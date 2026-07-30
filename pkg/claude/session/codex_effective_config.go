@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -76,12 +78,19 @@ type codexRemoteConfigOrigin struct {
 	Version string
 }
 
+// String names the layer well enough for an operator to go and change it. The
+// enterprise bundle carries an admin-facing name; the MDM layer instead carries
+// a preferences domain and key, so falling back to the bare layer type would
+// tell the operator only what they already read in the layer name.
 func (o codexRemoteConfigOrigin) String() string {
-	name := o.Name
-	if strings.TrimSpace(name) == "" {
-		name = o.Layer
+	rendered := o.Key + " from " + o.Layer + " layer"
+	if name := strings.TrimSpace(o.Name); name != "" {
+		rendered += fmt.Sprintf(" %q", name)
 	}
-	return fmt.Sprintf("%s from %s layer %q (%s)", o.Key, o.Layer, name, o.Version)
+	if version := strings.TrimSpace(o.Version); version != "" {
+		rendered += " (" + version + ")"
+	}
+	return rendered
 }
 
 // codexEffectiveConfigReader is the process seam. Production runs the real
@@ -99,14 +108,15 @@ var codexEffectiveConfigReader = readCodexEffectiveConfig
 // so a test still runs the production parser and layer-origin attribution over
 // the shape Codex actually returns.
 func SetCodexEffectiveConfigProbeForTest(
-	read func(cwd string, environment []sandboxpolicy.EnvironmentEntry) (json.RawMessage, error),
+	read func(cwd string, environment []sandboxpolicy.EnvironmentEntry, permissionProfile string) (json.RawMessage, error),
 ) func() {
 	previous := codexEffectiveConfigReader
 	codexEffectiveConfigReader = func(
 		cwd string,
 		environment []sandboxpolicy.EnvironmentEntry,
+		permissionProfile string,
 	) (codexEffectiveConfig, error) {
-		raw, err := read(cwd, environment)
+		raw, err := read(cwd, environment, permissionProfile)
 		if err != nil {
 			return codexEffectiveConfig{}, err
 		}
@@ -124,44 +134,86 @@ func SetCodexEffectiveConfigProbeForTest(
 func readCodexEffectiveConfig(
 	cwd string,
 	environment []sandboxpolicy.EnvironmentEntry,
+	permissionProfile string,
 ) (codexEffectiveConfig, error) {
+	raw, err := readCodexEffectiveConfigJSON(cwd, environment, permissionProfile)
+	if err != nil {
+		return codexEffectiveConfig{}, err
+	}
+	return parseCodexEffectiveConfig(raw)
+}
+
+// readCodexEffectiveConfigJSON returns the raw `config/read` result so callers
+// and tests can inspect the response shape itself, not only its projection.
+func readCodexEffectiveConfigJSON(
+	cwd string,
+	environment []sandboxpolicy.EnvironmentEntry,
+	permissionProfile string,
+) (json.RawMessage, error) {
 	ctx, cancel := context.WithTimeout(
 		context.Background(), codexEffectiveConfigTimeout)
 	defer cancel()
+
+	// exec.Command resolves the binary against the PARENT process PATH at
+	// construction time, so assigning command.Env afterwards would not change
+	// which binary runs. The launch profile can set its own PATH, and reading
+	// a different Codex build than the one that launches would mean reading a
+	// different layer precedence, so resolve against the launch environment.
+	launchEnvironment := launchModelEnvironment(environment)
+	executable, lookErr := codexEffectiveConfigLookPath(launchEnvironment["PATH"])
+	if lookErr != nil {
+		return nil, fmt.Errorf(
+			"cannot locate the Codex binary to read its effective config: %w",
+			lookErr)
+	}
 
 	// --disable only sets features.<name>, never a provider-routing key, so the
 	// probe still reads the routing this launch will get. Plugin/marketplace
 	// sync is unrelated to model transport and would otherwise make the probe
 	// wait on catalog fetches.
-	command := exec.CommandContext(ctx, "codex",
+	arguments := []string{
 		"--disable", "plugins",
 		"--disable", "remote_plugin",
 		"--disable", "plugin_sharing",
-		"app-server", "--listen", "stdio://")
+	}
+	if strings.TrimSpace(permissionProfile) != "" {
+		arguments = append(arguments, "-p", strings.TrimSpace(permissionProfile))
+	}
+	arguments = append(arguments, "app-server", "--listen", "stdio://")
+
+	command := exec.CommandContext(ctx, executable, arguments...)
 	command.Dir = cwd
-	command.Env = codexEffectiveConfigEnv(environment)
-	command.Stderr = nil
+	command.Env = sortedEnvironment(launchEnvironment)
+	// Keep the tail of stderr: without it every startup failure — a renamed
+	// subcommand on a newer Codex, a broken install — collapses into the same
+	// "produced no result" message with nothing to diagnose it from.
+	var diagnostics boundedBuffer
+	command.Stderr = &diagnostics
 
 	stdin, err := command.StdinPipe()
 	if err != nil {
-		return codexEffectiveConfig{}, fmt.Errorf(
+		return nil, fmt.Errorf(
 			"cannot drive the Codex app-server effective-config read: %w", err)
 	}
 	stdout, err := command.StdoutPipe()
 	if err != nil {
-		return codexEffectiveConfig{}, fmt.Errorf(
+		return nil, fmt.Errorf(
 			"cannot drive the Codex app-server effective-config read: %w", err)
 	}
 	if err := command.Start(); err != nil {
-		return codexEffectiveConfig{}, fmt.Errorf(
+		return nil, fmt.Errorf(
 			"cannot run the Codex app-server effective-config read: %w", err)
 	}
+	waited := false
+	waitErr := error(nil)
 	defer func() {
 		_ = stdin.Close()
 		if command.Process != nil {
 			_ = command.Process.Kill()
 		}
-		_ = command.Wait()
+		if !waited {
+			_ = command.Wait()
+		}
 	}()
 
 	requests := []any{
@@ -180,10 +232,10 @@ func readCodexEffectiveConfig(
 	for _, request := range requests {
 		encoded, marshalErr := json.Marshal(request)
 		if marshalErr != nil {
-			return codexEffectiveConfig{}, marshalErr
+			return nil, marshalErr
 		}
 		if _, writeErr := stdin.Write(append(encoded, '\n')); writeErr != nil {
-			return codexEffectiveConfig{}, fmt.Errorf(
+			return nil, fmt.Errorf(
 				"the Codex app-server closed before answering config/read: %w",
 				writeErr)
 		}
@@ -202,27 +254,35 @@ func readCodexEffectiveConfig(
 		if json.Unmarshal(scanner.Bytes(), &message) != nil {
 			continue
 		}
-		if message.ID == nil || *message.ID != 2 {
-			continue
-		}
-		if message.Error != nil {
-			return codexEffectiveConfig{}, fmt.Errorf(
+		// A JSON-RPC error for a malformed or unsupported request can carry a
+		// null id, so an id-matched-only check would drop the one message that
+		// explains the failure and fall through to the generic no-result path.
+		if message.Error != nil && (message.ID == nil || *message.ID == 2) {
+			return nil, fmt.Errorf(
 				"the Codex app-server refused config/read: %s",
 				message.Error.Message)
 		}
-		return parseCodexEffectiveConfig(message.Result)
+		if message.ID == nil || *message.ID != 2 {
+			continue
+		}
+		return message.Result, nil
 	}
 	if ctx.Err() != nil {
-		return codexEffectiveConfig{}, fmt.Errorf(
+		return nil, fmt.Errorf(
 			"the Codex app-server effective-config read did not answer within %s",
 			codexEffectiveConfigTimeout)
 	}
 	if err := scanner.Err(); err != nil {
-		return codexEffectiveConfig{}, fmt.Errorf(
-			"cannot read the Codex app-server effective-config reply: %w", err)
+		return nil, fmt.Errorf(
+			"cannot read the Codex app-server effective-config reply: %w%s",
+			err, diagnostics.suffix())
 	}
-	return codexEffectiveConfig{}, fmt.Errorf(
-		"the Codex app-server produced no config/read result")
+	_ = stdin.Close()
+	waitErr = command.Wait()
+	waited = true
+	return nil, fmt.Errorf(
+		"the Codex app-server produced no config/read result (%s)%s",
+		codexEffectiveConfigExit(waitErr), diagnostics.suffix())
 }
 
 // codexConfigReadParams asks for the effective config as seen from the launch
@@ -252,9 +312,11 @@ func parseCodexEffectiveConfig(
 		} `json:"config"`
 		Origins map[string]struct {
 			Name struct {
-				Type string `json:"type"`
-				Name string `json:"name"`
-				File string `json:"file"`
+				Type   string `json:"type"`
+				Name   string `json:"name"`
+				File   string `json:"file"`
+				Domain string `json:"domain"`
+				Key    string `json:"key"`
 			} `json:"name"`
 			Version string `json:"version"`
 		} `json:"origins"`
@@ -296,11 +358,18 @@ func parseCodexEffectiveConfig(
 			origin.Name.Type != codexConfigLayerMDM {
 			continue
 		}
+		name := strings.TrimSpace(origin.Name.Name)
+		if name == "" && strings.TrimSpace(origin.Name.Domain) != "" {
+			name = strings.TrimSpace(origin.Name.Domain)
+			if key := strings.TrimSpace(origin.Name.Key); key != "" {
+				name += "/" + key
+			}
+		}
 		effective.RemoteOrigins = append(
 			effective.RemoteOrigins, codexRemoteConfigOrigin{
 				Key:     key,
 				Layer:   origin.Name.Type,
-				Name:    origin.Name.Name,
+				Name:    name,
 				Version: origin.Version,
 			})
 	}
@@ -336,10 +405,7 @@ func codexProviderRoutingKey(key string) bool {
 	return false
 }
 
-func codexEffectiveConfigEnv(
-	overrides []sandboxpolicy.EnvironmentEntry,
-) []string {
-	environment := launchModelEnvironment(overrides)
+func sortedEnvironment(environment map[string]string) []string {
 	names := make([]string, 0, len(environment))
 	for name := range environment {
 		names = append(names, name)
@@ -350,4 +416,59 @@ func codexEffectiveConfigEnv(
 		env = append(env, name+"="+environment[name])
 	}
 	return env
+}
+
+// codexEffectiveConfigLookPath resolves the Codex binary against the launch
+// PATH rather than the parent process's. It walks the entries itself instead of
+// swapping os.Environ around exec.LookPath, because a launch preflight can run
+// concurrently with others and must not mutate process-global state.
+var codexEffectiveConfigLookPath = func(path string) (string, error) {
+	if strings.TrimSpace(path) == "" {
+		return exec.LookPath("codex")
+	}
+	for _, dir := range filepath.SplitList(path) {
+		if dir == "" {
+			dir = "."
+		}
+		candidate := filepath.Join(dir, "codex")
+		info, err := os.Stat(candidate)
+		if err != nil || info.IsDir() || info.Mode().Perm()&0o111 == 0 {
+			continue
+		}
+		return candidate, nil
+	}
+	return "", fmt.Errorf(
+		"%q not found in the launch PATH", "codex")
+}
+
+// boundedBuffer keeps only the tail of a stream. Codex can be chatty on stderr
+// and none of it belongs in a refusal message beyond the part that explains
+// the failure.
+type boundedBuffer struct {
+	data []byte
+}
+
+const codexEffectiveConfigDiagnosticsLimit = 2048
+
+func (b *boundedBuffer) Write(p []byte) (int, error) {
+	b.data = append(b.data, p...)
+	if len(b.data) > codexEffectiveConfigDiagnosticsLimit {
+		b.data = b.data[len(b.data)-codexEffectiveConfigDiagnosticsLimit:]
+	}
+	return len(p), nil
+}
+
+func (b *boundedBuffer) suffix() string {
+	text := strings.TrimSpace(string(b.data))
+	if text == "" {
+		return ""
+	}
+	return "; Codex reported: " + text
+}
+
+func codexEffectiveConfigExit(err error) string {
+	if err == nil {
+		return "the process exited without answering"
+	}
+	return err.Error()
 }

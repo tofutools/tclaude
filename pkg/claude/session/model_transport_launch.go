@@ -23,6 +23,13 @@ type ModelTransportLaunchContext struct {
 	Cwd         string
 	Environment []sandboxpolicy.EnvironmentEntry
 	ExtraArgs   []string
+	// PermissionProfile is the Codex permission profile the launch will pass as
+	// `-p <name>`. tclaude sets this itself on the stacked path, so it is not
+	// covered by the ExtraArgs gate; the profile layers
+	// $CODEX_HOME/<name>.config.toml above the base user config and can carry
+	// provider routing, so the effective-config probe has to select it too or
+	// it reads a different config than the launch gets.
+	PermissionProfile string
 }
 
 // ResolveTclaudeLayerModelTransport resolves the concrete provider endpoint for
@@ -367,10 +374,15 @@ func claudeProviderSettingsPaths(
 	// managed-settings.json can. The live fetch still happens after this
 	// preflight; inspecting the cache catches the consented, persisted case
 	// rather than pretending the channel does not exist.
+	// Both are appended rather than either/or: a stale or wrong
+	// CLAUDE_CODE_REMOTE_SETTINGS_PATH export must not make the default cache
+	// invisible. A path that does not exist is skipped during inspection, so
+	// naming both costs nothing and cannot under-inspect.
 	if remote := strings.TrimSpace(
 		environment["CLAUDE_CODE_REMOTE_SETTINGS_PATH"]); remote != "" {
 		paths = append(paths, remote)
-	} else if configDir != "" {
+	}
+	if configDir != "" {
 		paths = append(paths, filepath.Join(configDir, "remote-settings.json"))
 	}
 	if configDir != "" {
@@ -440,7 +452,8 @@ func resolveCodexModelTransport(
 		}
 		configDir = filepath.Join(home, ".codex")
 	}
-	config, err := codexEffectiveConfigReader(context.Cwd, context.Environment)
+	config, err := codexEffectiveConfigReader(
+		context.Cwd, context.Environment, context.PermissionProfile)
 	if err != nil {
 		return harness.ResolvedModelTransport{}, modelTransportLaunchError(h,
 			err.Error()+"; fix the Codex installation or configuration, or use network open")
@@ -466,22 +479,21 @@ func resolveCodexModelTransport(
 		Provenance:       codexRemoteProvenance(config.RemoteOrigins),
 		ProviderResolved: true,
 	}
-	switch {
-	case authMode == codexAuthChatGPT:
-		// ChatGPT sign-in routes model traffic at chatgpt_base_url rather than
-		// the API endpoint, and refreshes its token at a base URL that is a
-		// compile-time constant in the harness
-		// (codex-rs/login/src/auth/manager.rs REFRESH_TOKEN_URL), so it cannot
-		// be moved by any config layer and is required for every ChatGPT launch.
-		baseURL := config.ChatGPTBaseURL
-		if baseURL == "" {
-			baseURL = codexDefaultChatGPTBaseURL
+	// ChatGPT sign-in substitutes chatgpt_base_url only for the built-in openai
+	// provider. A custom provider keeps posting to its own base_url and merely
+	// uses the ChatGPT token as its bearer, so the model endpoint is chosen by
+	// the provider and only the refresh endpoint follows the credential.
+	if provider == "openai" {
+		if authMode == codexAuthChatGPT {
+			baseURL := config.ChatGPTBaseURL
+			if baseURL == "" {
+				baseURL = codexDefaultChatGPTBaseURL
+			}
+			resolved.BaseURL = baseURL
+		} else {
+			resolved.BaseURL = config.OpenAIBaseURL
 		}
-		resolved.BaseURL = baseURL
-		resolved.AuxiliaryBaseURLs = []string{codexChatGPTTokenRefreshURL}
-	case provider == "openai":
-		resolved.BaseURL = config.OpenAIBaseURL
-	default:
+	} else {
 		configured, ok := config.ModelProviders[provider]
 		if !ok || configured.BaseURL == "" {
 			return harness.ResolvedModelTransport{}, modelTransportLaunchError(h,
@@ -489,6 +501,13 @@ func resolveCodexModelTransport(
 					provider, provider))
 		}
 		resolved.BaseURL = configured.BaseURL
+	}
+	if authMode == codexAuthChatGPT {
+		// The refresh endpoint is a compile-time constant in the harness
+		// (codex-rs/login/src/auth/manager.rs REFRESH_TOKEN_URL), so no config
+		// layer can move it and every ChatGPT-authenticated launch needs it,
+		// whichever provider serves the model traffic.
+		resolved.AuxiliaryBaseURLs = []string{codexChatGPTTokenRefreshURL}
 	}
 	if authMode == codexAuthNone && provider != "openai" {
 		if configured, ok := config.ModelProviders[provider]; ok &&

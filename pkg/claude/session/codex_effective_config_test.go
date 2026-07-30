@@ -63,7 +63,8 @@ func TestParseCodexEffectiveConfigNamesRemotelyDeliveredOrigins(t *testing.T) {
 	// out-of-band origins, so naming them would dilute the disclosure.
 	assert.Equal(t, []codexRemoteConfigOrigin{
 		{
-			Key: "chatgpt_base_url", Layer: "mdm", Version: "sha256:mdm",
+			Key: "chatgpt_base_url", Layer: "mdm",
+			Name: "com.openai.codex/config", Version: "sha256:mdm",
 		},
 		{
 			Key: "model_provider", Layer: "enterpriseManaged",
@@ -78,7 +79,11 @@ func TestParseCodexEffectiveConfigNamesRemotelyDeliveredOrigins(t *testing.T) {
 	assert.Equal(t,
 		`model_provider from enterpriseManaged layer "acme-workspace" (sha256:bundle)`,
 		config.RemoteOrigins[1].String())
-	assert.Equal(t, `chatgpt_base_url from mdm layer "mdm" (sha256:mdm)`,
+	// The MDM layer carries a preferences domain/key rather than an
+	// admin-facing name; rendering the bare layer type would tell the operator
+	// only what the words "mdm layer" already said.
+	assert.Equal(t,
+		`chatgpt_base_url from mdm layer "com.openai.codex/config" (sha256:mdm)`,
 		config.RemoteOrigins[0].String())
 }
 
@@ -96,4 +101,16 @@ func TestCodexProviderRoutingKeyMatchesTableMembers(t *testing.T) {
 		assert.Falsef(t, codexProviderRoutingKey(key),
 			"expected %q not to route", key)
 	}
+}
+
+func TestCodexRemoteConfigOriginRendersWithoutOptionalFields(t *testing.T) {
+	// An unnamed, unversioned layer must not render dangling punctuation.
+	assert.Equal(t, "model_provider from enterpriseManaged layer",
+		codexRemoteConfigOrigin{
+			Key: "model_provider", Layer: "enterpriseManaged",
+		}.String())
+	assert.Equal(t, `model_provider from enterpriseManaged layer "acme"`,
+		codexRemoteConfigOrigin{
+			Key: "model_provider", Layer: "enterpriseManaged", Name: "acme",
+		}.String())
 }

@@ -1,6 +1,7 @@
 package session
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -113,6 +114,21 @@ func TestResolveTclaudeLayerClaudeRefusesRemoteManagedProviderSettings(t *testin
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), relocated)
 	assert.Contains(t, err.Error(), "CLAUDE_CODE_USE_BEDROCK")
+
+	// A stale or wrong override must not hide the default cache: both are
+	// inspected, so the routing sitting in the default location still refuses.
+	_, err = ResolveTclaudeLayerModelTransport(
+		harness.MustGet(harness.DefaultName),
+		ModelTransportLaunchContext{
+			Cwd: cwd,
+			Environment: []sandboxpolicy.EnvironmentEntry{
+				{Name: "HOME", Value: home},
+				{Name: "CLAUDE_CODE_REMOTE_SETTINGS_PATH", Value: filepath.Join(t.TempDir(), "absent.json")},
+			},
+		})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), remote)
+	assert.Contains(t, err.Error(), "ANTHROPIC_BASE_URL")
 }
 
 func TestResolveTclaudeLayerClaudeRefusesMutableSettingsProvider(t *testing.T) {
@@ -188,6 +204,10 @@ func TestResolveTclaudeLayerCodexModelTransportFromEffectiveConfig(t *testing.T)
 	require.NoError(t, err)
 	assert.Equal(t, "corp", resolved.Provider)
 	assert.Equal(t, "https://models.example/v1", resolved.BaseURL)
+	assert.Equal(t, []string{
+		`model_provider from enterpriseManaged layer "acme-workspace" (sha256:abc)`,
+	}, resolved.Provenance,
+		"a route chosen by a layer the operator cannot read must carry its origin into the launch disclosure")
 
 	*effective = codexEffectiveConfig{
 		ModelProvider: "openai",
@@ -257,7 +277,7 @@ func TestResolveTclaudeLayerCodexRefusesUnresolvableEffectiveConfig(t *testing.T
 	}
 	previous := codexEffectiveConfigReader
 	codexEffectiveConfigReader = func(
-		string, []sandboxpolicy.EnvironmentEntry,
+		string, []sandboxpolicy.EnvironmentEntry, string,
 	) (codexEffectiveConfig, error) {
 		return codexEffectiveConfig{}, errors.New(
 			"the Codex app-server effective-config read did not answer within 45s")
@@ -501,10 +521,110 @@ func stubCodexEffectiveConfig(
 	stub := &config
 	previous := codexEffectiveConfigReader
 	codexEffectiveConfigReader = func(
-		string, []sandboxpolicy.EnvironmentEntry,
+		string, []sandboxpolicy.EnvironmentEntry, string,
 	) (codexEffectiveConfig, error) {
 		return *stub, nil
 	}
 	t.Cleanup(func() { codexEffectiveConfigReader = previous })
 	return stub
+}
+
+func TestResolveTclaudeLayerCodexChatGPTKeepsCustomProviderEndpoint(t *testing.T) {
+	home, cwd := isolateModelTransportLaunch(t)
+	codexHome := filepath.Join(home, ".codex")
+	require.NoError(t, os.MkdirAll(codexHome, 0o700))
+	codex := harness.MustGet(harness.CodexName)
+	require.NoError(t, os.WriteFile(filepath.Join(codexHome, "auth.json"), []byte(
+		`{"auth_mode":"chatgpt","tokens":{"access_token":"token"}}`), 0o600))
+	stubCodexEffectiveConfig(t, codexEffectiveConfig{
+		ModelProvider:  "corp",
+		ChatGPTBaseURL: "https://chatgpt.example/backend-api/",
+		ModelProviders: map[string]codexEffectiveProvider{
+			"corp": {BaseURL: "https://models.corp.example/v1", RequiresOpenAIAuth: true},
+		},
+	})
+
+	// ChatGPT sign-in supplies the bearer token, but a custom provider still
+	// posts to its own base_url. Resolving to chatgpt_base_url here would
+	// authorize two destinations Codex never contacts and omit the one it does.
+	resolved, err := ResolveTclaudeLayerModelTransport(
+		codex, ModelTransportLaunchContext{
+			Model: "gpt-5.4", Cwd: cwd,
+			Environment: []sandboxpolicy.EnvironmentEntry{
+				{Name: "HOME", Value: home},
+				{Name: "CODEX_HOME", Value: codexHome},
+			},
+		})
+	require.NoError(t, err)
+	assert.Equal(t, "corp", resolved.Provider)
+	assert.Equal(t, "https://models.corp.example/v1", resolved.BaseURL)
+	assert.Equal(t,
+		[]string{"https://auth.openai.com/oauth/token"},
+		resolved.AuxiliaryBaseURLs,
+		"the refresh endpoint still follows the credential")
+
+	requirement, err := harness.ResolveModelTransportRequirement(codex, resolved)
+	require.NoError(t, err)
+	assert.Equal(t, []sandboxpolicy.NetworkAllowEntry{
+		{Domain: "models.corp.example", Ports: []int{443}},
+		{Domain: "auth.openai.com", Ports: []int{443}},
+	}, requirement.Destinations)
+}
+
+func TestResolveTclaudeLayerCodexRefusesUnauthenticatedProviderNeedingOpenAIAuth(t *testing.T) {
+	home, cwd := isolateModelTransportLaunch(t)
+	codexHome := filepath.Join(home, ".codex")
+	require.NoError(t, os.MkdirAll(codexHome, 0o700))
+	stubCodexEffectiveConfig(t, codexEffectiveConfig{
+		ModelProvider: "corp",
+		ModelProviders: map[string]codexEffectiveProvider{
+			"corp": {BaseURL: "https://models.example/v1", RequiresOpenAIAuth: true},
+		},
+	})
+
+	_, err := ResolveTclaudeLayerModelTransport(
+		harness.MustGet(harness.CodexName),
+		ModelTransportLaunchContext{
+			Cwd: cwd,
+			Environment: []sandboxpolicy.EnvironmentEntry{
+				{Name: "HOME", Value: home},
+				{Name: "CODEX_HOME", Value: codexHome},
+			},
+		})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "requires OpenAI authentication")
+	assert.Contains(t, err.Error(), "network open")
+}
+
+func TestResolveTclaudeLayerCodexProbeSelectsTheLaunchPermissionProfile(t *testing.T) {
+	home, cwd := isolateModelTransportLaunch(t)
+	codexHome := filepath.Join(home, ".codex")
+	require.NoError(t, os.MkdirAll(codexHome, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(codexHome, "auth.json"), []byte(
+		`{"auth_mode":"apikey","OPENAI_API_KEY":"test-key"}`), 0o600))
+
+	// tclaude passes `-p <profile>` itself on the stacked path, so it never
+	// reaches the ExtraArgs gate. The profile layers its own config above the
+	// base user config and can carry provider routing, so a probe that did not
+	// select it would read a different config than the launch gets.
+	var observed string
+	restore := SetCodexEffectiveConfigProbeForTest(
+		func(_ string, _ []sandboxpolicy.EnvironmentEntry, profile string) (json.RawMessage, error) {
+			observed = profile
+			return json.RawMessage(`{"config":{},"origins":{}}`), nil
+		})
+	t.Cleanup(restore)
+
+	_, err := ResolveTclaudeLayerModelTransport(
+		harness.MustGet(harness.CodexName),
+		ModelTransportLaunchContext{
+			Cwd: cwd,
+			Environment: []sandboxpolicy.EnvironmentEntry{
+				{Name: "HOME", Value: home},
+				{Name: "CODEX_HOME", Value: codexHome},
+			},
+			PermissionProfile: "tclaude-agent",
+		})
+	require.NoError(t, err)
+	assert.Equal(t, "tclaude-agent", observed)
 }

@@ -30,6 +30,7 @@ type ModelTransportRequirement struct {
 // besides its model endpoint — Codex's ChatGPT token refresh is the first such
 // case. They are separate from BaseURL because they are not provider choices a
 // resolver may substitute for one another: every one of them has to be covered.
+//
 // Provenance names a remotely delivered configuration layer that won one of the
 // provider-routing keys. It is empty when every routing key came from a file
 // the operator can read, and is disclosed verbatim at launch when it is not:
@@ -61,11 +62,7 @@ type staticModelTransport struct {
 func (r staticModelTransport) ResolveModelTransport(
 	resolved ResolvedModelTransport,
 ) (ModelTransportRequirement, error) {
-	requirement, err := r.resolveModelEndpoint(resolved)
-	if err != nil {
-		return ModelTransportRequirement{}, err
-	}
-	return withAuxiliaryModelTransport(requirement, resolved.AuxiliaryBaseURLs)
+	return r.resolveModelEndpoint(resolved)
 }
 
 func (r staticModelTransport) resolveModelEndpoint(
@@ -140,6 +137,7 @@ func containsNetworkDestination(
 			destination.CIDR == candidate.CIDR &&
 			destination.Host == candidate.Host &&
 			destination.Loopback == candidate.Loopback &&
+			destination.IncludeSubdomains == candidate.IncludeSubdomains &&
 			slices.Equal(destination.Ports, candidate.Ports) {
 			return true
 		}
@@ -158,8 +156,7 @@ func (unresolvedOpenCodeModelTransport) ResolveModelTransport(
 		if err != nil {
 			return ModelTransportRequirement{}, err
 		}
-		return withAuxiliaryModelTransport(
-			requirement, resolved.AuxiliaryBaseURLs)
+		return requirement, nil
 	}
 	return ModelTransportRequirement{}, fmt.Errorf(
 		"OpenCode model %q does not expose a concrete resolved provider endpoint at the harness descriptor seam; "+
@@ -240,6 +237,15 @@ func ResolveModelTransportRequirement(
 		)
 	}
 	requirement, err := h.ModelTransport.ResolveModelTransport(resolved)
+	if err != nil {
+		return ModelTransportRequirement{}, modelTransportCapabilityError(h, err.Error())
+	}
+	// Unioned here rather than inside each resolver: an auxiliary endpoint is
+	// mandatory, so a resolver that forgot to merge it would silently produce a
+	// requirement missing a destination that coverage validation would then
+	// happily pass.
+	requirement, err = withAuxiliaryModelTransport(
+		requirement, resolved.AuxiliaryBaseURLs)
 	if err != nil {
 		return ModelTransportRequirement{}, modelTransportCapabilityError(h, err.Error())
 	}

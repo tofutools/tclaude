@@ -38,7 +38,7 @@ func TestMain(m *testing.M) {
 	// override, no base URL, no remotely delivered layer — which resolves to
 	// the first-party API route. Tests needing a different route swap their own.
 	restoreCodexProbe := session.SetCodexEffectiveConfigProbeForTest(
-		func(string, []sandboxpolicy.EnvironmentEntry) (json.RawMessage, error) {
+		func(string, []sandboxpolicy.EnvironmentEntry, string) (json.RawMessage, error) {
 			return json.RawMessage(`{"config":{},"origins":{}}`), nil
 		})
 	code := m.Run()
