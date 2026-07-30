@@ -845,3 +845,79 @@ func TestRenderMountPlanFromLaunchDirs(t *testing.T) {
 		entry("/usr/share/tclaude", MountRO),
 	})
 }
+
+func TestRenderMountPlanWithEngineRecordsTheDeployedEngine(t *testing.T) {
+	discriminating := NetworkRules{
+		Mode:  AccessModeList,
+		Allow: []NetworkAllowEntry{{Domain: "example.com", Ports: []int{443}}},
+	}
+	loopbackOnly := NetworkRules{
+		Mode:  AccessModeList,
+		Allow: []NetworkAllowEntry{{Loopback: true}},
+	}
+	for _, tc := range []struct {
+		name     string
+		rules    NetworkRules
+		selected NetworkEngine
+		want     NetworkEngine
+	}{
+		{
+			name:     "proxy selection on a discriminating policy",
+			rules:    discriminating,
+			selected: NetworkEngineProxy,
+			want:     NetworkEngineProxy,
+		},
+		{
+			// RenderMountPlan delegates here with no selection, so this is also
+			// the assertion that every pre-engine launch renders unchanged.
+			name:     "no selection keeps the packet gateway",
+			rules:    discriminating,
+			selected: NetworkEngineUnset,
+			want:     NetworkEnginePacket,
+		},
+		{
+			name:     "proxy selection on a policy that needs no engine",
+			rules:    loopbackOnly,
+			selected: NetworkEngineProxy,
+			want:     NetworkEngineUnset,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rules := tc.rules
+			plan, err := RenderMountPlanWithEngine(
+				EffectiveProfile{Network: &rules}, tc.selected)
+			if err != nil {
+				t.Fatalf("render: %v", err)
+			}
+			if plan.NetworkEngine != tc.want {
+				t.Fatalf("plan engine = %q, want %q", plan.NetworkEngine, tc.want)
+			}
+		})
+	}
+}
+
+func TestRenderMountPlanLeavesEngineSelectionToItsCaller(t *testing.T) {
+	rules := NetworkRules{
+		Mode:  AccessModeList,
+		Allow: []NetworkAllowEntry{{Domain: "example.com"}},
+	}
+	plan, err := RenderMountPlan(EffectiveProfile{Network: &rules})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if plan.NetworkEngine != NetworkEnginePacket {
+		t.Fatalf("plan engine = %q, want the packet gateway", plan.NetworkEngine)
+	}
+}
+
+func TestRenderMountPlanWithEngineRejectsAnInvalidSelection(t *testing.T) {
+	rules := NetworkRules{
+		Mode:  AccessModeList,
+		Allow: []NetworkAllowEntry{{Domain: "example.com"}},
+	}
+	if _, err := RenderMountPlanWithEngine(
+		EffectiveProfile{Network: &rules}, NetworkEngine("socks"),
+	); err == nil {
+		t.Fatal("expected an invalid engine to refuse the plan")
+	}
+}

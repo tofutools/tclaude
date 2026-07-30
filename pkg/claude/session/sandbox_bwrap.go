@@ -14,6 +14,7 @@ import (
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/sandboxproxy"
 )
 
 // TclaudeLayerLaunchContract carries writable paths required by the launched
@@ -41,6 +42,12 @@ type TclaudeLayerLaunchContract struct {
 	// already-bound descriptor and never sees this path inside its mount
 	// namespace.
 	OpenCodeControl *TclaudeLayerOpenCodeControl `json:"opencode_control,omitempty"`
+	// NetworkEngine carries the engine a layer selected for this launch, after
+	// most-explicit-wins resolution. It is launch input rather than authored
+	// policy: nothing in a profile spells it yet, and an omitted value is the
+	// pre-engine behavior byte for byte. Whether the selection deploys anything
+	// is decided by sandboxpolicy.DeployedNetworkEngine, never here.
+	NetworkEngine sandboxpolicy.NetworkEngine `json:"network_engine,omitempty"`
 }
 
 type TclaudeLayerOpenCodeControl struct {
@@ -95,6 +102,10 @@ type TclaudeLayerLaunchInput struct {
 	FinalHideDirs    []string
 	ReadOnlyBinds    []TclaudeLayerReadOnlyBind
 	OpenCodeControl  *TclaudeLayerOpenCodeControl
+	// NetworkEngine is the resolved engine selection for this launch. See the
+	// contract field of the same name; production callers leave it unset until
+	// the selection surface exists.
+	NetworkEngine sandboxpolicy.NetworkEngine
 }
 
 // TclaudeLayerNetworkPosture derives the launch posture after applying any
@@ -231,6 +242,10 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 		WriteDirs:         contractWriteDirs,
 		ProfileFilesystem: profileFilesystem,
 		OpenCodeControl:   input.OpenCodeControl,
+		NetworkEngine:     input.NetworkEngine,
+	}
+	if err := sandboxpolicy.ValidateNetworkEngine(contract.NetworkEngine); err != nil {
+		return TclaudeLayerLaunchSpec{}, err
 	}
 	if input.Snapshot != nil && input.Snapshot.UnixSocketMaterialization != nil {
 		paths := append([]string(nil), input.Snapshot.UnixSocketMaterialization.Paths...)
@@ -292,6 +307,102 @@ func CanonicalTclaudeLayerGeneratedPath(path string) string {
 		}
 		suffix = append(suffix, filepath.Base(ancestor))
 		ancestor = parent
+	}
+}
+
+// validateTclaudeLayerFilteredPolicy proves the compiled policy is one the
+// engine this plan deploys can actually enforce, before any namespace is built.
+//
+// Each engine is asked in its own vocabulary, and only its own: the packet
+// gateway must be able to render its nftables policy, and the proxy must be
+// able to compile its evaluator. Asking the proxy engine for an nft rendering
+// would refuse launches over a limitation of a mechanism that is not running,
+// and asking neither would let an unenforceable policy reach the floor.
+func validateTclaudeLayerFilteredPolicy(plan sandboxpolicy.MountPlan) error {
+	if plan.FilteredNetwork == nil {
+		return fmt.Errorf("filtered network posture has no compiled gateway policy")
+	}
+	if tclaudeLayerPlanDeploysProxy(plan) {
+		if _, err := sandboxproxy.NewEvaluatorFromRuleSet(
+			*plan.FilteredNetwork); err != nil {
+			return fmt.Errorf("validate filtered network proxy policy: %w", err)
+		}
+		return nil
+	}
+	if _, err := sandboxpolicy.RenderFilteredNetworkNFT(*plan.FilteredNetwork); err != nil {
+		return fmt.Errorf("validate filtered network gateway policy: %w", err)
+	}
+	return nil
+}
+
+// TclaudeLayerFloorPosture maps a network posture and the engine deployed for
+// it onto the bubblewrap floor the launch actually builds.
+//
+// The proxy engine's floor IS the isolated posture's construction — empty
+// network namespace, PID namespace, constructed root, agentd socket allowlisted
+// — and the mapping says so once, here, instead of adding a parallel case to
+// every switch that builds, probes, or describes a floor. That is the whole of
+// "reuse NetworkIsolatedWithAgentd unchanged": the packet posture's user
+// namespace, uid-0 mapping, capability grants, nft policy, resolver reopen and
+// pasta prerequisites are not skipped by a flag, they are never reached.
+func TclaudeLayerFloorPosture(
+	posture sandboxpolicy.NetworkPosture,
+	engine sandboxpolicy.NetworkEngine,
+) sandboxpolicy.NetworkPosture {
+	if posture == sandboxpolicy.NetworkFiltered &&
+		engine == sandboxpolicy.NetworkEngineProxy {
+		return sandboxpolicy.NetworkIsolatedWithAgentd
+	}
+	return posture
+}
+
+// tclaudeLayerPlanFloorPosture is TclaudeLayerFloorPosture for a rendered plan.
+func tclaudeLayerPlanFloorPosture(
+	plan sandboxpolicy.MountPlan,
+) sandboxpolicy.NetworkPosture {
+	return TclaudeLayerFloorPosture(plan.NetworkPosture, plan.NetworkEngine)
+}
+
+// tclaudeLayerPlanDeploysProxy reports whether this plan runs the host-side
+// filtering proxy. It reads the engine the plan already resolved rather than
+// re-deciding it, so the launch and any preview answer from one predicate.
+func tclaudeLayerPlanDeploysProxy(plan sandboxpolicy.MountPlan) bool {
+	return plan.NetworkPosture == sandboxpolicy.NetworkFiltered &&
+		plan.NetworkEngine == sandboxpolicy.NetworkEngineProxy
+}
+
+// ResolveTclaudeLayerForEngine verifies the host capability for a launch whose
+// filtering engine is already resolved. The engine can only make the floor
+// LESS demanding — the proxy floor needs no user namespace, capabilities, nft
+// or pasta — so probing the mapped floor is the honest prerequisite check
+// rather than a relaxed one.
+func ResolveTclaudeLayerForEngine(
+	posture sandboxpolicy.NetworkPosture,
+	root sandboxpolicy.RootPosture,
+	engine sandboxpolicy.NetworkEngine,
+) (string, harness.LaunchOSSandbox, error) {
+	floor := TclaudeLayerFloorPosture(posture, engine)
+	binary, sandbox, err := ResolveTclaudeLayer(floor, root)
+	if err != nil {
+		return "", sandbox, err
+	}
+	if floor != posture {
+		sandbox = tclaudeLayerProxyLaunchOSSandbox()
+	}
+	return binary, sandbox, nil
+}
+
+// tclaudeLayerProxyLaunchOSSandbox names the mechanism a proxy-engine launch
+// actually runs. Disclosure must never inherit the isolated posture's sentence
+// just because the floor is shared: the floor is the same, what runs on top of
+// it is not.
+func tclaudeLayerProxyLaunchOSSandbox() harness.LaunchOSSandbox {
+	return harness.LaunchOSSandbox{
+		State: "on",
+		Source: "tclaude-layer (bubblewrap; filtered network via supervised " +
+			"loopback filtering proxy; isolated PIDs; constructed root; " +
+			"agentd socket allowlisted)",
+		FilteredNetwork: true,
 	}
 }
 
@@ -851,6 +962,14 @@ func TclaudeLayerUnixRelayServerFDs(
 	if err != nil {
 		return 0, 0, err
 	}
+	if tclaudeLayerPlanDeploysProxy(plan) {
+		// Kept in step with tclaudeLayerUnixRelayServerCommandArgs, which
+		// refuses the same combination. Reporting the packet supervisor's
+		// layout here would hand the caller descriptor numbers for a
+		// supervisor this plan does not start.
+		return 0, 0, fmt.Errorf(
+			"the OpenCode Unix-relay launch does not support the proxy filtering engine")
+	}
 	if plan.NetworkPosture == sandboxpolicy.NetworkFiltered {
 		return 8, 9, nil
 	}
@@ -875,7 +994,8 @@ func tclaudeLayerSpecRenderInput(
 	if err := validateTclaudeLayerOpenCodeControl(spec); err != nil {
 		return nil, nil, nil, nil, nil, sandboxpolicy.MountPlan{}, err
 	}
-	plan, err := sandboxpolicy.RenderMountPlan(spec.Effective)
+	plan, err := sandboxpolicy.RenderMountPlanWithEngine(
+		spec.Effective, spec.Contract.NetworkEngine)
 	if err != nil {
 		return nil, nil, nil, nil, nil, sandboxpolicy.MountPlan{},
 			fmt.Errorf("render mount plan: %w", err)
@@ -1265,8 +1385,8 @@ func bwrapArgsWithDaemonFinal(
 		if plan.FilteredNetwork == nil {
 			return nil, fmt.Errorf("filtered network posture has no compiled gateway policy")
 		}
-		if _, err := sandboxpolicy.RenderFilteredNetworkNFT(*plan.FilteredNetwork); err != nil {
-			return nil, fmt.Errorf("validate filtered network gateway policy: %w", err)
+		if err := validateTclaudeLayerFilteredPolicy(plan); err != nil {
+			return nil, err
 		}
 	} else if plan.FilteredNetwork != nil {
 		return nil, fmt.Errorf("non-filtered network posture unexpectedly carries a gateway policy")
@@ -1278,7 +1398,10 @@ func bwrapArgsWithDaemonFinal(
 		// pane shell outside this namespace.
 		"--new-session",
 	}
-	switch plan.NetworkPosture {
+	// The floor, not the posture: a filtered plan under the proxy engine builds
+	// the isolated posture's namespace exactly, so it takes that case rather
+	// than a copy of it (see TclaudeLayerFloorPosture).
+	switch tclaudeLayerPlanFloorPosture(plan) {
 	case sandboxpolicy.NetworkHostOpen:
 		if tclaudeLayerPlanUsesConstructedRoot(plan) {
 			// TCL-798: the host network namespace is kept, but the root is
@@ -1331,10 +1454,12 @@ func bwrapArgsWithDaemonFinal(
 		// Never share the host's scratch directory by default.
 		"--tmpfs", "/tmp",
 	)
-	if plan.NetworkPosture == sandboxpolicy.NetworkFiltered {
+	if tclaudeLayerPlanFloorPosture(plan) == sandboxpolicy.NetworkFiltered {
 		// Keep /run ambient-free while creating its private filesystem before
 		// any explicitly authorized Unix sockets beneath it are rebound. The
-		// filtered relay may later add only the resolver symlink target.
+		// filtered relay may later add only the resolver symlink target. The
+		// proxy floor has no in-namespace resolver to rebind, so it never
+		// reaches here.
 		args = append(args, "--tmpfs", "/run")
 	}
 	if tclaudeLayerPlanUsesConstructedRoot(plan) {

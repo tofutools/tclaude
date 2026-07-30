@@ -193,11 +193,24 @@ func tclaudeLayerCommand(
 		return "", err
 	}
 	relay := tclaudeLayerRelayPrefix()
-	filtered, err := filteredNetworkRelayPrefix(plan)
+	engine, err := tclaudeLayerEnginePrefix(plan)
 	if err != nil {
 		return "", err
 	}
-	return relay + filtered + " -- " + command, nil
+	return relay + engine + " -- " + command, nil
+}
+
+// tclaudeLayerEnginePrefix contributes the supervisor flag for whichever
+// filtering engine this plan deploys, and nothing when it deploys none.
+//
+// The two engines are mutually exclusive by construction here — the plan names
+// exactly one — rather than by a check further down, so no launch can be
+// rendered with both supervisors attached.
+func tclaudeLayerEnginePrefix(plan sandboxpolicy.MountPlan) (string, error) {
+	if tclaudeLayerPlanDeploysProxy(plan) {
+		return proxyNetworkRelayPrefix(plan)
+	}
+	return filteredNetworkRelayPrefix(plan)
 }
 
 func tclaudeLayerStackedCommand(
@@ -263,14 +276,14 @@ func tclaudeLayerServerCommand(
 	if err != nil {
 		return "", err
 	}
-	filtered, err := filteredNetworkRelayPrefix(plan)
+	engine, err := tclaudeLayerEnginePrefix(plan)
 	if err != nil {
 		return "", err
 	}
-	if filtered == "" {
+	if engine == "" {
 		return command, nil
 	}
-	return tclaudeLayerRelayPrefix() + filtered + " -- " + command, nil
+	return tclaudeLayerRelayPrefix() + engine + " -- " + command, nil
 }
 
 func tclaudeLayerUnixRelayServerCommandArgs(
@@ -280,6 +293,14 @@ func tclaudeLayerUnixRelayServerCommandArgs(
 	_, _, _, _, _, plan, err := tclaudeLayerSpecRenderInput(spec)
 	if err != nil {
 		return nil, err
+	}
+	if tclaudeLayerPlanDeploysProxy(plan) {
+		// The OpenCode inherited-descriptor contract is written against the
+		// packet supervisor's exact fd layout. Refusing is the fail-closed
+		// answer: rendering it with the packet policy encoding would launch a
+		// proxy-engine plan under the wrong supervisor.
+		return nil, fmt.Errorf(
+			"the OpenCode Unix-relay launch does not support the proxy filtering engine")
 	}
 	if plan.NetworkPosture != sandboxpolicy.NetworkFiltered {
 		return bwrapArgv, nil

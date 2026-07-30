@@ -18,6 +18,16 @@ func tclaudeLayerFilteredBootstrapCmd() *cobra.Command {
 	}
 }
 
+func tclaudeLayerProxyBootstrapCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:    "tclaude-layer-proxy-bootstrap",
+		Hidden: true,
+		RunE: func(*cobra.Command, []string) error {
+			return fmt.Errorf("the proxy-network bootstrap is Linux-only")
+		},
+	}
+}
+
 func tclaudeLayerFilteredNFTCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:    "tclaude-layer-filtered-nft",

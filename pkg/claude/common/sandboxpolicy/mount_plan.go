@@ -128,10 +128,15 @@ const (
 // Aliases are auxiliary namespace setup rather than authority-bearing mounts;
 // their targets remain governed by Entries.
 type MountPlan struct {
-	Entries         []MountEntry
-	Aliases         []MountAlias
-	NetworkPosture  NetworkPosture
-	RootPosture     RootPosture
+	Entries        []MountEntry
+	Aliases        []MountAlias
+	NetworkPosture NetworkPosture
+	RootPosture    RootPosture
+	// NetworkEngine names the filtering engine this plan actually deploys, as
+	// decided by DeployedNetworkEngine. It is unset whenever the policy needs
+	// no engine at all, so a reader never has to re-derive that question — and
+	// so the plan cannot claim a mechanism the launch does not run.
+	NetworkEngine   NetworkEngine
 	FilteredNetwork *FilteredNetworkRuleSet
 }
 

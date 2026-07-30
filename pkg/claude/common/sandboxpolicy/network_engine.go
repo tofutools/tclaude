@@ -146,6 +146,47 @@ func sortNetworkEngineSelections(in []NetworkEngineSelection) {
 	}
 }
 
+// DeployedNetworkEngine answers the only engine question a launch or a preview
+// ever needs: which filtering engine does THIS policy actually deploy?
+//
+// It is the composition of the two halves that must never be re-derived apart —
+// the discrimination predicate below, and the authored engine selection resolved
+// by ResolveNetworkEngine — and it is deliberately the single place they meet.
+// The launch path calls it today. Enforcement prediction is to call this same
+// function rather than grow its own copy when the selection surface lands —
+// that is what will keep a preview from naming a mechanism the launch does not
+// run, and it is why the composition lives here rather than at the launch seam.
+//
+// The unset result is load-bearing rather than a missing value: a policy that
+// asks for no distinction between destinations deploys NO engine, whatever a
+// layer selected. Selecting an engine for such a policy is not an error (the
+// selection is latent and takes effect when a rule is added); it simply does not
+// start a process. Selecting nothing under a discriminating policy keeps the
+// packet gateway, which is what every launch ran before an engine existed.
+//
+// It requires materialized launch intent for the same reason the discrimination
+// predicate does: a caller that forgot to expand packs fails closed rather than
+// deploying by guess.
+func DeployedNetworkEngine(
+	rules NetworkRules,
+	selected NetworkEngine,
+) (NetworkEngine, error) {
+	if err := ValidateNetworkEngine(selected); err != nil {
+		return NetworkEngineUnset, err
+	}
+	discriminating, err := NetworkRulesAreDiscriminating(rules)
+	if err != nil {
+		return NetworkEngineUnset, err
+	}
+	if !discriminating {
+		return NetworkEngineUnset, nil
+	}
+	if selected == NetworkEngineUnset {
+		return NetworkEnginePacket, nil
+	}
+	return selected, nil
+}
+
 // NetworkRulesAreDiscriminating implements the proposal's Discriminating()
 // predicate: the resolved policy asks for a distinction between destinations,
 // and therefore needs a filtering engine deployed to make it.
