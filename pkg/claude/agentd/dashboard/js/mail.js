@@ -1612,7 +1612,8 @@ function initMail() {
 export const mailController = Object.freeze({
   state: mailState,
   renderMailTab, initMail, renderAccessRequests,
-  focusAccessRequest, openMailbox, openHumanNotifications, senderOnline, focusNextAttention, setBoxQuery, setMessageQuery,
+  focusAccessRequest, openMailbox, senderOnline, focusNextAttention, setBoxQuery, setMessageQuery,
+  openHumanNotifications,
   setShowRetired, setShowEmpty, setShowPrevGens,
   mailboxView, mailboxLabel, mailboxTitleAttr, selectMailbox,
   toggleGroupExpand, toggleAgentsExpand, toggleBoxSelection, clearBoxSelection,
