@@ -49,7 +49,23 @@ const (
 	smokePeerSocketEnv         = "TCLAUDE_SANDBOX_V2_PEER_SOCKET"
 	smokePositiveRootSocketEnv = "TCLAUDE_SANDBOX_V2_POSITIVE_ROOT_SOCKET"
 	smokeSocketHelperEnv       = "TCLAUDE_SANDBOX_V2_SOCKET_HELPER"
+	// TCL-866 mount-path evidence. Each pair names the host directory a grant
+	// reads from and the sandbox path it must appear at.
+	smokeMountROSourceEnv = "TCLAUDE_SANDBOX_V2_MOUNT_RO_SOURCE"
+	smokeMountROGuestEnv  = "TCLAUDE_SANDBOX_V2_MOUNT_RO_GUEST"
+	smokeMountRWSourceEnv = "TCLAUDE_SANDBOX_V2_MOUNT_RW_SOURCE"
+	smokeMountRWGuestEnv  = "TCLAUDE_SANDBOX_V2_MOUNT_RW_GUEST"
 )
+
+// tclaudeLayerSmokeMounts carries the TCL-866 projection fixture through the
+// helper boundary. Keeping it in one value avoids growing the helper's already
+// long positional parameter list by four more strings.
+type tclaudeLayerSmokeMounts struct {
+	ReadOnlySource  string
+	ReadOnlyGuest   string
+	ReadWriteSource string
+	ReadWriteGuest  string
+}
 
 const smokeConvID = "75000000-0000-4000-8000-000000000750"
 
@@ -145,6 +161,27 @@ func TestTclaudeLayerHostSmoke(t *testing.T) {
 	helperBinary := filepath.Join(allowed, "claude")
 	copyTestBinary(t, os.Args[0], helperBinary)
 
+	// TCL-866 fixture. The projection sources live OUTSIDE the smoke root on
+	// purpose: no other rule covers them, so the only way their content can be
+	// visible inside the sandbox is through the mount_path grants below. That is
+	// what makes "appears at the sandbox path and NOT at the host path" a real
+	// assertion rather than a restatement of some other grant.
+	mountBase, err := os.MkdirTemp(smokeBase, "tclaude-sandbox-v2-mounts-")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(mountBase) })
+	mountBase, err = filepath.EvalSymlinks(mountBase)
+	require.NoError(t, err)
+	mounts := tclaudeLayerSmokeMounts{
+		ReadOnlySource:  filepath.Join(mountBase, "dataset"),
+		ReadOnlyGuest:   "/srv/dataset",
+		ReadWriteSource: filepath.Join(mountBase, "scratch"),
+		ReadWriteGuest:  "/srv/scratch",
+	}
+	require.NoError(t, os.MkdirAll(mounts.ReadOnlySource, 0o700))
+	require.NoError(t, os.MkdirAll(mounts.ReadWriteSource, 0o700))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(mounts.ReadOnlySource, "probe"), []byte("mounted-ro"), 0o600))
+
 	// Spell the profile rule through a symlink and persist it through the real
 	// registry path. Resolution must bind the canonical target and recover the
 	// retained spelling; a raw in-memory profile would not exercise TCL-762.
@@ -162,6 +199,16 @@ func TestTclaudeLayerHostSmoke(t *testing.T) {
 			// The applier's final host-control phase must override even an
 			// ordinary write grant on the tmux socket directory's parent.
 			{Path: tmuxBase, Access: sandboxpolicy.AccessWrite},
+			// TCL-866: project two host directories onto sandbox paths that do
+			// not exist on the host at all.
+			{
+				Path: mounts.ReadOnlySource, Access: sandboxpolicy.AccessRead,
+				MountPath: mounts.ReadOnlyGuest,
+			},
+			{
+				Path: mounts.ReadWriteSource, Access: sandboxpolicy.AccessWrite,
+				MountPath: mounts.ReadWriteGuest,
+			},
 		},
 	})
 	require.NoError(t, err)
@@ -173,6 +220,14 @@ func TestTclaudeLayerHostSmoke(t *testing.T) {
 	assert.Contains(t, plan.Entries, sandboxpolicy.MountEntry{Path: realTools, Mode: sandboxpolicy.MountRO})
 	assert.NotContains(t, plan.Entries, sandboxpolicy.MountEntry{Path: aliasTools, Mode: sandboxpolicy.MountRO})
 	assert.Contains(t, plan.Aliases, sandboxpolicy.MountAlias{Link: aliasTools, Target: realTools})
+	assert.Contains(t, plan.Entries, sandboxpolicy.MountEntry{
+		Path: mounts.ReadOnlyGuest, Mode: sandboxpolicy.MountRO,
+		Source: mounts.ReadOnlySource,
+	})
+	assert.Contains(t, plan.Entries, sandboxpolicy.MountEntry{
+		Path: mounts.ReadWriteGuest, Mode: sandboxpolicy.MountRW,
+		Source: mounts.ReadWriteSource,
+	})
 
 	phase0, err := tclaudeLayerPhase0WriteDirs(TclaudeLayerLaunchContract{
 		HarnessName: harness.DefaultName,
@@ -181,6 +236,19 @@ func TestTclaudeLayerHostSmoke(t *testing.T) {
 	require.NoError(t, err)
 	hostOpenPlan := plan
 	hostOpenPlan.NetworkPosture = sandboxpolicy.NetworkHostOpen
+	// The host-open posture binds the real host root read-only, so there is no
+	// writable place to create a new mount point and the applier refuses a
+	// projection outright. The resize arms below exist to exercise terminal
+	// plumbing, not mount paths, so drop the projected entries rather than
+	// inventing host directories for them.
+	hostOpenEntries := make([]sandboxpolicy.MountEntry, 0, len(plan.Entries))
+	for _, entry := range plan.Entries {
+		if entry.IsRemapped() {
+			continue
+		}
+		hostOpenEntries = append(hostOpenEntries, entry)
+	}
+	hostOpenPlan.Entries = hostOpenEntries
 	for _, tc := range []struct {
 		name string
 		plan sandboxpolicy.MountPlan
@@ -202,7 +270,7 @@ func TestTclaudeLayerHostSmoke(t *testing.T) {
 	runTclaudeLayerSmokeHelper(t, binary, helperBinary, phase0, plan, privateWriteDir, allowed, outside,
 		filepath.Join(aliasTools, "probe"), protectedFile, tmuxSocket, runtimeSocket,
 		strconv.Itoa(os.Getpid()), hostLoopback.Addr().String(), tclaudeBinary,
-		privateOwnFile, privateSibling)
+		privateOwnFile, privateSibling, mounts)
 
 	// Two launch-equivalent agents receive disjoint socket lists. Each can
 	// connect to its own bound endpoint while the sibling endpoint outside all
@@ -240,6 +308,7 @@ func runTclaudeLayerSmokeHelper(
 	privateWriteDir TclaudeLayerPrivateWriteDir,
 	allowed, outside, aliasFile, protectedFile, tmuxSocket, runtimeSocket,
 	hostPID, hostLoopbackAddr, tclaudeBinary, privateOwnFile, privateSiblingDir string,
+	mounts tclaudeLayerSmokeMounts,
 ) {
 	t.Helper()
 	args, err := bwrapArgs(phase0WriteDirs, plan, privateWriteDir)
@@ -261,6 +330,10 @@ func runTclaudeLayerSmokeHelper(
 		smokeTclaudeBinaryEnv+"="+tclaudeBinary,
 		smokePrivateOwnFileEnv+"="+privateOwnFile,
 		smokePrivateSiblingDirEnv+"="+privateSiblingDir,
+		smokeMountROSourceEnv+"="+mounts.ReadOnlySource,
+		smokeMountROGuestEnv+"="+mounts.ReadOnlyGuest,
+		smokeMountRWSourceEnv+"="+mounts.ReadWriteSource,
+		smokeMountRWGuestEnv+"="+mounts.ReadWriteGuest,
 	)
 	output, err := cmd.CombinedOutput()
 	if ctx.Err() != nil {
@@ -430,6 +503,34 @@ func TestTclaudeLayerSmokeHelper(t *testing.T) {
 	got, err := os.ReadFile(aliasFile)
 	require.NoError(t, err, "symlink alias must remain usable through the read-only base root")
 	assert.Equal(t, "alias-ok", string(got))
+
+	// TCL-866 real-kernel evidence: a host directory mounted at a different
+	// sandbox path appears THERE with the authored access, and its host path is
+	// absent inside the namespace.
+	mountROSource := os.Getenv(smokeMountROSourceEnv)
+	mountROGuest := os.Getenv(smokeMountROGuestEnv)
+	mountRWSource := os.Getenv(smokeMountRWSourceEnv)
+	mountRWGuest := os.Getenv(smokeMountRWGuestEnv)
+	require.NotEmpty(t, mountROGuest)
+	require.NotEmpty(t, mountRWGuest)
+	projected, err := os.ReadFile(filepath.Join(mountROGuest, "probe"))
+	require.NoError(t, err, "a read grant with a mount path must be readable at that sandbox path")
+	assert.Equal(t, "mounted-ro", string(projected))
+	err = os.WriteFile(filepath.Join(mountROGuest, "denied"), []byte("no"), 0o600)
+	require.Error(t, err, "a read grant must stay read-only at its mount path")
+	assert.True(t, errors.Is(err, syscall.EROFS),
+		"projected read-only mount write must fail with EROFS, got %v", err)
+	require.NoError(t,
+		os.WriteFile(filepath.Join(mountRWGuest, "written"), []byte("ok"), 0o600),
+		"a write grant with a mount path must be writable at that sandbox path")
+	for _, hostSource := range []string{mountROSource, mountRWSource} {
+		require.NotEmpty(t, hostSource)
+		_, err = os.Stat(hostSource)
+		require.Errorf(t, err,
+			"the host path %q must not also be exposed inside the sandbox", hostSource)
+		assert.Truef(t, errors.Is(err, syscall.ENOENT),
+			"host path %q must be absent with ENOENT, got %v", hostSource, err)
+	}
 	// Real-kernel proof of the absolute protected-root invariant (TCL-791):
 	// nothing the profile can say makes this file readable inside the wall.
 	if _, err := os.ReadFile(protectedFile); err == nil {

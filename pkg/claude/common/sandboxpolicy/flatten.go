@@ -2,7 +2,6 @@ package sandboxpolicy
 
 import (
 	"fmt"
-	"maps"
 	"sort"
 )
 
@@ -80,6 +79,10 @@ func FlattenWithNotices(in Profile, lookup LookupProfile) (Profile, []AccessNoti
 		return Profile{}, nil, fmt.Errorf("sandbox profile %q nests includes deeper than %d levels", root.Name, MaxIncludeDepth)
 	}
 	parts := f.compose(root)
+	if len(parts.filesystemConflicts) > 0 {
+		return Profile{}, nil, fmt.Errorf(
+			"sandbox profile %q: %s", root.Name, parts.filesystemConflicts[0])
+	}
 	if len(parts.network.Deny) > MaxNetworkAllowEntries {
 		return Profile{}, nil, fmt.Errorf(
 			"flattened network.deny has too many entries (maximum %d)",
@@ -124,15 +127,22 @@ func FlattenWithNotices(in Profile, lookup LookupProfile) (Profile, []AccessNoti
 		sockets := cloneUnixSocketRules(parts.unixSockets)
 		out.UnixSockets = &sockets
 	}
+	spelledResolved := map[string]struct{}{}
 	for _, grant := range parts.filesystem {
 		out.Filesystem = append(out.Filesystem, grant)
 		if out.FilesystemSpellings == nil {
+			continue
+		}
+		// Spellings belong to the host path, so two mounts of one directory
+		// contribute a single spelling rule rather than a duplicate row.
+		if _, done := spelledResolved[grant.Path]; done {
 			continue
 		}
 		set := parts.filesystemSpellings[grant.Path]
 		if len(set) == 0 {
 			continue
 		}
+		spelledResolved[grant.Path] = struct{}{}
 		spellings := make([]string, 0, len(set))
 		for spelling := range set {
 			spellings = append(spellings, spelling)
@@ -149,7 +159,7 @@ func FlattenWithNotices(in Profile, lookup LookupProfile) (Profile, []AccessNoti
 	for name := range parts.agentDirectories {
 		out.AgentDirectories = append(out.AgentDirectories, name)
 	}
-	sort.Slice(out.Filesystem, func(i, j int) bool { return out.Filesystem[i].Path < out.Filesystem[j].Path })
+	sortFilesystemGrants(out.Filesystem)
 	if out.FilesystemSpellings != nil {
 		sort.Slice(out.FilesystemSpellings.Rules, func(i, j int) bool {
 			return out.FilesystemSpellings.Rules[i].ResolvedPath <
@@ -162,8 +172,15 @@ func FlattenWithNotices(in Profile, lookup LookupProfile) (Profile, []AccessNoti
 }
 
 type flattenedParts struct {
-	filesystem              map[string]FilesystemGrant
-	filesystemSpellings     map[string]map[string]struct{}
+	filesystem          map[string]FilesystemGrant
+	filesystemSpellings map[string]map[string]struct{}
+	// filesystemConflicts records overrides that replace one HOST path's rule
+	// with a rule about a DIFFERENT host path at the same sandbox path. Ordinary
+	// same-host-path override is settled include semantics; this shape is not,
+	// because the overridden rule simply vanishes — and if it was a deny, the
+	// composed profile ends up neither denying nor granting that host path, with
+	// nothing downstream able to notice. Refuse instead.
+	filesystemConflicts     []string
 	hasFilesystemSpellings  bool
 	environment             map[string]EnvironmentEntry
 	agentDirectories        map[string]struct{}
@@ -174,6 +191,19 @@ type flattenedParts struct {
 	hasNewUnixSockets       bool
 	networkListContributors []string
 	socketListContributors  []string
+}
+
+// noteFilesystemOverride records the one override shape include composition
+// must not perform silently: replacing the rule for one HOST path with a rule
+// about a different host path that happens to occupy the same sandbox path.
+func (parts *flattenedParts) noteFilesystemOverride(guest string, grant FilesystemGrant) {
+	previous, exists := parts.filesystem[guest]
+	if !exists || previous.Path == grant.Path {
+		return
+	}
+	parts.filesystemConflicts = append(parts.filesystemConflicts, fmt.Sprintf(
+		"sandbox path %q is claimed by two different host paths %q and %q across includes; an include override may not replace a rule about one host path with a rule about another",
+		guest, previous.Path, grant.Path))
 }
 
 type flattener struct {
@@ -250,7 +280,10 @@ func (f *flattener) compose(p Profile) *flattenedParts {
 			parts = f.compose(f.profiles[name])
 			f.memo[name] = parts
 		}
-		maps.Copy(out.filesystem, parts.filesystem)
+		for guest, grant := range parts.filesystem {
+			out.noteFilesystemOverride(guest, grant)
+			out.filesystem[guest] = grant
+		}
 		mergeFlattenedFilesystemSpellings(out.filesystemSpellings, parts.filesystemSpellings)
 		out.hasFilesystemSpellings =
 			out.hasFilesystemSpellings || parts.hasFilesystemSpellings
@@ -275,7 +308,12 @@ func (f *flattener) compose(p Profile) *flattenedParts {
 			out.socketListContributors, parts.socketListContributors...)
 	}
 	for _, grant := range p.Filesystem {
-		out.filesystem[grant.Path] = grant
+		// Include override is keyed on the guest path: "the same rule" means the
+		// same position inside the sandbox. For an unremapped rule that is the
+		// host path, so include semantics are unchanged; a remapped rule
+		// overrides only the mount that occupies its own sandbox path.
+		out.noteFilesystemOverride(grant.GuestPath(), grant)
+		out.filesystem[grant.GuestPath()] = grant
 	}
 	if p.FilesystemSpellings != nil {
 		out.hasFilesystemSpellings = true

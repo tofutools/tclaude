@@ -58,14 +58,36 @@ func RequireContained(parent, child Snapshot) error {
 		if childGrant.Access == AccessDeny {
 			continue
 		}
-		parentAccess, covered := EffectiveAccessAt(parent.Effective.Filesystem, childGrant.Path)
-		if covered && parentAccess == AccessDeny {
+		// Containment is checked in BOTH spaces once mount paths exist
+		// (TCL-866), because a remapped grant has two sides and each can leak
+		// independently. The namespace side asks whether the child may occupy
+		// that sandbox path at all; the host side asks whether the parent ever
+		// had authority over the directory whose contents the child is
+		// exposing. Without the second check a child could mount an arbitrary
+		// host directory at a sandbox path the parent happened to grant. For a
+		// rule with no mount path the two paths are equal and the pair collapses
+		// to exactly the pre-TCL-866 check.
+		guestAccess, guestCovered := EffectiveAccessAt(
+			parent.Effective.Filesystem, childGrant.GuestPath())
+		if guestCovered && guestAccess == AccessDeny {
 			return fmt.Errorf(
 				"filesystem %s grant %q reopens a path the parent snapshot denies; a child may not carve out authority beneath a deny the parent did not itself reopen",
+				childGrant.Access, childGrant.GuestPath())
+		}
+		if !guestCovered || (childGrant.Access == AccessWrite && guestAccess != AccessWrite) {
+			return fmt.Errorf("filesystem %s grant %q is not contained by the parent snapshot", childGrant.Access, childGrant.GuestPath())
+		}
+		hostAccess, hostCovered := EffectiveHostAccessAt(
+			parent.Effective.Filesystem, childGrant.Path)
+		if hostCovered && hostAccess == AccessDeny {
+			return fmt.Errorf(
+				"filesystem %s grant for host path %q reopens a path the parent snapshot denies; a child may not carve out authority beneath a deny the parent did not itself reopen",
 				childGrant.Access, childGrant.Path)
 		}
-		if !covered || (childGrant.Access == AccessWrite && parentAccess != AccessWrite) {
-			return fmt.Errorf("filesystem %s grant %q is not contained by the parent snapshot", childGrant.Access, childGrant.Path)
+		if !hostCovered || (childGrant.Access == AccessWrite && hostAccess != AccessWrite) {
+			return fmt.Errorf(
+				"filesystem %s grant for host path %q is not contained by the parent snapshot",
+				childGrant.Access, childGrant.Path)
 		}
 	}
 	for _, parentGrant := range parent.Effective.Filesystem {
@@ -657,7 +679,11 @@ func cloneEffectiveProfile(in EffectiveProfile) EffectiveProfile {
 		source := cloneProfileSource(*in.Provenance.UnixSockets)
 		out.Provenance.UnixSockets = &source
 	}
-	sort.Slice(out.Filesystem, func(i, j int) bool { return out.Filesystem[i].Path < out.Filesystem[j].Path })
+	// The SAME canonical order normalizeFilesystem produces. RevalidateSnapshot
+	// compares the two with an order-sensitive DeepEqual, so a snapshot sorted by
+	// host path while resolution sorts by guest path would fail revalidation for
+	// every profile that uses a mount path.
+	sortFilesystemGrants(out.Filesystem)
 	sort.Slice(out.Environment, func(i, j int) bool { return out.Environment[i].Name < out.Environment[j].Name })
 	sort.Strings(out.AgentDirectories)
 	return out

@@ -64,6 +64,13 @@ func (p MountPlan) String() string {
 		return b.String()
 	}
 	for _, entry := range p.Entries {
+		// A remapped entry discloses both sides. Printing only the guest path
+		// would read as an ordinary same-path mount and hide which host
+		// directory the authority actually came from.
+		if entry.IsRemapped() {
+			fmt.Fprintf(&b, "  %-4s %s <- %s\n", entry.Mode, entry.Path, entry.Source)
+			continue
+		}
 		fmt.Fprintf(&b, "  %-4s %s\n", entry.Mode, entry.Path)
 	}
 	return b.String()

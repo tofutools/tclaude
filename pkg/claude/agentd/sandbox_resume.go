@@ -165,7 +165,21 @@ func clampResumeDenyLineage(current, previous sandboxpolicy.Snapshot) sandboxpol
 	changed := false
 	for _, grant := range current.Effective.Filesystem {
 		if grant.Access != sandboxpolicy.AccessDeny {
-			if access, covered := sandboxpolicy.EffectiveAccessAt(previousGrants, grant.Path); covered && access == sandboxpolicy.AccessDeny {
+			// Containment is asked in both spaces, for the same reason
+			// RequireContained does (TCL-866): the namespace side asks whether
+			// the agent may reach that sandbox path, the host side whether the
+			// previous policy allowed that host directory's contents out at all.
+			// Checking only the namespace side would let a dropped deny survive
+			// as a projection under a new sandbox path, and the clamp would then
+			// hand the caller a set its own revalidation rejects — turning a
+			// documented narrowing into an opaque hard failure. For an unremapped
+			// rule the two paths are equal and this is the pre-TCL-866 check.
+			guestAccess, guestCovered := sandboxpolicy.EffectiveAccessAt(
+				previousGrants, grant.GuestPath())
+			hostAccess, hostCovered := sandboxpolicy.EffectiveHostAccessAt(
+				previousGrants, grant.Path)
+			if (guestCovered && guestAccess == sandboxpolicy.AccessDeny) ||
+				(hostCovered && hostAccess == sandboxpolicy.AccessDeny) {
 				changed = true
 				continue
 			}
@@ -176,7 +190,7 @@ func clampResumeDenyLineage(current, previous sandboxpolicy.Snapshot) sandboxpol
 		if previousGrant.Access != sandboxpolicy.AccessDeny {
 			continue
 		}
-		if access, covered := sandboxpolicy.EffectiveAccessAt(kept, previousGrant.Path); covered && access == sandboxpolicy.AccessDeny {
+		if access, covered := sandboxpolicy.EffectiveAccessAt(kept, previousGrant.GuestPath()); covered && access == sandboxpolicy.AccessDeny {
 			continue
 		}
 		kept = append(kept, sandboxpolicy.FilesystemGrant{Path: previousGrant.Path, Access: sandboxpolicy.AccessDeny})
@@ -185,7 +199,15 @@ func clampResumeDenyLineage(current, previous sandboxpolicy.Snapshot) sandboxpol
 	if !changed {
 		return current
 	}
-	sort.Slice(kept, func(i, j int) bool { return kept[i].Path < kept[j].Path })
+	// The canonical order is by sandbox path, matching normalizeFilesystem;
+	// sorting by host path here would make the clamped snapshot fail its own
+	// revalidation for any profile that uses a mount path.
+	sort.Slice(kept, func(i, j int) bool {
+		if kept[i].GuestPath() != kept[j].GuestPath() {
+			return kept[i].GuestPath() < kept[j].GuestPath()
+		}
+		return kept[i].Path < kept[j].Path
+	})
 	current.Effective.Filesystem = kept
 	// Provenance must not keep naming a profile for a rule that is no longer
 	// in the effective set, or an audit view would claim authority that is not

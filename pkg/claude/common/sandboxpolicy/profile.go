@@ -45,9 +45,58 @@ const (
 	AccessDeny  Access = "deny"
 )
 
+// FilesystemGrant is one operator-authored directory rule.
+//
+// Path is always a HOST path: it is the authority-bearing side, and it is what
+// symlink resolution, protected-root containment and directory-ness are decided
+// against. MountPath is optional and is the SANDBOX-side path the host
+// directory appears at, in the style of a Kubernetes volume mount (TCL-866).
+//
+// Absent MountPath means "same path inside as outside", which is what every
+// rule authored before TCL-866 meant and still means, so an existing profile's
+// behavior is unchanged. A remapped rule is only meaningful for read/write:
+// AccessDeny keeps host-path semantics because a deny hides a path rather than
+// projecting one, so deny + mount_path is a validation error rather than a
+// silently ignored field.
+//
+// MountPath is a namespace path, not a host path. It is validated
+// SYNTACTICALLY only — absolute, cleaned, within MaxPathBytes, no control
+// characters — because it names a location inside a mount namespace that does
+// not exist yet. Resolving it against the host would ask the wrong filesystem.
 type FilesystemGrant struct {
-	Path   string `json:"path"`
-	Access Access `json:"access"`
+	Path      string `json:"path"`
+	Access    Access `json:"access"`
+	MountPath string `json:"mount_path,omitempty"`
+}
+
+// GuestPath is the path this grant occupies INSIDE the sandbox. It is the key
+// every namespace-relative question must use: mount-plan ordering and shadowing,
+// most-specific-wins evaluation, and what an agent will actually see. For a rule
+// with no MountPath it is exactly Path, so callers that predate TCL-866 keep
+// their behavior by construction.
+func (grant FilesystemGrant) GuestPath() string {
+	if grant.MountPath != "" {
+		return grant.MountPath
+	}
+	return grant.Path
+}
+
+// IsRemapped reports whether the grant projects its host path onto a different
+// sandbox path. Capability gates key on this: only a real mount namespace can
+// enforce it, so every other enforcement surface must refuse rather than fall
+// back to mounting at the host path.
+func (grant FilesystemGrant) IsRemapped() bool {
+	return grant.MountPath != "" && grant.MountPath != grant.Path
+}
+
+// HasRemappedGrant reports whether any rule in a set is remapped.
+func HasRemappedGrant(grants []FilesystemGrant) bool {
+	for _, grant := range grants {
+		if grant.IsRemapped() {
+			return true
+		}
+	}
+	return false
 }
 
 // FilesystemSpellingRule associates non-authoritative operator spellings with
@@ -327,10 +376,16 @@ func normalizeFilesystem(in []FilesystemGrant, allowMissing bool) ([]FilesystemG
 	if err != nil {
 		return nil, nil, err
 	}
-	byPath := make(map[string]Access, len(in))
+	// Folding is keyed on the GUEST path, because that is the position a rule
+	// occupies inside the sandbox and therefore what "the same rule twice" means
+	// there. For an unremapped rule the guest path IS the canonical host path, so
+	// this is byte-identical to the pre-TCL-866 behavior. Two rules that project
+	// DIFFERENT host directories onto one guest path are a collision rather than
+	// a fold, and are rejected below.
+	byGuest := make(map[string]FilesystemGrant, len(in))
 	missingPaths := map[string]bool{}
 	for i, grant := range in {
-		_, path, missing, err := normalizeFilesystemGrant(
+		_, path, mountPath, missing, err := normalizeFilesystemGrant(
 			i, grant, allowMissing, protected,
 		)
 		if err != nil {
@@ -339,15 +394,32 @@ func normalizeFilesystem(in []FilesystemGrant, allowMissing bool) ([]FilesystemG
 		if missing {
 			missingPaths[path] = true
 		}
-		if previous, exists := byPath[path]; !exists || accessRank(grant.Access) > accessRank(previous) {
-			byPath[path] = grant.Access
+		candidate := FilesystemGrant{Path: path, Access: grant.Access, MountPath: mountPath}
+		guest := candidate.GuestPath()
+		previous, exists := byGuest[guest]
+		if !exists {
+			byGuest[guest] = candidate
+			continue
+		}
+		if previous.Path != candidate.Path {
+			return nil, nil, fmt.Errorf(
+				"filesystem[%d]: sandbox path %q is claimed by two different host paths %q and %q",
+				i, guest, previous.Path, candidate.Path,
+			)
+		}
+		if accessRank(candidate.Access) > accessRank(previous.Access) {
+			previous.Access = candidate.Access
+			byGuest[guest] = previous
 		}
 	}
-	out := make([]FilesystemGrant, 0, len(byPath))
-	for path, access := range byPath {
-		out = append(out, FilesystemGrant{Path: path, Access: access})
+	out := make([]FilesystemGrant, 0, len(byGuest))
+	for _, grant := range byGuest {
+		out = append(out, grant)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
+	sortFilesystemGrants(out)
+	if err := validateMountPaths(out, protected); err != nil {
+		return nil, nil, err
+	}
 	missing := make([]string, 0, len(missingPaths))
 	for path := range missingPaths {
 		missing = append(missing, path)
@@ -356,49 +428,199 @@ func normalizeFilesystem(in []FilesystemGrant, allowMissing bool) ([]FilesystemG
 	return out, missing, nil
 }
 
+// canonicalGuestPathForComparison resolves a sandbox path the same way
+// protectedPaths() resolves its own entries, so the two are compared in one
+// spelling. It is used ONLY for comparison: the authored mount_path is stored
+// lexically, because it names a location inside a namespace that does not exist
+// yet. A path that cannot be resolved at all is returned unchanged, which is the
+// common case for a guest path with no host counterpart.
+func canonicalGuestPathForComparison(path string) string {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return filepath.Clean(resolved)
+	}
+	if resolved, err := canonicalMissingDirectory(path); err == nil {
+		return resolved
+	}
+	return path
+}
+
+// mostSpecificHostDeny reports the deny rule that actually governs a host path,
+// if any. Only same-path rules take part: a remapped rule confers its access at
+// its sandbox path, not at the host path it reads from, so it cannot reopen a
+// host subtree for anyone else.
+func mostSpecificHostDeny(grants []FilesystemGrant, hostPath string) (string, bool) {
+	best := ""
+	denied := false
+	for _, grant := range grants {
+		if grant.IsRemapped() || !pathContainsOrEqual(grant.Path, hostPath) {
+			continue
+		}
+		if len(grant.Path) < len(best) {
+			continue
+		}
+		if len(grant.Path) == len(best) && !denied {
+			// Equal length means equal path; normalization already folded those
+			// with deny dominating, so this can only reinforce an existing deny.
+			continue
+		}
+		best = grant.Path
+		denied = grant.Access == AccessDeny
+	}
+	return best, denied
+}
+
+// sortFilesystemGrants is the canonical persistence order. Guest path leads
+// because that is the fold key; the host path breaks ties so the order stays
+// total. Unremapped sets sort exactly as they did before TCL-866.
+func sortFilesystemGrants(grants []FilesystemGrant) {
+	sort.Slice(grants, func(i, j int) bool {
+		left, right := grants[i].GuestPath(), grants[j].GuestPath()
+		if left != right {
+			return left < right
+		}
+		return grants[i].Path < grants[j].Path
+	})
+}
+
+// validateMountPaths enforces the cross-rule invariants a remapped grant
+// introduces. Every check is a refusal rather than a silent drop: a dropped
+// remap would leave the intended guest path empty while the host path stayed
+// exposed, which is wrong in both directions.
+func validateMountPaths(grants []FilesystemGrant, protected []string) error {
+	if !HasRemappedGrant(grants) {
+		return nil
+	}
+	// A guest path that lands on tclaude's own unshadowable machinery would
+	// either be overridden later (making the rule a lie) or cut the agent off
+	// from coordination. Refuse it where it can still be attributed to a rule.
+	sockets := AgentdSocketFloor()
+	for _, grant := range grants {
+		if !grant.IsRemapped() {
+			continue
+		}
+		guest := grant.GuestPath()
+		// Compare BOTH the authored spelling and its canonical form. The stored
+		// mount_path stays lexical — it names a namespace location, so resolving
+		// it is not meaningful in general — but the protected-root wall is a
+		// wall around real directories, and on macOS "/var/…" and
+		// "/private/var/…" are one directory. Checking only the authored
+		// spelling would let the other one walk straight through.
+		for _, candidate := range []string{guest, canonicalGuestPathForComparison(guest)} {
+			for _, denied := range protected {
+				if pathsIntersect(candidate, denied) {
+					return fmt.Errorf(
+						"filesystem rule for %q: sandbox path %q intersects protected directory %q",
+						grant.Path, guest, denied,
+					)
+				}
+			}
+			for _, socket := range sockets {
+				if pathContainsOrEqual(candidate, socket) ||
+					pathContainsOrEqual(candidate, canonicalGuestPathForComparison(socket)) {
+					return fmt.Errorf(
+						"filesystem rule for %q: sandbox path %q would shadow the agentd control socket %q",
+						grant.Path, guest, socket,
+					)
+				}
+			}
+		}
+		// A deny is expressed against the HOST path, so a remap of a denied
+		// subtree would re-expose exactly the content the deny hides, just under
+		// another name. Most-specific-wins still applies: a source inside a
+		// broad deny that a narrower read/write rule already reopens is not
+		// denied, so only a source whose MOST SPECIFIC host-space rule is a deny
+		// is refused. That is the same lattice the rest of the package uses,
+		// evaluated on the host side because that is where a deny lives.
+		if deny, denied := mostSpecificHostDeny(grants, grant.Path); denied {
+			return fmt.Errorf(
+				"filesystem rule for %q: host path is denied by rule %q, so it must not be mounted at sandbox path %q",
+				grant.Path, deny, guest,
+			)
+		}
+	}
+	return nil
+}
+
 func normalizeFilesystemGrant(
 	index int,
 	grant FilesystemGrant,
 	allowMissing bool,
 	protected []string,
-) (spelling, resolved string, missing bool, err error) {
+) (spelling, resolved, mountPath string, missing bool, err error) {
 	if grant.Access != AccessRead && grant.Access != AccessWrite && grant.Access != AccessDeny {
-		return "", "", false, fmt.Errorf(
+		return "", "", "", false, fmt.Errorf(
 			"filesystem[%d].access %q is invalid (want read, write, or deny)",
 			index, grant.Access,
 		)
 	}
 	spelling, err = cleanDirectoryPath(grant.Path)
 	if err != nil {
-		return "", "", false, fmt.Errorf("filesystem[%d].path: %w", index, err)
+		return "", "", "", false, fmt.Errorf("filesystem[%d].path: %w", index, err)
 	}
 	resolved, missing, err = canonicalDirectory(spelling, allowMissing)
 	if err != nil {
-		return "", "", false, fmt.Errorf("filesystem[%d].path: %w", index, err)
+		return "", "", "", false, fmt.Errorf("filesystem[%d].path: %w", index, err)
 	}
 	if grant.Access != AccessDeny {
 		for _, denied := range protected {
 			if pathsIntersect(resolved, denied) {
-				return "", "", false, fmt.Errorf(
+				return "", "", "", false, fmt.Errorf(
 					"filesystem[%d].path %q intersects protected directory %q",
 					index, resolved, denied,
 				)
 			}
 		}
 	}
-	return spelling, resolved, missing, nil
+	mountPath, err = normalizeMountPath(index, grant, resolved)
+	if err != nil {
+		return "", "", "", false, err
+	}
+	return spelling, resolved, mountPath, missing, nil
+}
+
+// normalizeMountPath validates the optional sandbox-side path. Validation is
+// deliberately syntactic: the guest path names a location in a mount namespace
+// that does not exist yet, so resolving it against the host would answer a
+// question about the wrong filesystem. A mount path that equals the canonical
+// host path is folded away, so "mount /srv/data at /srv/data" persists as the
+// ordinary same-path rule it actually is.
+func normalizeMountPath(index int, grant FilesystemGrant, resolved string) (string, error) {
+	raw := strings.TrimSpace(grant.MountPath)
+	if raw == "" {
+		return "", nil
+	}
+	if grant.Access == AccessDeny {
+		return "", fmt.Errorf(
+			"filesystem[%d].mount_path is not allowed on a deny rule: a deny hides a path rather than projecting one, so it always applies to the host path %q",
+			index, grant.Path,
+		)
+	}
+	mountPath, err := cleanDirectoryPath(raw)
+	if err != nil {
+		return "", fmt.Errorf("filesystem[%d].mount_path: %w", index, err)
+	}
+	if mountPath == string(filepath.Separator) {
+		return "", fmt.Errorf(
+			"filesystem[%d].mount_path must not be the sandbox root %q", index, mountPath)
+	}
+	if mountPath == resolved {
+		return "", nil
+	}
+	return mountPath, nil
 }
 
 type authoredFilesystemCandidate struct {
-	resolved string
-	spelling string
-	access   Access
-	missing  bool
-	info     os.FileInfo
+	resolved  string
+	spelling  string
+	mountPath string
+	access    Access
+	missing   bool
+	info      os.FileInfo
 }
 
 type authoredFilesystemGroup struct {
 	resolved  string
+	mountPath string
 	access    Access
 	missing   bool
 	info      os.FileInfo
@@ -423,7 +645,7 @@ func normalizeFilesystemForAuthoringWithIdentity(
 	}
 	candidates := make([]authoredFilesystemCandidate, 0, len(in))
 	for i, grant := range in {
-		spelling, resolved, missing, err := normalizeFilesystemGrant(
+		spelling, resolved, mountPath, missing, err := normalizeFilesystemGrant(
 			i, grant, allowMissing, protected,
 		)
 		if err != nil {
@@ -440,8 +662,8 @@ func normalizeFilesystemForAuthoringWithIdentity(
 			}
 		}
 		candidates = append(candidates, authoredFilesystemCandidate{
-			resolved: resolved, spelling: spelling, access: grant.Access,
-			missing: missing, info: info,
+			resolved: resolved, spelling: spelling, mountPath: mountPath,
+			access: grant.Access, missing: missing, info: info,
 		})
 	}
 	// The representative must not depend on request row order. Folding only
@@ -454,6 +676,9 @@ func normalizeFilesystemForAuthoringWithIdentity(
 		if candidates[i].resolved != candidates[j].resolved {
 			return candidates[i].resolved < candidates[j].resolved
 		}
+		if candidates[i].mountPath != candidates[j].mountPath {
+			return candidates[i].mountPath < candidates[j].mountPath
+		}
 		if candidates[i].spelling != candidates[j].spelling {
 			return candidates[i].spelling < candidates[j].spelling
 		}
@@ -465,6 +690,13 @@ func normalizeFilesystemForAuthoringWithIdentity(
 		groupIndex := -1
 		for i := range groups {
 			group := &groups[i]
+			// The mount path is part of the group identity: the same host
+			// directory projected onto two guest paths is two mounts, not one
+			// rule spelled twice. Identity coalescing still answers only the
+			// host-side question.
+			if group.mountPath != candidate.mountPath {
+				continue
+			}
 			if group.resolved == candidate.resolved ||
 				(group.info != nil && candidate.info != nil &&
 					mountOrderKey(group.resolved) == mountOrderKey(candidate.resolved) &&
@@ -475,7 +707,8 @@ func normalizeFilesystemForAuthoringWithIdentity(
 		}
 		if groupIndex < 0 {
 			groups = append(groups, authoredFilesystemGroup{
-				resolved: candidate.resolved, access: candidate.access,
+				resolved: candidate.resolved, mountPath: candidate.mountPath,
+				access:  candidate.access,
 				missing: candidate.missing, info: candidate.info,
 				spellings: map[string]struct{}{},
 			})
@@ -493,28 +726,55 @@ func normalizeFilesystemForAuthoringWithIdentity(
 
 	filesystem := make([]FilesystemGrant, 0, len(groups))
 	missingSet := map[string]struct{}{}
-	spellingRules := make([]FilesystemSpellingRule, 0, len(groups))
+	// Spellings are a property of the HOST path, so groups that differ only by
+	// mount path contribute to one rule here rather than to a duplicate row the
+	// spelling validator would then reject.
+	spellingsByResolved := map[string]map[string]struct{}{}
+	claimedGuestPaths := map[string]string{}
 	for _, group := range groups {
-		filesystem = append(filesystem, FilesystemGrant{
-			Path: group.resolved, Access: group.access,
-		})
+		grant := FilesystemGrant{
+			Path: group.resolved, Access: group.access, MountPath: group.mountPath,
+		}
+		guest := grant.GuestPath()
+		if previous, exists := claimedGuestPaths[guest]; exists && previous != grant.Path {
+			return nil, nil, nil, fmt.Errorf(
+				"filesystem: sandbox path %q is claimed by two different host paths %q and %q",
+				guest, previous, grant.Path,
+			)
+		}
+		claimedGuestPaths[guest] = grant.Path
+		filesystem = append(filesystem, grant)
 		if group.missing {
 			missingSet[group.resolved] = struct{}{}
 		}
 		if len(group.spellings) == 0 {
 			continue
 		}
-		spellings := make([]string, 0, len(group.spellings))
+		merged := spellingsByResolved[group.resolved]
+		if merged == nil {
+			merged = map[string]struct{}{}
+			spellingsByResolved[group.resolved] = merged
+		}
 		for spelling := range group.spellings {
+			merged[spelling] = struct{}{}
+		}
+	}
+	spellingRules := make([]FilesystemSpellingRule, 0, len(spellingsByResolved))
+	for resolved, set := range spellingsByResolved {
+		spellings := make([]string, 0, len(set))
+		for spelling := range set {
 			spellings = append(spellings, spelling)
 		}
 		sort.Strings(spellings)
 		spellingRules = append(spellingRules, FilesystemSpellingRule{
-			ResolvedPath: group.resolved,
+			ResolvedPath: resolved,
 			Spellings:    spellings,
 		})
 	}
-	sort.Slice(filesystem, func(i, j int) bool { return filesystem[i].Path < filesystem[j].Path })
+	sortFilesystemGrants(filesystem)
+	if err := validateMountPaths(filesystem, protected); err != nil {
+		return nil, nil, nil, err
+	}
 	sort.Slice(spellingRules, func(i, j int) bool {
 		return spellingRules[i].ResolvedPath < spellingRules[j].ResolvedPath
 	})

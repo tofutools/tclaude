@@ -125,6 +125,22 @@ func predictSandboxFilesystem(
 			"no directory-access rules are configured",
 		)
 	}
+	// A mount_path rule needs a mount namespace. Report Refused everywhere else
+	// BEFORE the per-harness branches, so the preview never shows a cell that
+	// reads as enforced for a rule the surface would silently mount at the host
+	// path instead.
+	remappedCount, remappedDetail := remappedGrantSummary(profile.Filesystem)
+	if remappedCount > 0 &&
+		!sandboxpolicy.SupportsMountPaths(target.implementation, target.platform) {
+		return predictedSandboxFeature(
+			tier, harness.AccessPredictionRefused,
+			fmt.Sprintf(
+				"%d directory rule%s mount a host directory at a different sandbox path (%s); "+
+					"that needs a mount namespace, which only the Linux tclaude-layer provides, so launch is refused rather than mounting at the host path",
+				remappedCount, pluralSuffix(remappedCount), remappedDetail,
+			),
+		)
+	}
 	if target.implementation.UsesTclaudeLayer() {
 		mechanism := "tclaude-layer Seatbelt"
 		if target.platform == "linux" {
@@ -133,6 +149,12 @@ func predictSandboxFilesystem(
 		detail := fmt.Sprintf(
 			"%s enforces the directory policy at process scope", mechanism,
 		)
+		if remappedCount > 0 {
+			detail += fmt.Sprintf(
+				" and mounts %d host director%s at a different sandbox path (%s)",
+				remappedCount, pluralY(remappedCount), remappedDetail,
+			)
+		}
 		if len(reopens) > 0 {
 			detail += fmt.Sprintf(
 				" and supports %d narrower read/write carve-out%s beneath denied parent directories (%s)",
@@ -334,6 +356,27 @@ func sandboxFilesystemTier(
 		return "unset"
 	}
 	return strings.Join(parts, " · ")
+}
+
+// remappedGrantSummary describes each remapped rule as "host → sandbox", capped
+// so a large profile does not turn one capability cell into a wall of paths.
+func remappedGrantSummary(grants []sandboxpolicy.FilesystemGrant) (int, string) {
+	const maxShown = 2
+	var shown []string
+	total := 0
+	for _, grant := range grants {
+		if !grant.IsRemapped() {
+			continue
+		}
+		total++
+		if len(shown) < maxShown {
+			shown = append(shown, fmt.Sprintf("%q → %q", grant.Path, grant.GuestPath()))
+		}
+	}
+	if total > maxShown {
+		shown = append(shown, fmt.Sprintf("and %d more", total-maxShown))
+	}
+	return total, strings.Join(shown, ", ")
 }
 
 func describePredictedReopens(reopens []sandboxpolicy.ReopenUnderDeny) string {

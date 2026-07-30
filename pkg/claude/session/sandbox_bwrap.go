@@ -141,6 +141,7 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 		launchContractReadDirs...,
 	)
 	launchDenyDirs := sandboxDirsForEffective(effective, sandboxpolicy.AccessDeny)
+	remappedGrants := remappedGrantsForEffective(effective)
 	var err error
 	stateRoot := strings.TrimSpace(input.StateRoot)
 	if stateRoot == "" {
@@ -194,8 +195,14 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 			}
 		}
 	}
-	effective.Filesystem = sandboxpolicy.GrantsFromDirs(
-		launchReadDirs, launchWriteDirs, launchDenyDirs)
+	// GrantsFromDirs flattens the launch-composed policy back into bare paths,
+	// which can only express same-path rules. Remapped grants are therefore
+	// carried around it and re-attached: they occupy their own sandbox paths, so
+	// they never fold with a contract dir, and dropping them here would silently
+	// launch without the mount the operator authored.
+	effective.Filesystem = append(
+		sandboxpolicy.GrantsFromDirs(launchReadDirs, launchWriteDirs, launchDenyDirs),
+		remappedGrants...)
 	agentDirectoryNames := make(map[string]bool, len(effective.AgentDirectories))
 	for _, name := range effective.AgentDirectories {
 		agentDirectoryNames[name] = true
@@ -204,6 +211,14 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 		if agentDirectoryNames[entry.Name] {
 			contractWriteDirs = append(contractWriteDirs, entry.Value)
 		}
+	}
+	// After the agent directories are in contractWriteDirs, not before: they are
+	// launch-required in exactly the same way, and a mount shadowing one would
+	// otherwise slip past the named refusal and silently hide it.
+	if err := validateRemappedGuestPathsAgainstContract(
+		remappedGrants, append(append([]string(nil), contractWriteDirs...), launchContractReadDirs...),
+	); err != nil {
+		return TclaudeLayerLaunchSpec{}, err
 	}
 	contract := TclaudeLayerLaunchContract{
 		HarnessName:       input.HarnessName,
@@ -1323,33 +1338,37 @@ func bwrapArgsWithDaemonFinal(
 		if path == "." || !filepath.IsAbs(path) {
 			return nil, fmt.Errorf("mount plan entry %d has non-absolute path %q", i, entry.Path)
 		}
+		// path is the SANDBOX-side location; source is the host directory whose
+		// authority the entry carries. They differ only for a mount_path grant
+		// (TCL-866), and a hide is always same-path because a deny names a host
+		// path rather than projecting one.
+		source := filepath.Clean(entry.SourcePath())
+		if source == "." || !filepath.IsAbs(source) {
+			return nil, fmt.Errorf("mount plan entry %d has non-absolute source %q", i, entry.Source)
+		}
+		if entry.IsRemapped() && entry.Mode == sandboxpolicy.MountHide {
+			return nil, fmt.Errorf(
+				"mount plan entry %d hides sandbox path %q but names host source %q; a hide is always same-path",
+				i, path, source)
+		}
 		switch entry.Mode {
-		case sandboxpolicy.MountRO:
-			exists, err := bwrapBindSourceExists(path)
+		case sandboxpolicy.MountRO, sandboxpolicy.MountRW:
+			exists, err := bwrapBindSourceExists(source)
 			if err != nil {
-				return nil, fmt.Errorf("mount plan entry %d source %q: %w", i, path, err)
+				return nil, fmt.Errorf("mount plan entry %d source %q: %w", i, source, err)
 			}
 			if !exists {
 				continue
 			}
-			hideRemounts.noteReplacement(path)
-			args = append(args, "--ro-bind", path, path)
-			args = appendTclaudeLayerProtectedRehides(
-				args,
-				path,
-				protectedRoots,
-				&hideRemounts,
-			)
-		case sandboxpolicy.MountRW:
-			exists, err := bwrapBindSourceExists(path)
-			if err != nil {
-				return nil, fmt.Errorf("mount plan entry %d source %q: %w", i, path, err)
-			}
-			if !exists {
-				continue
+			if err := requireTclaudeLayerGuestMountpoint(i, entry, plan.NetworkPosture); err != nil {
+				return nil, err
 			}
 			hideRemounts.noteReplacement(path)
-			args = append(args, "--bind", path, path)
+			flag := "--ro-bind"
+			if entry.Mode == sandboxpolicy.MountRW {
+				flag = "--bind"
+			}
+			args = append(args, flag, source, path)
 			args = appendTclaudeLayerProtectedRehides(
 				args,
 				path,
@@ -1455,6 +1474,43 @@ func bwrapArgsWithDaemonFinal(
 		"--remount-ro", tmuxSocketDir,
 	)
 	return args, nil
+}
+
+// requireTclaudeLayerGuestMountpoint states the one host-side precondition a
+// remapped mount has, and states it as a refusal rather than letting bubblewrap
+// fail with an unattributable error.
+//
+// Under a CONSTRUCTED root the sandbox root is a fresh tmpfs, so bubblewrap
+// creates the destination directory inside the namespace and nothing on the
+// host has to exist. Under the host-open posture the sandbox root IS the host
+// root, bound read-only, so there is nowhere to create a new mountpoint: the
+// directory must already exist on the host. This mirrors the existing
+// daemon-final source→target bind, which has required an existing target since
+// it was introduced.
+//
+// tclaude deliberately does not mkdir the mountpoint itself. Creating host
+// directories as a side effect of launching is the same failure the missing-
+// source rule already refuses (see RenderMountPlanFromGrants): it would leave
+// real directories behind on the operator's box for a rule that may never
+// launch again.
+func requireTclaudeLayerGuestMountpoint(
+	index int,
+	entry sandboxpolicy.MountEntry,
+	posture sandboxpolicy.NetworkPosture,
+) error {
+	if !entry.IsRemapped() || tclaudeLayerConstructedRootPosture(posture) {
+		return nil
+	}
+	exists, err := bwrapBindSourceExists(entry.Path)
+	if err != nil {
+		return fmt.Errorf("mount plan entry %d sandbox mount point %q: %w", index, entry.Path, err)
+	}
+	if !exists {
+		return fmt.Errorf(
+			"tclaude_layer_missing_mount_point: mount plan entry %d cannot mount %q at sandbox path %q because the sandbox root is the host root under the %s network posture, so the mount point must already exist on the host; create %q, or use an isolated or filtered network posture where tclaude constructs the root",
+			index, entry.SourcePath(), entry.Path, posture, entry.Path)
+	}
+	return nil
 }
 
 func tclaudeLayerConstructedRootPosture(posture sandboxpolicy.NetworkPosture) bool {
@@ -1937,11 +1993,54 @@ func sandboxDirsForEffective(
 ) []string {
 	out := make([]string, 0, len(effective.Filesystem))
 	for _, grant := range effective.Filesystem {
-		if grant.Access == access {
+		// A remapped grant has no single path that means both "the host
+		// directory" and "where it appears", so it cannot ride a bare path list.
+		// remappedGrantsForEffective carries it instead.
+		if grant.Access == access && !grant.IsRemapped() {
 			out = append(out, grant.Path)
 		}
 	}
 	return out
+}
+
+// remappedGrantsForEffective returns the rules a bare path list cannot express.
+func remappedGrantsForEffective(
+	effective sandboxpolicy.EffectiveProfile,
+) []sandboxpolicy.FilesystemGrant {
+	var out []sandboxpolicy.FilesystemGrant
+	for _, grant := range effective.Filesystem {
+		if grant.IsRemapped() {
+			out = append(out, grant)
+		}
+	}
+	return out
+}
+
+// validateRemappedGuestPathsAgainstContract refuses a mount that would land on
+// top of a path the launch itself requires. Launch-contract binds are applied
+// BEFORE the policy plan replays, so a remapped mount covering one of them would
+// shadow it — the workspace, a Git admin directory or harness state would simply
+// be gone, and the harness would fail in a way that points nowhere near the rule
+// that caused it.
+func validateRemappedGuestPathsAgainstContract(
+	remapped []sandboxpolicy.FilesystemGrant,
+	contractDirs []string,
+) error {
+	for _, grant := range remapped {
+		guest := grant.GuestPath()
+		for _, dir := range contractDirs {
+			dir = canonicalSandboxPath(dir)
+			if dir == "" {
+				continue
+			}
+			if sandboxpolicy.PathContainsOrEqual(guest, dir) {
+				return fmt.Errorf(
+					"unsupported_sandbox_profile_mount_path: mounting %q at sandbox path %q would shadow the launch-required directory %q",
+					grant.Path, guest, dir)
+			}
+		}
+	}
+	return nil
 }
 
 func sandboxDenyCoversEffectivePath(

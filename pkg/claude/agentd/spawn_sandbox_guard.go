@@ -75,6 +75,17 @@ func sandboxProfileCapabilityFailure(
 	if err != nil {
 		return &spawnFailure{http.StatusUnprocessableEntity, "unsupported_sandbox_profile_filesystem", err.Error()}
 	}
+	// Mount paths need a real mount namespace, which only the Linux tclaude-layer
+	// has. The launch boundary refuses too, but doing it here as well means the
+	// operator gets the named capability back from the spawn API instead of
+	// watching the pane die (TCL-866).
+	if err := sandboxpolicy.ValidateMountPathSupport(
+		filesystem, implementation, runtime.GOOS,
+	); err != nil {
+		return &spawnFailure{
+			http.StatusUnprocessableEntity,
+			"unsupported_sandbox_profile_mount_path", err.Error()}
+	}
 	if implementation.UsesTclaudeLayer() {
 		// The outer applier, not the harness-native sandbox catalog, represents
 		// filesystem and network policy. The session boundary validates the

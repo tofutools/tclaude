@@ -63,7 +63,11 @@ func addAgentDirectoryWriteGrants(effective *sandboxpolicy.EffectiveProfile, mou
 // is left as-is (write is already sufficient; a user deny must still win).
 func ensureAgentDirWriteGrant(effective *sandboxpolicy.EffectiveProfile, path string, sources []sandboxpolicy.ProfileSource) {
 	for i := range effective.Filesystem {
-		if effective.Filesystem[i].Path != path {
+		// A remapped grant reading from the same host directory is a DIFFERENT
+		// mount: it confers access at its own sandbox path, not at the agent
+		// directory's. Upgrading it would leave the agent directory itself
+		// ungranted while widening an unrelated projection.
+		if effective.Filesystem[i].Path != path || effective.Filesystem[i].IsRemapped() {
 			continue
 		}
 		if effective.Filesystem[i].Access == sandboxpolicy.AccessRead {

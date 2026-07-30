@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -2358,12 +2359,29 @@ func resumeLaunchCmdWithStackedProof(
 			return "", "", nil, fmt.Errorf("sandbox_profile_changed: %w", err)
 		}
 		launchGrants = launchFilesystem
+		// The bare read/write/deny dir lists below can only express same-path
+		// rules. Refuse a resume whose recorded policy needs a projection this
+		// implementation cannot enforce, rather than resuming with the host path
+		// exposed and the authored sandbox path empty.
+		if err := sandboxpolicy.ValidateMountPathSupport(
+			launchFilesystem, implementation, runtime.GOOS,
+		); err != nil {
+			return "", "", nil, err
+		}
 		for _, grant := range launchFilesystem {
+			// These lists become the HARNESS's own sandbox dirs, which under the
+			// stacked implementation is the nested wall running inside the
+			// namespace tclaude built. So a remapped grant contributes the path
+			// it occupies there — matching sandboxSnapshotDirs on the fresh-launch
+			// side. Skipping it instead would have bwrap mount the directory while
+			// the inner wall silently blocked it, and only on resume. The outer
+			// layer does not read these lists; it takes the projection from the
+			// snapshot itself.
 			switch grant.Access {
 			case sandboxpolicy.AccessWrite:
-				writeDirs = append(writeDirs, grant.Path)
+				writeDirs = append(writeDirs, grant.GuestPath())
 			case sandboxpolicy.AccessRead:
-				readDirs = append(readDirs, grant.Path)
+				readDirs = append(readDirs, grant.GuestPath())
 			case sandboxpolicy.AccessDeny:
 				denyDirs = append(denyDirs, grant.Path)
 			}

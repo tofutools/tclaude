@@ -28,6 +28,12 @@ type ReopenUnderDeny struct {
 // grant at the SAME canonical path as a deny cannot exist (normalization folds
 // duplicates with deny dominating), and a grant ABOVE a deny is an ordinary
 // broad grant that the deny narrows rather than a carve-out.
+//
+// Containment is evaluated in GUEST-path space (TCL-866): the shape this gates
+// is "what an agent can still reach beneath a path it was denied", which is a
+// question about the sandbox namespace. A deny always occupies its host path,
+// and an unremapped grant's guest path IS its host path, so this is unchanged
+// for every rule set authored before mount paths existed.
 func ReopensUnderDeny(grants []FilesystemGrant) []ReopenUnderDeny {
 	var out []ReopenUnderDeny
 	for _, deny := range grants {
@@ -35,11 +41,11 @@ func ReopensUnderDeny(grants []FilesystemGrant) []ReopenUnderDeny {
 			continue
 		}
 		for _, reopen := range grants {
-			if reopen.Access == AccessDeny || reopen.Path == deny.Path {
+			if reopen.Access == AccessDeny || reopen.GuestPath() == deny.GuestPath() {
 				continue
 			}
-			if pathContainsOrEqual(deny.Path, reopen.Path) {
-				out = append(out, ReopenUnderDeny{Deny: deny.Path, Reopen: reopen})
+			if pathContainsOrEqual(deny.GuestPath(), reopen.GuestPath()) {
+				out = append(out, ReopenUnderDeny{Deny: deny.GuestPath(), Reopen: reopen})
 			}
 		}
 	}
@@ -47,7 +53,7 @@ func ReopensUnderDeny(grants []FilesystemGrant) []ReopenUnderDeny {
 		if out[i].Deny != out[j].Deny {
 			return out[i].Deny < out[j].Deny
 		}
-		return out[i].Reopen.Path < out[j].Reopen.Path
+		return out[i].Reopen.GuestPath() < out[j].Reopen.GuestPath()
 	})
 	return out
 }
@@ -96,6 +102,35 @@ func GrantsFromDirs(readDirs, writeDirs, denyDirs []string) []FilesystemGrant {
 	return out
 }
 
+// EffectiveHostAccessAt is EffectiveAccessAt asked on the HOST side: it matches
+// rules by the host directory whose contents they expose, regardless of where
+// inside the sandbox that content lands.
+//
+// The two questions come apart only once a rule carries a mount path, and they
+// are both real. "What can the agent reach at /data" is the namespace question
+// EffectiveAccessAt answers. "Which host directory's contents does this policy
+// confer authority over" is this one, and it is what a containment check between
+// a parent and a child policy must ask — otherwise a child could mount an
+// arbitrary host directory at a sandbox path its parent happened to grant, and
+// gain host authority the parent never had.
+func EffectiveHostAccessAt(grants []FilesystemGrant, path string) (Access, bool) {
+	best := ""
+	var access Access
+	found := false
+	for _, grant := range grants {
+		if !pathContainsOrEqual(grant.Path, path) {
+			continue
+		}
+		if !found || len(grant.Path) > len(best) ||
+			(len(grant.Path) == len(best) && accessRank(grant.Access) > accessRank(access)) {
+			best = grant.Path
+			access = grant.Access
+			found = true
+		}
+	}
+	return access, found
+}
+
 // EffectiveAccessAt reports the access a grant set actually confers at one
 // canonical path, applying the most-specific-rule-wins semantics both supported
 // harnesses implement (Claude Code documents it for read rules; Codex renders
@@ -105,20 +140,27 @@ func GrantsFromDirs(readDirs, writeDirs, denyDirs []string) []FilesystemGrant {
 // This is the read model that makes deny rows containment-checkable: without
 // it, a deny and a broader read on an ancestor are indistinguishable from a
 // plain read.
+//
+// path is a SANDBOX path and rules are matched by their guest paths, so a
+// remapped grant answers for the location the agent actually sees. Callers
+// asking "what does the HOST path P end up as" must not use this for a remapped
+// set; that is a different question, and today's callers all ask about the
+// namespace.
 func EffectiveAccessAt(grants []FilesystemGrant, path string) (Access, bool) {
 	best := ""
 	var access Access
 	found := false
 	for _, grant := range grants {
-		if !pathContainsOrEqual(grant.Path, path) {
+		guest := grant.GuestPath()
+		if !pathContainsOrEqual(guest, path) {
 			continue
 		}
 		// Longer canonical path == more specific. On an exact-length tie the
 		// paths are equal, and normalization already folded those with deny
 		// dominating write dominating read.
-		if !found || len(grant.Path) > len(best) ||
-			(len(grant.Path) == len(best) && accessRank(grant.Access) > accessRank(access)) {
-			best = grant.Path
+		if !found || len(guest) > len(best) ||
+			(len(guest) == len(best) && accessRank(grant.Access) > accessRank(access)) {
+			best = guest
 			access = grant.Access
 			found = true
 		}
