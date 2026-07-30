@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"net/url"
 	"os"
 	"os/exec"
@@ -44,6 +45,28 @@ const (
 	openCodeLayerSmokeShellRetry  = 250 * time.Millisecond
 	openCodeLayerSmokeShellWait   = 60 * time.Second
 	openCodeFilteredToolHelperEnv = "TCLAUDE_OPENCODE_FILTERED_TOOL_HELPER"
+)
+
+// The deny fixture is the same live adjacent-target namespace the Claude/Codex
+// gateway smoke consumes, so the CI job provisions it under the same names.
+const (
+	openCodeFilteredAllowedAddrEnv    = "TCLAUDE_FILTERED_ALLOWED_ADDR"
+	openCodeFilteredAdjacentAddrEnv   = "TCLAUDE_FILTERED_ADJACENT_ADDR"
+	openCodeFilteredAllowedAddr6Env   = "TCLAUDE_FILTERED_ALLOWED_ADDR6"
+	openCodeFilteredAdjacentAddr6Env  = "TCLAUDE_FILTERED_ADJACENT_ADDR6"
+	openCodeFilteredAllowedPrefix6Env = "TCLAUDE_FILTERED_ALLOWED_PREFIX6"
+	openCodeFilteredAllowedPortEnv    = "TCLAUDE_FILTERED_ALLOWED_PORT"
+	openCodeFilteredDeniedPortEnv     = "TCLAUDE_FILTERED_DENIED_PORT"
+	// Both names resolve to the adjacent fixture address, so a denied name and
+	// an allowed name deliberately share one destination address.
+	openCodeFilteredDenyHost    = "exact-host.filtered.test"
+	openCodeFilteredAllowedHost = "sibling.filtered.test"
+	openCodeFilteredProbeWait   = 900 * time.Millisecond
+	// Mirrors the broker's unexported filteredNetworkDNSHostMappingTTL. Every
+	// negative-lease assertion refreshes the lease first rather than relying on
+	// this value, which is used only to observe expiry.
+	openCodeFilteredDNSMappingTTL = 2 * time.Second
+	openCodeFilteredDenyHelperTag = "opencode-filtered-deny-helper PASS"
 )
 
 // TestOpenCodeTclaudeLayerExecutorSmoke is the real integration proof for the
@@ -193,13 +216,8 @@ func runOpenCodeTclaudeLayerExecutorSmoke(t *testing.T, filtered bool) {
 	var filteredFixture *openCodeFilteredSmokeFixture
 	if filtered {
 		filteredFixture = newOpenCodeFilteredSmokeFixture(t, cwd)
-		snapshot.Effective.Network.Allow = []sandboxpolicy.NetworkAllowEntry{{
-			Loopback: true,
-			Ports: []int{
-				filteredFixture.modelPort,
-				filteredFixture.allowedPort,
-			},
-		}}
+		snapshot.Effective.Network.Allow, snapshot.Effective.Network.Deny =
+			openCodeFilteredNetworkRules(filteredFixture)
 		snapshot.Effective.Environment = append(
 			snapshot.Effective.Environment,
 			filteredFixture.environment...,
@@ -391,6 +409,10 @@ func runOpenCodeTclaudeLayerExecutorSmoke(t *testing.T, filtered bool) {
 		clcommon.ShellQuoteArg(identityProbeBinary),
 	)
 	output := runOpenCodeLayerSmokeShell(t, *runtime, command)
+	if filtered {
+		require.Containsf(t, output, openCodeFilteredDenyHelperTag,
+			"the real bash tool must report the deny boundary it executed: %s", output)
+	}
 	require.FileExists(t, filepath.Join(cwd, "tool-written"))
 	_, statErr := os.Stat(filepath.Join(outside, "blocked"))
 	require.ErrorIs(t, statErr, os.ErrNotExist,
@@ -435,6 +457,7 @@ type openCodeFilteredSmokeFixture struct {
 	modelPort          int
 	allowedPort        int
 	deniedPort         int
+	deny               openCodeFilteredDenyFixture
 	modelBaseURL       string
 	environment        []sandboxpolicy.EnvironmentEntry
 	helperConfig       string
@@ -446,9 +469,128 @@ type openCodeFilteredSmokeFixture struct {
 	accountRequests    atomic.Int32
 }
 
+// openCodeFilteredDenyFixture names the live adjacent targets the deny cases
+// need. The loopback echo pairs cannot carry them: a DNS deny installs a
+// negative lease on the answered address, and the host-loopback address is the
+// same destination the inspected model route depends on.
+type openCodeFilteredDenyFixture struct {
+	allowedAddr    string
+	adjacentAddr   string
+	allowedAddr6   string
+	adjacentAddr6  string
+	allowedPrefix6 string
+	coveringPrefix string
+	allowedPort    int
+	deniedPort     int
+}
+
 type openCodeFilteredToolHelperConfig struct {
-	Allowed string `json:"allowed"`
-	Denied  string `json:"denied"`
+	Allowed string                       `json:"allowed"`
+	Denied  string                       `json:"denied"`
+	Deny    *openCodeFilteredDenyProbeIR `json:"deny,omitempty"`
+}
+
+// openCodeFilteredDenyProbeIR is the flattened address plan the bash-tool
+// helper replays inside the confined server's namespace.
+type openCodeFilteredDenyProbeIR struct {
+	AllowedAddr   string `json:"allowed_addr"`
+	AdjacentAddr  string `json:"adjacent_addr"`
+	AllowedAddr6  string `json:"allowed_addr6"`
+	AdjacentAddr6 string `json:"adjacent_addr6"`
+	AllowedPort   int    `json:"allowed_port"`
+	DeniedPort    int    `json:"denied_port"`
+}
+
+func newOpenCodeFilteredDenyFixture(t *testing.T) openCodeFilteredDenyFixture {
+	t.Helper()
+	fixture := openCodeFilteredDenyFixture{
+		allowedAddr:    requireOpenCodeFilteredEnv(t, openCodeFilteredAllowedAddrEnv),
+		adjacentAddr:   requireOpenCodeFilteredEnv(t, openCodeFilteredAdjacentAddrEnv),
+		allowedAddr6:   requireOpenCodeFilteredEnv(t, openCodeFilteredAllowedAddr6Env),
+		adjacentAddr6:  requireOpenCodeFilteredEnv(t, openCodeFilteredAdjacentAddr6Env),
+		allowedPrefix6: requireOpenCodeFilteredEnv(t, openCodeFilteredAllowedPrefix6Env),
+		allowedPort:    requireOpenCodeFilteredPort(t, openCodeFilteredAllowedPortEnv),
+		deniedPort:     requireOpenCodeFilteredPort(t, openCodeFilteredDeniedPortEnv),
+	}
+	fixture.coveringPrefix = openCodeFilteredCoveringPrefix(
+		t, fixture.allowedAddr, fixture.adjacentAddr)
+	return fixture
+}
+
+// requireOpenCodeFilteredEnv refuses a degraded run rather than skipping the
+// deny cases. Silent omission would let the smoke keep reporting a pass while
+// covering strictly less than the activation record claims.
+func requireOpenCodeFilteredEnv(t *testing.T, name string) string {
+	t.Helper()
+	value := strings.TrimSpace(os.Getenv(name))
+	require.NotEmptyf(t, value,
+		"%s is required; the filtered smoke's deny cases need the live adjacent "+
+			"target fixture", name)
+	return value
+}
+
+func requireOpenCodeFilteredPort(t *testing.T, name string) int {
+	t.Helper()
+	value, err := strconv.Atoi(requireOpenCodeFilteredEnv(t, name))
+	require.NoError(t, err)
+	require.Greater(t, value, 0)
+	require.LessOrEqual(t, value, 65535)
+	return value
+}
+
+func openCodeFilteredCoveringPrefix(t *testing.T, first, second string) string {
+	t.Helper()
+	a, err := netip.ParseAddr(first)
+	require.NoError(t, err)
+	b, err := netip.ParseAddr(second)
+	require.NoError(t, err)
+	require.Equal(t, a.BitLen(), b.BitLen())
+	for bits := a.BitLen(); bits >= 0; bits-- {
+		prefix := netip.PrefixFrom(a, bits).Masked()
+		if prefix.Contains(b) {
+			return prefix.String()
+		}
+	}
+	t.Fatal("fixture addresses have no covering prefix")
+	return ""
+}
+
+// openCodeFilteredNetworkRules authors one launch policy that carries both the
+// allow surface the activation smoke already proved and the deny surface this
+// boundary adds. Deny precedence is exercised in both overlap directions: IPv4
+// narrows a broad allow, IPv6 widens over a narrow one.
+func openCodeFilteredNetworkRules(
+	fixture *openCodeFilteredSmokeFixture,
+) (allow, deny []sandboxpolicy.NetworkAllowEntry) {
+	denyFixture := fixture.deny
+	allow = []sandboxpolicy.NetworkAllowEntry{
+		{
+			Loopback: true,
+			Ports: []int{
+				fixture.modelPort,
+				fixture.allowedPort,
+			},
+		},
+		{CIDR: denyFixture.coveringPrefix},
+		{CIDR: denyFixture.allowedPrefix6},
+		{CIDR: denyFixture.allowedAddr6 + "/128"},
+		{
+			Host:  openCodeFilteredAllowedHost,
+			Ports: []int{denyFixture.allowedPort},
+		},
+	}
+	deny = []sandboxpolicy.NetworkAllowEntry{
+		{
+			CIDR:  denyFixture.allowedAddr + "/32",
+			Ports: []int{denyFixture.deniedPort},
+		},
+		{
+			CIDR:  denyFixture.allowedPrefix6,
+			Ports: []int{denyFixture.deniedPort},
+		},
+		{Host: openCodeFilteredDenyHost},
+	}
+	return allow, deny
 }
 
 func newOpenCodeFilteredSmokeFixture(
@@ -459,6 +601,7 @@ func newOpenCodeFilteredSmokeFixture(
 	fixture := &openCodeFilteredSmokeFixture{}
 	fixture.allowedPort = newOpenCodeFilteredEchoPair(t)
 	fixture.deniedPort = newOpenCodeFilteredEchoPair(t)
+	fixture.deny = newOpenCodeFilteredDenyFixture(t)
 
 	modelServer := httptest.NewServer(http.HandlerFunc(func(
 		writer http.ResponseWriter,
@@ -556,6 +699,14 @@ func newOpenCodeFilteredSmokeFixture(
 			strconv.Itoa(fixture.allowedPort)),
 		Denied: net.JoinHostPort(sandboxpolicy.FilteredNetworkHostLoopbackName,
 			strconv.Itoa(fixture.deniedPort)),
+		Deny: &openCodeFilteredDenyProbeIR{
+			AllowedAddr:   fixture.deny.allowedAddr,
+			AdjacentAddr:  fixture.deny.adjacentAddr,
+			AllowedAddr6:  fixture.deny.allowedAddr6,
+			AdjacentAddr6: fixture.deny.adjacentAddr6,
+			AllowedPort:   fixture.deny.allowedPort,
+			DeniedPort:    fixture.deny.deniedPort,
+		},
 	})
 	require.NoError(t, err)
 	fixture.helperConfig = string(helperJSON)
@@ -720,6 +871,145 @@ func TestOpenCodeFilteredNetworkToolHelper(t *testing.T) {
 		require.Error(t, readErr, "unauthorised UDP port returned traffic")
 	}
 	fmt.Println("opencode-filtered-network-helper PASS")
+
+	require.NotNil(t, config.Deny,
+		"the deny probe plan is mandatory for this boundary")
+	runOpenCodeFilteredDenyProbes(t, *config.Deny)
+	fmt.Println(openCodeFilteredDenyHelperTag)
+}
+
+// runOpenCodeFilteredDenyProbes proves deny precedence from inside the real
+// OpenCode bash tool. The static cases cover both overlap directions, and the
+// DNS case proves a denied name cuts an address the CIDR allow otherwise
+// permits.
+func runOpenCodeFilteredDenyProbes(
+	t *testing.T,
+	plan openCodeFilteredDenyProbeIR,
+) {
+	t.Helper()
+	allowed4 := net.JoinHostPort(plan.AllowedAddr, strconv.Itoa(plan.AllowedPort))
+	denied4 := net.JoinHostPort(plan.AllowedAddr, strconv.Itoa(plan.DeniedPort))
+	adjacent4 := net.JoinHostPort(plan.AdjacentAddr, strconv.Itoa(plan.DeniedPort))
+	allowed6 := net.JoinHostPort(plan.AllowedAddr6, strconv.Itoa(plan.AllowedPort))
+	denied6 := net.JoinHostPort(plan.AllowedAddr6, strconv.Itoa(plan.DeniedPort))
+	adjacent6 := net.JoinHostPort(plan.AdjacentAddr6, strconv.Itoa(plan.AllowedPort))
+
+	// IPv4: a narrow port-scoped deny defeats the broad covering allow, and is
+	// not widened onto the rest of that allow.
+	openCodeFilteredTCPRoundTrip(t, "tcp4", allowed4)
+	openCodeFilteredUDPRoundTrip(t, "udp4", allowed4)
+	openCodeFilteredTCPDenied(t, "tcp4", denied4)
+	openCodeFilteredUDPDenied(t, "udp4", denied4)
+	openCodeFilteredTCPRoundTrip(t, "tcp4", adjacent4)
+
+	// IPv6: the overlap runs the other way. A broad prefix deny defeats the
+	// narrow /128 allow authored for the same address.
+	openCodeFilteredTCPRoundTrip(t, "tcp6", allowed6)
+	openCodeFilteredUDPRoundTrip(t, "udp6", allowed6)
+	openCodeFilteredTCPDenied(t, "tcp6", denied6)
+	openCodeFilteredUDPDenied(t, "udp6", denied6)
+	openCodeFilteredTCPRoundTrip(t, "tcp6", adjacent6)
+
+	// The allowed name answers and its address is reachable before any denied
+	// name is observed.
+	openCodeFilteredDNSAllowed(t, openCodeFilteredAllowedHost, "ip4")
+	openCodeFilteredTCPRoundTrip(t, "tcp4", net.JoinHostPort(
+		openCodeFilteredAllowedHost, strconv.Itoa(plan.AllowedPort)))
+
+	// The denied name is refused at the broker, and the negative lease it
+	// installs defeats both the covering CIDR allow and the earlier positive
+	// lease on the shared address. Each assertion refreshes the lease first so
+	// it measures the cut rather than racing the fixture TTL.
+	openCodeFilteredDNSDenied(t, openCodeFilteredDenyHost, "ip4")
+	openCodeFilteredDNSDenied(t, openCodeFilteredDenyHost, "ip6")
+	openCodeFilteredDNSDenied(t, openCodeFilteredDenyHost, "ip4")
+	openCodeFilteredTCPDenied(t, "tcp4", adjacent4)
+	openCodeFilteredDNSDenied(t, openCodeFilteredDenyHost, "ip6")
+	openCodeFilteredTCPDenied(t, "tcp6", adjacent6)
+
+	// Negative authority is TTL-bound: expiry restores the CIDR baseline.
+	time.Sleep(openCodeFilteredDNSMappingTTL + time.Second)
+	openCodeFilteredTCPRoundTrip(t, "tcp4", adjacent4)
+}
+
+func openCodeFilteredTCPRoundTrip(t *testing.T, network, address string) {
+	t.Helper()
+	connection, err := net.DialTimeout(network, address, openCodeFilteredProbeWait)
+	require.NoErrorf(t, err, "%s allow %s", network, address)
+	defer func() { _ = connection.Close() }()
+	require.NoError(t, connection.SetDeadline(
+		time.Now().Add(openCodeFilteredProbeWait)))
+	payload := []byte("opencode-deny-tcp")
+	_, err = connection.Write(payload)
+	require.NoError(t, err)
+	reply := make([]byte, len(payload))
+	_, err = io.ReadFull(connection, reply)
+	require.NoErrorf(t, err, "%s allow %s", network, address)
+	assert.Equal(t, payload, reply)
+}
+
+func openCodeFilteredTCPDenied(t *testing.T, network, address string) {
+	t.Helper()
+	connection, err := net.DialTimeout(network, address, openCodeFilteredProbeWait)
+	if err == nil {
+		_ = connection.Close()
+	}
+	require.Errorf(t, err, "%s deny %s", network, address)
+}
+
+func openCodeFilteredUDPRoundTrip(t *testing.T, network, address string) {
+	t.Helper()
+	remote, err := net.ResolveUDPAddr(network, address)
+	require.NoError(t, err)
+	connection, err := net.DialUDP(network, nil, remote)
+	require.NoError(t, err)
+	defer func() { _ = connection.Close() }()
+	require.NoError(t, connection.SetDeadline(
+		time.Now().Add(openCodeFilteredProbeWait)))
+	payload := []byte("opencode-deny-udp")
+	_, err = connection.Write(payload)
+	require.NoError(t, err)
+	reply := make([]byte, len(payload))
+	_, err = io.ReadFull(connection, reply)
+	require.NoErrorf(t, err, "%s allow %s", network, address)
+	assert.Equal(t, payload, reply)
+}
+
+func openCodeFilteredUDPDenied(t *testing.T, network, address string) {
+	t.Helper()
+	remote, err := net.ResolveUDPAddr(network, address)
+	require.NoError(t, err)
+	connection, err := net.DialUDP(network, nil, remote)
+	require.NoError(t, err)
+	defer func() { _ = connection.Close() }()
+	require.NoError(t, connection.SetDeadline(
+		time.Now().Add(openCodeFilteredProbeWait)))
+	_, err = connection.Write([]byte("must-not-arrive"))
+	if err != nil {
+		require.ErrorIsf(t, err, syscall.EPERM, "%s deny %s", network, address)
+		return
+	}
+	_, err = connection.Read(make([]byte, 64))
+	require.Errorf(t, err, "%s deny %s", network, address)
+}
+
+func openCodeFilteredDNSAllowed(t *testing.T, host, network string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(
+		context.Background(), openCodeFilteredProbeWait)
+	defer cancel()
+	addresses, err := net.DefaultResolver.LookupNetIP(ctx, network, host)
+	require.NoErrorf(t, err, "DNS allow %s (%s)", host, network)
+	require.NotEmptyf(t, addresses, "DNS allow %s (%s)", host, network)
+}
+
+func openCodeFilteredDNSDenied(t *testing.T, host, network string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(
+		context.Background(), openCodeFilteredProbeWait)
+	defer cancel()
+	_, err := net.DefaultResolver.LookupNetIP(ctx, network, host)
+	require.Errorf(t, err, "DNS deny %s (%s)", host, network)
 }
 
 func copyOpenCodeLayerSmokeExecutable(t *testing.T, source, destination string) {
