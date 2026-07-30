@@ -9,7 +9,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 func stubSeanceDaemon(
@@ -129,14 +128,14 @@ func TestSeance_PrintCmd_BuildsHeadlessResumeArgv(t *testing.T) {
 
 func TestSeance_PrintCmd_ClaudeIncludesTmuxHostControlDeny(t *testing.T) {
 	const dead = "eeeeeeee-1111-1111-1111-111111111111"
-	t.Setenv("TMUX_TMPDIR", t.TempDir())
-	socketPath, err := harness.ClaudeTmuxSocketDenyPath()
-	require.NoError(t, err)
+	const socketPath = "/daemon-resolved/tmux-1000/tclaude"
+	t.Setenv("TMUX_TMPDIR", "relative-client-value-must-not-be-used")
 	stubSeanceDaemon(t, seanceResolveResp{
-		Predecessor: dead,
-		Harness:     "claude",
-		Cwd:         t.TempDir(),
-		Sandbox:     "inherit",
+		Predecessor:              dead,
+		Harness:                  "claude",
+		Cwd:                      t.TempDir(),
+		Sandbox:                  "inherit",
+		ClaudeTmuxSocketDenyPath: socketPath,
 	}, nil, nil)
 
 	var stdout, stderr bytes.Buffer
@@ -155,6 +154,7 @@ func TestSeance_PrintCmd_ClaudeIncludesTmuxHostControlDeny(t *testing.T) {
 // spawned by this CLI.
 func TestSeance_Run_InvokesDaemonWithPinnedResumePlan(t *testing.T) {
 	const dead = "99999999-1111-1111-1111-111111111111"
+	t.Setenv("TMUX_TMPDIR", "relative-client-value-must-not-affect-run")
 	cwd := t.TempDir()
 	var runBody map[string]any
 	var runOpts DaemonOpts

@@ -45,15 +45,16 @@ type seanceResolveReq struct {
 }
 
 type seanceResolveResp struct {
-	Predecessor string `json:"predecessor"`
-	Harness     string `json:"harness"`
-	Cwd         string `json:"cwd"`
-	Hops        int    `json:"hops"`
-	Requested   int    `json:"requested_back"`
-	Exact       bool   `json:"exact"`
-	Sandbox     string `json:"sandbox"`
-	Approval    string `json:"approval"`
-	AutoReview  bool   `json:"auto_review"`
+	Predecessor              string `json:"predecessor"`
+	Harness                  string `json:"harness"`
+	Cwd                      string `json:"cwd"`
+	Hops                     int    `json:"hops"`
+	Requested                int    `json:"requested_back"`
+	Exact                    bool   `json:"exact"`
+	Sandbox                  string `json:"sandbox"`
+	Approval                 string `json:"approval"`
+	AutoReview               bool   `json:"auto_review"`
+	ClaudeTmuxSocketDenyPath string `json:"claude_tmux_socket_deny_path,omitempty"`
 
 	// launchPosture and effectiveSandbox never cross the API boundary. They are
 	// the daemon-private, DB-backed launch contract consumed by /run.
@@ -557,19 +558,29 @@ func resolveSeancePlan(
 			"cannot reproduce the predecessor's recorded sandbox: "+err.Error())
 		return seanceResolveResp{}, false
 	}
+	claudeTmuxSocketDenyPath := ""
+	if h.Name == harness.DefaultName && sandboxMode != harness.ClaudeSandboxOff {
+		claudeTmuxSocketDenyPath, err = harness.ClaudeTmuxSocketDenyPath()
+		if err != nil {
+			writeError(w, http.StatusConflict, "sandbox_profile_changed",
+				"cannot render the predecessor's Claude host-control sandbox: "+err.Error())
+			return seanceResolveResp{}, false
+		}
+	}
 
 	return seanceResolveResp{
-		Predecessor:      target,
-		Harness:          h.Name,
-		Cwd:              cwd,
-		Hops:             hops,
-		Requested:        req.Back,
-		Exact:            exact,
-		Sandbox:          sandboxMode,
-		Approval:         approvalPolicy,
-		AutoReview:       autoReview,
-		launchPosture:    posture,
-		effectiveSandbox: effectiveSandbox,
+		Predecessor:              target,
+		Harness:                  h.Name,
+		Cwd:                      cwd,
+		Hops:                     hops,
+		Requested:                req.Back,
+		Exact:                    exact,
+		Sandbox:                  sandboxMode,
+		Approval:                 approvalPolicy,
+		AutoReview:               autoReview,
+		ClaudeTmuxSocketDenyPath: claudeTmuxSocketDenyPath,
+		launchPosture:            posture,
+		effectiveSandbox:         effectiveSandbox,
 	}, true
 }
 

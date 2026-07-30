@@ -83,15 +83,16 @@ func seanceCmd() *cobra.Command {
 // belongs in agentd because succession, session cwd and harness metadata live
 // in private ~/.tclaude/data.
 type seanceResolveResp struct {
-	Predecessor string `json:"predecessor"`
-	Harness     string `json:"harness"`
-	Cwd         string `json:"cwd"`
-	Hops        int    `json:"hops"`
-	Requested   int    `json:"requested_back"`
-	Exact       bool   `json:"exact"`
-	Sandbox     string `json:"sandbox"`
-	Approval    string `json:"approval"`
-	AutoReview  bool   `json:"auto_review"`
+	Predecessor              string `json:"predecessor"`
+	Harness                  string `json:"harness"`
+	Cwd                      string `json:"cwd"`
+	Hops                     int    `json:"hops"`
+	Requested                int    `json:"requested_back"`
+	Exact                    bool   `json:"exact"`
+	Sandbox                  string `json:"sandbox"`
+	Approval                 string `json:"approval"`
+	AutoReview               bool   `json:"auto_review"`
+	ClaudeTmuxSocketDenyPath string `json:"claude_tmux_socket_deny_path,omitempty"`
 }
 
 type seanceRunResp struct {
@@ -184,12 +185,8 @@ func runSeance(p *seanceParams, stdin io.Reader, stdout, stderr io.Writer) int {
 		ApprovalPolicy: resolved.Approval,
 		AutoReview:     resolved.AutoReview,
 	}
-	if h.Name == harness.DefaultName {
-		posture, err = harness.PrepareClaudeSandboxLaunch(posture)
-		if err != nil {
-			fmt.Fprintf(stderr, "Error: prepare Claude host-control sandbox preview: %v\n", err)
-			return rcIOFailure
-		}
+	if resolved.ClaudeTmuxSocketDenyPath != "" {
+		posture.SandboxDenyDirs = []string{resolved.ClaudeTmuxSocketDenyPath}
 	}
 	if h.Name == harness.CodexName && posture.SandboxMode == harness.SandboxManagedProfile {
 		// The daemon creates a launch-unique profile at execution time. Keep a
