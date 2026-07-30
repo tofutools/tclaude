@@ -1,7 +1,7 @@
 import { readReviewer, reviewerValue } from './approval-controls.js';
 import {
   CODEX_BUILTIN_FILTERED_NETWORK_HINT,
-  codexBuiltinSandboxOptionLabel,
+  isCodexBuiltinSandboxOption,
 } from './sandbox-network-disclosure.js';
 
 export const MODEL_CUSTOM_VALUE = '__custom__';
@@ -228,13 +228,13 @@ export function sandboxImplOptionsFor(
     .filter((option) => canBuiltinOSSandbox
       || text(option?.value) !== SANDBOX_IMPL_DEFAULT)
     .map((option) => {
-      const codexLabel = codexBuiltinSandboxOptionLabel(
+      const codexBuiltin = isCodexBuiltinSandboxOption(
         text(option?.value), text(harnessName),
       );
       return {
         ...option,
-        label: codexLabel || fillHarnessPlaceholder(option?.label, displayName),
-        descr: codexLabel
+        label: fillHarnessPlaceholder(option?.label, displayName),
+        descr: codexBuiltin
           ? CODEX_BUILTIN_FILTERED_NETWORK_HINT
           : fillHarnessPlaceholder(option?.descr, displayName),
       };
@@ -341,7 +341,15 @@ export function setSpawnSandboxImpl(draft, value) {
 // one on a host that cannot run it — that the launch will REFUSE rather than
 // quietly fall back. Saying "will refuse" is the whole point: an operator who
 // picks it anyway is choosing a failed launch, not an unnoticed downgrade.
-export function sandboxImplHintFor(draft, view) {
+//
+// resolvedImplementation is the DAEMON's answer for a blank row. A blank row
+// used to mean "nobody knows yet", so it had to stay silent; now the daemon
+// tells us, and the row names that answer. Silence would be a worse lie than
+// the old one: the row would read "Codex CLI built-in" while withholding that
+// this particular implementation cannot enforce a profile's TCP/UDP rules.
+// Passing nothing keeps the old honest silence, which is what the profile
+// editor wants — there, the field really is unresolved until spawn.
+export function sandboxImplHintFor(draft, view, resolvedImplementation = '') {
   if (!view.showSandboxImpl) return null;
   const explicit = text(draft.sandboxImpl);
   if (!explicit && sandboxModeIsOff(draft.harness, draft.sandbox)) {
@@ -371,7 +379,10 @@ export function sandboxImplHintFor(draft, view) {
       text: 'Sandbox OFF. The agent runs without OS-level confinement; approval policy still applies.',
     };
   }
-  if (explicit === SANDBOX_IMPL_DEFAULT && view.sandboxImplHarnessName === 'codex') {
+  const builtinCodex = view.sandboxImplHarnessName === 'codex'
+    && (explicit === SANDBOX_IMPL_DEFAULT
+      || (!explicit && text(resolvedImplementation) === SANDBOX_IMPL_DEFAULT));
+  if (builtinCodex) {
     return { warn: true, text: CODEX_BUILTIN_FILTERED_NETWORK_HINT };
   }
   if (value === SANDBOX_IMPL_DEFAULT && !view.sandboxImplCanBuiltin) {

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPreactHarness } from './preact-harness.mjs';
 
-const catalog = [{ name: 'claude', display_name: 'Claude Code', models: ['sonnet'], effort_levels: ['low', 'high'], can_sandbox: true, can_builtin_os_sandbox: true, sandbox_modes: ['inherit', 'on'], default_sandbox: 'inherit', can_approval: true, approval_modes: ['inherit', 'plan'], default_approval: 'inherit', approval_mode_help: { inherit: 'keep settings', plan: 'plan only' }, can_tools: false, tools_modes: [], default_tools: '', tools_mode_help: {}, can_auto_review: false, can_ask_timeout: true, ask_timeout_modes: ['inherit', '60s'], default_ask_timeout: 'inherit', can_remote_control: true, can_auto_memory: true, can_dir_trust: true, dir_trust_store: '~/.claude.json' }, { name: 'codex', models: [], can_sandbox: true, can_builtin_os_sandbox: true, sandbox_modes: ['workspace-write'], default_sandbox: 'workspace-write', can_approval: true, approval_modes: ['never', 'untrusted', 'on-failure', 'on-request'], default_approval: 'never', approval_mode_help: { never: 'never prompt', untrusted: 'ask for untrusted', 'on-failure': 'deprecated retry', 'on-request': 'ask when requested' }, can_tools: false, tools_modes: [], default_tools: '', tools_mode_help: {}, can_auto_review: true, can_remote_control: false, can_auto_memory: false, can_ssh_workaround: true, can_dir_trust: true, dir_trust_store: '~/.codex/config.toml' }, { name: 'opencode', display_name: 'OpenCode', models: [], effort_levels: [], can_sandbox: true, can_builtin_os_sandbox: false, sandbox_modes: ['off'], default_sandbox: 'off', sandbox_mode_help: { off: '⚠ No tclaude OS containment' }, can_approval: false, approval_modes: [], default_approval: '', can_tools: true, tools_modes: ['allow', 'ask', 'deny'], default_tools: 'allow', tools_mode_help: { allow: 'allow tools', ask: 'ask for tools', deny: 'deny tools' }, can_auto_review: false, can_remote_control: false, can_auto_memory: false, can_dir_trust: false, dir_trust_store: '' }];
+const catalog = [{ name: 'claude', display_name: 'Claude Code', models: ['sonnet'], effort_levels: ['low', 'high'], can_sandbox: true, can_builtin_os_sandbox: true, sandbox_modes: ['inherit', 'on'], default_sandbox: 'inherit', can_approval: true, approval_modes: ['inherit', 'plan'], default_approval: 'inherit', approval_mode_help: { inherit: 'keep settings', plan: 'plan only' }, can_tools: false, tools_modes: [], default_tools: '', tools_mode_help: {}, can_auto_review: false, can_ask_timeout: true, ask_timeout_modes: ['inherit', '60s'], default_ask_timeout: 'inherit', can_remote_control: true, can_auto_memory: true, can_dir_trust: true, dir_trust_store: '~/.claude.json' }, { name: 'codex', display_name: 'Codex CLI', models: [], can_sandbox: true, can_builtin_os_sandbox: true, sandbox_modes: ['workspace-write'], default_sandbox: 'workspace-write', can_approval: true, approval_modes: ['never', 'untrusted', 'on-failure', 'on-request'], default_approval: 'never', approval_mode_help: { never: 'never prompt', untrusted: 'ask for untrusted', 'on-failure': 'deprecated retry', 'on-request': 'ask when requested' }, can_tools: false, tools_modes: [], default_tools: '', tools_mode_help: {}, can_auto_review: true, can_remote_control: false, can_auto_memory: false, can_ssh_workaround: true, can_dir_trust: true, dir_trust_store: '~/.codex/config.toml' }, { name: 'opencode', display_name: 'OpenCode', models: [], effort_levels: [], can_sandbox: true, can_builtin_os_sandbox: false, sandbox_modes: ['off'], default_sandbox: 'off', sandbox_mode_help: { off: '⚠ No tclaude OS containment' }, can_approval: false, approval_modes: [], default_approval: '', can_tools: true, tools_modes: ['allow', 'ask', 'deny'], default_tools: 'allow', tools_mode_help: { allow: 'allow tools', ask: 'ask for tools', deny: 'deny tools' }, can_auto_review: false, can_remote_control: false, can_auto_memory: false, can_dir_trust: false, dir_trust_store: '' }];
 
 const sandboxImpl = {
   options: [
@@ -232,8 +232,10 @@ test('profile editor names the harness-owned sandbox after the selected harness'
   assert.equal(
     [...host.querySelector('#profile-editor-sandbox-impl').options]
       .find((option) => option.value === 'harness-builtin').textContent,
-    'Codex built-in (no filtered network sandbox yet)',
+    'Codex CLI built-in',
   );
+  // The caveat left the option label but not the dialog: this draft pins
+  // harness-builtin (see the seed above), so the hint under the row states it.
   assert.match(host.textContent, /upstream proxy is experimental and off by default/);
   assert.equal(host.querySelector('#profile-editor-sandbox-row').hidden, false,
     'the explicit harness-builtin selection survives a capable harness switch');
@@ -1668,7 +1670,7 @@ test('sandbox editor groups concrete rules by the selected assignment outcome', 
     [...host.querySelector('#sandbox-profile-editor-evaluate-implementation').options]
       .map((option) => option.textContent),
     [
-      'Codex built-in sandbox (no filtered network sandbox yet)',
+      'Codex built-in sandbox',
       'tclaude sandbox',
       'Stacked sandboxes',
     ],
