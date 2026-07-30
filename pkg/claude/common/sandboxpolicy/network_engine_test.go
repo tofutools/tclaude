@@ -194,6 +194,14 @@ func TestNetworkRulesAreDiscriminating(t *testing.T) {
 			want:  false,
 		},
 		{
+			name: "an empty list with denies still allows nothing",
+			rules: NetworkRules{
+				Mode: AccessModeList,
+				Deny: []NetworkAllowEntry{{Domain: "tracker.example"}},
+			},
+			want: false,
+		},
+		{
 			name: "a loopback-only list is expressed by the floor",
 			rules: NetworkRules{
 				Mode:  AccessModeList,

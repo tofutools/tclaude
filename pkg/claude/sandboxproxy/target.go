@@ -94,6 +94,15 @@ func (t Target) IsLoopback() bool {
 	}
 }
 
+// namesLocalHost reports whether the target reaches the host running the
+// proxy, by any of its spellings. It is the loopback selector's full domain.
+func (t Target) namesLocalHost() bool {
+	if t.IsLoopback() {
+		return true
+	}
+	return t.Kind == TargetKindLiteral && namesLocalHost(t.Addr)
+}
+
 // Host renders the destination identity as the client stated it.
 func (t Target) Host() string {
 	if t.Kind == TargetKindLiteral {

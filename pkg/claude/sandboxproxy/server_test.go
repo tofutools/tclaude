@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -593,8 +594,11 @@ func TestSOCKS5RequiresNoAuthMethod(t *testing.T) {
 func TestHTTPAbsoluteFormIsEvaluatedOnTheRequestLineHost(t *testing.T) {
 	// Absolute-form forwarding needs an origin that speaks HTTP, unlike the
 	// byte-banner origin the CONNECT cases use.
+	var observedHost atomic.Pointer[string]
 	origin := httptest.NewServer(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
+			host := r.Host
+			observedHost.Store(&host)
 			if r.URL.Path != "/health" || r.RequestURI != "/health" {
 				w.WriteHeader(http.StatusBadRequest)
 				return
@@ -605,10 +609,15 @@ func TestHTTPAbsoluteFormIsEvaluatedOnTheRequestLineHost(t *testing.T) {
 	originAddr := strings.TrimPrefix(origin.URL, "http://")
 
 	proxy := startProxyToAddr(t, listRules([]sandboxpolicy.NetworkAllowEntry{
-		{Domain: "example.com", Ports: []int{80}},
+		{Domain: "example.com", Ports: []int{80, 8080}},
 	}, nil), equivalenceResolutions(), originAddr)
 
-	allowed := httpAbsoluteForm(t, proxy.addr, "http://example.com/health")
+	// The Host header names a different authority than the request line. The
+	// request line is what policy evaluates, so it must also be what the
+	// origin is told — otherwise an authorized connection could still select
+	// an unevaluated vhost.
+	allowed := httpAbsoluteForm(t, proxy.addr,
+		"http://example.com/health", "evil.example.com")
 	if !strings.Contains(allowed, "200") {
 		t.Fatalf("allowed absolute-form response = %q", allowed)
 	}
@@ -617,8 +626,28 @@ func TestHTTPAbsoluteFormIsEvaluatedOnTheRequestLineHost(t *testing.T) {
 		record.Target.Name != "example.com" || record.Target.Port != 80 {
 		t.Fatalf("absolute-form target = %+v, want example.com:80", record.Target)
 	}
+	if got := observedHost.Load(); got == nil || *got != "example.com" {
+		t.Fatalf("origin observed Host %v, want the request-line authority "+
+			"example.com", got)
+	}
 
-	refused := httpAbsoluteForm(t, proxy.addr, "http://badexample.com/health")
+	// A non-default port must survive into the forwarded Host field, or a
+	// vhost or an absolute-URL reconstruction on the origin sees the wrong
+	// authority. The default port stays elided, as a Host field normally is.
+	allowed = httpAbsoluteForm(t, proxy.addr,
+		"http://example.com:8080/health", "evil.example.com:8080")
+	if !strings.Contains(allowed, "200") {
+		t.Fatalf("allowed absolute-form response on port 8080 = %q", allowed)
+	}
+	if got := observedHost.Load(); got == nil || *got != "example.com:8080" {
+		t.Fatalf("origin observed Host %v, want example.com:8080", got)
+	}
+	if got := proxy.lastDecision(t); got.Target.Port != 8080 {
+		t.Fatalf("target port = %d, want 8080", got.Target.Port)
+	}
+
+	refused := httpAbsoluteForm(t, proxy.addr,
+		"http://badexample.com/health", "badexample.com")
 	if !strings.Contains(refused, "403") {
 		t.Fatalf("refused absolute-form response = %q", refused)
 	}
@@ -631,7 +660,7 @@ func TestHTTPAbsoluteFormIsEvaluatedOnTheRequestLineHost(t *testing.T) {
 // httpAbsoluteForm sends one absolute-form request and returns the status line.
 // The test origin answers a minimal HTTP response so the forward path is
 // exercised end to end.
-func httpAbsoluteForm(t *testing.T, proxyAddr, target string) string {
+func httpAbsoluteForm(t *testing.T, proxyAddr, target, hostHeader string) string {
 	t.Helper()
 	conn, err := net.DialTimeout("tcp", proxyAddr, 5*time.Second)
 	if err != nil {
@@ -641,7 +670,7 @@ func httpAbsoluteForm(t *testing.T, proxyAddr, target string) string {
 	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
 	if _, err := fmt.Fprintf(conn,
 		"GET %s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n",
-		target, strings.TrimPrefix(target, "http://"),
+		target, hostHeader,
 	); err != nil {
 		t.Fatalf("write request: %v", err)
 	}
@@ -883,5 +912,172 @@ func TestUnresolvableTargetIsNotRenderedAsARefusal(t *testing.T) {
 	if socksOutcome.Response != "0x04" {
 		t.Fatalf("socks reply = %s, want 0x04 (host unreachable)",
 			socksOutcome.Response)
+	}
+}
+
+// TestResolvedAddressHonorsDenyRows guards the second evaluation stage against
+// the bypass a first-stage-only deny would leave: an allowed name whose answer
+// points at a denied address. Both the loopback and CIDR deny shapes are
+// covered, and the open baseline is included because a deny must win there too.
+func TestResolvedAddressHonorsDenyRows(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		rules sandboxpolicy.NetworkRules
+		addr  string
+		port  int
+		want  Verdict
+	}{
+		{
+			name: "a loopback deny refuses an allowed name resolving to loopback",
+			rules: listRules([]sandboxpolicy.NetworkAllowEntry{
+				{Domain: "example.com"}, {Loopback: true},
+			}, []sandboxpolicy.NetworkAllowEntry{
+				{Loopback: true, Ports: []int{22}},
+			}),
+			addr: "127.0.0.1", port: 22, want: VerdictDeniedByRule,
+		},
+		{
+			name: "the same policy still admits an undenied loopback port",
+			rules: listRules([]sandboxpolicy.NetworkAllowEntry{
+				{Domain: "example.com"}, {Loopback: true},
+			}, []sandboxpolicy.NetworkAllowEntry{
+				{Loopback: true, Ports: []int{22}},
+			}),
+			addr: "127.0.0.1", port: 8080, want: VerdictAllowed,
+		},
+		{
+			name: "a cidr deny refuses an allowed name resolving into it",
+			rules: listRules([]sandboxpolicy.NetworkAllowEntry{
+				{Domain: "example.com"}, {CIDR: "10.0.0.0/8"},
+			}, []sandboxpolicy.NetworkAllowEntry{
+				{CIDR: "10.1.0.0/16"},
+			}),
+			addr: "10.1.2.3", port: 443, want: VerdictDeniedByRule,
+		},
+		{
+			name: "the same policy still admits the undenied part of the range",
+			rules: listRules([]sandboxpolicy.NetworkAllowEntry{
+				{Domain: "example.com"}, {CIDR: "10.0.0.0/8"},
+			}, []sandboxpolicy.NetworkAllowEntry{
+				{CIDR: "10.1.0.0/16"},
+			}),
+			addr: "10.2.3.4", port: 443, want: VerdictAllowed,
+		},
+		{
+			name:  "a deny wins under an open baseline too",
+			rules: openRules([]sandboxpolicy.NetworkAllowEntry{{CIDR: "10.1.0.0/16"}}),
+			addr:  "10.1.2.3", port: 443, want: VerdictDeniedByRule,
+		},
+		{
+			name:  "an open baseline still reaches undenied private space",
+			rules: openRules([]sandboxpolicy.NetworkAllowEntry{{CIDR: "10.1.0.0/16"}}),
+			addr:  "10.2.3.4", port: 443, want: VerdictAllowed,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			evaluator := mustEvaluator(t, tc.rules)
+			decision := evaluator.EvaluateResolvedAddress(
+				mustTarget(t, "example.com", tc.port),
+				netip.MustParseAddr(tc.addr))
+			if decision.Verdict != tc.want {
+				t.Fatalf("verdict = %q, want %q", decision.Verdict, tc.want)
+			}
+		})
+	}
+}
+
+// TestUnspecifiedAddressIsHostLoopback covers the other spellings that reach
+// the host itself. connect() to the unspecified address of either family lands
+// on local loopback, and Linux routes 0.0.0.0/8 to the local host, so these
+// must be governed by the loopback selector under every baseline — including
+// an open one, where an authored loopback row cannot even be expressed.
+func TestUnspecifiedAddressIsHostLoopback(t *testing.T) {
+	openDeny := openRules(
+		[]sandboxpolicy.NetworkAllowEntry{{Domain: "tracker.example"}})
+	loopbackList := listRules([]sandboxpolicy.NetworkAllowEntry{
+		{Loopback: true, Ports: []int{8080}},
+	}, nil)
+
+	for _, host := range []string{"0.0.0.0", "::", "0.1.2.3"} {
+		t.Run("open baseline refuses "+host, func(t *testing.T) {
+			evaluator := mustEvaluator(t, openDeny)
+			target := mustTarget(t, host, 8080)
+			if got := evaluator.Evaluate(target); got.Allowed() {
+				t.Fatalf("requested %s was allowed under an open baseline", host)
+			}
+			got := evaluator.EvaluateResolvedAddress(
+				mustTarget(t, "example.com", 8080), netip.MustParseAddr(host))
+			if got.Allowed() {
+				t.Fatalf("a name resolving to %s was allowed under an open baseline",
+					host)
+			}
+		})
+		t.Run("a loopback row carves out "+host, func(t *testing.T) {
+			evaluator := mustEvaluator(t, loopbackList)
+			got := evaluator.EvaluateResolvedAddress(
+				mustTarget(t, "example.com", 8080), netip.MustParseAddr(host))
+			if !got.Allowed() {
+				t.Fatalf("verdict for %s = %q, want allowed by the loopback row",
+					host, got.Verdict)
+			}
+		})
+	}
+}
+
+// TestCloseStopsAccepting proves Close does what its name says: the listening
+// socket is gone and Serve has returned, rather than staying bound until one
+// more connection happens to arrive.
+func TestCloseStopsAccepting(t *testing.T) {
+	handled := make(chan struct{}, 1)
+	server, err := New(Config{
+		Rules: listRules([]sandboxpolicy.NetworkAllowEntry{
+			{Domain: "example.com", Ports: []int{443}},
+		}, nil),
+		OnDecision: func(Carriage, Target, Decision) {
+			select {
+			case handled <- struct{}{}:
+			default:
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen proxy: %v", err)
+	}
+	addr := listener.Addr().String()
+	served := make(chan error, 1)
+	go func() { served <- server.Serve(listener) }()
+
+	// Drive one complete request first. Waiting for its decision proves the
+	// proxy was accepting, and proves the accept loop has looped back and is
+	// blocked in Accept — which is the state Close has to break out of. A bare
+	// dial would not: its connection could still be sitting in the accept
+	// queue when Close runs, and Serve would then return for the wrong reason.
+	if outcome := httpConnect(t, addr, "denied.example:443"); !outcome.Refused {
+		t.Fatalf("the proxy was not serving before Close: %+v", outcome)
+	}
+	select {
+	case <-handled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the proxy never handled the probe request")
+	}
+
+	if err := server.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	select {
+	case err := <-served:
+		if err != nil {
+			t.Fatalf("Serve returned %v, want nil after Close", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Serve did not return after Close; it is still blocked in Accept")
+	}
+	if conn, err := net.DialTimeout("tcp", addr, time.Second); err == nil {
+		_ = conn.Close()
+		t.Fatal("the listener is still bound after Close")
 	}
 }

@@ -55,9 +55,10 @@ type Server struct {
 	baseCtx context.Context
 	stop    context.CancelFunc
 
-	mu     sync.Mutex
-	closed bool
-	conns  map[net.Conn]struct{}
+	mu       sync.Mutex
+	closed   bool
+	conns    map[net.Conn]struct{}
+	listener net.Listener
 }
 
 // New builds a server from materialized launch intent.
@@ -105,6 +106,9 @@ func (s *Server) Evaluator() *Evaluator { return s.evaluator }
 // Serve accepts connections until the listener fails or Close is called.
 func (s *Server) Serve(l net.Listener) error {
 	defer func() { _ = l.Close() }()
+	if !s.adopt(l) {
+		return nil
+	}
 	var wg sync.WaitGroup
 	defer wg.Wait()
 	for {
@@ -138,16 +142,35 @@ func (s *Server) Close() error {
 	}
 	s.closed = true
 	s.stop()
+	listener := s.listener
+	s.listener = nil
 	conns := make([]net.Conn, 0, len(s.conns))
 	for conn := range s.conns {
 		conns = append(conns, conn)
 	}
 	s.conns = nil
 	s.mu.Unlock()
+	// Closing the listener is what actually stops accepting: Serve is blocked
+	// in Accept and cannot reach its own deferred close until it returns.
+	if listener != nil {
+		_ = listener.Close()
+	}
 	for _, conn := range conns {
 		_ = conn.Close()
 	}
 	return nil
+}
+
+// adopt records the listener so Close can unblock the accept loop. It reports
+// false when the server was already closed.
+func (s *Server) adopt(l net.Listener) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return false
+	}
+	s.listener = l
+	return true
 }
 
 func (s *Server) isClosed() bool {

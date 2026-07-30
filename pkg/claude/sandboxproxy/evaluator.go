@@ -125,7 +125,7 @@ func (e *Evaluator) Evaluate(target Target) Decision {
 	// its own; host loopback is only ever reached through an authored loopback
 	// row. Honoring the default here would hand an open policy a destination it
 	// never asked for and never previously had.
-	if e.defaultAccept && !target.IsLoopback() {
+	if e.defaultAccept && !target.namesLocalHost() {
 		return Decision{Verdict: VerdictAllowed}
 	}
 	if rule := e.match(e.rules.Rules, names.Allow, target, false); rule != nil {
@@ -214,14 +214,20 @@ func portsCover(ports []int, port int) bool {
 
 // EvaluateResolvedAddress applies the private-destination blocker to one
 // address a name resolved to. The resolved address is deliberately not
-// re-checked against the authored list — there is no lease model here and name
-// identity is the authority — but it may not lead somewhere the operator never
-// asked for.
+// re-checked against the authored allow list — there is no lease model here and
+// name identity is the authority — but it may not lead somewhere the operator
+// never asked for, and it may never land somewhere the operator explicitly
+// refused.
+//
+// Deny rows are evaluated here as well as on the requested target, under every
+// baseline. Without that, an authored deny would be bypassable through any
+// allowed name whose answer points at the denied address — which is exactly the
+// rebinding route this blocker exists to close.
 //
 // The carve-outs are exactly the two authored ways to ask: a loopback row for
-// host loopback, and an explicit CIDR row for other reserved space. Both must
-// also cover the requested port, so the blocker never grants more than the row
-// that carved it out.
+// the host itself, and an explicit CIDR row for other reserved space. Both must
+// also cover the requested port, so a carve-out never grants more than the row
+// that made it.
 //
 // The blocker applies only in allowlist postures. Under an open baseline the
 // policy authorizes everything except its authored denies, so refusing private
@@ -229,6 +235,12 @@ func portsCover(ports []int, port int) bool {
 // the packet engine does for the same authored policy. Open means open, minus
 // the denies (operator ruling, 2026-07-30; it supersedes the design doc's
 // unconditional wording).
+//
+// The host itself is the one exception to that: reaching host loopback always
+// requires an authored loopback row, under every baseline. Under the packet
+// engine an open posture puts the sandbox on the host network, where its
+// loopback is its own, so an open policy never had this destination to begin
+// with.
 func (e *Evaluator) EvaluateResolvedAddress(
 	target Target,
 	addr netip.Addr,
@@ -240,16 +252,22 @@ func (e *Evaluator) EvaluateResolvedAddress(
 			Detail:  refusalDetail(target, VerdictPrivateDestination),
 		}
 	}
-	// The loopback carve-out is not part of the baseline-conditional blocker:
-	// host loopback is reachable only through an authored loopback row under
-	// every baseline, for the reason Evaluate states.
-	if !addr.IsLoopback() && e.defaultAccept {
-		return Decision{Verdict: VerdictAllowed}
+	// The resolved address is asked as the literal it is, through the same
+	// matcher a literal target uses, so there is one deny implementation
+	// rather than two.
+	resolved := Target{
+		Kind: TargetKindLiteral,
+		Addr: addr,
+		Port: target.Port,
 	}
-	if !isReservedDestination(addr) {
-		return Decision{Verdict: VerdictAllowed}
+	if rule := e.match(e.rules.DenyRules, nil, resolved, true); rule != nil {
+		return Decision{
+			Verdict: VerdictDeniedByRule,
+			Rule:    rule,
+			Detail:  refusalDetail(target, VerdictDeniedByRule),
+		}
 	}
-	if addr.IsLoopback() {
+	if namesLocalHost(addr) {
 		for i := range e.rules.Rules {
 			if e.rules.Rules[i].Selector != sandboxpolicy.NetworkSelectorLoopback {
 				continue
@@ -262,6 +280,9 @@ func (e *Evaluator) EvaluateResolvedAddress(
 			Verdict: VerdictPrivateDestination,
 			Detail:  refusalDetail(target, VerdictPrivateDestination),
 		}
+	}
+	if e.defaultAccept || !isReservedDestination(addr) {
+		return Decision{Verdict: VerdictAllowed}
 	}
 	for i := range e.rules.Rules {
 		if e.rules.Rules[i].Selector != sandboxpolicy.NetworkSelectorCIDR {
@@ -281,12 +302,52 @@ func (e *Evaluator) EvaluateResolvedAddress(
 	}
 }
 
-var reservedDestinationPrefixes = []netip.Prefix{
-	// "This network". Linux routes 0.0.0.0/8 to the local host, so it is a
-	// second spelling of loopback rather than a routable destination.
+// localHostPrefixes are the spellings that reach the host itself without being
+// the loopback address. Linux routes 0.0.0.0/8 to the local host, and connect()
+// to the unspecified address of either family lands on local loopback, so these
+// are further spellings of host loopback rather than routable destinations.
+var localHostPrefixes = []netip.Prefix{
 	netip.MustParsePrefix("0.0.0.0/8"),
+}
+
+// namesLocalHost reports whether an address reaches the host running the proxy.
+// Every such spelling is governed by the loopback selector, under every
+// baseline — otherwise an open posture would reach host services through
+// 0.0.0.0 that no authored row ever granted.
+func namesLocalHost(addr netip.Addr) bool {
+	if addr.IsLoopback() || addr.IsUnspecified() {
+		return true
+	}
+	for _, prefix := range localHostPrefixes {
+		if prefix.Contains(addr) {
+			return true
+		}
+	}
+	return false
+}
+
+var reservedDestinationPrefixes = []netip.Prefix{
+	// "This network" — also handled by namesLocalHost, kept here so the
+	// classifier stands on its own.
+	netip.MustParsePrefix("0.0.0.0/8"),
+	// IETF protocol assignments.
+	netip.MustParsePrefix("192.0.0.0/24"),
 	// Carrier-grade NAT.
 	netip.MustParsePrefix("100.64.0.0/10"),
+	// Benchmarking.
+	netip.MustParsePrefix("198.18.0.0/15"),
+	// Reserved, including the broadcast address.
+	netip.MustParsePrefix("240.0.0.0/4"),
+	// NAT64. A host behind a NAT64/DNS64 gateway reaches embedded IPv4 —
+	// including private space — through this prefix, so it must not read as
+	// an ordinary global address.
+	netip.MustParsePrefix("64:ff9b::/96"),
+	netip.MustParsePrefix("64:ff9b:1::/48"),
+	// IPv4-compatible IPv6, deprecated site-local, and 6to4, which likewise
+	// embed an IPv4 destination.
+	netip.MustParsePrefix("::/96"),
+	netip.MustParsePrefix("fec0::/10"),
+	netip.MustParsePrefix("2002::/16"),
 }
 
 // isReservedDestination classifies the address space a resolved name may not

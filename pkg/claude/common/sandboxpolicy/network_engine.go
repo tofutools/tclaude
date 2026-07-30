@@ -176,6 +176,12 @@ func NetworkRulesAreDiscriminating(rules NetworkRules) (bool, error) {
 	case AccessModeOpen:
 		return len(rules.Deny) > 0, nil
 	case AccessModeList:
+		if len(rules.Allow) == 0 {
+			// An empty allow list under a deny baseline authorizes exactly
+			// nothing, which is the closed posture by another spelling. Its
+			// deny rows have no work to do and the floor expresses it alone.
+			return false, nil
+		}
 		if len(rules.Deny) > 0 {
 			return true, nil
 		}

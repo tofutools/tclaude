@@ -127,13 +127,10 @@ func (s *Server) forwardHTTP(
 ) bool {
 	outbound := req.Clone(req.Context())
 	outbound.RequestURI = ""
-	// Forward the authority policy actually authorized. A client may send a
-	// Host header naming a different vhost than the request line; the request
-	// line is what was evaluated, so it is what the origin must be told.
-	outbound.Host = target.Host()
-	for _, header := range hopByHopHeaders {
-		outbound.Header.Del(header)
-	}
+	// The Host field is deliberately not overridden. For an absolute-form
+	// request Go sets req.Host from the request-line authority, which is
+	// exactly the authority policy evaluated, so a client cannot use a
+	// conflicting Host header to select a vhost that was never evaluated.
 	// One upstream connection carries exactly one forwarded request here, so
 	// ask the origin to close it rather than leaving a pooled connection this
 	// proxy does not own.
