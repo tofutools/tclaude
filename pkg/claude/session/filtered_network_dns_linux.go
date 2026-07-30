@@ -557,6 +557,12 @@ func sanitizeFilteredDNSResponse(response *dnsmessage.Message) {
 	response.Additionals = filterAddressBearingDNSResources(response.Additionals)
 }
 
+// Dropping SVCB and HTTPS records serves two purposes, not one. Besides
+// denying address smuggling, it also denies the client the ECHConfigList that
+// TLS Encrypted Client Hello needs, so sandboxed clients keep sending a
+// plaintext SNI. Relaxing this therefore also gives up that name visibility;
+// see "SVCB/HTTPS stripping also keeps TLS SNI observable" in
+// docs/linux-network-filtering.md before changing it.
 func filterAddressBearingDNSResources(
 	resources []dnsmessage.Resource,
 ) []dnsmessage.Resource {
