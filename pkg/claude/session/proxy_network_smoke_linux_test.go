@@ -406,10 +406,15 @@ func TestTclaudeLayerProxyFloorHelper(t *testing.T) {
 	}
 	fmt.Printf("proxy-floor: direct TCP to an allowed destination: refused (%v)\n", err)
 
-	require.Error(t, proxySmokeSendUDP(allowed))
-	fmt.Println("proxy-floor: UDP to an allowed destination: refused")
+	udpRefusal, err := proxySmokeSendUDP(allowed)
+	require.NoError(t, err)
+	require.NotNil(t, udpRefusal, "a UDP datagram left the sandbox to %s", allowed)
+	fmt.Printf("proxy-floor: UDP to an allowed destination: refused (%v)\n",
+		udpRefusal)
 
-	require.Error(t, proxySmokeSendUDP(proxySmokePublicResolver))
+	dnsUDPRefusal, err := proxySmokeSendUDP(proxySmokePublicResolver)
+	require.NoError(t, err)
+	require.NotNil(t, dnsUDPRefusal, "a DNS datagram left the sandbox")
 	dnsConn, dnsErr := net.DialTimeout(
 		"tcp", proxySmokePublicResolver, proxySmokeDialTimeout)
 	if dnsErr == nil {
@@ -418,8 +423,10 @@ func TestTclaudeLayerProxyFloorHelper(t *testing.T) {
 	}
 	fmt.Printf("proxy-floor: DNS to a public resolver: refused (%v)\n", dnsErr)
 
-	require.Error(t, proxySmokePingEcho(fixture.AllowedAddr))
-	fmt.Println("proxy-floor: ICMP echo: refused")
+	icmpRefusal, err := proxySmokePingEcho(fixture.AllowedAddr)
+	require.NoError(t, err)
+	require.NotNil(t, icmpRefusal, "an ICMP echo left the sandbox")
+	fmt.Printf("proxy-floor: ICMP echo: refused (%v)\n", icmpRefusal)
 
 	// The namespace has no resolver at all, which is what makes socks5h and
 	// CONNECT-by-name load-bearing rather than a preference.
@@ -510,41 +517,57 @@ func proxySmokeProxyEndpoint(t *testing.T) string {
 	return endpoint
 }
 
-func proxySmokeSendUDP(address string) error {
+// proxySmokeSendUDP reports the REFUSAL, not the attempt: it returns the error
+// the floor produced, and a nil error means the datagram left the sandbox.
+//
+// The polarity is the whole point. A helper that returned an error for both
+// outcomes would pass a `require.Error` assertion whether the floor held or
+// leaked, which is exactly the vacuous shape these smokes exist to avoid.
+func proxySmokeSendUDP(address string) (refusal error, err error) {
 	conn, err := net.DialTimeout("udp", address, proxySmokeDialTimeout)
 	if err != nil {
-		return err
+		return err, nil
 	}
 	defer func() { _ = conn.Close() }()
 	if err := conn.SetDeadline(time.Now().Add(proxySmokeDialTimeout)); err != nil {
-		return err
+		return nil, err
 	}
-	// An empty namespace has no route, so the send itself fails. A datagram
-	// that leaves is a floor failure even if nothing answers it.
-	_, err = conn.Write([]byte("tclaude-proxy-floor"))
-	if err != nil {
-		return err
+	// An empty namespace has no route, so the send itself fails.
+	if _, writeErr := conn.Write([]byte("tclaude-proxy-floor")); writeErr != nil {
+		return writeErr, nil
 	}
-	return fmt.Errorf("UDP datagram left the sandbox to %s", address)
+	return nil, nil
 }
 
-// proxySmokePingEcho attempts an ICMP echo, through the unprivileged datagram
-// ICMP socket where it is available. Either the socket cannot be created or the
-// echo cannot be sent; both are refusals, and a successful send is not.
-func proxySmokePingEcho(address string) error {
+// TestProxySmokeSendUDPReportsTrafficThatLeaves guards the polarity the floor
+// smoke's anti-vacuous property rests on. It needs no sandbox and no gate: on
+// an ordinary host the datagram leaves, so the helper must report NO refusal.
+// A helper that returned an error for both outcomes would satisfy the floor
+// smoke whether the floor held or leaked, and would fail here.
+func TestProxySmokeSendUDPReportsTrafficThatLeaves(t *testing.T) {
+	refusal, err := proxySmokeSendUDP("127.0.0.1:9")
+	require.NoError(t, err)
+	assert.NoError(t, refusal,
+		"a datagram that left the host must not be reported as a refusal")
+}
+
+// proxySmokePingEcho attempts an ICMP echo. Like proxySmokeSendUDP it returns
+// the refusal: either the socket cannot be created or the echo cannot be sent,
+// and a nil refusal means an echo left the sandbox.
+func proxySmokePingEcho(address string) (refusal error, err error) {
 	conn, err := net.Dial("ip4:icmp", address)
 	if err != nil {
-		return err
+		return err, nil
 	}
 	defer func() { _ = conn.Close() }()
 	if err := conn.SetDeadline(time.Now().Add(proxySmokeDialTimeout)); err != nil {
-		return err
+		return nil, err
 	}
 	echo := []byte{8, 0, 0, 0, 0, 1, 0, 1}
-	if _, err := conn.Write(echo); err != nil {
-		return err
+	if _, writeErr := conn.Write(echo); writeErr != nil {
+		return writeErr, nil
 	}
-	return fmt.Errorf("an ICMP echo left the sandbox to %s", address)
+	return nil, nil
 }
 
 // proxySmokeHTTPConnect asks one policy question over the HTTP CONNECT

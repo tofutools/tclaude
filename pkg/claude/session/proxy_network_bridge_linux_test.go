@@ -562,6 +562,37 @@ func TestTclaudeLayerWinchRelayRefusesCombinedEngines(t *testing.T) {
 	assert.ErrorContains(t, err, "cannot be combined")
 }
 
+// TestTclaudeLayerWinchRelayStartsAProxySandbox drives the supervisor past the
+// point where it launches bubblewrap, with a proxy policy and a stand-in for
+// bwrap that reports a child and exits.
+//
+// The refusal tests above all return at their 125 before anything is started,
+// so nothing else in the suite exercises the descriptor bookkeeping that runs
+// immediately after the child starts — where the engine's own descriptor list,
+// not the other engine's, must be the one consulted.
+func TestTclaudeLayerWinchRelayStartsAProxySandbox(t *testing.T) {
+	plan := proxyBridgeTestPlan(t,
+		proxyBridgeDiscriminatingRules(), sandboxpolicy.NetworkEngineProxy)
+	policy, err := encodeProxyNetworkRelayPolicy(plan)
+	require.NoError(t, err)
+
+	// Reports a child on bubblewrap's JSON status descriptor and exits, which
+	// is the shortest path through the supervisor's start sequence.
+	fakeBwrap := filepath.Join(t.TempDir(), "bwrap")
+	require.NoError(t, os.WriteFile(fakeBwrap,
+		[]byte("#!/bin/sh\nprintf '{\"child-pid\":%d}' \"$$\" >&3\n"), 0o700))
+
+	code, err := runTclaudeLayerWinchRelay(
+		[]string{fakeBwrap, "--", "/bin/true"}, nil,
+		stackedRelayBindingOptions{ProxyPolicy: policy})
+	// The stand-in never runs a bootstrap, so no listener is ever handed out.
+	// The supervisor must survive its start sequence and then fail closed on
+	// the missing handoff — reporting it, rather than dying on the way there or
+	// releasing a harness gate it has no proxy behind.
+	assert.Equal(t, 125, code)
+	assert.ErrorContains(t, err, "accept proxy network readiness")
+}
+
 // TestTclaudeLayerUnixRelayRefusesTheProxyEngine proves the OpenCode
 // inherited-descriptor path fails closed rather than rendering a proxy plan
 // under the packet supervisor's fd contract.

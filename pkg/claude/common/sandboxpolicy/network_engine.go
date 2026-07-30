@@ -152,8 +152,10 @@ func sortNetworkEngineSelections(in []NetworkEngineSelection) {
 // It is the composition of the two halves that must never be re-derived apart —
 // the discrimination predicate below, and the authored engine selection resolved
 // by ResolveNetworkEngine — and it is deliberately the single place they meet.
-// Both the launch path and PredictAccessEnforcement call it, so a preview cannot
-// name a mechanism the launch does not run.
+// The launch path calls it today. Enforcement prediction is to call this same
+// function rather than grow its own copy when the selection surface lands —
+// that is what will keep a preview from naming a mechanism the launch does not
+// run, and it is why the composition lives here rather than at the launch seam.
 //
 // The unset result is load-bearing rather than a missing value: a policy that
 // asks for no distinction between destinations deploys NO engine, whatever a

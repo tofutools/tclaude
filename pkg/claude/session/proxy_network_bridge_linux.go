@@ -126,8 +126,10 @@ func proxyNetworkRelayPrefix(plan sandboxpolicy.MountPlan) (string, error) {
 //
 // Note what is NOT here, compared with the packet relay: no capability
 // arguments, no nft policy, no hosts or resolver files, no pasta. The proxy
-// engine's whole in-namespace footprint is one sealed executable and one
-// readiness socket, both removed before the harness runs.
+// engine's whole in-namespace footprint is one sealed executable, which the
+// bootstrap unlinks before exec'ing the harness, and one bind-mounted readiness
+// socket whose host end is closed and unlinked once the single handoff it
+// exists for has been accepted.
 func prepareProxyNetworkRelay(
 	encoded string,
 ) (_ preparedProxyNetworkRelay, retErr error) {
@@ -252,8 +254,14 @@ func (p *preparedProxyNetworkRelay) Close() {
 }
 
 // Active reports whether this launch deploys a proxy at all.
+//
+// It is keyed on the readiness directory rather than on the listener, because
+// the listener is deliberately dropped the moment the handoff is accepted. A
+// predicate meaning "a proxy is deployed" must not start answering false
+// halfway through the launch it describes — a later supervision or teardown
+// check consulting it would silently take the no-proxy branch.
 func (p *preparedProxyNetworkRelay) Active() bool {
-	return p != nil && p.SyncListener != nil
+	return p != nil && p.SyncDir != ""
 }
 
 // waitCh exposes the proxy's exit channel. A nil channel blocks forever in a
@@ -278,6 +286,11 @@ func (p *preparedProxyNetworkRelay) waitCh() <-chan error {
 func (p *preparedProxyNetworkRelay) waitListenerReady(namespacePID int) error {
 	if !p.Active() {
 		return nil
+	}
+	if p.SyncListener == nil {
+		// The readiness channel exists for exactly one connection. A second
+		// handshake would be a second, unverified claim on the same launch.
+		return fmt.Errorf("proxy network readiness has already been consumed")
 	}
 	if err := p.SyncListener.SetDeadline(
 		time.Now().Add(proxyNetworkReadyTimeout),
