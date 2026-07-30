@@ -304,8 +304,7 @@ test('sandbox-implementation hint stays silent for the default and warns honestl
 
   const off = model.sandboxImplHintFor({ sandboxImpl: 'off' }, codexView);
   assert.equal(off.warn, true);
-  assert.match(off.text, /Sandbox OFF/);
-  assert.match(off.text, /without OS-level confinement/);
+  assert.equal(off.text, 'Sandbox OFF. The agent runs without OS-level confinement.');
 
   const openCodeView = model.spawnCapabilityView(
     { harness: 'opencode' }, { harnesses, sandboxImpl },

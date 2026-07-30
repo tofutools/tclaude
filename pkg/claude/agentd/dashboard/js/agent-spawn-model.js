@@ -376,7 +376,7 @@ export function sandboxImplHintFor(draft, view, resolvedImplementation = '') {
   if (value === SANDBOX_IMPL_OFF) {
     return {
       warn: true,
-      text: 'Sandbox OFF. The agent runs without OS-level confinement; approval policy still applies.',
+      text: 'Sandbox OFF. The agent runs without OS-level confinement.',
     };
   }
   const builtinCodex = view.sandboxImplHarnessName === 'codex'
