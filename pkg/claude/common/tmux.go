@@ -82,6 +82,46 @@ func TmuxArgs(args ...string) []string {
 	return append([]string{"-L", TmuxSocketName}, args...)
 }
 
+// TmuxHyperlinksFeature is the tmux terminal-feature name for OSC 8 hyperlink
+// passthrough. tmux always PARSES OSC 8 out of pane output and keeps the target
+// URL in its grid, but it only re-emits the sequence to a client whose terminal
+// advertises the `Hls` capability. Neither the terminfo entry for the web
+// terminal's TERM nor tmux's own terminal auto-detection (xterm.js answers no
+// XTVERSION query) supplies it, so without an explicit opt-in every OSC 8 link
+// a harness draws reaches the browser as plain, unclickable label text.
+const TmuxHyperlinksFeature = "hyperlinks"
+
+// TmuxClientFeaturesEnv asks a `tclaude session attach` child process to pass
+// tmux `-T <features>` for the client it forks. The dashboard's web terminals
+// reach tmux through that wrapper rather than by spawning tmux themselves, so
+// the "this client renders OSC 8" fact has to survive one process hop. It is
+// deliberately an env var and not a CLI flag: the native-terminal attach path
+// shares the same command builder and must keep tmux's default (detected)
+// feature set, since an arbitrary local terminal may not handle OSC 8.
+const TmuxClientFeaturesEnv = "TCLAUDE_TMUX_CLIENT_FEATURES"
+
+// TmuxClientFeatureArgs turns a requested feature list into the tmux client
+// flags that precede the command word (`tmux -T a,b attach-session …`), or nil
+// when nothing valid was asked for.
+//
+// The list is charset-gated even though it lands in an exec argv rather than a
+// shell word: this value arrives from the process environment, and tmux treats
+// an unparsable -T as a fatal client error, so a malformed value would turn
+// every web terminal into a blank pane instead of one without links.
+func TmuxClientFeatureArgs(features string) []string {
+	features = strings.TrimSpace(features)
+	if features == "" || len(features) > 128 {
+		return nil
+	}
+	for _, r := range features {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == ',' || r == '-' {
+			continue
+		}
+		return nil
+	}
+	return []string{"-T", features}
+}
+
 // ExactTarget returns a tmux -t target that resolves the session name
 // EXACTLY. A bare `-t name` falls back to prefix (then fnmatch) matching
 // when no exact match exists, so a command aimed at a dead session's name

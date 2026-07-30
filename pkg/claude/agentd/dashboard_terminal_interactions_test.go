@@ -70,6 +70,11 @@ func TestDashboardTerminalInteractionsWired(t *testing.T) {
 		"flash(SELECT_HINT);\n      term.focus();",
 		"isComposeMessageShortcut(event)",
 		"onComposeMessage();",
+		// An OSC 8 link's label is chosen independently of its target, so the
+		// destination must be visible before the human commits to Ctrl/Cmd-click.
+		"hover: (event, text) => showLinkTarget(text)",
+		"leave: () => clearLinkTarget()",
+		"setStatus(url ? `Ctrl/Cmd-click → ${shortenForStatus(url)}` : 'blocked unsafe link')",
 	} {
 		if !strings.Contains(interactions, needle) {
 			t.Errorf("terminal-interactions.js missing %q", needle)

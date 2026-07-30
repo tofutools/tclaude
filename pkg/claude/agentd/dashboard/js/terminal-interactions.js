@@ -176,6 +176,14 @@ function safeHTTPURL(raw) {
   }
 }
 
+// The status line is one row of chrome under the terminal, so a long target
+// URL would push out the hint that precedes it. Keep both ends — the origin
+// says who is being contacted, the tail is what distinguishes sibling links.
+function shortenForStatus(url, max = 120) {
+  if (url.length <= max) return url;
+  return `${url.slice(0, max - 15)}…${url.slice(-14)}`;
+}
+
 function legacyCopy(text) {
   const area = document.createElement('textarea');
   area.value = text;
@@ -369,10 +377,26 @@ export function attachTerminalInteractions({
     }
     window.open(url, '_blank', 'noopener,noreferrer');
   };
+  // An OSC 8 hyperlink chooses its label text independently of its target, so
+  // "see the docs" — or a string that reads like some other URL — can point
+  // anywhere. A web-links match is self-describing (the text IS the target);
+  // an explicit hyperlink is not. Show the real destination while the pointer
+  // rests on it so Ctrl/Cmd-click is never a blind gesture.
+  const showLinkTarget = (raw) => {
+    if (!setStatus) return;
+    if (statusTimer) { clearTimeout(statusTimer); statusTimer = null; }
+    const url = safeHTTPURL(raw);
+    setStatus(url ? `Ctrl/Cmd-click → ${shortenForStatus(url)}` : 'blocked unsafe link');
+  };
+  const clearLinkTarget = () => {
+    if (!setStatus) return;
+    if (statusTimer) { clearTimeout(statusTimer); statusTimer = null; }
+    setStatus(baseStatus());
+  };
   const linkHandler = {
     activate: (event, text) => activateLink(event, text),
-    hover: () => {},
-    leave: () => {},
+    hover: (event, text) => showLinkTarget(text),
+    leave: () => clearLinkTarget(),
     allowNonHttpProtocols: false,
   };
   term.options.linkHandler = linkHandler; // explicit OSC 8 hyperlinks

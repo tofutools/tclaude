@@ -71,8 +71,9 @@ func handleTUIAttachWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	command := fmt.Sprintf(
-		"exec tmux -L %s attach-session -t %s",
+		"exec tmux -L %s %s attach-session -t %s",
 		shellSingleQuote(clcommon.TmuxSocketName),
+		webTerminalTmuxFlags(),
 		shellSingleQuote(clcommon.ExactTarget(sess.TmuxSession)),
 	)
 	runPTYOverWS(w, r, command, "")

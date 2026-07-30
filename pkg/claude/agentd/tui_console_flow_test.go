@@ -210,6 +210,38 @@ func TestTUIRemoteAttachUsesANonDisplacingTmuxClient(t *testing.T) {
 		"closing this stream must not detach every other client on the session")
 }
 
+// The standalone TUI's terminal is an xterm.js client like the dashboard's, so
+// it needs the same OSC 8 opt-in: tmux keeps a hyperlink's target in its grid
+// and emits it only to a client that advertises the capability. The flags must
+// land before the command word — tmux reads client flags only there, and would
+// fail the whole client on a misplaced -T rather than merely drop the links.
+func TestTUIRemoteAttachRequestsHyperlinkPassthrough(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("dev")
+	spawned := f.Spawn("dev", "worker")
+
+	var command string
+	t.Cleanup(agentd.SetTermWSHookForTest(&agentd.TermWSHook{
+		RewriteCommand: func(gotCommand, gotSession string) (string, string) {
+			command = gotCommand
+			return gotCommand, gotSession
+		},
+	}))
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://agent-host:8321"))
+
+	rec := testharness.Serve(agentd.BuildDashboardHandlerForTest(), httptest.NewRequest(
+		http.MethodGet,
+		"http://agent-host:8321/api/tui/attach-ws/"+spawned.ConvID,
+		nil,
+	))
+	require.NotEmpty(t, command, "status=%d body=%s", rec.Code, rec.Body.String())
+
+	flagAt := strings.Index(command, "-T hyperlinks")
+	require.GreaterOrEqual(t, flagAt, 0, "no hyperlink opt-in in %q", command)
+	assert.Less(t, flagAt, strings.Index(command, "attach-session"),
+		"client flags must precede the tmux command word: %q", command)
+}
+
 // Enter on an offline agent is the console's "turn this back on": it goes
 // through the daemon's resume verb, in the directory and conversation the
 // agent was last running.

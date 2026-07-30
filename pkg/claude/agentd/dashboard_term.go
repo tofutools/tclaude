@@ -105,8 +105,8 @@ func handleDashboardTermWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := termSessionName(res.ConvID, which)
-	cmd := fmt.Sprintf("tmux -L %s new-session -A -s %s -c %s",
-		clcommon.TmuxSocketName, shellSingleQuote(name), shellSingleQuote(dir))
+	cmd := fmt.Sprintf("tmux -L %s %s new-session -A -s %s -c %s",
+		clcommon.TmuxSocketName, webTerminalTmuxFlags(), shellSingleQuote(name), shellSingleQuote(dir))
 	runPTYOverWS(w, r, cmd, name)
 }
 
@@ -171,8 +171,8 @@ func handleDashboardGroupTermWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sessName := groupTermSessionName(g.Name)
-	cmd := fmt.Sprintf("tmux -L %s new-session -A -s %s -c %s",
-		clcommon.TmuxSocketName, shellSingleQuote(sessName), shellSingleQuote(dir))
+	cmd := fmt.Sprintf("tmux -L %s %s new-session -A -s %s -c %s",
+		clcommon.TmuxSocketName, webTerminalTmuxFlags(), shellSingleQuote(sessName), shellSingleQuote(dir))
 	runPTYOverWS(w, r, cmd, sessName)
 }
 
@@ -364,6 +364,32 @@ func hangupProcessGroup(proc *os.Process) {
 	}
 }
 
+// webTerminalTmuxFlags are the tmux client flags for a terminal rendered by the
+// dashboard's xterm.js, spelled for the `sh -c` command strings the PTY sites
+// build. The browser terminal loads a linkHandler for OSC 8, so it can honestly
+// claim the hyperlink capability tmux gates hyperlink passthrough on — without
+// it, a link a harness draws with label text (rather than a bare URL) arrives as
+// dead text, because tmux keeps the target in its grid and never emits it.
+//
+// A tmux client that reaches tmux through `tclaude session attach` instead of
+// forking tmux itself gets the same opt-in via clcommon.TmuxClientFeaturesEnv,
+// which runPTYOverWS puts in the PTY environment.
+func webTerminalTmuxFlags() string {
+	return "-T " + clcommon.TmuxHyperlinksFeature
+}
+
+// webTerminalPTYEnv is the environment every browser-hosted PTY runs under.
+// TERM describes what xterm.js emulates; the feature request is the same OSC 8
+// opt-in webTerminalTmuxFlags spells inline, carried as an env var for the PTY
+// sites that reach tmux through `tclaude session attach` instead of forking
+// tmux themselves — that wrapper turns it back into tmux's -T.
+func webTerminalPTYEnv() []string {
+	return append(os.Environ(),
+		"TERM=xterm-256color",
+		clcommon.TmuxClientFeaturesEnv+"="+clcommon.TmuxHyperlinksFeature,
+	)
+}
+
 // runPTYOverWS upgrades the request to a WebSocket and pumps a PTY
 // running `sh -c shellCommand` over it: PTY output → binary WS
 // messages, WS messages → PTY input, except a {"type":"resize",...}
@@ -390,7 +416,7 @@ func runPTYOverWS(w http.ResponseWriter, r *http.Request, shellCommand, tmuxSess
 	defer func() { _ = conn.Close() }()
 
 	cmd := exec.Command("sh", "-c", shellCommand)
-	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
+	cmd.Env = webTerminalPTYEnv()
 
 	ptmx, err := pty.Start(cmd)
 	if err != nil {
