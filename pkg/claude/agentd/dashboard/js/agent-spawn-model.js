@@ -1,6 +1,6 @@
 import { readReviewer, reviewerValue } from './approval-controls.js';
 import {
-  CODEX_BUILTIN_FILTERED_NETWORK_HINT,
+  CODEX_BUILTIN_FILTERED_NETWORK_DETAIL,
   isCodexBuiltinSandboxOption,
 } from './sandbox-network-disclosure.js';
 
@@ -235,7 +235,7 @@ export function sandboxImplOptionsFor(
         ...option,
         label: fillHarnessPlaceholder(option?.label, displayName),
         descr: codexBuiltin
-          ? CODEX_BUILTIN_FILTERED_NETWORK_HINT
+          ? CODEX_BUILTIN_FILTERED_NETWORK_DETAIL
           : fillHarnessPlaceholder(option?.descr, displayName),
       };
     });
@@ -349,6 +349,30 @@ export function approvalControlsVisibleFor(draft, resolvedImplementation = '') {
   return codexOwnsSandbox && text(draft?.sandbox) !== 'danger-full-access';
 }
 
+// sandboxImplCaveatFor answers "does the implementation this row selects carry
+// a caveat the operator should be able to read?" — the copy the [!] trigger
+// beside the selector discloses, NOT copy any dialog prints inline.
+//
+// Only Codex's built-in sandbox has one today. It is a caveat rather than a
+// hint because a blank row reading "Codex CLI built-in" would otherwise
+// withhold that this particular implementation cannot enforce a profile's
+// TCP/UDP rules; the warning-coloured trigger says a caveat exists, and the
+// disclosure says what it is. Keeping the paragraph out of the row is the
+// point: it applies to one harness and used to push every control below it off
+// the first screen.
+//
+// resolvedImplementation is the DAEMON's answer for a blank row. Passing
+// nothing keeps a blank row silent, which is what the profile editor wants —
+// there, the field really is unresolved until spawn.
+export function sandboxImplCaveatFor(draft, view, resolvedImplementation = '') {
+  if (!view?.showSandboxImpl) return '';
+  const explicit = text(draft?.sandboxImpl);
+  const builtinCodex = view.sandboxImplHarnessName === 'codex'
+    && (explicit === SANDBOX_IMPL_DEFAULT
+      || (!explicit && text(resolvedImplementation) === SANDBOX_IMPL_DEFAULT));
+  return builtinCodex ? CODEX_BUILTIN_FILTERED_NETWORK_DETAIL : '';
+}
+
 // sandboxImplHintFor renders the note under the sandbox-implementation row.
 // Two truths, in the order an operator needs them: what the selected
 // implementation actually is, and — when they have selected the experimental
@@ -356,13 +380,11 @@ export function approvalControlsVisibleFor(draft, resolvedImplementation = '') {
 // quietly fall back. Saying "will refuse" is the whole point: an operator who
 // picks it anyway is choosing a failed launch, not an unnoticed downgrade.
 //
-// resolvedImplementation is the DAEMON's answer for a blank row. A blank row
-// used to mean "nobody knows yet", so it had to stay silent; now the daemon
-// tells us, and the row names that answer. Silence would be a worse lie than
-// the old one: the row would read "Codex CLI built-in" while withholding that
-// this particular implementation cannot enforce a profile's TCP/UDP rules.
-// Passing nothing keeps the old honest silence, which is what the profile
-// editor wants — there, the field really is unresolved until spawn.
+// What it deliberately does NOT carry is the Codex built-in caveat; that is
+// sandboxImplCaveatFor's, and it rides on the row's disclosure trigger.
+//
+// resolvedImplementation is the DAEMON's answer for a blank row, used by the
+// legacy-off notices below for the same reason the caveat uses it.
 export function sandboxImplHintFor(draft, view, resolvedImplementation = '') {
   if (!view.showSandboxImpl) return null;
   const explicit = text(draft.sandboxImpl);
@@ -392,12 +414,6 @@ export function sandboxImplHintFor(draft, view, resolvedImplementation = '') {
       warn: true,
       text: 'Sandbox OFF. The agent runs without OS-level confinement.',
     };
-  }
-  const builtinCodex = view.sandboxImplHarnessName === 'codex'
-    && (explicit === SANDBOX_IMPL_DEFAULT
-      || (!explicit && text(resolvedImplementation) === SANDBOX_IMPL_DEFAULT));
-  if (builtinCodex) {
-    return { warn: true, text: CODEX_BUILTIN_FILTERED_NETWORK_HINT };
   }
   if (value === SANDBOX_IMPL_DEFAULT && !view.sandboxImplCanBuiltin) {
     const explicit = text(draft.sandboxImpl) === SANDBOX_IMPL_DEFAULT;
