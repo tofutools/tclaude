@@ -557,6 +557,12 @@ func sanitizeFilteredDNSResponse(response *dnsmessage.Message) {
 	response.Additionals = filterAddressBearingDNSResources(response.Additionals)
 }
 
+// A and AAAA records are dropped purely to deny address smuggling. The SVCB
+// and HTTPS cases serve a second purpose as well: they deny the client the
+// ECHConfigList that TLS Encrypted Client Hello needs, so sandboxed clients
+// keep sending a plaintext SNI. Relaxing those two therefore also gives up
+// that name visibility; see "SVCB/HTTPS stripping also keeps TLS SNI
+// observable" in docs/linux-network-filtering.md before changing it.
 func filterAddressBearingDNSResources(
 	resources []dnsmessage.Resource,
 ) []dnsmessage.Resource {
