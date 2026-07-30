@@ -15,8 +15,8 @@ import (
 // cooperating client can distinguish a policy refusal from an origin's own 403.
 const RefusalHeader = "X-Tclaude-Network-Refusal"
 
-// hopByHopHeaders are dropped when forwarding an absolute-form request: they
-// describe the hop to the proxy, not the request to the origin.
+// hopByHopHeaders are dropped when forwarding: they describe one hop, not the
+// request or response itself.
 var hopByHopHeaders = []string{
 	"Connection",
 	"Keep-Alive",
@@ -71,7 +71,7 @@ func (s *Server) serveHTTPConnect(conn *bufferedConn, req *http.Request) {
 			"tclaude filtering proxy could not reach "+target.String()+".")
 		return
 	}
-	defer func() { _ = upstream.Close() }()
+	defer s.untrack(upstream)
 	if _, err := io.WriteString(conn,
 		"HTTP/1.1 200 Connection established\r\n\r\n"); err != nil {
 		return
@@ -113,7 +113,7 @@ func (s *Server) serveHTTPAbsoluteForm(conn net.Conn, req *http.Request) bool {
 			"tclaude filtering proxy could not reach "+target.String()+".")
 		return false
 	}
-	defer func() { _ = upstream.Close() }()
+	defer s.untrack(upstream)
 	return s.forwardHTTP(conn, upstream, req, target)
 }
 
@@ -127,12 +127,9 @@ func (s *Server) forwardHTTP(
 ) bool {
 	outbound := req.Clone(req.Context())
 	outbound.RequestURI = ""
-	// Hop-by-hop headers describe the hop to this proxy, not the request to
-	// the origin. Forwarding them would hand the origin the client's proxy
-	// credentials among other things.
-	for _, header := range hopByHopHeaders {
-		outbound.Header.Del(header)
-	}
+	// Forwarding these would hand the origin the client's proxy credentials
+	// among other things.
+	stripHopByHop(outbound.Header, req.Header.Get("Connection"))
 	// The Host field is deliberately not overridden. For an absolute-form
 	// request Go sets req.Host from the request-line authority, which is
 	// exactly the authority policy evaluated, so a client cannot use a
@@ -158,12 +155,32 @@ func (s *Server) forwardHTTP(
 	}
 	defer func() { _ = resp.Body.Close() }()
 	_ = conn.SetDeadline(time.Time{})
+	// Asking the origin to close is this proxy's own hop decision and must not
+	// be relayed to the client hop, whose reuse is governed by the client's own
+	// request. Leaving it in would tell the client the connection is closing
+	// while this function reports it reusable.
+	stripHopByHop(resp.Header, resp.Header.Get("Connection"))
+	resp.Close = req.Close
 	if err := resp.Write(conn); err != nil {
 		return false
 	}
 	// req.Close reflects the client's own Connection header; honor it, and
 	// otherwise allow another request on the proxy connection.
 	return !req.Close
+}
+
+// stripHopByHop removes the headers that describe one hop rather than the
+// message itself: the fixed set, plus every token the peer named in its own
+// Connection header, which RFC 7230 §6.1 makes hop-by-hop for that hop.
+func stripHopByHop(header http.Header, connection string) {
+	for _, token := range strings.Split(connection, ",") {
+		if token = strings.TrimSpace(token); token != "" {
+			header.Del(token)
+		}
+	}
+	for _, name := range hopByHopHeaders {
+		header.Del(name)
+	}
 }
 
 // parseHTTPAuthority reads a host[:port] authority. defaultPort applies when

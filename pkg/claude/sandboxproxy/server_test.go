@@ -35,6 +35,37 @@ type testOrigin struct {
 	received []byte
 }
 
+// newHoldingOrigin accepts and then holds each connection open forever without
+// ever closing its own side, even after the peer half-closes. That is the state
+// a stalled origin leaves behind, and the one in which an untracked upstream
+// socket leaks: the upstream-to-client copy has nothing to unblock it.
+func newHoldingOrigin(t *testing.T) *net.TCPAddr {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen holding origin: %v", err)
+	}
+	release := make(chan struct{})
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				_, _ = io.WriteString(conn, originBanner)
+				<-release
+				_ = conn.Close()
+			}()
+		}
+	}()
+	t.Cleanup(func() {
+		close(release)
+		_ = listener.Close()
+	})
+	return listener.Addr().(*net.TCPAddr)
+}
+
 func newTestOrigin(t *testing.T) *testOrigin {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -1101,5 +1132,166 @@ func TestCloseStopsAccepting(t *testing.T) {
 	if conn, err := net.DialTimeout("tcp", addr, time.Second); err == nil {
 		_ = conn.Close()
 		t.Fatal("the listener is still bound after Close")
+	}
+}
+
+// TestCloseTearsDownTheUpstreamHalf covers the half Close used to miss. Only
+// client connections were tracked, so after Close the client-to-upstream copy
+// finished but the upstream-to-client copy stayed blocked on a socket nothing
+// closed — leaking a goroutine and an upstream socket per stalled tunnel.
+//
+// Serve is the observable: it waits for every handler goroutine before
+// returning, so a handler still blocked in its upstream copy keeps Serve from
+// returning. The origin holds its side open forever, which is what makes the
+// leak reachable — a peer that closes on EOF would mask it.
+func TestCloseTearsDownTheUpstreamHalf(t *testing.T) {
+	upstreamAddr := newHoldingOrigin(t)
+	server, err := New(Config{
+		Rules: listRules([]sandboxpolicy.NetworkAllowEntry{
+			{Domain: "example.com", Ports: []int{443}},
+		}, nil),
+		Dialer: &Dialer{
+			Timeout: 5 * time.Second,
+			Resolve: func(_ context.Context, _ string) ([]netip.Addr, error) {
+				return []netip.Addr{netip.MustParseAddr("93.184.216.34")}, nil
+			},
+			DialAddr: func(ctx context.Context, _, _ string) (net.Conn, error) {
+				var d net.Dialer
+				return d.DialContext(ctx, "tcp", upstreamAddr.String())
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen proxy: %v", err)
+	}
+	served := make(chan error, 1)
+	go func() { served <- server.Serve(listener) }()
+
+	conn, err := net.DialTimeout("tcp", listener.Addr().String(), 5*time.Second)
+	if err != nil {
+		t.Fatalf("dial proxy: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+	if _, err := io.WriteString(conn,
+		"CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n",
+	); err != nil {
+		t.Fatalf("write CONNECT: %v", err)
+	}
+	reader := bufio.NewReader(conn)
+	resp, err := http.ReadResponse(reader,
+		&http.Request{Method: http.MethodConnect})
+	if err != nil {
+		t.Fatalf("read CONNECT response: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("CONNECT status = %s, want 200", resp.Status)
+	}
+	// Reading the banner proves the tunnel is live and both copies are running
+	// before Close, which is the state that used to survive it.
+	banner := make([]byte, len(originBanner))
+	if _, err := io.ReadFull(reader, banner); err != nil {
+		t.Fatalf("read origin banner: %v", err)
+	}
+
+	if err := server.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	select {
+	case err := <-served:
+		if err != nil {
+			t.Fatalf("Serve returned %v, want nil after Close", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Serve did not return after Close: a carried connection's " +
+			"upstream half is still blocking its handler")
+	}
+}
+
+// TestForwardedHeadersAreHopScoped covers both halves of the hop-by-hop
+// contract: a token the client names in its own Connection header is hop-by-hop
+// for this hop and must not reach the origin, and this proxy's decision to
+// close its upstream connection must not be relayed to the client hop as if the
+// client's connection were closing.
+func TestForwardedHeadersAreHopScoped(t *testing.T) {
+	var observed atomic.Pointer[http.Header]
+	origin := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			header := r.Header.Clone()
+			observed.Store(&header)
+			_, _ = io.WriteString(w, "ok")
+		}))
+	t.Cleanup(origin.Close)
+
+	proxy := startProxyToAddr(t, listRules([]sandboxpolicy.NetworkAllowEntry{
+		{Domain: "example.com", Ports: []int{80}},
+	}, nil), equivalenceResolutions(), strings.TrimPrefix(origin.URL, "http://"))
+
+	conn, err := net.DialTimeout("tcp", proxy.addr, 5*time.Second)
+	if err != nil {
+		t.Fatalf("dial proxy: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+	// The client keeps its own connection alive and names a custom hop-by-hop
+	// token in Connection.
+	if _, err := io.WriteString(conn,
+		"GET http://example.com/health HTTP/1.1\r\n"+
+			"Host: example.com\r\n"+
+			"Connection: X-Client-Only\r\n"+
+			"X-Client-Only: hop-scoped\r\n"+
+			"X-End-To-End: preserved\r\n\r\n",
+	); err != nil {
+		t.Fatalf("write request: %v", err)
+	}
+	reader := bufio.NewReader(conn)
+	resp, err := http.ReadResponse(reader, &http.Request{Method: http.MethodGet})
+	if err != nil {
+		t.Fatalf("read response: %v", err)
+	}
+	_, _ = io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+
+	got := observed.Load()
+	if got == nil {
+		t.Fatal("the origin never saw the request")
+	}
+	if value := got.Get("X-Client-Only"); value != "" {
+		t.Fatalf("a Connection-named token reached the origin: %q", value)
+	}
+	if value := got.Get("X-End-To-End"); value != "preserved" {
+		t.Fatalf("an end-to-end header was lost: %q", value)
+	}
+
+	// The client did not ask to close, so the response must not tell it the
+	// connection is closing just because this proxy closes its upstream one.
+	if resp.Close {
+		t.Fatal("the response relayed this proxy's upstream close to the client")
+	}
+	if value := resp.Header.Get("Connection"); strings.EqualFold(value, "close") {
+		t.Fatalf("response carried Connection: %q to the client hop", value)
+	}
+
+	// And the client hop really is reusable: a second request on the same
+	// connection must be served.
+	if _, err := io.WriteString(conn,
+		"GET http://example.com/health HTTP/1.1\r\n"+
+			"Host: example.com\r\nConnection: close\r\n\r\n",
+	); err != nil {
+		t.Fatalf("write second request: %v", err)
+	}
+	second, err := http.ReadResponse(reader, &http.Request{Method: http.MethodGet})
+	if err != nil {
+		t.Fatalf("read second response: %v", err)
+	}
+	_, _ = io.ReadAll(second.Body)
+	_ = second.Body.Close()
+	if second.StatusCode != http.StatusOK {
+		t.Fatalf("second response = %s, want 200", second.Status)
 	}
 }

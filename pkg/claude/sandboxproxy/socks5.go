@@ -74,7 +74,7 @@ func (s *Server) serveSOCKS5(conn net.Conn, reader *bufio.Reader) {
 		socks5WriteReply(conn, socks5ReplyHostUnreachable)
 		return
 	}
-	defer func() { _ = upstream.Close() }()
+	defer s.untrack(upstream)
 	if err := socks5WriteConnectReply(conn, upstream.LocalAddr()); err != nil {
 		return
 	}

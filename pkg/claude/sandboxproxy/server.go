@@ -132,8 +132,9 @@ func (s *Server) Serve(l net.Listener) error {
 	}
 }
 
-// Close stops accepting and tears down every carried connection. A proxy
-// failure must be a sandbox failure, never a quietly unfiltered sandbox.
+// Close stops accepting and tears down every carried connection, both halves
+// of each. A proxy failure must be a sandbox failure, never a quietly
+// unfiltered sandbox.
 func (s *Server) Close() error {
 	s.mu.Lock()
 	if s.closed {
@@ -266,6 +267,15 @@ func (s *Server) connect(
 	if err != nil {
 		s.reportError(carriage, err)
 		return nil, decision, err
+	}
+	// The upstream half is tracked alongside the client half. Without it a
+	// stalled tunnel survives Close: the client conn dies, the client-to-
+	// upstream copy finishes, and the upstream-to-client copy stays blocked
+	// reading a socket nothing closes — leaking a goroutine and a socket per
+	// tunnel, which is exactly what Close promises not to do.
+	if !s.track(conn) {
+		_ = conn.Close()
+		return nil, decision, fmt.Errorf("proxy is closing")
 	}
 	return conn, decision, nil
 }
