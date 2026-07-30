@@ -162,8 +162,8 @@ func predictSandboxFilesystem(
 				)
 			}
 			return predictedSandboxFeature(
-				tier, harness.AccessPredictionEnforced,
-				"Claude Code receives these additive directory grants without tclaude changing whether the operator's settings enable the OS sandbox",
+				tier, harness.AccessPredictionEnforcedPartial,
+				"tclaude passes these additive directory grants to Claude Code, but sandbox \"inherit\" lets Claude settings decide whether its OS sandbox applies them; the launch remains allowed because the rules only widen access",
 			)
 		}
 		if len(reopens) > 0 {

@@ -396,8 +396,9 @@ func TestSandboxProfileDraftEnforcementUsesResolvedDefaultSandboxMode(t *testing
 	require.Len(t, got.Targets, 1)
 	assert.Equal(t, harness.DefaultName, got.Targets[0].Target.Harness)
 	assert.Equal(t, harness.ClaudeSandboxInherit, got.Targets[0].Target.Sandbox)
-	assert.Equal(t, harness.AccessPredictionEnforced, got.Targets[0].Axes.Filesystem.Outcome,
-		"additive Claude directory grants do not require tclaude to force the inherited sandbox on")
+	assert.Equal(t, harness.AccessPredictionEnforcedPartial, got.Targets[0].Axes.Filesystem.Outcome,
+		"additive Claude directory grants do not block launch, but inherited settings decide whether the sandbox applies them")
+	assert.Contains(t, got.Targets[0].Axes.Filesystem.Detail, "launch remains allowed")
 	assert.Equal(t, harness.AccessPredictionEnforced, got.Targets[0].Axes.AgentDirectories.Outcome)
 
 	globalID, err := db.CreateSpawnProfile(&db.SpawnProfile{
