@@ -9,7 +9,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
@@ -437,93 +436,36 @@ func flattenSandboxProfileForDraftInspection(
 	return value, notices, nil
 }
 
+// defaultSandboxProfilePredictionTarget is the preview's launch target when the
+// operator has overridden none of the target controls. It shares
+// resolveLaunchDefaults with the spawn dialog so the preview and the dialog can
+// never disagree about what a launch would resolve, then applies the two
+// adjustments that belong to PREDICTION rather than to launch resolution: under
+// stacked the harness's own built-in mode is what gets predicted, and OpenCode's
+// implementation-specific mode has to be derived.
 func defaultSandboxProfilePredictionTarget(groupName string) (sandboxProfileEnforcementTargetRequest, string, error) {
-	var groupProfile *db.SpawnProfile
-	if strings.TrimSpace(groupName) != "" {
-		group, err := db.GetAgentGroupByName(strings.TrimSpace(groupName))
-		if err != nil {
-			return sandboxProfileEnforcementTargetRequest{}, "", err
-		}
-		groupProfile = groupDefaultProfile(group)
-	}
-	globalProfile := globalDefaultProfile()
-	tiers := []launchProfileTier{
-		{profile: groupProfile, source: profileSource(groupProfile, agent.ProvGroupProfileSource)},
-		{profile: globalProfile, source: profileSource(globalProfile, agent.ProvGlobalProfileSource)},
-	}
-
-	harnessName := harness.DefaultName
-	harnessSource := agent.ProvHarnessDefault
-	for _, tier := range tiers {
-		if tier.profile != nil {
-			harnessName = harnessOrDefault(tier.profile.Harness)
-			harnessSource = tier.source
-			break
-		}
-	}
-	resolvedHarness, err := harness.Resolve(harnessName)
-	if err != nil {
-		return sandboxProfileEnforcementTargetRequest{}, "", err
-	}
-
-	requestedSandbox, sandboxSource, _, fail := resolveStringLaunchField(
-		"sandbox", "", resolvedHarness.Name, tiers,
-		func(profile *db.SpawnProfile) string { return profile.Sandbox },
-		func(raw string) (string, error) { return harness.ValidateSandboxMode(resolvedHarness, raw) },
-	)
+	defaults, fail, err := resolveLaunchDefaults(groupName, "", "")
 	if fail != nil {
 		return sandboxProfileEnforcementTargetRequest{}, "", fmt.Errorf("%s", fail.Msg)
 	}
-	requestedImplementation, implementationSource, _, fail := resolveStringLaunchField(
-		sandboxImplementationField, "", resolvedHarness.Name, tiers,
-		func(profile *db.SpawnProfile) string { return profile.SandboxImplementation },
-		func(raw string) (string, error) {
-			return validateSandboxImplementationForHarness(resolvedHarness, raw)
-		},
-	)
-	if fail != nil {
-		return sandboxProfileEnforcementTargetRequest{}, "", fmt.Errorf("%s", fail.Msg)
-	}
-	implementation, err := sandboxpolicy.NormalizeImplementation(requestedImplementation)
 	if err != nil {
 		return sandboxProfileEnforcementTargetRequest{}, "", err
 	}
-	sandboxMode, err := harness.ResolveSandboxMode(resolvedHarness, requestedSandbox)
-	if err != nil {
-		return sandboxProfileEnforcementTargetRequest{}, "", err
-	}
-	if implementation == sandboxpolicy.ImplementationStacked {
-		sandboxMode = predictedBuiltinMode(harnessName)
+	sandboxMode := defaults.sandbox
+	if defaults.implementation == sandboxpolicy.ImplementationStacked {
+		sandboxMode = predictedBuiltinMode(defaults.harness.Name)
 	}
 	sandboxMode, err = harness.ResolveOpenCodeSandboxImplementationMode(
-		resolvedHarness.Name, sandboxMode, implementation)
+		defaults.harness.Name, sandboxMode, defaults.implementation)
 	if err != nil {
 		return sandboxProfileEnforcementTargetRequest{}, "", err
 	}
-
-	sources := []string{}
-	for _, source := range []string{harnessSource, sandboxSource, implementationSource} {
-		if source == "" {
-			continue
-		}
-		seen := false
-		for _, existing := range sources {
-			if existing == source {
-				seen = true
-				break
-			}
-		}
-		if !seen {
-			sources = append(sources, source)
-		}
-	}
-	resolvedBy := strings.Join(sources, "; ")
 	return sandboxProfileEnforcementTargetRequest{
-		Implementation: string(implementation),
-		Harness:        harnessName,
+		Implementation: string(defaults.implementation),
+		Harness:        defaults.harness.Name,
 		Platform:       runtime.GOOS,
 		Sandbox:        sandboxMode,
-	}, resolvedBy, nil
+	}, defaults.resolvedBy, nil
 }
 
 func effectiveDraftSandboxProfileContexts(

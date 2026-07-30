@@ -26,6 +26,21 @@ export const RESOLVED_DEFAULTS_LABEL = 'Resolved defaults';
 // literal-string assertion could see.
 export const RESOLVED_DEFAULTS_CHAIN = 'Resolved defaults evaluate what a real launch would resolve, taking the first tier that sets a value: explicit launch choice → named spawn profile → group default spawn profile → global default spawn profile → harness default.';
 
+// RESOLVED_DEFAULT_LABEL is the singular form, for a control that resolves ONE
+// value and can name it. The plural form above belongs to the sandbox-profile
+// editor's target controls, which resolve three axes at once.
+export const RESOLVED_DEFAULT_LABEL = 'Resolved default';
+
+// resolvedDefaultOption renders the blank choice of a control whose value the
+// daemon fills in. It names the ANSWER when the daemon has given us one, and
+// stays silent about it otherwise — a control that guessed while the request
+// was still in flight would be stating a launch shape nobody had resolved.
+export function resolvedDefaultOption(answer) {
+  return answer
+    ? `— ${RESOLVED_DEFAULT_LABEL} (${answer}) —`
+    : `— ${RESOLVED_DEFAULT_LABEL} —`;
+}
+
 // The sandbox-profile editor's preview resolves a launch it has no explicit or
 // named-profile tier for: there is no spawn to make a choice, and no --profile.
 // Stating the general chain there would promise two tiers that control cannot

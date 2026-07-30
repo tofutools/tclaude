@@ -110,8 +110,14 @@ test('sandbox-implementation view gates on the harness, discloses on the host', 
     ['tclaude-layer', 'stacked'],
     'OpenCode must never offer a harness-builtin OS sandbox that does not exist',
   );
-  assert.match(opencode.sandboxImplInheritLabel, /no built-in OS sandbox/);
-  assert.match(opencode.sandboxImplInheritLabel, /command filter, not confinement/);
+  // A blank row for OpenCode resolves to harness-builtin server-side, which is
+  // exactly the option OpenCode does not offer. Naming it would advertise a
+  // sandbox this harness cannot run, so the mapper declines to name anything and
+  // the row falls back to an unnamed resolved default.
+  assert.equal(
+    model.sandboxImplResolvedLabel(opencode.sandboxImplOptions, 'harness-builtin'), '',
+    'an answer with no matching option must not be named',
+  );
 });
 
 test('the harness-owned option is named after the actual harness', async (t) => {
@@ -166,8 +172,15 @@ test('sandbox-implementation hint stays silent for the default and warns honestl
   const codexView = model.spawnCapabilityView(
     { harness: 'codex' }, { harnesses, sandboxImpl },
   );
-  assert.match(codexView.sandboxImplInheritLabel,
-    /profile chain, then harness-builtin \(no filtered network sandbox yet\)/);
+  // The resolved default is named with the SAME label its concrete option
+  // carries, so the operator can see it is one of the choices below and not a
+  // fourth thing.
+  assert.equal(
+    model.sandboxImplResolvedLabel(codexView.sandboxImplOptions, 'harness-builtin'),
+    'Codex built-in (no filtered network sandbox yet)',
+  );
+  assert.equal(model.sandboxImplResolvedLabel(codexView.sandboxImplOptions, ''), '',
+    'an unresolved answer names nothing rather than guessing');
   assert.equal(model.sandboxImplHintFor({ sandboxImpl: '' }, codexView), null,
     'inherit leaves the profile chain in control and must not claim the builtin target won');
   const codexHint = model.sandboxImplHintFor(

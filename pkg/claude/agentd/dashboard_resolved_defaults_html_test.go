@@ -43,11 +43,13 @@ func TestDashboardHTML_ResolvedDefaultsVocabulary(t *testing.T) {
 		`export const SANDBOX_PROFILE_LAYERS_LABEL = 'Composed sandbox-profile layers';`:                                                "one canonical phrase for the composed layers",
 
 		// The launch dialog and the profile editor both read the canonical copy.
-		`<option value="">${RESOLVED_DEFAULTS_LABEL}</option>`:             "the evaluation harness selector names resolved defaults",
-		`${RESOLVED_DEFAULTS_LABEL} (this host)`:                           "the platform selector narrows the same phrase instead of coining another",
-		`— ${RESOLVED_DEFAULTS_LABEL} (${view.sandboxImplInheritLabel}) —`: "the spawn dialog's implementation row names resolved defaults",
-		"`Unset (${RESOLVED_DEFAULTS_LABEL.toLowerCase()} at spawn)`":      "the profile editor's implementation row names resolved defaults",
-		`<label title=${EVALUATION_TARGET_TITLE}>Agent harness`:            "the target controls carry the explanation as a tooltip, not a paragraph",
+		`<option value="">${RESOLVED_DEFAULTS_LABEL}</option>`:        "the evaluation harness selector names resolved defaults",
+		`${RESOLVED_DEFAULTS_LABEL} (this host)`:                      "the platform selector narrows the same phrase instead of coining another",
+		`${resolvedDefaultOption(resolvedSandboxImplLabel)}`:          "the spawn dialog's implementation row names the resolved implementation, not the chain that produced it",
+		"`— ${RESOLVED_DEFAULT_LABEL} (${answer}) —`":                 "a named resolved default reads as one value, not a mechanism",
+		`launchDefaults?.implementation`:                              "the named value comes from the daemon, not from a client-side guess",
+		"`Unset (${RESOLVED_DEFAULTS_LABEL.toLowerCase()} at spawn)`": "the profile editor's implementation row names resolved defaults",
+		`<label title=${EVALUATION_TARGET_TITLE}>Agent harness`:       "the target controls carry the explanation as a tooltip, not a paragraph",
 
 		// Sandbox-policy composition stays distinguishable from those defaults.
 		`'— composed global + group sandbox profiles —'`:     "the spawn dialog's sandbox-profile option names composition, not a default",
