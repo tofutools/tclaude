@@ -146,6 +146,12 @@ func TestLinuxTclaudeLayerSocketCapabilitiesAreCombinationAware(t *testing.T) {
 	// authored only a SOCKET rule must not discover that by watching a launch
 	// fail, so the filesystem consequence is disclosed here too.
 	assert.Contains(t, notices[0].Detail, "no longer visible at all")
+	// The posture is NAMED, not merely described, so an operator whose
+	// pre-existing sockets+open profile changes behavior on upgrade can see
+	// which boundary became active.
+	assert.Contains(t, notices[0].Detail, "host-network constructed root")
+	assert.Equal(t, "tclaude-layer bubblewrap (host-network constructed root)",
+		caps.mechanism)
 	assert.Contains(t, notices[0].Detail,
 		"read-only OS surface it mounts (/usr, /bin, /sbin, /lib*, /etc, /opt)",
 		"sockets on the static OS surface stay connectable; naming it is what makes the remainder honest")

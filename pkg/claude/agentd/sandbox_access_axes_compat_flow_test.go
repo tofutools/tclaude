@@ -133,9 +133,39 @@ func TestSandboxProfileEnforcementPredictionIsOrderedAndCannotGateLaunch(t *test
 		"abstract-namespace Unix sockets")
 	assert.Contains(t, got.Targets[0].Axes.UnixSockets.Detail,
 		"readable/writable directories")
+	// TCL-798 condition (a): the operator must be able to SEE the filesystem
+	// shape change, not only read about it. This flag is what makes the preview
+	// add a "Block: every other host path" rule row next to the rules they
+	// wrote.
+	assert.True(t, got.Targets[0].Axes.ConstructedRoot,
+		"a host-open profile that authors the socket axis builds its own root")
+	assert.False(t, got.Targets[1].Axes.ConstructedRoot,
+		"a harness-builtin target has no root to construct")
 	assert.Equal(t, "harness-builtin", got.Targets[1].Implementation)
 	assert.Equal(t, harness.AccessPredictionEnforced,
 		got.Targets[1].Axes.UnixSockets.Outcome)
+
+	// Mutation guard for the same condition: the identical profile WITHOUT the
+	// socket axis must not claim a constructed root, so the row appears exactly
+	// when the operator's edit causes it.
+	rec = profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", map[string]any{
+		"name": "no-socket-wall", "filesystem": []any{}, "environment": []any{},
+		"network": map[string]any{"mode": "open"},
+	})
+	require.Equalf(t, http.StatusCreated, rec.Code, "body=%s", rec.Body.String())
+	rec = profileReq(t, f, http.MethodGet,
+		"/v1/sandbox-profiles/no-socket-wall/enforcement?"+
+			"for=tclaude-layer%2Fclaude%2Flinux", nil)
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var unauthored struct {
+		Targets []struct {
+			Axes harness.PredictedAccessAxes `json:"axes"`
+		} `json:"targets"`
+	}
+	testharness.DecodeJSON(t, rec, &unauthored)
+	require.Len(t, unauthored.Targets, 1)
+	assert.False(t, unauthored.Targets[0].Axes.ConstructedRoot,
+		"no default-on: an unauthored socket axis keeps the inherited host root")
 
 	rec = profileReq(t, f, http.MethodGet,
 		"/v1/sandbox-profiles/socket-wall/enforcement?for=tclaude-layer%2Fclaude%2Fwindows", nil)

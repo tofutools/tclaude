@@ -999,6 +999,38 @@ test('sandbox access-axis model preserves legacy meaning and validates structure
   assert.equal(buckets.applied.label, 'Fully supported rules');
   assert.equal(buckets.partial.label, 'Partially supported rules');
   assert.equal(buckets.notApplied.label, 'Unsupported rules');
+  // TCL-798: a target that builds its own filesystem root states the implicit
+  // half of that posture as a rule row, next to the rules the operator wrote.
+  // Without it, adding a SOCKET rule silently changes which host paths exist
+  // and the preview looks identical.
+  const constructedRootBuckets = model.sandboxRuleBuckets({
+    filesystem: { outcome: 'enforced', detail: '' },
+    unix_sockets: { outcome: 'enforced_partial', detail: 'socket detail' },
+    constructed_root: true,
+  }, {
+    filesystem: [{ path: '/home/operator/work', access: 'write' }],
+    network: { mode: 'open' },
+    unix_sockets: { mode: 'closed' },
+  });
+  assert.ok(
+    constructedRootBuckets.applied.rules.some(
+      (rule) => rule.startsWith('Block: every other host path')),
+    'a constructed root must appear as a visible filesystem rule',
+  );
+  const inheritedRootBuckets = model.sandboxRuleBuckets({
+    filesystem: { outcome: 'enforced', detail: '' },
+    unix_sockets: { outcome: 'enforced', detail: '' },
+  }, {
+    filesystem: [{ path: '/home/operator/work', access: 'write' }],
+    network: { mode: 'open' },
+  });
+  assert.ok(
+    !inheritedRootBuckets.applied.rules.concat(
+      inheritedRootBuckets.partial.rules, inheritedRootBuckets.notApplied.rules,
+    ).some((rule) => rule.startsWith('Block: every other host path')),
+    'an inherited host root must not claim the row',
+  );
+
   const denyBuckets = model.sandboxRuleBuckets({
     network: { outcome: 'enforced_partial', detail: 'mixed network axis' },
   }, {

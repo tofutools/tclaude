@@ -52,6 +52,7 @@ type AccessEnforcement struct {
 	socketListRefusal       string
 	socketCombinationDetail string
 	socketClosedRefusal     string
+	constructedRoot         bool
 	scope                   string
 	mechanism               string
 	mcpBypass               bool
@@ -79,9 +80,15 @@ type PredictedAccessEnforcement struct {
 	SocketListRefusal            string
 	SocketCombinationDetail      string
 	SocketClosedRefusal          string
-	Scope                        string
-	Mechanism                    string
-	MCPBypass                    bool
+	// ConstructedRoot reports that this target builds its own filesystem root
+	// rather than inheriting the host's. It is a whole-posture fact rather than
+	// a per-rule verdict, and the preview needs it: the authored rules are all
+	// still enforced, but everything the operator did NOT author stops being
+	// visible, and that change has to be legible where they read their rules.
+	ConstructedRoot bool
+	Scope           string
+	Mechanism       string
+	MCPBypass       bool
 }
 
 const (
@@ -103,6 +110,11 @@ type PredictedAccessAxes struct {
 	AgentDirectories PredictedAccessAxis `json:"agent_directories"`
 	Network          PredictedAccessAxis `json:"network"`
 	UnixSockets      PredictedAccessAxis `json:"unix_sockets"`
+	// ConstructedRoot lets the preview state the filesystem consequence of a
+	// built root as a RULE the operator can see, next to the rules they wrote,
+	// rather than only as prose in a warning. Omitted when false so older
+	// clients and inherited-root targets are unaffected.
+	ConstructedRoot bool `json:"constructed_root,omitempty"`
 }
 
 // PredictedNetworkEntry projects the list-wide enforcement plan onto one
@@ -144,6 +156,7 @@ type accessEnforcementTableRow struct {
 	SocketListRefusal            string
 	SocketCombinationDetail      string
 	SocketClosedRefusal          string
+	ConstructedRoot              bool
 	Scope                        string
 	Mechanism                    string
 	MCPBypass                    bool
@@ -434,6 +447,14 @@ func accessEnforcementTable(
 				// sockets beneath them.
 				caps.SocketClosed = EnforcePartial
 				caps.SocketList = EnforcePartial
+				// Name the posture in the mechanism itself. Every disclosure
+				// that prints a mechanism — the launch degradation notice, the
+				// predicted axis detail, the spawn warning — then says WHICH
+				// boundary is active. An operator whose pre-existing
+				// sockets+open profile starts behaving differently after an
+				// upgrade learns why from the launch notes rather than from a
+				// build that stopped working.
+				caps.Mechanism = mechanism + " (host-network constructed root)"
 				caps.SocketCombinationDetail =
 					"listed Unix sockets are bound and sockets outside the sandbox's readable/writable directories remain hidden, " +
 						"but sockets beneath those readable/writable directories remain reachable"
@@ -452,6 +473,14 @@ func accessEnforcementTable(
 				// at all and no mount plan can reach them.
 				caps.SocketClosed = EnforcePartial
 				caps.SocketList = EnforcePartial
+				// Name the posture in the mechanism itself. Every disclosure
+				// that prints a mechanism — the launch degradation notice, the
+				// predicted axis detail, the spawn warning — then says WHICH
+				// boundary is active. An operator whose pre-existing
+				// sockets+open profile starts behaving differently after an
+				// upgrade learns why from the launch notes rather than from a
+				// build that stopped working.
+				caps.Mechanism = mechanism + " (host-network constructed root)"
 				caps.SocketCombinationDetail =
 					"tclaude builds the sandbox root, so listed Unix sockets are bound and " +
 						"ambient filesystem sockets are absent; sockets beneath the sandbox's own readable/writable " +
@@ -481,6 +510,24 @@ func accessEnforcementTable(
 			// Darwin has the required Seatbelt vocabulary, but M1's host-open
 			// renderer wires no socket denies. The capability remains None
 			// until that adapter consumes the authored axis.
+		}
+		// Whether this target builds its own root is decided once, from the
+		// combination the launch will actually run, so the preview cannot
+		// disagree with the applier. Linux only: Seatbelt is a path filter over
+		// the host namespace and has no root to construct.
+		if goos == "linux" {
+			networkPosture, postureErr := sandboxpolicy.NetworkPostureForRules(
+				axes.Network)
+			socketTier := axes.UnixSockets.Mode
+			if !linuxHostOpenConstructedRootAvailable(
+				h, implementation, axes, goos) {
+				// Without the mechanism the socket tier is about to be widened
+				// away, so only the network posture's own implication counts.
+				socketTier = sandboxpolicy.AccessModeUnset
+			}
+			caps.ConstructedRoot = postureErr == nil &&
+				sandboxpolicy.RootPostureFor(networkPosture, socketTier) ==
+					sandboxpolicy.RootConstructed
 		}
 		return caps, nil
 	}
@@ -610,6 +657,7 @@ func accessEnforcementFromTable(row accessEnforcementTableRow) AccessEnforcement
 		socketListRefusal:       row.SocketListRefusal,
 		socketCombinationDetail: row.SocketCombinationDetail,
 		socketClosedRefusal:     row.SocketClosedRefusal,
+		constructedRoot:         row.ConstructedRoot,
 		scope:                   row.Scope, mechanism: row.Mechanism, mcpBypass: row.MCPBypass,
 	}
 }
@@ -632,6 +680,7 @@ func predictedAccessEnforcementFromTable(row accessEnforcementTableRow) Predicte
 		SocketListRefusal:       row.SocketListRefusal,
 		SocketCombinationDetail: row.SocketCombinationDetail,
 		SocketClosedRefusal:     row.SocketClosedRefusal,
+		ConstructedRoot:         row.ConstructedRoot,
 		Scope:                   row.Scope, Mechanism: row.Mechanism, MCPBypass: row.MCPBypass,
 	}
 }
@@ -643,8 +692,9 @@ func DescribePredictedAccess(
 	caps PredictedAccessEnforcement,
 ) PredictedAccessAxes {
 	return PredictedAccessAxes{
-		Network:     predictNetworkAxis(axes.Network, caps),
-		UnixSockets: predictSocketAxis(axes.UnixSockets, caps),
+		Network:         predictNetworkAxis(axes.Network, caps),
+		UnixSockets:     predictSocketAxis(axes.UnixSockets, caps),
+		ConstructedRoot: caps.ConstructedRoot,
 	}
 }
 
