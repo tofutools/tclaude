@@ -135,9 +135,10 @@ func predictSandboxFilesystem(
 		return predictedSandboxFeature(
 			tier, harness.AccessPredictionRefused,
 			fmt.Sprintf(
-				"%d directory rule%s mount a host directory at a different sandbox path (%s); "+
+				"%d directory rule%s mount%s a host directory at a different sandbox path (%s); "+
 					"that needs a mount namespace, which only the Linux tclaude-layer provides, so launch is refused rather than mounting at the host path",
-				remappedCount, pluralSuffix(remappedCount), remappedDetail,
+				remappedCount, pluralSuffix(remappedCount),
+				singularVerbSuffix(remappedCount), remappedDetail,
 			),
 		)
 	}
@@ -453,6 +454,15 @@ func sandboxPredictionOutcomeRank(outcome string) int {
 
 func predictedSandboxFeature(tier, outcome, detail string) harness.PredictedAccessAxis {
 	return harness.PredictedAccessAxis{Tier: tier, Outcome: outcome, Detail: detail}
+}
+
+// singularVerbSuffix is pluralSuffix's mirror: a verb agreeing with a count
+// takes its "s" in exactly the case the noun does not.
+func singularVerbSuffix(count int) string {
+	if count == 1 {
+		return "s"
+	}
+	return ""
 }
 
 func pluralSuffix(count int) string {

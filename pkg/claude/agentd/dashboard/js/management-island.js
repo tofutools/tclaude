@@ -293,7 +293,12 @@ function SandboxPolicyResult({ target, context, contextIndex }) {
       <ul>${otherWarnings.map((warning) => html`<li key=${warning.axis}><strong>${warning.label}:</strong> ${warning.detail}</li>`)}</ul>
     </div>`}
     ${buckets.launchRefused && html`<div class="sbx-launch-blocked" role="alert">This target refuses the launch. Unsupported rules are not silently skipped.</div>`}
-    <${SandboxOutcomeBucket} bucket=${buckets.applied} open=${false}
+    ${/* The Applied bucket ships closed — a fully supported policy needs no
+         attention. A remapped rule is the exception: the editor row shows only a
+         glyph, so this line is where the host → sandbox mapping is actually
+         legible, and a mapping two collapses deep is not a disclosure. Only
+         profiles that use a mount path are affected. */ ''}
+    <${SandboxOutcomeBucket} bucket=${buckets.applied} open=${buckets.applied.hasMountPath === true}
       helpOpen=${ruleHelpOpen} setHelpOpen=${setRuleHelpOpen}
       helpPrefix=${helpPrefix} targetLabel=${targetLabel}/>
     <${SandboxOutcomeBucket} bucket=${buckets.partial} open=${true}
@@ -992,7 +997,13 @@ function sandboxMountPathWire(row) {
 }
 
 function sandboxFilesystemWire(draft, baseline) {
-  const pathKey = (rows) => JSON.stringify((rows || []).map((row) => [row.path, row.mount_path || '']));
+  // Deliberately keyed on the HOST path alone. Retained spellings belong to the
+  // host directory, so changing where that directory is mounted inside the
+  // sandbox does not invalidate them — and treating it as a re-authoring would
+  // silently replace the canonical path with the operator's alias spelling and
+  // drop the sidecar, from an edit that changed nothing about which directory
+  // is granted (TCL-866).
+  const pathKey = (rows) => JSON.stringify((rows || []).map((row) => row.path));
   const pathsUnchanged = pathKey(draft.filesystem) === pathKey(baseline.filesystem);
   const retained = draft.filesystem_spellings;
   if (pathsUnchanged && retained?.version === 1) {
@@ -1050,6 +1061,10 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
   const [predictionError, setPredictionError] = useState('');
   const [predictionBusy, setPredictionBusy] = useState(false);
   const [effectiveContext, setEffectiveContext] = useState(0);
+  // Index of the filesystem row whose "mount at" popover is open, or -1. One
+  // at a time: the panel renders beneath its row, so two open panels would push
+  // the rows apart and make the table hard to read.
+  const [mountPathRow, setMountPathRow] = useState(-1);
   // The feed is optional and its failures are the menu's own business. They
   // must never reach `state.error`, which carries save and validation
   // refusals: a late rejection would replace the reason a save was refused
@@ -1087,7 +1102,16 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
   const directoryGeneration = useRef(0); const submitRef = useRef(null); const wasSaving = useRef(false); const filesystemSignature = JSON.stringify(draft.filesystem); const latestFilesystem = useRef(filesystemSignature); latestFilesystem.current = filesystemSignature;
   const dirty = dirtyDraft(draft, baseline);
   const saving = state.busy.value === 'sandbox-save';
-  const setFS = (index, patch) => setDraft((value) => ({ ...value, filesystem: value.filesystem.map((row, i) => i === index ? { ...row, ...patch } : row) }));
+  const setFS = (index, patch) => setDraft((value) => ({ ...value, filesystem: value.filesystem.map((row, i) => {
+    if (i !== index) return row;
+    const next = { ...row, ...patch };
+    // A deny hides a host path rather than projecting one, so mount_path is a
+    // validation error on it. Drop the value when the operator switches the row
+    // to deny rather than letting the save fail later with a server-side
+    // refusal. The change is visible: the row's mount glyph greys out.
+    if (next.access === 'deny') delete next.mount_path;
+    return next;
+  }) }));
   const setEnv = (index, patch) => setDraft((value) => ({ ...value, environment: value.environment.map((row, i) => i === index ? { ...row, ...patch } : row) }));
   const parseRaw = () => { const filesystem = JSON.parse(rawFS || '[]'); const filesystem_spellings = JSON.parse(rawSpellings || 'null'); const environment = JSON.parse(rawEnv || '[]'); const includes = JSON.parse(rawIncludes || '[]'); const agent_directories = JSON.parse(rawAgentDirs || '[]'); const network = JSON.parse(rawNetwork || '{}'); const unix_sockets = JSON.parse(rawSockets || '{}'); if (![filesystem, environment, includes, agent_directories].every(Array.isArray)) throw new Error('filesystem, environment, includes and agent dirs must be arrays'); if (filesystem_spellings !== null && (!filesystem_spellings || Array.isArray(filesystem_spellings))) throw new Error('filesystem spellings must be a JSON object or null'); if (!network || typeof network !== 'object' || Array.isArray(network) || !unix_sockets || typeof unix_sockets !== 'object' || Array.isArray(unix_sockets)) throw new Error('network and unix sockets must be JSON objects'); if (network.allow != null && !Array.isArray(network.allow) || network.deny != null && !Array.isArray(network.deny) || unix_sockets.allow != null && !Array.isArray(unix_sockets.allow)) throw new Error('network allow/deny and Unix-socket allow fields must be arrays'); if (network.packs != null && !Array.isArray(network.packs) || network.deny_packs != null && !Array.isArray(network.deny_packs)) throw new Error('network packs and deny_packs must be arrays'); const rowError = accessRowShapeError(network, unix_sockets); if (rowError) throw new Error(rowError); const axes = sandboxAccessAxes({ network, unix_sockets }); return { filesystem, filesystem_spellings, environment, includes, agent_directories, network: axes.network, unix_sockets: axes.unix_sockets }; };
   const applyRaw = () => { try { const parsed = parseRaw(); setDraft((value) => ({ ...value, ...parsed, filesystem: sandboxFilesystemEditorRows(parsed.filesystem, parsed.filesystem_spellings) })); state.error.value = ''; return true; } catch (error) { state.error.value = error.message || String(error); return false; } };
@@ -1219,7 +1243,7 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
         </div>`}
         ${globalConfigWarnings.map((warning, index) => html`<div key=${index} class="sbx-global-warning" role="status">⚠ ${warning}</div>`)}
       </div>`}
-      <div class="sbx-rows">${draft.filesystem.map((row, index) => html`<div key=${index} class="sbx-row sbx-filesystem-row"><${SegmentedControl} className="sbx-access sbx-filesystem-access" label=${`Filesystem row ${index + 1} access`} value=${row.access || 'read'} onChange=${(access) => setFS(index, { access })} options=${[['read', 'Read'], ['write', 'Write'], ['deny', 'Deny']]}/><span class="sbx-path-binding"><input class="sbx-path" value=${row.path || ''} onInput=${(event) => setFS(index, { path: event.currentTarget.value })}/>${row._resolved_path && html`<span class="sbx-binding-target">binds → ${row._resolved_path}${row._spellings?.length > 1 ? ` · also retained: ${row._spellings.slice(1).join(', ')}` : ''}</span>`}${row.mount_path && html`<span class="sbx-binding-target sbx-mount-path">mounts inside the sandbox at → ${row.mount_path}</span>`}</span><button type="button" onClick=${async () => { const result = await pickDirectory({ startDir: row.path || '', title: 'Select a sandbox directory' }); if (result.path) setFS(index, { path: result.path }); else if (result.error) state.error.value = result.error; }}>Browse…</button><button type="button" onClick=${() => setDraft((value) => ({ ...value, filesystem: value.filesystem.filter((_, i) => i !== index) }))}>×</button></div>`)}</div><button type="button" class="sbx-add-row" onClick=${() => setDraft((value) => ({ ...value, filesystem: [...value.filesystem, { path: '', access: 'read' }] }))}>＋ add directory</button>
+      <div class="sbx-rows">${draft.filesystem.map((row, index) => { const denied = (row.access || 'read') === 'deny'; const mountPath = (row.mount_path || '').trim(); const mountOpen = mountPathRow === index; const mountInvalid = denied && !!mountPath; const mountLabel = mountInvalid ? `A deny rule must not carry a mount path; this profile will be refused until ${mountPath} is removed` : denied ? 'A deny always applies to the host path' : mountPath ? `Mounts inside the sandbox at ${mountPath}` : 'Mount at a different sandbox path'; return html`<div key=${index} class="sbx-row sbx-filesystem-row"><${SegmentedControl} className="sbx-access sbx-filesystem-access" label=${`Filesystem row ${index + 1} access`} value=${row.access || 'read'} onChange=${(access) => setFS(index, { access })} options=${[['read', 'Read'], ['write', 'Write'], ['deny', 'Deny']]}/><span class="sbx-path-binding"><input class="sbx-path" value=${row.path || ''} onInput=${(event) => setFS(index, { path: event.currentTarget.value })}/>${row._resolved_path && html`<span class="sbx-binding-target">binds → ${row._resolved_path}${row._spellings?.length > 1 ? ` · also retained: ${row._spellings.slice(1).join(', ')}` : ''}</span>`}</span><button type="button" onClick=${async () => { const result = await pickDirectory({ startDir: row.path || '', title: 'Select a sandbox directory' }); if (result.path) setFS(index, { path: result.path }); else if (result.error) state.error.value = result.error; }}>Browse…</button>${/* The SET state is deliberately loud. The value itself lives in a popover, so this glyph is the only signal a reviewer scrolling the table gets that the row projects its directory somewhere else; a quiet toggle would let a remapped row read as an ordinary same-path grant. */ ''}<button type="button" class=${`sbx-mount-btn${mountPath && !denied ? ' is-set' : ''}${mountInvalid ? ' is-invalid' : ''}`} id=${`sandbox-profile-editor-mount-toggle-${index}`} disabled=${denied} aria-expanded=${denied ? undefined : mountOpen} aria-controls=${mountOpen && !denied ? `sandbox-profile-editor-mount-panel-${index}` : undefined} aria-label=${`Filesystem row ${index + 1}: ${mountLabel}`} title=${mountLabel} onClick=${() => setMountPathRow(mountOpen ? -1 : index)}>⤳</button><button type="button" onClick=${() => { setMountPathRow(-1); setDraft((value) => ({ ...value, filesystem: value.filesystem.filter((_, i) => i !== index) })); }}>×</button></div>${mountOpen && !denied && html`<div key=${`mount-${index}`} class="sbx-mount-panel" id=${`sandbox-profile-editor-mount-panel-${index}`} onKeyDown=${(event) => { if (event.key !== 'Escape') return; /* Close just this panel. Without it Escape reaches the Overlay and starts the whole modal's discard-confirm flow, which is a wildly disproportionate answer to dismissing one popover. */ event.stopPropagation(); event.preventDefault(); setMountPathRow(-1); document.getElementById(`sandbox-profile-editor-mount-toggle-${index}`)?.focus(); }}><div class="sbx-mount-title">Mount inside the sandbox at</div><div class="sbx-mount-row"><input class="sbx-path" value=${row.mount_path || ''} placeholder="/data" ref=${(node) => { /* Preact does not implement autofocus, and the document's autofocus-processed flag is already set by the modal's name field, so the browser will not honor it either. Focus the field explicitly when the panel first mounts. */ if (node && !node.dataset.focused) { node.dataset.focused = '1'; node.focus(); } }} onInput=${(event) => setFS(index, { mount_path: event.currentTarget.value })}/><button type="button" disabled=${!mountPath} onClick=${() => setFS(index, { mount_path: '' })}>clear</button></div><div class="sbx-mount-help">The agent sees this path instead of the host path; <strong>${row._resolved_path || row.path || 'the host directory'} is not visible inside the sandbox at all</strong>. Leave it empty to expose the directory at its own location.</div><div class="sbx-mount-help"><strong>Linux tclaude-layer or stacked only.</strong> Mounting a directory somewhere else needs a mount namespace. macOS Seatbelt and harness-builtin sandboxes cannot do it and refuse the launch — they never fall back to exposing the host path instead.</div></div>`}`; })}</div><button type="button" class="sbx-add-row" onClick=${() => setDraft((value) => ({ ...value, filesystem: [...value.filesystem, { path: '', access: 'read' }] }))}>＋ add directory</button>
       ${/* `|| null` rather than a bare boolean: where `open` is not a settable
            DOM property, Preact falls back to setAttribute, and setting it to
            `false` still leaves the attribute present (i.e. open). null removes

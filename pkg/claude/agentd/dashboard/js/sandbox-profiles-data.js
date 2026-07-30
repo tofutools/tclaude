@@ -244,7 +244,19 @@ function effectiveRuleRows(context = {}) {
   for (const entry of context.filesystem || []) {
     const prefix = entry.access === 'write' ? 'Read/write'
       : entry.access === 'read' ? 'Read-only' : 'Block';
-    rows.push({ axis: 'filesystem', label: `${prefix}: ${entry.path}` });
+    // A remapped rule names the path the agent will actually see FIRST, with
+    // the host directory the authority came from after it (TCL-866). This
+    // preview is the canonical always-visible disclosure of the mapping — the
+    // editor row's own control is a popover — so the rule line has to carry it
+    // rather than reading like an ordinary same-path grant.
+    const mountPath = (entry.mount_path || '').trim();
+    const target = mountPath && mountPath !== entry.path
+      ? `${mountPath} ← ${entry.path}` : entry.path;
+    rows.push({
+      axis: 'filesystem',
+      label: `${prefix}: ${target}`,
+      hasMountPath: target !== entry.path,
+    });
   }
   for (const name of context.environment || []) {
     rows.push({ axis: 'environment', label: `Set environment: ${name}` });
@@ -309,9 +321,9 @@ function bucketKey(outcome) {
 // callers fall back to the target-wide worst-case axes for older daemons.
 export function sandboxRuleBuckets(axes = {}, context = {}, networkEntries = []) {
   const buckets = {
-    applied: { key: 'applied', label: 'Fully supported rules', rules: [], items: [], reasons: [] },
-    partial: { key: 'partial', label: 'Partially supported rules', rules: [], items: [], reasons: [] },
-    notApplied: { key: 'not-applied', label: 'Unsupported rules', rules: [], items: [], reasons: [] },
+    applied: { key: 'applied', label: 'Fully supported rules', rules: [], items: [], reasons: [], hasMountPath: false },
+    partial: { key: 'partial', label: 'Partially supported rules', rules: [], items: [], reasons: [], hasMountPath: false },
+    notApplied: { key: 'not-applied', label: 'Unsupported rules', rules: [], items: [], reasons: [], hasMountPath: false },
   };
   const networkPredictions = new Map();
   for (const prediction of networkEntries || []) {
@@ -326,6 +338,9 @@ export function sandboxRuleBuckets(axes = {}, context = {}, networkEntries = [])
       ? { outcome: 'enforced', detail: '' }
       : axes?.[rule.axis] || { outcome: 'not_enforced', detail: 'No enforcement verdict was returned.' });
     const bucket = buckets[bucketKey(verdict.outcome)];
+    // Recorded so a bucket that would otherwise ship collapsed can decide to
+    // open: a remapped rule's mapping is only legible here (TCL-866).
+    if (rule.hasMountPath) bucket.hasMountPath = true;
     bucket.rules.push(rule.label);
     bucket.items.push({
       label: rule.label,
