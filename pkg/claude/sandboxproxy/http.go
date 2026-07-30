@@ -127,6 +127,12 @@ func (s *Server) forwardHTTP(
 ) bool {
 	outbound := req.Clone(req.Context())
 	outbound.RequestURI = ""
+	// Hop-by-hop headers describe the hop to this proxy, not the request to
+	// the origin. Forwarding them would hand the origin the client's proxy
+	// credentials among other things.
+	for _, header := range hopByHopHeaders {
+		outbound.Header.Del(header)
+	}
 	// The Host field is deliberately not overridden. For an absolute-form
 	// request Go sets req.Host from the request-line authority, which is
 	// exactly the authority policy evaluated, so a client cannot use a

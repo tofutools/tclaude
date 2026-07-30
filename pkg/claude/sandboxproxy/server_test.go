@@ -599,6 +599,17 @@ func TestHTTPAbsoluteFormIsEvaluatedOnTheRequestLineHost(t *testing.T) {
 		func(w http.ResponseWriter, r *http.Request) {
 			host := r.Host
 			observedHost.Store(&host)
+			// Connection is excluded: Go writes its own on the forwarded
+			// request. Every other hop-by-hop header must be gone.
+			for _, header := range hopByHopHeaders {
+				if header == "Connection" {
+					continue
+				}
+				if r.Header.Get(header) != "" {
+					w.WriteHeader(http.StatusTeapot)
+					return
+				}
+			}
 			if r.URL.Path != "/health" || r.RequestURI != "/health" {
 				w.WriteHeader(http.StatusBadRequest)
 				return
@@ -616,8 +627,13 @@ func TestHTTPAbsoluteFormIsEvaluatedOnTheRequestLineHost(t *testing.T) {
 	// request line is what policy evaluates, so it must also be what the
 	// origin is told — otherwise an authorized connection could still select
 	// an unevaluated vhost.
+	// The probe carries a hop-by-hop header the origin must never see: it
+	// describes the hop to this proxy, and forwarding Proxy-Authorization
+	// would hand the origin the client's proxy credentials. The origin
+	// answers 418 if any hop-by-hop header arrives.
 	allowed := httpAbsoluteForm(t, proxy.addr,
-		"http://example.com/health", "evil.example.com")
+		"http://example.com/health", "evil.example.com",
+		"Proxy-Authorization: Basic c2VjcmV0")
 	if !strings.Contains(allowed, "200") {
 		t.Fatalf("allowed absolute-form response = %q", allowed)
 	}
@@ -635,7 +651,7 @@ func TestHTTPAbsoluteFormIsEvaluatedOnTheRequestLineHost(t *testing.T) {
 	// vhost or an absolute-URL reconstruction on the origin sees the wrong
 	// authority. The default port stays elided, as a Host field normally is.
 	allowed = httpAbsoluteForm(t, proxy.addr,
-		"http://example.com:8080/health", "evil.example.com:8080")
+		"http://example.com:8080/health", "evil.example.com:8080", "")
 	if !strings.Contains(allowed, "200") {
 		t.Fatalf("allowed absolute-form response on port 8080 = %q", allowed)
 	}
@@ -647,7 +663,7 @@ func TestHTTPAbsoluteFormIsEvaluatedOnTheRequestLineHost(t *testing.T) {
 	}
 
 	refused := httpAbsoluteForm(t, proxy.addr,
-		"http://badexample.com/health", "badexample.com")
+		"http://badexample.com/health", "badexample.com", "")
 	if !strings.Contains(refused, "403") {
 		t.Fatalf("refused absolute-form response = %q", refused)
 	}
@@ -660,7 +676,10 @@ func TestHTTPAbsoluteFormIsEvaluatedOnTheRequestLineHost(t *testing.T) {
 // httpAbsoluteForm sends one absolute-form request and returns the status line.
 // The test origin answers a minimal HTTP response so the forward path is
 // exercised end to end.
-func httpAbsoluteForm(t *testing.T, proxyAddr, target, hostHeader string) string {
+func httpAbsoluteForm(
+	t *testing.T,
+	proxyAddr, target, hostHeader, extraHeader string,
+) string {
 	t.Helper()
 	conn, err := net.DialTimeout("tcp", proxyAddr, 5*time.Second)
 	if err != nil {
@@ -668,9 +687,12 @@ func httpAbsoluteForm(t *testing.T, proxyAddr, target, hostHeader string) string
 	}
 	defer func() { _ = conn.Close() }()
 	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+	if extraHeader != "" {
+		extraHeader += "\r\n"
+	}
 	if _, err := fmt.Fprintf(conn,
-		"GET %s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n",
-		target, hostHeader,
+		"GET %s HTTP/1.1\r\nHost: %s\r\n%sConnection: close\r\n\r\n",
+		target, hostHeader, extraHeader,
 	); err != nil {
 		t.Fatalf("write request: %v", err)
 	}

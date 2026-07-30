@@ -286,7 +286,7 @@ func (c *bufferedConn) CloseWrite() error {
 	if half, ok := c.Conn.(writeCloser); ok {
 		return half.CloseWrite()
 	}
-	return c.Conn.Close()
+	return c.Close()
 }
 
 // pipe joins an authorized tunnel and returns when either side finishes.
