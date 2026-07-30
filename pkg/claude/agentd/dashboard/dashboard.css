@@ -4748,6 +4748,7 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
   margin-left: auto;
 }
 .sbx-section-count-empty {
+  color: #484f58;
   font-weight: 400;
 }
 .sbx-section-summary {
