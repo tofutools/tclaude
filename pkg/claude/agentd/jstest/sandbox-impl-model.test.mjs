@@ -146,6 +146,14 @@ test('sandbox-implementation view gates on the harness, discloses on the host', 
     false,
     'an invalid resolved answer never gives OpenCode a built-in mode control',
   );
+  assert.equal(
+    model.spawnCapabilityView(
+      { harness: 'opencode', sandboxImpl: 'harness-builtin' },
+      { harnesses, sandboxImpl },
+    ).showSandboxMode,
+    false,
+    'a preserved invalid explicit selection never gives OpenCode a built-in mode control',
+  );
 
   const builtin = model.spawnCapabilityView(
     { harness: 'codex', sandboxImpl: 'harness-builtin' }, { harnesses, sandboxImpl },

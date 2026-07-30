@@ -686,6 +686,8 @@ test('an untouched Codex row still discloses the built-in sandbox network gap', 
   try {
     state.open({ groupName: 'alpha' });
     await flush(harness);
+    await harness.act(() => new Promise((resolve) => setTimeout(resolve, 50)));
+    await flush(harness);
     const claudeMode = host.querySelector('#agent-spawn-sandbox');
     assert.equal(selectedValue(host.querySelector('#agent-spawn-sandbox-impl')), '',
       'the initial Claude implementation row is untouched');

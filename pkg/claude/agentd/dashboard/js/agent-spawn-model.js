@@ -471,8 +471,7 @@ export function spawnCapabilityView(draft, context, resolvedSandboxImpl = '') {
   const askTimeout = launchSetting(harness, 'askTimeout');
   const selectedSandboxImpl = text(draft.sandboxImpl);
   const resolvedBuiltinSandbox = !selectedSandboxImpl
-    && text(resolvedSandboxImpl) === SANDBOX_IMPL_DEFAULT
-    && harness?.can_builtin_os_sandbox !== false;
+    && text(resolvedSandboxImpl) === SANDBOX_IMPL_DEFAULT;
   const sandboxProfilesDisabled = draft.sandboxImpl === SANDBOX_IMPL_OFF
     || (draft.harness === 'codex' && draft.sandbox === 'danger-full-access');
   const showSSHWorkaround = !!harness?.can_ssh_workaround;
@@ -505,7 +504,7 @@ export function spawnCapabilityView(draft, context, resolvedSandboxImpl = '') {
     showContextFeatures: harness ? !!harness.can_context_features : draft.harness === 'claude',
     showAutoCompactWindow: harness ? !!harness.can_auto_compact_window : draft.harness === 'claude',
     ...sandboxImplView(harness, context),
-    showSandboxMode: !!(sandbox.visible
+    showSandboxMode: !!(sandbox.visible && harness?.can_builtin_os_sandbox !== false
       && (selectedSandboxImpl === SANDBOX_IMPL_DEFAULT || resolvedBuiltinSandbox)),
     autoCompactWindowMin: Number(harness?.auto_compact_window_min) || 0,
     autoCompactWindowMax: Number(harness?.auto_compact_window_max) || 0,
