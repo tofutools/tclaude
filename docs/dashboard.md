@@ -1509,11 +1509,13 @@ says so rather than appearing to lose the drag.
 
 An explicitly reordered tab sequence is stored as a dashboard presentation
 preference in the same server-backed preferences as the other sticky view
-settings. A terminal key already in that stored sequence returns to its
-remembered relative position when it is reopened; a key absent from it is
-appended at the end of the current strip. Simply opening, closing, switching, or
-popping out a terminal does not rewrite the stored order. Remembered history is
-bounded to 512 keys and 60 KiB.
+settings. Opening a terminal always appends its tab after the tabs already open,
+even when its key appeared in an older stored sequence. A terminal with
+remembered group membership instead appends within that group, keeping the
+group contiguous. Simply opening, closing, switching, or popping out a terminal
+does not rewrite the stored order; the preference changes only when a tab or
+group is explicitly moved. Remembered history is bounded to 512 keys and
+60 KiB.
 
 ### Terminal tab groups
 

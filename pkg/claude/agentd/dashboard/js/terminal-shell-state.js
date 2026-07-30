@@ -238,15 +238,6 @@ export function createTerminalShellState({ prefs = dashPrefs, persistOrder = tru
     return groupID ? groupIndex.value.get(groupID) : null;
   }
 
-  function sortByPreferredOrder(items) {
-    const rank = new Map(readPreferredOrder().map((key, index) => [key, index]));
-    return items
-      .map((pane, index) => ({ pane, index }))
-      .sort((a, b) => (rank.get(a.pane.key) ?? Number.MAX_SAFE_INTEGER)
-        - (rank.get(b.pane.key) ?? Number.MAX_SAFE_INTEGER) || a.index - b.index)
-      .map(({ pane }) => pane);
-  }
-
   function commitPaneOrder(next) {
     const normalized = normalizeGrouping(next, groupIDFor);
     if (normalized.every((pane, index) => panes.value[index] === pane)
@@ -321,9 +312,11 @@ export function createTerminalShellState({ prefs = dashPrefs, persistOrder = tru
       label: seed.label || 'terminal',
       seed: Object.freeze({ ...seed }),
     });
-    const preferred = readPreferredOrder();
-    if (!preferred.includes(key)) preferred.push(key);
-    panes.value = normalizeGrouping(sortByPreferredOrder([...panes.value, pane]), groupIDFor);
+    // Opening is a new strip action, even when this terminal key appeared in a
+    // previously persisted order. Put it after the panes that are open now;
+    // normalizeGrouping only pulls it back beside remembered group siblings.
+    // Explicit drag/keyboard moves remain the sole writers of preferred order.
+    panes.value = normalizeGrouping([...panes.value, pane], groupIDFor);
     activeKey.value = key;
     // A pane that lands in a collapsed stack must be visible to be usable, so
     // the stack opens rather than the activation being silently invisible.

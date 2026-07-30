@@ -66,7 +66,7 @@ test('terminal shell state owns stable pane, active, reveal, and modal descripto
   assert.equal(state.modal.value, null);
 });
 
-test('terminal pane order persists, restores known keys, appends new keys, and never changes active identity', async (t) => {
+test('terminal pane order persists explicit moves while every opened pane appends', async (t) => {
   const harness = await createPreactHarness(t);
   const { createTerminalShellState, TERMINAL_PANE_ORDER_KEY } =
     await harness.importDashboardModule('js/terminal-shell-state.js');
@@ -78,33 +78,33 @@ test('terminal pane order persists, restores known keys, appends new keys, and n
   const one = state.openPane({ ws: '/one', key: 'one', label: 'one' });
   const two = state.openPane({ ws: '/two', key: 'two', label: 'two' });
   const three = state.openPane({ ws: '/three', key: 'three', label: 'three' });
-  assert.deepEqual(state.panes.value.map((pane) => pane.key), ['two', 'one', 'three'],
-    'known keys use remembered order and a genuinely new key appends');
+  assert.deepEqual(state.panes.value.map((pane) => pane.key), ['one', 'two', 'three'],
+    'stored positions do not prepend newly opened terminal instances');
   assert.equal(state.activeKey.value, 'three');
   assert.equal(prefs.writes.length, 0,
     'ordinary opens cannot overwrite an explicit order written by another dashboard client');
 
   const moved = state.reorderPane('three', 'two');
-  assert.deepEqual(state.panes.value.map((pane) => pane.key), ['three', 'two', 'one']);
-  assert.deepEqual(moved, { pane: three, index: 0, count: 3, group: null });
+  assert.deepEqual(state.panes.value.map((pane) => pane.key), ['one', 'three', 'two']);
+  assert.deepEqual(moved, { pane: three, index: 1, count: 3, group: null });
   assert.equal(state.activeKey.value, 'three', 'moving the active pane never switches terminals');
   assert.equal(state.panes.value.find((pane) => pane.key === 'one'), one,
     'reordering preserves stable pane descriptors');
   assert.equal(state.panes.value.find((pane) => pane.key === 'two'), two);
   assert.deepEqual(JSON.parse(prefs.getItem(TERMINAL_PANE_ORDER_KEY)),
-    ['three', 'two', 'one', 'closed'], 'closed remembered keys remain behind the visible order');
+    ['one', 'three', 'two', 'closed'], 'closed remembered keys remain behind the visible order');
 
   state.movePaneByOffset('three', 1);
-  assert.deepEqual(state.panes.value.map((pane) => pane.key), ['two', 'three', 'one']);
+  assert.deepEqual(state.panes.value.map((pane) => pane.key), ['one', 'two', 'three']);
   assert.equal(state.activeKey.value, 'three');
-  assert.equal(state.movePaneByOffset('two', -1), null, 'moving past the first position is inert');
+  assert.equal(state.movePaneByOffset('one', -1), null, 'moving past the first position is inert');
 
   state.removePane('three');
-  assert.deepEqual(state.panes.value.map((pane) => pane.key), ['two', 'one']);
-  assert.equal(state.activeKey.value, 'one', 'closing a reordered active pane selects its right neighbor');
+  assert.deepEqual(state.panes.value.map((pane) => pane.key), ['one', 'two']);
+  assert.equal(state.activeKey.value, 'two', 'closing a reordered active pane selects its nearest neighbor');
   const reopened = state.openPane({ ws: '/three-again', key: 'three', label: 'three again' });
-  assert.deepEqual(state.panes.value.map((pane) => pane.key), ['two', 'three', 'one'],
-    'reopening a known key restores its remembered relative position');
+  assert.deepEqual(state.panes.value.map((pane) => pane.key), ['one', 'two', 'three'],
+    'reopening a known key appends rather than restoring its old position');
   assert.equal(state.activeKey.value, 'three');
   assert.notEqual(reopened, three, 'closing and reopening still creates a fresh terminal lifecycle');
 });
