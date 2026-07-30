@@ -317,9 +317,10 @@ unleased destinations through an auxiliary query.
 ### SVCB/HTTPS stripping also keeps TLS SNI observable
 
 The `SVCB` and `HTTPS` half of that sanitizing has a second effect, and it is
-load-bearing. TLS Encrypted Client Hello (ECH, [RFC 9849](https://datatracker.ietf.org/doc/rfc9849/),
-March 2026) requires the client to obtain an `ECHConfigList`, and the defined
-way to publish one is an `HTTPS`/`SVCB` resource record. A sandboxed client
+load-bearing. TLS Encrypted Client Hello (ECH,
+[RFC 9849](https://datatracker.ietf.org/doc/rfc9849/), March 2026) requires the
+client to obtain an `ECHConfigList`, and the defined way to publish one is an
+`HTTPS`/`SVCB` resource record. A sandboxed client
 that can only resolve through the broker never sees such a record, so it cannot
 learn a config and negotiates with a plaintext `server_name` instead. Client
 hostnames therefore stay observable on the wire inside the sandbox.
@@ -328,12 +329,12 @@ Relaxing the stripping is not only an address-smuggling decision. It would also
 make ECH reachable and remove that plaintext-SNI visibility, including for any
 future control that depends on reading the name a connection claims.
 
-Be honest about what this buys: it is defense in depth against *accidental* or
-cooperative ECH, not a guarantee. A client that wants ECH can still carry a
-hardcoded or out-of-band `ECHConfigList`, or fetch one over DoH to an allowed
-domain inside a body the broker cannot see. And even under ECH the outer
-ClientHello still carries a cover `public_name` SNI, so an observer sees a name
-— just not the intended one.
+The property is defense in depth against accidental or cooperative ECH, not a
+guarantee against a hostile client. Such a client can still carry a hardcoded or
+out-of-band `ECHConfigList`, or fetch one over DoH to an allowed domain inside a
+body the broker cannot inspect. Even under ECH the outer ClientHello still
+carries a cover `public_name` SNI, so an observer is not blinded outright; it
+sees a name that is not the intended one.
 
 The analysis of record is
 [TCL-876](https://linear.app/johan-kjolhede/issue/TCL-876) — passive host/SNI
