@@ -11,6 +11,8 @@
 // and the template editor's per-agent role dropdown (modal-templates.js) read
 // through here so there is one fetch path and one cache.
 
+import { sandboxModeLabel } from './resolved-defaults.js';
+
 const API = '/api/roles';
 
 // In-memory cache of the full role list (each entry is a complete roleJSON —
@@ -90,7 +92,9 @@ function roleSummary(rl) {
   if (rl.harness && rl.harness !== 'claude') parts.push(rl.harness);
   if (rl.model) parts.push(rl.model);
   if (rl.effort) parts.push(`effort ${rl.effort}`);
-  if (rl.sandbox) parts.push(`sandbox ${rl.sandbox}`);
+  // A role's sandbox mode is shown verbatim everywhere else; `inherit` is the
+  // one token that needs saying out loud.
+  if (rl.sandbox) parts.push(`sandbox ${sandboxModeLabel(rl.harness || 'claude', rl.sandbox)}`);
   if (rl.approval) parts.push(`approval ${rl.approval}`);
   if (rl.tools) parts.push(`tools ${rl.tools}`);
   const nPerms = (rl.permissions || []).length;

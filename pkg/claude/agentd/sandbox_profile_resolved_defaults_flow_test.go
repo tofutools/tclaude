@@ -39,15 +39,22 @@ func TestSandboxProfilePreviewResolvesLaunchDefaultsAndNamesComposedLayers(t *te
 	_, err = db.SetAgentGroupSandboxProfile("crew", "crew-rules")
 	require.NoError(t, err)
 
-	// The group's default SPAWN profile decides the launch target. Codex, so a
-	// preview that quietly fell back to the harness default (Claude) is visible
-	// rather than accidentally correct.
+	// Both spawn-profile tiers are populated, with DIFFERENT harnesses, so the
+	// assertion below can distinguish all three outcomes: group wins (codex),
+	// global wins (opencode), or neither was consulted and the harness default
+	// (claude) stood. A test that left the global tier empty would pass just as
+	// happily with the precedence inverted.
 	_, err = db.CreateSpawnProfile(&db.SpawnProfile{Name: "crew-launch", Harness: "codex"})
 	require.NoError(t, err)
+	_, err = db.CreateSpawnProfile(&db.SpawnProfile{Name: "house-launch", Harness: "opencode"})
+	require.NoError(t, err)
+	rec := profileReq(t, f, http.MethodPut, "/v1/spawn-profile-default",
+		map[string]any{"name": "house-launch"})
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 	_, err = db.SetAgentGroupDefaultProfile("crew", "crew-launch")
 	require.NoError(t, err)
 
-	rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profile-enforcement", map[string]any{
+	rec = profileReq(t, f, http.MethodPost, "/v1/sandbox-profile-enforcement", map[string]any{
 		"draft": map[string]any{
 			"name": "scratch-draft", "filesystem": []any{}, "environment": []any{},
 		},
@@ -73,6 +80,8 @@ func TestSandboxProfilePreviewResolvesLaunchDefaultsAndNamesComposedLayers(t *te
 		"the preview must resolve the launch target the way a real spawn into this group would")
 	assert.Contains(t, got.Targets[0].ResolvedBy, `group default profile "crew-launch"`,
 		"the preview has to name the tier it resolved from; the dashboard renders this verbatim")
+	assert.NotContains(t, got.Targets[0].ResolvedBy, "house-launch",
+		"the group tier outranks the global one; the global profile must not be the source")
 
 	require.Len(t, got.Contexts, 1)
 	assert.Equal(t, map[string]string{

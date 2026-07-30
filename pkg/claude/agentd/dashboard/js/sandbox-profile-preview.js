@@ -1,6 +1,4 @@
-import {
-  SANDBOX_PROFILE_LAYERS_LABEL, sandboxProfileLayersText,
-} from './resolved-defaults.js';
+import { sandboxProfileLayersInline } from './resolved-defaults.js';
 
 function flattenProfile(profile, byName, state) {
   const filesystem = new Map();
@@ -80,8 +78,9 @@ export function composeSandboxProfilePolicy(applied, byName = {}) {
   // the launch dialog and the editor describe one composition in one vocabulary.
   const layerContext = {};
   for (const { scope, profile } of applied) layerContext[scope] = profile.name;
-  const scopes = `${SANDBOX_PROFILE_LAYERS_LABEL}: `
-    + sandboxProfileLayersText(layerContext, 'none — no sandbox profile applies to this launch');
+  const scopes = sandboxProfileLayersInline(
+    layerContext, 'none — no sandbox profile applies to this launch',
+  );
   const grants = [...filesystem]
     .map(([path, value]) => `${value.access} ${path} (${value.scope})`).join(' · ');
   const keys = [...environment].map(([name, scope]) => `${name} (${scope})`).join(', ');

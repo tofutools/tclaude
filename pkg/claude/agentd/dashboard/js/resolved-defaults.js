@@ -26,9 +26,26 @@ export const RESOLVED_DEFAULTS_LABEL = 'Resolved defaults';
 // literal-string assertion could see.
 export const RESOLVED_DEFAULTS_CHAIN = 'Resolved defaults evaluate what a real launch would resolve, taking the first tier that sets a value: explicit launch choice → named spawn profile → group default spawn profile → global default spawn profile → harness default.';
 
+// The sandbox-profile editor's preview resolves a launch it has no explicit or
+// named-profile tier for: there is no spawn to make a choice, and no --profile.
+// Stating the general chain there would promise two tiers that control cannot
+// reach, so the preview gets its own sentence rather than the general one.
+export const RESOLVED_DEFAULTS_CHAIN_PREVIEW = 'This preview has no explicit launch choice and no named spawn profile, so its resolved defaults run: group default spawn profile → global default spawn profile → harness default.';
+
 // One line for the same reason as the chain above: the enumerated layers are
 // the claim, and they have to be assertable as one string.
 export const SANDBOX_PROFILE_COMPOSITION = 'Sandbox-profile policy is composed, not resolved from a single winner: the global sandbox profile, the group sandbox profile, and an explicit sandbox profile when one is chosen all apply together.';
+
+// GLOBAL_SANDBOX_PROFILE_ROLE / GROUP_SANDBOX_PROFILE_ROLE describe one layer's
+// place in that composition, for the toolbar chip and the group chip that assign
+// them. They exist so a tooltip cannot quietly coin a fourth way to say it.
+export const GLOBAL_SANDBOX_PROFILE_ROLE = "the first composed layer of every launch's sandbox policy, applied together with the group sandbox profile and any explicit one";
+export const GROUP_SANDBOX_PROFILE_ROLE = "the group layer of a launch's composed sandbox policy, applied together with the global sandbox profile and any explicit one";
+
+// GLOBAL_DEFAULT_PROFILE_ROLE / GROUP_DEFAULT_PROFILE_ROLE do the same for the
+// two spawn-profile tiers of the resolved-defaults chain.
+export const GLOBAL_DEFAULT_PROFILE_ROLE = 'the last resolved-defaults tier before the harness default, used when the chosen group has no default spawn profile of its own';
+export const GROUP_DEFAULT_PROFILE_ROLE = 'the resolved-defaults tier above the global default spawn profile, filling launch fields a spawn left blank';
 
 // CLAUDE_INHERIT_SANDBOX_LABEL replaces a bare `inherit` wherever Claude's
 // sandbox mode is named in a control. The token stays in parentheses as
@@ -44,6 +61,19 @@ export const CLAUDE_INHERIT_SANDBOX_PLAIN = "Claude's own settings decide whethe
 // the launch actually gets. Every other mode already names its own effect.
 export function sandboxModeLabel(harnessName, mode) {
   return harnessName === 'claude' && mode === 'inherit' ? CLAUDE_INHERIT_SANDBOX_LABEL : mode;
+}
+
+// sandboxModeOptionLabel is the selectable form: the label plus the harness's
+// own recommendation. It folds the two into ONE parenthetical for a rewritten
+// mode, because a caller appending "(recommended)" to a label that already ends
+// in "(inherit)" produces "…(inherit) (recommended)". Both dialogs call this
+// rather than composing the two halves themselves.
+export function sandboxModeOptionLabel(harnessName, mode, recommended) {
+  const label = sandboxModeLabel(harnessName, mode);
+  if (mode !== recommended) return label;
+  return label.endsWith(')')
+    ? `${label.slice(0, -1)}, recommended)`
+    : `${label} (recommended)`;
 }
 
 // sandboxModeDetail is the read-only form used where a resolved mode is
@@ -69,4 +99,12 @@ export function sandboxProfileLayersText(context = {}, emptyText = 'none') {
     .filter((scope) => context[scope])
     .map((scope) => `${scope} “${context[scope]}”`);
   return layers.length ? layers.join(' + ') : emptyText;
+}
+
+// sandboxProfileLayersInline is the same list for a flat single-line summary,
+// where the surrounding text already uses " · " between sections. Two or more
+// layers joined by " + " would run straight into the next section with nothing
+// marking where the list ended, so the inline form brackets itself.
+export function sandboxProfileLayersInline(context = {}, emptyText = 'none') {
+  return `${SANDBOX_PROFILE_LAYERS_LABEL} (${sandboxProfileLayersText(context, emptyText)})`;
 }

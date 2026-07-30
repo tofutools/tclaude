@@ -13,6 +13,9 @@ import { PAGE_SIZES, listLimit } from './list-paging.js';
 import { activityModeViews, activitySummary } from './group-activity.js';
 import { ActivityModes } from './activity-bots.js';
 import {
+  GROUP_DEFAULT_PROFILE_ROLE, GROUP_SANDBOX_PROFILE_ROLE, RESOLVED_DEFAULTS_LABEL,
+} from './resolved-defaults.js';
+import {
   buildGroupTree, groupMembersView, realGroupOpen, virtualGroupOpen,
 } from './groups-view-model.js';
 import { ActionMenu, InlineEditor, useGroupsInteractions } from './groups-interactions.js';
@@ -332,8 +335,8 @@ function GroupProfileChip({ group, actions, kind }) {
     ? `group-sandbox-profile${current ? '' : ' unset'}`
     : `group-default-model${current ? '' : ' unset'}`;
   const title = sandbox
-    ? current ? `Sandbox profile for ${group.name}: ${current} — the group layer of the composed sandbox policy, applied together with the global sandbox profile and any explicit one. Click to change.` : 'No group sandbox profile — the composed sandbox policy of a launch here is the global one plus any explicit profile. Click to set one.'
-    : current ? `Group default spawn profile for agents spawned into this group: ${current} — the resolved-defaults tier above the global default spawn profile, filling launch fields the spawn left blank. Click to change.` : 'No group default spawn profile — click to set one. (Resolved defaults fall through to the global default spawn profile, then the harness default.)';
+    ? current ? `Sandbox profile for ${group.name}: ${current} — ${GROUP_SANDBOX_PROFILE_ROLE}. Click to change.` : `No group sandbox profile — click to set one. It would be ${GROUP_SANDBOX_PROFILE_ROLE}.`
+    : current ? `Group default spawn profile for agents spawned into this group: ${current} — ${GROUP_DEFAULT_PROFILE_ROLE}. Click to change.` : `No group default spawn profile — click to set one. (${RESOLVED_DEFAULTS_LABEL} fall through to the global default spawn profile, then the harness default.)`;
   return html`<span
     ref=${triggerRef}
     class=${className} tabindex="0" role="button"

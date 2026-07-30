@@ -49,7 +49,7 @@ import { HelpField } from './help-field.js';
 import { SandboxImplHint } from './sandbox-impl-hint.js';
 import {
   RESOLVED_DEFAULTS_CHAIN, RESOLVED_DEFAULTS_LABEL, SANDBOX_PROFILE_COMPOSITION,
-  sandboxModeLabel,
+  sandboxModeOptionLabel,
 } from './resolved-defaults.js';
 
 const html = htm.bind(h);
@@ -119,13 +119,16 @@ function ErrorBanner({ error, onDismiss }) {
   </div>`;
 }
 
-// labelFor lets a setting rewrite a mode token that says nothing to a human —
-// today only Claude's sandbox `inherit`. Every other setting renders its own
-// tokens, which already name their effect.
-function SettingOptions({ setting, labelFor = null }) {
+// optionLabel lets a setting rewrite a mode token that says nothing to a human —
+// today only Claude's sandbox `inherit`. It owns the "(recommended)" suffix too,
+// so a rewritten label ending in its own parenthetical does not collect a second
+// one. Every other setting renders its tokens, which already name their effect.
+function SettingOptions({ setting, optionLabel = null }) {
   return setting.modes.map((mode) => ({
     value: mode,
-    label: `${labelFor ? labelFor(mode) : mode}${mode === setting.recommended ? ' (recommended)' : ''}`,
+    label: optionLabel
+      ? optionLabel(mode, setting.recommended)
+      : `${mode}${mode === setting.recommended ? ' (recommended)' : ''}`,
   }));
 }
 
@@ -854,7 +857,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
       title="Launch containment for the new agent. The modes are per-harness."
       value=${draft.sandbox} options=${SettingOptions({
     setting: view.sandbox,
-    labelFor: (mode) => sandboxModeLabel(draft.harness, mode),
+    optionLabel: (mode, recommended) => sandboxModeOptionLabel(draft.harness, mode, recommended),
   })}
       onChange=${(event) => {
         const value = event.currentTarget.value;

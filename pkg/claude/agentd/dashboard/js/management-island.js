@@ -32,8 +32,9 @@ import {
   sandboxImplHintFor, sandboxImplClearedNoticeFor, sandboxImplOptionsFor,
 } from './agent-spawn-model.js';
 import {
-  RESOLVED_DEFAULTS_CHAIN, RESOLVED_DEFAULTS_LABEL, SANDBOX_PROFILE_COMPOSITION,
-  SANDBOX_PROFILE_LAYERS_LABEL, sandboxModeDetail, sandboxModeLabel, sandboxProfileLayersText,
+  RESOLVED_DEFAULTS_CHAIN, RESOLVED_DEFAULTS_CHAIN_PREVIEW, RESOLVED_DEFAULTS_LABEL,
+  SANDBOX_PROFILE_COMPOSITION, SANDBOX_PROFILE_LAYERS_LABEL,
+  sandboxModeDetail, sandboxModeOptionLabel, sandboxProfileLayersText,
 } from './resolved-defaults.js';
 
 // Mirrors the spawn dialog's copy: which layer owns the wall, the experimental
@@ -127,7 +128,7 @@ const EFFECTIVE_POLICY_HELP = 'Evaluates the composed policy for the selected im
 // the three selectors above and the layer row below are each half of: the
 // selectors resolve LAUNCH PARAMETERS, the preview composes SANDBOX POLICY.
 const EVALUATION_TARGET_INTRO = `${RESOLVED_DEFAULTS_LABEL} answer which launch these rules are `
-  + `evaluated against; override any of them to try another target. ${RESOLVED_DEFAULTS_CHAIN}`;
+  + `evaluated against; override any control to try another target. ${RESOLVED_DEFAULTS_CHAIN_PREVIEW}`;
 
 const html = htm.bind(h);
 
@@ -821,9 +822,7 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
     <${HelpField} id=${sandboxID} label="Sandbox" title="Launch containment for the agent. The modes are per-harness."
       value=${draft.sandbox}
       options=${(hEntry?.sandbox_modes || []).map((value) => ({
-    value,
-    label: sandboxModeLabel(draft.harness, value)
-      + (value === hEntry.default_sandbox ? ' (recommended)' : ''),
+    value, label: sandboxModeOptionLabel(draft.harness, value, hEntry.default_sandbox),
   }))}
       onChange=${(event) => change(setDraft, 'sandbox', event.currentTarget.value)}
       help=${sandboxHelp} open=${helpOpen === sandboxID} setOpen=${setHelpOpen}
@@ -1278,7 +1277,11 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
            thing the rule buckets never restate, and it is what separates
            "composed sandbox policy" from the launch-parameter defaults the
            target controls above resolve. */ ''}
-      ${selectedEffective && html`<div class="sbx-policy-layers" id="sandbox-profile-editor-policy-layers">
+      ${/* role="status" because the "Rules for" selector above swaps this row's
+           contents in place; without it the one statement of which profiles
+           compose the shown rules changes silently for a screen reader. */ ''}
+      ${selectedEffective && html`<div class="sbx-policy-layers" id="sandbox-profile-editor-policy-layers"
+        role="status" aria-live="polite" aria-atomic="true">
         <strong>${SANDBOX_PROFILE_LAYERS_LABEL}:</strong> ${sandboxProfileLayersText(selectedEffective.context, 'this draft alone — no global or group sandbox profile applies')}
       </div>`}
       ${selectedEffective && prediction?.targets?.map((target, index) => html`<${SandboxPolicyResult} key=${index} target=${target} context=${selectedEffective} contextIndex=${effectiveContext}/>`)}

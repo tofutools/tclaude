@@ -428,7 +428,7 @@ test('profile choices expose aliases as distinct handles tied to one profile', a
     permission_overrides: { 'human.notify': 'grant', 'groups.spawn': 'deny' },
   }), [
 		'last disable reason · previous outage',
-    'harness claude', 'model sonnet', 'effort high', 'sandbox inherit', 'approval plan',
+    'harness claude', 'model sonnet', 'effort high', 'sandbox Claude settings decide (inherit)', 'approval plan',
     'ask-timeout 5m', 'auto-review off', 'trust-dir on', 'remote-control off', 'auto-memory on',
     'name worker', 'role reviewer', 'descr cold review', 'initial message · 10 chars',
     'sync-wt on', 'focus off', 'group-ctx on', 'owner off',
@@ -3037,8 +3037,11 @@ test('sandbox editor separates resolved launch defaults from composed sandbox la
     'Resolved defaults');
   assert.equal(host.querySelector('#sandbox-profile-editor-evaluate-platform').options[0].textContent,
     'Resolved defaults (this host)');
+  // The preview resolves a launch with no explicit choice and no named spawn
+  // profile, so the intro must state ITS tiers, not the general chain — that
+  // would promise two controls this dialog does not have.
   assert.match(host.querySelector('#sandbox-profile-editor-evaluate-intro').textContent,
-    /explicit launch choice → named spawn profile → group default spawn profile → global default spawn profile → harness default\./);
+    /no explicit launch choice and no named spawn profile, so its resolved defaults run: group default spawn profile → global default spawn profile → harness default\./);
 
   // Sandbox-policy composition: every layer named, by scope, without a click.
   assert.equal(host.querySelector('#sandbox-profile-editor-policy-layers').textContent.trim(),

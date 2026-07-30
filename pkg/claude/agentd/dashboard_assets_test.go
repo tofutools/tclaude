@@ -687,7 +687,7 @@ func TestDashboardAssets_QuickChipKeyboardOperability(t *testing.T) {
 		// button semantics until Preact swaps it for the inline select.
 		`<button ref=${triggerRef} type="button" id=${copy.id}`,
 		// toolbar-profile-renderers.js — its accessible name tracks the picked profile.
-		"'Set dashboard default spawn profile'",
+		"`Set ${GLOBAL_DEFAULT_PROFILE_NAME.toLowerCase()}`",
 		// dashboard.css — tabbing onto a collapsed group's chips reveals the
 		// folded labels (keyboard mirror of the hover reveal)…
 		"body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary:focus-within .qo-text",
