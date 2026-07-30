@@ -1180,8 +1180,17 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
 .human-notification-drawer-body a { color: #58a6ff; text-decoration: none; }
 .human-notification-drawer-body a:hover { text-decoration: underline; }
 .human-notification-drawer-attachment {
-  display: flex; align-items: center; gap: 10px; margin-top: 20px; padding: 11px 12px;
+  display: flex; align-items: center; gap: 10px; margin-top: 20px; padding-right: 12px;
   border: 1px solid #30363d; border-radius: 6px; background: #161b22;
+}
+.human-notification-drawer-file-link {
+  min-width: 0; align-self: stretch; flex: 1; display: flex; align-items: center;
+  gap: 10px; padding: 11px 0 11px 12px; border-radius: 5px;
+  text-decoration: none;
+}
+.human-notification-drawer-file-link:hover { background: rgba(88, 166, 255, .07); }
+.human-notification-drawer-file-link:focus-visible {
+  outline: 2px solid #58a6ff; outline-offset: -2px;
 }
 .human-notification-drawer-file-icon {
   width: 34px; height: 34px; display: grid; place-items: center;
@@ -1195,11 +1204,11 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
   text-overflow: ellipsis; white-space: nowrap;
 }
 .human-notification-drawer-file span { margin-top: 2px; color: #7d8590; font-size: 10px; }
-.human-notification-drawer-attachment a {
+.human-notification-drawer-download {
   padding: 5px 9px; border: 1px solid #1f6feb; border-radius: 4px;
   color: #58a6ff; font-size: 12px; text-decoration: none;
 }
-.human-notification-drawer-attachment a:hover { background: rgba(31, 111, 235, .12); }
+.human-notification-drawer-download:hover { background: rgba(31, 111, 235, .12); }
 .human-notification-drawer-actions {
   display: flex; align-items: center; gap: 7px; padding: 13px 16px;
   border-top: 1px solid #30363d; background: #161b22;

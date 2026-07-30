@@ -90,3 +90,51 @@ test('failed queued writes restore the last server-confirmed state', async (t) =
     'both failures restore the original server-confirmed unread state');
   assert.equal(snapshot.value.messages_unread, 1);
 });
+
+test('attachment card and explicit button download the same published file', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { GroupsNotificationReader } = await harness.importDashboardModule(
+    'js/groups-notification-reader.js',
+  );
+  const message = {
+    id: 42,
+    from_agent: 'agt_sender',
+    from_conv: 'conv-sender',
+    from_title: 'sender',
+    subject: 'artifact',
+    body: 'Download it',
+    read: true,
+    attachment: {
+      filename: 'report.png',
+      content_type: 'image/png',
+      size_bytes: 2048,
+    },
+  };
+  const state = {
+    snapshot: { value: { messages: [message], messages_unread: 0 } },
+    publish() {},
+  };
+  const mounted = await harness.mount(harness.html`
+    <${GroupsNotificationReader}
+      descriptor=${{
+        sender: { agent: 'agt_sender', conv: 'conv-sender', label: 'sender' },
+        messageId: 42,
+      }}
+      snapshot=${state.snapshot.value}
+      state=${state}
+      actions=${{ reportError() {} }}
+      onSelect=${() => {}}
+      onClose=${() => {}}
+    />
+  `);
+  const links = [...mounted.container.querySelectorAll(
+    '.human-notification-drawer-attachment a',
+  )];
+  assert.equal(links.length, 2);
+  for (const link of links) {
+    assert.equal(link.getAttribute('href'), '/api/human-messages/42/attachment');
+    assert.equal(link.getAttribute('download'), 'report.png');
+  }
+  assert.match(links[0].textContent, /report\.png/);
+  assert.match(links[1].textContent, /Download/);
+});
