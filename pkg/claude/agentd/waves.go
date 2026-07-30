@@ -169,6 +169,7 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 		}
 		launch, lfail := resolveTemplateAgentLaunch(a, role, agentCwd, caller)
 		if lfail != nil {
+			res.ErrorKind = lfail.Kind
 			res.Error = lfail.Msg
 			wr.Failed++
 			wr.Results = append(wr.Results, res)
@@ -246,6 +247,7 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 		})
 		cleanupCwdProof()
 		if fail != nil {
+			res.ErrorKind = fail.Kind
 			res.Error = fail.Msg
 			wr.Failed++
 			wr.Results = append(wr.Results, res)
@@ -268,6 +270,7 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 		// second resolve failing is unexpected — record it per-agent, don't abort.
 		owner, overrides, afail := resolveTemplateAgentAccess(a, role)
 		if afail != nil {
+			res.ErrorKind = afail.Kind
 			res.Error = "spawned, but resolving access failed: " + afail.Msg
 			wr.Results = append(wr.Results, res)
 			continue

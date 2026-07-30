@@ -492,8 +492,12 @@ func TestPrintProfileHumanShowsRememberedReasonWhileEnabled(t *testing.T) {
 
 func TestPrintProfileHumanShowsOperatorOnly(t *testing.T) {
 	var buf bytes.Buffer
-	printProfileHuman(&buf, profileJSON{Name: "trusted", OperatorOnly: true})
+	printProfileHuman(&buf, profileJSON{
+		Name: "trusted", Disabled: boolPtr(false), OperatorOnly: true,
+		DisabledReason: "previous outage",
+	})
 	assert.Contains(t, buf.String(), "status:  👤 operator only")
+	assert.Contains(t, buf.String(), "last disable reason: previous outage")
 }
 
 // An empty/sparse profile renders without panicking and shows only the name.

@@ -669,11 +669,15 @@ func printProfileHuman(w io.Writer, p profileJSON) {
 	if profileDisabledValue(&p) {
 		fmt.Fprintln(w, "  status:  🚫 disabled")
 		fmt.Fprintf(w, "  reason:  %s\n", p.DisabledReason)
-	} else if p.OperatorOnly {
-		fmt.Fprintln(w, "  status:  👤 operator only")
-	} else if p.DisabledReason != "" {
-		fmt.Fprintln(w, "  status:  enabled")
-		fmt.Fprintf(w, "  last disable reason: %s\n", p.DisabledReason)
+	} else {
+		if p.OperatorOnly {
+			fmt.Fprintln(w, "  status:  👤 operator only")
+		} else if p.DisabledReason != "" {
+			fmt.Fprintln(w, "  status:  enabled")
+		}
+		if p.DisabledReason != "" {
+			fmt.Fprintf(w, "  last disable reason: %s\n", p.DisabledReason)
+		}
 	}
 	if len(p.Aliases) > 0 {
 		fmt.Fprintf(w, "  aliases: %s\n", strings.Join(p.Aliases, ", "))

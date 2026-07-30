@@ -649,6 +649,7 @@ type instantiateAgentResult struct {
 	Owner        bool     `json:"owner"`
 	OwnerDropped bool     `json:"owner_dropped"`
 	Granted      []string `json:"granted"`
+	ErrorKind    string   `json:"error_kind"`
 	Error        string   `json:"error"`
 }
 
