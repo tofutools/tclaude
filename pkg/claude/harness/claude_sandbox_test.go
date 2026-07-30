@@ -157,11 +157,9 @@ func TestClaudeSpawner_Sandbox(t *testing.T) {
 	}
 }
 
-// TestClaudeSandboxOnBlock_MatchesHardening guards the single-source-of-truth
-// contract: the per-session `on` block IS the block the global
-// `--install-sandbox-hardening` setup writes, so they cannot drift. (The setup
-// package asserts its own spec separately; here we just pin the keys the
-// spawner/setup both depend on.)
+// TestClaudeSandboxOnBlock_MatchesHardening pins the effective policy the
+// per-session `on` block and global hardening share. (The setup package asserts
+// its platform-specific persisted shape separately.)
 func TestClaudeSandboxOnBlock_MatchesHardening(t *testing.T) {
 	b := ClaudeSandboxOnBlock()
 	if b["enabled"] != true {

@@ -181,7 +181,9 @@ Add this to your Claude Code **`~/.claude/settings.json`** — both deny
 layers, the disabled escape hatch, and the `sandbox.network` allowances the
 daemon socket and GitHub workflow need (see "Keeping the daemon socket
 reachable" below). User scope means a deny rule there cannot be weakened by
-any project's `.claude/settings.json`:
+any project's `.claude/settings.json`. The JSON below is the macOS-safe form;
+Linux/WSL2 also needs `"allowAllUnixSockets": true`, which the installer adds
+automatically:
 
 ```json
 {

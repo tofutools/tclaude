@@ -129,10 +129,10 @@ func (claudeSandbox) ModeHelp(mode string) string {
 }
 
 // ClaudeSandboxOnBlock is the value of the settings.json `sandbox` key the
-// `on` mode injects via `--settings` — and the single source of truth the
-// global `tclaude setup --install-sandbox-hardening` reuses for its own
-// `sandbox` block, so the per-session override and the global hardening can
-// never drift (docs/sandbox-hardening.md is the human-facing source of truth).
+// `on` mode injects via `--settings`. The global
+// `tclaude setup --install-sandbox-hardening` reuses its effective policy; on
+// fresh macOS settings it omits the default-false allowAllUnixSockets key,
+// while this higher-precedence launch overlay pins false.
 //
 // It enables the sandbox AND preserves the properties a daemon-spawned agent
 // needs: the agent-reachable agentd Unix socket (~/.tclaude/api/…) stays
@@ -145,6 +145,7 @@ func (claudeSandbox) ModeHelp(mode string) string {
 // is disabled so those boundaries cannot be skipped. ~/.codex remains readable
 // because it also contains the Codex runtime itself; denying that whole root
 // can strand the harness.
+//
 // Unix-socket policy is platform-specific. macOS honors the exact
 // `allowUnixSockets` path list, so enabling `allowAllUnixSockets` there would
 // disable the only built-in filter protecting other host sockets. Linux/WSL2
