@@ -44,6 +44,7 @@ type profileJSON struct {
 	// from the pre-v122 shape where disabled_reason was the disable switch.
 	Disabled       *bool  `json:"disabled,omitempty"`
 	DisabledReason string `json:"disabled_reason,omitempty"`
+	OperatorOnly   bool   `json:"operator_only,omitempty"`
 
 	// Launch fields.
 	Harness string `json:"harness,omitempty"`
@@ -270,6 +271,8 @@ func runProfilesLs(stdout, stderr io.Writer) int {
 		status := "enabled"
 		if profileDisabledValue(&p) {
 			status = "🚫 disabled: " + profileOneLine(p.DisabledReason)
+		} else if p.OperatorOnly {
+			status = "👤 operator only"
 		}
 		fmt.Fprintf(stdout, "%-16s  %-22s  %-8s  %-12s  %-7s  %-36s  %s\n",
 			truncate(p.Name, 16), truncate(dash(strings.Join(p.Aliases, ", ")), 22), truncate(dash(p.Harness), 8), truncate(dash(p.Model), 12),
@@ -666,6 +669,8 @@ func printProfileHuman(w io.Writer, p profileJSON) {
 	if profileDisabledValue(&p) {
 		fmt.Fprintln(w, "  status:  🚫 disabled")
 		fmt.Fprintf(w, "  reason:  %s\n", p.DisabledReason)
+	} else if p.OperatorOnly {
+		fmt.Fprintln(w, "  status:  👤 operator only")
 	} else if p.DisabledReason != "" {
 		fmt.Fprintln(w, "  status:  enabled")
 		fmt.Fprintf(w, "  last disable reason: %s\n", p.DisabledReason)

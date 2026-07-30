@@ -490,6 +490,12 @@ func TestPrintProfileHumanShowsRememberedReasonWhileEnabled(t *testing.T) {
 	assert.NotContains(t, buf.String(), "🚫")
 }
 
+func TestPrintProfileHumanShowsOperatorOnly(t *testing.T) {
+	var buf bytes.Buffer
+	printProfileHuman(&buf, profileJSON{Name: "trusted", OperatorOnly: true})
+	assert.Contains(t, buf.String(), "status:  👤 operator only")
+}
+
 // An empty/sparse profile renders without panicking and shows only the name.
 func TestPrintProfileHuman_Sparse(t *testing.T) {
 	var buf bytes.Buffer

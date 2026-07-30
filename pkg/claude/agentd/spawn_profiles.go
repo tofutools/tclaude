@@ -52,6 +52,9 @@ type spawnProfileJSON struct {
 	// independently so enabling does not discard the operator's explanation.
 	Disabled       *bool  `json:"disabled,omitempty"`
 	DisabledReason string `json:"disabled_reason,omitempty"`
+	// OperatorOnly permits human/operator launches but rejects an agent caller
+	// that resolves this profile at any launch tier.
+	OperatorOnly bool `json:"operator_only,omitempty"`
 
 	// Launch fields — overlap clcommon.SpawnArgs.
 	Harness string `json:"harness,omitempty"`
@@ -126,6 +129,7 @@ func profileToJSON(p *db.SpawnProfile) spawnProfileJSON {
 		Aliases:                    append([]string{}, p.Aliases...),
 		Disabled:                   &disabled,
 		DisabledReason:             p.DisabledReason,
+		OperatorOnly:               p.OperatorOnly,
 		Harness:                    p.Harness,
 		Model:                      p.Model,
 		Effort:                     p.Effort,
@@ -167,6 +171,7 @@ func profileInlineToJSON(p *db.SpawnProfile) spawnProfileJSON {
 	out := profileToJSON(p)
 	out.Disabled = nil
 	out.DisabledReason = ""
+	out.OperatorOnly = false
 	return out
 }
 
@@ -380,6 +385,7 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 		Aliases:                    aliases,
 		Disabled:                   disabled,
 		DisabledReason:             disabledReason,
+		OperatorOnly:               body.OperatorOnly,
 		Harness:                    hName,
 		Model:                      model,
 		Effort:                     effort,
@@ -427,9 +433,9 @@ func buildInlineProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawn
 		return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg",
 			"profile_inline: a template-local profile has no name — use spawn_profile to reference a registry profile by name"}
 	}
-	if body.Disabled != nil || strings.TrimSpace(body.DisabledReason) != "" {
+	if body.Disabled != nil || strings.TrimSpace(body.DisabledReason) != "" || body.OperatorOnly {
 		return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg",
-			"profile_inline: disabled state is only valid on a saved spawn profile"}
+			"profile_inline: disabled and operator-only state are only valid on a saved spawn profile"}
 	}
 	switch {
 	case strings.TrimSpace(body.AgentName) != "":
@@ -479,6 +485,24 @@ func disabledProfileFailure(p *db.SpawnProfile) *spawnFailure {
 		Status: http.StatusConflict,
 		Kind:   "profile_disabled",
 		Msg:    fmt.Sprintf("spawn profile %q is disabled: %s", p.Name, reason),
+	}
+}
+
+// profileSpawnFailure applies the saved-profile launch gates for an originating
+// caller. An empty caller is the human trust root; any non-empty value is an
+// authenticated agent conversation propagated through direct, template,
+// process, wave, and scribe spawn adapters.
+func profileSpawnFailure(p *db.SpawnProfile, caller string) *spawnFailure {
+	if fail := disabledProfileFailure(p); fail != nil {
+		return fail
+	}
+	if p == nil || !p.OperatorOnly || strings.TrimSpace(caller) == "" {
+		return nil
+	}
+	return &spawnFailure{
+		Status: http.StatusForbidden,
+		Kind:   "profile_operator_only",
+		Msg:    fmt.Sprintf("spawn profile %q is restricted to human/operator spawns", p.Name),
 	}
 }
 

@@ -330,7 +330,7 @@ func summonScribe(name string, overrides map[string]string, brief string, exclus
 	// seeding, never CC's. Every summon is fresh, so every new scribe observes
 	// the profile currently configured by the operator.
 	stampScribeProfileFromConfig(g)
-	spawnHarness, fail := scribeSpawnHarness(g)
+	spawnHarness, fail := scribeSpawnHarnessForCaller(g, spawnerConvID)
 	if fail != nil {
 		return nil, false, fail
 	}
@@ -490,9 +490,13 @@ func ensureScribeWorkdir() (string, *spawnFailure) {
 // the default harness). Mirrors executeSpawn → applyDefaultProfile so the dir
 // we pre-trust matches the harness that will read the trust store.
 func scribeSpawnHarness(g *db.AgentGroup) (string, *spawnFailure) {
+	return scribeSpawnHarnessForCaller(g, "")
+}
+
+func scribeSpawnHarnessForCaller(g *db.AgentGroup, caller string) (string, *spawnFailure) {
 	profiles := []*db.SpawnProfile{groupDefaultProfile(g), globalDefaultProfile()}
 	for _, prof := range profiles {
-		if fail := disabledProfileFailure(prof); fail != nil {
+		if fail := profileSpawnFailure(prof, caller); fail != nil {
 			return "", fail
 		}
 	}

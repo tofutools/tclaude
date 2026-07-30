@@ -24,6 +24,7 @@ func TestSpawnProfile_CRUDRoundTrip(t *testing.T) {
 		Name:           "codex-sandboxed",
 		Disabled:       true,
 		DisabledReason: "capacity temporarily exhausted",
+		OperatorOnly:   true,
 		Harness:        "codex",
 		Model:          "gpt-5",
 		Effort:         "high",
@@ -47,6 +48,7 @@ func TestSpawnProfile_CRUDRoundTrip(t *testing.T) {
 	assert.Equal(t, id, got.ID)
 	assert.True(t, got.Disabled)
 	assert.Equal(t, "capacity temporarily exhausted", got.DisabledReason)
+	assert.True(t, got.OperatorOnly)
 	assert.Equal(t, "codex", got.Harness)
 	assert.Equal(t, "gpt-5", got.Model)
 	assert.Equal(t, "high", got.Effort)

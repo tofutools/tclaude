@@ -753,6 +753,12 @@ with the stored reason, as does `tclaude ask` when configured to use it. Clear
 Disabled to make all existing references usable again; the editor retains and
 shows the previous reason so it can be reviewed or reused next time.
 
+A profile can also be marked **Operator only**. It stays available to the
+dashboard and other human-owned spawn surfaces, but any agent-originated spawn
+that resolves through it is refused. The profile manager and pickers mark it
+with **👤 Operator only** so this restriction remains visible without treating
+the profile as disabled.
+
 ### Sandbox Profiles
 
 Sandbox profiles are separate, harness-neutral launch policy: absolute

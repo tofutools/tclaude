@@ -162,6 +162,48 @@ func TestEnabledSpawnProfileWithRememberedReasonCanSpawn(t *testing.T) {
 	assert.Equal(t, http.StatusOK, spawn.Code, "remembered reason must not act as the disable switch")
 }
 
+func TestOperatorOnlySpawnProfilesAllowHumanAndBlockAgentAtEveryTier(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(*testing.T, *testharness.Flow)
+		body  map[string]any
+	}{
+		{name: "explicit", setup: func(*testing.T, *testharness.Flow) {},
+			body: map[string]any{"name": "worker", "profile": "operator"}},
+		{name: "group default", setup: func(t *testing.T, f *testharness.Flow) {
+			require.Equal(t, http.StatusOK, setGroupProfile(t, f, "alpha", "operator").Code)
+		}, body: map[string]any{"name": "worker"}},
+		{name: "global default", setup: func(t *testing.T, f *testharness.Flow) {
+			require.Equal(t, http.StatusOK, setGlobalProfile(t, f, "operator").Code)
+		}, body: map[string]any{"name": "worker"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFlow(t)
+			g := f.HaveGroup("alpha")
+			require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
+				"name": "operator", "operator_only": true,
+			}).Code)
+			tc.setup(t, f)
+
+			const lead = "operator-only-agent-caller-111111111111"
+			f.HaveMember(g.Name, lead)
+			require.NoError(t, db.GrantAgentPermission(lead, agentd.PermGroupsSpawn, "test"))
+			denied := f.AsAgent(lead).SpawnWith(g.Name, tc.body)
+			assert.Equal(t, http.StatusForbidden, denied.Code)
+			assert.Contains(t, string(denied.Raw), "profile_operator_only")
+			assert.Contains(t, string(denied.Raw), "restricted to human/operator spawns")
+		})
+	}
+
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
+		"name": "operator", "operator_only": true,
+	}).Code)
+	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{"name": "worker", "profile": "operator"})
+	assert.Equal(t, http.StatusOK, spawn.Code, "body=%s", spawn.Raw)
+}
+
 func TestSpawnProfilePrecedence_ExplicitProfileAliasWinsAndIsDisclosed(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("alpha")
