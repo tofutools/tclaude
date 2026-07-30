@@ -144,13 +144,26 @@ func predictSandboxFilesystem(
 
 	switch target.harness.Name {
 	case harness.DefaultName:
-		if strings.TrimSpace(validatedBuiltinMode) != harness.ClaudeSandboxOn {
+		mode := strings.TrimSpace(validatedBuiltinMode)
+		if mode != harness.ClaudeSandboxOn && filesystemHasDeny(grants) {
 			return predictedSandboxFeature(
 				tier, harness.AccessPredictionRefused,
 				fmt.Sprintf(
 					"Claude directory rules require sandbox %q; sandbox %q cannot guarantee enforcement",
 					harness.ClaudeSandboxOn, validatedBuiltinMode,
 				),
+			)
+		}
+		if mode != harness.ClaudeSandboxOn {
+			if mode == harness.ClaudeSandboxOff {
+				return predictedSandboxFeature(
+					tier, harness.AccessPredictionNotEnforced,
+					"Claude Code's OS sandbox is off, so tclaude does not emit additive directory grants; the launch still has unrestricted directory access",
+				)
+			}
+			return predictedSandboxFeature(
+				tier, harness.AccessPredictionEnforced,
+				"Claude Code receives these additive directory grants without tclaude changing whether the operator's settings enable the OS sandbox",
 			)
 		}
 		if len(reopens) > 0 {
