@@ -196,3 +196,83 @@ func TestPlannedAxesKeepTheEngineThroughWidening(t *testing.T) {
 	assert.Equal(t, NetworkEngineProxy, axes.Network.Engine,
 		"widening drops destinations, never the authored mechanism")
 }
+
+// TestFlattenCarriesTheEngineThroughIncludes covers the rewrite between
+// authoring and composition. Includes are flattened into one profile BEFORE
+// Resolve composes the tiers, so an engine dropped here disappears before the
+// tier resolution that would have disclosed it: the effective policy names no
+// engine, the composition notice never fires, and the launch runs the
+// pre-engine default with nothing on the rendered surface to say so.
+//
+// Precedence inside an include chain is the same most-explicit-wins rule the
+// tiers use: a profile's own engine beats the engines of the profiles it
+// includes, and a later include beats an earlier one.
+func TestFlattenCarriesTheEngineThroughIncludes(t *testing.T) {
+	registry := map[string]*Profile{
+		"base": {
+			Name: "base",
+			Network: &NetworkRules{
+				Baseline: NetworkBaselineDeny,
+				Allow:    []NetworkAllowEntry{{Host: "example.com"}},
+				Engine:   NetworkEnginePacket,
+			},
+		},
+		"team": {
+			Name:     "team",
+			Includes: []string{"base"},
+			Network: &NetworkRules{
+				Baseline: NetworkBaselineDeny,
+				Allow:    []NetworkAllowEntry{{Host: "example.com"}},
+				Engine:   NetworkEngineProxy,
+			},
+		},
+		"silent": {
+			Name: "silent",
+			Network: &NetworkRules{
+				Baseline: NetworkBaselineDeny,
+				Allow:    []NetworkAllowEntry{{Host: "example.com"}},
+			},
+		},
+	}
+
+	// An including profile that names no engine of its own inherits the one its
+	// include named rather than losing it.
+	inherited, err := Flatten(Profile{
+		Name:     "top",
+		Includes: []string{"team"},
+	}, registryLookup(registry))
+	require.NoError(t, err)
+	require.NotNil(t, inherited.Network)
+	assert.Equal(t, NetworkEngineProxy, inherited.Network.Engine)
+
+	// The profile's own engine is the most explicit layer and wins.
+	own, err := Flatten(Profile{
+		Name:     "top",
+		Includes: []string{"team"},
+		Network: &NetworkRules{
+			Baseline: NetworkBaselineDeny,
+			Allow:    []NetworkAllowEntry{{Host: "example.com"}},
+			Engine:   NetworkEnginePacket,
+		},
+	}, registryLookup(registry))
+	require.NoError(t, err)
+	assert.Equal(t, NetworkEnginePacket, own.Network.Engine)
+
+	// An include that expresses no opinion is absorbed rather than clearing an
+	// engine an earlier include already named.
+	absorbed, err := Flatten(Profile{
+		Name:     "top",
+		Includes: []string{"team", "silent"},
+	}, registryLookup(registry))
+	require.NoError(t, err)
+	assert.Equal(t, NetworkEngineProxy, absorbed.Network.Engine)
+
+	// And the flattened profile still composes and discloses, which is the
+	// property the drop actually destroyed.
+	effective, err := Resolve(Scopes{Explicit: &inherited})
+	require.NoError(t, err)
+	assert.Equal(t, NetworkEngineProxy, effective.Network.Engine)
+	notice, ok := networkEngineNotice(t, effective)
+	require.True(t, ok, "an engine reaching composition through an include is still disclosed")
+	assert.Contains(t, notice.Detail, "Proxy filter")
+}

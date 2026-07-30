@@ -42,9 +42,20 @@ func KnownResolverSocketPaths() []string {
 	return out
 }
 
-// NetworkEngineResolverSocketConflict reports the first authored Unix-socket
-// selector that would hand a known resolver back to a sandbox running under the
-// proxy engine, together with the resolver path it reaches.
+// NetworkEngineResolverSocketConflict reports the first authored Unix-socket selector that
+// would hand a known resolver back to a sandbox running under the proxy engine,
+// together with the resolver path it reaches.
+//
+// SCOPE, stated because it bounds the guarantee rather than describing it: this
+// checks the Unix-socket axis only, which is the seam TCL-882 was scoped to. A
+// FILESYSTEM grant covering the resolver's directory reaches the same socket
+// inode — the constructed root binds granted paths, and a read-only bind does
+// not stop connect(2) on a socket beneath it — and is NOT refused here. That
+// path is unreachable today because the proxy engine deploys nothing while its
+// capability cells are unenforced, but it must be closed before activation
+// makes the floor reachable. The capability table this runs in sees only the
+// resolved access axes, so closing it needs a seam that also sees the effective
+// filesystem; picking that seam is activation work, not authoring work.
 //
 // It is deliberately a pure function of authored policy: it matches selectors
 // rather than probing the host, so the preview and the launch reach the same
@@ -88,7 +99,7 @@ func NetworkEngineResolverSocketConflict(
 // one conflict, with its remedies named.
 func NetworkEngineResolverSocketRefusal(selector, resolver string) string {
 	return "missing capability proxy_engine_name_authority: the Proxy filter engine decides host and domain rules on the name the sandbox asks for, " +
-		"and the authored Unix-socket rule " + selector + " reaches the system resolver at " + resolver + ", " +
+		"and the authored rule " + selector + " reaches the system resolver at " + resolver + ", " +
 		"which converts names to addresses inside the sandbox and leaves those rules with no name to decide; " +
-		"remove that socket rule, or select the Packet filter engine, whose DNS broker holds name authority with a resolver socket present"
+		"remove or deny that rule, or select the Packet filter engine, whose DNS broker holds name authority with a resolver socket present"
 }

@@ -32,6 +32,10 @@ func proxyBridgeTestPlan(
 	engine sandboxpolicy.NetworkEngine,
 ) sandboxpolicy.MountPlan {
 	t.Helper()
+	// The engine is authored policy, so it reaches the renderer on the profile
+	// rather than only as a caller argument; passing it in both places
+	// exercises the render seam's cross-check agreeing.
+	rules.Engine = engine
 	plan, err := sandboxpolicy.RenderMountPlanWithEngine(
 		sandboxpolicy.EffectiveProfile{Network: &rules}, engine)
 	require.NoError(t, err)

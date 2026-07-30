@@ -1007,7 +1007,33 @@ func UnixSocketLaunchNotice(result *UnixSocketMaterialization) *AccessNotice {
 func intersectNetworkRules(left, right NetworkRules) NetworkRules {
 	out := intersectNetworkBaselines(left, right)
 	out.Deny = unionNetworkEntries(left.Deny, right.Deny)
+	out.Engine = mergeNetworkEngines(left.Engine, right.Engine)
 	return out
+}
+
+// mergeNetworkEngines carries the engine across a merge that intersects
+// everything else. The engine is not intersected, because it is not an access
+// axis and there is no strictness to compare; it follows most-explicit-wins,
+// with right as the more explicit layer.
+//
+// Both callers order their merges that way. Include flattening folds each
+// include in turn and then the profile's own axes last, so a profile beats what
+// it includes and a later include beats an earlier one. Tier composition folds
+// global, then group, then explicit, which is the same precedence
+// ResolveNetworkEngine applies — Resolve still settles the engine through that
+// function afterwards, because it is the one that also reports the layers that
+// lost.
+//
+// Carrying it here rather than dropping it is load-bearing: flattening happens
+// BEFORE tier resolution, so an engine lost at this seam is gone before the
+// resolution that would have disclosed it — the effective policy would name no
+// engine, no composition notice would fire, and the launch would run the
+// pre-engine default with nothing on the rendered surface to say so.
+func mergeNetworkEngines(left, right NetworkEngine) NetworkEngine {
+	if right != NetworkEngineUnset {
+		return right
+	}
+	return left
 }
 
 func intersectNetworkBaselines(left, right NetworkRules) NetworkRules {

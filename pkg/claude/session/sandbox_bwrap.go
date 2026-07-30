@@ -575,6 +575,30 @@ func FilteredNetworkPrerequisiteNotice(
 	}
 }
 
+// FilteredNetworkPrerequisiteNoticeApplies reports whether the packet
+// gateway's pasta/nft prerequisite disclosure describes THIS policy's launch.
+//
+// The probe behind that notice is the packet gateway's: pasta, nft, and the
+// namespace privileges they need. The proxy engine reaches its floor through
+// the isolated posture's plain unshare and has none of those prerequisites
+// (§2.5), so disclosing them would name a launch gate that does not gate this
+// launch — and a failing pasta on a host that will never call pasta would read
+// as the reason the rules are not enforced.
+//
+// It is exported because the notice is appended from two launch surfaces — the
+// session boundary and the daemon spawn guard — and a gate applied at only one
+// of them would let the two disagree about the same profile.
+//
+// An unresolvable engine keeps the notice rather than dropping it: failing to
+// answer the question is not evidence that the prerequisite is absent, and
+// suppressing a launch-gate disclosure is the worse error.
+func FilteredNetworkPrerequisiteNoticeApplies(
+	network sandboxpolicy.NetworkRules,
+) bool {
+	engine, err := sandboxpolicy.DeployedNetworkEngineForRules(network)
+	return err != nil || engine != sandboxpolicy.NetworkEngineProxy
+}
+
 func appendFilteredNetworkPrerequisiteNotice(
 	notices []sandboxpolicy.AccessNotice,
 	outerLayer bool,
@@ -586,18 +610,7 @@ func appendFilteredNetworkPrerequisiteNotice(
 	if !outerLayer || err != nil || posture != sandboxpolicy.NetworkFiltered {
 		return notices
 	}
-	// The probe this notice reports is the packet gateway's: pasta, nft, and
-	// the namespace privileges they need. The proxy engine reaches its floor
-	// through the isolated posture's plain unshare and has none of those
-	// prerequisites (§2.5), so running the probe would disclose a launch gate
-	// that does not gate this launch — and a failing pasta on a host that will
-	// never call pasta would read as a reason the rules are not enforced.
-	//
-	// An unresolvable engine keeps the notice rather than dropping it: failing
-	// to answer the question is not evidence that the prerequisite is absent,
-	// and suppressing a launch-gate disclosure is the worse error.
-	engine, engineErr := sandboxpolicy.DeployedNetworkEngineForRules(network)
-	if engineErr == nil && engine == sandboxpolicy.NetworkEngineProxy {
+	if !FilteredNetworkPrerequisiteNoticeApplies(network) {
 		return notices
 	}
 	return append(notices, FilteredNetworkPrerequisiteNotice(probe(), enforcing))
