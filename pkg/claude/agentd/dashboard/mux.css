@@ -205,7 +205,10 @@
   font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   color: #d4d4d4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.mux-pane-status { font-size: 11px; color: #7d8590; flex: 1; }
+.mux-pane-status {
+  font-size: 11px; color: #7d8590; flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .terminal-interaction-hint {
   color: #7d8590; font-size: 11px; white-space: nowrap;
 }

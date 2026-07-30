@@ -3363,7 +3363,10 @@ details[data-group-key][open] > summary .group-default-model:not(.unset) > .grou
 .term-session-header h3 {
   margin: 0; font-size: 13px; color: #d4d4d4; font-family: ui-monospace, monospace;
 }
-.term-session-status { font-size: 11px; color: #7d8590; flex: 1; }
+.term-session-status {
+  font-size: 11px; color: #7d8590; flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 /* "⧉ tab" — hand this modal terminal to the dashboard's Terminals tab
    (js/terminals-tab.js). Themed dark: a bare <button> would render with
    the browser's white default. */
