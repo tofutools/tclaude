@@ -967,3 +967,63 @@ func TestClosedNetworkOverrideWidensOnlyThatAxisAndPinsRefusalCopy(t *testing.T)
 	require.ErrorContains(t, err, "cannot enforce closed Unix-socket access",
 		"the network-only option must not become a generic capability bypass")
 }
+
+// TestComposedNetworkDisclosureSentencesAreSeparated pins TCL-864's copy
+// contract: the baseline verdict, the launch-check condition and each deny
+// row's limitation are authored independently, so the composed disclosure must
+// join them as separate sentences instead of running them together. Every
+// clause must still survive verbatim.
+func TestComposedNetworkDisclosureSentencesAreSeparated(t *testing.T) {
+	deny := sandboxpolicy.NetworkAllowEntry{Domain: "telemetry.example", Ports: []int{443}}
+	axes := sandboxpolicy.ResolvedAxes{
+		Network: sandboxpolicy.NetworkRules{
+			Mode: sandboxpolicy.AccessModeOpen,
+			Deny: []sandboxpolicy.NetworkAllowEntry{deny},
+		},
+	}
+
+	// A target that applies no deny entries: the ambient-access baseline is
+	// followed by the whole fail-open deny limitation.
+	predicted := DescribePredictedAccess(axes, PredictedAccessEnforcement{
+		Mechanism: "test sandbox",
+		Scope:     "process",
+	})
+	assert.Equal(t, AccessPredictionEnforcedPartial, predicted.Network.Outcome)
+	assert.Equal(t,
+		"ambient outbound network access remains available. Deny limitation: "+
+			PredictedNetworkDenyNotEnforcedDetail,
+		predicted.Network.Detail)
+
+	// A target that does apply them keeps the same separation on the
+	// enforced-deny sentence.
+	predicted = DescribePredictedAccess(axes, PredictedAccessEnforcement{
+		NetworkDenySelectors: []NetworkSelectorCapability{{
+			Selector: string(sandboxpolicy.NetworkSelectorDomain),
+			Level:    EnforceFull,
+		}},
+		NetworkDenyPorts: EnforceFull,
+		Mechanism:        "test sandbox",
+		Scope:            "process",
+	})
+	assert.Equal(t,
+		"ambient outbound network access remains available. Configured deny rules are enforced.",
+		predicted.Network.Detail)
+
+	// Per-row details compose the launch-check condition the same way.
+	rows := DescribePredictedNetworkDenyEntries(
+		[]sandboxpolicy.NetworkAllowEntry{deny},
+		PredictedAccessEnforcement{
+			NetworkDenySelectors: []NetworkSelectorCapability{{
+				Selector: string(sandboxpolicy.NetworkSelectorDomain),
+				Level:    EnforceFull,
+			}},
+			NetworkDenyPorts:     EnforceFull,
+			NetworkListCondition: "Live network probes must pass.",
+			Mechanism:            "test gateway",
+			Scope:                "process",
+		})
+	require.Len(t, rows, 1)
+	assert.Equal(t,
+		"test gateway enforces this deny destination. Live network probes must pass.",
+		rows[0].Detail)
+}

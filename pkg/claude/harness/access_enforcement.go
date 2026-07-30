@@ -594,7 +594,7 @@ func DescribePredictedNetworkEntries(
 				strings.Join(partialReasons, " "))
 		}
 		if caps.NetworkListCondition != "" {
-			detail += " " + caps.NetworkListCondition
+			detail = appendPredictionSentence(detail, caps.NetworkListCondition)
 		}
 		out[i] = PredictedNetworkEntry{
 			Entry: entry, Mode: "allow",
@@ -655,7 +655,7 @@ func DescribePredictedNetworkDenyEntries(
 					strings.Join(partialReasons, " "))
 			}
 			if caps.NetworkListCondition != "" {
-				detail += " " + caps.NetworkListCondition
+				detail = appendPredictionSentence(detail, caps.NetworkListCondition)
 			}
 		}
 		out[i] = PredictedNetworkEntry{
@@ -719,18 +719,54 @@ func predictNetworkAxis(
 		if baseline.Outcome == AccessPredictionEnforced {
 			baseline.Outcome = AccessPredictionEnforcedPartial
 		}
-		baseline.Detail += " Deny limitation: " +
-			strings.Join(uniquePredictionDetails(unsupportedDetails), " ")
+		baseline.Detail = appendPredictionSentence(baseline.Detail,
+			"Deny limitation: "+
+				joinPredictionSentences(uniquePredictionDetails(unsupportedDetails)))
 	case len(partialDetails) > 0:
 		if baseline.Outcome == AccessPredictionEnforced {
 			baseline.Outcome = AccessPredictionEnforcedPartial
 		}
-		baseline.Detail += " Deny limitation: " +
-			strings.Join(uniquePredictionDetails(partialDetails), " ")
+		baseline.Detail = appendPredictionSentence(baseline.Detail,
+			"Deny limitation: "+
+				joinPredictionSentences(uniquePredictionDetails(partialDetails)))
 	default:
-		baseline.Detail += " Configured deny rules are enforced."
+		baseline.Detail = appendPredictionSentence(baseline.Detail,
+			"Configured deny rules are enforced.")
 	}
 	return baseline
+}
+
+// appendPredictionSentence joins two independently-sourced disclosure clauses
+// as separate sentences. Each clause is authored on its own (a baseline
+// verdict, a launch-check condition, one deny row's limitation), so none of
+// them can know whether it will be first, last, or in the middle. Without the
+// terminator the composed line reads as one run-on sentence — "ambient
+// outbound network access remains available Deny limitation: …" (TCL-864).
+// Nothing is dropped or reworded; only the separator is added.
+func appendPredictionSentence(base, next string) string {
+	base = strings.TrimRight(base, " ")
+	next = strings.TrimSpace(next)
+	switch {
+	case base == "":
+		return next
+	case next == "":
+		return base
+	}
+	if !strings.HasSuffix(base, ".") && !strings.HasSuffix(base, "!") &&
+		!strings.HasSuffix(base, "?") {
+		base += "."
+	}
+	return base + " " + next
+}
+
+// joinPredictionSentences composes an ordered set of clauses with the same
+// sentence separation appendPredictionSentence applies pairwise.
+func joinPredictionSentences(values []string) string {
+	out := ""
+	for _, value := range values {
+		out = appendPredictionSentence(out, value)
+	}
+	return out
 }
 
 func uniquePredictionDetails(values []string) []string {
@@ -829,7 +865,7 @@ func withNetworkListCondition(
 	condition string,
 ) PredictedAccessAxis {
 	if condition != "" {
-		axis.Detail += " " + condition
+		axis.Detail = appendPredictionSentence(axis.Detail, condition)
 	}
 	return axis
 }

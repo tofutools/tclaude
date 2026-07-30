@@ -925,7 +925,13 @@ test('sandbox access-axis model preserves legacy meaning and validates structure
     ],
     environment: ['POLICY_OWNER'],
     agent_directories: ['GOCACHE'],
-    network: { mode: 'list', allow: [{ domain: 'api.example.com', ports: [443] }] },
+    network: {
+      mode: 'list',
+      allow: [
+        { domain: 'api.example.com', ports: [443] },
+        { cidr: '198.51.100.0/24' },
+      ],
+    },
     unix_sockets: { mode: 'closed' },
     agentd_socket: 'always reachable',
   });
@@ -941,6 +947,8 @@ test('sandbox access-axis model preserves legacy meaning and validates structure
   ]);
   assert.deepEqual(buckets.notApplied.rules, [
     'Allow network: domain api.example.com · port 443',
+    // TCL-864: a CIDR row names the selector, not the axis word a second time.
+    'Allow network: CIDR 198.51.100.0/24',
     'Block all other network destinations',
   ]);
   assert.equal(buckets.launchRefused, true);
@@ -985,7 +993,7 @@ test('sandbox access-axis model preserves legacy meaning and validates structure
     },
   ]);
   assert.ok(denyBuckets.applied.rules.includes(
-    'Deny network: network 192.0.2.0/24'));
+    'Deny network: CIDR 192.0.2.0/24'));
   assert.ok(denyBuckets.partial.rules.includes(
     'Deny network: domain partial.example · port 443'));
   assert.ok(denyBuckets.notApplied.rules.includes(
@@ -2169,7 +2177,7 @@ test('effective preview buckets normalized deny rows with target-specific help',
   const applied = host.querySelector('.sbx-rule-bucket-applied');
   const partial = host.querySelector('.sbx-rule-bucket-partial');
   const unsupported = host.querySelector('.sbx-rule-bucket-not-applied');
-  assert.match(applied.textContent, /Deny network: network 192\.0\.2\.0\/24/);
+  assert.match(applied.textContent, /Deny network: CIDR 192\.0\.2\.0\/24/);
   assert.match(partial.textContent,
     /Deny network: domain api\.example\.com · port 443/);
   assert.match(unsupported.textContent,
