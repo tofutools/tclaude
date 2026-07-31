@@ -2,6 +2,7 @@ package session
 
 import (
 	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -283,6 +284,7 @@ func TestRenderSeatbeltProfileRefusesProjection(t *testing.T) {
 				{Path: "/srv/shared", Mode: sandboxpolicy.MountRO, Source: "/Users/dev/dataset"},
 			},
 		},
+		netip.AddrPort{},
 		[]string{"/Users/dev/.tclaude/data"},
 		"/private/tmp/tmux-501",
 		"/private/var/folders/ab/runtime/T",

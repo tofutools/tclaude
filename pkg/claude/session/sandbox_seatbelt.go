@@ -2,6 +2,7 @@ package session
 
 import (
 	"fmt"
+	"net/netip"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -52,19 +53,41 @@ type seatbeltRegionNode struct {
 // fixed /dev runtime carveouts, pierces only the class-1 root write deny. A
 // narrower profile RO/hide still produces its own deny without those
 // exceptions, so runtime compatibility can never reopen an operator policy.
+//
+// proxyEndpoint is the host-loopback address the tclaude filtering proxy
+// listens on, and is required by — and permitted on — exactly the plans that
+// deploy one. It is the zero value for every other plan.
 func renderSeatbeltProfile(
 	phase0WriteDirs, requiredSocketPaths []string,
 	plan sandboxpolicy.MountPlan,
+	proxyEndpoint netip.AddrPort,
 	protectedRoots []string,
 	tmuxSocketDir, runtimeTempDir string,
 	identity seatbeltIdentityLookup,
 	daemonReadOnlyPaths []string,
 	privateWriteDirs ...TclaudeLayerPrivateWriteDir,
 ) (string, []seatbeltProfileParam, error) {
+	deploysProxy := tclaudeLayerPlanDeploysProxy(plan)
 	switch plan.NetworkPosture {
 	case sandboxpolicy.NetworkHostOpen, sandboxpolicy.NetworkIsolatedWithAgentd:
 	case sandboxpolicy.NetworkFiltered:
-		if !sandboxpolicy.FilteredNetworkRulesAreLoopbackOnly(plan.FilteredNetwork) {
+		// Both filtered renderings need a compiled policy, so the guard stays
+		// ahead of the branch rather than inside one arm of it. The proxy floor
+		// opens nothing without it, but a filtered plan carrying no policy at
+		// all is a caller that failed to materialize, and this renderer should
+		// fail closed on its own rather than rely on the launch seam's check.
+		if plan.FilteredNetwork == nil {
+			return "", nil, fmt.Errorf(
+				"darwin tclaude-layer filtered networking requires a compiled network policy",
+			)
+		}
+		// The two filtered renderings are mutually exclusive by construction
+		// rather than by ordering here: a loopback-only compiled rule set
+		// carries no deny rows, so it is not discriminating and never resolves
+		// to an engine at all (NetworkRulesAreDiscriminating). Only a rule set
+		// the native Seatbelt rules cannot express reaches the proxy floor.
+		if !deploysProxy &&
+			!sandboxpolicy.FilteredNetworkRulesAreLoopbackOnly(plan.FilteredNetwork) {
 			return "", nil, fmt.Errorf(
 				"darwin tclaude-layer filtered networking supports only a non-empty loopback-only list",
 			)
@@ -74,6 +97,9 @@ func renderSeatbeltProfile(
 			"darwin tclaude-layer has invalid network posture %d",
 			plan.NetworkPosture,
 		)
+	}
+	if err := validateSeatbeltProxyEndpoint(proxyEndpoint, deploysProxy); err != nil {
+		return "", nil, err
 	}
 	if identity == nil {
 		identity = func(string) (seatbeltFileIdentity, bool) {
@@ -256,9 +282,97 @@ func renderSeatbeltProfile(
 		nodes,
 		runtimeTempDir,
 		plan,
+		proxyEndpoint,
 		identity,
 	)
 	return profile, params, nil
+}
+
+// validateSeatbeltProxyEndpoint holds the proxy floor's one IP destination to
+// the plan that actually deploys a proxy, in both directions.
+//
+// A proxy plan without an endpoint is refused rather than rendered as the bare
+// isolated floor: the harness would come up with no route to its own filtering
+// proxy, which is the deny-everything outcome dressed as a working launch. An
+// endpoint supplied for a plan that deploys no proxy is refused too, because
+// silently dropping it would open nothing while the caller believed it had.
+//
+// Membership in the host-loopback space is decided by the shared predicate
+// (sandboxpolicy.AddrIsLoopbackIdentity), never by a second local notion of
+// what "loopback" spells. An endpoint outside that space would not be a
+// filtering proxy on this host at all; it would be a route off it.
+//
+// The unspecified address is the one place where that predicate alone would be
+// wrong, and the reason generalizes past this function: the rule is ONE
+// PREDICATE PER QUESTION, not one predicate per address. Connect-reachability
+// and bind-scope are different questions that happen to take the same argument,
+// so reusing one across that boundary is not reuse — it is a category error
+// wearing reuse's clothes, and it is more dangerous than duplication precisely
+// because the shared name makes it look deliberate.
+//
+// Concretely: AddrIsLoopbackIdentity carries 0.0.0.0/8 and ::/128 because
+// connecting TO the unspecified address lands on local loopback, which makes
+// them host-loopback DESTINATIONS. This endpoint is where the proxy LISTENS,
+// and binding to the unspecified address is the opposite — a wildcard listener
+// on every interface, so the sandbox's only egress would also be reachable from
+// the LAN. A launcher taking its endpoint from a net.Listen(":0") listener
+// address lands here, which is why the refusal is at this seam rather than left
+// to the caller.
+//
+// So the predicate stays the sole definition of loopback identity and is not
+// copied or narrowed; the bind-scope question is simply answered separately,
+// below. Anyone reaching for AddrIsLoopbackIdentity to validate another bind
+// address needs the same second answer.
+func validateSeatbeltProxyEndpoint(
+	endpoint netip.AddrPort,
+	deploysProxy bool,
+) error {
+	if !deploysProxy {
+		if endpoint.Addr().IsValid() || endpoint.Port() != 0 {
+			return fmt.Errorf(
+				"darwin tclaude-layer was given proxy endpoint %s for a plan that deploys no filtering proxy",
+				endpoint,
+			)
+		}
+		return nil
+	}
+	if !endpoint.Addr().IsValid() {
+		return fmt.Errorf(
+			"darwin tclaude-layer proxy floor requires the host-loopback endpoint the filtering proxy listens on",
+		)
+	}
+	if endpoint.Port() == 0 {
+		return fmt.Errorf(
+			"darwin tclaude-layer proxy floor requires a bound proxy port, got %s",
+			endpoint,
+		)
+	}
+	if !sandboxpolicy.AddrIsLoopbackIdentity(endpoint.Addr()) {
+		return fmt.Errorf(
+			"darwin tclaude-layer proxy floor refuses non-host-loopback proxy endpoint %s",
+			endpoint,
+		)
+	}
+	// Not redundant with the check above, and not a narrowing of it: the shared
+	// predicate accepts the unspecified address as a DESTINATION, and this is a
+	// LISTEN address. See the bind-vs-connect paragraph on this function before
+	// deleting this as dead code.
+	//
+	// Unmap first, for the same reason loopbackIdentityPrefixes carries the
+	// ::ffff: ranges: a mapped spelling must not be a second name for the space
+	// its unmapped form governs. AddrIsLoopbackIdentity already unmaps, so
+	// without this the two checks would disagree about ::ffff:0.0.0.0 — the one
+	// address this check exists to reject. That spelling is not exotic: it is
+	// what Go's net-to-netip bridge produces from a 16-byte net.IP, so
+	// net.IPv4zero, net.ParseIP("0.0.0.0") and a net.TCPAddr built from either
+	// all arrive here mapped.
+	if endpoint.Addr().Unmap().IsUnspecified() {
+		return fmt.Errorf(
+			"darwin tclaude-layer proxy floor refuses wildcard proxy endpoint %s: the filtering proxy must listen on host loopback, not on every interface",
+			endpoint,
+		)
+	}
+	return nil
 }
 
 func cleanSeatbeltPaths(label string, paths []string) ([]string, error) {
@@ -517,6 +631,7 @@ func compileSeatbeltDenyRegions(
 	nodes []seatbeltRegionNode,
 	runtimeTempDir string,
 	plan sandboxpolicy.MountPlan,
+	proxyEndpoint netip.AddrPort,
 	identity seatbeltIdentityLookup,
 ) (string, []seatbeltProfileParam) {
 	var profile strings.Builder
@@ -527,9 +642,17 @@ func compileSeatbeltDenyRegions(
 	profile.WriteString("; Seatbelt allow/deny rule selection.\n")
 
 	params := []seatbeltProfileParam{}
-	switch plan.NetworkPosture {
+	// The floor a plan builds, not the posture it names. TclaudeLayerFloorPosture
+	// is the same mapping the Linux launcher applies, and it says once — there
+	// rather than in a second switch here — that the proxy engine's floor IS the
+	// isolated posture's construction. On Seatbelt that means the isolated
+	// denies verbatim, with the proxy endpoint as their only addition; a
+	// filtered plan reaches the native loopback rules only when it deploys no
+	// proxy at all.
+	switch tclaudeLayerPlanFloorPosture(plan) {
 	case sandboxpolicy.NetworkIsolatedWithAgentd:
-		params = appendSeatbeltIsolatedNetworkRules(&profile, params, nodes)
+		params = appendSeatbeltIsolatedNetworkRules(
+			&profile, params, nodes, proxyEndpoint)
 	case sandboxpolicy.NetworkFiltered:
 		appendSeatbeltLoopbackNetworkRules(&profile, plan.FilteredNetwork)
 	}
@@ -718,10 +841,32 @@ func appendSeatbeltLoopbackNetworkRules(
 // the isolated contract. Listener prevention rests on network-bind. A listening
 // descriptor handed in over SCM_RIGHTS would require cooperation from the
 // trusted agentd daemon and is outside this boundary's threat model.
+//
+// A valid proxyEndpoint turns this into the proxy floor, and adds exactly one
+// thing to it: TCP to the host-loopback port the tclaude filtering proxy
+// listens on, so both carriages the launcher advertises — HTTP CONNECT and
+// SOCKS5, one listener — have a route to it and nothing else does. Everything
+// the isolated floor denies stays denied, which is what leaves the harness with
+// no way around the proxy: a second host-loopback service is a different port
+// and stays unreachable, an external address is not loopback at all, a UDP
+// datagram matches no exception (the endpoint's is TCP-only), and network-bind
+// still refuses every listener.
+//
+// The exception is written as a port on Seatbelt's "localhost" rather than on
+// the address the proxy actually bound, so the port is the only thing that
+// discriminates between destinations here. Whether that token means exactly
+// the host-loopback interface — covering 127.0.0.1 and ::1 alike, and nothing
+// bound at a routable local address — is a runtime Seatbelt behavior that no
+// golden can observe, and it is UNVERIFIED until M3.2's smoke measures it on a
+// macOS runner. The intent is the same identity folding the evaluator applies
+// to loopback destinations; if the smoke contradicts it, this generator is
+// what changes. sandboxpolicy.AddrIsLoopbackIdentity governs which endpoints
+// are ACCEPTED above and says nothing about what Seatbelt MATCHES here.
 func appendSeatbeltIsolatedNetworkRules(
 	profile *strings.Builder,
 	params []seatbeltProfileParam,
 	nodes []seatbeltRegionNode,
+	proxyEndpoint netip.AddrPort,
 ) []seatbeltProfileParam {
 	exceptions := make([]int, 0, 1)
 	for index, node := range nodes {
@@ -738,10 +883,19 @@ func appendSeatbeltIsolatedNetworkRules(
 		return nodes[exceptions[i]].path < nodes[exceptions[j]].path
 	})
 
-	profile.WriteString("\n; Isolated networking denies host/public connectivity and listeners.\n")
-	profile.WriteString("; Only allowlisted connects at the parameterized socket spellings are excepted.\n")
+	proxyFloor := proxyEndpoint.Port() != 0
+	if proxyFloor {
+		profile.WriteString("\n; Proxy-floor networking denies host/public connectivity and listeners.\n")
+		profile.WriteString("; Allowlisted connects at the parameterized socket spellings are excepted,\n")
+		profile.WriteString("; and so is TCP to the one host-loopback port the tclaude filtering proxy\n")
+		profile.WriteString("; listens on. A second loopback service, an external address, a UDP\n")
+		profile.WriteString("; datagram and every listener stay denied.\n")
+	} else {
+		profile.WriteString("\n; Isolated networking denies host/public connectivity and listeners.\n")
+		profile.WriteString("; Only allowlisted connects at the parameterized socket spellings are excepted.\n")
+	}
 	profile.WriteString("(deny network-bind)\n")
-	if len(exceptions) == 0 {
+	if len(exceptions) == 0 && !proxyFloor {
 		profile.WriteString("(deny network-outbound)\n")
 		return params
 	}
@@ -752,18 +906,21 @@ func appendSeatbeltIsolatedNetworkRules(
 			path: nodes[exception].path,
 		})
 	}
-	appendSeatbeltNetworkDenyExceptAgentd(profile, "network-outbound", len(exceptions))
+	appendSeatbeltFloorOutboundDenyRule(profile, len(exceptions), proxyEndpoint)
 	return params
 }
 
-func appendSeatbeltNetworkDenyExceptAgentd(
+// appendSeatbeltFloorOutboundDenyRule writes the floor's single outbound deny.
+// Every destination the floor permits is a require-not inside it rather than a
+// separate allow rule, so reachability never depends on Seatbelt's
+// allow/deny rule selection — the same reason the filesystem carveouts live
+// inside their deny predicates.
+func appendSeatbeltFloorOutboundDenyRule(
 	profile *strings.Builder,
-	action string,
 	exceptionCount int,
+	proxyEndpoint netip.AddrPort,
 ) {
-	profile.WriteString("(deny ")
-	profile.WriteString(action)
-	profile.WriteString("\n")
+	profile.WriteString("(deny network-outbound\n")
 	profile.WriteString("  (require-all\n")
 	for index := range exceptionCount {
 		name := fmt.Sprintf("AGENTD_SOCKET_%d", index)
@@ -772,6 +929,12 @@ func appendSeatbeltNetworkDenyExceptAgentd(
 		profile.WriteString("        (literal (param \"")
 		profile.WriteString(name)
 		profile.WriteString("\"))))\n")
+	}
+	if port := proxyEndpoint.Port(); port != 0 {
+		// The port is an integer, so nothing operator-controlled is interpolated
+		// into the profile text here.
+		fmt.Fprintf(profile,
+			"    (require-not (remote tcp \"localhost:%d\"))\n", port)
 	}
 	profile.WriteString("  ))\n")
 }
