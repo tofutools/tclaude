@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -390,6 +391,65 @@ func TestLocalPresetsOpenCodeRefuseAtNamedModelTransportSeam(t *testing.T) {
 			assert.Empty(t, resp.ConvID)
 		})
 	}
+}
+
+// TCL-895 at the surface an operator actually meets. The seam test above pins
+// the PACKET gateway's refusal; this one pins what changed — a local preset
+// that deploys an activated proxy engine is no longer refused for the packet
+// gateway's reason, and is still refused for the engine-independent one.
+//
+// The two messages are the whole point: "these presets name no explicit
+// provider" describes machinery a proxy launch never runs, while "requires an
+// explicit provider/model launch model" is the contract that still binds it.
+func TestLocalPresetsOpenCodeProxyEngineRefusesForTheProviderNotThePreset(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	const profileName = "opencode-local-model-apis-proxy"
+	_, err := db.CreateSandboxProfile(&db.SandboxProfile{
+		Name: profileName,
+		Network: &sandboxpolicy.NetworkRules{
+			Mode: sandboxpolicy.AccessModeList,
+			Allow: []sandboxpolicy.NetworkAllowEntry{
+				{Domain: "api.anthropic.com", Ports: []int{443}},
+				{Domain: "api.openai.com", Ports: []int{443}},
+				{Loopback: true},
+			},
+			Engine: sandboxpolicy.NetworkEngineProxy,
+		},
+	})
+	require.NoError(t, err)
+
+	resp := f.AsHuman().SpawnWith("crew", map[string]any{
+		"name":                   profileName + "-worker",
+		"harness":                harness.OpenCodeName,
+		"sandbox":                harness.OpenCodeSandboxTclaudeLayer,
+		"sandbox_implementation": string(sandboxpolicy.ImplementationTclaudeLayer),
+		"sandbox_profile":        profileName,
+	})
+	require.Equalf(t, http.StatusUnprocessableEntity, resp.Code,
+		"spawn body=%s", resp.Raw)
+	failure := decodeFailure(t, resp.Raw)
+	// The load-bearing half, and it holds on ANY host: whatever refuses this
+	// launch, it is no longer the packet gateway's preset refusal. Revert the
+	// gate and this is exactly the message that comes back.
+	assert.NotContains(t, failure.Error, "local presets name no explicit provider",
+		"the packet gateway's preset refusal must not be rendered for a proxy launch")
+	assert.Empty(t, resp.ConvID)
+
+	// The other half needs the launch to get PAST the floor, and the ordinary
+	// test job has no bubblewrap. Asserting it unconditionally would make this
+	// test depend on a host capability it is not about, so the floor's own
+	// refusal is recognized and reported rather than silently accepted.
+	if strings.Contains(failure.Error, "bwrap") ||
+		strings.Contains(failure.Error, "bubblewrap") ||
+		strings.Contains(failure.Error, "user namespaces") {
+		t.Logf("floor unavailable on this host, so only the preset-refusal half is asserted: %s",
+			failure.Error)
+		return
+	}
+	assert.Equal(t, harness.SandboxCapabilityModelTransport, failure.Code)
+	assert.Contains(t, failure.Error, "explicit provider/model launch model",
+		"the engine-independent model-transport contract still binds this launch")
 }
 
 // TestProxyEngineSpawnOmitsThePacketPrerequisiteNotice is the daemon-spawn half

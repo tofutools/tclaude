@@ -444,9 +444,10 @@ func accessEnforcementTable(
 		// floor resolved — a floor that needs neither — so a host without pasta
 		// reaches these cells exactly as the posture's operational headline
 		// promises.
-		if implementation == sandboxpolicy.ImplementationTclaudeLayer &&
+		proxyCellsActivated := implementation == sandboxpolicy.ImplementationTclaudeLayer &&
 			!packetGateway && filteredNetworkReady &&
-			proxyEngineActivated(h.Name, goos) {
+			proxyEngineActivated(h.Name, goos)
+		if proxyCellsActivated {
 			caps.NetworkList = EnforceFull
 			caps.NetworkSelectors = []NetworkSelectorCapability{
 				{
@@ -550,6 +551,7 @@ func accessEnforcementTable(
 			caps.Mechanism = "tclaude-layer Seatbelt native host-loopback filter"
 		}
 		if implementation == sandboxpolicy.ImplementationTclaudeLayer &&
+			!proxyCellsActivated &&
 			h.Name == OpenCodeName &&
 			(IsLocalAccessNetworkPreset(axes.Network) ||
 				IsLocalModelAPIsNetworkPreset(axes.Network)) {
@@ -559,6 +561,26 @@ func accessEnforcementTable(
 			// to resolve one from, so advertising their packet capability would
 			// make the rendered surface disagree with the launch-gated
 			// model-transport refusal.
+			//
+			// TCL-895: dropped only when the proxy cells above ACTUALLY
+			// applied. The refusal is the packet gateway's — pre-resolving a
+			// launch endpoint to check the authored list against — and a
+			// proxy-engine launch runs none of it, so an activated engine:proxy
+			// profile on one of these presets kept rendering a refusal for
+			// machinery it never reaches.
+			//
+			// The condition is proxyCellsActivated rather than merely "the
+			// deployed engine is the proxy", and the difference is the whole
+			// safety of this gate. On a platform or harness whose proxy cells
+			// are NOT activated, dropping the refusal would leave a row that
+			// enforces nothing — which the plan then widens to open. That would
+			// turn a launch that used to be refused into one that starts with
+			// open outbound, which is the wrong direction for a preset whose
+			// entire purpose is "local only".
+			//
+			// The launch seam mirrors this exactly, in
+			// session.ValidateTclaudeLayerOpenCodeLocalModelTransport, so
+			// preview and runtime still answer together.
 			caps.NetworkList = EnforceNone
 			caps.NetworkSelectors = nil
 			caps.NetworkPorts = EnforceNone

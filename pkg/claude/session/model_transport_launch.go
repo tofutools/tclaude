@@ -242,11 +242,54 @@ func resolveOpenCodeModelTransport(
 // explicit-provider filtering is supported because the frozen inline config is
 // the provider authority; the local presets have no such authority and OpenCode
 // exposes no effective-config read of its own loader, so they stay refused.
+//
+// TCL-895: that refusal is the PACKET gateway's. Its whole reason is that the
+// gateway admits a destination only if the authored allow list can be checked
+// against a launch endpoint resolved ahead of time, and these presets offer
+// nothing to resolve one from. A proxy-engine launch decides on the identity
+// the client states at connect time and needs no such pre-resolution, so
+// refusing it here would describe a mechanism this launch does not run.
+//
+// The relaxation is additionally conditioned on the proxy cells being ACTIVATED
+// for this harness on this platform. Without that, a platform whose proxy cells
+// enforce nothing would have this refusal dropped and its policy widened to
+// open — turning a launch that was refused into one that starts with open
+// outbound, for a preset whose whole purpose is "local only".
+//
+// The engine gate lives INSIDE this function rather than at its call sites,
+// because both launch seams — the session boundary and the daemon spawn guard
+// — call it, and a gate applied at one of them could drift from the other and
+// from the rendered row. The renderer reaches the same two predicates through
+// accessEnforcementTable. Same predicates, but note the inputs differ by
+// design: the renderer derives its engine from EffectiveAccessAxes and this
+// seam from PlannedEffectiveAccessAxes, which absorbs prior degradation
+// notices. A profile carrying one can therefore look non-discriminating here
+// and discriminating there; the divergence direction is to REFUSE, so it
+// cannot open a launch the row says is closed.
+//
+// This is not a hole in the OpenCode launch gate: the ENGINE-INDEPENDENT
+// model-transport resolve still runs for any filtered posture, so a
+// proxy-engine local-preset launch without an explicit provider/model and
+// inline explicit-provider config is still refused — which is exactly what the
+// proxy row's OpenCodeFilteredExplicitProviderCaveat discloses.
 func ValidateTclaudeLayerOpenCodeLocalModelTransport(
 	h *harness.Harness,
-	_ sandboxpolicy.EffectiveProfile,
+	effective sandboxpolicy.EffectiveProfile,
 	_ ModelTransportLaunchContext,
 ) error {
+	engine, err := TclaudeLayerNetworkEngine(effective)
+	if err != nil {
+		// Not a model-transport capability error: this is a malformed or
+		// unmaterialized profile, and mislabelling it would send the operator
+		// to the provider-configuration remedy for a problem that is not one.
+		// Both call sites derive their axes before reaching here, so this is
+		// close to unreachable; it fails closed rather than silently relaxing.
+		return fmt.Errorf("derive network engine for OpenCode local preset: %w", err)
+	}
+	if engine == sandboxpolicy.NetworkEngineProxy &&
+		harness.ProxyEngineActivated(h.Name, runtime.GOOS) {
+		return nil
+	}
 	return modelTransportLaunchError(h,
 		"OpenCode's local presets name no explicit provider and OpenCode exposes no effective-config read of its own loader, so their launch endpoint cannot be resolved; use an explicit-provider OpenCode config, use Claude Code or Codex with a resolvable provider, or use network open")
 }
