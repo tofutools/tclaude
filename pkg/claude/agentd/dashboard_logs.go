@@ -347,23 +347,6 @@ func logFileGeneration(path string, file *os.File, info os.FileInfo) (token stri
 	return strconv.FormatUint(entry.token, 36), true
 }
 
-func currentLogFileGeneration(path string) (string, error) {
-	file, err := os.Open(path) //nolint:gosec // tclaude's configured log path
-	if err != nil {
-		return "", err
-	}
-	info, err := file.Stat()
-	if err != nil {
-		_ = file.Close()
-		return "", err
-	}
-	generation, retained := logFileGeneration(path, file, info)
-	if !retained {
-		_ = file.Close()
-	}
-	return generation, nil
-}
-
 func pruneLogFileIdentities() {
 	logFileIdentityRegistry.Lock()
 	defer logFileIdentityRegistry.Unlock()
@@ -404,29 +387,49 @@ type logRecord struct {
 	bytes  int64
 }
 
-func followLogRecords(path string) ([]logRecord, bool, error) {
+func followLogRecords(path string) ([]logRecord, string, bool, error) {
 	entry := followedLogFiles[path]
 	if entry.follower == nil {
 		entry.follower = newLogFollower()
 	}
 	entry.usedAt = time.Now()
-	update, err := entry.follower.Refresh(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			delete(followedLogFiles, path)
+	for range 3 {
+		update, err := entry.follower.Refresh(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				delete(followedLogFiles, path)
+			}
+			return nil, "", false, err
 		}
-		return nil, false, err
+		// Obtain the retained generation handle only after proving the path
+		// still names the descriptor generation whose fold was committed. A
+		// log rotation in this gap retries against the replacement instead of
+		// pairing old records with the new active file's row keys.
+		file, err := os.Open(path) //nolint:gosec // tclaude's configured log path
+		if err != nil {
+			return nil, "", false, err
+		}
+		info, err := file.Stat()
+		if err != nil {
+			_ = file.Close()
+			return nil, "", false, err
+		}
+		if update.Info == nil || !os.SameFile(update.Info, info) {
+			_ = file.Close()
+			continue
+		}
+		generation, retained := logFileGeneration(path, file, info)
+		if !retained {
+			_ = file.Close()
+		}
+		followedLogFiles[path] = entry
+		records := slices.Clone(update.State.records)
+		for i := range records {
+			records[i].key = fmt.Sprintf("%s:%d", generation, records[i].offset)
+		}
+		return records, generation, update.State.truncated, nil
 	}
-	followedLogFiles[path] = entry
-	generation, err := currentLogFileGeneration(path)
-	if err != nil {
-		return nil, false, err
-	}
-	records := slices.Clone(update.State.records)
-	for i := range records {
-		records[i].key = fmt.Sprintf("%s:%d", generation, records[i].offset)
-	}
-	return records, update.State.truncated, nil
+	return nil, "", false, fmt.Errorf("log file %s changed repeatedly while assigning its generation", path)
 }
 
 // gatherLogLines returns the log lines in chronological order (oldest
@@ -465,17 +468,11 @@ func gatherLogRecords(path string, includeRotated bool, maxBytes int64) (records
 			truncated = true
 			break
 		}
-		cached, fileTruncated, err := followLogRecords(f)
+		cached, generation, fileTruncated, err := followLogRecords(f)
 		if err != nil {
 			continue // missing / unreadable file — skip it
 		}
 		fileRecords, used, budgetTruncated := logRecordsWithinBudget(cached, budget)
-		generation := ""
-		if len(cached) > 0 {
-			generation = strings.SplitN(cached[0].key, ":", 2)[0]
-		} else if current, generationErr := currentLogFileGeneration(f); generationErr == nil {
-			generation = current
-		}
 		// Rotation can rename the active file after we read it but before we
 		// open .1. In that interleaving both paths name the same physical file;
 		// count it once and never emit duplicate row keys.
