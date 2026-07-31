@@ -584,6 +584,11 @@ func TestTclaudeLayerWinchRelayStartsAProxySandbox(t *testing.T) {
 
 	// Reports a child on bubblewrap's JSON status descriptor, then STAYS ALIVE.
 	//
+	// `exec` so the process that stays alive IS the one whose PID was reported:
+	// without it the shell forks a child and waits, and only the shell's own
+	// survival keeps the pin valid — true today, but incidental rather than
+	// stated, and not guaranteed across shells that optimize the tail call.
+	//
 	// Staying alive is load-bearing, not tidiness. The supervisor pins the
 	// reported child with PidfdOpen immediately after reading it; a stand-in
 	// that has already exited makes that call return ESRCH, and the supervisor
@@ -593,7 +598,7 @@ func TestTclaudeLayerWinchRelayStartsAProxySandbox(t *testing.T) {
 	// race in the test rather than a defect in the supervisor.
 	fakeBwrap := filepath.Join(t.TempDir(), "bwrap")
 	require.NoError(t, os.WriteFile(fakeBwrap,
-		[]byte("#!/bin/sh\nprintf '{\"child-pid\":%d}' \"$$\" >&3\nsleep 30\n"),
+		[]byte("#!/bin/sh\nprintf '{\"child-pid\":%d}' \"$$\" >&3\nexec sleep 30\n"),
 		0o700))
 
 	code, err := runTclaudeLayerWinchRelay(
@@ -839,7 +844,7 @@ func TestProxyNetworkHostsFileReachesTheNamedDescriptor(t *testing.T) {
 	// the failure this test requires.
 	require.NoError(t, os.WriteFile(fakeBwrap, []byte(
 		"#!/bin/sh\ncat <&"+strconv.Itoa(proxyNetworkHostsFD)+" >"+observed+
-			"\nprintf '{\"child-pid\":%d}' \"$$\" >&3\nsleep 30\n"), 0o700))
+			"\nprintf '{\"child-pid\":%d}' \"$$\" >&3\nexec sleep 30\n"), 0o700))
 
 	_, err = runTclaudeLayerWinchRelay(
 		[]string{fakeBwrap, "--", "/bin/true"}, nil,
