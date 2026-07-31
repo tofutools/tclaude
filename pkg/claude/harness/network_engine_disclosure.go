@@ -309,6 +309,26 @@ const (
 	ProxyEngineCIDRSelectorDetail = "Enforced only when the client asks for this address literally, through the tclaude proxy. " +
 		"A name that resolves into this range is not admitted by this rule, and UDP or a client that does not use the proxy is blocked entirely."
 
+	// ProxyEngineDenyCIDRSelectorDetail is why a DENY cidr rule is Full here
+	// while the ALLOW cidr rule beside it is only Partial. The two polarities
+	// are not symmetric, and reusing the allow-shaped string for the deny cell
+	// (TCL-890) stated the opposite of what the engine does.
+	//
+	// The allow cell is Partial because a name is authorized before resolution,
+	// so a cidr ALLOW row never admits a name — it only admits a client that
+	// asks for the address literally.
+	//
+	// The deny cell does not have that gap, because refusing happens at a
+	// second point the allow decision does not have: Dialer.Connect asks
+	// EvaluateResolvedAddress for every candidate address, and that re-applies
+	// the cidr DENY rows to the resolved literal under both baselines. A name
+	// that resolves into a denied range is therefore refused, and the proxy
+	// connects to the exact address it cleared, so no lease window exists
+	// between the check and the connection.
+	ProxyEngineDenyCIDRSelectorDetail = "Enforced on the address the connection actually uses, through the tclaude proxy. " +
+		"A name that resolves into this range is refused as well, because every resolved address is matched against this rule before the connection is made, " +
+		"and UDP or a client that does not use the proxy is blocked entirely."
+
 	// ProxyEngineLoopbackSelectorDetail states the improvement over the packet
 	// gateway's synthetic host-loopback address.
 	ProxyEngineLoopbackSelectorDetail = "Host loopback is reached through the filtering proxy on the authored ports. " +

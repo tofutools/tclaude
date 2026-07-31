@@ -235,20 +235,29 @@ packet drop: HTTP gets a `403` with a short capability-phrased body naming the
 destination, and SOCKS5 gets reply code `0x02` (connection not allowed by
 ruleset), which is the protocol's exact word for this.
 
-### CIDR is deliberately literal-only
+### Allow CIDR is deliberately literal-only
 
-A name target is **never** resolved and then matched against CIDR rules.
-Matching resolved addresses against CIDRs would silently hand every CIDR rule
-the DNS-name authority the operator did not author — the same ruling the packet
-posture makes when it refuses to let a CIDR rule authorize a DNS query. The
-honest consequence is that `cidr` is rated **Partial** here, with a per-entry
-disclosure saying so.
+A name target is **never** resolved and then matched against CIDR **allow**
+rules. Matching resolved addresses against CIDRs would silently hand every CIDR
+rule the DNS-name authority the operator did not author — the same ruling the
+packet posture makes when it refuses to let a CIDR rule authorize a DNS query.
+The honest consequence is that allow `cidr` is rated **Partial** here, with a
+per-entry disclosure saying so.
+
+The **deny** polarity is the opposite, and it follows from the same principle
+rather than contradicting it: resolved addresses **are** matched against CIDR
+deny rows (`EvaluateResolvedAddress`, applied per candidate in
+`Dialer.Connect`). Authorizing on a resolved address would grant authority
+nobody authored; refusing on one takes no authority away, and declining to
+check would let an authored deny be walked past by spelling the destination as
+a name. Deny `cidr` is therefore rated **Full**.
 
 ### Host-side resolution and the private-destination blocker
 
 For an allowed name target the proxy resolves host-side and connects. The
-resolved address is not re-checked against the authored list — there is no lease
-model here, and name identity is the authority. It **is** checked against a
+resolved address is not re-checked against the authored **allow** list — there
+is no lease model here, and name identity is the authority. It **is** matched
+against the authored **deny** rows (see above), and against a
 private-destination blocker **in allowlist modes** (baseline deny / list):
 the connection is refused when the resolved address is loopback, link-local,
 private (RFC 1918), CGNAT, ULA, or unspecified/multicast — unless the policy
@@ -619,7 +628,7 @@ Deny selectors:
 | Selector | Rating | Why |
 |---|---|---|
 | `host`, `domain` | **Partial** | The proxy decides on the identity the *client* states, and a client can state an IP literal instead of a name. Literal targets are matched against `cidr` rows only, and there is no TLS interception to recover the name, so a name deny is bypassable by connecting to the denied host's address directly. Rated Partial **unconditionally**: whether such a literal is reachable depends on the whole rule set, and a rating that flipped as unrelated CIDR rows were edited could not be reasoned about. The remedy is named per entry — add a `cidr` deny for the addresses that name resolves to. |
-| `cidr` | **Partial** | the exact mirror: a *name* resolving into a denied range is not matched |
+| `cidr` | **Full** | Not the mirror of the allow side, and the asymmetry is the point. Refusing happens at a second place authorizing does not: `Dialer.Connect` asks `EvaluateResolvedAddress` for every candidate address, and that re-applies `cidr` **deny** rows to the resolved literal under both baselines. A name resolving into a denied range is therefore refused, and the proxy connects to the exact address it cleared, so no window opens between the check and the connection. An allow `cidr` row has no such second chance — the name was authorized before any address existed — which is why it stays Partial. |
 | `loopback` | **Full** | Legitimately Full, and it is not an oversight that it sits between two Partials. The escape that makes a name deny Partial is stating an address instead of a name — and for loopback there is no such escape, because the evaluator folds every spelling of loopback into **one identity** before matching: a literal loopback target is matched against the loopback name, so `localhost`, `127.0.0.1`, `::1` — and the unspecified spellings that also reach the host — all answer to the same row. There is no literal that slips past a loopback deny. Do not "fix" this to Partial for symmetry; it would be a false rating. |
 | deny ports | **Full** | the port is part of the requested target |
 
