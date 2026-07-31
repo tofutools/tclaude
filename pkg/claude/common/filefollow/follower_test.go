@@ -1,6 +1,7 @@
 package filefollow
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"os"
@@ -13,6 +14,44 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestTailInitialOffsetAlignsWithinBoundedWindow(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "tail.jsonl")
+	prefix := bytes.Repeat([]byte{'x'}, 256)
+	content := append(prefix, '\n')
+	content = append(content, []byte("first-tail\nsecond-tail\n")...)
+	require.NoError(t, os.WriteFile(path, content, 0o600))
+
+	file, err := os.Open(path)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, file.Close()) })
+	info, err := file.Stat()
+	require.NoError(t, err)
+	offset, err := TailInitialOffset(32)(file, info)
+	require.NoError(t, err)
+	_, err = file.Seek(offset, io.SeekStart)
+	require.NoError(t, err)
+	remaining, err := io.ReadAll(file)
+	require.NoError(t, err)
+
+	assert.Equal(t, int64(len(prefix)+1), offset)
+	assert.Equal(t, "first-tail\nsecond-tail\n", string(remaining))
+}
+
+func TestTailInitialOffsetReturnsEOFWhenWindowContainsNoBoundary(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "one-record.jsonl")
+	require.NoError(t, os.WriteFile(path, bytes.Repeat([]byte{'x'}, 1024), 0o600))
+	file, err := os.Open(path)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, file.Close()) })
+	info, err := file.Stat()
+	require.NoError(t, err)
+
+	offset, err := TailInitialOffset(64)(file, info)
+	require.NoError(t, err)
+	assert.Equal(t, info.Size(), offset)
+}
 
 type testFold struct {
 	Values    []string

@@ -296,6 +296,11 @@ func TestAudit_SelfRenameCapturesTitle(t *testing.T) {
 		testharness.JSONRequest(t, http.MethodPost, "/v1/whoami/rename",
 			map[string]any{"title": "audit-fixer"}), worker.ConvID))
 	require.Equal(t, http.StatusOK, rec.Code, "self-rename should succeed; body=%s", rec.Body.String())
+	indexRow, err := db.GetConvIndex(worker.ConvID)
+	require.NoError(t, err)
+	require.NotNil(t, indexRow)
+	assert.Equal(t, "audit-fixer", indexRow.CustomTitle,
+		"accepted in-pane rename is cache-visible before transcript debounce")
 
 	row := auditRowByVerb(t, "rename")
 	assert.Equal(t, db.AuditActorAgent, row.ActorKind)

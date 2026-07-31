@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/common"
@@ -853,6 +854,74 @@ func TestNeedsIdentityMigration(t *testing.T) {
 		require.NoError(t, err)
 		assert.False(t, got, "must not migrate onto a conv that already owns an identity")
 	})
+}
+
+func TestWaitForClearedIdentityIndexUsesMetadataOnlyOrdering(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	db.ResetForTest()
+	const convID = "11111111-1111-1111-1111-111111111111"
+	cwd := filepath.Join(home, "project")
+	projectDir := convops.GetClaudeProjectPath(cwd)
+	require.NoError(t, os.MkdirAll(projectDir, 0o755))
+	path := filepath.Join(projectDir, convID+".jsonl")
+	require.NoError(t, os.WriteFile(path, []byte("rename-sidecar\n"), 0o600))
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
+		ConvID: convID, FullPath: path, FileSize: 0, CustomTitle: "old", IndexedAt: time.Now(),
+	}))
+
+	oldTimeout, oldPoll := clearIndexCatchupTimeout, clearIndexCatchupPoll
+	clearIndexCatchupTimeout, clearIndexCatchupPoll = 500*time.Millisecond, 5*time.Millisecond
+	t.Cleanup(func() {
+		clearIndexCatchupTimeout, clearIndexCatchupPoll = oldTimeout, oldPoll
+	})
+	updated := make(chan error, 1)
+	go func() {
+		time.Sleep(25 * time.Millisecond)
+		updated <- db.UpsertConvIndex(&db.ConvIndexRow{
+			ConvID: convID, FullPath: path, FileSize: info.Size(),
+			FileMtime: info.ModTime().Unix(), CustomTitle: "fresh", IndexedAt: time.Now(),
+		})
+	}()
+
+	waitForClearedIdentityIndex(&SessionState{ConvID: convID, Cwd: cwd})
+	require.NoError(t, <-updated)
+	row, err := db.GetConvIndex(convID)
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	assert.Equal(t, "fresh", row.CustomTitle)
+}
+
+func TestMigrateClearedIdentityRecoversTitleWithoutMonitor(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	db.ResetForTest()
+	const oldConv = "11111111-1111-1111-1111-111111111111"
+	const newConv = "22222222-2222-2222-2222-222222222222"
+	cwd := filepath.Join(home, "project")
+	projectDir := convops.GetClaudeProjectPath(cwd)
+	require.NoError(t, os.MkdirAll(projectDir, 0o755))
+	path := filepath.Join(projectDir, oldConv+".jsonl")
+	require.NoError(t, os.WriteFile(path,
+		[]byte("{\"type\":\"custom-title\",\"customTitle\":\"fresh-direct-rename\"}\n"), 0o600))
+	require.NoError(t, db.SetConvIndexCustomTitle(oldConv, "stale-cache", db.DefaultHarness))
+	mustEnsureAgent(t, oldConv)
+
+	oldTimeout := clearIndexCatchupTimeout
+	clearIndexCatchupTimeout = 0
+	t.Cleanup(func() { clearIndexCatchupTimeout = oldTimeout })
+
+	require.True(t, migrateClearedIdentity(&SessionState{ConvID: oldConv, Cwd: cwd}, newConv))
+	actor, err := db.GetAgentByConv(newConv)
+	require.NoError(t, err)
+	require.NotNil(t, actor)
+	assert.Equal(t, "fresh-direct-rename", actor.PendingName)
+	row, err := db.GetConvIndex(oldConv)
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	assert.Equal(t, "fresh-direct-rename", row.CustomTitle)
 }
 
 // TestRunHookCallback_ClearMigratesAgentIdentity drives the full hook

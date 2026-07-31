@@ -421,10 +421,76 @@ func (c *ConvFollower) ReindexFile(filePath string) *SessionEntry {
 
 const maxSharedConvFollowers = 512
 
+// customTitleTailBytes bounds the rare synchronous recovery used when a
+// /clear hook outruns agentd's normal incremental transcript monitor. It is
+// deliberately a tail window rather than a transcript rebuild: a direct
+// /rename writes its custom-title record immediately before /clear.
+const customTitleTailBytes = 4 * 1024 * 1024
+
+type customTitleTailState struct {
+	title string
+}
+
+func scanCustomTitleTail(r io.Reader, _ string, state *customTitleTailState, strict bool) (int64, bool, error) {
+	return filefollow.ScanLines(r, filefollow.LineConfig{MaxRecordBytes: maxJSONLLineBytes}, func(line filefollow.Line) bool {
+		if line.Oversized || len(bytes.TrimSpace(line.Data)) == 0 {
+			return true
+		}
+		var msg struct {
+			Type        string `json:"type"`
+			CustomTitle string `json:"customTitle"`
+		}
+		if err := json.Unmarshal(line.Data, &msg); err != nil {
+			return false
+		}
+		if msg.Type == "custom-title" && msg.CustomTitle != "" {
+			state.title = msg.CustomTitle
+		}
+		return true
+	}, strict)
+}
+
+// RefreshCustomTitleFromTail recovers the newest title from a bounded tail of
+// one transcript. It exists for the /rename -> /clear ordering edge when no
+// daemon monitor is following the file; normal recurring freshness continues
+// through FollowAndUpsertFile. The title-only read intentionally does not
+// stamp file metadata, because it has not rebuilt the full conversation row.
+func RefreshCustomTitleFromTail(filePath string) (bool, error) {
+	convID := strings.TrimSuffix(filepath.Base(filePath), ".jsonl")
+	if len(convID) != 36 || filepath.Ext(filePath) != ".jsonl" {
+		return false, nil
+	}
+	follower := filefollow.New(filefollow.Config[customTitleTailState]{
+		NewState:      func(string, int64) customTitleTailState { return customTitleTailState{} },
+		CloneState:    func(state customTitleTailState) customTitleTailState { return state },
+		Scan:          scanCustomTitleTail,
+		InitialOffset: filefollow.TailInitialOffset(customTitleTailBytes),
+	})
+	update, err := follower.Refresh(filePath)
+	if err != nil {
+		return false, err
+	}
+	if update.State.title == "" {
+		return false, nil
+	}
+	if err := db.SetConvIndexCustomTitle(convID, update.State.title, db.DefaultHarness); err != nil {
+		return false, err
+	}
+	if actor, err := db.GetAgentByConv(convID); err != nil {
+		return false, err
+	} else if actor != nil {
+		if err := db.SetAgentPendingName(actor.AgentID, update.State.title); err != nil {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
 type sharedConvFollowerEntry struct {
 	mu       sync.Mutex
 	follower *ConvFollower
 	usedAt   time.Time
+	active   int
 }
 
 var sharedConvFollowers = struct {
@@ -444,27 +510,43 @@ func FollowAndUpsertFile(filePath string) *SessionEntry {
 		sharedConvFollowers.entries[filePath] = entry
 	}
 	entry.usedAt = time.Now()
-	if len(sharedConvFollowers.entries) > maxSharedConvFollowers {
-		var oldestPath string
-		var oldest time.Time
-		for path, candidate := range sharedConvFollowers.entries {
-			if oldestPath == "" || candidate.usedAt.Before(oldest) {
-				oldestPath, oldest = path, candidate.usedAt
-			}
-		}
-		delete(sharedConvFollowers.entries, oldestPath)
-	}
+	entry.active++
+	pruneSharedConvFollowers()
 	sharedConvFollowers.Unlock()
 
 	entry.mu.Lock()
 	result := entry.follower.ReindexFile(filePath)
 	entry.mu.Unlock()
-	if _, err := os.Stat(filePath); os.IsNotExist(err) {
-		sharedConvFollowers.Lock()
-		if sharedConvFollowers.entries[filePath] == entry {
-			delete(sharedConvFollowers.entries, filePath)
-		}
-		sharedConvFollowers.Unlock()
+	_, statErr := os.Stat(filePath)
+	sharedConvFollowers.Lock()
+	entry.active--
+	if os.IsNotExist(statErr) && sharedConvFollowers.entries[filePath] == entry {
+		delete(sharedConvFollowers.entries, filePath)
 	}
+	pruneSharedConvFollowers()
+	sharedConvFollowers.Unlock()
 	return result
+}
+
+// pruneSharedConvFollowers never evicts an in-flight entry: doing so would let
+// a second caller create another follower and lock for the same path while the
+// older fold can still commit. Temporary growth above the cap is preferable to
+// concurrent out-of-order conv_index writes and is pruned as calls finish.
+func pruneSharedConvFollowers() {
+	for len(sharedConvFollowers.entries) > maxSharedConvFollowers {
+		var oldestPath string
+		var oldest time.Time
+		for path, candidate := range sharedConvFollowers.entries {
+			if candidate.active > 0 {
+				continue
+			}
+			if oldestPath == "" || candidate.usedAt.Before(oldest) {
+				oldestPath, oldest = path, candidate.usedAt
+			}
+		}
+		if oldestPath == "" {
+			return
+		}
+		delete(sharedConvFollowers.entries, oldestPath)
+	}
 }

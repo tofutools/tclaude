@@ -5,7 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -456,6 +458,50 @@ func TestConvFollower_ReindexFileDeletesOnMissing(t *testing.T) {
 	row, err = db.GetConvIndex(followerTestConvID)
 	require.NoError(t, err)
 	require.Nil(t, row, "a removed file's row is evicted")
+}
+
+func TestPruneSharedConvFollowersPinsInflightEntries(t *testing.T) {
+	sharedConvFollowers.Lock()
+	original := sharedConvFollowers.entries
+	sharedConvFollowers.entries = make(map[string]*sharedConvFollowerEntry)
+	sharedConvFollowers.Unlock()
+	t.Cleanup(func() {
+		sharedConvFollowers.Lock()
+		sharedConvFollowers.entries = original
+		sharedConvFollowers.Unlock()
+	})
+
+	sharedConvFollowers.Lock()
+	sharedConvFollowers.entries["active"] = &sharedConvFollowerEntry{active: 1}
+	for i := 0; i < maxSharedConvFollowers; i++ {
+		path := fmt.Sprintf("idle-%03d", i)
+		sharedConvFollowers.entries[path] = &sharedConvFollowerEntry{usedAt: time.Unix(int64(i+1), 0)}
+	}
+	pruneSharedConvFollowers()
+	_, activeKept := sharedConvFollowers.entries["active"]
+	gotLen := len(sharedConvFollowers.entries)
+	sharedConvFollowers.Unlock()
+	require.True(t, activeKept, "an in-flight path must retain its unique follower and mutex")
+	require.Equal(t, maxSharedConvFollowers, gotLen)
+}
+
+func TestRefreshCustomTitleFromTailUsesNewestBoundedWindow(t *testing.T) {
+	setupTestDB(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, followerTestConvID+".jsonl")
+	content := titleLine("stale-prefix") +
+		strings.Repeat("x", customTitleTailBytes+1024) + "\n" +
+		titleLine("fresh-tail")
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+
+	refreshed, err := RefreshCustomTitleFromTail(path)
+	require.NoError(t, err)
+	require.True(t, refreshed)
+	row, err := db.GetConvIndex(followerTestConvID)
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	assert.Equal(t, "fresh-tail", row.CustomTitle)
+	assert.Zero(t, row.FileSize, "title-only tail recovery must not claim a full transcript scan")
 }
 
 // TestConvFollower_IncrementalBranchHistoryMatchesFull asserts the DB-level

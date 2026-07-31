@@ -1,7 +1,6 @@
 package agentd
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -260,33 +259,6 @@ func scanFollowedLogLines(r io.Reader, _ string, state *followedLogState, strict
 	}, strict)
 }
 
-// logTailInitialOffset bounds first hydration to the newest maxLogReadBytes
-// and advances to the first complete newline after the seek point.
-func logTailInitialOffset(file *os.File, info os.FileInfo) (int64, error) {
-	if info.Size() <= maxLogReadBytes {
-		return 0, nil
-	}
-	start := info.Size() - maxLogReadBytes
-	if _, err := file.Seek(start, io.SeekStart); err != nil {
-		return 0, err
-	}
-	reader := bufio.NewReaderSize(file, 64*1024)
-	for {
-		fragment, err := reader.ReadSlice('\n')
-		start += int64(len(fragment))
-		switch err {
-		case nil:
-			return start, nil
-		case bufio.ErrBufferFull:
-			continue
-		case io.EOF:
-			return info.Size(), nil
-		default:
-			return 0, err
-		}
-	}
-}
-
 type followedLogFile struct {
 	follower *filefollow.Follower[followedLogState]
 	usedAt   time.Time
@@ -301,7 +273,7 @@ func newLogFollower() *filefollow.Follower[followedLogState] {
 		},
 		CloneState:    cloneFollowedLogState,
 		Scan:          scanFollowedLogLines,
-		InitialOffset: logTailInitialOffset,
+		InitialOffset: filefollow.TailInitialOffset(maxLogReadBytes),
 	})
 }
 
