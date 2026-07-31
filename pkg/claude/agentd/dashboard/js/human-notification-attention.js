@@ -1,7 +1,24 @@
-// Pure helpers for projecting unread human.notify rows onto the Groups view.
+// Pure helpers for projecting unread human.notify rows onto the surfaces that
+// draw the yellow attention glyph — Groups member rows and Terminals tabs.
 // Human notifications carry both a rotation-stable agent id and the sending
 // conversation generation. Prefer the stable id, but retain the conv fallback
 // for legacy/pre-identity senders.
+
+// Every attention glyph opens the SAME quick reader, which is mounted once on
+// its own body-level host (see mountGroupsIsland). Surfaces ask for it by
+// event rather than by import so a tab that is not the Groups tab can raise it
+// without owning a reader of its own.
+export const OPEN_HUMAN_NOTIFICATION_EVENT = 'tclaude:open-human-notification';
+
+export function openHumanNotificationReader({
+  sender, messageID, launcher = null, returnFocus = null, documentRef = globalThis.document,
+} = {}) {
+  if (!sender || !messageID || !documentRef) return false;
+  documentRef.dispatchEvent(new CustomEvent(OPEN_HUMAN_NOTIFICATION_EVENT, {
+    detail: { sender, messageId: messageID, launcher, returnFocus },
+  }));
+  return true;
+}
 
 export function unreadHumanMessages(snapshot) {
   return (snapshot?.messages || []).filter((message) => !message?.read);

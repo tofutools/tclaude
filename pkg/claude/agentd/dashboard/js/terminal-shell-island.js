@@ -10,6 +10,9 @@ import { loadXtermRuntime } from './xterm-loader.js';
 import { bindTerminalHandoffReceiver } from './terminal-handoff.js';
 import { dragLeftRegion, dragScreenPoint } from './terminal-drag-out.js';
 import { MAX_TERMINAL_GROUP_NAME_LENGTH } from './terminal-shell-state.js';
+import {
+  memberHumanMessages, openHumanNotificationReader,
+} from './human-notification-attention.js';
 
 const html = htm.bind(h);
 const INTERACTION_HINT = 'Select: Option-drag (macOS) / Shift-drag (Linux/Windows) · Copy: Ctrl/Cmd+Shift+C';
@@ -269,9 +272,59 @@ function TerminalPane({
   `;
 }
 
+// paneUnreadNotifications returns the unread human notifications sent by the
+// agent behind one terminal pane, newest first. A pane seed carries a single
+// agent selector, which is the stable agent id where one exists and the conv id
+// otherwise — the same both-identities match the Groups rows use.
+export function paneUnreadNotifications(pane, snapshotValue) {
+  const selector = pane?.seed?.agent || '';
+  if (!selector || !snapshotValue) return [];
+  return memberHumanMessages(selector, snapshotValue, true);
+}
+
+// TabAttention is the Terminals-tab twin of the Groups member row's yellow "!"
+// glyph, and opens the very same quick reader. The strip is cramped and clips
+// its own overflow, so the glyph sits inline in the tab and states its content
+// in the tooltip instead of hovering a preview card.
+function TabAttention({ pane, snapshot }) {
+  const messages = paneUnreadNotifications(pane, snapshot?.value);
+  if (!messages.length) return null;
+  const message = messages[0];
+  const label = pane.label || 'this agent';
+  const subject = message.subject || '(no subject)';
+  const title = `${messages.length} unread notification${messages.length === 1 ? '' : 's'}`
+    + ` from ${label} — open quick reader\n\n${subject}`;
+  const open = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    // Identify the sender from the message itself: it carries both the stable
+    // agent id and the sending conversation generation, where the pane seed
+    // holds only whichever one the launcher happened to have.
+    openHumanNotificationReader({
+      sender: {
+        agent: message.from_agent || '',
+        conv: message.from_conv || '',
+        label: message.from_title || label,
+      },
+      messageID: message.id,
+      launcher: event.currentTarget,
+    });
+  };
+  return html`
+    <button
+      type="button"
+      class="mux-tab-attention"
+      draggable="false"
+      title=${title}
+      aria-label=${title}
+      onClick=${open}
+    ><span class="human-notification-attention-glyph" aria-hidden="true">!</span></button>
+  `;
+}
+
 function PaneTab({
   pane, active, menuOpen, groupId = null, actions, openMenu, dragging, dropSide,
-  onDragStart, onDragEnd, onDragOver, onDragLeave, onDrop, onReordered,
+  onDragStart, onDragEnd, onDragOver, onDragLeave, onDrop, onReordered, snapshot = null,
 }) {
   const activate = (event) => {
     if (event.type === 'keydown' && event.target.closest('button')) return;
@@ -340,6 +393,7 @@ function PaneTab({
       onDragLeave=${(event) => onDragLeave(event, pane.key)}
       onDrop=${(event) => onDrop(event, pane.key)}
     >
+      <${TabAttention} pane=${pane} snapshot=${snapshot} />
       <span class="mux-tab-label">${pane.label}</span>
       <button
         type="button"
@@ -363,7 +417,7 @@ function PaneTab({
 function GroupStack({
   group, panes, activeKey, actions, renaming, onRenameStart, onRenameCommit, onRenameCancel,
   openMenu, menuOpen, dropActive, dragging, onPillDragOver, onPillDragLeave, onPillDrop,
-  onPillDragStart, onPillDragEnd, onKeyboardMove, renderTab,
+  onPillDragStart, onPillDragEnd, onKeyboardMove, renderTab, snapshot = null,
 }) {
   const inputRef = useRef(null);
   // A single click collapses, a double click renames — the two share the pill.
@@ -429,6 +483,12 @@ function GroupStack({
   // there is nowhere outside the stack for activation to move to — collapsing
   // must never leave the strip with no visible active tab.
   const visible = group.collapsed ? panes.filter((pane) => pane.key === activeKey) : panes;
+  // A collapsed stack hides every tab but the active one, and with them their
+  // attention glyphs. The pill carries a hint so a notification inside a folded
+  // stack is still visible from the strip.
+  const hiddenUnread = panes
+    .filter((pane) => !visible.includes(pane))
+    .reduce((total, pane) => total + paneUnreadNotifications(pane, snapshot?.value).length, 0);
   const openMenuAt = (event) => {
     const keyboard = event.type === 'keydown';
     if (keyboard && event.key !== 'ContextMenu' && !(event.key === 'F10' && event.shiftKey)) return false;
@@ -504,12 +564,15 @@ function GroupStack({
           onKeyDown=${onPillKeyDown}
           onDragStart=${(event) => onPillDragStart(event, group.id)}
           onDragEnd=${onPillDragEnd}
-          aria-label=${`${group.name}, ${panes.length} terminal${panes.length === 1 ? '' : 's'}`}
+          aria-label=${`${group.name}, ${panes.length} terminal${panes.length === 1 ? '' : 's'}`
+            + (hiddenUnread ? `, ${hiddenUnread} unread notification${hiddenUnread === 1 ? '' : 's'} in a collapsed tab` : '')}
           data-menu-open=${menuOpen ? 'true' : 'false'}
         >
           <span class="mux-group-caret" aria-hidden="true">${group.collapsed ? '▸' : '▾'}</span>
           <span class="mux-group-name">${group.name}</span>
           <span class="mux-group-count" aria-hidden="true">${panes.length}</span>
+          ${hiddenUnread ? html`<span class="human-notification-attention-glyph mux-group-attention"
+            aria-hidden="true">!</span>` : null}
         </button>
       `}
       ${visible.map((pane) => renderTab(pane))}
@@ -653,7 +716,7 @@ function PaneContextMenu({
 function TerminalTabs({
   state, actions, widgetFactory, onComposeMessage, composeMessageReady = null,
   composeMessageDialogKind = () => '',
-  solo = false, manageTitle = false, empty = false,
+  solo = false, manageTitle = false, empty = false, snapshot = null,
 }) {
   const current = state.view.value;
   const composeMessageAvailable = Boolean(onComposeMessage) &&
@@ -1191,6 +1254,7 @@ function TerminalTabs({
                 onDragLeave=${tabDragLeave}
                 onDrop=${dropTab}
                 onReordered=${announceAndRefocus}
+                snapshot=${snapshot}
               />
             `;
             if (segment.type !== 'group') return renderTab(segment.pane);
@@ -1235,6 +1299,7 @@ function TerminalTabs({
                 onPillDragEnd=${endGroupDrag}
                 onKeyboardMove=${moveGroupKeyboard}
                 renderTab=${renderTab}
+                snapshot=${snapshot}
               />
             `;
           })}
@@ -1349,6 +1414,7 @@ export function mountTerminalShellIsland({
   widgetFactory = mountTerminalWidget,
   onComposeMessage = null,
   composeMessageDialogKind = () => '',
+  snapshot = null,
 }) {
   // A custom widget factory (tests or another embedding) owns its own runtime.
   // The production xterm adapter asks the facade to load the classic core
@@ -1362,7 +1428,8 @@ export function mountTerminalShellIsland({
     },
   });
   render(html`<${TerminalTabs} state=${state} actions=${actions} widgetFactory=${widgetFactory}
-    onComposeMessage=${onComposeMessage} composeMessageDialogKind=${composeMessageDialogKind} />`, host);
+    onComposeMessage=${onComposeMessage} composeMessageDialogKind=${composeMessageDialogKind}
+    snapshot=${snapshot} />`, host);
   render(html`<${TerminalBadge} state=${state} />`, badgeHost);
   render(html`<${TerminalModal} state=${state} actions=${actions} widgetFactory=${widgetFactory} />`, modalHost);
   registerCleanup(() => {
@@ -1407,6 +1474,6 @@ export function mountStandaloneTerminalShell({
 }
 
 export {
-  GroupStack, OpaqueTerminalHost, PaneContextMenu, PaneTab, TerminalBadge, TerminalModal,
-  TerminalModalSession, TerminalPane, TerminalTabs,
+  GroupStack, OpaqueTerminalHost, PaneContextMenu, PaneTab, TabAttention, TerminalBadge,
+  TerminalModal, TerminalModalSession, TerminalPane, TerminalTabs,
 };

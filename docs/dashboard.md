@@ -404,12 +404,20 @@ worktree, effective permissions, and an **owner** badge where applicable.
 
 An amber **!** floating over the start of an agent's name means that agent has
 sent one or more unread notifications to the human with
-`tclaude agent notify-human`. Select it to open **Messages → Human**, already
-filtered to that agent. Matching amber marks over the top-bar activity bots
-and a group's activity bots are non-interactive breadcrumbs: globally they mean
-some agent needs attention, and on a group they mean one of its members does.
-Only the agent-row mark is a link; reading or marking the notification updates
-all three levels on the next dashboard refresh.
+`tclaude agent notify-human`. Hovering it previews the newest one; selecting it
+opens the quick reader — a right-hand drawer that pages through that agent's
+notifications, downloads an attached file, replies, and offers **Open in
+Messages ↗** for the full **Messages → Human** view filtered to that agent.
+Opening a notification in the reader marks it read.
+
+The same amber **!** appears on the **Terminals** tab, on the tab of any open
+terminal whose agent has unread notifications, and opens the same quick reader.
+A collapsed tab stack carries the mark on its pill while the tab it belongs to
+is folded away. Matching amber marks over the top-bar activity bots and a
+group's activity bots are non-interactive breadcrumbs: globally they mean some
+agent needs attention, and on a group they mean one of its members does. Only
+the agent-row and terminal-tab marks are links; reading or marking the
+notification updates every level on the next dashboard refresh.
 
 The row's harness/model line carries a **sandbox badge** — `🔒` when the OS
 sandbox confined the agent, `⚠` for a posture weaker than it looks. It reflects

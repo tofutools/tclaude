@@ -109,10 +109,11 @@ const groupsDescriptor = createIslandDescriptor({
     listHost: '#groups-list',
     memberDialogHost: '#groups-member-dialog-root',
     addMemberDialogHost: '#groups-add-member-dialog-root',
+    notificationReaderHost: '#human-notification-reader-root',
   },
   failureClass: 'groups-error',
   load: async ({ hosts: {
-    filterHost, listHost, memberDialogHost, addMemberDialogHost,
+    filterHost, listHost, memberDialogHost, addMemberDialogHost, notificationReaderHost,
   }, dependencies }) => {
     const islandModule = import('./groups-island.js');
     const memberEditorModule = import('./member-editor-island.js');
@@ -131,7 +132,7 @@ const groupsDescriptor = createIslandDescriptor({
       state: groupsState,
       mount: (registerCleanup) => {
         mountGroupsIsland({
-          filterHost, listHost, state: groupsState, actions,
+          filterHost, listHost, notificationReaderHost, state: groupsState, actions,
           registerCleanup,
         });
         mountGroupsMemberEditor({
@@ -242,13 +243,20 @@ const terminalsDescriptor = createIslandDescriptor({
     const islandModule = import('./terminal-shell-island.js');
     const stateModule = import('./terminal-shell-state.js');
     const actionsModule = import('./terminal-shell-actions.js');
-    const [{ mountTerminalShellIsland }, { terminalShellState }, { createTerminalShellActions }] =
-      await Promise.all([islandModule, stateModule, actionsModule]);
+    // The dashboard snapshot is what tells a terminal tab that its agent has
+    // unread human notifications. The standalone pop-out shell mounts without
+    // it and simply draws no attention glyph.
+    const snapshotStoreModule = import('./snapshot-store.js');
+    const [
+      { mountTerminalShellIsland }, { terminalShellState }, { createTerminalShellActions },
+      { dashboardState },
+    ] = await Promise.all([islandModule, stateModule, actionsModule, snapshotStoreModule]);
     const actions = createTerminalShellActions({ state: terminalShellState, ...dependencies });
     return {
       state: terminalShellState,
       mount: (registerCleanup) => mountTerminalShellIsland({
         host, badgeHost, modalHost, state: terminalShellState, actions, registerCleanup,
+        snapshot: dashboardState.snapshot,
         widgetFactory: dependencies.widgetFactory,
         onComposeMessage: dependencies.onComposeMessage,
         composeMessageDialogKind: dependencies.composeMessageDialogKind,
