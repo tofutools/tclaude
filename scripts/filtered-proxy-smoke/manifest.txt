@@ -24,3 +24,10 @@
 
 20-harness-egress TestPinnedProxyHarnessCooperation
 20-harness-egress TestPinnedProxyToolEgress
+
+# TCL-889. Unlike every line above it, this one backs NO capability cell: the
+# OpenCode launch seam refuses the proxy engine, so there is nothing for its
+# result to activate. It is recorded here because it is a smoke that must not be
+# allowed to rot into a silent skip — the §6.2 carriage answer it produces is
+# only worth reading if the run that produced it actually executed.
+30-opencode-carriage TestOpenCodeProxyCarriageCooperation

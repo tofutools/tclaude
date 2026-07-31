@@ -14,6 +14,11 @@
 #   pkg/claude/session/filtered_network_model_endpoint_smoke_test.go
 HARNESS_CLAUDE_VERSION="2.1.220"
 HARNESS_CODEX_VERSION="0.145.0"
+# Kept in step with the OpenCode pin the executor-smoke jobs in
+# .github/workflows/ci.yml provision, so the carriage answer this shard records
+# is about the same binary those smokes exercise. A carriage result is a fact
+# about a version, not about OpenCode forever.
+HARNESS_OPENCODE_VERSION="1.18.6"
 
 harnesses::install_codex() {
   smoke::log "Installing pinned Codex ${HARNESS_CODEX_VERSION}"
@@ -81,6 +86,29 @@ harnesses::install_claude() {
   claude --version
   claude --version | grep -qF "$HARNESS_CLAUDE_VERSION" || {
     smoke::error "claude is not at the pinned version ${HARNESS_CLAUDE_VERSION}"
+    return 1
+  }
+}
+
+harnesses::install_opencode() {
+  smoke::log "Installing pinned OpenCode ${HARNESS_OPENCODE_VERSION}"
+  npm install --global "opencode-ai@${HARNESS_OPENCODE_VERSION}"
+  # Must resolve under the read-only OS surface the constructed root binds, for
+  # the same reason Claude and Codex must: a binary in the runner's home is
+  # simply absent inside the sandbox, and the launch fails with "not found",
+  # which reads like a broken smoke rather than a path that was never granted.
+  local resolved
+  resolved="$(command -v opencode)"
+  case "$resolved" in
+    /usr/*|/opt/*) ;;
+    *)
+      smoke::error "opencode resolved to $resolved, which the sandbox root does not bind"
+      return 1
+      ;;
+  esac
+  opencode --version
+  opencode --version | grep -qF "$HARNESS_OPENCODE_VERSION" || {
+    smoke::error "opencode is not at the pinned version ${HARNESS_OPENCODE_VERSION}"
     return 1
   }
 }

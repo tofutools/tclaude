@@ -113,6 +113,7 @@ go build -o "$SMOKE_TCLAUDE_BINARY" .
 smoke::unlock_userns
 harnesses::install_codex
 harnesses::install_claude
+harnesses::install_opencode
 
 # 4. Run each flow in a subshell so a flow's trap, cwd and variables cannot leak
 #    into the next one, then check its evidence.
