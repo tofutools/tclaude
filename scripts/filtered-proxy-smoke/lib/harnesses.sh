@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+# Pinned harness provisioning.
+#
+# The PINS LIVE HERE, not in a workflow file. That is the whole point of this
+# layout: bumping Claude Code or Codex to a new pin is a repo edit an agent can
+# make and a reviewer can read, not a change to .github/workflows that needs an
+# operator with workflow scope. The smokes are evidence ABOUT these exact
+# versions, so the version and the evidence belong in the same reviewable file.
+#
+# Every install ends by asserting the version it got. A silently-newer harness
+# would quietly invalidate every cell the smokes back.
+
+# Keep in step with the pins the Go smokes assert:
+#   pkg/claude/session/filtered_network_model_endpoint_smoke_test.go
+HARNESS_CLAUDE_VERSION="2.1.220"
+HARNESS_CODEX_VERSION="0.145.0"
+
+harnesses::install_codex() {
+  smoke::log "Installing pinned Codex ${HARNESS_CODEX_VERSION}"
+  npm install --global "@openai/codex@${HARNESS_CODEX_VERSION}"
+  codex --version
+  codex --version | grep -qF "$HARNESS_CODEX_VERSION" || {
+    smoke::error "codex is not at the pinned version ${HARNESS_CODEX_VERSION}"
+    return 1
+  }
+}
+
+harnesses::install_claude() {
+  smoke::log "Installing pinned Claude Code ${HARNESS_CLAUDE_VERSION}"
+  local platform=linux-x64
+  local base=https://downloads.claude.ai/claude-code-releases
+  local tmp="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
+  local manifest="$tmp/claude-manifest.json"
+  local binary="$tmp/claude-${HARNESS_CLAUDE_VERSION}"
+  local curl_args=(
+    --fail --location --silent --show-error
+    --max-time 60 --retry 2 --retry-all-errors
+  )
+
+  curl "${curl_args[@]}" --output "$manifest" \
+    "$base/${HARNESS_CLAUDE_VERSION}/manifest.json"
+  # The published checksum is verified before the binary is installed: this
+  # runs a downloaded executable against real network policy, so provenance is
+  # not optional.
+  local checksum
+  checksum=$(node -e '
+    const fs = require("fs");
+    const manifest = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+    process.stdout.write(manifest.platforms[process.argv[2]]?.checksum ?? "");
+  ' "$manifest" "$platform")
+  if [[ ! "$checksum" =~ ^[a-f0-9]{64}$ ]]; then
+    smoke::error "missing Claude Code checksum for $platform"
+    return 1
+  fi
+  curl "${curl_args[@]}" --output "$binary" \
+    "$base/${HARNESS_CLAUDE_VERSION}/$platform/claude"
+  echo "$checksum  $binary" | sha256sum --check
+
+  mkdir -p "$HOME/.local/bin" "$HOME/.local/share/claude/versions"
+  install -m 0755 "$binary" \
+    "$HOME/.local/share/claude/versions/${HARNESS_CLAUDE_VERSION}"
+  ln -sfn "$HOME/.local/share/claude/versions/${HARNESS_CLAUDE_VERSION}" \
+    "$HOME/.local/bin/claude"
+  export PATH="$HOME/.local/bin:$PATH"
+  [[ -n "${GITHUB_PATH:-}" ]] && echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+  claude --version
+  claude --version | grep -qF "$HARNESS_CLAUDE_VERSION" || {
+    smoke::error "claude is not at the pinned version ${HARNESS_CLAUDE_VERSION}"
+    return 1
+  }
+}
+
+# harnesses::unlock_userns makes unprivileged user namespaces available, which
+# bubblewrap needs and the hosted image restricts by default. Failure is fatal:
+# without it every flow would fail to build a floor, which must not be
+# mistakable for a boundary that refused something.
+harnesses::unlock_userns() {
+  smoke::log "Unlocking unprivileged user namespaces"
+  sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 >/dev/null 2>&1 || true
+  if ! bwrap --die-with-parent --ro-bind / / --dev /dev --proc /proc \
+       --tmpfs /tmp -- true; then
+    smoke::error "bubblewrap cannot create a sandbox on this runner; the image or its AppArmor policy changed"
+    return 1
+  fi
+}
