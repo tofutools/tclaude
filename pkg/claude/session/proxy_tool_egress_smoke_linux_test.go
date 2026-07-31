@@ -348,7 +348,7 @@ func proxyEgressGoDownload(t *testing.T, port int, proxy string) error {
 	// from what the allowed fetch already downloaded, succeeds without touching
 	// the network at all, and the denied assertion silently stops testing the
 	// boundary — the module cache answering instead of the policy.
-	cache := t.TempDir()
+	cache := proxyEgressModuleCache(t)
 	if err := os.WriteFile(filepath.Join(module, "go.mod"),
 		[]byte("module tclaude.test/egress\n\ngo 1.21\n"), 0o600); err != nil {
 		return err
@@ -580,4 +580,33 @@ func proxyEgressRefused(decisions []proxyDecisionRecord, port int) bool {
 		}
 	}
 	return false
+}
+
+// proxyEgressModuleCache makes a module cache that can actually be removed.
+//
+// go writes everything under GOMODCACHE read-only, including the directories,
+// so t.TempDir's RemoveAll fails with "permission denied" and the test fails in
+// cleanup — after everything it was testing has already passed. Restoring write
+// permission before removal is the documented way to delete a module cache
+// without shelling out to `go clean -modcache`.
+func proxyEgressModuleCache(t *testing.T) string {
+	t.Helper()
+	cache, err := os.MkdirTemp("", "proxy-egress-modcache-")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = filepath.WalkDir(cache,
+			func(path string, entry os.DirEntry, err error) error {
+				if err != nil {
+					return nil
+				}
+				mode := os.FileMode(0o600)
+				if entry.IsDir() {
+					mode = 0o700
+				}
+				_ = os.Chmod(path, mode)
+				return nil
+			})
+		_ = os.RemoveAll(cache)
+	})
+	return cache
 }
