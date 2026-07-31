@@ -151,9 +151,13 @@ func handleSandboxProfileEnforcement(w http.ResponseWriter, r *http.Request) {
 		if target.platform != runtime.GOOS {
 			item.Caveat = "(prediction for a non-host platform; host capability probes did not run)"
 		} else if target.implementation.UsesTclaudeLayer() {
-			probe := cachedTclaudeLayerHostAvailability
-			if err := probe(); err != nil {
-				item.Caveat = "(prediction only; the target's host capability could not be verified: " + err.Error() + ")"
+			// Disclosure, like the dashboard catalog: this endpoint predicts and
+			// cannot mint a launch token, so it reads the fork-free presence
+			// table rather than executing the sandbox engine per request.
+			if err := sandboxToolPresence(
+				sandboxToolLayerHost, tclaudeLayerHostPresence,
+			); err != nil {
+				item.Caveat = "(prediction only; the target's host tooling is not installed: " + err.Error() + ")"
 			}
 		}
 		response.Targets = append(response.Targets, item)

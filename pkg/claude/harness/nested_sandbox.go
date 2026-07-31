@@ -35,6 +35,16 @@ type NestedSandboxContract interface {
 	ResolveExecutable(context.Context) (NestedSandboxExecutable, error)
 	PrepareLaunch(SpawnSpec) SpawnSpec
 	PrepareProbe(string, NestedSandboxExecutable) (NestedSandboxProbe, error)
+	// EnginePresence answers the weaker, fork-free question "is this engine
+	// INSTALLED" for DISCLOSURE surfaces only. ResolveExecutable execs the
+	// engine (`<engine> --version`) to freeze its identity; a 2-second
+	// dashboard poll cannot afford that, and does not need it to tell an
+	// operator the engine is missing.
+	//
+	// nil means installed, NEVER working. It is the "dependency check" the
+	// contract note above forbids substituting for ResolveExecutable — the ban
+	// is on the LAUNCH path, which must keep running the real round-trip.
+	EnginePresence() error
 }
 
 // NestedSandboxExecutable freezes the exact engine entry point and the identity
@@ -126,6 +136,10 @@ func (claudeNestedSandbox) ResolveExecutable(ctx context.Context) (NestedSandbox
 	// Claude does not expose a supported switch that binds its tool runner to
 	// that external package.
 	return resolveNestedExecutable(ctx, "claude", "stacked_claude_srt_probe")
+}
+
+func (claudeNestedSandbox) EnginePresence() error {
+	return nestedEnginePresence("claude", "stacked_claude_srt_probe")
 }
 
 func (claudeNestedSandbox) PrepareLaunch(spec SpawnSpec) SpawnSpec {
@@ -292,6 +306,10 @@ func (codexNestedSandbox) ResolveExecutable(ctx context.Context) (NestedSandboxE
 	return resolveCodexNativeExecutable(ctx, launcher)
 }
 
+func (codexNestedSandbox) EnginePresence() error {
+	return nestedEnginePresence("codex", "stacked_codex_bwrap_backend")
+}
+
 func (codexNestedSandbox) PrepareLaunch(spec SpawnSpec) SpawnSpec {
 	spec.SandboxMode = ""
 	if spec.PermissionProfile == "" {
@@ -368,6 +386,25 @@ enabled = false
 		KnownPaths: []string{executable.Path, configPath, workspace, sibling},
 		Cleanup:    cleanup,
 	}, nil
+}
+
+// nestedEnginePresence is the fork-free prefix of resolveNestedExecutable: the
+// platform gate and the PATH lookup, without inspectNestedExecutable's
+// `--version` exec. Disclosure only — see NestedSandboxContract.EnginePresence.
+func nestedEnginePresence(name, capability string) error {
+	if runtime.GOOS != "linux" {
+		return &NestedSandboxCapabilityError{
+			Capability: "stacked_nested_seatbelt",
+			Detail:     "a second harness sandbox cannot be applied inside tclaude's macOS Seatbelt profile",
+		}
+	}
+	if _, err := exec.LookPath(name); err != nil {
+		return &NestedSandboxCapabilityError{
+			Capability: capability,
+			Detail:     fmt.Sprintf("model-free %s entry point is not on PATH: %v", name, err),
+		}
+	}
+	return nil
 }
 
 func resolveNestedExecutable(

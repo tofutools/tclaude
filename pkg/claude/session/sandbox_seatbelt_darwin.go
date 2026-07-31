@@ -114,6 +114,26 @@ func resolveBwrapBinary(
 	return darwinSeatbeltExecutable, nil
 }
 
+// tclaudeLayerToolingPresence is the fork-free half of resolveBwrapBinary:
+// sandbox-exec exists and is executable. It deliberately does NOT run
+// probeDarwinSeatbelt — that exec is what makes the availability predicate too
+// expensive for a polled disclosure surface. The relay distinction is
+// Linux-only (pidfd), so both boundaries answer identically here.
+func tclaudeLayerToolingPresence(bool) error {
+	info, err := statDarwinSeatbelt(darwinSeatbeltExecutable)
+	if err != nil {
+		return fmt.Errorf(
+			"darwin tclaude-layer requires %s for Seatbelt filesystem confinement: %w",
+			darwinSeatbeltExecutable, err)
+	}
+	if !info.Mode().IsRegular() || info.Mode()&0o111 == 0 {
+		return fmt.Errorf(
+			"darwin tclaude-layer requires executable %s for Seatbelt filesystem confinement",
+			darwinSeatbeltExecutable)
+	}
+	return nil
+}
+
 func resolveBwrapServerBinary(
 	posture sandboxpolicy.NetworkPosture,
 	root sandboxpolicy.RootPosture,

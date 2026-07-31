@@ -758,12 +758,21 @@ func SetTclaudeLayerHostAvailabilitiesForTest(
 ) func() {
 	prev := tclaudeLayerHostAvailability
 	prevServer := tclaudeLayerServerHostAvailability
+	prevPresence := tclaudeLayerHostPresence
+	prevServerPresence := tclaudeLayerServerHostPresence
 	tclaudeLayerHostAvailability = interactive
 	tclaudeLayerServerHostAvailability = server
+	// The disclosure reads presence, the launch reads availability. A test
+	// describing a host without the tooling must move both, or it would assert
+	// a dashboard that contradicts the refusal on the same machine.
+	tclaudeLayerHostPresence = interactive
+	tclaudeLayerServerHostPresence = server
 	resetSandboxImplHostProbeCache()
 	return func() {
 		tclaudeLayerHostAvailability = prev
 		tclaudeLayerServerHostAvailability = prevServer
+		tclaudeLayerHostPresence = prevPresence
+		tclaudeLayerServerHostPresence = prevServerPresence
 		resetSandboxImplHostProbeCache()
 	}
 }

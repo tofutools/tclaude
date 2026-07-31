@@ -151,6 +151,10 @@ func sandboxImplementationHostFailure(harnessName, implementation string) *spawn
 		availability = tclaudeLayerServerHostAvailability
 	}
 	if err := availability(); err != nil {
+		// The live probe disagrees with the disclosure's cheap presence answer
+		// (or a tool that was found has gone away). Drop the latches so the
+		// dashboard resumes checking instead of showing a stale green.
+		invalidateSandboxToolingPresence()
 		if normalized.UsesNestedHarnessSandbox() {
 			return &spawnFailure{http.StatusUnprocessableEntity, sandboxImplementationUnavailableKind,
 				fmt.Sprintf("stacked requested — refused: missing capability stacked_outer_tclaude_layer: %v; "+
@@ -169,6 +173,7 @@ func sandboxImplementationHostFailure(harnessName, implementation string) *spawn
 				resolveErr.Error()}
 		}
 		if availabilityErr := stackedSandboxHostAvailability(h); availabilityErr != nil {
+			invalidateSandboxToolingPresence()
 			return &spawnFailure{http.StatusUnprocessableEntity,
 				sandboxImplementationUnavailableKind, availabilityErr.Error()}
 		}
