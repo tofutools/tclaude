@@ -12588,6 +12588,61 @@ body.wizard .action-menu[data-menu-empty]::after {
   content: 'no such deed in this tome'; color: #b39ddb;
 }
 
+/* ─── Audit spawn-details disclosure ─────────────────────────────────
+   The audit table itself keeps its readable dark default, but the [?]
+   disclosure is a dialog surface, so it takes the same midnight-violet void +
+   mystic-purple frame as the Summon / Bind dialogs rather than staying on the
+   #0d1117 chrome its scrollbars had already left behind. The <pre> bodies stay
+   a legible violet-tinted dark so the JSON is still readable. */
+body.wizard .audit-spawn-popover {
+  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  border-color: #7a5db0;
+  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
+  color: #e7d9f5;
+}
+body.wizard .audit-spawn-popover-head {
+  color: #f3e6c0;
+  /* The same fantasy-serif stack the header h1 / dialog titles use. */
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 1px;
+  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
+}
+body.wizard .audit-spawn-popover-close { color: #b39ddb; text-shadow: none; }
+body.wizard .audit-spawn-popover-close:hover,
+body.wizard .audit-spawn-popover-close:focus { color: #f3e6c0; }
+body.wizard .audit-spawn-popover-note { color: #f0c674; }
+body.wizard .audit-spawn-popover h4 { color: #d9b45a; }
+body.wizard .audit-spawn-popover pre {
+  background: #140f28;
+  border-color: rgba(122, 93, 176, 0.5);
+  color: #e7d9f5;
+}
+@supports not selector(::-webkit-scrollbar) {
+  body.wizard .audit-spawn-popover,
+  body.wizard .audit-spawn-popover pre { scrollbar-color: #7a5db0 #140f28; }
+}
+body.wizard .audit-spawn-popover::-webkit-scrollbar,
+body.wizard .audit-spawn-popover pre::-webkit-scrollbar { width: 10px; height: 10px; }
+body.wizard .audit-spawn-popover::-webkit-scrollbar-track,
+body.wizard .audit-spawn-popover pre::-webkit-scrollbar-track,
+body.wizard .audit-spawn-popover::-webkit-scrollbar-corner,
+body.wizard .audit-spawn-popover pre::-webkit-scrollbar-corner { background: #140f28; }
+body.wizard .audit-spawn-popover::-webkit-scrollbar-thumb,
+body.wizard .audit-spawn-popover pre::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #7a5db0, #3a2a63);
+  border: 1px solid #d9b45a; border-radius: 6px;
+}
+body.wizard .audit-spawn-popover::-webkit-scrollbar-thumb:hover,
+body.wizard .audit-spawn-popover pre::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #8f6fca, #4a367d);
+}
+/* The default skin brightens the thumb again while it is dragged; without an
+   arcane twin that drag flashes light grey through the violet frame. */
+body.wizard .audit-spawn-popover::-webkit-scrollbar-thumb:active,
+body.wizard .audit-spawn-popover pre::-webkit-scrollbar-thumb:active {
+  background: linear-gradient(180deg, #a98fdc, #5c458f);
+}
+
 /* ═══ Wizard Messages tab — "The Rookery & the Unfurled Scroll" ═══════
    Unlike the rest of the wizard re-skin (which only re-paints chrome and
    leaves the data tables their readable dark default), the Messages tab is
@@ -12631,25 +12686,6 @@ body.wizard .mail-reader::-webkit-scrollbar-thumb {
 body.wizard .mail-sidebar::-webkit-scrollbar-thumb:hover,
 body.wizard .mail-list::-webkit-scrollbar-thumb:hover,
 body.wizard .mail-reader::-webkit-scrollbar-thumb:hover { background: linear-gradient(180deg, #8f6fca, #4a367d); }
-@supports not selector(::-webkit-scrollbar) {
-  body.wizard .audit-spawn-popover,
-  body.wizard .audit-spawn-popover pre { scrollbar-color: #7a5db0 #140f28; }
-}
-body.wizard .audit-spawn-popover::-webkit-scrollbar,
-body.wizard .audit-spawn-popover pre::-webkit-scrollbar { width: 10px; height: 10px; }
-body.wizard .audit-spawn-popover::-webkit-scrollbar-track,
-body.wizard .audit-spawn-popover pre::-webkit-scrollbar-track,
-body.wizard .audit-spawn-popover::-webkit-scrollbar-corner,
-body.wizard .audit-spawn-popover pre::-webkit-scrollbar-corner { background: #140f28; }
-body.wizard .audit-spawn-popover::-webkit-scrollbar-thumb,
-body.wizard .audit-spawn-popover pre::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, #7a5db0, #3a2a63);
-  border: 1px solid #d9b45a; border-radius: 6px;
-}
-body.wizard .audit-spawn-popover::-webkit-scrollbar-thumb:hover,
-body.wizard .audit-spawn-popover pre::-webkit-scrollbar-thumb:hover {
-  background: linear-gradient(180deg, #8f6fca, #4a367d);
-}
 /* Empty-state prompts across the three panes read as muted arcane. */
 body.wizard .mail-sidebar .empty,
 body.wizard .mail-list .empty,

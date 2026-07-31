@@ -53,6 +53,8 @@ func TestDashboardHTML_AuditTabWired(t *testing.T) {
 	must(".audit-spawn-popover::-webkit-scrollbar", "the outer spawn-details scrollbar uses dashboard chrome")
 	must(".audit-spawn-popover pre::-webkit-scrollbar-thumb", "the nested JSON scrollbar uses dashboard chrome")
 	must("body.wizard .audit-spawn-popover::-webkit-scrollbar-thumb", "wizard spawn-details scrollbars use the arcane chrome")
+	must("body.wizard .audit-spawn-popover {", "the wizard spawn-details surface leaves the default dark chrome")
+	must("body.wizard .audit-spawn-popover pre {", "wizard spawn-details JSON bodies take the violet-tinted dark")
 	must("scrollbar-color: #6e7681 #0d1117", "Firefox receives the regular scrollbar fallback")
 	must("scrollbar-color: #7a5db0 #140f28", "Firefox receives the wizard scrollbar fallback")
 	must("response_truncated", "large captured responses disclose truncation")
