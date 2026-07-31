@@ -20,13 +20,28 @@ scripts/filtered-proxy-smoke/run.sh --validate-only   # + manifest/flow consiste
 only on the Linux CI shard.
 
 Both are also run by `go test ./pkg/claude/session -run TestProxySmoke`, so
-ordinary CI catches a broken guard without waiting for the smoke shard.
+ordinary CI catches a broken guard without waiting for the smoke shard — and
+they run for **every** smoke shard's manifest, not only this one.
+
+## What is shared and what is this shard's own
+
+The evidence checker, its self-test, the manifest drift guards, the flow runner
+and the network fixtures live in `scripts/lib/smoke/` and are shared with every
+other smoke shard (`scripts/proxy-posture-e2e/` is the other one today). The
+discipline is therefore defined once, self-tested once, and cannot differ
+between shards — a forked copy would be a second place the rule "a skipped,
+renamed or zero-test smoke is a hard failure" could quietly weaken.
+
+What stays in this directory is what is specific to these smokes: the host
+packages they need (`lib/prereqs.sh`), the harness pins (`lib/harnesses.sh`),
+the flows, and the manifest that says which evidence they must produce.
 
 ## Why this lives here and not in a workflow
 
 Everything that decides *what runs*, *what counts as evidence*, *which harness
-versions are pinned* and *how fixtures are built* is in this directory. The CI
-job is generic: check out, set up Go and Node, invoke `run.sh`.
+versions are pinned* and *how fixtures are built* is in this directory and the
+shared lib. The CI job is generic: check out, set up Go and Node, invoke
+`run.sh`.
 
 That split exists because `.github/workflows/**` needs an operator with
 `workflow` scope to merge. With the logic inline, every new smoke, every
@@ -40,6 +55,12 @@ deliberately **shorter** than the packet gateway's sibling smoke, which also
 installs nftables and builds pasta from source: the proxy floor reaches its
 namespace through bubblewrap's plain unshare and calls neither. Installing them
 here would quietly undermine the claim that this floor does not need them.
+
+That claim belongs to **this** shard. `scripts/lib/smoke/packet-floor.sh` does
+provision pasta and nft, and the posture-e2e shard uses it — because its
+loopback-only scenario is a filtered policy that deploys *no* engine and
+therefore runs the packet floor. Sharing the code does not share the claim: what
+matters here is that these flows never call it.
 
 Needing a new tool is a repo edit here, not a workflow merge — the same reason
 the flows and the harness pins live in this directory.

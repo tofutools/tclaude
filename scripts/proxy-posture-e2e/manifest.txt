@@ -1,0 +1,24 @@
+# Evidence manifest for the end-to-end proxy-posture smokes (M2.6).
+#
+# Each line: <flow-file-basename-without-.sh> <TopLevelTestName>
+#
+# This file IS the evidence record. A scenario only counts as verified if its
+# name appears here AND the run reports an explicit top-level pass for it, so a
+# test that is skipped, renamed, filtered out or build-tagged away is a hard CI
+# failure rather than a quiet green.
+#
+# The four lines are the four rows of the §1.3 deployment table. Deleting one is
+# a visible, reviewable diff that says exactly which posture stopped being
+# verified end to end — and, for the three no-proxy rows, that nothing is left
+# checking that a proxy is NOT deployed.
+#
+# Adding a scenario: add its flow file under flows/, add its test name here.
+# Nothing under .github/ needs to change.
+
+10-discriminating TestProxyPostureE2EDiscriminatingAllowlist
+
+20-open-deny TestProxyPostureE2EOpenBaselineWithDeny
+
+30-loopback-only TestProxyPostureE2ELoopbackOnlyDeploysNoProxy
+
+40-allow-all TestProxyPostureE2EAllowAllDeploysNoFloor

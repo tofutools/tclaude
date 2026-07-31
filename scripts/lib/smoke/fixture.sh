@@ -32,6 +32,14 @@ fixture::netns_up() {
   done
 }
 
+# fixture::host_address_add HOST_LINK CIDR — a second host-side address on an
+# existing veth, for a flow whose namespace answers on more than one subnet.
+# The proxy dials from the HOST, so a fixture address it must reach needs a host
+# route, and that route is this address.
+fixture::host_address_add() {
+  sudo ip address add "$2" dev "$1"
+}
+
 # fixture::netns_down NAMESPACE HOST_LINK — safe to call when nothing was made.
 fixture::netns_down() {
   sudo ip netns del "$1" 2>/dev/null || true
