@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/filefollow"
 )
 
 // The follower's core contract is restart-equivalence: the entry it
@@ -66,6 +67,13 @@ func statOf(t *testing.T, path string) os.FileInfo {
 	info, err := os.Stat(path)
 	require.NoError(t, err)
 	return info
+}
+
+func cursorOf(t *testing.T, f *convFollower) filefollow.Cursor {
+	t.Helper()
+	cursor, ok := f.stream.Checkpoint()
+	require.True(t, ok)
+	return cursor
 }
 
 func appendToFile(t *testing.T, path, content string) {
@@ -144,7 +152,7 @@ func TestConvFollower_PartialTrailingLine(t *testing.T) {
 	f := newConvFollower(followerTestConvID)
 	_, _, err := f.refresh(path, statOf(t, path))
 	require.NoError(t, err)
-	offsetAfterFirst := f.offset
+	offsetAfterFirst := cursorOf(t, f).Offset
 
 	// Append the first half of a record — no trailing newline yet.
 	full := userLine("feature-a", "2026-03-01T11:00:00Z", "second")
@@ -153,7 +161,7 @@ func TestConvFollower_PartialTrailingLine(t *testing.T) {
 	entry, complete, err := f.refresh(path, statOf(t, path))
 	require.NoError(t, err)
 	assertMatchesFullReparse(t, path, entry, complete)
-	require.Equal(t, offsetAfterFirst, f.offset, "torn tail is not committed to the cursor")
+	require.Equal(t, offsetAfterFirst, cursorOf(t, f).Offset, "torn tail is not committed to the cursor")
 	require.Equal(t, "first prompt", entry.FirstPrompt, "no second prompt visible yet")
 
 	// Complete the record; now it must be visible.
@@ -161,7 +169,7 @@ func TestConvFollower_PartialTrailingLine(t *testing.T) {
 	entry, complete, err = f.refresh(path, statOf(t, path))
 	require.NoError(t, err)
 	assertMatchesFullReparse(t, path, entry, complete)
-	require.Greater(t, f.offset, offsetAfterFirst, "completed record advances the cursor")
+	require.Greater(t, cursorOf(t, f).Offset, offsetAfterFirst, "completed record advances the cursor")
 }
 
 // TestConvFollower_ShrinkTriggersFullReparse: a file that shrank below the
@@ -175,7 +183,7 @@ func TestConvFollower_ShrinkTriggersFullReparse(t *testing.T) {
 	f := newConvFollower(followerTestConvID)
 	_, _, err := f.refresh(path, statOf(t, path))
 	require.NoError(t, err)
-	require.Greater(t, f.offset, int64(0))
+	require.Greater(t, cursorOf(t, f).Offset, int64(0))
 
 	// Replace with strictly smaller content (a different, shorter conv).
 	shrunk := userLine("release", "2026-04-01T09:00:00Z", "brand new")
@@ -247,7 +255,7 @@ func TestConvFollower_RewriteGrowsLargerAnchorCatches(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, []byte(v2), 0o600))
 	require.True(t, os.SameFile(primedInode, statOf(t, path)),
 		"precondition: same inode (in-place rewrite, not a replace)")
-	require.Greater(t, statOf(t, path).Size(), f.offset,
+	require.Greater(t, statOf(t, path).Size(), cursorOf(t, f).Offset,
 		"precondition: rewrite ends larger than the cursor")
 
 	entry, complete, err := f.refresh(path, statOf(t, path))
@@ -275,8 +283,8 @@ func TestConvFollower_StubWithOffsetStillAnchors(t *testing.T) {
 	entry, _, err := f.refresh(path, statOf(t, path))
 	require.NoError(t, err)
 	require.Nil(t, entry, "non-indexable records finalize to a stub")
-	require.Greater(t, f.offset, int64(0), "the stub record still advanced the cursor")
-	require.NotEmpty(t, f.anchor, "a stub with a non-zero offset still captures an anchor (F2b)")
+	require.Greater(t, cursorOf(t, f).Offset, int64(0), "the stub record still advanced the cursor")
+	require.NotEmpty(t, cursorOf(t, f).Anchor, "a stub with a non-zero offset still captures an anchor (F2b)")
 
 	// Append another stub then a real prompt: the anchored stub cursor can
 	// increment, and the result matches a full reparse.
@@ -302,11 +310,14 @@ func TestConvFollower_EmptyAnchorForcesFullReparse(t *testing.T) {
 	entry, _, err := f.refresh(path, statOf(t, path))
 	require.NoError(t, err)
 	require.Equal(t, "AAA", entry.FirstPrompt)
-	require.NotEmpty(t, f.anchor, "precondition: a normal commit captured an anchor")
+	cursor := cursorOf(t, f)
+	require.NotEmpty(t, cursor.Anchor, "precondition: a normal commit captured an anchor")
 	primedInode := statOf(t, path)
 
-	// Simulate a failed anchor capture on the prior commit.
-	f.anchor = nil
+	// A restored non-zero cursor without an anchor is rejected before it can
+	// ever become eligible for an incremental read.
+	cursor.Anchor = nil
+	require.Error(t, f.stream.Restore(cursor, newJSONLScanState(followerTestConvID, path)))
 
 	// In-place, same-inode rewrite that changes the head FirstPrompt (same
 	// length, so the boundary at the old offset still aligns) and grows the
@@ -322,7 +333,7 @@ func TestConvFollower_EmptyAnchorForcesFullReparse(t *testing.T) {
 	assertMatchesFullReparse(t, path, entry, complete)
 	require.Equal(t, "BBB", entry.FirstPrompt,
 		"empty anchor forced a full reparse; the stale cursor was not trusted")
-	require.NotEmpty(t, f.anchor, "the full reparse re-captured an anchor")
+	require.NotEmpty(t, cursorOf(t, f).Anchor, "the full reparse retained a validated anchor")
 }
 
 // TestConvFollower_OversizedRecordSkipped: a record past the line cap is

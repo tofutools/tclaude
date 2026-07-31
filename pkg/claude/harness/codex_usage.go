@@ -4,9 +4,14 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"sort"
+	"strings"
+	"sync"
 	"time"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/filefollow"
 )
 
 // Subscription rate-limit telemetry for Codex (JOH-214). Claude Code surfaces
@@ -220,7 +225,7 @@ func LatestCodexUsageForConvs(home string, convIDs []string, since time.Time) (*
 		if best != nil && best.Observed.After(st.mtime.Add(codexRolloutMtimeSlack)) {
 			break
 		}
-		u, err := CodexUsageFromRollout(st.path)
+		u, err := followCodexUsage(st.path)
 		if err != nil || u == nil {
 			continue
 		}
@@ -229,6 +234,124 @@ func LatestCodexUsageForConvs(home string, convIDs []string, since time.Time) (*
 		}
 	}
 	return best, nil
+}
+
+type codexUsageFollowState struct {
+	latest *CodexUsage
+}
+
+type codexUsagePathFollower struct {
+	stream      *filefollow.Follower[codexUsageFollowState]
+	archiveInfo os.FileInfo
+	archive     *CodexUsage
+	usedAt      time.Time
+}
+
+var codexUsageFollowers = struct {
+	sync.Mutex
+	byPath map[string]*codexUsagePathFollower
+}{byPath: make(map[string]*codexUsagePathFollower)}
+
+const maxCodexUsageFollowers = 512
+
+// followCodexUsage is the recurring repair-poller reader. Live JSONL paths
+// retain a validated cursor and fold only complete appended records; immutable
+// archives are decoded once per physical generation. LatestCodexUsage remains
+// the intentional one-shot startup discovery path.
+func followCodexUsage(path string) (*CodexUsage, error) {
+	codexUsageFollowers.Lock()
+	defer codexUsageFollowers.Unlock()
+
+	entry := codexUsageFollowers.byPath[path]
+	if entry == nil {
+		entry = &codexUsagePathFollower{stream: newCodexUsageStream()}
+		codexUsageFollowers.byPath[path] = entry
+	}
+	entry.usedAt = time.Now()
+	pruneCodexUsageFollowers()
+
+	if strings.HasSuffix(path, ".zst") {
+		info, err := os.Stat(path)
+		if err != nil {
+			delete(codexUsageFollowers.byPath, path)
+			return nil, err
+		}
+		if entry.archiveInfo != nil && os.SameFile(entry.archiveInfo, info) &&
+			entry.archiveInfo.Size() == info.Size() && entry.archiveInfo.ModTime().Equal(info.ModTime()) {
+			return entry.archive, nil
+		}
+		u, err := CodexUsageFromRollout(path)
+		if err != nil {
+			return nil, err
+		}
+		entry.stream.Reset()
+		entry.archiveInfo = info
+		entry.archive = u
+		return u, nil
+	}
+
+	update, err := entry.stream.Refresh(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			delete(codexUsageFollowers.byPath, path)
+		}
+		return nil, err
+	}
+	entry.archiveInfo = nil
+	entry.archive = nil
+	return update.State.latest, nil
+}
+
+func newCodexUsageStream() *filefollow.Follower[codexUsageFollowState] {
+	return filefollow.New(filefollow.Config[codexUsageFollowState]{
+		NewState:   func(string, int64) codexUsageFollowState { return codexUsageFollowState{} },
+		CloneState: func(state codexUsageFollowState) codexUsageFollowState { return state },
+		Scan: func(r io.Reader, _ string, state *codexUsageFollowState, strict bool) (int64, bool, error) {
+			return filefollow.ScanLines(r, filefollow.LineConfig{MaxRecordBytes: maxCodexRolloutLineBytes}, func(line filefollow.Line) bool {
+				if line.Oversized {
+					return true
+				}
+				return foldCodexUsageLine(state, line.Data)
+			}, strict)
+		},
+	})
+}
+
+func foldCodexUsageLine(state *codexUsageFollowState, line []byte) bool {
+	if len(bytes.TrimSpace(line)) == 0 {
+		return true
+	}
+	var env codexEnvelope
+	if json.Unmarshal(line, &env) != nil {
+		return false
+	}
+	if env.Type != "event_msg" {
+		return true
+	}
+	var ev codexTokenCountEvent
+	if json.Unmarshal(env.Payload, &ev) != nil {
+		return false
+	}
+	if ev.Type != "token_count" {
+		return true
+	}
+	if u := codexUsageFromRateLimits(ev.RateLimits, env.Timestamp); u != nil {
+		state.latest = u
+	}
+	return true
+}
+
+func pruneCodexUsageFollowers() {
+	for len(codexUsageFollowers.byPath) > maxCodexUsageFollowers {
+		var oldestPath string
+		var oldest time.Time
+		for path, entry := range codexUsageFollowers.byPath {
+			if oldestPath == "" || entry.usedAt.Before(oldest) {
+				oldestPath, oldest = path, entry.usedAt
+			}
+		}
+		delete(codexUsageFollowers.byPath, oldestPath)
+	}
 }
 
 // CodexUsageFromRollout reads rolloutPath (transparently decompressing
@@ -245,37 +368,18 @@ func CodexUsageFromRollout(rolloutPath string) (*CodexUsage, error) {
 	}
 	defer func() { _ = rc.Close() }()
 
-	var best *CodexUsage
+	state := codexUsageFollowState{}
 	err = scanCodexRolloutLines(rc, rolloutPath, func(line []byte) bool {
-		if len(bytes.TrimSpace(line)) == 0 {
-			return true
-		}
-		var env codexEnvelope
-		if json.Unmarshal(line, &env) != nil {
-			return true
-		}
-		if env.Type != "event_msg" {
-			return true
-		}
-		var ev codexTokenCountEvent
-		if json.Unmarshal(env.Payload, &ev) != nil || ev.Type != "token_count" {
-			return true
-		}
-		u := codexUsageFromRateLimits(ev.RateLimits, env.Timestamp)
-		if u == nil {
-			return true
-		}
-		// Rollout order is authoritative: the last populated record wins.
-		// Codex writes records chronologically, but using position rather than
-		// comparing envelope timestamps also keeps this one-shot reference
-		// exactly equivalent to the incremental follower's position-based fold.
-		best = u
+		// The reference one-shot scan is deliberately lenient: malformed records
+		// are skipped. The recurring follower treats them as append doubt and
+		// rebuilds through this same fold, preserving exact parity.
+		_ = foldCodexUsageLine(&state, line)
 		return true
 	})
 	if err != nil {
 		return nil, fmt.Errorf("scan codex rollout %s: %w", rolloutPath, err)
 	}
-	return best, nil
+	return state.latest, nil
 }
 
 // codexUsageFromRateLimits resolves an account-wide rate_limits block into a

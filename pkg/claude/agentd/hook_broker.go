@@ -115,14 +115,12 @@ func resolveHookAck(sessionID, token string, delivered bool) bool {
 // safeBrokeredConvID rejects a conversation id that is not a single
 // path-safe segment.
 //
-// The conv-id is caller-controlled and is not merely stored: the /clear
-// identity migration joins it into a filesystem path
-// (convops.ScanAndUpsertFile of "<project dir>/<conv-id>.jsonl"), and
-// filepath.Join cleans ".." segments, so a conv-id containing them walks
-// out of the projects directory. On the direct path that resolves inside
-// the agent's own sandbox and buys it nothing; brokered, the daemon
-// resolves it on the host, which turns an unvalidated field into a
-// host-side read of any uuid-shaped file the agent can name.
+// The conv-id is caller-controlled and is not merely stored: later freshness
+// and auto-name paths join it into a transcript pathname, and filepath.Join
+// cleans ".." segments. On the direct path that resolves inside the agent's
+// own sandbox and buys it nothing; brokered, the daemon resolves it on the
+// host, which turns an unvalidated field into a host-side read of any
+// uuid-shaped file the agent can name.
 //
 // The check is a path-segment rule rather than a uuid shape on purpose:
 // conv-id formats differ per harness, and this closes the traversal

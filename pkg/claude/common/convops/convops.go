@@ -702,7 +702,7 @@ func RefreshConvIndexEntry(convID string) *db.ConvIndexRow {
 	if info.ModTime().Unix() <= row.FileMtime && info.Size() == row.FileSize && !isStubRow(row) {
 		return row
 	}
-	if ScanAndUpsertFile(row.FullPath) == nil {
+	if FollowAndUpsertFile(row.FullPath) == nil {
 		return row
 	}
 	if refreshed, err := db.GetConvIndex(convID); err == nil && refreshed != nil {
@@ -714,7 +714,9 @@ func RefreshConvIndexEntry(convID string) *db.ConvIndexRow {
 // ScanAndUpsertFile scans a single .jsonl conversation file and upserts the
 // result into the DB cache. The project dir is derived from the file's parent
 // directory. Returns the resulting SessionEntry, or nil if the file has no
-// useful data or was deleted.
+// useful data or was deleted. This is an intentional one-shot primitive for
+// explicit indexing/copy/repair operations; recurring callers must retain a
+// ConvFollower or use FollowAndUpsertFile.
 func ScanAndUpsertFile(filePath string) *SessionEntry {
 	convID := strings.TrimSuffix(filepath.Base(filePath), ".jsonl")
 	if len(convID) != 36 {

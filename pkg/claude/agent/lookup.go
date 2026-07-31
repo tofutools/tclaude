@@ -405,7 +405,7 @@ func FreshConvRowAt(convID, cwd string) *db.ConvIndexRow {
 		return nil
 	}
 	jsonlPath := filepath.Join(projectPath, convID+".jsonl")
-	conv.ScanAndUpsertFile(jsonlPath)
+	conv.FollowAndUpsertFile(jsonlPath)
 	return freshConvRow(convID)
 }
 

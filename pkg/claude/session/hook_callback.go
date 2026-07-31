@@ -17,7 +17,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/convindex"
-	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/notify"
 	"github.com/tofutools/tclaude/pkg/claude/common/paneinput"
@@ -275,17 +274,10 @@ var notifyOnStateTransition = notify.OnStateTransition
 // needsIdentityMigration). The rotation is atomic, so a failure strands nothing:
 // identity stays wholly on oldConv.
 func migrateClearedIdentity(state *SessionState, newConv string) bool {
-	// Freshen the old conv's conv_index from its .jsonl before the
-	// rotation carries the display name. An agent's /rename of itself
-	// lands as a customTitle turn in the .jsonl, and conv_index may not
-	// have been re-scanned since — without this the carried name (and
-	// so the /rename restore below) could miss a recent rename.
-	// Best-effort: a missing file / unindexable .jsonl is a no-op.
-	if state.Cwd != "" {
-		if projectDir := convops.GetClaudeProjectPath(state.Cwd); projectDir != "" {
-			convops.ScanAndUpsertFile(filepath.Join(projectDir, state.ConvID+".jsonl"))
-		}
-	}
+	// Hooks never parse transcript files. agentd's incremental fsnotify
+	// follower owns conv_index freshness; rotation uses its latest durable row.
+	// This avoids retrying a byte-zero transcript scan on every later hook when
+	// an identity migration itself is temporarily failing.
 	carriedName, err := rotateAgentConv(state.ConvID, newConv, "clear")
 	if err != nil {
 		slog.Error("clear-migrate: agent identity rotation failed (will retry on next hook)",

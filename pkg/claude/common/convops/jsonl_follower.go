@@ -1,7 +1,6 @@
 package convops
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"io"
@@ -9,9 +8,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/filefollow"
 )
 
 // This file adds an incremental "follower" over a live Claude Code
@@ -302,120 +303,46 @@ func (s *jsonlScanState) finalize(info os.FileInfo) *SessionEntry {
 	return &entry
 }
 
-// readJSONLLine reads and drains one record in bounded chunks, mirroring
-// readCodexRolloutLine (TCL-379). The returned slice holds at most
-// maxJSONLLineBytes; lineBytes always reports the full drained size so the
-// caller can advance its offset past an oversized record without retaining
-// the whole payload. A record longer than the cap sets oversized=true —
-// the scan skips it (warn once) rather than treating it as a hard failure.
-func readJSONLLine(reader *bufio.Reader, line []byte) ([]byte, int64, bool, error) {
-	var lineBytes int64
-	oversized := false
-	for {
-		fragment, err := reader.ReadSlice('\n')
-		lineBytes += int64(len(fragment))
-		if !oversized {
-			remaining := maxJSONLLineBytes - len(line)
-			if len(fragment) <= remaining {
-				line = append(line, fragment...)
-			} else {
-				line = append(line, fragment[:remaining]...)
-				oversized = true
-			}
-		}
-		if err == bufio.ErrBufferFull {
-			continue
-		}
-		return line, lineBytes, oversized, err
-	}
-}
-
 // scanJSONLLines consumes newline-terminated records from r into state and
 // reports how many bytes of complete records were consumed. A writer may be
 // mid-write(2) when the monitor polls: the unterminated tail stays at the
 // current offset (not counted in consumed) and is retried on the next
 // append. strict controls the decode-doubt contract — see consumeLine.
 func scanJSONLLines(r io.Reader, path string, state *jsonlScanState, strict bool) (consumed int64, doubt bool, err error) {
-	reader := bufio.NewReaderSize(r, 64*1024)
-	line := make([]byte, 0, 64*1024)
-	for {
-		var lineBytes int64
-		var oversized bool
-		var readErr error
-		line, lineBytes, oversized, readErr = readJSONLLine(reader, line[:0])
-		switch readErr {
-		case nil:
-			if oversized {
-				// An oversized record (a turn carrying a huge tool result
-				// or pasted blob) must never be a hard scan failure. Match
-				// the Codex follower: discard the record, advance past its
-				// newline, continue. Do NOT flag doubt — a rebuild would
-				// hit the same record and loop forever. Mark the scan
-				// oversized-incomplete so the destructive branch-history
-				// rebuild is skipped (the skipped record may have carried a
-				// branch stamp); the row itself is still upserted.
-				state.oversizedSeen = true
-				slog.Warn("conv_index: skipping oversized .jsonl record",
-					"path", path, "bytes", lineBytes,
-					"limit_bytes", maxJSONLLineBytes)
-			} else if ok := state.consumeLine(line); strict && !ok {
-				doubt = true
-			}
-			consumed += lineBytes
-		case io.EOF:
-			if lineBytes == 0 {
-				return consumed, doubt, nil
-			}
-			// A syntactically complete record can arrive without a trailing
-			// newline at true EOF. Consume it only if it is valid, non-empty
-			// and not oversized; a torn mid-write tail is left un-consumed
-			// and retried from the same offset after the next append.
-			trimmed := bytes.TrimSpace(line)
-			if !oversized && len(trimmed) > 0 && json.Valid(trimmed) {
-				if ok := state.consumeLine(line); strict && !ok {
-					doubt = true
-				}
-				consumed += lineBytes
-			}
-			return consumed, doubt, nil
-		default:
-			return consumed, doubt, readErr
+	return filefollow.ScanLines(r, filefollow.LineConfig{MaxRecordBytes: maxJSONLLineBytes}, func(line filefollow.Line) bool {
+		if line.Oversized {
+			// An oversized record must not make every later append rebuild.
+			// Its bounded prefix is deliberately ignored and the complete
+			// physical record is committed past its newline.
+			state.oversizedSeen = true
+			slog.Warn("conv_index: skipping oversized .jsonl record",
+				"path", path, "bytes", line.Bytes,
+				"limit_bytes", maxJSONLLineBytes)
+			return true
 		}
-	}
+		return state.consumeLine(line.Data)
+	}, strict)
 }
-
-// convFollowerAnchorBytes is how many bytes just before the cursor the
-// follower re-reads and compares before trusting appended content. It
-// closes the one hole the size/inode guards miss: an in-place rewrite that
-// ends LARGER than the cursor keeps the same inode and passes the shrink
-// check, and decode-doubt only catches it if the new bytes at the old
-// offset happen to be misaligned. Re-reading the committed tail detects any
-// change to the bytes preceding the cursor directly. 64 bytes is ample —
-// any real rewrite changes far more than the last line's tail — and the
-// read is a single pread of a fixed small buffer.
-const convFollowerAnchorBytes = 64
 
 // convFollower incrementally follows ONE live transcript .jsonl. The
 // daemon monitor holds one per watched path and drives it from a single
-// goroutine, so it carries no lock (unlike the Codex follower, which is
-// shared across concurrent dashboard polls). The cursor is in-memory only:
-// a daemon restart starts from a clean full reparse, exactly like the Codex
-// follower.
+// goroutine. All cursor and file-change mechanics live in filefollow.
 type convFollower struct {
 	convID string
-
-	info   os.FileInfo
-	offset int64
-	anchor []byte
-	state  jsonlScanState
+	stream *filefollow.Follower[jsonlScanState]
 
 	entry    *SessionEntry
 	complete bool
-	primed   bool
 }
 
 func newConvFollower(convID string) *convFollower {
-	return &convFollower{convID: convID}
+	f := &convFollower{convID: convID}
+	f.stream = filefollow.New(filefollow.Config[jsonlScanState]{
+		NewState:   func(path string, _ int64) jsonlScanState { return newJSONLScanState(convID, path) },
+		CloneState: func(state jsonlScanState) jsonlScanState { return state.clone() },
+		Scan:       scanJSONLLines,
+	})
+	return f
 }
 
 // refresh returns convID's freshest scan result, reading only appended
@@ -425,156 +352,17 @@ func newConvFollower(convID string) *convFollower {
 // (entry, scanComplete) is always what a full parseJSONLSession of the same
 // bytes would produce.
 func (f *convFollower) refresh(path string, info os.FileInfo) (*SessionEntry, bool, error) {
-	// Fully unchanged — same identity, size AND mtime — is answered from
-	// memory without reopening. Requiring mtime equality (not just size) is
-	// deliberate: a same-length in-place rewrite keeps size == offset but
-	// bumps mtime, and must NOT be served from the stale cursor.
-	if f.primed && f.info != nil && os.SameFile(f.info, info) &&
-		f.info.Size() == info.Size() && f.info.ModTime().Equal(info.ModTime()) {
-		return f.entry, f.complete, nil
-	}
-
-	// An identity change (rotation, replace-then-rename) or a shrink below
-	// the cursor invalidates the offset outright, as does a not-yet-primed
-	// follower. Only a same-inode file that has grown past the cursor is a
-	// candidate for reading just the appended bytes — and even then the
-	// tail-anchor check inside scanAppend must pass.
-	sameFile := f.primed && f.info != nil && os.SameFile(f.info, info)
-	if sameFile && info.Size() > f.offset {
-		if entry, complete, ok := f.scanAppend(path, info); ok {
-			return entry, complete, nil
-		}
-		// Any seek/read/anchor/decode doubt falls through to the
-		// authoritative rebuild.
-	}
-	// size == offset with a bumped mtime (same-length rewrite), a shrink,
-	// an identity change, or append-doubt all land here.
-	return f.fullScan(path, info)
-}
-
-func (f *convFollower) fullScan(path string, info os.FileInfo) (*SessionEntry, bool, error) {
-	file, err := os.Open(path) //nolint:gosec // path is a ~/.claude/projects .jsonl from our own monitor
+	_ = info // filefollow captures identity and metadata from one descriptor.
+	update, err := f.stream.Refresh(path)
 	if err != nil {
 		return nil, false, err
 	}
-	defer func() { _ = file.Close() }()
-
-	state := newJSONLScanState(f.convID, path)
-	consumed, _, scanErr := scanJSONLLines(file, path, &state, false)
-	complete := scanErr == nil && !state.oversizedSeen
-	entry := state.finalize(info)
-
-	f.commit(path, info, consumed, state, entry, complete)
-	if scanErr != nil {
-		// Match parseJSONLSession: a scan that stopped before EOF is a
-		// truncated view; report it so the caller skips the branch-history
-		// rebuild. The state is still committed so the next tick can try to
-		// increment from where we stopped.
-		slog.Warn("conv_index: .jsonl scan stopped before EOF; branch history not rebuilt",
-			"conv_id", f.convID, "error", scanErr)
+	if update.Unchanged {
+		return f.entry, f.complete, nil
 	}
-	return entry, complete, nil
-}
-
-func (f *convFollower) scanAppend(path string, info os.FileInfo) (*SessionEntry, bool, bool) {
-	file, err := os.Open(path) //nolint:gosec // path is a ~/.claude/projects .jsonl from our own monitor
-	if err != nil {
-		return nil, false, false
-	}
-	defer func() { _ = file.Close() }()
-
-	// Never trust a cursor we can't validate: with a non-zero offset, an
-	// empty anchor means the last commit could not read its tail (a
-	// best-effort capture that failed). We have nothing to check the
-	// committed bytes against, so bail to a full reparse rather than
-	// blindly reading from a possibly-stale offset. (offset == 0 has no
-	// preceding bytes to validate — reading from 0 IS a scan from start.)
-	if f.offset > 0 && len(f.anchor) == 0 {
-		return nil, false, false
-	}
-
-	// Tail-anchor check: re-read the committed bytes just before the cursor
-	// and compare. A mismatch means the file was rewritten under the same
-	// inode (not a pure append), so the offset is meaningless — bail to a
-	// full reparse.
-	if len(f.anchor) > 0 {
-		buf := make([]byte, len(f.anchor))
-		anchorStart := f.offset - int64(len(f.anchor))
-		if _, err := file.ReadAt(buf, anchorStart); err != nil {
-			return nil, false, false
-		}
-		if !bytes.Equal(buf, f.anchor) {
-			slog.Debug("conv_index: .jsonl tail anchor mismatch; full reparse",
-				"conv_id", f.convID, "path", path)
-			return nil, false, false
-		}
-	}
-
-	if _, err := file.Seek(f.offset, io.SeekStart); err != nil {
-		return nil, false, false
-	}
-	// Advance a throwaway copy so a mid-append read/decode failure cannot
-	// half-advance the durable state before the full-rescan fallback.
-	state := f.state.clone()
-	consumed, doubt, scanErr := scanJSONLLines(file, path, &state, true)
-	if scanErr != nil || doubt {
-		return nil, false, false
-	}
-	newOffset := f.offset + consumed
-	// oversizedSeen is sticky in the accumulator, so it reflects any
-	// oversized record from offset 0 — the completeness verdict matches a
-	// full reparse of the same bytes.
-	complete := !state.oversizedSeen
-	entry := state.finalize(info)
-	f.commitAt(path, info, newOffset, state, entry, complete)
-	return entry, complete, true
-}
-
-// commit records a full-scan result: consumed is the absolute byte count of
-// complete records from offset 0.
-func (f *convFollower) commit(path string, info os.FileInfo, consumed int64, state jsonlScanState, entry *SessionEntry, complete bool) {
-	f.commitAt(path, info, consumed, state, entry, complete)
-}
-
-// commitAt durably advances the cursor to newOffset and snapshots the tail
-// anchor from disk. Anchoring reads the last convFollowerAnchorBytes before
-// newOffset so the next tick can prove the file was only appended to.
-func (f *convFollower) commitAt(path string, info os.FileInfo, newOffset int64, state jsonlScanState, entry *SessionEntry, complete bool) {
-	f.info = info
-	f.offset = newOffset
-	f.state = state
-	f.entry = entry
-	f.complete = complete
-	f.primed = true
-	f.captureAnchor(path, newOffset)
-}
-
-// captureAnchor reads the committed tail from path so scanAppend can verify
-// it next tick. It takes the path explicitly rather than f.entry.FullPath so
-// a STUB commit (finalize returned nil — non-indexable records that still
-// advanced the offset) anchors too; otherwise a stub with a non-zero offset
-// would carry an empty anchor and, under scanAppend's never-trust guard,
-// full-reparse on every subsequent tick. Best-effort: on any read failure
-// the anchor is cleared, which under that same guard forces the next tick to
-// full-reparse rather than trust an unvalidated cursor.
-func (f *convFollower) captureAnchor(path string, offset int64) {
-	n := min(int64(convFollowerAnchorBytes), offset)
-	if n <= 0 {
-		f.anchor = nil
-		return
-	}
-	file, err := os.Open(path) //nolint:gosec // our own monitored .jsonl
-	if err != nil {
-		f.anchor = nil
-		return
-	}
-	defer func() { _ = file.Close() }()
-	buf := make([]byte, n)
-	if _, err := file.ReadAt(buf, offset-n); err != nil {
-		f.anchor = nil
-		return
-	}
-	f.anchor = buf
+	f.complete = !update.State.oversizedSeen
+	f.entry = update.State.finalize(update.Info)
+	return f.entry, f.complete, nil
 }
 
 // ConvFollower is the exported per-path handle the daemon's fsnotify
@@ -621,11 +409,62 @@ func (c *ConvFollower) ReindexFile(filePath string) *SessionEntry {
 	}
 	scanned, scanComplete, err := c.f.refresh(filePath, info)
 	if err != nil {
-		// A hard I/O error opening the file (rare: stat succeeded, open
-		// failed). Fall back to the full path so behavior is identical to
-		// pre-follower on such errors; the cursor stays unprimed and retries
-		// fresh next tick.
-		return ScanAndUpsertFile(filePath)
+		// Keep the last committed fold on transient I/O/churn. Recurring paths
+		// must never bypass the follower with a second byte-zero scan; the next
+		// event retries against the still-validated cursor or rebuilds once.
+		slog.Warn("conv_index: incremental transcript refresh failed",
+			"path", filePath, "conv_id", c.convID, "error", err)
+		return c.f.entry
 	}
 	return upsertScanResult(filePath, c.convID, c.projectDir, info, scanned, scanComplete)
+}
+
+const maxSharedConvFollowers = 512
+
+type sharedConvFollowerEntry struct {
+	mu       sync.Mutex
+	follower *ConvFollower
+	usedAt   time.Time
+}
+
+var sharedConvFollowers = struct {
+	sync.Mutex
+	entries map[string]*sharedConvFollowerEntry
+}{entries: make(map[string]*sharedConvFollowerEntry)}
+
+// FollowAndUpsertFile is the concurrency-safe recurring-reader counterpart to
+// ScanAndUpsertFile. Dashboard/name freshness fallbacks share these bounded
+// per-path cursors so a race with agentd's fsnotify debounce cannot replay a
+// large transcript from byte zero on every request.
+func FollowAndUpsertFile(filePath string) *SessionEntry {
+	sharedConvFollowers.Lock()
+	entry := sharedConvFollowers.entries[filePath]
+	if entry == nil {
+		entry = &sharedConvFollowerEntry{follower: NewConvFollower(filePath)}
+		sharedConvFollowers.entries[filePath] = entry
+	}
+	entry.usedAt = time.Now()
+	if len(sharedConvFollowers.entries) > maxSharedConvFollowers {
+		var oldestPath string
+		var oldest time.Time
+		for path, candidate := range sharedConvFollowers.entries {
+			if oldestPath == "" || candidate.usedAt.Before(oldest) {
+				oldestPath, oldest = path, candidate.usedAt
+			}
+		}
+		delete(sharedConvFollowers.entries, oldestPath)
+	}
+	sharedConvFollowers.Unlock()
+
+	entry.mu.Lock()
+	result := entry.follower.ReindexFile(filePath)
+	entry.mu.Unlock()
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		sharedConvFollowers.Lock()
+		if sharedConvFollowers.entries[filePath] == entry {
+			delete(sharedConvFollowers.entries, filePath)
+		}
+		sharedConvFollowers.Unlock()
+	}
+	return result
 }

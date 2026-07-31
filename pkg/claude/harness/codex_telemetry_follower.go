@@ -1,8 +1,6 @@
 package harness
 
 import (
-	"bufio"
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +10,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/filefollow"
 )
 
 const (
@@ -28,23 +28,33 @@ var ErrCodexTelemetryCheckpointTooLarge = errors.New("codex telemetry checkpoint
 type CodexTelemetryFollower struct {
 	mu sync.Mutex
 
-	home     string
-	convID   string
-	path     string
-	info     os.FileInfo
-	offset   int64
-	state    codexRuntimeScanState
-	snapshot CodexRuntimeSnapshot
-
-	checkpointSize    int64
-	checkpointModTime int64
-	checkpointDevice  uint64
-	checkpointInode   uint64
-	checkpointAnchor  []byte
-	restored          bool
+	home        string
+	convID      string
+	path        string
+	stream      *filefollow.Follower[codexRuntimeScanState]
+	archiveInfo os.FileInfo
+	state       codexRuntimeScanState
+	snapshot    CodexRuntimeSnapshot
 
 	checkpointTooLarge           bool
 	checkpointTooLargeStateBytes int64
+}
+
+func (f *CodexTelemetryFollower) ensureStream() *filefollow.Follower[codexRuntimeScanState] {
+	if f.stream == nil {
+		f.stream = filefollow.New(filefollow.Config[codexRuntimeScanState]{
+			NewState:   func(string, int64) codexRuntimeScanState { return newCodexRuntimeScanState() },
+			CloneState: func(state codexRuntimeScanState) codexRuntimeScanState { return state.clone() },
+			Scan: func(r io.Reader, path string, state *codexRuntimeScanState, strict bool) (int64, bool, error) {
+				if !strict {
+					state.costAuthoritative = true
+				}
+				return scanCompleteCodexLines(r, path, state, strict)
+			},
+			AnchorBytes: codexTelemetryAnchorBytes,
+		})
+	}
+	return f.stream
 }
 
 // codexTelemetryCheckpoint is the durable form of the follower's cursor and
@@ -119,19 +129,19 @@ func (f *CodexTelemetryFollower) RestoreCheckpoint(data []byte) error {
 			state.addCheckpointSetValue(state.followupCallIDs, checkpointFollowupCallIDsPrefix, id)
 		}
 	}
+	cursor := filefollow.Cursor{
+		Path: cp.Path, Offset: cp.Offset, FileSize: cp.FileSize,
+		ModTimeUnixNano: cp.ModTimeUnixNano, Device: cp.Device, Inode: cp.Inode,
+		Anchor: append([]byte(nil), cp.Anchor...),
+	}
+	if err := f.ensureStream().Restore(cursor, state); err != nil {
+		return fmt.Errorf("restore Codex telemetry cursor: %w", err)
+	}
 	f.home = cp.Home
 	f.convID = cp.ConvID
 	f.path = cp.Path
-	f.info = nil
-	f.offset = cp.Offset
 	f.state = state
 	f.snapshot = state.snapshot()
-	f.checkpointSize = cp.FileSize
-	f.checkpointModTime = cp.ModTimeUnixNano
-	f.checkpointDevice = cp.Device
-	f.checkpointInode = cp.Inode
-	f.checkpointAnchor = append([]byte(nil), cp.Anchor...)
-	f.restored = true
 	f.checkpointTooLarge = false
 	return nil
 }
@@ -141,7 +151,8 @@ func (f *CodexTelemetryFollower) RestoreCheckpoint(data []byte) error {
 func (f *CodexTelemetryFollower) Checkpoint() ([]byte, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.path == "" || f.offset <= 0 || f.checkpointSize < f.offset || len(f.checkpointAnchor) == 0 {
+	cursor, cursorOK := f.ensureStream().Checkpoint()
+	if !cursorOK || f.path == "" || cursor.Offset <= 0 {
 		return nil, false, nil
 	}
 	// Avoid rebuilding, sorting, and marshaling a multi-MB checkpoint until its
@@ -156,12 +167,12 @@ func (f *CodexTelemetryFollower) Checkpoint() ([]byte, bool, error) {
 		Home:                 f.home,
 		ConvID:               f.convID,
 		Path:                 f.path,
-		Offset:               f.offset,
-		FileSize:             f.checkpointSize,
-		ModTimeUnixNano:      f.checkpointModTime,
-		Device:               f.checkpointDevice,
-		Inode:                f.checkpointInode,
-		Anchor:               append([]byte(nil), f.checkpointAnchor...),
+		Offset:               cursor.Offset,
+		FileSize:             cursor.FileSize,
+		ModTimeUnixNano:      cursor.ModTimeUnixNano,
+		Device:               cursor.Device,
+		Inode:                cursor.Inode,
+		Anchor:               append([]byte(nil), cursor.Anchor...),
 		Latest:               f.state.latest,
 		ContextReset:         f.state.contextReset,
 		Model:                f.state.model,
@@ -213,42 +224,33 @@ func (f *CodexTelemetryFollower) RuntimeTelemetry(home, convID string) (CodexRun
 	if path == "" {
 		return CodexRuntimeSnapshot{}, nil
 	}
-	if f.restored {
-		if !f.restoreMatches(path, info) {
-			f.clearCursor()
-		} else {
-			f.restored = false
-			f.info = info
-			// An exact unchanged-file match needs no open/read at all. Growth
-			// is handled below by scanAppend from the restored offset.
-			if info.Size() == f.checkpointSize && info.ModTime().UnixNano() == f.checkpointModTime {
-				f.info = info
-				return f.snapshot, nil
-			}
-			if err := f.scanAppend(path); err == nil {
-				f.snapshot = f.state.snapshot()
-				return f.snapshot, nil
-			}
-			// A persisted cursor is only an optimization. Any validation or
-			// incremental-decode doubt falls back to the authoritative rebuild.
-			f.clearCursor()
-		}
-	}
-	if f.info != nil && os.SameFile(f.info, info) && f.info.Size() == info.Size() &&
-		f.info.ModTime().Equal(info.ModTime()) {
-		return f.snapshot, nil
-	}
-
-	unchangedFile := f.info != nil && os.SameFile(f.info, info)
-	canIncrement := unchangedFile && !strings.HasSuffix(path, ".zst") && info.Size() >= f.offset
-	if canIncrement && info.Size() > f.offset {
-		if err := f.scanAppend(path); err == nil {
-			f.snapshot = f.state.snapshot()
+	if strings.HasSuffix(path, ".zst") {
+		if f.archiveInfo != nil && os.SameFile(f.archiveInfo, info) &&
+			f.archiveInfo.Size() == info.Size() && f.archiveInfo.ModTime().Equal(info.ModTime()) {
 			return f.snapshot, nil
 		}
-		// Any seek/read/decode doubt falls through to the authoritative rebuild.
+		snap, err := CodexRuntimeTelemetryFromRollout(path)
+		if err != nil {
+			return CodexRuntimeSnapshot{}, err
+		}
+		f.ensureStream().Reset()
+		f.archiveInfo = info
+		f.state = newCodexRuntimeScanState()
+		f.snapshot = snap
+		return snap, nil
 	}
-	return f.fullScan(path, info)
+	_ = info // filefollow stats the opened descriptor and pathname atomically.
+	update, err := f.ensureStream().Refresh(path)
+	if err != nil {
+		return CodexRuntimeSnapshot{}, fmt.Errorf("follow Codex rollout %s: %w", path, err)
+	}
+	if update.Unchanged {
+		return f.snapshot, nil
+	}
+	f.state = update.State
+	f.archiveInfo = nil
+	f.snapshot = update.State.snapshot()
+	return f.snapshot, nil
 }
 
 // rollout reuses the memoized path while it still exists. Codex archives by
@@ -291,292 +293,30 @@ func (f *CodexTelemetryFollower) rollout(home, convID string) (string, os.FileIn
 	return path, info, nil
 }
 
-func (f *CodexTelemetryFollower) fullScan(path string, info os.FileInfo) (CodexRuntimeSnapshot, error) {
-	if strings.HasSuffix(path, ".zst") {
-		snap, err := CodexRuntimeTelemetryFromRollout(path)
-		if err != nil {
-			return CodexRuntimeSnapshot{}, err
-		}
-		f.state = newCodexRuntimeScanState()
-		f.offset = 0
-		f.info = info
-		f.snapshot = snap
-		return snap, nil
-	}
-
-	// Open/scan/capture from one descriptor. If the pathname is replaced while
-	// it is being scanned, retry against the replacement rather than combining
-	// file A's fold state with file B's identity and anchor.
-	for attempt := 0; attempt < 3; attempt++ {
-		file, err := os.Open(path)
-		if err != nil {
-			return CodexRuntimeSnapshot{}, err
-		}
-		state := newCodexRuntimeScanState()
-		offset, metadata, _, scanErr := scanCodexTelemetryToStable(file, path, &state, 0, false)
-		_ = file.Close()
-		if scanErr != nil {
-			return CodexRuntimeSnapshot{}, fmt.Errorf("scan codex rollout %s: %w", path, scanErr)
-		}
-		pathInfo, statErr := os.Stat(path)
-		if statErr != nil {
-			return CodexRuntimeSnapshot{}, statErr
-		}
-		if !os.SameFile(metadata.info, pathInfo) {
-			continue
-		}
-		state.costAuthoritative = true
-		f.state = state
-		f.offset = offset
-		f.info = metadata.info
-		f.snapshot = state.snapshot()
-		f.applyCheckpoint(metadata)
-		f.checkpointTooLarge = false
-		return f.snapshot, nil
-	}
-	return CodexRuntimeSnapshot{}, fmt.Errorf("codex rollout %s changed repeatedly while scanning", path)
-}
-
-func (f *CodexTelemetryFollower) scanAppend(path string) error {
-	file, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = file.Close() }()
-	openedInfo, err := file.Stat()
-	if err != nil {
-		return err
-	}
-	if f.info != nil && !os.SameFile(f.info, openedInfo) {
-		return fmt.Errorf("codex rollout replaced before incremental scan")
-	}
-	// Parse into a copy so a read/decode failure cannot partially advance the
-	// durable state before the caller's full-rescan fallback succeeds.
-	state := f.state.clone()
-	newOffset, metadata, doubt, err := scanCodexTelemetryToStable(file, path, &state, f.offset, true)
-	if err != nil {
-		return err
-	}
-	if doubt {
-		return fmt.Errorf("decode newly appended rollout line")
-	}
-	pathInfo, err := os.Stat(path)
-	if err != nil {
-		return err
-	}
-	if !os.SameFile(metadata.info, pathInfo) {
-		return fmt.Errorf("codex rollout replaced during incremental scan")
-	}
-	f.state = state
-	f.offset = newOffset
-	f.info = metadata.info
-	f.applyCheckpoint(metadata)
-	return nil
-}
-
 func (f *CodexTelemetryFollower) clearCursor() {
-	f.info = nil
-	f.offset = 0
+	if f.stream != nil {
+		f.stream.Reset()
+	}
+	f.archiveInfo = nil
 	f.state = newCodexRuntimeScanState()
 	f.snapshot = CodexRuntimeSnapshot{}
-	f.checkpointSize = 0
-	f.checkpointModTime = 0
-	f.checkpointDevice = 0
-	f.checkpointInode = 0
-	f.checkpointAnchor = nil
-	f.restored = false
 	f.checkpointTooLarge = false
-}
-
-func (f *CodexTelemetryFollower) restoreMatches(path string, info os.FileInfo) bool {
-	if path != f.path || strings.HasSuffix(path, ".zst") || info.Size() < f.offset ||
-		info.Size() < f.checkpointSize {
-		return false
-	}
-	file, err := os.Open(path)
-	if err != nil {
-		return false
-	}
-	metadata, metadataErr := captureCodexTelemetryCheckpoint(file, f.offset)
-	_ = file.Close()
-	if metadataErr != nil || !os.SameFile(info, metadata.info) {
-		return false
-	}
-	if metadata.size < f.checkpointSize {
-		return false
-	}
-	pathInfo, err := os.Stat(path)
-	if err != nil || !os.SameFile(metadata.info, pathInfo) {
-		return false
-	}
-	// Same-size rewrites are not append-only and must rebuild even if their
-	// final anchor happens to match. Growth is allowed to change mtime.
-	if metadata.size == f.checkpointSize && metadata.modTime != f.checkpointModTime {
-		return false
-	}
-	if metadata.device != 0 && metadata.inode != 0 &&
-		(f.checkpointDevice == 0 || f.checkpointInode == 0 ||
-			metadata.device != f.checkpointDevice || metadata.inode != f.checkpointInode) {
-		return false
-	}
-	return bytes.Equal(metadata.anchor, f.checkpointAnchor)
-}
-
-type codexTelemetryCheckpointMetadata struct {
-	info          os.FileInfo
-	size          int64
-	modTime       int64
-	device, inode uint64
-	anchor        []byte
-}
-
-// scanCodexTelemetryToStable closes the EOF/stat race: a writer may append a
-// complete record after scanCompleteCodexLines observes EOF but before we stat
-// the descriptor for the checkpoint. Keep consuming from the committed offset
-// until size and mtime stay unchanged across both EOF and metadata capture.
-// A stable incomplete tail is intentionally accepted with size > offset; its
-// bytes are retried when the file next changes.
-func scanCodexTelemetryToStable(
-	file *os.File,
-	path string,
-	state *codexRuntimeScanState,
-	offset int64,
-	strict bool,
-) (int64, codexTelemetryCheckpointMetadata, bool, error) {
-	return scanCodexTelemetryToStableWithScanner(file, path, state, offset, strict, scanCompleteCodexLines)
-}
-
-type codexTelemetryLineScanner func(
-	io.Reader,
-	string,
-	*codexRuntimeScanState,
-	bool,
-) (int64, bool, error)
-
-func scanCodexTelemetryToStableWithScanner(
-	file *os.File,
-	path string,
-	state *codexRuntimeScanState,
-	offset int64,
-	strict bool,
-	scan codexTelemetryLineScanner,
-) (int64, codexTelemetryCheckpointMetadata, bool, error) {
-	const maxStabilityAttempts = 8
-	var doubt bool
-	for range maxStabilityAttempts {
-		before, err := file.Stat()
-		if err != nil {
-			return offset, codexTelemetryCheckpointMetadata{}, doubt, err
-		}
-		if _, err := file.Seek(offset, io.SeekStart); err != nil {
-			return offset, codexTelemetryCheckpointMetadata{}, doubt, err
-		}
-		read, scanDoubt, err := scan(file, path, state, strict)
-		if err != nil {
-			return offset, codexTelemetryCheckpointMetadata{}, doubt, err
-		}
-		doubt = doubt || scanDoubt
-		offset += read
-		after, err := file.Stat()
-		if err != nil {
-			return offset, codexTelemetryCheckpointMetadata{}, doubt, err
-		}
-		if before.Size() != after.Size() || !before.ModTime().Equal(after.ModTime()) {
-			continue
-		}
-		metadata, err := captureCodexTelemetryCheckpoint(file, offset)
-		if err != nil {
-			return offset, codexTelemetryCheckpointMetadata{}, doubt, err
-		}
-		if metadata.size != after.Size() || metadata.modTime != after.ModTime().UnixNano() {
-			continue
-		}
-		return offset, metadata, doubt, nil
-	}
-	return offset, codexTelemetryCheckpointMetadata{}, doubt,
-		fmt.Errorf("codex rollout %s did not stabilize while scanning", path)
-}
-
-func captureCodexTelemetryCheckpoint(file *os.File, offset int64) (codexTelemetryCheckpointMetadata, error) {
-	if offset < 0 {
-		return codexTelemetryCheckpointMetadata{}, fmt.Errorf("invalid Codex telemetry checkpoint offset %d", offset)
-	}
-	info, err := file.Stat()
-	if err != nil {
-		return codexTelemetryCheckpointMetadata{}, err
-	}
-	if info.Size() < offset {
-		return codexTelemetryCheckpointMetadata{}, fmt.Errorf("codex rollout shrank while scanning")
-	}
-	start := max(offset-codexTelemetryAnchorBytes, 0)
-	anchor := make([]byte, offset-start)
-	if len(anchor) > 0 {
-		if _, err := file.ReadAt(anchor, start); err != nil {
-			return codexTelemetryCheckpointMetadata{}, err
-		}
-	}
-	device, inode, _ := codexTelemetryFileIdentity(info)
-	return codexTelemetryCheckpointMetadata{
-		info: info, size: info.Size(), modTime: info.ModTime().UnixNano(),
-		device: device, inode: inode, anchor: anchor,
-	}, nil
-}
-
-func (f *CodexTelemetryFollower) applyCheckpoint(metadata codexTelemetryCheckpointMetadata) {
-	f.checkpointSize = metadata.size
-	f.checkpointModTime = metadata.modTime
-	f.checkpointDevice = metadata.device
-	f.checkpointInode = metadata.inode
-	f.checkpointAnchor = metadata.anchor
 }
 
 // scanCompleteCodexLines consumes newline-terminated records only. A writer may
 // be between write(2)s when the dashboard polls; the unterminated tail stays at
 // the current offset and is retried with the next append.
 func scanCompleteCodexLines(r io.Reader, rolloutPath string, state *codexRuntimeScanState, strict bool) (consumed int64, doubt bool, err error) {
-	reader := bufio.NewReaderSize(r, 64*1024)
-	line := make([]byte, 0, 64*1024)
-	for {
-		var lineBytes int64
-		var oversized bool
-		var readErr error
-		line, lineBytes, oversized, readErr = readCodexRolloutLine(reader, line[:0])
-		switch readErr {
-		case nil:
-			if oversized {
-				// Compaction replacement-history and image payloads can be tens
-				// of MiB. Match the telemetry parser's best-effort malformed-line
-				// contract: discard the completed record, advance past its
-				// newline, and continue to later telemetry without retaining the
-				// whole payload in memory. Do not flag decode doubt: rebuilding
-				// would encounter the same record and loop forever.
-				slog.Warn("codex-telemetry: skipping oversized rollout record",
-					"path", rolloutPath, "bytes", lineBytes,
-					"limit_bytes", maxCodexRolloutLineBytes, "module", "harness")
-				if isCodexCompactedRecordPrefix(line) {
-					state.invalidateContext()
-				}
-			} else if ok := state.consumeLine(line); strict && !ok {
-				doubt = true
+	return filefollow.ScanLines(r, filefollow.LineConfig{MaxRecordBytes: maxCodexRolloutLineBytes}, func(line filefollow.Line) bool {
+		if line.Oversized {
+			slog.Warn("codex-telemetry: skipping oversized rollout record",
+				"path", rolloutPath, "bytes", line.Bytes,
+				"limit_bytes", maxCodexRolloutLineBytes, "module", "harness")
+			if isCodexCompactedRecordPrefix(line.Data) {
+				state.invalidateContext()
 			}
-			consumed += lineBytes
-		case io.EOF:
-			if lineBytes == 0 {
-				return consumed, doubt, nil
-			}
-			// Match the established parser for a syntactically complete EOF
-			// record. An oversized or invalid mid-write tail is not consumed;
-			// the follower retries it from the same offset after the next append.
-			trimmed := bytes.TrimSpace(line)
-			if !oversized && len(trimmed) > 0 && json.Valid(trimmed) {
-				if ok := state.consumeLine(line); strict && !ok {
-					doubt = true
-				}
-				consumed += lineBytes
-			}
-			return consumed, doubt, nil
-		default:
-			return consumed, doubt, readErr
+			return true
 		}
-	}
+		return state.consumeLine(line.Data)
+	}, strict)
 }

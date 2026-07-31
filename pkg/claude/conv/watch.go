@@ -120,6 +120,9 @@ type watchModel struct {
 	activeSessions map[string]*session.SessionState // convID -> session
 	groupsByConv   map[string][]string              // convID -> group names; empty if no groups configured
 	pendingByConv  map[string]string                // convID -> spawn-time agent name; title fallback (convDisplayTitle)
+	// transcriptFollowers gives the CLI watch mode the same per-path
+	// incremental indexing contract as agentd's fsnotify monitor.
+	transcriptFollowers map[string]*ConvFollower
 
 	// Navigation
 	cursor         int
@@ -1327,6 +1330,7 @@ func (m *watchModel) handleFSChange(filePath string, removed bool) {
 	}
 
 	if removed {
+		delete(m.transcriptFollowers, filePath)
 		_ = db.DeleteConvIndex(convID)
 		_ = db.DeleteConvBranchHistory(convID)
 		m.removeEntry(convID)
@@ -1334,7 +1338,15 @@ func (m *watchModel) handleFSChange(filePath string, removed bool) {
 		return
 	}
 
-	entry := ScanAndUpsertFile(filePath)
+	if m.transcriptFollowers == nil {
+		m.transcriptFollowers = make(map[string]*ConvFollower)
+	}
+	follower := m.transcriptFollowers[filePath]
+	if follower == nil {
+		follower = NewConvFollower(filePath)
+		m.transcriptFollowers[filePath] = follower
+	}
+	entry := follower.ReindexFile(filePath)
 	if entry == nil {
 		return
 	}
