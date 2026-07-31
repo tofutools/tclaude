@@ -189,12 +189,32 @@ func runOpenCodeProxyCarriageCase(
 	// the sandbox no route to any proxy (isolated) or refuse the proxy engine
 	// outright, which is the finding this arm exists beside.
 	snapshot.Effective.NetworkAccess = sandboxpolicy.NetworkAccessInternet
+	// HOME must name a directory that EXISTS INSIDE the constructed root. The
+	// filtered launch path sets it into the harness state root for this reason;
+	// the host-open path does not, so an inherited HOME under the runner's temp
+	// tree would be absent inside the sandbox and the server fails on its first
+	// write with nothing but an opaque 500 to show for it. The workspace is
+	// bound read-write by construction, so a directory under it is always there.
+	agentHome := filepath.Join(cwd, "agent-home")
+	require.NoError(t, os.MkdirAll(agentHome, 0o700))
 	snapshot.Effective.Environment = append(
-		origin.environment, openCodeCarriageEnvironment(auditor.endpoint, carriage)...)
+		append([]sandboxpolicy.EnvironmentEntry{{Name: "HOME", Value: agentHome}},
+			origin.environment...),
+		openCodeCarriageEnvironment(auditor.endpoint, carriage)...)
 
 	agentID := db.NewAgentID()
-	_, err = allocatePrivateOpenCodeState(agentID)
+	allocation, err := allocatePrivateOpenCodeState(agentID)
 	require.NoError(t, err)
+	// Whatever goes wrong, the server's own log is what says why. The launch
+	// helper dumps it on a failed START; a failure at session creation or at the
+	// prompt would otherwise leave only an opaque HTTP 500.
+	t.Cleanup(func() {
+		if !t.Failed() {
+			return
+		}
+		logOpenCodeLayerSmokeServerLogs(t,
+			filepath.Join(allocation.StateRoot, "data", "opencode", "log"))
+	})
 	spec, err := openCodeTclaudeLayerLaunchSpec(
 		string(sandboxpolicy.ImplementationTclaudeLayer), cwd, nil, &snapshot, agentID)
 	require.NoError(t, err)
