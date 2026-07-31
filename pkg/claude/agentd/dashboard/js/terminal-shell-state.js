@@ -115,6 +115,21 @@ export function createTerminalShellState({ prefs = dashPrefs, persistPresentatio
     (key) => membership.value.get(key) || null,
     groupIndex.value,
   ));
+  // The router's view of this tab (TCL-317 path routing). A pane's deep-linkable
+  // identity is its AGENT selector — `agent_id || conv-id`, the same
+  // rotation-immune token the row actions route by — and NOT the pane key or the
+  // runtime pane id. Only the agent survives a reload: from it alone the tab can
+  // reopen the agent's live session, which is what makes /terminals/<agent-id>
+  // reattachable rather than a bookmark to nothing. Panes with no agent (group
+  // terminals, raw hand-fed seeds) are deliberately not addressable, so the
+  // location degrades to the bare tab rather than inventing a second id space.
+  const navLocation = computed(() => {
+    const loc = { tab: 'terminals' };
+    const active = panes.value.find((pane) => pane.key === activeKey.value);
+    const agent = active?.seed?.agent;
+    if (agent) loc.selection = String(agent);
+    return loc;
+  });
   const view = computed(() => ({
     panes: panes.value,
     activeKey: activeKey.value,
@@ -690,6 +705,7 @@ export function createTerminalShellState({ prefs = dashPrefs, persistPresentatio
     membership,
     segments,
     view,
+    location: navLocation,
     openPane,
     activatePane,
     removePane,

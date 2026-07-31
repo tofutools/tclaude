@@ -9,7 +9,8 @@ var terminalsPageHTML = mustReadFS(dashboardAssetsFS, "terminals.html")
 // handleDashboardTerminals serves the /terminals route, behind the same auth
 // gate as the dashboard root. It has two jobs, discriminated by the ?solo query:
 //
-//   - /terminals?solo=1 — the standalone popout page (js/terminals.js): the
+//   - /terminals?solo=1 — exactly that, value and all — the standalone popout
+//     page (js/terminals.js): the
 //     per-terminal "⧉ tab" pop-out, one terminal in its own OS/browser window,
 //     seeded via the URL hash. It only loads /static/* assets and connects to
 //     the /api/term-ws and /api/open-window-ws WebSocket endpoints.
@@ -25,8 +26,7 @@ func handleDashboardTerminals(w http.ResponseWriter, r *http.Request) {
 	}
 	// Auth: remote (mTLS + passphrase) requests are authenticated at the remote
 	// listener's boundary; loopback requires the session cookie the browser got
-	// when it opened the dashboard at /. A missing/stale cookie bounces to / to
-	// re-authenticate rather than dead-ending on a plain 403.
+	// when it opened the dashboard at /.
 	authed := dashboardPreAuthed(r)
 	if !authed {
 		_, valid, refresh := dashboardRequestSessionMatch(r)
@@ -36,10 +36,21 @@ func handleDashboardTerminals(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if !authed {
-		http.Redirect(w, r, "/", http.StatusSeeOther)
+		// Render the sign-in page IN PLACE, exactly as handleDashboardRoot does
+		// for a deep path, rather than bouncing to "/". The URL is what carries
+		// the deep link, so a redirect would discard the agent before the
+		// operator could sign in — losing the terminal on the one path a
+		// bookmark is most likely to take (a stale cookie after a daemon
+		// restart). Keeping it means dashboardLoginReturnTarget can restore
+		// /terminals/<agent-id> afterwards, which is why it admits this route.
+		renderDashboardLoginPage(w, r, http.StatusForbidden, "")
 		return
 	}
-	if r.URL.Query().Has("solo") {
+	// The pop-out is always the bare /terminals?solo=1. A deep link
+	// (/terminals/<agent-id>) names a tab within the dashboard, so it serves the
+	// SPA even if a stray ?solo rides along — the standalone page has no router
+	// and would silently drop the agent segment.
+	if r.URL.Path == "/terminals" && r.URL.Query().Get("solo") == "1" {
 		writeTerminalsPage(w)
 		return
 	}

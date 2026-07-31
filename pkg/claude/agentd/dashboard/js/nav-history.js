@@ -61,6 +61,21 @@ function tabAvailable(tab) {
   return !!(btn && btn.offsetParent !== null);
 }
 
+// pendingTerminalAttach reports whether `loc` is a terminals deep link that is
+// merely NOT ATTACHED YET rather than genuinely stale. It is the one location
+// that is legitimately unavailable at the moment we restore it: panes do not
+// survive a reload, so with none open the Terminals tab is CSS-hidden — which
+// is precisely the state the reattach is about to fix. Treating it as a stale
+// target would bounce every /terminals/<agent-id> deep link to the default tab
+// before the reattach it asks for could ever run. If the agent turns out to be
+// gone, the island answers with a correction (or leaves the tab), so the
+// stranded-on-a-hidden-section case the stale guard protects against is still
+// covered — just decided by the view that actually knows, and one async hop
+// later.
+function pendingTerminalAttach(loc) {
+  return loc.tab === 'terminals' && !!loc.selection;
+}
+
 // activeLocationFromDOM reads the current dashboard location out of the live
 // DOM: the active top-level nav button, plus the active subtab for tabs that
 // have one. Everything is normalized through the core so an unexpected DOM
@@ -74,6 +89,13 @@ function activeLocationFromDOM() {
     if (sub) loc.subtab = sub.dataset.subtab;
   } else if (tab === 'jobs') {
     const island = featureState('jobs');
+    if (island) return normalizeLocation(island.location.value);
+  } else if (tab === 'terminals') {
+    // Which terminal is being viewed is island state the DOM never spells out
+    // (the active pane's agent selector), so ask the island — same reasoning as
+    // Processes below. Absent island (asset failed to load, no pane ever
+    // opened) degrades to the bare /terminals.
+    const island = featureState('terminals');
     if (island) return normalizeLocation(island.location.value);
   } else if (tab === 'processes') {
     // Ask the island directly: an open template editor's id (the
@@ -103,6 +125,12 @@ function requestProcessesLocation(loc) {
   }));
 }
 
+function requestTerminalsLocation(loc) {
+  document.dispatchEvent(new CustomEvent('tclaude:restore-location', {
+    detail: { location: normalizeLocation(loc) },
+  }));
+}
+
 function requestJobsLocation(loc) {
   document.dispatchEvent(new CustomEvent('tclaude:restore-location', {
     detail: { location: normalizeLocation(loc) },
@@ -123,6 +151,12 @@ function activate(loc) {
     if (navBtn && !navBtn.classList.contains('active')) navBtn.click();
     if (loc.tab === 'access' && loc.subtab) {
       $(`#tab-access .access-subtab[data-subtab="${loc.subtab}"]`)?.click();
+    } else if (loc.tab === 'terminals' && loc.selection) {
+      // Reattaching an agent's terminal is asynchronous (xterm runtime load,
+      // then a socket), so like Processes this goes through the island rather
+      // than a click, and the island answers only to CORRECT the URL when the
+      // agent can no longer be attached.
+      requestTerminalsLocation(loc);
     } else if (loc.tab === 'jobs') {
       requestJobsLocation(loc);
     } else if (loc.tab === 'processes') {
@@ -259,7 +293,8 @@ function onPopstate(e) {
   // back-stack (e.g. terminals closed while you were on another tab), so
   // activating it would strand the user on a blank hidden section. Fall back to
   // the default in place, mirroring the init-time guard.
-  if (current(stack).tab !== DEFAULT_TAB && !tabAvailable(current(stack).tab)) {
+  if (current(stack).tab !== DEFAULT_TAB && !tabAvailable(current(stack).tab)
+    && !pendingTerminalAttach(current(stack))) {
     stack = replaceCurrent(stack, normalizeLocation({ tab: DEFAULT_TAB }));
   }
   activate(current(stack));
@@ -304,7 +339,7 @@ export function initNavHistory() {
   // tab is CSS-hidden) has nothing to show — fall back to the default rather
   // than stranding on a blank section. Runs here, after the tab binders and
   // the Terminal Shell island set the visibility classes.
-  if (loc.tab !== DEFAULT_TAB && !tabAvailable(loc.tab)) {
+  if (loc.tab !== DEFAULT_TAB && !tabAvailable(loc.tab) && !pendingTerminalAttach(loc)) {
     loc = normalizeLocation({ tab: DEFAULT_TAB });
     stack = initialState(loc);
   }

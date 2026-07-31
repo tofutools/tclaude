@@ -1437,6 +1437,21 @@ tab appears and collects each pane, but the dashboard stays on Groups so several
 agents can be opened before switching tabs. Either modifier is accepted on
 every supported desktop platform.
 
+The Terminals tab is deep-linkable: viewing an agent's terminal puts that
+agent's id in the address bar as `/terminals/<agent-id>`, so the URL is
+bookmarkable and survives a hard refresh. On reload the dashboard reattaches
+that one terminal — the other panes that were open cannot be recreated, since
+nothing about them is stored outside the page. Back and Forward move between
+terminals you have viewed. A link naming an agent the daemon no longer knows
+about falls back to the Groups tab rather than leaving you on an empty tab.
+
+Collecting terminals in the background with **Ctrl-click** or **Cmd-click**
+does not move the address bar: those panes are gathered without switching to
+them, so the URL keeps describing the tab you are actually looking at. When a
+pane closes underneath you — an agent retires, or a bulk unfocus closes it —
+the URL follows to whichever terminal you land on, but that does not become a
+Back step, since you never asked to go there.
+
 An agent terminal pane also has a **✉ Message** button. Pressing
 **Ctrl+M** or **Cmd+M** anywhere on the active Terminals tab—or in a terminal
 detached into its own browser tab/window—opens the same composer with the

@@ -132,6 +132,80 @@ test('a repeated refusal does not grow history without bound', async (t) => {
   assert.equal(browsing.at(), '/processes/templates/release-train');
 });
 
+test('a terminals deep link survives boot with the tab still hidden', async (t) => {
+  // The ordering hazard behind /terminals/<agent-id>: panes do not survive a
+  // reload, so at the instant the router boots there are none, the Terminals
+  // tab is CSS-hidden (no nav button in this shell) and the ordinary
+  // stale-target guard would bounce the URL to the default tab — killing the
+  // reattach before it could run. A deep link must be let through instead, and
+  // handed to the island to attach.
+  const harness = await createPreactHarness(t);
+  installShell(harness);
+  const browsing = installBrowsingContext(t, harness, '/terminals/agt_abc123');
+  const { initNavHistory } = await harness.importDashboardModule('js/nav-history.js');
+
+  const restores = [];
+  harness.document.addEventListener('tclaude:restore-location',
+    (event) => restores.push(event.detail.location));
+
+  initNavHistory();
+
+  assert.equal(browsing.at(), '/terminals/agt_abc123', 'the deep link must not be bounced to /');
+  assert.deepEqual(browsing.calls, [{ kind: 'replace', url: '/terminals/agt_abc123' }]);
+  assert.deepEqual(restores, [{ tab: 'terminals', selection: 'agt_abc123' }],
+    'the island is asked to reattach the agent named in the URL');
+});
+
+test('a bare /terminals with no terminals open still falls back', async (t) => {
+  // Only a deep link earns the exemption above. A bare /terminals names no
+  // agent, so there is nothing to reattach and nothing to show — the original
+  // stale-target fallback must still apply.
+  const harness = await createPreactHarness(t);
+  installShell(harness);
+  const browsing = installBrowsingContext(t, harness, '/terminals');
+  const { initNavHistory } = await harness.importDashboardModule('js/nav-history.js');
+
+  const restores = [];
+  harness.document.addEventListener('tclaude:restore-location',
+    (event) => restores.push(event.detail.location));
+
+  initNavHistory();
+
+  assert.equal(browsing.at(), '/', 'a bare hidden tab still falls back to the default');
+  assert.deepEqual(restores, []);
+});
+
+test('switching between two terminals pushes one entry each', async (t) => {
+  const harness = await createPreactHarness(t);
+  installShell(harness);
+  const browsing = installBrowsingContext(t, harness, '/terminals/agt_one');
+  const [{ registerFeatureState }, { initNavHistory }] = await Promise.all([
+    harness.importDashboardModule('js/feature-state-registry.js'),
+    harness.importDashboardModule('js/nav-history.js'),
+  ]);
+  const islandLocation = harness.signals.signal({ tab: 'terminals', selection: 'agt_one' });
+  registerFeatureState('terminals', { location: islandLocation });
+
+  initNavHistory();
+  browsing.calls.length = 0;
+
+  // Clicking another terminal's tab is a real navigation, so Back returns to
+  // the terminal you were on before.
+  harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:navigated', {
+    detail: { location: { tab: 'terminals', selection: 'agt_two' } },
+  }));
+  assert.deepEqual(browsing.calls, [{ kind: 'push', url: '/terminals/agt_two' }]);
+  browsing.calls.length = 0;
+
+  // Re-announcing the terminal already being viewed is a duplicate and must not
+  // grow history (AC #4).
+  islandLocation.value = { tab: 'terminals', selection: 'agt_two' };
+  harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:navigated', {
+    detail: { location: { tab: 'terminals', selection: 'agt_two' } },
+  }));
+  assert.deepEqual(browsing.calls, []);
+});
+
 test('the adapter reads the open editor id from the island, not the DOM', async (t) => {
   const harness = await createPreactHarness(t);
   installShell(harness);

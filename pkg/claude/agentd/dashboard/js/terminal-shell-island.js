@@ -4,7 +4,8 @@ import htm from 'htm';
 import { mountTerminalWidget } from './terminals-core.js';
 import { arcanePaletteEnabled } from './terminal-theme.js';
 import { terminalComposeShortcutAction } from './terminal-compose-route.js';
-import { registerTerminalShellController } from './terminals-tab.js';
+import { openWebWindowPane, registerTerminalShellController } from './terminals-tab.js';
+import { bindTerminalNavRouting } from './terminal-nav-route.js';
 import { hasShownOverlay } from './overlay-stack.js';
 import { loadXtermRuntime } from './xterm-loader.js';
 import { bindTerminalHandoffReceiver } from './terminal-handoff.js';
@@ -1433,12 +1434,25 @@ export function mountTerminalShellIsland({
       return actions.receiveHandoffPane(seed);
     },
   });
+  // Path routing for the tab (/terminals/<agent-id>). Bound here rather than in
+  // TerminalTabs because the standalone pop-out shares that component and owns
+  // no dashboard URL — only the mounted island is a routable location.
+  // openWebWindowPane (not actions.openPane) so a restored deep link goes
+  // through the very same launcher as the "focus this agent" row action,
+  // including its lazy xterm runtime load.
+  const unbindNavRouting = bindTerminalNavRouting({
+    state,
+    snapshot,
+    openAgentPane: (agent, label) => openWebWindowPane(agent, label),
+    leaveTab: () => document.querySelector('nav [data-tab="groups"]')?.click(),
+  });
   render(html`<${TerminalTabs} state=${state} actions=${actions} widgetFactory=${widgetFactory}
     onComposeMessage=${onComposeMessage} composeMessageDialogKind=${composeMessageDialogKind}
     snapshot=${snapshot} />`, host);
   render(html`<${TerminalBadge} state=${state} />`, badgeHost);
   render(html`<${TerminalModal} state=${state} actions=${actions} widgetFactory=${widgetFactory} />`, modalHost);
   registerCleanup(() => {
+    unbindNavRouting();
     unbindHandoff();
     unregisterController();
     render(null, modalHost);

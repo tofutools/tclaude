@@ -262,6 +262,11 @@ func dashboardRequestSessionMatch(r *http.Request) (present, valid, refresh bool
 func registerDashboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/", handleDashboardRoot)
 	mux.HandleFunc("/terminals", handleDashboardTerminals)
+	// The Terminals tab addresses a single terminal by agent id
+	// (/terminals/<agent-id>), so the route is a subtree, not one exact path.
+	// Without this the deep link would fall through to the "/" catch-all and
+	// 404, because `terminals` is deliberately not in dashboardAppTabs.
+	mux.HandleFunc("/terminals/", handleDashboardTerminals)
 	mux.HandleFunc("/dashboard/login", handleDashboardLogin)
 	mux.HandleFunc("/api/tui/attach-ws/", handleTUIAttachWS)
 	mux.Handle("/api/tui/", http.StripPrefix(tuiHTTPPrefix, buildTUIHTTPHandler()))
@@ -351,9 +356,11 @@ func handleDashboardStatic() http.Handler {
 // /processes/templates/<template-id> for an open process editor).
 //
 // Kept in sync with ROUTABLE_TABS in js/nav-history.js. Terminals is
-// deliberately absent — /terminals is its own standalone popout route
-// (handleDashboardTerminals) — and Vegas is a conditional soundtrack tab that
-// is not URL-routed; neither is a bookmarkable location.
+// deliberately absent because it is served by its OWN handler
+// (handleDashboardTerminals, registered for both /terminals and the
+// /terminals/<agent-id> subtree), not because it is unroutable — it is a
+// bookmarkable location like any other tab. Vegas is a conditional soundtrack
+// tab that is not URL-routed at all.
 var dashboardAppTabs = map[string]bool{
 	"groups": true, "automations": true, "jobs": true, "processes": true, "plugins": true, "access": true,
 	"messages": true, "usage": true, "costs": true, "audit": true, "logs": true, "config": true,
@@ -373,6 +380,15 @@ func isDashboardAppPath(p string) bool {
 	}
 	seg, _, _ := strings.Cut(strings.TrimPrefix(p, "/"), "/")
 	return dashboardAppTabs[seg]
+}
+
+// isDashboardTerminalsPath reports whether a path belongs to the Terminals
+// route: the tab itself (/terminals) or a single terminal addressed by agent id
+// (/terminals/<agent-id>). Both are served by handleDashboardTerminals, so both
+// are legitimate post-login return targets. Only the prefix is validated — the
+// client normalizes the id, and an unknown one degrades to the bare tab.
+func isDashboardTerminalsPath(p string) bool {
+	return p == "/terminals" || strings.HasPrefix(p, "/terminals/")
 }
 
 func handleDashboardRoot(w http.ResponseWriter, r *http.Request) {
@@ -474,7 +490,7 @@ func dashboardLoginReturnTarget(r *http.Request) string {
 	}
 	u.Path = path.Clean(u.Path)
 	u.RawPath = ""
-	if !isDashboardAppPath(u.Path) && u.Path != "/terminals" {
+	if !isDashboardAppPath(u.Path) && !isDashboardTerminalsPath(u.Path) {
 		return "/"
 	}
 	q := u.Query()
