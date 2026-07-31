@@ -33,8 +33,9 @@ export const DEFAULT_TAB = 'groups';
 // Terminals IS routed and server-served (its own handler covers /terminals and
 // the /terminals/<agent-id> subtree, which is why it is absent from
 // dashboardAppTabs); Vegas lives in KNOWN_TABS only so a hand-typed URL
-// degrades gracefully. Keep the three in step when adding or removing a tab. Kept in sync with the nav buttons in dashboard.html
-// (data-tab=...). An unknown first segment parses back to the default location
+// degrades gracefully. Keep the three in step when adding or removing a tab,
+// and in sync with the nav buttons in dashboard.html (data-tab=...).
+// An unknown first segment parses back to the default location
 // rather than an invalid tab, which keeps a stale/typo'd URL from breaking
 // navigation (AC #5).
 export const KNOWN_TABS = new Set([

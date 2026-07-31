@@ -61,10 +61,6 @@ function tabAvailable(tab) {
   return !!(btn && btn.offsetParent !== null);
 }
 
-// activeLocationFromDOM reads the current dashboard location out of the live
-// DOM: the active top-level nav button, plus the active subtab for tabs that
-// have one. Everything is normalized through the core so an unexpected DOM
-// state degrades to a valid location rather than a bogus one.
 // pendingTerminalAttach reports whether `loc` is a terminals deep link that is
 // merely NOT ATTACHED YET rather than genuinely stale. It is the one location
 // that is legitimately unavailable at the moment we restore it: panes do not
@@ -80,6 +76,10 @@ function pendingTerminalAttach(loc) {
   return loc.tab === 'terminals' && !!loc.selection;
 }
 
+// activeLocationFromDOM reads the current dashboard location out of the live
+// DOM: the active top-level nav button, plus the active subtab for tabs that
+// have one. Everything is normalized through the core so an unexpected DOM
+// state degrades to a valid location rather than a bogus one.
 function activeLocationFromDOM() {
   const navBtn = $$('nav [data-tab]').find(b => b.classList.contains('active'));
   const tab = navBtn ? navBtn.dataset.tab : DEFAULT_TAB;
