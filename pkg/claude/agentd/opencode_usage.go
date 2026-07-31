@@ -134,7 +134,9 @@ func observeOpenCodeSessionTree(runtime db.OpenCodeRuntime, event json.RawMessag
 	switch decoded.Type {
 	case "session.created", "session.updated":
 		if _, parentTracked := tracked[decoded.Properties.Info.ParentID]; decoded.Properties.Info.ParentID != "" && parentTracked {
-			tracked[id] = decoded.Properties.Info.ParentID
+			if _, exists := tracked[id]; exists || len(tracked) < maxOpenCodeTrackedSessions {
+				tracked[id] = decoded.Properties.Info.ParentID
+			}
 		}
 	case "session.deleted":
 		if _, belongs := tracked[id]; belongs && id != runtime.ConvID {
@@ -154,10 +156,26 @@ func observeOpenCodeSessionTree(runtime db.OpenCodeRuntime, event json.RawMessag
 			for removedID := range removed {
 				removedIDs = append(removedIDs, removedID)
 			}
+			if costs := openCodeVirtualCostState.nativeCosts[runtime.SessionID]; costs != nil {
+				if openCodeVirtualCostState.retiredNativeCost == nil {
+					openCodeVirtualCostState.retiredNativeCost = map[string]float64{}
+				}
+				for _, removedID := range removedIDs {
+					openCodeVirtualCostState.retiredNativeCost[runtime.SessionID] += costs[removedID]
+					delete(costs, removedID)
+				}
+			}
 		}
 	}
 	openCodeVirtualCostState.Unlock()
 	return removedIDs
+}
+
+func persistOpenCodeRealCost(runtime db.OpenCodeRuntime, cost float64) error {
+	if retained, err := db.MaxRealCostForConv(runtime.ConvID); err == nil && retained > cost {
+		cost = retained
+	}
+	return db.UpdateSessionCost(runtime.SessionID, cost)
 }
 
 func applyOpenCodeSessionDeletion(
@@ -246,11 +264,12 @@ func applyOpenCodeCost(runtime db.OpenCodeRuntime, event json.RawMessage) {
 	for _, cost := range costs {
 		total += cost
 	}
+	total += openCodeVirtualCostState.retiredNativeCost[runtime.SessionID]
 	openCodeVirtualCostState.Unlock()
 	if total <= 0 {
 		return
 	}
-	if err := db.UpdateSessionCost(runtime.SessionID, total); err != nil {
+	if err := persistOpenCodeRealCost(runtime, total); err != nil {
 		slog.Warn("OpenCode session cost could not be persisted",
 			"session", runtime.SessionID, "error", err, "module", "agentd")
 	}
@@ -405,6 +424,9 @@ var openCodeVirtualCostState struct {
 	// cost so a later root session.updated cannot overwrite child spend.
 	trackedSessions map[string]map[string]string
 	nativeCosts     map[string]map[string]float64
+	// retiredNativeCost compacts deleted descendants into one cumulative
+	// scalar. Backfill reconstructs it from the persisted session total.
+	retiredNativeCost map[string]float64
 }
 
 type openCodePendingRemoval struct {
@@ -432,6 +454,7 @@ func clearOpenCodeVirtualCostState(sessionID string) {
 	delete(openCodeVirtualCostState.hydratedSession, sessionID)
 	delete(openCodeVirtualCostState.trackedSessions, sessionID)
 	delete(openCodeVirtualCostState.nativeCosts, sessionID)
+	delete(openCodeVirtualCostState.retiredNativeCost, sessionID)
 	openCodeVirtualCostState.Unlock()
 }
 
@@ -893,7 +916,7 @@ func projectAndPersistOpenCodeCostState(ctx context.Context, runtime db.OpenCode
 	}
 	openCodeVirtualCostState.Unlock()
 	if realCost > 0 {
-		if err := db.UpdateSessionCost(runtime.SessionID, realCost); err != nil {
+		if err := persistOpenCodeRealCost(runtime, realCost); err != nil {
 			slog.Warn("OpenCode native message cost could not be persisted",
 				"session", runtime.SessionID, "error", err, "module", "agentd")
 			return
@@ -1484,6 +1507,7 @@ func backfillOpenCodeContextUsage(ctx context.Context, runtime db.OpenCodeRuntim
 	if !openCodeProjectorCurrent(ctx, runtime.SessionID) {
 		return false
 	}
+	retainedRealCost, _ := db.MaxRealCostForConv(runtime.ConvID)
 	openCodeVirtualCostState.Lock()
 	for sessionID, cost := range historyCosts {
 		nativeCosts[sessionID] = cost
@@ -1502,6 +1526,12 @@ func backfillOpenCodeContextUsage(ctx context.Context, runtime db.OpenCodeRuntim
 		openCodeVirtualCostState.nativeCosts = map[string]map[string]float64{}
 	}
 	openCodeVirtualCostState.nativeCosts[runtime.SessionID] = nativeCosts
+	if openCodeVirtualCostState.retiredNativeCost == nil {
+		openCodeVirtualCostState.retiredNativeCost = map[string]float64{}
+	}
+	retiredRealCost := math.Max(retainedRealCost-realCost, 0)
+	openCodeVirtualCostState.retiredNativeCost[runtime.SessionID] = retiredRealCost
+	realCost += retiredRealCost
 	if openCodeVirtualCostState.snapshotSteps == nil {
 		openCodeVirtualCostState.snapshotSteps =
 			map[string]map[string]map[string]struct{}{}
@@ -1513,7 +1543,7 @@ func backfillOpenCodeContextUsage(ctx context.Context, runtime db.OpenCodeRuntim
 		return false
 	}
 	if realCost > 0 && waitForOpenCodeCostSessionRow(ctx, runtime.SessionID) {
-		if err := db.UpdateSessionCost(runtime.SessionID, realCost); err != nil {
+		if err := persistOpenCodeRealCost(runtime, realCost); err != nil {
 			slog.Warn("OpenCode real cost backfill could not be persisted",
 				"session", runtime.SessionID, "error", err, "module", "agentd")
 		}

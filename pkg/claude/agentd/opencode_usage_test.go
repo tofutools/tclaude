@@ -34,6 +34,7 @@ func resetOpenCodeVirtualCostStateForTest() {
 	openCodeVirtualCostState.removalRetries = nil
 	openCodeVirtualCostState.trackedSessions = nil
 	openCodeVirtualCostState.nativeCosts = nil
+	openCodeVirtualCostState.retiredNativeCost = nil
 	openCodeVirtualCostState.Unlock()
 }
 
@@ -1067,6 +1068,86 @@ func TestApplyOpenCodeCostAggregatesTrackedChildSessions(t *testing.T) {
 	snap, err := db.GetContextSnapshot(sessionID)
 	require.NoError(t, err)
 	assert.InDelta(t, 6, snap.CostUSD, 1e-12)
+
+	openCodeVirtualCostState.Lock()
+	openCodeVirtualCostState.hydratedSession = map[string]bool{sessionID: true}
+	openCodeVirtualCostState.Unlock()
+	applyOpenCodeVirtualCostUsage(context.Background(), runtime, openCodeContextUsage{
+		SessionID: rootID, MessageID: "msg-real-root", ReportedCost: float64ptr(1), Input: 1,
+	})
+	applyOpenCodeVirtualCostUsage(context.Background(), runtime, openCodeContextUsage{
+		SessionID: childID, MessageID: "msg-real-child", ReportedCost: float64ptr(2), Input: 1,
+	})
+	removed := observeOpenCodeSessionTree(runtime, json.RawMessage(fmt.Sprintf(
+		`{"type":"session.deleted","properties":{"info":{"id":%q}}}`, childID,
+	)))
+	applyOpenCodeSessionDeletion(context.Background(), runtime, removed)
+	snap, err = db.GetContextSnapshot(sessionID)
+	require.NoError(t, err)
+	assert.InDelta(t, 6, snap.CostUSD, 1e-12,
+		"deleting conversation data cannot unspend cumulative API cost")
+	openCodeVirtualCostState.Lock()
+	assert.NotContains(t, openCodeVirtualCostState.nativeCosts[sessionID], childID)
+	assert.NotContains(t, openCodeVirtualCostState.nativeCosts[sessionID], grandID)
+	assert.InDelta(t, 5, openCodeVirtualCostState.retiredNativeCost[sessionID], 1e-12)
+	openCodeVirtualCostState.Unlock()
+
+	applyOpenCodeCost(runtime, json.RawMessage(openCodeSessionUpdatedEventJSON(rootID, rootID, 2)))
+	snap, err = db.GetContextSnapshot(sessionID)
+	require.NoError(t, err)
+	assert.InDelta(t, 7, snap.CostUSD, 1e-12,
+		"new root spend advances on top of the compacted deleted-child spend")
+}
+
+func TestObserveOpenCodeSessionTreeBoundsLiveDescendants(t *testing.T) {
+	resetOpenCodeVirtualCostStateForTest()
+	t.Cleanup(resetOpenCodeVirtualCostStateForTest)
+	runtime := db.OpenCodeRuntime{SessionID: "oc-bound", ConvID: "ses-bound"}
+	for i := 0; i < maxOpenCodeTrackedSessions+50; i++ {
+		observeOpenCodeSessionTree(runtime, json.RawMessage(fmt.Sprintf(
+			`{"type":"session.created","properties":{"info":{"id":"child-%d","parentID":%q}}}`,
+			i, runtime.ConvID,
+		)))
+	}
+	openCodeVirtualCostState.Lock()
+	tracked := len(openCodeVirtualCostState.trackedSessions[runtime.SessionID])
+	openCodeVirtualCostState.Unlock()
+	assert.Equal(t, maxOpenCodeTrackedSessions, tracked)
+}
+
+func TestBackfillOpenCodeCostReconstructsDeletedChildSpendAfterRestart(t *testing.T) {
+	setupTestDB(t)
+	resetOpenCodeVirtualCostStateForTest()
+	t.Cleanup(resetOpenCodeVirtualCostStateForTest)
+	const sessionID, rootID = "oc-retired-restart", "ses-retired-restart"
+	seedOpenCodeUsageSession(t, sessionID, rootID)
+	require.NoError(t, db.UpdateSessionCost(sessionID, 7),
+		"persist the pre-restart root plus deleted-child cumulative spend")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/session/" + rootID + "/message":
+			_, _ = w.Write([]byte(`[{"info":{"id":"msg-root","role":"assistant",` +
+				`"sessionID":"` + rootID + `","providerID":"openai","modelID":"gpt-a",` +
+				`"cost":2,"tokens":{"input":1,"output":0}}}]`))
+		case "/session/" + rootID + "/children":
+			_, _ = w.Write([]byte(`[]`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	runtime := db.OpenCodeRuntime{
+		SessionID: sessionID, ConvID: rootID, ServerURL: server.URL,
+		Password: "pw", PID: os.Getpid(), Cwd: t.TempDir(),
+	}
+	require.True(t, backfillOpenCodeContextUsage(context.Background(), runtime))
+	snap, err := db.GetContextSnapshot(sessionID)
+	require.NoError(t, err)
+	assert.InDelta(t, 7, snap.CostUSD, 1e-12)
+	openCodeVirtualCostState.Lock()
+	assert.InDelta(t, 5, openCodeVirtualCostState.retiredNativeCost[sessionID], 1e-12)
+	assert.InDelta(t, 2, openCodeVirtualCostState.nativeCosts[sessionID][rootID], 1e-12)
+	openCodeVirtualCostState.Unlock()
 }
 
 func TestBufferedFinalStepRemovalSurvivesReconnectBackfill(t *testing.T) {
