@@ -329,6 +329,16 @@ type proxyEngineLaunchInput struct {
 	// EXPECTED to exit non-zero — a harness running on invalid credentials —
 	// sets it.
 	AllowExitError bool
+	// AllowTimeout tolerates the launch hitting its own deadline.
+	//
+	// Also opt-in, and for a narrow reason: a harness given deliberately
+	// invalid credentials retries on its own schedule, and how long it flails
+	// before giving up is not part of what the smoke proves. The evidence is
+	// the CONNECT observed AT THE PROXY, which is recorded the moment it is
+	// attempted. What must still hold is the evidence itself — a launch that
+	// timed out before reaching its origin records nothing, and its caller's
+	// assertions fail exactly as they should.
+	AllowTimeout bool
 }
 
 // proxyEngineLaunchResult is what a completed launch leaves behind to assert
@@ -434,7 +444,10 @@ func runProxyEngineLaunch(
 	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", command)
 	cmd.Env = launchEnv
 	output, runErr := cmd.CombinedOutput()
-	require.NoError(t, ctx.Err(), "proxy launch timed out; output:\n%s", output)
+	if !input.AllowTimeout {
+		require.NoError(t, ctx.Err(),
+			"proxy launch timed out; output:\n%s", output)
+	}
 	if !input.AllowExitError {
 		require.NoErrorf(t, runErr, "proxy smoke output:\n%s", output)
 	}

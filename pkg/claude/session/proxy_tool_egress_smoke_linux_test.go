@@ -344,6 +344,11 @@ func proxyEgressGitClone(t *testing.T, port int, proxy string) error {
 func proxyEgressGoDownload(t *testing.T, port int, proxy string) error {
 	t.Helper()
 	module := t.TempDir()
+	// A FRESH module cache per attempt. Without it the denied fetch is served
+	// from what the allowed fetch already downloaded, succeeds without touching
+	// the network at all, and the denied assertion silently stops testing the
+	// boundary — the module cache answering instead of the policy.
+	cache := t.TempDir()
 	if err := os.WriteFile(filepath.Join(module, "go.mod"),
 		[]byte("module tclaude.test/egress\n\ngo 1.21\n"), 0o600); err != nil {
 		return err
@@ -352,6 +357,7 @@ func proxyEgressGoDownload(t *testing.T, port int, proxy string) error {
 		proxyEgressModulePath+"@"+proxyEgressModuleVersion)
 	command.Dir = module
 	command.Env = append(os.Environ(),
+		"GOMODCACHE="+cache,
 		// By NAME, never by literal: cmd/go refuses to proxy any loopback
 		// destination regardless of NO_PROXY, so a 127.0.0.1 GOPROXY would
 		// bypass the boundary entirely and the denied case would "pass" on a

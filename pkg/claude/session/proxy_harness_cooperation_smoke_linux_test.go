@@ -251,8 +251,13 @@ func runProxyCooperationScenario(
 		PrepareHome:       scenario.prepare,
 		Timeout:           180 * time.Second,
 		// The harness runs on invalid credentials and is EXPECTED to exit
-		// non-zero. This is the only launch in the set that tolerates it.
+		// non-zero, and to spend its own time retrying first. This is the only
+		// launch in the set that tolerates either. The evidence — the model
+		// origin observed at the proxy — is recorded when the CONNECT is
+		// attempted, long before the harness gives up, and the assertions on
+		// that record are unchanged.
 		AllowExitError: true,
+		AllowTimeout:   true,
 		Command: func(workspace string) string {
 			// The probe runs first and unconditionally, then the harness runs
 			// whatever its own exit status. Both are inside the same floor,
