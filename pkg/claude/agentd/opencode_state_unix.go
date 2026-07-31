@@ -5,6 +5,7 @@ package agentd
 import (
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"golang.org/x/sys/unix"
 )
@@ -624,6 +626,103 @@ func validateExistingOpenCodeCredential(path string) error {
 		return fmt.Errorf("existing private OpenCode credential %q is not a regular file", path)
 	}
 	return nil
+}
+
+// prepareOpenCodeReadOnlyConfig supplies the one app-owned compatibility file
+// OpenCode 1.18.6 writes before loading a config directory:
+// https://github.com/anomalyco/opencode/blob/v1.18.6/packages/opencode/src/config/config.ts#L295-L312
+//
+// It runs after the durable state paths exist but before the sandbox starts.
+// Only the config app directory actually named by the launch contract is
+// eligible, and only when that directory is served by a daemon-final read-only
+// bind — without the file, Config.loadInstanceState fails its own write and
+// the first session creation answers HTTP 500 (EROFS on Linux).
+//
+// The file is created in the bind's SOURCE, which is what the sandbox actually
+// sees. On Darwin the private-state layout adapter has already rewritten the
+// config bind to same-path, so source and target coincide. On Linux the bind
+// is {ambient config -> per-agent config} whenever an ambient
+// ~/.config/opencode exists, so the source is the operator's real config
+// directory. Seeding there is a host-visible side effect, acceptable only
+// because it is create-if-absent (an operator-owned file is never rewritten,
+// and a non-regular path is refused) and because the payload is byte-identical
+// to what OpenCode itself writes on first run — see openCodeInstallGitignore.
+// A seeded file therefore leaves no diff for OpenCode to undo.
+//
+// Because the write target comes from a bind SOURCE — which the launch
+// contract's own validation does not constrain, it checks targets — the source
+// is separately confined to the two directories the layouts emit before
+// anything is created; see validateOpenCodeReadOnlyConfigSeedSource.
+//
+// platform names the caller's OS for the refusal message only; the behavior is
+// identical on both, so either path is exercisable from either host.
+func prepareOpenCodeReadOnlyConfig(
+	spec *session.TclaudeLayerLaunchSpec,
+	platform string,
+) error {
+	if spec == nil || spec.Contract.HarnessName != harness.OpenCodeName ||
+		len(spec.Contract.StateDirs) != 4 {
+		return nil
+	}
+	configDir := canonicalOpenCodeRuntimePath(spec.Contract.StateDirs[2])
+	source := openCodeReadOnlyConfigBindSource(spec.Contract)
+	if configDir == "" || source == "" {
+		return nil
+	}
+	if err := validateOpenCodeReadOnlyConfigSeedSource(source, configDir); err != nil {
+		return fmt.Errorf(
+			"opencode_read_only_config_bootstrap: refuse %s OpenCode launch because the read-only config prerequisite could not be established: %w",
+			platform, err)
+	}
+	created, err := ensureOpenCodeBootstrapGitignore(source, "config")
+	if err != nil {
+		return fmt.Errorf(
+			"opencode_read_only_config_bootstrap: refuse %s OpenCode launch because the read-only config prerequisite could not be established: %w",
+			platform, err)
+	}
+	stateRoot := filepath.Clean(spec.Contract.StateRoot)
+	if created && (!filepath.IsAbs(stateRoot) ||
+		!sandboxpolicy.PathContainsOrEqual(stateRoot, source)) {
+		slog.Info("created OpenCode bootstrap metadata in ambient host config before read-only confinement",
+			"path", filepath.Join(source, openCodeInstallBootstrapFile))
+	}
+	return nil
+}
+
+// validateOpenCodeReadOnlyConfigSeedSource constrains where the bootstrap may
+// be written. The launch contract's own validation covers bind TARGETS, and
+// the seed goes to a SOURCE, so without this a persisted spec replayed by
+// runtime reconciliation could direct a daemon-side file creation anywhere.
+// Only the two directories the layouts actually emit are accepted: the config
+// app directory the contract already names, and the ambient OpenCode config app
+// directory this host resolves for itself.
+func validateOpenCodeReadOnlyConfigSeedSource(source, configDir string) error {
+	if source == configDir {
+		return nil
+	}
+	ambient, err := openCodeAmbientAppDir("XDG_CONFIG_HOME", ".config")
+	if err != nil {
+		return fmt.Errorf("resolve ambient OpenCode config for bootstrap: %w", err)
+	}
+	// Compared as DIRECTORIES rather than as strings: a host whose config base
+	// or temp root reaches the same directory through a symlink (macOS
+	// /var -> /private/var is the everyday case) would otherwise refuse a bind
+	// the layout itself produced.
+	if resolvedOpenCodeSeedPath(source) == resolvedOpenCodeSeedPath(ambient) ||
+		resolvedOpenCodeSeedPath(source) == resolvedOpenCodeSeedPath(configDir) {
+		return nil
+	}
+	return fmt.Errorf(
+		"read-only OpenCode config bind source %q is neither the contract's config directory nor this host's ambient OpenCode config",
+		source)
+}
+
+func resolvedOpenCodeSeedPath(path string) string {
+	path = filepath.Clean(path)
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return filepath.Clean(resolved)
+	}
+	return path
 }
 
 func ensureOpenCodeInstallGitignore(installDir string) error {
