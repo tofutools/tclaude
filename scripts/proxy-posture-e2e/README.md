@@ -29,7 +29,7 @@ waiting for a smoke shard.
 | -- | -- | -- |
 | `10-discriminating` | list + host/CIDR allows + a deny beating an overlap | proxy deployed; allow carried over **both** carriages; deny refused with `denied_by_rule` at the proxy; direct TCP, UDP and ICMP refused by the floor |
 | `20-open-deny` | open baseline + one deny row | proxy deployed; deny enforced; private space (RFC1918 name, RFC1918 literal, reserved literal) still **reachable** per the amended §4.4 ruling; host loopback still refused without an authored loopback row |
-| `30-loopback-only` | loopback-only list | **no** proxy: no process, no listener in the sandbox namespace, no injected discovery, no decision record — while the authored loopback port is reachable and an unauthored one is not |
+| `30-loopback-only` | loopback-only list | **no** proxy: no process, no listener in the sandbox namespace beyond the packet floor's own DNS broker, no injected discovery, no decision record — while the authored loopback port is reachable and an unauthored one is not |
 | `40-allow-all` | open, no denies | **no** floor and no proxy: the fixture is reachable directly |
 
 Every scenario authors `engine: proxy`. The four differ only in the policy,
@@ -44,8 +44,10 @@ in the scenarios that DO deploy a proxy, where they must find one:
 
 - a host-side watch of the process table for the whole life of the sandbox,
   matching `argv[0]` against this shard's own `tclaude` binary;
-- a read of the listening sockets in the sandbox's **own** network namespace,
-  which is where a deployed proxy's listener lives;
+- a complete inventory of the listening sockets in the sandbox's **own** network
+  namespace, which is where a deployed proxy's listener lives — exact rather than
+  "no proxy port", because a sandbox that was never told about a proxy cannot
+  know which ephemeral port to exclude;
 - the proxy discovery variables the launcher injects, which must be absent;
 - the proxy's own decision record, which must not exist.
 

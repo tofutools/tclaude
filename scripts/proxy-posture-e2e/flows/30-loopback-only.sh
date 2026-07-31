@@ -36,9 +36,10 @@ flow::run() {
 flow::describe() {
   cat <<'TXT'
 A loopback-only list must deploy NO filtering proxy while still being enforced:
-no proxy process on the host while the sandbox runs, no listening socket at all
-in the sandbox's own network namespace (where a deployed proxy's listener would
-be), no proxy discovery injected, no decision record — and the authored host
+no proxy process on the host while the sandbox runs, no listener in the sandbox's
+own network namespace other than the packet floor's DNS broker (a deployed
+proxy's listener would live exactly there), no proxy discovery injected, no
+decision record — and the authored host
 loopback port reachable through the floor while an unauthored one is refused.
 
 If this flow failed with a "packet-floor prerequisite failed" message instead,
