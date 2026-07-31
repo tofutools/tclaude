@@ -728,7 +728,7 @@ func TestDashboardAssets_DefaultTerminalWired(t *testing.T) {
 		// then opens the new label through the web-terminal websocket.
 		"defaultTerminal: snapshot.default_terminal === 'web' ? 'web' : 'native'",
 		"if (draft.autoFocus && context.defaultTerminal === 'web') body.auto_focus_web = true;",
-		"openTerminalPane({\n          ws: payload.focus_ws",
+		"await openTerminalPane({\n            ws: payload.focus_ws",
 		"openTerminalPane,\n      celebrateSlop",
 		"key: `window:${agent}`",
 		// terminals-tab.js — the shared pane-openers.

@@ -277,18 +277,23 @@ export function createAgentSpawnActions({
       });
     },
 
-    complete(payload, draft) {
+    async complete(payload, draft) {
       const label = draft.name || (payload.conv_id ? shortID(payload.conv_id) : 'agent');
       if (draft.autoFocus && payload.focus_mode === 'browser' && payload.focus_ws) {
         const agent = payload.agent_id || payload.conv_id || payload.label || label;
-        openTerminalPane({
-          ws: payload.focus_ws,
-          label: payload.label || label,
-          key: `window:${agent}`,
-          hideConv: payload.conv_id || agent,
-          agent,
-        });
-        notify(`spawned ${label} → ${draft.group} — opened in Terminals tab`);
+        try {
+          const pane = await openTerminalPane({
+            ws: payload.focus_ws,
+            label: payload.label || label,
+            key: `window:${agent}`,
+            hideConv: payload.conv_id || agent,
+            agent,
+          });
+          if (pane) notify(`spawned ${label} → ${draft.group} — opened in Terminals tab`);
+          else notify(`spawned ${label} → ${draft.group} — terminal pane did not open`, true);
+        } catch (cause) {
+          notify(`spawned ${label} → ${draft.group} — terminal pane failed: ${cause?.message || cause}`, true);
+        }
       } else {
         notify(`spawned ${label} → ${draft.group}${draft.autoFocus ? ' — opening terminal' : ''}`);
       }

@@ -402,6 +402,7 @@ test('agent-spawn actions preserve effort memory, HTTP errors, upload retry inpu
   const { createAgentSpawnActions } = await harness.importDashboardModule('js/agent-spawn-actions.js');
   const calls = [];
   const store = new Map();
+  let paneResult = Promise.resolve({ key: 'window:worker' });
   let response = { ok: false, status: 403, text: async () => 'permission denied' };
   const actions = createAgentSpawnActions({
     fetchImpl: async (url, options) => { calls.push(['fetch', url, options]); return response; },
@@ -415,7 +416,7 @@ test('agent-spawn actions preserve effort memory, HTTP errors, upload retry inpu
     confirm: async () => true,
     notify: (...args) => calls.push(['notify', ...args]),
     refresh: () => calls.push(['refresh']),
-    openTerminalPane: (...args) => calls.push(['pane', ...args]),
+    openTerminalPane: (...args) => { calls.push(['pane', ...args]); return paneResult; },
     celebrateSlop: () => calls.push(['slop']),
     celebrateWizard: () => calls.push(['wizard']),
     recordInteraction: (...args) => calls.push(['interaction', ...args]),
@@ -437,13 +438,13 @@ test('agent-spawn actions preserve effort memory, HTTP errors, upload retry inpu
     json: async () => ({ conv_id: '1234567890', focus_mode: 'browser', focus_ws: '/ws' }),
   };
   const payload = await actions.spawn({ url: '/spawn', body: { name: 'worker' } });
-  actions.complete(payload, { name: 'worker', group: 'alpha', autoFocus: true });
+  await actions.complete(payload, { name: 'worker', group: 'alpha', autoFocus: true });
   assert.ok(calls.some(([kind]) => kind === 'pane'));
   assert.ok(calls.some(([kind, message]) => kind === 'notify' && /opened in Terminals tab/.test(message)));
   assert.ok(calls.some(([kind]) => kind === 'refresh'));
 
   const beforeWebCompletion = calls.length;
-  actions.complete(
+  await actions.complete(
     {
       agent_id: 'agt_webworker', conv_id: 'abcdef1234', label: 'web-worker', focus_mode: 'browser',
       focus_ws: '/api/spawn-focus-ws/web-worker',
@@ -461,6 +462,26 @@ test('agent-spawn actions preserve effort memory, HTTP errors, upload retry inpu
   );
   assert.ok(webCompletionCalls.some(([kind, message]) => kind === 'notify'
     && /opened in Terminals tab/.test(message)));
+
+  paneResult = Promise.resolve(null);
+  const beforeMissingPane = calls.length;
+  await actions.complete(payload, { name: 'missing-pane', group: 'alpha', autoFocus: true });
+  const missingPaneCalls = calls.slice(beforeMissingPane);
+  assert.equal(missingPaneCalls.some(([kind, message]) => kind === 'notify'
+    && /opened in Terminals tab/.test(message)), false,
+    'a null pane result must not claim success');
+  assert.ok(missingPaneCalls.some(([kind, message, isError]) => kind === 'notify'
+    && /terminal pane did not open/.test(message) && isError === true));
+
+  paneResult = Promise.reject(new Error('runtime unavailable'));
+  const beforeRejectedPane = calls.length;
+  await actions.complete(payload, { name: 'rejected-pane', group: 'alpha', autoFocus: true });
+  const rejectedPaneCalls = calls.slice(beforeRejectedPane);
+  assert.equal(rejectedPaneCalls.some(([kind, message]) => kind === 'notify'
+    && /opened in Terminals tab/.test(message)), false,
+    'a rejected pane open must not claim success');
+  assert.ok(rejectedPaneCalls.some(([kind, message, isError]) => kind === 'notify'
+    && /terminal pane failed: runtime unavailable/.test(message) && isError === true));
 
   const worktreeDraft = {
     worktree: '__new__', wtRepo: '/next', worktreeBranch: 'worker', worktreeBase: 'main',

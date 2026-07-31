@@ -697,7 +697,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
       const payload = await actions.spawn(request);
       if (!state.isCurrent(current.generation)) return;
       state.close();
-      actions.complete(payload, next);
+      void actions.complete(payload, next);
     } catch (cause) {
       if (state.isCurrent(current.generation)) {
         setError(errorMessage(cause));
