@@ -473,35 +473,55 @@ func TestProxyEngineActivationIsScopedToItsEvidence(t *testing.T) {
 	require.Positive(t, activatedRows,
 		"the activation record is empty, so this coupling has no subject at all")
 
-	// AND THE OTHER DIRECTION, WHICH NO REGISTERED HARNESS CAN DEMONSTRATE ANY
-	// MORE — stated at the level where it is still real rather than dressed up
-	// as something it is not.
+	// AND THE OTHER DIRECTION, WHICH NO REGISTERED HARNESS CAN DEMONSTRATE ON
+	// LINUX ANY MORE. With TCL-891 every registered harness has a Linux row, so
+	// the loop above can no longer exercise "a harness the record does not
+	// mention is not activated".
 	//
-	// With TCL-891 every registered harness has a Linux row, so the loop above
-	// can no longer exercise "a harness the record does not mention is not
-	// activated". The obvious-looking substitute is a Darwin row, and it is a
-	// TRAP: Darwin's cells are EnforceNone for a reason that DOMINATES this
-	// lookup — the proxy-cells branch is not reached there at all — so a Darwin
-	// subject passes whether or not the record is consulted, and would advertise
-	// coverage this rule does not have. Verified, not assumed: with the platform
-	// gate in proxyEngineActivated removed, the Darwin rating stays EnforceNone.
-	//
-	// So the fail-closed default is asserted on the predicate itself, where it
-	// is the real and permanent property: a name the record does not mention is
-	// not activated. That is what a future harness registered before its
-	// evidence exists will rely on, and asserting it here keeps it under test
-	// instead of letting it lapse the moment the last row was added.
+	// It is asserted on the predicate, where it is real and permanent: a name
+	// the record does not mention is not activated. That is what a future
+	// harness registered before its evidence exists will rely on.
 	assert.False(t, proxyEngineActivated("harness-with-no-activation-record", "linux"),
 		"the record lookup must be fail-closed for a name it does not mention")
+
+	// A ROW WITH NO SMOKES IS THE SAME BUG WEARING A ROW. proxyEngineActivated
+	// keys on presence, so an entry added with an empty slice would activate
+	// cells while naming no evidence at all — the exact thing the record exists
+	// to prevent, and the one authoring mistake the coupling above cannot see.
 	for _, name := range Names() {
-		assert.Equalf(t, len(ProxyEngineActivationSmokes(name)) > 0,
-			proxyEngineActivated(name, "linux"),
-			"%s: the predicate and the record must agree", name)
+		if _, listed := proxyEngineActivatedSmokes[name]; !listed {
+			continue
+		}
+		assert.NotEmptyf(t, ProxyEngineActivationSmokes(name),
+			"%s has a row but names no smoke, so its cells rest on nothing", name)
 	}
 
 	// Boundary 2: Darwin is M3 and activates on its own Seatbelt smokes. Asked
 	// of both activated harnesses, because the record is keyed by harness and
 	// the platform gate sits beside that lookup rather than inside it.
+	//
+	// TWO SUBJECTS, because the obvious one is not discriminating on its own.
+	// For the discriminating allow-list axes used above, Darwin's rating is
+	// EnforceNone for an EARLIER reason as well, so asserting only that rating
+	// would leave the platform gate unpinned — deleting the goos check would
+	// not fail it. Both a rating-level subject where the branch IS reachable on
+	// Darwin, and the predicate itself, are therefore asserted.
+	//
+	// The reachable-on-Darwin shape is loopback-only allow rows plus a deny row:
+	// NetworkRulesAreLoopbackOnly ignores Deny, so filteredNetworkReady holds on
+	// Darwin, while the deny row makes the policy discriminating and selects the
+	// proxy engine. Without the platform gate the deny selectors below appear —
+	// verified for the two plain-CLI harnesses, which is what makes this a real
+	// rating-level subject rather than a decorative one. It does NOT discriminate
+	// for OpenCode, whose Darwin deny cells stay empty for another reason, and
+	// that is precisely why the predicate assertion below is asserted for every
+	// harness rather than left to this one.
+	darwinReachable := rules
+	darwinReachable.Mode = sandboxpolicy.AccessModeList
+	darwinReachable.Allow = []sandboxpolicy.NetworkAllowEntry{{Loopback: true}}
+	darwinReachable.Deny = []sandboxpolicy.NetworkAllowEntry{
+		{Host: "denied.example.com"},
+	}
 	for _, activated := range activatedProxyEngineHarnesses(t) {
 		darwin, err := PredictAccessEnforcement(
 			activated, sandboxpolicy.ImplementationTclaudeLayer, axes, "", "darwin",
@@ -510,11 +530,18 @@ func TestProxyEngineActivationIsScopedToItsEvidence(t *testing.T) {
 		assert.Equalf(t, EnforceNone, darwin.NetworkList,
 			"Linux evidence does not activate the Darwin floor for %s",
 			activated.Name)
-		// The RATING alone does not pin the platform gate, and this line is
-		// what makes the boundary real: Darwin's cells are EnforceNone for an
-		// earlier reason too, so deleting the goos check in proxyEngineActivated
-		// would leave the assertion above still passing. Asking the predicate
-		// directly is what fails when the gate goes.
+
+		reachable, err := PredictAccessEnforcement(
+			activated, sandboxpolicy.ImplementationTclaudeLayer,
+			sandboxpolicy.ResolvedAxes{Network: darwinReachable}, "", "darwin",
+		)
+		require.NoErrorf(t, err, "harness %s", activated.Name)
+		assert.Emptyf(t, reachable.NetworkDenySelectors,
+			"the Darwin proxy branch is reachable for these axes, and Linux evidence must not populate its deny cells for %s",
+			activated.Name)
+
+		// And the gate itself, so the boundary fails when the gate goes rather
+		// than only when something downstream of it happens to notice.
 		assert.Falsef(t, proxyEngineActivated(activated.Name, "darwin"),
 			"the platform gate, not an incidental one, is what keeps %s unactivated on Darwin",
 			activated.Name)

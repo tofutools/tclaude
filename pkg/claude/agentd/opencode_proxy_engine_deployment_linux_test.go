@@ -234,6 +234,45 @@ func TestOpenCodeProxyEngineCellsFollowTheActivationRecord(t *testing.T) {
 		harness.ProxyEngineNotActivatedNotice,
 		"the unactivated platform must still disclose that it is not activated")
 
+	// PREVIEW AND RUNTIME MUST NOT DISAGREE. The model-transport gate that
+	// refuses an OpenCode filtered launch without an explicit provider/model is
+	// ENGINE-INDEPENDENT — it fires for any filtered posture — so an activated
+	// proxy row that did not carry its caveat would render network.list Full
+	// for a launch then refused with unsupported_filtered_model_transport.
+	//
+	// This was invisible until the flip: while these cells were EnforceNone the
+	// condition string was never populated for OpenCode, so activation is what
+	// exposed the gap. The packet branch has carried the same caveat all along.
+	assert.Contains(t, predicted.NetworkListCondition,
+		harness.OpenCodeFilteredExplicitProviderCaveat,
+		"an activated OpenCode proxy row must disclose the explicit-provider launch gate")
+
+	// And on the deny selectors, because a deny-only profile has no allow list
+	// and would never reach the condition above.
+	denyOnly := sandboxpolicy.EmptySnapshot()
+	denyOnly.Effective.Network = &sandboxpolicy.NetworkRules{
+		Mode:   sandboxpolicy.AccessModeOpen,
+		Engine: sandboxpolicy.NetworkEngineProxy,
+		Deny: []sandboxpolicy.NetworkAllowEntry{
+			{Host: "telemetry.example", Ports: []int{443}},
+		},
+	}
+	denyAxes, err := sandboxpolicy.PlannedEffectiveAccessAxes(denyOnly.Effective)
+	require.NoError(t, err)
+	denyPredicted, err := harness.PredictAccessEnforcement(
+		harness.MustGet(harness.OpenCodeName),
+		sandboxpolicy.ImplementationTclaudeLayer, denyAxes, "", "linux",
+	)
+	require.NoError(t, err)
+	require.NotEmpty(t, denyPredicted.NetworkDenySelectors,
+		"a deny-only proxy profile must rate its deny selectors, or this assertion has no subject")
+	for _, capability := range denyPredicted.NetworkDenySelectors {
+		assert.Containsf(t, capability.Detail,
+			harness.OpenCodeFilteredExplicitProviderCaveat,
+			"deny selector %s must carry the launch gate a deny-only profile cannot read elsewhere",
+			capability.Selector)
+	}
+
 	// The per-harness carriage fact this ticket turns on, and it is asserted
 	// HERE rather than only in the harness package because this is the OpenCode
 	// launch path's own test: OpenCode 1.18.6 carries over HTTP CONNECT and
@@ -252,6 +291,13 @@ func TestOpenCodeProxyEngineCellsFollowTheActivationRecord(t *testing.T) {
 // `mode: list` policy, the shape where the rating is least wrong. Asking both
 // baselines is what makes a rating an observation of the mechanism rather than
 // a second opinion about it.
+//
+// NOT REDUNDANT with the harness package's equivalents, and the reason is worth
+// stating because the overlap is obvious and the difference is not: those tests
+// iterate the ACTIVATED SET, so removing OpenCode from the record removes it
+// from their coverage too and they would still pass. This one names the harness,
+// so it fails when the row goes — which is what ties the ratings to the record
+// rather than to whoever happens to be listed.
 func TestOpenCodeProxyEngineRatingsMatchTheEvaluator(t *testing.T) {
 	const denied = "denied.example.com"
 	const deniedAddr = "93.184.216.34"
@@ -296,6 +342,14 @@ func TestOpenCodeProxyEngineRatingsMatchTheEvaluator(t *testing.T) {
 			byLiteral, err := sandboxproxy.ParseTarget(deniedAddr, 443)
 			require.NoError(t, err)
 			escaped := evaluator.Evaluate(byLiteral).Allowed()
+			// REQUIRED, not merely branched on. The interesting assertion below
+			// lives inside `if escaped`, so an evaluator that stopped carrying
+			// the literal past the deny would make this subtest assert nothing
+			// and still pass. If that ever becomes false the rating should be
+			// revisited, not silently skipped.
+			require.Truef(t, escaped,
+				"%s baseline: the literal must still escape the name deny, or this baseline tests nothing",
+				baseline.name)
 
 			predicted, err := harness.PredictAccessEnforcement(
 				harness.MustGet(harness.OpenCodeName),

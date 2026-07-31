@@ -31,23 +31,35 @@ const ProxyEngineCarriageNotice = "The filtering proxy carries HTTP, HTTPS, and 
 // exists because "what the ENGINE carries" and "what THIS CLIENT uses" are two
 // different facts that a single carriage sentence would smear together.
 //
-// The engine carries both carriages for every harness — the floor arm's
-// in-namespace probe proved an authorized destination carried over HTTP and
-// SOCKS5 in the same OpenCode launch. What is specific to OpenCode is the
-// CLIENT: 1.18.6 routes its model traffic over HTTP CONNECT and ignores
-// ALL_PROXY entirely, measured under one-carriage isolation in
-// TestOpenCodeProxyCarriageCooperation and reproduced behind the real floor in
-// TestOpenCodeProxyFloorCooperation.
+// SCOPE, and it is the whole correctness of this sentence. The measured fact is
+// about OpenCode's OWN MODEL PATH and nothing else: 1.18.6 routes model traffic
+// over HTTP CONNECT and ignores ALL_PROXY, measured under one-carriage
+// isolation in TestOpenCodeProxyCarriageCooperation and reproduced behind the
+// real floor in TestOpenCodeProxyFloorCooperation.
 //
-// The two plain-CLI harnesses do NOT carry this sentence, and the difference is
-// evidence rather than favouritism: TestPinnedProxyToolEgress records their
-// ordinary tool traffic carrying over BOTH carriages, so SOCKS-dependent
-// destinations are reachable and therefore filtered for them. No equivalent
-// measurement exists for OpenCode's tools, and this sentence deliberately does
-// not claim one — it says what is blocked, which is the fail-closed direction.
-const ProxyEngineOpenCodeCarriageNotice = "This harness routes its model traffic over HTTP CONNECT only and ignores ALL_PROXY, " +
-	"so a destination that would need the SOCKS5 carriage has no route out of this sandbox: " +
-	"it is blocked by the floor rather than filtered by the authored policy."
+// It must NOT be widened into a claim about the sandbox. The launcher injects
+// ALL_PROXY=socks5h://… into EVERY proxy-engine launch (proxyNetworkSandboxEnv)
+// and the proxy serves SOCKS5 on that endpoint, so a tool or subprocess that
+// honors it — curl, git, go, pip, an MCP stdio server — does use the SOCKS5
+// carriage and IS decided by the authored policy. The floor arm's own
+// in-namespace probe proves it inside an OpenCode launch: it carries its
+// declared destination over SOCKS5 and the policy ALLOWS it.
+//
+// An earlier draft of this sentence said a SOCKS-needing destination "has no
+// route out of this sandbox", which the cited run disproves and which would
+// have told an operator an authored rule was dead when it is live. Over-stating
+// what is blocked is not the safe direction: it invites authoring less policy,
+// not more.
+//
+// The two plain-CLI harnesses carry no such sentence because their model path
+// is not the open question — TestPinnedProxyToolEgress records their ordinary
+// tool traffic carrying over BOTH carriages. No equivalent measurement exists
+// for OpenCode's tools, and this sentence says so rather than guessing either
+// way.
+const ProxyEngineOpenCodeCarriageNotice = "This harness's own model requests use the HTTP CONNECT carriage only and ignore ALL_PROXY, " +
+	"so an authored rule that only a SOCKS5-carried model request would reach is never exercised by it. " +
+	"Tools and subprocesses that honor ALL_PROXY still use the SOCKS5 carriage and are filtered by the authored policy; " +
+	"this harness's tool egress has not been measured."
 
 // ProxyEngineNotActivatedNotice is the M2.3 half of the disclosure. The proxy
 // engine is authorable before it is activated, and while its capability cells

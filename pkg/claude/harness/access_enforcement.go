@@ -506,6 +506,29 @@ func accessEnforcementTable(
 			}
 			caps.NetworkDenyPorts = EnforceFull
 			caps.NetworkListCondition = ProxyEngineLaunchCondition
+			if h.Name == OpenCodeName {
+				// Preview and runtime must not disagree, exactly as on the
+				// packet branch above. The model-transport gate this caveat
+				// describes is ENGINE-INDEPENDENT — it fires for any filtered
+				// posture (see ResolveTclaudeLayerModelTransport at the launch
+				// seam) — so activating these cells without carrying it would
+				// render network.list Full for a launch that is then refused
+				// with unsupported_filtered_model_transport.
+				//
+				// It was invisible until TCL-891: while the proxy cells were
+				// EnforceNone for OpenCode this string was never populated, so
+				// the flip is what exposes the gap rather than what creates it.
+				caps.NetworkListCondition +=
+					" " + OpenCodeFilteredExplicitProviderCaveat
+				// And on every deny selector, for the same reason the packet
+				// branch does it: a deny-only profile has no allow list, so the
+				// condition above would never reach the operator at all.
+				for index := range caps.NetworkDenySelectors {
+					caps.NetworkDenySelectors[index].Detail = strings.TrimSpace(
+						caps.NetworkDenySelectors[index].Detail + " " +
+							OpenCodeFilteredExplicitProviderCaveat)
+				}
+			}
 		}
 		if implementation == sandboxpolicy.ImplementationTclaudeLayer &&
 			goos == "darwin" && filteredNetworkReady &&

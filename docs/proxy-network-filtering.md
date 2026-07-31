@@ -484,23 +484,41 @@ is the easiest mistake to make here:
   `TestOpenCodeProxyCarriageCooperation` (flow `30-opencode-carriage`) and
   reproduced behind the real floor.
 
-The consequence is a **per-harness disclosure, not a rating change**: a
-destination OpenCode would need the SOCKS5 carriage for has no carriage and no
-route out of the empty namespace, so it is **blocked by the floor rather than
-filtered by the policy** (`ProxyEngineOpenCodeCarriageNotice`). The selector
-cells are unchanged — host, domain, cidr, port and loopback are all expressible
-over HTTP CONNECT, and the cells rate what the evaluator enforces. The two
-plain-CLI harnesses do not carry that sentence because `TestPinnedProxyToolEgress`
-records their ordinary tool traffic carrying over both carriages; no equivalent
-measurement exists for OpenCode's tools, and the sentence deliberately does not
-claim one.
+The consequence is a **per-harness disclosure, not a rating change**
+(`ProxyEngineOpenCodeCarriageNotice`), and its scope matters: the measured fact
+is about OpenCode's **own model path**, so an authored rule that only a
+SOCKS5-carried *model request* would reach is never exercised by this harness.
+
+It is **not** a claim about the sandbox. The launcher injects
+`ALL_PROXY=socks5h://…` into every proxy-engine launch and the proxy serves
+SOCKS5 on that endpoint, so a tool or subprocess that honors it — `curl`, `git`,
+`go`, `pip`, an MCP stdio server — does use the SOCKS5 carriage and **is filtered
+by the authored policy**. The floor arm's own in-namespace probe proves it inside
+an OpenCode launch: it carries its declared destination over SOCKS5 and the
+policy allows it. OpenCode's *tool* egress has not been measured, and the
+disclosure says so rather than guessing either way.
+
+The selector cells are unchanged — host, domain, cidr, port and loopback are all
+expressible over HTTP CONNECT, and the cells rate what the evaluator enforces.
+The two plain-CLI harnesses carry no such sentence because their model path is
+not the open question: `TestPinnedProxyToolEgress` records their ordinary tool
+traffic carrying over both carriages.
 
 With every registered harness now listed on Linux, the activation rule's
-"a harness with no record stays unenforced" case has no registered subject left.
-It is kept under test at the level where it is still real — the record lookup's
-fail-closed default in `TestProxyEngineActivationIsScopedToItsEvidence` — rather
-than through a Darwin row, whose cells are unenforced for a reason that dominates
-that lookup and would advertise coverage the rule does not have.
+"a harness with no record stays unenforced" case has no registered Linux subject
+left. `TestProxyEngineActivationIsScopedToItsEvidence` keeps it under test at the
+level where it is still real: the record lookup's fail-closed default for a name
+the record does not mention, plus a check that no row is present-but-empty (which
+would activate cells naming no evidence).
+
+The Darwin boundary beside it asserts the platform gate **directly** as well as
+through a rating, and the reason is a trap worth recording. For ordinary
+allow-list axes the Darwin rating is `EnforceNone` for an earlier reason too, so
+a rating-only assertion would not fail if the platform gate were deleted. The
+axes that *do* reach the proxy branch on Darwin are loopback-only allow rows plus
+a deny row — `NetworkRulesAreLoopbackOnly` ignores `Deny`, so the readiness check
+holds while the deny row still selects the engine — and that shape is asserted
+too. The domination is therefore **axes-specific, not structural**.
 
 What the first activation run (on-main run `30609001363`) actually showed, as
 distinct from what was hypothesized:
