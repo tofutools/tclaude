@@ -201,6 +201,7 @@ func LatestCodexUsageForConvs(home string, convIDs []string, since time.Time) (*
 	type rolloutStat struct {
 		path  string
 		mtime time.Time
+		info  os.FileInfo
 	}
 	var stats []rolloutStat
 	for id := range want {
@@ -212,7 +213,7 @@ func LatestCodexUsageForConvs(home string, convIDs []string, since time.Time) (*
 		if statErr != nil || fi.ModTime().Before(since) {
 			continue
 		}
-		stats = append(stats, rolloutStat{path: p, mtime: fi.ModTime()})
+		stats = append(stats, rolloutStat{path: p, mtime: fi.ModTime(), info: fi})
 	}
 	sort.Slice(stats, func(i, j int) bool {
 		if stats[i].mtime.Equal(stats[j].mtime) {
@@ -226,7 +227,7 @@ func LatestCodexUsageForConvs(home string, convIDs []string, since time.Time) (*
 		if best != nil && best.Observed.After(st.mtime.Add(codexRolloutMtimeSlack)) {
 			break
 		}
-		u, err := followCodexUsage(st.path)
+		u, err := followCodexUsage(st.path, st.info)
 		if err != nil || u == nil {
 			continue
 		}
@@ -259,7 +260,7 @@ const maxCodexUsageFollowers = 512
 // retain a validated cursor and fold only complete appended records; immutable
 // archives are decoded once per physical generation. LatestCodexUsage remains
 // the intentional one-shot startup discovery path.
-func followCodexUsage(path string) (*CodexUsage, error) {
+func followCodexUsage(path string, info os.FileInfo) (*CodexUsage, error) {
 	codexUsageFollowers.Lock()
 	defer codexUsageFollowers.Unlock()
 
@@ -272,10 +273,13 @@ func followCodexUsage(path string) (*CodexUsage, error) {
 	pruneCodexUsageFollowers()
 
 	if strings.HasSuffix(path, ".zst") {
-		info, err := os.Stat(path)
-		if err != nil {
-			delete(codexUsageFollowers.byPath, path)
-			return nil, err
+		if info == nil {
+			var err error
+			info, err = os.Stat(path)
+			if err != nil {
+				delete(codexUsageFollowers.byPath, path)
+				return nil, err
+			}
 		}
 		if entry.archiveInfo != nil && os.SameFile(entry.archiveInfo, info) &&
 			entry.archiveInfo.Size() == info.Size() && entry.archiveInfo.ModTime().Equal(info.ModTime()) {
@@ -291,7 +295,13 @@ func followCodexUsage(path string) (*CodexUsage, error) {
 		return u, nil
 	}
 
-	update, err := entry.stream.Refresh(path)
+	var update filefollow.Update[codexUsageFollowState]
+	var err error
+	if info == nil {
+		update, err = entry.stream.Refresh(path)
+	} else {
+		update, err = entry.stream.RefreshWithInfo(path, info)
+	}
 	if err != nil {
 		if os.IsNotExist(err) {
 			delete(codexUsageFollowers.byPath, path)

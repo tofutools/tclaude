@@ -148,6 +148,21 @@ func (f *Follower[S]) Refresh(path string) (Update[S], error) {
 	if err != nil {
 		return Update[S]{}, err
 	}
+	return f.refreshWithInfo(path, info)
+}
+
+// RefreshWithInfo is Refresh for a caller that already statted path while
+// resolving it. Scans still validate the opened descriptor and pathname before
+// committing; the supplied metadata only removes a duplicate hot-path stat.
+func (f *Follower[S]) RefreshWithInfo(path string, info os.FileInfo) (Update[S], error) {
+	f.stats.Refreshes++
+	return f.refreshWithInfo(path, info)
+}
+
+func (f *Follower[S]) refreshWithInfo(path string, info os.FileInfo) (Update[S], error) {
+	if info == nil {
+		return Update[S]{}, fmt.Errorf("filefollow: nil file info for %s", path)
+	}
 	if f.path != "" && path != f.path {
 		f.Reset()
 	}

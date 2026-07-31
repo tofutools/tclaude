@@ -27,3 +27,24 @@ func TestRunSnapshotLoadsBoundsConcurrency(t *testing.T) {
 	assert.Equal(t, int32(len(loads)), completed.Load())
 	assert.LessOrEqual(t, maximum.Load(), int32(snapshotLoadConcurrency))
 }
+
+func TestRunSnapshotNamedLoadsReportsQueueAndRun(t *testing.T) {
+	phases := runSnapshotNamedLoads(snapshotNamedLoad{name: "load", run: func() {}})
+	if assert.Len(t, phases, 1) && assert.Len(t, phases[0].Children, 2) {
+		assert.Equal(t, "queue", phases[0].Children[0].Name)
+		assert.Equal(t, "run", phases[0].Children[1].Name)
+	}
+}
+
+func BenchmarkSnapshotPreloadFanoutOverhead(b *testing.B) {
+	batchSizes := []int{8, 2, 5, 4}
+	for b.Loop() {
+		for _, size := range batchSizes {
+			loads := make([]snapshotNamedLoad, size)
+			for i := range loads {
+				loads[i] = snapshotNamedLoad{name: "noop", run: func() {}}
+			}
+			runSnapshotNamedLoads(loads...)
+		}
+	}
+}

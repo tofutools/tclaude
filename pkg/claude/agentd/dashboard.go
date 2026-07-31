@@ -2370,12 +2370,15 @@ type snapshotNamedLoad struct {
 
 // runSnapshotNamedLoads is the instrumented form of runSnapshotLoads. It
 // returns measurements in declaration order even though the work runs in
-// parallel, which keeps the nested Debug table stable between polls.
+// parallel, which keeps the nested Debug table stable between polls. Each
+// child's total includes time waiting for the daemon-wide load slot; queue and
+// execution are nested separately so contention cannot disappear into the
+// preload parent's otherwise-unexplained wall time.
 func runSnapshotNamedLoads(loads ...snapshotNamedLoad) []perfPhase {
 	if len(loads) == 0 {
 		return nil
 	}
-	timings := make([]time.Duration, len(loads))
+	timings := make([]perfPhase, len(loads))
 	jobs := make(chan int, len(loads))
 	for i := range loads {
 		jobs <- i
@@ -2388,21 +2391,30 @@ func runSnapshotNamedLoads(loads ...snapshotNamedLoad) []perfPhase {
 		go func() {
 			defer wg.Done()
 			for index := range jobs {
+				queuedAt := time.Now()
 				snapshotLoadSlots <- struct{}{}
 				func() {
 					defer func() { <-snapshotLoadSlots }()
-					start := time.Now()
+					startedAt := time.Now()
 					loads[index].run()
-					timings[index] = time.Since(start)
+					finishedAt := time.Now()
+					timings[index] = perfPhase{
+						Name: loads[index].name,
+						Ms:   durMs(finishedAt.Sub(queuedAt)),
+						Children: []perfPhase{
+							{Name: "queue", Ms: durMs(startedAt.Sub(queuedAt))},
+							{Name: "run", Ms: durMs(finishedAt.Sub(startedAt))},
+						},
+					}
 				}()
 			}
 		}()
 	}
 	wg.Wait()
 	phases := make([]perfPhase, 0, len(loads))
-	for i, load := range loads {
-		if load.name != "" {
-			phases = append(phases, perfPhase{Name: load.name, Ms: durMs(timings[i])})
+	for i := range loads {
+		if timings[i].Name != "" {
+			phases = append(phases, timings[i])
 		}
 	}
 	return phases

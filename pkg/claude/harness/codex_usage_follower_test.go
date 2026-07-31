@@ -25,7 +25,7 @@ func TestCodexUsageRepairFollowerReadsOnlyAppendedPayload(t *testing.T) {
 	}
 	appendUsageSnapshot(10)
 
-	first, err := followCodexUsage(path)
+	first, err := followCodexUsage(path, nil)
 	require.NoError(t, err)
 	require.NotNil(t, first)
 	require.NotNil(t, first.FiveHour)
@@ -34,7 +34,7 @@ func TestCodexUsageRepairFollowerReadsOnlyAppendedPayload(t *testing.T) {
 	codexUsageFollowers.Lock()
 	firstStats := codexUsageFollowers.byPath[path].stream.Stats()
 	codexUsageFollowers.Unlock()
-	unchanged, err := followCodexUsage(path)
+	unchanged, err := followCodexUsage(path, nil)
 	require.NoError(t, err)
 	assert.Equal(t, first, unchanged)
 	codexUsageFollowers.Lock()
@@ -48,7 +48,7 @@ func TestCodexUsageRepairFollowerReadsOnlyAppendedPayload(t *testing.T) {
 	appendUsageSnapshot(25)
 	after, err := os.Stat(path)
 	require.NoError(t, err)
-	latest, err := followCodexUsage(path)
+	latest, err := followCodexUsage(path, nil)
 	require.NoError(t, err)
 	require.NotNil(t, latest)
 	require.NotNil(t, latest.FiveHour)

@@ -108,7 +108,9 @@ func TestFollowerUnchangedAndAppendReadOnlyNewPayload(t *testing.T) {
 	writeRecords(t, path, "one", "two")
 	follower := newTestFollower(1024)
 
-	first, err := follower.Refresh(path)
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	first, err := follower.RefreshWithInfo(path, info)
 	require.NoError(t, err)
 	assert.True(t, first.Rebuilt)
 	assert.Equal(t, []string{"one", "two"}, first.State.Values)

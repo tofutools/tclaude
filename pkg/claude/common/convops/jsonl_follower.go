@@ -352,8 +352,7 @@ func newConvFollower(convID string) *convFollower {
 // (entry, scanComplete) is always what a full parseJSONLSession of the same
 // bytes would produce.
 func (f *convFollower) refresh(path string, info os.FileInfo) (*SessionEntry, bool, error) {
-	_ = info // filefollow captures identity and metadata from one descriptor.
-	update, err := f.stream.Refresh(path)
+	update, err := f.stream.RefreshWithInfo(path, info)
 	if err != nil {
 		return nil, false, err
 	}
