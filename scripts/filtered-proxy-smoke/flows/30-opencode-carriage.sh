@@ -97,6 +97,13 @@ flow::run() {
       -count=1 -v -timeout=900s
 }
 
+# The arm launches the real OpenCode server:
+# opencode_proxy_carriage_smoke_linux_test.go resolves it through
+# harness.OpenCodeExecutable() before it measures a carriage.
+flow::harnesses() {
+  echo opencode
+}
+
 flow::describe() {
   cat <<'TXT'
 The carriage arm must launch the real OpenCode server through the real

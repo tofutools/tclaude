@@ -137,10 +137,18 @@ bash "$shared/selftest.sh"
 #    exactly the states in which everything downstream would pass vacuously.
 smoke::load_manifest "$here/manifest.txt" "$here/flows"
 
-# 2b. Read and validate the shard map. The union checks are the point: a flow
-#     assigned to no shard, or a harness claimed by no shard, would leave both CI
-#     jobs green while the smoke silently stopped running. Both run even when no
-#     shard was selected, so the guard cannot be avoided by running unsharded.
+# 2b. Read each flow's own harness declaration. It lives in the flow file so it
+#     cannot be left behind when a flow moves between shards; a flow that
+#     declares nothing is refused here, by name, rather than failing later and
+#     somewhere else with a "cannot install"-class error.
+smoke::load_flow_harnesses
+
+# 2c. Read and validate the shard map, which declares flows only — each shard's
+#     install set is DERIVED as the union of its flows' declarations. The union
+#     checks are the point: a flow assigned to no shard, or a harness no flow
+#     declares, would leave both CI jobs green while the smoke silently stopped
+#     running. All of these run even when no shard was selected, so the guards
+#     cannot be avoided by running unsharded.
 smoke::load_shards "$here/shards.txt"
 mapfile -t known_harnesses < <(harnesses::known)
 smoke::require_shard_harness_coverage "${known_harnesses[@]}"
@@ -157,7 +165,11 @@ label="Filtered-proxy smoke"
 if [[ "$shard_set" -eq 1 ]]; then
   smoke::select_shard "$shard"
   label="Filtered-proxy smoke [$shard]"
-  smoke::log "Shard '$shard': flows ${SMOKE_SHARD_FLOWS[$shard]% }; harnesses ${SMOKE_SHARD_HARNESSES[$shard]% }"
+  # Derived, not declared: the shard map names flows only. Reported anyway, and
+  # reported as "(none)" rather than as an empty tail, because the install set is
+  # what a reader of this log wants to check against the flows they expected.
+  shard_harnesses="${SMOKE_SHARD_HARNESSES[$shard]% }"
+  smoke::log "Shard '$shard': flows ${SMOKE_SHARD_FLOWS[$shard]% }; harnesses (derived) ${shard_harnesses:-(none)}"
 else
   # No shard: run everything and install every harness, which is what this
   # entrypoint did before shards existed and still does for a local
@@ -214,9 +226,15 @@ mkdir -p "$HARNESS_CACHE_DIR"
 # Only the selected shard's harnesses: a job that never launches Claude Code has
 # no reason to spend a minute installing it. The version and checksum assertions
 # inside each install are unchanged — see lib/harnesses.sh.
-for harness in "${SMOKE_SELECTED_HARNESSES[@]}"; do
-  "harnesses::install_$harness"
-done
+#
+# Guarded on length rather than expanded straight: the set is derived from the
+# flows, so a shard whose flows all declare `none` legitimately installs nothing,
+# and `"${empty[@]}"` under `set -u` is a footgun on older bash.
+if [[ ${#SMOKE_SELECTED_HARNESSES[@]} -gt 0 ]]; then
+  for harness in "${SMOKE_SELECTED_HARNESSES[@]}"; do
+    "harnesses::install_$harness"
+  done
+fi
 
 # 4. Run each flow in a subshell so a flow's trap, cwd and variables cannot leak
 #    into the next one, then check its evidence.

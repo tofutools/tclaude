@@ -76,6 +76,15 @@ flow::run() {
       -count=1 -v -timeout=900s
 }
 
+# The cooperation arm launches BOTH pinned harnesses — see
+# proxy_harness_cooperation_smoke_linux_test.go, which requires the pinned
+# `claude` and `codex` binaries by name and version before it measures anything.
+# The tool-egress arm in the same flow needs curl, git and go, which are
+# prerequisites rather than harnesses (lib/prereqs.sh).
+flow::harnesses() {
+  echo claude codex
+}
+
 flow::describe() {
   cat <<'TXT'
 The cooperation smoke must run the pinned harnesses inside the real proxy floor
