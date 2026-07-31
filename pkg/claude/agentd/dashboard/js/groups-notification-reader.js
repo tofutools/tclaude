@@ -133,13 +133,19 @@ export function GroupsNotificationReader({
     void persistHumanMessageRead(state, message.id, true, actions.reportError);
   }, [message?.id]);
 
+  // Keyed on the open identity, not the launcher: a reopen that cancels an
+  // in-flight exit reuses the mounted component, and the same launcher raising
+  // the same message again must still move focus into the panel.
   useEffect(() => {
     closeRef.current?.focus({ preventScroll: true });
-  }, [descriptor.launcher]);
+  }, [descriptor.openID, descriptor.launcher]);
 
   useEffect(() => {
     const onKeyDown = (event) => {
       if (event.key !== 'Escape' || hasShownOverlay()) return;
+      // Already dismissed and sliding out: this Escape is not ours to eat, and
+      // preventing it would deny it to whatever else the operator meant it for.
+      if (closing) return;
       // The reader draws over the Terminals tab too, where a live xterm is
       // taking keys and calling preventDefault on the ones it forwards to the
       // PTY. Escape pressed inside a terminal belongs to that terminal, not to
@@ -150,7 +156,7 @@ export function GroupsNotificationReader({
     };
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [onClose]);
+  }, [onClose, closing]);
 
   if (!message) return null;
   const previous = messages[index - 1];
