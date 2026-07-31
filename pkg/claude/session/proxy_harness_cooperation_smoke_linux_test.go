@@ -94,7 +94,7 @@ type proxyCooperationScenario struct {
 	args    []string
 	env     map[string]string
 	origins []string
-	prepare func(t *testing.T, home string) map[string]string
+	prepare func(t *testing.T, home, workspace string) map[string]string
 }
 
 // TestPinnedProxyHarnessCooperation runs each pinned harness inside a real
@@ -132,9 +132,14 @@ func TestPinnedProxyHarnessCooperation(t *testing.T) {
 				"exec", "--skip-git-repo-check", "--model", "gpt-5.4",
 				"Reply with exactly ok."),
 			origins: []string{"api.openai.com"},
-			prepare: func(t *testing.T, home string) map[string]string {
+			prepare: func(t *testing.T, home, workspace string) map[string]string {
 				t.Helper()
-				codexHome := filepath.Join(home, ".codex")
+				// The WORKSPACE, not the home. The constructed root binds the
+				// workspace and ~/.claude; the rest of the sandbox home is not
+				// visible inside, so a CODEX_HOME under it exists on the host and
+				// is absent to the harness — which reports it as a missing path
+				// rather than as anything to do with the network boundary.
+				codexHome := filepath.Join(workspace, ".codex")
 				require.NoError(t, os.MkdirAll(codexHome, 0o700))
 				require.NoError(t, os.WriteFile(
 					filepath.Join(codexHome, "auth.json"),
@@ -227,11 +232,14 @@ func runProxyCooperationScenario(
 	// the scenario writes has to land there before the launch is constructed.
 	// runProxyEngineLaunch owns that directory, so the scenario's own
 	// preparation is threaded through the environment it returns.
-	env := append([]string(nil), os.Environ()...)
-	env = append(env, proxySmokeHelperEnv(nil, fixture)...)
-	env = append(env,
-		proxyCooperationProbeEnv+"=1",
-	)
+	// ONLY the extra variables. runProxyEngineLaunch reads os.Environ() itself,
+	// after it has redirected HOME at the sandbox home — capturing it here would
+	// pass a STALE HOME that, being appended later, wins. That is not
+	// hypothetical: it sent the supervisor's log (and therefore the proxy's
+	// decision record, this smoke's entire audit trail) to the runner's real
+	// home, where it could not even be created.
+	env := append([]string(nil), proxySmokeHelperEnv(nil, fixture)...)
+	env = append(env, proxyCooperationProbeEnv+"=1")
 	for name, value := range scenario.env {
 		env = append(env, name+"="+value)
 	}

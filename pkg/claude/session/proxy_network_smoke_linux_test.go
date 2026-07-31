@@ -311,12 +311,15 @@ type proxyEngineLaunchInput struct {
 	// WorkspaceBinaries are host files copied into the workspace, keyed by the
 	// name they take there.
 	WorkspaceBinaries map[string]string
-	// PrepareHome runs after the sandbox HOME exists and before the launch is
-	// constructed. It is the only place a fixture that the in-sandbox process
-	// must SEE can be written: a directory made outside this home is not part
-	// of the constructed root and would be invisible inside the floor. Entries
-	// it returns are appended to the launch environment.
-	PrepareHome func(t *testing.T, home string) map[string]string
+	// PrepareHome runs after the sandbox HOME and workspace exist and before the
+	// launch is constructed. It is the only place a fixture the in-sandbox
+	// process must SEE can be written.
+	//
+	// Both paths are passed because they are not equivalent: the constructed
+	// root binds the WORKSPACE and ~/.claude, not the whole home, so a fixture
+	// written elsewhere under the home exists on the host and is invisible
+	// inside the floor. Entries returned are appended to the launch environment.
+	PrepareHome func(t *testing.T, home, workspace string) map[string]string
 	// Timeout bounds the whole launch. Zero uses the floor smoke's bound.
 	Timeout time.Duration
 	// AllowExitError tolerates a non-zero exit from the in-sandbox command.
@@ -399,7 +402,7 @@ func runProxyEngineLaunch(
 	launchEnv := append([]string(nil), os.Environ()...)
 	launchEnv = append(launchEnv, input.ExtraEnv...)
 	if input.PrepareHome != nil {
-		for name, value := range input.PrepareHome(t, smokeHome) {
+		for name, value := range input.PrepareHome(t, smokeHome, helperDir) {
 			launchEnv = append(launchEnv, name+"="+value)
 		}
 	}

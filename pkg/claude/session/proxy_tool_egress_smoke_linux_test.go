@@ -59,6 +59,15 @@ const (
 	proxyEgressCAEnv     = "TCLAUDE_FILTERED_PROXY_EGRESS_CA"
 	proxyEgressPortsEnv  = "TCLAUDE_FILTERED_PROXY_EGRESS_PORTS"
 
+	// proxyEgressGoHost is why the go arm can work at all. cmd/go selects its
+	// proxy through net/http's ProxyFromEnvironment, whose useProxy refuses
+	// EVERY loopback destination before NO_PROXY is even consulted — verified:
+	// https://127.0.0.1:PORT gets no proxy, https://<a name> does. So the go
+	// arm addresses the fixture by NAME. The flow maps that name to 127.0.0.1
+	// in the host resolver, which is where the proxy resolves it, and the
+	// authored loopback row is what admits the result.
+	proxyEgressGoHost = "egress.proxy.tclaude.test"
+
 	proxyEgressModulePath    = "example.com/tclaudeproxysmoke"
 	proxyEgressModuleVersion = "v1.0.0"
 	proxyEgressBody          = "tclaude-proxy-egress-ok"
@@ -66,23 +75,30 @@ const (
 
 // proxyEgressPorts are the four host-loopback fixtures, passed to the
 // in-sandbox helper as one env value so the two halves cannot disagree.
+// The go arm gets its OWN pair of TLS ports rather than sharing git's. Sharing
+// them meant a per-arm decision assertion could be satisfied by git alone, so
+// the go arm's "denied" marker rested on an error that a proxy bypass would
+// also produce — vacuous in exactly the direction this suite exists to prevent.
 type proxyEgressPorts struct {
-	AllowedHTTP int
-	DeniedHTTP  int
-	AllowedTLS  int
-	DeniedTLS   int
+	AllowedHTTP  int
+	DeniedHTTP   int
+	AllowedTLS   int
+	DeniedTLS    int
+	AllowedGoTLS int
+	DeniedGoTLS  int
 }
 
 func (p proxyEgressPorts) encode() string {
-	return fmt.Sprintf("%d,%d,%d,%d",
-		p.AllowedHTTP, p.DeniedHTTP, p.AllowedTLS, p.DeniedTLS)
+	return fmt.Sprintf("%d,%d,%d,%d,%d,%d",
+		p.AllowedHTTP, p.DeniedHTTP, p.AllowedTLS, p.DeniedTLS,
+		p.AllowedGoTLS, p.DeniedGoTLS)
 }
 
 func decodeProxyEgressPorts(t *testing.T, value string) proxyEgressPorts {
 	t.Helper()
 	fields := strings.Split(value, ",")
-	require.Len(t, fields, 4, "malformed egress port fixture %q", value)
-	numbers := make([]int, 4)
+	require.Len(t, fields, 6, "malformed egress port fixture %q", value)
+	numbers := make([]int, 6)
 	for i, field := range fields {
 		port, err := strconv.Atoi(field)
 		require.NoError(t, err)
@@ -91,6 +107,7 @@ func decodeProxyEgressPorts(t *testing.T, value string) proxyEgressPorts {
 	return proxyEgressPorts{
 		AllowedHTTP: numbers[0], DeniedHTTP: numbers[1],
 		AllowedTLS: numbers[2], DeniedTLS: numbers[3],
+		AllowedGoTLS: numbers[4], DeniedGoTLS: numbers[5],
 	}
 }
 
@@ -111,32 +128,33 @@ func TestPinnedProxyToolEgress(t *testing.T) {
 	repository := proxyEgressGitRepository(t)
 	module := proxyEgressModuleZip(t)
 	ports := proxyEgressPorts{
-		AllowedHTTP: proxyEgressHTTPServer(t, nil, repository, module),
-		DeniedHTTP:  proxyEgressHTTPServer(t, nil, repository, module),
-		AllowedTLS:  proxyEgressHTTPServer(t, authority, repository, module),
-		DeniedTLS:   proxyEgressHTTPServer(t, authority, repository, module),
+		AllowedHTTP:  proxyEgressHTTPServer(t, nil, repository, module),
+		DeniedHTTP:   proxyEgressHTTPServer(t, nil, repository, module),
+		AllowedTLS:   proxyEgressHTTPServer(t, authority, repository, module),
+		DeniedTLS:    proxyEgressHTTPServer(t, authority, repository, module),
+		AllowedGoTLS: proxyEgressHTTPServer(t, authority, repository, module),
+		DeniedGoTLS:  proxyEgressHTTPServer(t, authority, repository, module),
 	}
 
 	helperBinary := "proxy-egress-helper"
-	fixture := proxySmokeRunnerFixture(t)
 	launch := runProxyEngineLaunch(t, proxyEngineLaunchInput{
-		Rules: proxyEgressRules(ports, fixture),
-		ExtraEnv: append(proxySmokeHelperEnv(nil, fixture),
-			proxyEgressHelperEnv+"=1",
-			proxyEgressPortsEnv+"="+ports.encode(),
-		),
+		Rules: proxyEgressRules(ports),
+		ExtraEnv: []string{
+			proxyEgressHelperEnv + "=1",
+			proxyEgressPortsEnv + "=" + ports.encode(),
+		},
 		WorkspaceBinaries: map[string]string{helperBinary: os.Args[0]},
 		Timeout:           300 * time.Second,
-		PrepareHome: func(t *testing.T, home string) map[string]string {
+		PrepareHome: func(t *testing.T, home, workspace string) map[string]string {
 			t.Helper()
 			// The CA is the FIXTURE ORIGIN's, and it is written inside the
 			// sandbox home so the tools can read it. Handing it to the tools is
 			// what makes "the proxy did not intercept" assertable: a MITM proxy
 			// would present a certificate this CA did not sign.
-			caPath := filepath.Join(home, "fixture-ca.pem")
+			caPath := filepath.Join(workspace, "fixture-ca.pem")
 			require.NoError(t, os.WriteFile(caPath, authority.caPEM, 0o600))
-			cache := filepath.Join(home, "go-cache")
-			modcache := filepath.Join(home, "go-mod")
+			cache := filepath.Join(workspace, "go-cache")
+			modcache := filepath.Join(workspace, "go-mod")
 			require.NoError(t, os.MkdirAll(cache, 0o700))
 			require.NoError(t, os.MkdirAll(modcache, 0o700))
 			return map[string]string{
@@ -192,13 +210,19 @@ func TestPinnedProxyToolEgress(t *testing.T) {
 		"the authorized plain-HTTP destination was never carried; decisions:\n%s",
 		formatProxyDecisions(decisions))
 	assert.Truef(t, proxyEgressCarried(decisions, ports.AllowedTLS),
-		"the authorized TLS destination was never carried, so git and go never reached it; decisions:\n%s",
+		"git's authorized TLS destination was never carried; decisions:\n%s",
+		formatProxyDecisions(decisions))
+	assert.Truef(t, proxyEgressCarried(decisions, ports.AllowedGoTLS),
+		"the go module fetch never reached the proxy — check it is not bypassing it; decisions:\n%s",
+		formatProxyDecisions(decisions))
+	assert.Truef(t, proxyEgressRefused(decisions, ports.DeniedGoTLS),
+		"the go denied arm produced no refusal at the proxy; it failed for another reason; decisions:\n%s",
 		formatProxyDecisions(decisions))
 	assert.Truef(t, proxyEgressRefused(decisions, ports.DeniedHTTP),
 		"curl's denied arm produced no refusal at the proxy; it failed for another reason; decisions:\n%s",
 		formatProxyDecisions(decisions))
 	assert.Truef(t, proxyEgressRefused(decisions, ports.DeniedTLS),
-		"the git and go denied arms produced no refusal at the proxy; they failed for another reason; decisions:\n%s",
+		"git's denied arm produced no refusal at the proxy; it failed for another reason; decisions:\n%s",
 		formatProxyDecisions(decisions))
 
 	// Both carriages must appear, or "curl over both carriages" is unproven.
@@ -211,24 +235,31 @@ func TestPinnedProxyToolEgress(t *testing.T) {
 		formatProxyDecisions(decisions))
 }
 
-// proxyEgressRules authorizes exactly two host-loopback ports. The other two
-// are live and unauthored, which is what makes their refusal a policy answer.
-func proxyEgressRules(
-	ports proxyEgressPorts,
-	fixture proxySmokeFixture,
-) sandboxpolicy.NetworkRules {
+// proxyEgressRules authorizes three host-loopback ports plus the name the go
+// arm addresses. Every other fixture port is live and unauthored, which is what
+// makes its refusal a policy answer rather than nothing listening.
+func proxyEgressRules(ports proxyEgressPorts) sandboxpolicy.NetworkRules {
 	return sandboxpolicy.NetworkRules{
 		Mode: sandboxpolicy.AccessModeList,
 		Allow: []sandboxpolicy.NetworkAllowEntry{
-			{Loopback: true, Ports: []int{ports.AllowedHTTP, ports.AllowedTLS}},
-			// A loopback-only list is deliberately NOT discriminating: the floor
-			// expresses host loopback natively, including its authored ports, so
-			// no engine is deployed for it (NetworkRulesAreDiscriminating). This
-			// smoke needs the proxy to exist, so the policy has to ask for a
-			// distinction the floor cannot make on its own. This row is that
-			// ask, and it names a real fixture destination rather than a
-			// decorative one.
-			{Host: proxySmokeAllowedHost, Ports: []int{fixture.AllowedPort}},
+			{
+				Loopback: true,
+				Ports: []int{
+					ports.AllowedHTTP, ports.AllowedTLS, ports.AllowedGoTLS,
+				},
+			},
+			// Two jobs, both real. It makes the policy DISCRIMINATING — a
+			// loopback-only list is deliberately not (the floor expresses host
+			// loopback natively, including authored ports), so without a
+			// non-loopback selector no engine deploys and the launch falls back
+			// to the packet gateway. And it is the row the go arm actually
+			// travels: cmd/go will not proxy a loopback literal, so that arm
+			// addresses the fixture by this name, which the flow maps to
+			// 127.0.0.1 for the host-side resolver.
+			//
+			// Only the ALLOWED go port is authorized here, so the denied go port
+			// is refused on the authored name+port pair rather than incidentally.
+			{Host: proxyEgressGoHost, Ports: []int{ports.AllowedGoTLS}},
 		},
 		Engine: sandboxpolicy.NetworkEngineProxy,
 	}
@@ -278,9 +309,9 @@ func TestProxyToolEgressHelper(t *testing.T) {
 	fmt.Println("proxy-egress: git-https/denied: refused")
 
 	// go module fetch, the third proxy-honoring toolchain in the set.
-	require.NoError(t, proxyEgressGoDownload(t, ports.AllowedTLS, httpProxy))
+	require.NoError(t, proxyEgressGoDownload(t, ports.AllowedGoTLS, httpProxy))
 	fmt.Println("proxy-egress: go-module/allowed: carried")
-	require.Error(t, proxyEgressGoDownload(t, ports.DeniedTLS, httpProxy),
+	require.Error(t, proxyEgressGoDownload(t, ports.DeniedGoTLS, httpProxy),
 		"go reached an unauthorized module origin that is LIVE on the host")
 	fmt.Println("proxy-egress: go-module/denied: refused")
 }
@@ -321,7 +352,11 @@ func proxyEgressGoDownload(t *testing.T, port int, proxy string) error {
 		proxyEgressModulePath+"@"+proxyEgressModuleVersion)
 	command.Dir = module
 	command.Env = append(os.Environ(),
-		"GOPROXY=https://127.0.0.1:"+strconv.Itoa(port)+"/mod",
+		// By NAME, never by literal: cmd/go refuses to proxy any loopback
+		// destination regardless of NO_PROXY, so a 127.0.0.1 GOPROXY would
+		// bypass the boundary entirely and the denied case would "pass" on a
+		// connection error rather than on a policy refusal.
+		"GOPROXY=https://"+proxyEgressGoHost+":"+strconv.Itoa(port)+"/mod",
 		"HTTPS_PROXY="+proxy,
 		"HTTP_PROXY="+proxy,
 		// Scoped to this command rather than set on the launch: the launch
@@ -374,6 +409,9 @@ func newProxyEgressAuthority(t *testing.T) *proxyEgressAuthority {
 		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1")},
+		// git reaches the fixture by literal, the go arm by name; the leaf has
+		// to satisfy both or a failure is TLS verification rather than policy.
+		DNSNames: []string{proxyEgressGoHost},
 	}
 	leafDER, err := x509.CreateCertificate(
 		rand.Reader, leafTemplate, caCert, &leafKey.PublicKey, caKey)

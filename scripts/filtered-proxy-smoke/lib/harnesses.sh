@@ -18,6 +18,17 @@ HARNESS_CODEX_VERSION="0.145.0"
 harnesses::install_codex() {
   smoke::log "Installing pinned Codex ${HARNESS_CODEX_VERSION}"
   npm install --global "@openai/codex@${HARNESS_CODEX_VERSION}"
+  # Must resolve under the read-only OS surface the constructed root binds,
+  # for the same reason Claude is installed under /usr/local.
+  local resolved
+  resolved="$(command -v codex)"
+  case "$resolved" in
+    /usr/*|/opt/*) ;;
+    *)
+      smoke::error "codex resolved to $resolved, which the sandbox root does not bind"
+      return 1
+      ;;
+  esac
   codex --version
   codex --version | grep -qF "$HARNESS_CODEX_VERSION" || {
     smoke::error "codex is not at the pinned version ${HARNESS_CODEX_VERSION}"
@@ -56,13 +67,17 @@ harnesses::install_claude() {
     "$base/${HARNESS_CLAUDE_VERSION}/$platform/claude"
   echo "$checksum  $binary" | sha256sum --check
 
-  mkdir -p "$HOME/.local/bin" "$HOME/.local/share/claude/versions"
-  install -m 0755 "$binary" \
-    "$HOME/.local/share/claude/versions/${HARNESS_CLAUDE_VERSION}"
-  ln -sfn "$HOME/.local/share/claude/versions/${HARNESS_CLAUDE_VERSION}" \
-    "$HOME/.local/bin/claude"
-  export PATH="$HOME/.local/bin:$PATH"
-  [[ -n "${GITHUB_PATH:-}" ]] && echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+  # Installed under /usr/local, NOT under $HOME/.local as the old workflow did.
+  # These smokes run the harness INSIDE the constructed root, which binds the
+  # read-only OS surface (/usr, /bin, /etc, /opt) plus the sandbox workspace —
+  # and nothing else. A binary in the runner's home is simply absent in there,
+  # and the harness fails with "not found", which reads like a broken smoke
+  # rather than a path that was never granted.
+  sudo install -d -m 0755 /usr/local/share/claude/versions
+  sudo install -m 0755 "$binary" \
+    "/usr/local/share/claude/versions/${HARNESS_CLAUDE_VERSION}"
+  sudo ln -sfn "/usr/local/share/claude/versions/${HARNESS_CLAUDE_VERSION}" \
+    /usr/local/bin/claude
   claude --version
   claude --version | grep -qF "$HARNESS_CLAUDE_VERSION" || {
     smoke::error "claude is not at the pinned version ${HARNESS_CLAUDE_VERSION}"
