@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"time"
 )
 
@@ -64,6 +65,10 @@ type CodexRuntimeSnapshot struct {
 	// instead of leaving it in place or restoring it from older telemetry.
 	ContextReset         bool
 	InterruptedSubagents map[string]struct{}
+	// DiscoveredSubagents is the durable collaboration tree edge set. It is
+	// consumed by the tree follower and is not persisted directly to session
+	// rows.
+	DiscoveredSubagents map[string]struct{}
 }
 
 type CodexTokenCostDailySnapshot struct {
@@ -191,21 +196,34 @@ func CodexTelemetryFromRollout(rolloutPath string) (ContextTelemetry, bool, erro
 // sub_agent_activity stream makes the dashboard self-heal immediately when
 // Codex did not invoke the configured SubagentStop hook.
 func CodexRuntimeTelemetryFromRollout(rolloutPath string) (CodexRuntimeSnapshot, error) {
-	rc, err := openCodexRollout(rolloutPath)
+	state, err := codexRuntimeTelemetryStateFromRollout(rolloutPath, "")
 	if err != nil {
 		return CodexRuntimeSnapshot{}, err
+	}
+	return state.snapshot(), nil
+}
+
+func codexRuntimeTelemetryStateFromRollout(rolloutPath, ownerID string) (codexRuntimeScanState, error) {
+	rc, err := openCodexRollout(rolloutPath)
+	if err != nil {
+		return codexRuntimeScanState{}, err
 	}
 	defer func() { _ = rc.Close() }()
 
 	state := newCodexRuntimeScanState()
+	if ownerID != "" {
+		state = newOwnedCodexRuntimeScanState(ownerID)
+	}
 	if _, _, err := scanCompleteCodexLines(rc, rolloutPath, &state, false); err != nil {
-		return CodexRuntimeSnapshot{}, fmt.Errorf("scan codex rollout %s: %w", rolloutPath, err)
+		return codexRuntimeScanState{}, fmt.Errorf("scan codex rollout %s: %w", rolloutPath, err)
 	}
 	state.costAuthoritative = true
-	return state.snapshot(), nil
+	return state, nil
 }
 
 type codexRuntimeScanState struct {
+	ownerID              string
+	ownerBoundarySeen    bool
 	latest               *codexTokenCountInfo
 	contextReset         bool
 	model                string
@@ -218,6 +236,7 @@ type codexRuntimeScanState struct {
 	costAuthoritative    bool
 	costHistory          []CodexTokenCostDailySnapshot
 	interruptedSubagents map[string]struct{}
+	discoveredSubagents  map[string]struct{}
 	followupCallIDs      map[string]struct{}
 	checkpointStateBytes int64
 }
@@ -225,12 +244,21 @@ type codexRuntimeScanState struct {
 func newCodexRuntimeScanState() codexRuntimeScanState {
 	return codexRuntimeScanState{
 		interruptedSubagents: map[string]struct{}{},
+		discoveredSubagents:  map[string]struct{}{},
 		followupCallIDs:      map[string]struct{}{},
 	}
 }
 
+func newOwnedCodexRuntimeScanState(ownerID string) codexRuntimeScanState {
+	state := newCodexRuntimeScanState()
+	state.ownerID = ownerID
+	return state
+}
+
 func (s codexRuntimeScanState) clone() codexRuntimeScanState {
 	out := codexRuntimeScanState{
+		ownerID:              s.ownerID,
+		ownerBoundarySeen:    s.ownerBoundarySeen,
 		latest:               s.latest,
 		contextReset:         s.contextReset,
 		model:                s.model,
@@ -243,11 +271,15 @@ func (s codexRuntimeScanState) clone() codexRuntimeScanState {
 		costAuthoritative:    s.costAuthoritative,
 		costHistory:          append([]CodexTokenCostDailySnapshot(nil), s.costHistory...),
 		interruptedSubagents: make(map[string]struct{}, len(s.interruptedSubagents)),
+		discoveredSubagents:  make(map[string]struct{}, len(s.discoveredSubagents)),
 		followupCallIDs:      make(map[string]struct{}, len(s.followupCallIDs)),
 		checkpointStateBytes: s.checkpointStateBytes,
 	}
 	for id := range s.interruptedSubagents {
 		out.interruptedSubagents[id] = struct{}{}
+	}
+	for id := range s.discoveredSubagents {
+		out.discoveredSubagents[id] = struct{}{}
 	}
 	for id := range s.followupCallIDs {
 		out.followupCallIDs[id] = struct{}{}
@@ -265,6 +297,19 @@ func (s *codexRuntimeScanState) consumeLine(line []byte) bool {
 	var env codexEnvelope
 	if json.Unmarshal(line, &env) != nil {
 		return false
+	}
+	if s.ownerID != "" && !s.ownerBoundarySeen {
+		if env.Type != "session_meta" {
+			return true
+		}
+		var meta codexSessionMeta
+		if json.Unmarshal(env.Payload, &meta) != nil {
+			return false
+		}
+		if meta.ID == s.ownerID {
+			s.ownerBoundarySeen = true
+		}
+		return true
 	}
 	if env.Type == "compacted" {
 		s.invalidateContext()
@@ -324,6 +369,7 @@ func (s *codexRuntimeScanState) consumeLine(line []byte) bool {
 		if ev.AgentThreadID == "" {
 			return true
 		}
+		s.discoveredSubagents[ev.AgentThreadID] = struct{}{}
 		switch ev.Kind {
 		case "started":
 			s.removeCheckpointSetValue(s.interruptedSubagents, checkpointInterruptedSubagentsPrefix, ev.AgentThreadID)
@@ -449,6 +495,7 @@ func (s *codexRuntimeScanState) snapshot() CodexRuntimeSnapshot {
 	result := CodexRuntimeSnapshot{
 		ContextReset:         s.contextReset,
 		InterruptedSubagents: s.interruptedSubagents,
+		DiscoveredSubagents:  s.discoveredSubagents,
 		Effort:               s.effort,
 		HasEffort:            s.effort != "",
 		Usage:                s.usage,
@@ -476,6 +523,80 @@ func (s *codexRuntimeScanState) snapshot() CodexRuntimeSnapshot {
 	result.Context = snap
 	result.HasContext = true
 	return result
+}
+
+// aggregateCodexRuntimeCosts keeps the root thread's context/lifecycle
+// projection while adding request-owned cost from every followed descendant.
+// Each thread history is cumulative, so it is first differenced into local-day
+// deltas and then rebuilt into one cumulative root history.
+func aggregateCodexRuntimeCosts(parts []CodexRuntimeSnapshot) CodexRuntimeSnapshot {
+	if len(parts) == 0 {
+		return CodexRuntimeSnapshot{}
+	}
+	out := parts[0]
+	type dayCost struct {
+		cost     float64
+		observed time.Time
+		model    string
+	}
+	days := map[string]dayCost{}
+	total := 0.0
+	hasCost := false
+	authoritative := true
+	latestObserved := time.Time{}
+	latestModel := ""
+	for _, part := range parts {
+		// A just-discovered child can precede its rollout file by a short
+		// interval. A completely empty projection contributes nothing and must
+		// not make the already-folded root non-authoritative.
+		empty := !part.CostAuthoritative && !part.HasCost && len(part.CostHistory) == 0 &&
+			len(part.DiscoveredSubagents) == 0
+		if !empty {
+			authoritative = authoritative && part.CostAuthoritative
+		}
+		if part.HasCost {
+			total += part.Cost.CostUSD
+			hasCost = true
+			if part.Cost.Observed.After(latestObserved) {
+				latestObserved = part.Cost.Observed
+				latestModel = part.Cost.Model
+			}
+		}
+		previous := 0.0
+		for _, item := range part.CostHistory {
+			delta := item.CostUSD - previous
+			previous = item.CostUSD
+			day := days[item.Day]
+			day.cost += delta
+			if item.Observed.After(day.observed) {
+				day.observed = item.Observed
+				day.model = item.Model
+			}
+			days[item.Day] = day
+		}
+	}
+	keys := make([]string, 0, len(days))
+	for day := range days {
+		keys = append(keys, day)
+	}
+	sort.Strings(keys)
+	var history []CodexTokenCostDailySnapshot
+	if len(keys) > 0 {
+		history = make([]CodexTokenCostDailySnapshot, 0, len(keys))
+	}
+	cumulative := 0.0
+	for _, key := range keys {
+		day := days[key]
+		cumulative += day.cost
+		history = append(history, CodexTokenCostDailySnapshot{
+			Day: key, CostUSD: cumulative, Observed: day.observed, Model: day.model,
+		})
+	}
+	out.CostAuthoritative = authoritative
+	out.CostHistory = history
+	out.HasCost = hasCost
+	out.Cost = CodexTokenCost{CostUSD: total, Model: latestModel, Observed: latestObserved}
+	return out
 }
 
 // contextTelemetryFromTokenCount turns a token_count info block into a

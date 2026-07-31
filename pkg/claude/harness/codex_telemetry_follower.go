@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	codexTelemetryCheckpointVersion  = 3
+	codexTelemetryCheckpointVersion  = 4
 	codexTelemetryAnchorBytes        = 64
 	maxCodexTelemetryCheckpointBytes = 1 << 20
 )
@@ -28,13 +28,15 @@ var ErrCodexTelemetryCheckpointTooLarge = errors.New("codex telemetry checkpoint
 type CodexTelemetryFollower struct {
 	mu sync.Mutex
 
-	home        string
-	convID      string
-	path        string
-	stream      *filefollow.Follower[codexRuntimeScanState]
-	archiveInfo os.FileInfo
-	state       codexRuntimeScanState
-	snapshot    CodexRuntimeSnapshot
+	home            string
+	convID          string
+	path            string
+	stream          *filefollow.Follower[codexRuntimeScanState]
+	archiveInfo     os.FileInfo
+	state           codexRuntimeScanState
+	snapshot        CodexRuntimeSnapshot
+	children        map[string]*CodexTelemetryFollower
+	preserveMissing bool
 
 	checkpointTooLarge           bool
 	checkpointTooLargeStateBytes int64
@@ -43,7 +45,12 @@ type CodexTelemetryFollower struct {
 func (f *CodexTelemetryFollower) ensureStream() *filefollow.Follower[codexRuntimeScanState] {
 	if f.stream == nil {
 		f.stream = filefollow.New(filefollow.Config[codexRuntimeScanState]{
-			NewState:   func(string, int64) codexRuntimeScanState { return newCodexRuntimeScanState() },
+			NewState: func(string, int64) codexRuntimeScanState {
+				if f.preserveMissing {
+					return newOwnedCodexRuntimeScanState(f.convID)
+				}
+				return newCodexRuntimeScanState()
+			},
 			CloneState: func(state codexRuntimeScanState) codexRuntimeScanState { return state.clone() },
 			Scan: func(r io.Reader, path string, state *codexRuntimeScanState, strict bool) (int64, bool, error) {
 				if !strict {
@@ -66,6 +73,7 @@ type codexTelemetryCheckpoint struct {
 	Home                 string                        `json:"home"`
 	ConvID               string                        `json:"conv_id"`
 	Path                 string                        `json:"path"`
+	OwnerBoundarySeen    bool                          `json:"owner_boundary_seen,omitempty"`
 	Offset               int64                         `json:"offset"`
 	FileSize             int64                         `json:"file_size"`
 	ModTimeUnixNano      int64                         `json:"mod_time_unix_nano"`
@@ -85,6 +93,8 @@ type codexTelemetryCheckpoint struct {
 	CostHistory          []CodexTokenCostDailySnapshot `json:"cost_history,omitempty"`
 	InterruptedSubagents []string                      `json:"interrupted_subagents,omitempty"`
 	FollowupCallIDs      []string                      `json:"followup_call_ids,omitempty"`
+	DiscoveredSubagents  []string                      `json:"discovered_subagents,omitempty"`
+	Children             map[string]json.RawMessage    `json:"children,omitempty"`
 }
 
 // RestoreCheckpoint primes an empty follower from a durable checkpoint. The
@@ -101,6 +111,9 @@ func (f *CodexTelemetryFollower) RestoreCheckpoint(data []byte) error {
 	if err := json.Unmarshal(data, &cp); err != nil {
 		return fmt.Errorf("decode Codex telemetry checkpoint: %w", err)
 	}
+	// Older checkpoints have no discovered-child ledger. Restoring their EOF
+	// cursor would permanently skip collaboration edges that occurred in the
+	// already-consumed prefix, so upgrades deliberately rebuild once.
 	if cp.Version != codexTelemetryCheckpointVersion {
 		return fmt.Errorf("unsupported Codex telemetry checkpoint version %d", cp.Version)
 	}
@@ -109,6 +122,10 @@ func (f *CodexTelemetryFollower) RestoreCheckpoint(data []byte) error {
 		return fmt.Errorf("invalid Codex telemetry checkpoint cursor")
 	}
 	state := newCodexRuntimeScanState()
+	if f.preserveMissing {
+		state = newOwnedCodexRuntimeScanState(cp.ConvID)
+		state.ownerBoundarySeen = cp.OwnerBoundarySeen
+	}
 	state.replaceCheckpointContext(cp.Latest, cp.ContextReset)
 	state.model = cp.Model
 	state.effort = cp.Effort
@@ -129,6 +146,11 @@ func (f *CodexTelemetryFollower) RestoreCheckpoint(data []byte) error {
 			state.addCheckpointSetValue(state.followupCallIDs, checkpointFollowupCallIDsPrefix, id)
 		}
 	}
+	for _, id := range cp.DiscoveredSubagents {
+		if id != "" {
+			state.discoveredSubagents[id] = struct{}{}
+		}
+	}
 	cursor := filefollow.Cursor{
 		Path: cp.Path, Offset: cp.Offset, FileSize: cp.FileSize,
 		ModTimeUnixNano: cp.ModTimeUnixNano, Device: cp.Device, Inode: cp.Inode,
@@ -142,6 +164,15 @@ func (f *CodexTelemetryFollower) RestoreCheckpoint(data []byte) error {
 	f.path = cp.Path
 	f.state = state
 	f.snapshot = state.snapshot()
+	f.children = make(map[string]*CodexTelemetryFollower, len(cp.Children))
+	for id, childData := range cp.Children {
+		child := &CodexTelemetryFollower{preserveMissing: true}
+		if err := child.RestoreCheckpoint(childData); err != nil {
+			return fmt.Errorf("restore Codex child %s checkpoint: %w", id, err)
+		}
+		f.children[id] = child
+		state.discoveredSubagents[id] = struct{}{}
+	}
 	f.checkpointTooLarge = false
 	return nil
 }
@@ -167,6 +198,7 @@ func (f *CodexTelemetryFollower) Checkpoint() ([]byte, bool, error) {
 		Home:                 f.home,
 		ConvID:               f.convID,
 		Path:                 f.path,
+		OwnerBoundarySeen:    f.state.ownerBoundarySeen,
 		Offset:               cursor.Offset,
 		FileSize:             cursor.FileSize,
 		ModTimeUnixNano:      cursor.ModTimeUnixNano,
@@ -186,6 +218,23 @@ func (f *CodexTelemetryFollower) Checkpoint() ([]byte, bool, error) {
 		CostHistory:          append([]CodexTokenCostDailySnapshot(nil), f.state.costHistory...),
 		InterruptedSubagents: sortedStringSet(f.state.interruptedSubagents),
 		FollowupCallIDs:      sortedStringSet(f.state.followupCallIDs),
+		DiscoveredSubagents:  sortedStringSet(f.state.discoveredSubagents),
+	}
+	if len(f.children) > 0 {
+		cp.Children = make(map[string]json.RawMessage, len(f.children))
+		for id := range f.state.discoveredSubagents {
+			child := f.children[id]
+			if child == nil {
+				continue
+			}
+			data, ok, err := child.Checkpoint()
+			if err != nil {
+				return nil, false, fmt.Errorf("encode Codex child %s checkpoint: %w", id, err)
+			}
+			if ok {
+				cp.Children[id] = data
+			}
+		}
 	}
 	data, err := json.Marshal(cp)
 	if err != nil {
@@ -222,34 +271,71 @@ func (f *CodexTelemetryFollower) RuntimeTelemetry(home, convID string) (CodexRun
 		return CodexRuntimeSnapshot{}, err
 	}
 	if path == "" {
+		if f.preserveMissing {
+			return f.aggregateChildrenLocked(home)
+		}
 		return CodexRuntimeSnapshot{}, nil
 	}
 	if strings.HasSuffix(path, ".zst") {
 		if f.archiveInfo != nil && os.SameFile(f.archiveInfo, info) &&
 			f.archiveInfo.Size() == info.Size() && f.archiveInfo.ModTime().Equal(info.ModTime()) {
-			return f.snapshot, nil
+			return f.aggregateChildrenLocked(home)
 		}
-		snap, err := CodexRuntimeTelemetryFromRollout(path)
+		ownerID := ""
+		if f.preserveMissing {
+			ownerID = convID
+		}
+		state, err := codexRuntimeTelemetryStateFromRollout(path, ownerID)
 		if err != nil {
 			return CodexRuntimeSnapshot{}, err
 		}
 		f.ensureStream().Reset()
 		f.archiveInfo = info
-		f.state = newCodexRuntimeScanState()
-		f.snapshot = snap
-		return snap, nil
+		f.state = state
+		f.snapshot = state.snapshot()
+		f.pruneChildrenLocked()
+		return f.aggregateChildrenLocked(home)
 	}
 	update, err := f.ensureStream().RefreshWithInfo(path, info)
 	if err != nil {
 		return CodexRuntimeSnapshot{}, fmt.Errorf("follow Codex rollout %s: %w", path, err)
 	}
 	if update.Unchanged {
-		return f.snapshot, nil
+		return f.aggregateChildrenLocked(home)
 	}
 	f.state = update.State
 	f.archiveInfo = nil
 	f.snapshot = update.State.snapshot()
-	return f.snapshot, nil
+	f.pruneChildrenLocked()
+	return f.aggregateChildrenLocked(home)
+}
+
+func (f *CodexTelemetryFollower) pruneChildrenLocked() {
+	for id := range f.children {
+		if _, discovered := f.state.discoveredSubagents[id]; !discovered {
+			delete(f.children, id)
+		}
+	}
+}
+
+func (f *CodexTelemetryFollower) aggregateChildrenLocked(home string) (CodexRuntimeSnapshot, error) {
+	if f.children == nil {
+		f.children = map[string]*CodexTelemetryFollower{}
+	}
+	parts := []CodexRuntimeSnapshot{f.snapshot}
+	for id := range f.state.discoveredSubagents {
+		child := f.children[id]
+		if child == nil {
+			child = &CodexTelemetryFollower{preserveMissing: true}
+			f.children[id] = child
+		}
+		snap, err := child.RuntimeTelemetry(home, id)
+		if err != nil {
+			return CodexRuntimeSnapshot{}, fmt.Errorf("follow Codex child %s: %w", id, err)
+		}
+		parts = append(parts, snap)
+	}
+	return aggregateCodexRuntimeCosts(parts), nil
 }
 
 // rollout reuses the memoized path while it still exists. Codex archives by
@@ -276,7 +362,9 @@ func (f *CodexTelemetryFollower) rollout(home, convID string) (string, os.FileIn
 		return path, nil, err
 	}
 	if path == "" {
-		f.clearCursor()
+		if !f.preserveMissing {
+			f.clearCursor()
+		}
 		f.path = ""
 		return "", nil, nil
 	}
@@ -299,6 +387,7 @@ func (f *CodexTelemetryFollower) clearCursor() {
 	f.archiveInfo = nil
 	f.state = newCodexRuntimeScanState()
 	f.snapshot = CodexRuntimeSnapshot{}
+	f.children = nil
 	f.checkpointTooLarge = false
 }
 

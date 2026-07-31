@@ -98,6 +98,13 @@ func TestCodexTelemetryFollower_CheckpointSurvivesRestartWithFoldState(t *testin
 	checkpoint, ok, err := beforeRestart.Checkpoint()
 	require.NoError(t, err)
 	require.True(t, ok)
+	var legacy map[string]any
+	require.NoError(t, json.Unmarshal(checkpoint, &legacy))
+	legacy["version"] = float64(3)
+	legacyCheckpoint, err := json.Marshal(legacy)
+	require.NoError(t, err)
+	assert.Error(t, (&CodexTelemetryFollower{}).RestoreCheckpoint(legacyCheckpoint),
+		"v3 has no child-discovery ledger and must rebuild once on upgrade")
 	checkpointOffset := codexFollowerOffset(t, beforeRestart)
 
 	restored := &CodexTelemetryFollower{}
@@ -188,6 +195,181 @@ func TestCodexTelemetryFollower_CostFoldSurvivesRestartAndReadsAppend(t *testing
 	require.NotNil(t, got.Usage.FiveHour)
 	assert.Equal(t, 31.0, got.Usage.FiveHour.UsedPercent)
 	assert.Greater(t, codexFollowerOffset(t, restored), firstOffset, "restored follower consumes only the append")
+}
+
+func TestCodexTelemetryFollower_AggregatesNestedChildOwnedCostExactlyOnce(t *testing.T) {
+	home := t.TempDir()
+	const (
+		rootID  = "019ec004-4250-79b1-9ade-ebaea4135401"
+		childID = "019ec004-4250-79b1-9ade-ebaea4135402"
+		grandID = "019ec004-4250-79b1-9ade-ebaea4135403"
+	)
+	root := newFollowerTestRollout(t, home, rootID)
+	appendRolloutEnvelope(t, root, "turn_context", map[string]any{"model": "gpt-5.6-terra"})
+	appendTokenCount(t, root, 100, 0, 100)
+	appendSubagentActivity(t, root, childID, "started", "")
+
+	// Model a full-history fork: inherited priceable records precede the
+	// child's own session_meta. The child-owned boundary must discard them.
+	child := followerTestRolloutPath(t, home, childID)
+	appendRolloutEnvelope(t, child, "turn_context", map[string]any{"model": "gpt-5.6-terra"})
+	appendTokenCount(t, child, 100, 0, 100)
+	appendRolloutEnvelope(t, child, "session_meta", map[string]any{
+		"id": childID,
+		"source": map[string]any{"subagent": map[string]any{"thread_spawn": map[string]any{
+			"parent_thread_id": rootID, "depth": 1,
+		}}},
+		"thread_source": "subagent",
+	})
+	appendRolloutEnvelope(t, child, "turn_context", map[string]any{"model": "gpt-5.6-sol"})
+	appendTokenCount(t, child, 100, 0, 100)
+	appendSubagentActivity(t, child, grandID, "started", "")
+
+	grand := followerTestRolloutPath(t, home, grandID)
+	appendRolloutEnvelope(t, grand, "session_meta", map[string]any{"id": grandID})
+	appendRolloutEnvelope(t, grand, "turn_context", map[string]any{"model": "gpt-5.6-luna"})
+	appendTokenCount(t, grand, 100, 0, 100)
+
+	follower := &CodexTelemetryFollower{}
+	got, err := follower.RuntimeTelemetry(home, rootID)
+	require.NoError(t, err)
+	require.True(t, got.HasCost)
+	assert.InDelta(t, 0.00072, got.Cost.CostUSD, 1e-12,
+		"root + child + grandchild are priced once; copied root history is excluded")
+	require.Len(t, got.CostHistory, 1)
+	assert.InDelta(t, got.Cost.CostUSD, got.CostHistory[0].CostUSD, 1e-12)
+
+	checkpoint, ok, err := follower.Checkpoint()
+	require.NoError(t, err)
+	require.True(t, ok)
+	restored := &CodexTelemetryFollower{}
+	require.NoError(t, restored.RestoreCheckpoint(checkpoint))
+	require.Contains(t, restored.children, childID)
+	childOffset := codexFollowerOffset(t, restored.children[childID])
+	unchanged, err := restored.RuntimeTelemetry(home, rootID)
+	require.NoError(t, err)
+	assert.InDelta(t, got.Cost.CostUSD, unchanged.Cost.CostUSD, 1e-12,
+		"restart restores every thread cursor without replaying or double-counting")
+	assert.Equal(t, childOffset, codexFollowerOffset(t, restored.children[childID]),
+		"unchanged polling consumes zero additional child rollout bytes")
+
+	beforeAppendSize := statSize(t, child)
+	appendTokenCount(t, child, 200, 0, 200)
+	appendedByteCount := statSize(t, child) - beforeAppendSize
+	appended, err := restored.RuntimeTelemetry(home, rootID)
+	require.NoError(t, err)
+	assert.InDelta(t, 0.00172, appended.Cost.CostUSD, 1e-12,
+		"only the newly appended child request is added")
+	assert.Equal(t, appendedByteCount, codexFollowerOffset(t, restored.children[childID])-childOffset,
+		"child work is proportional to appended bytes, not its rollout prefix")
+
+	rawChild, err := os.ReadFile(child)
+	require.NoError(t, err)
+	enc, err := zstd.NewWriter(nil)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(child+".zst", enc.EncodeAll(rawChild, nil), 0o600))
+	enc.Close()
+	require.NoError(t, os.Remove(child))
+	archived, err := restored.RuntimeTelemetry(home, rootID)
+	require.NoError(t, err)
+	assert.InDelta(t, appended.Cost.CostUSD, archived.Cost.CostUSD, 1e-12,
+		"archive transition preserves the child-owned boundary and total")
+}
+
+func TestAggregateCodexRuntimeCosts_MergesDailyCumulativeHistories(t *testing.T) {
+	at := time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC)
+	parts := []CodexRuntimeSnapshot{
+		{
+			HasCost: true, CostAuthoritative: true,
+			Cost: CodexTokenCost{CostUSD: 3, Observed: at},
+			CostHistory: []CodexTokenCostDailySnapshot{
+				{Day: "2026-07-10", CostUSD: 1, Observed: at},
+				{Day: "2026-07-11", CostUSD: 3, Observed: at},
+			},
+		},
+		{
+			HasCost: true, CostAuthoritative: true,
+			Cost: CodexTokenCost{CostUSD: 5, Observed: at.Add(time.Hour)},
+			CostHistory: []CodexTokenCostDailySnapshot{
+				{Day: "2026-07-11", CostUSD: 4, Observed: at},
+				{Day: "2026-07-12", CostUSD: 5, Observed: at.Add(time.Hour)},
+			},
+		},
+	}
+
+	got := aggregateCodexRuntimeCosts(parts)
+	require.True(t, got.CostAuthoritative)
+	assert.Equal(t, 8.0, got.Cost.CostUSD)
+	require.Len(t, got.CostHistory, 3)
+	assert.Equal(t, []float64{1, 7, 8}, []float64{
+		got.CostHistory[0].CostUSD,
+		got.CostHistory[1].CostUSD,
+		got.CostHistory[2].CostUSD,
+	})
+}
+
+func TestCodexTelemetryFollower_ChildBoundarySurvivesMidForkRestart(t *testing.T) {
+	home := t.TempDir()
+	const childID = "019ec004-4250-79b1-9ade-ebaea4135412"
+	child := followerTestRolloutPath(t, home, childID)
+	appendRolloutEnvelope(t, child, "turn_context", map[string]any{"model": "gpt-5.6-terra"})
+	appendTokenCount(t, child, 100, 0, 100) // copied ancestor request
+
+	follower := &CodexTelemetryFollower{preserveMissing: true}
+	first, err := follower.RuntimeTelemetry(home, childID)
+	require.NoError(t, err)
+	assert.False(t, first.HasCost)
+	checkpoint, ok, err := follower.Checkpoint()
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	restored := &CodexTelemetryFollower{preserveMissing: true}
+	require.NoError(t, restored.RestoreCheckpoint(checkpoint))
+	appendTokenCount(t, child, 200, 0, 200) // more copied history after restart
+	appendRolloutEnvelope(t, child, "session_meta", map[string]any{"id": childID})
+	appendRolloutEnvelope(t, child, "turn_context", map[string]any{"model": "gpt-5.6-sol"})
+	appendTokenCount(t, child, 100, 0, 100) // first child-owned request
+	got, err := restored.RuntimeTelemetry(home, childID)
+	require.NoError(t, err)
+	require.True(t, got.HasCost)
+	assert.InDelta(t, 0.0005, got.Cost.CostUSD, 1e-12,
+		"restart before session_meta must not turn later copied records into child-owned usage")
+}
+
+func TestCodexTelemetryFollower_RebuildPrunesStaleChildCheckpoint(t *testing.T) {
+	home := t.TempDir()
+	const (
+		rootID  = "019ec004-4250-79b1-9ade-ebaea4135421"
+		childID = "019ec004-4250-79b1-9ade-ebaea4135422"
+	)
+	root := newFollowerTestRollout(t, home, rootID)
+	appendSubagentActivity(t, root, childID, "started", "")
+	child := newFollowerTestRollout(t, home, childID)
+	appendRolloutEnvelope(t, child, "turn_context", map[string]any{"model": "gpt-5.6-sol"})
+	appendTokenCount(t, child, 100, 0, 100)
+
+	follower := &CodexTelemetryFollower{}
+	first, err := follower.RuntimeTelemetry(home, rootID)
+	require.NoError(t, err)
+	require.True(t, first.HasCost)
+	require.Contains(t, follower.children, childID)
+
+	replacement := append(rolloutEnvelope(t, "session_meta", map[string]any{"id": rootID}), '\n')
+	require.NoError(t, os.WriteFile(root, replacement, 0o600))
+	rebuilt, err := follower.RuntimeTelemetry(home, rootID)
+	require.NoError(t, err)
+	assert.False(t, rebuilt.HasCost)
+	assert.NotContains(t, follower.children, childID)
+
+	checkpoint, ok, err := follower.Checkpoint()
+	require.NoError(t, err)
+	require.True(t, ok)
+	restored := &CodexTelemetryFollower{}
+	require.NoError(t, restored.RestoreCheckpoint(checkpoint))
+	afterRestart, err := restored.RuntimeTelemetry(home, rootID)
+	require.NoError(t, err)
+	assert.False(t, afterRestart.HasCost, "stale child cost must not resurrect after restart")
+	assert.NotContains(t, restored.state.discoveredSubagents, childID)
 }
 
 func TestCodexTelemetryFollower_CheckpointInvalidationRebuilds(t *testing.T) {
@@ -608,13 +790,19 @@ func appendRolloutEnvelope(t *testing.T, path, typ string, payload any) {
 
 func newFollowerTestRollout(t *testing.T, home, id string) string {
 	t.Helper()
+	path := followerTestRolloutPath(t, home, id)
+	appendRolloutEnvelope(t, path, "session_meta", map[string]any{
+		"id": id, "cwd": "/tmp/project", "timestamp": "2026-07-12T10:00:00Z",
+	})
+	return path
+}
+
+func followerTestRolloutPath(t *testing.T, home, id string) string {
+	t.Helper()
 	dir := filepath.Join(home, ".codex", "sessions", "2026", "07", "12")
 	require.NoError(t, os.MkdirAll(dir, 0o755))
 	path := filepath.Join(dir, "rollout-2026-07-12T10-00-00-"+id+".jsonl")
 	require.NoError(t, os.WriteFile(path, nil, 0o600))
-	appendRolloutEnvelope(t, path, "session_meta", map[string]any{
-		"id": id, "cwd": "/tmp/project", "timestamp": "2026-07-12T10:00:00Z",
-	})
 	return path
 }
 
