@@ -1,10 +1,5 @@
 package session
 
-import (
-	"sync"
-	"time"
-)
-
 // Downward process-tree enumeration.
 //
 // The existing /proc helpers in process_unix.go all walk UPWARD (a hook
@@ -82,7 +77,7 @@ func DescendantCommandLines(rootPID int) ([]string, bool) {
 	if out, ok, supported := descendantCommandLinesViaChildren(rootPID); supported {
 		return out, ok
 	}
-	table, ok := cachedProcTable()
+	table, ok := readProcTable()
 	if !ok {
 		return nil, false
 	}
@@ -110,34 +105,11 @@ func DescendantCommandLines(rootPID int) ([]string, bool) {
 	return out, true
 }
 
-// procTableMemoTTL bounds how stale a shared process-table snapshot may be.
-//
-// The fallback path (and macOS, whose snapshot is a `ps` fork rather than a
-// directory scan) is otherwise re-taken once per agent per poll, so a roster of
-// N agents pays N identical snapshots two seconds apart. One second is below
-// the reconcile's own bgShellReconcileMinInterval, so sharing a snapshot inside
-// a poll cannot make a badge any staler than the caller already tolerates.
-const procTableMemoTTL = time.Second
-
-var procTableMemo struct {
-	sync.Mutex
-	at    time.Time
-	table procTable
-	ok    bool
-}
-
-// cachedProcTable returns a recent process-table snapshot, taking a new one
-// only when the last is older than procTableMemoTTL. The snapshot is immutable
-// once built, so concurrent callers may share it.
-func cachedProcTable() (procTable, bool) {
-	procTableMemo.Lock()
-	defer procTableMemo.Unlock()
-	if !procTableMemo.at.IsZero() && time.Since(procTableMemo.at) < procTableMemoTTL {
-		return procTableMemo.table, procTableMemo.ok
-	}
-	table, ok := readProcTable()
-	procTableMemo.at = time.Now()
-	procTableMemo.table = table
-	procTableMemo.ok = ok
-	return table, ok
-}
+// The snapshot is deliberately NOT memoized across calls, even though a roster
+// of N agents on the fallback path pays N of them per poll. The caller's own
+// read-through cache is keyed on the ledger JSON precisely so that a hook
+// launching new background work invalidates it immediately rather than making
+// that work wait out an interval — and a snapshot taken before the fork is not
+// "slightly stale", it is evidence that the shell is not running, which retires
+// the ledger entry permanently. Sharing a snapshot inside a poll would reopen
+// that window for every agent reconciled after the first.

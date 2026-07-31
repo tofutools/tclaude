@@ -3,6 +3,7 @@
 package session
 
 import (
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -116,10 +117,19 @@ func descendantCommandLinesViaChildren(rootPID int) (out []string, ok bool, supp
 		if cmd := readProcCmdline(pid); cmd != "" {
 			out = append(out, cmd)
 		}
-		// A descendant that exits mid-walk simply contributes no children;
-		// that is normal, not a failure of the whole enumeration.
-		if kids, err := readProcChildren(pid); err == nil {
+		kids, err := readProcChildren(pid)
+		switch {
+		case err == nil:
 			queue = append(queue, kids...)
+		case errors.Is(err, fs.ErrNotExist):
+			// The descendant exited between being named and being read. That
+			// is normal, and it took its own subtree with it.
+		default:
+			// Anything else — a hidepid mount refusing, fd exhaustion — means
+			// this subtree was NOT enumerated. Reporting the truncated answer
+			// as ok would read as "that background shell is gone" and retire a
+			// live ledger entry, so say "cannot tell" instead.
+			return nil, false, true
 		}
 	}
 	return out, true, true
@@ -127,6 +137,12 @@ func descendantCommandLinesViaChildren(rootPID int) (out []string, ok bool, supp
 
 // readProcChildren returns the pids the kernel reports as children of pid,
 // unioned across all of its threads.
+//
+// fs.ErrNotExist means the process (or every one of its threads) is gone, or
+// the kernel has no children file at all — indistinguishable from here, which
+// is fine: at the root it selects the fallback walk, and below it the process
+// simply has no subtree left to report. Any OTHER error is a genuine failure to
+// read and is propagated so the caller can refuse to answer.
 func readProcChildren(pid int) ([]int, error) {
 	taskDir := filepath.Join("/proc", strconv.Itoa(pid), "task")
 	tids, err := os.ReadDir(taskDir)
@@ -134,13 +150,16 @@ func readProcChildren(pid int) ([]int, error) {
 		return nil, err
 	}
 	var out []int
-	unreadable := 0
+	gone := 0
 	for _, tid := range tids {
 		data, err := os.ReadFile(filepath.Join(taskDir, tid.Name(), "children"))
 		if err != nil {
-			// One thread exiting mid-read is normal; every thread failing means
-			// the children interface is not available for this process.
-			unreadable++
+			// One thread exiting mid-read is normal; every thread failing that
+			// way means there is nothing here to enumerate.
+			if !errors.Is(err, fs.ErrNotExist) {
+				return nil, err
+			}
+			gone++
 			continue
 		}
 		for _, field := range strings.Fields(string(data)) {
@@ -149,7 +168,7 @@ func readProcChildren(pid int) ([]int, error) {
 			}
 		}
 	}
-	if unreadable == len(tids) {
+	if gone == len(tids) {
 		return nil, fs.ErrNotExist
 	}
 	return out, nil

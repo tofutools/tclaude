@@ -68,9 +68,11 @@ func parsePSLine(line string) (pid, ppid int, command string, ok bool) {
 	return pid, ppid, strings.TrimSpace(rest[second:]), true
 }
 
-// descendantCommandLinesViaChildren reports supported=false here. Darwin has no /proc, so there is no per-process children list to read;
-// the `ps` snapshot above is already one syscall-cheap fork for the whole
-// host, and cachedProcTable keeps a poll from taking several.
+// descendantCommandLinesViaChildren reports supported=false here.
+//
+// Darwin has no /proc, so there is no per-process children list to ask for and
+// the caller falls back to the `ps` snapshot above — one fork for the whole
+// host, which is what this platform paid before this optimisation existed.
 func descendantCommandLinesViaChildren(int) (out []string, ok bool, supported bool) {
 	return nil, false, false
 }

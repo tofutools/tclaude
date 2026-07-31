@@ -3,6 +3,8 @@
 package session
 
 import (
+	"errors"
+	"io/fs"
 	"os/exec"
 	"sort"
 	"testing"
@@ -38,7 +40,11 @@ func TestDescendantCommandLines_SubtreeMatchesFullScan(t *testing.T) {
 	root := startTree(t)
 
 	viaChildren, ok, supported := descendantCommandLinesViaChildren(root)
-	require.True(t, supported, "this kernel exposes /proc/<pid>/task/<tid>/children")
+	if !supported {
+		// CONFIG_PROC_CHILDREN absent, or a container hiding it — the very case
+		// the fallback exists for. Nothing to compare, and not a defect.
+		t.Skip("this kernel does not expose /proc/<pid>/task/<tid>/children")
+	}
 	require.True(t, ok)
 
 	table, tableOK := readProcTable()
@@ -67,7 +73,9 @@ func TestDescendantCommandLines_DeadRootCannotTell(t *testing.T) {
 func TestDescendantCommandLines_LeafReportsNothingRunning(t *testing.T) {
 	root := startTree(t)
 	leaves, ok, supported := descendantCommandLinesViaChildren(root)
-	require.True(t, supported)
+	if !supported {
+		t.Skip("this kernel does not expose /proc/<pid>/task/<tid>/children")
+	}
 	require.True(t, ok)
 	require.NotEmpty(t, leaves)
 
@@ -87,6 +95,26 @@ func TestDescendantCommandLines_LeafReportsNothingRunning(t *testing.T) {
 	assert.True(t, supported)
 	assert.True(t, ok, "a readable-but-empty children list is an answer")
 	assert.Empty(t, lines, "a leaf has no descendants")
+}
+
+// readProcChildren's error is what the whole ok/supported contract is built on,
+// so the two cases the walk distinguishes are pinned directly: a live process
+// answers, and a pid with nothing behind it reports fs.ErrNotExist rather than
+// an empty success — which at the root selects the fallback walk and below it
+// means "this descendant is gone", never "nothing is running".
+func TestReadProcChildren_DistinguishesGoneFromAnswered(t *testing.T) {
+	root := startTree(t)
+	kids, err := readProcChildren(root)
+	if errors.Is(err, fs.ErrNotExist) {
+		t.Skip("this kernel does not expose /proc/<pid>/task/<tid>/children")
+	}
+	require.NoError(t, err)
+	assert.Len(t, kids, 2, "the shell's two sleeps")
+
+	// A pid the kernel has nothing for at all.
+	_, err = readProcChildren(1 << 30)
+	assert.ErrorIs(t, err, fs.ErrNotExist,
+		"an absent process is a non-answer, not an empty children list")
 }
 
 // descendantsFromTable is the pre-existing full-scan walk, kept here as the
