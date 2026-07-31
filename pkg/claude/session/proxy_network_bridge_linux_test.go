@@ -582,11 +582,19 @@ func TestTclaudeLayerWinchRelayStartsAProxySandbox(t *testing.T) {
 	policy, err := encodeProxyNetworkRelayPolicy(plan)
 	require.NoError(t, err)
 
-	// Reports a child on bubblewrap's JSON status descriptor and exits, which
-	// is the shortest path through the supervisor's start sequence.
+	// Reports a child on bubblewrap's JSON status descriptor, then STAYS ALIVE.
+	//
+	// Staying alive is load-bearing, not tidiness. The supervisor pins the
+	// reported child with PidfdOpen immediately after reading it; a stand-in
+	// that has already exited makes that call return ESRCH, and the supervisor
+	// takes its child-already-gone path — returning the child's own exit status
+	// and NEVER reaching the readiness wait this test is about. The assertions
+	// below then fail with a nil error on a fast or loaded runner, which is a
+	// race in the test rather than a defect in the supervisor.
 	fakeBwrap := filepath.Join(t.TempDir(), "bwrap")
 	require.NoError(t, os.WriteFile(fakeBwrap,
-		[]byte("#!/bin/sh\nprintf '{\"child-pid\":%d}' \"$$\" >&3\n"), 0o700))
+		[]byte("#!/bin/sh\nprintf '{\"child-pid\":%d}' \"$$\" >&3\nsleep 30\n"),
+		0o700))
 
 	code, err := runTclaudeLayerWinchRelay(
 		[]string{fakeBwrap, "--", "/bin/true"}, nil,
@@ -825,9 +833,13 @@ func TestProxyNetworkHostsFileReachesTheNamedDescriptor(t *testing.T) {
 
 	observed := filepath.Join(t.TempDir(), "hosts-at-fd")
 	fakeBwrap := filepath.Join(t.TempDir(), "bwrap")
+	// Stays alive after reporting, for the reason spelled out on the sibling
+	// test above: an exited stand-in makes the supervisor's PidfdOpen return
+	// ESRCH, so it never reaches the readiness wait and returns nil instead of
+	// the failure this test requires.
 	require.NoError(t, os.WriteFile(fakeBwrap, []byte(
 		"#!/bin/sh\ncat <&"+strconv.Itoa(proxyNetworkHostsFD)+" >"+observed+
-			"\nprintf '{\"child-pid\":%d}' \"$$\" >&3\n"), 0o700))
+			"\nprintf '{\"child-pid\":%d}' \"$$\" >&3\nsleep 30\n"), 0o700))
 
 	_, err = runTclaudeLayerWinchRelay(
 		[]string{fakeBwrap, "--", "/bin/true"}, nil,
