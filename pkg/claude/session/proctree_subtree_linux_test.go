@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os/exec"
 	"sort"
+	"syscall"
 	"testing"
 	"time"
 
@@ -19,9 +20,13 @@ import (
 func startTree(t *testing.T) int {
 	t.Helper()
 	cmd := exec.Command("/bin/sh", "-c", "sleep 30 & sleep 31; wait")
+	// Own process group, so cleanup can take the whole subtree. Killing the
+	// shell alone would orphan the two sleeps for another half minute — and the
+	// point of this fixture is precisely that they are separate processes.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	require.NoError(t, cmd.Start())
 	t.Cleanup(func() {
-		_ = cmd.Process.Kill()
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 		_, _ = cmd.Process.Wait()
 	})
 	pid := cmd.Process.Pid
