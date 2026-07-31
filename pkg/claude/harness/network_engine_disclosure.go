@@ -33,8 +33,14 @@ const ProxyEngineCarriageNotice = "The filtering proxy carries HTTP, HTTPS, and 
 // posture whose enforcement is unavailable: widen to open, disclosed. Naming
 // the remedy is the point — an operator reading "nothing is enforced" needs to
 // know it is pending activation evidence rather than a broken profile.
-const ProxyEngineNotActivatedNotice = "The proxy filtering engine is selected but not yet activated: its capability cells stay unenforced " +
-	"until the per-harness carriage smokes land, so these rules are not enforced here and outbound network access remains open."
+// It says "for this target" rather than naming the smokes as the only blocker,
+// because activation is per harness, platform AND sandbox implementation: a
+// configuration can be unactivated for a reason the carriage smokes will never
+// change, and a notice promising that landing them is the remedy would be wrong
+// for exactly those configurations.
+const ProxyEngineNotActivatedNotice = "The proxy filtering engine is selected but not activated for this target: its capability cells stay unenforced here, " +
+	"so these rules are not enforced and outbound network access remains open. " +
+	"Activation is per harness, platform and sandbox implementation, and lands with the carriage smokes that prove each one."
 
 // ProxyEngineLatentSelectionNotice is §1.3-4. Selecting an engine for a policy
 // that needs no filtering is not an error; the selection is latent and takes
@@ -168,10 +174,39 @@ func ProxyEngineActivationSmokes(harnessName string) []string {
 // flattering one: host and domain LOSE the TTL/shared-IP caveat and become
 // genuinely Full, while CIDR DROPS from Full to Partial.
 const (
-	// ProxyEngineNameSelectorDetail is why a name rule is Full here and only
-	// caveated Full under the packet gateway.
+	// ProxyEngineNameSelectorDetail is why an ALLOW name rule is Full here and
+	// only caveated Full under the packet gateway.
+	//
+	// It carries the private-destination blocker too. That blocker refuses an
+	// authored name whose ANSWER lands in loopback, link-local, RFC1918, CGNAT
+	// or other reserved space unless a cidr or loopback rule covers it — which
+	// is narrower than the operator authored, and a profile that works under
+	// the packet gateway can stop working here. Narrower is not a security
+	// over-claim, but an undisclosed narrowing is still a rendered surface that
+	// does not match the mechanism.
 	ProxyEngineNameSelectorDetail = "Enforced on the host name the client requests, before resolution. " +
-		"There is no DNS-lease caveat: no address-lease window exists, and a shared IP address grants no authority."
+		"There is no DNS-lease caveat: no address-lease window exists, and a shared IP address grants no authority. " +
+		"A name that resolves into loopback, link-local, private or other reserved address space is refused unless a cidr or loopback rule also covers it."
+
+	// ProxyEngineDenyNameSelectorDetail is why a DENY name rule is Partial.
+	//
+	// The proxy decides on the identity the CLIENT states, and the client
+	// chooses whether to state a name or an address. A name deny is never
+	// matched against an IP literal — there is no TLS interception to recover
+	// the name from — so a client that asks for the denied host's address
+	// directly is not covered by the rule. Under a default-allow baseline that
+	// literal is simply allowed; under a list baseline it is allowed whenever
+	// some cidr rule covers the address.
+	//
+	// This is rated Partial UNCONDITIONALLY rather than only under an open
+	// baseline, even though the escape needs a reachable literal. Whether one
+	// is reachable depends on the whole rule set, and a cell that flipped
+	// between Full and Partial as unrelated cidr rows were edited would be a
+	// rating an operator cannot reason about. Partial with the escape named is
+	// the honest, stable answer.
+	ProxyEngineDenyNameSelectorDetail = "Enforced on the host name the client requests, before resolution, with no DNS-lease caveat. " +
+		"It does not cover a client that asks for the address literally: a name deny is not matched against an IP literal, " +
+		"so add a cidr deny for the addresses this name resolves to if the destination must be blocked by address as well."
 
 	// ProxyEngineCIDRSelectorDetail is the honest cost of the L7 view.
 	ProxyEngineCIDRSelectorDetail = "Enforced only when the client asks for this address literally, through the tclaude proxy. " +

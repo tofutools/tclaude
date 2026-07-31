@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/sandboxproxy"
 )
 
 func proxyEngineRules(allow ...sandboxpolicy.NetworkAllowEntry) sandboxpolicy.NetworkRules {
@@ -390,12 +391,15 @@ func TestProxyEngineActivationIsScopedToItsEvidence(t *testing.T) {
 		require.True(t, ok)
 		assert.Equal(t, EnforcePartial, cidr.Level,
 			"CIDR drops to Partial under an L7 view and must not be over-claimed")
-		// §5.2: deny names stay Full, which is where this engine is strictly
-		// better than the packet gateway rather than worse.
+		// Deny names are Partial, not Full. The engine has no DNS broker to
+		// bypass, but it decides on the identity the client states, and a name
+		// deny is never matched against an IP literal.
 		denyHost, ok := networkSelectorCapability(predicted.NetworkDenySelectors,
 			string(sandboxpolicy.NetworkSelectorHost))
 		require.True(t, ok)
-		assert.Equal(t, EnforceFull, denyHost.Level)
+		assert.Equal(t, EnforcePartial, denyHost.Level,
+			"a name deny does not cover a client that asks by address")
+		assert.Contains(t, denyHost.Detail, "asks for the address literally")
 	}
 
 	// Boundary 1: an unlisted harness keeps EnforceNone and still says it is
@@ -466,5 +470,79 @@ func TestActivatedProxyEngineStopsWideningToOpen(t *testing.T) {
 		assert.NotEqualf(t, "no_mechanism", notice.Reason,
 			"the widen-to-open warning must stop firing once the cells are activated: %s",
 			notice.Detail)
+	}
+}
+
+// TestProxyEngineDenyNameRatingMatchesTheEvaluator is the test whose absence let
+// a Full rating stand: every other proxy assertion runs against a list policy,
+// where the escape needs a cidr row to bite, so the rating was only ever pinned
+// in the shape where it was least wrong.
+//
+// It compares the RATING against the real evaluator rather than against a
+// second opinion about the rating. A name deny that the evaluator does not
+// apply to a literal cannot be rendered as fully enforced, whichever baseline
+// the policy uses.
+func TestProxyEngineDenyNameRatingMatchesTheEvaluator(t *testing.T) {
+	const denied = "evil.example.com"
+	const deniedAddr = "93.184.216.34"
+
+	for _, testCase := range []struct {
+		name  string
+		rules sandboxpolicy.NetworkRules
+	}{
+		{
+			// Default-allow: the literal is simply allowed.
+			name: "open baseline",
+			rules: sandboxpolicy.NetworkRules{
+				Mode:   sandboxpolicy.AccessModeOpen,
+				Deny:   []sandboxpolicy.NetworkAllowEntry{{Host: denied}},
+				Engine: sandboxpolicy.NetworkEngineProxy,
+			},
+		},
+		{
+			// Allowlist: the literal is allowed because a cidr row covers it,
+			// so the deny is escaped without any DNS trickery at all.
+			name: "list baseline with a covering cidr rule",
+			rules: sandboxpolicy.NetworkRules{
+				Mode: sandboxpolicy.AccessModeList,
+				Allow: []sandboxpolicy.NetworkAllowEntry{
+					{CIDR: "93.184.216.0/24", Ports: []int{443}},
+				},
+				Deny:   []sandboxpolicy.NetworkAllowEntry{{Host: denied}},
+				Engine: sandboxpolicy.NetworkEngineProxy,
+			},
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			evaluator, err := sandboxproxy.NewEvaluator(testCase.rules)
+			require.NoError(t, err)
+
+			byName, err := sandboxproxy.ParseTarget(denied, 443)
+			require.NoError(t, err)
+			require.False(t, evaluator.Evaluate(byName).Allowed(),
+				"the deny must hold for the name it was authored against")
+
+			byLiteral, err := sandboxproxy.ParseTarget(deniedAddr, 443)
+			require.NoError(t, err)
+			escaped := evaluator.Evaluate(byLiteral).Allowed()
+
+			predicted, err := PredictAccessEnforcement(
+				Default(), sandboxpolicy.ImplementationTclaudeLayer,
+				sandboxpolicy.ResolvedAxes{Network: testCase.rules}, "", "linux",
+			)
+			require.NoError(t, err)
+			capability, ok := networkSelectorCapability(
+				predicted.NetworkDenySelectors,
+				string(sandboxpolicy.NetworkSelectorHost))
+			require.True(t, ok)
+
+			if escaped {
+				assert.NotEqualf(t, EnforceFull, capability.Level,
+					"the evaluator carried %s:443 past a deny on %s, so the cell must not claim full enforcement",
+					deniedAddr, denied)
+				assert.NotEmpty(t, capability.Detail,
+					"a partial rating must say what it does not cover")
+			}
+		})
 	}
 }

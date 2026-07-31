@@ -473,21 +473,25 @@ func accessEnforcementTable(
 				},
 			}
 			caps.NetworkPorts = EnforceFull
-			// Deny keeps its name selectors at Full even under an open baseline,
-			// where the packet gateway must drop to Partial with the DNS-deny
-			// caveat: encrypted DNS or a second address escapes a broker, and
-			// there is no broker here. The proxy sees the requested name on
-			// every request, so the deny has nothing to miss.
+			// Deny name selectors are PARTIAL, and the reason is worth stating
+			// here because the tempting rating is Full. The proxy has no DNS
+			// broker to bypass, so it is immune to the escape that forces the
+			// packet gateway down — but it decides on the identity the CLIENT
+			// states, and a client may state an address instead of a name. A
+			// name deny is never matched against a literal, and there is no TLS
+			// interception to recover the name, so the denied host's address
+			// reaches the destination whenever anything else authorizes it.
+			// Rating this Full would claim a block the engine does not deliver.
 			caps.NetworkDenySelectors = []NetworkSelectorCapability{
 				{
 					Selector: string(sandboxpolicy.NetworkSelectorHost),
-					Level:    EnforceFull,
-					Detail:   ProxyEngineNameSelectorDetail,
+					Level:    EnforcePartial,
+					Detail:   ProxyEngineDenyNameSelectorDetail,
 				},
 				{
 					Selector: string(sandboxpolicy.NetworkSelectorDomain),
-					Level:    EnforceFull,
-					Detail:   ProxyEngineNameSelectorDetail,
+					Level:    EnforcePartial,
+					Detail:   ProxyEngineDenyNameSelectorDetail,
 				},
 				{
 					Selector: string(sandboxpolicy.NetworkSelectorCIDR),
