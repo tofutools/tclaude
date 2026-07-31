@@ -129,11 +129,13 @@ func proxyNetworkRelayPrefix(plan sandboxpolicy.MountPlan) (string, error) {
 // exactly those two things visible inside the namespace.
 //
 // Note what is NOT here, compared with the packet relay: no capability
-// arguments, no nft policy, no hosts or resolver files, no pasta. The proxy
-// engine's whole in-namespace footprint is one sealed executable, which the
-// bootstrap unlinks before exec'ing the harness, and one bind-mounted readiness
+// arguments, no nft policy, no resolver files, no pasta. The proxy engine's
+// whole in-namespace footprint is three things: one sealed executable, which
+// the bootstrap unlinks before exec'ing the harness; one bind-mounted readiness
 // socket whose host end is closed and unlinked once the single handoff it
-// exists for has been accepted.
+// exists for has been accepted; and the sealed loopback-only /etc/hosts bound
+// read-only over the host's, which is what the engine's name authority rests on
+// — see the hosts-file comment below and ProxyNetworkHostsFile.
 func prepareProxyNetworkRelay(
 	encoded string,
 ) (_ preparedProxyNetworkRelay, retErr error) {
