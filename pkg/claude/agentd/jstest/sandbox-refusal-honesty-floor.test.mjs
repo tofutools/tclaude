@@ -1,0 +1,131 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { createPreactHarness } from './preact-harness.mjs';
+
+/* TCL-885 HONESTY FLOOR.
+
+   This suite guards the one property that must hold no matter which per-target
+   refusal ROW TYPE the operator eventually chooses, and it should outlive that
+   decision.
+
+   A refused target arrives from the daemon with NO axes. sandboxRuleBuckets
+   substitutes {outcome:'not_enforced', detail:'No enforcement verdict was
+   returned.'} for a missing axis so an OLD daemon degrades gracefully. If a
+   refusal ever reaches that path, the preview says "unsupported, no verdict
+   returned" with launchRefused FALSE and shows no alert — the operator is told
+   nothing is wrong while the launch is in fact blocked. That is strictly worse
+   than the plain 400 this ticket replaced, so it is a correctness floor rather
+   than a design choice.
+
+   The renderer branch under test is deliberately minimal and commits to none of
+   the mocked options; what it renders may change, that it renders must not. */
+
+const REFUSAL = {
+  kind: 'unsupported_sandbox_profile_network_allowlist',
+  message: 'missing capability proxy_engine_name_authority: the Proxy filter engine '
+    + 'loses name authority; narrow that grant, deny the resolver socket, or select '
+    + 'the Packet filter engine',
+};
+
+const CONTEXT = {
+  filesystem: [{ path: '/run/systemd/resolve', access: 'read' }],
+  network: { mode: 'list', allow: [{ domain: 'example.com', ports: [443] }] },
+  agentd_socket: 'always reachable',
+};
+
+const REFUSED_TARGET = {
+  target: { implementation: 'tclaude-layer', harness: 'claude', platform: 'linux' },
+  predicted: false,
+  axes: {},
+  refusal: REFUSAL,
+};
+
+// Same shape, same absent axes, but no refusal — an OLD daemon that simply
+// omitted the axes. The two must not render alike.
+const OLD_DAEMON_TARGET = {
+  target: { implementation: 'tclaude-layer', harness: 'claude', platform: 'linux' },
+  predicted: true,
+  axes: {},
+};
+
+async function renderTarget(harness, target) {
+  const { SandboxPolicyResult } = await harness.importDashboardModule('js/management-island.js');
+  const mounted = await harness.mount(harness.html`
+    <${SandboxPolicyResult} target=${target} context=${CONTEXT} contextIndex=${0}/>`);
+  return mounted.container;
+}
+
+test('a refused target renders as launch-blocked, carrying the capability and its remedy', async (t) => {
+  const harness = await createPreactHarness(t);
+  const container = await renderTarget(harness, REFUSED_TARGET);
+
+  const alert = container.querySelector('.sbx-launch-blocked');
+  assert.ok(alert, 'a refused target must render the launch-blocked alert');
+  assert.equal(alert.getAttribute('role'), 'alert',
+    'the refusal must be announced, not merely displayed');
+  assert.match(alert.textContent, /launch is refused/);
+  // Discriminating: the specific missing capability and the named remedy, not a
+  // generic "blocked".
+  assert.match(alert.textContent, /proxy_engine_name_authority/);
+  assert.match(alert.textContent, /Packet filter engine/);
+
+  // And specifically NOT the missing-axis fallback's wording or bucketing.
+  assert.doesNotMatch(container.textContent, /No enforcement verdict was returned/,
+    'a refusal must never reach the missing-axis fallback');
+  assert.equal(container.querySelector('.sbx-rule-bucket'), null,
+    'no verdict was reached, so no bucket may claim one');
+});
+
+test('an old daemon\'s missing axes render differently from a refusal', async (t) => {
+  const harness = await createPreactHarness(t);
+  const refused = (await renderTarget(harness, REFUSED_TARGET)).innerHTML;
+  const oldDaemon = (await renderTarget(harness, OLD_DAEMON_TARGET)).innerHTML;
+  assert.notEqual(refused, oldDaemon,
+    'the two states must be visibly distinct, or a refusal reads as "not enforced"');
+
+  const container = await renderTarget(harness, OLD_DAEMON_TARGET);
+  // The old-daemon path keeps its documented behaviour: rules listed as
+  // unsupported with the fallback reason, and NO launch-blocked alert — an
+  // absent verdict is not a refusal, and claiming otherwise would over-state
+  // what is blocked.
+  assert.ok(container.querySelector('.sbx-rule-bucket'));
+  assert.match(container.textContent, /No enforcement verdict was returned/);
+  assert.equal(container.querySelector('.sbx-launch-blocked'), null);
+});
+
+test('a refused target is flagged as needing attention', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { sandboxPolicyNeedsAttention } = await harness.importDashboardModule('js/management-island.js');
+  assert.equal(sandboxPolicyNeedsAttention(REFUSED_TARGET, CONTEXT, 0), true,
+    'a blocked launch must open its section rather than sit collapsed');
+});
+
+test('a refusal in one context leaves the other contexts rendering normally', async (t) => {
+  const harness = await createPreactHarness(t);
+  const target = {
+    target: { implementation: 'tclaude-layer', harness: 'claude', platform: 'linux' },
+    predicted: true,
+    axes: { filesystem: { outcome: 'enforced', tier: '1 read rule', detail: 'aggregate' } },
+    context_axes: [
+      {
+        filesystem: { outcome: 'enforced', tier: '1 read rule', detail: 'enforced here' },
+        network: { outcome: 'enforced', tier: 'list', detail: 'enforced here' },
+        unix_sockets: { outcome: 'enforced', tier: 'unset', detail: 'enforced here' },
+      },
+      {},
+    ],
+    context_refusals: [null, REFUSAL],
+  };
+  const { SandboxPolicyResult } = await harness.importDashboardModule('js/management-island.js');
+
+  const clean = await harness.mount(harness.html`
+    <${SandboxPolicyResult} target=${target} context=${CONTEXT} contextIndex=${0}/>`);
+  assert.equal(clean.container.querySelector('.sbx-launch-blocked'), null,
+    'a sibling context\'s refusal must not darken this one');
+  assert.ok(clean.container.querySelector('.sbx-rule-bucket-applied'));
+
+  const refused = await harness.mount(harness.html`
+    <${SandboxPolicyResult} target=${target} context=${CONTEXT} contextIndex=${1}/>`);
+  assert.ok(refused.container.querySelector('.sbx-launch-blocked'));
+  assert.match(refused.container.textContent, /proxy_engine_name_authority/);
+});

@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"runtime"
@@ -14,6 +15,49 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
+// sandboxProfileEnforcementRefusal is the preview's per-target rendering of a
+// typed *harness.SandboxCapabilityError: this target's harness cannot faithfully
+// enforce this policy, so a launch against it would be refused outright.
+//
+// It is deliberately NOT expressed as an axis verdict. The refusal is a property
+// of the (policy, target) pair decided before any individual rule was judged, so
+// there are no axes to report; presenting one would claim a per-rule verdict the
+// evaluator never produced. Consumers must therefore branch on this field before
+// reading Axes — a refused target carries the zero PredictedAccessAxes, which is
+// indistinguishable from an old daemon's missing axes.
+type sandboxProfileEnforcementRefusal struct {
+	Kind    string `json:"kind"`
+	Harness string `json:"harness,omitempty"`
+	Message string `json:"message"`
+}
+
+// sandboxProfilePredictionRefusal is the ONE rule for which prediction errors
+// become a per-target refusal row instead of failing the whole request.
+//
+// Per-target: a typed *harness.SandboxCapabilityError. It says a well-formed
+// target cannot enforce a well-formed policy, which is a verdict about that
+// target alone; the other targets in the same request are unaffected and keep
+// their normal rows.
+//
+// Whole-request: everything else. An unparseable --for target, an unresolvable
+// sandbox mode, and an invalid profile or draft are all malformed REQUESTS —
+// they are detected before prediction and there is no valid target to attach a
+// row to. An untyped error out of PredictAccessEnforcement means the evaluator's
+// own contract was violated (for instance capabilities that never passed the
+// implementation gate); degrading that to a row would report a broken evaluator
+// as a policy verdict.
+func sandboxProfilePredictionRefusal(err error) *sandboxProfileEnforcementRefusal {
+	var capability *harness.SandboxCapabilityError
+	if !errors.As(err, &capability) {
+		return nil
+	}
+	return &sandboxProfileEnforcementRefusal{
+		Kind:    capability.Kind,
+		Harness: capability.Harness,
+		Message: capability.Message,
+	}
+}
+
 type sandboxProfileEnforcementTarget struct {
 	Implementation string                      `json:"implementation"`
 	Harness        string                      `json:"harness"`
@@ -21,6 +65,8 @@ type sandboxProfileEnforcementTarget struct {
 	Predicted      bool                        `json:"predicted"`
 	Axes           harness.PredictedAccessAxes `json:"axes"`
 	Caveat         string                      `json:"caveat,omitempty"`
+	// Refusal is set exactly when Predicted is false.
+	Refusal *sandboxProfileEnforcementRefusal `json:"refusal,omitempty"`
 }
 
 type sandboxProfileEnforcementResponse struct {
@@ -54,6 +100,14 @@ type sandboxProfileDraftEnforcementTarget struct {
 	NetworkEntries        []harness.PredictedNetworkEntry        `json:"network_entries,omitempty"`
 	ContextAxes           []harness.PredictedAccessAxes          `json:"context_axes,omitempty"`
 	ContextNetworkEntries [][]harness.PredictedNetworkEntry      `json:"context_network_entries,omitempty"`
+	// Refusal is set exactly when Predicted is false: this target refuses the
+	// whole policy, and Axes/ContextAxes carry no verdict.
+	Refusal *sandboxProfileEnforcementRefusal `json:"refusal,omitempty"`
+	// ContextRefusals is index-aligned with ContextAxes. A non-nil entry means
+	// that effective assignment context refuses on this target while the others
+	// keep their ordinary rows; the aligned ContextAxes entry is the zero value
+	// and must not be read as a verdict.
+	ContextRefusals []*sandboxProfileEnforcementRefusal `json:"context_refusals,omitempty"`
 }
 
 type sandboxProfileEffectiveContext struct {
@@ -134,6 +188,18 @@ func handleSandboxProfileEnforcement(w http.ResponseWriter, r *http.Request) {
 			target.harness, target.implementation, axes, mode, target.platform,
 		)
 		if err != nil {
+			// A capability conflict is this target's verdict, not this request's
+			// error: the remaining --for targets are unaffected and still render.
+			if refusal := sandboxProfilePredictionRefusal(err); refusal != nil {
+				response.Targets = append(response.Targets, sandboxProfileEnforcementTarget{
+					Implementation: string(target.implementation),
+					Harness:        target.harness.Name,
+					Platform:       target.platform,
+					Predicted:      false,
+					Refusal:        refusal,
+				})
+				continue
+			}
 			writeError(w, http.StatusBadRequest, "invalid_arg",
 				fmt.Sprintf("invalid --for target %q: %v", raw, err))
 			return
@@ -243,11 +309,27 @@ func handleSandboxProfileDraftEnforcement(w http.ResponseWriter, r *http.Request
 			writeError(w, http.StatusBadRequest, "invalid_arg", parseErr.Error())
 			return
 		}
+		resolvedTarget := sandboxProfileEnforcementTargetRequest{
+			Implementation: string(target.implementation),
+			Harness:        target.harness.Name,
+			Platform:       target.platform,
+			Sandbox:        mode,
+		}
+		// The composed policy and the draft-only policy are two evaluations of
+		// ONE target, so a capability conflict in either refuses the target. The
+		// composed one is checked first: it is the policy a launch would carry.
 		predicted, predictErr := harness.PredictAccessEnforcement(
 			target.harness, target.implementation, axes,
 			mode, target.platform,
 		)
 		if predictErr != nil {
+			if refusal := sandboxProfilePredictionRefusal(predictErr); refusal != nil {
+				response.Targets = append(response.Targets, sandboxProfileDraftEnforcementTarget{
+					Target: resolvedTarget, ResolvedBy: resolvedBy,
+					Predicted: false, Refusal: refusal,
+				})
+				continue
+			}
 			writeError(w, http.StatusBadRequest, "invalid_arg", predictErr.Error())
 			return
 		}
@@ -256,10 +338,17 @@ func handleSandboxProfileDraftEnforcement(w http.ResponseWriter, r *http.Request
 			mode, target.platform,
 		)
 		if predictErr != nil {
+			if refusal := sandboxProfilePredictionRefusal(predictErr); refusal != nil {
+				response.Targets = append(response.Targets, sandboxProfileDraftEnforcementTarget{
+					Target: resolvedTarget, ResolvedBy: resolvedBy,
+					Predicted: false, Refusal: refusal,
+				})
+				continue
+			}
 			writeError(w, http.StatusBadRequest, "invalid_arg", predictErr.Error())
 			return
 		}
-		described, contextAxes, contextNetworkEntries, describeErr :=
+		described, contextAxes, contextRefusals, contextNetworkEntries, describeErr :=
 			describePredictedDraftSandboxProfile(
 				flattened, contexts, target, mode,
 				harness.DescribePredictedAccess(axes, predicted),
@@ -268,6 +357,19 @@ func handleSandboxProfileDraftEnforcement(w http.ResponseWriter, r *http.Request
 			writeError(w, http.StatusBadRequest, "invalid_sandbox_profile", describeErr.Error())
 			return
 		}
+		// Every effective assignment context refusing leaves nothing to describe,
+		// so the target itself is refused rather than carrying a full-length list
+		// of per-context refusals with no surviving verdict between them.
+		if refusal := onlyContextRefusals(contextRefusals); refusal != nil {
+			response.Targets = append(response.Targets, sandboxProfileDraftEnforcementTarget{
+				Target: resolvedTarget, ResolvedBy: resolvedBy,
+				Predicted: false, Refusal: refusal,
+			})
+			continue
+		}
+		if len(contextRefusals) > len(response.Contexts) {
+			contextRefusals = contextRefusals[:len(response.Contexts)]
+		}
 		if len(contextAxes) > len(response.Contexts) {
 			contextAxes = contextAxes[:len(response.Contexts)]
 		}
@@ -275,12 +377,7 @@ func handleSandboxProfileDraftEnforcement(w http.ResponseWriter, r *http.Request
 			contextNetworkEntries = contextNetworkEntries[:len(response.Contexts)]
 		}
 		response.Targets = append(response.Targets, sandboxProfileDraftEnforcementTarget{
-			Target: sandboxProfileEnforcementTargetRequest{
-				Implementation: string(target.implementation),
-				Harness:        target.harness.Name,
-				Platform:       target.platform,
-				Sandbox:        mode,
-			},
+			Target:     resolvedTarget,
 			ResolvedBy: resolvedBy,
 			Predicted:  true,
 			Axes:       described,
@@ -288,10 +385,27 @@ func handleSandboxProfileDraftEnforcement(w http.ResponseWriter, r *http.Request
 				draftAxes.Network, draftPredicted, body.Draft.Network,
 			),
 			ContextAxes:           contextAxes,
+			ContextRefusals:       contextRefusals,
 			ContextNetworkEntries: contextNetworkEntries,
 		})
 	}
 	writeJSON(w, http.StatusOK, response)
+}
+
+// onlyContextRefusals reports the first refusal when EVERY effective assignment
+// context refused, and nil as soon as one context survived with real axes.
+func onlyContextRefusals(
+	refusals []*sandboxProfileEnforcementRefusal,
+) *sandboxProfileEnforcementRefusal {
+	if len(refusals) == 0 {
+		return nil
+	}
+	for _, refusal := range refusals {
+		if refusal == nil {
+			return nil
+		}
+	}
+	return refusals[0]
 }
 
 func predictedDraftNetworkEntries(

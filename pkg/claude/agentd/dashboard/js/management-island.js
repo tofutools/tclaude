@@ -13,6 +13,7 @@ import {
   sandboxProfileSummary,
   sandboxRuleBuckets,
   sandboxTargetLabel,
+  sandboxTargetRefusal,
 } from './sandbox-profiles-data.js';
 import { CODEX_BUILTIN_FILTERED_NETWORK_DETAIL } from './sandbox-network-disclosure.js';
 import { pickDirectory } from './helpers.js';
@@ -267,12 +268,26 @@ function SandboxOutcomeBucket({
   </details>`;
 }
 
-function SandboxPolicyResult({ target, context, contextIndex }) {
+export function SandboxPolicyResult({ target, context, contextIndex }) {
   const [ruleHelpOpen, setRuleHelpOpen] = useState('');
   const axes = target.context_axes?.[contextIndex] || target.axes || {};
   const networkEntries = target.context_network_entries?.[contextIndex]
     ?? target.network_entries ?? [];
-  const buckets = sandboxRuleBuckets(axes, context, networkEntries);
+  /* TCL-885. A refused target carries NO axes, so it must be read here before
+     anything touches `axes` — sandboxRuleBuckets substitutes
+     {outcome:'not_enforced', detail:'No enforcement verdict was returned.'} for
+     a missing axis, and a refusal that fell into that path would render as
+     "unsupported, no verdict returned" with launchRefused FALSE: an operator
+     told nothing is wrong while the launch is blocked.
+
+     This branch is a deliberate MINIMUM, not the ticket's row type. The row-type
+     design is the operator's open decision; this reuses the existing
+     .sbx-launch-blocked element so the preview cannot regress below today's
+     honest refusal in the meantime. Whatever the operator picks refines what
+     this renders, not whether it exists — so keep it structureless: capability
+     text and remedy, no buckets, no grouping, no vocabulary of its own. */
+  const refusal = sandboxTargetRefusal(target, contextIndex);
+  const buckets = sandboxRuleBuckets(axes, context, networkEntries, refusal);
   const otherWarnings = sandboxOtherAssignmentWarnings(target.axes, axes);
   const otherLaunchRefused = otherWarnings.some((warning) => warning.outcome === 'refused');
   const partialCount = buckets.partial.rules.length;
@@ -290,13 +305,15 @@ function SandboxPolicyResult({ target, context, contextIndex }) {
       <div>The overall safety check includes every assignment, including any omitted from the selector.</div>
       <ul>${otherWarnings.map((warning) => html`<li key=${warning.axis}><strong>${warning.label}:</strong> ${warning.detail}</li>`)}</ul>
     </div>`}
-    ${buckets.launchRefused && html`<div class="sbx-launch-blocked" role="alert">This target refuses the launch. Unsupported rules are not silently skipped.</div>`}
+    ${buckets.launchRefused && html`<div class="sbx-launch-blocked" role="alert">${refusal
+    ? `This target cannot enforce this policy, so the launch is refused. ${refusal.message}`
+    : 'This target refuses the launch. Unsupported rules are not silently skipped.'}</div>`}
     ${/* The Applied bucket ships closed — a fully supported policy needs no
          attention. A remapped rule is the exception: the editor row shows only a
          glyph, so this line is where the host → sandbox mapping is actually
          legible, and a mapping two collapses deep is not a disclosure. Only
          profiles that use a mount path are affected. */ ''}
-    <${SandboxOutcomeBucket} bucket=${buckets.applied} open=${buckets.applied.hasMountPath === true}
+    ${!refusal && html`<${SandboxOutcomeBucket} bucket=${buckets.applied} open=${buckets.applied.hasMountPath === true}
       helpOpen=${ruleHelpOpen} setHelpOpen=${setRuleHelpOpen}
       helpPrefix=${helpPrefix} targetLabel=${targetLabel}/>
     <${SandboxOutcomeBucket} bucket=${buckets.partial} open=${true}
@@ -304,7 +321,7 @@ function SandboxPolicyResult({ target, context, contextIndex }) {
       helpPrefix=${helpPrefix} targetLabel=${targetLabel}/>
     <${SandboxOutcomeBucket} bucket=${buckets.notApplied} open=${true}
       helpOpen=${ruleHelpOpen} setHelpOpen=${setRuleHelpOpen}
-      helpPrefix=${helpPrefix} targetLabel=${targetLabel}/>
+      helpPrefix=${helpPrefix} targetLabel=${targetLabel}/>`}
     <details class="sbx-target-details"><summary>Evaluation details</summary>
       ${target.target.sandbox ? html`<div>Sandbox mode: ${sandboxModeDetail(target.target.harness, target.target.sandbox)}</div>` : null}
       ${target.resolved_by
@@ -314,11 +331,13 @@ function SandboxPolicyResult({ target, context, contextIndex }) {
   </div>`;
 }
 
-function sandboxPolicyNeedsAttention(target, context, contextIndex) {
+export function sandboxPolicyNeedsAttention(target, context, contextIndex) {
   const axes = target.context_axes?.[contextIndex] || target.axes || {};
   const networkEntries = target.context_network_entries?.[contextIndex]
     ?? target.network_entries ?? [];
-  return sandboxRuleBuckets(axes, context, networkEntries).launchRefused
+  return sandboxRuleBuckets(
+    axes, context, networkEntries, sandboxTargetRefusal(target, contextIndex),
+  ).launchRefused
     || sandboxOtherAssignmentWarnings(target.axes, axes).length > 0;
 }
 

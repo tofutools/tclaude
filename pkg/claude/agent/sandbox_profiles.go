@@ -319,19 +319,38 @@ type sandboxProfileEnforcementJSON struct {
 	Targets []sandboxProfileEnforcementTargetJSON `json:"targets"`
 }
 
+// sandboxProfileEnforcementRefusalJSON mirrors the daemon's per-target refusal:
+// this target's harness cannot enforce this policy, so a launch against it is
+// refused outright. It is separate from the axes because the refusal is decided
+// before any rule is judged — there is no per-axis verdict to report.
+type sandboxProfileEnforcementRefusalJSON struct {
+	Kind    string `json:"kind"`
+	Harness string `json:"harness,omitempty"`
+	Message string `json:"message"`
+}
+
 type sandboxProfileEnforcementTargetJSON struct {
-	Implementation string                      `json:"implementation"`
-	Harness        string                      `json:"harness"`
-	Platform       string                      `json:"platform"`
-	Predicted      bool                        `json:"predicted"`
-	Axes           harness.PredictedAccessAxes `json:"axes"`
-	Caveat         string                      `json:"caveat,omitempty"`
+	Implementation string                                `json:"implementation"`
+	Harness        string                                `json:"harness"`
+	Platform       string                                `json:"platform"`
+	Predicted      bool                                  `json:"predicted"`
+	Axes           harness.PredictedAccessAxes           `json:"axes"`
+	Caveat         string                                `json:"caveat,omitempty"`
+	Refusal        *sandboxProfileEnforcementRefusalJSON `json:"refusal,omitempty"`
 }
 
 func printSandboxProfileEnforcement(w io.Writer, result sandboxProfileEnforcementJSON) {
 	for _, target := range result.Targets {
 		fmt.Fprintf(w, "  enforcement for %s/%s/%s:\n",
 			target.Implementation, target.Harness, target.Platform)
+		// Printing the zero axes for a refused target would render five
+		// "NOT ENFORCED" lines that no evaluation produced. The refusal replaces
+		// them, and names the missing capability so the remedy text is reachable.
+		if target.Refusal != nil {
+			fmt.Fprintf(w, "    REFUSED at launch (%s): %s\n",
+				target.Refusal.Kind, target.Refusal.Message)
+			continue
+		}
 		printPredictedAccessAxis(w, "directories", target.Axes.Filesystem)
 		printPredictedAccessAxis(w, "environment", target.Axes.Environment)
 		printPredictedAccessAxis(w, "agent dirs", target.Axes.AgentDirectories)

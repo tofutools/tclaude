@@ -33,6 +33,13 @@ func describePredictedSandboxProfile(
 // directory capability against the effective assignment contexts, not just the
 // draft in isolation. This catches a carve-out formed across scopes, such as a
 // global denied parent plus a narrower group-profile write grant.
+// A capability conflict formed in ONE context refuses that context alone. The
+// returned refusal slice is index-aligned with the axes slice, and a refused
+// index carries the zero PredictedAccessAxes: a refusal is decided before any
+// rule is judged, so there is no verdict to place there, and every consumer must
+// read the refusal slice before the axes one. The aggregate axes summarize only
+// the contexts that survived, so an unrelated context's refusal cannot silently
+// darken a clean context's verdict.
 func describePredictedDraftSandboxProfile(
 	flattened sandboxpolicy.Profile,
 	contexts []sandboxProfileEffectiveContext,
@@ -42,28 +49,40 @@ func describePredictedDraftSandboxProfile(
 ) (
 	harness.PredictedAccessAxes,
 	[]harness.PredictedAccessAxes,
+	[]*sandboxProfileEnforcementRefusal,
 	[][]harness.PredictedNetworkEntry,
 	error,
 ) {
 	if len(contexts) == 0 {
 		return describePredictedSandboxProfile(
 			flattened, target, validatedBuiltinMode, described,
-		), nil, nil, nil
+		), nil, nil, nil, nil
 	}
 	predictions := make([]harness.PredictedAccessAxes, 0, len(contexts))
+	refusals := make([]*sandboxProfileEnforcementRefusal, 0, len(contexts))
 	networkPredictions := make(
 		[][]harness.PredictedNetworkEntry, 0, len(contexts))
+	// survivors feeds the aggregate; predictions stays index-aligned with the
+	// contexts so a refused context still occupies its own slot.
+	survivors := make([]harness.PredictedAccessAxes, 0, len(contexts))
 	for _, context := range contexts {
 		axes, err := sandboxpolicy.DeriveAccessAxes(context.policy)
 		if err != nil {
-			return harness.PredictedAccessAxes{}, nil, nil, err
+			return harness.PredictedAccessAxes{}, nil, nil, nil, err
 		}
 		predicted, err := harness.PredictAccessEnforcement(
 			target.harness, target.implementation, axes,
 			validatedBuiltinMode, target.platform,
 		)
 		if err != nil {
-			return harness.PredictedAccessAxes{}, nil, nil, err
+			refusal := sandboxProfilePredictionRefusal(err)
+			if refusal == nil {
+				return harness.PredictedAccessAxes{}, nil, nil, nil, err
+			}
+			refusals = append(refusals, refusal)
+			predictions = append(predictions, harness.PredictedAccessAxes{})
+			networkPredictions = append(networkPredictions, nil)
+			continue
 		}
 		networkRows := append([]harness.PredictedNetworkEntry{},
 			harness.DescribePredictedNetworkEntries(
@@ -72,37 +91,45 @@ func describePredictedDraftSandboxProfile(
 			harness.DescribePredictedNetworkDenyEntries(
 				axes.Network.Deny, predicted)...)
 		networkPredictions = append(networkPredictions, networkRows)
-		predictions = append(predictions, describePredictedSandboxProfile(
+		contextAxes := describePredictedSandboxProfile(
 			context.policy, target, validatedBuiltinMode,
 			harness.DescribePredictedAccess(axes, predicted),
-		))
+		)
+		predictions = append(predictions, contextAxes)
+		survivors = append(survivors, contextAxes)
+		refusals = append(refusals, nil)
+	}
+	if len(survivors) == 0 {
+		// Nothing survived to aggregate. The caller turns an all-refused target
+		// into a target-level refusal, so the axes returned here are never read.
+		return harness.PredictedAccessAxes{}, predictions, refusals, networkPredictions, nil
 	}
 	described.Filesystem = aggregateSandboxFeature(
-		predictions, func(value harness.PredictedAccessAxes) harness.PredictedAccessAxis {
+		survivors, func(value harness.PredictedAccessAxes) harness.PredictedAccessAxis {
 			return value.Filesystem
 		},
 	)
 	described.Environment = aggregateSandboxFeature(
-		predictions, func(value harness.PredictedAccessAxes) harness.PredictedAccessAxis {
+		survivors, func(value harness.PredictedAccessAxes) harness.PredictedAccessAxis {
 			return value.Environment
 		},
 	)
 	described.AgentDirectories = aggregateSandboxFeature(
-		predictions, func(value harness.PredictedAccessAxes) harness.PredictedAccessAxis {
+		survivors, func(value harness.PredictedAccessAxes) harness.PredictedAccessAxis {
 			return value.AgentDirectories
 		},
 	)
 	described.Network = aggregateSandboxFeature(
-		predictions, func(value harness.PredictedAccessAxes) harness.PredictedAccessAxis {
+		survivors, func(value harness.PredictedAccessAxes) harness.PredictedAccessAxis {
 			return value.Network
 		},
 	)
 	described.UnixSockets = aggregateSandboxFeature(
-		predictions, func(value harness.PredictedAccessAxes) harness.PredictedAccessAxis {
+		survivors, func(value harness.PredictedAccessAxes) harness.PredictedAccessAxis {
 			return value.UnixSockets
 		},
 	)
-	return described, predictions, networkPredictions, nil
+	return described, predictions, refusals, networkPredictions, nil
 }
 
 func predictSandboxFilesystem(

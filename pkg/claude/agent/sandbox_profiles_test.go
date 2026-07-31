@@ -356,3 +356,64 @@ func TestRunSandboxProfilesExportImportPreservesFutureEnvelopeFields(t *testing.
 	assert.Equal(t, "error", body["on_conflict"])
 	assert.Equal(t, false, body["apply_assignments"])
 }
+
+// TestPrintSandboxProfileEnforcementRendersRefusalInsteadOfEmptyAxes covers the
+// CLI half of TCL-885. A refused target arrives with the ZERO axes, so printing
+// them would emit five verdict lines the evaluator never produced — the same
+// over-claim the dashboard side must avoid, in text.
+//
+// Falsifiability: delete the `if target.Refusal != nil` branch in
+// printSandboxProfileEnforcement. The refused target then prints five axis lines
+// whose outcome renders as the empty string (pre-change output contains
+// "directories:" and does NOT contain "REFUSED at launch"; post-change output is
+// the reverse), so both halves of the refused-target assertions below fail.
+func TestPrintSandboxProfileEnforcementRendersRefusalInsteadOfEmptyAxes(t *testing.T) {
+	const message = "missing capability proxy_engine_name_authority: " +
+		"narrow that grant, or select the Packet filter engine"
+	var out bytes.Buffer
+	printSandboxProfileEnforcement(&out, sandboxProfileEnforcementJSON{
+		Profile: "resolver-conflict",
+		Targets: []sandboxProfileEnforcementTargetJSON{{
+			Implementation: "tclaude-layer", Harness: "claude", Platform: "linux",
+			Predicted: false,
+			Refusal: &sandboxProfileEnforcementRefusalJSON{
+				Kind:    "unsupported_sandbox_profile_network_allowlist",
+				Message: message,
+			},
+		}, {
+			Implementation: "harness-builtin", Harness: "claude", Platform: "linux",
+			Predicted: true,
+			Axes: harness.PredictedAccessAxes{
+				Filesystem: harness.PredictedAccessAxis{
+					Tier: "1 read rule", Outcome: harness.AccessPredictionEnforced,
+					Detail: "the OS sandbox enforces the directory rules",
+				},
+			},
+		}},
+	})
+	text := out.String()
+	lines := strings.Split(strings.TrimSpace(text), "\n")
+
+	// Both targets render, which is the whole point of the ticket.
+	assert.Contains(t, text, "enforcement for tclaude-layer/claude/linux:")
+	assert.Contains(t, text, "enforcement for harness-builtin/claude/linux:")
+
+	// The refused target: one refusal line naming the capability and the remedy.
+	assert.Contains(t, text, "REFUSED at launch (unsupported_sandbox_profile_network_allowlist)")
+	assert.Contains(t, text, message)
+
+	// …and NOT the five empty axis lines. Asserting on the specific labels, not
+	// merely on a line count, so a future axis rename cannot make this vacuous.
+	refused := lines[1]
+	assert.Contains(t, refused, "REFUSED at launch")
+	for _, label := range []string{
+		"directories:", "environment:", "agent dirs:", "Unix sockets:",
+	} {
+		assert.NotContains(t, refused, label,
+			"a refused target must not print an axis verdict that was never computed")
+	}
+
+	// The unaffected target keeps its ordinary per-axis lines.
+	assert.Contains(t, text,
+		"directories:  1 read rule — ENFORCED: the OS sandbox enforces the directory rules")
+}
