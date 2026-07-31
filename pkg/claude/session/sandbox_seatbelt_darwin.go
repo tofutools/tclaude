@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -241,6 +242,10 @@ func tclaudeLayerCommand(
 		filteredContract,
 		socketPaths,
 		filteredPlan,
+		// The Darwin launcher binds no filtering proxy yet, so it renders no
+		// proxy floor. The posture gate above refuses a plan that would need
+		// one rather than falling back to a floor with no route to it.
+		netip.AddrPort{},
 		protectedRoots,
 		tmuxSocketDir,
 		runtimeTempDir,
