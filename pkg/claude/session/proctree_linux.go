@@ -3,6 +3,7 @@
 package session
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -73,4 +74,83 @@ func readProcCmdline(pid int) string {
 		return ""
 	}
 	return strings.Join(strings.FieldsFunc(string(data), func(r rune) bool { return r == 0 }), " ")
+}
+
+// descendantCommandLinesViaChildren walks DOWN from rootPID using the kernel's
+// own child list — /proc/<pid>/task/<tid>/children — reading only the agent's
+// subtree instead of reconstructing it from every process on the host.
+//
+// supported=false means this kernel cannot answer (the children file needs
+// CONFIG_PROC_CHILDREN, and a container may hide it), and the caller falls back
+// to the full-table walk. It is reported separately from ok so an unsupported
+// kernel degrades to the slower-but-equivalent path rather than to "cannot
+// tell", which would leave every ledger to its TTL.
+//
+// Children are per-THREAD: a process forked from a non-main thread is listed
+// under that thread's tid, so every entry in /proc/<pid>/task must be read. The
+// task list is one directory read and a typical agent has few threads' worth of
+// children, so a whole subtree costs a handful of reads against the ~235 the
+// full scan needs on a modest host.
+//
+// The concurrency caveat is the same one the full scan already lives with: a
+// process may fork or exit mid-walk, so this is a best-effort snapshot either
+// way. It matters little here — the thing being matched is a background shell
+// that outlives the turn, not something appearing and vanishing between reads.
+func descendantCommandLinesViaChildren(rootPID int) (out []string, ok bool, supported bool) {
+	rootChildren, err := readProcChildren(rootPID)
+	if err != nil {
+		// The root's own children file is the support probe. A root that has
+		// exited reports ok=false through the caller's liveness check before
+		// reaching here, so a failure now means the interface is unavailable.
+		return nil, false, false
+	}
+	visited := map[int]struct{}{rootPID: {}}
+	queue := rootChildren
+	for len(queue) > 0 && len(visited) < maxProcTreeNodes {
+		pid := queue[0]
+		queue = queue[1:]
+		if _, seen := visited[pid]; seen {
+			continue
+		}
+		visited[pid] = struct{}{}
+		if cmd := readProcCmdline(pid); cmd != "" {
+			out = append(out, cmd)
+		}
+		// A descendant that exits mid-walk simply contributes no children;
+		// that is normal, not a failure of the whole enumeration.
+		if kids, err := readProcChildren(pid); err == nil {
+			queue = append(queue, kids...)
+		}
+	}
+	return out, true, true
+}
+
+// readProcChildren returns the pids the kernel reports as children of pid,
+// unioned across all of its threads.
+func readProcChildren(pid int) ([]int, error) {
+	taskDir := filepath.Join("/proc", strconv.Itoa(pid), "task")
+	tids, err := os.ReadDir(taskDir)
+	if err != nil {
+		return nil, err
+	}
+	var out []int
+	unreadable := 0
+	for _, tid := range tids {
+		data, err := os.ReadFile(filepath.Join(taskDir, tid.Name(), "children"))
+		if err != nil {
+			// One thread exiting mid-read is normal; every thread failing means
+			// the children interface is not available for this process.
+			unreadable++
+			continue
+		}
+		for _, field := range strings.Fields(string(data)) {
+			if child, err := strconv.Atoi(field); err == nil && child > 0 {
+				out = append(out, child)
+			}
+		}
+	}
+	if unreadable == len(tids) {
+		return nil, fs.ErrNotExist
+	}
+	return out, nil
 }

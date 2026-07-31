@@ -1,5 +1,10 @@
 package session
 
+import (
+	"sync"
+	"time"
+)
+
 // Downward process-tree enumeration.
 //
 // The existing /proc helpers in process_unix.go all walk UPWARD (a hook
@@ -67,7 +72,17 @@ func DescendantCommandLines(rootPID int) ([]string, bool) {
 	if rootPID <= 0 || !IsProcessAlive(rootPID) {
 		return nil, false
 	}
-	table, ok := readProcTable()
+	// Prefer walking the subtree directly. Reconstructing it from a full
+	// process-table snapshot costs one /proc/<pid>/stat read per process ON THE
+	// HOST — measured at ~15.5us each, so ~3.6ms per 235 processes — and the
+	// dashboard pays it once per agent with live background work, on every
+	// 2-second poll. An agent's actual subtree is a handful of processes; the
+	// kernel can name its children directly, so ask for those instead. Falls
+	// back below on a kernel that cannot answer.
+	if out, ok, supported := descendantCommandLinesViaChildren(rootPID); supported {
+		return out, ok
+	}
+	table, ok := cachedProcTable()
 	if !ok {
 		return nil, false
 	}
@@ -93,4 +108,36 @@ func DescendantCommandLines(rootPID int) ([]string, bool) {
 		queue = append(queue, children[pid]...)
 	}
 	return out, true
+}
+
+// procTableMemoTTL bounds how stale a shared process-table snapshot may be.
+//
+// The fallback path (and macOS, whose snapshot is a `ps` fork rather than a
+// directory scan) is otherwise re-taken once per agent per poll, so a roster of
+// N agents pays N identical snapshots two seconds apart. One second is below
+// the reconcile's own bgShellReconcileMinInterval, so sharing a snapshot inside
+// a poll cannot make a badge any staler than the caller already tolerates.
+const procTableMemoTTL = time.Second
+
+var procTableMemo struct {
+	sync.Mutex
+	at    time.Time
+	table procTable
+	ok    bool
+}
+
+// cachedProcTable returns a recent process-table snapshot, taking a new one
+// only when the last is older than procTableMemoTTL. The snapshot is immutable
+// once built, so concurrent callers may share it.
+func cachedProcTable() (procTable, bool) {
+	procTableMemo.Lock()
+	defer procTableMemo.Unlock()
+	if !procTableMemo.at.IsZero() && time.Since(procTableMemo.at) < procTableMemoTTL {
+		return procTableMemo.table, procTableMemo.ok
+	}
+	table, ok := readProcTable()
+	procTableMemo.at = time.Now()
+	procTableMemo.table = table
+	procTableMemo.ok = ok
+	return table, ok
 }
