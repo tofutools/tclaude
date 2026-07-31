@@ -1,7 +1,9 @@
 package agentd_test
 
 import (
+	"fmt"
 	"net/http"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -569,4 +571,232 @@ func TestSandboxProfileDraftEnforcementRefusesTargetWhenEveryContextRefuses(t *t
 	assert.Empty(t, target.ContextAxes,
 		"a target-level refusal replaces the per-context lists rather than duplicating them")
 	assert.Empty(t, target.ContextRefusals)
+}
+
+// TestSandboxProfileDraftEnforcementCarriesRefusalsPastTheDisplayCap closes a
+// gap a cold review found. The per-context lists are capped at 10 for display,
+// and the aggregate deliberately summarizes SURVIVING contexts only — so before
+// this fix a refusal in context 11 was truncated off the wire AND absent from
+// the aggregate, i.e. invisible, while the editor still tells the operator the
+// omitted assignments "are still included in the overall safety check".
+//
+// Falsifiability: delete the omittedRefusals collection in
+// handleSandboxProfileDraftEnforcement (return an empty slice). OmittedRefusals
+// is then empty where it is now length 2, and the require below fails. The
+// pre-change value is 0 and the post-change value is 2; they DIFFER.
+func TestSandboxProfileDraftEnforcementCarriesRefusalsPastTheDisplayCap(t *testing.T) {
+	f := newFlow(t)
+	// 12 groups: more than the 10-context display cap. Two of them get the
+	// resolver grant, so their contexts conflict and the other ten do not.
+	for i := range 12 {
+		_, err := db.CreateAgentGroup(fmt.Sprintf("crew-%02d", i), "")
+		require.NoError(t, err)
+	}
+	for _, body := range []map[string]any{{
+		"name": "global-proxy-cap", "filesystem": []any{}, "environment": []any{},
+		"network": map[string]any{
+			"baseline": "deny", "engine": "proxy",
+			"allow": []any{map[string]any{"domain": "example.com", "ports": []any{443}}},
+		},
+	}, {
+		"name": "group-resolver-cap", "environment": []any{},
+		"filesystem": []any{
+			map[string]any{"path": "/run/systemd/resolve", "access": "read"},
+		},
+	}} {
+		rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", body)
+		require.Equalf(t, http.StatusCreated, rec.Code, "body=%s", rec.Body.String())
+	}
+	require.NoError(t, db.SetGlobalSandboxProfile("global-proxy-cap"))
+	// The LAST two groups, so their contexts land beyond the display cap.
+	for _, name := range []string{"crew-10", "crew-11"} {
+		_, err := db.SetAgentGroupSandboxProfile(name, "group-resolver-cap")
+		require.NoError(t, err)
+	}
+	globalProfile, err := db.GetSandboxProfile("global-proxy-cap")
+	require.NoError(t, err)
+	require.NotNil(t, globalProfile)
+
+	rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profile-enforcement", map[string]any{
+		"draft": map[string]any{
+			"id": globalProfile.ID, "name": globalProfile.Name,
+			"filesystem": []any{}, "environment": []any{},
+			"network": map[string]any{
+				"baseline": "deny", "engine": "proxy",
+				"allow": []any{map[string]any{"domain": "example.com", "ports": []any{443}}},
+			},
+			"unix_sockets": map[string]any{},
+		},
+		"targets": []any{map[string]any{
+			"implementation": "tclaude-layer", "harness": "claude", "platform": "linux",
+		}},
+	})
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+
+	var got struct {
+		Targets []struct {
+			Predicted       bool                          `json:"predicted"`
+			ContextAxes     []harness.PredictedAccessAxes `json:"context_axes"`
+			ContextRefusals []*refusalJSON                `json:"context_refusals"`
+			OmittedRefusals []*refusalJSON                `json:"omitted_refusals"`
+		} `json:"targets"`
+		Contexts          []struct{} `json:"contexts"`
+		RemainingContexts int        `json:"remaining_contexts"`
+	}
+	testharness.DecodeJSON(t, rec, &got)
+	require.Len(t, got.Targets, 1)
+	target := got.Targets[0]
+
+	require.Len(t, got.Contexts, 10, "the display cap must still apply")
+	assert.Equal(t, 2, got.RemainingContexts)
+	assert.Len(t, target.ContextAxes, 10)
+	assert.Len(t, target.ContextRefusals, 10,
+		"the displayed slices stay index-aligned and capped")
+
+	// The refusals that would otherwise have been truncated into silence.
+	require.Len(t, target.OmittedRefusals, 2,
+		"a refusal past the display cap must still reach the client")
+	for _, refusal := range target.OmittedRefusals {
+		require.NotNil(t, refusal)
+		assert.Equal(t, harness.SandboxCapabilityNetworkAllowlist, refusal.Kind)
+		assert.Contains(t, refusal.Message, "proxy_engine_name_authority")
+	}
+	// The ten displayed contexts are genuinely clean, so this is a real
+	// "invisible past the cap" case rather than a target-wide refusal.
+	assert.True(t, target.Predicted)
+	for i, refusal := range target.ContextRefusals {
+		assert.Nilf(t, refusal, "displayed context %d must be clean", i)
+	}
+}
+
+// TestSandboxProfileDraftEnforcementDoesNotRefuseOnDraftOnlyConflict closes the
+// second gap the cold review found, in the opposite direction: OVER-claiming.
+//
+// The draft-only axes are the draft WITHOUT its includes, and they feed nothing
+// but the authoring-level network rows. No launch uses that policy. When an
+// include contributes a deny that removes the offending grant, the COMPOSED
+// policy — the one a launch carries — is clean, so refusing the target here
+// would claim a launch refusal the launch path would not make.
+//
+// Falsifiability: restore the refusal branch on the draftAxes prediction (make
+// it append a refused target and continue). Predicted then flips true -> false
+// and Refusal nil -> non-nil, so the two requires below fail; the values DIFFER.
+// This case also proves the branch is REACHED, which the earlier draft test did
+// not do — there the conflict was in the draft itself, so the composed-policy
+// branch fired first and this code never ran.
+func TestSandboxProfileDraftEnforcementDoesNotRefuseOnDraftOnlyConflict(t *testing.T) {
+	f := newFlow(t)
+	// The include denies the resolver socket at a MORE SPECIFIC path than the
+	// draft's own read grant. The conflict detector resolves per guest position
+	// by "most specific covering grant wins", so the socket is denied in the
+	// COMPOSED policy while the draft on its own still carries the conflict. An
+	// include cannot override the draft at the SAME path — the draft's own
+	// entries are applied last — which is why this uses a narrower one.
+	rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", map[string]any{
+		"name": "denies-resolver", "environment": []any{},
+		"filesystem": []any{
+			map[string]any{"path": "/run/nscd/socket", "access": "deny"},
+		},
+	})
+	require.Equalf(t, http.StatusCreated, rec.Code, "body=%s", rec.Body.String())
+
+	// A resolver socket whose directory is not present on this host, so both the
+	// broad grant and the narrower deny are authorable as ordinary rows.
+	draft := resolverConflictProfile("draft-only-conflict")
+	draft["filesystem"] = []any{
+		map[string]any{"path": "/run/nscd", "access": "read"},
+	}
+	draft["includes"] = []any{"denies-resolver"}
+	draft["unix_sockets"] = map[string]any{}
+	rec = profileReq(t, f, http.MethodPost, "/v1/sandbox-profile-enforcement", map[string]any{
+		"draft": draft,
+		"targets": []any{map[string]any{
+			"implementation": "tclaude-layer", "harness": "claude", "platform": "linux",
+		}},
+	})
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+
+	var got struct {
+		Targets []struct {
+			Predicted      bool                            `json:"predicted"`
+			Axes           harness.PredictedAccessAxes     `json:"axes"`
+			Refusal        *refusalJSON                    `json:"refusal"`
+			NetworkEntries []harness.PredictedNetworkEntry `json:"network_entries"`
+		} `json:"targets"`
+	}
+	testharness.DecodeJSON(t, rec, &got)
+	require.Len(t, got.Targets, 1)
+	target := got.Targets[0]
+
+	assert.True(t, target.Predicted,
+		"the composed policy is clean, so the target must not be refused")
+	require.Nil(t, target.Refusal,
+		"PREVIEW/LAUNCH PARITY: refusing here would claim a refusal the launch would not make")
+	assert.NotEmpty(t, target.Axes.Network.Outcome,
+		"the target keeps the verdicts its composed policy earned")
+	// The authoring-level rows are the one thing the draft-only evaluation feeds,
+	// and they are omitted rather than rendered from a refused evaluation.
+	assert.Empty(t, target.NetworkEntries,
+		"rows from a refused evaluation would show verdicts that were never computed")
+}
+
+// TestSandboxProfileEnforcementRefusalKeepsThePredictionCaveat closes a third
+// cold-review gap. A refusal is a prediction like any other and inherits the
+// same qualification; before this fix the refused row skipped the caveat, so on
+// a host that ran no capability probes it read MORE confidently than the
+// enforced rows beside it.
+//
+// Falsifiability: drop the `Caveat:` field from the refused row in
+// handleSandboxProfileEnforcement. The refused target's Caveat is then "" where
+// it is now the non-host-platform sentence, and the require below fails — while
+// the clean target's caveat is unchanged, so the two are compared against each
+// other rather than against a constant.
+func TestSandboxProfileEnforcementRefusalKeepsThePredictionCaveat(t *testing.T) {
+	f := newFlow(t)
+	rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles",
+		resolverConflictProfile("resolver-conflict-caveat"))
+	require.Equalf(t, http.StatusCreated, rec.Code, "body=%s", rec.Body.String())
+
+	// Predict for a platform that is not this host, so the caveat applies. The
+	// conflict is Linux-only, so the refused row must be the linux one; the
+	// darwin row is the control that shows the caveat is platform-derived.
+	rec = profileReq(t, f, http.MethodGet,
+		"/v1/sandbox-profiles/resolver-conflict-caveat/enforcement?"+
+			"for=tclaude-layer%2Fclaude%2Flinux&"+
+			"for=tclaude-layer%2Fclaude%2Fdarwin", nil)
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+
+	var got struct {
+		Targets []struct {
+			Platform string       `json:"platform"`
+			Caveat   string       `json:"caveat"`
+			Refusal  *refusalJSON `json:"refusal"`
+		} `json:"targets"`
+	}
+	testharness.DecodeJSON(t, rec, &got)
+	require.Len(t, got.Targets, 2)
+	refused, other := got.Targets[0], got.Targets[1]
+	require.NotNil(t, refused.Refusal, "the linux target is the refused one")
+	require.Nil(t, other.Refusal, "darwin deploys no proxy engine here")
+
+	if runtime.GOOS != "linux" {
+		require.NotEmpty(t, refused.Caveat,
+			"a refused prediction must carry the same qualification as an enforced one")
+		assert.Contains(t, refused.Caveat, "non-host platform")
+	}
+	if runtime.GOOS != "darwin" {
+		assert.Contains(t, other.Caveat, "non-host platform",
+			"control: the caveat is derived from the platform, not from the refusal")
+	}
+	// On a Linux host the refused target IS the host platform, so the caveat is
+	// whatever the tooling probe says — the point is that it is computed by the
+	// same helper for both rows rather than skipped for the refused one.
+	assert.Equal(t, sandboxProfileCaveatForPlatform(refused.Platform), refused.Caveat != "",
+		"the refused row's caveat must follow the same rule as every other row")
+}
+
+// sandboxProfileCaveatForPlatform mirrors only the platform half of the daemon's
+// caveat rule, which is the half this test can predict from outside.
+func sandboxProfileCaveatForPlatform(platform string) bool {
+	return platform != runtime.GOOS
 }

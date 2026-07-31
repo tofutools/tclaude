@@ -243,8 +243,16 @@ export function sandboxTargetRefusal(target = {}, contextIndex = null) {
    must still be visible — the same contract sandboxOtherAssignmentWarnings
    carries for axis verdicts. */
 export function sandboxOtherContextRefusals(target = {}, contextIndex = null) {
-  return (target.context_refusals || []).flatMap((refusal, index) =>
+  const listed = (target.context_refusals || []).flatMap((refusal, index) =>
     refusal && index !== contextIndex ? [{ index, refusal }] : []);
+  // Assignments past the display cap have no index of their own, and they
+  // contribute nothing to the aggregate either (it summarizes surviving contexts
+  // only) — so without these the editor would claim every assignment was checked
+  // while a refusal among the omitted ones went unmentioned.
+  return [
+    ...listed,
+    ...(target.omitted_refusals || []).map((refusal) => ({ index: null, refusal })),
+  ];
 }
 
 export function sandboxPredictionWarnings(prediction) {
@@ -253,10 +261,16 @@ export function sandboxPredictionWarnings(prediction) {
     // A refused target has no axes to iterate. Reading them anyway would report
     // a fully-enforced profile, which is the most dangerous possible summary of
     // a target that cannot run the policy at all.
-    const refusals = [target.refusal, ...(target.context_refusals || [])].filter(Boolean);
-    if (refusals.length) {
-      capability.push(...refusals.map((refusal) => refusal.message));
-    }
+    const refusals = [
+      target.refusal,
+      ...(target.context_refusals || []),
+      ...(target.omitted_refusals || []),
+    ].filter(Boolean);
+    // Prefixed, because these land in the same flat warning line as
+    // "partially enforced" details. "This launch will be REFUSED" and "network
+    // is partly enforced" are not the same news, and an unlabelled join makes
+    // them read alike.
+    capability.push(...refusals.map((refusal) => `Launch refused: ${refusal.message}`));
     if (target.refusal) continue;
     for (const axis of ['filesystem', 'environment', 'agent_directories', 'network', 'unix_sockets']) {
       const verdict = target.axes?.[axis];

@@ -108,6 +108,12 @@ type sandboxProfileDraftEnforcementTarget struct {
 	// keep their ordinary rows; the aligned ContextAxes entry is the zero value
 	// and must not be read as a verdict.
 	ContextRefusals []*sandboxProfileEnforcementRefusal `json:"context_refusals,omitempty"`
+	// OmittedRefusals carries refusals from assignment contexts beyond the
+	// display cap. Those contexts have no index in ContextAxes and contribute
+	// nothing to the aggregate (which summarizes surviving contexts only), so
+	// without this field a refusal past the cap would be invisible while the
+	// editor still claims every assignment was checked.
+	OmittedRefusals []*sandboxProfileEnforcementRefusal `json:"omitted_refusals,omitempty"`
 }
 
 type sandboxProfileEffectiveContext struct {
@@ -133,6 +139,27 @@ type parsedSandboxProfileEnforcementTarget struct {
 	harness        *harness.Harness
 	platform       string
 	raw            string
+}
+
+// sandboxProfilePredictionCaveat qualifies a prediction that could not be
+// checked against this host. Shared by the enforced and the refused row so the
+// two are stated with the same confidence.
+func sandboxProfilePredictionCaveat(target parsedSandboxProfileEnforcementTarget) string {
+	if target.platform != runtime.GOOS {
+		return "(prediction for a non-host platform; host capability probes did not run)"
+	}
+	if !target.implementation.UsesTclaudeLayer() {
+		return ""
+	}
+	// Disclosure, like the dashboard catalog: this endpoint predicts and cannot
+	// mint a launch token, so it reads the fork-free presence table rather than
+	// executing the sandbox engine per request.
+	if err := sandboxToolPresence(
+		sandboxToolLayerHost, tclaudeLayerHostPresence,
+	); err != nil {
+		return "(prediction only; the target's host tooling is not installed: " + err.Error() + ")"
+	}
+	return ""
 }
 
 func handleSandboxProfileEnforcement(w http.ResponseWriter, r *http.Request) {
@@ -197,6 +224,11 @@ func handleSandboxProfileEnforcement(w http.ResponseWriter, r *http.Request) {
 					Platform:       target.platform,
 					Predicted:      false,
 					Refusal:        refusal,
+					// A refusal is a prediction like any other, so it inherits the
+					// same qualification. Stating it unqualified would make the
+					// refused row read MORE confidently than the enforced rows
+					// beside it, on a host that ran no capability probes at all.
+					Caveat: sandboxProfilePredictionCaveat(target),
 				})
 				continue
 			}
@@ -214,18 +246,7 @@ func handleSandboxProfileEnforcement(w http.ResponseWriter, r *http.Request) {
 				harness.DescribePredictedAccess(axes, prediction),
 			),
 		}
-		if target.platform != runtime.GOOS {
-			item.Caveat = "(prediction for a non-host platform; host capability probes did not run)"
-		} else if target.implementation.UsesTclaudeLayer() {
-			// Disclosure, like the dashboard catalog: this endpoint predicts and
-			// cannot mint a launch token, so it reads the fork-free presence
-			// table rather than executing the sandbox engine per request.
-			if err := sandboxToolPresence(
-				sandboxToolLayerHost, tclaudeLayerHostPresence,
-			); err != nil {
-				item.Caveat = "(prediction only; the target's host tooling is not installed: " + err.Error() + ")"
-			}
-		}
+		item.Caveat = sandboxProfilePredictionCaveat(target)
 		response.Targets = append(response.Targets, item)
 	}
 	writeJSON(w, http.StatusOK, response)
@@ -315,9 +336,8 @@ func handleSandboxProfileDraftEnforcement(w http.ResponseWriter, r *http.Request
 			Platform:       target.platform,
 			Sandbox:        mode,
 		}
-		// The composed policy and the draft-only policy are two evaluations of
-		// ONE target, so a capability conflict in either refuses the target. The
-		// composed one is checked first: it is the policy a launch would carry.
+		// Only the COMPOSED policy decides whether this target is refused: that is
+		// the policy a launch actually carries.
 		predicted, predictErr := harness.PredictAccessEnforcement(
 			target.harness, target.implementation, axes,
 			mode, target.platform,
@@ -333,20 +353,25 @@ func handleSandboxProfileDraftEnforcement(w http.ResponseWriter, r *http.Request
 			writeError(w, http.StatusBadRequest, "invalid_arg", predictErr.Error())
 			return
 		}
+		// The draft-ONLY axes (the draft without its includes) feed nothing but the
+		// authoring-level network rows. No launch ever uses that policy, so a
+		// capability conflict here must NOT refuse the target: the composed policy
+		// above is what a launch carries, and it already passed. Refusing on this
+		// evaluation would claim a launch refusal the launch path would not make —
+		// reachable whenever an include contributes a deny that removes the
+		// offending grant from the composed policy. The authored rows are simply
+		// omitted; the composed verdict stands.
 		draftPredicted, predictErr := harness.PredictAccessEnforcement(
 			target.harness, target.implementation, draftAxes,
 			mode, target.platform,
 		)
+		draftOnlyRefused := false
 		if predictErr != nil {
-			if refusal := sandboxProfilePredictionRefusal(predictErr); refusal != nil {
-				response.Targets = append(response.Targets, sandboxProfileDraftEnforcementTarget{
-					Target: resolvedTarget, ResolvedBy: resolvedBy,
-					Predicted: false, Refusal: refusal,
-				})
-				continue
+			if sandboxProfilePredictionRefusal(predictErr) == nil {
+				writeError(w, http.StatusBadRequest, "invalid_arg", predictErr.Error())
+				return
 			}
-			writeError(w, http.StatusBadRequest, "invalid_arg", predictErr.Error())
-			return
+			draftOnlyRefused = true
 		}
 		described, contextAxes, contextRefusals, contextNetworkEntries, describeErr :=
 			describePredictedDraftSandboxProfile(
@@ -367,6 +392,18 @@ func handleSandboxProfileDraftEnforcement(w http.ResponseWriter, r *http.Request
 			})
 			continue
 		}
+		// The display cap truncates the per-context lists, but a refusal must not
+		// be what gets dropped. The aggregate axes deliberately summarize only the
+		// SURVIVING contexts, so a refused context contributes nothing there
+		// either — truncating it away as well would leave the omitted assignments
+		// with no representation at all, while the editor tells the operator they
+		// "are still included in the overall safety check". Carry them separately.
+		omittedRefusals := []*sandboxProfileEnforcementRefusal{}
+		for _, refusal := range contextRefusals[min(len(contextRefusals), len(response.Contexts)):] {
+			if refusal != nil {
+				omittedRefusals = append(omittedRefusals, refusal)
+			}
+		}
 		if len(contextRefusals) > len(response.Contexts) {
 			contextRefusals = contextRefusals[:len(response.Contexts)]
 		}
@@ -381,11 +418,12 @@ func handleSandboxProfileDraftEnforcement(w http.ResponseWriter, r *http.Request
 			ResolvedBy: resolvedBy,
 			Predicted:  true,
 			Axes:       described,
-			NetworkEntries: predictedDraftNetworkEntries(
-				draftAxes.Network, draftPredicted, body.Draft.Network,
+			NetworkEntries: draftOnlyNetworkEntries(
+				draftOnlyRefused, draftAxes.Network, draftPredicted, body.Draft.Network,
 			),
 			ContextAxes:           contextAxes,
 			ContextRefusals:       contextRefusals,
+			OmittedRefusals:       omittedRefusals,
 			ContextNetworkEntries: contextNetworkEntries,
 		})
 	}
@@ -406,6 +444,22 @@ func onlyContextRefusals(
 		}
 	}
 	return refusals[0]
+}
+
+// draftOnlyNetworkEntries suppresses the authored network rows when the
+// draft-only evaluation refused. Those rows describe per-entry capability
+// against a policy no launch uses; rendering them from a refused evaluation
+// would show verdicts that were never computed.
+func draftOnlyNetworkEntries(
+	refused bool,
+	rules sandboxpolicy.NetworkRules,
+	caps harness.PredictedAccessEnforcement,
+	authored *sandboxpolicy.NetworkRules,
+) []harness.PredictedNetworkEntry {
+	if refused {
+		return nil
+	}
+	return predictedDraftNetworkEntries(rules, caps, authored)
 }
 
 func predictedDraftNetworkEntries(

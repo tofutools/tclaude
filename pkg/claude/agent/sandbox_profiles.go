@@ -297,7 +297,10 @@ func runSandboxProfilesShow(p *sandboxProfilesShowParams, stdout, stderr io.Writ
 		}
 		enforcement = &predicted
 		if p.JSON {
-			return writeSandboxProfileJSON(stdout, stderr, predicted)
+			if rc := writeSandboxProfileJSON(stdout, stderr, predicted); rc != rcOK {
+				return rc
+			}
+			return sandboxProfileEnforcementRC(predicted)
 		}
 	}
 	var profile sandboxProfileJSON
@@ -310,6 +313,23 @@ func runSandboxProfilesShow(p *sandboxProfilesShowParams, stdout, stderr io.Writ
 	printSandboxProfileHuman(stdout, profile)
 	if enforcement != nil {
 		printSandboxProfileEnforcement(stdout, *enforcement)
+		return sandboxProfileEnforcementRC(*enforcement)
+	}
+	return rcOK
+}
+
+// sandboxProfileEnforcementRC keeps a refused target a NON-ZERO exit.
+//
+// Before TCL-885 a capability conflict was a whole-request 400, which mapped to
+// rcInvalidArg. It is now a per-target row inside a 200, so without this a
+// script gating on exit status would read an unenforceable profile as OK — the
+// row's whole purpose is to say more than the 400 did, not less. The same code
+// is reused so existing callers keep their contract.
+func sandboxProfileEnforcementRC(result sandboxProfileEnforcementJSON) int {
+	for _, target := range result.Targets {
+		if target.Refusal != nil {
+			return rcInvalidArg
+		}
 	}
 	return rcOK
 }

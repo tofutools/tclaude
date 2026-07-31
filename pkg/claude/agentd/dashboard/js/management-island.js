@@ -10,6 +10,7 @@ import {
   sandboxAccessDraftErrors,
   sandboxNetworkAuthoring,
   sandboxOtherAssignmentWarnings,
+  sandboxOtherContextRefusals,
   sandboxProfileSummary,
   sandboxRuleBuckets,
   sandboxTargetLabel,
@@ -288,7 +289,24 @@ export function SandboxPolicyResult({ target, context, contextIndex }) {
      text and remedy, no buckets, no grouping, no vocabulary of its own. */
   const refusal = sandboxTargetRefusal(target, contextIndex);
   const buckets = sandboxRuleBuckets(axes, context, networkEntries, refusal);
-  const otherWarnings = sandboxOtherAssignmentWarnings(target.axes, axes);
+  /* A refusal in an assignment context the operator is NOT looking at, plus any
+     from contexts past the display cap. The pre-existing axis-based check cannot
+     find these: a refused context contributes nothing to the aggregate axes by
+     design, so there is no verdict for it to compare. Without this the editor
+     would render a clean preview for the selected context and say nothing at all
+     about an assignment whose launch is blocked. */
+  const otherRefusals = sandboxOtherContextRefusals(target, contextIndex);
+  const otherWarnings = [
+    ...sandboxOtherAssignmentWarnings(target.axes, axes),
+    ...otherRefusals.map(({ index, refusal }) => ({
+      axis: `refusal-${index ?? 'omitted'}`,
+      label: index === null
+        ? 'An assignment omitted from this selector'
+        : `Assignment ${index + 1}`,
+      outcome: 'refused',
+      detail: refusal.message,
+    })),
+  ];
   const otherLaunchRefused = otherWarnings.some((warning) => warning.outcome === 'refused');
   const partialCount = buckets.partial.rules.length;
   const unsupportedCount = buckets.notApplied.rules.length;
@@ -338,7 +356,8 @@ export function sandboxPolicyNeedsAttention(target, context, contextIndex) {
   return sandboxRuleBuckets(
     axes, context, networkEntries, sandboxTargetRefusal(target, contextIndex),
   ).launchRefused
-    || sandboxOtherAssignmentWarnings(target.axes, axes).length > 0;
+    || sandboxOtherAssignmentWarnings(target.axes, axes).length > 0
+    || sandboxOtherContextRefusals(target, contextIndex).length > 0;
 }
 
 function accessRowShapeError(network, unixSockets) {

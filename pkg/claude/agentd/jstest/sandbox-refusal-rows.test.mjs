@@ -70,7 +70,7 @@ test('a refused target surfaces its capability warning instead of reading as ful
   const warnings = sandboxPredictionWarnings({
     targets: [{ predicted: false, axes: {}, refusal: REFUSAL }],
   });
-  assert.deepEqual(warnings.capability, [REFUSAL.message]);
+  assert.deepEqual(warnings.capability, [`Launch refused: ${REFUSAL.message}`]);
 });
 
 test('an unaffected target in the same response keeps its ordinary verdicts', () => {
@@ -88,7 +88,9 @@ test('an unaffected target in the same response keeps its ordinary verdicts', ()
   });
   // Both, in one response: the ticket's whole point is that one target's
   // conflict no longer erases the other target's rows.
-  assert.deepEqual(warnings.capability, [REFUSAL.message, 'partly enforced']);
+  assert.deepEqual(warnings.capability,
+    [`Launch refused: ${REFUSAL.message}`, 'partly enforced'],
+    'a refusal must be labelled as blocking; a partial verdict must not be');
 });
 
 test('a per-context refusal wins over the target-wide one for the selected context', () => {

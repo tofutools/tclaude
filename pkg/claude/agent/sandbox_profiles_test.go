@@ -417,3 +417,40 @@ func TestPrintSandboxProfileEnforcementRendersRefusalInsteadOfEmptyAxes(t *testi
 	assert.Contains(t, text,
 		"directories:  1 read rule — ENFORCED: the OS sandbox enforces the directory rules")
 }
+
+// TestSandboxProfileEnforcementRCKeepsARefusalNonZero guards a scripting
+// contract a cold review caught. Before TCL-885 a capability conflict was a
+// whole-request 400, which MapDaemonErrorToRC turned into rcInvalidArg. It is
+// now a per-target row inside a 200, so without an explicit check the command
+// would exit 0 and a script gating on status would read an unenforceable
+// profile as fine — the row exists to say MORE than the 400 did, not less.
+//
+// Falsifiability: make sandboxProfileEnforcementRC always return rcOK. The
+// refused cases below then return 0 where they now return 3; pre- and
+// post-change values DIFFER and the first two assertions fail.
+func TestSandboxProfileEnforcementRCKeepsARefusalNonZero(t *testing.T) {
+	refused := sandboxProfileEnforcementTargetJSON{
+		Implementation: "tclaude-layer", Harness: "claude", Platform: "linux",
+		Predicted: false,
+		Refusal: &sandboxProfileEnforcementRefusalJSON{
+			Kind: "unsupported_sandbox_profile_network_allowlist", Message: "nope",
+		},
+	}
+	clean := sandboxProfileEnforcementTargetJSON{
+		Implementation: "harness-builtin", Harness: "claude", Platform: "linux",
+		Predicted: true,
+	}
+	// Same code the pre-change 400 mapped to, so existing callers keep their
+	// contract rather than learning a new one.
+	assert.Equal(t, rcInvalidArg, sandboxProfileEnforcementRC(
+		sandboxProfileEnforcementJSON{Targets: []sandboxProfileEnforcementTargetJSON{refused}}))
+	// A refusal anywhere in a MIXED request still fails the command: the
+	// operator asked about that target too.
+	assert.Equal(t, rcInvalidArg, sandboxProfileEnforcementRC(
+		sandboxProfileEnforcementJSON{Targets: []sandboxProfileEnforcementTargetJSON{clean, refused}}))
+	// …and a fully clean prediction must still succeed, so the check above
+	// cannot be passing by always failing.
+	assert.Equal(t, rcOK, sandboxProfileEnforcementRC(
+		sandboxProfileEnforcementJSON{Targets: []sandboxProfileEnforcementTargetJSON{clean}}))
+	assert.Equal(t, rcOK, sandboxProfileEnforcementRC(sandboxProfileEnforcementJSON{}))
+}

@@ -129,3 +129,95 @@ test('a refusal in one context leaves the other contexts rendering normally', as
   assert.ok(refused.container.querySelector('.sbx-launch-blocked'));
   assert.match(refused.container.textContent, /proxy_engine_name_authority/);
 });
+
+/* The following three cases were added after a cold review found that the
+   per-context refusal was PRODUCED by the daemon but never RENDERED, so an
+   assignment the operator was not currently looking at could be refused with no
+   signal anywhere on screen — a regression from the 400 this ticket replaced,
+   one level up from where the original guard sat. */
+
+test('a refusal in an unselected context is surfaced, not silently dropped', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { SandboxPolicyResult, sandboxPolicyNeedsAttention } =
+    await harness.importDashboardModule('js/management-island.js');
+  const target = {
+    target: { implementation: 'tclaude-layer', harness: 'claude', platform: 'linux' },
+    predicted: true,
+    // The aggregate summarizes SURVIVING contexts only, so it is clean — which
+    // is exactly why the pre-existing axis-based "other assignments" check
+    // cannot find this refusal and why it needs its own path.
+    axes: { filesystem: { outcome: 'enforced', tier: '1 read rule', detail: 'aggregate' } },
+    context_axes: [
+      {
+        filesystem: { outcome: 'enforced', tier: '1 read rule', detail: 'enforced here' },
+        network: { outcome: 'enforced', tier: 'list', detail: 'enforced here' },
+        unix_sockets: { outcome: 'enforced', tier: 'unset', detail: 'enforced here' },
+      },
+      {},
+    ],
+    context_refusals: [null, REFUSAL],
+  };
+  // Viewing context 0, which is itself perfectly clean.
+  const mounted = await harness.mount(harness.html`
+    <${SandboxPolicyResult} target=${target} context=${CONTEXT} contextIndex=${0}/>`);
+  const other = mounted.container.querySelector('.sbx-other-assignments');
+  assert.ok(other, 'the refused sibling assignment must be reported');
+  assert.ok(other.classList.contains('refused'));
+  assert.equal(other.getAttribute('role'), 'alert');
+  assert.match(other.textContent, /proxy_engine_name_authority/);
+  assert.equal(sandboxPolicyNeedsAttention(target, CONTEXT, 0), true,
+    'a blocked sibling assignment must open the section');
+});
+
+test('a refusal past the display cap is surfaced via omitted_refusals', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { SandboxPolicyResult, sandboxPolicyNeedsAttention } =
+    await harness.importDashboardModule('js/management-island.js');
+  // The daemon caps the per-context lists at 10. A context beyond the cap has no
+  // index in context_axes AND contributes nothing to the aggregate, so without
+  // omitted_refusals it would be invisible while the editor still tells the
+  // operator the omitted assignments "are still included in the overall safety
+  // check".
+  const target = {
+    target: { implementation: 'tclaude-layer', harness: 'claude', platform: 'linux' },
+    predicted: true,
+    axes: { filesystem: { outcome: 'enforced', tier: '1 read rule', detail: 'aggregate' } },
+    context_axes: [{
+      filesystem: { outcome: 'enforced', tier: '1 read rule', detail: 'enforced here' },
+      network: { outcome: 'enforced', tier: 'list', detail: 'enforced here' },
+      unix_sockets: { outcome: 'enforced', tier: 'unset', detail: 'enforced here' },
+    }],
+    context_refusals: [null],
+    omitted_refusals: [REFUSAL],
+  };
+  const mounted = await harness.mount(harness.html`
+    <${SandboxPolicyResult} target=${target} context=${CONTEXT} contextIndex=${0}/>`);
+  const other = mounted.container.querySelector('.sbx-other-assignments');
+  assert.ok(other, 'an omitted assignment that refuses must still be reported');
+  assert.match(other.textContent, /omitted from this selector/);
+  assert.match(other.textContent, /proxy_engine_name_authority/);
+  assert.equal(sandboxPolicyNeedsAttention(target, CONTEXT, 0), true);
+});
+
+test('a target with no refusal anywhere reports no refusal warning', async (t) => {
+  // The converse, so the two cases above cannot pass by always warning.
+  const harness = await createPreactHarness(t);
+  const { SandboxPolicyResult, sandboxPolicyNeedsAttention } =
+    await harness.importDashboardModule('js/management-island.js');
+  const target = {
+    target: { implementation: 'tclaude-layer', harness: 'claude', platform: 'linux' },
+    predicted: true,
+    axes: { filesystem: { outcome: 'enforced', tier: '1 read rule', detail: 'aggregate' } },
+    context_axes: [{
+      filesystem: { outcome: 'enforced', tier: '1 read rule', detail: 'enforced here' },
+      network: { outcome: 'enforced', tier: 'list', detail: 'enforced here' },
+      unix_sockets: { outcome: 'enforced', tier: 'unset', detail: 'enforced here' },
+    }],
+    context_refusals: [null],
+  };
+  const mounted = await harness.mount(harness.html`
+    <${SandboxPolicyResult} target=${target} context=${CONTEXT} contextIndex=${0}/>`);
+  assert.equal(mounted.container.querySelector('.sbx-other-assignments'), null);
+  assert.equal(mounted.container.querySelector('.sbx-launch-blocked'), null);
+  assert.equal(sandboxPolicyNeedsAttention(target, CONTEXT, 0), false);
+});
