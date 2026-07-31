@@ -138,6 +138,12 @@ declare -A SMOKE_FLOW_HARNESSES=()
 #
 # Requires smoke::load_manifest to have run: SMOKE_FLOW_FILES is the set of flow
 # files this reads, and reading an empty set would record nothing while passing.
+#
+# NOTE, because this is a NEW requirement on a flow file: reading a declaration
+# means SOURCING the flow, including on the --validate-only path, which never
+# sourced one before. A flow must therefore be inert at source time — function
+# definitions and `set -euo pipefail`, nothing that touches a sandbox, a network
+# or /etc/hosts. flow::run is where a flow is allowed to do things.
 smoke::load_flow_harnesses() {
   SMOKE_FLOW_HARNESSES=()
   if [[ ${#SMOKE_FLOW_FILES[@]} -eq 0 ]]; then
@@ -145,7 +151,7 @@ smoke::load_flow_harnesses() {
     return 1
   fi
 
-  local file name raw status item collected
+  local file name raw status verdict item collected
   local -a tokens=()
   for file in "${SMOKE_FLOW_FILES[@]}"; do
     name="$(basename "$file" .sh)"
@@ -153,25 +159,47 @@ smoke::load_flow_harnesses() {
     # Sourced in a command-substitution subshell, exactly as smoke::run_flows
     # sources a flow to reach flow::describe and flow::report — so a flow's
     # `set -e`, traps and variables cannot reach the caller. The flow's own
-    # top-level output is discarded; only what flow::harnesses prints is read.
+    # top-level STDOUT is discarded; only what flow::harnesses prints is read.
+    #
+    # Its STDERR is deliberately NOT discarded. A flow with a syntax error is a
+    # declaration problem, and swallowing bash's own diagnostic would leave this
+    # function saying "could not be sourced" with no line number — which is the
+    # same misattribution, one level down, that this whole change is about.
+    #
+    # The outcome is carried on the FIRST LINE rather than in the exit status.
+    # Reserved statuses would be indistinguishable from `flow::harnesses`
+    # returning the same number itself: `flow::harnesses() { return 3; }` would
+    # be reported as "declares no flow::harnesses", which is a lie about a
+    # declaration that is right there in the file. Both marker paths exit 0, so a
+    # non-zero status can only mean the declaration itself failed.
     raw="$(
       # shellcheck source=/dev/null
-      source "$file" >/dev/null 2>&1 || exit 4
-      declare -F flow::harnesses >/dev/null 2>&1 || exit 3
+      source "$file" >/dev/null || { printf 'unsourceable\n'; exit 0; }
+      declare -F flow::harnesses >/dev/null 2>&1 || { printf 'undeclared\n'; exit 0; }
+      printf 'declared\n'
       flow::harnesses
     )" || status=$?
-    case "$status" in
-      0) ;;
-      3)
+    if [[ "$status" -ne 0 ]]; then
+      smoke::error "flow '$name' flow::harnesses failed with status $status"
+      return 1
+    fi
+    verdict="${raw%%$'\n'*}"
+    raw="${raw#"$verdict"}"
+    case "$verdict" in
+      declared) ;;
+      undeclared)
         smoke::error "flow '$name' declares no flow::harnesses; say which harnesses it launches, or 'none'"
         return 1
         ;;
-      4)
-        smoke::error "flow '$name' could not be sourced to read its harness declaration"
+      unsourceable)
+        smoke::error "flow '$name' could not be sourced to read its harness declaration; see the error above"
         return 1
         ;;
       *)
-        smoke::error "flow '$name' flow::harnesses failed with status $status"
+        # Neither marker survived, so the subshell died before printing one —
+        # nothing about this flow's declaration is known, and guessing would be
+        # the silent pass this function exists to refuse.
+        smoke::error "flow '$name' produced no harness-declaration verdict; its declaration could not be read"
         return 1
         ;;
     esac
@@ -487,9 +515,16 @@ smoke::require_shard_harness_coverage() {
     return 1
   fi
 
+  # Deduplicated across shards. Two shards legitimately claim the same harness
+  # when two of their flows declare it, and iterating the raw concatenation would
+  # report an uninstallable name once per claiming shard — the same defect
+  # printed twice reads like two.
   local claimed="" name harness
   for name in "${SMOKE_SHARD_NAMES[@]}"; do
-    claimed+="${SMOKE_SHARD_HARNESSES[$name]}"
+    for harness in ${SMOKE_SHARD_HARNESSES[$name]}; do
+      [[ " $claimed" == *" $harness "* ]] && continue
+      claimed+="$harness "
+    done
   done
 
   local failed=0

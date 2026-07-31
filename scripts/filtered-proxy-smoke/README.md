@@ -112,9 +112,9 @@ whether or not a shard was selected:
 | flow union | a flow the manifest names that **no** shard runs — it would stop running while every job stayed green |
 | flow harness declaration | a flow that declares no harness set at all — its harnesses would be installed by nobody, and the flow would fail later and somewhere else |
 | harness union | a harness `lib/harnesses.sh` can install that no flow declares (installed by nobody), or a flow declaring one nothing can install |
-| workflow matrix | a shard declared here that CI's `shard: [...]` matrix does not invoke — it would satisfy both unions above and still execute nowhere |
+| workflow matrix | a shard declared here that CI's `shard: [...]` matrix does not invoke — it would satisfy every check above and still execute nowhere |
 
-The third one reads `.github/workflows/*.yml` **read-only**. The dependency
+The last one reads `.github/workflows/*.yml` **read-only**. The dependency
 points from the repo *into* the workflow deliberately: that keeps the CI job
 generic, whereas a workflow that had to know about flows is the thing this whole
 layout exists to avoid. A job that does not pass `--shard` is skipped rather than
@@ -140,7 +140,11 @@ set cannot be left behind, and there is no second list to keep in step.
 
 1. Add `flows/<NN>-<name>.sh` defining `flow::run` and `flow::harnesses` (and
    optionally `flow::describe` for the failure summary, `flow::report` for an
-   operator-facing extract on success).
+   operator-facing extract on success). The file must be **inert at source
+   time** — function definitions and `set -euo pipefail`, nothing else. Reading
+   `flow::harnesses` sources the flow, including on the `--validate-only` path,
+   which must stay safe to run anywhere; `flow::run` is where a flow is allowed
+   to build sandboxes and rewrite `/etc/hosts`.
 2. Add its required top-level test names to `manifest.txt`.
 3. Assign it to a shard in `shards.txt`.
 

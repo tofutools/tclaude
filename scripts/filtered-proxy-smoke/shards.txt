@@ -35,10 +35,10 @@
 # scripts/lib/smoke/selftest.sh, which every run executes before trusting
 # anything, so the guards cannot rot unnoticed either.
 #
-# A third check closes the level above: run.sh reads the workflow files and
+# A LAST check closes the level above: run.sh reads the workflow files and
 # refuses to run unless the shard names CI's matrix invokes are exactly the ones
 # declared here. A shard added below but not to the matrix would otherwise
-# satisfy both unions above and still execute nowhere.
+# satisfy every check above and still execute nowhere.
 #
 # Adding a flow therefore costs three edits, all reviewable: a manifest.txt line
 # saying what evidence it must produce, a shards.txt entry saying which job runs

@@ -267,8 +267,50 @@ expect_flow_harnesses refuse none-plus-name \
 
 # A declaration the reader cannot evaluate must fail rather than record nothing.
 expect_flow_harnesses refuse failing-declaration \
-  "flow::harnesses failed with status" \
+  "flow '10-alpha' flow::harnesses failed with status 9" \
   '10-alpha=return 9'
+
+# ...and the statuses that would collide with a reserved sentinel if the outcome
+# were carried in the exit status rather than on the first line. A flow whose
+# declaration returns 3 must be reported as a FAILING declaration, never as
+# "declares no flow::harnesses" — that would be a lie about a declaration
+# sitting right there in the file, which is the same misattribution this whole
+# change is about, one level down.
+expect_flow_harnesses refuse failing-declaration-status-3 \
+  "flow '10-alpha' flow::harnesses failed with status 3" \
+  '10-alpha=return 3'
+expect_flow_harnesses refuse failing-declaration-status-4 \
+  "flow '10-alpha' flow::harnesses failed with status 4" \
+  '10-alpha=return 4'
+
+# A flow that cannot be sourced at all: refused, and bash's own diagnostic is
+# left visible so the reader gets a line number rather than only "could not be
+# sourced". `unexpected end of file` is bash's, not ours — its presence in the
+# captured output is the assertion that stderr was not swallowed.
+mkdir -p "$work/flowharness-unsourceable/flows"
+printf '10-alpha TestAlpha\n' > "$work/flowharness-unsourceable/manifest.txt"
+printf 'flow::run() { :; }\nflow::harnesses() {\n' \
+  > "$work/flowharness-unsourceable/flows/10-alpha.sh"
+if {
+  smoke::load_manifest "$work/flowharness-unsourceable/manifest.txt" \
+    "$work/flowharness-unsourceable/flows" &&
+    smoke::load_flow_harnesses
+} > "$work/flowharness-unsourceable/out" 2>&1; then
+  printf 'selftest FAIL: flowharness-unsourceable — wanted refuse, got pass\n'
+  failures=1
+else
+  if ! grep -qF "flow '10-alpha' could not be sourced" \
+      "$work/flowharness-unsourceable/out"; then
+    printf 'selftest FAIL: flowharness-unsourceable did not name the flow\n'
+    sed 's/^/    /' "$work/flowharness-unsourceable/out"
+    failures=1
+  fi
+  if ! grep -q 'unexpected end of file' "$work/flowharness-unsourceable/out"; then
+    printf "selftest FAIL: flowharness-unsourceable swallowed bash's own diagnostic\n"
+    sed 's/^/    /' "$work/flowharness-unsourceable/out"
+    failures=1
+  fi
+fi
 
 # Duplicates would install the same harness twice and read as two claims.
 expect_flow_harnesses refuse duplicate \
@@ -395,6 +437,32 @@ if [[ -z "${SMOKE_SHARD_HARNESSES[one]+set}" || -n "${SMOKE_SHARD_HARNESSES[one]
     "${SMOKE_SHARD_HARNESSES[one]:-<unset>}"
   failures=1
 fi
+# ...carried all the way through SELECTION, not just derivation. The empty set is
+# a path the entrypoint takes at run time — `read -a` on an empty here-string,
+# then a `for` over a zero-length array under `set -u` — and a case that stopped
+# at load_shards would leave the one shape claimed-supported and never executed.
+if smoke::select_shard one > "$work/select-derived-empty.out" 2>&1; then
+  if [[ ${#SMOKE_SELECTED_HARNESSES[@]} -ne 0 ]]; then
+    printf 'selftest FAIL: select-derived-empty selected %q, wanted nothing\n' \
+      "${SMOKE_SELECTED_HARNESSES[*]}"
+    failures=1
+  fi
+  # The loop run.sh performs over the selection, under the same `set -euo
+  # pipefail` it runs with: zero iterations, and no unbound-variable abort.
+  if ! (
+    set -euo pipefail
+    if [[ ${#SMOKE_SELECTED_HARNESSES[@]} -gt 0 ]]; then
+      for h in "${SMOKE_SELECTED_HARNESSES[@]}"; do echo "$h"; done
+    fi
+  ) > /dev/null 2>&1; then
+    printf 'selftest FAIL: select-derived-empty cannot be iterated under set -u\n'
+    failures=1
+  fi
+else
+  printf 'selftest FAIL: select-derived-empty — wanted pass, got refuse\n'
+  sed 's/^/    /' "$work/select-derived-empty.out"
+  failures=1
+fi
 
 # THE ONE THIS SECTION EXISTS FOR: 30-gamma has evidence and a flow file, but no
 # shard runs it. Every other guard in this file passes; only this one refuses.
@@ -469,9 +537,20 @@ fi
 # ...and deriving install sets from flow declarations that were never read would
 # hand every shard an empty one — every job installing nothing, every flow that
 # needs a harness failing with "not found".
+#
+# The MESSAGE is asserted, not just the refusal. A bare exit-status check does
+# not discriminate here: the per-flow `${...+set}` check inside the derivation
+# refuses the same input for a different reason, so this case would stay green
+# with the ordering guard deleted and would prove nothing about the guard its
+# name claims.
 if ( SMOKE_FLOW_HARNESSES=(); smoke::load_shards "$work/shards-green/shards.txt" ) \
     > "$work/shards-no-flow-harnesses.out" 2>&1; then
   printf 'selftest FAIL: shards-no-flow-harnesses — wanted refuse, got pass\n'
+  failures=1
+elif ! grep -qF "called before smoke::load_flow_harnesses" \
+    "$work/shards-no-flow-harnesses.out"; then
+  printf 'selftest FAIL: shards-no-flow-harnesses refused for the wrong reason\n'
+  sed 's/^/    /' "$work/shards-no-flow-harnesses.out"
   failures=1
 fi
 
@@ -663,6 +742,48 @@ if ! grep -qF "flow(s) 20-beta declare harness 'codex', which this entrypoint ca
 fi
 # Declaring no installable harnesses at all must be an error, not a free pass.
 expect_harness_coverage refuse no-known
+
+# One defect, reported ONCE. Two shards legitimately claim the same harness when
+# a flow in each declares it, and iterating the raw per-shard concatenation would
+# print the same "cannot install" line once per claiming shard — a single typo
+# rendered as two findings, which is the misattribution this change is about
+# wearing a different hat.
+mkdir -p "$work/harness-dup/flows"
+printf '10-alpha TestAlpha\n20-beta TestBeta\n' > "$work/harness-dup/manifest.txt"
+printf 'one flows 10-alpha\ntwo flows 20-beta\n' > "$work/harness-dup/shards.txt"
+printf 'flow::run() { :; }\nflow::harnesses() { echo codex; }\n' \
+  > "$work/harness-dup/flows/10-alpha.sh"
+printf 'flow::run() { :; }\nflow::harnesses() { echo codex; }\n' \
+  > "$work/harness-dup/flows/20-beta.sh"
+if {
+  smoke::load_manifest "$work/harness-dup/manifest.txt" "$work/harness-dup/flows" &&
+    smoke::load_flow_harnesses &&
+    smoke::load_shards "$work/harness-dup/shards.txt"
+} > "$work/harness-dup/load.out" 2>&1; then
+  smoke::require_shard_harness_coverage claude > "$work/harness-dup/out" 2>&1 || true
+  # Counted on the plain ERROR: line only. smoke::error also emits a `::error::`
+  # workflow annotation for the same message, so counting every occurrence would
+  # report 2 for a single finding and this case would fail on the correct code.
+  dup_lines="$(grep -c "^ERROR:.*cannot install" "$work/harness-dup/out" || true)"
+  if [[ "${dup_lines:-0}" -ne 1 ]]; then
+    printf 'selftest FAIL: harness-dup reported the same uninstallable harness %s times, wanted 1\n' \
+      "${dup_lines:-0}"
+    sed 's/^/    /' "$work/harness-dup/out"
+    failures=1
+  fi
+  # ...and both declaring flows are still named, so deduplicating the harness
+  # must not cost the attribution the message exists for.
+  if ! grep -qF "flow(s) 10-alpha 20-beta declare harness 'codex'" \
+      "$work/harness-dup/out"; then
+    printf 'selftest FAIL: harness-dup did not name both declaring flows\n'
+    sed 's/^/    /' "$work/harness-dup/out"
+    failures=1
+  fi
+else
+  printf 'selftest FAIL: harness-dup fixture did not load\n'
+  sed 's/^/    /' "$work/harness-dup/load.out"
+  failures=1
+fi
 
 # --- fixture teardown hygiene (TCL-881) -------------------------------------
 #
