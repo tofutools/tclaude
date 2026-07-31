@@ -36,6 +36,32 @@ func TestRunSnapshotNamedLoadsReportsQueueAndRun(t *testing.T) {
 	}
 }
 
+func TestRunSnapshotNamedLoadsIncludesWaitForLaterWorkerWave(t *testing.T) {
+	started := make(chan struct{}, snapshotLoadConcurrency)
+	release := make(chan struct{})
+	loads := make([]snapshotNamedLoad, snapshotLoadConcurrency+1)
+	for i := range loads {
+		loads[i] = snapshotNamedLoad{name: "load", run: func() {
+			if i < snapshotLoadConcurrency {
+				started <- struct{}{}
+				<-release
+			}
+		}}
+	}
+	phasesCh := make(chan []perfPhase, 1)
+	go func() { phasesCh <- runSnapshotNamedLoads(loads...) }()
+	for range snapshotLoadConcurrency {
+		<-started
+	}
+	time.Sleep(5 * time.Millisecond)
+	close(release)
+	phases := <-phasesCh
+	if assert.Len(t, phases, snapshotLoadConcurrency+1) && assert.Len(t, phases[snapshotLoadConcurrency].Children, 2) {
+		assert.GreaterOrEqual(t, phases[snapshotLoadConcurrency].Children[0].Ms, float64(4),
+			"job after the worker limit must report its wait behind the first wave")
+	}
+}
+
 func BenchmarkSnapshotPreloadFanoutOverhead(b *testing.B) {
 	batchSizes := []int{8, 2, 5, 4}
 	for b.Loop() {

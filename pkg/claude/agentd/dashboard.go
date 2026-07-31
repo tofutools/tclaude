@@ -2379,8 +2379,10 @@ func runSnapshotNamedLoads(loads ...snapshotNamedLoad) []perfPhase {
 		return nil
 	}
 	timings := make([]perfPhase, len(loads))
+	queuedAt := make([]time.Time, len(loads))
 	jobs := make(chan int, len(loads))
 	for i := range loads {
+		queuedAt[i] = time.Now()
 		jobs <- i
 	}
 	close(jobs)
@@ -2391,7 +2393,6 @@ func runSnapshotNamedLoads(loads ...snapshotNamedLoad) []perfPhase {
 		go func() {
 			defer wg.Done()
 			for index := range jobs {
-				queuedAt := time.Now()
 				snapshotLoadSlots <- struct{}{}
 				func() {
 					defer func() { <-snapshotLoadSlots }()
@@ -2400,9 +2401,9 @@ func runSnapshotNamedLoads(loads ...snapshotNamedLoad) []perfPhase {
 					finishedAt := time.Now()
 					timings[index] = perfPhase{
 						Name: loads[index].name,
-						Ms:   durMs(finishedAt.Sub(queuedAt)),
+						Ms:   durMs(finishedAt.Sub(queuedAt[index])),
 						Children: []perfPhase{
-							{Name: "queue", Ms: durMs(startedAt.Sub(queuedAt))},
+							{Name: "queue", Ms: durMs(startedAt.Sub(queuedAt[index]))},
 							{Name: "run", Ms: durMs(finishedAt.Sub(startedAt))},
 						},
 					}
@@ -3089,7 +3090,12 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	)
 	for i := range collectorPhases {
 		if collectorPhases[i].Name == "usage" {
-			collectorPhases[i].Children = usagePhases
+			for j := range collectorPhases[i].Children {
+				if collectorPhases[i].Children[j].Name == "run" {
+					collectorPhases[i].Children[j].Children = usagePhases
+					break
+				}
+			}
 			break
 		}
 	}
