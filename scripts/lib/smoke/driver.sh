@@ -11,8 +11,8 @@
 # A shard's own entrypoint keeps exactly what is specific to it: which packages
 # it installs, which tools it pins, and its flows. It calls:
 #
-#   smoke::load_manifest   "$here/manifest.txt"     # + drift guards vs flows/
-#   smoke::run_flows       "$here" "$label"          # execute + judge evidence
+#   smoke::load_manifest   "$here/manifest.txt" "$here/flows"  # + drift guards
+#   smoke::run_flows       "$label"                            # execute + judge
 #
 # Both are safe to call without a sandbox; only the flows themselves are
 # destructive, and smoke::load_manifest is what --validate-only stops after.
@@ -42,17 +42,26 @@ smoke::load_manifest() {
     return 1
   fi
 
-  local flow test_name _rest
-  # The `|| [[ -n ... ]]` tail matters: read returns non-zero at EOF, so a final
-  # line with no trailing newline would otherwise be skipped — silently dropping
-  # a required test while every drift guard still passed.
-  while read -r flow test_name _rest || [[ -n "${flow:-}" ]]; do
+  local flow names name
+  # EVERY name on the line is recorded, not just the first. Reading the rest of
+  # the line into a discarded variable would drop the second and later names
+  # from the evidence set while every drift guard below still passed — silently
+  # requiring less than the manifest says, which is the exact vacuous shape this
+  # file exists to refuse.
+  #
+  # The `|| [[ -n ... ]]` tail matters for the same reason in the other
+  # direction: read returns non-zero at EOF, so a final line with no trailing
+  # newline would otherwise be skipped entirely.
+  while read -r flow names || [[ -n "${flow:-}" ]]; do
     [[ -z "${flow:-}" || "$flow" == \#* ]] && continue
-    if [[ -z "${test_name:-}" ]]; then
+    if [[ -z "${names:-}" ]]; then
       smoke::error "manifest line for flow '$flow' names no test"
       return 1
     fi
-    SMOKE_REQUIRED_BY_FLOW["$flow"]+="$test_name "
+    for name in $names; do
+      [[ "$name" == \#* ]] && break
+      SMOKE_REQUIRED_BY_FLOW["$flow"]+="$name "
+    done
   done < "$manifest"
 
   mapfile -t SMOKE_FLOW_FILES < <(find "$flows_dir" -maxdepth 1 -name '*.sh' | sort)
