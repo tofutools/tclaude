@@ -1458,7 +1458,9 @@ func backfillOpenCodeContextUsage(ctx context.Context, runtime db.OpenCodeRuntim
 		}
 		messageRealCost := openCodeMessageUsageRealCost(costUsage)
 		realCost += messageRealCost
-		historyCosts[m.Info.SessionID] += messageRealCost
+		if messageRealCost > 0 {
+			historyCosts[m.Info.SessionID] += messageRealCost
+		}
 		effectiveUsage := aggregateOpenCodeMessageCostUsage(costUsage)
 		if effectiveUsage.total() <= 0 {
 			if costUsage.hadSteps {
@@ -1485,6 +1487,12 @@ func backfillOpenCodeContextUsage(ctx context.Context, runtime db.OpenCodeRuntim
 	openCodeVirtualCostState.Lock()
 	for sessionID, cost := range historyCosts {
 		nativeCosts[sessionID] = cost
+	}
+	realCost = 0
+	for _, cost := range nativeCosts {
+		if cost > 0 {
+			realCost += cost
+		}
 	}
 	if openCodeVirtualCostState.trackedSessions == nil {
 		openCodeVirtualCostState.trackedSessions = map[string]map[string]string{}
