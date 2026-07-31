@@ -466,9 +466,6 @@ jobs:
           TCLAUDE_FILTERED_ALLOWED_PREFIX: 198.18.3.0/25
           TCLAUDE_FILTERED_ALLOWED_PORT: "41021"
           TCLAUDE_FILTERED_DENIED_PORT: "41022"
-          # The port the pinned harnesses' model origins are reached on. It is
-          # 443 because that is the port the harnesses themselves choose.
-          TCLAUDE_FILTERED_PROXY_ORIGIN_PORT: "443"
         run: |
           namespace=tclaude-proxy-cooperation
           host_link=tclprx2
@@ -508,7 +505,9 @@ jobs:
             echo "198.18.3.10 api.anthropic.com api.openai.com"
           } | sudo tee -a /etc/hosts >/dev/null
 
-          # 443 carries the model origins; the two fixture ports keep the
+          # 443 carries the model origins and is NOT configurable: the pinned
+          # harnesses choose that port themselves, so the smoke pins it too
+          # rather than reading it from here. The two fixture ports keep the
           # runner-fixture contract the proxy smokes share.
           for port in 443 41021 41022; do
             sudo ip netns exec "$namespace" \
