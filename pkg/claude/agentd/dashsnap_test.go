@@ -759,7 +759,7 @@ func baseStates() []dashsnap.State {
 		{
 			Key:     "groups-notification-reader",
 			Title:   "Groups — notification quick reader",
-			Caption: "TCL-875: an agent-level unread marker opens the non-modal reader over Groups, keeps the hierarchy visible, takes keyboard focus, and exposes sender navigation plus read and Messages actions.",
+			Caption: "TCL-875: an agent-level unread marker opens the non-modal reader over Groups, keeps the hierarchy visible, takes keyboard focus, and exposes sender navigation plus read and Messages actions. Opening leaves the message unread until the operator marks it.",
 			JS: showGroups + expandGroups + `return (async function(){
   var deadline = Date.now() + 4000;
   var marker = null;
@@ -779,17 +779,13 @@ func baseStates() []dashsnap.State {
       !drawer.querySelector('.human-notification-drawer-actions .primary')) {
     throw new Error('groups-notification-reader: reader content/actions missing');
   }
-  // The visual matrix reuses one DB fixture across both skins. Restore the
-  // opened message server-side without publishing it into the current page:
-  // this capture still shows the real optimistic "opened · read" state, while
-  // the later wizard capture gets the unread launch marker too.
-  var id = Number(drawer.dataset.messageId);
-  var response = await fetch('/api/human-messages/read', {
-    method:'POST', credentials:'same-origin',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({id:id, read:false})
-  });
-  if (!response.ok) throw new Error('groups-notification-reader: fixture read-state restore failed');
+  // Opening the reader must not mark the message read; the state chip and the
+  // agent marker both stay unread until the operator uses "Mark read". The
+  // visual matrix reuses one DB fixture across both skins, so this also keeps
+  // the later wizard capture's unread launch marker intact.
+  var chip = drawer.querySelector('.human-notification-drawer-state');
+  if (!chip || !chip.classList.contains('unread')) throw new Error('groups-notification-reader: opening marked the message read');
+  if (!document.querySelector('.human-notification-attention')) throw new Error('groups-notification-reader: opening cleared the unread marker');
 })();`,
 			SettleMS: 300,
 		},

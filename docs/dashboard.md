@@ -408,7 +408,9 @@ sent one or more unread notifications to the human with
 opens the quick reader — a right-hand drawer that pages through that agent's
 notifications, downloads an attached file, replies, and offers **Open in
 Messages ↗** for the full **Messages → Human** view filtered to that agent.
-Opening a notification in the reader marks it read.
+Opening a notification in the reader does **not** mark it read — glancing at a
+message never silently clears the mark. Use the reader's **Mark read** action
+when you have handled it; sending a reply marks the original read too.
 
 The same amber **!** appears on the **Terminals** tab, on the tab of any open
 terminal whose agent has unread notifications, and opens the same quick reader.
