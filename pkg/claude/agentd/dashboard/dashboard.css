@@ -1760,6 +1760,31 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
   color: #d4d4d4; font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
   white-space: pre-wrap; overflow-wrap: anywhere;
 }
+/* Keep both scroll surfaces in the disclosure on the same dark skin as the
+   dashboard panes. Firefox has no ::-webkit-scrollbar surface, so its
+   standardized fallback stays behind the feature query used by the rest of
+   the dashboard. */
+@supports not selector(::-webkit-scrollbar) {
+  .audit-spawn-popover,
+  .audit-spawn-popover pre {
+    scrollbar-width: thin;
+    scrollbar-color: #6e7681 #0d1117;
+  }
+}
+.audit-spawn-popover::-webkit-scrollbar,
+.audit-spawn-popover pre::-webkit-scrollbar { width: 10px; height: 10px; }
+.audit-spawn-popover::-webkit-scrollbar-track,
+.audit-spawn-popover pre::-webkit-scrollbar-track { background: #0d1117; }
+.audit-spawn-popover::-webkit-scrollbar-corner,
+.audit-spawn-popover pre::-webkit-scrollbar-corner { background: #161b22; }
+.audit-spawn-popover::-webkit-scrollbar-thumb,
+.audit-spawn-popover pre::-webkit-scrollbar-thumb {
+  background: #6e7681; border-radius: 6px;
+}
+.audit-spawn-popover::-webkit-scrollbar-thumb:hover,
+.audit-spawn-popover pre::-webkit-scrollbar-thumb:hover { background: #8b949e; }
+.audit-spawn-popover::-webkit-scrollbar-thumb:active,
+.audit-spawn-popover pre::-webkit-scrollbar-thumb:active { background: #b1bac4; }
 .filter-bar label.filter-toggle select {
   background: #161b22; color: #d4d4d4; border: 1px solid #2a3340;
   border-radius: 4px; padding: 1px 4px; font-size: 12px; cursor: pointer;
@@ -12413,6 +12438,25 @@ body.wizard .mail-reader::-webkit-scrollbar-thumb {
 body.wizard .mail-sidebar::-webkit-scrollbar-thumb:hover,
 body.wizard .mail-list::-webkit-scrollbar-thumb:hover,
 body.wizard .mail-reader::-webkit-scrollbar-thumb:hover { background: linear-gradient(180deg, #8f6fca, #4a367d); }
+@supports not selector(::-webkit-scrollbar) {
+  body.wizard .audit-spawn-popover,
+  body.wizard .audit-spawn-popover pre { scrollbar-color: #7a5db0 #140f28; }
+}
+body.wizard .audit-spawn-popover::-webkit-scrollbar,
+body.wizard .audit-spawn-popover pre::-webkit-scrollbar { width: 10px; height: 10px; }
+body.wizard .audit-spawn-popover::-webkit-scrollbar-track,
+body.wizard .audit-spawn-popover pre::-webkit-scrollbar-track,
+body.wizard .audit-spawn-popover::-webkit-scrollbar-corner,
+body.wizard .audit-spawn-popover pre::-webkit-scrollbar-corner { background: #140f28; }
+body.wizard .audit-spawn-popover::-webkit-scrollbar-thumb,
+body.wizard .audit-spawn-popover pre::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #7a5db0, #3a2a63);
+  border: 1px solid #d9b45a; border-radius: 6px;
+}
+body.wizard .audit-spawn-popover::-webkit-scrollbar-thumb:hover,
+body.wizard .audit-spawn-popover pre::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #8f6fca, #4a367d);
+}
 /* Empty-state prompts across the three panes read as muted arcane. */
 body.wizard .mail-sidebar .empty,
 body.wizard .mail-list .empty,
