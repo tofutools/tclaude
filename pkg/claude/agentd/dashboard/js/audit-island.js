@@ -1,5 +1,5 @@
 import { Fragment, h, render } from 'preact';
-import { useEffect, useRef } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { idTooltip, relTime, shortAgentId } from './helpers.js';
 import { actorTitle, AUDIT_COLUMNS, AUDIT_PAGE_SIZES, fmtAuditTime, statusView, targetTitle, verbClass } from './audit-model.js';
@@ -17,6 +17,33 @@ function Target({ entry }) {
   if (!entry.group_name && !entry.target_label && !id) return html`<span class="muted">—</span>`;
   return html`<${Fragment}>${entry.group_name && html`<span class="tag">${entry.group_name}</span>`}${entry.target_label && html` <span class="rowname">${entry.target_label}</span>`}${id && html` <span class="id" title=${idTooltip(entry.target_agent, entry.target_conv)}>${id}</span>`}</${Fragment}>`;
 }
+function prettyAuditValue(value, raw = '') {
+  if (raw) return raw;
+  if (value === undefined) return '(not captured)';
+  try { return JSON.stringify(value, null, 2); } catch (_) { return String(value); }
+}
+function SpawnDetails({ entry }) {
+  const [open, setOpen] = useState(false);
+  const details = entry.spawn;
+  if (!details) return null;
+  const panelID = `audit-spawn-details-${entry.id}`;
+  const closeOnEscape = (event) => {
+    if (event.key === 'Escape') { event.stopPropagation(); setOpen(false); }
+  };
+  return html`<span class="audit-spawn-info">
+    <button type="button" class="spawn-field-help-trigger audit-spawn-info-trigger"
+      aria-label="Show spawn request, resolved parameters, and response"
+      aria-controls=${panelID} aria-expanded=${open ? 'true' : 'false'} title="Show spawn request, resolved parameters, and response"
+      onClick=${() => setOpen(!open)}>?</button>
+    ${open && html`<div id=${panelID} class="audit-spawn-popover" role="dialog" aria-label="Spawn details" onKeyDown=${closeOnEscape}>
+      <div class="audit-spawn-popover-head"><strong>Spawn details</strong><button type="button" class="audit-spawn-popover-close" aria-label="Close spawn details" title="Close" onClick=${() => setOpen(false)}>×</button></div>
+      ${details.snapshot_truncated && html`<div class="audit-spawn-popover-note">The request snapshot exceeded the audit size limit; the resolved values and response are retained where possible.</div>`}
+      <section><h4>Request input</h4><pre>${prettyAuditValue(details.input, details.input_raw)}</pre></section>
+      <section><h4>Resolved parameters and profiles</h4><pre>${prettyAuditValue(details.resolved)}</pre></section>
+      <section><h4>Command response${details.response_truncated ? ' (truncated)' : ''}</h4><pre>${prettyAuditValue(details.response, details.response_raw)}</pre></section>
+    </div>`}
+  </span>`;
+}
 function Header({ current, state, actions }) {
   const activate = (event, key) => { if (!key || (event.type === 'keydown' && event.key !== 'Enter' && event.key !== ' ' && event.key !== 'Spacebar')) return; event.preventDefault(); state.cycleSort(key); actions.load(); };
   return html`<thead><tr>${AUDIT_COLUMNS.map((column) => { const active = column.key === current.sort; return html`<th key=${column.label} class=${column.key ? `audit-sort${active ? ' active' : ''}` : undefined} tabIndex=${column.key ? 0 : undefined} aria-sort=${column.key ? active ? current.dir === 'asc' ? 'ascending' : 'descending' : 'none' : undefined} title=${column.key ? `Sort by ${column.label}` : undefined} onClick=${(event) => activate(event, column.key)} onKeyDown=${(event) => activate(event, column.key)}>${column.label}${active ? current.dir === 'asc' ? ' ▲' : ' ▼' : ''}</th>`; })}</tr></thead>`;
@@ -30,7 +57,7 @@ function Rows({ current, state, actions }) {
     <td class="audit-trunc" title=${actorTitle(entry, id)}><${Actor} entry=${entry} /></td>
     <td class="audit-trunc" title=${entry.verb || ''}><span class=${verbClass(entry.verb)}>${entry.verb}</span>${entry.source === 'dashboard' && html` <span class="id" title="run from the dashboard">⊞</span>`}</td>
     <td class="audit-trunc" title=${targetTitle(entry)}><${Target} entry=${entry} /></td>
-    <td class="audit-detail"><span class="muted" title=${entry.detail || ''}>${entry.detail || ''}</span></td>
+    <td class="audit-detail"><span class="muted" title=${entry.detail || ''}>${entry.detail || ''}</span><${SpawnDetails} entry=${entry} /></td>
     <td class="audit-nowrap"><span class=${status.className} title=${status.title}>${status.label}</span></td>
   </tr>`; })}</tbody></table>`;
 }

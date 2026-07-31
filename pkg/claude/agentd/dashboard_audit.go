@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"encoding/json"
 	"net/http"
 	"time"
 
@@ -28,36 +29,69 @@ const (
 // mirrors db.AuditLogEntry but renders At as an RFC3339 string and omits
 // empty optional fields.
 type auditEntryView struct {
-	ID              int64  `json:"id"`
-	At              string `json:"at"`
-	ActorKind       string `json:"actor_kind"`
-	ActorConv       string `json:"actor_conv,omitempty"`
-	ActorAgent      string `json:"actor_agent,omitempty"`
-	ActorLabel      string `json:"actor_label"`
-	Verb            string `json:"verb"`
-	TargetConv      string `json:"target_conv,omitempty"`
-	TargetAgent     string `json:"target_agent,omitempty"`
-	TargetLabel     string `json:"target_label,omitempty"`
-	GroupName       string `json:"group_name,omitempty"`
-	Detail          string `json:"detail,omitempty"`
-	Method          string `json:"method"`
-	Path            string `json:"path"`
-	Status          int    `json:"status"`
-	Source          string `json:"source"`
-	EventID         string `json:"event_id,omitempty"`
-	RelatedEventID  string `json:"related_event_id,omitempty"`
-	SessionID       string `json:"session_id,omitempty"`
-	TmuxSession     string `json:"tmux_session,omitempty"`
-	PaneID          string `json:"pane_id,omitempty"`
-	Observer        string `json:"observer,omitempty"`
-	CauseKind       string `json:"cause_kind,omitempty"`
-	ObservedProcess string `json:"observed_process,omitempty"`
-	LaunchPhase     string `json:"launch_phase,omitempty"`
-	ExitCode        *int   `json:"exit_code,omitempty"`
-	Signal          string `json:"signal,omitempty"`
-	LifecycleAction string `json:"lifecycle_action,omitempty"`
-	Reason          string `json:"reason,omitempty"`
-	ObservedState   string `json:"observed_state,omitempty"`
+	ID              int64           `json:"id"`
+	At              string          `json:"at"`
+	ActorKind       string          `json:"actor_kind"`
+	ActorConv       string          `json:"actor_conv,omitempty"`
+	ActorAgent      string          `json:"actor_agent,omitempty"`
+	ActorLabel      string          `json:"actor_label"`
+	Verb            string          `json:"verb"`
+	TargetConv      string          `json:"target_conv,omitempty"`
+	TargetAgent     string          `json:"target_agent,omitempty"`
+	TargetLabel     string          `json:"target_label,omitempty"`
+	GroupName       string          `json:"group_name,omitempty"`
+	Detail          string          `json:"detail,omitempty"`
+	Spawn           *auditSpawnView `json:"spawn,omitempty"`
+	Method          string          `json:"method"`
+	Path            string          `json:"path"`
+	Status          int             `json:"status"`
+	Source          string          `json:"source"`
+	EventID         string          `json:"event_id,omitempty"`
+	RelatedEventID  string          `json:"related_event_id,omitempty"`
+	SessionID       string          `json:"session_id,omitempty"`
+	TmuxSession     string          `json:"tmux_session,omitempty"`
+	PaneID          string          `json:"pane_id,omitempty"`
+	Observer        string          `json:"observer,omitempty"`
+	CauseKind       string          `json:"cause_kind,omitempty"`
+	ObservedProcess string          `json:"observed_process,omitempty"`
+	LaunchPhase     string          `json:"launch_phase,omitempty"`
+	ExitCode        *int            `json:"exit_code,omitempty"`
+	Signal          string          `json:"signal,omitempty"`
+	LifecycleAction string          `json:"lifecycle_action,omitempty"`
+	Reason          string          `json:"reason,omitempty"`
+	ObservedState   string          `json:"observed_state,omitempty"`
+}
+
+// auditSpawnView is the structured portion of a spawn row. Input and
+// response are decoded JSON values so the browser can render them safely as
+// formatted data instead of treating an audit detail string as markup.
+type auditSpawnView struct {
+	Input             any    `json:"input,omitempty"`
+	InputRaw          string `json:"input_raw,omitempty"`
+	Resolved          any    `json:"resolved,omitempty"`
+	Response          any    `json:"response,omitempty"`
+	ResponseRaw       string `json:"response_raw,omitempty"`
+	ResponseTruncated bool   `json:"response_truncated,omitempty"`
+	SnapshotTruncated bool   `json:"snapshot_truncated,omitempty"`
+}
+
+func splitAuditDetail(verb, detail string) (string, *auditSpawnView) {
+	if verb != "spawn" || detail == "" {
+		return detail, nil
+	}
+	var envelope auditSpawnEnvelope
+	if err := json.Unmarshal([]byte(detail), &envelope); err != nil || envelope.Kind != auditSpawnDetailKind {
+		return detail, nil
+	}
+	return envelope.Summary, &auditSpawnView{
+		Input:             envelope.Input,
+		InputRaw:          envelope.InputRaw,
+		Resolved:          envelope.Resolved,
+		Response:          envelope.Response,
+		ResponseRaw:       envelope.ResponseRaw,
+		ResponseTruncated: envelope.ResponseTruncated,
+		SnapshotTruncated: envelope.SnapshotTruncated,
+	}
 }
 
 // auditResponse is the Audit tab payload: one page of rows, the pager
@@ -143,6 +177,7 @@ func handleDashboardAudit(w http.ResponseWriter, r *http.Request) {
 
 	entries := make([]auditEntryView, 0, len(rows))
 	for _, e := range rows {
+		detail, spawn := splitAuditDetail(e.Verb, e.Detail)
 		entries = append(entries, auditEntryView{
 			ID:              e.ID,
 			At:              e.At.Format(time.RFC3339),
@@ -155,7 +190,8 @@ func handleDashboardAudit(w http.ResponseWriter, r *http.Request) {
 			TargetAgent:     e.TargetAgent,
 			TargetLabel:     e.TargetLabel,
 			GroupName:       e.GroupName,
-			Detail:          e.Detail,
+			Detail:          detail,
+			Spawn:           spawn,
 			Method:          e.Method,
 			Path:            e.Path,
 			Status:          e.Status,

@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -1188,12 +1189,41 @@ func projectSafeHTTPLogPath(path string) (string, bool) {
 
 type statusRec struct {
 	http.ResponseWriter
-	code int
+	code         int
+	capture      *bytes.Buffer
+	captureLimit int
+	captureTrunc bool
 }
 
 func (r *statusRec) WriteHeader(c int) {
 	r.code = c
 	r.ResponseWriter.WriteHeader(c)
+}
+
+// Write forwards the response unchanged while optionally retaining a bounded
+// copy for an audit caller. Most statusRec users only need the status code, so
+// capture is opt-in; the spawn audit path uses it to preserve both successful
+// JSON responses and useful error bodies without buffering arbitrary streams.
+func (r *statusRec) Write(p []byte) (int, error) {
+	if r.capture != nil {
+		limit := r.captureLimit
+		if limit <= 0 {
+			limit = len(p)
+		}
+		remaining := limit - r.capture.Len()
+		if remaining > 0 {
+			if remaining < len(p) {
+				_, _ = r.capture.Write(p[:remaining])
+				r.captureTrunc = true
+			} else {
+				_, _ = r.capture.Write(p)
+			}
+		}
+		if r.capture.Len() >= limit && len(p) > remaining {
+			r.captureTrunc = true
+		}
+	}
+	return r.ResponseWriter.Write(p)
 }
 
 // Hijack forwards to the wrapped ResponseWriter's http.Hijacker, which Go

@@ -60,10 +60,13 @@ type auditCtx struct {
 // middleware after a command succeeds. It deliberately cannot carry request
 // request bodies.
 type auditResult struct {
-	targetConv  string
-	targetLabel string
-	eventID     string
-	detail      string
+	targetConv        string
+	targetLabel       string
+	eventID           string
+	detail            string
+	spawnResolved     any
+	responseBody      []byte
+	responseTruncated bool
 }
 
 type auditResultContextKey struct{}
@@ -87,6 +90,15 @@ func setAuditTargetConv(r *http.Request, conv string) {
 func setAuditDetail(r *http.Request, detail string) {
 	if result, ok := r.Context().Value(auditResultContextKey{}).(*auditResult); ok {
 		result.detail = auditClip(detail, 240)
+	}
+}
+
+// setAuditSpawnResolved records the server-side launch shape that was built
+// after request/profile/default resolution. It is kept separate from the
+// short table detail and is only serialized for spawn audit rows.
+func setAuditSpawnResolved(r *http.Request, resolved any) {
+	if result, ok := r.Context().Value(auditResultContextKey{}).(*auditResult); ok {
+		result.spawnResolved = resolved
 	}
 }
 
@@ -278,9 +290,19 @@ func auditRequests(h http.Handler) http.Handler {
 		if ok && route.describe != nil {
 			body = bufferAuditBody(r)
 		}
+		captureResponse := ok && route.verb == "spawn"
+		var responseBody bytes.Buffer
 		rec := &statusRec{ResponseWriter: w, code: 200}
+		if captureResponse {
+			rec.capture = &responseBody
+			rec.captureLimit = auditSpawnSnapshotMax
+		}
 		h.ServeHTTP(rec, r)
 		if ok {
+			if captureResponse {
+				result.responseBody = append([]byte(nil), responseBody.Bytes()...)
+				result.responseTruncated = rec.captureTrunc
+			}
 			recordAuditRow(r, route, vars, body, result, rec.code, source)
 		}
 	})
@@ -460,6 +482,10 @@ func recordAuditRow(r *http.Request, route *auditRoute, vars map[string]string, 
 	if status < http.StatusBadRequest && result != nil && result.targetLabel != "" {
 		fields.TargetLabel = result.targetLabel
 	}
+	if route.verb == "spawn" && result != nil {
+		fields.Detail = encodeSpawnAuditDetail(fields.Detail, body, result.responseBody,
+			result.spawnResolved, result.responseTruncated)
+	}
 	if fields.Verb == "" {
 		return // unclassifiable — nothing useful to record
 	}
@@ -553,6 +579,106 @@ func auditConvLabel(convID string) string {
 // / hosts: / → name) keep their own tighter caps — they're bounded by
 // nature, so 512 would never apply.
 const auditDetailMax = 512
+
+// auditSpawnSnapshotMax bounds the structured request/response snapshot kept
+// in a spawn row. Spawn JSON is normally a few KB (even with an initial brief),
+// but the cap keeps a malformed or unexpectedly large response from turning an
+// audit event into an unbounded database/UI payload.
+const auditSpawnSnapshotMax = 256 << 10
+
+const auditSpawnDetailKind = "tclaude.spawn.audit.v1"
+
+type auditSpawnEnvelope struct {
+	Kind              string `json:"kind"`
+	Summary           string `json:"summary,omitempty"`
+	Input             any    `json:"input,omitempty"`
+	InputRaw          string `json:"input_raw,omitempty"`
+	Resolved          any    `json:"resolved,omitempty"`
+	Response          any    `json:"response,omitempty"`
+	ResponseRaw       string `json:"response_raw,omitempty"`
+	ResponseTruncated bool   `json:"response_truncated,omitempty"`
+	SnapshotTruncated bool   `json:"snapshot_truncated,omitempty"`
+}
+
+// auditSpawnInputSnapshot preserves the request's parameter values without
+// putting the spawn briefing or the one-shot directory proof token into the
+// audit database. Audit detail is intentionally not a prompt/content store.
+func auditSpawnInputSnapshot(request []byte) (any, string) {
+	if len(request) == 0 {
+		return map[string]any{}, ""
+	}
+
+	var input any
+	if err := json.Unmarshal(request, &input); err != nil {
+		return nil, "request body was not valid JSON"
+	}
+	object, ok := input.(map[string]any)
+	if !ok {
+		return input, ""
+	}
+	if brief, ok := object["initial_message"].(string); ok {
+		object["initial_message"] = redactedAuditText(brief)
+	}
+	if _, ok := object["write_proof_token"]; ok {
+		object["write_proof_token"] = "[redacted]"
+	}
+	return object, ""
+}
+
+func redactedAuditText(value string) map[string]any {
+	return map[string]any{
+		"redacted":   true,
+		"byte_count": len(value),
+	}
+}
+
+// encodeSpawnAuditDetail keeps the existing one-line summary while attaching
+// the request's non-content parameter values, the daemon's resolved launch
+// shape, and the handler response. The envelope is stored in the existing
+// detail column so old DBs need no destructive migration; the dashboard
+// unwraps it into a disclosure panel and legacy rows continue to render as
+// plain detail text.
+func encodeSpawnAuditDetail(summary string, request, response []byte, resolved any, responseTruncated bool) string {
+	envelope := auditSpawnEnvelope{Kind: auditSpawnDetailKind, Summary: summary, Resolved: resolved,
+		ResponseTruncated: responseTruncated}
+	envelope.Input, envelope.InputRaw = auditSpawnInputSnapshot(request)
+	if len(response) > 0 {
+		var output any
+		if err := json.Unmarshal(response, &output); err == nil {
+			envelope.Response = output
+		} else {
+			envelope.ResponseRaw = string(response)
+		}
+	}
+	b, err := json.Marshal(envelope)
+	if err != nil {
+		// A resolved value is assembled from ordinary JSON-safe fields, so this
+		// is defensive only. Preserve the table summary if a future field ever
+		// accidentally becomes non-marshalable.
+		return summary
+	}
+	if len(b) <= auditSpawnSnapshotMax {
+		return string(b)
+	}
+	// Prefer retaining the response and resolved values over an arbitrarily
+	// large request. The body is still represented honestly as a bounded marker
+	// rather than silently dropping the fact that it was truncated.
+	compact := auditSpawnEnvelope{
+		Kind:              envelope.Kind,
+		Summary:           envelope.Summary,
+		InputRaw:          "request snapshot exceeded audit size limit",
+		Resolved:          envelope.Resolved,
+		Response:          envelope.Response,
+		ResponseRaw:       envelope.ResponseRaw,
+		ResponseTruncated: envelope.ResponseTruncated,
+		SnapshotTruncated: true,
+	}
+	b, err = json.Marshal(compact)
+	if err != nil || len(b) > auditSpawnSnapshotMax {
+		return summary
+	}
+	return string(b)
+}
 
 // auditClip trims and length-caps a free-text value for the Detail
 // column / a label, collapsing whitespace so a multi-line message body

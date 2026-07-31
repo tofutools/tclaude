@@ -48,6 +48,49 @@ func TestAudit_SpawnRecordsHumanActor(t *testing.T) {
 	assert.Equal(t, http.MethodPost, row.Method)
 }
 
+func TestAudit_SpawnSnapshotIncludesResolutionAndFailureResponse(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+
+	spawn := f.AsHuman().SpawnWith("crew", map[string]any{
+		"name":            "worker",
+		"role":            "reviewer",
+		"initial_message": "private spawn briefing",
+	})
+	require.Equal(t, http.StatusOK, spawn.Code, "spawn should succeed; body=%s", spawn.Raw)
+
+	type snapshot struct {
+		Kind     string         `json:"kind"`
+		Input    map[string]any `json:"input"`
+		Resolved map[string]any `json:"resolved"`
+		Response map[string]any `json:"response"`
+	}
+	var success snapshot
+	row := auditRowByVerb(t, "spawn")
+	require.NoError(t, json.Unmarshal([]byte(row.Detail), &success))
+	assert.Equal(t, "tclaude.spawn.audit.v1", success.Kind)
+	assert.Equal(t, "worker", success.Input["name"])
+	assert.Equal(t, map[string]any{"redacted": true, "byte_count": float64(len("private spawn briefing"))}, success.Input["initial_message"])
+	assert.NotContains(t, row.Detail, "private spawn briefing")
+	assert.Equal(t, "worker", success.Resolved["params"].(map[string]any)["name"])
+	assert.Equal(t, "crew", success.Response["group"])
+
+	failed := f.AsHuman().SpawnWith("crew", map[string]any{
+		"name":            "failed-worker",
+		"profile":         "does-not-exist",
+		"initial_message": "private failed briefing",
+	})
+	require.Equal(t, http.StatusBadRequest, failed.Code, "spawn should fail; body=%s", failed.Raw)
+
+	var failure snapshot
+	row = auditRowByVerb(t, "spawn")
+	require.NoError(t, json.Unmarshal([]byte(row.Detail), &failure))
+	assert.Equal(t, http.StatusBadRequest, row.Status)
+	assert.Equal(t, "does-not-exist", failure.Input["profile"])
+	assert.Equal(t, "invalid_profile", failure.Response["code"])
+	assert.NotContains(t, row.Detail, "private failed briefing")
+}
+
 func TestAudit_ForceStopCorrelatesSystemExitObservation(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("crew")

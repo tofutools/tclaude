@@ -1,15 +1,56 @@
 package agentd
 
 import (
+	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/gorilla/websocket"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
+
+func TestSpawnAuditDetailCarriesRequestResolutionAndResponse(t *testing.T) {
+	resolved := map[string]any{
+		"params":   map[string]any{"harness": "codex", "permission_overrides": map[string]string{"groups.spawn": "grant"}},
+		"profiles": map[string]any{"group_default": "secure-codex"},
+	}
+	detail := encodeSpawnAuditDetail("role: reviewer", []byte(`{"name":"worker","role":"reviewer","initial_message":"private prompt","write_proof_token":"one-shot-secret"}`),
+		[]byte(`{"error":"sandbox unavailable","code":"invalid_sandbox"}`), resolved, false)
+
+	var envelope auditSpawnEnvelope
+	require.NoError(t, json.Unmarshal([]byte(detail), &envelope))
+	assert.Equal(t, auditSpawnDetailKind, envelope.Kind)
+	assert.Equal(t, "role: reviewer", envelope.Summary)
+	assert.Equal(t, "worker", envelope.Input.(map[string]any)["name"])
+	assert.Equal(t, map[string]any{"redacted": true, "byte_count": float64(len("private prompt"))}, envelope.Input.(map[string]any)["initial_message"])
+	assert.Equal(t, "[redacted]", envelope.Input.(map[string]any)["write_proof_token"])
+	assert.NotContains(t, detail, "private prompt")
+	assert.NotContains(t, detail, "one-shot-secret")
+	assert.Equal(t, "sandbox unavailable", envelope.Response.(map[string]any)["error"])
+	assert.Equal(t, "codex", envelope.Resolved.(map[string]any)["params"].(map[string]any)["harness"])
+
+	summary, view := splitAuditDetail("spawn", detail)
+	assert.Equal(t, "role: reviewer", summary)
+	require.NotNil(t, view)
+	assert.Equal(t, "invalid_sandbox", view.Response.(map[string]any)["code"])
+}
+
+func TestStatusRecCapturesBoundedResponseWithoutChangingIt(t *testing.T) {
+	underlying := httptest.NewRecorder()
+	var captured bytes.Buffer
+	rec := &statusRec{ResponseWriter: underlying, code: 200, capture: &captured, captureLimit: 4}
+	_, err := rec.Write([]byte("abcdef"))
+	require.NoError(t, err)
+	assert.Equal(t, "abcdef", underlying.Body.String())
+	assert.Equal(t, "abcd", captured.String())
+	assert.True(t, rec.captureTrunc)
+}
 
 // auditRequests (and logRequest) wrap every response in *statusRec for
 // status-code capture. statusRec embeds the http.ResponseWriter
