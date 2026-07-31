@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	codexTelemetryCheckpointVersion  = 4
+	codexTelemetryCheckpointVersion  = 5
 	codexTelemetryAnchorBytes        = 64
 	maxCodexTelemetryCheckpointBytes = 1 << 20
 )
@@ -263,6 +263,22 @@ func sortedStringSet(set map[string]struct{}) []string {
 // from the last complete newline; archived .zst files are immutable and only
 // use the stat cache.
 func (f *CodexTelemetryFollower) RuntimeTelemetry(home, convID string) (CodexRuntimeSnapshot, error) {
+	return f.runtimeTelemetry(home, convID, nil)
+}
+
+func (f *CodexTelemetryFollower) runtimeTelemetry(
+	home, convID string,
+	ancestors map[string]struct{},
+) (CodexRuntimeSnapshot, error) {
+	if _, cycle := ancestors[convID]; cycle {
+		return CodexRuntimeSnapshot{}, nil
+	}
+	nextAncestors := make(map[string]struct{}, len(ancestors)+1)
+	for id := range ancestors {
+		nextAncestors[id] = struct{}{}
+	}
+	nextAncestors[convID] = struct{}{}
+
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -272,14 +288,14 @@ func (f *CodexTelemetryFollower) RuntimeTelemetry(home, convID string) (CodexRun
 	}
 	if path == "" {
 		if f.preserveMissing {
-			return f.aggregateChildrenLocked(home)
+			return f.aggregateChildrenLocked(home, nextAncestors)
 		}
 		return CodexRuntimeSnapshot{}, nil
 	}
 	if strings.HasSuffix(path, ".zst") {
 		if f.archiveInfo != nil && os.SameFile(f.archiveInfo, info) &&
 			f.archiveInfo.Size() == info.Size() && f.archiveInfo.ModTime().Equal(info.ModTime()) {
-			return f.aggregateChildrenLocked(home)
+			return f.aggregateChildrenLocked(home, nextAncestors)
 		}
 		ownerID := ""
 		if f.preserveMissing {
@@ -294,20 +310,20 @@ func (f *CodexTelemetryFollower) RuntimeTelemetry(home, convID string) (CodexRun
 		f.state = state
 		f.snapshot = state.snapshot()
 		f.pruneChildrenLocked()
-		return f.aggregateChildrenLocked(home)
+		return f.aggregateChildrenLocked(home, nextAncestors)
 	}
 	update, err := f.ensureStream().RefreshWithInfo(path, info)
 	if err != nil {
 		return CodexRuntimeSnapshot{}, fmt.Errorf("follow Codex rollout %s: %w", path, err)
 	}
 	if update.Unchanged {
-		return f.aggregateChildrenLocked(home)
+		return f.aggregateChildrenLocked(home, nextAncestors)
 	}
 	f.state = update.State
 	f.archiveInfo = nil
 	f.snapshot = update.State.snapshot()
 	f.pruneChildrenLocked()
-	return f.aggregateChildrenLocked(home)
+	return f.aggregateChildrenLocked(home, nextAncestors)
 }
 
 func (f *CodexTelemetryFollower) pruneChildrenLocked() {
@@ -318,7 +334,10 @@ func (f *CodexTelemetryFollower) pruneChildrenLocked() {
 	}
 }
 
-func (f *CodexTelemetryFollower) aggregateChildrenLocked(home string) (CodexRuntimeSnapshot, error) {
+func (f *CodexTelemetryFollower) aggregateChildrenLocked(
+	home string,
+	ancestors map[string]struct{},
+) (CodexRuntimeSnapshot, error) {
 	if f.children == nil {
 		f.children = map[string]*CodexTelemetryFollower{}
 	}
@@ -329,7 +348,7 @@ func (f *CodexTelemetryFollower) aggregateChildrenLocked(home string) (CodexRunt
 			child = &CodexTelemetryFollower{preserveMissing: true}
 			f.children[id] = child
 		}
-		snap, err := child.RuntimeTelemetry(home, id)
+		snap, err := child.runtimeTelemetry(home, id, ancestors)
 		if err != nil {
 			return CodexRuntimeSnapshot{}, fmt.Errorf("follow Codex child %s: %w", id, err)
 		}

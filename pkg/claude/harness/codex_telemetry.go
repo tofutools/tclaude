@@ -369,9 +369,14 @@ func (s *codexRuntimeScanState) consumeLine(line []byte) bool {
 		if ev.AgentThreadID == "" {
 			return true
 		}
-		s.discoveredSubagents[ev.AgentThreadID] = struct{}{}
 		switch ev.Kind {
 		case "started":
+			// Collaboration activity is bidirectional: child rollouts also
+			// reference their parent when results/messages cross the boundary.
+			// Only started is an authoritative parent -> newly-spawned-child
+			// edge. Treating interacted/interrupted as discovery can build a
+			// root -> child -> root cycle in the cost follower.
+			s.discoveredSubagents[ev.AgentThreadID] = struct{}{}
 			s.removeCheckpointSetValue(s.interruptedSubagents, checkpointInterruptedSubagentsPrefix, ev.AgentThreadID)
 		case "interacted":
 			if _, resumes := s.followupCallIDs[ev.EventID]; resumes {
