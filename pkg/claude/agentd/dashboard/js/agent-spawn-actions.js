@@ -52,7 +52,7 @@ export function createAgentSpawnActions({
   confirm,
   notify = () => {},
   refresh = () => {},
-  openTerminal = () => {},
+  openTerminalPane = () => {},
   celebrateSlop = () => {},
   celebrateWizard = () => {},
   recordInteraction = () => {},
@@ -280,12 +280,15 @@ export function createAgentSpawnActions({
     complete(payload, draft) {
       const label = draft.name || (payload.conv_id ? shortID(payload.conv_id) : 'agent');
       if (draft.autoFocus && payload.focus_mode === 'browser' && payload.focus_ws) {
-        openTerminal({
-          wsPath: payload.focus_ws,
+        const agent = payload.agent_id || payload.conv_id || payload.label || label;
+        openTerminalPane({
+          ws: payload.focus_ws,
           label: payload.label || label,
-          hideConv: payload.conv_id || null,
+          key: `window:${agent}`,
+          hideConv: payload.conv_id || agent,
+          agent,
         });
-        notify(`spawned ${label} → ${draft.group} — opened in-browser terminal`);
+        notify(`spawned ${label} → ${draft.group} — opened in Terminals tab`);
       } else {
         notify(`spawned ${label} → ${draft.group}${draft.autoFocus ? ' — opening terminal' : ''}`);
       }

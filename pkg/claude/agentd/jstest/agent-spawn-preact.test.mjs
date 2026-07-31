@@ -415,7 +415,7 @@ test('agent-spawn actions preserve effort memory, HTTP errors, upload retry inpu
     confirm: async () => true,
     notify: (...args) => calls.push(['notify', ...args]),
     refresh: () => calls.push(['refresh']),
-    openTerminal: (...args) => calls.push(['terminal', ...args]),
+    openTerminalPane: (...args) => calls.push(['pane', ...args]),
     celebrateSlop: () => calls.push(['slop']),
     celebrateWizard: () => calls.push(['wizard']),
     recordInteraction: (...args) => calls.push(['interaction', ...args]),
@@ -438,26 +438,29 @@ test('agent-spawn actions preserve effort memory, HTTP errors, upload retry inpu
   };
   const payload = await actions.spawn({ url: '/spawn', body: { name: 'worker' } });
   actions.complete(payload, { name: 'worker', group: 'alpha', autoFocus: true });
-  assert.ok(calls.some(([kind]) => kind === 'terminal'));
-  assert.ok(calls.some(([kind, message]) => kind === 'notify' && /opened in-browser/.test(message)));
+  assert.ok(calls.some(([kind]) => kind === 'pane'));
+  assert.ok(calls.some(([kind, message]) => kind === 'notify' && /opened in Terminals tab/.test(message)));
   assert.ok(calls.some(([kind]) => kind === 'refresh'));
 
   const beforeWebCompletion = calls.length;
   actions.complete(
     {
-      conv_id: 'abcdef1234', label: 'web-worker', focus_mode: 'browser',
+      agent_id: 'agt_webworker', conv_id: 'abcdef1234', label: 'web-worker', focus_mode: 'browser',
       focus_ws: '/api/spawn-focus-ws/web-worker',
     },
     { name: 'web-worker', group: 'alpha', autoFocus: true },
   );
   const webCompletionCalls = calls.slice(beforeWebCompletion);
   assert.deepEqual(
-    webCompletionCalls.find(([kind]) => kind === 'terminal')?.[1],
-    { wsPath: '/api/spawn-focus-ws/web-worker', label: 'web-worker', hideConv: 'abcdef1234' },
-    'web-terminal preference opens the label-keyed spawn terminal directly',
+    webCompletionCalls.find(([kind]) => kind === 'pane')?.[1],
+    {
+      ws: '/api/spawn-focus-ws/web-worker', label: 'web-worker', key: 'window:agt_webworker',
+      hideConv: 'abcdef1234', agent: 'agt_webworker',
+    },
+    'web-terminal preference opens a label-keyed pane in the Terminals tab',
   );
   assert.ok(webCompletionCalls.some(([kind, message]) => kind === 'notify'
-    && /opened in-browser/.test(message)));
+    && /opened in Terminals tab/.test(message)));
 
   const worktreeDraft = {
     worktree: '__new__', wtRepo: '/next', worktreeBranch: 'worker', worktreeBase: 'main',

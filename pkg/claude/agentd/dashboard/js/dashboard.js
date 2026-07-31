@@ -56,7 +56,7 @@ import { bindCostDisplayToggle } from './cost-display-toggle.js';
 import { focusAccessRequest } from './mail-bridge.js';
 import { dashPrefs, initDashPrefs } from './prefs.js';
 import { initTerminalThemeSync } from './terminal-theme.js';
-import { closeTerminalsForWindowOp, openTermModal, openWebWindowPane } from './terminals-tab.js';
+import { closeTerminalsForWindowOp, openTerminalPane, openWebWindowPane } from './terminals-tab.js';
 import { recordGroupInteraction } from './last-group.js';
 import { loadSortState } from './sort.js';
 import { bindDock } from './dock.js';
@@ -214,7 +214,7 @@ async function settleInitialLayout() {
       confirmDiscard,
       notify: toast,
       refresh: dashboardActions.refresh,
-      openTerminal: openTermModal,
+      openTerminalPane,
       celebrateSlop: slopJackpot,
       celebrateWizard: wizardSummon,
       recordInteraction: recordGroupInteraction,
