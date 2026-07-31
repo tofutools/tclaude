@@ -3,7 +3,6 @@
 package agentd
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -11,7 +10,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
-	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
@@ -137,59 +135,4 @@ func TestDarwinOpenCodeStateLayoutPreservesConfigBaseAcrossLeafSymlink(t *testin
 		"non-OpenCode config writes must keep targeting the real XDG base")
 	assert.Equal(t, resolvedConfig, layout.stateDirs[2],
 		"OpenCode's app directory must retain its resolved filesystem identity")
-}
-
-func TestPrepareDarwinOpenCodeReadOnlyConfigBootstrapsWithoutOverwrite(t *testing.T) {
-	root := t.TempDir()
-	configDir := filepath.Join(t.TempDir(), "opencode")
-	require.NoError(t, os.Mkdir(configDir, 0o700))
-	spec := darwinOpenCodeConfigBootstrapSpec(root, configDir)
-
-	require.NoError(t, prepareOpenCodeReadOnlyConfigForPlatform(spec))
-	path := filepath.Join(configDir, openCodeInstallBootstrapFile)
-	raw, err := os.ReadFile(path)
-	require.NoError(t, err)
-	assert.Equal(t, openCodeInstallGitignore, string(raw))
-
-	require.NoError(t, os.WriteFile(path, []byte("operator-owned"), 0o640))
-	require.NoError(t, prepareOpenCodeReadOnlyConfigForPlatform(spec))
-	raw, err = os.ReadFile(path)
-	require.NoError(t, err)
-	assert.Equal(t, "operator-owned", string(raw),
-		"the pre-wall bootstrap must never overwrite existing host config metadata")
-}
-
-func TestPrepareDarwinOpenCodeReadOnlyConfigRefusesUnsafeBootstrap(t *testing.T) {
-	root := t.TempDir()
-	configDir := filepath.Join(t.TempDir(), "opencode")
-	require.NoError(t, os.Mkdir(configDir, 0o700))
-	require.NoError(t, os.WriteFile(filepath.Join(configDir, "target"), []byte("x"), 0o600))
-	require.NoError(t, os.Symlink("target",
-		filepath.Join(configDir, openCodeInstallBootstrapFile)))
-
-	err := prepareOpenCodeReadOnlyConfigForPlatform(
-		darwinOpenCodeConfigBootstrapSpec(root, configDir))
-	require.ErrorContains(t, err, "opencode_read_only_config_bootstrap")
-	require.ErrorContains(t, err, "existing OpenCode config bootstrap")
-}
-
-func darwinOpenCodeConfigBootstrapSpec(
-	root, configDir string,
-) *session.TclaudeLayerLaunchSpec {
-	return &session.TclaudeLayerLaunchSpec{
-		Contract: session.TclaudeLayerLaunchContract{
-			HarnessName: harness.OpenCodeName,
-			StateRoot:   root,
-			StateDirs: []string{
-				filepath.Join(root, "data", "opencode"),
-				filepath.Join(root, "cache", "opencode"),
-				configDir,
-				filepath.Join(root, "state", "opencode"),
-			},
-			ReadOnlyBinds: []session.TclaudeLayerReadOnlyBind{{
-				Source: configDir,
-				Target: configDir,
-			}},
-		},
-	}
 }

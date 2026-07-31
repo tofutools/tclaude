@@ -4,12 +4,10 @@ package agentd
 
 import (
 	"fmt"
-	"log/slog"
 	"path/filepath"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
-	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
@@ -62,43 +60,10 @@ func adaptOpenCodeStateLayoutForPlatform(layout *openCodeStateLayout) error {
 	return nil
 }
 
-// prepareOpenCodeReadOnlyConfigForPlatform supplies the one app-owned
-// compatibility file OpenCode 1.18.6 writes before loading a config directory:
-// https://github.com/anomalyco/opencode/blob/v1.18.6/packages/opencode/src/config/config.ts#L295-L312
-//
-// It runs after the durable state paths exist but before sandbox-exec starts.
-// Only the config app directory actually named by the launch contract is
-// eligible, and it must already be a same-path daemon-final read-only root.
+// prepareOpenCodeReadOnlyConfigForPlatform delegates to the shared
+// implementation; see prepareOpenCodeReadOnlyConfig.
 func prepareOpenCodeReadOnlyConfigForPlatform(
 	spec *session.TclaudeLayerLaunchSpec,
 ) error {
-	if spec == nil || spec.Contract.HarnessName != harness.OpenCodeName ||
-		len(spec.Contract.StateDirs) != 4 {
-		return nil
-	}
-	configDir := filepath.Clean(spec.Contract.StateDirs[2])
-	readOnly := false
-	for _, bind := range spec.Contract.ReadOnlyBinds {
-		if filepath.Clean(bind.Source) == configDir &&
-			filepath.Clean(bind.Target) == configDir {
-			readOnly = true
-			break
-		}
-	}
-	if !readOnly {
-		return nil
-	}
-	created, err := ensureOpenCodeBootstrapGitignore(configDir, "config")
-	if err != nil {
-		return fmt.Errorf(
-			"opencode_read_only_config_bootstrap: refuse Darwin OpenCode launch because the read-only config prerequisite could not be established: %w",
-			err)
-	}
-	stateRoot := filepath.Clean(spec.Contract.StateRoot)
-	if created && (!filepath.IsAbs(stateRoot) ||
-		!sandboxpolicy.PathContainsOrEqual(stateRoot, configDir)) {
-		slog.Info("created OpenCode bootstrap metadata in ambient host config before read-only confinement",
-			"path", filepath.Join(configDir, openCodeInstallBootstrapFile))
-	}
-	return nil
+	return prepareOpenCodeReadOnlyConfig(spec, "Darwin")
 }

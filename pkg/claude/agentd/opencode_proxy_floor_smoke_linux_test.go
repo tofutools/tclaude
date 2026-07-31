@@ -189,19 +189,6 @@ func TestOpenCodeProxyFloorCooperation(t *testing.T) {
 	}
 	cwd := filepath.Join(home, "workspace")
 	require.NoError(t, os.MkdirAll(cwd, 0o700))
-	// TCL-892 workaround, test-owned exactly as #1787's arm made it: the
-	// per-agent XDG config directory is bound READ-ONLY for a private-state
-	// launch, and OpenCode's Config.loadInstanceState writes a .gitignore into
-	// it while creating a session — so without this the server answers HTTP 500
-	// with EROFS and nothing is ever measured. Darwin pre-creates the file at
-	// launch time (prepareOpenCodeReadOnlyConfigForPlatform); on Linux that
-	// hook is a no-op, which is TCL-892 and deliberately not fixed here.
-	ambientConfig := filepath.Join(home, "config", "opencode")
-	require.NoError(t, os.MkdirAll(ambientConfig, 0o700))
-	require.NoError(t, os.WriteFile(
-		filepath.Join(ambientConfig, openCodeInstallBootstrapFile),
-		[]byte(openCodeInstallGitignore), 0o600))
-
 	db.ResetForTest()
 	t.Cleanup(db.ResetForTest)
 	agentSocket := filepath.Join(home, ".tclaude", "api", "agentd.sock")
