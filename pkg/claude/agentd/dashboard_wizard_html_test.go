@@ -1918,7 +1918,7 @@ func TestDashboardHTML_WizardCogDialogThemes(t *testing.T) {
 	must("body.wizard #worktree-cleanup-modal .cleanup-toolbar button.active", "worktree category chips are re-skinned")
 	must("body.wizard #worktree-cleanup-modal .cleanup-list", "worktree candidate list is re-skinned")
 	must("body.wizard #worktree-cleanup-modal #worktree-cleanup-submit {", "prune lever is re-skinned")
-	must("Prune ${selected.length} worktree", "worktree submit swaps to prune copy")
+	must("Remove ${removeCopy} + prune ${pruneCopy}", "worktree submit names both selected cleanup actions")
 	must("title=${wizard ? wizardReason(candidate.reason) : candidate.reason}", "worktree reason tooltip swaps its nouns")
 	must("document.addEventListener('tclaude:wizard', updateWizard);", "open worktree dialog follows live theme flips")
 
