@@ -728,6 +728,9 @@ func TestDashboardAssets_DefaultTerminalWired(t *testing.T) {
 		// then opens the new label through the web-terminal websocket.
 		"defaultTerminal: snapshot.default_terminal === 'web' ? 'web' : 'native'",
 		"if (draft.autoFocus && context.defaultTerminal === 'web') body.auto_focus_web = true;",
+		"await openTerminalPane({\n            ws: payload.focus_ws",
+		"openTerminalPane,\n      celebrateSlop",
+		"key: `window:${agent}`",
 		// terminals-tab.js — the shared pane-openers.
 		"export function openWebWindowPane(",
 		"export function openWebTermPane(",
@@ -752,6 +755,9 @@ func TestDashboardAssets_DefaultTerminalWired(t *testing.T) {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard assets missing %q — default-terminal routing broken", needle)
 		}
+	}
+	if strings.Contains(dashboardAssets, "openTerminal: openTermModal") {
+		t.Error("spawn web auto-focus must open a Terminals-tab pane, not the terminal overlay")
 	}
 }
 
