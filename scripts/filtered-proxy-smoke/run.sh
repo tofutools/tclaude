@@ -17,9 +17,19 @@
 set -euo pipefail
 
 validate_only=0
-if [[ "${1:-}" == "--validate-only" ]]; then
-  validate_only=1
-fi
+case "${1:-}" in
+  --validate-only) validate_only=1 ;;
+  "")              validate_only=0 ;;
+  *)
+    printf 'usage: %s [--validate-only]\n' "${BASH_SOURCE[0]}" >&2
+    printf 'unrecognized argument: %s\n' "$1" >&2
+    # Refusing an unknown argument matters more here than usually: the
+    # destructive path is the DEFAULT, so a typo like --validate or --dry-run
+    # would otherwise build sandboxes, npm-install harnesses and rewrite the
+    # caller's /etc/hosts while they believed they had asked for a dry run.
+    exit 2
+    ;;
+esac
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$here/../.." && pwd)"
@@ -53,7 +63,10 @@ bash "$here/selftest.sh"
 #    in which everything downstream would pass vacuously.
 declare -A REQUIRED_BY_FLOW=()
 manifest="$here/manifest.txt"
-while read -r flow test_name _rest; do
+# The `|| [[ -n ... ]]` tail matters: read returns non-zero at EOF, so a final
+# line with no trailing newline would otherwise be skipped — silently dropping a
+# required test while every drift guard still passed.
+while read -r flow test_name _rest || [[ -n "${flow:-}" ]]; do
   [[ -z "${flow:-}" || "$flow" == \#* ]] && continue
   if [[ -z "${test_name:-}" ]]; then
     smoke::error "manifest line for flow '$flow' names no test"
@@ -92,6 +105,28 @@ if [[ "$validate_only" -eq 1 ]]; then
   exit 0
 fi
 
+# Past this point the script is destructive: it builds real sandboxes, installs
+# packages and harnesses, and rewrites /etc/hosts. When the logic lived in a
+# workflow it could not be run by accident; now that it is an ordinary file in
+# the repo, that protection has to be written down.
+if [[ "${CI:-}" != "true" && "${TCLAUDE_ALLOW_LOCAL_PROXY_SMOKE:-}" != "1" ]]; then
+  smoke::error "refusing to run the real smokes outside CI"
+  cat >&2 <<'TXT'
+This builds real bubblewrap sandboxes, installs packages and harnesses, and
+temporarily rewrites /etc/hosts. Run one of these instead:
+
+  scripts/filtered-proxy-smoke/run.sh --validate-only   # manifest + flow checks
+  scripts/filtered-proxy-smoke/selftest.sh              # evidence checker
+
+Set TCLAUDE_ALLOW_LOCAL_PROXY_SMOKE=1 only if you genuinely mean it.
+TXT
+  exit 2
+fi
+
+# Whatever happens from here, the runner's resolver goes back. Flows restore it
+# too; this is the backstop for a cancelled job, which fires no flow trap.
+trap fixture::hosts_restore EXIT INT TERM
+
 # 3. Prerequisites. Installed first, then asserted individually, so a missing
 #    tool is named rather than surfacing later as a boundary that appeared to
 #    refuse something.
@@ -119,7 +154,15 @@ for file in "${flow_files[@]}"; do
     # shellcheck source=/dev/null
     source "$file"
     flow::run
-  ) 2>&1 | tee "$log" || status="${PIPESTATUS[0]}"
+  ) 2>&1 | tee "$log" || true
+  # Both halves are inspected: PIPESTATUS[0] is the flow, [1] is tee. Reading
+  # only the flow would let a failed tee — which means the log this run's
+  # evidence is read from is incomplete — resolve to success.
+  status="${PIPESTATUS[0]}"
+  if [[ "${PIPESTATUS[1]:-0}" -ne 0 ]]; then
+    smoke::error "could not write the flow log $log; its evidence is unreadable"
+    status=1
+  fi
 
   # The exit status and the evidence are checked SEPARATELY and both must hold.
   # `go test` exits 0 for a skip, and a flow can also die before reaching its
@@ -139,9 +182,11 @@ for file in "${flow_files[@]}"; do
       if [[ -n "$evidence_output" ]]; then
         printf '```text\n%s\n```\n\n' "$evidence_output"
       fi
-      printf 'What this flow must show:\n\n```text\n'
-      ( source "$file"; flow::describe )
-      printf '```\n'
+      if ( source "$file"; declare -F flow::describe >/dev/null ); then
+        printf 'What this flow must show:\n\n```text\n'
+        ( source "$file"; flow::describe )
+        printf '```\n'
+      fi
     } | smoke::summary
     smoke::error "filtered-proxy smoke flow '$name' did not report the evidence it must"
   else

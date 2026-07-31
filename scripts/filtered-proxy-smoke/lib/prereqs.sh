@@ -15,10 +15,13 @@
 #   bubblewrap  builds the sandbox floor
 #   socat       the fixture listeners and their round-trip proofs
 #   iproute2    netns and veth setup
+#   ripgrep     Claude Code's embedded sandbox runtime discovers `rg` at run
+#               time; without it flow 20 fails inside the harness rather than
+#               at a named missing tool
 #
 # go, node, npm, curl and git come from the runner image and the workflow's
 # toolchain setup; run.sh asserts all of them by name either way.
-PREREQ_PACKAGES=(bubblewrap socat iproute2)
+PREREQ_PACKAGES=(bubblewrap socat iproute2 ripgrep)
 
 prereqs::install() {
   if [[ "${SMOKE_SKIP_APT:-0}" == "1" ]]; then

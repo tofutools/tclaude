@@ -6,12 +6,18 @@ cell.
 
 **Never run these locally.** The flows build real bubblewrap sandboxes, create
 network namespaces with `sudo`, and temporarily rewrite `/etc/hosts`. CI is the
-only place they belong. The two safe entry points are:
+only place they belong, and `run.sh` enforces that: outside CI it refuses unless
+`TCLAUDE_ALLOW_LOCAL_PROXY_SMOKE=1` is set, and it rejects any argument it does
+not recognise rather than falling through to the destructive default. The two
+safe entry points are:
 
 ```bash
 scripts/filtered-proxy-smoke/selftest.sh              # proves the evidence checker
 scripts/filtered-proxy-smoke/run.sh --validate-only   # + manifest/flow consistency
 ```
+
+`bash` 4 or newer is required (associative arrays, `mapfile`); the script runs
+only on the Linux CI shard.
 
 Both are also run by `go test ./pkg/claude/session -run TestProxySmoke`, so
 ordinary CI catches a broken guard without waiting for the smoke shard.
@@ -63,6 +69,12 @@ and for a package with no test files. **An exit status is not evidence.**
 | subtest pass only | an indented pass does not speak for its parent |
 | prefix match | `TestSmoke` is not satisfied by `TestSmokeExtra` |
 | no names declared | a flow requiring nothing could not fail |
+
+One shape it does **not** catch, stated rather than implied: a parent test
+reporting a top-level pass while every one of its subtests skipped. No current
+smoke has that shape, but nothing here would notice if one were introduced —
+like a rename applied consistently to both the test and the manifest, it is a
+review question.
 
 `run.sh` proves all of that against synthetic logs **before** it runs anything,
 so a checker that has rotted fails the run instead of passing every flow.

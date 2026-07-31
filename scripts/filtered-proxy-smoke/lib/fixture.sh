@@ -61,10 +61,15 @@ fixture::prove_reachable() {
   fi
 }
 
-# fixture::hosts_add LINE... — appends to the host resolver and registers a
-# restore. The proxy resolves names HOST-side, so fixture names must live in
-# the host's /etc/hosts; the backup is taken once and restored by the caller's
-# trap even if the flow dies mid-way.
+# fixture::hosts_add LINE... — appends to the host resolver. The proxy resolves
+# names HOST-side, so fixture names must live in the host's /etc/hosts.
+#
+# The backup is taken once, and restoring it is the caller's job through an
+# EXIT trap. Getting that wrong is not a tidiness bug: flows share hostnames,
+# glibc returns the FIRST match, so a stale entry left by one flow silently
+# redirects the next flow to the wrong address and fails it for a fabricated
+# reason. run.sh also restores on EXIT/INT/TERM so a cancelled job cannot leave
+# the runner's resolver rewritten.
 fixture::hosts_add() {
   local backup="${SMOKE_HOSTS_BACKUP:?fixture::hosts_add needs SMOKE_HOSTS_BACKUP}"
   [[ -f "$backup" ]] || sudo cp /etc/hosts "$backup"

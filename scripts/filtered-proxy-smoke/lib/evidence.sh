@@ -33,15 +33,18 @@ require_passed_tests() {
     return 1
   fi
 
-  local name
+  local name pattern
   for name in "${required[@]}"; do
+    # Escape regex metacharacters: a manifest name is data, and `.` or `+` in
+    # one would otherwise match more (or less) than the test it names.
+    pattern=$(printf '%s' "$name" | sed 's/[][\.^$*+?(){}|]/\\&/g')
     # Anchored to the start of the line and followed by a space: `--- PASS:`
     # lines for SUBTESTS are indented, and a bare prefix match would let
     # TestFoo be satisfied by TestFooBar.
-    if ! grep -Eq "^--- PASS: ${name} " "$log"; then
-      if grep -Eq "^--- SKIP: ${name} " "$log"; then
+    if ! grep -Eq "^--- PASS: ${pattern} " "$log"; then
+      if grep -Eq "^--- SKIP: ${pattern} " "$log"; then
         printf 'evidence: %s SKIPPED; a gated-out smoke is not evidence\n' "$name"
-      elif grep -Eq "^--- FAIL: ${name} " "$log"; then
+      elif grep -Eq "^--- FAIL: ${pattern} " "$log"; then
         printf 'evidence: %s FAILED\n' "$name"
       else
         printf 'evidence: %s did not run at all (renamed, removed, filtered out, or build-tagged away)\n' "$name"
@@ -60,3 +63,10 @@ require_passed_tests() {
 
   return "$failed"
 }
+
+# RESIDUAL, stated rather than implied: a parent test that reports a top-level
+# pass while every one of its subtests skipped would satisfy this check. No
+# current smoke has that shape — both harness smokes skip only at top level, and
+# their t.Run bodies contain no skips — but nothing here would catch it if one
+# were introduced. It is a review question, like a rename applied consistently
+# to both the test and the manifest.

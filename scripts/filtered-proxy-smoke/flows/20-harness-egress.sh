@@ -22,7 +22,11 @@ flow::run() {
     fixture::netns_down "$ns" "$host_link"
     fixture::hosts_restore
   }
-  trap cleanup RETURN
+  # EXIT, never RETURN: a RETURN trap does NOT fire when set -e aborts the
+  # function, which is precisely the case cleanup exists for. run.sh calls
+  # flow::run inside a subshell, so EXIT fires when that subshell ends however
+  # it ends.
+  trap cleanup EXIT
 
   fixture::netns_up "$ns" "$host_link" "$peer_link" 198.18.3.1/24 \
     "$allowed/24" "$adjacent/24"
