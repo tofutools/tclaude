@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -31,6 +32,8 @@ func resetOpenCodeVirtualCostStateForTest() {
 	openCodeVirtualCostState.knownSteps = nil
 	openCodeVirtualCostState.snapshotSteps = nil
 	openCodeVirtualCostState.removalRetries = nil
+	openCodeVirtualCostState.trackedSessions = nil
+	openCodeVirtualCostState.nativeCosts = nil
 	openCodeVirtualCostState.Unlock()
 }
 
@@ -944,6 +947,126 @@ func TestBackfillOpenCodeContextUsage(t *testing.T) {
 	assert.Equal(t, "openai/gpt-5.6-terra", snap.Model)
 	assert.InDelta(t, 2.257, snap.VirtualCostUSD, 1e-12,
 		"recovery prices every persisted step, including one whose top-level update was interrupted")
+}
+
+func TestOpenCodeCostBackfillAndLiveEventsAggregateNestedSessionTree(t *testing.T) {
+	setupTestDB(t)
+	resetOpenCodeLimitCacheForTest()
+	resetOpenCodeVirtualCostStateForTest()
+	t.Cleanup(resetOpenCodeLimitCacheForTest)
+	t.Cleanup(resetOpenCodeVirtualCostStateForTest)
+	const (
+		sessionID = "oc-tree"
+		rootID    = "ses-root"
+		childID   = "ses-child"
+		grandID   = "ses-grand"
+		lateID    = "ses-late"
+	)
+	seedOpenCodeUsageSession(t, sessionID, rootID)
+	message := func(id string, input int64) string {
+		return fmt.Sprintf(`[{"info":{"id":%q,"role":"assistant","providerID":"openai",`+
+			`"modelID":"gpt-a","time":{"created":100},"cost":0,`+
+			`"tokens":{"input":%d,"output":0,"reasoning":0,"cache":{"read":0,"write":0}}}}]`,
+			id, input)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/config/providers":
+			_, _ = w.Write([]byte(`{"providers":[{"id":"openai","models":{"gpt-a":{` +
+				`"cost":{"input":1,"output":2},"limit":{"context":10000000}}}}]}`))
+		case "/session/" + rootID + "/message":
+			_, _ = w.Write([]byte(message("msg-root", 1_000_000)))
+		case "/session/" + childID + "/message":
+			_, _ = w.Write([]byte(message("msg-child", 2_000_000)))
+		case "/session/" + grandID + "/message":
+			_, _ = w.Write([]byte(message("msg-grand", 3_000_000)))
+		case "/session/" + rootID + "/children":
+			_, _ = w.Write([]byte(`[{"id":"` + childID + `","parentID":"` + rootID + `","cost":0}]`))
+		case "/session/" + childID + "/children":
+			_, _ = w.Write([]byte(`[{"id":"` + grandID + `","parentID":"` + childID + `","cost":0}]`))
+		case "/session/" + grandID + "/children":
+			_, _ = w.Write([]byte(`[]`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	runtime := db.OpenCodeRuntime{
+		SessionID: sessionID, ConvID: rootID, ServerURL: server.URL,
+		Password: "pw", PID: os.Getpid(), Cwd: t.TempDir(),
+	}
+	require.True(t, backfillOpenCodeContextUsage(context.Background(), runtime))
+
+	snap, err := db.GetContextSnapshot(sessionID)
+	require.NoError(t, err)
+	assert.InDelta(t, 6, snap.VirtualCostUSD, 1e-12)
+	assert.Equal(t, int64(1_000_000), snap.TokensInput,
+		"child usage contributes cost without replacing root context occupancy")
+	openCodeVirtualCostState.Lock()
+	tracked := openCodeVirtualCostState.trackedSessions[sessionID]
+	assert.Equal(t, rootID, tracked[childID])
+	assert.Equal(t, childID, tracked[grandID])
+	openCodeVirtualCostState.Unlock()
+
+	projector := newOpenCodeEventProjector(rootID, runtime.Cwd)
+	childUpdate := openCodeMessageUpdatedEventJSON(
+		"evt-child", childID, "openai", "gpt-a", 4_000_000, 0, 0, 0, 0,
+	)
+	childUpdate = strings.Replace(childUpdate, `"msg_1"`, `"msg-child"`, 1)
+	childUpdate = strings.Replace(childUpdate, `"tokens"`, `"cost":0,"tokens"`, 1)
+	consumeOpenCodeEvent(context.Background(), runtime, projector, json.RawMessage(childUpdate))
+	snap, err = db.GetContextSnapshot(sessionID)
+	require.NoError(t, err)
+	assert.InDelta(t, 8, snap.VirtualCostUSD, 1e-12,
+		"a replayed child message replaces its prior contribution exactly once")
+	assert.Equal(t, int64(1_000_000), snap.TokensInput)
+
+	created := json.RawMessage(fmt.Sprintf(
+		`{"type":"session.created","properties":{"info":{"id":%q,"parentID":%q}}}`,
+		lateID, grandID,
+	))
+	consumeOpenCodeEvent(context.Background(), runtime, projector, created)
+	lateUpdate := openCodeMessageUpdatedEventJSON(
+		"evt-late", lateID, "openai", "gpt-a", 1_000_000, 0, 0, 0, 0,
+	)
+	lateUpdate = strings.Replace(lateUpdate, `"msg_1"`, `"msg-late"`, 1)
+	lateUpdate = strings.Replace(lateUpdate, `"tokens"`, `"cost":0,"tokens"`, 1)
+	consumeOpenCodeEvent(context.Background(), runtime, projector, json.RawMessage(lateUpdate))
+	snap, err = db.GetContextSnapshot(sessionID)
+	require.NoError(t, err)
+	assert.InDelta(t, 9, snap.VirtualCostUSD, 1e-12,
+		"a nested child discovered live contributes without reconnecting")
+
+	deleted := json.RawMessage(fmt.Sprintf(
+		`{"type":"session.deleted","properties":{"info":{"id":%q}}}`, childID,
+	))
+	consumeOpenCodeEvent(context.Background(), runtime, projector, deleted)
+	snap, err = db.GetContextSnapshot(sessionID)
+	require.NoError(t, err)
+	assert.InDelta(t, 1, snap.VirtualCostUSD, 1e-12,
+		"deleting a child removes its complete descendant subtree projection")
+}
+
+func TestApplyOpenCodeCostAggregatesTrackedChildSessions(t *testing.T) {
+	setupTestDB(t)
+	resetOpenCodeVirtualCostStateForTest()
+	t.Cleanup(resetOpenCodeVirtualCostStateForTest)
+	const sessionID, rootID, childID, grandID = "oc-real-tree", "ses-r", "ses-c", "ses-g"
+	seedOpenCodeUsageSession(t, sessionID, rootID)
+	runtime := db.OpenCodeRuntime{SessionID: sessionID, ConvID: rootID}
+	for _, edge := range [][2]string{{childID, rootID}, {grandID, childID}} {
+		observeOpenCodeSessionTree(runtime, json.RawMessage(fmt.Sprintf(
+			`{"type":"session.created","properties":{"info":{"id":%q,"parentID":%q}}}`,
+			edge[0], edge[1],
+		)))
+	}
+	applyOpenCodeCost(runtime, json.RawMessage(openCodeSessionUpdatedEventJSON(rootID, rootID, 1)))
+	applyOpenCodeCost(runtime, json.RawMessage(openCodeSessionUpdatedEventJSON(childID, childID, 2)))
+	applyOpenCodeCost(runtime, json.RawMessage(openCodeSessionUpdatedEventJSON(grandID, grandID, 3)))
+	applyOpenCodeCost(runtime, json.RawMessage(openCodeSessionUpdatedEventJSON("foreign", "foreign", 99)))
+	snap, err := db.GetContextSnapshot(sessionID)
+	require.NoError(t, err)
+	assert.InDelta(t, 6, snap.CostUSD, 1e-12)
 }
 
 func TestBufferedFinalStepRemovalSurvivesReconnectBackfill(t *testing.T) {

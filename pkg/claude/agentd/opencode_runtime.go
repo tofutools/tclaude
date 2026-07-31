@@ -2510,6 +2510,10 @@ func consumeOpenCodeEventLocked(
 	if !openCodeProjectorCurrent(ctx, runtime.SessionID) {
 		return
 	}
+	removedSessions := observeOpenCodeSessionTree(runtime, event)
+	applyOpenCodeSessionDeletion(ctx, runtime, removedSessions)
+	eventSessionID := openCodeRawEventSessionID(event)
+	costSessionTracked := openCodeSessionTracked(runtime, eventSessionID)
 	observeOpenCodeStandingOrderAssistant(runtime, projector, event)
 	projected, err := projector.project(event)
 	if native, ok := projector.takeNativeHook(); ok {
@@ -2526,11 +2530,15 @@ func consumeOpenCodeEventLocked(
 	// publishes each call's authoritative token block as a step-finish part;
 	// retain it before the following message.updated event supplies model
 	// metadata and triggers the aggregate WHAT-IF projection.
-	if step, ok := parseOpenCodeStepCostUsage(event, runtime.ConvID); ok {
-		applyOpenCodeVirtualCostStep(ctx, runtime, step)
+	if costSessionTracked {
+		if step, ok := parseOpenCodeStepCostUsage(event, eventSessionID); ok {
+			applyOpenCodeVirtualCostStep(ctx, runtime, step)
+		}
 	}
-	if removal, ok := parseOpenCodeCostRemoval(event, runtime.ConvID); ok {
-		applyOpenCodeVirtualCostRemoval(ctx, runtime, removal)
+	if costSessionTracked {
+		if removal, ok := parseOpenCodeCostRemoval(event, eventSessionID); ok {
+			applyOpenCodeVirtualCostRemoval(ctx, runtime, removal)
+		}
 	}
 	if !openCodeProjectorCurrent(ctx, runtime.SessionID) {
 		return
@@ -2542,14 +2550,18 @@ func consumeOpenCodeEventLocked(
 	// A cold-cache fetch (bounded to one per cache TTL and cancelled with ctx)
 	// can briefly delay subsequent buffered events; in practice the local
 	// managed server resolves the limit in milliseconds. See TCL-701.
-	if usage, ok := parseOpenCodeContextUsage(event, runtime.ConvID); ok {
-		persistOpenCodeContextUsage(ctx, runtime, usage)
-		// TCL-673: record the provider/model slug from the same message so the
-		// dashboard model column and cost-history denormalisation are populated.
-		persistOpenCodeModelSlug(runtime, usage)
-		// TCL-708: the same authoritative per-message usage drives the native
-		// catalog what-if projection and provider-aware Usage coverage index.
-		applyOpenCodeVirtualCostUsage(ctx, runtime, usage)
+	if costSessionTracked {
+		if usage, ok := parseOpenCodeContextUsage(event, eventSessionID); ok {
+			if eventSessionID == runtime.ConvID {
+				persistOpenCodeContextUsage(ctx, runtime, usage)
+				// TCL-673: record the provider/model slug from the root message so
+				// child model calls do not replace the parent's dashboard model.
+				persistOpenCodeModelSlug(runtime, usage)
+			}
+			// TCL-708: the same authoritative per-message usage drives the native
+			// catalog what-if projection and provider-aware Usage coverage index.
+			applyOpenCodeVirtualCostUsage(ctx, runtime, usage)
+		}
 	}
 	if !openCodeProjectorCurrent(ctx, runtime.SessionID) {
 		return

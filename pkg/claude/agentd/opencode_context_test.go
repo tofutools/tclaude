@@ -45,7 +45,7 @@ func TestParseOpenCodeContextUsage(t *testing.T) {
 			name:  "assistant usage",
 			event: openCodeMessageUpdatedEventJSON("evt_1", convID, "openai", "gpt-5.4", 1000, 200, 50, 300, 10),
 			want: openCodeContextUsage{
-				MessageID: "msg_1", ProviderID: "openai", ModelID: "gpt-5.4",
+				SessionID: convID, MessageID: "msg_1", ProviderID: "openai", ModelID: "gpt-5.4",
 				Input: 1000, Output: 200, Reasoning: 50, CacheRead: 300, CacheWrite: 10,
 			},
 			ok: true,
@@ -76,7 +76,7 @@ func TestParseOpenCodeContextUsage(t *testing.T) {
 			event: fmt.Sprintf(`{"id":"evt_6","type":"message.updated","properties":{"sessionID":%q,"info":{`+
 				`"role":"assistant","providerID":"openai","modelID":"gpt-5.4",`+
 				`"tokens":{"input":500,"output":0,"reasoning":0,"cache":{"read":0,"write":0}}}}}`, convID),
-			want: openCodeContextUsage{ProviderID: "openai", ModelID: "gpt-5.4", Input: 500},
+			want: openCodeContextUsage{SessionID: convID, ProviderID: "openai", ModelID: "gpt-5.4", Input: 500},
 			ok:   true,
 		},
 	}

@@ -60,6 +60,149 @@ type openCodeSessionUpdatedEvent struct {
 	} `json:"properties"`
 }
 
+type openCodeSessionTreeEvent struct {
+	Type       string `json:"type"`
+	Properties struct {
+		SessionID string `json:"sessionID"`
+		Info      struct {
+			ID       string `json:"id"`
+			ParentID string `json:"parentID"`
+		} `json:"info"`
+	} `json:"properties"`
+}
+
+func ensureOpenCodeTrackedSessionsLocked(runtime db.OpenCodeRuntime) map[string]string {
+	if openCodeVirtualCostState.trackedSessions == nil {
+		openCodeVirtualCostState.trackedSessions = map[string]map[string]string{}
+	}
+	tracked := openCodeVirtualCostState.trackedSessions[runtime.SessionID]
+	if tracked == nil {
+		tracked = map[string]string{}
+		openCodeVirtualCostState.trackedSessions[runtime.SessionID] = tracked
+	}
+	if runtime.ConvID != "" {
+		tracked[runtime.ConvID] = ""
+	}
+	return tracked
+}
+
+func openCodeSessionTracked(runtime db.OpenCodeRuntime, sessionID string) bool {
+	if sessionID == "" {
+		return false
+	}
+	openCodeVirtualCostState.Lock()
+	tracked := ensureOpenCodeTrackedSessionsLocked(runtime)
+	_, ok := tracked[sessionID]
+	openCodeVirtualCostState.Unlock()
+	return ok
+}
+
+func rememberOpenCodeTrackedSession(runtime db.OpenCodeRuntime, sessionID string) {
+	if sessionID == "" {
+		return
+	}
+	openCodeVirtualCostState.Lock()
+	tracked := ensureOpenCodeTrackedSessionsLocked(runtime)
+	if _, ok := tracked[sessionID]; !ok {
+		tracked[sessionID] = runtime.ConvID
+	}
+	openCodeVirtualCostState.Unlock()
+}
+
+// observeOpenCodeSessionTree learns newly created descendants before the same
+// directory-wide SSE event is routed through the cost parsers. OpenCode emits
+// parentID on session.created/session.updated; reconnect hydration replaces
+// this opportunistic tree from the authoritative children endpoint.
+func observeOpenCodeSessionTree(runtime db.OpenCodeRuntime, event json.RawMessage) []string {
+	if !bytes.Contains(event, []byte(`"session.`)) {
+		return nil
+	}
+	var decoded openCodeSessionTreeEvent
+	if json.Unmarshal(event, &decoded) != nil {
+		return nil
+	}
+	id := decoded.Properties.Info.ID
+	if id == "" {
+		id = decoded.Properties.SessionID
+	}
+	if id == "" {
+		return nil
+	}
+	var removedIDs []string
+	openCodeVirtualCostState.Lock()
+	tracked := ensureOpenCodeTrackedSessionsLocked(runtime)
+	switch decoded.Type {
+	case "session.created", "session.updated":
+		if _, parentTracked := tracked[decoded.Properties.Info.ParentID]; decoded.Properties.Info.ParentID != "" && parentTracked {
+			tracked[id] = decoded.Properties.Info.ParentID
+		}
+	case "session.deleted":
+		if _, belongs := tracked[id]; belongs && id != runtime.ConvID {
+			delete(tracked, id)
+			removed := map[string]struct{}{id: {}}
+			for changed := true; changed; {
+				changed = false
+				for childID, parentID := range tracked {
+					if _, parentRemoved := removed[parentID]; parentRemoved {
+						delete(tracked, childID)
+						removed[childID] = struct{}{}
+						changed = true
+					}
+				}
+			}
+			removedIDs = make([]string, 0, len(removed))
+			for removedID := range removed {
+				removedIDs = append(removedIDs, removedID)
+			}
+		}
+	}
+	openCodeVirtualCostState.Unlock()
+	return removedIDs
+}
+
+func applyOpenCodeSessionDeletion(
+	ctx context.Context,
+	runtime db.OpenCodeRuntime,
+	removedIDs []string,
+) {
+	if len(removedIDs) == 0 || !openCodeProjectorCurrent(ctx, runtime.SessionID) {
+		return
+	}
+	removed := make(map[string]struct{}, len(removedIDs))
+	for _, id := range removedIDs {
+		removed[id] = struct{}{}
+	}
+	var messageIDs []string
+	openCodeVirtualCostState.Lock()
+	_, usages := ensureOpenCodeVirtualCostStateLocked(runtime.SessionID)
+	for messageID, state := range usages {
+		sessionID := state.message.SessionID
+		if sessionID == "" {
+			for _, step := range state.steps {
+				sessionID = step.SessionID
+				if sessionID != "" {
+					break
+				}
+			}
+		}
+		if _, deleted := removed[sessionID]; !deleted {
+			continue
+		}
+		delete(usages, messageID)
+		delete(openCodeVirtualCostState.bySession[runtime.SessionID], messageID)
+		forgetOpenCodeKnownMessageLocked(runtime.ConvID, messageID)
+		forgetOpenCodeSnapshotMessageLocked(runtime.ConvID, messageID)
+		messageIDs = append(messageIDs, messageID)
+	}
+	openCodeVirtualCostState.Unlock()
+	for _, messageID := range messageIDs {
+		_ = db.DeleteOpenCodeUsageActivity(runtime.ConvID, runtime.SessionID, messageID)
+		_ = clearOpenCodePricingStepsRemoved(runtime.ConvID, messageID)
+		takeOpenCodePendingRemoval(runtime.ConvID, messageID)
+	}
+	projectAndPersistOpenCodeCostState(ctx, runtime)
+}
+
 // applyOpenCodeCost records OpenCode's own cumulative session cost as real spend
 // from a `session.updated` event. The figure is OpenCode's, never a tclaude
 // price table: on a ChatGPT/Codex subscription OpenCode reports 0 (no per-token
@@ -86,10 +229,28 @@ func applyOpenCodeCost(runtime db.OpenCodeRuntime, event json.RawMessage) {
 	if sessionID == "" {
 		sessionID = decoded.Properties.SessionID
 	}
-	if sessionID != runtime.ConvID || decoded.Properties.Info.Cost <= 0 {
+	if !openCodeSessionTracked(runtime, sessionID) || decoded.Properties.Info.Cost < 0 {
 		return
 	}
-	if err := db.UpdateSessionCost(runtime.SessionID, decoded.Properties.Info.Cost); err != nil {
+	openCodeVirtualCostState.Lock()
+	if openCodeVirtualCostState.nativeCosts == nil {
+		openCodeVirtualCostState.nativeCosts = map[string]map[string]float64{}
+	}
+	costs := openCodeVirtualCostState.nativeCosts[runtime.SessionID]
+	if costs == nil {
+		costs = map[string]float64{}
+		openCodeVirtualCostState.nativeCosts[runtime.SessionID] = costs
+	}
+	costs[sessionID] = decoded.Properties.Info.Cost
+	total := 0.0
+	for _, cost := range costs {
+		total += cost
+	}
+	openCodeVirtualCostState.Unlock()
+	if total <= 0 {
+		return
+	}
+	if err := db.UpdateSessionCost(runtime.SessionID, total); err != nil {
 		slog.Warn("OpenCode session cost could not be persisted",
 			"session", runtime.SessionID, "error", err, "module", "agentd")
 	}
@@ -101,6 +262,7 @@ func applyOpenCodeCost(runtime db.OpenCodeRuntime, event json.RawMessage) {
 type openCodeHistoryMessage struct {
 	Info struct {
 		ID         string   `json:"id"`
+		SessionID  string   `json:"sessionID"`
 		Role       string   `json:"role"`
 		ProviderID string   `json:"providerID"`
 		ModelID    string   `json:"modelID"`
@@ -154,6 +316,14 @@ type openCodeRemovedEvent struct {
 	} `json:"properties"`
 }
 
+func openCodeRawEventSessionID(event json.RawMessage) string {
+	var envelope openCodeEventEnvelope
+	if json.Unmarshal(event, &envelope) != nil {
+		return ""
+	}
+	return openCodeEventSessionID(envelope)
+}
+
 func parseOpenCodeCostRemoval(event json.RawMessage, convID string) (openCodeCostRemoval, bool) {
 	if convID == "" || !bytes.Contains(event, []byte(`.removed"`)) {
 		return openCodeCostRemoval{}, false
@@ -199,7 +369,7 @@ func parseOpenCodeStepCostUsage(event json.RawMessage, convID string) (openCodeS
 		return openCodeStepCostUsage{}, false
 	}
 	usage := openCodeContextUsage{
-		MessageID: part.MessageID, ReportedCost: part.Cost,
+		SessionID: sessionID, MessageID: part.MessageID, ReportedCost: part.Cost,
 		Input: part.Tokens.Input, Output: part.Tokens.Output, Reasoning: part.Tokens.Reasoning,
 		CacheRead: part.Tokens.Cache.Read, CacheWrite: part.Tokens.Cache.Write,
 	}
@@ -230,6 +400,11 @@ var openCodeVirtualCostState struct {
 	knownSteps      map[string]map[string]map[string]struct{}
 	snapshotSteps   map[string]map[string]map[string]struct{}
 	removalRetries  map[openCodeRemovalRetryKey]struct{}
+	// trackedSessions is the authoritative OpenCode session tree for one
+	// tclaude root session. nativeCosts stores each tree node's cumulative real
+	// cost so a later root session.updated cannot overwrite child spend.
+	trackedSessions map[string]map[string]string
+	nativeCosts     map[string]map[string]float64
 }
 
 type openCodePendingRemoval struct {
@@ -255,6 +430,8 @@ func clearOpenCodeVirtualCostState(sessionID string) {
 	delete(openCodeVirtualCostState.bySession, sessionID)
 	delete(openCodeVirtualCostState.usageSession, sessionID)
 	delete(openCodeVirtualCostState.hydratedSession, sessionID)
+	delete(openCodeVirtualCostState.trackedSessions, sessionID)
+	delete(openCodeVirtualCostState.nativeCosts, sessionID)
 	openCodeVirtualCostState.Unlock()
 }
 
@@ -825,6 +1002,7 @@ func applyOpenCodeVirtualCostUsage(ctx context.Context, runtime db.OpenCodeRunti
 	if !openCodeProjectorCurrent(ctx, runtime.SessionID) {
 		return
 	}
+	rememberOpenCodeTrackedSession(runtime, usage.SessionID)
 	openCodeVirtualCostState.Lock()
 	_, usages := ensureOpenCodeVirtualCostStateLocked(runtime.SessionID)
 	state := usages[usage.MessageID]
@@ -868,6 +1046,7 @@ func applyOpenCodeVirtualCostStep(ctx context.Context, runtime db.OpenCodeRuntim
 	if !openCodeProjectorCurrent(ctx, runtime.SessionID) {
 		return
 	}
+	rememberOpenCodeTrackedSession(runtime, step.Usage.SessionID)
 	openCodeVirtualCostState.Lock()
 	_, usages := ensureOpenCodeVirtualCostStateLocked(runtime.SessionID)
 	state := usages[step.Usage.MessageID]
@@ -1054,6 +1233,114 @@ func replaceOpenCodeVirtualCostUsage(
 // costs are summed as well: this recovers real spend when a session.updated
 // event was missed during a disconnect. Best-effort — it never fails the
 // stream.
+const maxOpenCodeTrackedSessions = 4096
+
+type openCodeChildSession struct {
+	ID       string  `json:"id"`
+	ParentID string  `json:"parentID"`
+	Cost     float64 `json:"cost"`
+}
+
+func fetchOpenCodeSessionMessages(
+	ctx context.Context,
+	runtime db.OpenCodeRuntime,
+	sessionID string,
+) ([]openCodeHistoryMessage, bool) {
+	endpoint := runtime.ServerURL + "/session/" + url.PathEscape(sessionID) +
+		"/message?directory=" + url.QueryEscape(runtime.Cwd)
+	request, err := openCodeRequest(http.MethodGet, endpoint, runtime, nil)
+	if err != nil {
+		return nil, false
+	}
+	response, err := opencodeapi.Do(openCodeConfigHTTPClient, request.WithContext(ctx), runtime)
+	if err != nil {
+		return nil, false
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return nil, false
+	}
+	var messages []openCodeHistoryMessage
+	if err := json.NewDecoder(io.LimitReader(response.Body, 64<<20)).Decode(&messages); err != nil {
+		return nil, false
+	}
+	for i := range messages {
+		if messages[i].Info.SessionID == "" {
+			messages[i].Info.SessionID = sessionID
+		}
+	}
+	return messages, true
+}
+
+func fetchOpenCodeSessionChildren(
+	ctx context.Context,
+	runtime db.OpenCodeRuntime,
+	sessionID string,
+) ([]openCodeChildSession, bool) {
+	endpoint := runtime.ServerURL + "/session/" + url.PathEscape(sessionID) +
+		"/children?directory=" + url.QueryEscape(runtime.Cwd)
+	request, err := openCodeRequest(http.MethodGet, endpoint, runtime, nil)
+	if err != nil {
+		return nil, false
+	}
+	response, err := opencodeapi.Do(openCodeConfigHTTPClient, request.WithContext(ctx), runtime)
+	if err != nil {
+		return nil, false
+	}
+	defer response.Body.Close()
+	// Older OpenCode servers did not expose session.children. Treating 404 as
+	// a leaf preserves root-only telemetry while supported versions recurse.
+	if response.StatusCode == http.StatusNotFound {
+		return nil, true
+	}
+	if response.StatusCode != http.StatusOK {
+		return nil, false
+	}
+	var children []openCodeChildSession
+	if err := json.NewDecoder(io.LimitReader(response.Body, 8<<20)).Decode(&children); err != nil {
+		return nil, false
+	}
+	return children, true
+}
+
+func fetchOpenCodeSessionTreeHistory(
+	ctx context.Context,
+	runtime db.OpenCodeRuntime,
+) ([]openCodeHistoryMessage, map[string]string, map[string]float64, bool) {
+	tracked := map[string]string{runtime.ConvID: ""}
+	nativeCosts := map[string]float64{}
+	queue := []string{runtime.ConvID}
+	allMessages := []openCodeHistoryMessage{}
+	for len(queue) > 0 {
+		if len(tracked) > maxOpenCodeTrackedSessions {
+			return nil, nil, nil, false
+		}
+		sessionID := queue[0]
+		queue = queue[1:]
+		messages, ok := fetchOpenCodeSessionMessages(ctx, runtime, sessionID)
+		if !ok {
+			return nil, nil, nil, false
+		}
+		allMessages = append(allMessages, messages...)
+		children, ok := fetchOpenCodeSessionChildren(ctx, runtime, sessionID)
+		if !ok {
+			return nil, nil, nil, false
+		}
+		for _, child := range children {
+			if child.ID == "" {
+				continue
+			}
+			if _, seen := tracked[child.ID]; seen {
+				continue
+			}
+			tracked[child.ID] = sessionID
+			nativeCosts[child.ID] = child.Cost
+			queue = append(queue, child.ID)
+		}
+	}
+	return allMessages, tracked, nativeCosts, true
+}
+
 func backfillOpenCodeContextUsage(ctx context.Context, runtime db.OpenCodeRuntime) bool {
 	if runtime.ConvID == "" || !openCodeProjectorCurrent(ctx, runtime.SessionID) {
 		return false
@@ -1065,33 +1352,10 @@ func backfillOpenCodeContextUsage(ctx context.Context, runtime db.OpenCodeRuntim
 		scheduleOpenCodeRemovalRetry(ctx, runtime)
 		return false
 	}
-	endpoint := runtime.ServerURL + "/session/" + url.PathEscape(runtime.ConvID) +
-		"/message?directory=" + url.QueryEscape(runtime.Cwd)
-	request, err := openCodeRequest(http.MethodGet, endpoint, runtime, nil)
-	if err != nil {
-		slog.Debug("OpenCode context backfill request could not be built",
-			"session", runtime.SessionID, "error", err, "module", "agentd")
-		return false
-	}
-	if !openCodeProjectorCurrent(ctx, runtime.SessionID) {
-		return false
-	}
-	response, err := opencodeapi.Do(openCodeConfigHTTPClient, request.WithContext(ctx), runtime)
-	if err != nil {
-		slog.Debug("OpenCode context backfill fetch failed",
-			"session", runtime.SessionID, "error", err, "module", "agentd")
-		return false
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		slog.Debug("OpenCode context backfill returned non-200",
-			"session", runtime.SessionID, "status", response.StatusCode, "module", "agentd")
-		return false
-	}
-	var messages []openCodeHistoryMessage
-	if err := json.NewDecoder(io.LimitReader(response.Body, 64<<20)).Decode(&messages); err != nil {
-		slog.Debug("OpenCode context backfill decode failed",
-			"session", runtime.SessionID, "error", err, "module", "agentd")
+	messages, trackedSessions, nativeCosts, ok := fetchOpenCodeSessionTreeHistory(ctx, runtime)
+	if !ok {
+		slog.Debug("OpenCode session-tree backfill failed",
+			"session", runtime.SessionID, "module", "agentd")
 		return false
 	}
 	removedPricingSteps, err := db.OpenCodePricingStepsRemoved(runtime.ConvID, time.Now())
@@ -1108,18 +1372,20 @@ func backfillOpenCodeContextUsage(ctx context.Context, runtime db.OpenCodeRuntim
 	}
 
 	var (
-		latest     openCodeContextUsage
-		latestAt   int64
-		haveAny    bool
-		costUsages []openCodeMessageCostUsage
-		realCost   float64
-		snapshot   = map[string]map[string]struct{}{}
+		latest       openCodeContextUsage
+		latestAt     int64
+		haveAny      bool
+		costUsages   []openCodeMessageCostUsage
+		realCost     float64
+		historyCosts = map[string]float64{}
+		snapshot     = map[string]map[string]struct{}{}
 	)
 	for _, m := range messages {
 		if m.Info.Role != "assistant" {
 			continue
 		}
 		usage := openCodeContextUsage{
+			SessionID:    m.Info.SessionID,
 			MessageID:    m.Info.ID,
 			ProviderID:   m.Info.ProviderID,
 			ModelID:      m.Info.ModelID,
@@ -1149,7 +1415,7 @@ func backfillOpenCodeContextUsage(ctx context.Context, runtime db.OpenCodeRuntim
 				continue
 			}
 			step := openCodeContextUsage{
-				MessageID: messageID, ReportedCost: part.Cost,
+				SessionID: m.Info.SessionID, MessageID: messageID, ReportedCost: part.Cost,
 				Input: part.Tokens.Input, Output: part.Tokens.Output, Reasoning: part.Tokens.Reasoning,
 				CacheRead: part.Tokens.Cache.Read, CacheWrite: part.Tokens.Cache.Write,
 			}
@@ -1190,7 +1456,9 @@ func backfillOpenCodeContextUsage(ctx context.Context, runtime db.OpenCodeRuntim
 			}
 			openCodeVirtualCostState.Unlock()
 		}
-		realCost += openCodeMessageUsageRealCost(costUsage)
+		messageRealCost := openCodeMessageUsageRealCost(costUsage)
+		realCost += messageRealCost
+		historyCosts[m.Info.SessionID] += messageRealCost
 		effectiveUsage := aggregateOpenCodeMessageCostUsage(costUsage)
 		if effectiveUsage.total() <= 0 {
 			if costUsage.hadSteps {
@@ -1199,7 +1467,7 @@ func backfillOpenCodeContextUsage(ctx context.Context, runtime db.OpenCodeRuntim
 			continue
 		}
 		costUsages = append(costUsages, costUsage)
-		if !haveAny || m.Info.Time.Created >= latestAt {
+		if m.Info.SessionID == runtime.ConvID && (!haveAny || m.Info.Time.Created >= latestAt) {
 			// Context occupancy is the latest model call, represented by the
 			// top-level token block. Only fall back to aggregated parts when
 			// that top-level update was interrupted and remains empty.
@@ -1215,6 +1483,17 @@ func backfillOpenCodeContextUsage(ctx context.Context, runtime db.OpenCodeRuntim
 		return false
 	}
 	openCodeVirtualCostState.Lock()
+	for sessionID, cost := range historyCosts {
+		nativeCosts[sessionID] = cost
+	}
+	if openCodeVirtualCostState.trackedSessions == nil {
+		openCodeVirtualCostState.trackedSessions = map[string]map[string]string{}
+	}
+	openCodeVirtualCostState.trackedSessions[runtime.SessionID] = trackedSessions
+	if openCodeVirtualCostState.nativeCosts == nil {
+		openCodeVirtualCostState.nativeCosts = map[string]map[string]float64{}
+	}
+	openCodeVirtualCostState.nativeCosts[runtime.SessionID] = nativeCosts
 	if openCodeVirtualCostState.snapshotSteps == nil {
 		openCodeVirtualCostState.snapshotSteps =
 			map[string]map[string]map[string]struct{}{}

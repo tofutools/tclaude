@@ -83,6 +83,7 @@ const (
 // (`tokens: {input, output, reasoning, cache: {read, write}}`); ProviderID and
 // ModelID key the context-window lookup.
 type openCodeContextUsage struct {
+	SessionID  string
 	MessageID  string
 	ProviderID string
 	ModelID    string
@@ -172,6 +173,7 @@ func parseOpenCodeContextUsage(event json.RawMessage, convID string) (openCodeCo
 		return openCodeContextUsage{}, false
 	}
 	usage := openCodeContextUsage{
+		SessionID:    sessionID,
 		MessageID:    info.ID,
 		ProviderID:   info.ProviderID,
 		ModelID:      info.ModelID,
