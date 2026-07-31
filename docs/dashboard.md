@@ -408,7 +408,9 @@ sent one or more unread notifications to the human with
 opens the quick reader — a right-hand drawer that pages through that agent's
 notifications, downloads an attached file, replies, and offers **Open in
 Messages ↗** for the full **Messages → Human** view filtered to that agent.
-Opening a notification in the reader marks it read.
+Opening a notification in the reader does **not** mark it read — glancing at a
+message never silently clears the mark. Use the reader's **Mark read** action
+when you have handled it; sending a reply marks the original read too.
 
 The same amber **!** appears on the **Terminals** tab, on the tab of any open
 terminal whose agent has unread notifications, and opens the same quick reader.
@@ -416,8 +418,8 @@ A collapsed tab stack carries the mark on its pill while the tab it belongs to
 is folded away. Matching amber marks over the top-bar activity bots and a
 group's activity bots are non-interactive breadcrumbs: globally they mean some
 agent needs attention, and on a group they mean one of its members does. Only
-the agent-row and terminal-tab marks are links; reading or marking the
-notification updates every level on the next dashboard refresh.
+the agent-row and terminal-tab marks are links; marking the notification read
+(or replying to it) updates every level on the next dashboard refresh.
 
 The row's harness/model line carries a **sandbox badge** — `🔒` when the OS
 sandbox confined the agent, `⚠` for a posture weaker than it looks. It reflects

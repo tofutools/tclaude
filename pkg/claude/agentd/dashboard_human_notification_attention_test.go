@@ -25,7 +25,7 @@ func TestHumanNotificationAttentionAssetsAreWired(t *testing.T) {
 		"terminal styles": {"mux.css", ".mux-tab-attention"},
 		"quick reader":    {"js/groups-notification-reader.js", "GroupsNotificationReader"},
 		"reader a11y":     {"js/groups-notification-reader.js", "aria-live=\"polite\""},
-		"auto read":       {"js/groups-notification-reader.js", "/api/human-messages/read"},
+		"read action":     {"js/groups-notification-reader.js", "/api/human-messages/read"},
 		"attachment":      {"js/groups-notification-reader.js", "/attachment"},
 		"mail bridge":     {"js/mail-bridge.js", "openHumanNotifications"},
 		"mail controller": {"js/mail.js", "selectMessage(first.id)"},
@@ -48,6 +48,20 @@ func TestHumanNotificationAttentionAssetsAreWired(t *testing.T) {
 		if !strings.Contains(asset, check.needle) {
 			t.Errorf("%s (%s) does not contain %q", name, check.asset, check.needle)
 		}
+	}
+}
+
+// Opening the quick reader must leave the notification unread: clearing the
+// attention marker is the operator's explicit decision, made with the reader's
+// "Mark read" action (or implied by sending a reply, which the reply handler
+// marks read server-side). Guard against the mark-on-open effect coming back.
+func TestGroupsNotificationReaderDoesNotMarkReadOnOpen(t *testing.T) {
+	asset := dashboardAssetFile(t, "js/groups-notification-reader.js")
+	if strings.Contains(asset, "persistHumanMessageRead(state, message.id, true") {
+		t.Error("the quick reader marks the notification read on open; that decision belongs to the operator")
+	}
+	if !strings.Contains(asset, "persistHumanMessageRead(state, message.id, !message.read") {
+		t.Error("the quick reader no longer exposes the operator-driven read toggle")
 	}
 }
 

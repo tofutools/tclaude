@@ -979,8 +979,10 @@ func handleDashboardHumanMessagesReply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Replying means the operator has handled this notification — mark the
-	// original read (idempotent; opening it in the reader usually already
-	// did). Best-effort: a failure here must not fail the delivered reply.
+	// original read (idempotent). Merely opening the reader deliberately does
+	// NOT mark read, so for a replied-to notification this is usually the write
+	// that clears it. Best-effort: a failure here must not fail the delivered
+	// reply.
 	if _, err := db.MarkHumanMessageRead(body.ID); err != nil {
 		slog.Warn("reply: mark original human message read failed", "id", body.ID, "error", err)
 	}

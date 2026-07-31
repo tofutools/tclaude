@@ -705,7 +705,7 @@ function HumanNotificationAttention({ member, snapshot }) {
         ${attachment
           ? html`<span class="human-notification-preview-attachment">📎 ${attachment.filename || 'attachment'}</span>`
           : html`<span>No attachment</span>`}
-        <span>${unread > 1 ? `${unread} unread · ` : ''}preview only · remains unread</span>
+        <span>${unread > 1 ? `${unread} unread · ` : ''}preview only · click to open</span>
       </span>
     </span>`}
   </button>`;

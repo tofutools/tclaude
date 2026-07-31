@@ -128,10 +128,9 @@ export function GroupsNotificationReader({
   const message = messages.find((item) => item.id === descriptor.messageId) || messages[0];
   const index = message ? messages.findIndex((item) => item.id === message.id) : -1;
 
-  useEffect(() => {
-    if (!message || message.read) return;
-    void persistHumanMessageRead(state, message.id, true, actions.reportError);
-  }, [message?.id]);
+  // Opening the reader deliberately does not mark the notification read.
+  // Marking read is the operator's decision, made with the "Mark read" action
+  // below, so a glance at a message never silently clears the attention marker.
 
   // Keyed on the open identity, not the launcher: a reopen that cancels an
   // in-flight exit reuses the mounted component, and the same launcher raising
@@ -172,7 +171,7 @@ export function GroupsNotificationReader({
       <div>
         <span class="human-notification-drawer-kicker">Human notification</span>
         <span class=${`human-notification-drawer-state ${message.read ? 'read' : 'unread'}`}>
-          ${message.read ? 'opened · read' : 'unread'}
+          ${message.read ? 'read' : 'unread'}
         </span>
       </div>
       <button ref=${closeRef} type="button" class="human-notification-drawer-close"
