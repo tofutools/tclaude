@@ -10,11 +10,10 @@ import (
 	"strings"
 )
 
-// CodexRolloutProjection is the latest-oriented subset hook callbacks lift
-// from a rollout. Each value is a snapshot carried by one record rather than
-// an accumulator over the event stream, so a plain rollout can be projected
-// by reading records newest-first. The scan stops once every field is found;
-// when a field is absent, it degrades to one full backward pass.
+// CodexRolloutProjection is the subset hook callbacks lift from a rollout.
+// Context, effort, and account usage are latest-oriented snapshots. Cost is a
+// per-turn accumulator because OpenAI's short/long pricing tier is selected per
+// request and cannot be reconstructed correctly from one cumulative token row.
 type CodexRolloutProjection struct {
 	Context      ContextTelemetry
 	HasContext   bool
@@ -61,7 +60,7 @@ func CodexHookProjectionFromRollout(path, modelHint string) (CodexRolloutProject
 		}
 	} else if err := scanCodexRolloutLinesReverse(path, func(line []byte) bool {
 		state.consumeReverse(line)
-		return !state.complete()
+		return true
 	}); err != nil {
 		return CodexRolloutProjection{}, fmt.Errorf("scan codex rollout %s: %w", path, err)
 	}
@@ -79,6 +78,11 @@ type codexProjectionScanState struct {
 	observed       string
 	effort         string
 	usage          *CodexUsage
+	costUSD        float64
+	costPriced     bool
+	costModel      string
+	costLegacy     bool
+	reverseCost    []codexTokenCountInfo
 }
 
 func (s *codexProjectionScanState) consumeForward(line []byte) {
@@ -120,6 +124,7 @@ func (s *codexProjectionScanState) consumeForward(line []byte) {
 		if usage != nil {
 			s.usage = usage
 		}
+		s.addCostInfo(s.effectiveCostModel(s.model), info, false)
 	}
 }
 
@@ -145,6 +150,7 @@ func (s *codexProjectionScanState) consumeReverse(line []byte) {
 		}
 	case "turn_context":
 		model, effort := projectCodexTurnContext(env.Payload)
+		s.flushReverseCost(s.effectiveCostModel(model))
 		if s.model == "" {
 			s.model = model
 		}
@@ -175,7 +181,60 @@ func (s *codexProjectionScanState) consumeReverse(line []byte) {
 		if s.usage == nil && usage != nil {
 			s.usage = usage
 		}
+		if s.modelHint != "" {
+			s.addCostInfo(s.modelHint, info, true)
+		} else {
+			s.reverseCost = append(s.reverseCost, info)
+		}
 	}
+}
+
+func (s *codexProjectionScanState) effectiveCostModel(turnModel string) string {
+	if s.modelHint != "" {
+		return s.modelHint
+	}
+	return turnModel
+}
+
+func (s *codexProjectionScanState) addCost(model string, usage codexTokenUsage) {
+	cost, ok := codexVirtualCost(model, usage)
+	if !ok {
+		return
+	}
+	s.costUSD += cost
+	s.costPriced = true
+	if s.costModel == "" {
+		s.costModel = model
+	}
+}
+
+func (s *codexProjectionScanState) addCostInfo(model string, info codexTokenCountInfo, reverse bool) {
+	if codexUsageHasBillableTokens(info.LastTokenUsage) {
+		if !s.costLegacy {
+			s.addCost(model, info.LastTokenUsage)
+		}
+		return
+	}
+	if !codexUsageHasBillableTokens(info.TotalTokenUsage) {
+		return
+	}
+	cost, ok := codexVirtualCost(model, info.TotalTokenUsage)
+	if !ok || (reverse && s.costPriced) {
+		return
+	}
+	// Older rollouts can omit last_token_usage. Their latest cumulative
+	// total remains the best available estimate; do not add older totals.
+	s.costUSD = cost
+	s.costPriced = true
+	s.costModel = model
+	s.costLegacy = true
+}
+
+func (s *codexProjectionScanState) flushReverseCost(model string) {
+	for _, info := range s.reverseCost {
+		s.addCostInfo(model, info, true)
+	}
+	s.reverseCost = s.reverseCost[:0]
 }
 
 func decodeCodexProjectionEnvelope(line []byte) (codexEnvelope, bool) {
@@ -212,20 +271,8 @@ func projectCodexTokenCount(env codexEnvelope) (codexTokenCountInfo, *CodexUsage
 	return ev.Info, codexUsageFromRateLimits(ev.RateLimits, env.Timestamp), true
 }
 
-func (s *codexProjectionScanState) complete() bool {
-	if s.info == nil || s.effort == "" || s.usage == nil {
-		return false
-	}
-	if s.contextBlocked && !s.contextDone {
-		return false
-	}
-	if _, ok := codexModelPrices[s.modelHint]; ok {
-		return true
-	}
-	return s.model != ""
-}
-
 func (s *codexProjectionScanState) projection() CodexRolloutProjection {
+	s.flushReverseCost(s.effectiveCostModel(s.model))
 	out := CodexRolloutProjection{
 		ContextReset: s.contextReset,
 		Effort:       s.effort,
@@ -240,12 +287,9 @@ func (s *codexProjectionScanState) projection() CodexRolloutProjection {
 		out.Context = context
 		out.HasContext = true
 	}
-	for _, model := range []string{s.modelHint, s.model} {
-		if cost, ok := codexVirtualCost(model, s.info.TotalTokenUsage, s.info.ModelContextWindow); ok {
-			out.Cost = CodexTokenCost{CostUSD: cost, Model: model, Observed: parseCodexEventTime(s.observed)}
-			out.HasCost = true
-			break
-		}
+	if s.costPriced {
+		out.Cost = CodexTokenCost{CostUSD: s.costUSD, Model: s.costModel, Observed: parseCodexEventTime(s.observed)}
+		out.HasCost = true
 	}
 	return out
 }

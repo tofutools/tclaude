@@ -40,25 +40,28 @@ func TestCodexVirtualCostFromRollout_PricesFlagshipModels(t *testing.T) {
 		name          string
 		model         string
 		contextWindow int
+		input         int
+		cached        int
+		output        int
 		want          float64
 	}{
-		{name: "gpt-5.6-sol short", model: "gpt-5.6-sol", contextWindow: 272000, want: 0.0000355},
-		{name: "gpt-5.6-sol long", model: "gpt-5.6-sol", contextWindow: 372000, want: 0.0000560},
-		{name: "gpt-5.6-terra short", model: "gpt-5.6-terra", contextWindow: 272000, want: 0.0000142},
-		{name: "gpt-5.6-terra long", model: "gpt-5.6-terra", contextWindow: 372000, want: 0.0000224},
-		{name: "gpt-5.6-luna short", model: "gpt-5.6-luna", contextWindow: 272000, want: 0.00000142},
-		{name: "gpt-5.6-luna long", model: "gpt-5.6-luna", contextWindow: 372000, want: 0.00000224},
+		{name: "gpt-5.6-sol short", model: "gpt-5.6-sol", contextWindow: 1050000, input: 200000, cached: 100000, output: 100000, want: 3.55},
+		{name: "gpt-5.6-sol long", model: "gpt-5.6-sol", contextWindow: 1050000, input: 300000, cached: 100000, output: 100000, want: 6.60},
+		{name: "gpt-5.6-terra short", model: "gpt-5.6-terra", contextWindow: 1050000, input: 200000, cached: 100000, output: 100000, want: 1.42},
+		{name: "gpt-5.6-terra long", model: "gpt-5.6-terra", contextWindow: 1050000, input: 300000, cached: 100000, output: 100000, want: 2.64},
+		{name: "gpt-5.6-luna short", model: "gpt-5.6-luna", contextWindow: 1050000, input: 200000, cached: 100000, output: 100000, want: 0.142},
+		{name: "gpt-5.6-luna long", model: "gpt-5.6-luna", contextWindow: 1050000, input: 300000, cached: 100000, output: 100000, want: 0.264},
 		{name: "gpt-5.5 short", model: "gpt-5.5", contextWindow: 272000, want: 0.0000355},
-		{name: "gpt-5.5 long", model: "gpt-5.5", contextWindow: 1000000, want: 0.0000560},
+		{name: "gpt-5.5 long", model: "gpt-5.5", contextWindow: 1000000, input: 300000, cached: 100000, output: 100000, want: 6.60},
 		{name: "gpt-5.5-pro short", model: "gpt-5.5-pro", contextWindow: 200000, want: 0.0002400},
-		{name: "gpt-5.5-pro long", model: "gpt-5.5-pro", contextWindow: 1000000, want: 0.0003900},
+		{name: "gpt-5.5-pro long", model: "gpt-5.5-pro", contextWindow: 1000000, input: 300000, cached: 100000, output: 100000, want: 45.00},
 		{name: "gpt-5.4 sampled codex window stays short", model: "gpt-5.4", contextWindow: 258400, want: 0.00001775},
 		{name: "gpt-5.4 short", model: "gpt-5.4", contextWindow: 200000, want: 0.00001775},
-		{name: "gpt-5.4 long", model: "gpt-5.4", contextWindow: 1000000, want: 0.0000280},
+		{name: "gpt-5.4 long", model: "gpt-5.4", contextWindow: 1000000, input: 300000, cached: 100000, output: 100000, want: 3.30},
 		{name: "gpt-5.4-mini", model: "gpt-5.4-mini", contextWindow: 1000000, want: 0.000005325},
 		{name: "gpt-5.4-nano", model: "gpt-5.4-nano", contextWindow: 1000000, want: 0.00000147},
 		{name: "gpt-5.4-pro short", model: "gpt-5.4-pro", contextWindow: 200000, want: 0.0002400},
-		{name: "gpt-5.4-pro long", model: "gpt-5.4-pro", contextWindow: 1000000, want: 0.0003900},
+		{name: "gpt-5.4-pro long", model: "gpt-5.4-pro", contextWindow: 1000000, input: 300000, cached: 100000, output: 100000, want: 45.00},
 	}
 
 	for _, tc := range cases {
@@ -69,7 +72,13 @@ func TestCodexVirtualCostFromRollout_PricesFlagshipModels(t *testing.T) {
 			cx.ContextWindow = tc.contextWindow
 			require.NoError(t, cx.Start())
 			require.NoError(t, cx.WriteUserInput("price it"))
-			usage := testharness.CodexTokenUsage{InputTokens: 2, CachedInputTokens: 1, OutputTokens: 1, TotalTokens: 3}
+			input, cached, output := tc.input, tc.cached, tc.output
+			if input == 0 {
+				input, cached, output = 2, 1, 1
+			}
+			usage := testharness.CodexTokenUsage{
+				InputTokens: input, CachedInputTokens: cached, OutputTokens: output, TotalTokens: input + output,
+			}
 			require.NoError(t, cx.WriteTokenCount(usage, usage))
 
 			cost, ok, err := harness.CodexVirtualCostFromRollout(cx.RolloutPath, "")
@@ -79,6 +88,41 @@ func TestCodexVirtualCostFromRollout_PricesFlagshipModels(t *testing.T) {
 			assert.InDelta(t, tc.want, cost.CostUSD, 1e-12)
 		})
 	}
+}
+
+func TestCodexVirtualCostFromRollout_AccumulatesMixedContextTiersPerTurn(t *testing.T) {
+	home := codexTestHome(t)
+	cx := testharness.NewCodexSim(t, home, "/home/u/proj")
+	cx.Model = "gpt-5.6-terra"
+	cx.ContextWindow = 1_050_000
+	require.NoError(t, cx.Start())
+
+	short := testharness.CodexTokenUsage{
+		InputTokens: 200_000, CachedInputTokens: 100_000, OutputTokens: 100_000, TotalTokens: 300_000,
+	}
+	require.NoError(t, cx.WriteUserInput("short"))
+	require.NoError(t, cx.WriteTokenCount(short, short))
+
+	long := testharness.CodexTokenUsage{
+		InputTokens: 300_000, CachedInputTokens: 100_000, OutputTokens: 100_000, TotalTokens: 400_000,
+	}
+	total := testharness.CodexTokenUsage{
+		InputTokens: 500_000, CachedInputTokens: 200_000, OutputTokens: 200_000, TotalTokens: 700_000,
+	}
+	require.NoError(t, cx.WriteUserInput("long"))
+	require.NoError(t, cx.WriteTokenCount(total, long))
+
+	cost, ok, err := harness.CodexVirtualCostFromRollout(cx.RolloutPath, "")
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.InDelta(t, 4.06, cost.CostUSD, 1e-12,
+		"$1.42 short request + $2.64 long request")
+
+	projection, err := harness.CodexHookProjectionFromRollout(cx.RolloutPath, "")
+	require.NoError(t, err)
+	require.True(t, projection.HasCost)
+	assert.InDelta(t, 4.06, projection.Cost.CostUSD, 1e-12,
+		"the live hook projection uses the same per-turn accumulation")
 }
 
 func TestCodexVirtualCostFromRollout_ResearchPreviewWithoutFinalRate(t *testing.T) {

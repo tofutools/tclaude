@@ -84,11 +84,12 @@ var codexModelPrices = map[string]codexModelPricing{
 	// borrowing another model's rate.
 }
 
-// CodexVirtualCostFromRollout reads rolloutPath and estimates the latest
-// cumulative pay-per-token cost from token_count.info.total_token_usage. The
-// model is taken from modelHint when supplied, else from the rollout's latest
-// turn_context model. ok is false for "not enough data" cases: no token_count,
-// no known model price, or an all-zero cumulative usage block.
+// CodexVirtualCostFromRollout reads rolloutPath and estimates cumulative
+// pay-per-token cost by pricing each token_count.info.last_token_usage block.
+// OpenAI selects long-context pricing per request, so applying one tier to the
+// cumulative total_token_usage block would misprice a mixed short/long history.
+// The model is taken from modelHint when supplied, else from each turn's latest
+// turn_context model. ok is false when no priced, non-zero turn was found.
 func CodexVirtualCostFromRollout(rolloutPath, modelHint string) (CodexTokenCost, bool, error) {
 	rc, err := openCodexRollout(rolloutPath)
 	if err != nil {
@@ -97,8 +98,9 @@ func CodexVirtualCostFromRollout(rolloutPath, modelHint string) (CodexTokenCost,
 	defer func() { _ = rc.Close() }()
 
 	var (
-		latestModel string
-		latestInfo  *codexTokenCountInfo
+		latestModel = strings.TrimSpace(modelHint)
+		costUSD     float64
+		priced      bool
 		observed    time.Time
 	)
 	err = scanCodexRolloutLines(rc, rolloutPath, func(line []byte) bool {
@@ -112,7 +114,7 @@ func CodexVirtualCostFromRollout(rolloutPath, modelHint string) (CodexTokenCost,
 		switch env.Type {
 		case "turn_context":
 			var tc codexTurnContext
-			if json.Unmarshal(env.Payload, &tc) == nil && strings.TrimSpace(tc.Model) != "" {
+			if strings.TrimSpace(modelHint) == "" && json.Unmarshal(env.Payload, &tc) == nil && strings.TrimSpace(tc.Model) != "" {
 				latestModel = strings.TrimSpace(tc.Model)
 			}
 		case "event_msg":
@@ -120,8 +122,24 @@ func CodexVirtualCostFromRollout(rolloutPath, modelHint string) (CodexTokenCost,
 			if json.Unmarshal(env.Payload, &ev) != nil || ev.Type != "token_count" {
 				return true
 			}
-			info := ev.Info
-			latestInfo = &info
+			turnUsage := ev.Info.LastTokenUsage
+			if !codexUsageHasBillableTokens(turnUsage) {
+				if !codexUsageHasBillableTokens(ev.Info.TotalTokenUsage) {
+					observed = parseCodexEventTime(env.Timestamp)
+					return true
+				}
+				// Early rollout formats could omit last_token_usage. Preserve
+				// their former latest-cumulative behavior as a compatibility
+				// fallback; current rollouts take the per-turn path above.
+				turnUsage = ev.Info.TotalTokenUsage
+				costUSD = 0
+				priced = false
+			}
+			turnCost, ok := codexVirtualCost(latestModel, turnUsage)
+			if ok {
+				costUSD += turnCost
+				priced = true
+			}
 			observed = parseCodexEventTime(env.Timestamp)
 		}
 		return true
@@ -129,32 +147,22 @@ func CodexVirtualCostFromRollout(rolloutPath, modelHint string) (CodexTokenCost,
 	if err != nil {
 		return CodexTokenCost{}, false, fmt.Errorf("scan codex rollout %s: %w", rolloutPath, err)
 	}
-	if latestInfo == nil {
+	if !priced {
 		return CodexTokenCost{}, false, nil
 	}
-	for _, model := range []string{modelHint, latestModel} {
-		model = strings.TrimSpace(model)
-		if model == "" {
-			continue
-		}
-		cost, ok := codexVirtualCost(model, latestInfo.TotalTokenUsage, latestInfo.ModelContextWindow)
-		if ok {
-			return CodexTokenCost{CostUSD: cost, Model: model, Observed: observed}, true, nil
-		}
-	}
-	return CodexTokenCost{}, false, nil
+	return CodexTokenCost{CostUSD: costUSD, Model: latestModel, Observed: observed}, true, nil
 }
 
-func codexVirtualCost(model string, usage codexTokenUsage, windowSize int64) (float64, bool) {
+func codexVirtualCost(model string, usage codexTokenUsage) (float64, bool) {
 	pricing, ok := codexModelPrices[strings.TrimSpace(model)]
 	if !ok {
 		return 0, false
 	}
-	if usage.InputTokens <= 0 && usage.CachedInputTokens <= 0 && usage.OutputTokens <= 0 {
+	if !codexUsageHasBillableTokens(usage) {
 		return 0, false
 	}
 	price := pricing.Short
-	if pricing.Long != nil && windowSize > codexShortContextWindowMax {
+	if pricing.Long != nil && usage.InputTokens > codexShortContextInputMax {
 		price = *pricing.Long
 	}
 	cachedInput := usage.CachedInputTokens
@@ -173,8 +181,11 @@ func codexVirtualCost(model string, usage codexTokenUsage, windowSize int64) (fl
 		float64(usage.OutputTokens)*price.OutputPerMTok) / 1_000_000, true
 }
 
-// codexShortContextWindowMax is the largest model_context_window treated as
-// OpenAI's "Short context" pricing tier. Codex reports the full model context
-// window in token_count.info.model_context_window; this is not an input-only
-// value.
-const codexShortContextWindowMax = 272_000
+func codexUsageHasBillableTokens(usage codexTokenUsage) bool {
+	return usage.InputTokens > 0 || usage.CachedInputTokens > 0 || usage.OutputTokens > 0
+}
+
+// codexShortContextInputMax is the largest per-request input that receives
+// OpenAI's short-context price. A request above this boundary is priced at the
+// long-context rate for all of its input and output tokens.
+const codexShortContextInputMax = 272_000
