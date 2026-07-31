@@ -25,9 +25,23 @@
 20-harness-egress TestPinnedProxyHarnessCooperation
 20-harness-egress TestPinnedProxyToolEgress
 
-# TCL-889. Unlike every line above it, this one backs NO capability cell: the
-# OpenCode launch seam refuses the proxy engine, so there is nothing for its
-# result to activate. It is recorded here because it is a smoke that must not be
-# allowed to rot into a silent skip — the §6.2 carriage answer it produces is
-# only worth reading if the run that produced it actually executed.
+# TCL-889, amended by TCL-891. This line backs no capability cell and still
+# does not, but the reason has changed: it is not that the seam refuses the
+# proxy engine (TCL-891 lifted that), it is that this arm runs HOST-OPEN by
+# construction. Offering exactly one carriage per launch is the only way to
+# answer "does this harness ignore ALL_PROXY", and that isolation is what it is
+# for. It is recorded here because it is a smoke that must not be allowed to rot
+# into a silent skip — the §6.2 carriage answer it produces is only worth
+# reading if the run that produced it actually executed.
 30-opencode-carriage TestOpenCodeProxyCarriageCooperation
+
+# TCL-891. THIS is the OpenCode floor evidence the line above could not be: the
+# real agentd-owned Unix-relay boundary launched behind the real proxy floor,
+# both carriages offered as production offers them, refusals observed executing
+# over each. It is recorded here on the same terms as every other line — a run
+# that skipped it is a hard failure, not a quiet green.
+#
+# What it does NOT do is activate a cell by itself. OpenCode's engine:proxy
+# cells stay EnforceNone until a PR makes the activation record citing this
+# flow's green named run; that PR is where this line starts backing a cell.
+40-opencode-floor TestOpenCodeProxyFloorCooperation

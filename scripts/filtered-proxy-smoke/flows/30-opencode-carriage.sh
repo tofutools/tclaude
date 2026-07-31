@@ -7,11 +7,12 @@
 # string in its binary, so SOCKS carriage was doubtful and unmeasured; a
 # "not carried" answer here is a RESULT, not a failure.
 #
-# It is NOT floor evidence and it backs no capability cell. The boundary agentd
-# launches OpenCode through refuses to deploy the proxy engine at all
-# (TestOpenCodeUnixRelayRefusesTheProxyEngine), so there is no proxy floor to
-# run OpenCode behind at this seam and nothing for this flow's result to
-# activate. The Go arm states the same limit at length in its own header.
+# It is NOT floor evidence and it backs no capability cell. It runs HOST-OPEN by
+# construction, because offering exactly ONE carriage per launch is the only way
+# to isolate the question above — and the filtered postures cannot do that. Flow
+# 40 is the floor evidence (TCL-891); this flow is the carriage isolation beside
+# it, and neither replaces the other. The Go arm states the same limit at length
+# in its own header.
 #
 # Fixture: a HOST-side dummy interface on its own subnet (198.18.4.0/24), not a
 # namespace. The Go arm serves the model origin itself so it can count what
@@ -103,9 +104,9 @@ origin, and a third launch offering NO carriage must show the proxy seeing
 nothing and the origin reached directly — without that control, "not carried"
 would be indistinguishable from a launch that never made a model request.
 
-This flow backs NO capability cell. OpenCode's engine:proxy cells stay
-EnforceNone because the OpenCode launch seam refuses the proxy engine outright,
-which no cooperation result can change.
+This flow backs NO capability cell. It is the carriage-isolation measurement,
+not a floor: what a real floor contains is flow 40's subject, and a cooperation
+result here could never have been the evidence for a rating.
 TXT
 }
 

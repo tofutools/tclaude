@@ -612,10 +612,21 @@ func TestTclaudeLayerWinchRelayStartsAProxySandbox(t *testing.T) {
 	assert.ErrorContains(t, err, "accept proxy network readiness")
 }
 
-// TestTclaudeLayerUnixRelayRefusesTheProxyEngine proves the OpenCode
-// inherited-descriptor path fails closed rather than rendering a proxy plan
-// under the packet supervisor's fd contract.
-func TestTclaudeLayerUnixRelayRefusesTheProxyEngine(t *testing.T) {
+// TestTclaudeLayerUnixRelayDeploysTheProxyEngine proves the OpenCode
+// inherited-descriptor path now DEPLOYS the proxy engine, and deploys it under
+// its own supervisor and its own fd layout rather than the packet gateway's.
+//
+// This test replaces TestTclaudeLayerUnixRelayRefusesTheProxyEngine (TCL-889),
+// which pinned the refusal this generalization lifts. What it must not become
+// is a weaker assertion than the one it replaces: refusing was fail-closed, so
+// "no error" is not enough. The three discriminating facts are all asserted —
+// the proxy policy flag and not the packet one, the preserved descriptors at
+// the proxy engine's numbers and not the packet engine's, and both renderers
+// agreeing about the same launch.
+//
+// Falsifiability: render the packet policy flag for a proxy plan, or return the
+// packet layout's 8/9 from TclaudeLayerUnixRelayServerFDs, and this fails.
+func TestTclaudeLayerUnixRelayDeploysTheProxyEngine(t *testing.T) {
 	spec, err := BuildTclaudeLayerLaunchSpec(TclaudeLayerLaunchInput{
 		HarnessName: "claude",
 		Cwd:         t.TempDir(),
@@ -623,10 +634,84 @@ func TestTclaudeLayerUnixRelayRefusesTheProxyEngine(t *testing.T) {
 		Snapshot:    proxyBridgeSnapshot(proxyBridgeDiscriminatingRules()),
 	})
 	require.NoError(t, err)
-	_, err = tclaudeLayerUnixRelayServerCommandArgs(spec, []string{"bwrap"})
-	assert.ErrorContains(t, err, "does not support the proxy filtering engine")
-	_, _, err = TclaudeLayerUnixRelayServerFDs(spec)
-	assert.ErrorContains(t, err, "does not support the proxy filtering engine")
+	argv, err := tclaudeLayerUnixRelayServerCommandArgs(spec, []string{"bwrap"})
+	require.NoError(t, err)
+	assert.Contains(t, argv, "--proxy-network-policy",
+		"a proxy-engine plan must start the proxy supervisor")
+	assert.NotContains(t, argv, "--filtered-network-policy",
+		"a proxy-engine plan must never be handed the packet gateway's policy")
+	assert.Contains(t, argv, "--preserve-fds")
+
+	// The proxy engine contributes two sealed descriptors where the packet
+	// gateway contributes four, so the launcher's pair lands at 6/7 rather than
+	// 8/9. Asserting the literal numbers rather than recomputing the formula is
+	// the point: this is the contract the in-sandbox relay command names, and a
+	// test that re-derived it would agree with any arithmetic the code chose.
+	listenerFD, executableFD, err := TclaudeLayerUnixRelayServerFDs(spec)
+	require.NoError(t, err)
+	assert.Equal(t, 6, listenerFD)
+	assert.Equal(t, 7, executableFD)
+}
+
+// TestTclaudeLayerUnixRelayFDsFollowTheDeployedEngine proves the same accessor
+// still answers the packet gateway's layout for a packet plan, and the
+// no-supervisor layout for a plan that deploys no engine at all.
+//
+// It exists because the lift above replaced a refusal with arithmetic, and
+// arithmetic that happened to be right for the proxy engine while quietly
+// having moved the packet gateway's descriptors would break the OpenCode
+// launch production already performs.
+func TestTclaudeLayerUnixRelayFDsFollowTheDeployedEngine(t *testing.T) {
+	packetRules := proxyBridgeDiscriminatingRules()
+	packetRules.Engine = sandboxpolicy.NetworkEnginePacket
+	packetSnapshot := sandboxpolicy.EmptySnapshot()
+	packetSnapshot.Effective.Network = &packetRules
+	packet, err := BuildTclaudeLayerLaunchSpec(TclaudeLayerLaunchInput{
+		HarnessName: "claude",
+		Cwd:         t.TempDir(),
+		StateRoot:   t.TempDir(),
+		Snapshot:    &packetSnapshot,
+	})
+	require.NoError(t, err)
+	listenerFD, executableFD, err := TclaudeLayerUnixRelayServerFDs(packet)
+	require.NoError(t, err)
+	assert.Equal(t, 8, listenerFD)
+	assert.Equal(t, 9, executableFD)
+
+	// No filtered posture, so no supervisor is interposed and the launcher's
+	// descriptors reach bubblewrap as the first two above stderr.
+	open := sandboxpolicy.EmptySnapshot()
+	open.Effective.NetworkAccess = sandboxpolicy.NetworkAccessInternet
+	unsupervised, err := BuildTclaudeLayerLaunchSpec(TclaudeLayerLaunchInput{
+		HarnessName: "claude",
+		Cwd:         t.TempDir(),
+		StateRoot:   t.TempDir(),
+		Snapshot:    &open,
+	})
+	require.NoError(t, err)
+	listenerFD, executableFD, err = TclaudeLayerUnixRelayServerFDs(unsupervised)
+	require.NoError(t, err)
+	assert.Equal(t, 3, listenerFD)
+	assert.Equal(t, 4, executableFD)
+}
+
+// TestWinchRelayPreservationRequiresAnEnginePolicy pins the supervisor's own
+// half of the lifted contract: preservation is rendered only WITH a supervisor,
+// so a preserve-fds request carrying no engine policy is a renderer and
+// supervisor that disagree about the launch, and is refused.
+func TestWinchRelayPreservationRequiresAnEnginePolicy(t *testing.T) {
+	code, err := runTclaudeLayerWinchRelay(
+		[]string{"/bin/true"}, nil,
+		stackedRelayBindingOptions{PreserveFDs: 2})
+	assert.Equal(t, 125, code)
+	assert.ErrorContains(t, err, "requires a filtering engine policy")
+
+	// A count this supervisor never renders is refused whichever engine asks.
+	code, err = runTclaudeLayerWinchRelay(
+		[]string{"/bin/true"}, nil,
+		stackedRelayBindingOptions{PreserveFDs: 3, ProxyPolicy: "x"})
+	assert.Equal(t, 125, code)
+	assert.ErrorContains(t, err, "requires the OpenCode two-fd contract")
 }
 
 // TestBuildTclaudeLayerLaunchSpecRefusesAnInvalidEngine keeps the launch input
@@ -775,7 +860,7 @@ func TestProxyNetworkSetupArgsGrantNoCapabilities(t *testing.T) {
 	require.NoError(t, err)
 	defer relay.Close()
 	assert.False(t, slices.Contains(relay.SetupArgs, "--cap-add"))
-	assert.Len(t, relay.Files, 2,
+	assert.Len(t, relay.Files, tclaudeLayerProxyEngineDescriptors,
 		"the sealed inputs are the bootstrap image and the namespace hosts file")
 	assert.Contains(t, relay.SetupArgs, proxyNetworkBootstrapSyncPath)
 	assert.Contains(t, relay.Command, tclaudeLayerProxyBootstrapCommand)
@@ -806,7 +891,7 @@ func TestProxyNetworkFloorMasksHostNameMappings(t *testing.T) {
 	assert.Equal(t, "--ro-bind-data", relay.SetupArgs[index-2])
 	assert.Equal(t, strconv.Itoa(proxyNetworkHostsFD), relay.SetupArgs[index-1])
 
-	require.Len(t, relay.Files, 2)
+	require.Len(t, relay.Files, tclaudeLayerProxyEngineDescriptors)
 
 	hosts := sandboxpolicy.ProxyNetworkHostsFile()
 	assert.Contains(t, string(hosts), "127.0.0.1 localhost",
@@ -857,4 +942,45 @@ func TestProxyNetworkHostsFileReachesTheNamedDescriptor(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, string(sandboxpolicy.ProxyNetworkHostsFile()), string(carried),
 		"the descriptor the /etc/hosts argument names must carry the hosts file")
+}
+
+// TestProxyNetworkSealedDescriptorCountMatchesTheRelayContract ties the number
+// of descriptors this engine actually prepares to the constant the shared relay
+// fd arithmetic is written against.
+//
+// The compile-time pin beside the fd constants catches a RENUMBERING. It cannot
+// catch an APPENDED descriptor: a fifth sealed input added with a new constant
+// leaves every existing fd constant reading the same, the pin still evaluates
+// to zero, and the build passes — while bubblewrap's ExtraFiles grows and the
+// OpenCode launcher's preserved pair silently moves one higher than
+// TclaudeLayerUnixRelayServerFDs reports. This test and the fail-closed check
+// inside prepareProxyNetworkRelay are what close that gap.
+//
+// Falsifiability: append one more file in prepareProxyNetworkRelay without
+// raising tclaudeLayerProxyEngineDescriptors, and this fails along with the
+// launch-time refusal.
+func TestProxyNetworkSealedDescriptorCountMatchesTheRelayContract(t *testing.T) {
+	plan := proxyBridgeTestPlan(t,
+		proxyBridgeDiscriminatingRules(), sandboxpolicy.NetworkEngineProxy)
+	encoded, err := encodeProxyNetworkRelayPolicy(plan)
+	require.NoError(t, err)
+	relay, err := prepareProxyNetworkRelay(encoded)
+	require.NoError(t, err)
+	defer relay.Close()
+	require.Len(t, relay.Files, tclaudeLayerProxyEngineDescriptors)
+
+	// And the fds those descriptors take on the far side of bubblewrap are
+	// exactly the ones below the launcher's pair, with no gap and no overlap.
+	spec, err := BuildTclaudeLayerLaunchSpec(TclaudeLayerLaunchInput{
+		HarnessName: "claude",
+		Cwd:         t.TempDir(),
+		StateRoot:   t.TempDir(),
+		Snapshot:    proxyBridgeSnapshot(proxyBridgeDiscriminatingRules()),
+	})
+	require.NoError(t, err)
+	listenerFD, _, err := TclaudeLayerUnixRelayServerFDs(spec)
+	require.NoError(t, err)
+	assert.Equal(t,
+		tclaudeLayerRelayStatusFD+len(relay.Files)+1, listenerFD,
+		"the launcher's listener must follow this engine's last sealed descriptor")
 }

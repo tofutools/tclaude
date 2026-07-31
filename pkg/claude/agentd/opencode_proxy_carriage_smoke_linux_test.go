@@ -39,14 +39,17 @@ import (
 // is present, does the OpenCode server route its MODEL traffic over it, and
 // over which carriage?
 //
-// It cannot be a floor smoke, and the reason is structural rather than a matter
-// of effort: the boundary agentd launches OpenCode through REFUSES to deploy
-// the proxy engine outright (TestOpenCodeUnixRelayRefusesTheProxyEngine, and
-// the refusals it pins in sandbox_bwrap.go / sandbox_bwrap_linux.go). There is
-// therefore no proxy floor to run OpenCode behind at this seam, and no cell for
-// any result here to flip. If that refusal is ever lifted, THIS arm is what
-// says whether doing so would buy containment or only a harness that ignores
-// the proxy and fails closed.
+// It is not a floor smoke, and since TCL-891 the reason is no longer that the
+// seam refuses the proxy engine — that refusal has been lifted, and
+// TestOpenCodeProxyFloorCooperation is the floor arm it made possible. The
+// reason now is what this arm is FOR: it offers exactly ONE carriage per launch,
+// which is the only construction that can answer "does this harness ignore
+// ALL_PROXY", and no filtered posture can do that. A floor injects both.
+//
+// So the two arms are complementary and this one is deliberately kept. It is
+// what said, before any floor existed, whether lifting the refusal would buy
+// containment or only a harness that ignores the proxy and fails closed; it is
+// what keeps saying so for each new pinned OpenCode version.
 //
 // The honest limit of the construction, stated rather than papered over. Under
 // the real floor the audit guarantee is structural: the sandbox has an empty
@@ -73,10 +76,10 @@ import (
 // One thing this arm is NOT, said plainly so a reader does not assume it: the
 // host-open launch is not the Unix-relay seam. Host-open builds the spec with
 // unixRelay=false, so there is no control relay and the transport is plain TCP.
-// It is a real agentd bwrap-confined OpenCode server, and it is the closest
-// thing to the refused boundary that can reach a proxy at all — but the seam
-// the refusal beside it is about is the relay one, and no launch there can be
-// measured until that refusal is lifted.
+// It is a real agentd bwrap-confined OpenCode server, but it is not the relay
+// seam. Since TCL-891 the relay seam CAN be measured, and
+// TestOpenCodeProxyFloorCooperation measures it; what that arm cannot do is
+// isolate one carriage, which is what keeps this one distinct.
 const (
 	openCodeCarriageSmokeEnv = "TCLAUDE_OPENCODE_PROXY_CARRIAGE_SMOKE"
 	// The origin must NOT be loopback. Clients commonly refuse to send a

@@ -1115,11 +1115,62 @@ func TclaudeLayerUnixRelayServerExecArgs(
 		spec, append([]string{binary}, args...))
 }
 
+// The inherited-descriptor contract, stated once for every filtering engine.
+//
+// runTclaudeLayerWinchRelay installs the launcher's two preserved descriptors
+// LAST in bubblewrap's ExtraFiles — after bubblewrap's own status pipe, and
+// after whatever sealed inputs the deployed engine contributed. What the
+// harness inside the sandbox sees is therefore determined by exactly one
+// engine-specific number: how many descriptors that engine contributes. These
+// constants are that number, and nothing else about the two engines differs
+// here.
+//
+// Writing the contract this way is what let the proxy engine join it without a
+// second copy of the layout. Each count is pinned at compile time against the
+// engine's own fd constants, beside those constants, so a descriptor added to
+// either engine is a build failure here rather than a launch that names the
+// wrong fds.
+const (
+	// tclaudeLayerRelayStatusFD is bubblewrap's --json-status-fd, which the
+	// supervisor always owns and always installs first.
+	tclaudeLayerRelayStatusFD = 3
+	// tclaudeLayerPacketEngineDescriptors: sealed bootstrap image, nft policy,
+	// hosts and resolv.conf (fds 4-7). See filtered_network_gateway_linux.go.
+	tclaudeLayerPacketEngineDescriptors = 4
+	// tclaudeLayerProxyEngineDescriptors: sealed bootstrap image and the
+	// loopback-only hosts file (fds 4-5). See proxy_network_bridge_linux.go.
+	// The proxy engine needs neither an nft policy nor a resolver, which is
+	// the whole of why its count is smaller.
+	tclaudeLayerProxyEngineDescriptors = 2
+)
+
+// tclaudeLayerRelayEngineDescriptors reports how many sealed descriptors the
+// engine this plan deploys hands bubblewrap ahead of the launcher's own two,
+// and whether a supervisor is interposed at all.
+//
+// The engine question is asked through tclaudeLayerPlanDeploysProxy — the one
+// deployment predicate — rather than re-derived from posture and engine here.
+func tclaudeLayerRelayEngineDescriptors(
+	plan sandboxpolicy.MountPlan,
+) (count int, relayed bool) {
+	if plan.NetworkPosture != sandboxpolicy.NetworkFiltered {
+		return 0, false
+	}
+	if tclaudeLayerPlanDeploysProxy(plan) {
+		return tclaudeLayerProxyEngineDescriptors, true
+	}
+	return tclaudeLayerPacketEngineDescriptors, true
+}
+
 // TclaudeLayerUnixRelayServerFDs returns the descriptors the inherited relay
-// command must name. The filtered supervisor owns bwrap fd 3 for its status
-// stream and fds 4-7 for its four sealed bootstrap inputs, then preserves the
-// launcher's listener and executable as fds 8 and 9. Without that supervisor
-// the launcher descriptors pass directly as fds 3 and 4.
+// command must name, for whichever filtering engine this plan deploys: the
+// packet gateway preserves the launcher's listener and executable as fds 8 and
+// 9, the filtering proxy as fds 6 and 7. Without a supervisor interposed at all
+// the launcher descriptors pass directly to bubblewrap as fds 3 and 4.
+//
+// It answers from tclaudeLayerRelayEngineDescriptors, which is also what
+// tclaudeLayerUnixRelayServerCommandArgs renders against, so the fds the
+// command NAMES and the fds the supervisor INSTALLS cannot disagree.
 func TclaudeLayerUnixRelayServerFDs(
 	spec TclaudeLayerLaunchSpec,
 ) (listenerFD, executableFD int, err error) {
@@ -1127,18 +1178,12 @@ func TclaudeLayerUnixRelayServerFDs(
 	if err != nil {
 		return 0, 0, err
 	}
-	if tclaudeLayerPlanDeploysProxy(plan) {
-		// Kept in step with tclaudeLayerUnixRelayServerCommandArgs, which
-		// refuses the same combination. Reporting the packet supervisor's
-		// layout here would hand the caller descriptor numbers for a
-		// supervisor this plan does not start.
-		return 0, 0, fmt.Errorf(
-			"the OpenCode Unix-relay launch does not support the proxy filtering engine")
+	engineDescriptors, relayed := tclaudeLayerRelayEngineDescriptors(plan)
+	if !relayed {
+		return 3, 4, nil
 	}
-	if plan.NetworkPosture == sandboxpolicy.NetworkFiltered {
-		return 8, 9, nil
-	}
-	return 3, 4, nil
+	base := tclaudeLayerRelayStatusFD + 1 + engineDescriptors
+	return base, base + 1, nil
 }
 
 func tclaudeLayerSpecRenderInput(

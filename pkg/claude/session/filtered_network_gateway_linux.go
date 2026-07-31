@@ -38,6 +38,15 @@ const (
 	filteredNetworkDNSDescriptorCount    = 3
 )
 
+// The packet gateway's four sealed inputs end at filteredNetworkResolvFD, and
+// the shared relay fd arithmetic in sandbox_bwrap.go is written against that
+// count: the OpenCode launcher's preserved descriptors begin immediately after
+// it. This is a compile-time pin, not a comment — adding a fifth sealed input
+// here without raising tclaudeLayerPacketEngineDescriptors fails the build,
+// rather than shipping an inherited relay that names two fds nothing installed.
+var _ = [1]struct{}{}[filteredNetworkResolvFD-
+	(tclaudeLayerRelayStatusFD+tclaudeLayerPacketEngineDescriptors)]
+
 func filteredNetworkHelperEnv() []string {
 	return []string{
 		"PATH=/usr/sbin:/usr/bin:/sbin:/bin",
@@ -218,6 +227,18 @@ func prepareFilteredNetworkRelay(encoded string) (_ preparedFilteredNetworkRelay
 		return preparedFilteredNetworkRelay{}, err
 	}
 	files = append(files, resolvFile)
+	// THE COUNT, checked against the constant the shared relay fd arithmetic is
+	// written against, not merely commented. The compile-time pin beside those
+	// constants catches a RENUMBERING; only this catches an APPENDED
+	// descriptor, which shifts the launcher's preserved pair while every fd
+	// constant still reads the same. Refusing here is fail-closed: the launch
+	// does not start, rather than telling the inherited relay to name two
+	// descriptors bubblewrap installed one higher.
+	if len(files) != tclaudeLayerPacketEngineDescriptors {
+		return preparedFilteredNetworkRelay{}, fmt.Errorf(
+			"packet gateway prepared %d sealed descriptors, but the relay fd contract is written for %d",
+			len(files), tclaudeLayerPacketEngineDescriptors)
+	}
 	setupArgs := []string{
 		"--ro-bind", syncHostPath, filteredNetworkBootstrapSyncPath,
 		"--perms", "0500",

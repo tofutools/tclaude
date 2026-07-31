@@ -142,9 +142,15 @@ var openCodeSSEHTTPClient = &http.Client{
 var (
 	startOpenCodeRuntimeForSpawn = startOpenCodeRuntime
 	sendOpenCodePromptForSpawn   = sendOpenCodePrompt
-	resolveOpenCodeTclaudeLayer  = session.ResolveTclaudeLayerServer
-	wrapOpenCodeTclaudeLayer     = session.WrapTclaudeLayerServerSpec
-	openCodeRelayExecutable      = os.Executable
+	// Engine-aware, and it has to be: the proxy engine's floor is the isolated
+	// posture's construction, so probing the filtered posture's prerequisites
+	// would refuse an OpenCode proxy launch for want of pasta and nft that it
+	// never calls. session.ResolveTclaudeLayerServerForEngine applies the same
+	// TclaudeLayerFloorPosture mapping the plain-CLI launch path already uses,
+	// rather than a second answer to the same question (TCL-891).
+	resolveOpenCodeTclaudeLayer = session.ResolveTclaudeLayerServerForEngine
+	wrapOpenCodeTclaudeLayer    = session.WrapTclaudeLayerServerSpec
+	openCodeRelayExecutable     = os.Executable
 )
 
 func startOpenCodeRuntime(
@@ -710,7 +716,17 @@ func openCodeServeProcessExec(
 	if err != nil {
 		return "", nil, nil, nil, noCleanup, err
 	}
-	bwrapBinary, _, err := resolveOpenCodeTclaudeLayer(posture, root)
+	// The DEPLOYED engine, not the authored one on the contract. They diverge
+	// for a filtered posture whose policy is non-discriminating: the contract
+	// carries `proxy` as authored while the plan deploys none, and probing the
+	// proxy engine's floor there would skip the pasta/nft/userns prerequisites
+	// the launch is actually about to need. TclaudeLayerNetworkEngine is the
+	// same resolution the plan itself performs.
+	engine, err := session.TclaudeLayerNetworkEngine(sandboxSpec.Effective)
+	if err != nil {
+		return "", nil, nil, nil, noCleanup, err
+	}
+	bwrapBinary, _, err := resolveOpenCodeTclaudeLayer(posture, root, engine)
 	if err != nil {
 		return "", nil, nil, nil, noCleanup, err
 	}
@@ -1025,8 +1041,12 @@ func openCodeServeExec(
 	if err != nil {
 		return "", nil, err
 	}
+	hostOpenEngine, err := session.TclaudeLayerNetworkEngine(sandboxSpec.Effective)
+	if err != nil {
+		return "", nil, err
+	}
 	bwrapBinary, _, err := resolveOpenCodeTclaudeLayer(
-		sandboxpolicy.NetworkHostOpen, root)
+		sandboxpolicy.NetworkHostOpen, root, hostOpenEngine)
 	if err != nil {
 		return "", nil, err
 	}
@@ -1068,8 +1088,17 @@ func openCodeTclaudeLayerLaunchSpec(
 	}
 	if posture != sandboxpolicy.NetworkHostOpen {
 		if posture == sandboxpolicy.NetworkFiltered {
+			// The engine comes from the composed policy, through the same
+			// resolution the launch itself performs, so the preflight probes
+			// the floor the launch will actually build. Never re-derived here:
+			// TclaudeLayerNetworkEngine is the one answer, and asking a second
+			// way is how a preflight ends up probing a different floor.
+			engine, engineErr := session.TclaudeLayerNetworkEngine(effective)
+			if engineErr != nil {
+				return nil, engineErr
+			}
 			_, _, filteredErr := resolveOpenCodeTclaudeLayer(
-				posture, sandboxpolicy.RootConstructed)
+				posture, sandboxpolicy.RootConstructed, engine)
 			if filteredErr != nil {
 				return nil, filteredErr
 			}

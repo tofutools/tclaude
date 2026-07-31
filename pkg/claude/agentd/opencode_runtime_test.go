@@ -916,6 +916,7 @@ func TestReconcileOpenCodeRuntimeNeverFallsBackFromMissingWrappedSpec(t *testing
 	resolveOpenCodeTclaudeLayer = func(
 		_ sandboxpolicy.NetworkPosture,
 		_ sandboxpolicy.RootPosture,
+		_ sandboxpolicy.NetworkEngine,
 	) (string, harness.LaunchOSSandbox, error) {
 		t.Fatal("a wrapped runtime without its launch spec must refuse before any restart")
 		return "", harness.LaunchOSSandbox{}, nil
@@ -1014,6 +1015,7 @@ func TestReconcileOpenCodeFilteredRuntimeRechecksPersistentAccountAuthority(
 	resolveOpenCodeTclaudeLayer = func(
 		_ sandboxpolicy.NetworkPosture,
 		_ sandboxpolicy.RootPosture,
+		_ sandboxpolicy.NetworkEngine,
 	) (string, harness.LaunchOSSandbox, error) {
 		return "/usr/bin/bwrap", harness.LaunchOSSandbox{}, nil
 	}
@@ -1117,6 +1119,7 @@ func TestOpenCodeServeExecWrapsAuthoritativeServer(t *testing.T) {
 	resolveOpenCodeTclaudeLayer = func(
 		posture sandboxpolicy.NetworkPosture,
 		_ sandboxpolicy.RootPosture,
+		_ sandboxpolicy.NetworkEngine,
 	) (string, harness.LaunchOSSandbox, error) {
 		require.Equal(t, sandboxpolicy.NetworkHostOpen, posture)
 		return "/usr/bin/bwrap", harness.LaunchOSSandbox{}, nil
@@ -1154,6 +1157,7 @@ func TestOpenCodeServeExecRefusesNonHostOpenBeforeResolve(t *testing.T) {
 	resolveOpenCodeTclaudeLayer = func(
 		_ sandboxpolicy.NetworkPosture,
 		_ sandboxpolicy.RootPosture,
+		_ sandboxpolicy.NetworkEngine,
 	) (string, harness.LaunchOSSandbox, error) {
 		t.Fatal("host capability must not be probed for an unsupported OpenCode posture")
 		return "", harness.LaunchOSSandbox{}, nil

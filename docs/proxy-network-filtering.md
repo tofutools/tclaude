@@ -466,9 +466,24 @@ to it.
 OpenCode is not activated; a profile that selects `engine: proxy` for it widens
 to open with a notice naming activation as the reason
 (`ProxyEngineNotActivatedNotice`), rather than silently claiming enforcement.
-It launches through the agentd-owned server boundary rather than as a plain
-CLI, so its cooperation arm belongs beside the OpenCode executor smoke, and
-until that exists it has no evidence at all.
+
+The reason it is not activated has changed, and the distinction matters when
+reading the cells. Until TCL-891 the agentd-owned Unix-relay boundary OpenCode
+launches through refused to deploy this engine at all — its inherited-descriptor
+contract was written against the packet gateway's exact fd layout — so no
+evidence about a floor was even obtainable. That contract has been generalized
+to both engines, and `TestOpenCodeProxyFloorCooperation` (smoke flow
+`40-opencode-floor`) now measures OpenCode behind the real floor. What is still
+missing is the activation record itself: a cell flips only in the PR that makes
+the record citing a green named run, so the cells stay `EnforceNone` until then.
+
+One measured fact about OpenCode 1.18.6 constrains what its row will be able to
+claim: it carries model traffic over **HTTP CONNECT** and ignores `ALL_PROXY`
+entirely (`TestOpenCodeProxyCarriageCooperation`, flow `30-opencode-carriage`,
+which offers one carriage per launch precisely so that question can be
+isolated). Under this engine that is contained rather than leaked — traffic a
+client does not carry has no route out of the empty namespace — but any
+SOCKS-dependent expressibility is absent for this harness.
 
 What the first activation run (on-main run `30609001363`) actually showed, as
 distinct from what was hypothesized:
@@ -506,7 +521,6 @@ unenforced:
 | A foreign `HTTP(S)_PROXY`/`ALL_PROXY` in the launch environment | the real destination sits behind a proxy the endpoint resolver cannot resolve | model-transport gate |
 | The same variables authored in Claude's `settings.json` (Claude Code only) | Claude re-reads settings env while a session runs, so a one-time preflight cannot freeze the route | `claudeSettingsProviderVariable` |
 | A provider endpoint using the packet gateway's synthetic host-loopback name | only the packet engine installs that mapping; under this engine it resolves to nothing, and the remedy is `localhost`/`127.0.0.1`/`::1` plus a `loopback` rule | `validateModelTransportLoopbackForPlatform`, `sandbox_bwrap.go` |
-| OpenCode's Unix-relay launch | that launch contract does not support this engine | `sandbox_bwrap.go` |
 | Packet and proxy engines in one launch | one launch runs one engine; deciding which policy is authoritative later is the shape of question that produces a bypass | `sandbox_bwrap_winch_relay_linux.go` |
 | A stacked relay binding combined with the proxy engine | the same rule, for the nested-harness relay | `sandbox_bwrap_winch_relay_linux.go` |
 

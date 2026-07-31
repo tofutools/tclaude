@@ -73,6 +73,15 @@ const (
 	proxyNetworkHostsFD = 5
 )
 
+// The proxy engine's two sealed inputs end at proxyNetworkHostsFD, and the
+// shared relay fd arithmetic in sandbox_bwrap.go is written against that count:
+// the OpenCode launcher's preserved descriptors begin immediately after it, at
+// fds 6 and 7. Compile-time pin, matching the packet gateway's — a third sealed
+// input added here without raising tclaudeLayerProxyEngineDescriptors fails the
+// build rather than producing a relay command that names the wrong descriptors.
+var _ = [1]struct{}{}[proxyNetworkHostsFD-
+	(tclaudeLayerRelayStatusFD+tclaudeLayerProxyEngineDescriptors)]
+
 // preparedProxyNetworkRelay is the host half of the bridge, owned by the
 // launch supervisor for exactly the sandbox's lifetime.
 type preparedProxyNetworkRelay struct {
@@ -197,6 +206,15 @@ func prepareProxyNetworkRelay(
 		return preparedProxyNetworkRelay{}, err
 	}
 	files = append(files, hostsFile)
+	// The same count check the packet gateway makes, for the same reason: the
+	// compile-time pin beside the fd constants catches a renumbering, and this
+	// catches an appended descriptor that would silently move the OpenCode
+	// launcher's preserved pair.
+	if len(files) != tclaudeLayerProxyEngineDescriptors {
+		return preparedProxyNetworkRelay{}, fmt.Errorf(
+			"proxy engine prepared %d sealed descriptors, but the relay fd contract is written for %d",
+			len(files), tclaudeLayerProxyEngineDescriptors)
+	}
 	return preparedProxyNetworkRelay{
 		SetupArgs: []string{
 			"--ro-bind", syncHostPath, proxyNetworkBootstrapSyncPath,
