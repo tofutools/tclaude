@@ -289,9 +289,9 @@ jobs:
           TCLAUDE_FILTERED_DENIED_PORT: "41002"
         run: |
           # TCL-881: the same two teardown helpers the proxy shards use, from
-          # the shared library, so the gateway job and the shards cannot drift.
-          # shellcheck source=../../scripts/lib/smoke/common.sh
-          source scripts/lib/smoke/common.sh
+          # the shared library, so every smoke job and the shards share one
+          # implementation rather than copies that drift.
+          source "$GITHUB_WORKSPACE/scripts/lib/smoke/common.sh"
           namespace=tclaude-filtered-target
           host_link=tclflt0
           peer_link=tclflt1
@@ -556,16 +556,22 @@ jobs:
           peer_link=tclocd1
           hosts_backup="$RUNNER_TEMP/tclaude-opencode-deny-hosts.before"
           sudo cp /etc/hosts "$hosts_backup"
+          # TCL-881: the same two teardown helpers the proxy shards use, from
+          # the shared library, so every smoke job and the shards share one
+          # implementation rather than copies that drift.
+          source "$GITHUB_WORKSPACE/scripts/lib/smoke/common.sh"
           server_pids=()
           cleanup() {
-            for pid in "${server_pids[@]}"; do
-              sudo kill "$pid" 2>/dev/null || true
-            done
+            # smoke::kill_listener signals the socat itself and not only the
+            # sudo wrapper holding it, which is what leaves a bound port behind.
+            smoke::kill_listener "${server_pids[@]:-}"
             sudo ip netns del "$namespace" 2>/dev/null || true
             sudo ip link del "$host_link" 2>/dev/null || true
             sudo tee /etc/hosts <"$hosts_backup" >/dev/null || true
           }
-          trap cleanup EXIT
+          # EXIT alone would let a cancelled job — GitHub sends SIGINT first —
+          # exit 0 with its fixture half torn down.
+          smoke::trap_cleanup cleanup
 
           sudo ip netns add "$namespace"
           sudo ip link add "$host_link" type veth peer name "$peer_link"
