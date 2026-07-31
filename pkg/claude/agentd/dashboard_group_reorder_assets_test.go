@@ -36,6 +36,9 @@ func TestDashboardJS_GroupReorderWired(t *testing.T) {
 			"group-reorder.js suppresses the header drag for clicks on interactive children"},
 		// group-reorder.js: the custom MIME and the persisted pref key.
 		{`'application/x-tclaude-group'`, "group-reorder.js uses a dedicated drag MIME"},
+		{`e.dataTransfer.effectAllowed = 'copyMove';`, "group drags allow the native copy cursor"},
+		{`openGroupCloneModal(dragName, {`, "Ctrl/Cmd group drops delegate to the clone dialog"},
+		{`group-drop-clone`, "clone drops carry distinct green target styling"},
 		{`tclaude.dash.groupOrder`, "group-reorder.js persists the order under its dashPrefs key"},
 		{`function sortGroupsByPref(`, "the shared order-applying helper exists"},
 		// dnd.js: the explicit isolation guard keeps the two drop handlers apart.

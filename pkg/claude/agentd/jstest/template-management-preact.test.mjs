@@ -103,7 +103,14 @@ test('template actions keep starter requests ordered and preserve mutation paylo
     'team',
     { no_clone_members: false, copy_owners: false, new_name: 'team-copy' },
   ]);
-  assert.equal(refreshes, 2);
+  await actions.cloneGroup('team', 'team-c-1', 'team-c-1', false, false, {
+    parent: 'parent', anchor: 'team', before: false,
+  });
+  assert.deepEqual(clones[1], [
+    'team',
+    { no_clone_members: true, copy_owners: false, parent: 'parent' },
+  ]);
+  assert.equal(refreshes, 3);
 });
 
 test('template manager and editor retain native markup, wizard variants, nested draft state, and stacking', async (t) => {

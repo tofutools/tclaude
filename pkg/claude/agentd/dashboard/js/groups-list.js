@@ -406,7 +406,7 @@ function RealGroupSummary({ group, activity, membersView, snapshot, actions }) {
   const groupEditing = interactions.editorKey.startsWith(`group:${group.name}:`);
   const renameKey = `group:${group.name}:name`;
   const maxValue = group.max_members || 0;
-  return html`<summary draggable=${!groupEditing} data-group-reorder=${group.name} title="Drag this header to reorder the group">
+  return html`<summary draggable=${!groupEditing} data-group-reorder=${group.name} title="Drag this header to reorder or nest the group · Ctrl/Cmd-drag to clone">
     ${interactions.editorKey === renameKey ? html`<${InlineEditor}
       editorKey=${renameKey} value=${group.name} className="group-rename-input"
       onCommit=${(value) => actions.renameGroup(group, value)}

@@ -47,6 +47,9 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 		// the historical API/CLI default of copying owner rows, while the
 		// dashboard can explicitly opt out when it clones settings only.
 		CopyOwners *bool `json:"copy_owners,omitempty"`
+		// Parent optionally chooses the clone's tree scope. Omitted preserves
+		// the source parent; an explicit empty string makes the clone top-level.
+		Parent *string `json:"parent,omitempty"`
 	}
 	if r.ContentLength > 0 {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -97,6 +100,23 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 	// keeps the one-line header invariant on the clone too.
 	srcSettings := *src
 	srcSettings.Descr = normalizeGroupDescr(src.Descr)
+	if body.Parent != nil {
+		parentName := strings.TrimSpace(*body.Parent)
+		srcSettings.ParentGroupID = nil
+		if parentName != "" {
+			parent, parentErr := db.GetAgentGroupByName(parentName)
+			if parentErr != nil {
+				writeError(w, http.StatusInternalServerError, "io", "load clone parent: "+parentErr.Error())
+				return
+			}
+			if parent == nil || parent.IsArchived() {
+				writeError(w, http.StatusBadRequest, "invalid_arg", "clone parent group not found or inactive: "+parentName)
+				return
+			}
+			parentID := parent.ID
+			srcSettings.ParentGroupID = &parentID
+		}
+	}
 	newGroupID, err := db.CreateAgentGroupFrom(newName, srcSettings)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io",

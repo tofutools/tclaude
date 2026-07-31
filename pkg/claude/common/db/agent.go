@@ -713,7 +713,7 @@ func CreateAgentGroupWithParent(name, descr, parentName string) (int64, error) {
 
 // CreateAgentGroupFrom inserts a new group named `name` that carries
 // every configurable setting from `src` — descr, default cwd / context
-// / profile, attachment, live group permissions, the max-members cap and the notify switch. created_at is
+// / profile, attachment, live group permissions, tree parent, the max-members cap and the notify switch. created_at is
 // stamped fresh and the new group comes up active (archived_at left
 // zero) regardless of src's archived state, so cloning an archived
 // group yields a live one. Returns the new group's ID.
@@ -766,11 +766,13 @@ func CreateAgentGroupFrom(name string, src AgentGroup) (int64, error) {
 		INSERT INTO agent_groups
 			(name, descr, default_cwd, default_context, default_profile, default_profile_id,
 			 sandbox_profile, sandbox_profile_id, max_members, notify_enabled, remote_control,
-			 attachment_url, attachment_label, mission, source_template, source_template_id, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 attachment_url, attachment_label, mission, source_template, source_template_id,
+			 parent_id, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		name, src.Descr, src.DefaultCwd, src.DefaultContext, src.DefaultProfile, defaultProfileID,
 		sandboxProfileName, sandboxProfileID, src.MaxMembers, src.NotifyEnabled, boolPtrToNull(src.RemoteControl),
 		src.AttachmentURL, src.AttachmentLabel, src.Mission, src.SourceTemplate, sourceTemplateID,
+		src.ParentGroupID,
 		time.Now().Format(time.RFC3339Nano))
 	if err != nil {
 		return 0, err

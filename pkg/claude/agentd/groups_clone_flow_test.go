@@ -92,6 +92,43 @@ func TestGroupsClone_DefaultsSuffix(t *testing.T) {
 	assert.Len(t, newMembers, 2, "new group member count")
 }
 
+func TestGroupsClone_PreservesOrOverridesTreeParent(t *testing.T) {
+	f := newFlow(t)
+	parent := f.HaveGroup("parent")
+	siblingParent := f.HaveGroup("other-parent")
+	source := f.HaveGroup("child")
+	_, err := db.SetAgentGroupParent(source.ID, parent.Name)
+	require.NoError(t, err)
+
+	preserved := groupCloneRequest(t, f, source.Name, map[string]any{
+		"new_name":         "child-copy",
+		"no_clone_members": true,
+	})
+	preservedGroup, err := db.GetAgentGroupByName(preserved.Group)
+	require.NoError(t, err)
+	require.NotNil(t, preservedGroup.ParentGroupID)
+	assert.Equal(t, parent.ID, *preservedGroup.ParentGroupID, "an ordinary clone stays beside its subgroup source")
+
+	overridden := groupCloneRequest(t, f, source.Name, map[string]any{
+		"new_name":         "child-elsewhere",
+		"no_clone_members": true,
+		"parent":           siblingParent.Name,
+	})
+	overriddenGroup, err := db.GetAgentGroupByName(overridden.Group)
+	require.NoError(t, err)
+	require.NotNil(t, overriddenGroup.ParentGroupID)
+	assert.Equal(t, siblingParent.ID, *overriddenGroup.ParentGroupID, "a drag placement can choose another sibling scope")
+
+	rooted := groupCloneRequest(t, f, source.Name, map[string]any{
+		"new_name":         "child-at-root",
+		"no_clone_members": true,
+		"parent":           "",
+	})
+	rootedGroup, err := db.GetAgentGroupByName(rooted.Group)
+	require.NoError(t, err)
+	assert.Nil(t, rootedGroup.ParentGroupID, "an explicit empty parent places a clone at root")
+}
+
 func TestGroupsClone_ResumeRefreshesFromClonedGroupNotSourceGroup(t *testing.T) {
 	f := newFlow(t)
 	const sourceConv = "group-clone-policy-source-111111111111"

@@ -138,7 +138,7 @@ function bindDockSaveDnd() {
     // dropEffect MUST be compatible with the source's effectAllowed, or a strict
     // browser (Firefox) resolves the operation to `none` and never fires `drop`.
     // The member drag (dnd.js) sets effectAllowed 'copyMove' (copy OK); the group
-    // drag (group-reorder.js) sets 'move' (copy would be rejected). Neither
+    // drag (group-reorder.js) sets 'copyMove' (move remains valid). Neither
     // capture actually MOVES the row, but matching the flag is what keeps the
     // drop alive cross-browser.
     e.dataTransfer.dropEffect = groupReorderActive ? 'move' : 'copy';

@@ -9,6 +9,7 @@ import {
 } from './profiles.js';
 import { loadRoles, createRole, updateRole, deleteRole } from './roles.js';
 import { fetchUnsandboxedAutonomy } from './unsandboxed-autonomy.js';
+import { insertGroupBeside, setGroupOrderPref, sortGroupsByPref } from './group-order.js';
 import {
   loadSandboxProfiles,
   loadSandboxCommonRules,
@@ -627,7 +628,7 @@ export function createManagementActions({
       context: group?.default_context || '',
     });
   }
-  function openGroupClone(name) {
+  function openGroupClone(name, placement = null) {
     const snapshotGroups = getSnapshot()?.groups || [];
     const source = snapshotGroups.find((item) => item.name === name) || null;
     const match = /^(.*?)-(?:c|clone)-\d+$/.exec(name);
@@ -646,6 +647,11 @@ export function createManagementActions({
       group: name,
       source,
       defaultName: `${prefix}${suffix}`,
+      placement: placement || {
+        parent: source?.parent || '',
+        anchor: name,
+        before: false,
+      },
     });
   }
   async function inspectGroupImport(file, as) {
@@ -683,11 +689,18 @@ export function createManagementActions({
     requestedName,
     withAgents,
     copyOwners,
+    placement = null,
   ) {
     const body = { no_clone_members: !withAgents, copy_owners: copyOwners };
     if (requestedName && requestedName !== defaultName)
       body.new_name = requestedName;
+    if (placement) body.parent = placement.parent || '';
     const result = await groups.cloneGroup(name, body);
+    if (result.group && placement?.anchor) {
+      const snapshotGroups = getSnapshot()?.groups || [];
+      const names = sortGroupsByPref(snapshotGroups.slice()).map((group) => group.name);
+      setGroupOrderPref(insertGroupBeside(names, result.group, placement.anchor, !!placement.before));
+    }
     state.closeDialog();
     const created = result.group ? `"${result.group}"` : 'new group';
     const failed = (result.members || []).filter(

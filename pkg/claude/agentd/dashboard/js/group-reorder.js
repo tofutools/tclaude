@@ -58,6 +58,7 @@ import { renderGroupsTab } from './tabs.js';
 import { lastSnapshot } from './dashboard.js';
 import { refresh, toast } from './refresh.js';
 import { openDeleteGroupModal } from './dashboard-operations.js';
+import { openGroupCloneModal } from './modal-templates.js';
 import { isWizardActive } from './slop.js';
 
 // Custom drag payload type. Intentionally NOT 'text/plain' — see the
@@ -91,8 +92,8 @@ function groupTrashTarget(e) {
 // clearDropMarkers strips the insertion-line + nest-target classes from every
 // group.
 function clearDropMarkers() {
-  $$('.group-drop-before, .group-drop-after, .group-drop-into').forEach(d =>
-    d.classList.remove('group-drop-before', 'group-drop-after', 'group-drop-into'));
+  $$('.group-drop-before, .group-drop-after, .group-drop-into, .group-drop-clone').forEach(d =>
+    d.classList.remove('group-drop-before', 'group-drop-after', 'group-drop-into', 'group-drop-clone'));
 }
 
 // snapshotGroupsByName returns a name→group map of the current snapshot's real
@@ -160,9 +161,35 @@ function resolveDrop(dragName, targetName, zone, byName) {
   return { desiredParent, before: zone === 'before' };
 }
 
+// A copy follows the same placement geometry as a move, except that dropping
+// onto the source itself is useful: it means "make a sibling here" and lets a
+// lone group be cloned without requiring a second target.
+function resolveCloneDrop(dragName, targetName, zone, byName) {
+  if (!dragName || !targetName) return null;
+  if (dragName === targetName) {
+    const source = byName.get(dragName);
+    if (!source) return null;
+    return {
+      desiredParent: source.parent || '',
+      before: zone === 'before',
+      anchor: dragName,
+    };
+  }
+  const target = byName.get(targetName);
+  if (!target) return null;
+  // Unlike moving the source, placing a newly-created clone under one of the
+  // source's descendants cannot form a cycle: the clone starts with no child
+  // edges of its own.
+  return {
+    desiredParent: zone === 'nest' ? targetName : (target.parent || ''),
+    before: zone === 'before',
+    anchor: targetName,
+  };
+}
+
 // reorderPill reuses the shared #dnd-pill chip (the member-row DnD's hint)
 // to track the cursor with a reorder label. `text` null hides it.
-function reorderPill(e, text) {
+function reorderPill(e, text, clone = false) {
   const pill = $('#dnd-pill');
   if (!pill) return;
   if (!text) {
@@ -170,7 +197,7 @@ function reorderPill(e, text) {
     return;
   }
   pill.textContent = text;
-  pill.classList.remove('clone');
+  pill.classList.toggle('clone', clone);
   pill.classList.add('show');
   pill.style.transform = `translate(${e.clientX + 12}px, ${e.clientY + 12}px)`;
 }
@@ -299,9 +326,10 @@ function bindGroupReorder() {
     groupDragHandle = handle;
     handle.addEventListener('dragend', endGroupDrag, { once: true });
     // Custom MIME ONLY — see the module header for why text/plain is
-    // withheld. effectAllowed/dropEffect stay 'move' (reorder, never copy).
+    // withheld. copyMove lets Ctrl/Cmd switch the native cursor to the clone
+    // operation while a plain drag remains a reorder.
     e.dataTransfer.setData(GROUP_DRAG_MIME, name);
-    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.effectAllowed = 'copyMove';
     const details = handle.closest('details[data-group-key]');
     if (details) details.classList.add('group-reorder-source');
     const trash = $('#dnd-trash');
@@ -335,21 +363,40 @@ function bindGroupReorder() {
     const targetName = details.getAttribute('data-group-key');
     const byName = snapshotGroupsByName();
     const zone = dropZone(e, details);
+    const clone = !!(e.ctrlKey || e.metaKey);
     // Reject up front (no preventDefault ⇒ no drop) a gesture that resolves to
     // nothing or a cycle — e.g. dropping a group onto itself, or nesting under
     // one of its own descendants. The marker/pill only show for a valid drop.
-    const plan = byName ? resolveDrop(groupDragName, targetName, zone, byName) : null;
+    const plan = byName
+      ? (clone
+          ? resolveCloneDrop(groupDragName, targetName, zone, byName)
+          : resolveDrop(groupDragName, targetName, zone, byName))
+      : null;
     if (!plan) {
       reorderPill(e, null);
       return;
     }
     e.preventDefault(); // required for `drop` to fire on this element
-    e.dataTransfer.dropEffect = 'move';
+    e.dataTransfer.dropEffect = clone ? 'copy' : 'move';
+    details.classList.toggle('group-drop-clone', clone);
     if (zone === 'nest') {
-      details.classList.add('group-drop-into');
-      reorderPill(e, `⤵ nest ${groupDragName} in ${targetName}`);
+      // A self-copy is always a sibling; nesting a group inside itself is
+      // impossible, but cloning beside itself is the most direct gesture.
+      if (clone && groupDragName === targetName) {
+        details.classList.add(plan.before ? 'group-drop-before' : 'group-drop-after');
+        reorderPill(e, `⧉ clone ${groupDragName} beside itself`, true);
+      } else {
+        details.classList.add('group-drop-into');
+        reorderPill(e, clone
+          ? `⧉ clone ${groupDragName} in ${targetName}`
+          : `⤵ nest ${groupDragName} in ${targetName}`, clone);
+      }
     } else {
       details.classList.add(plan.before ? 'group-drop-before' : 'group-drop-after');
+      if (clone) {
+        reorderPill(e, `⧉ clone ${groupDragName} beside ${targetName}`, true);
+        return;
+      }
       const curParent = (byName.get(groupDragName) || {}).parent || '';
       // Signal a re-parent (drag OUT of / across subtrees) distinctly from a
       // plain same-scope reorder.
@@ -386,11 +433,24 @@ function bindGroupReorder() {
     const dragName = groupDragName;
     const targetName = details.getAttribute('data-group-key');
     const zone = dropZone(e, details);
+    const clone = !!(e.ctrlKey || e.metaKey);
+    const byName = snapshotGroupsByName();
+    const clonePlan = clone && byName
+      ? resolveCloneDrop(dragName, targetName, zone, byName)
+      : null;
     // Tear down NOW, before applyGroupDrop reconciles the keyed tree and moves
     // or replaces the dragged header. Leaving cleanup to browser dragend could
     // strand the pill and route later document events through stale drag state.
     // endGroupDrag is idempotent, so a dragend that does fire is harmless.
     endGroupDrag();
+    if (clonePlan) {
+      openGroupCloneModal(dragName, {
+        parent: clonePlan.desiredParent,
+        anchor: clonePlan.anchor,
+        before: clonePlan.before,
+      });
+      return;
+    }
     applyGroupDrop(dragName, targetName, zone);
   });
 

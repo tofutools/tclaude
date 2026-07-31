@@ -764,6 +764,13 @@ target group instead, leaving the original in place. A hint pill follows the
 cursor and the drop target's outline flips colour to show which effect is
 armed.
 
+Group headers are drag handles too. A plain drag reorders or nests the group;
+hold **Ctrl** (**Cmd** on macOS) to copy it instead. The green copy marker shows
+the destination, then the existing clone dialog opens so you can review the
+new name and whether members or owners come along. Edge drops create a sibling
+at the target's level, including inside subgroup trees; dropping a group onto
+itself creates the clone beside it.
+
 ### Spawn Profiles
 
 Reusable launch presets for agents. A spawn profile can carry the harness,
