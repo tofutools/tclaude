@@ -162,6 +162,54 @@ func TestDashboardTerminals_PlainServesSPA(t *testing.T) {
 	}
 }
 
+// TestDashboardTerminals_DeepLinkServesSPA: /terminals/<agent-id> addresses a
+// single terminal within the Terminals tab, so it serves the SPA index and lets
+// the client router reattach that agent on a hard refresh. Registered as a
+// subtree route — without it the path falls through to the "/" catch-all and
+// 404s, because `terminals` is deliberately not in dashboardAppTabs.
+func TestDashboardTerminals_DeepLinkServesSPA(t *testing.T) {
+	cookie, _ := withDashboardAuthForTest(t)
+
+	// Through the real mux, so the subtree pattern itself is under test rather
+	// than just the handler it dispatches to.
+	mux := http.NewServeMux()
+	registerDashboardRoutes(mux)
+
+	for _, path := range []string{
+		"/terminals/agt_abc123",
+		"/terminals/conv-42", // a pre-identity agent is addressed by conv-id
+		// A stray ?solo must not win here: the standalone page has no router and
+		// would silently drop the agent segment.
+		"/terminals/agt_abc123?solo=1",
+	} {
+		r := httptest.NewRequest(http.MethodGet, path, nil)
+		r.AddCookie(cookie)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, r)
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("GET %s: status %d, want 200; body=%s", path, rec.Code, rec.Body.String())
+			continue
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, `/static/js/dashboard.js`) || !strings.Contains(body, `id="tab-terminals"`) {
+			t.Errorf("GET %s must serve the dashboard SPA", path)
+		}
+		if strings.Contains(body, `/static/js/terminals.js`) {
+			t.Errorf("GET %s must not serve the standalone popout page", path)
+		}
+	}
+
+	// The bare pop-out route is unchanged: that IS the standalone page.
+	r := httptest.NewRequest(http.MethodGet, "/terminals?solo=1", nil)
+	r.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, r)
+	if !strings.Contains(rec.Body.String(), `/static/js/terminals.js`) {
+		t.Error("/terminals?solo=1 must still serve the standalone popout page")
+	}
+}
+
 // TestDashboardTerminals_RemotePreAuthed: a request already authenticated at
 // the remote (mTLS + passphrase) listener boundary — tagged via
 // remoteAuthedCtxKey by remoteAuthMiddleware — is served the page directly,

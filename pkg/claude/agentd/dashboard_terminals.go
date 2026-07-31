@@ -39,7 +39,11 @@ func handleDashboardTerminals(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
-	if r.URL.Query().Has("solo") {
+	// The pop-out is always the bare /terminals?solo=1. A deep link
+	// (/terminals/<agent-id>) names a tab within the dashboard, so it serves the
+	// SPA even if a stray ?solo rides along — the standalone page has no router
+	// and would silently drop the agent segment.
+	if r.URL.Path == "/terminals" && r.URL.Query().Has("solo") {
 		writeTerminalsPage(w)
 		return
 	}

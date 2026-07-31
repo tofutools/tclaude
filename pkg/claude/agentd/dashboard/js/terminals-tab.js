@@ -52,8 +52,11 @@ export function openTerminalPane(seedOrPromise, { reveal = true } = {}) {
   });
 }
 
+// Returns openTerminalPane's promise (the opened pane, or null). Every existing
+// caller is fire-and-forget; the deep-link restore in terminal-nav-route.js
+// needs to know whether the agent's terminal actually came up.
 export function openWebWindowPane(agent, label, options) {
-  openTerminalPane({
+  return openTerminalPane({
     ws: `/api/open-window-ws/${encodeURIComponent(agent)}`,
     label,
     key: `window:${agent}`,

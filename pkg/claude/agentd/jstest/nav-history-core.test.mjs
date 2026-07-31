@@ -117,6 +117,53 @@ test('toPath / fromPath round-trip includes the terminals tab', () => {
   assert.deepEqual(fromPath('/terminals'), { tab: 'terminals' });
 });
 
+test('a terminals deep link carries the agent id in the SECOND segment', () => {
+  // Terminals has no subtab, so /terminals/<agent-id> puts the entity where
+  // other tabs put a subtab. Parsing it as a subtab would silently drop it.
+  const viewing = { tab: 'terminals', selection: 'agt_abc123' };
+  assert.equal(toPath(viewing), '/terminals/agt_abc123');
+  assert.deepEqual(fromPath('/terminals/agt_abc123'), viewing);
+  // A pre-identity agent is addressed by its conv-id — same shape, no
+  // special-casing.
+  assert.deepEqual(fromPath('/terminals/conv-42'), { tab: 'terminals', selection: 'conv-42' });
+});
+
+test('a terminals selection is a location distinct from the bare tab', () => {
+  const bare = { tab: 'terminals' };
+  const one = { tab: 'terminals', selection: 'agt_one' };
+  const two = { tab: 'terminals', selection: 'agt_two' };
+  assert.ok(!locEquals(bare, one));
+  assert.ok(!locEquals(one, two));
+  // Switching between two terminals is a real navigation, not a duplicate.
+  const stack = push(push(initialState(bare), one), two);
+  assert.equal(stack.entries.length, 3);
+  // Re-selecting the terminal already being viewed still suppresses (AC #4).
+  assert.equal(push(stack, two), stack);
+});
+
+test('a dead terminals deep link falls back to the bare tab', () => {
+  // resolveStale drops the selection, not the tab: the operator asked for the
+  // Terminals tab and an agent that is gone — the tab is still the right place.
+  const loc = { tab: 'terminals', selection: 'agt_retired' };
+  assert.deepEqual(resolveStale(loc, () => false), { tab: 'terminals' });
+  assert.deepEqual(resolveStale(loc, () => true), loc);
+});
+
+test('a stray third segment under terminals is dropped', () => {
+  // Only one entity is addressable, so /terminals/<agent>/junk degrades to the
+  // agent rather than yielding an invalid location (AC #5).
+  assert.deepEqual(fromPath('/terminals/agt_abc/junk'), { tab: 'terminals', selection: 'agt_abc' });
+});
+
+test('a tab-level selection is refused on tabs that cannot show one', () => {
+  // Only terminals has a tab-level selection; elsewhere a bare tab + selection
+  // is meaningless and must not survive normalization into the URL.
+  assert.deepEqual(normalizeLocation({ tab: 'costs', selection: 'x' }), { tab: 'costs' });
+  assert.deepEqual(normalizeLocation({ tab: 'groups', selection: 'x' }), { tab: 'groups' });
+  // /costs/x parses its second segment as a subtab, which costs does not have.
+  assert.deepEqual(fromPath('/costs/x'), { tab: 'costs' });
+});
+
 test('toPath / fromPath round-trip includes the Usage tab', () => {
   const usage = { tab: 'usage' };
   assert.equal(toPath(usage), '/usage');

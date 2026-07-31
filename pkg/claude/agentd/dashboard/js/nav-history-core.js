@@ -30,9 +30,10 @@ export const DEFAULT_TAB = 'groups';
 //   KNOWN_TABS (parse-tolerant, here)
 //     ⊇ ROUTABLE_TABS (js/nav-history.js — tabs we actually push a URL for)
 //     ⊇ dashboardAppTabs (dashboard.go — paths the server serves)
-// Terminals/Vegas live in KNOWN_TABS (so a hand-typed URL degrades gracefully)
-// but are not routed or server-served. Keep the three in step when adding or
-// removing a tab. Kept in sync with the nav buttons in dashboard.html
+// Terminals IS routed and server-served (its own handler covers /terminals and
+// the /terminals/<agent-id> subtree, which is why it is absent from
+// dashboardAppTabs); Vegas lives in KNOWN_TABS only so a hand-typed URL
+// degrades gracefully. Keep the three in step when adding or removing a tab. Kept in sync with the nav buttons in dashboard.html
 // (data-tab=...). An unknown first segment parses back to the default location
 // rather than an invalid tab, which keeps a stale/typo'd URL from breaking
 // navigation (AC #5).
@@ -62,6 +63,13 @@ export const SELECTABLE_SUBTABS = {
   processes: new Set(['templates']),
 };
 
+// SELECTABLE_TABS enumerates tabs whose selection hangs directly off the TAB,
+// with no subtab in between — so the entity lives in the SECOND path segment:
+//   - terminals/<agent-id> — the Terminals tab is viewing that agent's terminal.
+// These tabs must not also appear in KNOWN_SUBTABS: a tab cannot have both a
+// subtab and a tab-level selection, because both would claim segment two.
+export const SELECTABLE_TABS = new Set(['terminals']);
+
 // defaultLocation returns a fresh copy of the fallback location. Returned as a
 // new object each call so callers can never alias/mutate a shared default.
 export function defaultLocation() {
@@ -79,10 +87,14 @@ export function normalizeLocation(loc) {
   if (loc && loc.subtab && subs && subs.has(loc.subtab)) {
     out.subtab = loc.subtab;
   }
-  // A selection is a free-form entity id (a Processes template id). It
-  // is only meaningful under a tab/subtab that has a detail view — see
-  // SELECTABLE_SUBTABS. Keep it only where it can apply.
-  if (loc && loc.selection && SELECTABLE_SUBTABS[tab]?.has(out.subtab)) {
+  // A selection is a free-form entity id (a Processes template id, a Terminals
+  // agent id). It is only meaningful where the view has a detail form: under a
+  // tab/subtab pair (SELECTABLE_SUBTABS) or directly under a subtab-less tab
+  // (SELECTABLE_TABS). Keep it only where it can apply.
+  const selectable = out.subtab
+    ? !!SELECTABLE_SUBTABS[tab]?.has(out.subtab)
+    : SELECTABLE_TABS.has(tab);
+  if (loc && loc.selection && selectable) {
     out.selection = String(loc.selection);
   }
   return out;
@@ -273,11 +285,18 @@ export function fromPath(pathname) {
   const clean = String(pathname || '').split('?')[0].split('#')[0];
   const parts = clean.split('/').filter(Boolean);
   if (parts.length === 0 || parts[0] === 'dashboard') return defaultLocation();
-  let [tab, subtab, selection] = parts;
+  let [tab, second, third] = parts;
   // /jobs is retained as a reload-safe legacy alias. toPath always emits the
   // canonical /automations route, so init/popstate heals old URLs in place.
   if (tab === 'automations') tab = 'jobs';
-  return normalizeLocation({ tab, subtab, selection: decodeSelection(selection) });
+  // On a tab-level-selection tab there is no subtab, so segment two IS the
+  // entity (/terminals/<agent-id>) — mirroring how toPath emits it. Reading it
+  // as a subtab would drop it on the floor, since terminals has no
+  // KNOWN_SUBTABS entry to match against.
+  if (SELECTABLE_TABS.has(tab)) {
+    return normalizeLocation({ tab, selection: decodeSelection(second) });
+  }
+  return normalizeLocation({ tab, subtab: second, selection: decodeSelection(third) });
 }
 
 // ---- Stale-target resolution --------------------------------------------
