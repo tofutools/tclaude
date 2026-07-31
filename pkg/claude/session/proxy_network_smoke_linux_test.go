@@ -14,6 +14,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -352,7 +354,39 @@ type proxyEngineLaunchInput struct {
 	// timed out before reaching its origin records nothing, and its caller's
 	// assertions fail exactly as they should.
 	AllowTimeout bool
+	// StopWhen ends the launch early once the caller's FULL evidence set has
+	// been recorded. It is handed the proxy decision log's raw lines, re-read on
+	// every poll, and returning true cancels the in-sandbox command.
+	//
+	// It optimizes WAITING, never ASSERTING. A launch whose command is expected
+	// to spend minutes retrying on invalid credentials has already produced
+	// everything its caller reads seconds in; the rest is the harness flailing,
+	// which no assertion inspects. Every assertion still runs, against the same
+	// log, after the launch returns — so a predicate that never fires (a broken
+	// log path, a harness that reached nothing) leaves the launch running to its
+	// own bound and failing exactly as it does today.
+	//
+	// The predicate must therefore demand the WHOLE evidence set, not its first
+	// record: stopping on a prefix would cancel the launch before the rest of
+	// what the caller asserts on could be written, turning a real failure into a
+	// fast one.
+	//
+	// A launch cancelled this way is killed mid-run, so its exit status and its
+	// context error are the smoke's own doing and are not checked. A caller that
+	// needs the command's own exit status observed must not set this.
+	StopWhen func(decisions []string) bool
 }
+
+// proxyLaunchStopPollInterval is how often StopWhen re-reads the decision log:
+// short enough that what is saved is the launch's remaining runtime rather than
+// the poll period, long enough that even a multi-minute launch re-reads a small
+// append-only file only a few hundred times.
+const proxyLaunchStopPollInterval = 500 * time.Millisecond
+
+// proxyLaunchWaitDelay bounds how long a cancelled launch may hold its output
+// pipe open after the kill. It is a backstop for a descendant that escaped the
+// process group, not the normal path: an uncancelled launch never reaches it.
+const proxyLaunchWaitDelay = 5 * time.Second
 
 // proxyEngineLaunchResult is what a completed launch leaves behind to assert
 // on: the sandbox's own output, and the host-side supervisor's log, which is
@@ -480,6 +514,18 @@ func runProxyEngineLaunch(
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", command)
 	cmd.Env = launchEnv
+	// Cancellation — by deadline or by the early stop — has to reach the whole
+	// launch, not just the shell. The default kill signals /bin/sh alone, and
+	// the bwrap tree beneath it inherits the output pipe: a killed shell whose
+	// harness keeps retrying would leave CombinedOutput blocked on that pipe
+	// until the harness finished on its own, which is precisely the wait the
+	// early stop exists to remove. Its own process group makes the kill reach
+	// the tree, and WaitDelay bounds the read even if something outlives it.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
+	cmd.WaitDelay = proxyLaunchWaitDelay
 	// The host-side observer runs for exactly the command's lifetime, and the
 	// launch waits for it: a t.Fatalf from an observer goroutine that outlived
 	// its test would panic instead of failing the smoke.
@@ -493,15 +539,47 @@ func runProxyEngineLaunch(
 	} else {
 		close(observed)
 	}
+	// The early stop watches the same log the assertions will read, and shares
+	// the observer's lifetime discipline: it must be finished before the launch
+	// returns, or a poll could outlive the test whose home it reads.
+	var stoppedEarly atomic.Bool
+	stopWatched := make(chan struct{})
+	if input.StopWhen != nil {
+		go func() {
+			defer close(stopWatched)
+			ticker := time.NewTicker(proxyLaunchStopPollInterval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-done:
+					return
+				case <-ticker.C:
+					if input.StopWhen(proxyDecisionLines(smokeHome)) {
+						stoppedEarly.Store(true)
+						cancel()
+						return
+					}
+				}
+			}
+		}()
+	} else {
+		close(stopWatched)
+	}
 	output, runErr := cmd.CombinedOutput()
 	close(done)
 	<-observed
-	if !input.AllowTimeout {
-		require.NoError(t, ctx.Err(),
-			"proxy launch timed out; output:\n%s", output)
-	}
-	if !input.AllowExitError {
-		require.NoErrorf(t, runErr, "proxy smoke output:\n%s", output)
+	<-stopWatched
+	// A launch this smoke cancelled itself did not time out and did not fail:
+	// both signals describe the kill, not the command. What the evidence says is
+	// still read below, unchanged.
+	if !stoppedEarly.Load() {
+		if !input.AllowTimeout {
+			require.NoError(t, ctx.Err(),
+				"proxy launch timed out; output:\n%s", output)
+		}
+		if !input.AllowExitError {
+			require.NoErrorf(t, runErr, "proxy smoke output:\n%s", output)
+		}
 	}
 	return proxyEngineLaunchResult{
 		Output:       string(output) + proxyLaunchRunError(runErr),
@@ -530,6 +608,15 @@ func proxyLaunchRunError(err error) string {
 // observation of the engine.
 func readProxyDecisionRecords(t *testing.T, home string) []string {
 	t.Helper()
+	return proxyDecisionLines(home)
+}
+
+// proxyDecisionLines is the same read without a *testing.T, so the early-stop
+// poll can use the ONE reader the assertions use. A second spelling of the log
+// path would be exactly the drift the candidate list below exists to survive,
+// and it would fail quietly here: a predicate reading a stale path reports
+// "nothing recorded yet" forever and turns the early stop back into a full wait.
+func proxyDecisionLines(home string) []string {
 	// The path comes from the production accessor rather than being spelled
 	// here: the log has moved once already (~/.tclaude -> ~/.tclaude/data), and
 	// a smoke that hard-coded the old spelling would read an empty file and
