@@ -150,6 +150,13 @@ func TestUnmapPrefixIsAddressSetPreserving(t *testing.T) {
 		// row nothing in the suite exercises UnmapPrefix's internal Masked()
 		// call — the sole production caller masks before calling.
 		"::ffff:10.0.0.5/104",
+		// Non-canonical and NOT mapped, so it leaves by the pass-through path
+		// rather than the rewriting one. The doc claims masking happens on
+		// both; without this row a mutant that masks only inside the mapped
+		// branch escapes the entire suite. Deliberately not a sub-/96 mapped
+		// spelling such as ::ffff:10.0.0.1/40: that masks to ::/40, for which
+		// the Contains comparison below is not meaningful.
+		"2001:db8::1/32",
 	}
 	probes := []string{
 		"10.0.0.1", "10.255.255.255", "11.0.0.1", "172.16.0.1", "172.32.0.1",
@@ -174,6 +181,22 @@ func TestUnmapPrefixIsAddressSetPreserving(t *testing.T) {
 					spelling, probe, got, want)
 			}
 		}
+	}
+}
+
+// TestUnmapPrefixReturnsInvalidPrefixUntouched pins the ordering the guard in
+// UnmapPrefix documents: IsValid must be checked BEFORE the mask, because
+// Masked() on an invalid prefix returns the zero Prefix and would discard the
+// caller's address. Without this the invariant is stated in a comment that no
+// test exercises, and a reorder passes the whole suite.
+func TestUnmapPrefixReturnsInvalidPrefixUntouched(t *testing.T) {
+	addr := netip.MustParseAddr("10.0.0.1")
+	invalid := netip.PrefixFrom(addr, -1)
+	if invalid.IsValid() {
+		t.Fatalf("premise broken: %v is valid", invalid)
+	}
+	if got := UnmapPrefix(invalid).Addr(); got != addr {
+		t.Fatalf("UnmapPrefix(invalid).Addr() = %v, want %v preserved", got, addr)
 	}
 }
 

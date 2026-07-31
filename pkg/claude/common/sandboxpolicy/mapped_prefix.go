@@ -12,7 +12,7 @@ var mappedIPv4Block = netip.MustParsePrefix("::ffff:0:0/96")
 
 // UnmapPrefix rewrites an IPv4-mapped IPv6 prefix to the IPv4 prefix naming
 // exactly the same addresses (::ffff:10.0.0.0/104 -> 10.0.0.0/8), and returns
-// every other prefix masked but otherwise unchanged.
+// every other valid prefix masked but otherwise unchanged.
 //
 // This exists because a cidr row is stored in whatever form the operator
 // authored, while every target is unmapped before matching, and
