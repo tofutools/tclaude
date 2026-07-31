@@ -288,15 +288,22 @@ jobs:
           TCLAUDE_FILTERED_ALLOWED_PORT: "41001"
           TCLAUDE_FILTERED_DENIED_PORT: "41002"
         run: |
-          # TCL-881: the same two teardown helpers the proxy shards use, from
-          # the shared library, so every smoke job and the shards share one
-          # implementation rather than copies that drift.
-          source "$GITHUB_WORKSPACE/scripts/lib/smoke/common.sh"
           namespace=tclaude-filtered-target
           host_link=tclflt0
           peer_link=tclflt1
           hosts_backup="$RUNNER_TEMP/tclaude-filtered-hosts.before"
           sudo cp /etc/hosts "$hosts_backup"
+          # TCL-881: the same two teardown helpers the proxy shards use, from
+          # the shared library, so every smoke job and the shards share one
+          # implementation rather than copies that drift.
+          source "$GITHUB_WORKSPACE/scripts/lib/smoke/common.sh"
+          # smoke::kill_listener needs pkill (procps): without it the cleanup
+          # would silently degrade to killing the sudo wrapper only, which is
+          # the defect this job just fixed.
+          command -v pkill >/dev/null || {
+            echo "::error::pkill (procps) is required by the smoke fixture cleanup"
+            exit 1
+          }
           server_pids=()
           cleanup() {
             # smoke::kill_listener signals the socat itself and not only the
@@ -306,8 +313,8 @@ jobs:
             sudo ip link del "$host_link" 2>/dev/null || true
             sudo tee /etc/hosts <"$hosts_backup" >/dev/null || true
           }
-          # EXIT alone would let a cancelled job leave the namespace, the veth
-          # and the runner's rewritten /etc/hosts behind.
+          # EXIT alone would let a cancelled job — GitHub sends SIGINT first —
+          # exit 0 with its fixture half torn down.
           smoke::trap_cleanup cleanup
 
           sudo ip netns add "$namespace"
@@ -560,6 +567,13 @@ jobs:
           # the shared library, so every smoke job and the shards share one
           # implementation rather than copies that drift.
           source "$GITHUB_WORKSPACE/scripts/lib/smoke/common.sh"
+          # smoke::kill_listener needs pkill (procps): without it the cleanup
+          # would silently degrade to killing the sudo wrapper only, which is
+          # the defect this job just fixed.
+          command -v pkill >/dev/null || {
+            echo "::error::pkill (procps) is required by the smoke fixture cleanup"
+            exit 1
+          }
           server_pids=()
           cleanup() {
             # smoke::kill_listener signals the socat itself and not only the

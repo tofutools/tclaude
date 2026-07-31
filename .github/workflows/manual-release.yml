@@ -301,6 +301,13 @@ jobs:
           # the shared library, so every smoke job and the shards share one
           # implementation rather than copies that drift.
           source "$GITHUB_WORKSPACE/scripts/lib/smoke/common.sh"
+          # smoke::kill_listener needs pkill (procps): without it the cleanup
+          # would silently degrade to killing the sudo wrapper only, which is
+          # the defect this job just fixed.
+          command -v pkill >/dev/null || {
+            echo "::error::pkill (procps) is required by the smoke fixture cleanup"
+            exit 1
+          }
           server_pids=()
           cleanup() {
             # smoke::kill_listener signals the socat itself and not only the
@@ -563,6 +570,13 @@ jobs:
           # the shared library, so every smoke job and the shards share one
           # implementation rather than copies that drift.
           source "$GITHUB_WORKSPACE/scripts/lib/smoke/common.sh"
+          # smoke::kill_listener needs pkill (procps): without it the cleanup
+          # would silently degrade to killing the sudo wrapper only, which is
+          # the defect this job just fixed.
+          command -v pkill >/dev/null || {
+            echo "::error::pkill (procps) is required by the smoke fixture cleanup"
+            exit 1
+          }
           server_pids=()
           cleanup() {
             # smoke::kill_listener signals the socat itself and not only the
