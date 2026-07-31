@@ -10,11 +10,9 @@ import (
 	"strings"
 )
 
-// CodexRolloutProjection is the latest-oriented subset hook callbacks lift
-// from a rollout. Each value is a snapshot carried by one record rather than
-// an accumulator over the event stream, so a plain rollout can be projected
-// by reading records newest-first. The scan stops once every field is found;
-// when a field is absent, it degrades to one full backward pass.
+// CodexRolloutProjection is a latest-oriented one-shot view of a Codex
+// rollout. Production live telemetry uses CodexTelemetryFollower instead;
+// callers must not put this whole-file fallback on a hook or polling path.
 type CodexRolloutProjection struct {
 	Context      ContextTelemetry
 	HasContext   bool
@@ -22,12 +20,11 @@ type CodexRolloutProjection struct {
 	Effort       string
 	HasEffort    bool
 	Usage        *CodexUsage
-	Cost         CodexTokenCost
-	HasCost      bool
 }
 
-// CodexHookProjection prefers the exact rollout path carried by a hook. Older
-// payloads without transcript_path fall back to normal by-id discovery.
+// CodexHookProjection prefers an exact rollout path and otherwise falls back
+// to discovery by conversation ID. It is retained as a one-shot reference;
+// live hooks must not use it because the fallback can scan the full rollout.
 func CodexHookProjection(home, convID, transcriptPath, modelHint string) (CodexRolloutProjection, string, error) {
 	path := transcriptPath
 	if !IsCodexRolloutPath(path) {
@@ -42,7 +39,7 @@ func CodexHookProjection(home, convID, transcriptPath, modelHint string) (CodexR
 }
 
 // CodexHookProjectionFromRollout derives context, reasoning effort,
-// subscription usage, and virtual cost in one scan. Live .jsonl rollouts are
+// subscription usage in one scan. Live .jsonl rollouts are
 // scanned from the tail; archived .zst rollouts cannot be sought in compressed
 // form and use one combined forward scan instead.
 func CodexHookProjectionFromRollout(path, modelHint string) (CodexRolloutProjection, error) {
@@ -240,13 +237,6 @@ func (s *codexProjectionScanState) projection() CodexRolloutProjection {
 		out.Context = context
 		out.HasContext = true
 	}
-	for _, model := range []string{s.modelHint, s.model} {
-		if cost, ok := codexVirtualCost(model, s.info.TotalTokenUsage, s.info.ModelContextWindow); ok {
-			out.Cost = CodexTokenCost{CostUSD: cost, Model: model, Observed: parseCodexEventTime(s.observed)}
-			out.HasCost = true
-			break
-		}
-	}
 	return out
 }
 
@@ -255,7 +245,7 @@ func (s *codexProjectionScanState) projection() CodexRolloutProjection {
 // discarded as chunks are read, so a multi-MiB compacted.replacement_history
 // cannot prevent older telemetry from being reached.
 func scanCodexRolloutLinesReverse(path string, visit func([]byte) bool) error {
-	f, err := os.Open(path) //nolint:gosec // hook supplies Codex's rollout path
+	f, err := os.Open(path) //nolint:gosec // caller supplies Codex's rollout path
 	if err != nil {
 		return err
 	}

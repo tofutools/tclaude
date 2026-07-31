@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"time"
 )
 
 // Context-window telemetry for Codex. Claude Code surfaces "how full is the
@@ -47,11 +48,29 @@ type ContextTelemetry struct {
 type CodexRuntimeSnapshot struct {
 	Context    ContextTelemetry
 	HasContext bool
+	Effort     string
+	HasEffort  bool
+	Usage      *CodexUsage
+	Cost       CodexTokenCost
+	HasCost    bool
+	// CostAuthoritative distinguishes a successfully folded rollout with no
+	// priceable records from a missing/unreadable rollout. CostHistory carries
+	// cumulative local-day prefixes so corrected pricing can replace, not MAX,
+	// previously persisted daily projections.
+	CostAuthoritative bool
+	CostHistory       []CodexTokenCostDailySnapshot
 	// ContextReset means a compacted record is newer than the latest usable
 	// token_count. Callers must clear any persisted pre-compaction snapshot
 	// instead of leaving it in place or restoring it from older telemetry.
 	ContextReset         bool
 	InterruptedSubagents map[string]struct{}
+}
+
+type CodexTokenCostDailySnapshot struct {
+	Day      string
+	CostUSD  float64
+	Observed time.Time
+	Model    string
 }
 
 // codexTokenUsage mirrors a token-usage block inside a token_count event.
@@ -68,9 +87,30 @@ type codexTokenUsage struct {
 
 // codexTokenCountInfo is the `info` block of a token_count event_msg.
 type codexTokenCountInfo struct {
-	TotalTokenUsage    codexTokenUsage `json:"total_token_usage"`
-	LastTokenUsage     codexTokenUsage `json:"last_token_usage"`
-	ModelContextWindow int64           `json:"model_context_window"`
+	TotalTokenUsage       codexTokenUsage `json:"total_token_usage"`
+	LastTokenUsage        codexTokenUsage `json:"last_token_usage"`
+	LastTokenUsagePresent bool            `json:"-"`
+	ModelContextWindow    int64           `json:"model_context_window"`
+}
+
+func (i *codexTokenCountInfo) UnmarshalJSON(data []byte) error {
+	var wire struct {
+		TotalTokenUsage    codexTokenUsage  `json:"total_token_usage"`
+		LastTokenUsage     *codexTokenUsage `json:"last_token_usage"`
+		ModelContextWindow int64            `json:"model_context_window"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	i.TotalTokenUsage = wire.TotalTokenUsage
+	i.ModelContextWindow = wire.ModelContextWindow
+	i.LastTokenUsagePresent = wire.LastTokenUsage != nil
+	if wire.LastTokenUsage != nil {
+		i.LastTokenUsage = *wire.LastTokenUsage
+	} else {
+		i.LastTokenUsage = codexTokenUsage{}
+	}
+	return nil
 }
 
 // codexTokenCountEvent is the `event_msg` payload of a token_count line. The
@@ -161,12 +201,22 @@ func CodexRuntimeTelemetryFromRollout(rolloutPath string) (CodexRuntimeSnapshot,
 	if _, _, err := scanCompleteCodexLines(rc, rolloutPath, &state, false); err != nil {
 		return CodexRuntimeSnapshot{}, fmt.Errorf("scan codex rollout %s: %w", rolloutPath, err)
 	}
+	state.costAuthoritative = true
 	return state.snapshot(), nil
 }
 
 type codexRuntimeScanState struct {
 	latest               *codexTokenCountInfo
 	contextReset         bool
+	model                string
+	effort               string
+	usage                *CodexUsage
+	costUSD              float64
+	costPriced           bool
+	costModel            string
+	costObserved         string
+	costAuthoritative    bool
+	costHistory          []CodexTokenCostDailySnapshot
 	interruptedSubagents map[string]struct{}
 	followupCallIDs      map[string]struct{}
 	checkpointStateBytes int64
@@ -183,6 +233,15 @@ func (s codexRuntimeScanState) clone() codexRuntimeScanState {
 	out := codexRuntimeScanState{
 		latest:               s.latest,
 		contextReset:         s.contextReset,
+		model:                s.model,
+		effort:               s.effort,
+		usage:                s.usage,
+		costUSD:              s.costUSD,
+		costPriced:           s.costPriced,
+		costModel:            s.costModel,
+		costObserved:         s.costObserved,
+		costAuthoritative:    s.costAuthoritative,
+		costHistory:          append([]CodexTokenCostDailySnapshot(nil), s.costHistory...),
 		interruptedSubagents: make(map[string]struct{}, len(s.interruptedSubagents)),
 		followupCallIDs:      make(map[string]struct{}, len(s.followupCallIDs)),
 		checkpointStateBytes: s.checkpointStateBytes,
@@ -209,6 +268,16 @@ func (s *codexRuntimeScanState) consumeLine(line []byte) bool {
 	}
 	if env.Type == "compacted" {
 		s.invalidateContext()
+		return true
+	}
+	if env.Type == "turn_context" {
+		model, effort := projectCodexTurnContext(env.Payload)
+		if model != "" {
+			s.model = model
+		}
+		if effort != "" {
+			s.effort = effort
+		}
 		return true
 	}
 	if env.Type == "response_item" {
@@ -243,6 +312,10 @@ func (s *codexRuntimeScanState) consumeLine(line []byte) bool {
 			contextReset = false
 		}
 		s.replaceCheckpointContext(&info, contextReset)
+		s.applyTokenCost(info, env.Timestamp)
+		if usage := codexUsageFromRateLimits(ev.RateLimits, env.Timestamp); usage != nil {
+			s.usage = usage
+		}
 	case "sub_agent_activity":
 		var ev codexSubagentActivityEvent
 		if json.Unmarshal(env.Payload, &ev) != nil {
@@ -264,6 +337,39 @@ func (s *codexRuntimeScanState) consumeLine(line []byte) bool {
 		}
 	}
 	return true
+}
+
+func (s *codexRuntimeScanState) applyTokenCost(info codexTokenCountInfo, observed string) {
+	usage := info.LastTokenUsage
+	legacy := !info.LastTokenUsagePresent
+	if legacy {
+		usage = info.TotalTokenUsage
+	}
+	cost, ok := codexVirtualCost(s.model, usage)
+	if !ok {
+		return
+	}
+	if legacy {
+		s.costUSD = cost
+	} else {
+		s.costUSD += cost
+	}
+	s.costPriced = true
+	s.costModel = s.model
+	s.costObserved = observed
+	observedAt := parseCodexEventTime(observed)
+	if observedAt.IsZero() {
+		observedAt = time.Now()
+	}
+	daily := CodexTokenCostDailySnapshot{
+		Day:     observedAt.In(time.Local).Format("2006-01-02"),
+		CostUSD: s.costUSD, Observed: observedAt, Model: s.model,
+	}
+	if len(s.costHistory) > 0 && s.costHistory[len(s.costHistory)-1].Day == daily.Day {
+		s.costHistory[len(s.costHistory)-1] = daily
+	} else {
+		s.costHistory = append(s.costHistory, daily)
+	}
 }
 
 func (s *codexRuntimeScanState) invalidateContext() {
@@ -343,6 +449,17 @@ func (s *codexRuntimeScanState) snapshot() CodexRuntimeSnapshot {
 	result := CodexRuntimeSnapshot{
 		ContextReset:         s.contextReset,
 		InterruptedSubagents: s.interruptedSubagents,
+		Effort:               s.effort,
+		HasEffort:            s.effort != "",
+		Usage:                s.usage,
+		CostAuthoritative:    s.costAuthoritative,
+		CostHistory:          append([]CodexTokenCostDailySnapshot(nil), s.costHistory...),
+	}
+	if s.costPriced {
+		result.Cost = CodexTokenCost{
+			CostUSD: s.costUSD, Model: s.costModel, Observed: parseCodexEventTime(s.costObserved),
+		}
+		result.HasCost = true
 	}
 	if s.latest == nil {
 		return result

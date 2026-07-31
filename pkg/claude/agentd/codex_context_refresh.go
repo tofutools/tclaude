@@ -51,12 +51,29 @@ type codexReadThroughSnapshot struct {
 	persistedContext      harness.ContextTelemetry
 	persistedHasContext   bool
 	persistedReset        bool
+	persistedEffort       string
+	persistedUsageAt      time.Time
+	persistedVirtualCost  float64
+	persistedCostAuth     bool
+	persistedCostHistory  []harness.CodexTokenCostDailySnapshot
 }
 
 type codexContextRefreshResult struct {
 	interruptedSubagents map[string]struct{}
 	context              *harness.ContextTelemetry
 	contextReset         bool
+}
+
+func codexCostHistoriesEqual(a, b []harness.CodexTokenCostDailySnapshot) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func codexContextRefreshResultFromCache(
@@ -386,6 +403,17 @@ func refreshCodexContextSnapshotOnReadBatched(
 		checkpointFailures = 0
 		checkpointPersistedAt = time.Time{}
 	}
+	persistedVirtualCost := cached.persistedVirtualCost
+	persistedEffort := cached.persistedEffort
+	persistedCostAuth := cached.persistedCostAuth
+	persistedCostHistory := cached.persistedCostHistory
+	if cached.sessionConvID != "" &&
+		(cached.sessionConvID != sess.ConvID || !cached.sessionCreatedAt.Equal(sess.CreatedAt)) {
+		persistedVirtualCost = 0
+		persistedEffort = ""
+		persistedCostAuth = false
+		persistedCostHistory = nil
+	}
 	checkpointDue := checkpointLoadedThisRefresh || checkpointData == "" || checkpointFailures > 0 ||
 		checkpointPersistedAt.IsZero() || started.Sub(checkpointPersistedAt) >= codexCheckpointPersistMinInterval
 	if checkpointDue {
@@ -408,10 +436,13 @@ func refreshCodexContextSnapshotOnReadBatched(
 		} else if ok && (string(checkpoint) != checkpointData || checkpointFailures > 0) {
 			timing.checkpointEncode = time.Since(checkpointEncodeStarted)
 			checkpointWriteStarted := time.Now()
-			if saveErr := db.SaveCodexTelemetryCheckpoint(sess.ID, checkpoint); saveErr != nil {
+			persisted, saveErr := db.SaveCodexTelemetryCheckpointForSessionGenerationContext(
+				context.Background(), sess.ID, sess.ConvID, sess.CreatedAt, checkpoint,
+			)
+			if saveErr != nil {
 				slog.Warn("codex-telemetry: failed to persist durable follower checkpoint",
 					"session_id", sess.ID, "error", saveErr, "module", "agentd")
-			} else {
+			} else if persisted {
 				checkpointData = string(checkpoint)
 				checkpointFailures = 0
 				checkpointPersistedAt = time.Now()
@@ -439,6 +470,46 @@ func refreshCodexContextSnapshotOnReadBatched(
 				checkpointPersistedAt = started
 			}
 		}
+	}
+	currentVirtualCost := 0.0
+	if snap.HasCost {
+		currentVirtualCost = snap.Cost.CostUSD
+	}
+	if snap.CostAuthoritative && (!persistedCostAuth || currentVirtualCost != persistedVirtualCost ||
+		!codexCostHistoriesEqual(snap.CostHistory, persistedCostHistory)) {
+		daily := make([]db.VirtualCostDailySnapshot, 0, len(snap.CostHistory))
+		for _, item := range snap.CostHistory {
+			daily = append(daily, db.VirtualCostDailySnapshot{
+				Day: item.Day, CostUSD: item.CostUSD, UpdatedAt: item.Observed, Model: item.Model,
+			})
+		}
+		persisted, err := db.ReplaceSessionVirtualCostHistoryForGeneration(
+			sess.ID, sess.ConvID, sess.CreatedAt, currentVirtualCost, daily,
+		)
+		if err != nil {
+			slog.Warn("codex-cost: failed to persist authoritative virtual cost history",
+				"session_id", sess.ID, "model", snap.Cost.Model, "error", err, "module", "agentd")
+		} else if persisted {
+			persistedVirtualCost = currentVirtualCost
+			persistedCostAuth = true
+			persistedCostHistory = append([]harness.CodexTokenCostDailySnapshot(nil), snap.CostHistory...)
+		}
+	}
+	if snap.HasEffort && snap.Effort != persistedEffort {
+		persisted, err := db.UpdateSessionEffortForGeneration(
+			sess.ID, sess.ConvID, sess.CreatedAt, snap.Effort,
+		)
+		if err != nil {
+			slog.Warn("codex-telemetry: failed to persist incremental effort",
+				"session_id", sess.ID, "effort", snap.Effort, "error", err, "module", "agentd")
+		} else if persisted {
+			persistedEffort = snap.Effort
+		}
+	}
+	persistedUsageAt := cached.persistedUsageAt
+	if snap.Usage != nil && !snap.Usage.Observed.IsZero() && snap.Usage.Observed.After(persistedUsageAt) {
+		saveCodexUsageSnapshot(snap.Usage, "telemetry-follower")
+		persistedUsageAt = snap.Usage.Observed
 	}
 
 	persistedConvID := cached.persistedConvID
@@ -587,6 +658,11 @@ func refreshCodexContextSnapshotOnReadBatched(
 		cachePersistedContext,
 		cachePersistedHasContext,
 		cachePersistedReset,
+		persistedEffort,
+		persistedUsageAt,
+		persistedVirtualCost,
+		persistedCostAuth,
+		persistedCostHistory,
 	)
 	completed = true
 	result := codexContextRefreshResult{
@@ -799,6 +875,11 @@ func cacheCodexRuntimeRefresh(
 	persistedContext harness.ContextTelemetry,
 	persistedHasContext bool,
 	persistedReset bool,
+	persistedEffort string,
+	persistedUsageAt time.Time,
+	persistedVirtualCost float64,
+	persistedCostAuth bool,
+	persistedCostHistory []harness.CodexTokenCostDailySnapshot,
 ) {
 	codexContextRefreshMu.Lock()
 	defer codexContextRefreshMu.Unlock()
@@ -822,6 +903,11 @@ func cacheCodexRuntimeRefresh(
 	prev.persistedContext = persistedContext
 	prev.persistedHasContext = persistedHasContext
 	prev.persistedReset = persistedReset
+	prev.persistedEffort = persistedEffort
+	prev.persistedUsageAt = persistedUsageAt
+	prev.persistedVirtualCost = persistedVirtualCost
+	prev.persistedCostAuth = persistedCostAuth
+	prev.persistedCostHistory = append([]harness.CodexTokenCostDailySnapshot(nil), persistedCostHistory...)
 	prev.refreshing = keepRefreshing
 	codexContextRefreshMu.last[sessionID] = prev
 }

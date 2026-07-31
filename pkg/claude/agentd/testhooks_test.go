@@ -241,6 +241,13 @@ func ResetDeliveryDebounceForTest() {
 	flushDebounceMu.Unlock()
 }
 
+// ResetCodexRefreshThrottleForTest makes the next dashboard snapshot poll the
+// incremental Codex telemetry follower immediately. Flow tests use stable
+// session IDs across -count iterations, unlike production daemon sessions.
+func ResetCodexRefreshThrottleForTest(sessionID string) {
+	resetCodexRefreshThrottleForTest(sessionID)
+}
+
 // SetTmuxCacheTTLForTest overrides the shared LiveTmuxSessions cache TTL and
 // clears any warm entry, returning a restore closure. newFlow sets it to 0 so
 // the cache is transparent (every call re-probes) — preserving each existing

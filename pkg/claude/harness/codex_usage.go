@@ -267,8 +267,8 @@ func CodexUsageFromRollout(rolloutPath string) (*CodexUsage, error) {
 		}
 		// Rollout order is authoritative: the last populated record wins.
 		// Codex writes records chronologically, but using position rather than
-		// comparing envelope timestamps also keeps this forward reference
-		// exactly equivalent to the hook's reverse-tail projection.
+		// comparing envelope timestamps also keeps this one-shot reference
+		// exactly equivalent to the incremental follower's position-based fold.
 		best = u
 		return true
 	})

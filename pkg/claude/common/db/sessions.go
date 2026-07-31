@@ -1800,6 +1800,45 @@ func UpdateSessionEffort(sessionID, level string) error {
 		`UPDATE sessions SET effort_level = ? WHERE id = ?`, level, sessionID)
 }
 
+// UpdateSessionEffortForGeneration conditionally stores rollout-derived
+// effort while the session ID still names the observed conversation
+// generation. The durable relaunch projection remains in the same transaction.
+func UpdateSessionEffortForGeneration(
+	sessionID, convID string,
+	createdAt time.Time,
+	level string,
+) (bool, error) {
+	if level == "" {
+		return false, nil
+	}
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	result, err := tx.Exec(`UPDATE sessions SET effort_level = ?
+		WHERE id = ? AND conv_id = ? AND created_at = ?`,
+		level, sessionID, convID, createdAt.Format(time.RFC3339Nano))
+	if err != nil {
+		return false, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil || affected == 0 {
+		return false, err
+	}
+	if err := projectSessionRelaunchProfilesTx(tx, sessionID, relaunchProjectionOptions{}); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // UpdateSessionCost stores the session's cumulative API cost in USD —
 // Claude Code's cost.total_cost_usd from the statusline input. The
 // statusbar hook records it here keyed by the tclaude session id, the
@@ -2070,6 +2109,93 @@ func ReplaceSessionVirtualCostHistory(
 		}
 	}
 	return tx.Commit()
+}
+
+// ReplaceSessionVirtualCostHistoryForGeneration is the correction-aware,
+// conditional form used by rollout followers. It replaces daily cumulative
+// prefixes (including lower values and an authoritative zero) only while the
+// session row is still the exact generation the caller observed.
+func ReplaceSessionVirtualCostHistoryForGeneration(
+	sessionID, expectedConvID string,
+	expectedCreatedAt time.Time,
+	totalUSD float64,
+	snapshots []VirtualCostDailySnapshot,
+) (bool, error) {
+	if totalUSD < 0 {
+		return false, nil
+	}
+	for _, snapshot := range snapshots {
+		if snapshot.CostUSD < 0 {
+			return false, nil
+		}
+		if _, err := time.ParseInLocation(costDayFormat, snapshot.Day, time.Local); err != nil {
+			return false, fmt.Errorf("replace session virtual cost history: bad day %q: %w", snapshot.Day, err)
+		}
+	}
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var convID string
+	err = tx.QueryRow(`UPDATE sessions SET virtual_cost_usd = ?
+		WHERE id = ? AND conv_id = ? AND created_at = ?
+		RETURNING conv_id`,
+		totalUSD, sessionID, expectedConvID, expectedCreatedAt.Format(time.RFC3339Nano)).Scan(&convID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if convID != "" {
+		if _, err := tx.Exec(`UPDATE sessions SET virtual_cost_usd = 0
+			WHERE conv_id = ? AND id <> ?`, convID, sessionID); err != nil {
+			return false, err
+		}
+		if _, err := tx.Exec(`UPDATE session_cost_daily SET virtual_cost_usd = 0
+			WHERE conv_id = ?`, convID); err != nil {
+			return false, err
+		}
+	} else if _, err := tx.Exec(`UPDATE session_cost_daily SET virtual_cost_usd = 0
+		WHERE session_id = ?`, sessionID); err != nil {
+		return false, err
+	}
+	for _, snapshot := range snapshots {
+		updatedAt := snapshot.UpdatedAt
+		if updatedAt.IsZero() {
+			updatedAt = time.Now()
+		}
+		if _, err := tx.Exec(`INSERT INTO session_cost_daily
+			(session_id, day, conv_id, virtual_cost_usd, updated_at, model, agent_id, harness)
+			SELECT id, ?, conv_id, ?, ?, ?,
+			       COALESCE(NULLIF(sessions.agent_id, ''),
+			                (SELECT agent_id FROM agent_conversations WHERE conv_id = sessions.conv_id), ''),
+			       COALESCE(NULLIF(harness, ''), 'claude')
+			FROM sessions WHERE id = ?
+			ON CONFLICT(session_id, day) DO UPDATE SET
+				virtual_cost_usd = excluded.virtual_cost_usd,
+				updated_at = excluded.updated_at,
+				conv_id  = CASE WHEN excluded.conv_id <> '' THEN excluded.conv_id
+				                ELSE session_cost_daily.conv_id END,
+				model    = CASE WHEN excluded.model <> '' THEN excluded.model
+				                ELSE session_cost_daily.model END,
+				agent_id = CASE WHEN excluded.agent_id <> '' THEN excluded.agent_id
+				                ELSE session_cost_daily.agent_id END,
+				harness  = CASE WHEN excluded.harness <> '' THEN excluded.harness
+				                ELSE session_cost_daily.harness END`,
+			snapshot.Day, snapshot.CostUSD, updatedAt.Format(time.RFC3339Nano), snapshot.Model, sessionID); err != nil {
+			return false, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // costDayFormat is the session_cost_daily.day key — a local-time

@@ -11,7 +11,7 @@ import (
 )
 
 // The telemetry parser is exercised through CodexContextTelemetry — the
-// exported entry the hook callback uses — driving the real CodexSim rollout
+// exported one-shot reference entry — driving the real CodexSim rollout
 // writer, so the on-disk token_count shape under test is the one the sim
 // records for every Codex flow test (testharness v2). External package for
 // the same import-cycle reason as the ConvStore tests.
