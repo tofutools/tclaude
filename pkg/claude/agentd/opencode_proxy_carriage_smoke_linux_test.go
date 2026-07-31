@@ -196,6 +196,21 @@ func runOpenCodeProxyCarriageCase(
 	}
 	cwd := filepath.Join(home, "workspace")
 	require.NoError(t, os.MkdirAll(cwd, 0o700))
+	// The per-agent XDG config directory is bound READ-ONLY for a private-state
+	// launch, and OpenCode's Config.loadInstanceState writes a .gitignore into
+	// it while creating a session — so without this the server answers HTTP 500
+	// with EROFS and nothing is ever measured. The read-only bind's SOURCE is
+	// the ambient config directory when one exists, so creating it here with
+	// the bootstrap payload production already defines is what puts the file
+	// inside the sandbox. Darwin has a launch-time equivalent
+	// (prepareOpenCodeReadOnlyConfigForPlatform); on Linux that hook is a
+	// no-op, which is a gap worth a ticket rather than something this arm
+	// should paper over in production code.
+	ambientConfig := filepath.Join(home, "config", "opencode")
+	require.NoError(t, os.MkdirAll(ambientConfig, 0o700))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(ambientConfig, openCodeInstallBootstrapFile),
+		[]byte(openCodeInstallGitignore), 0o600))
 
 	db.ResetForTest()
 	t.Cleanup(db.ResetForTest)
