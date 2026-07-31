@@ -71,6 +71,16 @@ func renderSeatbeltProfile(
 	switch plan.NetworkPosture {
 	case sandboxpolicy.NetworkHostOpen, sandboxpolicy.NetworkIsolatedWithAgentd:
 	case sandboxpolicy.NetworkFiltered:
+		// Both filtered renderings need a compiled policy, so the guard stays
+		// ahead of the branch rather than inside one arm of it. The proxy floor
+		// opens nothing without it, but a filtered plan carrying no policy at
+		// all is a caller that failed to materialize, and this renderer should
+		// fail closed on its own rather than rely on the launch seam's check.
+		if plan.FilteredNetwork == nil {
+			return "", nil, fmt.Errorf(
+				"darwin tclaude-layer filtered networking requires a compiled network policy",
+			)
+		}
 		// The two filtered renderings are mutually exclusive by construction
 		// rather than by ordering here: a loopback-only compiled rule set
 		// carries no deny rows, so it is not discriminating and never resolves
@@ -291,6 +301,16 @@ func renderSeatbeltProfile(
 // (sandboxpolicy.AddrIsLoopbackIdentity), never by a second local notion of
 // what "loopback" spells. An endpoint outside that space would not be a
 // filtering proxy on this host at all; it would be a route off it.
+//
+// The unspecified address is the one place where reusing that predicate alone
+// would be wrong, and the reason is that it answers a question this endpoint
+// does not ask. AddrIsLoopbackIdentity carries 0.0.0.0/8 and ::/128 because
+// connecting TO the unspecified address lands on local loopback, which makes
+// them host-loopback DESTINATIONS. This endpoint is where the proxy LISTENS,
+// and binding to the unspecified address is the opposite: a wildcard listener
+// on every interface, so the sandbox's only egress would also be reachable
+// from the LAN. The predicate stays the sole definition of loopback identity;
+// this is a second question about the same address, answered here.
 func validateSeatbeltProxyEndpoint(
 	endpoint netip.AddrPort,
 	deploysProxy bool,
@@ -318,6 +338,12 @@ func validateSeatbeltProxyEndpoint(
 	if !sandboxpolicy.AddrIsLoopbackIdentity(endpoint.Addr()) {
 		return fmt.Errorf(
 			"darwin tclaude-layer proxy floor refuses non-host-loopback proxy endpoint %s",
+			endpoint,
+		)
+	}
+	if endpoint.Addr().IsUnspecified() {
+		return fmt.Errorf(
+			"darwin tclaude-layer proxy floor refuses wildcard proxy endpoint %s: the filtering proxy must listen on host loopback, not on every interface",
 			endpoint,
 		)
 	}
@@ -801,11 +827,16 @@ func appendSeatbeltLoopbackNetworkRules(
 // datagram matches no exception (the endpoint's is TCP-only), and network-bind
 // still refuses every listener.
 //
-// The exception is written as a port on Seatbelt's "localhost", which is the
-// whole host-loopback interface rather than one address in it. That is the same
-// identity folding the evaluator applies to loopback destinations, so the
-// spelling the proxy happens to have bound is not a second question the profile
-// answers differently — and the port, not the address, is what discriminates.
+// The exception is written as a port on Seatbelt's "localhost" rather than on
+// the address the proxy actually bound, so the port is the only thing that
+// discriminates between destinations here. Whether that token means exactly
+// the host-loopback interface — covering 127.0.0.1 and ::1 alike, and nothing
+// bound at a routable local address — is a runtime Seatbelt behavior that no
+// golden can observe, and it is UNVERIFIED until M3.2's smoke measures it on a
+// macOS runner. The intent is the same identity folding the evaluator applies
+// to loopback destinations; if the smoke contradicts it, this generator is
+// what changes. sandboxpolicy.AddrIsLoopbackIdentity governs which endpoints
+// are ACCEPTED above and says nothing about what Seatbelt MATCHES here.
 func appendSeatbeltIsolatedNetworkRules(
 	profile *strings.Builder,
 	params []seatbeltProfileParam,
@@ -850,8 +881,7 @@ func appendSeatbeltIsolatedNetworkRules(
 			path: nodes[exception].path,
 		})
 	}
-	appendSeatbeltFloorOutboundDenyRule(
-		profile, "network-outbound", len(exceptions), proxyEndpoint)
+	appendSeatbeltFloorOutboundDenyRule(profile, len(exceptions), proxyEndpoint)
 	return params
 }
 
@@ -862,13 +892,10 @@ func appendSeatbeltIsolatedNetworkRules(
 // inside their deny predicates.
 func appendSeatbeltFloorOutboundDenyRule(
 	profile *strings.Builder,
-	action string,
 	exceptionCount int,
 	proxyEndpoint netip.AddrPort,
 ) {
-	profile.WriteString("(deny ")
-	profile.WriteString(action)
-	profile.WriteString("\n")
+	profile.WriteString("(deny network-outbound\n")
 	profile.WriteString("  (require-all\n")
 	for index := range exceptionCount {
 		name := fmt.Sprintf("AGENTD_SOCKET_%d", index)
