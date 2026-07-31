@@ -370,8 +370,12 @@ func TestProxyEngineActivationIsScopedToItsEvidence(t *testing.T) {
 	)
 	axes := sandboxpolicy.ResolvedAxes{Network: rules}
 
-	// Activated: the harness this PR flips.
-	for _, activated := range []*Harness{Default()} {
+	// Activated: every harness in the record. Codex joins Claude Code here in
+	// TCL-888 on the evidence TCL-884 already named, and it is asserted through
+	// the same predicted row rather than through a Claude-shaped assumption —
+	// the branch that sets these cells is harness-agnostic apart from the
+	// record lookup, and this loop is what holds it that way.
+	for _, activated := range []*Harness{Default(), MustGet(CodexName)} {
 		predicted, err := PredictAccessEnforcement(
 			activated, sandboxpolicy.ImplementationTclaudeLayer, axes, "", "linux",
 		)
@@ -380,6 +384,16 @@ func TestProxyEngineActivationIsScopedToItsEvidence(t *testing.T) {
 			"%s has green named smokes and must be enforced", activated.Name)
 		assert.NotEmptyf(t, ProxyEngineActivationSmokes(activated.Name),
 			"%s must record the smokes its cells rest on", activated.Name)
+		// §5.3 on the activated side, and the mirror of boundary 1 below: the
+		// not-activated sentence has retired for this harness while the carriage
+		// notice stays, because activation changes what is enforced and not what
+		// the engine carries.
+		assert.NotContainsf(t, predicted.NetworkEngineDetail,
+			ProxyEngineNotActivatedNotice,
+			"%s is activated and must not still say it is not", activated.Name)
+		assert.Containsf(t, predicted.NetworkEngineDetail,
+			ProxyEngineCarriageNotice,
+			"%s still discloses what the engine carries", activated.Name)
 		// §5.1's mirror image, both halves. Rating CIDR Full here would be the
 		// flattering-but-wrong direction, and it is the one worth pinning.
 		host, ok := networkSelectorCapability(predicted.NetworkSelectors,
@@ -405,10 +419,15 @@ func TestProxyEngineActivationIsScopedToItsEvidence(t *testing.T) {
 	// Boundary 1: an unlisted harness keeps EnforceNone and still says it is
 	// not activated. "Not measured" is rated as unenforced rather than assumed
 	// to behave like its neighbours — and this is what makes activation a
-	// per-harness fact rather than a posture-wide one. Codex is here rather
-	// than only OpenCode precisely because its smoke arm IS green: the cells
-	// follow this record, not the run.
-	for _, unlisted := range []string{CodexName, OpenCodeName} {
+	// per-harness fact rather than a posture-wide one.
+	//
+	// Codex used to be asserted here alongside OpenCode, and moved up to the
+	// activated loop with its record in the same commit — which is the rule
+	// working, not an exception to it. OpenCode is what keeps the rule under
+	// test afterwards: it sits beside two activated harnesses on the same
+	// platform, engine and implementation, and stays unenforced purely because
+	// it has no row.
+	for _, unlisted := range []string{OpenCodeName} {
 		predicted, err := PredictAccessEnforcement(
 			MustGet(unlisted), sandboxpolicy.ImplementationTclaudeLayer,
 			axes, "", "linux",
@@ -423,13 +442,18 @@ func TestProxyEngineActivationIsScopedToItsEvidence(t *testing.T) {
 			"%s records no backing smokes", unlisted)
 	}
 
-	// Boundary 2: Darwin is M3 and activates on its own Seatbelt smokes.
-	darwin, err := PredictAccessEnforcement(
-		Default(), sandboxpolicy.ImplementationTclaudeLayer, axes, "", "darwin",
-	)
-	require.NoError(t, err)
-	assert.Equal(t, EnforceNone, darwin.NetworkList,
-		"Linux evidence does not activate the Darwin floor")
+	// Boundary 2: Darwin is M3 and activates on its own Seatbelt smokes. Asked
+	// of both activated harnesses, because the record is keyed by harness and
+	// the platform gate sits beside that lookup rather than inside it.
+	for _, activated := range []*Harness{Default(), MustGet(CodexName)} {
+		darwin, err := PredictAccessEnforcement(
+			activated, sandboxpolicy.ImplementationTclaudeLayer, axes, "", "darwin",
+		)
+		require.NoErrorf(t, err, "harness %s", activated.Name)
+		assert.Equalf(t, EnforceNone, darwin.NetworkList,
+			"Linux evidence does not activate the Darwin floor for %s",
+			activated.Name)
+	}
 
 	// Boundary 3: the packet gateway is untouched. Its DNS caveat is the marker
 	// — if the proxy branch had leaked into it, that caveat would be gone.
@@ -482,6 +506,12 @@ func TestActivatedProxyEngineStopsWideningToOpen(t *testing.T) {
 // second opinion about the rating. A name deny that the evaluator does not
 // apply to a literal cannot be rendered as fully enforced, whichever baseline
 // the policy uses.
+//
+// TCL-888 runs it for every activated harness rather than only the first one.
+// The evaluator is harness-blind, so a harness whose cells were flipped without
+// its ratings being checked against it is exactly how the over-claim above got
+// in: the rating has to be re-derived from the evaluator per row that renders
+// it, not inherited from the row that was checked.
 func TestProxyEngineDenyNameRatingMatchesTheEvaluator(t *testing.T) {
 	const denied = "evil.example.com"
 	const deniedAddr = "93.184.216.34"
@@ -526,22 +556,104 @@ func TestProxyEngineDenyNameRatingMatchesTheEvaluator(t *testing.T) {
 			require.NoError(t, err)
 			escaped := evaluator.Evaluate(byLiteral).Allowed()
 
-			predicted, err := PredictAccessEnforcement(
-				Default(), sandboxpolicy.ImplementationTclaudeLayer,
-				sandboxpolicy.ResolvedAxes{Network: testCase.rules}, "", "linux",
-			)
-			require.NoError(t, err)
-			capability, ok := networkSelectorCapability(
-				predicted.NetworkDenySelectors,
-				string(sandboxpolicy.NetworkSelectorHost))
-			require.True(t, ok)
+			for _, activated := range []*Harness{Default(), MustGet(CodexName)} {
+				predicted, err := PredictAccessEnforcement(
+					activated, sandboxpolicy.ImplementationTclaudeLayer,
+					sandboxpolicy.ResolvedAxes{Network: testCase.rules}, "", "linux",
+				)
+				require.NoErrorf(t, err, "harness %s", activated.Name)
+				capability, ok := networkSelectorCapability(
+					predicted.NetworkDenySelectors,
+					string(sandboxpolicy.NetworkSelectorHost))
+				require.Truef(t, ok, "harness %s", activated.Name)
 
-			if escaped {
-				assert.NotEqualf(t, EnforceFull, capability.Level,
-					"the evaluator carried %s:443 past a deny on %s, so the cell must not claim full enforcement",
-					deniedAddr, denied)
-				assert.NotEmpty(t, capability.Detail,
-					"a partial rating must say what it does not cover")
+				if escaped {
+					assert.NotEqualf(t, EnforceFull, capability.Level,
+						"the evaluator carried %s:443 past a deny on %s, so %s's cell must not claim full enforcement",
+						deniedAddr, denied, activated.Name)
+					assert.NotEmptyf(t, capability.Detail,
+						"a partial rating must say what it does not cover (%s)",
+						activated.Name)
+				}
+			}
+		})
+	}
+}
+
+// TestProxyEngineDenyLoopbackRatingMatchesTheEvaluator is the other half of the
+// deny row, and it exists because the shape LOOKS like the over-claim its
+// neighbour above caught: loopback is rated Full while the two name selectors
+// beside it are Partial, so a reader scanning the cells sees the flattering
+// rating in the position where the flattering rating was wrong last time.
+//
+// It is right here, and the reason is a property of the evaluator rather than
+// an argument about the engine: host loopback has several spellings and the
+// evaluator folds every one of them into a single identity before matching, so
+// there is no by-address restatement to walk past a deny the way there is for a
+// name. Asserted against that evaluator, in both baselines, for every activated
+// harness — the same shape that would have caught the name over-claim.
+func TestProxyEngineDenyLoopbackRatingMatchesTheEvaluator(t *testing.T) {
+	denyLoopback := []sandboxpolicy.NetworkAllowEntry{{Loopback: true}}
+
+	for _, testCase := range []struct {
+		name  string
+		rules sandboxpolicy.NetworkRules
+	}{
+		{
+			name: "open baseline",
+			rules: sandboxpolicy.NetworkRules{
+				Mode:   sandboxpolicy.AccessModeOpen,
+				Deny:   denyLoopback,
+				Engine: sandboxpolicy.NetworkEngineProxy,
+			},
+		},
+		{
+			name: "list baseline",
+			rules: sandboxpolicy.NetworkRules{
+				Mode: sandboxpolicy.AccessModeList,
+				Allow: []sandboxpolicy.NetworkAllowEntry{
+					{Domain: "example.com", Ports: []int{443}},
+				},
+				Deny:   denyLoopback,
+				Engine: sandboxpolicy.NetworkEngineProxy,
+			},
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			evaluator, err := sandboxproxy.NewEvaluator(testCase.rules)
+			require.NoError(t, err)
+
+			// Every spelling a client could state, including the one an escape
+			// would use: the literal rather than the name.
+			//
+			// The verdict is compared, not just Allowed(). Host loopback is the
+			// one destination no baseline ever reaches on its own — an open
+			// baseline explicitly declines to default-accept it — so "not
+			// allowed" is the answer here whether the deny row matched or
+			// matched nothing at all. Only VerdictDeniedByRule distinguishes
+			// the rating's actual premise from that ambient refusal.
+			for _, spelling := range []string{"localhost", "127.0.0.1", "::1"} {
+				target, err := sandboxproxy.ParseTarget(spelling, 8080)
+				require.NoErrorf(t, err, "spelling %s", spelling)
+				assert.Equalf(t, sandboxproxy.VerdictDeniedByRule,
+					evaluator.Evaluate(target).Verdict,
+					"the loopback deny must MATCH the %s spelling, not merely leave it unauthorized",
+					spelling)
+			}
+
+			for _, activated := range []*Harness{Default(), MustGet(CodexName)} {
+				predicted, err := PredictAccessEnforcement(
+					activated, sandboxpolicy.ImplementationTclaudeLayer,
+					sandboxpolicy.ResolvedAxes{Network: testCase.rules}, "", "linux",
+				)
+				require.NoErrorf(t, err, "harness %s", activated.Name)
+				capability, ok := networkSelectorCapability(
+					predicted.NetworkDenySelectors,
+					string(sandboxpolicy.NetworkSelectorLoopback))
+				require.Truef(t, ok, "harness %s", activated.Name)
+				assert.Equalf(t, EnforceFull, capability.Level,
+					"the evaluator refused every loopback spelling, so %s's cell is Full and rating it down would understate the engine",
+					activated.Name)
 			}
 		})
 	}

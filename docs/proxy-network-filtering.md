@@ -456,11 +456,19 @@ named CI smoke. Cells follow the activation record
 (`proxyEngineActivatedSmokes`), never a proposal and never a static scan of a
 binary.
 
-Currently activated: **Claude Code 2.1.220 on Linux**, backed by
-`TestPinnedProxyHarnessCooperation` and `TestPinnedProxyToolEgress`. Codex and
-OpenCode are not activated; a profile that selects `engine: proxy` for them
-widens to open with a notice naming activation as the reason
+Currently activated: **Claude Code 2.1.220 and Codex 0.145.0, on Linux**, both
+backed by `TestPinnedProxyHarnessCooperation` and `TestPinnedProxyToolEgress`.
+Codex was activated one milestone after Claude Code, from the same runs rather
+than from new ones — the evidence was green from the first shard run, and what
+was missing was the record, which is the rule working rather than an exception
+to it.
+
+OpenCode is not activated; a profile that selects `engine: proxy` for it widens
+to open with a notice naming activation as the reason
 (`ProxyEngineNotActivatedNotice`), rather than silently claiming enforcement.
+It launches through the agentd-owned server boundary rather than as a plain
+CLI, so its cooperation arm belongs beside the OpenCode executor smoke, and
+until that exists it has no evidence at all.
 
 What the first activation run (on-main run `30609001363`) actually showed, as
 distinct from what was hypothesized:
