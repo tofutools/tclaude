@@ -2750,14 +2750,48 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		return a
 	}
 
+	// Host-catalog reads, measured. These look like plain struct
+	// fields but two of them reach the host: buildSandboxImplCatalog FORKS
+	// bwrap to probe namespace availability (twice, plus a per-harness engine
+	// resolution) whenever its 60 s disclosure cache expires, and
+	// readUserDefaultModel reads the user's harness settings file. At a 2 s
+	// poll that is one poll in thirty paying a multi-fork bill, which is
+	// exactly the shape of an occasional multi-hundred-ms — sometimes
+	// multi-second — spike in an otherwise ~13 ms request. They sat inside the
+	// "groups" window unmeasured, so the spike was charged to a group loop
+	// whose own sub-phases never exceed a fraction of a millisecond.
+	var payloadPhases []perfPhase
+	payloadPhase := func(name string, fn func()) {
+		start := time.Now()
+		fn()
+		payloadPhases = append(payloadPhases, perfPhase{Name: name, Ms: durMs(time.Since(start))})
+	}
+	var (
+		authSession dashboardAuthSession
+		userModel   string
+		harnesses   []dashboardHarness
+		sandboxImpl dashboardSandboxImpl
+		raRunning   bool
+		raBind      string
+		raMaterial  bool
+	)
+	payloadPhase("auth_session", func() { authSession = dashboardAuthSessionForRequest(r) })
+	payloadPhase("user_model", func() { userModel = readUserDefaultModel() })
+	payloadPhase("harness_catalog", func() { harnesses = buildHarnessCatalog() })
+	payloadPhase("sandbox_impl", func() { sandboxImpl = buildSandboxImplCatalog() })
+	payloadPhase("remote_access", func() {
+		raRunning, raBind = remoteListenerStatus()
+		raMaterial = remoteaccess.Exists()
+	})
+
 	out := snapshotPayload{
 		GeneratedAt:          time.Now().Format(time.RFC3339),
 		Version:              buildversion.AppVersion(),
-		AuthSession:          dashboardAuthSessionForRequest(r),
+		AuthSession:          authSession,
 		PopupBase:            popupBaseURL,
-		UserDefaultModel:     readUserDefaultModel(),
-		Harnesses:            buildHarnessCatalog(),
-		SandboxImpl:          buildSandboxImplCatalog(),
+		UserDefaultModel:     userModel,
+		Harnesses:            harnesses,
+		SandboxImpl:          sandboxImpl,
 		NotificationsEnabled: cfg != nil && cfg.Notifications != nil && cfg.Notifications.Enabled,
 		SpawnNameNormalize:   cfg.SpawnNameNormalizeEnabled(),
 		VegasInRegularMode:   cfg.ShowVegasInRegularMode(),
@@ -2790,9 +2824,9 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 
 	// Remote-access runtime state for the Config tab's guidance (JOH-227): has
 	// setup generated the material, and is the listener live in this process.
-	raRunning, raBind := remoteListenerStatus()
+	// Read above, with the rest of the host catalog, so its cost is measured.
 	out.RemoteAccess = dashboardRemoteAccess{
-		MaterialExists: remoteaccess.Exists(),
+		MaterialExists: raMaterial,
 		Running:        raRunning,
 		RunningBind:    raBind,
 	}
@@ -2809,6 +2843,10 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		out.SandboxProfileDefault = globalSandboxProfile.Name
 	}
 	out.Agents = []dashboardAgent{}
+	// Close the payload preamble before the group loop starts, so "groups" is
+	// the loop and nothing else.
+	span.addChildren("payload", payloadPhases...)
+	span.mark("payload")
 	// id→name for resolving each group's parent_id to a parent NAME the
 	// client tree keys off. Built from the same group set we're serializing,
 	// so a parent_id with no live group simply doesn't resolve (child stays

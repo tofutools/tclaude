@@ -97,7 +97,7 @@ func TestDashboardPerf_RecordsPollTimings(t *testing.T) {
 	require.Len(t, snap.Samples, 2)
 	// The handler's named phases arrive in execution order, with the
 	// wrapper's synthetic "write" (JSON encode + socket write) last.
-	wantPhases := []string{"tmux_ls", "preload", "groups", "codex_telemetry", "roster", "assemble", "collectors", "write"}
+	wantPhases := []string{"tmux_ls", "preload", "payload", "groups", "codex_telemetry", "roster", "assemble", "collectors", "write"}
 	var gotPhases []string
 	for _, p := range snap.Samples[0].Phases {
 		gotPhases = append(gotPhases, p.Name)
@@ -112,7 +112,19 @@ func TestDashboardPerf_RecordsPollTimings(t *testing.T) {
 	// The groups phase used to report one opaque number while its max ran three
 	// orders of magnitude above its p50. It now names the per-group point
 	// queries and the per-row side reads that can stall it.
-	groupsPhase := snap.Phases[2]
+	// The payload preamble reaches the HOST — buildSandboxImplCatalog forks
+	// bwrap on a cold 60 s cache — and used to sit unmeasured inside the groups
+	// window, so an occasional multi-hundred-ms fork was charged to a group loop
+	// whose own sub-phases stay well under a millisecond.
+	payloadPhase := snap.Phases[2]
+	var payloadChildNames []string
+	for _, child := range payloadPhase.Children {
+		payloadChildNames = append(payloadChildNames, child.Name)
+	}
+	assert.Equal(t, []string{
+		"auth_session", "user_model", "harness_catalog", "sandbox_impl", "remote_access",
+	}, payloadChildNames)
+	groupsPhase := snap.Phases[3]
 	var groupsChildNames []string
 	for _, child := range groupsPhase.Children {
 		groupsChildNames = append(groupsChildNames, child.Name)
@@ -122,7 +134,7 @@ func TestDashboardPerf_RecordsPollTimings(t *testing.T) {
 		"member_rows", "owner_rows", "member_sort",
 		"bg_reconcile", "context_snapshot", "slowest_group",
 	}, groupsChildNames)
-	codexTelemetry := snap.Phases[3]
+	codexTelemetry := snap.Phases[4]
 	require.NotEmpty(t, codexTelemetry.Children,
 		"Codex telemetry exposes cache, rollout, checkpoint, and context persistence timings")
 	var codexChildNames []string
@@ -142,7 +154,7 @@ func TestDashboardPerf_RecordsPollTimings(t *testing.T) {
 	}
 	assert.Empty(t, contextWrite.Children,
 		"write-path children are sparse observations, not zero-valued samples on idle polls")
-	collectors := snap.Phases[6]
+	collectors := snap.Phases[7]
 	require.NotEmpty(t, collectors.Children, "collectors expose their nested operations")
 	var usage perfPhaseJSON
 	for _, child := range collectors.Children {
