@@ -358,6 +358,40 @@ func TestPrepareOpenCodeReadOnlyConfigRefusesAllocationOutsidePrivateParent(t *t
 	assert.NoFileExists(t, filepath.Join(configDir, openCodeInstallBootstrapFile))
 }
 
+// Accepted, documented behavior rather than an oversight: a private allocation
+// is bound to the private state parent it was created under, so changing
+// XDG_DATA_HOME (or HOME, when XDG_DATA_HOME is unset) strands it and the seed
+// refuses. openCodeControlSocketPath already fails the same way on the same
+// allocation, which is why isolated and filtered postures were already broken
+// by this operator action before the seed was anchored; this makes the
+// host-open posture behave the same. The refusal has to name the environment
+// change, because that is the only thing that tells an operator what they did.
+func TestPrepareOpenCodeReadOnlyConfigRefusesAllocationStrandedByEnvChange(t *testing.T) {
+	stateRoot, configDir := allocatedOpenCodeConfigDir(t)
+	spec := openCodeConfigBootstrapSpec(stateRoot, configDir, configDir)
+	require.NoError(t, prepareOpenCodeReadOnlyConfig(spec, "Linux"),
+		"the allocation is seedable before the environment moves")
+	require.NoError(t, os.Remove(
+		filepath.Join(configDir, openCodeInstallBootstrapFile)))
+
+	// The operator moves their XDG data base. The allocation row, the state
+	// root on disk and the launch contract are all unchanged.
+	t.Setenv("XDG_DATA_HOME", filepath.Join(t.TempDir(), "moved"))
+
+	err := prepareOpenCodeReadOnlyConfig(spec, "Linux")
+	require.ErrorContains(t, err,
+		"is outside this daemon's private state parent")
+	require.ErrorContains(t, err,
+		"a changed XDG_DATA_HOME or HOME moves that parent away from an existing allocation")
+	assert.NoFileExists(t, filepath.Join(configDir, openCodeInstallBootstrapFile))
+
+	// The same allocation fails the same way on the control-socket path, which
+	// is the pre-existing rule this one is now consistent with — asserted, so
+	// "consistency gain" is not a claim the PR makes about untested code.
+	_, controlErr := openCodeControlSocketPath(filepath.Base(stateRoot))
+	require.Error(t, controlErr)
+}
+
 // The self-bind case, driven through the PRODUCTION layout builder rather than
 // a hand-authored contract. TestPrepareOpenCodeReadOnlyConfigMatchesTheProduced-
 // Layout covers the ambient projection; this covers the other half — a host with
