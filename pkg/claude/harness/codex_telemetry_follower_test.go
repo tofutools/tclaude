@@ -100,11 +100,11 @@ func TestCodexTelemetryFollower_CheckpointSurvivesRestartWithFoldState(t *testin
 	require.True(t, ok)
 	var legacy map[string]any
 	require.NoError(t, json.Unmarshal(checkpoint, &legacy))
-	legacy["version"] = float64(3)
+	legacy["version"] = float64(4)
 	legacyCheckpoint, err := json.Marshal(legacy)
 	require.NoError(t, err)
 	assert.Error(t, (&CodexTelemetryFollower{}).RestoreCheckpoint(legacyCheckpoint),
-		"v3 has no child-discovery ledger and must rebuild once on upgrade")
+		"v4 may contain interaction-only child edges and must rebuild once on upgrade")
 	checkpointOffset := codexFollowerOffset(t, beforeRestart)
 
 	restored := &CodexTelemetryFollower{}
@@ -224,10 +224,12 @@ func TestCodexTelemetryFollower_AggregatesNestedChildOwnedCostExactlyOnce(t *tes
 	appendRolloutEnvelope(t, child, "turn_context", map[string]any{"model": "gpt-5.6-sol"})
 	appendTokenCount(t, child, 100, 0, 100)
 	appendSubagentActivity(t, child, grandID, "started", "")
-	// Real child rollouts reference the parent again when collaboration
-	// messages/results cross the boundary. Those are not descendant edges.
-	appendSubagentActivity(t, child, rootID, "interacted", "")
-	appendSubagentActivity(t, child, rootID, "interrupted", "")
+	// Exercise the cycle guard independently of event filtering. A malformed
+	// or future rollout can claim its ancestor was started as a child, while
+	// ordinary collaboration activity must not create descendant edges.
+	appendSubagentActivity(t, child, rootID, "started", "")
+	appendSubagentActivity(t, child, "interaction-only", "interacted", "")
+	appendSubagentActivity(t, child, "interrupt-only", "interrupted", "")
 
 	grand := followerTestRolloutPath(t, home, grandID)
 	appendRolloutEnvelope(t, grand, "session_meta", map[string]any{"id": grandID})
@@ -258,8 +260,13 @@ func TestCodexTelemetryFollower_AggregatesNestedChildOwnedCostExactlyOnce(t *tes
 	require.Len(t, got.CostHistory, 1)
 	assert.InDelta(t, got.Cost.CostUSD, got.CostHistory[0].CostUSD, 1e-12)
 	require.Contains(t, follower.children, childID)
-	assert.NotContains(t, follower.children[childID].state.discoveredSubagents, rootID,
-		"child-to-parent collaboration activity is not a spawn edge")
+	require.Contains(t, follower.children[childID].state.discoveredSubagents, rootID,
+		"the deliberately cyclic started edge reaches the ancestor guard")
+	require.Contains(t, follower.children[childID].children, rootID)
+	assert.NotContains(t, follower.children[childID].state.discoveredSubagents, "interaction-only",
+		"interaction activity is not a spawn edge")
+	assert.NotContains(t, follower.children[childID].state.discoveredSubagents, "interrupt-only",
+		"interruption activity is not a spawn edge")
 
 	checkpoint, ok, err := follower.Checkpoint()
 	require.NoError(t, err)
