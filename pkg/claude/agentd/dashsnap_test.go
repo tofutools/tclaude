@@ -526,10 +526,13 @@ func seedPalette(t *testing.T, f *testharness.Flow) {
 		{Name: "reviewer-b", Role: "reviewer"},
 	})
 
-	// Spawn profiles. The last three are deliberately awkward rows — an alias
+	// Spawn profiles. The last four are deliberately awkward rows — an alias
 	// list, an operator-only badge and a disabled badge alongside a long
 	// summary — because the manager's card head has to keep the name, badges,
-	// summary and action buttons aligned when they all appear at once.
+	// summary and action buttons aligned when they all appear at once. The
+	// final one is the worst case on purpose: a long name AND several aliases
+	// AND a pill AND a full summary, all competing for one line. Nothing may
+	// paint over the action buttons there, however ugly the wrapping gets.
 	yes := true
 	for _, p := range []db.SpawnProfile{
 		{Name: "opus-fast", Descr: "Opus, fast, auto-review", Model: "claude-opus-4-8", Effort: "high"},
@@ -549,6 +552,16 @@ func seedPalette(t *testing.T, f *testharness.Flow) {
 			DisabledReason: "superseded by opus-fast — kept for provenance",
 			Model:          "claude-opus-4-8", Effort: "high", AutoCompactWindow: "450000",
 			TrustDir: &yes,
+		},
+		{
+			Name:    "codex-gpt5.6-sol-high-cold-reviewer-operator-gated",
+			Aliases: []string{"cold-reviewer", "second-opinion", "gated-reviewer"},
+			// Server-side name validation rejects only slashes, control
+			// characters and edge whitespace, so a name this long — and one
+			// carrying spaces — is a shape the manager really has to survive.
+			OperatorOnly: true, Harness: "codex", Model: "gpt-5.6-sol",
+			Effort: "xhigh", Sandbox: "tclaude-agent", Approval: "never",
+			SSHWorkaround: &yes, TrustDir: &yes,
 		},
 	} {
 		if _, err := db.CreateSpawnProfile(&p); err != nil && !errors.Is(err, db.ErrSpawnProfileNameTaken) {
@@ -3317,7 +3330,8 @@ func profileCloneJS() string {
   var operatorOnly = document.querySelector('#profile-editor-operator-only');
   if (!operatorOnly || !operatorOnly.checked) throw new Error('clone dropped the source operator-only restriction');
   var title = document.querySelector('#profile-editor-title');
-  if (!title || !title.textContent.includes('luna')) throw new Error('clone editor does not name its source profile');
+  var wanted = document.body.classList.contains('wizard') ? 'Mirror pattern: luna' : 'Clone profile: luna';
+  if (!title || title.textContent.indexOf(wanted) < 0) throw new Error('clone editor title is ' + JSON.stringify(title && title.textContent) + ', want it to contain ' + JSON.stringify(wanted));
 })();`
 }
 

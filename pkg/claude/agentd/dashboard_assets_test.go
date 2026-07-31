@@ -535,9 +535,51 @@ func TestDashboardCSS_RegistryManagePanelsResizable(t *testing.T) {
 		t.Errorf("dashboard.css missing %q — enlarged panel footers would float", listFlex)
 	}
 	// The links panel shares .manage-modal but has no resize wiring, so it must
-	// not have been swept into the rule.
-	if strings.Contains(css, "#links-manage-modal .manage-modal {\n  resize:") {
-		t.Error("dashboard.css gives #links-manage-modal a resize grip its JS never persists")
+	// not have been swept into the rule. Check this structurally rather than by
+	// spelling: scan every rule that declares `resize` and reject one whose
+	// selector list mentions the links panel, so a differently-formatted or
+	// separately-authored rule cannot slip past.
+	for _, rule := range cssRulesDeclaring(css, "resize:") {
+		if strings.Contains(rule.selector, "#links-manage-modal") {
+			t.Errorf("dashboard.css gives #links-manage-modal a resize grip its JS never persists (selector %q)", rule.selector)
+		}
+	}
+}
+
+// cssRulesDeclaring returns the flat (non-nested) CSS rules whose declaration
+// block contains `needle`, paired with their selector list. Comments are
+// stripped first so a rule discussed in prose is not mistaken for a real one.
+// Good enough for asset guards: dashboard.css has no at-rule-nested blocks that
+// declare the properties these tests police.
+func cssRulesDeclaring(css, needle string) []struct{ selector, body string } {
+	var out []struct{ selector, body string }
+	for {
+		start := strings.Index(css, "/*")
+		if start < 0 {
+			break
+		}
+		end := strings.Index(css[start:], "*/")
+		if end < 0 {
+			css = css[:start]
+			break
+		}
+		css = css[:start] + " " + css[start+end+2:]
+	}
+	for rest := css; ; {
+		open := strings.Index(rest, "{")
+		if open < 0 {
+			return out
+		}
+		close := strings.Index(rest[open:], "}")
+		if close < 0 {
+			return out
+		}
+		selector := strings.TrimSpace(rest[:open])
+		body := rest[open+1 : open+close]
+		if strings.Contains(body, needle) {
+			out = append(out, struct{ selector, body string }{selector, body})
+		}
+		rest = rest[open+close+1:]
 	}
 }
 

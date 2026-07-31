@@ -6210,20 +6210,42 @@ body.wizard .directory-picker-modal .modal-buttons { border-top-color: rgba(122,
   display: flex; flex-direction: column; gap: 6px;
 }
 .template-card .tc-head { display: flex; align-items: baseline; gap: 10px; }
-/* Head sizing. Every head item except the summary is a fixed-content label, so
-   the summary must be the ONLY one that gives when the row runs out of room —
-   otherwise flexbox spreads the overflow across the name, the pills and the
-   buttons at once and the row loses its line. flex:none on the labels stops
-   them shrinking; the summary keeps flex-shrink and adds min-width:0, without
-   which a flex item refuses to go below its longest word and wrap. It does NOT
-   grow (flex-basis stays auto): the trailing counts should sit beside the text
-   they annotate, not be flung against the buttons. align-items:baseline then
-   keeps the name, pills and buttons on the summary's FIRST line, so a two-line
-   summary doesn't drag them down with it. */
-.template-card .tc-name { flex: none; font-size: 14px; font-weight: 600; color: #d4d4d4; }
-.template-card .tc-aliases { flex: none; color: #8ea8c3; font-size: 12px; }
-.template-card .tc-descr { flex: 0 1 auto; min-width: 0; color: #7d8590; font-size: 12px; }
-.template-card .tc-count { flex: none; color: #6e7681; font-size: 11px; }
+/* Head sizing — who gives when the row runs out of width, and in what order.
+   Flexbox splits a deficit across every shrinkable item at once, which is what
+   used to wrap the NAME mid-token while the summary beside it still had slack.
+
+   The name is therefore rigid, and rigid it must stay: a shrink of even a
+   fraction of a pixel wraps `gpt5.6-sol-high` at one of its hyphens, so no
+   shrink factor is small enough to be safe. It is capped instead — under the
+   cap (every realistic name) it never wraps, and a pathological name wraps
+   inside its own column rather than eating the row. The pills are rigid for
+   the reason this rule exists at all: a pill broken across two lines ("OPERATOR"
+   over "ONLY") doubles the row's height and knocks its whole head out of line
+   with every other row. The buttons are rigid because a squashed click target
+   is worse than any wrapping.
+
+   That leaves the summary and the aliases to absorb the deficit, and the
+   summary should take essentially all of it — hence its outsized shrink
+   factor. It keeps a min-width floor rather than min-width:0, because a flex
+   item squeezed below its content width does not clip: its text paints on out
+   of the box and over the action buttons. When the summary bottoms out on that
+   floor the remainder falls to the aliases, which wrap — the last and softest
+   thing on the row to give. The summary does not GROW, so the trailing counts
+   stay beside the text they annotate instead of being flung at the buttons.
+
+   Caveat, visible in the visual-smoke fixture: the shrink factor cannot fully
+   protect the aliases either. Sub-pixel layout rounding means a token already
+   at its full width breaks from any shrink at all, so a crowded row can wrap
+   `aka reviewer` even though the summary absorbed 99.99% of the deficit. That
+   is cosmetic and costs no row height, which is why the aliases — not the
+   buttons or the name — are the ones left holding it.
+
+   align-items:baseline then keeps the name, pills and buttons on the summary's
+   FIRST line, so a two-line summary doesn't drag them down with it. */
+.template-card .tc-name { flex: none; max-width: 32ch; font-size: 14px; font-weight: 600; color: #d4d4d4; }
+.template-card .tc-aliases { flex: 0 1 auto; min-width: 0; color: #8ea8c3; font-size: 12px; }
+.template-card .tc-descr { flex: 0 200 auto; min-width: 22ch; color: #7d8590; font-size: 12px; }
+.template-card .tc-count { color: #6e7681; font-size: 11px; }
 .template-card .tc-actions { flex: none; margin-left: auto; display: flex; gap: 6px; }
 /* JOH-364: the deploy/summon action is a `.primary` button (the sibling
    instantiate/duplicate/edit/export/delete are `.tool`, covered by the base

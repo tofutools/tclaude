@@ -101,7 +101,16 @@ func TestDashboardHTML_SpawnProfilesUI(t *testing.T) {
 	// says as a badge.
 	present(`.tc-disabled, .tc-operator-only {`, "both status pills share the non-wrapping pill geometry")
 	present(`flex: none; white-space: nowrap;`, "a status pill never wraps mid-phrase and unbalances its row")
-	present(`.template-card .tc-descr { flex: 0 1 auto; min-width: 0;`, "the summary is the only head item that shrinks")
+	// The summary is the head's shock absorber, but it must never be squeezed
+	// below its content: a flex item narrower than its text does not clip, it
+	// paints out over the action buttons. Both halves matter — the outsized
+	// shrink factor (so the name and counts keep their line) and the floor.
+	present(`.template-card .tc-descr { flex: 0 200 auto; min-width: 22ch;`, "the summary absorbs the row's deficit but keeps a floor so its text cannot paint over the buttons")
+	// Rigid, because any shrink at all wraps a hyphenated name like
+	// `gpt5.6-sol-high`; capped, so a pathological name wraps in its own column
+	// instead of pushing the buttons off the card.
+	present(`.template-card .tc-name { flex: none; max-width: 32ch;`, "the name never wraps at a realistic length and never monopolises the row")
+	present(`.template-card .tc-actions { flex: none;`, "the action buttons are never squashed or pushed out of the row")
 	present(`profileSummary(item, { status: false })`, "the manager card leaves the status to its badge")
 	present(`function profileSummary(p, { status = true } = {})`, "surfaces without a status badge still get it in the summary")
 	present(`id=${profile ? 'profile-editor-harness'`, "the editor's harness selector")

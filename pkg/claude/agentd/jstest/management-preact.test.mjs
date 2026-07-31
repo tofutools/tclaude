@@ -3685,11 +3685,19 @@ test('cloning a spawn profile opens a create-mode editor on a free, alias-safe h
 
   await harness.act(() => harness.fireEvent(host.querySelector('#profile-editor-submit'), 'click'));
   assert.equal(created.length, 1, 'the clone was created, not patched over its source');
-  assert.equal(created[0].name, 'luna-copy-2');
-  assert.equal(created[0].operator_only, true);
-  assert.equal(created[0].model, 'gpt-5.6-luna');
-  assert.deepEqual(created[0].permission_overrides, { 'groups.spawn': 'grant' });
   assert.equal('aliases' in created[0], false);
+  // Everything else on the source must survive the round-trip, including the
+  // launch fields the editor renders through harness-gated rows — those are the
+  // ones a clone could plausibly drop while still looking right on screen.
+  assert.deepEqual(
+    (({ name, harness, model, effort, sandbox, approval, operator_only, permission_overrides }) =>
+      ({ name, harness, model, effort, sandbox, approval, operator_only, permission_overrides }))(created[0]),
+    {
+      name: 'luna-copy-2', harness: 'codex', model: 'gpt-5.6-luna', effort: 'high',
+      sandbox: 'workspace-write', approval: 'never', operator_only: true,
+      permission_overrides: { 'groups.spawn': 'grant' },
+    },
+  );
 
   cleanups.reverse().forEach((fn) => fn());
   host.remove();
