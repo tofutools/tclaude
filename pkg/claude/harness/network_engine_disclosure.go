@@ -309,6 +309,36 @@ const (
 	ProxyEngineCIDRSelectorDetail = "Enforced only when the client asks for this address literally, through the tclaude proxy. " +
 		"A name that resolves into this range is not admitted by this rule, and UDP or a client that does not use the proxy is blocked entirely."
 
+	// ProxyEngineDenyCIDRSelectorDetail is the DENY cidr cell's own string.
+	// It exists because reusing the allow-shaped one (TCL-890) stated the
+	// opposite of what the engine does: that detail says a name resolving into
+	// the range is not admitted by the rule, and for a deny that is backwards.
+	// Dialer.Connect asks EvaluateResolvedAddress per candidate, and that
+	// re-applies cidr deny rows to the resolved literal under both baselines,
+	// so a name resolving into a denied range IS refused, and the proxy
+	// connects to the exact address it cleared.
+	//
+	// The rating stays PARTIAL, and it is worth recording why the tempting
+	// raise to Full is wrong, because the correction above removes the reason
+	// everyone remembers:
+	//
+	//  1. A target in the host-loopback identity space is decided by the
+	//     loopback rows alone — match() takes that branch before any cidr row
+	//     is considered — so a cidr deny overlapping that space never applies.
+	//  2. An address is not a destination. The same host restated in another
+	//     address family (a NAT64 or 6to4 embedding of a denied v4 address) is
+	//     a different address, and a v4 cidr row does not match it. Under an
+	//     allowlist baseline the reserved-space blocker refuses those anyway;
+	//     under a default-allow baseline they are reachable.
+	//
+	// Both are named in the string rather than left for an operator to find,
+	// with the remedy that actually covers them.
+	ProxyEngineDenyCIDRSelectorDetail = "Enforced on the address the connection actually uses, through the tclaude proxy: " +
+		"a name that resolves into this range is refused as well, because every resolved address is matched against this rule before the connection is made. " +
+		"It does not cover the same destination reached under a different address — a NAT64 or 6to4 form of a denied IPv4 address is not matched by an IPv4 rule, " +
+		"and an address in the host-loopback identity space is decided by loopback rules alone — so deny those forms too if they must be blocked. " +
+		"UDP or a client that does not use the proxy is blocked entirely."
+
 	// ProxyEngineLoopbackSelectorDetail states the improvement over the packet
 	// gateway's synthetic host-loopback address.
 	ProxyEngineLoopbackSelectorDetail = "Host loopback is reached through the filtering proxy on the authored ports. " +

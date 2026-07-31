@@ -494,9 +494,16 @@ func accessEnforcementTable(
 					Detail:   ProxyEngineDenyNameSelectorDetail,
 				},
 				{
+					// TCL-890: the deny polarity, not the allow one. This
+					// cell borrowed the allow-shaped string, whose "a name
+					// that resolves into this range is not admitted by this
+					// rule" is the opposite of what the engine does to a deny.
+					// The rating stays Partial — see the constant for the two
+					// escapes that keep it there, neither of which is the one
+					// the old string described.
 					Selector: string(sandboxpolicy.NetworkSelectorCIDR),
 					Level:    EnforcePartial,
-					Detail:   ProxyEngineCIDRSelectorDetail,
+					Detail:   ProxyEngineDenyCIDRSelectorDetail,
 				},
 				{
 					Selector: string(sandboxpolicy.NetworkSelectorLoopback),
