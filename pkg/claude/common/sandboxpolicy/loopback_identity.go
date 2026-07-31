@@ -35,6 +35,15 @@ var loopbackIdentityPrefixes = []netip.Prefix{
 	// unmapped before they reach AddrIsLoopbackIdentity, so these exist for
 	// the prefix check: a mapped range must not be an authorable second name
 	// for space the loopback selector governs.
+	//
+	// Since TCL-901 the compiler unmaps a cidr row before asking
+	// PrefixIntersectsLoopbackIdentity, so a mapped prefix of at least /96
+	// reaches this list already in IPv4 form and is caught by the entries
+	// above. These two are kept deliberately, for the same reason the
+	// IsLoopback check below is kept: they still carry the prefixes shorter
+	// than /96, which unmap cannot rewrite and which reach the identity space
+	// only as IPv6. They are a subset of what the refusal must cover, so they
+	// can only ever agree with it.
 	netip.MustParsePrefix("::ffff:127.0.0.0/104"),
 	netip.MustParsePrefix("::ffff:0.0.0.0/104"),
 }
