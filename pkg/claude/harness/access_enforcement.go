@@ -435,6 +435,78 @@ func accessEnforcementTable(
 			}
 			caps.NetworkDenyPorts = EnforceFull
 		}
+		// TCL-884 / §8.3: the Linux proxy-engine cells, activated per harness by
+		// the named smokes recorded in proxyEngineActivatedSmokes.
+		//
+		// filteredNetworkReady means something DIFFERENT on this branch, and the
+		// difference is the point of TCL-883. On the packet branches above it is
+		// the pasta/nft probe. Here it is the launch's own verdict that the proxy
+		// floor resolved — a floor that needs neither — so a host without pasta
+		// reaches these cells exactly as the posture's operational headline
+		// promises.
+		if implementation == sandboxpolicy.ImplementationTclaudeLayer &&
+			!packetGateway && filteredNetworkReady &&
+			proxyEngineActivated(h.Name, goos) {
+			caps.NetworkList = EnforceFull
+			caps.NetworkSelectors = []NetworkSelectorCapability{
+				{
+					Selector: string(sandboxpolicy.NetworkSelectorHost),
+					Level:    EnforceFull,
+					Detail:   ProxyEngineNameSelectorDetail,
+				},
+				{
+					Selector: string(sandboxpolicy.NetworkSelectorDomain),
+					Level:    EnforceFull,
+					Detail:   ProxyEngineNameSelectorDetail,
+				},
+				{
+					// The one cell that is WORSE than the packet gateway's, and
+					// it is rated down rather than quietly kept at Full.
+					Selector: string(sandboxpolicy.NetworkSelectorCIDR),
+					Level:    EnforcePartial,
+					Detail:   ProxyEngineCIDRSelectorDetail,
+				},
+				{
+					Selector: string(sandboxpolicy.NetworkSelectorLoopback),
+					Level:    EnforceFull,
+					Detail:   ProxyEngineLoopbackSelectorDetail,
+				},
+			}
+			caps.NetworkPorts = EnforceFull
+			// Deny name selectors are PARTIAL, and the reason is worth stating
+			// here because the tempting rating is Full. The proxy has no DNS
+			// broker to bypass, so it is immune to the escape that forces the
+			// packet gateway down — but it decides on the identity the CLIENT
+			// states, and a client may state an address instead of a name. A
+			// name deny is never matched against a literal, and there is no TLS
+			// interception to recover the name, so the denied host's address
+			// reaches the destination whenever anything else authorizes it.
+			// Rating this Full would claim a block the engine does not deliver.
+			caps.NetworkDenySelectors = []NetworkSelectorCapability{
+				{
+					Selector: string(sandboxpolicy.NetworkSelectorHost),
+					Level:    EnforcePartial,
+					Detail:   ProxyEngineDenyNameSelectorDetail,
+				},
+				{
+					Selector: string(sandboxpolicy.NetworkSelectorDomain),
+					Level:    EnforcePartial,
+					Detail:   ProxyEngineDenyNameSelectorDetail,
+				},
+				{
+					Selector: string(sandboxpolicy.NetworkSelectorCIDR),
+					Level:    EnforcePartial,
+					Detail:   ProxyEngineCIDRSelectorDetail,
+				},
+				{
+					Selector: string(sandboxpolicy.NetworkSelectorLoopback),
+					Level:    EnforceFull,
+					Detail:   ProxyEngineLoopbackSelectorDetail,
+				},
+			}
+			caps.NetworkDenyPorts = EnforceFull
+			caps.NetworkListCondition = ProxyEngineLaunchCondition
+		}
 		if implementation == sandboxpolicy.ImplementationTclaudeLayer &&
 			goos == "darwin" && filteredNetworkReady &&
 			(h.Name == DefaultName || h.Name == CodexName) &&
@@ -613,7 +685,9 @@ func accessEnforcementTable(
 		// at all and must keep its native mechanism sentence.
 		caps.NetworkEngine = deployedEngine
 		caps.NetworkEngineDetail = networkEngineDisclosure(
-			axes.Network.Engine, deployedEngine)
+			axes.Network.Engine, deployedEngine,
+			deployedEngine == sandboxpolicy.NetworkEngineProxy &&
+				caps.NetworkList != EnforceNone)
 		return caps, nil
 	}
 	switch h.Name {

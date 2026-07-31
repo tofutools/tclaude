@@ -33,8 +33,14 @@ const ProxyEngineCarriageNotice = "The filtering proxy carries HTTP, HTTPS, and 
 // posture whose enforcement is unavailable: widen to open, disclosed. Naming
 // the remedy is the point — an operator reading "nothing is enforced" needs to
 // know it is pending activation evidence rather than a broken profile.
-const ProxyEngineNotActivatedNotice = "The proxy filtering engine is selected but not yet activated: its capability cells stay unenforced " +
-	"until the per-harness carriage smokes land, so these rules are not enforced here and outbound network access remains open."
+// It says "for this target" rather than naming the smokes as the only blocker,
+// because activation is per harness, platform AND sandbox implementation: a
+// configuration can be unactivated for a reason the carriage smokes will never
+// change, and a notice promising that landing them is the remedy would be wrong
+// for exactly those configurations.
+const ProxyEngineNotActivatedNotice = "The proxy filtering engine is selected but not activated for this target: its capability cells stay unenforced here, " +
+	"so these rules are not enforced and outbound network access remains open. " +
+	"Activation is per harness, platform and sandbox implementation, and lands with the carriage smokes that prove each one."
 
 // ProxyEngineLatentSelectionNotice is §1.3-4. Selecting an engine for a policy
 // that needs no filtering is not an error; the selection is latent and takes
@@ -87,8 +93,13 @@ func proxyEngineMechanism(goos string) string {
 // An entirely unset selection produces the empty string. That is what keeps
 // engine-unset configurations rendering exactly what they rendered before this
 // field existed.
+// The activated flag decides whether the not-yet-activated sentence still
+// applies. It is passed in rather than re-derived because the SAME row already
+// decided it: a disclosure that re-answered the activation question could tell
+// an operator the rules are unenforced while the cells beside it say Full.
 func networkEngineDisclosure(
 	selected, deployed sandboxpolicy.NetworkEngine,
+	activated bool,
 ) string {
 	if selected == sandboxpolicy.NetworkEngineUnset {
 		return ""
@@ -98,11 +109,119 @@ func networkEngineDisclosure(
 	}
 	switch {
 	case deployed == sandboxpolicy.NetworkEngineProxy:
-		sentences = append(sentences,
-			ProxyEngineCarriageNotice, ProxyEngineNotActivatedNotice)
+		// The carriage notice is §5.3 and stays for good: it describes what the
+		// engine carries, which does not change when its cells are activated.
+		// The not-activated sentence is the one that retires.
+		sentences = append(sentences, ProxyEngineCarriageNotice)
+		if !activated {
+			sentences = append(sentences, ProxyEngineNotActivatedNotice)
+		}
 	case deployed == sandboxpolicy.NetworkEngineUnset &&
 		selected == sandboxpolicy.NetworkEngineProxy:
 		sentences = append(sentences, ProxyEngineLatentSelectionNotice)
 	}
 	return strings.Join(sentences, " ")
 }
+
+// proxyEngineActivatedSmokes is the §8.3 activation record: per harness, the
+// named CI smokes whose green run is the evidence for that harness's Linux
+// `engine: proxy` capability cells.
+//
+// This map IS the capability matrix row. A harness absent from it has no
+// evidence and keeps `EnforceNone`, which is the honest rating for "not
+// measured" rather than a pessimistic one — the proposal's activation rule is
+// that a cell flips only in the PR carrying its green smoke, and never outlives
+// it. The smoke names are recorded here rather than only in a document so that
+// renaming a smoke without renaming this row is a visible edit at the seam that
+// depends on it, and so a reader of the capability table can find the run that
+// justifies it.
+//
+// Codex is deliberately absent from this first activation even though its arm
+// of the same smokes runs green in the same CI run. Flipping one harness at a
+// time keeps the review on what the cells MEAN rather than on two harnesses at
+// once; adding Codex here is a one-line follow-up backed by that same run.
+//
+// OpenCode is absent for a different and stronger reason: it launches through
+// the agentd-owned server boundary rather than as a plain CLI, so its
+// cooperation arm belongs beside the existing OpenCode executor smoke. Until
+// that exists it has no evidence at all.
+var proxyEngineActivatedSmokes = map[string][]string{
+	DefaultName: {
+		"TestPinnedProxyHarnessCooperation",
+		"TestPinnedProxyToolEgress",
+	},
+}
+
+// proxyEngineActivated reports whether this harness's proxy-engine cells have
+// their evidence on this platform. Linux only: the Darwin floor is M3, and it
+// activates on its own Seatbelt smokes rather than inheriting these.
+func proxyEngineActivated(harnessName, goos string) bool {
+	if goos != "linux" {
+		return false
+	}
+	_, activated := proxyEngineActivatedSmokes[harnessName]
+	return activated
+}
+
+// ProxyEngineActivationSmokes returns the smokes backing one harness's cells,
+// for disclosure surfaces and tests. The result is a copy.
+func ProxyEngineActivationSmokes(harnessName string) []string {
+	return append([]string(nil), proxyEngineActivatedSmokes[harnessName]...)
+}
+
+// §5.1 and §5.2 selector details. The headline is the mirror-image relationship
+// to the packet gateway, and both halves of it are stated rather than only the
+// flattering one: host and domain LOSE the TTL/shared-IP caveat and become
+// genuinely Full, while CIDR DROPS from Full to Partial.
+const (
+	// ProxyEngineNameSelectorDetail is why an ALLOW name rule is Full here and
+	// only caveated Full under the packet gateway.
+	//
+	// It carries the private-destination blocker too. That blocker refuses an
+	// authored name whose ANSWER lands in loopback, link-local, RFC1918, CGNAT
+	// or other reserved space unless a cidr or loopback rule covers it — which
+	// is narrower than the operator authored, and a profile that works under
+	// the packet gateway can stop working here. Narrower is not a security
+	// over-claim, but an undisclosed narrowing is still a rendered surface that
+	// does not match the mechanism.
+	ProxyEngineNameSelectorDetail = "Enforced on the host name the client requests, before resolution. " +
+		"There is no DNS-lease caveat: no address-lease window exists, and a shared IP address grants no authority. " +
+		"A name that resolves into loopback, link-local, private or other reserved address space is refused unless a cidr or loopback rule also covers it."
+
+	// ProxyEngineDenyNameSelectorDetail is why a DENY name rule is Partial.
+	//
+	// The proxy decides on the identity the CLIENT states, and the client
+	// chooses whether to state a name or an address. A name deny is never
+	// matched against an IP literal — there is no TLS interception to recover
+	// the name from — so a client that asks for the denied host's address
+	// directly is not covered by the rule. Under a default-allow baseline that
+	// literal is simply allowed; under a list baseline it is allowed whenever
+	// some cidr rule covers the address.
+	//
+	// This is rated Partial UNCONDITIONALLY rather than only under an open
+	// baseline, even though the escape needs a reachable literal. Whether one
+	// is reachable depends on the whole rule set, and a cell that flipped
+	// between Full and Partial as unrelated cidr rows were edited would be a
+	// rating an operator cannot reason about. Partial with the escape named is
+	// the honest, stable answer.
+	ProxyEngineDenyNameSelectorDetail = "Enforced on the host name the client requests, before resolution, with no DNS-lease caveat. " +
+		"It does not cover a client that asks for the address literally: a name deny is not matched against an IP literal, " +
+		"so add a cidr deny for the addresses this name resolves to if the destination must be blocked by address as well."
+
+	// ProxyEngineCIDRSelectorDetail is the honest cost of the L7 view.
+	ProxyEngineCIDRSelectorDetail = "Enforced only when the client asks for this address literally, through the tclaude proxy. " +
+		"A name that resolves into this range is not admitted by this rule, and UDP or a client that does not use the proxy is blocked entirely."
+
+	// ProxyEngineLoopbackSelectorDetail states the improvement over the packet
+	// gateway's synthetic host-loopback address.
+	ProxyEngineLoopbackSelectorDetail = "Host loopback is reached through the filtering proxy on the authored ports. " +
+		"Unlike the packet gateway, no synthetic address can substitute for this rule."
+
+	// ProxyEngineLaunchCondition describes the proxy floor's launch gate. It
+	// differs from the packet gateway's condition in the outcome, not just the
+	// prerequisites: a host that cannot build this floor REFUSES the launch
+	// rather than starting it with the rules unenforced.
+	ProxyEngineLaunchCondition = "At launch, bubblewrap must create the mount, network and PID namespaces this floor needs, and pidfds must be available. " +
+		"A launch that cannot build the floor is refused rather than started with these rules unenforced. " +
+		"No pasta, nft, or DNS broker is involved."
+)

@@ -200,17 +200,24 @@ func TestNetworkEngineDisclosureRendersThroughTheEnforcementAPI(t *testing.T) {
 	assert.Contains(t, unset, "pasta",
 		"an unset engine still describes the packet gateway's launch checks")
 
-	// A deployed proxy names the engine, discloses what it carries, and says
-	// plainly that it is not activated yet — with the remedy named, so nothing
-	// is enforced is legible as pending evidence rather than a broken profile.
+	// A deployed and ACTIVATED proxy names the engine and discloses what it
+	// carries. The not-yet-activated sentence has retired — leaving it beside
+	// cells that now say Full would tell the operator nothing is enforced while
+	// the row says otherwise — and the launch condition is the proxy floor's
+	// own, which refuses rather than widens.
 	proxy := detailFor(t, "engine-proxy-discriminating")
 	assert.Contains(t, proxy, "Filtering engine: Proxy filter")
 	assert.Contains(t, proxy, "SOCKS5")
 	assert.Contains(t, proxy, "blocked rather than filtered")
-	assert.Contains(t, proxy, "not yet activated")
-	assert.Contains(t, proxy, "carriage smokes")
-	assert.NotContains(t, proxy, "pasta",
-		"a proxy-engine posture must not claim the packet gateway's prerequisites")
+	assert.NotContains(t, proxy, "not yet activated")
+	assert.Contains(t, proxy, "enforces the network allow list",
+		"an activated proxy engine states that it enforces")
+	assert.Contains(t, proxy, harness.ProxyEngineLaunchCondition,
+		"the launch condition must be the proxy floor's own")
+	assert.NotContains(t, proxy, "supervised DNS/pasta/nftables",
+		"a proxy-engine posture must not claim the packet gateway's mechanism")
+	assert.NotContains(t, proxy, "outbound traffic is open",
+		"this floor refuses a launch it cannot build; it does not widen it")
 
 	// A selection on a policy that needs no filtering is latent, not an error.
 	latent := detailFor(t, "engine-proxy-latent")
