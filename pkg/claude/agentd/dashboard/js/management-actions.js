@@ -30,11 +30,16 @@ function utf8Length(value) {
   return new TextEncoder().encode(value).length;
 }
 
-function sandboxCloneName(sourceName, existingNames) {
+// cloneName suggests the free "<source>-copy" handle a clone opens with,
+// bumping the suffix until it misses everything in `existingNames`. `maxBytes`
+// caps the result for registries that enforce a name length (sandbox profiles);
+// the prefix is trimmed by whole code points so a multi-byte name never gets
+// cut mid-character. Spawn profiles have no such cap and pass none.
+function cloneName(sourceName, existingNames, maxBytes = Infinity) {
   const names = new Set(existingNames);
   for (let suffix = 1; ; suffix += 1) {
     const tail = suffix === 1 ? '-copy' : `-copy-${suffix}`;
-    const budget = MAX_SANDBOX_PROFILE_NAME_BYTES - utf8Length(tail);
+    const budget = maxBytes - utf8Length(tail);
     let prefix = '';
     for (const char of sourceName) {
       if (utf8Length(prefix + char) > budget) break;
@@ -345,6 +350,31 @@ export function createManagementActions({
       sandboxImpl: getSnapshot()?.sandbox_impl || {},
     });
   }
+  // openProfileClone seeds the normal profile editor with a copy of `source`,
+  // so the duplicate is reviewed and saved through the same validated path as
+  // any hand-written profile rather than being POSTed behind the operator's
+  // back. Mirrors openSandboxClone.
+  function openProfileClone(source) {
+    if (!source?.name) {
+      notify('spawn profile not found', true);
+      return false;
+    }
+    // Primary names and aliases live in ONE server-side namespace, so the
+    // suggested handle has to dodge both — landing on an existing alias is a
+    // 400 at save time, not a rename prompt.
+    const taken = (state.profiles.value || []).flatMap((profile) => [
+      profile.name,
+      ...(profile.aliases || []),
+    ]);
+    // The copy starts with no aliases for the same reason: an alias is a
+    // single-holder handle, so carrying the source's list over would guarantee
+    // that 400.
+    openProfileEditor(
+      { ...source, aliases: [], name: cloneName(source.name, taken) },
+      { editExisting: false, cloneSourceName: source.name },
+    );
+    return true;
+  }
   function openRoleEditor(seed = null) {
     void load('profiles');
     state.openDialog({
@@ -367,9 +397,10 @@ export function createManagementActions({
       notify('sandbox profile not found', true);
       return false;
     }
-    const name = sandboxCloneName(
+    const name = cloneName(
       source.name,
       (state.sandboxProfiles.value || []).map((profile) => profile.name),
+      MAX_SANDBOX_PROFILE_NAME_BYTES,
     );
     // Keep clone creation in the normal sandbox editor, so the copy is
     // reviewable through the same normalized diff as any other edit.
@@ -993,6 +1024,7 @@ export function createManagementActions({
     load,
     openManager,
     openProfileEditor,
+    openProfileClone,
     openRoleEditor,
     openSandboxEditor,
     openSandboxClone,

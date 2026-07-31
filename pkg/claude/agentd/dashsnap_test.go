@@ -526,10 +526,43 @@ func seedPalette(t *testing.T, f *testharness.Flow) {
 		{Name: "reviewer-b", Role: "reviewer"},
 	})
 
-	// Spawn profiles.
+	// Spawn profiles. The last four are deliberately awkward rows — an alias
+	// list, an operator-only badge and a disabled badge alongside a long
+	// summary — because the manager's card head has to keep the name, badges,
+	// summary and action buttons aligned when they all appear at once. The
+	// final one is the worst case on purpose: a long name AND several aliases
+	// AND a pill AND a full summary, all competing for one line. Nothing may
+	// paint over the action buttons there, however ugly the wrapping gets.
+	yes := true
 	for _, p := range []db.SpawnProfile{
 		{Name: "opus-fast", Descr: "Opus, fast, auto-review", Model: "claude-opus-4-8", Effort: "high"},
 		{Name: "sonnet-review", Descr: "Sonnet reviewer", Model: "claude-sonnet-5", Effort: "medium"},
+		{
+			Name: "gpt5.6-sol-high", Aliases: []string{"reviewer"}, Harness: "codex",
+			Model: "gpt-5.6-sol", Effort: "high", Sandbox: "tclaude-agent",
+			Approval: "never", TrustDir: &yes,
+		},
+		{
+			Name: "luna", OperatorOnly: true, Harness: "codex",
+			Model: "gpt-5.6-luna", Effort: "xhigh", Sandbox: "tclaude-agent",
+			Approval: "never", SSHWorkaround: &yes,
+		},
+		{
+			Name: "opus[1m]-high-retired", Disabled: true,
+			DisabledReason: "superseded by opus-fast — kept for provenance",
+			Model:          "claude-opus-4-8", Effort: "high", AutoCompactWindow: "450000",
+			TrustDir: &yes,
+		},
+		{
+			Name:    "codex-gpt5.6-sol-high-cold-reviewer-operator-gated",
+			Aliases: []string{"cold-reviewer", "second-opinion", "gated-reviewer"},
+			// Server-side name validation rejects only slashes, control
+			// characters and edge whitespace, so a name this long — and one
+			// carrying spaces — is a shape the manager really has to survive.
+			OperatorOnly: true, Harness: "codex", Model: "gpt-5.6-sol",
+			Effort: "xhigh", Sandbox: "tclaude-agent", Approval: "never",
+			SSHWorkaround: &yes, TrustDir: &yes,
+		},
 	} {
 		if _, err := db.CreateSpawnProfile(&p); err != nil && !errors.Is(err, db.ErrSpawnProfileNameTaken) {
 			t.Fatalf("seedPalette profile %s: %v", p.Name, err)
@@ -1236,10 +1269,19 @@ func baseStates() []dashsnap.State {
 			SettleMS: 900,
 		},
 		{
-			Key:      "management-profiles",
-			Title:    "Management — spawn profiles",
-			Caption:  "Preact-owned spawn-profile manager with filtering, transfer actions, keyed cards, and create/edit/delete entry points.",
+			Key:   "management-profiles",
+			Title: "Management — spawn profiles",
+			Caption: "Preact-owned spawn-profile manager with filtering, transfer actions, keyed cards, and edit/clone/delete entry points. " +
+				"The awkward rows carry the load: a single-line status pill keeps the name, summary and buttons of the operator-only and " +
+				"disabled rows on the same line as every other row, and only the summary wraps.",
 			JS:       managementModalJS("/static/js/modal-profiles.js", "openProfilesManageModal", "#profiles-manage-modal"),
+			SettleMS: 700,
+		},
+		{
+			Key:      "management-profile-clone",
+			Title:    "Management — clone a spawn profile",
+			Caption:  "A profile card's clone action opens the ordinary editor on a copy: the title names the source and the name field arrives pre-filled with a free handle.",
+			JS:       profileCloneJS(),
 			SettleMS: 700,
 		},
 		{
@@ -3254,6 +3296,43 @@ func managementModalJS(modulePath, opener, readySelector string) string {
   }
   if (!document.querySelector(%q)) throw new Error('management modal did not render: %s');
 })();`, modulePath, opener, opener, opener, readySelector, readySelector, readySelector)
+}
+
+// profileCloneJS opens the spawn-profile manager and clicks one card's clone
+// action. It targets the operator-only row on purpose: a clone has to carry the
+// source's every field, and operator_only is the one an editor that silently
+// dropped it would still look right without.
+//
+// The assertions are the point of the state — the screenshot only proves the
+// chrome. A clone that opened on a blank or colliding name, or on the source's
+// aliases (single-holder handles that would 400 at save), would still render a
+// perfectly ordinary-looking editor.
+func profileCloneJS() string {
+	return `return (async function(){
+  var module = await import('/static/js/modal-profiles.js');
+  module.openProfilesManageModal();
+  var deadline = Date.now() + 3000;
+  while (!document.querySelector('#profiles-manage-modal [data-key="luna"] .profile-clone') && Date.now() < deadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 40); });
+  }
+  var clone = document.querySelector('#profiles-manage-modal [data-key="luna"] .profile-clone');
+  if (!clone) throw new Error('operator-only profile card offers no clone action');
+  clone.click();
+  deadline = Date.now() + 3000;
+  while (!document.querySelector('#profile-editor-name') && Date.now() < deadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 40); });
+  }
+  var name = document.querySelector('#profile-editor-name');
+  if (!name) throw new Error('clone did not open the profile editor');
+  if (name.value !== 'luna-copy') throw new Error('clone name suggestion is ' + JSON.stringify(name.value) + ', want "luna-copy"');
+  var aliases = document.querySelector('#profile-editor-aliases');
+  if (!aliases || aliases.value !== '') throw new Error('clone carried the source aliases into the shared handle namespace');
+  var operatorOnly = document.querySelector('#profile-editor-operator-only');
+  if (!operatorOnly || !operatorOnly.checked) throw new Error('clone dropped the source operator-only restriction');
+  var title = document.querySelector('#profile-editor-title');
+  var wanted = document.body.classList.contains('wizard') ? 'Mirror pattern: luna' : 'Clone profile: luna';
+  if (!title || title.textContent.indexOf(wanted) < 0) throw new Error('clone editor title is ' + JSON.stringify(title && title.textContent) + ', want it to contain ' + JSON.stringify(wanted));
+})();`
 }
 
 // spawnContextFeaturesJS opens the spawn dialog from a group row and drives the

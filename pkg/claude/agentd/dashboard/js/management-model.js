@@ -40,13 +40,18 @@ export function harnessDefaults(harness) {
   };
 }
 
-export function profileDraft(seed = null, { editExisting = true, local = null } = {}, catalog = []) {
+// A create-from-seed (editExisting:false) normally clears the name: the seed is
+// a live agent's launch state or a template's inline spec, which carries no
+// handle worth reusing. A CLONE is the exception — its seed arrives with a
+// suggested free handle already computed (openProfileClone), and blanking that
+// would make the operator retype it, so cloneSourceName keeps the name.
+export function profileDraft(seed = null, { editExisting = true, local = null, cloneSourceName = '' } = {}, catalog = []) {
   const harness = defaultHarness(catalog, seed?.harness);
   const h = harnessByName(catalog, harness);
   const defaults = harnessDefaults(h);
   const sandbox = seed?.sandbox || defaults.sandbox;
   return {
-    name: !local && editExisting ? seed?.name || '' : '', aliases_text: (seed?.aliases || []).join(', '), harness,
+    name: !local && (editExisting || cloneSourceName) ? seed?.name || '' : '', aliases_text: (seed?.aliases || []).join(', '), harness,
     disabled: !!seed?.disabled, disabled_reason: seed?.disabled_reason || '',
     operator_only: !!seed?.operator_only,
     model: seed?.model || '', effort: seed?.effort || '', sandbox,

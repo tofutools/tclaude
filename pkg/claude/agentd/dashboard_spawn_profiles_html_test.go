@@ -77,6 +77,42 @@ func TestDashboardHTML_SpawnProfilesUI(t *testing.T) {
 	present(`const status = profile.disabled`, "profile selectors key their warning marker from the explicit disabled state")
 	present(`id="profile-editor-operator-only"`, "the editor can restrict a profile to human/operator spawns")
 	present(`👤 Operator only`, "operator-only profiles are visibly marked")
+
+	// Duplicating a profile is a first-class listing action, and it routes
+	// through the ordinary editor so the copy is reviewed and validated like any
+	// hand-written profile rather than POSTed straight from the card.
+	present(`class="tool profile-clone"`, "clone action in each spawn-profile card")
+	present(`actions.openProfileClone(item)`, "clone action opens the profile editor")
+	present(`function openProfileClone(`, "clone action is owned by the management actions")
+	present(`{ editExisting: false, cloneSourceName: source.name }`, "clone editor keeps create semantics and remembers its source")
+	present(`...(profile.aliases || []),`, "clone name suggestion dodges alias handles as well as primary names")
+	present(`{ ...source, aliases: [], name: cloneName(source.name, taken) }`, "the copy drops the source's single-holder aliases and opens on a free handle")
+	present(`!local && (editExisting || cloneSourceName) ? seed?.name || '' : ''`, "the clone's suggested name survives into the editor field")
+	present("wizWord(`Clone profile: ${options.cloneSourceName}`", "the editor says it is cloning, and from what")
+
+	// The listing panel is user-resizable and remembers its size, like the
+	// group-templates panel it sits beside.
+	present("resizeKey=${`tclaude.dash.modalSize.${domKind}-manage`}", "each management panel persists its own dragged size")
+	present(`#profiles-manage-modal .manage-modal,`, "the spawn-profile panel carries the resize grip")
+	present(`#profiles-manage-modal #profiles-list,`, "the profile listing absorbs the extra height of an enlarged panel")
+
+	// Card-head alignment: the status pills are single-line labels, only the
+	// summary gives, and the manager does not repeat in prose what it already
+	// says as a badge.
+	present(`.tc-disabled, .tc-operator-only {`, "both status pills share the non-wrapping pill geometry")
+	present(`flex: none; white-space: nowrap;`, "a status pill never wraps mid-phrase and unbalances its row")
+	// The summary is the head's shock absorber, but it must never be squeezed
+	// below its content: a flex item narrower than its text does not clip, it
+	// paints out over the action buttons. Both halves matter — the outsized
+	// shrink factor (so the name and counts keep their line) and the floor.
+	present(`.template-card .tc-descr { flex: 0 200 auto; min-width: 22ch;`, "the summary absorbs the row's deficit but keeps a floor so its text cannot paint over the buttons")
+	// Rigid, because any shrink at all wraps a hyphenated name like
+	// `gpt5.6-sol-high`; capped, so a pathological name wraps in its own column
+	// instead of pushing the buttons off the card.
+	present(`.template-card .tc-name { flex: none; max-width: 32ch;`, "the name never wraps at a realistic length and never monopolises the row")
+	present(`.template-card .tc-actions { flex: none;`, "the action buttons are never squashed or pushed out of the row")
+	present(`profileSummary(item, { status: false })`, "the manager card leaves the status to its badge")
+	present(`function profileSummary(p, { status = true } = {})`, "surfaces without a status badge still get it in the summary")
 	present(`id=${profile ? 'profile-editor-harness'`, "the editor's harness selector")
 	present(`id="profile-editor-submit"`, "the editor's Save button")
 	present(`function ProfileExport(`, "profile export component")

@@ -215,10 +215,15 @@ function syncDashDefaultProfile(name) {
 // for the manage-modal cards — only the fields that are actually set show, so
 // a sparse profile reads cleanly. The launch fields lead (harness/model/…),
 // then the identity bits. Mirrors the terse meta style of the template cards.
-function profileSummary(p) {
+//
+// The disabled / operator-only status leads the summary for callers that have
+// nowhere else to say it (the dock chips, the export picker). Pass
+// { status: false } from a surface that already renders the status as its own
+// badge — the manager cards do — so the row doesn't say it twice.
+function profileSummary(p, { status = true } = {}) {
   const parts = [];
-  if (p.disabled) parts.push('🚫 disabled');
-  else if (p.operator_only) parts.push('👤 operator only');
+  if (status && p.disabled) parts.push('🚫 disabled');
+  else if (status && p.operator_only) parts.push('👤 operator only');
   // Claude is the default harness — only name a non-default one.
   if (p.harness && p.harness !== 'claude') parts.push(p.harness);
   if (p.model) parts.push(p.model);

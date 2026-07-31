@@ -787,11 +787,22 @@ offer each alias separately as
 `alias → primary-name`.
 
 Open the manager from the Groups tab cog (**⚙ → ⧉ profiles…**). The manager can
-create/edit/delete profiles and now also **⇪ export** / **⤒ import** portable
-profile bundles. Export opens a checklist of saved profiles so you can uncheck
-anything that should not travel. Import reads a bundle, previews every profile,
-lets you uncheck rows, and handles existing-name conflicts per profile by
-renaming or overwriting.
+create/edit/**clone**/delete profiles and now also **⇪ export** / **⤒ import**
+portable profile bundles. Export opens a checklist of saved profiles so you can
+uncheck anything that should not travel. Import reads a bundle, previews every
+profile, lets you uncheck rows, and handles existing-name conflicts per profile
+by renaming or overwriting.
+
+**clone** is the way to spin a variant off an existing profile. It opens the
+ordinary editor on a copy, pre-filled with a free `<name>-copy` handle, so the
+duplicate is reviewed and validated like any hand-written profile before it is
+saved. The copy starts with no aliases: an alias is a single-holder handle in
+the same namespace as primary names, so carrying the source's over would only
+collide.
+
+Like the group-templates panel, the profile, role and sandbox-profile managers
+are **resizable** — drag the bottom-right grip on either axis. Each panel
+remembers its own size across reopen, daemon restart, and browser tab.
 
 A profile can be **disabled without deleting it**. Its editor keeps a Disabled
 checkbox and required reason; disabled profiles remain visible, editable,

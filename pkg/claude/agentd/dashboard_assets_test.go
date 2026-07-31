@@ -493,35 +493,93 @@ func TestDashboardCSS_TerminalStacksAboveEditors(t *testing.T) {
 	}
 }
 
-// TestDashboardCSS_TemplatesManageResizable guards the paired CSS half of the
-// resizable summoning-circles management PANEL (the group-templates list). It
-// is a LIST panel, not a form, so unlike the editor it carries a fixed
-// min-height floor (the JS opts out of content-tracking min via fitContent:false
-// — a content-tracking floor would pin at the 86vh cap and make a long list
-// un-shrinkable). The id-scoped card must carry `resize: both` with non-visible
-// overflow on both axes (overflow:auto overriding the base overflow-y:auto,
-// else the grip is inert), an explicit width that keeps the default 880 while
-// max-width raises only the drag ceiling, and the min-height floor. Scoped to
-// the #id, NOT the shared .manage-modal class, so the profiles/roles/links
-// panels that also carry that class stay unaffected.
-func TestDashboardCSS_TemplatesManageResizable(t *testing.T) {
+// TestDashboardCSS_RegistryManagePanelsResizable guards the paired CSS half of
+// the resizable registry management PANELS — group templates, spawn profiles,
+// roles and sandbox profiles. They are LIST panels, not forms, so unlike the
+// editors they carry a fixed min-height floor (the JS opts out of
+// content-tracking min via fitContent:false — a content-tracking floor would
+// pin at the 86vh cap and make a long list un-shrinkable). Each card must carry
+// `resize: both` with non-visible overflow on both axes (overflow:auto
+// overriding the base overflow-y:auto, else the grip is inert), an explicit
+// width that keeps the default 880 while max-width raises only the drag
+// ceiling, and the min-height floor.
+//
+// The rule is still scoped by #id rather than the shared .manage-modal class:
+// the links panel also carries that class and is NOT wired for resize on the JS
+// side, so a class-wide rule would give it an inert grip.
+func TestDashboardCSS_RegistryManagePanelsResizable(t *testing.T) {
 	cssBytes, err := fs.ReadFile(dashboardAssetsFS, "dashboard.css")
 	if err != nil {
 		t.Fatalf("reading embedded dashboard.css: %v", err)
 	}
 	css := string(cssBytes)
-	needle := "#templates-manage-modal .manage-modal {\n" +
+	needle := "#templates-manage-modal .manage-modal,\n" +
+		"#profiles-manage-modal .manage-modal,\n" +
+		"#roles-manage-modal .manage-modal,\n" +
+		"#sandbox-profiles-manage-modal .manage-modal {\n" +
 		"  resize: both; overflow: auto;\n" +
 		"  width: min(880px, calc(100vw - 32px));\n" +
 		"  max-width: min(1100px, calc(100vw - 32px));\n" +
 		"  min-height: 260px;\n" +
 		"}"
 	if !strings.Contains(css, needle) {
-		t.Errorf("dashboard.css missing %q — templates-manage panel resize regressed", needle)
+		t.Errorf("dashboard.css missing %q — registry manage-panel resize regressed", needle)
 	}
-	// The list host must flex so an enlarged panel keeps its footer at the bottom.
-	if !strings.Contains(css, "#templates-manage-modal #templates-list { flex: 1 1 auto; }") {
-		t.Error("dashboard.css missing the #templates-list flex rule — enlarged panel footer would float")
+	// Every panel that can be enlarged also needs its list host to flex, or the
+	// footer Close button floats in the middle of the grown box.
+	listFlex := "#templates-manage-modal #templates-list,\n" +
+		"#profiles-manage-modal #profiles-list,\n" +
+		"#roles-manage-modal #roles-list,\n" +
+		"#sandbox-profiles-manage-modal #sandbox-profiles-list { flex: 1 1 auto; }"
+	if !strings.Contains(css, listFlex) {
+		t.Errorf("dashboard.css missing %q — enlarged panel footers would float", listFlex)
+	}
+	// The links panel shares .manage-modal but has no resize wiring, so it must
+	// not have been swept into the rule. Check this structurally rather than by
+	// spelling: scan every rule that declares `resize` and reject one whose
+	// selector list mentions the links panel, so a differently-formatted or
+	// separately-authored rule cannot slip past.
+	for _, rule := range cssRulesDeclaring(css, "resize:") {
+		if strings.Contains(rule.selector, "#links-manage-modal") {
+			t.Errorf("dashboard.css gives #links-manage-modal a resize grip its JS never persists (selector %q)", rule.selector)
+		}
+	}
+}
+
+// cssRulesDeclaring returns the flat (non-nested) CSS rules whose declaration
+// block contains `needle`, paired with their selector list. Comments are
+// stripped first so a rule discussed in prose is not mistaken for a real one.
+// Good enough for asset guards: dashboard.css has no at-rule-nested blocks that
+// declare the properties these tests police.
+func cssRulesDeclaring(css, needle string) []struct{ selector, body string } {
+	var out []struct{ selector, body string }
+	for {
+		start := strings.Index(css, "/*")
+		if start < 0 {
+			break
+		}
+		end := strings.Index(css[start:], "*/")
+		if end < 0 {
+			css = css[:start]
+			break
+		}
+		css = css[:start] + " " + css[start+end+2:]
+	}
+	for rest := css; ; {
+		open := strings.Index(rest, "{")
+		if open < 0 {
+			return out
+		}
+		close := strings.Index(rest[open:], "}")
+		if close < 0 {
+			return out
+		}
+		selector := strings.TrimSpace(rest[:open])
+		body := rest[open+1 : open+close]
+		if strings.Contains(body, needle) {
+			out = append(out, struct{ selector, body string }{selector, body})
+		}
+		rest = rest[open+close+1:]
 	}
 }
 

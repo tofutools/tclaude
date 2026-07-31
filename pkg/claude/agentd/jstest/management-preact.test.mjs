@@ -3625,3 +3625,105 @@ test('profile editor engine control selects an engine and keeps it across a base
   unmount();
   host.remove();
 });
+
+test('cloning a spawn profile opens a create-mode editor on a free, alias-safe handle', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { createManagementActions }, { mountManagementIsland }] =
+    await Promise.all([
+      harness.importDashboardModule('js/management-state.js'),
+      harness.importDashboardModule('js/management-actions.js'),
+      harness.importDashboardModule('js/management-island.js'),
+    ]);
+  // `luna-copy` is deliberately parked as an ALIAS of an unrelated profile, not
+  // as a primary name: primary names and aliases share one namespace on the
+  // server, so a suggestion that only checked names would collide and 400.
+  const source = {
+    name: 'luna', aliases: ['moon'], operator_only: true, harness: 'codex',
+    model: 'gpt-5.6-luna', effort: 'high', sandbox: 'workspace-write',
+    approval: 'never', permission_overrides: { 'groups.spawn': 'grant' },
+  };
+  const profiles = [source, { name: 'other', aliases: ['luna-copy'] }];
+  const created = [];
+  const state = createManagementState();
+  const actions = createManagementActions({
+    state, confirm: async () => true, notify() {},
+    getSnapshot: () => ({ harnesses: catalog, sandbox_impl: sandboxImpl }),
+    profileAPI: {
+      loadProfiles: async () => profiles,
+      createProfile: async (body) => { created.push(body); return {}; },
+      updateProfile: async () => { throw new Error('a clone must never PATCH its source'); },
+    },
+  });
+  await actions.load('profiles');
+  assert.equal(actions.openProfileClone(source), true);
+
+  const descriptor = state.dialog.value;
+  assert.equal(descriptor.kind, 'profile-editor');
+  assert.equal(descriptor.options.editExisting, false, 'a clone saves as a create');
+  assert.equal(descriptor.options.cloneSourceName, 'luna');
+  assert.equal(descriptor.seed.name, 'luna-copy-2', 'the alias-held luna-copy is skipped');
+  assert.deepEqual(descriptor.seed.aliases, [], 'single-holder aliases do not travel to the copy');
+  assert.equal(descriptor.seed.operator_only, true, 'the copy is faithful to the source');
+
+  const cleanups = [];
+  const host = harness.document.createElement('div');
+  harness.document.body.appendChild(host);
+  mountManagementIsland({
+    host, state, actions, confirmDiscard: async () => true,
+    openProfilePermissions() {}, openProfileContextFeatures() {},
+    registerCleanup(fn) { cleanups.push(fn); },
+  });
+  await harness.act(() => Promise.resolve());
+
+  assert.match(host.querySelector('#profile-editor-title').textContent, /Clone profile: luna/);
+  assert.equal(host.querySelector('#profile-editor-name').value, 'luna-copy-2',
+    'the suggested handle reaches the field instead of being blanked as a plain create-from-seed');
+  assert.equal(host.querySelector('#profile-editor-aliases').value, '');
+  // LinkeDOM does not implement HTMLInputElement.checked, so read the state
+  // through the selector rather than the property.
+  assert.equal(host.querySelector('#profile-editor-operator-only').matches(':checked'), true);
+
+  await harness.act(() => harness.fireEvent(host.querySelector('#profile-editor-submit'), 'click'));
+  assert.equal(created.length, 1, 'the clone was created, not patched over its source');
+  assert.equal('aliases' in created[0], false);
+  // Everything else on the source must survive the round-trip, including the
+  // launch fields the editor renders through harness-gated rows — those are the
+  // ones a clone could plausibly drop while still looking right on screen.
+  assert.deepEqual(
+    (({ name, harness, model, effort, sandbox, approval, operator_only, permission_overrides }) =>
+      ({ name, harness, model, effort, sandbox, approval, operator_only, permission_overrides }))(created[0]),
+    {
+      name: 'luna-copy-2', harness: 'codex', model: 'gpt-5.6-luna', effort: 'high',
+      sandbox: 'workspace-write', approval: 'never', operator_only: true,
+      permission_overrides: { 'groups.spawn': 'grant' },
+    },
+  );
+
+  cleanups.reverse().forEach((fn) => fn());
+  host.remove();
+});
+
+test('profile card summaries defer the status to the badge that already shows it', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { profileSummary } = await harness.importDashboardModule('js/profiles.js');
+  const gated = { name: 'luna', operator_only: true, model: 'gpt-5.6-luna' };
+  const dead = { name: 'old', disabled: true, disabled_reason: 'superseded', model: 'opus' };
+  // Surfaces with no badge of their own (dock chips, export picker) keep it.
+  assert.match(profileSummary(gated), /^👤 operator only · /);
+  assert.match(profileSummary(dead), /^🚫 disabled · /);
+  // The manager cards badge it themselves, so the summary must not repeat it.
+  assert.equal(profileSummary(gated, { status: false }), 'gpt-5.6-luna');
+  assert.equal(profileSummary(dead, { status: false }), 'opus');
+});
+
+test('a plain create-from-seed still blanks the name, only a clone keeps it', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { profileDraft } = await harness.importDashboardModule('js/management-model.js');
+  const seed = { name: 'luna', harness: 'codex' };
+  // Save-a-running-agent / template inline specs: the seed's handle is not a
+  // profile name, so the operator must supply one.
+  assert.equal(profileDraft(seed, { editExisting: false }, catalog).name, '');
+  assert.equal(profileDraft(seed, { editExisting: false, cloneSourceName: 'luna' }, catalog).name, 'luna');
+  assert.equal(profileDraft(seed, { local: true, cloneSourceName: 'luna' }, catalog).name, '',
+    'a local per-agent override has no name field to fill');
+});
