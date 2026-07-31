@@ -738,3 +738,114 @@ func TestProxyEngineSpawnRefusesAHostThatCannotBuildTheFloor(t *testing.T) {
 	assert.Contains(t, failure.Error, "bubblewrap")
 	assert.Empty(t, resp.ConvID)
 }
+
+// TestProxyEngineSpawnDisclosesTheNoProxyOverride is §7.4 at the surface an
+// operator reads. The launcher's override of an inherited NO_PROXY is merged
+// behavior; what this proves is that it reaches the persisted access notices,
+// and only on the launches that actually perform it.
+//
+// The cases are chosen so a disclosure that fired on the wrong condition cannot
+// pass: the packet engine performs no override and must stay silent with the
+// same host value set, and the proxy engine must stay silent when the host
+// carried no exemption to discard.
+//
+// Claude Code rather than Codex, unlike the sibling tests above: the proxy
+// engine's capability cells are activated per harness, and a launch whose cells
+// are unactivated widens to open and deploys no proxy — so there would be no
+// override to disclose.
+func TestProxyEngineSpawnDisclosesTheNoProxyOverride(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	// The ROUTING variables refuse a filtered launch outright (§7.3), so a
+	// runner that exports them would fail this test for an unrelated reason.
+	// Clearing them is what leaves NO_PROXY as the only proxy variable under
+	// test; it is deliberately NOT cleared, because it is the input.
+	for _, name := range []string{
+		"HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy",
+		"ALL_PROXY", "all_proxy",
+	} {
+		t.Setenv(name, "")
+	}
+	t.Cleanup(agentd.SetFilteredNetworkPrerequisiteForTest(
+		func() session.FilteredNetworkPrerequisite {
+			return session.FilteredNetworkPrerequisite{
+				Detected: true,
+				Detail:   "test namespace, pasta, and nft readiness",
+			}
+		},
+	))
+	t.Cleanup(agentd.SetTclaudeLayerAccessVerdictForTest(
+		func(_ string, posture sandboxpolicy.NetworkPosture, _ sandboxpolicy.RootPosture,
+			_ sandboxpolicy.NetworkEngine) (harness.LaunchOSSandbox, error) {
+			return harness.LaunchOSSandbox{
+				State:           "on",
+				Source:          "test filtered gateway",
+				FilteredNetwork: posture == sandboxpolicy.NetworkFiltered,
+			}, nil
+		},
+	))
+
+	for _, tc := range []struct {
+		profile    string
+		engine     sandboxpolicy.NetworkEngine
+		noProxy    string
+		wantNotice bool
+	}{
+		{"no-proxy-proxy-engine", sandboxpolicy.NetworkEngineProxy,
+			"internal.example,10.0.0.0/8", true},
+		{"no-proxy-packet-engine", sandboxpolicy.NetworkEnginePacket,
+			"internal.example,10.0.0.0/8", false},
+		{"no-proxy-absent", sandboxpolicy.NetworkEngineProxy, "", false},
+	} {
+		t.Run(tc.profile, func(t *testing.T) {
+			t.Setenv("NO_PROXY", tc.noProxy)
+			t.Setenv("no_proxy", "")
+			_, err := db.CreateSandboxProfile(&db.SandboxProfile{
+				Name: tc.profile,
+				Network: &sandboxpolicy.NetworkRules{
+					Mode: sandboxpolicy.AccessModeList,
+					Allow: []sandboxpolicy.NetworkAllowEntry{
+						{Domain: "example.com", Ports: []int{443}},
+						// The launch's own model destination: a filtered
+						// profile that does not cover it is refused before any
+						// notice is recorded.
+						{Host: "api.anthropic.com", Ports: []int{443}},
+					},
+					Engine: tc.engine,
+				},
+			})
+			require.NoError(t, err)
+
+			resp := f.AsHuman().SpawnWith("crew", map[string]any{
+				"name": tc.profile + "-worker",
+				// An empty cwd: Claude's provider inspection reads the
+				// repository's own .claude settings, which is host state this
+				// test does not author.
+				"cwd":                    t.TempDir(),
+				"harness":                harness.DefaultName,
+				"sandbox":                harness.ClaudeSandboxOff,
+				"sandbox_implementation": string(sandboxpolicy.ImplementationTclaudeLayer),
+				"sandbox_profile":        tc.profile,
+			})
+			require.Equalf(t, http.StatusOK, resp.Code, "spawn body=%s", resp.Raw)
+
+			snapshot, ok := f.World.SpawnSandboxPolicy(resp.ConvID)
+			require.True(t, ok)
+			require.NotNil(t, snapshot)
+			found := false
+			for _, notice := range snapshot.Effective.AccessNotices {
+				if notice.Reason ==
+					sandboxpolicy.AccessNoticeReasonProxyEngineNoProxyOverride {
+					found = true
+					assert.Equal(t,
+						sandboxpolicy.AccessNoticeEffectEnvironmentOverridden,
+						notice.Effect)
+					assert.Contains(t, notice.Detail, "NO_PROXY")
+					assert.Contains(t, notice.Detail, "fails closed")
+				}
+			}
+			assert.Equal(t, tc.wantNotice, found,
+				"the NO_PROXY override disclosure must follow the launches that perform it")
+		})
+	}
+}

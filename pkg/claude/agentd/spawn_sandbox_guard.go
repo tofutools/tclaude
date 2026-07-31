@@ -319,6 +319,17 @@ func planSandboxProfileAccessForLaunch(
 			plannedEffective.AccessNotices, notices...,
 		)
 		modelContext.Environment = plannedEffective.Environment
+		// §7.4, disclosed from the same pre-injection environment the gate
+		// below inspects: what the launcher discards is exactly what the
+		// resolver saw, so the two cannot describe different launches. The
+		// posture handed in is the RENDERED one, so a policy that widened away
+		// from filtered is not disclosed as if a proxy still ran for it.
+		if noProxyNotice := session.ProxyEngineNoProxyOverrideNotice(
+			runtime.GOOS, implementation, renderedNetworkPosture,
+			rendered.Network, plannedEffective.Environment,
+		); noProxyNotice != nil {
+			notices = append(notices, *noProxyNotice)
+		}
 		resolvedModel, resolveModelErr := session.ResolveTclaudeLayerModelTransport(
 			h, modelContext)
 		if resolveModelErr != nil {

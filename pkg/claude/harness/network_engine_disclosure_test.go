@@ -546,3 +546,82 @@ func TestProxyEngineDenyNameRatingMatchesTheEvaluator(t *testing.T) {
 		})
 	}
 }
+
+// TestResolverConflictRefusalsAreAsymmetric pins the recorded asymmetry between
+// the two resolver-reaching refusals: which Kind each carries, where each
+// refuses, and which one an operator sees when a policy trips both.
+//
+// The asymmetry is deliberate and its rationale lives in one comment block at
+// the socket conflict site in access_enforcement.go. This test is the half that
+// makes changing it visible: a future edit that aligns the Kinds or reorders
+// the two has to come here and say so.
+func TestResolverConflictRefusalsAreAsymmetric(t *testing.T) {
+	const resolverSocket = "/run/systemd/resolve/io.systemd.Resolve"
+	network := proxyEngineRules(
+		sandboxpolicy.NetworkAllowEntry{Domain: "example.com", Ports: []int{443}},
+	)
+
+	// The socket conflict is RECORDED on the row, not returned: resolving the
+	// target succeeds, and the refusal lands at the unix_sockets list rung with
+	// the socket axis named.
+	socketOnly := sandboxpolicy.ResolvedAxes{
+		Network: network,
+		UnixSockets: sandboxpolicy.UnixSocketRules{
+			Mode:  sandboxpolicy.AccessModeList,
+			Allow: []sandboxpolicy.SocketAllowEntry{{Path: resolverSocket}},
+		},
+	}
+	caps, err := accessEnforcementForTargetForTest(
+		Default(), sandboxpolicy.ImplementationTclaudeLayer,
+		socketOnly, "", "linux",
+	)
+	require.NoError(t, err,
+		"the socket conflict is recorded on the row so the rest of the target still resolves")
+	require.Equal(t, EnforceNone, caps.socketList)
+	require.NotEmpty(t, caps.socketListRefusal)
+
+	_, _, planErr := PlanAccessEnforcement(socketOnly, caps)
+	require.Error(t, planErr, "the ladder's socket rung is where it refuses")
+	var socketCapabilityErr *SandboxCapabilityError
+	require.ErrorAs(t, planErr, &socketCapabilityErr)
+	assert.Equal(t, SandboxCapabilitySocketAllowlist, socketCapabilityErr.Kind,
+		"the offending authority is the socket allow list, so the remedy is a socket-axis edit")
+	assert.Contains(t, planErr.Error(), "proxy_engine_name_authority")
+
+	// The filesystem conflict returns from the capability seam instead, with
+	// the network axis named. Linux-only, as the refusal itself is.
+	filesystemOnly := sandboxpolicy.ResolvedAxes{
+		Network: network,
+		Filesystem: []sandboxpolicy.FilesystemGrant{
+			{Path: resolverSocket, Access: sandboxpolicy.AccessRead},
+		},
+	}
+	_, filesystemErr := accessEnforcementForTargetForTest(
+		Default(), sandboxpolicy.ImplementationTclaudeLayer,
+		filesystemOnly, "", "linux",
+	)
+	require.Error(t, filesystemErr,
+		"the filesystem conflict has no ladder rung to defer to and refuses at the seam")
+	var filesystemCapabilityErr *SandboxCapabilityError
+	require.ErrorAs(t, filesystemErr, &filesystemCapabilityErr)
+	assert.Equal(t, SandboxCapabilityNetworkAllowlist,
+		filesystemCapabilityErr.Kind)
+
+	// Both at once: the filesystem refusal is the one that surfaces, because it
+	// returns before the row reaches the ladder. It is the more general of the
+	// two, so it is also the answer that stays correct if only one authored row
+	// is fixed.
+	both := sandboxpolicy.ResolvedAxes{
+		Network:     network,
+		UnixSockets: socketOnly.UnixSockets,
+		Filesystem:  filesystemOnly.Filesystem,
+	}
+	_, bothErr := accessEnforcementForTargetForTest(
+		Default(), sandboxpolicy.ImplementationTclaudeLayer, both, "", "linux",
+	)
+	require.Error(t, bothErr)
+	var bothCapabilityErr *SandboxCapabilityError
+	require.ErrorAs(t, bothErr, &bothCapabilityErr)
+	assert.Equal(t, SandboxCapabilityNetworkAllowlist, bothCapabilityErr.Kind,
+		"a policy tripping both refusals surfaces the filesystem one")
+}

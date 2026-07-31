@@ -417,12 +417,28 @@ func tclaudeLayerPlanFloorPosture(
 	return TclaudeLayerFloorPosture(plan.NetworkPosture, plan.NetworkEngine)
 }
 
+// TclaudeLayerDeploysProxy reports whether a launch at this posture and engine
+// runs the host-side filtering proxy. Both halves are required and neither is
+// sufficient: a filtered posture under the packet engine runs pasta and nft
+// instead, and a proxy engine on a policy that widened away from filtered runs
+// no filtering at all.
+//
+// It is exported because a disclosure ABOUT the proxy must be emitted on
+// exactly the launches that deploy one, and answering that question a second
+// way is how a notice ends up describing a launch that never happened.
+func TclaudeLayerDeploysProxy(
+	posture sandboxpolicy.NetworkPosture,
+	engine sandboxpolicy.NetworkEngine,
+) bool {
+	return posture == sandboxpolicy.NetworkFiltered &&
+		engine == sandboxpolicy.NetworkEngineProxy
+}
+
 // tclaudeLayerPlanDeploysProxy reports whether this plan runs the host-side
 // filtering proxy. It reads the engine the plan already resolved rather than
 // re-deciding it, so the launch and any preview answer from one predicate.
 func tclaudeLayerPlanDeploysProxy(plan sandboxpolicy.MountPlan) bool {
-	return plan.NetworkPosture == sandboxpolicy.NetworkFiltered &&
-		plan.NetworkEngine == sandboxpolicy.NetworkEngineProxy
+	return TclaudeLayerDeploysProxy(plan.NetworkPosture, plan.NetworkEngine)
 }
 
 // ResolveTclaudeLayerForEngine verifies the host capability for a launch whose
