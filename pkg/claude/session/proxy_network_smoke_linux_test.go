@@ -489,13 +489,29 @@ func readProxyDecisionRecords(t *testing.T, home string) []string {
 			return records
 		}
 	}
-	// A launch that ran produced decisions, so an absent or empty log is a
-	// broken audit trail rather than a quiet "nothing happened". Failing here
-	// names the real problem instead of letting a downstream NotEmpty blame
-	// the harness.
-	require.FailNowf(t, "the filtering proxy left no decision record",
-		"looked in %v; the supervisor must run at debug level", candidates)
+	// Deliberately NOT a failure here. The floor and policy smokes do not read
+	// this record, and making every launch depend on it would give them a new
+	// way to go red that has nothing to do with what they prove. The smokes
+	// that DO rest on it assert its presence themselves, through
+	// requireProxyDecisions below, where the failure can name what is missing.
 	return nil
+}
+
+// requireProxyDecisions is the assertion for a smoke whose evidence IS the
+// proxy's decision record. An absent record means a broken audit trail — the
+// supervisor did not run at debug level, or the log moved again — and saying so
+// here keeps a downstream "the harness reached no origin" from taking the blame
+// for it.
+func requireProxyDecisions(
+	t *testing.T,
+	launch proxyEngineLaunchResult,
+) []proxyDecisionRecord {
+	t.Helper()
+	require.NotEmptyf(t, launch.Decisions,
+		"the filtering proxy left no decision record for a launch that ran; "+
+			"the supervisor must run at debug level and write to %s; output:\n%s",
+		common.OutputLogPath(), launch.Output)
+	return parseProxyDecisions(t, launch.Decisions)
 }
 
 // proxySmokeLoopbackServer starts a host-loopback TCP listener and returns its

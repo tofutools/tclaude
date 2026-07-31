@@ -256,7 +256,7 @@ func runProxyCooperationScenario(
 		},
 	})
 	t.Logf("proxy cooperation launch output:\n%s", launch.Output)
-	return parseProxyDecisions(t, launch.Decisions)
+	return requireProxyDecisions(t, launch)
 }
 
 // proxyCooperationRules is the authored policy for one scenario: exactly the

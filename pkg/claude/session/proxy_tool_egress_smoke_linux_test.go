@@ -181,8 +181,7 @@ func TestPinnedProxyToolEgress(t *testing.T) {
 	// The refusals must be the POLICY answering, which is only visible in the
 	// proxy's own record. A curl that failed because the fixture was down would
 	// satisfy the markers above and leave no refusal here.
-	decisions := parseProxyDecisions(t, launch.Decisions)
-	require.NotEmpty(t, decisions)
+	decisions := requireProxyDecisions(t, launch)
 
 	// Each arm is proved at ITS OWN port. One aggregate counter would let a
 	// single curl refusal stand in for the git and go arms, whose "denied"
