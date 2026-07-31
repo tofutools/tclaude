@@ -418,8 +418,8 @@ A collapsed tab stack carries the mark on its pill while the tab it belongs to
 is folded away. Matching amber marks over the top-bar activity bots and a
 group's activity bots are non-interactive breadcrumbs: globally they mean some
 agent needs attention, and on a group they mean one of its members does. Only
-the agent-row and terminal-tab marks are links; reading or marking the
-notification updates every level on the next dashboard refresh.
+the agent-row and terminal-tab marks are links; marking the notification read
+(or replying to it) updates every level on the next dashboard refresh.
 
 The row's harness/model line carries a **sandbox badge** — `🔒` when the OS
 sandbox confined the agent, `⚠` for a posture weaker than it looks. It reflects

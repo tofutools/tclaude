@@ -8,6 +8,66 @@ function deferred() {
   return { promise, resolve };
 }
 
+test('opening an unread notification does not mark it read', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { GroupsNotificationReader } = await harness.importDashboardModule(
+    'js/groups-notification-reader.js',
+  );
+  const message = {
+    id: 41,
+    from_agent: 'agt_sender',
+    from_conv: 'conv-sender',
+    from_title: 'sender',
+    subject: 'needs a decision',
+    body: 'Please look at this.',
+    read: false,
+  };
+  const published = [];
+  const state = {
+    snapshot: { value: { messages: [message], messages_unread: 1 } },
+    publish(next) { published.push(next); state.snapshot.value = next; },
+  };
+  const calls = [];
+  const savedFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url, body: JSON.parse(options.body) });
+    return { ok: true, text: async () => '' };
+  };
+  t.after(() => { globalThis.fetch = savedFetch; });
+
+  const mounted = await harness.mount(harness.html`
+    <${GroupsNotificationReader}
+      descriptor=${{
+        sender: { agent: 'agt_sender', conv: 'conv-sender', label: 'sender' },
+        messageId: 41,
+      }}
+      snapshot=${state.snapshot.value}
+      state=${state}
+      actions=${{ reportError() {} }}
+      onSelect=${() => {}}
+      onClose=${() => {}}
+    />
+  `);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.deepEqual(calls, [], 'rendering the reader must not write read state');
+  assert.deepEqual(published, [], 'rendering the reader must not mutate the snapshot');
+  assert.equal(state.snapshot.value.messages_unread, 1);
+  const chip = mounted.container.querySelector('.human-notification-drawer-state');
+  assert.equal(chip.textContent.trim(), 'unread');
+
+  // Clearing the mark is the operator's action, taken through the button.
+  const mark = [...mounted.container.querySelectorAll('.human-notification-drawer-actions button')]
+    .find((button) => button.textContent === 'Mark read');
+  assert.ok(mark, 'quick reader offers the operator a Mark read action');
+  await harness.act(() => mark.click());
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(calls.map((call) => call.body), [{ id: 41, read: true }]);
+  assert.equal(calls[0].url, '/api/human-messages/read');
+  assert.equal(state.snapshot.value.messages_unread, 0);
+  await mounted.unmount();
+});
+
 test('human notification read writes preserve the operator’s last action', async (t) => {
   const harness = await createPreactHarness(t);
   const { persistHumanMessageRead } = await harness.importDashboardModule(
@@ -33,12 +93,14 @@ test('human notification read writes preserve the operator’s last action', asy
   };
   t.after(() => { globalThis.fetch = savedFetch; });
 
-  const opened = persistHumanMessageRead(state, 7, true);
+  // The operator marks read and immediately changes their mind: the second
+  // write must queue behind the first rather than race it.
+  const marked = persistHumanMessageRead(state, 7, true);
   await Promise.resolve();
   const explicit = persistHumanMessageRead(state, 7, false);
   await Promise.resolve();
   assert.deepEqual(calls, [{ id: 7, read: true }],
-    'the explicit toggle waits behind the in-flight automatic read');
+    'the second toggle waits behind the in-flight write');
   assert.equal(snapshot.value.messages[0].read, false,
     'the explicit action is reflected optimistically');
 
@@ -51,7 +113,7 @@ test('human notification read writes preserve the operator’s last action', asy
   ]);
 
   second.resolve({ ok: true });
-  await Promise.all([opened, explicit]);
+  await Promise.all([marked, explicit]);
   assert.equal(snapshot.value.messages[0].read, false);
   assert.equal(snapshot.value.messages_unread, 1);
 });
@@ -78,13 +140,13 @@ test('failed queued writes restore the last server-confirmed state', async (t) =
   globalThis.fetch = async () => (++calls === 1 ? first.promise : second.promise);
   t.after(() => { globalThis.fetch = savedFetch; });
 
-  const opened = persistHumanMessageRead(state, 8, true);
+  const marked = persistHumanMessageRead(state, 8, true);
   await Promise.resolve();
   const explicit = persistHumanMessageRead(state, 8, false);
   first.resolve({ ok: false, text: async () => 'read failed' });
   await new Promise((resolve) => setTimeout(resolve, 0));
   second.resolve({ ok: false, text: async () => 'unread failed' });
-  await Promise.all([opened, explicit]);
+  await Promise.all([marked, explicit]);
 
   assert.equal(snapshot.value.messages[0].read, false,
     'both failures restore the original server-confirmed unread state');

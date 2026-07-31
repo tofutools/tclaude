@@ -308,8 +308,9 @@ function TabAttention({ pane, snapshot }) {
       },
       messageID: message.id,
       launcher: event.currentTarget,
-      // The glyph itself disappears the moment the message is marked read, so
-      // the tab is the surface focus can actually come back to.
+      // The glyph can disappear under focus — the operator marks the message
+      // read from the reader, or a reply does — so the tab, not the glyph, is
+      // the surface focus can reliably come back to.
       returnFocus: event.currentTarget.closest('.mux-tab') || null,
     });
   };

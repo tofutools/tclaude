@@ -504,7 +504,7 @@ func TestHumanMessages_DashboardMarkRead(t *testing.T) {
 }
 
 // Scenario: the read endpoint's {"read": false} opt-out — the reader's
-// "mark unread" toggle, the complement to the auto-mark-on-open. A message
+// "mark unread" toggle, the complement to its "mark read" action. A message
 // marked read can be flagged back to unread over the same endpoint.
 func TestHumanMessages_DashboardMarkUnread(t *testing.T) {
 	newFlow(t)
@@ -513,8 +513,8 @@ func TestHumanMessages_DashboardMarkUnread(t *testing.T) {
 	id, err := db.InsertHumanMessage(&db.HumanMessage{FromConv: "c", Body: "one"})
 	require.NoError(t, err)
 
-	// Mark it read (the omitted "read" defaults to true — what the
-	// auto-mark-on-open posts).
+	// Mark it read (the omitted "read" defaults to true — what the reader's
+	// "Mark read" action posts).
 	rec := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodPost,
 		"/api/human-messages/read", map[string]any{"id": id}))
 	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
