@@ -453,6 +453,124 @@ jobs:
             exit 1
           fi
 
+      - name: Run pinned proxy harness cooperation and tool-egress smokes
+        shell: bash
+        env:
+          TCLAUDE_FILTERED_PROXY_SMOKE: "1"
+          TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY: ${{ runner.temp }}/tclaude-sandbox-v2
+          # An independent subnet from the floor/policy smoke's fixture, so this
+          # step neither depends on that one's namespace nor is affected by the
+          # order the two land in.
+          TCLAUDE_FILTERED_ALLOWED_ADDR: 198.18.3.10
+          TCLAUDE_FILTERED_ADJACENT_ADDR: 198.18.3.200
+          TCLAUDE_FILTERED_ALLOWED_PREFIX: 198.18.3.0/25
+          TCLAUDE_FILTERED_ALLOWED_PORT: "41021"
+          TCLAUDE_FILTERED_DENIED_PORT: "41022"
+          # The port the pinned harnesses' model origins are reached on. It is
+          # 443 because that is the port the harnesses themselves choose.
+          TCLAUDE_FILTERED_PROXY_ORIGIN_PORT: "443"
+        run: |
+          namespace=tclaude-proxy-cooperation
+          host_link=tclprx2
+          peer_link=tclprx3
+          hosts_backup="$RUNNER_TEMP/tclaude-proxy-coop-hosts.before"
+          sudo cp /etc/hosts "$hosts_backup"
+          server_pids=()
+          cleanup() {
+            for pid in "${server_pids[@]}"; do
+              sudo kill "$pid" 2>/dev/null || true
+            done
+            sudo ip netns del "$namespace" 2>/dev/null || true
+            sudo ip link del "$host_link" 2>/dev/null || true
+            sudo tee /etc/hosts <"$hosts_backup" >/dev/null || true
+          }
+          trap cleanup EXIT
+
+          sudo ip netns add "$namespace"
+          sudo ip link add "$host_link" type veth peer name "$peer_link"
+          sudo ip link set "$peer_link" netns "$namespace"
+          sudo ip link set dev "$host_link" addrgenmode none
+          sudo ip netns exec "$namespace" ip link set dev "$peer_link" addrgenmode none
+          sudo ip link set "$host_link" up
+          sudo ip address add 198.18.3.1/24 dev "$host_link"
+          sudo ip netns exec "$namespace" ip link set lo up
+          sudo ip netns exec "$namespace" ip link set "$peer_link" up
+          sudo ip netns exec "$namespace" ip address add 198.18.3.10/24 dev "$peer_link"
+          sudo ip netns exec "$namespace" ip address add 198.18.3.200/24 dev "$peer_link"
+
+          # The pinned harnesses' real model origins are pointed at the fixture
+          # for the duration of this step. That is what keeps the smoke OFFLINE:
+          # no packet can reach a real model provider, so the deliberately
+          # invalid credentials cannot even be presented to one. /etc/hosts is
+          # restored on exit.
+          {
+            echo "198.18.3.10 allowed.proxy.tclaude.test"
+            echo "198.18.3.10 api.anthropic.com api.openai.com"
+          } | sudo tee -a /etc/hosts >/dev/null
+
+          # 443 carries the model origins; the two fixture ports keep the
+          # runner-fixture contract the proxy smokes share.
+          for port in 443 41021 41022; do
+            sudo ip netns exec "$namespace" \
+              socat "TCP4-LISTEN:$port,bind=198.18.3.10,reuseaddr,fork" EXEC:/bin/cat \
+              >"$RUNNER_TEMP/proxy-coop-tcp-$port.log" 2>&1 &
+            server_pids+=("$!")
+          done
+          sleep 1
+
+          # Every refusal these smokes assert must be the POLICY refusing, never
+          # an unreachable fixture. Prove the round trip first.
+          for port in 443 41021 41022; do
+            token="proxy-coop-fixture-$port"
+            reply=$(
+              printf '%s' "$token" |
+                timeout 5 socat -T 2 -t 2 - "TCP4:198.18.3.10:$port"
+            )
+            if [[ "$reply" != "$token" ]]; then
+              echo "::error::proxy cooperation fixture failed a direct round trip to 198.18.3.10:$port"
+              exit 1
+            fi
+          done
+
+          smoke_log="$RUNNER_TEMP/tclaude-proxy-harness-smoke.log"
+          go test ./pkg/claude/session \
+            -run '^TestPinnedProxy(HarnessCooperation|ToolEgress)$' \
+            -count=1 -v -timeout=900s |
+            tee "$smoke_log"
+          if ! grep -q '^--- PASS: TestPinnedProxyHarnessCooperation ' "$smoke_log"; then
+            {
+              echo "### Pinned proxy harness cooperation smoke did not complete"
+              echo
+              echo "The named real boundary did not report an explicit pass."
+              echo "A skip, missing/renamed test, version drift, build-tag mismatch, or zero-test success is a hard failure."
+              echo "The smoke must run Claude 2.1.220 and Codex 0.145.0 inside the real proxy floor on deliberately invalid credentials, observe each expected model origin carried AT THE PROXY, observe the deliberate undeclared probe refused over both carriages, and show no undeclared origin allowed."
+              echo "Linux engine: proxy capability cells are backed by this run; a failure here means those cells have lost their evidence."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::TestPinnedProxyHarnessCooperation did not report an explicit pass"
+            exit 1
+          fi
+          if ! grep -q '^--- PASS: TestPinnedProxyToolEgress ' "$smoke_log"; then
+            {
+              echo "### Pinned proxy tool-egress smoke did not complete"
+              echo
+              echo "The named real boundary did not report an explicit pass."
+              echo "A skip, missing/renamed test, build-tag mismatch, or zero-test success is a hard failure."
+              echo "The smoke must run curl over BOTH carriages, git over HTTPS, and a go module fetch inside the proxy floor, with allowed destinations carried and LIVE denied destinations failing closed at the proxy."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::TestPinnedProxyToolEgress did not report an explicit pass"
+            exit 1
+          fi
+          # The carriage record is the §6 ALL_PROXY question answered
+          # empirically. Surface it so the capability matrix rows can be checked
+          # against a run rather than against a string scan.
+          {
+            echo "### Pinned proxy harness carriage record"
+            echo
+            echo '```text'
+            grep 'proxy-cooperation: ' "$smoke_log" || echo "(no carriage record emitted)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Run pinned Codex effective-config seam evidence
         env:
           TCLAUDE_FILTERED_MODEL_ENDPOINT_SMOKE: "1"
