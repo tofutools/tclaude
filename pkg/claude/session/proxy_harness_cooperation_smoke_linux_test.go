@@ -52,10 +52,13 @@ import (
 //
 // In addition to the floor/policy smoke fixture, the job must map each pinned
 // harness's model origin in the HOST's /etc/hosts to TCLAUDE_FILTERED_ALLOWED_ADDR
-// and run a listener there on TCLAUDE_FILTERED_PROXY_ORIGIN_PORT:
+// and run a listener there on port 443:
 //
 //	api.anthropic.com -> TCLAUDE_FILTERED_ALLOWED_ADDR
 //	api.openai.com    -> TCLAUDE_FILTERED_ALLOWED_ADDR
+//
+// and a listener on port 443 at that address. 443 is mandatory, not a
+// parameter: the pinned harnesses pick it themselves.
 //
 // The mapping is what keeps this smoke offline: no packet reaches a real model
 // provider, so an invalid credential cannot even be presented to one. The
@@ -63,7 +66,14 @@ import (
 // upstream connection — otherwise a green run could not tell "policy allowed
 // it" from "policy allowed it and the tunnel was actually carried".
 const (
-	proxyOriginPortEnv          = "TCLAUDE_FILTERED_PROXY_ORIGIN_PORT"
+	// proxyCooperationOriginPort is 443 and is NOT read from the job. The
+	// pinned harnesses choose that port themselves — nothing here overrides a
+	// base URL — so a policy authorizing any other port would refuse their
+	// CONNECT for want of a matching row, and the smoke would fail for a reason
+	// that has nothing to do with the harness. Pinning it here keeps the
+	// fixture contract and the authored policy from drifting apart.
+	proxyCooperationOriginPort = 443
+
 	proxyCooperationProbeEnv    = "TCLAUDE_FILTERED_PROXY_COOPERATION_PROBE"
 	proxyCooperationProbeMarker = "proxy-cooperation-probe"
 
@@ -95,7 +105,7 @@ func TestPinnedProxyHarnessCooperation(t *testing.T) {
 		t.Skip("set TCLAUDE_FILTERED_PROXY_SMOKE=1 on the executing Linux CI boundary")
 	}
 	fixture := proxySmokeRunnerFixture(t)
-	originPort := requireFilteredSmokePort(t, proxyOriginPortEnv)
+	originPort := proxyCooperationOriginPort
 
 	claude := requirePinnedFilteredHarness(t, "claude", filteredClaudePinnedVersion)
 	codex := requirePinnedFilteredHarness(t, "codex", filteredCodexPinnedVersion)
@@ -160,9 +170,17 @@ func TestPinnedProxyHarnessCooperation(t *testing.T) {
 				if slices.Contains(declared, decision.Host) {
 					continue
 				}
+				// A LITERAL target has no Host — it records an Address — and
+				// treating that empty Host as an undeclared name would fail the
+				// test for the wrong reason on any harness that connects by IP.
+				// Literals are authorized by the fixture CIDR row, so an allowed
+				// one is inside the authored policy, not outside it.
+				if decision.Kind == "literal" {
+					continue
+				}
 				assert.NotEqualf(t, "allowed", decision.Verdict,
-					"%s reached undeclared origin %s:%d through the proxy",
-					scenario.name, decision.Host, decision.Port)
+					"%s reached undeclared origin %s through the proxy",
+					scenario.name, decision.Destination())
 			}
 
 			// 3. Anti-vacuous: at least one refusal actually executed. The
@@ -212,7 +230,6 @@ func runProxyCooperationScenario(
 	env := append([]string(nil), os.Environ()...)
 	env = append(env, proxySmokeHelperEnv(nil, fixture)...)
 	env = append(env,
-		proxyOriginPortEnv+"="+strconv.Itoa(originPort),
 		proxyCooperationProbeEnv+"=1",
 	)
 	for name, value := range scenario.env {
@@ -221,10 +238,13 @@ func runProxyCooperationScenario(
 
 	launch := runProxyEngineLaunch(t, proxyEngineLaunchInput{
 		Rules:             rules,
-		Env:               env,
+		ExtraEnv:          env,
 		WorkspaceBinaries: map[string]string{probeBinary: os.Args[0]},
 		PrepareHome:       scenario.prepare,
 		Timeout:           180 * time.Second,
+		// The harness runs on invalid credentials and is EXPECTED to exit
+		// non-zero. This is the only launch in the set that tolerates it.
+		AllowExitError: true,
 		Command: func(workspace string) string {
 			// The probe runs first and unconditionally, then the harness runs
 			// whatever its own exit status. Both are inside the same floor,

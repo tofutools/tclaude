@@ -120,7 +120,7 @@ func TestPinnedProxyToolEgress(t *testing.T) {
 	helperBinary := "proxy-egress-helper"
 	launch := runProxyEngineLaunch(t, proxyEngineLaunchInput{
 		Rules: proxyEgressRules(ports),
-		Env: append(append([]string(nil), os.Environ()...),
+		ExtraEnv: append([]string(nil),
 			proxyEgressHelperEnv+"=1",
 			proxyEgressPortsEnv+"="+ports.encode(),
 		),
@@ -140,16 +140,20 @@ func TestPinnedProxyToolEgress(t *testing.T) {
 			require.NoError(t, os.MkdirAll(modcache, 0o700))
 			return map[string]string{
 				proxyEgressCAEnv: caPath,
-				// Each tool reads its own trust variable; none of them is
-				// tclaude's doing, and nothing here modifies a system store.
-				"SSL_CERT_FILE":  caPath,
-				"GIT_SSL_CAINFO": caPath,
 				"GOCACHE":        cache,
 				"GOMODCACHE":     modcache,
 				"GOFLAGS":        "-mod=mod",
-				"GOSUMDB":        "off",
-				"GOPRIVATE":      "*",
-				"GONOSUMDB":      "*",
+				// The checksum database is off because the fixture module is
+				// not in it. GOPRIVATE/GONOPROXY are deliberately NOT set:
+				// GOPRIVATE defaults GONOPROXY, and a GONOPROXY of "*" tells go
+				// to bypass GOPROXY and resolve modules from version control —
+				// which would take the go arm off the proxy path entirely and
+				// make its denied case pass for the wrong reason.
+				"GOSUMDB":   "off",
+				"GONOSUMDB": "*",
+				// A toolchain download would be a second, unauthored
+				// destination and has nothing to do with what is under test.
+				"GOTOOLCHAIN": "local",
 			}
 		},
 		Command: func(workspace string) string {
@@ -179,22 +183,31 @@ func TestPinnedProxyToolEgress(t *testing.T) {
 	// satisfy the markers above and leave no refusal here.
 	decisions := parseProxyDecisions(t, launch.Decisions)
 	require.NotEmpty(t, decisions)
-	refused := 0
-	carried := 0
-	for _, decision := range decisions {
-		switch {
-		case decision.Verdict == "allowed" && decision.Port == ports.AllowedTLS:
-			carried++
-		case decision.Verdict != "allowed" &&
-			(decision.Port == ports.DeniedHTTP || decision.Port == ports.DeniedTLS):
-			refused++
-		}
-	}
-	assert.Positivef(t, carried,
-		"no authorized TLS destination was carried; decisions:\n%s",
+
+	// Each arm is proved at ITS OWN port. One aggregate counter would let a
+	// single curl refusal stand in for the git and go arms, whose "denied"
+	// markers rest on an error that a misconfigured fixture, a missing
+	// endpoint, or a toolchain that bypassed the proxy would also produce.
+	assert.Truef(t, proxyEgressCarried(decisions, ports.AllowedHTTP),
+		"the authorized plain-HTTP destination was never carried; decisions:\n%s",
 		formatProxyDecisions(decisions))
-	assert.Positivef(t, refused,
-		"no denial was executed at the proxy; the tools may have failed for another reason; decisions:\n%s",
+	assert.Truef(t, proxyEgressCarried(decisions, ports.AllowedTLS),
+		"the authorized TLS destination was never carried, so git and go never reached it; decisions:\n%s",
+		formatProxyDecisions(decisions))
+	assert.Truef(t, proxyEgressRefused(decisions, ports.DeniedHTTP),
+		"curl's denied arm produced no refusal at the proxy; it failed for another reason; decisions:\n%s",
+		formatProxyDecisions(decisions))
+	assert.Truef(t, proxyEgressRefused(decisions, ports.DeniedTLS),
+		"the git and go denied arms produced no refusal at the proxy; they failed for another reason; decisions:\n%s",
+		formatProxyDecisions(decisions))
+
+	// Both carriages must appear, or "curl over both carriages" is unproven.
+	carriages := map[string]bool{}
+	for _, decision := range decisions {
+		carriages[decision.Carriage] = true
+	}
+	assert.Truef(t, carriages["http"] && carriages["socks5"],
+		"both carriages must have delivered traffic; decisions:\n%s",
 		formatProxyDecisions(decisions))
 }
 
@@ -300,6 +313,11 @@ func proxyEgressGoDownload(t *testing.T, port int, proxy string) error {
 		"GOPROXY=https://127.0.0.1:"+strconv.Itoa(port)+"/mod",
 		"HTTPS_PROXY="+proxy,
 		"HTTP_PROXY="+proxy,
+		// Scoped to this command rather than set on the launch: the launch
+		// environment is the host supervisor's too, and narrowing its Go root
+		// pool to a throwaway fixture CA is a side effect on a host process
+		// that has no business trusting it.
+		"SSL_CERT_FILE="+os.Getenv(proxyEgressCAEnv),
 	)
 	output, err := command.CombinedOutput()
 	if err != nil {
@@ -484,4 +502,27 @@ func proxyEgressModuleZip(t *testing.T) map[string][]byte {
 		base + proxyEgressModuleVersion + ".mod": []byte(goMod),
 		base + proxyEgressModuleVersion + ".zip": archive.Bytes(),
 	}
+}
+
+// proxyEgressCarried reports whether the proxy actually carried a connection to
+// this fixture port.
+func proxyEgressCarried(decisions []proxyDecisionRecord, port int) bool {
+	for _, decision := range decisions {
+		if decision.Port == port && decision.Verdict == "allowed" {
+			return true
+		}
+	}
+	return false
+}
+
+// proxyEgressRefused reports whether the POLICY refused this fixture port. The
+// port is live, so a refusal recorded here is the engine answering rather than
+// a connection that failed on its own.
+func proxyEgressRefused(decisions []proxyDecisionRecord, port int) bool {
+	for _, decision := range decisions {
+		if decision.Port == port && decision.Verdict != "allowed" {
+			return true
+		}
+	}
+	return false
 }

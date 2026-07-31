@@ -59,18 +59,22 @@ func ParseTarget(host string, port int) (Target, error) {
 	if addr, err := netip.ParseAddr(host); err == nil {
 		addr = addr.Unmap()
 		if !addr.IsValid() {
-			return Target{}, fmt.Errorf("target address %q is invalid", host)
+			return Target{}, fmt.Errorf("target address is invalid")
 		}
 		// A zoned literal names a local interface, which is never a routable
 		// destination for this proxy.
 		if addr.Zone() != "" {
-			return Target{}, fmt.Errorf("target address %q carries a zone", host)
+			return Target{}, fmt.Errorf("target address carries a zone")
 		}
 		return Target{Kind: TargetKindLiteral, Addr: addr, Port: port}, nil
 	}
 	name, err := sandboxpolicy.NormalizeNetworkTargetName(host)
 	if err != nil {
-		return Target{}, fmt.Errorf("target host %q: %w", host, err)
+		// The rejected name is not repeated: like an HTTP authority, a SOCKS5
+		// DOMAINNAME is raw client bytes and can carry userinfo. The wrapped
+		// error names the rule that rejected it, which is the diagnostic value.
+		return Target{}, fmt.Errorf("target host (%d bytes) is not a usable name: %w",
+			len(host), err)
 	}
 	return Target{Kind: TargetKindName, Name: name, Port: port}, nil
 }

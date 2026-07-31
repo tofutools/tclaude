@@ -27,8 +27,8 @@ import (
 const (
 	decisionLogSecret       = "s3cr3t-must-never-be-logged"
 	decisionLogProxyAuth    = "Basic dXNlcjpzM2NyM3QtbXVzdC1uZXZlci1iZS1sb2dnZWQ="
-	decisionLogAllowedHost  = "allowed.decision.test"
-	decisionLogRefusedHost  = "refused.decision.test"
+	decisionLogAllowedHost  = "carried.decision.test"
+	decisionLogRefusedHost  = "blocked.decision.test"
 	decisionLogDialDeadline = 5 * time.Second
 )
 
@@ -95,6 +95,16 @@ func TestProxyNetworkDecisionLogCarriesNoCredentials(t *testing.T) {
 	_, err = decisionLogSOCKS5Connect(endpoint, decisionLogRefusedHost, 443)
 	require.NoError(t, err)
 
+	// The ERROR path, which is the only shape that could ever have leaked: an
+	// authority carrying userinfo does not split into host:port, so it is
+	// rejected before a Target exists and is reported through OnError rather
+	// than OnDecision. The rejected bytes must not be echoed.
+	_, _ = decisionLogHTTPConnect(endpoint,
+		"user:"+decisionLogSecret+"@"+decisionLogRefusedHost+":443", "")
+	// The same shape over SOCKS5, whose DOMAINNAME is equally raw client bytes.
+	_, _ = decisionLogSOCKS5Connect(endpoint,
+		"user:"+decisionLogSecret+"@"+decisionLogRefusedHost, 443)
+
 	records := strings.Join(log.lines(), "\n")
 	require.NotEmpty(t, records, "the proxy must have recorded its decisions")
 	require.Contains(t, records, decisionLogRefusedHost,
@@ -110,11 +120,17 @@ func TestProxyNetworkDecisionLogCarriesNoCredentials(t *testing.T) {
 }
 
 // decisionLogHas reports whether some record names this host with this verdict.
+//
+// The verdict is matched as a JSON FIELD rather than as a substring. A bare
+// substring match is silently satisfied by a fixture host that happens to spell
+// the verdict — which is why the fixtures above are named "carried" and
+// "blocked" rather than "allowed" and "refused" as well.
 func decisionLogHas(records []string, host, verdict string) bool {
+	field := `"verdict":"` + verdict + `"`
 	for _, record := range records {
 		if strings.Contains(record, ProxyNetworkDecisionMessage) &&
-			strings.Contains(record, host) &&
-			strings.Contains(record, verdict) {
+			strings.Contains(record, `"host":"`+host+`"`) &&
+			strings.Contains(record, field) {
 			return true
 		}
 	}
