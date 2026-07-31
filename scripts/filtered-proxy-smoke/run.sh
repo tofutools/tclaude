@@ -189,14 +189,17 @@ TXT
 fi
 
 # Whatever happens from here, the runner's resolver goes back. Flows restore it
-# too; this is the backstop for a cancelled job, which fires no flow trap.
-trap fixture::hosts_restore EXIT INT TERM
+# too; this is the backstop for a cancelled job, whose signal arrives here
+# rather than inside a flow. Through the helper, so an interrupted run EXITS —
+# a bare `trap ... INT TERM` would restore the resolver and then carry on
+# running flows until the runner killed it.
+smoke::trap_cleanup fixture::hosts_restore
 
 # 3. Prerequisites. Installed first, then asserted individually, so a missing
 #    tool is named rather than surfacing later as a boundary that appeared to
 #    refuse something.
 prereqs::install
-smoke::require_command go sudo ip socat curl npm node bwrap git || exit 1
+smoke::require_command go sudo ip socat curl npm node bwrap git pkill || exit 1
 
 smoke::log "Building tclaude for the smoke launches"
 go build -o "$SMOKE_TCLAUDE_BINARY" .
