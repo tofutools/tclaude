@@ -1151,9 +1151,15 @@ jobs:
           path: ${{ runner.temp }}/smoke-harness-cache
           key: smoke-harness-${{ runner.os }}-${{ matrix.shard }}-${{ hashFiles('scripts/filtered-proxy-smoke/lib/harnesses.sh') }}
 
+      # The shard reaches the script through env: rather than being spliced into
+      # the shell line, matching the sibling test job's use of matrix values.
+      # Nothing user-controlled can reach a matrix value here, so this is
+      # consistency and lint-quiet rather than a live injection fix.
       - name: Run filtered-network proxy smokes
         shell: bash
-        run: scripts/filtered-proxy-smoke/run.sh --shard ${{ matrix.shard }}
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: scripts/filtered-proxy-smoke/run.sh --shard "$SHARD"
 
   # The end-to-end proxy-posture smokes verify the ASSEMBLED posture: authored
   # policy in, real launch, real enforcement observed, for each posture the
