@@ -113,16 +113,19 @@ func TestDashboardPerf_RecordsPollTimings(t *testing.T) {
 	// orders of magnitude above its p50. It now names the per-group point
 	// queries and the per-row side reads that can stall it.
 	// The payload preamble reaches the HOST — buildSandboxImplCatalog forks
-	// bwrap on a cold 60 s cache — and used to sit unmeasured inside the groups
-	// window, so an occasional multi-hundred-ms fork was charged to a group loop
-	// whose own sub-phases stay well under a millisecond.
+	// bwrap on a cold 60 s cache, buildHarnessCatalog costs ~500 ms on a
+	// process's first call — and used to sit unmeasured inside the groups
+	// window, so that cost was charged to a group loop whose own sub-phases
+	// stay well under a millisecond. "other" closes the window so the children
+	// account for the parent rather than leaving an unexplained gap.
 	payloadPhase := snap.Phases[2]
 	var payloadChildNames []string
 	for _, child := range payloadPhase.Children {
 		payloadChildNames = append(payloadChildNames, child.Name)
 	}
 	assert.Equal(t, []string{
-		"auth_session", "user_model", "harness_catalog", "sandbox_impl", "remote_access",
+		"auth_session", "user_model", "harness_catalog", "sandbox_impl",
+		"remote_access", "other",
 	}, payloadChildNames)
 	groupsPhase := snap.Phases[3]
 	var groupsChildNames []string
