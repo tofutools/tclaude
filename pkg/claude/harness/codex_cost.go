@@ -38,12 +38,15 @@ type codexModelPricing struct {
 var codexModelPrices = map[string]codexModelPricing{
 	"gpt-5.6-sol": {
 		Short: codexModelPrice{InputPerMTok: 5.00, CachedInputPerMTok: 0.50, OutputPerMTok: 30.00},
+		Long:  &codexModelPrice{InputPerMTok: 10.00, CachedInputPerMTok: 1.00, OutputPerMTok: 45.00},
 	},
 	"gpt-5.6-terra": {
-		Short: codexModelPrice{InputPerMTok: 2.50, CachedInputPerMTok: 0.25, OutputPerMTok: 15.00},
+		Short: codexModelPrice{InputPerMTok: 2.00, CachedInputPerMTok: 0.20, OutputPerMTok: 12.00},
+		Long:  &codexModelPrice{InputPerMTok: 4.00, CachedInputPerMTok: 0.40, OutputPerMTok: 18.00},
 	},
 	"gpt-5.6-luna": {
-		Short: codexModelPrice{InputPerMTok: 1.00, CachedInputPerMTok: 0.10, OutputPerMTok: 6.00},
+		Short: codexModelPrice{InputPerMTok: 0.20, CachedInputPerMTok: 0.02, OutputPerMTok: 1.20},
+		Long:  &codexModelPrice{InputPerMTok: 0.40, CachedInputPerMTok: 0.04, OutputPerMTok: 1.80},
 	},
 	"gpt-5.5": {
 		Short: codexModelPrice{InputPerMTok: 5.00, CachedInputPerMTok: 0.50, OutputPerMTok: 30.00},

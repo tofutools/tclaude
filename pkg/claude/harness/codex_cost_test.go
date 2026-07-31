@@ -42,9 +42,12 @@ func TestCodexVirtualCostFromRollout_PricesFlagshipModels(t *testing.T) {
 		contextWindow int
 		want          float64
 	}{
-		{name: "gpt-5.6-sol", model: "gpt-5.6-sol", contextWindow: 372000, want: 0.0000355},
-		{name: "gpt-5.6-terra", model: "gpt-5.6-terra", contextWindow: 372000, want: 0.00001775},
-		{name: "gpt-5.6-luna", model: "gpt-5.6-luna", contextWindow: 372000, want: 0.0000071},
+		{name: "gpt-5.6-sol short", model: "gpt-5.6-sol", contextWindow: 272000, want: 0.0000355},
+		{name: "gpt-5.6-sol long", model: "gpt-5.6-sol", contextWindow: 372000, want: 0.0000560},
+		{name: "gpt-5.6-terra short", model: "gpt-5.6-terra", contextWindow: 272000, want: 0.0000142},
+		{name: "gpt-5.6-terra long", model: "gpt-5.6-terra", contextWindow: 372000, want: 0.0000224},
+		{name: "gpt-5.6-luna short", model: "gpt-5.6-luna", contextWindow: 272000, want: 0.00000142},
+		{name: "gpt-5.6-luna long", model: "gpt-5.6-luna", contextWindow: 372000, want: 0.00000224},
 		{name: "gpt-5.5 short", model: "gpt-5.5", contextWindow: 272000, want: 0.0000355},
 		{name: "gpt-5.5 long", model: "gpt-5.5", contextWindow: 1000000, want: 0.0000560},
 		{name: "gpt-5.5-pro short", model: "gpt-5.5-pro", contextWindow: 200000, want: 0.0002400},
