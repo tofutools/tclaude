@@ -1356,6 +1356,9 @@ func fetchOpenCodeSessionTreeHistory(
 			if _, seen := tracked[child.ID]; seen {
 				continue
 			}
+			if len(tracked) >= maxOpenCodeTrackedSessions {
+				return nil, nil, nil, false
+			}
 			tracked[child.ID] = sessionID
 			nativeCosts[child.ID] = child.Cost
 			queue = append(queue, child.ID)
