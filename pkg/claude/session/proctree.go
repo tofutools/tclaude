@@ -67,6 +67,16 @@ func DescendantCommandLines(rootPID int) ([]string, bool) {
 	if rootPID <= 0 || !IsProcessAlive(rootPID) {
 		return nil, false
 	}
+	// Prefer walking the subtree directly. Reconstructing it from a full
+	// process-table snapshot costs one /proc/<pid>/stat read per process ON THE
+	// HOST — measured at ~15.5us each, so ~3.6ms per 235 processes — and the
+	// dashboard pays it once per agent with live background work, on every
+	// 2-second poll. An agent's actual subtree is a handful of processes; the
+	// kernel can name its children directly, so ask for those instead. Falls
+	// back below on a kernel that cannot answer.
+	if out, ok, supported := descendantCommandLinesViaChildren(rootPID); supported {
+		return out, ok
+	}
 	table, ok := readProcTable()
 	if !ok {
 		return nil, false
@@ -94,3 +104,12 @@ func DescendantCommandLines(rootPID int) ([]string, bool) {
 	}
 	return out, true
 }
+
+// The snapshot is deliberately NOT memoized across calls, even though a roster
+// of N agents on the fallback path pays N of them per poll. The caller's own
+// read-through cache is keyed on the ledger JSON precisely so that a hook
+// launching new background work invalidates it immediately rather than making
+// that work wait out an interval — and a snapshot taken before the fork is not
+// "slightly stale", it is evidence that the shell is not running, which retires
+// the ledger entry permanently. Sharing a snapshot inside a poll would reopen
+// that window for every agent reconciled after the first.

@@ -10,3 +10,9 @@ package session
 func readProcTable() (procTable, bool) {
 	return procTable{}, false
 }
+
+// descendantCommandLinesViaChildren reports supported=false here. No process enumeration on this platform at all, so there is nothing
+// cheaper to prefer.
+func descendantCommandLinesViaChildren(int) (out []string, ok bool, supported bool) {
+	return nil, false, false
+}
