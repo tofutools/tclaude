@@ -716,8 +716,17 @@ func openCodeServeProcessExec(
 	if err != nil {
 		return "", nil, nil, nil, noCleanup, err
 	}
-	bwrapBinary, _, err := resolveOpenCodeTclaudeLayer(
-		posture, root, sandboxSpec.Contract.NetworkEngine)
+	// The DEPLOYED engine, not the authored one on the contract. They diverge
+	// for a filtered posture whose policy is non-discriminating: the contract
+	// carries `proxy` as authored while the plan deploys none, and probing the
+	// proxy engine's floor there would skip the pasta/nft/userns prerequisites
+	// the launch is actually about to need. TclaudeLayerNetworkEngine is the
+	// same resolution the plan itself performs.
+	engine, err := session.TclaudeLayerNetworkEngine(sandboxSpec.Effective)
+	if err != nil {
+		return "", nil, nil, nil, noCleanup, err
+	}
+	bwrapBinary, _, err := resolveOpenCodeTclaudeLayer(posture, root, engine)
 	if err != nil {
 		return "", nil, nil, nil, noCleanup, err
 	}
@@ -1032,8 +1041,12 @@ func openCodeServeExec(
 	if err != nil {
 		return "", nil, err
 	}
+	hostOpenEngine, err := session.TclaudeLayerNetworkEngine(sandboxSpec.Effective)
+	if err != nil {
+		return "", nil, err
+	}
 	bwrapBinary, _, err := resolveOpenCodeTclaudeLayer(
-		sandboxpolicy.NetworkHostOpen, root, sandboxSpec.Contract.NetworkEngine)
+		sandboxpolicy.NetworkHostOpen, root, hostOpenEngine)
 	if err != nil {
 		return "", nil, err
 	}
@@ -1077,13 +1090,10 @@ func openCodeTclaudeLayerLaunchSpec(
 		if posture == sandboxpolicy.NetworkFiltered {
 			// The engine comes from the composed policy, through the same
 			// resolution the launch itself performs, so the preflight probes
-			// the floor the launch will actually build.
-			axes, axesErr := sandboxpolicy.PlannedEffectiveAccessAxes(effective)
-			if axesErr != nil {
-				return nil, axesErr
-			}
-			engine, engineErr := sandboxpolicy.DeployedNetworkEngineForRules(
-				axes.Network)
+			// the floor the launch will actually build. Never re-derived here:
+			// TclaudeLayerNetworkEngine is the one answer, and asking a second
+			// way is how a preflight ends up probing a different floor.
+			engine, engineErr := session.TclaudeLayerNetworkEngine(effective)
 			if engineErr != nil {
 				return nil, engineErr
 			}

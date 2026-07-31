@@ -860,7 +860,7 @@ func TestProxyNetworkSetupArgsGrantNoCapabilities(t *testing.T) {
 	require.NoError(t, err)
 	defer relay.Close()
 	assert.False(t, slices.Contains(relay.SetupArgs, "--cap-add"))
-	assert.Len(t, relay.Files, 2,
+	assert.Len(t, relay.Files, tclaudeLayerProxyEngineDescriptors,
 		"the sealed inputs are the bootstrap image and the namespace hosts file")
 	assert.Contains(t, relay.SetupArgs, proxyNetworkBootstrapSyncPath)
 	assert.Contains(t, relay.Command, tclaudeLayerProxyBootstrapCommand)
@@ -891,7 +891,7 @@ func TestProxyNetworkFloorMasksHostNameMappings(t *testing.T) {
 	assert.Equal(t, "--ro-bind-data", relay.SetupArgs[index-2])
 	assert.Equal(t, strconv.Itoa(proxyNetworkHostsFD), relay.SetupArgs[index-1])
 
-	require.Len(t, relay.Files, 2)
+	require.Len(t, relay.Files, tclaudeLayerProxyEngineDescriptors)
 
 	hosts := sandboxpolicy.ProxyNetworkHostsFile()
 	assert.Contains(t, string(hosts), "127.0.0.1 localhost",
@@ -942,4 +942,45 @@ func TestProxyNetworkHostsFileReachesTheNamedDescriptor(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, string(sandboxpolicy.ProxyNetworkHostsFile()), string(carried),
 		"the descriptor the /etc/hosts argument names must carry the hosts file")
+}
+
+// TestProxyNetworkSealedDescriptorCountMatchesTheRelayContract ties the number
+// of descriptors this engine actually prepares to the constant the shared relay
+// fd arithmetic is written against.
+//
+// The compile-time pin beside the fd constants catches a RENUMBERING. It cannot
+// catch an APPENDED descriptor: a fifth sealed input added with a new constant
+// leaves every existing fd constant reading the same, the pin still evaluates
+// to zero, and the build passes — while bubblewrap's ExtraFiles grows and the
+// OpenCode launcher's preserved pair silently moves one higher than
+// TclaudeLayerUnixRelayServerFDs reports. This test and the fail-closed check
+// inside prepareProxyNetworkRelay are what close that gap.
+//
+// Falsifiability: append one more file in prepareProxyNetworkRelay without
+// raising tclaudeLayerProxyEngineDescriptors, and this fails along with the
+// launch-time refusal.
+func TestProxyNetworkSealedDescriptorCountMatchesTheRelayContract(t *testing.T) {
+	plan := proxyBridgeTestPlan(t,
+		proxyBridgeDiscriminatingRules(), sandboxpolicy.NetworkEngineProxy)
+	encoded, err := encodeProxyNetworkRelayPolicy(plan)
+	require.NoError(t, err)
+	relay, err := prepareProxyNetworkRelay(encoded)
+	require.NoError(t, err)
+	defer relay.Close()
+	require.Len(t, relay.Files, tclaudeLayerProxyEngineDescriptors)
+
+	// And the fds those descriptors take on the far side of bubblewrap are
+	// exactly the ones below the launcher's pair, with no gap and no overlap.
+	spec, err := BuildTclaudeLayerLaunchSpec(TclaudeLayerLaunchInput{
+		HarnessName: "claude",
+		Cwd:         t.TempDir(),
+		StateRoot:   t.TempDir(),
+		Snapshot:    proxyBridgeSnapshot(proxyBridgeDiscriminatingRules()),
+	})
+	require.NoError(t, err)
+	listenerFD, _, err := TclaudeLayerUnixRelayServerFDs(spec)
+	require.NoError(t, err)
+	assert.Equal(t,
+		tclaudeLayerRelayStatusFD+len(relay.Files)+1, listenerFD,
+		"the launcher's listener must follow this engine's last sealed descriptor")
 }

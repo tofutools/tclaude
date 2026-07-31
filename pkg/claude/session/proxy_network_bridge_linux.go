@@ -206,6 +206,15 @@ func prepareProxyNetworkRelay(
 		return preparedProxyNetworkRelay{}, err
 	}
 	files = append(files, hostsFile)
+	// The same count check the packet gateway makes, for the same reason: the
+	// compile-time pin beside the fd constants catches a renumbering, and this
+	// catches an appended descriptor that would silently move the OpenCode
+	// launcher's preserved pair.
+	if len(files) != tclaudeLayerProxyEngineDescriptors {
+		return preparedProxyNetworkRelay{}, fmt.Errorf(
+			"proxy engine prepared %d sealed descriptors, but the relay fd contract is written for %d",
+			len(files), tclaudeLayerProxyEngineDescriptors)
+	}
 	return preparedProxyNetworkRelay{
 		SetupArgs: []string{
 			"--ro-bind", syncHostPath, proxyNetworkBootstrapSyncPath,

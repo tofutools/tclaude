@@ -16,10 +16,14 @@
 #
 # Fixture: a HOST-side dummy interface on its own subnet (198.18.5.0/24), not a
 # namespace. Disjoint from flows 10, 20 and 30 so no flow can disturb another or
-# depend on one having run. Three names resolve to the one fixture address, and
+# depend on one having run. Four names resolve to the one fixture address, and
 # each has a job:
 #
-#   origin      — authored ALLOW; the model origin the Go arm serves itself
+#   origin      — authored ALLOW; the model origin the Go arm serves itself,
+#                 and the ONLY name whose decisions are read as OpenCode's
+#   declared    — authored ALLOW; the in-floor probe's carried destination. It
+#                 is a separate name from the origin precisely so the probe's
+#                 own allowed decisions can never be mistaken for the server's
 #   undeclared  — authored NOWHERE; refused as `not_authorized`
 #   denied      — authored ALLOW *and* DENY; refused as `denied_by_rule`
 #
@@ -43,8 +47,10 @@ flow::run() {
   origin_host=oc-floor-origin.floor.test
   undeclared_host=oc-floor-undeclared.floor.test
   denied_host=oc-floor-denied.floor.test
+  declared_host=oc-floor-declared.floor.test
   probe_port=41051
   probe_pid=
+  arm_log="$SMOKE_ARTIFACTS/opencode-floor-arm.log"
 
   cleanup() {
     # `|| true` is not tidiness: without it, a kill that fails because socat
@@ -66,10 +72,10 @@ flow::run() {
   sudo ip link set "$link" up
   sudo ip address add "$origin_addr/24" dev "$link"
   fixture::hosts_add \
-    "$origin_addr $origin_host $undeclared_host $denied_host"
+    "$origin_addr $origin_host $declared_host $undeclared_host $denied_host"
 
   # Anti-vacuous precondition. The address must answer a direct round trip, and
-  # all three names must resolve to it host-side — the proxy resolves names on
+  # all four names must resolve to it host-side — the proxy resolves names on
   # the HOST, so a name that resolved nowhere would produce an unresolvable
   # verdict rather than the policy verdict each name exists to demonstrate.
   #
@@ -84,7 +90,7 @@ flow::run() {
   sleep 1
   fixture::prove_reachable "$origin_addr" "$probe_port"
   local name resolved
-  for name in "$origin_host" "$undeclared_host" "$denied_host"; do
+  for name in "$origin_host" "$declared_host" "$undeclared_host" "$denied_host"; do
     resolved="$(getent hosts "$name" | awk '{print $1}' | head -n1)"
     if [[ "$resolved" != "$origin_addr" ]]; then
       smoke::error "$name resolves to '${resolved:-nothing}', not $origin_addr"
@@ -100,9 +106,29 @@ flow::run() {
   TCLAUDE_OPENCODE_FLOOR_ORIGIN_HOST="$origin_host" \
   TCLAUDE_OPENCODE_FLOOR_UNDECLARED_HOST="$undeclared_host" \
   TCLAUDE_OPENCODE_FLOOR_DENIED_HOST="$denied_host" \
+  TCLAUDE_OPENCODE_FLOOR_DECLARED_HOST="$declared_host" \
     go test ./pkg/claude/agentd \
       -run '^TestOpenCodeProxyFloorCooperation$' \
-      -count=1 -v -timeout=900s
+      -count=1 -v -timeout=900s | tee "$arm_log"
+
+  # THE PROBE MARKERS ARE COUNTED HERE, NOT IN flow::report. The driver calls
+  # flow::report only after a flow has already been marked passed, and it
+  # discards the function's status — a check there would read like a gate and
+  # gate nothing. This runs inside flow::run, where a non-zero return fails the
+  # flow.
+  #
+  # Four is the whole set: the undeclared and deny-row questions over each of
+  # the two carriages. Fewer means the in-floor probe did not ask them all,
+  # which is exactly the state in which the arm's refusal evidence would be
+  # about a record nothing wrote. The Go arm asserts the same set itself; this
+  # is the shell-side backstop against an arm that stopped emitting them.
+  local refusals
+  refusals="$(grep -c 'opencode-proxy-floor-probe: .*: refused' "$arm_log" || true)"
+  if [[ "${refusals:-0}" -ne 4 ]]; then
+    smoke::error "in-floor probe recorded ${refusals:-0} refusals, expected 4; the refusal evidence is incomplete"
+    return 1
+  fi
+  smoke::log "in-floor probe refusals recorded: $refusals"
 }
 
 flow::describe() {
@@ -136,11 +162,7 @@ TXT
 flow::report() {
   local log="$1"
   grep 'opencode-proxy-floor: ' "$log" || echo "(no floor record emitted)"
-  # Counted, not merely shown. Four is the whole set the arm requires — the
-  # undeclared and deny-row questions over each of the two carriages — and a
-  # smaller number means the in-floor probe did not ask them all, which is
-  # exactly the state in which the refusal evidence above would be vacuous.
-  local refusals
-  refusals="$(grep -c 'opencode-proxy-floor-probe: .*: refused' "$log" || true)"
-  echo "in-floor probe refusals recorded: ${refusals:-0} (expected 4)"
+  # Display only. The gate that MATTERS is in flow::run, because the driver
+  # discards this function's status.
+  grep 'opencode-proxy-floor-probe: ' "$log" || echo "(no probe markers emitted)"
 }

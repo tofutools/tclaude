@@ -204,3 +204,119 @@ func openCodeProxyEngineSnapshot() sandboxpolicy.Snapshot {
 	}
 	return snapshot
 }
+
+// TestOpenCodeLayerResolveProbesTheFloorTheLaunchBuilds pins the half of the
+// lift that is easiest to get subtly wrong: which engine the host-capability
+// probe is asked about.
+//
+// The launch contract carries the AUTHORED engine, and the plan deploys the
+// RESOLVED one. They are the same for a discriminating policy and DIFFERENT for
+// a non-discriminating one — a filtered posture whose allow rows the proxy
+// engine cannot discriminate on deploys no engine at all, even though the
+// profile authored `engine: proxy`. Probing the contract's answer there would
+// verify the proxy engine's floor (bubblewrap and pidfds) for a launch that is
+// about to build the packet gateway's (pasta, nft, a user namespace), and the
+// launch would then fail deep inside the supervisor rather than at the
+// prerequisite check that exists to catch it.
+//
+// Falsifiability: pass spec.Contract.NetworkEngine instead of the deployed
+// engine at either resolve site and the non-discriminating case below reports
+// the isolated floor.
+func TestOpenCodeLayerResolveProbesTheFloorTheLaunchBuilds(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		rules       sandboxpolicy.NetworkRules
+		wantEngine  sandboxpolicy.NetworkEngine
+		wantPosture sandboxpolicy.NetworkPosture
+	}{
+		{
+			name: "discriminating-proxy",
+			rules: sandboxpolicy.NetworkRules{
+				Mode:   sandboxpolicy.AccessModeList,
+				Engine: sandboxpolicy.NetworkEngineProxy,
+				Allow: []sandboxpolicy.NetworkAllowEntry{
+					{Domain: "example.com", Ports: []int{443}},
+				},
+			},
+			wantEngine: sandboxpolicy.NetworkEngineProxy,
+			// The proxy engine's floor IS the isolated posture's construction.
+			wantPosture: sandboxpolicy.NetworkIsolatedWithAgentd,
+		},
+		{
+			name: "authored-proxy-but-non-discriminating",
+			rules: sandboxpolicy.NetworkRules{
+				Mode:   sandboxpolicy.AccessModeList,
+				Engine: sandboxpolicy.NetworkEngineProxy,
+				Allow: []sandboxpolicy.NetworkAllowEntry{
+					{Loopback: true, Ports: []int{8080}},
+				},
+			},
+			// No engine deploys, so the packet gateway's floor is what gets
+			// built and what must be probed.
+			wantEngine:  sandboxpolicy.NetworkEngineUnset,
+			wantPosture: sandboxpolicy.NetworkFiltered,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home, err := os.MkdirTemp("/tmp", "ocr-*")
+			require.NoError(t, err)
+			home, err = filepath.EvalSymlinks(home)
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = os.RemoveAll(home) })
+			t.Setenv("HOME", home)
+			t.Setenv("XDG_DATA_HOME", filepath.Join(home, "data"))
+			socketPath := filepath.Join(home, ".tclaude", "api", "agentd.sock")
+			require.NoError(t, os.MkdirAll(filepath.Dir(socketPath), 0o700))
+			socket, err := net.Listen("unix", socketPath)
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = socket.Close() })
+			t.Setenv(agentipc.SocketEnv, socketPath)
+			db.ResetForTest()
+			t.Cleanup(db.ResetForTest)
+
+			snapshot := sandboxpolicy.EmptySnapshot()
+			rules := tc.rules
+			snapshot.Effective.Network = &rules
+			agentID := db.NewAgentID()
+			_, err = allocatePrivateOpenCodeState(agentID)
+			require.NoError(t, err)
+			spec, err := buildOpenCodeTclaudeLayerLaunchSpec(
+				t.TempDir(), nil, &snapshot, agentID, true, true)
+			require.NoError(t, err)
+			require.NotNil(t, spec)
+
+			var probedPostures []sandboxpolicy.NetworkPosture
+			var probedEngines []sandboxpolicy.NetworkEngine
+			previousResolve := resolveOpenCodeTclaudeLayer
+			resolveOpenCodeTclaudeLayer = func(
+				posture sandboxpolicy.NetworkPosture,
+				root sandboxpolicy.RootPosture,
+				engine sandboxpolicy.NetworkEngine,
+			) (string, harness.LaunchOSSandbox, error) {
+				probedEngines = append(probedEngines, engine)
+				// The floor mapping is production's, applied here rather than
+				// re-implemented, so this records the posture that would
+				// actually have been verified.
+				probedPostures = append(probedPostures,
+					session.TclaudeLayerFloorPosture(posture, engine))
+				return "/usr/bin/bwrap", harness.LaunchOSSandbox{}, nil
+			}
+			t.Cleanup(func() { resolveOpenCodeTclaudeLayer = previousResolve })
+
+			runtime := &db.OpenCodeRuntime{
+				SessionID: "opencode-resolve-" + tc.name,
+				Transport: db.OpenCodeTransportUnixRelay,
+			}
+			_, _, _, _, cleanup, err := openCodeServeProcessExec(
+				"/usr/bin/opencode", "41998", runtime, spec)
+			cleanup()
+			require.NoError(t, err)
+			require.NotEmpty(t, probedEngines,
+				"the launch must verify the host before rendering")
+			assert.Equal(t, tc.wantEngine, probedEngines[0],
+				"the probe must follow the DEPLOYED engine, not the authored one")
+			assert.Equal(t, tc.wantPosture, probedPostures[0],
+				"the probe must verify the floor this launch actually builds")
+		})
+	}
+}

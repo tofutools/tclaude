@@ -96,6 +96,15 @@ const (
 	// deny row beats (denied_by_rule).
 	openCodeFloorUndeclaredHostEnv = "TCLAUDE_OPENCODE_FLOOR_UNDECLARED_HOST"
 	openCodeFloorDeniedHostEnv     = "TCLAUDE_OPENCODE_FLOOR_DENIED_HOST"
+	// The probe's own DECLARED destination, and it is a separate name from the
+	// model origin on purpose. If the probe asked about the origin's name, its
+	// two allowed decisions would land in the same set the arm reads to answer
+	// "did OPENCODE carry its model traffic" — and every downstream conclusion
+	// would then be about the probe. Worst of all, the floor-leaked assertion
+	// would become unfalsifiable: it fires when a model request completed with
+	// no proxy decision naming the origin, and the probe would have guaranteed
+	// such a decision exists before OpenCode was even prompted.
+	openCodeFloorDeclaredHostEnv = "TCLAUDE_OPENCODE_FLOOR_DECLARED_HOST"
 
 	// The probe's own environment, read inside the floor.
 	openCodeFloorProbeEnv       = "TCLAUDE_OPENCODE_FLOOR_PROBE"
@@ -129,11 +138,25 @@ func TestOpenCodeProxyFloorCooperation(t *testing.T) {
 	// the real pinned binary rather than finding itself.
 	realOpenCode, err := harness.OpenCodeExecutable()
 	require.NoError(t, err)
+	// THE LAUNCHER AND THE SUPERVISOR ARE THE REAL tclaude BINARY, not this
+	// test binary. openCodeRelayExecutable defaults to os.Executable, which
+	// under `go test` is the compiled agentd test binary — and only tclaude's
+	// main understands the positional launch mode this seam execs. A test
+	// binary would ignore it, re-run this package's tests with the smoke
+	// environment still set, and the launch would die at its authority
+	// handshake with nothing to say about the floor. The existing relay
+	// executor smoke makes the same override for the same reason.
+	previousRelayExecutable := openCodeRelayExecutable
+	openCodeRelayExecutable = func() (string, error) { return tclaudeBinary, nil }
+	t.Cleanup(func() { openCodeRelayExecutable = previousRelayExecutable })
 
 	originAddr := requireOpenCodeFloorEnv(t, openCodeFloorOriginAddrEnv)
 	originHost := requireOpenCodeFloorEnv(t, openCodeFloorOriginHostEnv)
 	undeclaredHost := requireOpenCodeFloorEnv(t, openCodeFloorUndeclaredHostEnv)
 	deniedHost := requireOpenCodeFloorEnv(t, openCodeFloorDeniedHostEnv)
+	declaredHost := requireOpenCodeFloorEnv(t, openCodeFloorDeclaredHostEnv)
+	require.NotEqual(t, originHost, declaredHost,
+		"the probe's declared destination must not be the model origin's name, or its decisions would be read as OpenCode's")
 	parsedOrigin, err := netip.ParseAddr(originAddr)
 	require.NoError(t, err)
 	require.Falsef(t, parsedOrigin.IsLoopback(),
@@ -164,15 +187,6 @@ func TestOpenCodeProxyFloorCooperation(t *testing.T) {
 		require.NoError(t, os.Unsetenv(entry.Name))
 		t.Cleanup(func() { _ = os.Setenv(entry.Name, previous) })
 	}
-	// THE AUDIT RECORD IS TURNED ON THE PRODUCTION WAY. The filtering proxy
-	// logs every decision at debug level and a refusal has no other observable
-	// trace at all — the client sees a status it may swallow, and the empty
-	// namespace produces no packet to capture. The relay argv this seam renders
-	// has no test seam to stub, and inventing one would mean the smoke proved
-	// something about a launch production does not perform. An operator turns
-	// the record on with exactly this config key, so the smoke does too.
-	writeOpenCodeFloorDebugConfig(t, home)
-
 	cwd := filepath.Join(home, "workspace")
 	require.NoError(t, os.MkdirAll(cwd, 0o700))
 	// TCL-892 workaround, test-owned exactly as #1787's arm made it: the
@@ -199,13 +213,13 @@ func TestOpenCodeProxyFloorCooperation(t *testing.T) {
 	markerPath := filepath.Join(cwd, openCodeFloorMarkerFile)
 	installOpenCodeFloorProbeWrapper(t, cwd, realOpenCode, markerPath,
 		openCodeFloorProbeTargets{
-			Declared:   net.JoinHostPort(originHost, strconv.Itoa(origin.port)),
+			Declared:   net.JoinHostPort(declaredHost, strconv.Itoa(origin.port)),
 			Undeclared: net.JoinHostPort(undeclaredHost, strconv.Itoa(origin.port)),
 			Denied:     net.JoinHostPort(deniedHost, strconv.Itoa(origin.port)),
 		})
 
 	snapshot := openCodeFloorSnapshot(
-		originAddr, originHost, deniedHost, origin.port)
+		originAddr, originHost, declaredHost, deniedHost, origin.port)
 	snapshot.Effective.Environment = append(
 		append([]sandboxpolicy.EnvironmentEntry(nil), origin.environment...),
 		sandboxpolicy.EnvironmentEntry{Name: openCodeFloorProbeEnv, Value: "1"})
@@ -213,6 +227,22 @@ func TestOpenCodeProxyFloorCooperation(t *testing.T) {
 	agentID := db.NewAgentID()
 	allocation, err := allocatePrivateOpenCodeState(agentID)
 	require.NoError(t, err)
+	// THE AUDIT RECORD IS TURNED ON THE PRODUCTION WAY, IN THE HOME THE
+	// SUPERVISOR ACTUALLY RESOLVES. The filtering proxy logs every decision at
+	// debug level and a refusal has no other observable trace at all — the
+	// client sees a status it may swallow, and the empty namespace produces no
+	// packet to capture. An operator turns that record on with this config key,
+	// so the smoke does too rather than inventing a seam for a launch
+	// production does not perform.
+	//
+	// WHICH HOME is the part that is easy to get wrong and silently lose the
+	// entire audit trail. A filtered launch has openCodeServerEnvironment pin
+	// HOME into the harness state root, and the launcher execs the supervisor
+	// with that environment — so the supervisor reads its config and writes its
+	// log under the state root's filtered home, NOT under this test's HOME.
+	supervisorHome := filepath.Join(
+		allocation.StateRoot, openCodeFilteredHomeBase)
+	writeOpenCodeFloorDebugConfig(t, supervisorHome)
 	t.Cleanup(func() {
 		if !t.Failed() {
 			return
@@ -269,9 +299,11 @@ func TestOpenCodeProxyFloorCooperation(t *testing.T) {
 	// Emitted UNCONDITIONALLY, not only on failure: the flow's checker counts
 	// these lines, and evidence that only appears when something went wrong is
 	// evidence a green run cannot be read from.
+	// Once, not twice. Under `go test -v` a t.Log already reaches the flow's
+	// log, and the flow COUNTS these lines — a second copy from fmt.Println
+	// would double every count the operator reads.
 	for _, marker := range markers {
 		t.Log(openCodeFloorMarkerPrefix + marker)
-		fmt.Println(openCodeFloorMarkerPrefix + marker)
 	}
 	assert.Contains(t, markers, "wrapper: started",
 		"the measurement wrapper must record that it ran at all")
@@ -289,7 +321,8 @@ func TestOpenCodeProxyFloorCooperation(t *testing.T) {
 	// on the first evidence of either and the assertions read what happened.
 	require.Eventuallyf(t, func() bool {
 		return len(openCodeFloorOriginDecisions(
-			readOpenCodeFloorDecisions(t, home), originHost, origin.port)) > 0 ||
+			readOpenCodeFloorDecisions(t, supervisorHome),
+			originHost, origin.port)) > 0 ||
 			origin.modelRequests.Load() > 0
 	}, 120*time.Second, 250*time.Millisecond,
 		"the OpenCode server made no model request over any route, so this run measured nothing")
@@ -298,9 +331,10 @@ func TestOpenCodeProxyFloorCooperation(t *testing.T) {
 	// path and report a conclusion this run did not measure.
 	time.Sleep(3 * time.Second)
 
-	decisions := readOpenCodeFloorDecisions(t, home)
-	require.NotEmpty(t, decisions,
-		"the proxy recorded no decision at all; either the floor never started or the audit record is not being read")
+	decisions := readOpenCodeFloorDecisions(t, supervisorHome)
+	require.NotEmptyf(t, decisions,
+		"the proxy recorded no decision at all; either the floor never started or its log is not where this arm reads it (%s)",
+		filepath.Join(supervisorHome, ".tclaude", "data", "output.log"))
 
 	records := make([]string, 0, 4)
 
@@ -309,12 +343,20 @@ func TestOpenCodeProxyFloorCooperation(t *testing.T) {
 	//    it is refused. This reads the WHOLE record rather than a list of names
 	//    guessed in advance, so a destination nobody anticipated cannot slip
 	//    past by not being asserted about.
-	declared := []string{originHost}
+	declared := []string{originHost, declaredHost}
 	for _, decision := range decisions {
 		if decision.Kind == "literal" {
-			// A literal target records an Address and no Host. Literals are
-			// authorized by the fixture CIDR row, so an allowed one is inside
-			// the authored policy rather than outside it.
+			// A literal target records an Address and no Host, so the name
+			// comparison below cannot judge it. It is ASSERTED rather than
+			// skipped: the only literal the authored policy covers is the
+			// fixture address, through the one /32 cidr row, so an allowed
+			// literal naming anything else is exactly the leak this assertion
+			// exists to catch.
+			if decision.Verdict == "allowed" {
+				assert.Equalf(t, originAddr, decision.Address,
+					"the floor's proxy allowed a literal destination outside the one authored cidr row: %s",
+					decision.Destination())
+			}
 			continue
 		}
 		if slices.Contains(declared, decision.Host) {
@@ -344,7 +386,7 @@ func TestOpenCodeProxyFloorCooperation(t *testing.T) {
 		// DECLARED destination in the same launch, so a refusal is the policy
 		// answering rather than the carriage being broken.
 		assert.Truef(t, openCodeFloorDecisionsInclude(
-			decisions, carriage, originHost, origin.port, "allowed"),
+			decisions, carriage, declaredHost, origin.port, "allowed"),
 			"the declared destination was not carried over %s, so its refusals prove nothing; decisions:\n%s",
 			carriage, formatOpenCodeFloorDecisions(decisions))
 	}
@@ -358,10 +400,9 @@ func TestOpenCodeProxyFloorCooperation(t *testing.T) {
 	//    record that the run did not measure.
 	originDecisions := openCodeFloorOriginDecisions(
 		decisions, originHost, origin.port)
-	// The probe's own declared requests are in that set too, so the harness's
-	// carriage is read from what is left after the probe's known markers are
-	// accounted for — which is why the record below reports the carriages SEEN
-	// and the completed model requests, rather than claiming a count.
+	// Nothing but OpenCode's own traffic can be in this set: the probe asks
+	// about a different declared name, so every decision here names the model
+	// origin because the SERVER named it.
 	direct := origin.modelRequests.Load()
 	carriages := map[string]bool{}
 	for _, decision := range originDecisions {
@@ -376,10 +417,10 @@ func TestOpenCodeProxyFloorCooperation(t *testing.T) {
 		records = append(records, fmt.Sprintf(
 			"CARRIED BUT NOT COMPLETED: the origin was offered to the proxy over %v and allowed, but no model request completed",
 			sortedOpenCodeFloorCarriages(carriages)))
-	case len(openCodeFloorTransportErrors(t, home)) > 0:
+	case len(openCodeFloorTransportErrors(t, supervisorHome)) > 0:
 		records = append(records, fmt.Sprintf(
 			"NOT CARRIED (attempted): the server reached the proxy but stated no target; transport errors=%v",
-			openCodeFloorTransportErrors(t, home)))
+			openCodeFloorTransportErrors(t, supervisorHome)))
 	default:
 		records = append(records,
 			"NOT CARRIED (never tried): the server made no proxy connection naming the model origin")
@@ -399,7 +440,6 @@ func TestOpenCodeProxyFloorCooperation(t *testing.T) {
 
 	for _, record := range records {
 		t.Log(openCodeFloorRecordPrefix + record)
-		fmt.Println(openCodeFloorRecordPrefix + record)
 	}
 }
 
@@ -415,12 +455,15 @@ func TestOpenCodeProxyFloorCooperation(t *testing.T) {
 //     private-destination blocker refuses in an allowlist posture unless an
 //     explicit cidr row covers it. Without it every carried request would be
 //     refused as private_destination and the arm could record nothing else;
+//   - the probe's declared host is authored allowed and is a DIFFERENT name
+//     from the origin, so the probe's own carried requests never enter the set
+//     the arm reads to answer what OpenCode did;
 //   - the denied host is authored ALLOWED and then DENIED, so the deny row has
 //     an overlapping allow to beat. A deny row with nothing to beat produces
 //     not_authorized, which is the other test's verdict, not this one's;
 //   - the undeclared name is deliberately absent from all of them.
 func openCodeFloorSnapshot(
-	originAddr, originHost, deniedHost string,
+	originAddr, originHost, declaredHost, deniedHost string,
 	originPort int,
 ) sandboxpolicy.Snapshot {
 	snapshot := sandboxpolicy.EmptySnapshot()
@@ -430,6 +473,7 @@ func openCodeFloorSnapshot(
 		Allow: []sandboxpolicy.NetworkAllowEntry{
 			{Host: originHost, Ports: []int{originPort}},
 			{CIDR: originAddr + "/32", Ports: []int{originPort}},
+			{Host: declaredHost, Ports: []int{originPort}},
 			{Host: deniedHost, Ports: []int{originPort}},
 		},
 		Deny: []sandboxpolicy.NetworkAllowEntry{
@@ -696,15 +740,19 @@ func openCodeFloorTransportErrors(t *testing.T, home string) []string {
 	return readOpenCodeFloorLogLines(home, session.ProxyNetworkErrorMessage)
 }
 
-// readOpenCodeFloorLogLines reads the supervisor's log through the production
-// accessor rather than a spelled path: the log has moved once already
-// (~/.tclaude -> ~/.tclaude/data), and a smoke that hard-coded the old spelling
-// would report "the proxy decided nothing" for a launch that decided plenty.
+// readOpenCodeFloorLogLines reads the supervisor's log.
+//
+// The home is passed in rather than taken from the accessor, and that is the
+// whole correctness of this reader: common.OutputLogPath() resolves against THIS
+// PROCESS's home, while the supervisor runs with HOME pinned into the harness
+// state root. It is kept as a last fallback only so a future launch that does
+// not repin HOME still reads somewhere sensible. The ~/.tclaude/output.log
+// spelling is read too because the log has moved once already.
 func readOpenCodeFloorLogLines(home, message string) []string {
 	candidates := []string{
-		common.OutputLogPath(),
 		filepath.Join(home, ".tclaude", "data", "output.log"),
 		filepath.Join(home, ".tclaude", "output.log"),
+		common.OutputLogPath(),
 	}
 	lines := []string{}
 	seen := map[string]struct{}{}
