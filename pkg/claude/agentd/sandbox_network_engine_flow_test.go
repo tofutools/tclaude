@@ -176,11 +176,14 @@ func TestNetworkEngineDisclosureRendersThroughTheEnforcementAPI(t *testing.T) {
 		require.Equalf(t, http.StatusCreated, rec.Code, "body=%s", rec.Body.String())
 	}
 
-	detailFor := func(t *testing.T, name string) string {
+	// The target is a parameter rather than a constant because activation is
+	// per harness: reading the rendered surface for only one of them would let
+	// a second activated harness disclose something else entirely and nothing
+	// here would notice.
+	detailForTarget := func(t *testing.T, name, target string) string {
 		t.Helper()
 		rec := profileReq(t, f, http.MethodGet,
-			"/v1/sandbox-profiles/"+name+"/enforcement?"+
-				"for=tclaude-layer%2Fclaude%2Flinux", nil)
+			"/v1/sandbox-profiles/"+name+"/enforcement?for="+target, nil)
 		require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 		var got struct {
 			Targets []struct {
@@ -190,6 +193,10 @@ func TestNetworkEngineDisclosureRendersThroughTheEnforcementAPI(t *testing.T) {
 		testharness.DecodeJSON(t, rec, &got)
 		require.Len(t, got.Targets, 1)
 		return got.Targets[0].Axes.Network.Detail
+	}
+	detailFor := func(t *testing.T, name string) string {
+		t.Helper()
+		return detailForTarget(t, name, "tclaude-layer%2Fclaude%2Flinux")
 	}
 
 	// Unset says nothing about an engine at all. This is the parity half: an
@@ -218,6 +225,26 @@ func TestNetworkEngineDisclosureRendersThroughTheEnforcementAPI(t *testing.T) {
 		"a proxy-engine posture must not claim the packet gateway's mechanism")
 	assert.NotContains(t, proxy, "outbound traffic is open",
 		"this floor refuses a launch it cannot build; it does not widen it")
+
+	// Codex is activated by TCL-888 on the evidence TCL-884 named, so the same
+	// profile read for a Codex target must render the SAME activated surface.
+	// Asserted through the API rather than inferred from the shared code path,
+	// because the rendered surface is the thing an operator reads, and it is
+	// what has to stop saying "not yet activated" the moment the cells flip.
+	//
+	// OpenCode is read beside it and must still carry the not-activated
+	// sentence: that contrast is the activation rule visible at the surface,
+	// and it is what would fail if a flip ever leaked past its record.
+	codex := detailForTarget(t, "engine-proxy-discriminating",
+		"tclaude-layer%2Fcodex%2Flinux")
+	assert.Equal(t, proxy, codex,
+		"an activated Codex target renders the same proxy-engine disclosure")
+	assert.NotContains(t, codex, "not activated")
+
+	openCode := detailForTarget(t, "engine-proxy-discriminating",
+		"tclaude-layer%2Fopencode%2Flinux")
+	assert.Contains(t, openCode, "not activated",
+		"a harness with no activation record must still disclose that")
 
 	// A selection on a policy that needs no filtering is latent, not an error.
 	latent := detailFor(t, "engine-proxy-latent")

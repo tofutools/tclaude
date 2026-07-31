@@ -136,17 +136,24 @@ func networkEngineDisclosure(
 // depends on it, and so a reader of the capability table can find the run that
 // justifies it.
 //
-// Codex is deliberately absent from this first activation even though its arm
-// of the same smokes runs green in the same CI run. Flipping one harness at a
-// time keeps the review on what the cells MEAN rather than on two harnesses at
-// once; adding Codex here is a one-line follow-up backed by that same run.
+// Codex was deliberately held back from the first activation (TCL-884) even
+// though its arm of the same smokes was green in the same run, so that review
+// could be about what the cells MEAN rather than about two harnesses at once.
+// TCL-888 makes its record from that same evidence: nothing new is proven by
+// adding the row, which is exactly the point — a cell flips when the record is
+// made, and the record is made against runs already named.
 //
 // OpenCode is absent for a different and stronger reason: it launches through
 // the agentd-owned server boundary rather than as a plain CLI, so its
 // cooperation arm belongs beside the existing OpenCode executor smoke. Until
-// that exists it has no evidence at all.
+// that exists it has no evidence at all, and it is what keeps the activation
+// rule itself under test now that both plain-CLI harnesses are listed.
 var proxyEngineActivatedSmokes = map[string][]string{
 	DefaultName: {
+		"TestPinnedProxyHarnessCooperation",
+		"TestPinnedProxyToolEgress",
+	},
+	CodexName: {
 		"TestPinnedProxyHarnessCooperation",
 		"TestPinnedProxyToolEgress",
 	},
