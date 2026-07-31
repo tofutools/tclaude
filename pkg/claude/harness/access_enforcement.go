@@ -577,6 +577,30 @@ func accessEnforcementTable(
 			caps.SocketListRefusal =
 				sandboxpolicy.NetworkEngineResolverSocketRefusal(selector, resolver)
 		}
+		// TCL-883: the same guarantee, taken away through the filesystem instead.
+		// A grant covering a resolver's directory binds the socket into the
+		// constructed root, and a read-only bind does not stop connect(2) on it.
+		//
+		// This one refuses from the capability seam rather than from a cell, for
+		// two reasons that are worth stating where the choice is made. There is
+		// no filesystem capability cell to attribute it to — the row rates the
+		// network and socket axes, and the offending authority is neither. And
+		// the conflict must refuse a DENY-ONLY proxy policy too (network open
+		// plus deny rows still deploys an engine), where the ladder's only
+		// filesystem-adjacent path omits unsupported deny rows with a widening
+		// notice instead of refusing; landing this on the allow-list cell would
+		// silently let exactly that shape through. Both PredictAccessEnforcement
+		// and ResolveAccessEnforcement return this error, so the editor preview
+		// and the launch refuse from the same evaluation.
+		if selector, resolver, conflict :=
+			sandboxpolicy.NetworkEngineResolverFilesystemConflict(
+				deployedEngine, axes.Filesystem); conflict {
+			return accessEnforcementTableRow{}, &SandboxCapabilityError{
+				Kind: SandboxCapabilityNetworkAllowlist,
+				Message: sandboxpolicy.NetworkEngineResolverFilesystemRefusal(
+					selector, resolver),
+			}
+		}
 		// The engine fields are set last so they describe the row as it ended
 		// up, after every platform and harness branch above has had its say —
 		// including a loopback-only policy on Darwin, which deploys no engine
@@ -1626,6 +1650,12 @@ func cloneResolvedAxes(in sandboxpolicy.ResolvedAxes) sandboxpolicy.ResolvedAxes
 		[]sandboxpolicy.SocketAllowEntry(nil),
 		in.UnixSockets.Allow...,
 	)
+	// The ladder never widens filesystem authority, but it must not hand back a
+	// slice that aliases the caller's either: a rendered axes value is passed on
+	// to renderers and persisted, and sharing backing arrays with authored input
+	// is how a later widening rung would leak into the profile it read.
+	out.Filesystem = append(
+		[]sandboxpolicy.FilesystemGrant(nil), in.Filesystem...)
 	return out
 }
 

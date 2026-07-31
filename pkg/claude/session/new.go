@@ -936,6 +936,12 @@ func runNew(params *NewParams) error {
 		return err
 	}
 	var filteredNetworkProbe *FilteredNetworkPrerequisite
+	// The engine this launch DEPLOYS, resolved once here and carried to every
+	// site that must agree about which floor is being built: the posture gate
+	// below, the host-capability resolve, and the boundary sentence. Unset means
+	// "no engine deployed", which leaves every one of those on the pre-engine
+	// path by construction.
+	tclaudeLayerEngine := sandboxpolicy.NetworkEngineUnset
 	if outerLayer &&
 		sandboxImplementation == sandboxpolicy.ImplementationTclaudeLayer &&
 		launchSandbox != nil && launchSandbox.Effective.Network != nil {
@@ -948,20 +954,39 @@ func runNew(params *NewParams) error {
 		if postureErr != nil {
 			return fmt.Errorf("derive sandbox network posture: %w", postureErr)
 		}
+		deployedEngine, engineErr := sandboxpolicy.DeployedNetworkEngineForRules(
+			axes.Network)
+		if engineErr != nil {
+			return fmt.Errorf("resolve network filtering engine: %w", engineErr)
+		}
+		tclaudeLayerEngine = deployedEngine
 		if requestedNetworkPosture == sandboxpolicy.NetworkFiltered {
 			if runtime.GOOS == "darwin" &&
 				sandboxpolicy.NetworkRulesAreLoopbackOnly(axes.Network) {
 				tclaudeLayerPosture = sandboxpolicy.NetworkFiltered
 			} else if runtime.GOOS == "linux" {
-				probe := ProbeFilteredNetworkPrerequisite()
-				filteredNetworkProbe = &probe
-				if supportErr := ValidateFilteredNetworkHarnessSupport(
-					h, sandboxImplementation, axes, probe,
-				); supportErr != nil {
-					return supportErr
-				}
-				if probe.Detected {
+				if ProxyEngineFloorApplies(axes.Network) {
+					// TCL-883: the proxy floor gets its own spawn-time gate. The
+					// packet gateway's probe is not it — pasta and nft are never
+					// called here — and gating on it would refuse the filtered
+					// posture on exactly the low-prerequisite hosts this engine
+					// exists to serve. The gate that DOES apply is the posture-
+					// exact resolve below, which maps the proxy floor onto the
+					// isolated posture and probes bubblewrap's namespaces plus
+					// pidfd; a host that cannot build the floor is refused there
+					// rather than silently widened to open here.
 					tclaudeLayerPosture = sandboxpolicy.NetworkFiltered
+				} else {
+					probe := ProbeFilteredNetworkPrerequisite()
+					filteredNetworkProbe = &probe
+					if supportErr := ValidateFilteredNetworkHarnessSupport(
+						h, sandboxImplementation, axes, probe,
+					); supportErr != nil {
+						return supportErr
+					}
+					if probe.Detected {
+						tclaudeLayerPosture = sandboxpolicy.NetworkFiltered
+					}
 				}
 			}
 		}
@@ -1131,15 +1156,15 @@ func runNew(params *NewParams) error {
 	var bwrapCapabilityErr error
 	if outerLayer {
 		if tclaudeLayerWrapsPane(h.Name) {
-			bwrapBinary, launchOSSandbox, bwrapCapabilityErr = ResolveTclaudeLayer(
-				tclaudeLayerPosture, tclaudeLayerRoot)
+			bwrapBinary, launchOSSandbox, bwrapCapabilityErr = ResolveTclaudeLayerForEngine(
+				tclaudeLayerPosture, tclaudeLayerRoot, tclaudeLayerEngine)
 		} else {
-			bwrapBinary, launchOSSandbox, bwrapCapabilityErr = ResolveTclaudeLayerServer(
-				tclaudeLayerPosture, tclaudeLayerRoot)
+			bwrapBinary, launchOSSandbox, bwrapCapabilityErr = ResolveTclaudeLayerServerForEngine(
+				tclaudeLayerPosture, tclaudeLayerRoot, tclaudeLayerEngine)
 		}
 		if bwrapCapabilityErr == nil && !stacked {
 			launchOSSandbox = TclaudeLayerLaunchOSSandboxForHarness(
-				h.Name, tclaudeLayerPosture, tclaudeLayerRoot)
+				h.Name, tclaudeLayerPosture, tclaudeLayerRoot, tclaudeLayerEngine)
 		}
 	}
 	if outerLayer {
@@ -1239,7 +1264,7 @@ func runNew(params *NewParams) error {
 				return fmt.Errorf("derive sandbox root posture: %w", err)
 			}
 			launchOSSandbox = TclaudeLayerLaunchOSSandboxForHarness(
-				h.Name, tclaudeLayerPosture, tclaudeLayerRoot)
+				h.Name, tclaudeLayerPosture, tclaudeLayerRoot, tclaudeLayerEngine)
 		}
 		if outerLayer {
 			plannedEffective := launchSandbox.Effective

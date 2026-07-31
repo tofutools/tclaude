@@ -1283,6 +1283,7 @@ func TestSpawnAccessPlannerWarnsAndRefusesThroughExistingChannels(t *testing.T) 
 	t.Cleanup(agentd.SetTclaudeLayerHostAvailabilityForTest(func() error { return nil }))
 	t.Cleanup(agentd.SetTclaudeLayerAccessVerdictForTest(func(
 		_ string, posture sandboxpolicy.NetworkPosture, _ sandboxpolicy.RootPosture,
+		_ sandboxpolicy.NetworkEngine,
 	) (harness.LaunchOSSandbox, error) {
 		return harness.LaunchOSSandbox{
 			State: "on", Source: fmt.Sprintf("test live tclaude-layer verdict for %v", posture),

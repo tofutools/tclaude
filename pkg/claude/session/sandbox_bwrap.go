@@ -417,8 +417,32 @@ func ResolveTclaudeLayerForEngine(
 	root sandboxpolicy.RootPosture,
 	engine sandboxpolicy.NetworkEngine,
 ) (string, harness.LaunchOSSandbox, error) {
+	return resolveTclaudeLayerForEngine(ResolveTclaudeLayer, posture, root, engine)
+}
+
+// ResolveTclaudeLayerServerForEngine is ResolveTclaudeLayerForEngine for the
+// non-interactive server boundary. It exists so a server-boundary harness
+// reaches the proxy floor through the same mapping an interactive one does: a
+// launch that resolved the packet floor's prerequisites here would refuse a
+// proxy-engine profile on a host that will never run pasta.
+func ResolveTclaudeLayerServerForEngine(
+	posture sandboxpolicy.NetworkPosture,
+	root sandboxpolicy.RootPosture,
+	engine sandboxpolicy.NetworkEngine,
+) (string, harness.LaunchOSSandbox, error) {
+	return resolveTclaudeLayerForEngine(
+		ResolveTclaudeLayerServer, posture, root, engine)
+}
+
+func resolveTclaudeLayerForEngine(
+	resolve func(sandboxpolicy.NetworkPosture, sandboxpolicy.RootPosture) (
+		string, harness.LaunchOSSandbox, error),
+	posture sandboxpolicy.NetworkPosture,
+	root sandboxpolicy.RootPosture,
+	engine sandboxpolicy.NetworkEngine,
+) (string, harness.LaunchOSSandbox, error) {
 	floor := TclaudeLayerFloorPosture(posture, engine)
-	binary, sandbox, err := ResolveTclaudeLayer(floor, root)
+	binary, sandbox, err := resolve(floor, root)
 	if err != nil {
 		return "", sandbox, err
 	}
@@ -575,28 +599,44 @@ func FilteredNetworkPrerequisiteNotice(
 	}
 }
 
+// ProxyEngineFloorApplies reports whether this policy's filtered posture is
+// carried by the PROXY engine's floor rather than the packet gateway's.
+//
+// It is the one predicate every surface that must tell the two floors apart
+// asks — the spawn guard's posture gate, the session boundary's posture gate,
+// and the pasta/nft prerequisite disclosure below. The proxy floor reaches the
+// isolated posture's plain unshare and has none of the packet gateway's
+// prerequisites (§2.5): no pasta, no nft, no CAP_NET_ADMIN, no port-53 broker.
+// Its own spawn-time gate is bubblewrap plus pidfd, which the posture-exact
+// resolve at the launch boundary already probes, so this predicate decides
+// WHICH gate runs rather than duplicating either one.
+//
+// An unresolvable engine answers false — the packet answer. Failing to resolve
+// the engine is not evidence that a proxy is deployed, and the packet branch is
+// the one that probes MORE and discloses MORE, so an unresolvable policy is
+// gated and disclosed rather than quietly admitted through the cheaper floor.
+func ProxyEngineFloorApplies(network sandboxpolicy.NetworkRules) bool {
+	engine, err := sandboxpolicy.DeployedNetworkEngineForRules(network)
+	return err == nil && engine == sandboxpolicy.NetworkEngineProxy
+}
+
 // FilteredNetworkPrerequisiteNoticeApplies reports whether the packet
 // gateway's pasta/nft prerequisite disclosure describes THIS policy's launch.
 //
-// The probe behind that notice is the packet gateway's: pasta, nft, and the
-// namespace privileges they need. The proxy engine reaches its floor through
-// the isolated posture's plain unshare and has none of those prerequisites
-// (§2.5), so disclosing them would name a launch gate that does not gate this
-// launch — and a failing pasta on a host that will never call pasta would read
-// as the reason the rules are not enforced.
+// The probe behind that notice is the packet gateway's, so disclosing it under
+// the proxy engine would name a launch gate that does not gate this launch —
+// and a failing pasta on a host that will never call pasta would read as the
+// reason the rules are not enforced.
 //
 // It is exported because the notice is appended from two launch surfaces — the
 // session boundary and the daemon spawn guard — and a gate applied at only one
-// of them would let the two disagree about the same profile.
-//
-// An unresolvable engine keeps the notice rather than dropping it: failing to
-// answer the question is not evidence that the prerequisite is absent, and
-// suppressing a launch-gate disclosure is the worse error.
+// of them would let the two disagree about the same profile. It is the exact
+// complement of ProxyEngineFloorApplies rather than a second derivation, so the
+// disclosure and the gate can never answer differently.
 func FilteredNetworkPrerequisiteNoticeApplies(
 	network sandboxpolicy.NetworkRules,
 ) bool {
-	engine, err := sandboxpolicy.DeployedNetworkEngineForRules(network)
-	return err != nil || engine != sandboxpolicy.NetworkEngineProxy
+	return !ProxyEngineFloorApplies(network)
 }
 
 func appendFilteredNetworkPrerequisiteNotice(
@@ -629,21 +669,31 @@ func TclaudeLayerLaunchOSSandbox(
 // TclaudeLayerLaunchOSSandboxForHarness describes the actual process boundary.
 // OpenCode's attach TUI is deliberately outside the wall; its agentd-owned
 // server is the process that executes tools and is the component we confine.
+//
+// The engine is taken rather than re-derived because the boundary sentence must
+// name the mechanism this launch RUNS. A filtered posture carried by the proxy
+// engine runs no pasta, no nft and no DNS broker, so inheriting the packet
+// gateway's sentence for it would be a disclosure that does not match the
+// rendered surface — the same failure the floor mapping exists to prevent.
 func TclaudeLayerLaunchOSSandboxForHarness(
 	harnessName string,
 	posture sandboxpolicy.NetworkPosture,
 	root sandboxpolicy.RootPosture,
+	engine sandboxpolicy.NetworkEngine,
 ) harness.LaunchOSSandbox {
+	resolved := TclaudeLayerLaunchOSSandbox(posture, root)
+	if TclaudeLayerFloorPosture(posture, engine) != posture {
+		resolved = tclaudeLayerProxyLaunchOSSandbox()
+	}
 	if harnessName == harness.OpenCodeName {
 		if posture == sandboxpolicy.NetworkFiltered {
-			resolved := TclaudeLayerLaunchOSSandbox(posture, root)
 			resolved.Source += "; OpenCode tool-executing server confined; " +
 				"attach client outside boundary over authenticated Unix relay"
 			return resolved
 		}
 		return tclaudeLayerOpenCodeLaunchOSSandbox()
 	}
-	return TclaudeLayerLaunchOSSandbox(posture, root)
+	return resolved
 }
 
 // TclaudeLayerRootPosture answers the TCL-798 question for one launch: does it

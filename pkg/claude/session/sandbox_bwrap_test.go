@@ -750,7 +750,7 @@ func TestTclaudeLayerVerdictRecordsPartialSocketFidelity(t *testing.T) {
 
 	openCode := TclaudeLayerLaunchOSSandboxForHarness(
 		harness.OpenCodeName, sandboxpolicy.NetworkHostOpen,
-		sandboxpolicy.RootHostInherited)
+		sandboxpolicy.RootHostInherited, sandboxpolicy.NetworkEngineUnset)
 	assert.Equal(t, "on", openCode.State)
 	assert.Equal(t,
 		"tclaude-layer (bubblewrap; OpenCode tool-executing server confined)",

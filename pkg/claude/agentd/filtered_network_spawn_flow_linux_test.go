@@ -47,7 +47,8 @@ func TestDefaultAllowDenySpawnSelectsFilteredNetworkPosture(t *testing.T) {
 			))
 			var resolvedPostures []sandboxpolicy.NetworkPosture
 			t.Cleanup(agentd.SetTclaudeLayerAccessVerdictForTest(
-				func(_ string, posture sandboxpolicy.NetworkPosture, _ sandboxpolicy.RootPosture) (harness.LaunchOSSandbox, error) {
+				func(_ string, posture sandboxpolicy.NetworkPosture, _ sandboxpolicy.RootPosture,
+					_ sandboxpolicy.NetworkEngine) (harness.LaunchOSSandbox, error) {
 					resolvedPostures = append(resolvedPostures, posture)
 					return harness.LaunchOSSandbox{
 						State:           "on",
@@ -131,7 +132,8 @@ func TestOpenCodeDefaultAllowDenyRefusesWithoutExplicitProvider(t *testing.T) {
 		},
 	))
 	t.Cleanup(agentd.SetTclaudeLayerAccessVerdictForTest(
-		func(_ string, posture sandboxpolicy.NetworkPosture, _ sandboxpolicy.RootPosture) (harness.LaunchOSSandbox, error) {
+		func(_ string, posture sandboxpolicy.NetworkPosture, _ sandboxpolicy.RootPosture,
+			_ sandboxpolicy.NetworkEngine) (harness.LaunchOSSandbox, error) {
 			return harness.LaunchOSSandbox{
 				State:           "on",
 				Source:          "test filtered gateway",
@@ -197,7 +199,8 @@ func TestLocalAccessSpawnRefusesCloudModelWithoutExplicitEndpoint(t *testing.T) 
 				},
 			))
 			t.Cleanup(agentd.SetTclaudeLayerAccessVerdictForTest(
-				func(_ string, posture sandboxpolicy.NetworkPosture, _ sandboxpolicy.RootPosture) (harness.LaunchOSSandbox, error) {
+				func(_ string, posture sandboxpolicy.NetworkPosture, _ sandboxpolicy.RootPosture,
+					_ sandboxpolicy.NetworkEngine) (harness.LaunchOSSandbox, error) {
 					require.Equal(t, sandboxpolicy.NetworkFiltered, posture)
 					return harness.LaunchOSSandbox{
 						State:           "on",
@@ -257,7 +260,8 @@ func TestLocalAccessSpawnAllowsConcreteHostLoopbackProvider(t *testing.T) {
 		},
 	))
 	t.Cleanup(agentd.SetTclaudeLayerAccessVerdictForTest(
-		func(_ string, posture sandboxpolicy.NetworkPosture, _ sandboxpolicy.RootPosture) (harness.LaunchOSSandbox, error) {
+		func(_ string, posture sandboxpolicy.NetworkPosture, _ sandboxpolicy.RootPosture,
+			_ sandboxpolicy.NetworkEngine) (harness.LaunchOSSandbox, error) {
 			require.Equal(t, sandboxpolicy.NetworkFiltered, posture)
 			return harness.LaunchOSSandbox{
 				State:           "on",
@@ -303,7 +307,8 @@ func TestLocalModelAPIsSpawnAllowsFirstPartyCloudProvider(t *testing.T) {
 		},
 	))
 	t.Cleanup(agentd.SetTclaudeLayerAccessVerdictForTest(
-		func(_ string, posture sandboxpolicy.NetworkPosture, _ sandboxpolicy.RootPosture) (harness.LaunchOSSandbox, error) {
+		func(_ string, posture sandboxpolicy.NetworkPosture, _ sandboxpolicy.RootPosture,
+			_ sandboxpolicy.NetworkEngine) (harness.LaunchOSSandbox, error) {
 			require.Equal(t, sandboxpolicy.NetworkFiltered, posture)
 			return harness.LaunchOSSandbox{
 				State:           "on",
@@ -403,7 +408,8 @@ func TestProxyEngineSpawnOmitsThePacketPrerequisiteNotice(t *testing.T) {
 		},
 	))
 	t.Cleanup(agentd.SetTclaudeLayerAccessVerdictForTest(
-		func(_ string, posture sandboxpolicy.NetworkPosture, _ sandboxpolicy.RootPosture) (harness.LaunchOSSandbox, error) {
+		func(_ string, posture sandboxpolicy.NetworkPosture, _ sandboxpolicy.RootPosture,
+			_ sandboxpolicy.NetworkEngine) (harness.LaunchOSSandbox, error) {
 			return harness.LaunchOSSandbox{
 				State:           "on",
 				Source:          "test filtered gateway",
@@ -466,6 +472,199 @@ func TestProxyEngineSpawnOmitsThePacketPrerequisiteNotice(t *testing.T) {
 			}
 			assert.Equal(t, tc.wantNotice, found,
 				"the packet gateway's prerequisite disclosure must follow the engine")
+		})
+	}
+}
+
+// TestProxyEngineSpawnDoesNotGateOnThePacketPrerequisite is TCL-883's second
+// deliverable at the daemon-spawn seam: the proxy floor gets its own
+// spawn-time gate.
+//
+// The probe faked here is the packet gateway's — pasta, nft, and the namespace
+// privileges they need — and it reports UNAVAILABLE, which is the ordinary
+// state of the low-prerequisite hosts §2.5 says the proxy engine exists to
+// serve. Before this change that answer widened every filtered profile to open
+// regardless of engine, so a proxy-engine profile was refused enforcement for a
+// prerequisite its launch never calls. The proxy floor must instead be gated by
+// the posture-exact verdict, which is asserted here by recording the posture
+// the guard actually asked the resolver to verify.
+func TestProxyEngineSpawnDoesNotGateOnThePacketPrerequisite(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	t.Cleanup(agentd.SetFilteredNetworkPrerequisiteForTest(
+		func() session.FilteredNetworkPrerequisite {
+			return session.FilteredNetworkPrerequisite{
+				Detected: false,
+				Detail:   "test host without pasta or nft",
+			}
+		},
+	))
+	var requested []sandboxpolicy.NetworkPosture
+	var requestedEngines []sandboxpolicy.NetworkEngine
+	t.Cleanup(agentd.SetTclaudeLayerAccessVerdictForTest(
+		func(_ string, posture sandboxpolicy.NetworkPosture, _ sandboxpolicy.RootPosture,
+			engine sandboxpolicy.NetworkEngine) (harness.LaunchOSSandbox, error) {
+			requested = append(requested, posture)
+			requestedEngines = append(requestedEngines, engine)
+			return harness.LaunchOSSandbox{
+				State:           "on",
+				Source:          "test proxy floor",
+				FilteredNetwork: posture == sandboxpolicy.NetworkFiltered,
+			}, nil
+		},
+	))
+	codexHome := t.TempDir()
+	require.NoError(t, os.WriteFile(
+		filepath.Join(codexHome, "auth.json"),
+		[]byte(`{"auth_mode":"apikey","OPENAI_API_KEY":"test-key"}`),
+		0o600))
+	t.Setenv("CODEX_HOME", codexHome)
+
+	for _, tc := range []struct {
+		profile     string
+		engine      sandboxpolicy.NetworkEngine
+		wantPosture sandboxpolicy.NetworkPosture
+		// The engine the guard must verify the host for is the DEPLOYED one,
+		// which for an unset selection on a discriminating policy is the packet
+		// gateway — the pre-engine default, unchanged.
+		wantEngine sandboxpolicy.NetworkEngine
+	}{
+		// The proxy floor is reached even though pasta and nft are absent.
+		{
+			"gate-engine-proxy",
+			sandboxpolicy.NetworkEngineProxy,
+			sandboxpolicy.NetworkFiltered,
+			sandboxpolicy.NetworkEngineProxy,
+		},
+		// The packet gateway keeps its own gate exactly as before: an absent
+		// prerequisite still widens it to host-open. This is the parity half —
+		// TCL-883 gives the proxy floor a gate, it does not remove anyone's.
+		{
+			"gate-engine-packet",
+			sandboxpolicy.NetworkEnginePacket,
+			sandboxpolicy.NetworkHostOpen,
+			sandboxpolicy.NetworkEnginePacket,
+		},
+		{
+			"gate-engine-unset",
+			sandboxpolicy.NetworkEngineUnset,
+			sandboxpolicy.NetworkHostOpen,
+			sandboxpolicy.NetworkEnginePacket,
+		},
+	} {
+		t.Run(tc.profile, func(t *testing.T) {
+			requested = nil
+			requestedEngines = nil
+			_, err := db.CreateSandboxProfile(&db.SandboxProfile{
+				Name: tc.profile,
+				Network: &sandboxpolicy.NetworkRules{
+					Baseline: sandboxpolicy.NetworkBaselineAllow,
+					Deny: []sandboxpolicy.NetworkAllowEntry{{
+						CIDR: "192.0.2.0/24", Ports: []int{443},
+					}},
+					Engine: tc.engine,
+				},
+			})
+			require.NoError(t, err)
+
+			resp := f.AsHuman().SpawnWith("crew", map[string]any{
+				"name":                   tc.profile + "-worker",
+				"harness":                harness.CodexName,
+				"sandbox":                harness.SandboxReadOnly,
+				"sandbox_implementation": string(sandboxpolicy.ImplementationTclaudeLayer),
+				"sandbox_profile":        tc.profile,
+			})
+			require.Equalf(t, http.StatusOK, resp.Code, "spawn body=%s", resp.Raw)
+
+			require.NotEmpty(t, requested,
+				"the guard must verify the host for the floor it intends to build")
+			assert.Equal(t, tc.wantPosture, requested[0],
+				"the posture the guard verifies must follow the deployed engine, not the packet probe")
+			// The engine has to reach the resolver too: the proxy floor maps onto
+			// the isolated posture's construction, and a resolve that did not
+			// know the engine would probe the packet gateway's prerequisites for
+			// a launch that never calls them.
+			assert.Equal(t, tc.wantEngine, requestedEngines[0])
+		})
+	}
+}
+
+// TestProxyEngineSpawnRefusesAResolverReachingFilesystemGrant walks TCL-883's
+// refusal end to end, from an authored profile through the daemon's own spawn
+// path. The unit tests cover each half — that the derived axes carry the
+// effective filesystem, and that the capability seam refuses on it — and this
+// one proves the halves are actually joined on the path an operator uses.
+//
+// /run is deliberately the authored grant rather than a resolver socket path:
+// it exists on every Linux host, so the profile layer accepts it, and it is an
+// ancestor of the known resolver sockets. It is also the honest demonstration
+// of the refusal's breadth — a broad grant refuses the proxy engine even from
+// an operator who never meant to reach a resolver, and the remedy text says so.
+func TestProxyEngineSpawnRefusesAResolverReachingFilesystemGrant(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	t.Cleanup(agentd.SetTclaudeLayerAccessVerdictForTest(
+		func(_ string, posture sandboxpolicy.NetworkPosture, _ sandboxpolicy.RootPosture,
+			_ sandboxpolicy.NetworkEngine) (harness.LaunchOSSandbox, error) {
+			return harness.LaunchOSSandbox{
+				State:           "on",
+				Source:          "test proxy floor",
+				FilteredNetwork: posture == sandboxpolicy.NetworkFiltered,
+			}, nil
+		},
+	))
+	codexHome := t.TempDir()
+	require.NoError(t, os.WriteFile(
+		filepath.Join(codexHome, "auth.json"),
+		[]byte(`{"auth_mode":"apikey","OPENAI_API_KEY":"test-key"}`),
+		0o600))
+	t.Setenv("CODEX_HOME", codexHome)
+
+	for _, tc := range []struct {
+		profile     string
+		engine      sandboxpolicy.NetworkEngine
+		wantRefusal bool
+	}{
+		{"fs-resolver-proxy", sandboxpolicy.NetworkEngineProxy, true},
+		// Parity: the packet gateway's DNS broker holds name authority with a
+		// resolver socket present, so the identical grant takes nothing away.
+		{"fs-resolver-packet", sandboxpolicy.NetworkEnginePacket, false},
+	} {
+		t.Run(tc.profile, func(t *testing.T) {
+			_, err := db.CreateSandboxProfile(&db.SandboxProfile{
+				Name: tc.profile,
+				Filesystem: []db.SandboxFilesystemGrant{
+					{Path: "/run", Access: "read"},
+				},
+				Network: &sandboxpolicy.NetworkRules{
+					Mode: sandboxpolicy.AccessModeList,
+					Allow: []sandboxpolicy.NetworkAllowEntry{
+						{Domain: "example.com", Ports: []int{443}},
+					},
+					Engine: tc.engine,
+				},
+			})
+			require.NoError(t, err)
+
+			resp := f.AsHuman().SpawnWith("crew", map[string]any{
+				"name":                   tc.profile + "-worker",
+				"harness":                harness.CodexName,
+				"sandbox":                harness.SandboxReadOnly,
+				"sandbox_implementation": string(sandboxpolicy.ImplementationTclaudeLayer),
+				"sandbox_profile":        tc.profile,
+			})
+			if !tc.wantRefusal {
+				require.Equalf(t, http.StatusOK, resp.Code, "spawn body=%s", resp.Raw)
+				return
+			}
+			require.Equalf(t, http.StatusUnprocessableEntity, resp.Code,
+				"spawn body=%s", resp.Raw)
+			failure := decodeFailure(t, resp.Raw)
+			assert.Contains(t, failure.Error, "proxy_engine_name_authority")
+			assert.Contains(t, failure.Error, "/run")
+			assert.Contains(t, failure.Error, "Packet filter engine",
+				"the refusal must carry its remedy all the way to the operator")
+			assert.Empty(t, resp.ConvID)
 		})
 	}
 }
