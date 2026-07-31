@@ -933,11 +933,13 @@ jobs:
       fail-fast: false
       matrix:
         # The shard NAMES are the only thing this workflow knows. Which flows
-        # each shard runs and which harnesses it installs lives in
-        # scripts/filtered-proxy-smoke/shards.txt, and the entrypoint refuses to
-        # start unless every flow in the manifest belongs to some shard — so
-        # adding a smoke stays a repo change, and a flow assigned to no shard
-        # fails the run instead of quietly vanishing from both jobs.
+        # each shard runs lives in scripts/filtered-proxy-smoke/shards.txt;
+        # which harnesses each flow launches lives in the flow itself
+        # (flow::harnesses), and a shard's install set is DERIVED as the union
+        # of its flows' declarations. The entrypoint refuses to start unless
+        # every flow in the manifest belongs to some shard — so adding a smoke
+        # stays a repo change, and a flow assigned to no shard fails the run
+        # instead of quietly vanishing from both jobs.
         shard: [session, agentd]
     steps:
       - name: Checkout code
