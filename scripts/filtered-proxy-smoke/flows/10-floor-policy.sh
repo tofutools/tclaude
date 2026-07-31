@@ -12,11 +12,17 @@
 set -euo pipefail
 
 flow::run() {
-  local ns=tclaude-proxy-target
-  local host_link=tclprx0 peer_link=tclprx1
+  # NOT `local`: the EXIT trap below runs after this function has returned, so
+  # a local would be out of scope by then and `set -u` would abort cleanup —
+  # leaving the resolver rewritten and the namespace behind, which is the very
+  # failure the trap exists to prevent. flow::run owns its subshell, so plain
+  # assignment leaks nothing.
+  ns=tclaude-proxy-target
+  host_link=tclprx0
+  peer_link=tclprx1
   local allowed=198.18.2.10 adjacent=198.18.2.200
   local -a ports=(41011 41012)
-  local -a pids=()
+  pids=()
 
   cleanup() {
     local pid

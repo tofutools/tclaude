@@ -7,14 +7,24 @@
 set -euo pipefail
 
 flow::run() {
-  local ns=tclaude-proxy-cooperation
-  local host_link=tclprx2 peer_link=tclprx3
+  # NOT `local`: the EXIT trap below runs after this function has returned, so
+  # a local would be out of scope by then and `set -u` would abort cleanup —
+  # leaving the resolver rewritten and the namespace behind, which is the very
+  # failure the trap exists to prevent. flow::run owns its subshell, so plain
+  # assignment leaks nothing.
+  ns=tclaude-proxy-cooperation
+  host_link=tclprx2
+  peer_link=tclprx3
   local allowed=198.18.3.10 adjacent=198.18.3.200
   # 443 carries the model origins and is NOT configurable: the pinned harnesses
   # choose that port themselves, so the Go smoke pins it too and the fixture
   # merely has to answer there.
+  # Derived below rather than repeated: flow 10 already does this, and a
+  # renumbered array with stale exports would hand the Go smoke a port with no
+  # listener — a fabricated failure of exactly the kind this suite must not
+  # produce.
   local -a ports=(443 41021 41022)
-  local -a pids=()
+  pids=()
 
   cleanup() {
     local pid
@@ -35,9 +45,13 @@ flow::run() {
   # duration of this flow, and /etc/hosts is restored on the way out. That is
   # what keeps the smoke OFFLINE: no packet can reach a real model provider, so
   # the deliberately invalid credentials cannot even be presented to one.
+  # The go arm addresses its fixture by NAME because cmd/go refuses to proxy a
+  # loopback literal; the name has to resolve host-side, which is where the
+  # proxy resolves it.
   fixture::hosts_add \
     "$allowed allowed.proxy.tclaude.test" \
-    "$allowed api.anthropic.com api.openai.com"
+    "$allowed api.anthropic.com api.openai.com" \
+    "127.0.0.1 egress.proxy.tclaude.test"
 
   local port
   for port in "${ports[@]}"; do
@@ -54,8 +68,8 @@ flow::run() {
   TCLAUDE_FILTERED_ALLOWED_ADDR="$allowed" \
   TCLAUDE_FILTERED_ADJACENT_ADDR="$adjacent" \
   TCLAUDE_FILTERED_ALLOWED_PREFIX=198.18.3.0/25 \
-  TCLAUDE_FILTERED_ALLOWED_PORT=41021 \
-  TCLAUDE_FILTERED_DENIED_PORT=41022 \
+  TCLAUDE_FILTERED_ALLOWED_PORT="${ports[1]}" \
+  TCLAUDE_FILTERED_DENIED_PORT="${ports[2]}" \
     go test ./pkg/claude/session \
       -run '^TestPinnedProxy(HarnessCooperation|ToolEgress)$' \
       -count=1 -v -timeout=900s

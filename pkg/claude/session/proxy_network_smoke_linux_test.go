@@ -311,12 +311,15 @@ type proxyEngineLaunchInput struct {
 	// WorkspaceBinaries are host files copied into the workspace, keyed by the
 	// name they take there.
 	WorkspaceBinaries map[string]string
-	// PrepareHome runs after the sandbox HOME exists and before the launch is
-	// constructed. It is the only place a fixture that the in-sandbox process
-	// must SEE can be written: a directory made outside this home is not part
-	// of the constructed root and would be invisible inside the floor. Entries
-	// it returns are appended to the launch environment.
-	PrepareHome func(t *testing.T, home string) map[string]string
+	// PrepareHome runs after the sandbox HOME and workspace exist and before the
+	// launch is constructed. It is the only place a fixture the in-sandbox
+	// process must SEE can be written.
+	//
+	// Both paths are passed because they are not equivalent: the constructed
+	// root binds the WORKSPACE and ~/.claude, not the whole home, so a fixture
+	// written elsewhere under the home exists on the host and is invisible
+	// inside the floor. Entries returned are appended to the launch environment.
+	PrepareHome func(t *testing.T, home, workspace string) map[string]string
 	// Timeout bounds the whole launch. Zero uses the floor smoke's bound.
 	Timeout time.Duration
 	// AllowExitError tolerates a non-zero exit from the in-sandbox command.
@@ -326,6 +329,16 @@ type proxyEngineLaunchInput struct {
 	// EXPECTED to exit non-zero — a harness running on invalid credentials —
 	// sets it.
 	AllowExitError bool
+	// AllowTimeout tolerates the launch hitting its own deadline.
+	//
+	// Also opt-in, and for a narrow reason: a harness given deliberately
+	// invalid credentials retries on its own schedule, and how long it flails
+	// before giving up is not part of what the smoke proves. The evidence is
+	// the CONNECT observed AT THE PROXY, which is recorded the moment it is
+	// attempted. What must still hold is the evidence itself — a launch that
+	// timed out before reaching its origin records nothing, and its caller's
+	// assertions fail exactly as they should.
+	AllowTimeout bool
 }
 
 // proxyEngineLaunchResult is what a completed launch leaves behind to assert
@@ -399,7 +412,7 @@ func runProxyEngineLaunch(
 	launchEnv := append([]string(nil), os.Environ()...)
 	launchEnv = append(launchEnv, input.ExtraEnv...)
 	if input.PrepareHome != nil {
-		for name, value := range input.PrepareHome(t, smokeHome) {
+		for name, value := range input.PrepareHome(t, smokeHome, helperDir) {
 			launchEnv = append(launchEnv, name+"="+value)
 		}
 	}
@@ -431,7 +444,10 @@ func runProxyEngineLaunch(
 	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", command)
 	cmd.Env = launchEnv
 	output, runErr := cmd.CombinedOutput()
-	require.NoError(t, ctx.Err(), "proxy launch timed out; output:\n%s", output)
+	if !input.AllowTimeout {
+		require.NoError(t, ctx.Err(),
+			"proxy launch timed out; output:\n%s", output)
+	}
 	if !input.AllowExitError {
 		require.NoErrorf(t, runErr, "proxy smoke output:\n%s", output)
 	}
