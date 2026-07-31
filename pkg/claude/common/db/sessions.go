@@ -1948,6 +1948,28 @@ func UpdateSessionCost(sessionID string, costUSD float64) error {
 	return tx.Commit()
 }
 
+// MaxRealCostForConv returns the largest cumulative real-cost snapshot retained
+// for a conversation across live and historical session generations. OpenCode
+// uses it when rebuilding a child-session tree whose deleted descendants are no
+// longer available from the server API.
+func MaxRealCostForConv(convID string) (float64, error) {
+	if convID == "" {
+		return 0, nil
+	}
+	d, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	var cost float64
+	err = d.QueryRow(`
+		SELECT COALESCE(MAX(cost_usd), 0) FROM (
+			SELECT cost_usd FROM sessions WHERE conv_id = ?
+			UNION ALL
+			SELECT cost_usd FROM session_cost_daily WHERE conv_id = ?
+		)`, convID, convID).Scan(&cost)
+	return cost, err
+}
+
 // UpdateSessionVirtualCost stores the session's cumulative pay-per-token-
 // EQUIVALENT cost in USD — the WHAT-IF sibling of UpdateSessionCost. Claude
 // Code emits cost.total_cost_usd on every statusline render regardless of

@@ -71,6 +71,23 @@ func TestUpdateSessionCost_WritesDailySnapshot(t *testing.T) {
 	assert.Equal(t, DefaultHarness, row.Harness, "default harness denormalised from the sessions row")
 }
 
+func TestMaxRealCostForConvIncludesRetiredSessionGeneration(t *testing.T) {
+	setupTestDB(t)
+	saveCostSession(t, "current", "idle", 1)
+	d, err := Open()
+	require.NoError(t, err)
+	_, err = d.Exec(`INSERT INTO session_cost_daily
+		(session_id, day, conv_id, cost_usd) VALUES ('retired', '2026-07-31', 'conv-current', 3)`)
+	require.NoError(t, err)
+
+	cost, err := MaxRealCostForConv("conv-current")
+	require.NoError(t, err)
+	assert.InDelta(t, 3, cost, 1e-12)
+	empty, err := MaxRealCostForConv("missing")
+	require.NoError(t, err)
+	assert.Zero(t, empty)
+}
+
 // TestUpdateSessionCost_DenormalisesHarness pins the harness sibling of conv_id
 // and model: the Costs tab can filter historical spend by harness even after
 // the live sessions row has been deleted.
