@@ -2382,7 +2382,9 @@ func runSnapshotNamedLoads(loads ...snapshotNamedLoad) []perfPhase {
 	queuedAt := make([]time.Time, len(loads))
 	jobs := make(chan int, len(loads))
 	for i := range loads {
-		queuedAt[i] = time.Now()
+		if loads[i].name != "" {
+			queuedAt[i] = time.Now()
+		}
 		jobs <- i
 	}
 	close(jobs)
@@ -2394,6 +2396,11 @@ func runSnapshotNamedLoads(loads ...snapshotNamedLoad) []perfPhase {
 			defer wg.Done()
 			for index := range jobs {
 				snapshotLoadSlots <- struct{}{}
+				if loads[index].name == "" {
+					loads[index].run()
+					<-snapshotLoadSlots
+					continue
+				}
 				func() {
 					defer func() { <-snapshotLoadSlots }()
 					startedAt := time.Now()
