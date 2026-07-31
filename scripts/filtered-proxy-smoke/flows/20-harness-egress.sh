@@ -27,16 +27,17 @@ flow::run() {
   pids=()
 
   cleanup() {
-    local pid
-    for pid in "${pids[@]:-}"; do sudo kill "$pid" 2>/dev/null || true; done
+    smoke::kill_listener "${pids[@]:-}"
     fixture::netns_down "$ns" "$host_link"
     fixture::hosts_restore
   }
   # EXIT, never RETURN: a RETURN trap does NOT fire when set -e aborts the
   # function, which is precisely the case cleanup exists for. run.sh calls
-  # flow::run inside a subshell, so EXIT fires when that subshell ends however
-  # it ends.
-  trap cleanup EXIT
+  # flow::run inside a subshell, so EXIT fires when that subshell ends. INT and
+  # TERM are taken as well (smoke::trap_cleanup) not because the teardown would
+  # otherwise be skipped — bash runs the EXIT trap on a fatal signal too — but
+  # because an interrupted flow would otherwise exit 0 and be judged a pass.
+  smoke::trap_cleanup cleanup
 
   fixture::netns_up "$ns" "$host_link" "$peer_link" 198.18.3.1/24 \
     "$allowed/24" "$adjacent/24"

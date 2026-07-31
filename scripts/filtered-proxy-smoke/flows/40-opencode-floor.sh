@@ -53,17 +53,21 @@ flow::run() {
   arm_log="$SMOKE_ARTIFACTS/opencode-floor-arm.log"
 
   cleanup() {
-    # `|| true` is not tidiness: without it, a kill that fails because socat
-    # already died aborts this trap under set -e, and the interface below is
-    # never removed.
-    [[ -n "${probe_pid:-}" ]] && sudo kill "$probe_pid" 2>/dev/null || true
+    # smoke::kill_listener tolerates an already-dead or never-started listener
+    # — one of the ways the round-trip proof below fails — so a kill cannot
+    # abort this trap under set -e and leave the interface behind. It signals
+    # socat itself, not only the sudo wrapper holding it.
+    smoke::kill_listener "${probe_pid:-}"
     sudo ip link del "$link" 2>/dev/null || true
     fixture::hosts_restore
     return 0
   }
   # EXIT, never RETURN: a RETURN trap does NOT fire when set -e aborts the
-  # function, which is precisely the case cleanup exists for.
-  trap cleanup EXIT
+  # function, which is precisely the case cleanup exists for. INT and TERM are
+  # covered too (smoke::trap_cleanup): bash runs the EXIT trap on a fatal
+  # signal, so what those add is the FAILURE — an interrupted flow would
+  # otherwise exit 0 and be judged a pass.
+  smoke::trap_cleanup cleanup
 
   sudo ip link add "$link" type dummy
   # No kernel-generated IPv6 link-local address: this fixture is IPv4 and an
@@ -97,7 +101,7 @@ flow::run() {
       return 1
     fi
   done
-  sudo kill "$probe_pid" 2>/dev/null || true
+  smoke::kill_listener "$probe_pid"
   probe_pid=
 
   TCLAUDE_OPENCODE_PROXY_FLOOR_SMOKE=1 \

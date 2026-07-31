@@ -78,8 +78,7 @@ posture::fixture_up() {
 # previous flow's address, outside its own prefix, and fail for a fabricated
 # reason.
 posture::fixture_down() {
-  local pid
-  for pid in "${pids[@]:-}"; do sudo kill "$pid" 2>/dev/null || true; done
+  smoke::kill_listener "${pids[@]:-}"
   fixture::netns_down "$ns" "$host_link"
   fixture::hosts_restore
 }

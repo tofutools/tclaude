@@ -90,15 +90,18 @@ TXT
 fi
 
 # Whatever happens from here, the runner's resolver goes back. Flows restore it
-# too; this is the backstop for a cancelled job, which fires no flow trap.
-trap fixture::hosts_restore EXIT INT TERM
+# too; this is the backstop for a cancelled job, whose signal arrives here
+# rather than inside a flow. Through the helper, so an interrupted run EXITS —
+# a bare `trap ... INT TERM` would restore the resolver and then carry on
+# running flows until the runner killed it.
+smoke::trap_cleanup fixture::hosts_restore
 
 # 3. Prerequisites. `pasta` and `nft` are deliberately NOT here: only the
 #    loopback-only flow needs them, and it installs them itself so a passt build
 #    break cannot fail the three scenarios that never touch the packet floor —
 #    nor read as a posture regression.
 prereqs::install
-smoke::require_command go sudo ip socat bwrap git || exit 1
+smoke::require_command go sudo ip socat bwrap git pkill || exit 1
 
 smoke::log "Building tclaude for the posture launches"
 go build -o "$SMOKE_TCLAUDE_BINARY" .

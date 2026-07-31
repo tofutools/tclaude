@@ -28,7 +28,7 @@ flow::run() {
   # been created yet at this point, so an early return needs no cleanup.
   smoke::packet_floor_install || return 1
 
-  trap posture::fixture_down EXIT
+  smoke::trap_cleanup posture::fixture_down
   posture::fixture_up 3
   posture::go_test '^TestProxyPostureE2ELoopbackOnlyDeploysNoProxy$'
 }

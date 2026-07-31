@@ -462,8 +462,166 @@ expect_harness_coverage refuse unknown-harness claude opencode
 # Declaring no installable harnesses at all must be an error, not a free pass.
 expect_harness_coverage refuse no-known
 
+# --- fixture teardown hygiene (TCL-881) -------------------------------------
+#
+# These two helpers exist because a leaked fixture does not fail loudly: it
+# fails the NEXT flow, on a port or a hostname that is still answering from the
+# previous one, and that reads like a policy result. Proving them here costs
+# nothing and needs no privileges — `sudo` is shadowed by a function, which is
+# exactly the seam the real helper goes through.
+
+# smoke::kill_listener must reach the process the WRAPPER is holding, not only
+# the wrapper: that is the whole defect it was written for.
+sudo() { "$@"; }
+wrapper_log="$work/wrapper.log"
+( sleep 30 & echo "$!" > "$work/child.pid"; wait ) >"$wrapper_log" 2>&1 &
+wrapper_pid=$!
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  [[ -s "$work/child.pid" ]] && break
+  sleep 0.2
+done
+child_pid="$(cat "$work/child.pid" 2>/dev/null || true)"
+if [[ -z "$child_pid" ]]; then
+  echo "selftest FAIL: kill_listener case could not start its wrapped child"
+  failures=1
+else
+  smoke::kill_listener "$wrapper_pid"
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    kill -0 "$child_pid" 2>/dev/null || break
+    sleep 0.2
+  done
+  if kill -0 "$child_pid" 2>/dev/null; then
+    printf 'selftest FAIL: kill_listener left the wrapped process %s alive\n' "$child_pid"
+    kill -KILL "$child_pid" 2>/dev/null || true
+    failures=1
+  fi
+fi
+kill -KILL "$wrapper_pid" 2>/dev/null || true
+unset -f sudo
+
+# The call shape every cleanup uses: an EMPTY or unset array under `set -u`.
+# `"${pids[@]:-}"` expands to one empty argument there, and a helper that did
+# not skip it — or that returned non-zero — would abort the very teardown it
+# was called from.
+(
+  set -euo pipefail
+  # shellcheck source=common.sh
+  source "$here/common.sh"
+  empty=()
+  smoke::kill_listener "${empty[@]:-}"
+  smoke::kill_listener ""
+) || {
+  echo 'selftest FAIL: kill_listener does not tolerate an empty pid list'
+  failures=1
+}
+
+# smoke::trap_cleanup's INT/TERM half, proven the way it actually has to be
+# proven. The obvious test does NOT work: bash runs an EXIT trap even when a
+# fatal signal kills the shell, so "did the cleanup run" cannot tell the helper
+# apart from a bare `trap ... EXIT`. Status discriminates for INT — an
+# untrapped SIGINT exits 0 — but NOT for TERM, where 143 is what death by
+# signal reports anyway, so the TERM case rests on the installed-handler
+# assertion beside it.
+#
+# What the helper actually buys is the FAILURE: a script interrupted with
+# SIGINT and no INT trap exits 0, and smoke::run_flows judges a flow by
+# PIPESTATUS[0]. So the case below sends the signal FROM OUTSIDE to a child
+# shell blocked in sleep — the real shape — and pins the status. It also asks
+# the shell what traps it installed, which is the direct statement and cannot
+# be satisfied by bash's own signal handling.
+expect_trap_cleanup_signal() {
+  local case="$1" signal="$2" want_status="$3"
+  local marks="$work/$case.marks" ready="$work/$case.ready"
+  local script="$work/$case.sh" traps="$work/$case.traps"
+  : > "$marks"
+  rm -f "$ready"
+  cat > "$script" <<SCRIPT
+set -euo pipefail
+source "$here/common.sh"
+mark() { echo x >> "$marks"; }
+smoke::trap_cleanup mark
+trap -p INT TERM > "$traps"
+: > "$ready"
+sleep 10
+SCRIPT
+  # Job control ON for the launch: bash sets SIGINT to SIG_IGN for background
+  # jobs of a non-interactive shell, and a trap cannot override an INHERITED
+  # ignore — so without `set -m` the child never sees the signal and this case
+  # would report the failure it is meant to detect, for the wrong reason.
+  set -m
+  bash "$script" &
+  local child=$!
+  set +m
+  local waited=0
+  while [[ ! -f "$ready" && "$waited" -lt 50 ]]; do
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  kill -"$signal" "$child" 2>/dev/null || true
+  local status=0
+  wait "$child" && status=0 || status=$?
+  # `wait` has already reaped the child, but its foreground `sleep` is orphaned
+  # when the handler exits out from under it. Kill the process group `set -m`
+  # gave the child — leaving a stray sleep behind in a teardown-hygiene test
+  # would be a poor joke.
+  kill -KILL -- "-$child" 2>/dev/null || true
+
+  if [[ "$status" -ne "$want_status" ]]; then
+    printf 'selftest FAIL: trap_cleanup/%s exited %s, wanted %s\n' \
+      "$case" "$status" "$want_status"
+    failures=1
+  fi
+  local ran
+  ran="$(wc -l < "$marks" | tr -d ' ')"
+  if [[ "$ran" -ne 1 ]]; then
+    printf 'selftest FAIL: trap_cleanup/%s ran cleanup %s times, wanted exactly 1\n' \
+      "$case" "$ran"
+    failures=1
+  fi
+  if ! grep -q "SIG$signal" "$traps"; then
+    printf 'selftest FAIL: trap_cleanup/%s installed no SIG%s handler\n' \
+      "$case" "$signal"
+    failures=1
+  fi
+}
+
+# INT is the discriminating one — and the one GitHub sends first on a cancelled
+# job. Without the helper's handler this child exits 0, which smoke::run_flows
+# would read as a passing flow.
+expect_trap_cleanup_signal int INT 130
+# TERM cannot discriminate on status alone (a shell killed by TERM reports 143
+# too), so this case rests on the installed-handler assertion beside it.
+expect_trap_cleanup_signal term TERM 143
+
+# The plain-exit case: the cleanup runs, ONCE, and the script's own status is
+# passed through rather than replaced by the trap.
+expect_trap_cleanup_exit() {
+  local marks="$work/exit.marks"
+  : > "$marks"
+  local status=0
+  (
+    # shellcheck source=common.sh
+    source "$here/common.sh"
+    mark() { echo x >> "$marks"; }
+    smoke::trap_cleanup mark
+    exit 7
+  ) >/dev/null 2>&1 || status=$?
+  local ran
+  ran="$(wc -l < "$marks" | tr -d ' ')"
+  if [[ "$status" -ne 7 ]]; then
+    printf 'selftest FAIL: trap_cleanup/exit exited %s, wanted 7\n' "$status"
+    failures=1
+  fi
+  if [[ "$ran" -ne 1 ]]; then
+    printf 'selftest FAIL: trap_cleanup/exit ran cleanup %s times, wanted exactly 1\n' "$ran"
+    failures=1
+  fi
+}
+
+expect_trap_cleanup_exit
+
 if [[ "$failures" -ne 0 ]]; then
   echo "smoke evidence selftest FAILED; refusing to trust any smoke result"
   exit 1
 fi
-echo "smoke evidence selftest: ok (evidence checker + manifest drift guards + shard-map union, workflow-matrix and harness-coverage guards)"
+echo "smoke evidence selftest: ok (evidence checker + manifest drift guards + shard-map union, workflow-matrix and harness-coverage guards + fixture teardown)"
