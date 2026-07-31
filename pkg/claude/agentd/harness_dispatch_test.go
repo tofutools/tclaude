@@ -56,6 +56,10 @@ func TestDeliverRename_RoutesToTitleStoreForOutOfBandHarness(t *testing.T) {
 	require.True(t, deliverRename(convID, "new-title"), "rename should be delivered via the title store")
 	assert.Equal(t, convID, store.lastConv)
 	assert.Equal(t, "new-title", store.lastTitle)
+	row, err := db.GetConvIndex(convID)
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	assert.Equal(t, "new-title", row.CustomTitle, "delivered title is immediately cache-visible")
 }
 
 // TestHarnessForConv_DefaultsToClaude pins resolution: a claude-tagged

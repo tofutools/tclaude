@@ -14,7 +14,7 @@ import (
 // convMonitorDebounce is how long a .jsonl must be quiet after a Write
 // before the monitor re-indexes it. An active conversation appends
 // turns in a burst while Claude is responding; debouncing collapses a
-// burst into one ScanAndUpsertFile rather than reparsing per turn.
+// burst into one incremental follower refresh rather than parsing per write.
 //
 // 500ms is well under the 2s dashboard poll, so a title / first-prompt
 // change is visible on the very next render — a brand-new conversation
@@ -29,8 +29,8 @@ import (
 var convMonitorDebounce = 500 * time.Millisecond
 
 // convMonitor is the daemon's live conv_index maintainer: ONE
-// fsnotify.Watcher over ~/.claude/projects/ that calls
-// convops.ScanAndUpsertFile whenever a conversation .jsonl changes, so
+// fsnotify.Watcher over ~/.claude/projects/ that advances a retained
+// convops.ConvFollower whenever a conversation .jsonl changes, so
 // the SQLite conv_index cache stays continuously fresh and readers (the
 // dashboard) can trust cached rows instead of re-stat+reparsing the
 // .jsonl on every access.
@@ -148,7 +148,7 @@ type fireEvent struct {
 // loop is the single event-loop goroutine. Every conv_index write
 // happens here, on this one goroutine: debounce timers only enqueue a
 // fireEvent, they never touch the DB themselves. So once loop returns,
-// no ScanAndUpsertFile call is left in flight — which is what lets a
+// no follower refresh is left in flight — which is what lets a
 // flow test stop the monitor and tear down its HOME without a race.
 func (m *convMonitor) loop() {
 	defer close(m.done)
@@ -249,7 +249,7 @@ func (m *convMonitor) handleEvent(event fsnotify.Event, timers map[string]*pendi
 		return
 	}
 
-	// Remove / Rename: act now. ScanAndUpsertFile is self-cleaning — an
+	// Remove / Rename: act now. ConvFollower is self-cleaning — an
 	// os.Stat miss makes it delete the conv_index row.
 	if event.Op&(fsnotify.Remove|fsnotify.Rename) != 0 {
 		if pt, ok := timers[path]; ok {

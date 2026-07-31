@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -50,14 +51,19 @@ func setupClearedAgent(t *testing.T, f *testharness.Flow) *db.AgentGroup {
 	g := f.HaveGroup(clearGroup)
 	f.HaveAliveSession(clearAgentConv, clearAgentLabel, clearAgentTmux, f.World.HomeDir)
 	// Stamp the agent's display name into the .jsonl exactly as a real
-	// /rename would, so the hook's pre-migration scan picks it up via
-	// the production conv_index path. (HaveConvWithTitle would short-
-	// circuit the .jsonl-scan path the fix relies on — see the
-	// testharness title-refresh quirk.)
+	// /rename would, then model the incremental monitor having committed that
+	// sidecar. Hooks no longer parse transcripts; production closes a direct
+	// /rename debounce race with bounded metadata ordering instead.
 	cc := f.World.CCs.GetByLabel(clearAgentLabel)
 	require.NotNil(t, cc, "CCSim for the agent should be registered")
 	require.NoError(t, cc.WriteCustomTitle(clearAgentTitle),
 		"seed the agent's customTitle turn")
+	info, err := os.Stat(cc.JsonlPath)
+	require.NoError(t, err)
+	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
+		ConvID: clearAgentConv, FullPath: cc.JsonlPath, FileSize: info.Size(),
+		FileMtime: info.ModTime().Unix(), CustomTitle: clearAgentTitle, IndexedAt: time.Now(),
+	}))
 	f.HaveMember(clearGroup, clearAgentConv)
 	f.HaveMember(clearGroup, clearPeerConv)
 	require.NoError(t, db.AddAgentGroupOwner(g.ID, clearAgentConv, "human"),

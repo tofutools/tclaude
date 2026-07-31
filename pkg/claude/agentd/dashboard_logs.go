@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/filefollow"
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
@@ -27,11 +28,12 @@ import (
 // a slow tail-follow poll ("stream", default off). Never on the 2s
 // snapshot tick.
 //
-// The log file is bounded by size-based rotation (default 10 MiB — see
-// config.ResolvedLogRotation), so parsing it per request is cheap. As a
-// backstop against a rotation-disabled (unbounded) log, only the newest
-// maxLogReadBytes are ever read+parsed; older lines are dropped and the
-// response's `truncated` flag says so.
+// Each physical file is followed incrementally across requests. Unchanged
+// files incur metadata checks only; growth parses just complete appended
+// records; shrink, replacement, or rewrite rebuilds the cached tail. As a
+// backstop against a rotation-disabled (unbounded) log, first hydration and
+// retained state are bounded to maxLogReadBytes; older lines are dropped and
+// the response's `truncated` flag says so.
 //
 // Because rotation splits history across siblings (output.log, .1, .2, …),
 // each response also reports which files it actually read (`sources`, with
@@ -224,43 +226,55 @@ func parseLogLine(line string) logEntryView {
 	return e
 }
 
-// readLogTail reads up to maxBytes from the END of the file at path. When
-// the file is larger, it seeks to the tail and drops the leading partial
-// line (the seek lands mid-record), returning truncated=true.
-func readLogTail(path string, maxBytes int64) (data []byte, start int64, generation string, truncated bool, err error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, 0, "", false, err
-	}
-	retained := false
-	defer func() {
-		if !retained {
-			_ = f.Close()
+const maxLogRecordBytes = 4 * 1024 * 1024
+
+type followedLogState struct {
+	records       []logRecord
+	nextOffset    int64
+	retainedBytes int64
+	truncated     bool
+}
+
+func cloneFollowedLogState(state followedLogState) followedLogState {
+	state.records = slices.Clone(state.records)
+	return state
+}
+
+func scanFollowedLogLines(r io.Reader, _ string, state *followedLogState, strict bool) (int64, bool, error) {
+	return filefollow.ScanLines(r, filefollow.LineConfig{MaxRecordBytes: maxLogRecordBytes}, func(line filefollow.Line) bool {
+		lineStart := state.nextOffset
+		state.nextOffset += line.Bytes
+		text := strings.TrimRight(string(line.Data), "\r\n")
+		if line.Oversized {
+			text = strings.TrimRight(text, "\r\n") + " … [oversized log record truncated]"
 		}
-	}()
-	info, err := f.Stat()
-	if err != nil {
-		return nil, 0, "", false, err
-	}
-	generation, retained = logFileGeneration(path, f, info)
-	size := info.Size()
-	if size <= maxBytes {
-		b, err := io.ReadAll(f)
-		return b, 0, generation, false, err
-	}
-	start = size - maxBytes
-	if _, err := f.Seek(start, io.SeekStart); err != nil {
-		return nil, 0, "", false, err
-	}
-	b, err := io.ReadAll(f)
-	if err != nil {
-		return nil, 0, "", false, err
-	}
-	if i := bytes.IndexByte(b, '\n'); i >= 0 {
-		b = b[i+1:]
-		start += int64(i + 1)
-	}
-	return b, start, generation, true, nil
+		state.records = append(state.records, logRecord{text: text, offset: lineStart, bytes: line.Bytes})
+		state.retainedBytes += line.Bytes
+		for state.retainedBytes > maxLogReadBytes && len(state.records) > 0 {
+			state.retainedBytes -= state.records[0].bytes
+			state.records = state.records[1:]
+			state.truncated = true
+		}
+		return true
+	}, strict)
+}
+
+type followedLogFile struct {
+	follower *filefollow.Follower[followedLogState]
+	usedAt   time.Time
+}
+
+var followedLogFiles = map[string]followedLogFile{}
+
+func newLogFollower() *filefollow.Follower[followedLogState] {
+	return filefollow.New(filefollow.Config[followedLogState]{
+		NewState: func(_ string, initialOffset int64) followedLogState {
+			return followedLogState{nextOffset: initialOffset, truncated: initialOffset > 0}
+		},
+		CloneState:    cloneFollowedLogState,
+		Scan:          scanFollowedLogLines,
+		InitialOffset: filefollow.TailInitialOffset(maxLogReadBytes),
+	})
 }
 
 type logFileIdentity struct {
@@ -320,9 +334,74 @@ func pruneLogFileIdentities() {
 	logFileIdentityRegistry.entries = kept
 }
 
+func pruneFollowedLogFiles() {
+	for path := range followedLogFiles {
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			delete(followedLogFiles, path)
+		}
+	}
+	for len(followedLogFiles) > 256 {
+		var oldestPath string
+		var oldest time.Time
+		for path, entry := range followedLogFiles {
+			if oldestPath == "" || entry.usedAt.Before(oldest) {
+				oldestPath, oldest = path, entry.usedAt
+			}
+		}
+		delete(followedLogFiles, oldestPath)
+	}
+}
+
 type logRecord struct {
-	text string
-	key  string
+	text   string
+	key    string
+	offset int64
+	bytes  int64
+}
+
+func followLogRecords(path string) ([]logRecord, string, bool, error) {
+	entry := followedLogFiles[path]
+	if entry.follower == nil {
+		entry.follower = newLogFollower()
+	}
+	entry.usedAt = time.Now()
+	for range 3 {
+		update, err := entry.follower.Refresh(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				delete(followedLogFiles, path)
+			}
+			return nil, "", false, err
+		}
+		// Obtain the retained generation handle only after proving the path
+		// still names the descriptor generation whose fold was committed. A
+		// log rotation in this gap retries against the replacement instead of
+		// pairing old records with the new active file's row keys.
+		file, err := os.Open(path) //nolint:gosec // tclaude's configured log path
+		if err != nil {
+			return nil, "", false, err
+		}
+		info, err := file.Stat()
+		if err != nil {
+			_ = file.Close()
+			return nil, "", false, err
+		}
+		if update.Info == nil || !os.SameFile(update.Info, info) {
+			_ = file.Close()
+			continue
+		}
+		generation, retained := logFileGeneration(path, file, info)
+		if !retained {
+			_ = file.Close()
+		}
+		followedLogFiles[path] = entry
+		records := slices.Clone(update.State.records)
+		for i := range records {
+			records[i].key = fmt.Sprintf("%s:%d", generation, records[i].offset)
+		}
+		return records, generation, update.State.truncated, nil
+	}
+	return nil, "", false, fmt.Errorf("log file %s changed repeatedly while assigning its generation", path)
 }
 
 // gatherLogLines returns the log lines in chronological order (oldest
@@ -341,6 +420,7 @@ func gatherLogRecords(path string, includeRotated bool, maxBytes int64) (records
 	logGatherMu.Lock()
 	defer logGatherMu.Unlock()
 	defer pruneLogFileIdentities()
+	defer pruneFollowedLogFiles()
 	// Newest-first file order: the active log, then each rotated sibling.
 	files := []string{path}
 	if includeRotated {
@@ -360,10 +440,11 @@ func gatherLogRecords(path string, includeRotated bool, maxBytes int64) (records
 			truncated = true
 			break
 		}
-		data, start, generation, tr, err := readLogTail(f, budget)
+		cached, generation, fileTruncated, err := followLogRecords(f)
 		if err != nil {
 			continue // missing / unreadable file — skip it
 		}
+		fileRecords, used, budgetTruncated := logRecordsWithinBudget(cached, budget)
 		// Rotation can rename the active file after we read it but before we
 		// open .1. In that interleaving both paths name the same physical file;
 		// count it once and never emit duplicate row keys.
@@ -371,11 +452,17 @@ func gatherLogRecords(path string, includeRotated bool, maxBytes int64) (records
 			continue
 		}
 		seenGenerations[generation] = true
-		if tr {
+		if fileTruncated || budgetTruncated {
 			truncated = true
 		}
-		budget -= int64(len(data))
-		fileRecords := splitNonEmptyRecords(data, generation, start)
+		budget -= used
+		nonEmpty := fileRecords[:0]
+		for _, record := range fileRecords {
+			if strings.TrimSpace(record.text) != "" {
+				nonEmpty = append(nonEmpty, record)
+			}
+		}
+		fileRecords = nonEmpty
 		// We iterate newest → oldest, so each file we visit is older than
 		// everything gathered so far: prepend to stay chronological.
 		records = append(fileRecords, records...)
@@ -385,17 +472,34 @@ func gatherLogRecords(path string, includeRotated bool, maxBytes int64) (records
 			Path:    f,
 			Name:    filepath.Base(f),
 			Lines:   len(fileRecords),
-			Bytes:   int64(len(data)),
+			Bytes:   used,
 			Rotated: f != path,
 		})
 		// A truncating read means the byte cap is reached — the dropped
 		// leading partial line leaves budget just above zero, so stop here
 		// rather than reading tiny mid-record slivers off older siblings.
-		if tr {
+		if fileTruncated || budgetTruncated {
 			break
 		}
 	}
 	return records, sources, truncated
+}
+
+func logRecordsWithinBudget(records []logRecord, budget int64) ([]logRecord, int64, bool) {
+	if budget <= 0 || len(records) == 0 {
+		return nil, 0, len(records) > 0
+	}
+	used := int64(0)
+	start := len(records)
+	for start > 0 {
+		next := records[start-1].bytes
+		if next > budget-used {
+			break
+		}
+		used += next
+		start--
+	}
+	return slices.Clone(records[start:]), used, start > 0
 }
 
 func gatherLogLines(path string, includeRotated bool, maxBytes int64) (lines []string, sources []logSource, truncated bool) {
@@ -420,23 +524,6 @@ func countRotatedLogFiles(path string) int {
 		n++
 	}
 	return n
-}
-
-// splitNonEmptyLines splits on '\n' and drops blank lines.
-func splitNonEmptyRecords(data []byte, generation string, start int64) []logRecord {
-	raw := bytes.Split(data, []byte{'\n'})
-	out := make([]logRecord, 0, len(raw))
-	offset := start
-	for _, lineBytes := range raw {
-		lineStart := offset
-		offset += int64(len(lineBytes) + 1)
-		line := strings.TrimRight(string(lineBytes), "\r")
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		out = append(out, logRecord{text: line, key: fmt.Sprintf("%s:%d", generation, lineStart)})
-	}
-	return out
 }
 
 // buildLogsResponse is the tab's core: read the log, parse + filter every

@@ -16,6 +16,7 @@ import (
 type SessionsIndex = convops.SessionsIndex
 type SessionEntry = convops.SessionEntry
 type LoadSessionsIndexOptions = convops.LoadSessionsIndexOptions
+type ConvFollower = convops.ConvFollower
 
 // Re-export functions from convops for backward compatibility. convops
 // is the single source-of-truth implementation for all conv-data ops
@@ -36,6 +37,8 @@ var (
 	LoadEntriesFromDB            = convops.LoadEntriesFromDB
 	RefreshConvIndexEntry        = convops.RefreshConvIndexEntry
 	ScanAndUpsertFile            = convops.ScanAndUpsertFile
+	FollowAndUpsertFile          = convops.FollowAndUpsertFile
+	NewConvFollower              = convops.NewConvFollower
 	ParseJSONLSessionPublic      = convops.ParseJSONLSessionPublic
 )
 
@@ -79,7 +82,6 @@ func Cmd() *cobra.Command {
 // `convops.DebugLog = true`; this helper preserves the existing surface
 // for one release.
 func SetDebugLog(v bool) { convops.DebugLog = v }
-
 
 // ListSessions returns all sessions from a project directory
 func ListSessions(projectPath string) ([]SessionEntry, error) {

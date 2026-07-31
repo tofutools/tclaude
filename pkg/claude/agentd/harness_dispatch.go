@@ -258,7 +258,11 @@ func deliverRename(convID, title string) bool {
 				"conv", convID, "harness", h.Name)
 			return false
 		}
-		return injectSlashCommand(convID, h.Life.RenameCommand()+" "+title, "", "rename")
+		if !injectSlashCommand(convID, h.Life.RenameCommand()+" "+title, "", "rename") {
+			return false
+		}
+		cacheDeliveredRename(convID, title, h.Name)
+		return true
 	}
 
 	// Out-of-band rename (direct title store): no live pane needed.
@@ -268,14 +272,30 @@ func deliverRename(convID, title string) bool {
 				"conv", convID, "harness", h.Name, "error", err)
 			return false
 		}
-		if err := db.SetConvIndexCustomTitle(convID, title, h.Name); err != nil {
-			slog.Warn("rename: failed to refresh cached title after ConvStore.SetTitle",
-				"conv", convID, "harness", h.Name, "error", err)
-		}
+		cacheDeliveredRename(convID, title, h.Name)
 		return true
 	}
 
 	slog.Warn("rename: harness supports neither an in-pane rename nor a title store",
 		"conv", convID, "harness", h.Name)
 	return false
+}
+
+// cacheDeliveredRename records the accepted title before an in-pane harness
+// has emitted and agentd has followed its transcript sidecar. Besides making
+// cache-only UI reads immediate, this establishes the ordering needed by a
+// `/clear` that arrives inside the fsnotify debounce window: identity rotation
+// carries the just-delivered name without making the hook parse the transcript.
+// A later authoritative transcript/native-store scan can still replace it.
+func cacheDeliveredRename(convID, title, harnessName string) {
+	if err := db.SetConvIndexCustomTitle(convID, title, harnessName); err != nil {
+		slog.Warn("rename: failed to refresh cached title after delivery",
+			"conv", convID, "harness", harnessName, "error", err)
+	}
+	if actor, err := db.GetAgentByConv(convID); err == nil && actor != nil {
+		if err := db.SetAgentPendingName(actor.AgentID, title); err != nil {
+			slog.Warn("rename: failed to refresh actor title fallback after delivery",
+				"conv", convID, "agent_id", actor.AgentID, "error", err)
+		}
+	}
 }

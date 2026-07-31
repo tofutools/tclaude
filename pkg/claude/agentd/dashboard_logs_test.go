@@ -97,8 +97,8 @@ func TestBuildLogsResponseKeysSurviveFullPageTailRollover(t *testing.T) {
 func TestGatherLogRecordKeysSurviveTailCapBoundaryAdvance(t *testing.T) {
 	line := jsonLine("2026-07-01T12:00:00.000Z", "INFO", "same")
 	path := writeLog(t, line, line, line)
-	// Start one byte before the oldest retained line. readLogTail drops that
-	// preceding newline, leaving exactly the newest two complete records.
+	// Give the response budget one byte beyond the newest two complete records;
+	// the cached follower keeps stable physical offsets as the window advances.
 	maxBytes := int64(2*(len(line)+1) + 1)
 	before, _, _ := gatherLogRecords(path, false, maxBytes)
 	if err := os.WriteFile(path, []byte(strings.Repeat(line+"\n", 4)), 0o644); err != nil {
@@ -160,6 +160,46 @@ func TestGatherLogRecordsSkipsSamePhysicalFileAtTwoPaths(t *testing.T) {
 	records, sources, _ := gatherLogRecords(path, true, maxLogReadBytes)
 	if len(records) != 1 || len(sources) != 1 {
 		t.Fatalf("same physical file emitted records/sources twice: records=%d sources=%d", len(records), len(sources))
+	}
+}
+
+func TestGatherLogRecordsReadsOnlyAppendedPayload(t *testing.T) {
+	line := jsonLine("2026-07-01T12:00:00.000Z", "INFO", "first")
+	path := writeLog(t, line)
+	_, _, _ = gatherLogRecords(path, false, maxLogReadBytes)
+
+	logGatherMu.Lock()
+	firstStats := followedLogFiles[path].follower.Stats()
+	logGatherMu.Unlock()
+	_, _, _ = gatherLogRecords(path, false, maxLogReadBytes)
+	logGatherMu.Lock()
+	unchangedStats := followedLogFiles[path].follower.Stats()
+	logGatherMu.Unlock()
+	if unchangedStats.PayloadBytes != firstStats.PayloadBytes || unchangedStats.Unchanged != firstStats.Unchanged+1 {
+		t.Fatalf("unchanged refresh read payload: before=%+v after=%+v", firstStats, unchangedStats)
+	}
+
+	appendLine := jsonLine("2026-07-01T12:00:01.000Z", "INFO", "second") + "\n"
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(appendLine); err != nil {
+		_ = f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	_, _, _ = gatherLogRecords(path, false, maxLogReadBytes)
+	logGatherMu.Lock()
+	appendedStats := followedLogFiles[path].follower.Stats()
+	logGatherMu.Unlock()
+	if got := appendedStats.PayloadBytes - unchangedStats.PayloadBytes; got != int64(len(appendLine)) {
+		t.Fatalf("append payload bytes = %d, want %d (stats=%+v)", got, len(appendLine), appendedStats)
+	}
+	if appendedStats.Appends != unchangedStats.Appends+1 {
+		t.Fatalf("append refresh count did not advance: before=%+v after=%+v", unchangedStats, appendedStats)
 	}
 }
 

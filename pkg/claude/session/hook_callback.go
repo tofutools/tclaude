@@ -275,15 +275,21 @@ var notifyOnStateTransition = notify.OnStateTransition
 // needsIdentityMigration). The rotation is atomic, so a failure strands nothing:
 // identity stays wholly on oldConv.
 func migrateClearedIdentity(state *SessionState, newConv string) bool {
-	// Freshen the old conv's conv_index from its .jsonl before the
-	// rotation carries the display name. An agent's /rename of itself
-	// lands as a customTitle turn in the .jsonl, and conv_index may not
-	// have been re-scanned since — without this the carried name (and
-	// so the /rename restore below) could miss a recent rename.
-	// Best-effort: a missing file / unindexable .jsonl is a no-op.
-	if state.Cwd != "" {
-		if projectDir := convops.GetClaudeProjectPath(state.Cwd); projectDir != "" {
-			convops.ScanAndUpsertFile(filepath.Join(projectDir, state.ConvID+".jsonl"))
+	// Hooks never rebuild transcripts. Give agentd's incremental fsnotify
+	// follower a short chance to commit a just-written direct /rename that is
+	// still inside its debounce window, using metadata only as the ordering
+	// signal. tclaude-delivered renames also stamp the cache synchronously; if
+	// no monitor exists, the fallback below reads only a bounded tail window.
+	if !waitForClearedIdentityIndex(state) {
+		path := clearedIdentityTranscriptPath(state)
+		if path != "" {
+			if refreshed, err := convops.RefreshCustomTitleFromTail(path); err != nil {
+				slog.Debug("clear-migrate: bounded title-tail recovery failed",
+					"conv_id", state.ConvID, "path", path, "error", err)
+			} else if refreshed {
+				slog.Debug("clear-migrate: recovered title from bounded transcript tail",
+					"conv_id", state.ConvID, "path", path)
+			}
 		}
 	}
 	carriedName, err := rotateAgentConv(state.ConvID, newConv, "clear")
@@ -301,6 +307,52 @@ func migrateClearedIdentity(state *SessionState, newConv string) bool {
 	// surface.
 	restoreClearedTitle(state.TmuxSession, carriedName)
 	return true
+}
+
+var (
+	clearIndexCatchupTimeout = 1100 * time.Millisecond
+	clearIndexCatchupPoll    = 25 * time.Millisecond
+)
+
+// waitForClearedIdentityIndex closes the direct-/rename → /clear ordering gap
+// without reading transcript payload. A custom-title record grows the old
+// JSONL; once conv_index records that size/mtime, RotateAgentConv can safely
+// carry the corresponding cached title. A false result lets the caller use a
+// bounded title-tail recovery rather than replaying the whole transcript.
+func waitForClearedIdentityIndex(state *SessionState) bool {
+	path := clearedIdentityTranscriptPath(state)
+	if path == "" || clearIndexCatchupTimeout <= 0 {
+		return false
+	}
+	deadline := time.Now().Add(clearIndexCatchupTimeout)
+	for {
+		info, statErr := os.Stat(path)
+		if statErr != nil {
+			return false
+		}
+		row, rowErr := db.GetConvIndex(state.ConvID)
+		if rowErr == nil && row != nil && row.FileSize == info.Size() &&
+			row.FileMtime >= info.ModTime().Unix() {
+			return true
+		}
+		if !time.Now().Before(deadline) {
+			slog.Debug("clear-migrate: conv_index did not catch up before rotation",
+				"conv_id", state.ConvID, "path", path)
+			return false
+		}
+		time.Sleep(clearIndexCatchupPoll)
+	}
+}
+
+func clearedIdentityTranscriptPath(state *SessionState) string {
+	if state == nil || state.ConvID == "" || state.Cwd == "" {
+		return ""
+	}
+	projectDir := convops.GetClaudeProjectPath(state.Cwd)
+	if projectDir == "" {
+		return ""
+	}
+	return filepath.Join(projectDir, state.ConvID+".jsonl")
 }
 
 // clearInjectAliveTimeout caps how long restoreClearedTitle polls for
