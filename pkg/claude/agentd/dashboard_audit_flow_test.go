@@ -26,16 +26,21 @@ type auditResp struct {
 	PruningOn       bool             `json:"pruning_on"`
 }
 type auditEntryResp struct {
-	ID              int64  `json:"id"`
-	At              string `json:"at"`
-	ActorKind       string `json:"actor_kind"`
-	ActorAgent      string `json:"actor_agent"`
-	ActorLabel      string `json:"actor_label"`
-	Verb            string `json:"verb"`
-	TargetAgent     string `json:"target_agent"`
-	TargetLabel     string `json:"target_label"`
-	GroupName       string `json:"group_name"`
-	Detail          string `json:"detail"`
+	ID          int64  `json:"id"`
+	At          string `json:"at"`
+	ActorKind   string `json:"actor_kind"`
+	ActorAgent  string `json:"actor_agent"`
+	ActorLabel  string `json:"actor_label"`
+	Verb        string `json:"verb"`
+	TargetAgent string `json:"target_agent"`
+	TargetLabel string `json:"target_label"`
+	GroupName   string `json:"group_name"`
+	Detail      string `json:"detail"`
+	Spawn       *struct {
+		Input    map[string]any `json:"input"`
+		Resolved map[string]any `json:"resolved"`
+		Response map[string]any `json:"response"`
+	} `json:"spawn"`
 	Status          int    `json:"status"`
 	Source          string `json:"source"`
 	EventID         string `json:"event_id"`
@@ -48,6 +53,34 @@ type auditEntryResp struct {
 	ExitCode        *int   `json:"exit_code"`
 	Signal          string `json:"signal"`
 	LifecycleAction string `json:"lifecycle_action"`
+}
+
+func TestAuditEndpoint_UnwrapsSpawnSnapshot(t *testing.T) {
+	newFlow(t)
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	detail, err := json.Marshal(map[string]any{
+		"kind":    "tclaude.spawn.audit.v1",
+		"summary": "role: reviewer",
+		"input":   map[string]any{"name": "worker"},
+		"resolved": map[string]any{
+			"params": map[string]any{"harness": "codex"},
+		},
+		"response": map[string]any{"error": "spawn timed out", "code": "timeout"},
+	})
+	require.NoError(t, err)
+	_, err = db.InsertAuditLog(db.AuditLogEntry{
+		ActorKind: db.AuditActorHuman, ActorLabel: "operator", Verb: "spawn",
+		Detail: string(detail), Status: 504, Source: db.AuditSourceDashboard,
+	})
+	require.NoError(t, err)
+
+	got := fetchAudit(t, agentd.BuildDashboardHandlerForTest(), "")
+	require.Len(t, got.Entries, 1)
+	assert.Equal(t, "role: reviewer", got.Entries[0].Detail)
+	require.NotNil(t, got.Entries[0].Spawn)
+	assert.Equal(t, "worker", got.Entries[0].Spawn.Input["name"])
+	assert.Equal(t, "codex", got.Entries[0].Spawn.Resolved["params"].(map[string]any)["harness"])
+	assert.Equal(t, "spawn timed out", got.Entries[0].Spawn.Response["error"])
 }
 
 func fetchAudit(t *testing.T, mux http.Handler, query string) auditResp {

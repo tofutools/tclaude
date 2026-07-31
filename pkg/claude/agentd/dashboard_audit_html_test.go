@@ -48,4 +48,9 @@ func TestDashboardHTML_AuditTabWired(t *testing.T) {
 	must("audit-verb", "verb chip class")
 	must("audit-actor", "actor chip class")
 	must("statusView", "the outcome pill model")
+	must("SpawnDetails", "spawn rows expose a structured details disclosure")
+	must("audit-spawn-popover", "spawn request/resolution/response overlay")
+	must("response_truncated", "large captured responses disclose truncation")
+	must("closeRef.current?.focus()", "opening the spawn disclosure transfers focus to its close control")
+	must("pointerdown', closeOnOutsidePointer", "outside pointer dismissal is owned by the popover")
 }

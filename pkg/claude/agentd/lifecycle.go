@@ -2530,6 +2530,111 @@ func marshalSpawnConfig(req agent.SpawnRequest) string {
 	return string(b)
 }
 
+// spawnAuditResolution is the complete, user-facing shape that reached the
+// shared spawn core. It deliberately excludes write-proof tokens and other
+// daemon-only capabilities, while retaining every launch/enrollment choice,
+// the profile rows that participated in resolution, and the resolved
+// provenance echo. Profile briefings are omitted for the same reason the raw
+// request briefing is redacted: audit detail is not a prompt/content store.
+// The raw request and HTTP response are captured alongside it by the audit
+// middleware.
+func spawnAuditProfileSnapshot(p *db.SpawnProfile) any {
+	if p == nil {
+		return nil
+	}
+	return map[string]any{
+		"id":                            p.ID,
+		"name":                          p.Name,
+		"aliases":                       append([]string(nil), p.Aliases...),
+		"disabled":                      p.Disabled,
+		"disabled_reason":               p.DisabledReason,
+		"operator_only":                 p.OperatorOnly,
+		"harness":                       p.Harness,
+		"model":                         p.Model,
+		"effort":                        p.Effort,
+		"sandbox":                       p.Sandbox,
+		"sandbox_implementation":        p.SandboxImplementation,
+		"approval":                      p.Approval,
+		"tools":                         p.ToolGovernance,
+		"ask_user_question_timeout":     p.AskUserQuestionTimeout,
+		"auto_compact_window":           p.AutoCompactWindow,
+		"auto_review":                   p.AutoReview,
+		"trust_dir":                     p.TrustDir,
+		"remote_control":                p.RemoteControl,
+		"auto_memory":                   p.AutoMemory,
+		"ssh_workaround":                p.SSHWorkaround,
+		"context_features":              p.ContextFeatures,
+		"agent_name":                    p.AgentName,
+		"role":                          p.Role,
+		"descr":                         p.Descr,
+		"initial_message":               redactedAuditText(p.InitialMessage),
+		"sync_worktree":                 p.SyncWorktree,
+		"auto_focus":                    p.AutoFocus,
+		"include_group_default_context": p.IncludeGroupDefaultContext,
+		"is_owner":                      p.IsOwner,
+		"permission_overrides":          p.PermissionOverrides,
+		"created_at":                    p.CreatedAt,
+		"updated_at":                    p.UpdatedAt,
+	}
+}
+
+func spawnAuditResolution(p spawnParams, launch *agent.ResolvedLaunch, requestedProfile string, profiles map[string]*db.SpawnProfile) map[string]any {
+	permissions := make(map[string]string, len(p.PermissionOverrides))
+	for slug, effect := range p.PermissionOverrides {
+		permissions[slug] = effect
+	}
+	features := make(map[string]string, len(p.ContextFeatures))
+	for feature, state := range p.ContextFeatures {
+		features[feature] = state
+	}
+	attachments := append([]string(nil), p.Attachments...)
+	profileSnapshots := make(map[string]any, len(profiles))
+	for name, profile := range profiles {
+		profileSnapshots[name] = spawnAuditProfileSnapshot(profile)
+	}
+	return map[string]any{
+		"launch":          launch,
+		"profile_request": requestedProfile,
+		"profiles":        profileSnapshots,
+		"params": map[string]any{
+			"name":                      p.Name,
+			"role":                      p.Role,
+			"descr":                     p.Descr,
+			"task_ref_url":              p.TaskURL,
+			"task_ref_label":            p.TaskLabel,
+			"attachments":               attachments,
+			"cwd":                       p.Cwd,
+			"worktree_path":             p.WorktreePath,
+			"worktree_branch":           p.WorktreeBranch,
+			"auto_focus":                p.AutoFocus,
+			"harness":                   p.Harness,
+			"model":                     p.Model,
+			"effort":                    p.Effort,
+			"ssh_workaround":            p.SSHWorkaround,
+			"sandbox":                   p.SandboxMode,
+			"sandbox_source":            p.SandboxModeSource,
+			"sandbox_implementation":    p.SandboxImplementation,
+			"allow_unenforced_sandbox":  p.AllowUnenforcedSandbox,
+			"approval":                  p.ApprovalPolicy,
+			"tools":                     p.ToolGovernance,
+			"auto_review":               p.AutoReview,
+			"trust_dir":                 p.TrustDir,
+			"remote_control":            p.RemoteControl,
+			"auto_memory":               p.AutoMemory,
+			"context_features":          features,
+			"auto_compact_window":       p.AutoCompactWindow,
+			"ask_user_question_timeout": p.AskUserQuestionTimeout,
+			"reply_to_conv":             p.ReplyToConv,
+			"spawned_by_conv":           p.SpawnedByConv,
+			"include_group_context":     p.GroupContext != "",
+			"is_owner":                  p.IsOwner,
+			"permission_overrides":      permissions,
+			"timeout":                   p.Timeout.String(),
+			"async":                     p.Async,
+		},
+	}
+}
+
 func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 	// requireGroupPermission also hands back the caller's conv-id: a real
 	// agent (e.g. a PO orchestrating workers) resolves to its conv-id,
@@ -3438,6 +3543,11 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	if body.IncludeGroupContext == nil || *body.IncludeGroupContext {
 		p.GroupContext = g.DefaultContext
 	}
+	setAuditSpawnResolved(r, spawnAuditResolution(p, resolvedLaunch, namedProfileHandle, map[string]*db.SpawnProfile{
+		"explicit":       namedProfile,
+		"group_default":  groupProfile,
+		"global_default": globalProfile,
+	}))
 
 	if beforeExecuteSpawnForTest != nil {
 		beforeExecuteSpawnForTest()
@@ -3461,6 +3571,11 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 			field.Source = agent.ProvLaunchDefault
 		}
 	}
+	setAuditSpawnResolved(r, spawnAuditResolution(p, resolvedLaunch, namedProfileHandle, map[string]*db.SpawnProfile{
+		"explicit":       namedProfile,
+		"group_default":  groupProfile,
+		"global_default": globalProfile,
+	}))
 	resp := map[string]any{
 		"group":        g.Name,
 		"conv_id":      outcome.ConvID,
