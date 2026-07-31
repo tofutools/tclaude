@@ -143,6 +143,15 @@ func networkEngineDisclosure(
 // adding the row, which is exactly the point — a cell flips when the record is
 // made, and the record is made against runs already named.
 //
+// The two smokes are not the same KIND of evidence, and the row would be read
+// wrong without saying so. TestPinnedProxyHarnessCooperation is the
+// harness-dependent half: it has a real per-harness scenario that launches that
+// harness's pinned binary and records which carriage reached its model origin.
+// TestPinnedProxyToolEgress is floor evidence shared by every row — it exercises
+// ordinary tool traffic through the floor and builds one launch spec, so it is
+// cited by both harnesses because its subject is the floor rather than the
+// client on top of it.
+//
 // OpenCode is absent for a different and stronger reason: it launches through
 // the agentd-owned server boundary rather than as a plain CLI, so its
 // cooperation arm belongs beside the existing OpenCode executor smoke. Until

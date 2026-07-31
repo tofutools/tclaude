@@ -216,7 +216,9 @@ func TestNetworkEngineDisclosureRendersThroughTheEnforcementAPI(t *testing.T) {
 	assert.Contains(t, proxy, "Filtering engine: Proxy filter")
 	assert.Contains(t, proxy, "SOCKS5")
 	assert.Contains(t, proxy, "blocked rather than filtered")
-	assert.NotContains(t, proxy, "not yet activated")
+	// The notice says "not activated for this target"; asserting on the
+	// spelling it does not use would pass however this rendered.
+	assert.NotContains(t, proxy, "not activated")
 	assert.Contains(t, proxy, "enforces the network allow list",
 		"an activated proxy engine states that it enforces")
 	assert.Contains(t, proxy, harness.ProxyEngineLaunchCondition,
@@ -230,7 +232,7 @@ func TestNetworkEngineDisclosureRendersThroughTheEnforcementAPI(t *testing.T) {
 	// profile read for a Codex target must render the SAME activated surface.
 	// Asserted through the API rather than inferred from the shared code path,
 	// because the rendered surface is the thing an operator reads, and it is
-	// what has to stop saying "not yet activated" the moment the cells flip.
+	// what has to stop saying "not activated" the moment the cells flip.
 	//
 	// OpenCode is read beside it and must still carry the not-activated
 	// sentence: that contrast is the activation rule visible at the surface,
