@@ -302,28 +302,18 @@ func (e *Evaluator) EvaluateResolvedAddress(
 	}
 }
 
-// localHostPrefixes are the spellings that reach the host itself without being
-// the loopback address. Linux routes 0.0.0.0/8 to the local host, and connect()
-// to the unspecified address of either family lands on local loopback, so these
-// are further spellings of host loopback rather than routable destinations.
-var localHostPrefixes = []netip.Prefix{
-	netip.MustParsePrefix("0.0.0.0/8"),
-}
-
 // namesLocalHost reports whether an address reaches the host running the proxy.
-// Every such spelling is governed by the loopback selector, under every
-// baseline — otherwise an open posture would reach host services through
-// 0.0.0.0 that no authored row ever granted.
+//
+// The definition is not this package's own: it is
+// sandboxpolicy.AddrIsLoopbackIdentity, the same list the compiler refuses cidr
+// rows against. That sharing is load-bearing rather than tidiness. match()
+// decides every target in this space from loopback rows alone, so a cidr row
+// overlapping it would be authorable but never consulted — an operator would
+// believe a deny exists that never fires (TCL-899). The branch is complete only
+// because no such row can be authored, and it stays complete only while the two
+// sides read one list.
 func namesLocalHost(addr netip.Addr) bool {
-	if addr.IsLoopback() || addr.IsUnspecified() {
-		return true
-	}
-	for _, prefix := range localHostPrefixes {
-		if prefix.Contains(addr) {
-			return true
-		}
-	}
-	return false
+	return sandboxpolicy.AddrIsLoopbackIdentity(addr)
 }
 
 var reservedDestinationPrefixes = []netip.Prefix{

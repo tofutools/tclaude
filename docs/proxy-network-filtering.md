@@ -252,11 +252,15 @@ nobody authored; refusing on one takes no authority away, and declining to
 check would let an authored deny be walked past by spelling the destination as
 a name.
 
-Deny `cidr` is still rated **Partial**, but for two reasons that have nothing
-to do with names: a target in the host-loopback identity space is decided by
-the `loopback` rows alone and never reaches a `cidr` row at all, and an
-IPv4 rule does not match a NAT64 or 6to4 form of the same address. See the deny
-table below.
+Deny `cidr` is still rated **Partial**, but for a reason that has nothing to do
+with names: an IPv4 rule does not match a NAT64 or 6to4 form of the same
+address. See the deny table below.
+
+A second reason used to sit beside it — a target in the host-loopback identity
+space is decided by the `loopback` rows alone and never reaches a `cidr` row —
+and that one is closed. Such a row is now refused when it is authored
+(`PrefixIntersectsLoopbackIdentity`), naming `{"loopback": true}` as the
+remedy, so the inert shape can no longer be written down at all.
 
 ### Host-side resolution and the private-destination blocker
 
@@ -593,6 +597,15 @@ The boundary provides:
 - no synthetic host-loopback address, and therefore none of the packet posture's
   synthetic-address reservation gap: the `loopback` selector is the sole
   host-loopback authority here;
+- no authorable-but-inert rule over the host-loopback identity space: because
+  the evaluator decides every target in that space — `127.0.0.0/8`, `::1`,
+  `0.0.0.0/8`, `::`, and their IPv4-mapped forms — from `loopback` rows alone, a
+  `cidr` row overlapping it is refused when it is authored rather than accepted
+  and never consulted. One list
+  (`sandboxpolicy.loopbackIdentityPrefixes`) backs both the compiler's refusal
+  and the evaluator's branch, so the branch cannot become incomplete by the two
+  drifting apart. An operator can no longer author a deny that silently never
+  fires;
 - no CA installation and no TLS interception anywhere;
 - no `CAP_NET_ADMIN`, no `CAP_NET_BIND_SERVICE`, no userns-root mapping, and no
   privileged in-namespace process;
@@ -610,6 +623,15 @@ Its deliberate limits are:
 - an authored name that resolves into private or reserved space is refused in
   allowlist modes unless a `cidr` or `loopback` row covers it, so a profile that
   works under the packet gateway can stop working here;
+- a `cidr` row overlapping the host-loopback identity space is refused at
+  authoring time rather than reinterpreted, so a profile that already carries
+  one stops validating: the editor's preview shows the refusal with
+  `{"loopback": true}` named as the remedy, and a launch resolving that profile
+  is refused rather than started. An **already-persisted session snapshot**
+  carrying such a row is revalidated the same way, so resume, seance, and watch
+  rendering refuse it with `sandbox_profile_changed` until the row is edited.
+  Nothing that was previously denied becomes allowed by this — the invalidated
+  row was inert by definition;
 - a private NSS module the known-resolver list does not cover is outside the
   name-authority guarantee;
 - capability cells are per harness and only activated by a named green smoke; an
@@ -635,7 +657,7 @@ Deny selectors:
 | Selector | Rating | Why |
 |---|---|---|
 | `host`, `domain` | **Partial** | The proxy decides on the identity the *client* states, and a client can state an IP literal instead of a name. Literal targets are matched against `cidr` rows only, and there is no TLS interception to recover the name, so a name deny is bypassable by connecting to the denied host's address directly. Rated Partial **unconditionally**: whether such a literal is reachable depends on the whole rule set, and a rating that flipped as unrelated CIDR rows were edited could not be reasoned about. The remedy is named per entry — add a `cidr` deny for the addresses that name resolves to. |
-| `cidr` | **Partial** | Not the mirror of the allow side, and not for the reason this row used to give. Refusing happens at a second place authorizing does not: `Dialer.Connect` asks `EvaluateResolvedAddress` for every candidate, which re-applies `cidr` **deny** rows to the resolved literal under both baselines — so a name resolving into a denied range **is** refused, and the proxy connects to the exact address it cleared. Two things still keep it short of Full, and they are what the per-entry disclosure names: (1) a target in the host-loopback identity space is decided by the `loopback` rows alone, so a `cidr` deny overlapping that space is never consulted; (2) an address is not a destination — a NAT64 or 6to4 form of a denied IPv4 address is a different address and an IPv4 rule does not match it, and while the reserved-space blocker refuses those under an allowlist baseline, a default-allow baseline reaches them. Deny those forms too if they must be blocked. |
+| `cidr` | **Partial** | Not the mirror of the allow side, and not for the reason this row used to give. Refusing happens at a second place authorizing does not: `Dialer.Connect` asks `EvaluateResolvedAddress` for every candidate, which re-applies `cidr` **deny** rows to the resolved literal under both baselines — so a name resolving into a denied range **is** refused, and the proxy connects to the exact address it cleared. One thing still keeps it short of Full, and it is what the per-entry disclosure names: an address is not a destination — a NAT64 or 6to4 form of a denied IPv4 address is a different address and an IPv4 rule does not match it, and while the reserved-space blocker refuses those under an allowlist baseline, a default-allow baseline reaches them. Deny those forms too if they must be blocked. A second reason stood here until the host-loopback identity space became unauthorable as a `cidr` row (see the security-properties list); with that shape refused at authoring time the escape is gone, but this one alone still holds the level. |
 | `loopback` | **Full** | Legitimately Full, and it is not an oversight that it sits between two Partials. The escape that makes a name deny Partial is stating an address instead of a name — and for loopback there is no such escape, because the evaluator folds every spelling of loopback into **one identity** before matching: a literal loopback target is matched against the loopback name, so `localhost`, `127.0.0.1`, `::1` — and the unspecified spellings that also reach the host — all answer to the same row. There is no literal that slips past a loopback deny. Do not "fix" this to Partial for symmetry; it would be a false rating. |
 | deny ports | **Full** | the port is part of the requested target |
 

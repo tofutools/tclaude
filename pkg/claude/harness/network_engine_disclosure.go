@@ -328,23 +328,36 @@ const (
 	//
 	// The rating stays PARTIAL, and it is worth recording why the tempting
 	// raise to Full is wrong, because the correction above removes the reason
-	// everyone remembers:
+	// everyone remembers.
 	//
-	//  1. A target in the host-loopback identity space is decided by the
-	//     loopback rows alone — match() takes that branch before any cidr row
-	//     is considered — so a cidr deny overlapping that space never applies.
-	//  2. An address is not a destination. The same host restated in another
-	//     address family (a NAT64 or 6to4 embedding of a denied v4 address) is
-	//     a different address, and a v4 cidr row does not match it. Under an
-	//     allowlist baseline the reserved-space blocker refuses those anyway;
-	//     under a default-allow baseline they are reachable.
+	// TCL-890 disclosed TWO escapes here. One is now CLOSED:
 	//
-	// Both are named in the string rather than left for an operator to find,
-	// with the remedy that actually covers them.
+	//	A target in the host-loopback identity space is decided by the loopback
+	//	rows alone — match() takes that branch before any cidr row is
+	//	considered — so a cidr deny overlapping that space never applied. That
+	//	shape is no longer authorable (TCL-899): the compiler refuses such a
+	//	row against sandboxpolicy.PrefixIntersectsLoopbackIdentity, naming the
+	//	loopback selector as the remedy, so an operator can no longer author a
+	//	deny that silently never fires. The cell stopped disclosing it, because
+	//	a disclosure that outlives its escape teaches a workaround for a hole
+	//	that is not there.
+	//
+	// One remains, and it alone is what holds the rating down:
+	//
+	//	An address is not a destination. The same host restated in another
+	//	address family (a NAT64 or 6to4 embedding of a denied v4 address) is a
+	//	different address, and a v4 cidr row does not match it. Under an
+	//	allowlist baseline the reserved-space blocker refuses those anyway;
+	//	under a default-allow baseline they are reachable. TCL-899 does not
+	//	cover this — that is routable embedded space, not host identity — so it
+	//	stays disclosed rather than force-fixed.
+	//
+	// It is named in the string rather than left for an operator to find, with
+	// the remedy that actually covers it.
 	ProxyEngineDenyCIDRSelectorDetail = "Enforced on the address the connection actually uses, through the tclaude proxy: " +
 		"a name that resolves into this range is refused as well, because every resolved address is matched against this rule before the connection is made. " +
-		"It does not cover the same destination reached under a different address — a NAT64 or 6to4 form of a denied IPv4 address is not matched by an IPv4 rule, " +
-		"and an address in the host-loopback identity space is decided by loopback rules alone — so deny those forms too if they must be blocked. " +
+		"It does not cover the same destination reached under a different address — a NAT64 or 6to4 form of a denied IPv4 address is not matched by an IPv4 rule — " +
+		"so deny those forms too if they must be blocked. " +
 		"UDP or a client that does not use the proxy is blocked entirely."
 
 	// ProxyEngineLoopbackSelectorDetail states the improvement over the packet
