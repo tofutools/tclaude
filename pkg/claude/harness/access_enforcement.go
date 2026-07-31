@@ -543,6 +543,7 @@ func accessEnforcementTable(
 			caps.Mechanism = "tclaude-layer Seatbelt native host-loopback filter"
 		}
 		if implementation == sandboxpolicy.ImplementationTclaudeLayer &&
+			packetGateway &&
 			h.Name == OpenCodeName &&
 			(IsLocalAccessNetworkPreset(axes.Network) ||
 				IsLocalModelAPIsNetworkPreset(axes.Network)) {
@@ -552,6 +553,16 @@ func accessEnforcementTable(
 			// to resolve one from, so advertising their packet capability would
 			// make the rendered surface disagree with the launch-gated
 			// model-transport refusal.
+			//
+			// TCL-895: gated on the deployed engine, from the same derivation
+			// every other packet-gateway rating in this function uses. The
+			// refusal below is the packet gateway's — pre-resolving a launch
+			// endpoint to check the authored list against — and a proxy-engine
+			// launch runs none of it, so an activated engine:proxy profile on
+			// one of these presets kept rendering a refusal for machinery it
+			// never reaches. The launch seam is gated by the same predicate
+			// inside session.ValidateTclaudeLayerOpenCodeLocalModelTransport,
+			// so preview and runtime still answer together.
 			caps.NetworkList = EnforceNone
 			caps.NetworkSelectors = nil
 			caps.NetworkPorts = EnforceNone

@@ -242,11 +242,37 @@ func resolveOpenCodeModelTransport(
 // explicit-provider filtering is supported because the frozen inline config is
 // the provider authority; the local presets have no such authority and OpenCode
 // exposes no effective-config read of its own loader, so they stay refused.
+//
+// TCL-895: that refusal is the PACKET gateway's. Its whole reason is that the
+// gateway admits a destination only if the authored allow list can be checked
+// against a launch endpoint resolved ahead of time, and these presets offer
+// nothing to resolve one from. A proxy-engine launch decides on the identity
+// the client states at connect time and needs no such pre-resolution, so
+// refusing it here would describe a mechanism this launch does not run.
+//
+// The engine gate lives INSIDE this function rather than at its call sites,
+// because both launch seams — the session boundary and the daemon spawn guard
+// — call it, and a gate applied at one of them could drift from the other and
+// from the rendered row. The renderer asks the same predicate through
+// accessEnforcementTable's deployed-engine derivation.
+//
+// This is not a hole in the OpenCode launch gate: the ENGINE-INDEPENDENT
+// model-transport resolve still runs for any filtered posture, so a
+// proxy-engine local-preset launch without an explicit provider/model and
+// inline explicit-provider config is still refused — which is exactly what the
+// proxy row's OpenCodeFilteredExplicitProviderCaveat discloses.
 func ValidateTclaudeLayerOpenCodeLocalModelTransport(
 	h *harness.Harness,
-	_ sandboxpolicy.EffectiveProfile,
+	effective sandboxpolicy.EffectiveProfile,
 	_ ModelTransportLaunchContext,
 ) error {
+	engine, err := TclaudeLayerNetworkEngine(effective)
+	if err != nil {
+		return err
+	}
+	if engine == sandboxpolicy.NetworkEngineProxy {
+		return nil
+	}
 	return modelTransportLaunchError(h,
 		"OpenCode's local presets name no explicit provider and OpenCode exposes no effective-config read of its own loader, so their launch endpoint cannot be resolved; use an explicit-provider OpenCode config, use Claude Code or Codex with a resolvable provider, or use network open")
 }
