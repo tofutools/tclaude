@@ -302,15 +302,27 @@ func renderSeatbeltProfile(
 // what "loopback" spells. An endpoint outside that space would not be a
 // filtering proxy on this host at all; it would be a route off it.
 //
-// The unspecified address is the one place where reusing that predicate alone
-// would be wrong, and the reason is that it answers a question this endpoint
-// does not ask. AddrIsLoopbackIdentity carries 0.0.0.0/8 and ::/128 because
+// The unspecified address is the one place where that predicate alone would be
+// wrong, and the reason generalizes past this function: the rule is ONE
+// PREDICATE PER QUESTION, not one predicate per address. Connect-reachability
+// and bind-scope are different questions that happen to take the same argument,
+// so reusing one across that boundary is not reuse — it is a category error
+// wearing reuse's clothes, and it is more dangerous than duplication precisely
+// because the shared name makes it look deliberate.
+//
+// Concretely: AddrIsLoopbackIdentity carries 0.0.0.0/8 and ::/128 because
 // connecting TO the unspecified address lands on local loopback, which makes
 // them host-loopback DESTINATIONS. This endpoint is where the proxy LISTENS,
-// and binding to the unspecified address is the opposite: a wildcard listener
-// on every interface, so the sandbox's only egress would also be reachable
-// from the LAN. The predicate stays the sole definition of loopback identity;
-// this is a second question about the same address, answered here.
+// and binding to the unspecified address is the opposite — a wildcard listener
+// on every interface, so the sandbox's only egress would also be reachable from
+// the LAN. A launcher taking its endpoint from a net.Listen(":0") listener
+// address lands here, which is why the refusal is at this seam rather than left
+// to the caller.
+//
+// So the predicate stays the sole definition of loopback identity and is not
+// copied or narrowed; the bind-scope question is simply answered separately,
+// below. Anyone reaching for AddrIsLoopbackIdentity to validate another bind
+// address needs the same second answer.
 func validateSeatbeltProxyEndpoint(
 	endpoint netip.AddrPort,
 	deploysProxy bool,
@@ -341,6 +353,10 @@ func validateSeatbeltProxyEndpoint(
 			endpoint,
 		)
 	}
+	// Not redundant with the check above, and not a narrowing of it: the shared
+	// predicate accepts the unspecified address as a DESTINATION, and this is a
+	// LISTEN address. See the bind-vs-connect paragraph on this function before
+	// deleting this as dead code.
 	if endpoint.Addr().IsUnspecified() {
 		return fmt.Errorf(
 			"darwin tclaude-layer proxy floor refuses wildcard proxy endpoint %s: the filtering proxy must listen on host loopback, not on every interface",
