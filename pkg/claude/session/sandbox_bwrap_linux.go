@@ -294,26 +294,34 @@ func tclaudeLayerUnixRelayServerCommandArgs(
 	if err != nil {
 		return nil, err
 	}
-	if tclaudeLayerPlanDeploysProxy(plan) {
-		// The OpenCode inherited-descriptor contract is written against the
-		// packet supervisor's exact fd layout. Refusing is the fail-closed
-		// answer: rendering it with the packet policy encoding would launch a
-		// proxy-engine plan under the wrong supervisor.
-		return nil, fmt.Errorf(
-			"the OpenCode Unix-relay launch does not support the proxy filtering engine")
-	}
 	if plan.NetworkPosture != sandboxpolicy.NetworkFiltered {
 		return bwrapArgv, nil
 	}
-	encoded, err := encodeFilteredNetworkRelayPolicy(plan)
+	// WHICH FLAG carries the payload is how the supervisor learns which engine
+	// it runs — never a mode byte on a shared one — so a supervisor started for
+	// one engine cannot be handed the other's policy by a parsing accident.
+	// Each policy is also encoded by its own engine's encoder, which validates
+	// through that engine's acceptance test before a namespace exists.
+	policyFlag := "--filtered-network-policy"
+	encode := encodeFilteredNetworkRelayPolicy
+	if tclaudeLayerPlanDeploysProxy(plan) {
+		policyFlag = "--proxy-network-policy"
+		encode = encodeProxyNetworkRelayPolicy
+	}
+	encoded, err := encode(plan)
 	if err != nil {
 		return nil, err
 	}
 	argv := []string{
+		// The LAUNCHER's fd space, not the sandbox's, and it is the same for
+		// both engines: this process was exec'd by the OpenCode launcher with
+		// the bound listener at fd 3 and the tclaude executable at fd 4. What
+		// differs per engine is only what the descriptors become on the far
+		// side of bubblewrap — see TclaudeLayerUnixRelayServerFDs.
 		"/proc/self/fd/4",
 		"session", tclaudeLayerWinchRelayCommand,
 		"--preserve-fds", "2",
-		"--filtered-network-policy", encoded,
+		policyFlag, encoded,
 		"--",
 	}
 	return append(argv, bwrapArgv...), nil

@@ -142,9 +142,15 @@ var openCodeSSEHTTPClient = &http.Client{
 var (
 	startOpenCodeRuntimeForSpawn = startOpenCodeRuntime
 	sendOpenCodePromptForSpawn   = sendOpenCodePrompt
-	resolveOpenCodeTclaudeLayer  = session.ResolveTclaudeLayerServer
-	wrapOpenCodeTclaudeLayer     = session.WrapTclaudeLayerServerSpec
-	openCodeRelayExecutable      = os.Executable
+	// Engine-aware, and it has to be: the proxy engine's floor is the isolated
+	// posture's construction, so probing the filtered posture's prerequisites
+	// would refuse an OpenCode proxy launch for want of pasta and nft that it
+	// never calls. session.ResolveTclaudeLayerServerForEngine applies the same
+	// TclaudeLayerFloorPosture mapping the plain-CLI launch path already uses,
+	// rather than a second answer to the same question (TCL-891).
+	resolveOpenCodeTclaudeLayer = session.ResolveTclaudeLayerServerForEngine
+	wrapOpenCodeTclaudeLayer    = session.WrapTclaudeLayerServerSpec
+	openCodeRelayExecutable     = os.Executable
 )
 
 func startOpenCodeRuntime(
@@ -710,7 +716,8 @@ func openCodeServeProcessExec(
 	if err != nil {
 		return "", nil, nil, nil, noCleanup, err
 	}
-	bwrapBinary, _, err := resolveOpenCodeTclaudeLayer(posture, root)
+	bwrapBinary, _, err := resolveOpenCodeTclaudeLayer(
+		posture, root, sandboxSpec.Contract.NetworkEngine)
 	if err != nil {
 		return "", nil, nil, nil, noCleanup, err
 	}
@@ -1026,7 +1033,7 @@ func openCodeServeExec(
 		return "", nil, err
 	}
 	bwrapBinary, _, err := resolveOpenCodeTclaudeLayer(
-		sandboxpolicy.NetworkHostOpen, root)
+		sandboxpolicy.NetworkHostOpen, root, sandboxSpec.Contract.NetworkEngine)
 	if err != nil {
 		return "", nil, err
 	}
@@ -1068,8 +1075,20 @@ func openCodeTclaudeLayerLaunchSpec(
 	}
 	if posture != sandboxpolicy.NetworkHostOpen {
 		if posture == sandboxpolicy.NetworkFiltered {
+			// The engine comes from the composed policy, through the same
+			// resolution the launch itself performs, so the preflight probes
+			// the floor the launch will actually build.
+			axes, axesErr := sandboxpolicy.PlannedEffectiveAccessAxes(effective)
+			if axesErr != nil {
+				return nil, axesErr
+			}
+			engine, engineErr := sandboxpolicy.DeployedNetworkEngineForRules(
+				axes.Network)
+			if engineErr != nil {
+				return nil, engineErr
+			}
 			_, _, filteredErr := resolveOpenCodeTclaudeLayer(
-				posture, sandboxpolicy.RootConstructed)
+				posture, sandboxpolicy.RootConstructed, engine)
 			if filteredErr != nil {
 				return nil, filteredErr
 			}

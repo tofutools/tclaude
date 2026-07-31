@@ -38,6 +38,15 @@ const (
 	filteredNetworkDNSDescriptorCount    = 3
 )
 
+// The packet gateway's four sealed inputs end at filteredNetworkResolvFD, and
+// the shared relay fd arithmetic in sandbox_bwrap.go is written against that
+// count: the OpenCode launcher's preserved descriptors begin immediately after
+// it. This is a compile-time pin, not a comment — adding a fifth sealed input
+// here without raising tclaudeLayerPacketEngineDescriptors fails the build,
+// rather than shipping an inherited relay that names two fds nothing installed.
+var _ = [1]struct{}{}[filteredNetworkResolvFD-
+	(tclaudeLayerRelayStatusFD+tclaudeLayerPacketEngineDescriptors)]
+
 func filteredNetworkHelperEnv() []string {
 	return []string{
 		"PATH=/usr/sbin:/usr/bin:/sbin:/bin",

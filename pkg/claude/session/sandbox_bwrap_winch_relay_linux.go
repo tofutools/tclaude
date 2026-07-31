@@ -143,10 +143,26 @@ func runTclaudeLayerWinchRelay(
 				"stacked and proxy relay bindings cannot be combined")
 		}
 	}
-	if binding.PreserveFDs != 0 &&
-		(binding.PreserveFDs != 2 || strings.TrimSpace(binding.FilteredPolicy) == "") {
-		return 125, fmt.Errorf(
-			"inherited descriptor preservation requires the filtered OpenCode two-fd contract")
+	if binding.PreserveFDs != 0 {
+		// The two-fd contract is the OpenCode launcher's, and it is the same
+		// under either filtering engine: the listener and the relay executable,
+		// and nothing else. A count this supervisor did not render is refused
+		// rather than preserved on faith.
+		if binding.PreserveFDs != 2 {
+			return 125, fmt.Errorf(
+				"inherited descriptor preservation requires the OpenCode two-fd contract")
+		}
+		// An engine policy is required because preservation is only ever
+		// rendered WITH a supervisor: a plan that deploys no engine passes the
+		// launcher's descriptors straight to bubblewrap and never reaches this
+		// process at all. Preserve-fds arriving without a policy therefore
+		// means the renderer and the supervisor disagree about the launch, and
+		// the fd numbers the harness was told to name would be wrong.
+		if strings.TrimSpace(binding.FilteredPolicy) == "" &&
+			strings.TrimSpace(binding.ProxyPolicy) == "" {
+			return 125, fmt.Errorf(
+				"inherited descriptor preservation requires a filtering engine policy")
+		}
 	}
 	bindingArgs, bindingFiles, err := prepareStackedRelayBinding(binding)
 	if err != nil {
