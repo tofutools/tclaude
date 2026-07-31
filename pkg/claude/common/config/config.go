@@ -456,15 +456,14 @@ type DashboardConfig struct {
 	// each poll and toggles body.group-quick-fold. See
 	// (*Config).GroupQuickOptions.
 	GroupQuickOptions string `json:"group_quick_options,omitempty"`
-	// DefaultTerminal selects how the dashboard's per-agent focus / open-window
-	// / open-terminal actions open a console — one of DefaultTerminal{Native,
-	// Web}. "native" (the default) pops a native OS window (falling back to an
-	// in-browser PTY only when it can't); "web" opens an in-browser terminal
-	// pane in the dashboard's Terminals tab instead, the same surface the
-	// dedicated "web term" / "web window" buttons use. Empty / unknown →
-	// default (native). The dashboard reads the resolved value off the snapshot
-	// each poll and routes its focus/open actions accordingly. The dedicated
-	// web buttons and the native-window bulk "windows…" modal are unaffected.
+	// DefaultTerminal selects how the dashboard's spawn auto-focus, per-agent
+	// focus / open-window / open-terminal actions open a console — one of
+	// DefaultTerminal{Native, Web}. "native" (the default) pops a native OS
+	// window (falling back to an in-browser PTY only when it can't); "web" opens
+	// an in-browser terminal pane in the dashboard's Terminals tab instead, the
+	// same surface the dedicated "web term" / "web window" buttons use. Empty /
+	// unknown → default (native). The dashboard reads the resolved value off the
+	// snapshot and routes its focus/open actions accordingly.
 	// See (*Config).DefaultTerminal.
 	DefaultTerminal string `json:"default_terminal,omitempty"`
 	// DefaultDirectoryPicker selects the directory chooser used from a local
@@ -1304,8 +1303,9 @@ func normalizeDefaultTerminal(s string) string {
 	}
 }
 
-// DefaultTerminal reports how the dashboard's per-agent focus / open-window /
-// open-terminal actions open a console — config dashboard.default_terminal.
+// DefaultTerminal reports how the dashboard's spawn auto-focus, per-agent
+// focus / open-window / open-terminal actions open a console — config
+// dashboard.default_terminal.
 // Default "native" (absent block / key or an unknown value): pop a native OS
 // window (with the usual in-browser fallback when none can be opened). "web"
 // routes those actions to an in-browser terminal pane in the dashboard's

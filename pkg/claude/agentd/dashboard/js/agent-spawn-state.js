@@ -23,6 +23,10 @@ export function createAgentSpawnState({ getSnapshot = () => null } = {}) {
       sandboxImpl: Object.freeze({ ...(snapshot.sandbox_impl || {}) }),
       sandboxProfiles: Object.freeze([...(snapshot.sandbox_profiles || [])]),
       userDefaultModel: String(snapshot.user_default_model || ''),
+      // Freeze the console target with the rest of the launch context. If the
+      // operator changes the preference while this dialog is open, this spawn
+      // should still execute the choice the form was opened under.
+      defaultTerminal: snapshot.default_terminal === 'web' ? 'web' : 'native',
       normalizeNames: snapshot.spawn_name_normalize !== false,
       sandboxRevision: 0,
     });

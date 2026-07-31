@@ -3391,6 +3391,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		GitWorktreeWriteDirs:       gitWorktreeWriteDirs,
 		GitWorktreeWriteDirsPinned: codexGitCommonDirPinned,
 		AutoFocus:                  body.AutoFocus,
+		AutoFocusWeb:               body.AutoFocusWeb,
 		Effort:                     effort,
 		Model:                      model,
 		Harness:                    h.Name,
@@ -3559,6 +3560,7 @@ type spawnParams struct {
 	GitWorktreeWriteDirs       []string
 	GitWorktreeWriteDirsPinned bool
 	AutoFocus                  bool
+	AutoFocusWeb               bool
 	// Effort is the validated Claude reasoning effort to forward to the
 	// new session's `tclaude session new --effort`, or "" to omit it.
 	Effort string
@@ -4850,6 +4852,13 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 			return
 		}
 		focused = true
+		if p.AutoFocusWeb {
+			// The requesting dashboard will attach the browser terminal from
+			// focus_ws in the spawn response. In particular, do not briefly pop
+			// a native window before handing the session back to the browser.
+			focusMode = "browser"
+			return
+		}
 		if err := openTerminal(openAttachCmd(label)); err != nil {
 			// No native window — headless agentd (no DISPLAY/WAYLAND_DISPLAY)
 			// or no terminal emulator installed. Don't just log and drop it:

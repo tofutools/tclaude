@@ -1108,6 +1108,9 @@ export function buildSpawnRequest(draft, context, worktreeSelection, attachmentP
     auto_focus: !!draft.autoFocus,
     include_group_context: !!draft.includeGroupContext,
   };
+  // Tell the daemon not to pop a native window; its ordinary browser-focus
+  // response then lets the dashboard attach the new pane in the Terminals tab.
+  if (draft.autoFocus && context.defaultTerminal === 'web') body.auto_focus_web = true;
   if (draft.profile) body.profile = draft.profile;
   if (attachmentPaths.length) body.attachments = [...attachmentPaths];
   if (draft.effort) body.effort = draft.effort;

@@ -1414,10 +1414,10 @@ independently. A missing, zero, negative, or malformed value falls back to
 The **Default terminal** toggle (`dashboard.default_terminal`) chooses where
 dashboard focus/open actions appear. Its default, `native`, opens or raises OS
 terminal windows. Selecting web terminals routes per-agent focus, open-window,
-open-terminal, and bulk focus from the **🪟 windows…** modal or command palette
-into panes in the dashboard's **Terminals** tab. Bulk unfocus still detaches the
-selected terminal clients and closes matching web panes; it never stops the
-agents.
+open-terminal, spawn **Auto focus**, and bulk focus from the **🪟 windows…**
+modal or command palette into panes in the dashboard's **Terminals** tab. Bulk
+unfocus still detaches the selected terminal clients and closes matching web
+panes; it never stops the agents.
 
 On the Groups tab, **Ctrl-click** or **Cmd-click** the Remote Access phone
 indicator or **web window** action to open that web terminal in the background.
@@ -1920,11 +1920,13 @@ and their paths are folded into the new agent's startup briefing under an
 its first turn. Attachments are per-spawn — they aren't stored in a spawn
 profile — and the temp copies are swept after a day.
 
-The modal has an **Auto focus** checkbox (default on): when checked, the daemon
-opens a terminal window attached to the freshly-spawned session — via
-`tclaude session attach`, so the reattached session keeps its status bar and
-focus/notify wiring — so you can watch and talk to the new agent immediately. A
-detached spawn otherwise has no window of its own.
+The modal has an **Auto focus** checkbox (default on): when checked, it opens a
+terminal attached to the freshly-spawned session so you can watch and talk to
+the new agent immediately. It uses `tclaude session attach`, preserving the
+status bar and focus/notify wiring. With **Default terminal** set to web, the
+terminal opens as a pane in the dashboard's **Terminals** tab; otherwise it
+opens a native terminal window. A detached spawn otherwise has no window of its
+own.
 
 For OpenCode, the modal also shows **Tool governance** with `allow`, `ask`, and
 `deny`. It applies one action to bash, glob, grep, LSP, task, and skill while

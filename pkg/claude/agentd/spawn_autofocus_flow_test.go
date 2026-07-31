@@ -72,6 +72,33 @@ func TestSpawn_AutoFocusFallsBackToBrowserWhenNoNativeWindow(t *testing.T) {
 		"focus_ws should be the label-keyed spawn-focus-ws path")
 }
 
+// Scenario: the dashboard's default-terminal preference is web, so its spawn
+// request asks to auto-focus directly into an in-browser terminal.
+//
+// Expected: agentd never invokes the native terminal opener and returns the
+// same label-keyed browser attachment handshake used by the headless fallback.
+func TestSpawn_AutoFocusWebSkipsNativeWindow(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+
+	opened := false
+	t.Cleanup(agentd.SetOpenTerminalForTest(func(string) error {
+		opened = true
+		return nil
+	}))
+
+	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{
+		"name": "worker", "auto_focus": true, "auto_focus_web": true,
+	})
+	if spawn.Code != http.StatusOK {
+		t.Fatalf("spawn: status=%d body=%s", spawn.Code, spawn.Raw)
+	}
+
+	assert.False(t, opened, "web auto-focus must not open a native terminal")
+	assert.Equal(t, "browser", spawn.FocusMode)
+	assert.Equal(t, "/api/spawn-focus-ws/"+spawn.Label, spawn.FocusWS)
+}
+
 // Scenario: a human spawns an agent without asking for auto focus —
 // either the dashboard checkbox is unchecked, or a CLI / agent caller
 // omits the field entirely.

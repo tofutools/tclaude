@@ -335,6 +335,13 @@ test('agent-spawn model normalizes names and builds exact launch bodies', async 
     cwd: '/mono', worktree_path: '/tmp/wt', worktree_branch: 'worker',
   });
 
+  const webRequest = model.buildSpawnRequest(
+    draft, { ...context, defaultTerminal: 'web' }, { path: '', branch: '' },
+  );
+  assert.equal(webRequest.body.auto_focus, true);
+  assert.equal(webRequest.body.auto_focus_web, true,
+    'web-terminal auto-focus must tell the daemon not to open a native window');
+
   const codex = model.selectSpawnHarness(draft, 'codex', context);
   const codexBody = model.buildSpawnRequest({
     ...codex, name: 'worker', sandbox: 'danger-full-access', sandboxProfile: 'stale',
@@ -368,12 +375,16 @@ test('agent-spawn model normalizes names and builds exact launch bodies', async 
 test('agent-spawn state snapshots opens and invalidates every async generation', async (t) => {
   const harness = await createPreactHarness(t);
   const { createAgentSpawnState } = await harness.importDashboardModule('js/agent-spawn-state.js');
-  let snapshot = { groups, harnesses, user_default_model: 'sonnet', spawn_name_normalize: false };
+  let snapshot = {
+    groups, harnesses, user_default_model: 'sonnet', spawn_name_normalize: false,
+    default_terminal: 'web',
+  };
   const state = createAgentSpawnState({ getSnapshot: () => snapshot });
   state.open({ groupName: 'alpha', role: 'reviewer' });
   const first = state.dialog.value;
   assert.equal(first.groups.length, 2);
   assert.equal(first.normalizeNames, false);
+  assert.equal(first.defaultTerminal, 'web');
   assert.equal(state.isCurrent(first.generation), true);
   snapshot = { groups: [], harnesses: [] };
   assert.equal(first.groups.length, 2, 'poll replacement cannot retarget an open draft');
@@ -430,6 +441,23 @@ test('agent-spawn actions preserve effort memory, HTTP errors, upload retry inpu
   assert.ok(calls.some(([kind]) => kind === 'terminal'));
   assert.ok(calls.some(([kind, message]) => kind === 'notify' && /opened in-browser/.test(message)));
   assert.ok(calls.some(([kind]) => kind === 'refresh'));
+
+  const beforeWebCompletion = calls.length;
+  actions.complete(
+    {
+      conv_id: 'abcdef1234', label: 'web-worker', focus_mode: 'browser',
+      focus_ws: '/api/spawn-focus-ws/web-worker',
+    },
+    { name: 'web-worker', group: 'alpha', autoFocus: true },
+  );
+  const webCompletionCalls = calls.slice(beforeWebCompletion);
+  assert.deepEqual(
+    webCompletionCalls.find(([kind]) => kind === 'terminal')?.[1],
+    { wsPath: '/api/spawn-focus-ws/web-worker', label: 'web-worker', hideConv: 'abcdef1234' },
+    'web-terminal preference opens the label-keyed spawn terminal directly',
+  );
+  assert.ok(webCompletionCalls.some(([kind, message]) => kind === 'notify'
+    && /opened in-browser/.test(message)));
 
   const worktreeDraft = {
     worktree: '__new__', wtRepo: '/next', worktreeBranch: 'worker', worktreeBase: 'main',

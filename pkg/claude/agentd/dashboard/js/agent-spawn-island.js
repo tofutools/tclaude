@@ -158,6 +158,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
     harnesses: current.harnesses,
     sandboxImpl: current.sandboxImpl,
     userDefaultModel: current.userDefaultModel,
+    defaultTerminal: current.defaultTerminal,
     normalizeNames: current.normalizeNames,
   }), [current]);
   const rememberedEffort = (model) => actions.rememberedEffort(model);
