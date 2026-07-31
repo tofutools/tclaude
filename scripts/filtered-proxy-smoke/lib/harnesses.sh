@@ -20,6 +20,24 @@ HARNESS_CODEX_VERSION="0.145.0"
 # about a version, not about OpenCode forever.
 HARNESS_OPENCODE_VERSION="1.18.6"
 
+# Where a CI cache may keep pinned harness artifacts between runs. The workflow
+# keys its cache on the pin strings above, so a restored entry is by construction
+# the same version this file names — but that is a claim about a cache key, not a
+# proof about a file, so every install below still asserts version (and, for
+# Claude, checksum) against the artifact it ACTUALLY uses. See install_claude.
+HARNESS_CACHE_DIR="${SMOKE_HARNESS_CACHE_DIR:-${RUNNER_TEMP:-${TMPDIR:-/tmp}}/smoke-harness-cache}"
+
+# harnesses::known prints the harness names this file can install, derived from
+# the functions themselves rather than a hand-written list — so adding an install
+# function immediately makes the shard map's harness-coverage guard demand that
+# some shard claim it, instead of it being installed by nobody.
+harnesses::known() {
+  local fn
+  while read -r _ _ fn; do
+    printf '%s\n' "${fn#harnesses::install_}"
+  done < <(declare -F | grep -E ' harnesses::install_[a-z_]+$') | sort
+}
+
 harnesses::install_codex() {
   smoke::log "Installing pinned Codex ${HARNESS_CODEX_VERSION}"
   npm install --global "@openai/codex@${HARNESS_CODEX_VERSION}"
@@ -47,17 +65,20 @@ harnesses::install_claude() {
   local base=https://downloads.claude.ai/claude-code-releases
   local tmp="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
   local manifest="$tmp/claude-manifest.json"
-  local binary="$tmp/claude-${HARNESS_CLAUDE_VERSION}"
+  local binary="$HARNESS_CACHE_DIR/claude-${HARNESS_CLAUDE_VERSION}-${platform}"
   local curl_args=(
     --fail --location --silent --show-error
     --max-time 60 --retry 2 --retry-all-errors
   )
+  mkdir -p "$HARNESS_CACHE_DIR"
 
+  # The published checksum is fetched EVERY run, cache hit or not. It is the
+  # authority the artifact is judged against, so reading it out of the same
+  # cache as the artifact would make the check circular: a bad pair would verify
+  # against itself. It is one small JSON document; nothing is saved by caching
+  # it.
   curl "${curl_args[@]}" --output "$manifest" \
     "$base/${HARNESS_CLAUDE_VERSION}/manifest.json"
-  # The published checksum is verified before the binary is installed: this
-  # runs a downloaded executable against real network policy, so provenance is
-  # not optional.
   local checksum
   checksum=$(node -e '
     const fs = require("fs");
@@ -68,9 +89,29 @@ harnesses::install_claude() {
     smoke::error "missing Claude Code checksum for $platform"
     return 1
   fi
-  curl "${curl_args[@]}" --output "$binary" \
-    "$base/${HARNESS_CLAUDE_VERSION}/$platform/claude"
-  echo "$checksum  $binary" | sha256sum --check
+
+  # MATERIALIZE, THEN VERIFY — in that order, and with the verification outside
+  # the branch. A CI cache may hand this step a binary nobody in this run
+  # downloaded, so a checksum check that only guarded the download path would
+  # leave the cache-hit path unverified: exactly the artifact most worth
+  # verifying, since it came from somewhere other than the vendor. Whatever file
+  # ends up at "$binary" is what gets checked and what gets installed.
+  if [[ -s "$binary" ]]; then
+    smoke::log "Using cached Claude Code artifact $binary"
+  else
+    curl "${curl_args[@]}" --output "$binary.part" \
+      "$base/${HARNESS_CLAUDE_VERSION}/$platform/claude"
+    # Renamed only once complete, so an interrupted download cannot be saved to
+    # the cache as a plausible-looking short file that every later run rejects.
+    mv "$binary.part" "$binary"
+  fi
+  if ! echo "$checksum  $binary" | sha256sum --check; then
+    # Removed rather than left in place: on a runner whose cache is populated,
+    # a bad entry would otherwise fail every subsequent run at the same pin.
+    rm -f "$binary"
+    smoke::error "Claude Code ${HARNESS_CLAUDE_VERSION} failed its published checksum; the artifact has been discarded"
+    return 1
+  fi
 
   # Installed under /usr/local, NOT under $HOME/.local as the old workflow did.
   # These smokes run the harness INSIDE the constructed root, which binds the

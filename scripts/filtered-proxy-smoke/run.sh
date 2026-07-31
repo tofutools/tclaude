@@ -16,26 +16,59 @@
 # /etc/hosts, and create network namespaces with sudo. `selftest.sh` is the part
 # that is safe to run anywhere, and it is what proves the evidence discipline.
 #
-# --validate-only runs the self-test and every manifest/flow consistency check
-# and then stops, touching no sandbox and no network. It is the part of this
-# entrypoint a developer or a pre-commit check can safely run, and it is how the
-# drift guards below are proven without executing a smoke.
+# --validate-only runs the self-test and every manifest/flow/shard consistency
+# check and then stops, touching no sandbox and no network. It is the part of
+# this entrypoint a developer or a pre-commit check can safely run, and it is how
+# the drift guards below are proven without executing a smoke.
+#
+# --shard NAME (or SMOKE_SHARD=NAME) runs only the flows shards.txt assigns to
+# that shard, and installs only the harnesses that shard needs. With no shard the
+# entrypoint runs everything, exactly as it did before the split existed — so a
+# developer, a validate-only check and a future single-job CI all keep working
+# without knowing shards exist. The shard map is loaded and its union coverage
+# asserted EITHER WAY: a hole in it must fail the unsharded run too, or the guard
+# would only exist in the configuration that already skips flows.
 set -euo pipefail
 
 validate_only=0
-case "${1:-}" in
-  --validate-only) validate_only=1 ;;
-  "")              validate_only=0 ;;
-  *)
-    printf 'usage: %s [--validate-only]\n' "${BASH_SOURCE[0]}" >&2
-    printf 'unrecognized argument: %s\n' "$1" >&2
-    # Refusing an unknown argument matters more here than usually: the
-    # destructive path is the DEFAULT, so a typo like --validate or --dry-run
-    # would otherwise build sandboxes, npm-install harnesses and rewrite the
-    # caller's /etc/hosts while they believed they had asked for a dry run.
-    exit 2
-    ;;
-esac
+shard="${SMOKE_SHARD:-}"
+
+usage() {
+  printf 'usage: %s [--validate-only] [--shard NAME]\n' "${BASH_SOURCE[0]}" >&2
+}
+
+# Refusing an unknown argument matters more here than usually: the destructive
+# path is the DEFAULT, so a typo like --validate or --dry-run would otherwise
+# build sandboxes, npm-install harnesses and rewrite the caller's /etc/hosts
+# while they believed they had asked for a dry run. A --shard with no value is
+# refused for the mirror-image reason: silently falling back to "run everything"
+# would turn a mistyped CI invocation into a job that quietly did another shard's
+# work as well.
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --validate-only) validate_only=1; shift ;;
+    --shard)
+      if [[ $# -lt 2 || -z "$2" ]]; then
+        usage
+        printf '%s\n' '--shard requires a shard name' >&2
+        exit 2
+      fi
+      shard="$2"; shift 2 ;;
+    --shard=*)
+      shard="${1#--shard=}"
+      if [[ -z "$shard" ]]; then
+        usage
+        printf '%s\n' '--shard requires a shard name' >&2
+        exit 2
+      fi
+      shift ;;
+    *)
+      usage
+      printf 'unrecognized argument: %s\n' "$1" >&2
+      exit 2
+      ;;
+  esac
+done
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$here/../.." && pwd)"
@@ -74,8 +107,28 @@ bash "$shared/selftest.sh"
 #    exactly the states in which everything downstream would pass vacuously.
 smoke::load_manifest "$here/manifest.txt" "$here/flows"
 
+# 2b. Read and validate the shard map. The union checks are the point: a flow
+#     assigned to no shard, or a harness claimed by no shard, would leave both CI
+#     jobs green while the smoke silently stopped running. Both run even when no
+#     shard was selected, so the guard cannot be avoided by running unsharded.
+smoke::load_shards "$here/shards.txt"
+mapfile -t known_harnesses < <(harnesses::known)
+smoke::require_shard_harness_coverage "${known_harnesses[@]}"
+
+label="Filtered-proxy smoke"
+if [[ -n "$shard" ]]; then
+  smoke::select_shard "$shard"
+  label="Filtered-proxy smoke [$shard]"
+  smoke::log "Shard '$shard': flows ${SMOKE_SHARD_FLOWS[$shard]% }; harnesses ${SMOKE_SHARD_HARNESSES[$shard]% }"
+else
+  # No shard: run everything and install every harness, which is what this
+  # entrypoint did before shards existed and still does for a local
+  # --validate-only or a single-job invocation.
+  SMOKE_SELECTED_HARNESSES=("${known_harnesses[@]}")
+fi
+
 if [[ "$validate_only" -eq 1 ]]; then
-  echo "filtered-proxy smoke: manifest and flows validate cleanly"
+  echo "filtered-proxy smoke: manifest, flows and shard map validate cleanly"
   exit 0
 fi
 
@@ -111,10 +164,13 @@ smoke::log "Building tclaude for the smoke launches"
 go build -o "$SMOKE_TCLAUDE_BINARY" .
 
 smoke::unlock_userns
-harnesses::install_codex
-harnesses::install_claude
-harnesses::install_opencode
+# Only the selected shard's harnesses: a job that never launches Claude Code has
+# no reason to spend a minute installing it. The version and checksum assertions
+# inside each install are unchanged — see lib/harnesses.sh.
+for harness in "${SMOKE_SELECTED_HARNESSES[@]}"; do
+  "harnesses::install_$harness"
+done
 
 # 4. Run each flow in a subshell so a flow's trap, cwd and variables cannot leak
 #    into the next one, then check its evidence.
-smoke::run_flows "Filtered-proxy smoke"
+smoke::run_flows "$label"
