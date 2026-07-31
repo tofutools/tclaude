@@ -40,8 +40,10 @@ the flows, and the manifest that says which evidence they must produce.
 
 Everything that decides *what runs*, *what counts as evidence*, *which harness
 versions are pinned* and *how fixtures are built* is in this directory and the
-shared lib. The CI job is generic: check out, set up Go and Node, invoke
-`run.sh`.
+shared lib. The CI job is generic: check out, set up Go and Node, restore the
+harness cache, invoke `run.sh`. It knows the shard *names* and nothing else —
+which flows each one runs and which harnesses it installs is `shards.txt`'s
+business, and the workflow-matrix check above is what keeps the two agreeing.
 
 That split exists because `.github/workflows/**` needs an operator with
 `workflow` scope to merge. With the logic inline, every new smoke, every
@@ -89,17 +91,33 @@ level and must stay there: `fixture::hosts_add`/`hosts_restore` mutate
 `/etc/hosts` through a single shared backup, so two flows running concurrently
 in one process would clobber each other's resolver state.
 
-Two union checks keep the split from quietly dropping coverage, and both run
+Three checks keep the split from quietly dropping coverage, and all of them run
 whether or not a shard was selected:
 
 | check | what it refuses |
 | -- | -- |
 | flow union | a flow the manifest names that **no** shard runs — it would stop running while every job stayed green |
 | harness union | a harness `lib/harnesses.sh` can install that no shard claims (installed by nobody), or a shard naming one nothing can install |
+| workflow matrix | a shard declared here that CI's `shard: [...]` matrix does not invoke — it would satisfy both unions above and still execute nowhere |
 
-Both are self-tested in `scripts/lib/smoke/selftest.sh` against synthetic shard
-maps — including the union gap itself — so the guard is proven on every run
-rather than trusted.
+The third one reads `.github/workflows/*.yml` **read-only**. The dependency
+points from the repo *into* the workflow deliberately: that keeps the CI job
+generic, whereas a workflow that had to know about flows is the thing this whole
+layout exists to avoid. A job that does not pass `--shard` is skipped rather than
+checked — that is the unsharded shape, which is complete coverage by
+construction. A job that *does* pass `--shard` but whose matrix the parser cannot
+read (a block-form list, say) is a hard failure, not an assumed match.
+
+All three are self-tested in `scripts/lib/smoke/selftest.sh` against synthetic
+shard maps and workflow files — including each gap itself — so the guards are
+proven on every run rather than trusted.
+
+**Residual, stated rather than implied:** harnesses are declared per *shard*, not
+per flow, so nothing knows that `20-harness-egress` is the line needing `codex`.
+Moving a flow between shards without moving its harness leaves both unions
+satisfied and fails inside the flow with "command not found" — loud, but reading
+like a broken smoke rather than a shard map with a hole in it. Declaring
+harnesses per flow and deriving each shard's set as the union would close it.
 
 ## Adding a smoke
 

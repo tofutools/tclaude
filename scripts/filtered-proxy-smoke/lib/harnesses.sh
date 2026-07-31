@@ -21,21 +21,30 @@ HARNESS_CODEX_VERSION="0.145.0"
 HARNESS_OPENCODE_VERSION="1.18.6"
 
 # Where a CI cache may keep pinned harness artifacts between runs. The workflow
-# keys its cache on the pin strings above, so a restored entry is by construction
-# the same version this file names — but that is a claim about a cache key, not a
-# proof about a file, so every install below still asserts version (and, for
-# Claude, checksum) against the artifact it ACTUALLY uses. See install_claude.
+# keys its cache on a hash of THIS FILE, which is where the pins live — a
+# conservative superset of the pin strings, so an unrelated edit here costs a
+# re-download and can never serve an artifact belonging to a different pin.
+#
+# That is still only a claim about a cache key, not a proof about a file, so
+# every install below asserts the version (and, for Claude, the checksum) against
+# the artifact it ACTUALLY uses. See install_claude.
 HARNESS_CACHE_DIR="${SMOKE_HARNESS_CACHE_DIR:-${RUNNER_TEMP:-${TMPDIR:-/tmp}}/smoke-harness-cache}"
 
 # harnesses::known prints the harness names this file can install, derived from
 # the functions themselves rather than a hand-written list — so adding an install
 # function immediately makes the shard map's harness-coverage guard demand that
 # some shard claim it, instead of it being installed by nobody.
+#
+# The charset matches what a bash function name can hold after the prefix, NOT
+# just lowercase letters: a narrower pattern would skip `install_gemini3`
+# entirely, which is the one failure this function must never have — an
+# undiscovered harness is installed by nobody AND makes the shard line that
+# correctly claims it fail as "cannot install".
 harnesses::known() {
   local fn
   while read -r _ _ fn; do
     printf '%s\n' "${fn#harnesses::install_}"
-  done < <(declare -F | grep -E ' harnesses::install_[a-z_]+$') | sort
+  done < <(declare -F | grep -E ' harnesses::install_[A-Za-z0-9_]+$') | sort
 }
 
 harnesses::install_codex() {
@@ -99,17 +108,33 @@ harnesses::install_claude() {
   if [[ -s "$binary" ]]; then
     smoke::log "Using cached Claude Code artifact $binary"
   else
-    curl "${curl_args[@]}" --output "$binary.part" \
-      "$base/${HARNESS_CLAUDE_VERSION}/$platform/claude"
-    # Renamed only once complete, so an interrupted download cannot be saved to
-    # the cache as a plausible-looking short file that every later run rejects.
+    # Renamed only once complete, so an interrupted download cannot be left
+    # behind as a plausible-looking short file — and the partial is cleaned up
+    # on failure rather than riding into the cache as dead weight under a key
+    # that never expires.
+    if ! curl "${curl_args[@]}" --output "$binary.part" \
+        "$base/${HARNESS_CLAUDE_VERSION}/$platform/claude"; then
+      rm -f "$binary.part"
+      smoke::error "could not download Claude Code ${HARNESS_CLAUDE_VERSION}"
+      return 1
+    fi
     mv "$binary.part" "$binary"
   fi
-  if ! echo "$checksum  $binary" | sha256sum --check; then
-    # Removed rather than left in place: on a runner whose cache is populated,
-    # a bad entry would otherwise fail every subsequent run at the same pin.
+  # Compared as a string rather than piped to `sha256sum --check`: the --check
+  # line format splits on a two-space delimiter and has its own backslash
+  # escaping, so a cache directory containing a space would make a CORRECT
+  # artifact fail as "no properly formatted checksum lines found" — a real
+  # failure with an actively misleading diagnosis.
+  local got
+  got="$(sha256sum "$binary" | cut -d' ' -f1)"
+  if [[ "$got" != "$checksum" ]]; then
+    # Removed so this runner re-downloads on the next attempt instead of failing
+    # on the same local file. NOTE, because it is easy to assume otherwise: this
+    # does NOT evict a poisoned GitHub Actions cache entry, which is immutable
+    # under its key and will be restored again. Recovering from that means
+    # deleting the cache entry (or changing the key by editing this file).
     rm -f "$binary"
-    smoke::error "Claude Code ${HARNESS_CLAUDE_VERSION} failed its published checksum; the artifact has been discarded"
+    smoke::error "Claude Code ${HARNESS_CLAUDE_VERSION} checksum mismatch: got $got, expected $checksum; the local artifact has been discarded"
     return 1
   fi
 

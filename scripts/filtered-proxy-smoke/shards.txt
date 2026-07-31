@@ -25,9 +25,23 @@
 # scripts/lib/smoke/selftest.sh, which every run executes before trusting
 # anything, so the guard cannot rot unnoticed either.
 #
+# A third check closes the level above: run.sh reads the workflow files and
+# refuses to run unless the shard names CI's matrix invokes are exactly the ones
+# declared here. A shard added below but not to the matrix would otherwise
+# satisfy both unions above and still execute nowhere.
+#
 # Adding a flow therefore costs two edits, both reviewable: a manifest.txt line
 # saying what evidence it must produce, and a shards.txt entry saying which job
 # runs it. Forgetting the second one fails the run rather than passing quietly.
+#
+# RESIDUAL, stated rather than implied: harnesses are declared per SHARD, not per
+# flow, so nothing here knows that 20-harness-egress is the line that needs codex.
+# Moving a flow between shards without moving its harness leaves both unions
+# satisfied and fails in CI with "command not found" inside the flow — a loud
+# failure, but one that reads like a broken smoke rather than a shard map with a
+# hole in it. Declaring harnesses per flow and deriving each shard's set as the
+# union would close it; that is a bigger change than this split, and it is a
+# review question until someone makes it.
 
 # Session-layer proxy floor, policy engine and pinned-harness egress.
 session flows      10-floor-policy 20-harness-egress

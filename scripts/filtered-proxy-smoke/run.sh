@@ -31,10 +31,38 @@
 set -euo pipefail
 
 validate_only=0
-shard="${SMOKE_SHARD:-}"
+shard=""
+shard_set=0
+# SMOKE_SHARD is held to the SAME rule as --shard, including when it is set to
+# the empty string: exported-but-empty is the shape a CI expression that resolved
+# to nothing produces, and treating it as "run everything" would silently make
+# one job do another shard's work while looking like it had been given a shard.
+if [[ -n "${SMOKE_SHARD+set}" ]]; then
+  if [[ -z "$SMOKE_SHARD" ]]; then
+    printf '%s\n' 'SMOKE_SHARD is set but empty; unset it to run every shard' >&2
+    exit 2
+  fi
+  shard="$SMOKE_SHARD"
+  shard_set=1
+fi
 
 usage() {
   printf 'usage: %s [--validate-only] [--shard NAME]\n' "${BASH_SOURCE[0]}" >&2
+}
+
+# An explicit --shard overrides SMOKE_SHARD, which is the ordinary precedence and
+# is what makes a one-off local invocation possible in a shell that exports one.
+# A REPEATED --shard is refused instead: there is no sensible precedence between
+# two of them, and silently keeping the last would run one shard while the
+# command line says two — the same ambiguity every other argument here refuses.
+shard_from_flag=0
+require_one_shard() {
+  if [[ "$shard_from_flag" -eq 1 ]]; then
+    usage
+    printf '%s\n' '--shard given more than once' >&2
+    exit 2
+  fi
+  shard_from_flag=1
 }
 
 # Refusing an unknown argument matters more here than usually: the destructive
@@ -53,7 +81,8 @@ while [[ $# -gt 0 ]]; do
         printf '%s\n' '--shard requires a shard name' >&2
         exit 2
       fi
-      shard="$2"; shift 2 ;;
+      require_one_shard
+      shard="$2"; shard_set=1; shift 2 ;;
     --shard=*)
       shard="${1#--shard=}"
       if [[ -z "$shard" ]]; then
@@ -61,7 +90,8 @@ while [[ $# -gt 0 ]]; do
         printf '%s\n' '--shard requires a shard name' >&2
         exit 2
       fi
-      shift ;;
+      require_one_shard
+      shard_set=1; shift ;;
     *)
       usage
       printf 'unrecognized argument: %s\n' "$1" >&2
@@ -114,9 +144,17 @@ smoke::load_manifest "$here/manifest.txt" "$here/flows"
 smoke::load_shards "$here/shards.txt"
 mapfile -t known_harnesses < <(harnesses::known)
 smoke::require_shard_harness_coverage "${known_harnesses[@]}"
+# ...and that every shard is actually invoked by a job. The two union checks
+# above cannot see this: a shard added here but not to the workflow matrix runs
+# nowhere while both legs stay green. Read-only, and skipped for a workflow whose
+# job does not pass --shard, so this holds before and after the job split.
+smoke::require_workflow_shards filtered-proxy-smoke \
+  "$repo_root/.github/workflows/ci.yml" \
+  "$repo_root/.github/workflows/release.yml" \
+  "$repo_root/.github/workflows/manual-release.yml"
 
 label="Filtered-proxy smoke"
-if [[ -n "$shard" ]]; then
+if [[ "$shard_set" -eq 1 ]]; then
   smoke::select_shard "$shard"
   label="Filtered-proxy smoke [$shard]"
   smoke::log "Shard '$shard': flows ${SMOKE_SHARD_FLOWS[$shard]% }; harnesses ${SMOKE_SHARD_HARNESSES[$shard]% }"
@@ -164,6 +202,12 @@ smoke::log "Building tclaude for the smoke launches"
 go build -o "$SMOKE_TCLAUDE_BINARY" .
 
 smoke::unlock_userns
+# Created unconditionally, not just by the install that populates it: CI caches
+# this path for every shard, and actions/cache warns on a path that does not
+# exist. A shard whose harnesses need no cached artifact should leave an empty
+# directory behind, not a warning that trains reviewers to ignore cache noise on
+# the leg where a real cache regression would show up.
+mkdir -p "$HARNESS_CACHE_DIR"
 # Only the selected shard's harnesses: a job that never launches Claude Code has
 # no reason to spend a minute installing it. The version and checksum assertions
 # inside each install are unchanged — see lib/harnesses.sh.

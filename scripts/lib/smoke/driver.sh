@@ -140,6 +140,10 @@ smoke::load_shards() {
   # dropping a shard line is exactly what this file must never do quietly.
   while read -r shard key items || [[ -n "${shard:-}" ]]; do
     [[ -z "${shard:-}" || "$shard" == \#* ]] && continue
+    if [[ ! "$shard" =~ ^[A-Za-z0-9._-]+$ ]]; then
+      smoke::error "shard map names shard '$shard', which is not a plain name"
+      return 1
+    fi
     case "${key:-}" in
       flows|harnesses) ;;
       "")
@@ -176,6 +180,15 @@ smoke::load_shards() {
     local collected=""
     for item in $items; do
       [[ "$item" == \#* ]] && break
+      # Charset-gated before it is used. These names index associative arrays
+      # and are compared with unquoted expansions, so a name containing `*`, `@`
+      # or a glob character would either alias every key or expand against the
+      # repo root this script cd's into. Refusing the name is cheaper than
+      # quoting every use site correctly forever.
+      if [[ ! "$item" =~ ^[A-Za-z0-9._-]+$ ]]; then
+        smoke::error "shard '$shard' names $key entry '$item', which is not a plain name"
+        return 1
+      fi
       if [[ " $collected" == *" $item "* ]]; then
         smoke::error "shard '$shard' names $key entry '$item' twice"
         return 1
@@ -238,6 +251,84 @@ smoke::load_shards() {
     smoke::error "shard map $shards covers no shard for flow(s): ${sorted% }; every flow must run in at least one shard"
     return 1
   fi
+}
+
+# smoke::require_workflow_shards JOB_ID WORKFLOW_FILE...
+#
+# The union check above proves every flow belongs to a shard. It cannot prove
+# that every shard is actually RUN, because the list of shards CI invokes lives
+# in a workflow file — behind an operator-scope merge — while the shard map lives
+# here. A shard added to shards.txt but not to the workflow matrix passes every
+# other guard in this file and never executes, in any job, forever: the same
+# vacuous green displaced one level up. This closes that.
+#
+# The dependency deliberately points from the repo INTO .github, never the other
+# way: a script reading a workflow read-only keeps the job generic, whereas a
+# workflow that had to know about flows would be the thing this whole layout
+# exists to avoid.
+#
+# A workflow whose job does NOT pass --shard is skipped rather than checked. That
+# is the unsharded shape — one job running every flow — which is complete
+# coverage by construction, and it is also the state of the tree before the
+# job-split workflow change lands.
+smoke::require_workflow_shards() {
+  local job="$1"
+  shift
+  local file block declared failed=0
+
+  if [[ ${#SMOKE_SHARD_NAMES[@]} -eq 0 ]]; then
+    smoke::error "smoke::require_workflow_shards called before a shard map was loaded"
+    return 1
+  fi
+
+  local wanted
+  wanted="$(printf '%s\n' "${SMOKE_SHARD_NAMES[@]}" | sort | tr '\n' ' ')"
+
+  for file in "$@"; do
+    if [[ ! -f "$file" ]]; then
+      smoke::error "no workflow at $file; the shard-matrix check cannot prove anything about it"
+      failed=1
+      continue
+    fi
+    # The job block: from `  <job>:` to the next line at the same indent. Both
+    # anchors are two-space-indented, which is the shape every job in these
+    # workflows has.
+    block="$(awk -v job="  $job:" '
+      $0 == job { inblock = 1; next }
+      inblock && /^  [^[:space:]#]/ { exit }
+      inblock { print }
+    ' "$file")"
+    if [[ -z "$block" ]]; then
+      # Not an error: a workflow that does not run this smoke at all has nothing
+      # to agree with. Callers pass only files that should contain the job, and
+      # a typo'd job id would show up as every file being skipped.
+      continue
+    fi
+    if [[ "$block" != *"--shard"* ]]; then
+      # Unsharded: one job runs every flow, so coverage is complete without a
+      # matrix to agree with.
+      continue
+    fi
+
+    # `shard: [a, b]` — the flow-sequence form. A matrix written in block form
+    # is not parsed and must fail rather than be assumed to match: guessing here
+    # would be exactly the silent pass this function exists to refuse.
+    if ! grep -Eq '^ +shard: \[[^]]*\]$' <<< "$block"; then
+      smoke::error "$file invokes $job with --shard but declares no 'shard: [...]' matrix this check can read"
+      failed=1
+      continue
+    fi
+    declared="$(grep -Eo '^ +shard: \[[^]]*\]$' <<< "$block" \
+      | sed -E 's/^ +shard: \[//; s/\]$//; s/,/ /g' \
+      | tr ' ' '\n' | grep -v '^$' | sort | tr '\n' ' ')"
+
+    if [[ "$declared" != "$wanted" ]]; then
+      smoke::error "$file runs $job with shards [${declared% }] but the shard map declares [${wanted% }]; a shard CI never invokes runs nowhere"
+      failed=1
+    fi
+  done
+
+  return "$failed"
 }
 
 # smoke::require_shard_harness_coverage KNOWN_HARNESS...

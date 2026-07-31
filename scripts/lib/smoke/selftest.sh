@@ -261,6 +261,15 @@ expect_shards refuse duplicate-flow "$SHARD_MANIFEST" 'one flows      10-alpha 1
 one harnesses  claude
 ' "${SHARD_FLOWS[@]}"
 
+# Names index associative arrays and are compared through unquoted expansions,
+# so a glob or `@` in one would alias every key or expand against the repo root.
+expect_shards refuse glob-in-flow "$SHARD_MANIFEST" 'one flows      * 10-alpha 20-beta 30-gamma
+one harnesses  claude
+' "${SHARD_FLOWS[@]}"
+expect_shards refuse glob-in-shard-name "$SHARD_MANIFEST" '@ flows      10-alpha 20-beta 30-gamma
+@ harnesses  claude
+' "${SHARD_FLOWS[@]}"
+
 # A shard map that declares nothing assigns nothing, and a missing one is not a
 # permissive default.
 expect_shards refuse empty-map "$SHARD_MANIFEST" '# only a comment
@@ -314,6 +323,114 @@ else
   failures=1
 fi
 
+# --- The workflow-matrix guard ------------------------------------------------
+#
+# The union check proves every flow belongs to a shard. It cannot prove every
+# shard is RUN: the list of shards CI invokes lives in a workflow file, and a
+# shard added here but not there executes nowhere while every job stays green.
+# The shard map loaded above declares shards "one" and "two".
+#
+# expect_workflow WANT(pass|refuse) CASE WORKFLOW_CONTENT
+expect_workflow() {
+  local want="$1" name="$2" content="$3"
+  local dir="$work/wf-$name"
+  mkdir -p "$dir"
+  printf '%s' "$content" > "$dir/wf.yml"
+  local got=pass
+  smoke::require_workflow_shards smoke-job "$dir/wf.yml" \
+    > "$dir/out" 2>&1 || got=refuse
+  if [[ "$got" != "$want" ]]; then
+    printf 'selftest FAIL: wf-%s — wanted %s, got %s\n' "$name" "$want" "$got"
+    sed 's/^/    /' "$dir/out"
+    failures=1
+  fi
+}
+
+# The green case: the matrix names exactly the shards the map declares.
+expect_workflow pass green 'jobs:
+  smoke-job:
+    strategy:
+      matrix:
+        shard: [one, two]
+    steps:
+      - run: run.sh --shard ${{ matrix.shard }}
+  other-job:
+    steps:
+      - run: something-else
+'
+
+# THE ONE THIS SECTION EXISTS FOR: the map declares "two", the matrix does not
+# run it. Every flow still belongs to a shard, so the union check is satisfied
+# and only this guard refuses.
+expect_workflow refuse shard-not-run 'jobs:
+  smoke-job:
+    strategy:
+      matrix:
+        shard: [one]
+    steps:
+      - run: run.sh --shard ${{ matrix.shard }}
+'
+
+# The mirror: a matrix naming a shard the map does not declare would fail at
+# selection time in CI, but saying so here names the real file.
+expect_workflow refuse extra-shard 'jobs:
+  smoke-job:
+    strategy:
+      matrix:
+        shard: [one, two, three]
+    steps:
+      - run: run.sh --shard ${{ matrix.shard }}
+'
+
+# Order must not matter; the comparison is between sets.
+expect_workflow pass reordered 'jobs:
+  smoke-job:
+    strategy:
+      matrix:
+        shard: [two, one]
+    steps:
+      - run: run.sh --shard ${{ matrix.shard }}
+'
+
+# A job that passes --shard but whose matrix this parser cannot read must FAIL
+# rather than be assumed to agree: assuming is the silent pass the guard exists
+# to refuse, and a matrix rewritten in block form is exactly how that would
+# happen.
+expect_workflow refuse unreadable-matrix 'jobs:
+  smoke-job:
+    strategy:
+      matrix:
+        shard:
+          - one
+          - two
+    steps:
+      - run: run.sh --shard ${{ matrix.shard }}
+'
+
+# An UNSHARDED job — one run over every flow — is complete coverage with no
+# matrix to agree with. This is also the state of the tree before the job-split
+# workflow change lands, so it must pass.
+expect_workflow pass unsharded 'jobs:
+  smoke-job:
+    steps:
+      - run: run.sh
+'
+
+# A workflow that does not contain the job at all has nothing to say about it.
+expect_workflow pass job-absent 'jobs:
+  unrelated:
+    steps:
+      - run: true
+'
+
+# A workflow file that is missing entirely cannot be checked, and must not read
+# as agreement.
+if smoke::require_workflow_shards smoke-job "$work/wf-green/does-not-exist.yml" \
+    > "$work/wf-missing.out" 2>&1; then
+  printf 'selftest FAIL: wf-missing — wanted refuse, got pass\n'
+  failures=1
+fi
+
 # --- Harness coverage ---------------------------------------------------------
 #
 # The mirror of the flow union check, for what a shard installs rather than what
@@ -349,4 +466,4 @@ if [[ "$failures" -ne 0 ]]; then
   echo "smoke evidence selftest FAILED; refusing to trust any smoke result"
   exit 1
 fi
-echo "smoke evidence selftest: ok (evidence checker + manifest drift guards + shard-map union guards)"
+echo "smoke evidence selftest: ok (evidence checker + manifest drift guards + shard-map union, workflow-matrix and harness-coverage guards)"
