@@ -221,6 +221,9 @@ focus on workflows and the behavior that is easy to miss from help text.
   layers, deny + reopen, gotchas, and symptom-to-cause triage.
 - [Linux network filtering](linux-network-filtering.md) — how tclaude's own
   bubblewrap, nftables, DNS, and `pasta` egress boundary works.
+- [Proxy network filtering](proxy-network-filtering.md) — the alternative
+  `network.engine: "proxy"` boundary: an empty network namespace plus a
+  filtering proxy that decides on the name the client asks for.
 - [Sandbox hardening](sandbox-hardening.md) — protect agentd state while keeping
   the coordination socket available.
 - [Processes](processes.md) — opt-in process templates, runs, evidence, and

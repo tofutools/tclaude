@@ -564,9 +564,12 @@ destination stays unknown. Claude continues from its inspected first-party
 launch route — including the cached remote managed settings, whose live fetch
 and hourly poll can still re-route the running process — with any later
 unauthored reroute denied fail-closed for new flows at the packet floor. Both
-harnesses refuse filtered launch when HTTP(S)/ALL proxy environment variables
-change the actual model-transport boundary; remove the proxy or use network
-open.
+harnesses refuse filtered launch when HTTP(S)/ALL proxy environment variables in
+the launch environment change the actual model-transport boundary; remove the
+proxy or use network open. Under `network.engine: "proxy"` tclaude injects its
+own proxy variables inside the namespace, after that gate has run, so they are
+never in the inspected environment and a foreign variable still refuses —
+including one that names a loopback address.
 
 The editor's Linux preview is prerequisite-conditional: the exact launch must
 pass live bubblewrap namespace plus trusted root-owned `pasta` and `nft`
@@ -574,6 +577,15 @@ probes. Pasta must expose every forwarding, synthetic-address mapping, and
 splice control used by the gateway; an older binary is unavailable rather than
 accepted with weaker arguments. A missing prerequisite keeps the list
 unenforced and widens to host-open with a launch warning.
+
+Those are the packet engine's prerequisites. A profile that selects
+`network.engine: "proxy"` needs only bubblewrap namespaces and pidfds — no
+`pasta`, no `nft`, no DNS broker — and a host that cannot build that floor
+refuses the launch instead of widening it. That engine still widens for a
+different reason: its capability cells are activated per harness, platform and
+sandbox implementation, so selecting it for a harness that is not activated yet
+leaves the rules unenforced with a notice saying so. See
+[Proxy network filtering](proxy-network-filtering.md).
 
 `network_access` accepts `internet`, `none`, or may be omitted to inherit the
 harness's existing behavior. On the Codex managed `tclaude-agent` sandbox, both

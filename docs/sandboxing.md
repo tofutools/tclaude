@@ -14,7 +14,8 @@ lives elsewhere and is not repeated here:
 | The full harness capability matrix | [Harnesses](harnesses.md#capability-matrix) |
 | Locking agents out of agentd's own state | [Sandbox hardening](sandbox-hardening.md) |
 | The dashboard editor and the sandbox scribe | [Dashboard → Sandbox Profiles](dashboard.md#sandbox-profiles) |
-| tclaude's Linux egress-filter implementation | [Linux network filtering in `tclaude-layer`](linux-network-filtering.md) |
+| tclaude's Linux egress-filter implementation (packet engine, the default) | [Linux network filtering in `tclaude-layer`](linux-network-filtering.md) |
+| The alternative egress-filter engine (`network.engine: "proxy"`) | [Proxy network filtering in `tclaude-layer`](proxy-network-filtering.md) |
 
 Start here, then go to those.
 
@@ -911,10 +912,23 @@ the `tclaude-layer` nft policy is the packet-enforced floor around the
 tool-executing server and all of its subprocesses.
 
 For all supported harnesses, a nonempty `HTTP_PROXY`, `HTTPS_PROXY`, or
-`ALL_PROXY` (including lowercase variants) changes the actual transport
-boundary and therefore refuses filtered launch: the real destination sits behind
-a proxy this seam does not resolve, so the authored list cannot be checked
-against it. Remove the proxy variable or use network open.
+`ALL_PROXY` (including lowercase variants) in the launch environment changes the
+actual transport boundary and therefore refuses filtered launch: the real
+destination sits behind a proxy this seam does not resolve, so the authored list
+cannot be checked against it. Remove the proxy variable or use network open. The
+same refusal covers those variables when a Claude `settings.json` authors them,
+because Claude re-reads settings env while a session runs.
+
+Under `network.engine: "proxy"` tclaude sets those variables itself, and that is
+not an exception to the refusal above. The resolver inspects the
+**pre-injection** environment — the host environment plus authored
+`EnvironmentEntry` overrides — and tclaude's own values are injected inside the
+namespace afterwards, so they are never in the inspected set. Nothing is
+allowlisted by value: a foreign variable that happens to name a loopback address
+refuses exactly like any other. `NO_PROXY`/`no_proxy` are the one exemption, and
+they are overridden to empty rather than refused over, with an access notice
+recording the override whenever the host actually carried a value. See
+[Proxy network filtering](proxy-network-filtering.md#the-proxy-environment-is-tclaudes).
 
 The built-in `net-anthropic` and `net-openai-codex` packs are backed by the
 named CI origin audit against Claude Code 2.1.220 and Codex CLI 0.145.0. The
