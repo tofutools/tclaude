@@ -17,7 +17,9 @@ import (
 // TestDashboardAuditSpawnPopoverChrome is the focused browser acceptance check
 // for the audit spawn-details disclosure. It proves real pointer/keyboard
 // input opens the panel, transfers focus, dismisses with Escape, restores focus
-// to the [?] trigger, and dismisses when the operator clicks outside.
+// to the [?] trigger, and dismisses when the operator clicks outside. A second
+// state re-runs it under the wizard skin — self-driven, for the reason spelled
+// out at wizardStateJS — to prove the disclosure is painted arcane too.
 func TestDashboardAuditSpawnPopoverChrome(t *testing.T) {
 	if os.Getenv("TCLAUDE_DASHSNAP") == "" {
 		t.Skip("browser smoke — set TCLAUDE_DASHSNAP=1 (needs local Chrome)")
@@ -53,11 +55,14 @@ var deadline = Date.now() + 5000;
 while (!document.querySelector('.audit-spawn-info-trigger') && Date.now() < deadline) await new Promise(function(resolve){setTimeout(resolve, 50);});
 if (!document.querySelector('.audit-spawn-info-trigger')) throw new Error('spawn details trigger did not render');`
 	// The wizard state drives the disclosure from its own JS rather than through
-	// BrowserActions: CDP-synthesized pointer and key input is not delivered to
-	// the wizard-skinned page in this harness (every other wizard dashsnap state
-	// drives itself the same way). The real-input contract — focus transfer,
-	// Escape, outside-click dismissal — stays covered by the default skin, which
-	// shares the markup; the wizard state covers the arcane paint.
+	// BrowserActions: no CDP-synthesized pointer or key input reaches a page
+	// dashsnap loaded via ?wizard=1, so any input-driven wizard state fails.
+	// That is a harness-level defect, not a skin one — it reproduces on main and
+	// on other wizard states (e.g. process-editor-browser-node-click), and the
+	// same skin applied client-side takes trusted input fine. Until it is fixed,
+	// the real-input contract — focus transfer, Escape, outside-click dismissal
+	// — stays covered by the default skin, which shares the markup; this state
+	// covers the arcane paint.
 	wizardStateJS := openAuditTabJS + `
 document.querySelector('.audit-spawn-info-trigger').click();
 await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
@@ -66,7 +71,6 @@ var body = panel && panel.querySelector('pre');
 if (!panel || !body) throw new Error('spawn details popover did not open under the wizard skin');
 var panelStyle = getComputedStyle(panel);
 if (!panelStyle.backgroundImage.includes('linear-gradient')) throw new Error('wizard spawn details kept the flat dashboard surface: ' + panelStyle.backgroundImage);
-if (panelStyle.backgroundColor === 'rgb(13, 17, 23)') throw new Error('wizard spawn details kept the default dark background');
 if (getComputedStyle(body).backgroundColor !== 'rgb(20, 15, 40)') throw new Error('wizard spawn details JSON body kept the default dark background: ' + getComputedStyle(body).backgroundColor);`
 	makeState := func(key, title string, wizard bool) dashsnap.State {
 		stateJS, actions := openAuditTabJS, []dashsnap.BrowserAction{

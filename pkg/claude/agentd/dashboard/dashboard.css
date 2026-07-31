@@ -12580,6 +12580,12 @@ body.wizard .audit-spawn-popover::-webkit-scrollbar-thumb:hover,
 body.wizard .audit-spawn-popover pre::-webkit-scrollbar-thumb:hover {
   background: linear-gradient(180deg, #8f6fca, #4a367d);
 }
+/* The default skin brightens the thumb again while it is dragged; without an
+   arcane twin that drag flashes light grey through the violet frame. */
+body.wizard .audit-spawn-popover::-webkit-scrollbar-thumb:active,
+body.wizard .audit-spawn-popover pre::-webkit-scrollbar-thumb:active {
+  background: linear-gradient(180deg, #a98fdc, #5c458f);
+}
 
 /* ═══ Wizard Messages tab — "The Rookery & the Unfurled Scroll" ═══════
    Unlike the rest of the wizard re-skin (which only re-paints chrome and
