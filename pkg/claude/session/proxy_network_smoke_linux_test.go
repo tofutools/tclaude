@@ -276,12 +276,72 @@ func runProxySmokeLaunch(
 	// is the policy answering rather than nothing listening.
 	fixture.HostAllowed = proxySmokeLoopbackServer(t)
 	fixture.HostDenied = proxySmokeLoopbackServer(t)
+	helperBinaryName := "proxy-smoke-helper"
+	launch := runProxyEngineLaunch(t, proxyEngineLaunchInput{
+		Rules: proxySmokeRules(fixture),
+		Env:   append(proxySmokeHelperEnv(os.Environ(), fixture), helperEnv...),
+		Command: func(workspace string) string {
+			return clcommon.ShellQuoteArg(
+				filepath.Join(workspace, helperBinaryName)) +
+				" -test.run=" + helperTest + " -test.v"
+		},
+		WorkspaceBinaries: map[string]string{helperBinaryName: os.Args[0]},
+	})
+	return fixture, launch.Output
+}
+
+// proxyEngineLaunchInput describes one real proxy-engine launch. It exists so
+// every proxy smoke builds the floor exactly one way: a second construction
+// site could differ from this one in a detail — an env var, a spec field, the
+// supervisor flag — and then prove something about a launch production never
+// performs.
+type proxyEngineLaunchInput struct {
+	// Rules is the authored policy, which the launch marks as proxy-engine.
+	Rules sandboxpolicy.NetworkRules
+	// Env is the complete environment for the launching supervisor. Proxy
+	// discovery is deliberately NOT set here: the launcher owns it.
+	Env []string
+	// Command builds the in-sandbox command line from the workspace path.
+	Command func(workspace string) string
+	// WorkspaceBinaries are host files copied into the workspace, keyed by the
+	// name they take there.
+	WorkspaceBinaries map[string]string
+	// PrepareHome runs after the sandbox HOME exists and before the launch is
+	// constructed. It is the only place a fixture that the in-sandbox process
+	// must SEE can be written: a directory made outside this home is not part
+	// of the constructed root and would be invisible inside the floor. Entries
+	// it returns are appended to the launch environment.
+	PrepareHome func(t *testing.T, home string) map[string]string
+	// Timeout bounds the whole launch. Zero uses the floor smoke's bound.
+	Timeout time.Duration
+}
+
+// proxyEngineLaunchResult is what a completed launch leaves behind to assert
+// on: the sandbox's own output, and the host-side supervisor's log, which is
+// where the filtering proxy records what it carried and refused.
+type proxyEngineLaunchResult struct {
+	Output    string
+	Home      string
+	Decisions []string
+}
+
+// runProxyEngineLaunch builds one real proxy-engine tclaude-layer launch and
+// runs the given command inside it.
+//
+// The supervisor runs at debug level on purpose: the proxy's decision record is
+// emitted there, and it is the only place a REFUSAL is observable. Without it a
+// smoke could only infer that undeclared destinations were refused.
+func runProxyEngineLaunch(
+	t *testing.T,
+	input proxyEngineLaunchInput,
+) proxyEngineLaunchResult {
+	t.Helper()
 	tclaudeBinary := strings.TrimSpace(os.Getenv(filteredGatewayTclaudeBinaryEnv))
 	require.NotEmpty(t, tclaudeBinary)
 	tclaudeBinary, err := filepath.Abs(tclaudeBinary)
 	require.NoError(t, err)
 
-	rules := proxySmokeRules(fixture)
+	rules := input.Rules
 	bwrapBinary, launchSandbox, err := ResolveTclaudeLayerForEngine(
 		sandboxpolicy.NetworkFiltered,
 		sandboxpolicy.RootConstructed,
@@ -295,8 +355,11 @@ func runProxySmokeLaunch(
 
 	previousRelay := tclaudeLayerRelayPrefix
 	tclaudeLayerRelayPrefix = func() string {
+		// Debug level is load-bearing rather than diagnostic: the filtering
+		// proxy records every decision it makes at that level, and a refusal
+		// has no other observable trace at all.
 		return clcommon.ShellQuoteArg(tclaudeBinary) +
-			" session " + tclaudeLayerWinchRelayCommand
+			" --log-level debug session " + tclaudeLayerWinchRelayCommand
 	}
 	t.Cleanup(func() { tclaudeLayerRelayPrefix = previousRelay })
 
@@ -315,8 +378,16 @@ func runProxySmokeLaunch(
 	require.NoError(t, os.MkdirAll(helperDir, 0o700))
 	t.Setenv("HOME", smokeHome)
 	prepareStackedSmokeControlPlane(t)
-	helperBinary := filepath.Join(helperDir, "proxy-smoke-helper")
-	copyTestBinary(t, os.Args[0], helperBinary)
+	for name, source := range input.WorkspaceBinaries {
+		copyTestBinary(t, source, filepath.Join(helperDir, name))
+	}
+
+	launchEnv := append([]string(nil), input.Env...)
+	if input.PrepareHome != nil {
+		for name, value := range input.PrepareHome(t, smokeHome) {
+			launchEnv = append(launchEnv, name+"="+value)
+		}
+	}
 
 	rules.Engine = sandboxpolicy.NetworkEngineProxy
 	snapshot := sandboxpolicy.EmptySnapshot()
@@ -330,20 +401,64 @@ func runProxySmokeLaunch(
 		StateRoot:   stateRoot,
 	})
 	require.NoError(t, err)
-	command, err := WrapTclaudeLayerSpec(bwrapBinary, spec,
-		clcommon.ShellQuoteArg(helperBinary)+" -test.run="+helperTest+" -test.v")
+	command, err := WrapTclaudeLayerSpec(
+		bwrapBinary, spec, input.Command(helperDir))
 	require.NoError(t, err)
 	require.Contains(t, command, "--proxy-network-policy",
 		"the launch must start the proxy supervisor rather than the packet one")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	timeout := input.Timeout
+	if timeout == 0 {
+		timeout = 90 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", command)
-	cmd.Env = append(proxySmokeHelperEnv(os.Environ(), fixture), helperEnv...)
+	cmd.Env = launchEnv
 	output, runErr := cmd.CombinedOutput()
-	require.NoErrorf(t, runErr, "proxy smoke output:\n%s", output)
-	require.NoError(t, ctx.Err())
-	return fixture, string(output)
+	// A launch whose in-sandbox command fails is still evidence — a harness
+	// running on invalid credentials exits non-zero by design — so the exit
+	// status is reported to the caller through the output rather than asserted
+	// here. What must hold unconditionally is that the launch itself completed.
+	require.NoError(t, ctx.Err(), "proxy launch timed out; output:\n%s", output)
+	return proxyEngineLaunchResult{
+		Output:    string(output) + proxyLaunchRunError(runErr),
+		Home:      smokeHome,
+		Decisions: readProxyDecisionRecords(t, smokeHome),
+	}
+}
+
+func proxyLaunchRunError(err error) string {
+	if err == nil {
+		return ""
+	}
+	return "\nproxy launch command exit: " + err.Error() + "\n"
+}
+
+// readProxyDecisionRecords returns the filtering proxy's own account of this
+// launch, read from the supervisor's log.
+//
+// This is where a REFUSAL becomes observable. The sandbox cannot report one —
+// a refused client sees a status it may swallow, and the empty-namespace floor
+// produces no packet to capture — so without these records "every undeclared
+// origin was refused" would be an inference from the policy rather than an
+// observation of the engine.
+func readProxyDecisionRecords(t *testing.T, home string) []string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(home, ".tclaude", "output.log"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		require.NoError(t, err)
+	}
+	records := []string{}
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.Contains(line, ProxyNetworkDecisionMessage) {
+			records = append(records, line)
+		}
+	}
+	return records
 }
 
 // proxySmokeLoopbackServer starts a host-loopback TCP listener and returns its
