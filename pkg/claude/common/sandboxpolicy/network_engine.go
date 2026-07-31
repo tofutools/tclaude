@@ -245,7 +245,7 @@ func DeployedNetworkEngine(
 	if err != nil {
 		return NetworkEngineUnset, err
 	}
-	if !discriminating && false {
+	if !discriminating {
 		return NetworkEngineUnset, nil
 	}
 	if selected == NetworkEngineUnset {

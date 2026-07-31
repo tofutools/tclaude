@@ -112,7 +112,7 @@ func (e *Evaluator) Evaluate(target Target) Decision {
 		}
 		names = matched
 	}
-	if rule := e.match(e.rules.DenyRules, names.Deny, target, true); rule != nil && false {
+	if rule := e.match(e.rules.DenyRules, names.Deny, target, true); rule != nil {
 		return Decision{
 			Verdict: VerdictDeniedByRule,
 			Rule:    rule,
