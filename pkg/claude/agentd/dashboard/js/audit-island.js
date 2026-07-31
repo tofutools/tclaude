@@ -24,19 +24,36 @@ function prettyAuditValue(value, raw = '') {
 }
 function SpawnDetails({ entry }) {
   const [open, setOpen] = useState(false);
+  const triggerRef = useRef(null);
+  const popoverRef = useRef(null);
+  const closeRef = useRef(null);
   const details = entry.spawn;
-  if (!details) return null;
   const panelID = `audit-spawn-details-${entry.id}`;
-  const closeOnEscape = (event) => {
-    if (event.key === 'Escape') { event.stopPropagation(); setOpen(false); }
+  const dismiss = (restoreFocus = true) => {
+    setOpen(false);
+    if (restoreFocus) triggerRef.current?.focus();
   };
+  const closeOnEscape = (event) => {
+    if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); dismiss(); }
+  };
+  useEffect(() => {
+    if (!open || !details) return undefined;
+    closeRef.current?.focus();
+    const closeOnOutsidePointer = (event) => {
+      if (!popoverRef.current?.contains(event.target) && !triggerRef.current?.contains(event.target)) dismiss(false);
+    };
+    document.addEventListener('pointerdown', closeOnOutsidePointer);
+    return () => document.removeEventListener('pointerdown', closeOnOutsidePointer);
+  }, [open, details]);
+  if (!details) return null;
   return html`<span class="audit-spawn-info">
     <button type="button" class="spawn-field-help-trigger audit-spawn-info-trigger"
+      ref=${triggerRef}
       aria-label="Show spawn request, resolved parameters, and response"
-      aria-controls=${panelID} aria-expanded=${open ? 'true' : 'false'} title="Show spawn request, resolved parameters, and response"
-      onClick=${() => setOpen(!open)}>?</button>
-    ${open && html`<div id=${panelID} class="audit-spawn-popover" role="dialog" aria-label="Spawn details" onKeyDown=${closeOnEscape}>
-      <div class="audit-spawn-popover-head"><strong>Spawn details</strong><button type="button" class="audit-spawn-popover-close" aria-label="Close spawn details" title="Close" onClick=${() => setOpen(false)}>×</button></div>
+      aria-controls=${open ? panelID : undefined} aria-expanded=${open ? 'true' : 'false'} title="Show spawn request, resolved parameters, and response"
+      onKeyDown=${closeOnEscape} onClick=${() => open ? dismiss() : setOpen(true)}>?</button>
+    ${open && html`<div id=${panelID} ref=${popoverRef} class="audit-spawn-popover" role="dialog" aria-label="Spawn details" tabIndex="-1" onKeyDown=${closeOnEscape}>
+      <div class="audit-spawn-popover-head"><strong>Spawn details</strong><button ref=${closeRef} type="button" class="audit-spawn-popover-close" aria-label="Close spawn details" title="Close" onClick=${() => dismiss()}>×</button></div>
       ${details.snapshot_truncated && html`<div class="audit-spawn-popover-note">The request snapshot exceeded the audit size limit; the resolved values and response are retained where possible.</div>`}
       <section><h4>Request input</h4><pre>${prettyAuditValue(details.input, details.input_raw)}</pre></section>
       <section><h4>Resolved parameters and profiles</h4><pre>${prettyAuditValue(details.resolved)}</pre></section>
