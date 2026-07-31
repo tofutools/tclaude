@@ -264,7 +264,10 @@ func runProxyCooperationScenario(
 		// below reads the same log this predicate reads, after the launch
 		// returns. An arm that records nothing still runs to the 180s bound and
 		// fails there.
-		StopWhen: proxyCooperationEvidenceRecorded(scenario, originPort),
+		// FALSIFICATION BRANCH — DO NOT MERGE. The predicate is forced true at
+		// start: with the launch cancelled before any evidence can be recorded,
+		// the arm must FAIL rather than pass fast.
+		StopWhen: func([]string) bool { return true },
 		Command: func(workspace string) string {
 			// The probe runs first and unconditionally, then the harness runs
 			// whatever its own exit status. Both are inside the same floor,
