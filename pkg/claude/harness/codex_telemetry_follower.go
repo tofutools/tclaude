@@ -73,6 +73,7 @@ type codexTelemetryCheckpoint struct {
 	Home                 string                        `json:"home"`
 	ConvID               string                        `json:"conv_id"`
 	Path                 string                        `json:"path"`
+	OwnerBoundarySeen    bool                          `json:"owner_boundary_seen,omitempty"`
 	Offset               int64                         `json:"offset"`
 	FileSize             int64                         `json:"file_size"`
 	ModTimeUnixNano      int64                         `json:"mod_time_unix_nano"`
@@ -123,7 +124,7 @@ func (f *CodexTelemetryFollower) RestoreCheckpoint(data []byte) error {
 	state := newCodexRuntimeScanState()
 	if f.preserveMissing {
 		state = newOwnedCodexRuntimeScanState(cp.ConvID)
-		state.ownerBoundarySeen = true
+		state.ownerBoundarySeen = cp.OwnerBoundarySeen
 	}
 	state.replaceCheckpointContext(cp.Latest, cp.ContextReset)
 	state.model = cp.Model
@@ -197,6 +198,7 @@ func (f *CodexTelemetryFollower) Checkpoint() ([]byte, bool, error) {
 		Home:                 f.home,
 		ConvID:               f.convID,
 		Path:                 f.path,
+		OwnerBoundarySeen:    f.state.ownerBoundarySeen,
 		Offset:               cursor.Offset,
 		FileSize:             cursor.FileSize,
 		ModTimeUnixNano:      cursor.ModTimeUnixNano,
@@ -220,7 +222,11 @@ func (f *CodexTelemetryFollower) Checkpoint() ([]byte, bool, error) {
 	}
 	if len(f.children) > 0 {
 		cp.Children = make(map[string]json.RawMessage, len(f.children))
-		for id, child := range f.children {
+		for id := range f.state.discoveredSubagents {
+			child := f.children[id]
+			if child == nil {
+				continue
+			}
 			data, ok, err := child.Checkpoint()
 			if err != nil {
 				return nil, false, fmt.Errorf("encode Codex child %s checkpoint: %w", id, err)
@@ -287,6 +293,7 @@ func (f *CodexTelemetryFollower) RuntimeTelemetry(home, convID string) (CodexRun
 		f.archiveInfo = info
 		f.state = state
 		f.snapshot = state.snapshot()
+		f.pruneChildrenLocked()
 		return f.aggregateChildrenLocked(home)
 	}
 	update, err := f.ensureStream().RefreshWithInfo(path, info)
@@ -299,7 +306,16 @@ func (f *CodexTelemetryFollower) RuntimeTelemetry(home, convID string) (CodexRun
 	f.state = update.State
 	f.archiveInfo = nil
 	f.snapshot = update.State.snapshot()
+	f.pruneChildrenLocked()
 	return f.aggregateChildrenLocked(home)
+}
+
+func (f *CodexTelemetryFollower) pruneChildrenLocked() {
+	for id := range f.children {
+		if _, discovered := f.state.discoveredSubagents[id]; !discovered {
+			delete(f.children, id)
+		}
+	}
 }
 
 func (f *CodexTelemetryFollower) aggregateChildrenLocked(home string) (CodexRuntimeSnapshot, error) {
@@ -371,6 +387,7 @@ func (f *CodexTelemetryFollower) clearCursor() {
 	f.archiveInfo = nil
 	f.state = newCodexRuntimeScanState()
 	f.snapshot = CodexRuntimeSnapshot{}
+	f.children = nil
 	f.checkpointTooLarge = false
 }
 
