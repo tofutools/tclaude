@@ -41,24 +41,69 @@ func TestDashboardXtermVendorAssets(t *testing.T) {
 	}
 }
 
-// TestDashboardTerminals_RequiresAuth: the standalone /terminals page is
-// gated by the dashboard session cookie. An unauthenticated GET is bounced
-// to / (where the human re-authenticates) rather than dead-ending — so the
-// page is never served without a valid cookie.
+// TestDashboardTerminals_RequiresAuth: the /terminals route is gated by the
+// dashboard session cookie. An unauthenticated GET renders the sign-in page IN
+// PLACE — the same treatment handleDashboardRoot gives a deep path — so the URL
+// survives re-authentication and the page body never leaks without a cookie.
 func TestDashboardTerminals_RequiresAuth(t *testing.T) {
 	withDashboardAuthForTest(t) // pins a session token, but we send no cookie
 
 	rec := httptest.NewRecorder()
 	handleDashboardTerminals(rec, httptest.NewRequest(http.MethodGet, "/terminals", nil))
 
-	if rec.Code != http.StatusSeeOther {
-		t.Fatalf("unauthenticated /terminals GET: status %d, want 303; body=%s", rec.Code, rec.Body.String())
-	}
-	if loc := rec.Header().Get("Location"); loc != "/" {
-		t.Errorf("redirect target = %q, want %q", loc, "/")
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("unauthenticated /terminals GET: status %d, want 403; body=%s", rec.Code, rec.Body.String())
 	}
 	if strings.Contains(rec.Body.String(), "mux-tabs") {
 		t.Error("unauthenticated /terminals must not leak the page body")
+	}
+}
+
+// TestDashboardTerminals_DeepLinkSurvivesReauth: a bookmarked
+// /terminals/<agent-id> opened with a stale cookie — the likeliest way a deep
+// link is hit — must not lose the agent. Redirecting to "/" would discard it
+// before the operator could sign in, so the sign-in page is rendered in place
+// and carries the original path as its post-login return target.
+func TestDashboardTerminals_DeepLinkSurvivesReauth(t *testing.T) {
+	withDashboardAuthForTest(t) // pins a session token, but we send no cookie
+
+	const deep = "/terminals/agt_abc123"
+	r := httptest.NewRequest(http.MethodGet, deep, nil)
+	rec := httptest.NewRecorder()
+	handleDashboardTerminals(rec, r)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("unauthenticated %s: status %d, want 403", deep, rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), "mux-tabs") {
+		t.Error("unauthenticated deep link must not leak the page body")
+	}
+	// The login form posts back to this target, which is what restores the
+	// terminal after sign-in.
+	if got := dashboardLoginReturnTarget(r); got != deep {
+		t.Errorf("post-login return target = %q, want %q", got, deep)
+	}
+}
+
+// TestDashboardTerminals_SoloRequiresExactValue: only ?solo=1 selects the
+// standalone popout. A bare or falsey value must fall through to the SPA rather
+// than serving a routerless page that would drop any deep-link segment.
+func TestDashboardTerminals_SoloRequiresExactValue(t *testing.T) {
+	cookie, _ := withDashboardAuthForTest(t)
+
+	for _, path := range []string{"/terminals?solo=0", "/terminals?solo=", "/terminals?solo=true"} {
+		r := httptest.NewRequest(http.MethodGet, path, nil)
+		r.AddCookie(cookie)
+		rec := httptest.NewRecorder()
+		handleDashboardTerminals(rec, r)
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("GET %s: status %d, want 200", path, rec.Code)
+			continue
+		}
+		if strings.Contains(rec.Body.String(), `/static/js/terminals.js`) {
+			t.Errorf("GET %s must not serve the standalone popout page", path)
+		}
 	}
 }
 
@@ -235,16 +280,16 @@ func TestDashboardTerminals_RemotePreAuthed(t *testing.T) {
 }
 
 // TestDashboardTerminals_SoloRequiresAuth: the ?solo popout is behind the same
-// gate as the plain route — an unauthenticated GET is bounced to /, so ?solo
-// can't bypass auth to reach the popout body.
+// gate as the plain route — an unauthenticated GET gets the sign-in page, so
+// ?solo can't bypass auth to reach the popout body.
 func TestDashboardTerminals_SoloRequiresAuth(t *testing.T) {
 	withDashboardAuthForTest(t) // pins a session token, but we send no cookie
 
 	rec := httptest.NewRecorder()
 	handleDashboardTerminals(rec, httptest.NewRequest(http.MethodGet, "/terminals?solo=1", nil))
 
-	if rec.Code != http.StatusSeeOther {
-		t.Fatalf("unauthenticated /terminals?solo=1 GET: status %d, want 303; body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("unauthenticated /terminals?solo=1 GET: status %d, want 403; body=%s", rec.Code, rec.Body.String())
 	}
 	if strings.Contains(rec.Body.String(), "mux-tabs") {
 		t.Error("unauthenticated /terminals?solo=1 must not leak the popout body")
