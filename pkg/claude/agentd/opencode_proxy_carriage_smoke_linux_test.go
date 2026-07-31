@@ -8,6 +8,8 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -19,6 +21,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/net/proxy"
+
 	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
@@ -65,6 +69,14 @@ import (
 //     floor makes;
 //   - the launch is the real agentd OpenCode server launch, confined by
 //     bubblewrap, driven by a real model request over its real HTTP API.
+//
+// One thing this arm is NOT, said plainly so a reader does not assume it: the
+// host-open launch is not the Unix-relay seam. Host-open builds the spec with
+// unixRelay=false, so there is no control relay and the transport is plain TCP.
+// It is a real agentd bwrap-confined OpenCode server, and it is the closest
+// thing to the refused boundary that can reach a proxy at all — but the seam
+// the refusal beside it is about is the relay one, and no launch there can be
+// measured until that refusal is lifted.
 const (
 	openCodeCarriageSmokeEnv = "TCLAUDE_OPENCODE_PROXY_CARRIAGE_SMOKE"
 	// The origin must NOT be loopback. Clients commonly refuse to send a
@@ -109,8 +121,11 @@ func TestOpenCodeProxyCarriageCooperation(t *testing.T) {
 	require.NoError(t, err)
 	originAddr := requireOpenCodeCarriageEnv(t, openCodeCarriageOriginAddrEnv)
 	originHost := requireOpenCodeCarriageEnv(t, openCodeCarriageOriginHostEnv)
-	require.NotEqual(t, "127.0.0.1", originAddr,
-		"a loopback origin cannot answer the carriage question: clients skip the proxy for it")
+	parsedOrigin, err := netip.ParseAddr(originAddr)
+	require.NoError(t, err)
+	require.Falsef(t, parsedOrigin.IsLoopback(),
+		"%s is loopback, and a loopback origin cannot answer the carriage question: clients skip the proxy for it",
+		originAddr)
 
 	records := make([]string, 0, 3)
 	for _, testCase := range []struct {
@@ -124,6 +139,10 @@ func TestOpenCodeProxyCarriageCooperation(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			record := runOpenCodeProxyCarriageCase(
 				t, tclaudeBinary, originAddr, originHost, testCase.carriage)
+			// Emitted HERE as well as in the summary below, because a case that
+			// dies on a require never reaches the summary, and a case that ran
+			// should leave its record either way.
+			t.Log(openCodeCarriageRecordPrefix + record)
 			records = append(records, record)
 		})
 	}
@@ -157,12 +176,16 @@ func runOpenCodeProxyCarriageCase(
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "config"))
 	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
 	// Some hosts export proxy routing variables of their own (TCL-867). The
-	// case under test is defined by what the LAUNCH offers, so the ambient ones
-	// are REMOVED, not blanked: the server environment appends the launch's
-	// entries after the ambient ones, and glibc's getenv answers with the FIRST
-	// occurrence of a name — a blanked ambient variable would therefore shadow
-	// the carriage this case exists to offer, and the arm would record "not
-	// carried" for every case.
+	// case under test is defined by what the LAUNCH offers, so every ambient
+	// one is REMOVED.
+	//
+	// Not because a blanked value would shadow an offered one — os/exec dedups
+	// Cmd.Env keeping the LAST occurrence, and the launch's entries are
+	// appended after the ambient ones, so an offered carriage wins either way.
+	// It is the variables a case does NOT offer that make this load-bearing,
+	// and the direct control most of all: a surviving ambient HTTPS_PROXY there
+	// would route the control through a proxy nobody in this test owns, and the
+	// falsifiability the whole arm rests on would be gone.
 	for _, entry := range session.ProxyNetworkCarriage("127.0.0.1:1") {
 		previous, present := os.LookupEnv(entry.Name)
 		if !present {
@@ -182,7 +205,16 @@ func runOpenCodeProxyCarriageCase(
 	t.Cleanup(stopAgentd)
 
 	origin := newOpenCodeCarriageOrigin(t, originAddr, originHost)
-	auditor := newOpenCodeCarriageAuditor(t, originHost, origin.port)
+	auditor := newOpenCodeCarriageAuditor(t, originHost, originAddr, origin.port)
+	// PRECONDITION, before anything is measured: prove that a client which DOES
+	// carry can reach this origin over BOTH carriages of this exact auditor.
+	//
+	// Without it, "OpenCode did not carry" and "nothing could have carried" are
+	// the same observation. That is the failure this suite exists to refuse:
+	// the expected answer here is a negative for at least one carriage, and an
+	// expected negative is worthless unless a positive was reachable.
+	proveOpenCodeCarriagePath(t, auditor, originHost, origin.port)
+	auditor.reset()
 
 	snapshot := sandboxpolicy.EmptySnapshot()
 	// Host-open, not filtered: the filtered postures at this seam either give
@@ -282,15 +314,33 @@ func runOpenCodeProxyCarriageCase(
 	}
 
 	if !carried {
-		// Not carried. This is a REPORTABLE RESULT, not a failure — but it is
-		// only meaningful if the request happened at all and went straight to
-		// the origin, which is what is asserted here.
+		// Not carried TO THE ORIGIN'S NAME. Two very different things can look
+		// like this, and reporting them as one would put a conclusion in the
+		// record that the run did not measure:
+		//
+		//   - the server never spoke to the proxy at all, which is the real
+		//     "does not carry" answer;
+		//   - the server DID speak to the proxy but stated the origin
+		//     differently — as an IP literal, because it resolved the name
+		//     itself rather than leaving resolution to the proxy. That is
+		//     cooperation, with a caveat that matters: authored host and domain
+		//     rows are never matched against a literal.
+		if len(decisions) > 0 {
+			assert.Empty(t, auditor.transportErrors())
+			return fmt.Sprintf(
+				"%s CARRIED UNDER A DIFFERENT IDENTITY: %d proxy decision(s), none stating %s:%d by name (first: %+v -> %s); direct origin requests=%d",
+				carriage, len(decisions), originHost, origin.port,
+				decisions[0].target, decisions[0].decision.Verdict, direct)
+		}
+		// This is a REPORTABLE RESULT, not a failure — but it is only
+		// meaningful if the request happened at all and went straight to the
+		// origin, which is what is asserted here.
 		assert.Positivef(t, direct,
 			"%s was not carried and the origin saw no direct request either: this case measured nothing",
 			carriage)
 		return fmt.Sprintf(
-			"%s NOT CARRIED: the server ignored the %s carriage and reached the origin directly (direct requests=%d)",
-			carriage, carriage, direct)
+			"%s NOT CARRIED: the server made no proxy connection and reached the origin directly (direct requests=%d)",
+			carriage, direct)
 	}
 
 	// Carried. Assert the discriminating facts rather than "something reached
@@ -314,6 +364,65 @@ func runOpenCodeProxyCarriageCase(
 	return fmt.Sprintf(
 		"%s CARRIED: %d proxy decision(s) for %s:%d, all allowed, model request completed",
 		carriage, len(originDecisions), originHost, origin.port)
+}
+
+// proveOpenCodeCarriagePath drives one request per carriage through the auditor
+// with a client known to cooperate, and requires each to be ALLOWED at the
+// proxy and answered by the origin.
+//
+// It uses /models.json rather than the completions endpoint deliberately: that
+// handler counts nothing, so the precondition cannot inflate the direct-request
+// count the measurement reads afterwards. The 418 it returns is the origin
+// answering, which is all this needs to establish.
+func proveOpenCodeCarriagePath(
+	t *testing.T,
+	auditor *openCodeCarriageAuditor,
+	originHost string,
+	originPort int,
+) {
+	t.Helper()
+	target := fmt.Sprintf("http://%s:%d/models.json", originHost, originPort)
+
+	proxyURL, err := url.Parse("http://" + auditor.endpoint)
+	require.NoError(t, err)
+	httpClient := &http.Client{
+		Timeout:   15 * time.Second,
+		Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL)},
+	}
+	response, err := httpClient.Get(target)
+	require.NoError(t, err,
+		"the HTTP carriage of this auditor must reach the origin, or a NOT CARRIED result would be unfalsifiable")
+	require.NoError(t, response.Body.Close())
+	require.Equal(t, http.StatusTeapot, response.StatusCode)
+
+	// socks5h semantics: the dialer is given the NAME, and x/net/proxy sends it
+	// to the proxy rather than resolving it here — which is what the authored
+	// host row is evaluated against.
+	socksDialer, err := proxy.SOCKS5("tcp", auditor.endpoint, nil, proxy.Direct)
+	require.NoError(t, err)
+	contextDialer, ok := socksDialer.(proxy.ContextDialer)
+	require.True(t, ok)
+	socksClient := &http.Client{
+		Timeout:   15 * time.Second,
+		Transport: &http.Transport{DialContext: contextDialer.DialContext},
+	}
+	response, err = socksClient.Get(target)
+	require.NoError(t, err,
+		"the SOCKS5 carriage of this auditor must reach the origin, or a NOT CARRIED result would be unfalsifiable")
+	require.NoError(t, response.Body.Close())
+	require.Equal(t, http.StatusTeapot, response.StatusCode)
+
+	seen := map[sandboxproxy.Carriage]bool{}
+	for _, decision := range auditor.snapshot() {
+		require.Equalf(t, sandboxproxy.VerdictAllowed, decision.decision.Verdict,
+			"the authored rows must authorize this origin: %+v", decision.target)
+		seen[decision.carriage] = true
+	}
+	require.True(t, seen[sandboxproxy.CarriageHTTP],
+		"the HTTP precondition request must have been decided at the proxy")
+	require.True(t, seen[sandboxproxy.CarriageSOCKS5],
+		"the SOCKS5 precondition request must have been decided at the proxy")
+	require.Empty(t, auditor.transportErrors())
 }
 
 // openCodeCarriageEnvironment offers exactly ONE carriage to the launch, taken
@@ -429,11 +538,15 @@ func newOpenCodeCarriageOrigin(
 			Name:  "OPENCODE_MODELS_URL",
 			Value: fmt.Sprintf("http://%s:%d/models.json", host, origin.port),
 		},
-		// OpenCode 1.18.6's provider-source isolation inputs, the same set the
-		// FILTERED launch path applies (openCodeServerEnvironment). The
-		// host-open posture this arm must use does not apply them, and without
-		// them the server reaches for model metadata, project config and
-		// updates of its own accord. That traffic is not what is being
+		// OpenCode 1.18.6's provider-source isolation inputs, modelled on the
+		// set the FILTERED launch path applies (openCodeServerEnvironment).
+		// NOT identical to it, and the difference is stated rather than implied:
+		// OPENCODE_CONFIG_DIR is dropped from a profile environment whenever the
+		// launch has private harness state (openCodePrivateEnvironmentName), and
+		// the filtered path additionally pins HOME into the state root, which
+		// this arm does for itself above. The host-open posture applies none of
+		// them on its own, and without them the server reaches for model
+		// metadata, project config and updates of its own accord. That traffic is not what is being
 		// measured, and under a carriage it would arrive at the proxy as
 		// destinations the authored allow row never covered — noise in the
 		// record at best, and internet traffic from a smoke at worst.
@@ -456,6 +569,7 @@ type openCodeCarriageAuditor struct {
 
 	mu        sync.Mutex
 	decisions []openCodeCarriageDecision
+	errors    []string
 }
 
 type openCodeCarriageDecision struct {
@@ -466,18 +580,25 @@ type openCodeCarriageDecision struct {
 
 func newOpenCodeCarriageAuditor(
 	t *testing.T,
-	originHost string,
+	originHost, originAddr string,
 	originPort int,
 ) *openCodeCarriageAuditor {
 	t.Helper()
 	auditor := &openCodeCarriageAuditor{}
-	// The origin is authorized BY NAME, so a carried request is decided on the
-	// identity the client states — the same thing an authored host row is
-	// evaluated against under the real floor.
+	// Two rows, and the second is not optional. The HOST row is what a carried
+	// request is decided on — the identity the client states, the same thing an
+	// authored host row is evaluated against under the real floor. The CIDR row
+	// is what lets the answer to that name be USED: 198.18.0.0/15 is benchmark
+	// space, which the evaluator's private-destination blocker refuses in an
+	// allowlist posture unless an explicit cidr row covers it. Without it every
+	// carried request would be refused with VerdictPrivateDestination, and the
+	// arm could record NOT CARRIED and nothing else — an expected negative that
+	// a working positive could never have contradicted.
 	rules := sandboxpolicy.NetworkRules{
 		Mode: sandboxpolicy.AccessModeList,
 		Allow: []sandboxpolicy.NetworkAllowEntry{
 			{Host: originHost, Ports: []int{originPort}},
+			{CIDR: originAddr + "/32", Ports: []int{originPort}},
 		},
 	}
 	server, err := sandboxproxy.New(sandboxproxy.Config{
@@ -495,10 +616,15 @@ func newOpenCodeCarriageAuditor(
 				})
 		},
 		OnError: func(carriage sandboxproxy.Carriage, err error) {
-			// Logged, never asserted on: a client that speaks one carriage at
-			// a proxy expecting the other produces one of these, and that is
-			// itself part of the answer rather than a defect.
-			t.Logf("carriage auditor %s transport error: %v", carriage, err)
+			// RECORDED, not logged from here. This callback runs on a proxy
+			// handler goroutine, and Close does not wait for those: a t.Logf
+			// landing after the subtest has finished panics the whole run with
+			// "Log in goroutine after Test has completed" — a fabricated
+			// failure. The test body drains these instead.
+			auditor.mu.Lock()
+			defer auditor.mu.Unlock()
+			auditor.errors = append(auditor.errors,
+				fmt.Sprintf("%s: %v", carriage, err))
 		},
 	})
 	require.NoError(t, err)
@@ -521,6 +647,21 @@ func (a *openCodeCarriageAuditor) decisionCount() int {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return len(a.decisions)
+}
+
+func (a *openCodeCarriageAuditor) transportErrors() []string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]string(nil), a.errors...)
+}
+
+// reset drops everything the precondition below produced, so the measurement
+// starts from a proxy and an origin that have seen nothing from this test.
+func (a *openCodeCarriageAuditor) reset() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.decisions = nil
+	a.errors = nil
 }
 
 // requireOpenCodeCarriageEnv refuses a degraded run rather than skipping the

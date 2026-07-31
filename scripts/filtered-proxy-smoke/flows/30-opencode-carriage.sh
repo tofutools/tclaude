@@ -33,7 +33,10 @@ flow::run() {
   probe_pid=
 
   cleanup() {
-    [[ -n "${probe_pid:-}" ]] && sudo kill "$probe_pid" 2>/dev/null
+    # `|| true` is not tidiness: without it, a kill that fails because socat
+    # already died — one of the ways the round-trip proof below fails — aborts
+    # this trap under set -e, and the interface below is never removed.
+    [[ -n "${probe_pid:-}" ]] && sudo kill "$probe_pid" 2>/dev/null || true
     sudo ip link del "$link" 2>/dev/null || true
     fixture::hosts_restore
     return 0
@@ -57,6 +60,15 @@ flow::run() {
   # that address host-side, because the proxy resolves names on the host and a
   # name that resolves nowhere would be refused as unresolvable rather than
   # carried.
+  #
+  # Two things this proves and two it does not, so neither is assumed silently.
+  # It proves the ADDRESS and the NAME, on a port of its own: the Go arm binds
+  # an ephemeral port for the real origin, so this cannot pre-prove that exact
+  # listener. And it proves reachability from the HOST; that transfers to the
+  # confined server because the host-open posture shares the host network
+  # namespace rather than unsharing it. The remaining question — can a client
+  # that cooperates actually reach the origin THROUGH the proxy — is proven
+  # inside the Go arm, per carriage, before anything is measured.
   sudo socat "TCP4-LISTEN:$probe_port,bind=$origin_addr,reuseaddr,fork" \
     EXEC:/bin/cat >"$SMOKE_ARTIFACTS/opencode-carriage-probe.log" 2>&1 &
   probe_pid=$!
