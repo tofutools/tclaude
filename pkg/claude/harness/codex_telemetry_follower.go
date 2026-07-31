@@ -110,7 +110,10 @@ func (f *CodexTelemetryFollower) RestoreCheckpoint(data []byte) error {
 	if err := json.Unmarshal(data, &cp); err != nil {
 		return fmt.Errorf("decode Codex telemetry checkpoint: %w", err)
 	}
-	if cp.Version != 3 && cp.Version != codexTelemetryCheckpointVersion {
+	// Older checkpoints have no discovered-child ledger. Restoring their EOF
+	// cursor would permanently skip collaboration edges that occurred in the
+	// already-consumed prefix, so upgrades deliberately rebuild once.
+	if cp.Version != codexTelemetryCheckpointVersion {
 		return fmt.Errorf("unsupported Codex telemetry checkpoint version %d", cp.Version)
 	}
 	if cp.Home == "" || cp.ConvID == "" || cp.Path == "" || cp.Offset <= 0 ||

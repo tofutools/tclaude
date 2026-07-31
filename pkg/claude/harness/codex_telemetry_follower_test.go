@@ -98,6 +98,13 @@ func TestCodexTelemetryFollower_CheckpointSurvivesRestartWithFoldState(t *testin
 	checkpoint, ok, err := beforeRestart.Checkpoint()
 	require.NoError(t, err)
 	require.True(t, ok)
+	var legacy map[string]any
+	require.NoError(t, json.Unmarshal(checkpoint, &legacy))
+	legacy["version"] = float64(3)
+	legacyCheckpoint, err := json.Marshal(legacy)
+	require.NoError(t, err)
+	assert.Error(t, (&CodexTelemetryFollower{}).RestoreCheckpoint(legacyCheckpoint),
+		"v3 has no child-discovery ledger and must rebuild once on upgrade")
 	checkpointOffset := codexFollowerOffset(t, beforeRestart)
 
 	restored := &CodexTelemetryFollower{}
