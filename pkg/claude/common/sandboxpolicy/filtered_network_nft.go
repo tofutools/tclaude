@@ -297,14 +297,17 @@ func FilteredNetworkHostsFile(hostHosts []byte) ([]byte, error) {
 //
 // What this does NOT cover, stated because it is the boundary of the guarantee:
 // the sandbox inherits the host's /etc/nsswitch.conf and NSS modules, so an
-// operator who authorizes a resolver socket through the unix_sockets axis
-// restores exactly the name-to-literal conversion this file exists to prevent.
-// NetworkEngineResolverSocketConflict refuses the known ones at the selection
-// surface, where an authored engine and authored sockets first meet — but only
-// on the unix_sockets axis. A filesystem grant covering a resolver's directory
-// reaches the same socket inode and is not refused yet; see the scope note on
-// that function. Neither is reachable while the engine deploys nothing, and
-// both have to hold before it does.
+// operator who hands a resolver socket back to the sandbox restores exactly the
+// name-to-literal conversion this file exists to prevent. Two authored axes can
+// do that, and both are refused at the capability surface, where an authored
+// engine first meets the rest of the policy: NetworkEngineResolverSocketConflict
+// on the unix_sockets axis, and NetworkEngineResolverFilesystemConflict on the
+// filesystem axis, over ONE list of known resolver paths (TCL-883).
+//
+// What remains outside the guarantee is a resolver that list does not know —
+// a private NSS module over a socket an operator builds themselves. The list
+// refuses the resolvers a real host ships; it is not a proof of exhaustiveness,
+// and this boundary is stated rather than claimed away.
 //
 // The delivered property is therefore "no automatic name-to-address conversion",
 // not "no host-derived address knowledge": /etc/resolv.conf and friends remain

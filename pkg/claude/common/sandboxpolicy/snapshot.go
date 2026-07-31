@@ -152,6 +152,12 @@ func deriveEffectiveAccessAxes(effective EffectiveProfile) (ResolvedAxes, error)
 		NetworkAccess: effective.NetworkAccess,
 		Network:       effective.Network,
 		UnixSockets:   effective.UnixSockets,
+		// The resolved filesystem authority rides along so capability planning
+		// can answer the one question that spans the filesystem and the network
+		// engine at once. This is the EFFECTIVE grant set — what the launch will
+		// actually bind — which is why the resolver-socket check reaches the
+		// same verdict here as at the launch boundary.
+		Filesystem: effective.Filesystem,
 	})
 }
 

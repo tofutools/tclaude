@@ -92,6 +92,25 @@ type SocketAllowEntry struct {
 type ResolvedAxes struct {
 	Network     NetworkRules
 	UnixSockets UnixSocketRules
+	// Filesystem is the authored filesystem authority this policy grants,
+	// carried alongside the two access axes rather than folded into them.
+	//
+	// It is here because one capability question genuinely spans both: a
+	// filesystem grant can reach a socket inode, and under the proxy filtering
+	// engine reaching a resolver socket defeats the engine's name authority
+	// exactly as authorizing that socket on the unix_sockets axis does (see
+	// NetworkEngineResolverFilesystemConflict). Capability planning could not
+	// ask that question while it saw only the two access axes.
+	//
+	// It is deliberately NOT a third enforceable axis: nothing rates it, nothing
+	// widens it, and PlanAccessEnforcement passes it through untouched. Callers
+	// that only need the access tiers can keep ignoring it.
+	//
+	// Not serialized. This type is rendered as `recorded_axes` on plan and
+	// profile responses, whose contract is the two ACCESS axes; adding a third
+	// key there would change an API shape to restate grants those responses
+	// already carry.
+	Filesystem []FilesystemGrant `json:"-"`
 }
 
 const (
@@ -179,7 +198,15 @@ func DeriveAccessAxes(p Profile) (ResolvedAxes, error) {
 		// new network axis itself is absent.
 		sockets.Mode = AccessModeClosed
 	}
-	return ResolvedAxes{Network: network, UnixSockets: sockets}, nil
+	return ResolvedAxes{
+		Network:     network,
+		UnixSockets: sockets,
+		// Taken from the profile this derivation was handed, so every caller
+		// that already builds axes from a whole profile — the editor
+		// prediction, the spawn guard, the launch boundary — gains the
+		// filesystem view without a second construction site to keep in step.
+		Filesystem: append([]FilesystemGrant(nil), p.Filesystem...),
+	}, nil
 }
 
 // resolvedNetworkRules clones the authored rules and, when a baseline is

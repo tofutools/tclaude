@@ -709,7 +709,8 @@ func SetTclaudeLayerHostAvailabilityForTest(fn func() error) func() {
 }
 
 func SetTclaudeLayerAccessVerdictForTest(
-	fn func(string, sandboxpolicy.NetworkPosture, sandboxpolicy.RootPosture) (harness.LaunchOSSandbox, error),
+	fn func(string, sandboxpolicy.NetworkPosture, sandboxpolicy.RootPosture,
+		sandboxpolicy.NetworkEngine) (harness.LaunchOSSandbox, error),
 ) func() {
 	previous := resolveTclaudeLayerAccessVerdict
 	resolveTclaudeLayerAccessVerdict = fn

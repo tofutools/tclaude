@@ -2670,8 +2670,19 @@ func resumeLaunchCmdWithStackedProof(
 		if rootErr != nil {
 			return "", "", nil, rootErr
 		}
+		// The engine is part of the question, not a decoration on the answer:
+		// it maps a filtered posture onto the proxy floor, which needs strictly
+		// less than the packet gateway. Resolving without it would refuse a
+		// resumed proxy-engine session for a pasta/nft prerequisite that
+		// session never uses — and would probe a floor the resume will not
+		// build even where those prerequisites are present.
+		engine, engineErr := session.TclaudeLayerNetworkEngine(effectiveProfile)
+		if engineErr != nil {
+			return "", "", nil, engineErr
+		}
 		var resolveErr error
-		binary, _, resolveErr = session.ResolveTclaudeLayer(posture, root)
+		binary, _, resolveErr = session.ResolveTclaudeLayerForEngine(
+			posture, root, engine)
 		if resolveErr != nil {
 			return "", "", nil, resolveErr
 		}
@@ -3192,9 +3203,7 @@ func createSessionForConv(conv *SessionEntry) error {
 	launchOSSandbox := harness.ResolveLaunchOSSandbox(h, resumeMode, resumeChosenBy, cwd)
 	switch resumeImplementation {
 	case sandboxpolicy.ImplementationTclaudeLayer:
-		launchOSSandbox = session.TclaudeLayerLaunchOSSandbox(
-			resumeTclaudeLayerPostures(conv.SessionID),
-		)
+		launchOSSandbox = resumeTclaudeLayerLaunchOSSandbox(conv.SessionID)
 	case sandboxpolicy.ImplementationStacked:
 		launchOSSandbox = session.StackedLaunchOSSandbox(
 			h, resumeTclaudeLayerNetworkPosture(conv.SessionID),
@@ -3242,8 +3251,17 @@ func createSessionForConv(conv *SessionEntry) error {
 }
 
 func resumeTclaudeLayerNetworkPosture(convID string) sandboxpolicy.NetworkPosture {
-	posture, _ := resumeTclaudeLayerPostures(convID)
+	posture, _, _ := resumeTclaudeLayerPostures(convID)
 	return posture
+}
+
+// resumeTclaudeLayerLaunchOSSandbox describes the boundary a resume rebuilds.
+// It reads the engine alongside the two postures so a resumed proxy-engine
+// session is not recorded with the packet gateway's mechanism sentence — the
+// same disclosure-matches-mechanism rule the spawn path follows.
+func resumeTclaudeLayerLaunchOSSandbox(convID string) harness.LaunchOSSandbox {
+	return session.TclaudeLayerLaunchOSSandboxForEngine(
+		resumeTclaudeLayerPostures(convID))
 }
 
 // resumeTclaudeLayerPostures reports both halves of the boundary a resume will
@@ -3253,20 +3271,30 @@ func resumeTclaudeLayerNetworkPosture(convID string) sandboxpolicy.NetworkPostur
 // host-open one.
 func resumeTclaudeLayerPostures(
 	convID string,
-) (sandboxpolicy.NetworkPosture, sandboxpolicy.RootPosture) {
+) (sandboxpolicy.NetworkPosture, sandboxpolicy.RootPosture,
+	sandboxpolicy.NetworkEngine) {
 	snapshot := resumeEffectiveSandboxForState(convID)
 	if snapshot == nil {
-		return sandboxpolicy.NetworkHostOpen, sandboxpolicy.RootHostInherited
+		return sandboxpolicy.NetworkHostOpen, sandboxpolicy.RootHostInherited,
+			sandboxpolicy.NetworkEngineUnset
 	}
 	posture, err := session.TclaudeLayerNetworkPosture(snapshot.Effective)
 	if err != nil {
-		return sandboxpolicy.NetworkHostOpen, sandboxpolicy.RootHostInherited
+		return sandboxpolicy.NetworkHostOpen, sandboxpolicy.RootHostInherited,
+			sandboxpolicy.NetworkEngineUnset
+	}
+	// An unresolvable engine falls back to unset, which describes the launch
+	// exactly as it was described before engines existed. Guessing "proxy" from
+	// a broken policy would claim a mechanism no launch is running.
+	engine, engineErr := session.TclaudeLayerNetworkEngine(snapshot.Effective)
+	if engineErr != nil {
+		engine = sandboxpolicy.NetworkEngineUnset
 	}
 	root, err := session.TclaudeLayerRootPosture(posture, snapshot.Effective)
 	if err != nil {
-		return posture, sandboxpolicy.RootHostInherited
+		return posture, sandboxpolicy.RootHostInherited, engine
 	}
-	return posture, root
+	return posture, root, engine
 }
 
 func findSessionForConv(convID string) *session.SessionState {

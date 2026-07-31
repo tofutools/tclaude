@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -191,6 +192,111 @@ func TestProxyEngineRefusesAResolverReachingGlob(t *testing.T) {
 	require.True(t, found)
 	assert.Equal(t, "/run/systemd/resolve/*", selector)
 	assert.Contains(t, resolver, "io.systemd.Resolve")
+}
+
+// TestProxyEngineRefusesAResolverReachingFilesystemGrant is TCL-883 at the
+// capability seam. The socket axis was closed by TCL-882; a filesystem grant
+// covering the resolver's directory binds the same inode into the constructed
+// root and takes the same capability away, so it must refuse from the same
+// evaluation — and from BOTH the preview and the launch, which is the property
+// that keeps the editor from promising what a launch will refuse.
+func TestProxyEngineRefusesAResolverReachingFilesystemGrant(t *testing.T) {
+	axes := sandboxpolicy.ResolvedAxes{
+		Network: proxyEngineRules(
+			sandboxpolicy.NetworkAllowEntry{Domain: "example.com", Ports: []int{443}},
+		),
+		Filesystem: []sandboxpolicy.FilesystemGrant{
+			{Path: "/srv/toolchain", Access: sandboxpolicy.AccessRead},
+			{Path: "/run/systemd/resolve", Access: sandboxpolicy.AccessRead},
+		},
+	}
+
+	_, predictErr := PredictAccessEnforcement(
+		Default(), sandboxpolicy.ImplementationTclaudeLayer, axes, "", "linux",
+	)
+	require.Error(t, predictErr,
+		"the editor preview must refuse rather than render a name authority it will not have")
+	assert.Contains(t, predictErr.Error(), "proxy_engine_name_authority")
+	assert.Contains(t, predictErr.Error(), "/run/systemd/resolve")
+	assert.Contains(t, predictErr.Error(), "Packet filter engine",
+		"a capability refusal must name its remedy")
+
+	// The launch half reads runtime.GOOS rather than a parameter, and this
+	// refusal is Linux-only by design: it describes a sandbox root built from
+	// authored grants, which Seatbelt has no equivalent of. So the preview is
+	// asked about Linux explicitly above, and the launch is asserted only where
+	// a Linux launch is what would run.
+	if runtime.GOOS == "linux" {
+		_, resolveErr := ResolveAccessEnforcement(
+			Default(), sandboxpolicy.ImplementationTclaudeLayer, axes,
+			LaunchOSSandbox{State: "on", Source: "test bwrap", FilteredNetwork: true}, "",
+		)
+		require.Error(t, resolveErr,
+			"the launch must refuse from the same evaluation the preview used")
+		assert.Contains(t, resolveErr.Error(), "proxy_engine_name_authority")
+
+		var capabilityErr *SandboxCapabilityError
+		require.ErrorAs(t, resolveErr, &capabilityErr,
+			"the refusal must be typed so callers attribute it to the network axis")
+		assert.Equal(t, SandboxCapabilityNetworkAllowlist, capabilityErr.Kind)
+	}
+
+	// The Linux-only scope is a claim in its own right, so assert it rather
+	// than only relying on the guard above: the identical axes on a darwin
+	// target must NOT refuse, because no root is built from grants there.
+	_, darwinErr := PredictAccessEnforcement(
+		Default(), sandboxpolicy.ImplementationTclaudeLayer, axes, "", "darwin",
+	)
+	assert.NoError(t, darwinErr,
+		"Seatbelt builds no root from grants; this refusal does not describe it")
+
+	// A DENY-ONLY policy is the shape that made this a capability-seam refusal
+	// rather than an allow-list cell: its network mode is open, so the ladder's
+	// list rung never runs and unsupported deny rows are omitted with a widening
+	// notice instead of refusing. It still deploys an engine, so it must refuse.
+	denyOnly := axes
+	denyOnly.Network = sandboxpolicy.NetworkRules{
+		Mode:   sandboxpolicy.AccessModeOpen,
+		Deny:   []sandboxpolicy.NetworkAllowEntry{{Domain: "blocked.example"}},
+		Engine: sandboxpolicy.NetworkEngineProxy,
+	}
+	_, denyErr := PredictAccessEnforcement(
+		Default(), sandboxpolicy.ImplementationTclaudeLayer, denyOnly, "", "linux",
+	)
+	require.Error(t, denyErr,
+		"a deny-only proxy policy loses the same name authority and must refuse too")
+	assert.Contains(t, denyErr.Error(), "proxy_engine_name_authority")
+
+	// Parity: the identical filesystem grant under the packet gateway changes
+	// nothing, because its DNS broker holds name authority with a resolver
+	// socket present. Unset must likewise be untouched.
+	for _, engine := range []sandboxpolicy.NetworkEngine{
+		sandboxpolicy.NetworkEnginePacket,
+		sandboxpolicy.NetworkEngineUnset,
+	} {
+		other := axes
+		other.Network = proxyEngineRules(
+			sandboxpolicy.NetworkAllowEntry{Domain: "example.com", Ports: []int{443}},
+		)
+		other.Network.Engine = engine
+		predicted, err := PredictAccessEnforcement(
+			Default(), sandboxpolicy.ImplementationTclaudeLayer, other, "", "linux",
+		)
+		require.NoErrorf(t, err, "engine %q must be unaffected", engine)
+		assert.Equal(t, EnforceFull, predicted.NetworkList)
+	}
+
+	// And a proxy policy whose grants reach no resolver keeps working, so the
+	// refusal is a signal rather than a blanket ban on the engine.
+	innocent := axes
+	innocent.Filesystem = []sandboxpolicy.FilesystemGrant{
+		{Path: "/srv/toolchain", Access: sandboxpolicy.AccessRead},
+	}
+	predicted, err := PredictAccessEnforcement(
+		Default(), sandboxpolicy.ImplementationTclaudeLayer, innocent, "", "linux",
+	)
+	require.NoError(t, err)
+	assert.Equal(t, sandboxpolicy.NetworkEngineProxy, predicted.NetworkEngine)
 }
 
 func mustEngineTableRow(
