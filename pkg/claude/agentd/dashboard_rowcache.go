@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"maps"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
@@ -44,12 +45,15 @@ type snapshotRowCache struct {
 	rowWork map[string]time.Duration
 }
 
-// rowWork phase names. Kept as constants so the accumulator key and the
-// /api/perf child name cannot drift apart.
+// rowWork phase names, in the order they are reported. Constants so the
+// accumulator key and the /api/perf child name cannot drift apart; a fixed
+// order because /api/perf aggregates children positionally-stable by name.
 const (
 	rowWorkBgReconcile     = "bg_reconcile"
 	rowWorkContextSnapshot = "context_snapshot"
 )
+
+var rowWorkPhaseOrder = []string{rowWorkBgReconcile, rowWorkContextSnapshot}
 
 // addRowWork is the recordRowWork sink for this request's rows. Single
 // goroutine, like the rest of the cache — no locking.
@@ -58,6 +62,27 @@ func (rc *snapshotRowCache) addRowWork(name string, d time.Duration) {
 		rc.rowWork = map[string]time.Duration{}
 	}
 	rc.rowWork[name] += d
+}
+
+// rowWorkSnapshot copies the accumulator so a later caller can report only the
+// row work that accrued after this point. A conv is resolved (and its side
+// reads paid) by whichever phase reaches it FIRST — in practice the preload
+// warm loop, since its conv set is a superset of every later surface's. Without
+// a baseline, a phase would re-report work another phase already paid for.
+func (rc *snapshotRowCache) rowWorkSnapshot() map[string]time.Duration {
+	out := make(map[string]time.Duration, len(rc.rowWork))
+	maps.Copy(out, rc.rowWork)
+	return out
+}
+
+// rowWorkPhasesSince renders the row work accrued since baseline (nil = since
+// request start) as /api/perf children.
+func (rc *snapshotRowCache) rowWorkPhasesSince(baseline map[string]time.Duration) []perfPhase {
+	out := make([]perfPhase, 0, len(rowWorkPhaseOrder))
+	for _, name := range rowWorkPhaseOrder {
+		out = append(out, perfPhase{Name: name, Ms: durMs(rc.rowWork[name] - baseline[name])})
+	}
+	return out
 }
 
 // convRowBundle is the fully-resolved per-conv row the dashboard renders,

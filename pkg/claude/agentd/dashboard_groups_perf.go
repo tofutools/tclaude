@@ -14,9 +14,10 @@ import (
 // assembly for members and owners — so /api/perf names the culprit instead of
 // just the phase.
 //
-// Codex telemetry is subtracted the same way the top-level phase subtracts it
-// (it is reported as its own top-level metric), so a member-row number here is
-// comparable to the parent's.
+// Codex telemetry is subtracted from every sub-phase, matching the parent's
+// own markExcluding, so a member-row number here is comparable to the parent's.
+// Both now subtract only the telemetry that accrued INSIDE the groups phase —
+// the bulk of it is paid by the preload warm loop and excluded there.
 //
 // slowestGroupMs is deliberately a single number rather than one child per
 // group: /api/perf aggregates children BY NAME across the ring, so per-group
@@ -48,10 +49,21 @@ type groupsPhaseTimer struct {
 	sortMembers time.Duration
 
 	slowestGroup time.Duration
+
+	// rowWorkBase is the per-row side-read accumulator as it stood when the
+	// loop began, so the loop reports only what IT paid. In practice this is
+	// almost all of it: the preload warm loop resolves every conv first, so a
+	// group's members are memo hits and these read ~0 here. A non-zero value
+	// means a conv reached the group loop unresolved.
+	rowWorkBase map[string]time.Duration
 }
 
 func newGroupsPhaseTimer(rc *snapshotRowCache) *groupsPhaseTimer {
-	return &groupsPhaseTimer{rc: rc}
+	t := &groupsPhaseTimer{rc: rc}
+	if rc != nil {
+		t.rowWorkBase = rc.rowWorkSnapshot()
+	}
+	return t
 }
 
 func (t *groupsPhaseTimer) codexSoFar() time.Duration {
@@ -100,21 +112,22 @@ func (t *groupsPhaseTimer) observeGroup(name string, m groupsPhaseMark) {
 // The children deliberately do not partition the parent: the loop also builds
 // the group view itself, and the last three entries are cross-cutting views of
 // time already counted in member_rows/owner_rows — the two un-batched per-row
-// side reads, and the worst single group iteration.
+// side reads paid inside the loop, and the worst single group iteration.
 func (t *groupsPhaseTimer) phases() []perfPhase {
-	rowWork := map[string]time.Duration{}
-	if t.rc != nil {
-		rowWork = t.rc.rowWork
-	}
-	return []perfPhase{
+	out := []perfPhase{
 		{Name: "group_perms", Ms: durMs(t.perms)},
 		{Name: "group_process", Ms: durMs(t.process)},
 		{Name: "group_waves", Ms: durMs(t.waves)},
 		{Name: "member_rows", Ms: durMs(t.memberRows)},
 		{Name: "owner_rows", Ms: durMs(t.ownerRows)},
 		{Name: "member_sort", Ms: durMs(t.sortMembers)},
-		{Name: rowWorkBgReconcile, Ms: durMs(rowWork[rowWorkBgReconcile])},
-		{Name: rowWorkContextSnapshot, Ms: durMs(rowWork[rowWorkContextSnapshot])},
-		{Name: "slowest_group", Ms: durMs(t.slowestGroup)},
 	}
+	if t.rc != nil {
+		out = append(out, t.rc.rowWorkPhasesSince(t.rowWorkBase)...)
+	} else {
+		for _, name := range rowWorkPhaseOrder {
+			out = append(out, perfPhase{Name: name})
+		}
+	}
+	return append(out, perfPhase{Name: "slowest_group", Ms: durMs(t.slowestGroup)})
 }

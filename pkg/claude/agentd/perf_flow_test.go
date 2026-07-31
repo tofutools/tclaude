@@ -269,3 +269,65 @@ func TestDashboardPerf_Reset(t *testing.T) {
 	rec = testharness.Serve(dash, testharness.JSONRequest(t, http.MethodGet, "/api/perf/reset", nil))
 	assert.Equal(t, http.StatusMethodNotAllowed, rec.Code, "GET /api/perf/reset must be refused")
 }
+
+// perfPhaseNamed finds one phase (or child) by name, failing the test when it
+// is absent — so a renamed phase surfaces as a clear failure rather than a
+// zero-valued comparison that silently passes.
+func perfPhaseNamed(t *testing.T, phases []perfPhaseJSON, name string) perfPhaseJSON {
+	t.Helper()
+	for _, p := range phases {
+		if p.Name == name {
+			return p
+		}
+	}
+	var have []string
+	for _, p := range phases {
+		have = append(have, p.Name)
+	}
+	require.Failf(t, "phase missing", "want %s, have %v", name, have)
+	return perfPhaseJSON{}
+}
+
+// TestDashboardPerf_GroupsPhaseAttribution pins WHERE the snapshot's per-row
+// costs are charged, not just that the phase tree has the right shape.
+//
+// The two un-batched per-row side reads (the background-work process-table
+// reconcile and the per-session context query) are paid by whichever phase
+// resolves a conv FIRST. That is the preload warm loop, whose conv set is a
+// superset of every later surface's — so by the time the group loop runs, its
+// members are memo hits that pay nothing. Charging them to "groups" would send
+// an operator chasing a spike into code that never issues the query.
+func TestDashboardPerf_GroupsPhaseAttribution(t *testing.T) {
+	f := newFlow(t)
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	agentd.ResetPerfForTest()
+	t.Cleanup(agentd.ResetPerfForTest)
+
+	const convID = "perf-1111-2222-3333-4444"
+	f.HaveConvWithTitle(convID, "perf-worker")
+	f.HaveAliveSession(convID, "spwn-perf", "tmux-perf", f.TestCwd("perf"))
+	f.HaveGroup("perfgrp")
+	f.HaveMember("perfgrp", convID)
+
+	dash := agentd.BuildDashboardHandlerForTest()
+	fetchSnapshotOnly(t, dash)
+
+	perf := fetchPerf(t, dash, "/api/perf")
+	snap := perfEndpointNamed(t, perf, "/api/snapshot")
+
+	groups := perfPhaseNamed(t, snap.Phases, "groups")
+	perms := perfPhaseNamed(t, groups.Children, "group_perms")
+	assert.Positive(t, perms.MaxMs,
+		"a group in the roster means at least one per-group permissions query")
+	slowest := perfPhaseNamed(t, groups.Children, "slowest_group")
+	assert.GreaterOrEqual(t, slowest.MaxMs, perms.MaxMs,
+		"the worst group iteration must cover the queries made inside it")
+
+	preload := perfPhaseNamed(t, snap.Phases, "preload")
+	assert.Positive(t, perfPhaseNamed(t, preload.Children, "context_snapshot").MaxMs,
+		"preload resolves every conv, so it pays the per-session context query")
+	assert.Zero(t, perfPhaseNamed(t, groups.Children, "context_snapshot").MaxMs,
+		"the group loop's row lookups are memo hits and must not re-report preload's cost")
+	assert.Zero(t, perfPhaseNamed(t, groups.Children, "bg_reconcile").MaxMs,
+		"same for the background-work reconcile")
+}

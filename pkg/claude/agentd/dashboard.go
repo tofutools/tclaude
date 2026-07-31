@@ -2062,9 +2062,10 @@ func stateForConvInSessionsTimed(rows []*db.SessionRow, aliveSet map[string]stru
 
 // recordRowWork, when non-nil, accumulates the named per-row side reads that
 // are neither batched nor reported as their own top-level phase — the
-// process-table reconcile and the per-session context point query. Both run
-// inside whichever snapshot phase first resolves the conv (in practice
-// "groups"), and both were invisible in /api/perf before.
+// process-table reconcile and the per-session context point query. They are
+// paid by whichever snapshot phase first resolves the conv (in practice the
+// preload warm loop, whose conv set is a superset of every later surface's),
+// and were invisible in /api/perf before.
 func stateForConvInSessionsBatched(
 	rows []*db.SessionRow,
 	aliveSet map[string]struct{},
@@ -2678,7 +2679,16 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	tagsFor := func(agentID string) tagsView {
 		return tagsView{Tags: allTags[agentID]}
 	}
-	span.mark("preload")
+	// The preload warm loop above resolves EVERY conv the snapshot will render,
+	// so it — not the group loop — is where the un-batched per-row side reads
+	// are actually paid. Report them here, and exclude the Codex telemetry they
+	// dragged in so preload stays comparable to the top-level codex_telemetry
+	// metric it is reported beside. Before this, preload double-counted that
+	// telemetry while the groups phase (which never pays it) subtracted the
+	// whole cumulative total and clamped toward zero.
+	span.addChildren("preload", rc.rowWorkPhasesSince(nil)...)
+	codexAfterPreload := rc.codexTelemetryTiming.total
+	span.markExcluding("preload", codexAfterPreload)
 	groupNames := make(map[int64]string, len(groups))
 	for _, group := range groups {
 		groupNames[group.ID] = group.Name
@@ -2916,9 +2926,9 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		out.Groups = append(out.Groups, dg)
 		gt.observeGroup(g.Name, groupMark)
 	}
-	codexTelemetryInGroups := rc.codexTelemetryTiming.total
+	codexAfterGroups := rc.codexTelemetryTiming.total
 	span.addChildren("groups", gt.phases()...)
-	span.markExcluding("groups", codexTelemetryInGroups)
+	span.markExcluding("groups", codexAfterGroups-codexAfterPreload)
 	for convID, slugs := range allGrants {
 		addAgent(convID)
 		copySlice := append([]string{}, slugs...)
@@ -2995,7 +3005,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 	span.addDuration("codex_telemetry", rc.codexTelemetryTiming.total)
 	span.addChildren("codex_telemetry", rc.codexTelemetryTiming.perfPhases()...)
-	span.markExcluding("roster", rc.codexTelemetryTiming.total-codexTelemetryInGroups)
+	span.markExcluding("roster", rc.codexTelemetryTiming.total-codexAfterGroups)
 
 	out.Ungrouped = []dashboardAgent{}
 	for _, a := range agentRows {
