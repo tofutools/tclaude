@@ -134,6 +134,11 @@ const (
 	// snapshot carries this exact notice through the forked session launcher;
 	// profiles cannot author it.
 	AccessNoticeReasonOperatorUnenforcedLaunchOverride = "operator_unenforced_launch_override"
+	// AccessNoticeReasonProxyEngineNoProxyOverride carries the proxy engine's
+	// proxy-environment ownership: an inherited NO_PROXY/no_proxy is overridden
+	// to empty inside the sandbox rather than honored or refused over. It is
+	// emitted only when a non-empty value was actually discarded.
+	AccessNoticeReasonProxyEngineNoProxyOverride = "proxy_engine_no_proxy_override"
 
 	AccessNoticeEffectNotEnforced       = "not_enforced"
 	AccessNoticeEffectEnforcedWider     = "enforced_wider"
@@ -146,6 +151,13 @@ const (
 	// its own effect precisely because the existing ones all describe a
 	// widening or a gate, and an engine selection is neither.
 	AccessNoticeEffectMechanismSelected = "mechanism_selected"
+	// AccessNoticeEffectEnvironmentOverridden states that the launch replaced an
+	// inherited environment value the running mechanism owns. It is its own
+	// effect for the same reason as the one above, in the opposite direction:
+	// the existing effects all report enforcement that is weaker than authored,
+	// and an override that discards a host exemption is not a weakening — the
+	// destinations it would have exempted stay unreachable.
+	AccessNoticeEffectEnvironmentOverridden = "environment_overridden"
 )
 
 // AccessNotice is the single persisted disclosure record used by access

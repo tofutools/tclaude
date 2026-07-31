@@ -590,19 +590,9 @@ func runTclaudeLayerProxyBootstrap(command []string) error {
 	return unix.Exec(executable, command, proxyNetworkSandboxEnv(os.Environ(), port))
 }
 
-// proxyNetworkProxyVariables are the variables the launcher owns on a
-// proxy-engine launch. Every one of them is REPLACED rather than merged: an
-// inherited value would point the harness at a destination tclaude does not
-// supervise, and an inherited NO_PROXY would carve destinations back out of the
-// only route that exists.
-var proxyNetworkProxyVariables = []string{
-	"HTTP_PROXY", "http_proxy",
-	"HTTPS_PROXY", "https_proxy",
-	"ALL_PROXY", "all_proxy",
-	"NO_PROXY", "no_proxy",
-}
-
-// proxyNetworkSandboxEnv injects the sandbox's proxy discovery.
+// proxyNetworkSandboxEnv injects the sandbox's proxy discovery. The variables
+// it owns are listed once, in proxy_network_env.go, beside the disclosure that
+// reports the override of them.
 //
 // ALL_PROXY uses socks5h rather than socks5, and the h is the whole point: it
 // keeps name resolution at the proxy, where the authored host and domain rows

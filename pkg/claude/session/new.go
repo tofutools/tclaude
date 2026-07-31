@@ -1282,6 +1282,14 @@ func runNew(params *NewParams) error {
 			if plannedPostureErr != nil {
 				return plannedPostureErr
 			}
+			// §7.4, from the same pre-injection environment the model-transport
+			// gate below inspects: the launcher discards exactly what the
+			// resolver saw, so the disclosure and the gate describe one launch.
+			if noProxyNotice := ProxyEngineNoProxyOverrideNotice(
+				plannedAxes.Network, plannedEffective.Environment,
+			); noProxyNotice != nil {
+				notices = append(notices, *noProxyNotice)
+			}
 			if plannedNetworkPosture == sandboxpolicy.NetworkFiltered {
 				var resolveModelErr error
 				resolvedModel, resolveModelErr = ResolveTclaudeLayerModelTransport(
