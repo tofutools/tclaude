@@ -33,6 +33,13 @@ func TestHumanNotificationAttentionAssetsAreWired(t *testing.T) {
 		"global a11y":     {"js/shell-island.js", "one or more agents have unread notifications"},
 		"styles":          {"dashboard.css", ".human-notification-attention"},
 		"drawer styles":   {"dashboard.css", ".human-notification-drawer"},
+		"panel geometry":  {"dashboard.css", "top: var(--dock-top); right: 0; bottom: var(--footer-h);"},
+		"panel slide in":  {"dashboard.css", "@keyframes human-notification-drawer-in"},
+		"panel slide out": {"dashboard.css", ".human-notification-drawer.closing"},
+		"reduced motion":  {"dashboard.css", "@media (prefers-reduced-motion: reduce)"},
+		"wizard skin":     {"dashboard.css", "body.wizard .human-notification-drawer"},
+		"vegas skin":      {"dashboard.css", "body.slop .human-notification-drawer"},
+		"exit hold":       {"js/human-notification-reader-island.js", "CLOSE_ANIMATION_MS"},
 	}
 	for name, check := range checks {
 		asset := dashboardAssetFile(t, check.asset)

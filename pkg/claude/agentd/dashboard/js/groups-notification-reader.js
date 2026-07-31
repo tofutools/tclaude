@@ -121,7 +121,7 @@ function Attachment({ message }) {
 }
 
 export function GroupsNotificationReader({
-  descriptor, snapshot, state, actions, onSelect, onClose,
+  descriptor, snapshot, state, actions, onSelect, onClose, closing = false,
 }) {
   const closeRef = useRef(null);
   const messages = senderMessages(descriptor.sender, snapshot);
@@ -159,7 +159,7 @@ export function GroupsNotificationReader({
   const senderLabel = message.from_title || descriptor.sender.label || senderID;
   const created = message.created_at ? new Date(message.created_at).toLocaleString() : '';
 
-  return html`<aside class="human-notification-drawer" role="dialog"
+  return html`<aside class=${`human-notification-drawer${closing ? ' closing' : ''}`} role="dialog"
     data-message-id=${message.id}
     aria-modal="false" aria-labelledby="human-notification-drawer-subject">
     <header class="human-notification-drawer-header">

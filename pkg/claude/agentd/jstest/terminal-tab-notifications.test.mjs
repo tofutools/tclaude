@@ -154,7 +154,8 @@ test('the quick reader mounts on its own body-level host and answers every surfa
   const launcher = harness.document.body.appendChild(harness.document.createElement('button'));
   t.after(() => launcher.remove());
   const mounted = await harness.mount(harness.html`
-    <${HumanNotificationReader} state=${state} actions=${{ reportError: () => {} }} />
+    <${HumanNotificationReader} state=${state} actions=${{ reportError: () => {} }}
+      closeAnimationMs=${10} />
   `);
   assert.equal(mounted.container.querySelector('.human-notification-drawer'), null);
 
@@ -173,9 +174,14 @@ test('the quick reader mounts on its own body-level host and answers every surfa
   await harness.act(() => {
     harness.fireEvent(drawer.querySelector('.human-notification-drawer-close'), 'click');
   });
-  assert.equal(mounted.container.querySelector('.human-notification-drawer'), null);
+  // The panel slides out before it goes: it stays mounted, marked .closing, for
+  // the length of the exit animation. Focus does not wait for it.
+  assert.ok(mounted.container.querySelector('.human-notification-drawer.closing'),
+    'closing plays the exit animation instead of vanishing');
   assert.equal(harness.document.activeElement, launcher,
     'closing hands focus back to whatever raised the reader');
+  await harness.act(async () => { await new Promise((done) => setTimeout(done, 40)); });
+  assert.equal(mounted.container.querySelector('.human-notification-drawer'), null);
 
   // Escape belongs to whoever already handled it — a live terminal, say.
   await harness.act(() => {
@@ -202,7 +208,22 @@ test('the quick reader mounts on its own body-level host and answers every surfa
     Object.defineProperty(escape, 'key', { value: 'Escape' });
     harness.document.dispatchEvent(escape);
   });
-  assert.equal(mounted.container.querySelector('.human-notification-drawer'), null);
+  assert.ok(mounted.container.querySelector('.human-notification-drawer.closing'));
+
+  // A notification raised mid-exit takes the panel over rather than opening
+  // behind a drawer that is about to unmount itself.
+  await harness.act(() => {
+    openHumanNotificationReader({
+      sender: { agent: 'agt_one', conv: 'conv-one-gen2', label: 'builder' },
+      messageID: 42,
+      documentRef: harness.document,
+    });
+  });
+  assert.equal(mounted.container.querySelector('.human-notification-drawer.closing'), null,
+    'reopening while the panel is sliding out cancels the exit');
+  await harness.act(async () => { await new Promise((done) => setTimeout(done, 40)); });
+  assert.ok(mounted.container.querySelector('.human-notification-drawer'),
+    'and the cancelled exit does not fire late and close the reopened panel');
 });
 
 test('the reader ignores an open request that names no message', async (t) => {
