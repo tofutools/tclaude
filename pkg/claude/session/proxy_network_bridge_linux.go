@@ -596,23 +596,10 @@ func runTclaudeLayerProxyBootstrap(command []string) error {
 //
 // The names it STRIPS come from proxy_network_env.go, beside the disclosure
 // that reports the override of them, so the two cannot disagree about which
-// variables the launcher owns. The values it SETS are the eight literals below:
-// they differ per variable (http:// for the routing pair, socks5h:// for
-// ALL_PROXY, empty for the exemptions), so they are written out rather than
-// generated from the name list. A name added to that list would therefore be
-// stripped but not set, which is the fail-closed direction — the sandbox loses
-// an inherited value rather than gaining an unsupervised one.
-//
-// ALL_PROXY uses socks5h rather than socks5, and the h is the whole point: it
-// keeps name resolution at the proxy, where the authored host and domain rows
-// are evaluated. A client that resolved names itself would have nothing to
-// resolve with — the namespace has no resolver — and would ask the proxy for a
-// literal, which the authored name rows do not cover.
-//
-// NO_PROXY and no_proxy are set to the empty string rather than removed. Empty
-// is the value that exempts nothing; absent would let a harness fall back to
-// its own default exemption list, which commonly includes localhost and private
-// space.
+// variables the launcher owns. The values it SETS come from
+// ProxyNetworkCarriage in that same file, which documents why each value has
+// the shape it has; this seam is one of its two callers rather than a second
+// definition of the same assignments.
 func proxyNetworkSandboxEnv(environ []string, port int) []string {
 	owned := make(map[string]struct{}, len(proxyNetworkProxyVariables))
 	for _, name := range proxyNetworkProxyVariables {
@@ -629,18 +616,10 @@ func proxyNetworkSandboxEnv(environ []string, port int) []string {
 		out = append(out, pair)
 	}
 	endpoint := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
-	http := "http://" + endpoint
-	socks := "socks5h://" + endpoint
-	return append(out,
-		"HTTP_PROXY="+http,
-		"http_proxy="+http,
-		"HTTPS_PROXY="+http,
-		"https_proxy="+http,
-		"ALL_PROXY="+socks,
-		"all_proxy="+socks,
-		"NO_PROXY=",
-		"no_proxy=",
-	)
+	for _, entry := range ProxyNetworkCarriage(endpoint) {
+		out = append(out, entry.Name+"="+entry.Value)
+	}
+	return out
 }
 
 // ProxyNetworkDecisionMessage and ProxyNetworkErrorMessage name the two records

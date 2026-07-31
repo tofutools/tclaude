@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/sandboxproxy"
 )
 
 // proxyNetworkRoutingVariables are the proxy-routing variables the launcher
@@ -41,6 +42,55 @@ var proxyNetworkProxyVariables = append(
 	append([]string(nil), proxyNetworkRoutingVariables...),
 	proxyNetworkExemptionVariables...,
 )
+
+// ProxyNetworkCarriageEntry is one variable the proxy launcher writes into the
+// sandbox, tagged with the carriage it routes the harness over. Carriage is
+// empty for the exemption variables, which route nothing and are set to empty.
+type ProxyNetworkCarriageEntry struct {
+	Name     string
+	Value    string
+	Carriage sandboxproxy.Carriage
+}
+
+// ProxyNetworkCarriage is the proxy environment the launcher injects for a
+// proxy endpoint, and the ONE definition of it. The launcher's exec seam
+// (proxyNetworkSandboxEnv) builds the sandbox environment from this, and the
+// OpenCode carriage-cooperation evidence arm asks it what the floor would
+// carry — so a harness measured as cooperating is measured against the exact
+// assignments a real floor makes, never against a second list that could drift
+// from it.
+//
+// The values differ per variable, which is why they are written out here rather
+// than generated from the name list: http:// for the routing pair, socks5h://
+// for ALL_PROXY, empty for the exemptions. A name added to
+// proxyNetworkProxyVariables but not here is therefore STRIPPED by the launcher
+// and never set, which is the fail-closed direction — the sandbox loses an
+// inherited value rather than gaining an unsupervised one.
+//
+// ALL_PROXY uses socks5h rather than socks5, and the h is the whole point: it
+// keeps name resolution at the proxy, where the authored host and domain rows
+// are evaluated. A client that resolved names itself would have nothing to
+// resolve with — the namespace has no resolver — and would ask the proxy for a
+// literal, which the authored name rows do not cover.
+//
+// NO_PROXY and no_proxy are set to the empty string rather than removed. Empty
+// is the value that exempts nothing; absent would let a harness fall back to
+// its own default exemption list, which commonly includes localhost and private
+// space.
+func ProxyNetworkCarriage(endpoint string) []ProxyNetworkCarriageEntry {
+	http := "http://" + endpoint
+	socks := "socks5h://" + endpoint
+	return []ProxyNetworkCarriageEntry{
+		{Name: "HTTP_PROXY", Value: http, Carriage: sandboxproxy.CarriageHTTP},
+		{Name: "http_proxy", Value: http, Carriage: sandboxproxy.CarriageHTTP},
+		{Name: "HTTPS_PROXY", Value: http, Carriage: sandboxproxy.CarriageHTTP},
+		{Name: "https_proxy", Value: http, Carriage: sandboxproxy.CarriageHTTP},
+		{Name: "ALL_PROXY", Value: socks, Carriage: sandboxproxy.CarriageSOCKS5},
+		{Name: "all_proxy", Value: socks, Carriage: sandboxproxy.CarriageSOCKS5},
+		{Name: "NO_PROXY", Value: ""},
+		{Name: "no_proxy", Value: ""},
+	}
+}
 
 // ProxyEngineNoProxyOverrideNotice is §7.4's disclosure: the proxy engine owns
 // the sandbox's proxy environment, and an inherited NO_PROXY is overridden to
