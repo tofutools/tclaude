@@ -239,8 +239,7 @@ func (f *CodexTelemetryFollower) RuntimeTelemetry(home, convID string) (CodexRun
 		f.snapshot = snap
 		return snap, nil
 	}
-	_ = info // filefollow stats the opened descriptor and pathname atomically.
-	update, err := f.ensureStream().Refresh(path)
+	update, err := f.ensureStream().RefreshWithInfo(path, info)
 	if err != nil {
 		return CodexRuntimeSnapshot{}, fmt.Errorf("follow Codex rollout %s: %w", path, err)
 	}
