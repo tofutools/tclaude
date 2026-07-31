@@ -115,6 +115,10 @@ func proxySmokeRunnerFixture(t *testing.T) proxySmokeFixture {
 func proxySmokeRules(fixture proxySmokeFixture) sandboxpolicy.NetworkRules {
 	return sandboxpolicy.NetworkRules{
 		Mode: sandboxpolicy.AccessModeList,
+		// Authored here rather than forced by the launch helper: the helper
+		// derives the deployed engine from the policy it is handed, which is
+		// what lets the same helper build a launch that deploys NO proxy.
+		Engine: sandboxpolicy.NetworkEngineProxy,
 		Allow: []sandboxpolicy.NetworkAllowEntry{
 			{Host: proxySmokeAllowedHost, Ports: []int{fixture.AllowedPort}},
 			// Authored so the deny row below has an overlapping allow to beat.
@@ -329,6 +333,15 @@ type proxyEngineLaunchInput struct {
 	// EXPECTED to exit non-zero — a harness running on invalid credentials —
 	// sets it.
 	AllowExitError bool
+	// WhileRunning observes the HOST while the in-sandbox command runs, and is
+	// the only place a smoke can watch what the launcher did rather than what
+	// the sandbox saw. It is handed a channel closed when the command exits.
+	//
+	// It exists for the one claim that cannot be made from inside the sandbox:
+	// that a filtering proxy process is ABSENT. A sandbox with no proxy sees
+	// exactly what a sandbox whose proxy it never used sees, so absence has to
+	// be observed from the side where the process would have been.
+	WhileRunning func(t *testing.T, done <-chan struct{})
 	// AllowTimeout tolerates the launch hitting its own deadline.
 	//
 	// Also opt-in, and for a narrow reason: a harness given deliberately
@@ -367,10 +380,23 @@ func runProxyEngineLaunch(
 	require.NoError(t, err)
 
 	rules := input.Rules
+	// Posture, engine and root are DERIVED from the authored policy through the
+	// same production functions the launcher uses, never asserted by the caller.
+	// That is what lets one helper build both a launch that deploys a proxy and
+	// one that must not: a test cannot accidentally ask for the proxy floor for
+	// a policy whose resolution says no engine deploys.
+	snapshot := sandboxpolicy.EmptySnapshot()
+	snapshot.Effective.Network = &rules
+	axes, err := sandboxpolicy.PlannedEffectiveAccessAxes(snapshot.Effective)
+	require.NoError(t, err)
+	posture, err := sandboxpolicy.NetworkPostureForRules(axes.Network)
+	require.NoError(t, err)
+	deployedEngine, err := sandboxpolicy.DeployedNetworkEngineForRules(axes.Network)
+	require.NoError(t, err)
 	bwrapBinary, launchSandbox, err := ResolveTclaudeLayerForEngine(
-		sandboxpolicy.NetworkFiltered,
-		sandboxpolicy.RootConstructed,
-		sandboxpolicy.NetworkEngineProxy,
+		posture,
+		sandboxpolicy.RootPostureForAxes(axes),
+		deployedEngine,
 	)
 	require.NoError(t, err)
 	// The proxy engine's prerequisites are bubblewrap and pidfds alone: a green
@@ -417,9 +443,6 @@ func runProxyEngineLaunch(
 		}
 	}
 
-	rules.Engine = sandboxpolicy.NetworkEngineProxy
-	snapshot := sandboxpolicy.EmptySnapshot()
-	snapshot.Effective.Network = &rules
 	stateRoot := filepath.Join(smokeHome, "."+harness.DefaultName)
 	require.NoError(t, os.MkdirAll(stateRoot, 0o700))
 	spec, err := BuildTclaudeLayerLaunchSpec(TclaudeLayerLaunchInput{
@@ -432,8 +455,16 @@ func runProxyEngineLaunch(
 	command, err := WrapTclaudeLayerSpec(
 		bwrapBinary, spec, input.Command(helperDir))
 	require.NoError(t, err)
-	require.Contains(t, command, "--proxy-network-policy",
-		"the launch must start the proxy supervisor rather than the packet one")
+	// The supervisor flag is compared against the ONE deployment predicate
+	// rather than to a per-test expectation. A policy that deploys a proxy must
+	// start the proxy supervisor and not the packet one; a policy that deploys
+	// none must start neither, and that is the whole of "no idle proxy" at the
+	// launch seam.
+	deploysProxy := TclaudeLayerDeploysProxy(posture, deployedEngine)
+	require.Equalf(t, deploysProxy,
+		strings.Contains(command, "--proxy-network-policy"),
+		"the launcher and TclaudeLayerDeploysProxy disagree about whether this "+
+			"policy deploys a filtering proxy; command:\n%s", command)
 
 	timeout := input.Timeout
 	if timeout == 0 {
@@ -443,7 +474,22 @@ func runProxyEngineLaunch(
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", command)
 	cmd.Env = launchEnv
+	// The host-side observer runs for exactly the command's lifetime, and the
+	// launch waits for it: a t.Fatalf from an observer goroutine that outlived
+	// its test would panic instead of failing the smoke.
+	done := make(chan struct{})
+	observed := make(chan struct{})
+	if input.WhileRunning != nil {
+		go func() {
+			defer close(observed)
+			input.WhileRunning(t, done)
+		}()
+	} else {
+		close(observed)
+	}
 	output, runErr := cmd.CombinedOutput()
+	close(done)
+	<-observed
 	if !input.AllowTimeout {
 		require.NoError(t, ctx.Err(),
 			"proxy launch timed out; output:\n%s", output)
