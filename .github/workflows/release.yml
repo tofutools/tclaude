@@ -1138,8 +1138,14 @@ jobs:
         with:
           node-version: lts/*
 
-      # The pinned Claude Code binary is a ~50MB download per job. The key is
-      # the hash of lib/harnesses.sh, which is where the pins live: a
+      # Caches the pinned Claude Code artifact. MEASURED WORTH, stated so nobody
+      # mistakes this for a speedup lever: the fresh download took 2.5s on a
+      # cache miss, so this saves ~2s, not the ~50MB-download cost it looks like
+      # it should. It is kept because it is cheap and because it bounds the
+      # damage from a slow vendor CDN, not because it moves the job's wall-clock.
+      # The lever is the flow's own runtime.
+      #
+      # The key is the hash of lib/harnesses.sh, which is where the pins live: a
       # conservative superset, so an unrelated edit to that file costs a
       # re-download and can never serve an artifact belonging to a different
       # pin. Correctness does not rest on the key either way —
