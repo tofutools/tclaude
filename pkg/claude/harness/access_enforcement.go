@@ -718,7 +718,7 @@ func accessEnforcementTable(
 		// at all and must keep its native mechanism sentence.
 		caps.NetworkEngine = deployedEngine
 		caps.NetworkEngineDetail = networkEngineDisclosure(
-			axes.Network.Engine, deployedEngine,
+			h.Name, axes.Network.Engine, deployedEngine,
 			deployedEngine == sandboxpolicy.NetworkEngineProxy &&
 				caps.NetworkList != EnforceNone)
 		return caps, nil

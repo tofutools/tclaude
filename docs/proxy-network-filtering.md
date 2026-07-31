@@ -456,34 +456,51 @@ named CI smoke. Cells follow the activation record
 (`proxyEngineActivatedSmokes`), never a proposal and never a static scan of a
 binary.
 
-Currently activated: **Claude Code 2.1.220 and Codex 0.145.0, on Linux**, both
-backed by `TestPinnedProxyHarnessCooperation` and `TestPinnedProxyToolEgress`.
-Codex was activated one milestone after Claude Code, from the same runs rather
-than from new ones — the evidence was green from the first shard run, and what
-was missing was the record, which is the rule working rather than an exception
-to it.
+Currently activated: **Claude Code 2.1.220, Codex 0.145.0 and OpenCode 1.18.6,
+on Linux.** The two plain-CLI harnesses are backed by
+`TestPinnedProxyHarnessCooperation` and `TestPinnedProxyToolEgress`; Codex was
+activated one milestone after Claude Code, from the same runs rather than from
+new ones — the evidence was green from the first shard run, and what was missing
+was the record, which is the rule working rather than an exception to it.
 
-OpenCode is not activated; a profile that selects `engine: proxy` for it widens
-to open with a notice naming activation as the reason
-(`ProxyEngineNotActivatedNotice`), rather than silently claiming enforcement.
+OpenCode (TCL-891) is backed by `TestOpenCodeProxyFloorCooperation`
+(smoke flow `40-opencode-floor`, green named run `30654121316`) plus the shared
+floor row `TestPinnedProxyToolEgress`. Unlike Codex, it proves something new:
+OpenCode launches through the agentd-owned Unix-relay server boundary rather
+than as a plain CLI, and that boundary **refused this engine outright** until
+TCL-891 generalized the inherited-descriptor contract from the packet
+supervisor's fd layout to both engines. Its row therefore rests on a smoke that
+had no way to exist before, not on a second reading of the plain-CLI runs.
 
-The reason it is not activated has changed, and the distinction matters when
-reading the cells. Until TCL-891 the agentd-owned Unix-relay boundary OpenCode
-launches through refused to deploy this engine at all — its inherited-descriptor
-contract was written against the packet gateway's exact fd layout — so no
-evidence about a floor was even obtainable. That contract has been generalized
-to both engines, and `TestOpenCodeProxyFloorCooperation` (smoke flow
-`40-opencode-floor`) now measures OpenCode behind the real floor. What is still
-missing is the activation record itself: a cell flips only in the PR that makes
-the record citing a green named run, so the cells stay `EnforceNone` until then.
+Two facts about that row, and they have **different subjects** — conflating them
+is the easiest mistake to make here:
 
-One measured fact about OpenCode 1.18.6 constrains what its row will be able to
-claim: it carries model traffic over **HTTP CONNECT** and ignores `ALL_PROXY`
-entirely (`TestOpenCodeProxyCarriageCooperation`, flow `30-opencode-carriage`,
-which offers one carriage per launch precisely so that question can be
-isolated). Under this engine that is contained rather than leaked — traffic a
-client does not carry has no route out of the empty namespace — but any
-SOCKS-dependent expressibility is absent for this harness.
+- **The floor** refuses undeclared destinations (`not_authorized`) and deny-row
+  destinations (`denied_by_rule`) over **both carriages**, and carries an
+  authorized destination over both, all observed executing in one launch by an
+  in-namespace cooperating client.
+- **OpenCode itself** carries model traffic over **HTTP CONNECT only** and
+  ignores `ALL_PROXY`, measured under one-carriage isolation in
+  `TestOpenCodeProxyCarriageCooperation` (flow `30-opencode-carriage`) and
+  reproduced behind the real floor.
+
+The consequence is a **per-harness disclosure, not a rating change**: a
+destination OpenCode would need the SOCKS5 carriage for has no carriage and no
+route out of the empty namespace, so it is **blocked by the floor rather than
+filtered by the policy** (`ProxyEngineOpenCodeCarriageNotice`). The selector
+cells are unchanged — host, domain, cidr, port and loopback are all expressible
+over HTTP CONNECT, and the cells rate what the evaluator enforces. The two
+plain-CLI harnesses do not carry that sentence because `TestPinnedProxyToolEgress`
+records their ordinary tool traffic carrying over both carriages; no equivalent
+measurement exists for OpenCode's tools, and the sentence deliberately does not
+claim one.
+
+With every registered harness now listed on Linux, the activation rule's
+"a harness with no record stays unenforced" case has no registered subject left.
+It is kept under test at the level where it is still real — the record lookup's
+fail-closed default in `TestProxyEngineActivationIsScopedToItsEvidence` — rather
+than through a Darwin row, whose cells are unenforced for a reason that dominates
+that lookup and would advertise coverage the rule does not have.
 
 What the first activation run (on-main run `30609001363`) actually showed, as
 distinct from what was hypothesized:

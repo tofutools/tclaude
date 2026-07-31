@@ -70,7 +70,7 @@ func TestProxyEngineDoesNotClaimThePacketGatewaysCells(t *testing.T) {
 // §1.3-4's latent selection, both of which are read from the network axis.
 func TestProxyEngineWholePostureDisclosure(t *testing.T) {
 	unactivated := networkEngineDisclosure(
-		sandboxpolicy.NetworkEngineProxy, sandboxpolicy.NetworkEngineProxy, false)
+		DefaultName, sandboxpolicy.NetworkEngineProxy, sandboxpolicy.NetworkEngineProxy, false)
 	assert.Contains(t, unactivated, "Filtering engine: Proxy filter.")
 	assert.Contains(t, unactivated, ProxyEngineCarriageNotice)
 	assert.Contains(t, unactivated, ProxyEngineNotActivatedNotice)
@@ -81,18 +81,34 @@ func TestProxyEngineWholePostureDisclosure(t *testing.T) {
 	// sentence retires. A row whose cells say Full while the sentence beside
 	// them says nothing is enforced is the contradiction this pins against.
 	activated := networkEngineDisclosure(
-		sandboxpolicy.NetworkEngineProxy, sandboxpolicy.NetworkEngineProxy, true)
+		DefaultName, sandboxpolicy.NetworkEngineProxy, sandboxpolicy.NetworkEngineProxy, true)
 	assert.Contains(t, activated, ProxyEngineCarriageNotice)
 	assert.NotContains(t, activated, ProxyEngineNotActivatedNotice)
 
 	latent := networkEngineDisclosure(
-		sandboxpolicy.NetworkEngineProxy, sandboxpolicy.NetworkEngineUnset, false)
+		DefaultName, sandboxpolicy.NetworkEngineProxy, sandboxpolicy.NetworkEngineUnset, false)
 	assert.Contains(t, latent, ProxyEngineLatentSelectionNotice)
 	assert.NotContains(t, latent, ProxyEngineCarriageNotice,
 		"a policy that deploys no proxy must not describe what a proxy carries")
 
+	// PER-HARNESS carriage, §5.3's second half. The engine's own carriage
+	// sentence is the same for everyone; what differs is what THIS client uses
+	// of it, and the two must not be smeared into one claim.
+	//
+	// Both directions are asserted, because only the pair is discriminating: a
+	// sentence that appeared for every harness would say nothing about
+	// OpenCode, and one that appeared for none would lose the measured fact.
+	openCode := networkEngineDisclosure(
+		OpenCodeName, sandboxpolicy.NetworkEngineProxy,
+		sandboxpolicy.NetworkEngineProxy, true)
+	assert.Contains(t, openCode, ProxyEngineCarriageNotice,
+		"what the engine carries is unchanged by which client is on top of it")
+	assert.Contains(t, openCode, ProxyEngineOpenCodeCarriageNotice)
+	assert.NotContains(t, activated, ProxyEngineOpenCodeCarriageNotice,
+		"a harness whose tool egress is measured over both carriages must not claim SOCKS is unreachable")
+
 	assert.Empty(t, networkEngineDisclosure(
-		sandboxpolicy.NetworkEngineUnset, sandboxpolicy.NetworkEnginePacket, false),
+		DefaultName, sandboxpolicy.NetworkEngineUnset, sandboxpolicy.NetworkEnginePacket, false),
 		"an unset selection renders nothing")
 }
 
@@ -375,7 +391,7 @@ func TestProxyEngineActivationIsScopedToItsEvidence(t *testing.T) {
 	// the same predicted row rather than through a Claude-shaped assumption —
 	// the branch that sets these cells is harness-agnostic apart from the
 	// record lookup, and this loop is what holds it that way.
-	for _, activated := range []*Harness{Default(), MustGet(CodexName)} {
+	for _, activated := range activatedProxyEngineHarnesses(t) {
 		predicted, err := PredictAccessEnforcement(
 			activated, sandboxpolicy.ImplementationTclaudeLayer, axes, "", "linux",
 		)
@@ -416,42 +432,91 @@ func TestProxyEngineActivationIsScopedToItsEvidence(t *testing.T) {
 		assert.Contains(t, denyHost.Detail, "asks for the address literally")
 	}
 
-	// Boundary 1: an unlisted harness keeps EnforceNone and still says it is
-	// not activated. "Not measured" is rated as unenforced rather than assumed
-	// to behave like its neighbours — and this is what makes activation a
-	// per-harness fact rather than a posture-wide one.
+	// Boundary 1: THE CELLS FOLLOW THE RECORD, over every registered harness.
 	//
-	// Codex used to be asserted here alongside OpenCode, and moved up to the
-	// activated loop with its record in the same commit — which is the rule
-	// working, not an exception to it. OpenCode is what keeps the rule under
-	// test afterwards: it sits beside two activated harnesses on the same
-	// platform, engine and implementation, and stays unenforced purely because
-	// it has no row.
-	for _, unlisted := range []string{OpenCodeName} {
+	// This used to be a loop over the harnesses that had NO record — first
+	// Codex and OpenCode, then OpenCode alone. TCL-891 activates the last of
+	// them, and that is exactly when the old shape became dangerous: a loop
+	// whose subject set empties on success asserts nothing and passes silently.
+	// Nobody would have seen the rule stop being tested, because the way it
+	// stops being tested is that it goes green.
+	//
+	// So the coupling is asserted instead, over a subject set that grows with
+	// the registry: for every registered harness on Linux, the cells are
+	// enforced exactly when the record backs them. The expectation is restated
+	// from the exported accessor rather than read from proxyEngineActivated,
+	// which would make it tautological — the point is that the RECORD and the
+	// CELLS agree, so the record must be consulted independently of the
+	// predicate that reads it.
+	activatedRows := 0
+	for _, name := range Names() {
 		predicted, err := PredictAccessEnforcement(
-			MustGet(unlisted), sandboxpolicy.ImplementationTclaudeLayer,
+			MustGet(name), sandboxpolicy.ImplementationTclaudeLayer,
 			axes, "", "linux",
 		)
-		require.NoErrorf(t, err, "harness %s", unlisted)
-		assert.Equalf(t, EnforceNone, predicted.NetworkList,
-			"%s is not in the activation record and must stay unenforced", unlisted)
-		assert.Containsf(t, predicted.NetworkEngineDetail,
+		require.NoErrorf(t, err, "harness %s", name)
+		if len(ProxyEngineActivationSmokes(name)) == 0 {
+			assert.Equalf(t, EnforceNone, predicted.NetworkList,
+				"%s has no record and must stay unenforced", name)
+			assert.Containsf(t, predicted.NetworkEngineDetail,
+				ProxyEngineNotActivatedNotice,
+				"%s must still disclose that it is not activated", name)
+			continue
+		}
+		activatedRows++
+		assert.Equalf(t, EnforceFull, predicted.NetworkList,
+			"%s has a record and must be enforced", name)
+		assert.NotContainsf(t, predicted.NetworkEngineDetail,
 			ProxyEngineNotActivatedNotice,
-			"%s must still disclose that it is not activated", unlisted)
-		assert.Emptyf(t, ProxyEngineActivationSmokes(unlisted),
-			"%s records no backing smokes", unlisted)
+			"%s has a record and must not say it is unactivated", name)
+	}
+	require.Positive(t, activatedRows,
+		"the activation record is empty, so this coupling has no subject at all")
+
+	// AND THE OTHER DIRECTION, WHICH NO REGISTERED HARNESS CAN DEMONSTRATE ANY
+	// MORE — stated at the level where it is still real rather than dressed up
+	// as something it is not.
+	//
+	// With TCL-891 every registered harness has a Linux row, so the loop above
+	// can no longer exercise "a harness the record does not mention is not
+	// activated". The obvious-looking substitute is a Darwin row, and it is a
+	// TRAP: Darwin's cells are EnforceNone for a reason that DOMINATES this
+	// lookup — the proxy-cells branch is not reached there at all — so a Darwin
+	// subject passes whether or not the record is consulted, and would advertise
+	// coverage this rule does not have. Verified, not assumed: with the platform
+	// gate in proxyEngineActivated removed, the Darwin rating stays EnforceNone.
+	//
+	// So the fail-closed default is asserted on the predicate itself, where it
+	// is the real and permanent property: a name the record does not mention is
+	// not activated. That is what a future harness registered before its
+	// evidence exists will rely on, and asserting it here keeps it under test
+	// instead of letting it lapse the moment the last row was added.
+	assert.False(t, proxyEngineActivated("harness-with-no-activation-record", "linux"),
+		"the record lookup must be fail-closed for a name it does not mention")
+	for _, name := range Names() {
+		assert.Equalf(t, len(ProxyEngineActivationSmokes(name)) > 0,
+			proxyEngineActivated(name, "linux"),
+			"%s: the predicate and the record must agree", name)
 	}
 
 	// Boundary 2: Darwin is M3 and activates on its own Seatbelt smokes. Asked
 	// of both activated harnesses, because the record is keyed by harness and
 	// the platform gate sits beside that lookup rather than inside it.
-	for _, activated := range []*Harness{Default(), MustGet(CodexName)} {
+	for _, activated := range activatedProxyEngineHarnesses(t) {
 		darwin, err := PredictAccessEnforcement(
 			activated, sandboxpolicy.ImplementationTclaudeLayer, axes, "", "darwin",
 		)
 		require.NoErrorf(t, err, "harness %s", activated.Name)
 		assert.Equalf(t, EnforceNone, darwin.NetworkList,
 			"Linux evidence does not activate the Darwin floor for %s",
+			activated.Name)
+		// The RATING alone does not pin the platform gate, and this line is
+		// what makes the boundary real: Darwin's cells are EnforceNone for an
+		// earlier reason too, so deleting the goos check in proxyEngineActivated
+		// would leave the assertion above still passing. Asking the predicate
+		// directly is what fails when the gate goes.
+		assert.Falsef(t, proxyEngineActivated(activated.Name, "darwin"),
+			"the platform gate, not an incidental one, is what keeps %s unactivated on Darwin",
 			activated.Name)
 	}
 
@@ -556,7 +621,7 @@ func TestProxyEngineDenyNameRatingMatchesTheEvaluator(t *testing.T) {
 			require.NoError(t, err)
 			escaped := evaluator.Evaluate(byLiteral).Allowed()
 
-			for _, activated := range []*Harness{Default(), MustGet(CodexName)} {
+			for _, activated := range activatedProxyEngineHarnesses(t) {
 				predicted, err := PredictAccessEnforcement(
 					activated, sandboxpolicy.ImplementationTclaudeLayer,
 					sandboxpolicy.ResolvedAxes{Network: testCase.rules}, "", "linux",
@@ -641,7 +706,7 @@ func TestProxyEngineDenyLoopbackRatingMatchesTheEvaluator(t *testing.T) {
 					spelling)
 			}
 
-			for _, activated := range []*Harness{Default(), MustGet(CodexName)} {
+			for _, activated := range activatedProxyEngineHarnesses(t) {
 				predicted, err := PredictAccessEnforcement(
 					activated, sandboxpolicy.ImplementationTclaudeLayer,
 					sandboxpolicy.ResolvedAxes{Network: testCase.rules}, "", "linux",
@@ -736,4 +801,24 @@ func TestResolverConflictRefusalsAreAsymmetric(t *testing.T) {
 	require.ErrorAs(t, bothErr, &bothCapabilityErr)
 	assert.Equal(t, SandboxCapabilityNetworkAllowlist, bothCapabilityErr.Kind,
 		"a policy tripping both refusals surfaces the filesystem one")
+}
+
+// activatedProxyEngineHarnesses derives the activated set FROM THE RECORD rather
+// than listing it, so a harness added to the record joins every assertion that
+// applies to activated harnesses without anyone remembering to update a slice.
+//
+// It refuses an empty set. A helper that quietly returned nothing would make
+// every loop over it vacuous — the same silent-pass shape the boundary above
+// was rewritten to avoid, one level down.
+func activatedProxyEngineHarnesses(t *testing.T) []*Harness {
+	t.Helper()
+	var out []*Harness
+	for _, name := range Names() {
+		if len(ProxyEngineActivationSmokes(name)) > 0 {
+			out = append(out, MustGet(name))
+		}
+	}
+	require.NotEmpty(t, out,
+		"the activation record is empty, so every assertion about activated harnesses would be vacuous")
+	return out
 }

@@ -243,10 +243,31 @@ func TestNetworkEngineDisclosureRendersThroughTheEnforcementAPI(t *testing.T) {
 		"an activated Codex target renders the same proxy-engine disclosure")
 	assert.NotContains(t, codex, "not activated")
 
+	// TCL-891 activates OpenCode from its own floor smoke, so the same profile
+	// read for an OpenCode target must now render the activated surface too —
+	// with ONE addition nobody else carries. The per-harness carriage sentence
+	// is the measured fact that this client uses HTTP CONNECT only, which is
+	// why the row is read here rather than assumed to equal its neighbours'.
 	openCode := detailForTarget(t, "engine-proxy-discriminating",
 		"tclaude-layer%2Fopencode%2Flinux")
-	assert.Contains(t, openCode, "not activated",
-		"a harness with no activation record must still disclose that")
+	assert.NotContains(t, openCode, "not activated",
+		"OpenCode has an activation record and must stop disclosing that it does not")
+	assert.Contains(t, openCode, harness.ProxyEngineCarriageNotice)
+	assert.Contains(t, openCode, harness.ProxyEngineOpenCodeCarriageNotice,
+		"the per-harness carriage fact must reach the surface an operator reads")
+	assert.NotEqual(t, proxy, openCode,
+		"OpenCode's surface differs from the plain-CLI harnesses' by exactly that sentence")
+	assert.NotContains(t, codex, harness.ProxyEngineOpenCodeCarriageNotice,
+		"a harness whose tool egress is measured over both carriages must not claim SOCKS is unreachable")
+
+	// The not-activated sentence must still be REACHABLE through this API, or
+	// the assertion above degenerates into "nothing ever says it". Darwin is
+	// the real, permanent subject for that until the M3 Seatbelt smokes exist:
+	// no harness has a Darwin record, and the platform is part of the target.
+	darwin := detailForTarget(t, "engine-proxy-discriminating",
+		"tclaude-layer%2Fopencode%2Fdarwin")
+	assert.Contains(t, darwin, "not activated",
+		"an unactivated platform must still disclose that through the same surface")
 
 	// A selection on a policy that needs no filtering is latent, not an error.
 	latent := detailFor(t, "engine-proxy-latent")

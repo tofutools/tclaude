@@ -27,6 +27,28 @@ const ProxyEngineCarriageNotice = "The filtering proxy carries HTTP, HTTPS, and 
 	"UDP, QUIC, ICMP, and TCP from a client that ignores the proxy have no route out of this sandbox: " +
 	"they are blocked rather than filtered."
 
+// ProxyEngineOpenCodeCarriageNotice is the per-harness half of §5.3, and it
+// exists because "what the ENGINE carries" and "what THIS CLIENT uses" are two
+// different facts that a single carriage sentence would smear together.
+//
+// The engine carries both carriages for every harness — the floor arm's
+// in-namespace probe proved an authorized destination carried over HTTP and
+// SOCKS5 in the same OpenCode launch. What is specific to OpenCode is the
+// CLIENT: 1.18.6 routes its model traffic over HTTP CONNECT and ignores
+// ALL_PROXY entirely, measured under one-carriage isolation in
+// TestOpenCodeProxyCarriageCooperation and reproduced behind the real floor in
+// TestOpenCodeProxyFloorCooperation.
+//
+// The two plain-CLI harnesses do NOT carry this sentence, and the difference is
+// evidence rather than favouritism: TestPinnedProxyToolEgress records their
+// ordinary tool traffic carrying over BOTH carriages, so SOCKS-dependent
+// destinations are reachable and therefore filtered for them. No equivalent
+// measurement exists for OpenCode's tools, and this sentence deliberately does
+// not claim one — it says what is blocked, which is the fail-closed direction.
+const ProxyEngineOpenCodeCarriageNotice = "This harness routes its model traffic over HTTP CONNECT only and ignores ALL_PROXY, " +
+	"so a destination that would need the SOCKS5 carriage has no route out of this sandbox: " +
+	"it is blocked by the floor rather than filtered by the authored policy."
+
 // ProxyEngineNotActivatedNotice is the M2.3 half of the disclosure. The proxy
 // engine is authorable before it is activated, and while its capability cells
 // are unenforced this launch follows the standing TCL-823 ruling for a selected
@@ -98,6 +120,7 @@ func proxyEngineMechanism(goos string) string {
 // decided it: a disclosure that re-answered the activation question could tell
 // an operator the rules are unenforced while the cells beside it say Full.
 func networkEngineDisclosure(
+	harnessName string,
 	selected, deployed sandboxpolicy.NetworkEngine,
 	activated bool,
 ) string {
@@ -113,6 +136,12 @@ func networkEngineDisclosure(
 		// engine carries, which does not change when its cells are activated.
 		// The not-activated sentence is the one that retires.
 		sentences = append(sentences, ProxyEngineCarriageNotice)
+		// Per-harness carriage, after the engine's own sentence and before the
+		// activation one, so a reader gets: what the engine carries, what THIS
+		// client uses of it, and whether the cells are backed.
+		if notice := proxyEngineHarnessCarriageNotice(harnessName); notice != "" {
+			sentences = append(sentences, notice)
+		}
 		if !activated {
 			sentences = append(sentences, ProxyEngineNotActivatedNotice)
 		}
@@ -121,6 +150,20 @@ func networkEngineDisclosure(
 		sentences = append(sentences, ProxyEngineLatentSelectionNotice)
 	}
 	return strings.Join(sentences, " ")
+}
+
+// proxyEngineHarnessCarriageNotice returns the measured per-harness carriage
+// sentence, or empty for a harness whose measurement adds nothing to the
+// engine's own carriage notice.
+//
+// Keyed by harness for the same reason the activation record is: carriage is a
+// fact about a client, measured per harness by a named smoke, and a sentence
+// that applied to every harness would be describing the engine instead.
+func proxyEngineHarnessCarriageNotice(harnessName string) string {
+	if harnessName == OpenCodeName {
+		return ProxyEngineOpenCodeCarriageNotice
+	}
+	return ""
 }
 
 // proxyEngineActivatedSmokes is the §8.3 activation record: per harness, the
@@ -152,11 +195,18 @@ func networkEngineDisclosure(
 // cited by both harnesses because its subject is the floor rather than the
 // client on top of it.
 //
-// OpenCode is absent for a different and stronger reason: it launches through
-// the agentd-owned server boundary rather than as a plain CLI, so its
-// cooperation arm belongs beside the existing OpenCode executor smoke. Until
-// that exists it has no evidence at all, and it is what keeps the activation
-// rule itself under test now that both plain-CLI harnesses are listed.
+// OpenCode joins in TCL-891, and unlike Codex it DOES prove something new: its
+// seam could not deploy this engine at all until that ticket generalized the
+// inherited-descriptor contract, so its row rests on a smoke that had no way to
+// exist before. Its evidence is therefore its own, not a second reading of the
+// plain-CLI runs.
+//
+// With every registered harness now listed on Linux, the activation rule needs
+// a subject that cannot evaporate — a boundary test whose unlisted set empties
+// on success passes silently. TestProxyEngineActivationIsScopedToItsEvidence
+// keeps it by asserting the record-to-cells coupling in BOTH directions over
+// every registered harness and both platforms, and by failing if either side of
+// that coupling has no subject at all.
 var proxyEngineActivatedSmokes = map[string][]string{
 	DefaultName: {
 		"TestPinnedProxyHarnessCooperation",
@@ -164,6 +214,25 @@ var proxyEngineActivatedSmokes = map[string][]string{
 	},
 	CodexName: {
 		"TestPinnedProxyHarnessCooperation",
+		"TestPinnedProxyToolEgress",
+	},
+	// TCL-891. OpenCode's row cites a DIFFERENT harness-dependent smoke from
+	// the two above, and that is the substance of the ticket rather than a
+	// naming detail: it launches through the agentd-owned Unix-relay server
+	// boundary, not as a plain CLI, and that boundary REFUSED this engine
+	// outright until the inherited-descriptor contract was generalized to it.
+	// TestOpenCodeProxyFloorCooperation is the first measurement of OpenCode
+	// behind a real proxy floor that was possible at all — green named run
+	// 30654121316, the run in which the smoke first executed.
+	//
+	// TestPinnedProxyToolEgress is cited here on the same terms it is cited
+	// above: its subject is the FLOOR, not the client on top of it, and the
+	// proxy floor is one construction shared by every row. It is NOT a claim
+	// about OpenCode's own tools — see ProxyEngineOpenCodeCarriageNotice, which
+	// says what is blocked for this harness rather than what was measured of
+	// its tool egress.
+	OpenCodeName: {
+		"TestOpenCodeProxyFloorCooperation",
 		"TestPinnedProxyToolEgress",
 	},
 }
