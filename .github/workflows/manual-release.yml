@@ -297,16 +297,29 @@ jobs:
           peer_link=tclflt1
           hosts_backup="$RUNNER_TEMP/tclaude-filtered-hosts.before"
           sudo cp /etc/hosts "$hosts_backup"
+          # TCL-881: the same two teardown helpers the proxy shards use, from
+          # the shared library, so every smoke job and the shards share one
+          # implementation rather than copies that drift.
+          source "$GITHUB_WORKSPACE/scripts/lib/smoke/common.sh"
+          # smoke::kill_listener needs pkill (procps): without it the cleanup
+          # would silently degrade to killing the sudo wrapper only, which is
+          # the defect this job just fixed.
+          command -v pkill >/dev/null || {
+            echo "::error::pkill (procps) is required by the smoke fixture cleanup"
+            exit 1
+          }
           server_pids=()
           cleanup() {
-            for pid in "${server_pids[@]}"; do
-              sudo kill "$pid" 2>/dev/null || true
-            done
+            # smoke::kill_listener signals the socat itself and not only the
+            # sudo wrapper holding it, which is what leaves a bound port behind.
+            smoke::kill_listener "${server_pids[@]:-}"
             sudo ip netns del "$namespace" 2>/dev/null || true
             sudo ip link del "$host_link" 2>/dev/null || true
             sudo tee /etc/hosts <"$hosts_backup" >/dev/null || true
           }
-          trap cleanup EXIT
+          # EXIT alone would let a cancelled job — GitHub sends SIGINT first —
+          # exit 0 with its fixture half torn down.
+          smoke::trap_cleanup cleanup
 
           sudo ip netns add "$namespace"
           sudo ip link add "$host_link" type veth peer name "$peer_link"
@@ -376,9 +389,13 @@ jobs:
           done
           for protocol in TCP6 UDP6; do
             token="filtered-fixture-$protocol"
+            # `|| true` inside the substitution, exactly as
+            # fixture::prove_reachable does it: under `set -e -o pipefail` a
+            # socat that fails — the very case this checks — would abort the
+            # step here, so the annotation below could never be reached.
             reply=$(
               printf '%s' "$token" |
-                timeout 5 socat -T 2 -t 2 - "$protocol:[fd00:823::10]:41001"
+                timeout 5 socat -T 2 -t 2 - "$protocol:[fd00:823::10]:41001" || true
             )
             if [[ "$reply" != "$token" ]]; then
               echo "::error::IPv6 filtered-network fixture failed direct $protocol round trip"
@@ -549,16 +566,29 @@ jobs:
           peer_link=tclocd1
           hosts_backup="$RUNNER_TEMP/tclaude-opencode-deny-hosts.before"
           sudo cp /etc/hosts "$hosts_backup"
+          # TCL-881: the same two teardown helpers the proxy shards use, from
+          # the shared library, so every smoke job and the shards share one
+          # implementation rather than copies that drift.
+          source "$GITHUB_WORKSPACE/scripts/lib/smoke/common.sh"
+          # smoke::kill_listener needs pkill (procps): without it the cleanup
+          # would silently degrade to killing the sudo wrapper only, which is
+          # the defect this job just fixed.
+          command -v pkill >/dev/null || {
+            echo "::error::pkill (procps) is required by the smoke fixture cleanup"
+            exit 1
+          }
           server_pids=()
           cleanup() {
-            for pid in "${server_pids[@]}"; do
-              sudo kill "$pid" 2>/dev/null || true
-            done
+            # smoke::kill_listener signals the socat itself and not only the
+            # sudo wrapper holding it, which is what leaves a bound port behind.
+            smoke::kill_listener "${server_pids[@]:-}"
             sudo ip netns del "$namespace" 2>/dev/null || true
             sudo ip link del "$host_link" 2>/dev/null || true
             sudo tee /etc/hosts <"$hosts_backup" >/dev/null || true
           }
-          trap cleanup EXIT
+          # EXIT alone would let a cancelled job — GitHub sends SIGINT first —
+          # exit 0 with its fixture half torn down.
+          smoke::trap_cleanup cleanup
 
           sudo ip netns add "$namespace"
           sudo ip link add "$host_link" type veth peer name "$peer_link"
