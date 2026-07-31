@@ -642,6 +642,39 @@ func accessEnforcementTable(
 		// synthesis site names — the one place an authored engine and an
 		// authored socket list meet — and it refuses through the socket axis so
 		// preview and launch reach the verdict from the same row.
+		//
+		// THE TWO RESOLVER REFUSALS ARE DELIBERATELY ASYMMETRIC, in both where
+		// they refuse and which Kind they carry. Recorded here, once, because
+		// the pair reads like an oversight otherwise:
+		//
+		//   - this one records SocketListRefusal on the row and refuses at the
+		//     ladder's unix_sockets list rung, with Kind SocketAllowlist. The
+		//     offending authority IS the socket allow list, so the operator's
+		//     remedy is a socket-axis edit and the ladder's own rung is where
+		//     they read it. Recording rather than returning also keeps every
+		//     other capability on the row resolved, so a preview can render the
+		//     whole target instead of one error.
+		//   - the filesystem one below returns immediately, with Kind
+		//     NetworkAllowlist. It cannot use either half of that. There is no
+		//     filesystem rung on the ladder to defer to — the ladder rates the
+		//     network and socket axes only — and it must also refuse a DENY-ONLY
+		//     proxy policy, which has no socket list and whose network mode is
+		//     open, so neither the socket rung nor the network list rung runs
+		//     for it. Deferring it would let exactly that shape through.
+		//
+		// The ordering that follows from this is not arbitrary either: when a
+		// policy trips BOTH, the filesystem refusal is what the operator sees,
+		// because it returns before this row is ever handed to the ladder. That
+		// is the more general of the two — it survives shapes the socket rung
+		// never evaluates — so surfacing it first is the answer that stays
+		// correct if the operator only fixes one thing.
+		//
+		// Aligning the Kinds was considered and rejected: each Kind names the
+		// axis whose authored rows the operator must edit, and CLI and dashboard
+		// remedies are rendered from it. A shared Kind would point half the
+		// refusals at the wrong axis. TestResolverConflictRefusalsAreAsymmetric
+		// pins both Kinds and the ordering, so a future change to either is a
+		// visible edit rather than a silent one.
 		if selector, resolver, conflict :=
 			sandboxpolicy.NetworkEngineResolverSocketConflict(
 				deployedEngine, axes.UnixSockets); conflict {
