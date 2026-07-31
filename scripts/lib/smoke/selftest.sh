@@ -130,6 +130,23 @@ expect_manifest pass green '# comment
 
 20-beta TestBeta' 10-alpha 20-beta
 
+# Several names on ONE line must ALL be required. The refusal case below is the
+# half that matters: if the second name were dropped, this log — which passes the
+# first and fails the second — would be accepted as evidence.
+expect_manifest pass multi-name-green '10-alpha TestAlpha TestAlphaTwo
+' 10-alpha
+# ...and the loaded set is inspected, not just the exit status: a parser that
+# accepted the line while recording one name would satisfy the case above.
+if [[ "${SMOKE_REQUIRED_BY_FLOW[10-alpha]:-}" != "TestAlpha TestAlphaTwo " ]]; then
+  printf 'selftest FAIL: manifest-multi-name-green recorded %q, wanted both names\n' \
+    "${SMOKE_REQUIRED_BY_FLOW[10-alpha]:-}"
+  failures=1
+fi
+expect_verdict refuse multi-name-partial '--- PASS: TestAlpha (1.00s)
+--- FAIL: TestAlphaTwo (1.00s)
+FAIL
+' TestAlpha TestAlphaTwo
+
 # A flow with no manifest entry is a smoke that cannot fail.
 expect_manifest refuse flow-without-evidence '10-alpha TestAlpha
 ' 10-alpha 20-beta

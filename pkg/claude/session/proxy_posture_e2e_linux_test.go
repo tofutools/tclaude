@@ -5,6 +5,7 @@ package session
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -899,8 +900,11 @@ func postureE2ETCPRoundTrip(target string) error {
 	if _, err := conn.Write([]byte(token)); err != nil {
 		return err
 	}
+	// ReadFull, not Read: a valid echo may arrive in more than one segment, and
+	// a short read would be reported as an echo MISMATCH — a fabricated policy
+	// failure in the arms where this helper proves a destination is carried.
 	reply := make([]byte, len(token))
-	if _, err := conn.Read(reply); err != nil {
+	if _, err := io.ReadFull(conn, reply); err != nil {
 		return err
 	}
 	if string(reply) != token {
