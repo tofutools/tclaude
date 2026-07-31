@@ -192,10 +192,7 @@ func NetworkPostureForRules(rules NetworkRules) (NetworkPosture, error) {
 	case AccessModeUnset:
 		return NetworkHostOpen, nil
 	case AccessModeOpen:
-		if len(rules.Deny) > 0 {
-			return NetworkFiltered, nil
-		}
-		return NetworkHostOpen, nil
+		return NetworkFiltered, nil
 	case AccessModeClosed:
 		return NetworkIsolatedWithAgentd, nil
 	case AccessModeList:
