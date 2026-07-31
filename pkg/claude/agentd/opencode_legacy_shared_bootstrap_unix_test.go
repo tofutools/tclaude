@@ -1,4 +1,4 @@
-//go:build linux
+//go:build linux || darwin
 
 package agentd
 
@@ -36,8 +36,8 @@ import (
 // existing test still green. This one goes through the production builder and
 // asserts the file lands.
 func TestLegacySharedOpenCodeLaunchGetsItsConfigBootstrap(t *testing.T) {
-	// Short temp root under /tmp: the OpenCode control socket path is built
-	// beneath it and a long one overruns the Linux sockaddr limit.
+	// Short temp root under /tmp: this test binds a Unix socket beneath it,
+	// and a long path overruns the sockaddr limit.
 	home, err := os.MkdirTemp("/tmp", "ocls-*")
 	require.NoError(t, err)
 	home, err = filepath.EvalSymlinks(home)
@@ -58,6 +58,9 @@ func TestLegacySharedOpenCodeLaunchGetsItsConfigBootstrap(t *testing.T) {
 	bootstrap := filepath.Join(ambientConfig, openCodeInstallBootstrapFile)
 	require.NoFileExists(t, bootstrap)
 
+	// A real bound agentd socket, because the launch contract carries the
+	// agentd socket floor and a canonicalization failure there would change the
+	// contract this test reads — not because the bootstrap consults it.
 	socketPath := filepath.Join(home, ".tclaude", "api", "agentd.sock")
 	require.NoError(t, os.MkdirAll(filepath.Dir(socketPath), 0o700))
 	socket, err := net.Listen("unix", socketPath)
@@ -81,6 +84,12 @@ func TestLegacySharedOpenCodeLaunchGetsItsConfigBootstrap(t *testing.T) {
 		t.TempDir(), nil, &snapshot, agentID, false, false)
 	require.NoError(t, err)
 	require.NotNil(t, spec)
+
+	// Re-asserted AFTER the build, not only before it: the layout builder
+	// already seeds a bootstrap file for a different directory (the install
+	// dir), so a future change that extended that to the config dir would make
+	// the read below pass with the hook doing nothing.
+	require.NoFileExists(t, bootstrap)
 
 	// The contract facts the bootstrap depends on, asserted rather than
 	// assumed — if a future change stops filling StateDirs for this shape, the
