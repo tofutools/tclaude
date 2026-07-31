@@ -120,11 +120,6 @@ func TestCodexVirtualCostFromRollout_AccumulatesMixedContextTiersPerTurn(t *test
 	assert.InDelta(t, 4.06, cost.CostUSD, 1e-12,
 		"$1.42 short request + $2.64 long request")
 
-	projection, err := harness.CodexHookProjectionFromRollout(cx.RolloutPath, "")
-	require.NoError(t, err)
-	require.True(t, projection.HasCost)
-	assert.InDelta(t, 4.06, projection.Cost.CostUSD, 1e-12,
-		"the live hook projection uses the same per-turn accumulation")
 }
 
 func TestCodexVirtualCostFromRollout_ResearchPreviewWithoutFinalRate(t *testing.T) {

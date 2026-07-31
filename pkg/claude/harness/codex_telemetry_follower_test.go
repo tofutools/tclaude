@@ -96,6 +96,65 @@ func TestCodexTelemetryFollower_CheckpointSurvivesRestartWithFoldState(t *testin
 	assert.NotEqual(t, string(checkpoint), string(nextCheckpoint), "advanced state produces a new checkpoint")
 }
 
+func TestCodexTelemetryFollower_CostFoldSurvivesRestartAndReadsAppend(t *testing.T) {
+	home := t.TempDir()
+	const id = "019ec004-4250-79b1-9ade-ebaea41354f0"
+	path := newFollowerTestRollout(t, home, id)
+	appendRolloutEnvelope(t, path, "turn_context", map[string]any{
+		"model": "gpt-5.6-terra", "effort": "high",
+	})
+	usage := func(input, cached, output int64) map[string]any {
+		return map[string]any{
+			"input_tokens": input, "cached_input_tokens": cached,
+			"output_tokens": output, "total_tokens": input + output,
+		}
+	}
+	appendCost := func(total, last map[string]any, rateLimits any) {
+		appendRolloutEnvelope(t, path, "event_msg", map[string]any{
+			"type": "token_count", "info": map[string]any{
+				"total_token_usage": total, "last_token_usage": last,
+				"model_context_window": 1_050_000,
+			},
+			"rate_limits": rateLimits,
+		})
+	}
+	short := usage(200_000, 100_000, 100_000)
+	appendCost(short, short, map[string]any{
+		"limit_id": "codex",
+		"primary": map[string]any{
+			"used_percent": 31, "window_minutes": 300, "resets_at": time.Now().Add(time.Hour).Unix(),
+		},
+	})
+
+	firstFollower := &CodexTelemetryFollower{}
+	first := assertFollowerMatchesFull(t, firstFollower, home, id, path)
+	require.True(t, first.HasCost)
+	assert.InDelta(t, 1.42, first.Cost.CostUSD, 1e-12)
+	assert.Equal(t, "high", first.Effort)
+	require.NotNil(t, first.Usage)
+	require.NotNil(t, first.Usage.FiveHour)
+	assert.Equal(t, 31.0, first.Usage.FiveHour.UsedPercent)
+	checkpoint, ok, err := firstFollower.Checkpoint()
+	require.NoError(t, err)
+	require.True(t, ok)
+	firstOffset := firstFollower.offset
+
+	long := usage(300_000, 100_000, 100_000)
+	total := usage(500_000, 200_000, 200_000)
+	appendCost(total, long, nil)
+
+	restored := &CodexTelemetryFollower{}
+	require.NoError(t, restored.RestoreCheckpoint(checkpoint))
+	got := assertFollowerMatchesFull(t, restored, home, id, path)
+	require.True(t, got.HasCost)
+	assert.InDelta(t, 4.06, got.Cost.CostUSD, 1e-12)
+	assert.Equal(t, "high", got.Effort, "effort survives the durable cursor")
+	require.NotNil(t, got.Usage, "latest populated usage survives the durable cursor")
+	require.NotNil(t, got.Usage.FiveHour)
+	assert.Equal(t, 31.0, got.Usage.FiveHour.UsedPercent)
+	assert.Greater(t, restored.offset, firstOffset, "restored follower consumes only the append")
+}
+
 func TestCodexTelemetryFollower_CheckpointInvalidationRebuilds(t *testing.T) {
 	home := t.TempDir()
 	const id = "019ec004-4250-79b1-9ade-ebaea41354f2"

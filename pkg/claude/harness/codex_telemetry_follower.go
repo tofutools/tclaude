@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	codexTelemetryCheckpointVersion  = 1
+	codexTelemetryCheckpointVersion  = 2
 	codexTelemetryAnchorBytes        = 64
 	maxCodexTelemetryCheckpointBytes = 1 << 20
 )
@@ -64,6 +64,13 @@ type codexTelemetryCheckpoint struct {
 	Anchor               []byte               `json:"anchor"`
 	Latest               *codexTokenCountInfo `json:"latest,omitempty"`
 	ContextReset         bool                 `json:"context_reset,omitempty"`
+	Model                string               `json:"model,omitempty"`
+	Effort               string               `json:"effort,omitempty"`
+	Usage                *CodexUsage          `json:"usage,omitempty"`
+	CostUSD              float64              `json:"cost_usd,omitempty"`
+	CostPriced           bool                 `json:"cost_priced,omitempty"`
+	CostModel            string               `json:"cost_model,omitempty"`
+	CostObserved         string               `json:"cost_observed,omitempty"`
 	InterruptedSubagents []string             `json:"interrupted_subagents,omitempty"`
 	FollowupCallIDs      []string             `json:"followup_call_ids,omitempty"`
 }
@@ -91,6 +98,13 @@ func (f *CodexTelemetryFollower) RestoreCheckpoint(data []byte) error {
 	}
 	state := newCodexRuntimeScanState()
 	state.replaceCheckpointContext(cp.Latest, cp.ContextReset)
+	state.model = cp.Model
+	state.effort = cp.Effort
+	state.usage = cp.Usage
+	state.costUSD = cp.CostUSD
+	state.costPriced = cp.CostPriced
+	state.costModel = cp.CostModel
+	state.costObserved = cp.CostObserved
 	for _, id := range cp.InterruptedSubagents {
 		if id != "" {
 			state.addCheckpointSetValue(state.interruptedSubagents, checkpointInterruptedSubagentsPrefix, id)
@@ -146,6 +160,13 @@ func (f *CodexTelemetryFollower) Checkpoint() ([]byte, bool, error) {
 		Anchor:               append([]byte(nil), f.checkpointAnchor...),
 		Latest:               f.state.latest,
 		ContextReset:         f.state.contextReset,
+		Model:                f.state.model,
+		Effort:               f.state.effort,
+		Usage:                f.state.usage,
+		CostUSD:              f.state.costUSD,
+		CostPriced:           f.state.costPriced,
+		CostModel:            f.state.costModel,
+		CostObserved:         f.state.costObserved,
 		InterruptedSubagents: sortedStringSet(f.state.interruptedSubagents),
 		FollowupCallIDs:      sortedStringSet(f.state.followupCallIDs),
 	}

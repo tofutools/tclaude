@@ -382,10 +382,10 @@ those call sites directly (and ideally lifting them into a contract):
   surfaced through `agentd/usage.go` and a Codex-specific DB cache row). Cost
   works differently: `agentd/costs.go` is a *generic* aggregator over the
   harness-agnostic `session_cost_daily` table, so each harness must get its own
-  numbers into that table — Codex computes its virtual cost inside its hook
-  projection (`codex_projection.go`, using `codex_cost.go`). Either way there is
-  no descriptor seam, so a new harness's usage/cost won't appear until similar
-  harness-specific code exists.
+  numbers into that table — Codex folds its virtual cost from appended rollout
+  records in agentd's durable telemetry follower (`codex_telemetry_follower.go`,
+  using `codex_cost.go`). Either way there is no descriptor seam, so a new
+  harness's usage/cost won't appear until similar harness-specific code exists.
 - **Statusline install.** `harness.go` names a *future* `StatuslineInstaller`
   seam that isn't factored out yet. Claude Code installs a command-backed
   renderer; Codex curates its native footer items (`statusbar/codex_install.go`).

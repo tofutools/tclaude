@@ -1437,16 +1437,10 @@ func applyHook(ctx context.Context, input HookCallbackInput, envSessionID string
 
 	persistCodexWorkspaceSnapshot(state, input)
 
-	// Lift Codex's context-window telemetry off its rollout onto the
-	// sessions row. Claude Code gets these figures from its statusbar; a
-	// Codex session has no command-statusline, so the hook is where
-	// context% becomes visible to the dashboard / context-info. Codex only
-	// writes a token_count when the model responds, so refresh at turn
-	// boundaries — Stop/SubagentStop (stopped) and resume (SessionStart) —
-	// not on every PreToolUse/PostToolUse tick: that keeps the rollout read
-	// (and, on the fallback, the ~/.codex/sessions walk) to ~once per turn.
-	// No-op for CC (it already has the statusbar) and best-effort.
-	persistCodexRolloutProjection(state, input, stopped || input.HookEventName == "SessionStart")
+	// Codex rollout telemetry is owned by agentd's incremental follower. Hook
+	// callbacks are separate processes and must not replay a potentially huge
+	// JSONL at turn boundaries; dashboard/context reads consume only appended
+	// bytes and persist a durable cursor for restart recovery.
 
 	// Refresh usage cache when user is likely looking at the status bar.
 	// Runs synchronously — hook callbacks are separate processes so this
@@ -1729,99 +1723,6 @@ func harnessUsesSlashContextControls(name string) bool {
 		return true
 	}
 	return h.SupportsCompact()
-}
-
-// persistCodexRolloutProjection lifts all latest-oriented Codex telemetry in
-// one reverse-tail scan. Hook callbacks are separate processes, so the
-// daemon's incremental follower cannot amortize these reads across events.
-func persistCodexRolloutProjection(state *SessionState, input HookCallbackInput, refreshContext bool) {
-	if state == nil || state.Harness != harness.CodexName || state.ConvID == "" {
-		return
-	}
-	refreshAccount := false
-	switch input.HookEventName {
-	case "Stop", "SubagentStop", "SessionStart", "PostCompact":
-		refreshAccount = true
-	}
-	if !refreshContext && !refreshAccount {
-		return
-	}
-	var home string
-	if !harness.IsCodexRolloutPath(input.TranscriptPath) {
-		var err error
-		home, err = os.UserHomeDir()
-		if err != nil {
-			slog.Warn("codex-projection: cannot resolve home", "error", err, "module", "hooks")
-			return
-		}
-	}
-	projection, path, err := harness.CodexHookProjection(home, state.ConvID, input.TranscriptPath, input.Model)
-	if err != nil {
-		slog.Warn("codex-projection: failed to read rollout",
-			"conv_id", state.ConvID, "path", path, "error", err, "module", "hooks")
-		return
-	}
-	if refreshContext {
-		switch {
-		case projection.HasContext:
-			snap := projection.Context
-			if err := db.UpdateContextSnapshot(state.ID, snap.Pct, snap.TokensInput, snap.TokensOutput, snap.WindowSize); err != nil {
-				slog.Warn("codex-telemetry: failed to update context snapshot",
-					"session_id", state.ID, "error", err, "module", "hooks")
-			}
-		case projection.ContextReset:
-			if err := db.ResetCompact(state.ID); err != nil {
-				slog.Warn("codex-telemetry: failed to persist compaction reset",
-					"session_id", state.ID, "error", err, "module", "hooks")
-			}
-		}
-	}
-	if refreshContext && projection.HasEffort {
-		if err := db.UpdateSessionEffort(state.ID, projection.Effort); err != nil {
-			slog.Warn("codex-telemetry: failed to update session effort",
-				"session_id", state.ID, "error", err, "module", "hooks")
-		}
-	}
-	if !refreshAccount {
-		return
-	}
-	if u := projection.Usage; u != nil && !u.Observed.IsZero() {
-		data, err := json.Marshal(u)
-		if err != nil {
-			slog.Warn("codex-usage: failed to marshal usage snapshot",
-				"session_id", state.ID, "error", err, "module", "hooks")
-		} else {
-			// Within one rollout the last populated record wins by position.
-			// The shared account cache remains timestamp-gated across hooks and
-			// rollouts, so a clock-skewed older observation cannot regress data
-			// another callback already stored. Making position authoritative
-			// across processes would require the durable cursor/CAS state this
-			// projection deliberately avoids.
-			windows := make([]db.SubscriptionUsageWindow, 0, 2)
-			if u.FiveHour != nil {
-				windows = append(windows, db.SubscriptionUsageWindow{
-					Name: "five_hour", Duration: 5 * time.Hour,
-					UsedPercent: u.FiveHour.UsedPercent, ResetsAt: u.FiveHour.ResetsAt,
-				})
-			}
-			if u.Weekly != nil {
-				windows = append(windows, db.SubscriptionUsageWindow{
-					Name: "seven_day", Duration: 7 * 24 * time.Hour,
-					UsedPercent: u.Weekly.UsedPercent, ResetsAt: u.Weekly.ResetsAt,
-				})
-			}
-			if _, err := db.SaveCodexUsageCacheIfNewer(data, u.Observed, path, windows...); err != nil {
-				slog.Warn("codex-usage: failed to persist usage snapshot",
-					"session_id", state.ID, "error", err, "module", "hooks")
-			}
-		}
-	}
-	if projection.HasCost {
-		if err := db.UpdateSessionVirtualCost(state.ID, projection.Cost.CostUSD); err != nil {
-			slog.Warn("codex-cost: failed to update session virtual cost",
-				"session_id", state.ID, "model", projection.Cost.Model, "error", err, "module", "hooks")
-		}
-	}
 }
 
 // persistCodexWorkspaceSnapshot is Codex's replacement for the Claude Code

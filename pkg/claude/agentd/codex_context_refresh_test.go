@@ -63,6 +63,72 @@ func TestCodexContextRefreshPersistsAndRestoresFollowerCheckpoint(t *testing.T) 
 	assert.NotEqual(t, string(firstCheckpoint.Data), string(secondCheckpoint.Data))
 }
 
+func TestCodexContextRefreshFollowerPersistsEffortUsageAndCost(t *testing.T) {
+	setupTestDB(t)
+	resetCodexContextRefreshStateForTest()
+	t.Cleanup(resetCodexContextRefreshStateForTest)
+
+	const (
+		sessionID = "codex-follower-fold-session"
+		convID    = "019ec004-4250-79b1-9ade-ebaea41354f4"
+	)
+	path := filepath.Join(os.Getenv("HOME"), ".codex", "sessions", "2026", "07", "16",
+		"rollout-2026-07-16T10-00-00-"+convID+".jsonl")
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, nil, 0o600))
+	appendCodexRefreshEnvelope(t, path, "session_meta", map[string]any{"id": convID})
+	appendCodexRefreshEnvelope(t, path, "turn_context", map[string]any{
+		"model": "gpt-5.6-terra", "effort": "high",
+	})
+	usage := map[string]any{
+		"input_tokens": 2000, "cached_input_tokens": 400,
+		"output_tokens": 100, "total_tokens": 2100,
+	}
+	appendCodexRefreshEnvelope(t, path, "event_msg", map[string]any{
+		"type": "token_count",
+		"info": map[string]any{
+			"total_token_usage": usage, "last_token_usage": usage,
+			"model_context_window": 200000,
+		},
+		"rate_limits": map[string]any{
+			"limit_id": "codex",
+			"primary": map[string]any{
+				"used_percent": 31, "window_minutes": 300,
+				"resets_at": time.Now().Add(2 * time.Hour).Unix(),
+			},
+			"secondary": map[string]any{
+				"used_percent": 45, "window_minutes": 10080,
+				"resets_at": time.Now().Add(5 * 24 * time.Hour).Unix(),
+			},
+		},
+	})
+
+	sess := &db.SessionRow{
+		ID: sessionID, ConvID: convID, TmuxSession: "codex-pane", Status: "idle",
+		Harness: harness.CodexName, CreatedAt: time.Now(),
+	}
+	require.NoError(t, db.SaveSession(sess))
+	refreshCodexContextSnapshotOnRead(sess, true)
+
+	snapshot, err := db.GetContextSnapshot(sessionID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2000), snapshot.TokensInput)
+	assert.Equal(t, "high", snapshot.EffortLevel)
+	assert.InDelta(t, 0.00448, snapshot.VirtualCostUSD, 1e-9)
+	assert.Zero(t, snapshot.CostUSD, "subscription cost remains hypothetical")
+
+	cache, err := db.LoadCodexUsageCache()
+	require.NoError(t, err)
+	require.NotNil(t, cache)
+	assert.Equal(t, "telemetry-follower", cache.Source)
+	var got harness.CodexUsage
+	require.NoError(t, json.Unmarshal(cache.Data, &got))
+	require.NotNil(t, got.FiveHour)
+	assert.Equal(t, 31.0, got.FiveHour.UsedPercent)
+	require.NotNil(t, got.Weekly)
+	assert.Equal(t, 45.0, got.Weekly.UsedPercent)
+}
+
 func TestCodexContextWritePerfPhasesOnlyIncludeExecutedPaths(t *testing.T) {
 	timing := codexTelemetryTiming{
 		contextWrite: 32 * time.Millisecond,

@@ -93,7 +93,8 @@ func TestApplyHook_CodexLiveStatusPipeline(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "gpt-5-codex", snap.Model, "Codex hook model is surfaced like statusline model")
 	assert.Equal(t, "gpt-5-codex", snap.ModelID, "Codex hook model is reusable as the launch model id")
-	assert.Equal(t, "high", snap.EffortLevel, "Codex rollout effort is surfaced like statusline effort")
+	assert.Empty(t, snap.EffortLevel,
+		"hooks do not read rollout effort; the agentd follower persists it")
 }
 
 func TestApplyHook_CodexLateHookBackfillsMissedLaunchState(t *testing.T) {
@@ -207,7 +208,7 @@ func TestApplyHook_CodexPublishesWorkspaceBranch(t *testing.T) {
 	assert.Equal(t, "main", loc.StartupBranch, "dashboard resolver keeps Codex init branch stable")
 }
 
-func TestApplyHook_CodexPersistsWhatIfCost(t *testing.T) {
+func TestApplyHook_CodexDoesNotReadRolloutCost(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
@@ -241,8 +242,8 @@ func TestApplyHook_CodexPersistsWhatIfCost(t *testing.T) {
 
 	snap, err := db.GetContextSnapshot(sessionID)
 	require.NoError(t, err)
-	assert.InDelta(t, 0.00427, snap.VirtualCostUSD, 1e-9,
-		"Codex token_count total usage is priced into the WHAT-IF column")
+	assert.Zero(t, snap.VirtualCostUSD,
+		"hooks must not replay a rollout to price the WHAT-IF column")
 	assert.Zero(t, snap.CostUSD, "Codex subscription estimate must not look like real API spend")
 }
 

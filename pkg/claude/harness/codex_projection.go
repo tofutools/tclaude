@@ -10,10 +10,9 @@ import (
 	"strings"
 )
 
-// CodexRolloutProjection is the subset hook callbacks lift from a rollout.
-// Context, effort, and account usage are latest-oriented snapshots. Cost is a
-// per-turn accumulator because OpenAI's short/long pricing tier is selected per
-// request and cannot be reconstructed correctly from one cumulative token row.
+// CodexRolloutProjection is a latest-oriented one-shot view of a Codex
+// rollout. Production live telemetry uses CodexTelemetryFollower instead;
+// callers must not put this whole-file fallback on a hook or polling path.
 type CodexRolloutProjection struct {
 	Context      ContextTelemetry
 	HasContext   bool
@@ -21,12 +20,11 @@ type CodexRolloutProjection struct {
 	Effort       string
 	HasEffort    bool
 	Usage        *CodexUsage
-	Cost         CodexTokenCost
-	HasCost      bool
 }
 
-// CodexHookProjection prefers the exact rollout path carried by a hook. Older
-// payloads without transcript_path fall back to normal by-id discovery.
+// CodexHookProjection prefers an exact rollout path and otherwise falls back
+// to discovery by conversation ID. It is retained as a one-shot reference;
+// live hooks must not use it because the fallback can scan the full rollout.
 func CodexHookProjection(home, convID, transcriptPath, modelHint string) (CodexRolloutProjection, string, error) {
 	path := transcriptPath
 	if !IsCodexRolloutPath(path) {
@@ -41,7 +39,7 @@ func CodexHookProjection(home, convID, transcriptPath, modelHint string) (CodexR
 }
 
 // CodexHookProjectionFromRollout derives context, reasoning effort,
-// subscription usage, and virtual cost in one scan. Live .jsonl rollouts are
+// subscription usage in one scan. Live .jsonl rollouts are
 // scanned from the tail; archived .zst rollouts cannot be sought in compressed
 // form and use one combined forward scan instead.
 func CodexHookProjectionFromRollout(path, modelHint string) (CodexRolloutProjection, error) {
@@ -59,11 +57,8 @@ func CodexHookProjectionFromRollout(path, modelHint string) (CodexRolloutProject
 			return CodexRolloutProjection{}, fmt.Errorf("scan codex rollout %s: %w", path, err)
 		}
 	} else if err := scanCodexRolloutLinesReverse(path, func(line []byte) bool {
-		// Exact mixed-tier recovery needs every per-turn usage record. Codex
-		// rollouts are the durable recovery log; unlike OpenCode, this path has
-		// no stable message-ID cost checkpoint to resume from yet.
 		state.consumeReverse(line)
-		return true
+		return !state.complete()
 	}); err != nil {
 		return CodexRolloutProjection{}, fmt.Errorf("scan codex rollout %s: %w", path, err)
 	}
@@ -81,11 +76,6 @@ type codexProjectionScanState struct {
 	observed       string
 	effort         string
 	usage          *CodexUsage
-	costUSD        float64
-	costPriced     bool
-	costModel      string
-	costLegacy     bool
-	reverseCost    []codexTokenCountInfo
 }
 
 func (s *codexProjectionScanState) consumeForward(line []byte) {
@@ -127,7 +117,6 @@ func (s *codexProjectionScanState) consumeForward(line []byte) {
 		if usage != nil {
 			s.usage = usage
 		}
-		s.addCostInfo(s.effectiveCostModel(s.model), info, false)
 	}
 }
 
@@ -153,7 +142,6 @@ func (s *codexProjectionScanState) consumeReverse(line []byte) {
 		}
 	case "turn_context":
 		model, effort := projectCodexTurnContext(env.Payload)
-		s.flushReverseCost(s.effectiveCostModel(model))
 		if s.model == "" {
 			s.model = model
 		}
@@ -184,77 +172,7 @@ func (s *codexProjectionScanState) consumeReverse(line []byte) {
 		if s.usage == nil && usage != nil {
 			s.usage = usage
 		}
-		if s.modelHint != "" {
-			s.addCostInfo(s.modelHint, info, true)
-		} else {
-			s.reverseCost = append(s.reverseCost, info)
-		}
 	}
-}
-
-func (s *codexProjectionScanState) effectiveCostModel(turnModel string) string {
-	if s.modelHint != "" {
-		return s.modelHint
-	}
-	return turnModel
-}
-
-func (s *codexProjectionScanState) addCost(model string, usage codexTokenUsage) {
-	cost, ok := codexVirtualCost(model, usage)
-	if !ok {
-		return
-	}
-	s.costUSD += cost
-	s.costPriced = true
-	if s.costModel == "" {
-		s.costModel = model
-	}
-}
-
-func (s *codexProjectionScanState) addCostInfo(model string, info codexTokenCountInfo, reverse bool) {
-	if reverse && s.costLegacy {
-		return
-	}
-	if info.LastTokenUsagePresent {
-		s.noteCostModel(model, reverse)
-		s.addCost(model, info.LastTokenUsage)
-		return
-	}
-	if !codexUsageHasBillableTokens(info.TotalTokenUsage) {
-		return
-	}
-	cost, ok := codexVirtualCost(model, info.TotalTokenUsage)
-	if !ok {
-		return
-	}
-	// Older rollouts can omit last_token_usage. Their latest cumulative
-	// total is the checkpoint for everything before it. Forward scans replace
-	// earlier work; reverse scans add the checkpoint after newer per-turn rows
-	// and then ignore older cumulative checkpoints.
-	if reverse {
-		s.costUSD += cost
-	} else {
-		s.costUSD = cost
-	}
-	s.costPriced = true
-	s.noteCostModel(model, reverse)
-	s.costLegacy = true
-}
-
-func (s *codexProjectionScanState) noteCostModel(model string, reverse bool) {
-	if _, ok := codexModelPrices[strings.TrimSpace(model)]; !ok {
-		return
-	}
-	if !reverse || s.costModel == "" {
-		s.costModel = model
-	}
-}
-
-func (s *codexProjectionScanState) flushReverseCost(model string) {
-	for _, info := range s.reverseCost {
-		s.addCostInfo(model, info, true)
-	}
-	s.reverseCost = s.reverseCost[:0]
 }
 
 func decodeCodexProjectionEnvelope(line []byte) (codexEnvelope, bool) {
@@ -291,8 +209,20 @@ func projectCodexTokenCount(env codexEnvelope) (codexTokenCountInfo, *CodexUsage
 	return ev.Info, codexUsageFromRateLimits(ev.RateLimits, env.Timestamp), true
 }
 
+func (s *codexProjectionScanState) complete() bool {
+	if s.info == nil || s.effort == "" || s.usage == nil {
+		return false
+	}
+	if s.contextBlocked && !s.contextDone {
+		return false
+	}
+	if _, ok := codexModelPrices[s.modelHint]; ok {
+		return true
+	}
+	return s.model != ""
+}
+
 func (s *codexProjectionScanState) projection() CodexRolloutProjection {
-	s.flushReverseCost(s.effectiveCostModel(s.model))
 	out := CodexRolloutProjection{
 		ContextReset: s.contextReset,
 		Effort:       s.effort,
@@ -307,10 +237,6 @@ func (s *codexProjectionScanState) projection() CodexRolloutProjection {
 		out.Context = context
 		out.HasContext = true
 	}
-	if s.costPriced {
-		out.Cost = CodexTokenCost{CostUSD: s.costUSD, Model: s.costModel, Observed: parseCodexEventTime(s.observed)}
-		out.HasCost = true
-	}
 	return out
 }
 
@@ -319,7 +245,7 @@ func (s *codexProjectionScanState) projection() CodexRolloutProjection {
 // discarded as chunks are read, so a multi-MiB compacted.replacement_history
 // cannot prevent older telemetry from being reached.
 func scanCodexRolloutLinesReverse(path string, visit func([]byte) bool) error {
-	f, err := os.Open(path) //nolint:gosec // hook supplies Codex's rollout path
+	f, err := os.Open(path) //nolint:gosec // caller supplies Codex's rollout path
 	if err != nil {
 		return err
 	}

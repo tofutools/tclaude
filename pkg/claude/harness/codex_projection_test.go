@@ -50,8 +50,6 @@ func TestCodexHookProjection_EquivalentToForwardScans(t *testing.T) {
 	require.NoError(t, err)
 	wantUsage, err := CodexUsageFromRollout(path)
 	require.NoError(t, err)
-	wantCost, wantCostOK, err := CodexVirtualCostFromRollout(path, "")
-	require.NoError(t, err)
 
 	got, err := CodexHookProjectionFromRollout(path, "")
 	require.NoError(t, err)
@@ -60,8 +58,6 @@ func TestCodexHookProjection_EquivalentToForwardScans(t *testing.T) {
 	assert.Equal(t, wantEffortOK, got.HasEffort)
 	assert.Equal(t, wantEffort, got.Effort)
 	assert.Equal(t, wantUsage, got.Usage)
-	assert.Equal(t, wantCostOK, got.HasCost)
-	assert.Equal(t, wantCost, got.Cost)
 	require.NotNil(t, got.Usage)
 	require.NotNil(t, got.Usage.FiveHour)
 	assert.Equal(t, 55.0, got.Usage.FiveHour.UsedPercent)
@@ -117,8 +113,6 @@ func TestCodexHookProjection_WindowOnlyNewestTokenCountMatchesForward(t *testing
 	require.NoError(t, err)
 	wantUsage, err := CodexUsageFromRollout(path)
 	require.NoError(t, err)
-	wantCost, wantCostOK, err := CodexVirtualCostFromRollout(path, "")
-	require.NoError(t, err)
 
 	got, err := CodexHookProjectionFromRollout(path, "")
 	require.NoError(t, err)
@@ -127,13 +121,11 @@ func TestCodexHookProjection_WindowOnlyNewestTokenCountMatchesForward(t *testing
 	assert.Equal(t, wantEffortOK, got.HasEffort)
 	assert.Equal(t, wantEffort, got.Effort)
 	assert.Equal(t, wantUsage, got.Usage)
-	assert.Equal(t, wantCostOK, got.HasCost)
-	assert.Equal(t, wantCost, got.Cost)
 	assert.False(t, got.HasContext)
 	assert.Equal(t, ContextTelemetry{}, got.Context)
 }
 
-func TestCodexHookProjection_MixedLegacyAndPerTurnCostParity(t *testing.T) {
+func TestCodexRuntimeTelemetry_MixedLegacyAndPerTurnCostParity(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "rollout.jsonl")
 	usage := func(input, cached, output int64) map[string]any {
 		return map[string]any{
@@ -179,7 +171,7 @@ func TestCodexHookProjection_MixedLegacyAndPerTurnCostParity(t *testing.T) {
 
 	for _, rollout := range []string{path, archive} {
 		t.Run(filepath.Ext(rollout), func(t *testing.T) {
-			got, err := CodexHookProjectionFromRollout(rollout, "")
+			got, err := CodexRuntimeTelemetryFromRollout(rollout)
 			require.NoError(t, err)
 			require.True(t, got.HasCost)
 			assert.InDelta(t, want.CostUSD, got.Cost.CostUSD, 1e-12)
@@ -210,7 +202,6 @@ func TestCodexHookProjection_OversizedCompactionInvalidatesContextButKeepsCost(t
 			require.NoError(t, err)
 			assert.True(t, got.ContextReset)
 			assert.False(t, got.HasContext, "pre-compaction occupancy is stale")
-			assert.True(t, got.HasCost, "cumulative token cost survives context compaction")
 		})
 	}
 }
@@ -300,7 +291,7 @@ func BenchmarkCodexHookProjection(b *testing.B) {
 			}
 		}
 	})
-	b.Run("one-combined-recovery-scan", func(b *testing.B) {
+	b.Run("one-reverse-tail", func(b *testing.B) {
 		for range b.N {
 			if _, err := CodexHookProjectionFromRollout(path, ""); err != nil {
 				b.Fatal(err)

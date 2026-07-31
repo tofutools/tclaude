@@ -51,6 +51,9 @@ type codexReadThroughSnapshot struct {
 	persistedContext      harness.ContextTelemetry
 	persistedHasContext   bool
 	persistedReset        bool
+	persistedEffort       string
+	persistedUsageAt      time.Time
+	persistedVirtualCost  float64
 }
 
 type codexContextRefreshResult struct {
@@ -386,6 +389,13 @@ func refreshCodexContextSnapshotOnReadBatched(
 		checkpointFailures = 0
 		checkpointPersistedAt = time.Time{}
 	}
+	persistedVirtualCost := cached.persistedVirtualCost
+	persistedEffort := cached.persistedEffort
+	if cached.sessionConvID != "" &&
+		(cached.sessionConvID != sess.ConvID || !cached.sessionCreatedAt.Equal(sess.CreatedAt)) {
+		persistedVirtualCost = 0
+		persistedEffort = ""
+	}
 	checkpointDue := checkpointLoadedThisRefresh || checkpointData == "" || checkpointFailures > 0 ||
 		checkpointPersistedAt.IsZero() || started.Sub(checkpointPersistedAt) >= codexCheckpointPersistMinInterval
 	if checkpointDue {
@@ -439,6 +449,27 @@ func refreshCodexContextSnapshotOnReadBatched(
 				checkpointPersistedAt = started
 			}
 		}
+	}
+	if snap.HasCost && snap.Cost.CostUSD != persistedVirtualCost {
+		if err := db.UpdateSessionVirtualCost(sess.ID, snap.Cost.CostUSD); err != nil {
+			slog.Warn("codex-cost: failed to persist incremental virtual cost",
+				"session_id", sess.ID, "model", snap.Cost.Model, "error", err, "module", "agentd")
+		} else {
+			persistedVirtualCost = snap.Cost.CostUSD
+		}
+	}
+	if snap.HasEffort && snap.Effort != persistedEffort {
+		if err := db.UpdateSessionEffort(sess.ID, snap.Effort); err != nil {
+			slog.Warn("codex-telemetry: failed to persist incremental effort",
+				"session_id", sess.ID, "effort", snap.Effort, "error", err, "module", "agentd")
+		} else {
+			persistedEffort = snap.Effort
+		}
+	}
+	persistedUsageAt := cached.persistedUsageAt
+	if snap.Usage != nil && !snap.Usage.Observed.IsZero() && snap.Usage.Observed.After(persistedUsageAt) {
+		saveCodexUsageSnapshot(snap.Usage, "telemetry-follower")
+		persistedUsageAt = snap.Usage.Observed
 	}
 
 	persistedConvID := cached.persistedConvID
@@ -587,6 +618,9 @@ func refreshCodexContextSnapshotOnReadBatched(
 		cachePersistedContext,
 		cachePersistedHasContext,
 		cachePersistedReset,
+		persistedEffort,
+		persistedUsageAt,
+		persistedVirtualCost,
 	)
 	completed = true
 	result := codexContextRefreshResult{
@@ -799,6 +833,9 @@ func cacheCodexRuntimeRefresh(
 	persistedContext harness.ContextTelemetry,
 	persistedHasContext bool,
 	persistedReset bool,
+	persistedEffort string,
+	persistedUsageAt time.Time,
+	persistedVirtualCost float64,
 ) {
 	codexContextRefreshMu.Lock()
 	defer codexContextRefreshMu.Unlock()
@@ -822,6 +859,9 @@ func cacheCodexRuntimeRefresh(
 	prev.persistedContext = persistedContext
 	prev.persistedHasContext = persistedHasContext
 	prev.persistedReset = persistedReset
+	prev.persistedEffort = persistedEffort
+	prev.persistedUsageAt = persistedUsageAt
+	prev.persistedVirtualCost = persistedVirtualCost
 	prev.refreshing = keepRefreshing
 	codexContextRefreshMu.last[sessionID] = prev
 }

@@ -47,6 +47,11 @@ type ContextTelemetry struct {
 type CodexRuntimeSnapshot struct {
 	Context    ContextTelemetry
 	HasContext bool
+	Effort     string
+	HasEffort  bool
+	Usage      *CodexUsage
+	Cost       CodexTokenCost
+	HasCost    bool
 	// ContextReset means a compacted record is newer than the latest usable
 	// token_count. Callers must clear any persisted pre-compaction snapshot
 	// instead of leaving it in place or restoring it from older telemetry.
@@ -188,6 +193,13 @@ func CodexRuntimeTelemetryFromRollout(rolloutPath string) (CodexRuntimeSnapshot,
 type codexRuntimeScanState struct {
 	latest               *codexTokenCountInfo
 	contextReset         bool
+	model                string
+	effort               string
+	usage                *CodexUsage
+	costUSD              float64
+	costPriced           bool
+	costModel            string
+	costObserved         string
 	interruptedSubagents map[string]struct{}
 	followupCallIDs      map[string]struct{}
 	checkpointStateBytes int64
@@ -204,6 +216,13 @@ func (s codexRuntimeScanState) clone() codexRuntimeScanState {
 	out := codexRuntimeScanState{
 		latest:               s.latest,
 		contextReset:         s.contextReset,
+		model:                s.model,
+		effort:               s.effort,
+		usage:                s.usage,
+		costUSD:              s.costUSD,
+		costPriced:           s.costPriced,
+		costModel:            s.costModel,
+		costObserved:         s.costObserved,
 		interruptedSubagents: make(map[string]struct{}, len(s.interruptedSubagents)),
 		followupCallIDs:      make(map[string]struct{}, len(s.followupCallIDs)),
 		checkpointStateBytes: s.checkpointStateBytes,
@@ -230,6 +249,16 @@ func (s *codexRuntimeScanState) consumeLine(line []byte) bool {
 	}
 	if env.Type == "compacted" {
 		s.invalidateContext()
+		return true
+	}
+	if env.Type == "turn_context" {
+		model, effort := projectCodexTurnContext(env.Payload)
+		if model != "" {
+			s.model = model
+		}
+		if effort != "" {
+			s.effort = effort
+		}
 		return true
 	}
 	if env.Type == "response_item" {
@@ -264,6 +293,10 @@ func (s *codexRuntimeScanState) consumeLine(line []byte) bool {
 			contextReset = false
 		}
 		s.replaceCheckpointContext(&info, contextReset)
+		s.applyTokenCost(info, env.Timestamp)
+		if usage := codexUsageFromRateLimits(ev.RateLimits, env.Timestamp); usage != nil {
+			s.usage = usage
+		}
 	case "sub_agent_activity":
 		var ev codexSubagentActivityEvent
 		if json.Unmarshal(env.Payload, &ev) != nil {
@@ -285,6 +318,26 @@ func (s *codexRuntimeScanState) consumeLine(line []byte) bool {
 		}
 	}
 	return true
+}
+
+func (s *codexRuntimeScanState) applyTokenCost(info codexTokenCountInfo, observed string) {
+	usage := info.LastTokenUsage
+	legacy := !info.LastTokenUsagePresent
+	if legacy {
+		usage = info.TotalTokenUsage
+	}
+	cost, ok := codexVirtualCost(s.model, usage)
+	if !ok {
+		return
+	}
+	if legacy {
+		s.costUSD = cost
+	} else {
+		s.costUSD += cost
+	}
+	s.costPriced = true
+	s.costModel = s.model
+	s.costObserved = observed
 }
 
 func (s *codexRuntimeScanState) invalidateContext() {
@@ -364,6 +417,15 @@ func (s *codexRuntimeScanState) snapshot() CodexRuntimeSnapshot {
 	result := CodexRuntimeSnapshot{
 		ContextReset:         s.contextReset,
 		InterruptedSubagents: s.interruptedSubagents,
+		Effort:               s.effort,
+		HasEffort:            s.effort != "",
+		Usage:                s.usage,
+	}
+	if s.costPriced {
+		result.Cost = CodexTokenCost{
+			CostUSD: s.costUSD, Model: s.costModel, Observed: parseCodexEventTime(s.costObserved),
+		}
+		result.HasCost = true
 	}
 	if s.latest == nil {
 		return result
