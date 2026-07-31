@@ -27,6 +27,17 @@ That split exists because `.github/workflows/**` needs an operator with
 fixture tweak and every pin bump cost an operator merge. Now they cost a repo
 edit and a review.
 
+## Host prerequisites
+
+`lib/prereqs.sh` installs `bubblewrap`, `socat` and `iproute2`. That list is
+deliberately **shorter** than the packet gateway's sibling smoke, which also
+installs nftables and builds pasta from source: the proxy floor reaches its
+namespace through bubblewrap's plain unshare and calls neither. Installing them
+here would quietly undermine the claim that this floor does not need them.
+
+Needing a new tool is a repo edit here, not a workflow merge — the same reason
+the flows and the harness pins live in this directory.
+
 ## Adding a smoke
 
 1. Add `flows/<NN>-<name>.sh` defining `flow::run` (and optionally

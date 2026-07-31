@@ -33,6 +33,8 @@ source "$here/lib/evidence.sh"
 source "$here/lib/fixture.sh"
 # shellcheck source=lib/harnesses.sh
 source "$here/lib/harnesses.sh"
+# shellcheck source=lib/prereqs.sh
+source "$here/lib/prereqs.sh"
 
 export SMOKE_ARTIFACTS="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/filtered-proxy-smoke"
 export SMOKE_HOSTS_BACKUP="$SMOKE_ARTIFACTS/etc-hosts.before"
@@ -90,8 +92,10 @@ if [[ "$validate_only" -eq 1 ]]; then
   exit 0
 fi
 
-# 3. Prerequisites, named individually so a missing one is never mistakable for
-#    a boundary refusing something.
+# 3. Prerequisites. Installed first, then asserted individually, so a missing
+#    tool is named rather than surfacing later as a boundary that appeared to
+#    refuse something.
+prereqs::install
 smoke::require_command go sudo ip socat curl npm node bwrap git || exit 1
 
 smoke::log "Building tclaude for the smoke launches"
