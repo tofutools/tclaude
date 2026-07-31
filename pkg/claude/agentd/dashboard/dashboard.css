@@ -3517,32 +3517,40 @@ details[data-group-key][open] > summary .group-default-model:not(.unset) > .grou
 /* The relocated filter bars sit flush inside the panel rather than spanning
    a full page width. */
 .manage-modal .filter-bar { margin: 0; }
-/* The Group-templates (summoning-circles) management PANEL is user-resizable —
-   a long roster of circles, or a small screen, makes the fixed panel cramped.
-   Drag the bottom-right grip on both axes; the size persists per panel
-   (makeModalResizable → dashPrefs key tclaude.dash.modalSize.templates-manage).
+/* The registry management PANELS (group templates, spawn profiles, roles,
+   sandbox profiles) are user-resizable — a long roster, or a small screen,
+   makes the fixed panel cramped. Drag the bottom-right grip on both axes; each
+   panel persists its OWN size (makeModalResizable → dashPrefs key
+   tclaude.dash.modalSize.<panel>-manage), because a wide spawn-profile listing
+   and a narrow role listing want different boxes.
    Unlike the spawn/clone/editor FORM dialogs — which grow to fit their fields
-   (content-tracking min-height + auto-grow) — this is a LIST panel whose
-   #templates-list is meant to SCROLL, so its JS wires with { fitContent: false }
-   (no content-tracking min, which would pin the floor at the 86vh cap and make
-   the panel un-shrinkable; no auto-grow, which would re-expand a deliberately-
-   shortened box on the 2s live refresh). The floor is the fixed min-height
+   (content-tracking min-height + auto-grow) — these are LIST panels whose list
+   is meant to SCROLL, so their JS wires with { fitContent: false } (no
+   content-tracking min, which would pin the floor at the 86vh cap and make the
+   panel un-shrinkable; no auto-grow, which would re-expand a deliberately-
+   shortened box on the live refresh). The floor is the fixed min-height
    here. resize needs overflow non-visible on both axes, so overflow:auto
    overrides the base overflow-y:auto. An explicit width keeps the default at
    the base 880 ceiling while max-width raises only the horizontal drag ceiling
    (the base uses width:calc(100%-32px), which would otherwise widen the default
    to the raised max). max-height:86vh (base) stays the vertical drag ceiling. */
-#templates-manage-modal .manage-modal {
+#templates-manage-modal .manage-modal,
+#profiles-manage-modal .manage-modal,
+#roles-manage-modal .manage-modal,
+#sandbox-profiles-manage-modal .manage-modal {
   resize: both; overflow: auto;
   width: min(880px, calc(100vw - 32px));
   max-width: min(1100px, calc(100vw - 32px));
   min-height: 260px;
 }
-/* Let the circle list absorb extra vertical space when the panel is enlarged,
+/* Let the listing absorb extra vertical space when the panel is enlarged,
    keeping the footer Close button at the bottom; the panel still scrolls as one
    unit (as it already does at the 86vh cap) when the list outgrows a shortened
-   box, since #templates-list keeps its content-driven min-height. */
-#templates-manage-modal #templates-list { flex: 1 1 auto; }
+   box, since the list keeps its content-driven min-height. */
+#templates-manage-modal #templates-list,
+#profiles-manage-modal #profiles-list,
+#roles-manage-modal #roles-list,
+#sandbox-profiles-manage-modal #sandbox-profiles-list { flex: 1 1 auto; }
 /* The cron-pick-target overlay is opened FROM inside the cron-create
    form (Owner / Target 🔍 buttons), so it has to stack on top of the
    create modal — not below it. Plain z-index:100 ties with the create
@@ -6033,7 +6041,23 @@ body.wizard .directory-picker-modal .modal-buttons { border-top-color: rgba(122,
 .ta-profile-summary-missing { color: #d29922; }
 .ta-profile-summary-empty { color: #6e7681; font-style: italic; }
 .profile-card-disabled { border-color: rgba(248, 81, 73, .8); background: rgba(248, 81, 73, .09); box-shadow: inset 3px 0 0 #f85149; }
-.tc-disabled { color: #ffd8d5; background: rgba(248, 81, 73, .2); border: 1px solid rgba(248, 81, 73, .75); border-radius: 999px; padding: 2px 7px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+/* Card-head status pills. They are LABELS, not prose: a pill that wraps mid-
+   phrase ("OPERATOR" over "ONLY") doubles the head's height and knocks the
+   name, summary and buttons of that one row out of line with every other row,
+   which is exactly what these rows looked like before. nowrap + flex:none
+   keeps each pill one line at its natural width and makes the summary the only
+   thing that gives, which is what should give. */
+.tc-disabled, .tc-operator-only {
+  flex: none; white-space: nowrap;
+  border-radius: 999px; padding: 2px 7px;
+  font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
+}
+.tc-disabled { color: #ffd8d5; background: rgba(248, 81, 73, .2); border: 1px solid rgba(248, 81, 73, .75); }
+/* Operator-only is a RESTRICTION, not a fault: the profile still spawns fine,
+   it just refuses agent-originated spawns. Red (the disabled pill's colour)
+   read as breakage; amber reads as "gated", and keeps the two states apart at
+   a glance in a listing that can show both. */
+.tc-operator-only { color: #f8d488; background: rgba(210, 153, 34, .16); border: 1px solid rgba(210, 153, 34, .7); }
 .tc-disabled-reason { color: #ffb3ad; white-space: pre-wrap; }
 /* "inherits default X" preview under a blank member's picker — muted + italic,
    the same "this value is inherited, not set here" cue as -empty. */
@@ -6186,11 +6210,21 @@ body.wizard .directory-picker-modal .modal-buttons { border-top-color: rgba(122,
   display: flex; flex-direction: column; gap: 6px;
 }
 .template-card .tc-head { display: flex; align-items: baseline; gap: 10px; }
-.template-card .tc-name { font-size: 14px; font-weight: 600; color: #d4d4d4; }
-.template-card .tc-aliases { color: #8ea8c3; font-size: 12px; }
-.template-card .tc-descr { color: #7d8590; font-size: 12px; }
-.template-card .tc-count { color: #6e7681; font-size: 11px; }
-.template-card .tc-actions { margin-left: auto; display: flex; gap: 6px; }
+/* Head sizing. Every head item except the summary is a fixed-content label, so
+   the summary must be the ONLY one that gives when the row runs out of room —
+   otherwise flexbox spreads the overflow across the name, the pills and the
+   buttons at once and the row loses its line. flex:none on the labels stops
+   them shrinking; the summary keeps flex-shrink and adds min-width:0, without
+   which a flex item refuses to go below its longest word and wrap. It does NOT
+   grow (flex-basis stays auto): the trailing counts should sit beside the text
+   they annotate, not be flung against the buttons. align-items:baseline then
+   keeps the name, pills and buttons on the summary's FIRST line, so a two-line
+   summary doesn't drag them down with it. */
+.template-card .tc-name { flex: none; font-size: 14px; font-weight: 600; color: #d4d4d4; }
+.template-card .tc-aliases { flex: none; color: #8ea8c3; font-size: 12px; }
+.template-card .tc-descr { flex: 0 1 auto; min-width: 0; color: #7d8590; font-size: 12px; }
+.template-card .tc-count { flex: none; color: #6e7681; font-size: 11px; }
+.template-card .tc-actions { flex: none; margin-left: auto; display: flex; gap: 6px; }
 /* JOH-364: the deploy/summon action is a `.primary` button (the sibling
    instantiate/duplicate/edit/export/delete are `.tool`, covered by the base
    button.tool rule). Without this it rendered white UA chrome in plain mode;
