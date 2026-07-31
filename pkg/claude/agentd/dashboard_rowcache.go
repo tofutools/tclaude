@@ -37,6 +37,27 @@ type snapshotRowCache struct {
 
 	codexTelemetryTiming codexTelemetryTiming
 	codexContextBatch    codexContextWriteBatch
+
+	// rowWork accumulates the un-batched per-row side reads (see
+	// stateForConvInSessionsBatched's recordRowWork) so the snapshot phase that
+	// resolved the rows can report them as sub-phases.
+	rowWork map[string]time.Duration
+}
+
+// rowWork phase names. Kept as constants so the accumulator key and the
+// /api/perf child name cannot drift apart.
+const (
+	rowWorkBgReconcile     = "bg_reconcile"
+	rowWorkContextSnapshot = "context_snapshot"
+)
+
+// addRowWork is the recordRowWork sink for this request's rows. Single
+// goroutine, like the rest of the cache — no locking.
+func (rc *snapshotRowCache) addRowWork(name string, d time.Duration) {
+	if rc.rowWork == nil {
+		rc.rowWork = map[string]time.Duration{}
+	}
+	rc.rowWork[name] += d
 }
 
 // convRowBundle is the fully-resolved per-conv row the dashboard renders,
@@ -185,7 +206,7 @@ func (rc *snapshotRowCache) viewFor(convID string) *convRowBundle {
 		Online:  isConvOnlineInSessions(rc.sessions[convID], rc.alive),
 		State: stateForConvInSessionsBatched(rc.sessions[convID], rc.alive, &rc.codexContextBatch, func(timing codexTelemetryTiming) {
 			rc.codexTelemetryTiming = rc.codexTelemetryTiming.add(timing)
-		}),
+		}, rc.addRowWork),
 	}
 	b.State.TemporarySandboxMode = rc.agents[convID].TemporarySandboxMode
 	rc.memo[convID] = b

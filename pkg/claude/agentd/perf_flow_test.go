@@ -109,6 +109,19 @@ func TestDashboardPerf_RecordsPollTimings(t *testing.T) {
 	preload := snap.Phases[1]
 	require.NotEmpty(t, preload.Children, "preload exposes its concurrent reads as nested phases")
 	assert.Equal(t, 2, preload.Children[0].Count)
+	// The groups phase used to report one opaque number while its max ran three
+	// orders of magnitude above its p50. It now names the per-group point
+	// queries and the per-row side reads that can stall it.
+	groupsPhase := snap.Phases[2]
+	var groupsChildNames []string
+	for _, child := range groupsPhase.Children {
+		groupsChildNames = append(groupsChildNames, child.Name)
+	}
+	assert.Equal(t, []string{
+		"group_perms", "group_process", "group_waves",
+		"member_rows", "owner_rows", "member_sort",
+		"bg_reconcile", "context_snapshot", "slowest_group",
+	}, groupsChildNames)
 	codexTelemetry := snap.Phases[3]
 	require.NotEmpty(t, codexTelemetry.Children,
 		"Codex telemetry exposes cache, rollout, checkpoint, and context persistence timings")

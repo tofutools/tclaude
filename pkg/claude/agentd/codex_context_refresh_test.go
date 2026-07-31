@@ -286,6 +286,7 @@ func TestDashboardCodexContextWriteBatchKeepsResponseFresh(t *testing.T) {
 		map[string]struct{}{sess.TmuxSession: {}},
 		batch,
 		nil,
+		nil,
 	)
 	assert.Equal(t, int64(12_000), state.TokensInput,
 		"the dashboard response must use rollout telemetry before the batch commits")
@@ -307,6 +308,7 @@ func TestDashboardCodexContextWriteBatchKeepsResponseFresh(t *testing.T) {
 		[]*db.SessionRow{sess},
 		map[string]struct{}{sess.TmuxSession: {}},
 		overlappingBatch,
+		nil,
 		nil,
 	)
 	assert.Equal(t, int64(12_000), overlappingState.TokensInput,
