@@ -19,9 +19,9 @@ import (
 
 // TestOpenCodeUnixRelayRefusesTheProxyEngine is the structural half of TCL-889,
 // and the reason OpenCode's Linux `engine: proxy` capability cells cannot be
-// activated by any amount of cooperation evidence: the boundary agentd actually
-// launches OpenCode through REFUSES to deploy the proxy engine at all, so there
-// is no enforcement to rate.
+// activated by any amount of cooperation evidence: agentd launches OpenCode
+// through the Unix-relay server boundary, and that boundary REFUSES to deploy
+// the proxy engine at all — so there is no enforcement to rate.
 //
 // It is pinned here, on the OpenCode path, because the existing session-package
 // test of the same refusal (TestTclaudeLayerUnixRelayRefusesTheProxyEngine)

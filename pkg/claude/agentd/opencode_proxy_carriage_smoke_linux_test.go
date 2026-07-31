@@ -353,8 +353,21 @@ func runOpenCodeProxyCarriageCase(
 		assert.Positivef(t, direct,
 			"%s was not carried and the origin saw no direct request either: this case measured nothing",
 			carriage)
+		// A third state hides here, and reporting it as "made no proxy
+		// connection" would be false. The client may have CONNECTED to the
+		// proxy and failed before stating a target — a handshake the proxy
+		// could not parse, which is what speaking the wrong carriage at it
+		// looks like. That leaves a transport error and no decision. It is
+		// still "not carried", but "tried and could not" is a different fact
+		// about the harness than "never tried", and a reader of this record
+		// should not have to guess which one happened.
+		if errors := auditor.transportErrors(); len(errors) > 0 {
+			return fmt.Sprintf(
+				"%s NOT CARRIED (attempted): the server reached the proxy but stated no target, and reached the origin directly (direct requests=%d, transport errors=%v)",
+				carriage, direct, errors)
+		}
 		return fmt.Sprintf(
-			"%s NOT CARRIED: the server made no proxy connection and reached the origin directly (direct requests=%d)",
+			"%s NOT CARRIED: the server made no proxy connection at all and reached the origin directly (direct requests=%d)",
 			carriage, direct)
 	}
 
