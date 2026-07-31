@@ -538,6 +538,35 @@ func TestWorktreeSweep_PruneAccountingUsesEntryIdentity(t *testing.T) {
 	assert.Equal(t, "partial", out.PruneOutcomes[0].Result)
 }
 
+func TestWorktreeSweep_PruneRejectsRepoOutsideGroupScope(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	repoFixture(t, f)
+	t.Cleanup(agentd.SetPruneWorktreeFnsForTest(
+		func(string) ([]worktree.PrunableWorktree, error) {
+			t.Fatal("an out-of-scope repo must not be previewed")
+			return nil, nil
+		},
+		func(string) (string, error) {
+			t.Fatal("an out-of-scope repo must not be pruned")
+			return "", nil
+		},
+	))
+
+	body := `{"prune_roots":["/outside-repo"]}`
+	r, err := http.NewRequest(http.MethodPost, "/api/worktrees/cleanup", strings.NewReader(body))
+	require.NoError(t, err)
+	rec := testharness.Serve(agentd.BuildDashboardHandlerForTest(), r)
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var out sweepCleanupWire
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+	assert.Equal(t, 1, out.PruneSkipped)
+	require.Len(t, out.PruneOutcomes, 1)
+	assert.Equal(t, "/outside-repo", out.PruneOutcomes[0].RepoRoot)
+	assert.Equal(t, "skipped", out.PruneOutcomes[0].Result)
+	assert.Equal(t, "repo is not in the current group cleanup scope", out.PruneOutcomes[0].Detail)
+}
+
 // Regression: PostToolUse can track an edit outside the worktree an agent was
 // launched in. The global dialog must still show that startup worktree as live,
 // and the execute-time recheck must keep it even if a stale browser submits the
