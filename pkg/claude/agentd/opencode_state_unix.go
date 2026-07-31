@@ -725,14 +725,15 @@ func validateOpenCodeReadOnlyConfigSeedSource(source, configDir string) error {
 		return nil
 	}
 	if resolvedOpenCodeSeedPath(source) == resolvedOpenCodeSeedPath(configDir) {
-		// Both candidates are named on refusal. A legacy contract replayed after
-		// the daemon's XDG_CONFIG_HOME changed lands here with source ==
-		// configDir, and its real cause is the ambient mismatch, not the
-		// per-agent shape.
+		// Both candidates are named on refusal, but the per-agent one leads: a
+		// self-bound source got here, so that is the shape the launch has. The
+		// ambient path still has to appear — a legacy contract replayed after
+		// the daemon's XDG_CONFIG_HOME changed also lands here, and the ambient
+		// mismatch is what its operator must act on.
 		if err := requireOpenCodeAllocatedConfigDir(configDir); err != nil {
 			return fmt.Errorf(
-				"read-only OpenCode config bind source %q does not resolve to this host's ambient OpenCode config %q: %w",
-				source, ambient, err)
+				"read-only OpenCode config bind source %q is not an allocated per-agent config directory (%w), and does not resolve to this host's ambient OpenCode config %q",
+				source, err, ambient)
 		}
 		return nil
 	}
@@ -761,6 +762,15 @@ func requireOpenCodeAllocatedConfigDir(configDir string) error {
 			"OpenCode config bootstrap target %q does not have the per-agent <state root>/config/opencode shape",
 			configDir)
 	}
+	// The agent id is checked here rather than left to
+	// requireOpenCodeStateAllocation so an operator's own directory name is not
+	// quoted back at them as an "invalid agent id" when the path merely happens
+	// to end in config/opencode.
+	if !openCodeAgentIDRE.MatchString(filepath.Base(stateRoot)) {
+		return fmt.Errorf(
+			"OpenCode config bootstrap target %q names %q where a per-agent state root was expected",
+			configDir, stateRoot)
+	}
 	allocation, err := requireOpenCodeStateAllocation(filepath.Base(stateRoot))
 	if err != nil {
 		return fmt.Errorf(
@@ -777,9 +787,13 @@ func requireOpenCodeAllocatedConfigDir(configDir string) error {
 	if err != nil {
 		return fmt.Errorf("resolve OpenCode private state parent for bootstrap: %w", err)
 	}
+	// Both sides are compared in resolved form. The allocator records a parent it
+	// has already resolved, while this derives one from the live environment, so
+	// a symlinked home or XDG base makes the two disagree as strings while naming
+	// the same directory.
 	if filepath.Dir(stateRoot) != resolvedOpenCodeSeedPath(parent) {
 		return fmt.Errorf(
-			"OpenCode config bootstrap target %q is outside this daemon's private state parent %q",
+			"OpenCode config bootstrap target %q is outside this daemon's private state parent %q; a changed XDG_DATA_HOME or HOME moves that parent away from an existing allocation",
 			configDir, parent)
 	}
 	return nil

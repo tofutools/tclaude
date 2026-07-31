@@ -3,6 +3,7 @@
 package agentd
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -132,12 +133,9 @@ func openCodeConfigBootstrapSpec(
 	}
 }
 
-// allocatedOpenCodeConfigDir gives the test an isolated host whose OpenCode
-// state allocation this daemon actually owns, and returns that agent's state
-// root and its config app directory. A self-bound contract naming any other
-// directory is refused (TCL-902), so the legitimate self-bind cases have to
-// stand on a real allocation rather than on the contract's own word.
-func allocatedOpenCodeConfigDir(t *testing.T) (stateRoot, configDir string) {
+// isolatedOpenCodeHost points every path the OpenCode state code derives at a
+// disposable home with its own database, and returns that home.
+func isolatedOpenCodeHost(t *testing.T) string {
 	t.Helper()
 	home, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
@@ -148,20 +146,29 @@ func allocatedOpenCodeConfigDir(t *testing.T) (stateRoot, configDir string) {
 	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
 	db.ResetForTest()
 	t.Cleanup(db.ResetForTest)
+	return home
+}
 
-	agentID := db.NewAgentID()
-	stateRoot = filepath.Join(home, "data", "tclaude", "opencode-agents", agentID)
-	configDir = filepath.Join(stateRoot, "config", "opencode")
-	require.NoError(t, os.MkdirAll(configDir, 0o700))
-	inserted, err := db.InsertOpenCodeAgentStateAllocation(
-		db.OpenCodeAgentStateAllocation{
-			AgentID:   agentID,
-			Mode:      db.OpenCodeStatePrivate,
-			StateRoot: stateRoot,
-		})
+// allocatedOpenCodeConfigDir gives the test an isolated host whose OpenCode
+// state allocation this daemon actually owns, and returns that agent's state
+// root and its config app directory. A self-bound contract naming any other
+// directory is refused (TCL-902), so the legitimate self-bind cases have to
+// stand on a real allocation rather than on the contract's own word.
+//
+// The allocation comes from allocatePrivateOpenCodeState, not from a row this
+// helper places where it thinks allocations go. The seed predicate now depends
+// on the private state parent the daemon derives, so a test that restated that
+// formula would agree with itself while the allocator drifted away from both.
+func allocatedOpenCodeConfigDir(t *testing.T) (stateRoot, configDir string) {
+	t.Helper()
+	isolatedOpenCodeHost(t)
+
+	allocation, err := allocatePrivateOpenCodeState(db.NewAgentID())
 	require.NoError(t, err)
-	require.True(t, inserted)
-	return stateRoot, configDir
+	require.Equal(t, db.OpenCodeStatePrivate, allocation.Mode)
+	configDir = filepath.Join(allocation.StateRoot, "config", "opencode")
+	require.NoError(t, os.MkdirAll(configDir, 0o700))
+	return allocation.StateRoot, configDir
 }
 
 // TCL-902, grandfathered branch. validateOpenCodeV3LaunchContract's
@@ -178,17 +185,25 @@ func TestPrepareOpenCodeReadOnlyConfigRefusesGrandfatheredContractTarget(t *test
 	// operator directory and one dressed up in the per-agent layout's own
 	// <root>/config/opencode shape.
 	for _, victimCase := range []struct {
-		name, suffix, want string
+		name, suffix string
+		want         func(victim string) string
 	}{
 		{
 			name:   "PlainDirectory",
 			suffix: "victim",
-			want:   "does not have the per-agent <state root>/config/opencode shape",
+			want: func(string) string {
+				return "does not have the per-agent <state root>/config/opencode shape"
+			},
 		},
 		{
 			name:   "LayoutShapedDirectory",
 			suffix: filepath.Join("victim", "config", "opencode"),
-			want:   "invalid OpenCode state agent id \"victim\"",
+			// The operator's own directory name must not be quoted back at them
+			// as an "invalid agent id"; it is named as what it is.
+			want: func(victim string) string {
+				return fmt.Sprintf("names %q where a per-agent state root was expected",
+					filepath.Dir(filepath.Dir(victim)))
+			},
 		},
 	} {
 		t.Run(victimCase.name, func(t *testing.T) {
@@ -217,7 +232,7 @@ func TestPrepareOpenCodeReadOnlyConfigRefusesGrandfatheredContractTarget(t *test
 			err := prepareOpenCodeReadOnlyConfig(
 				&session.TclaudeLayerLaunchSpec{Contract: contract}, "Linux")
 			require.ErrorContains(t, err, "opencode_read_only_config_bootstrap")
-			require.ErrorContains(t, err, victimCase.want)
+			require.ErrorContains(t, err, victimCase.want(victim))
 			assert.NoFileExists(t, filepath.Join(victim, openCodeInstallBootstrapFile))
 		})
 	}
@@ -297,13 +312,7 @@ func TestPrepareOpenCodeReadOnlyConfigRefusesForeignRootOfAllocatedAgent(t *test
 // A legacy-shared allocation records no state root, so its agent id must not
 // carry a per-agent config directory that only looks the part.
 func TestPrepareOpenCodeReadOnlyConfigRefusesLegacySharedAllocation(t *testing.T) {
-	home, err := filepath.EvalSymlinks(t.TempDir())
-	require.NoError(t, err)
-	t.Setenv("HOME", home)
-	t.Setenv("XDG_DATA_HOME", filepath.Join(home, "data"))
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "config"))
-	db.ResetForTest()
-	t.Cleanup(db.ResetForTest)
+	home := isolatedOpenCodeHost(t)
 
 	agentID := db.NewAgentID()
 	inserted, err := db.InsertOpenCodeAgentStateAllocation(
@@ -329,13 +338,7 @@ func TestPrepareOpenCodeReadOnlyConfigRefusesLegacySharedAllocation(t *testing.T
 // parent THIS daemon derives, is not proof of anything: the allocation store is
 // the same durable database as the launch spec.
 func TestPrepareOpenCodeReadOnlyConfigRefusesAllocationOutsidePrivateParent(t *testing.T) {
-	home, err := filepath.EvalSymlinks(t.TempDir())
-	require.NoError(t, err)
-	t.Setenv("HOME", home)
-	t.Setenv("XDG_DATA_HOME", filepath.Join(home, "data"))
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "config"))
-	db.ResetForTest()
-	t.Cleanup(db.ResetForTest)
+	home := isolatedOpenCodeHost(t)
 
 	agentID := db.NewAgentID()
 	stateRoot := filepath.Join(home, "elsewhere", agentID)
