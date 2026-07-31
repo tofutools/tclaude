@@ -39,6 +39,7 @@ import { dashPrefs } from './prefs.js';
 import { lastSnapshot } from './dashboard.js';
 import { featureState } from './feature-state-registry.js';
 import { syncFullBleedBars } from './hscroll.js';
+import { syncChromeTopInset } from './chrome-inset.js';
 // The compact one-line summaries live in the DATA modules (profiles.js /
 // roles.js); the editor/manager openers live in the MODAL modules. Importing
 // each from the module that actually exports it — a bad named import would
@@ -330,33 +331,12 @@ function syncDockActions(open) {
   }
 }
 
-// syncDockTop keeps the fixed dock rail spanning ONLY the content area —
-// below the top bar (header + marquee + nav) and above the fixed footer
-// (req 1) — rather than covering the header's right-side controls as the
-// old top:0 rail did. The chrome scrolls away with the page (it isn't
-// sticky — making it sticky would spin up a stacking context that re-scopes
-// the header popovers, a documented no-go), so we can't pin the top to a
-// constant: instead --dock-top tracks nav's live viewport-bottom, clamped at
-// 0. At rest it sits just under the nav; as the page scrolls down and the
-// chrome leaves, it rises to fill the full height (where the content is now
-// full-height too). Cheap: one getBoundingClientRect, rAF-coalesced. The
-// bottom is pinned in CSS to the footer bar.
-let dockTopScheduled = false;
-function syncDockTop() {
-  if (dockTopScheduled) return;
-  dockTopScheduled = true;
-  requestAnimationFrame(() => {
-    dockTopScheduled = false;
-    const nav = document.querySelector('nav');
-    const navBottom = nav ? nav.getBoundingClientRect().bottom : 0;
-    document.documentElement.style.setProperty('--dock-top', Math.max(0, navBottom) + 'px');
-  });
-}
+// The dock's top inset is the shared content-area inset (--dock-top), measured
+// and published by chrome-inset.js — the human-notification reader rides the
+// same variable. The dock owns the listeners that keep it fresh (see bindDock);
+// the measurement itself is no longer dock-private.
+const syncDockTop = () => syncChromeTopInset();
 
-// bindDock wires the edge toggle + seeds the open state from dashPrefs. Must
-// run after initDashPrefs so the persisted flag is already loaded. The
-// toggle button + shell are static HTML, so this binds once and survives
-// every poll (renderDock only touches #dock-body's inner sections).
 export function bindDock() {
   if (!$('#agent-dock')) return;
   // Re-home the toolbar globals off ANY change to body.dock-open, not only the

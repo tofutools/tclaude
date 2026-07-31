@@ -1109,12 +1109,52 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
   width: 15px; height: 15px; font-size: 10px;
   pointer-events: none;
 }
+/* The quick reader is a right-side panel and is geometrically the palette
+   dock's twin: it spans ONLY the content area — from --dock-top (nav's live
+   viewport-bottom, kept in sync by js/dock.js as the chrome scrolls away) down
+   to the fixed footer bar — so it lines up with the same top and bottom edges
+   the dock does, on every tab and at every chrome height. The old fixed
+   `top: 54px; bottom: 0` guessed one header height and covered the footer,
+   which is what made it read as a stray overlay rather than part of the shell.
+
+   Unlike the dock it deliberately does NOT reserve page width (no body
+   padding-right): the dock is a persistent rail you work alongside, while the
+   reader is a transient panel raised by a glyph and dismissed with Esc.
+   Reserving would reflow the whole page — and refit every open xterm — twice
+   per notification.
+
+   z-index sits above the dock (45), the footer (40) and the row/menu dropdowns
+   (50-60) — the reader is raised deliberately and should not be half-covered by
+   a menu left open behind it — and below the modal overlays (100+), so Reply
+   still opens over the reader. */
 .human-notification-drawer {
-  position: fixed; z-index: 90; top: 54px; right: 0; bottom: 0;
+  position: fixed; z-index: 90;
+  top: var(--dock-top); right: 0; bottom: var(--footer-h);
   width: min(440px, calc(100vw - 24px)); display: flex; flex-direction: column;
   box-sizing: border-box; border-left: 1px solid #30363d;
   background: #0d1117; color: #c9d1d9;
   box-shadow: -16px 0 36px rgba(0, 0, 0, .46);
+  animation: human-notification-drawer-in .18s ease;
+}
+/* The dock slides on a class it holds permanently; the reader is mounted and
+   unmounted per notification, so the entry is a mount-time animation (no
+   first-frame class dance) and the exit is a .closing class the island holds
+   for the same duration before it unmounts. Paging between messages re-renders
+   the same element, so neither replays mid-read. */
+@keyframes human-notification-drawer-in {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+@keyframes human-notification-drawer-out {
+  from { transform: translateX(0); }
+  to { transform: translateX(100%); }
+}
+.human-notification-drawer.closing {
+  animation: human-notification-drawer-out .18s ease forwards;
+}
+@media (prefers-reduced-motion: reduce) {
+  .human-notification-drawer,
+  .human-notification-drawer.closing { animation: none; }
 }
 .human-notification-drawer-header {
   position: relative; padding: 16px 18px 14px; border-bottom: 1px solid #30363d;
@@ -1221,6 +1261,103 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
 .human-notification-drawer-actions button.primary {
   border-color: #1f6feb; background: #0d3a66; color: #dbeafe;
 }
+/* ─── Reader skins for the cosmetic themes ────────────────────────────
+   The reader is chrome, so it re-skins with the shell the way the dock does:
+   the grimoire under body.wizard, the casino under body.slop. Both are kept
+   STRICTLY scoped to .human-notification-drawer (the same anti-pin invariant
+   #agent-dock follows) so neither theme leaks into the default panel. The two
+   classes never coexist. Regular mode is the unskinned block above.
+
+   The amber "!" glyph that raises the reader is deliberately NOT re-skinned in
+   either theme: it is an alert, and it should read the same everywhere. */
+body.wizard .human-notification-drawer {
+  background: #12101a; border-left-color: #3a2f57;
+  box-shadow: -16px 0 36px rgba(18, 6, 38, .58);
+}
+body.wizard .human-notification-drawer-header,
+body.wizard .human-notification-drawer-actions,
+body.wizard .human-notification-drawer-attachment { background: #17131f; }
+body.wizard .human-notification-drawer-header { border-bottom-color: #3a2f57; }
+body.wizard .human-notification-drawer-actions { border-top-color: #3a2f57; }
+body.wizard .human-notification-drawer-kicker { color: #9a86c9; }
+body.wizard .human-notification-drawer-close { border-color: #3a2f57; color: #b39ddb; }
+body.wizard .human-notification-drawer-close:hover,
+body.wizard .human-notification-drawer-close:focus-visible { color: #e6dcff; border-color: #7c5cc4; }
+body.wizard .human-notification-drawer-avatar { background: #241a3a; color: #e6c45f; }
+body.wizard .human-notification-drawer-sender strong,
+body.wizard .human-notification-drawer-message h2,
+body.wizard .human-notification-drawer-file strong { color: #e6dcff; }
+body.wizard .human-notification-drawer-sender small,
+body.wizard .human-notification-drawer-date,
+body.wizard .human-notification-drawer-file span { color: #9a86c9; }
+body.wizard .human-notification-drawer-nav { border-bottom-color: #2a2140; color: #b39ddb; }
+body.wizard .human-notification-drawer-nav button {
+  background: #1d1730; border-color: #3a2f57; color: #b39ddb;
+}
+body.wizard .human-notification-drawer-nav button:hover:not(:disabled) {
+  color: #e6dcff; border-color: #7c5cc4;
+}
+body.wizard .human-notification-drawer-date { border-bottom-color: #2a2140; }
+body.wizard .human-notification-drawer-body { color: #d8cff0; }
+body.wizard .human-notification-drawer-body a { color: #b39ddb; }
+body.wizard .human-notification-drawer-attachment { border-color: #3a2f57; }
+body.wizard .human-notification-drawer-file-link:hover { background: rgba(124, 92, 196, .12); }
+body.wizard .human-notification-drawer-file-link:focus-visible { outline-color: #b39ddb; }
+body.wizard .human-notification-drawer-file-icon { background: #241a3a; color: #d8cff0; }
+body.wizard .human-notification-drawer-download { border-color: #7c5cc4; color: #b39ddb; }
+body.wizard .human-notification-drawer-download:hover { background: rgba(124, 92, 196, .16); }
+body.wizard .human-notification-drawer-actions button {
+  background: #1d1730; border-color: #3a2f57; color: #d8cff0;
+}
+body.wizard .human-notification-drawer-actions button:hover { border-color: #7c5cc4; color: #e6dcff; }
+body.wizard .human-notification-drawer-actions button.primary {
+  background: #3b2a63; border-color: #7c5cc4; color: #f0e9ff;
+}
+
+body.slop .human-notification-drawer {
+  background: #1a0505; border-left-color: #8b0000;
+  box-shadow: -16px 0 36px rgba(0, 0, 0, .6);
+}
+body.slop .human-notification-drawer-header,
+body.slop .human-notification-drawer-actions,
+body.slop .human-notification-drawer-attachment { background: #2a0a0a; }
+body.slop .human-notification-drawer-header { border-bottom-color: #8b0000; }
+body.slop .human-notification-drawer-actions { border-top-color: #8b0000; }
+body.slop .human-notification-drawer-kicker { color: #c9a86b; }
+body.slop .human-notification-drawer-close { border-color: #8b0000; color: #c9a86b; }
+body.slop .human-notification-drawer-close:hover,
+body.slop .human-notification-drawer-close:focus-visible { color: #ffe88c; border-color: #ffd700; }
+body.slop .human-notification-drawer-avatar { background: #4a0a0a; color: #ffd700; }
+body.slop .human-notification-drawer-sender strong,
+body.slop .human-notification-drawer-message h2,
+body.slop .human-notification-drawer-file strong { color: #ffe88c; }
+body.slop .human-notification-drawer-sender small,
+body.slop .human-notification-drawer-date,
+body.slop .human-notification-drawer-file span { color: #c9a86b; }
+body.slop .human-notification-drawer-nav { border-bottom-color: #5c0d0d; color: #c9a86b; }
+body.slop .human-notification-drawer-nav button {
+  background: #2a0a0a; border-color: #8b0000; color: #c9a86b;
+}
+body.slop .human-notification-drawer-nav button:hover:not(:disabled) {
+  color: #ffe88c; border-color: #ffd700;
+}
+body.slop .human-notification-drawer-date { border-bottom-color: #5c0d0d; }
+body.slop .human-notification-drawer-body { color: #f0dcc0; }
+body.slop .human-notification-drawer-body a { color: #ffd700; }
+body.slop .human-notification-drawer-attachment { border-color: #8b0000; }
+body.slop .human-notification-drawer-file-link:hover { background: rgba(255, 215, 0, .09); }
+body.slop .human-notification-drawer-file-link:focus-visible { outline-color: #ffd700; }
+body.slop .human-notification-drawer-file-icon { background: #4a0a0a; color: #f0dcc0; }
+body.slop .human-notification-drawer-download { border-color: #ffd700; color: #ffd700; }
+body.slop .human-notification-drawer-download:hover { background: rgba(255, 215, 0, .13); }
+body.slop .human-notification-drawer-actions button {
+  background: #2a0a0a; border-color: #8b0000; color: #f0dcc0;
+}
+body.slop .human-notification-drawer-actions button:hover { border-color: #ffd700; color: #ffe88c; }
+body.slop .human-notification-drawer-actions button.primary {
+  background: #4a0a0a; border-color: #ffd700; color: #ffe88c;
+}
+
 .rowname-input {
   background: #0d1117; border: 1px solid #58a6ff; border-radius: 3px;
   color: #d4d4d4; padding: 0 4px; font: inherit; font-weight: 600;

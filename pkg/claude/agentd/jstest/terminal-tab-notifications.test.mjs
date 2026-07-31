@@ -34,6 +34,17 @@ function widgetFactory() {
   });
 }
 
+const older = {
+  id: 41,
+  from_agent: 'agt_one',
+  from_conv: 'conv-one-gen2',
+  from_title: 'builder',
+  subject: 'earlier question',
+  body: 'still open',
+  read: false,
+  created_at: '2026-07-31T09:00:00Z',
+};
+
 const notification = {
   id: 42,
   from_agent: 'agt_one',
@@ -145,7 +156,7 @@ test('the quick reader mounts on its own body-level host and answers every surfa
     await harness.importDashboardModule('js/human-notification-reader-island.js');
   const { openHumanNotificationReader } =
     await harness.importDashboardModule('js/human-notification-attention.js');
-  const snapshot = { value: { messages_unread: 1, messages: [notification] } };
+  const snapshot = { value: { messages_unread: 2, messages: [notification, older] } };
   const state = { snapshot, publish(next) { snapshot.value = next; } };
   const savedFetch = globalThis.fetch;
   globalThis.fetch = async () => ({ ok: true });
@@ -154,7 +165,8 @@ test('the quick reader mounts on its own body-level host and answers every surfa
   const launcher = harness.document.body.appendChild(harness.document.createElement('button'));
   t.after(() => launcher.remove());
   const mounted = await harness.mount(harness.html`
-    <${HumanNotificationReader} state=${state} actions=${{ reportError: () => {} }} />
+    <${HumanNotificationReader} state=${state} actions=${{ reportError: () => {} }}
+      closeAnimationMs=${10} />
   `);
   assert.equal(mounted.container.querySelector('.human-notification-drawer'), null);
 
@@ -173,9 +185,14 @@ test('the quick reader mounts on its own body-level host and answers every surfa
   await harness.act(() => {
     harness.fireEvent(drawer.querySelector('.human-notification-drawer-close'), 'click');
   });
-  assert.equal(mounted.container.querySelector('.human-notification-drawer'), null);
+  // The panel slides out before it goes: it stays mounted, marked .closing, for
+  // the length of the exit animation. Focus does not wait for it.
+  assert.ok(mounted.container.querySelector('.human-notification-drawer.closing'),
+    'closing plays the exit animation instead of vanishing');
   assert.equal(harness.document.activeElement, launcher,
     'closing hands focus back to whatever raised the reader');
+  await harness.act(async () => { await new Promise((done) => setTimeout(done, 40)); });
+  assert.equal(mounted.container.querySelector('.human-notification-drawer'), null);
 
   // Escape belongs to whoever already handled it — a live terminal, say.
   await harness.act(() => {
@@ -202,7 +219,77 @@ test('the quick reader mounts on its own body-level host and answers every surfa
     Object.defineProperty(escape, 'key', { value: 'Escape' });
     harness.document.dispatchEvent(escape);
   });
-  assert.equal(mounted.container.querySelector('.human-notification-drawer'), null);
+  assert.ok(mounted.container.querySelector('.human-notification-drawer.closing'));
+
+  // A different notification raised mid-exit takes the panel over rather than
+  // opening behind a drawer that is about to unmount itself.
+  await harness.act(() => {
+    openHumanNotificationReader({
+      sender: { agent: 'agt_one', conv: 'conv-one-gen2', label: 'builder' },
+      messageID: 41,
+      documentRef: harness.document,
+    });
+  });
+  const retaken = mounted.container.querySelector('.human-notification-drawer');
+  assert.ok(retaken, 'the panel is still there');
+  assert.equal(retaken.classList.contains('closing'), false,
+    'reopening while the panel is sliding out cancels the exit');
+  assert.equal(retaken.dataset.messageId, '41', 'and it shows the new notification');
+  assert.ok(retaken.contains(harness.document.activeElement),
+    'a reopen that reuses the mounted panel still moves focus into it');
+  await harness.act(async () => { await new Promise((done) => setTimeout(done, 40)); });
+  assert.ok(mounted.container.querySelector('.human-notification-drawer'),
+    'and the cancelled exit does not fire late and close the reopened panel');
+});
+
+test('a dismissed panel stops competing for Escape, and reduced motion skips the hold', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { HumanNotificationReader } =
+    await harness.importDashboardModule('js/human-notification-reader-island.js');
+  const { openHumanNotificationReader } =
+    await harness.importDashboardModule('js/human-notification-attention.js');
+  const snapshot = { value: { messages_unread: 1, messages: [notification] } };
+  const state = { snapshot, publish(next) { snapshot.value = next; } };
+  const savedFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true });
+  t.after(() => { globalThis.fetch = savedFetch; });
+
+  const open = () => harness.act(() => openHumanNotificationReader({
+    sender: { agent: 'agt_one', conv: 'conv-one-gen2', label: 'builder' },
+    messageID: 42,
+    documentRef: harness.document,
+  }));
+  const escape = () => {
+    const event = new harness.window.Event('keydown', { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'key', { value: 'Escape' });
+    harness.act(() => harness.document.dispatchEvent(event));
+    return event;
+  };
+
+  const mounted = await harness.mount(harness.html`
+    <${HumanNotificationReader} state=${state} actions=${{ reportError: () => {} }}
+      closeAnimationMs=${10} />
+  `);
+  await open();
+  assert.equal(escape().defaultPrevented, true, 'the open panel owns Escape');
+  assert.ok(mounted.container.querySelector('.human-notification-drawer.closing'));
+  // Still on screen, but already dismissed: a second Escape belongs to whatever
+  // else the operator meant it for, so the sliding-out panel must not eat it.
+  assert.equal(escape().defaultPrevented, false,
+    'a panel that is sliding out no longer consumes Escape');
+  await harness.act(async () => { await new Promise((done) => setTimeout(done, 40)); });
+
+  // Reduced motion: there is no exit animation to wait for, so holding the
+  // panel there for the animation's duration would just read as a hang.
+  const savedMatchMedia = globalThis.matchMedia;
+  globalThis.matchMedia = (query) => ({ matches: query.includes('reduced-motion') });
+  t.after(() => { globalThis.matchMedia = savedMatchMedia; });
+  await open();
+  assert.ok(mounted.container.querySelector('.human-notification-drawer'));
+  escape();
+  await harness.act(async () => { await new Promise((done) => setTimeout(done, 0)); });
+  assert.equal(mounted.container.querySelector('.human-notification-drawer'), null,
+    'reduced motion unmounts at once instead of holding for an animation');
 });
 
 test('the reader ignores an open request that names no message', async (t) => {
