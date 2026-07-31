@@ -40,8 +40,10 @@ the flows, and the manifest that says which evidence they must produce.
 
 Everything that decides *what runs*, *what counts as evidence*, *which harness
 versions are pinned* and *how fixtures are built* is in this directory and the
-shared lib. The CI job is generic: check out, set up Go and Node, invoke
-`run.sh`.
+shared lib. The CI job is generic: check out, set up Go and Node, restore the
+harness cache, invoke `run.sh`. It knows the shard *names* and nothing else —
+which flows each one runs and which harnesses it installs is `shards.txt`'s
+business, and the workflow-matrix check above is what keeps the two agreeing.
 
 That split exists because `.github/workflows/**` needs an operator with
 `workflow` scope to merge. With the logic inline, every new smoke, every
@@ -65,15 +67,83 @@ matters here is that these flows never call it.
 Needing a new tool is a repo edit here, not a workflow merge — the same reason
 the flows and the harness pins live in this directory.
 
+## Shards: two jobs, one entrypoint
+
+`shards.txt` maps a shard name to the flows one CI job runs and the harnesses
+that job installs:
+
+```
+session flows      10-floor-policy 20-harness-egress
+session harnesses  claude codex
+agentd  flows      30-opencode-carriage 40-opencode-floor
+agentd  harnesses  opencode
+```
+
+```bash
+scripts/filtered-proxy-smoke/run.sh --shard session   # or SMOKE_SHARD=session
+scripts/filtered-proxy-smoke/run.sh                   # no shard: everything
+```
+
+The two halves are independent — disjoint subnets, disjoint harnesses, disjoint
+Go packages — so running them as two jobs roughly halves the wall-clock and lets
+each job skip installing a harness it never launches. The split is at the **job**
+level and must stay there: `fixture::hosts_add`/`hosts_restore` mutate
+`/etc/hosts` through a single shared backup, so two flows running concurrently
+in one process would clobber each other's resolver state.
+
+Three checks keep the split from quietly dropping coverage, and all of them run
+whether or not a shard was selected:
+
+| check | what it refuses |
+| -- | -- |
+| flow union | a flow the manifest names that **no** shard runs — it would stop running while every job stayed green |
+| harness union | a harness `lib/harnesses.sh` can install that no shard claims (installed by nobody), or a shard naming one nothing can install |
+| workflow matrix | a shard declared here that CI's `shard: [...]` matrix does not invoke — it would satisfy both unions above and still execute nowhere |
+
+The third one reads `.github/workflows/*.yml` **read-only**. The dependency
+points from the repo *into* the workflow deliberately: that keeps the CI job
+generic, whereas a workflow that had to know about flows is the thing this whole
+layout exists to avoid. A job that does not pass `--shard` is skipped rather than
+checked — that is the unsharded shape, which is complete coverage by
+construction. A job that *does* pass `--shard` but whose matrix the parser cannot
+read (a block-form list, say) is a hard failure, not an assumed match.
+
+All three are self-tested in `scripts/lib/smoke/selftest.sh` against synthetic
+shard maps and workflow files — including each gap itself — so the guards are
+proven on every run rather than trusted.
+
+**Residual, stated rather than implied:** harnesses are declared per *shard*, not
+per flow, so nothing knows that `20-harness-egress` is the line needing `codex`.
+Moving a flow between shards without moving its harness leaves both unions
+satisfied and fails inside the flow with "command not found" — loud, but reading
+like a broken smoke rather than a shard map with a hole in it. Declaring
+harnesses per flow and deriving each shard's set as the union would close it.
+
 ## Adding a smoke
 
 1. Add `flows/<NN>-<name>.sh` defining `flow::run` (and optionally
    `flow::describe` for the failure summary, `flow::report` for an
    operator-facing extract on success).
 2. Add its required top-level test names to `manifest.txt`.
+3. Assign it to a shard in `shards.txt`.
 
 Nothing under `.github/` changes. `run.sh` discovers flows in sorted order and
-runs each in a subshell, so a flow cannot leak state into the next.
+runs each in a subshell, so a flow cannot leak state into the next. Forgetting
+step 3 fails the run rather than silently retiring the smoke.
+
+## Pinned-harness artifacts and the CI cache
+
+`harnesses::install_claude` **materializes, then verifies**: whatever file ends
+up at the cache path — restored by `actions/cache` or freshly downloaded — is
+what the published `sha256` is checked against and what gets installed. The
+checksum itself is fetched from the vendor manifest every run, never cached
+alongside the artifact, so a bad pair cannot verify against itself. A restored
+artifact that fails the check is deleted rather than left to poison every later
+run at the same pin. Every harness still asserts its version after install.
+
+`SMOKE_HARNESS_CACHE_DIR` overrides where those artifacts live (default:
+`$RUNNER_TEMP/smoke-harness-cache`); it is the path the workflow caches, keyed on
+the pin strings in `lib/harnesses.sh`.
 
 ## The evidence discipline
 
