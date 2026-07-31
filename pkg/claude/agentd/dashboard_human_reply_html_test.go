@@ -14,6 +14,7 @@ import (
 // the same string-pin approach as the slop / wizard guards.
 func TestDashboardHTML_HumanReplyWired(t *testing.T) {
 	island := string(mustReadFS(dashboardAssetsFS, "js/mail-island.js"))
+	quickReader := string(mustReadFS(dashboardAssetsFS, "js/groups-notification-reader.js"))
 	html := string(mustReadFS(dashboardAssetsFS, "dashboard.html"))
 	must := func(needle, why string) {
 		t.Helper()
@@ -31,6 +32,12 @@ func TestDashboardHTML_HumanReplyWired(t *testing.T) {
 	if !strings.Contains(island, `data-agent=${message.from_agent || ''}`) ||
 		!strings.Contains(island, `data-conv=${message.from_conv}`) {
 		t.Error("Messages island reply control is missing sender identity attributes")
+	}
+	if !strings.Contains(quickReader, "human-notification-drawer-reply") ||
+		!strings.Contains(quickReader, "openHumanReplyModal({") ||
+		!strings.Contains(quickReader, "id: message.id") ||
+		!strings.Contains(quickReader, "subject: message.subject || ''") {
+		t.Error("Groups notification reader is missing the shared reply launcher context")
 	}
 	must("function senderOnline(", "mail.js defines the shared sender-online helper")
 	must("focusAccessRequest, openMailbox, senderOnline,", "mail.js exports senderOnline for the reply dialog")
