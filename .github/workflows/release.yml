@@ -1106,9 +1106,22 @@ jobs:
   # a review, not a workflow merge. Keep this job generic: if a change here is
   # ever needed to add a smoke, that belongs in the entrypoint instead.
   filtered-proxy-smoke:
-    name: Filtered-network proxy smoke
+    name: Filtered-network proxy smoke (${{ matrix.shard }})
     if: ${{ inputs.homebrew_only != true }}
     runs-on: ubuntu-latest
+    strategy:
+      # One red shard must not cancel its sibling. The two halves are
+      # independent evidence, and losing the other half's result to a
+      # cancellation would turn one failure into two unknowns.
+      fail-fast: false
+      matrix:
+        # The shard NAMES are the only thing this workflow knows. Which flows
+        # each shard runs and which harnesses it installs lives in
+        # scripts/filtered-proxy-smoke/shards.txt, and the entrypoint refuses to
+        # start unless every flow in the manifest belongs to some shard — so
+        # adding a smoke stays a repo change, and a flow assigned to no shard
+        # fails the run instead of quietly vanishing from both jobs.
+        shard: [session, agentd]
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -1125,9 +1138,34 @@ jobs:
         with:
           node-version: lts/*
 
+      # Caches the pinned Claude Code artifact. MEASURED WORTH, stated so nobody
+      # mistakes this for a speedup lever: the fresh download took 2.5s on a
+      # cache miss, so this saves ~2s, not the ~50MB-download cost it looks like
+      # it should. It is kept because it is cheap and because it bounds the
+      # damage from a slow vendor CDN, not because it moves the job's wall-clock.
+      # The lever is the flow's own runtime.
+      #
+      # The key is the hash of lib/harnesses.sh, which is where the pins live: a
+      # conservative superset, so an unrelated edit to that file costs a
+      # re-download and can never serve an artifact belonging to a different
+      # pin. Correctness does not rest on the key either way —
+      # harnesses::install_claude verifies the published sha256 and the version
+      # against whatever file it actually uses, restored or freshly downloaded.
+      - name: Cache pinned harness artifacts
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/smoke-harness-cache
+          key: smoke-harness-${{ runner.os }}-${{ matrix.shard }}-${{ hashFiles('scripts/filtered-proxy-smoke/lib/harnesses.sh') }}
+
+      # The shard reaches the script through env: rather than being spliced into
+      # the shell line, matching the sibling test job's use of matrix values.
+      # Nothing user-controlled can reach a matrix value here, so this is
+      # consistency and lint-quiet rather than a live injection fix.
       - name: Run filtered-network proxy smokes
         shell: bash
-        run: scripts/filtered-proxy-smoke/run.sh
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: scripts/filtered-proxy-smoke/run.sh --shard "$SHARD"
 
   # The end-to-end proxy-posture smokes verify the ASSEMBLED posture: authored
   # policy in, real launch, real enforcement observed, for each posture the
