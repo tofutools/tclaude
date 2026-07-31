@@ -189,5 +189,50 @@ test('reply button opens the shared reply dialog with notification context', asy
     label: 'sender',
     subject: 'review result',
   }]);
-  assert.deepEqual(closed, [false], 'reply closes the quick reader without restoring its launcher');
+  assert.deepEqual(closed, [], 'reply keeps the quick reader open beneath the reply dialog');
+});
+
+test('quick reader yields Escape to a stacked reply dialog', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { GroupsNotificationReader } = await harness.importDashboardModule(
+    'js/groups-notification-reader.js',
+  );
+  const message = {
+    id: 44,
+    from_agent: 'agt_sender',
+    from_conv: 'conv-sender',
+    from_title: 'sender',
+    subject: 'follow-up',
+    body: 'Please reply.',
+    read: true,
+  };
+  const state = {
+    snapshot: { value: { messages: [message], messages_unread: 0 } },
+    publish() {},
+  };
+  const closed = [];
+  const mounted = await harness.mount(harness.html`
+    <${GroupsNotificationReader}
+      descriptor=${{
+        sender: { agent: 'agt_sender', conv: 'conv-sender', label: 'sender' },
+        messageId: 44,
+      }}
+      snapshot=${state.snapshot.value}
+      state=${state}
+      actions=${{ reportError() {} }}
+      onSelect=${() => {}}
+      onClose=${(restoreFocus) => closed.push(restoreFocus)}
+    />
+  `);
+
+  const overlay = harness.document.createElement('div');
+  overlay.className = 'modal-overlay show';
+  harness.document.body.append(overlay);
+  await harness.act(() => harness.fireEvent(harness.document, 'keydown', { key: 'Escape' }));
+  assert.deepEqual(closed, [], 'the reader stays open while the reply dialog owns Escape');
+
+  overlay.remove();
+  await harness.act(() => harness.fireEvent(harness.document, 'keydown', { key: 'Escape' }));
+  assert.deepEqual(closed, [true], 'Escape closes the reader when no modal is stacked');
+  await mounted.unmount();
 });

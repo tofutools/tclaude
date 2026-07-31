@@ -5,6 +5,7 @@ import { relTime, shortAgentId } from './helpers.js';
 import { humanNotificationMatchesSender } from './human-notification-attention.js';
 import { openHumanNotifications } from './mail-bridge.js';
 import { openHumanReplyModal } from './message-access-dialog-controller.js';
+import { hasShownOverlay } from './overlay-stack.js';
 
 const html = htm.bind(h);
 const readWrites = new Map();
@@ -138,7 +139,7 @@ export function GroupsNotificationReader({
 
   useEffect(() => {
     const onKeyDown = (event) => {
-      if (event.key !== 'Escape') return;
+      if (event.key !== 'Escape' || hasShownOverlay()) return;
       event.preventDefault();
       onClose(true);
     };
@@ -194,7 +195,8 @@ export function GroupsNotificationReader({
     </div>
     <div class="human-notification-drawer-actions">
       <button type="button" class="primary human-notification-drawer-reply" onClick=${() => {
-        onClose(false);
+        // Keep the quick viewer mounted beneath the reply dialog so it remains
+        // available after the reply is sent or the dialog is dismissed.
         openHumanReplyModal({
           id: message.id,
           agent: message.from_agent || descriptor.sender.agent || '',
