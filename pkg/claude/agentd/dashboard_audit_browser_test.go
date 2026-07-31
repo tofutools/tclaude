@@ -64,6 +64,9 @@ if (!document.querySelector('.audit-spawn-info-trigger')) throw new Error('spawn
 var panel = document.querySelector('.audit-spawn-popover');
 var close = panel && panel.querySelector('.audit-spawn-popover-close');
 if (!panel || !close) throw new Error('spawn details popover did not open');
+if (panel.querySelectorAll('section').length !== 3) throw new Error('spawn details sections did not render');
+if (getComputedStyle(panel.querySelector('section')).display === 'none') throw new Error('spawn details sections are hidden by global tab styling');
+if (!panel.textContent.includes('Request input') || !panel.textContent.includes('Resolved parameters and profiles') || !panel.textContent.includes('Command response')) throw new Error('spawn details body labels did not render');
 if (document.activeElement !== close) throw new Error('opening the popover did not focus close');
 resolve();
 }catch(error){reject(error);}});});});`},

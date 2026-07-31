@@ -1748,6 +1748,7 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 }
 .audit-spawn-popover-close:hover, .audit-spawn-popover-close:focus { color: #f0f6fc; }
 .audit-spawn-popover-note { margin: 0 0 8px; color: #d29922; font-size: 11px; line-height: 1.4; }
+.audit-spawn-popover section { display: block; }
 .audit-spawn-popover section + section { margin-top: 10px; }
 .audit-spawn-popover h4 {
   margin: 0 0 4px; color: #79c0ff; font-size: 11px; font-weight: 600;
