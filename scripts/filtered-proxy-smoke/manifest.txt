@@ -1,0 +1,26 @@
+# Evidence manifest for the filtered-proxy smokes.
+#
+# Each line: <flow-file-basename-without-.sh> <TopLevelTestName>
+#
+# This file IS the evidence record. A smoke only backs a capability cell if its
+# name appears here AND the run reports an explicit top-level pass for it, so a
+# test that is skipped, renamed, filtered out or build-tagged away is a hard CI
+# failure rather than a quiet green.
+#
+# TRADE-OFF, stated where it is taken: this discipline now lives in a file
+# agents can edit, whereas it used to live in a workflow only an operator could
+# change. That was the price of making the smokes extensible without a workflow
+# merge every time. The guard from here on is this manifest plus cold review:
+# deleting a line is a visible, reviewable diff that says exactly which evidence
+# is being dropped, and every flow must claim at least one test or the run
+# fails. What it cannot stop is a rename done consistently in both places — that
+# is a review question, not a mechanical one.
+#
+# Adding a smoke: add its flow file under flows/, add its test names here.
+# Nothing under .github/ needs to change.
+
+10-floor-policy TestTclaudeLayerProxyFloorSmoke
+10-floor-policy TestTclaudeLayerProxyPolicySmoke
+
+20-harness-egress TestPinnedProxyHarnessCooperation
+20-harness-egress TestPinnedProxyToolEgress
