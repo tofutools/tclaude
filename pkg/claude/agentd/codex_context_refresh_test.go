@@ -84,7 +84,8 @@ func TestCodexContextRefreshFollowerPersistsEffortUsageAndCost(t *testing.T) {
 		"input_tokens": 2000, "cached_input_tokens": 400,
 		"output_tokens": 100, "total_tokens": 2100,
 	}
-	appendCodexRefreshEnvelope(t, path, "event_msg", map[string]any{
+	yesterday := time.Now().AddDate(0, 0, -1)
+	appendCodexRefreshEnvelopeAt(t, path, yesterday, "event_msg", map[string]any{
 		"type": "token_count",
 		"info": map[string]any{
 			"total_token_usage": usage, "last_token_usage": usage,
@@ -102,20 +103,43 @@ func TestCodexContextRefreshFollowerPersistsEffortUsageAndCost(t *testing.T) {
 			},
 		},
 	})
+	appendCodexRefreshEnvelope(t, path, "event_msg", map[string]any{
+		"type": "token_count",
+		"info": map[string]any{
+			"total_token_usage": map[string]any{
+				"input_tokens": 4000, "cached_input_tokens": 800,
+				"output_tokens": 200, "total_tokens": 4200,
+			},
+			"last_token_usage":     usage,
+			"model_context_window": 200000,
+		},
+	})
 
 	sess := &db.SessionRow{
 		ID: sessionID, ConvID: convID, TmuxSession: "codex-pane", Status: "idle",
 		Harness: harness.CodexName, CreatedAt: time.Now(),
 	}
 	require.NoError(t, db.SaveSession(sess))
+	require.NoError(t, db.ReplaceSessionVirtualCostHistory(sessionID, 1,
+		[]db.VirtualCostDailySnapshot{
+			{Day: yesterday.In(time.Local).Format("2006-01-02"), CostUSD: 0.5, UpdatedAt: yesterday},
+			{Day: time.Now().In(time.Local).Format("2006-01-02"), CostUSD: 1, UpdatedAt: time.Now()},
+		}), "seed the inflated multi-day projection produced by the old pricing table")
 	refreshCodexContextSnapshotOnRead(sess, true)
 
 	snapshot, err := db.GetContextSnapshot(sessionID)
 	require.NoError(t, err)
 	assert.Equal(t, int64(2000), snapshot.TokensInput)
 	assert.Equal(t, "high", snapshot.EffortLevel)
-	assert.InDelta(t, 0.00448, snapshot.VirtualCostUSD, 1e-9)
+	assert.InDelta(t, 0.00896, snapshot.VirtualCostUSD, 1e-9)
 	assert.Zero(t, snapshot.CostUSD, "subscription cost remains hypothetical")
+	rows, err := db.AllCostDailyRows()
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+	assert.InDelta(t, 0.00448, rows[0].VirtualCostUSD, 1e-9,
+		"the authoritative fold replaces the old first-day cumulative prefix")
+	assert.InDelta(t, 0.00896, rows[1].VirtualCostUSD, 1e-9,
+		"the authoritative fold replaces, rather than MAXes, the final daily total")
 
 	cache, err := db.LoadCodexUsageCache()
 	require.NoError(t, err)
@@ -127,6 +151,69 @@ func TestCodexContextRefreshFollowerPersistsEffortUsageAndCost(t *testing.T) {
 	assert.Equal(t, 31.0, got.FiveHour.UsedPercent)
 	require.NotNil(t, got.Weekly)
 	assert.Equal(t, 45.0, got.Weekly.UsedPercent)
+
+	// Replacement with a valid but unpriced rollout is authoritative: stale
+	// session and daily projections must clear instead of surviving forever.
+	require.NoError(t, os.WriteFile(path, nil, 0o600))
+	appendCodexRefreshEnvelope(t, path, "session_meta", map[string]any{"id": convID})
+	appendCodexRefreshEnvelope(t, path, "turn_context", map[string]any{
+		"model": "unpriced-preview", "effort": "medium",
+	})
+	appendCodexRefreshTokenCount(t, path, 100, 10)
+	resetCodexRefreshThrottleForTest(sessionID)
+	refreshCodexContextSnapshotOnRead(sess, true)
+	snapshot, err = db.GetContextSnapshot(sessionID)
+	require.NoError(t, err)
+	assert.Zero(t, snapshot.VirtualCostUSD)
+	rows, err = db.AllCostDailyRows()
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+	assert.Zero(t, rows[0].VirtualCostUSD)
+	assert.Zero(t, rows[1].VirtualCostUSD)
+}
+
+func TestCodexContextRefreshRejectsStaleSessionGenerationTelemetry(t *testing.T) {
+	setupTestDB(t)
+	resetCodexContextRefreshStateForTest()
+	t.Cleanup(resetCodexContextRefreshStateForTest)
+
+	const (
+		sessionID = "codex-stale-generation-session"
+		convID    = "019ec004-4250-79b1-9ade-ebaea41354f5"
+	)
+	path := filepath.Join(os.Getenv("HOME"), ".codex", "sessions", "2026", "07", "16",
+		"rollout-2026-07-16T10-00-00-"+convID+".jsonl")
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, nil, 0o600))
+	appendCodexRefreshEnvelope(t, path, "session_meta", map[string]any{"id": convID})
+	appendCodexRefreshEnvelope(t, path, "turn_context", map[string]any{
+		"model": "gpt-5.6-terra", "effort": "high",
+	})
+	appendCodexRefreshTokenCount(t, path, 2000, 100)
+
+	stale := &db.SessionRow{
+		ID: sessionID, ConvID: convID, TmuxSession: "codex-pane", Status: "idle",
+		Harness: harness.CodexName, CreatedAt: time.Now().Add(-time.Minute),
+	}
+	require.NoError(t, db.SaveSession(stale))
+	require.NoError(t, db.DeleteSession(sessionID))
+	current := *stale
+	current.CreatedAt = time.Now()
+	require.NoError(t, db.SaveSession(&current))
+	require.NoError(t, db.UpdateSessionEffort(sessionID, "low"))
+	require.NoError(t, db.UpdateSessionVirtualCost(sessionID, 9))
+
+	refreshCodexContextSnapshotOnRead(stale, true)
+	snapshot, err := db.GetContextSnapshot(sessionID)
+	require.NoError(t, err)
+	assert.Equal(t, "low", snapshot.EffortLevel,
+		"stale follower effort must not attach to a recreated session row")
+	assert.Equal(t, 9.0, snapshot.VirtualCostUSD,
+		"stale follower cost must not attach to a recreated session row")
+	checkpoint, err := db.LoadCodexTelemetryCheckpoint(sessionID)
+	require.NoError(t, err)
+	assert.Nil(t, checkpoint,
+		"stale follower checkpoint must not attach to a recreated session row")
 }
 
 func TestCodexContextWritePerfPhasesOnlyIncludeExecutedPaths(t *testing.T) {
@@ -787,8 +874,13 @@ func appendCodexRefreshTokenCount(t *testing.T, path string, input, output int64
 
 func appendCodexRefreshEnvelope(t *testing.T, path, typ string, payload any) {
 	t.Helper()
+	appendCodexRefreshEnvelopeAt(t, path, time.Now(), typ, payload)
+}
+
+func appendCodexRefreshEnvelopeAt(t *testing.T, path string, at time.Time, typ string, payload any) {
+	t.Helper()
 	line, err := json.Marshal(map[string]any{
-		"timestamp": time.Now().UTC().Format(time.RFC3339Nano), "type": typ, "payload": payload,
+		"timestamp": at.UTC().Format(time.RFC3339Nano), "type": typ, "payload": payload,
 	})
 	require.NoError(t, err)
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0)

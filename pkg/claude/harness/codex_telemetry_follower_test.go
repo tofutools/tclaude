@@ -129,7 +129,10 @@ func TestCodexTelemetryFollower_CostFoldSurvivesRestartAndReadsAppend(t *testing
 	firstFollower := &CodexTelemetryFollower{}
 	first := assertFollowerMatchesFull(t, firstFollower, home, id, path)
 	require.True(t, first.HasCost)
+	require.True(t, first.CostAuthoritative)
 	assert.InDelta(t, 1.42, first.Cost.CostUSD, 1e-12)
+	require.Len(t, first.CostHistory, 1)
+	assert.InDelta(t, 1.42, first.CostHistory[0].CostUSD, 1e-12)
 	assert.Equal(t, "high", first.Effort)
 	require.NotNil(t, first.Usage)
 	require.NotNil(t, first.Usage.FiveHour)
@@ -147,7 +150,11 @@ func TestCodexTelemetryFollower_CostFoldSurvivesRestartAndReadsAppend(t *testing
 	require.NoError(t, restored.RestoreCheckpoint(checkpoint))
 	got := assertFollowerMatchesFull(t, restored, home, id, path)
 	require.True(t, got.HasCost)
+	require.True(t, got.CostAuthoritative)
 	assert.InDelta(t, 4.06, got.Cost.CostUSD, 1e-12)
+	require.Len(t, got.CostHistory, 1)
+	assert.InDelta(t, 4.06, got.CostHistory[0].CostUSD, 1e-12,
+		"daily cumulative history survives the durable cursor")
 	assert.Equal(t, "high", got.Effort, "effort survives the durable cursor")
 	require.NotNil(t, got.Usage, "latest populated usage survives the durable cursor")
 	require.NotNil(t, got.Usage.FiveHour)

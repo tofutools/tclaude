@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"time"
 )
 
 // Context-window telemetry for Codex. Claude Code surfaces "how full is the
@@ -52,11 +53,24 @@ type CodexRuntimeSnapshot struct {
 	Usage      *CodexUsage
 	Cost       CodexTokenCost
 	HasCost    bool
+	// CostAuthoritative distinguishes a successfully folded rollout with no
+	// priceable records from a missing/unreadable rollout. CostHistory carries
+	// cumulative local-day prefixes so corrected pricing can replace, not MAX,
+	// previously persisted daily projections.
+	CostAuthoritative bool
+	CostHistory       []CodexTokenCostDailySnapshot
 	// ContextReset means a compacted record is newer than the latest usable
 	// token_count. Callers must clear any persisted pre-compaction snapshot
 	// instead of leaving it in place or restoring it from older telemetry.
 	ContextReset         bool
 	InterruptedSubagents map[string]struct{}
+}
+
+type CodexTokenCostDailySnapshot struct {
+	Day      string
+	CostUSD  float64
+	Observed time.Time
+	Model    string
 }
 
 // codexTokenUsage mirrors a token-usage block inside a token_count event.
@@ -187,6 +201,7 @@ func CodexRuntimeTelemetryFromRollout(rolloutPath string) (CodexRuntimeSnapshot,
 	if _, _, err := scanCompleteCodexLines(rc, rolloutPath, &state, false); err != nil {
 		return CodexRuntimeSnapshot{}, fmt.Errorf("scan codex rollout %s: %w", rolloutPath, err)
 	}
+	state.costAuthoritative = true
 	return state.snapshot(), nil
 }
 
@@ -200,6 +215,8 @@ type codexRuntimeScanState struct {
 	costPriced           bool
 	costModel            string
 	costObserved         string
+	costAuthoritative    bool
+	costHistory          []CodexTokenCostDailySnapshot
 	interruptedSubagents map[string]struct{}
 	followupCallIDs      map[string]struct{}
 	checkpointStateBytes int64
@@ -223,6 +240,8 @@ func (s codexRuntimeScanState) clone() codexRuntimeScanState {
 		costPriced:           s.costPriced,
 		costModel:            s.costModel,
 		costObserved:         s.costObserved,
+		costAuthoritative:    s.costAuthoritative,
+		costHistory:          append([]CodexTokenCostDailySnapshot(nil), s.costHistory...),
 		interruptedSubagents: make(map[string]struct{}, len(s.interruptedSubagents)),
 		followupCallIDs:      make(map[string]struct{}, len(s.followupCallIDs)),
 		checkpointStateBytes: s.checkpointStateBytes,
@@ -338,6 +357,19 @@ func (s *codexRuntimeScanState) applyTokenCost(info codexTokenCountInfo, observe
 	s.costPriced = true
 	s.costModel = s.model
 	s.costObserved = observed
+	observedAt := parseCodexEventTime(observed)
+	if observedAt.IsZero() {
+		observedAt = time.Now()
+	}
+	daily := CodexTokenCostDailySnapshot{
+		Day:     observedAt.In(time.Local).Format("2006-01-02"),
+		CostUSD: s.costUSD, Observed: observedAt, Model: s.model,
+	}
+	if len(s.costHistory) > 0 && s.costHistory[len(s.costHistory)-1].Day == daily.Day {
+		s.costHistory[len(s.costHistory)-1] = daily
+	} else {
+		s.costHistory = append(s.costHistory, daily)
+	}
 }
 
 func (s *codexRuntimeScanState) invalidateContext() {
@@ -420,6 +452,8 @@ func (s *codexRuntimeScanState) snapshot() CodexRuntimeSnapshot {
 		Effort:               s.effort,
 		HasEffort:            s.effort != "",
 		Usage:                s.usage,
+		CostAuthoritative:    s.costAuthoritative,
+		CostHistory:          append([]CodexTokenCostDailySnapshot(nil), s.costHistory...),
 	}
 	if s.costPriced {
 		result.Cost = CodexTokenCost{

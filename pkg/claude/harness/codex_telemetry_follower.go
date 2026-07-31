@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	codexTelemetryCheckpointVersion  = 2
+	codexTelemetryCheckpointVersion  = 3
 	codexTelemetryAnchorBytes        = 64
 	maxCodexTelemetryCheckpointBytes = 1 << 20
 )
@@ -52,27 +52,29 @@ type CodexTelemetryFollower struct {
 // byte N with an empty interrupted-child/followup ledger would produce a
 // different answer from scanning bytes [0,N) first.
 type codexTelemetryCheckpoint struct {
-	Version              int                  `json:"version"`
-	Home                 string               `json:"home"`
-	ConvID               string               `json:"conv_id"`
-	Path                 string               `json:"path"`
-	Offset               int64                `json:"offset"`
-	FileSize             int64                `json:"file_size"`
-	ModTimeUnixNano      int64                `json:"mod_time_unix_nano"`
-	Device               uint64               `json:"device,omitempty"`
-	Inode                uint64               `json:"inode,omitempty"`
-	Anchor               []byte               `json:"anchor"`
-	Latest               *codexTokenCountInfo `json:"latest,omitempty"`
-	ContextReset         bool                 `json:"context_reset,omitempty"`
-	Model                string               `json:"model,omitempty"`
-	Effort               string               `json:"effort,omitempty"`
-	Usage                *CodexUsage          `json:"usage,omitempty"`
-	CostUSD              float64              `json:"cost_usd,omitempty"`
-	CostPriced           bool                 `json:"cost_priced,omitempty"`
-	CostModel            string               `json:"cost_model,omitempty"`
-	CostObserved         string               `json:"cost_observed,omitempty"`
-	InterruptedSubagents []string             `json:"interrupted_subagents,omitempty"`
-	FollowupCallIDs      []string             `json:"followup_call_ids,omitempty"`
+	Version              int                           `json:"version"`
+	Home                 string                        `json:"home"`
+	ConvID               string                        `json:"conv_id"`
+	Path                 string                        `json:"path"`
+	Offset               int64                         `json:"offset"`
+	FileSize             int64                         `json:"file_size"`
+	ModTimeUnixNano      int64                         `json:"mod_time_unix_nano"`
+	Device               uint64                        `json:"device,omitempty"`
+	Inode                uint64                        `json:"inode,omitempty"`
+	Anchor               []byte                        `json:"anchor"`
+	Latest               *codexTokenCountInfo          `json:"latest,omitempty"`
+	ContextReset         bool                          `json:"context_reset,omitempty"`
+	Model                string                        `json:"model,omitempty"`
+	Effort               string                        `json:"effort,omitempty"`
+	Usage                *CodexUsage                   `json:"usage,omitempty"`
+	CostUSD              float64                       `json:"cost_usd,omitempty"`
+	CostPriced           bool                          `json:"cost_priced,omitempty"`
+	CostModel            string                        `json:"cost_model,omitempty"`
+	CostObserved         string                        `json:"cost_observed,omitempty"`
+	CostAuthoritative    bool                          `json:"cost_authoritative,omitempty"`
+	CostHistory          []CodexTokenCostDailySnapshot `json:"cost_history,omitempty"`
+	InterruptedSubagents []string                      `json:"interrupted_subagents,omitempty"`
+	FollowupCallIDs      []string                      `json:"followup_call_ids,omitempty"`
 }
 
 // RestoreCheckpoint primes an empty follower from a durable checkpoint. The
@@ -105,6 +107,8 @@ func (f *CodexTelemetryFollower) RestoreCheckpoint(data []byte) error {
 	state.costPriced = cp.CostPriced
 	state.costModel = cp.CostModel
 	state.costObserved = cp.CostObserved
+	state.costAuthoritative = cp.CostAuthoritative
+	state.costHistory = append([]CodexTokenCostDailySnapshot(nil), cp.CostHistory...)
 	for _, id := range cp.InterruptedSubagents {
 		if id != "" {
 			state.addCheckpointSetValue(state.interruptedSubagents, checkpointInterruptedSubagentsPrefix, id)
@@ -167,6 +171,8 @@ func (f *CodexTelemetryFollower) Checkpoint() ([]byte, bool, error) {
 		CostPriced:           f.state.costPriced,
 		CostModel:            f.state.costModel,
 		CostObserved:         f.state.costObserved,
+		CostAuthoritative:    f.state.costAuthoritative,
+		CostHistory:          append([]CodexTokenCostDailySnapshot(nil), f.state.costHistory...),
 		InterruptedSubagents: sortedStringSet(f.state.interruptedSubagents),
 		FollowupCallIDs:      sortedStringSet(f.state.followupCallIDs),
 	}
@@ -319,6 +325,7 @@ func (f *CodexTelemetryFollower) fullScan(path string, info os.FileInfo) (CodexR
 		if !os.SameFile(metadata.info, pathInfo) {
 			continue
 		}
+		state.costAuthoritative = true
 		f.state = state
 		f.offset = offset
 		f.info = metadata.info
