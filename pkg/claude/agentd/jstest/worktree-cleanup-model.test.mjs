@@ -28,8 +28,16 @@ test('worktree model preserves classifications, safety gates, and exact-path res
   assert.deepEqual(model.visibleWorktrees(reconciled, 'old').map((row) => row.path), ['/repo-wt']);
   assert.deepEqual(model.categoryWorktrees(reconciled, 'agent').map((row) => row.path), ['/repo-wt-child']);
   assert.deepEqual(model.dirtyWorktrees(reconciled).map((row) => row.path), ['/repo-wt']);
-  assert.deepEqual(model.freezeWorktreeCleanupRequest(reconciled, false), {
-    paths: ['/repo-wt', '/repo-wt-child'], deleteBranches: false,
+  const pruneChoices = new Map([['/repo', false]]);
+  const prunable = model.reconcilePrunableRepos([{
+    repo_root: '/repo', count: 3, checked: true,
+    reasons: [{ reason: 'gitdir file does not exist', count: 3 }],
+  }], pruneChoices);
+  assert.equal(prunable[0].checked, false, 'an explicit stale-record opt-out survives a rescan');
+  assert.equal(model.prunableRecordCount(prunable), 3);
+  assert.equal(model.prunableRepoMatches(prunable[0], 'gitdir'), true);
+  assert.deepEqual(model.freezeWorktreeCleanupRequest(reconciled, prunable, false), {
+    paths: ['/repo-wt', '/repo-wt-child'], pruneRoots: [], deleteBranches: false,
   });
 
   model.reconcileWorktreeCandidates([
@@ -63,4 +71,7 @@ test('worktree model filters by path, branch, and agent identity and summarizes 
   assert.equal(model.worktreeMatches(candidate, 'missing'), false);
   assert.equal(model.worktreeCleanupSummary({ removed: 2, branches: 1, skipped: 1, failed: 1 }),
     'removed 2 worktrees (+1 branch), 1 skipped, 1 failed');
+  assert.equal(model.worktreeCleanupSummary({
+    removed: 0, pruned: 2, prune_remaining: 1, prune_failed: 1,
+  }), 'removed 0 worktrees; pruned 2 stale Git records, 1 remains (1 repo failed/partial)');
 });

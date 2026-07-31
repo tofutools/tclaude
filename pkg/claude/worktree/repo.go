@@ -1,12 +1,14 @@
 package worktree
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 )
 
 // repo.go holds repo-path-aware twins of the CWD-implicit helpers in
@@ -92,6 +94,12 @@ func parseWorktreePorcelain(output string) []WorktreeInfo {
 			current.Branch = strings.TrimPrefix(strings.TrimPrefix(line, "branch "), "refs/heads/")
 		case line == "bare":
 			current.IsBare = true
+		case line == "prunable" || strings.HasPrefix(line, "prunable "):
+			current.Prunable = true
+			current.PrunableReason = strings.TrimSpace(strings.TrimPrefix(line, "prunable"))
+		case line == "locked" || strings.HasPrefix(line, "locked "):
+			current.Locked = true
+			current.LockReason = strings.TrimSpace(strings.TrimPrefix(line, "locked"))
 		}
 	}
 	if current.Path != "" {
@@ -127,20 +135,245 @@ func MainRepoForPath(dir string) string {
 	return filepath.Dir(common)
 }
 
+// PrunableWorktree is one stale administrative entry reported by
+// `git worktree prune --dry-run --verbose`. AdminDir is Git's name below
+// .git/worktrees; Reason explains why Git considers it removable.
+type PrunableWorktree struct {
+	AdminDir     string
+	Reason       string
+	WorktreePath string // non-empty when Git can still associate a checkout path
+}
+
+const tclaudePruneProtectionReason = "tclaude cleanup protects individually managed worktree"
+
+var worktreePruneMu sync.Mutex
+
+// PruneProtectionRestoreError means prune may have cleared the requested
+// invisible records, but tclaude could not restore one of the temporary locks
+// used to protect an individually managed porcelain row. Callers must report
+// this as failed/partial rather than advisory command stderr.
+type PruneProtectionRestoreError struct {
+	Err error
+}
+
+func (e *PruneProtectionRestoreError) Error() string {
+	return "restore temporary worktree prune protection: " + e.Err.Error()
+}
+
+func (e *PruneProtectionRestoreError) Unwrap() error { return e.Err }
+
+// PrunableWorktreesIn reports stale worktree administrative entries that are
+// absent from `worktree list`, without changing them. Prune's dry-run is the
+// authoritative discovery surface; candidates that porcelain still exposes
+// stay in the existing individually selectable worktree flow. The only repair
+// performed during preview is removing a tclaude-owned temporary protection
+// lock left behind by an interrupted earlier prune.
+func PrunableWorktreesIn(dir string) ([]PrunableWorktree, error) {
+	if strings.TrimSpace(dir) == "" {
+		return nil, nil
+	}
+	worktreePruneMu.Lock()
+	defer worktreePruneMu.Unlock()
+	if err := recoverPruneProtectionLocksIn(dir); err != nil {
+		return nil, err
+	}
+	stdout, stderr, err := runWorktreePrune(dir, true)
+	if err != nil {
+		return nil, pruneCommandError(true, stderr, err)
+	}
+	// Git writes verbose dry-run records to stderr on current versions even
+	// when the command succeeds. Parse both streams so discovery does not
+	// accidentally recreate the exact "invisible stale records" defect.
+	entries := parsePrunableWorktrees(stdout + "\n" + stderr)
+	if resolveErr := resolvePrunableWorktreePaths(dir, entries); resolveErr != nil {
+		return nil, resolveErr
+	}
+
+	// A prune candidate with a readable gitdir can also appear in porcelain
+	// as an individually selectable/protected worktree row. Keep those out of
+	// the repo aggregate: PruneWorktreesIn temporarily locks them as a second
+	// line of defence, while the existing checkout flow remains authoritative.
+	listed, listErr := ListWorktreesIn(dir)
+	if listErr != nil {
+		return nil, fmt.Errorf("list worktrees while classifying prune preview: %w", listErr)
+	}
+	filtered := entries[:0]
+	for _, entry := range entries {
+		visible := false
+		for _, wt := range listed {
+			if wt.Prunable && entry.WorktreePath != "" && sameDir(wt.Path, entry.WorktreePath) {
+				visible = true
+				break
+			}
+		}
+		if visible {
+			continue
+		}
+		filtered = append(filtered, entry)
+	}
+	return filtered, nil
+}
+
 // PruneWorktreesIn runs `git worktree prune` in the repo containing dir,
 // clearing the administrative registrations of worktrees whose working
 // directories have been deleted out-of-band (by hand, or by a tool that
 // removed the dir without telling git). `git worktree remove` already
 // cleans the link for worktrees it removes; this mops up the *dangling*
 // links a directory-only delete leaves behind. It only ever touches
-// entries whose dir is already missing — never a live worktree — so it
-// is safe to run repo-wide after a sweep.
-func PruneWorktreesIn(dir string) error {
+// entries whose dir is already missing — never a live worktree — so it is
+// safe to run repo-wide after a sweep.
+//
+// Git may write per-entry failures to stderr and still exit 0. The stderr is
+// therefore returned even on success so callers can show it as advisory
+// detail; callers must verify the post-state with PrunableWorktreesIn rather
+// than trusting either the exit status or an empty error.
+func PruneWorktreesIn(dir string) (stderr string, err error) {
 	if strings.TrimSpace(dir) == "" {
-		return nil
+		return "", nil
 	}
-	_, err := gitIn(dir, "worktree", "prune")
-	return err
+	worktreePruneMu.Lock()
+	defer worktreePruneMu.Unlock()
+	if recoverErr := recoverPruneProtectionLocksIn(dir); recoverErr != nil {
+		return "", recoverErr
+	}
+	listed, listErr := ListWorktreesIn(dir)
+	if listErr != nil {
+		return "", fmt.Errorf("protect listed worktrees before prune: %w", listErr)
+	}
+	locked := make([]string, 0)
+	for _, wt := range listed {
+		// Protect every individually managed linked worktree, not only the
+		// entries already marked prunable in this snapshot. A checkout can
+		// disappear concurrently between list and prune; pre-locking the whole
+		// listed set prevents that race from bypassing its explicit UI row.
+		if wt.Locked || wt.IsMain {
+			continue
+		}
+		if _, lockErr := gitIn(dir, "worktree", "lock", "--reason",
+			tclaudePruneProtectionReason, wt.Path); lockErr != nil {
+			if rollbackErr := unlockWorktreesIn(dir, locked); rollbackErr != nil {
+				return "", &PruneProtectionRestoreError{Err: fmt.Errorf(
+					"protect listed worktree %s: %v; rollback also failed: %w",
+					wt.Path, lockErr, rollbackErr,
+				)}
+			}
+			return "", fmt.Errorf("protect listed worktree %s before prune: %w", wt.Path, lockErr)
+		}
+		locked = append(locked, wt.Path)
+	}
+
+	_, stderr, err = runWorktreePrune(dir, false)
+	unlockErr := unlockWorktreesIn(dir, locked)
+	if unlockErr != nil {
+		if err != nil {
+			return stderr, &PruneProtectionRestoreError{Err: fmt.Errorf(
+				"%v; prune command also failed: %w", unlockErr, pruneCommandError(false, stderr, err),
+			)}
+		}
+		return stderr, &PruneProtectionRestoreError{Err: unlockErr}
+	}
+	if err != nil {
+		return stderr, pruneCommandError(false, stderr, err)
+	}
+	return stderr, nil
+}
+
+func recoverPruneProtectionLocksIn(dir string) error {
+	listed, err := ListWorktreesIn(dir)
+	if err != nil {
+		return fmt.Errorf("list worktrees while recovering prune protection: %w", err)
+	}
+	owned := make([]string, 0)
+	for _, wt := range listed {
+		if wt.Locked && wt.LockReason == tclaudePruneProtectionReason {
+			owned = append(owned, wt.Path)
+		}
+	}
+	if err := unlockWorktreesIn(dir, owned); err != nil {
+		return &PruneProtectionRestoreError{Err: err}
+	}
+	return nil
+}
+
+func unlockWorktreesIn(dir string, paths []string) error {
+	var first error
+	for _, path := range paths {
+		if _, err := gitIn(dir, "worktree", "unlock", path); err != nil && first == nil {
+			first = fmt.Errorf("restore listed worktree lock %s after prune: %w", path, err)
+		}
+	}
+	return first
+}
+
+func runWorktreePrune(dir string, dryRun bool) (stdout, stderr string, err error) {
+	args := []string{"worktree", "prune"}
+	if dryRun {
+		args = append(args, "--dry-run", "--verbose")
+	}
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "LC_ALL=C", "LANG=C")
+	var outBuf, errBuf bytes.Buffer
+	cmd.Stdout = &outBuf
+	cmd.Stderr = &errBuf
+	err = cmd.Run()
+	return strings.TrimSpace(outBuf.String()), strings.TrimSpace(errBuf.String()), err
+}
+
+func pruneCommandError(dryRun bool, stderr string, err error) error {
+	args := "worktree prune"
+	if dryRun {
+		args += " --dry-run --verbose"
+	}
+	if stderr != "" {
+		return fmt.Errorf("git %s: %s", args, stderr)
+	}
+	return fmt.Errorf("git %s: %w", args, err)
+}
+
+func parsePrunableWorktrees(output string) []PrunableWorktree {
+	var out []PrunableWorktree
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		const prefix = "Removing worktrees/"
+		if !strings.HasPrefix(line, prefix) {
+			continue
+		}
+		adminAndReason := strings.TrimPrefix(line, prefix)
+		adminDir, reason, ok := strings.Cut(adminAndReason, ": ")
+		adminDir, reason = strings.TrimSpace(adminDir), strings.TrimSpace(reason)
+		if !ok || adminDir == "" || reason == "" {
+			continue
+		}
+		out = append(out, PrunableWorktree{AdminDir: adminDir, Reason: reason})
+	}
+	return out
+}
+
+func resolvePrunableWorktreePaths(dir string, entries []PrunableWorktree) error {
+	common, err := gitIn(dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	if err != nil {
+		return fmt.Errorf("resolve Git common dir for prune preview: %w", err)
+	}
+	if strings.TrimSpace(common) == "" {
+		return fmt.Errorf("resolve Git common dir for prune preview: empty path")
+	}
+	for i := range entries {
+		if entries[i].AdminDir == "" || entries[i].AdminDir == "." || entries[i].AdminDir == ".." ||
+			filepath.Base(entries[i].AdminDir) != entries[i].AdminDir {
+			return fmt.Errorf("unsafe worktree administrative name %q", entries[i].AdminDir)
+		}
+		gitdirPath := filepath.Join(strings.TrimSpace(common), "worktrees", entries[i].AdminDir, "gitdir")
+		data, readErr := os.ReadFile(gitdirPath)
+		if readErr != nil {
+			continue
+		}
+		gitdir := filepath.Clean(strings.TrimSpace(string(data)))
+		if filepath.Base(gitdir) == ".git" {
+			entries[i].WorktreePath = filepath.Dir(gitdir)
+		}
+	}
+	return nil
 }
 
 // ListWorktreesIn returns all worktrees of the repo containing dir.

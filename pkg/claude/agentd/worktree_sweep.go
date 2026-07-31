@@ -2,6 +2,8 @@ package agentd
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"path/filepath"
 	"sort"
@@ -50,9 +52,11 @@ import (
 // removeWorktreeFn from worktree_cleanup.go cover the rest). All are
 // vars so a test can route them at a simulated repo.
 var (
-	listWorktreesInFn = worktree.ListWorktreesIn
-	repoRootForPathFn = worktree.RepoRootForPath
-	worktreeDirtyFn   = worktree.IsDirtyIn
+	listWorktreesInFn   = worktree.ListWorktreesIn
+	repoRootForPathFn   = worktree.RepoRootForPath
+	worktreeDirtyFn     = worktree.IsDirtyIn
+	prunableWorktreesFn = worktree.PrunableWorktreesIn
+	pruneWorktreesFn    = worktree.PruneWorktreesIn
 )
 
 // sweepAgent is an agent bound to a worktree — either its immutable startup
@@ -83,6 +87,27 @@ type sweepWorktree struct {
 	Category string       `json:"category"` // main | live | agent | orphan
 	Checked  bool         `json:"checked"`  // smart-default tick
 	Reason   string       `json:"reason"`   // why this default / what the row is
+}
+
+// sweepPrunableRepo is one bookkeeping-only cleanup choice. Git's dry-run
+// often cannot recover a useful checkout path or branch for these broken
+// administrative entries, so the UI presents one aggregate row per repo and
+// keeps the reason counts available behind a disclosure.
+type sweepPrunableRepo struct {
+	RepoRoot string             `json:"repo_root"`
+	Count    int                `json:"count"`
+	Reasons  []sweepPruneReason `json:"reasons"`
+	Checked  bool               `json:"checked"`
+}
+
+type sweepPruneReason struct {
+	Reason string `json:"reason"`
+	Count  int    `json:"count"`
+}
+
+type sweepPruneScanError struct {
+	RepoRoot string `json:"repo_root"`
+	Detail   string `json:"detail"`
 }
 
 // registeredSweepWorktree is Git's authoritative record for a worktree plus
@@ -136,11 +161,14 @@ func groupWorktreeDirs(g *db.AgentGroup) []string {
 // renders as "nothing to clean up".
 func dashboardGroupWorktrees(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 	roots, out := discoverSweepWorktrees(groupWorktreeDirs(g))
+	prunable, pruneErrors := discoverPrunableRepos(roots)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"scope":      "group",
-		"group":      g.Name,
-		"repo_roots": roots,
-		"worktrees":  out,
+		"scope":          "group",
+		"group":          g.Name,
+		"repo_roots":     roots,
+		"worktrees":      out,
+		"prunable_repos": prunable,
+		"prune_errors":   pruneErrors,
 	})
 }
 
@@ -155,12 +183,54 @@ func dashboardAllGroupWorktrees(w http.ResponseWriter) {
 		return
 	}
 	roots, out := discoverSweepWorktrees(dirs)
+	prunable, pruneErrors := discoverPrunableRepos(roots)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"scope":      "all",
-		"groups":     names,
-		"repo_roots": roots,
-		"worktrees":  out,
+		"scope":          "all",
+		"groups":         names,
+		"repo_roots":     roots,
+		"worktrees":      out,
+		"prunable_repos": prunable,
+		"prune_errors":   pruneErrors,
 	})
+}
+
+// discoverPrunableRepos runs Git's authoritative prune dry-run for every
+// discovered main repo. Only affected repos become rows. Counts are a live
+// preview, not inventory: execute-time cleanup takes another before snapshot.
+func discoverPrunableRepos(roots []string) ([]sweepPrunableRepo, []sweepPruneScanError) {
+	out := make([]sweepPrunableRepo, 0, len(roots))
+	errors := make([]sweepPruneScanError, 0)
+	for _, root := range roots {
+		entries, err := prunableWorktreesFn(root)
+		if err != nil {
+			errors = append(errors, sweepPruneScanError{RepoRoot: root, Detail: err.Error()})
+			continue
+		}
+		if len(entries) == 0 {
+			continue
+		}
+		counts := map[string]int{}
+		for _, entry := range entries {
+			counts[entry.Reason]++
+		}
+		reasons := make([]sweepPruneReason, 0, len(counts))
+		for reason, count := range counts {
+			reasons = append(reasons, sweepPruneReason{Reason: reason, Count: count})
+		}
+		sort.Slice(reasons, func(i, j int) bool {
+			if reasons[i].Count != reasons[j].Count {
+				return reasons[i].Count > reasons[j].Count
+			}
+			return reasons[i].Reason < reasons[j].Reason
+		})
+		out = append(out, sweepPrunableRepo{
+			RepoRoot: root,
+			Count:    len(entries),
+			Reasons:  reasons,
+			Checked:  true,
+		})
+	}
+	return out, errors
 }
 
 func allGroupWorktreeDirs() (names, dirs []string, err error) {
@@ -598,15 +668,33 @@ type worktreeCleanupOutcome struct {
 	Detail string `json:"detail,omitempty"` // human-readable reason
 }
 
+// worktreePruneOutcome reports verified bookkeeping cleanup for one repo.
+// Result is pruned, partial, failed, or skipped. Remaining is authoritative:
+// Git can exit 0 after failing every deletion, so exit status alone never
+// produces a successful outcome.
+type worktreePruneOutcome struct {
+	RepoRoot  string `json:"repo_root"`
+	Before    int    `json:"before"`
+	Cleared   int    `json:"cleared"`
+	Remaining int    `json:"remaining"`
+	Result    string `json:"result"`
+	Detail    string `json:"detail,omitempty"`
+}
+
 // worktreeCleanupResponse is the wire shape returned by POST
 // /api/worktrees/cleanup. Outcomes is always non-nil so the dashboard
 // can .map() over it unconditionally.
 type worktreeCleanupResponse struct {
-	Outcomes []worktreeCleanupOutcome `json:"outcomes"`
-	Removed  int                      `json:"removed"`
-	Branches int                      `json:"branches"`
-	Skipped  int                      `json:"skipped"`
-	Failed   int                      `json:"failed"`
+	Outcomes       []worktreeCleanupOutcome `json:"outcomes"`
+	PruneOutcomes  []worktreePruneOutcome   `json:"prune_outcomes"`
+	Removed        int                      `json:"removed"`
+	Branches       int                      `json:"branches"`
+	Skipped        int                      `json:"skipped"`
+	Failed         int                      `json:"failed"`
+	Pruned         int                      `json:"pruned"`
+	PruneRemaining int                      `json:"prune_remaining"`
+	PruneFailed    int                      `json:"prune_failed"`
+	PruneSkipped   int                      `json:"prune_skipped"`
 }
 
 // handleDashboardWorktreeCleanup answers POST /api/worktrees/cleanup.
@@ -638,6 +726,7 @@ func handleDashboardWorktreeCleanup(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		Paths          []string `json:"paths"`
+		PruneRoots     []string `json:"prune_roots"`
 		DeleteBranches bool     `json:"delete_branches"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -655,9 +744,12 @@ func handleDashboardWorktreeCleanup(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "list groups: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	_, registered := scanSweepWorktrees(dirs)
+	roots, registered := scanSweepWorktrees(dirs)
 	liveRoots := liveAgentWorktreeRoots()
-	resp := worktreeCleanupResponse{Outcomes: []worktreeCleanupOutcome{}}
+	resp := worktreeCleanupResponse{
+		Outcomes:      []worktreeCleanupOutcome{},
+		PruneOutcomes: []worktreePruneOutcome{},
+	}
 	seen := map[string]bool{}
 	for _, raw := range body.Paths {
 		path := strings.TrimSpace(raw)
@@ -722,7 +814,114 @@ func handleDashboardWorktreeCleanup(w http.ResponseWriter, r *http.Request) {
 		}
 		resp.Outcomes = append(resp.Outcomes, out)
 	}
+
+	// Stale-record cleanup is an independent, explicit action. Restrict roots
+	// to the group-derived repo set re-read above, then verify the live state
+	// before and after prune. In particular, do not trust prune's exit code:
+	// Git returns 0 when sandbox bind mounts make every deletion fail.
+	allowedRoots := make(map[string]string, len(roots))
+	for _, root := range roots {
+		allowedRoots[cleanClaimDir(root)] = root
+	}
+	seenRoots := map[string]bool{}
+	for _, raw := range body.PruneRoots {
+		requested := cleanClaimDir(raw)
+		if requested == "" || seenRoots[requested] {
+			continue
+		}
+		seenRoots[requested] = true
+		root, allowed := allowedRoots[requested]
+		if !allowed {
+			resp.PruneOutcomes = append(resp.PruneOutcomes, worktreePruneOutcome{
+				RepoRoot: strings.TrimSpace(raw),
+				Result:   "skipped",
+				Detail:   "repo is not in the current group cleanup scope",
+			})
+			resp.PruneSkipped++
+			continue
+		}
+		out := pruneOneRepo(root)
+		resp.PruneOutcomes = append(resp.PruneOutcomes, out)
+		resp.Pruned += out.Cleared
+		resp.PruneRemaining += out.Remaining
+		switch out.Result {
+		case "partial", "failed":
+			resp.PruneFailed++
+		case "skipped":
+			resp.PruneSkipped++
+		}
+	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func pruneOneRepo(root string) worktreePruneOutcome {
+	out := worktreePruneOutcome{RepoRoot: root}
+	before, err := prunableWorktreesFn(root)
+	if err != nil {
+		out.Result = "failed"
+		out.Detail = "could not verify stale Git records before prune: " + err.Error()
+		return out
+	}
+	out.Before = len(before)
+	if out.Before == 0 {
+		out.Result = "skipped"
+		out.Detail = "already pruned — the live pre-check found no stale Git records"
+		return out
+	}
+
+	stderr, pruneErr := pruneWorktreesFn(root)
+	after, afterErr := prunableWorktreesFn(root)
+	if afterErr != nil {
+		out.Result = "failed"
+		out.Detail = "prune ran, but post-state verification failed: " + afterErr.Error()
+		if pruneErr != nil {
+			out.Detail += "; prune command: " + pruneErr.Error()
+		}
+		if stderr != "" && pruneErr == nil {
+			out.Detail += "; Git reported: " + strings.Join(strings.Fields(stderr), " ")
+		}
+		return out
+	}
+	out.Remaining = len(after)
+	afterIDs := make(map[string]bool, len(after))
+	for _, entry := range after {
+		afterIDs[entry.AdminDir] = true
+	}
+	for _, entry := range before {
+		if !afterIDs[entry.AdminDir] {
+			out.Cleared++
+		}
+	}
+	var protectionRestoreErr *worktree.PruneProtectionRestoreError
+	protectionRestoreFailed := errors.As(pruneErr, &protectionRestoreErr)
+	if out.Remaining > 0 {
+		out.Result = "failed"
+		if out.Cleared > 0 {
+			out.Result = "partial"
+		}
+		out.Detail = fmt.Sprintf(
+			"%d of %d stale Git records cleared; %d remain. Git could not remove every administrative entry. An active agent sandbox may be holding bind mounts on .git/worktrees entries; stop the affected sandboxed agents and retry.",
+			out.Cleared, out.Before, out.Remaining,
+		)
+	} else if protectionRestoreFailed {
+		out.Result = "partial"
+		out.Detail = fmt.Sprintf(
+			"%d stale Git records cleared, but restoring temporary protection for an individually managed worktree initially failed. The post-state scan recovered tclaude-owned locks; review the listed worktree before retrying cleanup. Command detail: %s",
+			out.Cleared, protectionRestoreErr.Error(),
+		)
+	} else {
+		out.Result = "pruned"
+		out.Detail = fmt.Sprintf("%d stale Git records cleared (bookkeeping only; no checkout or branch removed)", out.Cleared)
+	}
+	if protectionRestoreFailed && out.Remaining > 0 {
+		out.Detail += " Restoring temporary listed-worktree protection also initially failed; the post-state scan recovered tclaude-owned locks. Detail: " + protectionRestoreErr.Error()
+	} else if pruneErr != nil && !protectionRestoreFailed {
+		out.Detail += " Prune command reported: " + pruneErr.Error() + "."
+	}
+	if stderr != "" && pruneErr == nil {
+		out.Detail += " Git reported: " + strings.Join(strings.Fields(stderr), " ")
+	}
+	return out
 }
 
 // removeOneRegisteredWorktree is the missing-directory sibling of

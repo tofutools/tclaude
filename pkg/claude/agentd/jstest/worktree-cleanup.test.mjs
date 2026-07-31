@@ -80,7 +80,8 @@ test('Preact cleanup owner preserves safety, full-bucket toggles, and visible se
   const opened = await mountCleanup(t);
   const { harness, host, pending } = opened;
   assert.match(host.querySelector('#worktree-cleanup-title').textContent, /alpha/);
-  assert.equal(host.querySelector('#worktree-cleanup-count').textContent.trim(), '1 of 3 selected');
+  assert.equal(host.querySelector('#worktree-cleanup-count').textContent.trim(),
+    '1 of 3 worktrees + 0 of 0 stale records selected');
   assert.equal(checkbox(host, '/repo').disabled, true, 'main worktree is visible but never selectable');
   assert.equal(isChecked(host, '/repo'), false);
   assert.match(host.querySelector('#worktree-cleanup-categories').textContent, /orphans 1\/2/);
@@ -93,7 +94,8 @@ test('Preact cleanup owner preserves safety, full-bucket toggles, and visible se
   host.querySelector('[data-dirty="1"]').click();
   await flush(harness);
   assert.equal(isChecked(host, '/repo-dirty'), true);
-  assert.equal(host.querySelector('#worktree-cleanup-count').textContent.trim(), '3 of 3 selected');
+  assert.equal(host.querySelector('#worktree-cleanup-count').textContent.trim(),
+    '3 of 3 worktrees + 0 of 0 stale records selected');
 
   const search = host.querySelector('#worktree-cleanup-search');
   search.value = 'orphan';
@@ -102,7 +104,8 @@ test('Preact cleanup owner preserves safety, full-bucket toggles, and visible se
   host.querySelector('#worktree-cleanup-select-none').click();
   await flush(harness);
   assert.equal(isChecked(host, '/repo-orphan'), false);
-  assert.equal(host.querySelector('#worktree-cleanup-count').textContent.trim(), '2 of 3 selected',
+  assert.equal(host.querySelector('#worktree-cleanup-count').textContent.trim(),
+    '2 of 3 worktrees + 0 of 0 stale records selected',
     'select none affects only the filtered visible removable set');
   search.value = '';
   await harness.act(() => harness.fireEvent(search, 'input'));
@@ -111,6 +114,79 @@ test('Preact cleanup owner preserves safety, full-bucket toggles, and visible se
 
   host.querySelector('#worktree-cleanup-cancel').click();
   assert.equal(await pending, null);
+  await flush(harness);
+});
+
+test('stale Git records are pre-selected, inspectable, and reported by verified post-state', async (t) => {
+  const requests = [];
+  const opened = await mountCleanup(t, {
+    scan: async () => ({
+      ...initialScan(),
+      prunableRepos: [{
+        repo_root: '/repo', count: 2, checked: true,
+        reasons: [{ reason: 'gitdir file does not exist', count: 2 }],
+      }],
+    }),
+    cleanup: async (request) => {
+      requests.push(request);
+      return {
+        removed: 1, branches: 1, skipped: 0, failed: 0,
+        pruned: 0, prune_remaining: 2, prune_failed: 1,
+        outcomes: [{ path: '/repo-orphan', branch: 'feature', result: 'removed_with_branch', detail: 'gone' }],
+        prune_outcomes: [{
+          repo_root: '/repo', before: 2, cleared: 0, remaining: 2, result: 'failed',
+          detail: '0 of 2 stale Git records cleared; 2 remain. An active agent sandbox may be holding bind mounts on .git/worktrees entries.',
+        }],
+      };
+    },
+  });
+  const { harness, host, pending } = opened;
+  const pruneControl = host.querySelector('input[data-prune-root="/repo"]');
+  assert.equal(pruneControl.checked === undefined
+    ? pruneControl.hasAttribute('checked') : pruneControl.checked, true,
+  'bookkeeping-only stale records are pre-selected');
+  const pruneRow = host.querySelector('[data-prune-root="/repo"]');
+  assert.match(pruneRow.textContent, /bookkeeping only/);
+  assert.match(pruneRow.textContent, /no checkout directory or branch/);
+  assert.match(pruneRow.querySelector('details').textContent, /2.*gitdir file does not exist/);
+  assert.match(host.querySelector('#worktree-cleanup-hint').textContent, /Counts reflect this live scan/);
+  assert.match(host.querySelector('#worktree-cleanup-branches-row').textContent,
+    /stale-record pruning never deletes branches/);
+  assert.equal(host.querySelector('#worktree-cleanup-count').textContent.trim(),
+    '1 of 3 worktrees + 2 of 2 stale records selected');
+  assert.match(host.querySelector('#worktree-cleanup-submit').textContent,
+    /Remove 1 worktree \+ prune 2 stale records/);
+
+  host.querySelector('#worktree-cleanup-submit').click();
+  await flush(harness);
+  assert.deepEqual(requests[0], {
+    paths: ['/repo-orphan'], pruneRoots: ['/repo'], deleteBranches: true,
+  });
+  assert.match(host.querySelector('#worktree-cleanup-hint').textContent,
+    /pruned 0 stale Git records, 2 remain/);
+  assert.match(host.querySelector('#worktree-cleanup-list').textContent,
+    /active agent sandbox may be holding bind mounts/,
+    'an exit-0 no-progress result names the real bind-mount failure mode');
+  host.querySelector('#worktree-cleanup-submit').click();
+  assert.equal((await pending).response.prune_remaining, 2);
+  await flush(harness);
+});
+
+test('stale-record preview errors make the live count explicitly incomplete', async (t) => {
+  const opened = await mountCleanup(t, {
+    scan: async () => ({
+      ...initialScan(),
+      prunableRepos: [],
+      pruneScanErrors: [{ repo_root: '/repo', detail: 'permission denied reading metadata' }],
+    }),
+  });
+  const { harness, host, pending } = opened;
+  assert.match(host.querySelector('#worktree-cleanup-hint').textContent,
+    /Stale-record scan incomplete.*counts cover successful live scans only/);
+  assert.match(host.querySelector('#worktree-cleanup-error').textContent,
+    /\/repo: permission denied reading metadata/);
+  host.querySelector('#worktree-cleanup-cancel').click();
+  await pending;
   await flush(harness);
 });
 
@@ -247,7 +323,7 @@ test('failed cleanup freezes an exact retry and successful partial outcomes rema
   await flush(harness);
   assert.equal(requests.length, 2);
   assert.equal(requests[1], requests[0], 'retry reuses the same frozen request identity');
-  assert.deepEqual(requests[0], { paths: ['/repo-orphan'], deleteBranches: true });
+  assert.deepEqual(requests[0], { paths: ['/repo-orphan'], pruneRoots: [], deleteBranches: true });
   assert.match(host.querySelector('#worktree-cleanup-hint').textContent,
     /removed 1 worktree.*1 skipped.*1 failed/);
   assert.match(host.querySelector('#worktree-cleanup-list').textContent, /main repo — never removed/);

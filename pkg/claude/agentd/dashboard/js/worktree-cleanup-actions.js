@@ -31,6 +31,11 @@ export function createWorktreeCleanupActions({
       return Object.freeze({
         repoRoots: Object.freeze([...(payload.repo_roots || [])].map(String)),
         worktrees: Object.freeze([...(payload.worktrees || [])]),
+        prunableRepos: Object.freeze([...(payload.prunable_repos || [])]),
+        pruneScanErrors: Object.freeze([...(payload.prune_errors || [])].map((entry) => Object.freeze({
+          repo_root: String(entry?.repo_root || ''),
+          detail: String(entry?.detail || ''),
+        }))),
       });
     },
 
@@ -41,6 +46,7 @@ export function createWorktreeCleanupActions({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           paths: request.paths,
+          prune_roots: request.pruneRoots || [],
           delete_branches: request.deleteBranches === true,
         }),
       });
@@ -54,8 +60,19 @@ export function createWorktreeCleanupActions({
           result: String(outcome?.result || ''),
           detail: String(outcome?.detail || ''),
         }))),
+        prune_outcomes: Object.freeze([...(payload.prune_outcomes || [])].map((outcome) => Object.freeze({
+          repo_root: String(outcome?.repo_root || ''),
+          before: Number(outcome?.before || 0),
+          cleared: Number(outcome?.cleared || 0),
+          remaining: Number(outcome?.remaining || 0),
+          result: String(outcome?.result || ''),
+          detail: String(outcome?.detail || ''),
+        }))),
       });
-      try { notify(worktreeCleanupSummary(result), Number(result.failed || 0) > 0); } catch (_) { /* advisory */ }
+      try {
+        notify(worktreeCleanupSummary(result),
+          Number(result.failed || 0) > 0 || Number(result.prune_failed || 0) > 0);
+      } catch (_) { /* advisory */ }
       // The destructive response is authoritative. Never keep its result UI
       // or close paths behind an ordinary snapshot refresh that may be slow or
       // unavailable; reconcile the background dashboard independently.
