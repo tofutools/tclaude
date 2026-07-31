@@ -118,9 +118,10 @@ func TestPinnedProxyToolEgress(t *testing.T) {
 	}
 
 	helperBinary := "proxy-egress-helper"
+	fixture := proxySmokeRunnerFixture(t)
 	launch := runProxyEngineLaunch(t, proxyEngineLaunchInput{
-		Rules: proxyEgressRules(ports),
-		ExtraEnv: append([]string(nil),
+		Rules: proxyEgressRules(ports, fixture),
+		ExtraEnv: append(proxySmokeHelperEnv(nil, fixture),
 			proxyEgressHelperEnv+"=1",
 			proxyEgressPortsEnv+"="+ports.encode(),
 		),
@@ -212,11 +213,22 @@ func TestPinnedProxyToolEgress(t *testing.T) {
 
 // proxyEgressRules authorizes exactly two host-loopback ports. The other two
 // are live and unauthored, which is what makes their refusal a policy answer.
-func proxyEgressRules(ports proxyEgressPorts) sandboxpolicy.NetworkRules {
+func proxyEgressRules(
+	ports proxyEgressPorts,
+	fixture proxySmokeFixture,
+) sandboxpolicy.NetworkRules {
 	return sandboxpolicy.NetworkRules{
 		Mode: sandboxpolicy.AccessModeList,
 		Allow: []sandboxpolicy.NetworkAllowEntry{
 			{Loopback: true, Ports: []int{ports.AllowedHTTP, ports.AllowedTLS}},
+			// A loopback-only list is deliberately NOT discriminating: the floor
+			// expresses host loopback natively, including its authored ports, so
+			// no engine is deployed for it (NetworkRulesAreDiscriminating). This
+			// smoke needs the proxy to exist, so the policy has to ask for a
+			// distinction the floor cannot make on its own. This row is that
+			// ask, and it names a real fixture destination rather than a
+			// decorative one.
+			{Host: proxySmokeAllowedHost, Ports: []int{fixture.AllowedPort}},
 		},
 		Engine: sandboxpolicy.NetworkEngineProxy,
 	}

@@ -7,14 +7,20 @@
 set -euo pipefail
 
 flow::run() {
-  local ns=tclaude-proxy-cooperation
-  local host_link=tclprx2 peer_link=tclprx3
+  # NOT `local`: the EXIT trap below runs after this function has returned, so
+  # a local would be out of scope by then and `set -u` would abort cleanup —
+  # leaving the resolver rewritten and the namespace behind, which is the very
+  # failure the trap exists to prevent. flow::run owns its subshell, so plain
+  # assignment leaks nothing.
+  ns=tclaude-proxy-cooperation
+  host_link=tclprx2
+  peer_link=tclprx3
   local allowed=198.18.3.10 adjacent=198.18.3.200
   # 443 carries the model origins and is NOT configurable: the pinned harnesses
   # choose that port themselves, so the Go smoke pins it too and the fixture
   # merely has to answer there.
   local -a ports=(443 41021 41022)
-  local -a pids=()
+  pids=()
 
   cleanup() {
     local pid

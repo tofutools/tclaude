@@ -274,7 +274,17 @@ func proxyCooperationRules(
 	originPort int,
 ) sandboxpolicy.NetworkRules {
 	allow := []sandboxpolicy.NetworkAllowEntry{
-		{CIDR: fixture.AllowedPrefix, Ports: []int{originPort}},
+		// BOTH ports, and the reason is easy to get wrong: this row is not a
+		// second authorization of any destination, it is what clears the
+		// fixture's RESERVED address space (198.18.0.0/15) through the
+		// private-destination blocker. Every authored name below resolves into
+		// that space, so a name authorized on a port this row does not cover is
+		// still refused — as `private_destination`, which reads like the policy
+		// rejecting the harness rather than the fixture lacking a clearance.
+		{
+			CIDR:  fixture.AllowedPrefix,
+			Ports: []int{originPort, fixture.AllowedPort},
+		},
 	}
 	for _, origin := range origins {
 		allow = append(allow, sandboxpolicy.NetworkAllowEntry{
