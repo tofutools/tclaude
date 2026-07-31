@@ -475,10 +475,15 @@ func normalizeNetworkAllowEntry(in NetworkAllowEntry, index int, field string) (
 			return NetworkAllowEntry{}, fmt.Errorf("network.%s[%d].cidr %q is invalid: %w", field, index, out.CIDR, parseErr)
 		}
 		prefix = prefix.Masked()
-		if prefixIntersectsLoopback(prefix) {
+		if PrefixIntersectsLoopbackIdentity(prefix) {
+			// Naming the space matters: 0.0.0.0/8 and :: reach the host too,
+			// so "covers loopback" alone reads as wrong to an operator who
+			// authored neither 127.0.0.0/8 nor ::1.
 			return NetworkAllowEntry{}, fmt.Errorf(
-				`network.%s[%d].cidr covers loopback; use {"loopback": true} instead`,
-				field, index,
+				`network.%s[%d].cidr %q covers the host-loopback identity space `+
+					`(127.0.0.0/8, ::1, 0.0.0.0/8, ::, and their IPv4-mapped forms), `+
+					`which the loopback selector alone governs; use {"loopback": true} instead`,
+				field, index, out.CIDR,
 			)
 		}
 		out.CIDR = prefix.String()
@@ -545,32 +550,6 @@ func normalizeDNSName(in string) (string, error) {
 		}
 	}
 	return strings.ToLower(in), nil
-}
-
-func prefixIntersectsLoopback(prefix netip.Prefix) bool {
-	if prefix.Addr().Is4() {
-		loopback := netip.MustParsePrefix("127.0.0.0/8")
-		return prefixesIntersect(prefix, loopback)
-	}
-	for _, loopback := range []netip.Prefix{
-		netip.MustParsePrefix("::1/128"),
-		// IPv4-mapped IPv6 addresses use a 96-bit ::ffff: prefix. Retain
-		// the IPv4 loopback /8 beneath it so both a single mapped address
-		// and a wider mapped range must use the dedicated loopback selector.
-		netip.MustParsePrefix("::ffff:127.0.0.0/104"),
-	} {
-		if prefixesIntersect(prefix, loopback) {
-			return true
-		}
-	}
-	return false
-}
-
-func prefixesIntersect(a, b netip.Prefix) bool {
-	if a.Addr().BitLen() != b.Addr().BitLen() {
-		return false
-	}
-	return a.Contains(b.Addr()) || b.Contains(a.Addr())
 }
 
 func normalizeUnixSocketRules(in *UnixSocketRules, allowMissing bool) (*UnixSocketRules, []string, error) {

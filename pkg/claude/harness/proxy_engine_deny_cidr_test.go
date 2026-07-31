@@ -142,33 +142,22 @@ func TestProxyEngineDenyCIDRRatingMatchesTheEvaluator(t *testing.T) {
 }
 
 // TCL-890 scope item 2: is Partial still the right LEVEL, given the
-// resolution-stage re-application above? Yes, and these are the two reasons —
-// asserted against the real evaluator rather than asserted about it, because a
-// rating kept for a reason nobody re-checked is how the last one went wrong.
+// resolution-stage re-application above? Yes — asserted against the real
+// evaluator rather than asserted about it, because a rating kept for a reason
+// nobody re-checked is how the last one went wrong.
 //
-// Neither escape is the one the old allow-shaped string described, which is why
-// the wording changed even though the level did not.
+// TCL-890 recorded two reasons. TCL-899 closed the first, so ONE remains, and
+// the level is now carried entirely by it: revisit Full if this test ever
+// stops reproducing it. It is not the escape the old allow-shaped string
+// described, which is why the wording changed even though the level did not.
 func TestProxyEngineDenyCIDREscapesThatKeepItPartial(t *testing.T) {
-	// 1. Host-loopback identity space is decided by the loopback rows alone.
-	//    A cidr deny overlapping it is never consulted, so authoring one and
-	//    believing it blocks something would be exactly the over-claim a Full
-	//    rating invites.
-	loopbackIdentity := sandboxpolicy.NetworkRules{
-		Mode: sandboxpolicy.AccessModeList,
-		Allow: []sandboxpolicy.NetworkAllowEntry{
-			{Loopback: true, Ports: []int{8080}},
-		},
-		Deny:   []sandboxpolicy.NetworkAllowEntry{{CIDR: "0.0.0.0/8"}},
-		Engine: sandboxpolicy.NetworkEngineProxy,
-	}
-	evaluator, err := sandboxproxy.NewEvaluator(loopbackIdentity)
-	require.NoError(t, err)
-	unspecified, err := sandboxproxy.ParseTarget("0.0.0.0", 8080)
-	require.NoError(t, err)
-	assert.True(t, evaluator.Evaluate(unspecified).Allowed(),
-		"the cidr deny does not reach the loopback identity set; if this ever fails, revisit the rating")
+	// The host-loopback identity escape this test used to assert is CLOSED
+	// (TCL-899). It is not merely absent here: TestLoopbackIdentityCIDRRowsAre
+	// Unauthorable below is its replacement, and it asserts the closure the
+	// same way this test asserts the remaining escape — against the real
+	// compiler and the real evaluator, in both baselines.
 
-	// 2. An address is not a destination. The same host restated in another
+	// An address is not a destination. The same host restated in another
 	//    address family is a different address, and an IPv4 rule does not
 	//    match it. Under a default-allow baseline that form is reachable.
 	openBaseline := sandboxpolicy.NetworkRules{
@@ -194,10 +183,181 @@ func TestProxyEngineDenyCIDREscapesThatKeepItPartial(t *testing.T) {
 			embedded)
 	}
 
-	// The disclosure names both, so an operator reading the cell learns what to
-	// author rather than discovering it.
+	// The disclosure names the escape that remains, so an operator reading the
+	// cell learns what to author rather than discovering it.
 	assert.Contains(t, ProxyEngineDenyCIDRSelectorDetail, "NAT64 or 6to4")
-	assert.Contains(t, ProxyEngineDenyCIDRSelectorDetail, "host-loopback identity space")
+	// And it must NOT still name the one that is gone. A disclosure that keeps
+	// claiming a closed escape teaches an operator to author a workaround for
+	// a hole that no longer exists, which is its own kind of false statement.
+	assert.NotContains(t, ProxyEngineDenyCIDRSelectorDetail,
+		"decided by loopback rules alone",
+		"the loopback-identity escape is closed (TCL-899); the cell must stop disclosing it")
+}
+
+// TestLoopbackIdentityCIDRRowsAreUnauthorable is TCL-899's evidence.
+//
+// The defect: Evaluator.match takes its loopback branch for every target in the
+// host-loopback identity space — which includes the unspecified address and all
+// of 0.0.0.0/8 — and that branch consults loopback rows alone. A cidr row
+// overlapping that space was therefore authorable but INERT: with
+// allow loopback:8080 + deny cidr 0.0.0.0/8, both the literal and an allowed
+// name resolving to 0.0.0.0 were dialed. An operator believed a deny existed
+// that never fired, which is the worst failure a policy surface has.
+//
+// The fix moves the refusal to authoring time, so the shape cannot exist. Three
+// things have to hold for that to be an honest answer rather than a blunt one,
+// and each is asserted here in BOTH baselines:
+//
+//  1. the previously-inert shape is refused, with the capability-phrased
+//     message naming the loopback selector as the remedy;
+//  2. the gate DISCRIMINATES — an ordinary cidr deny still compiles and still
+//     denies, so this is not "cidr rows got harder to author";
+//  3. the remedy the message names actually works: a loopback deny refuses the
+//     very target the inert row failed to stop, with VerdictDeniedByRule rather
+//     than a bare Allowed() == false.
+//
+// Falsifiability: revert PrefixIntersectsLoopbackIdentity to the pre-fix
+// 127.0.0.0/8 + ::1 list and (1) fails — the rows compile. The pre-fix value
+// differs from the post-fix one at every assertion here, rather than the test
+// merely agreeing with whatever the code does.
+func TestLoopbackIdentityCIDRRowsAreUnauthorable(t *testing.T) {
+	// Every spelling of the space match() claims. 127.0.0.0/8 and ::1/128 were
+	// already refused before TCL-899 and are kept so a later narrowing of the
+	// predicate cannot pass this test.
+	inert := []string{
+		"0.0.0.0/8",            // the reported shape
+		"0.0.0.0/32",           // the unspecified address alone
+		"0.0.0.0/7",            // a range merely OVERLAPPING the space
+		"::/128",               // unspecified, v6
+		"::ffff:0.0.0.0/104",   // the v4 "this network" space, v6-spelled
+		"127.0.0.0/8",          // pre-existing coverage, must not regress
+		"::1/128",              //
+		"::ffff:127.0.0.1/128", //
+	}
+
+	for _, baseline := range []struct {
+		name  string
+		rules func(deny []sandboxpolicy.NetworkAllowEntry) sandboxpolicy.NetworkRules
+	}{
+		{
+			// Default-allow: the deny row is the only thing standing between
+			// the client and the destination.
+			name: "open",
+			rules: func(deny []sandboxpolicy.NetworkAllowEntry) sandboxpolicy.NetworkRules {
+				return sandboxpolicy.NetworkRules{
+					Mode: sandboxpolicy.AccessModeOpen, Deny: deny,
+					Engine: sandboxpolicy.NetworkEngineProxy,
+				}
+			},
+		},
+		{
+			// Allowlist that AUTHORIZES host loopback, which is the shape the
+			// escape actually lived in: the target is admitted by the loopback
+			// allow row, so only the cidr deny could have stopped it.
+			name: "list",
+			rules: func(deny []sandboxpolicy.NetworkAllowEntry) sandboxpolicy.NetworkRules {
+				return sandboxpolicy.NetworkRules{
+					Mode: sandboxpolicy.AccessModeList,
+					Allow: []sandboxpolicy.NetworkAllowEntry{
+						{Loopback: true, Ports: []int{8080}},
+					},
+					Deny:   deny,
+					Engine: sandboxpolicy.NetworkEngineProxy,
+				}
+			},
+		},
+	} {
+		t.Run(baseline.name, func(t *testing.T) {
+			// 1. The inert shape is refused at authoring time, in both
+			//    polarities: an ALLOW cidr row over this space was equally
+			//    inert, and the same normalizer governs both.
+			// An open baseline has no allow list at all — network.allow is only
+			// valid with mode "list" — so the allow polarity is exercised where
+			// it is authorable.
+			polarities := []string{"deny"}
+			if baseline.name == "list" {
+				polarities = append(polarities, "allow")
+			}
+			for _, cidr := range inert {
+				for _, polarity := range polarities {
+					entry := []sandboxpolicy.NetworkAllowEntry{{CIDR: cidr}}
+					rules := baseline.rules(entry)
+					if polarity == "allow" {
+						rules = baseline.rules(nil)
+						rules.Allow = append(rules.Allow, entry...)
+					}
+					_, err := sandboxproxy.NewEvaluator(rules)
+					require.Errorf(t, err,
+						"%s cidr %q overlaps the host-loopback identity space and must not compile",
+						polarity, cidr)
+					assert.Containsf(t, err.Error(), `use {"loopback": true} instead`,
+						"the refusal must name the remedy, not just refuse: %s cidr %q", polarity, cidr)
+					assert.Containsf(t, err.Error(), "host-loopback identity space",
+						"the refusal must name what it refused: %s cidr %q", polarity, cidr)
+				}
+			}
+
+			// 2. The gate discriminates. An ordinary cidr deny outside the
+			//    identity space still compiles AND still denies — otherwise
+			//    assertion 1 would be satisfied by refusing everything.
+			ordinary := baseline.rules([]sandboxpolicy.NetworkAllowEntry{
+				{CIDR: "93.184.216.0/24"},
+			})
+			evaluator, err := sandboxproxy.NewEvaluator(ordinary)
+			require.NoError(t, err, "an ordinary cidr deny must still be authorable")
+			routable, err := sandboxproxy.ParseTarget("93.184.216.34", 443)
+			require.NoError(t, err)
+			assert.Equal(t, sandboxproxy.VerdictDeniedByRule,
+				evaluator.Evaluate(routable).Verdict,
+				"the ordinary cidr deny must still fire")
+
+			// 3. The remedy the refusal names actually blocks the target the
+			//    inert row failed to block. Without this, the message would be
+			//    directing an operator at a selector nobody re-checked.
+			remedied := baseline.rules([]sandboxpolicy.NetworkAllowEntry{
+				{Loopback: true},
+			})
+			remediedEvaluator, err := sandboxproxy.NewEvaluator(remedied)
+			require.NoError(t, err)
+			for _, spelling := range []string{"0.0.0.0", "127.0.0.1", "::", "::1"} {
+				target, parseErr := sandboxproxy.ParseTarget(spelling, 8080)
+				require.NoError(t, parseErr)
+				decision := remediedEvaluator.Evaluate(target)
+				assert.Equalf(t, sandboxproxy.VerdictDeniedByRule, decision.Verdict,
+					"%s is host loopback and the loopback deny must refuse it by rule", spelling)
+			}
+		})
+	}
+}
+
+// The compiler and the proxy evaluator must not drift back into two
+// definitions of the host-loopback identity space. That divergence IS the
+// defect: the evaluator's branch is complete only for exactly the space the
+// compiler keeps cidr rows out of. Wider compiler than evaluator refuses rows
+// that would have worked; narrower compiler than evaluator readmits the inert
+// shape TCL-899 closed.
+func TestLoopbackIdentityAgreesBetweenCompilerAndEvaluator(t *testing.T) {
+	for _, spelling := range []string{
+		"0.0.0.0", "0.255.255.255", "127.0.0.1", "127.255.255.254", "::", "::1",
+	} {
+		addr := netip.MustParseAddr(spelling)
+		require.Truef(t, sandboxpolicy.AddrIsLoopbackIdentity(addr),
+			"%s is host loopback to the evaluator", spelling)
+		single := netip.PrefixFrom(addr, addr.BitLen())
+		assert.Truef(t, sandboxpolicy.PrefixIntersectsLoopbackIdentity(single),
+			"%s is decided by loopback rows, so a cidr row naming it must not compile",
+			spelling)
+	}
+	// The converse: an address the evaluator treats as routable must stay
+	// authorable as a cidr row, or the gate has swallowed ordinary space.
+	for _, spelling := range []string{"1.0.0.0", "93.184.216.34", "2001:db8::1", "fd00::2"} {
+		addr := netip.MustParseAddr(spelling)
+		require.Falsef(t, sandboxpolicy.AddrIsLoopbackIdentity(addr),
+			"%s is a routable destination to the evaluator", spelling)
+		single := netip.PrefixFrom(addr, addr.BitLen())
+		assert.Falsef(t, sandboxpolicy.PrefixIntersectsLoopbackIdentity(single),
+			"%s must remain authorable as a cidr row", spelling)
+	}
 }
 
 // The two polarities must not converge on one string again. A single shared
