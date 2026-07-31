@@ -202,6 +202,14 @@ func TestPinnedProxyHarnessCooperation(t *testing.T) {
 			//    actually use? Recorded rather than asserted — a harness that
 			//    never uses SOCKS is a capability fact about that harness, not
 			//    a failure.
+			//
+			//    Read this as "the carriages up to the launch's evidence", not
+			//    "every carriage the harness would ever have used": the early
+			//    stop ends the launch shortly after the first model-origin
+			//    record, so a carriage the harness would have reached for later
+			//    is not in the record. That is fine for a printed observation
+			//    and NOT fine for an assertion — anything asserted on this set
+			//    would need the predicate to wait for it too.
 			carriages := proxyDecisionCarriages(decisions, scenario.origins)
 			carriageByHarness[scenario.name] = carriages
 			fmt.Printf(
@@ -258,6 +266,13 @@ func runProxyCooperationScenario(
 		// that record are unchanged.
 		AllowExitError: true,
 		AllowTimeout:   true,
+		// …and because that evidence is complete long before the harness stops
+		// retrying, the launch is ended as soon as the record contains all of
+		// it. What is skipped is the retrying, not any assertion: everything
+		// below reads the same log this predicate reads, after the launch
+		// returns. An arm that records nothing still runs to the 180s bound and
+		// fails there.
+		StopWhen: proxyCooperationEvidenceRecorded(scenario, originPort),
 		Command: func(workspace string) string {
 			// The probe runs first and unconditionally, then the harness runs
 			// whatever its own exit status. Both are inside the same floor,
@@ -270,6 +285,56 @@ func runProxyCooperationScenario(
 	})
 	t.Logf("proxy cooperation launch output:\n%s", launch.Output)
 	return requireProxyDecisions(t, launch)
+}
+
+// proxyCooperationEvidenceRecorded builds this arm's early-stop predicate: it
+// reports whether the proxy's log already holds every record the assertions
+// above need to EXIST — the model origin allowed at the origin port, AND the
+// deliberate undeclared probe refused. (Assertion 4 is not part of that set: it
+// prints what the record contains rather than requiring anything of it, and its
+// comment says what the stop costs it.)
+//
+// Both halves are required on purpose. The probe runs first and unconditionally,
+// so its refusal appears within seconds of launch; stopping on that alone would
+// cancel the launch before the harness ever reached its origin, and assertion 1
+// would then fail on a launch that was about to satisfy it. Requiring the pair
+// means the stop can only fire when every assertion that needs a record to exist
+// already has it.
+//
+// What the stop does give up is observation of what the harness would have done
+// during the retry time that is skipped. Assertion 2 — no undeclared origin was
+// allowed — therefore reads a shorter record than before. That is the deliberate
+// trade: the same claim over the launch up to its evidence, in seconds rather
+// than three minutes.
+func proxyCooperationEvidenceRecorded(
+	scenario proxyCooperationScenario,
+	originPort int,
+) func([]string) bool {
+	return func(lines []string) bool {
+		// Lenient parsing, unlike the assertions'. proxyDecisionLines already
+		// drops an unterminated tail, so this is the second layer rather than
+		// the only one — but a poll that skips a line it cannot read simply
+		// waits one more tick, which costs nothing, whereas the assertions are
+		// right to treat a complete-but-malformed record as a broken contract.
+		decisions := make([]proxyDecisionRecord, 0, len(lines))
+		for _, line := range lines {
+			var record proxyDecisionRecord
+			if err := json.Unmarshal([]byte(line), &record); err != nil {
+				continue
+			}
+			decisions = append(decisions, record)
+		}
+		if !proxyDecisionsIncludeRefusal(
+			decisions, proxyCooperationUndeclaredHost) {
+			return false
+		}
+		for _, origin := range scenario.origins {
+			if !proxyDecisionsInclude(decisions, origin, originPort, "allowed") {
+				return false
+			}
+		}
+		return true
+	}
 }
 
 // proxyCooperationRules is the authored policy for one scenario: exactly the
@@ -347,6 +412,66 @@ func TestProxyCooperationProbeHelper(t *testing.T) {
 	require.Equal(t, byte(2), reply,
 		"SOCKS5 refusals use connection-not-allowed")
 	fmt.Printf("%s: undeclared/socks5: refused\n", proxyCooperationProbeMarker)
+}
+
+// TestProxyCooperationEvidenceRecordedPredicate pins the early stop's ONE
+// dangerous failure mode: firing before the evidence is complete. It runs
+// everywhere, without the smoke fixture, because the predicate is the part of
+// the early stop a reviewer cannot otherwise see exercised — the smoke itself
+// only ever runs it against a log that ends up complete.
+func TestProxyCooperationEvidenceRecordedPredicate(t *testing.T) {
+	const port = proxyCooperationOriginPort
+	scenario := proxyCooperationScenario{
+		name: "claude", origins: []string{"api.anthropic.com"},
+	}
+	stop := proxyCooperationEvidenceRecorded(scenario, port)
+
+	decision := func(host string, port int, verdict string) string {
+		line, err := json.Marshal(proxyDecisionRecord{
+			Message: ProxyNetworkDecisionMessage,
+			Host:    host, Port: port, Verdict: verdict, Kind: "host",
+		})
+		require.NoError(t, err)
+		return string(line)
+	}
+	refused := decision(proxyCooperationUndeclaredHost, 8080, "refused")
+	carried := decision("api.anthropic.com", port, "allowed")
+
+	for _, testCase := range []struct {
+		name  string
+		lines []string
+		stop  bool
+	}{
+		{name: "nothing recorded"},
+		{name: "probe refusal alone", lines: []string{refused}},
+		{name: "model origin alone", lines: []string{carried}},
+		{
+			name: "model origin on another port",
+			lines: []string{
+				refused, decision("api.anthropic.com", 8080, "allowed"),
+			},
+		},
+		{
+			name:  "model origin refused",
+			lines: []string{refused, decision("api.anthropic.com", port, "refused")},
+		},
+		{
+			name:  "the probe allowed rather than refused",
+			lines: []string{decision(proxyCooperationUndeclaredHost, 8080, "allowed"), carried},
+		},
+		{name: "full evidence set", lines: []string{refused, carried}, stop: true},
+		{
+			// A poll that catches the log mid-append must wait for the next
+			// tick rather than crash the launch or read the torn line as data.
+			name:  "full evidence set with a torn trailing line",
+			lines: []string{refused, carried, `{"msg":"proxy netw`},
+			stop:  true,
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			assert.Equal(t, testCase.stop, stop(testCase.lines))
+		})
+	}
 }
 
 // proxyDecisionRecord is one line of the proxy's own account of this launch.
