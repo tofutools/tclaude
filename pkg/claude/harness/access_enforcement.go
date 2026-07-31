@@ -592,9 +592,15 @@ func accessEnforcementTable(
 		// silently let exactly that shape through. Both PredictAccessEnforcement
 		// and ResolveAccessEnforcement return this error, so the editor preview
 		// and the launch refuse from the same evaluation.
+		//
+		// Linux only, because the mechanism is: tclaude builds the sandbox root
+		// from the authored grants there, and knownResolverSocketPaths are Linux
+		// resolver paths. Seatbelt is a path filter over the host namespace and
+		// has no root to construct; when M3 activates the Darwin proxy floor it
+		// brings its own paths and its own gate rather than inheriting these.
 		if selector, resolver, conflict :=
 			sandboxpolicy.NetworkEngineResolverFilesystemConflict(
-				deployedEngine, axes.Filesystem); conflict {
+				deployedEngine, axes.Filesystem); conflict && goos == "linux" {
 			return accessEnforcementTableRow{}, &SandboxCapabilityError{
 				Kind: SandboxCapabilityNetworkAllowlist,
 				Message: sandboxpolicy.NetworkEngineResolverFilesystemRefusal(

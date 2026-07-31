@@ -7,12 +7,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestResolverFilesystemConflictReachesTheInodeEveryWayAGrantCan is TCL-883's
+// TestResolverFilesystemConflictRefusesGrantsThatNameTheResolver is TCL-883's
 // core: the Unix-socket axis was never the only route to a resolver socket.
-// Each case here is a distinct way a filesystem grant reaches the same inode,
-// and each must refuse; the negative cases below bound the refusal so it stays
-// a security rule rather than a path-shaped superstition.
-func TestResolverFilesystemConflictReachesTheInodeEveryWayAGrantCan(t *testing.T) {
+// Each case here is a distinct spelling by which an authored grant names a
+// resolver directory, and each must refuse; the negative cases below bound the
+// refusal so it stays a security rule rather than a path-shaped superstition.
+//
+// The name is deliberately "names the resolver" rather than "every way a grant
+// can reach the inode": matching is lexical over canonicalized authored paths,
+// so a host bind mount of a resolver directory into a granted subtree is
+// outside it. That boundary is stated on the predicate itself.
+func TestResolverFilesystemConflictRefusesGrantsThatNameTheResolver(t *testing.T) {
 	for _, testCase := range []struct {
 		name             string
 		grants           []FilesystemGrant
@@ -132,6 +137,18 @@ func TestResolverFilesystemConflictLeavesInnocentPoliciesAlone(t *testing.T) {
 				{Path: "/run/systemd/resolve", Access: AccessDeny},
 			},
 		},
+		{
+			// The same authored position spelled twice. Both the profile
+			// normalizer and the mount renderer fold these by access rank, and
+			// deny outranks read, so the rendered plan hides the socket — the
+			// check has to agree rather than report first-wins.
+			name:   "a duplicate position where the deny outranks the read",
+			engine: NetworkEngineProxy,
+			grants: []FilesystemGrant{
+				{Path: "/run/systemd/resolve", Access: AccessRead},
+				{Path: "/run/systemd/resolve", Access: AccessDeny},
+			},
+		},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			_, _, found := NetworkEngineResolverFilesystemConflict(
@@ -174,6 +191,17 @@ func TestResolverFilesystemConflictHonorsMountPlanShadowing(t *testing.T) {
 		"a deny at the host position does not shadow a remapped guest position")
 	assert.Equal(t, "/run/systemd", selector)
 	assert.Contains(t, resolver, "io.systemd.Resolve")
+
+	// A remapped grant rooted at "/" keeps its suffix separated: the guest key
+	// is joined rather than concatenated, so the resolver lands beneath the
+	// mount path instead of fusing into its first element.
+	rootRemap := []FilesystemGrant{
+		{Path: "/", MountPath: "/sandbox-root", Access: AccessRead},
+	}
+	selector, _, found = NetworkEngineResolverFilesystemConflict(
+		NetworkEngineProxy, rootRemap)
+	require.True(t, found)
+	assert.Equal(t, "/", selector)
 
 	// A LESS specific deny does not win over a more specific grant, for the
 	// same reason the renderer would not let it.

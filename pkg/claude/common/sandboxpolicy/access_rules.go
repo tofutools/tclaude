@@ -105,7 +105,12 @@ type ResolvedAxes struct {
 	// It is deliberately NOT a third enforceable axis: nothing rates it, nothing
 	// widens it, and PlanAccessEnforcement passes it through untouched. Callers
 	// that only need the access tiers can keep ignoring it.
-	Filesystem []FilesystemGrant
+	//
+	// Not serialized. This type is rendered as `recorded_axes` on plan and
+	// profile responses, whose contract is the two ACCESS axes; adding a third
+	// key there would change an API shape to restate grants those responses
+	// already carry.
+	Filesystem []FilesystemGrant `json:"-"`
 }
 
 const (

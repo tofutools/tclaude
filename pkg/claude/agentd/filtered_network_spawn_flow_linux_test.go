@@ -3,6 +3,7 @@
 package agentd_test
 
 import (
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -667,4 +668,73 @@ func TestProxyEngineSpawnRefusesAResolverReachingFilesystemGrant(t *testing.T) {
 			assert.Empty(t, resp.ConvID)
 		})
 	}
+}
+
+// TestProxyEngineSpawnRefusesAHostThatCannotBuildTheFloor is the other half of
+// the gate. Its sibling above proves the guard stops asking the PACKET
+// gateway's question under the proxy engine; this proves the question it asks
+// instead is a real one.
+//
+// Removing a gate is only safe if something else refuses. Here the
+// posture-exact verdict — which maps the proxy floor onto the isolated
+// posture's construction and probes bubblewrap's namespaces plus pidfd —
+// reports that this host cannot build it. The spawn must be refused, not
+// silently started with the network rules unenforced.
+func TestProxyEngineSpawnRefusesAHostThatCannotBuildTheFloor(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	t.Cleanup(agentd.SetFilteredNetworkPrerequisiteForTest(
+		func() session.FilteredNetworkPrerequisite {
+			// Detected, so a residual dependence on the packet probe could not
+			// be what refuses this spawn.
+			return session.FilteredNetworkPrerequisite{
+				Detected: true,
+				Detail:   "test namespace, pasta, and nft readiness",
+			}
+		},
+	))
+	t.Cleanup(agentd.SetTclaudeLayerAccessVerdictForTest(
+		func(_ string, posture sandboxpolicy.NetworkPosture, _ sandboxpolicy.RootPosture,
+			_ sandboxpolicy.NetworkEngine) (harness.LaunchOSSandbox, error) {
+			if posture == sandboxpolicy.NetworkFiltered {
+				return harness.LaunchOSSandbox{}, errors.New(
+					"tclaude-layer cannot create the bubblewrap mount, network, and PID namespaces")
+			}
+			return harness.LaunchOSSandbox{
+				State: "on", Source: "test host-open boundary",
+			}, nil
+		},
+	))
+	codexHome := t.TempDir()
+	require.NoError(t, os.WriteFile(
+		filepath.Join(codexHome, "auth.json"),
+		[]byte(`{"auth_mode":"apikey","OPENAI_API_KEY":"test-key"}`),
+		0o600))
+	t.Setenv("CODEX_HOME", codexHome)
+
+	_, err := db.CreateSandboxProfile(&db.SandboxProfile{
+		Name: "floor-unavailable-proxy",
+		Network: &sandboxpolicy.NetworkRules{
+			Mode: sandboxpolicy.AccessModeList,
+			Allow: []sandboxpolicy.NetworkAllowEntry{
+				{Domain: "example.com", Ports: []int{443}},
+			},
+			Engine: sandboxpolicy.NetworkEngineProxy,
+		},
+	})
+	require.NoError(t, err)
+
+	resp := f.AsHuman().SpawnWith("crew", map[string]any{
+		"name":                   "floor-unavailable-worker",
+		"harness":                harness.CodexName,
+		"sandbox":                harness.SandboxReadOnly,
+		"sandbox_implementation": string(sandboxpolicy.ImplementationTclaudeLayer),
+		"sandbox_profile":        "floor-unavailable-proxy",
+	})
+	require.Equalf(t, http.StatusUnprocessableEntity, resp.Code,
+		"a host that cannot build the proxy floor must refuse, not launch unfiltered; body=%s",
+		resp.Raw)
+	failure := decodeFailure(t, resp.Raw)
+	assert.Contains(t, failure.Error, "bubblewrap")
+	assert.Empty(t, resp.ConvID)
 }

@@ -127,8 +127,15 @@ func NetworkEngineResolverSocketConflict(
 // direction: the alternative is a proxy engine that silently loses name
 // authority on a policy that looked fine. The refusal names the remedy.
 //
-// Like the socket check, this is a KNOWN-paths list rather than a proof of
-// exhaustiveness; see the comment on knownResolverSocketPaths.
+// TWO BOUNDARIES, both stated rather than claimed away. The list is a
+// KNOWN-paths list rather than a proof of exhaustiveness (see the comment on
+// knownResolverSocketPaths). And the MATCHING is lexical over canonicalized
+// authored paths: symlinks are covered, because the profile layer resolves them
+// before this check sees a grant, but a host BIND MOUNT of a resolver directory
+// into a granted subtree is not. tclaude does not create such a mount, and an
+// operator who has made one has already reshaped the host namespace beneath the
+// grant they authored; the honest statement is that this refuses grants that
+// name the resolver, not that it proves no path reaches it.
 func NetworkEngineResolverFilesystemConflict(
 	engine NetworkEngine,
 	filesystem []FilesystemGrant,
@@ -152,11 +159,26 @@ func NetworkEngineResolverFilesystemConflict(
 			if grant.Path == "" || !pathCovers(grantPath, resolverPath) {
 				continue
 			}
-			guest := filepath.Clean(grant.GuestPath()) +
-				strings.TrimPrefix(resolverPath, grantPath)
+			// The guest position this grant puts the resolver at. The suffix is
+			// joined rather than concatenated so a grant rooted at "/" — whose
+			// cleaned path has no trailing separator to reuse — cannot fuse the
+			// mount path into the first path element.
+			guest := filepath.Join(filepath.Clean(grant.GuestPath()),
+				strings.TrimPrefix(resolverPath, grantPath))
 			previous, seen := winners[guest]
-			if seen && previous.specificity >= len(grantPath) {
-				continue
+			if seen {
+				if previous.specificity > len(grantPath) {
+					continue
+				}
+				// Equal specificity is the same authored position spelled
+				// twice, which the renderer and the profile normalizer both
+				// resolve by access rank — deny wins. Taking first-wins here
+				// would report a conflict for rows whose rendered plan hides
+				// the socket.
+				if previous.specificity == len(grantPath) &&
+					accessRank(previous.access) >= accessRank(grant.Access) {
+					continue
+				}
 			}
 			winners[guest] = winner{
 				access:      grant.Access,

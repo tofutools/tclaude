@@ -158,6 +158,24 @@ func TclaudeLayerNetworkPosture(
 	return sandboxpolicy.NetworkPostureForRules(axes.Network)
 }
 
+// TclaudeLayerNetworkEngine reports the filtering engine a resolved profile
+// DEPLOYS, from the same planned axes TclaudeLayerNetworkPosture reads.
+//
+// It is the resume path's route to the answer the spawn and launch paths get
+// from their own axes. Without it a resumed launch would re-derive the floor
+// from the posture alone, probe the packet gateway's prerequisites for a launch
+// that calls neither pasta nor nft, and record the packet gateway's boundary
+// sentence for a session running behind a proxy.
+func TclaudeLayerNetworkEngine(
+	effective sandboxpolicy.EffectiveProfile,
+) (sandboxpolicy.NetworkEngine, error) {
+	axes, err := sandboxpolicy.PlannedEffectiveAccessAxes(effective)
+	if err != nil {
+		return sandboxpolicy.NetworkEngineUnset, err
+	}
+	return sandboxpolicy.DeployedNetworkEngineForRules(axes.Network)
+}
+
 // BuildTclaudeLayerLaunchSpec freezes the launch-active filesystem rows, then
 // constructs the exact launch contract the outer
 // renderer consumes. Callers may persist the result and re-render it later
@@ -666,6 +684,22 @@ func TclaudeLayerLaunchOSSandbox(
 	return tclaudeLayerLaunchOSSandbox(posture, root)
 }
 
+// TclaudeLayerLaunchOSSandboxForEngine is TclaudeLayerLaunchOSSandbox for a
+// launch whose filtering engine is known. A filtered posture carried by the
+// proxy engine runs no pasta, no nft and no DNS broker, so it must not be
+// described with the packet gateway's sentence — the badge and the persisted
+// record are read as statements about the mechanism this launch runs.
+func TclaudeLayerLaunchOSSandboxForEngine(
+	posture sandboxpolicy.NetworkPosture,
+	root sandboxpolicy.RootPosture,
+	engine sandboxpolicy.NetworkEngine,
+) harness.LaunchOSSandbox {
+	if TclaudeLayerFloorPosture(posture, engine) != posture {
+		return tclaudeLayerProxyLaunchOSSandbox()
+	}
+	return tclaudeLayerLaunchOSSandbox(posture, root)
+}
+
 // TclaudeLayerLaunchOSSandboxForHarness describes the actual process boundary.
 // OpenCode's attach TUI is deliberately outside the wall; its agentd-owned
 // server is the process that executes tools and is the component we confine.
@@ -681,10 +715,7 @@ func TclaudeLayerLaunchOSSandboxForHarness(
 	root sandboxpolicy.RootPosture,
 	engine sandboxpolicy.NetworkEngine,
 ) harness.LaunchOSSandbox {
-	resolved := TclaudeLayerLaunchOSSandbox(posture, root)
-	if TclaudeLayerFloorPosture(posture, engine) != posture {
-		resolved = tclaudeLayerProxyLaunchOSSandbox()
-	}
+	resolved := TclaudeLayerLaunchOSSandboxForEngine(posture, root, engine)
 	if harnessName == harness.OpenCodeName {
 		if posture == sandboxpolicy.NetworkFiltered {
 			resolved.Source += "; OpenCode tool-executing server confined; " +
