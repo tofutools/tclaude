@@ -3,10 +3,8 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { GROUP_VIEW_OPTIONS } from './groups-state.js';
 import { GroupsNativeList } from './groups-list.js';
-import { GroupsNotificationReader } from './groups-notification-reader.js';
 import { GroupStandingOrdersDialog } from './groups-standing-orders-dialog.js';
 import { GroupsInteractionProvider } from './groups-interactions.js';
-import { OPEN_HUMAN_NOTIFICATION_EVENT } from './human-notification-attention.js';
 import { syncBotAnimations, syncWizardOrbit } from './helpers.js';
 import { isWizardActive } from './slop.js';
 
@@ -192,49 +190,6 @@ export function GroupsControls({ state, actions }) {
   `;
 }
 
-// HumanNotificationReaderHost owns the one mounted quick reader. It lives on a
-// body-level host rather than inside the Groups section because every surface
-// that draws the yellow attention glyph opens it — Groups member rows and, on
-// the Terminals tab, the tab of an agent with unread notifications. A drawer
-// rendered inside a hidden tab section would not be visible at all.
-export function HumanNotificationReaderHost({ state, actions }) {
-  const [descriptor, setDescriptor] = useState(null);
-
-  useEffect(() => {
-    const open = (event) => {
-      const detail = event.detail || {};
-      if (!detail.sender || !detail.messageId) return;
-      setDescriptor({
-        sender: detail.sender,
-        messageId: detail.messageId,
-        launcher: detail.launcher || null,
-        returnFocus: detail.returnFocus || null,
-      });
-    };
-    document.addEventListener(OPEN_HUMAN_NOTIFICATION_EVENT, open);
-    return () => document.removeEventListener(OPEN_HUMAN_NOTIFICATION_EVENT, open);
-  }, []);
-
-  if (!descriptor) return null;
-  const close = (restoreFocus) => {
-    const focusTarget = descriptor.launcher?.isConnected
-      ? descriptor.launcher
-      : descriptor.returnFocus;
-    setDescriptor(null);
-    if (restoreFocus && focusTarget?.isConnected) {
-      queueMicrotask(() => focusTarget.focus({ preventScroll: true }));
-    }
-  };
-  return html`<${GroupsNotificationReader}
-    descriptor=${descriptor}
-    snapshot=${state.snapshot.value}
-    state=${state}
-    actions=${actions}
-    onSelect=${(messageId) => setDescriptor({ ...descriptor, messageId })}
-    onClose=${close}
-  />`;
-}
-
 export function GroupsList({ host, state, actions }) {
   useWizardTheme();
   const [hoveredGroupKey, setHoveredGroupKey] = useState(null);
@@ -350,7 +305,7 @@ export function BrokerRefusalNotice({ snapshot }) {
 }
 
 export function mountGroupsIsland({
-  filterHost, listHost, notificationReaderHost, state, actions, registerCleanup,
+  filterHost, listHost, state, actions, registerCleanup,
 }) {
   state.initialize();
   render(html`<${GroupsControls} state=${state} actions=${actions} />`, filterHost);
@@ -363,9 +318,4 @@ export function mountGroupsIsland({
     />
   `, listHost);
   registerCleanup(() => render(null, listHost));
-  if (notificationReaderHost) {
-    render(html`<${HumanNotificationReaderHost} state=${state} actions=${actions} />`,
-      notificationReaderHost);
-    registerCleanup(() => render(null, notificationReaderHost));
-  }
 }

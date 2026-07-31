@@ -77,6 +77,14 @@
   margin: 0; padding: 0; border: 0; background: none; cursor: pointer;
   border-radius: 50%;
 }
+/* The shared glyph rings itself in the Groups table's chrome colour; inside a
+   tab the surrounding surface is the tab itself, so only that ring is retuned. */
+.mux-tab-attention > .human-notification-attention-glyph {
+  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.55), 0 0 0 2px #0d1117;
+}
+.mux-tab.active .mux-tab-attention > .human-notification-attention-glyph {
+  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.55), 0 0 0 2px #21262d;
+}
 .mux-tab-attention:hover > .human-notification-attention-glyph {
   background: #815b00;
 }

@@ -109,11 +109,10 @@ const groupsDescriptor = createIslandDescriptor({
     listHost: '#groups-list',
     memberDialogHost: '#groups-member-dialog-root',
     addMemberDialogHost: '#groups-add-member-dialog-root',
-    notificationReaderHost: '#human-notification-reader-root',
   },
   failureClass: 'groups-error',
   load: async ({ hosts: {
-    filterHost, listHost, memberDialogHost, addMemberDialogHost, notificationReaderHost,
+    filterHost, listHost, memberDialogHost, addMemberDialogHost,
   }, dependencies }) => {
     const islandModule = import('./groups-island.js');
     const memberEditorModule = import('./member-editor-island.js');
@@ -132,7 +131,7 @@ const groupsDescriptor = createIslandDescriptor({
       state: groupsState,
       mount: (registerCleanup) => {
         mountGroupsIsland({
-          filterHost, listHost, notificationReaderHost, state: groupsState, actions,
+          filterHost, listHost, state: groupsState, actions,
           registerCleanup,
         });
         mountGroupsMemberEditor({
@@ -150,6 +149,44 @@ const groupsDescriptor = createIslandDescriptor({
 
 export function mountGroupsFeature(dependencies = {}) {
   return mountIslandDescriptor(groupsDescriptor, dependencies);
+}
+
+// The quick reader belongs to no tab: the Groups member rows and the Terminals
+// tab strip both raise it, and it draws over whichever tab is showing. Its own
+// island keeps it alive when either of those features fails to mount, and
+// keeps a missing reader host from taking a whole tab down with it.
+const humanNotificationsDescriptor = createIslandDescriptor({
+  name: 'human-notifications',
+  label: 'Human notification reader',
+  hosts: { host: '#human-notification-reader-root' },
+  failureClass: 'human-notifications-error',
+  load: async ({ hosts: { host }, dependencies }) => {
+    const islandModule = import('./human-notification-reader-island.js');
+    const dashboardStateModule = import('./snapshot-store.js');
+    const groupsStateModule = import('./groups-state.js');
+    const [{ mountHumanNotificationReaderIsland }, { dashboardState }, { groupsState }] =
+      await Promise.all([islandModule, dashboardStateModule, groupsStateModule]);
+    // Read the store every island sees — the reader must work even where the
+    // Groups feature is absent — but push its optimistic read/unread edit into
+    // the Groups store too, so the member row, the terminal tab glyph and the
+    // top-bar hint all move together instead of at the next poll.
+    const state = {
+      snapshot: dashboardState.snapshot,
+      publish: (next) => {
+        dashboardState.publishLocalEdit(next);
+        groupsState.publish(next);
+      },
+    };
+    return {
+      mount: (registerCleanup) => mountHumanNotificationReaderIsland({
+        host, state, actions: { reportError: dependencies.notify }, registerCleanup,
+      }),
+    };
+  },
+});
+
+export function mountHumanNotificationsFeature(dependencies = {}) {
+  return mountIslandDescriptor(humanNotificationsDescriptor, dependencies);
 }
 
 const linksDescriptor = createIslandDescriptor({

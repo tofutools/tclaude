@@ -138,6 +138,15 @@ export function createDashboardState({ now = () => Date.now() } = {}) {
     return true;
   }
 
+  // publishLocalEdit applies an OPTIMISTIC local change to the published
+  // snapshot — marking a human notification read, say — outside the request
+  // lifecycle, so every island reading this store sees it before the next poll
+  // reconciles to server truth. It deliberately touches no request bookkeeping:
+  // the poll in flight still owns commit/fail/discard.
+  function publishLocalEdit(value) {
+    snapshot.value = value ? { ...value } : null;
+  }
+
   // Feature modules derive views instead of copying snapshot slices into
   // additional mutable stores. The selector reruns only when its Signal
   // dependencies change and stays independent of legacy rendering modules.
@@ -160,6 +169,7 @@ export function createDashboardState({ now = () => Date.now() } = {}) {
     discardRequest,
     setActiveTab,
     setConnection,
+    publishLocalEdit,
     select,
   });
 }

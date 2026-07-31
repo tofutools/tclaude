@@ -129,13 +129,20 @@ test('a collapsed tab stack carries the alert of the tabs it hides', async (t) =
   assert.equal(host.querySelectorAll('.mux-group-attention').length, 1);
   assert.match(host.querySelector('.mux-group-pill').getAttribute('aria-label'),
     /1 unread notification in a collapsed tab/);
+
+  await harness.act(() => terminalShellState.toggleGroupCollapsed(group.id));
+  assert.equal(host.querySelectorAll('.mux-group-attention').length, 0,
+    'an expanded stack shows the alert on the member tab itself');
+  const glyphs = host.querySelectorAll('.mux-tab-attention');
+  assert.equal(glyphs.length, 1, 'the snapshot reaches tabs rendered inside a stack');
+  assert.equal(glyphs[0].closest('[role="tab"]').dataset.paneKey, 'one');
   await harness.act(() => cleanup());
 });
 
 test('the quick reader mounts on its own body-level host and answers every surface', async (t) => {
   const harness = await createPreactHarness(t);
-  const { HumanNotificationReaderHost } =
-    await harness.importDashboardModule('js/groups-island.js');
+  const { HumanNotificationReader } =
+    await harness.importDashboardModule('js/human-notification-reader-island.js');
   const { openHumanNotificationReader } =
     await harness.importDashboardModule('js/human-notification-attention.js');
   const snapshot = { value: { messages_unread: 1, messages: [notification] } };
@@ -144,8 +151,10 @@ test('the quick reader mounts on its own body-level host and answers every surfa
   globalThis.fetch = async () => ({ ok: true });
   t.after(() => { globalThis.fetch = savedFetch; });
 
+  const launcher = harness.document.body.appendChild(harness.document.createElement('button'));
+  t.after(() => launcher.remove());
   const mounted = await harness.mount(harness.html`
-    <${HumanNotificationReaderHost} state=${state} actions=${{ reportError: () => {} }} />
+    <${HumanNotificationReader} state=${state} actions=${{ reportError: () => {} }} />
   `);
   assert.equal(mounted.container.querySelector('.human-notification-drawer'), null);
 
@@ -153,6 +162,7 @@ test('the quick reader mounts on its own body-level host and answers every surfa
     openHumanNotificationReader({
       sender: { agent: 'agt_one', conv: 'conv-one-gen2', label: 'builder' },
       messageID: 42,
+      launcher,
       documentRef: harness.document,
     });
   });
@@ -164,4 +174,48 @@ test('the quick reader mounts on its own body-level host and answers every surfa
     harness.fireEvent(drawer.querySelector('.human-notification-drawer-close'), 'click');
   });
   assert.equal(mounted.container.querySelector('.human-notification-drawer'), null);
+  assert.equal(harness.document.activeElement, launcher,
+    'closing hands focus back to whatever raised the reader');
+
+  // Escape belongs to whoever already handled it — a live terminal, say.
+  await harness.act(() => {
+    openHumanNotificationReader({
+      sender: { agent: 'agt_one', conv: 'conv-one-gen2', label: 'builder' },
+      messageID: 42,
+      documentRef: harness.document,
+    });
+  });
+  assert.ok(mounted.container.querySelector('.human-notification-drawer'));
+  await harness.act(() => {
+    const escape = new harness.window.Event('keydown', { bubbles: true, cancelable: true });
+    Object.defineProperty(escape, 'key', { value: 'Escape' });
+    escape.preventDefault();
+    harness.document.dispatchEvent(escape);
+  });
+  assert.ok(mounted.container.querySelector('.human-notification-drawer'),
+    'an already-handled Escape does not close the reader');
+
+  // …and the same Escape, unhandled, still closes it — so the assertion above
+  // is about defaultPrevented and not about the listener being absent.
+  await harness.act(() => {
+    const escape = new harness.window.Event('keydown', { bubbles: true, cancelable: true });
+    Object.defineProperty(escape, 'key', { value: 'Escape' });
+    harness.document.dispatchEvent(escape);
+  });
+  assert.equal(mounted.container.querySelector('.human-notification-drawer'), null);
+});
+
+test('the reader ignores an open request that names no message', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { openHumanNotificationReader } =
+    await harness.importDashboardModule('js/human-notification-attention.js');
+  const seen = [];
+  harness.document.addEventListener('tclaude:open-human-notification', (e) => seen.push(e));
+  assert.equal(openHumanNotificationReader({
+    sender: { agent: 'agt_one' }, messageID: null, documentRef: harness.document,
+  }), false);
+  assert.equal(openHumanNotificationReader({
+    sender: null, messageID: 42, documentRef: harness.document,
+  }), false);
+  assert.equal(seen.length, 0);
 });

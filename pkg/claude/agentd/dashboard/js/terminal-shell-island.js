@@ -308,6 +308,9 @@ function TabAttention({ pane, snapshot }) {
       },
       messageID: message.id,
       launcher: event.currentTarget,
+      // The glyph itself disappears the moment the message is marked read, so
+      // the tab is the surface focus can actually come back to.
+      returnFocus: event.currentTarget.closest('.mux-tab') || null,
     });
   };
   return html`
@@ -486,9 +489,11 @@ function GroupStack({
   // A collapsed stack hides every tab but the active one, and with them their
   // attention glyphs. The pill carries a hint so a notification inside a folded
   // stack is still visible from the strip.
-  const hiddenUnread = panes
-    .filter((pane) => !visible.includes(pane))
-    .reduce((total, pane) => total + paneUnreadNotifications(pane, snapshot?.value).length, 0);
+  const hiddenUnread = group.collapsed
+    ? panes
+      .filter((pane) => !visible.includes(pane))
+      .reduce((total, pane) => total + paneUnreadNotifications(pane, snapshot?.value).length, 0)
+    : 0;
   const openMenuAt = (event) => {
     const keyboard = event.type === 'keydown';
     if (keyboard && event.key !== 'ContextMenu' && !(event.key === 'F10' && event.shiftKey)) return false;

@@ -140,6 +140,11 @@ export function GroupsNotificationReader({
   useEffect(() => {
     const onKeyDown = (event) => {
       if (event.key !== 'Escape' || hasShownOverlay()) return;
+      // The reader draws over the Terminals tab too, where a live xterm is
+      // taking keys and calling preventDefault on the ones it forwards to the
+      // PTY. Escape pressed inside a terminal belongs to that terminal, not to
+      // this drawer.
+      if (event.defaultPrevented) return;
       event.preventDefault();
       onClose(true);
     };
