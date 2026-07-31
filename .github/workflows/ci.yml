@@ -913,4 +913,5 @@ jobs:
           node-version: lts/*
 
       - name: Run filtered-network proxy smokes
+        shell: bash
         run: scripts/filtered-proxy-smoke/run.sh

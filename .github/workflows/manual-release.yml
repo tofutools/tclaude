@@ -959,7 +959,8 @@ jobs:
     name: Release
     runs-on: ubuntu-latest
     needs:
-      [test, lint, version, build, sandbox-v2-smoke, sandbox-v2-seatbelt-smoke]
+      [test, lint, version, build, sandbox-v2-smoke, sandbox-v2-seatbelt-smoke,
+       filtered-proxy-smoke]
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -1007,6 +1008,8 @@ jobs:
   # ever needed to add a smoke, that belongs in the entrypoint instead.
   filtered-proxy-smoke:
     name: Filtered-network proxy smoke
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -1025,4 +1028,5 @@ jobs:
           node-version: lts/*
 
       - name: Run filtered-network proxy smokes
+        shell: bash
         run: scripts/filtered-proxy-smoke/run.sh
