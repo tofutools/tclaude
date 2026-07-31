@@ -202,6 +202,14 @@ func TestPinnedProxyHarnessCooperation(t *testing.T) {
 			//    actually use? Recorded rather than asserted — a harness that
 			//    never uses SOCKS is a capability fact about that harness, not
 			//    a failure.
+			//
+			//    Read this as "the carriages up to the launch's evidence", not
+			//    "every carriage the harness would ever have used": the early
+			//    stop ends the launch shortly after the first model-origin
+			//    record, so a carriage the harness would have reached for later
+			//    is not in the record. That is fine for a printed observation
+			//    and NOT fine for an assertion — anything asserted on this set
+			//    would need the predicate to wait for it too.
 			carriages := proxyDecisionCarriages(decisions, scenario.origins)
 			carriageByHarness[scenario.name] = carriages
 			fmt.Printf(
@@ -280,9 +288,11 @@ func runProxyCooperationScenario(
 }
 
 // proxyCooperationEvidenceRecorded builds this arm's early-stop predicate: it
-// reports whether the proxy's log already holds the WHOLE evidence set the
-// assertions above rest on — the model origin allowed at the origin port, AND
-// the deliberate undeclared probe refused.
+// reports whether the proxy's log already holds every record the assertions
+// above need to EXIST — the model origin allowed at the origin port, AND the
+// deliberate undeclared probe refused. (Assertion 4 is not part of that set: it
+// prints what the record contains rather than requiring anything of it, and its
+// comment says what the stop costs it.)
 //
 // Both halves are required on purpose. The probe runs first and unconditionally,
 // so its refusal appears within seconds of launch; stopping on that alone would
@@ -301,10 +311,11 @@ func proxyCooperationEvidenceRecorded(
 	originPort int,
 ) func([]string) bool {
 	return func(lines []string) bool {
-		// Lenient parsing, unlike the assertions': the poll can catch the log
-		// mid-append, and a torn last line is a timing artifact of reading a
-		// live file rather than the broken contract parseProxyDecisions rejects.
-		// Waiting one more tick for it to be complete costs nothing.
+		// Lenient parsing, unlike the assertions'. proxyDecisionLines already
+		// drops an unterminated tail, so this is the second layer rather than
+		// the only one — but a poll that skips a line it cannot read simply
+		// waits one more tick, which costs nothing, whereas the assertions are
+		// right to treat a complete-but-malformed record as a broken contract.
 		decisions := make([]proxyDecisionRecord, 0, len(lines))
 		for _, line := range lines {
 			var record proxyDecisionRecord
