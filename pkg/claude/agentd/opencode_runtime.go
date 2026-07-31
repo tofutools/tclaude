@@ -548,6 +548,33 @@ func revalidateOpenCodeRuntimeEffective(
 	return revalidated.Effective, nil
 }
 
+// openCodeReadOnlyConfigBindSource answers the one question both the launch
+// contract's validation and the pre-sandbox bootstrap ask of a contract: which
+// directory, if any, serves this contract's config app directory read-only?
+// The validator only needs to know that one exists; the bootstrap needs to know
+// WHICH, because that is the directory the sandbox reads through the bind. They
+// ask here rather than each deriving "the config bind" for itself.
+//
+// The LAST matching bind wins, because that is the one the sandbox serves.
+func openCodeReadOnlyConfigBindSource(
+	contract session.TclaudeLayerLaunchContract,
+) string {
+	if len(contract.StateDirs) != 4 {
+		return ""
+	}
+	configTarget := canonicalOpenCodeRuntimePath(contract.StateDirs[2])
+	if configTarget == "" {
+		return ""
+	}
+	source := ""
+	for _, bind := range contract.ReadOnlyBinds {
+		if canonicalOpenCodeRuntimePath(bind.Target) == configTarget {
+			source = canonicalOpenCodeRuntimePath(bind.Source)
+		}
+	}
+	return source
+}
+
 func canonicalOpenCodeRuntimePath(path string) string {
 	path = filepath.Clean(strings.TrimSpace(path))
 	if path == "." || !filepath.IsAbs(path) {
@@ -958,14 +985,7 @@ func validateOpenCodeV3LaunchContract(
 	if len(contract.FinalHideDirs) != 3 {
 		return fmt.Errorf("private OpenCode v3 launch contract must hide the three ambient mutable XDG roots")
 	}
-	configTarget := canonicalOpenCodeRuntimePath(contract.StateDirs[2])
-	configReadOnly := false
-	for _, bind := range contract.ReadOnlyBinds {
-		if canonicalOpenCodeRuntimePath(bind.Target) == configTarget {
-			configReadOnly = true
-		}
-	}
-	if !configReadOnly {
+	if openCodeReadOnlyConfigBindSource(contract) == "" {
 		return fmt.Errorf("private OpenCode v3 launch contract does not bind global config read-only")
 	}
 	if filtered {

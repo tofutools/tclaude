@@ -649,6 +649,11 @@ func validateExistingOpenCodeCredential(path string) error {
 // to what OpenCode itself writes on first run — see openCodeInstallGitignore.
 // A seeded file therefore leaves no diff for OpenCode to undo.
 //
+// Because the write target comes from a bind SOURCE — which the launch
+// contract's own validation does not constrain, it checks targets — the source
+// is separately confined to the two directories the layouts emit before
+// anything is created; see validateOpenCodeReadOnlyConfigSeedSource.
+//
 // platform names the caller's OS for the refusal message only; the behavior is
 // identical on both, so either path is exercisable from either host.
 func prepareOpenCodeReadOnlyConfig(
@@ -659,16 +664,15 @@ func prepareOpenCodeReadOnlyConfig(
 		len(spec.Contract.StateDirs) != 4 {
 		return nil
 	}
-	configDir := filepath.Clean(spec.Contract.StateDirs[2])
-	source := ""
-	for _, bind := range spec.Contract.ReadOnlyBinds {
-		if filepath.Clean(bind.Target) == configDir {
-			source = filepath.Clean(bind.Source)
-			break
-		}
-	}
-	if source == "" {
+	configDir := canonicalOpenCodeRuntimePath(spec.Contract.StateDirs[2])
+	source := openCodeReadOnlyConfigBindSource(spec.Contract)
+	if configDir == "" || source == "" {
 		return nil
+	}
+	if err := validateOpenCodeReadOnlyConfigSeedSource(source, configDir); err != nil {
+		return fmt.Errorf(
+			"opencode_read_only_config_bootstrap: refuse %s OpenCode launch because the read-only config prerequisite could not be established: %w",
+			platform, err)
 	}
 	created, err := ensureOpenCodeBootstrapGitignore(source, "config")
 	if err != nil {
@@ -683,6 +687,33 @@ func prepareOpenCodeReadOnlyConfig(
 			"path", filepath.Join(source, openCodeInstallBootstrapFile))
 	}
 	return nil
+}
+
+// validateOpenCodeReadOnlyConfigSeedSource constrains where the bootstrap may
+// be written. The launch contract's own validation covers bind TARGETS, and
+// the seed goes to a SOURCE, so without this a persisted spec replayed by
+// runtime reconciliation could direct a daemon-side file creation anywhere.
+// Only the two directories the layouts actually emit are accepted: the config
+// app directory the contract already names, and the ambient OpenCode config app
+// directory this host resolves for itself.
+func validateOpenCodeReadOnlyConfigSeedSource(source, configDir string) error {
+	if source == configDir {
+		return nil
+	}
+	ambient, err := openCodeAmbientAppDir("XDG_CONFIG_HOME", ".config")
+	if err != nil {
+		return fmt.Errorf("resolve ambient OpenCode config for bootstrap: %w", err)
+	}
+	ambient = filepath.Clean(ambient)
+	if resolved, resolveErr := filepath.EvalSymlinks(ambient); resolveErr == nil {
+		ambient = filepath.Clean(resolved)
+	}
+	if source == ambient {
+		return nil
+	}
+	return fmt.Errorf(
+		"read-only OpenCode config bind source %q is neither the contract's config directory nor this host's ambient OpenCode config",
+		source)
 }
 
 func ensureOpenCodeInstallGitignore(installDir string) error {

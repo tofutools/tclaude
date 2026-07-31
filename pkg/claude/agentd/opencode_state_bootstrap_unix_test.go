@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
@@ -49,8 +50,10 @@ func TestPrepareOpenCodeReadOnlyConfigBootstrapsWithoutOverwrite(t *testing.T) {
 // sees the source through.
 func TestPrepareOpenCodeReadOnlyConfigSeedsProjectionSource(t *testing.T) {
 	root := t.TempDir()
-	ambientConfig := filepath.Join(t.TempDir(), "opencode")
-	require.NoError(t, os.Mkdir(ambientConfig, 0o700))
+	configBase := filepath.Join(t.TempDir(), "config")
+	ambientConfig := filepath.Join(configBase, "opencode")
+	require.NoError(t, os.MkdirAll(ambientConfig, 0o700))
+	t.Setenv("XDG_CONFIG_HOME", configBase)
 	privateConfig := filepath.Join(root, "config", "opencode")
 	require.NoError(t, os.MkdirAll(privateConfig, 0o700))
 
@@ -132,4 +135,94 @@ func openCodeConfigBootstrapSpec(
 			}},
 		},
 	}
+}
+
+// A bind source is not covered by the launch contract's own validation, which
+// checks bind targets, so a replayed or tampered spec must not be able to aim a
+// daemon-side write at an arbitrary directory.
+func TestPrepareOpenCodeReadOnlyConfigRefusesForeignBindSource(t *testing.T) {
+	root := t.TempDir()
+	configDir := filepath.Join(t.TempDir(), "opencode")
+	require.NoError(t, os.Mkdir(configDir, 0o700))
+	foreign := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "config"))
+
+	err := prepareOpenCodeReadOnlyConfig(
+		openCodeConfigBootstrapSpec(root, configDir, foreign), "Linux")
+	require.ErrorContains(t, err, "opencode_read_only_config_bootstrap")
+	require.ErrorContains(t, err, "neither the contract's config directory")
+	assert.NoFileExists(t, filepath.Join(foreign, openCodeInstallBootstrapFile))
+}
+
+// When more than one read-only bind names the config directory, the one the
+// sandbox serves is the LAST. Seeding an earlier source would write a file
+// nothing inside the sandbox can see.
+func TestPrepareOpenCodeReadOnlyConfigSeedsTheServingBind(t *testing.T) {
+	root := t.TempDir()
+	configBase := filepath.Join(t.TempDir(), "config")
+	ambientConfig := filepath.Join(configBase, "opencode")
+	require.NoError(t, os.MkdirAll(ambientConfig, 0o700))
+	t.Setenv("XDG_CONFIG_HOME", configBase)
+	privateConfig := filepath.Join(root, "config", "opencode")
+	require.NoError(t, os.MkdirAll(privateConfig, 0o700))
+
+	spec := openCodeConfigBootstrapSpec(root, privateConfig, ambientConfig)
+	spec.Contract.ReadOnlyBinds = append(spec.Contract.ReadOnlyBinds,
+		session.TclaudeLayerReadOnlyBind{
+			Source: privateConfig, Target: privateConfig,
+		})
+
+	require.NoError(t, prepareOpenCodeReadOnlyConfig(spec, "Linux"))
+	assert.FileExists(t, filepath.Join(privateConfig, openCodeInstallBootstrapFile))
+	assert.NoFileExists(t,
+		filepath.Join(ambientConfig, openCodeInstallBootstrapFile),
+		"the losing bind's source is not what the sandbox reads")
+}
+
+// The unit cases above author their own contract, so nothing in them would
+// notice if the production layout stopped emitting the bind shape the predicate
+// looks for. This one builds the layout through the production path and feeds
+// its own output to the predicate.
+func TestPrepareOpenCodeReadOnlyConfigMatchesTheProducedLayout(t *testing.T) {
+	home := t.TempDir()
+	configBase := filepath.Join(home, "config")
+	ambientConfig := filepath.Join(configBase, "opencode")
+	require.NoError(t, os.MkdirAll(ambientConfig, 0o700))
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, "data"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_CONFIG_HOME", configBase)
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+
+	const agentID = "agt_0123456789abcdef0123456789abcdef"
+	stateRoot := filepath.Join(home, "opencode-state", agentID)
+	require.NoError(t, os.MkdirAll(stateRoot, 0o700))
+	resolvedRoot, err := filepath.EvalSymlinks(stateRoot)
+	require.NoError(t, err)
+
+	layout, err := openCodeStateLayoutForAllocation(db.OpenCodeAgentStateAllocation{
+		AgentID:   agentID,
+		Mode:      db.OpenCodeStatePrivate,
+		StateRoot: resolvedRoot,
+	})
+	require.NoError(t, err)
+	require.Len(t, layout.stateDirs, 4)
+
+	spec := &session.TclaudeLayerLaunchSpec{
+		Contract: session.TclaudeLayerLaunchContract{
+			HarnessName:   harness.OpenCodeName,
+			StateRoot:     resolvedRoot,
+			StateDirs:     layout.stateDirs,
+			ReadOnlyBinds: layout.readOnlyBinds,
+		},
+	}
+	require.NoError(t, prepareOpenCodeReadOnlyConfigForPlatform(spec))
+
+	resolvedAmbient, err := filepath.EvalSymlinks(ambientConfig)
+	require.NoError(t, err)
+	raw, err := os.ReadFile(
+		filepath.Join(resolvedAmbient, openCodeInstallBootstrapFile))
+	require.NoError(t, err,
+		"the layout's config bind serves the ambient directory, so that is where the bootstrap has to land")
+	assert.Equal(t, openCodeInstallGitignore, string(raw))
 }
