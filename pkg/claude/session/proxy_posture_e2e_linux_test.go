@@ -243,10 +243,16 @@ func TestProxyPostureE2EOpenBaselineWithDeny(t *testing.T) {
 			fixture.AllowedPort, sandboxproxy.VerdictAllowed),
 		"a private-space LITERAL must be carried under an open baseline; records:\n%s",
 		strings.Join(launch.Decisions, "\n"))
+	// NOT VerdictPrivateDestination, and the difference is the mechanism rather
+	// than a detail: the private-destination blocker runs at the RESOLVED-
+	// address stage, and this target never reaches it. Evaluate refuses first,
+	// because the open baseline's accept branch explicitly excludes loopback —
+	// host loopback is reachable only through an authored loopback row, under
+	// every baseline — so the honest verdict is "no authored row covers this".
 	assert.Truef(t,
 		postureE2EHasAddressVerdict(decisions, "127.0.0.1",
-			fixture.HostAllowed, sandboxproxy.VerdictPrivateDestination),
-		"host loopback must still be refused as a private destination without an authored loopback row; records:\n%s",
+			fixture.HostAllowed, sandboxproxy.VerdictNotAuthorized),
+		"host loopback must still be refused without an authored loopback row, and by the open baseline's own loopback exclusion; records:\n%s",
 		strings.Join(launch.Decisions, "\n"))
 }
 
@@ -288,7 +294,7 @@ func TestProxyPostureE2ELoopbackOnlyDeploysNoProxy(t *testing.T) {
 		Rules: postureE2ELoopbackOnlyRules,
 		Markers: []string{
 			"posture-e2e: loopback-only/proxy discovery in the sandbox: absent",
-			"posture-e2e: loopback-only/listening sockets in the sandbox namespace: none",
+			"posture-e2e: loopback-only/listening sockets in the sandbox namespace: only the floor's DNS broker",
 			"posture-e2e: loopback-only/authored host-loopback port: carried",
 			"posture-e2e: loopback-only/unauthored host-loopback port: refused",
 		},
@@ -720,13 +726,22 @@ func postureE2EOpenDenyHelper(t *testing.T, fixture postureE2EFixture) {
 func postureE2ELoopbackOnlyHelper(t *testing.T, fixture postureE2EFixture) {
 	postureE2ERequireNoProxyDiscovery(t, "loopback-only")
 
-	// No socket listens in this namespace. A deployed proxy's listener lives
-	// exactly here — the bootstrap creates it INSIDE the namespace — so this is
-	// the absence assertion the ticket asks for, made where the thing would be.
-	require.Emptyf(t, postureE2EListeningPorts(t),
-		"a namespace with no filtering proxy must hold no listening socket")
+	// The only socket listening in this namespace is the PACKET floor's own DNS
+	// broker. A deployed proxy's listener would live exactly here — the
+	// bootstrap creates it INSIDE the namespace — so an exact set is the
+	// absence assertion the ticket asks for, made where the thing would be.
+	//
+	// Exact rather than "no proxy port": the proxy's port is ephemeral and
+	// unknowable to a sandbox that was never told about one, so the only
+	// statement that can exclude it is a complete inventory. That makes this
+	// assertion loud if the floor ever grows another listener, which is the
+	// right failure for a smoke whose whole subject is what is running.
+	require.Equalf(t,
+		[]string{strconv.Itoa(filteredNetworkDNSPort)},
+		postureE2EListeningPorts(t),
+		"the packet floor's DNS broker must be the ONLY listener in a namespace with no filtering proxy")
 	fmt.Println(
-		"posture-e2e: loopback-only/listening sockets in the sandbox namespace: none")
+		"posture-e2e: loopback-only/listening sockets in the sandbox namespace: only the floor's DNS broker")
 
 	// The floor is enforcing the authored policy natively: the authored host
 	// loopback port answers and the unauthored one does not. Without both, an
