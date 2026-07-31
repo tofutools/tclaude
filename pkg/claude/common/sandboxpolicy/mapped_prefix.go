@@ -30,11 +30,19 @@ var mappedIPv4Block = netip.MustParsePrefix("::ffff:0:0/96")
 // refuses it. So every mapped prefix that survives authoring is at least /96
 // and lies wholly inside the block, where the bit arithmetic below is exact.
 // There is no residue of partially-normalizable rows needing a second policy.
-// The returned prefix is masked, so the address set it names is exactly the
-// address set the argument named. Masking here rather than relying on the
-// caller keeps that true for any future caller: without it,
+// The returned prefix is ALWAYS masked — on the pass-through paths as much as
+// on the rewriting one. UnmapPrefix(2001:db8::1/32) returns 2001:db8::/32, not
+// the argument. Masking here rather than relying on the caller is what lets the
+// paragraph above be stated unconditionally: without it,
 // UnmapPrefix(::ffff:10.0.0.5/104) would return 10.0.0.5/8, whose String()
 // renders a non-canonical prefix even though Contains still agrees.
+//
+// So this canonicalizes host bits, and callers must not rely on getting their
+// own value back unchanged. It never changes which addresses the prefix names:
+// masking only clears bits below the prefix length, so Contains answers
+// identically for every address, on every path. The sole production caller
+// (normalizeNetworkAllowEntry) masks before calling and is unaffected either
+// way; the guarantee is stated for the second caller.
 func UnmapPrefix(prefix netip.Prefix) netip.Prefix {
 	if !prefix.IsValid() {
 		return prefix
