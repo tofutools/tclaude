@@ -1285,7 +1285,14 @@ func runNew(params *NewParams) error {
 			// §7.4, from the same pre-injection environment the model-transport
 			// gate below inspects: the launcher discards exactly what the
 			// resolver saw, so the disclosure and the gate describe one launch.
+			// The planned posture is passed in for the same reason the gate
+			// below is conditioned on it: a policy that is not launching
+			// filtered runs no proxy and performs no override. The enclosing
+			// branch is already the tclaude-layer one, and the implementation
+			// is handed over anyway so both launch surfaces ask one predicate
+			// the same way rather than relying on where they sit.
 			if noProxyNotice := ProxyEngineNoProxyOverrideNotice(
+				runtime.GOOS, sandboxImplementation, plannedNetworkPosture,
 				plannedAxes.Network, plannedEffective.Environment,
 			); noProxyNotice != nil {
 				notices = append(notices, *noProxyNotice)

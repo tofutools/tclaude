@@ -590,9 +590,16 @@ func runTclaudeLayerProxyBootstrap(command []string) error {
 	return unix.Exec(executable, command, proxyNetworkSandboxEnv(os.Environ(), port))
 }
 
-// proxyNetworkSandboxEnv injects the sandbox's proxy discovery. The variables
-// it owns are listed once, in proxy_network_env.go, beside the disclosure that
-// reports the override of them.
+// proxyNetworkSandboxEnv injects the sandbox's proxy discovery.
+//
+// The names it STRIPS come from proxy_network_env.go, beside the disclosure
+// that reports the override of them, so the two cannot disagree about which
+// variables the launcher owns. The values it SETS are the eight literals below:
+// they differ per variable (http:// for the routing pair, socks5h:// for
+// ALL_PROXY, empty for the exemptions), so they are written out rather than
+// generated from the name list. A name added to that list would therefore be
+// stripped but not set, which is the fail-closed direction — the sandbox loses
+// an inherited value rather than gaining an unsupervised one.
 //
 // ALL_PROXY uses socks5h rather than socks5, and the h is the whole point: it
 // keeps name resolution at the proxy, where the authored host and domain rows

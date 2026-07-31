@@ -76,24 +76,30 @@ func TestProxyPostureInjectedVariablesNeverReachTheInspectedSet(t *testing.T) {
 	//    environment. It refuses — the injected values are indistinguishable
 	//    from a foreign proxy to the resolver, which is why ordering is the
 	//    whole mechanism.
-	postInjection := make([]sandboxpolicy.EnvironmentEntry, 0, len(entries)+2)
-	postInjection = append(postInjection, entries...)
+	// ONE VARIABLE AT A TIME. Injecting all six and asserting one refusal
+	// would prove the property for whichever name the gate happens to check
+	// first: dropping the other five from its list would leave the test green.
 	for _, name := range proxyNetworkRoutingVariables {
-		postInjection = append(postInjection, sandboxpolicy.EnvironmentEntry{
-			Name: name, Value: injected[name],
+		t.Run(name, func(t *testing.T) {
+			postInjection := append(
+				append([]sandboxpolicy.EnvironmentEntry(nil), entries...),
+				sandboxpolicy.EnvironmentEntry{Name: name, Value: injected[name]},
+			)
+			refusing := modelTransportProxyVariable(
+				launchModelEnvironment(postInjection))
+			require.Equalf(t, name, refusing,
+				"the launcher's own %s must be a refusing value, not a recognized one",
+				name)
+			_, resolveErr := ResolveTclaudeLayerModelTransport(
+				harness.MustGet(harness.DefaultName),
+				ModelTransportLaunchContext{
+					Model: "sonnet", Cwd: cwd, Environment: postInjection,
+				})
+			require.Error(t, resolveErr,
+				"the gate must refuse its own launcher's value when it precedes it")
+			assert.Contains(t, resolveErr.Error(), name)
 		})
 	}
-	refusing := modelTransportProxyVariable(launchModelEnvironment(postInjection))
-	require.NotEmpty(t, refusing,
-		"tclaude's own injected values must be refusing values, not recognized ones")
-	_, err = ResolveTclaudeLayerModelTransport(
-		harness.MustGet(harness.DefaultName),
-		ModelTransportLaunchContext{
-			Model: "sonnet", Cwd: cwd, Environment: postInjection,
-		})
-	require.Error(t, err,
-		"the gate must refuse its own launcher's values when they precede it")
-	assert.Contains(t, err.Error(), refusing)
 }
 
 func proxyPostureEnvironmentMap(environ []string) map[string]string {

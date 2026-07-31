@@ -45,8 +45,9 @@ func TestProxyPostureForeignProxyVariableStillRefuses(t *testing.T) {
 		value string
 	}{
 		{"HTTPS_PROXY", "http://proxy.example:8443"},
-		{"HTTP_PROXY", "http://127.0.0.1:39217"},
 		{"https_proxy", "http://[::1]:39217"},
+		{"HTTP_PROXY", "http://127.0.0.1:39217"},
+		{"http_proxy", "http://localhost:39217"},
 		{"ALL_PROXY", "socks5h://127.0.0.1:39217"},
 		{"all_proxy", "socks5h://localhost:39217"},
 	} {
@@ -122,7 +123,7 @@ func TestProxyPostureNoProxyOverrideIsDisclosed(t *testing.T) {
 
 	t.Run("inherited-value-discloses", func(t *testing.T) {
 		isolateProxyNoProxyEnvironment(t)
-		notice := ProxyEngineNoProxyOverrideNotice(rules,
+		notice := proxyPostureNoProxyNotice(rules,
 			[]sandboxpolicy.EnvironmentEntry{
 				{Name: "NO_PROXY", Value: "internal.example,10.0.0.0/8"},
 			})
@@ -143,7 +144,7 @@ func TestProxyPostureNoProxyOverrideIsDisclosed(t *testing.T) {
 	t.Run("host-value-discloses", func(t *testing.T) {
 		isolateProxyNoProxyEnvironment(t)
 		t.Setenv("no_proxy", "internal.example")
-		notice := ProxyEngineNoProxyOverrideNotice(rules, nil)
+		notice := proxyPostureNoProxyNotice(rules, nil)
 		require.NotNil(t, notice,
 			"the host environment is inspected, not only authored overrides")
 		assert.Contains(t, notice.Detail, "no_proxy")
@@ -153,7 +154,7 @@ func TestProxyPostureNoProxyOverrideIsDisclosed(t *testing.T) {
 		isolateProxyNoProxyEnvironment(t)
 		t.Setenv("NO_PROXY", "a.example")
 		t.Setenv("no_proxy", "b.example")
-		notice := ProxyEngineNoProxyOverrideNotice(rules, nil)
+		notice := proxyPostureNoProxyNotice(rules, nil)
 		require.NotNil(t, notice)
 		assert.Contains(t, notice.Detail, "NO_PROXY and no_proxy")
 	})
@@ -161,7 +162,7 @@ func TestProxyPostureNoProxyOverrideIsDisclosed(t *testing.T) {
 	t.Run("empty-and-whitespace-stay-silent", func(t *testing.T) {
 		isolateProxyNoProxyEnvironment(t)
 		t.Setenv("NO_PROXY", "   ")
-		assert.Nil(t, ProxyEngineNoProxyOverrideNotice(rules,
+		assert.Nil(t, proxyPostureNoProxyNotice(rules,
 			[]sandboxpolicy.EnvironmentEntry{{Name: "no_proxy", Value: ""}}),
 			"an override that discarded nothing is not a disclosure")
 	})
@@ -169,7 +170,7 @@ func TestProxyPostureNoProxyOverrideIsDisclosed(t *testing.T) {
 	t.Run("authored-override-wins-over-host", func(t *testing.T) {
 		isolateProxyNoProxyEnvironment(t)
 		t.Setenv("NO_PROXY", "host.example")
-		assert.Nil(t, ProxyEngineNoProxyOverrideNotice(rules,
+		assert.Nil(t, proxyPostureNoProxyNotice(rules,
 			[]sandboxpolicy.EnvironmentEntry{{Name: "NO_PROXY", Value: ""}}),
 			"the inspected value is the composed pre-injection one the launch carries")
 	})
@@ -180,8 +181,43 @@ func TestProxyPostureNoProxyOverrideIsDisclosed(t *testing.T) {
 		packet := proxyPostureEvidenceRules()
 		packet.Engine = sandboxpolicy.NetworkEnginePacket
 		require.False(t, ProxyEngineFloorApplies(packet))
-		assert.Nil(t, ProxyEngineNoProxyOverrideNotice(packet, nil),
+		assert.Nil(t, proxyPostureNoProxyNotice(packet, nil),
 			"the packet gateway performs no override, so it discloses none")
+	})
+
+	t.Run("widened-to-open-posture-stays-silent", func(t *testing.T) {
+		isolateProxyNoProxyEnvironment(t)
+		t.Setenv("NO_PROXY", "internal.example")
+		// The engine survives widening — the launch has to keep deploying the
+		// engine the preview named — so the engine question ALONE would still
+		// answer "proxy" here. No proxy runs at a host-open posture, and an
+		// inherited NO_PROXY is then honored rather than overridden, so a
+		// notice here would tell the operator a reachable destination is
+		// unreachable.
+		assert.Nil(t, ProxyEngineNoProxyOverrideNotice(
+			"linux", sandboxpolicy.ImplementationTclaudeLayer,
+			sandboxpolicy.NetworkHostOpen, rules, nil),
+			"a policy that widened away from filtered performs no override")
+	})
+
+	t.Run("darwin-stays-silent", func(t *testing.T) {
+		isolateProxyNoProxyEnvironment(t)
+		t.Setenv("NO_PROXY", "internal.example")
+		// The override is performed by the Linux launcher's exec seam; the
+		// Darwin floor is M3. Asked as a parameter rather than read from
+		// runtime.GOOS, so this case executes on either platform.
+		assert.Nil(t, ProxyEngineNoProxyOverrideNotice(
+			"darwin", sandboxpolicy.ImplementationTclaudeLayer,
+			sandboxpolicy.NetworkFiltered, rules, nil))
+	})
+
+	t.Run("non-tclaude-layer-stays-silent", func(t *testing.T) {
+		isolateProxyNoProxyEnvironment(t)
+		t.Setenv("NO_PROXY", "internal.example")
+		assert.Nil(t, ProxyEngineNoProxyOverrideNotice(
+			"linux", sandboxpolicy.ImplementationHarnessBuiltin,
+			sandboxpolicy.NetworkFiltered, rules, nil),
+			"no other implementation builds this floor or injects this environment")
 	})
 
 	t.Run("non-discriminating-policy-stays-silent", func(t *testing.T) {
@@ -194,8 +230,72 @@ func TestProxyPostureNoProxyOverrideIsDisclosed(t *testing.T) {
 			Engine: sandboxpolicy.NetworkEngineProxy,
 		}
 		require.False(t, ProxyEngineFloorApplies(latent))
-		assert.Nil(t, ProxyEngineNoProxyOverrideNotice(latent, nil))
+		assert.Nil(t, proxyPostureNoProxyNotice(latent, nil))
 	})
+}
+
+// TestProxyRoutingVariableListsAgree is the no-forking gate for the three
+// places the routing variables are named.
+//
+// The launcher's list carries a safety claim in its own doc comment — that a
+// foreign value in one of these never reaches the replacement, because the gate
+// already refused the launch over it. That claim is only true while the two
+// sets are equal. A name added to the launcher's list alone would be a routing
+// variable tclaude strips inside the sandbox but never refuses a foreign copy
+// of; a name added to the gate's alone would be refused but then inherited.
+//
+// The Claude settings list is asserted as a SUPERSET rather than an equal: it
+// also carries provider selectors that have nothing to do with proxies.
+func TestProxyRoutingVariableListsAgree(t *testing.T) {
+	gate := map[string]bool{}
+	for _, name := range proxyNetworkRoutingVariables {
+		gate[name] = false
+	}
+	for _, name := range []string{
+		"HTTPS_PROXY", "https_proxy",
+		"HTTP_PROXY", "http_proxy",
+		"ALL_PROXY", "all_proxy",
+	} {
+		// The literal list here is the gate's, restated so a change to it
+		// shows up as a failure rather than being silently followed.
+		_, known := gate[name]
+		assert.Truef(t, known,
+			"%s is refused by the model-transport gate but not owned by the launcher",
+			name)
+		gate[name] = true
+	}
+	for name, covered := range gate {
+		assert.Truef(t, covered,
+			"%s is replaced by the launcher but not refused by the model-transport gate",
+			name)
+		_, settings := claudeProviderSettingVariables[name]
+		assert.Truef(t, settings,
+			"%s must also refuse through Claude's live-reloaded settings", name)
+	}
+	// And the gate really does read that list, rather than the list merely
+	// matching a second copy of it.
+	for _, name := range proxyNetworkRoutingVariables {
+		assert.Equalf(t, name, modelTransportProxyVariable(
+			map[string]string{name: "http://proxy.example:8443"}),
+			"the gate must refuse over %s", name)
+	}
+}
+
+// proxyPostureNoProxyNotice asks the disclosure the way a Linux tclaude-layer
+// launch asks it: the posture is derived from the same rules, so a fixture
+// cannot claim a posture its own policy would not produce. The platform and
+// implementation cases below pass their own values instead of using this.
+func proxyPostureNoProxyNotice(
+	rules sandboxpolicy.NetworkRules,
+	environment []sandboxpolicy.EnvironmentEntry,
+) *sandboxpolicy.AccessNotice {
+	posture, err := sandboxpolicy.NetworkPostureForRules(rules)
+	if err != nil {
+		return nil
+	}
+	return ProxyEngineNoProxyOverrideNotice(
+		"linux", sandboxpolicy.ImplementationTclaudeLayer, posture,
+		rules, environment)
 }
 
 // isolateProxyNoProxyEnvironment clears the exemption variables the runner's
