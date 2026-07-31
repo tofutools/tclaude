@@ -108,8 +108,8 @@ func TestProxyEngineDenyCIDRRatingMatchesTheEvaluator(t *testing.T) {
 					predicted.NetworkDenySelectors,
 					string(sandboxpolicy.NetworkSelectorCIDR))
 				require.Truef(t, ok, "harness %s", activated.Name)
-				assert.Equalf(t, EnforceFull, capability.Level,
-					"the evaluator refused both the literal and the name resolving into the range, so %s's deny cidr cell is Full",
+				assert.Equalf(t, EnforcePartial, capability.Level,
+					"%s: the evaluator refuses the literal and the name, but the escapes below keep this cell short of Full",
 					activated.Name)
 				// Contains, not Equal: OpenCode appends its own launch-gate
 				// caveat to every deny selector detail, and that is its row's
@@ -139,6 +139,65 @@ func TestProxyEngineDenyCIDRRatingMatchesTheEvaluator(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TCL-890 scope item 2: is Partial still the right LEVEL, given the
+// resolution-stage re-application above? Yes, and these are the two reasons —
+// asserted against the real evaluator rather than asserted about it, because a
+// rating kept for a reason nobody re-checked is how the last one went wrong.
+//
+// Neither escape is the one the old allow-shaped string described, which is why
+// the wording changed even though the level did not.
+func TestProxyEngineDenyCIDREscapesThatKeepItPartial(t *testing.T) {
+	// 1. Host-loopback identity space is decided by the loopback rows alone.
+	//    A cidr deny overlapping it is never consulted, so authoring one and
+	//    believing it blocks something would be exactly the over-claim a Full
+	//    rating invites.
+	loopbackIdentity := sandboxpolicy.NetworkRules{
+		Mode: sandboxpolicy.AccessModeList,
+		Allow: []sandboxpolicy.NetworkAllowEntry{
+			{Loopback: true, Ports: []int{8080}},
+		},
+		Deny:   []sandboxpolicy.NetworkAllowEntry{{CIDR: "0.0.0.0/8"}},
+		Engine: sandboxpolicy.NetworkEngineProxy,
+	}
+	evaluator, err := sandboxproxy.NewEvaluator(loopbackIdentity)
+	require.NoError(t, err)
+	unspecified, err := sandboxproxy.ParseTarget("0.0.0.0", 8080)
+	require.NoError(t, err)
+	assert.True(t, evaluator.Evaluate(unspecified).Allowed(),
+		"the cidr deny does not reach the loopback identity set; if this ever fails, revisit the rating")
+
+	// 2. An address is not a destination. The same host restated in another
+	//    address family is a different address, and an IPv4 rule does not
+	//    match it. Under a default-allow baseline that form is reachable.
+	openBaseline := sandboxpolicy.NetworkRules{
+		Mode:   sandboxpolicy.AccessModeOpen,
+		Deny:   []sandboxpolicy.NetworkAllowEntry{{CIDR: "93.184.216.0/24"}},
+		Engine: sandboxpolicy.NetworkEngineProxy,
+	}
+	openEvaluator, err := sandboxproxy.NewEvaluator(openBaseline)
+	require.NoError(t, err)
+	v4, err := sandboxproxy.ParseTarget("93.184.216.34", 443)
+	require.NoError(t, err)
+	require.Equal(t, sandboxproxy.VerdictDeniedByRule,
+		openEvaluator.Evaluate(v4).Verdict,
+		"the v4 literal must be denied, or the embedding below proves nothing")
+	for _, embedded := range []string{
+		"64:ff9b::5db8:d822", // NAT64
+		"2002:5db8:d822::",   // 6to4
+	} {
+		target, parseErr := sandboxproxy.ParseTarget(embedded, 443)
+		require.NoError(t, parseErr)
+		assert.Truef(t, openEvaluator.Evaluate(target).Allowed(),
+			"%s is the denied destination in another address family and is not matched by the v4 rule",
+			embedded)
+	}
+
+	// The disclosure names both, so an operator reading the cell learns what to
+	// author rather than discovering it.
+	assert.Contains(t, ProxyEngineDenyCIDRSelectorDetail, "NAT64 or 6to4")
+	assert.Contains(t, ProxyEngineDenyCIDRSelectorDetail, "host-loopback identity space")
 }
 
 // The two polarities must not converge on one string again. A single shared
