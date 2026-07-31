@@ -25,8 +25,11 @@ func resetOpenCodeModelCacheForTest() {
 	openCodeModelCache.Lock()
 	defer openCodeModelCache.Unlock()
 	openCodeModelCache.value = openCodeCatalog{}
-	openCodeModelCache.refreshing = false
 	openCodeModelCache.lastRefreshStart = time.Time{}
+}
+
+func backgroundRefreshIdle() bool {
+	return openCodeRefreshesInFlight.Load() == 0
 }
 
 // stubOpenCodeModels swaps the subprocess and clears the cache, restoring both.
@@ -42,6 +45,12 @@ func stubOpenCodeModels(t *testing.T, run func(string) ([]byte, error)) *atomic.
 	resolveOpenCodeExecutable = func() (string, error) { return "/fake/opencode", nil }
 	resetOpenCodeModelCacheForTest()
 	t.Cleanup(func() {
+		// Drain first: calls is incremented BEFORE the stub body runs, so a
+		// test that returns as soon as the counter moves can leave a refresh
+		// goroutine between its exec and its store. Resetting under it would
+		// let that store land in the NEXT test's cache.
+		require.Eventually(t, backgroundRefreshIdle, 5*time.Second, 5*time.Millisecond,
+			"a refresh goroutine outlived its test")
 		runOpenCodeModels = previousRun
 		resolveOpenCodeExecutable = previousExe
 		resetOpenCodeModelCacheForTest()
@@ -94,8 +103,12 @@ func TestOpenCodeModels_ValidationLoadsSynchronously(t *testing.T) {
 }
 
 // A burst of polls arriving on a cold cache must start ONE subprocess, not one
-// per poll — the property the old mutex-across-exec provided by serializing
-// everyone behind it, which is what made a slow exec stall the whole poll.
+// per poll.
+//
+// The rate floor is deliberately defeated here — pushed back past its interval
+// while a refresh is genuinely wedged — because otherwise the floor alone would
+// produce this result and the test would silently stop covering the in-flight
+// bound it is named for.
 func TestOpenCodeModels_ConcurrentPollsSingleFlight(t *testing.T) {
 	release := make(chan struct{})
 	calls := stubOpenCodeModels(t, func(string) ([]byte, error) {
@@ -103,24 +116,106 @@ func TestOpenCodeModels_ConcurrentPollsSingleFlight(t *testing.T) {
 		return []byte(fakeOpenCodeModels), nil
 	})
 
+	_ = openCodeModels{}.Models() // starts the one wedged refresh
+	require.Eventually(t, func() bool { return calls.Load() == 1 },
+		2*time.Second, 10*time.Millisecond)
+
 	var wg sync.WaitGroup
 	for range 50 {
 		wg.Add(1)
-		go func() { defer wg.Done(); _ = openCodeModels{}.Models() }()
+		go func() {
+			defer wg.Done()
+			// Each poll finds the floor already expired, so only the in-flight
+			// bound can stop it forking.
+			openCodeModelCache.Lock()
+			openCodeModelCache.lastRefreshStart =
+				time.Now().Add(-2 * openCodeModelRefreshMinInterval)
+			openCodeModelCache.Unlock()
+			_ = openCodeModels{}.Models()
+		}()
 	}
 	wg.Wait()
-	close(release)
+	assert.Equal(t, int64(1), calls.Load(),
+		"50 polls against a refresh already in flight must not fork again")
 
+	close(release)
 	require.Eventually(t, func() bool {
 		return len(openCodeModels{}.Models()) > 0
 	}, 2*time.Second, 10*time.Millisecond)
-	assert.Equal(t, int64(1), calls.Load(),
-		"50 concurrent polls must fork once, not 50 times")
 }
 
-// Guava's refreshAfterWrite shape: once something is known, a stale entry is
-// served immediately while the refresh happens behind it. The poll never waits,
-// and never regresses to empty just because the value aged out.
+// The flight group — not the background flag — is what bounds subprocesses on
+// the REFUSAL path, where concurrent spawns each need an authoritative answer.
+func TestOpenCodeModels_ConcurrentValidationsForkOnce(t *testing.T) {
+	release := make(chan struct{})
+	calls := stubOpenCodeModels(t, func(string) ([]byte, error) {
+		<-release
+		return []byte(fakeOpenCodeModels), nil
+	})
+
+	var wg sync.WaitGroup
+	results := make([]error, 8)
+	for i := range results {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, results[i] = openCodeModels{}.ValidateModel("openai/gpt-5")
+		}()
+	}
+	time.Sleep(50 * time.Millisecond) // let them all reach the exec
+	close(release)
+	wg.Wait()
+
+	assert.Equal(t, int64(1), calls.Load(),
+		"8 concurrent spawns validating a model must fork opencode once")
+	for i, err := range results {
+		assert.NoError(t, err, "validator %d must still get an authoritative answer", i)
+	}
+}
+
+// A slow refresh must not fork a second subprocess while it runs, and must not
+// wedge the catalog once it finishes. Together with the exec's deadline and
+// WaitDelay — which are what stop a refresh running forever — this is the
+// liveness the design actually provides.
+func TestOpenCodeModels_RecoversAfterASlowRefresh(t *testing.T) {
+	release := make(chan struct{})
+	calls := stubOpenCodeModels(t, func(string) ([]byte, error) {
+		select {
+		case <-release:
+		case <-time.After(5 * time.Second): // stand-in for the exec deadline
+		}
+		return []byte(fakeOpenCodeModels), nil
+	})
+
+	_ = openCodeModels{}.Models()
+	require.Eventually(t, func() bool { return calls.Load() == 1 },
+		2*time.Second, 10*time.Millisecond)
+
+	// While it is still running, polls past the floor must not fork again.
+	openCodeModelCache.Lock()
+	openCodeModelCache.lastRefreshStart =
+		time.Now().Add(-2 * openCodeModelRefreshMinInterval)
+	openCodeModelCache.Unlock()
+	_ = openCodeModels{}.Models()
+	assert.Equal(t, int64(1), calls.Load(), "one subprocess at a time")
+
+	close(release)
+	require.Eventually(t, func() bool {
+		return len(openCodeModels{}.Models()) > 0
+	}, 2*time.Second, 10*time.Millisecond, "the slow refresh still lands")
+
+	// And the machinery is not wedged: age it out and a further refresh runs.
+	openCodeModelCache.Lock()
+	openCodeModelCache.value.at = time.Now().Add(-2 * openCodeModelCacheTTL)
+	openCodeModelCache.lastRefreshStart =
+		time.Now().Add(-2 * openCodeModelRefreshMinInterval)
+	openCodeModelCache.Unlock()
+	_ = openCodeModels{}.Models()
+	require.Eventually(t, func() bool { return calls.Load() == 2 },
+		2*time.Second, 10*time.Millisecond,
+		"a completed slow refresh must not block later ones")
+}
+
 func TestOpenCodeModels_ServesStaleWhileRefreshing(t *testing.T) {
 	release := make(chan struct{})
 	var second atomic.Bool

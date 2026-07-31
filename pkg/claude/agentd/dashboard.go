@@ -2760,9 +2760,11 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	//     cache expires. At a 2 s poll that is one poll in thirty paying a
 	//     multi-fork bill: exactly the shape of an occasional
 	//     multi-hundred-ms spike in an otherwise ~13 ms request.
-	//   - buildHarnessCatalog costs ~500 ms on the FIRST call of the process
-	//     and microseconds after (one-time lazy init, no TTL) — a first-poll
-	//     cost rather than a recurring one, but equally invisible before.
+	//   - buildHarnessCatalog used to cost ~500 ms whenever OpenCode's model
+	//     catalog went stale, because building it EXECUTED `opencode models`.
+	//     That read is now served from cache and refreshed in the background,
+	//     so this should stay in the microseconds; if it ever does not, a
+	//     harness descriptor has started doing work on the read path again.
 	//
 	// Both sat inside the "groups" window unmeasured, so their cost was charged
 	// to a group loop whose own sub-phases never exceed a fraction of a

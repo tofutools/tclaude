@@ -4,11 +4,15 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"log/slog"
 	"os/exec"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
+
+	"golang.org/x/sync/singleflight"
 )
 
 const openCodeModelCacheTTL = 5 * time.Minute
@@ -22,6 +26,9 @@ const openCodeModelCacheTTL = 5 * time.Minute
 // happy path, and this floor only matters when refreshes keep failing.
 const openCodeModelRefreshMinInterval = time.Minute
 
+// openCodeModelsExecTimeout bounds the subprocess itself.
+const openCodeModelsExecTimeout = 10 * time.Second
+
 type openCodeCatalog struct {
 	models  []string
 	efforts []string
@@ -32,25 +39,52 @@ type openCodeCatalog struct {
 var openCodeModelCache struct {
 	sync.Mutex
 	value openCodeCatalog
-	// refreshing single-flights the background refresh, so a burst of polls
-	// arriving on a stale cache starts one subprocess rather than one each.
-	// At most one goroutine and therefore at most one `opencode models` process
-	// exists at any moment, however long that process takes to answer.
-	refreshing bool
 	// lastRefreshStart is when a background refresh was last STARTED (not
 	// finished), which is what openCodeModelRefreshMinInterval bounds.
+	//
+	// Keyed on the START, not the finish. An "is one running?" flag would be
+	// the obvious second guard and is deliberately absent: it is cleared only
+	// by the refreshing goroutine, so anything that parked that goroutine would
+	// freeze the catalog for the daemon's whole life — silently, since no
+	// reader blocks any more. A start-keyed floor cannot be left set.
+	//
+	// That removes one wedge but not the underlying one: a refresh that never
+	// returns still holds openCodeCatalogFlight, and later refreshes join it
+	// rather than forking a second subprocess. Liveness therefore rests on
+	// runOpenCodeModels ALWAYS returning — which is why its exec carries both a
+	// context deadline and a WaitDelay. Safety (one subprocess) comes from the
+	// flight group; the floor bounds the rate.
 	lastRefreshStart time.Time
 }
+
+// openCodeRefreshesInFlight counts background refreshes that have started and
+// not yet returned. Observability, never a gate — see lastRefreshStart.
+var openCodeRefreshesInFlight atomic.Int64
 
 // resolveOpenCodeExecutable is indirected so a test can describe an installed
 // OpenCode without owning the machine it runs on.
 var resolveOpenCodeExecutable = OpenCodeExecutable
 
 var runOpenCodeModels = func(path string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), openCodeModelsExecTimeout)
 	defer cancel()
-	return exec.CommandContext(ctx, path, "models", "openai", "--verbose").Output()
+	cmd := exec.CommandContext(ctx, path, "models", "openai", "--verbose")
+	// WaitDelay is load-bearing, not a nicety. Output() reads until the stdout
+	// pipe hits EOF, and cancelling the context only kills `opencode` itself —
+	// an inherited grandchild holding that pipe open keeps Output() parked long
+	// after the deadline. OpenCode is a JS runtime that spawns children, so this
+	// is reachable, and the caller is a background refresh whose completion is
+	// what re-arms future refreshes.
+	cmd.WaitDelay = time.Second
+	return cmd.Output()
 }
+
+// openCodeCatalogFlight collapses concurrent refreshes — background and
+// synchronous alike — into ONE subprocess. The disclosure flag below only
+// bounds background goroutines; this is what makes "at most one
+// `opencode models` running at any moment" true globally, including a burst of
+// concurrent spawns each validating a model against a cold cache.
+var openCodeCatalogFlight singleflight.Group
 
 type openCodeModels struct{}
 
@@ -120,14 +154,19 @@ func openCodeCatalogForDisclosure() openCodeCatalog {
 		time.Since(value.at) >= openCodeModelCacheTTL
 	rateAllows := openCodeModelCache.lastRefreshStart.IsZero() ||
 		time.Since(openCodeModelCache.lastRefreshStart) >= openCodeModelRefreshMinInterval
-	if stale && rateAllows && !openCodeModelCache.refreshing {
-		openCodeModelCache.refreshing = true
+	if stale && rateAllows {
 		openCodeModelCache.lastRefreshStart = time.Now()
+		openCodeRefreshesInFlight.Add(1)
 		go func() {
 			defer func() {
-				openCodeModelCache.Lock()
-				openCodeModelCache.refreshing = false
-				openCodeModelCache.Unlock()
+				openCodeRefreshesInFlight.Add(-1)
+				// This goroutine no longer runs inside an HTTP handler, so a
+				// panic here would take the daemon down rather than produce a
+				// 500. A stale model list is not worth that.
+				if r := recover(); r != nil {
+					slog.Error("opencode model catalog refresh panicked",
+						"panic", r, "module", "harness")
+				}
 			}()
 			refreshOpenCodeCatalog()
 		}()
@@ -150,18 +189,25 @@ func loadOpenCodeCatalog() openCodeCatalog {
 	return refreshOpenCodeCatalog()
 }
 
-// refreshOpenCodeCatalog executes OpenCode and stores the result.
+// refreshOpenCodeCatalog executes OpenCode and stores the result, joining any
+// refresh already running instead of starting a second one.
 //
-// The exec runs OUTSIDE the lock. Holding it across a subprocess — which is
-// what this function used to do — meant one slow or wedged `opencode models`
-// blocked every other reader for up to its 10-second timeout, including the
-// dashboard poll. Two callers racing a stale cache may both exec; that is
-// bounded and far cheaper than serializing everyone behind one of them.
+// The exec runs OUTSIDE the cache lock. Holding it across a subprocess — which
+// is what this function used to do — meant one slow or wedged `opencode models`
+// blocked every other reader for up to its timeout, including the dashboard
+// poll. The flight group replaces that accidental serialization with a
+// deliberate one: concurrent callers still produce a single subprocess, but
+// they wait on its RESULT rather than on a mutex, so the disclosure path can
+// decline to wait at all.
 func refreshOpenCodeCatalog() openCodeCatalog {
-	value := computeOpenCodeCatalog()
-	openCodeModelCache.Lock()
-	defer openCodeModelCache.Unlock()
-	openCodeModelCache.value = value
+	shared, _, _ := openCodeCatalogFlight.Do("catalog", func() (any, error) {
+		value := computeOpenCodeCatalog()
+		openCodeModelCache.Lock()
+		defer openCodeModelCache.Unlock()
+		openCodeModelCache.value = value
+		return value, nil
+	})
+	value, _ := shared.(openCodeCatalog)
 	return value
 }
 
