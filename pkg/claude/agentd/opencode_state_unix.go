@@ -3,6 +3,7 @@
 package agentd
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -243,9 +244,16 @@ func allocatePrivateOpenCodeState(agentID string) (*db.OpenCodeAgentStateAllocat
 	return &allocation, nil
 }
 
+// errOpenCodeInvalidAgentID lets a caller recognize "that name is not an agent
+// id" without applying openCodeAgentIDRE itself. A caller that re-derived the
+// rule to phrase its own message would own a second copy of a refusal
+// condition, and two copies can only ever drift apart; one predicate with two
+// presentations cannot.
+var errOpenCodeInvalidAgentID = errors.New("invalid OpenCode state agent id")
+
 func requireOpenCodeStateAllocation(agentID string) (*db.OpenCodeAgentStateAllocation, error) {
 	if !openCodeAgentIDRE.MatchString(agentID) {
-		return nil, fmt.Errorf("invalid OpenCode state agent id %q", agentID)
+		return nil, fmt.Errorf("%w %q", errOpenCodeInvalidAgentID, agentID)
 	}
 	allocation, err := db.GetOpenCodeAgentStateAllocation(agentID)
 	if err != nil {
@@ -762,16 +770,16 @@ func requireOpenCodeAllocatedConfigDir(configDir string) error {
 			"OpenCode config bootstrap target %q does not have the per-agent <state root>/config/opencode shape",
 			configDir)
 	}
-	// The agent id is checked here rather than left to
-	// requireOpenCodeStateAllocation so an operator's own directory name is not
-	// quoted back at them as an "invalid agent id" when the path merely happens
-	// to end in config/opencode.
-	if !openCodeAgentIDRE.MatchString(filepath.Base(stateRoot)) {
+	allocation, err := requireOpenCodeStateAllocation(filepath.Base(stateRoot))
+	// Rendered differently, not decided differently: the agent-id rule stays
+	// wholly inside requireOpenCodeStateAllocation. This only declines to quote
+	// an operator's own directory name back at them as an "invalid agent id"
+	// when their path merely happens to end in config/opencode.
+	if errors.Is(err, errOpenCodeInvalidAgentID) {
 		return fmt.Errorf(
 			"OpenCode config bootstrap target %q names %q where a per-agent state root was expected",
 			configDir, stateRoot)
 	}
-	allocation, err := requireOpenCodeStateAllocation(filepath.Base(stateRoot))
 	if err != nil {
 		return fmt.Errorf(
 			"OpenCode config bootstrap target %q is not an allocated per-agent config directory: %w",

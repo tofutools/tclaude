@@ -133,12 +133,24 @@ func openCodeConfigBootstrapSpec(
 	}
 }
 
+// resolvedTestPath is the file's idiom for "the spelling the production code
+// will use". This area compares paths for IDENTITY, and a path has more than
+// one true spelling: a host reaching its temp root through a symlink (macOS
+// /var -> /private/var) hands a test one spelling while the code under test
+// renders another. Build expectations through here rather than from a raw
+// t.TempDir() path.
+func resolvedTestPath(t *testing.T, path string) string {
+	t.Helper()
+	resolved, err := filepath.EvalSymlinks(path)
+	require.NoError(t, err)
+	return resolved
+}
+
 // isolatedOpenCodeHost points every path the OpenCode state code derives at a
 // disposable home with its own database, and returns that home.
 func isolatedOpenCodeHost(t *testing.T) string {
 	t.Helper()
-	home, err := filepath.EvalSymlinks(t.TempDir())
-	require.NoError(t, err)
+	home := resolvedTestPath(t, t.TempDir())
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_DATA_HOME", filepath.Join(home, "data"))
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
@@ -185,8 +197,9 @@ func TestPrepareOpenCodeReadOnlyConfigRefusesGrandfatheredContractTarget(t *test
 	// operator directory and one dressed up in the per-agent layout's own
 	// <root>/config/opencode shape.
 	for _, victimCase := range []struct {
-		name, suffix string
-		want         func(victim string) string
+		name, suffix  string
+		want          func(victim string) string
+		resolveVictim bool
 	}{
 		{
 			name:   "PlainDirectory",
@@ -204,6 +217,7 @@ func TestPrepareOpenCodeReadOnlyConfigRefusesGrandfatheredContractTarget(t *test
 				return fmt.Sprintf("names %q where a per-agent state root was expected",
 					filepath.Dir(filepath.Dir(victim)))
 			},
+			resolveVictim: true,
 		},
 	} {
 		t.Run(victimCase.name, func(t *testing.T) {
@@ -232,7 +246,14 @@ func TestPrepareOpenCodeReadOnlyConfigRefusesGrandfatheredContractTarget(t *test
 			err := prepareOpenCodeReadOnlyConfig(
 				&session.TclaudeLayerLaunchSpec{Contract: contract}, "Linux")
 			require.ErrorContains(t, err, "opencode_read_only_config_bootstrap")
-			require.ErrorContains(t, err, victimCase.want(victim))
+			// The refusal quotes the path in the spelling the production code
+			// resolved it to, which is not the one t.TempDir() handed us on a
+			// host whose temp root is a symlink.
+			expected := victim
+			if victimCase.resolveVictim {
+				expected = resolvedTestPath(t, victim)
+			}
+			require.ErrorContains(t, err, victimCase.want(expected))
 			assert.NoFileExists(t, filepath.Join(victim, openCodeInstallBootstrapFile))
 		})
 	}
@@ -389,7 +410,8 @@ func TestPrepareOpenCodeReadOnlyConfigRefusesAllocationStrandedByEnvChange(t *te
 	// is the pre-existing rule this one is now consistent with — asserted, so
 	// "consistency gain" is not a claim the PR makes about untested code.
 	_, controlErr := openCodeControlSocketPath(filepath.Base(stateRoot))
-	require.Error(t, controlErr)
+	require.ErrorContains(t, controlErr, "validated direct agent child",
+		"pinned to the reason: an unrelated failure here would keep this test green while the parity claim in the migration note quietly became false")
 }
 
 // The self-bind case, driven through the PRODUCTION layout builder rather than
@@ -488,8 +510,7 @@ func TestPrepareOpenCodeReadOnlyConfigMatchesTheProducedLayout(t *testing.T) {
 	const agentID = "agt_0123456789abcdef0123456789abcdef"
 	stateRoot := filepath.Join(home, "opencode-state", agentID)
 	require.NoError(t, os.MkdirAll(stateRoot, 0o700))
-	resolvedRoot, err := filepath.EvalSymlinks(stateRoot)
-	require.NoError(t, err)
+	resolvedRoot := resolvedTestPath(t, stateRoot)
 
 	layout, err := openCodeStateLayoutForAllocation(db.OpenCodeAgentStateAllocation{
 		AgentID:   agentID,
@@ -509,8 +530,7 @@ func TestPrepareOpenCodeReadOnlyConfigMatchesTheProducedLayout(t *testing.T) {
 	}
 	require.NoError(t, prepareOpenCodeReadOnlyConfigForPlatform(spec))
 
-	resolvedAmbient, err := filepath.EvalSymlinks(ambientConfig)
-	require.NoError(t, err)
+	resolvedAmbient := resolvedTestPath(t, ambientConfig)
 	raw, err := os.ReadFile(
 		filepath.Join(resolvedAmbient, openCodeInstallBootstrapFile))
 	require.NoError(t, err,
