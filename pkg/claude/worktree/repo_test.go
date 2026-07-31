@@ -80,6 +80,9 @@ func TestPrunableWorktreesInReadsGitVerboseStream(t *testing.T) {
 	repoPath, parentDir := setupTestRepo(t)
 	require.NoError(t, exec.Command("git", "-C", repoPath, "config",
 		"gc.worktreePruneExpire", "now").Run())
+	healthyPath := filepath.Join(parentDir, "healthy-listed")
+	require.NoError(t, exec.Command("git", "-C", repoPath, "worktree", "add",
+		"-b", "healthy-listed", healthyPath).Run())
 	listedPath := filepath.Join(parentDir, "listed-prunable")
 	require.NoError(t, exec.Command("git", "-C", repoPath, "worktree", "add",
 		"-b", "listed-prunable", listedPath).Run())
@@ -126,6 +129,14 @@ func TestPrunableWorktreesInReadsGitVerboseStream(t *testing.T) {
 	require.NotNil(t, protected, "repo prune must not bypass the individually managed row")
 	assert.True(t, protected.Prunable)
 	assert.False(t, protected.Locked, "tclaude's temporary protection lock is restored")
+	healthyFound := false
+	for _, wt := range listed {
+		if filepath.Clean(wt.Path) == filepath.Clean(healthyPath) {
+			healthyFound = true
+			assert.False(t, wt.Locked, "healthy listed rows are protected across the prune race, then restored")
+		}
+	}
+	assert.True(t, healthyFound)
 }
 
 func TestAddWorktreeIn(t *testing.T) {

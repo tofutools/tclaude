@@ -242,7 +242,11 @@ func PruneWorktreesIn(dir string) (stderr string, err error) {
 	}
 	locked := make([]string, 0)
 	for _, wt := range listed {
-		if !wt.Prunable || wt.Locked || wt.IsMain {
+		// Protect every individually managed linked worktree, not only the
+		// entries already marked prunable in this snapshot. A checkout can
+		// disappear concurrently between list and prune; pre-locking the whole
+		// listed set prevents that race from bypassing its explicit UI row.
+		if wt.Locked || wt.IsMain {
 			continue
 		}
 		if _, lockErr := gitIn(dir, "worktree", "lock", "--reason",
@@ -260,11 +264,16 @@ func PruneWorktreesIn(dir string) (stderr string, err error) {
 
 	_, stderr, err = runWorktreePrune(dir, false)
 	unlockErr := unlockWorktreesIn(dir, locked)
+	if unlockErr != nil {
+		if err != nil {
+			return stderr, &PruneProtectionRestoreError{Err: fmt.Errorf(
+				"%v; prune command also failed: %w", unlockErr, pruneCommandError(false, stderr, err),
+			)}
+		}
+		return stderr, &PruneProtectionRestoreError{Err: unlockErr}
+	}
 	if err != nil {
 		return stderr, pruneCommandError(false, stderr, err)
-	}
-	if unlockErr != nil {
-		return stderr, &PruneProtectionRestoreError{Err: unlockErr}
 	}
 	return stderr, nil
 }
