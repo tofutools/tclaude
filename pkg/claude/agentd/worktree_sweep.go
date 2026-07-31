@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"path/filepath"
@@ -891,6 +892,8 @@ func pruneOneRepo(root string) worktreePruneOutcome {
 			out.Cleared++
 		}
 	}
+	var protectionRestoreErr *worktree.PruneProtectionRestoreError
+	protectionRestoreFailed := errors.As(pruneErr, &protectionRestoreErr)
 	if out.Remaining > 0 {
 		out.Result = "failed"
 		if out.Cleared > 0 {
@@ -900,11 +903,19 @@ func pruneOneRepo(root string) worktreePruneOutcome {
 			"%d of %d stale Git records cleared; %d remain. Git could not remove every administrative entry. An active agent sandbox may be holding bind mounts on .git/worktrees entries; stop the affected sandboxed agents and retry.",
 			out.Cleared, out.Before, out.Remaining,
 		)
+	} else if protectionRestoreFailed {
+		out.Result = "partial"
+		out.Detail = fmt.Sprintf(
+			"%d stale Git records cleared, but restoring temporary protection for an individually managed worktree initially failed. The post-state scan recovered tclaude-owned locks; review the listed worktree before retrying cleanup. Command detail: %s",
+			out.Cleared, protectionRestoreErr.Error(),
+		)
 	} else {
 		out.Result = "pruned"
 		out.Detail = fmt.Sprintf("%d stale Git records cleared (bookkeeping only; no checkout or branch removed)", out.Cleared)
 	}
-	if pruneErr != nil {
+	if protectionRestoreFailed && out.Remaining > 0 {
+		out.Detail += " Restoring temporary listed-worktree protection also initially failed; the post-state scan recovered tclaude-owned locks. Detail: " + protectionRestoreErr.Error()
+	} else if pruneErr != nil && !protectionRestoreFailed {
 		out.Detail += " Prune command reported: " + pruneErr.Error() + "."
 	}
 	if stderr != "" && pruneErr == nil {

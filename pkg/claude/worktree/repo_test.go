@@ -73,6 +73,7 @@ locked operator hold
 	assert.True(t, wts[1].Prunable)
 	assert.Equal(t, "gitdir file points to non-existent location", wts[1].PrunableReason)
 	assert.True(t, wts[1].Locked)
+	assert.Equal(t, "operator hold", wts[1].LockReason)
 }
 
 func TestPrunableWorktreesInReadsGitVerboseStream(t *testing.T) {
@@ -84,6 +85,9 @@ func TestPrunableWorktreesInReadsGitVerboseStream(t *testing.T) {
 		"-b", "listed-prunable", listedPath).Run())
 	require.NoError(t, os.Rename(listedPath, listedPath+"-gone"),
 		"delete the checkout out-of-band while retaining its readable gitdir registration")
+	require.NoError(t, exec.Command("git", "-C", repoPath, "worktree", "lock", "--reason",
+		tclaudePruneProtectionReason, listedPath).Run(),
+		"simulate a tclaude-owned protection lock abandoned by an interrupted prune")
 
 	adminDir := filepath.Join(repoPath, ".git", "worktrees", "stale-test")
 	require.NoError(t, os.MkdirAll(adminDir, 0o755))
@@ -98,6 +102,13 @@ func TestPrunableWorktreesInReadsGitVerboseStream(t *testing.T) {
 		"the porcelain-visible prunable worktree stays in the individual checkout flow")
 	assert.Equal(t, "stale-test", entries[0].AdminDir)
 	assert.Contains(t, entries[0].Reason, "gitdir file")
+	listedAfterRecovery, err := ListWorktreesIn(repoPath)
+	require.NoError(t, err)
+	for _, wt := range listedAfterRecovery {
+		if filepath.Clean(wt.Path) == filepath.Clean(listedPath) {
+			assert.False(t, wt.Locked, "a later preview recovers an abandoned tclaude-owned lock")
+		}
+	}
 
 	stderr, err := PruneWorktreesIn(repoPath)
 	require.NoError(t, err, "repo prune should temporarily protect the listed worktree: %s", stderr)

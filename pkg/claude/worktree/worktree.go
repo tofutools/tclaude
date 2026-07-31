@@ -126,6 +126,7 @@ type WorktreeInfo struct {
 	Prunable       bool   // Git lists the registration but considers it prunable
 	PrunableReason string // porcelain reason following "prunable"
 	Locked         bool   // Git must not prune this registration
+	LockReason     string // porcelain reason following "locked"
 }
 
 // ListWorktrees returns all git worktrees of the repo in the current

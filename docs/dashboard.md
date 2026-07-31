@@ -2024,7 +2024,9 @@ durable inventory. Pruning these records cannot remove a checkout directory or
 branch. A prune candidate that Git still exposes as a checkout row stays in
 the existing per-worktree selection flow; tclaude temporarily locks such rows
 during repo pruning so the aggregate action cannot bypass an unticked
-agent-bound or otherwise protected row. After pruning, tclaude repeats the dry-run and reports the verified
+agent-bound or otherwise protected row. A later scan recovers any tclaude-owned
+temporary lock left by an interrupted prune. After pruning, tclaude repeats
+the dry-run and reports the verified
 number cleared and remaining instead of trusting Git's exit code. In
 particular, an active agent sandbox can hold bind mounts on the administrative
 entries: Git may then report failures while exiting successfully, and the

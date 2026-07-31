@@ -538,6 +538,37 @@ func TestWorktreeSweep_PruneAccountingUsesEntryIdentity(t *testing.T) {
 	assert.Equal(t, "partial", out.PruneOutcomes[0].Result)
 }
 
+func TestWorktreeSweep_PruneProtectionRestoreFailureIsPartial(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	repoFixture(t, f)
+	previews := [][]worktree.PrunableWorktree{{{AdminDir: "old-a"}}, {}}
+	t.Cleanup(agentd.SetPruneWorktreeFnsForTest(
+		func(string) ([]worktree.PrunableWorktree, error) {
+			out := previews[0]
+			previews = previews[1:]
+			return out, nil
+		},
+		func(string) (string, error) {
+			return "", &worktree.PruneProtectionRestoreError{Err: errors.New("unlock listed worktree: permission denied")}
+		},
+	))
+
+	body := `{"prune_roots":["/repo"]}`
+	r, err := http.NewRequest(http.MethodPost, "/api/worktrees/cleanup", strings.NewReader(body))
+	require.NoError(t, err)
+	rec := testharness.Serve(agentd.BuildDashboardHandlerForTest(), r)
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var out sweepCleanupWire
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+	assert.Equal(t, 1, out.Pruned, "the requested invisible record was verified cleared")
+	assert.Equal(t, 1, out.PruneFailed, "protection restore failures are never successful notifications")
+	require.Len(t, out.PruneOutcomes, 1)
+	assert.Equal(t, "partial", out.PruneOutcomes[0].Result)
+	assert.Contains(t, out.PruneOutcomes[0].Detail, "restoring temporary protection")
+	assert.Contains(t, out.PruneOutcomes[0].Detail, "permission denied")
+}
+
 func TestWorktreeSweep_PruneRejectsRepoOutsideGroupScope(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 	f := newFlow(t)

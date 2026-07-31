@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 )
 
 // repo.go holds repo-path-aware twins of the CWD-implicit helpers in
@@ -98,6 +99,7 @@ func parseWorktreePorcelain(output string) []WorktreeInfo {
 			current.PrunableReason = strings.TrimSpace(strings.TrimPrefix(line, "prunable"))
 		case line == "locked" || strings.HasPrefix(line, "locked "):
 			current.Locked = true
+			current.LockReason = strings.TrimSpace(strings.TrimPrefix(line, "locked"))
 		}
 	}
 	if current.Path != "" {
@@ -142,13 +144,38 @@ type PrunableWorktree struct {
 	WorktreePath string // non-empty when Git can still associate a checkout path
 }
 
+const tclaudePruneProtectionReason = "tclaude cleanup protects individually managed worktree"
+
+var worktreePruneMu sync.Mutex
+
+// PruneProtectionRestoreError means prune may have cleared the requested
+// invisible records, but tclaude could not restore one of the temporary locks
+// used to protect an individually managed porcelain row. Callers must report
+// this as failed/partial rather than advisory command stderr.
+type PruneProtectionRestoreError struct {
+	Err error
+}
+
+func (e *PruneProtectionRestoreError) Error() string {
+	return "restore temporary worktree prune protection: " + e.Err.Error()
+}
+
+func (e *PruneProtectionRestoreError) Unwrap() error { return e.Err }
+
 // PrunableWorktreesIn reports stale worktree administrative entries that are
 // absent from `worktree list`, without changing them. Prune's dry-run is the
 // authoritative discovery surface; candidates that porcelain still exposes
-// stay in the existing individually selectable worktree flow.
+// stay in the existing individually selectable worktree flow. The only repair
+// performed during preview is removing a tclaude-owned temporary protection
+// lock left behind by an interrupted earlier prune.
 func PrunableWorktreesIn(dir string) ([]PrunableWorktree, error) {
 	if strings.TrimSpace(dir) == "" {
 		return nil, nil
+	}
+	worktreePruneMu.Lock()
+	defer worktreePruneMu.Unlock()
+	if err := recoverPruneProtectionLocksIn(dir); err != nil {
+		return nil, err
 	}
 	stdout, stderr, err := runWorktreePrune(dir, true)
 	if err != nil {
@@ -204,6 +231,11 @@ func PruneWorktreesIn(dir string) (stderr string, err error) {
 	if strings.TrimSpace(dir) == "" {
 		return "", nil
 	}
+	worktreePruneMu.Lock()
+	defer worktreePruneMu.Unlock()
+	if recoverErr := recoverPruneProtectionLocksIn(dir); recoverErr != nil {
+		return "", recoverErr
+	}
 	listed, listErr := ListWorktreesIn(dir)
 	if listErr != nil {
 		return "", fmt.Errorf("protect listed worktrees before prune: %w", listErr)
@@ -214,8 +246,13 @@ func PruneWorktreesIn(dir string) (stderr string, err error) {
 			continue
 		}
 		if _, lockErr := gitIn(dir, "worktree", "lock", "--reason",
-			"tclaude cleanup protects individually managed worktree", wt.Path); lockErr != nil {
-			unlockWorktreesIn(dir, locked)
+			tclaudePruneProtectionReason, wt.Path); lockErr != nil {
+			if rollbackErr := unlockWorktreesIn(dir, locked); rollbackErr != nil {
+				return "", &PruneProtectionRestoreError{Err: fmt.Errorf(
+					"protect listed worktree %s: %v; rollback also failed: %w",
+					wt.Path, lockErr, rollbackErr,
+				)}
+			}
 			return "", fmt.Errorf("protect listed worktree %s before prune: %w", wt.Path, lockErr)
 		}
 		locked = append(locked, wt.Path)
@@ -227,9 +264,26 @@ func PruneWorktreesIn(dir string) (stderr string, err error) {
 		return stderr, pruneCommandError(false, stderr, err)
 	}
 	if unlockErr != nil {
-		return stderr, unlockErr
+		return stderr, &PruneProtectionRestoreError{Err: unlockErr}
 	}
 	return stderr, nil
+}
+
+func recoverPruneProtectionLocksIn(dir string) error {
+	listed, err := ListWorktreesIn(dir)
+	if err != nil {
+		return fmt.Errorf("list worktrees while recovering prune protection: %w", err)
+	}
+	owned := make([]string, 0)
+	for _, wt := range listed {
+		if wt.Locked && wt.LockReason == tclaudePruneProtectionReason {
+			owned = append(owned, wt.Path)
+		}
+	}
+	if err := unlockWorktreesIn(dir, owned); err != nil {
+		return &PruneProtectionRestoreError{Err: err}
+	}
+	return nil
 }
 
 func unlockWorktreesIn(dir string, paths []string) error {
