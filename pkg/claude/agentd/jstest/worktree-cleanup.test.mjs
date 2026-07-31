@@ -172,6 +172,24 @@ test('stale Git records are pre-selected, inspectable, and reported by verified 
   await flush(harness);
 });
 
+test('stale-record preview errors make the live count explicitly incomplete', async (t) => {
+  const opened = await mountCleanup(t, {
+    scan: async () => ({
+      ...initialScan(),
+      prunableRepos: [],
+      pruneScanErrors: [{ repo_root: '/repo', detail: 'permission denied reading metadata' }],
+    }),
+  });
+  const { harness, host, pending } = opened;
+  assert.match(host.querySelector('#worktree-cleanup-hint').textContent,
+    /Stale-record scan incomplete.*counts cover successful live scans only/);
+  assert.match(host.querySelector('#worktree-cleanup-error').textContent,
+    /\/repo: permission denied reading metadata/);
+  host.querySelector('#worktree-cleanup-cancel').click();
+  await pending;
+  await flush(harness);
+});
+
 test('rescan preserves present exact-path choices but forgets them after successful absence', async (t) => {
   let scans = 0;
   const opened = await mountCleanup(t, {

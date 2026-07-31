@@ -2021,7 +2021,10 @@ list`, so the preview discovers them separately with `git worktree prune`'s
 dry-run and shows one pre-selected **bookkeeping only** row per affected repo.
 The disclosure on that row groups Git's reasons; its count is a live scan, not
 durable inventory. Pruning these records cannot remove a checkout directory or
-branch. After pruning, tclaude repeats the dry-run and reports the verified
+branch. A prune candidate that Git still exposes as a checkout row stays in
+the existing per-worktree selection flow; tclaude temporarily locks such rows
+during repo pruning so the aggregate action cannot bypass an unticked
+agent-bound or otherwise protected row. After pruning, tclaude repeats the dry-run and reports the verified
 number cleared and remaining instead of trusting Git's exit code. In
 particular, an active agent sandbox can hold bind mounts on the administrative
 entries: Git may then report failures while exiting successfully, and the

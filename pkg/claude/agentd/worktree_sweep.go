@@ -104,6 +104,11 @@ type sweepPruneReason struct {
 	Count  int    `json:"count"`
 }
 
+type sweepPruneScanError struct {
+	RepoRoot string `json:"repo_root"`
+	Detail   string `json:"detail"`
+}
+
 // registeredSweepWorktree is Git's authoritative record for a worktree plus
 // the surviving main checkout used to mutate it. It remains usable when Path
 // itself no longer exists.
@@ -155,12 +160,14 @@ func groupWorktreeDirs(g *db.AgentGroup) []string {
 // renders as "nothing to clean up".
 func dashboardGroupWorktrees(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 	roots, out := discoverSweepWorktrees(groupWorktreeDirs(g))
+	prunable, pruneErrors := discoverPrunableRepos(roots)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"scope":          "group",
 		"group":          g.Name,
 		"repo_roots":     roots,
 		"worktrees":      out,
-		"prunable_repos": discoverPrunableRepos(roots),
+		"prunable_repos": prunable,
+		"prune_errors":   pruneErrors,
 	})
 }
 
@@ -175,23 +182,30 @@ func dashboardAllGroupWorktrees(w http.ResponseWriter) {
 		return
 	}
 	roots, out := discoverSweepWorktrees(dirs)
+	prunable, pruneErrors := discoverPrunableRepos(roots)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"scope":          "all",
 		"groups":         names,
 		"repo_roots":     roots,
 		"worktrees":      out,
-		"prunable_repos": discoverPrunableRepos(roots),
+		"prunable_repos": prunable,
+		"prune_errors":   pruneErrors,
 	})
 }
 
 // discoverPrunableRepos runs Git's authoritative prune dry-run for every
 // discovered main repo. Only affected repos become rows. Counts are a live
 // preview, not inventory: execute-time cleanup takes another before snapshot.
-func discoverPrunableRepos(roots []string) []sweepPrunableRepo {
+func discoverPrunableRepos(roots []string) ([]sweepPrunableRepo, []sweepPruneScanError) {
 	out := make([]sweepPrunableRepo, 0, len(roots))
+	errors := make([]sweepPruneScanError, 0)
 	for _, root := range roots {
 		entries, err := prunableWorktreesFn(root)
-		if err != nil || len(entries) == 0 {
+		if err != nil {
+			errors = append(errors, sweepPruneScanError{RepoRoot: root, Detail: err.Error()})
+			continue
+		}
+		if len(entries) == 0 {
 			continue
 		}
 		counts := map[string]int{}
@@ -215,7 +229,7 @@ func discoverPrunableRepos(roots []string) []sweepPrunableRepo {
 			Checked:  true,
 		})
 	}
-	return out
+	return out, errors
 }
 
 func allGroupWorktreeDirs() (names, dirs []string, err error) {
@@ -862,15 +876,20 @@ func pruneOneRepo(root string) worktreePruneOutcome {
 		if pruneErr != nil {
 			out.Detail += "; prune command: " + pruneErr.Error()
 		}
-		if stderr != "" {
+		if stderr != "" && pruneErr == nil {
 			out.Detail += "; Git reported: " + strings.Join(strings.Fields(stderr), " ")
 		}
 		return out
 	}
 	out.Remaining = len(after)
-	out.Cleared = out.Before - out.Remaining
-	if out.Cleared < 0 {
-		out.Cleared = 0
+	afterIDs := make(map[string]bool, len(after))
+	for _, entry := range after {
+		afterIDs[entry.AdminDir] = true
+	}
+	for _, entry := range before {
+		if !afterIDs[entry.AdminDir] {
+			out.Cleared++
+		}
 	}
 	if out.Remaining > 0 {
 		out.Result = "failed"
@@ -888,7 +907,7 @@ func pruneOneRepo(root string) worktreePruneOutcome {
 	if pruneErr != nil {
 		out.Detail += " Prune command reported: " + pruneErr.Error() + "."
 	}
-	if stderr != "" {
+	if stderr != "" && pruneErr == nil {
 		out.Detail += " Git reported: " + strings.Join(strings.Fields(stderr), " ")
 	}
 	return out

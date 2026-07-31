@@ -57,21 +57,64 @@ Removing malformed-entry`)
 	}, out)
 }
 
+func TestParseWorktreePorcelainKeepsPruneAndLockState(t *testing.T) {
+	wts := parseWorktreePorcelain(`worktree /repo
+HEAD abc
+branch refs/heads/main
+
+worktree /repo-missing
+HEAD def
+branch refs/heads/topic
+prunable gitdir file points to non-existent location
+locked operator hold
+`)
+	require.Len(t, wts, 2)
+	assert.True(t, wts[0].IsMain)
+	assert.True(t, wts[1].Prunable)
+	assert.Equal(t, "gitdir file points to non-existent location", wts[1].PrunableReason)
+	assert.True(t, wts[1].Locked)
+}
+
 func TestPrunableWorktreesInReadsGitVerboseStream(t *testing.T) {
-	repoPath, _ := setupTestRepo(t)
+	repoPath, parentDir := setupTestRepo(t)
+	require.NoError(t, exec.Command("git", "-C", repoPath, "config",
+		"gc.worktreePruneExpire", "now").Run())
+	listedPath := filepath.Join(parentDir, "listed-prunable")
+	require.NoError(t, exec.Command("git", "-C", repoPath, "worktree", "add",
+		"-b", "listed-prunable", listedPath).Run())
+	require.NoError(t, os.Rename(listedPath, listedPath+"-gone"),
+		"delete the checkout out-of-band while retaining its readable gitdir registration")
+
 	adminDir := filepath.Join(repoPath, ".git", "worktrees", "stale-test")
 	require.NoError(t, os.MkdirAll(adminDir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(adminDir, "gitdir"),
-		[]byte(filepath.Join(repoPath, "missing-worktree", ".git")+"\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(adminDir, "HEAD"), []byte("ref: refs/heads/stale\n"), 0o644))
 	old := time.Now().Add(-365 * 24 * time.Hour)
 	require.NoError(t, os.Chtimes(adminDir, old, old))
-	require.NoError(t, os.Chtimes(filepath.Join(adminDir, "gitdir"), old, old))
+	require.NoError(t, os.Chtimes(filepath.Join(adminDir, "HEAD"), old, old))
 
 	entries, err := PrunableWorktreesIn(repoPath)
 	require.NoError(t, err)
-	require.Len(t, entries, 1)
+	require.Len(t, entries, 1,
+		"the porcelain-visible prunable worktree stays in the individual checkout flow")
 	assert.Equal(t, "stale-test", entries[0].AdminDir)
 	assert.Contains(t, entries[0].Reason, "gitdir file")
+
+	stderr, err := PruneWorktreesIn(repoPath)
+	require.NoError(t, err, "repo prune should temporarily protect the listed worktree: %s", stderr)
+	remaining, err := PrunableWorktreesIn(repoPath)
+	require.NoError(t, err)
+	assert.Empty(t, remaining, "the invisible administrative entry was pruned")
+	listed, err := ListWorktreesIn(repoPath)
+	require.NoError(t, err)
+	var protected *WorktreeInfo
+	for i := range listed {
+		if filepath.Clean(listed[i].Path) == filepath.Clean(listedPath) {
+			protected = &listed[i]
+		}
+	}
+	require.NotNil(t, protected, "repo prune must not bypass the individually managed row")
+	assert.True(t, protected.Prunable)
+	assert.False(t, protected.Locked, "tclaude's temporary protection lock is restored")
 }
 
 func TestAddWorktreeIn(t *testing.T) {

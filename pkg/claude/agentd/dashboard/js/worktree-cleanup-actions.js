@@ -32,6 +32,10 @@ export function createWorktreeCleanupActions({
         repoRoots: Object.freeze([...(payload.repo_roots || [])].map(String)),
         worktrees: Object.freeze([...(payload.worktrees || [])]),
         prunableRepos: Object.freeze([...(payload.prunable_repos || [])]),
+        pruneScanErrors: Object.freeze([...(payload.prune_errors || [])].map((entry) => Object.freeze({
+          repo_root: String(entry?.repo_root || ''),
+          detail: String(entry?.detail || ''),
+        }))),
       });
     },
 

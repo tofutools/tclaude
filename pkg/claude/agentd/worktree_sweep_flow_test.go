@@ -2,6 +2,7 @@ package agentd_test
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -69,6 +70,10 @@ type sweepDiscoverWire struct {
 			Count  int    `json:"count"`
 		} `json:"reasons"`
 	} `json:"prunable_repos"`
+	PruneErrors []struct {
+		RepoRoot string `json:"repo_root"`
+		Detail   string `json:"detail"`
+	} `json:"prune_errors"`
 }
 
 type sweepCleanupWire struct {
@@ -411,7 +416,7 @@ func TestWorktreeSweep_DiscoverIncludesPrunableRepoReasonCounts(t *testing.T) {
 			return []worktree.PrunableWorktree{
 				{AdminDir: "old-a", Reason: "gitdir file does not exist"},
 				{AdminDir: "old-b", Reason: "gitdir file does not exist"},
-				{AdminDir: "old-c", Reason: "gitdir file points to non-existent location"},
+				{AdminDir: "old-c", Reason: "administrative entry is unreadable"},
 			}, nil
 		},
 		func(string) (string, error) {
@@ -429,8 +434,26 @@ func TestWorktreeSweep_DiscoverIncludesPrunableRepoReasonCounts(t *testing.T) {
 	require.Len(t, row.Reasons, 2)
 	assert.Equal(t, "gitdir file does not exist", row.Reasons[0].Reason)
 	assert.Equal(t, 2, row.Reasons[0].Count)
-	assert.Equal(t, "gitdir file points to non-existent location", row.Reasons[1].Reason)
+	assert.Equal(t, "administrative entry is unreadable", row.Reasons[1].Reason)
 	assert.Equal(t, 1, row.Reasons[1].Count)
+}
+
+func TestWorktreeSweep_DiscoverSurfacesPrunePreviewErrors(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	repoFixture(t, f)
+	t.Cleanup(agentd.SetPruneWorktreeFnsForTest(
+		func(string) ([]worktree.PrunableWorktree, error) {
+			return nil, errors.New("permission denied reading worktree metadata")
+		},
+		func(string) (string, error) { return "", nil },
+	))
+
+	out := discoverWorktrees(t, agentd.BuildDashboardHandlerForTest(), "squad")
+	assert.Empty(t, out.PrunableRepos)
+	require.Len(t, out.PruneErrors, 1, "a failed preview must not masquerade as zero stale records")
+	assert.Equal(t, "/repo", out.PruneErrors[0].RepoRoot)
+	assert.Contains(t, out.PruneErrors[0].Detail, "permission denied")
 }
 
 // Git exits 0 even when a sandbox bind mount makes every administrative
@@ -482,6 +505,37 @@ func TestWorktreeSweep_PruneExitZeroWithoutProgressIsFailed(t *testing.T) {
 	assert.Contains(t, out.PruneOutcomes[0].Detail, "active agent sandbox may be holding bind mounts")
 	assert.Contains(t, out.PruneOutcomes[0].Detail, "Device or resource busy",
 		"stderr is preserved as advisory detail even though prune returned nil")
+}
+
+func TestWorktreeSweep_PruneAccountingUsesEntryIdentity(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	repoFixture(t, f)
+	previews := [][]worktree.PrunableWorktree{
+		{{AdminDir: "old-a"}, {AdminDir: "old-b"}},
+		{{AdminDir: "new-c"}},
+	}
+	t.Cleanup(agentd.SetPruneWorktreeFnsForTest(
+		func(string) ([]worktree.PrunableWorktree, error) {
+			out := previews[0]
+			previews = previews[1:]
+			return out, nil
+		},
+		func(string) (string, error) { return "", nil },
+	))
+
+	body := `{"prune_roots":["/repo"]}`
+	r, err := http.NewRequest(http.MethodPost, "/api/worktrees/cleanup", strings.NewReader(body))
+	require.NoError(t, err)
+	rec := testharness.Serve(agentd.BuildDashboardHandlerForTest(), r)
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var out sweepCleanupWire
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+	require.Len(t, out.PruneOutcomes, 1)
+	assert.Equal(t, 2, out.PruneOutcomes[0].Cleared,
+		"both original identities cleared even though a new stale record appeared concurrently")
+	assert.Equal(t, 1, out.PruneOutcomes[0].Remaining, "post-state reports the new live remainder")
+	assert.Equal(t, "partial", out.PruneOutcomes[0].Result)
 }
 
 // Regression: PostToolUse can track an edit outside the worktree an agent was

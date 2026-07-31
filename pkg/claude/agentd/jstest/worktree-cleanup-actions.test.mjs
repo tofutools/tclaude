@@ -34,6 +34,7 @@ test('worktree actions preserve scan scopes, explicit cleanup wire fields, and p
   assert.deepEqual(await actions.scan('alpha/beta'), {
     repoRoots: ['/repo'], worktrees: [{ path: '/repo-wt', checked: true }],
     prunableRepos: [{ repo_root: '/repo', count: 2, checked: true }],
+    pruneScanErrors: [],
   });
   assert.equal(calls[0][0], '/api/groups/alpha%2Fbeta/worktrees');
   await actions.scan('');

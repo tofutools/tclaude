@@ -118,11 +118,14 @@ func BranchExists(branch string) bool {
 
 // WorktreeInfo represents a git worktree
 type WorktreeInfo struct {
-	Path   string // Absolute path to worktree
-	Branch string // Branch checked out in worktree
-	Commit string // Current commit SHA
-	IsMain bool   // True if this is the main worktree
-	IsBare bool   // True if this is a bare worktree
+	Path           string // Absolute path to worktree
+	Branch         string // Branch checked out in worktree
+	Commit         string // Current commit SHA
+	IsMain         bool   // True if this is the main worktree
+	IsBare         bool   // True if this is a bare worktree
+	Prunable       bool   // Git lists the registration but considers it prunable
+	PrunableReason string // porcelain reason following "prunable"
+	Locked         bool   // Git must not prune this registration
 }
 
 // ListWorktrees returns all git worktrees of the repo in the current

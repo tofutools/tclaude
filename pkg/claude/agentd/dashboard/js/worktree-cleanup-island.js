@@ -130,6 +130,7 @@ export function WorktreeCleanupDialog({ current, state, actions }) {
   const allGroups = !descriptor.group;
   const [candidates, setCandidates] = useState([]);
   const [prunableRepos, setPrunableRepos] = useState([]);
+  const [pruneScanErrors, setPruneScanErrors] = useState([]);
   const [repoRoots, setRepoRoots] = useState([]);
   const [query, setQuery] = useState('');
   const [deleteBranches, setDeleteBranches] = useState(true);
@@ -171,6 +172,7 @@ export function WorktreeCleanupDialog({ current, state, actions }) {
       setPrunableRepos(rescan
         ? reconcilePrunableRepos(response.prunableRepos, touchedPruneChoices.current)
         : normalizePrunableRepos(response.prunableRepos));
+      setPruneScanErrors(response.pruneScanErrors || []);
     } catch (cause) {
       if (active.current && requestGeneration === generation.current) {
         setError(`scan failed: ${cause?.message || String(cause)}`);
@@ -273,12 +275,15 @@ export function WorktreeCleanupDialog({ current, state, actions }) {
   const wizardWhere = repoRoots.length
     ? (allGroups && repoRoots.length > 1 ? `${repoRoots.length} party groves` : repoRoots.join(', '))
     : (allGroups ? 'groves used by any party' : "this party's repo");
+  const scanFrame = pruneScanErrors.length
+    ? `Stale-record scan incomplete for ${pruneScanErrors.length} repo${pruneScanErrors.length === 1 ? '' : 's'}; counts cover successful live scans only.`
+    : 'Counts reflect this live scan.';
   const regularHint = removable.length === 0 && staleRecords === 0
-    ? `No removable worktrees or stale Git records found in ${regularWhere}. Counts reflect this live scan.`
-    : `${removable.length} removable worktree${removable.length === 1 ? '' : 's'} and ${staleRecords} stale Git record${staleRecords === 1 ? '' : 's'} found in ${regularWhere}. Counts reflect this live scan. Safe orphans, retired-agent leftovers, and bookkeeping-only stale records are pre-ticked; agent-bound or dirty worktrees remain unticked for review.`;
+    ? `No removable worktrees or stale Git records found in ${regularWhere}. ${scanFrame}`
+    : `${removable.length} removable worktree${removable.length === 1 ? '' : 's'} and ${staleRecords} stale Git record${staleRecords === 1 ? '' : 's'} found in ${regularWhere}. ${scanFrame} Safe orphans, retired-agent leftovers, and bookkeeping-only stale records are pre-ticked; agent-bound or dirty worktrees remain unticked for review.`;
   const wizardHint = removable.length === 0 && staleRecords === 0
-    ? `No removable worktrees or stale Git records found in ${wizardWhere}. Counts reflect this live scan.`
-    : `${removable.length} removable worktree${removable.length === 1 ? '' : 's'} and ${staleRecords} stale Git record${staleRecords === 1 ? '' : 's'} found in ${wizardWhere}. Counts reflect this live scan. Safe orphans, banished-familiar leftovers, and bookkeeping-only stale records are pre-ticked; familiar-bound or dirty worktrees remain unticked for review.`;
+    ? `No removable worktrees or stale Git records found in ${wizardWhere}. ${scanFrame}`
+    : `${removable.length} removable worktree${removable.length === 1 ? '' : 's'} and ${staleRecords} stale Git record${staleRecords === 1 ? '' : 's'} found in ${wizardWhere}. ${scanFrame} Safe orphans, banished-familiar leftovers, and bookkeeping-only stale records are pre-ticked; familiar-bound or dirty worktrees remain unticked for review.`;
   const retrying = !!submittedRequest;
   const selectedCountCopy = `${selected.length} of ${removable.length} worktrees + ${selectedStaleRecords} of ${staleRecords} stale records selected`;
   const removeCopy = `${selected.length} worktree${selected.length === 1 ? '' : 's'}`;
@@ -388,7 +393,10 @@ export function WorktreeCleanupDialog({ current, state, actions }) {
           <span class="wt-note">force-deletes each removed worktree's local branch — <code>main</code>/<code>master</code> are always kept; stale-record pruning never deletes branches</span>
         </span>
       </label>
-      <div class="cleanup-error" id="worktree-cleanup-error" role=${error ? 'alert' : undefined}>${error}</div>
+      <div class="cleanup-error" id="worktree-cleanup-error"
+        role=${error || pruneScanErrors.length ? 'alert' : undefined}>${error || (pruneScanErrors.length
+          ? `Stale-record scan incomplete: ${pruneScanErrors.map((entry) => `${entry.repo_root}: ${entry.detail}`).join('; ')}`
+          : '')}</div>
       <div class="modal-buttons">
         <button id="worktree-cleanup-cancel" type="button" disabled=${closeBlocked} onClick=${close}>
           <${Words} plain="Cancel" wizard="Dispel" />
