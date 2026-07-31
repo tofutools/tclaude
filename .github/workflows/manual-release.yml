@@ -960,7 +960,7 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       [test, lint, version, build, sandbox-v2-smoke, sandbox-v2-seatbelt-smoke,
-       filtered-proxy-smoke]
+       filtered-proxy-smoke, proxy-posture-e2e]
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -1030,3 +1030,29 @@ jobs:
       - name: Run filtered-network proxy smokes
         shell: bash
         run: scripts/filtered-proxy-smoke/run.sh
+
+  # The end-to-end proxy-posture smokes verify the ASSEMBLED posture: authored
+  # policy in, real launch, real enforcement observed, for each posture the
+  # conditional-deployment table distinguishes — including the three that must
+  # deploy no proxy. Everything that decides what runs and what counts as
+  # evidence lives in scripts/proxy-posture-e2e/, so extending it is a repo
+  # change and a review, not a workflow merge. Keep this job generic: if a
+  # change here is ever needed to add a scenario, that belongs in the entrypoint
+  # instead.
+  proxy-posture-e2e:
+    name: Proxy posture end-to-end
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Run end-to-end proxy-posture smokes
+        shell: bash
+        run: scripts/proxy-posture-e2e/run.sh
