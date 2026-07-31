@@ -412,6 +412,10 @@ type SpawnRequest struct {
 	// spawn modal defaults its checkbox on; CLI / agent callers pass it
 	// explicitly.
 	AutoFocus bool `json:"auto_focus,omitempty"`
+	// AutoFocusWeb routes AutoFocus to the dashboard's in-browser terminal
+	// instead of asking agentd to open a native OS window. The dashboard sets
+	// this when dashboard.default_terminal is "web"; CLI callers leave it off.
+	AutoFocusWeb bool `json:"auto_focus_web,omitempty"`
 
 	// IncludeGroupContext controls whether the group's default_context
 	// (when set) is folded into the new agent's startup briefing. A nil

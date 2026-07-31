@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/creack/pty"
 	"github.com/gorilla/websocket"
@@ -238,24 +239,23 @@ func handleDashboardOpenWindowWS(w http.ResponseWriter, r *http.Request) {
 }
 
 // spawnFocusWSPath builds the /api/spawn-focus-ws/{label} path the
-// spawn endpoint hands back (as focus_ws) when auto-focus could not
-// pop a native window. Label-keyed, not conv-keyed — see
+// spawn endpoint hands back (as focus_ws) when auto-focus targets the browser
+// or could not pop a native window. Label-keyed, not conv-keyed — see
 // handleDashboardSpawnFocusWS.
 func spawnFocusWSPath(label string) string {
 	return "/api/spawn-focus-ws/" + url.PathEscape(label)
 }
 
-// handleDashboardSpawnFocusWS is the in-browser fallback for spawn
-// auto-focus: when executeSpawn's focusSpawn closure can't pop a
-// native terminal window (no DISPLAY/WAYLAND_DISPLAY, or no terminal
-// emulator installed), the spawn response points the dashboard here
-// instead of silently opening nothing while claiming success — see
-// spawnOutcome.FocusMode / handleGroupSpawn.
+// handleDashboardSpawnFocusWS is the browser target/fallback for spawn
+// auto-focus. The response points the dashboard here when web terminals are
+// configured, or when a native open fails, instead of silently opening
+// nothing while claiming success — see spawnOutcome.FocusMode / handleGroupSpawn.
 //
 // Label-keyed rather than conv-keyed, like pending_focus.go's attach:
 // a freshly-spawned pane may not have a conv-id yet (a gated Codex
-// spawn, or a CC spawn whose hook hasn't landed), but its label is
-// known the moment the pane exists.
+// spawn, or a CC spawn whose hook hasn't landed). A deferred OpenCode response
+// can even precede the pane; waitForDashboardSpawnFocusSession bridges that
+// bounded pending-launch interval.
 //
 //	GET /api/spawn-focus-ws/{label}
 //
@@ -273,12 +273,44 @@ func handleDashboardSpawnFocusWS(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "expected /api/spawn-focus-ws/{label}", http.StatusNotFound)
 		return
 	}
-	sess, err := db.LoadSession(label)
-	if err != nil || sess == nil || sess.TmuxSession == "" {
+	sess := waitForDashboardSpawnFocusSession(r, label)
+	if sess == nil {
 		http.Error(w, "no tmux pane for "+label, http.StatusNotFound)
 		return
 	}
 	runPTYOverWS(w, r, webTerminalAttachCmd(openAttachCmd(label)), sess.TmuxSession)
+}
+
+// waitForDashboardSpawnFocusSession bridges the one spawn shape where the
+// browser-focus response can precede the pane: deferred OpenCode server boot.
+// Keep the websocket handshake pending while the label is still a durable
+// pending-spawn reservation, bounded beyond OpenCode's startup timeout plus
+// the short pane fork. Ordinary missing labels still fail immediately, and a
+// canceled/failed pending spawn stops waiting as soon as its reservation goes.
+func waitForDashboardSpawnFocusSession(r *http.Request, label string) *db.SessionRow {
+	const paneForkGrace = 3 * time.Second
+	deadline := time.NewTimer(openCodeStartupTimeout + paneForkGrace)
+	defer deadline.Stop()
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		sess, err := db.LoadSession(label)
+		if err == nil && sess != nil && sess.TmuxSession != "" {
+			return sess
+		}
+		pending, pendingErr := db.GetPendingSpawn(label)
+		if pendingErr != nil || pending == nil {
+			return nil
+		}
+		select {
+		case <-r.Context().Done():
+			return nil
+		case <-deadline.C:
+			return nil
+		case <-ticker.C:
+		}
+	}
 }
 
 // termWSHook lets the env-gated real-browser terminal smoke observe and

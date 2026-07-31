@@ -724,6 +724,10 @@ func TestDashboardAssets_DefaultTerminalWired(t *testing.T) {
 		// dashboard.js — the resolver + the snapshot flag it reads.
 		"export function webTerminalDefault()",
 		"lastSnapshot.default_terminal === 'web'",
+		// agent spawn — the frozen snapshot choice suppresses native auto-focus,
+		// then opens the new label through the web-terminal websocket.
+		"defaultTerminal: snapshot.default_terminal === 'web' ? 'web' : 'native'",
+		"if (draft.autoFocus && context.defaultTerminal === 'web') body.auto_focus_web = true;",
 		// terminals-tab.js — the shared pane-openers.
 		"export function openWebWindowPane(",
 		"export function openWebTermPane(",

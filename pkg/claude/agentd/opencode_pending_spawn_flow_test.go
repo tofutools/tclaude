@@ -2,6 +2,8 @@ package agentd_test
 
 import (
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -12,6 +14,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
 // Flow coverage for the deferred OpenCode spawn path: the managed
@@ -126,6 +129,78 @@ func TestOpenCodeAgent_SlowBootReturnsPendingThenEnrollsInBackground(t *testing.
 	boundAgentID, err := db.AgentIDForConv(convID)
 	require.NoError(t, err)
 	assert.Equal(t, resp.AgentID, boundAgentID, "background enrollment binds the reserved identity")
+}
+
+// Scenario: a cold OpenCode boot returns Pending before its tmux pane exists,
+// while the dashboard requested Auto focus with web terminals as its target.
+//
+// Expected: the pending response still carries the browser attach handshake.
+// The dashboard can open the Terminals-tab pane immediately and let the web
+// terminal's bounded startup retries bridge the deferred pane launch; the
+// continuation must never open a native terminal as a side effect.
+func TestOpenCodeAgent_SlowBootPreservesWebAutoFocus(t *testing.T) {
+	f := newFlow(t)
+	t.Cleanup(agentd.SetOpenCodeAsyncSpawnResponseGraceForTest(20 * time.Millisecond))
+
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
+	blockedOpenCodeRuntime(t, release, nil)
+
+	openedNative := false
+	t.Cleanup(agentd.SetOpenTerminalForTest(func(string) error {
+		openedNative = true
+		return nil
+	}))
+
+	f.HaveGroup("oc-crew")
+	resp := f.AsHuman().SpawnWith("oc-crew", map[string]any{
+		"name": "oc-worker", "harness": "opencode",
+		"auto_focus": true, "auto_focus_web": true,
+	})
+	require.Equal(t, 200, resp.Code, "raw=%s", resp.Raw)
+	require.Empty(t, resp.ConvID, "cold launch should return Pending")
+	assert.Equal(t, "browser", resp.FocusMode)
+	assert.Equal(t, "/api/spawn-focus-ws/"+resp.Label, resp.FocusWS)
+	assert.False(t, openedNative)
+
+	// Start the web-terminal request while no pane exists. Hold the runtime
+	// beyond terminals-core.js's entire generic retry window (200+500+1000ms):
+	// this one request must remain pending server-side instead of consuming all
+	// browser retries as 404s before OpenCode finishes booting.
+	var attachCommand string
+	t.Cleanup(agentd.SetTermWSHookForTest(&agentd.TermWSHook{
+		RewriteCommand: func(command, session string) (string, string) {
+			attachCommand = command
+			return command, session
+		},
+	}))
+	const dashboardOrigin = "http://127.0.0.1:0"
+	t.Cleanup(agentd.SetPopupBaseURLForTest(dashboardOrigin))
+	requestDone := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		request := httptest.NewRequest(http.MethodGet, resp.FocusWS, nil)
+		request.Header.Set("Origin", dashboardOrigin)
+		requestDone <- testharness.Serve(agentd.BuildDashboardHandlerForTest(), request)
+	}()
+	select {
+	case early := <-requestDone:
+		t.Fatalf("spawn-focus request returned before deferred pane existed: status=%d body=%s",
+			early.Code, early.Body.String())
+	case <-time.After(2 * time.Second):
+	}
+
+	releaseOnce.Do(func() { close(release) })
+	f.AssertGroupMember("oc-crew", "ses_"+resp.Label, "oc-worker", 10*time.Second)
+	select {
+	case terminalResponse := <-requestDone:
+		assert.NotEmpty(t, attachCommand, "focus websocket reached the terminal attach path")
+		assert.NotEqual(t, http.StatusNotFound, terminalResponse.Code)
+	case <-time.After(2 * time.Second):
+		t.Fatal("spawn-focus request did not resume after deferred pane appeared")
+	}
+	agentd.WaitForBackgroundForTest()
+	assert.False(t, openedNative, "deferred web auto-focus must never open a native terminal")
 }
 
 // Scenario (cold-review regression, PR #1496 finding 1): the operator's

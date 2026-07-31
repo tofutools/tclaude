@@ -3391,6 +3391,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		GitWorktreeWriteDirs:       gitWorktreeWriteDirs,
 		GitWorktreeWriteDirsPinned: codexGitCommonDirPinned,
 		AutoFocus:                  body.AutoFocus,
+		AutoFocusWeb:               body.AutoFocusWeb,
 		Effort:                     effort,
 		Model:                      model,
 		Harness:                    h.Name,
@@ -3493,10 +3494,10 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		resp["task_ref_url"] = p.TaskURL
 		resp["task_ref_state"] = taskRefBindState(outcome.ConvID, p.TaskURL)
 	}
-	// FocusMode is only ever non-empty when the caller asked for
-	// auto-focus. "browser" means openTerminal couldn't pop a native
-	// window — the dashboard's spawn modal points at focus_ws instead of
-	// claiming success and opening nothing (see spawnOutcome.FocusMode).
+	// FocusMode is only ever non-empty when the caller asked for auto-focus.
+	// "browser" means the dashboard explicitly targeted a web terminal or
+	// openTerminal couldn't pop a native window; in either case the spawn modal
+	// points at focus_ws (see spawnOutcome.FocusMode).
 	if outcome.FocusMode != "" {
 		resp["focus_mode"] = outcome.FocusMode
 		if outcome.FocusMode == "browser" {
@@ -3559,6 +3560,7 @@ type spawnParams struct {
 	GitWorktreeWriteDirs       []string
 	GitWorktreeWriteDirsPinned bool
 	AutoFocus                  bool
+	AutoFocusWeb               bool
 	// Effort is the validated Claude reasoning effort to forward to the
 	// new session's `tclaude session new --effort`, or "" to omit it.
 	Effort string
@@ -3778,10 +3780,11 @@ type spawnOutcome struct {
 	// FocusMode reports what the auto-focus attempt (if AutoFocus was
 	// requested) actually did: "" (not requested, or the pane never came
 	// up within the poll), "native" (a real GUI terminal window opened),
-	// or "browser" (no native window could be popped — headless agentd,
-	// or no terminal emulator installed — so the caller should fall back
-	// to the in-browser terminal, same as handleDashboardOpenWindowAPI's
-	// mode:"browser"). Set once, by the focusSpawn closure in executeSpawn.
+	// or "browser" (explicit web-terminal target, or no native window could be
+	// popped and the caller should fall back to the in-browser terminal, same as
+	// handleDashboardOpenWindowAPI's mode:"browser"). Usually set by the
+	// focusSpawn closure; a deferred OpenCode response preserves the explicit
+	// browser intent before that closure can run.
 	FocusMode string
 }
 
@@ -4850,6 +4853,13 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 			return
 		}
 		focused = true
+		if p.AutoFocusWeb {
+			// The requesting dashboard will attach the browser terminal from
+			// focus_ws in the spawn response. In particular, do not briefly pop
+			// a native window before handing the session back to the browser.
+			focusMode = "browser"
+			return
+		}
 		if err := openTerminal(openAttachCmd(label)); err != nil {
 			// No native window — headless agentd (no DISPLAY/WAYLAND_DISPLAY)
 			// or no terminal emulator installed. Don't just log and drop it:
@@ -5253,8 +5263,18 @@ func executeServerSpawnDeferred(g *db.AgentGroup, p spawnParams, syncProofCleanu
 	mu.Unlock()
 	slog.Info("spawn: OpenCode launch continues in background; recorded pending spawn",
 		"label", label, "group", g.Name)
+	// A deferred OpenCode launch has no pane yet, so the continuation cannot
+	// deliver its eventual browser-focus outcome back through this already-
+	// returned request. Hand the dashboard the label-keyed websocket now; the
+	// terminal client's bounded initial retries bridge the pane coming online.
+	// Native auto-focus remains continuation-owned because agentd can open that
+	// window itself once the pane exists.
+	focusMode := ""
+	if p.AutoFocus && p.AutoFocusWeb {
+		focusMode = "browser"
+	}
 	return &spawnOutcome{AgentID: p.AgentID, ConvID: "", Label: label,
-		Harness: p.Harness, Model: p.Model, Effort: p.Effort}, nil
+		Harness: p.Harness, Model: p.Model, Effort: p.Effort, FocusMode: focusMode}, nil
 }
 
 // surfaceDeferredSpawnFailure lands a deferred spawn failure in the dashboard
