@@ -392,6 +392,50 @@ func TestLocalPresetsOpenCodeRefuseAtNamedModelTransportSeam(t *testing.T) {
 	}
 }
 
+// TCL-895 at the surface an operator actually meets. The seam test above pins
+// the PACKET gateway's refusal; this one pins what changed — a local preset
+// that deploys an activated proxy engine is no longer refused for the packet
+// gateway's reason, and is still refused for the engine-independent one.
+//
+// The two messages are the whole point: "these presets name no explicit
+// provider" describes machinery a proxy launch never runs, while "requires an
+// explicit provider/model launch model" is the contract that still binds it.
+func TestLocalPresetsOpenCodeProxyEngineRefusesForTheProviderNotThePreset(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	const profileName = "opencode-local-model-apis-proxy"
+	_, err := db.CreateSandboxProfile(&db.SandboxProfile{
+		Name: profileName,
+		Network: &sandboxpolicy.NetworkRules{
+			Mode: sandboxpolicy.AccessModeList,
+			Allow: []sandboxpolicy.NetworkAllowEntry{
+				{Domain: "api.anthropic.com", Ports: []int{443}},
+				{Domain: "api.openai.com", Ports: []int{443}},
+				{Loopback: true},
+			},
+			Engine: sandboxpolicy.NetworkEngineProxy,
+		},
+	})
+	require.NoError(t, err)
+
+	resp := f.AsHuman().SpawnWith("crew", map[string]any{
+		"name":                   profileName + "-worker",
+		"harness":                harness.OpenCodeName,
+		"sandbox":                harness.OpenCodeSandboxTclaudeLayer,
+		"sandbox_implementation": string(sandboxpolicy.ImplementationTclaudeLayer),
+		"sandbox_profile":        profileName,
+	})
+	require.Equalf(t, http.StatusUnprocessableEntity, resp.Code,
+		"spawn body=%s", resp.Raw)
+	failure := decodeFailure(t, resp.Raw)
+	assert.Equal(t, harness.SandboxCapabilityModelTransport, failure.Code)
+	assert.NotContains(t, failure.Error, "local presets name no explicit provider",
+		"the packet gateway's preset refusal must not be rendered for a proxy launch")
+	assert.Contains(t, failure.Error, "explicit provider/model launch model",
+		"the engine-independent model-transport contract still binds this launch")
+	assert.Empty(t, resp.ConvID)
+}
+
 // TestProxyEngineSpawnOmitsThePacketPrerequisiteNotice is the daemon-spawn half
 // of the engine-conditional prerequisite disclosure. The session boundary and
 // this guard both append that notice, so a gate applied at only one of them

@@ -260,6 +260,14 @@ func proxyEngineActivated(harnessName, goos string) bool {
 	return activated
 }
 
+// ProxyEngineActivated is proxyEngineActivated for callers outside this
+// package. The launch seam needs it because a gate that keyed only on "the
+// deployed engine is the proxy" would relax a launch on a platform whose proxy
+// cells enforce nothing, turning a refusal into an open-network start.
+func ProxyEngineActivated(harnessName, goos string) bool {
+	return proxyEngineActivated(harnessName, goos)
+}
+
 // ProxyEngineActivationSmokes returns the smokes backing one harness's cells,
 // for disclosure surfaces and tests. The result is a copy.
 func ProxyEngineActivationSmokes(harnessName string) []string {

@@ -661,16 +661,21 @@ preview. That preview places each effective deny destination in the existing
 Fully supported, Partially supported, or Unsupported bucket for the selected
 target. Its `?` disclosure identifies the target and explains the mechanism,
 limitation, and remedy without turning an authored row into a global
-enforcement claim. macOS, built-in, and stacked cells, plus OpenCode's local
-presets, remain unsupported for network denies. Capability planning omits
-their deny rows individually; a port-scoped deny is never widened into a
+enforcement claim. macOS, built-in, and stacked cells remain unsupported for
+network denies, as do OpenCode's local presets wherever they run the packet
+gateway — a local preset that deploys the **proxy** engine on a platform whose
+proxy cells are activated does rate its deny rows. Capability planning omits
+unsupported deny rows individually; a port-scoped deny is never widened into a
 whole-destination block.
 
 `net-local` provides the unscoped loopback destination for local model servers
 such as Ollama, LM Studio, and llama.cpp, Codex OSS mode, OpenCode local
 providers, and host-local development services. OpenCode local-provider
-launches are currently refused because their effective provider endpoint is
-not available at the launch seam: those presets name no explicit provider.
+launches are refused **under the packet gateway** because their effective
+provider endpoint is not available at the launch seam: those presets name no
+explicit provider. Under an activated `network.engine: proxy` they are not:
+that engine resolves nothing ahead of time, so the preset composes normally and
+the launch is held to the ordinary explicit-provider contract instead.
 `net-anthropic` and `net-openai-codex` independently provide the direct
 Anthropic and OpenAI API-key endpoints. New drafts select these three packs
 once on their first transition to Deny all; they remain ordinary editable pack
@@ -706,10 +711,15 @@ A concrete provider at `host.tclaude.internal` on Linux, or real
 and OpenAI API packs cover first-party API-key traffic and the opt-in ChatGPT
 pack covers ChatGPT-signed-in Codex; custom providers, web search, plugins, MCP
 servers, and commands run by the agent need their own authored destinations.
-OpenCode remains launch-refused under the built-in local/model-API combination with
-`unsupported_filtered_model_transport`, naming the missing explicit provider and
-the network-open remedy; the editor does not advertise its local-provider constituency as
-present-day support.
+Under the packet gateway, OpenCode remains launch-refused on the built-in
+local/model-API combination with `unsupported_filtered_model_transport`, naming
+the missing explicit provider and the network-open remedy; the editor does not
+advertise its local-provider constituency as present-day support. That refusal
+is the packet gateway's own — it exists because that gateway checks the
+authored list against an endpoint resolved ahead of time — so it does not apply
+to a launch whose deployed engine is an activated proxy. Such a launch still
+needs an explicit provider/model and inline explicit-provider config; what it
+no longer gets is a refusal naming machinery it never runs.
 
 One operational detail of the host-network constructed root: the static OS
 surface binds `/etc` read-only, but on a systemd-resolved-class host

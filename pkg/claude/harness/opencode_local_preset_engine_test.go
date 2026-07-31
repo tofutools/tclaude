@@ -159,3 +159,49 @@ func mustAccessEnforcementTable(
 	require.NoError(t, err)
 	return row
 }
+
+// The gate's dangerous direction, pinned. Dropping the refusal for EVERY
+// proxy-deployed policy — rather than only where the proxy cells are activated
+// — would leave a row that enforces nothing, and the plan widens such a row to
+// open. A "local only" preset would then start a launch with open outbound
+// where it used to be refused: fail-closed turning into fail-open on a platform
+// this change was never about.
+//
+// goos is a parameter of the renderer, so this holds from any host.
+func TestOpenCodeLocalPresetKeepsTheRefusalWhereProxyCellsAreNotActivated(t *testing.T) {
+	rules := sandboxpolicy.NetworkRules{
+		Mode: sandboxpolicy.AccessModeList,
+		Allow: []sandboxpolicy.NetworkAllowEntry{
+			{Domain: "api.anthropic.com", Ports: []int{443}},
+			{Domain: "api.openai.com", Ports: []int{443}},
+			{Loopback: true},
+		},
+		Engine: sandboxpolicy.NetworkEngineProxy,
+	}
+	engine, err := sandboxpolicy.DeployedNetworkEngineForRules(rules)
+	require.NoError(t, err)
+	require.Equal(t, sandboxpolicy.NetworkEngineProxy, engine)
+	require.False(t, ProxyEngineActivated(OpenCodeName, "darwin"),
+		"this case is about an UNACTIVATED platform; if Darwin activates, rewrite it")
+
+	axes := sandboxpolicy.ResolvedAxes{Network: rules}
+	predicted, err := PredictAccessEnforcement(
+		MustGet(OpenCodeName), sandboxpolicy.ImplementationTclaudeLayer,
+		axes, "", "darwin",
+	)
+	require.NoError(t, err)
+	assert.Equal(t, EnforceNone, predicted.NetworkList)
+	assert.Contains(t, predicted.NetworkListRefusal, SandboxCapabilityModelTransport)
+
+	// And the plan refuses rather than widening. Without the activation
+	// condition this call returns a widened, open policy with a notice.
+	row, err := accessEnforcementTable(
+		MustGet(OpenCodeName), sandboxpolicy.ImplementationTclaudeLayer,
+		axes, OpenCodeSandboxTclaudeLayer, "darwin", true,
+	)
+	require.NoError(t, err)
+	rendered, _, err := PlanAccessEnforcement(axes, accessEnforcementFromTable(row))
+	require.ErrorContains(t, err, SandboxCapabilityModelTransport)
+	assert.NotEqual(t, sandboxpolicy.AccessModeOpen, rendered.Network.Mode,
+		"a refused local preset must never reach a launch widened to open")
+}

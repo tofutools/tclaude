@@ -1,6 +1,7 @@
 package session
 
 import (
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -44,9 +45,23 @@ func TestOpenCodeLocalPresetLaunchGateIsEngineGated(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, sandboxpolicy.NetworkEngineProxy, engine,
 		"the preset must actually deploy the proxy, or this case proves nothing")
-	require.NoError(t, ValidateTclaudeLayerOpenCodeLocalModelTransport(
-		openCode, proxyEffective, ModelTransportLaunchContext{Model: "corp/model"}),
-		"a proxy-engine launch runs none of the machinery this refusal describes")
+
+	proxyErr := ValidateTclaudeLayerOpenCodeLocalModelTransport(
+		openCode, proxyEffective, ModelTransportLaunchContext{Model: "corp/model"})
+	// Deploying the proxy is not enough on its own: the relaxation also needs
+	// this harness's proxy cells to be ACTIVATED on this platform, because a
+	// platform whose cells enforce nothing would have the policy widened to
+	// open instead of refused. The expectation is therefore READ FROM the
+	// predicate rather than hard-coded, so this test says the same thing on a
+	// Linux runner and a macOS one.
+	if harness.ProxyEngineActivated(openCode.Name, runtime.GOOS) {
+		require.NoError(t, proxyErr,
+			"a proxy-engine launch runs none of the machinery this refusal describes")
+	} else {
+		require.Error(t, proxyErr,
+			"an unactivated platform must keep the refusal rather than widen to open")
+		require.ErrorContains(t, proxyErr, "no explicit provider")
+	}
 }
 
 // The gate above is not a hole in the OpenCode launch contract: the general
