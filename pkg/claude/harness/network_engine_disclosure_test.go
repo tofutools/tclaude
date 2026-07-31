@@ -18,9 +18,10 @@ func proxyEngineRules(allow ...sandboxpolicy.NetworkAllowEntry) sandboxpolicy.Ne
 }
 
 // TestProxyEngineDoesNotClaimThePacketGatewaysCells is the honesty gate for the
-// milestone. The proxy engine's ratings are unactivated, so a policy that
-// deploys a proxy must not inherit the ratings of the pasta/nft gateway it does
-// not run — and must not inherit its launch-check disclosure either.
+// milestone, now on the other side of activation. An activated proxy engine
+// must rate its OWN mechanism — never inherit the pasta/nft gateway's ratings,
+// its DNS caveat, or its launch-check disclosure, none of which describe a
+// launch that runs no pasta, no nft and no broker.
 func TestProxyEngineDoesNotClaimThePacketGatewaysCells(t *testing.T) {
 	rules := proxyEngineRules(
 		sandboxpolicy.NetworkAllowEntry{Domain: "example.com", Ports: []int{443}},
@@ -31,12 +32,22 @@ func TestProxyEngineDoesNotClaimThePacketGatewaysCells(t *testing.T) {
 	)
 	require.NoError(t, err)
 	assert.Equal(t, sandboxpolicy.NetworkEngineProxy, predicted.NetworkEngine)
-	assert.Equal(t, EnforceNone, predicted.NetworkList,
-		"proxy cells stay unenforced until their carriage smokes land")
-	assert.Empty(t, predicted.NetworkSelectors)
-	assert.Empty(t, predicted.NetworkDenySelectors)
+	assert.Equal(t, EnforceFull, predicted.NetworkList,
+		"the proxy cells are activated by the named carriage smokes")
 	assert.Equal(t, ProxyEngineLinuxMechanism, predicted.Mechanism)
-	assert.NotContains(t, predicted.NetworkListCondition, "pasta")
+	// The mechanism sentence, the launch condition and the name-selector detail
+	// must all be the proxy's own. The condition is compared for EQUALITY rather
+	// than for the absence of "pasta": the proxy's own condition mentions pasta
+	// deliberately, to say it is not involved, and a substring check would both
+	// fail on that and pass on a packet condition that happened to be reworded.
+	assert.Equal(t, ProxyEngineLaunchCondition, predicted.NetworkListCondition)
+	assert.NotContains(t, predicted.NetworkListCondition,
+		"outbound traffic is open",
+		"this floor refuses a launch it cannot build; it does not widen it")
+	for _, capability := range predicted.NetworkSelectors {
+		assert.NotContains(t, capability.Detail, "DNS lease",
+			"the packet gateway's TTL caveat does not describe this engine")
+	}
 
 	// The same policy with no engine authored keeps every packet-gateway
 	// rating, which is the parity half: unset changes nothing.
@@ -57,21 +68,30 @@ func TestProxyEngineDoesNotClaimThePacketGatewaysCells(t *testing.T) {
 // TestProxyEngineWholePostureDisclosure covers §5.3's whole-posture notice and
 // §1.3-4's latent selection, both of which are read from the network axis.
 func TestProxyEngineWholePostureDisclosure(t *testing.T) {
-	deployed := networkEngineDisclosure(
-		sandboxpolicy.NetworkEngineProxy, sandboxpolicy.NetworkEngineProxy)
-	assert.Contains(t, deployed, "Filtering engine: Proxy filter.")
-	assert.Contains(t, deployed, ProxyEngineCarriageNotice)
-	assert.Contains(t, deployed, ProxyEngineNotActivatedNotice)
-	assert.NotContains(t, deployed, ProxyEngineLatentSelectionNotice)
+	unactivated := networkEngineDisclosure(
+		sandboxpolicy.NetworkEngineProxy, sandboxpolicy.NetworkEngineProxy, false)
+	assert.Contains(t, unactivated, "Filtering engine: Proxy filter.")
+	assert.Contains(t, unactivated, ProxyEngineCarriageNotice)
+	assert.Contains(t, unactivated, ProxyEngineNotActivatedNotice)
+	assert.NotContains(t, unactivated, ProxyEngineLatentSelectionNotice)
+
+	// Activated: the carriage notice STAYS — it describes what the engine
+	// carries, which activation does not change — and only the not-yet-activated
+	// sentence retires. A row whose cells say Full while the sentence beside
+	// them says nothing is enforced is the contradiction this pins against.
+	activated := networkEngineDisclosure(
+		sandboxpolicy.NetworkEngineProxy, sandboxpolicy.NetworkEngineProxy, true)
+	assert.Contains(t, activated, ProxyEngineCarriageNotice)
+	assert.NotContains(t, activated, ProxyEngineNotActivatedNotice)
 
 	latent := networkEngineDisclosure(
-		sandboxpolicy.NetworkEngineProxy, sandboxpolicy.NetworkEngineUnset)
+		sandboxpolicy.NetworkEngineProxy, sandboxpolicy.NetworkEngineUnset, false)
 	assert.Contains(t, latent, ProxyEngineLatentSelectionNotice)
 	assert.NotContains(t, latent, ProxyEngineCarriageNotice,
 		"a policy that deploys no proxy must not describe what a proxy carries")
 
 	assert.Empty(t, networkEngineDisclosure(
-		sandboxpolicy.NetworkEngineUnset, sandboxpolicy.NetworkEnginePacket),
+		sandboxpolicy.NetworkEngineUnset, sandboxpolicy.NetworkEnginePacket, false),
 		"an unset selection renders nothing")
 }
 
@@ -336,4 +356,115 @@ func TestCapabilityLadderKeepsTheEngineThroughWidening(t *testing.T) {
 	require.Equal(t, sandboxpolicy.AccessModeOpen, rendered.Network.Mode,
 		"the list must have widened")
 	assert.Equal(t, sandboxpolicy.NetworkEngineProxy, rendered.Network.Engine)
+}
+
+// TestProxyEngineActivationIsScopedToItsEvidence is §8.3's rule expressed as a
+// test: a cell is Full exactly where a named green smoke backs it, and nowhere
+// else. The three boundaries below are the ways an activation silently spreads
+// past its evidence — to an unmeasured harness, to an unmeasured platform, or
+// to the engine that was never the subject of the smoke.
+func TestProxyEngineActivationIsScopedToItsEvidence(t *testing.T) {
+	rules := proxyEngineRules(
+		sandboxpolicy.NetworkAllowEntry{Domain: "example.com", Ports: []int{443}},
+	)
+	axes := sandboxpolicy.ResolvedAxes{Network: rules}
+
+	// Activated: the harness this PR flips.
+	for _, activated := range []*Harness{Default()} {
+		predicted, err := PredictAccessEnforcement(
+			activated, sandboxpolicy.ImplementationTclaudeLayer, axes, "", "linux",
+		)
+		require.NoErrorf(t, err, "harness %s", activated.Name)
+		assert.Equalf(t, EnforceFull, predicted.NetworkList,
+			"%s has green named smokes and must be enforced", activated.Name)
+		assert.NotEmptyf(t, ProxyEngineActivationSmokes(activated.Name),
+			"%s must record the smokes its cells rest on", activated.Name)
+		// §5.1's mirror image, both halves. Rating CIDR Full here would be the
+		// flattering-but-wrong direction, and it is the one worth pinning.
+		host, ok := networkSelectorCapability(predicted.NetworkSelectors,
+			string(sandboxpolicy.NetworkSelectorHost))
+		require.True(t, ok)
+		assert.Equal(t, EnforceFull, host.Level)
+		cidr, ok := networkSelectorCapability(predicted.NetworkSelectors,
+			string(sandboxpolicy.NetworkSelectorCIDR))
+		require.True(t, ok)
+		assert.Equal(t, EnforcePartial, cidr.Level,
+			"CIDR drops to Partial under an L7 view and must not be over-claimed")
+		// §5.2: deny names stay Full, which is where this engine is strictly
+		// better than the packet gateway rather than worse.
+		denyHost, ok := networkSelectorCapability(predicted.NetworkDenySelectors,
+			string(sandboxpolicy.NetworkSelectorHost))
+		require.True(t, ok)
+		assert.Equal(t, EnforceFull, denyHost.Level)
+	}
+
+	// Boundary 1: an unlisted harness keeps EnforceNone and still says it is
+	// not activated. "Not measured" is rated as unenforced rather than assumed
+	// to behave like its neighbours — and this is what makes activation a
+	// per-harness fact rather than a posture-wide one. Codex is here rather
+	// than only OpenCode precisely because its smoke arm IS green: the cells
+	// follow this record, not the run.
+	for _, unlisted := range []string{CodexName, OpenCodeName} {
+		predicted, err := PredictAccessEnforcement(
+			MustGet(unlisted), sandboxpolicy.ImplementationTclaudeLayer,
+			axes, "", "linux",
+		)
+		require.NoErrorf(t, err, "harness %s", unlisted)
+		assert.Equalf(t, EnforceNone, predicted.NetworkList,
+			"%s is not in the activation record and must stay unenforced", unlisted)
+		assert.Containsf(t, predicted.NetworkEngineDetail,
+			ProxyEngineNotActivatedNotice,
+			"%s must still disclose that it is not activated", unlisted)
+		assert.Emptyf(t, ProxyEngineActivationSmokes(unlisted),
+			"%s records no backing smokes", unlisted)
+	}
+
+	// Boundary 2: Darwin is M3 and activates on its own Seatbelt smokes.
+	darwin, err := PredictAccessEnforcement(
+		Default(), sandboxpolicy.ImplementationTclaudeLayer, axes, "", "darwin",
+	)
+	require.NoError(t, err)
+	assert.Equal(t, EnforceNone, darwin.NetworkList,
+		"Linux evidence does not activate the Darwin floor")
+
+	// Boundary 3: the packet gateway is untouched. Its DNS caveat is the marker
+	// — if the proxy branch had leaked into it, that caveat would be gone.
+	packetRules := rules
+	packetRules.Engine = sandboxpolicy.NetworkEnginePacket
+	packet, err := PredictAccessEnforcement(
+		Default(), sandboxpolicy.ImplementationTclaudeLayer,
+		sandboxpolicy.ResolvedAxes{Network: packetRules}, "", "linux",
+	)
+	require.NoError(t, err)
+	assert.Equal(t, EnforceFull, packet.NetworkList)
+	packetCIDR, ok := networkSelectorCapability(packet.NetworkSelectors,
+		string(sandboxpolicy.NetworkSelectorCIDR))
+	require.True(t, ok)
+	assert.Equal(t, EnforceFull, packetCIDR.Level,
+		"the packet gateway rates CIDR Full and this change does not touch it")
+	assert.Contains(t, packet.NetworkListCondition, "pasta")
+}
+
+// TestActivatedProxyEngineStopsWideningToOpen is the operator-visible half of
+// the flip. While the cells were unenforced, an authored proxy policy was
+// widened to open with a persisted warning; that must stop for an activated
+// configuration, and the launch must render the authored list instead.
+func TestActivatedProxyEngineStopsWideningToOpen(t *testing.T) {
+	axes := sandboxpolicy.ResolvedAxes{
+		Network: proxyEngineRules(
+			sandboxpolicy.NetworkAllowEntry{Domain: "example.com", Ports: []int{443}},
+		),
+	}
+	rendered, notices, err := PlanAccessEnforcement(
+		axes, accessEnforcementFromTable(mustEngineTableRow(t, axes)),
+	)
+	require.NoError(t, err)
+	assert.Equal(t, sandboxpolicy.AccessModeList, rendered.Network.Mode,
+		"an activated proxy policy must reach the launch as a list, not widened open")
+	assert.Equal(t, sandboxpolicy.NetworkEngineProxy, rendered.Network.Engine)
+	for _, notice := range notices {
+		assert.NotEqualf(t, "no_mechanism", notice.Reason,
+			"the widen-to-open warning must stop firing once the cells are activated: %s",
+			notice.Detail)
+	}
 }

@@ -435,6 +435,74 @@ func accessEnforcementTable(
 			}
 			caps.NetworkDenyPorts = EnforceFull
 		}
+		// TCL-884 / §8.3: the Linux proxy-engine cells, activated per harness by
+		// the named smokes recorded in proxyEngineActivatedSmokes.
+		//
+		// filteredNetworkReady means something DIFFERENT on this branch, and the
+		// difference is the point of TCL-883. On the packet branches above it is
+		// the pasta/nft probe. Here it is the launch's own verdict that the proxy
+		// floor resolved — a floor that needs neither — so a host without pasta
+		// reaches these cells exactly as the posture's operational headline
+		// promises.
+		if implementation == sandboxpolicy.ImplementationTclaudeLayer &&
+			!packetGateway && filteredNetworkReady &&
+			proxyEngineActivated(h.Name, goos) {
+			caps.NetworkList = EnforceFull
+			caps.NetworkSelectors = []NetworkSelectorCapability{
+				{
+					Selector: string(sandboxpolicy.NetworkSelectorHost),
+					Level:    EnforceFull,
+					Detail:   ProxyEngineNameSelectorDetail,
+				},
+				{
+					Selector: string(sandboxpolicy.NetworkSelectorDomain),
+					Level:    EnforceFull,
+					Detail:   ProxyEngineNameSelectorDetail,
+				},
+				{
+					// The one cell that is WORSE than the packet gateway's, and
+					// it is rated down rather than quietly kept at Full.
+					Selector: string(sandboxpolicy.NetworkSelectorCIDR),
+					Level:    EnforcePartial,
+					Detail:   ProxyEngineCIDRSelectorDetail,
+				},
+				{
+					Selector: string(sandboxpolicy.NetworkSelectorLoopback),
+					Level:    EnforceFull,
+					Detail:   ProxyEngineLoopbackSelectorDetail,
+				},
+			}
+			caps.NetworkPorts = EnforceFull
+			// Deny keeps its name selectors at Full even under an open baseline,
+			// where the packet gateway must drop to Partial with the DNS-deny
+			// caveat: encrypted DNS or a second address escapes a broker, and
+			// there is no broker here. The proxy sees the requested name on
+			// every request, so the deny has nothing to miss.
+			caps.NetworkDenySelectors = []NetworkSelectorCapability{
+				{
+					Selector: string(sandboxpolicy.NetworkSelectorHost),
+					Level:    EnforceFull,
+					Detail:   ProxyEngineNameSelectorDetail,
+				},
+				{
+					Selector: string(sandboxpolicy.NetworkSelectorDomain),
+					Level:    EnforceFull,
+					Detail:   ProxyEngineNameSelectorDetail,
+				},
+				{
+					Selector: string(sandboxpolicy.NetworkSelectorCIDR),
+					Level:    EnforcePartial,
+					Detail:   ProxyEngineCIDRSelectorDetail,
+				},
+				{
+					Selector: string(sandboxpolicy.NetworkSelectorLoopback),
+					Level:    EnforceFull,
+					Detail:   ProxyEngineLoopbackSelectorDetail,
+				},
+			}
+			caps.NetworkDenyPorts = EnforceFull
+			caps.NetworkListCondition = ProxyEngineLaunchCondition
+		}
 		if implementation == sandboxpolicy.ImplementationTclaudeLayer &&
 			goos == "darwin" && filteredNetworkReady &&
 			(h.Name == DefaultName || h.Name == CodexName) &&
@@ -613,7 +681,9 @@ func accessEnforcementTable(
 		// at all and must keep its native mechanism sentence.
 		caps.NetworkEngine = deployedEngine
 		caps.NetworkEngineDetail = networkEngineDisclosure(
-			axes.Network.Engine, deployedEngine)
+			axes.Network.Engine, deployedEngine,
+			deployedEngine == sandboxpolicy.NetworkEngineProxy &&
+				caps.NetworkList != EnforceNone)
 		return caps, nil
 	}
 	switch h.Name {
