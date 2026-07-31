@@ -581,7 +581,10 @@ unenforced and widens to host-open with a launch warning.
 Those are the packet engine's prerequisites. A profile that selects
 `network.engine: "proxy"` needs only bubblewrap namespaces and pidfds — no
 `pasta`, no `nft`, no DNS broker — and a host that cannot build that floor
-refuses the launch instead of widening it. See
+refuses the launch instead of widening it. That engine still widens for a
+different reason: its capability cells are activated per harness, platform and
+sandbox implementation, so selecting it for a harness that is not activated yet
+leaves the rules unenforced with a notice saying so. See
 [Proxy network filtering](proxy-network-filtering.md).
 
 `network_access` accepts `internet`, `none`, or may be omitted to inherit the

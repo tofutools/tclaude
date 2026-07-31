@@ -85,10 +85,24 @@ name does not cover a client that asks for that host's address instead. See
 ```
 
 `engine` names **how** a discriminating rule set is enforced. It never changes
-**what** is authored, and it is not an access axis: it cannot widen or narrow
-the destination set. Two profiles that agree on rules and disagree on engine
-authorize the same destinations; they differ in mechanism, protocol carriage,
-and honest capability rating.
+**what** is authored: it cannot widen or narrow the destinations the policy
+declares, so two profiles that agree on rules and disagree on engine authorize
+the same destinations. What they differ in is mechanism, protocol carriage, and
+honest capability rating.
+
+That is a statement about the authored policy, **not** a promise that switching
+engines leaves enforcement unchanged. Two ways a switch changes what a target
+actually enforces, both documented below and both worth knowing before you edit
+the field:
+
+- **Activation.** Proxy cells are activated per harness, platform and sandbox
+  implementation. A profile that changes nothing but `engine: "proxy"` on a
+  harness that is not activated yet is **widened to open** with a notice — the
+  authored rules stop being enforced. See
+  [Harness cooperation and activation](#harness-cooperation-and-activation).
+- **The private-destination blocker** narrows an authored name whose answer
+  lands in reserved space. See
+  [Host-side resolution](#host-side-resolution-and-the-private-destination-blocker).
 
 Unset never changes behavior. Unset resolves to today's behavior per platform:
 Linux to the packet gateway, macOS to today's macOS behavior. There is no
@@ -129,7 +143,7 @@ destinations that the floor cannot express on its own
 | allow-all / open, no denies | none (host network) | **no** — nothing to filter |
 | `closed` / no network | empty netns only | **no** |
 | loopback-only list | the floor expresses it natively | **no** |
-| open with denies, or a list with a host/domain/cidr entry | empty netns | **yes** |
+| open with denies, any list carrying a deny row, or a list with a host/domain/cidr entry | empty netns | **yes** |
 
 Consequences worth knowing:
 
@@ -241,9 +255,19 @@ private (RFC 1918), CGNAT, ULA, or unspecified/multicast — unless the policy
 authored a `loopback` rule or a CIDR covering that range, in which case the
 operator asked for it.
 
-The blocker does **not** apply under an open baseline. Open means open, minus
-the authored denies; applying it there would narrow a policy the packet engine
-does not narrow.
+Under an **open** baseline the reserved-space half of that blocker does not
+apply: open means open, minus the authored denies, and applying it there would
+narrow a policy the packet engine does not narrow. Two things still apply under
+every baseline, and an operator debugging an open policy needs both:
+
+- **Host loopback is never reached by default.** It is excluded from the open
+  baseline's own default-accept, and the resolved-address check refuses it
+  unless an authored `loopback` row covers the port. Under the packet engine an
+  open posture puts the sandbox on the host network, where its loopback is its
+  own — so honoring the default here would hand an open policy a destination it
+  never had.
+- **Deny rows are re-checked against the resolved address.** That is what
+  actually closes rebinding onto a *denied* address for an open policy.
 
 Two things follow. First, this closes by construction the DNS-rebinding route
 the packet posture documents as an open gap: a permitted name whose answer is
@@ -369,10 +393,11 @@ same launch-private Unix packet socket and the same peer-credential and
 anything into the sandbox, and the sandbox never receives a route out of it.
 
 Compared with the packet gateway there is no nft policy, no resolver files, no
-`pasta`, and no capability arguments. The whole in-namespace footprint is one
-sealed executable, which the bootstrap unlinks before exec, and one bind-mounted
-readiness socket, whose host end is closed and unlinked after the single handoff
-it exists for.
+`pasta`, and no capability arguments. The whole in-namespace footprint is three
+things: one sealed executable, which the bootstrap unlinks before exec; one
+bind-mounted readiness socket, whose host end is closed and unlinked after the
+single handoff it exists for; and the sealed loopback-only `/etc/hosts` that the
+name-authority guarantee above rests on, bound read-only over the host's.
 
 Sandbox-private loopback stays usable for the harness's own servers. A sandboxed
 process can connect to its own listeners; it cannot reach the host's loopback
@@ -417,8 +442,9 @@ would be fail-*closed* rather than open. Every component's failure mode here is
 The running proxy records one decision per connection at `debug` level
 (`sandbox filtering proxy decision`). What it logs is a closed set by
 construction — carriage, target kind, host or address, port, verdict, and the
-matched rule's index — because the record is built from the evaluated target,
-which carries no request line, no path, no query, and no headers. That is a
+matched rule's index, selector and authored value — because the record is built
+from the evaluated target and the matched rule, neither of which carries a
+request line, a path, a query, or a header. That is a
 security property rather than tidiness: a `Proxy-Authorization` header or
 userinfo in an absolute-form URL cannot reach the log.
 
@@ -469,10 +495,12 @@ unenforced:
 | A filesystem grant covering a resolver socket | the same authority taken away through the filesystem; a read-only bind does not stop `connect(2)` | returns from the capability seam (`NetworkAllowlist`), Linux only |
 | The floor's prerequisites are unavailable | this engine refuses rather than launching unfiltered | spawn guard and `ResolveTclaudeLayerForEngine` |
 | A policy that does not compile | a policy the running evaluator could not answer from must never reach the relay | `sandbox_bwrap.go`, `proxy_network_bridge_linux.go` |
-| A foreign `HTTP(S)_PROXY`/`ALL_PROXY`, or a settings-authored one | the real destination sits behind a proxy the endpoint resolver cannot resolve | model-transport gate |
+| A foreign `HTTP(S)_PROXY`/`ALL_PROXY` in the launch environment | the real destination sits behind a proxy the endpoint resolver cannot resolve | model-transport gate |
+| The same variables authored in Claude's `settings.json` (Claude Code only) | Claude re-reads settings env while a session runs, so a one-time preflight cannot freeze the route | `claudeSettingsProviderVariable` |
 | A provider endpoint using the packet gateway's synthetic host-loopback name | only the packet engine installs that mapping; under this engine it resolves to nothing, and the remedy is `localhost`/`127.0.0.1`/`::1` plus a `loopback` rule | `validateModelTransportLoopbackForPlatform`, `sandbox_bwrap.go` |
 | OpenCode's Unix-relay launch | that launch contract does not support this engine | `sandbox_bwrap.go` |
 | Packet and proxy engines in one launch | one launch runs one engine; deciding which policy is authoritative later is the shape of question that produces a bypass | `sandbox_bwrap_winch_relay_linux.go` |
+| A stacked relay binding combined with the proxy engine | the same rule, for the nested-harness relay | `sandbox_bwrap_winch_relay_linux.go` |
 
 The two resolver refusals are deliberately asymmetric in where they refuse and
 which capability kind they carry — each kind names the axis whose authored rows
