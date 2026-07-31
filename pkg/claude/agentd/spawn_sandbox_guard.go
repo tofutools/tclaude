@@ -271,8 +271,10 @@ func planSandboxProfileAccessForLaunch(
 		verdict, err = resolveTclaudeLayerAccessVerdict(
 			h.Name, posture, root, deployedEngine)
 		if err != nil {
-			return nil, &spawnFailure{http.StatusUnprocessableEntity,
-				sandboxImplementationUnavailableKind, err.Error()}
+			// Reached from spawn, clone, reincarnate and relaunch — all of
+			// which refuse here on a LIVE host-capability failure, so all of
+			// them must resume the disclosure's presence checking.
+			return nil, sandboxImplementationUnavailable(err.Error())
 		}
 	}
 	caps, err := harness.ResolveAccessEnforcement(

@@ -6,6 +6,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 // The disclosure's whole point is that a found tool costs nothing on the next
@@ -96,4 +98,63 @@ func TestSandboxImplCatalog_OmitsOpenCodeFromStacked(t *testing.T) {
 	catalog := buildSandboxImplCatalog()
 	assert.NotContains(t, catalog.Stacked, "opencode",
 		"OpenCode has no nested sandbox; stacking is meaningless for it")
+}
+
+// The reset contract that matters is not invalidateSandboxToolingPresence in
+// isolation — it is that a REFUSED LAUNCH resumes checking. This drives the
+// production refusal (sandboxImplementationHostFailure) rather than calling the
+// invalidator directly, so a refusal path that forgot to invalidate fails here.
+//
+// It also describes the case the presence check deliberately cannot see: the
+// tool is installed (presence succeeds) but the live probe refuses, which is
+// exactly the "available means INSTALLED, not WORKING" gap.
+func TestSandboxImplementationHostFailure_ResumesPresenceChecking(t *testing.T) {
+	resetSandboxImplHostProbeCache()
+	t.Cleanup(resetSandboxImplHostProbeCache)
+
+	calls := 0
+	present := func() error { calls++; return nil }
+
+	require.NoError(t, sandboxToolPresence(sandboxToolLayerHost, present))
+	require.NoError(t, sandboxToolPresence(sandboxToolLayerHost, present))
+	require.Equal(t, 1, calls, "the tool is installed, so the disclosure latches")
+
+	previous := tclaudeLayerHostAvailability
+	tclaudeLayerHostAvailability = func() error {
+		return errors.New("unprivileged user namespaces are unavailable")
+	}
+	t.Cleanup(func() { tclaudeLayerHostAvailability = previous })
+
+	failure := sandboxImplementationHostFailure(
+		harness.DefaultName, string(sandboxpolicy.ImplementationTclaudeLayer))
+	require.NotNil(t, failure, "the live probe refuses even though the tool is present")
+	assert.Equal(t, sandboxImplementationUnavailableKind, failure.Kind)
+
+	require.NoError(t, sandboxToolPresence(sandboxToolLayerHost, present))
+	assert.Equal(t, 2, calls,
+		"the refused launch dropped the latch, so the next poll looks again")
+}
+
+// A probe already in flight when a launch refuses must not write its
+// pre-invalidation observation afterwards — that would resurrect the latch the
+// refusal just dropped, and with no TTL the disclosure would stay green until
+// the next refused launch.
+func TestSandboxToolPresence_InFlightProbeCannotResurrectLatch(t *testing.T) {
+	resetSandboxImplHostProbeCache()
+	t.Cleanup(resetSandboxImplHostProbeCache)
+
+	calls := 0
+	// The probe observes "present", but an invalidation lands while it runs.
+	racy := func() error {
+		calls++
+		if calls == 1 {
+			invalidateSandboxToolingPresence()
+		}
+		return nil
+	}
+
+	require.NoError(t, sandboxToolPresence(sandboxToolLayerHost, racy))
+	require.NoError(t, sandboxToolPresence(sandboxToolLayerHost, racy))
+	assert.Equal(t, 2, calls,
+		"the stale observation must not latch; the next poll re-checks")
 }

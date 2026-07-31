@@ -46,6 +46,22 @@ const sandboxImplementationField = "sandbox_implementation"
 // marks a value that is malformed or inapplicable to the resolved harness.
 const sandboxImplementationUnavailableKind = "sandbox_implementation_unavailable"
 
+// sandboxImplementationUnavailable builds a host-capability refusal.
+//
+// Every such refusal ALSO drops the dashboard's tooling-presence latches
+// (see sandbox_tooling_presence.go). A live probe refusing is the only
+// evidence the daemon gets that a tool it already found has gone away — or
+// that mere presence disagrees with what the engine actually does — and the
+// disclosure has no TTL to heal itself with. Routing every site through this
+// constructor is deliberate: refusals are produced from several launch paths
+// (spawn, clone, reincarnate, relaunch), and one that forgot to invalidate
+// would leave the dashboard green forever with no operator-visible signal.
+func sandboxImplementationUnavailable(msg string) *spawnFailure {
+	invalidateSandboxToolingPresence()
+	return &spawnFailure{
+		http.StatusUnprocessableEntity, sandboxImplementationUnavailableKind, msg}
+}
+
 // The host-capability predicates are indirected so flow tests can drive both
 // branches deterministically. Interactive harnesses require the terminal relay
 // predicate; OpenCode confines its non-interactive server and therefore uses
@@ -151,31 +167,24 @@ func sandboxImplementationHostFailure(harnessName, implementation string) *spawn
 		availability = tclaudeLayerServerHostAvailability
 	}
 	if err := availability(); err != nil {
-		// The live probe disagrees with the disclosure's cheap presence answer
-		// (or a tool that was found has gone away). Drop the latches so the
-		// dashboard resumes checking instead of showing a stale green.
-		invalidateSandboxToolingPresence()
 		if normalized.UsesNestedHarnessSandbox() {
-			return &spawnFailure{http.StatusUnprocessableEntity, sandboxImplementationUnavailableKind,
+			return sandboxImplementationUnavailable(
 				fmt.Sprintf("stacked requested — refused: missing capability stacked_outer_tclaude_layer: %v; "+
-					"refusing rather than falling back to tclaude-layer or harness-builtin", err)}
+					"refusing rather than falling back to tclaude-layer or harness-builtin", err))
 		}
-		return &spawnFailure{http.StatusUnprocessableEntity, sandboxImplementationUnavailableKind,
+		return sandboxImplementationUnavailable(
 			fmt.Sprintf("sandbox implementation %s is not available on this host: %v; "+
 				"refusing the launch rather than falling back to %s",
 				sandboxpolicy.ImplementationTclaudeLayer, err,
-				sandboxpolicy.ImplementationHarnessBuiltin)}
+				sandboxpolicy.ImplementationHarnessBuiltin))
 	}
 	if normalized.UsesNestedHarnessSandbox() {
 		h, resolveErr := harness.ResolveSpawnable(harnessName)
 		if resolveErr != nil {
-			return &spawnFailure{http.StatusUnprocessableEntity, sandboxImplementationUnavailableKind,
-				resolveErr.Error()}
+			return sandboxImplementationUnavailable(resolveErr.Error())
 		}
 		if availabilityErr := stackedSandboxHostAvailability(h); availabilityErr != nil {
-			invalidateSandboxToolingPresence()
-			return &spawnFailure{http.StatusUnprocessableEntity,
-				sandboxImplementationUnavailableKind, availabilityErr.Error()}
+			return sandboxImplementationUnavailable(availabilityErr.Error())
 		}
 	}
 	return nil

@@ -78,13 +78,19 @@ var sandboxToolingMu sync.Mutex
 
 // sandboxToolingFound is the latch: a key present here has been found and is
 // never looked up again until invalidateSandboxToolingPresence clears it.
+//
+// A missing tool is deliberately NOT memoized. Re-deriving it costs one PATH
+// lookup per poll and is exactly what lets an operator who installs the tool
+// mid-session see the disclosure clear on the next tick.
 var sandboxToolingFound = map[sandboxToolKey]bool{}
 
-// sandboxToolingMissing caches the refusal for a tool that was looked for and
-// not found, so repeated reads within one poll share one answer. Unlike the
-// found set this is re-derived on every poll — that is what lets an operator
-// who installs the tool see the disclosure clear.
-var sandboxToolingMissing = map[sandboxToolKey]error{}
+// sandboxToolingGeneration is bumped by every invalidation. A probe result is
+// only latched if the generation it started under is still current — otherwise
+// a probe that was in flight when a launch refused could write its
+// pre-invalidation observation afterwards and silently resurrect the latch the
+// refusal just dropped. With no TTL to heal that, the disclosure would be stuck
+// green until the next refused launch.
+var sandboxToolingGeneration uint64
 
 // sandboxToolPresence answers one tool's presence, doing no work at all once
 // the tool has been found. probe is only called while the tool is missing.
@@ -94,6 +100,7 @@ func sandboxToolPresence(key sandboxToolKey, probe func() error) error {
 		sandboxToolingMu.Unlock()
 		return nil
 	}
+	generation := sandboxToolingGeneration
 	sandboxToolingMu.Unlock()
 
 	// Probe OUTSIDE the lock. A PATH lookup is cheap but still touches the
@@ -103,12 +110,9 @@ func sandboxToolPresence(key sandboxToolKey, probe func() error) error {
 
 	sandboxToolingMu.Lock()
 	defer sandboxToolingMu.Unlock()
-	if err == nil {
+	if err == nil && generation == sandboxToolingGeneration {
 		sandboxToolingFound[key] = true
-		delete(sandboxToolingMissing, key)
-		return nil
 	}
-	sandboxToolingMissing[key] = err
 	return err
 }
 
@@ -120,8 +124,8 @@ func sandboxToolPresence(key sandboxToolKey, probe func() error) error {
 func invalidateSandboxToolingPresence() {
 	sandboxToolingMu.Lock()
 	defer sandboxToolingMu.Unlock()
+	sandboxToolingGeneration++
 	clear(sandboxToolingFound)
-	clear(sandboxToolingMissing)
 }
 
 // resetSandboxImplHostProbeCache drops the disclosure latches. Test-only: a
