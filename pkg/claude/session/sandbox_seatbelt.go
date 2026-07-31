@@ -357,7 +357,16 @@ func validateSeatbeltProxyEndpoint(
 	// predicate accepts the unspecified address as a DESTINATION, and this is a
 	// LISTEN address. See the bind-vs-connect paragraph on this function before
 	// deleting this as dead code.
-	if endpoint.Addr().IsUnspecified() {
+	//
+	// Unmap first, for the same reason loopbackIdentityPrefixes carries the
+	// ::ffff: ranges: a mapped spelling must not be a second name for the space
+	// its unmapped form governs. AddrIsLoopbackIdentity already unmaps, so
+	// without this the two checks would disagree about ::ffff:0.0.0.0 — the one
+	// address this check exists to reject. That spelling is not exotic: it is
+	// what Go's net-to-netip bridge produces from a 16-byte net.IP, so
+	// net.IPv4zero, net.ParseIP("0.0.0.0") and a net.TCPAddr built from either
+	// all arrive here mapped.
+	if endpoint.Addr().Unmap().IsUnspecified() {
 		return fmt.Errorf(
 			"darwin tclaude-layer proxy floor refuses wildcard proxy endpoint %s: the filtering proxy must listen on host loopback, not on every interface",
 			endpoint,

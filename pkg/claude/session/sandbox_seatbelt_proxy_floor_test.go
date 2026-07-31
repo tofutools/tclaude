@@ -300,6 +300,11 @@ func TestSeatbeltProxyFloorWithoutAllowlistedSocketsStillReachesTheProxy(t *test
 // legacy spellings — not the single socket the golden above uses. The endpoint
 // exception has to survive alongside all of them, in the same deny, or the
 // normal launch shape is the one that loses its route to the proxy.
+//
+// This is asserted as a property over every socket count from zero up, not at
+// one fixture size. AgentdSocketFloor() dedups, so it is normally three but two
+// whenever a legacy spelling is empty or folds away; a test pinned at three
+// discrete sizes leaves the counts between them free to behave differently.
 func TestSeatbeltProxyFloorKeepsTheEndpointBesideEverySocketException(t *testing.T) {
 	sockets := []string{
 		"/Users/dev/.tclaude/api/agentd.sock",
@@ -309,36 +314,44 @@ func TestSeatbeltProxyFloorKeepsTheEndpointBesideEverySocketException(t *testing
 	require.GreaterOrEqual(t, len(sockets), len(sandboxpolicy.AgentdSocketFloor()),
 		"the fixture must cover at least as many spellings as the real socket floor")
 
-	plan := proxyFloorPlan(t)
-	plan.Entries = nil
-	for _, socket := range sockets {
-		plan.Entries = append(plan.Entries, sandboxpolicy.MountEntry{
-			Path: socket, Mode: sandboxpolicy.MountRO,
+	for count := 0; count <= len(sockets); count++ {
+		t.Run(fmt.Sprintf("%d allowlisted sockets", count), func(t *testing.T) {
+			allowlisted := sockets[:count]
+			plan := proxyFloorPlan(t)
+			plan.Entries = nil
+			for _, socket := range allowlisted {
+				plan.Entries = append(plan.Entries, sandboxpolicy.MountEntry{
+					Path: socket, Mode: sandboxpolicy.MountRO,
+				})
+			}
+			profile, params := renderProxyFloor(
+				t, plan, proxyFloorEndpoint(), allowlisted)
+
+			proxyException := fmt.Sprintf(
+				`(require-not (remote tcp "localhost:%d"))`, proxyFloorProxyPort)
+			assert.Equal(t, 1, strings.Count(profile, proxyException),
+				"the endpoint exception must survive a %d-socket floor", count)
+
+			floorRule := seatbeltRuleContaining(profile, proxyException)
+			rendered := make([]string, 0, count)
+			for index := range allowlisted {
+				name := fmt.Sprintf("AGENTD_SOCKET_%d", index)
+				require.Contains(t, floorRule,
+					fmt.Sprintf(`(literal (param "%s"))`, name),
+					"every allowlisted socket must be an exception to the SAME deny as the endpoint")
+				for _, param := range params {
+					if param.name == name {
+						rendered = append(rendered, param.path)
+					}
+				}
+			}
+			assert.ElementsMatch(t, allowlisted, rendered,
+				"each socket spelling must be parameterized exactly once")
+			assert.NotContains(t, floorRule,
+				fmt.Sprintf("AGENTD_SOCKET_%d", count),
+				"the floor must not invent a socket exception no caller allowlisted")
 		})
 	}
-	profile, params := renderProxyFloor(t, plan, proxyFloorEndpoint(), sockets)
-
-	proxyException := fmt.Sprintf(
-		`(require-not (remote tcp "localhost:%d"))`, proxyFloorProxyPort)
-	assert.Equal(t, 1, strings.Count(profile, proxyException),
-		"the endpoint exception must survive a multi-socket floor")
-
-	floorRule := seatbeltRuleContaining(profile, proxyException)
-	rendered := make([]string, 0, len(sockets))
-	for index := range sockets {
-		name := fmt.Sprintf("AGENTD_SOCKET_%d", index)
-		require.Contains(t, floorRule, fmt.Sprintf(`(literal (param "%s"))`, name),
-			"every allowlisted socket must be an exception to the SAME deny as the endpoint")
-		for _, param := range params {
-			if param.name == name {
-				rendered = append(rendered, param.path)
-			}
-		}
-	}
-	assert.ElementsMatch(t, sockets, rendered,
-		"each socket spelling must be parameterized exactly once")
-	assert.NotContains(t, floorRule, "AGENTD_SOCKET_3",
-		"the floor must not invent a socket exception no caller allowlisted")
 }
 
 // Loopback identity is decided by the shared predicate, so every spelling of
@@ -349,11 +362,29 @@ func TestSeatbeltProxyFloorKeepsTheEndpointBesideEverySocketException(t *testing
 // The unspecified addresses the shared predicate also carries are deliberately
 // absent here: they name the host as a DESTINATION but are a wildcard bind as a
 // LISTEN address, and the refusal test above owns them.
+//
+// ::ffff:127.0.0.1 is here because Go's net-to-netip bridge produces mapped
+// spellings from any 16-byte net.IP, so it is a form a launcher really arrives
+// with — not because it discriminates the predicates. It does not: netip's own
+// IsLoopback already unmaps 4-in-6.
+//
+// Worth recording, since it looks like a gap: once the wildcard refusal is in
+// place, AddrIsLoopbackIdentity and a plain IsLoopback agree on every address
+// that can be a real listen address. The identity predicate is wider only by
+// the unspecified addresses (refused above as binds) and the rest of
+// 0.0.0.0/8, which names "this network" and is not an address any host binds.
+// So the reuse of the shared predicate is correct here BY CONSTRUCTION rather
+// than test-enforced, and no fixture below can prove which one is called. It is
+// still the right call to make: the identity question has one owner, and a
+// local IsLoopback here would be a second definition that happens to coincide
+// today.
 func TestSeatbeltProxyFloorUsesTheSharedLoopbackIdentity(t *testing.T) {
 	canonical, _ := renderProxyFloor(
 		t, proxyFloorPlan(t), proxyFloorEndpoint(), []string{proxyFloorAgentdSocket})
 
-	for _, spelling := range []string{"127.0.0.1", "127.0.0.5", "::1"} {
+	for _, spelling := range []string{
+		"127.0.0.1", "127.0.0.5", "::1", "::ffff:127.0.0.1",
+	} {
 		addr := netip.MustParseAddr(spelling)
 		require.True(t, sandboxpolicy.AddrIsLoopbackIdentity(addr),
 			"the fixture must name the host by the shared predicate's definition")
@@ -409,6 +440,17 @@ func TestRenderSeatbeltProxyFloorRefusesEndpointsItCannotHonor(t *testing.T) {
 			plan:     plan,
 			endpoint: netip.AddrPortFrom(netip.MustParseAddr("::"), proxyFloorProxyPort),
 			message:  "refuses wildcard proxy endpoint",
+		},
+		// The mapped spelling of the same wildcard. Go's net-to-netip bridge
+		// produces it from any 16-byte net.IP, so a launcher reading a bind
+		// address from configuration arrives here in this form rather than the
+		// unmapped one; a check that did not unmap would accept the exact
+		// address it exists to reject.
+		"proxy plan whose endpoint is a v4-mapped wildcard bind": {
+			plan: plan,
+			endpoint: netip.AddrPortFrom(
+				netip.MustParseAddr("::ffff:0.0.0.0"), proxyFloorProxyPort),
+			message: "refuses wildcard proxy endpoint",
 		},
 		"filtered proxy plan carrying no compiled policy": {
 			plan: sandboxpolicy.MountPlan{
