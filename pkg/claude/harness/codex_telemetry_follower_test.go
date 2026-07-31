@@ -15,13 +15,6 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/filefollow"
 )
 
-func codexFollowerCursor(t *testing.T, follower *CodexTelemetryFollower) filefollow.Cursor {
-	t.Helper()
-	cursor, ok := follower.ensureStream().Checkpoint()
-	require.True(t, ok)
-	return cursor
-}
-
 func codexFollowerOffset(t *testing.T, follower *CodexTelemetryFollower) int64 {
 	t.Helper()
 	cursor, ok := follower.ensureStream().Checkpoint()

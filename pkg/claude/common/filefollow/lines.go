@@ -87,7 +87,6 @@ func ScanLines(r io.Reader, config LineConfig, consume func(Line) bool, strict b
 					doubt = true
 				}
 				consumed += lineBytes
-				break
 			case io.EOF:
 				return consumed, doubt, nil
 			default:
