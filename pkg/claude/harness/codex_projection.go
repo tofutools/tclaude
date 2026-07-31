@@ -209,25 +209,42 @@ func (s *codexProjectionScanState) addCost(model string, usage codexTokenUsage) 
 }
 
 func (s *codexProjectionScanState) addCostInfo(model string, info codexTokenCountInfo, reverse bool) {
-	if codexUsageHasBillableTokens(info.LastTokenUsage) {
-		if !s.costLegacy {
-			s.addCost(model, info.LastTokenUsage)
-		}
+	if reverse && s.costLegacy {
+		return
+	}
+	if info.LastTokenUsagePresent {
+		s.noteCostModel(model, reverse)
+		s.addCost(model, info.LastTokenUsage)
 		return
 	}
 	if !codexUsageHasBillableTokens(info.TotalTokenUsage) {
 		return
 	}
 	cost, ok := codexVirtualCost(model, info.TotalTokenUsage)
-	if !ok || (reverse && s.costPriced) {
+	if !ok {
 		return
 	}
 	// Older rollouts can omit last_token_usage. Their latest cumulative
-	// total remains the best available estimate; do not add older totals.
-	s.costUSD = cost
+	// total is the checkpoint for everything before it. Forward scans replace
+	// earlier work; reverse scans add the checkpoint after newer per-turn rows
+	// and then ignore older cumulative checkpoints.
+	if reverse {
+		s.costUSD += cost
+	} else {
+		s.costUSD = cost
+	}
 	s.costPriced = true
-	s.costModel = model
+	s.noteCostModel(model, reverse)
 	s.costLegacy = true
+}
+
+func (s *codexProjectionScanState) noteCostModel(model string, reverse bool) {
+	if _, ok := codexModelPrices[strings.TrimSpace(model)]; !ok {
+		return
+	}
+	if !reverse || s.costModel == "" {
+		s.costModel = model
+	}
 }
 
 func (s *codexProjectionScanState) flushReverseCost(model string) {

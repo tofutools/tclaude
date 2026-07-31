@@ -133,6 +133,61 @@ func TestCodexHookProjection_WindowOnlyNewestTokenCountMatchesForward(t *testing
 	assert.Equal(t, ContextTelemetry{}, got.Context)
 }
 
+func TestCodexHookProjection_MixedLegacyAndPerTurnCostParity(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "rollout.jsonl")
+	usage := func(input, cached, output int64) map[string]any {
+		return map[string]any{
+			"input_tokens": input, "cached_input_tokens": cached,
+			"output_tokens": output, "total_tokens": input + output,
+		}
+	}
+	tokenCount := func(timestamp string, total map[string]any, last any) []byte {
+		info := map[string]any{"total_token_usage": total, "model_context_window": 1_050_000}
+		if last != nil {
+			info["last_token_usage"] = last
+		}
+		return codexProjectionEnvelope(t, timestamp, "event_msg", map[string]any{
+			"type": "token_count", "info": info,
+		})
+	}
+	short := usage(200_000, 100_000, 100_000)
+	long := usage(300_000, 100_000, 100_000)
+	total := usage(500_000, 200_000, 200_000)
+	zero := usage(0, 0, 0)
+	lines := [][]byte{
+		codexProjectionEnvelope(t, "2026-07-12T10:00:00Z", "turn_context", map[string]any{"model": "gpt-5.6-terra"}),
+		// Legacy row: last_token_usage is absent, so total is a cumulative checkpoint.
+		tokenCount("2026-07-12T10:01:00Z", short, nil),
+		codexProjectionEnvelope(t, "2026-07-12T11:00:00Z", "turn_context", map[string]any{"model": "gpt-5.6-luna"}),
+		tokenCount("2026-07-12T11:01:00Z", total, long),
+		// A present but zero last_token_usage is a current no-usage event, not legacy.
+		tokenCount("2026-07-12T11:02:00Z", total, zero),
+	}
+	require.NoError(t, os.WriteFile(path, append(bytes.Join(lines, []byte{'\n'}), '\n'), 0o600))
+
+	enc, err := zstd.NewWriter(nil)
+	require.NoError(t, err)
+	archive := path + ".zst"
+	require.NoError(t, os.WriteFile(archive, enc.EncodeAll(append(bytes.Join(lines, []byte{'\n'}), '\n'), nil), 0o600))
+	enc.Close()
+
+	want, ok, err := CodexVirtualCostFromRollout(path, "")
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.InDelta(t, 1.684, want.CostUSD, 1e-12, "$1.42 Terra checkpoint + $0.264 Luna turn")
+	assert.Equal(t, "gpt-5.6-luna", want.Model)
+
+	for _, rollout := range []string{path, archive} {
+		t.Run(filepath.Ext(rollout), func(t *testing.T) {
+			got, err := CodexHookProjectionFromRollout(rollout, "")
+			require.NoError(t, err)
+			require.True(t, got.HasCost)
+			assert.InDelta(t, want.CostUSD, got.Cost.CostUSD, 1e-12)
+			assert.Equal(t, want.Model, got.Cost.Model)
+		})
+	}
+}
+
 func TestCodexHookProjection_OversizedCompactionInvalidatesContextButKeepsCost(t *testing.T) {
 	path := writeOversizedCodexRollout(t, [][]byte{
 		codexProjectionEnvelope(t, "2026-07-12T10:00:00Z", "turn_context", map[string]any{

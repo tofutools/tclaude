@@ -123,7 +123,7 @@ func CodexVirtualCostFromRollout(rolloutPath, modelHint string) (CodexTokenCost,
 				return true
 			}
 			turnUsage := ev.Info.LastTokenUsage
-			if !codexUsageHasBillableTokens(turnUsage) {
+			if !ev.Info.LastTokenUsagePresent {
 				if !codexUsageHasBillableTokens(ev.Info.TotalTokenUsage) {
 					observed = parseCodexEventTime(env.Timestamp)
 					return true

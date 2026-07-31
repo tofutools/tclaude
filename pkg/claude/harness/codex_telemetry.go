@@ -68,9 +68,30 @@ type codexTokenUsage struct {
 
 // codexTokenCountInfo is the `info` block of a token_count event_msg.
 type codexTokenCountInfo struct {
-	TotalTokenUsage    codexTokenUsage `json:"total_token_usage"`
-	LastTokenUsage     codexTokenUsage `json:"last_token_usage"`
-	ModelContextWindow int64           `json:"model_context_window"`
+	TotalTokenUsage       codexTokenUsage `json:"total_token_usage"`
+	LastTokenUsage        codexTokenUsage `json:"last_token_usage"`
+	LastTokenUsagePresent bool            `json:"-"`
+	ModelContextWindow    int64           `json:"model_context_window"`
+}
+
+func (i *codexTokenCountInfo) UnmarshalJSON(data []byte) error {
+	var wire struct {
+		TotalTokenUsage    codexTokenUsage  `json:"total_token_usage"`
+		LastTokenUsage     *codexTokenUsage `json:"last_token_usage"`
+		ModelContextWindow int64            `json:"model_context_window"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	i.TotalTokenUsage = wire.TotalTokenUsage
+	i.ModelContextWindow = wire.ModelContextWindow
+	i.LastTokenUsagePresent = wire.LastTokenUsage != nil
+	if wire.LastTokenUsage != nil {
+		i.LastTokenUsage = *wire.LastTokenUsage
+	} else {
+		i.LastTokenUsage = codexTokenUsage{}
+	}
+	return nil
 }
 
 // codexTokenCountEvent is the `event_msg` payload of a token_count line. The
