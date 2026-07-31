@@ -28,9 +28,9 @@ func TestDashboardAuditSpawnPopoverChrome(t *testing.T) {
 	detail, err := json.Marshal(map[string]any{
 		"kind":     "tclaude.spawn.audit.v1",
 		"summary":  "role: reviewer",
-		"input":    map[string]any{"name": "worker"},
-		"resolved": map[string]any{"params": map[string]any{"harness": "codex"}},
-		"response": map[string]any{"code": "invalid_profile", "error": "profile does not exist"},
+		"input":    map[string]any{"name": "worker", "blob": strings.Repeat("input ", 500)},
+		"resolved": map[string]any{"params": map[string]any{"harness": "codex"}, "blob": strings.Repeat("resolved ", 500)},
+		"response": map[string]any{"code": "invalid_profile", "error": "profile does not exist", "blob": strings.Repeat("response ", 500)},
 	})
 	if err != nil {
 		t.Fatalf("marshal audit fixture: %v", err)
@@ -83,6 +83,8 @@ resolve();
 }catch(error){reject(error);}});});});`},
 				{Kind: "click", Selector: "#filter-audit"},
 				{Kind: "eval", JS: `if (document.querySelector('.audit-spawn-popover')) throw new Error('outside click did not close spawn details');`},
+				{Kind: "click", Selector: ".audit-spawn-info-trigger"},
+				{Kind: "eval", JS: `if (!document.querySelector('.audit-spawn-popover')) throw new Error('spawn details did not reopen for the scrollbar capture');`},
 			},
 		}
 	}
