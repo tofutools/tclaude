@@ -17,6 +17,17 @@ export function setGroupOrderPref(names, prefs = dashPrefs) {
   prefs.setItem(GROUP_ORDER_KEY, JSON.stringify(names));
 }
 
+export function insertGroupBeside(names, groupName, anchorName, before = false) {
+  const order = names.filter((name) => name !== groupName);
+  const anchor = order.indexOf(anchorName);
+  if (anchor < 0) {
+    order.push(groupName);
+    return order;
+  }
+  order.splice(anchor + (before ? 0 : 1), 0, groupName);
+  return order;
+}
+
 export function sortGroupsByPref(groups, prefs = dashPrefs) {
   const order = groupOrderPref(prefs);
   if (!order?.length) return groups;

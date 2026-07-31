@@ -52,8 +52,8 @@ export function openGroupContextModal(groupName) {
   return managementController().openGroupContext(groupName);
 }
 
-export function openGroupCloneModal(groupName) {
-  return managementController().openGroupClone(groupName);
+export function openGroupCloneModal(groupName, placement = null) {
+  return managementController().openGroupClone(groupName, placement);
 }
 
 export function groupDefaultContext(groupName) {

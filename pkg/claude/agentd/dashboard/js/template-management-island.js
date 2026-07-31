@@ -1150,6 +1150,7 @@ export function GroupCloneDialog({
         name.trim(),
         withAgents,
         copyOwners,
+        descriptor.placement,
       );
     } catch (err) {
       setError(message(err));
