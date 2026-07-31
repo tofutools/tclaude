@@ -1097,3 +1097,31 @@ jobs:
           git add Formula/tclaude.rb
           git commit -m "tclaude ${{ steps.formula.outputs.version }}"
           git push
+
+  # The filtered-network proxy smokes build real sandboxes against live
+  # fixtures. Everything that decides what runs, what counts as evidence, which
+  # harness versions are pinned and how fixtures are built lives in
+  # scripts/filtered-proxy-smoke/ — so extending the smokes is a repo change and
+  # a review, not a workflow merge. Keep this job generic: if a change here is
+  # ever needed to add a smoke, that belongs in the entrypoint instead.
+  filtered-proxy-smoke:
+    name: Filtered-network proxy smoke
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      # Node is needed by the entrypoint to install the pinned harnesses and to
+      # read their release manifest.
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: lts/*
+
+      - name: Run filtered-network proxy smokes
+        run: scripts/filtered-proxy-smoke/run.sh
