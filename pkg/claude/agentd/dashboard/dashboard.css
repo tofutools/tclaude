@@ -6397,6 +6397,8 @@ body.wizard .directory-picker-modal .modal-buttons { border-top-color: rgba(122,
 }
 .cleanup-badge.skipped { color: #d29922; border-color: #4d3c12; }
 .cleanup-badge.failed { color: #f85149; border-color: #4d1d1d; }
+.cleanup-badge.partial { color: #f0883e; border-color: #5a3a1a; }
+.cleanup-badge.pruned { color: #3fb950; border-color: #1d3a23; }
 .cleanup-badge.removed_with_branch { color: #3fb950; border-color: #1d3a23; }
 /* worktree-cleanup: per-category badges + dirty flag. */
 .cleanup-badge.cat-orphan { color: #3fb950; border-color: #1d3a23; }
@@ -6404,7 +6406,21 @@ body.wizard .directory-picker-modal .modal-buttons { border-top-color: rgba(122,
 .cleanup-badge.cat-agent { color: #d29922; border-color: #4d3c12; }
 .cleanup-badge.cat-live { color: #58a6ff; border-color: #1f3a5a; }
 .cleanup-badge.cat-main { color: #7d8590; border-color: #2a3340; }
+.cleanup-badge.cat-stale { color: #d29922; border-color: #4d3c12; }
 .cleanup-badge.dirty { color: #f0883e; border-color: #5a3a1a; }
+.cleanup-prune-row { background: rgba(210, 153, 34, 0.035); }
+.cleanup-prune-note {
+  margin: 5px 8px 0 25px; color: #7d8590; font-size: 11px; line-height: 1.4;
+}
+.cleanup-prune-note code { color: #c9d1d9; }
+.cleanup-prune-reasons {
+  margin: 7px 8px 3px 25px; padding: 6px 8px;
+  border-left: 2px solid #4d3c12; color: #8b949e; font-size: 11px;
+  background: rgba(210, 153, 34, 0.04);
+}
+.cleanup-prune-reasons summary { color: #d29922; cursor: pointer; }
+.cleanup-prune-reasons ul { margin: 6px 0 0 17px; padding: 0; }
+.cleanup-prune-reasons p { margin: 6px 0 0; color: #f0883e; line-height: 1.4; }
 /* worktree-cleanup: the category mass-toggle chip row. Each chip flips a
    whole category's ticks at once; .active marks one where all rows are on. */
 .cleanup-categories { flex-wrap: wrap; }

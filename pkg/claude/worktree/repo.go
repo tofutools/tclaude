@@ -1,6 +1,7 @@
 package worktree
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -127,20 +128,94 @@ func MainRepoForPath(dir string) string {
 	return filepath.Dir(common)
 }
 
+// PrunableWorktree is one stale administrative entry reported by
+// `git worktree prune --dry-run --verbose`. AdminDir is Git's name below
+// .git/worktrees; Reason explains why Git considers it removable.
+type PrunableWorktree struct {
+	AdminDir string
+	Reason   string
+}
+
+// PrunableWorktreesIn reports stale worktree administrative entries without
+// changing them. Git deliberately omits these entries from `worktree list`, so
+// prune's dry-run output is the authoritative discovery surface.
+func PrunableWorktreesIn(dir string) ([]PrunableWorktree, error) {
+	stdout, stderr, err := runWorktreePrune(dir, true)
+	if err != nil {
+		return nil, pruneCommandError(true, stderr, err)
+	}
+	// Git writes verbose dry-run records to stderr on current versions even
+	// when the command succeeds. Parse both streams so discovery does not
+	// accidentally recreate the exact "invisible stale records" defect.
+	return parsePrunableWorktrees(stdout + "\n" + stderr), nil
+}
+
 // PruneWorktreesIn runs `git worktree prune` in the repo containing dir,
 // clearing the administrative registrations of worktrees whose working
 // directories have been deleted out-of-band (by hand, or by a tool that
 // removed the dir without telling git). `git worktree remove` already
 // cleans the link for worktrees it removes; this mops up the *dangling*
 // links a directory-only delete leaves behind. It only ever touches
-// entries whose dir is already missing — never a live worktree — so it
-// is safe to run repo-wide after a sweep.
-func PruneWorktreesIn(dir string) error {
+// entries whose dir is already missing — never a live worktree — so it is
+// safe to run repo-wide after a sweep.
+//
+// Git may write per-entry failures to stderr and still exit 0. The stderr is
+// therefore returned even on success so callers can show it as advisory
+// detail; callers must verify the post-state with PrunableWorktreesIn rather
+// than trusting either the exit status or an empty error.
+func PruneWorktreesIn(dir string) (stderr string, err error) {
 	if strings.TrimSpace(dir) == "" {
-		return nil
+		return "", nil
 	}
-	_, err := gitIn(dir, "worktree", "prune")
-	return err
+	_, stderr, err = runWorktreePrune(dir, false)
+	if err != nil {
+		return stderr, pruneCommandError(false, stderr, err)
+	}
+	return stderr, nil
+}
+
+func runWorktreePrune(dir string, dryRun bool) (stdout, stderr string, err error) {
+	args := []string{"worktree", "prune"}
+	if dryRun {
+		args = append(args, "--dry-run", "--verbose")
+	}
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	var outBuf, errBuf bytes.Buffer
+	cmd.Stdout = &outBuf
+	cmd.Stderr = &errBuf
+	err = cmd.Run()
+	return strings.TrimSpace(outBuf.String()), strings.TrimSpace(errBuf.String()), err
+}
+
+func pruneCommandError(dryRun bool, stderr string, err error) error {
+	args := "worktree prune"
+	if dryRun {
+		args += " --dry-run --verbose"
+	}
+	if stderr != "" {
+		return fmt.Errorf("git %s: %s", args, stderr)
+	}
+	return fmt.Errorf("git %s: %w", args, err)
+}
+
+func parsePrunableWorktrees(output string) []PrunableWorktree {
+	var out []PrunableWorktree
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		const prefix = "Removing worktrees/"
+		if !strings.HasPrefix(line, prefix) {
+			continue
+		}
+		adminAndReason := strings.TrimPrefix(line, prefix)
+		adminDir, reason, ok := strings.Cut(adminAndReason, ": ")
+		adminDir, reason = strings.TrimSpace(adminDir), strings.TrimSpace(reason)
+		if !ok || adminDir == "" || reason == "" {
+			continue
+		}
+		out = append(out, PrunableWorktree{AdminDir: adminDir, Reason: reason})
+	}
+	return out
 }
 
 // ListWorktreesIn returns all worktrees of the repo containing dir.

@@ -2009,10 +2009,23 @@ scans the union of every group's default directory and member worktree history,
 deduplicates groups that share a repo, and opens the same explicit-selection
 preview as each group header's **cleanup worktrees…** action. The global
 **🧹 clean up** modal links to this preview too, under its agent cleanup
-options. Git's registered worktree list is authoritative: linked worktrees
+options. For checkout rows, Git's registered worktree list is authoritative:
+linked worktrees
 remain cleanup candidates when their directory was deleted out-of-band or
 their HEAD is detached. Cleanup removes those registrations through the
 surviving main checkout; detached entries have no branch to delete.
+
+Git may also retain older `.git/worktrees` bookkeeping whose `gitdir` is
+missing or broken. Those records are structurally absent from `git worktree
+list`, so the preview discovers them separately with `git worktree prune`'s
+dry-run and shows one pre-selected **bookkeeping only** row per affected repo.
+The disclosure on that row groups Git's reasons; its count is a live scan, not
+durable inventory. Pruning these records cannot remove a checkout directory or
+branch. After pruning, tclaude repeats the dry-run and reports the verified
+number cleared and remaining instead of trusting Git's exit code. In
+particular, an active agent sandbox can hold bind mounts on the administrative
+entries: Git may then report failures while exiting successfully, and the
+dialog reports the remaining records as failed/partial with retry guidance.
 
 The palette's status-filtered retire shortcuts cover the same complete roster.
 For both **idle** and **offline** agents it offers a command for each real

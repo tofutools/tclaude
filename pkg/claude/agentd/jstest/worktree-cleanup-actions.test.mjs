@@ -25,6 +25,7 @@ test('worktree actions preserve scan scopes, explicit cleanup wire fields, and p
       }
       return new Response(JSON.stringify({
         repo_roots: ['/repo'], worktrees: [{ path: '/repo-wt', checked: true }],
+        prunable_repos: [{ repo_root: '/repo', count: 2, checked: true }],
       }), { status: 200 });
     },
     refresh: async () => { refreshes += 1; },
@@ -32,15 +33,20 @@ test('worktree actions preserve scan scopes, explicit cleanup wire fields, and p
   });
   assert.deepEqual(await actions.scan('alpha/beta'), {
     repoRoots: ['/repo'], worktrees: [{ path: '/repo-wt', checked: true }],
+    prunableRepos: [{ repo_root: '/repo', count: 2, checked: true }],
   });
   assert.equal(calls[0][0], '/api/groups/alpha%2Fbeta/worktrees');
   await actions.scan('');
   assert.equal(calls[1][0], '/api/worktrees/cleanup');
 
-  const request = Object.freeze({ paths: Object.freeze(['/removed', '/main', '/failed']), deleteBranches: true });
+  const request = Object.freeze({
+    paths: Object.freeze(['/removed', '/main', '/failed']),
+    pruneRoots: Object.freeze(['/repo']),
+    deleteBranches: true,
+  });
   const result = await actions.cleanup(request);
   assert.deepEqual(JSON.parse(calls[2][1].body), {
-    paths: ['/removed', '/main', '/failed'], delete_branches: true,
+    paths: ['/removed', '/main', '/failed'], prune_roots: ['/repo'], delete_branches: true,
   });
   assert.equal(result.outcomes[1].result, 'skipped');
   assert.equal(result.outcomes[2].detail, 'git refused');
@@ -60,7 +66,7 @@ test('worktree actions surface HTTP and plain-text server recheck failures', asy
   const cleanup = createWorktreeCleanupActions({
     fetchImpl: async () => new Response('server recheck failed', { status: 409 }),
   });
-  await assert.rejects(cleanup.cleanup({ paths: ['/repo-wt'], deleteBranches: false }),
+  await assert.rejects(cleanup.cleanup({ paths: ['/repo-wt'], pruneRoots: [], deleteBranches: false }),
     /server recheck failed/);
 });
 
@@ -80,7 +86,7 @@ test('accepted cleanup outcomes do not wait for an unrelated dashboard refresh',
   });
 
   const result = await Promise.race([
-    actions.cleanup({ paths: ['/repo-wt'], deleteBranches: false }),
+    actions.cleanup({ paths: ['/repo-wt'], pruneRoots: [], deleteBranches: false }),
     new Promise((_, reject) => setTimeout(
       () => reject(new Error('accepted cleanup was blocked behind refresh')), 250,
     )),

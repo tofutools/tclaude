@@ -1192,6 +1192,20 @@ func SetSweepWorktreeFnsForTest(
 	}
 }
 
+// SetPruneWorktreeFnsForTest swaps the prune dry-run and mutation seams used
+// by repo-wide stale-record cleanup. The mutation seam returns stderr even on
+// a nil error because real Git may report per-entry failures while exiting 0.
+func SetPruneWorktreeFnsForTest(
+	preview func(dir string) ([]worktree.PrunableWorktree, error),
+	prune func(dir string) (string, error),
+) func() {
+	prevPreview, prevPrune := prunableWorktreesFn, pruneWorktreesFn
+	prunableWorktreesFn, pruneWorktreesFn = preview, prune
+	return func() {
+		prunableWorktreesFn, pruneWorktreesFn = prevPreview, prevPrune
+	}
+}
+
 // SetRetireWorktreeGraceForTest shrinks the deferred retire cleanup's
 // exit-grace window so a flow test can exercise the grace-timeout branch
 // (agent never exits → worktree kept → human notice) without waiting the

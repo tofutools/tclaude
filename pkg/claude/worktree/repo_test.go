@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sort"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -42,6 +43,35 @@ func TestListWorktreesIn(t *testing.T) {
 	require.Len(t, wts, 1)
 	assert.True(t, wts[0].IsMain)
 	assert.Equal(t, "main", wts[0].Branch)
+}
+
+func TestParsePrunableWorktrees(t *testing.T) {
+	out := parsePrunableWorktrees(`Removing worktrees/topic-one: gitdir file does not exist
+Removing worktrees/topic-two: gitdir file points to non-existent location
+warning: unrelated output
+Removing malformed-entry`)
+
+	assert.Equal(t, []PrunableWorktree{
+		{AdminDir: "topic-one", Reason: "gitdir file does not exist"},
+		{AdminDir: "topic-two", Reason: "gitdir file points to non-existent location"},
+	}, out)
+}
+
+func TestPrunableWorktreesInReadsGitVerboseStream(t *testing.T) {
+	repoPath, _ := setupTestRepo(t)
+	adminDir := filepath.Join(repoPath, ".git", "worktrees", "stale-test")
+	require.NoError(t, os.MkdirAll(adminDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(adminDir, "gitdir"),
+		[]byte(filepath.Join(repoPath, "missing-worktree", ".git")+"\n"), 0o644))
+	old := time.Now().Add(-365 * 24 * time.Hour)
+	require.NoError(t, os.Chtimes(adminDir, old, old))
+	require.NoError(t, os.Chtimes(filepath.Join(adminDir, "gitdir"), old, old))
+
+	entries, err := PrunableWorktreesIn(repoPath)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	assert.Equal(t, "stale-test", entries[0].AdminDir)
+	assert.Contains(t, entries[0].Reason, "gitdir file")
 }
 
 func TestAddWorktreeIn(t *testing.T) {

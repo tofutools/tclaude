@@ -55,11 +55,20 @@ type sweepWorktreeWire struct {
 }
 
 type sweepDiscoverWire struct {
-	Scope     string              `json:"scope"`
-	Group     string              `json:"group"`
-	Groups    []string            `json:"groups"`
-	RepoRoots []string            `json:"repo_roots"`
-	Worktrees []sweepWorktreeWire `json:"worktrees"`
+	Scope         string              `json:"scope"`
+	Group         string              `json:"group"`
+	Groups        []string            `json:"groups"`
+	RepoRoots     []string            `json:"repo_roots"`
+	Worktrees     []sweepWorktreeWire `json:"worktrees"`
+	PrunableRepos []struct {
+		RepoRoot string `json:"repo_root"`
+		Count    int    `json:"count"`
+		Checked  bool   `json:"checked"`
+		Reasons  []struct {
+			Reason string `json:"reason"`
+			Count  int    `json:"count"`
+		} `json:"reasons"`
+	} `json:"prunable_repos"`
 }
 
 type sweepCleanupWire struct {
@@ -69,10 +78,22 @@ type sweepCleanupWire struct {
 		Result string `json:"result"`
 		Detail string `json:"detail"`
 	} `json:"outcomes"`
-	Removed  int `json:"removed"`
-	Branches int `json:"branches"`
-	Skipped  int `json:"skipped"`
-	Failed   int `json:"failed"`
+	Removed       int `json:"removed"`
+	Branches      int `json:"branches"`
+	Skipped       int `json:"skipped"`
+	Failed        int `json:"failed"`
+	PruneOutcomes []struct {
+		RepoRoot  string `json:"repo_root"`
+		Before    int    `json:"before"`
+		Cleared   int    `json:"cleared"`
+		Remaining int    `json:"remaining"`
+		Result    string `json:"result"`
+		Detail    string `json:"detail"`
+	} `json:"prune_outcomes"`
+	Pruned         int `json:"pruned"`
+	PruneRemaining int `json:"prune_remaining"`
+	PruneFailed    int `json:"prune_failed"`
+	PruneSkipped   int `json:"prune_skipped"`
 }
 
 // --- the git seam fake ----------------------------------------------
@@ -375,6 +396,92 @@ func TestWorktreeSweep_DiscoverAllGroupsDeduplicatesSharedRepos(t *testing.T) {
 	require.Len(t, out.Worktrees, 8, "shared worktrees are not duplicated across groups")
 	assert.Equal(t, "/repo", byPath(out.Worktrees)["/repo-wt-orphan"].RepoRoot,
 		"linked worktrees identify their main repo")
+}
+
+// Stale administrative entries have no `git worktree list` stanza, so they
+// travel beside checkout rows as one pre-selected aggregate per repo. Reason
+// counts keep the live dry-run inspectable without inventing checkout paths.
+func TestWorktreeSweep_DiscoverIncludesPrunableRepoReasonCounts(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	repoFixture(t, f)
+	t.Cleanup(agentd.SetPruneWorktreeFnsForTest(
+		func(dir string) ([]worktree.PrunableWorktree, error) {
+			require.Equal(t, "/repo", dir)
+			return []worktree.PrunableWorktree{
+				{AdminDir: "old-a", Reason: "gitdir file does not exist"},
+				{AdminDir: "old-b", Reason: "gitdir file does not exist"},
+				{AdminDir: "old-c", Reason: "gitdir file points to non-existent location"},
+			}, nil
+		},
+		func(string) (string, error) {
+			t.Fatal("discovery must never prune")
+			return "", nil
+		},
+	))
+
+	out := discoverWorktrees(t, agentd.BuildDashboardHandlerForTest(), "squad")
+	require.Len(t, out.PrunableRepos, 1)
+	row := out.PrunableRepos[0]
+	assert.Equal(t, "/repo", row.RepoRoot)
+	assert.Equal(t, 3, row.Count)
+	assert.True(t, row.Checked, "bookkeeping-only cleanup is pre-selected")
+	require.Len(t, row.Reasons, 2)
+	assert.Equal(t, "gitdir file does not exist", row.Reasons[0].Reason)
+	assert.Equal(t, 2, row.Reasons[0].Count)
+	assert.Equal(t, "gitdir file points to non-existent location", row.Reasons[1].Reason)
+	assert.Equal(t, 1, row.Reasons[1].Count)
+}
+
+// Git exits 0 even when a sandbox bind mount makes every administrative
+// deletion fail. The handler must judge the post-state, not that status: a
+// nil prune error with an unchanged dry-run is an honest failed outcome.
+func TestWorktreeSweep_PruneExitZeroWithoutProgressIsFailed(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	repoFixture(t, f)
+	previewCalls := 0
+	pruneCalls := 0
+	stale := []worktree.PrunableWorktree{
+		{AdminDir: "old-a", Reason: "gitdir file does not exist"},
+		{AdminDir: "old-b", Reason: "gitdir file does not exist"},
+	}
+	t.Cleanup(agentd.SetPruneWorktreeFnsForTest(
+		func(dir string) ([]worktree.PrunableWorktree, error) {
+			require.Equal(t, "/repo", dir)
+			previewCalls++
+			return stale, nil // unchanged before and after prune
+		},
+		func(dir string) (string, error) {
+			require.Equal(t, "/repo", dir)
+			pruneCalls++
+			return "error: failed to delete '.git/worktrees/old-a': Device or resource busy", nil
+		},
+	))
+
+	body := `{"paths":[],"prune_roots":["/repo"],"delete_branches":true}`
+	r, err := http.NewRequest(http.MethodPost, "/api/worktrees/cleanup", strings.NewReader(body))
+	require.NoError(t, err)
+	r.Header.Set("Content-Type", "application/json")
+	rec := testharness.Serve(agentd.BuildDashboardHandlerForTest(), r)
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+
+	var out sweepCleanupWire
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+	assert.Equal(t, 2, previewCalls, "contract is dry-run before, then dry-run after")
+	assert.Equal(t, 1, pruneCalls)
+	assert.Zero(t, out.Pruned)
+	assert.Equal(t, 2, out.PruneRemaining)
+	assert.Equal(t, 1, out.PruneFailed)
+	require.Len(t, out.PruneOutcomes, 1)
+	assert.Equal(t, "failed", out.PruneOutcomes[0].Result)
+	assert.Equal(t, 2, out.PruneOutcomes[0].Before)
+	assert.Zero(t, out.PruneOutcomes[0].Cleared)
+	assert.Equal(t, 2, out.PruneOutcomes[0].Remaining)
+	assert.Contains(t, out.PruneOutcomes[0].Detail, "0 of 2 stale Git records cleared; 2 remain")
+	assert.Contains(t, out.PruneOutcomes[0].Detail, "active agent sandbox may be holding bind mounts")
+	assert.Contains(t, out.PruneOutcomes[0].Detail, "Device or resource busy",
+		"stderr is preserved as advisory detail even though prune returned nil")
 }
 
 // Regression: PostToolUse can track an edit outside the worktree an agent was

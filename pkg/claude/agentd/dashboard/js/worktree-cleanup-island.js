@@ -8,10 +8,15 @@ import {
   categoryWorktrees,
   dirtyWorktrees,
   freezeWorktreeCleanupRequest,
+  normalizePrunableRepos,
   normalizeWorktreeCandidates,
+  prunableRecordCount,
+  prunableRepoMatches,
+  reconcilePrunableRepos,
   reconcileWorktreeCandidates,
   removableWorktrees,
   selectedWorktrees,
+  selectedPrunableRepos,
   visibleWorktrees,
   worktreeCleanupSummary,
   worktreeMatches,
@@ -73,9 +78,42 @@ function CleanupCandidateRow({ candidate, locked, wizard, onToggle }) {
   </label></div>`;
 }
 
+function PrunableRepoRow({ repo, locked, onToggle }) {
+  return html`<div class="cleanup-row cleanup-prune-row" data-prune-root=${repo.repo_root}>
+    <label title="Bookkeeping only — stale-record pruning never removes a checkout directory or branch">
+      <input type="checkbox" data-prune-root=${repo.repo_root} checked=${repo.checked}
+        disabled=${locked}
+        onChange=${(event) => onToggle(repo.repo_root, event.currentTarget.checked)} />
+      <span class="branch">${repo.count} stale Git record${repo.count === 1 ? '' : 's'}</span>
+      <span class="cleanup-badge cat-stale">bookkeeping only</span>
+      <span class="path" title=${repo.repo_root}>${repo.repo_root}</span>
+    </label>
+    <div class="cleanup-prune-note">Safe to prune: removes broken <code>.git/worktrees</code>
+      metadata only — no checkout directory or branch.</div>
+    <details class="cleanup-prune-reasons">
+      <summary>Why ${repo.count === 1 ? 'is this record' : `are these ${repo.count} records`} stale?</summary>
+      <ul>${repo.reasons.map((entry) => html`<li key=${entry.reason}>
+        <strong>${entry.count}</strong> — ${entry.reason}
+      </li>`)}</ul>
+      <p>If records remain after prune, the result says so. An active agent sandbox can hold
+        bind mounts on these entries, causing Git to fail while still exiting 0.</p>
+    </details>
+  </div>`;
+}
+
 function CleanupOutcomeList({ response }) {
   const outcomes = response?.outcomes || [];
+  const pruneOutcomes = response?.prune_outcomes || [];
   return html`<div class="cleanup-list" id="worktree-cleanup-list">
+    ${pruneOutcomes.map((outcome) => html`
+      <div class="cleanup-row cleanup-prune-row" key=${`prune:${outcome.repo_root}`}
+        data-prune-root=${outcome.repo_root}>
+        <span class=${`cleanup-badge ${outcome.result || ''}`}>${outcome.result || 'unknown'}</span>
+        <span class="branch">${outcome.cleared} pruned / ${outcome.remaining} remain</span>
+        <span class="path" title=${outcome.repo_root}>${outcome.repo_root}</span>
+        <span class="meta">${outcome.detail || ''}</span>
+      </div>
+    `)}
     ${outcomes.length ? outcomes.map((outcome) => html`
       <div class="cleanup-row" key=${outcome.path} data-path=${outcome.path}>
         <span class=${`cleanup-badge ${outcome.result || ''}`}>${outcome.result || 'unknown'}</span>
@@ -83,7 +121,7 @@ function CleanupOutcomeList({ response }) {
         <span class="path" title=${outcome.path}>${outcome.path}</span>
         <span class="meta">${outcome.detail || ''}</span>
       </div>
-    `) : html`<div class="cleanup-empty">no worktree outcomes returned</div>`}
+    `) : (pruneOutcomes.length ? null : html`<div class="cleanup-empty">no cleanup outcomes returned</div>`)}
   </div>`;
 }
 
@@ -91,6 +129,7 @@ export function WorktreeCleanupDialog({ current, state, actions }) {
   const { descriptor } = current;
   const allGroups = !descriptor.group;
   const [candidates, setCandidates] = useState([]);
+  const [prunableRepos, setPrunableRepos] = useState([]);
   const [repoRoots, setRepoRoots] = useState([]);
   const [query, setQuery] = useState('');
   const [deleteBranches, setDeleteBranches] = useState(true);
@@ -100,6 +139,7 @@ export function WorktreeCleanupDialog({ current, state, actions }) {
   const [result, setResult] = useState(null);
   const [wizard, setWizard] = useState(() => document.body.classList.contains('wizard'));
   const touchedChoices = useRef(new Map());
+  const touchedPruneChoices = useRef(new Map());
   const generation = useRef(0);
   const active = useRef(true);
   const submitLock = useRef(false);
@@ -128,6 +168,9 @@ export function WorktreeCleanupDialog({ current, state, actions }) {
       setCandidates(rescan
         ? reconcileWorktreeCandidates(response.worktrees, touchedChoices.current)
         : normalizeWorktreeCandidates(response.worktrees));
+      setPrunableRepos(rescan
+        ? reconcilePrunableRepos(response.prunableRepos, touchedPruneChoices.current)
+        : normalizePrunableRepos(response.prunableRepos));
     } catch (cause) {
       if (active.current && requestGeneration === generation.current) {
         setError(`scan failed: ${cause?.message || String(cause)}`);
@@ -145,8 +188,12 @@ export function WorktreeCleanupDialog({ current, state, actions }) {
   }, [result]);
 
   const selected = selectedWorktrees(candidates);
+  const selectedPruneRepos = selectedPrunableRepos(prunableRepos);
   const removable = removableWorktrees(candidates);
   const visible = visibleWorktrees(candidates, query);
+  const visiblePruneRepos = prunableRepos.filter((repo) => prunableRepoMatches(repo, query));
+  const staleRecords = prunableRecordCount(prunableRepos);
+  const selectedStaleRecords = prunableRecordCount(selectedPruneRepos);
   const locked = !!submittedRequest || !!result;
   const busy = !!busyAction;
   const closeBlocked = busyAction === 'submit';
@@ -170,16 +217,35 @@ export function WorktreeCleanupDialog({ current, state, actions }) {
       entry.path === path ? Object.freeze({ ...entry, checked }) : entry)));
   };
 
+  const replacePruneChoices = (rows, checked) => {
+    if (busy || locked || !rows.length) return;
+    const roots = new Set(rows.map((repo) => repo.repo_root));
+    for (const root of roots) touchedPruneChoices.current.set(root, checked);
+    setPrunableRepos((currentRepos) => Object.freeze(currentRepos.map((repo) =>
+      roots.has(repo.repo_root) ? Object.freeze({ ...repo, checked }) : repo)));
+  };
+
+  const togglePrunableRepo = (root, checked) => {
+    if (busy || locked) return;
+    const repo = prunableRepos.find((entry) => entry.repo_root === root);
+    if (!repo) return;
+    touchedPruneChoices.current.set(root, checked);
+    setPrunableRepos((currentRepos) => Object.freeze(currentRepos.map((entry) =>
+      entry.repo_root === root ? Object.freeze({ ...entry, checked }) : entry)));
+  };
+
   const toggleBucket = (rows) => {
     if (!rows.length) return;
     replaceChoices(rows, !rows.every((candidate) => candidate.checked));
   };
 
   const submit = async () => {
-    if (busy || result || selected.length === 0 || submitLock.current) return;
+    if (busy || result || (selected.length === 0 && selectedPruneRepos.length === 0) || submitLock.current) return;
     submitLock.current = true;
-    const request = submittedRequest || freezeWorktreeCleanupRequest(candidates, deleteBranches);
-    if (!request.paths.length) {
+    const request = submittedRequest || freezeWorktreeCleanupRequest(
+      candidates, prunableRepos, deleteBranches,
+    );
+    if (!request.paths.length && !request.pruneRoots.length) {
       submitLock.current = false;
       return;
     }
@@ -207,13 +273,21 @@ export function WorktreeCleanupDialog({ current, state, actions }) {
   const wizardWhere = repoRoots.length
     ? (allGroups && repoRoots.length > 1 ? `${repoRoots.length} party groves` : repoRoots.join(', '))
     : (allGroups ? 'groves used by any party' : "this party's repo");
-  const regularHint = removable.length === 0
-    ? `No removable worktrees found in ${regularWhere}.`
-    : `${removable.length} removable worktree${removable.length === 1 ? '' : 's'} in ${regularWhere}. Orphans (no agent) and retired-agent leftovers are pre-ticked; worktrees a still-enrolled agent uses (resume-bound) and ones with uncommitted changes are left unticked for you to review. Only ticked worktrees are removed.`;
-  const wizardHint = removable.length === 0
-    ? `No removable worktrees found in ${wizardWhere}.`
-    : `${removable.length} removable worktree${removable.length === 1 ? '' : 's'} in ${wizardWhere}. Orphans (no familiar) and banished-familiar leftovers are pre-ticked; worktrees a still-bound familiar uses and ones with uncommitted changes are left unticked for review. Only ticked worktrees are removed.`;
+  const regularHint = removable.length === 0 && staleRecords === 0
+    ? `No removable worktrees or stale Git records found in ${regularWhere}. Counts reflect this live scan.`
+    : `${removable.length} removable worktree${removable.length === 1 ? '' : 's'} and ${staleRecords} stale Git record${staleRecords === 1 ? '' : 's'} found in ${regularWhere}. Counts reflect this live scan. Safe orphans, retired-agent leftovers, and bookkeeping-only stale records are pre-ticked; agent-bound or dirty worktrees remain unticked for review.`;
+  const wizardHint = removable.length === 0 && staleRecords === 0
+    ? `No removable worktrees or stale Git records found in ${wizardWhere}. Counts reflect this live scan.`
+    : `${removable.length} removable worktree${removable.length === 1 ? '' : 's'} and ${staleRecords} stale Git record${staleRecords === 1 ? '' : 's'} found in ${wizardWhere}. Counts reflect this live scan. Safe orphans, banished-familiar leftovers, and bookkeeping-only stale records are pre-ticked; familiar-bound or dirty worktrees remain unticked for review.`;
   const retrying = !!submittedRequest;
+  const selectedCountCopy = `${selected.length} of ${removable.length} worktrees + ${selectedStaleRecords} of ${staleRecords} stale records selected`;
+  const removeCopy = `${selected.length} worktree${selected.length === 1 ? '' : 's'}`;
+  const pruneCopy = `${selectedStaleRecords} stale record${selectedStaleRecords === 1 ? '' : 's'}`;
+  let actionCore = 'Nothing selected';
+  if (selected.length && selectedStaleRecords) actionCore = `Remove ${removeCopy} + prune ${pruneCopy}`;
+  else if (selected.length) actionCore = `Remove ${removeCopy}`;
+  else if (selectedStaleRecords) actionCore = `Prune ${pruneCopy}`;
+  const actionCopy = `${retrying ? 'Retry ' : ''}${actionCore}`;
 
   return html`<${Overlay}
     id="worktree-cleanup-modal"
@@ -243,22 +317,24 @@ export function WorktreeCleanupDialog({ current, state, actions }) {
       /></p>
       <div class="cleanup-toolbar">
         <button type="button" id="worktree-cleanup-select-all" disabled=${busy || locked}
-          onClick=${() => replaceChoices(
-            removable.filter((candidate) => worktreeMatches(candidate, query)), true,
-          )}>select all</button>
+          onClick=${() => {
+            replaceChoices(removable.filter((candidate) => worktreeMatches(candidate, query)), true);
+            replacePruneChoices(visiblePruneRepos, true);
+          }}>select all</button>
         <button type="button" id="worktree-cleanup-select-none" disabled=${busy || locked}
-          onClick=${() => replaceChoices(
-            removable.filter((candidate) => worktreeMatches(candidate, query)), false,
-          )}>select none</button>
+          onClick=${() => {
+            replaceChoices(removable.filter((candidate) => worktreeMatches(candidate, query)), false);
+            replacePruneChoices(visiblePruneRepos, false);
+          }}>select none</button>
         <button type="button" id="worktree-cleanup-rescan" disabled=${busy || locked}
           title="Re-scan the repo for worktrees right now (live state can shift as agents come and go)"
           onClick=${() => void load(true)}>${busyAction === 'rescan' ? 'scanning…' : '⟳ rescan'}</button>
-        <input type="search" id="worktree-cleanup-search" placeholder="filter path / branch…"
+        <input type="search" id="worktree-cleanup-search" placeholder="filter path / branch / repo…"
           aria-label="Filter worktrees" value=${query} disabled=${busy || locked}
           onInput=${(event) => setQuery(event.currentTarget.value)} />
         <span class="spacer"></span>
         <span class="cleanup-count" id="worktree-cleanup-count">
-          ${selected.length} of ${removable.length} selected
+          ${selectedCountCopy}
         </span>
       </div>
       <div class="cleanup-toolbar cleanup-categories" id="worktree-cleanup-categories">
@@ -283,17 +359,25 @@ export function WorktreeCleanupDialog({ current, state, actions }) {
             title=${`Toggle all ${rows.length} worktrees with uncommitted changes`}
             onClick=${() => toggleBucket(rows)}>uncommitted ${on}/${rows.length}</button>`;
         })()}
+        ${staleRecords ? html`<button type="button" data-cat="stale"
+          class=${selectedStaleRecords === staleRecords ? 'active' : ''} disabled=${busy || locked}
+          title="Toggle bookkeeping-only stale Git records"
+          onClick=${() => replacePruneChoices(prunableRepos, selectedStaleRecords !== staleRecords)}>
+          stale records ${selectedStaleRecords}/${staleRecords}</button>` : null}
       </div>
       <div class="cleanup-list" id="worktree-cleanup-list">
-        ${busyAction === 'scan' && candidates.length === 0
+        ${busyAction === 'scan' && candidates.length === 0 && prunableRepos.length === 0
           ? html`<div class="cleanup-empty">scanning…</div>`
-          : visible.length
-            ? visible.map((candidate) => html`<${CleanupCandidateRow}
+          : visible.length || visiblePruneRepos.length
+            ? html`${visiblePruneRepos.map((repo) => html`<${PrunableRepoRow}
+              key=${repo.repo_root} repo=${repo} locked=${busy || locked}
+              onToggle=${togglePrunableRepo}
+            />`)}${visible.map((candidate) => html`<${CleanupCandidateRow}
               key=${candidate.path} candidate=${candidate} locked=${busy || locked}
               wizard=${wizard} onToggle=${toggleCandidate}
-            />`)
+            />`)}`
             : html`<div class="cleanup-empty">
-              ${error && candidates.length === 0 ? 'scan failed' : 'no worktrees match the filter'}
+              ${error && candidates.length === 0 ? 'scan failed' : 'no cleanup rows match the filter'}
             </div>`}
       </div>
       <label class="delete-agent-wt" id="worktree-cleanup-branches-row">
@@ -301,7 +385,7 @@ export function WorktreeCleanupDialog({ current, state, actions }) {
           disabled=${busy || locked}
           onChange=${(event) => setDeleteBranches(event.currentTarget.checked)} />
         <span>Also delete the feature branch
-          <span class="wt-note">force-deletes each removed worktree's local branch — <code>main</code>/<code>master</code> are always kept</span>
+          <span class="wt-note">force-deletes each removed worktree's local branch — <code>main</code>/<code>master</code> are always kept; stale-record pruning never deletes branches</span>
         </span>
       </label>
       <div class="cleanup-error" id="worktree-cleanup-error" role=${error ? 'alert' : undefined}>${error}</div>
@@ -310,14 +394,14 @@ export function WorktreeCleanupDialog({ current, state, actions }) {
           <${Words} plain="Cancel" wizard="Dispel" />
         </button>
         <button id="worktree-cleanup-submit" class="primary danger" type="button"
-          disabled=${busy || selected.length === 0} aria-busy=${busyAction === 'submit' ? 'true' : undefined}
+          disabled=${busy || (selected.length === 0 && selectedPruneRepos.length === 0)} aria-busy=${busyAction === 'submit' ? 'true' : undefined}
           onClick=${() => void submit()}>
           ${busyAction === 'submit'
             ? html`<span class="btn-spinner" aria-hidden="true"></span><${Words}
               plain="Removing…" wizard="Pruning…" />`
             : html`<${Words}
-              plain=${`${retrying ? 'Retry ' : ''}Remove ${selected.length} worktree${selected.length === 1 ? '' : 's'}`}
-              wizard=${`${retrying ? 'Retry ' : ''}Prune ${selected.length} worktree${selected.length === 1 ? '' : 's'}`}
+              plain=${actionCopy}
+              wizard=${actionCopy}
             />`}
         </button>
       </div>
