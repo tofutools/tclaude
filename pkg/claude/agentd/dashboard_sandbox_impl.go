@@ -2,12 +2,9 @@ package agentd
 
 import (
 	"runtime"
-	"sync"
-	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
-	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 // dashboardSandboxImpl is the sandbox-IMPLEMENTATION catalog the spawn dialog
@@ -30,28 +27,40 @@ type dashboardSandboxImpl struct {
 	Options []dashboardSandboxImplOption `json:"options"`
 	// Default is the implementation a launch resolves to when nothing pins one.
 	Default string `json:"default"`
-	// HostAvailable reports whether this host can create the interactive
-	// tclaude-layer namespace and terminal relay. It is disclosure, never
-	// permission: the dialog
+	// HostAvailable reports whether the interactive tclaude-layer's TOOLING IS
+	// INSTALLED — bubblewrap on PATH plus pidfd for the terminal relay (Linux),
+	// or sandbox-exec (macOS). It is disclosure, never permission: the dialog
 	// keeps an unavailable implementation selectable and warns, because the
 	// launch-time refusal is the authority and a dialog that quietly removed
-	// the option would have replaced it. It is also deliberately not a promise
-	// — an isolated-network launch needs strictly more than the baseline, so a
-	// true here rules out a doomed launch without guaranteeing a good one.
+	// the option would have replaced it.
+	//
+	// It is deliberately NOT a promise, and the gap is wider than it looks: a
+	// true here means the tool is present, not that it works. A host with bwrap
+	// installed but unprivileged user namespaces disabled reports true and
+	// still fails the launch. That is the accepted cost of keeping this off the
+	// 2-second poll — verifying it means FORKING the sandbox engine, which is
+	// what the launch does, posture-exact, where the answer decides something.
+	// So a false here rules out an obviously-doomed launch; a true rules
+	// nothing in.
 	HostAvailable bool `json:"host_available"`
-	// HostUnavailableReason names the concrete missing capability (no bwrap on
-	// PATH, no unprivileged user namespaces, not Linux) so the operator can fix
-	// it rather than guess. "" when HostAvailable is true.
+	// HostUnavailableReason names the concrete missing tool (no bwrap on PATH,
+	// no pidfd, not Linux) so the operator can fix it rather than guess. "" when
+	// HostAvailable is true.
 	HostUnavailableReason string `json:"host_unavailable_reason,omitempty"`
 	// ServerHostAvailable and ServerHostUnavailableReason are the same
-	// disclosure for a relay-free, non-interactive server boundary. Keeping the
-	// topology answers separate prevents a missing terminal-relay capability
-	// from being presented as an OpenCode executor refusal.
+	// installed-not-working disclosure for a relay-free, non-interactive server
+	// boundary. Keeping the topology answers separate prevents a missing
+	// terminal-relay capability from being presented as an OpenCode executor
+	// refusal.
 	ServerHostAvailable         bool   `json:"server_host_available"`
 	ServerHostUnavailableReason string `json:"server_host_unavailable_reason,omitempty"`
 	// Stacked is per-harness because each descriptor owns a different real
-	// engine entry point. It is disclosure only; launch always re-resolves and
-	// completes the nested round-trip inside the exact outer spec.
+	// engine entry point, and carries only harnesses that HAVE a nested sandbox
+	// — OpenCode owns none, so stacking is not a capability it can lack and it
+	// is absent rather than reported unavailable. Same installed-not-working
+	// semantics as the fields above: it says the engine is on PATH, not that it
+	// sandboxes. Launch always re-resolves and completes the nested round-trip
+	// inside the exact outer spec.
 	Stacked map[string]dashboardStackedAvailability `json:"stacked"`
 	// StackedAppArmorLikely says the host most likely denies the nested bwrap
 	// stacked needs, because Ubuntu's bwrap-userns-restrict AppArmor policy is
@@ -66,10 +75,15 @@ type dashboardSandboxImpl struct {
 	StackedAppArmorLikely bool `json:"stacked_apparmor_nested_bwrap_likely,omitempty"`
 }
 
+// dashboardStackedAvailability discloses whether a harness's nested-sandbox
+// engine is INSTALLED. It carried an ExecutableIdentity (path|version|size|
+// mtime) until the poll stopped executing `<engine> --version` to obtain it —
+// the field had no reader in the dashboard, so paying a process launch per
+// minute to populate it bought nothing. The launch still freezes the exact
+// identity it probes, where it is load-bearing.
 type dashboardStackedAvailability struct {
-	Available          bool   `json:"available"`
-	UnavailableReason  string `json:"unavailable_reason,omitempty"`
-	ExecutableIdentity string `json:"executable_identity,omitempty"`
+	Available         bool   `json:"available"`
+	UnavailableReason string `json:"unavailable_reason,omitempty"`
 }
 
 type dashboardSandboxImplOption struct {
@@ -94,78 +108,6 @@ type dashboardSandboxImplOption struct {
 	Experimental bool `json:"experimental,omitempty"`
 }
 
-// sandboxImplHostProbeTTL bounds how stale the DISCLOSED availability may be.
-// The probe forks bwrap and the dashboard snapshot is polled continuously, so
-// an uncached answer would fork on every poll. A stale answer is safe here
-// precisely because this surface only discloses: the launch re-probes live and
-// refuses on its own answer. Nothing that REFUSES may read this cache.
-const sandboxImplHostProbeTTL = 60 * time.Second
-
-type sandboxImplHostProbeCache struct {
-	sync.Mutex
-	checkedAt time.Time
-	err       error
-	valid     bool
-}
-
-var sandboxImplHostProbe sandboxImplHostProbeCache
-var sandboxImplServerHostProbe sandboxImplHostProbeCache
-var sandboxImplStackedProbeMu sync.Mutex
-var sandboxImplStackedProbe = map[string]struct {
-	checkedAt time.Time
-	value     dashboardStackedAvailability
-}{}
-
-// sandboxImplHostProbeNow is the clock, indirected so a test can age the cache
-// without sleeping.
-var sandboxImplHostProbeNow = time.Now
-
-// cachedTclaudeLayerHostAvailability answers the DISCLOSURE question, at most
-// once per TTL. Never call it from a path that refuses a launch.
-func cachedTclaudeLayerHostAvailability() error {
-	return cachedSandboxImplHostAvailability(
-		&sandboxImplHostProbe, tclaudeLayerHostAvailability)
-}
-
-func cachedTclaudeLayerServerHostAvailability() error {
-	return cachedSandboxImplHostAvailability(
-		&sandboxImplServerHostProbe, tclaudeLayerServerHostAvailability)
-}
-
-func cachedSandboxImplHostAvailability(
-	cache *sandboxImplHostProbeCache,
-	probe func() error,
-) error {
-	now := sandboxImplHostProbeNow()
-	cache.Lock()
-	if cache.valid && now.Sub(cache.checkedAt) < sandboxImplHostProbeTTL {
-		err := cache.err
-		cache.Unlock()
-		return err
-	}
-	cache.Unlock()
-
-	// Probe OUTSIDE the lock. The probe forks bwrap, and this runs on the
-	// continuously-polled dashboard snapshot: holding the mutex across the exec
-	// would let one slow probe queue every later snapshot request behind it, so
-	// a wedged namespace setup would freeze the whole page rather than one
-	// field. Two callers racing a stale cache may both probe; that is bounded
-	// (the probe carries its own deadline) and far cheaper than the alternative.
-	err := probe()
-
-	cache.Lock()
-	defer cache.Unlock()
-	cache.err = err
-	cache.checkedAt = now
-	cache.valid = true
-	return err
-}
-
-// buildSandboxImplCatalog assembles the host-wide implementation catalog.
-//
-// The copy discipline here is load-bearing (epic requirement 12): each
-// description says what the implementation DOES, never what it guarantees, and
-// the platform caveat is stated rather than implied.
 func buildSandboxImplCatalog() dashboardSandboxImpl {
 	out := dashboardSandboxImpl{
 		Platform: runtime.GOOS,
@@ -199,74 +141,39 @@ func buildSandboxImplCatalog() dashboardSandboxImpl {
 		Default: string(sandboxpolicy.ImplementationHarnessBuiltin),
 		Stacked: map[string]dashboardStackedAvailability{},
 	}
-	if err := cachedTclaudeLayerHostAvailability(); err != nil {
+	if err := sandboxToolPresence(sandboxToolLayerHost, tclaudeLayerHostPresence); err != nil {
 		out.HostUnavailableReason = err.Error()
 	} else {
 		out.HostAvailable = true
 	}
-	if err := cachedTclaudeLayerServerHostAvailability(); err != nil {
+	if err := sandboxToolPresence(
+		sandboxToolLayerServerHost, tclaudeLayerServerHostPresence,
+	); err != nil {
 		out.ServerHostUnavailableReason = err.Error()
 	} else {
 		out.ServerHostAvailable = true
 	}
+	// Only harnesses that own a nested sandbox appear here. OpenCode has none,
+	// so "stacked" is not a capability it can lack — it is simply not a member
+	// of this map, which is what SupportsNestedSandbox already gates.
 	for _, name := range harness.Names() {
 		h, err := harness.ResolveSpawnable(name)
-		if err != nil {
+		if err != nil || !h.SupportsNestedSandbox() {
 			continue
 		}
-		out.Stacked[name] = cachedStackedSandboxAvailability(h)
+		value := dashboardStackedAvailability{}
+		if err := sandboxToolPresence(stackedEngineToolKey(h.Name), func() error {
+			return stackedEnginePresence(h)
+		}); err != nil {
+			value.UnavailableReason = err.Error()
+		} else {
+			value.Available = true
+		}
+		out.Stacked[name] = value
 	}
 	// Uncached on purpose: this is four stats of world-readable paths, not a
 	// fork, and an operator who just unloaded the policy should see the hint
 	// go away on the next poll rather than a TTL later.
 	out.StackedAppArmorLikely = stackedAppArmorNestedBlockLikely()
 	return out
-}
-
-func cachedStackedSandboxAvailability(h *harness.Harness) dashboardStackedAvailability {
-	now := sandboxImplHostProbeNow()
-	sandboxImplStackedProbeMu.Lock()
-	cached, ok := sandboxImplStackedProbe[h.Name]
-	if ok && now.Sub(cached.checkedAt) < sandboxImplHostProbeTTL {
-		sandboxImplStackedProbeMu.Unlock()
-		return cached.value
-	}
-	sandboxImplStackedProbeMu.Unlock()
-
-	value := dashboardStackedAvailability{}
-	executable, err := session.StackedSandboxAvailability(h)
-	if err != nil {
-		value.UnavailableReason = err.Error()
-	} else {
-		value.Available = true
-		value.ExecutableIdentity = executable.Identity()
-	}
-	sandboxImplStackedProbeMu.Lock()
-	sandboxImplStackedProbe[h.Name] = struct {
-		checkedAt time.Time
-		value     dashboardStackedAvailability
-	}{checkedAt: now, value: value}
-	sandboxImplStackedProbeMu.Unlock()
-	return value
-}
-
-// resetSandboxImplHostProbeCache drops the disclosure cache. Test-only: a test
-// that swaps the predicate must be able to observe the new answer rather than
-// one cached before the swap.
-func resetSandboxImplHostProbeCache() {
-	for _, cache := range []*sandboxImplHostProbeCache{
-		&sandboxImplHostProbe,
-		&sandboxImplServerHostProbe,
-	} {
-		cache.Lock()
-		cache.valid = false
-		cache.err = nil
-		cache.Unlock()
-	}
-	sandboxImplStackedProbeMu.Lock()
-	sandboxImplStackedProbe = map[string]struct {
-		checkedAt time.Time
-		value     dashboardStackedAvailability
-	}{}
-	sandboxImplStackedProbeMu.Unlock()
 }

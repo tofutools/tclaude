@@ -571,6 +571,33 @@ func TclaudeLayerServerHostAvailability() error {
 	return err
 }
 
+// TclaudeLayerHostToolingPresence reports whether the tclaude-layer's required
+// TOOLING IS INSTALLED — bubblewrap on PATH (Linux) or /usr/bin/sandbox-exec
+// (macOS) — WITHOUT executing any of it.
+//
+// This is a strictly weaker question than TclaudeLayerHostAvailability, and it
+// exists for one reason: the availability predicate EXECUTES the sandbox engine
+// (Linux forks bwrap to build a throwaway namespace; macOS runs sandbox-exec),
+// and the dashboard was asking it on a 2-second poll. A disclosure surface does
+// not need a live namespace to tell an operator "bubblewrap is not installed",
+// which is the actionable half of the answer and the only half a poll can
+// afford.
+//
+// nil therefore means INSTALLED, never WORKING. A host with bwrap present but
+// unprivileged user namespaces disabled answers nil here and still fails the
+// launch — correctly, because the launch runs the full posture-exact probe.
+// Nothing that REFUSES may call this; see TclaudeLayerHostAvailability.
+func TclaudeLayerHostToolingPresence() error {
+	return tclaudeLayerToolingPresence(true)
+}
+
+// TclaudeLayerServerHostToolingPresence is the relay-free server sibling: same
+// installed-not-working semantics, minus the interactive terminal-relay
+// capability an unattended server boundary never needs.
+func TclaudeLayerServerHostToolingPresence() error {
+	return tclaudeLayerToolingPresence(false)
+}
+
 // FilteredNetworkPrerequisite is the live control-plane result for the Linux
 // filtered gateway. Detected does not itself mean NetworkList is enforced:
 // the exact launch remains gated on policy installation and gateway readiness.

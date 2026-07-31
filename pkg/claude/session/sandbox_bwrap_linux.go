@@ -138,6 +138,24 @@ func resolveBwrapBinary(
 	return binary, nil
 }
 
+// tclaudeLayerToolingPresence is the fork-free half of resolveBwrapBinary: it
+// answers "is bubblewrap installed" with a PATH lookup and, for the
+// interactive boundary, the pidfd capability the terminal relay needs (two
+// syscalls, no child process). It deliberately does NOT run probeBwrap — that
+// exec is what makes the availability predicate too expensive for a polled
+// disclosure surface.
+func tclaudeLayerToolingPresence(interactive bool) error {
+	if _, err := lookPathBwrap("bwrap"); err != nil {
+		return fmt.Errorf("tclaude-layer requires bubblewrap (`bwrap`) on PATH: %w", err)
+	}
+	if interactive {
+		if err := probeTclaudeLayerPidfd(); err != nil {
+			return fmt.Errorf("tclaude-layer requires Linux pidfd support for its terminal-resize relay: %w", err)
+		}
+	}
+	return nil
+}
+
 func resolveBwrapServerBinary(
 	posture sandboxpolicy.NetworkPosture,
 	root sandboxpolicy.RootPosture,

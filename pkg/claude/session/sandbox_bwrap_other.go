@@ -24,6 +24,12 @@ func resolveBwrapServerBinary(
 		"tclaude-layer server wrapping requires Linux/bubblewrap or macOS/Seatbelt")
 }
 
+// tclaudeLayerToolingPresence mirrors resolveBwrapBinary's refusal: there is no
+// tooling to look for on an unsupported platform.
+func tclaudeLayerToolingPresence(bool) error {
+	return fmt.Errorf("tclaude-layer requires Linux/bubblewrap or macOS/Seatbelt; this platform is not supported")
+}
+
 func tclaudeLayerCommand(
 	string,
 	[]string,
