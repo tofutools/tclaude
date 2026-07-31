@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -220,18 +221,34 @@ func TestProxyEngineRefusesAResolverReachingFilesystemGrant(t *testing.T) {
 	assert.Contains(t, predictErr.Error(), "Packet filter engine",
 		"a capability refusal must name its remedy")
 
-	_, resolveErr := ResolveAccessEnforcement(
-		Default(), sandboxpolicy.ImplementationTclaudeLayer, axes,
-		LaunchOSSandbox{State: "on", Source: "test bwrap", FilteredNetwork: true}, "",
-	)
-	require.Error(t, resolveErr,
-		"the launch must refuse from the same evaluation the preview used")
-	assert.Contains(t, resolveErr.Error(), "proxy_engine_name_authority")
+	// The launch half reads runtime.GOOS rather than a parameter, and this
+	// refusal is Linux-only by design: it describes a sandbox root built from
+	// authored grants, which Seatbelt has no equivalent of. So the preview is
+	// asked about Linux explicitly above, and the launch is asserted only where
+	// a Linux launch is what would run.
+	if runtime.GOOS == "linux" {
+		_, resolveErr := ResolveAccessEnforcement(
+			Default(), sandboxpolicy.ImplementationTclaudeLayer, axes,
+			LaunchOSSandbox{State: "on", Source: "test bwrap", FilteredNetwork: true}, "",
+		)
+		require.Error(t, resolveErr,
+			"the launch must refuse from the same evaluation the preview used")
+		assert.Contains(t, resolveErr.Error(), "proxy_engine_name_authority")
 
-	var capabilityErr *SandboxCapabilityError
-	require.ErrorAs(t, resolveErr, &capabilityErr,
-		"the refusal must be typed so callers attribute it to the network axis")
-	assert.Equal(t, SandboxCapabilityNetworkAllowlist, capabilityErr.Kind)
+		var capabilityErr *SandboxCapabilityError
+		require.ErrorAs(t, resolveErr, &capabilityErr,
+			"the refusal must be typed so callers attribute it to the network axis")
+		assert.Equal(t, SandboxCapabilityNetworkAllowlist, capabilityErr.Kind)
+	}
+
+	// The Linux-only scope is a claim in its own right, so assert it rather
+	// than only relying on the guard above: the identical axes on a darwin
+	// target must NOT refuse, because no root is built from grants there.
+	_, darwinErr := PredictAccessEnforcement(
+		Default(), sandboxpolicy.ImplementationTclaudeLayer, axes, "", "darwin",
+	)
+	assert.NoError(t, darwinErr,
+		"Seatbelt builds no root from grants; this refusal does not describe it")
 
 	// A DENY-ONLY policy is the shape that made this a capability-seam refusal
 	// rather than an allow-list cell: its network mode is open, so the ladder's
