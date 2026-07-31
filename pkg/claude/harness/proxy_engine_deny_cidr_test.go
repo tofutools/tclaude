@@ -216,10 +216,19 @@ func TestProxyEngineDenyCIDREscapesThatKeepItPartial(t *testing.T) {
 //     very target the inert row failed to stop, with VerdictDeniedByRule rather
 //     than a bare Allowed() == false.
 //
-// Falsifiability: revert PrefixIntersectsLoopbackIdentity to the pre-fix
-// 127.0.0.0/8 + ::1 list and (1) fails — the rows compile. The pre-fix value
-// differs from the post-fix one at every assertion here, rather than the test
-// merely agreeing with whatever the code does.
+// Falsifiability: revert loopbackIdentityPrefixes to the pre-fix 127.0.0.0/8 +
+// ::1 list and (1) fails — the rows compile. That differing pre-fix value is
+// what makes this evidence rather than agreement with whatever the code does.
+// Precisely: it differs for the five spellings TCL-899 added; the three
+// pre-existing ones below are regression cover, and they are honestly not
+// falsified by that revert because the old predicate already refused them.
+//
+// Baseline scope, stated rather than implied: normalizeNetworkAllowEntry is
+// mode-independent, so open and list run the same code path through assertion
+// 1's deny polarity. The list baseline is not decoration anyway — it is the
+// only one where the allow polarity is authorable at all, and the only one
+// where assertion 3 shows a loopback deny beating an authored loopback ALLOW,
+// which is the exact shape the escape lived in.
 func TestLoopbackIdentityCIDRRowsAreUnauthorable(t *testing.T) {
 	// Every spelling of the space match() claims. 127.0.0.0/8 and ::1/128 were
 	// already refused before TCL-899 and are kept so a later narrowing of the

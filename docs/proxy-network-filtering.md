@@ -627,8 +627,11 @@ Its deliberate limits are:
   authoring time rather than reinterpreted, so a profile that already carries
   one stops validating: the editor's preview shows the refusal with
   `{"loopback": true}` named as the remedy, and a launch resolving that profile
-  is refused rather than started. Nothing that was previously denied becomes
-  allowed by this — the invalidated row was inert by definition;
+  is refused rather than started. An **already-persisted session snapshot**
+  carrying such a row is revalidated the same way, so resume, seance, and watch
+  rendering refuse it with `sandbox_profile_changed` until the row is edited.
+  Nothing that was previously denied becomes allowed by this — the invalidated
+  row was inert by definition;
 - a private NSS module the known-resolver list does not cover is outside the
   name-authority guarantee;
 - capability cells are per harness and only activated by a named green smoke; an
