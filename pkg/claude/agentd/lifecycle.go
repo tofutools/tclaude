@@ -3494,10 +3494,10 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		resp["task_ref_url"] = p.TaskURL
 		resp["task_ref_state"] = taskRefBindState(outcome.ConvID, p.TaskURL)
 	}
-	// FocusMode is only ever non-empty when the caller asked for
-	// auto-focus. "browser" means openTerminal couldn't pop a native
-	// window — the dashboard's spawn modal points at focus_ws instead of
-	// claiming success and opening nothing (see spawnOutcome.FocusMode).
+	// FocusMode is only ever non-empty when the caller asked for auto-focus.
+	// "browser" means the dashboard explicitly targeted a web terminal or
+	// openTerminal couldn't pop a native window; in either case the spawn modal
+	// points at focus_ws (see spawnOutcome.FocusMode).
 	if outcome.FocusMode != "" {
 		resp["focus_mode"] = outcome.FocusMode
 		if outcome.FocusMode == "browser" {
@@ -3780,10 +3780,11 @@ type spawnOutcome struct {
 	// FocusMode reports what the auto-focus attempt (if AutoFocus was
 	// requested) actually did: "" (not requested, or the pane never came
 	// up within the poll), "native" (a real GUI terminal window opened),
-	// or "browser" (no native window could be popped — headless agentd,
-	// or no terminal emulator installed — so the caller should fall back
-	// to the in-browser terminal, same as handleDashboardOpenWindowAPI's
-	// mode:"browser"). Set once, by the focusSpawn closure in executeSpawn.
+	// or "browser" (explicit web-terminal target, or no native window could be
+	// popped and the caller should fall back to the in-browser terminal, same as
+	// handleDashboardOpenWindowAPI's mode:"browser"). Usually set by the
+	// focusSpawn closure; a deferred OpenCode response preserves the explicit
+	// browser intent before that closure can run.
 	FocusMode string
 }
 
