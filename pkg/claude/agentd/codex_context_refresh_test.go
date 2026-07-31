@@ -847,6 +847,9 @@ func resetCodexContextRefreshStateForTest() {
 func resetCodexRefreshThrottleForTest(sessionID string) {
 	codexContextRefreshMu.Lock()
 	defer codexContextRefreshMu.Unlock()
+	if codexContextRefreshMu.last == nil {
+		codexContextRefreshMu.last = make(map[string]codexReadThroughSnapshot)
+	}
 	state := codexContextRefreshMu.last[sessionID]
 	state.at = time.Time{}
 	state.checkpointPersistedAt = time.Time{}

@@ -115,13 +115,15 @@ func TestDashboardSnapshot_CodexModelAndEffortSurfaced(t *testing.T) {
 // on every later lifecycle hook. The first accepted main-thread event must
 // advance both sessions.model (dashboard display) and sessions.model_id (resume /
 // reincarnate inheritance). Reasoning effort is not in Codex's hook payload,
-// so it deliberately converges from the rollout at the next Stop instead of
-// introducing a dashboard file poller.
-func TestDashboardSnapshot_CodexRuntimeModelAndEffortChangesConvergeFromHooks(t *testing.T) {
+// so it deliberately converges through agentd's durable incremental rollout
+// follower on a later dashboard refresh. Hooks never read the rollout.
+func TestDashboardSnapshot_CodexRuntimeModelAndEffortChangesConvergeFromHookAndFollower(t *testing.T) {
 	const conv = "019ec004-4250-79b1-9ade-ebaea41590ab"
 	const label = "spwn-codx-switch"
 
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	agentd.ResetCodexRefreshThrottleForTest(label)
+	t.Cleanup(func() { agentd.ResetCodexRefreshThrottleForTest(label) })
 
 	f := newFlow(t)
 	f.HaveGroup("squad")
@@ -166,16 +168,17 @@ func TestDashboardSnapshot_CodexRuntimeModelAndEffortChangesConvergeFromHooks(t 
 	require.NotNil(t, compactAgent)
 	assert.Equal(t, "gpt-5.5", compactAgent.State.Model,
 		"the next accepted Codex hook advances the dashboard model")
-	assert.Equal(t, "medium", compactAgent.State.EffortLevel,
-		"effort waits for the turn-ending rollout read")
+	// Effort may already be xhigh here if this fetch lands outside the follower
+	// throttle window; otherwise it converges on the next polling interval.
 
 	dbSnap, err := db.GetContextSnapshot(label)
 	require.NoError(t, err)
 	assert.Equal(t, "gpt-5.5", dbSnap.ModelID,
 		"the same hook atomically advances the resume-safe model id")
 
-	// Stop is the explicit, event-driven convergence point for effort. There
-	// is still no dashboard rollout polling for model or reasoning effort.
+	// Stop only updates lifecycle state; it does not read the rollout. The next
+	// dashboard polling interval lets the follower consume only newly appended
+	// bytes and converge the effort.
 	require.NoError(t, session.ApplyHook(session.HookCallbackInput{
 		HookEventName:  "Stop",
 		ConvID:         conv,
@@ -183,13 +186,14 @@ func TestDashboardSnapshot_CodexRuntimeModelAndEffortChangesConvergeFromHooks(t 
 		Model:          "gpt-5.5",
 		TranscriptPath: cx.RolloutPath,
 	}, label))
+	agentd.ResetCodexRefreshThrottleForTest(label)
 
 	afterStop := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
 	stoppedAgent := findDashAgent(afterStop, conv)
 	require.NotNil(t, stoppedAgent)
 	assert.Equal(t, "gpt-5.5", stoppedAgent.State.Model)
 	assert.Equal(t, "xhigh", stoppedAgent.State.EffortLevel,
-		"Stop converges the changed Codex reasoning effort")
+		"the incremental follower converges the changed Codex reasoning effort")
 
 	member := findDashMember(afterStop, "squad", conv)
 	require.NotNil(t, member)
