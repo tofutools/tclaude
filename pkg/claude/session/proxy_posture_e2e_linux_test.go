@@ -385,6 +385,17 @@ func runProxyPostureE2ELaunch(
 		WhileRunning:      observer.watch,
 	})
 
+	// The launch derives posture and engine from the axes the launcher plans,
+	// while the assertions above derive them from the authored rules. Both call
+	// the production functions, but they are different seams — so they are
+	// compared rather than assumed equal. If planning ever normalized or widened
+	// a policy, this says so plainly instead of surfacing as a scenario that
+	// mysteriously expected the wrong deployment.
+	require.Equalf(t, deploysProxy, launch.DeploysProxy,
+		"the authored policy and the planned launch disagree about deployment "+
+			"(planned posture %v, engine %v)",
+		launch.Posture, launch.Engine)
+
 	for _, marker := range scenario.Markers {
 		assert.Containsf(t, launch.Output, marker,
 			"the %s scenario must OBSERVE each check executing", scenario.Key)
@@ -394,7 +405,7 @@ func runProxyPostureE2ELaunch(
 	// that never sampled would report "no proxy process" for every scenario,
 	// including the ones that run one.
 	assert.Positivef(t, observer.Samples(),
-		"the host-side proxy-process watch never sampled, so its verdict is worthless")
+		"the host-side proxy-process watch completed no scan of the process table, so its verdict is worthless")
 	assert.Equalf(t, deploysProxy, observer.SawProxy(),
 		"a filtering proxy process was %s while the %s sandbox ran",
 		postureE2EPresence(observer.SawProxy()), scenario.Key)
@@ -520,7 +531,7 @@ func (o *postureE2EProxyProcessObserver) SawProxy() bool {
 }
 
 func (o *postureE2EProxyProcessObserver) watch(
-	t *testing.T,
+	_ *testing.T,
 	done <-chan struct{},
 ) {
 	binary := strings.TrimSpace(os.Getenv(filteredGatewayTclaudeBinaryEnv))
@@ -531,8 +542,15 @@ func (o *postureE2EProxyProcessObserver) watch(
 	ticker := time.NewTicker(25 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		o.samples++
-		if postureE2EProxySupervisorRunning(resolved) {
+		// Only a COMPLETED scan counts. Incrementing unconditionally would make
+		// the caller's anti-vacuity assertion unfalsifiable — it would hold even
+		// if every /proc read had failed, which is precisely the state in which
+		// "no proxy process" means "we never looked".
+		found, scanned := postureE2EProxySupervisorRunning(resolved)
+		if scanned {
+			o.samples++
+		}
+		if found {
 			o.saw = true
 		}
 		select {
@@ -547,15 +565,17 @@ func (o *postureE2EProxyProcessObserver) watch(
 }
 
 // postureE2EProxySupervisorRunning reports whether any live process is this
-// shard's tclaude running as the proxy supervisor.
+// shard's tclaude running as the proxy supervisor, and whether the process
+// table could be read at all. The second return is what separates "no proxy is
+// running" from "this never looked".
 //
 // argv[0] is compared, not just the command line: the /bin/sh that wraps every
 // launch carries the supervisor flag in ITS command line too, and counting that
 // would report a running proxy for a launch whose supervisor never started.
-func postureE2EProxySupervisorRunning(binary string) bool {
+func postureE2EProxySupervisorRunning(binary string) (found, scanned bool) {
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
-		return false
+		return false, false
 	}
 	for _, entry := range entries {
 		if !entry.IsDir() {
@@ -575,10 +595,10 @@ func postureE2EProxySupervisorRunning(binary string) bool {
 			continue
 		}
 		if strings.Contains(string(raw), "--proxy-network-policy") {
-			return true
+			return true, true
 		}
 	}
-	return false
+	return false, true
 }
 
 // ---------------------------------------------------------------------------
@@ -756,7 +776,12 @@ func postureE2ELoopbackOnlyHelper(t *testing.T, fixture postureE2EFixture) {
 	denied := net.JoinHostPort(
 		sandboxpolicy.FilteredNetworkHostLoopbackName,
 		strconv.Itoa(fixture.HostDenied))
-	require.Errorf(t, postureE2ETCPRoundTrip(denied),
+	// Dial-only, deliberately. A round trip fails for a refused connection AND
+	// for a short read or an echo mismatch, so requiring "some error" here would
+	// let a fixture problem stand in for the floor refusing — the one refusal in
+	// this shard that would otherwise not be distinguished from a broken
+	// fixture. The port is LIVE on the host, so a failed connect is the policy.
+	require.Errorf(t, postureE2ETCPDial(denied),
 		"an unauthored host-loopback port must be refused by the floor")
 	fmt.Println("posture-e2e: loopback-only/unauthored host-loopback port: refused")
 }
@@ -884,6 +909,16 @@ func postureE2ETCPRoundTrip(target string) error {
 	return nil
 }
 
+// postureE2ETCPDial reports whether a connection could be established at all,
+// with none of the round trip's other failure modes folded in.
+func postureE2ETCPDial(target string) error {
+	conn, err := net.DialTimeout("tcp", target, postureE2EDialTimeout)
+	if err != nil {
+		return err
+	}
+	return conn.Close()
+}
+
 // postureE2EListeningPorts reports every distinct TCP port listening in the
 // CALLER's network namespace, read from the kernel rather than from a tool the
 // sandbox may not have.
@@ -895,11 +930,13 @@ func postureE2EListeningPorts(t *testing.T) []string {
 	t.Helper()
 	seen := map[string]bool{}
 	ports := []string{}
+	read := 0
 	for _, path := range []string{"/proc/net/tcp", "/proc/net/tcp6"} {
 		file, err := os.Open(path)
 		if err != nil {
 			continue
 		}
+		read++
 		scanner := bufio.NewScanner(file)
 		for scanner.Scan() {
 			fields := strings.Fields(scanner.Text())
@@ -925,5 +962,10 @@ func postureE2EListeningPorts(t *testing.T) []string {
 		require.NoError(t, scanner.Err())
 		require.NoError(t, file.Close())
 	}
+	// An inventory assembled from no table at all is an empty list that means
+	// "could not look", and the scenarios that assert absence would read it as
+	// "nothing was listening".
+	require.Positive(t, read,
+		"neither /proc/net/tcp nor /proc/net/tcp6 could be read; an empty listener inventory would not be evidence")
 	return ports
 }

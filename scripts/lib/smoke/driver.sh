@@ -83,13 +83,13 @@ smoke::load_manifest() {
   done
 }
 
-# smoke::run_flows ENTRYPOINT_DIR LABEL
+# smoke::run_flows LABEL
 #
 # Runs each flow in its own subshell — so a flow's trap, cwd and variables
 # cannot leak into the next — and judges its evidence. Returns non-zero if any
 # flow failed or produced no evidence. Requires SMOKE_ARTIFACTS.
 smoke::run_flows() {
-  local here="$1" label="$2"
+  local label="$1"
   local overall=0
   local -A flow_status=()
   local file name log status evidence_output

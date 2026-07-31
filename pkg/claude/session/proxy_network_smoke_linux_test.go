@@ -361,6 +361,12 @@ type proxyEngineLaunchResult struct {
 	Output    string
 	Home      string
 	Decisions []string
+	// Posture, Engine and DeploysProxy are what the launch DERIVED from the
+	// authored policy, published so a caller compares against the launch's own
+	// answer rather than re-deriving one that could differ.
+	Posture      sandboxpolicy.NetworkPosture
+	Engine       sandboxpolicy.NetworkEngine
+	DeploysProxy bool
 }
 
 // runProxyEngineLaunch builds one real proxy-engine tclaude-layer launch and
@@ -498,9 +504,12 @@ func runProxyEngineLaunch(
 		require.NoErrorf(t, runErr, "proxy smoke output:\n%s", output)
 	}
 	return proxyEngineLaunchResult{
-		Output:    string(output) + proxyLaunchRunError(runErr),
-		Home:      smokeHome,
-		Decisions: readProxyDecisionRecords(t, smokeHome),
+		Output:       string(output) + proxyLaunchRunError(runErr),
+		Home:         smokeHome,
+		Decisions:    readProxyDecisionRecords(t, smokeHome),
+		Posture:      posture,
+		Engine:       deployedEngine,
+		DeploysProxy: deploysProxy,
 	}
 }
 

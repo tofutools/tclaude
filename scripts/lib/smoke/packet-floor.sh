@@ -55,11 +55,22 @@ smoke::packet_floor_prereq_failed() {
 # executable trust walk requires, repairing it where a runner image ships it
 # wrong (TCL-858). A non-root-owned ancestor makes every trusted-executable
 # resolution fail, which surfaces far from its cause.
+#
+# The repair runs only under CI=true; see the comment at the branch.
 smoke::packet_floor_trust_ancestry() {
   local component owner_uid chown_status repaired_uid
   for component in / /usr /usr/lib; do
     owner_uid="$(stat -L -c '%u' "$component")" || return 1
     [[ "$owner_uid" == "0" ]] && continue
+    # The REPAIR is CI-only, deliberately. run.sh has a local escape hatch, and
+    # a developer who takes it must not have `sudo chown root /` run on their
+    # workstation because a runner image once shipped a wrong owner. Outside CI
+    # the mismatch is reported and the flow stops.
+    if [[ "${CI:-}" != "true" ]]; then
+      smoke::packet_floor_prereq_failed \
+        "path component $component is not root-owned (uid $owner_uid); the automatic repair is CI-only, so fix the ownership yourself or run this in CI"
+      return 1
+    fi
     printf '::warning title=Untrusted runner image::TCL-858 trust-walk prerequisite detected: path component "%s" is not root-owned (uid %s); attempting non-recursive sudo chown root\n' \
       "$component" "$owner_uid"
     chown_status=0
