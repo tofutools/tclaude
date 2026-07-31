@@ -46,11 +46,13 @@ func TestDashboardAuditSpawnPopoverChrome(t *testing.T) {
 	srv := httptest.NewServer(agentd.BuildDashboardHandlerForTest())
 	defer srv.Close()
 	outDir := filepath.Join(dashSnapOutRoot(t), "audit-spawn-popover-"+time.Now().Format("20060102-150405.000"))
-	state := dashsnap.State{
-		Key:     "audit-spawn-popover-focus-dismiss",
-		Title:   "Audit spawn details focus and dismissal",
-		Caption: "The [?] disclosure focuses its close control, Escape restores focus to the trigger, and an outside click dismisses it.",
-		JS: `return (async function(){
+	makeState := func(key, title string, wizard bool) dashsnap.State {
+		return dashsnap.State{
+			Key:     key,
+			Title:   title,
+			Caption: "The [?] disclosure focuses its close control, Escape restores focus to the trigger, an outside click dismisses it, and both dashboard scrollbar skins are covered.",
+			Wizard:  wizard,
+			JS: `return (async function(){
 var tab = document.querySelector('nav [data-tab="audit"]');
 if (!tab) throw new Error('audit tab missing');
 tab.click();
@@ -58,9 +60,9 @@ var deadline = Date.now() + 5000;
 while (!document.querySelector('.audit-spawn-info-trigger') && Date.now() < deadline) await new Promise(function(resolve){setTimeout(resolve, 50);});
 if (!document.querySelector('.audit-spawn-info-trigger')) throw new Error('spawn details trigger did not render');
 })();`,
-		Actions: []dashsnap.BrowserAction{
-			{Kind: "click", Selector: ".audit-spawn-info-trigger"},
-			{Kind: "eval", JS: `return new Promise(function(resolve,reject){requestAnimationFrame(function(){requestAnimationFrame(function(){try{
+			Actions: []dashsnap.BrowserAction{
+				{Kind: "click", Selector: ".audit-spawn-info-trigger"},
+				{Kind: "eval", JS: `return new Promise(function(resolve,reject){requestAnimationFrame(function(){requestAnimationFrame(function(){try{
 var panel = document.querySelector('.audit-spawn-popover');
 var close = panel && panel.querySelector('.audit-spawn-popover-close');
 if (!panel || !close) throw new Error('spawn details popover did not open');
@@ -70,20 +72,25 @@ if (!panel.textContent.includes('Request input') || !panel.textContent.includes(
 if (document.activeElement !== close) throw new Error('opening the popover did not focus close');
 resolve();
 }catch(error){reject(error);}});});});`},
-			{Kind: "key", Key: "Escape"},
-			{Kind: "eval", JS: `var trigger = document.querySelector('.audit-spawn-info-trigger');
+				{Kind: "key", Key: "Escape"},
+				{Kind: "eval", JS: `var trigger = document.querySelector('.audit-spawn-info-trigger');
 if (document.querySelector('.audit-spawn-popover')) throw new Error('Escape did not close spawn details');
 				if (trigger.getAttribute('aria-expanded') !== 'false' || document.activeElement !== trigger) throw new Error('Escape did not restore trigger focus');`},
-			{Kind: "click", Selector: ".audit-spawn-info-trigger"},
-			{Kind: "eval", JS: `return new Promise(function(resolve,reject){requestAnimationFrame(function(){requestAnimationFrame(function(){try{
+				{Kind: "click", Selector: ".audit-spawn-info-trigger"},
+				{Kind: "eval", JS: `return new Promise(function(resolve,reject){requestAnimationFrame(function(){requestAnimationFrame(function(){try{
 if (!document.querySelector('.audit-spawn-popover')) throw new Error('spawn details did not reopen');
 resolve();
 }catch(error){reject(error);}});});});`},
-			{Kind: "click", Selector: "#filter-audit"},
-			{Kind: "eval", JS: `if (document.querySelector('.audit-spawn-popover')) throw new Error('outside click did not close spawn details');`},
-		},
+				{Kind: "click", Selector: "#filter-audit"},
+				{Kind: "eval", JS: `if (document.querySelector('.audit-spawn-popover')) throw new Error('outside click did not close spawn details');`},
+			},
+		}
 	}
-	shots, err := dashsnap.Capture(dashsnap.Config{BaseURL: srv.URL, OutDir: outDir, States: []dashsnap.State{state}})
+	states := []dashsnap.State{
+		makeState("audit-spawn-popover-focus-dismiss", "Audit spawn details focus and dismissal", false),
+		makeState("audit-spawn-popover-wizard-scrollbars", "Audit spawn details wizard scrollbars", true),
+	}
+	shots, err := dashsnap.Capture(dashsnap.Config{BaseURL: srv.URL, OutDir: outDir, States: states})
 	if err != nil {
 		t.Fatalf("dashsnap.Capture: %v", err)
 	}
