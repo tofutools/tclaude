@@ -15,9 +15,9 @@ import (
 // Claude side (usage.go) reads a SQLite cache populated by Claude Code's
 // statusline callback and, only when opted in, the Anthropic usage API. Codex
 // has no such endpoint wired in, so the figures are lifted off the rollout
-// files Codex writes locally. Hook callbacks refresh the shared SQLite cache
-// from Codex's transcript_path at turn boundaries; the poller below is a
-// repair path so a missed hook or daemon restart still discovers a last-known
+// files Codex writes locally. The dashboard's retained telemetry followers
+// refresh the shared SQLite cache for live rows; the poller below is a repair
+// path so a quiet dashboard or daemon restart still discovers a last-known
 // snapshot without making the 2-second /api/snapshot tick walk
 // ~/.codex/sessions.
 

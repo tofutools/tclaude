@@ -174,9 +174,10 @@ func LatestCodexUsage(home string, since time.Time) (*CodexUsage, error) {
 
 // LatestCodexUsageForConvs scans the rollout directory enough to locate the
 // provided Codex session ids, then reads only those rollout files for the
-// newest rate-limit snapshot. It is the repair-poller path: hooks update from
-// transcript_path directly, while this narrows fallback work to tclaude's live
-// Codex sessions instead of reading every recent rollout on every interval.
+// newest rate-limit snapshot. It is the repair-poller path: dashboard runtime
+// telemetry normally updates the cache, while this narrows fallback work to
+// tclaude's live Codex sessions instead of reading every recent rollout on
+// every interval.
 func LatestCodexUsageForConvs(home string, convIDs []string, since time.Time) (*CodexUsage, error) {
 	if len(convIDs) == 0 {
 		return nil, nil
