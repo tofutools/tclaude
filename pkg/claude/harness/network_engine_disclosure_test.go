@@ -625,11 +625,20 @@ func TestProxyEngineDenyLoopbackRatingMatchesTheEvaluator(t *testing.T) {
 
 			// Every spelling a client could state, including the one an escape
 			// would use: the literal rather than the name.
+			//
+			// The verdict is compared, not just Allowed(). Host loopback is the
+			// one destination no baseline ever reaches on its own — an open
+			// baseline explicitly declines to default-accept it — so "not
+			// allowed" is the answer here whether the deny row matched or
+			// matched nothing at all. Only VerdictDeniedByRule distinguishes
+			// the rating's actual premise from that ambient refusal.
 			for _, spelling := range []string{"localhost", "127.0.0.1", "::1"} {
 				target, err := sandboxproxy.ParseTarget(spelling, 8080)
 				require.NoErrorf(t, err, "spelling %s", spelling)
-				assert.Falsef(t, evaluator.Evaluate(target).Allowed(),
-					"a loopback deny must hold for the %s spelling too", spelling)
+				assert.Equalf(t, sandboxproxy.VerdictDeniedByRule,
+					evaluator.Evaluate(target).Verdict,
+					"the loopback deny must MATCH the %s spelling, not merely leave it unauthorized",
+					spelling)
 			}
 
 			for _, activated := range []*Harness{Default(), MustGet(CodexName)} {
