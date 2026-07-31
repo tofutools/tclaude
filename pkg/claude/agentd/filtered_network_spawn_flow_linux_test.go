@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -428,12 +429,27 @@ func TestLocalPresetsOpenCodeProxyEngineRefusesForTheProviderNotThePreset(t *tes
 	require.Equalf(t, http.StatusUnprocessableEntity, resp.Code,
 		"spawn body=%s", resp.Raw)
 	failure := decodeFailure(t, resp.Raw)
-	assert.Equal(t, harness.SandboxCapabilityModelTransport, failure.Code)
+	// The load-bearing half, and it holds on ANY host: whatever refuses this
+	// launch, it is no longer the packet gateway's preset refusal. Revert the
+	// gate and this is exactly the message that comes back.
 	assert.NotContains(t, failure.Error, "local presets name no explicit provider",
 		"the packet gateway's preset refusal must not be rendered for a proxy launch")
+	assert.Empty(t, resp.ConvID)
+
+	// The other half needs the launch to get PAST the floor, and the ordinary
+	// test job has no bubblewrap. Asserting it unconditionally would make this
+	// test depend on a host capability it is not about, so the floor's own
+	// refusal is recognized and reported rather than silently accepted.
+	if strings.Contains(failure.Error, "bwrap") ||
+		strings.Contains(failure.Error, "bubblewrap") ||
+		strings.Contains(failure.Error, "user namespaces") {
+		t.Logf("floor unavailable on this host, so only the preset-refusal half is asserted: %s",
+			failure.Error)
+		return
+	}
+	assert.Equal(t, harness.SandboxCapabilityModelTransport, failure.Code)
 	assert.Contains(t, failure.Error, "explicit provider/model launch model",
 		"the engine-independent model-transport contract still binds this launch")
-	assert.Empty(t, resp.ConvID)
 }
 
 // TestProxyEngineSpawnOmitsThePacketPrerequisiteNotice is the daemon-spawn half
