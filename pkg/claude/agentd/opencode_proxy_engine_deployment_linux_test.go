@@ -15,6 +15,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/sandboxproxy"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
@@ -147,30 +148,50 @@ func TestOpenCodeUnixRelayDeploysTheProxyEngine(t *testing.T) {
 		"the inherited relay must name the listener descriptor the accessor reports")
 }
 
-// TestOpenCodeProxyEngineCellsStayUnenforced still asserts EnforceNone, and
-// THE REASON HAS CHANGED — which is the whole point of keeping it in this PR
-// rather than deleting or flipping it.
+// TestOpenCodeProxyEngineCellsFollowTheActivationRecord replaces
+// TestOpenCodeProxyEngineCellsStayUnenforced, and it moves in the same commit
+// as the record it follows — which is the rule, not a convenience.
 //
-// Until TCL-891 the cells were unenforced because the launch seam refused to
-// deploy the engine at all: there was nothing to rate, and no amount of
-// evidence could have changed that. The lift above removes that reason. What
-// keeps the cells at EnforceNone now is the activation rule itself: a cell
-// flips only in the PR carrying the green named smoke that justifies it, and
-// this PR makes no activation record. OpenCode is still absent from
-// proxyEngineActivatedSmokes, so the honest rating is still "not measured".
+// The history in one line each, because the reason has now changed twice and a
+// reader deserves to know which one is current:
 //
-// So this test is now the guard on the ORDERING rather than on the refusal: it
-// fails the moment someone adds the OpenCode row without the flip PR's ratings
-// and disclosure work, and it fails if the lift is mistaken for an activation.
+//   - before TCL-891, unenforced because the launch seam REFUSED this engine
+//     and there was nothing to rate;
+//   - during TCL-891's first PR, unenforced because the seam could deploy it
+//     but no ACTIVATION RECORD had been made;
+//   - now, enforced because the record exists, made from the green named run
+//     of the floor smoke that PR added.
 //
-// The rating is asked of the REAL evaluator rather than of the activation map,
-// because the map being empty and the evaluator agreeing are two different
-// facts and only the second one is what an operator sees.
+// ON SHOWING THAT THE PRE-FLIP VALUE DIFFERS, and where that is honestly
+// possible. The concern is real: an assertion that only checks the enforced
+// value would pass unchanged on a tree where the ratings branch had been made
+// unconditional — the same shape as the deny-name over-claim TCL-884 caught.
 //
-// Platform is passed explicitly rather than taken from runtime.GOOS so the
+// The tempting in-test comparison is the Darwin row, and it is a TRAP. Darwin's
+// cells are EnforceNone for a reason that DOMINATES the record lookup (the
+// proxy-cells branch is not reached there at all), so requiring linux != darwin
+// would pass whether or not the record gates anything, and would advertise a
+// guarantee this test does not have. Verified rather than assumed: with the
+// platform gate removed from proxyEngineActivated, the Darwin rating is still
+// EnforceNone.
+//
+// So the coupling is pinned where it is real — on the record and the predicate,
+// in TestProxyEngineActivationIsScopedToItsEvidence, whose two halves are each
+// falsifiability-verified — and the revert check for THIS test was done by hand
+// and recorded in the PR: with the OpenCode row removed from the record, every
+// assertion below fails. The Darwin read is kept, but only for the claim it can
+// actually support: that the not-activated sentence still reaches an operator
+// somewhere.
+//
+// Ratings are asked of the REAL evaluator in BOTH baselines below rather than
+// read off the activation map, because the map having a row and the enforcement
+// actually being deliverable are two different facts, and only the second is
+// what an operator relies on.
+//
+// Platform is passed explicitly rather than taken from runtime.GOOS so each
 // assertion states which platform it is about — GOOS=darwin go vet cannot see
 // into a runtime.GOOS branch (TCL-884 handoff §3.4).
-func TestOpenCodeProxyEngineCellsStayUnenforced(t *testing.T) {
+func TestOpenCodeProxyEngineCellsFollowTheActivationRecord(t *testing.T) {
 	snapshot := openCodeProxyEngineSnapshot()
 	axes, err := sandboxpolicy.PlannedEffectiveAccessAxes(snapshot.Effective)
 	require.NoError(t, err)
@@ -180,15 +201,212 @@ func TestOpenCodeProxyEngineCellsStayUnenforced(t *testing.T) {
 		sandboxpolicy.ImplementationTclaudeLayer, axes, "", "linux",
 	)
 	require.NoError(t, err)
-	assert.Equal(t, harness.EnforceNone, predicted.NetworkList,
-		"OpenCode's proxy-engine allow cells have no activation record to rate from")
-	assert.Empty(t, predicted.NetworkSelectors)
-	assert.Equal(t, harness.EnforceNone, predicted.NetworkPorts)
-	assert.Empty(t, harness.ProxyEngineActivationSmokes(harness.OpenCodeName),
-		"the seam can deploy the engine now, but no green named smoke has been recorded for it")
-	assert.Contains(t, predicted.NetworkEngineDetail,
+	assert.Equal(t, harness.EnforceFull, predicted.NetworkList,
+		"OpenCode's proxy-engine allow cells are backed by a green named smoke")
+	assert.Equal(t, harness.EnforceFull, predicted.NetworkPorts)
+	assert.NotEmpty(t, predicted.NetworkSelectors)
+	assert.Contains(t,
+		harness.ProxyEngineActivationSmokes(harness.OpenCodeName),
+		"TestOpenCodeProxyFloorCooperation",
+		"the row must name the smoke that actually measured OpenCode behind the floor")
+
+	// Darwin, read for the ONE claim it can support: the not-activated sentence
+	// is still reachable for this harness somewhere, so the assertion below
+	// that it has retired on Linux is a change rather than a disappearance.
+	// Deliberately NOT used as proof that the rating is gated on evidence — see
+	// the header.
+	unactivated, err := harness.PredictAccessEnforcement(
+		harness.MustGet(harness.OpenCodeName),
+		sandboxpolicy.ImplementationTclaudeLayer, axes, "", "darwin",
+	)
+	require.NoError(t, err)
+	assert.Equal(t, harness.EnforceNone, unactivated.NetworkList)
+
+	// §5.3, both halves. The not-activated sentence retires; the carriage
+	// sentence stays, because activation changes what is ENFORCED and not what
+	// the engine CARRIES.
+	assert.NotContains(t, predicted.NetworkEngineDetail,
 		harness.ProxyEngineNotActivatedNotice,
-		"the operator-facing surface must keep saying these cells are not activated")
+		"an activated harness must not still say its cells are unactivated")
+	assert.Contains(t, predicted.NetworkEngineDetail,
+		harness.ProxyEngineCarriageNotice)
+	assert.Contains(t, unactivated.NetworkEngineDetail,
+		harness.ProxyEngineNotActivatedNotice,
+		"the unactivated platform must still disclose that it is not activated")
+
+	// PREVIEW AND RUNTIME MUST NOT DISAGREE. The model-transport gate that
+	// refuses an OpenCode filtered launch without an explicit provider/model is
+	// ENGINE-INDEPENDENT — it fires for any filtered posture — so an activated
+	// proxy row that did not carry its caveat would render network.list Full
+	// for a launch then refused with unsupported_filtered_model_transport.
+	//
+	// This was invisible until the flip: while these cells were EnforceNone the
+	// condition string was never populated for OpenCode, so activation is what
+	// exposed the gap. The packet branch has carried the same caveat all along.
+	assert.Contains(t, predicted.NetworkListCondition,
+		harness.OpenCodeFilteredExplicitProviderCaveat,
+		"an activated OpenCode proxy row must disclose the explicit-provider launch gate")
+
+	// And on the deny selectors, because a deny-only profile has no allow list
+	// and would never reach the condition above.
+	denyOnly := sandboxpolicy.EmptySnapshot()
+	denyOnly.Effective.Network = &sandboxpolicy.NetworkRules{
+		Mode:   sandboxpolicy.AccessModeOpen,
+		Engine: sandboxpolicy.NetworkEngineProxy,
+		Deny: []sandboxpolicy.NetworkAllowEntry{
+			{Host: "telemetry.example", Ports: []int{443}},
+		},
+	}
+	denyAxes, err := sandboxpolicy.PlannedEffectiveAccessAxes(denyOnly.Effective)
+	require.NoError(t, err)
+	denyPredicted, err := harness.PredictAccessEnforcement(
+		harness.MustGet(harness.OpenCodeName),
+		sandboxpolicy.ImplementationTclaudeLayer, denyAxes, "", "linux",
+	)
+	require.NoError(t, err)
+	require.NotEmpty(t, denyPredicted.NetworkDenySelectors,
+		"a deny-only proxy profile must rate its deny selectors, or this assertion has no subject")
+	for _, capability := range denyPredicted.NetworkDenySelectors {
+		assert.Containsf(t, capability.Detail,
+			harness.OpenCodeFilteredExplicitProviderCaveat,
+			"deny selector %s must carry the launch gate a deny-only profile cannot read elsewhere",
+			capability.Selector)
+	}
+
+	// The per-harness carriage fact this ticket turns on, and it is asserted
+	// HERE rather than only in the harness package because this is the OpenCode
+	// launch path's own test: OpenCode 1.18.6 carries over HTTP CONNECT and
+	// ignores ALL_PROXY, so SOCKS-dependent destinations are BLOCKED by the
+	// floor rather than filtered by the policy. Saying so is what stops the
+	// activated row reading as a broader claim than the measurement supports.
+	assert.Contains(t, predicted.NetworkEngineDetail,
+		harness.ProxyEngineOpenCodeCarriageNotice)
+}
+
+// TestOpenCodeProxyEngineRatingsMatchTheEvaluator asserts the flipped cells
+// against the REAL evaluator — the same one the running proxy compiles — in
+// BOTH baselines, per the standard adopted after TCL-884's over-claim.
+//
+// The over-claim survived review because every proxy assertion ran against a
+// `mode: list` policy, the shape where the rating is least wrong. Asking both
+// baselines is what makes a rating an observation of the mechanism rather than
+// a second opinion about it.
+//
+// NOT REDUNDANT with the harness package's equivalents, and the reason is worth
+// stating because the overlap is obvious and the difference is not: those tests
+// iterate the ACTIVATED SET, so removing OpenCode from the record removes it
+// from their coverage too and they would still pass. This one names the harness,
+// so it fails when the row goes — which is what ties the ratings to the record
+// rather than to whoever happens to be listed.
+func TestOpenCodeProxyEngineRatingsMatchTheEvaluator(t *testing.T) {
+	const denied = "denied.example.com"
+	const deniedAddr = "93.184.216.34"
+
+	for _, baseline := range []struct {
+		name  string
+		rules sandboxpolicy.NetworkRules
+	}{
+		{
+			// Open baseline: the literal is simply allowed, so a name deny is
+			// escaped by asking for the address.
+			name: "open",
+			rules: sandboxpolicy.NetworkRules{
+				Mode:   sandboxpolicy.AccessModeOpen,
+				Deny:   []sandboxpolicy.NetworkAllowEntry{{Host: denied}},
+				Engine: sandboxpolicy.NetworkEngineProxy,
+			},
+		},
+		{
+			// Allowlist baseline with a covering cidr row: the literal is
+			// allowed by that row, so the deny is escaped with no DNS trickery
+			// at all.
+			name: "list",
+			rules: sandboxpolicy.NetworkRules{
+				Mode: sandboxpolicy.AccessModeList,
+				Allow: []sandboxpolicy.NetworkAllowEntry{
+					{CIDR: "93.184.216.0/24", Ports: []int{443}},
+				},
+				Deny:   []sandboxpolicy.NetworkAllowEntry{{Host: denied}},
+				Engine: sandboxpolicy.NetworkEngineProxy,
+			},
+		},
+	} {
+		t.Run(baseline.name, func(t *testing.T) {
+			evaluator, err := sandboxproxy.NewEvaluator(baseline.rules)
+			require.NoError(t, err)
+
+			byName, err := sandboxproxy.ParseTarget(denied, 443)
+			require.NoError(t, err)
+			require.False(t, evaluator.Evaluate(byName).Allowed(),
+				"the deny must hold for the name it was authored against")
+			byLiteral, err := sandboxproxy.ParseTarget(deniedAddr, 443)
+			require.NoError(t, err)
+			escaped := evaluator.Evaluate(byLiteral).Allowed()
+			// REQUIRED, not merely branched on. The interesting assertion below
+			// lives inside `if escaped`, so an evaluator that stopped carrying
+			// the literal past the deny would make this subtest assert nothing
+			// and still pass. If that ever becomes false the rating should be
+			// revisited, not silently skipped.
+			require.Truef(t, escaped,
+				"%s baseline: the literal must still escape the name deny, or this baseline tests nothing",
+				baseline.name)
+
+			predicted, err := harness.PredictAccessEnforcement(
+				harness.MustGet(harness.OpenCodeName),
+				sandboxpolicy.ImplementationTclaudeLayer,
+				sandboxpolicy.ResolvedAxes{Network: baseline.rules}, "", "linux",
+			)
+			require.NoError(t, err)
+			capability, ok := openCodeNetworkDenySelector(
+				predicted, sandboxpolicy.NetworkSelectorHost)
+			require.True(t, ok)
+			if escaped {
+				assert.NotEqual(t, harness.EnforceFull, capability.Level,
+					"the evaluator carried %s:443 past a deny on %s, so OpenCode's cell must not claim full enforcement",
+					deniedAddr, denied)
+				assert.NotEmpty(t, capability.Detail,
+					"a partial rating must say what it does not cover")
+			}
+
+			// Deny loopback is Full and CORRECT, evaluator-asserted since
+			// TCL-888 and deliberately not touched here: every loopback
+			// spelling is folded into one identity before matching, so there is
+			// no by-address restatement to walk past the deny.
+			loopbackRules := baseline.rules
+			loopbackRules.Deny = []sandboxpolicy.NetworkAllowEntry{{Loopback: true}}
+			loopbackEvaluator, err := sandboxproxy.NewEvaluator(loopbackRules)
+			require.NoError(t, err)
+			for _, spelling := range []string{"127.0.0.1", "localhost", "::1"} {
+				target, parseErr := sandboxproxy.ParseTarget(spelling, 443)
+				require.NoError(t, parseErr)
+				assert.Falsef(t, loopbackEvaluator.Evaluate(target).Allowed(),
+					"loopback spelling %s must not escape a loopback deny", spelling)
+			}
+			loopbackPredicted, err := harness.PredictAccessEnforcement(
+				harness.MustGet(harness.OpenCodeName),
+				sandboxpolicy.ImplementationTclaudeLayer,
+				sandboxpolicy.ResolvedAxes{Network: loopbackRules}, "", "linux",
+			)
+			require.NoError(t, err)
+			loopback, ok := openCodeNetworkDenySelector(
+				loopbackPredicted, sandboxpolicy.NetworkSelectorLoopback)
+			require.True(t, ok)
+			assert.Equal(t, harness.EnforceFull, loopback.Level,
+				"no loopback spelling escapes the deny, so Full is the honest rating")
+		})
+	}
+}
+
+func openCodeNetworkDenySelector(
+	predicted harness.PredictedAccessEnforcement,
+	selector sandboxpolicy.NetworkSelectorKind,
+) (harness.NetworkSelectorCapability, bool) {
+	for _, capability := range predicted.NetworkDenySelectors {
+		if capability.Selector == string(selector) {
+			return capability, true
+		}
+	}
+	return harness.NetworkSelectorCapability{}, false
 }
 
 // openCodeProxyEngineSnapshot authors the one profile both tests above are

@@ -456,34 +456,69 @@ named CI smoke. Cells follow the activation record
 (`proxyEngineActivatedSmokes`), never a proposal and never a static scan of a
 binary.
 
-Currently activated: **Claude Code 2.1.220 and Codex 0.145.0, on Linux**, both
-backed by `TestPinnedProxyHarnessCooperation` and `TestPinnedProxyToolEgress`.
-Codex was activated one milestone after Claude Code, from the same runs rather
-than from new ones — the evidence was green from the first shard run, and what
-was missing was the record, which is the rule working rather than an exception
-to it.
+Currently activated: **Claude Code 2.1.220, Codex 0.145.0 and OpenCode 1.18.6,
+on Linux.** The two plain-CLI harnesses are backed by
+`TestPinnedProxyHarnessCooperation` and `TestPinnedProxyToolEgress`; Codex was
+activated one milestone after Claude Code, from the same runs rather than from
+new ones — the evidence was green from the first shard run, and what was missing
+was the record, which is the rule working rather than an exception to it.
 
-OpenCode is not activated; a profile that selects `engine: proxy` for it widens
-to open with a notice naming activation as the reason
-(`ProxyEngineNotActivatedNotice`), rather than silently claiming enforcement.
+OpenCode (TCL-891) is backed by `TestOpenCodeProxyFloorCooperation`
+(smoke flow `40-opencode-floor`, green named run `30654121316`) plus the shared
+floor row `TestPinnedProxyToolEgress`. Unlike Codex, it proves something new:
+OpenCode launches through the agentd-owned Unix-relay server boundary rather
+than as a plain CLI, and that boundary **refused this engine outright** until
+TCL-891 generalized the inherited-descriptor contract from the packet
+supervisor's fd layout to both engines. Its row therefore rests on a smoke that
+had no way to exist before, not on a second reading of the plain-CLI runs.
 
-The reason it is not activated has changed, and the distinction matters when
-reading the cells. Until TCL-891 the agentd-owned Unix-relay boundary OpenCode
-launches through refused to deploy this engine at all — its inherited-descriptor
-contract was written against the packet gateway's exact fd layout — so no
-evidence about a floor was even obtainable. That contract has been generalized
-to both engines, and `TestOpenCodeProxyFloorCooperation` (smoke flow
-`40-opencode-floor`) now measures OpenCode behind the real floor. What is still
-missing is the activation record itself: a cell flips only in the PR that makes
-the record citing a green named run, so the cells stay `EnforceNone` until then.
+Two facts about that row, and they have **different subjects** — conflating them
+is the easiest mistake to make here:
 
-One measured fact about OpenCode 1.18.6 constrains what its row will be able to
-claim: it carries model traffic over **HTTP CONNECT** and ignores `ALL_PROXY`
-entirely (`TestOpenCodeProxyCarriageCooperation`, flow `30-opencode-carriage`,
-which offers one carriage per launch precisely so that question can be
-isolated). Under this engine that is contained rather than leaked — traffic a
-client does not carry has no route out of the empty namespace — but any
-SOCKS-dependent expressibility is absent for this harness.
+- **The floor** refuses undeclared destinations (`not_authorized`) and deny-row
+  destinations (`denied_by_rule`) over **both carriages**, and carries an
+  authorized destination over both, all observed executing in one launch by an
+  in-namespace cooperating client.
+- **OpenCode itself** carries model traffic over **HTTP CONNECT only** and
+  ignores `ALL_PROXY`, measured under one-carriage isolation in
+  `TestOpenCodeProxyCarriageCooperation` (flow `30-opencode-carriage`) and
+  reproduced behind the real floor.
+
+The consequence is a **per-harness disclosure, not a rating change**
+(`ProxyEngineOpenCodeCarriageNotice`), and its scope matters: the measured fact
+is about OpenCode's **own model path**, so an authored rule that only a
+SOCKS5-carried *model request* would reach is never exercised by this harness.
+
+It is **not** a claim about the sandbox. The launcher injects
+`ALL_PROXY=socks5h://…` into every proxy-engine launch and the proxy serves
+SOCKS5 on that endpoint, so a tool or subprocess that honors it — `curl`, `git`,
+`go`, `pip`, an MCP stdio server — does use the SOCKS5 carriage and **is filtered
+by the authored policy**. The floor arm's own in-namespace probe proves it inside
+an OpenCode launch: it carries its declared destination over SOCKS5 and the
+policy allows it. OpenCode's *tool* egress has not been measured, and the
+disclosure says so rather than guessing either way.
+
+The selector cells are unchanged — host, domain, cidr, port and loopback are all
+expressible over HTTP CONNECT, and the cells rate what the evaluator enforces.
+The two plain-CLI harnesses carry no such sentence because their model path is
+not the open question: `TestPinnedProxyToolEgress` records their ordinary tool
+traffic carrying over both carriages.
+
+With every registered harness now listed on Linux, the activation rule's
+"a harness with no record stays unenforced" case has no registered Linux subject
+left. `TestProxyEngineActivationIsScopedToItsEvidence` keeps it under test at the
+level where it is still real: the record lookup's fail-closed default for a name
+the record does not mention, plus a check that no row is present-but-empty (which
+would activate cells naming no evidence).
+
+The Darwin boundary beside it asserts the platform gate **directly** as well as
+through a rating, and the reason is a trap worth recording. For ordinary
+allow-list axes the Darwin rating is `EnforceNone` for an earlier reason too, so
+a rating-only assertion would not fail if the platform gate were deleted. The
+axes that *do* reach the proxy branch on Darwin are loopback-only allow rows plus
+a deny row — `NetworkRulesAreLoopbackOnly` ignores `Deny`, so the readiness check
+holds while the deny row still selects the engine — and that shape is asserted
+too. The domination is therefore **axes-specific, not structural**.
 
 What the first activation run (on-main run `30609001363`) actually showed, as
 distinct from what was hypothesized:
