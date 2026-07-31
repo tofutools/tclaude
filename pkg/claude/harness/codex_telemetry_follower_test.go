@@ -224,6 +224,10 @@ func TestCodexTelemetryFollower_AggregatesNestedChildOwnedCostExactlyOnce(t *tes
 	appendRolloutEnvelope(t, child, "turn_context", map[string]any{"model": "gpt-5.6-sol"})
 	appendTokenCount(t, child, 100, 0, 100)
 	appendSubagentActivity(t, child, grandID, "started", "")
+	// Real child rollouts reference the parent again when collaboration
+	// messages/results cross the boundary. Those are not descendant edges.
+	appendSubagentActivity(t, child, rootID, "interacted", "")
+	appendSubagentActivity(t, child, rootID, "interrupted", "")
 
 	grand := followerTestRolloutPath(t, home, grandID)
 	appendRolloutEnvelope(t, grand, "session_meta", map[string]any{"id": grandID})
@@ -231,13 +235,31 @@ func TestCodexTelemetryFollower_AggregatesNestedChildOwnedCostExactlyOnce(t *tes
 	appendTokenCount(t, grand, 100, 0, 100)
 
 	follower := &CodexTelemetryFollower{}
-	got, err := follower.RuntimeTelemetry(home, rootID)
-	require.NoError(t, err)
+	type telemetryResult struct {
+		snap CodexRuntimeSnapshot
+		err  error
+	}
+	result := make(chan telemetryResult, 1)
+	go func() {
+		snap, err := follower.RuntimeTelemetry(home, rootID)
+		result <- telemetryResult{snap: snap, err: err}
+	}()
+	var got CodexRuntimeSnapshot
+	select {
+	case completed := <-result:
+		require.NoError(t, completed.err)
+		got = completed.snap
+	case <-time.After(2 * time.Second):
+		t.Fatal("parent back-reference created a cyclic follower deadlock")
+	}
 	require.True(t, got.HasCost)
 	assert.InDelta(t, 0.00072, got.Cost.CostUSD, 1e-12,
 		"root + child + grandchild are priced once; copied root history is excluded")
 	require.Len(t, got.CostHistory, 1)
 	assert.InDelta(t, got.Cost.CostUSD, got.CostHistory[0].CostUSD, 1e-12)
+	require.Contains(t, follower.children, childID)
+	assert.NotContains(t, follower.children[childID].state.discoveredSubagents, rootID,
+		"child-to-parent collaboration activity is not a spawn edge")
 
 	checkpoint, ok, err := follower.Checkpoint()
 	require.NoError(t, err)
