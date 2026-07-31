@@ -79,7 +79,7 @@ runs each in a subshell, so a flow cannot leak state into the next.
 
 `go test` exits 0 for a skipped test, for a `-run` filter that matches nothing,
 and for a package with no test files. **An exit status is not evidence.**
-`lib/evidence.sh` is, and it refuses:
+`scripts/lib/smoke/evidence.sh` is, and it refuses:
 
 | shape | why it is not evidence |
 | -- | -- |
@@ -98,7 +98,9 @@ like a rename applied consistently to both the test and the manifest, it is a
 review question.
 
 `run.sh` proves all of that against synthetic logs **before** it runs anything,
-so a checker that has rotted fails the run instead of passing every flow.
+so a checker that has rotted fails the run instead of passing every flow. The
+checker, its self-test and the drift guards are shared with every other smoke
+shard, so this is proven once rather than once per shard.
 
 It also refuses manifest drift in both directions: a flow with no manifest
 entry (a smoke that cannot fail) and a manifest entry with no flow (evidence

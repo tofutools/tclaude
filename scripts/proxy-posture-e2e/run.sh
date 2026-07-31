@@ -107,4 +107,4 @@ smoke::unlock_userns
 
 # 4. Run each flow in a subshell so a flow's trap, cwd and variables cannot leak
 #    into the next one, then check its evidence.
-smoke::run_flows "$here" "Proxy-posture e2e"
+smoke::run_flows "Proxy-posture e2e"

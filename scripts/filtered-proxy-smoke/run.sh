@@ -116,4 +116,4 @@ harnesses::install_claude
 
 # 4. Run each flow in a subshell so a flow's trap, cwd and variables cannot leak
 #    into the next one, then check its evidence.
-smoke::run_flows "$here" "Filtered-proxy smoke"
+smoke::run_flows "Filtered-proxy smoke"
