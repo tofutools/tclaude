@@ -128,6 +128,45 @@ func TestOpenCodeAgent_SlowBootReturnsPendingThenEnrollsInBackground(t *testing.
 	assert.Equal(t, resp.AgentID, boundAgentID, "background enrollment binds the reserved identity")
 }
 
+// Scenario: a cold OpenCode boot returns Pending before its tmux pane exists,
+// while the dashboard requested Auto focus with web terminals as its target.
+//
+// Expected: the pending response still carries the browser attach handshake.
+// The dashboard can open the Terminals-tab pane immediately and let the web
+// terminal's bounded startup retries bridge the deferred pane launch; the
+// continuation must never open a native terminal as a side effect.
+func TestOpenCodeAgent_SlowBootPreservesWebAutoFocus(t *testing.T) {
+	f := newFlow(t)
+	t.Cleanup(agentd.SetOpenCodeAsyncSpawnResponseGraceForTest(20 * time.Millisecond))
+
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
+	blockedOpenCodeRuntime(t, release, nil)
+
+	openedNative := false
+	t.Cleanup(agentd.SetOpenTerminalForTest(func(string) error {
+		openedNative = true
+		return nil
+	}))
+
+	f.HaveGroup("oc-crew")
+	resp := f.AsHuman().SpawnWith("oc-crew", map[string]any{
+		"name": "oc-worker", "harness": "opencode",
+		"auto_focus": true, "auto_focus_web": true,
+	})
+	require.Equal(t, 200, resp.Code, "raw=%s", resp.Raw)
+	require.Empty(t, resp.ConvID, "cold launch should return Pending")
+	assert.Equal(t, "browser", resp.FocusMode)
+	assert.Equal(t, "/api/spawn-focus-ws/"+resp.Label, resp.FocusWS)
+	assert.False(t, openedNative)
+
+	releaseOnce.Do(func() { close(release) })
+	f.AssertGroupMember("oc-crew", "ses_"+resp.Label, "oc-worker", 10*time.Second)
+	agentd.WaitForBackgroundForTest()
+	assert.False(t, openedNative, "deferred web auto-focus must never open a native terminal")
+}
+
 // Scenario (cold-review regression, PR #1496 finding 1): the operator's
 // legacy-injection revert (SpawnLegacyInjection) turns launch enrollment off,
 // which used to let the deferred continuation fall into the reservedPending

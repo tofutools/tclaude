@@ -5262,8 +5262,18 @@ func executeServerSpawnDeferred(g *db.AgentGroup, p spawnParams, syncProofCleanu
 	mu.Unlock()
 	slog.Info("spawn: OpenCode launch continues in background; recorded pending spawn",
 		"label", label, "group", g.Name)
+	// A deferred OpenCode launch has no pane yet, so the continuation cannot
+	// deliver its eventual browser-focus outcome back through this already-
+	// returned request. Hand the dashboard the label-keyed websocket now; the
+	// terminal client's bounded initial retries bridge the pane coming online.
+	// Native auto-focus remains continuation-owned because agentd can open that
+	// window itself once the pane exists.
+	focusMode := ""
+	if p.AutoFocus && p.AutoFocusWeb {
+		focusMode = "browser"
+	}
 	return &spawnOutcome{AgentID: p.AgentID, ConvID: "", Label: label,
-		Harness: p.Harness, Model: p.Model, Effort: p.Effort}, nil
+		Harness: p.Harness, Model: p.Model, Effort: p.Effort, FocusMode: focusMode}, nil
 }
 
 // surfaceDeferredSpawnFailure lands a deferred spawn failure in the dashboard
