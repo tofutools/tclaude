@@ -145,6 +145,11 @@ func TestUnmapPrefixIsAddressSetPreserving(t *testing.T) {
 	prefixes := []string{
 		"::ffff:10.0.0.0/104", "::ffff:172.16.0.0/108",
 		"::ffff:192.168.1.0/120", "::ffff:8.8.8.8/128",
+		// Deliberately NOT canonical: host bits are set below the prefix
+		// length. Every other spelling here is already masked, so without this
+		// row nothing in the suite exercises UnmapPrefix's internal Masked()
+		// call — the sole production caller masks before calling.
+		"::ffff:10.0.0.5/104",
 	}
 	probes := []string{
 		"10.0.0.1", "10.255.255.255", "11.0.0.1", "172.16.0.1", "172.32.0.1",
@@ -153,6 +158,14 @@ func TestUnmapPrefixIsAddressSetPreserving(t *testing.T) {
 	for _, spelling := range prefixes {
 		authored := netip.MustParsePrefix(spelling)
 		unmapped := UnmapPrefix(authored)
+		// Contains masks both operands, so it is invariant to a prefix's own
+		// host bits and can NEVER detect whether UnmapPrefix masked. The
+		// canonical-form assertion is what pins that half of the contract;
+		// without it, removing the internal Masked() leaves this test green.
+		if unmapped != unmapped.Masked() {
+			t.Fatalf("%s: UnmapPrefix returned non-canonical %s (want %s)",
+				spelling, unmapped, unmapped.Masked())
+		}
 		for _, probe := range probes {
 			v4 := netip.MustParseAddr(probe)
 			mapped := netip.AddrFrom16(v4.As16())

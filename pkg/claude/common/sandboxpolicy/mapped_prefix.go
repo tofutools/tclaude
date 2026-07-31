@@ -12,7 +12,7 @@ var mappedIPv4Block = netip.MustParsePrefix("::ffff:0:0/96")
 
 // UnmapPrefix rewrites an IPv4-mapped IPv6 prefix to the IPv4 prefix naming
 // exactly the same addresses (::ffff:10.0.0.0/104 -> 10.0.0.0/8), and returns
-// every other prefix unchanged.
+// every other prefix masked but otherwise unchanged.
 //
 // This exists because a cidr row is stored in whatever form the operator
 // authored, while every target is unmapped before matching, and
@@ -30,7 +30,8 @@ var mappedIPv4Block = netip.MustParsePrefix("::ffff:0:0/96")
 // refuses it. So every mapped prefix that survives authoring is at least /96
 // and lies wholly inside the block, where the bit arithmetic below is exact.
 // There is no residue of partially-normalizable rows needing a second policy.
-// The returned prefix is ALWAYS masked — on the pass-through paths as much as
+//
+// Valid input is always returned masked — on the pass-through paths as much as
 // on the rewriting one. UnmapPrefix(2001:db8::1/32) returns 2001:db8::/32, not
 // the argument. Masking here rather than relying on the caller is what lets the
 // paragraph above be stated unconditionally: without it,
@@ -44,6 +45,12 @@ var mappedIPv4Block = netip.MustParsePrefix("::ffff:0:0/96")
 // (normalizeNetworkAllowEntry) masks before calling and is unaffected either
 // way; the guarantee is stated for the second caller.
 func UnmapPrefix(prefix netip.Prefix) netip.Prefix {
+	// This guard must stay BEFORE the mask, and that ordering is load-bearing
+	// in the same way the unmap-before-refusal ordering in
+	// normalizeNetworkAllowEntry is: Masked() on an invalid prefix returns the
+	// zero Prefix, so masking first would silently discard the caller's Addr
+	// instead of handing their value back. Invalid input is the one case that
+	// is NOT returned masked.
 	if !prefix.IsValid() {
 		return prefix
 	}
