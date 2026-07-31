@@ -2057,17 +2057,33 @@ func stateForConvInSessions(rows []*db.SessionRow, aliveSet map[string]struct{})
 }
 
 func stateForConvInSessionsTimed(rows []*db.SessionRow, aliveSet map[string]struct{}, recordCodexTelemetry func(codexTelemetryTiming)) agentState {
-	return stateForConvInSessionsBatched(rows, aliveSet, nil, recordCodexTelemetry)
+	return stateForConvInSessionsBatched(rows, aliveSet, nil, recordCodexTelemetry, nil)
 }
 
+// recordRowWork, when non-nil, accumulates the named per-row side reads that
+// are neither batched nor reported as their own top-level phase — the
+// process-table reconcile and the per-session context point query. They are
+// paid by whichever snapshot phase first resolves the conv (in practice the
+// preload warm loop, whose conv set is a superset of every later surface's),
+// and were invisible in /api/perf before.
 func stateForConvInSessionsBatched(
 	rows []*db.SessionRow,
 	aliveSet map[string]struct{},
 	contextBatch *codexContextWriteBatch,
 	recordCodexTelemetry func(codexTelemetryTiming),
+	recordRowWork func(string, time.Duration),
 ) agentState {
 	if len(rows) == 0 {
 		return agentState{}
+	}
+	timed := func(name string, fn func()) {
+		if recordRowWork == nil {
+			fn()
+			return
+		}
+		start := time.Now()
+		fn()
+		recordRowWork(name, time.Since(start))
 	}
 	pick := rows[0] // already sorted most-recent first
 	alive := false
@@ -2144,7 +2160,8 @@ func stateForConvInSessionsBatched(
 		// descendant processes in one pass — the badges are only
 		// trustworthy because of this step, since the hook stream announces
 		// a launch of either kind but never its end.
-		background := backgroundCountsOnRead(pick, alive)
+		var background backgroundCounts
+		timed(rowWorkBgReconcile, func() { background = backgroundCountsOnRead(pick, alive) })
 		out.BgShellCount = background.Shells
 		out.MonitorCount = background.Monitors
 		// Keep the status consistent with the reconciled counts. The stored
@@ -2195,7 +2212,10 @@ func stateForConvInSessionsBatched(
 	// surface it regardless of liveness: a frozen context_pct for an
 	// exited agent is genuinely informative ("it died at 80%"), unlike
 	// a frozen "idle" status that would mislabel a dead agent.
-	if snap, err := db.GetContextSnapshot(pick.ID); err == nil {
+	var snap db.ContextSnapshot
+	var snapErr error
+	timed(rowWorkContextSnapshot, func() { snap, snapErr = db.GetContextSnapshot(pick.ID) })
+	if snapErr == nil {
 		// Batched Codex persistence commits after every row has been assembled.
 		// Overlay the rollout-derived values now so the response remains
 		// read-through fresh while several agents share one durable commit.
@@ -2679,7 +2699,16 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	tagsFor := func(agentID string) tagsView {
 		return tagsView{Tags: allTags[agentID]}
 	}
-	span.mark("preload")
+	// The preload warm loop above resolves EVERY conv the snapshot will render,
+	// so it — not the group loop — is where the un-batched per-row side reads
+	// are actually paid. Report them here, and exclude the Codex telemetry they
+	// dragged in so preload stays comparable to the top-level codex_telemetry
+	// metric it is reported beside. Before this, preload double-counted that
+	// telemetry while the groups phase (which never pays it) subtracted the
+	// whole cumulative total and clamped toward zero.
+	span.addChildren("preload", rc.rowWorkPhasesSince(nil)...)
+	codexAfterPreload := rc.codexTelemetryTiming.total
+	span.markExcluding("preload", codexAfterPreload)
 	groupNames := make(map[int64]string, len(groups))
 	for _, group := range groups {
 		groupNames[group.ID] = group.Name
@@ -2789,8 +2818,15 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	for _, g := range groups {
 		groupNameByID[g.ID] = g.Name
 	}
+	// The groups phase was a single opaque number while its p99/max ran orders
+	// of magnitude above its p50: the loop below fires three point queries PER
+	// GROUP plus a per-conv row assembly, and nothing said which of them
+	// stalled. gt accumulates each part so /api/perf can name the culprit.
+	gt := newGroupsPhaseTimer(rc)
 	for _, g := range groups {
-		groupPermissions, _ := db.ListAgentGroupPermissions(g.ID)
+		groupMark := gt.begin()
+		var groupPermissions []string
+		gt.track(&gt.perms, func() { groupPermissions, _ = db.ListAgentGroupPermissions(g.ID) })
 		attachment := groupAttachmentViewFor(g)
 		dg := dashboardGroup{Name: g.Name, Descr: g.Descr, AttachmentURL: attachment.URL, AttachmentLabel: attachment.Label, AttachmentLabelOverride: attachment.LabelOverride, DefaultCwd: g.DefaultCwd, DefaultContext: g.DefaultContext, DefaultProfile: g.DefaultProfile, SandboxProfile: g.SandboxProfile, Permissions: groupPermissions, MaxMembers: g.MaxMembers, NotifyEnabled: g.NotifyEnabled, RemoteControlPolicy: remoteControlPolicyToWire(g.RemoteControl), Mission: g.Mission, SourceTemplate: g.SourceTemplate, Scribe: isScribeGroup(g), Members: []dashboardMember{}}
 		if g.ParentGroupID != nil {
@@ -2799,15 +2835,19 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		// Advisory process state (JOH-242): attach the current phase + phase map
 		// + transition log so the group view can render a phase chip + advance
 		// control. nil for a group with no process.
-		if st, trs, perr := loadGroupProcess(g.ID); perr == nil && st != nil {
-			pv := processStateToJSON(st, trs)
-			dg.Process = &pv
-		}
+		gt.track(&gt.process, func() {
+			if st, trs, perr := loadGroupProcess(g.ID); perr == nil && st != nil {
+				pv := processStateToJSON(st, trs)
+				dg.Process = &pv
+			}
+		})
 		// Staged-spawn choreography status (JOH-244): a "wave N/M pending" chip
 		// while later waves are still deferred. nil when the deploy is complete.
-		if wv := loadWaveStatus(g.ID); wv != nil {
-			dg.Waves = wv
-		}
+		gt.track(&gt.waves, func() {
+			if wv := loadWaveStatus(g.ID); wv != nil {
+				dg.Waves = wv
+			}
+		})
 		members := membersByGroup[g.ID]
 		if !g.IsArchived() {
 			for _, m := range members {
@@ -2821,6 +2861,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			ownerSet[o.ConvID] = true
 		}
 		memberSet := map[string]bool{}
+		memberMark := gt.begin()
 		for _, m := range members {
 			memberSet[m.ConvID] = true
 			b := rc.viewFor(m.ConvID)
@@ -2856,9 +2897,11 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+		gt.end(&gt.memberRows, memberMark)
 		// Surface owners who aren't members so the list stays
 		// comprehensive. Same shape as the CLI:
 		// role="owner", no descr.
+		ownerMark := gt.begin()
 		for ownerConv := range ownerSet {
 			if memberSet[ownerConv] {
 				continue
@@ -2891,16 +2934,21 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 				a.OwnedGroups = append(a.OwnedGroups, g.Name)
 			}
 		}
+		gt.end(&gt.ownerRows, ownerMark)
 		// Default ordering: newest-first by creation time (the Age
 		// column; the JS column sort treats this as the natural order it
 		// falls back to). Mirrors handleGroupMembersList.
+		sortMark := gt.begin()
 		sortMembersByAge(dg.Members,
 			func(m dashboardMember) string { return m.CreatedAt },
 			func(m dashboardMember) string { return m.ConvID })
+		gt.end(&gt.sortMembers, sortMark)
 		out.Groups = append(out.Groups, dg)
+		gt.observeGroup(g.Name, groupMark)
 	}
-	codexTelemetryInGroups := rc.codexTelemetryTiming.total
-	span.markExcluding("groups", codexTelemetryInGroups)
+	codexAfterGroups := rc.codexTelemetryTiming.total
+	span.addChildren("groups", gt.phases()...)
+	span.markExcluding("groups", codexAfterGroups-codexAfterPreload)
 	for convID, slugs := range allGrants {
 		addAgent(convID)
 		copySlice := append([]string{}, slugs...)
@@ -2977,7 +3025,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 	span.addDuration("codex_telemetry", rc.codexTelemetryTiming.total)
 	span.addChildren("codex_telemetry", rc.codexTelemetryTiming.perfPhases()...)
-	span.markExcluding("roster", rc.codexTelemetryTiming.total-codexTelemetryInGroups)
+	span.markExcluding("roster", rc.codexTelemetryTiming.total-codexAfterGroups)
 
 	out.Ungrouped = []dashboardAgent{}
 	for _, a := range agentRows {
