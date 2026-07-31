@@ -43,16 +43,16 @@ func TestSanitizeTmuxName(t *testing.T) {
 		{"myrepo", "myrepo"},
 		{"already-dashed", "already-dashed"},
 		{"under_score", "under_score"},
-		{"my.repo", "my-repo"},          // tmux rejects '.' in session names
-		{"a:b", "a-b"},                  // tmux rejects ':' in session names
-		{"with space", "with-space"},    // spaces make -t targets fragile
-		{"a..b--c", "a-b-c"},            // runs collapse
-		{"..dots..", "dots"},            // leading/trailing junk trims away
-		{"åäö", ""},                     // nothing survives → caller falls back
-		{"répo-cité", "r-po-cit"},       // non-ASCII runes dash out
-		{".", ""},                       // filepath.Base of an empty cwd
+		{"my.repo", "my-repo"},       // tmux rejects '.' in session names
+		{"a:b", "a-b"},               // tmux rejects ':' in session names
+		{"with space", "with-space"}, // spaces make -t targets fragile
+		{"a..b--c", "a-b-c"},         // runs collapse
+		{"..dots..", "dots"},         // leading/trailing junk trims away
+		{"åäö", ""},                  // nothing survives → caller falls back
+		{"répo-cité", "r-po-cit"},    // non-ASCII runes dash out
+		{".", ""},                    // filepath.Base of an empty cwd
 		{"", ""},
-		{strings.Repeat("x", 40), strings.Repeat("x", 32)}, // length cap
+		{strings.Repeat("x", 40), strings.Repeat("x", 32)},        // length cap
 		{strings.Repeat("x", 31) + "-y", strings.Repeat("x", 31)}, // no trailing dash after the cut
 	}
 	for _, c := range cases {

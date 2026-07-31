@@ -186,6 +186,12 @@ func stripHopByHop(header http.Header, connection string) {
 // parseHTTPAuthority reads a host[:port] authority. defaultPort applies when
 // the authority omits one; a zero defaultPort makes the port mandatory, which
 // is what CONNECT requires.
+// It deliberately does NOT echo the authority it rejected. These errors reach
+// the audit hook, and an authority is raw client bytes: a client can put
+// credentials in it (`CONNECT user:pass@host:443` fails the split precisely
+// BECAUSE of the userinfo), so echoing it would write them wherever the error
+// is recorded. The same rule refusalDetail already follows — only values the
+// proxy itself derived are ever repeated back.
 func parseHTTPAuthority(authority string, defaultPort int) (Target, error) {
 	authority = strings.TrimSpace(authority)
 	if authority == "" {
@@ -194,13 +200,14 @@ func parseHTTPAuthority(authority string, defaultPort int) (Target, error) {
 	host, portText, err := net.SplitHostPort(authority)
 	if err != nil {
 		if defaultPort == 0 {
-			return Target{}, fmt.Errorf("proxy authority %q has no port", authority)
+			return Target{}, fmt.Errorf(
+				"proxy authority (%d bytes) is not host:port", len(authority))
 		}
 		return ParseTarget(strings.Trim(authority, "[]"), defaultPort)
 	}
 	port, err := strconv.Atoi(portText)
 	if err != nil {
-		return Target{}, fmt.Errorf("proxy authority %q has an invalid port", authority)
+		return Target{}, fmt.Errorf("proxy authority has an invalid port")
 	}
 	return ParseTarget(host, port)
 }
