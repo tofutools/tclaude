@@ -48,6 +48,11 @@ func AddrIsLoopbackIdentity(addr netip.Addr) bool {
 	if !addr.IsValid() {
 		return false
 	}
+	// Redundant with the list today — 127.0.0.0/8 and ::1/128 are exactly
+	// IsLoopback, and both unspecified addresses fall inside 0.0.0.0/8 and
+	// ::/128 — and deliberately kept. It is a subset, so it can only ever
+	// agree; if a future Go release widens either predicate, this tracks it
+	// and the compiler's refusal is what would then need to catch up.
 	if addr.IsLoopback() || addr.IsUnspecified() {
 		return true
 	}
