@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/netip"
 	"os"
@@ -351,7 +352,11 @@ func (p *preparedProxyNetworkRelay) waitListenerReady(namespacePID int) error {
 	if err != nil {
 		return err
 	}
-	server, err := sandboxproxy.NewFromRuleSet(p.Rules, sandboxproxy.Config{})
+	server, err := sandboxproxy.NewFromRuleSet(
+		p.Rules, sandboxproxy.Config{
+			OnDecision: logProxyNetworkDecision,
+			OnError:    logProxyNetworkError,
+		})
 	if err != nil {
 		_ = listener.Close()
 		return fmt.Errorf("build filtering proxy: %w", err)
@@ -637,4 +642,71 @@ func proxyNetworkSandboxEnv(environ []string, port int) []string {
 		"NO_PROXY=",
 		"no_proxy=",
 	)
+}
+
+// ProxyNetworkDecisionMessage and ProxyNetworkErrorMessage name the two records
+// the filtering proxy emits. They are exported constants rather than string
+// literals at the call site because they are a read contract: the operator
+// greps for them, and the harness-cooperation smokes require them.
+const (
+	ProxyNetworkDecisionMessage = "sandbox filtering proxy decision"
+	ProxyNetworkErrorMessage    = "sandbox filtering proxy transport error"
+)
+
+// logProxyNetworkDecision records one policy verdict.
+//
+// This is the only place a running proxy says what it decided, and it is the
+// difference between "the policy refused every undeclared destination" being
+// observed and being inferred. A refusal leaves no other trace: the client sees
+// a 403 it may swallow, and the floor produces no packet to capture.
+//
+// DEBUG rather than INFO deliberately. A busy sandbox makes a decision per
+// connection, so at the default level this would drown the log; an operator who
+// wants the record asks for it with --log-level debug.
+//
+// WHAT IS LOGGED IS A CLOSED SET, and that is a security property rather than
+// tidiness. The record is built from the evaluated Target — carriage, target
+// kind, host or address, port — plus the verdict and the matched rule's index.
+// The request line, the URL path, the query, and every header are deliberately
+// absent, so a Proxy-Authorization header or userinfo in an absolute-form URL
+// cannot reach the log. That holds by construction, because a Target carries no
+// such field to log; TestProxyNetworkDecisionLogCarriesNoCredentials pins it
+// against a future field being added and logged.
+func logProxyNetworkDecision(
+	carriage sandboxproxy.Carriage,
+	target sandboxproxy.Target,
+	decision sandboxproxy.Decision,
+) {
+	attrs := []any{
+		"module", "proxy-network",
+		"carriage", string(carriage),
+		"target_kind", string(target.Kind),
+		"port", target.Port,
+		"verdict", string(decision.Verdict),
+	}
+	if target.Kind == sandboxproxy.TargetKindName {
+		attrs = append(attrs, "host", target.Name)
+	} else {
+		attrs = append(attrs, "address", target.Addr.String())
+	}
+	if decision.Rule != nil {
+		// Which authored row answered, by its selector and index — enough to
+		// find the rule in the profile without reprinting the profile.
+		attrs = append(attrs,
+			"rule_entry", decision.Rule.EntryIndex,
+			"rule_selector", string(decision.Rule.Selector),
+			"rule_value", decision.Rule.Value)
+	}
+	slog.Debug(ProxyNetworkDecisionMessage, attrs...)
+}
+
+// logProxyNetworkError records a non-policy failure: a malformed carriage
+// handshake or an upstream that could not be reached. It is kept distinct from
+// a decision so a reader never mistakes a transport failure for a refusal —
+// the same separation the evaluator draws with VerdictUnresolvable.
+func logProxyNetworkError(carriage sandboxproxy.Carriage, err error) {
+	slog.Debug(ProxyNetworkErrorMessage,
+		"module", "proxy-network",
+		"carriage", string(carriage),
+		"error", err)
 }
