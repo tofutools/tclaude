@@ -704,16 +704,25 @@ func validateOpenCodeReadOnlyConfigSeedSource(source, configDir string) error {
 	if err != nil {
 		return fmt.Errorf("resolve ambient OpenCode config for bootstrap: %w", err)
 	}
-	ambient = filepath.Clean(ambient)
-	if resolved, resolveErr := filepath.EvalSymlinks(ambient); resolveErr == nil {
-		ambient = filepath.Clean(resolved)
-	}
-	if source == ambient {
+	// Compared as DIRECTORIES rather than as strings: a host whose config base
+	// or temp root reaches the same directory through a symlink (macOS
+	// /var -> /private/var is the everyday case) would otherwise refuse a bind
+	// the layout itself produced.
+	if resolvedOpenCodeSeedPath(source) == resolvedOpenCodeSeedPath(ambient) ||
+		resolvedOpenCodeSeedPath(source) == resolvedOpenCodeSeedPath(configDir) {
 		return nil
 	}
 	return fmt.Errorf(
 		"read-only OpenCode config bind source %q is neither the contract's config directory nor this host's ambient OpenCode config",
 		source)
+}
+
+func resolvedOpenCodeSeedPath(path string) string {
+	path = filepath.Clean(path)
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return filepath.Clean(resolved)
+	}
+	return path
 }
 
 func ensureOpenCodeInstallGitignore(installDir string) error {

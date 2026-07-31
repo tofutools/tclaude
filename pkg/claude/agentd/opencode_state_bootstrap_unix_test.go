@@ -226,3 +226,26 @@ func TestPrepareOpenCodeReadOnlyConfigMatchesTheProducedLayout(t *testing.T) {
 		"the layout's config bind serves the ambient directory, so that is where the bootstrap has to land")
 	assert.Equal(t, openCodeInstallGitignore, string(raw))
 }
+
+// The bind source and the host's ambient config can name the same directory
+// through different paths — macOS reaches its temp root through /var, a
+// symlink to /private/var, which is how this first failed in CI. The source
+// check compares directories, not strings.
+func TestPrepareOpenCodeReadOnlyConfigAcceptsSymlinkedAmbientConfig(t *testing.T) {
+	root := t.TempDir()
+	real := t.TempDir()
+	configBase := filepath.Join(real, "config")
+	ambientConfig := filepath.Join(configBase, "opencode")
+	require.NoError(t, os.MkdirAll(ambientConfig, 0o700))
+
+	link := filepath.Join(t.TempDir(), "link")
+	require.NoError(t, os.Symlink(real, link))
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(link, "config"))
+
+	privateConfig := filepath.Join(root, "config", "opencode")
+	require.NoError(t, os.MkdirAll(privateConfig, 0o700))
+	spec := openCodeConfigBootstrapSpec(root, privateConfig, ambientConfig)
+
+	require.NoError(t, prepareOpenCodeReadOnlyConfig(spec, "Darwin"))
+	assert.FileExists(t, filepath.Join(ambientConfig, openCodeInstallBootstrapFile))
+}
