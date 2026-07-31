@@ -175,8 +175,16 @@ function resolveCloneDrop(dragName, targetName, zone, byName) {
       anchor: dragName,
     };
   }
-  const plan = resolveDrop(dragName, targetName, zone, byName);
-  return plan ? {...plan, anchor: targetName} : null;
+  const target = byName.get(targetName);
+  if (!target) return null;
+  // Unlike moving the source, placing a newly-created clone under one of the
+  // source's descendants cannot form a cycle: the clone starts with no child
+  // edges of its own.
+  return {
+    desiredParent: zone === 'nest' ? targetName : (target.parent || ''),
+    before: zone === 'before',
+    anchor: targetName,
+  };
 }
 
 // reorderPill reuses the shared #dnd-pill chip (the member-row DnD's hint)
