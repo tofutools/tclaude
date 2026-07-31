@@ -639,6 +639,11 @@
 <!-- Preact-owned combined member editor. Its local draft remains mounted
      across snapshot polling while the Groups rows reconcile independently. -->
 <div id="groups-member-dialog-root"></div>
+<!-- The human-notification quick reader. Body-level, not inside the Groups
+     section: the yellow "!" glyph is drawn on Groups member rows AND on
+     Terminals tabs, and a fixed drawer rendered inside a hidden tab section
+     would never be visible. Both surfaces raise it by document event. -->
+<div id="human-notification-reader-root"></div>
 <!-- Preact-owned add-existing-agent picker. Its search/highlight state remains
      mounted across snapshot polling and successful add-another operations. -->
 <div id="groups-add-member-dialog-root"></div>

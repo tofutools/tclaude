@@ -11,6 +11,7 @@ import { isWizardActive } from './slop.js';
 import { ActionMenu, InlineEditor, useGroupsInteractions } from './groups-interactions.js';
 import {
   humanNotificationSenderQuery, memberHumanMessages, memberUnreadHumanCount,
+  openHumanNotificationReader,
 } from './human-notification-attention.js';
 
 const html = htm.bind(h);
@@ -678,18 +679,16 @@ function HumanNotificationAttention({ member, snapshot }) {
   const openReader = (event) => {
     event.preventDefault();
     event.stopPropagation();
-    document.dispatchEvent(new CustomEvent('tclaude:open-human-notification', {
-      detail: {
-        sender: {
-          agent: member.agent_id || '',
-          conv: member.conv_id || '',
-          label,
-        },
-        messageId: message?.id || null,
-        launcher: event.currentTarget,
-        returnFocus: event.currentTarget.closest('.rowname')?.querySelector('.rowname-text') || null,
+    openHumanNotificationReader({
+      sender: {
+        agent: member.agent_id || '',
+        conv: member.conv_id || '',
+        label,
       },
-    }));
+      messageID: message?.id || null,
+      launcher: event.currentTarget,
+      returnFocus: event.currentTarget.closest('.rowname')?.querySelector('.rowname-text') || null,
+    });
   };
   return html`<button type="button" class="human-notification-attention"
     ...${memberAttrs(member)}
