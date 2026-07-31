@@ -138,3 +138,56 @@ test('attachment card and explicit button download the same published file', asy
   assert.match(links[0].textContent, /report\.png/);
   assert.match(links[1].textContent, /Download/);
 });
+
+test('reply button opens the shared reply dialog with notification context', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ GroupsNotificationReader }, dialogController] = await Promise.all([
+    harness.importDashboardModule('js/groups-notification-reader.js'),
+    harness.importDashboardModule('js/message-access-dialog-controller.js'),
+  ]);
+  const opened = [];
+  const unregister = dialogController.registerMessageAccessDialogController({
+    openHumanReply(context) { opened.push(context); },
+  });
+  t.after(unregister);
+  const message = {
+    id: 43,
+    from_agent: 'agt_sender',
+    from_conv: 'conv-sender',
+    from_title: 'sender',
+    subject: 'review result',
+    body: 'The report is ready.',
+    read: true,
+  };
+  const state = {
+    snapshot: { value: { messages: [message], messages_unread: 0 } },
+    publish() {},
+  };
+  const closed = [];
+  const mounted = await harness.mount(harness.html`
+    <${GroupsNotificationReader}
+      descriptor=${{
+        sender: { agent: 'agt_sender', conv: 'conv-sender', label: 'sender' },
+        messageId: 43,
+      }}
+      snapshot=${state.snapshot.value}
+      state=${state}
+      actions=${{ reportError() {} }}
+      onSelect=${() => {}}
+      onClose=${(restoreFocus) => closed.push(restoreFocus)}
+    />
+  `);
+
+  const reply = [...mounted.container.querySelectorAll('.human-notification-drawer-actions button')]
+    .find((button) => button.textContent === 'Reply');
+  assert.ok(reply, 'quick reader renders a Reply action');
+  await harness.act(() => reply.click());
+  assert.deepEqual(opened, [{
+    id: 43,
+    agent: 'agt_sender',
+    conv: 'conv-sender',
+    label: 'sender',
+    subject: 'review result',
+  }]);
+  assert.deepEqual(closed, [false], 'reply closes the quick reader without restoring its launcher');
+});

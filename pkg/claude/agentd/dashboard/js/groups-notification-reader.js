@@ -4,6 +4,7 @@ import htm from 'htm';
 import { relTime, shortAgentId } from './helpers.js';
 import { humanNotificationMatchesSender } from './human-notification-attention.js';
 import { openHumanNotifications } from './mail-bridge.js';
+import { openHumanReplyModal } from './message-access-dialog-controller.js';
 
 const html = htm.bind(h);
 const readWrites = new Map();
@@ -192,7 +193,17 @@ export function GroupsNotificationReader({
       </div>
     </div>
     <div class="human-notification-drawer-actions">
-      <button type="button" class="primary" onClick=${() => {
+      <button type="button" class="primary human-notification-drawer-reply" onClick=${() => {
+        onClose(false);
+        openHumanReplyModal({
+          id: message.id,
+          agent: message.from_agent || descriptor.sender.agent || '',
+          conv: message.from_conv || descriptor.sender.conv || '',
+          label: senderLabel,
+          subject: message.subject || '',
+        });
+      }}>Reply</button>
+      <button type="button" onClick=${() => {
         onClose(false);
         openHumanNotifications(senderID, message.id);
       }}>Open in Messages ↗</button>
