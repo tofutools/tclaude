@@ -30,10 +30,24 @@ var mappedIPv4Block = netip.MustParsePrefix("::ffff:0:0/96")
 // refuses it. So every mapped prefix that survives authoring is at least /96
 // and lies wholly inside the block, where the bit arithmetic below is exact.
 // There is no residue of partially-normalizable rows needing a second policy.
+// The returned prefix is masked, so the address set it names is exactly the
+// address set the argument named. Masking here rather than relying on the
+// caller keeps that true for any future caller: without it,
+// UnmapPrefix(::ffff:10.0.0.5/104) would return 10.0.0.5/8, whose String()
+// renders a non-canonical prefix even though Contains still agrees.
 func UnmapPrefix(prefix netip.Prefix) netip.Prefix {
-	if !prefix.IsValid() || !prefix.Addr().Is4In6() {
+	if !prefix.IsValid() {
 		return prefix
 	}
+	prefix = prefix.Masked()
+	if !prefix.Addr().Is4In6() {
+		return prefix
+	}
+	// Unreachable for a masked prefix — masking below /96 clears part of the
+	// ffff field, so Is4In6 is already false above — and kept deliberately, in
+	// the same posture as the redundant checks in loopback_identity.go. It is
+	// what stops the subtraction below from going negative if Is4In6 ever
+	// stops meaning exactly "inside ::ffff:0:0/96".
 	if prefix.Bits() < mappedIPv4Block.Bits() {
 		return prefix
 	}

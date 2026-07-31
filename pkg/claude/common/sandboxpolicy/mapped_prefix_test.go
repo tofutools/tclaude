@@ -136,6 +136,60 @@ func TestMappedBlockPrefixBelowNinetySixStillRefused(t *testing.T) {
 	}
 }
 
+// TestUnmapPrefixIsAddressSetPreserving pins the property the whole change
+// rests on: the rewritten prefix names exactly the addresses the authored one
+// named, so "the same row" really is the same row. Asserted on the mapped
+// image of each address rather than by string comparison, because that is the
+// question the evaluator actually asks.
+func TestUnmapPrefixIsAddressSetPreserving(t *testing.T) {
+	prefixes := []string{
+		"::ffff:10.0.0.0/104", "::ffff:172.16.0.0/108",
+		"::ffff:192.168.1.0/120", "::ffff:8.8.8.8/128",
+	}
+	probes := []string{
+		"10.0.0.1", "10.255.255.255", "11.0.0.1", "172.16.0.1", "172.32.0.1",
+		"192.168.1.7", "192.168.2.7", "8.8.8.8", "8.8.4.4", "0.0.0.0",
+	}
+	for _, spelling := range prefixes {
+		authored := netip.MustParsePrefix(spelling)
+		unmapped := UnmapPrefix(authored)
+		for _, probe := range probes {
+			v4 := netip.MustParseAddr(probe)
+			mapped := netip.AddrFrom16(v4.As16())
+			if got, want := unmapped.Contains(v4), authored.Contains(mapped); got != want {
+				t.Fatalf("%s: Contains(%s) = %v after unmap, %v as authored",
+					spelling, probe, got, want)
+			}
+		}
+	}
+}
+
+// TestNoCIDRSpellingBecomesNewlyRefused guards the compat-break direction that
+// the other refusal tests do not: a spelling that USED to be accepted must not
+// start being refused. Resolve re-normalizes every tier at launch, so a newly
+// refused form would break profiles already on disk — the same migration cost
+// that argued against refusing rather than normalizing in the first place.
+func TestNoCIDRSpellingBecomesNewlyRefused(t *testing.T) {
+	accepted := []string{
+		// Mapped rows over routable space: the rows this ticket repairs.
+		"::ffff:10.0.0.0/104", "::ffff:192.168.1.0/120", "::ffff:8.8.8.8/128",
+		// Ordinary IPv4 and IPv6 rows, which unmap must not disturb.
+		"10.0.0.0/8", "192.168.0.0/16", "203.0.113.0/24",
+		"2001:db8::/32", "fd00::/8", "2606:4700::/32",
+	}
+	for _, cidr := range accepted {
+		t.Run(cidr, func(t *testing.T) {
+			if _, err := CompileFilteredNetworkRules(NetworkRules{
+				Mode:   AccessModeList,
+				Allow:  []NetworkAllowEntry{{CIDR: cidr}},
+				Engine: NetworkEngineProxy,
+			}); err != nil {
+				t.Fatalf("cidr %q is now refused (%v); it was accepted before", cidr, err)
+			}
+		})
+	}
+}
+
 // TestPersistedProfileWithMappedCIDRNormalizesOnLoad proves the benefit that
 // justified normalizing over refusing: a profile ALREADY on disk carrying a
 // mapped row is repaired when it is loaded, without the operator editing it.
