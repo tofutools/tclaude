@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
@@ -21,9 +22,7 @@ import (
 func TestPrepareOpenCodeReadOnlyConfigBootstrapsWithoutOverwrite(t *testing.T) {
 	for _, platform := range []string{"Linux", "Darwin"} {
 		t.Run(platform, func(t *testing.T) {
-			root := t.TempDir()
-			configDir := filepath.Join(t.TempDir(), "opencode")
-			require.NoError(t, os.Mkdir(configDir, 0o700))
+			root, configDir := allocatedOpenCodeConfigDir(t)
 			spec := openCodeConfigBootstrapSpec(root, configDir, configDir)
 
 			require.NoError(t, prepareOpenCodeReadOnlyConfig(spec, platform))
@@ -70,9 +69,7 @@ func TestPrepareOpenCodeReadOnlyConfigSeedsProjectionSource(t *testing.T) {
 func TestPrepareOpenCodeReadOnlyConfigRefusesUnsafeBootstrap(t *testing.T) {
 	for _, platform := range []string{"Linux", "Darwin"} {
 		t.Run(platform, func(t *testing.T) {
-			root := t.TempDir()
-			configDir := filepath.Join(t.TempDir(), "opencode")
-			require.NoError(t, os.Mkdir(configDir, 0o700))
+			root, configDir := allocatedOpenCodeConfigDir(t)
 			require.NoError(t, os.WriteFile(
 				filepath.Join(configDir, "target"), []byte("x"), 0o600))
 			require.NoError(t, os.Symlink("target",
@@ -104,9 +101,7 @@ func TestPrepareOpenCodeReadOnlyConfigSkipsWritableConfig(t *testing.T) {
 // implementation. With the Linux hook back to its pre-TCL-892 `return nil`,
 // this fails on Linux.
 func TestPrepareOpenCodeReadOnlyConfigForPlatformIsWired(t *testing.T) {
-	root := t.TempDir()
-	configDir := filepath.Join(t.TempDir(), "opencode")
-	require.NoError(t, os.Mkdir(configDir, 0o700))
+	root, configDir := allocatedOpenCodeConfigDir(t)
 
 	require.NoError(t, prepareOpenCodeReadOnlyConfigForPlatform(
 		openCodeConfigBootstrapSpec(root, configDir, configDir)))
@@ -137,6 +132,168 @@ func openCodeConfigBootstrapSpec(
 	}
 }
 
+// allocatedOpenCodeConfigDir gives the test an isolated host whose OpenCode
+// state allocation this daemon actually owns, and returns that agent's state
+// root and its config app directory. A self-bound contract naming any other
+// directory is refused (TCL-902), so the legitimate self-bind cases have to
+// stand on a real allocation rather than on the contract's own word.
+func allocatedOpenCodeConfigDir(t *testing.T) (stateRoot, configDir string) {
+	t.Helper()
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, "data"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "config"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
+
+	agentID := db.NewAgentID()
+	stateRoot = filepath.Join(home, "data", "tclaude", "opencode-agents", agentID)
+	configDir = filepath.Join(stateRoot, "config", "opencode")
+	require.NoError(t, os.MkdirAll(configDir, 0o700))
+	inserted, err := db.InsertOpenCodeAgentStateAllocation(
+		db.OpenCodeAgentStateAllocation{
+			AgentID:   agentID,
+			Mode:      db.OpenCodeStatePrivate,
+			StateRoot: stateRoot,
+		})
+	require.NoError(t, err)
+	require.True(t, inserted)
+	return stateRoot, configDir
+}
+
+// TCL-902, grandfathered branch. validateOpenCodeV3LaunchContract's
+// grandfathered branch validates no state directories at all, so a persisted
+// spec tampered to name a victim directory as StateDirs[2] — plus the self-bind
+// that makes it its own read-only source — clears the launch contract. Before
+// this fix the seed's source check accepted it too, on nothing but
+// `source == configDir`, and created a daemon-side .gitignore in the victim
+// directory. The contract's acceptance is asserted, not assumed: it is what
+// makes the seed the only thing standing between the tampered spec and the
+// write.
+func TestPrepareOpenCodeReadOnlyConfigRefusesGrandfatheredContractTarget(t *testing.T) {
+	// Two victim shapes, because the refusal has to hold for both a plain
+	// operator directory and one dressed up in the per-agent layout's own
+	// <root>/config/opencode shape.
+	for _, victimCase := range []struct {
+		name, suffix, want string
+	}{
+		{
+			name:   "PlainDirectory",
+			suffix: "victim",
+			want:   "does not have the per-agent <state root>/config/opencode shape",
+		},
+		{
+			name:   "LayoutShapedDirectory",
+			suffix: filepath.Join("victim", "config", "opencode"),
+			want:   "invalid OpenCode state agent id \"victim\"",
+		},
+	} {
+		t.Run(victimCase.name, func(t *testing.T) {
+			_, _ = allocatedOpenCodeConfigDir(t)
+			victim := filepath.Join(t.TempDir(), victimCase.suffix)
+			require.NoError(t, os.MkdirAll(victim, 0o700))
+			legacyRoot := filepath.Join(t.TempDir(), ".opencode")
+
+			contract := session.TclaudeLayerLaunchContract{
+				HarnessName: harness.OpenCodeName,
+				StateRoot:   legacyRoot,
+				StateDirs: []string{
+					filepath.Join(legacyRoot, "data", "opencode"),
+					filepath.Join(legacyRoot, "cache", "opencode"),
+					victim,
+					filepath.Join(legacyRoot, "state", "opencode"),
+				},
+				FinalHideDirs: []string{filepath.Dir(legacyRoot)},
+				ReadOnlyBinds: []session.TclaudeLayerReadOnlyBind{{
+					Source: victim, Target: victim,
+				}},
+			}
+			require.NoError(t, validateOpenCodeV3LaunchContract(contract, false),
+				"the grandfathered branch accepts this contract; the seed is the only remaining gate")
+
+			err := prepareOpenCodeReadOnlyConfig(
+				&session.TclaudeLayerLaunchSpec{Contract: contract}, "Linux")
+			require.ErrorContains(t, err, "opencode_read_only_config_bootstrap")
+			require.ErrorContains(t, err, victimCase.want)
+			assert.NoFileExists(t, filepath.Join(victim, openCodeInstallBootstrapFile))
+		})
+	}
+}
+
+// TCL-902, private branch. Fixing only the grandfathered branch would leave the
+// class open: the private branch ties StateDirs[2] to Environment[2].Value,
+// which the same persisted artifact supplies. This contract passes the private
+// branch in full — four XDG roots, an agent-id-shaped state root, the private
+// write pair, three hidden ambient roots — while naming a victim directory, so
+// the seed target must be checked against the allocation store rather than
+// against the contract.
+func TestPrepareOpenCodeReadOnlyConfigRefusesUnallocatedPrivateTarget(t *testing.T) {
+	_, _ = allocatedOpenCodeConfigDir(t)
+	// The victim carries an agent-id-shaped root of its own, so the refusal
+	// comes from the allocation store rather than from the path shape.
+	const unallocatedID = "agt_00000000000000000000000000000042"
+	victimBase := filepath.Join(t.TempDir(), unallocatedID, "config")
+	victim := filepath.Join(victimBase, "opencode")
+	require.NoError(t, os.MkdirAll(victim, 0o700))
+	forgedRoot := filepath.Join(t.TempDir(), "agt_0123456789abcdef")
+
+	contract := session.TclaudeLayerLaunchContract{
+		HarnessName: harness.OpenCodeName,
+		StateRoot:   forgedRoot,
+		Environment: []sandboxpolicy.EnvironmentEntry{
+			{Name: "XDG_DATA_HOME", Value: filepath.Join(forgedRoot, "data")},
+			{Name: "XDG_CACHE_HOME", Value: filepath.Join(forgedRoot, "cache")},
+			{Name: "XDG_CONFIG_HOME", Value: victimBase},
+			{Name: "XDG_STATE_HOME", Value: filepath.Join(forgedRoot, "state")},
+		},
+		StateDirs: []string{
+			filepath.Join(forgedRoot, "data", "opencode"),
+			filepath.Join(forgedRoot, "cache", "opencode"),
+			victim,
+			filepath.Join(forgedRoot, "state", "opencode"),
+		},
+		PrivateWriteDirs: []session.TclaudeLayerPrivateWriteDir{{
+			Parent: filepath.Dir(forgedRoot), Current: forgedRoot,
+		}},
+		FinalHideDirs: []string{"/a", "/b", "/c"},
+		ReadOnlyBinds: []session.TclaudeLayerReadOnlyBind{{
+			Source: victim, Target: victim,
+		}},
+	}
+	require.NoError(t, validateOpenCodeV3LaunchContract(contract, false),
+		"the private branch accepts this contract; the seed is the only remaining gate")
+
+	err := prepareOpenCodeReadOnlyConfig(
+		&session.TclaudeLayerLaunchSpec{Contract: contract}, "Linux")
+	require.ErrorContains(t, err, "opencode_read_only_config_bootstrap")
+	require.ErrorContains(t, err,
+		"is not an allocated per-agent config directory")
+	require.ErrorContains(t, err, "has no durable state allocation")
+	assert.NoFileExists(t, filepath.Join(victim, openCodeInstallBootstrapFile))
+}
+
+// A state root whose agent id IS allocated, but whose config directory belongs
+// to a different root, must not pass on the agent id alone.
+func TestPrepareOpenCodeReadOnlyConfigRefusesForeignRootOfAllocatedAgent(t *testing.T) {
+	stateRoot, _ := allocatedOpenCodeConfigDir(t)
+	agentID := filepath.Base(stateRoot)
+	impostorRoot := filepath.Join(t.TempDir(), agentID)
+	impostorConfig := filepath.Join(impostorRoot, "config", "opencode")
+	require.NoError(t, os.MkdirAll(impostorConfig, 0o700))
+
+	err := prepareOpenCodeReadOnlyConfig(
+		openCodeConfigBootstrapSpec(impostorRoot, impostorConfig, impostorConfig),
+		"Linux")
+	require.ErrorContains(t, err, "opencode_read_only_config_bootstrap")
+	require.ErrorContains(t, err,
+		"is not the allocated state root of agent "+agentID)
+	assert.NoFileExists(t,
+		filepath.Join(impostorConfig, openCodeInstallBootstrapFile))
+}
+
 // A bind source is not covered by the launch contract's own validation, which
 // checks bind targets, so a replayed or tampered spec must not be able to aim a
 // daemon-side write at an arbitrary directory.
@@ -150,7 +307,8 @@ func TestPrepareOpenCodeReadOnlyConfigRefusesForeignBindSource(t *testing.T) {
 	err := prepareOpenCodeReadOnlyConfig(
 		openCodeConfigBootstrapSpec(root, configDir, foreign), "Linux")
 	require.ErrorContains(t, err, "opencode_read_only_config_bootstrap")
-	require.ErrorContains(t, err, "neither the contract's config directory")
+	require.ErrorContains(t, err,
+		"is neither an allocated per-agent config directory nor this host's ambient OpenCode config")
 	assert.NoFileExists(t, filepath.Join(foreign, openCodeInstallBootstrapFile))
 }
 
@@ -158,13 +316,9 @@ func TestPrepareOpenCodeReadOnlyConfigRefusesForeignBindSource(t *testing.T) {
 // sandbox serves is the LAST. Seeding an earlier source would write a file
 // nothing inside the sandbox can see.
 func TestPrepareOpenCodeReadOnlyConfigSeedsTheServingBind(t *testing.T) {
-	root := t.TempDir()
-	configBase := filepath.Join(t.TempDir(), "config")
-	ambientConfig := filepath.Join(configBase, "opencode")
+	root, privateConfig := allocatedOpenCodeConfigDir(t)
+	ambientConfig := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "opencode")
 	require.NoError(t, os.MkdirAll(ambientConfig, 0o700))
-	t.Setenv("XDG_CONFIG_HOME", configBase)
-	privateConfig := filepath.Join(root, "config", "opencode")
-	require.NoError(t, os.MkdirAll(privateConfig, 0o700))
 
 	spec := openCodeConfigBootstrapSpec(root, privateConfig, ambientConfig)
 	spec.Contract.ReadOnlyBinds = append(spec.Contract.ReadOnlyBinds,

@@ -652,7 +652,9 @@ func validateExistingOpenCodeCredential(path string) error {
 // Because the write target comes from a bind SOURCE — which the launch
 // contract's own validation does not constrain, it checks targets — the source
 // is separately confined to the two directories the layouts emit before
-// anything is created; see validateOpenCodeReadOnlyConfigSeedSource.
+// anything is created; see validateOpenCodeReadOnlyConfigSeedSource. Neither
+// of those two directories is taken on the contract's word: the contract names
+// state directories, it does not prove them.
 //
 // platform names the caller's OS for the refusal message only; the behavior is
 // identical on both, so either path is exercisable from either host.
@@ -693,13 +695,20 @@ func prepareOpenCodeReadOnlyConfig(
 // be written. The launch contract's own validation covers bind TARGETS, and
 // the seed goes to a SOURCE, so without this a persisted spec replayed by
 // runtime reconciliation could direct a daemon-side file creation anywhere.
-// Only the two directories the layouts actually emit are accepted: the config
-// app directory the contract already names, and the ambient OpenCode config app
-// directory this host resolves for itself.
+// Only the two directories the layouts actually emit are accepted: the ambient
+// OpenCode config app directory this host resolves for itself, and the config
+// app directory of a per-agent state allocation this daemon owns.
+//
+// The contract's own config directory is deliberately NOT an acceptance
+// criterion by itself (TCL-902). Every launch-contract branch lets persisted
+// data name StateDirs[2]: the grandfathered branch of
+// validateOpenCodeV3LaunchContract validates no state directories at all, and
+// the private branch only ties StateDirs[2] to an equally contract-supplied
+// XDG_CONFIG_HOME. A self-bound tampered spec would otherwise satisfy
+// "source == the contract's config directory" for any directory on the host.
+// Both host-authoritative answers below are re-derived here from the daemon's
+// own environment and its allocation store instead.
 func validateOpenCodeReadOnlyConfigSeedSource(source, configDir string) error {
-	if source == configDir {
-		return nil
-	}
 	ambient, err := openCodeAmbientAppDir("XDG_CONFIG_HOME", ".config")
 	if err != nil {
 		return fmt.Errorf("resolve ambient OpenCode config for bootstrap: %w", err)
@@ -708,13 +717,45 @@ func validateOpenCodeReadOnlyConfigSeedSource(source, configDir string) error {
 	// or temp root reaches the same directory through a symlink (macOS
 	// /var -> /private/var is the everyday case) would otherwise refuse a bind
 	// the layout itself produced.
-	if resolvedOpenCodeSeedPath(source) == resolvedOpenCodeSeedPath(ambient) ||
-		resolvedOpenCodeSeedPath(source) == resolvedOpenCodeSeedPath(configDir) {
+	if resolvedOpenCodeSeedPath(source) == resolvedOpenCodeSeedPath(ambient) {
 		return nil
 	}
+	if resolvedOpenCodeSeedPath(source) == resolvedOpenCodeSeedPath(configDir) {
+		return requireOpenCodeAllocatedConfigDir(configDir)
+	}
 	return fmt.Errorf(
-		"read-only OpenCode config bind source %q is neither the contract's config directory nor this host's ambient OpenCode config",
+		"read-only OpenCode config bind source %q is neither an allocated per-agent config directory nor this host's ambient OpenCode config",
 		source)
+}
+
+// requireOpenCodeAllocatedConfigDir proves that a config app directory named by
+// a launch contract is the one belonging to a private state allocation this
+// daemon actually made, rather than a path a persisted spec merely asserts.
+// It reuses requireOpenCodeStateAllocation — the same allocation authority the
+// launch path itself consults — instead of restating what a legitimate
+// per-agent config path looks like.
+func requireOpenCodeAllocatedConfigDir(configDir string) error {
+	resolved := resolvedOpenCodeSeedPath(configDir)
+	configBase := filepath.Dir(resolved)
+	stateRoot := filepath.Dir(configBase)
+	if filepath.Base(resolved) != "opencode" || filepath.Base(configBase) != "config" {
+		return fmt.Errorf(
+			"OpenCode config bootstrap target %q does not have the per-agent <state root>/config/opencode shape",
+			configDir)
+	}
+	allocation, err := requireOpenCodeStateAllocation(filepath.Base(stateRoot))
+	if err != nil {
+		return fmt.Errorf(
+			"OpenCode config bootstrap target %q is not an allocated per-agent config directory: %w",
+			configDir, err)
+	}
+	if allocation.Mode != db.OpenCodeStatePrivate ||
+		resolvedOpenCodeSeedPath(allocation.StateRoot) != stateRoot {
+		return fmt.Errorf(
+			"OpenCode config bootstrap target %q is not the allocated state root of agent %s",
+			configDir, allocation.AgentID)
+	}
+	return nil
 }
 
 func resolvedOpenCodeSeedPath(path string) string {
