@@ -300,7 +300,7 @@ func BenchmarkCodexHookProjection(b *testing.B) {
 			}
 		}
 	})
-	b.Run("one-reverse-tail", func(b *testing.B) {
+	b.Run("one-combined-recovery-scan", func(b *testing.B) {
 		for range b.N {
 			if _, err := CodexHookProjectionFromRollout(path, ""); err != nil {
 				b.Fatal(err)

@@ -59,6 +59,9 @@ func CodexHookProjectionFromRollout(path, modelHint string) (CodexRolloutProject
 			return CodexRolloutProjection{}, fmt.Errorf("scan codex rollout %s: %w", path, err)
 		}
 	} else if err := scanCodexRolloutLinesReverse(path, func(line []byte) bool {
+		// Exact mixed-tier recovery needs every per-turn usage record. Codex
+		// rollouts are the durable recovery log; unlike OpenCode, this path has
+		// no stable message-ID cost checkpoint to resume from yet.
 		state.consumeReverse(line)
 		return true
 	}); err != nil {
