@@ -102,10 +102,10 @@ func TestRenderSeatbeltProxyFloorGolden(t *testing.T) {
 ; inside each deny predicate so plan precedence does not depend on
 ; Seatbelt allow/deny rule selection.
 
-; Proxy-floor networking denies host/public connectivity and listeners.
+; Proxy-floor networking denies public connectivity and listeners.
 ; Allowlisted connects at the parameterized socket spellings are excepted,
-; and so is TCP to the one host-loopback port the tclaude filtering proxy
-; listens on. A second loopback service, an external address, a UDP
+; and so is TCP to the proxy port through Seatbelt's host-wide localhost token.
+; A second loopback port, an external address, a UDP
 ; datagram and every listener stay denied.
 (deny network-bind)
 (deny network-outbound

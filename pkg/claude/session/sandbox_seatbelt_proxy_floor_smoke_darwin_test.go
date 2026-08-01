@@ -43,11 +43,17 @@ const (
 )
 
 // TestSeatbeltProxyFloorSmoke is §8.2 test 6. It activates the M3.1-generated
-// profile around a real subprocess and proves that the proxy endpoint is the
-// only IP route left: both proxy carriages work on its one listener, while a
-// live second loopback port, a live same-port service on a non-loopback local
-// address, external TCP, UDP, and listener creation all fail with Seatbelt's
-// EPERM. The agentd AF_UNIX floor remains usable.
+// profile around a real subprocess and measures its actual boundary: both
+// proxy carriages work on one listener; a live second loopback port, external
+// TCP, UDP, and listener creation fail with Seatbelt's EPERM; and the agentd
+// AF_UNIX floor remains usable.
+//
+// It also characterizes a load-bearing Seatbelt grammar limitation. SBPL only
+// accepts "localhost" or "*" as a network-filter host, and "localhost:PORT"
+// matches every address assigned to this host at that port. Therefore a live
+// service on a non-loopback local address at the proxy's port remains directly
+// reachable. This is a documented hole, not a successful isolation assertion;
+// any change in either direction is news and must update the follow-up design.
 func TestSeatbeltProxyFloorSmoke(t *testing.T) {
 	if os.Getenv("TCLAUDE_SANDBOX_V2_SMOKE") != "1" {
 		t.Skip("set TCLAUDE_SANDBOX_V2_SMOKE=1 on macOS to exercise sandbox-exec")
@@ -71,9 +77,10 @@ func TestSeatbeltProxyFloorSmoke(t *testing.T) {
 	udpControl := seatbeltProxyFloorUDPEchoListener(t)
 	udpControlEndpoint := udpControl.LocalAddr().String()
 
-	// Every in-sandbox denial below has an exact out-of-sandbox positive
-	// control. EPERM then identifies Seatbelt as the refusing boundary; a dead
-	// listener, missing route, or runner policy cannot impersonate evidence.
+	// Every in-sandbox network observation below has an exact out-of-sandbox
+	// positive control. EPERM then identifies Seatbelt as the refusing boundary
+	// for denials, while the same-port echo proves the characterized bypass is a
+	// live different service rather than an absent route or dead endpoint.
 	seatbeltProxyFloorEchoRoundTrip(t, "tcp4", controlEndpoint, "host-second-loopback")
 	seatbeltProxyFloorEchoRoundTrip(t, "tcp", samePortListener.Addr().String(), "host-same-port")
 	seatbeltProxyFloorUDPRoundTrip(t, udpControlEndpoint, "host-udp")
@@ -186,7 +193,7 @@ func TestSeatbeltProxyFloorSmoke(t *testing.T) {
 		"seatbelt-proxy-floor: HTTP CONNECT carriage: carried",
 		"seatbelt-proxy-floor: SOCKS5 carriage: carried",
 		"seatbelt-proxy-floor: second loopback port: refused with EPERM",
-		"seatbelt-proxy-floor: same port on non-loopback local address: refused with EPERM",
+		"seatbelt-proxy-floor LIMITATION: same-port non-loopback service is directly reachable",
 		"seatbelt-proxy-floor: external TCP: refused with EPERM",
 		"seatbelt-proxy-floor: UDP send: refused with EPERM",
 		"seatbelt-proxy-floor: network-bind: refused with EPERM",
@@ -221,9 +228,14 @@ func TestSeatbeltProxyFloorSmokeHelper(t *testing.T) {
 	seatbeltProxyFloorRequireEPERM(t, "second loopback TCP connect",
 		func() error { return seatbeltProxyFloorDialAndClose("tcp4", controlEndpoint) })
 	fmt.Println("seatbelt-proxy-floor: second loopback port: refused with EPERM")
-	seatbeltProxyFloorRequireEPERM(t, "same-port non-loopback TCP connect",
-		func() error { return seatbeltProxyFloorDialAndClose("tcp", samePortEndpoint) })
-	fmt.Println("seatbelt-proxy-floor: same port on non-loopback local address: refused with EPERM")
+	// Seatbelt cannot spell "this TCP port, loopback interface only": the host
+	// grammar accepts only "localhost" or "*", and localhost matches every
+	// address assigned to the host. Assert the bypass positively so the test
+	// fails if it disappears as well as if the fixture stops being meaningful.
+	// The launch-time mitigation for this opportunistic collision is tracked by
+	// the follow-up architecture work; zero capability cells depend on it today.
+	seatbeltProxyFloorEchoRoundTrip(t, "tcp", samePortEndpoint, "sandbox-same-port-bypass")
+	fmt.Println("seatbelt-proxy-floor LIMITATION: same-port non-loopback service is directly reachable")
 	seatbeltProxyFloorRequireEPERM(t, "external TCP connect",
 		func() error { return seatbeltProxyFloorDialAndClose("tcp4", "1.1.1.1:443") })
 	fmt.Println("seatbelt-proxy-floor: external TCP: refused with EPERM")
