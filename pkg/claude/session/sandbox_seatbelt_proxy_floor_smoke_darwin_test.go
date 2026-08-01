@@ -274,8 +274,14 @@ func seatbeltProxyFloorCharacterizeSamePort(t *testing.T, endpoint string) {
 	// grammar accepts only "localhost" or "*", and localhost matches every
 	// address assigned to the host. Assert the bypass positively so the test
 	// fails if it disappears as well as if the fixture stops being meaningful.
-	// TCL-917's launch-time collision mitigation keeps this probe and flips the
-	// one named expectation constant above; zero capability cells depend on it.
+	// TCL-917 RULED AGAINST that mitigation: no launch-time collision check on
+	// this path or the native one, because refusing a launch when an unrelated
+	// program holds a port is how a sandbox gets switched off, and the scenario
+	// is narrow. The ruling was document and disclose, so this constant is now
+	// expected to stay true until Apple changes what "localhost" matches — at
+	// which point flipping it is still the entire change. Zero capability cells
+	// depend on it. The native-path twin is
+	// darwinLocalAccessSamePortBypassExpected in the Darwin smoke.
 	if seatbeltProxyFloorSamePortBypassExpected {
 		seatbeltProxyFloorEchoRoundTrip(t, "tcp", endpoint, "sandbox-same-port-bypass")
 	} else {

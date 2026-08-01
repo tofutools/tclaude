@@ -539,6 +539,29 @@ a deny row — `NetworkRulesAreLoopbackOnly` ignores `Deny`, so the readiness ch
 holds while the deny row still selects the engine — and that shape is asserted
 too. The domination is therefore **axes-specific, not structural**.
 
+### Darwin `NetworkList` is capped at Partial (TCL-917)
+
+A ceiling on what any future Darwin activation may claim, recorded here so it is
+not rediscovered when a cell is proposed.
+
+A Seatbelt loopback rule scopes to **a port set across all host-local
+addresses**, not to the loopback interface. `localhost` in SBPL means every
+address assigned to the host, and literal IPs are rejected at profile parse
+time, so "this port, loopback only" is not expressible at all. Measured on the
+native path — CI run `30691418550`, job `91346704723`.
+
+So **M3.3 may rate Darwin `NetworkList` Partial with that scope stated; it may
+not rate it Full.** This is a cap on a future claim rather than a correction to
+a current one: the cell is already `EnforceNone` and `EnforceFull` is gated on
+`goos == "linux"`, so nothing is over-rated today and no cell changed when this
+was measured.
+
+TCL-917 considered a launch-time port-collision check and it was ruled against —
+refusing a launch because an unrelated program holds a port is how a sandbox
+gets switched off, and the scenario is narrow. The ruling was document and
+disclose. If a Darwin proxy is ever wired up, revisit the question **then**,
+with the seam in front of you; this is not a permanent "never".
+
 What the first activation run (on-main run `30609001363`) actually showed, as
 distinct from what was hypothesized:
 

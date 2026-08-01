@@ -688,13 +688,30 @@ not silently transfer ownership to a future release registry.
 
 On Linux, pack-backed lists use the filtered gateway. Local host services are
 reached through `host.tclaude.internal`; `127.0.0.1` and `::1` remain private
-to the sandbox. On macOS, strict Local access is enforced natively by Seatbelt
-against real host `127.0.0.1` and `::1`. Port scopes are honored, outbound
-non-loopback IP connections are denied, and bind/inbound behavior is left
-alone so local services and the IDE bridge can work. The Seatbelt outbound
-rule uses `remote ip` predicates; an outbound `local ip` predicate would match
-the local side of remote connections and is therefore never used for this
-boundary.
+to the sandbox. On macOS, strict Local access is enforced natively by Seatbelt,
+but **its scope is a port set, not an address set**. Seatbelt's network grammar
+accepts only `*` or `localhost` as the host part of a rule, and `localhost`
+means *every address assigned to this machine* — not the loopback interface.
+
+So allowing Local access on port N also allows anything else **on this same
+machine** listening on port N, including a service bound only to the host's LAN
+address. Everything involved belongs to the machine the agent already runs on:
+this is not egress, and a service bound to `0.0.0.0` was already reachable
+through the loopback rule in any case. The gap needs a second service, on the
+same port, bound exclusively to a non-loopback address.
+
+Ports outside the list are denied, and outbound **TCP** connections to
+addresses beyond this machine are denied. Bind/inbound behavior is left alone
+so local services and the IDE bridge can work. The Seatbelt outbound rule uses
+`remote ip` predicates; an outbound `local ip` predicate would match the local
+side of remote connections and is therefore never used for this boundary.
+
+This is a limit of the mechanism rather than a configuration mistake: SBPL
+cannot express "this port, loopback only" at all, so no policy you can author
+avoids it. It is measured on a real runner rather than inferred — CI run
+`30691418550`, job `91346704723` — and pinned by a characterization test, so a
+change in Apple's `localhost` semantics in *either* direction is reported by CI
+instead of being discovered years later.
 
 macOS does not yet enforce a mixed Local + model-API pack list. It follows the
 same established list-degradation path as any other mixed Darwin list: the

@@ -793,6 +793,33 @@ func seatbeltDaemonReopenDescendants(
 // the proxy-floor exception below and must not be described as interface-level
 // loopback isolation.
 //
+// THE CONSEQUENCE, MEASURED ON THIS PATH RATHER THAN INFERRED FROM THAT ONE.
+// M3.2 measured the proxy floor. Applying its result here was an inference
+// until TCL-917 measured this function's own rendering: CI run 30688396007
+// was the proxy floor; run 30691418550, job 91346704723 is this path, where a
+// connect to 192.168.64.10:49187 succeeded from inside the sandbox while the
+// authored rule named 127.0.0.1:49187. The two paths render different
+// profiles — this one emits both tcp and udp exceptions per port, the proxy
+// floor emits tcp only — so the inference needed checking and now does not.
+//
+// So what a Local-access rule actually scopes to is A PORT SET ACROSS ALL
+// HOST-LOCAL ADDRESSES, not the loopback interface. Allowing port N also
+// permits a different service on port N bound to this machine's LAN address.
+// Everything involved is the same machine: this is not egress, and a service
+// bound to 0.0.0.0 was already reachable through the loopback rule anyway.
+// The gap needs a second service, same port, bound EXCLUSIVELY to a
+// non-loopback address.
+//
+// NOT FIXABLE HERE, AND DELIBERATELY NOT MITIGATED. SBPL cannot express "this
+// port, loopback only" at all, so no generator change closes it. TCL-917
+// considered a launch-time port-collision check and the operator ruled
+// against it: refusing a launch because an unrelated program holds a port is
+// how the sandbox gets switched off, and the scenario is narrow enough that
+// the complexity buys little. The ruling was DOCUMENT AND DISCLOSE, and the
+// disclosure is the deliverable — see docs/sandboxing.md and the
+// darwinLocalAccessSamePortBypassExpected characterization, which fails if
+// this behaviour changes in EITHER direction.
+//
 // Outbound exceptions must be remote predicates. A local-ip predicate observes
 // the unbound socket's source address and Seatbelt treats localhost as matching
 // INADDR_ANY, which would admit every destination.
