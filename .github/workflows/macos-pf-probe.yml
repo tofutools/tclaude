@@ -1,0 +1,20 @@
+name: macOS PF evidence probe
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/macos-pf-probe.yml
+      - scripts/macos-pf-probe.sh
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Probe scoped block, rdr, and gid matching
+        run: bash scripts/macos-pf-probe.sh
