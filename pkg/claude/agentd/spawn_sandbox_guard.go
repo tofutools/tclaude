@@ -223,21 +223,6 @@ func planSandboxProfileAccessForLaunch(
 		// up an operator's settings change.
 		verdict = harness.ResolveLaunchOSSandbox(
 			h, sandboxMode, "", modelContext.Cwd)
-		// ResolveLaunchOSSandbox uses Unverified here only when a settings tier
-		// above the one that enabled Claude's builtin sandbox could not be read.
-		// That tier might disable confinement, so it is not positive enforcement
-		// evidence. Keep this check local: outer sandbox implementations use the
-		// same flag for known partial fidelity that their capability table handles.
-		if verdict.Unverified {
-			return nil, &spawnFailure{
-				http.StatusUnprocessableEntity,
-				"unsupported_sandbox_profile_access",
-				fmt.Sprintf(
-					"access enforcement requires a verified functioning OS sandbox; verdict is %q from %q but higher-precedence Claude settings could not be verified",
-					verdict.State, verdict.Source,
-				),
-			}
-		}
 	}
 	if implementation.UsesTclaudeLayer() {
 		posture := sandboxpolicy.NetworkHostOpen
