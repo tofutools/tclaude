@@ -859,6 +859,31 @@ func (h *openCodeTmuxHandshake) connectGate(deadline time.Time) error {
 	return fmt.Errorf("OpenCode tmux launch gate did not become ready")
 }
 
+func awaitOpenCodeTmuxAuthority(handshake *openCodeTmuxHandshake,
+	process *openCodeProcess, timeout time.Duration) (opencodeapi.UnixLaunchAuthority, error) {
+	type authorityResult struct {
+		authority opencodeapi.UnixLaunchAuthority
+		err       error
+	}
+	authorityReady := make(chan authorityResult, 1)
+	go func() {
+		authority, err := opencodeapi.ReadUnixLaunchAuthority(handshake.status)
+		authorityReady <- authorityResult{authority: authority, err: err}
+	}()
+	select {
+	case result := <-authorityReady:
+		return result.authority, result.err
+	case processErr := <-process.done:
+		if processErr == nil {
+			processErr = fmt.Errorf("unix launcher exited before authority handshake")
+		}
+		return opencodeapi.UnixLaunchAuthority{}, processErr
+	case <-time.After(timeout):
+		return opencodeapi.UnixLaunchAuthority{},
+			fmt.Errorf("OpenCode Unix launcher authority handshake timed out")
+	}
+}
+
 func shellJoinOpenCodeCommand(command string, args []string) string {
 	parts := make([]string, 0, len(args)+1)
 	parts = append(parts, clcommon.ShellQuoteArg(command))
@@ -935,7 +960,8 @@ func startOpenCodeProcessThroughTmux(runtime *db.OpenCodeRuntime, command string
 			stopOpenCodeProcess(*runtime, process)
 			return nil, err
 		}
-		authority, err := opencodeapi.ReadUnixLaunchAuthority(handshake.status)
+		authority, err := awaitOpenCodeTmuxAuthority(
+			handshake, process, openCodeStartupTimeout)
 		if err != nil {
 			stopOpenCodeProcess(*runtime, process)
 			return nil, err

@@ -100,6 +100,36 @@ func TestManagedOpenCodeTmuxUnixHandshakeCrossesProcessBoundary(t *testing.T) {
 	require.NoError(t, <-childDone)
 }
 
+func TestManagedOpenCodeTmuxUnixHandshakeTimesOutAfterGateConnect(t *testing.T) {
+	handshake, err := prepareOpenCodeTmuxHandshake()
+	require.NoError(t, err)
+	t.Cleanup(handshake.close)
+
+	release := make(chan struct{})
+	childDone := make(chan struct{})
+	go func() {
+		defer close(childDone)
+		status, openErr := os.OpenFile(handshake.statusPath, os.O_WRONLY, 0)
+		if openErr != nil {
+			return
+		}
+		defer status.Close()
+		gate, openErr := os.Open(handshake.gatePath)
+		if openErr != nil {
+			return
+		}
+		defer gate.Close()
+		<-release
+	}()
+
+	require.NoError(t, handshake.connectGate(time.Now().Add(time.Second)))
+	process := &openCodeProcess{done: make(chan error, 1)}
+	_, err = awaitOpenCodeTmuxAuthority(handshake, process, 20*time.Millisecond)
+	require.ErrorContains(t, err, "authority handshake timed out")
+	close(release)
+	<-childDone
+}
+
 func TestManagedServerDropsStoredCgroupFromPreviousDelegationBeforeReprepare(t *testing.T) {
 	setupTestDB(t)
 	t.Setenv("TMUX", "")
