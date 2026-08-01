@@ -39,6 +39,7 @@ func harnessWithConvs(s harness.ConvStore) *harness.Harness {
 func TestDiscoverSpawnedConvID(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	db.ResetForTest()
+	cleanupAgentdTestDB(t)
 
 	launch := time.Now()
 	const cwd = "/work/repo"

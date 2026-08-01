@@ -37,6 +37,7 @@ func TestScribeSpawnHarness_DefaultsToClaude_CodexFromProfile(t *testing.T) {
 	t.Setenv("HOME", dir)
 	t.Setenv("USERPROFILE", dir)
 	db.ResetForTest()
+	cleanupAgentdTestDB(t)
 
 	// A bare scribe group (no default profile) → the default harness (Claude).
 	bareID, err := db.CreateAgentGroup("bare-scribe", scribeGroupDescr)
@@ -67,6 +68,7 @@ func TestScribeSpawnHarness_UsesGlobalDefault(t *testing.T) {
 	t.Setenv("HOME", dir)
 	t.Setenv("USERPROFILE", dir)
 	db.ResetForTest()
+	cleanupAgentdTestDB(t)
 
 	_, err := db.CreateSpawnProfile(&db.SpawnProfile{Name: "global-codex", Harness: harness.CodexName})
 	require.NoError(t, err)
@@ -86,6 +88,7 @@ func TestScribeSpawnHarness_RejectsDisabledDefault(t *testing.T) {
 	t.Setenv("HOME", dir)
 	t.Setenv("USERPROFILE", dir)
 	db.ResetForTest()
+	cleanupAgentdTestDB(t)
 
 	_, err := db.CreateSpawnProfile(&db.SpawnProfile{
 		Name: "paused", Harness: harness.CodexName, Disabled: true, DisabledReason: "provider maintenance",
@@ -110,6 +113,7 @@ func TestScribeSpawnHarness_OperatorOnlyDefaultRejectsAgentCaller(t *testing.T) 
 	t.Setenv("HOME", dir)
 	t.Setenv("USERPROFILE", dir)
 	db.ResetForTest()
+	cleanupAgentdTestDB(t)
 
 	_, err := db.CreateSpawnProfile(&db.SpawnProfile{
 		Name: "operator", Harness: harness.CodexName, OperatorOnly: true,

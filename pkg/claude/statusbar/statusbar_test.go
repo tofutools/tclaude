@@ -31,6 +31,7 @@ func observeTCL925SQLiteSidecarsAtCleanup(t testing.TB, home, family string) {
 func TestApplyRenderWritesPreservesGitSnapshotFreshness(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 	const conv = "statusline-pr-freshness"
 	fetchedAt := time.Now().Add(-10 * time.Second).Truncate(time.Microsecond)
 	input := StatusLineInput{}
@@ -87,6 +88,7 @@ func TestTemporarySandboxWarningFollowsStableAgentAcrossRotation(t *testing.T) {
 	observeTCL925SQLiteSidecarsAtCleanup(t, home, "statusbar")
 	t.Setenv("HOME", home)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 	const oldConv = "statusline-unlocked-old"
 	const newConv = "statusline-unlocked-new"
 	agentID, _, err := db.EnsureAgentForConv(oldConv, "test")

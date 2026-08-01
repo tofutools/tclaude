@@ -297,6 +297,7 @@ func TestRealTmuxAuthenticatedPaneDiedCallbackRecordsExactlyOnce(t *testing.T) {
 	t.Setenv("USERPROFILE", home)
 	tmux := withIsolatedRealTmux(t)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 	const sessionID = "spwn-real-callback"
 	const tmuxName = "tcl573-real-callback"
 	const generation = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"

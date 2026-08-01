@@ -29,6 +29,7 @@ func TestApplyHook_CodexLiveStatusPipeline(t *testing.T) {
 	t.Setenv("HOME", dir)
 	t.Setenv("USERPROFILE", dir)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 
 	const convID = "019ec004-4250-79b1-9ade-ebaea4159001"
 	const sessionID = "agent-codex-status"
@@ -102,6 +103,7 @@ func TestApplyHook_CodexLateHookBackfillsMissedLaunchState(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 
 	cwd := filepath.Join(home, "plain-project")
 	require.NoError(t, os.MkdirAll(cwd, 0o755))
@@ -151,6 +153,7 @@ func TestApplyHook_CodexPublishesWorkspaceBranch(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 
 	repo := filepath.Join(home, "repo")
 	require.NoError(t, os.MkdirAll(repo, 0o755))
@@ -213,6 +216,7 @@ func TestApplyHook_CodexDoesNotReadRolloutCost(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 
 	const convID = "019ec004-4250-79b1-9ade-ebaea4159020"
 	const sessionID = "agent-codex-cost"

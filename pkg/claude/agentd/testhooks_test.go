@@ -19,6 +19,18 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/worktree"
 )
 
+// cleanupAgentdTestDB encodes the package-level teardown rule for tests whose
+// TempDir owns the singleton database: quiesce background writers, then close
+// the database, then let TempDir remove the directory. Cleanup is LIFO, so the
+// reset is registered first. This is the shared form of the established
+// reaper-test contract at reaper_test.go:90-96; any package that adds its own
+// background database writer must quiesce that writer before resetting too.
+func cleanupAgentdTestDB(t testing.TB) {
+	t.Helper()
+	t.Cleanup(db.ResetForTest)
+	t.Cleanup(WaitForBackgroundForTest)
+}
+
 // BuildHandlerForTest exposes the production /v1 mux to flow tests in
 // `package agentd_test`. The mux is identical to what serve() installs
 // — minus the socket plumbing. The _test.go suffix keeps it out of

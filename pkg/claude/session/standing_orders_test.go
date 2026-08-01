@@ -24,6 +24,7 @@ func standingOrderFixture(t *testing.T, harnessName string) int64 {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 
 	require.NoError(t, SaveSessionState(&SessionState{
 		ID:      "sess-1",

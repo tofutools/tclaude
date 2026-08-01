@@ -429,6 +429,7 @@ func TestOpenCodeCompactionProjectsPortableStandingOrderBoundary(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	db.ResetForTest()
+	cleanupAgentdTestDB(t)
 
 	const (
 		sessionID = "spwn-opencode-compact-order"
@@ -486,6 +487,7 @@ func TestOpenCodeProjectionDrivesSharedStatusStateMachine(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	db.ResetForTest()
+	cleanupAgentdTestDB(t)
 
 	const (
 		sessionID = "spwn-opencode"
@@ -557,6 +559,7 @@ func TestOpenCodeStandingOrderOriginSurvivesProjectorRestartUntilStop(t *testing
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	db.ResetForTest()
+	cleanupAgentdTestDB(t)
 
 	const (
 		sessionID = "spwn-opencode-standing-origin"
@@ -633,6 +636,7 @@ func TestOpenCodeStandingOrderOriginReconcilesCompletedTurnAfterSSEGap(t *testin
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	db.ResetForTest()
+	cleanupAgentdTestDB(t)
 
 	const (
 		sessionID = "spwn-opencode-standing-origin-gap"
@@ -715,6 +719,7 @@ func TestConsumeOpenCodeEventWaitsForLaunchSessionRow(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	db.ResetForTest()
+	cleanupAgentdTestDB(t)
 
 	const (
 		sessionID = "spwn-opencode-row-race"
@@ -752,6 +757,7 @@ func TestConsumeOpenCodeSSEReconnectsReconcilesAttentionAndStopsWithContext(t *t
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	db.ResetForTest()
+	cleanupAgentdTestDB(t)
 
 	const (
 		sessionID = "spwn-opencode-reconnect"
@@ -849,6 +855,7 @@ func TestReconcileOpenCodeSSEClearsAnsweredAttentionWhileDisconnected(t *testing
 			t.Setenv("HOME", home)
 			t.Setenv("USERPROFILE", home)
 			db.ResetForTest()
+			cleanupAgentdTestDB(t)
 
 			const (
 				sessionID = "spwn-opencode-answered"

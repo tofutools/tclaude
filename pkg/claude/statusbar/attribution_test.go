@@ -23,6 +23,7 @@ func attributionWorld(t *testing.T, sessionID, convID, pendingConv string) {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 
 	require.NoError(t, db.SaveSession(&db.SessionRow{ID: sessionID, ConvID: convID}))
 	if pendingConv != "" {

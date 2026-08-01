@@ -74,14 +74,16 @@
     "line": 87,
     "owner": "TestSessionReaper_ReapsDeadCodexSessionAndNotifies",
     "receiver": "t",
-    "anchor": "\tdb.ResetForTest()"
+    "anchor": "\tdb.ResetForTest()",
+    "existingQuiesce": true
   },
   {
     "file": "pkg/claude/agentd/reaper_test.go",
     "line": 175,
     "owner": "TestSessionReaper_FirstTickRecordsReconciliation",
     "receiver": "t",
-    "anchor": "\tdb.ResetForTest()"
+    "anchor": "\tdb.ResetForTest()",
+    "existingQuiesce": true
   },
   {
     "file": "pkg/claude/agentd/scribe_workdir_test.go",
