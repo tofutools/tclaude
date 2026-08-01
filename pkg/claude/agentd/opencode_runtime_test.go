@@ -174,6 +174,25 @@ func TestOpenCodeSessionCreationFailsIfPolicyIsNotRetained(t *testing.T) {
 	require.ErrorContains(t, err, "did not retain")
 }
 
+func TestOpenCodeSessionCreationOmitsIntentionalEmptyPolicy(t *testing.T) {
+	const password = "private-password"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]json.RawMessage
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		assert.NotContains(t, body, "permission",
+			"sandbox off must not inject a session permission field")
+		_, _ = w.Write([]byte(`{"id":"ses_native","permission":[]}`))
+	}))
+	defer server.Close()
+
+	convID, err := createOpenCodeSession(db.OpenCodeRuntime{
+		PID: os.Getpid(), ServerURL: server.URL, Password: password,
+		Cwd: "/tmp/project", PermissionJSON: `[]`,
+	}, "worker")
+	require.NoError(t, err)
+	assert.Equal(t, "ses_native", convID)
+}
+
 func TestOpenCodeSessionCreationReportsBoundedServerError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "private state is not writable", http.StatusInternalServerError)
@@ -190,6 +209,12 @@ func TestOpenCodeSessionCreationReportsBoundedServerError(t *testing.T) {
 func TestEnsureOpenCodeSessionPermissionRejectsLegacyEmptyPolicy(t *testing.T) {
 	err := ensureOpenCodeSessionPermission(db.OpenCodeRuntime{})
 	require.ErrorContains(t, err, "no persisted permission policy")
+}
+
+func TestEnsureOpenCodeSessionPermissionAcceptsIntentionalEmptyPolicy(t *testing.T) {
+	require.NoError(t, ensureOpenCodeSessionPermission(db.OpenCodeRuntime{
+		PermissionJSON: `[]`,
+	}))
 }
 
 func TestOpenCodeHealthRequiresManagedListenerAndHealthyBody(t *testing.T) {

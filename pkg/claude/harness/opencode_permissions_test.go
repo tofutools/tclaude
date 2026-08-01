@@ -314,7 +314,7 @@ func TestBuildOpenCodePermissionRulesTclaudeLayerHonorsApproval(t *testing.T) {
 	assert.Equal(t, "ask", lastExactOpenCodeAction(rules, "webfetch", "*"))
 }
 
-func TestBuildOpenCodePermissionRulesOffStillAppliesApproval(t *testing.T) {
+func TestBuildOpenCodePermissionRulesOffInjectsNoSessionPolicy(t *testing.T) {
 	rules, err := BuildOpenCodePermissionRules(OpenCodePermissionSpec{
 		Cwd:            "/repo",
 		Worktree:       "/repo",
@@ -325,13 +325,8 @@ func TestBuildOpenCodePermissionRulesOffStillAppliesApproval(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	assert.Equal(t, "allow", lastExactOpenCodeAction(rules, "read", "*"))
-	assert.Equal(t, "allow", lastExactOpenCodeAction(rules, "edit", "*"))
-	assert.Equal(t, "allow", lastExactOpenCodeAction(rules, "external_directory", "*"))
-	assert.Equal(t, "ask", lastExactOpenCodeAction(rules, "bash", "*"),
-		"sandbox off keeps its existing approval behavior and ignores tool governance")
-	assert.Equal(t, "allow", lastExactOpenCodeAction(rules, "glob", "*"),
-		"sandbox off remains a no-containment posture")
+	assert.Empty(t, rules,
+		"sandbox off must leave OpenCode's native permission and tool posture untouched")
 }
 
 func TestBuildOpenCodePermissionRulesUsesRootForNonGitWorktree(t *testing.T) {

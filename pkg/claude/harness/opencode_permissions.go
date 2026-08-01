@@ -92,6 +92,14 @@ func BuildOpenCodePermissionRules(spec OpenCodePermissionSpec) ([]OpenCodePermis
 	if err != nil {
 		return nil, err
 	}
+	// Off means OpenCode owns its native permission posture. In particular, do
+	// not leave the leading deny-all rule behind: a partial reopen strips bash,
+	// task, skill, LSP, and external skill reads from the agent's advertised
+	// tool surface. An empty rule suffix is persisted by agentd so relaunch can
+	// distinguish this intentional posture from a legacy runtime with no policy.
+	if sandboxMode == OpenCodeSandboxOff {
+		return []OpenCodePermissionRule{}, nil
+	}
 	if strings.TrimSpace(spec.ReadBaseline) != "" {
 		return nil, fmt.Errorf("opencode access control cannot accept legacy read baseline %q", spec.ReadBaseline)
 	}
@@ -115,10 +123,6 @@ func BuildOpenCodePermissionRules(spec OpenCodePermissionSpec) ([]OpenCodePermis
 	rules := []OpenCodePermissionRule{{
 		Permission: "*", Pattern: "*", Action: openCodeActionDeny,
 	}}
-	if sandboxMode == OpenCodeSandboxOff {
-		rules = appendOpenCodeOffRules(rules, approval, network)
-		return appendOpenCodeEnvReadRules(rules, approval, "."), nil
-	}
 	if sandboxMode == OpenCodeSandboxTclaudeLayer {
 		rules = appendOpenCodeTclaudeLayerRules(
 			rules, approval, toolGovernance, network,
@@ -219,27 +223,6 @@ func appendOpenCodeToolRules(
 		})
 	}
 	return rules
-}
-
-func appendOpenCodeOffRules(rules []OpenCodePermissionRule, approval string, network sandboxpolicy.NetworkAccess) []OpenCodePermissionRule {
-	for _, permission := range []string{"read", "glob", "grep"} {
-		rules = append(rules, OpenCodePermissionRule{
-			Permission: permission, Pattern: "*", Action: openCodeActionAllow,
-		})
-	}
-	action := openCodeApprovalAction(approval)
-	rules = append(rules,
-		OpenCodePermissionRule{Permission: "edit", Pattern: "*", Action: action},
-		OpenCodePermissionRule{Permission: "external_directory", Pattern: "*", Action: action},
-	)
-	bashAction := openCodeActionDeny
-	if approval != OpenCodeApprovalDeny {
-		bashAction = openCodeActionAsk
-	}
-	rules = append(rules, OpenCodePermissionRule{
-		Permission: "bash", Pattern: "*", Action: bashAction,
-	})
-	return appendOpenCodeWebRules(rules, approval, network)
 }
 
 func appendOpenCodeWebRules(rules []OpenCodePermissionRule, approval string, network sandboxpolicy.NetworkAccess) []OpenCodePermissionRule {

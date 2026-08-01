@@ -1774,7 +1774,10 @@ func createOpenCodeSession(runtime db.OpenCodeRuntime, title string) (string, er
 	if err != nil {
 		return "", err
 	}
-	body := map[string]any{"permission": rules}
+	body := map[string]any{}
+	if len(rules) > 0 {
+		body["permission"] = rules
+	}
 	if strings.TrimSpace(title) != "" {
 		body["title"] = title
 	}
@@ -1818,9 +1821,6 @@ func decodeOpenCodePermissionRules(raw string) ([]harness.OpenCodePermissionRule
 	if err := json.Unmarshal([]byte(raw), &rules); err != nil {
 		return nil, fmt.Errorf("decode OpenCode permission policy: %w", err)
 	}
-	if len(rules) == 0 {
-		return nil, fmt.Errorf("OpenCode permission policy is empty")
-	}
 	for i, rule := range rules {
 		if strings.TrimSpace(rule.Permission) == "" || strings.TrimSpace(rule.Pattern) == "" {
 			return nil, fmt.Errorf("OpenCode permission rule %d has an empty permission or pattern", i)
@@ -1845,6 +1845,9 @@ func ensureOpenCodeSessionPermission(runtime db.OpenCodeRuntime) error {
 	expected, err := decodeOpenCodePermissionRules(runtime.PermissionJSON)
 	if err != nil {
 		return err
+	}
+	if len(expected) == 0 {
+		return nil
 	}
 	current, err := getOpenCodeSessionPermission(runtime)
 	if err != nil {
@@ -1908,7 +1911,7 @@ func getOpenCodeSessionPermission(runtime db.OpenCodeRuntime) ([]harness.OpenCod
 }
 
 func openCodePermissionHasSuffix(current, expected []harness.OpenCodePermissionRule) bool {
-	if len(expected) == 0 || len(current) < len(expected) {
+	if len(current) < len(expected) {
 		return false
 	}
 	offset := len(current) - len(expected)

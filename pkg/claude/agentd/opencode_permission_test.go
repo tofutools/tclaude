@@ -30,3 +30,11 @@ func TestOpenCodePermissionJSONForLaunchResolvesBlankCwd(t *testing.T) {
 	assert.True(t, foundReadableLaunchDir,
 		"the inherited daemon cwd must be compiled into the access-control rules")
 }
+
+func TestOpenCodePermissionJSONForLaunchOffPersistsEmptySuffix(t *testing.T) {
+	encoded, err := openCodePermissionJSONForLaunch("/tmp/project",
+		harness.OpenCodeSandboxOff, harness.OpenCodeApprovalDeny,
+		harness.OpenCodeToolsDeny, nil)
+	require.NoError(t, err)
+	assert.JSONEq(t, `[]`, encoded)
+}
