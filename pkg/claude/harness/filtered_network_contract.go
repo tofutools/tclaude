@@ -31,30 +31,55 @@ const (
 // address"). So the mechanism cannot express "this port, loopback only" at all.
 //
 // NOT NONE EITHER. Real enforcement happens and is measured: a port outside the
-// authored list is refused with EPERM, an external TCP connect is refused, and
-// bind is refused. Only the ADDRESS axis is unenforced, which is why the ports
-// cell stays Full and this one moves to Partial.
+// authored list is refused with EPERM, and an outbound TCP connect to an
+// external destination is refused. Only the ADDRESS axis is unenforced, which
+// is why the ports cell stays Full and this one moves to Partial.
+//
+// BIND IS NOT RESTRICTED ON THIS POSTURE, and an earlier draft of the string
+// below claimed the opposite. `(deny network-bind)` is emitted only by
+// appendSeatbeltIsolatedNetworkRules; the loopback path deliberately leaves
+// bind alone so local services and the IDE bridge keep working
+// (sandbox_seatbelt_test.go asserts the profile does NOT contain it, and the
+// Darwin Local smoke requires net.Listen to SUCCEED). The false claim came from
+// importing a property measured on the ISOLATED posture into this one — the
+// same held-parameter mistake TCL-917 was about. Do not restore it: an operator
+// must not be told the precondition is one the sandbox cannot arrange.
 //
 // SCOPE OF THE MEASUREMENT. TCP. External UDP was measured on neither Seatbelt
-// path, so it is named here rather than claimed either way on the operator
-// surface — see the same note at appendSeatbeltLoopbackNetworkRules.
+// path, so the operator-facing strings below say TCP rather than claiming IP
+// generally — the policy recorded in docs/proxy-network-filtering.md. See the
+// same note at appendSeatbeltLoopbackNetworkRules.
+//
+// WIDENING IS NOT DETECTABLE. No test would notice if Apple made `localhost`
+// match addresses beyond this machine: the external-destination assertion moves
+// the address AND the port together, so it is refused on port alone even under
+// a widened host predicate. The strings below therefore describe what is
+// refused TODAY without implying the boundary is monitored.
 //
 // NOT MITIGATED, DELIBERATELY. The operator ruled document-and-disclose and
 // ruled AGAINST a launch-time port-collision check on both Seatbelt paths
 // (TCL-917). Do not re-propose one here.
 const (
 	// SeatbeltNativeLoopbackSelectorDetail is the per-selector disclosure. It
-	// names the escape and the precondition an operator needs to judge their
-	// own exposure, rather than leaving either to be discovered.
-	SeatbeltNativeLoopbackSelectorDetail = "Local-machine rules are enforced on the authored ports: a port outside the list is refused, and destinations off this machine are refused. " +
-		"They are not confined to loopback. macOS sandbox rules accept only \"localhost\" as the host, which means every address assigned to this machine, " +
-		"so a service listening on an authored port at another of this machine's addresses — its LAN address, for example — is reachable from the sandbox as well. " +
-		"That needs a service already listening there; the sandbox cannot create one, because it cannot bind."
+	// names the escape and its precondition, so an operator can judge their own
+	// exposure rather than discovering it.
+	//
+	// It covers BOTH authored shapes. A rule naming ports is enforced on those
+	// ports; a rule naming NO ports takes the allowAllPorts path and emits
+	// `(allow network-outbound (remote ip "localhost:*"))`, which is every port
+	// on every address of this machine. Saying only "the authored ports are
+	// enforced" would be false for that shape, which is the net-local preset.
+	SeatbeltNativeLoopbackSelectorDetail = "Local-machine rules are not confined to loopback. " +
+		"macOS sandbox rules accept only \"localhost\" as the host, which means every address assigned to this machine, " +
+		"so a service listening on an allowed port at another of this machine's addresses — its LAN address, for example — is reachable from the sandbox as well. " +
+		"A rule that names ports allows only those ports; a rule that names no ports allows every port on this machine. " +
+		"Outbound TCP to destinations off this machine is refused, as is a port outside the list."
 
 	// SeatbeltNativeLoopbackCondition carries the same escape on the ROW, so an
 	// operator reading network.list learns it without opening the selector.
-	SeatbeltNativeLoopbackCondition = "Local-machine rules are enforced on the authored ports, but they are not confined to loopback: " +
-		"a service listening on an authored port at another of this machine's addresses is reachable from the sandbox as well."
+	SeatbeltNativeLoopbackCondition = "Local-machine rules are not confined to loopback: " +
+		"a service listening on an allowed port at another of this machine's addresses is reachable from the sandbox as well. " +
+		"A rule that names no ports allows every port on this machine."
 )
 
 func filteredNetworkDNSCaveat() string {

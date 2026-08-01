@@ -1030,7 +1030,25 @@ func TestDarwinTclaudeLayerEnforcesOnlyLoopbackOnlyLists(t *testing.T) {
 	}}, row.NetworkSelectors)
 	// The escape must reach an operator who reads the ROW without opening the
 	// selector, which is the whole reason the condition is populated.
+	//
+	// Asserting equality against the constant would pin the WIRING and nothing
+	// else: it passes for any body, so deleting the load-bearing clause would
+	// regress the disclosure with this test still green. The clause itself is
+	// asserted too.
 	assert.Equal(t, SeatbeltNativeLoopbackCondition, row.NetworkListCondition)
+	assert.Contains(t, row.NetworkListCondition, "not confined to loopback")
+	assert.Contains(t, row.NetworkSelectors[0].Detail, "not confined to loopback")
+
+	// The branch covers Codex as well as Claude Code, and a gate that silently
+	// stopped covering one of them would otherwise pass here.
+	codexRow, err := accessEnforcementTable(
+		MustGet(CodexName), sandboxpolicy.ImplementationTclaudeLayer,
+		local, ClaudeSandboxOff, "darwin", true,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, EnforcePartial, codexRow.NetworkList)
+	assert.Equal(t, row.NetworkSelectors, codexRow.NetworkSelectors)
+	assert.Equal(t, row.NetworkListCondition, codexRow.NetworkListCondition)
 	rendered, notices, err := PlanAccessEnforcement(
 		local, accessEnforcementFromTable(row))
 	require.NoError(t, err)

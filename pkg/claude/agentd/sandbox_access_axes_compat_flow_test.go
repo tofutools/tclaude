@@ -755,13 +755,23 @@ func TestSandboxProfileDraftEnforcementDistinguishesDarwinLocalAndMixedLists(t *
 		detail   string
 	}{
 		{
+			// TCL-927: enforced_PARTIAL, not enforced. This is the rendered
+			// surface the dashboard reads, so the address-axis escape has to
+			// arrive here and not only on the capability row.
+			//
+			// The detail asserts the load-bearing phrase rather than the old
+			// "host-loopback", which the mechanism string satisfies on its own
+			// and so would keep passing with the disclosure removed.
+			//
+			// Note this case authors NO ports, which is the shape that grants
+			// every port on the machine — see SeatbeltNativeLoopbackSelectorDetail.
 			name: "darwin-local",
 			allow: []any{
 				map[string]any{"loopback": true},
 			},
 			platform: "darwin",
-			outcome:  harness.AccessPredictionEnforced,
-			detail:   "host-loopback",
+			outcome:  harness.AccessPredictionEnforcedPartial,
+			detail:   "not confined to loopback",
 		},
 		{
 			name: "darwin-local-model-apis",
