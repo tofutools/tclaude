@@ -52,6 +52,15 @@ var loopbackIdentityPrefixes = []netip.Prefix{
 // any of its spellings. Every such spelling is governed by the loopback
 // selector, under every baseline — otherwise an open posture would reach host
 // services through 0.0.0.0 that no authored row ever granted.
+//
+// It answers CONNECT-reachability only — whether traffic sent to this address
+// arrives at the host running the sandbox — and is not a bind-scope test. The
+// two diverge exactly where it would hurt: 0.0.0.0 is in this space because
+// connect() to it lands on local loopback, while bind() to it is the widest
+// scope there is rather than a loopback-scoped one. A caller asking "may
+// something listen here" needs its own predicate, not this one. The concrete
+// instance is validateSeatbeltProxyEndpoint (TCL-906), and the reasoning lives
+// at that call site rather than being restated here.
 func AddrIsLoopbackIdentity(addr netip.Addr) bool {
 	addr = addr.Unmap()
 	if !addr.IsValid() {
