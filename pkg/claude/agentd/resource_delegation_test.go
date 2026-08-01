@@ -1,16 +1,48 @@
 package agentd
 
 import (
+	"io"
+	"os"
 	"os/exec"
+	"slices"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/opencodeapi"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
+
+type openCodeTmuxProbeFake struct {
+	sync.Mutex
+	results []bool
+	calls   [][]string
+}
+
+func (f *openCodeTmuxProbeFake) Command(args ...string) *exec.Cmd {
+	f.Lock()
+	f.calls = append(f.calls, slices.Clone(args))
+	succeed := true
+	if len(f.results) > 0 {
+		succeed = f.results[0]
+		f.results = f.results[1:]
+	}
+	f.Unlock()
+	if succeed {
+		return exec.Command("true")
+	}
+	return exec.Command("false")
+}
+
+func (f *openCodeTmuxProbeFake) ListSessions() (map[string]struct{}, error) {
+	return nil, nil
+}
 
 func TestResolveResourceDelegationDirPrecedence(t *testing.T) {
 	t.Setenv(session.ResourceDelegationDirEnv, "/from-env")
@@ -34,15 +66,119 @@ func TestResolveResourceDelegationDirPrecedence(t *testing.T) {
 	assert.Equal(t, "legacy self-cgroup derivation", source)
 }
 
-func TestManagedOpenCodeExternalResourceCgroupRequiresExplicitDegradation(t *testing.T) {
-	t.Setenv("TMUX", "")
-	t.Setenv(session.ResourceDelegationDirEnv,
-		"/sys/fs/cgroup/system.slice/tclaude-tmux.service")
-	_, err := configureOpenCodeResourceCgroup(exec.Command("true"),
-		"/sys/fs/cgroup/system.slice/tclaude-tmux.service/tclaude-test")
-	require.Error(t, err)
-	assert.ErrorIs(t, err, errOpenCodeResourceCgroup)
-	assert.ErrorContains(t, err, "cannot be placed across systemd units")
+func TestManagedOpenCodeTmuxSessionNameIsStableAndBounded(t *testing.T) {
+	first := openCodeManagedTmuxSession("ses_same")
+	assert.Equal(t, first, openCodeManagedTmuxSession("ses_same"))
+	assert.NotEqual(t, first, openCodeManagedTmuxSession("ses_other"))
+	assert.Regexp(t, `^__tclaude-opencode-[0-9a-f]{20}$`, first)
+}
+
+func TestManagedOpenCodeTmuxReclaimsReservedOrphan(t *testing.T) {
+	fake := &openCodeTmuxProbeFake{results: []bool{true, true}}
+	previous := clcommon.Default
+	clcommon.Default = fake
+	t.Cleanup(func() { clcommon.Default = previous })
+
+	require.NoError(t, reclaimOrphanedOpenCodeTmuxSession("__tclaude-opencode-deadbeef"))
+	require.Len(t, fake.calls, 2)
+	assert.Equal(t, []string{"-N", "has-session", "-t", "=__tclaude-opencode-deadbeef"}, fake.calls[0])
+	assert.Equal(t, []string{"-N", "kill-session", "-t", "=__tclaude-opencode-deadbeef"}, fake.calls[1])
+}
+
+func TestManagedOpenCodeTmuxWatcherToleratesTransientFailures(t *testing.T) {
+	fake := &openCodeTmuxProbeFake{results: []bool{false, false, true, false, false, false}}
+	previousTmux := clcommon.Default
+	previousInterval := openCodeTmuxProbeInterval
+	clcommon.Default = fake
+	openCodeTmuxProbeInterval = time.Millisecond
+	t.Cleanup(func() {
+		clcommon.Default = previousTmux
+		openCodeTmuxProbeInterval = previousInterval
+	})
+	process := &openCodeProcess{pid: 4242, tmuxSession: "__tclaude-opencode-watch",
+		done: make(chan error, 1)}
+
+	go watchOpenCodeTmuxProcess(process, db.OpenCodeRuntime{SessionID: "watch-session"})
+	select {
+	case err := <-process.done:
+		require.ErrorContains(t, err, "managed tmux session exited")
+	case <-time.After(time.Second):
+		t.Fatal("tmux watcher did not reach the consecutive-failure threshold")
+	}
+	fake.Lock()
+	defer fake.Unlock()
+	assert.Len(t, fake.calls, 6, "a successful probe must reset the failure count")
+}
+
+func TestManagedOpenCodeTmuxUnixHandshakeCrossesProcessBoundary(t *testing.T) {
+	handshake, err := prepareOpenCodeTmuxHandshake()
+	require.NoError(t, err)
+	t.Cleanup(handshake.close)
+
+	childDone := make(chan error, 1)
+	go func() {
+		status, openErr := os.OpenFile(handshake.statusPath, os.O_WRONLY, 0)
+		if openErr != nil {
+			childDone <- openErr
+			return
+		}
+		defer status.Close()
+		gate, openErr := os.Open(handshake.gatePath)
+		if openErr != nil {
+			childDone <- openErr
+			return
+		}
+		defer gate.Close()
+		if writeErr := opencodeapi.WriteUnixLaunchAuthority(status,
+			opencodeapi.UnixLaunchAuthority{Device: 41, Inode: 42}); writeErr != nil {
+			childDone <- writeErr
+			return
+		}
+		var acknowledgement [1]byte
+		_, readErr := io.ReadFull(gate, acknowledgement[:])
+		if readErr == nil && acknowledgement[0] != 1 {
+			readErr = io.ErrUnexpectedEOF
+		}
+		childDone <- readErr
+	}()
+
+	require.NoError(t, handshake.connectGate(time.Now().Add(time.Second)))
+	authority, err := opencodeapi.ReadUnixLaunchAuthority(handshake.status)
+	require.NoError(t, err)
+	assert.Equal(t, opencodeapi.UnixLaunchAuthority{Device: 41, Inode: 42}, authority)
+	_, err = handshake.gate.Write([]byte{1})
+	require.NoError(t, err)
+	require.NoError(t, <-childDone)
+}
+
+func TestManagedOpenCodeTmuxUnixHandshakeTimesOutAfterGateConnect(t *testing.T) {
+	handshake, err := prepareOpenCodeTmuxHandshake()
+	require.NoError(t, err)
+	t.Cleanup(handshake.close)
+
+	release := make(chan struct{})
+	childDone := make(chan struct{})
+	go func() {
+		defer close(childDone)
+		status, openErr := os.OpenFile(handshake.statusPath, os.O_WRONLY, 0)
+		if openErr != nil {
+			return
+		}
+		defer status.Close()
+		gate, openErr := os.Open(handshake.gatePath)
+		if openErr != nil {
+			return
+		}
+		defer gate.Close()
+		<-release
+	}()
+
+	require.NoError(t, handshake.connectGate(time.Now().Add(time.Second)))
+	process := &openCodeProcess{done: make(chan error, 1)}
+	_, err = awaitOpenCodeTmuxAuthority(handshake, process, 20*time.Millisecond)
+	require.ErrorContains(t, err, "authority handshake timed out")
+	close(release)
+	<-childDone
 }
 
 func TestManagedServerDropsStoredCgroupFromPreviousDelegationBeforeReprepare(t *testing.T) {

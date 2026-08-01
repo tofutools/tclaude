@@ -232,6 +232,14 @@ func wrapPreparedResourceCgroupCommand(sessionID, dir, command string, allowUnen
 	return wrapper
 }
 
+// WrapPreparedResourceCgroupCommand renders the pane-side resource wrapper for
+// a cgroup that agentd already prepared. Managed servers use this when their
+// durable process tree must be forked by the external tmux runtime rather than
+// by agentd itself.
+func WrapPreparedResourceCgroupCommand(sessionID, dir, command string, allowUnenforced bool) string {
+	return wrapPreparedResourceCgroupCommand(sessionID, dir, command, allowUnenforced)
+}
+
 // ConfigureProcessResourceCgroup asks clone3 to place cmd in the prepared
 // cgroup atomically, before its program executes. The returned cleanup closes
 // the directory FD after Start returns; it does not remove the cgroup.
