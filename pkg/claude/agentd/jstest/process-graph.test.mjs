@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assertAbsent } from './assertions.mjs';
+import { assertAbsent, assertSameNode } from './assertions.mjs';
 import {
   ProcessGraph, interactionNode, isGraphTypingTarget, normalizeWheelDelta,
 } from '../dashboard/js/process-graph.js';
@@ -183,7 +183,7 @@ test('live edge reroutes update geometry without replacing interactive edge DOM'
     ProcessGraph.prototype.updateEdgeGeometry.call(fake, [{
       ...edge, path: 'M 50 60 L 70 80', label: { x: 61, y: 63 },
     }]);
-    assert.equal(fake.edgeLayer.firstElementChild, rendered,
+    assertSameNode(fake.edgeLayer.firstElementChild, rendered,
       'drag frames retain edge focus, listeners, and selection classes');
     assert.equal(rendered.querySelector('.process-edge-path').getAttribute('d'), 'M 50 60 L 70 80');
     assert.equal(rendered.querySelector('.process-edge-hit').getAttribute('d'), 'M 50 60 L 70 80');

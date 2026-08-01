@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assertAbsent } from './assertions.mjs';
+import { assertAbsent, assertSameNode } from './assertions.mjs';
 import { createPreactHarness, getByRole } from './preact-harness.mjs';
 
 function deferred() {
@@ -62,7 +62,7 @@ test('cron dialog owns focus and dirty Escape/backdrop dismissal', async (t) => 
   await harness.act(() => harness.fireEvent(harness.document, 'keydown', { key: 'Escape' }));
   assert.equal(closed, 1, 'confirmed Escape closes the dirty draft');
   await mounted.unmount();
-  assert.equal(harness.document.activeElement, invoker, 'unmount restores the launcher focus');
+  assertSameNode(harness.document.activeElement, invoker, 'unmount restores the launcher focus');
   invoker.remove();
 });
 

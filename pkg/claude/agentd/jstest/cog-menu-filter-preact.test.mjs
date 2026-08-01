@@ -9,7 +9,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assertAbsent } from './assertions.mjs';
+import { assertAbsent, assertSameNode } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 async function mountCog(t, { onRun = () => {} } = {}) {
@@ -81,7 +81,7 @@ test('opening a cog focuses the filter box so it is typeable at once', async (t)
   await view.open();
   // The component focuses in a microtask, matching InlineEditor's pattern.
   await new Promise((resolve) => queueMicrotask(resolve));
-  assert.equal(view.harness.document.activeElement, view.filter());
+  assertSameNode(view.harness.document.activeElement, view.filter());
 });
 
 test('typing narrows the menu and clicking the filter box does not dismiss it', async (t) => {

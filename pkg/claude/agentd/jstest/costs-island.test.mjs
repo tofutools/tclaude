@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assertAbsent } from './assertions.mjs';
+import { assertAbsent, assertSameNode } from './assertions.mjs';
 import { createPreactHarness, getByRole } from './preact-harness.mjs';
 
 const storage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
@@ -37,8 +37,8 @@ test('Costs island renders controls and preserves keyed table focus/selection ac
   await harness.act(() => {
     snapshot.value = { cost_tab_visible: true, cost_tab_whatif: false, generated_at: '2026-07-10T12:00:02Z' };
   });
-  assert.equal(mounted.container.querySelector('.cost-col[data-tip]'), chartColumn, 'snapshot refresh preserves the imperative chart');
-  assert.equal(harness.document.body.querySelector('.cost-tip'), tooltip, 'snapshot refresh preserves the open chart tooltip');
+  assertSameNode(mounted.container.querySelector('.cost-col[data-tip]'), chartColumn, 'snapshot refresh preserves the imperative chart');
+  assertSameNode(harness.document.body.querySelector('.cost-tip'), tooltip, 'snapshot refresh preserves the open chart tooltip');
   await harness.act(() => { activeTab.value = 'groups'; });
   assertAbsent(harness.document.body.querySelector('.cost-tip'), 'leaving Costs removes its body-level tooltip');
   await harness.act(() => { activeTab.value = 'costs'; });
@@ -49,9 +49,9 @@ test('Costs island renders controls and preserves keyed table focus/selection ac
   id.focus();
   const text = row.querySelector('.rowname').firstChild;
   await harness.act(() => { state.beginRequest(2); state.commitRequest(2, payload()); });
-  assert.equal(mounted.container.querySelector('tr[data-key="cost-conv-a-2026-07-10"]'), row);
-  assert.equal(row.querySelector('.rowname').firstChild, text);
-  assert.equal(harness.document.activeElement, id);
+  assertSameNode(mounted.container.querySelector('tr[data-key="cost-conv-a-2026-07-10"]'), row);
+  assertSameNode(row.querySelector('.rowname').firstChild, text);
+  assertSameNode(harness.document.activeElement, id);
 
   const filter = getByRole(mounted.container, 'textbox', { name: 'Filter cost agents' });
   await harness.input(filter, 'gpt');
@@ -211,7 +211,7 @@ test('Costs rows carry an accurate, banner-linked WHAT-IF marker', async (t) => 
   await harness.act(() => { event = harness.fireEvent(mark, 'click', { button: 0 }); });
   assert.equal(event.defaultPrevented, true, 'a plain click is handled in place, without a history entry');
   assert.ok(banner.classList.contains('cost-whatif-flash'), 'the banner flashes so the jump visibly lands');
-  assert.equal(harness.document.activeElement, banner,
+  assertSameNode(harness.document.activeElement, banner,
     'and takes focus, so a keyboard or screen-reader visitor arrives too');
   await mounted.unmount();
 });

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assertAbsent } from './assertions.mjs';
+import { assertAbsent, assertSameNode } from './assertions.mjs';
 import { createPreactHarness, getByRole } from './preact-harness.mjs';
 
 function section(calls) {
@@ -58,8 +58,8 @@ test('Dock keeps keyed cards, disclosure and an open menu stable across snapshot
   assert.equal(cog.getAttribute('aria-expanded'), 'true');
 
   await harness.act(() => state.publish({ profiles: [{ name: 'review', model: 'opus' }] }));
-  assert.equal(host.querySelector('.dock-card'), card, 'stable item key preserves the drag source');
-  assert.equal(host.querySelector('.dock-card-menu'), menu, 'open menu node survives the poll');
+  assertSameNode(host.querySelector('.dock-card'), card, 'stable item key preserves the drag source');
+  assertSameNode(host.querySelector('.dock-card-menu'), menu, 'open menu node survives the poll');
   assert.ok(menu.classList.contains('open'));
   assert.equal(card.querySelector('.dock-chip').textContent, 'opus');
 
@@ -68,7 +68,7 @@ test('Dock keeps keyed cards, disclosure and an open menu stable across snapshot
   await harness.act(() => harness.fireEvent(harness.document.body, 'keydown', { key: 'Escape' }));
   await Promise.resolve();
   assert.equal(cog.getAttribute('aria-expanded'), 'false');
-  assert.equal(harness.document.activeElement, cog, 'Escape restores focus to the owning cog');
+  assertSameNode(harness.document.activeElement, cog, 'Escape restores focus to the owning cog');
 
   details.removeAttribute('open');
   await harness.act(() => harness.fireEvent(details, 'toggle'));
@@ -91,7 +91,7 @@ test('Dock keeps keyed cards, disclosure and an open menu stable across snapshot
   await harness.act(() => harness.fireEvent(harness.document.body, 'click'));
   await Promise.resolve();
   assert.equal(cog.getAttribute('aria-expanded'), 'false', 'outside click closes the menu');
-  assert.equal(harness.document.activeElement, cog, 'outside click restores focus when it remained in the hidden menu');
+  assertSameNode(harness.document.activeElement, cog, 'outside click restores focus when it remained in the hidden menu');
 
   await mounted.unmount();
   host.remove();
@@ -288,7 +288,7 @@ test('Dock renders structured badge metadata natively with stable badge keys', a
   assertAbsent(host.querySelector('.dock-chip'), 'the source class survives native rendering');
 
   await harness.act(() => state.publish({ profiles: [{ name: 'circle', waves: 3 }] }));
-  assert.equal(host.querySelector('.tc-count'), badge, 'the structured badge key retains DOM identity');
+  assertSameNode(host.querySelector('.tc-count'), badge, 'the structured badge key retains DOM identity');
   assert.equal(badge.textContent, '🌊 3 waves');
   await mounted.unmount();
   host.remove();

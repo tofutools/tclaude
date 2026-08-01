@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertSameNode } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 test('transaction state freezes exact identities and refuses live retargeting', async (t) => {
@@ -102,7 +103,7 @@ test('transaction frame blocks busy dismissal and restores opener focus', async 
   await harness.act(() => Promise.resolve());
   assert.deepEqual(calls, ['submit', 'close']);
   await mounted.unmount();
-  assert.equal(harness.document.activeElement, opener);
+  assertSameNode(harness.document.activeElement, opener);
 });
 
 test('transaction frame uses topmost dirty confirmation and guards backdrop drags', async (t) => {

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assertAbsent } from './assertions.mjs';
+import { assertAbsent, assertSameNode } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 function deferred() {
@@ -288,7 +288,7 @@ test('group retire preview preserves bulk-only worktree coupling, hidden checks,
   await harness.act(() => Promise.resolve());
   assert.equal(finishes, 1);
   assertAbsent(host.querySelector('#retire-preview-modal'));
-  assert.equal(harness.document.activeElement, opener);
+  assertSameNode(harness.document.activeElement, opener);
   assert.deepEqual(await mounted.pending, {
     kind: 'retire-group-preview', response: await second.promise,
   });

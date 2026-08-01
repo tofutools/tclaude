@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertSameNode } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 function message(id, overrides = {}) {
@@ -142,12 +143,12 @@ test('Arrow keys walk the message list, moving the selection and the focus toget
   listRows[1].focus();
   const down = await press(listRows[1], 'ArrowDown');
   assert.deepEqual(calls.messages, ['3']);
-  assert.equal(harness.document.activeElement, listRows[2]);
+  assertSameNode(harness.document.activeElement, listRows[2]);
   assert.equal(down.defaultPrevented, true);
 
   await press(listRows[2], 'ArrowUp');
   assert.deepEqual(calls.messages, ['3', '2']);
-  assert.equal(harness.document.activeElement, listRows[1]);
+  assertSameNode(harness.document.activeElement, listRows[1]);
   await mounted.unmount();
 });
 
@@ -166,7 +167,7 @@ test('Arrow keys stop at the ends of the rendered page instead of paging', async
   // the operator is reading.
   assert.equal(up.defaultPrevented, true);
   assert.equal(down.defaultPrevented, true);
-  assert.equal(harness.document.activeElement, listRows[2]);
+  assertSameNode(harness.document.activeElement, listRows[2]);
   await mounted.unmount();
 });
 
@@ -185,16 +186,16 @@ test('Home, End, PageUp, and PageDown move within the rendered page', async (t) 
   listRows[5].focus();
   await press(listRows[5], 'PageDown');
   assert.equal(calls.messages.at(-1), '9', 'PageDown moves one three-row viewport');
-  assert.equal(harness.document.activeElement, listRows[8]);
+  assertSameNode(harness.document.activeElement, listRows[8]);
   await press(listRows[8], 'PageUp');
   assert.equal(calls.messages.at(-1), '6');
 
   await press(listRows[5], 'Home');
   assert.equal(calls.messages.at(-1), '1');
-  assert.equal(harness.document.activeElement, listRows[0]);
+  assertSameNode(harness.document.activeElement, listRows[0]);
   await press(listRows[0], 'End');
   assert.equal(calls.messages.at(-1), '12');
-  assert.equal(harness.document.activeElement, listRows[11]);
+  assertSameNode(harness.document.activeElement, listRows[11]);
 
   await press(listRows[11], 'PageDown');
   assert.equal(calls.messages.at(-1), '12', 'PageDown clamps at the rendered last row');
@@ -211,7 +212,7 @@ test('A move started from a row control continues from that row', async (t) => {
   await press(checkbox, 'ArrowDown');
 
   assert.deepEqual(calls.messages, ['3']);
-  assert.equal(harness.document.activeElement, listRows[2]);
+  assertSameNode(harness.document.activeElement, listRows[2]);
   await mounted.unmount();
 });
 
@@ -225,23 +226,23 @@ test('Down enters each filter result list, while Up or Escape returns from its f
   boxFilter.focus();
   const intoBoxes = await press(boxFilter, 'ArrowDown');
   assert.equal(intoBoxes.defaultPrevented, true);
-  assert.equal(harness.document.activeElement, boxes[0]);
+  assertSameNode(harness.document.activeElement, boxes[0]);
   assert.deepEqual(calls.mailboxes, ['all']);
   const outOfBoxes = await press(boxes[0], 'ArrowUp');
   assert.equal(outOfBoxes.defaultPrevented, true);
-  assert.equal(harness.document.activeElement, boxFilter);
+  assertSameNode(harness.document.activeElement, boxFilter);
 
   messageFilter.focus();
   await press(messageFilter, 'ArrowDown');
-  assert.equal(harness.document.activeElement, listRows[0]);
+  assertSameNode(harness.document.activeElement, listRows[0]);
   assert.deepEqual(calls.messages, ['1']);
   await press(listRows[0], 'Escape');
-  assert.equal(harness.document.activeElement, messageFilter);
+  assertSameNode(harness.document.activeElement, messageFilter);
 
   listRows[1].focus();
   const deeperEscape = await press(listRows[1], 'Escape');
   assert.equal(deeperEscape.defaultPrevented, false, 'Escape only returns from the first row');
-  assert.equal(harness.document.activeElement, listRows[1]);
+  assertSameNode(harness.document.activeElement, listRows[1]);
   await mounted.unmount();
 });
 
@@ -255,7 +256,7 @@ test('Down in a filter stays native when its result pane has no rows', async (t)
 
   const down = await press(filter, 'ArrowDown');
   assert.equal(down.defaultPrevented, false);
-  assert.equal(harness.document.activeElement, filter);
+  assertSameNode(harness.document.activeElement, filter);
   assert.deepEqual(calls.messages, []);
   await mounted.unmount();
 });
@@ -267,7 +268,7 @@ test('Down in a composing filter stays with the IME candidate list', async (t) =
 
   const down = await press(filter, 'ArrowDown', { isComposing: true });
   assert.equal(down.defaultPrevented, false);
-  assert.equal(harness.document.activeElement, filter);
+  assertSameNode(harness.document.activeElement, filter);
   assert.deepEqual(calls.messages, []);
   await mounted.unmount();
 });
@@ -286,24 +287,24 @@ test('Left and Right move focus across sidebar, list, and reader', async (t) => 
 
   boxes[1].focus();
   await press(boxes[1], 'ArrowRight');
-  assert.equal(harness.document.activeElement, listRows[1]);
+  assertSameNode(harness.document.activeElement, listRows[1]);
   await press(listRows[1], 'ArrowRight');
-  assert.equal(harness.document.activeElement, reader);
+  assertSameNode(harness.document.activeElement, reader);
 
   const readerDown = await press(reader, 'ArrowDown');
   assert.equal(readerDown.defaultPrevented, false, 'the focused reader keeps native scrolling');
-  assert.equal(harness.document.activeElement, reader);
+  assertSameNode(harness.document.activeElement, reader);
 
   await press(reader, 'ArrowLeft');
-  assert.equal(harness.document.activeElement, listRows[1]);
+  assertSameNode(harness.document.activeElement, listRows[1]);
   await press(listRows[1], 'ArrowLeft');
-  assert.equal(harness.document.activeElement, boxes[1]);
+  assertSameNode(harness.document.activeElement, boxes[1]);
   assert.deepEqual(calls.mailboxes, []);
   assert.deepEqual(calls.messages, [], 'pane switches preserve the current selection');
 
   const modified = await press(boxes[1], 'ArrowRight', { ctrlKey: true });
   assert.equal(modified.defaultPrevented, false);
-  assert.equal(harness.document.activeElement, boxes[1]);
+  assertSameNode(harness.document.activeElement, boxes[1]);
   await mounted.unmount();
 });
 
@@ -318,7 +319,7 @@ test('Entering an unselected message list opens the focused fallback row', async
 
   boxes[1].focus();
   await press(boxes[1], 'ArrowRight');
-  assert.equal(harness.document.activeElement, listRows[0]);
+  assertSameNode(harness.document.activeElement, listRows[0]);
   assert.equal(signal.value.selectedMsgId, 1);
   assert.equal(mounted.container.querySelector('.mail-subject').textContent, 'Subject 1 #1');
 
@@ -327,7 +328,7 @@ test('Entering an unselected message list opens the focused fallback row', async
   });
   reader.focus();
   await press(reader, 'ArrowLeft');
-  assert.equal(harness.document.activeElement, listRows[0]);
+  assertSameNode(harness.document.activeElement, listRows[0]);
   assert.equal(signal.value.selectedMsgId, 1);
   assert.equal(mounted.container.querySelector('.mail-subject').textContent, 'Subject 1 #1');
   assert.deepEqual(calls.messages, ['1', '1']);
@@ -389,7 +390,7 @@ test('Arrow keys walk the sidebar in painted order, nested group members include
   const sidebar = mounted.container.querySelector('#mail-sidebar');
   await press(sidebar, 'ArrowDown');
   assert.deepEqual(calls.mailboxes, ['group:tclaude']);
-  assert.equal(harness.document.activeElement, boxes[2]);
+  assertSameNode(harness.document.activeElement, boxes[2]);
 
   // …and crosses into the group's nested members and out again to the flat
   // agent list without stopping on the section heading or the expand caret.
@@ -397,7 +398,7 @@ test('Arrow keys walk the sidebar in painted order, nested group members include
     await press(harness.document.activeElement, 'ArrowDown');
     assert.equal(calls.mailboxes.at(-1), expected);
   }
-  assert.equal(harness.document.activeElement, boxes[5]);
+  assertSameNode(harness.document.activeElement, boxes[5]);
   await mounted.unmount();
 });
 
@@ -410,9 +411,9 @@ test('Clicking a row focuses it, so the arrow keys pick up from there', async (t
   // not), so the island focuses it explicitly — otherwise "click a message,
   // then arrow" would be a Linux-only feature.
   await harness.act(() => harness.fireEvent(listRows[2], 'click'));
-  assert.equal(harness.document.activeElement, listRows[2]);
+  assertSameNode(harness.document.activeElement, listRows[2]);
   await harness.act(() => harness.fireEvent(boxes[3], 'click'));
-  assert.equal(harness.document.activeElement, boxes[3]);
+  assertSameNode(harness.document.activeElement, boxes[3]);
   await mounted.unmount();
 });
 
@@ -441,7 +442,7 @@ test('A request decided in the background keeps the focused row, and the arrows 
   // assert.ok, not assert.equal: a failing DOM-node comparison spends ~20s
   // rendering two element diffs nobody reads.
   assert.ok(rowFor('req-1') === focused, 'the decided row must keep its DOM node');
-  assert.equal(harness.document.activeElement, focused);
+  assertSameNode(harness.document.activeElement, focused);
 
   await press(harness.document.activeElement, 'ArrowDown');
   assert.deepEqual(calls.messages, ['req-3']);

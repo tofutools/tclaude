@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assertAbsent } from './assertions.mjs';
+import { assertAbsent, assertDifferentNode, assertSameNode } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 function deferred() {
@@ -78,16 +78,16 @@ test('Preact editor shell keeps one graph host across chrome, selection, and mod
   assertAbsent(host.querySelector('.process-editor-id-input'), 'no id field is offered at creation');
 
   await harness.act(() => editor.status('poll updated'));
-  assert.equal(host.querySelector('.process-editor-canvas-host'), graphHost);
-  assert.equal(host.querySelector('.process-graph'), graphRoot);
+  assertSameNode(host.querySelector('.process-editor-canvas-host'), graphHost);
+  assertSameNode(host.querySelector('.process-graph'), graphRoot);
   assert.match(host.querySelector('.process-editor-status').textContent, /poll updated/);
 
   await harness.act(() => editor.setSelection({ type: 'template' }));
-  assert.equal(host.querySelector('.process-editor-canvas-host'), graphHost);
+  assertSameNode(host.querySelector('.process-editor-canvas-host'), graphHost);
   assert.ok(host.querySelector('.process-editor-inspector [aria-label="Template display name"]'));
   await harness.act(() => editor.addNodeType('task', { x: 400, y: 200 }));
-  assert.equal(host.querySelector('.process-editor-canvas-host'), graphHost);
-  assert.equal(host.querySelector('.process-graph'), graphRoot,
+  assertSameNode(host.querySelector('.process-editor-canvas-host'), graphHost);
+  assertSameNode(host.querySelector('.process-graph'), graphRoot,
     'setGraph updates the opaque widget without remounting its host/root');
 
   editor.destroy();
@@ -384,7 +384,7 @@ test('custom snippets create, keyboard-insert, rename, and delete through the Pr
     'shared field primitive preserves the explicit label association');
   assert.equal(nameInput.getAttribute('placeholder'), 'e.g. Release review');
   assert.equal(nameInput.getAttribute('autocomplete'), 'off');
-  assert.equal(harness.document.activeElement, nameInput, 'snippet name remains the dialog initial focus');
+  assertSameNode(harness.document.activeElement, nameInput, 'snippet name remains the dialog initial focus');
   assert.equal(host.querySelector('#process-snippet-name-modal .primary').disabled, true,
     'blank name keeps submission disabled without disabling or skipping the input');
   await harness.act(() => {
@@ -674,7 +674,7 @@ test('editor chooser and stale controller commits revalidate the shared port aut
   assert.equal(editor.openConnectedNodeChooser({ nodeId: 'start', port: 'out' }, { x: 20, y: 30 }), true);
   await Promise.resolve();
   harness.fireEvent(host.querySelector('.process-node-chooser-input'), 'keydown', { key: 'Escape' });
-  assert.equal(harness.document.activeElement, sourcePort,
+  assertSameNode(harness.document.activeElement, sourcePort,
     'chooser dismissal restores its exact visible connector invoker');
 
   assert.equal(editor.openConnectedNodeChooser({ nodeId: 'start', port: 'out' }, { x: 20, y: 30 }), true);
@@ -939,8 +939,8 @@ test('unrelated Signals snapshots preserve an active inspector IME buffer and fo
   input.dispatchEvent(new harness.window.Event('compositionstart', { bubbles: true }));
 
   await harness.act(() => editor.status('validation refreshed'));
-  assert.equal(host.querySelector('[aria-label="Template display name"]'), input);
-  assert.equal(harness.document.activeElement, input);
+  assertSameNode(host.querySelector('[aria-label="Template display name"]'), input);
+  assertSameNode(harness.document.activeElement, input);
   assert.equal(input.value, '編集中');
 
   input.dispatchEvent(new harness.window.Event('compositionend', { bubbles: true }));
@@ -1091,20 +1091,20 @@ test('production scribe modal owns focus, inertness, and every close path inside
   let opened = await open();
   let textarea = opened.overlay.querySelector('textarea');
   const send = opened.overlay.querySelector('button.primary');
-  assert.equal(harness.document.activeElement, textarea);
+  assertSameNode(harness.document.activeElement, textarea);
   assert.match(opened.overlay.querySelector('pre').textContent, /"start"/);
   assert.match(opened.overlay.querySelector('.process-scribe-context-end').textContent, /visibly truncated/);
   send.focus();
   let tab = harness.fireEvent(send, 'keydown', { key: 'Tab' });
   assert.equal(tab.defaultPrevented, true);
-  assert.equal(harness.document.activeElement, textarea);
+  assertSameNode(harness.document.activeElement, textarea);
   tab = harness.fireEvent(textarea, 'keydown', { key: 'Tab', shiftKey: true });
   assert.equal(tab.defaultPrevented, true);
-  assert.equal(harness.document.activeElement, send);
+  assertSameNode(harness.document.activeElement, send);
   await harness.act(() => harness.fireEvent(textarea, 'keydown', { key: 'Escape' }));
   assert.equal(await opened.pending, null);
   assert.equal(editorRoot.hasAttribute('inert'), false);
-  assert.equal(harness.document.activeElement, invoker, 'Escape restores the production invoker');
+  assertSameNode(harness.document.activeElement, invoker, 'Escape restores the production invoker');
 
   opened = await open();
   await harness.act(() => harness.fireEvent(
@@ -1112,13 +1112,13 @@ test('production scribe modal owns focus, inertness, and every close path inside
   ));
   assert.equal(await opened.pending, null);
   assert.equal(editorRoot.hasAttribute('inert'), false);
-  assert.equal(harness.document.activeElement, invoker, 'Cancel restores the production invoker');
+  assertSameNode(harness.document.activeElement, invoker, 'Cancel restores the production invoker');
 
   opened = await open();
   await harness.act(() => harness.fireEvent(opened.overlay, 'mousedown'));
   assert.equal(await opened.pending, null);
   assert.equal(editorRoot.hasAttribute('inert'), false);
-  assert.equal(harness.document.activeElement, invoker, 'backdrop dismissal restores the production invoker');
+  assertSameNode(harness.document.activeElement, invoker, 'backdrop dismissal restores the production invoker');
 
   opened = await open({ kind: 'diagnostic', prompt: 'Fix it.', context: '{"code":"missing_start"}', truncated: false });
   textarea = opened.overlay.querySelector('textarea');
@@ -1127,7 +1127,7 @@ test('production scribe modal owns focus, inertness, and every close path inside
   await harness.act(() => harness.fireEvent(opened.overlay.querySelector('button.primary'), 'click'));
   assert.equal(await opened.pending, 'Preserve unrelated stages.');
   assert.equal(editorRoot.hasAttribute('inert'), false);
-  assert.equal(harness.document.activeElement, invoker, 'Send restores the production invoker');
+  assertSameNode(harness.document.activeElement, invoker, 'Send restores the production invoker');
   editor.destroy();
 });
 
@@ -1146,11 +1146,11 @@ test('editor choice dialogs restore the exact prior focus owner or body state', 
 
   editor.graph.focus();
   const sink = host.querySelector('.process-graph-keyboard-sink');
-  assert.equal(harness.document.activeElement, sink);
+  assertSameNode(harness.document.activeElement, sink);
   let opened = await open();
   await harness.act(() => harness.getByRole(opened.overlay, 'button', { name: 'Cancel' }).click());
   assert.equal(await opened.pending, null);
-  assert.equal(harness.document.activeElement, sink, 'Cancel restores the exact shortcut sink');
+  assertSameNode(harness.document.activeElement, sink, 'Cancel restores the exact shortcut sink');
 
   const node = host.querySelector('.process-node[data-node-id="start"]');
   const focusElement = harness.window.HTMLElement.prototype.focus;
@@ -1162,14 +1162,14 @@ test('editor choice dialogs restore the exact prior focus owner or body state', 
   opened = await open();
   await harness.act(() => harness.getByRole(opened.overlay, 'button', { name: 'Apply' }).click());
   assert.equal(await opened.pending, 'apply');
-  assert.equal(harness.document.activeElement, node, 'confirmation restores the exact graph item');
+  assertSameNode(harness.document.activeElement, node, 'confirmation restores the exact graph item');
 
   focusElement.call(harness.document.body);
-  assert.equal(harness.document.activeElement, harness.document.body);
+  assertSameNode(harness.document.activeElement, harness.document.body);
   opened = await open();
   await harness.act(() => harness.fireEvent(harness.document.activeElement, 'keydown', { key: 'Escape' }));
   assert.equal(await opened.pending, null);
-  assert.equal(harness.document.activeElement, harness.document.body,
+  assertSameNode(harness.document.activeElement, harness.document.body,
     'an unfocused editor remains unfocused after dialog teardown');
   editor.destroy();
 });
@@ -1198,7 +1198,7 @@ test('scribe preview backdrop cancels without sending and restores editor intera
   const overlay = host.querySelector('.process-scribe-preview-overlay');
   assert.ok(overlay, 'the request reached the production preview');
   assert.equal(editorRoot.hasAttribute('inert'), true);
-  assert.equal(harness.document.activeElement, overlay.querySelector('textarea'));
+  assertSameNode(harness.document.activeElement, overlay.querySelector('textarea'));
 
   let backdrop;
   await harness.act(() => {
@@ -1210,7 +1210,7 @@ test('scribe preview backdrop cancels without sending and restores editor intera
   assert.equal(sends, 0, 'backdrop cancellation never crosses the scribe send boundary');
   assertAbsent(host.querySelector('.process-scribe-preview-overlay'));
   assert.equal(editorRoot.hasAttribute('inert'), false);
-  assert.equal(harness.document.activeElement, invoker);
+  assertSameNode(harness.document.activeElement, invoker);
   editor.destroy();
 });
 
@@ -1243,13 +1243,13 @@ test('forced scribe modal disposal removes its listener, inert boundary, and foc
   });
   assert.equal(keydownListeners.size, 1, 'the open preview owns one document focus listener');
   assert.equal(editorRoot.hasAttribute('inert'), true);
-  assert.notEqual(harness.document.activeElement, invoker);
+  assertDifferentNode(harness.document.activeElement, invoker);
 
   await harness.act(() => editor.modalDispose(null));
   assert.equal(await pending, null);
   assertAbsent(host.querySelector('.process-scribe-preview-overlay'));
   assert.equal(editorRoot.hasAttribute('inert'), false);
-  assert.equal(harness.document.activeElement, invoker);
+  assertSameNode(harness.document.activeElement, invoker);
   assert.equal(keydownListeners.size, 0, 'forced disposal removes the document focus listener');
   editor.destroy();
 });
@@ -1285,7 +1285,7 @@ test('stacked scribe preview alone owns Tab and Escape, then returns focus to th
   const lower = harness.document.querySelector('#scribe-preview-lower-overlay');
   lower.style.zIndex = '100';
   const lowerOpener = lower.querySelector('#scribe-preview-lower-opener');
-  assert.equal(harness.document.activeElement, lowerOpener);
+  assertSameNode(harness.document.activeElement, lowerOpener);
 
   let pending;
   await harness.act(() => {
@@ -1296,7 +1296,7 @@ test('stacked scribe preview alone owns Tab and Escape, then returns focus to th
   const preview = host.querySelector('.process-scribe-preview-overlay');
   preview.style.zIndex = '200';
   const textarea = preview.querySelector('textarea');
-  assert.equal(harness.document.activeElement, textarea);
+  assertSameNode(harness.document.activeElement, textarea);
 
   const dialogPointer = harness.fireEvent(preview.querySelector('[role="dialog"]'), 'mousedown');
   assert.equal(dialogPointer.defaultPrevented, false,
@@ -1310,7 +1310,7 @@ test('stacked scribe preview alone owns Tab and Escape, then returns focus to th
   lower.querySelector('#scribe-preview-lower-last').focus();
   const tab = harness.fireEvent(harness.document.activeElement, 'keydown', { key: 'Tab' });
   assert.equal(tab.defaultPrevented, true);
-  assert.equal(harness.document.activeElement, textarea,
+  assertSameNode(harness.document.activeElement, textarea,
     'the top preview contains focus while the lower overlay yields');
 
   await harness.act(() => harness.fireEvent(textarea, 'keydown', { key: 'Escape' }));
@@ -1318,13 +1318,13 @@ test('stacked scribe preview alone owns Tab and Escape, then returns focus to th
   assertAbsent(host.querySelector('.process-scribe-preview-overlay'));
   assert.ok(harness.document.querySelector('#scribe-preview-lower-overlay'));
   assert.equal(lowerCloses, 0, 'the preview Escape does not dismiss the lower overlay');
-  assert.equal(harness.document.activeElement, lowerOpener,
+  assertSameNode(harness.document.activeElement, lowerOpener,
     'preview cleanup returns focus to its still-open owning overlay');
 
   await harness.act(() => harness.fireEvent(lowerOpener, 'keydown', { key: 'Escape' }));
   assertAbsent(harness.document.querySelector('#scribe-preview-lower-overlay'));
   assert.equal(lowerCloses, 1);
-  assert.equal(harness.document.activeElement, editorInvoker);
+  assertSameNode(harness.document.activeElement, editorInvoker);
   await lowerMount.unmount();
   editor.destroy();
 });
@@ -1364,13 +1364,13 @@ test('production node and params dialogs stay inside the editor island root', as
   await harness.act(() => editor.openNodeSettings(editor.model.template.start));
   const nodeOverlay = host.querySelector('.process-node-modal');
   assert.ok(nodeOverlay, 'node detail is rendered by the editor island');
-  assert.equal(harness.document.querySelector('.process-node-modal'), nodeOverlay);
+  assertSameNode(harness.document.querySelector('.process-node-modal'), nodeOverlay);
   await harness.act(() => editor.modalDispose(null));
 
   await harness.act(() => editor.openParamsSettings());
   const paramsOverlay = host.querySelector('.process-param-modal');
   assert.ok(paramsOverlay, 'params form is rendered by the same editor island');
-  assert.equal(harness.document.querySelector('.process-param-modal'), paramsOverlay);
+  assertSameNode(harness.document.querySelector('.process-param-modal'), paramsOverlay);
   await harness.act(() => editor.modalDispose(null));
   editor.destroy();
 });

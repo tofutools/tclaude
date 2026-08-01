@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assertAbsent } from './assertions.mjs';
+import { assertAbsent, assertSameNode } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 function deferred() {
@@ -219,7 +219,7 @@ test('delete-group renderer preserves detach defaults, explicit selection, and r
   await harness.act(() => second.promise);
   await harness.act(() => Promise.resolve());
   assertAbsent(host.querySelector('#delete-group-modal'));
-  assert.equal(harness.document.activeElement, opener, 'successful completion restores opener focus');
+  assertSameNode(harness.document.activeElement, opener, 'successful completion restores opener focus');
   assert.deepEqual(await opened.pending, { ok: true, retired: 2, detached: 1 });
 });
 
@@ -459,7 +459,7 @@ test('delete-group yields topmost Escape, guards backdrop drags, and restores it
   escape(harness);
   await harness.act(() => Promise.resolve());
   assertAbsent(host.querySelector('#delete-group-modal'));
-  assert.equal(harness.document.activeElement, opener);
+  assertSameNode(harness.document.activeElement, opener);
   assert.equal(await opened.pending, null);
 });
 

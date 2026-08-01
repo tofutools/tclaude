@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertSameNode } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 function message(id, overrides = {}) {
@@ -107,10 +108,10 @@ test('Messages island preserves native controls, CSS hooks, focus, reader, and k
   messageFilter.focus();
   await harness.act(() => { state.value = { ...state.value, total: 2, totalUnfiltered: 2,
     messages: [message(2), ...state.value.messages] }; });
-  assert.equal(mounted.container.querySelectorAll('.mail-row-wrap')[1], originalRow);
-  assert.equal(mounted.container.querySelector('#mail-reader'), originalReader);
+  assertSameNode(mounted.container.querySelectorAll('.mail-row-wrap')[1], originalRow);
+  assertSameNode(mounted.container.querySelector('#mail-reader'), originalReader);
   assert.equal(originalReader.scrollTop, 37);
-  assert.equal(harness.document.activeElement, messageFilter);
+  assertSameNode(harness.document.activeElement, messageFilter);
 
   harness.document.body.classList.add('wizard');
   await harness.act(() => { state.value = { ...state.value }; });
@@ -166,7 +167,7 @@ test('Messages interactions freeze mailbox changes while busy, wire agent mark-a
   mounted.container.querySelector('#filter-messages-clear').click();
   await harness.act(() => Promise.resolve());
   assert.equal(clearedTo, '');
-  assert.equal(harness.document.activeElement, mounted.container.querySelector('#filter-messages'));
+  assertSameNode(harness.document.activeElement, mounted.container.querySelector('#filter-messages'));
 
   await harness.act(() => { state.value = { ...state.value, busy: true }; });
   const mailbox = mounted.container.querySelector('.mailbox');

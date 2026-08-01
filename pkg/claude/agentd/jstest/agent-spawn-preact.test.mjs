@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assertAbsent } from './assertions.mjs';
+import { assertAbsent, assertSameNode } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 const groups = [{
@@ -652,7 +652,7 @@ test('Preact agent-spawn owner renders profile/custom/capability states without 
   const sameNameNode = host.querySelector('#agent-spawn-name');
   state.refreshSandboxPolicy();
   await flush(harness);
-  assert.equal(host.querySelector('#agent-spawn-name'), sameNameNode, 'source refresh preserves the keyed draft DOM');
+  assertSameNode(host.querySelector('#agent-spawn-name'), sameNameNode, 'source refresh preserves the keyed draft DOM');
   assert.equal(host.querySelector('#agent-spawn-name').value, 'my worker');
 
   // Claude Code has its own trust-folder dialog, so the checkbox is offered

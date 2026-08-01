@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assertAbsent } from './assertions.mjs';
+import { assertAbsent, assertSameNode } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 function view() {
@@ -119,7 +119,7 @@ test('Delete then Enter confirms a simple selection deletion from the focused de
   pressDelete(harness, ProcessTemplateEditor, editor);
   const overlay = await waitForSelector(harness.document, '.process-editor-modal');
   const destructive = harness.getByRole(overlay, 'button', { name: 'Delete selection' });
-  assert.equal(harness.document.activeElement, destructive);
+  assertSameNode(harness.document.activeElement, destructive);
   assert.notEqual(harness.document.activeElement.textContent, 'Cancel');
 
   pressFocusedEnter(harness);
@@ -140,7 +140,7 @@ test('Delete then Enter keeps the primary rewire choice for a mid-graph node', a
   pressDelete(harness, ProcessTemplateEditor, editor);
   const overlay = await waitForSelector(harness.document, '.process-editor-modal');
   const rewire = harness.getByRole(overlay, 'button', { name: 'Delete + rewire through' });
-  assert.equal(harness.document.activeElement, rewire);
+  assertSameNode(harness.document.activeElement, rewire);
   assert.match(rewire.className, /\bprimary\b/);
 
   pressFocusedEnter(harness);
@@ -180,7 +180,7 @@ test('choice dialogs without an explicit or primary focus keep the existing Canc
     choices: [{ key: 'continue', label: 'Continue' }],
   });
   const overlay = await waitForSelector(harness.document, '.process-editor-modal');
-  assert.equal(harness.document.activeElement, harness.getByRole(overlay, 'button', { name: 'Cancel' }));
+  assertSameNode(harness.document.activeElement, harness.getByRole(overlay, 'button', { name: 'Cancel' }));
   harness.fireEvent(harness.document.activeElement, 'click');
   assert.equal(await pending, null);
 });
@@ -341,7 +341,7 @@ test('discard confirmation rejection is contained for gesture and programmatic n
   harness.fireEvent(input, 'keydown', { key: 'Escape' });
   await settle();
   assert.equal(attempts, 1);
-  assert.equal(harness.document.querySelector('.process-node-modal'), overlay,
+  assertSameNode(harness.document.querySelector('.process-node-modal'), overlay,
     'a rejected gesture confirmation keeps the dialog mounted');
   assert.match(overlay.querySelector('.process-node-status').textContent,
     /Discard confirmation failed: confirmation service unavailable/);
@@ -349,7 +349,7 @@ test('discard confirmation rejection is contained for gesture and programmatic n
   assert.equal(await dispose.requestClose(), false, 'programmatic replacement receives a contained false result');
   await settle();
   assert.equal(attempts, 2);
-  assert.equal(harness.document.querySelector('.process-node-modal'), overlay);
+  assertSameNode(harness.document.querySelector('.process-node-modal'), overlay);
   assert.equal(model.node('work').name, 'Original');
   dispose(null);
 });
@@ -426,9 +426,9 @@ test('node dialog traps Tab and restores its invoker on forced teardown', async 
   save.focus();
   const tab = harness.fireEvent(save, 'keydown', { key: 'Tab' });
   assert.equal(tab.defaultPrevented, true);
-  assert.equal(harness.document.activeElement, first, 'Tab wraps to the first dialog control');
+  assertSameNode(harness.document.activeElement, first, 'Tab wraps to the first dialog control');
   dispose(null);
-  assert.equal(harness.document.activeElement, invoker, 'forced parent teardown restores the invoker');
+  assertSameNode(harness.document.activeElement, invoker, 'forced parent teardown restores the invoker');
 });
 
 test('node dialog opens with the label field focused, falling back when read-only', async (t) => {
@@ -442,14 +442,14 @@ test('node dialog opens with the label field focused, falling back when read-onl
   await settle();
   const overlay = harness.document.querySelector('.process-node-modal');
   const label = overlay.querySelector('.process-node-detail > .process-node-section .process-node-input');
-  assert.equal(harness.document.activeElement, label, 'editing a node lands the caret in the label field');
+  assertSameNode(harness.document.activeElement, label, 'editing a node lands the caret in the label field');
   dispose(null);
 
   const viewDispose = openNodeDialog({ model, nodeId: 'work', mode: 'view' });
   await settle();
   const readOnly = harness.document.querySelector('.process-node-modal');
   assert.equal(readOnly.querySelector('.process-node-input').disabled, true, 'view mode disables the label field');
-  assert.equal(
+  assertSameNode(
     harness.document.activeElement,
     readOnly.querySelector('.process-node-close'),
     'a disabled label field yields to the first focusable control',
@@ -509,7 +509,7 @@ test('node dialog restores and persists its own resize without bypassing dirty f
   planToggle.checked = true;
   harness.fireEvent(planToggle, 'change');
   await settle();
-  assert.equal(overlay.querySelector('.process-node-dialog'), dialog,
+  assertSameNode(overlay.querySelector('.process-node-dialog'), dialog,
     'dynamic stage fields rerender inside the same resizable card');
   assert.equal(dialog.style.width, '920px');
   assert.equal(dialog.style.height, '640px');
@@ -547,7 +547,7 @@ test('node dialog restores and persists its own resize without bypassing dirty f
   assert.equal(decisions.length, 1, 'resize wiring leaves dirty Escape behind confirmation');
   decisions.shift()(false);
   await settle();
-  assert.equal(harness.document.querySelector('.process-node-modal'), overlay,
+  assertSameNode(harness.document.querySelector('.process-node-modal'), overlay,
     'rejecting discard keeps the resized draft open');
 
   harness.fireEvent(overlay.querySelector('.process-node-cancel'), 'click');
@@ -555,7 +555,7 @@ test('node dialog restores and persists its own resize without bypassing dirty f
   decisions.shift()(true);
   await settle();
   assertAbsent(harness.document.querySelector('.process-node-modal'));
-  assert.equal(harness.document.activeElement, invoker, 'confirmed close still restores the invoker');
+  assertSameNode(harness.document.activeElement, invoker, 'confirmed close still restores the invoker');
 
   // The helper cleanup is part of dialog disposal: detached pointer events
   // cannot mutate the preference after ownership ends.
@@ -586,7 +586,7 @@ test('opening another node settings dialog cannot replace a rejected dirty draft
   harness.fireEvent(input, 'change');
   assert.equal(await ProcessTemplateEditor.prototype.openNodeSettings.call(editor, 'done'), false);
   assert.equal(confirmations, 1);
-  assert.equal(harness.document.querySelector('.process-node-modal'), overlay);
+  assertSameNode(harness.document.querySelector('.process-node-modal'), overlay);
   assert.equal(overlay.querySelector('[role="dialog"]').getAttribute('aria-label'), 'Node work');
   editor.modalDispose(null);
 });
@@ -609,7 +609,7 @@ test('programmatic node-dialog replacement contains a rejected discard promise',
   harness.fireEvent(input, 'change');
   assert.equal(await ProcessTemplateEditor.prototype.openNodeSettings.call(editor, 'done'), false);
   await settle();
-  assert.equal(harness.document.querySelector('.process-node-modal'), overlay);
+  assertSameNode(harness.document.querySelector('.process-node-modal'), overlay);
   assert.equal(overlay.querySelector('[role="dialog"]').getAttribute('aria-label'), 'Node work');
   assert.match(overlay.querySelector('.process-node-status').textContent,
     /Discard confirmation failed: confirmation service unavailable/);
@@ -690,7 +690,7 @@ test('params dialog rejects invalid edited number and boolean defaults without a
     harness.fireEvent(overlay.querySelector('.modal-buttons .primary'), 'click');
     await settle();
 
-    assert.equal(harness.document.querySelector('.process-param-modal'), overlay, `${label}: dialog remains open`);
+    assertSameNode(harness.document.querySelector('.process-param-modal'), overlay, `${label}: dialog remains open`);
     const alert = overlay.querySelector('[role="alert"]');
     assert.match(alert.textContent, expectedError, `${label}: accessible validation feedback`);
     assert.deepEqual(model.template.params, original, `${label}: model is unchanged`);
@@ -753,7 +753,7 @@ test('params dialog restores focus near removed rows and to Add after the final 
     const expected = focusedName
       ? overlay.querySelector(`[data-process-param="${focusedName}"] .process-param-name`)
       : overlay.querySelector('.process-param-toolbar button');
-    assert.equal(harness.document.activeElement, expected, `${label}: focus moves to the predictable nearby control`);
+    assertSameNode(harness.document.activeElement, expected, `${label}: focus moves to the predictable nearby control`);
     assert.equal(overlay.querySelector('[role="dialog"]').contains(harness.document.activeElement), true,
       `${label}: focus remains inside the dialog`);
     dispose(null);
@@ -833,7 +833,7 @@ test('params dialog contains rejected discard confirmation and reports programma
   harness.fireEvent(overlay.querySelector('.process-param-toolbar button'), 'click');
   assert.equal(await dispose.requestClose(), false);
   await settle();
-  assert.equal(harness.document.querySelector('.process-param-modal'), overlay);
+  assertSameNode(harness.document.querySelector('.process-param-modal'), overlay);
   assert.match(overlay.querySelector('[role="alert"]').textContent,
     /Discard confirmation failed: confirmation service unavailable/);
   assert.equal(overlay.inert, false);
@@ -868,12 +868,12 @@ test('dirty params participate in navigation and rejected modal replacement guar
   });
   assert.equal(await actions.closeCanvas(), false, 'outer navigation is rejected');
   assert.equal(confirmations, 1);
-  assert.equal(harness.document.querySelector('.process-param-modal'), overlay, 'navigation rejection keeps the draft open');
+  assertSameNode(harness.document.querySelector('.process-param-modal'), overlay, 'navigation rejection keeps the draft open');
 
   assert.equal(await ProcessTemplateEditor.prototype.openNodeSettings.call(editor, 'work'), false,
     'another editor modal cannot replace the rejected params draft');
   assert.equal(confirmations, 2);
-  assert.equal(harness.document.querySelector('.process-param-modal'), overlay);
+  assertSameNode(harness.document.querySelector('.process-param-modal'), overlay);
   assertAbsent(harness.document.querySelector('.process-node-modal'));
   editor.modalDispose(null);
 });
@@ -896,7 +896,7 @@ test('params dialog traps Tab and restores focus on every close path without pro
   harness.fireEvent(harness.document.querySelector('.process-param-modal .modal-buttons button'), 'click');
   await settle();
   assert.equal(prompts, 0, 'clean Cancel closes without confirmation');
-  assert.equal(harness.document.activeElement, cleanInvoker);
+  assertSameNode(harness.document.activeElement, cleanInvoker);
 
   for (const gesture of ['cancel', 'escape', 'backdrop', 'forced']) {
     const invoker = harness.document.body.appendChild(harness.document.createElement('button'));
@@ -916,7 +916,7 @@ test('params dialog traps Tab and restores focus on every close path without pro
     apply.focus();
     const tab = harness.fireEvent(apply, 'keydown', { key: 'Tab' });
     assert.equal(tab.defaultPrevented, true, `${gesture}: Tab is contained`);
-    assert.equal(harness.document.activeElement, first, `${gesture}: Tab wraps to the first control`);
+    assertSameNode(harness.document.activeElement, first, `${gesture}: Tab wraps to the first control`);
 
     if (gesture === 'cancel') harness.fireEvent(overlay.querySelector('.modal-buttons button'), 'click');
     else if (gesture === 'escape') harness.fireEvent(first, 'keydown', { key: 'Escape' });
@@ -925,7 +925,7 @@ test('params dialog traps Tab and restores focus on every close path without pro
     await settle();
     assert.equal(confirmations, gesture === 'forced' ? 0 : 1, `${gesture}: confirmation count`);
     assertAbsent(harness.document.querySelector('.process-param-modal'), `${gesture}: dialog closes`);
-    assert.equal(harness.document.activeElement, invoker, `${gesture}: invoker focus is restored`);
+    assertSameNode(harness.document.activeElement, invoker, `${gesture}: invoker focus is restored`);
   }
 });
 

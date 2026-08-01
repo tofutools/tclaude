@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assertAbsent } from './assertions.mjs';
+import { assertAbsent, assertSameNode } from './assertions.mjs';
 import { createPreactHarness, getByRole } from './preact-harness.mjs';
 
 function deferred() {
@@ -141,8 +141,8 @@ test('Links manager owns keyed rows, filter/sort controls and direct actions', a
   assert.equal(edit.hasAttribute('data-act'), false, 'manager actions are direct component callbacks');
   edit.focus();
   await harness.act(() => state.publish({ ...sample, links: [sample.links[1], { ...sample.links[0], mode: 'owners->members' }] }));
-  assert.equal(host.querySelector('tr[data-key="link-1"]'), first);
-  assert.equal(harness.document.activeElement, edit);
+  assertSameNode(host.querySelector('tr[data-key="link-1"]'), first);
+  assertSameNode(harness.document.activeElement, edit);
 
   const filter = getByRole(host, 'textbox', { name: 'Filter inter-group links' });
   await harness.input(filter, 'gamma');
@@ -150,7 +150,7 @@ test('Links manager owns keyed rows, filter/sort controls and direct actions', a
   assert.equal(host.querySelector('#filter-links-count .theme-copy-regular').textContent, '1 / 2');
   const clear = getByRole(host, 'button', { name: 'Clear link filter' });
   await harness.act(() => harness.fireEvent(clear, 'click'));
-  assert.equal(harness.document.activeElement, filter);
+  assertSameNode(harness.document.activeElement, filter);
   assert.equal(host.querySelectorAll('#links-list tbody tr').length, 2);
 
   const fromHeader = host.querySelector('th[data-sort-col="from"]');
@@ -185,7 +185,7 @@ test('Links create form validates, controls bidirectional payload and exposes bu
   const to = host.querySelector('#link-modal-to');
   const mode = host.querySelector('#link-modal-mode');
   const bidir = host.querySelector('#link-modal-bidir');
-  assert.equal(harness.document.activeElement, from);
+  assertSameNode(harness.document.activeElement, from);
   await choose(harness, to, 'alpha');
   await harness.act(() => harness.fireEvent(host.querySelector('#link-modal-submit'), 'click'));
   assert.match(host.querySelector('#link-modal-error').textContent, /must differ/);
@@ -255,7 +255,7 @@ test('Links edit form is immutable except for mode and submits the exact row ide
   assert.equal(host.querySelector('#link-modal-from').disabled, true);
   assert.equal(host.querySelector('#link-modal-to').disabled, true);
   assertAbsent(host.querySelector('#link-modal-bidir'));
-  assert.equal(harness.document.activeElement, host.querySelector('#link-modal-mode'));
+  assertSameNode(harness.document.activeElement, host.querySelector('#link-modal-mode'));
   await choose(harness, host.querySelector('#link-modal-mode'), 'members->members');
   await harness.act(() => harness.fireEvent(host.querySelector('#link-modal-submit'), 'click'));
   assert.deepEqual(calls[0], ['update', { id: '2', from: 'gamma', to: 'alpha', mode: 'members->members' }]);
@@ -272,7 +272,7 @@ test('stacked Links focus, Escape and live snapshot refresh are deterministic', 
   invoker.focus();
   await harness.act(() => state.openManager());
   await harness.act(() => Promise.resolve());
-  assert.equal(harness.document.activeElement, host.querySelector('#filter-links'));
+  assertSameNode(harness.document.activeElement, host.querySelector('#filter-links'));
 
   const create = host.querySelector('#link-new-open');
   create.focus();
@@ -287,9 +287,9 @@ test('stacked Links focus, Escape and live snapshot refresh are deterministic', 
   await choose(harness, form.mode, 'owners->members');
   form.mode.focus();
   await harness.act(() => state.publish({ ...sample, links: [{ ...sample.links[0], mode: 'owners->members' }] }));
-  assert.equal(host.querySelector('#link-modal-mode'), form.mode, 'snapshot publish preserves the Preact-owned draft controls');
+  assertSameNode(host.querySelector('#link-modal-mode'), form.mode, 'snapshot publish preserves the Preact-owned draft controls');
   assert.equal(form.mode.value, 'owners->members');
-  assert.equal(harness.document.activeElement, form.mode);
+  assertSameNode(harness.document.activeElement, form.mode);
   assert.equal(host.querySelectorAll('#links-list tbody tr').length, 1, 'the underlying manager updates live');
 
   const escape = () => {
@@ -301,13 +301,13 @@ test('stacked Links focus, Escape and live snapshot refresh are deterministic', 
   await harness.act(() => Promise.resolve());
   assertAbsent(host.querySelector('#link-modal'));
   assert.ok(host.querySelector('#links-manage-modal'), 'the first Escape closes only the top editor');
-  assert.equal(harness.document.activeElement, create);
+  assertSameNode(harness.document.activeElement, create);
   assert.equal(discardChecks, 1);
 
   await harness.act(() => escape());
   await harness.act(() => Promise.resolve());
   assertAbsent(host.querySelector('#links-manage-modal'));
-  assert.equal(harness.document.activeElement, invoker);
+  assertSameNode(harness.document.activeElement, invoker);
   invoker.remove();
   await mounted.cleanup();
 });
@@ -345,8 +345,8 @@ test('Links create dirty baseline survives live group membership changes', async
   await harness.act(() => Promise.resolve());
   assert.equal(discardChecks, 1, 'a publish cannot make a changed draft appear clean');
   assert.ok(host.querySelector('#link-modal'), 'denied discard retains the editor');
-  assert.equal(host.querySelector('#link-modal-from'), from, 'publish retains the controlled From element');
-  assert.equal(host.querySelector('#link-modal-to'), to, 'publish retains the controlled To element');
+  assertSameNode(host.querySelector('#link-modal-from'), from, 'publish retains the controlled From element');
+  assertSameNode(host.querySelector('#link-modal-to'), to, 'publish retains the controlled To element');
   assert.equal(from.value, 'beta');
   assert.equal(to.value, 'gamma');
 

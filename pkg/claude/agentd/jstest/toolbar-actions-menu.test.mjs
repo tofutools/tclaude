@@ -7,7 +7,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assertAbsent } from './assertions.mjs';
+import { assertAbsent, assertSameNode } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 // The production shell's cog, trimmed to a few representative items.
@@ -74,7 +74,7 @@ test('the toolbar cog opens focused on its filter box, showing everything', asyn
 
   assert.equal(view.isOpen(), true);
   assert.equal(view.cog.getAttribute('aria-expanded'), 'true');
-  assert.equal(view.harness.document.activeElement, view.filter);
+  assertSameNode(view.harness.document.activeElement, view.filter);
   assert.deepEqual(view.visible(), ALL);
 });
 

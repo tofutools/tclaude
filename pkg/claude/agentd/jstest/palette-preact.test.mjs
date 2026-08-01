@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertSameNode } from './assertions.mjs';
 import { createPreactHarness, getByRole } from './preact-harness.mjs';
 
 function commands(count, calls = []) {
@@ -215,7 +216,7 @@ test('palette island preserves markup, keyboard/mouse behavior, theme copy, focu
   assert.equal(openEvent.defaultPrevented, true);
   assert.equal(overlay.classList.contains('show'), true);
   const input = modalHost.querySelector('#palette-input');
-  assert.equal(harness.document.activeElement, input);
+  assertSameNode(harness.document.activeElement, input);
   assert.equal(input.getAttribute('placeholder'), island.DEFAULT_PLACEHOLDER);
   assert.equal(input.getAttribute('aria-activedescendant'), 'palette-opt-0');
   assert.equal(overlay.querySelectorAll('[role="option"]').length, 12);
@@ -247,7 +248,7 @@ test('palette island preserves markup, keyboard/mouse behavior, theme copy, focu
   await harness.act(() => harness.fireEvent(input, 'keydown', { key: 'Enter' }));
   assert.deepEqual(runs, [3]);
   assert.equal(overlay.classList.contains('show'), false);
-  assert.equal(harness.document.activeElement, button, 'run restores previous focus before the action');
+  assertSameNode(harness.document.activeElement, button, 'run restores previous focus before the action');
 
   const blocker = harness.document.body.appendChild(harness.document.createElement('div'));
   blocker.className = 'manage-overlay show';

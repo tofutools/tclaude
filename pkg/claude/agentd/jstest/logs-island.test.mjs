@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertSameNode } from './assertions.mjs';
 import { createPreactHarness, getByRole } from './preact-harness.mjs';
 
 const payload = (entries) => ({ entries, page: 1, page_size: 100, total: entries.length, total_unfiltered: entries.length, path: '/tmp/output.log', sources: [{ path: '/tmp/output.log', name: 'output.log', lines: entries.length, bytes: 2048 }] });
@@ -17,15 +18,15 @@ test('Logs island renders controls and preserves duplicate row focus across tail
   const oldRow = mounted.container.querySelector('tbody tr'); oldRow.tabIndex = 0; oldRow.focus();
   await harness.act(() => { const next = state.beginRequest(); state.commitRequest(next, payload([row, row])); });
   const rows = mounted.container.querySelectorAll('tbody tr');
-  assert.equal(rows[1], oldRow);
-  assert.equal(harness.document.activeElement, oldRow);
+  assertSameNode(rows[1], oldRow);
+  assertSameNode(harness.document.activeElement, oldRow);
   assert.equal(rows.length, 2);
   const search = getByRole(mounted.container, 'textbox', { name: 'Search logs' });
   await harness.input(search, 'panic');
   assert.equal(state.view.value.query, 'panic');
   await harness.act(() => harness.fireEvent(getByRole(mounted.container, 'button', { name: 'Clear log search' }), 'click'));
   assert.equal(state.view.value.query, '');
-  assert.equal(harness.document.activeElement, search);
+  assertSameNode(harness.document.activeElement, search);
   assert.equal(mounted.container.querySelector('#filter-logs-count').getAttribute('aria-live'), 'polite');
   assert.match(mounted.container.querySelector('#logs-status').textContent, /2 lines/);
   await mounted.unmount();

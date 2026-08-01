@@ -1,13 +1,14 @@
-import test from 'node:test'; import assert from 'node:assert/strict'; import { createPreactHarness, getByRole } from './preact-harness.mjs';
+import test from 'node:test'; import assert from 'node:assert/strict';
+import { assertSameNode } from './assertions.mjs'; import { createPreactHarness, getByRole } from './preact-harness.mjs';
 const entry = (id, detail = 'copy me') => ({ id, at: '2026-07-12T00:00:00Z', actor_kind: 'human', verb: 'agent.stop', group_name: 'team', target_label: 'Worker', detail, status: 200, source: 'dashboard' });
 const payload = (entries) => ({ entries, total: entries.length, total_unfiltered: entries.length, page: 1, page_size: 100, sort: 'time', dir: 'desc', pruning_on: true, retention_days: 30 });
 test('Audit island filters/sorts and preserves keyed row focus across refreshes', async (t) => {
   const harness = await createPreactHarness(t); const [{ createAuditState }, { AuditApp }] = await Promise.all([harness.importDashboardModule('js/audit-state.js'), harness.importDashboardModule('js/audit-island.js')]);
   const state = createAuditState({ activeTab: harness.signals.signal('audit') }); let token = state.beginRequest(); state.commitRequest(token, payload([entry(1)])); const calls = []; const actions = { load: async () => calls.push('load') };
   const mounted = await harness.mount(harness.html`<${AuditApp} state=${state} actions=${actions} />`); const row = mounted.container.querySelector('tr[data-key="audit-1"]'); row.tabIndex = 0; row.focus();
-  await harness.act(() => { token = state.beginRequest(); state.commitRequest(token, payload([entry(2), entry(1)])); }); assert.equal(mounted.container.querySelector('tr[data-key="audit-1"]'), row); assert.equal(harness.document.activeElement, row);
+  await harness.act(() => { token = state.beginRequest(); state.commitRequest(token, payload([entry(2), entry(1)])); }); assertSameNode(mounted.container.querySelector('tr[data-key="audit-1"]'), row); assertSameNode(harness.document.activeElement, row);
   const search = getByRole(mounted.container, 'textbox', { name: 'Search audit events' }); await harness.input(search, 'deny'); assert.equal(state.view.value.query, 'deny');
-  await harness.act(() => harness.fireEvent(getByRole(mounted.container, 'button', { name: 'Clear audit search' }), 'click')); assert.equal(state.view.value.query, ''); assert.equal(harness.document.activeElement, search); assert.equal(mounted.container.querySelector('#filter-audit-count').getAttribute('aria-live'), 'polite');
+  await harness.act(() => harness.fireEvent(getByRole(mounted.container, 'button', { name: 'Clear audit search' }), 'click')); assert.equal(state.view.value.query, ''); assertSameNode(harness.document.activeElement, search); assert.equal(mounted.container.querySelector('#filter-audit-count').getAttribute('aria-live'), 'polite');
   const actor = [...mounted.container.querySelectorAll('th')].find((th) => th.textContent.includes('Actor')); await harness.act(() => harness.fireEvent(actor, 'click')); assert.equal(state.view.value.sort, 'actor');
   assert.match(mounted.container.querySelector('#audit-retention').textContent, /keeping 30 days/); await mounted.unmount();
 });

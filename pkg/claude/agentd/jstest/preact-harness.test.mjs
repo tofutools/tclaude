@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertSameNode } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 test('component harness covers events, keyed focus, controlled state, cleanup, and queries', async (t) => {
@@ -51,21 +52,21 @@ test('component harness covers events, keyed focus, controlled state, cleanup, a
 
   const beta = harness.getByRole(view.container, 'button', { name: 'Beta' });
   beta.focus();
-  assert.equal(harness.document.activeElement, beta);
+  assertSameNode(harness.document.activeElement, beta);
   let betaBlurred = 0;
   beta.addEventListener('blur', () => { betaBlurred += 1; });
   harness.getByRole(view.container, 'button', { name: 'Alpha' }).focus();
   assert.equal(betaBlurred, 1, 'moving focus blurs the previous element');
   beta.focus();
   await view.rerender(harness.html`<${Fixture} items=${[initial[1], initial[0]]} />`);
-  assert.equal(harness.getByRole(view.container, 'button', { name: 'Beta' }), beta);
-  assert.equal(harness.document.activeElement, beta);
+  assertSameNode(harness.getByRole(view.container, 'button', { name: 'Beta' }), beta);
+  assertSameNode(harness.document.activeElement, beta);
 
   harness.window.dispatchEvent(new harness.window.Event('fixture-ping'));
   assert.equal(pings, 1);
   await view.unmount();
   assert.equal(view.container.isConnected, false, 'harness-owned root was removed');
-  assert.equal(harness.document.activeElement, harness.document.body, 'detached focus falls back to body');
+  assertSameNode(harness.document.activeElement, harness.document.body, 'detached focus falls back to body');
   harness.window.dispatchEvent(new harness.window.Event('fixture-ping'));
   assert.equal(pings, 1, 'effect listener was removed on unmount');
 

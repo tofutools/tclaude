@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertSameNode } from './assertions.mjs';
 import { createPreactHarness, getByRole } from './preact-harness.mjs';
 
 test('Config island owns the complete form markup and tracks dirty input', async (t) => {
@@ -355,10 +356,10 @@ test('Config save validates, confirms, writes against its baseline, and clears d
   assert.match(modal.querySelector('#config-diff-sub').textContent, /\/tmp\/config.json/);
   const confirm = modal.querySelector('#config-diff-confirm');
   const cancel = modal.querySelector('#config-diff-cancel');
-  assert.equal(harness.document.activeElement, confirm);
+  assertSameNode(harness.document.activeElement, confirm);
   cancel.focus();
   harness.fireEvent(cancel, 'keydown', { key: 'Tab', shiftKey: true });
-  assert.equal(harness.document.activeElement, confirm);
+  assertSameNode(harness.document.activeElement, confirm);
   harness.fireEvent(confirm, 'click');
   await saving;
   assert.deepEqual(requests.map(({ url }) => url), ['/api/config', '/api/config?dry_run=1', '/api/config']);
@@ -367,7 +368,7 @@ test('Config save validates, confirms, writes against its baseline, and clears d
   assert.equal(posted.config.terminal, 'ghostty');
   assert.equal(state.view.value.phase, 'ready');
   assert.equal(state.view.value.dirty, false);
-  assert.equal(harness.document.activeElement, terminal);
+  assertSameNode(harness.document.activeElement, terminal);
   await mounted.unmount();
 });
 
@@ -462,9 +463,9 @@ test('Config list reconciliation preserves unrelated typing and focuses the adde
   await harness.input(terminal, 'half-typed');
   harness.fireEvent(mounted.container.querySelector('#cfg-agent-permissions .cfg-list-add'), 'click');
   await new Promise(resolve => queueMicrotask(resolve));
-  assert.equal(mounted.container.querySelector('#cfg-terminal'), terminal);
+  assertSameNode(mounted.container.querySelector('#cfg-terminal'), terminal);
   assert.equal(terminal.value, 'half-typed');
-  assert.equal(harness.document.activeElement,
+  assertSameNode(harness.document.activeElement,
     mounted.container.querySelector('#cfg-agent-permissions .cfg-list-row:last-of-type input'));
   await mounted.unmount();
 });

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assertAbsent } from './assertions.mjs';
+import { assertAbsent, assertSameNode } from './assertions.mjs';
 import { createPreactHarness, getByRole } from './preact-harness.mjs';
 
 const phase = (name, p50 = 2, children = []) => ({
@@ -191,11 +191,11 @@ test('Debug island keys endpoint and phase DOM and owns only an active 10s timer
       endpoint('/api/z-last', 9),
     ], '2026-07-13T12:00:10Z'));
   });
-  assert.equal(mounted.container.querySelector('[data-key="debug-/api/snapshot"]'), snapshotCard);
-  assert.equal(snapshotCard.querySelector('tr[data-key="phase-sessions"]'), phaseRow);
+  assertSameNode(mounted.container.querySelector('[data-key="debug-/api/snapshot"]'), snapshotCard);
+  assertSameNode(snapshotCard.querySelector('tr[data-key="phase-sessions"]'), phaseRow);
   assert.equal(phaseRow.children[1].textContent, '4.00 ms', 'phase latest value refreshes in-place');
   assert.equal(childRow.children[1].textContent, '3.00 ms', 'expanded child values refresh in-place');
-  assert.equal(harness.document.activeElement, snapshotCard);
+  assertSameNode(harness.document.activeElement, snapshotCard);
 
   await harness.act(() => { activeTab.value = 'groups'; });
   assert.equal(timers.size, 0, 'inactive Debug owns no timer');

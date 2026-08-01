@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assertAbsent } from './assertions.mjs';
+import { assertAbsent, assertSameNode } from './assertions.mjs';
 import { createPreactHarness, getByRole } from './preact-harness.mjs';
 
 function installHosts(harness) {
@@ -439,7 +439,7 @@ test('terminal tab context menu supports pointer and keyboard detach and close a
     'opening focuses the first action');
   await harness.act(() => harness.fireEvent(pointerMenu, 'keydown', { key: 'Escape' }));
   assertAbsent(host.querySelector('[role="menu"]'));
-  assert.equal(harness.document.activeElement, tab('two'), 'Escape restores focus to the invoking tab');
+  assertSameNode(harness.document.activeElement, tab('two'), 'Escape restores focus to the invoking tab');
   await harness.act(() => harness.fireEvent(tab('two'), 'contextmenu', { clientX: 24, clientY: 32 }));
   const tabMenu = getByRole(host, 'menu', { name: 'Actions for two' });
   await harness.act(async () => {
@@ -448,7 +448,7 @@ test('terminal tab context menu supports pointer and keyboard detach and close a
   });
   assertAbsent(host.querySelector('[role="menu"]'), 'Tab dismisses the floating menu');
   assert.equal(tab('two').getAttribute('aria-expanded'), 'false');
-  assert.equal(harness.document.activeElement, host.querySelector('.mux-pane.active button'),
+  assertSameNode(harness.document.activeElement, host.querySelector('.mux-pane.active button'),
     'forward Tab moves into the active pane controls');
   await harness.act(() => harness.fireEvent(tab('two'), 'contextmenu', { clientX: 24, clientY: 32 }));
   const reverseMenu = getByRole(host, 'menu', { name: 'Actions for two' });
@@ -457,13 +457,13 @@ test('terminal tab context menu supports pointer and keyboard detach and close a
     await Promise.resolve();
   });
   assertAbsent(host.querySelector('[role="menu"]'), 'Shift+Tab dismisses the floating menu');
-  assert.equal(harness.document.activeElement, tab('two'), 'reverse Tab restores the invoking tab');
+  assertSameNode(harness.document.activeElement, tab('two'), 'reverse Tab restores the invoking tab');
   await harness.act(() => harness.fireEvent(tab('two'), 'contextmenu', { clientX: 24, clientY: 32 }));
   const reopenedMenu = getByRole(host, 'menu', { name: 'Actions for two' });
   await harness.act(() => harness.fireEvent(getByRole(reopenedMenu, 'menuitem', { name: 'Close tab' }), 'click'));
   assert.deepEqual([...host.querySelectorAll('.mux-tab-label')].map((label) => label.textContent), ['one', 'three']);
   assert.equal(tab('three').getAttribute('aria-selected'), 'true', 'closing an inactive tab preserves active selection');
-  assert.equal(harness.document.activeElement, tab('three'), 'close tab focuses the surviving active tab');
+  assertSameNode(harness.document.activeElement, tab('three'), 'close tab focuses the surviving active tab');
 
   await open('detached');
   await harness.act(() => harness.fireEvent(tab('detached'), 'contextmenu', { clientX: 24, clientY: 32 }));
@@ -479,7 +479,7 @@ test('terminal tab context menu supports pointer and keyboard detach and close a
     'detach uses the same standalone terminal handoff as the pane header button');
   assert.equal(opened.at(-2).opened[2], undefined,
     'the context menu still detaches into a browser tab — window features are what would make it a window');
-  assert.equal(harness.document.activeElement, tab('three'), 'detach focuses the surviving active tab');
+  assertSameNode(harness.document.activeElement, tab('three'), 'detach focuses the surviving active tab');
 
   await open('two');
   let keyboardOpen;
@@ -497,7 +497,7 @@ test('terminal tab context menu supports pointer and keyboard detach and close a
   await harness.act(() => harness.fireEvent(harness.document.activeElement, 'click'));
   assert.deepEqual([...host.querySelectorAll('.mux-tab-label')].map((label) => label.textContent), ['three']);
   assert.equal(tab('three').getAttribute('aria-selected'), 'true');
-  assert.equal(harness.document.activeElement, tab('three'), 'close others focuses the kept tab');
+  assertSameNode(harness.document.activeElement, tab('three'), 'close others focuses the kept tab');
 
   await open('four');
   await open('five');
@@ -506,7 +506,7 @@ test('terminal tab context menu supports pointer and keyboard detach and close a
   await harness.act(() => harness.fireEvent(getByRole(allMenu, 'menuitem', { name: 'Close all tabs' }), 'click'));
   assert.equal(host.querySelectorAll('[role="tab"]').length, 0);
   assert.equal(harness.document.body.classList.contains('hide-terminals'), true);
-  assert.equal(harness.document.activeElement, harness.document.querySelector('nav [data-tab="groups"]'),
+  assertSameNode(harness.document.activeElement, harness.document.querySelector('nav [data-tab="groups"]'),
     'close all moves focus to the selected Groups navigation tab');
   assert.deepEqual(requests.sort(), [
     '/api/hide/agt_detached', '/api/hide/agt_five', '/api/hide/agt_four', '/api/hide/agt_one',

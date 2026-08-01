@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assertAbsent } from './assertions.mjs';
+import { assertAbsent, assertSameNode } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 function deferred() {
@@ -294,7 +294,7 @@ test('delete yields topmost Escape, guards backdrop drags, and restores its open
   escape(harness);
   await harness.act(() => Promise.resolve());
   assertAbsent(host.querySelector('#delete-agent-modal'));
-  assert.equal(harness.document.activeElement, opener);
+  assertSameNode(harness.document.activeElement, opener);
   assert.equal(await mounted.pending, null);
   await mounted.mounted.unmount();
 });

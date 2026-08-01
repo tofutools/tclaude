@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assertAbsent } from './assertions.mjs';
+import { assertAbsent, assertSameNode } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 function deferred() {
@@ -254,7 +254,7 @@ test('delete-retired submits only checked visible identities and failure returns
   await harness.act(() => Promise.resolve());
   assert.equal(finishes, 1);
   assertAbsent(host.querySelector('#delete-retired-modal'));
-  assert.equal(harness.document.activeElement, opener);
+  assertSameNode(harness.document.activeElement, opener);
   assert.deepEqual(await opened.pending, {
     kind: 'delete-retired-preview', response: await second.promise,
   });

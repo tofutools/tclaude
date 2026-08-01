@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assertAbsent } from './assertions.mjs';
+import { assertAbsent, assertSameNode } from './assertions.mjs';
 import { createPreactHarness, getByRole } from './preact-harness.mjs';
 
 function memoryPrefs(initial = {}) {
@@ -93,7 +93,7 @@ test('opaque slop host safely retakes nested-root ownership after an imperative 
   await assert.doesNotReject(() => mounted.rerender(harness.html`
     <${SlopMachine} state=${{ status: 'idle' }} online=${true} conv="new-conv" />
   `));
-  assert.equal(mounted.container.querySelector('.slop-machine'), machine,
+  assertSameNode(mounted.container.querySelector('.slop-machine'), machine,
     'the parent Preact owner preserves the opaque outer host');
   assert.equal(machine.dataset.status, 'idle');
   assert.equal(machine.dataset.conv, 'new-conv');
@@ -203,11 +203,11 @@ test('Groups list preserves keyed disclosure, focus and nodes across reorder/act
     { name: 'alpha', descr: 'new', members: [{ conv_id: 'alpha-member', title: 'Alpha member', online: true, state: { status: 'working' } }] },
   ])));
 
-  assert.equal(host.querySelector('details[data-group-key="alpha"]'), alpha);
-  assert.equal(host.querySelector('details[data-group-key="beta"]'), beta);
-  assert.equal(host.querySelector('details:first-child'), beta, 'snapshot reorder moves keyed nodes');
+  assertSameNode(host.querySelector('details[data-group-key="alpha"]'), alpha);
+  assertSameNode(host.querySelector('details[data-group-key="beta"]'), beta);
+  assertSameNode(host.querySelector('details:first-child'), beta, 'snapshot reorder moves keyed nodes');
   assert.equal(alpha.open, true, 'live disclosure state is not reset by a reorder');
-  assert.equal(alpha.querySelector('.group-descr-input'), editor, 'native inline editor identity survives publish');
+  assertSameNode(alpha.querySelector('.group-descr-input'), editor, 'native inline editor identity survives publish');
   assert.equal(editor.value, 'draft survives poll', 'poll data cannot overwrite a live draft');
   assert.ok(beta.querySelector('.group-activity'));
   await harness.act(() => harness.fireEvent(editor, 'keydown', { key: 'Escape' }));
@@ -218,7 +218,7 @@ test('Groups list preserves keyed disclosure, focus and nodes across reorder/act
   await harness.act(() => harness.document.dispatchEvent(new harness.window.CustomEvent(
     'tclaude:wizard', { detail: { active: true } },
   )));
-  assert.equal(host.querySelector('details[data-group-key="alpha"]'), alpha,
+  assertSameNode(host.querySelector('details[data-group-key="alpha"]'), alpha,
     'the theme repaint preserves keyed group disclosure identity');
 
   const machine = beta.querySelector('.slop-machine');
@@ -229,7 +229,7 @@ test('Groups list preserves keyed disclosure, focus and nodes across reorder/act
     { name: 'beta', members: [{ conv_id: 'beta-member', title: 'Beta member', online: true, state: { status: 'awaiting_input' } }] },
     { name: 'alpha', descr: 'new', members: [{ conv_id: 'alpha-member', title: 'Alpha member', online: true, state: { status: 'working' } }] },
   ])));
-  assert.equal(machine.firstElementChild, activeReel,
+  assertSameNode(machine.firstElementChild, activeReel,
     'a same-status publish preserves an in-flight imperative reel pull');
 
   await harness.act(() => state.publish(snapshot([
@@ -244,7 +244,7 @@ test('Groups list preserves keyed disclosure, focus and nodes across reorder/act
     { name: 'beta', members: [] },
     { name: 'alpha', descr: 'new', members: [{ conv_id: 'alpha-member', title: 'Alpha member', online: true, state: { status: 'working' } }] },
   ])));
-  assert.equal(harness.document.activeElement, inspect,
+  assertSameNode(harness.document.activeElement, inspect,
     'a neighboring activity chip disappearing does not replace the keyed action');
 
   await mounted.unmount();
@@ -273,7 +273,7 @@ test('Groups hover state follows semantic keys across polls and clears on disapp
     'movement within one summary does not clear and reapply hover');
 
   await harness.act(() => state.publish(snapshot([beta, { ...alpha, descr: 'polled' }])));
-  assert.equal(host.querySelector('details[data-group-key="alpha"]'), alphaNode,
+  assertSameNode(host.querySelector('details[data-group-key="alpha"]'), alphaNode,
     'the keyed group node survives reorder polling');
   assert.equal(alphaNode.classList.contains('quick-hover'), true,
     'semantic hover state is re-stamped after polling reconciliation');
@@ -363,7 +363,7 @@ test('Groups controls own query, visibility, columns, badge and dropdown behavio
   assert.equal(refreshes, 1, 'query and visibility changes share one debounced refresh');
   await harness.act(() => harness.fireEvent(harness.document.body, 'keydown', { key: 'Escape' }));
   assert.equal(view.getAttribute('aria-expanded'), 'false');
-  assert.equal(harness.document.activeElement, view);
+  assertSameNode(harness.document.activeElement, view);
 
   await mounted.unmount();
 });
@@ -464,9 +464,9 @@ test('native group chrome preserves hierarchy, virtual DnD and shared menu contr
   await harness.act(() => state.publish(chromeSnapshot({
     pendingAgentID: 'agt-pending', retiredAgentID: 'agt-retired',
   })));
-  assert.equal(host.querySelector('tr[data-key="gate-1"]'), pending,
+  assertSameNode(host.querySelector('tr[data-key="gate-1"]'), pending,
     'pending row identity stays label-keyed when agent metadata materializes');
-  assert.equal(host.querySelector('tr[data-key="retired-1"]'), retired,
+  assertSameNode(host.querySelector('tr[data-key="retired-1"]'), retired,
     'retired row identity stays conv-id-keyed when agent metadata materializes');
 
   assert.match(retired.closest('details').querySelector('.group-virtual-badge').title,
@@ -571,7 +571,7 @@ test('native group and member menus share dismissal, focus, flip and publish sta
   await harness.act(() => state.publish(snapshot([{
     ...group, descr: 'published while open', members: [{ ...group.members[0], state: { status: 'working' } }],
   }])));
-  assert.equal(details.querySelector('.group-header-cog .action-menu'), groupMenu);
+  assertSameNode(details.querySelector('.group-header-cog .action-menu'), groupMenu);
   assert.equal(groupMenu.classList.contains('open'), true, 'keyed menu state survives a snapshot publish');
 
   await harness.act(() => harness.fireEvent(memberCog, 'click'));
@@ -594,7 +594,7 @@ test('native group and member menus share dismissal, focus, flip and publish sta
   focusedItem.focus();
   await harness.act(() => harness.fireEvent(harness.document.body, 'keydown', { key: 'Escape' }));
   assert.equal(groupMenu.classList.contains('open'), false);
-  assert.equal(harness.document.activeElement, groupCog, 'Escape returns focus to the owning cog');
+  assertSameNode(harness.document.activeElement, groupCog, 'Escape returns focus to the owning cog');
 
   await mounted.unmount();
 });
@@ -635,7 +635,7 @@ test('multi-group member copies isolate menus, editors, focus and unmount cleanu
   assert.equal(betaRow.draggable, true);
   await harness.act(() => harness.fireEvent(alphaInput, 'keydown', { key: 'Escape' }));
   const restoredAlphaTrigger = alphaRow.querySelector('.rowname-text');
-  assert.equal(harness.document.activeElement, restoredAlphaTrigger);
+  assertSameNode(harness.document.activeElement, restoredAlphaTrigger);
   assert.equal(restoredAlphaTrigger.dataset.editorKey,
     'member:group:alpha:agt-shared-member:name');
 
@@ -652,7 +652,7 @@ test('multi-group member copies isolate menus, editors, focus and unmount cleanu
   survivingMenu.querySelector('button[data-act="term"]').focus();
   await harness.act(() => harness.fireEvent(harness.document.body, 'keydown', { key: 'Escape' }));
   assert.equal(survivingMenu.classList.contains('open'), false);
-  assert.equal(harness.document.activeElement, survivingCog,
+  assertSameNode(harness.document.activeElement, survivingCog,
     'Escape returns focus through the surviving registration after sibling unmount');
 
   await mounted.unmount();
@@ -699,7 +699,7 @@ test('native member and group editors preserve drafts, park DnD and surface busy
   await harness.act(() => state.publish(snapshot([{
     ...group, members: [{ ...group.members[0], title: 'Published title' }],
   }])));
-  assert.equal(row.querySelector('.rowname-input'), nameInput);
+  assertSameNode(row.querySelector('.rowname-input'), nameInput);
   assert.equal(nameInput.value, 'Member draft', 'member rename draft survives a publish');
   harness.fireEvent(nameInput, 'keydown', { key: 'Enter' });
   await Promise.resolve();
@@ -731,7 +731,7 @@ test('native member and group editors preserve drafts, park DnD and surface busy
   await harness.input(descrInput, 'description draft');
   assert.equal(summary.draggable, false);
   await harness.act(() => state.publish(snapshot([{ ...group, descr: 'new poll descr' }])));
-  assert.equal(summary.querySelector('.group-descr-input'), descrInput);
+  assertSameNode(summary.querySelector('.group-descr-input'), descrInput);
   assert.equal(descrInput.value, 'description draft');
   await harness.act(() => harness.fireEvent(descrInput, 'keydown', { key: 'Escape' }));
   assert.equal(summary.draggable, true);
@@ -768,7 +768,7 @@ test('native member and group editors preserve drafts, park DnD and surface busy
   assert.equal(summary.draggable, false);
   await harness.act(() => harness.fireEvent(renameInput, 'keydown', { key: 'Escape' }));
   await harness.act(() => Promise.resolve());
-  assert.equal(harness.document.activeElement, groupCog, 'group rename Escape returns to its menu cog');
+  assertSameNode(harness.document.activeElement, groupCog, 'group rename Escape returns to its menu cog');
 
   const choicesLoad = deferred();
   profileChoicesResult = () => choicesLoad.promise;
@@ -778,13 +778,13 @@ test('native member and group editors preserve drafts, park DnD and surface busy
   assert.equal(profileSelect.disabled, true);
   assert.equal(summary.draggable, false);
   await harness.act(() => state.publish(snapshot([{ ...group, default_profile: 'published-profile' }])));
-  assert.equal(summary.querySelector('.group-default-profile-select'), profileSelect,
+  assertSameNode(summary.querySelector('.group-default-profile-select'), profileSelect,
     'profile picker identity survives a publish while choices load');
   await harness.act(() => choicesLoad.resolve([{ value: 'profile-b', label: 'Profile B' }]));
   await harness.act(() => Promise.resolve());
   await harness.act(() => Promise.resolve());
   assert.equal(profileSelect.disabled, false);
-  assert.equal(harness.document.activeElement, profileSelect);
+  assertSameNode(harness.document.activeElement, profileSelect);
   const profileSave = deferred();
   setProfileResult = () => profileSave.promise;
   profileSelect.querySelector('option[value="profile-b"]').selected = true;
@@ -811,12 +811,12 @@ test('native member and group editors preserve drafts, park DnD and surface busy
   assert.equal(sandboxSelect.disabled, false);
   assert.equal(sandboxSelect.getAttribute('aria-invalid'), 'true');
   assert.equal(sandboxSelect.title, 'sandbox rejected');
-  assert.equal(harness.document.activeElement, sandboxSelect, 'failed persistence restores picker focus');
+  assertSameNode(harness.document.activeElement, sandboxSelect, 'failed persistence restores picker focus');
   await harness.act(() => harness.fireEvent(sandboxSelect, 'keydown', { key: 'Escape' }));
   await harness.act(() => Promise.resolve());
   const restoredSandboxTrigger = summary.querySelector('.group-sandbox-profile');
   assert.equal(sandboxTrigger.isConnected, false, 'the picker replaces its original trigger node');
-  assert.equal(harness.document.activeElement, restoredSandboxTrigger,
+  assertSameNode(harness.document.activeElement, restoredSandboxTrigger,
     'Escape focuses the locally committed replacement profile trigger');
   assert.equal(restoredSandboxTrigger.dataset.editorKey, 'group:alpha:sandbox_profile');
   calls.splice(0, 2);
@@ -1062,12 +1062,12 @@ test('native member edit launchers carry focus and keep a frozen draft across po
   await harness.act(() => state.publish(snapshot([{
     name: 'alpha', members: [{ ...member, role: 'published role', descr: 'published descr' }],
   }])));
-  assert.equal(dialogHost.querySelector('#edit-member-role'), roleInput,
+  assertSameNode(dialogHost.querySelector('#edit-member-role'), roleInput,
     'polling does not remount the active member transaction');
   assert.equal(roleInput.value, 'reviewer draft', 'polling cannot overwrite the local draft');
   dialogHost.querySelector('#edit-member-cancel').click();
   await harness.act(() => Promise.resolve());
-  assert.equal(harness.document.activeElement, role, 'explicit close restores the row-cell invoker');
+  assertSameNode(harness.document.activeElement, role, 'explicit close restores the row-cell invoker');
 
   const descr = row.querySelector('.descr-edit');
   await harness.act(() => harness.fireEvent(descr, 'keydown', { key: 'Enter', isComposing: true }));
@@ -1091,7 +1091,7 @@ test('native member edit launchers carry focus and keep a frozen draft across po
   Object.defineProperty(escape, 'key', { value: 'Escape' });
   harness.document.dispatchEvent(escape);
   await harness.act(() => Promise.resolve());
-  assert.equal(harness.document.activeElement, cog, 'menu launch restores focus to the owning cog');
+  assertSameNode(harness.document.activeElement, cog, 'menu launch restores focus to the owning cog');
 
   await dialog.unmount();
   await list.unmount();
