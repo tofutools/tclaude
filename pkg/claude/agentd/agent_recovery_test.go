@@ -236,6 +236,13 @@ func TestManualRecoverySuccessorEarnsHealthyReset(t *testing.T) {
 
 	result := resumeOneConvLocked(conv, false, false)
 	require.Equal(t, "resumed", result.Action)
+	manualAttempt, err := db.AgentRecoveryForAgent(agentID)
+	require.NoError(t, err)
+	require.NotNil(t, manualAttempt)
+	require.Equal(t, db.AgentRecoveryStatusRestarting, manualAttempt.Status)
+	require.Equal(t, db.AgentRecoveryReasonManualResume, manualAttempt.ReasonCode)
+	assert.False(t, recoveryStatusVisible(*manualAttempt, time.Time{}, false, time.Now().UTC()),
+		"a manual launch must not inherit the automatic restarting highlight")
 
 	successor := autoSuccessor
 	successor.ID += "-manual-successor"
@@ -248,6 +255,9 @@ func TestManualRecoverySuccessorEarnsHealthyReset(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, recovery)
 	require.Equal(t, db.AgentRecoveryStatusRecovered, recovery.Status)
+	require.Equal(t, db.AgentRecoveryReasonManualResume, recovery.ReasonCode)
+	assert.False(t, recoveryStatusVisible(*recovery, confirmedAt.Add(-time.Second), true, confirmedAt),
+		"a manually resumed successor must not be labeled recovered automatically")
 
 	runAgentRecoverySweep(confirmedAt.Add(db.AgentRecoveryHealthyReset + time.Second))
 	reset, err := db.AgentRecoveryForAgent(agentID)
