@@ -2,11 +2,76 @@ package session
 
 import (
 	"fmt"
+	"log/slog"
+	"net"
+	"strconv"
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/sandboxproxy"
 )
+
+// proxyNetworkSandboxEnv injects the sandbox's proxy discovery after the
+// platform launcher has bound its actual endpoint.
+func proxyNetworkSandboxEnv(environ []string, port int) []string {
+	owned := make(map[string]struct{}, len(proxyNetworkProxyVariables))
+	for _, name := range proxyNetworkProxyVariables {
+		owned[name] = struct{}{}
+	}
+	out := make([]string, 0, len(environ)+len(proxyNetworkProxyVariables))
+	for _, pair := range environ {
+		name, _, ok := strings.Cut(pair, "=")
+		if ok {
+			if _, mine := owned[name]; mine {
+				continue
+			}
+		}
+		out = append(out, pair)
+	}
+	endpoint := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+	for _, entry := range ProxyNetworkCarriage(endpoint) {
+		out = append(out, entry.Name+"="+entry.Value)
+	}
+	return out
+}
+
+const (
+	ProxyNetworkDecisionMessage = "sandbox filtering proxy decision"
+	ProxyNetworkErrorMessage    = "sandbox filtering proxy transport error"
+)
+
+func logProxyNetworkDecision(
+	carriage sandboxproxy.Carriage,
+	target sandboxproxy.Target,
+	decision sandboxproxy.Decision,
+) {
+	attrs := []any{
+		"module", "proxy-network",
+		"carriage", string(carriage),
+		"target_kind", string(target.Kind),
+		"port", target.Port,
+		"verdict", string(decision.Verdict),
+	}
+	if target.Kind == sandboxproxy.TargetKindName {
+		attrs = append(attrs, "host", target.Name)
+	} else {
+		attrs = append(attrs, "address", target.Addr.String())
+	}
+	if decision.Rule != nil {
+		attrs = append(attrs,
+			"rule_entry", decision.Rule.EntryIndex,
+			"rule_selector", string(decision.Rule.Selector),
+			"rule_value", decision.Rule.Value)
+	}
+	slog.Debug(ProxyNetworkDecisionMessage, attrs...)
+}
+
+func logProxyNetworkError(carriage sandboxproxy.Carriage, err error) {
+	slog.Debug(ProxyNetworkErrorMessage,
+		"module", "proxy-network",
+		"carriage", string(carriage),
+		"error", err)
+}
 
 // proxyNetworkRoutingVariables are the proxy-routing variables the launcher
 // owns on a proxy-engine launch. Every one of them is REPLACED rather than
@@ -106,11 +171,11 @@ func ProxyNetworkCarriage(endpoint string) []ProxyNetworkCarriageEntry {
 //
 // Four conditions, none of them re-derived here:
 //
-//   - goos is Linux. The override is performed by proxyNetworkSandboxEnv, which
-//     is the Linux launcher's exec seam; the Darwin floor is M3. This is taken
-//     as a parameter rather than read from runtime.GOOS so a caller predicting
-//     for another target — and a test — can ask about a platform it is not
-//     running on.
+//   - goos is Linux or Darwin. Both production launchers inject through
+//     proxyNetworkSandboxEnv after binding their supervised endpoint. This is
+//     taken as a parameter rather than read from runtime.GOOS so a caller
+//     predicting for another target — and a test — can ask about a platform it
+//     is not running on.
 //   - the launch uses the tclaude layer. No other implementation builds this
 //     floor or injects this environment.
 //   - the launch deploys a proxy: TclaudeLayerDeploysProxy, the same predicate
@@ -146,7 +211,7 @@ func ProxyEngineNoProxyOverrideNotice(
 	network sandboxpolicy.NetworkRules,
 	environment []sandboxpolicy.EnvironmentEntry,
 ) *sandboxpolicy.AccessNotice {
-	if goos != "linux" || !implementation.UsesTclaudeLayer() {
+	if (goos != "linux" && goos != "darwin") || !implementation.UsesTclaudeLayer() {
 		return nil
 	}
 	engine, err := sandboxpolicy.DeployedNetworkEngineForRules(network)

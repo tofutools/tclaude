@@ -170,10 +170,56 @@ func tclaudeLayerCommand(
 	plan sandboxpolicy.MountPlan,
 	harnessCommand string,
 ) (string, error) {
+	return tclaudeLayerDarwinCommand(
+		binary, phase0WriteDirs, privateWriteDirs, finalHideDirs,
+		readOnlyBinds, socketPaths, plan, harnessCommand, 0)
+}
+
+func tclaudeLayerDarwinCommand(
+	binary string,
+	phase0WriteDirs []string,
+	privateWriteDirs []TclaudeLayerPrivateWriteDir,
+	finalHideDirs []string,
+	readOnlyBinds []TclaudeLayerReadOnlyBind,
+	socketPaths []string,
+	plan sandboxpolicy.MountPlan,
+	harnessCommand string,
+	preserveFDs int,
+) (string, error) {
+	if tclaudeLayerPlanDeploysProxy(plan) {
+		return darwinProxyLauncherCommand(darwinProxyLaunchSpec{
+			Binary:           binary,
+			Phase0WriteDirs:  phase0WriteDirs,
+			PrivateWriteDirs: privateWriteDirs,
+			FinalHideDirs:    finalHideDirs,
+			ReadOnlyBinds:    readOnlyBinds,
+			SocketPaths:      socketPaths,
+			Plan:             plan,
+			HarnessCommand:   harnessCommand,
+			PreserveFDs:      preserveFDs,
+		})
+	}
+	return renderDarwinSeatbeltCommand(
+		binary, phase0WriteDirs, privateWriteDirs, finalHideDirs,
+		readOnlyBinds, socketPaths, plan, harnessCommand, netip.AddrPort{})
+}
+
+func renderDarwinSeatbeltCommand(
+	binary string,
+	phase0WriteDirs []string,
+	privateWriteDirs []TclaudeLayerPrivateWriteDir,
+	finalHideDirs []string,
+	readOnlyBinds []TclaudeLayerReadOnlyBind,
+	socketPaths []string,
+	plan sandboxpolicy.MountPlan,
+	harnessCommand string,
+	proxyEndpoint netip.AddrPort,
+) (string, error) {
 	switch plan.NetworkPosture {
 	case sandboxpolicy.NetworkHostOpen, sandboxpolicy.NetworkIsolatedWithAgentd:
 	case sandboxpolicy.NetworkFiltered:
-		if !sandboxpolicy.FilteredNetworkRulesAreLoopbackOnly(plan.FilteredNetwork) {
+		if !tclaudeLayerPlanDeploysProxy(plan) &&
+			!sandboxpolicy.FilteredNetworkRulesAreLoopbackOnly(plan.FilteredNetwork) {
 			return "", fmt.Errorf(
 				"darwin tclaude-layer filtered networking supports only a non-empty loopback-only list",
 			)
@@ -242,10 +288,7 @@ func tclaudeLayerCommand(
 		filteredContract,
 		socketPaths,
 		filteredPlan,
-		// The Darwin launcher binds no filtering proxy yet, so it renders no
-		// proxy floor. The posture gate above refuses a plan that would need
-		// one rather than falling back to a floor with no route to it.
-		netip.AddrPort{},
+		proxyEndpoint,
 		protectedRoots,
 		tmuxSocketDir,
 		runtimeTempDir,
@@ -275,7 +318,7 @@ func tclaudeLayerServerCommand(
 	plan sandboxpolicy.MountPlan,
 	serverCommand string,
 ) (string, error) {
-	return tclaudeLayerCommand(
+	return tclaudeLayerDarwinCommand(
 		binary,
 		phase0WriteDirs,
 		privateWriteDirs,
@@ -284,6 +327,7 @@ func tclaudeLayerServerCommand(
 		socketPaths,
 		plan,
 		serverCommand,
+		2,
 	)
 }
 

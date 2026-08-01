@@ -5,15 +5,27 @@ package session
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
+
+const darwinProxyLauncherHelperEnv = "TCLAUDE_DARWIN_PROXY_LAUNCHER_HELPER"
 
 func TestResolveTclaudeLayerDarwinAcceptsFilteredSeatbeltCapability(t *testing.T) {
 	oldStat := statDarwinSeatbelt
@@ -283,6 +295,131 @@ func TestTclaudeLayerDarwinCommandCarriesFullAgentdSocketFloor(t *testing.T) {
 	for _, socket := range sandboxpolicy.AgentdSocketFloor() {
 		assert.Containsf(t, command, socket, "missing rendered agentd socket floor entry %s", socket)
 	}
+}
+
+func TestTclaudeLayerDarwinCommandDefersProxyFloorToLauncher(t *testing.T) {
+	plan := darwinProxyLauncherTestPlan(t, 443)
+	oldPrefix := darwinProxyLauncherPrefix
+	darwinProxyLauncherPrefix = func() string {
+		return "/usr/local/bin/tclaude session " + tclaudeLayerDarwinProxyLauncherCommand
+	}
+	t.Cleanup(func() { darwinProxyLauncherPrefix = oldPrefix })
+
+	command, err := tclaudeLayerCommand(
+		darwinSeatbeltExecutable, nil, nil, nil, nil, nil, plan, "true")
+	require.NoError(t, err)
+	assert.Contains(t, command, tclaudeLayerDarwinProxyLauncherCommand)
+	assert.Contains(t, command, "--launch")
+	assert.NotContains(t, command, " -p ",
+		"the profile cannot be rendered before the launcher owns the actual endpoint")
+
+	serverCommand, err := tclaudeLayerServerCommand(
+		darwinSeatbeltExecutable, nil, nil, nil, nil, nil, plan, "true")
+	require.NoError(t, err)
+	encoded := strings.TrimPrefix(serverCommand,
+		darwinProxyLauncherPrefix()+" --launch ")
+	spec, err := decodeDarwinProxyLaunchSpec(encoded)
+	require.NoError(t, err)
+	assert.Equal(t, 2, spec.PreserveFDs,
+		"the OpenCode server boundary keeps its launcher-owned descriptor pair")
+}
+
+func TestDarwinProxyLauncherProductionPath(t *testing.T) {
+	if os.Getenv(darwinProxyLauncherHelperEnv) == "1" {
+		darwinProxyLauncherHelper(t)
+		return
+	}
+
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, "carried-by-darwin-filtering-proxy")
+	}))
+	t.Cleanup(origin.Close)
+	originURL, err := url.Parse(origin.URL)
+	require.NoError(t, err)
+	_, rawPort, err := net.SplitHostPort(originURL.Host)
+	require.NoError(t, err)
+	port, err := strconv.Atoi(rawPort)
+	require.NoError(t, err)
+
+	t.Setenv(darwinProxyLauncherHelperEnv, "1")
+	t.Setenv("TCLAUDE_DARWIN_PROXY_ORIGIN", origin.URL)
+	spec := darwinProxyLaunchSpec{
+		Binary: darwinSeatbeltExecutable,
+		Plan:   darwinProxyLauncherTestPlan(t, port),
+		HarnessCommand: clcommon.ShellQuoteArg(os.Args[0]) +
+			" -test.run=^TestDarwinProxyLauncherProductionPath$ -test.v",
+	}
+	code, err := runDarwinProxyLauncher(spec)
+	require.NoError(t, err)
+	assert.Zero(t, code)
+}
+
+func TestDarwinProxyLauncherTreatsENODEVAsNonTerminal(t *testing.T) {
+	oldGet := darwinProxyTerminalForegroundGroup
+	oldSet := darwinProxySetTerminalForegroundGroup
+	darwinProxyTerminalForegroundGroup = func(int) (int, error) {
+		return 0, syscall.ENODEV
+	}
+	darwinProxySetTerminalForegroundGroup = func(int, int) error {
+		t.Fatal("a non-terminal descriptor has no foreground group to set")
+		return nil
+	}
+	t.Cleanup(func() {
+		darwinProxyTerminalForegroundGroup = oldGet
+		darwinProxySetTerminalForegroundGroup = oldSet
+	})
+
+	restore, err := darwinProxyGiveTerminalTo(4242)
+	require.NoError(t, err)
+	restore()
+}
+
+func darwinProxyLauncherTestPlan(t *testing.T, port int) sandboxpolicy.MountPlan {
+	t.Helper()
+	rules := sandboxpolicy.NetworkRules{
+		Mode:   sandboxpolicy.AccessModeList,
+		Engine: sandboxpolicy.NetworkEngineProxy,
+		Allow: []sandboxpolicy.NetworkAllowEntry{{
+			Loopback: true,
+			Ports:    []int{port},
+		}},
+		Deny: []sandboxpolicy.NetworkAllowEntry{{Host: "blocked.invalid"}},
+	}
+	compiled, err := sandboxpolicy.CompileFilteredNetworkRules(rules)
+	require.NoError(t, err)
+	plan := sandboxpolicy.MountPlan{
+		NetworkPosture:  sandboxpolicy.NetworkFiltered,
+		NetworkEngine:   sandboxpolicy.NetworkEngineProxy,
+		FilteredNetwork: &compiled,
+	}
+	require.True(t, tclaudeLayerPlanDeploysProxy(plan))
+	return plan
+}
+
+func darwinProxyLauncherHelper(t *testing.T) {
+	httpProxy := os.Getenv("HTTP_PROXY")
+	require.NotEmpty(t, httpProxy)
+	for _, name := range []string{"http_proxy", "HTTPS_PROXY", "https_proxy"} {
+		assert.Equal(t, httpProxy, os.Getenv(name), name)
+	}
+	parsed, err := url.Parse(httpProxy)
+	require.NoError(t, err)
+	assert.Equal(t, "http", parsed.Scheme)
+	for _, name := range []string{"ALL_PROXY", "all_proxy"} {
+		assert.Equal(t, "socks5h://"+parsed.Host, os.Getenv(name), name)
+	}
+	assert.Empty(t, os.Getenv("NO_PROXY"))
+	assert.Empty(t, os.Getenv("no_proxy"))
+
+	transport := &http.Transport{Proxy: http.ProxyURL(parsed)}
+	client := &http.Client{Transport: transport, Timeout: 5 * time.Second}
+	response, err := client.Get(os.Getenv("TCLAUDE_DARWIN_PROXY_ORIGIN"))
+	require.NoError(t, err)
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	require.NoError(t, err)
+	assert.Equal(t, "carried-by-darwin-filtering-proxy", string(body))
+	fmt.Println("darwin-proxy-launcher: production path carried HTTP through the supervised endpoint")
 }
 
 func TestDarwinSeatbeltRuntimeTempDirRefusesNonstandardCarveout(t *testing.T) {
