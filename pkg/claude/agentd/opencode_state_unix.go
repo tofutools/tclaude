@@ -637,15 +637,30 @@ func validateExistingOpenCodeCredential(path string) error {
 }
 
 // openCodeSeedWindowHookForTest runs at the exact instant between the seed's
-// validation and its write, and is nil in production. It exists so the
-// check-then-use window TCL-908 closes can be exercised deterministically:
-// a test that raced a real attacker would be flaky in the direction that hides
-// the defect, and an unexercised window is a claim rather than a property.
+// validation and its write. It exists so the check-then-use window TCL-908
+// closes can be exercised deterministically: a test that raced a real attacker
+// would be flaky in the direction that HIDES the defect, and an unexercised
+// window is a claim rather than a property.
 //
-// It is deliberately not a general injection point — it takes no arguments,
-// returns nothing, and cannot influence what the seed does. All it can do is
-// let a test move the filesystem underneath a decision that has already been
-// made, and observe that the decision is not affected.
+// Safety argument, stated here so an audit of this path does not have to
+// re-derive it:
+//
+//   - It is nil in production. No non-test file assigns it; the only writer is
+//     the test that arms it and restores nil in t.Cleanup.
+//   - It takes no arguments, so it is told nothing about the launch.
+//   - It returns nothing, so it cannot report a decision, cannot abort, and
+//     cannot redirect the write.
+//
+// Therefore it cannot influence what the seed decides or what it writes. The
+// only thing it can affect is WHEN a test observes the seed — it lets a test
+// move the filesystem underneath a decision that has already been made, and
+// then assert the decision was not affected. Reaching the write still requires
+// passing every check above it.
+//
+// It lives in production code rather than in a _test file because production
+// code references it, and Go cannot resolve a non-test reference to a
+// test-file declaration. The alternative was contorting the seed's shape to
+// avoid the variable, which would trade a nil hook for a worse structure.
 var openCodeSeedWindowHookForTest func()
 
 // prepareOpenCodeReadOnlyConfig supplies the one app-owned compatibility file
