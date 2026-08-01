@@ -193,16 +193,30 @@ smoke::load_flow_harnesses() {
     # status 5" is the same lie about a declaration sitting in the file, one
     # trigger over. The marker is what discriminates, so read it first.
     #
-    # RESIDUE, stated rather than implied: one path still cannot be attributed.
-    # A flow with a top-level `trap 'exit 7' EXIT` AND a declaration present is
-    # reported as the declaration failing, because by then `declared` has been
-    # printed and flow::harnesses has actually run — the trap fires after
-    # everything, so no marker can discriminate. It is ruled out by the
-    # inert-at-source-time contract above and no flow in the tree does it; all
-    # four set their traps inside flow::run. Closing it mechanically would mean a
-    # SECOND marker printed after flow::harnesses, with its absence meaning
-    # "died after the declaration" — symmetric with what is here, and deliberately
-    # not spent, since the contract already excludes the case.
+    # RESIDUE, stated rather than implied: one path is still misattributed. A
+    # flow with a top-level `trap 'exit 7' EXIT` AND a declaration present is
+    # reported as the declaration failing, because the trap fires after
+    # flow::harnesses has already run and printed. Ruled out by the
+    # inert-at-source-time contract above, and no flow in the tree does it — all
+    # four set their traps inside flow::run.
+    #
+    # It is NOT unclosable, and saying so would be its own small misattribution.
+    # But the obvious close does not work, which is why it is worth writing down
+    # rather than left as an exercise. A second marker after flow::harnesses
+    # WOULD discriminate the trap (measured: status 7 with the trailing marker
+    # present) — and would silently break the case round one fixed, because
+    # flow::harnesses is currently the LAST command in the subshell and its
+    # status IS the subshell's. Put a `printf` after it and
+    # `flow::harnesses() { return 3; }` becomes status 0 with a clean trailing
+    # marker: reported as a SUCCESS with an empty set. Measured, not reasoned.
+    # (`set -e` does not save it: the command substitution sits on the left of
+    # `||`, which suppresses it inside.)
+    #
+    # A correct version must therefore capture the declaration's own failure
+    # explicitly as well — `flow::harnesses || { printf 'declfail:%s\n' "$?";
+    # exit 0; }` before the trailing marker — which is three interacting markers
+    # and a parse to close a case the contract already excludes. Deliberately
+    # not spent.
     verdict="${raw%%$'\n'*}"
     raw="${raw#"$verdict"}"
     if [[ "$status" -ne 0 ]]; then
