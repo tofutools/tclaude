@@ -788,7 +788,7 @@ func validateOpenCodeReadOnlyConfigSeedSourceAt(
 	sourceFD int,
 	source, configDir string,
 ) error {
-	identity, err := openCodeDirectoryIdentityOf(sourceFD, "config")
+	identity, err := openCodeDirectoryIdentityOf(sourceFD, source, "config")
 	if err != nil {
 		return err
 	}
@@ -856,7 +856,20 @@ func validateOpenCodeReadOnlyConfigSeedSourceAt(
 	// its operator must act on.
 	if allocErr != nil && openCodeDirectoryIs(identity, configDir) {
 		return fmt.Errorf(
-			"read-only OpenCode config bind source %q is not an allocated per-agent config directory (%w), and does not resolve to this host's ambient OpenCode config %q",
+			// "is not", NOT "does not resolve to". That wording was TRUE
+			// before this change, when the test really was
+			// resolvedOpenCodeSeedPath(source) against the ambient one. This
+			// change made acceptance a device/inode comparison against an open
+			// descriptor, and this function's own header now says "source is
+			// carried for MESSAGES only — nothing here resolves it". The
+			// sentence outlived the mechanism it described.
+			//
+			// It was also wrong in a case that has nothing to do with
+			// symlinks: on a host with no ambient config at all,
+			// openCodeDirectoryIs returns false on the Stat error, and the
+			// operator was told the source "does not resolve to" a directory
+			// that does not exist — implying it exists somewhere else.
+			"read-only OpenCode config bind source %q is not an allocated per-agent config directory (%w), and is not this host's ambient OpenCode config %q",
 			source, allocErr, ambient)
 	}
 	return fmt.Errorf(
@@ -986,11 +999,14 @@ type openCodeDirectoryIdentity struct {
 	inode  uint64
 }
 
-func openCodeDirectoryIdentityOf(fd int, surface string) (openCodeDirectoryIdentity, error) {
+func openCodeDirectoryIdentityOf(
+	fd int,
+	path, surface string,
+) (openCodeDirectoryIdentity, error) {
 	var stat unix.Stat_t
 	if err := unix.Fstat(fd, &stat); err != nil {
 		return openCodeDirectoryIdentity{}, fmt.Errorf(
-			"inspect OpenCode %s bootstrap directory: %w", surface, err)
+			"inspect OpenCode %s bootstrap directory %q: %w", surface, path, err)
 	}
 	return openCodeDirectoryIdentity{
 		device: uint64(stat.Dev), inode: uint64(stat.Ino),

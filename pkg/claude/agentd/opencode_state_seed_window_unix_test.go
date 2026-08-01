@@ -240,3 +240,34 @@ func TestValidateExistingOpenCodeBootstrapInspectsThroughTheDescriptor(t *testin
 	require.ErrorContains(t, pathErr, "is not a regular file",
 		"addressing by path is what let the swap change which file was inspected")
 }
+
+// The allocated-but-wrong branch's wording. It said the source "does not
+// resolve to" this host's ambient config, which was true before the descriptor
+// rewrite — the test really was resolvedOpenCodeSeedPath(source) against the
+// ambient path. Acceptance is now a device/inode comparison and this function
+// resolves nothing, so the sentence outlived its mechanism.
+//
+// The discriminating case needs no symlink at all: point the ambient config
+// somewhere that does not exist. "Does not resolve to <path>" then implies
+// <path> exists and is elsewhere, when it does not exist.
+func TestValidateOpenCodeReadOnlyConfigSeedSourceAtDoesNotClaimResolution(t *testing.T) {
+	_, _ = allocatedOpenCodeConfigDir(t)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "absent-config-base"))
+
+	// The branch under test needs the allocation lookup to FAIL while the
+	// descriptor IS the contract's config directory, so the source is
+	// self-bound to an unallocated target. Pointing at a foreign directory
+	// instead lands in the other refusal and proves nothing about this wording.
+	unallocated := filepath.Join(t.TempDir(), "config", "opencode")
+	require.NoError(t, os.MkdirAll(unallocated, 0o700))
+	fd, err := openOpenCodeBootstrapDirectory(unallocated, "config")
+	require.NoError(t, err)
+	defer func() { _ = unix.Close(fd) }()
+
+	err = validateOpenCodeReadOnlyConfigSeedSourceAt(fd, unallocated, unallocated)
+	require.Error(t, err)
+	require.NotContains(t, err.Error(), "does not resolve to",
+		"nothing here resolves the source; claiming resolution describes a mechanism the code no longer performs")
+	require.Contains(t, err.Error(), "is not this host's ambient OpenCode config",
+		"the claim must be about WHAT the directory is, not how it was determined")
+}
