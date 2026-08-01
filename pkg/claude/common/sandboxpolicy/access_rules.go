@@ -482,7 +482,7 @@ func normalizeNetworkAllowEntry(in NetworkAllowEntry, index int, field string) (
 		// would leave it depending on that list's mapped entries alone.
 		prefix = UnmapPrefix(prefix)
 		if PrefixIntersectsLoopbackIdentity(prefix) {
-			// Naming the space matters: 0.0.0.0/8 and :: reach the host too,
+			// Naming the space matters: 0.0.0.0 and :: reach the host too,
 			// so "covers loopback" alone reads as wrong to an operator who
 			// authored neither 127.0.0.0/8 nor ::1.
 			return NetworkAllowEntry{}, fmt.Errorf(
