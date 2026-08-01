@@ -891,6 +891,7 @@ export function createManagementActions({
       if (draft.filesystem_spellings !== undefined) body.filesystem_spellings = draft.filesystem_spellings;
       if (draft.network !== undefined) body.network = draft.network;
       if (draft.unix_sockets !== undefined) body.unix_sockets = draft.unix_sockets;
+      if (draft.resource_limits !== undefined) body.resource_limits = draft.resource_limits;
       Object.assign(body, sandboxProfileForWire(body));
       if (!body.name) throw new Error('name is required');
       const targetName = options.editExisting === false
