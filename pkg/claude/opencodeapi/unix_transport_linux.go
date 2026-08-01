@@ -197,12 +197,15 @@ func unlinkSocketIdentity(path string, device, inode int64, requireMode bool) er
 		//
 		// This runs on the cleanup path during an already-failing teardown,
 		// which is where a confidently wrong message costs the most.
-		expected := "the recorded socket"
+		// The lead-in names the PATH, not "the OpenCode control socket": on the
+		// not-a-socket arm the object at that path is not a socket at all, so
+		// calling it one in the same breath as denying it reads as a
+		// contradiction.
+		expected := "the recorded OpenCode control socket"
 		if requireMode {
-			expected = "the recorded mode-0600 socket"
+			expected = "the recorded mode-0600 OpenCode control socket"
 		}
-		return fmt.Errorf(
-			"refusing to remove OpenCode control socket %q: it is no longer %s", path, expected)
+		return fmt.Errorf("refusing to remove %q: it is no longer %s", path, expected)
 	}
 	if err := unix.Unlinkat(parentFD, filepath.Base(path), 0); err != nil {
 		return fmt.Errorf("remove OpenCode control socket: %w", err)
@@ -318,8 +321,15 @@ func validateControlParent(path string) error {
 // own predicate untouched, and only a five-line formatter with no policy in it
 // is duplicated. If the wording ever changes, change it in both — agentd's
 // copy is the one to follow.
+func controlStatOwnerDescription(stat *syscall.Stat_t, ok bool) string {
+	if !ok || stat == nil {
+		return "no readable owner"
+	}
+	return fmt.Sprintf("uid %d", stat.Uid)
+}
+
 // controlPeerCredentialDescription renders the credential half of the peer
-// refusal, for the same reason controlStatOwnerDescription exists: a nil
+// refusal, for the same reason controlStatOwnerDescription exists above: a nil
 // credential must not be printed as "uid 0", which would name root as the peer
 // of a connection whose credentials were never obtained.
 func controlPeerCredentialDescription(credential *syscall.Ucred) string {
@@ -327,13 +337,6 @@ func controlPeerCredentialDescription(credential *syscall.Ucred) string {
 		return "not readable"
 	}
 	return fmt.Sprintf("uid %d, pid %d", credential.Uid, credential.Pid)
-}
-
-func controlStatOwnerDescription(stat *syscall.Stat_t, ok bool) string {
-	if !ok || stat == nil {
-		return "no readable owner"
-	}
-	return fmt.Sprintf("uid %d", stat.Uid)
 }
 
 func controlParentIdentity(path string) (int64, int64, error) {

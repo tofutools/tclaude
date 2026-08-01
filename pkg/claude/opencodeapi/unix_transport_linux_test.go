@@ -477,7 +477,7 @@ func TestCleanupAndPeerRefusalsDescribeWhatWasActuallyChecked(t *testing.T) {
 		// ran — and "replaced" would be wrong too, since nothing was replaced.
 		err = unlinkSocketIdentity(regular, int64(stat.Dev), int64(stat.Ino), false)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "is no longer the recorded socket")
+		assert.Contains(t, err.Error(), "is no longer the recorded OpenCode control socket")
 		assert.NotContains(t, err.Error(), "mode-0600",
 			"the mode clause is guarded by requireMode and must not be claimed when it is off")
 		assert.NotContains(t, err.Error(), "refusing to remove replaced OpenCode control socket")
@@ -494,7 +494,27 @@ func TestCleanupAndPeerRefusalsDescribeWhatWasActuallyChecked(t *testing.T) {
 
 		err = unlinkSocketIdentity(regular, int64(stat.Dev), int64(stat.Ino), true)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "is no longer the recorded mode-0600 socket")
+		assert.Contains(t, err.Error(), "is no longer the recorded mode-0600 OpenCode control socket")
+	})
+
+	t.Run("peer refusal does not assert subtree membership it never evaluated", func(t *testing.T) {
+		// End-to-end, through Do -> dialVerifiedUnix, on the arm that DOES
+		// evaluate membership: a recorded PID no live process descends from.
+		// The renderer pin below is not enough on its own — reverting the
+		// sentence has to turn something red, which is exactly the gap the
+		// cold review found in the first version of this change.
+		runtime, _, captured := unixHTTPFixture(t)
+		runtime.PID = 99_999_999
+		request, err := NewRequest(http.MethodGet,
+			runtime.ServerURL+"/global/health", runtime, nil)
+		require.NoError(t, err)
+		_, err = Do(&http.Client{Timeout: time.Second}, request, runtime)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "could not be proven to belong to the recorded process subtree")
+		assert.NotContains(t, err.Error(), "is outside the recorded process subtree",
+			"two of the three arms short-circuit before membership is evaluated")
+		assert.Contains(t, err.Error(), fmt.Sprintf("expected uid %d", os.Geteuid()))
+		assert.Zero(t, captured.Load(), "credentials must not reach an unproven peer")
 	})
 
 	t.Run("peer credential description never invents a uid", func(t *testing.T) {
