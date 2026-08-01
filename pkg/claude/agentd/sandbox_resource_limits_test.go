@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -47,10 +48,15 @@ func TestResourceLimitOperatorOverrideNoticeIsRecorded(t *testing.T) {
 		string(sandboxpolicy.ImplementationHarnessBuiltin),
 		session.ModelTransportLaunchContext{}, true,
 	)
-	// This host is Linux, so there is nothing to override at the product
-	// compatibility layer; the live controller probe belongs to session new.
 	require.Nil(t, failure)
-	assert.Empty(t, notices)
+	if runtime.GOOS == "linux" {
+		// The live controller probe belongs to session new.
+		assert.Empty(t, notices)
+	} else {
+		require.Len(t, notices, 1)
+		assert.Equal(t, "resource_limits", notices[0].Axis)
+		assert.Contains(t, notices[0].Detail, "not enforced")
+	}
 }
 
 func TestResourceLimitsRequireExportVersion11(t *testing.T) {
