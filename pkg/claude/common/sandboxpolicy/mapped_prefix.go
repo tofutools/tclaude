@@ -26,7 +26,8 @@ var mappedIPv4Block = netip.MustParsePrefix("::ffff:0:0/96")
 // The rewrite is total rather than partial, which is what makes normalizing a
 // complete answer instead of a special case. A prefix shorter than /96 that
 // intersects the mapped block necessarily contains the whole of it, hence
-// contains ::ffff:0.0.0.0/104, and PrefixIntersectsLoopbackIdentity already
+// contains mapped host-loopback addresses, and
+// PrefixIntersectsLoopbackRowAuthority already
 // refuses it. So every mapped prefix that survives authoring is at least /96
 // and lies wholly inside the block, where the bit arithmetic below is exact.
 // There is no residue of partially-normalizable rows needing a second policy.

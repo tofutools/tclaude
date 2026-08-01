@@ -105,7 +105,7 @@ func TestMappedLoopbackCIDRRowStillRefused(t *testing.T) {
 			if err == nil {
 				t.Fatalf("cidr %q was accepted; want the loopback refusal", cidr)
 			}
-			if !strings.Contains(err.Error(), `use {"loopback": true} instead`) {
+			if !strings.Contains(err.Error(), `use {"loopback": true} for that portion`) {
 				t.Fatalf("cidr %q refused with %v, want the loopback remedy", cidr, err)
 			}
 		})
@@ -131,7 +131,7 @@ func TestMappedBlockPrefixBelowNinetySixStillRefused(t *testing.T) {
 	if err == nil {
 		t.Fatalf("cidr %q was accepted; want the loopback refusal", cidr)
 	}
-	if !strings.Contains(err.Error(), `use {"loopback": true} instead`) {
+	if !strings.Contains(err.Error(), `split it and keep CIDR rows for the remainder`) {
 		t.Fatalf("cidr %q refused with %v, want the loopback remedy", cidr, err)
 	}
 }

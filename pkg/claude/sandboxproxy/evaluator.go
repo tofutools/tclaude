@@ -267,7 +267,7 @@ func (e *Evaluator) EvaluateResolvedAddress(
 			Detail:  refusalDetail(target, VerdictDeniedByRule),
 		}
 	}
-	if namesLocalHost(addr) {
+	if resolved.IsLoopback() {
 		for i := range e.rules.Rules {
 			if e.rules.Rules[i].Selector != sandboxpolicy.NetworkSelectorLoopback {
 				continue
@@ -302,27 +302,9 @@ func (e *Evaluator) EvaluateResolvedAddress(
 	}
 }
 
-// namesLocalHost reports whether an address is in the host-loopback identity
-// space. That is WIDER than "reaches the host running the proxy": the space
-// covers all of 0.0.0.0/8, and only the unspecified address within that /8
-// reaches this host — the rest is ordinary destination space routed off-host
-// (TCL-910). The name is historical; the list is the definition.
-//
-// The definition is not this package's own: it is
-// sandboxpolicy.AddrIsLoopbackIdentity, the same list the compiler refuses cidr
-// rows against. That sharing is load-bearing rather than tidiness. match()
-// decides every target in this space from loopback rows alone, so a cidr row
-// overlapping it would be authorable but never consulted — an operator would
-// believe a deny exists that never fires (TCL-899). The branch is complete only
-// because no such row can be authored, and it stays complete only while the two
-// sides read one list.
-func namesLocalHost(addr netip.Addr) bool {
-	return sandboxpolicy.AddrIsLoopbackIdentity(addr)
-}
-
 var reservedDestinationPrefixes = []netip.Prefix{
-	// "This network" — also handled by namesLocalHost, kept here so the
-	// classifier stands on its own.
+	// "This network". Its exact unspecified address is governed by loopback
+	// rows; the rest reaches this classifier as ordinary reserved space.
 	netip.MustParsePrefix("0.0.0.0/8"),
 	// IETF protocol assignments.
 	netip.MustParsePrefix("192.0.0.0/24"),

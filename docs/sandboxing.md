@@ -681,6 +681,17 @@ Anthropic and OpenAI API-key endpoints. New drafts select these three packs
 once on their first transition to Deny all; they remain ordinary editable pack
 choices afterward.
 
+Under the proxy engine, an unscoped loopback row governs `127.0.0.0/8`, `::1`,
+the exact unspecified addresses `0.0.0.0` and `::`, and their IPv4-mapped
+spellings. It does not authorize the rest of `0.0.0.0/8`: those addresses are
+ordinary reserved destinations and are refused under Deny all unless an
+explicit CIDR allow row covers them. CIDR rows such as `0.0.0.1/32` are
+authorable in either polarity, so an Allow all profile can explicitly deny the
+address and a Deny all profile can deliberately allow it. A broader CIDR that
+also contains an address governed by loopback rows remains invalid; split the
+range so loopback and CIDR authority stay explicit. Port scopes apply in both
+cases.
+
 Legacy `network.mode: list` profiles remain valid and open as Deny all with
 their exact rows under manual destinations. The editor never infers a pack
 reference from matching endpoints, so opening and saving a legacy policy does

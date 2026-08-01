@@ -296,15 +296,15 @@ func TestNewEvaluatorRejectsUnmaterializedRules(t *testing.T) {
 	}
 }
 
-// TestLoopbackIdentityIsOneDomainEverywhere pins the property whose absence
+// TestLoopbackRowAuthorityIsOneDomainEverywhere pins the property whose absence
 // produced a deny bypass: every spelling of the host is governed by the
 // loopback selector, on both polarities and at both evaluation stages. A strict
 // predicate in one place and a broad one in another is exactly how a deny row
 // authored against the loopback selector went unmatched.
-func TestLoopbackIdentityIsOneDomainEverywhere(t *testing.T) {
-	// 0.0.0.0 and :: reach the host, and Linux routes 0.0.0.0/8 there, so all
-	// of these must behave exactly as 127.0.0.1 does.
-	spellings := []string{"127.0.0.1", "::1", "0.0.0.0", "::", "0.5.6.7"}
+func TestLoopbackRowAuthorityIsOneDomainEverywhere(t *testing.T) {
+	// The exact unspecified addresses reach the host. Non-unspecified 0/8 is
+	// intentionally absent: it is reserved CIDR space, not loopback authority.
+	spellings := []string{"127.0.0.1", "::1", "0.0.0.0", "::"}
 
 	denyPolicy := listRules(
 		[]sandboxpolicy.NetworkAllowEntry{{Domain: "example.com"}, {Loopback: true}},
@@ -345,6 +345,55 @@ func TestLoopbackIdentityIsOneDomainEverywhere(t *testing.T) {
 				[]sandboxpolicy.NetworkAllowEntry{{Domain: "example.com"}}, nil))
 			if got := evaluator.Evaluate(mustTarget(t, spelling, 8080)); got.Allowed() {
 				t.Fatalf("%s was allowed with no authored loopback row", spelling)
+			}
+		})
+	}
+}
+
+// TestLoopbackRowAuthorityVariesAddressAndPort makes both parameters of a
+// loopback row visible. In particular, a mapped non-unspecified 0/8 spelling
+// must not recover the broad identity predicate through a second address form.
+func TestLoopbackRowAuthorityVariesAddressAndPort(t *testing.T) {
+	evaluator := mustEvaluator(t, listRules([]sandboxpolicy.NetworkAllowEntry{
+		{Domain: "example.com"},
+		{Loopback: true, Ports: []int{8080}},
+	}, nil))
+
+	for _, tc := range []struct {
+		name         string
+		addr         string
+		port         int
+		directWant   Verdict
+		resolvedWant Verdict
+		wantRule     bool
+	}{
+		{"unspecified at authored port", "0.0.0.0", 8080,
+			VerdictAllowed, VerdictAllowed, true},
+		{"unspecified at another port", "0.0.0.0", 8081,
+			VerdictNotAuthorized, VerdictPrivateDestination, false},
+		{"non-unspecified 0/8 at authored port", "0.0.0.1", 8080,
+			VerdictNotAuthorized, VerdictPrivateDestination, false},
+		{"non-unspecified 0/8 at another port", "0.0.0.1", 8081,
+			VerdictNotAuthorized, VerdictPrivateDestination, false},
+		{"mapped non-unspecified 0/8", "::ffff:0.0.0.1", 8080,
+			VerdictNotAuthorized, VerdictPrivateDestination, false},
+		{"ordinary reserved control", "192.168.64.5", 8080,
+			VerdictNotAuthorized, VerdictPrivateDestination, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			direct := evaluator.Evaluate(mustTarget(t, tc.addr, tc.port))
+			if direct.Verdict != tc.directWant {
+				t.Fatalf("direct verdict = %q, want %q", direct.Verdict, tc.directWant)
+			}
+
+			resolved := evaluator.EvaluateResolvedAddress(
+				mustTarget(t, "example.com", tc.port), netip.MustParseAddr(tc.addr))
+			if resolved.Verdict != tc.resolvedWant {
+				t.Fatalf("resolved verdict = %q, want %q", resolved.Verdict, tc.resolvedWant)
+			}
+			if (direct.Rule != nil) != tc.wantRule || (resolved.Rule != nil) != tc.wantRule {
+				t.Fatalf("rule presence: direct=%t resolved=%t, want both %t",
+					direct.Rule != nil, resolved.Rule != nil, tc.wantRule)
 			}
 		})
 	}

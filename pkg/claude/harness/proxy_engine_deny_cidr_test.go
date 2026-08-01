@@ -194,12 +194,11 @@ func TestProxyEngineDenyCIDREscapesThatKeepItPartial(t *testing.T) {
 		"the loopback-identity escape is closed (TCL-899); the cell must stop disclosing it")
 }
 
-// TestLoopbackIdentityCIDRRowsAreUnauthorable is TCL-899's evidence.
+// TestLoopbackRowAuthorityCIDRRowsAreUnauthorable is TCL-899's evidence.
 //
 // The defect: Evaluator.match takes its loopback branch for every target in the
-// host-loopback identity space — which includes the unspecified address and all
-// of 0.0.0.0/8 — and that branch consults loopback rows alone. A cidr row
-// overlapping that space was therefore authorable but INERT: with
+// loopback-row authority space, and that branch consults loopback rows alone.
+// A cidr row overlapping that space was therefore authorable but INERT: with
 // allow loopback:8080 + deny cidr 0.0.0.0/8, both the literal and an allowed
 // name resolving to 0.0.0.0 were dialed. An operator believed a deny existed
 // that never fired, which is the worst failure a policy surface has.
@@ -216,12 +215,11 @@ func TestProxyEngineDenyCIDREscapesThatKeepItPartial(t *testing.T) {
 //     very target the inert row failed to stop, with VerdictDeniedByRule rather
 //     than a bare Allowed() == false.
 //
-// Falsifiability: revert loopbackIdentityPrefixes to the pre-fix 127.0.0.0/8 +
-// ::1 list and (1) fails — the rows compile. That differing pre-fix value is
-// what makes this evidence rather than agreement with whatever the code does.
-// Precisely: it differs for the five spellings TCL-899 added; the three
-// pre-existing ones below are regression cover, and they are honestly not
-// falsified by that revert because the old predicate already refused them.
+// Falsifiability: removing an exact unspecified entry from
+// loopbackRowAuthorityPrefixes makes its corresponding row compile; bypassing
+// the compiler gate makes every row compile. The authorable-and-effective test
+// below separately fails if the compiler is switched back to the broad identity
+// list.
 //
 // Baseline scope, stated rather than implied: normalizeNetworkAllowEntry is
 // mode-independent, so open and list run the same code path through assertion
@@ -229,10 +227,11 @@ func TestProxyEngineDenyCIDREscapesThatKeepItPartial(t *testing.T) {
 // only one where the allow polarity is authorable at all, and the only one
 // where assertion 3 shows a loopback deny beating an authored loopback ALLOW,
 // which is the exact shape the escape lived in.
-func TestLoopbackIdentityCIDRRowsAreUnauthorable(t *testing.T) {
-	// Every spelling of the space match() claims. 127.0.0.0/8 and ::1/128 were
-	// already refused before TCL-899 and are kept so a later narrowing of the
-	// predicate cannot pass this test.
+func TestLoopbackRowAuthorityCIDRRowsAreUnauthorable(t *testing.T) {
+	// Every prefix overlaps at least one address match() decides from loopback
+	// rows. The broad 0/8 spellings stay refused because they contain the exact
+	// unspecified address; individual non-unspecified addresses are tested as
+	// authorable below.
 	inert := []string{
 		"0.0.0.0/8",            // the reported shape
 		"0.0.0.0/32",           // the unspecified address alone
@@ -299,9 +298,11 @@ func TestLoopbackIdentityCIDRRowsAreUnauthorable(t *testing.T) {
 					require.Errorf(t, err,
 						"%s cidr %q overlaps the host-loopback identity space and must not compile",
 						polarity, cidr)
-					assert.Containsf(t, err.Error(), `use {"loopback": true} instead`,
+					assert.Containsf(t, err.Error(), `use {"loopback": true} for that portion`,
 						"the refusal must name the remedy, not just refuse: %s cidr %q", polarity, cidr)
-					assert.Containsf(t, err.Error(), "host-loopback identity space",
+					assert.Containsf(t, err.Error(), "split it and keep CIDR rows for the remainder",
+						"the refusal must preserve mixed-range intent: %s cidr %q", polarity, cidr)
+					assert.Containsf(t, err.Error(), "address space governed by loopback rows",
 						"the refusal must name what it refused: %s cidr %q", polarity, cidr)
 				}
 			}
@@ -339,34 +340,183 @@ func TestLoopbackIdentityCIDRRowsAreUnauthorable(t *testing.T) {
 	}
 }
 
-// The compiler and the proxy evaluator must not drift back into two
-// definitions of the host-loopback identity space. That divergence IS the
-// defect: the evaluator's branch is complete only for exactly the space the
-// compiler keeps cidr rows out of. Wider compiler than evaluator refuses rows
-// that would have worked; narrower compiler than evaluator readmits the inert
-// shape TCL-899 closed.
-func TestLoopbackIdentityAgreesBetweenCompilerAndEvaluator(t *testing.T) {
+// The compiler and evaluator must agree on loopback-row authority even though
+// broad loopback-identity membership is intentionally wider (TCL-916).
+func TestLoopbackRowAuthorityAgreesBetweenCompilerAndEvaluator(t *testing.T) {
 	for _, spelling := range []string{
-		"0.0.0.0", "0.255.255.255", "127.0.0.1", "127.255.255.254", "::", "::1",
+		"0.0.0.0", "127.0.0.1", "127.255.255.254", "::", "::1",
 	} {
 		addr := netip.MustParseAddr(spelling)
-		require.Truef(t, sandboxpolicy.AddrIsLoopbackIdentity(addr),
-			"%s is host loopback to the evaluator", spelling)
+		require.Truef(t, sandboxpolicy.AddrHasLoopbackRowAuthority(addr),
+			"%s is governed by loopback rows", spelling)
 		single := netip.PrefixFrom(addr, addr.BitLen())
-		assert.Truef(t, sandboxpolicy.PrefixIntersectsLoopbackIdentity(single),
+		assert.Truef(t, sandboxpolicy.PrefixIntersectsLoopbackRowAuthority(single),
 			"%s is decided by loopback rows, so a cidr row naming it must not compile",
 			spelling)
 	}
-	// The converse: an address the evaluator treats as routable must stay
-	// authorable as a cidr row, or the gate has swallowed ordinary space.
-	for _, spelling := range []string{"1.0.0.0", "93.184.216.34", "2001:db8::1", "fd00::2"} {
+	for _, spelling := range []string{
+		"0.0.0.1", "::ffff:0.0.0.1", "1.0.0.0", "93.184.216.34", "2001:db8::1", "fd00::2",
+	} {
 		addr := netip.MustParseAddr(spelling)
-		require.Falsef(t, sandboxpolicy.AddrIsLoopbackIdentity(addr),
-			"%s is a routable destination to the evaluator", spelling)
+		require.Falsef(t, sandboxpolicy.AddrHasLoopbackRowAuthority(addr),
+			"%s must not be governed by loopback rows", spelling)
 		single := netip.PrefixFrom(addr, addr.BitLen())
-		assert.Falsef(t, sandboxpolicy.PrefixIntersectsLoopbackIdentity(single),
+		assert.Falsef(t, sandboxpolicy.PrefixIntersectsLoopbackRowAuthority(single),
 			"%s must remain authorable as a cidr row", spelling)
 	}
+
+	// Membership itself is not narrowed: TCL-910's broader answer remains true
+	// for both native and mapped spellings even though row authority is false.
+	for _, spelling := range []string{"0.0.0.1", "0.255.255.255", "::ffff:0.0.0.1"} {
+		addr := netip.MustParseAddr(spelling)
+		assert.Truef(t, sandboxpolicy.AddrIsLoopbackIdentity(addr),
+			"%s must remain in the settled broad identity space", spelling)
+		assert.Truef(t, sandboxpolicy.PrefixIntersectsLoopbackIdentity(
+			netip.PrefixFrom(addr, addr.BitLen())),
+			"%s must remain in the settled broad prefix identity space", spelling)
+	}
+}
+
+// TestNonUnspecifiedZeronetCIDRRowsAreAuthorableAndEffective proves both
+// directions of TCL-899's invariant after the authority split: CIDR allows and
+// denies compile, and each actually governs direct and resolved targets. Both
+// address spelling and port are varied so neither rule parameter is assumed.
+func TestNonUnspecifiedZeronetCIDRRowsAreAuthorableAndEffective(t *testing.T) {
+	const (
+		name       = "example.com"
+		authored   = 8080
+		unauthored = 8081
+	)
+	addresses := []string{"0.0.0.1", "::ffff:0.0.0.1"}
+
+	allowEvaluator, err := sandboxproxy.NewEvaluator(sandboxpolicy.NetworkRules{
+		Mode: sandboxpolicy.AccessModeList,
+		Allow: []sandboxpolicy.NetworkAllowEntry{
+			{Domain: name},
+			{CIDR: "0.0.0.1/32", Ports: []int{authored}},
+		},
+		Engine: sandboxpolicy.NetworkEngineProxy,
+	})
+	require.NoError(t, err, "a non-unspecified 0/8 CIDR allow must be authorable")
+
+	denyEvaluator, err := sandboxproxy.NewEvaluator(sandboxpolicy.NetworkRules{
+		Mode: sandboxpolicy.AccessModeOpen,
+		Deny: []sandboxpolicy.NetworkAllowEntry{
+			{CIDR: "0.0.0.1/32", Ports: []int{authored}},
+		},
+		Engine: sandboxpolicy.NetworkEngineProxy,
+	})
+	require.NoError(t, err, "a non-unspecified 0/8 CIDR deny must be authorable")
+
+	for _, address := range addresses {
+		t.Run(address, func(t *testing.T) {
+			for _, tc := range []struct {
+				name          string
+				evaluator     *sandboxproxy.Evaluator
+				port          int
+				directWant    sandboxproxy.Verdict
+				resolvedWant  sandboxproxy.Verdict
+				wantRuleMatch bool
+			}{
+				{"allow authored port", allowEvaluator, authored,
+					sandboxproxy.VerdictAllowed, sandboxproxy.VerdictAllowed, true},
+				{"allow other port", allowEvaluator, unauthored,
+					sandboxproxy.VerdictNotAuthorized, sandboxproxy.VerdictPrivateDestination, false},
+				{"deny authored port", denyEvaluator, authored,
+					sandboxproxy.VerdictDeniedByRule, sandboxproxy.VerdictDeniedByRule, true},
+				{"deny other port", denyEvaluator, unauthored,
+					sandboxproxy.VerdictAllowed, sandboxproxy.VerdictAllowed, false},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					direct, parseErr := sandboxproxy.ParseTarget(address, tc.port)
+					require.NoError(t, parseErr)
+					directDecision := tc.evaluator.Evaluate(direct)
+					assert.Equal(t, tc.directWant, directDecision.Verdict)
+
+					byName, parseErr := sandboxproxy.ParseTarget(name, tc.port)
+					require.NoError(t, parseErr)
+					if tc.evaluator == allowEvaluator {
+						require.True(t, tc.evaluator.Evaluate(byName).Allowed(),
+							"the name must reach resolved-address evaluation")
+					}
+					resolvedDecision := tc.evaluator.EvaluateResolvedAddress(
+						byName, netip.MustParseAddr(address))
+					assert.Equal(t, tc.resolvedWant, resolvedDecision.Verdict)
+					assert.Equal(t, tc.wantRuleMatch, directDecision.Rule != nil)
+					assert.Equal(t, tc.wantRuleMatch, resolvedDecision.Rule != nil)
+				})
+			}
+		})
+	}
+}
+
+// TestMixedZeronetDenyMigrationPreservesIntent exercises the migration the
+// authoring refusal prescribes. A rejected 0/8 deny is replaced by a loopback
+// deny for exact 0.0.0.0 plus the canonical CIDR decomposition of the rest;
+// every resulting row compiles and fires, while an address outside 0/8 remains
+// allowed under the open baseline.
+func TestMixedZeronetDenyMigrationPreservesIntent(t *testing.T) {
+	_, err := sandboxproxy.NewEvaluator(sandboxpolicy.NetworkRules{
+		Mode:   sandboxpolicy.AccessModeOpen,
+		Deny:   []sandboxpolicy.NetworkAllowEntry{{CIDR: "0.0.0.0/8"}},
+		Engine: sandboxpolicy.NetworkEngineProxy,
+	})
+	require.Error(t, err, "the mixed CIDR must be split before it can be effective")
+	assert.ErrorContains(t, err, `use {"loopback": true} for that portion`)
+	assert.ErrorContains(t, err, "split it and keep CIDR rows for the remainder")
+
+	addrFromUint32 := func(value uint32) netip.Addr {
+		return netip.AddrFrom4([4]byte{
+			byte(value >> 24), byte(value >> 16), byte(value >> 8), byte(value),
+		})
+	}
+	uint32FromAddr := func(addr netip.Addr) uint32 {
+		bytes := addr.As4()
+		return uint32(bytes[0])<<24 | uint32(bytes[1])<<16 |
+			uint32(bytes[2])<<8 | uint32(bytes[3])
+	}
+
+	deny := []sandboxpolicy.NetworkAllowEntry{{Loopback: true}}
+	cursor := uint32(1)
+	for bits := 32; bits >= 9; bits-- {
+		prefix := netip.PrefixFrom(addrFromUint32(cursor), bits)
+		require.Equal(t, cursor, uint32FromAddr(prefix.Masked().Addr()),
+			"the generated remainder prefix must start at the uncovered cursor")
+		deny = append(deny, sandboxpolicy.NetworkAllowEntry{CIDR: prefix.String()})
+		cursor += uint32(1) << uint(32-bits)
+	}
+	require.Equal(t, uint32(1)<<24, cursor,
+		"the split rows must cover every non-unspecified address in 0/8")
+
+	evaluator, err := sandboxproxy.NewEvaluator(sandboxpolicy.NetworkRules{
+		Mode:   sandboxpolicy.AccessModeOpen,
+		Deny:   deny,
+		Engine: sandboxpolicy.NetworkEngineProxy,
+	})
+	require.NoError(t, err, "the prescribed split must be authorable")
+
+	zero, err := sandboxproxy.ParseTarget("0.0.0.0", 443)
+	require.NoError(t, err)
+	assert.Equal(t, sandboxproxy.VerdictDeniedByRule, evaluator.Evaluate(zero).Verdict,
+		"the loopback row must preserve the deny at exact 0.0.0.0")
+
+	for _, entry := range deny[1:] {
+		prefix := netip.MustParsePrefix(entry.CIDR)
+		start := uint32FromAddr(prefix.Addr())
+		size := uint32(1) << uint(32-prefix.Bits())
+		for _, value := range []uint32{start, start + size - 1} {
+			target, parseErr := sandboxproxy.ParseTarget(addrFromUint32(value).String(), 443)
+			require.NoError(t, parseErr)
+			assert.Equalf(t, sandboxproxy.VerdictDeniedByRule,
+				evaluator.Evaluate(target).Verdict,
+				"the split deny row %s must fire at %s", entry.CIDR, target.Host())
+		}
+	}
+
+	outside, err := sandboxproxy.ParseTarget("1.0.0.0", 443)
+	require.NoError(t, err)
+	assert.Equal(t, sandboxproxy.VerdictAllowed, evaluator.Evaluate(outside).Verdict,
+		"the split must not become a blanket deny")
 }
 
 // The two polarities must not converge on one string again. A single shared
