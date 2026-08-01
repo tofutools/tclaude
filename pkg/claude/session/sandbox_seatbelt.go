@@ -297,10 +297,12 @@ func renderSeatbeltProfile(
 // endpoint supplied for a plan that deploys no proxy is refused too, because
 // silently dropping it would open nothing while the caller believed it had.
 //
-// Membership in the host-loopback space is decided by the shared predicate
-// (sandboxpolicy.AddrIsLoopbackIdentity), never by a second local notion of
-// what "loopback" spells. An endpoint outside that space would not be a
-// filtering proxy on this host at all; it would be a route off it.
+// Membership in the shared proxy-endpoint identity space is decided by
+// sandboxpolicy.AddrIsLoopbackIdentity, never by a second local definition.
+// This check deliberately inherits that predicate's 0.0.0.0/8 over-inclusion;
+// its corrected comment owns what that space means. This renderer receives the
+// address of an already-bound proxy listener and does not use membership here
+// to make a new claim about every member's connect reachability.
 //
 // The unspecified address is the one place where that predicate alone would be
 // wrong, and the reason generalizes past this function: the rule is ONE
@@ -310,14 +312,13 @@ func renderSeatbeltProfile(
 // wearing reuse's clothes, and it is more dangerous than duplication precisely
 // because the shared name makes it look deliberate.
 //
-// Concretely: AddrIsLoopbackIdentity carries 0.0.0.0/8 and ::/128 because
-// connecting TO the unspecified address lands on local loopback, which makes
-// them host-loopback DESTINATIONS. This endpoint is where the proxy LISTENS,
-// and binding to the unspecified address is the opposite — a wildcard listener
-// on every interface, so the sandbox's only egress would also be reachable from
-// the LAN. A launcher taking its endpoint from a net.Listen(":0") listener
-// address lands here, which is why the refusal is at this seam rather than left
-// to the caller.
+// Concretely, connecting TO either unspecified address lands on the local host,
+// but this endpoint records where the proxy LISTENS. Binding an unspecified
+// address is the opposite — a wildcard listener on every interface, so the
+// sandbox's only egress would also be reachable from the LAN. A launcher taking
+// its endpoint from a net.Listen(":0") listener address lands here, which is why
+// this seam separately refuses that address. It needs no claim about how the
+// rest of 0.0.0.0/8 routes.
 //
 // So the predicate stays the sole definition of loopback identity and is not
 // copied or narrowed; the bind-scope question is simply answered separately,
