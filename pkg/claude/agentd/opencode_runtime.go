@@ -624,17 +624,21 @@ func startOpenCodeProcess(
 	runtime *db.OpenCodeRuntime,
 	sandboxSpec *session.TclaudeLayerLaunchSpec,
 ) (*openCodeProcess, error) {
+	executable, err := harness.OpenCodeExecutable()
+	if err != nil {
+		return nil, fmt.Errorf("find OpenCode executable: %w", err)
+	}
 	if sandboxSpec != nil {
+		executable, err = exposeOpenCodeExecutable(sandboxSpec, executable)
+		if err != nil {
+			return nil, err
+		}
 		if err := prepareOpenCodeTclaudeLayerState(sandboxSpec); err != nil {
 			return nil, fmt.Errorf("prepare OpenCode tclaude-layer state: %w", err)
 		}
 		if err := prepareOpenCodeReadOnlyConfigForPlatform(sandboxSpec); err != nil {
 			return nil, err
 		}
-	}
-	executable, err := harness.OpenCodeExecutable()
-	if err != nil {
-		return nil, fmt.Errorf("find OpenCode executable: %w", err)
 	}
 	parsed, err := url.Parse(runtime.ServerURL)
 	if err != nil {
@@ -771,6 +775,25 @@ func startOpenCodeProcess(
 	stopOpenCodeProcess(*runtime, process)
 	return nil, fmt.Errorf("OpenCode server at %s did not become healthy within %s",
 		runtime.ServerURL, openCodeStartupTimeout)
+}
+
+func exposeOpenCodeExecutable(spec *session.TclaudeLayerLaunchSpec, executable string) (string, error) {
+	resolved, err := filepath.EvalSymlinks(executable)
+	if err != nil {
+		return "", fmt.Errorf("resolve OpenCode executable for sandbox: %w", err)
+	}
+	resolved, err = filepath.Abs(resolved)
+	if err != nil {
+		return "", fmt.Errorf("resolve absolute OpenCode executable for sandbox: %w", err)
+	}
+	// The executable is launch infrastructure, not profile-authored access.
+	// Reopen exactly this file read-only even when a constructed root or a
+	// broad deny hides its installation directory. OpenCode's mutable XDG
+	// roots remain the separate daemon-owned writable state contract.
+	bind := session.TclaudeLayerReadOnlyBind{Source: resolved, Target: resolved}
+	spec.Contract.ReadOnlyBinds = append(
+		[]session.TclaudeLayerReadOnlyBind{bind}, spec.Contract.ReadOnlyBinds...)
+	return resolved, nil
 }
 
 func (process *openCodeProcess) rootPID() int {

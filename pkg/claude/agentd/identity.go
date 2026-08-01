@@ -734,8 +734,10 @@ var (
 //  4. For a recorded tclaude-layer launch, the ancestor chain above the
 //     harness's parent. The bubblewrap + inner shell wrappers add hops between
 //     the harness and the tmux pane PID recorded in sessions.
-//  5. For an OpenCode ancestor only, agentd's opencode_runtimes table keyed
-//     by the ancestor's own pid, then its parent's pid.
+//  5. agentd's opencode_runtimes table keyed by each walked ancestor pid.
+//     OpenCode's packaged runtime may report its process name as `bun`, so
+//     the daemon-recorded pid and live endpoint proof are the authority, not
+//     the executable's current display name.
 //
 // Step 3 is the load-bearing one for Codex (JOH-206). The spawn row is keyed
 // by the tmux pane_pid (ParsePIDFromTmux at `tclaude session new`), and a
@@ -765,6 +767,13 @@ var (
 // Callers use hasAncestor to distinguish "really the human" (no ancestor)
 // from "agent we can't identify" (ancestor present, conv-id unresolved).
 func convIDForPID(pid int) (convID string, hasAncestor bool) {
+	// Packaged OpenCode builds may expose their underlying `bun` process name
+	// on macOS. Cross that name-independent ancestry only for a runtime whose
+	// recorded contract is tclaude-layer; the helper retains the same bounded
+	// wrapper walk and live endpoint-ownership proof as the named path below.
+	if id := openCodeRuntimeConvByAncestor(pid); id != "" {
+		return id, true
+	}
 	cur := pid
 	for cur > 1 {
 		name := procName(cur)
@@ -1076,9 +1085,10 @@ func sessionConvByPID(hostPID int) string {
 }
 
 // openCodeRuntimeConvByPID returns the conv-id of the freshest managed
-// OpenCode runtime whose recorded `opencode serve` pid is hostPID. It is
-// called only for an OpenCode-named ancestor, keeping the Claude/Codex
-// sessions.pid resolution contract unchanged.
+// OpenCode runtime whose recorded server pid is hostPID. The exact
+// daemon-recorded pid is deliberately checked independently of the process
+// name: packaged OpenCode builds can expose their underlying `bun` runtime on
+// macOS. Claude/Codex sessions.pid resolution remains unchanged.
 //
 // The match is confirmed by endpoint ownership before it becomes an identity:
 // if an `opencode serve` crashes, its runtime row lingers with a stale pid
