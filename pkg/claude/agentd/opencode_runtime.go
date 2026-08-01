@@ -2428,6 +2428,14 @@ func stopOpenCodeProcess(runtime db.OpenCodeRuntime, known *openCodeProcess) {
 		if process.tmuxSession != "" {
 			killErr := clcommon.Default.Command(
 				"-N", "kill-session", "-t", clcommon.ExactTarget(process.tmuxSession)).Run()
+			if killErr == nil {
+				// A successful tmux kill is authoritative. Do not wait for the
+				// health watcher to accumulate its transient-failure threshold:
+				// that can outlive this stop grace period and make us fall back to
+				// killing a root PID after tmux has already released it.
+				process.finish(nil)
+				return
+			}
 			select {
 			case <-process.done:
 			case <-time.After(openCodeProcessStopWait):

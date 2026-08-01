@@ -110,6 +110,28 @@ func TestManagedOpenCodeTmuxWatcherToleratesTransientFailures(t *testing.T) {
 	assert.Len(t, fake.calls, 6, "a successful probe must reset the failure count")
 }
 
+func TestStopManagedOpenCodeTmuxCompletesAfterSuccessfulKill(t *testing.T) {
+	fake := &openCodeTmuxProbeFake{results: []bool{true}}
+	previous := clcommon.Default
+	clcommon.Default = fake
+	t.Cleanup(func() { clcommon.Default = previous })
+	process := &openCodeProcess{pid: 4242, tmuxSession: "__tclaude-opencode-stop",
+		done: make(chan error, 1)}
+
+	stopOpenCodeProcess(db.OpenCodeRuntime{SessionID: "stop-session", PID: process.pid}, process)
+
+	select {
+	case err := <-process.done:
+		require.NoError(t, err)
+	default:
+		t.Fatal("successful tmux kill did not complete the managed process")
+	}
+	fake.Lock()
+	defer fake.Unlock()
+	require.Len(t, fake.calls, 1)
+	assert.Equal(t, []string{"-N", "kill-session", "-t", "=__tclaude-opencode-stop"}, fake.calls[0])
+}
+
 func TestManagedOpenCodeTmuxUnixHandshakeCrossesProcessBoundary(t *testing.T) {
 	handshake, err := prepareOpenCodeTmuxHandshake()
 	require.NoError(t, err)
