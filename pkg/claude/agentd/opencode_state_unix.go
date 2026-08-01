@@ -199,7 +199,7 @@ func validateOpenCodeFilteredProviderSources(stateRoot string) error {
 		content, err := os.ReadFile(path)
 		if err != nil || string(content) != openCodeInstallGitignore {
 			return fmt.Errorf(
-				"OpenCode filtered provider bootstrap %q is not the pinned provider-empty marker; clear the filtered config state or use network open",
+				"OpenCode filtered provider bootstrap %q could not be read or is not the pinned provider-empty marker; clear the filtered config state or use network open",
 				path)
 		}
 	}
@@ -217,7 +217,7 @@ func validateOpenCodeFilteredProviderDirectory(
 	info, err := os.Lstat(path)
 	if err != nil || !info.IsDir() {
 		return fmt.Errorf(
-			"OpenCode filtered %s %q could not be inspected or is not a directory; clear the filtered config state or use network open",
+			"OpenCode filtered %s %q could not be inspected or is not a directory (symlinks are not followed); clear the filtered config state or use network open",
 			surface, path)
 	}
 	resolved, err := filepath.EvalSymlinks(path)
@@ -242,7 +242,7 @@ func validateOpenCodeFilteredProviderDirectory(
 	if entry.Name() != openCodeInstallBootstrapFile ||
 		infoErr != nil || !entryInfo.Mode().IsRegular() {
 		return fmt.Errorf(
-			"OpenCode filtered %s %q contains unapproved provider authority; clear it or use network open",
+			"OpenCode filtered %s %q holds an entry that could not be inspected or is not the approved marker file; clear it or use network open",
 			surface, path)
 	}
 	return nil
@@ -351,6 +351,21 @@ func requireOpenCodeStateAllocation(agentID string) (*db.OpenCodeAgentStateAlloc
 // not yield a *syscall.Stat_t leaves stat nil, and "found uid 0" for that case
 // would name root as the owner of a directory whose owner was never read —
 // a confident wrong answer where no answer is available.
+// openCodeRecordedStateRootDescription renders the allocation's recorded state
+// root for a refusal. Presentation only; it reaches no decision.
+//
+// A legacy-shared allocation records NO state root — validateOpenCodeState-
+// Allocation requires the field to be empty — and resolvedOpenCodeSeedPath("")
+// is ".", because Clean("") is "." and EvalSymlinks(".") succeeds. Printing
+// that would name "." as the recorded root of an allocation that has none.
+// Saying so in words is the only answer available.
+func openCodeRecordedStateRootDescription(recorded, resolved string) string {
+	if strings.TrimSpace(recorded) == "" {
+		return "none recorded"
+	}
+	return fmt.Sprintf("%q", resolved)
+}
+
 func openCodeStatOwnerDescription(stat *syscall.Stat_t, ok bool) string {
 	if !ok || stat == nil {
 		return "no readable owner"
@@ -400,7 +415,7 @@ func openCodeControlSocketPath(agentID string) (string, error) {
 	parentStat, parentStatOK := parentInfo.Sys().(*syscall.Stat_t)
 	if !parentStatOK || parentStat.Uid != uint32(os.Geteuid()) {
 		return "", fmt.Errorf(
-			"OpenCode control parent %q has the wrong owner (found %s, expected uid %d)",
+			"OpenCode control parent %q owner could not be read or is not the expected one (found %s, expected uid %d)",
 			parent, openCodeStatOwnerDescription(parentStat, parentStatOK), os.Geteuid())
 	}
 	controlRoot := allocation.StateRoot
@@ -427,7 +442,7 @@ func openCodeControlSocketPath(agentID string) (string, error) {
 	rootStat, rootStatOK := info.Sys().(*syscall.Stat_t)
 	if !rootStatOK || rootStat.Uid != uint32(os.Geteuid()) {
 		return "", fmt.Errorf(
-			"OpenCode control root %q has the wrong owner (found %s, expected uid %d)",
+			"OpenCode control root %q owner could not be read or is not the expected one (found %s, expected uid %d)",
 			controlRoot, openCodeStatOwnerDescription(rootStat, rootStatOK), os.Geteuid())
 	}
 	resolved, err := filepath.EvalSymlinks(controlRoot)
@@ -496,7 +511,8 @@ func validateOpenCodeStateAllocation(
 		}
 		resolved, err := filepath.EvalSymlinks(root)
 		if err != nil || resolved != root {
-			return nil, fmt.Errorf("private OpenCode state root %q no longer has its allocated identity",
+			return nil, fmt.Errorf(
+				"private OpenCode state root %q could not be resolved or no longer has its allocated identity",
 				root)
 		}
 		if err := refuseOpenCodeProtectedStateRoot(root); err != nil {
@@ -1175,17 +1191,22 @@ func prepareOpenCodeReadOnlyConfig(
 	stateRoot := filepath.Clean(spec.Contract.StateRoot)
 	if created && (!filepath.IsAbs(stateRoot) ||
 		!sandboxpolicy.PathContainsOrEqual(stateRoot, source)) {
-		// "outside the contract's state root", not "in ambient host config".
-		// The condition is LEXICAL containment, and an allocated per-agent
-		// source reached through a symlinked state root fails it while being
-		// the opposite of ambient. The old line was a conclusion about the
-		// path's nature drawn from a spelling comparison, in the one record an
-		// operator would later use to decide whether host config was touched.
+		// "not lexically below the contract's state root", not "in ambient host
+		// config" — and not merely "outside" it either. The condition IS a
+		// spelling comparison, so an allocated per-agent source reached through
+		// a symlinked state root fails it while being physically inside, and
+		// the opposite of ambient. Naming the comparison rather than a
+		// conclusion about the path's nature is the only claim this line can
+		// support, in the one record an operator would later use to decide
+		// whether host config was touched.
+		//
+		// A cold review caught that the first correction here traded a wrong
+		// conclusion for a weaker one rather than for the mechanism.
 		//
 		// Both operands are logged for the same reason: the answer to "why is
 		// this line here" is the relationship between them, and a reader who
 		// cannot see the state root cannot check the claim.
-		slog.Info("created OpenCode bootstrap metadata outside the contract's state root before read-only confinement",
+		slog.Info("created OpenCode bootstrap metadata not lexically below the contract's state root before read-only confinement",
 			"path", filepath.Join(source, openCodeInstallBootstrapFile),
 			"state_root", stateRoot)
 	}
@@ -1403,19 +1424,35 @@ func requireOpenCodeAllocatedStateRoot(stateRoot, subject, noun string) error {
 		return fmt.Errorf("%s is not an allocated per-agent %s: %w", subject, noun, err)
 	}
 	// Hoisted out of the condition so the message can print the value the
-	// comparison ran on. This is one resolution where the expression form would
-	// have needed a second to render it — and a second walk is a second read,
-	// which is the hazard the comment in requireOpenCodeAllocatedConfigDir
-	// spells out. Fewer reads, not more.
+	// comparison ran on, rather than resolving a second time in the format
+	// arguments — a second walk is a second read, which is the hazard the
+	// comment in requireOpenCodeAllocatedConfigDir spells out.
+	//
+	// It is NOT fewer reads than the pre-change code: the || short-circuited
+	// this call away whenever the mode already mismatched, and it now always
+	// runs. No decision changes — EvalSymlinks is side-effect-free and the
+	// condition is identical — but the honest comparison is against what was
+	// here, not against the alternative rendering.
 	allocatedRoot := resolvedOpenCodeSeedPath(allocation.StateRoot)
 	if allocation.Mode != db.OpenCodeStatePrivate || allocatedRoot != stateRoot {
 		// Both paths named. The condition is mode-mismatch OR path-mismatch,
 		// and when it was the path the sentence named neither the allocated
 		// root nor the tested one — leaving an operator with a refusal about
 		// two paths and no way to see how they differed.
+		//
+		// The allocated root is RENDERED, not printed raw. A legacy-shared
+		// allocation is required by validateOpenCodeStateAllocation to record
+		// an EMPTY state root, and resolvedOpenCodeSeedPath("") is ".", so
+		// quoting it would tell an operator that this allocation's recorded
+		// root is "." — a confident wrong value for a field guaranteed to hold
+		// none, and a path they would then go and look at. That is this
+		// ticket's own defect shape, and it was introduced by this fix before
+		// a cold review caught it.
 		return fmt.Errorf(
-			"%s does not belong to the %s state allocation of agent %s (allocated state root %q, tested as %q)",
-			subject, allocation.Mode, allocation.AgentID, allocatedRoot, stateRoot)
+			"%s does not belong to the %s state allocation of agent %s (allocated state root %s, tested as %q)",
+			subject, allocation.Mode, allocation.AgentID,
+			openCodeRecordedStateRootDescription(allocation.StateRoot, allocatedRoot),
+			stateRoot)
 	}
 	parent, err := openCodePrivateStateParent()
 	if err != nil {

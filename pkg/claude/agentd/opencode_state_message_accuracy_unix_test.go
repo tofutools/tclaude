@@ -134,6 +134,25 @@ func TestOpenCodeStatOwnerDescriptionDoesNotInventAnOwner(t *testing.T) {
 	assert.Equal(t, "uid 4294967294",
 		openCodeStatOwnerDescription(&syscall.Stat_t{Uid: 4294967294}, true),
 		"a real owner is rendered as the uid it is")
-	assert.NotEqual(t, "uid 0", openCodeStatOwnerDescription(nil, false),
-		"the zero value must never be presented as a finding")
+}
+
+// The allocated-state-root renderer, pinned directly because the value it
+// guards against is produced by the standard library rather than by this
+// package: Clean("") is ".", EvalSymlinks(".") succeeds, and a legacy-shared
+// allocation is REQUIRED to record an empty state root. Printing the resolved
+// form would name "." as a recorded root that does not exist.
+func TestOpenCodeRecordedStateRootDescriptionDoesNotInventARoot(t *testing.T) {
+	// The precondition, asserted rather than assumed — if resolution of an
+	// empty path ever stopped yielding ".", this renderer's whole reason to
+	// exist would change and the test should say so first.
+	require.Equal(t, ".", resolvedOpenCodeSeedPath(""),
+		"an empty recorded root still resolves to the current directory")
+
+	assert.Equal(t, "none recorded",
+		openCodeRecordedStateRootDescription("", resolvedOpenCodeSeedPath("")))
+	assert.Equal(t, "none recorded",
+		openCodeRecordedStateRootDescription("   ", resolvedOpenCodeSeedPath("   ")))
+	assert.Equal(t, `"/real/root"`,
+		openCodeRecordedStateRootDescription("/real/root", "/real/root"),
+		"a recorded root is quoted in its resolved form")
 }

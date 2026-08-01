@@ -353,6 +353,15 @@ func TestPrepareOpenCodeReadOnlyConfigRefusesLegacySharedAllocation(t *testing.T
 		openCodeConfigBootstrapSpec(stateRoot, configDir, configDir), "Linux")
 	require.ErrorContains(t, err,
 		"does not belong to the legacy-shared state allocation of agent "+agentID)
+	// TCL-923: a legacy-shared allocation is REQUIRED to record an empty state
+	// root, and resolvedOpenCodeSeedPath("") is "." — so the refusal must not
+	// name "." as its recorded root. That is a confident wrong value for a
+	// field guaranteed to hold none, and an operator would go and look at it.
+	// Introduced by this ticket's own fix and caught by cold review.
+	require.Contains(t, err.Error(), "allocated state root none recorded",
+		"an allocation with no recorded root must say so, not invent one")
+	require.NotContains(t, err.Error(), `allocated state root "."`,
+		"the invented value must not come back")
 	assert.NoFileExists(t, filepath.Join(configDir, openCodeInstallBootstrapFile))
 }
 
