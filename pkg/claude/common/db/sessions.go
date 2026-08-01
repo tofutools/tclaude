@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"time"
 
@@ -1960,6 +1961,25 @@ func UpdateSessionCost(sessionID string, costUSD float64) error {
 	// The model CASE mirrors conv_id: a render that carries no model
 	// (the empty-context ones before a turn's first response) keeps the
 	// last good value rather than blanking it.
+	//
+	// THE STORED FORMAT IS NOT SAFE TO ORDER BY IN SQL (TCL-932).
+	// time.RFC3339Nano TRIMS TRAILING ZEROS from the fractional second, so the
+	// column is variable-width and SQLite compares it as TEXT. Lexical order
+	// then disagrees with chronological order whenever the earlier stamp's
+	// fraction is a proper PREFIX of the later one's — the terminator 'Z'
+	// (0x5A) loses to a digit (0x30-0x39), so "…07Z" sorts after
+	// "…07.000001Z" and "…07.9Z" after "…07.95Z". A whole-second stamp, whose
+	// fraction is trimmed away entirely, is the empty-prefix case and sorts
+	// after every other stamp in its second.
+	//
+	// Anyone ordering by this column must decide which order they want and get
+	// it a way the format cannot break: parse it (AllCostDailyRows sorts the
+	// cost walk in Go for exactly this reason) or, when INSERTION order is what
+	// is wanted, use the autoincrement id instead — the remedy already applied
+	// three times in this package, see ListUndeliveredAgentMessagesFor in
+	// agent.go and ListAgentCronRunsForJob in agent_cron.go. The two are not
+	// interchangeable: this row is UPSERTED, so its rowid is its first insert
+	// and not its last spend.
 	now := time.Now()
 	// agent_id is denormalised in alongside conv_id, with the same keep-last-good
 	// CASE guard. Prefer the session's persisted agent_id (the v77 companion,
@@ -2496,6 +2516,22 @@ func AllCostDailyRows() ([]CostDailyRow, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The SQL ORDER BY is kept, but it is NO LONGER LOAD-BEARING for the walk —
+	// the Go sort below is. It stays because v133's expression index matches it,
+	// so SQLite still returns rows near-sorted and this hot read avoids building
+	// a temporary B-tree on every dashboard poll; the Go pass then costs almost
+	// nothing on an already-ordered slice.
+	//
+	// Why SQL cannot own this order (TCL-932): updated_at is written with
+	// time.RFC3339Nano, which TRIMS TRAILING ZEROS from the fractional second,
+	// and SQLite compares it as TEXT. Lexical order is therefore NOT
+	// chronological order — it inverts whenever the earlier stamp's fraction is
+	// a proper PREFIX of the later one's, because the terminator 'Z' (0x5A)
+	// loses to a digit (0x30-0x39): "…07Z" sorts AFTER "…07.000001Z", and
+	// "…07.9Z" after "…07.95Z". An inverted pair makes CostDeltas read a
+	// carry-forward resume as a below-peak drop, reset the baseline, and
+	// double-count the conversation — the summed-instead-of-high-water figure
+	// that reached the Costs dashboard.
 	rows, err := db.Query(`SELECT session_id, day, conv_id, cost_usd, virtual_cost_usd, updated_at, model, harness
 		FROM session_cost_daily
 		ORDER BY COALESCE(NULLIF(conv_id, ''), session_id), day, updated_at, session_id`)
@@ -2511,7 +2547,80 @@ func AllCostDailyRows() ([]CostDailyRow, error) {
 		}
 		out = append(out, r)
 	}
+	sortCostDailyRowsForWalk(out)
 	return out, rows.Err()
+}
+
+// costDailyConvKey is the walk's grouping key: the denormalised conv_id, or the
+// session_id for the rare row that has none. It is the Go twin of the query's
+// COALESCE/NULLIF fallback from conv_id to session_id, and of CostDeltas's own
+// fallback — three copies of one rule, so it is stated once here and used by
+// the sort.
+func costDailyConvKey(r CostDailyRow) string {
+	if r.ConvID != "" {
+		return r.ConvID
+	}
+	return r.SessionID
+}
+
+// sortCostDailyRowsForWalk establishes the order CostDeltas documents as its
+// precondition — (conv-key, day, updated_at CHRONOLOGICALLY, session_id) —
+// by parsing the timestamp rather than comparing its spelling.
+//
+// The comparison is exact and platform-independent: time.Parse recovers the
+// instant regardless of how many fractional digits RFC3339Nano chose to emit,
+// so the walk's contract ("the tie-break is chronological, and this matters")
+// is true by construction instead of by format coincidence.
+//
+// The order is TOTAL. Rows that share an instant, and rows whose stamps are
+// both unusable, fall through to session_id — the same final tiebreaker the
+// query has always applied — so no pair is left to the sort's discretion.
+//
+// An absent or unparseable stamp sorts FIRST, which is what the lexical order
+// already did ("" precedes every real stamp). Preserving that rather than
+// inventing a new position keeps this change to the defect: rows written before
+// updated_at existed keep the place in the walk they have always had.
+//
+// Day needs no parsing — it is fixed-width "2006-01-02", where lexical and
+// chronological order coincide. Only the variable-width field was ever the
+// problem.
+func sortCostDailyRowsForWalk(rows []CostDailyRow) {
+	sort.SliceStable(rows, func(i, j int) bool {
+		a, b := rows[i], rows[j]
+		if ak, bk := costDailyConvKey(a), costDailyConvKey(b); ak != bk {
+			return ak < bk
+		}
+		if a.Day != b.Day {
+			return a.Day < b.Day
+		}
+		at, aOK := parseCostDailyStamp(a.UpdatedAt)
+		bt, bOK := parseCostDailyStamp(b.UpdatedAt)
+		switch {
+		case aOK && bOK:
+			if !at.Equal(bt) {
+				return at.Before(bt)
+			}
+		case aOK != bOK:
+			// Exactly one is usable; the unusable one goes first.
+			return bOK
+		}
+		return a.SessionID < b.SessionID
+	})
+}
+
+// parseCostDailyStamp reads an updated_at as the instant it records. The bool
+// is false for the empty stamp ("" if unknown, per CostDailyRow) and for any
+// value this process cannot parse — reported rather than swallowed as the zero
+// time, because "no stamp" and "midnight in year 1" must not sort alike.
+func parseCostDailyStamp(stamp string) (time.Time, bool) {
+	if stamp == "" {
+		return time.Time{}, false
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, stamp)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return parsed, true
 }
 
 // HasAnyRealCost reports whether any REAL pay-per-token spend has ever been
