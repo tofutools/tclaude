@@ -73,7 +73,7 @@ export function sandboxProfileSummary(profile) {
 }
 
 export function sandboxResourceLimitsForWire(resourceLimits = {}) {
-  const memory = String(resourceLimits.memory || '').trim();
+  const memory = String(resourceLimits.memory ?? '').trim();
   const cpuText = String(resourceLimits.cpu ?? '').trim();
   return {
     ...(memory ? { memory } : {}),
@@ -83,7 +83,7 @@ export function sandboxResourceLimitsForWire(resourceLimits = {}) {
 
 export function sandboxResourceLimitErrors(resourceLimits = {}) {
   const errors = [];
-  const memory = String(resourceLimits.memory || '').trim();
+  const memory = String(resourceLimits.memory ?? '').trim();
   if (memory && !/^(?:\d+(?:\.\d+)?|\.\d+)(?:[KMGT](?:I(?:B)?|B)?|B)$/i.test(memory)) {
     errors.push('Memory limit must be a positive quantity with a B, K/KB/KiB, M/MB/MiB, G/GB/GiB, or T/TB/TiB unit.');
   }

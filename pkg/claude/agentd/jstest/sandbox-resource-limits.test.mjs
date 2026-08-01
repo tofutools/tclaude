@@ -18,6 +18,8 @@ test('resource limits trim their authored spelling and serialize CPU as a number
 test('resource limit validation matches the editor contract', () => {
   assert.deepEqual(sandboxResourceLimitErrors({ memory: '512mIb', cpu: '2.5' }), []);
   assert.match(sandboxResourceLimitErrors({ memory: '512' })[0], /unit/);
+  assert.match(sandboxResourceLimitErrors({ memory: 0 })[0], /unit/);
+  assert.deepEqual(sandboxResourceLimitsForWire({ memory: 0 }), { memory: '0' });
   assert.match(sandboxResourceLimitErrors({ memory: '0GiB' })[0], /greater than zero/);
   assert.match(sandboxResourceLimitErrors({ memory: '0gib' })[0], /greater than zero/);
   assert.match(sandboxResourceLimitErrors({ cpu: '500m' })[0], /cores/);

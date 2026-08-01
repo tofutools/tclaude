@@ -42,3 +42,20 @@ func resourceLimitsAlreadyOverridden(notices []sandboxpolicy.AccessNotice) bool 
 	}
 	return false
 }
+
+// replaceAccessDegradationNotices preserves the dashboard-authorized resource
+// fallback recorded by agentd for this launch. The generic replacement still
+// discards stale target-derived network/socket degradation notices.
+func replaceAccessDegradationNotices(
+	existing []sandboxpolicy.AccessNotice,
+	current ...sandboxpolicy.AccessNotice,
+) []sandboxpolicy.AccessNotice {
+	for _, notice := range existing {
+		if notice.Axis == "resource_limits" &&
+			notice.Reason == sandboxpolicy.AccessNoticeReasonOperatorUnenforcedLaunchOverride &&
+			notice.Effect == sandboxpolicy.AccessNoticeEffectNotEnforced {
+			current = append(current, notice)
+		}
+	}
+	return sandboxpolicy.ReplaceAccessDegradationNotices(existing, current...)
+}

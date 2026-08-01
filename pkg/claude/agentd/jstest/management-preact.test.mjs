@@ -1187,6 +1187,39 @@ test('sandbox editor owns nested rows, raw validation, dirty discard, and save-i
   cleanups.reverse().forEach((fn) => fn());
 });
 
+test('sandbox editor blocks scribe handoff for invalid structured resource limits', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  for (const [field, value, expected] of [
+    ['memory', '512', /unit/],
+    ['cpu', '0.009', /at least 0.01/],
+  ]) {
+    const state = createManagementState();
+    state.openDialog({
+      kind: 'sandbox-editor',
+      seed: {
+        name: `invalid-${field}`, filesystem: [], environment: [], includes: [], agent_directories: [],
+        resource_limits: { [field]: value },
+      },
+      options: {},
+    });
+    let scribe = null;
+    const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state, {
+      configureSandboxWithAgent(draft) { scribe = draft; },
+    });
+    await harness.act(() => Promise.resolve());
+
+    host.querySelector('#sandbox-profile-editor-scribe').click();
+    await harness.act(() => Promise.resolve());
+    assert.equal(scribe, null, `${field}: invalid structured value must not reach the scribe`);
+    assert.match(host.querySelector('.cron-create-error').textContent, expected);
+    assert.ok(host.querySelector('#sandbox-profile-editor-modal'), `${field}: editor remains open`);
+    unmount();
+  }
+});
+
 test('sandbox filesystem and socket rows reuse accessible segmented controls while compact rows keep their authored shapes', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([

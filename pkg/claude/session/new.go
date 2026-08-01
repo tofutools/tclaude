@@ -1271,7 +1271,7 @@ func runNew(params *NewParams) error {
 		}
 		if outerLayer {
 			plannedEffective := launchSandbox.Effective
-			plannedEffective.AccessNotices = sandboxpolicy.ReplaceAccessDegradationNotices(
+			plannedEffective.AccessNotices = replaceAccessDegradationNotices(
 				plannedEffective.AccessNotices, notices...,
 			)
 			resolvedModel := harness.ResolvedModelTransport{Model: model}
@@ -1336,12 +1336,12 @@ func runNew(params *NewParams) error {
 				return materializationErr
 			}
 		}
-		launchSandbox.Effective.AccessNotices = sandboxpolicy.ReplaceAccessDegradationNotices(
+		launchSandbox.Effective.AccessNotices = replaceAccessDegradationNotices(
 			launchSandbox.Effective.AccessNotices, notices...,
 		)
 		sandboxpolicy.SetUnixSocketLaunchMaterialization(launchSandbox, materialization)
 		if effectiveSandbox != nil {
-			effectiveSandbox.Effective.AccessNotices = sandboxpolicy.ReplaceAccessDegradationNotices(
+			effectiveSandbox.Effective.AccessNotices = replaceAccessDegradationNotices(
 				effectiveSandbox.Effective.AccessNotices, notices...,
 			)
 			sandboxpolicy.SetUnixSocketLaunchMaterialization(

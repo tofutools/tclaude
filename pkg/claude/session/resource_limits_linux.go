@@ -298,9 +298,16 @@ func runResourceLimitExec(cgroupDir, sessionID, command string, allowUnenforced 
 	}
 	var exitErr *exec.ExitError
 	if errors.As(waitErr, &exitErr) {
-		os.Exit(exitErr.ExitCode())
+		os.Exit(resourceLimitChildExitCode(exitErr))
 	}
 	return waitErr
+}
+
+func resourceLimitChildExitCode(exitErr *exec.ExitError) int {
+	if status, ok := exitErr.Sys().(syscall.WaitStatus); ok && status.Signaled() {
+		return 128 + int(status.Signal())
+	}
+	return exitErr.ExitCode()
 }
 
 func ResourceCgroupOOMKilled(dir string) bool {

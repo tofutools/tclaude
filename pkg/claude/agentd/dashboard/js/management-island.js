@@ -1430,7 +1430,23 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
     return () => { active = false; clearTimeout(timer); };
   }, [predictionSignature]);
   const createMissing = async () => { const filesystem = clone(draft.filesystem); const signature = JSON.stringify(filesystem); const generation = ++directoryGeneration.current; setDirectoryBusy(true); state.error.value = ''; try { const result = await actions.createDirectories(filesystem); const refreshed = await actions.inspectDirectories(filesystem); if (generation === directoryGeneration.current && signature === latestFilesystem.current) { const created = result?.created || []; state.error.value = `Created ${created.length} sandbox director${created.length === 1 ? 'y' : 'ies'}.`; setDirectoryStatus({ missing: refreshed?.missing || [], creatable: refreshed?.creatable || [] }); } } catch (error) { if (generation === directoryGeneration.current) state.error.value = error.message || String(error); } finally { setDirectoryBusy(false); } };
-  const configureWithAgent = () => { let value = { ...draft, ...sandboxFilesystemWire(draft, baseline), resource_limits: sandboxResourceLimitsForWire(draft.resource_limits) }; if (advanced) { try { value = { ...draft, ...parseRaw() }; } catch (error) { state.error.value = error.message || String(error); return; } } const editExisting = options.editExisting ?? !!seed; const targetName = editExisting ? options.targetName || seed?.name || '' : ''; state.closeDialog(); void actions.configureSandboxWithAgent(value, { targetName, editExisting, cloneSourceName: options.cloneSourceName, onCreate: options.onCreate }); };
+  const configureWithAgent = () => {
+    let value = { ...draft, ...sandboxFilesystemWire(draft, baseline), resource_limits: sandboxResourceLimitsForWire(draft.resource_limits) };
+    if (advanced) {
+      try { value = { ...draft, ...parseRaw() }; }
+      catch (error) { state.error.value = error.message || String(error); return; }
+    }
+    const handoffErrors = [
+      ...sandboxAccessDraftErrors(value),
+      ...sandboxResourceLimitErrors(value.resource_limits),
+      ...(networkPackVisibilityError ? [networkPackVisibilityError] : []),
+    ];
+    if (handoffErrors.length) { state.error.value = handoffErrors[0]; return; }
+    const editExisting = options.editExisting ?? !!seed;
+    const targetName = editExisting ? options.targetName || seed?.name || '' : '';
+    state.closeDialog();
+    void actions.configureSandboxWithAgent(value, { targetName, editExisting, cloneSourceName: options.cloneSourceName, onCreate: options.onCreate });
+  };
   const structuredFilesystemWire = sandboxFilesystemWire(draft, baseline);
   const rawDirty = advanced && [rawFS !== JSON.stringify(structuredFilesystemWire.filesystem, null, 2), rawSpellings !== JSON.stringify(structuredFilesystemWire.filesystem_spellings, null, 2), rawEnv !== JSON.stringify(draft.environment, null, 2), rawIncludes !== JSON.stringify(draft.includes, null, 2), rawAgentDirs !== JSON.stringify(draft.agent_directories, null, 2), rawNetwork !== JSON.stringify(draft.network, null, 2), rawSockets !== JSON.stringify(draft.unix_sockets, null, 2), rawResources !== JSON.stringify(sandboxResourceLimitsForWire(draft.resource_limits), null, 2)].some(Boolean);
   // A preset inserts ordinary deny rows and then forgets it ever existed: no

@@ -847,11 +847,7 @@ func effectiveDraftSandboxProfileContexts(
 		}
 		memoryBytes := ""
 		if policy.ResourceLimits.Memory != "" {
-			value, parseErr := sandboxpolicy.ParseMemoryLimitBytes(policy.ResourceLimits.Memory)
-			if parseErr != nil {
-				return nil, 0, parseErr
-			}
-			memoryBytes = fmt.Sprintf("%d", value)
+			memoryBytes = fmt.Sprintf("%d", policy.ResourceLimits.MemoryBytes)
 		}
 		cpuMax := ""
 		if policy.ResourceLimits.CPU != nil {

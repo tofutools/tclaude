@@ -176,3 +176,16 @@ func TestResourceLimitExecFailsClosedWhenOverrideDisclosureCannotPersist(t *test
 	err := runResourceLimitExec(dir, "session-runtime-failure", "exit 0", true)
 	assert.ErrorContains(t, err, "required resource-limit override disclosure")
 }
+
+func TestResourceLimitChildExitCodeUsesShellSignalConvention(t *testing.T) {
+	cmd := exec.Command("/bin/sh", "-c", "kill -KILL $$")
+	err := cmd.Run()
+	var exitErr *exec.ExitError
+	require.ErrorAs(t, err, &exitErr)
+	assert.Equal(t, 137, resourceLimitChildExitCode(exitErr))
+
+	cmd = exec.Command("/bin/sh", "-c", "exit 23")
+	err = cmd.Run()
+	require.ErrorAs(t, err, &exitErr)
+	assert.Equal(t, 23, resourceLimitChildExitCode(exitErr))
+}
