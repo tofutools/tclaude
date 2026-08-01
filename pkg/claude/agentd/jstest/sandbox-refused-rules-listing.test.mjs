@@ -240,7 +240,16 @@ test('a refused target renders EXACTLY one bucket, closed against a new class', 
      weaker: re-introducing Option B verbatim — a "Blocked rules" bucket, one row
      per rule, outcome 'refused', rendered on the refused target — passed the
      whole suite. Enumerating known-bad names cannot catch a name you did not
-     think of, which is exactly the case that matters. */
+     think of, which is exactly the case that matters.
+
+     WHY IT GOES RED MATTERS, not just that it does. Injecting Option B BEFORE
+     the unjudged bucket also trips `bucketOfRule`, which returns the FIRST
+     matching bucket — so that ordering goes red for a reason unrelated to this
+     assertion and would let a weaker test look sufficient. Verified in both
+     orderings: with Option B rendered AFTER the unjudged bucket the incidental
+     catch is silent and THIS assertion is the only failure, naming the second
+     bucket. Do not "simplify" it back to per-class checks on the strength of a
+     red seen in the other ordering. */
   const harness = await createPreactHarness(t);
   const container = await render(harness, REFUSED_TARGET);
   const classes = [...container.querySelectorAll('.sbx-rule-bucket')]
