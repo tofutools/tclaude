@@ -302,7 +302,11 @@ func (e *Evaluator) EvaluateResolvedAddress(
 	}
 }
 
-// namesLocalHost reports whether an address reaches the host running the proxy.
+// namesLocalHost reports whether an address is in the host-loopback identity
+// space. That is WIDER than "reaches the host running the proxy": the space
+// covers all of 0.0.0.0/8, and only the unspecified address in it reaches this
+// host — the rest is ordinary destination space the kernel routes off-host
+// (TCL-910). The name is historical; the list is the definition.
 //
 // The definition is not this package's own: it is
 // sandboxpolicy.AddrIsLoopbackIdentity, the same list the compiler refuses cidr

@@ -3,37 +3,44 @@ package sandboxpolicy
 import "net/netip"
 
 // loopbackIdentityPrefixes is the ONE definition of the address space that
-// names the host running the sandbox rather than a routable destination.
+// names the host running the sandbox, or is carried alongside space that does,
+// rather than a routable destination. The "carried alongside" is not a hedge:
+// see the 0.0.0.0/8 row below.
 //
 // It is deliberately wider than netip.Addr.IsLoopback, and wider than
 // reachability alone justifies. This comment used to say that Linux routes
 // 0.0.0.0/8 to the local host. It does not — on either platform we ship — and
 // the two halves of that sentence come apart (TCL-910, probe output quoted in
-// the PR; measured on an Azure Linux runner, kernel 6.17, and macOS 26.4):
+// the PR; measured on ONE Azure Linux runner, kernel 6.17, and ONE macOS 26.4
+// host):
 //
 //   - The UNSPECIFIED address of either family does land on the local host,
-//     but not by routing, and the platforms arrive there by different
-//     mechanisms. Linux resolves it in the route lookup itself:
-//     "ip route get 0.0.0.0" reports "local 0.0.0.0 dev lo src 127.0.0.1".
-//     macOS does not — "route -n get -inet 0.0.0.0" there returns the DEFAULT
-//     route via the LAN gateway — and connect() still lands on 127.0.0.1, so
-//     there the substitution happens in the connect path, below the route
-//     table. For :: both platforms substitute in the connect path: a dial of
-//     [::] reaches a ::1-ONLY listener on hosts whose route table calls ::
-//     unreachable. This is why the claim cannot be stated once for "either
-//     family" and left there.
+//     but never out of a route-table entry, and the platforms differ in where
+//     the substitution happens. Linux answers it in the output-route CODE:
+//     the local table carries no 0/8 row, yet "ip route get 0.0.0.0" reports
+//     "local 0.0.0.0 dev lo src 127.0.0.1", because a zero destination is
+//     rewritten to loopback during the lookup rather than matched. macOS does
+//     not — "route -n get -inet 0.0.0.0" returns the DEFAULT route via the
+//     LAN gateway — and connect() still lands on 127.0.0.1, because BSD
+//     substitutes the FIRST CONFIGURED INTERFACE ADDRESS for INADDR_ANY in
+//     the connect path, and lo0 is first in any normal configuration. For ::
+//     both platforms substitute in the connect path: a dial of [::] reaches a
+//     ::1-ONLY listener on hosts whose routing state does not resolve :: at
+//     all. Three mechanisms for one outcome, which is why this cannot be
+//     stated once for "either family" and left there.
 //
 //   - The REST of 0.0.0.0/8 reaches the local host on neither platform, and
-//     is not special-cased at all: it is ordinary destination space resolved
-//     through the route table like any other. On the routed Linux host
-//     "ip route get 0.0.0.1" returns "via <gateway> dev eth0" — OFF the host
-//     — and the connect times out; on macOS it likewise resolves to the
-//     default gateway and fails EHOSTUNREACH. On a host with no default route
-//     it fails ENETUNREACH, which is what the reviewer who found this saw:
-//     that errno was a property of their route table, not of the address
-//     space. Neither kernel's local table carries any part of 0/8. It is
-//     RFC 6890 "this host on this network" — valid as a SOURCE address, not
-//     as a destination.
+//     is not special-cased on the OUTPUT path: it is ordinary destination
+//     space resolved through the route table like any other. On the routed
+//     Linux host "ip route get 0.0.0.1" returns "via <gateway> dev eth0" —
+//     OFF the host — and the connect times out; on macOS it likewise resolves
+//     to the default gateway, and the connect fails EHOSTUNREACH. On a host
+//     with no default route it fails ENETUNREACH, which is what the reviewer
+//     who found this saw: that errno was a property of their route table, not
+//     of the address space. No interface on either host carries a 0/8
+//     address, and neither host's routing state maps any of it on-host. It is
+//     RFC 6890 "this host on this network", whose registry entry marks it
+//     valid as a SOURCE address and neither a destination nor forwardable.
 //
 // The /8 row stays regardless and is NOT narrowed here. Be careful about what
 // the over-inclusion buys, because the two sides are not symmetric: at
@@ -41,10 +48,16 @@ import "net/netip"
 // out to be unreachable, so nothing is permitted that should be denied. At
 // EVALUATION it hands those addresses to the loopback rows alone, so an
 // allow-loopback posture admits a dial to something like 0.0.0.1 that leaves
-// the host instead of staying on it — undeliverable anywhere, since RFC 6890
-// space is not forwarded, but still not the same statement as "over-inclusion
-// can only refuse more". Narrowing the row is a behaviour change that needs
-// its own scrutiny rather than a docs pass.
+// the host instead of staying on it — on Linux at least, where the kernel
+// selects an off-host route and the connect times out rather than failing
+// locally. macOS returned EHOSTUNREACH, which is consistent with nothing
+// being transmitted; no capture was taken on either, so what is established
+// is route selection, not a frame. How far such a packet travels is a
+// property of the network and not of this package: a conforming router drops
+// a destination the RFC 6890 registry marks non-forwardable. Narrowing the
+// row is a behaviour change that needs its own scrutiny rather than a docs
+// pass, and the seam for it would be the evaluator — which rows this space is
+// handed to — not this list.
 //
 // The IPv4-mapped forms are carried so a v6-spelled range covering the same
 // space cannot present a second identity for it.
@@ -88,12 +101,17 @@ var loopbackIdentityPrefixes = []netip.Prefix{
 }
 
 // AddrIsLoopbackIdentity reports whether an address names the host itself by
-// any of its spellings. Every such spelling is governed by the loopback
-// selector, under every baseline — otherwise an open posture would reach host
-// services through 0.0.0.0 that no authored row ever granted.
+// any of its spellings, or falls in the space carried alongside them — the
+// rest of 0.0.0.0/8, which does NOT name the host and is covered deliberately
+// (see loopbackIdentityPrefixes). Every spelling that does name the host is
+// governed by the loopback selector, under every baseline — otherwise an open
+// posture would reach host services through 0.0.0.0 that no authored row ever
+// granted.
 //
-// It answers CONNECT-reachability only — whether traffic sent to this address
-// arrives at the host running the sandbox — and is not a bind-scope test. The
+// The question it answers is a CONNECT-scope one — whether traffic sent to an
+// address arrives at the host running the sandbox, for the spellings that do
+// (see above for the space carried alongside them, which does not) — and it is
+// not a bind-scope test. The
 // two diverge exactly where it would hurt: 0.0.0.0 is in this space because
 // connect() to it lands on local loopback, while bind() to it is the widest
 // scope there is rather than a loopback-scoped one. A caller asking "may
