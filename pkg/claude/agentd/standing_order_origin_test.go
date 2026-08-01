@@ -23,6 +23,7 @@ import (
 
 func TestHookHarnessNudgeCarriesTrustedOriginThroughTurn(t *testing.T) {
 	home := t.TempDir()
+	observeTCL925SQLiteSidecarsAtCleanup(t, home, "standing-order")
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	db.ResetForTest()

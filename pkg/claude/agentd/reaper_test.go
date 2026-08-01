@@ -45,6 +45,7 @@ func TestEnrollOnlineSessionAssignsFallbackWhenStartHookWasMissed(t *testing.T) 
 
 func TestSessionReaper_OpenCodeServerLossOverridesLivePane(t *testing.T) {
 	dir := t.TempDir()
+	observeTCL925SQLiteSidecarsAtCleanup(t, dir, "reaper")
 	t.Setenv("HOME", dir)
 	t.Setenv("USERPROFILE", dir)
 	db.ResetForTest()
