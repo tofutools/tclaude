@@ -806,8 +806,32 @@ type openCodeTmuxHandshake struct {
 	gate       *os.File
 }
 
+var openCodeTmuxHandshakeDataDir = tclcommon.TclaudeDataDir
+
 func prepareOpenCodeTmuxHandshake() (*openCodeTmuxHandshake, error) {
-	dir, err := os.MkdirTemp("", "tclaude-opencode-launch-")
+	// The launcher is forked by the external tmux runtime, which may have a
+	// different private temporary-directory namespace from agentd. Keep the
+	// cross-process handshake in tclaude's private persistent state instead of
+	// assuming that os.TempDir is shared between the two services.
+	dataDir := strings.TrimSpace(openCodeTmuxHandshakeDataDir())
+	if dataDir == "" {
+		return nil, fmt.Errorf("resolve private OpenCode tmux handshake directory")
+	}
+	root := filepath.Join(dataDir, "opencode-launch-handshakes")
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		return nil, fmt.Errorf("create private OpenCode tmux handshake root: %w", err)
+	}
+	info, err := os.Lstat(root)
+	if err != nil {
+		return nil, fmt.Errorf("inspect private OpenCode tmux handshake root: %w", err)
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("private OpenCode tmux handshake root is not a real directory")
+	}
+	if err := os.Chmod(root, 0o700); err != nil {
+		return nil, fmt.Errorf("protect private OpenCode tmux handshake root: %w", err)
+	}
+	dir, err := os.MkdirTemp(root, "launch-")
 	if err != nil {
 		return nil, fmt.Errorf("create OpenCode tmux handshake directory: %w", err)
 	}

@@ -4,7 +4,9 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -111,6 +113,7 @@ func TestManagedOpenCodeTmuxWatcherToleratesTransientFailures(t *testing.T) {
 }
 
 func TestManagedOpenCodeTmuxUnixHandshakeCrossesProcessBoundary(t *testing.T) {
+	setOpenCodeTmuxHandshakeDataDirForTest(t)
 	handshake, err := prepareOpenCodeTmuxHandshake()
 	require.NoError(t, err)
 	t.Cleanup(handshake.close)
@@ -152,6 +155,7 @@ func TestManagedOpenCodeTmuxUnixHandshakeCrossesProcessBoundary(t *testing.T) {
 }
 
 func TestManagedOpenCodeTmuxUnixHandshakeTimesOutAfterGateConnect(t *testing.T) {
+	setOpenCodeTmuxHandshakeDataDirForTest(t)
 	handshake, err := prepareOpenCodeTmuxHandshake()
 	require.NoError(t, err)
 	t.Cleanup(handshake.close)
@@ -179,6 +183,39 @@ func TestManagedOpenCodeTmuxUnixHandshakeTimesOutAfterGateConnect(t *testing.T) 
 	require.ErrorContains(t, err, "authority handshake timed out")
 	close(release)
 	<-childDone
+}
+
+func TestManagedOpenCodeTmuxHandshakeDoesNotUseProcessTempDir(t *testing.T) {
+	dataDir := setOpenCodeTmuxHandshakeDataDirForTest(t)
+	t.Setenv("TMPDIR", t.TempDir())
+
+	handshake, err := prepareOpenCodeTmuxHandshake()
+	require.NoError(t, err)
+	t.Cleanup(handshake.close)
+
+	rel, err := filepath.Rel(dataDir, handshake.dir)
+	require.NoError(t, err)
+	assert.False(t, filepath.IsAbs(rel))
+	assert.NotEqual(t, "..", rel)
+	assert.False(t, strings.HasPrefix(rel, ".."+string(filepath.Separator)))
+	assert.Equal(t, os.FileMode(0o700), mustFileMode(t,
+		filepath.Join(dataDir, "opencode-launch-handshakes")))
+}
+
+func setOpenCodeTmuxHandshakeDataDirForTest(t *testing.T) string {
+	t.Helper()
+	dataDir := t.TempDir()
+	previous := openCodeTmuxHandshakeDataDir
+	openCodeTmuxHandshakeDataDir = func() string { return dataDir }
+	t.Cleanup(func() { openCodeTmuxHandshakeDataDir = previous })
+	return dataDir
+}
+
+func mustFileMode(t *testing.T, path string) os.FileMode {
+	t.Helper()
+	info, err := os.Lstat(path)
+	require.NoError(t, err)
+	return info.Mode().Perm()
 }
 
 func TestManagedServerDropsStoredCgroupFromPreviousDelegationBeforeReprepare(t *testing.T) {
