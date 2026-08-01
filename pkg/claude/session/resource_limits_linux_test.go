@@ -55,6 +55,9 @@ func TestWrapResourceLimitedCommandRendersIndependentAxes(t *testing.T) {
 	changedCPU := 1.0
 	assert.Error(t, ValidatePreparedResourceCgroup(
 		cgroup, sandboxpolicy.ResourceLimits{Memory: "1.5GiB", CPU: &changedCPU}))
+	assert.Error(t, ValidatePreparedResourceCgroup(
+		cgroup, sandboxpolicy.ResourceLimits{Memory: "1.5GiB"}),
+		"removing CPU must not reuse a cgroup that retains the old quota")
 	assert.Contains(t, wrapped, "resource-limit-exec")
 	assert.Contains(t, wrapped, "exec harness")
 	assert.Contains(t, wrapped, "--allow-unenforced")
@@ -101,6 +104,13 @@ func TestConfigureProcessResourceCgroupUsesAtomicClonePlacement(t *testing.T) {
 	require.NotNil(t, cmd.SysProcAttr)
 	assert.True(t, cmd.SysProcAttr.UseCgroupFD)
 	assert.GreaterOrEqual(t, cmd.SysProcAttr.CgroupFD, 0)
+}
+
+func TestValidatePreparedResourceCgroupAcceptsRemovedAxesOnlyAtMax(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "memory.max"), []byte("max\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "cpu.max"), []byte("max 100000\n"), 0o644))
+	require.NoError(t, ValidatePreparedResourceCgroup(dir, sandboxpolicy.ResourceLimits{}))
 }
 
 func TestResourceCgroupOOMKilled(t *testing.T) {

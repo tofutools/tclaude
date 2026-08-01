@@ -178,26 +178,35 @@ func ConfigureProcessResourceCgroup(cmd *exec.Cmd, dir string) (func(), error) {
 // ValidatePreparedResourceCgroup confirms that a durable managed-server
 // boundary still carries the limits requested by the current relaunch.
 func ValidatePreparedResourceCgroup(dir string, limits sandboxpolicy.ResourceLimits) error {
+	wantMemory := "max"
 	if limits.Memory != "" {
 		want, err := sandboxpolicy.ParseMemoryLimitBytes(limits.Memory)
 		if err != nil {
 			return err
 		}
-		got, err := os.ReadFile(filepath.Join(dir, "memory.max"))
-		if err != nil || strings.TrimSpace(string(got)) != strconv.FormatUint(want, 10) {
-			return fmt.Errorf("prepared resource cgroup memory.max no longer matches requested limit")
-		}
+		wantMemory = strconv.FormatUint(want, 10)
 	}
+	gotMemory, err := os.ReadFile(filepath.Join(dir, "memory.max"))
+	if err != nil && !(limits.Memory == "" && errors.Is(err, os.ErrNotExist)) {
+		return fmt.Errorf("prepared resource cgroup memory.max no longer matches requested limit")
+	}
+	if err == nil && strings.TrimSpace(string(gotMemory)) != wantMemory {
+		return fmt.Errorf("prepared resource cgroup memory.max no longer matches requested limit")
+	}
+	wantCPU := fmt.Sprintf("max %d", sandboxpolicy.CPUCgroupPeriodMicros)
 	if limits.CPU != nil {
 		quota, err := sandboxpolicy.CPUQuotaMicros(*limits.CPU)
 		if err != nil {
 			return err
 		}
-		want := fmt.Sprintf("%d %d", quota, sandboxpolicy.CPUCgroupPeriodMicros)
-		got, err := os.ReadFile(filepath.Join(dir, "cpu.max"))
-		if err != nil || strings.TrimSpace(string(got)) != want {
-			return fmt.Errorf("prepared resource cgroup cpu.max no longer matches requested limit")
-		}
+		wantCPU = fmt.Sprintf("%d %d", quota, sandboxpolicy.CPUCgroupPeriodMicros)
+	}
+	gotCPU, err := os.ReadFile(filepath.Join(dir, "cpu.max"))
+	if err != nil && !(limits.CPU == nil && errors.Is(err, os.ErrNotExist)) {
+		return fmt.Errorf("prepared resource cgroup cpu.max no longer matches requested limit")
+	}
+	if err == nil && strings.TrimSpace(string(gotCPU)) != wantCPU {
+		return fmt.Errorf("prepared resource cgroup cpu.max no longer matches requested limit")
 	}
 	return nil
 }
