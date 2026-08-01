@@ -1963,13 +1963,12 @@ func UpdateSessionCost(sessionID string, costUSD float64) error {
 	// last good value rather than blanking it.
 	//
 	// THE STORED FORMAT IS NOT SAFE TO ORDER BY IN SQL (TCL-932).
-	// The stamp below is time.RFC3339Nano over time.Now(): TRAILING ZEROS are
-	// trimmed from the fractional second, and the zone is LOCAL. The column is
-	// therefore variable-width, SQLite compares it as TEXT, and lexical order
-	// disagrees with chronological order in more than one way. The exact rule
-	// lives in one place — sortCostDailyRowsForWalk — because it is
-	// zone-dependent and so reproduces on some machines and not others; do not
-	// restate it here, read it there.
+	// The stamp below is time.RFC3339Nano over time.Now(), so it has its
+	// trailing zeros trimmed and carries THIS machine's zone — and it is only
+	// one of several writers of this column, which is why the contract and the
+	// inversions are stated once in sortCostDailyRowsForWalk. Do not infer the
+	// column's shape from this line and do not restate the rule here: read it
+	// there.
 	//
 	// Anyone ordering by this column must decide which order they want and get
 	// it a way the format cannot break: parse it (AllCostDailyRows sorts the
@@ -2521,15 +2520,13 @@ func AllCostDailyRows() ([]CostDailyRow, error) {
 	// a temporary B-tree on every dashboard poll; the Go pass then costs almost
 	// nothing on an already-ordered slice.
 	//
-	// Why SQL cannot own this order (TCL-932): updated_at is written with
-	// time.RFC3339Nano over a LOCAL time.Now() and compared by SQLite as TEXT,
-	// and lexical order over that format is not chronological order. See
-	// sortCostDailyRowsForWalk for the exact rule — there are two shapes and
-	// they surface in different zones, which is why this presented as an
-	// intermittent CI-only failure. An inverted pair makes CostDeltas read a
-	// carry-forward resume as a below-peak drop, reset the baseline, and
-	// double-count the conversation — the summed-instead-of-high-water figure
-	// that reached the Costs dashboard.
+	// Why SQL cannot own this order (TCL-932): updated_at is RFC3339Nano
+	// compared by SQLite as TEXT, and lexical order over that column is not
+	// chronological order. sortCostDailyRowsForWalk states the column contract
+	// and the inversions; it is not restated here on purpose. An inverted pair
+	// makes CostDeltas read a carry-forward resume as a below-peak drop, reset
+	// the baseline, and double-count the conversation — the
+	// summed-instead-of-high-water figure that reached the Costs dashboard.
 	rows, err := db.Query(`SELECT session_id, day, conv_id, cost_usd, virtual_cost_usd, updated_at, model, harness
 		FROM session_cost_daily
 		ORDER BY COALESCE(NULLIF(conv_id, ''), session_id), day, updated_at, session_id`)
@@ -2566,50 +2563,70 @@ func costDailyConvKey(r CostDailyRow) string {
 // by parsing the timestamp rather than comparing its spelling.
 //
 // WHY THE SPELLING CANNOT BE TRUSTED (TCL-932). This is the one authoritative
-// statement of the rule; UpdateSessionCost and AllCostDailyRows point here
-// rather than restate it, because it is ZONE-DEPENDENT and a partial retelling
-// is what sent the first reader wrong.
+// statement; UpdateSessionCost and AllCostDailyRows point here rather than
+// restate it. A partial retelling is what sent the first reader wrong, and a
+// single source that is paraphrased elsewhere is not single.
 //
-// Stamps are written time.RFC3339Nano over time.Now(), so they carry the LOCAL
-// zone and the fractional second has its TRAILING ZEROS TRIMMED. The column is
-// variable-width, SQLite compares it as TEXT, and there are TWO distinct
-// inversions — each reachable in a different zone, which is why neither
-// reproduces everywhere:
+// THE COLUMN CONTRACT, not one writer's habit. Every updated_at in
+// session_cost_daily is some time.Time run through time.RFC3339Nano, but the
+// zone is the WRITER'S, not this process's, and the writers disagree:
 //
-//   - Under UTC the stamp ends in 'Z' (0x5A), which is ABOVE both '.' (0x2E)
-//     and every digit (0x30-0x39). A stamp that stops early therefore sorts
-//     AFTER its own extensions: "…07Z" after "…07.000001Z", "…07.9Z" after
-//     "…07.95Z". Exactly: the order inverts iff the earlier stamp's trimmed
-//     fraction is a proper PREFIX of the later one's, and a whole second —
-//     fraction trimmed away entirely — is the empty-prefix case. This is the
-//     shape that reached CI.
+//   - UpdateSessionCost stamps time.Now(), so those rows carry the local zone
+//     of whatever machine recorded the spend.
+//   - ReplaceSessionVirtualCostHistory and
+//     ReplaceSessionVirtualCostHistoryForGeneration format the caller's
+//     VirtualCostDailySnapshot.UpdatedAt verbatim, preserving whatever
+//     *time.Location it arrived with (only a zero value falls back to
+//     time.Now()). A fixed-zone snapshot is stored in that fixed zone.
+//   - v53 backfilled pre-existing timestamp STRINGS rather than generating
+//     stamps at all.
 //
-//   - Under a numeric offset the stamp ends in '+' (0x2B) or '-' (0x2D), both
-//     BELOW '.' and every digit. The prefix inversion above therefore CANNOT
-//     HAPPEN AT ALL, which is why this defect presented as UTC-only and why
-//     the rule above will not reproduce on a developer machine in a zone.
-//     Offsets get their own inversion instead: a DST transition puts two
-//     offsets inside one local day, and the later instant carries the smaller
-//     offset —
+// So a single table can hold Z stamps and several different numeric offsets at
+// once, and an offset row is not evidence of anything about this machine.
+// RFC3339Nano additionally TRIMS TRAILING ZEROS from the fraction. The column
+// is therefore variable-width AND multi-zone, SQLite compares it as TEXT, and
+// lexical order is not chronological order. Two CONCRETE inversions, neither
+// of them the exhaustive rule:
+//
+//   - Trimmed fractions, WITHIN one zone. Under UTC the stamp ends in 'Z'
+//     (0x5A), which is ABOVE both '.' (0x2E) and every digit (0x30-0x39), so a
+//     stamp that stops early sorts AFTER its own extensions: "…07Z" after
+//     "…07.000001Z", "…07.9Z" after "…07.95Z". Within a single zone this one is
+//     exact: the order inverts iff the earlier stamp's trimmed fraction is a
+//     proper PREFIX of the later one's, a whole second being the empty-prefix
+//     case. This is the shape that reached CI. Under a numeric offset the stamp
+//     ends in '+' (0x2B) or '-' (0x2D), both BELOW '.' and every digit, so this
+//     particular inversion cannot occur there — which is why the defect
+//     presented as UTC-only and why this half will not reproduce for a reader
+//     whose rows carry offsets.
+//
+//   - Disagreeing offsets, ACROSS zones. Comparing two spellings of different
+//     offsets compares wall-clock text, not instants, so any mix of offsets can
+//     disagree with time — no DST involved, and no shared zone required, since
+//     the writers above can put unrelated offsets in one table. One concrete
+//     instance is a DST FALL-BACK, where a single local day holds two offsets
+//     and the later instant carries the SMALLER one:
 //
 //     earlier 2026-10-25T02:59:00+02:00 (00:59Z)
 //     later   2026-10-25T02:00:00+01:00 (01:00Z)
 //
-//     — which is lexically inverted. Note both land on the SAME day value, so
-//     the outer day key does not shield it, which is the half a reader would
-//     assume is safe.
+//     — lexically inverted, and note both land on the SAME day value, so the
+//     outer day key does not shield it. Fall-back specifically: spring-forward
+//     moves the offset the other way and does not have this relationship. Treat
+//     this as one worked example of cross-offset disagreement, not as its
+//     shape.
 //
 // Both are fixed by the same thing, and neither by widening the format:
-// compare parsed instants. time.Parse recovers the instant whatever spelling
-// or offset was emitted, so the walk's contract ("the tie-break is
-// chronological, and this matters") is true by construction instead of by
-// format coincidence.
+// compare parsed instants. time.Parse recovers the instant whatever spelling or
+// offset was emitted, so the walk's contract ("the tie-break is chronological,
+// and this matters") is true by construction instead of by format coincidence.
+// That also means the fix does not depend on enumerating the inversions — which
+// is the point, since the list above is examples and the parse is general.
 //
-// So the CODE here is MORE CORRECT than the comments around it used to claim:
-// the DST shape is handled, and was handled before anyone noticed it existed.
-// That is worth stating rather than quietly enjoying — a fix that outperforms
-// its own documentation only ever bites the next reader, who trusts the
-// documentation.
+// The CODE has consistently been MORE CORRECT than the comments describing it:
+// cross-offset rows were handled before anyone noticed they could exist. Worth
+// stating rather than quietly enjoying — a fix that outperforms its own
+// documentation only bites the next reader, who trusts the documentation.
 //
 // The order is TOTAL. Rows that share an instant, and rows whose stamps are
 // both unusable, fall through to session_id — the same final tiebreaker the

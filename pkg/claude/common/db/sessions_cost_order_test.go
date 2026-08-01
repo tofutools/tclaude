@@ -203,15 +203,17 @@ func TestCostDailyWalkOrderIsTotal(t *testing.T) {
 	})
 
 	t.Run("MixedZoneOffsetsWithinOneDayStillOrderChronologically", func(t *testing.T) {
-		// The SECOND inversion shape, and the one that bites in a zone rather
-		// than under UTC. The prefix inversion cannot occur here at all —
-		// '+' (0x2B) sorts BELOW '.' and every digit — but a DST transition
-		// puts two offsets inside one local day, and the later instant carries
-		// the smaller offset.
+		// One worked instance of cross-offset disagreement: a DST FALL-BACK,
+		// where a single local day holds two offsets and the later instant
+		// carries the SMALLER one. Fall-back specifically — spring-forward
+		// moves the offset the other way and has no such relationship.
 		//
-		// Europe/Stockholm, 2026-10-25 fall-back. Written as literals rather
-		// than derived from a loaded location so the fixture does not depend on
-		// the runner's tzdata being present or current.
+		// The prefix inversion cannot occur here at all ('+' 0x2B sorts BELOW
+		// '.' and every digit); this is the other shape.
+		//
+		// Europe/Stockholm, 2026-10-25. Written as literals rather than derived
+		// from a loaded location so the fixture does not depend on the runner's
+		// tzdata being present or current.
 		const (
 			earlier = "2026-10-25T02:59:00+02:00" // 00:59Z
 			later   = "2026-10-25T02:00:00+01:00" // 01:00Z
@@ -237,6 +239,40 @@ func TestCostDailyWalkOrderIsTotal(t *testing.T) {
 		}
 		assert.InDelta(t, 1.25, total, 1e-9,
 			"a DST fall-back pair must not double-count either")
+	})
+
+	t.Run("UnrelatedOffsetsFromDifferentWritersOrderChronologically", func(t *testing.T) {
+		// The GENERAL cross-offset case, with no DST anywhere in it.
+		//
+		// This is reachable because the column has more than one writer and
+		// they do not agree on a zone: UpdateSessionCost stamps time.Now(),
+		// while ReplaceSessionVirtualCostHistory and its ForGeneration sibling
+		// format the caller's VirtualCostDailySnapshot.UpdatedAt verbatim and
+		// preserve whatever *time.Location it arrived with. v53 backfilled
+		// pre-existing strings. So one table can hold several unrelated
+		// offsets, and comparing their spellings compares wall-clock text
+		// rather than instants.
+		const (
+			earlier = "2026-08-01T20:00:00+09:00" // 11:00Z
+			later   = "2026-08-01T05:00:00-07:00" // 12:00Z
+		)
+		require.Greater(t, earlier, later,
+			"fixture precondition: the earlier instant must sort LAST lexically")
+
+		rows := []CostDailyRow{
+			{SessionID: "wcs-a2", Day: "2026-08-01", ConvID: "conv", UpdatedAt: later, CostUSD: 1.25},
+			{SessionID: "wcs-a1", Day: "2026-08-01", ConvID: "conv", UpdatedAt: earlier, CostUSD: 1.00},
+		}
+		sortCostDailyRowsForWalk(rows)
+		assert.Equal(t, "wcs-a1", rows[0].SessionID,
+			"offsets from different writers are still compared as instants")
+
+		total := 0.0
+		for _, d := range CostDeltas(rows, false) {
+			total += d.USD
+		}
+		assert.InDelta(t, 1.25, total, 1e-9,
+			"a cross-offset pair must not double-count either")
 	})
 
 	t.Run("ConversationsStayGroupedAndDaysOrdered", func(t *testing.T) {
