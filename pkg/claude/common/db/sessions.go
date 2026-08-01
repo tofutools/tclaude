@@ -1963,14 +1963,13 @@ func UpdateSessionCost(sessionID string, costUSD float64) error {
 	// last good value rather than blanking it.
 	//
 	// THE STORED FORMAT IS NOT SAFE TO ORDER BY IN SQL (TCL-932).
-	// time.RFC3339Nano TRIMS TRAILING ZEROS from the fractional second, so the
-	// column is variable-width and SQLite compares it as TEXT. Lexical order
-	// then disagrees with chronological order whenever the earlier stamp's
-	// fraction is a proper PREFIX of the later one's — the terminator 'Z'
-	// (0x5A) loses to a digit (0x30-0x39), so "…07Z" sorts after
-	// "…07.000001Z" and "…07.9Z" after "…07.95Z". A whole-second stamp, whose
-	// fraction is trimmed away entirely, is the empty-prefix case and sorts
-	// after every other stamp in its second.
+	// The stamp below is time.RFC3339Nano over time.Now(): TRAILING ZEROS are
+	// trimmed from the fractional second, and the zone is LOCAL. The column is
+	// therefore variable-width, SQLite compares it as TEXT, and lexical order
+	// disagrees with chronological order in more than one way. The exact rule
+	// lives in one place — sortCostDailyRowsForWalk — because it is
+	// zone-dependent and so reproduces on some machines and not others; do not
+	// restate it here, read it there.
 	//
 	// Anyone ordering by this column must decide which order they want and get
 	// it a way the format cannot break: parse it (AllCostDailyRows sorts the
@@ -2523,12 +2522,11 @@ func AllCostDailyRows() ([]CostDailyRow, error) {
 	// nothing on an already-ordered slice.
 	//
 	// Why SQL cannot own this order (TCL-932): updated_at is written with
-	// time.RFC3339Nano, which TRIMS TRAILING ZEROS from the fractional second,
-	// and SQLite compares it as TEXT. Lexical order is therefore NOT
-	// chronological order — it inverts whenever the earlier stamp's fraction is
-	// a proper PREFIX of the later one's, because the terminator 'Z' (0x5A)
-	// loses to a digit (0x30-0x39): "…07Z" sorts AFTER "…07.000001Z", and
-	// "…07.9Z" after "…07.95Z". An inverted pair makes CostDeltas read a
+	// time.RFC3339Nano over a LOCAL time.Now() and compared by SQLite as TEXT,
+	// and lexical order over that format is not chronological order. See
+	// sortCostDailyRowsForWalk for the exact rule — there are two shapes and
+	// they surface in different zones, which is why this presented as an
+	// intermittent CI-only failure. An inverted pair makes CostDeltas read a
 	// carry-forward resume as a below-peak drop, reset the baseline, and
 	// double-count the conversation — the summed-instead-of-high-water figure
 	// that reached the Costs dashboard.
