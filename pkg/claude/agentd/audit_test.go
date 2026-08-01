@@ -273,7 +273,6 @@ func TestNormalizeProcessRunAuthorizationsReturnsDurableEmptyList(t *testing.T) 
 // permission in the detail.
 func TestRecordApprovalDecision_WritesPopupRow(t *testing.T) {
 	dir := t.TempDir()
-	observeTCL925SQLiteSidecarsAtCleanup(t, dir, "audit")
 	t.Setenv("HOME", dir)
 	t.Setenv("USERPROFILE", dir)
 	db.ResetForTest()

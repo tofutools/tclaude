@@ -5,7 +5,6 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -17,22 +16,6 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/common"
 )
-
-func observeTCL925SQLiteSidecarsAtCleanup(t testing.TB, home, family string) {
-	t.Helper()
-	t.Cleanup(func() {
-		matches, err := filepath.Glob(filepath.Join(home, ".tclaude", "data", "db.sqlite-*"))
-		if err != nil {
-			t.Fatalf("TCL-925 cleanup probe %s could not list SQLite sidecars: %v", family, err)
-		}
-		names := make([]string, 0, len(matches))
-		for _, match := range matches {
-			names = append(names, filepath.Base(match))
-		}
-		sort.Strings(names)
-		t.Logf("TCL-925 cleanup probe %s sidecars=%v", family, names)
-	})
-}
 
 // TestIsValidRenameTitle pins the session-side mirror of agentd's
 // rename-title gate. The /clear title-restore injection in
@@ -171,7 +154,6 @@ func TestRunHookCallback_SessionEndMarksExited(t *testing.T) {
 
 func TestRunHookCallback_DelayedPredecessorSessionEndCannotExitRelaunch(t *testing.T) {
 	dir := t.TempDir()
-	observeTCL925SQLiteSidecarsAtCleanup(t, dir, "session-hooks")
 	t.Setenv("HOME", dir)
 	db.ResetForTest()
 	t.Cleanup(db.ResetForTest)
