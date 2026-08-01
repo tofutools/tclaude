@@ -890,7 +890,11 @@ test('sandbox actions preserve dry-run, canonical commit, delete, and import bou
     inspectSandboxImport: async (value) => ({ profiles: value.profiles }), importSandboxProfiles: async (...args) => { calls.push(['import', ...args]); return {}; },
   };
   const actions = createManagementActions({ state, confirm: async () => { genericConfirms += 1; return true; }, notify() {}, refreshSandboxSpawn: async () => { refreshed += 1; }, sandboxAPI });
-  const draft = { name: 'safe', filesystem: [{ path: '/tmp', access: 'write' }], environment: [], includes: ['base'], agent_directories: ['GOCACHE'], network_access: 'internet' };
+  const draft = {
+    name: 'safe', filesystem: [{ path: '/tmp', access: 'write' }], environment: [],
+    includes: ['base'], agent_directories: ['GOCACHE'], network_access: 'internet',
+    resource_limits: { memory: '8GB' },
+  };
   // The save body always carries the full-replace shape. The retired
   // read_baseline and break_glass_filesystem fields are gone from the wire
   // entirely (TCL-791).
