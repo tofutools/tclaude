@@ -62,14 +62,13 @@ func haveLiveTmuxSessions(t *testing.T, names ...string) {
 
 // stampSessionUpdatedAt pins a row's updated_at so the ORDER BY the resolver
 // reads is deterministic: SaveSession always stamps time.Now(), and two saves
-// in one test can land close enough that RFC3339Nano's variable-width fraction
-// does not sort the way wall-clock did.
+// in one test can land close enough that their timestamps collide.
 func stampSessionUpdatedAt(t *testing.T, sessionID string, at time.Time) {
 	t.Helper()
 	handle, err := db.Open()
 	require.NoError(t, err)
 	res, err := handle.Exec(`UPDATE sessions SET updated_at = ? WHERE id = ?`,
-		at.UTC().Truncate(time.Second).Format(time.RFC3339Nano), sessionID)
+		at.UTC().Truncate(time.Second).UnixNano(), sessionID)
 	require.NoError(t, err)
 	affected, err := res.RowsAffected()
 	require.NoError(t, err)

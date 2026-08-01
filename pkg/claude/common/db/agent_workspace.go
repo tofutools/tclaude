@@ -69,7 +69,7 @@ func UpsertAgentWorkspace(w AgentWorkspace) error {
 			agent_id       = excluded.agent_id`,
 		w.ConvID, w.Cwd, w.Branch, w.RepoURL, w.DefaultBranch,
 		w.PRNumber, w.PRURL, w.PRState,
-		w.UpdatedAt.Format(time.RFC3339Nano), w.ConvID)
+		dbTime(w.UpdatedAt), w.ConvID)
 	return err
 }
 
@@ -82,19 +82,19 @@ func GetAgentWorkspace(convID string) (AgentWorkspace, error) {
 		return AgentWorkspace{}, err
 	}
 	var w AgentWorkspace
-	var updatedStr string
+	var updatedAt dbTimestamp
 	err = conn.QueryRow(`SELECT conv_id, cwd, branch, repo_url, default_branch,
 			pr_number, pr_url, pr_state, updated_at
 		FROM agent_workspace WHERE conv_id = ?`, convID).
 		Scan(&w.ConvID, &w.Cwd, &w.Branch, &w.RepoURL, &w.DefaultBranch,
-			&w.PRNumber, &w.PRURL, &w.PRState, &updatedStr)
+			&w.PRNumber, &w.PRURL, &w.PRState, &updatedAt)
 	if err == sql.ErrNoRows {
 		return AgentWorkspace{}, nil
 	}
 	if err != nil {
 		return AgentWorkspace{}, err
 	}
-	w.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedStr)
+	w.UpdatedAt = updatedAt.Time()
 	return w, nil
 }
 

@@ -50,7 +50,7 @@ func SetConvNotifyPref(convID, mode string) error {
 			return aerr
 		}
 		_, err = db.Exec(`INSERT OR REPLACE INTO agent_notify_prefs (agent_id, mode, updated_at) VALUES (?, ?, ?)`,
-			agentID, mode, time.Now().Format(time.RFC3339Nano))
+			agentID, mode, dbTime(time.Now()))
 		return err
 	default:
 		return fmt.Errorf("invalid notify pref %q (want %q, %q or %q)",

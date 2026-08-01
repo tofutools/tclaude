@@ -589,8 +589,8 @@ func scanStandingOrder(s rowScanner) (*StandingOrder, error) {
 		sources        string
 		enabled        int
 		operator       int
-		createdRaw     string
-		updatedRaw     string
+		createdAt      dbTimestamp
+		updatedAt      dbTimestamp
 		groupScopesRaw string
 		selectorsRaw   string
 	)
@@ -602,15 +602,15 @@ func scanStandingOrder(s rowScanner) (*StandingOrder, error) {
 		&o.TriggerEvent, &sources, &o.MatchField, &o.MatchRegex,
 		&o.Timing, &o.Cadence, &o.CooldownSeconds, &o.DebounceSeconds,
 		&enabled, &o.DisabledReason, &operator,
-		&createdRaw, &updatedRaw, &groupScopesRaw, &selectorsRaw,
+		&createdAt, &updatedAt, &groupScopesRaw, &selectorsRaw,
 	); err != nil {
 		return nil, err
 	}
 	o.TriggerSources = NormalizeTriggerSources(strings.Split(sources, ","))
 	o.Enabled = enabled != 0
 	o.OperatorAuthored = operator != 0
-	o.CreatedAt = parseStandingTime(createdRaw)
-	o.UpdatedAt = parseStandingTime(updatedRaw)
+	o.CreatedAt = createdAt.Time()
+	o.UpdatedAt = updatedAt.Time()
 	for _, raw := range strings.Split(groupScopesRaw, ",") {
 		id, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
 		if err == nil && id > 0 {
@@ -633,23 +633,11 @@ func scanStandingOrder(s rowScanner) (*StandingOrder, error) {
 	return &o, nil
 }
 
-func parseStandingTime(raw string) time.Time {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return time.Time{}
-	}
-	t, err := time.Parse(time.RFC3339Nano, raw)
-	if err != nil {
-		return time.Time{}
-	}
-	return t
-}
-
-func formatStandingTime(t time.Time) string {
+func formatStandingTime(t time.Time) any {
 	if t.IsZero() {
-		return ""
+		return nil
 	}
-	return t.UTC().Format(time.RFC3339Nano)
+	return dbTime(t.UTC())
 }
 
 // InsertStandingOrder writes a new order. CreatedAt/UpdatedAt are stamped
@@ -738,7 +726,7 @@ func ListStandingOrdersForExplain() ([]*StandingOrder, error) {
 		return nil, err
 	}
 	return listStandingOrders(d,
-		standingSelect+` WHERE (o.owner_agent = '' OR ow.retired_at = '') ORDER BY o.id`)
+		standingSelect+` WHERE (o.owner_agent = '' OR ow.retired_at IS NULL) ORDER BY o.id`)
 }
 
 // ListStandingOrders returns every order, ordered by id asc.
@@ -918,7 +906,7 @@ func ListEnabledStandingOrdersForEvent(
 				   AND native.event = ?
 			)
 		)
-		AND (o.owner_agent = '' OR ow.retired_at = '')
+		AND (o.owner_agent = '' OR ow.retired_at IS NULL)
 		ORDER BY o.id`, event, harnessName, nativeEvent)
 }
 
@@ -938,7 +926,7 @@ func EnabledStandingOrderHookEvents(harnessName string) ([]string, error) {
 		  LEFT JOIN agents owner ON owner.agent_id = o.owner_agent
 		 WHERE selector.harness = ?
 		   AND o.enabled = 1
-		   AND (o.owner_agent = '' OR owner.retired_at = '')
+		   AND (o.owner_agent = '' OR owner.retired_at IS NULL)
 		 ORDER BY selector.event`,
 		strings.ToLower(strings.TrimSpace(harnessName)))
 	if err != nil {
@@ -1207,7 +1195,7 @@ func ReenableGroupRetiredStandingOrders(groupID int64) (int, error) {
 		 row_version = row_version + 1, updated_at = ?
 		 WHERE target_kind = ? AND group_id = ? AND disabled_reason = ?
 		 AND (owner_agent = '' OR EXISTS (
-			SELECT 1 FROM agents WHERE agent_id = owner_agent AND retired_at = ''
+			SELECT 1 FROM agents WHERE agent_id = owner_agent AND retired_at IS NULL
 		 ))`,
 		formatStandingTime(time.Now()), StandingTargetGroup, groupID,
 		StandingDisabledReasonGroupRetired)
@@ -1282,24 +1270,20 @@ func LatestSuccessfulStandingDeliveryAt(orderID, revision int64, targetAgent str
 	if err != nil {
 		return time.Time{}, err
 	}
-	var raw string
+	var createdAt dbTimestamp
 	err = d.QueryRow(`SELECT created_at FROM agent_standing_order_deliveries
 		WHERE order_id = ? AND order_revision = ? AND target_agent = ?
 		AND outcome IN (?, ?)
 		ORDER BY id DESC LIMIT 1`,
 		orderID, revision, targetAgent,
-		StandingOutcomeDelivered, StandingOutcomeDegradedTransport).Scan(&raw)
+		StandingOutcomeDelivered, StandingOutcomeDegradedTransport).Scan(&createdAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return time.Time{}, nil
 	}
 	if err != nil {
 		return time.Time{}, err
 	}
-	at := parseStandingTime(raw)
-	if at.IsZero() {
-		return time.Time{}, fmt.Errorf("invalid standing-order delivery time %q", raw)
-	}
-	return at, nil
+	return createdAt.Time(), nil
 }
 
 // StandingOrderDeliveredInEpoch reports whether a delivery has already been
@@ -1347,17 +1331,15 @@ func ListStandingDeliveries(orderID int64, limit int) ([]*StandingDelivery, erro
 	defer func() { _ = rows.Close() }()
 	var out []*StandingDelivery
 	for rows.Next() {
-		var (
-			rec        StandingDelivery
-			createdRaw string
-		)
+		var rec StandingDelivery
+		var createdAt dbTimestamp
 		if err := rows.Scan(&rec.ID, &rec.OrderID, &rec.OrderRevision, &rec.TargetConv,
 			&rec.TargetAgent,
 			&rec.Epoch, &rec.Outcome, &rec.Transport, &rec.Harness, &rec.Detail,
-			&createdRaw); err != nil {
+			&createdAt); err != nil {
 			return nil, err
 		}
-		rec.CreatedAt = parseStandingTime(createdRaw)
+		rec.CreatedAt = createdAt.Time()
 		out = append(out, &rec)
 	}
 	return out, rows.Err()

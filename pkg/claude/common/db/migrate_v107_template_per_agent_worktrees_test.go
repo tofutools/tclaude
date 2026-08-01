@@ -13,7 +13,7 @@ func TestMigrateV106toV107_AddsTemplatePerAgentWorktreesDefault(t *testing.T) {
 	require.NoError(t, err)
 	mustExec(t, d, `ALTER TABLE group_templates DROP COLUMN per_agent_worktrees`)
 	mustExec(t, d, `INSERT INTO group_templates (name, created_at, updated_at)
-		VALUES ('legacy', '2026-07-10T00:00:00Z', '2026-07-10T00:00:00Z')`)
+		VALUES ('legacy', 1783641600000000000, 1783641600000000000)`)
 	mustExec(t, d, `UPDATE schema_version SET version = 106`)
 
 	require.NoError(t, migrateV106toV107(d))

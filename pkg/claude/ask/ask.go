@@ -28,6 +28,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/google/uuid"
@@ -532,12 +533,12 @@ func liveFreshConvResolver(h *harness.Harness, cwd string) func() string {
 			return ""
 		}
 		var newestID string
-		var newestMtime int64
+		var newestMtime time.Time
 		for _, e := range after {
 			if e.SessionID == "" || beforeIDs[e.SessionID] {
 				continue
 			}
-			if newestID == "" || e.FileMtime >= newestMtime {
+			if newestID == "" || !e.FileMtime.Before(newestMtime) {
 				newestID, newestMtime = e.SessionID, e.FileMtime
 			}
 		}

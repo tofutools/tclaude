@@ -35,7 +35,7 @@ func TestMigrateV98toV99_AddsColumn(t *testing.T) {
 	mustExec(t, d, `UPDATE schema_version SET version = 98`)
 
 	// A pre-existing group row (without the new column) must survive the ALTER.
-	mustExec(t, d, `INSERT INTO agent_groups (name, created_at) VALUES ('legacy-grp', '2026-07-04T00:00:00Z')`)
+	mustExec(t, d, `INSERT INTO agent_groups (name, created_at) VALUES ('legacy-grp', 1783123200000000000)`)
 
 	require.NoError(t, migrateV98toV99(d), "v98→v99")
 

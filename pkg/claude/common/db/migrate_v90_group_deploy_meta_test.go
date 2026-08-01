@@ -28,7 +28,7 @@ func TestMigrateV89toV90_AddsColumns(t *testing.T) {
 	// A pre-existing group (without the new columns) must survive the ALTER and
 	// read the provenance fields back as the defaults.
 	mustExec(t, d, `INSERT INTO agent_groups (name, descr, created_at)
-		VALUES ('legacy', 'd', '2026-07-03T00:00:00Z')`)
+		VALUES ('legacy', 'd', 1783036800000000000)`)
 
 	require.NoError(t, migrateV89toV90(d), "v89→v90")
 

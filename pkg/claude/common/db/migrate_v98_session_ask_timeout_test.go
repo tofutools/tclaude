@@ -37,7 +37,7 @@ func TestMigrateV97toV98_AddsColumn(t *testing.T) {
 	// A pre-existing session row (without the new column) must survive the ALTER
 	// and read back with the default.
 	mustExec(t, d, `INSERT INTO sessions (id, tmux_session, pid, cwd, conv_id, status, created_at, updated_at)
-		VALUES ('legacy-sess', 'tc-legacy', 123, '/tmp', 'conv-legacy', 'idle', '2026-07-04T00:00:00Z', '2026-07-04T00:00:00Z')`)
+		VALUES ('legacy-sess', 'tc-legacy', 123, '/tmp', 'conv-legacy', 'idle', 1783123200000000000, 1783123200000000000)`)
 
 	require.NoError(t, migrateV97toV98(d), "v97→v98")
 

@@ -82,8 +82,8 @@ func UpsertOpenCodeRuntime(runtime OpenCodeRuntime) error {
 		runtime.PID, runtime.Cwd, runtime.SandboxImplementation, runtime.SandboxLaunchSpecJSON,
 		normalizeOpenCodeTransport(runtime.Transport), runtime.ControlSocketPath,
 		runtime.ControlSocketDevice, runtime.ControlSocketInode, runtime.PermissionJSON, runtime.ResourceCgroupDir,
-		runtime.CreatedAt.Format(time.RFC3339Nano),
-		runtime.UpdatedAt.Format(time.RFC3339Nano))
+		dbTime(runtime.CreatedAt),
+		dbTime(runtime.UpdatedAt))
 	return err
 }
 
@@ -190,7 +190,7 @@ type openCodeRuntimeScanner interface {
 
 func scanOpenCodeRuntime(row openCodeRuntimeScanner) (*OpenCodeRuntime, error) {
 	var runtime OpenCodeRuntime
-	var created, updated string
+	var created, updated dbTimestamp
 	if err := row.Scan(&runtime.SessionID, &runtime.ConvID, &runtime.ServerURL,
 		&runtime.Password, &runtime.PID, &runtime.Cwd, &runtime.SandboxImplementation,
 		&runtime.SandboxLaunchSpecJSON, &runtime.Transport, &runtime.ControlSocketPath,
@@ -199,8 +199,8 @@ func scanOpenCodeRuntime(row openCodeRuntimeScanner) (*OpenCodeRuntime, error) {
 		return nil, err
 	}
 	runtime.Transport = normalizeOpenCodeTransport(runtime.Transport)
-	runtime.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
-	runtime.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updated)
+	runtime.CreatedAt = created.Time()
+	runtime.UpdatedAt = updated.Time()
 	return &runtime, nil
 }
 

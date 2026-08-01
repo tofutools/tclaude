@@ -54,7 +54,7 @@ func TestAgentTags_AddReplaceRemoveList(t *testing.T) {
 	d, err := Open()
 	require.NoError(t, err)
 	mustExec(t, d, `INSERT INTO agents (agent_id, current_conv_id, created_at)
-		VALUES ('agt_a', 'conv-a', '2026-07-04T00:00:00Z')`)
+		VALUES ('agt_a', 'conv-a', 1783123200000000000)`)
 
 	// Add is additive + sorted, and de-dupes against existing.
 	require.NoError(t, AddAgentTags("agt_a", "b", "a"))
@@ -84,7 +84,7 @@ func TestAgentTags_RejectsInvalidAndOverCap(t *testing.T) {
 	d, err := Open()
 	require.NoError(t, err)
 	mustExec(t, d, `INSERT INTO agents (agent_id, current_conv_id, created_at)
-		VALUES ('agt_b', 'conv-b', '2026-07-04T00:00:00Z')`)
+		VALUES ('agt_b', 'conv-b', 1783123200000000000)`)
 
 	assert.Error(t, AddAgentTags("agt_b", "bad\ntag"), "newline rejected on add")
 	assert.Error(t, ReplaceAgentTags("agt_b", []string{"ok", "  "}), "empty rejected on replace")
@@ -113,7 +113,7 @@ func TestListAllAgentTags(t *testing.T) {
 	require.NoError(t, err)
 	for _, id := range []string{"agt_x", "agt_y", "agt_z"} {
 		mustExec(t, d, `INSERT INTO agents (agent_id, current_conv_id, created_at)
-			VALUES (?, ?, '2026-07-04T00:00:00Z')`, id, "conv-"+id)
+			VALUES (?, ?, 1783123200000000000)`, id, "conv-"+id)
 	}
 	require.NoError(t, AddAgentTags("agt_x", "b", "a"))
 	require.NoError(t, AddAgentTags("agt_y", "solo"))

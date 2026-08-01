@@ -20,7 +20,7 @@ func TestMigrateV160toV161AddsSpawnProfileSandboxImplementation(t *testing.T) {
 	mustExec(t, d, `ALTER TABLE spawn_profiles DROP COLUMN sandbox_implementation`)
 	mustExec(t, d, `UPDATE schema_version SET version = 160`)
 	mustExec(t, d, `INSERT INTO spawn_profiles (name, created_at, updated_at)
-		VALUES ('legacy-profile', '2026-07-26T00:00:00Z', '2026-07-26T00:00:00Z')`)
+		VALUES ('legacy-profile', 1785024000000000000, 1785024000000000000)`)
 
 	require.NoError(t, migrateV160toV161(d))
 

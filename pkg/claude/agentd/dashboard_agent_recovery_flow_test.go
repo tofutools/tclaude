@@ -53,18 +53,18 @@ func TestDashboardSnapshot_SurfacesCodexRecoveryStatesEverywhere(t *testing.T) {
 		if status == db.AgentRecoveryStatusSuppressed {
 			reason = "resume_provenance_missing"
 		}
-		recoveredAtValue := ""
+		var recoveredAtValue any
 		if status == db.AgentRecoveryStatusRecovered {
-			recoveredAtValue = recoveredAt.Format(time.RFC3339Nano)
+			recoveredAtValue = recoveredAt.UnixNano()
 		}
 		_, err = database.Exec(`UPDATE agent_recovery SET status=?, reason_code=?,
 			consecutive_crashes=3, backoff_step=2, backoff_seconds=20,
 			next_attempt_at=?, recovered_at=? WHERE conv_id=?`, status, reason,
-			now.Add(20*time.Second).Format(time.RFC3339Nano), recoveredAtValue, conv)
+			now.Add(20*time.Second).UnixNano(), recoveredAtValue, conv)
 		require.NoError(t, err)
 		if status == db.AgentRecoveryStatusRecovered {
 			_, err = database.Exec(`UPDATE sessions SET last_hook=? WHERE id=?`,
-				recoveredAt.Add(-time.Second).Format(time.RFC3339Nano), label)
+				recoveredAt.Add(-time.Second).UnixNano(), label)
 			require.NoError(t, err)
 		}
 	}
@@ -102,7 +102,7 @@ func TestDashboardSnapshot_SurfacesCodexRecoveryStatesEverywhere(t *testing.T) {
 	database, err := db.Open()
 	require.NoError(t, err)
 	_, err = database.Exec(`UPDATE sessions SET last_hook=? WHERE conv_id=?`,
-		recoveredAt.Add(time.Second).Format(time.RFC3339Nano), convs[db.AgentRecoveryStatusRecovered])
+		recoveredAt.Add(time.Second).UnixNano(), convs[db.AgentRecoveryStatusRecovered])
 	require.NoError(t, err)
 	snap = fetchSnapshotOnly(t, agentd.BuildDashboardHandlerForTest())
 	for _, group := range snap.Groups {

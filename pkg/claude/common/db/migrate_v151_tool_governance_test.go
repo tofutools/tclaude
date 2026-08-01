@@ -14,8 +14,8 @@ func TestMigrateV150toV151AddsToolGovernance(t *testing.T) {
 	mustExec(t, d, `ALTER TABLE spawn_profiles DROP COLUMN tools`)
 	mustExec(t, d, `ALTER TABLE roles DROP COLUMN tools`)
 	mustExec(t, d, `UPDATE schema_version SET version = 150`)
-	mustExec(t, d, `INSERT INTO spawn_profiles (name, created_at, updated_at) VALUES ('legacy', 'now', 'now')`)
-	mustExec(t, d, `INSERT INTO roles (name, created_at, updated_at) VALUES ('legacy', 'now', 'now')`)
+	mustExec(t, d, `INSERT INTO spawn_profiles (name, created_at, updated_at) VALUES ('legacy', 1767225600000000000, 1767225600000000000)`)
+	mustExec(t, d, `INSERT INTO roles (name, created_at, updated_at) VALUES ('legacy', 1767225600000000000, 1767225600000000000)`)
 
 	require.NoError(t, migrateV150toV151(d))
 	require.NoError(t, migrateV150toV151(d), "migration converges")

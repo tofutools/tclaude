@@ -47,7 +47,7 @@ func UpsertAgentPR(agentID, prURL, summary, state string) (AgentPR, error) {
 			summary = excluded.summary,
 			state = excluded.state,
 			updated_at = excluded.updated_at`,
-		agentID, prURL, summary, state, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
+		agentID, prURL, summary, state, dbTime(now), dbTime(now)); err != nil {
 		return AgentPR{}, err
 	}
 	return GetAgentPR(agentID, prURL)
@@ -71,7 +71,7 @@ func MarkAgentPRHandled(agentID, prURL string) (int64, error) {
 	res, err := d.Exec(`UPDATE agent_prs
 		SET state = 'handled', updated_at = ?
 		WHERE agent_id = ? AND pr_url = ?`,
-		time.Now().UTC().Format(time.RFC3339Nano), agentID, prURL)
+		dbTime(time.Now().UTC()), agentID, prURL)
 	if err != nil {
 		return 0, err
 	}
@@ -109,7 +109,7 @@ func UpdateAgentPRState(agentID, prURL, state string) (int64, error) {
 		SET state = ?, updated_at = ?
 		WHERE agent_id = ? AND pr_url = ? AND state <> 'handled'
 			AND (LOWER(TRIM(state)) <> 'merged' OR LOWER(TRIM(?)) = 'merged')`,
-		state, time.Now().UTC().Format(time.RFC3339Nano), agentID, prURL, state)
+		state, dbTime(time.Now().UTC()), agentID, prURL, state)
 	if err != nil {
 		return 0, err
 	}
@@ -132,7 +132,7 @@ func GetAgentPR(agentID, prURL string) (AgentPR, error) {
 		return AgentPR{}, err
 	}
 	var row AgentPR
-	var created, updated string
+	var created, updated dbTimestamp
 	err = d.QueryRow(`SELECT id, agent_id, pr_url, summary, state, created_at, updated_at
 		FROM agent_prs WHERE agent_id = ? AND pr_url = ?`, agentID, prURL).
 		Scan(&row.ID, &row.AgentID, &row.PRURL, &row.Summary, &row.State, &created, &updated)
@@ -142,8 +142,8 @@ func GetAgentPR(agentID, prURL string) (AgentPR, error) {
 	if err != nil {
 		return AgentPR{}, err
 	}
-	row.CreatedAt = parseTimeOrZero(created)
-	row.UpdatedAt = parseTimeOrZero(updated)
+	row.CreatedAt = created.Time()
+	row.UpdatedAt = updated.Time()
 	return row, nil
 }
 
@@ -166,12 +166,12 @@ func ListUnhandledAgentPRs() (map[string][]AgentPR, error) {
 	out := map[string][]AgentPR{}
 	for rows.Next() {
 		var row AgentPR
-		var created, updated string
+		var created, updated dbTimestamp
 		if err := rows.Scan(&row.ID, &row.AgentID, &row.PRURL, &row.Summary, &row.State, &created, &updated); err != nil {
 			return nil, err
 		}
-		row.CreatedAt = parseTimeOrZero(created)
-		row.UpdatedAt = parseTimeOrZero(updated)
+		row.CreatedAt = created.Time()
+		row.UpdatedAt = updated.Time()
 		out[row.AgentID] = append(out[row.AgentID], row)
 	}
 	return out, rows.Err()

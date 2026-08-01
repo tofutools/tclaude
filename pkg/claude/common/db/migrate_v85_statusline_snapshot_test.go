@@ -24,7 +24,7 @@ func TestMigrateV84toV85_AddsColumn(t *testing.T) {
 	// A pre-existing session row (without the new column) must survive the ALTER
 	// and read back with the default.
 	mustExec(t, d, `INSERT INTO sessions (id, created_at, updated_at)
-		VALUES ('sess-existing', '2026-07-02T00:00:00Z', '2026-07-02T00:00:00Z')`)
+		VALUES ('sess-existing', 1782950400000000000, 1782950400000000000)`)
 
 	require.NoError(t, migrateV84toV85(d), "v84→v85")
 
@@ -56,7 +56,7 @@ func TestUpdateStatuslineSnapshot_RoundTrip(t *testing.T) {
 	require.NoError(t, err, "Open")
 
 	mustExec(t, d, `INSERT INTO sessions (id, created_at, updated_at)
-		VALUES ('sess-1', '2026-07-02T00:00:00Z', '2026-07-02T00:00:00Z')`)
+		VALUES ('sess-1', 1782950400000000000, 1782950400000000000)`)
 
 	// A raw payload carrying a field StatusLineInput doesn't name (fable_bucket)
 	// must round-trip verbatim — the whole point of storing raw bytes.

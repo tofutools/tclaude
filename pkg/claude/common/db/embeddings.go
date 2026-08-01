@@ -31,7 +31,7 @@ func UpsertEmbedding(row *EmbeddingRow) error {
 		 embedding=excluded.embedding, model=excluded.model,
 		 created_at=excluded.created_at`,
 		row.ConvID, row.ChunkIndex, row.ChunkType, row.ChunkText,
-		row.Embedding, row.Model, row.CreatedAt.Format(time.RFC3339Nano))
+		row.Embedding, row.Model, nullableDBTime(row.CreatedAt))
 	return err
 }
 
@@ -119,12 +119,12 @@ func ListEmbeddedConvIDs() (map[string]time.Time, error) {
 
 	result := make(map[string]time.Time)
 	for rows.Next() {
-		var convID, createdAt string
+		var convID string
+		var createdAt dbTimestamp
 		if err := rows.Scan(&convID, &createdAt); err != nil {
 			return nil, err
 		}
-		t, _ := time.Parse(time.RFC3339Nano, createdAt)
-		result[convID] = t
+		result[convID] = createdAt.Time()
 	}
 	return result, rows.Err()
 }
@@ -149,12 +149,12 @@ func ListEmbeddedConvIDsForProject(projectDir string) (map[string]time.Time, err
 
 	result := make(map[string]time.Time)
 	for rows.Next() {
-		var convID, createdAt string
+		var convID string
+		var createdAt dbTimestamp
 		if err := rows.Scan(&convID, &createdAt); err != nil {
 			return nil, err
 		}
-		t, _ := time.Parse(time.RFC3339Nano, createdAt)
-		result[convID] = t
+		result[convID] = createdAt.Time()
 	}
 	return result, rows.Err()
 }
@@ -198,13 +198,13 @@ func scanEmbeddingRows(rows *sql.Rows) ([]*EmbeddingRow, error) {
 	var result []*EmbeddingRow
 	for rows.Next() {
 		var r EmbeddingRow
-		var createdAt string
+		var createdAt dbTimestamp
 		err := rows.Scan(&r.ConvID, &r.ChunkIndex, &r.ChunkType, &r.ChunkText,
 			&r.Embedding, &r.Model, &createdAt)
 		if err != nil {
 			return nil, err
 		}
-		r.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
+		r.CreatedAt = createdAt.Time()
 		result = append(result, &r)
 	}
 	return result, rows.Err()

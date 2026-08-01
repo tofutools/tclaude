@@ -14,7 +14,7 @@ import (
 // session_cost_daily alongside a sessions table, runs the v53
 // migration, and asserts the new updated_at column lands backfilled
 // from the session's clock: last_hook when it carries a real
-// timestamp, else updated_at, and '' (date-only) for history whose
+// timestamp, else updated_at, and ” (date-only) for history whose
 // session row is already gone or never had a usable timestamp.
 func TestMigrateV52toV53_AddsUpdatedAtAndBackfills(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "v52.sqlite")
@@ -89,5 +89,5 @@ func TestMigrateV52toV53_FreshSchemaRoundTrips(t *testing.T) {
 	rows, err := AllCostDailyRows()
 	require.NoError(t, err, "AllCostDailyRows")
 	require.Len(t, rows, 1, "one daily row after one costed tick")
-	assert.NotEmpty(t, rows[0].UpdatedAt, "the write path stamps a last-activity time")
+	assert.NotZero(t, rows[0].UpdatedAtNS, "the write path stamps a last-activity time")
 }

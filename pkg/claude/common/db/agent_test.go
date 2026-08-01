@@ -718,7 +718,7 @@ func TestClaimAgentMessageNudge(t *testing.T) {
 	m, err := GetAgentMessage(id)
 	require.NoError(t, err, "GetAgentMessage")
 	assert.True(t, m.DeliveredAt.IsZero())
-	assert.Equal(t, token1.ClaimedAt, m.NudgeClaimedAt.Format(time.RFC3339Nano))
+	assert.Equal(t, token1.ClaimedAt, m.NudgeClaimedAt.UnixNano())
 	assert.Equal(t, 1, token1.Attempt)
 	assert.Equal(t, 1, m.NudgeAttempts)
 

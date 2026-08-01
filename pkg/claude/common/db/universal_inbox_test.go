@@ -83,7 +83,7 @@ func TestMigrateV35toV36_MakesGroupIDOptional(t *testing.T) {
 
 	// Every message row survived with group_id and the rest intact.
 	type msg struct {
-		gid              int64
+		gid                  int64
 		from, to, subj, body string
 	}
 	byID := map[int64]msg{}

@@ -138,7 +138,7 @@ func ReplaceAgentGroupPermissions(groupID int64, slugs []string, grantedBy strin
 	if _, err := tx.Exec(`DELETE FROM agent_group_permissions WHERE group_id = ?`, groupID); err != nil {
 		return err
 	}
-	now := time.Now().Format(time.RFC3339Nano)
+	now := dbTime(time.Now())
 	seen := map[string]bool{}
 	for _, slug := range slugs {
 		if seen[slug] {
@@ -168,9 +168,9 @@ func HasAgentGroupPermission(convID, slug string) (bool, error) {
 	err = d.QueryRow(`
 		SELECT COUNT(*)
 		FROM agent_group_permissions gp
-		JOIN agent_groups g ON g.id = gp.group_id AND g.archived_at = ''
+		JOIN agent_groups g ON g.id = gp.group_id AND g.archived_at IS NULL
 		JOIN agent_group_members gm ON gm.group_id = gp.group_id
-		JOIN agents a ON a.agent_id = gm.agent_id AND a.retired_at = ''
+		JOIN agents a ON a.agent_id = gm.agent_id AND a.retired_at IS NULL
 		WHERE gm.agent_id = ? AND gp.slug = ?`, agentID, slug).Scan(&n)
 	return n > 0, err
 }
@@ -408,24 +408,24 @@ func SetAgentPermissionOverrideByAgentID(agentID, slug, effect, grantedBy string
 	}
 	res, err := db.Exec(`INSERT INTO agent_permissions
 		(agent_id, slug, effect, granted_at, granted_by)
-		SELECT ?, ?, ?, ?, ? FROM agents WHERE agent_id = ? AND retired_at = ''
+		SELECT ?, ?, ?, ?, ? FROM agents WHERE agent_id = ? AND retired_at IS NULL
 		ON CONFLICT(agent_id, slug) DO UPDATE SET
 			effect     = excluded.effect,
 			granted_at = excluded.granted_at,
 			granted_by = excluded.granted_by`,
-		agentID, slug, effect, time.Now().Format(time.RFC3339Nano), grantedBy, agentID)
+		agentID, slug, effect, dbTime(time.Now()), grantedBy, agentID)
 	if err != nil {
 		return err
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
-		var retiredAt string
+		var retiredAt dbTimestamp
 		switch err := db.QueryRow(`SELECT retired_at FROM agents WHERE agent_id = ?`, agentID).Scan(&retiredAt); {
 		case errors.Is(err, sql.ErrNoRows):
 			return fmt.Errorf("SetAgentPermissionOverrideByAgentID: agent %s does not exist", agentID)
 		case err != nil:
 			return err
-		case retiredAt != "":
+		case retiredAt.valid:
 			return fmt.Errorf("SetAgentPermissionOverrideByAgentID: agent %s is retired", agentID)
 		default:
 			return fmt.Errorf("SetAgentPermissionOverrideByAgentID: agent %s is not active", agentID)
@@ -499,10 +499,10 @@ func ApplyAgentPermissionOverrides(convID string, overrides map[string]string, g
 			return err
 		}
 	}
-	now := time.Now().Format(time.RFC3339Nano)
+	now := dbTime(time.Now())
 	upsert := `INSERT INTO agent_permissions
 		(agent_id, slug, effect, granted_at, granted_by)
-		SELECT ?, ?, ?, ?, ? FROM agents WHERE agent_id = ? AND retired_at = ''
+		SELECT ?, ?, ?, ?, ? FROM agents WHERE agent_id = ? AND retired_at IS NULL
 		ON CONFLICT(agent_id, slug) DO UPDATE SET
 			effect = excluded.effect,
 			granted_at = excluded.granted_at,
@@ -510,7 +510,7 @@ func ApplyAgentPermissionOverrides(convID string, overrides map[string]string, g
 	if preserveSameEffectProvenance {
 		upsert = `INSERT INTO agent_permissions
 			(agent_id, slug, effect, granted_at, granted_by)
-			SELECT ?, ?, ?, ?, ? FROM agents WHERE agent_id = ? AND retired_at = ''
+			SELECT ?, ?, ?, ?, ? FROM agents WHERE agent_id = ? AND retired_at IS NULL
 			ON CONFLICT(agent_id, slug) DO UPDATE SET
 				effect = excluded.effect,
 				granted_at = CASE
@@ -700,7 +700,7 @@ func CreateAgentGroupWithParent(name, descr, parentName string) (int64, error) {
 	}
 
 	res, err := tx.Exec(`INSERT INTO agent_groups (name, descr, created_at, parent_id) VALUES (?, ?, ?, ?)`,
-		name, descr, time.Now().Format(time.RFC3339Nano), parentID)
+		name, descr, dbTime(time.Now()), parentID)
 	if err != nil {
 		return 0, err
 	}
@@ -773,7 +773,7 @@ func CreateAgentGroupFrom(name string, src AgentGroup) (int64, error) {
 		sandboxProfileName, sandboxProfileID, src.MaxMembers, src.NotifyEnabled, boolPtrToNull(src.RemoteControl),
 		src.AttachmentURL, src.AttachmentLabel, src.Mission, src.SourceTemplate, sourceTemplateID,
 		src.ParentGroupID,
-		time.Now().Format(time.RFC3339Nano))
+		dbTime(time.Now()))
 	if err != nil {
 		return 0, err
 	}
@@ -787,7 +787,7 @@ func CreateAgentGroupFrom(name string, src AgentGroup) (int64, error) {
 		if _, err := tx.Exec(`
 			INSERT INTO agent_group_permissions (group_id, slug, granted_at, granted_by)
 			SELECT ?, slug, ?, 'group-clone' FROM agent_group_permissions WHERE group_id = ?`,
-			id, time.Now().Format(time.RFC3339Nano), src.ID); err != nil {
+			id, dbTime(time.Now()), src.ID); err != nil {
 			return 0, err
 		}
 	}
@@ -1257,7 +1257,7 @@ func RenameAgentGroup(oldName, newName, byConv string) (*AgentGroup, error) {
 		if _, err := tx.Exec(
 			`INSERT INTO agent_group_audit (group_id, old_name, new_name, by_conv, at, by_agent)
 			 VALUES (?, ?, ?, ?, ?, `+agentForConvExpr+`)`,
-			g.ID, oldName, newName, byConv, time.Now().Format(time.RFC3339Nano), byConv); err != nil {
+			g.ID, oldName, newName, byConv, dbTime(time.Now()), byConv); err != nil {
 			return nil, err
 		}
 		if err := tx.Commit(); err != nil {
@@ -1281,7 +1281,7 @@ func RenameAgentGroup(oldName, newName, byConv string) (*AgentGroup, error) {
 	if _, err := tx.Exec(
 		`INSERT INTO agent_group_audit (group_id, old_name, new_name, by_conv, at, by_agent)
 		 VALUES (?, ?, ?, ?, ?, `+agentForConvExpr+`)`,
-		g.ID, oldName, newName, byConv, time.Now().Format(time.RFC3339Nano), byConv); err != nil {
+		g.ID, oldName, newName, byConv, dbTime(time.Now()), byConv); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -1309,9 +1309,11 @@ func ListAgentGroupRenames(groupID int64) ([]AgentGroupAudit, error) {
 	var out []AgentGroupAudit
 	for rows.Next() {
 		var a AgentGroupAudit
-		if err := rows.Scan(&a.ID, &a.GroupID, &a.OldName, &a.NewName, &a.ByConv, &a.At, &a.ByAgent); err != nil {
+		var at dbTimestamp
+		if err := rows.Scan(&a.ID, &a.GroupID, &a.OldName, &a.NewName, &a.ByConv, &at, &a.ByAgent); err != nil {
 			return nil, err
 		}
+		a.At = exportTimestamp(at)
 		out = append(out, a)
 	}
 	return out, rows.Err()
@@ -1345,7 +1347,7 @@ func ArchiveAgentGroup(name string) error {
 		return err
 	}
 	res, err := d.Exec(`UPDATE agent_groups SET archived_at = ? WHERE name = ?`,
-		time.Now().UTC().Format(time.RFC3339Nano), name)
+		dbTime(time.Now().UTC()), name)
 	if err != nil {
 		return err
 	}
@@ -1363,7 +1365,7 @@ func UnarchiveAgentGroup(name string) error {
 	if err != nil {
 		return err
 	}
-	res, err := d.Exec(`UPDATE agent_groups SET archived_at = '' WHERE name = ?`, name)
+	res, err := d.Exec(`UPDATE agent_groups SET archived_at = NULL WHERE name = ?`, name)
 	if err != nil {
 		return err
 	}
@@ -1485,9 +1487,9 @@ func AddAgentGroupMember(m *AgentGroupMember) error {
 	}
 	res, err := db.Exec(`INSERT OR REPLACE INTO agent_group_members
 		(group_id, agent_id, role, descr, joined_at)
-		SELECT ?, ?, ?, ?, ? FROM agents WHERE agent_id = ? AND retired_at = ''`,
+		SELECT ?, ?, ?, ?, ? FROM agents WHERE agent_id = ? AND retired_at IS NULL`,
 		m.GroupID, agentID, m.Role, m.Descr,
-		m.JoinedAt.Format(time.RFC3339Nano), agentID)
+		dbTime(m.JoinedAt), agentID)
 	if err != nil {
 		return err
 	}
@@ -1796,7 +1798,7 @@ func DeleteAgentByConvID(convID string) (AgentDeletionCounts, error) {
 						succeeded_at = excluded.succeeded_at,
 						agent_id = excluded.agent_id`,
 					bridgeOld, bridgeNew, bridgeReason,
-					time.Now().UTC().Format(time.RFC3339), bridgeNew, bridgeOld); err != nil {
+					dbTime(time.Now().UTC()), bridgeNew, bridgeOld); err != nil {
 					return AgentDeletionCounts{}, fmt.Errorf("delete agent (bridge succession): %w", err)
 				}
 			}
@@ -2123,7 +2125,7 @@ func insertAgentMessage(db dbExecQuerier, m *AgentMessage) (int64, error) {
 		 COALESCE((SELECT agent_id FROM agent_conversations WHERE conv_id = ?), ''),
 		 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		m.GroupID, m.FromConv, m.ToConv, m.FromConv, m.ToConv, m.Subject, m.Body, m.ParentID,
-		m.CreatedAt.Format(time.RFC3339Nano),
+		dbTime(m.CreatedAt),
 		formatTimeOrEmpty(m.DeliveredAt), formatTimeOrEmpty(m.ReadAt),
 		recipientsToJSON(m.ToRecipients), recipientsToJSON(m.CcRecipients),
 		recipientAgentsJSON(db, m.ToRecipients), recipientAgentsJSON(db, m.CcRecipients),
@@ -2148,13 +2150,13 @@ func PruneAgentMessagesForConv(forConv string, olderThan time.Time, readOnly boo
 	if err != nil {
 		return 0, err
 	}
-	cutoff := olderThan.Format(time.RFC3339Nano)
+	cutoff := dbTime(olderThan)
 	q := `DELETE FROM agent_messages
 		WHERE (from_conv = ? OR to_conv = ?)
 		  AND created_at < ?`
 	args := []any{forConv, forConv, cutoff}
 	if readOnly {
-		q += ` AND read_at != ''`
+		q += ` AND read_at IS NOT NULL`
 	}
 	res, err := d.Exec(q, args...)
 	if err != nil {
@@ -2186,9 +2188,9 @@ func PruneAgentMessagesForActor(conv, agentID string, olderThan time.Time, readO
 		return 0, err
 	}
 	q := `DELETE FROM agent_messages WHERE ` + where + ` AND created_at < ?`
-	args = append(args, olderThan.Format(time.RFC3339Nano))
+	args = append(args, dbTime(olderThan))
 	if readOnly {
-		q += ` AND read_at != ''`
+		q += ` AND read_at IS NOT NULL`
 	}
 	res, err := d.Exec(q, args...)
 	if err != nil {
@@ -2237,15 +2239,15 @@ func AddAgentGroupOwner(groupID int64, convID, grantedBy string) error {
 	}
 	res, err := d.Exec(
 		`INSERT OR IGNORE INTO agent_group_owners (group_id, agent_id, granted_at, granted_by)
-		 SELECT ?, ?, ?, ? FROM agents WHERE agent_id = ? AND retired_at = ''`,
-		groupID, agentID, time.Now().Format(time.RFC3339Nano), grantedBy, agentID)
+		 SELECT ?, ?, ?, ? FROM agents WHERE agent_id = ? AND retired_at IS NULL`,
+		groupID, agentID, dbTime(time.Now()), grantedBy, agentID)
 	if err != nil {
 		return err
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
 		var active int
-		if err := d.QueryRow(`SELECT COUNT(*) FROM agents WHERE agent_id = ? AND retired_at = ''`, agentID).Scan(&active); err != nil {
+		if err := d.QueryRow(`SELECT COUNT(*) FROM agents WHERE agent_id = ? AND retired_at IS NULL`, agentID).Scan(&active); err != nil {
 			return err
 		}
 		if active == 0 {
@@ -2373,11 +2375,11 @@ func ListAgentGroupOwners(groupID int64) ([]*AgentGroupOwner, error) {
 	var out []*AgentGroupOwner
 	for rows.Next() {
 		var o AgentGroupOwner
-		var grantedAt string
+		var grantedAt dbTimestamp
 		if err := rows.Scan(&o.GroupID, &o.AgentID, &o.ConvID, &grantedAt, &o.GrantedBy); err != nil {
 			return nil, err
 		}
-		o.GrantedAt = parseTimeOrZero(grantedAt)
+		o.GrantedAt = grantedAt.Time()
 		out = append(out, &o)
 	}
 	return out, rows.Err()
@@ -2540,11 +2542,11 @@ func FindAgentMembersBySelector(selector string) ([]*AgentGroupMember, error) {
 	var out []*AgentGroupMember
 	for rows.Next() {
 		var m AgentGroupMember
-		var joined string
+		var joined dbTimestamp
 		if err := rows.Scan(&m.GroupID, &m.ConvID, &m.Role, &m.Descr, &joined); err != nil {
 			return nil, err
 		}
-		m.JoinedAt = parseTimeOrZero(joined)
+		m.JoinedAt = joined.Time()
 		out = append(out, &m)
 	}
 	return out, rows.Err()
@@ -2563,13 +2565,13 @@ func MarkAgentMessageDeliveredState(id int64, consumed bool) error {
 	if err != nil {
 		return err
 	}
-	now := time.Now().Format(time.RFC3339Nano)
-	readAt := ""
+	now := dbTime(time.Now())
+	var readAt any
 	if consumed {
 		readAt = now
 	}
 	_, err = db.Exec(`UPDATE agent_messages
-		SET delivered_at = ?, read_at = CASE WHEN ? != '' THEN ? ELSE read_at END, nudge_claimed_at = ''
+		SET delivered_at = ?, read_at = CASE WHEN ? IS NOT NULL THEN ? ELSE read_at END, nudge_claimed_at = NULL
 		WHERE id = ?`, now, readAt, readAt, id)
 	return err
 }
@@ -2628,7 +2630,7 @@ func ListUndeliveredAgentMessagesFor(toConv string) ([]*AgentMessage, error) {
 	}
 	q := `SELECT ` + agentMessageColumns + `
 		FROM agent_messages
-		WHERE to_conv = ? AND delivered_at = '' AND read_at = '' AND nudge_cancelled_at = ''
+		WHERE to_conv = ? AND delivered_at IS NULL AND read_at IS NULL AND nudge_cancelled_at IS NULL
 		ORDER BY id ASC`
 	rows, err := db.Query(q, toConv)
 	if err != nil {
@@ -2664,7 +2666,7 @@ func ListUndeliveredForAgent(agentID string) ([]*AgentMessage, error) {
 	}
 	q := `SELECT ` + agentMessageColumns + `
 		FROM agent_messages
-		WHERE to_agent = ? AND pin_gen = 0 AND delivered_at = '' AND read_at = '' AND nudge_cancelled_at = ''
+		WHERE to_agent = ? AND pin_gen = 0 AND delivered_at IS NULL AND read_at IS NULL AND nudge_cancelled_at IS NULL
 		ORDER BY id ASC`
 	rows, err := db.Query(q, agentID)
 	if err != nil {
@@ -2700,7 +2702,7 @@ func ListUndeliveredForExactConv(convID string) ([]*AgentMessage, error) {
 	}
 	q := `SELECT ` + agentMessageColumns + `
 		FROM agent_messages
-		WHERE to_conv = ? AND (pin_gen = 1 OR to_agent = '') AND delivered_at = '' AND read_at = '' AND nudge_cancelled_at = ''
+		WHERE to_conv = ? AND (pin_gen = 1 OR to_agent = '') AND delivered_at IS NULL AND read_at IS NULL AND nudge_cancelled_at IS NULL
 		ORDER BY id ASC`
 	rows, err := db.Query(q, convID)
 	if err != nil {
@@ -2733,7 +2735,7 @@ func CountUndeliveredForAgent(agentID string) (int, error) {
 	}
 	var n int
 	err = db.QueryRow(
-		`SELECT COUNT(*) FROM agent_messages WHERE to_agent = ? AND pin_gen = 0 AND delivered_at = '' AND read_at = '' AND nudge_cancelled_at = ''`,
+		`SELECT COUNT(*) FROM agent_messages WHERE to_agent = ? AND pin_gen = 0 AND delivered_at IS NULL AND read_at IS NULL AND nudge_cancelled_at IS NULL`,
 		agentID).Scan(&n)
 	return n, err
 }
@@ -2751,7 +2753,7 @@ func CountUndeliveredForExactConv(convID string) (int, error) {
 	}
 	var n int
 	err = db.QueryRow(
-		`SELECT COUNT(*) FROM agent_messages WHERE to_conv = ? AND (pin_gen = 1 OR to_agent = '') AND delivered_at = '' AND read_at = '' AND nudge_cancelled_at = ''`,
+		`SELECT COUNT(*) FROM agent_messages WHERE to_conv = ? AND (pin_gen = 1 OR to_agent = '') AND delivered_at IS NULL AND read_at IS NULL AND nudge_cancelled_at IS NULL`,
 		convID).Scan(&n)
 	return n, err
 }
@@ -2766,7 +2768,7 @@ func ListAllUndeliveredAgentMessages() ([]*AgentMessage, error) {
 		return nil, err
 	}
 	rows, err := d.Query(`SELECT ` + agentMessageColumns + ` FROM agent_messages
-		WHERE delivered_at = '' AND read_at = '' AND nudge_cancelled_at = '' ORDER BY id ASC`)
+		WHERE delivered_at IS NULL AND read_at IS NULL AND nudge_cancelled_at IS NULL ORDER BY id ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -2793,8 +2795,8 @@ func ListAllUndeliveredAgentMessages() ([]*AgentMessage, error) {
 // flush-on-online path's job; this sweep only re-nudges about already-
 // delivered traffic, so "reminder" means exactly that.
 //
-// Ordering is by id (insertion order), NOT created_at, for the same
-// RFC3339Nano lexical-sort reason ListUndeliveredAgentMessagesFor documents.
+// Ordering is by id (insertion order) so reminders have a stable total order
+// even when several messages carry the same created_at instant.
 func ListDeliveredUnreadAgentMessages() ([]*AgentMessage, error) {
 	db, err := Open()
 	if err != nil {
@@ -2802,7 +2804,7 @@ func ListDeliveredUnreadAgentMessages() ([]*AgentMessage, error) {
 	}
 	q := `SELECT ` + agentMessageColumns + `
 		FROM agent_messages
-		WHERE to_conv != '' AND delivered_at != '' AND read_at = ''
+		WHERE to_conv != '' AND delivered_at IS NOT NULL AND read_at IS NULL
 		ORDER BY id ASC`
 	rows, err := db.Query(q)
 	if err != nil {
@@ -2821,27 +2823,31 @@ func ListDeliveredUnreadAgentMessages() ([]*AgentMessage, error) {
 }
 
 type AgentMessageNudgeClaim struct {
-	ClaimedAt string
+	ClaimedAt int64
 	Attempt   int
 }
 
 // ClaimAgentMessageNudge atomically acquires a short-lived nudge lease without
-// marking the message delivered. The returned token is the exact timestamp
-// plus monotonically-incremented per-message attempt number stored by the same
-// UPDATE. Completion/release must present both, so even two RFC3339Nano stamps
-// that serialize identically cannot let a stale worker mutate a newer claim.
+// marking the message delivered. The returned token is the exact Unix-nanosecond
+// timestamp plus a monotonically-incremented per-message attempt number stored
+// by the same UPDATE. Completion/release must present both, so even two claims
+// made at the same instant cannot let a stale worker mutate a newer claim.
 func ClaimAgentMessageNudge(id int64, now time.Time) (token AgentMessageNudgeClaim, claimed bool, err error) {
 	db, err := Open()
 	if err != nil {
 		return token, false, err
 	}
-	token.ClaimedAt = now.Format(time.RFC3339Nano)
+	claimedNS, err := timeToUnixNano(now)
+	if err != nil {
+		return AgentMessageNudgeClaim{}, false, err
+	}
+	token.ClaimedAt = claimedNS
 	err = db.QueryRow(
 		`UPDATE agent_messages
 		 SET nudge_claimed_at = ?, nudge_attempted_at = ?, nudge_attempts = nudge_attempts + 1
-		 WHERE id = ? AND delivered_at = '' AND read_at = '' AND nudge_claimed_at = '' AND nudge_cancelled_at = ''
+		 WHERE id = ? AND delivered_at IS NULL AND read_at IS NULL AND nudge_claimed_at IS NULL AND nudge_cancelled_at IS NULL
 		 RETURNING nudge_attempts`,
-		token.ClaimedAt, token.ClaimedAt, id).Scan(&token.Attempt)
+		claimedNS, claimedNS, id).Scan(&token.Attempt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return AgentMessageNudgeClaim{}, false, nil
 	}
@@ -2866,14 +2872,14 @@ func CompleteAgentMessageNudgeState(id int64, token AgentMessageNudgeClaim, now 
 	if err != nil {
 		return false, err
 	}
-	readAt := ""
+	var readAt any
 	if consumed {
-		readAt = now.Format(time.RFC3339Nano)
+		readAt = dbTime(now)
 	}
 	res, err := d.Exec(`UPDATE agent_messages
-		SET delivered_at = ?, read_at = CASE WHEN ? != '' THEN ? ELSE read_at END, nudge_claimed_at = ''
-		WHERE id = ? AND delivered_at = '' AND nudge_claimed_at = ? AND nudge_attempts = ?`,
-		now.Format(time.RFC3339Nano), readAt, readAt, id, token.ClaimedAt, token.Attempt)
+		SET delivered_at = ?, read_at = CASE WHEN ? IS NOT NULL THEN ? ELSE read_at END, nudge_claimed_at = NULL
+		WHERE id = ? AND delivered_at IS NULL AND nudge_claimed_at = ? AND nudge_attempts = ?`,
+		dbTime(now), readAt, readAt, id, token.ClaimedAt, token.Attempt)
 	if err != nil {
 		return false, err
 	}
@@ -2888,8 +2894,8 @@ func ReleaseAgentMessageNudge(id int64, token AgentMessageNudgeClaim) (bool, err
 	if err != nil {
 		return false, err
 	}
-	res, err := d.Exec(`UPDATE agent_messages SET nudge_claimed_at = ''
-		WHERE id = ? AND delivered_at = '' AND nudge_claimed_at = ? AND nudge_attempts = ?`,
+	res, err := d.Exec(`UPDATE agent_messages SET nudge_claimed_at = NULL
+		WHERE id = ? AND delivered_at IS NULL AND nudge_claimed_at = ? AND nudge_attempts = ?`,
 		id, token.ClaimedAt, token.Attempt)
 	if err != nil {
 		return false, err
@@ -2906,8 +2912,8 @@ func ReleaseAllAgentMessageNudgeClaims() (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	res, err := d.Exec(`UPDATE agent_messages SET nudge_claimed_at = ''
-		WHERE delivered_at = '' AND nudge_claimed_at != ''`)
+	res, err := d.Exec(`UPDATE agent_messages SET nudge_claimed_at = NULL
+		WHERE delivered_at IS NULL AND nudge_claimed_at IS NOT NULL`)
 	if err != nil {
 		return 0, err
 	}
@@ -2941,13 +2947,13 @@ func suppressOfflineRegularNudges(targetWhere string, targetArgs []any, now time
 	if err != nil {
 		return 0, err
 	}
-	stamp := now.Format(time.RFC3339Nano)
+	stamp := dbTime(now)
 	args := []any{stamp, stamp}
 	args = append(args, targetArgs...)
 	res, err := d.Exec(`UPDATE agent_messages
-		SET delivered_at = ?, nudge_discarded_at = ?, nudge_claimed_at = ''
-		WHERE regular_send = 1 AND delivered_at = '' AND nudge_claimed_at = ''
-		  AND nudge_cancelled_at = '' AND `+targetWhere, args...)
+		SET delivered_at = ?, nudge_discarded_at = ?, nudge_claimed_at = NULL
+		WHERE regular_send = 1 AND delivered_at IS NULL AND nudge_claimed_at IS NULL
+		  AND nudge_cancelled_at IS NULL AND `+targetWhere, args...)
 	if err != nil {
 		return 0, err
 	}
@@ -2977,11 +2983,11 @@ func CancelAgentMessageNudge(id int64, targetAgentID string, now time.Time, reas
 	}
 	res, err := d.Exec(`UPDATE agent_messages
 		SET nudge_cancelled_at = ?, nudge_cancel_reason = ?
-		WHERE id = ? AND delivered_at = '' AND read_at = ''
-		  AND nudge_claimed_at = '' AND nudge_cancelled_at = ''
+		WHERE id = ? AND delivered_at IS NULL AND read_at IS NULL
+		  AND nudge_claimed_at IS NULL AND nudge_cancelled_at IS NULL
 		  AND NOT EXISTS (
-			SELECT 1 FROM agents WHERE agent_id = ? AND retired_at = '')`,
-		now.Format(time.RFC3339Nano), reason, id, targetAgentID)
+			SELECT 1 FROM agents WHERE agent_id = ? AND retired_at IS NULL)`,
+		dbTime(now), reason, id, targetAgentID)
 	if err != nil {
 		return false, err
 	}
@@ -2997,11 +3003,11 @@ func MarkAgentMessageRead(id int64) error {
 	if err != nil {
 		return err
 	}
-	now := time.Now().Format(time.RFC3339Nano)
+	now := dbTime(time.Now())
 	_, err = db.Exec(`UPDATE agent_messages
-		SET read_at = CASE WHEN read_at = '' THEN ? ELSE read_at END,
-			processed_at = CASE WHEN regular_send = 1 AND processed_at = '' THEN ? ELSE processed_at END
-		WHERE id = ? AND (read_at = '' OR (regular_send = 1 AND processed_at = ''))`, now, now, id)
+		SET read_at = CASE WHEN read_at IS NULL THEN ? ELSE read_at END,
+			processed_at = CASE WHEN regular_send = 1 AND processed_at IS NULL THEN ? ELSE processed_at END
+		WHERE id = ? AND (read_at IS NULL OR (regular_send = 1 AND processed_at IS NULL))`, now, now, id)
 	return err
 }
 
@@ -3022,17 +3028,17 @@ func MarkRegularAgentMessageStarted(id int64, convID string, inline bool, now ti
 		return false, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	stamp := now.Format(time.RFC3339Nano)
-	readAt := ""
+	stamp := dbTime(now)
+	var readAt any
 	if inline {
 		readAt = stamp
 	}
 	targetWhere := `(to_conv = ? OR (pin_gen = 0 AND to_agent != '' AND to_agent =
 		COALESCE((SELECT agent_id FROM agent_conversations WHERE conv_id = ?), '')))`
 	res, err := tx.Exec(`UPDATE agent_messages
-		SET started_at = CASE WHEN started_at = '' THEN ? ELSE started_at END,
-			read_at = CASE WHEN ? != '' THEN ? ELSE read_at END
-		WHERE id = ? AND regular_send = 1 AND processed_at = ''
+		SET started_at = CASE WHEN started_at IS NULL THEN ? ELSE started_at END,
+			read_at = CASE WHEN ? IS NOT NULL THEN ? ELSE read_at END
+		WHERE id = ? AND regular_send = 1 AND processed_at IS NULL
 		  AND `+targetWhere,
 		stamp, readAt, readAt, id, convID, convID)
 	if err != nil {
@@ -3046,7 +3052,7 @@ func MarkRegularAgentMessageStarted(id int64, convID string, inline bool, now ti
 	// earlier prompt for this recipient. Only already-read rows qualify here,
 	// which recovers missed inline hooks without falsely consuming pointer mail.
 	//
-	// This keeps delivered_at != '' while the same watermark in
+	// This keeps delivered_at IS NOT NULL while the same watermark in
 	// MarkReadRegularAgentMessagesProcessed does not; the difference is
 	// deliberate, not drift. Reached from UserPromptSubmit, this statement can
 	// run before the daemon's post-send completion stamp lands, so delivered_at
@@ -3054,7 +3060,7 @@ func MarkRegularAgentMessageStarted(id int64, convID string, inline bool, now ti
 	// time a terminal hook runs there is nothing left to disambiguate, and
 	// read_at alone already implies the body reached the pane.
 	if _, err := tx.Exec(`UPDATE agent_messages SET processed_at = ?
-		WHERE id < ? AND regular_send = 1 AND delivered_at != '' AND read_at != '' AND processed_at = ''
+		WHERE id < ? AND regular_send = 1 AND delivered_at IS NOT NULL AND read_at IS NOT NULL AND processed_at IS NULL
 		  AND `+targetWhere, stamp, id, convID, convID); err != nil {
 		return false, err
 	}
@@ -3156,16 +3162,16 @@ func MarkReadRegularAgentMessagesProcessed(convID string, now time.Time) (int64,
 		(to_agent = '' AND to_conv IN (
 			SELECT conv_id FROM agent_conversations WHERE agent_id =
 				COALESCE((SELECT agent_id FROM agent_conversations WHERE conv_id = ?), ''))))`
-	stamp := now.Format(time.RFC3339Nano)
+	stamp := dbTime(now)
 	res, err := d.Exec(`UPDATE agent_messages SET processed_at = ?
-		WHERE regular_send = 1 AND read_at != '' AND processed_at = ''
+		WHERE regular_send = 1 AND read_at IS NOT NULL AND processed_at IS NULL
 		  AND `+recipient+`
 		  AND id <= COALESCE(
 			(SELECT MAX(id) FROM agent_messages
-			  WHERE regular_send = 1 AND read_at != '' AND processed_at = '' AND started_at != ''
+			  WHERE regular_send = 1 AND read_at IS NOT NULL AND processed_at IS NULL AND started_at IS NOT NULL
 				AND `+recipient+`),
 			(SELECT MIN(id) FROM agent_messages
-			  WHERE regular_send = 1 AND read_at != '' AND processed_at = ''
+			  WHERE regular_send = 1 AND read_at IS NOT NULL AND processed_at IS NULL
 				AND `+recipient+`))`,
 		stamp,
 		convID, convID, convID,
@@ -3321,8 +3327,8 @@ func actorMatchClause(pairs ...[2]string) (string, []any) {
 // inbox/outbox: it selects rows matching convCol = conv OR agentCol = agent,
 // ordered most-recent-first, skipping whichever of conv/agent is empty (see
 // actorMatchClause). convCol/agentCol must be literal column names, never user
-// input — they are interpolated into SQL. Ordering is by id DESC for the same
-// RFC3339Nano lexical-sort reason listAgentMessagesByCol documents.
+// input — they are interpolated into SQL. Ordering by id DESC gives the actor
+// mailbox a stable newest-insertion-first total order.
 func listAgentMessagesForActor(convCol, agentCol, conv, agent string, limit int) ([]*AgentMessage, error) {
 	where, args := actorMatchClause([2]string{convCol, conv}, [2]string{agentCol, agent})
 	if where == "" {
@@ -3359,15 +3365,9 @@ func listAgentMessagesForActor(convCol, agentCol, conv, agent string, limit int)
 // `from_conv`, `to_agent` or `from_agent`), never user input — it's
 // interpolated into SQL.
 //
-// Ordering is by id DESC (autoincrement = insertion order), NOT created_at.
-// created_at is an RFC3339Nano string compared lexically by SQLite: a time on
-// a whole second serialises with no fractional part ("…:00Z") and sorts AFTER
-// a later same-second value ("…:00.004Z") because '.' < 'Z'. ORDER BY
-// created_at could therefore return a newer row as "older" — and with LIMIT,
-// silently drop the genuinely-newest row. This is the same RFC3339Nano flake
-// already fixed for the undelivered-queue query in #242 (see
-// ListUndeliveredAgentMessagesFor); id is monotonic with insertion, giving a
-// correct, total most-recent-first order independent of the timestamp format.
+// Ordering is by id DESC because the mailbox contract is newest insertion
+// first. The autoincrement key supplies a unique total order for LIMIT even
+// when multiple rows have the same created_at instant.
 func listAgentMessagesByCol(col, value string, limit int) ([]*AgentMessage, error) {
 	db, err := Open()
 	if err != nil {
@@ -3427,13 +3427,11 @@ func MailboxCounts() (map[string]MailboxCount, error) {
 	}
 	out := map[string]MailboxCount{}
 
-	// bump records the newest message instant seen for a conv. created_at
-	// is stored as zero-padded RFC3339Nano text, so MAX() over it is a
-	// valid chronological max; parse it once here.
-	bump := func(conv, maxCreated string) {
+	// bump records the newest message instant seen for a conversation.
+	bump := func(conv string, maxCreated dbTimestamp) {
 		c := out[conv]
-		if t := parseTimeOrZero(maxCreated); t.After(c.Last) {
-			c.Last = t
+		if maxCreated.Time().After(c.Last) {
+			c.Last = maxCreated.Time()
 		}
 		out[conv] = c
 	}
@@ -3441,7 +3439,7 @@ func MailboxCounts() (map[string]MailboxCount, error) {
 	// Received side: total in + unread + newest, grouped by recipient.
 	inRows, err := db.Query(`SELECT to_conv,
 		COUNT(*),
-		SUM(CASE WHEN read_at = '' THEN 1 ELSE 0 END),
+		SUM(CASE WHEN read_at IS NULL THEN 1 ELSE 0 END),
 		MAX(created_at)
 		FROM agent_messages WHERE to_conv != '' GROUP BY to_conv`)
 	if err != nil {
@@ -3449,7 +3447,8 @@ func MailboxCounts() (map[string]MailboxCount, error) {
 	}
 	defer func() { _ = inRows.Close() }()
 	for inRows.Next() {
-		var conv, maxCreated string
+		var conv string
+		var maxCreated dbTimestamp
 		var total, unread int
 		if err := inRows.Scan(&conv, &total, &unread, &maxCreated); err != nil {
 			return nil, err
@@ -3472,7 +3471,8 @@ func MailboxCounts() (map[string]MailboxCount, error) {
 	}
 	defer func() { _ = outRows.Close() }()
 	for outRows.Next() {
-		var conv, maxCreated string
+		var conv string
+		var maxCreated dbTimestamp
 		var total int
 		if err := outRows.Scan(&conv, &total, &maxCreated); err != nil {
 			return nil, err
@@ -3710,8 +3710,8 @@ func sqlPlaceholders(n int) string {
 
 // ListMailboxPage returns one newest-first page of the rows matching f.
 // limit <= 0 means "no limit" (the whole match); offset < 0 is clamped to
-// 0. Ordered by id DESC (insertion order), not created_at, for the same
-// RFC3339Nano lexical-sort reason listAgentMessagesByCol documents.
+// 0. Ordered by id DESC for stable newest-insertion-first pagination, including
+// rows that share the same created_at instant.
 func ListMailboxPage(f MailboxFilter, limit, offset int) ([]*AgentMessage, error) {
 	d, err := Open()
 	if err != nil {
@@ -3864,7 +3864,7 @@ func SetAgentMessagesRead(ids []int64, read bool) (int64, error) {
 	// When marking read the timestamp is the first bound parameter (it
 	// precedes the IN-list in the UPDATE); marking unread binds the ids only.
 	if read {
-		stamp := time.Now().Format(time.RFC3339Nano)
+		stamp := dbTime(time.Now())
 		args = append(args, stamp, stamp)
 	}
 	for i, id := range ids {
@@ -3875,11 +3875,11 @@ func SetAgentMessagesRead(ids []int64, read bool) (int64, error) {
 	var q string
 	if read {
 		q = `UPDATE agent_messages
-			SET read_at = CASE WHEN read_at = '' THEN ? ELSE read_at END,
-				processed_at = CASE WHEN regular_send = 1 AND processed_at = '' THEN ? ELSE processed_at END
-			WHERE (read_at = '' OR (regular_send = 1 AND processed_at = '')) AND id IN (` + in + `)`
+			SET read_at = CASE WHEN read_at IS NULL THEN ? ELSE read_at END,
+				processed_at = CASE WHEN regular_send = 1 AND processed_at IS NULL THEN ? ELSE processed_at END
+			WHERE (read_at IS NULL OR (regular_send = 1 AND processed_at IS NULL)) AND id IN (` + in + `)`
 	} else {
-		q = `UPDATE agent_messages SET read_at = '' WHERE read_at != '' AND id IN (` + in + `)`
+		q = `UPDATE agent_messages SET read_at = NULL WHERE read_at IS NOT NULL AND id IN (` + in + `)`
 	}
 	res, err := d.Exec(q, args...)
 	if err != nil {
@@ -3904,12 +3904,12 @@ func MarkAgentMailboxRead(conv string) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	stamp := time.Now().Format(time.RFC3339Nano)
+	stamp := dbTime(time.Now())
 	res, err := d.Exec(
 		`UPDATE agent_messages
-		 SET read_at = CASE WHEN read_at = '' THEN ? ELSE read_at END,
-			 processed_at = CASE WHEN regular_send = 1 AND processed_at = '' THEN ? ELSE processed_at END
-		 WHERE to_conv = ? AND (read_at = '' OR (regular_send = 1 AND processed_at = ''))`,
+		 SET read_at = CASE WHEN read_at IS NULL THEN ? ELSE read_at END,
+			 processed_at = CASE WHEN regular_send = 1 AND processed_at IS NULL THEN ? ELSE processed_at END
+		 WHERE to_conv = ? AND (read_at IS NULL OR (regular_send = 1 AND processed_at IS NULL))`,
 		stamp, stamp, conv)
 	if err != nil {
 		return 0, err
@@ -3952,11 +3952,11 @@ func WipeAgentMessagesForConvs(convs []string) (int64, error) {
 	return n, nil
 }
 
-func formatTimeOrEmpty(t time.Time) string {
+func formatTimeOrEmpty(t time.Time) any {
 	if t.IsZero() {
-		return ""
+		return nil
 	}
-	return t.Format(time.RFC3339Nano)
+	return dbTime(t)
 }
 
 // recipientsToJSON encodes a recipient slice as the JSON-array text we
@@ -4026,7 +4026,7 @@ func parseTimeOrZero(s string) time.Time {
 	if s == "" {
 		return time.Time{}
 	}
-	t, err := time.Parse(time.RFC3339Nano, s)
+	t, err := parseLegacyDBTime(s)
 	if err != nil {
 		return time.Time{}
 	}
@@ -4040,7 +4040,7 @@ type rowScanner interface {
 
 func scanAgentGroup(s rowScanner) (*AgentGroup, error) {
 	var g AgentGroup
-	var createdAt, archivedAt string
+	var createdAt, archivedAt dbTimestamp
 	var remoteControl, parentID sql.NullInt64
 	if err := s.Scan(&g.ID, &g.Name, &g.Descr, &g.DefaultCwd, &g.DefaultContext,
 		&g.DefaultProfile, &g.SandboxProfile, &g.SandboxProfileID,
@@ -4050,18 +4050,18 @@ func scanAgentGroup(s rowScanner) (*AgentGroup, error) {
 	}
 	g.RemoteControl = nullToBoolPtr(remoteControl)
 	g.ParentGroupID = nullToInt64Ptr(parentID)
-	g.CreatedAt = parseTimeOrZero(createdAt)
-	g.ArchivedAt = parseTimeOrZero(archivedAt)
+	g.CreatedAt = createdAt.Time()
+	g.ArchivedAt = archivedAt.Time()
 	return &g, nil
 }
 
 func scanAgentGroupMember(s rowScanner) (*AgentGroupMember, error) {
 	var m AgentGroupMember
-	var joinedAt string
+	var joinedAt dbTimestamp
 	if err := s.Scan(&m.GroupID, &m.ConvID, &m.Role, &m.Descr, &joinedAt); err != nil {
 		return nil, err
 	}
-	m.JoinedAt = parseTimeOrZero(joinedAt)
+	m.JoinedAt = joinedAt.Time()
 	return &m, nil
 }
 
@@ -4087,8 +4087,9 @@ const agentMessageColumns = `id, group_id, from_conv, to_conv, from_agent, to_ag
 
 func scanAgentMessage(s rowScanner) (*AgentMessage, error) {
 	var m AgentMessage
-	var createdAt, deliveredAt, readAt, nudgeClaimedAt, nudgeAttemptedAt string
-	var nudgeCancelledAt, startedAt, processedAt, nudgeDiscardedAt string
+	var createdAt dbTimestamp
+	var deliveredAt, readAt, nudgeClaimedAt, nudgeAttemptedAt dbTimestamp
+	var nudgeCancelledAt, startedAt, processedAt, nudgeDiscardedAt dbTimestamp
 	var toRecipients, ccRecipients string
 	var toRecipientAgents, ccRecipientAgents string
 	var pinGen, regularSend int
@@ -4103,15 +4104,15 @@ func scanAgentMessage(s rowScanner) (*AgentMessage, error) {
 		&startedAt, &processedAt, &nudgeDiscardedAt); err != nil {
 		return nil, err
 	}
-	m.CreatedAt = parseTimeOrZero(createdAt)
-	m.DeliveredAt = parseTimeOrZero(deliveredAt)
-	m.ReadAt = parseTimeOrZero(readAt)
-	m.NudgeClaimedAt = parseTimeOrZero(nudgeClaimedAt)
-	m.NudgeAttemptedAt = parseTimeOrZero(nudgeAttemptedAt)
-	m.NudgeCancelledAt = parseTimeOrZero(nudgeCancelledAt)
-	m.StartedAt = parseTimeOrZero(startedAt)
-	m.ProcessedAt = parseTimeOrZero(processedAt)
-	m.NudgeDiscardedAt = parseTimeOrZero(nudgeDiscardedAt)
+	m.CreatedAt = createdAt.Time()
+	m.DeliveredAt = deliveredAt.Time()
+	m.ReadAt = readAt.Time()
+	m.NudgeClaimedAt = nudgeClaimedAt.Time()
+	m.NudgeAttemptedAt = nudgeAttemptedAt.Time()
+	m.NudgeCancelledAt = nudgeCancelledAt.Time()
+	m.StartedAt = startedAt.Time()
+	m.ProcessedAt = processedAt.Time()
+	m.NudgeDiscardedAt = nudgeDiscardedAt.Time()
 	m.ToRecipients = recipientsFromJSON(toRecipients)
 	m.CcRecipients = recipientsFromJSON(ccRecipients)
 	m.ToRecipientAgents = recipientsFromJSON(toRecipientAgents)

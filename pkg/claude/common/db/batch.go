@@ -159,12 +159,12 @@ func ListAgentGroupOwnersBatch(groupIDs []int64) (map[int64][]*AgentGroupOwner, 
 		}
 		for rows.Next() {
 			var owner AgentGroupOwner
-			var grantedAt string
+			var grantedAt dbTimestamp
 			if err := rows.Scan(&owner.GroupID, &owner.AgentID, &owner.ConvID, &grantedAt, &owner.GrantedBy); err != nil {
 				_ = rows.Close()
 				return nil, err
 			}
-			owner.GrantedAt = parseTimeOrZero(grantedAt)
+			owner.GrantedAt = grantedAt.Time()
 			out[owner.GroupID] = append(out[owner.GroupID], &owner)
 		}
 		err = rows.Err()
@@ -320,12 +320,12 @@ func ListAgentWorkdirsByConv(convIDs []string) (map[string]AgentWorkdir, error) 
 		}
 		for rows.Next() {
 			var w AgentWorkdir
-			var updatedStr string
-			if err := rows.Scan(&w.ConvID, &w.Dir, &w.WorktreeRoot, &w.Branch, &updatedStr); err != nil {
+			var updatedAt dbTimestamp
+			if err := rows.Scan(&w.ConvID, &w.Dir, &w.WorktreeRoot, &w.Branch, &updatedAt); err != nil {
 				_ = rows.Close()
 				return nil, err
 			}
-			w.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedStr)
+			w.UpdatedAt = updatedAt.Time()
 			out[w.ConvID] = w
 		}
 		err = rows.Err()
@@ -359,13 +359,13 @@ func ListAgentWorkspacesByConv(convIDs []string) (map[string]AgentWorkspace, err
 		}
 		for rows.Next() {
 			var w AgentWorkspace
-			var updatedStr string
+			var updatedAt dbTimestamp
 			if err := rows.Scan(&w.ConvID, &w.Cwd, &w.Branch, &w.RepoURL, &w.DefaultBranch,
-				&w.PRNumber, &w.PRURL, &w.PRState, &updatedStr); err != nil {
+				&w.PRNumber, &w.PRURL, &w.PRState, &updatedAt); err != nil {
 				_ = rows.Close()
 				return nil, err
 			}
-			w.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedStr)
+			w.UpdatedAt = updatedAt.Time()
 			out[w.ConvID] = w
 		}
 		err = rows.Err()
@@ -523,14 +523,14 @@ func AgentsByID(agentIDs []string) (map[string]ConvAgent, error) {
 		}
 		for rows.Next() {
 			var ca ConvAgent
-			var createdAt, retiredAt string
+			var createdAt, retiredAt dbTimestamp
 			if err := rows.Scan(&ca.AgentID, &ca.CurrentConvID, &ca.PendingName,
 				&createdAt, &retiredAt); err != nil {
 				_ = rows.Close()
 				return nil, err
 			}
-			ca.Retired = retiredAt != ""
-			ca.CreatedAt = CanonicalAgeTimestamp(createdAt)
+			ca.Retired = retiredAt.valid
+			ca.CreatedAt = CanonicalAgeTimestampFromTime(createdAt.Time())
 			out[ca.AgentID] = ca
 		}
 		err = rows.Err()
@@ -573,7 +573,8 @@ func AgentsByConv(convIDs []string) (map[string]ConvAgent, error) {
 		for rows.Next() {
 			var convID string
 			var ca ConvAgent
-			var createdAt, retiredAt, relaunchRaw string
+			var relaunchRaw string
+			var createdAt, retiredAt dbTimestamp
 			if err := rows.Scan(&convID, &ca.AgentID, &ca.CurrentConvID,
 				&ca.PendingName, &createdAt, &retiredAt, &relaunchRaw, &ca.Superseded); err != nil {
 				_ = rows.Close()
@@ -583,11 +584,11 @@ func AgentsByConv(convIDs []string) (map[string]ConvAgent, error) {
 				profile != nil && profile.TemporarySandboxMode != nil {
 				ca.TemporarySandboxMode = strings.TrimSpace(*profile.TemporarySandboxMode)
 			}
-			ca.Retired = retiredAt != ""
+			ca.Retired = retiredAt.valid
 			// Canonicalise to UTC RFC3339Nano (keeping full sub-second precision)
 			// so the value agrees byte-for-byte with the CLI path
 			// (agent.MemberCreated). Age consumers compare parsed instants.
-			ca.CreatedAt = CanonicalAgeTimestamp(createdAt)
+			ca.CreatedAt = CanonicalAgeTimestampFromTime(createdAt.Time())
 			out[convID] = ca
 		}
 		err = rows.Err()
@@ -618,13 +619,14 @@ func LoadGitCacheBatch(repoHashes []string) (map[string]*GitCacheRow, error) {
 			return nil, err
 		}
 		for rows.Next() {
-			var key, dataStr, fetchedStr string
-			if err := rows.Scan(&key, &dataStr, &fetchedStr); err != nil {
+			var key, dataStr string
+			var fetchedAt dbTimestamp
+			if err := rows.Scan(&key, &dataStr, &fetchedAt); err != nil {
 				_ = rows.Close()
 				return nil, err
 			}
 			row := &GitCacheRow{Data: []byte(dataStr)}
-			row.FetchedAt, _ = time.Parse(time.RFC3339Nano, fetchedStr)
+			row.FetchedAt = fetchedAt.Time()
 			out[key] = row
 		}
 		err = rows.Err()

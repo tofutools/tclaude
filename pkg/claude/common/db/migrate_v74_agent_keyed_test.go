@@ -64,27 +64,27 @@ func TestMigrateV73toV74_TransformsRefsAndPreservesRuns(t *testing.T) {
 	mustExec(t, d, `INSERT INTO agent_cron_jobs
 		(name, owner_conv, target_kind, target_conv, group_id, interval_seconds,
 		 subject, body, enabled, created_at, last_run_at, last_run_status)
-		VALUES ('job', 'mgr', 'conv', 'g1', 0, 600, '', 'ping', 1, '2020-01-01T00:00:00Z', '', '')`)
+		VALUES ('job', 'mgr', 'conv', 'g1', 0, 600, '', 'ping', 1, 1577836800000000000, NULL, '')`)
 	var jobID int64
 	require.NoError(t, d.QueryRow(`SELECT id FROM agent_cron_jobs WHERE name = 'job'`).Scan(&jobID))
 	mustExec(t, d, `INSERT INTO agent_cron_runs (job_id, fired_at, status, error_msg)
-		VALUES (?, '2020-01-01T00:10:00Z', 'ok', '')`, jobID)
+		VALUES (?, 1577837400000000000, 'ok', '')`, jobID)
 
 	// A group-target job: owner-less (human-scheduled), no target conv.
 	mustExec(t, d, `INSERT INTO agent_cron_jobs
 		(name, owner_conv, target_kind, target_conv, group_id, interval_seconds,
 		 subject, body, enabled, created_at, last_run_at, last_run_status)
-		VALUES ('grp', '', 'group', '', 7, 600, '', 'team', 1, '2020-01-01T00:00:00Z', '', '')`)
+		VALUES ('grp', '', 'group', '', 7, 600, '', 'team', 1, 1577836800000000000, NULL, '')`)
 
 	// Spawn history under BOTH generations of actor A — the rate-limit subject
 	// that must collapse onto one agent key after the cutover.
 	mustExec(t, d, `INSERT INTO agent_spawn_history (spawner_conv_id, spawned_at)
-		VALUES ('g0', '2020-01-01T00:00:00Z')`)
+		VALUES ('g0', 1577836800000000000)`)
 	mustExec(t, d, `INSERT INTO agent_spawn_history (spawner_conv_id, spawned_at)
-		VALUES ('g1', '2020-01-02T00:00:00Z')`)
+		VALUES ('g1', 1577923200000000000)`)
 	// Clone history keyed on mgr.
 	mustExec(t, d, `INSERT INTO agent_clone_history (source_conv_id, cloned_at)
-		VALUES ('mgr', '2020-01-01T00:00:00Z')`)
+		VALUES ('mgr', 1577836800000000000)`)
 
 	require.NoError(t, migrateV73toV74(d), "v73→v74 cutover")
 
@@ -147,22 +147,22 @@ func TestUnmappedV74Rows_DetectsOrphan(t *testing.T) {
 	// Map 'mapped'; leave 'orphan' deliberately unmapped.
 	agentID := newAgentID()
 	mustExec(t, d, `INSERT INTO agents (agent_id, current_conv_id, created_at, created_via)
-		VALUES (?, 'mapped', '2020-01-01T00:00:00Z', 'test')`, agentID)
+		VALUES (?, 'mapped', 1577836800000000000, 'test')`, agentID)
 	mustExec(t, d, `INSERT INTO agent_conversations (conv_id, agent_id, role, reason, linked_at)
-		VALUES ('mapped', ?, 'head', 'test', '2020-01-01T00:00:00Z')`, agentID)
+		VALUES ('mapped', ?, 'head', 'test', 1577836800000000000)`, agentID)
 
 	// A job owned by the mapped conv but targeting the orphan; an owner-less
 	// group job ('' refs) must NOT be reported.
 	mustExec(t, d, `INSERT INTO agent_cron_jobs
 		(name, owner_conv, target_kind, target_conv, group_id, interval_seconds,
 		 subject, body, enabled, created_at, last_run_at, last_run_status)
-		VALUES ('j', 'mapped', 'conv', 'orphan', 0, 600, '', 'b', 1, '2020-01-01T00:00:00Z', '', '')`)
+		VALUES ('j', 'mapped', 'conv', 'orphan', 0, 600, '', 'b', 1, 1577836800000000000, NULL, '')`)
 	mustExec(t, d, `INSERT INTO agent_cron_jobs
 		(name, owner_conv, target_kind, target_conv, group_id, interval_seconds,
 		 subject, body, enabled, created_at, last_run_at, last_run_status)
-		VALUES ('g', '', 'group', '', 7, 600, '', 'b', 1, '2020-01-01T00:00:00Z', '', '')`)
+		VALUES ('g', '', 'group', '', 7, 600, '', 'b', 1, 1577836800000000000, NULL, '')`)
 	mustExec(t, d, `INSERT INTO agent_spawn_history (spawner_conv_id, spawned_at)
-		VALUES ('mapped', '2020-01-01T00:00:00Z')`)
+		VALUES ('mapped', 1577836800000000000)`)
 
 	unmapped, err := unmappedV74Rows(d)
 	require.NoError(t, err)

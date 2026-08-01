@@ -104,7 +104,7 @@ func insertAuditLog(x auditExecer, e AuditLogEntry) (int64, error) {
 			COALESCE(NULLIF(?, ''), `+agentForConvExpr+`),
 			COALESCE(NULLIF(?, ''), `+agentForConvExpr+`),
 			?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		at.UTC().Format(time.RFC3339Nano), e.ActorKind, e.ActorConv, e.ActorLabel, e.Verb,
+		dbTime(at.UTC()), e.ActorKind, e.ActorConv, e.ActorLabel, e.Verb,
 		e.TargetConv, e.TargetLabel, e.GroupName, e.Detail,
 		e.Method, e.Path, e.Status, e.Source,
 		e.ActorAgent, e.ActorConv, e.TargetAgent, e.TargetConv,
@@ -274,7 +274,7 @@ func ListAuditLog(f AuditLogFilter) ([]AuditLogEntry, error) {
 	var out []AuditLogEntry
 	for rows.Next() {
 		var e AuditLogEntry
-		var at string
+		var at dbTimestamp
 		if err := rows.Scan(&e.ID, &at, &e.ActorKind, &e.ActorConv, &e.ActorAgent, &e.ActorLabel, &e.Verb,
 			&e.TargetConv, &e.TargetAgent, &e.TargetLabel, &e.GroupName, &e.Detail,
 			&e.Method, &e.Path, &e.Status, &e.Source,
@@ -284,9 +284,7 @@ func ListAuditLog(f AuditLogFilter) ([]AuditLogEntry, error) {
 			&e.Reason, &e.ObservedState, &e.DedupKey); err != nil {
 			return nil, err
 		}
-		if t, perr := time.Parse(time.RFC3339Nano, at); perr == nil {
-			e.At = t
-		}
+		e.At = at.Time()
 		out = append(out, e)
 	}
 	return out, rows.Err()
@@ -310,17 +308,15 @@ func CountAuditLog(f AuditLogFilter) (int, error) {
 
 // PruneAuditLog deletes rows older than cutoff and returns the number
 // removed. Used by the daemon's periodic cleanup to enforce the
-// configurable retention window. The cutoff is compared against the
-// RFC3339Nano `at` text: a `<` comparison against a far-away cutoff is
-// unaffected by the sub-second lexical-misorder hazard (that only
-// reshuffles rows within the same whole second), so this is safe.
+// configurable retention window. Since v181, `at` and the cutoff argument are
+// guarded integer Unix nanoseconds, so the SQL comparison is chronological.
 func PruneAuditLog(cutoff time.Time) (int64, error) {
 	d, err := Open()
 	if err != nil {
 		return 0, err
 	}
 	res, err := d.Exec(`DELETE FROM audit_log WHERE at < ?`,
-		cutoff.UTC().Format(time.RFC3339Nano))
+		dbTime(cutoff.UTC()))
 	if err != nil {
 		return 0, fmt.Errorf("prune audit log: %w", err)
 	}

@@ -12,19 +12,15 @@ func GetNotifyTime(sessionID string) (time.Time, bool, error) {
 	if err != nil {
 		return time.Time{}, false, err
 	}
-	var s string
-	err = db.QueryRow(`SELECT notified_at FROM notify_state WHERE session_id = ?`, sessionID).Scan(&s)
+	var notifiedAt dbTimestamp
+	err = db.QueryRow(`SELECT notified_at FROM notify_state WHERE session_id = ?`, sessionID).Scan(&notifiedAt)
 	if err == sql.ErrNoRows {
 		return time.Time{}, false, nil
 	}
 	if err != nil {
 		return time.Time{}, false, err
 	}
-	t, err := time.Parse(time.RFC3339Nano, s)
-	if err != nil {
-		return time.Time{}, false, err
-	}
-	return t, true, nil
+	return notifiedAt.Time(), true, nil
 }
 
 // SetNotifyTime records the current time as the last notification time for a session.
@@ -38,6 +34,6 @@ func setNotifyTimeAt(sessionID string, notifiedAt time.Time) error {
 		return err
 	}
 	_, err = db.Exec(`INSERT OR REPLACE INTO notify_state (session_id, notified_at) VALUES (?, ?)`,
-		sessionID, notifiedAt.Format(time.RFC3339Nano))
+		sessionID, dbTime(notifiedAt))
 	return err
 }

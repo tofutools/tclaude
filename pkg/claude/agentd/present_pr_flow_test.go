@@ -243,6 +243,6 @@ func agePresentedPR(t *testing.T, agentID, prURL string, age time.Duration) {
 	d, err := db.Open()
 	require.NoError(t, err)
 	_, err = d.Exec(`UPDATE agent_prs SET updated_at = ? WHERE agent_id = ? AND pr_url = ?`,
-		time.Now().Add(-age).UTC().Format(time.RFC3339Nano), agentID, prURL)
+		time.Now().Add(-age).UTC().UnixNano(), agentID, prURL)
 	require.NoError(t, err)
 }

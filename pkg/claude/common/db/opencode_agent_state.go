@@ -32,7 +32,7 @@ func InsertOpenCodeAgentStateAllocation(allocation OpenCodeAgentStateAllocation)
 			(agent_id, mode, state_root, created_at)
 		VALUES (?, ?, ?, ?)
 	`, strings.TrimSpace(allocation.AgentID), allocation.Mode, allocation.StateRoot,
-		allocation.CreatedAt.Format(time.RFC3339Nano))
+		dbTime(allocation.CreatedAt))
 	if err != nil {
 		return false, fmt.Errorf("insert OpenCode agent state allocation: %w", err)
 	}
@@ -46,7 +46,7 @@ func GetOpenCodeAgentStateAllocation(agentID string) (*OpenCodeAgentStateAllocat
 		return nil, err
 	}
 	var allocation OpenCodeAgentStateAllocation
-	var created string
+	var created dbTimestamp
 	err = d.QueryRow(`
 		SELECT agent_id, mode, state_root, created_at
 		FROM opencode_agent_state_allocations
@@ -59,9 +59,6 @@ func GetOpenCodeAgentStateAllocation(agentID string) (*OpenCodeAgentStateAllocat
 	if err != nil {
 		return nil, err
 	}
-	allocation.CreatedAt, err = time.Parse(time.RFC3339Nano, created)
-	if err != nil {
-		return nil, fmt.Errorf("parse OpenCode agent state allocation time: %w", err)
-	}
+	allocation.CreatedAt = created.Time()
 	return &allocation, nil
 }

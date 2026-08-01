@@ -43,7 +43,6 @@ const (
 	MaxProcessRunEventActor            = 256
 	MaxProcessRunAuthorizationProfiles = model.MaxNormalizedNodes
 	MaxProcessRunAuthorizationProfile  = MaxProcessRunAuthorizationsBytes - 4
-	maxProcessRunTimestampSize         = 64
 )
 
 const (
@@ -290,9 +289,8 @@ func validProcessRunEventTime(value time.Time) bool {
 	if value.IsZero() {
 		return false
 	}
-	formatted := value.UTC().Format(time.RFC3339Nano)
-	parsed, err := time.Parse(time.RFC3339Nano, formatted)
-	return err == nil && parsed.Equal(value.UTC())
+	_, err := timeToUnixNano(value.UTC())
+	return err == nil
 }
 
 func validateProcessRunCreate(input ProcessRunCreate) error {
@@ -377,7 +375,7 @@ func CreateProcessRun(input ProcessRunCreate) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := dbTime(time.Now().UTC())
 	result, err := tx.Exec(`INSERT INTO process_runs
 		(id, template_ref, template_snapshot_json, params_json, program_authorizations_json, status,
 		 state_version, checkpoint_json, created_at, updated_at)
@@ -438,7 +436,7 @@ func TransitionProcessRun(runID string, transition ProcessRunTransition) (int64,
 	result, err := tx.Exec(`UPDATE process_runs
 		SET status = ?, state_version = ?, checkpoint_json = ?, updated_at = ?
 		WHERE id = ? AND state_version = ?`, transition.Status, nextVersion,
-		string(transition.CheckpointJSON), time.Now().UTC().Format(time.RFC3339Nano),
+		string(transition.CheckpointJSON), dbTime(time.Now().UTC()),
 		runID, transition.ExpectedStateVersion)
 	if err != nil {
 		return 0, fmt.Errorf("update process run checkpoint: %w", err)
@@ -489,7 +487,7 @@ func insertProcessRunEvents(tx *sql.Tx, runID string, events []ProcessRunEvent) 
 			(run_id, sequence, occurred_at, node_id, kind, payload_json, actor)
 			VALUES (?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT(run_id, sequence) DO NOTHING`, runID, event.Sequence,
-			event.OccurredAt.UTC().Format(time.RFC3339Nano), event.NodeID, event.Kind,
+			dbTime(event.OccurredAt.UTC()), event.NodeID, event.Kind,
 			string(event.PayloadJSON), event.Actor)
 		if err != nil {
 			return fmt.Errorf("append process run evidence sequence %d: %w", event.Sequence, err)
@@ -509,14 +507,15 @@ type processRunScanner interface{ Scan(...any) error }
 
 func scanProcessRun(scanner processRunScanner) (*ProcessRun, error) {
 	var run ProcessRun
-	var id, templateRef, snapshot, params, authorizations, status, checkpoint, created, updated sql.NullString
+	var id, templateRef, snapshot, params, authorizations, status, checkpoint sql.NullString
+	var created, updated dbTimestamp
 	var stateVersion sql.NullInt64
 	if err := scanner.Scan(&id, &templateRef, &snapshot, &params, &authorizations, &status,
 		&stateVersion, &checkpoint, &created, &updated); err != nil {
 		return nil, err
 	}
 	if !id.Valid || !templateRef.Valid || !snapshot.Valid || !params.Valid || !authorizations.Valid || !status.Valid ||
-		!stateVersion.Valid || !checkpoint.Valid || !created.Valid || !updated.Valid {
+		!stateVersion.Valid || !checkpoint.Valid || !created.valid || !updated.valid {
 		return nil, ErrProcessRunCorrupt
 	}
 	run.ID, run.TemplateRef, run.Status = id.String, templateRef.String, status.String
@@ -536,13 +535,8 @@ func scanProcessRun(scanner processRunScanner) (*ProcessRun, error) {
 	if err := validateProcessJSONObject("checkpoint", []byte(checkpoint.String), MaxProcessRunCheckpointBytes); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrProcessRunCorrupt, err)
 	}
-	var err error
-	if run.CreatedAt, err = time.Parse(time.RFC3339Nano, created.String); err != nil {
-		return nil, fmt.Errorf("%w: invalid created timestamp", ErrProcessRunCorrupt)
-	}
-	if run.UpdatedAt, err = time.Parse(time.RFC3339Nano, updated.String); err != nil {
-		return nil, fmt.Errorf("%w: invalid updated timestamp", ErrProcessRunCorrupt)
-	}
+	run.CreatedAt = created.Time()
+	run.UpdatedAt = updated.Time()
 	run.TemplateSnapshotJSON = json.RawMessage(strings.Clone(snapshot.String))
 	run.ParamsJSON = json.RawMessage(strings.Clone(params.String))
 	run.ProgramAuthorizationsJSON = json.RawMessage(strings.Clone(authorizations.String))
@@ -563,15 +557,14 @@ const processRunSelect = `SELECT
 	CASE WHEN typeof(status) = 'text' AND length(CAST(status AS BLOB)) BETWEEN 1 AND ? THEN status END,
 	CASE WHEN typeof(state_version) = 'integer' AND state_version > 0 THEN state_version END,
 	CASE WHEN typeof(checkpoint_json) = 'text' AND length(CAST(checkpoint_json AS BLOB)) BETWEEN 1 AND ? THEN checkpoint_json END,
-	CASE WHEN typeof(created_at) = 'text' AND length(CAST(created_at AS BLOB)) BETWEEN 1 AND ? THEN created_at END,
-	CASE WHEN typeof(updated_at) = 'text' AND length(CAST(updated_at AS BLOB)) BETWEEN 1 AND ? THEN updated_at END
+	CASE WHEN typeof(created_at) = 'integer' THEN created_at END,
+	CASE WHEN typeof(updated_at) = 'integer' THEN updated_at END
 	FROM process_runs`
 
 func processRunSelectArgs() []any {
 	return []any{
 		MaxProcessRunIDBytes, MaxProcessRunTemplateRef, MaxProcessRunTemplateSnapshotBytes,
 		MaxProcessRunParamsBytes, MaxProcessRunAuthorizationsBytes, MaxProcessRunStatusBytes, MaxProcessRunCheckpointBytes,
-		maxProcessRunTimestampSize, maxProcessRunTimestampSize,
 	}
 }
 
@@ -644,39 +637,31 @@ func ListProcessRunSummaries(afterID string, limit int) ([]ProcessRunSummary, er
 		CASE WHEN typeof(template_ref) = 'text' AND length(CAST(template_ref AS BLOB)) BETWEEN 1 AND ? THEN template_ref END,
 		CASE WHEN typeof(status) = 'text' AND length(CAST(status AS BLOB)) BETWEEN 1 AND ? THEN status END,
 		CASE WHEN typeof(state_version) = 'integer' AND state_version > 0 THEN state_version END,
-		CASE WHEN typeof(created_at) = 'text' AND length(CAST(created_at AS BLOB)) BETWEEN 1 AND ? THEN created_at END,
-		CASE WHEN typeof(updated_at) = 'text' AND length(CAST(updated_at AS BLOB)) BETWEEN 1 AND ? THEN updated_at END
+		CASE WHEN typeof(created_at) = 'integer' THEN created_at END,
+		CASE WHEN typeof(updated_at) = 'integer' THEN updated_at END
 		FROM process_runs WHERE id > ? ORDER BY id LIMIT ?`,
-		MaxProcessRunIDBytes, MaxProcessRunTemplateRef, MaxProcessRunStatusBytes,
-		maxProcessRunTimestampSize, maxProcessRunTimestampSize, afterID, limit)
+		MaxProcessRunIDBytes, MaxProcessRunTemplateRef, MaxProcessRunStatusBytes, afterID, limit)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
 	runs := make([]ProcessRunSummary, 0, limit)
 	for rows.Next() {
-		var id, templateRef, status, createdAt, updatedAt sql.NullString
+		var id, templateRef, status sql.NullString
+		var createdAt, updatedAt dbTimestamp
 		var stateVersion sql.NullInt64
 		if err := rows.Scan(&id, &templateRef, &status, &stateVersion, &createdAt, &updatedAt); err != nil {
 			return nil, err
 		}
-		if !id.Valid || !templateRef.Valid || !status.Valid || !stateVersion.Valid || !createdAt.Valid || !updatedAt.Valid ||
+		if !id.Valid || !templateRef.Valid || !status.Valid || !stateVersion.Valid || !createdAt.valid || !updatedAt.valid ||
 			!validProcessRuntimeIdentifier(id.String, MaxProcessRunIDBytes, false) ||
 			!validProcessRuntimeText(templateRef.String, MaxProcessRunTemplateRef, false) ||
 			!validProcessRuntimeIdentifier(status.String, MaxProcessRunStatusBytes, false) {
 			return nil, ErrProcessRunCorrupt
 		}
-		created, err := time.Parse(time.RFC3339Nano, createdAt.String)
-		if err != nil {
-			return nil, fmt.Errorf("%w: invalid run created timestamp", ErrProcessRunCorrupt)
-		}
-		updated, err := time.Parse(time.RFC3339Nano, updatedAt.String)
-		if err != nil {
-			return nil, fmt.Errorf("%w: invalid run updated timestamp", ErrProcessRunCorrupt)
-		}
 		runs = append(runs, ProcessRunSummary{
 			ID: id.String, TemplateRef: templateRef.String, Status: status.String,
-			StateVersion: stateVersion.Int64, CreatedAt: created, UpdatedAt: updated,
+			StateVersion: stateVersion.Int64, CreatedAt: createdAt.Time(), UpdatedAt: updatedAt.Time(),
 		})
 	}
 	return runs, rows.Err()
@@ -774,13 +759,14 @@ func ListRunnableProcessRunIDs(afterID string, limit int) ([]string, string, err
 
 func scanProcessRunEvent(scanner processRunScanner) (ProcessRunEvent, error) {
 	var event ProcessRunEvent
-	var runID, occurred, nodeID, kind, payload, actor sql.NullString
+	var runID, nodeID, kind, payload, actor sql.NullString
+	var occurred dbTimestamp
 	var sequence sql.NullInt64
 	if err := scanner.Scan(&runID, &sequence, &occurred, &nodeID,
 		&kind, &payload, &actor); err != nil {
 		return ProcessRunEvent{}, err
 	}
-	if !runID.Valid || !sequence.Valid || !occurred.Valid || !nodeID.Valid ||
+	if !runID.Valid || !sequence.Valid || !occurred.valid || !nodeID.Valid ||
 		!kind.Valid || !payload.Valid || !actor.Valid {
 		return ProcessRunEvent{}, ErrProcessRunCorrupt
 	}
@@ -795,10 +781,7 @@ func scanProcessRunEvent(scanner processRunScanner) (ProcessRunEvent, error) {
 	if err := validateProcessJSONObject("event payload", []byte(payload.String), MaxProcessRunEventPayloadBytes); err != nil {
 		return ProcessRunEvent{}, fmt.Errorf("%w: %v", ErrProcessRunCorrupt, err)
 	}
-	var err error
-	if event.OccurredAt, err = time.Parse(time.RFC3339Nano, occurred.String); err != nil {
-		return ProcessRunEvent{}, fmt.Errorf("%w: invalid event timestamp", ErrProcessRunCorrupt)
-	}
+	event.OccurredAt = occurred.Time()
 	event.PayloadJSON = json.RawMessage(strings.Clone(payload.String))
 	return event, nil
 }
@@ -806,7 +789,7 @@ func scanProcessRunEvent(scanner processRunScanner) (ProcessRunEvent, error) {
 const processRunEventSelect = `SELECT
 	CASE WHEN typeof(run_id) = 'text' AND length(CAST(run_id AS BLOB)) BETWEEN 1 AND ? THEN run_id END,
 	CASE WHEN typeof(sequence) = 'integer' AND sequence > 0 THEN sequence END,
-	CASE WHEN typeof(occurred_at) = 'text' AND length(CAST(occurred_at AS BLOB)) BETWEEN 1 AND ? THEN occurred_at END,
+	CASE WHEN typeof(occurred_at) = 'integer' THEN occurred_at END,
 	CASE WHEN typeof(node_id) = 'text' AND length(CAST(node_id AS BLOB)) <= ? THEN node_id END,
 	CASE WHEN typeof(kind) = 'text' AND length(CAST(kind AS BLOB)) BETWEEN 1 AND ? THEN kind END,
 	CASE WHEN typeof(payload_json) = 'text' AND length(CAST(payload_json AS BLOB)) BETWEEN 1 AND ? THEN payload_json END,
@@ -815,7 +798,7 @@ const processRunEventSelect = `SELECT
 
 func processRunEventSelectArgs() []any {
 	return []any{
-		MaxProcessRunIDBytes, maxProcessRunTimestampSize, MaxProcessRunNodeIDBytes,
+		MaxProcessRunIDBytes, MaxProcessRunNodeIDBytes,
 		MaxProcessRunEventKind, MaxProcessRunEventPayloadBytes, MaxProcessRunEventActor,
 	}
 }

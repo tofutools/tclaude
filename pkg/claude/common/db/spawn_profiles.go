@@ -166,7 +166,7 @@ func CreateSpawnProfile(p *SpawnProfile) (int64, error) {
 		return 0, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	now := time.Now().Format(time.RFC3339Nano)
+	now := dbTime(time.Now())
 	res, err := tx.Exec(
 		`INSERT INTO spawn_profiles
 		   (name, disabled, disabled_reason, operator_only, harness, model, effort, sandbox, sandbox_implementation, approval, tools, ask_user_question_timeout,
@@ -248,7 +248,7 @@ func UpdateSpawnProfile(p *SpawnProfile) error {
 		boolPtrToNull(p.AutoMemory), boolPtrToNull(p.SSHWorkaround),
 		boolPtrToNull(p.IsOwner), marshalPermissionOverrides(p.PermissionOverrides),
 		marshalStringMapColumn(p.ContextFeatures, "spawn_profiles.context_features"),
-		time.Now().Format(time.RFC3339Nano), p.ID)
+		dbTime(time.Now()), p.ID)
 	if err != nil {
 		if isSpawnProfileHandleViolation(err) {
 			return ErrSpawnProfileNameTaken
@@ -281,7 +281,7 @@ func UpdateSpawnProfile(p *SpawnProfile) error {
 		WHERE key = 'tclaude.dash.default_profile'
 		  AND EXISTS (SELECT 1 FROM dashboard_prefs ids
 		               WHERE ids.key = 'tclaude.dash.default_profile_id' AND ids.value = CAST(? AS TEXT))`,
-		p.Name, time.Now().Format(time.RFC3339Nano), p.ID); err != nil {
+		p.Name, dbTime(time.Now()), p.ID); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -498,7 +498,8 @@ func scanSpawnProfile(s rowScanner) (*SpawnProfile, error) {
 	var p SpawnProfile
 	var disabled int64
 	var autoReview, trustDir, syncWorktree, autoFocus, includeCtx, remoteControl, autoMemory, sshWorkaround, isOwner sql.NullInt64
-	var permOverrides, contextFeatures, createdAt, updatedAt string
+	var permOverrides, contextFeatures string
+	var createdAt, updatedAt dbTimestamp
 	if err := s.Scan(&p.ID, &p.Name, &disabled, &p.DisabledReason, &p.OperatorOnly, &p.Harness, &p.Model, &p.Effort, &p.Sandbox,
 		&p.SandboxImplementation, &p.Approval,
 		&p.ToolGovernance, &p.AskUserQuestionTimeout, &p.AutoCompactWindow,
@@ -519,7 +520,7 @@ func scanSpawnProfile(s rowScanner) (*SpawnProfile, error) {
 	p.IsOwner = nullToBoolPtr(isOwner)
 	p.PermissionOverrides = unmarshalPermissionOverrides(permOverrides)
 	p.ContextFeatures = unmarshalStringMapColumn(contextFeatures, "spawn_profiles.context_features")
-	p.CreatedAt = parseTimeOrZero(createdAt)
-	p.UpdatedAt = parseTimeOrZero(updatedAt)
+	p.CreatedAt = createdAt.Time()
+	p.UpdatedAt = updatedAt.Time()
 	return &p, nil
 }

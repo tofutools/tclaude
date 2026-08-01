@@ -16,7 +16,7 @@ func TestMigrateV128toV129AddsCronQueueWhenOfflineDisabledForLegacyJobs(t *testi
 	mustExec(t, d, `UPDATE schema_version SET version = 128`)
 	mustExec(t, d, `INSERT INTO agent_cron_jobs
 		(name, owner_agent, target_agent, interval_seconds, created_at)
-		VALUES ('legacy-job', '', '', 600, '2026-07-16T09:00:00Z')`)
+		VALUES ('legacy-job', '', '', 600, 1784192400000000000)`)
 
 	require.NoError(t, migrateV128toV129(d))
 	var queueOffline int

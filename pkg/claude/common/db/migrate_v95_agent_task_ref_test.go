@@ -39,7 +39,7 @@ func TestMigrateV94toV95_AddsColumns(t *testing.T) {
 	// A pre-existing agent row (without the new columns) must survive the ALTER
 	// and read back with the defaults.
 	mustExec(t, d, `INSERT INTO agents (agent_id, current_conv_id, created_at)
-		VALUES ('agt_legacy', 'conv-legacy', '2026-07-02T00:00:00Z')`)
+		VALUES ('agt_legacy', 'conv-legacy', 1782950400000000000)`)
 
 	require.NoError(t, migrateV94toV95(d), "v94→v95")
 
@@ -74,7 +74,7 @@ func TestSetAgentTaskRef(t *testing.T) {
 	d, err := Open()
 	require.NoError(t, err, "Open")
 	mustExec(t, d, `INSERT INTO agents (agent_id, current_conv_id, created_at)
-		VALUES ('agt_x', 'conv-x', '2026-07-02T00:00:00Z')`)
+		VALUES ('agt_x', 'conv-x', 1782950400000000000)`)
 
 	// Set with an explicit label.
 	n, err := SetAgentTaskRef("agt_x", "https://linear.app/a/issue/JOH-1", "custom")
@@ -109,8 +109,8 @@ func TestListAgentTaskRefs(t *testing.T) {
 	setupTestDB(t)
 	d, err := Open()
 	require.NoError(t, err, "Open")
-	mustExec(t, d, `INSERT INTO agents (agent_id, current_conv_id, created_at) VALUES ('agt_a', 'conv-a', '2026-07-02T00:00:00Z')`)
-	mustExec(t, d, `INSERT INTO agents (agent_id, current_conv_id, created_at) VALUES ('agt_b', 'conv-b', '2026-07-02T00:00:00Z')`)
+	mustExec(t, d, `INSERT INTO agents (agent_id, current_conv_id, created_at) VALUES ('agt_a', 'conv-a', 1782950400000000000)`)
+	mustExec(t, d, `INSERT INTO agents (agent_id, current_conv_id, created_at) VALUES ('agt_b', 'conv-b', 1782950400000000000)`)
 	_, err = SetAgentTaskRef("agt_a", "https://github.com/o/r/pull/9", "")
 	require.NoError(t, err)
 
@@ -134,7 +134,7 @@ func TestListAgentTaskRefsByAgentIDs(t *testing.T) {
 		{"agt_visible_unlinked", "conv-visible-unlinked"},
 		{"agt_hidden_linked", "conv-hidden-linked"},
 	} {
-		mustExec(t, d, `INSERT INTO agents (agent_id, current_conv_id, created_at) VALUES (?, ?, '2026-07-02T00:00:00Z')`, row.agentID, row.convID)
+		mustExec(t, d, `INSERT INTO agents (agent_id, current_conv_id, created_at) VALUES (?, ?, 1782950400000000000)`, row.agentID, row.convID)
 	}
 	_, err = SetAgentTaskRef("agt_visible_linked", "https://linear.app/a/issue/TCL-1", "TCL-1")
 	require.NoError(t, err)

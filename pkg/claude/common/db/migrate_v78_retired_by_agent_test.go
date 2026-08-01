@@ -55,8 +55,8 @@ func TestMigrateV77toV78_BackfillsRetiredByAgent(t *testing.T) {
 	} {
 		mustExec(t, d, s)
 	}
-	mustExec(t, d, `UPDATE agents SET retired_at = '2020-01-01T00:00:00Z', retired_by = 'retirer-conv' WHERE agent_id = '`+targetA+`'`)
-	mustExec(t, d, `UPDATE agents SET retired_at = '2020-01-02T00:00:00Z', retired_by = 'human' WHERE agent_id = '`+targetH+`'`)
+	mustExec(t, d, `UPDATE agents SET retired_at = 1577836800000000000, retired_by = 'retirer-conv' WHERE agent_id = '`+targetA+`'`)
+	mustExec(t, d, `UPDATE agents SET retired_at = 1577923200000000000, retired_by = 'human' WHERE agent_id = '`+targetH+`'`)
 
 	require.NoError(t, migrateV77toV78(d), "v77→v78 backfill")
 

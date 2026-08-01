@@ -68,7 +68,8 @@ func migrateV74toV75(db *sql.DB) error {
 			    retired_by    = (SELECT e.retired_by    FROM agent_enrollment e WHERE e.conv_id = agents.current_conv_id),
 			    retire_reason = (SELECT e.retire_reason FROM agent_enrollment e WHERE e.conv_id = agents.current_conv_id)
 			WHERE current_conv_id IN (SELECT conv_id FROM agent_enrollment)
-			  AND retired_at != (SELECT e.retired_at FROM agent_enrollment e WHERE e.conv_id = agents.current_conv_id)`,
+			  AND COALESCE(CAST(retired_at AS TEXT), '') !=
+			      (SELECT e.retired_at FROM agent_enrollment e WHERE e.conv_id = agents.current_conv_id)`,
 		); err != nil {
 			return fmt.Errorf("migrate v74→v75 (retire-flag sync): %w", err)
 		}

@@ -18,13 +18,13 @@ func TestClaimAgentdRequestPrunesExpiredRecords(t *testing.T) {
 		(request_key, fingerprint, owner_id, state, status, headers_json, response_body, created_at, expires_at)
 		VALUES
 			('expired-pending', 'expired-pending-fingerprint', 'daemon-a', 'pending', 0, '', NULL, ?, ?),
-			('expired-completed', 'expired-completed-fingerprint', 'daemon-a', 'completed', 201, '{}', 'done', ?, ?),
+			('expired-completed', 'expired-completed-fingerprint', 'daemon-a', 'completed', 201, '{}', X'646F6E65', ?, ?),
 			('live-pending', 'live-pending-fingerprint', 'daemon-a', 'pending', 0, '', NULL, ?, ?),
-			('live-completed', 'live-completed-fingerprint', 'daemon-a', 'completed', 201, '{}', 'done', ?, ?)`,
-		now.Add(-time.Hour).Unix(), now.Unix(),
-		now.Add(-time.Hour).Unix(), now.Add(-time.Second).Unix(),
-		now.Add(-time.Hour).Unix(), now.Add(time.Second).Unix(),
-		now.Add(-time.Hour).Unix(), now.Add(time.Second).Unix())
+			('live-completed', 'live-completed-fingerprint', 'daemon-a', 'completed', 201, '{}', X'646F6E65', ?, ?)`,
+		dbTime(now.Add(-time.Hour)), dbTime(now),
+		dbTime(now.Add(-time.Hour)), dbTime(now.Add(-time.Second)),
+		dbTime(now.Add(-time.Hour)), dbTime(now.Add(time.Second)),
+		dbTime(now.Add(-time.Hour)), dbTime(now.Add(time.Second)))
 	require.NoError(t, err)
 
 	_, claimed, err := ClaimAgentdRequest(

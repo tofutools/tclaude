@@ -332,7 +332,7 @@ func waitForClearedIdentityIndex(state *SessionState) bool {
 		}
 		row, rowErr := db.GetConvIndex(state.ConvID)
 		if rowErr == nil && row != nil && row.FileSize == info.Size() &&
-			row.FileMtime >= info.ModTime().Unix() {
+			!row.FileMtime.Before(info.ModTime().Round(0).UTC()) {
 			return true
 		}
 		if !time.Now().Before(deadline) {
@@ -1816,10 +1816,11 @@ func persistCodexWorkspaceSnapshot(state *SessionState, input HookCallbackInput)
 		projectDir = cwd
 	}
 	fullPath := input.TranscriptPath
-	var fileMtime, fileSize int64
+	var fileMtime time.Time
+	var fileSize int64
 	if fullPath != "" {
 		if info, err := os.Stat(fullPath); err == nil {
-			fileMtime = info.ModTime().Unix()
+			fileMtime = info.ModTime().Round(0).UTC()
 			fileSize = info.Size()
 			projectDir = filepath.Dir(fullPath)
 		}

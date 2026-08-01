@@ -67,6 +67,38 @@ func TestConvIndex_GitBranchStartupRoundtrip(t *testing.T) {
 	assert.Equal(t, "main", found.GitBranchStartup, "ListAllConvIndex carries git_branch_startup")
 }
 
+func TestConvIndexFileMtime_NormalizesMonotonicAndLocationBeforeGuard(t *testing.T) {
+	setupTestDB(t)
+	mtime := time.Now() // carries a monotonic reading on supported platforms
+	require.NoError(t, UpsertConvIndex(&ConvIndexRow{
+		ConvID: "mtime-normalized", FileMtime: mtime, IndexedAt: time.Now(),
+	}))
+
+	row, err := GetConvIndex("mtime-normalized")
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	assert.True(t, row.FileMtime.Equal(mtime), "round trip preserves the instant")
+	assert.Equal(t, time.UTC, row.FileMtime.Location(), "database reads canonicalize location")
+
+	fixedZone := time.FixedZone("fixture", 2*60*60)
+	sameInstant := mtime.Round(0).In(fixedZone)
+	require.NoError(t, UpsertConvIndex(&ConvIndexRow{
+		ConvID: "mtime-normalized", FileMtime: sameInstant, IndexedAt: time.Now(),
+	}))
+	row, err = GetConvIndex("mtime-normalized")
+	require.NoError(t, err)
+	assert.True(t, row.FileMtime.Equal(mtime), "location baggage cannot change cache chronology")
+}
+
+func TestConvIndexFileMtime_RejectsOutsideUnixNanoRange(t *testing.T) {
+	setupTestDB(t)
+	err := UpsertConvIndex(&ConvIndexRow{
+		ConvID: "mtime-out-of-range", FileMtime: time.Date(2500, 1, 1, 0, 0, 0, 0, time.UTC), IndexedAt: time.Now(),
+	})
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "outside the Unix-nanosecond range")
+}
+
 func TestConvIndexBranchSnapshotSeedsCreatedOnce(t *testing.T) {
 	setupTestDB(t)
 

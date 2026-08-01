@@ -16,7 +16,7 @@ func TestMigrateV153toV154AddsCronOperatorAuthoredDisabledForLegacyJobs(t *testi
 	mustExec(t, d, `UPDATE schema_version SET version = 153`)
 	mustExec(t, d, `INSERT INTO agent_cron_jobs
 		(name, owner_agent, target_agent, interval_seconds, created_at)
-		VALUES ('legacy-job', '', '', 600, '2026-07-24T09:00:00Z')`)
+		VALUES ('legacy-job', '', '', 600, 1784883600000000000)`)
 
 	require.NoError(t, migrateV153toV154(d))
 	var operatorAuthored int

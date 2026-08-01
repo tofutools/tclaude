@@ -66,7 +66,7 @@ func insertTransferLog(x execer, e TransferLogEntry) (int64, error) {
 			 result_group, target_dir, conv_remaps, agent_count, message_count,
 			 by_conv, note, by_agent)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+agentForConvExpr+`)`,
-		e.Kind, at.Format(time.RFC3339Nano), e.FormatVersion,
+		e.Kind, dbTime(at), e.FormatVersion,
 		e.SourceGroup, e.SourceHome, e.SourceOS,
 		e.ResultGroup, e.TargetDir, e.ConvRemaps,
 		e.AgentCount, e.MessageCount, e.ByConv, e.Note, e.ByConv)
@@ -117,16 +117,14 @@ func ListTransferLog(limit int) ([]TransferLogEntry, error) {
 	var out []TransferLogEntry
 	for rows.Next() {
 		var e TransferLogEntry
-		var at string
+		var at dbTimestamp
 		if err := rows.Scan(&e.ID, &e.Kind, &at, &e.FormatVersion,
 			&e.SourceGroup, &e.SourceHome, &e.SourceOS, &e.ResultGroup,
 			&e.TargetDir, &e.ConvRemaps, &e.AgentCount, &e.MessageCount,
 			&e.ByConv, &e.Note, &e.ByAgent); err != nil {
 			return nil, err
 		}
-		if t, err := time.Parse(time.RFC3339Nano, at); err == nil {
-			e.At = t
-		}
+		e.At = at.Time()
 		out = append(out, e)
 	}
 	return out, rows.Err()

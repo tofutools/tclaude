@@ -82,7 +82,7 @@ func ReplaceSpawnHarnessRules(groupID int64, rules []SpawnHarnessRule) error {
 	if _, err := tx.Exec(`DELETE FROM spawn_harness_rules WHERE group_id = ?`, groupID); err != nil {
 		return err
 	}
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := dbTime(time.Now().UTC())
 	for _, rule := range normalized {
 		if _, err := tx.Exec(`INSERT INTO spawn_harness_rules
 			(group_id, source_harness, target_harness, decision, reason, updated_at)
@@ -108,10 +108,12 @@ func ListSpawnHarnessRules(groupID int64) ([]SpawnHarnessRule, error) {
 	var out []SpawnHarnessRule
 	for rows.Next() {
 		var rule SpawnHarnessRule
+		var updatedAt dbTimestamp
 		if err := rows.Scan(&rule.GroupID, &rule.SourceHarness, &rule.TargetHarness,
-			&rule.Decision, &rule.Reason, &rule.UpdatedAt); err != nil {
+			&rule.Decision, &rule.Reason, &updatedAt); err != nil {
 			return nil, err
 		}
+		rule.UpdatedAt = exportTimestamp(updatedAt)
 		out = append(out, rule)
 	}
 	return out, rows.Err()
@@ -134,11 +136,13 @@ func ResolveSpawnHarnessRule(groupID int64, source, target string) (rule SpawnHa
 		ids = []int64{groupID, 0}
 	}
 	for _, id := range ids {
+		var updatedAt dbTimestamp
 		err = d.QueryRow(`SELECT group_id, source_harness, target_harness, decision, reason, updated_at
 			FROM spawn_harness_rules WHERE group_id = ? AND source_harness = ? AND target_harness = ?`,
 			id, source, target).Scan(&rule.GroupID, &rule.SourceHarness, &rule.TargetHarness,
-			&rule.Decision, &rule.Reason, &rule.UpdatedAt)
+			&rule.Decision, &rule.Reason, &updatedAt)
 		if err == nil {
+			rule.UpdatedAt = exportTimestamp(updatedAt)
 			if id == 0 {
 				return rule, "global", true, nil
 			}

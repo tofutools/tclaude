@@ -54,11 +54,11 @@ func TestMigrateV75toV76_BackfillsAgentRefs(t *testing.T) {
 	// A message from a predecessor generation to actorB; one from actorB back to
 	// the head generation; one to a plain (non-actor) conv.
 	mustExec(t, d, `INSERT INTO agent_messages (group_id, from_conv, to_conv, created_at)
-		VALUES (0, 'g0', 'convB', '2020-01-01T00:00:00Z')`)
+		VALUES (0, 'g0', 'convB', 1577836800000000000)`)
 	mustExec(t, d, `INSERT INTO agent_messages (group_id, from_conv, to_conv, created_at)
-		VALUES (0, 'convB', 'g1', '2020-01-02T00:00:00Z')`)
+		VALUES (0, 'convB', 'g1', 1577923200000000000)`)
 	mustExec(t, d, `INSERT INTO agent_messages (group_id, from_conv, to_conv, created_at)
-		VALUES (0, 'convB', 'plain', '2020-01-03T00:00:00Z')`)
+		VALUES (0, 'convB', 'plain', 1578009600000000000)`)
 
 	require.NoError(t, migrateV75toV76(d), "v75→v76 backfill")
 

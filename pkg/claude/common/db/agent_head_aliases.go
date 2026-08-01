@@ -50,7 +50,7 @@ func SetHeadAlias(handle, anchorConvID, byConv string) error {
 	_, err = d.Exec(`INSERT OR REPLACE INTO agent_head_aliases
 		(handle, anchor_conv_id, created_at, by_conv, by_agent, anchor_agent_id)
 		VALUES (?, ?, ?, ?, `+agentForConvExpr+`, `+agentForConvExpr+`)`,
-		handle, anchorConvID, time.Now().Format(time.RFC3339Nano), byConv, byConv, anchorConvID)
+		handle, anchorConvID, dbTime(time.Now()), byConv, byConv, anchorConvID)
 	return err
 }
 
@@ -115,7 +115,7 @@ func GetHeadAlias(handle string) (*HeadAlias, error) {
 		return nil, err
 	}
 	var h HeadAlias
-	var createdAt string
+	var createdAt dbTimestamp
 	err = d.QueryRow(`SELECT handle, anchor_conv_id, created_at, by_conv, by_agent, anchor_agent_id
 		FROM agent_head_aliases WHERE handle = ?`, handle).
 		Scan(&h.Handle, &h.AnchorConvID, &createdAt, &h.ByConv, &h.ByAgent, &h.AnchorAgentID)
@@ -125,7 +125,7 @@ func GetHeadAlias(handle string) (*HeadAlias, error) {
 	if err != nil {
 		return nil, err
 	}
-	h.CreatedAt = parseTimeOrZero(createdAt)
+	h.CreatedAt = createdAt.Time()
 	return &h, nil
 }
 
@@ -156,11 +156,11 @@ func ListHeadAliases() ([]*HeadAlias, error) {
 	var out []*HeadAlias
 	for rows.Next() {
 		var h HeadAlias
-		var createdAt string
+		var createdAt dbTimestamp
 		if err := rows.Scan(&h.Handle, &h.AnchorConvID, &createdAt, &h.ByConv, &h.ByAgent, &h.AnchorAgentID); err != nil {
 			return nil, err
 		}
-		h.CreatedAt = parseTimeOrZero(createdAt)
+		h.CreatedAt = createdAt.Time()
 		out = append(out, &h)
 	}
 	return out, rows.Err()

@@ -175,7 +175,7 @@ func TestCronPatch_ImmediateFireSuppressesCachedSchedulerCandidate(t *testing.T)
 	require.NoError(t, err)
 	now := time.Now().UTC().Truncate(time.Second)
 	_, err = d.Exec(`UPDATE agent_cron_jobs SET created_at = ? WHERE id = ?`,
-		now.Add(-time.Hour).Format(time.RFC3339), job.ID)
+		now.Add(-time.Hour).UnixNano(), job.ID)
 	require.NoError(t, err)
 
 	restore := agentd.SetCronAfterDueListForTest(func() {
@@ -341,7 +341,7 @@ func TestDashboardCronRunNow_SuppressesCachedSchedulerCandidate(t *testing.T) {
 	require.NoError(t, err)
 	now := time.Now().UTC().Truncate(time.Second)
 	_, err = d.Exec(`UPDATE agent_cron_jobs SET created_at = ? WHERE id = ?`,
-		now.Add(-time.Hour).Format(time.RFC3339), job.ID)
+		now.Add(-time.Hour).UnixNano(), job.ID)
 	require.NoError(t, err)
 	mux := agentd.BuildDashboardHandlerForTest()
 
@@ -368,7 +368,7 @@ func TestDashboardCronDelete_WaitsForAuthorizedScheduledDelivery(t *testing.T) {
 	require.NoError(t, err)
 	now := time.Now().UTC().Truncate(time.Second)
 	_, err = d.Exec(`UPDATE agent_cron_jobs SET created_at = ? WHERE id = ?`,
-		now.Add(-time.Hour).Format(time.RFC3339), job.ID)
+		now.Add(-time.Hour).UnixNano(), job.ID)
 	require.NoError(t, err)
 	mux := agentd.BuildDashboardHandlerForTest()
 

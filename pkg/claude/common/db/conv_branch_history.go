@@ -160,13 +160,13 @@ func RebuildConvBranchHistoryScan(convID string, obs []BranchObservation) error 
 	}
 	for rows.Next() {
 		var e existingRow
-		var fs, ls string
+		var fs, ls dbTimestamp
 		if err := rows.Scan(&e.repoDir, &e.branch, &e.source, &fs, &ls); err != nil {
 			_ = rows.Close()
 			return err
 		}
-		e.firstSeen = parseTimeOrZero(fs)
-		e.lastSeen = parseTimeOrZero(ls)
+		e.firstSeen = fs.Time()
+		e.lastSeen = ls.Time()
 		existing[cbhKey(e.repoDir, e.branch)] = e
 	}
 	if err := rows.Err(); err != nil {
@@ -338,13 +338,13 @@ func ListConvBranchHistory(convID string) ([]ConvBranchHistoryRow, error) {
 	var out []ConvBranchHistoryRow
 	for rows.Next() {
 		var r ConvBranchHistoryRow
-		var firstSeen, lastSeen string
+		var firstSeen, lastSeen dbTimestamp
 		if err := rows.Scan(&r.ConvID, &r.RepoDir, &r.Branch, &r.PRNumber,
 			&r.PRURL, &r.PRState, &r.Source, &firstSeen, &lastSeen); err != nil {
 			return nil, err
 		}
-		r.FirstSeen = parseTimeOrZero(firstSeen)
-		r.LastSeen = parseTimeOrZero(lastSeen)
+		r.FirstSeen = firstSeen.Time()
+		r.LastSeen = lastSeen.Time()
 		out = append(out, r)
 	}
 	return out, rows.Err()
@@ -362,13 +362,12 @@ func DeleteConvBranchHistory(convID string) error {
 	return err
 }
 
-// fmtBranchTime renders a timestamp for storage — RFC3339Nano in UTC so
-// the stored strings sort lexically (the ORDER BY in ListConvBranchHistory
-// relies on it). A zero time stores as "" rather than the year-1 string,
-// matching parseTimeOrZero's empty-is-zero convention.
-func fmtBranchTime(t time.Time) string {
+// fmtBranchTime converts an optional branch timestamp to the guarded database
+// representation. A zero time stores as SQL NULL; present values store as
+// integer Unix nanoseconds.
+func fmtBranchTime(t time.Time) any {
 	if t.IsZero() {
-		return ""
+		return nil
 	}
-	return t.UTC().Format(time.RFC3339Nano)
+	return dbTime(t.UTC())
 }

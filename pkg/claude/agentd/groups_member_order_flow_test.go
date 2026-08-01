@@ -159,11 +159,13 @@ func TestGroupMembers_AgeRepairsLateActorEnrollment(t *testing.T) {
 // there is no production path that rewrites an actor's birth time.
 func mustSetAgentCreated(t *testing.T, convID, createdRFC3339 string) {
 	t.Helper()
+	createdAt, err := time.Parse(time.RFC3339Nano, createdRFC3339)
+	require.NoError(t, err)
 	conn, err := db.Open()
 	require.NoError(t, err)
 	res, err := conn.Exec(`UPDATE agents SET created_at = ?
 		WHERE agent_id = (SELECT agent_id FROM agent_conversations WHERE conv_id = ?)`,
-		createdRFC3339, convID)
+		createdAt.UnixNano(), convID)
 	require.NoError(t, err)
 	n, err := res.RowsAffected()
 	require.NoError(t, err)

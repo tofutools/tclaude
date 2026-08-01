@@ -281,6 +281,27 @@ func TestTryClaimUsageFetch_ExpiredClaim(t *testing.T) {
 	assert.True(t, claimed, "expected claim on expired entry to succeed")
 }
 
+func TestTryClaimUsageFetch_MissingStampClaimsLikeStale(t *testing.T) {
+	setupTestDB(t)
+
+	ttl := 5 * time.Minute
+	oldTime := time.Now().Add(-ttl - time.Minute)
+	require.NoError(t, SaveUsageCache(json.RawMessage(`{}`), oldTime, oldTime))
+
+	claimed, err := TryClaimUsageFetch(ttl)
+	require.NoError(t, err)
+	require.True(t, claimed, "control: stale non-NULL timestamp reaches and satisfies the claim predicate")
+
+	d, err := Open()
+	require.NoError(t, err)
+	_, err = d.Exec(`UPDATE usage_cache SET last_attempt_at = NULL WHERE id = 1`)
+	require.NoError(t, err)
+
+	claimed, err = TryClaimUsageFetch(ttl)
+	require.NoError(t, err)
+	assert.True(t, claimed, "a migrated missing timestamp is claimable; NULL must not make the row permanently stale")
+}
+
 func TestTryClaimUsageFetch_FreshEntry(t *testing.T) {
 	setupTestDB(t)
 
@@ -356,9 +377,9 @@ func TestSchemaV1ToV2Migration(t *testing.T) {
 	require.NoError(t, err, "Open")
 
 	// Verify the cache tables exist by inserting into them
-	_, err = d.Exec(`INSERT INTO usage_cache (id, data, fetched_at, last_attempt_at) VALUES (1, '{}', '', '')`)
+	_, err = d.Exec(`INSERT INTO usage_cache (id, data, fetched_at, last_attempt_at) VALUES (1, '{}', NULL, NULL)`)
 	require.NoError(t, err, "insert into usage_cache")
-	_, err = d.Exec(`INSERT INTO git_cache (repo_hash, data, fetched_at) VALUES ('test', '{}', '')`)
+	_, err = d.Exec(`INSERT INTO git_cache (repo_hash, data, fetched_at) VALUES ('test', '{}', NULL)`)
 	require.NoError(t, err, "insert into git_cache")
 
 	// Verify schema version is 2

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"sort"
 	"strings"
 	"time"
 
@@ -236,6 +235,9 @@ func SaveSession(s *SessionRow) error {
 		return err
 	}
 	s.UpdatedAt = time.Now()
+	if s.CreatedAt.IsZero() {
+		s.CreatedAt = s.UpdatedAt
+	}
 
 	// An empty Harness defaults to "claude" so a caller that hasn't set
 	// it writes the same value the column DEFAULT would, not "".
@@ -310,7 +312,7 @@ func SaveSession(s *SessionRow) error {
 			exit_launch_gate_state = CASE WHEN excluded.exit_callback_generation <> '' THEN excluded.exit_launch_gate_state ELSE sessions.exit_launch_gate_state END`,
 		s.ID, s.TmuxSession, s.PID, s.Cwd, s.ConvID,
 		s.Status, s.StatusDetail, s.SubagentCount, s.SubagentsJSON, s.BgShellsJSON, s.MonitorsJSON, boolToInt(s.AutoRegistered),
-		s.CreatedAt.Format(time.RFC3339Nano), s.UpdatedAt.Format(time.RFC3339Nano), s.LastHook.Format(time.RFC3339Nano), harness, s.SandboxMode, sandboxImplementation, s.SandboxModeSource, s.OSSandboxState, s.OSSandboxSource, boolToInt(s.OSSandboxUnverified), s.AskUserQuestionTimeout, effectiveSandbox, s.ApprovalPolicy, boolToInt(s.ApprovalAutoReview), s.ResumeProvenance, s.ConvID,
+		dbTime(s.CreatedAt), dbTime(s.UpdatedAt), nullableDBTime(s.LastHook), harness, s.SandboxMode, sandboxImplementation, s.SandboxModeSource, s.OSSandboxState, s.OSSandboxSource, boolToInt(s.OSSandboxUnverified), s.AskUserQuestionTimeout, effectiveSandbox, s.ApprovalPolicy, boolToInt(s.ApprovalAutoReview), s.ResumeProvenance, s.ConvID,
 		s.ExitLaunchGeneration, s.ExitLaunchGateState)
 	if err != nil {
 		return err
@@ -342,7 +344,7 @@ func InsertSessionResumeAnchor(convID, cwd, harness, provenance string, now time
 	if harness == "" {
 		harness = DefaultHarness
 	}
-	stamp := now.Format(time.RFC3339Nano)
+	stamp := dbTime(now)
 	res, err := d.Exec(`INSERT INTO sessions
 		(id, cwd, conv_id, status, created_at, updated_at, harness, resume_provenance, agent_id)
 		SELECT ?, ?, ?, 'exited', ?, ?, ?, ?, `+agentForConvExpr+`
@@ -754,7 +756,7 @@ func CleanupOldExited(maxAge time.Duration) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	cutoff := time.Now().Add(-maxAge).Format(time.RFC3339Nano)
+	cutoff := dbTime(time.Now().Add(-maxAge))
 	result, err := db.Exec(`DELETE FROM sessions WHERE status = 'exited' AND updated_at < ?`, cutoff)
 	if err != nil {
 		return 0, err
@@ -769,12 +771,12 @@ func MaxUpdatedAt() (time.Time, error) {
 	if err != nil {
 		return time.Time{}, err
 	}
-	var s sql.NullString
-	err = db.QueryRow(`SELECT MAX(updated_at) FROM sessions`).Scan(&s)
-	if err != nil || !s.Valid {
+	var updatedAt dbTimestamp
+	err = db.QueryRow(`SELECT MAX(updated_at) FROM sessions`).Scan(&updatedAt)
+	if err != nil || !updatedAt.valid {
 		return time.Time{}, err
 	}
-	return time.Parse(time.RFC3339Nano, s.String)
+	return updatedAt.Time(), nil
 }
 
 // scanSession scans a single session row. sql.ErrNoRows (an empty *sql.Row)
@@ -790,9 +792,10 @@ func scanSession(row *sql.Row) (*SessionRow, error) {
 func scanSessionRow(s rowScanner) (*SessionRow, error) {
 	var row SessionRow
 	var autoReg, remoteCtl, autoMemory, approvalAutoReview, osSandboxUnverified int
-	var createdStr, updatedStr, lastHookStr, effectiveSandbox, contextFeatures string
+	var createdAt, updatedAt, lastHook dbTimestamp
+	var effectiveSandbox, contextFeatures string
 	if err := s.Scan(&row.ID, &row.TmuxSession, &row.PID, &row.Cwd, &row.ConvID,
-		&row.Status, &row.StatusDetail, &row.SubagentCount, &row.SubagentsJSON, &row.BgShellsJSON, &row.MonitorsJSON, &autoReg, &createdStr, &updatedStr, &lastHookStr, &row.Harness, &row.SandboxMode, &row.SandboxImplementation, &row.SandboxModeSource, &row.OSSandboxState, &row.OSSandboxSource, &osSandboxUnverified, &row.AskUserQuestionTimeout, &effectiveSandbox, &remoteCtl, &autoMemory, &contextFeatures, &row.AutoCompactWindow, &row.ApprovalPolicy, &approvalAutoReview, &row.ResumeProvenance); err != nil {
+		&row.Status, &row.StatusDetail, &row.SubagentCount, &row.SubagentsJSON, &row.BgShellsJSON, &row.MonitorsJSON, &autoReg, &createdAt, &updatedAt, &lastHook, &row.Harness, &row.SandboxMode, &row.SandboxImplementation, &row.SandboxModeSource, &row.OSSandboxState, &row.OSSandboxSource, &osSandboxUnverified, &row.AskUserQuestionTimeout, &effectiveSandbox, &remoteCtl, &autoMemory, &contextFeatures, &row.AutoCompactWindow, &row.ApprovalPolicy, &approvalAutoReview, &row.ResumeProvenance); err != nil {
 		return nil, err
 	}
 	row.AutoRegistered = autoReg != 0
@@ -806,11 +809,9 @@ func scanSessionRow(s rowScanner) (*SessionRow, error) {
 	if err != nil {
 		return nil, fmt.Errorf("decode session %q effective sandbox: %w", row.ID, err)
 	}
-	row.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdStr)
-	row.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedStr)
-	if lastHookStr != "" {
-		row.LastHook, _ = time.Parse(time.RFC3339Nano, lastHookStr)
-	}
+	row.CreatedAt = createdAt.Time()
+	row.UpdatedAt = updatedAt.Time()
+	row.LastHook = lastHook.Time()
 	return &row, nil
 }
 
@@ -835,7 +836,7 @@ func UpdateSessionLastHook(id string, t time.Time) error {
 	if err != nil {
 		return err
 	}
-	_, err = db.Exec(`UPDATE sessions SET last_hook = ? WHERE id = ?`, t.Format(time.RFC3339Nano), id)
+	_, err = db.Exec(`UPDATE sessions SET last_hook = ? WHERE id = ?`, dbTime(t), id)
 	return err
 }
 
@@ -875,8 +876,8 @@ func MarkSessionExitedIfUnchanged(id, observedStatus string, observedUpdatedAt t
 			subagent_count = 0, subagents_json = '', bg_shells_json = '', monitors_json = '',
 			exit_reason = COALESCE(exit_reason, NULLIF(?, ''))
 		WHERE id = ? AND status = ? AND updated_at = ?`,
-		time.Now().Format(time.RFC3339Nano),
-		fallbackExitReason, id, observedStatus, observedUpdatedAt.Format(time.RFC3339Nano))
+		dbTime(time.Now()),
+		fallbackExitReason, id, observedStatus, dbTime(observedUpdatedAt))
 	if err != nil {
 		return false, err
 	}
@@ -905,8 +906,8 @@ func SetSessionStatusIfUnchanged(
 	res, err := d.Exec(`UPDATE sessions
 		SET status = ?, status_detail = ?, updated_at = ?
 		WHERE id = ? AND status = ? AND updated_at = ?`,
-		status, detail, at.Format(time.RFC3339Nano),
-		id, observedStatus, observedUpdatedAt.Format(time.RFC3339Nano))
+		status, detail, dbTime(at),
+		id, observedStatus, dbTime(observedUpdatedAt))
 	if err != nil {
 		return false, err
 	}
@@ -972,7 +973,7 @@ func MarkSessionsIdleAfterInterrupt(convID string) (int64, error) {
 		SET status = 'idle', status_detail = '', updated_at = ?,
 			subagent_count = 0, subagents_json = ''
 		WHERE conv_id = ? AND status = 'working'`,
-		time.Now().Format(time.RFC3339Nano), convID)
+		dbTime(time.Now()), convID)
 	if err != nil {
 		return 0, err
 	}
@@ -1284,7 +1285,7 @@ func (b *ContextSnapshotWriteBatch) Commit() (result ContextSnapshotWriteBatchRe
 			execResult, err = tx.Exec(`UPDATE sessions
 				SET context_pct = 0, tokens_input = 0, tokens_output = 0, nudged_pct = 0
 				WHERE id = ? AND conv_id = ? AND created_at = ?`,
-				operation.sessionID, operation.convID, operation.createdAt.Format(time.RFC3339Nano))
+				operation.sessionID, operation.convID, dbTime(operation.createdAt))
 			timing.Update = time.Since(stageStarted)
 			if err == nil {
 				stageStarted = time.Now()
@@ -1302,7 +1303,7 @@ func (b *ContextSnapshotWriteBatch) Commit() (result ContextSnapshotWriteBatchRe
 				WHERE id = ? AND conv_id = ? AND created_at = ? AND context_window_size = ?`,
 				operation.pct, operation.tokensInput, operation.tokensOutput, operation.window,
 				operation.sessionID, operation.convID,
-				operation.createdAt.Format(time.RFC3339Nano), operation.window)
+				dbTime(operation.createdAt), operation.window)
 			timing.Update = time.Since(stageStarted)
 			if err == nil {
 				stageStarted = time.Now()
@@ -1319,7 +1320,7 @@ func (b *ContextSnapshotWriteBatch) Commit() (result ContextSnapshotWriteBatchRe
 				SET context_pct = ?, tokens_input = ?, tokens_output = ?, context_window_size = ?
 				WHERE id = ? AND conv_id = ? AND created_at = ?`,
 				operation.pct, operation.tokensInput, operation.tokensOutput, operation.window,
-				operation.sessionID, operation.convID, operation.createdAt.Format(time.RFC3339Nano))
+				operation.sessionID, operation.convID, dbTime(operation.createdAt))
 			timing.Update = time.Since(stageStarted)
 			if err == nil {
 				stageStarted = time.Now()
@@ -1449,7 +1450,7 @@ func UpdateContextSnapshotIfWindowUnchangedTimed(
 		SET context_pct = ?, tokens_input = ?, tokens_output = ?, context_window_size = ?
 		WHERE id = ? AND conv_id = ? AND created_at = ? AND context_window_size = ?`,
 		pct, tokensInput, tokensOutput, windowSize,
-		sessionID, convID, createdAt.Format(time.RFC3339Nano), windowSize)
+		sessionID, convID, dbTime(createdAt), windowSize)
 	timing.ExecCommit = time.Since(stageStarted)
 	if err != nil {
 		return false, err
@@ -1867,7 +1868,7 @@ func UpdateSessionEffortForGeneration(
 	defer func() { _ = tx.Rollback() }()
 	result, err := tx.Exec(`UPDATE sessions SET effort_level = ?
 		WHERE id = ? AND conv_id = ? AND created_at = ?`,
-		level, sessionID, convID, createdAt.Format(time.RFC3339Nano))
+		level, sessionID, convID, dbTime(createdAt))
 	if err != nil {
 		return false, err
 	}
@@ -1961,23 +1962,9 @@ func UpdateSessionCost(sessionID string, costUSD float64) error {
 	// The model CASE mirrors conv_id: a render that carries no model
 	// (the empty-context ones before a turn's first response) keeps the
 	// last good value rather than blanking it.
-	//
-	// THE STORED FORMAT IS NOT SAFE TO ORDER BY IN SQL (TCL-932).
-	// The stamp below is time.RFC3339Nano over time.Now(), so it has its
-	// trailing zeros trimmed and carries THIS machine's zone — and it is only
-	// one of several writers of this column, which is why the contract and the
-	// inversions are stated once in sortCostDailyRowsForWalk. Do not infer the
-	// column's shape from this line and do not restate the rule here: read it
-	// there.
-	//
-	// Anyone ordering by this column must decide which order they want and get
-	// it a way the format cannot break: parse it (AllCostDailyRows sorts the
-	// cost walk in Go for exactly this reason) or, when INSERTION order is what
-	// is wanted, use the autoincrement id instead — the remedy already applied
-	// three times in this package, see ListUndeliveredAgentMessagesFor in
-	// agent.go and ListAgentCronRunsForJob in agent_cron.go. The two are not
-	// interchangeable: this row is UPSERTED, so its rowid is its first insert
-	// and not its last spend.
+	// Use updated_at directly for chronology: since v181 it is guarded integer
+	// Unix nanoseconds. This is semantically necessary, not an encoding
+	// workaround—the row is UPSERTED, so rowid cannot stand in for recency.
 	now := time.Now()
 	// agent_id is denormalised in alongside conv_id, with the same keep-last-good
 	// CASE guard. Prefer the session's persisted agent_id (the v77 companion,
@@ -2003,7 +1990,7 @@ func UpdateSessionCost(sessionID string, costUSD float64) error {
 			                ELSE session_cost_daily.agent_id END,
 			harness  = CASE WHEN excluded.harness <> '' THEN excluded.harness
 			                ELSE session_cost_daily.harness END`,
-		now.Format(costDayFormat), costUSD, now.Format(time.RFC3339Nano), sessionID)
+		now.Format(costDayFormat), costUSD, dbTime(now), sessionID)
 	if err != nil {
 		return err
 	}
@@ -2085,7 +2072,7 @@ func UpdateSessionVirtualCost(sessionID string, costUSD float64) error {
 			                ELSE session_cost_daily.agent_id END,
 			harness  = CASE WHEN excluded.harness <> '' THEN excluded.harness
 			                ELSE session_cost_daily.harness END`,
-		now.Format(costDayFormat), costUSD, now.Format(time.RFC3339Nano), sessionID)
+		now.Format(costDayFormat), costUSD, dbTime(now), sessionID)
 	if err != nil {
 		return err
 	}
@@ -2188,7 +2175,7 @@ func ReplaceSessionVirtualCostHistory(
 				                ELSE session_cost_daily.agent_id END,
 				harness  = CASE WHEN excluded.harness <> '' THEN excluded.harness
 				                ELSE session_cost_daily.harness END`,
-			snapshot.Day, snapshot.CostUSD, updatedAt.Format(time.RFC3339Nano), snapshot.Model, sessionID); err != nil {
+			snapshot.Day, snapshot.CostUSD, dbTime(updatedAt), snapshot.Model, sessionID); err != nil {
 			return err
 		}
 	}
@@ -2229,7 +2216,7 @@ func ReplaceSessionVirtualCostHistoryForGeneration(
 	err = tx.QueryRow(`UPDATE sessions SET virtual_cost_usd = ?
 		WHERE id = ? AND conv_id = ? AND created_at = ?
 		RETURNING conv_id`,
-		totalUSD, sessionID, expectedConvID, expectedCreatedAt.Format(time.RFC3339Nano)).Scan(&convID)
+		totalUSD, sessionID, expectedConvID, dbTime(expectedCreatedAt)).Scan(&convID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -2272,7 +2259,7 @@ func ReplaceSessionVirtualCostHistoryForGeneration(
 				                ELSE session_cost_daily.agent_id END,
 				harness  = CASE WHEN excluded.harness <> '' THEN excluded.harness
 				                ELSE session_cost_daily.harness END`,
-			snapshot.Day, snapshot.CostUSD, updatedAt.Format(time.RFC3339Nano), snapshot.Model, sessionID); err != nil {
+			snapshot.Day, snapshot.CostUSD, dbTime(updatedAt), snapshot.Model, sessionID); err != nil {
 			return false, err
 		}
 	}
@@ -2304,7 +2291,7 @@ type CostDailyRow struct {
 	// tab's mixed delta walk prefers real spend for that slice. (See
 	// UpdateSessionVirtualCost for the rare mid-session-billing-flip case.)
 	VirtualCostUSD float64
-	UpdatedAt      string // RFC3339Nano of the day's last spend; "" if unknown
+	UpdatedAtNS    int64 `json:"-"` // Unix nanoseconds of the day's last spend; zero if unknown
 	// Model is the LLM model display name the session reported, denormalised
 	// onto the row at write time (the model sibling of ConvID) so the Costs
 	// tab's per-agent breakdown keeps naming a retired agent's model after
@@ -2321,13 +2308,13 @@ type CostDailyRow struct {
 // on — day, actor keys, the timestamp and the model — minus the raw
 // cumulative the walk consumes.
 type CostDelta struct {
-	Day       string
-	ConvID    string
-	SessionID string
-	USD       float64
-	UpdatedAt string // RFC3339Nano of the day's last spend; "" if unknown
-	Model     string // model display name denormalised onto the row; "" if unknown
-	Harness   string // harness denormalised onto the row; "" if unknown/pre-v103
+	Day         string
+	ConvID      string
+	SessionID   string
+	USD         float64
+	UpdatedAtNS int64  `json:"-"` // Unix nanoseconds of the day's last spend; zero if unknown
+	Model       string // model display name denormalised onto the row; "" if unknown
+	Harness     string // harness denormalised onto the row; "" if unknown/pre-v103
 	// Kind is "real" or "what_if" for MixedCostDeltas. The legacy single-column
 	// CostDeltas leaves it empty for backward compatibility.
 	Kind string
@@ -2412,7 +2399,7 @@ func CostDeltas(rows []CostDailyRow, whatif bool) []CostDelta {
 		prevKey = key
 		prevSession = r.SessionID
 		if d := val - baseline; d > 0 {
-			out = append(out, CostDelta{Day: r.Day, ConvID: r.ConvID, SessionID: r.SessionID, USD: d, UpdatedAt: r.UpdatedAt, Model: r.Model, Harness: r.Harness})
+			out = append(out, CostDelta{Day: r.Day, ConvID: r.ConvID, SessionID: r.SessionID, USD: d, UpdatedAtNS: r.UpdatedAtNS, Model: r.Model, Harness: r.Harness})
 			baseline = val
 		}
 	}
@@ -2456,7 +2443,7 @@ func MixedCostDeltas(rows []CostDailyRow) []CostDelta {
 		if d := val - baseline; d > 0 {
 			out = append(out, CostDelta{
 				Day: r.Day, ConvID: r.ConvID, SessionID: r.SessionID, USD: d,
-				UpdatedAt: r.UpdatedAt, Model: r.Model, Harness: r.Harness, Kind: kind,
+				UpdatedAtNS: r.UpdatedAtNS, Model: r.Model, Harness: r.Harness, Kind: kind,
 			})
 			baseline = val
 		}
@@ -2514,19 +2501,9 @@ func AllCostDailyRows() ([]CostDailyRow, error) {
 	if err != nil {
 		return nil, err
 	}
-	// The SQL ORDER BY is kept, but it is NO LONGER LOAD-BEARING for the walk —
-	// the Go sort below is. It stays because v133's expression index matches it,
-	// so SQLite still returns rows near-sorted and this hot read avoids building
-	// a temporary B-tree on every dashboard poll; the Go pass then costs almost
-	// nothing on an already-ordered slice.
-	//
-	// Why SQL cannot own this order (TCL-932): updated_at is RFC3339Nano
-	// compared by SQLite as TEXT, and lexical order over that column is not
-	// chronological order. sortCostDailyRowsForWalk states the column contract
-	// and the inversions; it is not restated here on purpose. An inverted pair
-	// makes CostDeltas read a carry-forward resume as a below-peak drop, reset
-	// the baseline, and double-count the conversation — the
-	// summed-instead-of-high-water figure that reached the Costs dashboard.
+	// v181 makes this ORDER BY load-bearing again: updated_at is INTEGER Unix
+	// nanoseconds, so SQLite's order is exact and the walk no longer needs a Go
+	// repair sort over variable-width/multi-zone text spellings.
 	rows, err := db.Query(`SELECT session_id, day, conv_id, cost_usd, virtual_cost_usd, updated_at, model, harness
 		FROM session_cost_daily
 		ORDER BY COALESCE(NULLIF(conv_id, ''), session_id), day, updated_at, session_id`)
@@ -2537,187 +2514,36 @@ func AllCostDailyRows() ([]CostDailyRow, error) {
 	var out []CostDailyRow
 	for rows.Next() {
 		var r CostDailyRow
-		if err := rows.Scan(&r.SessionID, &r.Day, &r.ConvID, &r.CostUSD, &r.VirtualCostUSD, &r.UpdatedAt, &r.Model, &r.Harness); err != nil {
+		var updatedAt dbTimestamp
+		if err := rows.Scan(&r.SessionID, &r.Day, &r.ConvID, &r.CostUSD, &r.VirtualCostUSD, &updatedAt, &r.Model, &r.Harness); err != nil {
 			return nil, err
 		}
+		r.UpdatedAtNS = updatedAt.UnixNano()
 		out = append(out, r)
 	}
-	sortCostDailyRowsForWalk(out)
 	return out, rows.Err()
 }
 
-// costDailyConvKey is the walk's grouping key: the denormalised conv_id, or the
-// session_id for the rare row that has none. It is the Go twin of the query's
-// COALESCE/NULLIF fallback from conv_id to session_id, and of CostDeltas's own
-// fallback — three copies of one rule, so it is stated once here and used by
-// the sort.
-func costDailyConvKey(r CostDailyRow) string {
-	if r.ConvID != "" {
-		return r.ConvID
-	}
-	return r.SessionID
-}
-
-// sortCostDailyRowsForWalk establishes the order CostDeltas documents as its
-// precondition — (conv-key, day, updated_at CHRONOLOGICALLY, session_id) —
-// by parsing the timestamp rather than comparing its spelling.
-//
-// WHY THE SPELLING CANNOT BE TRUSTED (TCL-932). This is the one authoritative
-// statement; UpdateSessionCost and AllCostDailyRows point here rather than
-// restate it. A partial retelling is what sent the first reader wrong, and a
-// single source that is paraphrased elsewhere is not single.
-//
-// THE COLUMN CONTRACT, not one writer's habit. When present, updated_at is
-// INTENDED to be an RFC3339Nano spelling; "" means unknown, which the schema
-// default and pre-updated_at history can both leave behind (see the unusable-
-// stamp paragraph below — this is one contract, not two). Nothing enforces the
-// format at the column, so "intended" is the strongest available claim. And
-// where a stamp is present, its zone belongs to the WRITER or the SOURCE it was
-// copied from, not to this process — the writers disagree:
-//
-//   - UpdateSessionCost stamps time.Now(), so those rows carry the local zone
-//     of whatever machine recorded the spend.
-//   - ReplaceSessionVirtualCostHistory and
-//     ReplaceSessionVirtualCostHistoryForGeneration format the caller's
-//     VirtualCostDailySnapshot.UpdatedAt verbatim, preserving whatever
-//     *time.Location it arrived with (only a zero value falls back to
-//     time.Now()). A fixed-zone snapshot is stored in that fixed zone.
-//   - v53 backfilled pre-existing timestamp STRINGS rather than generating
-//     stamps at all.
-//
-// So a single table can hold Z stamps and several different numeric offsets at
-// once, and an offset row is not evidence of anything about this machine.
-// RFC3339Nano additionally TRIMS TRAILING ZEROS from the fraction. The column
-// is therefore variable-width AND multi-zone, SQLite compares it as TEXT, and
-// lexical order is not chronological order. Two CONCRETE inversions, neither
-// of them the exhaustive rule:
-//
-//   - Trimmed fractions, WITHIN one zone. Under UTC the stamp ends in 'Z'
-//     (0x5A), which is ABOVE both '.' (0x2E) and every digit (0x30-0x39), so a
-//     stamp that stops early sorts AFTER its own extensions: "…07Z" after
-//     "…07.000001Z", "…07.9Z" after "…07.95Z". Within a single zone this one is
-//     exact: the order inverts iff the earlier stamp's trimmed fraction is a
-//     proper PREFIX of the later one's, a whole second being the empty-prefix
-//     case. This is the shape that reached CI. Under a numeric offset the stamp
-//     ends in '+' (0x2B) or '-' (0x2D), both BELOW '.' and every digit, so this
-//     particular inversion cannot occur there — which is why the defect
-//     presented as UTC-only and why this half will not reproduce for a reader
-//     whose rows carry offsets.
-//
-//   - Disagreeing offsets, ACROSS zones. Comparing two spellings of different
-//     offsets compares wall-clock text, not instants, so any mix of offsets can
-//     disagree with time — no DST involved, and no shared zone required, since
-//     the writers above can put unrelated offsets in one table. One concrete
-//     instance is a DST FALL-BACK, where a single local day holds two offsets
-//     and the later instant carries the SMALLER one:
-//
-//     earlier 2026-10-25T02:59:00+02:00 (00:59Z)
-//     later   2026-10-25T02:00:00+01:00 (01:00Z)
-//
-//     — lexically inverted, and note both land on the SAME day value, so the
-//     outer day key does not shield it. Fall-back specifically: spring-forward
-//     moves the offset the other way and does not have this relationship. Treat
-//     this as one worked example of cross-offset disagreement, not as its
-//     shape.
-//
-// Both are fixed by the same thing, and neither by widening the format:
-// compare parsed instants. time.Parse recovers the instant whatever spelling or
-// offset was emitted, so the walk's contract ("the tie-break is chronological,
-// and this matters") is true by construction instead of by format coincidence.
-// That also means the fix does not depend on enumerating the inversions — which
-// is the point, since the list above is examples and the parse is general.
-//
-// The CODE has consistently been MORE CORRECT than the comments describing it:
-// cross-offset rows were handled before anyone noticed they could exist. Worth
-// stating rather than quietly enjoying — a fix that outperforms its own
-// documentation only bites the next reader, who trusts the documentation.
-//
-// The order is TOTAL. Rows that share an instant, and rows whose stamps are
-// both unusable, fall through to session_id — the same final tiebreaker the
-// query has always applied — so no pair is left to the sort's discretion.
-//
-// An absent or unparseable stamp sorts FIRST, so every row the walk cannot
-// place in time forms one contiguous block ahead of every row it can, and none
-// interleaves between two dated rows.
-//
-// For "" — the documented value for an unknown stamp, and the only unusable
-// value this package's writers can produce — that is the position lexical
-// order already gave it, so rows written before updated_at existed keep the
-// place in the walk they have always had. A non-empty UNPARSEABLE stamp does
-// move: "not-a-timestamp" sorted LAST before ('n' > '2'). That is a deliberate
-// behaviour change, not a preservation, and is said plainly because a change
-// described as a preservation is this ticket's own defect in miniature.
-//
-// Day needs no parsing — it is fixed-width "2006-01-02", where lexical and
-// chronological order coincide. Only the variable-width field was ever the
-// problem.
-func sortCostDailyRowsForWalk(rows []CostDailyRow) {
-	sort.SliceStable(rows, func(i, j int) bool {
-		a, b := rows[i], rows[j]
-		if ak, bk := costDailyConvKey(a), costDailyConvKey(b); ak != bk {
-			return ak < bk
-		}
-		if a.Day != b.Day {
-			return a.Day < b.Day
-		}
-		at, aOK := parseCostDailyStamp(a.UpdatedAt)
-		bt, bOK := parseCostDailyStamp(b.UpdatedAt)
-		switch {
-		case aOK && bOK:
-			if !at.Equal(bt) {
-				return at.Before(bt)
-			}
-		case aOK != bOK:
-			// Exactly one is usable; the unusable one goes first.
-			return bOK
-		}
-		return a.SessionID < b.SessionID
-	})
-}
-
-// CompareCostStamps orders two updated_at spellings by the INSTANT they
-// record, returning -1, 0 or 1. Callers outside this package compare cost
-// stamps through here rather than with < and >, because the column's spelling
-// does not sort chronologically — see sortCostDailyRowsForWalk for the
-// contract and the inversions.
-//
-// Unusable stamps (unknown or unparseable) rank BELOW every usable one and
-// equal to each other, matching the position the walk gives them.
-func CompareCostStamps(a, b string) int {
-	at, aOK := parseCostDailyStamp(a)
-	bt, bOK := parseCostDailyStamp(b)
+// CompareCostInstants orders two internal Unix-nanosecond instants. Zero is
+// the in-memory representation of SQL NULL: it ranks below every known instant
+// (including pre-epoch values) and equal to another absence. Malformed runtime
+// values are impossible after v181 because STRICT INTEGER storage and the
+// migration's loud validation reject them at the database boundary.
+func CompareCostInstants(a, b int64) int {
 	switch {
-	case aOK && bOK:
-		switch {
-		case at.Before(bt):
-			return -1
-		case bt.Before(at):
-			return 1
-		default:
-			return 0
-		}
-	case aOK:
-		return 1
-	case bOK:
+	case a == 0 && b == 0:
+		return 0
+	case a == 0:
 		return -1
+	case b == 0:
+		return 1
+	case a < b:
+		return -1
+	case a > b:
+		return 1
 	default:
 		return 0
 	}
-}
-
-// parseCostDailyStamp reads an updated_at as the instant it records. The bool
-// is false for the empty stamp ("" if unknown, per CostDailyRow) and for any
-// value this process cannot parse — reported rather than swallowed as the zero
-// time, because "no stamp" and "midnight in year 1" must not sort alike.
-func parseCostDailyStamp(stamp string) (time.Time, bool) {
-	if stamp == "" {
-		return time.Time{}, false
-	}
-	parsed, err := time.Parse(time.RFC3339Nano, stamp)
-	if err != nil {
-		return time.Time{}, false
-	}
-	return parsed, true
 }
 
 // HasAnyRealCost reports whether any REAL pay-per-token spend has ever been

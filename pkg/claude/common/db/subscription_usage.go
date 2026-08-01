@@ -68,8 +68,8 @@ func SubscriptionUsageHistorySince(since time.Time) ([]SubscriptionUsageHistoryR
 	if err != nil {
 		return nil, err
 	}
-	bucketCutoff := since.UTC().Truncate(SubscriptionUsageSampleInterval).Format(time.RFC3339Nano)
-	observedCutoff := since.UTC().Format(time.RFC3339Nano)
+	bucketCutoff := dbTime(since.UTC().Truncate(SubscriptionUsageSampleInterval))
+	observedCutoff := dbTime(since.UTC())
 	rows, err := d.Query(`SELECT s.provider, w.window_name, w.duration_seconds,
 		w.used_percent, w.resets_at, w.observed_at, w.source, w.excluded
 		FROM subscription_usage_samples s
@@ -86,22 +86,14 @@ func SubscriptionUsageHistorySince(since time.Time) ([]SubscriptionUsageHistoryR
 	for rows.Next() {
 		var row SubscriptionUsageHistoryRow
 		var durationSeconds int64
-		var resetsAt, observedAt string
+		var resetsAt, observedAt dbTimestamp
 		if err := rows.Scan(&row.Provider, &row.WindowName, &durationSeconds,
 			&row.UsedPercent, &resetsAt, &observedAt, &row.Source, &row.Excluded); err != nil {
 			return nil, fmt.Errorf("read subscription usage history: scan: %w", err)
 		}
 		row.Duration = time.Duration(durationSeconds) * time.Second
-		if resetsAt != "" {
-			row.ResetsAt, err = time.Parse(time.RFC3339Nano, resetsAt)
-			if err != nil {
-				return nil, fmt.Errorf("read subscription usage history: resets_at: %w", err)
-			}
-		}
-		row.ObservedAt, err = time.Parse(time.RFC3339Nano, observedAt)
-		if err != nil {
-			return nil, fmt.Errorf("read subscription usage history: observed_at: %w", err)
-		}
+		row.ResetsAt = resetsAt.Time()
+		row.ObservedAt = observedAt.Time()
 		out = append(out, row)
 	}
 	if err := rows.Err(); err != nil {
@@ -127,7 +119,7 @@ func SetSubscriptionUsagePointExcluded(provider, windowName string, observedAt t
 	result, err := d.Exec(`UPDATE subscription_usage_windows SET excluded = ?
 		WHERE window_name = ? AND observed_at = ? AND sample_id IN (
 			SELECT id FROM subscription_usage_samples WHERE provider = ?
-		)`, excluded, windowName, observedAt.UTC().Format(time.RFC3339Nano), provider)
+		)`, excluded, windowName, dbTime(observedAt.UTC()), provider)
 	if err != nil {
 		return fmt.Errorf("set subscription usage exclusion: %w", err)
 	}
@@ -209,7 +201,7 @@ func validateSubscriptionUsageSample(sample SubscriptionUsageSample) (Subscripti
 }
 
 func saveSubscriptionUsageSampleTx(tx *sql.Tx, sample SubscriptionUsageSample, now time.Time) (bool, error) {
-	cutoff := now.Add(-DefaultSubscriptionUsageRetention).Format(time.RFC3339Nano)
+	cutoff := dbTime(now.Add(-DefaultSubscriptionUsageRetention))
 	if _, err := tx.Exec(`DELETE FROM subscription_usage_samples WHERE sampled_at < ?`, cutoff); err != nil {
 		return false, fmt.Errorf("save subscription usage sample: prune: %w", err)
 	}
@@ -219,7 +211,7 @@ func saveSubscriptionUsageSampleTx(tx *sql.Tx, sample SubscriptionUsageSample, n
 	if sampledAt.Before(now.Add(-DefaultSubscriptionUsageRetention)) {
 		return false, nil // delayed stale observations must not regrow pruned history.
 	}
-	sampledStr := sampledAt.Format(time.RFC3339Nano)
+	sampledStr := dbTime(sampledAt)
 	var id int64
 	if _, err := tx.Exec(`INSERT OR IGNORE INTO subscription_usage_samples
 		(provider, sampled_at) VALUES (?, ?)`, sample.Provider, sampledStr); err != nil {
@@ -232,12 +224,12 @@ func saveSubscriptionUsageSampleTx(tx *sql.Tx, sample SubscriptionUsageSample, n
 
 	stored := false
 	for _, w := range sample.Windows {
-		var existingObserved string
+		var existingObserved dbTimestamp
 		err := tx.QueryRow(`SELECT observed_at FROM subscription_usage_windows
 			WHERE sample_id = ? AND window_name = ?`, id, w.Name).Scan(&existingObserved)
 		switch err {
 		case nil:
-			if existing, parseErr := time.Parse(time.RFC3339Nano, existingObserved); parseErr == nil && !observedAt.After(existing) {
+			if !observedAt.After(existingObserved.Time()) {
 				continue
 			}
 		case sql.ErrNoRows:
@@ -245,9 +237,9 @@ func saveSubscriptionUsageSampleTx(tx *sql.Tx, sample SubscriptionUsageSample, n
 		default:
 			return false, fmt.Errorf("save subscription usage sample: find window %q: %w", w.Name, err)
 		}
-		resetsAt := ""
+		var resetsAt any
 		if !w.ResetsAt.IsZero() {
-			resetsAt = w.ResetsAt.UTC().Format(time.RFC3339Nano)
+			resetsAt = dbTime(w.ResetsAt.UTC())
 		}
 		if _, err := tx.Exec(`INSERT INTO subscription_usage_windows
 			(sample_id, window_name, duration_seconds, used_percent, resets_at, observed_at, source)
@@ -260,7 +252,7 @@ func saveSubscriptionUsageSampleTx(tx *sql.Tx, sample SubscriptionUsageSample, n
 				source = excluded.source,
 				excluded = 0`,
 			id, w.Name, int64(w.Duration/time.Second), w.UsedPercent, resetsAt,
-			observedAt.Format(time.RFC3339Nano), sample.Source); err != nil {
+			dbTime(observedAt), sample.Source); err != nil {
 			return false, fmt.Errorf("save subscription usage sample: insert window %q: %w", w.Name, err)
 		}
 		stored = true
@@ -276,7 +268,7 @@ func PruneSubscriptionUsageHistory(cutoff time.Time) (int64, error) {
 		return 0, err
 	}
 	result, err := d.Exec(`DELETE FROM subscription_usage_samples WHERE sampled_at < ?`,
-		cutoff.UTC().Format(time.RFC3339Nano))
+		dbTime(cutoff.UTC()))
 	if err != nil {
 		return 0, fmt.Errorf("prune subscription usage history: %w", err)
 	}

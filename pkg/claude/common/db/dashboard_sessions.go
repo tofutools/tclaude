@@ -28,13 +28,13 @@ func PreserveDashboardSessionGrace(tokenHash string, expiresAt, now time.Time) e
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.Exec(`DELETE FROM dashboard_session_grace WHERE expires_at <= ?`, now.Unix()); err != nil {
+	if _, err := tx.Exec(`DELETE FROM dashboard_session_grace WHERE expires_at <= ?`, dbTime(now)); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(`INSERT INTO dashboard_session_grace (token_hash, expires_at, created_at)
 		VALUES (?, ?, ?)
 		ON CONFLICT(token_hash) DO UPDATE SET expires_at = excluded.expires_at`,
-		tokenHash, expiresAt.Unix(), now.UTC().Format(time.RFC3339Nano)); err != nil {
+		tokenHash, dbTime(expiresAt), dbTime(now.UTC())); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -53,7 +53,7 @@ func ListDashboardSessionGrace(now time.Time) ([]DashboardSessionGrace, error) {
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.Exec(`DELETE FROM dashboard_session_grace WHERE expires_at <= ?`, now.Unix()); err != nil {
+	if _, err := tx.Exec(`DELETE FROM dashboard_session_grace WHERE expires_at <= ?`, dbTime(now)); err != nil {
 		return nil, err
 	}
 	rows, err := tx.Query(`SELECT token_hash, expires_at
@@ -64,12 +64,12 @@ func ListDashboardSessionGrace(now time.Time) ([]DashboardSessionGrace, error) {
 	var out []DashboardSessionGrace
 	for rows.Next() {
 		var item DashboardSessionGrace
-		var expiresUnix int64
-		if err := rows.Scan(&item.TokenHash, &expiresUnix); err != nil {
+		var expiresAt dbTimestamp
+		if err := rows.Scan(&item.TokenHash, &expiresAt); err != nil {
 			_ = rows.Close()
 			return nil, err
 		}
-		item.ExpiresAt = time.Unix(expiresUnix, 0).UTC()
+		item.ExpiresAt = expiresAt.Time()
 		out = append(out, item)
 	}
 	if err := rows.Close(); err != nil {

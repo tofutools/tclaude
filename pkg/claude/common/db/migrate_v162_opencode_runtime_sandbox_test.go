@@ -16,7 +16,7 @@ func TestMigrateV161toV162AddsOpenCodeRuntimeSandboxAuthority(t *testing.T) {
 	mustExec(t, d, `UPDATE schema_version SET version = 161`)
 	mustExec(t, d, `INSERT INTO opencode_runtimes
 		(session_id, server_url, password, cwd, created_at, updated_at)
-		VALUES ('spwn-legacy', 'http://127.0.0.1:43210', 'private', '/tmp/project', 'now', 'now')`)
+		VALUES ('spwn-legacy', 'http://127.0.0.1:43210', 'private', '/tmp/project', 1767225600000000000, 1767225600000000000)`)
 
 	require.NoError(t, migrateV161toV162(d))
 	assert.Equal(t, 162, schemaVersion(d))
@@ -26,5 +26,5 @@ func TestMigrateV161toV162AddsOpenCodeRuntimeSandboxAuthority(t *testing.T) {
 	assert.Equal(t, "harness-builtin", implementation)
 	assert.Empty(t, spec)
 	require.NoError(t, migrateV161toV162(d), "partially applied migration converges")
-	assert.Equal(t, 180, currentVersion, "tripwire: bump this with the next migration")
+	assert.Equal(t, 181, currentVersion, "tripwire: bump this with the next migration")
 }

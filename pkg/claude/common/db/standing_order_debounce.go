@@ -71,16 +71,16 @@ func ScheduleStandingDebounce(p *StandingDebounce) error {
 
 func scanStandingDebounce(s rowScanner) (*StandingDebounce, error) {
 	var p StandingDebounce
-	var dueRaw, maxRaw, updatedRaw string
+	var dueAt, maxDueAt, updatedAt dbTimestamp
 	if err := s.Scan(
 		&p.OrderID, &p.OrderRevision, &p.TargetAgent, &p.TargetConv,
-		&p.Epoch, &p.Harness, &p.Detail, &dueRaw, &maxRaw, &updatedRaw,
+		&p.Epoch, &p.Harness, &p.Detail, &dueAt, &maxDueAt, &updatedAt,
 	); err != nil {
 		return nil, err
 	}
-	p.DueAt = parseStandingTime(dueRaw)
-	p.MaxDueAt = parseStandingTime(maxRaw)
-	p.UpdatedAt = parseStandingTime(updatedRaw)
+	p.DueAt = dueAt.Time()
+	p.MaxDueAt = maxDueAt.Time()
+	p.UpdatedAt = updatedAt.Time()
 	return &p, nil
 }
 

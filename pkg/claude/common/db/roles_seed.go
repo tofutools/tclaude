@@ -112,7 +112,7 @@ func ensureSeededRoles(d *sql.DB) error {
 		return nil
 	}
 
-	now := time.Now().Format(time.RFC3339Nano)
+	now := dbTime(time.Now())
 	tx, err := d.Begin()
 	if err != nil {
 		return fmt.Errorf("ensure seed roles (begin): %w", err)

@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -202,10 +203,11 @@ func TestProcessSnippetAPICorruptRowIsolation(t *testing.T) {
 	createProcessSnippetRequest(t, "Healthy")
 	database, err := db.Open()
 	require.NoError(t, err)
+	stamp := time.Date(2026, 7, 18, 0, 0, 0, 0, time.UTC).UnixNano()
 	_, err = database.Exec(`INSERT INTO process_snippets
 		(id, name, name_key, envelope_json, revision, created_at, updated_at)
 		VALUES (?, 'Broken', 'broken', '{not-json', 1, ?, ?)`,
-		"psn_11111111111111111111111111111111", "2026-07-18T00:00:00Z", "2026-07-18T00:00:00Z")
+		"psn_11111111111111111111111111111111", stamp, stamp)
 	require.NoError(t, err)
 
 	recorder := serveProcessSnippetRequest(dashboardRequest(http.MethodGet, "/api/process/snippets", ""))
@@ -232,7 +234,7 @@ func TestProcessSnippetAPICorruptRowIsolation(t *testing.T) {
 	_, err = database.Exec(`INSERT INTO process_snippets
 		(id, name, name_key, envelope_json, revision, created_at, updated_at)
 		VALUES (?, 'Oversized', 'oversized', ?, 1, ?, ?)`,
-		oversizedID, oversized, "2026-07-18T00:00:00Z", "2026-07-18T00:00:00Z")
+		oversizedID, oversized, stamp, stamp)
 	require.NoError(t, err)
 	rename := serveProcessSnippetRequest(dashboardRequest(http.MethodPatch, "/api/process/snippets/"+oversizedID,
 		`{"name":"Still manageable","revision":1}`))

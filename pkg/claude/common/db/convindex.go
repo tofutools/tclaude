@@ -10,7 +10,7 @@ type ConvIndexRow struct {
 	ConvID       string
 	ProjectDir   string // Claude project directory path (e.g., ~/.claude/projects/-Users-foo-git-bar)
 	FullPath     string
-	FileMtime    int64 // Unix seconds
+	FileMtime    time.Time // zero means no file timestamp
 	FileSize     int64
 	FirstPrompt  string
 	Summary      string
@@ -50,6 +50,9 @@ func UpsertConvIndex(row *ConvIndexRow) error {
 	if err != nil {
 		return err
 	}
+	if row.IndexedAt.IsZero() {
+		row.IndexedAt = time.Now()
+	}
 
 	sidechain := 0
 	if row.IsSidechain {
@@ -88,10 +91,10 @@ func UpsertConvIndex(row *ConvIndexRow) error {
 		// Claude Code scanner builds rows without a harness, coalesced to
 		// 'claude'); updating it here would clobber a 'codex' tag the
 		// Codex scanner set on INSERT back to 'claude' on the next rescan.
-		row.ConvID, row.ProjectDir, row.FullPath, row.FileMtime, row.FileSize,
+		row.ConvID, row.ProjectDir, row.FullPath, nullableFileMtime(row.FileMtime), row.FileSize,
 		row.FirstPrompt, row.Summary, row.CustomTitle, row.MessageCount,
-		row.Created, row.Modified, row.GitBranch, row.ProjectPath,
-		sidechain, row.IndexedAt.Format(time.RFC3339Nano), row.GitBranchStartup, harness)
+		nullableDBTimeText(row.Created), nullableDBTimeText(row.Modified), row.GitBranch, row.ProjectPath,
+		sidechain, dbTime(row.IndexedAt), row.GitBranchStartup, harness)
 	return err
 }
 
@@ -111,7 +114,7 @@ func SetConvIndexCustomTitle(convID, title, harness string) error {
 	if err != nil {
 		return err
 	}
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := dbTime(time.Now().UTC())
 	_, err = conn.Exec(`INSERT INTO conv_index
 		(conv_id, project_dir, full_path, custom_title, indexed_at, harness)
 		VALUES (?, '', '', ?, ?, ?)
@@ -183,7 +186,7 @@ func UpsertConvIndexBranchSnapshot(row *ConvIndexRow) error {
 		   ELSE conv_index.full_path
 		 END,
 		 file_mtime=CASE
-		   WHEN conv_index.file_mtime = 0
+		   WHEN conv_index.file_mtime IS NULL
 		   THEN excluded.file_mtime
 		   ELSE conv_index.file_mtime
 		 END,
@@ -193,14 +196,14 @@ func UpsertConvIndexBranchSnapshot(row *ConvIndexRow) error {
 		   ELSE conv_index.file_size
 		 END,
 		 created=CASE
-		   WHEN conv_index.created = '' OR conv_index.created IS NULL
+		   WHEN conv_index.created IS NULL
 		   THEN excluded.created
 		   ELSE conv_index.created
 		 END,
 		 indexed_at=excluded.indexed_at`,
-		row.ConvID, row.ProjectDir, row.FullPath, row.FileMtime, row.FileSize,
-		row.GitBranch, row.ProjectPath, row.IndexedAt.Format(time.RFC3339Nano),
-		row.GitBranchStartup, row.Created, harness)
+		row.ConvID, row.ProjectDir, row.FullPath, nullableFileMtime(row.FileMtime), row.FileSize,
+		row.GitBranch, row.ProjectPath, dbTime(row.IndexedAt),
+		row.GitBranchStartup, nullableDBTimeText(row.Created), harness)
 	return err
 }
 
@@ -263,7 +266,7 @@ func ListRecentConvIndex(limit int) ([]*ConvIndexRow, error) {
 		created, modified, git_branch, project_path, is_sidechain, indexed_at,
 		archived_at, git_branch_startup, harness
 		FROM conv_index
-		WHERE is_sidechain = 0 AND archived_at = ''
+		WHERE is_sidechain = 0 AND archived_at IS NULL
 		ORDER BY file_mtime DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
@@ -335,12 +338,12 @@ func MaxConvIndexUpdatedAt() (time.Time, error) {
 		return time.Time{}, err
 	}
 
-	var indexedAt string
-	err = db.QueryRow(`SELECT COALESCE(MAX(indexed_at), '') FROM conv_index`).Scan(&indexedAt)
-	if err != nil || indexedAt == "" {
+	var indexedAt dbTimestamp
+	err = db.QueryRow(`SELECT MAX(indexed_at) FROM conv_index`).Scan(&indexedAt)
+	if err != nil || !indexedAt.valid {
 		return time.Time{}, err
 	}
-	return time.Parse(time.RFC3339Nano, indexedAt)
+	return indexedAt.Time(), nil
 }
 
 // MaxConvIndexUpdatedAtForProject returns the maximum indexed_at for a specific project.
@@ -350,12 +353,12 @@ func MaxConvIndexUpdatedAtForProject(projectDir string) (time.Time, error) {
 		return time.Time{}, err
 	}
 
-	var indexedAt string
-	err = db.QueryRow(`SELECT COALESCE(MAX(indexed_at), '') FROM conv_index WHERE project_dir = ?`, projectDir).Scan(&indexedAt)
-	if err != nil || indexedAt == "" {
+	var indexedAt dbTimestamp
+	err = db.QueryRow(`SELECT MAX(indexed_at) FROM conv_index WHERE project_dir = ?`, projectDir).Scan(&indexedAt)
+	if err != nil || !indexedAt.valid {
 		return time.Time{}, err
 	}
-	return time.Parse(time.RFC3339Nano, indexedAt)
+	return indexedAt.Time(), nil
 }
 
 // DeleteConvIndexByProjectDir removes all entries for a project directory.
@@ -384,20 +387,32 @@ func scanConvIndexRows(rows *sql.Rows) ([]*ConvIndexRow, error) {
 func scanOneConvIndex(s interface{ Scan(...any) error }) (*ConvIndexRow, error) {
 	var r ConvIndexRow
 	var sidechain int
-	var indexedAt, archivedAt string
-	err := s.Scan(&r.ConvID, &r.ProjectDir, &r.FullPath, &r.FileMtime, &r.FileSize,
+	var fileMtime, created, modified, indexedAt, archivedAt dbTimestamp
+	err := s.Scan(&r.ConvID, &r.ProjectDir, &r.FullPath, &fileMtime, &r.FileSize,
 		&r.FirstPrompt, &r.Summary, &r.CustomTitle, &r.MessageCount,
-		&r.Created, &r.Modified, &r.GitBranch, &r.ProjectPath,
+		&created, &modified, &r.GitBranch, &r.ProjectPath,
 		&sidechain, &indexedAt, &archivedAt, &r.GitBranchStartup, &r.Harness)
 	if err != nil {
 		return nil, err
 	}
 	r.IsSidechain = sidechain != 0
-	r.IndexedAt, _ = time.Parse(time.RFC3339Nano, indexedAt)
-	if archivedAt != "" {
-		r.ArchivedAt, _ = time.Parse(time.RFC3339Nano, archivedAt)
+	r.FileMtime = fileMtime.Time()
+	if !created.Time().IsZero() {
+		r.Created = created.RFC3339Nano()
 	}
+	if !modified.Time().IsZero() {
+		r.Modified = modified.RFC3339Nano()
+	}
+	r.IndexedAt = indexedAt.Time()
+	r.ArchivedAt = archivedAt.Time()
 	return &r, nil
+}
+
+func nullableFileMtime(value time.Time) any {
+	if value.IsZero() {
+		return nil
+	}
+	return dbTime(value.Round(0).UTC())
 }
 
 // SetConvIndexArchived stamps or clears the archived_at column on a
@@ -413,9 +428,9 @@ func SetConvIndexArchived(convID string, archived bool) error {
 	if err != nil {
 		return err
 	}
-	val := ""
+	var val any
 	if archived {
-		val = time.Now().UTC().Format(time.RFC3339Nano)
+		val = dbTime(time.Now().UTC())
 	}
 	res, err := d.Exec(`UPDATE conv_index SET archived_at = ? WHERE conv_id = ?`,
 		val, convID)

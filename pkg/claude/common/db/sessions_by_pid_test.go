@@ -23,7 +23,7 @@ func stampSessionUpdatedAt(t *testing.T, id string, at time.Time) {
 	handle, err := Open()
 	require.NoError(t, err)
 	_, err = handle.Exec(`UPDATE sessions SET updated_at = ? WHERE id = ?`,
-		at.UTC().Truncate(time.Second).Format(time.RFC3339Nano), id)
+		dbTime(at.UTC().Truncate(time.Second)), id)
 	require.NoError(t, err)
 }
 

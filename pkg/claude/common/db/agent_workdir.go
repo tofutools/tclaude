@@ -10,7 +10,7 @@ import (
 //
 //   - Dir          the directory of the most-recent file the agent edited
 //   - WorktreeRoot the git working-tree root containing Dir ("" if Dir
-//                  isn't in a git repo)
+//     isn't in a git repo)
 //   - Branch       the git branch checked out at WorktreeRoot ("" likewise)
 //
 // The PostToolUse hook callback computes all three on every file edit
@@ -55,7 +55,7 @@ func UpsertAgentWorkdir(convID, dir, worktreeRoot, branch string) error {
 			dir = excluded.dir, worktree_root = excluded.worktree_root,
 			branch = excluded.branch, updated_at = excluded.updated_at,
 			agent_id = excluded.agent_id`,
-		convID, dir, worktreeRoot, branch, time.Now().Format(time.RFC3339Nano), convID)
+		convID, dir, worktreeRoot, branch, dbTime(time.Now()), convID)
 	return err
 }
 
@@ -96,17 +96,17 @@ func GetAgentWorkdir(convID string) (AgentWorkdir, error) {
 		return AgentWorkdir{}, err
 	}
 	var w AgentWorkdir
-	var updatedStr string
+	var updatedAt dbTimestamp
 	err = conn.QueryRow(`SELECT conv_id, dir, worktree_root, branch, updated_at
 		FROM agent_workdir WHERE conv_id = ?`, convID).
-		Scan(&w.ConvID, &w.Dir, &w.WorktreeRoot, &w.Branch, &updatedStr)
+		Scan(&w.ConvID, &w.Dir, &w.WorktreeRoot, &w.Branch, &updatedAt)
 	if err == sql.ErrNoRows {
 		return AgentWorkdir{}, nil
 	}
 	if err != nil {
 		return AgentWorkdir{}, err
 	}
-	w.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedStr)
+	w.UpdatedAt = updatedAt.Time()
 	return w, nil
 }
 

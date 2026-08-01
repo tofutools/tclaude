@@ -56,8 +56,8 @@ func ClaimCloneSlot(sourceConvID string, cooldown time.Duration, now time.Time) 
 	if err != nil {
 		return err
 	}
-	threshold := now.Add(-cooldown).Format(time.RFC3339Nano)
-	nowStr := now.Format(time.RFC3339Nano)
+	threshold := dbTime(now.Add(-cooldown))
+	nowStr := dbTime(now)
 
 	// INSERT only if no prior row for this source within cooldown.
 	// SQLite executes INSERT ... SELECT ... WHERE NOT EXISTS as a
@@ -101,17 +101,17 @@ func LatestCloneAt(sourceConvID string) (time.Time, error) {
 	if sourceAgentID == "" {
 		return time.Time{}, nil
 	}
-	var s string
+	var clonedAt dbTimestamp
 	err = d.QueryRow(`
 		SELECT cloned_at FROM agent_clone_history
 		WHERE source_agent_id = ?
 		ORDER BY cloned_at DESC
-		LIMIT 1`, sourceAgentID).Scan(&s)
+		LIMIT 1`, sourceAgentID).Scan(&clonedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return time.Time{}, nil
 	}
 	if err != nil {
 		return time.Time{}, err
 	}
-	return time.Parse(time.RFC3339Nano, s)
+	return clonedAt.Time(), nil
 }

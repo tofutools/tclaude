@@ -1,11 +1,14 @@
 package harness
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"testing"
 	"time"
 
@@ -53,7 +56,7 @@ func TestOpenCodeConvStore_ListConvsMapsDirectoryAndCaches(t *testing.T) {
 	assert.Equal(t, "Alpha native title", all[0].Summary)
 	assert.Equal(t, OpenCodeName, all[0].Harness)
 	assert.Equal(t, "2026-07-23T12:01:16Z", all[0].Created)
-	assert.Equal(t, int64(1784808077), all[0].FileMtime)
+	assert.Equal(t, time.UnixMilli(1784808077386).UTC(), all[0].FileMtime)
 
 	local, err := store.ListConvs("/work/a")
 	require.NoError(t, err)
@@ -66,6 +69,63 @@ func TestOpenCodeConvStore_ListConvsMapsDirectoryAndCaches(t *testing.T) {
 	assert.Equal(t, OpenCodeName, row.Harness)
 	assert.Equal(t, "/work/a", row.ProjectPath)
 	assert.Equal(t, "Alpha native title", row.Summary)
+}
+
+func TestOpenCodeFileMtime_AboveUnixNanoRangeSkipsCacheLoudlyWithoutHidingSession(t *testing.T) {
+	withTestDB(t)
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+
+	const maxUnixNanoMillis = int64(^uint64(0)>>1) / int64(time.Millisecond)
+	session := openCodeSession{ID: "ses_out_of_range", Directory: "/work", Updated: maxUnixNanoMillis + 1}
+	entry := openCodeSessionEntry(session)
+	require.False(t, entry.FileMtime.IsZero(), "an invalid present instant must not become the absence sentinel")
+
+	entries, err := openCodeTestStore([]openCodeSession{session}).ListConvs("")
+	require.NoError(t, err, "one bad third-party timestamp must not blank the source listing")
+	require.Len(t, entries, 1)
+	assert.Equal(t, session.ID, entries[0].SessionID)
+
+	row, err := db.GetConvIndex(session.ID)
+	require.NoError(t, err)
+	assert.Nil(t, row, "an unrepresentable timestamp must skip its cache row")
+	assert.Contains(t, logs.String(), "level=ERROR")
+	assert.Contains(t, logs.String(), session.ID)
+	assert.Contains(t, logs.String(), strconv.FormatInt(session.Updated, 10),
+		"the loud failure identifies the offending third-party value")
+	assert.Contains(t, logs.String(), "outside the Unix-nanosecond range")
+}
+
+func TestOpenCodeConvStore_GenericCacheFailureDoesNotHideCLISessions(t *testing.T) {
+	withTestDB(t)
+	d, err := db.Open()
+	require.NoError(t, err)
+	_, err = d.Exec(`CREATE TRIGGER reject_opencode_cache_fixture
+		BEFORE INSERT ON conv_index
+		WHEN NEW.conv_id = 'ses_cache_failure'
+		BEGIN
+			SELECT RAISE(ABORT, 'generic cache failure fixture');
+		END`)
+	require.NoError(t, err)
+
+	session := openCodeSession{
+		ID:        "ses_cache_failure",
+		Title:     "Still visible from the CLI",
+		Created:   1784808076886,
+		Updated:   1784808077386,
+		Directory: "/work/cache-failure",
+	}
+	entries, err := openCodeTestStore([]openCodeSession{session}).ListConvs("")
+	require.NoError(t, err, "a generic cache failure must not suppress source CLI sessions")
+	require.Len(t, entries, 1)
+	assert.Equal(t, session.ID, entries[0].SessionID)
+	assert.Equal(t, session.Title, entries[0].Summary)
+
+	row, err := db.GetConvIndex(session.ID)
+	require.NoError(t, err)
+	assert.Nil(t, row, "the listing came from the CLI even though its cache write failed")
 }
 
 func TestOpenCodeConvStore_ResolveLocalGlobalAndAmbiguous(t *testing.T) {

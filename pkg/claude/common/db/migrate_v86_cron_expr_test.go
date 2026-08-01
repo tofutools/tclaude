@@ -27,7 +27,7 @@ func TestMigrateV85toV86_AddsColumn(t *testing.T) {
 		(name, owner_agent, target_kind, target_agent, group_id, interval_seconds,
 		 subject, body, enabled, created_at, last_run_at, last_run_status)
 		VALUES ('legacy', 'agt_owner', 'conv', 'agt_target', 0, 600,
-		 's', 'b', 1, '2026-07-02T00:00:00Z', '', '')`)
+		 's', 'b', 1, 1782950400000000000, NULL, '')`)
 
 	require.NoError(t, migrateV85toV86(d), "v85→v86")
 

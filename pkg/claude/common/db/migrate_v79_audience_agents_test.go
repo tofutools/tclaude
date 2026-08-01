@@ -58,12 +58,12 @@ func TestMigrateV78toV79_BackfillsAudienceAgents(t *testing.T) {
 	}
 	mustExec(t, d, `INSERT INTO agent_messages
 		(id, group_id, from_conv, to_conv, subject, body, created_at, to_recipients, cc_recipients)
-		VALUES (1, 0, 'sender-conv', 'primary-conv', '', 'hi', '2020-01-01T00:00:00Z',
+		VALUES (1, 0, 'sender-conv', 'primary-conv', '', 'hi', 1577836800000000000,
 		 '["primary-conv"]', '["cc1-conv","cc2-conv"]')`)
 	// A legacy single-recipient row with no audience stays empty.
 	mustExec(t, d, `INSERT INTO agent_messages
 		(id, group_id, from_conv, to_conv, subject, body, created_at)
-		VALUES (2, 0, 'sender-conv', 'lone-conv', '', 'old', '2020-01-02T00:00:00Z')`)
+		VALUES (2, 0, 'sender-conv', 'lone-conv', '', 'old', 1577923200000000000)`)
 
 	require.NoError(t, migrateV78toV79(d), "v78→v79 backfill")
 

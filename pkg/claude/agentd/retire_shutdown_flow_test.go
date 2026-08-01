@@ -165,7 +165,7 @@ func TestRetire_RevocationFailureDoesNotDemoteAgent(t *testing.T) {
 			name:        "retirement state",
 			triggerName: "fail_agent_retire",
 			triggerSQL: `CREATE TRIGGER fail_agent_retire BEFORE UPDATE OF retired_at ON agents
-				WHEN NEW.retired_at <> '' BEGIN SELECT RAISE(FAIL, 'forced retirement failure'); END`,
+				WHEN NEW.retired_at IS NOT NULL BEGIN SELECT RAISE(FAIL, 'forced retirement failure'); END`,
 			wantError: "retire",
 		},
 	}

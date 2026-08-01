@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"testing"
 
@@ -99,12 +100,11 @@ func TestMigrate_ReporterFiresForFreshDB(t *testing.T) {
 	assert.Equal(t, currentVersion, schemaVersion(d))
 }
 
-// TestMigrate_ReporterAlreadyCurrentForPastHeadDB covers the pathological path
-// where the DB's schema is NEWER than this binary (a newer tclaude wrote it,
-// then an older one ran): migrate() applies nothing and fires AlreadyCurrent
-// once, reporting the DB's ACTUAL version (> head) alongside the binary's head
-// so the consumer can flag the anomaly instead of reassuring the operator.
-func TestMigrate_ReporterAlreadyCurrentForPastHeadDB(t *testing.T) {
+// TestMigrate_ReporterRefusesPastHeadDB supersedes the July 4 benign-no-op
+// contract deliberately. A binary whose readers predate a storage migration
+// can otherwise scan a newer representation into zero values; it must refuse
+// the database before reporting it as already current.
+func TestMigrate_ReporterRefusesPastHeadDB(t *testing.T) {
 	d := openRawMigrationDB(t)
 	// Drive the DB to head first (a real, fully-migrated DB), then bump its
 	// recorded schema_version past what this binary knows.
@@ -114,22 +114,24 @@ func TestMigrate_ReporterAlreadyCurrentForPastHeadDB(t *testing.T) {
 	require.NoError(t, err)
 
 	var applying []int
-	var beginCalls, doneCalls, alreadyCalls, alreadyVer, alreadyHead int
+	var beginCalls, doneCalls, alreadyCalls int
 	SetMigrationReporter(&MigrationReporter{
-		AlreadyCurrent: func(v, head int) { alreadyVer, alreadyHead = v, head; alreadyCalls++ },
+		AlreadyCurrent: func(int, int) { alreadyCalls++ },
 		Begin:          func(int, int) { beginCalls++ },
 		Applying:       func(v int) { applying = append(applying, v) },
 		Done:           func(int) { doneCalls++ },
 	})
 	t.Cleanup(func() { SetMigrationReporter(nil) })
 
-	require.NoError(t, migrate(d), "a DB past head is a no-op, not an error")
+	err = migrate(d)
+	require.Error(t, err, "past-head refusal arm must execute")
+	assert.ErrorContains(t, err, "database was created by a newer tclaude; refusing to open")
+	assert.ErrorContains(t, err, fmt.Sprintf("database schema version %d", pastHead))
+	assert.ErrorContains(t, err, fmt.Sprintf("this binary supports %d", currentVersion))
 	assert.Empty(t, applying, "no migrations applied when the DB is past head")
 	assert.Equal(t, 0, beginCalls, "Begin does not fire for a past-head DB")
 	assert.Equal(t, 0, doneCalls, "Done does not fire for a past-head DB")
-	assert.Equal(t, 1, alreadyCalls, "AlreadyCurrent fires once for a past-head DB")
-	assert.Equal(t, pastHead, alreadyVer, "AlreadyCurrent reports the DB's actual (past-head) version")
-	assert.Equal(t, currentVersion, alreadyHead, "AlreadyCurrent reports the binary's head version")
+	assert.Equal(t, 0, alreadyCalls, "a refused DB is never reported as already current")
 	// The migration must not have rewound the DB's version.
 	assert.Equal(t, pastHead, schemaVersion(d))
 }

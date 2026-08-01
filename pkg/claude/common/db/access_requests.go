@@ -2,7 +2,6 @@ package db
 
 import (
 	"fmt"
-	"log/slog"
 	"time"
 )
 
@@ -52,13 +51,13 @@ func UpsertAccessRequest(ar *AccessRequest) error {
 	if status == "" {
 		status = AccessRequestStatusPending
 	}
-	deadline := ""
+	var deadline any
 	if !ar.DeadlineAt.IsZero() {
-		deadline = ar.DeadlineAt.Format(time.RFC3339Nano)
+		deadline = dbTime(ar.DeadlineAt)
 	}
-	decided := ""
+	var decided any
 	if !ar.DecidedAt.IsZero() {
-		decided = ar.DecidedAt.Format(time.RFC3339Nano)
+		decided = dbTime(ar.DecidedAt)
 	}
 	autoGrantable := 0
 	if ar.AutoGrantable {
@@ -97,7 +96,7 @@ func UpsertAccessRequest(ar *AccessRequest) error {
 			decided_at = excluded.decided_at`,
 		ar.ID, ar.Perm, ar.ConvID, ar.AgentID, ar.ConvID, ar.ConvTitle, ar.Method, ar.Path, ar.RawQuery,
 		ar.BodyPreview, ar.BodyLabel, ar.TargetGroup, ar.TargetConvID, ar.TargetConvTitle,
-		autoGrantable, status, created.Format(time.RFC3339Nano), deadline, decided, explicitAgentID)
+		autoGrantable, status, dbTime(created), deadline, decided, explicitAgentID)
 	if err != nil {
 		return fmt.Errorf("upsert access request: %w", err)
 	}
@@ -133,7 +132,7 @@ func ListRecentHandledAccessRequests(limit int) ([]*AccessRequest, error) {
 	for rows.Next() {
 		var ar AccessRequest
 		var autoGrantable int
-		var created, deadline, decided string
+		var created, deadline, decided dbTimestamp
 		if err := rows.Scan(&ar.ID, &ar.Perm, &ar.ConvID, &ar.AgentID, &ar.ConvTitle,
 			&ar.Method, &ar.Path, &ar.RawQuery, &ar.BodyPreview, &ar.BodyLabel,
 			&ar.TargetGroup, &ar.TargetConvID, &ar.TargetConvTitle, &autoGrantable,
@@ -141,23 +140,10 @@ func ListRecentHandledAccessRequests(limit int) ([]*AccessRequest, error) {
 			return nil, err
 		}
 		ar.AutoGrantable = autoGrantable != 0
-		ar.CreatedAt = parseAccessRequestTime(ar.ID, "created_at", created)
-		ar.DeadlineAt = parseAccessRequestTime(ar.ID, "deadline_at", deadline)
-		ar.DecidedAt = parseAccessRequestTime(ar.ID, "decided_at", decided)
+		ar.CreatedAt = created.Time()
+		ar.DeadlineAt = deadline.Time()
+		ar.DecidedAt = decided.Time()
 		out = append(out, &ar)
 	}
 	return out, rows.Err()
-}
-
-func parseAccessRequestTime(id, field, value string) time.Time {
-	if value == "" {
-		return time.Time{}
-	}
-	t, err := time.Parse(time.RFC3339Nano, value)
-	if err != nil {
-		slog.Warn("access_requests: unparseable timestamp, leaving zero",
-			"id", id, "field", field, "value", value, "error", err)
-		return time.Time{}
-	}
-	return t
 }

@@ -81,7 +81,7 @@ type PendingSpawn struct {
 	// A nil value is reserved for legacy rows created before snapshot support;
 	// recovery paths must not re-resolve mutable registry assignments for it.
 	EffectiveSandbox *sandboxpolicy.Snapshot
-	// CreatedAt is the RFC3339Nano spawn time, stamped by InsertPendingSpawn.
+	// CreatedAt is the RFC3339Nano spawn time exposed at this compatibility boundary.
 	CreatedAt string
 }
 
@@ -115,7 +115,7 @@ func InsertPendingSpawn(p *PendingSpawn) error {
 		p.ReplyToConv, p.SpawnedByConv, p.ReplyToConv, p.SpawnedByConv,
 		p.WorktreePath, p.WorktreeBranch, boolToInt(p.IsOwner), marshalPermissionOverrides(p.PermissionOverrides), p.ProcessCommandID,
 		p.TaskURL, p.TaskLabel, effectiveSandbox,
-		time.Now().Format(time.RFC3339Nano))
+		dbTime(time.Now()))
 	return err
 }
 
@@ -347,14 +347,16 @@ func scanPendingSpawn(s rowScanner) (*PendingSpawn, error) {
 	var isOwner int
 	var permOverrides string
 	var effectiveSandbox string
+	var createdAt dbTimestamp
 	if err := s.Scan(&p.Label, &p.AgentID, &launching, &p.GroupID, &p.Role, &p.Descr, &p.Name,
 		&p.InitialMessage, &p.GroupContext, &p.ReplyToConv, &p.SpawnedByConv,
 		&p.ReplyToAgent, &p.SpawnedByAgent,
 		&p.WorktreePath, &p.WorktreeBranch, &isOwner, &permOverrides, &p.ProcessCommandID,
-		&p.TaskURL, &p.TaskLabel, &effectiveSandbox, &p.CreatedAt); err != nil {
+		&p.TaskURL, &p.TaskLabel, &effectiveSandbox, &createdAt); err != nil {
 		return nil, err
 	}
 	p.Launching = launching != 0
+	p.CreatedAt = exportTimestamp(createdAt)
 	p.IsOwner = isOwner != 0
 	p.PermissionOverrides = unmarshalPermissionOverrides(permOverrides)
 	var err error

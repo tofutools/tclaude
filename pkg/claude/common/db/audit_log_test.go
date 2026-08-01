@@ -232,7 +232,7 @@ func TestAuditLog_LegacyRowWithNullExitCodeStillReads(t *testing.T) {
 	_, err = d.Exec(`INSERT INTO audit_log
 		(at, actor_kind, actor_label, verb, method, path, status, source)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		time.Now().UTC().Format(time.RFC3339Nano), AuditActorHuman, "human",
+		dbTime(time.Now().UTC()), AuditActorHuman, "human",
 		"legacy.command", "POST", "/v1/legacy", 200, AuditSourceCLI)
 	require.NoError(t, err)
 

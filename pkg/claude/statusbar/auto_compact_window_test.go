@@ -2,11 +2,12 @@ package statusbar
 
 import (
 	"testing"
+	"time"
 
-	"github.com/tofutools/tclaude/pkg/claude/common/db"
-	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 // resetTestDB points the DB at a fresh temp home and resets the singleton, so a
@@ -27,10 +28,11 @@ func insertSession(t *testing.T, sessionID, window string) {
 	t.Helper()
 	d, err := db.Open()
 	require.NoError(t, err)
+	stamp := time.Date(2026, 7, 25, 9, 0, 0, 0, time.UTC).UnixNano()
 	_, err = d.Exec(`INSERT INTO sessions (id, tmux_session, pid, cwd, conv_id, status,
 		created_at, updated_at, auto_compact_window)
-		VALUES (?, ?, 0, '/tmp', ?, 'idle', '2026-07-25T09:00:00Z', '2026-07-25T09:00:00Z', ?)`,
-		sessionID, "tc-"+sessionID, "conv-"+sessionID, window)
+		VALUES (?, ?, 0, '/tmp', ?, 'idle', ?, ?, ?)`,
+		sessionID, "tc-"+sessionID, "conv-"+sessionID, stamp, stamp, window)
 	require.NoError(t, err)
 }
 

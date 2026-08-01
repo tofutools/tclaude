@@ -86,7 +86,7 @@ func codexThreadEntry(t codexThread, id, path string, info os.FileInfo) convops.
 	e := convops.SessionEntry{
 		SessionID:    id,
 		FullPath:     path,
-		FileMtime:    info.ModTime().Unix(),
+		FileMtime:    info.ModTime().Round(0).UTC(),
 		FileSize:     info.Size(),
 		FirstPrompt:  t.FirstUserMessage,
 		ProjectPath:  t.Cwd,
@@ -121,7 +121,7 @@ func codexRolloutEntry(id, path string, info os.FileInfo) (convops.SessionEntry,
 	return convops.SessionEntry{
 		SessionID:    id,
 		FullPath:     path,
-		FileMtime:    info.ModTime().Unix(),
+		FileMtime:    info.ModTime().Round(0).UTC(),
 		FileSize:     info.Size(),
 		FirstPrompt:  head.FirstUserMsg,
 		ProjectPath:  head.Cwd,

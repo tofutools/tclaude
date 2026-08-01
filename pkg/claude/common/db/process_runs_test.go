@@ -96,7 +96,7 @@ func TestProcessRunActiveReadIsPagedAndDoesNotReplayEvidence(t *testing.T) {
 	require.NoError(t, err)
 	_, err = d.Exec(`INSERT INTO process_run_events
 		(run_id, sequence, occurred_at, node_id, kind, payload_json, actor)
-		VALUES ('run_a', 1, '2026-07-22T12:00:00Z', '', 'bad_evidence', 'not-json', '')`)
+		VALUES ('run_a', 1, 1784721600000000000, '', 'bad_evidence', 'not-json', '')`)
 	require.NoError(t, err)
 	run, err := GetProcessRun("run_a")
 	require.NoError(t, err)
@@ -504,9 +504,9 @@ func TestProcessRunJSONRejectsDuplicatesAndInvalidUTF8AcrossSurfaces(t *testing.
 	}
 }
 
-func TestProcessRunEventTimestampRFC3339YearBoundaries(t *testing.T) {
+func TestProcessRunEventTimestampUnixNanoYearBoundaries(t *testing.T) {
 	setupTestDB(t)
-	for _, year := range []int{0, 9999} {
+	for _, year := range []int{1678, 2262} {
 		t.Run(fmt.Sprintf("accept_%d", year), func(t *testing.T) {
 			input := processRunFixture(t, fmt.Sprintf("run_time_%d", year), "running", json.RawMessage(`{}`))
 			event := processRunEvent(1, "created")
@@ -519,7 +519,7 @@ func TestProcessRunEventTimestampRFC3339YearBoundaries(t *testing.T) {
 			assert.True(t, stored[0].OccurredAt.Equal(event.OccurredAt))
 		})
 	}
-	for _, year := range []int{-1, 10000} {
+	for _, year := range []int{-1, 0, 1677, 2263, 9999, 10000} {
 		t.Run(fmt.Sprintf("reject_%d", year), func(t *testing.T) {
 			id := fmt.Sprintf("run_time_reject_%d", year)
 			input := processRunFixture(t, id, "running", json.RawMessage(`{}`))

@@ -2,6 +2,7 @@ package db
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -63,13 +64,20 @@ func TestListAgentConvSuccessions_OrderedByRecency(t *testing.T) {
 	setupTestDB(t)
 	require.NoError(t, RecordConvSuccession("a1", "a2", "reincarnate"), "first record")
 	require.NoError(t, RecordConvSuccession("b1", "b2", "reincarnate"), "second record")
+	d, err := Open()
+	require.NoError(t, err)
+	older := time.Date(2026, 8, 1, 12, 0, 0, 123, time.FixedZone("west", -7*60*60))
+	newer := older.Add(time.Nanosecond)
+	_, err = d.Exec(`UPDATE agent_conv_succession SET succeeded_at = CASE old_conv_id
+		WHEN 'a1' THEN ? WHEN 'b1' THEN ? END`, dbTime(older), dbTime(newer))
+	require.NoError(t, err)
+
 	rows, err := ListAgentConvSuccessions()
 	require.NoError(t, err, "ListAgentConvSuccessions")
 	require.Len(t, rows, 2, "len(rows)")
-	// Most recent first. RFC3339 succeeded_at has 1-second precision so
-	// rapid back-to-back writes can collide; the rowid-DESC tiebreaker
-	// guarantees deterministic ordering regardless of clock granularity.
 	assert.Equal(t, "b1", rows[0].OldConvID, "rows[0].OldConvID")
+	assert.True(t, rows[0].SucceededAt.Equal(newer), "newer INTEGER timestamp round-trips")
+	assert.True(t, rows[1].SucceededAt.Equal(older), "older INTEGER timestamp round-trips")
 }
 
 func TestGetConvPredecessor_BackwardEdge(t *testing.T) {

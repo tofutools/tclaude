@@ -11,10 +11,9 @@ import (
 )
 
 // TCL-935. The Costs breakdown picks each slice's last activity, model and
-// harness by comparing session_cost_daily.updated_at stamps. Those are
-// RFC3339Nano, whose spelling does not sort chronologically (TCL-932), so a
-// string comparison could show the EARLIER spend as a slice's last activity —
-// and since the breakdown sorts on that field, mis-order whole rows.
+// harness by comparing session_cost_daily.updated_at instants. Before v181
+// these were RFC3339Nano strings whose spellings did not sort chronologically;
+// the fixtures retain those adversarial wire spellings but seed INTEGER ns.
 //
 // Every fixture here seeds stamps whose lexical order is the REVERSE of their
 // chronological order, and asserts that precondition rather than assuming it.
@@ -29,15 +28,25 @@ import (
 
 // costOrderStamps returns two same-day stamps whose lexical order is inverted
 // relative to time: the earlier instant sorts last as a string.
-func costOrderStamps(t *testing.T) (day, earlier, later string) {
+type costOrderFixture struct {
+	day, earlier, later string
+	earlierNS, laterNS  int64
+}
+
+func costOrderStamps(t *testing.T) costOrderFixture {
 	t.Helper()
-	day = time.Now().Format("2006-01-02")
+	day := time.Now().Format("2006-01-02")
 	// ".9" is a proper prefix of ".95", so 'Z' (0x5A) loses to '5' (0x35).
-	earlier = day + "T12:00:07.9Z"
-	later = day + "T12:00:07.95Z"
+	earlier := day + "T12:00:07.9Z"
+	later := day + "T12:00:07.95Z"
 	require.Greater(t, earlier, later,
 		"fixture precondition: the EARLIER instant must sort LAST as a string, or nothing here is under test")
-	return day, earlier, later
+	earlierTime, err := time.Parse(time.RFC3339Nano, earlier)
+	require.NoError(t, err)
+	laterTime, err := time.Parse(time.RFC3339Nano, later)
+	require.NoError(t, err)
+	return costOrderFixture{day: day, earlier: earlier, later: later,
+		earlierNS: earlierTime.UnixNano(), laterNS: laterTime.UnixNano()}
 }
 
 func TestDashboardCosts_LastActivityIsTheLatestInstantNotTheLargestString(t *testing.T) {
@@ -45,7 +54,7 @@ func TestDashboardCosts_LastActivityIsTheLatestInstantNotTheLargestString(t *tes
 	newFlow(t)
 
 	const conv = "wcaa-1111-2222-3333-4444"
-	day, earlier, later := costOrderStamps(t)
+	stamps := costOrderStamps(t)
 
 	conn, err := db.Open()
 	require.NoError(t, err)
@@ -53,14 +62,14 @@ func TestDashboardCosts_LastActivityIsTheLatestInstantNotTheLargestString(t *tes
 	// Cumulative cost rises, so both rows contribute a delta.
 	_, err = conn.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, cost_usd, updated_at)
 		VALUES (?, ?, ?, ?, ?), (?, ?, ?, ?, ?)`,
-		"wca-1", day, conv, 1.00, earlier,
-		"wca-2", day, conv, 1.25, later)
+		"wca-1", stamps.day, conv, 1.00, stamps.earlierNS,
+		"wca-2", stamps.day, conv, 1.25, stamps.laterNS)
 	require.NoError(t, err, "seed one conv's original and resume with inverted stamps")
 
 	out := fetchCosts(t, agentd.BuildDashboardHandlerForTest(), "")
 
 	require.Len(t, out.Agents, 1, "one breakdown row per (conv, day)")
-	assert.Equal(t, later, out.Agents[0].LastActivity,
+	assert.Equal(t, stamps.later, out.Agents[0].LastActivity,
 		"the slice's last activity is its latest INSTANT, not the stamp that spells the largest string")
 	// The cost is the conversation's high-water cumulative — TCL-932's fix,
 	// asserted here so a regression in either half is distinguishable.
@@ -80,7 +89,7 @@ func TestDashboardCosts_ConvLessRowsShareASliceAndStillReportTheLatestInstant(t 
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 	newFlow(t)
 
-	day, earlier, later := costOrderStamps(t)
+	stamps := costOrderStamps(t)
 
 	conn, err := db.Open()
 	require.NoError(t, err)
@@ -88,14 +97,14 @@ func TestDashboardCosts_ConvLessRowsShareASliceAndStillReportTheLatestInstant(t 
 	// spend first and the EARLIER one last: "aaa" < "zzz".
 	_, err = conn.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, cost_usd, updated_at)
 		VALUES (?, ?, '', ?, ?), (?, ?, '', ?, ?)`,
-		"aaa-late", day, 2.00, later,
-		"zzz-early", day, 1.00, earlier)
+		"aaa-late", stamps.day, 2.00, stamps.laterNS,
+		"zzz-early", stamps.day, 1.00, stamps.earlierNS)
 	require.NoError(t, err, "seed two conv-less sessions whose id order opposes their time order")
 
 	out := fetchCosts(t, agentd.BuildDashboardHandlerForTest(), "")
 
 	require.Len(t, out.Agents, 1, "conv-less rows share the one slice keyed by an empty conv id")
-	assert.Equal(t, later, out.Agents[0].LastActivity,
+	assert.Equal(t, stamps.later, out.Agents[0].LastActivity,
 		"last activity is the latest instant even when the last delta in the slice is the earlier spend")
 }
 
@@ -105,7 +114,7 @@ func TestDashboardCosts_BreakdownOrdersByInstantWithinADay(t *testing.T) {
 
 	const convLate = "wclb-1111-2222-3333-4444"
 	const convEarly = "wceb-1111-2222-3333-4444"
-	day, earlier, later := costOrderStamps(t)
+	stamps := costOrderStamps(t)
 
 	conn, err := db.Open()
 	require.NoError(t, err)
@@ -113,8 +122,8 @@ func TestDashboardCosts_BreakdownOrdersByInstantWithinADay(t *testing.T) {
 	// to be what orders them.
 	_, err = conn.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, cost_usd, updated_at)
 		VALUES (?, ?, ?, ?, ?), (?, ?, ?, ?, ?)`,
-		"wcb-late", day, convLate, 0.10, later,
-		"wcb-early", day, convEarly, 5.00, earlier)
+		"wcb-late", stamps.day, convLate, 0.10, stamps.laterNS,
+		"wcb-early", stamps.day, convEarly, 5.00, stamps.earlierNS)
 	require.NoError(t, err, "seed two convs whose stamps invert lexically")
 
 	out := fetchCosts(t, agentd.BuildDashboardHandlerForTest(), "")
@@ -135,16 +144,16 @@ func TestDashboardCosts_DatedRowOutranksUnstampedRowOnTheSameDay(t *testing.T) {
 
 	const convStamped = "wcsb-1111-2222-3333-4444"
 	const convBare = "wcbb-1111-2222-3333-4444"
-	day, earlier, _ := costOrderStamps(t)
+	stamps := costOrderStamps(t)
 
 	conn, err := db.Open()
 	require.NoError(t, err)
 	// The unstamped conv is the pricier one, so precision — not cost — has to
 	// be what orders them.
 	_, err = conn.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, cost_usd, updated_at)
-		VALUES (?, ?, ?, ?, ?), (?, ?, ?, ?, '')`,
-		"wcs-stamped", day, convStamped, 0.10, earlier,
-		"wcs-bare", day, convBare, 5.00)
+		VALUES (?, ?, ?, ?, ?), (?, ?, ?, ?, NULL)`,
+		"wcs-stamped", stamps.day, convStamped, 0.10, stamps.earlierNS,
+		"wcs-bare", stamps.day, convBare, 5.00)
 	require.NoError(t, err, "seed one stamped and one unstamped row on the same day")
 
 	out := fetchCosts(t, agentd.BuildDashboardHandlerForTest(), "")
@@ -160,7 +169,7 @@ func TestDashboardCosts_DatedRowOutranksUnstampedRowOnTheSameDay(t *testing.T) {
 // what fails when it becomes >.
 //
 // Those two sites compare with >= 0 rather than > 0 so that EQUAL stamps keep
-// the last good value — and the initial "" modelAt compares EQUAL to a delta
+// the last good value — and the initial absent modelAt compares EQUAL to a delta
 // that carries no stamp, so metadata still lands when nothing is stamped at
 // all. TestCompareCostStamps pins what the comparator returns; it cannot show
 // that these callers depend on the equality case.
@@ -182,7 +191,7 @@ func TestDashboardCosts_UnstampedRowStillReportsItsModelAndHarness(t *testing.T)
 	// pre-v53 shape, and the case where modelAt and the delta's stamp are
 	// both "" so only an equality-inclusive compare records anything.
 	_, err = conn.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, cost_usd, updated_at, model, harness)
-		VALUES (?, ?, ?, ?, '', ?, ?)`,
+		VALUES (?, ?, ?, ?, NULL, ?, ?)`,
 		"wcu-1", day, conv, 1.00, "Fable 5", "codex")
 	require.NoError(t, err, "seed an unstamped but costed row carrying model and harness")
 
@@ -207,6 +216,9 @@ func TestDashboardCosts_EqualStampsKeepTheLastGoodModel(t *testing.T) {
 	const conv = "wceq-1111-2222-3333-4444"
 	day := time.Now().Format("2006-01-02")
 	stamp := day + "T12:00:07.5Z"
+	stampTime, err := time.Parse(time.RFC3339Nano, stamp)
+	require.NoError(t, err)
+	stampNS := stampTime.UnixNano()
 
 	conn, err := db.Open()
 	require.NoError(t, err)
@@ -214,8 +226,8 @@ func TestDashboardCosts_EqualStampsKeepTheLastGoodModel(t *testing.T) {
 	// contribute a delta. The later-walked session carries the newer model.
 	_, err = conn.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, cost_usd, updated_at, model, harness)
 		VALUES (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?)`,
-		"wceq-a", day, conv, 1.00, stamp, "Sonnet 5", "claude",
-		"wceq-b", day, conv, 1.25, stamp, "Fable 5", "codex")
+		"wceq-a", day, conv, 1.00, stampNS, "Sonnet 5", "claude",
+		"wceq-b", day, conv, 1.25, stampNS, "Fable 5", "codex")
 	require.NoError(t, err, "seed two same-instant rows whose models differ")
 
 	out := fetchCosts(t, agentd.BuildDashboardHandlerForTest(), "")

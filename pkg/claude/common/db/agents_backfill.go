@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"time"
@@ -157,18 +158,47 @@ func ensureAgentForHeadTx(d *sql.DB, head string, now time.Time) (string, error)
 	}
 
 	created, via, retiredAt, retiredBy, retireReason, pendingName := headEnrollmentFacts(d, head, now)
+	createdValue, err := backfillTimestampValue(d, "agents", "created_at", created)
+	if err != nil {
+		return "", err
+	}
+	retiredValue, err := backfillTimestampValue(d, "agents", "retired_at", retiredAt)
+	if err != nil {
+		return "", err
+	}
 	agentID := newAgentID()
 	if _, err := d.Exec(`INSERT INTO agents
 		(agent_id, current_conv_id, created_at, created_via,
 		 retired_at, retired_by, retire_reason, pending_name)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		agentID, head, created, via, retiredAt, retiredBy, retireReason, pendingName); err != nil {
+		agentID, head, createdValue, via, retiredValue, retiredBy, retireReason, pendingName); err != nil {
 		return "", err
 	}
 	if err := linkConvTx(d, head, agentID, ConvRoleHead, "backfill", now); err != nil {
 		return "", err
 	}
 	return agentID, nil
+}
+
+// backfillTimestampValue bridges the v72 migration's legacy TEXT schema and
+// head-schema tests that exercise its idempotent repair path after v181.
+func backfillTimestampValue(d *sql.DB, table, column, value string) (any, error) {
+	rows, err := d.Query(`SELECT type FROM pragma_table_info(?) WHERE name = ?`, table, column)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	if !rows.Next() {
+		return nil, fmt.Errorf("missing timestamp column %s.%s", table, column)
+	}
+	var declaredType string
+	if err := rows.Scan(&declaredType); err != nil {
+		return nil, err
+	}
+	if strings.EqualFold(declaredType, "INTEGER") {
+		return nullableDBTimeText(value), nil
+	}
+	return value, nil
 }
 
 // headEnrollmentFacts reads the actor-level facts to seed an agent from its

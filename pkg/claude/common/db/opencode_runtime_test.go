@@ -75,7 +75,7 @@ func TestOpenCodeRuntimeLookupByPID(t *testing.T) {
 	d, err := Open()
 	require.NoError(t, err)
 	_, err = d.Exec(`UPDATE opencode_runtimes
-		SET updated_at = '2020-01-01T00:00:00Z' WHERE session_id = 'spwn-old'`)
+		SET updated_at = 1577836800000000000 WHERE session_id = 'spwn-old'`)
 	require.NoError(t, err)
 
 	runtime, err := FindOpenCodeRuntimeByPID(4242)

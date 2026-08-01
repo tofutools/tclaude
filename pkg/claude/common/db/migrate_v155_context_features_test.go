@@ -16,10 +16,10 @@ func TestMigrateV154toV155AddsContextFeatureColumns(t *testing.T) {
 	mustExec(t, d, `ALTER TABLE sessions DROP COLUMN context_features`)
 	mustExec(t, d, `UPDATE schema_version SET version = 154`)
 	mustExec(t, d, `INSERT INTO spawn_profiles (name, created_at, updated_at)
-		VALUES ('legacy-profile', '2026-07-24T09:00:00Z', '2026-07-24T09:00:00Z')`)
+		VALUES ('legacy-profile', 1784883600000000000, 1784883600000000000)`)
 	mustExec(t, d, `INSERT INTO sessions (id, tmux_session, pid, cwd, conv_id, status, created_at, updated_at)
 		VALUES ('legacy-session', 'tc-legacy', 0, '/tmp', 'conv-legacy', 'idle',
-		        '2026-07-24T09:00:00Z', '2026-07-24T09:00:00Z')`)
+		        1784883600000000000, 1784883600000000000)`)
 
 	require.NoError(t, migrateV154toV155(d))
 

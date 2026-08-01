@@ -39,13 +39,13 @@ func ClaimAgentdRequest(requestKey, fingerprint, ownerID string, now, expiresAt 
 		return record, false, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.Exec(`DELETE FROM agentd_idempotency WHERE expires_at <= ?`, now.Unix()); err != nil {
+	if _, err := tx.Exec(`DELETE FROM agentd_idempotency WHERE expires_at <= ?`, dbTime(now)); err != nil {
 		return record, false, err
 	}
 	res, err := tx.Exec(`INSERT OR IGNORE INTO agentd_idempotency
 		(request_key, fingerprint, owner_id, state, created_at, expires_at)
 		VALUES (?, ?, ?, 'pending', ?, ?)`,
-		requestKey, fingerprint, ownerID, now.Unix(), expiresAt.Unix())
+		requestKey, fingerprint, ownerID, dbTime(now), dbTime(expiresAt))
 	if err != nil {
 		return record, false, err
 	}
@@ -102,13 +102,13 @@ func CompleteAgentdRequest(requestKey, ownerID string, status int, headersJSON s
 
 func scanAgentdIdempotency(row rowScanner) (AgentdIdempotencyRecord, error) {
 	var record AgentdIdempotencyRecord
-	var createdUnix, expiresUnix int64
+	var createdAt, expiresAt dbTimestamp
 	if err := row.Scan(&record.RequestKey, &record.Fingerprint, &record.OwnerID,
 		&record.State, &record.Status, &record.HeadersJSON, &record.ResponseBody,
-		&createdUnix, &expiresUnix); err != nil {
+		&createdAt, &expiresAt); err != nil {
 		return AgentdIdempotencyRecord{}, err
 	}
-	record.CreatedAt = time.Unix(createdUnix, 0).UTC()
-	record.ExpiresAt = time.Unix(expiresUnix, 0).UTC()
+	record.CreatedAt = createdAt.Time()
+	record.ExpiresAt = expiresAt.Time()
 	return record, nil
 }

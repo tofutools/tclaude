@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -147,7 +148,7 @@ func TestProcessSnippetsCorruptIDsAndRenamePayloadStayBounded(t *testing.T) {
 	setupTestDB(t)
 	database, err := Open()
 	require.NoError(t, err)
-	now := "2026-07-18T00:00:00Z"
+	now := dbTime(time.Date(2026, 7, 18, 0, 0, 0, 0, time.UTC))
 	for index, id := range []string{
 		"psn_invalid",
 		"psn_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",

@@ -39,7 +39,7 @@ func TestMigrateV91toV92_AddsProcess(t *testing.T) {
 
 	// A pre-existing template (without process) must survive the ALTER.
 	mustExec(t, d, `INSERT INTO group_templates (name, descr, default_context, created_at, updated_at)
-		VALUES ('legacy', 'd', '', '2026-07-03T00:00:00Z', '2026-07-03T00:00:00Z')`)
+		VALUES ('legacy', 'd', '', 1783036800000000000, 1783036800000000000)`)
 
 	require.NoError(t, migrateV91toV92(d), "v91→v92")
 

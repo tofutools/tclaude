@@ -112,7 +112,10 @@ func (s openCodeConvStore) ListConvs(cwd string) ([]convops.SessionEntry, error)
 	if err != nil {
 		return nil, err
 	}
-	entries := syncOpenCodeConvIndex(sessions)
+	entries, err := syncOpenCodeConvIndex(sessions)
+	if err != nil {
+		return nil, err
+	}
 	if cwd == "" {
 		return entries, nil
 	}
@@ -129,8 +132,11 @@ func (s openCodeConvStore) ListConvs(cwd string) ([]convops.SessionEntry, error)
 // syncOpenCodeConvIndex keeps the common cache useful for dashboard and title
 // readers without making it the source of truth. A successful CLI snapshot
 // inserts/refreshes every OpenCode row and evicts OpenCode rows absent from the
-// snapshot. Cache failures only degrade enrichment; they never hide CLI data.
-func syncOpenCodeConvIndex(sessions []openCodeSession) []convops.SessionEntry {
+// snapshot. Cache failures degrade enrichment rather than hiding source CLI
+// sessions. Timestamp representation failures are logged at error level with
+// the source values and skip the cache row, so the invalid instant stays loud
+// without letting one bad third-party value blank the source listing.
+func syncOpenCodeConvIndex(sessions []openCodeSession) ([]convops.SessionEntry, error) {
 	cached := map[string]*db.ConvIndexRow{}
 	if rows, err := db.ListAllConvIndex(); err != nil {
 		slog.Warn("opencode convstore: conv_index unreadable; continuing from CLI", "error", err)
@@ -159,8 +165,14 @@ func syncOpenCodeConvIndex(sessions []openCodeSession) []convops.SessionEntry {
 			}
 		}
 		if err := db.UpsertConvIndex(openCodeEntryDBRow(entry)); err != nil {
-			slog.Warn("opencode convstore: conv_index upsert failed",
-				"conv", session.ID, "error", err)
+			if db.IsTimestampRepresentationError(err) {
+				slog.Error("opencode convstore: timestamp cannot be represented; cache row skipped",
+					"conv", session.ID, "created_millis", session.Created,
+					"updated_millis", session.Updated, "error", err)
+			} else {
+				slog.Warn("opencode convstore: conv_index upsert failed; continuing from CLI",
+					"conv", session.ID, "error", err)
+			}
 		}
 		entries = append(entries, entry)
 	}
@@ -172,13 +184,13 @@ func syncOpenCodeConvIndex(sessions []openCodeSession) []convops.SessionEntry {
 			}
 		}
 	}
-	return entries
+	return entries, nil
 }
 
 func openCodeSessionEntry(session openCodeSession) convops.SessionEntry {
 	return convops.SessionEntry{
 		SessionID:    session.ID,
-		FileMtime:    openCodeMillisToUnix(session.Updated),
+		FileMtime:    openCodeMillisToTime(session.Updated),
 		Summary:      session.Title,
 		MessageCount: 0,
 		Created:      openCodeMillisToRFC3339(session.Created),
@@ -207,11 +219,11 @@ func openCodeEntryDBRow(entry convops.SessionEntry) *db.ConvIndexRow {
 	}
 }
 
-func openCodeMillisToUnix(ms int64) int64 {
+func openCodeMillisToTime(ms int64) time.Time {
 	if ms <= 0 {
-		return 0
+		return time.Time{}
 	}
-	return ms / int64(time.Second/time.Millisecond)
+	return time.UnixMilli(ms).Round(0).UTC()
 }
 
 func openCodeMillisToRFC3339(ms int64) string {

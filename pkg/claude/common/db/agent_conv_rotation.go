@@ -99,7 +99,7 @@ func RotateAgentConv(oldConv, newConv, reason string) (carriedName string, err e
 	defer func() { _ = tx.Rollback() }()
 
 	now := time.Now()
-	nowSec := now.UTC().Format(time.RFC3339)
+	nowSec := dbTime(now.UTC())
 
 	// --- succession edge old → new ---
 	// Mirrors db.RecordConvSuccession. Powers db.ResolveLatestConv, so a stale

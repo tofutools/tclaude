@@ -166,7 +166,7 @@ func RunMv(params *MvParams, stdout, stderr *os.File, stdin *os.File) int {
 		dstEntry := SessionEntry{
 			SessionID:        srcEntry.SessionID,
 			FullPath:         dstConvFile,
-			FileMtime:        dstInfo.ModTime().UnixMilli(),
+			FileMtime:        dstInfo.ModTime().Round(0).UTC(),
 			FirstPrompt:      srcEntry.FirstPrompt,
 			Summary:          srcEntry.Summary,
 			CustomTitle:      srcEntry.CustomTitle,

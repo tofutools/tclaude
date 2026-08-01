@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 180
+const currentVersion = 181
 
 // DefaultHarness is the value of the `harness` column for a row that
 // predates multi-harness support or was produced by the Claude Code scan
@@ -24,6 +24,9 @@ const DefaultHarness = "claude"
 func migrate(db *sql.DB) error {
 	r := migrationReporter
 	ver := schemaVersion(db)
+	if ver > currentVersion {
+		return newerDatabaseVersionError(ver)
+	}
 	if ver == currentVersion {
 		// Already at head — the overwhelmingly common restart. No migration
 		// runs, but announce the no-op so an operator watching agentd start
@@ -48,10 +51,15 @@ func migrate(db *sql.DB) error {
 	}
 
 	// Only walk the chain announcing progress when there is actually forward
-	// work to do. A DB pathologically PAST head — its schema written by a newer
-	// binary — applies nothing either; report it as a no-op too (with the DB's
-	// actual version) rather than returning wordlessly.
-	if ver >= currentVersion {
+	// work to do. Keep the post-create check explicit as well as the fast path
+	// above: neither entry point may let an older binary open a newer schema and
+	// then silently decode values using stale storage assumptions. The greater-
+	// than arm is deliberately redundant defensive code and cannot fire while
+	// the fast-path guard above remains in place.
+	if ver > currentVersion {
+		return newerDatabaseVersionError(ver)
+	}
+	if ver == currentVersion {
 		r.reportAlreadyCurrent(ver, currentVersion)
 		return nil
 	}
@@ -70,6 +78,11 @@ func migrate(db *sql.DB) error {
 	}
 	r.reportDone(currentVersion)
 	return nil
+}
+
+func newerDatabaseVersionError(databaseVersion int) error {
+	return fmt.Errorf("database was created by a newer tclaude; refusing to open: database schema version %d, this binary supports %d",
+		databaseVersion, currentVersion)
 }
 
 // migrateV86toV87 adds sessions.subagents_json — the per-session ledger of

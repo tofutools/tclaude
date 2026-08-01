@@ -149,7 +149,7 @@ func UpsertWaveChoreography(c *WaveChoreography) error {
 	if err != nil {
 		return err
 	}
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := dbTime(time.Now().UTC())
 	_, err = d.Exec(`
 		INSERT INTO group_wave_choreography (group_id, group_name, state, updated_at)
 		VALUES (?, ?, ?, ?)
@@ -224,7 +224,8 @@ func DeleteWaveChoreography(groupID int64) error {
 
 func scanWaveChoreography(s rowScanner) (*WaveChoreography, error) {
 	var groupID int64
-	var groupName, state, updatedAt string
+	var groupName, state string
+	var updatedAt dbTimestamp
 	if err := s.Scan(&groupID, &groupName, &state, &updatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
@@ -237,7 +238,7 @@ func scanWaveChoreography(s rowScanner) (*WaveChoreography, error) {
 	}
 	c.GroupID = groupID
 	c.GroupName = groupName
-	c.UpdatedAt = parseTimeOrZero(updatedAt)
+	c.UpdatedAt = updatedAt.Time()
 	// Non-nil slices/maps so callers can range/index safely.
 	if c.GatingConvs == nil {
 		c.GatingConvs = []string{}

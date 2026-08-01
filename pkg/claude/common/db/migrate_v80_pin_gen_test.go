@@ -46,7 +46,7 @@ func TestMigrateV79toV80_AddsColumn(t *testing.T) {
 	}
 	mustExec(t, d, `INSERT INTO agent_messages
 		(id, group_id, from_conv, to_conv, subject, body, created_at)
-		VALUES (1, 0, 'sender-conv', 'to-conv', '', 'hi', '2020-01-01T00:00:00Z')`)
+		VALUES (1, 0, 'sender-conv', 'to-conv', '', 'hi', 1577836800000000000)`)
 
 	has, err := columnExists(d, "agent_messages", "pin_gen")
 	require.NoError(t, err)
