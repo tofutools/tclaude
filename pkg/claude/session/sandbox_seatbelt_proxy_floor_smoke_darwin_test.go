@@ -34,6 +34,7 @@ const (
 	seatbeltProxyFloorEndpointEnv     = "TCLAUDE_SEATBELT_PROXY_FLOOR_ENDPOINT"
 	seatbeltProxyFloorControlEnv      = "TCLAUDE_SEATBELT_PROXY_FLOOR_CONTROL"
 	seatbeltProxyFloorSamePortEnv     = "TCLAUDE_SEATBELT_PROXY_FLOOR_SAME_PORT"
+	seatbeltProxyFloorUDPControlEnv   = "TCLAUDE_SEATBELT_PROXY_FLOOR_UDP_CONTROL"
 	seatbeltProxyFloorAgentdSocketEnv = "TCLAUDE_SEATBELT_PROXY_FLOOR_AGENTD_SOCKET"
 	seatbeltProxyFloorHelperTest      = "^TestSeatbeltProxyFloorSmokeHelper$"
 	seatbeltProxyFloorTimeout         = 2 * time.Second
@@ -57,17 +58,31 @@ func TestSeatbeltProxyFloorSmoke(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	proxyListener, err := net.Listen("tcp4", "127.0.0.1:0")
-	require.NoError(t, err)
+	proxyListener, samePortListener, inventory := seatbeltProxyFloorListenerPair(t)
 	proxyEndpoint := proxyListener.Addr().(*net.TCPAddr).AddrPort()
+	t.Logf("same-port/different-local-address probe selected %s beside proxy %s; runner interfaces:\n%s",
+		samePortListener.Addr(), proxyEndpoint, inventory)
 
 	controlListener := seatbeltProxyFloorEchoListener(t, "127.0.0.1:0")
 	controlEndpoint := controlListener.Addr().String()
 	controlPort := controlListener.Addr().(*net.TCPAddr).Port
+	udpControl := seatbeltProxyFloorUDPEchoListener(t)
+	udpControlEndpoint := udpControl.LocalAddr().String()
 
-	samePortListener, inventory := seatbeltProxyFloorSamePortListener(t, proxyEndpoint.Port())
-	t.Logf("same-port/different-local-address probe selected %s; runner interfaces:\n%s",
-		samePortListener.Addr(), inventory)
+	// Every in-sandbox denial below has an exact out-of-sandbox positive
+	// control. EPERM then identifies Seatbelt as the refusing boundary; a dead
+	// listener, missing route, or runner policy cannot impersonate evidence.
+	seatbeltProxyFloorEchoRoundTrip(t, "tcp4", controlEndpoint, "host-second-loopback")
+	seatbeltProxyFloorEchoRoundTrip(t, "tcp", samePortListener.Addr().String(), "host-same-port")
+	seatbeltProxyFloorUDPRoundTrip(t, udpControlEndpoint, "host-udp")
+	require.NoError(t, seatbeltProxyFloorDialAndClose("tcp4", "1.1.1.1:443"),
+		"runner must reach the exact external TCP target before Seatbelt denies it")
+	bindControl, err := net.Listen("tcp4", "127.0.0.1:0")
+	require.NoError(t, err,
+		"runner must create the same kind of TCP listener before Seatbelt denies it")
+	require.NoError(t, bindControl.Close())
+	t.Logf("out-of-sandbox controls passed: second-loopback=%s same-port=%s external=1.1.1.1:443 udp=%s tcp-bind=available",
+		controlEndpoint, samePortListener.Addr(), udpControlEndpoint)
 
 	rules := sandboxpolicy.NetworkRules{
 		Mode:   sandboxpolicy.AccessModeList,
@@ -150,6 +165,7 @@ func TestSeatbeltProxyFloorSmoke(t *testing.T) {
 		seatbeltProxyFloorEndpointEnv+"="+proxyEndpoint.String(),
 		seatbeltProxyFloorControlEnv+"="+controlEndpoint,
 		seatbeltProxyFloorSamePortEnv+"="+samePortListener.Addr().String(),
+		seatbeltProxyFloorUDPControlEnv+"="+udpControlEndpoint,
 		seatbeltProxyFloorAgentdSocketEnv+"="+agentdSocket,
 	)
 	var output bytes.Buffer
@@ -186,6 +202,7 @@ func TestSeatbeltProxyFloorSmokeHelper(t *testing.T) {
 	proxyEndpoint := os.Getenv(seatbeltProxyFloorEndpointEnv)
 	controlEndpoint := os.Getenv(seatbeltProxyFloorControlEnv)
 	samePortEndpoint := os.Getenv(seatbeltProxyFloorSamePortEnv)
+	udpControlEndpoint := os.Getenv(seatbeltProxyFloorUDPControlEnv)
 	agentdSocket := os.Getenv(seatbeltProxyFloorAgentdSocketEnv)
 
 	seatbeltProxyFloorHTTPRoundTrip(t, proxyEndpoint, controlEndpoint)
@@ -203,7 +220,7 @@ func TestSeatbeltProxyFloorSmokeHelper(t *testing.T) {
 		func() error { return seatbeltProxyFloorDialAndClose("tcp4", "1.1.1.1:443") })
 	fmt.Println("seatbelt-proxy-floor: external TCP: refused with EPERM")
 	seatbeltProxyFloorRequireEPERM(t, "UDP send", func() error {
-		conn, err := net.DialTimeout("udp4", "1.1.1.1:53", seatbeltProxyFloorTimeout)
+		conn, err := net.DialTimeout("udp4", udpControlEndpoint, seatbeltProxyFloorTimeout)
 		if err != nil {
 			return err
 		}
@@ -329,12 +346,44 @@ func seatbeltProxyFloorEchoRoundTrip(t *testing.T, network, endpoint, nonce stri
 	seatbeltProxyFloorConnEcho(t, conn, conn, nonce)
 }
 
+func seatbeltProxyFloorUDPRoundTrip(t *testing.T, endpoint, nonce string) {
+	t.Helper()
+	conn, err := net.DialTimeout("udp4", endpoint, seatbeltProxyFloorTimeout)
+	require.NoError(t, err)
+	defer func() { _ = conn.Close() }()
+	require.NoError(t, conn.SetDeadline(time.Now().Add(seatbeltProxyFloorTimeout)))
+	_, err = conn.Write([]byte(nonce))
+	require.NoError(t, err)
+	echo := make([]byte, len(nonce))
+	_, err = io.ReadFull(conn, echo)
+	require.NoError(t, err)
+	require.Equal(t, nonce, string(echo))
+}
+
 func seatbeltProxyFloorEchoListener(t *testing.T, endpoint string) net.Listener {
 	t.Helper()
 	listener, err := net.Listen("tcp4", endpoint)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = listener.Close() })
 	seatbeltProxyFloorServeEcho(t, listener)
+	return listener
+}
+
+func seatbeltProxyFloorUDPEchoListener(t *testing.T) *net.UDPConn {
+	t.Helper()
+	listener, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = listener.Close() })
+	go func() {
+		buffer := make([]byte, 1024)
+		for {
+			n, peer, readErr := listener.ReadFromUDP(buffer)
+			if readErr != nil {
+				return
+			}
+			_, _ = listener.WriteToUDP(buffer[:n], peer)
+		}
+	}()
 	return listener
 }
 
@@ -360,7 +409,7 @@ type seatbeltProxyFloorLocalAddress struct {
 	address       netip.Addr
 }
 
-func seatbeltProxyFloorSamePortListener(t *testing.T, port uint16) (net.Listener, string) {
+func seatbeltProxyFloorListenerPair(t *testing.T) (net.Listener, net.Listener, string) {
 	t.Helper()
 	interfaces, err := net.Interfaces()
 	require.NoError(t, err)
@@ -403,26 +452,45 @@ func seatbeltProxyFloorSamePortListener(t *testing.T, port uint16) (net.Listener
 		return candidates[i].address.Less(candidates[j].address)
 	})
 	inventory := strings.Join(observed, "\n")
-	var bindFailures []string
+	if len(candidates) == 0 {
+		t.Fatalf("runner exposes no active globally-unicast non-loopback local address; it cannot execute the required same-port/different-local-address probe\nrunner interfaces:\n%s",
+			inventory)
+	}
+	var pairFailures []string
 	for _, candidate := range candidates {
 		network := "tcp6"
 		if candidate.address.Is4() {
 			network = "tcp4"
 		}
-		listener, listenErr := net.Listen(
-			network,
-			netip.AddrPortFrom(candidate.address, port).String(),
-		)
-		if listenErr == nil {
-			t.Cleanup(func() { _ = listener.Close() })
-			seatbeltProxyFloorServeEcho(t, listener)
-			return listener, inventory
+		for range 10 {
+			// Reserve the non-loopback side FIRST, then ask loopback for that
+			// exact port. A transient collision retries the pair instead of
+			// masquerading as a runner with no usable local address.
+			control, controlErr := net.Listen(
+				network,
+				netip.AddrPortFrom(candidate.address, 0).String(),
+			)
+			if controlErr != nil {
+				pairFailures = append(pairFailures, fmt.Sprintf(
+					"%s %s flags=%s control bind: %v",
+					candidate.interfaceName, candidate.address, candidate.flags, controlErr))
+				break
+			}
+			port := control.Addr().(*net.TCPAddr).Port
+			proxy, proxyErr := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+			if proxyErr == nil {
+				t.Cleanup(func() { _ = proxy.Close() })
+				t.Cleanup(func() { _ = control.Close() })
+				seatbeltProxyFloorServeEcho(t, control)
+				return proxy, control, inventory
+			}
+			_ = control.Close()
+			pairFailures = append(pairFailures, fmt.Sprintf(
+				"%s %s flags=%s reserved port %d but loopback bind collided: %v",
+				candidate.interfaceName, candidate.address, candidate.flags, port, proxyErr))
 		}
-		bindFailures = append(bindFailures, fmt.Sprintf(
-			"%s %s flags=%s: %v",
-			candidate.interfaceName, candidate.address, candidate.flags, listenErr))
 	}
-	t.Fatalf("no active non-loopback local address could bind the proxy's port %d; this runner cannot execute the required same-port/different-local-address probe\nrunner interfaces:\n%s\nbind attempts:\n%s",
-		port, inventory, strings.Join(bindFailures, "\n"))
-	return nil, inventory
+	t.Fatalf("runner has candidate non-loopback local addresses, but no same-port control/proxy pair could be reserved after bounded retries\nrunner interfaces:\n%s\npair attempts:\n%s",
+		inventory, strings.Join(pairFailures, "\n"))
+	return nil, nil, inventory
 }
