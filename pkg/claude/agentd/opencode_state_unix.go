@@ -1251,7 +1251,30 @@ func requireOpenCodeAllocatedStateRoot(stateRoot, subject, noun string) error {
 	}
 	parent, err := openCodePrivateStateParent()
 	if err != nil {
-		return fmt.Errorf("resolve OpenCode private state parent: %w", err)
+		// subject, like the four refusals around it. Before this function was
+		// generalized to serve two callers it hard-coded "for bootstrap", which
+		// was accurate when there was only one; generalizing correctly deleted
+		// that qualifier and did not substitute the parameter that exists to
+		// carry it, so the caller's name was dropped at exactly the point it
+		// started to matter.
+		//
+		// NOT TEST-COVERED, and that is stated rather than left to look like an
+		// oversight. openCodePrivateStateParent fails only when
+		// openCodeXDGBase falls through to os.UserHomeDir and that fails, i.e.
+		// HOME undefined. Reaching this line first requires
+		// requireOpenCodeStateAllocation to have SUCCEEDED, and for a private
+		// allocation that runs refuseOpenCodeProtectedStateRoot ->
+		// sandboxpolicy.ProtectedPaths, which resolves the home directory live
+		// on every call and is not memoized. So every HOME state that could
+		// fire this branch has already refused one step earlier, for the same
+		// underlying reason. Established by probe, not by reading: a test that
+		// clears HOME reports "resolve protected paths for OpenCode state:
+		// ... $HOME is not defined" and never arrives here. A test pinning this
+		// wording would have to go red for that other reason, which is not
+		// evidence about this line.
+		return fmt.Errorf(
+			"resolve OpenCode private state parent while checking %s: %w",
+			subject, err)
 	}
 	// Both sides are compared in resolved form. The allocator records a parent it
 	// has already resolved, while this derives one from the live environment, so
