@@ -242,8 +242,8 @@ func validateOpenCodeFilteredProviderDirectory(
 	if entry.Name() != openCodeInstallBootstrapFile ||
 		infoErr != nil || !entryInfo.Mode().IsRegular() {
 		return fmt.Errorf(
-			"OpenCode filtered %s %q holds an entry that could not be inspected or is not the approved marker file; clear it or use network open",
-			surface, path)
+			"OpenCode filtered %s %q holds an entry %q that could not be inspected or is not the approved marker file; clear it or use network open",
+			surface, path, entry.Name())
 	}
 	return nil
 }
@@ -342,6 +342,28 @@ func requireOpenCodeStateAllocation(agentID string) (*db.OpenCodeAgentStateAlloc
 	return validateOpenCodeStateAllocation(*allocation)
 }
 
+// openCodeRecordedStateRootDescription renders the allocation's recorded state
+// root for a refusal. Presentation only; it reaches no decision.
+//
+// A legacy-shared allocation records NO state root: validateOpenCodeState
+// Allocation requires the field to be empty, and resolvedOpenCodeSeedPath("")
+// is ".", because Clean("") is "." and EvalSymlinks(".") succeeds. Printing
+// that would name "." as the recorded root of an allocation that has none.
+// Saying so in words is the only answer available.
+//
+// The emptiness test is `== ""`, not TrimSpace, so that it agrees EXACTLY with
+// the validator that guarantees its precondition — that check is untrimmed, so
+// a whitespace root never survives validation and cannot reach here. Using a
+// looser predicate would also mean calling a recorded (if useless) value "none
+// recorded", which is a small instance of the overstatement this whole pass
+// exists to remove.
+func openCodeRecordedStateRootDescription(recorded, resolved string) string {
+	if recorded == "" {
+		return "no allocated state root recorded"
+	}
+	return fmt.Sprintf("allocated state root %q", resolved)
+}
+
 // openCodeStatOwnerDescription renders the owner half of an ownership refusal.
 // It is presentation only and reaches no decision: the two callers already
 // decided, and both of their conditions are disjunctions whose arms would
@@ -351,21 +373,6 @@ func requireOpenCodeStateAllocation(agentID string) (*db.OpenCodeAgentStateAlloc
 // not yield a *syscall.Stat_t leaves stat nil, and "found uid 0" for that case
 // would name root as the owner of a directory whose owner was never read —
 // a confident wrong answer where no answer is available.
-// openCodeRecordedStateRootDescription renders the allocation's recorded state
-// root for a refusal. Presentation only; it reaches no decision.
-//
-// A legacy-shared allocation records NO state root — validateOpenCodeState-
-// Allocation requires the field to be empty — and resolvedOpenCodeSeedPath("")
-// is ".", because Clean("") is "." and EvalSymlinks(".") succeeds. Printing
-// that would name "." as the recorded root of an allocation that has none.
-// Saying so in words is the only answer available.
-func openCodeRecordedStateRootDescription(recorded, resolved string) string {
-	if strings.TrimSpace(recorded) == "" {
-		return "none recorded"
-	}
-	return fmt.Sprintf("%q", resolved)
-}
-
 func openCodeStatOwnerDescription(stat *syscall.Stat_t, ok bool) string {
 	if !ok || stat == nil {
 		return "no readable owner"
@@ -1449,7 +1456,7 @@ func requireOpenCodeAllocatedStateRoot(stateRoot, subject, noun string) error {
 		// ticket's own defect shape, and it was introduced by this fix before
 		// a cold review caught it.
 		return fmt.Errorf(
-			"%s does not belong to the %s state allocation of agent %s (allocated state root %s, tested as %q)",
+			"%s does not belong to the %s state allocation of agent %s (%s, tested as %q)",
 			subject, allocation.Mode, allocation.AgentID,
 			openCodeRecordedStateRootDescription(allocation.StateRoot, allocatedRoot),
 			stateRoot)

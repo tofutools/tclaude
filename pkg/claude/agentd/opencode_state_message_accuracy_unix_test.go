@@ -148,11 +148,23 @@ func TestOpenCodeRecordedStateRootDescriptionDoesNotInventARoot(t *testing.T) {
 	require.Equal(t, ".", resolvedOpenCodeSeedPath(""),
 		"an empty recorded root still resolves to the current directory")
 
-	assert.Equal(t, "none recorded",
+	assert.Equal(t, "no allocated state root recorded",
 		openCodeRecordedStateRootDescription("", resolvedOpenCodeSeedPath("")))
-	assert.Equal(t, "none recorded",
-		openCodeRecordedStateRootDescription("   ", resolvedOpenCodeSeedPath("   ")))
-	assert.Equal(t, `"/real/root"`,
+	assert.Equal(t, `allocated state root "/real/root"`,
 		openCodeRecordedStateRootDescription("/real/root", "/real/root"),
 		"a recorded root is quoted in its resolved form")
+	// Whitespace is deliberately NOT special-cased: validateOpenCodeState
+	// Allocation refuses a legacy-shared allocation on StateRoot != "" without
+	// trimming, so a whitespace root never survives validation and cannot reach
+	// here. Matching that predicate exactly is the point — a looser one would
+	// call a recorded value "none recorded", which is the overstatement this
+	// pass exists to remove.
+	// Rendered as the spelling it is, not as ".": resolvedOpenCodeSeedPath
+	// leaves a path it cannot resolve alone, and Clean("   ") is "   " — a
+	// three-space relative filename, not an empty path. Asserted rather than
+	// assumed, because the "." this helper exists to suppress comes from
+	// Clean("") specifically and does not generalize to blank-looking input.
+	assert.Equal(t, `allocated state root "   "`,
+		openCodeRecordedStateRootDescription("   ", resolvedOpenCodeSeedPath("   ")),
+		"an unreachable input is rendered by the general branch, not excused by a second predicate")
 }
