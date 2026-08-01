@@ -2354,11 +2354,11 @@ func stopOpenCodeRuntime(sessionID string) error {
 	if runtime == nil {
 		return nil
 	}
-	stopOpenCodeProcess(*runtime, nil)
+	safeToCleanUp := stopOpenCodeProcess(*runtime, nil)
 	if runtime.Transport == db.OpenCodeTransportUnixRelay {
-		if session.IsProcessAlive(runtime.PID) {
+		if !safeToCleanUp || session.IsProcessAlive(runtime.PID) {
 			return fmt.Errorf(
-				"OpenCode recovered process remains alive; retaining Unix replay authority")
+				"OpenCode process tree remains alive; retaining Unix replay authority")
 		}
 		if err := opencodeapi.RemoveUnixSocket(*runtime); err != nil {
 			return fmt.Errorf("finish OpenCode Unix control cleanup: %w", err)
@@ -2368,8 +2368,8 @@ func stopOpenCodeRuntime(sessionID string) error {
 	return db.DeleteOpenCodeRuntime(sessionID)
 }
 
-func stopOpenCodeProcess(runtime db.OpenCodeRuntime, known *openCodeProcess) {
-	removeControlSocket := true
+func stopOpenCodeProcess(runtime db.OpenCodeRuntime, known *openCodeProcess) (removeControlSocket bool) {
+	removeControlSocket = true
 	defer func() {
 		if !removeControlSocket {
 			return
@@ -2505,6 +2505,7 @@ func stopOpenCodeProcess(runtime db.OpenCodeRuntime, known *openCodeProcess) {
 				"endpoint", runtime.ServerURL)
 		}
 	}
+	return removeControlSocket
 }
 
 func killOpenCodePIDs(pids []int) {

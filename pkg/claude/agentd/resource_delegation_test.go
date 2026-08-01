@@ -1,10 +1,13 @@
 package agentd
 
 import (
+	"bufio"
 	"io"
 	"os"
 	"os/exec"
 	"slices"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -110,26 +113,46 @@ func TestManagedOpenCodeTmuxWatcherToleratesTransientFailures(t *testing.T) {
 	assert.Len(t, fake.calls, 6, "a successful probe must reset the failure count")
 }
 
-func TestStopManagedOpenCodeTmuxWaitsForPaneTreeAfterSuccessfulKill(t *testing.T) {
+func TestStopManagedOpenCodeTmuxRetainsAuthorityWhileDescendantLives(t *testing.T) {
 	fake := &openCodeTmuxProbeFake{results: []bool{true}}
 	previous := clcommon.Default
 	clcommon.Default = fake
 	t.Cleanup(func() { clcommon.Default = previous })
-	child := exec.Command("sleep", "10")
-	require.NoError(t, child.Start())
+	parent := exec.Command("sh", "-c", "sleep 10 >/dev/null 2>&1 & echo $!; sleep 0.1")
+	stdout, err := parent.StdoutPipe()
+	require.NoError(t, err)
+	require.NoError(t, parent.Start())
+	descendantLine, err := bufio.NewReader(stdout).ReadString('\n')
+	require.NoError(t, err)
+	descendantPID, err := strconv.Atoi(strings.TrimSpace(descendantLine))
+	require.NoError(t, err)
+	parentDone := make(chan struct{})
+	go func() {
+		_ = parent.Wait()
+		close(parentDone)
+	}()
 	t.Cleanup(func() {
-		_ = child.Process.Kill()
-		_ = child.Wait()
+		if descendant, findErr := os.FindProcess(descendantPID); findErr == nil {
+			_ = descendant.Kill()
+		}
+		<-parentDone
 	})
-	process := &openCodeProcess{pid: child.Process.Pid, tmuxSession: "__tclaude-opencode-stop",
+	process := &openCodeProcess{pid: parent.Process.Pid, tmuxSession: "__tclaude-opencode-stop",
 		done: make(chan error, 1)}
 
 	started := time.Now()
-	stopOpenCodeProcess(db.OpenCodeRuntime{SessionID: "stop-session", PID: process.pid}, process)
+	safeToCleanUp := stopOpenCodeProcess(
+		db.OpenCodeRuntime{SessionID: "stop-session", PID: process.pid}, process)
 	assert.GreaterOrEqual(t, time.Since(started), openCodeProcessStopWait,
 		"tmux command success must not be treated as pane-tree exit")
 	assert.Less(t, time.Since(started), openCodeProcessStopWait+time.Second,
 		"pane-tree exit wait must remain bounded")
+	assert.False(t, safeToCleanUp,
+		"a live captured descendant must retain Unix replay authority")
+	assert.False(t, session.IsProcessAlive(parent.Process.Pid),
+		"the pane root must have exited to exercise descendant-only retention")
+	assert.True(t, session.IsProcessAlive(descendantPID),
+		"the captured descendant must remain alive through the timeout")
 
 	select {
 	case err := <-process.done:
