@@ -269,6 +269,30 @@ func validateControlParent(path string) error {
 	return err
 }
 
+// controlStatOwnerDescription renders the owner half of the ownership refusals
+// below, so an unreadable owner is never printed as "uid 0" — that would name
+// root as the owner of a path whose owner was never read.
+//
+// RESTATED, NOT SHARED, and the import graph is why rather than taste.
+// agentd.openCodeStatOwnerDescription is the canonical spelling of this
+// sentence and predates it (TCL-923, #1851). It cannot be imported here:
+// agentd already imports opencodeapi, so the reverse edge is a cycle. Sharing
+// would therefore mean MOVING the helper to a new home, which is a
+// cross-package refactor and outside TCL-933's "message text and its tests
+// only, no renames" boundary.
+//
+// The TCL-911 hazard this is weighed against is two spellings of a refusal
+// CONDITION drifting apart. That is not what happens here: each file keeps its
+// own predicate untouched, and only a five-line formatter with no policy in it
+// is duplicated. If the wording ever changes, change it in both — agentd's
+// copy is the one to follow.
+func controlStatOwnerDescription(stat *syscall.Stat_t, ok bool) string {
+	if !ok || stat == nil {
+		return "no readable owner"
+	}
+	return fmt.Sprintf("uid %d", stat.Uid)
+}
+
 func controlParentIdentity(path string) (int64, int64, error) {
 	cleanPath := filepath.Clean(path)
 	if cleanPath != path || !filepath.IsAbs(cleanPath) ||
@@ -299,11 +323,20 @@ func controlParentIdentity(path string) (int64, int64, error) {
 	}
 	stat, ok := info.Sys().(*syscall.Stat_t)
 	if !ok || stat.Uid != uint32(os.Geteuid()) {
-		return 0, 0, fmt.Errorf("OpenCode control socket parent has the wrong owner")
+		// The !ok arm means the owner was never read, so "wrong owner" — the
+		// previous wording — asserted a verdict about a value nobody has. The
+		// disjunction is stated as a disjunction (TCL-933).
+		return 0, 0, fmt.Errorf(
+			"OpenCode control socket parent %q owner could not be read or is not the expected one (found %s, expected uid %d)",
+			parent, controlStatOwnerDescription(stat, ok), os.Geteuid())
 	}
 	resolved, err := filepath.EvalSymlinks(parent)
 	if err != nil || resolved != parent {
-		return 0, 0, fmt.Errorf("OpenCode control socket parent is not canonical")
+		// err covers EACCES/ELOOP and friends, where canonicality was never
+		// determined. Reporting those as "is not canonical" named a mechanism
+		// this line did not run (TCL-933).
+		return 0, 0, fmt.Errorf(
+			"OpenCode control socket parent %q could not be resolved or is not canonical", parent)
 	}
 	return int64(stat.Dev), int64(stat.Ino), nil
 }
@@ -319,11 +352,25 @@ func socketPathIdentity(path string, requireMode bool) (int64, int64, error) {
 	}
 	if info.Mode()&os.ModeSymlink != 0 || info.Mode()&os.ModeSocket == 0 ||
 		(requireMode && info.Mode().Perm() != 0o600) {
-		return 0, 0, fmt.Errorf("OpenCode control authority is not a real mode-0600 socket")
+		// TCL-933, and a THIRD shape beyond the two that ticket named: the
+		// mode-0600 clause is GATED on requireMode, while the old wording
+		// stated it unconditionally. The gated-off path is live —
+		// socketPathIdentity(path, false) runs right after the bind — so a
+		// symlink or non-socket was reported as failing a permission check
+		// that never executed. A future audit of this family should carry
+		// "clause stated unconditionally but guarded in the predicate" on its
+		// checklist alongside the disjunction and never-ran-mechanism shapes.
+		expected := "a real socket"
+		if requireMode {
+			expected = "a real mode-0600 socket"
+		}
+		return 0, 0, fmt.Errorf("OpenCode control authority %q is not %s", path, expected)
 	}
 	stat, ok := info.Sys().(*syscall.Stat_t)
 	if !ok || stat.Uid != uint32(os.Geteuid()) {
-		return 0, 0, fmt.Errorf("OpenCode control socket has the wrong owner")
+		return 0, 0, fmt.Errorf(
+			"OpenCode control socket %q owner could not be read or is not the expected one (found %s, expected uid %d)",
+			path, controlStatOwnerDescription(stat, ok), os.Geteuid())
 	}
 	return int64(stat.Dev), int64(stat.Ino), nil
 }
