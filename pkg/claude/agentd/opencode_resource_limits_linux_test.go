@@ -31,3 +31,16 @@ func TestManagedOpenCodeExternalResourceCgroupLaunchUsesTmuxWrapper(t *testing.T
 	assert.Contains(t, command, "tclaude-tmux.service/tclaude-test")
 	assert.Contains(t, command, "'env HOME=/srv/agent /opt/opencode serve --port 43210'")
 }
+
+func TestManagedOpenCodeSandboxLaunchCapturesStderrOutsideTmuxPane(t *testing.T) {
+	handshake := &openCodeTmuxHandshake{
+		statusPath: "/private/authority", gatePath: "/private/gate",
+		stderrPath: "/private/stderr",
+	}
+	command := openCodeTmuxLaunchCommand(db.OpenCodeRuntime{}, "/opt/tclaude",
+		[]string{"opencode-unix-launch"}, nil, handshake)
+
+	assert.Contains(t, command, "3>/private/authority")
+	assert.Contains(t, command, "4</private/gate")
+	assert.Contains(t, command, "2>/private/stderr")
+}

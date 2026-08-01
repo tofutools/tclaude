@@ -802,6 +802,7 @@ type openCodeTmuxHandshake struct {
 	dir        string
 	statusPath string
 	gatePath   string
+	stderrPath string
 	status     *os.File
 	gate       *os.File
 }
@@ -836,7 +837,8 @@ func prepareOpenCodeTmuxHandshake() (*openCodeTmuxHandshake, error) {
 		return nil, fmt.Errorf("create OpenCode tmux handshake directory: %w", err)
 	}
 	h := &openCodeTmuxHandshake{dir: dir,
-		statusPath: filepath.Join(dir, "authority"), gatePath: filepath.Join(dir, "gate")}
+		statusPath: filepath.Join(dir, "authority"), gatePath: filepath.Join(dir, "gate"),
+		stderrPath: filepath.Join(dir, "stderr")}
 	fail := func(err error) (*openCodeTmuxHandshake, error) {
 		h.close()
 		return nil, err
@@ -846,6 +848,13 @@ func prepareOpenCodeTmuxHandshake() (*openCodeTmuxHandshake, error) {
 	}
 	if err := syscall.Mkfifo(h.gatePath, 0o600); err != nil {
 		return fail(fmt.Errorf("create OpenCode tmux launch gate: %w", err))
+	}
+	stderr, err := os.OpenFile(h.stderrPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return fail(fmt.Errorf("create OpenCode tmux startup stderr: %w", err))
+	}
+	if err := stderr.Close(); err != nil {
+		return fail(fmt.Errorf("close OpenCode tmux startup stderr: %w", err))
 	}
 	h.status, err = os.OpenFile(h.statusPath, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
@@ -939,7 +948,8 @@ func openCodeTmuxLaunchCommand(runtime db.OpenCodeRuntime, command string, args,
 	serverCommand := strings.Join(parts, " ")
 	if handshake != nil {
 		serverCommand += " 3>" + clcommon.ShellQuoteArg(handshake.statusPath) +
-			" 4<" + clcommon.ShellQuoteArg(handshake.gatePath)
+			" 4<" + clcommon.ShellQuoteArg(handshake.gatePath) +
+			" 2>" + clcommon.ShellQuoteArg(handshake.stderrPath)
 	}
 	if runtime.ResourceCgroupDir != "" {
 		serverCommand = session.WrapPreparedResourceCgroupCommand(
@@ -995,14 +1005,16 @@ func startOpenCodeProcessThroughTmux(runtime *db.OpenCodeRuntime, command string
 	go watchOpenCodeTmuxProcess(process, *runtime)
 	if handshake != nil {
 		if err := handshake.connectGate(time.Now().Add(openCodeStartupTimeout)); err != nil {
+			output := captureOpenCodeTmuxStartup(handshake, tmuxSession)
 			stopOpenCodeProcess(*runtime, process)
-			return nil, err
+			return nil, openCodeTmuxStartupError(err, output)
 		}
 		authority, err := awaitOpenCodeTmuxAuthority(
 			handshake, process, openCodeStartupTimeout)
 		if err != nil {
+			output := captureOpenCodeTmuxStartup(handshake, tmuxSession)
 			stopOpenCodeProcess(*runtime, process)
-			return nil, err
+			return nil, openCodeTmuxStartupError(err, output)
 		}
 		if err := persistAndAcknowledgeOpenCodeUnixLaunch(runtime, authority, handshake.gate); err != nil {
 			stopOpenCodeProcess(*runtime, process)
@@ -1016,7 +1028,7 @@ func startOpenCodeProcessThroughTmux(runtime *db.OpenCodeRuntime, command string
 			if err == nil {
 				err = fmt.Errorf("server exited before health check")
 			}
-			paneOutput := captureOpenCodeTmuxPane(tmuxSession)
+			paneOutput := captureOpenCodeTmuxStartup(handshake, tmuxSession)
 			stopOpenCodeProcess(*runtime, process)
 			return nil, fmt.Errorf("OpenCode server failed during startup: %w: %s", err, paneOutput)
 		default:
@@ -1026,10 +1038,36 @@ func startOpenCodeProcessThroughTmux(runtime *db.OpenCodeRuntime, command string
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	paneOutput := captureOpenCodeTmuxPane(tmuxSession)
+	paneOutput := captureOpenCodeTmuxStartup(handshake, tmuxSession)
 	stopOpenCodeProcess(*runtime, process)
 	return nil, fmt.Errorf("OpenCode server at %s did not become healthy within %s: %s",
 		runtime.ServerURL, openCodeStartupTimeout, paneOutput)
+}
+
+func captureOpenCodeTmuxStartup(handshake *openCodeTmuxHandshake, tmuxSession string) string {
+	if handshake != nil && handshake.stderrPath != "" {
+		file, err := os.Open(handshake.stderrPath)
+		if err == nil {
+			defer file.Close()
+			raw, readErr := io.ReadAll(io.LimitReader(file, spawnStderrMax+1))
+			if readErr == nil {
+				if len(raw) > spawnStderrMax {
+					raw = raw[:spawnStderrMax]
+				}
+				if output := strings.TrimSpace(string(raw)); output != "" {
+					return output
+				}
+			}
+		}
+	}
+	return captureOpenCodeTmuxPane(tmuxSession)
+}
+
+func openCodeTmuxStartupError(err error, output string) error {
+	if strings.TrimSpace(output) == "" {
+		return err
+	}
+	return fmt.Errorf("%w: %s", err, output)
 }
 
 func reclaimOrphanedOpenCodeTmuxSession(tmuxSession string) error {

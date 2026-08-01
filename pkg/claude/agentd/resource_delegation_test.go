@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -200,6 +201,23 @@ func TestManagedOpenCodeTmuxHandshakeDoesNotUseProcessTempDir(t *testing.T) {
 	assert.False(t, strings.HasPrefix(rel, ".."+string(filepath.Separator)))
 	assert.Equal(t, os.FileMode(0o700), mustFileMode(t,
 		filepath.Join(dataDir, "opencode-launch-handshakes")))
+	assert.Equal(t, os.FileMode(0o600), mustFileMode(t, handshake.stderrPath))
+}
+
+func TestManagedOpenCodeTmuxStartupRetainsStderrAfterPaneExit(t *testing.T) {
+	setOpenCodeTmuxHandshakeDataDirForTest(t)
+	handshake, err := prepareOpenCodeTmuxHandshake()
+	require.NoError(t, err)
+	t.Cleanup(handshake.close)
+	require.NoError(t, os.WriteFile(handshake.stderrPath,
+		[]byte("bwrap: cannot create namespace\n"), 0o600))
+
+	assert.Equal(t, "bwrap: cannot create namespace",
+		captureOpenCodeTmuxStartup(handshake, "missing-tmux-session"))
+	assert.EqualError(t, openCodeTmuxStartupError(
+		errors.New("managed tmux session exited"),
+		captureOpenCodeTmuxStartup(handshake, "missing-tmux-session")),
+		"managed tmux session exited: bwrap: cannot create namespace")
 }
 
 func setOpenCodeTmuxHandshakeDataDirForTest(t *testing.T) string {
