@@ -314,6 +314,16 @@ function sandboxContextLabel(contexts, index) {
      `target.network_entries` would attribute the DRAFT-ONLY prediction — a
      different policy, which no launch uses — to this context.
 
+   An index NOT in the list returns [] as well, where the old expression fell
+   back. Said plainly because it is a behaviour change the paragraph above does
+   not cover: "authoritative for every index IN it" is silent about an index past
+   the end. It is unreachable — context_network_entries, context_axes and
+   context_refusals are built in one loop and truncated together
+   (sandbox_profile_enforcement.go:425-433), so they are equal-length, and both
+   call sites are gated on prediction.contexts[effectiveContext] existing — and
+   the strict answer is the right one anyway: an index the daemon never described
+   has no verdict, and the draft-only rows are not it.
+
    Null at an index is EXCLUSIVELY the refusal marker, which is what lets this
    treat it as a verdict rather than as missing data. Verified against the only
    producer, sandbox_profile_prediction.go:68-101: the success path appends
