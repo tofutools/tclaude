@@ -20,6 +20,17 @@ import { createPreactHarness } from './preact-harness.mjs';
    The renderer branch under test is deliberately minimal and commits to none of
    the mocked options; what it renders may change, that it renders must not. */
 
+/* Absence without handing a live DOM node to node's diff formatter. On FAILURE,
+   assert.equal(el, null) walks the linkedom element's circular parent/child
+   graph and the process is OOM-killed: the file dies with SIGKILL after ~30s and
+   prints no test names, so a wrong assertion fails as a HANG rather than a diff.
+   TCL-915 hit exactly that on the assertion below. Reducing to a short string
+   first keeps the failure one line AND names what was found. */
+function assertAbsent(root, selector, message) {
+  const found = root.querySelector(selector);
+  assert.equal(found && `${found.localName}.${found.getAttribute('class') || ''}`, null, message);
+}
+
 const REFUSAL = {
   kind: 'unsupported_sandbox_profile_network_allowlist',
   message: 'missing capability proxy_engine_name_authority: the Proxy filter engine '
@@ -72,8 +83,33 @@ test('a refused target renders as launch-blocked, carrying the capability and it
   // And specifically NOT the missing-axis fallback's wording or bucketing.
   assert.doesNotMatch(container.textContent, /No enforcement verdict was returned/,
     'a refusal must never reach the missing-axis fallback');
-  assert.equal(container.querySelector('.sbx-rule-bucket'), null,
-    'no verdict was reached, so no bucket may claim one');
+  /* TCL-915 narrowed this. It used to read
+     `querySelector('.sbx-rule-bucket') === null` — no bucket AT ALL — which was
+     true of the TCL-885 minimum and is false by design under Option C, which
+     renders one bucket that carries no verdict and says so.
+
+     THE EXACT SET, not an enumeration of known-bad classes. A first attempt
+     asserted the three verdict classes were absent by name and was caught by
+     cold review as GENUINELY WEAKER: re-introducing Option B verbatim — a fifth
+     "Blocked rules" bucket, one row per rule, outcome 'refused', on the refused
+     target — passed the whole suite green. That is the ticket's single
+     prohibited outcome shipping undetected.
+
+     The justification written alongside that attempt was backwards. It claimed
+     per-class assertions stop a bucket "added later" that a count would miss;
+     the truth is the reverse — a closed set is what catches an unknown class,
+     and naming three known ones is precisely the form that cannot. Recorded
+     rather than quietly corrected, because the wrong reasoning is what made the
+     weaker assertion look like the stronger one. */
+  const bucketClasses = [...container.querySelectorAll('.sbx-rule-bucket')]
+    .map((bucket) => [...bucket.classList].find((name) => name.startsWith('sbx-rule-bucket-')));
+  assert.deepEqual(bucketClasses, ['sbx-rule-bucket-unjudged'],
+    'a refused target renders EXACTLY the unjudged bucket — any other bucket, '
+    + 'including a new class, claims a verdict that was never reached');
+
+  const unjudged = container.querySelector('.sbx-rule-bucket-unjudged');
+  assert.match(unjudged.textContent, /never judged|none carries a verdict/,
+    'listing rules without a verdict is only honest if it SAYS no verdict was reached');
 });
 
 test('an old daemon\'s missing axes render differently from a refusal', async (t) => {
@@ -90,7 +126,8 @@ test('an old daemon\'s missing axes render differently from a refusal', async (t
   // what is blocked.
   assert.ok(container.querySelector('.sbx-rule-bucket'));
   assert.match(container.textContent, /No enforcement verdict was returned/);
-  assert.equal(container.querySelector('.sbx-launch-blocked'), null);
+  assertAbsent(container, '.sbx-launch-blocked',
+    'an absent verdict is not a refusal');
 });
 
 test('a refused target is flagged as needing attention', async (t) => {
@@ -120,7 +157,7 @@ test('a refusal in one context leaves the other contexts rendering normally', as
 
   const clean = await harness.mount(harness.html`
     <${SandboxPolicyResult} target=${target} context=${CONTEXT} contextIndex=${0}/>`);
-  assert.equal(clean.container.querySelector('.sbx-launch-blocked'), null,
+  assertAbsent(clean.container, '.sbx-launch-blocked',
     'a sibling context\'s refusal must not darken this one');
   assert.ok(clean.container.querySelector('.sbx-rule-bucket-applied'));
 
@@ -266,7 +303,7 @@ test('a target with no refusal anywhere reports no refusal warning', async (t) =
   };
   const mounted = await harness.mount(harness.html`
     <${SandboxPolicyResult} target=${target} context=${CONTEXT} contextIndex=${0}/>`);
-  assert.equal(mounted.container.querySelector('.sbx-other-assignments'), null);
-  assert.equal(mounted.container.querySelector('.sbx-launch-blocked'), null);
+  assertAbsent(mounted.container, '.sbx-other-assignments', 'no other assignment warns');
+  assertAbsent(mounted.container, '.sbx-launch-blocked', 'and nothing is blocked');
   assert.equal(sandboxPolicyNeedsAttention(target, CONTEXT, 0), false);
 });

@@ -5027,6 +5027,56 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
   background: rgba(248, 81, 73, .08);
   border-left-color: #f85149;
 }
+/* TCL-915. The not-evaluated bucket differs from the three verdict buckets on
+   TWO channels, not one: a grey no verdict uses (#6e7681), and NO background
+   tint at all where each verdict bucket has one. Colour is the weakest of the
+   three signals here — the summary text already reads "Rules not evaluated"
+   against "Fully supported rules", and .sbx-bucket-note states it in prose — so
+   this styling reinforces a distinction that survives without it. */
+.sbx-rule-bucket-unjudged {
+  background: transparent;
+  border-left-color: #6e7681;
+  color: #8b949e;
+}
+.sbx-rule-bucket-unjudged > summary {
+  color: #8b949e;
+}
+.sbx-rule-bucket-unjudged .sbx-rule-count {
+  background: #1c2128;
+  color: #8b949e;
+}
+/* Sits ABOVE the rules it describes. A neutral list under a quiet heading still
+   invites "these were checked and were fine"; this is the sentence that denies
+   it, and it is what the tests pin rather than the bucket's class or presence. */
+.sbx-bucket-note {
+  border-bottom: 1px dashed #30363d;
+  color: #8b949e;
+  font-size: .82rem;
+  margin: .35rem 0 .1rem;
+  padding-bottom: .4rem;
+}
+/* The capability kind, beside the refusal prose rather than buried in it: it is
+   the stable identifier an operator can search for or quote in a bug report. */
+.sbx-refusal-kind {
+  background: rgba(248, 81, 73, .16);
+  border-radius: .25rem;
+  color: #ff9d95;
+  display: inline-block;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: .74rem;
+  margin: .3rem 0 .35rem;
+  padding: .05rem .35rem;
+}
+.sbx-refusal-kind-label {
+  opacity: .75;
+}
+.sbx-refusal-detail {
+  color: #f0b6b1;
+  font-size: .86rem;
+}
+.sbx-launch-blocked > strong {
+  display: block;
+}
 .sbx-rule-count {
   background: #21262d;
   border-radius: 999px;
