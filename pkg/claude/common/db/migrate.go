@@ -3163,7 +3163,7 @@ func incompleteV1Schema(db *sql.DB) (bool, error) {
 		return false, nil
 	}
 	rows, err := db.Query(`SELECT name FROM sqlite_master
-		WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+		WHERE type = 'table'
 		  AND name NOT IN ('schema_version', 'sessions', 'notify_state')
 		ORDER BY name`)
 	if err != nil {
@@ -3175,6 +3175,9 @@ func incompleteV1Schema(db *sql.DB) (bool, error) {
 		var name string
 		if err := rows.Scan(&name); err != nil {
 			return false, err
+		}
+		if strings.HasPrefix(name, "sqlite_") {
+			continue
 		}
 		unexpected = append(unexpected, name)
 	}

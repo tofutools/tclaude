@@ -743,6 +743,34 @@ func TestMigrateRefusesV1HealingOnMixedHeadShape(t *testing.T) {
 	assert.Equal(t, 1, headTable, "refusal leaves head-shaped user tables untouched")
 }
 
+func TestOpenRefusesV1HealingWithSQLitePrefixLookalikeTable(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	ResetForTest()
+	dbPath := filepath.Join(dir, ".tclaude", "data", "db.sqlite")
+	require.NoError(t, os.MkdirAll(filepath.Dir(dbPath), 0o700))
+	raw, err := sql.Open("sqlite", dbPath)
+	require.NoError(t, err)
+	_, err = raw.Exec(`
+		CREATE TABLE schema_version(version INTEGER NOT NULL);
+		INSERT INTO schema_version VALUES (1);
+		CREATE TABLE sqlitebackup(value TEXT);
+		INSERT INTO sqlitebackup VALUES ('must-survive');
+	`)
+	require.NoError(t, err)
+	require.NoError(t, raw.Close())
+
+	_, openErr := Open()
+	require.ErrorContains(t, openErr, "refusing to heal incomplete v1 schema")
+	require.ErrorContains(t, openErr, "sqlitebackup")
+	check, err := sql.Open("sqlite", dbPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = check.Close() })
+	var value string
+	require.NoError(t, check.QueryRow(`SELECT value FROM sqlitebackup`).Scan(&value))
+	assert.Equal(t, "must-survive", value, "literal-prefix guard preserves the unexpected user table")
+}
+
 func TestFailedFreshImportRefusesToResetPopulatedV1Tables(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
