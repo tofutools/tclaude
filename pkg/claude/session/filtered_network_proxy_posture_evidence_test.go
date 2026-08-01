@@ -200,15 +200,16 @@ func TestProxyPostureNoProxyOverrideIsDisclosed(t *testing.T) {
 			"a policy that widened away from filtered performs no override")
 	})
 
-	t.Run("darwin-stays-silent", func(t *testing.T) {
+	t.Run("darwin-discloses-the-same-launcher-owned-override", func(t *testing.T) {
 		isolateProxyNoProxyEnvironment(t)
 		t.Setenv("NO_PROXY", "internal.example")
-		// The override is performed by the Linux launcher's exec seam; the
-		// Darwin floor is M3. Asked as a parameter rather than read from
-		// runtime.GOOS, so this case executes on either platform.
-		assert.Nil(t, ProxyEngineNoProxyOverrideNotice(
+		notice := ProxyEngineNoProxyOverrideNotice(
 			"darwin", sandboxpolicy.ImplementationTclaudeLayer,
-			sandboxpolicy.NetworkFiltered, rules, nil))
+			sandboxpolicy.NetworkFiltered, rules, nil)
+		require.NotNil(t, notice)
+		assert.Equal(t,
+			sandboxpolicy.AccessNoticeReasonProxyEngineNoProxyOverride,
+			notice.Reason)
 	})
 
 	t.Run("non-tclaude-layer-stays-silent", func(t *testing.T) {
@@ -281,8 +282,9 @@ func TestProxyRoutingVariableListsAgree(t *testing.T) {
 	}
 }
 
-// proxyPostureNoProxyNotice asks the disclosure the way a Linux tclaude-layer
-// launch asks it: the posture is derived from the same rules, so a fixture
+// proxyPostureNoProxyNotice asks the disclosure the way a tclaude-layer launch
+// asks it on this test's representative Linux target: the posture is derived
+// from the same rules, so a fixture
 // cannot claim a posture its own policy would not produce. The platform and
 // implementation cases below pass their own values instead of using this.
 func proxyPostureNoProxyNotice(

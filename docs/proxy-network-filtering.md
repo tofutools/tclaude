@@ -143,7 +143,7 @@ destinations that the floor cannot express on its own
 | allow-all / open, no denies | none (host network) | **no** — nothing to filter |
 | `closed` / no network | empty netns only | **no** |
 | loopback-only list | the floor expresses it natively | **no** |
-| open with denies, any list carrying a deny row, or a list with a host/domain/cidr entry | empty netns | **yes** |
+| open with denies, any list carrying a deny row, or a list with a host/domain/cidr entry | empty netns on Linux; Seatbelt deny floor on macOS | **yes** |
 
 Consequences worth knowing:
 
@@ -151,8 +151,8 @@ Consequences worth knowing:
   path and for `PredictAccessEnforcement`, so an editor preview cannot promise a
   mechanism the launch will not run.
 - **The disclosure names the mechanism that actually runs.** A policy that
-  deploys a proxy reads `tclaude-layer bubblewrap + supervised loopback
-  filtering proxy`; a loopback-only policy under the same authored engine keeps
+  deploys a proxy names the platform floor plus its supervised loopback
+  filtering proxy; a loopback-only policy under the same authored engine keeps
   the native mechanism sentence, because that is what runs.
 - **No idle proxy.** The proxy is started by the filtered launcher only on the
   discriminating branch, and its lifetime is the sandbox's. There is no daemon
@@ -348,9 +348,10 @@ NO_PROXY    = ""                          no_proxy    = ""
 
 Four details are load-bearing:
 
-- **The port is ephemeral and chosen by the in-namespace bind.** A fixed port
-  would collide with dev servers the harness itself starts, and nothing on the
-  host can squat a port that is bound from inside.
+- **The port is ephemeral and launcher-owned.** Linux chooses it with the
+  in-namespace bind. Darwin chooses it with a host-loopback bind, then renders
+  that actual endpoint into the Seatbelt floor before the harness starts. A
+  fixed port would create an unnecessary collision surface.
 - **`socks5h`, not `socks5`.** The `h` keeps name resolution at the proxy, where
   the authored host and domain rows are evaluated. A client forced to plain
   `socks5://` resolves locally, finds no resolver, and fails — which is the
@@ -382,7 +383,8 @@ upstream. Upstream chaining is off, and would have to be explicitly authored.
 
 ## Gated launch sequence
 
-The harness does not start before the proxy is accepting:
+The harness does not start before the proxy listener exists and its policy has
+compiled. Linux uses a descriptor handoff:
 
 ```text
 resolve and validate profile
@@ -420,13 +422,23 @@ bind-mounted readiness socket, whose host end is closed and unlinked after the
 single handoff it exists for; and the sealed loopback-only `/etc/hosts` that the
 name-authority guarantee above rests on, bound read-only over the host's.
 
-Sandbox-private loopback stays usable for the harness's own servers. A sandboxed
-process can connect to its own listeners; it cannot reach the host's loopback
-except through an authored `loopback` rule carried by the proxy.
+On Linux, sandbox-private loopback stays usable for the harness's own servers. A
+sandboxed process can connect to its own listeners; it cannot reach the host's
+loopback except through an authored `loopback` rule carried by the proxy.
+
+Darwin has no network namespace or descriptor handoff. Its launcher binds
+`127.0.0.1:<ephemeral>` on the host, compiles the same evaluator, renders the
+already-validated Seatbelt proxy floor for that exact port, injects the same
+eight proxy variables, and only then starts `sandbox-exec`. The profile denies
+all listener creation and all outbound networking except the launcher-owned TCP
+port and the agentd Unix-socket floor. Seatbelt's `localhost:PORT` selector is
+host-wide, not loopback-interface-only; the TCL-917 limitation below is part of
+the boundary rather than hidden by the launcher.
 
 ## Prerequisites and trust checks
 
-Only two, and this is the engine's headline operational advantage:
+On Linux there are only two, which is the engine's headline operational
+advantage:
 
 - bubblewrap can create the mount, network, and PID namespaces this floor needs;
 - Linux pidfds are available.
@@ -435,6 +447,10 @@ There is no `pasta`, no `nft`, no trust walk over their paths, no
 `CAP_NET_ADMIN` or `CAP_NET_BIND_SERVICE` probe, and no port-53 broker. **This
 engine works on hosts where the packet gateway cannot run** — without being a
 fallback for them.
+
+On Darwin the prerequisite is the same `sandbox-exec` deny-write capability
+probe as the rest of the Seatbelt layer. The proxy launcher adds no packet
+gateway, resolver broker, or privileged helper.
 
 The failure policy differs from the packet gateway's in the outcome, not just in
 the checks: **a host that cannot build this floor refuses the launch** rather
@@ -446,19 +462,22 @@ that widening is disclosed with its own notice.
 
 ## Supervision and failure behavior
 
-The outer tclaude relay supervises bubblewrap and the proxy:
+The outer tclaude launcher supervises the sandbox and the proxy:
 
-- the harness cannot start before the proxy is accepting on the handed-out
-  descriptor;
-- if the proxy exits, the relay kills the sandbox;
-- when the sandbox exits, the relay terminates the proxy;
-- bubblewrap keeps `--die-with-parent`, and the child is pinned with a pidfd,
-  avoiding PID-reuse races.
+- the harness cannot start before the launcher has bound the proxy endpoint and
+  compiled its evaluator;
+- if the proxy exits, the launcher kills the sandbox;
+- when the sandbox exits, the launcher terminates the proxy;
+- on Linux, bubblewrap keeps `--die-with-parent` and the child is pinned with a
+  pidfd;
+- on Darwin, `sandbox-exec` runs in a launcher-owned process group, which is
+  terminated if the proxy exits; interactive launches hand that group the
+  terminal foreground while the launcher remains its supervisor.
 
-A proxy failure is a sandbox failure. There is no state in which the harness runs
-with the proxy gone — and because the floor is an empty netns, even that state
-would be fail-*closed* rather than open. Every component's failure mode here is
-"no network".
+A proxy failure is a sandbox failure. There is no supported state in which the
+harness runs with the proxy gone. Linux's empty netns has no alternate route;
+Darwin's Seatbelt floor permits only the launcher-owned port and kills the
+sandbox process group when its server exits.
 
 The running proxy records one decision per connection at `debug` level
 (`sandbox filtering proxy decision`). What it logs is a closed set by
@@ -602,8 +621,10 @@ operator docs therefore claim TCP and not IP generally.
 TCL-917 considered a launch-time port-collision check and it was ruled against —
 refusing a launch because an unrelated program holds a port is how a sandbox
 gets switched off, and the scenario is narrow. The ruling was document and
-disclose. If a Darwin proxy is ever wired up, revisit the question **then**,
-with the seam in front of you; this is not a permanent "never".
+disclose. The Darwin launcher preserves that decision: it does not scan for a
+same-port service on another local address or refuse the launch over one. The
+production boundary therefore carries the host-wide same-port reachability
+described above.
 
 ### What the first activation run showed
 
@@ -748,9 +769,10 @@ The main implementation seams are:
 | SOCKS5 handling | `pkg/claude/sandboxproxy/socks5.go` |
 | Policy evaluation and the private-destination blocker | `pkg/claude/sandboxproxy/evaluator.go` |
 | Listener, accept loop, and host-side dial | `pkg/claude/sandboxproxy/server.go`, `dial.go` |
-| Bootstrap, descriptor handoff, proxy environment, decision log | `pkg/claude/session/proxy_network_bridge_linux.go` |
+| Linux bootstrap and descriptor handoff | `pkg/claude/session/proxy_network_bridge_linux.go` |
+| Darwin endpoint binding, Seatbelt launch, and supervision | `pkg/claude/session/proxy_network_launcher_darwin.go` |
 | The proxy environment the launcher owns, and the NO_PROXY disclosure | `pkg/claude/session/proxy_network_env.go` |
 | Floor mapping, engine predicate, and launch refusals | `pkg/claude/session/sandbox_bwrap.go` |
 | Model-transport gate (pre-injection environment) | `pkg/claude/session/model_transport_launch.go` |
-| Supervision and fail-closed teardown | `pkg/claude/session/sandbox_bwrap_winch_relay_linux.go` |
+| Supervision and fail-closed teardown | `pkg/claude/session/sandbox_bwrap_winch_relay_linux.go`, `proxy_network_launcher_darwin.go` |
 | Capability cells, activation record, and disclosure strings | `pkg/claude/harness/network_engine_disclosure.go`, `access_enforcement.go` |
