@@ -766,6 +766,18 @@ func requireOpenCodeAnchoredStateTargets(
 					continue
 				}
 			}
+			// Worded per group. The read-only arm runs with allowAmbient
+			// false, so offering "nor one of this host's ambient directories"
+			// there names a criterion it never applies — and a directory that
+			// IS ambient would be told it is not. Worse, that sentence is the
+			// one the migration note assigns to "XDG_CONFIG_HOME changed", so
+			// it would point an operator at an environment change that is not
+			// the cause.
+			if !group.allowAmbient {
+				return fmt.Errorf(
+					"OpenCode launch contract %s %q is not below its state root %q",
+					kind, dir, resolvedRoot)
+			}
 			return fmt.Errorf(
 				"OpenCode launch contract %s %q is neither below its state root %q nor one of this host's ambient OpenCode state directories",
 				kind, dir, resolvedRoot)
@@ -823,8 +835,14 @@ func openCodeStateRootSubject(stateRoot, resolved string) string {
 	if resolved == stateRoot {
 		return fmt.Sprintf("OpenCode launch contract state root %q", stateRoot)
 	}
+	// "resolving to", NOT "a symlink": the inequality is produced by a symlink
+	// in ANY component, and attributing it to the leaf is wrong exactly where
+	// this message is most often read. A symlinked HOME or XDG_DATA_HOME — the
+	// host shape #1822 documented — makes every per-agent refusal print this,
+	// and telling an operator their state root is a symlink when they wrote it
+	// literally sends them looking for something that is not there.
 	return fmt.Sprintf(
-		"OpenCode launch contract state root %q (a symlink, resolving to %q)",
+		"OpenCode launch contract state root %q (resolving to %q)",
 		stateRoot, resolved)
 }
 

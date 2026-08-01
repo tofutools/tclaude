@@ -288,23 +288,45 @@ func TestPrepareOpenCodeTclaudeLayerStateAcceptsProducedFilteredLayout(t *testin
 	require.NoError(t, requireOpenCodeAnchoredStateTargets(contract))
 
 	// The filtered posture's directories are all below the state root, so this
-	// acceptance must not be riding on the ambient arm. Moving the ambient bases
-	// away leaves it accepted.
+	// acceptance must not be riding on the ambient arm — the anchor must never
+	// derive the ambient set at all.
 	//
-	// XDG_DATA_HOME is deliberately NOT moved, and the exclusion is the point
-	// rather than a convenience: it anchors the private state ALLOCATION, not
-	// the ambient answer, so moving it strands the allocation and refuses with
-	// the environment-change message #1822 documented. Including it here made
-	// this test fail for that unrelated reason, which would have read as "the
-	// private posture depends on an ambient directory" — a wrong conclusion
-	// about the code, reached from a fixture that was testing two things at once.
-	for _, name := range []string{
-		"XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME",
-	} {
-		t.Setenv(name, filepath.Join(t.TempDir(), "moved-"+name))
-	}
+	// Pinned by making that derivation IMPOSSIBLE rather than merely relocated.
+	// An earlier version moved the ambient bases to fresh temp paths and
+	// asserted acceptance; a cold-review mutation restoring eager derivation
+	// left it green, because relocating a base does not make
+	// ambientOpenCodeStateAppDirs fail — openCodeXDGBase falls back to $HOME and
+	// canonicalizeMissingOpenCodePath happily walks up to an existing ancestor.
+	// The assertion could not fail, so it pinned nothing.
+	//
+	// Pointing XDG_CACHE_HOME through a REGULAR FILE is what breaks it:
+	// canonicalizeMissingOpenCodePath returns any non-ENOENT Lstat error, and a
+	// file used as a directory component gives ENOTDIR. Lazy derivation never
+	// reaches it and accepts; eager derivation returns that error and this test
+	// fails.
+	//
+	// Two things are deliberately NOT touched, and both exclusions are the point
+	// rather than conveniences, because each would fail this test for a reason
+	// that has nothing to do with laziness:
+	//
+	//   - $HOME. Clearing it looks like a cleaner way to break the ambient set,
+	//     but refuseOpenCodeProtectedStateRoot resolves the home directory too,
+	//     so the anchor fails before it ever reaches the ambient arm. Tried
+	//     first, and it failed with "$HOME is not defined" from the protected
+	//     paths — a green-to-red move that would have proved nothing.
+	//   - XDG_DATA_HOME. It anchors the private state ALLOCATION, not the
+	//     ambient answer, so breaking it strands the allocation and refuses with
+	//     the environment-change message #1822 documented.
+	notADirectory := filepath.Join(t.TempDir(), "regular-file")
+	require.NoError(t, os.WriteFile(notADirectory, []byte("x"), 0o600))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(notADirectory, "under-a-file"))
+	require.Error(t, func() error {
+		_, err := ambientOpenCodeStateAppDirs()
+		return err
+	}(),
+		"the fixture only discriminates if deriving the ambient set is now impossible")
 	require.NoError(t, requireOpenCodeAnchoredStateTargets(contract),
-		"a private posture names no ambient directory, so it must not depend on one")
+		"a private posture names no ambient directory, so it must not derive one")
 }
 
 // Non-OpenCode launch specs are untouched: the authority this anchor uses is
@@ -369,6 +391,41 @@ func TestPrepareOpenCodeTclaudeLayerStateRefusesReadOnlyStateDirEscape(t *testin
 	assert.NoDirExists(t, victim,
 		"a daemon-side mkdir escaped the state root through an in-root symlink")
 	require.ErrorContains(t, err,
-		"is neither below its state root",
+		"is not below its state root",
 		"pinned to the reason, not to the presence of any error")
+	// The retired spelling kept as a NEGATIVE needle. The read-only arm never
+	// consults the ambient set, so offering it as a criterion would name a test
+	// this refusal does not apply, and would point an operator at the
+	// environment change the migration note assigns that exact sentence to.
+	require.NotContains(t, err.Error(),
+		"nor one of this host's ambient OpenCode state directories",
+		"the read-only arm must not offer a criterion it never applies")
+}
+
+// The refusal subject must not attribute the symlink to the LEAF. The
+// inequality that triggers the parenthetical is produced by a symlink in any
+// component, and on the realistic trigger — a symlinked HOME or XDG_DATA_HOME,
+// the host shape #1822 documented — the leaf is written literally. Telling an
+// operator their state root is a symlink then sends them looking for something
+// that is not there.
+func TestOpenCodeStateRootSubjectDoesNotBlameTheLeaf(t *testing.T) {
+	parent := filepath.Join(t.TempDir(), "real-parent")
+	require.NoError(t, os.MkdirAll(parent, 0o700))
+	link := filepath.Join(t.TempDir(), "link-parent")
+	require.NoError(t, os.Symlink(parent, link))
+
+	const leaf = "agt_00000000000000000000000000000042"
+	stateRoot := filepath.Join(link, leaf)
+	require.NoError(t, os.Mkdir(stateRoot, 0o700))
+	resolved, err := filepath.EvalSymlinks(stateRoot)
+	require.NoError(t, err)
+	require.NotEqual(t, stateRoot, resolved,
+		"the fixture only discriminates if resolution actually changes the path")
+
+	subject := openCodeStateRootSubject(stateRoot, resolved)
+	assert.Contains(t, subject, "resolving to",
+		"the resolved path still has to be shown; hiding it is what #1822 fixed")
+	// The retired spelling as a negative needle: this is the claim that was wrong.
+	assert.NotContains(t, subject, "a symlink",
+		"the leaf here is a literal directory; only a component above it is a link")
 }
