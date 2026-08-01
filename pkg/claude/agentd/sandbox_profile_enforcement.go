@@ -161,9 +161,27 @@ type sandboxProfileEffectiveContext struct {
 	AgentDirectories []string                        `json:"agent_directories"`
 	Network          sandboxpolicy.NetworkRules      `json:"network"`
 	UnixSockets      sandboxpolicy.UnixSocketRules   `json:"unix_sockets"`
+	ResourceLimits   sandboxpolicy.ResourceLimits    `json:"resource_limits,omitempty"`
+	MemoryLimitBytes string                          `json:"memory_limit_bytes,omitempty"`
+	CPUQuota         string                          `json:"cpu_max,omitempty"`
 	AgentdSocket     string                          `json:"agentd_socket"`
 	Notices          []sandboxpolicy.AccessNotice    `json:"notices"`
 	policy           sandboxpolicy.Profile
+}
+
+func sandboxResourceLimitRefusal(
+	profile sandboxpolicy.Profile,
+	target parsedSandboxProfileEnforcementTarget,
+) *sandboxProfileEnforcementRefusal {
+	if err := sandboxpolicy.ValidateResourceLimitTarget(
+		profile.ResourceLimits, target.implementation, target.platform,
+	); err != nil {
+		return &sandboxProfileEnforcementRefusal{
+			Kind: "unsupported_resource_limits", Harness: target.harness.Name,
+			Message: err.Error(),
+		}
+	}
+	return nil
 }
 
 type sandboxProfileDraftEnforcementResponse struct {
@@ -248,6 +266,14 @@ func handleSandboxProfileEnforcement(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "invalid_arg",
 				fmt.Sprintf("invalid --for target %q: %v", raw, err))
 			return
+		}
+		if refusal := sandboxResourceLimitRefusal(flattened, target); refusal != nil {
+			response.Targets = append(response.Targets, sandboxProfileEnforcementTarget{
+				Implementation: string(target.implementation), Harness: target.harness.Name,
+				Platform: target.platform, Predicted: false, Refusal: refusal,
+				Caveat: sandboxProfilePredictionCaveat(target),
+			})
+			continue
 		}
 		prediction, err := harness.PredictAccessEnforcement(
 			target.harness, target.implementation, axes, mode, target.platform,
@@ -784,9 +810,10 @@ func effectiveDraftSandboxProfileContexts(
 			}
 		}
 		effectivePolicy := sandboxpolicy.Profile{
-			NetworkAccess: effective.NetworkAccess,
-			Network:       effective.Network,
-			UnixSockets:   effective.UnixSockets,
+			NetworkAccess:  effective.NetworkAccess,
+			Network:        effective.Network,
+			UnixSockets:    effective.UnixSockets,
+			ResourceLimits: effective.ResourceLimits,
 		}
 		axes, err := sandboxpolicy.DeriveAccessAxes(effectivePolicy)
 		if err != nil {
@@ -816,6 +843,23 @@ func effectiveDraftSandboxProfileContexts(
 			NetworkAccess:    effective.NetworkAccess,
 			Network:          effective.Network,
 			UnixSockets:      effective.UnixSockets,
+			ResourceLimits:   effective.ResourceLimits,
+		}
+		memoryBytes := ""
+		if policy.ResourceLimits.Memory != "" {
+			value, parseErr := sandboxpolicy.ParseMemoryLimitBytes(policy.ResourceLimits.Memory)
+			if parseErr != nil {
+				return nil, 0, parseErr
+			}
+			memoryBytes = fmt.Sprintf("%d", value)
+		}
+		cpuMax := ""
+		if policy.ResourceLimits.CPU != nil {
+			quota, quotaErr := sandboxpolicy.CPUQuotaMicros(*policy.ResourceLimits.CPU)
+			if quotaErr != nil {
+				return nil, 0, quotaErr
+			}
+			cpuMax = fmt.Sprintf("%d %d", quota, sandboxpolicy.CPUCgroupPeriodMicros)
 		}
 		out = append(out, sandboxProfileEffectiveContext{
 			Context:          context,
@@ -824,6 +868,9 @@ func effectiveDraftSandboxProfileContexts(
 			AgentDirectories: policy.AgentDirectories,
 			Network:          axes.Network,
 			UnixSockets:      axes.UnixSockets,
+			ResourceLimits:   policy.ResourceLimits,
+			MemoryLimitBytes: memoryBytes,
+			CPUQuota:         cpuMax,
 			AgentdSocket:     "always reachable",
 			Notices:          notices,
 			policy:           policy,
@@ -977,7 +1024,7 @@ func sandboxProfileDBToPolicy(profile *db.SandboxProfile) *sandboxpolicy.Profile
 		FilesystemSpellings: profile.FilesystemSpellings,
 		Environment:         profile.Environment, AgentDirectories: profile.AgentDirectories,
 		NetworkAccess: profile.NetworkAccess, Network: profile.Network,
-		UnixSockets: profile.UnixSockets, Includes: profile.Includes,
+		UnixSockets: profile.UnixSockets, ResourceLimits: profile.ResourceLimits, Includes: profile.Includes,
 	}
 }
 

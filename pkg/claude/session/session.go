@@ -185,6 +185,7 @@ func Cmd() *cobra.Command {
 			ReplayCmd(),
 			NotifyListenCmd(),
 			codexProfileCleanupCmd(),
+			resourceLimitExecCmd(),
 			exitCallbackCmd(),
 			tclaudeLayerWinchRelayCmd(),
 			tclaudeLayerFilteredBootstrapCmd(),

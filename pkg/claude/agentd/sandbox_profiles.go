@@ -85,7 +85,7 @@ func handleSandboxCommonRuleCatalog(w http.ResponseWriter, r *http.Request) {
 
 const (
 	sandboxProfileExportFormat        = "tclaude-sandbox-profiles"
-	sandboxProfileExportVersion       = 10
+	sandboxProfileExportVersion       = 11
 	sandboxProfileExportVersionLegacy = 9
 )
 
@@ -104,6 +104,7 @@ type sandboxProfileJSON struct {
 	NetworkAccess       sandboxpolicy.NetworkAccess        `json:"network_access,omitempty"`
 	Network             *sandboxpolicy.NetworkRules        `json:"network,omitempty"`
 	UnixSockets         *sandboxpolicy.UnixSocketRules     `json:"unix_sockets,omitempty"`
+	ResourceLimits      sandboxpolicy.ResourceLimits       `json:"resource_limits,omitempty"`
 	Includes            []string                           `json:"includes,omitempty"`
 	CreatedAt           string                             `json:"created_at,omitempty"`
 	UpdatedAt           string                             `json:"updated_at,omitempty"`
@@ -148,7 +149,7 @@ func sandboxProfileToJSON(p *db.SandboxProfile, localFields bool) sandboxProfile
 		FilesystemSpellings: p.FilesystemSpellings,
 		Environment:         p.Environment, AgentDirectories: p.AgentDirectories,
 		NetworkAccess: sandboxpolicy.LegacyNetworkAccessForExport(p.Network, p.NetworkAccess),
-		Network:       p.Network, UnixSockets: p.UnixSockets, Includes: p.Includes,
+		Network:       p.Network, UnixSockets: p.UnixSockets, ResourceLimits: p.ResourceLimits, Includes: p.Includes,
 	}
 	if localFields {
 		out.ID = p.ID
@@ -167,7 +168,7 @@ func buildSandboxProfile(body sandboxProfileJSON) (*db.SandboxProfile, []string,
 		Name: body.Name, Filesystem: body.Filesystem,
 		FilesystemSpellings: body.FilesystemSpellings,
 		Environment:         body.Environment, AgentDirectories: body.AgentDirectories, NetworkAccess: body.NetworkAccess,
-		Network: body.Network, UnixSockets: body.UnixSockets, Includes: body.Includes,
+		Network: body.Network, UnixSockets: body.UnixSockets, ResourceLimits: body.ResourceLimits, Includes: body.Includes,
 	}
 	var normalized sandboxpolicy.Profile
 	var missing []string
@@ -185,7 +186,7 @@ func buildSandboxProfile(body sandboxProfileJSON) (*db.SandboxProfile, []string,
 		FilesystemSpellings: normalized.FilesystemSpellings,
 		Environment:         normalized.Environment, AgentDirectories: normalized.AgentDirectories,
 		NetworkAccess: normalized.NetworkAccess, Network: normalized.Network,
-		UnixSockets: normalized.UnixSockets, Includes: normalized.Includes,
+		UnixSockets: normalized.UnixSockets, ResourceLimits: normalized.ResourceLimits, Includes: normalized.Includes,
 	}, missing, nil
 }
 
@@ -194,7 +195,7 @@ func buildSandboxProfileForImport(body sandboxProfileJSON) (*db.SandboxProfile, 
 		Name: body.Name, Filesystem: body.Filesystem,
 		FilesystemSpellings: body.FilesystemSpellings,
 		Environment:         body.Environment, AgentDirectories: body.AgentDirectories, NetworkAccess: body.NetworkAccess,
-		Network: body.Network, UnixSockets: body.UnixSockets, Includes: body.Includes,
+		Network: body.Network, UnixSockets: body.UnixSockets, ResourceLimits: body.ResourceLimits, Includes: body.Includes,
 	})
 	if err != nil {
 		return nil, nil, err
@@ -204,7 +205,7 @@ func buildSandboxProfileForImport(body sandboxProfileJSON) (*db.SandboxProfile, 
 		FilesystemSpellings: normalized.FilesystemSpellings,
 		Environment:         normalized.Environment, AgentDirectories: normalized.AgentDirectories,
 		NetworkAccess: normalized.NetworkAccess, Network: normalized.Network,
-		UnixSockets: normalized.UnixSockets, Includes: normalized.Includes,
+		UnixSockets: normalized.UnixSockets, ResourceLimits: normalized.ResourceLimits, Includes: normalized.Includes,
 	}, missing, nil
 }
 
@@ -686,6 +687,10 @@ func handleSandboxProfilesExport(w http.ResponseWriter, r *http.Request) {
 	}
 	formatVersion := sandboxProfileExportVersionLegacy
 	for _, profile := range out {
+		if profile.ResourceLimits.Enabled() {
+			formatVersion = sandboxProfileExportVersion
+			break
+		}
 		if profile.Network != nil &&
 			(len(profile.Network.DenyPacks) > 0 || len(profile.Network.Deny) > 0) {
 			formatVersion = sandboxProfileExportVersion

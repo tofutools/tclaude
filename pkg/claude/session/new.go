@@ -33,7 +33,8 @@ import (
 type NewParams struct {
 	// ManagedLaunch marks agentd's forked session wrapper. The daemon already
 	// resolved profile precedence, so the child must use the exact passed shape.
-	ManagedLaunch bool `long:"managed-launch" help:"Internal: launch parameters were resolved by agentd"`
+	ManagedLaunch          bool `long:"managed-launch" help:"Internal: launch parameters were resolved by agentd"`
+	AllowUnenforcedSandbox bool `long:"allow-unenforced-sandbox" help:"Internal: operator authorized launch when sandbox enforcement is unavailable"`
 	// SandboxChosenBy is the resolution tier that supplied --sandbox, as
 	// resolved by the daemon spawn boundary ("explicit", `global default
 	// profile "x"`, …). The badge attributes the launch's containment to it, so
@@ -269,6 +270,7 @@ func NewCmd() *cobra.Command {
 	// Allow arbitrary args so post-'--' args pass through to claude without cobra rejecting them.
 	cmd.Args = cobra.ArbitraryArgs
 	_ = cmd.Flags().MarkHidden("managed-launch")
+	_ = cmd.Flags().MarkHidden("allow-unenforced-sandbox")
 	_ = cmd.Flags().MarkHidden("cwd-write-proof")
 	_ = cmd.Flags().MarkHidden("dir-write-proof")
 	_ = cmd.Flags().MarkHidden("codex-git-common-dir")
@@ -1599,6 +1601,35 @@ func runNew(params *NewParams) error {
 		}
 		if err != nil {
 			return fmt.Errorf("wrap harness with tclaude-layer: %w", err)
+		}
+	}
+	if launchSandbox != nil && launchSandbox.Effective.ResourceLimits.Enabled() {
+		if err := sandboxpolicy.ValidateResourceLimitTarget(
+			launchSandbox.Effective.ResourceLimits, sandboxImplementation, runtime.GOOS,
+		); err != nil {
+			if !params.AllowUnenforcedSandbox {
+				return fmt.Errorf("unsupported_sandbox_profile_resource_limits: %w", err)
+			}
+			launchSandbox.Effective.AccessNotices = append(
+				launchSandbox.Effective.AccessNotices,
+				resourceLimitOverrideNotice(err),
+			)
+		} else {
+			wrapped, cleanup, resourceErr := wrapResourceLimitedCommand(
+				sessionID, launchSandbox.Effective.ResourceLimits, harnessCmd,
+			)
+			if resourceErr != nil {
+				if !params.AllowUnenforcedSandbox {
+					return resourceErr
+				}
+				launchSandbox.Effective.AccessNotices = append(
+					launchSandbox.Effective.AccessNotices,
+					resourceLimitOverrideNotice(resourceErr),
+				)
+			} else {
+				defer cleanup()
+				harnessCmd = wrapped
+			}
 		}
 	}
 	if launchProfilePath != "" {

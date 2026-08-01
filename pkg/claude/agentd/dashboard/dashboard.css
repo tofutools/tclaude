@@ -4995,6 +4995,29 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
 .sbx-effective-preview {
   margin-top: .65rem;
 }
+.sbx-resource-intro,
+.sbx-resource-evaluation {
+  color: var(--text-muted);
+  font-size: .85rem;
+  line-height: 1.45;
+}
+.sbx-resource-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(10rem, 1fr));
+  gap: .65rem;
+  margin-top: .55rem;
+}
+.sbx-resource-fields label {
+  display: grid;
+  gap: .25rem;
+}
+.sbx-resource-evaluation {
+  border: 1px solid #30363d;
+  border-left: 3px solid #58a6ff;
+  border-radius: .35rem;
+  margin-top: .4rem;
+  padding: .45rem .6rem;
+}
 .sbx-policy-result {
   margin-top: .45rem;
 }

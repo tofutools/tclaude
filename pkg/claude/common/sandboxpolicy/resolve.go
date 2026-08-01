@@ -49,6 +49,8 @@ type ResolutionProvenance struct {
 	AgentDirectories map[string][]ProfileSource `json:"agent_directories"`
 	Network          *ProfileSource             `json:"network,omitempty"`
 	UnixSockets      *ProfileSource             `json:"unix_sockets,omitempty"`
+	ResourceMemory   *ProfileSource             `json:"resource_memory,omitempty"`
+	ResourceCPU      *ProfileSource             `json:"resource_cpu,omitempty"`
 }
 
 // EffectiveProfile is the fully-composed harness-neutral sandbox payload and
@@ -66,6 +68,7 @@ type EffectiveProfile struct {
 	NetworkAccess    NetworkAccess        `json:"network_access,omitempty"`
 	Network          *NetworkRules        `json:"network,omitempty"`
 	UnixSockets      *UnixSocketRules     `json:"unix_sockets,omitempty"`
+	ResourceLimits   ResourceLimits       `json:"resource_limits,omitempty"`
 	AccessNotices    []AccessNotice       `json:"access_notices,omitempty"`
 	Provenance       ResolutionProvenance `json:"provenance"`
 }
@@ -222,6 +225,17 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 			result.NetworkAccess = normalized.NetworkAccess
 			networkSource := source
 			result.Provenance.Network = &networkSource
+		}
+		if normalized.ResourceLimits.Memory != "" {
+			result.ResourceLimits.Memory = normalized.ResourceLimits.Memory
+			resourceSource := source
+			result.Provenance.ResourceMemory = &resourceSource
+		}
+		if normalized.ResourceLimits.CPU != nil {
+			value := *normalized.ResourceLimits.CPU
+			result.ResourceLimits.CPU = &value
+			resourceSource := source
+			result.Provenance.ResourceCPU = &resourceSource
 		}
 		axes, err := DeriveAccessAxes(normalized)
 		if err != nil {

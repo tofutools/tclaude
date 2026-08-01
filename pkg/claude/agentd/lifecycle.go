@@ -4676,6 +4676,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		Sandbox:                    p.SandboxMode,
 		SandboxChosenBy:            p.SandboxModeSource,
 		SandboxImplementation:      p.SandboxImplementation,
+		AllowUnenforcedSandbox:     p.AllowUnenforcedSandbox,
 		AskUserQuestionTimeout:     p.AskUserQuestionTimeout,
 		Approval:                   p.ApprovalPolicy,
 		ToolGovernance:             p.ToolGovernance,
@@ -6556,6 +6557,9 @@ func sessionNewArgs(a clcommon.SpawnArgs) []string {
 	if a.SandboxSnapshotPath != "" {
 		args = append(args, "--sandbox-snapshot-path", a.SandboxSnapshotPath,
 			"--sandbox-snapshot-digest", a.SandboxSnapshotDigest)
+	}
+	if a.AllowUnenforcedSandbox {
+		args = append(args, "--allow-unenforced-sandbox")
 	}
 	if a.CwdWriteProof != "" {
 		args = append(args, "--cwd-write-proof", a.CwdWriteProof)

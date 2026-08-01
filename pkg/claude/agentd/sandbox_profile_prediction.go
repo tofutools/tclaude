@@ -66,6 +66,12 @@ func describePredictedDraftSandboxProfile(
 	// contexts so a refused context still occupies its own slot.
 	survivors := make([]harness.PredictedAccessAxes, 0, len(contexts))
 	for _, context := range contexts {
+		if refusal := sandboxResourceLimitRefusal(context.policy, target); refusal != nil {
+			refusals = append(refusals, refusal)
+			predictions = append(predictions, harness.PredictedAccessAxes{})
+			networkPredictions = append(networkPredictions, nil)
+			continue
+		}
 		axes, err := sandboxpolicy.DeriveAccessAxes(context.policy)
 		if err != nil {
 			return harness.PredictedAccessAxes{}, nil, nil, nil, err
