@@ -26,7 +26,8 @@ cleanup() {
     kill "$listener_pid" 2>/dev/null || true
     wait "$listener_pid" 2>/dev/null || true
   fi
-  sudo pfctl -a "$anchor" -F all 2>/dev/null || true
+  sudo pfctl -a "$anchor" -F rules 2>/dev/null || true
+  sudo pfctl -a "$anchor" -F nat 2>/dev/null || true
   if [[ -n "$pf_token" ]]; then
     sudo pfctl -X "$pf_token" 2>/dev/null || true
   fi
