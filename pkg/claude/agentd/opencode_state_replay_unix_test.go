@@ -404,10 +404,10 @@ func TestPrepareOpenCodeTclaudeLayerStateRefusesReadOnlyStateDirEscape(t *testin
 	// it. Without this the sentence contradicts itself in the only case that
 	// reaches this arm: the quoted directory literally begins with the quoted
 	// state root, because the escape is a symlink the message never mentions.
-	require.Contains(t, err.Error(), "(resolving to ",
-		"a refusal decided on the resolved path must not quote only the contract spelling")
+	require.Contains(t, err.Error(), "(tested as ",
+		"a refusal decided on a transformed path must not quote only the contract spelling")
 	require.Contains(t, err.Error(), victim,
-		"the resolved path shown must be where the escape actually lands")
+		"the path shown must be the one the containment check actually ran on")
 }
 
 // The refusal subject must not attribute the symlink to the LEAF. The
@@ -436,4 +436,29 @@ func TestOpenCodeStateRootSubjectDoesNotBlameTheLeaf(t *testing.T) {
 	// The retired spelling as a negative needle: this is the claim that was wrong.
 	assert.NotContains(t, subject, "a symlink",
 		"the leaf here is a literal directory; only a component above it is a link")
+}
+
+// A purely LEXICAL escape — ".." with no symlink anywhere — must also show the
+// path that was tested. This is the case the first version of the subject block
+// missed: it triggered on "resolved != clean", which is false here because the
+// only transformation was Clean, so the refusal quoted a spelling beginning
+// with the state root and said it was not below it, explaining nothing.
+//
+// Built by string concatenation, NOT filepath.Join: Join cleans, which would
+// collapse the ".." before the contract ever carried it, and the test would
+// then pass while exercising nothing.
+func TestOpenCodeAnchoredStateTargetsShowsTheTestedPathForLexicalEscapes(t *testing.T) {
+	stateRoot, _ := allocatedOpenCodeConfigDir(t)
+	spelled := stateRoot + "/data/../../../../../../etc"
+
+	err := requireOpenCodeAnchoredStateTargets(session.TclaudeLayerLaunchContract{
+		HarnessName: harness.OpenCodeName,
+		StateRoot:   stateRoot,
+		StateDirs:   []string{spelled},
+	})
+	require.ErrorContains(t, err, "is neither below its state root")
+	require.Contains(t, err.Error(), "(tested as ",
+		"a lexical escape is transformed too, and the refusal must say what it tested")
+	require.NotContains(t, err.Error(), "resolving to",
+		"Clean is not symlink resolution; naming it that invites kernel semantics")
 }

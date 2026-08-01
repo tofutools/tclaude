@@ -774,14 +774,34 @@ func requireOpenCodeAnchoredStateTargets(
 			}
 			// The comparison that just failed was on RESOLVED, so resolved is
 			// what the refusal has to show. Quoting only the contract's
-			// spelling produces a sentence that contradicts itself in the one
-			// case that reaches it: "<root>/escape/x is not below <root>" is
-			// read as a broken containment check, not as "escape is a symlink".
-			// Same rule openCodeStateRootSubject states for the state root —
-			// a refusal must not consume information its message withholds.
+			// spelling produces a sentence that contradicts itself:
+			// "<root>/escape/x is not below <root>" reads as a broken
+			// containment check rather than as "escape is a symlink". Same rule
+			// openCodeStateRootSubject states for the state root — a refusal
+			// must not consume information its message withholds.
+			//
+			// Triggered on resolved != DIR, not resolved != clean, and worded
+			// "tested as" rather than "resolving to". Both corrections come
+			// from one finding: two different transformations sit between the
+			// contract's spelling and the compared value — lexical
+			// normalization (Clean/TrimSpace, via canonicalOpenCodeRuntimePath)
+			// and symlink resolution — and the earlier version showed only the
+			// second. A purely lexical "<root>/data/../../../../etc" therefore
+			// printed the raw spelling with no parenthetical at all, which is
+			// precisely the withholding this block exists to stop. Naming the
+			// mechanism was also wrong: "resolving to" invites the operator to
+			// apply kernel semantics to the quoted string, and the kernel does
+			// not resolve it this way — Clean collapses "..", including one
+			// that follows a symlink, before anything is resolved.
+			//
+			// "Tested as" claims only what is true and is the whole point: this
+			// is the value the containment check actually ran on. The daemon's
+			// mkdir applies the identical Clean before creating anything, so
+			// the two agree; that consistency is what makes the shown path the
+			// operative one rather than a second opinion.
 			subject := fmt.Sprintf("%s %q", kind, dir)
-			if resolved != clean {
-				subject = fmt.Sprintf("%s %q (resolving to %q)", kind, dir, resolved)
+			if resolved != dir {
+				subject = fmt.Sprintf("%s %q (tested as %q)", kind, dir, resolved)
 			}
 			// Worded per group. The read-only arm runs with allowAmbient
 			// false, so offering "nor one of this host's ambient directories"
