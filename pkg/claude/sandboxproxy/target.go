@@ -84,13 +84,10 @@ func ParseTarget(host string, port int) (Target, error) {
 // resolve host-side and meet the private-destination blocker like any other.
 const LoopbackTargetName = "localhost"
 
-// IsLoopback reports whether the client asked for the host running the proxy,
-// by any of its spellings — or for space carried alongside them, which is not
-// the same thing: the identity list covers all of 0.0.0.0/8, of which only the
-// unspecified address reaches this host (sandboxpolicy.loopbackIdentityPrefixes,
-// TCL-910). Under this posture the loopback selector is the only authority over
-// host loopback — there is no synthetic address for a CIDR rule or a DNS answer
-// to smuggle in.
+// IsLoopback reports whether loopback rows govern the requested target. For a
+// literal this is narrower than the settled loopback-identity membership:
+// non-unspecified 0.0.0.0/8 remains identity space but is ordinary reserved
+// destination space for proxy policy (TCL-916).
 //
 // This is deliberately the single loopback predicate in the package. An earlier
 // revision had a strict one here and a broader one for resolved addresses; the
@@ -100,7 +97,7 @@ const LoopbackTargetName = "localhost"
 func (t Target) IsLoopback() bool {
 	switch t.Kind {
 	case TargetKindLiteral:
-		return namesLocalHost(t.Addr)
+		return sandboxpolicy.AddrHasLoopbackRowAuthority(t.Addr)
 	case TargetKindName:
 		return t.Name == LoopbackTargetName
 	default:

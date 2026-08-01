@@ -43,40 +43,20 @@ import "net/netip"
 //     RFC 6890 "this host on this network", whose registry entry marks it
 //     valid as a SOURCE address and neither a destination nor forwardable.
 //
-// The /8 row stays regardless and is NOT narrowed here. Be careful about what
-// the over-inclusion buys, because the two sides are not symmetric: at
-// AUTHORING it only ever tightens, refusing cidr rows over space that turns
-// out to be unreachable, so nothing is permitted that should be denied. At
-// EVALUATION it hands those addresses to the loopback rows alone, so an
-// allow-loopback posture admits a dial to something like 0.0.0.1 that leaves
-// the host instead of staying on it — on Linux at least, where the kernel
-// selects an off-host route and the connect times out rather than failing
-// locally. macOS returned EHOSTUNREACH, which is consistent with nothing
-// being transmitted; no capture was taken on either, so what is established
-// is route selection, not a frame. How far such a packet travels is a
-// property of the network and not of this package: a conforming router drops
-// a destination the RFC 6890 registry marks non-forwardable. Narrowing the
-// row is a behaviour change that needs its own scrutiny rather than a docs
-// pass, and the seam for it would be the evaluator — which rows this space is
-// handed to — not this list, with the compiler's refusal kept in step (see
-// TCL-899: an address that is neither authorable nor deniable is that trap in
-// reverse).
+// The /8 row stays regardless and is NOT narrowed here. Since TCL-916 this
+// broad membership is not itself proxy row authority: non-unspecified 0/8
+// falls through to reserved-destination handling, and exact CIDR rows there
+// are authorable in either polarity. The evaluator and compiler use the
+// separate list below so that change does not recreate TCL-899's trap: an
+// address that is both unauthorable and undeniable.
 //
 // The IPv4-mapped forms are carried so a v6-spelled range covering the same
 // space cannot present a second identity for it.
 //
-// Two consumers read this list and they must never disagree:
-//
-//   - the compiler, which refuses a cidr row intersecting this space so the
-//     operator is directed to the loopback selector that actually governs it
-//     (PrefixIntersectsLoopbackIdentity);
-//   - the proxy evaluator, whose loopback branch decides every target in this
-//     space from loopback rows alone (AddrIsLoopbackIdentity).
-//
-// The second is only correct because the first holds: if a cidr row could
-// overlap this space it would be authorable but INERT, since the evaluator
-// would never reach it (TCL-899). One list is what keeps the branch complete
-// rather than accidentally sufficient.
+// Proxy row authority is a different question. The evaluator and compiler use
+// loopbackRowAuthorityPrefixes below; keeping it separate is what lets the
+// broad identity membership stand without handing routable 0/8 destinations
+// to loopback rows (TCL-916).
 var loopbackIdentityPrefixes = []netip.Prefix{
 	netip.MustParsePrefix("127.0.0.0/8"),
 	netip.MustParsePrefix("::1/128"),
@@ -91,14 +71,9 @@ var loopbackIdentityPrefixes = []netip.Prefix{
 	// the prefix check: a mapped range must not be an authorable second name
 	// for space the loopback selector governs.
 	//
-	// Since TCL-901 the compiler unmaps a cidr row before asking
-	// PrefixIntersectsLoopbackIdentity, so a mapped prefix of at least /96
-	// reaches this list already in IPv4 form and is caught by the entries
-	// above. These two are kept deliberately, for the same reason the
-	// IsLoopback check below is kept: they still carry the prefixes shorter
-	// than /96, which unmap cannot rewrite and which reach the identity space
-	// only as IPv6. They are a subset of what the refusal must cover, so they
-	// can only ever agree with it.
+	// PrefixIntersectsLoopbackIdentity also answers the broad membership
+	// question for mapped prefixes shorter than /96, which UnmapPrefix cannot
+	// rewrite. Proxy authoring refusal uses the separate row-authority list.
 	netip.MustParsePrefix("::ffff:127.0.0.0/104"),
 	netip.MustParsePrefix("::ffff:0.0.0.0/104"),
 }
@@ -142,12 +117,58 @@ func AddrIsLoopbackIdentity(addr netip.Addr) bool {
 	return false
 }
 
-// PrefixIntersectsLoopbackIdentity reports whether a cidr row would overlap the
-// host-loopback identity space. Such a row is refused at authoring time with
-// the loopback selector named as the remedy, because the evaluator decides that
-// space from loopback rows alone and would never consult it.
+// PrefixIntersectsLoopbackIdentity reports whether a prefix overlaps the broad
+// loopback-identity membership. It does not answer whether a CIDR row would be
+// inert: use PrefixIntersectsLoopbackRowAuthority for that policy question.
 func PrefixIntersectsLoopbackIdentity(prefix netip.Prefix) bool {
 	for _, loopback := range loopbackIdentityPrefixes {
+		if prefixesIntersect(prefix, loopback) {
+			return true
+		}
+	}
+	return false
+}
+
+// loopbackRowAuthorityPrefixes is the address space the proxy decides from
+// loopback rows alone. Unlike loopbackIdentityPrefixes it includes only the
+// spellings that actually reach the host: 127/8, ::1, and the exact
+// unspecified addresses. The mapped entries cover prefixes that UnmapPrefix
+// cannot rewrite because they begin below the mapped block's /96 boundary.
+//
+// Both consumers of this list are load-bearing. AddrHasLoopbackRowAuthority
+// dispatches evaluator rows; PrefixIntersectsLoopbackRowAuthority keeps CIDR
+// rows out of exactly the space where that dispatch would make them inert
+// (TCL-899). Adding an address to either question without the other recreates
+// an unauthorable or ineffective policy row.
+var loopbackRowAuthorityPrefixes = []netip.Prefix{
+	netip.MustParsePrefix("127.0.0.0/8"),
+	netip.MustParsePrefix("::1/128"),
+	netip.MustParsePrefix("0.0.0.0/32"),
+	netip.MustParsePrefix("::/128"),
+	netip.MustParsePrefix("::ffff:127.0.0.0/104"),
+	netip.MustParsePrefix("::ffff:0.0.0.0/128"),
+}
+
+// AddrHasLoopbackRowAuthority reports whether the proxy must decide an address
+// from loopback rows rather than CIDR rows or the default verdict.
+func AddrHasLoopbackRowAuthority(addr netip.Addr) bool {
+	addr = addr.Unmap()
+	if !addr.IsValid() {
+		return false
+	}
+	for _, prefix := range loopbackRowAuthorityPrefixes {
+		if prefix.Contains(addr) {
+			return true
+		}
+	}
+	return false
+}
+
+// PrefixIntersectsLoopbackRowAuthority reports whether a CIDR row overlaps
+// address space the proxy decides from loopback rows alone. Such a row would be
+// inert, so authoring must direct the operator to a loopback row instead.
+func PrefixIntersectsLoopbackRowAuthority(prefix netip.Prefix) bool {
+	for _, loopback := range loopbackRowAuthorityPrefixes {
 		if prefixesIntersect(prefix, loopback) {
 			return true
 		}
