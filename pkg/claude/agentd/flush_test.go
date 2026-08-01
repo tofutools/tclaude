@@ -191,6 +191,16 @@ func TestFlush_InlineAgentMessagePreservesSenderAndConsumes(t *testing.T) {
 	assert.False(t, m.ReadAt.IsZero(), "inline agent mail is consumed like operator mail")
 }
 
+func TestInlineReplyIdentifiesOriginalMessage(t *testing.T) {
+	setupTestDB(t)
+	id, err := db.InsertAgentMessage(&db.AgentMessage{
+		FromConv: "peer-aaaa-bbbb-cccc", ToConv: "me", Body: "Here is the answer.", ParentID: 42,
+	})
+	require.NoError(t, err)
+	nudge := messageNudgeText(id)
+	assert.Contains(t, nudge, "; delivery: inline; in reply to original message #42]")
+}
+
 func TestStartupContextNeverUsesRegularMessageInlining(t *testing.T) {
 	setupTestDB(t)
 	id, err := db.InsertAgentMessage(&db.AgentMessage{
