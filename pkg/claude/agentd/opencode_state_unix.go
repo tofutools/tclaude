@@ -33,6 +33,31 @@ const (
 	// OpenCode write-on-boot path must be separately reviewed; do not grow this
 	// into a file list or overwrite an operator-owned file.
 	openCodeInstallGitignore = "node_modules\npackage.json\npackage-lock.json\nbun.lock\n.gitignore"
+
+	// openCodeStrandedAllocationRemedy is the way out for an operator whose
+	// private OpenCode allocation no longer matches the private state parent
+	// this daemon derives — the shape a changed XDG_DATA_HOME or HOME produces
+	// (TCL-909).
+	//
+	// It is one constant rather than a sentence per site ON PURPOSE. Two
+	// separate paths refuse this same situation: the control socket, which the
+	// isolated and filtered postures reach, and the state-root anchor, which
+	// host-open reaches. They were already telling operators different things
+	// about the identical condition, and a second copy is how they would drift
+	// again.
+	//
+	// "Recreate this agent" in as many words, because the alternative remedies
+	// were considered and rejected: migrating the recorded parent would make
+	// the daemon trust a value read back out of the same store the launch spec
+	// comes from, which is the circularity TCL-902 closed, and no repair
+	// command exists to point at. Restoring the environment is offered second
+	// because it is the operator's cheaper option when the change was
+	// accidental, and it mutates nothing.
+	//
+	// Do NOT attach this to a refusal an unaffected operator can reach. Telling
+	// someone whose agent is fine to recreate it is worse than saying nothing.
+	openCodeStrandedAllocationRemedy = "recreate this agent to get an allocation under the current parent, " +
+		"or restore the previous XDG_DATA_HOME or HOME"
 )
 
 type openCodeStateLayout struct {
@@ -324,9 +349,37 @@ func openCodeControlSocketPath(agentID string) (string, error) {
 		return "", fmt.Errorf("OpenCode control root has the wrong owner")
 	}
 	resolved, err := filepath.EvalSymlinks(controlRoot)
-	if err != nil || resolved != controlRoot || filepath.Dir(controlRoot) != parent ||
-		filepath.Base(controlRoot) != agentID {
-		return "", fmt.Errorf("OpenCode control root is not the validated direct agent child")
+	if err != nil {
+		return "", fmt.Errorf("resolve OpenCode control root %q: %w", controlRoot, err)
+	}
+	if resolved != controlRoot {
+		return "", fmt.Errorf(
+			"OpenCode control root %q is not canonical (it resolves to %q)",
+			controlRoot, resolved)
+	}
+	// The stranded case, split out from the three around it because it is the
+	// only one an operator can act on and the only one with a cause worth
+	// naming. For a private allocation controlRoot is the RECORDED state root
+	// while parent is derived from the live environment, so this fires exactly
+	// when the two disagree — which is what a changed XDG_DATA_HOME or HOME
+	// does.
+	//
+	// Legacy-shared cannot reach it: controlRoot was built as
+	// filepath.Join(parent, agentID) a few lines up, so its parent IS parent by
+	// construction and it follows the environment instead of being stranded by
+	// it. Probed, not reasoned about — a legacy-shared allocation returns a
+	// path with no error both before and after the move. That matters here
+	// because telling an operator who is NOT stranded to recreate their agent
+	// is worse than saying nothing.
+	if filepath.Dir(controlRoot) != parent {
+		return "", fmt.Errorf(
+			"OpenCode control root %q is outside this daemon's private state parent %q; %s",
+			controlRoot, parent, openCodeStrandedAllocationRemedy)
+	}
+	if filepath.Base(controlRoot) != agentID {
+		return "", fmt.Errorf(
+			"OpenCode control root %q is not the direct child named for agent %s",
+			controlRoot, agentID)
 	}
 	if err := refuseOpenCodeProtectedStateRoot(controlRoot); err != nil {
 		return "", err
@@ -1282,8 +1335,8 @@ func requireOpenCodeAllocatedStateRoot(stateRoot, subject, noun string) error {
 	// the same directory.
 	if filepath.Dir(stateRoot) != resolvedOpenCodeSeedPath(parent) {
 		return fmt.Errorf(
-			"%s is outside this daemon's private state parent %q; a changed XDG_DATA_HOME or HOME moves that parent away from an existing allocation",
-			subject, parent)
+			"%s is outside this daemon's private state parent %q; a changed XDG_DATA_HOME or HOME moves that parent away from an existing allocation — %s",
+			subject, parent, openCodeStrandedAllocationRemedy)
 	}
 	return nil
 }
