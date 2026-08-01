@@ -4,6 +4,7 @@ package opencodeapi
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -292,4 +294,260 @@ func TestUnixAttachShimHelper(t *testing.T) {
 	require.NoError(t, err)
 	_ = response.Body.Close()
 	os.Exit(0)
+}
+
+// TCL-933. These refusals decide correctly and then described themselves
+// inaccurately, which is expensive precisely when an operator is already
+// stuck: a confidently wrong message buys a wrong hypothesis. The corrected
+// spellings match their siblings in agentd (TCL-923, #1851).
+//
+// Each assertion carries the RETIRED wording as a negative needle, because
+// re-introducing a spelling already removed elsewhere is this family's
+// demonstrated failure mode. The needles are full sentences on purpose: a
+// short needle like `is not canonical"` also matches the CORRECTED wording
+// ("could not be resolved or is not canonical") and would pass while pinning
+// nothing.
+func TestControlIdentityRefusalsDescribeWhatWasActuallyChecked(t *testing.T) {
+	// A raw t.TempDir() can already be non-canonical (on macOS via
+	// /var -> /private/var, and on Linux wherever TMPDIR points through a
+	// link), so a canonicality assertion built on one can fire for the
+	// PLATFORM's symlink rather than the fixture's own construction — passing
+	// while testing nothing it names.
+	// NOT t.TempDir(): a sockaddr_un path is capped at 108 bytes, and this
+	// fixture spends 55 of them on the fixed suffix. On a host whose TMPDIR is
+	// deep, the refusal under test is never reached — the length gate fires
+	// first, and the subtest goes red for a reason that has nothing to do with
+	// canonicality. That happened while writing this, which is exactly why the
+	// short base is deliberate rather than incidental.
+	shortBase, err := os.MkdirTemp("/tmp", "tcl933-")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(shortBase) })
+	// Canonicalized FIRST, so the assertion below is about the symlink this
+	// test builds and not one the platform put in the path already.
+	base, err := filepath.EvalSymlinks(shortBase)
+	require.NoError(t, err)
+	const agentID = "agt_0123456789abcdef0123456789abcdef"
+
+	t.Run("parent canonicality names resolution failure as a disjunction", func(t *testing.T) {
+		real := filepath.Join(base, "real")
+		require.NoError(t, os.MkdirAll(filepath.Join(real, agentID), 0o700))
+		link := filepath.Join(base, "link")
+		require.NoError(t, os.Symlink(real, link))
+
+		// The PARENT itself is a real 0700 directory, so the mode and owner
+		// gates pass and execution actually reaches the canonicality check —
+		// which fails only because an ANCESTOR is the symlink this test built.
+		_, _, err := controlParentIdentity(filepath.Join(link, agentID, "control.sock"))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "could not be resolved or is not canonical")
+		assert.Contains(t, err.Error(), agentID, "the refusal names the path it judged")
+		assert.NotContains(t, err.Error(), "OpenCode control socket parent is not canonical")
+	})
+
+	t.Run("authority mode refusal does not name a check it skipped", func(t *testing.T) {
+		regular := filepath.Join(base, "not-a-socket")
+		require.NoError(t, os.WriteFile(regular, nil, 0o600))
+
+		// requireMode=false is the live path from createUnixListener, taken
+		// right after the bind. The permission clause is GATED off here, so
+		// naming mode-0600 would describe a check that never ran.
+		_, _, err := socketPathIdentity(regular, false)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "is not a real socket")
+		assert.NotContains(t, err.Error(), "mode-0600",
+			"the mode clause is guarded by requireMode and must not be claimed when it is off")
+		assert.NotContains(t, err.Error(), "OpenCode control authority is not a real mode-0600 socket")
+
+		// requireMode=true DOES run it, so naming it is correct there.
+		_, _, err = socketPathIdentity(regular, true)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "is not a real mode-0600 socket")
+	})
+
+	t.Run("owner description never invents a uid it did not read", func(t *testing.T) {
+		// The uid-mismatch arm needs a path owned by another user and is not
+		// reachable unprivileged, so the renderer is pinned directly. This is
+		// the half that matters: printing "uid 0" for an unread owner would
+		// name root as the owner of a path whose owner was never looked at.
+		assert.Equal(t, "no readable owner", controlStatOwnerDescription(nil, false))
+		assert.Equal(t, "no readable owner", controlStatOwnerDescription(nil, true),
+			"a nil stat is unreadable regardless of the assertion flag")
+		assert.Equal(t, "uid 4242",
+			controlStatOwnerDescription(&syscall.Stat_t{Uid: 4242}, true))
+	})
+}
+
+// foreignOwnedSocket finds a socket on this host that this test does NOT own,
+// so the ownership refusal can be exercised end to end.
+//
+// The premise that this needed root was WRONG, and the correction is the point:
+// you cannot CREATE a foreign-owned file unprivileged, but you do not need to —
+// socketPathIdentity gates on Lstat, symlink, socket and (optionally) mode, so
+// merely POINTING at an existing one reaches the owner arm.
+//
+// requireMode0600 selects a candidate that also clears the permission gate, so
+// the requireMode=true path lands on ownership rather than stopping at mode.
+func foreignOwnedSocket(t *testing.T, requireMode0600 bool) string {
+	t.Helper()
+	for _, candidate := range []string{
+		"/run/udev/control",
+		"/run/dbus/system_bus_socket",
+		"/run/systemd/private",
+	} {
+		info, err := os.Lstat(candidate)
+		if err != nil || info.Mode()&os.ModeSymlink != 0 ||
+			info.Mode()&os.ModeSocket == 0 {
+			continue
+		}
+		if requireMode0600 && info.Mode().Perm() != 0o600 {
+			continue
+		}
+		stat, ok := info.Sys().(*syscall.Stat_t)
+		if !ok || stat.Uid == uint32(os.Geteuid()) {
+			continue
+		}
+		return candidate
+	}
+	t.Skip("no foreign-owned socket on this host to exercise the ownership refusal")
+	return ""
+}
+
+// TCL-933. The ownership sentences are the ticket's PRIMARY target, and the
+// first version of this suite pinned only the renderer — so reverting either
+// message to its retired wording would have passed green, which is precisely
+// the failure mode the suite's own comment calls this family's demonstrated
+// one. Found by cold review.
+//
+// COVERAGE IS STATED EXACTLY, because overclaiming it is what went wrong the
+// first time: this reaches the SOCKET ownership arm. The PARENT ownership arm
+// (controlParentIdentity) additionally requires a foreign-owned mode-0700
+// directory named agt_<32 hex>, which cannot be created unprivileged and does
+// not exist incidentally on a host, so that sentence remains renderer-pinned.
+func TestControlSocketOwnershipRefusalNamesFoundAndExpectedUID(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		requireMode bool
+	}{
+		{name: "mode gate off", requireMode: false},
+		{name: "mode gate on", requireMode: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			path := foreignOwnedSocket(t, test.requireMode)
+			info, err := os.Lstat(path)
+			require.NoError(t, err)
+			stat, ok := info.Sys().(*syscall.Stat_t)
+			require.True(t, ok)
+
+			_, _, err = socketPathIdentity(path, test.requireMode)
+			require.Error(t, err)
+			// Discriminating: the refusal must carry BOTH uids, so an operator
+			// can see the mismatch rather than being told only that one exists.
+			assert.Contains(t, err.Error(), "owner could not be read or is not the expected one")
+			assert.Contains(t, err.Error(), fmt.Sprintf("found uid %d", stat.Uid))
+			assert.Contains(t, err.Error(), fmt.Sprintf("expected uid %d", os.Geteuid()))
+			assert.Contains(t, err.Error(), path, "the refusal names the path it judged")
+			// The negative needle this suite previously lacked for ownership.
+			assert.NotContains(t, err.Error(), "OpenCode control socket has the wrong owner")
+		})
+	}
+}
+
+// TCL-933, folded in after cold review found them in the same family. Both
+// were missed by the first whole-surface pass, which enumerated every site and
+// then judged only the region the ticket pointed at.
+func TestCleanupAndPeerRefusalsDescribeWhatWasActuallyChecked(t *testing.T) {
+	// Short base for the 108-byte sockaddr cap, canonicalized first — same
+	// reasoning as the canonicality fixture above.
+	shortBase, err := os.MkdirTemp("/tmp", "tcl933b-")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(shortBase) })
+	base, err := filepath.EvalSymlinks(shortBase)
+	require.NoError(t, err)
+
+	t.Run("cleanup refusal does not name the mode gate when it is off", func(t *testing.T) {
+		regular := filepath.Join(base, "plain")
+		require.NoError(t, os.WriteFile(regular, nil, 0o600))
+		info, err := os.Lstat(regular)
+		require.NoError(t, err)
+		stat, ok := info.Sys().(*syscall.Stat_t)
+		require.True(t, ok)
+
+		// Identity MATCHES, so the only failing arm is not-a-socket. With the
+		// mode gate off, naming mode-0600 would describe a check that never
+		// ran — and "replaced" would be wrong too, since nothing was replaced.
+		err = unlinkSocketIdentity(regular, int64(stat.Dev), int64(stat.Ino), false)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "is no longer the recorded OpenCode control socket")
+		assert.NotContains(t, err.Error(), "mode-0600",
+			"the mode clause is guarded by requireMode and must not be claimed when it is off")
+		assert.NotContains(t, err.Error(), "refusing to remove replaced OpenCode control socket")
+		assert.Contains(t, err.Error(), regular, "the refusal names the path it judged")
+	})
+
+	t.Run("cleanup refusal names the mode gate when it is the only failing arm", func(t *testing.T) {
+		// The mode clause is LAST in the disjunction, so it only executes when
+		// the three before it are false. An earlier version of this subtest
+		// used a regular file: not-a-socket short-circuited and the mode
+		// predicate never ran, so the test asserted coverage it did not have.
+		//
+		// A real socket with matched device/inode makes the first three arms
+		// false, and a mode that is not 0600 leaves the gate as the only thing
+		// that can fire.
+		socketPath := filepath.Join(base, "gated.sock")
+		listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: socketPath, Net: "unix"})
+		require.NoError(t, err)
+		listener.SetUnlinkOnClose(false)
+		t.Cleanup(func() { _ = listener.Close(); _ = os.Remove(socketPath) })
+		require.NoError(t, os.Chmod(socketPath, 0o640))
+
+		info, err := os.Lstat(socketPath)
+		require.NoError(t, err)
+		require.True(t, info.Mode()&os.ModeSocket != 0, "the fixture must be a real socket")
+		stat, ok := info.Sys().(*syscall.Stat_t)
+		require.True(t, ok)
+		require.Equal(t, os.FileMode(0o640), info.Mode().Perm(),
+			"the fixture must not be 0600, or the gate cannot fire")
+
+		err = unlinkSocketIdentity(socketPath, int64(stat.Dev), int64(stat.Ino), true)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "is no longer the recorded mode-0600 OpenCode control socket")
+
+		// The same fixture with the gate OFF must succeed, which is what proves
+		// the mode clause -- and nothing else about this path -- caused the
+		// refusal above.
+		require.NoError(t,
+			unlinkSocketIdentity(socketPath, int64(stat.Dev), int64(stat.Ino), false))
+		_, err = os.Lstat(socketPath)
+		assert.ErrorIs(t, err, os.ErrNotExist)
+	})
+
+	t.Run("peer refusal does not assert subtree membership it never evaluated", func(t *testing.T) {
+		// End-to-end, through Do -> dialVerifiedUnix, on the arm that DOES
+		// evaluate membership: a recorded PID no live process descends from.
+		// The renderer pin below is not enough on its own — reverting the
+		// sentence has to turn something red, which is exactly the gap the
+		// cold review found in the first version of this change.
+		runtime, _, captured := unixHTTPFixture(t)
+		runtime.PID = 99_999_999
+		request, err := NewRequest(http.MethodGet,
+			runtime.ServerURL+"/global/health", runtime, nil)
+		require.NoError(t, err)
+		_, err = Do(&http.Client{Timeout: time.Second}, request, runtime)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "could not be proven to belong to the recorded process subtree")
+		assert.NotContains(t, err.Error(), "is outside the recorded process subtree",
+			"two of the three arms short-circuit before membership is evaluated")
+		assert.Contains(t, err.Error(), fmt.Sprintf("expected uid %d", os.Geteuid()))
+		assert.Zero(t, captured.Load(), "credentials must not reach an unproven peer")
+	})
+
+	t.Run("peer credential description never invents a uid", func(t *testing.T) {
+		// The nil arm is the one that mattered: the retired sentence asserted
+		// the peer was "outside the recorded process subtree" when no
+		// credential had been read at all, sending an operator to inspect a
+		// process hierarchy that was never consulted.
+		assert.Equal(t, "not readable", controlPeerCredentialDescription(nil))
+		assert.Equal(t, "uid 4242, pid 77",
+			controlPeerCredentialDescription(&syscall.Ucred{Uid: 4242, Pid: 77}))
+	})
 }
