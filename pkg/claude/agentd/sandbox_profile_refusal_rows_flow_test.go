@@ -905,11 +905,20 @@ func TestSandboxProfileDraftEnforcementKeepsEveryDistinctContextRefusal(t *testi
 	// That is not hypothetical — this assertion originally used the directory
 	// form and was verified vacuous: with the collapse restored the body still
 	// contained "/run/systemd/resolve" and the assertion passed.
+	// PRESENCE CHECK ONLY, not a guard: the collapse keeps the FIRST refusal, so
+	// this string survives it and this assertion passes in both states. Stated
+	// because its message otherwise reads exactly as strongly as the next one.
 	assert.Contains(t, body, "/run/nscd/socket",
-		"the first refusing context's resolver must be reported")
-	// The discriminating one. Only the SECOND context's refusal message carries
+		"the first refusing context's resolver must be reported (presence only)")
+	// THE DISCRIMINATING ONE. Only the SECOND context's refusal message carries
 	// this string, so it is absent from the whole body if that refusal is
 	// dropped (verified: false under the collapse, true with it removed).
+	//
+	// Which of the two is discriminating depends on ORDERING: ListAgentGroups is
+	// `ORDER BY name`, so crew-nscd precedes crew-systemd and is refusals[0]. If
+	// that ever flips, the PAIR still fails under the collapse, but these two
+	// labels land on the wrong lines — fix the labels, do not assume the test
+	// broke.
 	assert.Contains(t, body, "io.systemd.Resolve",
 		"the SECOND refusing context's resolver must not vanish from the wire")
 

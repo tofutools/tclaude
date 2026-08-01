@@ -36,11 +36,17 @@ import (
 // The dashboard currently resolves that nil with `??`, which treats it as
 // absent and falls back to these draft-only rows. That is unreachable in
 // practice, because the renderer returns on the refusal before the value is
-// read. It is a known gap, tracked in TCL-914, rather than hardened here — an
-// attempt to guard it in this PR was reverted for being more error-prone than
-// the path it protected. TCL-914 also covers the underlying defect: the
-// renderer and sandboxPolicyNeedsAttention derive this value independently and
-// can disagree.
+// read — and that holds for BOTH consumers of the value, since sandboxRuleBuckets
+// returns on the refusal before the entries are used. It is a known gap, tracked
+// in TCL-914, rather than hardened here: an attempt to guard it in this PR was
+// reverted for being more error-prone than the path it protected.
+//
+// TCL-914 also covers what is underneath it. SandboxPolicyResult and
+// sandboxPolicyNeedsAttention derive this value from two independent copies of
+// the same expression. They cannot disagree TODAY — the copies are identical, so
+// every shape the daemon emits resolves the same way in both. The defect is that
+// nothing makes them stay identical, so a change to one silently diverges from
+// the other.
 type sandboxProfileEnforcementRefusal struct {
 	Kind    string `json:"kind"`
 	Harness string `json:"harness,omitempty"`
