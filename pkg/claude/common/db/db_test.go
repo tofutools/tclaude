@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -579,4 +580,40 @@ func TestLegacyImport(t *testing.T) {
 	// Old location should be gone (it was moved before the dir rename)
 	_, err = os.Stat(dir + "/.tclaude/data/claude-sessions.migrated/debug.log")
 	assert.True(t, os.IsNotExist(err), "debug.log should not remain in old dir")
+}
+
+func TestLegacyImportRepairsMissingRequiredTimestamps(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	ResetForTest()
+
+	sessDir := filepath.Join(dir, ".tclaude", "claude-sessions")
+	require.NoError(t, os.MkdirAll(sessDir, 0o755))
+	fileStamp := time.Date(2025, 2, 3, 4, 5, 6, 0, time.UTC)
+	createdStamp := time.Date(2025, 3, 4, 5, 6, 7, 0, time.UTC)
+	updatedStamp := time.Date(2025, 4, 5, 6, 7, 8, 0, time.UTC)
+	fixtures := []struct {
+		id, timestamps string
+		wantCreated    time.Time
+		wantUpdated    time.Time
+	}{
+		{"missing-both", "", fileStamp, fileStamp},
+		{"missing-created", `,"updated":"2025-04-05T06:07:08Z"`, updatedStamp, updatedStamp},
+		{"missing-updated", `,"created":"2025-03-04T05:06:07Z"`, createdStamp, createdStamp},
+	}
+	for _, fixture := range fixtures {
+		path := filepath.Join(sessDir, fixture.id+".json")
+		body := fmt.Sprintf(`{"id":%q,"tmuxSession":%q,"status":"idle"%s}`, fixture.id, fixture.id, fixture.timestamps)
+		require.NoError(t, os.WriteFile(path, []byte(body), 0o644))
+		require.NoError(t, os.Chtimes(path, fileStamp, fileStamp))
+	}
+
+	_, err := Open()
+	require.NoError(t, err, "fresh v1 import must survive its own v181 migration")
+	for _, fixture := range fixtures {
+		row, err := LoadSession(fixture.id)
+		require.NoError(t, err, fixture.id)
+		assert.Equal(t, fixture.wantCreated, row.CreatedAt, fixture.id+" created_at")
+		assert.Equal(t, fixture.wantUpdated, row.UpdatedAt, fixture.id+" updated_at")
+	}
 }

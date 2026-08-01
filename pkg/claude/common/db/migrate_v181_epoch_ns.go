@@ -50,6 +50,9 @@ func migrateV180toV181(d *sql.DB) error {
 	if err != nil {
 		return fmt.Errorf("migrate v180→v181 (epoch nanoseconds): suspend triggers: %w", err)
 	}
+	if err := repairAndValidateRequiredZeroTimestamps(ctx, tx, tables); err != nil {
+		return fmt.Errorf("migrate v180→v181 (epoch nanoseconds): %w", err)
+	}
 	for _, table := range tables {
 		if err := convertTimestampTable(ctx, tx, table); err != nil {
 			return fmt.Errorf("migrate v180→v181 (epoch nanoseconds): %w", err)
@@ -350,6 +353,173 @@ func timestampColumnNames(tables []timestampTable) []string {
 		}
 	}
 	return names
+}
+
+type requiredZeroTimestamp struct {
+	table, columns, row, values string
+}
+
+func (z requiredZeroTimestamp) String() string {
+	return fmt.Sprintf("%s.%s %s value %s", z.table, z.columns, z.row, z.values)
+}
+
+// repairAndValidateRequiredZeroTimestamps handles the one required-column
+// repair with trustworthy provenance before the generic converter runs. A
+// session's sibling timestamp describes the same row and is therefore safe to
+// copy. Every other missing required timestamp is reported together so users
+// do not have to repair and retry one row at a time.
+func repairAndValidateRequiredZeroTimestamps(
+	ctx context.Context,
+	tx *sql.Tx,
+	tables []timestampTable,
+) error {
+	var issues []requiredZeroTimestamp
+	repairSessions := hasRequiredSessionTimestampPair(tables)
+	if repairSessions {
+		var err error
+		issues, err = repairLegacySessionZeroTimestamps(ctx, tx)
+		if err != nil {
+			return err
+		}
+	}
+	for _, table := range tables {
+		for _, column := range table.columns {
+			if !column.text || column.sentinel || (repairSessions &&
+				table.name == "sessions" && (column.name == "created_at" || column.name == "updated_at")) {
+				continue
+			}
+			query := `SELECT rowid, ` + quoteIdentifier(column.name) + ` FROM ` + quoteIdentifier(table.name) + ` ORDER BY rowid`
+			rows, err := tx.QueryContext(ctx, query)
+			if err != nil {
+				return fmt.Errorf("%s.%s required-zero census: %w", table.name, column.name, err)
+			}
+			for rows.Next() {
+				var rowID int64
+				var raw any
+				if err := rows.Scan(&rowID, &raw); err != nil {
+					_ = rows.Close()
+					return fmt.Errorf("%s.%s required-zero census: %w", table.name, column.name, err)
+				}
+				value, ok := legacyTimestampText(raw)
+				if ok && isMissingRequiredLegacyTimestamp(value) {
+					issues = append(issues, requiredZeroTimestamp{
+						table: table.name, columns: column.name, row: fmt.Sprintf("rowid %d", rowID), values: fmt.Sprintf("%q", value),
+					})
+				}
+			}
+			if err := rows.Err(); err != nil {
+				_ = rows.Close()
+				return fmt.Errorf("%s.%s required-zero census: %w", table.name, column.name, err)
+			}
+			if err := rows.Close(); err != nil {
+				return fmt.Errorf("%s.%s required-zero census close: %w", table.name, column.name, err)
+			}
+		}
+	}
+	if len(issues) == 0 {
+		return nil
+	}
+	formatted := make([]string, 0, len(issues))
+	for _, issue := range issues {
+		formatted = append(formatted, issue.String())
+	}
+	return fmt.Errorf("required timestamp is empty or Go-zero in %d row(s): %s; restore the .pre-v181-epochns.bak backup, replace every listed value with a valid RFC3339 timestamp from a trustworthy source, then retry",
+		len(issues), strings.Join(formatted, "; "))
+}
+
+func hasRequiredSessionTimestampPair(tables []timestampTable) bool {
+	var created, updated bool
+	for _, table := range tables {
+		if table.name != "sessions" {
+			continue
+		}
+		for _, column := range table.columns {
+			created = created || column.name == "created_at" && column.text && !column.sentinel
+			updated = updated || column.name == "updated_at" && column.text && !column.sentinel
+		}
+	}
+	return created && updated
+}
+
+func repairLegacySessionZeroTimestamps(ctx context.Context, tx *sql.Tx) ([]requiredZeroTimestamp, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT rowid, id, created_at, updated_at FROM sessions ORDER BY rowid`)
+	if err != nil {
+		return nil, fmt.Errorf("sessions required-zero census: %w", err)
+	}
+	type repair struct {
+		rowID  int64
+		column string
+		value  string
+	}
+	var repairs []repair
+	var issues []requiredZeroTimestamp
+	for rows.Next() {
+		var rowID int64
+		var id, created, updated string
+		if err := rows.Scan(&rowID, &id, &created, &updated); err != nil {
+			_ = rows.Close()
+			return nil, fmt.Errorf("sessions required-zero census: %w", err)
+		}
+		createdMissing := isMissingRequiredLegacyTimestamp(created)
+		updatedMissing := isMissingRequiredLegacyTimestamp(updated)
+		createdGoZero := isLegacyRFC3339ZeroTime(created)
+		updatedGoZero := isLegacyRFC3339ZeroTime(updated)
+		switch {
+		case createdGoZero && !updatedMissing && validRequiredLegacyTimestamp(updated):
+			repairs = append(repairs, repair{rowID: rowID, column: "created_at", value: updated})
+			createdMissing = false
+		case updatedGoZero && !createdMissing && validRequiredLegacyTimestamp(created):
+			repairs = append(repairs, repair{rowID: rowID, column: "updated_at", value: created})
+			updatedMissing = false
+		}
+		if createdMissing || updatedMissing {
+			var columns []string
+			if createdMissing {
+				columns = append(columns, "created_at")
+			}
+			if updatedMissing {
+				columns = append(columns, "updated_at")
+			}
+			issues = append(issues, requiredZeroTimestamp{
+				table: "sessions", columns: strings.Join(columns, ","),
+				row: fmt.Sprintf("rowid %d id %q", rowID, id), values: fmt.Sprintf("created_at=%q updated_at=%q", created, updated),
+			})
+		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, fmt.Errorf("sessions required-zero census: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("sessions required-zero census close: %w", err)
+	}
+	for _, repair := range repairs {
+		statement := `UPDATE sessions SET ` + quoteIdentifier(repair.column) + ` = ? WHERE rowid = ?`
+		if _, err := tx.ExecContext(ctx, statement, repair.value, repair.rowID); err != nil {
+			return nil, fmt.Errorf("sessions.%s rowid %d sibling repair: %w", repair.column, repair.rowID, err)
+		}
+	}
+	return issues, nil
+}
+
+func legacyTimestampText(raw any) (string, bool) {
+	switch value := raw.(type) {
+	case string:
+		return value, true
+	case []byte:
+		return string(value), true
+	default:
+		return "", false
+	}
+}
+
+func isMissingRequiredLegacyTimestamp(value string) bool {
+	return value == "" || isLegacyRFC3339ZeroTime(value)
+}
+
+func validRequiredLegacyTimestamp(value string) bool {
+	_, err := parseLegacyDBTime(value)
+	return err == nil
 }
 
 // rewriteTimestampSentinelPredicates updates schema objects that outlive a

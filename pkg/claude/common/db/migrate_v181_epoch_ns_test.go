@@ -366,6 +366,56 @@ func TestMigrateV180toV181_RepairsOptionalGoZeroTimeAsAbsent(t *testing.T) {
 	assert.False(t, lastHook.Valid, "legacy Go zero time is the optional column's absence sentinel")
 }
 
+func TestMigrateV180toV181_RepairsRequiredSessionGoZeroFromSibling(t *testing.T) {
+	d := v180FixtureDB(t)
+	zero := time.Time{}.Format(time.RFC3339Nano)
+	created := "2024-01-02T03:04:05.123456789Z"
+	updated := "2024-02-03T04:05:06.987654321Z"
+	_, err := d.Exec(`INSERT INTO sessions (id, created_at, updated_at) VALUES
+		('repair-created', ?, ?),
+		('repair-updated', ?, ?)`, zero, updated, created, zero)
+	require.NoError(t, err)
+
+	require.NoError(t, migrateV180toV181(d), "both sibling-repair arms must execute")
+	for _, tc := range []struct {
+		id, sibling string
+	}{
+		{"repair-created", updated},
+		{"repair-updated", created},
+	} {
+		var createdNS, updatedNS int64
+		require.NoError(t, d.QueryRow(`SELECT created_at, updated_at FROM sessions WHERE id = ?`, tc.id).
+			Scan(&createdNS, &updatedNS))
+		parsed, err := time.Parse(time.RFC3339Nano, tc.sibling)
+		require.NoError(t, err)
+		assert.Equal(t, parsed.UnixNano(), createdNS, tc.id+" created_at uses sibling provenance")
+		assert.Equal(t, parsed.UnixNano(), updatedNS, tc.id+" updated_at uses sibling provenance")
+	}
+}
+
+func TestMigrateV180toV181_ReportsAllUnrepairableRequiredZeros(t *testing.T) {
+	d := v180FixtureDB(t)
+	zero := time.Time{}.Format(time.RFC3339Nano)
+	_, err := d.Exec(`INSERT INTO sessions (id, created_at, updated_at) VALUES
+		('both-zero-a', ?, ?),
+		('both-zero-b', ?, ?)`, zero, zero, zero, zero)
+	require.NoError(t, err)
+	_, err = d.Exec(`INSERT INTO notify_state (session_id, notified_at) VALUES ('required-zero', ?)`, zero)
+	require.NoError(t, err)
+
+	err = migrateV180toV181(d)
+	require.Error(t, err, "unrepairable required-zero census must execute")
+	for _, want := range []string{
+		`id "both-zero-a"`, `id "both-zero-b"`, "notify_state.notified_at", "in 3 row(s)",
+		"restore the .pre-v181-epochns.bak backup", "replace every listed value",
+	} {
+		assert.ErrorContains(t, err, want)
+	}
+	var version int
+	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&version))
+	assert.Equal(t, 180, version, "the aggregate failure rolls back all sibling repairs and conversions")
+}
+
 func TestMigrateV180toV181_RejectsEmptyRequiredTimestamp(t *testing.T) {
 	d := v180FixtureDB(t)
 	_, err := d.Exec(`INSERT INTO notify_state (session_id, notified_at) VALUES ('required-empty', '')`)
@@ -445,31 +495,59 @@ func TestDBTimestampRejectsLegacyStorageClasses(t *testing.T) {
 	assert.Equal(t, int64(0), boundary, "read-only inclusive range may start at the Unix epoch")
 }
 
-func TestMigrateV180toV181_RejectsInvalidTimestampsLoudly(t *testing.T) {
+func TestMigrateV180toV181_InvalidTimestampMatrix(t *testing.T) {
 	for _, tc := range []struct {
-		name, value string
+		name, value        string
+		optionalBecomesNil bool
 	}{
-		{"malformed", "not-a-time"},
-		{"go_zero", time.Time{}.Format(time.RFC3339Nano)},
-		{"zero", "1970-01-01T00:00:00Z"},
-		{"out_of_range", "9999-01-01T00:00:00Z"},
+		{name: "malformed", value: "not-a-time"},
+		{name: "go_zero_rfc3339", value: time.Time{}.Format(time.RFC3339Nano), optionalBecomesNil: true},
+		{name: "go_zero_string", value: time.Time{}.String()},
+		{name: "epoch_zero", value: "1970-01-01T00:00:00Z"},
+		{name: "sqlite_datetime_epoch", value: "1970-01-01 00:00:00"},
+		{name: "out_of_range", value: "9999-01-01T00:00:00Z"},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			d := v180FixtureDB(t)
-			_, err := d.Exec(`INSERT INTO notify_state (session_id, notified_at) VALUES ('bad', ?)`, tc.value)
-			require.NoError(t, err)
-			err = migrateV180toV181(d)
-			require.Error(t, err, "failure arm must execute")
-			assert.ErrorContains(t, err, "notify_state.notified_at")
-			assert.ErrorContains(t, err, "rowid")
-			assert.ErrorContains(t, err, fmt.Sprintf("value %q", tc.value))
-			var version int
-			require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&version))
-			assert.Equal(t, 180, version)
-			var storageType string
-			require.NoError(t, d.QueryRow(`SELECT typeof(notified_at) FROM notify_state WHERE session_id = 'bad'`).Scan(&storageType))
-			assert.Equal(t, "text", storageType, "failed conversion rolls back the source row")
-		})
+		for _, column := range []struct {
+			name, qualified string
+			optional        bool
+		}{
+			{name: "required", qualified: "notify_state.notified_at"},
+			{name: "optional", qualified: "sessions.last_hook", optional: true},
+		} {
+			t.Run(column.name+"/"+tc.name, func(t *testing.T) {
+				d := v180FixtureDB(t)
+				var err error
+				if column.optional {
+					_, err = d.Exec(`INSERT INTO sessions (id, created_at, updated_at, last_hook)
+						VALUES ('bad', '2024-01-02T03:04:05Z', '2024-01-02T03:04:06Z', ?)`, tc.value)
+				} else {
+					_, err = d.Exec(`INSERT INTO notify_state (session_id, notified_at) VALUES ('bad', ?)`, tc.value)
+				}
+				require.NoError(t, err)
+				err = migrateV180toV181(d)
+				if column.optional && tc.optionalBecomesNil {
+					require.NoError(t, err)
+					var value sql.NullInt64
+					require.NoError(t, d.QueryRow(`SELECT last_hook FROM sessions WHERE id = 'bad'`).Scan(&value))
+					assert.False(t, value.Valid, "recognized optional Go-zero becomes NULL")
+					return
+				}
+				require.Error(t, err, "failure arm must execute")
+				assert.ErrorContains(t, err, column.qualified)
+				assert.ErrorContains(t, err, "rowid")
+				assert.ErrorContains(t, err, fmt.Sprintf("%q", tc.value))
+				var version int
+				require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&version))
+				assert.Equal(t, 180, version)
+				var storageType string
+				query := `SELECT typeof(notified_at) FROM notify_state WHERE session_id = 'bad'`
+				if column.optional {
+					query = `SELECT typeof(last_hook) FROM sessions WHERE id = 'bad'`
+				}
+				require.NoError(t, d.QueryRow(query).Scan(&storageType))
+				assert.Equal(t, "text", storageType, "failed conversion rolls back the source row")
+			})
+		}
 	}
 }
 

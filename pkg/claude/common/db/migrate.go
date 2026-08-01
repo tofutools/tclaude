@@ -3139,13 +3139,33 @@ func importLegacySessions(db *sql.DB, home string) bool {
 		if autoMarkers[id] {
 			autoReg = 1
 		}
+		// Old session JSON could omit one or both timestamps. Prefer the
+		// row's own sibling stamp when one exists; when both are absent, the
+		// JSON file's mtime is the closest durable provenance for when that
+		// session state existed. Never format a zero time into these required
+		// columns: v181 deliberately rejects it.
+		created, updated := s.Created, s.Updated
+		if created.IsZero() && !updated.IsZero() {
+			created = updated
+		}
+		if updated.IsZero() && !created.IsZero() {
+			updated = created
+		}
+		if created.IsZero() && updated.IsZero() {
+			info, infoErr := entry.Info()
+			if infoErr != nil || info.ModTime().IsZero() {
+				slog.Warn("skipping legacy session without usable timestamps", "id", s.ID, "path", path, "error", infoErr)
+				continue
+			}
+			created, updated = info.ModTime(), info.ModTime()
+		}
 
 		_, err = tx.Exec(`INSERT OR IGNORE INTO sessions
 			(id, tmux_session, pid, cwd, conv_id, status, status_detail, auto_registered, created_at, updated_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			s.ID, s.TmuxSession, s.PID, s.Cwd, s.ConvID,
 			s.Status, s.StatusDetail, autoReg,
-			s.Created.Format(time.RFC3339Nano), s.Updated.Format(time.RFC3339Nano))
+			created.Format(time.RFC3339Nano), updated.Format(time.RFC3339Nano))
 		if err != nil {
 			slog.Warn("failed to import session", "id", s.ID, "error", err)
 			continue
