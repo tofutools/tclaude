@@ -626,8 +626,12 @@ func TestOpenCodeControlSocketPathLeavesLegacySharedUnstrandedAndUnadvised(t *te
 	// in this file warns about, and this assertion walked straight into it: it
 	// went red on macOS CI only.
 	//
-	// Resolved AFTER the call, when production has created the directory —
-	// EvalSymlinks needs it to exist.
+	// resolvedTestPath needs `moved` to exist, and the FIXTURE guarantees that
+	// above rather than production. An earlier version of this comment said the
+	// resolution was placed after the production call "when production has
+	// created the directory" — true when it was written, and made false by the
+	// MkdirAll added above, which exists precisely so this assertion no longer
+	// depends on the code it is testing.
 	assert.True(t, strings.HasPrefix(after, resolvedTestPath(t, moved)),
 		"the new control root must sit under the new parent")
 }
