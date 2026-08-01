@@ -1079,7 +1079,11 @@ func TestReconcileOpenCodeFilteredRuntimeRechecksPersistentAccountAuthority(
 	require.NoError(t, os.WriteFile(
 		hostileConfig, []byte(`{"provider":{"opaque":{}}}`), 0o600))
 	_, err = openCodeRuntimeSandboxSpec(runtime)
-	require.ErrorContains(t, err, "not provider-empty")
+	// TCL-923: names the condition that fired — a second entry beside the
+	// marker — rather than the property the directory was required to have.
+	require.ErrorContains(t, err, "does not hold exactly one entry")
+	require.NotContains(t, err.Error(), "is not provider-empty",
+		"the retired wording must not come back")
 	require.NoError(t, os.Remove(hostileConfig))
 	_, err = openCodeRuntimeSandboxSpec(runtime)
 	require.NoError(t, err)

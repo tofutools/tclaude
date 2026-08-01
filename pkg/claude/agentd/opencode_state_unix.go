@@ -103,13 +103,32 @@ func isolateOpenCodeFilteredConfig(layout *openCodeStateLayout) error {
 			return err
 		}
 	}
+	// "could not be resolved OR is not canonical", because the condition is a
+	// disjunction and the resolve error is one of its arms: an EACCES or ELOOP
+	// reported as a canonicality verdict is a mechanism claim nobody tested.
+	// The sentence names both arms rather than picking one.
+	//
+	// Naming WHICH arm fired, and showing the resolved value when the
+	// inequality is the real one, would need the disjunction split into two
+	// refusals. That is a control-flow change and this ticket is scoped to
+	// message text, so it is deliberately not done here.
+	//
+	// The subject is "XDG config directory", not "filtered config base": the
+	// value quoted is configApp — configBase/opencode — and the previous
+	// wording named the parent while printing the child. It now matches the
+	// vocabulary validateOpenCodeFilteredProviderSources uses for the same
+	// directory.
 	resolved, err := filepath.EvalSymlinks(configApp)
 	if err != nil || resolved != configApp {
-		return fmt.Errorf("OpenCode filtered config base %q is not canonical", configApp)
+		return fmt.Errorf(
+			"OpenCode filtered XDG config directory %q could not be resolved or is not canonical",
+			configApp)
 	}
 	resolvedHome, err := filepath.EvalSymlinks(filteredHome)
 	if err != nil || resolvedHome != filteredHome {
-		return fmt.Errorf("OpenCode filtered home %q is not canonical", filteredHome)
+		return fmt.Errorf(
+			"OpenCode filtered home %q could not be resolved or is not canonical",
+			filteredHome)
 	}
 	found := false
 	for index := range layout.environment {
@@ -134,9 +153,25 @@ func isolateOpenCodeFilteredConfig(layout *openCodeStateLayout) error {
 // its serialized launch contract. It runs immediately before every exec,
 // including persisted-spec replay.
 func validateOpenCodeFilteredProviderSources(stateRoot string) error {
+	// canonicalOpenCodeRuntimePath is purely lexical — TrimSpace, Clean,
+	// IsAbs — so it canonicalizes nothing and the only way it yields "" is a
+	// path that is not absolute. The old sentence called that "not canonical",
+	// which named a mechanism this gate does not perform: "", "   ",
+	// "relative/path" and "." all reported a canonicality verdict when their
+	// single fault was non-absoluteness, and it printed no value at all.
+	//
+	// The wording for this exact predicate already exists twice in this file
+	// ("is not an absolute path", with the value quoted); this now agrees with
+	// them rather than inventing a third spelling.
+	//
+	// spelled is kept because the assignment below overwrites the argument, and
+	// the value worth showing an operator is the one they configured.
+	spelled := stateRoot
 	stateRoot = canonicalOpenCodeRuntimePath(stateRoot)
 	if stateRoot == "" {
-		return fmt.Errorf("OpenCode filtered provider state root is not canonical")
+		return fmt.Errorf(
+			"OpenCode filtered provider state root %q is not an absolute path",
+			spelled)
 	}
 	configBase := filepath.Join(stateRoot, openCodeFilteredConfigBase)
 	filteredHome := filepath.Join(stateRoot, openCodeFilteredHomeBase)
@@ -164,7 +199,7 @@ func validateOpenCodeFilteredProviderSources(stateRoot string) error {
 		content, err := os.ReadFile(path)
 		if err != nil || string(content) != openCodeInstallGitignore {
 			return fmt.Errorf(
-				"OpenCode filtered provider bootstrap %q is not the pinned provider-empty marker; clear the filtered config state or use network open",
+				"OpenCode filtered provider bootstrap %q could not be read or is not the pinned provider-empty marker; clear the filtered config state or use network open",
 				path)
 		}
 	}
@@ -175,22 +210,31 @@ func validateOpenCodeFilteredProviderDirectory(
 	path string,
 	surface string,
 ) error {
+	// This arm tests existence and directory-ness. It does NOT test
+	// canonicality — that is the check immediately below — so calling its
+	// failure "not a canonical directory" named the wrong mechanism and sent a
+	// reader to the symlink question for a missing directory.
 	info, err := os.Lstat(path)
 	if err != nil || !info.IsDir() {
 		return fmt.Errorf(
-			"OpenCode filtered %s %q is not a canonical directory; clear the filtered config state or use network open",
+			"OpenCode filtered %s %q could not be inspected or is not a directory (symlinks are not followed); clear the filtered config state or use network open",
 			surface, path)
 	}
 	resolved, err := filepath.EvalSymlinks(path)
 	if err != nil || resolved != path {
 		return fmt.Errorf(
-			"OpenCode filtered %s %q is not canonical; clear the filtered config state or use network open",
+			"OpenCode filtered %s %q could not be resolved or is not canonical; clear the filtered config state or use network open",
 			surface, path)
 	}
+	// "provider-empty" is what the directory is required to BE, not what this
+	// condition tests. The condition is len(entries) != 1, so the sentence it
+	// used to produce told an EMPTY directory that it was not empty, and blamed
+	// a ReadDir failure on the directory's contents. Both are states an
+	// operator would then go and look for and not find.
 	entries, err := os.ReadDir(path)
 	if err != nil || len(entries) != 1 {
 		return fmt.Errorf(
-			"OpenCode filtered %s %q is not provider-empty; clear it or use network open",
+			"OpenCode filtered %s %q could not be listed or does not hold exactly one entry (the provider-empty marker); clear it or use network open",
 			surface, path)
 	}
 	entry := entries[0]
@@ -198,8 +242,8 @@ func validateOpenCodeFilteredProviderDirectory(
 	if entry.Name() != openCodeInstallBootstrapFile ||
 		infoErr != nil || !entryInfo.Mode().IsRegular() {
 		return fmt.Errorf(
-			"OpenCode filtered %s %q contains unapproved provider authority; clear it or use network open",
-			surface, path)
+			"OpenCode filtered %s %q holds an entry %q that could not be inspected or is not the approved marker file; clear it or use network open",
+			surface, path, entry.Name())
 	}
 	return nil
 }
@@ -298,6 +342,44 @@ func requireOpenCodeStateAllocation(agentID string) (*db.OpenCodeAgentStateAlloc
 	return validateOpenCodeStateAllocation(*allocation)
 }
 
+// openCodeRecordedStateRootDescription renders the allocation's recorded state
+// root for a refusal. Presentation only; it reaches no decision.
+//
+// A legacy-shared allocation records NO state root: validateOpenCodeState
+// Allocation requires the field to be empty, and resolvedOpenCodeSeedPath("")
+// is ".", because Clean("") is "." and EvalSymlinks(".") succeeds. Printing
+// that would name "." as the recorded root of an allocation that has none.
+// Saying so in words is the only answer available.
+//
+// The emptiness test is `== ""`, not TrimSpace, so that it agrees EXACTLY with
+// the validator that guarantees its precondition — that check is untrimmed, so
+// a whitespace root never survives validation and cannot reach here. Using a
+// looser predicate would also mean calling a recorded (if useless) value "none
+// recorded", which is a small instance of the overstatement this whole pass
+// exists to remove.
+func openCodeRecordedStateRootDescription(recorded, resolved string) string {
+	if recorded == "" {
+		return "no allocated state root recorded"
+	}
+	return fmt.Sprintf("allocated state root %q", resolved)
+}
+
+// openCodeStatOwnerDescription renders the owner half of an ownership refusal.
+// It is presentation only and reaches no decision: the two callers already
+// decided, and both of their conditions are disjunctions whose arms would
+// otherwise render identically.
+//
+// The !ok arm gets its own words rather than a zero. A Sys() assertion that did
+// not yield a *syscall.Stat_t leaves stat nil, and "found uid 0" for that case
+// would name root as the owner of a directory whose owner was never read —
+// a confident wrong answer where no answer is available.
+func openCodeStatOwnerDescription(stat *syscall.Stat_t, ok bool) string {
+	if !ok || stat == nil {
+		return "no readable owner"
+	}
+	return fmt.Sprintf("uid %d", stat.Uid)
+}
+
 func openCodeControlSocketPath(agentID string) (string, error) {
 	allocation, err := requireOpenCodeStateAllocation(agentID)
 	if err != nil {
@@ -321,14 +403,27 @@ func openCodeControlSocketPath(agentID string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolve OpenCode control parent: %w", err)
 	}
+	// Names the path, and names the Lstat failure as its own arm. The root's
+	// counterpart below handles its Lstat error separately and so can state a
+	// pure directory verdict; this one folds the error in, and an EACCES
+	// reported as "is not a real mode-0700 directory" is a claim about the
+	// directory's nature that was never tested.
 	parentInfo, err := os.Lstat(parent)
 	if err != nil || parentInfo.Mode()&os.ModeSymlink != 0 || !parentInfo.IsDir() ||
 		parentInfo.Mode().Perm() != 0o700 {
-		return "", fmt.Errorf("OpenCode control parent is not a real mode-0700 directory")
+		return "", fmt.Errorf(
+			"OpenCode control parent %q could not be inspected or is not a real mode-0700 directory",
+			parent)
 	}
-	if stat, ok := parentInfo.Sys().(*syscall.Stat_t); !ok ||
-		stat.Uid != uint32(os.Geteuid()) {
-		return "", fmt.Errorf("OpenCode control parent has the wrong owner")
+	// The owner refusals print the path, the owner found, and the owner
+	// required. Without them a reader cannot tell a wrong uid from a Sys()
+	// assertion that did not yield a *syscall.Stat_t — and in this region a
+	// zero would otherwise be indistinguishable from not having looked.
+	parentStat, parentStatOK := parentInfo.Sys().(*syscall.Stat_t)
+	if !parentStatOK || parentStat.Uid != uint32(os.Geteuid()) {
+		return "", fmt.Errorf(
+			"OpenCode control parent %q owner could not be read or is not the expected one (found %s, expected uid %d)",
+			parent, openCodeStatOwnerDescription(parentStat, parentStatOK), os.Geteuid())
 	}
 	controlRoot := allocation.StateRoot
 	if allocation.Mode == db.OpenCodeStateLegacyShared {
@@ -341,12 +436,21 @@ func openCodeControlSocketPath(agentID string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("inspect OpenCode control root: %w", err)
 	}
+	// Left as it stands, deliberately. It covers three causes — symlink, not a
+	// directory, wrong permission — and it is TRUE of all three, because the
+	// Lstat error is already handled one arm up. Naming which of the three
+	// fired would need the disjunction split, which is a control-flow change
+	// and out of this ticket's scope. Recorded rather than silently skipped:
+	// vague is not the same defect as wrong, and only the wrong ones are fixed
+	// here.
 	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() || info.Mode().Perm() != 0o700 {
 		return "", fmt.Errorf("OpenCode control root %q is not a real mode-0700 directory", controlRoot)
 	}
-	if stat, ok := info.Sys().(*syscall.Stat_t); !ok ||
-		stat.Uid != uint32(os.Geteuid()) {
-		return "", fmt.Errorf("OpenCode control root has the wrong owner")
+	rootStat, rootStatOK := info.Sys().(*syscall.Stat_t)
+	if !rootStatOK || rootStat.Uid != uint32(os.Geteuid()) {
+		return "", fmt.Errorf(
+			"OpenCode control root %q owner could not be read or is not the expected one (found %s, expected uid %d)",
+			controlRoot, openCodeStatOwnerDescription(rootStat, rootStatOK), os.Geteuid())
 	}
 	resolved, err := filepath.EvalSymlinks(controlRoot)
 	if err != nil {
@@ -414,7 +518,8 @@ func validateOpenCodeStateAllocation(
 		}
 		resolved, err := filepath.EvalSymlinks(root)
 		if err != nil || resolved != root {
-			return nil, fmt.Errorf("private OpenCode state root %q no longer has its allocated identity",
+			return nil, fmt.Errorf(
+				"private OpenCode state root %q could not be resolved or no longer has its allocated identity",
 				root)
 		}
 		if err := refuseOpenCodeProtectedStateRoot(root); err != nil {
@@ -501,7 +606,13 @@ func openCodeStateLayoutForAllocation(
 		}
 		resolved, err := filepath.EvalSymlinks(appDir)
 		if err != nil || resolved != appDir {
-			return nil, fmt.Errorf("private OpenCode %s directory %q is not canonical", name, appDir)
+			// Both arms named, for the same reason as the filtered sites: the
+			// EvalSymlinks error is a disjunct here, and reporting an EACCES
+			// or ELOOP as a canonicality verdict claims a mechanism this line
+			// did not run.
+			return nil, fmt.Errorf(
+				"private OpenCode %s directory %q could not be resolved or is not canonical",
+				name, appDir)
 		}
 		layout.stateDirs = append(layout.stateDirs, appDir)
 		layout.environment = append(layout.environment, sandboxpolicy.EnvironmentEntry{
@@ -1087,8 +1198,24 @@ func prepareOpenCodeReadOnlyConfig(
 	stateRoot := filepath.Clean(spec.Contract.StateRoot)
 	if created && (!filepath.IsAbs(stateRoot) ||
 		!sandboxpolicy.PathContainsOrEqual(stateRoot, source)) {
-		slog.Info("created OpenCode bootstrap metadata in ambient host config before read-only confinement",
-			"path", filepath.Join(source, openCodeInstallBootstrapFile))
+		// "not lexically below the contract's state root", not "in ambient host
+		// config" — and not merely "outside" it either. The condition IS a
+		// spelling comparison, so an allocated per-agent source reached through
+		// a symlinked state root fails it while being physically inside, and
+		// the opposite of ambient. Naming the comparison rather than a
+		// conclusion about the path's nature is the only claim this line can
+		// support, in the one record an operator would later use to decide
+		// whether host config was touched.
+		//
+		// A cold review caught that the first correction here traded a wrong
+		// conclusion for a weaker one rather than for the mechanism.
+		//
+		// Both operands are logged for the same reason: the answer to "why is
+		// this line here" is the relationship between them, and a reader who
+		// cannot see the state root cannot check the claim.
+		slog.Info("created OpenCode bootstrap metadata not lexically below the contract's state root before read-only confinement",
+			"path", filepath.Join(source, openCodeInstallBootstrapFile),
+			"state_root", stateRoot)
 	}
 	return nil
 }
@@ -1229,9 +1356,16 @@ func requireOpenCodeAllocatedConfigDir(configDir string) (string, error) {
 	configBase := filepath.Dir(resolved)
 	stateRoot := filepath.Dir(configBase)
 	if filepath.Base(resolved) != "opencode" || filepath.Base(configBase) != "config" {
+		// The tested value is appended, matching the state-directory arm's
+		// "(tested as %q)". The decision runs on resolved and the sentence
+		// quoted configDir, so with a symlinked opencode leaf the refusal
+		// printed a path that visibly HAS the shape it was being told it
+		// lacks. That reads as a bug in the validator rather than as a symlink
+		// in the operator's tree, and it is the only message in this file that
+		// contradicts itself on screen.
 		return "", fmt.Errorf(
-			"OpenCode config bootstrap target %q does not have the per-agent <state root>/config/opencode shape",
-			configDir)
+			"OpenCode config bootstrap target %q does not have the per-agent <state root>/config/opencode shape (tested as %q)",
+			configDir, resolved)
 	}
 	if err := requireOpenCodeAllocatedStateRoot(stateRoot,
 		fmt.Sprintf("OpenCode config bootstrap target %q", configDir),
@@ -1296,11 +1430,36 @@ func requireOpenCodeAllocatedStateRoot(stateRoot, subject, noun string) error {
 	if err != nil {
 		return fmt.Errorf("%s is not an allocated per-agent %s: %w", subject, noun, err)
 	}
-	if allocation.Mode != db.OpenCodeStatePrivate ||
-		resolvedOpenCodeSeedPath(allocation.StateRoot) != stateRoot {
+	// Hoisted out of the condition so the message can print the value the
+	// comparison ran on, rather than resolving a second time in the format
+	// arguments — a second walk is a second read, which is the hazard the
+	// comment in requireOpenCodeAllocatedConfigDir spells out.
+	//
+	// It is NOT fewer reads than the pre-change code: the || short-circuited
+	// this call away whenever the mode already mismatched, and it now always
+	// runs. No decision changes — EvalSymlinks is side-effect-free and the
+	// condition is identical — but the honest comparison is against what was
+	// here, not against the alternative rendering.
+	allocatedRoot := resolvedOpenCodeSeedPath(allocation.StateRoot)
+	if allocation.Mode != db.OpenCodeStatePrivate || allocatedRoot != stateRoot {
+		// Both paths named. The condition is mode-mismatch OR path-mismatch,
+		// and when it was the path the sentence named neither the allocated
+		// root nor the tested one — leaving an operator with a refusal about
+		// two paths and no way to see how they differed.
+		//
+		// The allocated root is RENDERED, not printed raw. A legacy-shared
+		// allocation is required by validateOpenCodeStateAllocation to record
+		// an EMPTY state root, and resolvedOpenCodeSeedPath("") is ".", so
+		// quoting it would tell an operator that this allocation's recorded
+		// root is "." — a confident wrong value for a field guaranteed to hold
+		// none, and a path they would then go and look at. That is this
+		// ticket's own defect shape, and it was introduced by this fix before
+		// a cold review caught it.
 		return fmt.Errorf(
-			"%s does not belong to the %s state allocation of agent %s",
-			subject, allocation.Mode, allocation.AgentID)
+			"%s does not belong to the %s state allocation of agent %s (%s, tested as %q)",
+			subject, allocation.Mode, allocation.AgentID,
+			openCodeRecordedStateRootDescription(allocation.StateRoot, allocatedRoot),
+			stateRoot)
 	}
 	parent, err := openCodePrivateStateParent()
 	if err != nil {

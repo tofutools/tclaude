@@ -353,6 +353,15 @@ func TestPrepareOpenCodeReadOnlyConfigRefusesLegacySharedAllocation(t *testing.T
 		openCodeConfigBootstrapSpec(stateRoot, configDir, configDir), "Linux")
 	require.ErrorContains(t, err,
 		"does not belong to the legacy-shared state allocation of agent "+agentID)
+	// TCL-923: a legacy-shared allocation is REQUIRED to record an empty state
+	// root, and resolvedOpenCodeSeedPath("") is "." — so the refusal must not
+	// name "." as its recorded root. That is a confident wrong value for a
+	// field guaranteed to hold none, and an operator would go and look at it.
+	// Introduced by this ticket's own fix and caught by cold review.
+	require.Contains(t, err.Error(), "no allocated state root recorded",
+		"an allocation with no recorded root must say so, not invent one")
+	require.NotContains(t, err.Error(), `allocated state root "."`,
+		"the invented value must not come back")
 	assert.NoFileExists(t, filepath.Join(configDir, openCodeInstallBootstrapFile))
 }
 
@@ -627,11 +636,22 @@ func TestOpenCodeControlSocketPathLeavesLegacySharedUnstrandedAndUnadvised(t *te
 	// went red on macOS CI only.
 	//
 	// resolvedTestPath needs `moved` to exist, and the FIXTURE guarantees that
-	// above rather than production. An earlier version of this comment said the
+	// above — independently of production, which as it happens also creates it.
+	// An earlier version of this comment said the
 	// resolution was placed after the production call "when production has
-	// created the directory" — true when it was written, and made false by the
-	// MkdirAll added above, which exists precisely so this assertion no longer
-	// depends on the code it is testing.
+	// created the directory" — true when it was written, and made obsolete as
+	// the reason by the MkdirAll added above, which exists precisely so this
+	// assertion no longer depends on the code it is testing.
+	//
+	// "Obsolete as the reason", not "false": a cold review ran the experiment
+	// this comment had not. With the fixture MkdirAll deleted the test still
+	// passes, because openCodePrivateStateParent's own os.MkdirAll creates
+	// `moved` as an intermediate regardless — so production DOES still create
+	// that directory and the retired sentence's factual clause was never
+	// falsified. What the fixture invalidated is why the placement mattered,
+	// which is a weaker relation than the word "false" claimed. Corrected here
+	// rather than left, because a claim about a claim overstating its own
+	// strength is the same defect one level up.
 	assert.True(t, strings.HasPrefix(after, resolvedTestPath(t, moved)),
 		"the new control root must sit under the new parent")
 }

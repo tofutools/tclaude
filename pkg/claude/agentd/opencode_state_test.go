@@ -308,9 +308,13 @@ func TestOpenCodeUnixRelayBuildsV4ForIsolatedSmokeAndFilteredPublicLaunch(t *tes
 			"opencode", "opencode.json")
 		require.NoError(t, os.WriteFile(
 			hostileFilteredConfig, []byte(`{"provider":{"opaque":{}}}`), 0o600))
-		require.ErrorContains(t,
-			validateOpenCodeFilteredProviderAuthority(filteredSpec),
-			"not provider-empty")
+		// TCL-923: the sentence names the condition that fired (a second entry
+		// beside the marker), not the property the directory was required to
+		// have. The old wording told an EMPTY directory it was not empty.
+		authorityErr := validateOpenCodeFilteredProviderAuthority(filteredSpec)
+		require.ErrorContains(t, authorityErr, "does not hold exactly one entry")
+		require.NotContains(t, authorityErr.Error(), "is not provider-empty",
+			"the retired wording must not come back")
 		require.NoError(t, os.Remove(hostileFilteredConfig))
 		require.NoError(t, validateOpenCodeFilteredProviderAuthority(filteredSpec))
 		listenerFD, executableFD, fdErr :=
