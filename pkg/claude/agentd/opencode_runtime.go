@@ -74,15 +74,14 @@ const (
 )
 
 type openCodeProcess struct {
-	cmd          *exec.Cmd
-	pid          int
-	tmuxSession  string
-	shutdownPIDs []int
-	done         chan error
-	doneOnce     sync.Once
-	cancel       context.CancelFunc
-	sseDone      chan struct{}
-	convID       string
+	cmd         *exec.Cmd
+	pid         int
+	tmuxSession string
+	done        chan error
+	doneOnce    sync.Once
+	cancel      context.CancelFunc
+	sseDone     chan struct{}
+	convID      string
 	// exited is set (under openCodeProcesses' lock) once cmd.Wait returns, so a
 	// consumer that had not yet registered its cancel at death time is never
 	// started against an already-dead server. Only processes with a cmd.Wait
@@ -851,6 +850,16 @@ func (h *openCodeTmuxHandshake) connectGate(deadline time.Time) error {
 		gate, err := os.OpenFile(h.gatePath, os.O_WRONLY|syscall.O_NONBLOCK, 0)
 		if err == nil {
 			h.gate = gate
+			// Gate readiness proves the launcher has opened the status writer.
+			// Reopen the reader in blocking mode now; FIFO deadlines are not
+			// supported on macOS, while a nonblocking reader can return EAGAIN
+			// before the launcher writes its authority payload.
+			status, openErr := os.OpenFile(h.statusPath, os.O_RDONLY, 0)
+			if openErr != nil {
+				return fmt.Errorf("reopen OpenCode tmux authority fifo: %w", openErr)
+			}
+			_ = h.status.Close()
+			h.status = status
 			return nil
 		}
 		if !errors.Is(err, syscall.ENXIO) {
@@ -863,11 +872,6 @@ func (h *openCodeTmuxHandshake) connectGate(deadline time.Time) error {
 
 func awaitOpenCodeTmuxAuthority(handshake *openCodeTmuxHandshake,
 	process *openCodeProcess, timeout time.Duration) (opencodeapi.UnixLaunchAuthority, error) {
-	if err := handshake.status.SetReadDeadline(time.Now().Add(timeout)); err != nil {
-		return opencodeapi.UnixLaunchAuthority{},
-			fmt.Errorf("set OpenCode tmux authority deadline: %w", err)
-	}
-	defer func() { _ = handshake.status.SetReadDeadline(time.Time{}) }()
 	type authorityResult struct {
 		authority opencodeapi.UnixLaunchAuthority
 		err       error
@@ -2355,11 +2359,11 @@ func stopOpenCodeRuntime(sessionID string) error {
 	if runtime == nil {
 		return nil
 	}
-	safeToCleanUp := stopOpenCodeProcess(*runtime, nil)
+	stopOpenCodeProcess(*runtime, nil)
 	if runtime.Transport == db.OpenCodeTransportUnixRelay {
-		if !safeToCleanUp || session.IsProcessAlive(runtime.PID) {
+		if session.IsProcessAlive(runtime.PID) {
 			return fmt.Errorf(
-				"OpenCode process tree remains alive; retaining Unix replay authority")
+				"OpenCode recovered process remains alive; retaining Unix replay authority")
 		}
 		if err := opencodeapi.RemoveUnixSocket(*runtime); err != nil {
 			return fmt.Errorf("finish OpenCode Unix control cleanup: %w", err)
@@ -2369,8 +2373,8 @@ func stopOpenCodeRuntime(sessionID string) error {
 	return db.DeleteOpenCodeRuntime(sessionID)
 }
 
-func stopOpenCodeProcess(runtime db.OpenCodeRuntime, known *openCodeProcess) (removeControlSocket bool) {
-	removeControlSocket = true
+func stopOpenCodeProcess(runtime db.OpenCodeRuntime, known *openCodeProcess) {
+	removeControlSocket := true
 	defer func() {
 		if !removeControlSocket {
 			return
@@ -2388,26 +2392,17 @@ func stopOpenCodeProcess(runtime db.OpenCodeRuntime, known *openCodeProcess) (re
 	if process == nil {
 		process = &openCodeProcess{}
 		openCodeProcesses.bySession[runtime.SessionID] = process
-	} else if openCodeProcesses.bySession[runtime.SessionID] == nil {
-		// A caller may pass a launch handle before another path has observed it.
-		// Register the same handle so an unsafe tmux teardown can leave a durable
-		// in-memory tombstone for later cleanup attempts.
-		openCodeProcesses.bySession[runtime.SessionID] = process
 	}
 	// Keep this tombstone registered until cancellation and projector join
 	// complete. A concurrent health/reconcile path must not interpret a
 	// temporarily missing entry as permission to launch a replacement SSE
 	// consumer during teardown.
 	process.stopping = true
-	shutdownPIDs := append([]int(nil), process.shutdownPIDs...)
 	cancel := process.cancel
 	sseDone := process.sseDone
 	projectorStopped := sseDone == nil
 	openCodeProcesses.Unlock()
 	defer func() {
-		if !removeControlSocket {
-			return
-		}
 		openCodeProcesses.Lock()
 		if openCodeProcesses.bySession[runtime.SessionID] == process {
 			delete(openCodeProcesses.bySession, runtime.SessionID)
@@ -2436,34 +2431,8 @@ func stopOpenCodeProcess(runtime db.OpenCodeRuntime, known *openCodeProcess) (re
 			}
 		}
 		if process.tmuxSession != "" {
-			if len(shutdownPIDs) > 0 {
-				if !waitForOpenCodePIDsExit(shutdownPIDs, openCodeProcessStopWait) {
-					removeControlSocket = false
-					slog.Warn("OpenCode tmux process tree still alive; control authority retained",
-						"session", runtime.SessionID, "pid", runtime.PID)
-				}
-				process.finish(nil)
-				return
-			}
-			recordedTree := opencodeapi.RecordedProcessSubtree(process.rootPID())
-			openCodeProcesses.Lock()
-			process.shutdownPIDs = append([]int(nil), recordedTree...)
-			openCodeProcesses.Unlock()
 			killErr := clcommon.Default.Command(
 				"-N", "kill-session", "-t", clcommon.ExactTarget(process.tmuxSession)).Run()
-			if killErr == nil {
-				// A successful tmux kill authoritatively removes the session, but
-				// its pane tree can still be handling SIGHUP. Wait on the PIDs we
-				// captured while tmux still owned them; on timeout, retain Unix
-				// authority rather than killing a possibly reused PID.
-				if !waitForOpenCodePIDsExit(recordedTree, openCodeProcessStopWait) {
-					removeControlSocket = false
-					slog.Warn("OpenCode tmux process tree did not exit; control authority retained",
-						"session", runtime.SessionID, "pid", runtime.PID)
-				}
-				process.finish(nil)
-				return
-			}
 			select {
 			case <-process.done:
 			case <-time.After(openCodeProcessStopWait):
@@ -2527,7 +2496,6 @@ func stopOpenCodeProcess(runtime db.OpenCodeRuntime, known *openCodeProcess) (re
 				"endpoint", runtime.ServerURL)
 		}
 	}
-	return removeControlSocket
 }
 
 func killOpenCodePIDs(pids []int) {

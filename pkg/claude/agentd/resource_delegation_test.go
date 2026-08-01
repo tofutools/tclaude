@@ -1,13 +1,10 @@
 package agentd
 
 import (
-	"bufio"
 	"io"
 	"os"
 	"os/exec"
 	"slices"
-	"strconv"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -111,67 +108,6 @@ func TestManagedOpenCodeTmuxWatcherToleratesTransientFailures(t *testing.T) {
 	fake.Lock()
 	defer fake.Unlock()
 	assert.Len(t, fake.calls, 6, "a successful probe must reset the failure count")
-}
-
-func TestStopManagedOpenCodeTmuxRetainsAuthorityWhileDescendantLives(t *testing.T) {
-	fake := &openCodeTmuxProbeFake{results: []bool{true}}
-	previous := clcommon.Default
-	clcommon.Default = fake
-	t.Cleanup(func() { clcommon.Default = previous })
-	parent := exec.Command("sh", "-c", "sleep 10 >/dev/null 2>&1 & echo $!; sleep 0.1")
-	stdout, err := parent.StdoutPipe()
-	require.NoError(t, err)
-	require.NoError(t, parent.Start())
-	descendantLine, err := bufio.NewReader(stdout).ReadString('\n')
-	require.NoError(t, err)
-	descendantPID, err := strconv.Atoi(strings.TrimSpace(descendantLine))
-	require.NoError(t, err)
-	parentDone := make(chan struct{})
-	go func() {
-		_ = parent.Wait()
-		close(parentDone)
-	}()
-	t.Cleanup(func() {
-		if descendant, findErr := os.FindProcess(descendantPID); findErr == nil {
-			_ = descendant.Kill()
-		}
-		<-parentDone
-	})
-	process := &openCodeProcess{pid: parent.Process.Pid, tmuxSession: "__tclaude-opencode-stop",
-		done: make(chan error, 1)}
-
-	started := time.Now()
-	safeToCleanUp := stopOpenCodeProcess(
-		db.OpenCodeRuntime{SessionID: "stop-session", PID: process.pid}, process)
-	assert.GreaterOrEqual(t, time.Since(started), openCodeProcessStopWait,
-		"tmux command success must not be treated as pane-tree exit")
-	assert.Less(t, time.Since(started), openCodeProcessStopWait+time.Second,
-		"pane-tree exit wait must remain bounded")
-	assert.False(t, safeToCleanUp,
-		"a live captured descendant must retain Unix replay authority")
-	assert.False(t, session.IsProcessAlive(parent.Process.Pid),
-		"the pane root must have exited to exercise descendant-only retention")
-	assert.True(t, session.IsProcessAlive(descendantPID),
-		"the captured descendant must remain alive through the timeout")
-	assert.False(t, stopOpenCodeProcess(
-		db.OpenCodeRuntime{SessionID: "stop-session", PID: process.pid}, nil),
-		"a retry must retain authority using the tombstoned descendant set")
-	openCodeProcesses.Lock()
-	assert.Same(t, process, openCodeProcesses.bySession["stop-session"],
-		"the stopping tombstone must survive while a captured descendant lives")
-	delete(openCodeProcesses.bySession, "stop-session")
-	openCodeProcesses.Unlock()
-
-	select {
-	case err := <-process.done:
-		require.NoError(t, err)
-	default:
-		t.Fatal("successful tmux kill did not complete the managed process")
-	}
-	fake.Lock()
-	defer fake.Unlock()
-	require.Len(t, fake.calls, 1)
-	assert.Equal(t, []string{"-N", "kill-session", "-t", "=__tclaude-opencode-stop"}, fake.calls[0])
 }
 
 func TestManagedOpenCodeTmuxUnixHandshakeCrossesProcessBoundary(t *testing.T) {
