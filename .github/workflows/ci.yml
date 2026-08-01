@@ -828,7 +828,13 @@ jobs:
         env:
           TCLAUDE_SANDBOX_V2_SMOKE: "1"
           TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY: ${{ runner.temp }}/tclaude-sandbox-v2
-        run: bash scripts/seatbelt-smoke/driver.sh
+        run: |
+          driver_log="$RUNNER_TEMP/seatbelt-smoke-driver.log"
+          bash scripts/seatbelt-smoke/driver.sh | tee "$driver_log"
+          if ! grep -q '^Seatbelt smoke evidence complete:$' "$driver_log"; then
+            echo "::error::seatbelt driver did not print its completion sentinel — it exited before finishing"
+            exit 1
+          fi
 
       - name: Run OpenCode Seatbelt executor smoke
         env:
