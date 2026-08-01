@@ -1112,6 +1112,7 @@ func TestOpenCodeLocalOnlyIntentIsRefusedWhereItCannotBeEnforced(t *testing.T) {
 		domainOnly := listOf(sandboxpolicy.NetworkAllowEntry{
 			Domain: "api.example.com", Ports: []int{443},
 		})
+		domainOnly.Network.Engine = sandboxpolicy.NetworkEngineProxy
 		for _, name := range []string{DefaultName, CodexName} {
 			row, planErr := plan(t, MustGet(name), domainOnly, "darwin")
 			require.NoErrorf(t, planErr, "harness %s", name)

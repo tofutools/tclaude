@@ -88,7 +88,7 @@ func TestPinnedProxyHarnessCooperationDarwin(t *testing.T) {
 			decisions, output := runDarwinProxyCooperationScenario(t, tclaudeBinary, scenario)
 			assert.Contains(t, output, darwinProxyCooperationMarker,
 				"the in-sandbox probe proves the shipped launcher injected the production endpoint")
-			assert.Truef(t, darwinProxyDecisionsInclude(decisions, scenario.origin, 443, "allowed"),
+			assert.Truef(t, darwinProxyDecisionsIncludeHTTP(decisions, scenario.origin, 443, "allowed"),
 				"%s %s did not reach %s through the Darwin proxy; decisions:\n%s",
 				scenario.name, scenario.version, scenario.origin, formatDarwinProxyDecisions(decisions))
 			assert.Truef(t, darwinProxyDecisionsIncludeRefusal(decisions, darwinProxyCooperationDenied),
@@ -160,16 +160,28 @@ func runDarwinProxyCooperationScenario(
 		cmd.Env = append(cmd.Env, scenario.prepare(t, workspace)...)
 	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	processDone := make(chan struct{})
+	fallbackDone := make(chan struct{})
+	var fallbackStarted atomic.Bool
 	cmd.Cancel = func() error {
-		if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err != nil {
+		if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM); err != nil {
 			if errors.Is(err, syscall.ESRCH) {
 				return os.ErrProcessDone
 			}
 			return err
 		}
+		fallbackStarted.Store(true)
+		go func() {
+			defer close(fallbackDone)
+			select {
+			case <-processDone:
+			case <-time.After(5 * time.Second):
+				_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			}
+		}()
 		return nil
 	}
-	cmd.WaitDelay = 5 * time.Second
+	cmd.WaitDelay = 10 * time.Second
 
 	var stopped atomic.Bool
 	done := make(chan struct{})
@@ -182,7 +194,7 @@ func runDarwinProxyCooperationScenario(
 				return
 			case <-ticker.C:
 				decisions := readDarwinProxyDecisions(home)
-				if darwinProxyDecisionsInclude(decisions, scenario.origin, 443, "allowed") &&
+				if darwinProxyDecisionsIncludeHTTP(decisions, scenario.origin, 443, "allowed") &&
 					darwinProxyDecisionsIncludeRefusal(decisions, darwinProxyCooperationDenied) {
 					stopped.Store(true)
 					cancel()
@@ -192,6 +204,10 @@ func runDarwinProxyCooperationScenario(
 		}
 	}()
 	output, runErr := cmd.CombinedOutput()
+	close(processDone)
+	if fallbackStarted.Load() {
+		<-fallbackDone
+	}
 	close(done)
 	if !stopped.Load() {
 		require.NoErrorf(t, ctx.Err(), "Darwin cooperation smoke timed out; output:\n%s", output)
@@ -288,11 +304,12 @@ func readDarwinProxyDecisions(home string) []darwinProxyDecisionRecord {
 	return nil
 }
 
-func darwinProxyDecisionsInclude(
+func darwinProxyDecisionsIncludeHTTP(
 	decisions []darwinProxyDecisionRecord, host string, port int, verdict string,
 ) bool {
 	return slices.ContainsFunc(decisions, func(decision darwinProxyDecisionRecord) bool {
-		return decision.Host == host && decision.Port == port && decision.Verdict == verdict
+		return decision.Carriage == "http" && decision.Host == host &&
+			decision.Port == port && decision.Verdict == verdict
 	})
 }
 
