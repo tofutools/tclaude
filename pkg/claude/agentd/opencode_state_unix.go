@@ -797,9 +797,12 @@ func validateOpenCodeReadOnlyConfigSeedSourceAt(
 	if openCodeDirectoryIs(identity, ambient) {
 		return nil
 	}
-	// EXACTLY ONE predicate decides acceptance, and both of its sides are
-	// things the daemon holds or derives: the pinned descriptor, and a path
-	// built from the allocation store's own recorded state root.
+	// The SECOND of the two acceptance routes. The ambient one is just above;
+	// this comment used to claim there was exactly one, which a cold review
+	// corrected. Neither has a window, but for different reasons: `ambient` is
+	// derived once from the daemon's own environment and Stat-ed once, never
+	// re-read, while this one compares the pinned descriptor against a path
+	// requireOpenCodeAllocatedConfigDir validated and returned.
 	//
 	// An earlier shape read configDir twice — once to compare against the
 	// descriptor, once to look the allocation up — which left the residual
@@ -886,14 +889,21 @@ func requireOpenCodeAllocatedConfigDir(configDir string) (string, error) {
 			"OpenCode config bootstrap target %q is outside this daemon's private state parent %q; a changed XDG_DATA_HOME or HOME moves that parent away from an existing allocation",
 			configDir, parent)
 	}
-	// Returned so the caller settles acceptance against a path this function
-	// produced, rather than re-reading configDir a second time — the double read
-	// was the residual window. Built from the allocation's own recorded state
-	// root, though that is presentation rather than protection: it was proven
-	// equal to the resolved one above, so it is the same string either way.
-	// Reading configDir exactly once is what closes the window.
-	return filepath.Join(
-		resolvedOpenCodeSeedPath(allocation.StateRoot), "config", "opencode"), nil
+	// Built from stateRoot — the local that was VALIDATED above — and never from
+	// a fresh walk. Every input this function inspects is resolved exactly once:
+	// configDir at the top, allocation.StateRoot in the equality check, parent in
+	// the containment check. That single-walk property is what closes the window,
+	// and it is the whole reason this returns a value instead of letting the
+	// caller re-derive one.
+	//
+	// An earlier version returned resolvedOpenCodeSeedPath(allocation.StateRoot)
+	// here, reasoning that it was proven equal to stateRoot above and so was
+	// merely presentation. That was wrong, and a cold review demonstrated it with
+	// a working PoC: a second walk is a second read, "proven equal above" holds
+	// only if resolution is deterministic across the two calls, and that is the
+	// assumption a check-then-use argument may not make. It reopened the very
+	// window the rest of this change closes.
+	return filepath.Join(stateRoot, "config", "opencode"), nil
 }
 
 func resolvedOpenCodeSeedPath(path string) string {
@@ -994,9 +1004,16 @@ func ensureOpenCodeBootstrapGitignoreAt(dirFD int, dir, surface string) (bool, e
 	defer func() {
 		_ = file.Close()
 		if !keep {
-			// Removed through the same descriptor the file was created through,
-			// so a failed write cannot delete an unrelated path that has since
-			// taken this name.
+			// Removed through the same descriptor the file was created
+			// through, so the deletion cannot land in a directory other than
+			// the one validated.
+			//
+			// Deliberately NOT claimed: that it deletes the file we created.
+			// unlinkat removes whatever entry holds this NAME in the pinned
+			// directory, and there is no portable unlink-if-same-inode, so a
+			// writer that unlinked and recreated .gitignore between our O_EXCL
+			// create and our write failure would lose theirs. The descriptor
+			// constrains WHERE, not WHICH.
 			_ = unix.Unlinkat(dirFD, openCodeInstallBootstrapFile, 0)
 		}
 	}()
