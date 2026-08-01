@@ -41,10 +41,19 @@ const (
 	// TCL-917 RULED AGAINST the launch-time collision check this comment
 	// previously said would land, so nothing is pending: the decision was
 	// document and disclose, and this value is expected to stay true until
-	// Apple changes what "localhost" matches. Flipping it is still the entire
-	// change if that happens — false makes the same-port probe require
-	// Seatbelt EPERM and turns the evidence marker from LIMITATION to
-	// MITIGATED.
+	// Apple NARROWS "localhost" to the loopback interface. Flipping it is
+	// still the entire change if that happens — false makes the same-port
+	// probe require Seatbelt EPERM and turns the evidence marker from
+	// LIMITATION to MITIGATED.
+	//
+	// THIS TEST CANNOT DETECT THE OTHER DIRECTION. If "localhost" ever
+	// WIDENED past this host, nothing here would fail: the external probe is
+	// 1.1.1.1:443 while the allow rule names only controlPort, so that
+	// connect is refused on PORT alone and says nothing about the host
+	// predicate. Address and port both move, which is the same two-parameter
+	// blind spot TCL-917 documented. The native-path twin,
+	// darwinLocalAccessSamePortBypassExpected, has the identical gap and
+	// names it too.
 	seatbeltProxyFloorSamePortBypassExpected = true
 	// Darwin's sockaddr_un.sun_path is 104 bytes including its terminator.
 	seatbeltProxyFloorUnixPathCapacity = 104
@@ -61,9 +70,12 @@ const (
 // matches every address assigned to this host at that port. Therefore a live
 // service on a non-loopback local address at the proxy's port remains directly
 // reachable. This is a documented hole, not a successful isolation assertion;
-// any change in either direction is news. There is no follow-up design to
-// update: TCL-917 ruled document-and-disclose and built no mitigation, so the
-// change that news would prompt is flipping the expectation constant above.
+// a change in either direction would be news — but only ONE direction is
+// news this test can bring. It fails if the bypass disappears (a narrowing);
+// a widening past this host leaves every assertion here green, for the reason
+// given at the expectation constant. There is no follow-up design to update:
+// TCL-917 ruled document-and-disclose and built no mitigation, so the change
+// a narrowing would prompt is flipping that constant.
 func TestSeatbeltProxyFloorSmoke(t *testing.T) {
 	if os.Getenv("TCLAUDE_SANDBOX_V2_SMOKE") != "1" {
 		t.Skip("set TCLAUDE_SANDBOX_V2_SMOKE=1 on macOS to exercise sandbox-exec")
@@ -279,13 +291,16 @@ func seatbeltProxyFloorCharacterizeSamePort(t *testing.T, endpoint string) {
 	// Seatbelt cannot spell "this TCP port, loopback interface only": the host
 	// grammar accepts only "localhost" or "*", and localhost matches every
 	// address assigned to the host. Assert the bypass positively so the test
-	// fails if it disappears as well as if the fixture stops being meaningful.
+	// fails if it disappears, or if the fixture stops being meaningful. It
+	// does NOT fail if localhost widens past this host — see the expectation
+	// constant for why the external probe cannot see that.
 	// TCL-917 RULED AGAINST that mitigation: no launch-time collision check on
 	// this path or the native one, because refusing a launch when an unrelated
 	// program holds a port is how a sandbox gets switched off, and the scenario
 	// is narrow. The ruling was document and disclose, so this constant is now
-	// expected to stay true until Apple changes what "localhost" matches — at
-	// which point flipping it is still the entire change. Zero capability cells
+	// expected to stay true until Apple NARROWS what "localhost" matches — at
+	// which point flipping it is still the entire change, and it is the change
+	// this test can actually prompt. Zero capability cells
 	// depend on it. The native-path twin is
 	// darwinLocalAccessSamePortBypassExpected in the Darwin smoke.
 	if seatbeltProxyFloorSamePortBypassExpected {
