@@ -833,13 +833,13 @@ func handleDashboardHumanMessagesDelete(w http.ResponseWriter, r *http.Request) 
 
 // replySubjectFor derives the subject of an operator reply from the
 // subject of the notification being answered. A notify-human ping often
-// carries no subject, so we fall back to a fixed line that still tells
-// the agent WHO is speaking; when there is one we prefix "Re: " (bounded
-// so a long original can't blow past the inbox subject cap).
-func replySubjectFor(orig string) string {
+// carries no subject, so we fall back to a line that identifies both the
+// speaker and the notification being answered; when there is one we prefix
+// "Re: " (bounded so a long original can't blow past the inbox subject cap).
+func replySubjectFor(orig string, originalMessageID int64) string {
 	orig = strings.TrimSpace(orig)
 	if orig == "" {
-		return "Reply from the human operator"
+		return fmt.Sprintf("Reply from the human operator to message #%d", originalMessageID)
 	}
 	// Bound the echoed subject. Truncate on a RUNE boundary — a byte slice
 	// could split a multi-byte character and leave invalid UTF-8 in the
@@ -965,7 +965,7 @@ func handleDashboardHumanMessagesReply(w http.ResponseWriter, r *http.Request) {
 		GroupID:          0,
 		FromConv:         "",
 		ToConv:           target,
-		Subject:          replySubjectFor(orig.Subject),
+		Subject:          replySubjectFor(orig.Subject, orig.ID),
 		Body:             body.Body,
 		ToRecipients:     []string{target},
 		OperatorAuthored: true,

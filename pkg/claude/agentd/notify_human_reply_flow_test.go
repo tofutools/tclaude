@@ -79,8 +79,8 @@ func TestHumanReply_OnlineAgent_DeliversAndNudges(t *testing.T) {
 }
 
 // Scenario: a notification with no subject still gets a sensible reply
-// subject — the fixed "Reply from the human operator" fallback — so the
-// agent sees who is speaking even when the original ping was subject-less.
+// subject that identifies both the operator and the original notification,
+// so the agent can disambiguate replies when several pings are in flight.
 func TestHumanReply_NoSubject_UsesFallback(t *testing.T) {
 	f := newFlow(t)
 
@@ -99,7 +99,7 @@ func TestHumanReply_NoSubject_UsesFallback(t *testing.T) {
 	rows, err := db.ListAgentMessagesForConv(sender, 100)
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
-	assert.Equal(t, "Reply from the human operator", rows[0].Subject)
+	assert.Equal(t, "Reply from the human operator to message #"+itoa64(msgID), rows[0].Subject)
 }
 
 // Scenario: replying to an OFFLINE agent is blocked with 409 — the
