@@ -484,17 +484,41 @@ func TestCleanupAndPeerRefusalsDescribeWhatWasActuallyChecked(t *testing.T) {
 		assert.Contains(t, err.Error(), regular, "the refusal names the path it judged")
 	})
 
-	t.Run("cleanup refusal names the mode gate when it runs", func(t *testing.T) {
-		regular := filepath.Join(base, "plain2")
-		require.NoError(t, os.WriteFile(regular, nil, 0o600))
-		info, err := os.Lstat(regular)
+	t.Run("cleanup refusal names the mode gate when it is the only failing arm", func(t *testing.T) {
+		// The mode clause is LAST in the disjunction, so it only executes when
+		// the three before it are false. An earlier version of this subtest
+		// used a regular file: not-a-socket short-circuited and the mode
+		// predicate never ran, so the test asserted coverage it did not have.
+		//
+		// A real socket with matched device/inode makes the first three arms
+		// false, and a mode that is not 0600 leaves the gate as the only thing
+		// that can fire.
+		socketPath := filepath.Join(base, "gated.sock")
+		listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: socketPath, Net: "unix"})
 		require.NoError(t, err)
+		listener.SetUnlinkOnClose(false)
+		t.Cleanup(func() { _ = listener.Close(); _ = os.Remove(socketPath) })
+		require.NoError(t, os.Chmod(socketPath, 0o640))
+
+		info, err := os.Lstat(socketPath)
+		require.NoError(t, err)
+		require.True(t, info.Mode()&os.ModeSocket != 0, "the fixture must be a real socket")
 		stat, ok := info.Sys().(*syscall.Stat_t)
 		require.True(t, ok)
+		require.Equal(t, os.FileMode(0o640), info.Mode().Perm(),
+			"the fixture must not be 0600, or the gate cannot fire")
 
-		err = unlinkSocketIdentity(regular, int64(stat.Dev), int64(stat.Ino), true)
+		err = unlinkSocketIdentity(socketPath, int64(stat.Dev), int64(stat.Ino), true)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "is no longer the recorded mode-0600 OpenCode control socket")
+
+		// The same fixture with the gate OFF must succeed, which is what proves
+		// the mode clause -- and nothing else about this path -- caused the
+		// refusal above.
+		require.NoError(t,
+			unlinkSocketIdentity(socketPath, int64(stat.Dev), int64(stat.Ino), false))
+		_, err = os.Lstat(socketPath)
+		assert.ErrorIs(t, err, os.ErrNotExist)
 	})
 
 	t.Run("peer refusal does not assert subtree membership it never evaluated", func(t *testing.T) {
