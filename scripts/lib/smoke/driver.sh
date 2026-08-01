@@ -208,7 +208,8 @@ smoke::load_flow_harnesses() {
     # flow::harnesses is currently the LAST command in the subshell and its
     # status IS the subshell's. Put a `printf` after it and
     # `flow::harnesses() { return 3; }` becomes status 0 with a clean trailing
-    # marker: reported as a SUCCESS with an empty set. Measured, not reasoned.
+    # marker: reported as a SUCCESS declaring a harness named `complete`.
+    # Measured, not reasoned.
     # (`set -e` does not save it: the command substitution sits on the left of
     # `||`, which suppresses it inside.)
     #
