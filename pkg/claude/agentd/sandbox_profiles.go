@@ -930,10 +930,20 @@ func supportedSandboxProfileExport(format string, version int) bool {
 }
 
 func validateSandboxProfileExportVersionContent(env sandboxProfileExportEnvelope) *spawnFailure {
-	if env.FormatVersion >= 10 {
-		return nil
-	}
 	for _, profile := range env.Profiles {
+		if env.FormatVersion < 11 && profile.ResourceLimits.Enabled() {
+			return &spawnFailure{
+				Status: http.StatusBadRequest,
+				Kind:   "invalid_format",
+				Msg: fmt.Sprintf(
+					"sandbox profile %q contains resource limits, which require export format version 11",
+					profile.Name,
+				),
+			}
+		}
+		if env.FormatVersion >= 10 {
+			continue
+		}
 		if profile.Network == nil ||
 			(len(profile.Network.DenyPacks) == 0 && len(profile.Network.Deny) == 0) {
 			continue

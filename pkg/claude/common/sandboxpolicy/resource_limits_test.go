@@ -49,12 +49,12 @@ func TestNormalizeResourceLimitsPreservesSpellingAndCarriesBytes(t *testing.T) {
 }
 
 func TestCPUQuotaMicros(t *testing.T) {
-	for cores, want := range map[float64]uint64{0.25: 25_000, 0.5: 50_000, 1: 100_000, 4.5: 450_000, 0.000001: 1} {
+	for cores, want := range map[float64]uint64{0.01: 1_000, 0.25: 25_000, 0.5: 50_000, 1: 100_000, 4.5: 450_000} {
 		got, err := CPUQuotaMicros(cores)
 		require.NoError(t, err)
 		assert.Equal(t, want, got)
 	}
-	for _, cores := range []float64{0, -1, math.NaN(), math.Inf(1), math.Exp2(64)} {
+	for _, cores := range []float64{0, -1, 0.009, math.NaN(), math.Inf(1), math.Exp2(64)} {
 		_, err := CPUQuotaMicros(cores)
 		assert.Error(t, err)
 	}

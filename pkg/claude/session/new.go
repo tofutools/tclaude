@@ -1625,6 +1625,7 @@ func runNew(params *NewParams) error {
 		} else {
 			wrapped, cleanup, resourceErr := wrapResourceLimitedCommand(
 				sessionID, launchSandbox.Effective.ResourceLimits, harnessCmd,
+				params.AllowUnenforcedSandbox,
 			)
 			if resourceErr != nil {
 				if !params.AllowUnenforcedSandbox {

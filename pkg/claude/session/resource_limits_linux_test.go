@@ -29,7 +29,7 @@ func TestWrapResourceLimitedCommandRendersIndependentAxes(t *testing.T) {
 	current := fakeCurrentResourceCgroup(t, "cpu memory io", "")
 	cpu := 0.5
 	wrapped, cleanup, err := wrapResourceLimitedCommand(
-		"session-one", sandboxpolicy.ResourceLimits{Memory: "1.5GiB", CPU: &cpu}, "exec harness",
+		"session-one", sandboxpolicy.ResourceLimits{Memory: "1.5GiB", CPU: &cpu}, "exec harness", true,
 	)
 	require.NoError(t, err)
 	t.Cleanup(cleanup)
@@ -50,6 +50,7 @@ func TestWrapResourceLimitedCommandRendersIndependentAxes(t *testing.T) {
 	assert.Equal(t, "50000 100000", string(cpuMax))
 	assert.Contains(t, wrapped, "resource-limit-exec")
 	assert.Contains(t, wrapped, "exec harness")
+	assert.Contains(t, wrapped, "--allow-unenforced")
 	enabled, err := os.ReadFile(filepath.Join(current, "cgroup.subtree_control"))
 	require.NoError(t, err)
 	assert.Equal(t, "+memory +cpu", string(enabled))
@@ -58,7 +59,7 @@ func TestWrapResourceLimitedCommandRendersIndependentAxes(t *testing.T) {
 func TestWrapResourceLimitedCommandRequiresOnlyConfiguredController(t *testing.T) {
 	current := fakeCurrentResourceCgroup(t, "memory", "memory")
 	wrapped, cleanup, err := wrapResourceLimitedCommand(
-		"memory-only", sandboxpolicy.ResourceLimits{Memory: "512MB"}, "harness",
+		"memory-only", sandboxpolicy.ResourceLimits{Memory: "512MB"}, "harness", false,
 	)
 	require.NoError(t, err)
 	t.Cleanup(cleanup)
@@ -72,7 +73,7 @@ func TestWrapResourceLimitedCommandFailsWhenControllerIsNotDelegated(t *testing.
 	fakeCurrentResourceCgroup(t, "memory", "")
 	cpu := 1.0
 	_, _, err := wrapResourceLimitedCommand(
-		"cpu-missing", sandboxpolicy.ResourceLimits{CPU: &cpu}, "harness",
+		"cpu-missing", sandboxpolicy.ResourceLimits{CPU: &cpu}, "harness", false,
 	)
 	assert.ErrorContains(t, err, "Delegate=cpu memory")
 }
@@ -84,22 +85,39 @@ func TestResourceDelegationDirUsesSystemdSupervisorParent(t *testing.T) {
 		resourceDelegationDir("/sys/fs/cgroup/user.slice/session.scope"))
 }
 
-func TestRemoveStaleResourceCgroupsOnlyRemovesEmptyWorkloadDirectories(t *testing.T) {
-	root := t.TempDir()
-	empty := filepath.Join(root, "tclaude-empty")
-	busy := filepath.Join(root, "tclaude-busy")
-	supervisor := filepath.Join(root, resourceSupervisorCgroup)
-	require.NoError(t, os.Mkdir(empty, 0o755))
-	require.NoError(t, os.Mkdir(busy, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(busy, "marker"), []byte("busy"), 0o644))
-	require.NoError(t, os.Mkdir(supervisor, 0o755))
+func TestResourceLimitExecOperatorOverrideFallsBackAfterAttachFailure(t *testing.T) {
+	oldRoot := resourceCgroupRoot
+	resourceCgroupRoot = t.TempDir()
+	t.Cleanup(func() { resourceCgroupRoot = oldRoot })
+	dir := filepath.Join(resourceCgroupRoot, "tclaude-runtime-failure")
+	require.NoError(t, os.Mkdir(dir, 0o755))
+	// A directory at cgroup.procs deterministically makes the attachment write
+	// fail on an ordinary test filesystem.
+	require.NoError(t, os.Mkdir(filepath.Join(dir, "cgroup.procs"), 0o755))
+	oldRecord := recordResourceLimitRuntimeOverrideForExec
+	recorded := false
+	recordResourceLimitRuntimeOverrideForExec = func(sessionID string, cause error) error {
+		recorded = true
+		assert.Equal(t, "session-runtime-failure", sessionID)
+		assert.ErrorContains(t, cause, "attach workload")
+		return nil
+	}
+	t.Cleanup(func() { recordResourceLimitRuntimeOverrideForExec = oldRecord })
 
-	removeStaleResourceCgroups(root)
+	require.NoError(t, runResourceLimitExec(
+		dir, "session-runtime-failure", "exit 0", true,
+	))
+	assert.True(t, recorded)
+}
 
-	_, err := os.Stat(empty)
-	assert.ErrorIs(t, err, os.ErrNotExist)
-	_, err = os.Stat(busy)
-	assert.NoError(t, err)
-	_, err = os.Stat(supervisor)
-	assert.NoError(t, err)
+func TestResourceLimitExecFailsClosedAfterAttachFailure(t *testing.T) {
+	oldRoot := resourceCgroupRoot
+	resourceCgroupRoot = t.TempDir()
+	t.Cleanup(func() { resourceCgroupRoot = oldRoot })
+	dir := filepath.Join(resourceCgroupRoot, "tclaude-runtime-failure")
+	require.NoError(t, os.Mkdir(dir, 0o755))
+	require.NoError(t, os.Mkdir(filepath.Join(dir, "cgroup.procs"), 0o755))
+
+	err := runResourceLimitExec(dir, "session-runtime-failure", "exit 0", false)
+	assert.ErrorContains(t, err, "attach workload")
 }

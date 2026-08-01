@@ -53,6 +53,7 @@ func wrapResourceLimitedCommand(
 	sessionID string,
 	limits sandboxpolicy.ResourceLimits,
 	command string,
+	allowUnenforced bool,
 ) (string, func(), error) {
 	current, err := currentCgroupDir()
 	if err != nil {
@@ -92,11 +93,21 @@ func wrapResourceLimitedCommand(
 			return "", func() {}, fmt.Errorf("enable delegated cgroup v2 controllers %s: %w (tclaude-agentd.service needs Delegate=cpu memory and DelegateSubgroup=%s)", strings.Join(needed, ", "), err, resourceSupervisorCgroup)
 		}
 	}
-	removeStaleResourceCgroups(delegation)
 	digest := sha256.Sum256([]byte(sessionID))
 	dir := filepath.Join(delegation, fmt.Sprintf("tclaude-%x", digest[:10]))
 	if err := os.Mkdir(dir, 0o755); err != nil {
-		return "", func() {}, fmt.Errorf("create resource cgroup for session %q: %w", sessionID, err)
+		if !errors.Is(err, os.ErrExist) {
+			return "", func() {}, fmt.Errorf("create resource cgroup for session %q: %w", sessionID, err)
+		}
+		// A deterministic same-session cgroup can survive a daemon crash. Only
+		// reclaim that exact empty target; never sweep other launches, whose
+		// newly prepared cgroups are also briefly empty before pane attachment.
+		if removeErr := os.Remove(dir); removeErr != nil {
+			return "", func() {}, fmt.Errorf("resource cgroup for session %q already exists and is active or not reclaimable: %w", sessionID, removeErr)
+		}
+		if err := os.Mkdir(dir, 0o755); err != nil {
+			return "", func() {}, fmt.Errorf("recreate stale resource cgroup for session %q: %w", sessionID, err)
+		}
 	}
 	cleanup := func() { _ = os.Remove(dir) }
 	if limits.Memory != "" {
@@ -124,22 +135,12 @@ func wrapResourceLimitedCommand(
 	}
 	wrapper := clcommon.DetectAbsoluteCmd("session", "resource-limit-exec") +
 		" --cgroup-dir " + clcommon.ShellQuoteArg(dir) +
+		" --session-id " + clcommon.ShellQuoteArg(sessionID) +
 		" --command " + clcommon.ShellQuoteArg(command)
+	if allowUnenforced {
+		wrapper += " --allow-unenforced"
+	}
 	return wrapper, cleanup, nil
-}
-
-func removeStaleResourceCgroups(delegation string) {
-	entries, err := os.ReadDir(delegation)
-	if err != nil {
-		return
-	}
-	for _, entry := range entries {
-		if entry.IsDir() && strings.HasPrefix(entry.Name(), "tclaude-") && entry.Name() != resourceSupervisorCgroup {
-			// cgroupfs refuses removal while processes remain. Thus this only
-			// reclaims empty leftovers from a prior daemon or launch crash.
-			_ = os.Remove(filepath.Join(delegation, entry.Name()))
-		}
-	}
 }
 
 func containsString(values []string, wanted string) bool {
@@ -152,32 +153,35 @@ func containsString(values []string, wanted string) bool {
 }
 
 func resourceLimitExecCmd() *cobra.Command {
-	var cgroupDir, command string
+	var cgroupDir, command, sessionID string
+	var allowUnenforced bool
 	cmd := &cobra.Command{
 		Use:    "resource-limit-exec",
 		Hidden: true,
 		Args:   cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return runResourceLimitExec(cgroupDir, command)
+			return runResourceLimitExec(cgroupDir, sessionID, command, allowUnenforced)
 		},
 	}
 	cmd.Flags().StringVar(&cgroupDir, "cgroup-dir", "", "prepared cgroup directory")
+	cmd.Flags().StringVar(&sessionID, "session-id", "", "managed session id")
 	cmd.Flags().StringVar(&command, "command", "", "shell command")
+	cmd.Flags().BoolVar(&allowUnenforced, "allow-unenforced", false, "operator authorized fallback without enforcement")
 	return cmd
 }
 
-func runResourceLimitExec(cgroupDir, command string) error {
-	current, err := currentCgroupDir()
-	if err != nil {
-		return err
-	}
+func runResourceLimitExec(cgroupDir, sessionID, command string, allowUnenforced bool) error {
 	cgroupDir = filepath.Clean(cgroupDir)
-	if filepath.Dir(cgroupDir) != resourceDelegationDir(current) || !strings.HasPrefix(filepath.Base(cgroupDir), "tclaude-") || filepath.Base(cgroupDir) == resourceSupervisorCgroup {
-		return errors.New("resource-limit-exec received a cgroup outside the current delegated subtree")
+	rel, err := filepath.Rel(resourceCgroupRoot, cgroupDir)
+	if err != nil || rel == "." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) || !strings.HasPrefix(filepath.Base(cgroupDir), "tclaude-") || filepath.Base(cgroupDir) == resourceSupervisorCgroup {
+		return errors.New("resource-limit-exec received an invalid resource cgroup path")
 	}
 	info, err := os.Lstat(cgroupDir)
-	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+	if err != nil {
 		return fmt.Errorf("resource-limit-exec cgroup is invalid: %w", err)
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return errors.New("resource-limit-exec cgroup is not a real directory")
 	}
 	gateRead, gateWrite, err := os.Pipe()
 	if err != nil {
@@ -195,6 +199,14 @@ func runResourceLimitExec(cgroupDir, command string) error {
 	_ = gateRead.Close()
 	moveErr := os.WriteFile(filepath.Join(cgroupDir, "cgroup.procs"), []byte(strconv.Itoa(child.Process.Pid)), 0o644)
 	if moveErr == nil {
+		_, moveErr = io.WriteString(gateWrite, "go\n")
+	}
+	if moveErr != nil && allowUnenforced {
+		noticeErr := fmt.Errorf("attach workload to resource cgroup before release: %w", moveErr)
+		if persistErr := recordResourceLimitRuntimeOverrideForExec(sessionID, noticeErr); persistErr != nil {
+			fmt.Fprintf(os.Stderr, "Warning: record resource-limit override: %v\n", persistErr)
+		}
+		fmt.Fprintf(os.Stderr, "Warning: %v; launching without configured resource-limit enforcement by operator approval\n", noticeErr)
 		_, moveErr = io.WriteString(gateWrite, "go\n")
 	}
 	_ = gateWrite.Close()

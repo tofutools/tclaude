@@ -3,6 +3,7 @@ package session
 import (
 	"fmt"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
@@ -18,3 +19,9 @@ func resourceLimitOverrideNotice(err error) sandboxpolicy.AccessNotice {
 		),
 	}
 }
+
+func recordResourceLimitRuntimeOverride(sessionID string, cause error) error {
+	return db.AppendSessionSandboxAccessNotice(sessionID, resourceLimitOverrideNotice(cause))
+}
+
+var recordResourceLimitRuntimeOverrideForExec = recordResourceLimitRuntimeOverride

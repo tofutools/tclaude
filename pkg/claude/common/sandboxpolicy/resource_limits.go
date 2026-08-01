@@ -99,6 +99,7 @@ func ValidateResourceLimitTarget(limits ResourceLimits, implementation Implement
 }
 
 const CPUCgroupPeriodMicros uint64 = 100_000
+const CPUCgroupMinimumQuotaMicros uint64 = 1_000
 
 // CPUQuotaMicros converts cores to cpu.max quota with deterministic upward
 // rounding. A 100ms period gives ordinary decimal core values exact results.
@@ -107,6 +108,9 @@ func CPUQuotaMicros(cores float64) (uint64, error) {
 		return 0, fmt.Errorf("CPU limit must be a positive finite number of cores")
 	}
 	quota := math.Ceil(cores * float64(CPUCgroupPeriodMicros))
+	if quota < float64(CPUCgroupMinimumQuotaMicros) {
+		return 0, fmt.Errorf("CPU limit must be at least 0.01 cores for Linux's minimum cgroup quota")
+	}
 	if quota >= math.Exp2(64) {
 		return 0, fmt.Errorf("CPU limit is outside the supported range")
 	}

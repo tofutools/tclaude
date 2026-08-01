@@ -504,7 +504,7 @@ independent `network` and `unix_sockets` access axes (plus the legacy
 independent `resource_limits.memory` and `resource_limits.cpu` ceilings.
 Memory accepts a positive decimal quantity with a case-insensitive decimal or
 binary unit, such as `4GB`, `4G`, `4GiB`, `512MB`, or `512MiB`; CPU is a
-positive number of cores, such as `0.5` or `4`. Filesystem access accepts `read`,
+positive number of cores at or above `0.01`, such as `0.5` or `4`. Filesystem access accepts `read`,
 `write`, or `deny`; deny blocks both reads and writes and dominates an
 exact-path grant from any other applied profile. This lets an explicit
 per-spawn profile subtract access inherited from a global or group profile.

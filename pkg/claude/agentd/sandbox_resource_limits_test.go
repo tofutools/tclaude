@@ -52,3 +52,19 @@ func TestResourceLimitOperatorOverrideNoticeIsRecorded(t *testing.T) {
 	require.Nil(t, failure)
 	assert.Empty(t, notices)
 }
+
+func TestResourceLimitsRequireExportVersion11(t *testing.T) {
+	envelope := sandboxProfileExportEnvelope{
+		Format: sandboxProfileExportFormat, FormatVersion: 10,
+		Profiles: []sandboxProfileJSON{{
+			Name: "limited", ResourceLimits: sandboxpolicy.ResourceLimits{Memory: "1GiB"},
+		}},
+	}
+	failure := validateSandboxProfileExportVersionContent(envelope)
+	require.NotNil(t, failure)
+	assert.Equal(t, "invalid_format", failure.Kind)
+	assert.Contains(t, failure.Msg, "version 11")
+
+	envelope.FormatVersion = 11
+	assert.Nil(t, validateSandboxProfileExportVersionContent(envelope))
+}
