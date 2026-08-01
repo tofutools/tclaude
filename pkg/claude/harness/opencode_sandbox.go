@@ -45,7 +45,7 @@ func (openCodeSandbox) ModeHelp(mode string) string {
 	case OpenCodeSandboxTclaudeLayer:
 		return "Linux/macOS OS containment for the tool-executing OpenCode server, provided by tclaude's built-in OS sandbox. The attach pane stays outside the sandbox; the authenticated local control connection, host networking, and ambient host Unix sockets remain reachable. The inner OpenCode access profile permits all paths while approval and tool-governance choices remain active."
 	case OpenCodeSandboxOff:
-		return "⚠ No directory scoping or OS containment. Filesystem/network sandbox profiles are incompatible and fail the launch. The selected tool approval policy still applies; bash is never auto-approved."
+		return "⚠ No directory scoping or OS containment. Filesystem/network sandbox profiles are incompatible and fail the launch. Permission mode and tool governance still apply."
 	default:
 		return ""
 	}

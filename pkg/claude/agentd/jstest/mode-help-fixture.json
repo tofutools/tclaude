@@ -22,13 +22,13 @@
   "codex/sandbox/read-only": "Raw Codex sandbox — no filesystem writes at all. ⚠ No agentd access: the agent CANNOT run `tclaude agent`.",
   "codex/sandbox/tclaude-agent": "Recommended. Workspace-write containment (only the working directory is writable; ~/.tclaude is inaccessible) PLUS access to agentd's state-free socket — the agent CAN run `tclaude agent` (coordinate, reincarnate, notify-human).",
   "codex/sandbox/workspace-write": "Raw Codex sandbox — only the working directory is writable ($HOME read-only). ⚠ No agentd access: the agent CANNOT run `tclaude agent`.",
-  "opencode/approval/allow-tools": "Automatically allow scoped edits and explicitly enabled web tools. Access-control tools remain enabled; bash with sandbox off still requires human approval.",
-  "opencode/approval/ask": "Access-control tools remain enabled. Ask a human before representable edits and permitted web tools. ⚠ Detached agents can block waiting; with sandbox off, bash also requires approval.",
+  "opencode/approval/allow-tools": "Automatically allow scoped edits and explicitly enabled web tools. Access-control tools remain governed by the separate Tool governance setting.",
+  "opencode/approval/ask": "Access-control tools remain enabled. Ask a human before representable edits and permitted web tools. ⚠ Detached agents can block waiting.",
   "opencode/approval/deny": "Fail-closed approval default: path-scoped reads and the access-control tool baseline run, while edits, web, and unlisted tools are denied without prompting.",
   "opencode/sandbox/access-control": "Lexical soft disk access control: built-in reads/edits follow relative path rules, while tools remain enabled. This is not an OS sandbox: it does not resolve or contain symlink targets, and bash/glob/grep can reach disk outside those lexical path rules.",
-  "opencode/sandbox/off": "⚠ No directory scoping or OS containment. Filesystem/network sandbox profiles are incompatible and fail the launch. The selected tool approval policy still applies; bash is never auto-approved.",
+  "opencode/sandbox/off": "⚠ No directory scoping or OS containment. Filesystem/network sandbox profiles are incompatible and fail the launch. Permission mode and tool governance still apply.",
   "opencode/sandbox/tclaude-layer": "Linux/macOS OS containment for the tool-executing OpenCode server, provided by tclaude's built-in OS sandbox. The attach pane stays outside the sandbox; the authenticated local control connection, host networking, and ambient host Unix sockets remain reachable. The inner OpenCode access profile permits all paths while approval and tool-governance choices remain active.",
-  "opencode/tools/allow": "In access-control and tclaude-layer modes, allow bash, glob, grep, lsp, task, and skill. Sandbox off ignores this setting.",
-  "opencode/tools/ask": "In access-control and tclaude-layer modes, ask before bash, glob, grep, lsp, task, or skill runs. Sandbox off ignores this setting. ⚠ Detached agents can block waiting for a human response.",
-  "opencode/tools/deny": "In access-control and tclaude-layer modes, deny bash, glob, grep, lsp, task, and skill without prompting. Sandbox off ignores this setting."
+  "opencode/tools/allow": "Allow bash, glob, grep, lsp, task, and skill in every sandbox mode.",
+  "opencode/tools/ask": "Ask before bash, glob, grep, lsp, task, or skill runs in every sandbox mode. ⚠ Detached agents can block waiting for a human response.",
+  "opencode/tools/deny": "Deny bash, glob, grep, lsp, task, and skill without prompting in every sandbox mode."
 }

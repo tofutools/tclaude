@@ -116,7 +116,7 @@ func BuildOpenCodePermissionRules(spec OpenCodePermissionSpec) ([]OpenCodePermis
 		Permission: "*", Pattern: "*", Action: openCodeActionDeny,
 	}}
 	if sandboxMode == OpenCodeSandboxOff {
-		rules = appendOpenCodeOffRules(rules, approval, network)
+		rules = appendOpenCodeOffRules(rules, approval, toolGovernance, network)
 		return appendOpenCodeEnvReadRules(rules, approval, "."), nil
 	}
 	if sandboxMode == OpenCodeSandboxTclaudeLayer {
@@ -221,24 +221,20 @@ func appendOpenCodeToolRules(
 	return rules
 }
 
-func appendOpenCodeOffRules(rules []OpenCodePermissionRule, approval string, network sandboxpolicy.NetworkAccess) []OpenCodePermissionRule {
-	for _, permission := range []string{"read", "glob", "grep"} {
-		rules = append(rules, OpenCodePermissionRule{
-			Permission: permission, Pattern: "*", Action: openCodeActionAllow,
-		})
-	}
+func appendOpenCodeOffRules(
+	rules []OpenCodePermissionRule,
+	approval, toolGovernance string,
+	network sandboxpolicy.NetworkAccess,
+) []OpenCodePermissionRule {
+	rules = append(rules, OpenCodePermissionRule{
+		Permission: "read", Pattern: "*", Action: openCodeActionAllow,
+	})
 	action := openCodeApprovalAction(approval)
 	rules = append(rules,
 		OpenCodePermissionRule{Permission: "edit", Pattern: "*", Action: action},
 		OpenCodePermissionRule{Permission: "external_directory", Pattern: "*", Action: action},
 	)
-	bashAction := openCodeActionDeny
-	if approval != OpenCodeApprovalDeny {
-		bashAction = openCodeActionAsk
-	}
-	rules = append(rules, OpenCodePermissionRule{
-		Permission: "bash", Pattern: "*", Action: bashAction,
-	})
+	rules = appendOpenCodeToolRules(rules, toolGovernance)
 	return appendOpenCodeWebRules(rules, approval, network)
 }
 

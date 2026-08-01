@@ -314,24 +314,31 @@ func TestBuildOpenCodePermissionRulesTclaudeLayerHonorsApproval(t *testing.T) {
 	assert.Equal(t, "ask", lastExactOpenCodeAction(rules, "webfetch", "*"))
 }
 
-func TestBuildOpenCodePermissionRulesOffStillAppliesApproval(t *testing.T) {
-	rules, err := BuildOpenCodePermissionRules(OpenCodePermissionSpec{
-		Cwd:            "/repo",
-		Worktree:       "/repo",
-		SandboxMode:    OpenCodeSandboxOff,
-		ApprovalPolicy: OpenCodeApprovalAllowTools,
-		ToolGovernance: OpenCodeToolsDeny,
-		NetworkAccess:  sandboxpolicy.NetworkAccessInternet,
-	})
-	require.NoError(t, err)
+func TestBuildOpenCodePermissionRulesOffStillAppliesApprovalAndToolGovernance(t *testing.T) {
+	for _, governance := range []string{
+		OpenCodeToolsAllow,
+		OpenCodeToolsAsk,
+		OpenCodeToolsDeny,
+	} {
+		t.Run(governance, func(t *testing.T) {
+			rules, err := BuildOpenCodePermissionRules(OpenCodePermissionSpec{
+				Cwd:            "/repo",
+				Worktree:       "/repo",
+				SandboxMode:    OpenCodeSandboxOff,
+				ApprovalPolicy: OpenCodeApprovalAllowTools,
+				ToolGovernance: governance,
+				NetworkAccess:  sandboxpolicy.NetworkAccessInternet,
+			})
+			require.NoError(t, err)
 
-	assert.Equal(t, "allow", lastExactOpenCodeAction(rules, "read", "*"))
-	assert.Equal(t, "allow", lastExactOpenCodeAction(rules, "edit", "*"))
-	assert.Equal(t, "allow", lastExactOpenCodeAction(rules, "external_directory", "*"))
-	assert.Equal(t, "ask", lastExactOpenCodeAction(rules, "bash", "*"),
-		"sandbox off keeps its existing approval behavior and ignores tool governance")
-	assert.Equal(t, "allow", lastExactOpenCodeAction(rules, "glob", "*"),
-		"sandbox off remains a no-containment posture")
+			assert.Equal(t, "allow", lastExactOpenCodeAction(rules, "read", "*"))
+			assert.Equal(t, "allow", lastExactOpenCodeAction(rules, "edit", "*"))
+			assert.Equal(t, "allow", lastExactOpenCodeAction(rules, "external_directory", "*"))
+			for _, permission := range []string{"bash", "glob", "grep", "lsp", "task", "skill"} {
+				assert.Equal(t, governance, lastExactOpenCodeAction(rules, permission, "*"), permission)
+			}
+		})
+	}
 }
 
 func TestBuildOpenCodePermissionRulesUsesRootForNonGitWorktree(t *testing.T) {
