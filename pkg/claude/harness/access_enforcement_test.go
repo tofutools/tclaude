@@ -22,6 +22,23 @@ func TestAccessEnforcementRungOneRequiresSandboxEvidence(t *testing.T) {
 	)
 	require.ErrorContains(t, err, `verdict is "off"`)
 
+	_, err = ResolveAccessEnforcement(
+		h, sandboxpolicy.ImplementationHarnessBuiltin, axes,
+		LaunchOSSandbox{State: "on", Source: "lower settings tier", Unverified: true},
+		ClaudeSandboxInherit,
+	)
+	require.ErrorContains(t, err, "higher-precedence Claude settings could not be verified")
+
+	_, err = ResolveAccessEnforcement(
+		h, sandboxpolicy.ImplementationTclaudeLayer, axes,
+		LaunchOSSandbox{
+			State: "on", Source: "partially enforced outer sandbox", Unverified: true,
+		},
+		ClaudeSandboxOff,
+	)
+	require.NoError(t, err,
+		"outer implementations use Unverified for disclosed partial fidelity, not missing sandbox evidence")
+
 	_, _, err = PlanAccessEnforcement(axes, AccessEnforcement{})
 	require.ErrorContains(t, err, "not resolved through the sandbox implementation gate")
 }

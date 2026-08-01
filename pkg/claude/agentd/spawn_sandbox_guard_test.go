@@ -95,6 +95,38 @@ func TestPlanSandboxProfileAccessResolvesInheritedClaudeSandboxSettings(t *testi
 	failure := preflight()
 	require.Nil(t, failure,
 		"the next preflight must pick up changed Claude settings for inherited builtin sandbox mode")
+
+	project := filepath.Join(home, "project")
+	require.NoError(t, os.MkdirAll(filepath.Join(project, ".claude"), 0o755))
+	projectSettings := filepath.Join(project, ".claude", "settings.json")
+	require.NoError(t, os.WriteFile(projectSettings, nil, 0o600))
+	_, failure = planSandboxProfileAccessForLaunch(
+		harness.DefaultName,
+		harness.ClaudeSandboxInherit,
+		snapshot,
+		string(sandboxpolicy.ImplementationHarnessBuiltin),
+		session.ModelTransportLaunchContext{Cwd: project},
+		false,
+	)
+	require.Nil(t, failure,
+		"an empty higher-precedence settings file is a no-op and must not block composition")
+
+	require.NoError(t, os.WriteFile(
+		projectSettings,
+		[]byte(`{"sandbox":`),
+		0o600,
+	))
+	_, failure = planSandboxProfileAccessForLaunch(
+		harness.DefaultName,
+		harness.ClaudeSandboxInherit,
+		snapshot,
+		string(sandboxpolicy.ImplementationHarnessBuiltin),
+		session.ModelTransportLaunchContext{Cwd: project},
+		false,
+	)
+	require.NotNil(t, failure,
+		"an unreadable higher-precedence settings tier must not count as positive sandbox evidence")
+	require.Contains(t, failure.Msg, "higher-precedence Claude settings could not be verified")
 }
 
 func TestPlanSandboxProfileAccessPersistsDetectedProbeWhenVerdictCannotFlip(t *testing.T) {
