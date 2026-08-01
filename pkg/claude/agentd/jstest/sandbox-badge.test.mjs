@@ -140,6 +140,15 @@ const CASES = [
     tooltip: 'Status: OFF\nImplementation: None\nProfile: None',
   },
   {
+    name: 'OpenCode soft access control is not an OS sandbox',
+    state: {
+      harness: 'opencode', sandbox_mode: 'access-control',
+      sandbox_profiles: [{ scope: 'global', name: 'tclaude' }],
+    },
+    glyph: '⚠', danger: true,
+    tooltip: 'Status: OFF\nImplementation: None\nProfile: tclaude',
+  },
+  {
     name: 'multiple applied profiles retain resolution order without scope detail',
     state: {
       harness: 'codex', sandbox_mode: 'workspace-write',
