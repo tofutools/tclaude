@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertAbsent } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 function snapshot({ members = [], groups, online = true, slugs = [], permissions } = {}) {
@@ -64,7 +65,7 @@ test('child chooser keeps the keyed parent draft mounted and cancellation return
   assert.equal(body.value, 'draft survives');
 
   await harness.act(() => harness.fireEvent(harness.document, 'keydown', { key: 'Escape' }));
-  assert.equal(host.querySelector('#cron-pick-target-modal'), null);
+  assertAbsent(host.querySelector('#cron-pick-target-modal'));
   assert.notEqual(host.querySelector('#message-create-modal'), null, 'stacked Escape closes only the chooser');
   assert.equal(host.querySelector('#message-create-body').value, 'draft survives');
   assert.equal(harness.document.activeElement, pickerButton, 'child teardown restores its invoker');

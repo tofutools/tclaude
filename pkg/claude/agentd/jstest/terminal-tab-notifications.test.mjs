@@ -5,6 +5,7 @@
 // rendered into a hidden tab section would never be visible.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertAbsent } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 function installHosts(harness) {
@@ -168,7 +169,7 @@ test('the quick reader mounts on its own body-level host and answers every surfa
     <${HumanNotificationReader} state=${state} actions=${{ reportError: () => {} }}
       closeAnimationMs=${10} />
   `);
-  assert.equal(mounted.container.querySelector('.human-notification-drawer'), null);
+  assertAbsent(mounted.container.querySelector('.human-notification-drawer'));
 
   await harness.act(() => {
     openHumanNotificationReader({
@@ -192,7 +193,7 @@ test('the quick reader mounts on its own body-level host and answers every surfa
   assert.equal(harness.document.activeElement, launcher,
     'closing hands focus back to whatever raised the reader');
   await harness.act(async () => { await new Promise((done) => setTimeout(done, 40)); });
-  assert.equal(mounted.container.querySelector('.human-notification-drawer'), null);
+  assertAbsent(mounted.container.querySelector('.human-notification-drawer'));
 
   // Escape belongs to whoever already handled it — a live terminal, say.
   await harness.act(() => {
@@ -288,8 +289,7 @@ test('a dismissed panel stops competing for Escape, and reduced motion skips the
   assert.ok(mounted.container.querySelector('.human-notification-drawer'));
   escape();
   await harness.act(async () => { await new Promise((done) => setTimeout(done, 0)); });
-  assert.equal(mounted.container.querySelector('.human-notification-drawer'), null,
-    'reduced motion unmounts at once instead of holding for an animation');
+  assertAbsent(mounted.container.querySelector('.human-notification-drawer'), 'reduced motion unmounts at once instead of holding for an animation');
 });
 
 test('the reader ignores an open request that names no message', async (t) => {

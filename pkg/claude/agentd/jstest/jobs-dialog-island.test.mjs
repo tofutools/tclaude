@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertAbsent } from './assertions.mjs';
 import { createPreactHarness, getByRole } from './preact-harness.mjs';
 
 function deferred() {
@@ -171,7 +172,7 @@ test('cron edit and duplicate descriptors render their distinct component modes'
   }));
   assert.equal(mounted.container.querySelector('#cron-create-modal').classList.contains('cron-editing'), true);
   assert.match(mounted.container.querySelector('#cron-create-title').textContent, /Edit cron job/);
-  assert.equal(mounted.container.querySelector('#cron-create-save-another'), null);
+  assertAbsent(mounted.container.querySelector('#cron-create-save-another'));
   await harness.act(() => harness.fireEvent(mounted.container.querySelector('#cron-create-submit'), 'click'));
   assert.equal(saved[0].method, 'PATCH');
 
@@ -228,7 +229,7 @@ test('cron explainer rejects stale responses while stacked pickers and live snap
   assert.equal(mounted.container.querySelectorAll('.modal-overlay.show').length, 2, 'picker stacks over the cron draft');
   assert.equal(harness.document.activeElement.id, 'cron-pick-target-search');
   await harness.act(() => harness.fireEvent(harness.document, 'keydown', { key: 'Escape' }));
-  assert.equal(mounted.container.querySelector('#cron-pick-target-modal'), null, 'first Escape closes only the stacked picker');
+  assertAbsent(mounted.container.querySelector('#cron-pick-target-modal'), 'first Escape closes only the stacked picker');
   assert.ok(mounted.container.querySelector('#cron-create-modal'));
 
   await harness.act(() => harness.fireEvent(mounted.container.querySelector('#cron-create-owner-pick'), 'click'));

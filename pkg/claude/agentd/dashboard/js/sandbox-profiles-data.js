@@ -249,9 +249,26 @@ export function sandboxOtherContextRefusals(target = {}, contextIndex = null) {
   // contribute nothing to the aggregate either (it summarizes surviving contexts
   // only) — so without these the editor would claim every assignment was checked
   // while a refusal among the omitted ones went unmentioned.
+  // TCL-913: an omitted assignment has no index to look its name up by, so the
+  // daemon sends the assignment's own context beside the refusal and it is
+  // passed through here. The KEY IS DROPPED, never defaulted: a daemon that
+  // predates the field and a daemon that sent an empty identity must not look
+  // the same to the caller, or the compat branch below cannot be decided — and
+  // an absent identity is exactly what makes the renderer fall back to today's
+  // unnamed wording rather than to a blank.
   return [
     ...listed,
-    ...(target.omitted_refusals || []).map((refusal) => ({ index: null, refusal })),
+    // filter(Boolean) keeps the tolerance the previous non-destructuring form
+    // had for free: destructuring a null entry THROWS, and this list feeds
+    // sandboxPolicyNeedsAttention, which previously only read .length and so
+    // survived one. The daemon drops nil refusals, so this is unreachable from
+    // a current one; the point is that a future daemon sending one degrades to
+    // a missing row rather than to a dead preview panel.
+    ...(target.omitted_refusals || []).filter(Boolean).map(({ context, ...refusal }) => ({
+      index: null,
+      refusal,
+      ...(context ? { context } : {}),
+    })),
   ];
 }
 
@@ -280,8 +297,9 @@ export function sandboxPredictionWarnings(prediction) {
   const composition = (prediction?.contexts || []).flatMap((context) => context.notices || []);
   /* The Set is deliberate and deliberately DISAGREES with the profile editor.
      N contexts refusing for one reason render as N rows there — each naming its
-     group, except cap-omitted ones, which can only say an assignment was omitted
-     (TCL-913) — because "which and how many assignments are affected" is scope
+     group, cap-omitted ones included, since TCL-913 carries the assignment's
+     identity beside the refusal — because "which and how many assignments are
+     affected" is scope
      the operator acts on. This is the spawn dialog's one-line summary, which has no
      room to carry that scope, so identical messages collapse. Do not "fix" one
      surface to match the other without deciding which question is being asked:
@@ -396,16 +414,53 @@ function bucketKey(outcome) {
 // `axes` should be the selected assignment's context_axes entry when present;
 // callers fall back to the target-wide worst-case axes for older daemons.
 // `refusal` short-circuits the whole bucketing: see sandboxTargetRefusal. A
-// refused target produces NO buckets rather than empty ones, because an empty
-// "Fully supported rules" bucket is itself a verdict, and none was reached. The
-// missing-axis fallback below must never be the path a refusal takes.
+// refused target produces none of the three VERDICT buckets rather than empty
+// ones, because an empty "Fully supported rules" bucket is itself a verdict, and
+// none was reached. The missing-axis fallback below must never be the path a
+// refusal takes.
+//
+// TCL-915 (Option C, the operator's choice). The rules are still LISTED, in a
+// fourth `unjudged` bucket that carries no verdict at all. It is deliberately
+// not a fourth verdict: the alternative design put the rules in a "Blocked"
+// group, which asserts each rule was judged and each was blocked, when
+// evaluation never got that far. Listing without judging is the only honest
+// shape, so this bucket says so in prose rather than leaving it to a colour.
+//
+// `bucketKey` cannot return 'unjudged', so the normal path can never route a
+// judged rule here — this bucket is reachable only from the refusal branch.
+export const SANDBOX_RULES_NOT_EVALUATED_NOTE = 'These are the rules this profile would apply. '
+  + 'The target was refused before any of them was judged, so none carries a verdict.';
+
 export function sandboxRuleBuckets(axes = {}, context = {}, networkEntries = [], refusal = null) {
   const buckets = {
     applied: { key: 'applied', label: 'Fully supported rules', rules: [], items: [], reasons: [], hasMountPath: false },
     partial: { key: 'partial', label: 'Partially supported rules', rules: [], items: [], reasons: [], hasMountPath: false },
     notApplied: { key: 'not-applied', label: 'Unsupported rules', rules: [], items: [], reasons: [], hasMountPath: false },
+    unjudged: {
+      key: 'unjudged', label: 'Rules not evaluated', rules: [], items: [], reasons: [],
+      hasMountPath: false, note: SANDBOX_RULES_NOT_EVALUATED_NOTE,
+    },
   };
-  if (refusal) return { ...buckets, launchRefused: true, refusal };
+  if (refusal) {
+    /* Rows only — no verdict is read, and none is invented. `constructed_root`
+       is a PREDICTION result, so a refused target's zero axes leave it false and
+       the synthetic "tclaude builds the sandbox root" row is correctly absent:
+       it describes what the evaluator worked out, and the evaluator never ran.
+       Only the operator's own authored rules are listed. */
+    for (const rule of effectiveRuleRows(context, axes?.constructed_root === true)) {
+      if (rule.hasMountPath) buckets.unjudged.hasMountPath = true;
+      buckets.unjudged.rules.push(rule.label);
+      buckets.unjudged.items.push({
+        label: rule.label,
+        // A distinct outcome, NOT '' and not 'not_enforced'. Both of those are
+        // read as verdicts downstream — '' ranks equal to 'enforced', and
+        // 'not_enforced' claims the rule was checked and found unsupported.
+        outcome: 'not_evaluated',
+        detail: '',
+      });
+    }
+    return { ...buckets, launchRefused: true, refusal };
+  }
   const networkPredictions = new Map();
   for (const prediction of networkEntries || []) {
     for (const key of prediction.keys || []) networkPredictions.set(key, prediction);

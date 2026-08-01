@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertAbsent } from './assertions.mjs';
 import { createHash } from 'node:crypto';
 import { createPreactHarness } from './preact-harness.mjs';
 
@@ -848,7 +849,7 @@ test('regression: an inline list rename never flashes the rename dialog open', a
   stop();
 
   assert.deepEqual(seen.filter(Boolean), [], 'the dialog is never opened by an inline rename');
-  assert.equal(mounted.container.querySelector('.process-rename-dialog'), null);
+  assertAbsent(mounted.container.querySelector('.process-rename-dialog'));
   await mounted.unmount();
 });
 
@@ -1149,8 +1150,7 @@ test('creating a template persists the named scaffold and prepopulates the edito
   await harness.act(() => harness.fireEvent(mounted.container.querySelector('#process-template-new'), 'click'));
   const input = mounted.container.querySelector('[data-process-create-input]');
   assert.ok(input, 'creation prompts for a display name');
-  assert.equal(mounted.container.querySelector('.process-editor-id-input'), null,
-    'creation never offers an id field');
+  assertAbsent(mounted.container.querySelector('.process-editor-id-input'), 'creation never offers an id field');
 
   input.value = 'Release train';
   await harness.act(() => harness.fireEvent(input, 'input'));

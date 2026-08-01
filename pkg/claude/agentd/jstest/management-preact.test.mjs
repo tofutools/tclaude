@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertAbsent } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 const catalog = [{ name: 'claude', display_name: 'Claude Code', models: ['sonnet'], effort_levels: ['low', 'high'], can_sandbox: true, can_builtin_os_sandbox: true, sandbox_modes: ['inherit', 'on'], default_sandbox: 'inherit', can_approval: true, approval_modes: ['inherit', 'plan'], default_approval: 'inherit', approval_mode_help: { inherit: 'keep settings', plan: 'plan only' }, can_tools: false, tools_modes: [], default_tools: '', tools_mode_help: {}, can_auto_review: false, can_ask_timeout: true, ask_timeout_modes: ['inherit', '60s'], default_ask_timeout: 'inherit', can_remote_control: true, can_auto_memory: true, can_dir_trust: true, dir_trust_store: '~/.claude.json' }, { name: 'codex', display_name: 'Codex CLI', models: [], can_sandbox: true, can_builtin_os_sandbox: true, sandbox_modes: ['workspace-write'], default_sandbox: 'workspace-write', can_approval: true, approval_modes: ['never', 'untrusted', 'on-failure', 'on-request'], default_approval: 'never', approval_mode_help: { never: 'never prompt', untrusted: 'ask for untrusted', 'on-failure': 'deprecated retry', 'on-request': 'ask when requested' }, can_tools: false, tools_modes: [], default_tools: '', tools_mode_help: {}, can_auto_review: true, can_remote_control: false, can_auto_memory: false, can_ssh_workaround: true, can_dir_trust: true, dir_trust_store: '~/.codex/config.toml' }, { name: 'opencode', display_name: 'OpenCode', models: [], effort_levels: [], can_sandbox: true, can_builtin_os_sandbox: false, sandbox_modes: ['off'], default_sandbox: 'off', sandbox_mode_help: { off: '⚠ No tclaude OS containment' }, can_approval: false, approval_modes: [], default_approval: '', can_tools: true, tools_modes: ['allow', 'ask', 'deny'], default_tools: 'allow', tools_mode_help: { allow: 'allow tools', ask: 'ask for tools', deny: 'deny tools' }, can_auto_review: false, can_remote_control: false, can_auto_memory: false, can_dir_trust: false, dir_trust_store: '' }];
@@ -107,7 +108,7 @@ test('Codex profile permission modes populate, survive harness switches, save, a
   assert.match(host.querySelector('#profile-editor-approval-hint').getAttribute('class'), /spawn-field-description/);
   assert.equal(approval.getAttribute('title'), 'never prompt');
   assert.equal(host.querySelector('#profile-editor-approval-row .spawn-field-help-trigger').getAttribute('aria-expanded'), 'false');
-  assert.equal(host.querySelector('#profile-editor-approval-caveat'), null, 'help with no ⚠ leaves nothing on screen');
+  assertAbsent(host.querySelector('#profile-editor-approval-caveat'), 'help with no ⚠ leaves nothing on screen');
   const initialReviewer = host.querySelector('#profile-editor-approval-reviewer');
   assert.deepEqual([...initialReviewer.options].map((option) => option.value), ['', 'human', 'auto_review']);
   assert.equal(selectedValue(initialReviewer), 'auto_review');
@@ -325,7 +326,7 @@ test('profile editor shows the unsandboxed-autonomy warning and clears it on a s
   choose(host.querySelector('#profile-editor-sandbox'), 'on');
   await harness.act(() => harness.fireEvent(host.querySelector('#profile-editor-sandbox'), 'change'));
   await harness.act(async () => { await new Promise((resolve) => setTimeout(resolve, 260)); });
-  assert.equal(host.querySelector('#profile-editor-autonomy-warning'), null, 'a safe sandbox clears the warning');
+  assertAbsent(host.querySelector('#profile-editor-autonomy-warning'), 'a safe sandbox clears the warning');
 
   cleanups.reverse().forEach((fn) => fn());
 });
@@ -402,8 +403,8 @@ test('OpenCode profile editor replaces the unsandboxed warning with its tclaude-
   assert.equal(notice.querySelector('[role="status"]').getAttribute('role'), 'status');
   assert.match(notice.querySelector('.spawn-field-hint.info').textContent,
     /tool-executing server runs inside tclaude's built-in OS sandbox/);
-  assert.equal(notice.querySelector('.spawn-field-hint.warn'), null);
-  assert.equal(host.querySelector('#profile-editor-autonomy-warning'), null);
+  assertAbsent(notice.querySelector('.spawn-field-hint.warn'));
+  assertAbsent(host.querySelector('#profile-editor-autonomy-warning'));
   assert.doesNotMatch(notice.textContent, /no built-in OS sandbox/,
     'the profile editor does not show the access-control warning for tclaude-layer');
   cleanups.reverse().forEach((fn) => fn());
@@ -455,7 +456,7 @@ test('profile editor tolerates an actions object without the autonomy probe', as
   mountManagementIsland({ host, state, actions: { async saveProfile() {} }, confirmDiscard: async () => true, openProfilePermissions() {}, registerCleanup(fn) { cleanups.push(fn); } });
   await harness.act(() => Promise.resolve());
   await harness.act(async () => { await new Promise((resolve) => setTimeout(resolve, 260)); });
-  assert.equal(host.querySelector('#profile-editor-autonomy-warning'), null, 'no probe method → no warning, no crash');
+  assertAbsent(host.querySelector('#profile-editor-autonomy-warning'), 'no probe method → no warning, no crash');
   cleanups.reverse().forEach((fn) => fn());
 });
 
@@ -840,7 +841,7 @@ test('profile editor Escape follows the visual stack over a later spawn dialog',
   };
 
   await openEditor(); await pressEscape();
-  assert.equal(host.querySelector('#profile-editor-modal'), null, 'a clean editor closes even though the spawn overlay is later in the DOM');
+  assertAbsent(host.querySelector('#profile-editor-modal'), 'a clean editor closes even though the spawn overlay is later in the DOM');
   assert.equal(confirms, 0, 'a clean editor needs no discard confirmation');
   assert.equal(spawn.classList.contains('show'), true, 'closing the editor leaves the underlying spawn dialog open');
   assert.equal(spawnCloses, 0);
@@ -851,7 +852,7 @@ test('profile editor Escape follows the visual stack over a later spawn dialog',
   assert.ok(host.querySelector('#profile-editor-modal'), 'rejecting discard keeps the dirty editor open');
   assert.equal(confirms, 1, 'a dirty editor offers discard confirmation');
   discard = true; await pressEscape();
-  assert.equal(host.querySelector('#profile-editor-modal'), null, 'accepting discard closes the dirty editor');
+  assertAbsent(host.querySelector('#profile-editor-modal'), 'accepting discard closes the dirty editor');
   assert.equal(spawn.classList.contains('show'), true, 'discarding the editor still leaves the underlying spawn dialog open');
   assert.equal(spawnCloses, 0);
 
@@ -1153,7 +1154,7 @@ test('sandbox save preview renders a focused line diff and restores the editor o
   assert.equal(harness.document.activeElement.id, 'sandbox-profile-diff-confirm');
   const editor = host.querySelector('#sandbox-profile-editor-modal'); assert.equal(editor.inert, true); assert.equal(editor.getAttribute('aria-hidden'), 'true');
   modal.querySelector('#sandbox-profile-diff-cancel').click(); state.busy.value = ''; await harness.act(() => Promise.resolve());
-  assert.equal(await decision, false); assert.equal(host.querySelector('#sandbox-profile-diff-modal'), null); assert.equal(editor.inert, false); assert.equal(editor.hasAttribute('aria-hidden'), false); assert.ok(host.querySelector('#sandbox-profile-editor-modal')); assert.equal(harness.document.activeElement, submit, 'focus returns after the editor is interactive again');
+  assert.equal(await decision, false); assertAbsent(host.querySelector('#sandbox-profile-diff-modal')); assert.equal(editor.inert, false); assert.equal(editor.hasAttribute('aria-hidden'), false); assert.ok(host.querySelector('#sandbox-profile-editor-modal')); assert.equal(harness.document.activeElement, submit, 'focus returns after the editor is interactive again');
   cleanups.reverse().forEach((fn) => fn());
 });
 
@@ -1183,7 +1184,7 @@ test('sandbox editor owns nested rows, raw validation, dirty discard, and save-i
   assert.match(host.querySelector('[role="alert"]').textContent, /JSON|position|property/i); assert.equal(saved, null);
   host.querySelector('#sandbox-profile-editor-scribe').click(); await harness.act(() => Promise.resolve()); assert.equal(scribe, null); assert.ok(host.querySelector('#sandbox-profile-editor-modal'), 'invalid raw JSON blocks scribe handoff');
   raw.value = '[{"path":"/raw","access":"read"}]'; raw.dispatchEvent(new harness.window.Event('input', { bubbles: true })); await harness.act(() => Promise.resolve()); host.querySelector('#sandbox-profile-editor-scribe').click(); await harness.act(() => Promise.resolve());
-  assert.equal(scribe.value.filesystem[0].path, '/raw'); assert.equal(scribe.value.network.baseline, 'deny'); assert.equal(scribe.value.network_access, ''); assert.equal(scribe.options.targetName, 'dev'); assert.equal(host.querySelector('#sandbox-profile-editor-modal'), null, 'scribe handoff closes the editor so its returned draft can be delivered');
+  assert.equal(scribe.value.filesystem[0].path, '/raw'); assert.equal(scribe.value.network.baseline, 'deny'); assert.equal(scribe.value.network_access, ''); assert.equal(scribe.options.targetName, 'dev'); assertAbsent(host.querySelector('#sandbox-profile-editor-modal'), 'scribe handoff closes the editor so its returned draft can be delivered');
   cleanups.reverse().forEach((fn) => fn());
 });
 
@@ -1261,8 +1262,7 @@ test('sandbox filesystem and socket rows reuse accessible segmented controls whi
   assert.equal(environmentRow.querySelectorAll('input').length, 2,
     'environment keeps free-form name/value controls under the fixed-grid hooks');
   const agentRow = host.querySelector('.sbx-agent-name').closest('.sbx-row');
-  assert.equal(agentRow.querySelector('.sbx-segmented-control'), null,
-    'agent-owned directory rows remain exactly the free-form input control');
+  assertAbsent(agentRow.querySelector('.sbx-segmented-control'), 'agent-owned directory rows remain exactly the free-form input control');
   unmount();
   host.remove();
 });
@@ -1290,8 +1290,7 @@ test('sandbox editor discloses missing includes and preserves their authored nam
   const includes = [...host.querySelectorAll('.sbx-inc-name')];
   assert.equal(includes.length, 2);
   assert.equal(selectedValue(includes[0]), 'base');
-  assert.equal(includes[0].closest('.sbx-include-row').querySelector('.sbx-include-warning'), null,
-    'a resolvable include remains an ordinary compact select');
+  assertAbsent(includes[0].closest('.sbx-include-row').querySelector('.sbx-include-warning'), 'a resolvable include remains an ordinary compact select');
   const missing = includes[1];
   assert.equal(selectedValue(missing), 'base-caches',
     'the sentinel option keeps the authored value selected in the DOM');
@@ -1701,8 +1700,7 @@ test('sandbox editor groups concrete rules by the selected assignment outcome', 
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
   assert.ok(host.querySelector('#sandbox-profile-editor-network-baseline'));
   assert.ok(host.querySelector('#sandbox-profile-editor-unix-sockets-mode'));
-  assert.equal(host.querySelector('#sandbox-profile-editor-evaluate-for'), null,
-    'the preview does not encode every target permutation in one selector');
+  assertAbsent(host.querySelector('#sandbox-profile-editor-evaluate-for'), 'the preview does not encode every target permutation in one selector');
   const evaluationHarness = host.querySelector('#sandbox-profile-editor-evaluate-harness');
   const evaluationImplementation = host.querySelector('#sandbox-profile-editor-evaluate-implementation');
   const evaluationPlatform = host.querySelector('#sandbox-profile-editor-evaluate-platform');
@@ -1722,8 +1720,7 @@ test('sandbox editor groups concrete rules by the selected assignment outcome', 
     ],
   );
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
-  assert.equal(host.querySelector('.sbx-network-badge'), null,
-    'allow rows do not duplicate the Effective policy preview with a per-row verdict');
+  assertAbsent(host.querySelector('.sbx-network-badge'), 'allow rows do not duplicate the Effective policy preview with a per-row verdict');
   assert.match(host.querySelector('.sbx-policy-target').textContent,
     /Codex on Linux · built-in sandbox · no filtered network sandbox yet/);
   assert.match(host.querySelector('.sbx-rule-bucket-not-applied').textContent,
@@ -1739,8 +1736,7 @@ test('sandbox editor groups concrete rules by the selected assignment outcome', 
   );
   choose(evaluationPlatform, 'darwin');
   await harness.act(() => harness.fireEvent(evaluationPlatform, 'change'));
-  assert.equal(host.querySelector('.sbx-network-badge'), null,
-    'target changes keep evaluation status in the preview instead of adding row verdicts');
+  assertAbsent(host.querySelector('.sbx-network-badge'), 'target changes keep evaluation status in the preview instead of adding row verdicts');
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
   assert.deepEqual(predictions.at(-1).targets, [{
     implementation: 'tclaude-layer',
@@ -1788,8 +1784,7 @@ test('sandbox editor groups concrete rules by the selected assignment outcome', 
     'a composition warning opens its owning evaluation section');
   assert.match(effectiveSection.querySelector('.sbx-section-body').textContent,
     /leaves no network destinations/);
-  assert.equal(host.querySelector('.sbx-capability-preview'), null,
-    'raw evaluator axes are not exposed in the primary read model');
+  assertAbsent(host.querySelector('.sbx-capability-preview'), 'raw evaluator axes are not exposed in the primary read model');
   assert.equal(host.querySelector('#sandbox-profile-editor-submit').disabled, false,
     'empty intersections warn but never block save');
   assert.equal(predictions[0].draft.id, 41);
@@ -1860,7 +1855,7 @@ test('blank new sandbox drafts do not request an enforcement prediction', async 
   });
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
   assert.equal(predictionCalls, 0);
-  assert.equal(host.querySelector('.sbx-capability-error'), null);
+  assertAbsent(host.querySelector('.sbx-capability-error'));
   unmount();
 });
 
@@ -1896,7 +1891,7 @@ test('sandbox enforcement preview pauses for an incomplete access row and resume
   await harness.act(() => harness.fireEvent(value, 'input'));
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
   assert.equal(predictions.length, 2, 'preview resumes after the row becomes valid');
-  assert.equal(host.querySelector('.sbx-preview-status'), null);
+  assertAbsent(host.querySelector('.sbx-preview-status'));
   assert.equal(predictions.at(-1).network.allow[0].host, 'api.example.com');
   unmount();
 });
@@ -2050,10 +2045,8 @@ test('new deny drafts apply default pack references once and pack rows stay read
   assert.equal(localHelp.getAttribute('aria-expanded'), 'true');
   assert.match(packRows[0].querySelector('.spawn-field-description').textContent, /local services/);
   assert.equal(newDraft.host.querySelectorAll('.sbx-network-pack-row').length, 3);
-  assert.equal(newDraft.host.querySelector('.sbx-network-pack-row input'), null,
-    'expanded pack destinations are read-only');
-  assert.equal(newDraft.host.querySelector('.sbx-network-pack-row .sbx-segmented-control'), null,
-    'read-only expanded destinations never instantiate the segmented component');
+  assertAbsent(newDraft.host.querySelector('.sbx-network-pack-row input'), 'expanded pack destinations are read-only');
+  assertAbsent(newDraft.host.querySelector('.sbx-network-pack-row .sbx-segmented-control'), 'read-only expanded destinations never instantiate the segmented component');
   assert.ok(newDraft.host.querySelector('.sbx-network-pack-row .sbx-network-mode-readonly.sbx-state-allow'),
     'read-only modes use the same explicit color-state mapping as editable controls');
 
@@ -2179,8 +2172,7 @@ test('network packs and manual destinations author deny mode without inline verd
     'a manual row keeps roving focus when its existing mode handler moves it between buckets');
   await harness.act(() => harness.fireEvent(segment(movedMode, 'allow'), 'keydown', { key: 'ArrowRight' }));
   assert.equal(segmentedValue(network.querySelector('.sbx-network-rule-mode')), 'deny');
-  assert.equal(network.querySelector('.sbx-network-badge'), null,
-    'deny destinations do not duplicate evaluation-style verdict chips');
+  assertAbsent(network.querySelector('.sbx-network-badge'), 'deny destinations do not duplicate evaluation-style verdict chips');
   const denyNote = network.querySelector('.sbx-network-deny-note');
   assert.equal(denyNote.textContent,
     'Deny enforcement depends on the launch target — see Effective policy preview.');
@@ -2222,8 +2214,7 @@ test('network packs and manual destinations author deny mode without inline verd
   const overlapValue = overlapRow.querySelector('.sbx-network-value');
   overlapValue.value = 'telemetry.example';
   await harness.act(() => harness.fireEvent(overlapValue, 'input'));
-  assert.equal(overlapRow.querySelector('.sbx-network-redundant'), null,
-    'different DNS names may share an address, so a deny can narrow the release');
+  assertAbsent(overlapRow.querySelector('.sbx-network-redundant'), 'different DNS names may share an address, so a deny can narrow the release');
   await harness.act(() => harness.fireEvent(
     [...network.querySelectorAll('[aria-label="Delete network row"]')].at(-1), 'click'));
   await harness.act(() => harness.fireEvent(
@@ -2315,7 +2306,7 @@ test('effective preview buckets normalized deny rows with target-specific help',
   });
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
   assert.equal(host.querySelector('.sbx-network-value').value, 'API.EXAMPLE.COM');
-  assert.equal(host.querySelector('.sbx-network-badge'), null);
+  assertAbsent(host.querySelector('.sbx-network-badge'));
   assert.equal(host.querySelector('.sbx-network-deny-note').textContent,
     'Deny enforcement depends on the launch target — see Effective policy preview.');
 
@@ -2369,22 +2360,20 @@ test('sandbox access rows expose aligned grid cells for network and Unix sockets
   );
   assert.ok(networkRows.every((row) => row.classList.contains('sbx-access-row')));
   assert.ok(networkRows.every((row) => row.closest('.sbx-network-table') === networkTable));
-  assert.equal(host.querySelector('.sbx-network-badge'), null,
-    'ordinary allow rows have no duplicate per-row evaluation verdict');
+  assertAbsent(host.querySelector('.sbx-network-badge'), 'ordinary allow rows have no duplicate per-row evaluation verdict');
   assert.ok(networkRows[0].querySelector('.sbx-network-modifier .sbx-inline-check'));
   assert.equal(networkRows[0].querySelector('.sbx-network-modifier').textContent.trim(), 'subdomains');
   assert.equal(networkRows[0].querySelector('.sbx-network-ports').placeholder, 'ports');
   assert.equal([...networkRows[0].querySelector('.sbx-network-selector').options]
     .some((option) => option.textContent === 'loopback'), true,
   'the kind dropdown retains its longest label');
-  assert.equal(networkRows[1].querySelector('.sbx-network-modifier'), null);
+  assertAbsent(networkRows[1].querySelector('.sbx-network-modifier'));
   assert.equal(networkRows[1].classList.contains('sbx-network-row-no-modifier'), true,
     'rows without a subdomains checkbox give the dead modifier gutter to the value cell');
   const loopbackValue = networkRows[1].querySelector('span.sbx-network-value.sbx-network-value-readonly');
   assert.equal(loopbackValue.textContent, '—');
   assert.equal(loopbackValue.getAttribute('aria-hidden'), 'true');
-  assert.equal(loopbackValue.querySelector('input'), null,
-    'a read-only no-value cell is plain muted text rather than input-look markup');
+  assertAbsent(loopbackValue.querySelector('input'), 'a read-only no-value cell is plain muted text rather than input-look markup');
   const networkHelp = host.querySelector('#sandbox-profile-editor-network-help-hint');
   assert.match(networkHelp.textContent, /Host matches one exact DNS name/);
   assert.match(networkHelp.textContent, /blank allows all ports/);
@@ -2448,7 +2437,7 @@ test('raw access JSON can repair a structured access validation error', async (t
   await harness.act(() => Promise.resolve());
   assert.equal(host.querySelector('#sandbox-profile-editor-submit').disabled, false,
     'the stale structured error cannot make raw repair unreachable');
-  assert.equal(host.querySelector('.sbx-access-validation'), null);
+  assertAbsent(host.querySelector('.sbx-access-validation'));
   const rawNetwork = host.querySelector('#sandbox-profile-editor-network');
   const rawSockets = host.querySelector('#sandbox-profile-editor-unix-sockets');
   rawNetwork.value = '{"mode":"list","allow":[null]}';
@@ -2565,8 +2554,8 @@ test('global harness filesystem rows start folded, remain immutable, and are nev
   // LinkeDOM does not implement HTMLInputElement.checked, so use the
   // state-aware selector rather than asserting only that an attribute exists.
   assert.equal(toggle.matches(':checked'), false, 'inherited context starts folded');
-  assert.equal(host.querySelector('#sandbox-profile-editor-global-filesystem'), null);
-  assert.equal(host.querySelector('#sandbox-profile-editor-global-harness-filter'), null, 'the harness filter only appears with inherited rows enabled');
+  assertAbsent(host.querySelector('#sandbox-profile-editor-global-filesystem'));
+  assertAbsent(host.querySelector('#sandbox-profile-editor-global-harness-filter'), 'the harness filter only appears with inherited rows enabled');
   assert.match(host.querySelector('.sbx-global-warning').textContent, /could not be parsed/, 'config warnings remain visible while inherited rows are folded');
   assert.equal(host.querySelector('#sandbox-profile-editor-filesystem-section').open, true,
     'a runtime config warning opens its owning collapsed section');
@@ -2632,7 +2621,7 @@ test('global harness filesystem rows start folded, remain immutable, and are nev
   filter.querySelector('option[value="none"]').selected = true;
   filter.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
   await harness.act(() => Promise.resolve());
-  assert.equal(host.querySelector('#sandbox-profile-editor-global-filesystem'), null, 'None hides all builtin rows without folding the controls');
+  assertAbsent(host.querySelector('#sandbox-profile-editor-global-filesystem'), 'None hides all builtin rows without folding the controls');
   assert.ok(host.querySelector('#sandbox-profile-editor-global-harness-filter'));
 
   host.querySelector('#sandbox-profile-editor-submit').click(); await harness.act(() => Promise.resolve());
@@ -2641,8 +2630,8 @@ test('global harness filesystem rows start folded, remain immutable, and are nev
   toggle.checked = false;
   toggle.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
   await harness.act(() => Promise.resolve());
-  assert.equal(host.querySelector('#sandbox-profile-editor-global-filesystem'), null, 'the checkbox folds inherited context without changing the draft');
-  assert.equal(host.querySelector('#sandbox-profile-editor-global-harness-filter'), null);
+  assertAbsent(host.querySelector('#sandbox-profile-editor-global-filesystem'), 'the checkbox folds inherited context without changing the draft');
+  assertAbsent(host.querySelector('#sandbox-profile-editor-global-harness-filter'));
   assert.match(host.querySelector('.sbx-global-warning').textContent, /could not be parsed/);
   unmount();
 });
@@ -2688,7 +2677,7 @@ test('the common-rule menu inserts plain editable deny rows and warns at inserti
   inertAdd.click();
   await harness.act(() => Promise.resolve());
   assert.equal(host.querySelectorAll('.sbx-section .sbx-path').length, rowsBefore, 'an entry with no paths here cannot be inserted');
-  assert.equal(host.querySelector('#sandbox-profile-editor-common-rule-notice'), null);
+  assertAbsent(host.querySelector('#sandbox-profile-editor-common-rule-notice'));
 
   entries[1].querySelector('.sbx-common-rule-add').click();
   await harness.act(() => Promise.resolve());
@@ -2748,8 +2737,8 @@ test('a profile carrying retired baseline fields loads with no baseline UI at al
   let saved = null;
   const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state, { async saveSandbox(value) { saved = value; } });
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
-  assert.equal(host.querySelector('#sandbox-profile-editor-read-baseline'), null);
-  assert.equal(host.querySelector('.sbx-read-exclusions'), null);
+  assertAbsent(host.querySelector('#sandbox-profile-editor-read-baseline'));
+  assertAbsent(host.querySelector('.sbx-read-exclusions'));
   assert.equal(host.querySelector('#sandbox-profile-editor-modal').textContent.includes('future.secret-store'), false);
   assert.equal(host.querySelector('.cron-create-error').textContent, '', 'an old profile loads without an error');
   host.querySelector('#sandbox-profile-editor-submit').click();
@@ -2806,10 +2795,10 @@ test('a failing common-rule feed blocks hidden pack authority but leaves manual 
   // Retry recovers the menu without a reopen.
   feedOffline = false;
   await harness.act(() => { feedError.querySelector('button').click(); return new Promise((resolve) => setTimeout(resolve, 50)); });
-  assert.equal(host.querySelector('#sandbox-profile-editor-common-rule-feed-error'), null);
+  assertAbsent(host.querySelector('#sandbox-profile-editor-common-rule-feed-error'));
   assert.equal(host.querySelectorAll('.sbx-common-rule-entry').length, COMMON_RULES.categories.length);
   assert.equal(host.querySelector('.sbx-common-rule-summary').textContent.includes('unavailable'), false);
-  assert.equal(host.querySelector('.sbx-network-pack-visibility-error'), null);
+  assertAbsent(host.querySelector('.sbx-network-pack-visibility-error'));
   assert.equal(host.querySelectorAll('.sbx-network-pack-row').length, 3);
   assert.equal(host.querySelector('#sandbox-profile-editor-submit').disabled, false);
   unmount();
@@ -2850,7 +2839,7 @@ test('a failing common-rule feed also blocks hidden deny-pack intent under Allow
     feedError.querySelector('button').click();
     return new Promise((resolve) => setTimeout(resolve, 50));
   });
-  assert.equal(host.querySelector('.sbx-network-pack-visibility-error'), null);
+  assertAbsent(host.querySelector('.sbx-network-pack-visibility-error'));
   const localPack = [...host.querySelectorAll('.sbx-network-pack')]
     .find((row) => /Local access/.test(row.textContent));
   assert.equal(segmentedValue(localPack.querySelector('.sbx-network-pack-mode')), 'deny');
@@ -2888,7 +2877,7 @@ test('a hung or synchronously throwing common-rule feed can still be retried', a
 
   mode = 'ok';
   await harness.act(() => { feedError().querySelector('button').click(); return new Promise((resolve) => setTimeout(resolve, 50)); });
-  assert.equal(feedError(), null);
+  assertAbsent(feedError());
   assert.equal(host.querySelectorAll('.sbx-common-rule-entry').length, COMMON_RULES.categories.length);
   unmount();
 });
@@ -3194,8 +3183,7 @@ test('sandbox editor separates resolved launch defaults from composed sandbox la
   // between a control and its result is what help-field.js exists to avoid.
   // It states the tiers THIS preview walks, not the general chain — the preview
   // has no explicit launch choice and no named spawn profile to offer.
-  assert.equal(host.querySelector('#sandbox-profile-editor-evaluate-intro'), null,
-    'the target controls must not grow a permanent block of prose');
+  assertAbsent(host.querySelector('#sandbox-profile-editor-evaluate-intro'), 'the target controls must not grow a permanent block of prose');
   const targetTitle = host.querySelector('#sandbox-profile-editor-evaluate-harness')
     .closest('label').getAttribute('title');
   assert.match(targetTitle,
@@ -3258,7 +3246,7 @@ test('mount-path control discloses a projection and refuses it on a deny row', a
   assert.match(toggles[2].getAttribute('title'), /deny always applies to the host path/);
 
   // The panel is collapsed until asked for, so the common case stays two fields.
-  assert.equal(host.querySelector('#sandbox-profile-editor-mount-panel-0'), null);
+  assertAbsent(host.querySelector('#sandbox-profile-editor-mount-panel-0'));
   assert.equal(toggles[0].getAttribute('aria-expanded'), 'false');
   await harness.act(() => harness.fireEvent(toggles[0], 'click'));
   const panel = host.querySelector('#sandbox-profile-editor-mount-panel-0');
@@ -3284,7 +3272,7 @@ test('mount-path control discloses a projection and refuses it on a deny row', a
   // reopen the popover on top of the mount input this panel autofocuses, so the
   // operator would type under something they never opened.
   await harness.act(() => harness.fireEvent(toggles[0], 'click'));
-  assert.equal(host.querySelector('#sandbox-profile-editor-mount-panel-0'), null);
+  assertAbsent(host.querySelector('#sandbox-profile-editor-mount-panel-0'));
   await harness.act(() => harness.fireEvent(toggles[0], 'click'));
   assert.equal(
     host.querySelector('#sandbox-profile-editor-mount-panel-0 .spawn-field-help-trigger')
@@ -3466,8 +3454,7 @@ test('the mount panel takes focus, closes on Escape, and returns focus to its ro
     'the field takes focus without relying on autofocus, which Preact does not implement');
 
   await harness.act(() => harness.fireEvent(panel, 'keydown', { key: 'Escape' }));
-  assert.equal(host.querySelector('#sandbox-profile-editor-mount-panel-0'), null,
-    'Escape dismisses the popover rather than the whole modal');
+  assertAbsent(host.querySelector('#sandbox-profile-editor-mount-panel-0'), 'Escape dismisses the popover rather than the whole modal');
   assert.equal(harness.document.activeElement, toggle);
   unmount();
 });

@@ -102,10 +102,10 @@ func TestRenderSeatbeltProxyFloorGolden(t *testing.T) {
 ; inside each deny predicate so plan precedence does not depend on
 ; Seatbelt allow/deny rule selection.
 
-; Proxy-floor networking denies host/public connectivity and listeners.
+; Proxy-floor networking denies public connectivity and listeners.
 ; Allowlisted connects at the parameterized socket spellings are excepted,
-; and so is TCP to the one host-loopback port the tclaude filtering proxy
-; listens on. A second loopback service, an external address, a UDP
+; and so is TCP to the proxy port through Seatbelt's host-wide localhost token.
+; A second loopback port, an external address, a UDP
 ; datagram and every listener stay denied.
 (deny network-bind)
 (deny network-outbound
@@ -165,9 +165,11 @@ func TestRenderSeatbeltProxyFloorGolden(t *testing.T) {
 	}, "the agentd floor must remain a parameterized socket spelling, not inlined text")
 }
 
-// The floor opens ONE destination. Every assertion here names the destination
-// that must not be reachable alongside the one that must, because a profile
-// that opened host loopback wholesale would satisfy the positive half alone.
+// The floor emits ONE TCP port exception. Seatbelt's localhost token makes
+// that selector host-wide rather than one interface-level destination; the
+// Darwin smoke owns that limitation. These portable assertions pin the axes
+// the grammar can still express: a second port, UDP, and an allow rule remain
+// absent.
 func TestSeatbeltProxyFloorOpensExactlyTheProxyPort(t *testing.T) {
 	profile, _ := renderProxyFloor(
 		t,
@@ -184,8 +186,8 @@ func TestSeatbeltProxyFloorOpensExactlyTheProxyPort(t *testing.T) {
 	// §8.2's second host-loopback port. Same interface, different port.
 	assert.NotContains(t, profile, fmt.Sprintf("localhost:%d", proxyFloorControlPort),
 		"a control server on a second host-loopback port must stay unreachable")
-	// A port-less loopback exception, or a remote-ip one, would reach every
-	// host-loopback service rather than the proxy.
+	// A port-less localhost exception, or a remote-ip one, would reach every
+	// host-local service rather than only services sharing the proxy's port.
 	assert.NotContains(t, profile, `"localhost:*"`)
 	assert.NotContains(t, profile, `(remote ip `)
 	// UDP has no exception at all: the endpoint's is TCP-only, so a datagram to

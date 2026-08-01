@@ -241,10 +241,19 @@ function sandboxEvaluationTarget(harness, implementation, platform) {
 }
 
 function sandboxRuleOutcomeHelp(item, targetLabel) {
-  const status = item.outcome === 'enforced' ? 'Enforced'
-    : item.outcome === 'enforced_partial' ? 'Partial'
-      : item.outcome === 'refused' ? 'Launch blocked' : 'Not applied';
-  const heading = `${status} on ${targetLabel}.`;
+  /* 'not_evaluated' is listed FIRST and explicitly, because the fallback arm of
+     this chain is 'Not applied' — a verdict. Without this branch every rule in
+     the TCL-915 not-evaluated bucket would disclose "Not applied on <target>",
+     asserting per rule exactly what the bucket around it exists to deny. The
+     per-rule help is a diagnostic, and a diagnostic that reports the defect
+     class it was written for is the sharpest version of that mistake. */
+  const status = item.outcome === 'not_evaluated' ? 'Not evaluated'
+    : item.outcome === 'enforced' ? 'Enforced'
+      : item.outcome === 'enforced_partial' ? 'Partial'
+        : item.outcome === 'refused' ? 'Launch blocked' : 'Not applied';
+  const heading = item.outcome === 'not_evaluated'
+    ? `${status} on ${targetLabel}. This rule was never judged: the target was refused first.`
+    : `${status} on ${targetLabel}.`;
   return {
     text: `${heading}${item.detail ? ` ${item.detail}` : ''}`,
     content: html`<span><strong>${heading}</strong>${item.detail ? ` ${item.detail}` : ''}</span>`,
@@ -256,6 +265,9 @@ function SandboxOutcomeBucket({
 }) {
   return html`<details class=${`sbx-rule-bucket sbx-rule-bucket-${bucket.key}`} open=${open}>
     <summary><span>${bucket.label}</span><span class="sbx-rule-count">${bucket.rules.length}</span></summary>
+    ${/* Before the rules, not after: the note says what the list below it IS,
+          and a disclaimer under a list has already been read past. */ ''}
+    ${bucket.note && html`<div class="sbx-bucket-note">${bucket.note}</div>`}
     ${bucket.items.length > 0 && html`<ul>${bucket.items.map((item, index) => {
     const helpID = `${helpPrefix}-${bucket.key}-${index}`;
     const help = sandboxRuleOutcomeHelp(item, targetLabel);
@@ -280,13 +292,25 @@ function SandboxOutcomeBucket({
    another assignment to name — the one divergent shape (an unsaved draft named
    identically to the existing global profile) arises solely in the
    single-context fallback. Stated rather than claimed "kept in step", so the
-   next person to touch the selector knows the two are not literally coupled. */
-function sandboxContextLabel(contexts, index) {
-  const value = contexts?.[index]?.context;
-  if (!value) return `assignment ${index + 1}`;
+   next person to touch the selector knows the two are not literally coupled.
+
+   This is the vocabulary itself, taking the context VALUE rather than a list
+   and an index. An assignment past the display cap has no index to be looked
+   up by — the daemon sends its context beside the refusal (TCL-913) — so the
+   naming has to be reachable without one. Returns null for a missing value so
+   the ordinal fallback stays with the index-based caller below, where there is
+   an N to show; an omitted assignment has none. */
+function sandboxContextLabelFor(value) {
+  if (!value) return null;
   if (value.group_name) return `group ${value.group_name}`;
   if (value.explicit) return 'explicit selection';
   return 'global assignment';
+}
+
+/* The index-based caller: names a LISTED assignment, and falls back to the
+   ordinal when the index has no context behind it. */
+function sandboxContextLabel(contexts, index) {
+  return sandboxContextLabelFor(contexts?.[index]?.context) ?? `assignment ${index + 1}`;
 }
 
 /* TCL-914. The network entries for ONE assignment context — the single
@@ -386,11 +410,21 @@ export function SandboxPolicyResult({ target, context, contextIndex, contexts = 
     ...sandboxOtherAssignmentWarnings(target.axes, axes),
     // A distinct axis per entry: it is the list key, and several omitted
     // refusals would otherwise share one.
-    ...otherRefusals.map(({ index, refusal }, position) => ({
+    ...otherRefusals.map(({ index, refusal, context: assignment }, position) => ({
       axis: index === null ? `refusal-omitted-${position}` : `refusal-${index}`,
-      label: index === null
-        ? 'An assignment omitted from this selector'
-        : sandboxContextLabel(contexts, index),
+      /* An omitted assignment has no index to name it by, so the daemon sends
+         its context beside the refusal (TCL-913) and it is named with the SAME
+         vocabulary as a listed one. The unnamed wording is the compat path, not
+         a default: it is what a response carrying no identity degrades to —
+         either from a daemon predating the field, or from one that could not
+         resolve the assignment. Both are ABSENT rather than empty, so this
+         branch is decidable; an empty identity would be named "global
+         assignment" by the helper, which is a confident wrong answer. */
+      label: assignment
+        ? sandboxContextLabelFor(assignment)
+        : index === null
+          ? 'An assignment omitted from this selector'
+          : sandboxContextLabel(contexts, index),
       outcome: 'refused',
       detail: refusal.message,
     })),
@@ -411,9 +445,44 @@ export function SandboxPolicyResult({ target, context, contextIndex, contexts = 
       <div>The overall safety check includes every assignment, including any omitted from the selector.</div>
       <ul>${otherWarnings.map((warning) => html`<li key=${warning.axis}><strong>${warning.label}:</strong> ${warning.detail}</li>`)}</ul>
     </div>`}
+    ${/* TCL-915. The target-level refusal banner. Same element and same red as
+          the minimum that shipped in TCL-885 — this promotes it to a headline
+          plus the capability kind plus the evaluator's own text, it does not
+          introduce a second red.
+
+          The detail is the wire's `message` VERBATIM. It is a single fused
+          sentence whose remedies are its trailing clause, and there is no
+          structured remedies field; splitting it client-side would be a guess
+          dressed as structure, and a mis-split silently DROPS a remedy — this
+          ticket's own failure mode committed in its own rendering. Ruled by the
+          operator's lead. Discrete remedy bullets need a wire change and a
+          separate ticket. */ ''}
     ${buckets.launchRefused && html`<div class="sbx-launch-blocked" role="alert">${refusal
-    ? `This target cannot enforce this policy, so the launch is refused. ${refusal.message}`
+    ? html`<strong>This target cannot enforce this policy, so the launch is refused.</strong>
+      ${/* The kind is a raw machine token. Sighted readers get "this is an
+            identifier" from the monospace chip; that cue does not survive into
+            speech, where it would run straight on from the sentence above as
+            though it were prose. The visible prefix says what it is on BOTH
+            channels rather than hiding the answer in an aria-label only one of
+            them reads. */ ''}
+      <span class="sbx-refusal-kind"><span class="sbx-refusal-kind-label">Capability: </span>${refusal.kind}</span>
+      <div class="sbx-refusal-detail">${refusal.message}</div>`
     : 'This target refuses the launch. Unsupported rules are not silently skipped.'}</div>`}
+    ${/* Listed, never judged. Ships COLLAPSED: these rules carry no verdict, so
+          they are reference material rather than something needing attention —
+          the banner above is what needs attention. This is a pure ADDITION; the
+          `!refusal` guard below is untouched, so the three verdict buckets stay
+          suppressed exactly as before.
+
+          Suppressed entirely when there is nothing to list. The note reads
+          "These are the rules this profile would apply", which is FALSE over an
+          empty policy, and a bucket headed "Rules not evaluated  0" invites
+          reading the zero as a finding. Nothing to list means nothing to say;
+          the banner already carries the whole story. */ ''}
+    ${refusal && buckets.unjudged.items.length > 0 && html`<${SandboxOutcomeBucket}
+      bucket=${buckets.unjudged} open=${false}
+      helpOpen=${ruleHelpOpen} setHelpOpen=${setRuleHelpOpen}
+      helpPrefix=${helpPrefix} targetLabel=${targetLabel}/>`}
     ${/* The Applied bucket ships closed — a fully supported policy needs no
          attention. A remapped rule is the exception: the editor row shows only a
          glyph, so this line is where the host → sandbox mapping is actually

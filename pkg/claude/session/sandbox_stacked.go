@@ -98,6 +98,16 @@ func ProbeStackedSandbox(
 	for _, warning := range stackedNamespaceWarnings(spec, probe.KnownPaths) {
 		fmt.Fprintf(os.Stderr, "stacked sandbox namespace warning: %s\n", warning)
 	}
+	// Deliberately WITHOUT the caller-side state-target anchor that guards the
+	// OpenCode replay path (TCL-907). That anchor exists because a spec read
+	// back from the database can have been tampered with between being written
+	// and being replayed; this spec was built in-process moments ago for a
+	// probe and never round-tripped through storage, so the precondition the
+	// whole defect family sits behind is absent here. A guard added anyway
+	// would be exercised only by a path that cannot exhibit the defect.
+	//
+	// Stated so a later sweep for "callers of PrepareTclaudeLayerHarnessState
+	// without the anchor" reads a reasoned absence rather than a gap.
 	if err := PrepareTclaudeLayerHarnessState(spec); err != nil {
 		proof.Cleanup()
 		return nil, stackedSandboxRefusal("stacked_outer_launch_spec",

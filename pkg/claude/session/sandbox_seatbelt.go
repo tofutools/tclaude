@@ -297,10 +297,12 @@ func renderSeatbeltProfile(
 // endpoint supplied for a plan that deploys no proxy is refused too, because
 // silently dropping it would open nothing while the caller believed it had.
 //
-// Membership in the host-loopback space is decided by the shared predicate
-// (sandboxpolicy.AddrIsLoopbackIdentity), never by a second local notion of
-// what "loopback" spells. An endpoint outside that space would not be a
-// filtering proxy on this host at all; it would be a route off it.
+// Membership in the shared proxy-endpoint identity space is decided by
+// sandboxpolicy.AddrIsLoopbackIdentity, never by a second local definition.
+// This check deliberately inherits that predicate's 0.0.0.0/8 over-inclusion;
+// its corrected comment owns what that space means. This renderer receives the
+// address of an already-bound proxy listener and does not use membership here
+// to make a new claim about every member's connect reachability.
 //
 // The unspecified address is the one place where that predicate alone would be
 // wrong, and the reason generalizes past this function: the rule is ONE
@@ -310,14 +312,13 @@ func renderSeatbeltProfile(
 // wearing reuse's clothes, and it is more dangerous than duplication precisely
 // because the shared name makes it look deliberate.
 //
-// Concretely: AddrIsLoopbackIdentity carries 0.0.0.0/8 and ::/128 because
-// connecting TO the unspecified address lands on local loopback, which makes
-// them host-loopback DESTINATIONS. This endpoint is where the proxy LISTENS,
-// and binding to the unspecified address is the opposite — a wildcard listener
-// on every interface, so the sandbox's only egress would also be reachable from
-// the LAN. A launcher taking its endpoint from a net.Listen(":0") listener
-// address lands here, which is why the refusal is at this seam rather than left
-// to the caller.
+// Concretely, connecting TO either unspecified address lands on the local host,
+// but this endpoint records where the proxy LISTENS. Binding an unspecified
+// address is the opposite — a wildcard listener on every interface, so the
+// sandbox's only egress would also be reachable from the LAN. A launcher taking
+// its endpoint from a net.Listen(":0") listener address lands here, which is why
+// this seam separately refuses that address. It needs no claim about how the
+// rest of 0.0.0.0/8 routes.
 //
 // So the predicate stays the sole definition of loopback identity and is not
 // copied or narrowed; the bind-scope question is simply answered separately,
@@ -779,11 +780,18 @@ func seatbeltDaemonReopenDescendants(
 	return out
 }
 
-// appendSeatbeltLoopbackNetworkRules applies the one network list Seatbelt can
-// represent without a proxy. The remote-ip wildcard confines the deny to IP
-// traffic, preserving the independently authored Unix-socket axis. Port-scoped
-// exceptions use the narrower TCP/UDP predicates so Seatbelt selects them over
-// the IP-wide deny; a portless loopback rule can use the IP predicate directly.
+// appendSeatbeltLoopbackNetworkRules applies the closest network list Seatbelt
+// can represent without a proxy. The remote-ip wildcard confines the deny to
+// IP traffic, preserving the independently authored Unix-socket axis.
+// Port-scoped exceptions use the narrower TCP/UDP predicates so Seatbelt
+// selects them over the IP-wide deny; a portless rule uses the IP predicate.
+//
+// Seatbelt's network grammar accepts only "localhost" or "*" as the host. A
+// real-host M3.2 measurement established that localhost means every address
+// assigned to the host, not only its loopback interfaces; literal IPs are
+// rejected at profile parse time. This structural approximation also governs
+// the proxy-floor exception below and must not be described as interface-level
+// loopback isolation.
 //
 // Outbound exceptions must be remote predicates. A local-ip predicate observes
 // the unbound socket's source address and Seatbelt treats localhost as matching
@@ -809,7 +817,8 @@ func appendSeatbeltLoopbackNetworkRules(
 	}
 	sort.Ints(ports)
 
-	profile.WriteString("\n; Local access permits only real host-loopback IP destinations.\n")
+	profile.WriteString("\n; Seatbelt local access uses its host-wide localhost token.\n")
+	profile.WriteString("; The grammar cannot narrow that token to a loopback interface.\n")
 	profile.WriteString("; Bind/inbound and Unix sockets retain their independently authored behavior.\n")
 	profile.WriteString("(deny network-outbound (remote ip \"*:*\"))\n")
 	if allowAllPorts {
@@ -843,25 +852,23 @@ func appendSeatbeltLoopbackNetworkRules(
 // trusted agentd daemon and is outside this boundary's threat model.
 //
 // A valid proxyEndpoint turns this into the proxy floor, and adds exactly one
-// thing to it: TCP to the host-loopback port the tclaude filtering proxy
-// listens on, so both carriages the launcher advertises — HTTP CONNECT and
-// SOCKS5, one listener — have a route to it and nothing else does. Everything
-// the isolated floor denies stays denied, which is what leaves the harness with
-// no way around the proxy: a second host-loopback service is a different port
-// and stays unreachable, an external address is not loopback at all, a UDP
-// datagram matches no exception (the endpoint's is TCP-only), and network-bind
+// thing to it: TCP to the host-local port the tclaude filtering proxy listens
+// on, so both carriages the launcher advertises — HTTP CONNECT and SOCKS5, one
+// listener — have a route to it. A second host-loopback service is a different
+// port and stays unreachable, an external address is not host-local, a UDP
+// datagram matches no exception (the endpoint is TCP-only), and network-bind
 // still refuses every listener.
 //
 // The exception is written as a port on Seatbelt's "localhost" rather than on
 // the address the proxy actually bound, so the port is the only thing that
-// discriminates between destinations here. Whether that token means exactly
-// the host-loopback interface — covering 127.0.0.1 and ::1 alike, and nothing
-// bound at a routable local address — is a runtime Seatbelt behavior that no
-// golden can observe, and it is UNVERIFIED until M3.2's smoke measures it on a
-// macOS runner. The intent is the same identity folding the evaluator applies
-// to loopback destinations; if the smoke contradicts it, this generator is
-// what changes. sandboxpolicy.AddrIsLoopbackIdentity governs which endpoints
-// are ACCEPTED above and says nothing about what Seatbelt MATCHES here.
+// discriminates between destinations here. M3.2 measured that token on macOS:
+// it also admits a different service on a non-loopback local address at the
+// same port. Replacing localhost with the bound IP is not representable —
+// sandbox-exec rejects literal hosts with "host must be * or localhost in
+// network address". The smoke characterizes that limitation explicitly and no
+// capability cell may activate this floor until the follow-up closes it.
+// sandboxpolicy.AddrIsLoopbackIdentity governs which endpoints are accepted by
+// the renderer; it cannot narrow what Seatbelt's localhost token matches.
 func appendSeatbeltIsolatedNetworkRules(
 	profile *strings.Builder,
 	params []seatbeltProfileParam,
@@ -885,10 +892,10 @@ func appendSeatbeltIsolatedNetworkRules(
 
 	proxyFloor := proxyEndpoint.Port() != 0
 	if proxyFloor {
-		profile.WriteString("\n; Proxy-floor networking denies host/public connectivity and listeners.\n")
+		profile.WriteString("\n; Proxy-floor networking denies public connectivity and listeners.\n")
 		profile.WriteString("; Allowlisted connects at the parameterized socket spellings are excepted,\n")
-		profile.WriteString("; and so is TCP to the one host-loopback port the tclaude filtering proxy\n")
-		profile.WriteString("; listens on. A second loopback service, an external address, a UDP\n")
+		profile.WriteString("; and so is TCP to the proxy port through Seatbelt's host-wide localhost token.\n")
+		profile.WriteString("; A second loopback port, an external address, a UDP\n")
 		profile.WriteString("; datagram and every listener stay denied.\n")
 	} else {
 		profile.WriteString("\n; Isolated networking denies host/public connectivity and listeners.\n")

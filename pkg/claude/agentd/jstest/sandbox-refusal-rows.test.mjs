@@ -129,3 +129,49 @@ test('sandboxRuleBuckets is unchanged for every response that carries no refusal
   assert.deepEqual(withoutArg, withArg);
   assert.equal(withoutArg.launchRefused, false);
 });
+
+// TCL-913. A cap-omitted refusal reaches the client (TCL-885) but arrived with
+// no identity, so the editor could only say "An assignment omitted from this
+// selector". The daemon now sends the refusing assignment's own context beside
+// the refusal; this function passes it through.
+test('an omitted refusal carries its assignment identity through', () => {
+  const target = {
+    omitted_refusals: [
+      { ...REFUSAL, context: { group_name: 'crew-10' } },
+      { ...REFUSAL, context: { group_name: 'crew-11' } },
+    ],
+  };
+  const got = sandboxOtherContextRefusals(target, 0);
+  assert.deepEqual(got, [
+    { index: null, refusal: REFUSAL, context: { group_name: 'crew-10' } },
+    { index: null, refusal: REFUSAL, context: { group_name: 'crew-11' } },
+  ]);
+  // The identity is a SIBLING of the refusal, not part of it: the refusal object
+  // stays the exact {kind, message} shape every other consumer reads, so adding
+  // the identity cannot change what a refusal looks like anywhere else.
+  for (const entry of got) {
+    assert.equal('context' in entry.refusal, false);
+  }
+});
+
+// The compat direction that is easy to get wrong: a NEWER client against an
+// OLDER daemon, which sends omitted_refusals with no context at all.
+test('an omitted refusal from a daemon that sends no identity omits the key entirely', () => {
+  const target = { omitted_refusals: [REFUSAL] };
+  const [entry] = sandboxOtherContextRefusals(target, 0);
+  // Asserted on the KEY, not on the value. `context: undefined` would be falsy
+  // and would read as "no identity" to the renderer while being
+  // indistinguishable from "the daemon sent an identity and it was empty" —
+  // which is the absence class this field's whole contract exists to avoid.
+  assert.equal('context' in entry, false);
+  assert.deepEqual(entry, { index: null, refusal: REFUSAL });
+});
+
+// Listed contexts are unaffected: they are identified by their index, and the
+// new field must not reshape the entries that already worked.
+test('listed context refusals keep their exact previous shape', () => {
+  const target = { context_refusals: [null, REFUSAL, null] };
+  const [entry] = sandboxOtherContextRefusals(target, 0);
+  assert.deepEqual(entry, { index: 1, refusal: REFUSAL });
+  assert.equal('context' in entry, false);
+});

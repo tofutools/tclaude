@@ -9,6 +9,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertAbsent } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 async function mountCog(t, { onRun = () => {} } = {}) {
@@ -170,5 +171,5 @@ test('closing leaves no filtered state behind for the next open', async (t) => {
   assert.equal(view.filter().value, '', 'the box is emptied on close');
   assert.deepEqual(view.visible(), ['+ add member', '⧉ clone…', 'delete group'],
     'and every item is showing again');
-  assert.equal(view.menuFilter.menuActiveItem(view.menu()), null);
+  assertAbsent(view.menuFilter.menuActiveItem(view.menu()));
 });

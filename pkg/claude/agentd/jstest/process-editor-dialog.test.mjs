@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertAbsent } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 function view() {
@@ -125,7 +126,7 @@ test('Delete then Enter confirms a simple selection deletion from the focused de
   await editor.pendingDeletion;
   assert.equal(editor.model.node('done'), undefined);
   assert.equal(editor.selection, null);
-  assert.equal(harness.document.querySelector('.process-editor-modal'), null);
+  assertAbsent(harness.document.querySelector('.process-editor-modal'));
 });
 
 test('Delete then Enter keeps the primary rewire choice for a mid-graph node', async (t) => {
@@ -205,7 +206,7 @@ test('diagnostic markers use one custom tooltip and keep accessible node and edg
   assert.equal(node.getAttribute('tabindex'), '0', 'keyboard focus reaches the described node');
   const nodeMarker = node.querySelector('.process-overlay-anchor');
   assert.equal(nodeMarker.hasAttribute('title'), false, 'the custom node target has no title attribute');
-  assert.equal(nodeMarker.querySelector('title'), null, 'the custom node tooltip has no duplicate SVG title');
+  assertAbsent(nodeMarker.querySelector('title'), 'the custom node tooltip has no duplicate SVG title');
   assert.match(nodeMarker.querySelector('.process-overlay-tooltip text').textContent, /Work performer is required/);
 
   const edge = host.querySelector('.process-edge');
@@ -214,7 +215,7 @@ test('diagnostic markers use one custom tooltip and keep accessible node and edg
   const edgeMarker = edge.querySelector('.process-edge-issue-marker');
   assert.equal(edge.hasAttribute('title'), false, 'the focusable edge target has no title attribute');
   assert.equal(edgeMarker.hasAttribute('title'), false, 'the custom edge target has no title attribute');
-  assert.equal(edgeMarker.querySelector('title'), null, 'the custom edge tooltip has no duplicate SVG title');
+  assertAbsent(edgeMarker.querySelector('title'), 'the custom edge tooltip has no duplicate SVG title');
   assert.match(edgeMarker.querySelector('.process-overlay-tooltip text').textContent, /pass is not declared/);
   assert.match(edgeMarker.querySelector('.process-overlay-tooltip text').textContent, /done is unreachable/,
     'the custom edge tooltip includes every diagnostic for its target');
@@ -242,7 +243,7 @@ test('node dialog Save is one undoable edit and Cmd/Ctrl+Enter uses the same tra
     else harness.fireEvent(overlay.querySelector('.process-node-input'), 'keydown', { key: 'Enter', [modifier]: true });
     assert.equal(model.node('work').name, `Changed by ${modifier}`);
     assert.equal(model.undoStack.length, 1, 'the complete dialog transaction occupies one history slot');
-    assert.equal(harness.document.querySelector('.process-node-modal'), null);
+    assertAbsent(harness.document.querySelector('.process-node-modal'));
     assert.equal(model.undo(), true);
     assert.equal(model.node('work').name, 'Original');
   }
@@ -286,7 +287,7 @@ test('dirty Escape awaits discard confirmation: reject keeps the draft, accept c
   assert.equal(decisions.length, 1);
   decisions.shift()(true);
   await settle();
-  assert.equal(harness.document.querySelector('.process-node-modal'), null);
+  assertAbsent(harness.document.querySelector('.process-node-modal'));
   assert.equal(model.node('work').name, 'Original');
   assert.equal(model.undoStack.length, 0, 'discard never creates a history entry');
   assert.equal(model.dirty, false);
@@ -314,7 +315,7 @@ test('Escape and backdrop flush an active raw node field before deciding whether
     else harness.fireEvent(overlay, 'mousedown');
     await settle();
     assert.equal(confirmations, 1, `${gesture} flushes the raw field before the dirty check`);
-    assert.equal(harness.document.querySelector('.process-node-modal'), null);
+    assertAbsent(harness.document.querySelector('.process-node-modal'));
     assert.equal(model.node('work').name, 'Original', `${gesture} discards the staged edit atomically`);
     assert.equal(model.undoStack.length, 0);
   }
@@ -405,7 +406,7 @@ test('rejected raw input stays dirty: Save remains open and Cancel confirms', as
   assert.equal(model.node('work').checks[1].id, 'verify');
   assert.equal(model.node('work').name, 'Renamed');
   assert.equal(model.undoStack.length, 1);
-  assert.equal(harness.document.querySelector('.process-node-modal'), null);
+  assertAbsent(harness.document.querySelector('.process-node-modal'));
 });
 
 test('node dialog traps Tab and restores its invoker on forced teardown', async (t) => {
@@ -553,7 +554,7 @@ test('node dialog restores and persists its own resize without bypassing dirty f
   await settle();
   decisions.shift()(true);
   await settle();
-  assert.equal(harness.document.querySelector('.process-node-modal'), null);
+  assertAbsent(harness.document.querySelector('.process-node-modal'));
   assert.equal(harness.document.activeElement, invoker, 'confirmed close still restores the invoker');
 
   // The helper cleanup is part of dialog disposal: detached pointer events
@@ -648,7 +649,7 @@ test('params dialog edits identifiers, typed defaults, descriptions, and require
   harness.fireEvent(overlay.querySelector('.modal-buttons .primary'), 'click');
 
   assert.equal(mutations, 1);
-  assert.equal(harness.document.querySelector('.process-param-modal'), null);
+  assertAbsent(harness.document.querySelector('.process-param-modal'));
   assert.equal(model.template.params.ticket.description, 'Tracker ticket');
   assert.equal(model.template.params.ticket.required, true);
   assert.equal(model.template.params.retries.default, 3, 'number defaults retain their declared type');
@@ -873,7 +874,7 @@ test('dirty params participate in navigation and rejected modal replacement guar
     'another editor modal cannot replace the rejected params draft');
   assert.equal(confirmations, 2);
   assert.equal(harness.document.querySelector('.process-param-modal'), overlay);
-  assert.equal(harness.document.querySelector('.process-node-modal'), null);
+  assertAbsent(harness.document.querySelector('.process-node-modal'));
   editor.modalDispose(null);
 });
 
@@ -923,7 +924,7 @@ test('params dialog traps Tab and restores focus on every close path without pro
     else dispose(null);
     await settle();
     assert.equal(confirmations, gesture === 'forced' ? 0 : 1, `${gesture}: confirmation count`);
-    assert.equal(harness.document.querySelector('.process-param-modal'), null, `${gesture}: dialog closes`);
+    assertAbsent(harness.document.querySelector('.process-param-modal'), `${gesture}: dialog closes`);
     assert.equal(harness.document.activeElement, invoker, `${gesture}: invoker focus is restored`);
   }
 });
@@ -951,7 +952,7 @@ test('Cancel, backdrop, and close affordance discard only after confirmation', a
     harness.fireEvent(target, gesture === 'backdrop' ? 'mousedown' : 'click');
     await settle();
     assert.equal(confirmations, 1, `${gesture} confirms a dirty discard`);
-    assert.equal(harness.document.querySelector('.process-node-modal'), null);
+    assertAbsent(harness.document.querySelector('.process-node-modal'));
     assert.equal(model.node('work').name, 'Original');
     assert.equal(model.undoStack.length, 0);
   }

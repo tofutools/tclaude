@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertAbsent } from './assertions.mjs';
 import { readFileSync } from 'node:fs';
 import { createPreactHarness } from './preact-harness.mjs';
 
@@ -429,7 +430,7 @@ test('the rendered hint carries its documentation link', async (t) => {
   // A hint without a doc renders no anchor at all, and no hint renders nothing.
   const plain = await harness.mount(harness.html`<${SandboxImplHint}
     hint=${{ warn: false, text: 'Experimental.' }} id="plain" />`);
-  assert.equal(plain.container.querySelector('#plain a'), null);
+  assertAbsent(plain.container.querySelector('#plain a'));
   const absent = await harness.mount(harness.html`<${SandboxImplHint} hint=${null} />`);
   assert.equal(absent.container.textContent, '');
 });

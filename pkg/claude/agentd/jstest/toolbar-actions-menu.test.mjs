@@ -7,6 +7,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertAbsent } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 // The production shell's cog, trimmed to a few representative items.
@@ -178,7 +179,7 @@ test('unbinding the toolbar cog releases every listener it added', async (t) => 
   assert.deepEqual(view.visible(), ALL, 'typing no longer filters');
 
   view.harness.fireEvent(view.harness.document.getElementById('links-manage-open'), 'mouseover');
-  assert.equal(view.menuFilter.menuActiveItem(view.menu), null, 'hover no longer tracks');
+  assertAbsent(view.menuFilter.menuActiveItem(view.menu), 'hover no longer tracks');
 
   view.harness.fireEvent(view.harness.document, 'keydown', { key: 'Escape' });
   assert.equal(view.isOpen(), true, 'the document Escape handler is gone');

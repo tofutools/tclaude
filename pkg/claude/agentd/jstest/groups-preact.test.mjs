@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertAbsent } from './assertions.mjs';
 import { createPreactHarness, getByRole } from './preact-harness.mjs';
 
 function memoryPrefs(initial = {}) {
@@ -99,8 +100,7 @@ test('opaque slop host safely retakes nested-root ownership after an imperative 
   assert.equal(machine.querySelectorAll('.slop-reels-root').length, 1,
     'the status edge installs exactly one fresh nested root');
   assert.equal(machine.querySelectorAll('.slop-reel').length, 3);
-  assert.equal(machine.querySelector('.slop-pull-reel'), null,
-    'no imperative pull DOM survives the ownership hand-back');
+  assertAbsent(machine.querySelector('.slop-pull-reel'), 'no imperative pull DOM survives the ownership hand-back');
 
   // Exercise the old pull's complete 900ms settle + 1800ms restore window.
   // Neither delayed callback may overwrite the newer status/conv identity.
@@ -109,13 +109,11 @@ test('opaque slop host safely retakes nested-root ownership after an imperative 
   assert.equal(machine.dataset.conv, 'new-conv');
   assert.equal(machine.querySelectorAll('.slop-reels-root').length, 1);
   assert.equal(machine.querySelectorAll('.slop-reel').length, 3);
-  assert.equal(machine.querySelector('.slop-pull-reel'), null,
-    'all stale pull timers leave the newer nested root untouched');
+  assertAbsent(machine.querySelector('.slop-pull-reel'), 'all stale pull timers leave the newer nested root untouched');
 
   await assert.doesNotReject(() => mounted.unmount());
-  assert.equal(mounted.container.querySelector('.slop-machine'), null);
-  assert.equal(mounted.container.querySelector('.slop-pull-reel'), null,
-    'unmount leaves no mutated pull DOM behind');
+  assertAbsent(mounted.container.querySelector('.slop-machine'));
+  assertAbsent(mounted.container.querySelector('.slop-pull-reel'), 'unmount leaves no mutated pull DOM behind');
 });
 
 test('stale jackpot hold cleanup cannot mark or overwrite a newer slop identity', async (t) => {
@@ -159,7 +157,7 @@ test('stale jackpot hold cleanup cannot mark or overwrite a newer slop identity'
   assert.equal(machine.dataset.conv, 'jackpot-new');
   assert.equal(machine.querySelectorAll('.slop-reels-root').length, 1);
   assert.equal(machine.querySelectorAll('.slop-reel').length, 3);
-  assert.equal(machine.querySelector('.slop-pull-reel'), null);
+  assertAbsent(machine.querySelector('.slop-pull-reel'));
   await mounted.unmount();
 });
 
@@ -281,7 +279,7 @@ test('Groups hover state follows semantic keys across polls and clears on disapp
     'semantic hover state is re-stamped after polling reconciliation');
 
   await harness.act(() => state.publish(snapshot([beta])));
-  assert.equal(host.querySelector('.quick-hover'), null);
+  assertAbsent(host.querySelector('.quick-hover'));
   await harness.act(() => state.publish(snapshot([alpha, beta])));
   assert.equal(host.querySelector('details[data-group-key="alpha"]').classList.contains('quick-hover'), false,
     'a group that disappears clears its hover key before reinsertion');
@@ -632,8 +630,7 @@ test('multi-group member copies isolate menus, editors, focus and unmount cleanu
   await harness.act(() => harness.fireEvent(alphaTrigger, 'click'));
   const alphaInput = alphaRow.querySelector('.rowname-input');
   assert.ok(alphaInput);
-  assert.equal(betaRow.querySelector('.rowname-input'), null,
-    'editing one membership copy does not replace the other group copy');
+  assertAbsent(betaRow.querySelector('.rowname-input'), 'editing one membership copy does not replace the other group copy');
   assert.equal(alphaRow.draggable, false);
   assert.equal(betaRow.draggable, true);
   await harness.act(() => harness.fireEvent(alphaInput, 'keydown', { key: 'Escape' }));
@@ -710,7 +707,7 @@ test('native member and group editors preserve drafts, park DnD and surface busy
   assert.equal(row.draggable, false, 'member row stays parked throughout persistence');
   await harness.act(() => agentSave.resolve(true));
   await harness.act(() => Promise.resolve());
-  assert.equal(row.querySelector('.rowname-input'), null);
+  assertAbsent(row.querySelector('.rowname-input'));
   assert.equal(row.draggable, true);
   assert.deepEqual(calls.shift(), ['rename-agent', 'member-1', 'Member draft']);
 
@@ -751,7 +748,7 @@ test('native member and group editors preserve drafts, park DnD and surface busy
   assert.equal(summary.draggable, false);
   await harness.act(() => cwdSave.resolve(true));
   await harness.act(() => Promise.resolve());
-  assert.equal(summary.querySelector('.group-default-cwd-input'), null);
+  assertAbsent(summary.querySelector('.group-default-cwd-input'));
   assert.deepEqual(calls.shift(), ['patch', 'alpha', 'default_cwd', '/tmp/new']);
 
   await harness.act(() => harness.fireEvent(summary.querySelector('.group-max-members'), 'click'));
@@ -796,7 +793,7 @@ test('native member and group editors preserve drafts, park DnD and surface busy
   assert.equal(profileSelect.disabled, true);
   await harness.act(() => profileSave.resolve(true));
   await harness.act(() => Promise.resolve());
-  assert.equal(summary.querySelector('.group-default-profile-select'), null);
+  assertAbsent(summary.querySelector('.group-default-profile-select'));
   assert.deepEqual(calls.splice(0, 2), [
     ['choices', 'profile'],
     ['profile', 'alpha', 'profile', 'profile-b'],
@@ -830,7 +827,7 @@ test('native member and group editors preserve drafts, park DnD and surface busy
   await harness.act(() => Promise.resolve());
   newSandbox.querySelector('option[value="/new-profile"]').selected = true;
   await harness.act(() => harness.fireEvent(newSandbox, 'change'));
-  assert.equal(summary.querySelector('.group-default-profile-select'), null);
+  assertAbsent(summary.querySelector('.group-default-profile-select'));
   assert.equal(calls[0][0], 'choices');
   assert.equal(calls[1][0], 'new-profile');
   assert.equal(calls[1][1], 'sandbox');
@@ -1007,8 +1004,8 @@ test('native member rows preserve the legacy field, capability and selector matr
   assert.equal(menu.querySelectorAll('.menu-sep').length, 3);
 
   assert.equal(fixedRow.querySelector('.rowname-fixed').textContent, 'Fixed agent');
-  assert.equal(fixedRow.querySelector('[data-act="rename-name"]'), null);
-  assert.equal(fixedRow.querySelector('[data-act="toggle-remote-control"]'), null);
+  assertAbsent(fixedRow.querySelector('[data-act="rename-name"]'));
+  assertAbsent(fixedRow.querySelector('[data-act="toggle-remote-control"]'));
   assert.equal(fixedRow.querySelector('.state-pill').classList.contains('state-crashed'), true);
   assert.match(fixedRow.querySelector('.state-pill-wrap').title, /process ended without a clean exit/);
   assert.equal(fixedRow.querySelector('.slop-machine').getAttribute('aria-hidden'), 'true');

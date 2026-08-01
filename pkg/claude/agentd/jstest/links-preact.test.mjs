@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertAbsent } from './assertions.mjs';
 import { createPreactHarness, getByRole } from './preact-harness.mjs';
 
 function deferred() {
@@ -253,7 +254,7 @@ test('Links edit form is immutable except for mode and submits the exact row ide
   assert.equal(host.querySelector('#link-modal-meta').textContent, '#2 · gamma → alpha');
   assert.equal(host.querySelector('#link-modal-from').disabled, true);
   assert.equal(host.querySelector('#link-modal-to').disabled, true);
-  assert.equal(host.querySelector('#link-modal-bidir'), null);
+  assertAbsent(host.querySelector('#link-modal-bidir'));
   assert.equal(harness.document.activeElement, host.querySelector('#link-modal-mode'));
   await choose(harness, host.querySelector('#link-modal-mode'), 'members->members');
   await harness.act(() => harness.fireEvent(host.querySelector('#link-modal-submit'), 'click'));
@@ -298,14 +299,14 @@ test('stacked Links focus, Escape and live snapshot refresh are deterministic', 
   };
   await harness.act(() => escape());
   await harness.act(() => Promise.resolve());
-  assert.equal(host.querySelector('#link-modal'), null);
+  assertAbsent(host.querySelector('#link-modal'));
   assert.ok(host.querySelector('#links-manage-modal'), 'the first Escape closes only the top editor');
   assert.equal(harness.document.activeElement, create);
   assert.equal(discardChecks, 1);
 
   await harness.act(() => escape());
   await harness.act(() => Promise.resolve());
-  assert.equal(host.querySelector('#links-manage-modal'), null);
+  assertAbsent(host.querySelector('#links-manage-modal'));
   assert.equal(harness.document.activeElement, invoker);
   invoker.remove();
   await mounted.cleanup();
@@ -353,7 +354,7 @@ test('Links create dirty baseline survives live group membership changes', async
   await harness.act(() => escape());
   await harness.act(() => Promise.resolve());
   assert.equal(discardChecks, 2);
-  assert.equal(host.querySelector('#link-modal'), null);
+  assertAbsent(host.querySelector('#link-modal'));
 
   // The inverse remains clean: an untouched alpha→beta draft does not start
   // prompting just because a publish removes alpha from the live group list.
@@ -364,7 +365,7 @@ test('Links create dirty baseline survives live group membership changes', async
   await harness.act(() => escape());
   await harness.act(() => Promise.resolve());
   assert.equal(discardChecks, 2, 'a publish cannot make an untouched draft appear dirty');
-  assert.equal(host.querySelector('#link-modal'), null);
+  assertAbsent(host.querySelector('#link-modal'));
   await mounted.cleanup();
 });
 

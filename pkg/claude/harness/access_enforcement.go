@@ -259,6 +259,18 @@ func ResolveAccessEnforcement(
 			osSandbox.State, osSandbox.Source,
 		)
 	}
+	// For Claude's builtin implementation, Unverified specifically means a
+	// settings tier above the one that enabled the native sandbox could not be
+	// read. That tier might disable confinement, so it is not positive evidence.
+	// Keep the scope exact: outer implementations also use Unverified to disclose
+	// known partial fidelity that their capability table handles deliberately.
+	if implementation == sandboxpolicy.ImplementationHarnessBuiltin &&
+		h.Name == DefaultName && osSandbox.Unverified {
+		return AccessEnforcement{}, fmt.Errorf(
+			"access enforcement requires a verified functioning OS sandbox; verdict is %q from %q but higher-precedence Claude settings could not be verified",
+			osSandbox.State, osSandbox.Source,
+		)
+	}
 	row, err := accessEnforcementTable(
 		h, implementation, axes, validatedBuiltinMode, runtime.GOOS,
 		osSandbox.FilteredNetwork,

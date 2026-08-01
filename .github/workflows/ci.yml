@@ -28,7 +28,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
 
@@ -84,12 +84,12 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
 
       - name: Set up Node for OpenCode smoke
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: 24
 
@@ -729,12 +729,12 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
 
       - name: Set up Node for OpenCode smoke
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: 24
 
@@ -829,24 +829,17 @@ jobs:
           TCLAUDE_SANDBOX_V2_SMOKE: "1"
           TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY: ${{ runner.temp }}/tclaude-sandbox-v2
         run: |
-          smoke_log="$RUNNER_TEMP/tclaude-layer-darwin-smoke.log"
-          go test ./pkg/claude/session -run '^TestTclaudeLayerDarwinSmoke$' -count=1 -v -timeout=120s |
-            tee "$smoke_log"
-          if ! grep -q '^--- PASS: TestTclaudeLayerDarwinSmoke ' "$smoke_log"; then
-            {
-              echo "### Sandbox v2 Seatbelt smoke did not complete"
-              echo
-              echo "The test command exited successfully without reporting that the named real smoke passed."
-              echo "The test name, build constraints, or smoke gate likely changed; see the test log."
-            } >> "$GITHUB_STEP_SUMMARY"
-            echo "::error::TestTclaudeLayerDarwinSmoke did not report an explicit pass"
+          driver_log="$RUNNER_TEMP/seatbelt-smoke-driver.log"
+          set +e
+          bash scripts/seatbelt-smoke/driver.sh | tee "$driver_log"
+          pipeline_status=("${PIPESTATUS[@]}")
+          set -e
+          if [[ "${pipeline_status[0]}" -ne 0 || "${pipeline_status[1]}" -ne 0 ]]; then
+            echo "::error::seatbelt driver pipeline failed (driver=${pipeline_status[0]}, tee=${pipeline_status[1]})"
             exit 1
           fi
-          refusal_log="$RUNNER_TEMP/stacked-seatbelt-refusal.log"
-          go test ./pkg/claude/session -run '^TestStackedSandboxDarwinRefusal$' -count=1 -v -timeout=30s |
-            tee "$refusal_log"
-          if ! grep -q '^--- PASS: TestStackedSandboxDarwinRefusal ' "$refusal_log"; then
-            echo "::error::TestStackedSandboxDarwinRefusal did not report an explicit pass"
+          if ! grep -q '^Seatbelt smoke evidence complete:$' "$driver_log"; then
+            echo "::error::seatbelt driver did not print its completion sentinel — it exited before finishing"
             exit 1
           fi
 
@@ -946,7 +939,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
 
@@ -987,7 +980,7 @@ jobs:
       # main that populates what PR runs restore. Renaming the key in one copy
       # would silently cost most of the hit rate with no failure anywhere.
       - name: Cache Go build output
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ${{ env.GOCACHE }}
           key: gobuild-filtered-proxy-smoke-${{ matrix.shard }}-${{ runner.os }}-${{ hashFiles('go.sum', 'go.mod') }}
@@ -997,7 +990,7 @@ jobs:
       # Node is needed by the entrypoint to install the pinned harnesses and to
       # read their release manifest.
       - name: Set up Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: lts/*
 
@@ -1015,7 +1008,7 @@ jobs:
       # harnesses::install_claude verifies the published sha256 and the version
       # against whatever file it actually uses, restored or freshly downloaded.
       - name: Cache pinned harness artifacts
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ${{ runner.temp }}/smoke-harness-cache
           key: smoke-harness-${{ runner.os }}-${{ matrix.shard }}-${{ hashFiles('scripts/filtered-proxy-smoke/lib/harnesses.sh') }}
@@ -1046,7 +1039,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
 

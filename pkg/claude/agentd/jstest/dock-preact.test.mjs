@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertAbsent } from './assertions.mjs';
 import { createPreactHarness, getByRole } from './preact-harness.mjs';
 
 function section(calls) {
@@ -49,7 +50,7 @@ test('Dock keeps keyed cards, disclosure and an open menu stable across snapshot
   assert.equal(card.dataset.dockKind, 'profiles');
   assert.equal(card.dataset.dockName, 'review');
   assert.equal(details.querySelector('.dock-section-icon').textContent, '⚙', 'the category icon stays in the section heading');
-  assert.equal(card.querySelector('.dock-card-icon'), null, 'cards do not repeat the category icon on every row');
+  assertAbsent(card.querySelector('.dock-card-icon'), 'cards do not repeat the category icon on every row');
 
   await harness.act(() => harness.fireEvent(cog, 'click'));
   const menu = getByRole(card, 'menu', { name: 'review' });
@@ -159,7 +160,7 @@ test('Profile cards show complete details in a non-reflowing tooltip', async (t)
     'aka codex-reviewer', 'aka cold-reviewer', 'sonnet', 'effort high', 'sandbox on',
   ]);
   assert.equal(full.getAttribute('aria-label'), 'All aliases and settings');
-  assert.equal(full.querySelector('.dock-chip-more'), null, 'the tooltip list is never truncated');
+  assertAbsent(full.querySelector('.dock-chip-more'), 'the tooltip list is never truncated');
 
   host.getBoundingClientRect = () => ({ top: 0, bottom: 100 });
   card.getBoundingClientRect = () => ({ top: 80, bottom: 100, left: 300, width: 220 });
@@ -284,7 +285,7 @@ test('Dock renders structured badge metadata natively with stable badge keys', a
   const badge = host.querySelector('.tc-count');
   assert.equal(badge.textContent, '🌊 2 waves');
   assert.equal(badge.title, 'staged-spawn waves');
-  assert.equal(host.querySelector('.dock-chip'), null, 'the source class survives native rendering');
+  assertAbsent(host.querySelector('.dock-chip'), 'the source class survives native rendering');
 
   await harness.act(() => state.publish({ profiles: [{ name: 'circle', waves: 3 }] }));
   assert.equal(host.querySelector('.tc-count'), badge, 'the structured badge key retains DOM identity');

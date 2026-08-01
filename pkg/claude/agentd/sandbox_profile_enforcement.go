@@ -107,6 +107,25 @@ type sandboxProfileEnforcementTarget struct {
 	Refusal *sandboxProfileEnforcementRefusal `json:"refusal,omitempty"`
 }
 
+// sandboxProfileOmittedRefusal is a refusal from an assignment context past the
+// display cap, carrying the identity of the assignment it belongs to (TCL-913).
+//
+// The refusal is EMBEDDED rather than nested, so the JSON stays the flat
+// {kind, harness, message} object clients already read, with "context" added
+// beside it. That is what keeps the wire change compatible in both directions:
+// a client that predates this field ignores the extra key and renders exactly
+// what it renders today, and a client that expects it but talks to a daemon
+// that predates it sees the key absent — not empty — and falls back.
+//
+// Context is the same map the listed contexts carry, deliberately NOT a
+// rendered string: the display vocabulary for an assignment lives in one place
+// in the frontend, and shipping words from here would put a second copy of it
+// in a different language with nothing keeping the two in step.
+type sandboxProfileOmittedRefusal struct {
+	*sandboxProfileEnforcementRefusal
+	Context map[string]string `json:"context,omitempty"`
+}
+
 type sandboxProfileEnforcementResponse struct {
 	Profile string                            `json:"profile"`
 	Targets []sandboxProfileEnforcementTarget `json:"targets"`
@@ -151,7 +170,13 @@ type sandboxProfileDraftEnforcementTarget struct {
 	// nothing to the aggregate (which summarizes surviving contexts only), so
 	// without this field a refusal past the cap would be invisible while the
 	// editor still claims every assignment was checked.
-	OmittedRefusals []*sandboxProfileEnforcementRefusal `json:"omitted_refusals,omitempty"`
+	//
+	// Each entry carries the refusing assignment's own context (TCL-913), so
+	// the operator can NAME it rather than being told only that some omitted
+	// assignment refuses. A listed context is identified by its index into
+	// ContextAxes; an omitted one has no index, which is why the identity must
+	// travel with the refusal itself.
+	OmittedRefusals []sandboxProfileOmittedRefusal `json:"omitted_refusals,omitempty"`
 }
 
 type sandboxProfileEffectiveContext struct {
@@ -435,11 +460,34 @@ func handleSandboxProfileDraftEnforcement(w http.ResponseWriter, r *http.Request
 		// either — truncating it away as well would leave the omitted assignments
 		// with no representation at all, while the editor tells the operator they
 		// "are still included in the overall safety check". Carry them separately.
-		omittedRefusals := []*sandboxProfileEnforcementRefusal{}
-		for _, refusal := range contextRefusals[min(len(contextRefusals), len(response.Contexts)):] {
-			if refusal != nil {
-				omittedRefusals = append(omittedRefusals, refusal)
+		// The offset is where the omitted contexts start, and it is also what
+		// turns a refusal back into an assignment: contextRefusals is index-
+		// aligned with the FULL contexts slice, so omitted entry i belongs to
+		// contexts[omittedFrom+i]. Ranging without that offset is how the
+		// identity was previously discarded (TCL-913) — the slice expression
+		// kept the refusal and threw away the only thing that named it.
+		omittedFrom := min(len(contextRefusals), len(response.Contexts))
+		// Guarded rather than assumed, and guarded on the PRECONDITION rather
+		// than on the index. A bounds check alone only catches misalignment
+		// that overflows; a SHIFT stays in bounds and names a real but wrong
+		// assignment, which is the one outcome worse than naming none. The
+		// alignment is a one-append-per-context property of the producer, so
+		// the honest test is that the lengths still agree — if a future edit
+		// there ever drops or adds an entry, every identity goes missing and
+		// the client falls back to its unnamed wording, which is today's
+		// behaviour. Both checks are kept: the length equality is what makes
+		// the claim true, the bounds check is what makes it obvious.
+		alignedWithContexts := len(contextRefusals) == len(contexts)
+		omittedRefusals := []sandboxProfileOmittedRefusal{}
+		for offset, refusal := range contextRefusals[omittedFrom:] {
+			if refusal == nil {
+				continue
 			}
+			entry := sandboxProfileOmittedRefusal{sandboxProfileEnforcementRefusal: refusal}
+			if index := omittedFrom + offset; alignedWithContexts && index < len(contexts) {
+				entry.Context = contexts[index].Context
+			}
+			omittedRefusals = append(omittedRefusals, entry)
 		}
 		if len(contextRefusals) > len(response.Contexts) {
 			contextRefusals = contextRefusals[:len(response.Contexts)]
