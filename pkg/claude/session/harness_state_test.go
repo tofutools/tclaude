@@ -20,6 +20,7 @@ func TestSessionState_HarnessRoundTripsThroughLoadMutateSave(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 
 	require.NoError(t, SaveSessionState(&SessionState{
 		ID:      "s1",
@@ -50,6 +51,7 @@ func TestSessionState_FreshDefaultsToClaude(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 
 	require.NoError(t, SaveSessionState(&SessionState{ID: "s2", ConvID: "c2", Status: StatusIdle}))
 	got, err := LoadSessionState("s2")

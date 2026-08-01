@@ -245,6 +245,7 @@ func TestRunHookCallback_CompactingStatusLifecycle(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 
 	cfg := config.DefaultConfig()
 	cfg.PreCompactGuard = &config.PreCompactGuardConfig{Enabled: false}
@@ -370,6 +371,7 @@ func TestRunHookCallback_PreCompactStatusAttribution(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 
 	cfg := config.DefaultConfig()
 	cfg.PreCompactGuard = &config.PreCompactGuardConfig{Enabled: false}
@@ -430,6 +432,7 @@ func TestRunHookCallback_PreCompactStatusForAutoRegisteredSession(t *testing.T) 
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 
 	cfg := config.DefaultConfig()
 	cfg.PreCompactGuard = &config.PreCompactGuardConfig{Enabled: false}

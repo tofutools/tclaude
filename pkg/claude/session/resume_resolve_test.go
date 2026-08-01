@@ -46,6 +46,7 @@ func TestResolveResumeConv_CodexUsesConvStore(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 
 	h, err := harness.Resolve("codex")
 	require.NoError(t, err)

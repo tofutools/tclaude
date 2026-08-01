@@ -116,6 +116,7 @@ func setupAskTestDB(t *testing.T) {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 }
 
 // fakeRun is a stand-in for the harness subprocess: it records every runPlan

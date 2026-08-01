@@ -40,6 +40,7 @@ func carryoverTestHome(t *testing.T) string {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 	return dir
 }
 

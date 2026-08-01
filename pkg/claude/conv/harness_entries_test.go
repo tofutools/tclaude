@@ -20,6 +20,7 @@ func setupHarnessTestHome(t *testing.T) string {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 	return home
 }
 

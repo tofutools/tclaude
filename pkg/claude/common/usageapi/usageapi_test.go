@@ -19,6 +19,7 @@ func setupTestCache(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 }
 
 // stubFuncs replaces fetchFunc, credentialCandidatesFunc, and refreshTokenFunc

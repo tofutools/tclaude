@@ -17,6 +17,7 @@ func isolateCacheAndDB(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 }
 
 // Two resumes of the same conversation must not both proceed: the second

@@ -37,6 +37,7 @@ func withResumeConfig(t *testing.T) {
 	t.Setenv("HOME", dir)
 	t.Setenv("USERPROFILE", dir) // os.UserHomeDir reads this on Windows
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 	cfg := config.DefaultConfig()
 	cfg.ClaudeResume = &config.ClaudeResumeConfig{ThresholdMinutes: new(config.ResumeThresholdMinutesSuppress)}
 	require.NoError(t, config.Save(cfg))
@@ -277,6 +278,7 @@ func TestResumeLaunchCmd_NoOverrideWhenUnconfigured(t *testing.T) {
 	t.Setenv("HOME", dir)
 	t.Setenv("USERPROFILE", dir)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 	require.NoError(t, config.Save(config.DefaultConfig())) // no claude_resume block
 
 	cmd, _, _, err := resumeLaunchCmd("claude", resumeConvClaude[:8], resumeConvClaude, nil)

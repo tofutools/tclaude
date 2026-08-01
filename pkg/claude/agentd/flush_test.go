@@ -24,6 +24,7 @@ func setupTestDB(t *testing.T) {
 	// Windows test run stays in the temp dir instead of the real home.
 	t.Setenv("USERPROFILE", dir)
 	db.ResetForTest()
+	cleanupAgentdTestDB(t)
 	// The name-derived spawn labels this daemon has handed out are a package
 	// global that outlives the per-test DB; clear it so one test's "worker"
 	// doesn't push the next test's to "worker-2".

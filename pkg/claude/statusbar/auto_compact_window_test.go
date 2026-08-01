@@ -18,6 +18,7 @@ func resetTestDB(t *testing.T) {
 	t.Setenv("HOME", dir)
 	t.Setenv("USERPROFILE", dir)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 }
 
 // insertSession writes the minimum session row GetSessionAutoCompactWindow reads

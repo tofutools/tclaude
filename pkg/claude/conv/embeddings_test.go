@@ -91,6 +91,7 @@ func setupEmbeddingsTestDB(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 }
 
 // --- Float32/Byte conversion tests ---

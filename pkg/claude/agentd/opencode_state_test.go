@@ -126,6 +126,7 @@ func TestOpenCodeUnixRelayBuildsV4ForIsolatedSmokeAndFilteredPublicLaunch(t *tes
 	t.Cleanup(func() { _ = os.RemoveAll(shortData) })
 	t.Setenv("XDG_DATA_HOME", shortData)
 	db.ResetForTest()
+	cleanupAgentdTestDB(t)
 	cwd := filepath.Join(shortHome, "work")
 	require.NoError(t, os.MkdirAll(cwd, 0o700))
 	agentID := "agt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"

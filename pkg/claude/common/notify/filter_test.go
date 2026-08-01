@@ -17,6 +17,7 @@ func setupFilterDB(t *testing.T) {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 }
 
 func addMember(t *testing.T, groupID int64, convID string) {

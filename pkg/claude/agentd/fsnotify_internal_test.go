@@ -16,6 +16,7 @@ import (
 func TestConvMonitor_HandleFireEvictsFollowerForRemovedPath(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	db.ResetForTest()
+	cleanupAgentdTestDB(t)
 
 	m := &convMonitor{projectsDir: filepath.Join(t.TempDir(), "projects")}
 	timers := map[string]*pendingTimer{}

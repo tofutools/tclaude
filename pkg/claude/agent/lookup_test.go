@@ -28,6 +28,7 @@ func setupTestDB(t *testing.T) {
 	whoamiViaDaemon = func() string { return "" }
 	t.Cleanup(func() { whoamiViaDaemon = prevWhoami })
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 }
 
 func TestCurrentConvID_PrefersDaemonOverEnvironment(t *testing.T) {

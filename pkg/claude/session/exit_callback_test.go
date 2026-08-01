@@ -75,6 +75,7 @@ func setupExitCallbackTest(t *testing.T, fake *exitCallbackTmux) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 	prev := clcommon.Default
 	clcommon.Default = fake
 	t.Cleanup(func() { clcommon.Default = prev })

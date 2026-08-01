@@ -16,6 +16,7 @@ func resetTestDB(t *testing.T) {
 	t.Setenv("HOME", dir)
 	t.Setenv("USERPROFILE", dir)
 	db.ResetForTest()
+	cleanupAgentdTestDB(t)
 }
 
 // TestPermissionRegistry_AutoGrantableSet pins the EXACT set of slugs the

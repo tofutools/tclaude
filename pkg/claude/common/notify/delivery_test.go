@@ -25,6 +25,7 @@ func setupDelivery(t *testing.T, delivery string) (marker string) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 
 	marker = filepath.Join(home, "os-channel-fired")
 	require.NoError(t, config.Save(&config.Config{
@@ -91,6 +92,7 @@ func TestDeliveryBrowserStillHonoursTheMasterSwitch(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 	require.NoError(t, config.Save(&config.Config{
 		Notifications: &config.NotificationConfig{
 			Enabled:  false,

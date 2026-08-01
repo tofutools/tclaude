@@ -15,6 +15,7 @@ func setupTestDB(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 }
 
 func TestDBCache_FreshEntryNotRescanned(t *testing.T) {
