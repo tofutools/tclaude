@@ -716,3 +716,62 @@ func environmentNames(entries []sandboxpolicy.EnvironmentEntry) string {
 	}
 	return strings.Join(names, ",")
 }
+
+// TestOpenCodeInvalidAgentIDIsMatchableFromBothProducers pins the property
+// TCL-911 restores: the two functions that refuse a malformed agent id render
+// ONE operator-visible sentence and both answer errors.Is with that sentence's
+// sentinel. Text equality is asserted on full Error() strings so a fix that
+// changed the wording would be caught here rather than by an operator.
+//
+// BOTH, not EVERY: the two producers are enumerated by hand, so a third one
+// added later emitting the literal — the exact failure mode this closes — would
+// not fail here. That invariant is carried by errOpenCodeInvalidAgentID's doc
+// comment, not by this assertion.
+//
+// The text assertions hold on the pre-fix tree as well — that is the point.
+// What fails without the fix is only the errors.Is assertion on
+// allocatePrivateOpenCodeState, which is exactly the drift being closed.
+func TestOpenCodeInvalidAgentIDIsMatchableFromBothProducers(t *testing.T) {
+	setupTestDB(t)
+	const badID = "agt_not-hex"
+	const wantSentence = `invalid OpenCode state agent id "agt_not-hex"`
+
+	allocated, allocErr := allocatePrivateOpenCodeState(badID)
+	require.Error(t, allocErr)
+	require.Nil(t, allocated)
+	required, requireErr := requireOpenCodeStateAllocation(badID)
+	require.Error(t, requireErr)
+	require.Nil(t, required)
+
+	assert.Equal(t, wantSentence, allocErr.Error(),
+		"allocatePrivateOpenCodeState must not change the operator-visible sentence")
+	assert.Equal(t, wantSentence, requireErr.Error(),
+		"requireOpenCodeStateAllocation must not change the operator-visible sentence")
+	assert.Equal(t, requireErr.Error(), allocErr.Error(),
+		"both producers must render byte-identically")
+
+	assert.ErrorIs(t, allocErr, errOpenCodeInvalidAgentID,
+		"a producer whose text matches the sentinel must also be matchable by errors.Is")
+	assert.ErrorIs(t, requireErr, errOpenCodeInvalidAgentID)
+
+	// The deliberately-similar sibling must NOT match: it is a different
+	// sentence about a different subject (a stored allocation's recorded id,
+	// not a caller-supplied one), so a caller acting on errOpenCodeInvalidAgentID
+	// must not swallow it.
+	sibling, siblingErr := validateOpenCodeStateAllocation(
+		db.OpenCodeAgentStateAllocation{AgentID: badID, Mode: db.OpenCodeStatePrivate})
+	require.Error(t, siblingErr)
+	require.Nil(t, sibling)
+	assert.Equal(t, `invalid OpenCode state allocation agent id "agt_not-hex"`,
+		siblingErr.Error())
+	assert.NotErrorIs(t, siblingErr, errOpenCodeInvalidAgentID)
+
+	// A well-formed id must not reach the sentinel at all, so the assertions
+	// above are about the id rule rather than about every refusal this
+	// allocation authority can produce.
+	_, missingErr := requireOpenCodeStateAllocation(
+		"agt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	require.Error(t, missingErr)
+	assert.ErrorContains(t, missingErr, "refusing shared-state fallback")
+	assert.NotErrorIs(t, missingErr, errOpenCodeInvalidAgentID)
+}

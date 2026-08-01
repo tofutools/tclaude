@@ -132,7 +132,7 @@ func TestDashboardHTML_SandboxProfilesUI(t *testing.T) {
 		`Host and domain rules allow IP addresses returned by DNS.`,
 		`If any check fails, these rules are not enforced and outbound traffic is open.`,
 		`local-machine rules use host.tclaude.internal.`,
-		`target.context_network_entries?.[contextIndex]`,
+		`sandboxContextNetworkEntries(target, contextIndex)`,
 		`class="sbx-section-help sbx-rule-help"`,
 		`Deny enforcement depends on the launch target — see Effective policy preview.`,
 	} {
@@ -160,6 +160,28 @@ func TestDashboardHTML_SandboxProfilesUI(t *testing.T) {
 		if strings.Contains(dashboardAssets, retired) {
 			t.Errorf("retired sandbox manager ownership remains: %q", retired)
 		}
+	}
+
+	// TCL-914. The per-context network entries are derived by ONE predicate that
+	// both consumers share: SandboxPolicyResult, deciding what to render, and
+	// sandboxPolicyNeedsAttention, deciding whether to raise attention. The
+	// disclosure needle above proves the helper is CALLED; these two prove it is
+	// called at BOTH sites and that neither has drifted back to deriving the
+	// value itself.
+	//
+	// Counted rather than merely Contains: a Contains check is satisfied by one
+	// surviving call site, which is exactly the state a previous attempt shipped
+	// in. The definition line is excluded by matching the assignment.
+	const sharedCall = "= sandboxContextNetworkEntries(target, contextIndex);"
+	if got := strings.Count(dashboardAssets, sharedCall); got != 2 {
+		t.Errorf("per-context network entries derived through the shared helper at %d call sites, want 2 (%q)",
+			got, sharedCall)
+	}
+	// The two-copy spelling this replaced. `??` treats the daemon's explicit null
+	// at a refused index as absent and substitutes the draft-only rows, so its
+	// return would be a silent regression at whichever site kept it.
+	if strings.Contains(dashboardAssets, "context_network_entries?.[contextIndex]") {
+		t.Error("a consumer derives the per-context network entries itself again; use sandboxContextNetworkEntries")
 	}
 }
 
