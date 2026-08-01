@@ -814,8 +814,18 @@ func validateOpenCodeReadOnlyConfigSeedSourceAt(
 	// string, so the candidate side is resolved by the kernel a second time —
 	// inherent to comparing a descriptor against a PATH, and unavoidable short
 	// of opening the candidate too. What makes it safe is not the absence of a
-	// second resolution but that both ends are daemon-derived and sit behind
-	// the same DB-write precondition.
+	// second resolution but that the CANDIDATE side is daemon-derived and lives
+	// under this daemon's own private state parent, while the DESCRIPTOR side
+	// needs no trust at all because it is the thing being proven — the whole
+	// route sitting behind the same DB-write precondition.
+	//
+	// Stated that way deliberately. An earlier version of this comment said
+	// "both ends are daemon-derived", which is false and false in the worst
+	// direction: the descriptor is opened on the contract's own
+	// ReadOnlyBinds[].Source, i.e. exactly the persisted-spec input this
+	// function exists to constrain, as its own header says 40 lines up. A
+	// safety argument that assumes the untrusted input is trusted is worse than
+	// no comment, because it reads as a reason to stop checking.
 	//
 	// An earlier shape read configDir twice — once to compare against the
 	// descriptor, once to look the allocation up — which left the residual
