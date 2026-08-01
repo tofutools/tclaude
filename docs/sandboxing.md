@@ -709,9 +709,12 @@ side of remote connections and is therefore never used for this boundary.
 This is a limit of the mechanism rather than a configuration mistake: SBPL
 cannot express "this port, loopback only" at all, so no policy you can author
 avoids it. It is measured on a real runner rather than inferred — CI run
-`30691418550`, job `91346704723` — and pinned by a characterization test, so a
-change in Apple's `localhost` semantics in *either* direction is reported by CI
-instead of being discovered years later.
+`30691418550`, job `91346704723` — and pinned by a characterization test, so if
+Apple ever *narrows* `localhost` to the loopback interface, CI reports it
+instead of the change being discovered years later. A *widening* of `localhost`
+beyond this machine is not detected by that test; catching it would need a
+service on the allowed port at an off-machine address, which CI cannot arrange
+safely.
 
 macOS does not yet enforce a mixed Local + model-API pack list. It follows the
 same established list-degradation path as any other mixed Darwin list: the
