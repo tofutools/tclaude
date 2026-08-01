@@ -541,6 +541,55 @@ a deny row — `NetworkRulesAreLoopbackOnly` ignores `Deny`, so the readiness ch
 holds while the deny row still selects the engine — and that shape is asserted
 too. The domination is therefore **axes-specific, not structural**.
 
+### Darwin `NetworkList` is capped at Partial (TCL-917)
+
+A ceiling on what any future Darwin activation may claim, recorded here so it is
+not rediscovered when a cell is proposed.
+
+A Seatbelt loopback rule scopes to **a port set across all host-local
+addresses**, not to the loopback interface, so "this port, loopback only" is
+not expressible at all.
+
+"Loopback rule" here means the rule Seatbelt renders on macOS, and it is **not**
+this document's *loopback-row authority* — the two are unrelated mechanisms that
+share a word. The `0.0.0.0/8` split between loopback rows and CIDR rows is a
+property of the proxy engine's evaluator; Seatbelt has no row-authority concept
+to split, only the single host token `localhost`, which is exactly why its scope
+collapses to a port set. Nothing in that split loosens or tightens what is
+described below.
+
+The two halves of that have different evidence, and are worth keeping apart:
+
+- **`localhost` matches every address assigned to the host.** Measured on the
+  native path — CI run `30691418550`, job `91346704723`. That job is **red by
+  design**: the probe reported its finding by failing deliberately, because a
+  passing log is one nobody reads.
+- **Literal IPs are rejected at profile parse time**, with `host must be * or
+  localhost in network address`. This comes from M3.1/M3.2 attempting exactly
+  that substitution, not from the run above, and no test currently asserts it.
+
+So **M3.3 may rate Darwin `NetworkList` Partial with that scope stated; it may
+not rate it Full.** This is a cap on a future claim rather than a correction to
+a current one: the cell is already `EnforceNone` and `EnforceFull` is gated on
+`goos == "linux"`, so nothing is over-rated today and no cell changed when this
+was measured.
+
+**Not measured, named so silence is not read as evidence:** external *UDP*
+egress from the native path. It is unmeasured on the proxy floor too — that
+suite's UDP assertion targets a **loopback** endpoint and tests the protocol
+axis (its exception is TCP-only) rather than testing egress. External *TCP*
+egress is measured on the native path: the Darwin smoke's `networkLocal` branch
+asserts `1.1.1.1:53` fails with EPERM, and it held in the run cited above. The
+operator docs therefore claim TCP and not IP generally.
+
+TCL-917 considered a launch-time port-collision check and it was ruled against —
+refusing a launch because an unrelated program holds a port is how a sandbox
+gets switched off, and the scenario is narrow. The ruling was document and
+disclose. If a Darwin proxy is ever wired up, revisit the question **then**,
+with the seam in front of you; this is not a permanent "never".
+
+### What the first activation run showed
+
 What the first activation run (on-main run `30609001363`) actually showed, as
 distinct from what was hypothesized:
 

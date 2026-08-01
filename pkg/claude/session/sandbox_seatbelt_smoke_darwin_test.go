@@ -6,11 +6,14 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -44,6 +47,7 @@ const (
 	darwinSmokeNetworkLocalEnv      = "TCLAUDE_SANDBOX_V2_NETWORK_LOCAL"
 	darwinSmokeHostListenerEnv      = "TCLAUDE_SANDBOX_V2_HOST_LISTENER"
 	darwinSmokeDeniedListenerEnv    = "TCLAUDE_SANDBOX_V2_DENIED_LISTENER"
+	darwinSmokeSamePortListenerEnv  = "TCLAUDE_SANDBOX_V2_SAME_PORT_LISTENER"
 	darwinSmokeExpectedAgentIDEnv   = "TCLAUDE_SANDBOX_V2_EXPECTED_AGENT_ID"
 	darwinSmokeRuntimeTempDirEnv    = "TCLAUDE_SANDBOX_V2_RUNTIME_TMPDIR"
 	darwinSmokeInheritedFDEnv       = "TCLAUDE_SANDBOX_V2_INHERITED_FD"
@@ -51,6 +55,41 @@ const (
 	darwinSmokeHelperGateFDEnv      = "TCLAUDE_SANDBOX_V2_HELPER_GATE_FD"
 	darwinSmokeHelperTestExpression = "^TestTclaudeLayerDarwinSmokeHelper$"
 )
+
+// darwinLocalAccessSamePortBypassExpected records what the LIVE Local-access
+// path currently does, not what it should do. TCL-917 ruled (c) document and
+// disclose: no refusal, no warning, no port check. The disclosure is the fix,
+// and this constant is what keeps the disclosure honest over time.
+//
+// Seatbelt cannot express "this port, loopback interface only". Its network
+// grammar accepts only "localhost" or "*" as the host, literal IPs are
+// rejected at parse time, and "localhost" matches every address assigned to
+// the host. So a rule allowing Local access on port N also permits a
+// different service on port N at this machine's non-loopback address.
+//
+// Measured on a real runner: CI run 30691418550, job 91346704723 — a connect
+// to 192.168.64.10:49187 succeeded from inside the sandbox while the rule
+// named 127.0.0.1:49187.
+//
+// If Apple ever NARROWS "localhost" to the loopback interface, this test
+// reports it instead of us discovering it years later, and flipping this one
+// constant is the entire change. That is what makes documenting-rather-than-
+// fixing defensible.
+//
+// It does NOT detect WIDENING. A "localhost" that matched addresses beyond
+// this machine would leave this constant true and every assertion here green;
+// catching that needs a service on the allowed port at an off-machine
+// address, which CI cannot arrange safely. Stated as an uncovered direction
+// rather than implied to be covered — an earlier version of this comment
+// claimed both directions and was wrong.
+const darwinLocalAccessSamePortBypassExpected = true
+
+func darwinLocalAccessSamePortMarker() string {
+	if darwinLocalAccessSamePortBypassExpected {
+		return "darwin-local-access LIMITATION: same-port non-loopback local service is directly reachable"
+	}
+	return "darwin-local-access MITIGATED: same-port non-loopback local service is refused with EPERM"
+}
 
 const darwinSmokeConvID = "77000000-0000-4000-8000-000000000770"
 const darwinSmokeSessionID = "sandbox-v2-darwin-smoke"
@@ -232,6 +271,27 @@ func TestTclaudeLayerDarwinSmoke(t *testing.T) {
 	assert.Equal(t, "claude-opus-5", snapshot.ModelID)
 
 	localPort := hostListener.Addr().(*net.TCPAddr).Port
+
+	// TCL-917: the ADDRESS axis of the Local-access rule. Everything the
+	// helper asserts below varies the PORT and holds the address at loopback,
+	// which is why this gap survived review three times — see the same-port
+	// characterization in the helper.
+	//
+	// This control is a DIFFERENT service on the SAME port at a non-loopback
+	// local address, so reaching it from inside the sandbox cannot be confused
+	// with reaching the allowed loopback service.
+	samePortListener, samePortInventory := darwinLocalAccessSamePortControl(t, localPort)
+	// Positive control: the helper's observation means nothing unless this
+	// target is independently known to answer. Without it, "refused" and
+	// "nothing was listening" are the same result.
+	samePortControlConn, err := net.DialTimeout(
+		"tcp4", samePortListener.Addr().String(), 2*time.Second)
+	require.NoErrorf(t, err,
+		"runner must reach the same-port non-loopback control before Seatbelt sees it\nrunner interfaces:\n%s",
+		samePortInventory)
+	require.NoError(t, samePortControlConn.Close())
+	t.Logf("out-of-sandbox control passed: same-port non-loopback=%s (allowed rule names 127.0.0.1:%d)",
+		samePortListener.Addr(), localPort)
 	localRules, err := sandboxpolicy.CompileFilteredNetworkRules(
 		sandboxpolicy.NetworkRules{
 			Mode: sandboxpolicy.AccessModeList,
@@ -244,7 +304,11 @@ func TestTclaudeLayerDarwinSmoke(t *testing.T) {
 	localPlan := plan
 	localPlan.NetworkPosture = sandboxpolicy.NetworkFiltered
 	localPlan.FilteredNetwork = &localRules
-	runDarwinSeatbeltSmokeHelper(
+	// The helper inherits os.Environ(), so this reaches it without changing
+	// runDarwinSeatbeltSmokeHelper's signature at five call sites. Only the
+	// networkLocal branch reads it; the other postures ignore it.
+	t.Setenv(darwinSmokeSamePortListenerEnv, samePortListener.Addr().String())
+	localOutput := runDarwinSeatbeltSmokeHelper(
 		t,
 		binary,
 		helperBinary,
@@ -269,6 +333,12 @@ func TestTclaudeLayerDarwinSmoke(t *testing.T) {
 		deniedHostListener.Addr().String(),
 		expectedAgentID,
 	)
+	// Unconditional, at the site that BUILT the Local plan. This site knows the
+	// posture from localPlan above; it does not ask the parameter under test
+	// whether to check. Flipping or shifting the positional networkLocal
+	// argument now fails here instead of removing the behaviour and its guard
+	// in one move.
+	requireDarwinLocalAccessCharacterized(t, localOutput)
 
 	isolatedPlan := plan
 	isolatedPlan.NetworkPosture = sandboxpolicy.NetworkIsolatedWithAgentd
@@ -354,7 +424,7 @@ func runDarwinSeatbeltSmokeHelper(
 	restrictBaseline, exerciseBroker, networkIsolated, networkLocal bool,
 	allowed, outside, readonly, hidden, aliasFile, protectedFile, policySocket, allowedPolicySocket, tmuxSocket,
 	runtimeTempDir, tclaudeBinary, hostListener, deniedListener, expectedAgentID string,
-) {
+) string {
 	t.Helper()
 	helperCommand := clcommon.ShellQuoteArg(helperBinary) +
 		" " + clcommon.ShellQuoteArg("-test.run="+darwinSmokeHelperTestExpression)
@@ -467,6 +537,45 @@ func runDarwinSeatbeltSmokeHelper(
 		t.Fatal("darwin tclaude-layer smoke timed out")
 	}
 	require.NoErrorf(t, err, "darwin tclaude-layer smoke output: %s", output.String())
+	// Returned rather than asserted on here. The previous version gated the
+	// marker assertion on networkLocal — the same parameter that decides
+	// whether the helper runs the branch — so flipping or shifting that
+	// positional argument removed the behaviour AND its guard together, which
+	// is the defect the guard exists to prevent, one level out. The caller
+	// that KNOWS it is building a Local plan owns the expectation instead.
+	return output.String()
+}
+
+// requireDarwinLocalAccessCharacterized asserts, unconditionally, that a helper
+// run reported the Local-access same-port characterization.
+//
+// Unconditional is the point: it is called from the site that constructs the
+// Local plan, so nothing about it is derived from the value under test.
+//
+// require, not assert, and the log comes AFTER it. The earlier version used a
+// nonfatal assert and then RECOMPUTED the expected marker to log it, so a run
+// where the helper never emitted the marker still printed "characterization
+// executed" — failing overall, but leaving the log claiming the observation
+// happened in exactly the run where it did not. The evidence line must flow
+// from the observation, not from the expectation.
+func requireDarwinLocalAccessCharacterized(t *testing.T, helperOutput string) {
+	t.Helper()
+	marker := darwinLocalAccessSamePortMarker()
+	require.Containsf(t, helperOutput, marker,
+		"the Local-access smoke must report the same-port characterization it executed;"+
+			" its absence means the branch did not run, not that it passed\noutput:\n%s",
+		helperOutput)
+	// Re-emitted so the evidence is READABLE IN CI: the helper's stdout is
+	// captured and discarded on success, so a later auditor grepping a green
+	// job log would otherwise find nothing — the same zero that means "the
+	// branch did not run". The line printed is the one FOUND in the output,
+	// not a freshly computed expectation.
+	for _, line := range strings.Split(helperOutput, "\n") {
+		if strings.Contains(line, marker) {
+			t.Logf("Local-access characterization executed: %s", strings.TrimSpace(line))
+			return
+		}
+	}
 }
 
 func TestTclaudeLayerDarwinSmokeHelper(t *testing.T) {
@@ -582,6 +691,57 @@ func TestTclaudeLayerDarwinSmokeHelper(t *testing.T) {
 		}
 		assertSeatbeltEPERM(t, deniedDialErr, "port-scoped host-loopback TCP connect")
 
+		// TCL-917 — THE ADDRESS AXIS. The assertion above varies the PORT and
+		// holds the address at loopback; this holds the ALLOWED port and varies
+		// the ADDRESS. Placed here deliberately, next to the assertion it
+		// completes, because a reader who sees only the port assertion
+		// concludes "the loopback rule is scoped to loopback", which is what
+		// this rule does NOT do.
+		//
+		// Asserted POSITIVELY as the current behaviour, so this fails if the
+		// bypass DISAPPEARS — that is what makes it a characterization rather
+		// than a permanent excuse.
+		//
+		// IT DOES NOT DETECT WIDENING, AND NOTHING HERE DOES. If Apple ever
+		// made "localhost" match addresses beyond this host, this assertion
+		// would still pass.
+		//
+		// An earlier version of this comment claimed the 1.1.1.1:53 EPERM
+		// assertion below covered that. It does not, and the reason is worth
+		// keeping: the allow rule permits only the ephemeral localPort, so
+		// 1.1.1.1:53 is refused on PORT alone even under a widened host
+		// predicate. That assertion moves the address AND the port at once,
+		// which makes it silent about either in isolation — the exact
+		// two-parameter mistake this whole change set exists to correct,
+		// committed inside the correction.
+		//
+		// Detecting widening would need a service on the ALLOWED port at an
+		// address off this machine, which CI cannot arrange safely. Named as
+		// an uncovered direction rather than left to an assertion that cannot
+		// see it.
+		samePortListener := os.Getenv(darwinSmokeSamePortListenerEnv)
+		require.NotEmpty(t, samePortListener,
+			"the same-port non-loopback control must be supplied, or this characterization silently measures nothing")
+		samePortConn, samePortErr := net.DialTimeout(
+			"tcp4", samePortListener, 2*time.Second)
+		if darwinLocalAccessSamePortBypassExpected {
+			require.NoErrorf(t, samePortErr,
+				"darwin Local access is expected to REACH a same-port service at %s: "+
+					"Seatbelt's localhost token matches every address assigned to the host. "+
+					"If this now refuses, Apple changed localhost semantics and "+
+					"darwinLocalAccessSamePortBypassExpected must be flipped",
+				samePortListener)
+			require.NoError(t, samePortConn.Close())
+		} else {
+			if samePortErr == nil {
+				_ = samePortConn.Close()
+				t.Fatalf("darwin Local access reached same-port non-loopback %s while "+
+					"the bypass was declared mitigated", samePortListener)
+			}
+			assertSeatbeltEPERM(t, samePortErr, "same-port non-loopback TCP connect")
+		}
+		fmt.Println(darwinLocalAccessSamePortMarker())
+
 		publicConn, publicDialErr := net.DialTimeout(
 			"tcp4", "1.1.1.1:53", 500*time.Millisecond)
 		if publicDialErr == nil {
@@ -671,6 +831,113 @@ func TestTclaudeLayerDarwinSmokeHelper(t *testing.T) {
 	status.Stdin = strings.NewReader(statusPayload)
 	statusOutput, err := status.CombinedOutput()
 	require.NoErrorf(t, err, "brokered status line through Seatbelt: %s", statusOutput)
+}
+
+// darwinLocalAccessSamePortControl binds a live service on the given port at a
+// NON-loopback address belonging to this machine, and returns it with the
+// interface inventory it inspected.
+//
+// It t.Fatals rather than skipping when no such address exists. A skip here
+// would be the absence-satisfied shape in the one test whose entire job is to
+// notice a change in Seatbelt's behaviour: a green run that silently measured
+// nothing is exactly what this characterization exists to prevent. The
+// inventory is in the failure so "no address existed" can never be confused
+// with "the probe was not written". That fatal-rather-than-skip decision is
+// the proxy-floor smoke's, deliberately.
+//
+// IT DOES NOT COPY THAT SMOKE'S COLLISION HANDLING, and the difference is
+// forced rather than chosen. The proxy floor reserves the non-loopback side at
+// port 0 FIRST and then asks loopback for that exact port, so a transient
+// collision can retry the whole pair. Here the loopback listener already
+// exists — it is bound before the host-open posture runs and its address is
+// handed to that helper — so the port is an input, not something this function
+// may choose. A collision is therefore possible and unretriable.
+//
+// The two failure modes get DISTINCT messages for that reason: "no candidate
+// address" and "the port was taken" are different problems, and a collision
+// reported as the former would send an investigator to look for a runner
+// networking fault that does not exist.
+func darwinLocalAccessSamePortControl(t *testing.T, port int) (net.Listener, string) {
+	t.Helper()
+	interfaces, err := net.Interfaces()
+	require.NoError(t, err)
+	observed := []string{}
+	candidates := []netip.Addr{}
+	for _, iface := range interfaces {
+		addresses, addressErr := iface.Addrs()
+		if addressErr != nil {
+			observed = append(observed,
+				fmt.Sprintf("%s flags=%s addresses=<error: %v>", iface.Name, iface.Flags, addressErr))
+			continue
+		}
+		for _, raw := range addresses {
+			observed = append(observed,
+				fmt.Sprintf("%s flags=%s address=%s", iface.Name, iface.Flags, raw.String()))
+			prefix, parseErr := netip.ParsePrefix(raw.String())
+			if parseErr != nil || iface.Flags&net.FlagUp == 0 {
+				continue
+			}
+			address := prefix.Addr().Unmap()
+			if !address.Is4() || !address.IsGlobalUnicast() ||
+				address.IsLoopback() || address.IsLinkLocalUnicast() {
+				continue
+			}
+			candidates = append(candidates, address)
+		}
+	}
+	sort.Strings(observed)
+	inventory := strings.Join(observed, "\n")
+	if len(candidates) == 0 {
+		t.Fatalf("runner exposes no active globally-unicast non-loopback IPv4 address; "+
+			"it cannot execute the required same-port/different-local-address characterization\n"+
+			"runner interfaces:\n%s", inventory)
+	}
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i].Less(candidates[j]) })
+	failures := []string{}
+	inUse := false
+	for _, candidate := range candidates {
+		target := netip.AddrPortFrom(candidate, uint16(port)).String()
+		listener, listenErr := net.Listen("tcp4", target)
+		if listenErr != nil {
+			if errors.Is(listenErr, syscall.EADDRINUSE) {
+				inUse = true
+			}
+			failures = append(failures, fmt.Sprintf("%s: %v", target, listenErr))
+			continue
+		}
+		t.Cleanup(func() { _ = listener.Close() })
+		// Drains the backlog so the control behaves like a live service rather
+		// than a bound-and-ignored socket. Note this is not what makes the
+		// measurement sound: a TCP handshake completes from the backlog whether
+		// or not anything accepts, so the connect would succeed regardless. What
+		// makes the result attributable is that the control is bound to a
+		// DIFFERENT ADDRESS than the allowed listener, so a successful connect
+		// cannot have landed on the allowed one.
+		go func() {
+			for {
+				conn, acceptErr := listener.Accept()
+				if acceptErr != nil {
+					return
+				}
+				_ = conn.Close()
+			}
+		}()
+		return listener, inventory
+	}
+	// The headline is derived from the errno, not assumed. Claiming "something
+	// else holds the port" for a permission or resource failure would send an
+	// investigator after a port conflict that never happened — an alarming
+	// wrong cause, which is not the safe direction to be wrong in.
+	cause := "the bind failed for reasons that are NOT EADDRINUSE; read the attempts below rather than assuming a port conflict"
+	if inUse {
+		cause = "at least one bind failed with EADDRINUSE, so something else already holds this port there"
+	}
+	t.Fatalf("could not place the same-port control: %d candidate non-loopback local "+
+		"address(es) exist, so this is not a runner-has-no-address fault. %s. The "+
+		"loopback listener fixed port %d before this function ran, so it cannot retry "+
+		"with a different one.\nbind attempts:\n%s\nrunner interfaces:\n%s",
+		len(candidates), cause, port, strings.Join(failures, "; "), inventory)
+	return nil, inventory
 }
 
 func assertSeatbeltEPERM(t *testing.T, err error, operation string) {

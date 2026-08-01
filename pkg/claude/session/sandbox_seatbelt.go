@@ -793,6 +793,54 @@ func seatbeltDaemonReopenDescendants(
 // the proxy-floor exception below and must not be described as interface-level
 // loopback isolation.
 //
+// THE CONSEQUENCE, MEASURED ON THIS PATH RATHER THAN INFERRED FROM THAT ONE.
+// M3.2 measured the proxy floor. Applying its result here was an inference
+// until TCL-917 measured this function's own rendering: CI run 30688396007
+// was the proxy floor; run 30691418550, job 91346704723 is this path, where a
+// connect to 192.168.64.10:49187 succeeded from inside the sandbox while the
+// authored rule named 127.0.0.1:49187.
+//
+// THREE KNOWN DIFFERENCES between this path and the proxy floor, listed
+// because they share the "localhost:PORT" spelling and the inference "both go
+// through the same token, so both behave alike" is what produced TCL-917:
+//
+//  1. This path renders only when a filtered plan deploys NO proxy; the proxy
+//     floor renders the isolated denies plus one endpoint exception.
+//  2. This path emits BOTH tcp and udp exceptions per port; the proxy floor
+//     emits tcp only.
+//  3. The proxy floor has no production caller on Darwin at all — the launcher
+//     passes a zero AddrPort — while this path is the one that ships.
+//
+// A measurement on one of them is not a measurement on the other.
+//
+// NOT MEASURED, named so silence is not read as evidence: external UDP egress
+// from this path. It is unmeasured on the proxy floor too — that suite's UDP
+// assertion targets a LOOPBACK endpoint and tests the protocol axis, since its
+// exception is tcp-only, rather than testing egress. External TCP egress IS
+// measured here: the Darwin smoke's networkLocal branch asserts 1.1.1.1:53
+// fails with EPERM, and it held in the run cited above.
+//
+// So what a Local-access rule actually scopes to is A PORT SET ACROSS ALL
+// HOST-LOCAL ADDRESSES, not the loopback interface. Allowing port N also
+// permits a different service on port N bound to this machine's LAN address.
+// Everything involved is the same machine: this is not egress, and a service
+// bound to 0.0.0.0 was already reachable through the loopback rule anyway.
+// The gap needs a second service, same port, bound EXCLUSIVELY to a
+// non-loopback address.
+//
+// NOT FIXABLE HERE, AND DELIBERATELY NOT MITIGATED. SBPL cannot express "this
+// port, loopback only" at all, so no generator change closes it. TCL-917
+// considered a launch-time port-collision check and the operator ruled
+// against it: refusing a launch because an unrelated program holds a port is
+// how the sandbox gets switched off, and the scenario is narrow enough that
+// the complexity buys little. The ruling was DOCUMENT AND DISCLOSE, and the
+// disclosure is the deliverable — see docs/sandboxing.md and the
+// darwinLocalAccessSamePortBypassExpected characterization, which fails if
+// Seatbelt ever NARROWS "localhost" to the loopback interface. It does not
+// detect a WIDENING past this host; that would need a service on the allowed
+// port at an off-machine address, which CI cannot arrange safely. The
+// uncovered direction is named at the constant.
+//
 // Outbound exceptions must be remote predicates. A local-ip predicate observes
 // the unbound socket's source address and Seatbelt treats localhost as matching
 // INADDR_ANY, which would admit every destination.
@@ -865,8 +913,13 @@ func appendSeatbeltLoopbackNetworkRules(
 // it also admits a different service on a non-loopback local address at the
 // same port. Replacing localhost with the bound IP is not representable —
 // sandbox-exec rejects literal hosts with "host must be * or localhost in
-// network address". The smoke characterizes that limitation explicitly and no
-// capability cell may activate this floor until the follow-up closes it.
+// network address". The smoke characterizes that limitation explicitly.
+//
+// No capability cell may activate this floor while it stands — and TCL-917
+// decided it will stand: the operator ruled document-and-disclose rather than
+// a launch-time collision check, so there is no follow-up that closes it. A
+// Darwin rating may be Partial with the scope stated, never Full. See the
+// activation record in docs/proxy-network-filtering.md.
 // sandboxpolicy.AddrIsLoopbackIdentity governs which endpoints are accepted by
 // the renderer; it cannot narrow what Seatbelt's localhost token matches.
 func appendSeatbeltIsolatedNetworkRules(

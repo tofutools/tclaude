@@ -699,13 +699,41 @@ not silently transfer ownership to a future release registry.
 
 On Linux, pack-backed lists use the filtered gateway. Local host services are
 reached through `host.tclaude.internal`; `127.0.0.1` and `::1` remain private
-to the sandbox. On macOS, strict Local access is enforced natively by Seatbelt
-against real host `127.0.0.1` and `::1`. Port scopes are honored, outbound
-non-loopback IP connections are denied, and bind/inbound behavior is left
-alone so local services and the IDE bridge can work. The Seatbelt outbound
-rule uses `remote ip` predicates; an outbound `local ip` predicate would match
-the local side of remote connections and is therefore never used for this
-boundary.
+to the sandbox. On macOS, strict Local access is enforced natively by Seatbelt,
+but **its scope is a port set, not an address set**. Seatbelt's network grammar
+accepts only `*` or `localhost` as the host part of a rule, and `localhost`
+means *every address assigned to this machine* — not the loopback interface.
+
+So allowing Local access on port N also allows anything else **on this same
+machine** listening on port N, including a service bound only to the host's LAN
+address. Everything involved belongs to the machine the agent already runs on:
+this is not egress, and a service bound to `0.0.0.0` was already reachable
+through the Seatbelt rule in any case, since `localhost` covers whichever
+address the connect names. The gap needs a second service, on the same port,
+bound exclusively to a non-loopback address.
+
+Note this is a different mechanism from the proxy engine's **loopback rows**
+described above, and the `0.0.0.0/8` authority split stated there does not
+apply here. Seatbelt has no row-authority concept to split: it has one host
+token, `localhost`, which is why the scope is a port set. Reading the two
+paragraphs as one model is the mistake to avoid — they share the word
+"loopback" and share nothing else.
+
+Ports outside the list are denied, and outbound **TCP** connections to
+addresses beyond this machine are denied. Bind/inbound behavior is left alone
+so local services and the IDE bridge can work. The Seatbelt outbound rule uses
+`remote ip` predicates; an outbound `local ip` predicate would match the local
+side of remote connections and is therefore never used for this boundary.
+
+This is a limit of the mechanism rather than a configuration mistake: SBPL
+cannot express "this port, loopback only" at all, so no policy you can author
+avoids it. It is measured on a real runner rather than inferred — CI run
+`30691418550`, job `91346704723` — and pinned by a characterization test, so if
+Apple ever *narrows* `localhost` to the loopback interface, CI reports it
+instead of the change being discovered years later. A *widening* of `localhost`
+beyond this machine is not detected by that test; catching it would need a
+service on the allowed port at an off-machine address, which CI cannot arrange
+safely.
 
 macOS does not yet enforce a mixed Local + model-API pack list. It follows the
 same established list-degradation path as any other mixed Darwin list: the
@@ -1173,7 +1201,11 @@ before running the real filesystem/network smoke and the OpenCode executor
 smoke, and fails if either named test does not report its explicit top-level
 PASS line. `TestTclaudeLayerDarwinSmoke` includes strict Local access: an
 allowed real-host loopback port connects, another listening loopback port and
-public egress fail with `EPERM`, and local bind remains available.
+public TCP egress fail with `EPERM`, and local bind remains available. It also
+characterizes the **address** axis, not only the port one: a different service
+on the *allowed* port at a non-loopback local address is reachable, which is
+the scope limit described above. Listing only the port assertions is what let
+that limit go unnoticed, so the pair is stated together.
 The CI job installs the deliberately pinned `opencode-ai@1.18.6` used by the
 Linux executor smoke. To repeat the filesystem smoke on a macOS host:
 
