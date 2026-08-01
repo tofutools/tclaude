@@ -11,10 +11,11 @@ import (
 )
 
 // migrateV180toV181 converts every SQLite timestamp from RFC3339Nano TEXT to
-// guarded int64 Unix nanoseconds. Explicit optional empty-string sentinels
-// become NULL; empty required values, malformed values, and out-of-range values
-// abort the entire transaction. Tables that contain timestamps are rebuilt as
-// STRICT so later writers cannot put text back into the columns.
+// guarded int64 Unix nanoseconds. Explicit optional empty-string sentinels and
+// historical RFC3339 Go zero times in optional columns become NULL; empty
+// required values, malformed values, and out-of-range values abort the entire
+// transaction. Tables that contain timestamps are rebuilt as STRICT so later
+// writers cannot put text back into the columns.
 func migrateV180toV181(d *sql.DB) error {
 	// This step rebuilds most of the schema. Keep the same best-effort recovery
 	// point as the earlier destructive identity migrations.
@@ -468,6 +469,14 @@ func convertTimestampColumn(ctx context.Context, tx *sql.Tx, table string, colum
 			}
 			return fmt.Errorf("%s.%s rowid %d value %q: required timestamp is empty", table, column.name, rowID, textValue)
 		}
+		// Some legacy writers formatted an absent time.Time directly instead
+		// of applying the column's empty-string sentinel first. Preserve that
+		// absence as NULL in the rebuilt schema. Do not repair required columns:
+		// a zero value there still indicates corrupt or incomplete source data.
+		if column.sentinel && isLegacyRFC3339ZeroTime(textValue) {
+			updates = append(updates, conversion{rowID: rowID, value: ""})
+			continue
+		}
 		parsed, err := parseLegacyDBTime(textValue)
 		if err != nil {
 			return fmt.Errorf("%s.%s rowid %d value %q: %w", table, column.name, rowID, textValue, err)
@@ -491,6 +500,11 @@ func convertTimestampColumn(ctx context.Context, tx *sql.Tx, table string, colum
 		}
 	}
 	return nil
+}
+
+func isLegacyRFC3339ZeroTime(value string) bool {
+	parsed, err := time.Parse(time.RFC3339Nano, value)
+	return err == nil && parsed.IsZero()
 }
 
 func timeFromUnixSeconds(seconds int64) time.Time {
