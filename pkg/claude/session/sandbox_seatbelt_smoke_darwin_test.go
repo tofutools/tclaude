@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"net"
 	"os"
@@ -45,8 +44,6 @@ const (
 	darwinSmokeNetworkLocalEnv      = "TCLAUDE_SANDBOX_V2_NETWORK_LOCAL"
 	darwinSmokeHostListenerEnv      = "TCLAUDE_SANDBOX_V2_HOST_LISTENER"
 	darwinSmokeDeniedListenerEnv    = "TCLAUDE_SANDBOX_V2_DENIED_LISTENER"
-	// TCL-917 TEMPORARY DIAGNOSTIC — removed in a commit on top of this one.
-	darwinSmokeTCL917ProbeTargetEnv = "TCLAUDE_SANDBOX_V2_TCL917_PROBE_TARGET"
 	darwinSmokeExpectedAgentIDEnv   = "TCLAUDE_SANDBOX_V2_EXPECTED_AGENT_ID"
 	darwinSmokeRuntimeTempDirEnv    = "TCLAUDE_SANDBOX_V2_RUNTIME_TMPDIR"
 	darwinSmokeInheritedFDEnv       = "TCLAUDE_SANDBOX_V2_INHERITED_FD"
@@ -235,40 +232,6 @@ func TestTclaudeLayerDarwinSmoke(t *testing.T) {
 	assert.Equal(t, "claude-opus-5", snapshot.ModelID)
 
 	localPort := hostListener.Addr().(*net.TCPAddr).Port
-
-	// TCL-917 TEMPORARY DIAGNOSTIC — REMOVED IN A COMMIT ON TOP OF THIS ONE.
-	//
-	// M3.2 measured the same-port bypass against the PROXY FLOOR exception.
-	// This probe asks whether the LIVE path has it too: an operator-authored
-	// "allow loopback port N" rule renders through the same Seatbelt
-	// "localhost" token via appendSeatbeltLoopbackNetworkRules, and that token
-	// is documented to mean every address assigned to the host.
-	//
-	// The existing assertions below vary the PORT while holding the address at
-	// loopback — the exact blind spot M3.1's cold review caught for the proxy
-	// floor. This holds the ALLOWED port and varies the ADDRESS instead.
-	//
-	// Bound here, outside the sandbox, on a NON-loopback local address at the
-	// same port the rule allows. Enumeration failing is reported as a positive
-	// statement rather than silently skipping the probe: "no non-loopback
-	// address was bindable" and "the probe did not run" must not look alike.
-	probeTarget, probeWhy := darwinTCL917BindNonLoopbackControl(t, localPort)
-	t.Logf("TCL917-PROBE setup: target=%q why=%q", probeTarget, probeWhy)
-	if probeTarget != "" {
-		// POSITIVE CONTROL: prove the target is reachable from OUTSIDE the
-		// sandbox first. Without this, an in-sandbox failure is unattributable
-		// — a refusal and an unreachable target produce the same disappointment.
-		outsideConn, outsideErr := net.DialTimeout("tcp4", probeTarget, 2*time.Second)
-		if outsideErr != nil {
-			t.Logf("TCL917-PROBE control-unreachable: %v (probe cannot attribute anything; not run)", outsideErr)
-			probeTarget = ""
-		} else {
-			_ = outsideConn.Close()
-			t.Logf("TCL917-PROBE control-reachable: %s dialled successfully from outside the sandbox", probeTarget)
-		}
-	}
-	t.Setenv(darwinSmokeTCL917ProbeTargetEnv, probeTarget)
-
 	localRules, err := sandboxpolicy.CompileFilteredNetworkRules(
 		sandboxpolicy.NetworkRules{
 			Mode: sandboxpolicy.AccessModeList,
@@ -631,50 +594,6 @@ func TestTclaudeLayerDarwinSmokeHelper(t *testing.T) {
 		require.NoError(t, listenErr,
 			"darwin Local access must preserve host-loopback bind for local services")
 		require.NoError(t, localListener.Close())
-
-		// TCL-917 TEMPORARY DIAGNOSTIC — removed in a commit on top of this one.
-		//
-		// Everything above varies the PORT and holds the ADDRESS at loopback.
-		// This holds the ALLOWED port and varies the ADDRESS to a non-loopback
-		// local one. If Seatbelt's "localhost" token means every address
-		// assigned to the host, this connect SUCCEEDS and the live filtered
-		// path carries the same structural hole M3.2 measured on the proxy
-		// floor.
-		//
-		// t.Errorf on purpose in every branch: CI runs this with -v but the
-		// finding must not depend on anyone reading a passing log, and a
-		// diagnostic that goes green teaches nothing. The deliberate red is
-		// the delivery mechanism.
-		probeTarget := strings.TrimSpace(os.Getenv(darwinSmokeTCL917ProbeTargetEnv))
-		if probeTarget == "" {
-			t.Errorf("TCL917-RESULT NOT-RUN: no control target was supplied; "+
-				"the parent could not bind a non-loopback local address (see its "+
-				"TCL917-PROBE inventory above). This is a POSITIVE statement that "+
-				"the probe did not run, not a negative result. allowed-port=%s",
-				hostListener)
-		} else {
-			probeConn, probeErr := net.DialTimeout("tcp4", probeTarget, 2*time.Second)
-			switch {
-			case probeErr == nil:
-				_ = probeConn.Close()
-				t.Errorf("TCL917-RESULT BYPASS-REPRODUCES: connect to %s SUCCEEDED from "+
-					"inside the sandbox. The allow rule named loopback port %s, and a "+
-					"service at a NON-loopback local address on that same port was "+
-					"reachable. appendSeatbeltLoopbackNetworkRules carries the same "+
-					"structural hole M3.2 measured on the proxy floor.",
-					probeTarget, hostListener)
-			case errors.Is(probeErr, syscall.EPERM):
-				t.Errorf("TCL917-RESULT REFUSED-EPERM: connect to %s failed with EPERM. "+
-					"Seatbelt refused it, so the live filtered path does NOT carry the "+
-					"proxy floor's same-port bypass. This contradicts the expectation "+
-					"and is the bigger finding. allowed-port=%s", probeTarget, hostListener)
-			default:
-				t.Errorf("TCL917-RESULT INCONCLUSIVE: connect to %s failed with %v "+
-					"(errno is not EPERM). ECONNREFUSED or EHOSTUNREACH is a different "+
-					"event from Seatbelt refusing, so this measures nothing about the "+
-					"policy. allowed-port=%s", probeTarget, probeErr, hostListener)
-			}
-		}
 	} else {
 		require.NoError(t, hostDialErr, "host-open posture must retain host-loopback connectivity")
 		require.NoError(t, hostConn.Close())
@@ -752,95 +671,6 @@ func TestTclaudeLayerDarwinSmokeHelper(t *testing.T) {
 	status.Stdin = strings.NewReader(statusPayload)
 	statusOutput, err := status.CombinedOutput()
 	require.NoErrorf(t, err, "brokered status line through Seatbelt: %s", statusOutput)
-}
-
-// darwinTCL917BindNonLoopbackControl is a TCL-917 TEMPORARY DIAGNOSTIC —
-// removed in a commit on top of this one.
-//
-// It binds a control listener on a NON-loopback local address at the given
-// port, and returns the dial target plus a human-readable account of what it
-// found. An empty target is never silent: the second return says WHY, and the
-// caller logs it, because "no non-loopback address exists on this runner" and
-// "the probe did not run" must never be ambiguous in the job log.
-//
-// The full interface inventory is logged whether or not a bind succeeds, so a
-// negative result carries the evidence for why it was negative.
-func darwinTCL917BindNonLoopbackControl(t *testing.T, port int) (string, string) {
-	t.Helper()
-	interfaces, err := net.Interfaces()
-	if err != nil {
-		return "", fmt.Sprintf("net.Interfaces failed: %v", err)
-	}
-	inventory := []string{}
-	candidates := []string{}
-	for _, iface := range interfaces {
-		addrs, addrErr := iface.Addrs()
-		if addrErr != nil {
-			inventory = append(inventory,
-				fmt.Sprintf("%s: Addrs failed: %v", iface.Name, addrErr))
-			continue
-		}
-		for _, addr := range addrs {
-			ipNet, ok := addr.(*net.IPNet)
-			if !ok {
-				continue
-			}
-			v4 := ipNet.IP.To4()
-			flags := []string{}
-			if v4 == nil {
-				flags = append(flags, "not-ipv4")
-			}
-			if ipNet.IP.IsLoopback() {
-				flags = append(flags, "loopback")
-			}
-			if !ipNet.IP.IsGlobalUnicast() {
-				flags = append(flags, "not-global-unicast")
-			}
-			if iface.Flags&net.FlagUp == 0 {
-				flags = append(flags, "down")
-			}
-			inventory = append(inventory,
-				fmt.Sprintf("%s: %s [%s]", iface.Name, ipNet.IP, strings.Join(flags, ",")))
-			if len(flags) == 0 {
-				candidates = append(candidates, v4.String())
-			}
-		}
-	}
-	t.Logf("TCL917-PROBE interface inventory (%d entries):", len(inventory))
-	for _, line := range inventory {
-		t.Logf("TCL917-PROBE   %s", line)
-	}
-	if len(candidates) == 0 {
-		return "", fmt.Sprintf(
-			"no non-loopback IPv4 global-unicast address on an up interface; %d addresses inspected",
-			len(inventory))
-	}
-	failures := []string{}
-	for _, candidate := range candidates {
-		target := net.JoinHostPort(candidate, strconv.Itoa(port))
-		listener, listenErr := net.Listen("tcp4", target)
-		if listenErr != nil {
-			failures = append(failures, fmt.Sprintf("%s: %v", target, listenErr))
-			continue
-		}
-		t.Cleanup(func() { _ = listener.Close() })
-		// Serve accepts so the control is a real reachable service rather than
-		// a bound socket nobody answers — the in-sandbox result must turn on
-		// Seatbelt's verdict, not on whether anything was listening.
-		go func() {
-			for {
-				conn, acceptErr := listener.Accept()
-				if acceptErr != nil {
-					return
-				}
-				_ = conn.Close()
-			}
-		}()
-		return target, fmt.Sprintf(
-			"bound control on %s (candidates: %s)", target, strings.Join(candidates, ","))
-	}
-	return "", fmt.Sprintf("no candidate address accepted a bind on port %d: %s",
-		port, strings.Join(failures, "; "))
 }
 
 func assertSeatbeltEPERM(t *testing.T, err error, operation string) {
