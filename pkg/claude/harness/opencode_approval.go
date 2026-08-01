@@ -12,13 +12,13 @@ const (
 	OpenCodeApprovalDeny = "deny"
 
 	// OpenCodeApprovalAsk lets a human approve representable edits and web
-	// tools. The access-control tool baseline remains enabled; with sandbox off,
-	// shell requires approval.
+	// tools. The tool-governance axis independently controls the built-in tool
+	// baseline in every sandbox mode.
 	OpenCodeApprovalAsk = "ask"
 
 	// OpenCodeApprovalAllowTools automatically permits representable edits and
-	// audited web tools. The access-control tool baseline remains enabled; with
-	// sandbox off, shell still requires approval.
+	// audited web tools. The tool-governance axis independently controls the
+	// built-in tool baseline in every sandbox mode.
 	OpenCodeApprovalAllowTools = "allow-tools"
 )
 
@@ -33,11 +33,11 @@ func (openCodeApproval) Modes() []string {
 func (openCodeApproval) ModeHelp(policy string) string {
 	switch strings.TrimSpace(policy) {
 	case OpenCodeApprovalDeny:
-		return "Fail-closed approval default: path-scoped reads and the access-control tool baseline run, while edits, web, and unlisted tools are denied without prompting."
+		return "Fail-closed approval default: path-scoped reads run, while edits, web, and unlisted permissions are denied without prompting. Built-in tools follow the separate Tool governance setting."
 	case OpenCodeApprovalAsk:
-		return "Access-control tools remain enabled. Ask a human before representable edits and permitted web tools. ⚠ Detached agents can block waiting; with sandbox off, bash also requires approval."
+		return "Ask a human before representable edits and permitted web tools. Built-in tools follow the separate Tool governance setting. ⚠ Detached agents can block waiting."
 	case OpenCodeApprovalAllowTools:
-		return "Automatically allow scoped edits and explicitly enabled web tools. Access-control tools remain enabled; bash with sandbox off still requires human approval."
+		return "Automatically allow scoped edits and explicitly enabled web tools. Access-control tools remain governed by the separate Tool governance setting."
 	default:
 		return ""
 	}

@@ -135,7 +135,7 @@ security claims.
 OpenCode deliberately has no `stacked` contract: profile apply and launch
 refuse that selection by name instead of degrading to a single wall.
 The explicit `off` mode removes path scoping but keeps the selected approval
-policy; bash is never auto-approved there. A bare direct `session new --harness
+and tool-governance policies. A bare direct `session new --harness
 opencode` is refused because it has no authenticated managed-server handoff;
 the pane is never allowed to start an independent OpenCode server.
 
@@ -483,9 +483,9 @@ Those tool permission keys are separate from
 `read`/`edit`/`external_directory` and cannot express the same lexical disk
 boundary, so tool-driven disk access can reach outside the authored paths. This
 is an accepted limitation of the soft sandbox, not an expansion of its
-path-scoped file permissions. In `off`, bash may ask under `ask` or
-`allow-tools`, but is never automatic; tool governance is not applied, because
-`off` remains the explicit no-containment posture. An `off` launch rejects an assigned
+path-scoped file permissions. Tool governance remains authoritative in `off`:
+`allow`, `ask`, and `deny` still apply uniformly to bash, glob, grep, LSP, task,
+and skill even though no directory or OS containment remains. An `off` launch rejects an assigned
 filesystem or network sandbox profile rather than silently discarding it;
 select `access-control` or remove the incompatible profile.
 

@@ -22,11 +22,11 @@ func (openCodeToolGovernance) Modes() []string {
 func (openCodeToolGovernance) ModeHelp(policy string) string {
 	switch strings.TrimSpace(policy) {
 	case OpenCodeToolsAllow:
-		return "In access-control and tclaude-layer modes, allow bash, glob, grep, lsp, task, and skill. Sandbox off ignores this setting."
+		return "Allow bash, glob, grep, lsp, task, and skill in every sandbox mode."
 	case OpenCodeToolsAsk:
-		return "In access-control and tclaude-layer modes, ask before bash, glob, grep, lsp, task, or skill runs. Sandbox off ignores this setting. ⚠ Detached agents can block waiting for a human response."
+		return "Ask before bash, glob, grep, lsp, task, or skill runs in every sandbox mode. ⚠ Detached agents can block waiting for a human response."
 	case OpenCodeToolsDeny:
-		return "In access-control and tclaude-layer modes, deny bash, glob, grep, lsp, task, and skill without prompting. Sandbox off ignores this setting."
+		return "Deny bash, glob, grep, lsp, task, and skill without prompting in every sandbox mode."
 	default:
 		return ""
 	}
