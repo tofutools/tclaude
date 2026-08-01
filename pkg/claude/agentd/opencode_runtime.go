@@ -868,9 +868,15 @@ func shellJoinOpenCodeCommand(command string, args []string) string {
 	return strings.Join(parts, " ")
 }
 
-func openCodeTmuxLaunchCommand(runtime db.OpenCodeRuntime, command string, args []string,
-	handshake *openCodeTmuxHandshake) string {
-	serverCommand := shellJoinOpenCodeCommand(command, args)
+func openCodeTmuxLaunchCommand(runtime db.OpenCodeRuntime, command string, args,
+	serverEnvironment []string, handshake *openCodeTmuxHandshake) string {
+	parts := make([]string, 0, len(serverEnvironment)+1)
+	parts = append(parts, "env")
+	for _, entry := range serverEnvironment {
+		parts = append(parts, clcommon.ShellQuoteArg(entry))
+	}
+	parts = append(parts, shellJoinOpenCodeCommand(command, args))
+	serverCommand := strings.Join(parts, " ")
 	if handshake != nil {
 		serverCommand += " 3>" + clcommon.ShellQuoteArg(handshake.statusPath) +
 			" 4<" + clcommon.ShellQuoteArg(handshake.gatePath)
@@ -896,10 +902,8 @@ func startOpenCodeProcessThroughTmux(runtime *db.OpenCodeRuntime, command string
 	tmuxSession := openCodeManagedTmuxSession(runtime.SessionID)
 	tmuxArgs := []string{"new-session", "-d", "-s", tmuxSession, "-c", runtime.Cwd,
 		"-x", "80", "-y", "24"}
-	for _, entry := range serverEnvironment {
-		tmuxArgs = append(tmuxArgs, "-e", entry)
-	}
-	tmuxArgs = append(tmuxArgs, openCodeTmuxLaunchCommand(*runtime, command, args, handshake))
+	tmuxArgs = append(tmuxArgs, openCodeTmuxLaunchCommand(
+		*runtime, command, args, serverEnvironment, handshake))
 	stderr := newSpawnStderrCapture()
 	launch := clcommon.Default.Command(session.ExternalTmuxNoStartArgs(tmuxArgs...)...)
 	launch.Stderr = stderr

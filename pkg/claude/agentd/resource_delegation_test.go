@@ -45,11 +45,11 @@ func TestManagedOpenCodeExternalResourceCgroupLaunchUsesTmuxWrapper(t *testing.T
 		SessionID: "managed-external", ResourceCgroupDir: "/sys/fs/cgroup/system.slice/tclaude-tmux.service/tclaude-test",
 	}
 	command := openCodeTmuxLaunchCommand(runtime, "/opt/opencode",
-		[]string{"serve", "--port", "43210"}, nil)
+		[]string{"serve", "--port", "43210"}, []string{"HOME=/srv/agent"}, nil)
 	assert.Contains(t, command, "session resource-limit-exec")
 	assert.Contains(t, command, "--cgroup-dir")
 	assert.Contains(t, command, "tclaude-tmux.service/tclaude-test")
-	assert.Contains(t, command, "'/opt/opencode serve --port 43210'")
+	assert.Contains(t, command, "'env HOME=/srv/agent /opt/opencode serve --port 43210'")
 }
 
 func TestManagedOpenCodeTmuxSessionNameIsStableAndBounded(t *testing.T) {
