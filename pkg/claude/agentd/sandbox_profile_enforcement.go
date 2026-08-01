@@ -31,8 +31,14 @@ import (
 // refused target may still have non-empty entries there. They describe the
 // authored draft, not the refused (policy, target) pair, and must not be read
 // as verdicts for it. ContextNetworkEntries carries an explicit nil at a
-// refused index to stay index-aligned — a consumer using `??`/`||` to fall
-// back would silently substitute the draft-only rows.
+// refused index to stay index-aligned.
+//
+// The dashboard currently resolves that nil with `??`, which treats it as
+// absent and falls back to these draft-only rows. That is unreachable in
+// practice, because the renderer returns on the refusal before the value is
+// read; it is recorded as a known gap, tracked separately, rather than
+// hardened here — an attempt to guard it in this PR was reverted for being
+// more error-prone than the path it protected.
 type sandboxProfileEnforcementRefusal struct {
 	Kind    string `json:"kind"`
 	Harness string `json:"harness,omitempty"`
