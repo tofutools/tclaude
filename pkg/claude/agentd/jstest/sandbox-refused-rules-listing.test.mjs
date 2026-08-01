@@ -67,6 +67,26 @@ const CLEAN_TARGET = {
   },
 };
 
+/* Absence, asserted WITHOUT handing a live DOM node to the diff formatter.
+
+   `assert.equal(container.querySelector(sel), null)` looks like the obvious
+   spelling and is a trap: when it FAILS, node's formatter walks the linkedom
+   element's circular parent/child graph to build a diff and the process is
+   OOM-killed. The test file dies with SIGKILL after ~30s, printing no test names
+   at all — so a wrong assertion here fails as a HANG, which reads as slowness
+   rather than as a defect. That cost real time on this ticket, twice: once on a
+   TCL-885 assertion Option C invalidated, and once on this suite's own scoping
+   control under mutation 7.
+
+   Reducing to a short string first keeps the failure a one-line diff AND names
+   what was found, which `assert.ok(!el)` would not. */
+function assertAbsent(container, selector, message) {
+  const found = container.querySelector(selector);
+  assert.equal(
+    found && `${found.localName}.${found.getAttribute('class') || ''}`, null, message,
+  );
+}
+
 // Which bucket holds a rule, by label. Fails naming what WAS rendered rather
 // than returning "absent", so a fixture that never reached the code cannot pass
 // for a working placement.
@@ -197,13 +217,12 @@ test('an unaffected target in the same request keeps its verdict buckets untouch
   const harness = await createPreactHarness(t);
   const container = await render(harness, CLEAN_TARGET);
 
-  assert.equal(container.querySelector('.sbx-rule-bucket-unjudged'), null,
+  assertAbsent(container, '.sbx-rule-bucket-unjudged',
     'a target that WAS evaluated has nothing unjudged');
-  assert.equal(container.querySelector('.sbx-launch-blocked'), null,
-    'and is not blocked');
+  assertAbsent(container, '.sbx-launch-blocked', 'and is not blocked');
   assert.equal(bucketOfRule(container, FS_RULE), 'sbx-rule-bucket-applied',
     'its rules keep their real verdicts');
   assert.equal(bucketOfRule(container, NET_RULE), 'sbx-rule-bucket-applied');
-  assert.equal(container.querySelector('.sbx-bucket-note'), null,
+  assertAbsent(container, '.sbx-bucket-note',
     'and it carries no not-evaluated disclaimer');
 });

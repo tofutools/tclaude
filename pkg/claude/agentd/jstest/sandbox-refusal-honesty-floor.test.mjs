@@ -20,6 +20,17 @@ import { createPreactHarness } from './preact-harness.mjs';
    The renderer branch under test is deliberately minimal and commits to none of
    the mocked options; what it renders may change, that it renders must not. */
 
+/* Absence without handing a live DOM node to node's diff formatter. On FAILURE,
+   assert.equal(el, null) walks the linkedom element's circular parent/child
+   graph and the process is OOM-killed: the file dies with SIGKILL after ~30s and
+   prints no test names, so a wrong assertion fails as a HANG rather than a diff.
+   TCL-915 hit exactly that on the assertion below. Reducing to a short string
+   first keeps the failure one line AND names what was found. */
+function assertAbsent(root, selector, message) {
+  const found = root.querySelector(selector);
+  assert.equal(found && `${found.localName}.${found.getAttribute('class') || ''}`, null, message);
+}
+
 const REFUSAL = {
   kind: 'unsupported_sandbox_profile_network_allowlist',
   message: 'missing capability proxy_engine_name_authority: the Proxy filter engine '
@@ -82,7 +93,7 @@ test('a refused target renders as launch-blocked, carrying the capability and it
      Asserted per class rather than by counting, so a fourth verdict bucket
      added later cannot slip through a total that still looks right. */
   for (const verdict of ['applied', 'partial', 'not-applied']) {
-    assert.equal(container.querySelector(`.sbx-rule-bucket-${verdict}`), null,
+    assertAbsent(container, `.sbx-rule-bucket-${verdict}`,
       `no verdict was reached, so the ${verdict} bucket must not claim one`);
   }
   const unjudged = container.querySelector('.sbx-rule-bucket-unjudged');
@@ -105,7 +116,8 @@ test('an old daemon\'s missing axes render differently from a refusal', async (t
   // what is blocked.
   assert.ok(container.querySelector('.sbx-rule-bucket'));
   assert.match(container.textContent, /No enforcement verdict was returned/);
-  assert.equal(container.querySelector('.sbx-launch-blocked'), null);
+  assertAbsent(container, '.sbx-launch-blocked',
+    'an absent verdict is not a refusal');
 });
 
 test('a refused target is flagged as needing attention', async (t) => {
@@ -135,7 +147,7 @@ test('a refusal in one context leaves the other contexts rendering normally', as
 
   const clean = await harness.mount(harness.html`
     <${SandboxPolicyResult} target=${target} context=${CONTEXT} contextIndex=${0}/>`);
-  assert.equal(clean.container.querySelector('.sbx-launch-blocked'), null,
+  assertAbsent(clean.container, '.sbx-launch-blocked',
     'a sibling context\'s refusal must not darken this one');
   assert.ok(clean.container.querySelector('.sbx-rule-bucket-applied'));
 
@@ -281,7 +293,7 @@ test('a target with no refusal anywhere reports no refusal warning', async (t) =
   };
   const mounted = await harness.mount(harness.html`
     <${SandboxPolicyResult} target=${target} context=${CONTEXT} contextIndex=${0}/>`);
-  assert.equal(mounted.container.querySelector('.sbx-other-assignments'), null);
-  assert.equal(mounted.container.querySelector('.sbx-launch-blocked'), null);
+  assertAbsent(mounted.container, '.sbx-other-assignments', 'no other assignment warns');
+  assertAbsent(mounted.container, '.sbx-launch-blocked', 'and nothing is blocked');
   assert.equal(sandboxPolicyNeedsAttention(target, CONTEXT, 0), false);
 });
