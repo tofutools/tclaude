@@ -380,6 +380,17 @@ func TestNormalizeEnvironmentRejectsInvalidReservedAndOversize(t *testing.T) {
 	}
 }
 
+func TestNormalizeEnvironmentAllowsNodeOptions(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	profile, err := Normalize(Profile{Name: "p", Environment: []EnvironmentEntry{{
+		Name: "NODE_OPTIONS", Value: "--max-old-space-size=4096",
+	}}})
+	require.NoError(t, err)
+	assert.Equal(t, []EnvironmentEntry{{
+		Name: "NODE_OPTIONS", Value: "--max-old-space-size=4096",
+	}}, profile.Environment)
+}
+
 func TestNormalizeEnvironmentLimits(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	entries := make([]EnvironmentEntry, MaxEnvironmentCount+1)
