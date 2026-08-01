@@ -18,3 +18,17 @@ test('assertAbsent reports a bounded element label without requiring a message',
     return true;
   });
 });
+
+test('assertAbsent preserves a caller-provided failure message', () => {
+  const found = {
+    localName: 'dialog',
+    getAttribute: () => 'dirty',
+  };
+
+  assert.throws(() => assertAbsent(found, 'expected the dialog to close'), (error) => {
+    assert.match(error.message, /^expected the dialog to close\n/);
+    assert.equal(error.actual, 'dialog.dirty');
+    assert.equal(error.expected, null);
+    return true;
+  });
+});
