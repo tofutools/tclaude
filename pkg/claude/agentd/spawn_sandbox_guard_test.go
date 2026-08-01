@@ -65,6 +65,38 @@ func TestPlanSandboxProfileAccessDisclosesUnmaterializedSocketEntries(t *testing
 	}
 }
 
+func TestPlanSandboxProfileAccessResolvesInheritedClaudeSandboxSettings(t *testing.T) {
+	home := t.TempDir()
+	managed := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Cleanup(harness.SetClaudeManagedSettingsRootForTest(managed))
+	snapshot := &sandboxpolicy.Snapshot{Effective: sandboxpolicy.EffectiveProfile{
+		UnixSockets: &sandboxpolicy.UnixSocketRules{Mode: sandboxpolicy.AccessModeOpen},
+	}}
+	preflight := func() *spawnFailure {
+		_, failure := planSandboxProfileAccessForLaunch(
+			harness.DefaultName,
+			harness.ClaudeSandboxInherit,
+			snapshot,
+			string(sandboxpolicy.ImplementationHarnessBuiltin),
+			session.ModelTransportLaunchContext{Cwd: home},
+			false,
+		)
+		return failure
+	}
+
+	require.NotNil(t, preflight(), "an actually unconfigured native sandbox must still fail closed")
+	require.NoError(t, os.MkdirAll(filepath.Join(home, ".claude"), 0o755))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(home, ".claude", "settings.json"),
+		[]byte(`{"sandbox":{"enabled":true}}`),
+		0o600,
+	))
+	failure := preflight()
+	require.Nil(t, failure,
+		"the next preflight must pick up changed Claude settings for inherited builtin sandbox mode")
+}
+
 func TestPlanSandboxProfileAccessPersistsDetectedProbeWhenVerdictCannotFlip(t *testing.T) {
 	oldProbe := probeFilteredNetworkPrerequisite
 	oldVerdict := resolveTclaudeLayerAccessVerdict
