@@ -30,14 +30,14 @@ const costDayKey = "2006-01-02"
 // db.CostDelta, kept lowercase so collectCosts and the sort/first-day
 // helpers read the same field names they always have.
 type costDelta struct {
-	day       string
-	convID    string
-	sessionID string
-	usd       float64
-	updatedAt string // RFC3339Nano of the day's last spend; "" if unknown
-	model     string // model display name denormalised onto the row; "" if unknown
-	harness   string // harness denormalised onto the row; "" if unknown
-	kind      string // real | what_if
+	day         string
+	convID      string
+	sessionID   string
+	usd         float64
+	updatedAtNS int64  // Unix nanoseconds of the day's last spend; zero if unknown
+	model       string // model display name denormalised onto the row; "" if unknown
+	harness     string // harness denormalised onto the row; "" if unknown
+	kind        string // real | what_if
 }
 
 func mixedCostDeltasFromRows(rows []db.CostDailyRow) []costDelta {
@@ -46,7 +46,7 @@ func mixedCostDeltasFromRows(rows []db.CostDailyRow) []costDelta {
 	for _, d := range deltas {
 		out = append(out, costDelta{
 			day: d.Day, convID: d.ConvID, sessionID: d.SessionID, usd: d.USD,
-			updatedAt: d.UpdatedAt, model: d.Model, harness: d.Harness, kind: d.Kind,
+			updatedAtNS: d.UpdatedAtNS, model: d.Model, harness: d.Harness, kind: d.Kind,
 		})
 	}
 	return out
@@ -65,7 +65,7 @@ func costDeltasFromRows(rows []db.CostDailyRow, whatif bool) []costDelta {
 	deltas := db.CostDeltas(rows, whatif)
 	out := make([]costDelta, 0, len(deltas))
 	for _, d := range deltas {
-		out = append(out, costDelta{day: d.Day, convID: d.ConvID, sessionID: d.SessionID, usd: d.USD, updatedAt: d.UpdatedAt, model: d.Model, harness: d.Harness})
+		out = append(out, costDelta{day: d.Day, convID: d.ConvID, sessionID: d.SessionID, usd: d.USD, updatedAtNS: d.UpdatedAtNS, model: d.Model, harness: d.Harness})
 	}
 	return out
 }
@@ -139,19 +139,20 @@ type costAgentRow struct {
 	// series (a generation's cost resets per /clear), and this is only an
 	// added attribution field, never a rekey. "" when the conv is not a
 	// known agent (e.g. a plain conversation's spend).
-	AgentID       string  `json:"agent_id,omitempty"`
-	ConvID        string  `json:"conv_id"`
-	Title         string  `json:"title"`
-	Day           string  `json:"day"`
-	CostUSD       float64 `json:"cost_usd"`
-	RealCostUSD   float64 `json:"real_cost_usd,omitempty"`
-	WhatIfCostUSD float64 `json:"what_if_cost_usd,omitempty"`
-	CostKind      string  `json:"cost_kind"`
-	Continued     bool    `json:"continued,omitempty"`
-	LastDay       string  `json:"last_day"`
-	LastActivity  string  `json:"last_activity,omitempty"`
-	Model         string  `json:"model"`
-	Harness       string  `json:"harness"`
+	AgentID        string  `json:"agent_id,omitempty"`
+	ConvID         string  `json:"conv_id"`
+	Title          string  `json:"title"`
+	Day            string  `json:"day"`
+	CostUSD        float64 `json:"cost_usd"`
+	RealCostUSD    float64 `json:"real_cost_usd,omitempty"`
+	WhatIfCostUSD  float64 `json:"what_if_cost_usd,omitempty"`
+	CostKind       string  `json:"cost_kind"`
+	Continued      bool    `json:"continued,omitempty"`
+	LastDay        string  `json:"last_day"`
+	LastActivity   string  `json:"last_activity,omitempty"`
+	lastActivityNS int64   `json:"-"`
+	Model          string  `json:"model"`
+	Harness        string  `json:"harness"`
 }
 
 // costsResponse is the /api/costs wire shape. Days is zero-filled —
@@ -228,19 +229,19 @@ func collectCosts(from, to time.Time, factor float64, includeWhatIf bool) (costs
 		usd    float64
 		real   float64
 		whatif float64
-		// lastActivity is the RFC3339Nano time of the slice's last spend —
+		// lastActivityNS is the integer time of the slice's last spend —
 		// the finest-grained "last activity" the breakdown can show; a
-		// later same-day stamp raises it. "" when no contributing row
+		// later same-day stamp raises it. Zero when no contributing row
 		// carried a timestamp.
-		lastActivity string
+		lastActivityNS int64
 		// model of the slice's latest-stamped delta with a known model;
 		// modelAt tracks that stamp so a model-less delta (no statusline
 		// tick yet) never blanks a value recorded earlier the same day.
-		model   string
-		modelAt string
+		model     string
+		modelAtNS int64
 		// harness of the slice's latest-stamped delta with a known harness.
-		harness   string
-		harnessAt string
+		harness     string
+		harnessAtNS int64
 	}
 	// One aggregate per (conv, day): a conversation that spent across
 	// several days breaks into one row per day, so a resume shows its true
@@ -276,19 +277,15 @@ func collectCosts(from, to time.Time, factor float64, includeWhatIf bool) (costs
 			a.real += d.usd
 			realTotal += d.usd
 		}
-		// Compared as INSTANTS, not as strings (TCL-935). These stamps are
-		// RFC3339Nano, whose spelling does not sort chronologically — see
-		// db.sortCostDailyRowsForWalk for the contract. Comparing them with >
-		// showed the EARLIER spend as a slice's last activity, and since the
-		// breakdown below sorts on this field it mis-ordered whole rows.
+		// Compared as integer instants, not RFC3339 spellings (TCL-935).
 		//
 		// Last-writer-wins would be wrong here even though the rows now arrive
 		// chronologically: the walk groups a conv-less row under its own
 		// session id, while this slice key is the RAW conv id, so every
 		// conv-less row on a day collapses into one slice whose deltas arrive
 		// in session-id order rather than in time order.
-		if db.CompareCostStamps(d.updatedAt, a.lastActivity) > 0 {
-			a.lastActivity = d.updatedAt
+		if db.CompareCostInstants(d.updatedAtNS, a.lastActivityNS) > 0 {
+			a.lastActivityNS = d.updatedAtNS
 		}
 		// Prefer the model denormalised onto the cost row — it survives the
 		// sessions row being deleted, so a retired agent still names its
@@ -299,21 +296,21 @@ func collectCosts(from, to time.Time, factor float64, includeWhatIf bool) (costs
 			m = models[d.sessionID]
 		}
 		// >= 0, not > 0: keeping the LAST value among equal stamps preserves
-		// the existing tie-break, and the initial "" modelAt compares equal to
+		// the existing tie-break, and the initial absent modelAt compares equal to
 		// a delta that carries no stamp, so a model still lands when nothing
 		// is stamped at all. This is a keep-last-GOOD pick, not a last-write —
 		// the m != "" guard is what stops a model-less delta blanking a value
 		// recorded earlier, so it cannot be folded in with lastActivity above.
-		if m != "" && db.CompareCostStamps(d.updatedAt, a.modelAt) >= 0 {
-			a.model, a.modelAt = m, d.updatedAt
+		if m != "" && db.CompareCostInstants(d.updatedAtNS, a.modelAtNS) >= 0 {
+			a.model, a.modelAtNS = m, d.updatedAtNS
 		}
 		h := d.harness
 		if h == "" {
 			h = harnesses[d.sessionID]
 		}
 		// Same keep-last-good shape as model above.
-		if h != "" && db.CompareCostStamps(d.updatedAt, a.harnessAt) >= 0 {
-			a.harness, a.harnessAt = h, d.updatedAt
+		if h != "" && db.CompareCostInstants(d.updatedAtNS, a.harnessAtNS) >= 0 {
+			a.harness, a.harnessAtNS = h, d.updatedAtNS
 		}
 		if d.day > convMaxDay[d.convID] {
 			convMaxDay[d.convID] = d.day
@@ -338,19 +335,20 @@ func collectCosts(from, to time.Time, factor float64, includeWhatIf bool) (costs
 	}
 	for k, a := range bySlice {
 		out.Agents = append(out.Agents, costAgentRow{
-			AgentID:       peerAgentID(k.conv),
-			ConvID:        k.conv,
-			Title:         agent.CachedTitle(k.conv),
-			Day:           k.day,
-			CostUSD:       a.usd,
-			RealCostUSD:   a.real,
-			WhatIfCostUSD: a.whatif,
-			CostKind:      costKind(a.real, a.whatif),
-			Continued:     k.day < convMaxDay[k.conv],
-			LastDay:       k.day,
-			LastActivity:  a.lastActivity,
-			Model:         a.model,
-			Harness:       a.harness,
+			AgentID:        peerAgentID(k.conv),
+			ConvID:         k.conv,
+			Title:          agent.CachedTitle(k.conv),
+			Day:            k.day,
+			CostUSD:        a.usd,
+			RealCostUSD:    a.real,
+			WhatIfCostUSD:  a.whatif,
+			CostKind:       costKind(a.real, a.whatif),
+			Continued:      k.day < convMaxDay[k.conv],
+			LastDay:        k.day,
+			LastActivity:   db.RFC3339NanoFromUnixNano(a.lastActivityNS),
+			lastActivityNS: a.lastActivityNS,
+			Model:          a.model,
+			Harness:        a.harness,
 		})
 	}
 	sortCostAgentRows(out.Agents)
@@ -410,13 +408,9 @@ func sortCostAgentRows(agents []costAgentRow) {
 // compareCostRowRecency orders two breakdown rows by recency, returning
 // -1, 0 or 1. It is deliberately TWO-TIER rather than one string key.
 //
-// The single-key form this replaces built "the RFC3339Nano value, else the
-// calendar day floored to midnight" and compared it lexically, justified by
-// the local offset being constant across rows. That premise is false
-// (TCL-935): LastActivity is copied straight from session_cost_daily.updated_at,
-// whose zone belongs to whichever writer produced it — see
-// db.sortCostDailyRowsForWalk. Trimmed fractions break the lexical order
-// within a single zone too, so even constant offsets would not have saved it.
+// The single-key form this replaces compared RFC3339 spellings lexically.
+// v181 carries the precise tier as integer nanoseconds instead, so caller
+// zones and trimmed fractions cannot affect order.
 //
 // Day first, then precision, then instant:
 //
@@ -435,14 +429,14 @@ func compareCostRowRecency(a, b costAgentRow) int {
 		return -1
 	}
 	switch {
-	case a.LastActivity != "" && b.LastActivity == "":
+	case a.lastActivityNS != 0 && b.lastActivityNS == 0:
 		return 1
-	case a.LastActivity == "" && b.LastActivity != "":
+	case a.lastActivityNS == 0 && b.lastActivityNS != 0:
 		return -1
-	case a.LastActivity == "" && b.LastActivity == "":
+	case a.lastActivityNS == 0 && b.lastActivityNS == 0:
 		return 0
 	}
-	return db.CompareCostStamps(a.LastActivity, b.LastActivity)
+	return db.CompareCostInstants(a.lastActivityNS, b.lastActivityNS)
 }
 
 // handleDashboardCosts serves GET /api/costs?from=YYYY-MM-DD[&to=YYYY-MM-DD] —

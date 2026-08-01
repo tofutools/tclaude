@@ -37,18 +37,6 @@ func dailyRowFor(t *testing.T, rows []CostDailyRow, sessionID, day string) *Cost
 	return nil
 }
 
-// parseStamp parses a stored RFC3339(Nano) updated_at into a time.Time.
-// updated_at is stored with variable sub-second precision (trailing zeros
-// are trimmed), so two stamps must be compared AS TIME — a lexical string
-// compare is wrong across the precision boundary (e.g. ".978Z" sorts
-// after ".978494Z" even though it is the earlier instant).
-func parseStamp(t *testing.T, s string) time.Time {
-	t.Helper()
-	ts, err := time.Parse(time.RFC3339Nano, s)
-	require.NoError(t, err, "parse timestamp %q", s)
-	return ts
-}
-
 // TestUpdateSessionCost_WritesDailySnapshot pins the statusline hook's
 // sibling write: recording a session's cumulative cost also upserts
 // today's session_cost_daily row — monotonic within the day (a stale,
@@ -123,20 +111,20 @@ func TestUpdateSessionCost_StampsUpdatedAt(t *testing.T) {
 	require.NoError(t, err)
 	row := dailyRowFor(t, rows, "ts-a", today)
 	require.NotNil(t, row)
-	first := row.UpdatedAt
+	first := row.UpdatedAtNS
 	require.NotEmpty(t, first, "first spend stamps updated_at")
 
 	require.NoError(t, UpdateSessionCost("ts-a", 0.50), "stale lower render")
 	rows, err = AllCostDailyRows()
 	require.NoError(t, err)
-	assert.Equal(t, first, dailyRowFor(t, rows, "ts-a", today).UpdatedAt,
+	assert.Equal(t, first, dailyRowFor(t, rows, "ts-a", today).UpdatedAtNS,
 		"a render that does not raise the day's spend must not bump the stamp")
 
 	require.NoError(t, UpdateSessionCost("ts-a", 2.00), "real new spend")
 	rows, err = AllCostDailyRows()
 	require.NoError(t, err)
-	bumped := dailyRowFor(t, rows, "ts-a", today).UpdatedAt
-	assert.False(t, parseStamp(t, bumped).Before(parseStamp(t, first)),
+	bumped := dailyRowFor(t, rows, "ts-a", today).UpdatedAtNS
+	assert.GreaterOrEqual(t, bumped, first,
 		"a higher cumulative figure refreshes the stamp")
 }
 
@@ -551,12 +539,12 @@ func TestSumCostSinceDay_ReinstateSameDayNoDoubleCount(t *testing.T) {
 	require.NoError(t, err, "open db")
 	for _, r := range []CostDailyRow{
 		{SessionID: "spwn-1692c2", Day: "2026-07-02", ConvID: "conv-ws", CostUSD: 42.39,
-			UpdatedAt: "2026-07-02T12:45:09+02:00"}, // original spawn, earlier
+			UpdatedAtNS: costStampNS(t, "2026-07-02T12:45:09+02:00")}, // original spawn, earlier
 		{SessionID: "conv-ws", Day: "2026-07-02", ConvID: "conv-ws", CostUSD: 43.27,
-			UpdatedAt: "2026-07-02T15:23:11+02:00"}, // reinstated, carry-forward, later
+			UpdatedAtNS: costStampNS(t, "2026-07-02T15:23:11+02:00")}, // reinstated, carry-forward, later
 	} {
 		_, err := d.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, cost_usd, updated_at)
-			VALUES (?, ?, ?, ?, ?)`, r.SessionID, r.Day, r.ConvID, r.CostUSD, dbTimeText(r.UpdatedAt))
+			VALUES (?, ?, ?, ?, ?)`, r.SessionID, r.Day, r.ConvID, r.CostUSD, r.UpdatedAtNS)
 		require.NoError(t, err, "seed %s", r.SessionID)
 	}
 
@@ -720,12 +708,12 @@ func TestAllCostDailyRows_ChronologicalTieBreak(t *testing.T) {
 	// the original spwn- session first.
 	for _, r := range []CostDailyRow{
 		{SessionID: "conv-re", Day: "2026-07-02", ConvID: "conv-re", CostUSD: 43.27,
-			UpdatedAt: "2026-07-02T15:23:11+02:00"}, // resume, later
+			UpdatedAtNS: costStampNS(t, "2026-07-02T15:23:11+02:00")}, // resume, later
 		{SessionID: "spwn-1692c2", Day: "2026-07-02", ConvID: "conv-re", CostUSD: 42.39,
-			UpdatedAt: "2026-07-02T12:45:09+02:00"}, // original, earlier
+			UpdatedAtNS: costStampNS(t, "2026-07-02T12:45:09+02:00")}, // original, earlier
 	} {
 		_, err := d.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, cost_usd, updated_at)
-			VALUES (?, ?, ?, ?, ?)`, r.SessionID, r.Day, r.ConvID, r.CostUSD, dbTimeText(r.UpdatedAt))
+			VALUES (?, ?, ?, ?, ?)`, r.SessionID, r.Day, r.ConvID, r.CostUSD, r.UpdatedAtNS)
 		require.NoError(t, err, "seed %s", r.SessionID)
 	}
 

@@ -10,7 +10,7 @@ type ConvIndexRow struct {
 	ConvID       string
 	ProjectDir   string // Claude project directory path (e.g., ~/.claude/projects/-Users-foo-git-bar)
 	FullPath     string
-	FileMtime    int64 // Unix nanoseconds; zero means no file timestamp
+	FileMtime    time.Time // zero means no file timestamp
 	FileSize     int64
 	FirstPrompt  string
 	Summary      string
@@ -387,8 +387,7 @@ func scanConvIndexRows(rows *sql.Rows) ([]*ConvIndexRow, error) {
 func scanOneConvIndex(s interface{ Scan(...any) error }) (*ConvIndexRow, error) {
 	var r ConvIndexRow
 	var sidechain int
-	var fileMtime sql.NullInt64
-	var created, modified, indexedAt, archivedAt dbTimestamp
+	var fileMtime, created, modified, indexedAt, archivedAt dbTimestamp
 	err := s.Scan(&r.ConvID, &r.ProjectDir, &r.FullPath, &fileMtime, &r.FileSize,
 		&r.FirstPrompt, &r.Summary, &r.CustomTitle, &r.MessageCount,
 		&created, &modified, &r.GitBranch, &r.ProjectPath,
@@ -397,7 +396,7 @@ func scanOneConvIndex(s interface{ Scan(...any) error }) (*ConvIndexRow, error) 
 		return nil, err
 	}
 	r.IsSidechain = sidechain != 0
-	r.FileMtime = fileMtime.Int64
+	r.FileMtime = fileMtime.Time()
 	if !created.Time().IsZero() {
 		r.Created = created.RFC3339Nano()
 	}
@@ -409,11 +408,11 @@ func scanOneConvIndex(s interface{ Scan(...any) error }) (*ConvIndexRow, error) 
 	return &r, nil
 }
 
-func nullableFileMtime(value int64) any {
-	if value == 0 {
+func nullableFileMtime(value time.Time) any {
+	if value.IsZero() {
 		return nil
 	}
-	return value
+	return dbTime(value.Round(0).UTC())
 }
 
 // SetConvIndexArchived stamps or clears the archived_at column on a

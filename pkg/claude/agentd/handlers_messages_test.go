@@ -32,7 +32,7 @@ func upsertConvIndexLocal(t *testing.T, convID, customTitle string) {
 		ConvID:      convID,
 		ProjectDir:  dir,
 		FullPath:    fullPath,
-		FileMtime:   time.Unix(mtime, 0).UnixNano(),
+		FileMtime:   time.Unix(mtime, 0).UTC(),
 		CustomTitle: customTitle,
 		IndexedAt:   time.Now(),
 	}), "UpsertConvIndex")

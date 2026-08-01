@@ -35,12 +35,30 @@ func TestMigrateV180toV181_ConvertsEveryTimestampAndPreservesSchemaGraph(t *test
 	d := v180FixtureDB(t)
 	columns := seedEveryV180TimestampColumn(t, d)
 	beforeTriggers := triggerDefinitions(t, d)
+	childTables := []string{
+		"agent_message_attachments", "agent_standing_order_hook_selectors",
+		"agent_standing_order_messages", "agent_tags", "group_template_agents",
+		"human_message_attachments", "operator_agent_messages",
+		"sandbox_profile_global_assignment", "spawn_profile_aliases",
+	}
+	childCounts := map[string]int{}
+	for _, table := range childTables {
+		var count int
+		require.NoError(t, d.QueryRow(`SELECT COUNT(*) FROM `+quoteIdentifier(table)).Scan(&count))
+		childCounts[table] = count
+		require.Positive(t, count, "%s fixture must contain a timestamp-less FK child", table)
+	}
+	sourceCounts := timestampNullabilityCounts(t, d)
+	assert.Equal(t, timestampNullabilityCountsResult{
+		total: 116, notNull: 114, emptyDefault: 38, zeroDefault: 1, alreadyNullable: 2,
+	}, sourceCounts, "v180 classifier inputs")
 
 	require.NoError(t, migrateV180toV181(d), "execute the exact v181 step")
 	var version int
 	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&version))
 	require.Equal(t, 181, version, "step execution control")
 
+	strictTables := map[string]bool{}
 	for _, column := range columns {
 		query := `SELECT COUNT(*), COALESCE(SUM(typeof(` + quoteIdentifier(column.column) + `) = 'integer'), 0)
 			FROM ` + quoteIdentifier(column.table) + ` WHERE ` + quoteIdentifier(column.column) + ` IS NOT NULL`
@@ -48,12 +66,31 @@ func TestMigrateV180toV181_ConvertsEveryTimestampAndPreservesSchemaGraph(t *test
 		require.NoError(t, d.QueryRow(query).Scan(&populated, &integers), column.qualified())
 		require.Positive(t, populated, "%s population control", column.qualified())
 		require.Equal(t, populated, integers, "%s values use SQLite INTEGER storage", column.qualified())
+		var declaredType string
+		require.NoError(t, d.QueryRow(`SELECT type FROM pragma_table_info(?) WHERE name = ?`, column.table, column.column).Scan(&declaredType))
+		assert.Equal(t, "INTEGER", strings.ToUpper(declaredType), "%s declared type", column.qualified())
+		if !strictTables[column.table] {
+			var strict int
+			require.NoError(t, d.QueryRow(`SELECT [strict] FROM pragma_table_list WHERE name = ?`, column.table).Scan(&strict))
+			assert.Equal(t, 1, strict, "%s is STRICT", column.table)
+			strictTables[column.table] = true
+		}
 	}
+	for _, table := range childTables {
+		var after int
+		require.NoError(t, d.QueryRow(`SELECT COUNT(*) FROM `+quoteIdentifier(table)).Scan(&after))
+		assert.Equal(t, childCounts[table], after, "%s rows survive parent rebuilds", table)
+	}
+	destinationCounts := timestampNullabilityCounts(t, d)
+	assert.Equal(t, 116, destinationCounts.total)
+	assert.Equal(t, 75, destinationCounts.notNull, "required timestamps retain NOT NULL")
+	assert.Equal(t, 41, destinationCounts.alreadyNullable, "only genuine sentinel/nullable timestamps become nullable")
 
 	rows, err := d.Query(`PRAGMA foreign_key_check`)
 	require.NoError(t, err)
 	defer rows.Close()
 	require.False(t, rows.Next(), "seeded FK children still reference rebuilt parents")
+	require.NoError(t, rows.Err())
 	require.Equal(t, beforeTriggers, triggerDefinitions(t, d), "all triggers survive the rebuild")
 
 	fresh := freshMigratedDB(t)
@@ -93,6 +130,7 @@ func seedEveryV180TimestampColumn(t *testing.T, d *sql.DB) []qualifiedTimestampC
 		require.NoError(t, tables.Scan(&name))
 		names = append(names, name)
 	}
+	require.NoError(t, tables.Err())
 	require.NoError(t, tables.Close())
 
 	var timestampColumns []qualifiedTimestampColumn
@@ -114,6 +152,28 @@ func seedEveryV180TimestampColumn(t *testing.T, d *sql.DB) []qualifiedTimestampC
 			case isTimestampColumn(name) && upperType == "INTEGER":
 				values = append(values, int64(1700000000))
 				timestampColumns = append(timestampColumns, qualifiedTimestampColumn{table, name})
+			case table == "agent_cron_jobs" && name == "target_kind":
+				values = append(values, "conv")
+			case table == "agent_permissions" && name == "effect":
+				values = append(values, "grant")
+			case table == "agent_notify_prefs" && name == "mode":
+				values = append(values, "on")
+			case table == "agentd_idempotency" && name == "state":
+				values = append(values, "pending")
+			case table == "spawn_harness_rules" && name == "source_harness":
+				values = append(values, "claude")
+			case table == "spawn_harness_rules" && name == "target_harness":
+				values = append(values, "codex")
+			case table == "spawn_harness_rules" && name == "decision":
+				values = append(values, "allow")
+			case table == "opencode_agent_state_allocations" && name == "mode":
+				values = append(values, "legacy-shared")
+			case table == "opencode_agent_state_allocations" && name == "state_root":
+				values = append(values, "")
+			case table == "process_runs" && name == "program_authorizations_json":
+				values = append(values, "{}")
+			case table == "agent_standing_order_turn_origins" && name == "state":
+				values = append(values, "pending")
 			case upperType == "INTEGER":
 				values = append(values, int64(1))
 			case upperType == "REAL":
@@ -124,6 +184,7 @@ func seedEveryV180TimestampColumn(t *testing.T, d *sql.DB) []qualifiedTimestampC
 				values = append(values, "x")
 			}
 		}
+		require.NoError(t, columns.Err())
 		require.NoError(t, columns.Close())
 		_, err = d.Exec(`INSERT OR IGNORE INTO `+quoteIdentifier(table)+` (`+
 			strings.Join(columnNames, ", ")+`) VALUES (`+strings.Join(placeholders, ", ")+`)`, values...)
@@ -150,7 +211,47 @@ func seedEveryV180TimestampColumn(t *testing.T, d *sql.DB) []qualifiedTimestampC
 		require.NoError(t, err)
 	}
 	require.NoError(t, execPragma(d, `PRAGMA foreign_keys = ON`))
+	require.NoError(t, execPragma(d, `PRAGMA ignore_check_constraints = OFF`))
 	return timestampColumns
+}
+
+type timestampNullabilityCountsResult struct {
+	total, notNull, emptyDefault, zeroDefault, alreadyNullable int
+}
+
+func timestampNullabilityCounts(t *testing.T, d *sql.DB) timestampNullabilityCountsResult {
+	t.Helper()
+	rows, err := d.Query(`SELECT s.name, p.name, p.type, p.[notnull], p.dflt_value
+		FROM sqlite_master s JOIN pragma_table_info(s.name) p
+		WHERE s.type = 'table' AND s.name NOT LIKE 'sqlite_%' ORDER BY s.rowid, p.cid`)
+	require.NoError(t, err)
+	defer rows.Close()
+	var counts timestampNullabilityCountsResult
+	for rows.Next() {
+		var table, name, declaredType string
+		var notNull int
+		var defaultValue any
+		require.NoError(t, rows.Scan(&table, &name, &declaredType, &notNull, &defaultValue))
+		if !isTimestampColumn(name) {
+			continue
+		}
+		counts.total++
+		if notNull == 0 {
+			counts.alreadyNullable++
+			continue
+		}
+		counts.notNull++
+		if value, ok := defaultValue.(string); ok {
+			switch value {
+			case "''":
+				counts.emptyDefault++
+			case "0":
+				counts.zeroDefault++
+			}
+		}
+	}
+	require.NoError(t, rows.Err())
+	return counts
 }
 
 type namedTrigger struct{ name, statement string }
@@ -225,30 +326,71 @@ func TestMigrateV180toV181_RoundTripsLegacySpellingsExactly(t *testing.T) {
 		{"whole_z", "2024-01-02T03:04:05Z"},
 		{"trimmed_fraction", "2024-01-02T03:04:05.1Z"},
 		{"offset", "2024-01-02T05:04:05.123456789+02:00"},
-		{"absent", ""},
 	}
 	for _, fixture := range fixtures {
 		_, err := d.Exec(`INSERT INTO notify_state (session_id, notified_at) VALUES (?, ?)`, fixture.id, fixture.value)
 		require.NoError(t, err)
 	}
+	_, err := d.Exec(`INSERT INTO usage_cache (id, data, fetched_at, last_attempt_at) VALUES (99, '{}', '', '')`)
+	require.NoError(t, err)
 
 	require.NoError(t, migrateV180toV181(d))
 	for _, fixture := range fixtures {
-		var stored sql.NullInt64
+		var stored int64
 		require.NoError(t, d.QueryRow(`SELECT notified_at FROM notify_state WHERE session_id = ?`, fixture.id).Scan(&stored))
-		if fixture.value == "" {
-			assert.False(t, stored.Valid, "empty-string absence must migrate to NULL")
-			continue
-		}
 		original, err := time.Parse(time.RFC3339Nano, fixture.value)
 		require.NoError(t, err)
-		require.True(t, stored.Valid)
-		assert.True(t, time.Unix(0, stored.Int64).Equal(original), "%s instant changed", fixture.id)
+		assert.True(t, time.Unix(0, stored).Equal(original), "%s instant changed", fixture.id)
 		var storageClass string
 		require.NoError(t, d.QueryRow(`SELECT typeof(notified_at) FROM notify_state WHERE session_id = ?`, fixture.id).
 			Scan(&storageClass))
 		assert.Equal(t, "integer", storageClass, fixture.id)
 	}
+
+	var absent sql.NullInt64
+	require.NoError(t, d.QueryRow(`SELECT fetched_at FROM usage_cache WHERE id = 99`).Scan(&absent))
+	assert.False(t, absent.Valid, "a genuine optional timestamp preserves absence as NULL")
+}
+
+func TestMigrateV180toV181_RejectsEmptyRequiredTimestamp(t *testing.T) {
+	d := v180FixtureDB(t)
+	_, err := d.Exec(`INSERT INTO notify_state (session_id, notified_at) VALUES ('required-empty', '')`)
+	require.NoError(t, err)
+
+	err = migrateV180toV181(d)
+	require.Error(t, err, "required-empty failure arm must execute")
+	assert.ErrorContains(t, err, "notify_state.notified_at")
+	assert.ErrorContains(t, err, "rowid")
+	assert.ErrorContains(t, err, `value ""`)
+	assert.ErrorContains(t, err, "required timestamp is empty")
+	var version int
+	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&version))
+	assert.Equal(t, 180, version)
+	var notNull int
+	require.NoError(t, d.QueryRow(`SELECT [notnull] FROM pragma_table_info('notify_state') WHERE name = 'notified_at'`).Scan(&notNull))
+	assert.Equal(t, 1, notNull, "failed migration leaves the required source constraint intact")
+}
+
+func TestMigrateV180toV181_RestoresAutoincrementHighWater(t *testing.T) {
+	d := v180FixtureDB(t)
+	_, err := d.Exec(`INSERT INTO human_messages (id, from_conv, body, created_at) VALUES
+		(1, 'first', 'first', '2024-01-02T03:04:05Z'),
+		(100, 'deleted', 'deleted', '2024-01-02T03:04:06Z')`)
+	require.NoError(t, err)
+	_, err = d.Exec(`DELETE FROM human_messages WHERE id = 100`)
+	require.NoError(t, err)
+
+	var before int64
+	require.NoError(t, d.QueryRow(`SELECT seq FROM sqlite_sequence WHERE name = 'human_messages'`).Scan(&before))
+	require.Equal(t, int64(100), before, "fixture retains a deleted externally-addressed id")
+	require.NoError(t, migrateV180toV181(d))
+
+	var restored int64
+	require.NoError(t, d.QueryRow(`SELECT seq FROM sqlite_sequence WHERE name = 'human_messages'`).Scan(&restored))
+	assert.Equal(t, int64(100), restored, "migration restores the original sequence, not the copied max id")
+	id, err := insertHumanMessage(d, &HumanMessage{FromConv: "next", Body: "next", CreatedAt: time.Unix(1704164647, 0)})
+	require.NoError(t, err)
+	assert.Equal(t, int64(101), id)
 }
 
 func TestMigrateV180toV181_ConvertsNamedEpochSecondColumns(t *testing.T) {
@@ -326,4 +468,29 @@ func TestMigrateV180toV181_RejectsUnrecognizedFileMtimeUnit(t *testing.T) {
 	require.Error(t, err, "failure arm must execute")
 	assert.ErrorContains(t, err, "conv_index.file_mtime")
 	assert.ErrorContains(t, err, "rowid")
+}
+
+func TestLegacyFileMtimeToUnixNano_ThresholdBoundaries(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		value     int64
+		want      int64
+		wantError bool
+	}{
+		{"floor_minus_one", legacyFileMtimeModernMillisFloor - 1, 0, true},
+		{"floor", legacyFileMtimeModernMillisFloor, legacyFileMtimeModernMillisFloor * int64(time.Millisecond), false},
+		{"floor_plus_one", legacyFileMtimeModernMillisFloor + 1, (legacyFileMtimeModernMillisFloor + 1) * int64(time.Millisecond), false},
+		{"max", maxUnixNanoMillis, maxUnixNanoMillis * int64(time.Millisecond), false},
+		{"max_plus_one", maxUnixNanoMillis + 1, 0, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := legacyFileMtimeToUnixNano(tc.value)
+			if tc.wantError {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+		})
+	}
 }

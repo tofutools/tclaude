@@ -101,7 +101,7 @@ func TestDiscoverSpawnedConvID(t *testing.T) {
 
 	t.Run("falls back to FileMtime when Created is empty", func(t *testing.T) {
 		h := harnessWithConvs(fakeDiscoveryStore{entries: []convops.SessionEntry{
-			{SessionID: "mtime-conv", ProjectPath: cwd, FileMtime: launch.Add(1 * time.Second).UnixNano()},
+			{SessionID: "mtime-conv", ProjectPath: cwd, FileMtime: launch.Add(1 * time.Second)},
 		}})
 		assert.Equal(t, "mtime-conv", discoverSpawnedConvID(h, cwd, launch))
 	})

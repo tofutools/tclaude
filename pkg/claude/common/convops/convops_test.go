@@ -172,7 +172,7 @@ func TestSessionEntry_ArchivedAt_JSON(t *testing.T) {
 
 func TestSessionEntry_FileMtime_JSONUsesRFC3339Nano(t *testing.T) {
 	mtime := time.Date(2026, 8, 1, 16, 13, 0, 123456789, time.UTC)
-	b, err := json.Marshal(SessionEntry{SessionID: "a", FileMtime: mtime.UnixNano()})
+	b, err := json.Marshal(SessionEntry{SessionID: "a", FileMtime: mtime})
 	require.NoError(t, err)
 
 	var wire map[string]any
@@ -321,7 +321,7 @@ func TestSessionsIndex_LegacyWriterKeepsMillisecondMtime(t *testing.T) {
 
 	mtime := time.Date(2026, 8, 1, 16, 13, 0, 123456789, time.UTC)
 	require.NoError(t, UpsertSessionsIndexEntry(tmpDir, SessionEntry{
-		SessionID: "legacy-reader", FileMtime: mtime.UnixNano(),
+		SessionID: "legacy-reader", FileMtime: mtime,
 	}))
 
 	var oldReader struct {
@@ -483,7 +483,7 @@ func TestLoadSessionsIndex_RescansStaleStub(t *testing.T) {
 		ConvID:     sessionID,
 		ProjectDir: tmpDir,
 		FullPath:   path,
-		FileMtime:  info.ModTime().UnixNano(),
+		FileMtime:  info.ModTime().Round(0).UTC(),
 		FileSize:   info.Size(),
 	}), "seed stub row")
 
@@ -517,7 +517,7 @@ func TestRefreshConvIndexEntry_RescansStaleStub(t *testing.T) {
 		ConvID:     sessionID,
 		ProjectDir: tmpDir,
 		FullPath:   path,
-		FileMtime:  info.ModTime().UnixNano(),
+		FileMtime:  info.ModTime().Round(0).UTC(),
 		FileSize:   info.Size(),
 	}), "seed stub row")
 

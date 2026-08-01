@@ -248,15 +248,13 @@ func ListAgentConvSuccessions() ([]*AgentConvSuccession, error) {
 	var out []*AgentConvSuccession
 	for rows.Next() {
 		var (
-			s     AgentConvSuccession
-			tsRaw string
+			s  AgentConvSuccession
+			ts dbTimestamp
 		)
-		if err := rows.Scan(&s.OldConvID, &s.NewConvID, &s.Reason, &tsRaw); err != nil {
+		if err := rows.Scan(&s.OldConvID, &s.NewConvID, &s.Reason, &ts); err != nil {
 			return nil, err
 		}
-		if t, err := time.Parse(time.RFC3339, tsRaw); err == nil {
-			s.SucceededAt = t
-		}
+		s.SucceededAt = ts.Time()
 		out = append(out, &s)
 	}
 	return out, rows.Err()

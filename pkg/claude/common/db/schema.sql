@@ -128,8 +128,8 @@ CREATE TABLE "sessions" (
 			status          TEXT NOT NULL DEFAULT 'idle',
 			status_detail   TEXT NOT NULL DEFAULT '',
 			auto_registered INTEGER NOT NULL DEFAULT 0,
-			created_at      INTEGER,
-			updated_at      INTEGER
+			created_at      INTEGER NOT NULL,
+			updated_at      INTEGER NOT NULL
 		, context_pct REAL NOT NULL DEFAULT 0, subagent_count INTEGER NOT NULL DEFAULT 0, last_hook INTEGER, tokens_input INTEGER NOT NULL DEFAULT 0, tokens_output INTEGER NOT NULL DEFAULT 0, context_window_size INTEGER NOT NULL DEFAULT 0, nudged_pct REAL NOT NULL DEFAULT 0, exit_reason TEXT, model TEXT NOT NULL DEFAULT '', effort_level TEXT NOT NULL DEFAULT '', pending_conv TEXT NOT NULL DEFAULT '', cost_usd REAL NOT NULL DEFAULT 0, model_id TEXT NOT NULL DEFAULT '', harness TEXT NOT NULL DEFAULT 'claude', sandbox_mode TEXT NOT NULL DEFAULT '', remote_control INTEGER NOT NULL DEFAULT 0, virtual_cost_usd REAL NOT NULL DEFAULT 0, agent_id TEXT NOT NULL DEFAULT '', last_statusline_json TEXT NOT NULL DEFAULT '', subagents_json TEXT NOT NULL DEFAULT '', ask_user_question_timeout TEXT NOT NULL DEFAULT '', effective_sandbox_config TEXT NOT NULL DEFAULT '', approval_policy TEXT NOT NULL DEFAULT '', approval_auto_review INTEGER NOT NULL DEFAULT 0, resume_provenance TEXT NOT NULL DEFAULT '', exit_intent TEXT NOT NULL DEFAULT '', exit_intent_event_id TEXT NOT NULL DEFAULT '', exit_intent_generation TEXT NOT NULL DEFAULT '', exit_intent_at INTEGER, exit_callback_generation TEXT NOT NULL DEFAULT '', exit_callback_token_hash TEXT NOT NULL DEFAULT '', exit_callback_pane_id TEXT NOT NULL DEFAULT '', exit_callback_used_at INTEGER, exit_launch_gate_state TEXT NOT NULL DEFAULT '', auto_memory INTEGER NOT NULL DEFAULT 0, bg_shells_json TEXT NOT NULL DEFAULT '', context_features TEXT NOT NULL DEFAULT '', auto_compact_window TEXT NOT NULL DEFAULT '', os_sandbox_state TEXT NOT NULL DEFAULT '', os_sandbox_source TEXT NOT NULL DEFAULT '', os_sandbox_unverified INTEGER NOT NULL DEFAULT 0, sandbox_mode_source TEXT NOT NULL DEFAULT '', sandbox_implementation TEXT NOT NULL DEFAULT 'harness-builtin', monitors_json TEXT NOT NULL DEFAULT '') STRICT;
 
 CREATE INDEX idx_sessions_conv_id ON sessions(conv_id);
@@ -138,7 +138,7 @@ CREATE INDEX idx_sessions_status_updated ON sessions(status, updated_at);
 
 CREATE TABLE "notify_state" (
 			session_id  TEXT PRIMARY KEY,
-			notified_at INTEGER
+			notified_at INTEGER NOT NULL
 		) STRICT;
 
 CREATE TABLE "usage_cache" (
@@ -194,7 +194,7 @@ CREATE TABLE "agent_groups" (
 			id          INTEGER PRIMARY KEY AUTOINCREMENT,
 			name        TEXT NOT NULL UNIQUE,
 			descr       TEXT NOT NULL DEFAULT '',
-			created_at  INTEGER
+			created_at  INTEGER NOT NULL
 		, archived_at INTEGER, default_cwd TEXT NOT NULL DEFAULT '', default_context TEXT NOT NULL DEFAULT '', max_members INTEGER NOT NULL DEFAULT 0, notify_enabled INTEGER NOT NULL DEFAULT 1, default_profile TEXT NOT NULL DEFAULT '', remote_control INTEGER, mission TEXT NOT NULL DEFAULT '', source_template TEXT NOT NULL DEFAULT '', parent_id INTEGER REFERENCES agent_groups(id) ON DELETE SET NULL, default_profile_id INTEGER, source_template_id INTEGER, sandbox_profile TEXT NOT NULL DEFAULT '', sandbox_profile_id INTEGER, attachment_url TEXT NOT NULL DEFAULT '', attachment_label TEXT NOT NULL DEFAULT '') STRICT;
 
 CREATE INDEX idx_agent_groups_archived
@@ -260,7 +260,7 @@ CREATE TABLE "agent_cron_jobs" (
 			subject          TEXT NOT NULL DEFAULT '',
 			body             TEXT NOT NULL DEFAULT '',
 			enabled          INTEGER NOT NULL DEFAULT 1,
-			created_at       INTEGER,
+			created_at       INTEGER NOT NULL,
 			last_run_at      INTEGER,
 			last_run_status  TEXT NOT NULL DEFAULT ''
 		, target_kind TEXT NOT NULL DEFAULT 'conv'
@@ -273,7 +273,7 @@ CREATE INDEX idx_agent_cron_jobs_target ON agent_cron_jobs(target_agent);
 CREATE TABLE "agent_cron_runs" (
 			id        INTEGER PRIMARY KEY AUTOINCREMENT,
 			job_id    INTEGER NOT NULL REFERENCES agent_cron_jobs(id) ON DELETE CASCADE,
-			fired_at  INTEGER,
+			fired_at  INTEGER NOT NULL,
 			status    TEXT NOT NULL DEFAULT '',
 			error_msg TEXT NOT NULL DEFAULT ''
 		) STRICT;
@@ -285,7 +285,7 @@ CREATE TABLE "agent_conv_succession" (
 			old_conv_id   TEXT PRIMARY KEY,
 			new_conv_id   TEXT NOT NULL,
 			reason        TEXT NOT NULL DEFAULT '',
-			succeeded_at  INTEGER
+			succeeded_at  INTEGER NOT NULL
 		, agent_id TEXT NOT NULL DEFAULT '') STRICT;
 
 CREATE INDEX idx_agent_conv_succession_new
@@ -293,7 +293,7 @@ CREATE INDEX idx_agent_conv_succession_new
 
 CREATE TABLE "agent_clone_history" (
 			source_agent_id TEXT NOT NULL,
-			cloned_at      INTEGER
+			cloned_at      INTEGER NOT NULL
 		) STRICT;
 
 CREATE INDEX idx_clone_history_source
@@ -305,7 +305,7 @@ CREATE TABLE "agent_group_audit" (
 			old_name   TEXT NOT NULL,
 			new_name   TEXT NOT NULL,
 			by_conv    TEXT NOT NULL DEFAULT '',
-			at         INTEGER
+			at         INTEGER NOT NULL
 		, by_agent TEXT NOT NULL DEFAULT '') STRICT;
 
 CREATE INDEX idx_agent_group_audit_group
@@ -314,7 +314,7 @@ CREATE INDEX idx_agent_group_audit_group
 CREATE TABLE "agent_head_aliases" (
 			handle         TEXT PRIMARY KEY,
 			anchor_conv_id TEXT NOT NULL,
-			created_at     INTEGER,
+			created_at     INTEGER NOT NULL,
 			by_conv        TEXT NOT NULL DEFAULT ''
 		, by_agent TEXT NOT NULL DEFAULT '', anchor_agent_id TEXT NOT NULL DEFAULT '') STRICT;
 
@@ -326,7 +326,7 @@ CREATE TABLE "agent_group_links" (
 			from_group_id   INTEGER NOT NULL REFERENCES agent_groups(id) ON DELETE CASCADE,
 			to_group_id     INTEGER NOT NULL REFERENCES agent_groups(id) ON DELETE CASCADE,
 			mode            TEXT    NOT NULL,
-			created_at      INTEGER,
+			created_at      INTEGER    NOT NULL,
 			by_conv         TEXT    NOT NULL DEFAULT '', by_agent TEXT NOT NULL DEFAULT '',
 			UNIQUE (from_group_id, to_group_id, mode)
 		) STRICT;
@@ -340,12 +340,12 @@ CREATE INDEX idx_agent_group_links_to
 CREATE TABLE "agent_workdir" (
 			conv_id    TEXT PRIMARY KEY,
 			dir        TEXT NOT NULL,
-			updated_at INTEGER
+			updated_at INTEGER NOT NULL
 		, worktree_root TEXT NOT NULL DEFAULT '', branch        TEXT NOT NULL DEFAULT '', agent_id TEXT NOT NULL DEFAULT '') STRICT;
 
 CREATE TABLE "agent_spawn_history" (
 			spawner_agent_id TEXT NOT NULL,
-			spawned_at      INTEGER
+			spawned_at      INTEGER NOT NULL
 		) STRICT;
 
 CREATE INDEX idx_spawn_history_spawner
@@ -358,7 +358,7 @@ CREATE TABLE "agent_messages" (
 			to_conv          TEXT NOT NULL,
 			subject          TEXT NOT NULL DEFAULT '',
 			body             TEXT NOT NULL DEFAULT '',
-			created_at       INTEGER,
+			created_at       INTEGER NOT NULL,
 			delivered_at     INTEGER,
 			read_at          INTEGER,
 			parent_id        INTEGER NOT NULL DEFAULT 0,
@@ -384,7 +384,7 @@ CREATE INDEX idx_agent_messages_regular_conv_backlog
 CREATE TABLE "agent_transfer_log" (
 			id             INTEGER PRIMARY KEY AUTOINCREMENT,
 			kind           TEXT NOT NULL,
-			at             INTEGER,
+			at             INTEGER NOT NULL,
 			format_version INTEGER NOT NULL DEFAULT 0,
 			source_group   TEXT NOT NULL DEFAULT '',
 			source_home    TEXT NOT NULL DEFAULT '',
@@ -406,8 +406,8 @@ CREATE TABLE "group_templates" (
 			name            TEXT NOT NULL UNIQUE,
 			descr           TEXT NOT NULL DEFAULT '',
 			default_context TEXT NOT NULL DEFAULT '',
-			created_at      INTEGER,
-			updated_at      INTEGER
+			created_at      INTEGER NOT NULL,
+			updated_at      INTEGER NOT NULL
 		, work_pattern TEXT NOT NULL DEFAULT '', process TEXT NOT NULL DEFAULT '', rhythms TEXT NOT NULL DEFAULT '', wave_max_wait INTEGER NOT NULL DEFAULT 0, per_agent_worktrees INTEGER NOT NULL DEFAULT 0) STRICT;
 
 CREATE TABLE "human_messages" (
@@ -417,7 +417,7 @@ CREATE TABLE "human_messages" (
 			group_name  TEXT NOT NULL DEFAULT '',
 			subject     TEXT NOT NULL DEFAULT '',
 			body        TEXT NOT NULL,
-			created_at  INTEGER,
+			created_at  INTEGER NOT NULL,
 			read_at     INTEGER
 		, from_agent TEXT NOT NULL DEFAULT '', process_run_id TEXT NOT NULL DEFAULT '', process_node_id TEXT NOT NULL DEFAULT '', process_command_id TEXT NOT NULL DEFAULT '') STRICT;
 
@@ -467,7 +467,7 @@ CREATE INDEX idx_session_cost_daily_walk
 CREATE TABLE "dashboard_prefs" (
 			key        TEXT PRIMARY KEY,
 			value      TEXT NOT NULL,
-			updated_at INTEGER
+			updated_at INTEGER NOT NULL
 		) STRICT;
 
 CREATE TRIGGER stable_ref_global_profile_insert
@@ -503,7 +503,7 @@ CREATE TABLE "pending_spawns" (
 			spawned_by_conv TEXT NOT NULL DEFAULT '',
 			worktree_path   TEXT NOT NULL DEFAULT '',
 			worktree_branch TEXT NOT NULL DEFAULT '',
-			created_at      INTEGER
+			created_at      INTEGER NOT NULL
 		, reply_to_agent TEXT NOT NULL DEFAULT '', spawned_by_agent TEXT NOT NULL DEFAULT '', is_owner INTEGER NOT NULL DEFAULT 0, permission_overrides TEXT NOT NULL DEFAULT '', process_command_id TEXT NOT NULL DEFAULT '', effective_sandbox_config TEXT NOT NULL DEFAULT '', agent_id TEXT NOT NULL DEFAULT '', launching INTEGER NOT NULL DEFAULT 0, task_url TEXT NOT NULL DEFAULT '', task_label TEXT NOT NULL DEFAULT '') STRICT;
 
 CREATE UNIQUE INDEX idx_pending_spawns_process_command ON pending_spawns(process_command_id) WHERE process_command_id <> '';
@@ -528,8 +528,8 @@ CREATE TABLE "spawn_profiles" (
 			sync_worktree                 INTEGER,
 			auto_focus                    INTEGER,
 			include_group_default_context INTEGER,
-			created_at                    INTEGER,
-			updated_at                    INTEGER
+			created_at                    INTEGER NOT NULL,
+			updated_at                    INTEGER NOT NULL
 		, remote_control INTEGER, is_owner INTEGER, permission_overrides TEXT NOT NULL DEFAULT '', ask_user_question_timeout TEXT NOT NULL DEFAULT '', disabled_reason TEXT NOT NULL DEFAULT '', disabled INTEGER NOT NULL DEFAULT 0, auto_memory INTEGER, tools TEXT NOT NULL DEFAULT '', context_features TEXT NOT NULL DEFAULT '', auto_compact_window TEXT NOT NULL DEFAULT '', ssh_workaround INTEGER, sandbox_implementation TEXT NOT NULL DEFAULT '', operator_only INTEGER NOT NULL DEFAULT 0) STRICT;
 
 CREATE TRIGGER spawn_profile_name_not_alias_insert
@@ -551,8 +551,8 @@ CREATE TABLE "ask_threads" (
 			cwd        TEXT NOT NULL,
 			conv_id    TEXT NOT NULL,
 			harness    TEXT NOT NULL DEFAULT 'claude',
-			created_at INTEGER,
-			updated_at INTEGER, agent_id TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL, agent_id TEXT NOT NULL DEFAULT '',
 			PRIMARY KEY (term_key, cwd)
 		) STRICT;
 
@@ -569,8 +569,8 @@ CREATE TABLE "export_jobs" (
 			artifact_name TEXT NOT NULL DEFAULT '',
 			artifact_size INTEGER NOT NULL DEFAULT 0,
 			content_type  TEXT NOT NULL DEFAULT '',
-			created_at    INTEGER,
-			updated_at    INTEGER
+			created_at    INTEGER NOT NULL,
+			updated_at    INTEGER NOT NULL
 		, worker_conv_id TEXT NOT NULL DEFAULT '', agent_id TEXT NOT NULL DEFAULT '', worker_agent_id TEXT NOT NULL DEFAULT '') STRICT;
 
 CREATE INDEX idx_export_jobs_conv
@@ -578,7 +578,7 @@ CREATE INDEX idx_export_jobs_conv
 
 CREATE TABLE "audit_log" (
 			id           INTEGER PRIMARY KEY AUTOINCREMENT,
-			at           INTEGER,
+			at           INTEGER NOT NULL,
 			actor_kind   TEXT NOT NULL DEFAULT '',
 			actor_conv   TEXT NOT NULL DEFAULT '',
 			actor_label  TEXT NOT NULL DEFAULT '',
@@ -605,7 +605,7 @@ CREATE INDEX idx_audit_log_event_id
 CREATE TABLE "agents" (
 			agent_id        TEXT PRIMARY KEY,
 			current_conv_id TEXT NOT NULL UNIQUE,
-			created_at      INTEGER,
+			created_at      INTEGER NOT NULL,
 			created_via     TEXT NOT NULL DEFAULT '',
 			retired_at      INTEGER,
 			retired_by      TEXT NOT NULL DEFAULT '',
@@ -620,7 +620,7 @@ CREATE TABLE "agent_conversations" (
 			agent_id  TEXT NOT NULL REFERENCES agents(agent_id) ON DELETE CASCADE,
 			role      TEXT NOT NULL DEFAULT '',
 			reason    TEXT NOT NULL DEFAULT '',
-			linked_at INTEGER
+			linked_at INTEGER NOT NULL
 		) STRICT;
 
 CREATE INDEX idx_agent_conversations_agent
@@ -631,7 +631,7 @@ CREATE TABLE "agent_group_members" (
 				agent_id  TEXT NOT NULL,
 				role      TEXT NOT NULL DEFAULT '',
 				descr     TEXT NOT NULL DEFAULT '',
-				joined_at INTEGER,
+				joined_at INTEGER NOT NULL,
 				PRIMARY KEY (group_id, agent_id)
 			) STRICT;
 
@@ -641,7 +641,7 @@ CREATE INDEX idx_agent_group_members_agent
 CREATE TABLE "agent_group_owners" (
 				group_id   INTEGER NOT NULL REFERENCES agent_groups(id) ON DELETE CASCADE,
 				agent_id   TEXT NOT NULL,
-				granted_at INTEGER,
+				granted_at INTEGER NOT NULL,
 				granted_by TEXT NOT NULL DEFAULT '',
 				PRIMARY KEY (group_id, agent_id)
 			) STRICT;
@@ -652,7 +652,7 @@ CREATE INDEX idx_agent_group_owners_agent
 CREATE TABLE "agent_permissions" (
 				agent_id   TEXT NOT NULL,
 				slug       TEXT NOT NULL,
-				granted_at INTEGER,
+				granted_at INTEGER NOT NULL,
 				granted_by TEXT NOT NULL DEFAULT '',
 				effect     TEXT NOT NULL DEFAULT 'grant' CHECK (effect IN ('grant', 'deny')),
 				PRIMARY KEY (agent_id, slug)
@@ -665,8 +665,8 @@ CREATE TABLE "agent_sudo_grants" (
 				id          INTEGER PRIMARY KEY AUTOINCREMENT,
 				agent_id    TEXT NOT NULL,
 				slug        TEXT NOT NULL,
-				granted_at  INTEGER,
-				expires_at  INTEGER,
+				granted_at  INTEGER NOT NULL,
+				expires_at  INTEGER NOT NULL,
 				granted_by  TEXT NOT NULL,
 				reason      TEXT NOT NULL DEFAULT '',
 				revoked_at  INTEGER
@@ -678,7 +678,7 @@ CREATE INDEX idx_sudo_active
 CREATE TABLE "agent_notify_prefs" (
 				agent_id   TEXT PRIMARY KEY,
 				mode       TEXT NOT NULL CHECK (mode IN ('on', 'off')),
-				updated_at INTEGER
+				updated_at INTEGER NOT NULL
 			) STRICT;
 
 CREATE TABLE "roles" (
@@ -693,8 +693,8 @@ CREATE TABLE "roles" (
 			sandbox       TEXT NOT NULL DEFAULT '',
 			approval      TEXT NOT NULL DEFAULT '',
 			permissions   TEXT NOT NULL DEFAULT '[]',
-			created_at    INTEGER,
-			updated_at    INTEGER
+			created_at    INTEGER NOT NULL,
+			updated_at    INTEGER NOT NULL
 		, spawn_profile_id INTEGER, tools TEXT NOT NULL DEFAULT '') STRICT;
 
 CREATE INDEX idx_roles_spawn_profile_id ON roles(spawn_profile_id);
@@ -719,7 +719,7 @@ CREATE TABLE "group_process_state" (
 			group_id         INTEGER PRIMARY KEY,
 			process          TEXT NOT NULL DEFAULT '[]',
 			current_phase    TEXT NOT NULL DEFAULT '',
-			phase_started_at INTEGER
+			phase_started_at INTEGER NOT NULL
 		) STRICT;
 
 CREATE TABLE "group_process_transitions" (
@@ -727,7 +727,7 @@ CREATE TABLE "group_process_transitions" (
 			group_id   INTEGER NOT NULL,
 			from_phase TEXT NOT NULL DEFAULT '',
 			to_phase   TEXT NOT NULL,
-			at         INTEGER,
+			at         INTEGER NOT NULL,
 			actor      TEXT NOT NULL DEFAULT ''
 		) STRICT;
 
@@ -738,7 +738,7 @@ CREATE TABLE "group_wave_choreography" (
 			group_id   INTEGER PRIMARY KEY,
 			group_name TEXT NOT NULL,
 			state      TEXT NOT NULL DEFAULT '{}',
-			updated_at INTEGER
+			updated_at INTEGER NOT NULL
 		) STRICT;
 
 CREATE TABLE "access_requests" (
@@ -757,7 +757,7 @@ CREATE TABLE "access_requests" (
 			target_conv_title TEXT NOT NULL DEFAULT '',
 			auto_grantable    INTEGER NOT NULL DEFAULT 0,
 			status            TEXT NOT NULL DEFAULT 'pending',
-			created_at        INTEGER,
+			created_at        INTEGER NOT NULL,
 			deadline_at       INTEGER,
 			decided_at        INTEGER
 		) STRICT;
@@ -779,8 +779,8 @@ CREATE TABLE "agent_prs" (
 			pr_url      TEXT NOT NULL,
 			summary     TEXT NOT NULL DEFAULT '',
 			state       TEXT NOT NULL DEFAULT '',
-			created_at  INTEGER,
-			updated_at  INTEGER,
+			created_at  INTEGER NOT NULL,
+			updated_at  INTEGER NOT NULL,
 			UNIQUE(agent_id, pr_url)
 		) STRICT;
 
@@ -793,14 +793,14 @@ CREATE TABLE "sandbox_profiles" (
 			name             TEXT NOT NULL UNIQUE,
 			filesystem_json  TEXT NOT NULL DEFAULT '[]',
 			environment_json TEXT NOT NULL DEFAULT '[]',
-			created_at       INTEGER,
-			updated_at       INTEGER
+			created_at       INTEGER NOT NULL,
+			updated_at       INTEGER NOT NULL
 		, includes_json TEXT NOT NULL DEFAULT '[]', agent_directories_json TEXT NOT NULL DEFAULT '[]', network_access TEXT NOT NULL DEFAULT '', network_json TEXT NOT NULL DEFAULT '', unix_sockets_json TEXT NOT NULL DEFAULT '', filesystem_spellings_json TEXT NOT NULL DEFAULT '', resource_limits_json TEXT NOT NULL DEFAULT '{}') STRICT;
 
 CREATE TABLE "agent_group_permissions" (
 			group_id   INTEGER NOT NULL REFERENCES agent_groups(id) ON DELETE CASCADE,
 			slug       TEXT NOT NULL,
-			granted_at INTEGER,
+			granted_at INTEGER NOT NULL,
 			granted_by TEXT NOT NULL DEFAULT '',
 			PRIMARY KEY (group_id, slug)
 		) STRICT;
@@ -811,7 +811,7 @@ CREATE INDEX idx_agent_group_permissions_slug
 CREATE TABLE "dashboard_session_grace" (
 			token_hash TEXT PRIMARY KEY,
 			expires_at INTEGER NOT NULL,
-			created_at INTEGER
+			created_at INTEGER NOT NULL
 		) STRICT;
 
 CREATE INDEX idx_dashboard_session_grace_expiry
@@ -838,7 +838,7 @@ CREATE TABLE "spawn_harness_rules" (
 			target_harness TEXT NOT NULL,
 			decision       TEXT NOT NULL CHECK (decision IN ('allow', 'deny')),
 			reason         TEXT NOT NULL DEFAULT '',
-			updated_at     INTEGER,
+			updated_at     INTEGER NOT NULL,
 			PRIMARY KEY (group_id, source_harness, target_harness),
 			CHECK (source_harness <> target_harness)
 		) STRICT;
@@ -850,13 +850,13 @@ CREATE TABLE "codex_telemetry_checkpoints" (
 			session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
 			data       TEXT NOT NULL,
 			failure_count INTEGER NOT NULL DEFAULT 0 CHECK (failure_count >= 0),
-			updated_at INTEGER
+			updated_at INTEGER NOT NULL
 		) STRICT;
 
 CREATE TABLE "subscription_usage_samples" (
 			id         INTEGER PRIMARY KEY AUTOINCREMENT,
 			provider   TEXT NOT NULL,
-			sampled_at INTEGER,
+			sampled_at INTEGER NOT NULL,
 			UNIQUE(provider, sampled_at)
 		) STRICT;
 
@@ -869,7 +869,7 @@ CREATE TABLE "subscription_usage_windows" (
 			duration_seconds INTEGER NOT NULL DEFAULT 0,
 			used_percent     REAL NOT NULL,
 			resets_at        INTEGER,
-			observed_at      INTEGER,
+			observed_at      INTEGER NOT NULL,
 			source           TEXT NOT NULL DEFAULT '', excluded INTEGER NOT NULL DEFAULT 0 CHECK(excluded IN (0, 1)),
 			PRIMARY KEY(sample_id, window_name)
 		) STRICT;
@@ -880,8 +880,8 @@ CREATE TABLE "process_snippets" (
 			name_key      TEXT NOT NULL UNIQUE,
 			envelope_json TEXT NOT NULL,
 			revision      INTEGER NOT NULL CHECK(revision > 0),
-			created_at    INTEGER,
-			updated_at    INTEGER
+			created_at    INTEGER NOT NULL,
+			updated_at    INTEGER NOT NULL
 		) STRICT;
 
 CREATE INDEX idx_process_snippets_order
@@ -911,7 +911,7 @@ CREATE TABLE "agent_recovery" (
 			healthy_since INTEGER,
 			notified_crash INTEGER NOT NULL DEFAULT 0,
 			notified_backoff INTEGER NOT NULL DEFAULT 0,
-			updated_at INTEGER
+			updated_at INTEGER NOT NULL
 		) STRICT;
 
 CREATE INDEX idx_agent_recovery_due
@@ -920,7 +920,7 @@ CREATE INDEX idx_agent_recovery_due
 CREATE TABLE "conversation_resume_profiles" (
 		conv_id      TEXT PRIMARY KEY,
 		profile_json TEXT NOT NULL,
-		updated_at   INTEGER
+		updated_at   INTEGER NOT NULL
 	) STRICT;
 
 CREATE TABLE "process_runs" (
@@ -937,9 +937,9 @@ CREATE TABLE "process_runs" (
 			state_version          INTEGER NOT NULL CHECK(state_version > 0),
 			checkpoint_json        TEXT NOT NULL
 			                           CHECK(length(CAST(checkpoint_json AS BLOB)) BETWEEN 1 AND 4194304),
-			created_at             INTEGER
+			created_at             INTEGER NOT NULL
 			                           CHECK(length(CAST(created_at AS BLOB)) BETWEEN 1 AND 64),
-			updated_at             INTEGER
+			updated_at             INTEGER NOT NULL
 			                           CHECK(length(CAST(updated_at AS BLOB)) BETWEEN 1 AND 64)
 		, program_authorizations_json TEXT NOT NULL DEFAULT '[]'
 			CHECK(length(CAST(program_authorizations_json AS BLOB)) BETWEEN 2 AND 262144)) STRICT;
@@ -952,7 +952,7 @@ CREATE TABLE "process_run_events" (
 			run_id       TEXT NOT NULL REFERENCES process_runs(id) ON DELETE CASCADE
 			                 CHECK(length(CAST(run_id AS BLOB)) BETWEEN 1 AND 128),
 			sequence     INTEGER NOT NULL CHECK(sequence > 0),
-			occurred_at  INTEGER
+			occurred_at  INTEGER NOT NULL
 			                 CHECK(length(CAST(occurred_at AS BLOB)) BETWEEN 1 AND 64),
 			node_id      TEXT NOT NULL DEFAULT ''
 			                 CHECK(length(CAST(node_id AS BLOB)) <= 256),
@@ -970,7 +970,7 @@ CREATE TABLE "browser_notifications" (
 			session_id TEXT NOT NULL DEFAULT '',
 			title      TEXT NOT NULL,
 			body       TEXT NOT NULL DEFAULT '',
-			created_at INTEGER
+			created_at INTEGER NOT NULL
 		) STRICT;
 
 CREATE INDEX idx_browser_notifications_created
@@ -983,8 +983,8 @@ CREATE TABLE "opencode_runtimes" (
 			password   TEXT NOT NULL,
 			pid        INTEGER NOT NULL DEFAULT 0,
 			cwd        TEXT NOT NULL,
-			created_at INTEGER,
-			updated_at INTEGER
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
 		, permission_json TEXT NOT NULL DEFAULT '', sandbox_implementation TEXT NOT NULL DEFAULT 'harness-builtin', sandbox_launch_spec_json TEXT NOT NULL DEFAULT '', transport TEXT NOT NULL DEFAULT 'loopback-tcp', control_socket_path TEXT NOT NULL DEFAULT '', control_socket_device INTEGER NOT NULL DEFAULT 0, control_socket_inode INTEGER NOT NULL DEFAULT 0, resource_cgroup_dir TEXT NOT NULL DEFAULT '') STRICT;
 
 CREATE TABLE "opencode_usage_activity" (
@@ -993,7 +993,7 @@ CREATE TABLE "opencode_usage_activity" (
 			conv_id     TEXT NOT NULL DEFAULT '',
 			provider_id TEXT NOT NULL,
 			model_id    TEXT NOT NULL,
-			observed_at INTEGER,
+			observed_at INTEGER NOT NULL,
 			PRIMARY KEY (session_id, message_id)
 		) STRICT;
 
@@ -1006,7 +1006,7 @@ CREATE INDEX idx_opencode_usage_activity_conv_message
 CREATE TABLE "opencode_usage_step_removals" (
 			conv_id    TEXT NOT NULL,
 			message_id TEXT NOT NULL,
-			removed_at INTEGER,
+			removed_at INTEGER NOT NULL,
 			PRIMARY KEY (conv_id, message_id)
 		) STRICT;
 
@@ -1017,7 +1017,7 @@ CREATE TABLE "opencode_agent_state_allocations" (
 			agent_id  TEXT PRIMARY KEY,
 			mode      TEXT NOT NULL CHECK (mode IN ('private', 'legacy-shared')),
 			state_root TEXT NOT NULL DEFAULT '',
-			created_at INTEGER,
+			created_at INTEGER NOT NULL,
 			CHECK (
 				(mode = 'private' AND state_root <> '') OR
 				(mode = 'legacy-shared' AND state_root = '')
@@ -1041,7 +1041,7 @@ CREATE TABLE "agent_standing_orders" (
 			enabled           INTEGER NOT NULL DEFAULT 1,
 			disabled_reason   TEXT    NOT NULL DEFAULT '',
 			operator_authored INTEGER NOT NULL DEFAULT 0,
-			created_at        INTEGER,
+			created_at        INTEGER    NOT NULL,
 			updated_at        INTEGER
 		, cooldown_seconds INTEGER NOT NULL DEFAULT 0, match_field TEXT NOT NULL DEFAULT '', match_regex TEXT NOT NULL DEFAULT '', row_version INTEGER NOT NULL DEFAULT 1, debounce_seconds INTEGER NOT NULL DEFAULT 0) STRICT;
 
@@ -1067,7 +1067,7 @@ CREATE TABLE "agent_standing_order_deliveries" (
 			transport      TEXT    NOT NULL DEFAULT '',
 			harness        TEXT    NOT NULL DEFAULT '',
 			detail         TEXT    NOT NULL DEFAULT '',
-			created_at     INTEGER
+			created_at     INTEGER    NOT NULL
 		, target_agent TEXT NOT NULL DEFAULT '') STRICT;
 
 CREATE INDEX idx_agent_standing_order_deliveries_order
@@ -1087,8 +1087,8 @@ CREATE TABLE "agent_standing_order_turn_origins" (
 			message_id   INTEGER NOT NULL CHECK(message_id > 0),
 			opencode_message_id TEXT NOT NULL,
 			state        TEXT NOT NULL CHECK(state IN ('pending', 'active')),
-			armed_at     INTEGER,
-			expires_at   INTEGER
+			armed_at     INTEGER NOT NULL,
+			expires_at   INTEGER NOT NULL
 		) STRICT;
 
 CREATE TABLE "agent_standing_order_debounce" (
@@ -1100,9 +1100,9 @@ CREATE TABLE "agent_standing_order_debounce" (
 			epoch          TEXT NOT NULL DEFAULT '',
 			harness        TEXT NOT NULL,
 			detail         TEXT NOT NULL DEFAULT '',
-			due_at         INTEGER,
-			max_due_at     INTEGER,
-			updated_at     INTEGER,
+			due_at         INTEGER NOT NULL,
+			max_due_at     INTEGER NOT NULL,
+			updated_at     INTEGER NOT NULL,
 			PRIMARY KEY (order_id, target_agent)
 		) STRICT;
 
@@ -1114,7 +1114,7 @@ CREATE TABLE "agent_standing_order_group_scopes" (
 			          REFERENCES agent_standing_orders(id) ON DELETE CASCADE,
 			group_id  INTEGER NOT NULL
 			          REFERENCES agent_groups(id) ON DELETE CASCADE,
-			created_at INTEGER,
+			created_at INTEGER NOT NULL,
 			PRIMARY KEY (order_id, group_id)
 		) STRICT;
 

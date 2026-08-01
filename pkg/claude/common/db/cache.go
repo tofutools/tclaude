@@ -269,7 +269,7 @@ func TryClaimUsageFetch(ttl time.Duration) (bool, error) {
 
 	// Try to claim: update only if stale or missing
 	result, err := db.Exec(`UPDATE usage_cache SET last_attempt_at = ?
-		WHERE id = 1 AND last_attempt_at < ?`, now, cutoff)
+		WHERE id = 1 AND (last_attempt_at IS NULL OR last_attempt_at < ?)`, now, cutoff)
 	if err != nil {
 		return false, err
 	}

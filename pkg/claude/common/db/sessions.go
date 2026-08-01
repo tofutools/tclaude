@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"sort"
 	"strings"
 	"time"
 
@@ -1963,23 +1962,9 @@ func UpdateSessionCost(sessionID string, costUSD float64) error {
 	// The model CASE mirrors conv_id: a render that carries no model
 	// (the empty-context ones before a turn's first response) keeps the
 	// last good value rather than blanking it.
-	//
-	// THE STORED FORMAT IS NOT SAFE TO ORDER BY IN SQL (TCL-932).
-	// The stamp below is time.RFC3339Nano over time.Now(), so it has its
-	// trailing zeros trimmed and carries THIS machine's zone — and it is only
-	// one of several writers of this column, which is why the contract and the
-	// inversions are stated once in sortCostDailyRowsForWalk. Do not infer the
-	// column's shape from this line and do not restate the rule here: read it
-	// there.
-	//
-	// Anyone ordering by this column must decide which order they want and get
-	// it a way the format cannot break: parse it (AllCostDailyRows sorts the
-	// cost walk in Go for exactly this reason) or, when INSERTION order is what
-	// is wanted, use the autoincrement id instead — the remedy already applied
-	// three times in this package, see ListUndeliveredAgentMessagesFor in
-	// agent.go and ListAgentCronRunsForJob in agent_cron.go. The two are not
-	// interchangeable: this row is UPSERTED, so its rowid is its first insert
-	// and not its last spend.
+	// Since v181 this is stored as guarded Unix nanoseconds, so SQL ordering is
+	// chronological regardless of the writer's original RFC3339 spelling or
+	// zone. The row is UPSERTED, so rowid still cannot stand in for recency.
 	now := time.Now()
 	// agent_id is denormalised in alongside conv_id, with the same keep-last-good
 	// CASE guard. Prefer the session's persisted agent_id (the v77 companion,
@@ -2306,7 +2291,7 @@ type CostDailyRow struct {
 	// tab's mixed delta walk prefers real spend for that slice. (See
 	// UpdateSessionVirtualCost for the rare mid-session-billing-flip case.)
 	VirtualCostUSD float64
-	UpdatedAt      string // RFC3339Nano of the day's last spend; "" if unknown
+	UpdatedAtNS    int64 `json:"-"` // Unix nanoseconds of the day's last spend; zero if unknown
 	// Model is the LLM model display name the session reported, denormalised
 	// onto the row at write time (the model sibling of ConvID) so the Costs
 	// tab's per-agent breakdown keeps naming a retired agent's model after
@@ -2323,13 +2308,13 @@ type CostDailyRow struct {
 // on — day, actor keys, the timestamp and the model — minus the raw
 // cumulative the walk consumes.
 type CostDelta struct {
-	Day       string
-	ConvID    string
-	SessionID string
-	USD       float64
-	UpdatedAt string // RFC3339Nano of the day's last spend; "" if unknown
-	Model     string // model display name denormalised onto the row; "" if unknown
-	Harness   string // harness denormalised onto the row; "" if unknown/pre-v103
+	Day         string
+	ConvID      string
+	SessionID   string
+	USD         float64
+	UpdatedAtNS int64  `json:"-"` // Unix nanoseconds of the day's last spend; zero if unknown
+	Model       string // model display name denormalised onto the row; "" if unknown
+	Harness     string // harness denormalised onto the row; "" if unknown/pre-v103
 	// Kind is "real" or "what_if" for MixedCostDeltas. The legacy single-column
 	// CostDeltas leaves it empty for backward compatibility.
 	Kind string
@@ -2414,7 +2399,7 @@ func CostDeltas(rows []CostDailyRow, whatif bool) []CostDelta {
 		prevKey = key
 		prevSession = r.SessionID
 		if d := val - baseline; d > 0 {
-			out = append(out, CostDelta{Day: r.Day, ConvID: r.ConvID, SessionID: r.SessionID, USD: d, UpdatedAt: r.UpdatedAt, Model: r.Model, Harness: r.Harness})
+			out = append(out, CostDelta{Day: r.Day, ConvID: r.ConvID, SessionID: r.SessionID, USD: d, UpdatedAtNS: r.UpdatedAtNS, Model: r.Model, Harness: r.Harness})
 			baseline = val
 		}
 	}
@@ -2458,7 +2443,7 @@ func MixedCostDeltas(rows []CostDailyRow) []CostDelta {
 		if d := val - baseline; d > 0 {
 			out = append(out, CostDelta{
 				Day: r.Day, ConvID: r.ConvID, SessionID: r.SessionID, USD: d,
-				UpdatedAt: r.UpdatedAt, Model: r.Model, Harness: r.Harness, Kind: kind,
+				UpdatedAtNS: r.UpdatedAtNS, Model: r.Model, Harness: r.Harness, Kind: kind,
 			})
 			baseline = val
 		}
@@ -2516,19 +2501,9 @@ func AllCostDailyRows() ([]CostDailyRow, error) {
 	if err != nil {
 		return nil, err
 	}
-	// The SQL ORDER BY is kept, but it is NO LONGER LOAD-BEARING for the walk —
-	// the Go sort below is. It stays because v133's expression index matches it,
-	// so SQLite still returns rows near-sorted and this hot read avoids building
-	// a temporary B-tree on every dashboard poll; the Go pass then costs almost
-	// nothing on an already-ordered slice.
-	//
-	// Why SQL cannot own this order (TCL-932): updated_at is RFC3339Nano
-	// compared by SQLite as TEXT, and lexical order over that column is not
-	// chronological order. sortCostDailyRowsForWalk states the column contract
-	// and the inversions; it is not restated here on purpose. An inverted pair
-	// makes CostDeltas read a carry-forward resume as a below-peak drop, reset
-	// the baseline, and double-count the conversation — the
-	// summed-instead-of-high-water figure that reached the Costs dashboard.
+	// v181 makes this ORDER BY load-bearing again: updated_at is INTEGER Unix
+	// nanoseconds, so SQLite's order is exact and the walk no longer needs a Go
+	// repair sort over variable-width/multi-zone text spellings.
 	rows, err := db.Query(`SELECT session_id, day, conv_id, cost_usd, virtual_cost_usd, updated_at, model, harness
 		FROM session_cost_daily
 		ORDER BY COALESCE(NULLIF(conv_id, ''), session_id), day, updated_at, session_id`)
@@ -2543,185 +2518,32 @@ func AllCostDailyRows() ([]CostDailyRow, error) {
 		if err := rows.Scan(&r.SessionID, &r.Day, &r.ConvID, &r.CostUSD, &r.VirtualCostUSD, &updatedAt, &r.Model, &r.Harness); err != nil {
 			return nil, err
 		}
-		r.UpdatedAt = exportTimestamp(updatedAt)
+		r.UpdatedAtNS = updatedAt.UnixNano()
 		out = append(out, r)
 	}
-	sortCostDailyRowsForWalk(out)
 	return out, rows.Err()
 }
 
-// costDailyConvKey is the walk's grouping key: the denormalised conv_id, or the
-// session_id for the rare row that has none. It is the Go twin of the query's
-// COALESCE/NULLIF fallback from conv_id to session_id, and of CostDeltas's own
-// fallback — three copies of one rule, so it is stated once here and used by
-// the sort.
-func costDailyConvKey(r CostDailyRow) string {
-	if r.ConvID != "" {
-		return r.ConvID
-	}
-	return r.SessionID
-}
-
-// sortCostDailyRowsForWalk establishes the order CostDeltas documents as its
-// precondition — (conv-key, day, updated_at CHRONOLOGICALLY, session_id) —
-// by parsing the timestamp rather than comparing its spelling.
-//
-// WHY THE SPELLING CANNOT BE TRUSTED (TCL-932). This is the one authoritative
-// statement; UpdateSessionCost and AllCostDailyRows point here rather than
-// restate it. A partial retelling is what sent the first reader wrong, and a
-// single source that is paraphrased elsewhere is not single.
-//
-// THE COLUMN CONTRACT, not one writer's habit. When present, updated_at is
-// INTENDED to be an RFC3339Nano spelling; "" means unknown, which the schema
-// default and pre-updated_at history can both leave behind (see the unusable-
-// stamp paragraph below — this is one contract, not two). Nothing enforces the
-// format at the column, so "intended" is the strongest available claim. And
-// where a stamp is present, its zone belongs to the WRITER or the SOURCE it was
-// copied from, not to this process — the writers disagree:
-//
-//   - UpdateSessionCost stamps time.Now(), so those rows carry the local zone
-//     of whatever machine recorded the spend.
-//   - ReplaceSessionVirtualCostHistory and
-//     ReplaceSessionVirtualCostHistoryForGeneration format the caller's
-//     VirtualCostDailySnapshot.UpdatedAt verbatim, preserving whatever
-//     *time.Location it arrived with (only a zero value falls back to
-//     time.Now()). A fixed-zone snapshot is stored in that fixed zone.
-//   - v53 backfilled pre-existing timestamp STRINGS rather than generating
-//     stamps at all.
-//
-// So a single table can hold Z stamps and several different numeric offsets at
-// once, and an offset row is not evidence of anything about this machine.
-// RFC3339Nano additionally TRIMS TRAILING ZEROS from the fraction. The column
-// is therefore variable-width AND multi-zone, SQLite compares it as TEXT, and
-// lexical order is not chronological order. Two CONCRETE inversions, neither
-// of them the exhaustive rule:
-//
-//   - Trimmed fractions, WITHIN one zone. Under UTC the stamp ends in 'Z'
-//     (0x5A), which is ABOVE both '.' (0x2E) and every digit (0x30-0x39), so a
-//     stamp that stops early sorts AFTER its own extensions: "…07Z" after
-//     "…07.000001Z", "…07.9Z" after "…07.95Z". Within a single zone this one is
-//     exact: the order inverts iff the earlier stamp's trimmed fraction is a
-//     proper PREFIX of the later one's, a whole second being the empty-prefix
-//     case. This is the shape that reached CI. Under a numeric offset the stamp
-//     ends in '+' (0x2B) or '-' (0x2D), both BELOW '.' and every digit, so this
-//     particular inversion cannot occur there — which is why the defect
-//     presented as UTC-only and why this half will not reproduce for a reader
-//     whose rows carry offsets.
-//
-//   - Disagreeing offsets, ACROSS zones. Comparing two spellings of different
-//     offsets compares wall-clock text, not instants, so any mix of offsets can
-//     disagree with time — no DST involved, and no shared zone required, since
-//     the writers above can put unrelated offsets in one table. One concrete
-//     instance is a DST FALL-BACK, where a single local day holds two offsets
-//     and the later instant carries the SMALLER one:
-//
-//     earlier 2026-10-25T02:59:00+02:00 (00:59Z)
-//     later   2026-10-25T02:00:00+01:00 (01:00Z)
-//
-//     — lexically inverted, and note both land on the SAME day value, so the
-//     outer day key does not shield it. Fall-back specifically: spring-forward
-//     moves the offset the other way and does not have this relationship. Treat
-//     this as one worked example of cross-offset disagreement, not as its
-//     shape.
-//
-// Both are fixed by the same thing, and neither by widening the format:
-// compare parsed instants. time.Parse recovers the instant whatever spelling or
-// offset was emitted, so the walk's contract ("the tie-break is chronological,
-// and this matters") is true by construction instead of by format coincidence.
-// That also means the fix does not depend on enumerating the inversions — which
-// is the point, since the list above is examples and the parse is general.
-//
-// The CODE has consistently been MORE CORRECT than the comments describing it:
-// cross-offset rows were handled before anyone noticed they could exist. Worth
-// stating rather than quietly enjoying — a fix that outperforms its own
-// documentation only bites the next reader, who trusts the documentation.
-//
-// The order is TOTAL. Rows that share an instant, and rows whose stamps are
-// both unusable, fall through to session_id — the same final tiebreaker the
-// query has always applied — so no pair is left to the sort's discretion.
-//
-// An absent or unparseable stamp sorts FIRST, so every row the walk cannot
-// place in time forms one contiguous block ahead of every row it can, and none
-// interleaves between two dated rows.
-//
-// For "" — the documented value for an unknown stamp, and the only unusable
-// value this package's writers can produce — that is the position lexical
-// order already gave it, so rows written before updated_at existed keep the
-// place in the walk they have always had. A non-empty UNPARSEABLE stamp does
-// move: "not-a-timestamp" sorted LAST before ('n' > '2'). That is a deliberate
-// behaviour change, not a preservation, and is said plainly because a change
-// described as a preservation is this ticket's own defect in miniature.
-//
-// Day needs no parsing — it is fixed-width "2006-01-02", where lexical and
-// chronological order coincide. Only the variable-width field was ever the
-// problem.
-func sortCostDailyRowsForWalk(rows []CostDailyRow) {
-	sort.SliceStable(rows, func(i, j int) bool {
-		a, b := rows[i], rows[j]
-		if ak, bk := costDailyConvKey(a), costDailyConvKey(b); ak != bk {
-			return ak < bk
-		}
-		if a.Day != b.Day {
-			return a.Day < b.Day
-		}
-		at, aOK := parseCostDailyStamp(a.UpdatedAt)
-		bt, bOK := parseCostDailyStamp(b.UpdatedAt)
-		switch {
-		case aOK && bOK:
-			if !at.Equal(bt) {
-				return at.Before(bt)
-			}
-		case aOK != bOK:
-			// Exactly one is usable; the unusable one goes first.
-			return bOK
-		}
-		return a.SessionID < b.SessionID
-	})
-}
-
-// CompareCostStamps orders two updated_at spellings by the INSTANT they
-// record, returning -1, 0 or 1. Callers outside this package compare cost
-// stamps through here rather than with < and >, because the column's spelling
-// does not sort chronologically — see sortCostDailyRowsForWalk for the
-// contract and the inversions.
-//
-// Unusable stamps (unknown or unparseable) rank BELOW every usable one and
-// equal to each other, matching the position the walk gives them.
-func CompareCostStamps(a, b string) int {
-	at, aOK := parseCostDailyStamp(a)
-	bt, bOK := parseCostDailyStamp(b)
+// CompareCostInstants orders two internal Unix-nanosecond instants. Zero is
+// the in-memory representation of SQL NULL: it ranks below every known instant
+// (including pre-epoch values) and equal to another absence. Malformed runtime
+// values are impossible after v181 because STRICT INTEGER storage and the
+// migration's loud validation reject them at the database boundary.
+func CompareCostInstants(a, b int64) int {
 	switch {
-	case aOK && bOK:
-		switch {
-		case at.Before(bt):
-			return -1
-		case bt.Before(at):
-			return 1
-		default:
-			return 0
-		}
-	case aOK:
-		return 1
-	case bOK:
+	case a == 0 && b == 0:
+		return 0
+	case a == 0:
 		return -1
+	case b == 0:
+		return 1
+	case a < b:
+		return -1
+	case a > b:
+		return 1
 	default:
 		return 0
 	}
-}
-
-// parseCostDailyStamp reads an updated_at as the instant it records. The bool
-// is false for the empty stamp ("" if unknown, per CostDailyRow) and for any
-// value this process cannot parse — reported rather than swallowed as the zero
-// time, because "no stamp" and "midnight in year 1" must not sort alike.
-func parseCostDailyStamp(stamp string) (time.Time, bool) {
-	if stamp == "" {
-		return time.Time{}, false
-	}
-	parsed, err := time.Parse(time.RFC3339Nano, stamp)
-	if err != nil {
-		return time.Time{}, false
-	}
-	return parsed, true
 }
 
 // HasAnyRealCost reports whether any REAL pay-per-token spend has ever been

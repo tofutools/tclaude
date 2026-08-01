@@ -112,7 +112,10 @@ func (s openCodeConvStore) ListConvs(cwd string) ([]convops.SessionEntry, error)
 	if err != nil {
 		return nil, err
 	}
-	entries := syncOpenCodeConvIndex(sessions)
+	entries, err := syncOpenCodeConvIndex(sessions)
+	if err != nil {
+		return nil, err
+	}
 	if cwd == "" {
 		return entries, nil
 	}
@@ -129,8 +132,10 @@ func (s openCodeConvStore) ListConvs(cwd string) ([]convops.SessionEntry, error)
 // syncOpenCodeConvIndex keeps the common cache useful for dashboard and title
 // readers without making it the source of truth. A successful CLI snapshot
 // inserts/refreshes every OpenCode row and evicts OpenCode rows absent from the
-// snapshot. Cache failures only degrade enrichment; they never hide CLI data.
-func syncOpenCodeConvIndex(sessions []openCodeSession) []convops.SessionEntry {
+// snapshot. Read failures only degrade enrichment, but write failures propagate
+// so a present timestamp that cannot be represented never becomes silent cache
+// absence.
+func syncOpenCodeConvIndex(sessions []openCodeSession) ([]convops.SessionEntry, error) {
 	cached := map[string]*db.ConvIndexRow{}
 	if rows, err := db.ListAllConvIndex(); err != nil {
 		slog.Warn("opencode convstore: conv_index unreadable; continuing from CLI", "error", err)
@@ -159,8 +164,7 @@ func syncOpenCodeConvIndex(sessions []openCodeSession) []convops.SessionEntry {
 			}
 		}
 		if err := db.UpsertConvIndex(openCodeEntryDBRow(entry)); err != nil {
-			slog.Warn("opencode convstore: conv_index upsert failed",
-				"conv", session.ID, "error", err)
+			return nil, fmt.Errorf("opencode convstore: cache %s: %w", session.ID, err)
 		}
 		entries = append(entries, entry)
 	}
@@ -172,13 +176,13 @@ func syncOpenCodeConvIndex(sessions []openCodeSession) []convops.SessionEntry {
 			}
 		}
 	}
-	return entries
+	return entries, nil
 }
 
 func openCodeSessionEntry(session openCodeSession) convops.SessionEntry {
 	return convops.SessionEntry{
 		SessionID:    session.ID,
-		FileMtime:    openCodeMillisToUnixNano(session.Updated),
+		FileMtime:    openCodeMillisToTime(session.Updated),
 		Summary:      session.Title,
 		MessageCount: 0,
 		Created:      openCodeMillisToRFC3339(session.Created),
@@ -207,15 +211,11 @@ func openCodeEntryDBRow(entry convops.SessionEntry) *db.ConvIndexRow {
 	}
 }
 
-func openCodeMillisToUnixNano(ms int64) int64 {
+func openCodeMillisToTime(ms int64) time.Time {
 	if ms <= 0 {
-		return 0
+		return time.Time{}
 	}
-	const maxUnixNanoMillis = int64(^uint64(0)>>1) / int64(time.Millisecond)
-	if ms > maxUnixNanoMillis {
-		return 0
-	}
-	return ms * int64(time.Millisecond)
+	return time.UnixMilli(ms).Round(0).UTC()
 }
 
 func openCodeMillisToRFC3339(ms int64) string {

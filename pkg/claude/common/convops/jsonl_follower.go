@@ -268,7 +268,7 @@ func (s *jsonlScanState) consumeLine(line []byte) bool {
 // timestamped line) — the stub case. info supplies mtime/size.
 func (s *jsonlScanState) finalize(info os.FileInfo) *SessionEntry {
 	entry := s.entry
-	entry.FileMtime = info.ModTime().UnixNano()
+	entry.FileMtime = info.ModTime().Round(0).UTC()
 	entry.FileSize = info.Size()
 	entry.LastTurnInterrupted = s.lastTurnInterrupted
 

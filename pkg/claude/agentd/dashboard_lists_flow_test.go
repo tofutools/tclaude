@@ -151,7 +151,7 @@ func TestDashboardConversations_ExcludesAgentsAndPaginates(t *testing.T) {
 	// deterministic: p3, p2, p1.
 	haveConv := func(conv, title string, mtime int64) {
 		require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
-			ConvID: conv, CustomTitle: title, FileMtime: mtime, IndexedAt: time.Now(),
+			ConvID: conv, CustomTitle: title, FileMtime: time.Unix(0, mtime).UTC(), IndexedAt: time.Now(),
 		}))
 	}
 	haveConv(p1, "promote-one", 100)

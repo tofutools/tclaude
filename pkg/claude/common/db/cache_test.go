@@ -281,6 +281,27 @@ func TestTryClaimUsageFetch_ExpiredClaim(t *testing.T) {
 	assert.True(t, claimed, "expected claim on expired entry to succeed")
 }
 
+func TestTryClaimUsageFetch_MissingStampClaimsLikeStale(t *testing.T) {
+	setupTestDB(t)
+
+	ttl := 5 * time.Minute
+	oldTime := time.Now().Add(-ttl - time.Minute)
+	require.NoError(t, SaveUsageCache(json.RawMessage(`{}`), oldTime, oldTime))
+
+	claimed, err := TryClaimUsageFetch(ttl)
+	require.NoError(t, err)
+	require.True(t, claimed, "control: stale non-NULL timestamp reaches and satisfies the claim predicate")
+
+	d, err := Open()
+	require.NoError(t, err)
+	_, err = d.Exec(`UPDATE usage_cache SET last_attempt_at = NULL WHERE id = 1`)
+	require.NoError(t, err)
+
+	claimed, err = TryClaimUsageFetch(ttl)
+	require.NoError(t, err)
+	assert.True(t, claimed, "a migrated missing timestamp is claimable; NULL must not make the row permanently stale")
+}
+
 func TestTryClaimUsageFetch_FreshEntry(t *testing.T) {
 	setupTestDB(t)
 

@@ -53,7 +53,7 @@ func TestOpenCodeConvStore_ListConvsMapsDirectoryAndCaches(t *testing.T) {
 	assert.Equal(t, "Alpha native title", all[0].Summary)
 	assert.Equal(t, OpenCodeName, all[0].Harness)
 	assert.Equal(t, "2026-07-23T12:01:16Z", all[0].Created)
-	assert.Equal(t, int64(1784808077386000000), all[0].FileMtime)
+	assert.Equal(t, time.UnixMilli(1784808077386).UTC(), all[0].FileMtime)
 
 	local, err := store.ListConvs("/work/a")
 	require.NoError(t, err)
@@ -66,6 +66,18 @@ func TestOpenCodeConvStore_ListConvsMapsDirectoryAndCaches(t *testing.T) {
 	assert.Equal(t, OpenCodeName, row.Harness)
 	assert.Equal(t, "/work/a", row.ProjectPath)
 	assert.Equal(t, "Alpha native title", row.Summary)
+}
+
+func TestOpenCodeFileMtime_AboveUnixNanoRangeFailsInsteadOfBecomingAbsent(t *testing.T) {
+	withTestDB(t)
+	const maxUnixNanoMillis = int64(^uint64(0)>>1) / int64(time.Millisecond)
+	session := openCodeSession{ID: "ses_out_of_range", Directory: "/work", Updated: maxUnixNanoMillis + 1}
+	entry := openCodeSessionEntry(session)
+	require.False(t, entry.FileMtime.IsZero(), "an invalid present instant must not become the absence sentinel")
+
+	_, err := openCodeTestStore([]openCodeSession{session}).ListConvs("")
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "outside the Unix-nanosecond range")
 }
 
 func TestOpenCodeConvStore_ResolveLocalGlobalAndAmbiguous(t *testing.T) {

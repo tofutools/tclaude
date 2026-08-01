@@ -72,6 +72,13 @@ func (t dbTimestamp) Time() time.Time {
 	return t.time
 }
 
+func (t dbTimestamp) UnixNano() int64 {
+	if !t.valid {
+		return 0
+	}
+	return t.time.UnixNano()
+}
+
 func (t dbTimestamp) NullTime() sql.NullTime {
 	return sql.NullTime{Time: t.time, Valid: t.valid}
 }
@@ -84,6 +91,17 @@ func (t dbTimestamp) RFC3339Nano() string {
 		return ""
 	}
 	return t.time.Format(time.RFC3339Nano)
+}
+
+// RFC3339NanoFromUnixNano is the outbound JSON/API boundary for an internal
+// Unix-nanosecond instant. Zero is the in-memory SQL-NULL sentinel and renders
+// as the conventional empty optional string; database writes still reject a
+// persisted epoch zero through dbTime.
+func RFC3339NanoFromUnixNano(ns int64) string {
+	if ns == 0 {
+		return ""
+	}
+	return timeFromUnixNano(ns).Format(time.RFC3339Nano)
 }
 
 // unixNanoValue defers timestamp validation until database/sql binds the

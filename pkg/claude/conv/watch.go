@@ -1396,7 +1396,7 @@ func (m *watchModel) semanticPreCheck() tea.Cmd {
 		unindexed := 0
 		for _, e := range entries {
 			embeddedAt, exists := embeddedConvs[e.SessionID]
-			if !exists || e.FileMtime > embeddedAt.UnixNano() {
+			if !exists || e.FileMtime.After(embeddedAt.Round(0)) {
 				unindexed++
 			}
 		}
@@ -1436,7 +1436,7 @@ func (m *watchModel) semanticStartIndex() tea.Cmd {
 		var toIndex []SessionEntry
 		for _, e := range entries {
 			embeddedAt, exists := embeddedConvs[e.SessionID]
-			if !exists || e.FileMtime > embeddedAt.UnixNano() {
+			if !exists || e.FileMtime.After(embeddedAt.Round(0)) {
 				toIndex = append(toIndex, e)
 			}
 		}

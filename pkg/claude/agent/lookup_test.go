@@ -102,7 +102,7 @@ func upsertConvIndex(t *testing.T, convID, customTitle, summary, firstPrompt str
 		ConvID:      convID,
 		ProjectDir:  dir,
 		FullPath:    fullPath,
-		FileMtime:   time.Unix(mtime, 0).UnixNano(),
+		FileMtime:   time.Unix(mtime, 0).UTC(),
 		CustomTitle: customTitle,
 		Summary:     summary,
 		FirstPrompt: firstPrompt,

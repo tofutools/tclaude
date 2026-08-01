@@ -24,6 +24,9 @@ const DefaultHarness = "claude"
 func migrate(db *sql.DB) error {
 	r := migrationReporter
 	ver := schemaVersion(db)
+	if ver > currentVersion {
+		return newerDatabaseVersionError(ver)
+	}
 	if ver == currentVersion {
 		// Already at head — the overwhelmingly common restart. No migration
 		// runs, but announce the no-op so an operator watching agentd start
@@ -48,10 +51,13 @@ func migrate(db *sql.DB) error {
 	}
 
 	// Only walk the chain announcing progress when there is actually forward
-	// work to do. A DB pathologically PAST head — its schema written by a newer
-	// binary — applies nothing either; report it as a no-op too (with the DB's
-	// actual version) rather than returning wordlessly.
-	if ver >= currentVersion {
+	// work to do. Keep the post-create check explicit as well as the fast path
+	// above: neither entry point may let an older binary open a newer schema and
+	// then silently decode values using stale storage assumptions.
+	if ver > currentVersion {
+		return newerDatabaseVersionError(ver)
+	}
+	if ver == currentVersion {
 		r.reportAlreadyCurrent(ver, currentVersion)
 		return nil
 	}
@@ -72,6 +78,11 @@ func migrate(db *sql.DB) error {
 	return nil
 }
 
+func newerDatabaseVersionError(databaseVersion int) error {
+	return fmt.Errorf("database was created by a newer tclaude; refusing to open: database schema version %d, this binary supports %d",
+		databaseVersion, currentVersion)
+}
+
 // migrateV86toV87 adds sessions.subagents_json — the per-session ledger of
 // currently-running sub-agents ({agent_id: {type, seen}}, see SubagentSet in
 // subagents.go). It replaces trusting the bare subagent_count +1/-1 stream:
@@ -81,7 +92,7 @@ func migrate(db *sql.DB) error {
 // re-adds a sub-agent whose Start was lost, the TTL ages out one whose Stop
 // was lost — and subagent_count becomes a derived cache of it.
 //
-// TEXT NOT NULL DEFAULT '' — a pre-existing row reads as "no ledger yet",
+// TEXT NOT NULL DEFAULT ” — a pre-existing row reads as "no ledger yet",
 // which the read side falls back from (see stateForConvIn). One transaction;
 // the ADD COLUMN is guarded by a sqlite_master table-existence probe AND a
 // pragma_table_info column probe (the migrateV65toV66 / migrateV56toV57
@@ -706,7 +717,7 @@ func migrateV62toV63(db *sql.DB) error {
 //
 // Idempotent / self-healing (the migrateV56toV57 convention): the ADD COLUMN
 // is pragma_table_info-guarded, and the synthesis only touches groups whose
-// default_profile is still '' (so a re-run after a half-applied attempt skips
+// default_profile is still ” (so a re-run after a half-applied attempt skips
 // the groups it already converted). It also tolerates a DB with no agent_groups
 // table / no default_model column (a minimally-seeded migration-heal DB). The
 // whole thing rides one transaction with the version bump.
@@ -758,7 +769,7 @@ func migrateV61toV62(db *sql.DB) error {
 // synthesizeGroupDefaultProfiles migrates each group's legacy default_model
 // into a synthesized claude spawn profile and points the group's default_profile
 // at it, so the per-group spawn default survives the JOH-210 cutover. Only
-// groups not yet converted (default_profile still '') are touched, which makes
+// groups not yet converted (default_profile still ”) are touched, which makes
 // it converge on a re-run. A DB whose agent_groups predates the v52
 // default_model column (a minimally-seeded heal DB) has nothing to migrate, so
 // the absence of default_model is tolerated.
@@ -1280,7 +1291,7 @@ func migrateV52toV53(db *sql.DB) error {
 // leaves model blank, so a group can run its whole team on e.g.
 // "sonnet" without every spawn surface having to say so. Sibling to
 // default_cwd (v27) / default_context (v29): an optional per-group
-// spawn default, '' = unset (spawns then omit --model and claude
+// spawn default, ” = unset (spawns then omit --model and claude
 // falls back to the user-level settings.json model, then its own
 // default).
 func migrateV51toV52(db *sql.DB) error {
@@ -1387,7 +1398,7 @@ func migrateV49toV50(db *sql.DB) error {
 // model, so a plain column keeps it type-safe and consistent with how
 // the model is already stored and surfaced.
 //
-// Defaults to '' — rows from before this migration, sessions whose
+// Defaults to ” — rows from before this migration, sessions whose
 // statusbar hasn't ticked yet, and models without reasoning-effort
 // support all read back empty, which both surfaces render as "no effort
 // token" (the statusbar omits it; the dashboard line shows just the
@@ -1422,7 +1433,7 @@ func migrateV47toV48(db *sql.DB) error {
 // SessionStart announced it; anything else is a foreign process's
 // event and is ignored.
 //
-// Defaults to '' — no announced transition. Overwritten by each new
+// Defaults to ” — no announced transition. Overwritten by each new
 // announcement; never read once the row's conv_id has advanced past it
 // (conv-ids are UUIDs, so a stale value can't collide with a future
 // foreign conv).
@@ -1449,7 +1460,7 @@ func migrateV48toV49(db *sql.DB) error {
 // every render, including before a turn's first API response), not
 // gated on the all-zero context guard.
 //
-// Defaults to '' — rows from before this migration, or sessions whose
+// Defaults to ” — rows from before this migration, or sessions whose
 // statusbar hasn't ticked yet, read back empty, which the dashboard
 // renders as "model not reported yet" (no harness line).
 func migrateV46toV47(db *sql.DB) error {
@@ -1849,7 +1860,7 @@ func migrateV37toV38(db *sql.DB) error {
 // .jsonl scan, so a pending name written here is stable — it survives
 // every snapshot refresh until the real /rename supersedes it.
 //
-// Existing rows backfill to '' (no pending name) — they are agents that
+// Existing rows backfill to ” (no pending name) — they are agents that
 // have long since been named, so the read path resolves their title
 // from conv_index as before.
 func migrateV36toV37(db *sql.DB) error {
@@ -2034,7 +2045,7 @@ func migrateV34toV35(db *sql.DB) error {
 // last-wins (it tracks the current branch as the session moves);
 // git_branch_startup is first-wins and immutable, so a dashboard can
 // honestly show an "init → now" branch pair. Existing rows backfill
-// to '' and self-heal on the next .jsonl rescan (the scanner fills
+// to ” and self-heal on the next .jsonl rescan (the scanner fills
 // the column, and UpsertConvIndex carries it through ON CONFLICT).
 func migrateV31toV32(db *sql.DB) error {
 	if _, err := db.Exec(`
@@ -2088,7 +2099,7 @@ func migrateV30toV31(db *sql.DB) error {
 // makes the bit explicit and reversible:
 //
 //   - a row exists   ⇒ the conv has been an agent.
-//   - retired_at=''  ⇒ active agent (shows on the roster).
+//   - retired_at=”  ⇒ active agent (shows on the roster).
 //   - retired_at set ⇒ retired — demoted to a plain conversation; the
 //     .jsonl is untouched, and it can be reinstated.
 //
@@ -2232,7 +2243,7 @@ func migrateV28toV29(db *sql.DB) error {
 // between sub-repos of a monorepo launch dir, where Claude Code's own
 // per-turn gitBranch stamp (the launch dir's branch) goes stale.
 //
-// Both columns default to '' so rows written by a pre-v28 hook keep
+// Both columns default to ” so rows written by a pre-v28 hook keep
 // working — readers fall back to an on-demand git resolution then.
 func migrateV27toV28(db *sql.DB) error {
 	_, err := db.Exec(`
@@ -2442,7 +2453,7 @@ func migrateV21toV22(db *sql.DB) error {
 // live successor, the recipient still wants to see who the message
 // was originally for. Empty for sends that didn't get redirected.
 //
-// Shape: TEXT NOT NULL DEFAULT '' (empty == "this row was sent
+// Shape: TEXT NOT NULL DEFAULT ” (empty == "this row was sent
 // directly, no redirection happened"). Cheap to filter on, no index
 // needed — reads are by primary key.
 func migrateV20toV21(db *sql.DB) error {
@@ -2569,7 +2580,7 @@ func migrateV17toV18(db *sql.DB) error {
 // renaming the title.
 //
 // Empty string = active. Non-empty (RFC3339 timestamp) = archived.
-// Indexed so the eventual `WHERE archived_at = ''` filter on
+// Indexed so the eventual `WHERE archived_at = ”` filter on
 // listing endpoints stays cheap as the table grows.
 //
 // Crucially: UpsertConvIndex does NOT include archived_at in its ON
@@ -2602,7 +2613,7 @@ func migrateV16toV17(db *sql.DB) error {
 // Plain TEXT column rather than separate epoch + flag because a
 // human reading the row directly should see when, not just whether.
 //
-// Indexed so the eventual `WHERE archived_at = ''` filter on
+// Indexed so the eventual `WHERE archived_at = ”` filter on
 // listing endpoints stays cheap as the table grows.
 func migrateV15toV16(db *sql.DB) error {
 	_, err := db.Exec(`

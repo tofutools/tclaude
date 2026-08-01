@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -154,9 +155,9 @@ func TestCostDeltasFromRows_SessionResetAcrossExit(t *testing.T) {
 func TestCostDeltasFromRows_CarryForwardNotReset(t *testing.T) {
 	rows := []db.CostDailyRow{
 		{SessionID: "spwn-y", Day: "2026-06-23", ConvID: "conv-c", CostUSD: 7.86,
-			UpdatedAt: "2026-06-23T10:46:27+02:00"}, // original, earlier
+			UpdatedAtNS: time.Date(2026, 6, 23, 8, 46, 27, 0, time.UTC).UnixNano()}, // original, earlier
 		{SessionID: "conv-c", Day: "2026-06-23", ConvID: "conv-c", CostUSD: 12.26,
-			UpdatedAt: "2026-06-23T11:17:02+02:00"}, // carry-forward, higher, later
+			UpdatedAtNS: time.Date(2026, 6, 23, 9, 17, 2, 0, time.UTC).UnixNano()}, // carry-forward, higher, later
 	}
 	deltas := costDeltasFromRows(rows, false)
 	assert.InDelta(t, 12.26, sumCostDeltas(deltas, "", ""), 1e-9,

@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -40,7 +41,7 @@ func TestDBCache_FreshEntryNotRescanned(t *testing.T) {
 		ConvID:      sessionID,
 		ProjectDir:  dir,
 		FullPath:    jsonlPath,
-		FileMtime:   info.ModTime().UnixNano(),
+		FileMtime:   info.ModTime().Round(0).UTC(),
 		FirstPrompt: "cached prompt",
 		Created:     "2026-03-01T10:00:00Z",
 		IndexedAt:   info.ModTime(),
@@ -75,7 +76,7 @@ func TestDBCache_StaleEntryRescanned(t *testing.T) {
 		ConvID:      sessionID,
 		ProjectDir:  dir,
 		FullPath:    jsonlPath,
-		FileMtime:   1, // old mtime - will trigger rescan
+		FileMtime:   time.Unix(0, 1).UTC(), // old mtime - will trigger rescan
 		FirstPrompt: "old cached prompt",
 	}))
 
@@ -108,7 +109,7 @@ func TestDBCache_ForceRescanIgnoresMtime(t *testing.T) {
 		ConvID:      sessionID,
 		ProjectDir:  dir,
 		FullPath:    jsonlPath,
-		FileMtime:   info.ModTime().UnixNano(),
+		FileMtime:   info.ModTime().Round(0).UTC(),
 		FirstPrompt: "old",
 	}))
 
@@ -162,7 +163,7 @@ func TestDBCache_DeletedFileRemovedFromDB(t *testing.T) {
 		ConvID:      sessionID,
 		ProjectDir:  dir,
 		FullPath:    filepath.Join(dir, sessionID+".jsonl"),
-		FileMtime:   12345,
+		FileMtime:   time.Unix(0, 12345).UTC(),
 		FirstPrompt: "will be removed",
 	}))
 

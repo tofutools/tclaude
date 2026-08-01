@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -10,11 +11,15 @@ import (
 )
 
 // migrateV180toV181 converts every SQLite timestamp from RFC3339Nano TEXT to
-// guarded int64 Unix nanoseconds. Empty-string sentinels become NULL; malformed
-// and out-of-range non-empty values abort the entire transaction. Tables that
-// contain timestamps are rebuilt as STRICT so later writers cannot put text
-// back into the columns.
+// guarded int64 Unix nanoseconds. Explicit optional empty-string sentinels
+// become NULL; empty required values, malformed values, and out-of-range values
+// abort the entire transaction. Tables that contain timestamps are rebuilt as
+// STRICT so later writers cannot put text back into the columns.
 func migrateV180toV181(d *sql.DB) error {
+	// This step rebuilds most of the schema. Keep the same best-effort recovery
+	// point as the earlier destructive identity migrations.
+	vacuumBackup(d, ".pre-v181-epochns.bak")
+
 	ctx := context.Background()
 	conn, err := d.Conn(ctx)
 	if err != nil {
@@ -69,11 +74,11 @@ func migrateV180toV181(d *sql.DB) error {
 		_ = rows.Close()
 		return fmt.Errorf("foreign-key check found violation: table=%s rowid=%v parent=%v fk=%d", table, rowID, parent, fk)
 	}
-	if err := rows.Close(); err != nil {
-		return fmt.Errorf("foreign-key check close: %w", err)
-	}
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("foreign-key check rows: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("foreign-key check close: %w", err)
 	}
 
 	if _, err := tx.ExecContext(ctx, `UPDATE schema_version SET version = 181`); err != nil {
@@ -86,10 +91,12 @@ func migrateV180toV181(d *sql.DB) error {
 }
 
 type timestampTable struct {
-	name       string
-	createSQL  string
-	columns    []timestampColumn
-	objectsSQL []string
+	name          string
+	createSQL     string
+	columns       []timestampColumn
+	objectsSQL    []string
+	autoIncrement bool
+	sequence      int64
 }
 
 type timestampColumn struct {
@@ -97,6 +104,7 @@ type timestampColumn struct {
 	text        bool
 	epochSecond bool
 	fileMtime   bool
+	sentinel    bool
 }
 
 func timestampTables(ctx context.Context, tx *sql.Tx) ([]timestampTable, error) {
@@ -139,8 +147,14 @@ func timestampTables(ctx context.Context, tx *sql.Tx) ([]timestampTable, error) 
 				return nil, fmt.Errorf("%s columns: %w", schema.name, err)
 			}
 			upperType := strings.ToUpper(strings.TrimSpace(declaredType))
+			emptyDefault := false
+			if value, ok := defaultValue.(string); ok {
+				emptyDefault = value == "''"
+			}
 			if upperType == "TEXT" && isTimestampColumn(name) {
-				columns = append(columns, timestampColumn{name: name, text: true})
+				columns = append(columns, timestampColumn{
+					name: name, text: true, sentinel: notNull == 0 || emptyDefault,
+				})
 				continue
 			}
 			if upperType == "INTEGER" && isLegacyEpochSecondColumn(schema.name, name) {
@@ -148,14 +162,14 @@ func timestampTables(ctx context.Context, tx *sql.Tx) ([]timestampTable, error) 
 				continue
 			}
 			if upperType == "INTEGER" && schema.name == "conv_index" && name == "file_mtime" {
-				columns = append(columns, timestampColumn{name: name, fileMtime: true})
+				columns = append(columns, timestampColumn{name: name, fileMtime: true, sentinel: true})
 			}
-		}
-		if err := columnRows.Close(); err != nil {
-			return nil, fmt.Errorf("%s columns close: %w", schema.name, err)
 		}
 		if err := columnRows.Err(); err != nil {
 			return nil, fmt.Errorf("%s columns: %w", schema.name, err)
+		}
+		if err := columnRows.Close(); err != nil {
+			return nil, fmt.Errorf("%s columns close: %w", schema.name, err)
 		}
 		if len(columns) == 0 {
 			continue
@@ -176,15 +190,32 @@ func timestampTables(ctx context.Context, tx *sql.Tx) ([]timestampTable, error) 
 			}
 			objects = append(objects, objectSQL)
 		}
-		if err := objectRows.Close(); err != nil {
-			return nil, fmt.Errorf("%s dependent objects close: %w", schema.name, err)
-		}
 		if err := objectRows.Err(); err != nil {
 			return nil, fmt.Errorf("%s dependent objects: %w", schema.name, err)
 		}
-		out = append(out, timestampTable{name: schema.name, createSQL: schema.sql, columns: columns, objectsSQL: objects})
+		if err := objectRows.Close(); err != nil {
+			return nil, fmt.Errorf("%s dependent objects close: %w", schema.name, err)
+		}
+		table := timestampTable{name: schema.name, createSQL: schema.sql, columns: columns, objectsSQL: objects,
+			autoIncrement: strings.Contains(strings.ToUpper(schema.sql), "AUTOINCREMENT")}
+		if table.autoIncrement {
+			table.sequence, err = sqliteSequence(ctx, tx, schema.name)
+			if err != nil {
+				return nil, fmt.Errorf("%s sqlite_sequence: %w", schema.name, err)
+			}
+		}
+		out = append(out, table)
 	}
 	return out, nil
+}
+
+func sqliteSequence(ctx context.Context, tx *sql.Tx, table string) (int64, error) {
+	var sequence int64
+	err := tx.QueryRowContext(ctx, `SELECT seq FROM sqlite_sequence WHERE name = ?`, table).Scan(&sequence)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return sequence, err
 }
 
 // Rebuilding one table can temporarily invalidate a trigger owned by another
@@ -207,10 +238,10 @@ func suspendAllTriggers(ctx context.Context, tx *sql.Tx) ([]string, error) {
 		names = append(names, name)
 		statements = append(statements, statement)
 	}
-	if err := rows.Close(); err != nil {
+	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	if err := rows.Err(); err != nil {
+	if err := rows.Close(); err != nil {
 		return nil, err
 	}
 	for _, name := range names {
@@ -241,10 +272,10 @@ func convertTimestampTable(ctx context.Context, tx *sql.Tx, table timestampTable
 	}
 
 	tempName := "__tclaude_v181_" + table.name
-	columnSet := make(map[string]bool, len(table.columns))
+	columnSet := make(map[string]timestampColumn, len(table.columns))
 	for _, column := range table.columns {
 		if column.text || column.fileMtime {
-			columnSet[column.name] = true
+			columnSet[column.name] = column
 		}
 	}
 	createSQL := rewriteTimestampSentinelPredicates(table.createSQL, timestampColumnNames([]timestampTable{table}))
@@ -268,6 +299,9 @@ func convertTimestampTable(ctx context.Context, tx *sql.Tx, table timestampTable
 	if _, err := tx.ExecContext(ctx, `ALTER TABLE `+quoteIdentifier(tempName)+` RENAME TO `+quoteIdentifier(table.name)); err != nil {
 		return fmt.Errorf("%s install STRICT replacement: %w", table.name, err)
 	}
+	if err := restoreSQLiteSequence(ctx, tx, table); err != nil {
+		return fmt.Errorf("%s restore sqlite_sequence: %w", table.name, err)
+	}
 	for _, objectSQL := range table.objectsSQL {
 		objectSQL = rewriteTimestampSentinelPredicates(objectSQL, timestampColumnNames([]timestampTable{table}))
 		if _, err := tx.ExecContext(ctx, objectSQL); err != nil {
@@ -275,6 +309,32 @@ func convertTimestampTable(ctx context.Context, tx *sql.Tx, table timestampTable
 		}
 	}
 	return nil
+}
+
+func restoreSQLiteSequence(ctx context.Context, tx *sql.Tx, table timestampTable) error {
+	if !table.autoIncrement {
+		return nil
+	}
+	copiedSequence, err := sqliteSequence(ctx, tx, table.name)
+	if err != nil {
+		return err
+	}
+	target := max(table.sequence, copiedSequence)
+	if target == 0 {
+		return nil
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE sqlite_sequence SET seq = ? WHERE name = ?`, target, table.name)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		_, err = tx.ExecContext(ctx, `INSERT INTO sqlite_sequence(name, seq) VALUES (?, ?)`, table.name, target)
+	}
+	return err
 }
 
 func timestampColumnNames(tables []timestampTable) []string {
@@ -330,7 +390,7 @@ func timestampCopySelectList(ctx context.Context, tx *sql.Tx, table timestampTab
 		quoted := quoteIdentifier(name)
 		column := kinds[name]
 		switch {
-		case column.text:
+		case column.text && column.sentinel:
 			expressions = append(expressions, `NULLIF(`+quoted+`, '')`)
 		case column.fileMtime:
 			expressions = append(expressions, `NULLIF(`+quoted+`, 0)`)
@@ -350,6 +410,7 @@ func convertTimestampColumn(ctx context.Context, tx *sql.Tx, table string, colum
 	if err != nil {
 		return fmt.Errorf("%s.%s read: %w", table, column.name, err)
 	}
+	defer func() { _ = rows.Close() }()
 	type conversion struct {
 		rowID int64
 		value any
@@ -402,7 +463,10 @@ func convertTimestampColumn(ctx context.Context, tx *sql.Tx, table string, colum
 			return fmt.Errorf("%s.%s rowid %d: expected TEXT timestamp, got %T", table, column.name, rowID, raw)
 		}
 		if textValue == "" {
-			continue
+			if column.sentinel {
+				continue
+			}
+			return fmt.Errorf("%s.%s rowid %d value %q: required timestamp is empty", table, column.name, rowID, textValue)
 		}
 		parsed, err := parseLegacyDBTime(textValue)
 		if err != nil {
@@ -414,11 +478,11 @@ func convertTimestampColumn(ctx context.Context, tx *sql.Tx, table string, colum
 		}
 		updates = append(updates, conversion{rowID: rowID, value: ns})
 	}
-	if err := rows.Close(); err != nil {
-		return fmt.Errorf("%s.%s close: %w", table, column.name, err)
-	}
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("%s.%s rows: %w", table, column.name, err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("%s.%s close: %w", table, column.name, err)
 	}
 	updateSQL := `UPDATE ` + quoteIdentifier(table) + ` SET ` + quoteIdentifier(column.name) + ` = ? WHERE rowid = ?`
 	for _, update := range updates {
@@ -439,12 +503,13 @@ func timeFromUnixSeconds(seconds int64) time.Time {
 // repaired as milliseconds; smaller values are seconds. This narrow threshold
 // avoids silently reinterpreting ordinary out-of-range second fixtures as a
 // different unit. Values accepted by neither arm abort with row context.
+const (
+	legacyFileMtimeModernMillisFloor = int64(946684800000)
+	maxUnixNanoMillis                = int64(^uint64(0)>>1) / int64(time.Millisecond)
+)
+
 func legacyFileMtimeToUnixNano(value int64) (int64, error) {
-	const (
-		modernMillisFloor = int64(946684800000)
-		maxUnixNanoMillis = int64(^uint64(0)>>1) / int64(time.Millisecond)
-	)
-	if value >= modernMillisFloor && value <= maxUnixNanoMillis {
+	if value >= legacyFileMtimeModernMillisFloor && value <= maxUnixNanoMillis {
 		return timeToUnixNano(time.UnixMilli(value))
 	}
 	return timeToUnixNano(timeFromUnixSeconds(value))
@@ -454,7 +519,7 @@ var timestampNotNull = regexp.MustCompile(`(?i)\s+NOT\s+NULL`)
 var emptyTimestampDefault = regexp.MustCompile(`(?i)\s+DEFAULT\s+''`)
 var zeroTimestampDefault = regexp.MustCompile(`(?i)\s+NOT\s+NULL\s+DEFAULT\s+0`)
 
-func rewriteTimestampTableSQL(createSQL, tempName string, timestampColumns map[string]bool) (string, error) {
+func rewriteTimestampTableSQL(createSQL, tempName string, timestampColumns map[string]timestampColumn) (string, error) {
 	open := strings.Index(createSQL, "(")
 	close := strings.LastIndex(createSQL, ")")
 	if open < 0 || close <= open {
@@ -478,7 +543,7 @@ func rewriteTimestampTableSQL(createSQL, tempName string, timestampColumns map[s
 	return `CREATE TABLE ` + quoteIdentifier(tempName) + ` (` + strings.Join(definitions, ",") + `) ` + suffix, nil
 }
 
-func rewriteTimestampDefinition(definition string, timestampColumns map[string]bool) string {
+func rewriteTimestampDefinition(definition string, timestampColumns map[string]timestampColumn) string {
 	trimmed := strings.TrimLeft(definition, " \t\r\n")
 	indent := definition[:len(definition)-len(trimmed)]
 	if trimmed == "" {
@@ -500,7 +565,8 @@ func rewriteTimestampDefinition(definition string, timestampColumns map[string]b
 		}
 	}
 	name := strings.Trim(trimmed[:end], `"`)
-	if !timestampColumns[name] {
+	column, ok := timestampColumns[name]
+	if !ok {
 		return definition
 	}
 	typeStart := end
@@ -512,15 +578,17 @@ func rewriteTimestampDefinition(definition string, timestampColumns map[string]b
 		typeEnd++
 	}
 	columnType := trimmed[typeStart:typeEnd]
-	if strings.EqualFold(columnType, "INTEGER") && name == "file_mtime" {
+	if strings.EqualFold(columnType, "INTEGER") && column.fileMtime {
 		return indent + zeroTimestampDefault.ReplaceAllString(trimmed, "")
 	}
 	if !strings.EqualFold(columnType, "TEXT") {
 		return definition
 	}
 	rewritten := trimmed[:typeStart] + "INTEGER" + trimmed[typeEnd:]
-	rewritten = timestampNotNull.ReplaceAllString(rewritten, "")
-	rewritten = emptyTimestampDefault.ReplaceAllString(rewritten, "")
+	if column.sentinel {
+		rewritten = timestampNotNull.ReplaceAllString(rewritten, "")
+		rewritten = emptyTimestampDefault.ReplaceAllString(rewritten, "")
+	}
 	return indent + rewritten
 }
 

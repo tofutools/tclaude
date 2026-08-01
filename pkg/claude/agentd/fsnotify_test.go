@@ -89,8 +89,8 @@ func TestConvMonitor_StartupScanRefreshesChangedConv(t *testing.T) {
 		ConvID:      convID,
 		ProjectDir:  filepath.Dir(cc.JsonlPath),
 		FullPath:    cc.JsonlPath,
-		FileMtime:   info.ModTime().Add(-time.Hour).UnixNano(), // 1h behind
-		FileSize:    0,                                         // and size mismatched
+		FileMtime:   info.ModTime().Add(-time.Hour).Round(0).UTC(), // 1h behind
+		FileSize:    0,                                             // and size mismatched
 		FirstPrompt: "STALE — should be replaced on startup",
 		// Created must be non-empty or isStubRow() treats this row as a
 		// stub and the freshness guard re-scans unconditionally — which
@@ -130,7 +130,7 @@ func TestConvMonitor_StartupScanSkipsUnchangedConv(t *testing.T) {
 		ConvID:     convID,
 		ProjectDir: filepath.Dir(cc.JsonlPath),
 		FullPath:   cc.JsonlPath,
-		FileMtime:  info.ModTime().UnixNano(),
+		FileMtime:  info.ModTime().Round(0).UTC(),
 		FileSize:   info.Size(),
 		Summary:    "freshness-guard-sentinel",
 		// Non-empty Created so isStubRow() returns false — otherwise

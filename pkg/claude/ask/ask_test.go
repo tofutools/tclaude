@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -52,24 +53,24 @@ func (*scriptedConvStore) Exists(string, string) (bool, error)                  
 func TestLiveFreshConvResolver(t *testing.T) {
 	t.Run("picks the newly appeared id", func(t *testing.T) {
 		store := &scriptedConvStore{lists: [][]convops.SessionEntry{
-			{{SessionID: "a", FileMtime: 1}},
-			{{SessionID: "a", FileMtime: 1}, {SessionID: "b", FileMtime: 2}},
+			{{SessionID: "a", FileMtime: time.Unix(0, 1)}},
+			{{SessionID: "a", FileMtime: time.Unix(0, 1)}, {SessionID: "b", FileMtime: time.Unix(0, 2)}},
 		}}
 		h := &harness.Harness{Name: "codex", Convs: store}
 		assert.Equal(t, "b", liveFreshConvResolver(h, "/repo/x")())
 	})
 	t.Run("newest of several new ids wins", func(t *testing.T) {
 		store := &scriptedConvStore{lists: [][]convops.SessionEntry{
-			{{SessionID: "a", FileMtime: 1}},
-			{{SessionID: "a", FileMtime: 1}, {SessionID: "b", FileMtime: 5}, {SessionID: "c", FileMtime: 9}},
+			{{SessionID: "a", FileMtime: time.Unix(0, 1)}},
+			{{SessionID: "a", FileMtime: time.Unix(0, 1)}, {SessionID: "b", FileMtime: time.Unix(0, 5)}, {SessionID: "c", FileMtime: time.Unix(0, 9)}},
 		}}
 		h := &harness.Harness{Name: "codex", Convs: store}
 		assert.Equal(t, "c", liveFreshConvResolver(h, "/repo/x")())
 	})
 	t.Run("nothing new yields empty", func(t *testing.T) {
 		store := &scriptedConvStore{lists: [][]convops.SessionEntry{
-			{{SessionID: "a", FileMtime: 1}},
-			{{SessionID: "a", FileMtime: 1}},
+			{{SessionID: "a", FileMtime: time.Unix(0, 1)}},
+			{{SessionID: "a", FileMtime: time.Unix(0, 1)}},
 		}}
 		h := &harness.Harness{Name: "codex", Convs: store}
 		assert.Empty(t, liveFreshConvResolver(h, "/repo/x")())
@@ -85,7 +86,7 @@ func TestLiveFreshConvResolver(t *testing.T) {
 		// instead skip the mapping.
 		store := &scriptedConvStore{
 			errOnGet: 1,
-			lists:    [][]convops.SessionEntry{nil, {{SessionID: "preexisting", FileMtime: 7}}},
+			lists:    [][]convops.SessionEntry{nil, {{SessionID: "preexisting", FileMtime: time.Unix(0, 7)}}},
 		}
 		h := &harness.Harness{Name: "codex", Convs: store}
 		assert.Empty(t, liveFreshConvResolver(h, "/repo/x")())
@@ -93,7 +94,7 @@ func TestLiveFreshConvResolver(t *testing.T) {
 	t.Run("failed after-listing yields empty", func(t *testing.T) {
 		store := &scriptedConvStore{
 			errOnGet: 2,
-			lists:    [][]convops.SessionEntry{{{SessionID: "a", FileMtime: 1}}, nil},
+			lists:    [][]convops.SessionEntry{{{SessionID: "a", FileMtime: time.Unix(0, 1)}}, nil},
 		}
 		h := &harness.Harness{Name: "codex", Convs: store}
 		assert.Empty(t, liveFreshConvResolver(h, "/repo/x")())

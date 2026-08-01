@@ -157,7 +157,7 @@ func RunCp(params *CpParams, stdout, stderr *os.File, stdin *os.File) int {
 		newEntry := SessionEntry{
 			SessionID:        newConvID,
 			FullPath:         dstConvFile,
-			FileMtime:        dstInfo.ModTime().UnixNano(),
+			FileMtime:        dstInfo.ModTime().Round(0).UTC(),
 			FirstPrompt:      srcEntry.FirstPrompt,
 			Summary:          srcEntry.Summary,
 			CustomTitle:      srcEntry.CustomTitle,

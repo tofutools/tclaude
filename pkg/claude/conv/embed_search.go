@@ -160,7 +160,7 @@ func RunIndexEmbeddings(params *IndexEmbeddingsParams, stdout, stderr *os.File) 
 		}
 
 		// Re-index if the conversation file has been modified since last embedding
-		if entry.FileMtime > embeddedAt.UnixNano() {
+		if entry.FileMtime.After(embeddedAt.Round(0)) {
 			toIndex = append(toIndex, entry)
 		}
 	}
