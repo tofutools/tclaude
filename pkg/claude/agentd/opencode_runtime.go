@@ -93,6 +93,7 @@ type openCodeProcess struct {
 
 var beforeOpenCodeTUICommandStatusCheckForTest func()
 var openCodeConversationStateCleanupDelay = 2 * openCodeSSERetryDelay
+var openCodeTmuxProbeInterval = time.Second
 
 var openCodeProcesses = struct {
 	sync.Mutex
@@ -849,7 +850,7 @@ func (h *openCodeTmuxHandshake) connectGate(deadline time.Time) error {
 		gate, err := os.OpenFile(h.gatePath, os.O_WRONLY|syscall.O_NONBLOCK, 0)
 		if err == nil {
 			h.gate = gate
-			return syscall.SetNonblock(int(h.status.Fd()), false)
+			return nil
 		}
 		if !errors.Is(err, syscall.ENXIO) {
 			return fmt.Errorf("open OpenCode tmux launch gate: %w", err)
@@ -861,6 +862,11 @@ func (h *openCodeTmuxHandshake) connectGate(deadline time.Time) error {
 
 func awaitOpenCodeTmuxAuthority(handshake *openCodeTmuxHandshake,
 	process *openCodeProcess, timeout time.Duration) (opencodeapi.UnixLaunchAuthority, error) {
+	if err := handshake.status.SetReadDeadline(time.Now().Add(timeout)); err != nil {
+		return opencodeapi.UnixLaunchAuthority{},
+			fmt.Errorf("set OpenCode tmux authority deadline: %w", err)
+	}
+	defer func() { _ = handshake.status.SetReadDeadline(time.Time{}) }()
 	type authorityResult struct {
 		authority opencodeapi.UnixLaunchAuthority
 		err       error
@@ -925,6 +931,9 @@ func startOpenCodeProcessThroughTmux(runtime *db.OpenCodeRuntime, command string
 		defer handshake.close()
 	}
 	tmuxSession := openCodeManagedTmuxSession(runtime.SessionID)
+	if err := reclaimOrphanedOpenCodeTmuxSession(tmuxSession); err != nil {
+		return nil, err
+	}
 	tmuxArgs := []string{"new-session", "-d", "-s", tmuxSession, "-c", runtime.Cwd,
 		"-x", "80", "-y", "24"}
 	tmuxArgs = append(tmuxArgs, openCodeTmuxLaunchCommand(
@@ -994,6 +1003,18 @@ func startOpenCodeProcessThroughTmux(runtime *db.OpenCodeRuntime, command string
 		runtime.ServerURL, openCodeStartupTimeout, paneOutput)
 }
 
+func reclaimOrphanedOpenCodeTmuxSession(tmuxSession string) error {
+	if err := clcommon.Default.Command(
+		"-N", "has-session", "-t", clcommon.ExactTarget(tmuxSession)).Run(); err != nil {
+		return nil
+	}
+	if err := clcommon.Default.Command(
+		"-N", "kill-session", "-t", clcommon.ExactTarget(tmuxSession)).Run(); err != nil {
+		return fmt.Errorf("reclaim orphaned OpenCode tmux session: %w", err)
+	}
+	return nil
+}
+
 func captureOpenCodeTmuxPane(tmuxSession string) string {
 	out, err := clcommon.Default.Command(
 		"-N", "capture-pane", "-p", "-S", "-200", "-t",
@@ -1005,10 +1026,16 @@ func captureOpenCodeTmuxPane(tmuxSession string) string {
 }
 
 func watchOpenCodeTmuxProcess(process *openCodeProcess, runtime db.OpenCodeRuntime) {
+	misses := 0
 	for {
 		err := clcommon.Default.Command(
 			"-N", "has-session", "-t", clcommon.ExactTarget(process.tmuxSession)).Run()
 		if err != nil {
+			misses++
+			if misses < openCodeHealthAttempts {
+				time.Sleep(openCodeTmuxProbeInterval)
+				continue
+			}
 			openCodeProcesses.Lock()
 			stopping := process.stopping
 			openCodeProcesses.Unlock()
@@ -1020,7 +1047,8 @@ func watchOpenCodeTmuxProcess(process *openCodeProcess, runtime db.OpenCodeRunti
 			finishOpenCodeProcessExit(process, runtime.SessionID, process.pid, waitErr, nil)
 			return
 		}
-		time.Sleep(time.Second)
+		misses = 0
+		time.Sleep(openCodeTmuxProbeInterval)
 	}
 }
 
