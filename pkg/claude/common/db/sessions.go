@@ -2675,6 +2675,36 @@ func sortCostDailyRowsForWalk(rows []CostDailyRow) {
 	})
 }
 
+// CompareCostStamps orders two updated_at spellings by the INSTANT they
+// record, returning -1, 0 or 1. Callers outside this package compare cost
+// stamps through here rather than with < and >, because the column's spelling
+// does not sort chronologically — see sortCostDailyRowsForWalk for the
+// contract and the inversions.
+//
+// Unusable stamps (unknown or unparseable) rank BELOW every usable one and
+// equal to each other, matching the position the walk gives them.
+func CompareCostStamps(a, b string) int {
+	at, aOK := parseCostDailyStamp(a)
+	bt, bOK := parseCostDailyStamp(b)
+	switch {
+	case aOK && bOK:
+		switch {
+		case at.Before(bt):
+			return -1
+		case bt.Before(at):
+			return 1
+		default:
+			return 0
+		}
+	case aOK:
+		return 1
+	case bOK:
+		return -1
+	default:
+		return 0
+	}
+}
+
 // parseCostDailyStamp reads an updated_at as the instant it records. The bool
 // is false for the empty stamp ("" if unknown, per CostDailyRow) and for any
 // value this process cannot parse — reported rather than swallowed as the zero
