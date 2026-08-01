@@ -54,13 +54,17 @@ func TestPrepareOpenCodeReadOnlyConfigWritesThroughTheValidatedDirectory(t *test
 	require.Equal(t, victimBase, mustReadlink(t, link),
 		"the path really does name the victim by the time the write happens")
 
+	// The victim is read FIRST and non-fatally. Ordered the other way, reverting
+	// the fix aborts on the missing file in the real directory and never states
+	// where the write actually went — a failure report about the return path
+	// rather than about the damage.
+	assert.NoFileExists(t,
+		filepath.Join(victimBase, "opencode", openCodeInstallBootstrapFile),
+		"a daemon-side write reached a directory the validation never saw")
 	raw, err := os.ReadFile(filepath.Join(realConfig, openCodeInstallBootstrapFile))
 	require.NoError(t, err,
 		"the write must land in the directory that was validated, not the one the path now names")
 	assert.Equal(t, openCodeInstallGitignore, string(raw))
-	assert.NoFileExists(t,
-		filepath.Join(victimBase, "opencode", openCodeInstallBootstrapFile),
-		"a daemon-side write reached a directory the validation never saw")
 }
 
 // The same property at the primitive, without the production hook: a descriptor
