@@ -47,11 +47,14 @@ func TestPrepareOpenCodeTclaudeLayerStateRefusesTamperedStateRoot(t *testing.T) 
 	}
 
 	err := prepareOpenCodeTclaudeLayerState(spec)
+	// The filesystem is read FIRST, and non-fatally, so that removing the anchor
+	// reports the observed pre-fix value — the victim directory exists — rather
+	// than aborting on the return code and leaving that unstated.
+	assert.NoDirExists(t, victim,
+		"the refusal has to happen BEFORE the mkdir, not merely be reported after it")
 	require.ErrorContains(t, err,
 		"is neither an allocated per-agent state root nor this host's OpenCode state root",
 		"pinned to the reason: an unrelated refusal here would keep this test green while the anchor quietly stopped firing")
-	assert.NoDirExists(t, victim,
-		"the refusal has to happen BEFORE the mkdir, not merely be reported after it")
 }
 
 // The same class one level in: a state root this daemon really allocated, whose
@@ -80,10 +83,10 @@ func TestPrepareOpenCodeTclaudeLayerStateRefusesTamperedStateDir(t *testing.T) {
 	}
 
 	err := prepareOpenCodeTclaudeLayerState(spec)
+	assert.NoDirExists(t, victim)
 	require.ErrorContains(t, err,
 		"is neither below its state root",
 		"pinned to the reason, not to the presence of any error")
-	assert.NoDirExists(t, victim)
 }
 
 // A per-agent-shaped state root whose agent id has no allocation is refused by
@@ -111,9 +114,9 @@ func TestPrepareOpenCodeTclaudeLayerStateRefusesUnallocatedAgentRoot(t *testing.
 	}
 
 	err := prepareOpenCodeTclaudeLayerState(spec)
+	assert.NoDirExists(t, victim)
 	require.ErrorContains(t, err, "has no durable state allocation")
 	require.ErrorContains(t, err, "is not an allocated per-agent state root")
-	assert.NoDirExists(t, victim)
 }
 
 // The private posture, driven through the PRODUCTION layout builder rather than
