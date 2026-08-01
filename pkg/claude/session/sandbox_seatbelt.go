@@ -798,9 +798,27 @@ func seatbeltDaemonReopenDescendants(
 // until TCL-917 measured this function's own rendering: CI run 30688396007
 // was the proxy floor; run 30691418550, job 91346704723 is this path, where a
 // connect to 192.168.64.10:49187 succeeded from inside the sandbox while the
-// authored rule named 127.0.0.1:49187. The two paths render different
-// profiles — this one emits both tcp and udp exceptions per port, the proxy
-// floor emits tcp only — so the inference needed checking and now does not.
+// authored rule named 127.0.0.1:49187.
+//
+// THREE KNOWN DIFFERENCES between this path and the proxy floor, listed
+// because they share the "localhost:PORT" spelling and the inference "both go
+// through the same token, so both behave alike" is what produced TCL-917:
+//
+//  1. This path renders only when a filtered plan deploys NO proxy; the proxy
+//     floor renders the isolated denies plus one endpoint exception.
+//  2. This path emits BOTH tcp and udp exceptions per port; the proxy floor
+//     emits tcp only.
+//  3. The proxy floor has no production caller on Darwin at all — the launcher
+//     passes a zero AddrPort — while this path is the one that ships.
+//
+// A measurement on one of them is not a measurement on the other.
+//
+// NOT MEASURED, named so silence is not read as evidence: external UDP egress
+// from this path. It is unmeasured on the proxy floor too — that suite's UDP
+// assertion targets a LOOPBACK endpoint and tests the protocol axis, since its
+// exception is tcp-only, rather than testing egress. External TCP egress IS
+// measured here: the Darwin smoke's networkLocal branch asserts 1.1.1.1:53
+// fails with EPERM, and it held in the run cited above.
 //
 // So what a Local-access rule actually scopes to is A PORT SET ACROSS ALL
 // HOST-LOCAL ADDRESSES, not the loopback interface. Allowing port N also

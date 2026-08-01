@@ -556,6 +556,14 @@ a current one: the cell is already `EnforceNone` and `EnforceFull` is gated on
 `goos == "linux"`, so nothing is over-rated today and no cell changed when this
 was measured.
 
+**Not measured, named so silence is not read as evidence:** external *UDP*
+egress from the native path. It is unmeasured on the proxy floor too — that
+suite's UDP assertion targets a **loopback** endpoint and tests the protocol
+axis (its exception is TCP-only) rather than testing egress. External *TCP*
+egress is measured on the native path: the Darwin smoke's `networkLocal` branch
+asserts `1.1.1.1:53` fails with EPERM, and it held in the run cited above. The
+operator docs therefore claim TCP and not IP generally.
+
 TCL-917 considered a launch-time port-collision check and it was ruled against —
 refusing a launch because an unrelated program holds a port is how a sandbox
 gets switched off, and the scenario is narrow. The ruling was document and
