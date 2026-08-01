@@ -289,20 +289,34 @@ function sandboxContextLabel(contexts, index) {
   return 'global assignment';
 }
 
+/* The network entries for ONE assignment context. Both callers below must
+   resolve this identically — one deciding what to render, the other deciding
+   whether to raise attention — so it is defined once rather than derived twice.
+   They previously each spelled it out with `??`, and only one was corrected
+   when the hazard was found.
+
+   A REFUSED context's entry is an explicit `null`, not absent: the daemon emits
+   a placeholder to keep this list index-aligned with context_axes. `??` treats
+   null as nullish, so a bare fallback substitutes target.network_entries — the
+   DRAFT-ONLY rows, a different policy's verdicts attributed to a refused
+   context. The array check is what distinguishes "this context has no verdict"
+   from "this daemon did not send per-context entries at all"; only the latter
+   may fall back. */
+function sandboxContextNetworkEntries(target, contextIndex) {
+  // Fall back ONLY when the daemon sent no per-context list at all (an older
+  // daemon). Once the list exists, it is authoritative for every index in it,
+  // including a null one: null means "this context produced no entries", which
+  // is a verdict, not a gap to be filled from elsewhere.
+  const contextEntries = target.context_network_entries;
+  if (!Array.isArray(contextEntries)) return target.network_entries ?? [];
+  const entry = contextEntries[contextIndex];
+  return Array.isArray(entry) ? entry : [];
+}
+
 export function SandboxPolicyResult({ target, context, contextIndex, contexts = [] }) {
   const [ruleHelpOpen, setRuleHelpOpen] = useState('');
   const axes = target.context_axes?.[contextIndex] || target.axes || {};
-  /* A REFUSED context's entry here is `null`, not absent — the daemon emits a
-     null placeholder to keep this list index-aligned with context_axes. `??`
-     treats null as nullish, so a bare fallback would silently substitute
-     target.network_entries, which are the DRAFT-ONLY rows: a different policy's
-     verdicts rendered against a refused context. Unreachable today because the
-     refusal branch below returns first, but the guard is explicit rather than
-     load-bearing on that ordering. */
-  const contextEntries = target.context_network_entries?.[contextIndex];
-  const networkEntries = Array.isArray(contextEntries)
-    ? contextEntries
-    : (target.network_entries ?? []);
+  const networkEntries = sandboxContextNetworkEntries(target, contextIndex);
   /* TCL-885. A refused target carries NO axes, so it must be read here before
      anything touches `axes` — sandboxRuleBuckets substitutes
      {outcome:'not_enforced', detail:'No enforcement verdict was returned.'} for
@@ -382,8 +396,7 @@ export function SandboxPolicyResult({ target, context, contextIndex, contexts = 
 
 export function sandboxPolicyNeedsAttention(target, context, contextIndex) {
   const axes = target.context_axes?.[contextIndex] || target.axes || {};
-  const networkEntries = target.context_network_entries?.[contextIndex]
-    ?? target.network_entries ?? [];
+  const networkEntries = sandboxContextNetworkEntries(target, contextIndex);
   return sandboxRuleBuckets(
     axes, context, networkEntries, sandboxTargetRefusal(target, contextIndex),
   ).launchRefused
