@@ -74,14 +74,15 @@ const (
 )
 
 type openCodeProcess struct {
-	cmd         *exec.Cmd
-	pid         int
-	tmuxSession string
-	done        chan error
-	doneOnce    sync.Once
-	cancel      context.CancelFunc
-	sseDone     chan struct{}
-	convID      string
+	cmd          *exec.Cmd
+	pid          int
+	tmuxSession  string
+	shutdownPIDs []int
+	done         chan error
+	doneOnce     sync.Once
+	cancel       context.CancelFunc
+	sseDone      chan struct{}
+	convID       string
 	// exited is set (under openCodeProcesses' lock) once cmd.Wait returns, so a
 	// consumer that had not yet registered its cancel at death time is never
 	// started against an already-dead server. Only processes with a cmd.Wait
@@ -2387,17 +2388,26 @@ func stopOpenCodeProcess(runtime db.OpenCodeRuntime, known *openCodeProcess) (re
 	if process == nil {
 		process = &openCodeProcess{}
 		openCodeProcesses.bySession[runtime.SessionID] = process
+	} else if openCodeProcesses.bySession[runtime.SessionID] == nil {
+		// A caller may pass a launch handle before another path has observed it.
+		// Register the same handle so an unsafe tmux teardown can leave a durable
+		// in-memory tombstone for later cleanup attempts.
+		openCodeProcesses.bySession[runtime.SessionID] = process
 	}
 	// Keep this tombstone registered until cancellation and projector join
 	// complete. A concurrent health/reconcile path must not interpret a
 	// temporarily missing entry as permission to launch a replacement SSE
 	// consumer during teardown.
 	process.stopping = true
+	shutdownPIDs := append([]int(nil), process.shutdownPIDs...)
 	cancel := process.cancel
 	sseDone := process.sseDone
 	projectorStopped := sseDone == nil
 	openCodeProcesses.Unlock()
 	defer func() {
+		if !removeControlSocket {
+			return
+		}
 		openCodeProcesses.Lock()
 		if openCodeProcesses.bySession[runtime.SessionID] == process {
 			delete(openCodeProcesses.bySession, runtime.SessionID)
@@ -2426,7 +2436,19 @@ func stopOpenCodeProcess(runtime db.OpenCodeRuntime, known *openCodeProcess) (re
 			}
 		}
 		if process.tmuxSession != "" {
+			if len(shutdownPIDs) > 0 {
+				if !waitForOpenCodePIDsExit(shutdownPIDs, openCodeProcessStopWait) {
+					removeControlSocket = false
+					slog.Warn("OpenCode tmux process tree still alive; control authority retained",
+						"session", runtime.SessionID, "pid", runtime.PID)
+				}
+				process.finish(nil)
+				return
+			}
 			recordedTree := opencodeapi.RecordedProcessSubtree(process.rootPID())
+			openCodeProcesses.Lock()
+			process.shutdownPIDs = append([]int(nil), recordedTree...)
+			openCodeProcesses.Unlock()
 			killErr := clcommon.Default.Command(
 				"-N", "kill-session", "-t", clcommon.ExactTarget(process.tmuxSession)).Run()
 			if killErr == nil {

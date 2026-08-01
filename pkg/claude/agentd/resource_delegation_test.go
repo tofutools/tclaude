@@ -153,6 +153,14 @@ func TestStopManagedOpenCodeTmuxRetainsAuthorityWhileDescendantLives(t *testing.
 		"the pane root must have exited to exercise descendant-only retention")
 	assert.True(t, session.IsProcessAlive(descendantPID),
 		"the captured descendant must remain alive through the timeout")
+	assert.False(t, stopOpenCodeProcess(
+		db.OpenCodeRuntime{SessionID: "stop-session", PID: process.pid}, nil),
+		"a retry must retain authority using the tombstoned descendant set")
+	openCodeProcesses.Lock()
+	assert.Same(t, process, openCodeProcesses.bySession["stop-session"],
+		"the stopping tombstone must survive while a captured descendant lives")
+	delete(openCodeProcesses.bySession, "stop-session")
+	openCodeProcesses.Unlock()
 
 	select {
 	case err := <-process.done:
