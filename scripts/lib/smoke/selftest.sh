@@ -168,6 +168,228 @@ expect_manifest refuse no-flows '10-alpha TestAlpha
 # An empty manifest names no evidence for the flows that exist.
 expect_manifest refuse empty-manifest '' 10-alpha
 
+# --- The per-flow harness declaration -----------------------------------------
+#
+# Each flow says which harnesses it launches, in its own file, and each shard's
+# install set is DERIVED as the union of its flows' declarations. The declaration
+# lives in the flow because that is the only place it cannot be left behind: when
+# it lived in the shard map, moving a flow to the other job without moving its
+# harness satisfied every union check and then failed deep inside the flow with a
+# "cannot install"-class error — loud, but attributed to the flow instead of to
+# the declaration.
+#
+# What can still be got wrong is the declaration itself, so that is what these
+# cases pin: a flow that declares nothing, one that declares an empty set, one
+# that says `none` and means it, and one that says `none` alongside a real name.
+# Every refusal case asserts the SPECIFIC message: the whole point of this change
+# is that a failure moved from one place to another, and a case that only checked
+# "something failed" would pass in both worlds and prove nothing.
+#
+# expect_flow_harnesses WANT(pass|refuse) CASE MESSAGE_SUBSTRING FLOW_BODY...
+#   FLOW_BODY entries are <flow-name>=<flow::harnesses body>, or <flow-name>=
+#   with an empty body for a flow that declares no flow::harnesses at all.
+expect_flow_harnesses() {
+  local want="$1" name="$2" wanted_message="$3"
+  shift 3
+  local dir="$work/flowharness-$name"
+  mkdir -p "$dir/flows"
+  local entry flow body manifest=""
+  for entry in "$@"; do
+    flow="${entry%%=*}"
+    body="${entry#*=}"
+    manifest+="$flow Test${flow}"$'\n'
+    if [[ -z "$body" ]]; then
+      printf 'flow::run() { :; }\n' > "$dir/flows/$flow.sh"
+    else
+      printf 'flow::run() { :; }\nflow::harnesses() { %s; }\n' "$body" \
+        > "$dir/flows/$flow.sh"
+    fi
+  done
+  printf '%s' "$manifest" > "$dir/manifest.txt"
+  local got=pass
+  {
+    smoke::load_manifest "$dir/manifest.txt" "$dir/flows" &&
+      smoke::load_flow_harnesses
+  } > "$dir/out" 2>&1 || got=refuse
+  if [[ "$got" != "$want" ]]; then
+    printf 'selftest FAIL: flowharness-%s — wanted %s, got %s\n' "$name" "$want" "$got"
+    sed 's/^/    /' "$dir/out"
+    failures=1
+    return
+  fi
+  # A refusal has to refuse the RIGHT thing. Without this, a guard that failed
+  # for an unrelated reason — an unreadable flow, a manifest slip — would satisfy
+  # every case below.
+  if [[ -n "$wanted_message" ]] && ! grep -qF "$wanted_message" "$dir/out"; then
+    printf 'selftest FAIL: flowharness-%s did not say %q\n' "$name" "$wanted_message"
+    sed 's/^/    /' "$dir/out"
+    failures=1
+  fi
+}
+
+# The green case, including the two shapes that must not be confused: a real set
+# and an explicit empty one.
+expect_flow_harnesses pass green '' \
+  '10-alpha=echo claude codex' '20-beta=echo none'
+if [[ "${SMOKE_FLOW_HARNESSES[10-alpha]:-}" != "claude codex " ]]; then
+  printf 'selftest FAIL: flowharness-green recorded %q for 10-alpha, wanted both names\n' \
+    "${SMOKE_FLOW_HARNESSES[10-alpha]:-}"
+  failures=1
+fi
+# `none` records the EMPTY string, and it must still be recorded — "declared
+# none" and "never loaded" are the two states the derivation must tell apart.
+if [[ -z "${SMOKE_FLOW_HARNESSES[20-beta]+set}" ]]; then
+  printf 'selftest FAIL: flowharness-green did not record 20-beta at all\n'
+  failures=1
+elif [[ -n "${SMOKE_FLOW_HARNESSES[20-beta]}" ]]; then
+  printf 'selftest FAIL: flowharness-green recorded %q for 20-beta, wanted the empty set\n' \
+    "${SMOKE_FLOW_HARNESSES[20-beta]}"
+  failures=1
+fi
+
+# THE ONE THIS SECTION EXISTS FOR: a flow with no declaration must be refused at
+# VALIDATION, naming the flow — not left to fail inside the flow at run time with
+# a missing binary.
+expect_flow_harnesses refuse undeclared \
+  "flow '20-beta' declares no flow::harnesses" \
+  '10-alpha=echo claude' '20-beta='
+
+# Printing nothing is not a declaration of nothing: it is the shape a broken
+# declaration takes, so `none` has to be said out loud.
+expect_flow_harnesses refuse empty-output \
+  "flow '10-alpha' declares an empty harness set" \
+  '10-alpha=:'
+
+# ...and `none` alongside a real name is a contradiction rather than a superset.
+# The message must name the COMPANIONS, not the whole set: "alongside none codex"
+# would list `none` as one of the things `none` conflicts with, which is false
+# and tells the reader nothing about what to drop.
+expect_flow_harnesses refuse none-plus-name \
+  "flow '10-alpha' declares 'none' alongside codex opencode;" \
+  '10-alpha=echo none codex opencode'
+if grep -qF "alongside none" "$work/flowharness-none-plus-name/out"; then
+  printf "selftest FAIL: flowharness-none-plus-name listed 'none' as its own companion\n"
+  sed 's/^/    /' "$work/flowharness-none-plus-name/out"
+  failures=1
+fi
+# The token order is preserved, so `none` appearing LAST must still report only
+# the real names — a companion list built by trimming a prefix or suffix would
+# pass the case above and fail this one.
+expect_flow_harnesses refuse none-plus-name-trailing \
+  "flow '10-alpha' declares 'none' alongside codex opencode;" \
+  '10-alpha=echo codex opencode none'
+
+# A declaration the reader cannot evaluate must fail rather than record nothing.
+expect_flow_harnesses refuse failing-declaration \
+  "flow '10-alpha' flow::harnesses failed with status 9" \
+  '10-alpha=return 9'
+
+# ...and the statuses that would collide with a reserved sentinel if the outcome
+# were carried in the exit status rather than on the first line. A flow whose
+# declaration returns 3 must be reported as a FAILING declaration, never as
+# "declares no flow::harnesses" — that would be a lie about a declaration
+# sitting right there in the file, which is the same misattribution this whole
+# change is about, one level down.
+expect_flow_harnesses refuse failing-declaration-status-3 \
+  "flow '10-alpha' flow::harnesses failed with status 3" \
+  '10-alpha=return 3'
+expect_flow_harnesses refuse failing-declaration-status-4 \
+  "flow '10-alpha' flow::harnesses failed with status 4" \
+  '10-alpha=return 4'
+
+# A flow whose TOP LEVEL exits non-zero, with a perfectly good declaration
+# sitting right there in the file. It must NOT be reported as the declaration
+# failing — that is the same lie one trigger over from the reserved-status
+# collision above, and it is why the verdict is read before the status is
+# attributed. `expect_flow_harnesses` cannot build this one: the failure has to
+# be at top level, outside flow::harnesses.
+expect_flow_top_level() {
+  local name="$1" body="$2" wanted="$3"
+  local dir="$work/flowtop-$name"
+  mkdir -p "$dir/flows"
+  printf '10-alpha TestAlpha\n' > "$dir/manifest.txt"
+  printf 'flow::run() { :; }\n%s\nflow::harnesses() { echo claude; }\n' "$body" \
+    > "$dir/flows/10-alpha.sh"
+  if {
+    smoke::load_manifest "$dir/manifest.txt" "$dir/flows" &&
+      smoke::load_flow_harnesses
+  } > "$dir/out" 2>&1; then
+    printf 'selftest FAIL: flowtop-%s — wanted refuse, got pass\n' "$name"
+    failures=1
+    return
+  fi
+  if ! grep -qF "$wanted" "$dir/out"; then
+    printf 'selftest FAIL: flowtop-%s did not say %q\n' "$name" "$wanted"
+    sed 's/^/    /' "$dir/out"
+    failures=1
+  fi
+  # The discriminating half: it must not be blamed on the declaration, which is
+  # defined and was never even called.
+  if grep -qF 'flow::harnesses failed' "$dir/out"; then
+    printf 'selftest FAIL: flowtop-%s blamed the declaration for a top-level failure\n' "$name"
+    sed 's/^/    /' "$dir/out"
+    failures=1
+  fi
+}
+
+expect_flow_top_level exit-nonzero 'exit 5' \
+  "flow '10-alpha' exited with status 5 before its harness declaration could be read"
+
+# The mirror: a top-level `exit 0` short-circuits the file before either marker
+# is printed. Status is zero and nothing about the declaration is known, so the
+# no-verdict branch must refuse rather than fall through to an empty set.
+expect_flow_top_level exit-zero 'exit 0' \
+  "flow '10-alpha' produced no harness-declaration verdict"
+
+# A flow that cannot be sourced at all: refused, and bash's own diagnostic is
+# left visible so the reader gets a line number rather than only "could not be
+# sourced". `unexpected end of file` is bash's, not ours — its presence in the
+# captured output is the assertion that stderr was not swallowed.
+mkdir -p "$work/flowharness-unsourceable/flows"
+printf '10-alpha TestAlpha\n' > "$work/flowharness-unsourceable/manifest.txt"
+printf 'flow::run() { :; }\nflow::harnesses() {\n' \
+  > "$work/flowharness-unsourceable/flows/10-alpha.sh"
+if {
+  smoke::load_manifest "$work/flowharness-unsourceable/manifest.txt" \
+    "$work/flowharness-unsourceable/flows" &&
+    smoke::load_flow_harnesses
+} > "$work/flowharness-unsourceable/out" 2>&1; then
+  printf 'selftest FAIL: flowharness-unsourceable — wanted refuse, got pass\n'
+  failures=1
+else
+  if ! grep -qF "flow '10-alpha' could not be sourced" \
+      "$work/flowharness-unsourceable/out"; then
+    printf 'selftest FAIL: flowharness-unsourceable did not name the flow\n'
+    sed 's/^/    /' "$work/flowharness-unsourceable/out"
+    failures=1
+  fi
+  if ! grep -q 'unexpected end of file' "$work/flowharness-unsourceable/out"; then
+    printf "selftest FAIL: flowharness-unsourceable swallowed bash's own diagnostic\n"
+    sed 's/^/    /' "$work/flowharness-unsourceable/out"
+    failures=1
+  fi
+fi
+
+# Duplicates would install the same harness twice and read as two claims.
+expect_flow_harnesses refuse duplicate \
+  "declares harness 'codex' twice" \
+  '10-alpha=echo codex codex'
+
+# Names index associative arrays and are interpolated into a
+# `harnesses::install_$name` call, so the same charset gate the shard map uses
+# applies here.
+expect_flow_harnesses refuse glob-in-harness \
+  "which is not a plain name" \
+  '10-alpha=echo "*"'
+
+# Reading declarations before a manifest would record none of them and then
+# derive an empty install set for every shard.
+if ( SMOKE_FLOW_FILES=(); smoke::load_flow_harnesses ) \
+    > "$work/flowharness-no-manifest.out" 2>&1; then
+  printf 'selftest FAIL: flowharness-no-manifest — wanted refuse, got pass\n'
+  failures=1
+fi
+
 # --- The shard-map guards -----------------------------------------------------
 #
 # Splitting a shard's flows across CI jobs adds a third way to prove nothing,
@@ -177,6 +399,8 @@ expect_manifest refuse empty-manifest '' 10-alpha
 # and this section is what proves the union check actually refuses it.
 #
 # expect_shards WANT(pass|refuse) CASE MANIFEST_CONTENT SHARDS_CONTENT FLOW_NAME...
+#   Each FLOW_NAME may carry its harness declaration as <name>:<harness>...;
+#   a bare name declares `none`.
 expect_shards() {
   local want="$1" name="$2" manifest_content="$3" shards_content="$4"
   shift 4
@@ -184,13 +408,18 @@ expect_shards() {
   mkdir -p "$dir/flows"
   printf '%s' "$manifest_content" > "$dir/manifest.txt"
   printf '%s' "$shards_content" > "$dir/shards.txt"
-  local flow
-  for flow in "$@"; do
-    printf 'flow::run() { :; }\n' > "$dir/flows/$flow.sh"
+  local flow spec harnesses
+  for spec in "$@"; do
+    flow="${spec%%:*}"
+    harnesses="${spec#*:}"
+    [[ "$harnesses" == "$spec" ]] && harnesses=none
+    printf 'flow::run() { :; }\nflow::harnesses() { echo %s; }\n' "$harnesses" \
+      > "$dir/flows/$flow.sh"
   done
   local got=pass
   {
     smoke::load_manifest "$dir/manifest.txt" "$dir/flows" &&
+      smoke::load_flow_harnesses &&
       smoke::load_shards "$dir/shards.txt"
   } > "$dir/out" 2>&1 || got=refuse
   if [[ "$got" != "$want" ]]; then
@@ -204,15 +433,15 @@ SHARD_MANIFEST='10-alpha TestAlpha
 20-beta TestBeta
 30-gamma TestGamma
 '
-SHARD_FLOWS=(10-alpha 20-beta 30-gamma)
+# 10-alpha declares claude, 20-beta declares codex, 30-gamma declares opencode —
+# one harness each, so a derived set says unambiguously which flows produced it.
+SHARD_FLOWS=(10-alpha:claude 20-beta:codex 30-gamma:opencode)
 
-# The green case: every flow assigned, both keys present on every shard.
+# The green case: every flow assigned, and a shard map that declares flows only.
 expect_shards pass green "$SHARD_MANIFEST" '# a comment
 one flows      10-alpha 20-beta
-one harnesses  claude codex
 
-two flows      30-gamma
-two harnesses  opencode' "${SHARD_FLOWS[@]}"
+two flows      30-gamma' "${SHARD_FLOWS[@]}"
 
 # ...and the parse is inspected, not just the exit status: a reader that
 # accepted the line while recording one flow would satisfy the case above and
@@ -222,52 +451,133 @@ if [[ "${SMOKE_SHARD_FLOWS[one]:-}" != "10-alpha 20-beta " ]]; then
     "${SMOKE_SHARD_FLOWS[one]:-}"
   failures=1
 fi
+# THE DERIVATION, inspected rather than inferred. Nothing in the shard map above
+# mentions a harness; "claude codex " can only have come from the two flows'
+# own declarations, unioned.
 if [[ "${SMOKE_SHARD_HARNESSES[one]:-}" != "claude codex " ]]; then
-  printf 'selftest FAIL: shards-green recorded harnesses %q, wanted both\n' \
+  printf 'selftest FAIL: shards-green derived harnesses %q for shard one, wanted "claude codex "\n' \
     "${SMOKE_SHARD_HARNESSES[one]:-}"
+  failures=1
+fi
+if [[ "${SMOKE_SHARD_HARNESSES[two]:-}" != "opencode " ]]; then
+  printf 'selftest FAIL: shards-green derived harnesses %q for shard two, wanted "opencode "\n' \
+    "${SMOKE_SHARD_HARNESSES[two]:-}"
+  failures=1
+fi
+
+# THE FALSIFICATION THIS CHANGE EXISTS FOR, run as a positive: 20-beta MOVES from
+# shard one to shard two, and NOTHING else changes — no harness list is edited,
+# because there is none to edit. Its codex declaration must move with it. Under
+# the old per-shard scheme this exact edit left codex behind in shard one and
+# failed inside the flow at run time with a "cannot install"-class error.
+expect_shards pass moved-flow "$SHARD_MANIFEST" 'one flows      10-alpha
+
+two flows      20-beta 30-gamma' "${SHARD_FLOWS[@]}"
+if [[ "${SMOKE_SHARD_HARNESSES[one]:-}" != "claude " ]]; then
+  printf 'selftest FAIL: shards-moved-flow left shard one with %q, wanted "claude "\n' \
+    "${SMOKE_SHARD_HARNESSES[one]:-}"
+  failures=1
+fi
+if [[ "${SMOKE_SHARD_HARNESSES[two]:-}" != "codex opencode " ]]; then
+  printf 'selftest FAIL: shards-moved-flow derived %q for shard two, wanted "codex opencode "\n' \
+    "${SMOKE_SHARD_HARNESSES[two]:-}"
+  failures=1
+fi
+
+# A shard whose flows all declare `none` installs nothing, and that is a correct
+# derivation rather than a forgotten line — the guard that used to refuse it was
+# guarding a declaration that no longer lives here.
+expect_shards pass derived-empty '10-alpha TestAlpha
+' 'one flows 10-alpha
+' 10-alpha
+if [[ -z "${SMOKE_SHARD_HARNESSES[one]+set}" || -n "${SMOKE_SHARD_HARNESSES[one]}" ]]; then
+  printf 'selftest FAIL: shards-derived-empty derived %q, wanted the empty set\n' \
+    "${SMOKE_SHARD_HARNESSES[one]:-<unset>}"
+  failures=1
+fi
+# ...carried all the way through SELECTION, not just derivation. The empty set is
+# a path the entrypoint takes at run time — `read -a` on an empty here-string,
+# then a `for` over a zero-length array under `set -u` — and a case that stopped
+# at load_shards would leave the one shape claimed-supported and never executed.
+#
+# PRE-POISONED on purpose. This is the first selection the file performs, so
+# SMOKE_SELECTED_HARNESSES is still at its `declare -a … =()` initial value and
+# an empty result would be indistinguishable from nothing having happened —
+# the case would pass in a world where selection did not clear at all. Seeding a
+# stale selection first is what makes the emptiness an observation.
+SMOKE_SELECTED_HARNESSES=(stale-claude stale-codex)
+if smoke::select_shard one > "$work/select-derived-empty.out" 2>&1; then
+  if [[ ${#SMOKE_SELECTED_HARNESSES[@]} -ne 0 ]]; then
+    printf 'selftest FAIL: select-derived-empty selected %q, wanted nothing\n' \
+      "${SMOKE_SELECTED_HARNESSES[*]}"
+    failures=1
+  fi
+  # The SHAPE of the loop run.sh performs, under the same `set -euo pipefail`:
+  # zero iterations, no unbound-variable abort. Stated honestly — this is a
+  # re-implementation, not run.sh's own line, so it cannot catch run.sh's length
+  # guard being deleted. What it does pin is that an empty selection is safe to
+  # iterate at all, which is the property the guard exists to preserve.
+  if ! (
+    set -euo pipefail
+    if [[ ${#SMOKE_SELECTED_HARNESSES[@]} -gt 0 ]]; then
+      for h in "${SMOKE_SELECTED_HARNESSES[@]}"; do echo "$h"; done
+    fi
+  ) > /dev/null 2>&1; then
+    printf 'selftest FAIL: select-derived-empty cannot be iterated under set -u\n'
+    failures=1
+  fi
+else
+  printf 'selftest FAIL: select-derived-empty — wanted pass, got refuse\n'
+  sed 's/^/    /' "$work/select-derived-empty.out"
   failures=1
 fi
 
 # THE ONE THIS SECTION EXISTS FOR: 30-gamma has evidence and a flow file, but no
 # shard runs it. Every other guard in this file passes; only this one refuses.
 expect_shards refuse union-gap "$SHARD_MANIFEST" 'one flows      10-alpha 20-beta
-one harnesses  claude
 ' "${SHARD_FLOWS[@]}"
 
 # A shard naming a flow the manifest does not: evidence assigned to a job for a
 # smoke that does not exist.
 expect_shards refuse unknown-flow "$SHARD_MANIFEST" 'one flows      10-alpha 20-beta 30-gamma 40-delta
-one harnesses  claude
 ' "${SHARD_FLOWS[@]}"
 
-# A shard with no harnesses could not launch a harness smoke, and a shard with
-# no flows is a job that runs nothing.
-expect_shards refuse no-harnesses "$SHARD_MANIFEST" 'one flows 10-alpha 20-beta 30-gamma
-' "${SHARD_FLOWS[@]}"
-expect_shards refuse no-flows "$SHARD_MANIFEST" 'one harnesses claude
-' "${SHARD_FLOWS[@]}"
+# NO "shard with no flows" and no "shard with no harnesses" case here, and both
+# absences are deliberate. A shard now enters the map only through its `flows`
+# line, so "declared but with no flows" is no longer constructible — the check
+# for it survives in driver.sh as an invariant, the way the selection count
+# check does, but it has nothing to assert against. And the install set is
+# derived, so the declaration that can be forgotten is the FLOW's:
+# flowharness-undeclared above is where that guard is proven.
 
 # Structural drift: a repeated key silently discards one of the two lists, an
 # unknown key is a typo that would drop the line, and a repeated flow inside one
 # shard would run the same smoke twice while reading as coverage of two.
 expect_shards refuse duplicate-key "$SHARD_MANIFEST" 'one flows      10-alpha 20-beta
 one flows      30-gamma
-one harnesses  claude
 ' "${SHARD_FLOWS[@]}"
 expect_shards refuse unknown-key "$SHARD_MANIFEST" 'one flowz      10-alpha 20-beta 30-gamma
-one harnesses  claude
 ' "${SHARD_FLOWS[@]}"
 expect_shards refuse duplicate-flow "$SHARD_MANIFEST" 'one flows      10-alpha 10-alpha 20-beta 30-gamma
-one harnesses  claude
 ' "${SHARD_FLOWS[@]}"
+
+# A shard map still carrying the OLD per-shard `harnesses` key must be refused by
+# name, not ignored. Silently skipping it is the worst of both worlds: the map
+# would read as declaring an install set while the derivation quietly overrode it.
+expect_shards refuse stale-harness-key "$SHARD_MANIFEST" 'one flows      10-alpha 20-beta 30-gamma
+one harnesses  claude codex opencode
+' "${SHARD_FLOWS[@]}"
+if ! grep -qF "harnesses are declared per flow" "$work/shards-stale-harness-key/out"; then
+  printf 'selftest FAIL: shards-stale-harness-key did not say where harnesses are declared\n'
+  sed 's/^/    /' "$work/shards-stale-harness-key/out"
+  failures=1
+fi
 
 # Names index associative arrays and are compared through unquoted expansions,
 # so a glob or `@` in one would alias every key or expand against the repo root.
 expect_shards refuse glob-in-flow "$SHARD_MANIFEST" 'one flows      * 10-alpha 20-beta 30-gamma
-one harnesses  claude
 ' "${SHARD_FLOWS[@]}"
 expect_shards refuse glob-in-shard-name "$SHARD_MANIFEST" '@ flows      10-alpha 20-beta 30-gamma
-@ harnesses  claude
 ' "${SHARD_FLOWS[@]}"
 
 # A shard map that declares nothing assigns nothing, and a missing one is not a
@@ -275,7 +585,6 @@ expect_shards refuse glob-in-shard-name "$SHARD_MANIFEST" '@ flows      10-alpha
 expect_shards refuse empty-map "$SHARD_MANIFEST" '# only a comment
 ' "${SHARD_FLOWS[@]}"
 expect_shards refuse comment-only-list "$SHARD_MANIFEST" 'one flows      # nothing here
-one harnesses  claude
 ' "${SHARD_FLOWS[@]}"
 
 # A shard map that is not there at all: absent must not read as "no constraints".
@@ -293,13 +602,34 @@ if ( SMOKE_REQUIRED_BY_FLOW=(); smoke::load_shards "$work/shards-green/shards.tx
   failures=1
 fi
 
+# ...and deriving install sets from flow declarations that were never read would
+# hand every shard an empty one — every job installing nothing, every flow that
+# needs a harness failing with "not found".
+#
+# The MESSAGE is asserted, not just the refusal. A bare exit-status check does
+# not discriminate here: the per-flow `${...+set}` check inside the derivation
+# refuses the same input for a different reason, so this case would stay green
+# with the ordering guard deleted and would prove nothing about the guard its
+# name claims.
+if ( SMOKE_FLOW_HARNESSES=(); smoke::load_shards "$work/shards-green/shards.txt" ) \
+    > "$work/shards-no-flow-harnesses.out" 2>&1; then
+  printf 'selftest FAIL: shards-no-flow-harnesses — wanted refuse, got pass\n'
+  failures=1
+elif ! grep -qF "called before smoke::load_flow_harnesses" \
+    "$work/shards-no-flow-harnesses.out"; then
+  printf 'selftest FAIL: shards-no-flow-harnesses refused for the wrong reason\n'
+  sed 's/^/    /' "$work/shards-no-flow-harnesses.out"
+  failures=1
+fi
+
 # --- Shard selection ----------------------------------------------------------
 #
 # Selection has its own way to prove nothing: a name that matches no shard must
 # fail rather than resolve to an empty flow list, and a name that does match must
-# narrow the run to exactly that shard's flows.
+# narrow the run to exactly that shard's flows and derived harnesses.
 smoke::load_manifest "$work/shards-green/manifest.txt" "$work/shards-green/flows" \
   > /dev/null 2>&1
+smoke::load_flow_harnesses > /dev/null 2>&1
 smoke::load_shards "$work/shards-green/shards.txt" > /dev/null 2>&1
 if smoke::select_shard nosuchshard > "$work/select-unknown.out" 2>&1; then
   printf 'selftest FAIL: select-unknown — wanted refuse, got pass\n'
@@ -435,8 +765,12 @@ fi
 #
 # The mirror of the flow union check, for what a shard installs rather than what
 # it runs. Its failure mode is quieter than it looks: the flow fails deep inside
-# with "command not found", which reads as a broken smoke rather than as a shard
-# map that forgot a harness.
+# with "command not found", which reads as a broken smoke rather than as a
+# declaration that forgot a harness.
+#
+# The check reads the DERIVED shard sets, so what it proves is unchanged; only
+# where the sets come from moved. The mirror direction names the declaring FLOW,
+# because the flow file is where the typo is.
 #
 # expect_harness_coverage WANT(pass|refuse) CASE KNOWN...
 expect_harness_coverage() {
@@ -452,15 +786,72 @@ expect_harness_coverage() {
   fi
 }
 
-# The shard map loaded above claims claude, codex and opencode.
+# The flows loaded above declare claude, codex and opencode; the shard sets
+# derived from them claim exactly those three.
 expect_harness_coverage pass green claude codex opencode
-# An installable harness no shard claims would be installed by no job.
+# An installable harness no flow declares would be installed by no job.
 expect_harness_coverage refuse unclaimed claude codex opencode gemini
-# A shard naming a harness nothing can install is a typo that would surface as a
-# missing binary halfway through a flow.
+if ! grep -qF "harness 'gemini' is installable but no flow declares it" \
+    "$work/harness-unclaimed.out"; then
+  printf 'selftest FAIL: harness-unclaimed did not name the unclaimed harness\n'
+  sed 's/^/    /' "$work/harness-unclaimed.out"
+  failures=1
+fi
+# A flow declaring a harness nothing can install is a typo that would surface as
+# a missing binary halfway through a flow. The message must name 20-beta, which
+# is the file the fix belongs in — a message naming only the shard would send
+# the reader to a file that no longer declares harnesses at all.
 expect_harness_coverage refuse unknown-harness claude opencode
+if ! grep -qF "flow(s) 20-beta declare harness 'codex', which this entrypoint cannot install" \
+    "$work/harness-unknown-harness.out"; then
+  printf 'selftest FAIL: harness-unknown-harness did not name the declaring flow\n'
+  sed 's/^/    /' "$work/harness-unknown-harness.out"
+  failures=1
+fi
 # Declaring no installable harnesses at all must be an error, not a free pass.
 expect_harness_coverage refuse no-known
+
+# One defect, reported ONCE. Two shards legitimately claim the same harness when
+# a flow in each declares it, and iterating the raw per-shard concatenation would
+# print the same "cannot install" line once per claiming shard — a single typo
+# rendered as two findings, which is the misattribution this change is about
+# wearing a different hat.
+mkdir -p "$work/harness-dup/flows"
+printf '10-alpha TestAlpha\n20-beta TestBeta\n' > "$work/harness-dup/manifest.txt"
+printf 'one flows 10-alpha\ntwo flows 20-beta\n' > "$work/harness-dup/shards.txt"
+printf 'flow::run() { :; }\nflow::harnesses() { echo codex; }\n' \
+  > "$work/harness-dup/flows/10-alpha.sh"
+printf 'flow::run() { :; }\nflow::harnesses() { echo codex; }\n' \
+  > "$work/harness-dup/flows/20-beta.sh"
+if {
+  smoke::load_manifest "$work/harness-dup/manifest.txt" "$work/harness-dup/flows" &&
+    smoke::load_flow_harnesses &&
+    smoke::load_shards "$work/harness-dup/shards.txt"
+} > "$work/harness-dup/load.out" 2>&1; then
+  smoke::require_shard_harness_coverage claude > "$work/harness-dup/out" 2>&1 || true
+  # Counted on the plain ERROR: line only. smoke::error also emits a `::error::`
+  # workflow annotation for the same message, so counting every occurrence would
+  # report 2 for a single finding and this case would fail on the correct code.
+  dup_lines="$(grep -c "^ERROR:.*cannot install" "$work/harness-dup/out" || true)"
+  if [[ "${dup_lines:-0}" -ne 1 ]]; then
+    printf 'selftest FAIL: harness-dup reported the same uninstallable harness %s times, wanted 1\n' \
+      "${dup_lines:-0}"
+    sed 's/^/    /' "$work/harness-dup/out"
+    failures=1
+  fi
+  # ...and both declaring flows are still named, so deduplicating the harness
+  # must not cost the attribution the message exists for.
+  if ! grep -qF "flow(s) 10-alpha 20-beta declare harness 'codex'" \
+      "$work/harness-dup/out"; then
+    printf 'selftest FAIL: harness-dup did not name both declaring flows\n'
+    sed 's/^/    /' "$work/harness-dup/out"
+    failures=1
+  fi
+else
+  printf 'selftest FAIL: harness-dup fixture did not load\n'
+  sed 's/^/    /' "$work/harness-dup/load.out"
+  failures=1
+fi
 
 # --- fixture teardown hygiene (TCL-881) -------------------------------------
 #
@@ -624,4 +1015,4 @@ if [[ "$failures" -ne 0 ]]; then
   echo "smoke evidence selftest FAILED; refusing to trust any smoke result"
   exit 1
 fi
-echo "smoke evidence selftest: ok (evidence checker + manifest drift guards + shard-map union, workflow-matrix and harness-coverage guards + fixture teardown)"
+echo "smoke evidence selftest: ok (evidence checker + manifest drift guards + per-flow harness declarations + shard-map union, derived-install-set, workflow-matrix and harness-coverage guards + fixture teardown)"

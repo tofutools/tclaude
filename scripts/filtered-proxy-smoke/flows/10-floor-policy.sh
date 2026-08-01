@@ -74,6 +74,18 @@ flow::run() {
       -count=1 -v -timeout=300s
 }
 
+# NO HARNESS. Both arms launch a real proxy-engine tclaude-layer sandbox and run
+# THIS TEST BINARY inside it (proxy_network_smoke_linux_test.go builds the
+# in-sandbox command from a copied Go test binary, not from a harness command
+# line). `harness.DefaultName` appears there only to name the state root the
+# launch contract binds; no harness executable is resolved, looked up or run.
+#
+# Declared explicitly rather than omitted: a flow that launches nothing and a
+# flow whose author forgot to say must not look alike.
+flow::harnesses() {
+  echo none
+}
+
 flow::describe() {
   cat <<'TXT'
 The floor must show direct TCP, UDP, DNS, ICMP and local name resolution all

@@ -135,6 +135,13 @@ flow::run() {
   smoke::log "in-floor probe refusals recorded: $refusals"
 }
 
+# The arm launches the real OpenCode server behind the real floor:
+# opencode_proxy_floor_smoke_linux_test.go resolves it through
+# harness.OpenCodeExecutable() and wraps it before anything is measured.
+flow::harnesses() {
+  echo opencode
+}
+
 flow::describe() {
   cat <<'TXT'
 The floor arm must launch the real OpenCode server through the real

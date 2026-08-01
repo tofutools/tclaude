@@ -105,20 +105,219 @@ smoke::load_manifest() {
 # SMOKE_SHARD_NAMES is the declaration order of the shards, so messages and
 # summaries read the way the file does.
 declare -a SMOKE_SHARD_NAMES=()
-# SMOKE_SHARD_FLOWS / SMOKE_SHARD_HARNESSES map a shard name to its
-# space-separated flow and harness lists.
+# SMOKE_SHARD_FLOWS maps a shard name to its space-separated flow list, which is
+# the one thing a shard actually declares. SMOKE_SHARD_HARNESSES is DERIVED by
+# smoke::load_shards as the union of those flows' own declarations — see
+# smoke::load_flow_harnesses — never read from the shard map.
 declare -A SMOKE_SHARD_FLOWS=()
 declare -A SMOKE_SHARD_HARNESSES=()
+
+# SMOKE_FLOW_HARNESSES maps a flow basename to the space-separated list of
+# harnesses that flow launches. A flow that launches none records the empty
+# string, which is why every read must distinguish "declared empty" from "never
+# loaded" with ${...+set} rather than :-.
+declare -A SMOKE_FLOW_HARNESSES=()
+
+# smoke::load_flow_harnesses
+#
+# Reads each flow's own harness declaration: a `flow::harnesses` function in the
+# flow file printing the harness names that flow launches, or the single token
+# `none`.
+#
+# The declaration lives IN THE FLOW because that is the only place it cannot be
+# left behind. When it lived in the shard map, moving a flow to another job
+# without moving its harness satisfied every union check and then failed deep
+# inside the flow with a "cannot install"-class error — a loud failure, but one
+# that reads as a broken smoke rather than as a shard map with a hole in it.
+# Declared here, the harness set travels with the file, and each shard's install
+# set is derived rather than restated.
+#
+# `none` is REQUIRED rather than allowing an absent function or empty output: a
+# flow that launches no harness and a flow whose author forgot to say are the two
+# states that must not look alike, and only one of them is safe to derive from.
+#
+# Requires smoke::load_manifest to have run: SMOKE_FLOW_FILES is the set of flow
+# files this reads, and reading an empty set would record nothing while passing.
+#
+# NOTE, because this is a NEW requirement on a flow file: reading a declaration
+# means SOURCING the flow, including on the --validate-only path, which never
+# sourced one before. A flow must therefore be inert at source time — function
+# definitions and `set -euo pipefail`, nothing that touches a sandbox, a network
+# or /etc/hosts. flow::run is where a flow is allowed to do things.
+smoke::load_flow_harnesses() {
+  SMOKE_FLOW_HARNESSES=()
+  if [[ ${#SMOKE_FLOW_FILES[@]} -eq 0 ]]; then
+    smoke::error "smoke::load_flow_harnesses called before a manifest was loaded; it would record no declaration at all"
+    return 1
+  fi
+
+  local file name raw status verdict item collected others
+  local -a tokens=()
+  for file in "${SMOKE_FLOW_FILES[@]}"; do
+    name="$(basename "$file" .sh)"
+    status=0
+    # Sourced in a command-substitution subshell, exactly as smoke::run_flows
+    # sources a flow to reach flow::describe and flow::report — so a flow's
+    # `set -e`, traps and variables cannot reach the caller. The flow's own
+    # top-level STDOUT is discarded; only what flow::harnesses prints is read.
+    #
+    # Its STDERR is deliberately NOT discarded. A flow with a syntax error is a
+    # declaration problem, and swallowing bash's own diagnostic would leave this
+    # function saying "could not be sourced" with no line number — which is the
+    # same misattribution, one level down, that this whole change is about.
+    #
+    # NOT a mechanical enforcement of the inert-at-source-time contract, and the
+    # difference matters: capturing `source`'s status at all requires putting it
+    # in a `||` context, which suppresses `set -e` INSIDE the sourced file. A
+    # flow whose top level runs a failing command therefore carries on and
+    # returns 0. That contract is held by review, not by this reader.
+    #
+    # The outcome is carried on the FIRST LINE rather than in the exit status.
+    # Reserved statuses would be indistinguishable from `flow::harnesses`
+    # returning the same number itself: `flow::harnesses() { return 3; }` would
+    # be reported as "declares no flow::harnesses", which is a lie about a
+    # declaration that is right there in the file.
+    raw="$(
+      # shellcheck source=/dev/null
+      source "$file" >/dev/null || { printf 'unsourceable\n'; exit 0; }
+      declare -F flow::harnesses >/dev/null 2>&1 || { printf 'undeclared\n'; exit 0; }
+      # BEFORE the call, so a non-zero status can be attributed. `declared` on
+      # the wire means the declaration was reached; its absence means the
+      # subshell died earlier.
+      printf 'declared\n'
+      flow::harnesses
+    )" || status=$?
+    # Verdict FIRST, then attribution. A bare `status != 0` check would blame the
+    # declaration for a flow whose TOP LEVEL exited non-zero — `exit 5` beside a
+    # perfectly good flow::harnesses reported as "flow::harnesses failed with
+    # status 5" is the same lie about a declaration sitting in the file, one
+    # trigger over. The marker is what discriminates, so read it first.
+    #
+    # RESIDUE, stated rather than implied: one path is still misattributed. A
+    # flow with a top-level `trap 'exit 7' EXIT` AND a declaration present is
+    # reported as the declaration failing, because the trap fires after
+    # flow::harnesses has already run and printed. Ruled out by the
+    # inert-at-source-time contract above, and no flow in the tree does it — all
+    # four set their traps inside flow::run.
+    #
+    # It is NOT unclosable, and saying so would be its own small misattribution.
+    # But the obvious close does not work, which is why it is worth writing down
+    # rather than left as an exercise. A second marker after flow::harnesses
+    # WOULD discriminate the trap (measured: status 7 with the trailing marker
+    # present) — and would silently break the case round one fixed, because
+    # flow::harnesses is currently the LAST command in the subshell and its
+    # status IS the subshell's. Put a `printf` after it and
+    # `flow::harnesses() { return 3; }` becomes status 0 with a clean trailing
+    # marker: reported as a SUCCESS declaring a harness named `complete`.
+    # Measured, not reasoned.
+    # (`set -e` does not save it: the command substitution sits on the left of
+    # `||`, which suppresses it inside.)
+    #
+    # A correct version must therefore make the trailing marker CARRY the status
+    # — `flow::harnesses; printf 'complete %s\n' "$?"` — because `$?` is gone the
+    # moment anything runs after the call, and a bare `complete` would also be
+    # tokenized as a harness name. That is a second marker plus a parse, to close
+    # a case the contract already excludes. Deliberately not spent.
+    verdict="${raw%%$'\n'*}"
+    raw="${raw#"$verdict"}"
+    if [[ "$status" -ne 0 ]]; then
+      if [[ "$verdict" == declared ]]; then
+        smoke::error "flow '$name' flow::harnesses failed with status $status"
+      else
+        smoke::error "flow '$name' exited with status $status before its harness declaration could be read; a flow must be inert at source time"
+      fi
+      return 1
+    fi
+    case "$verdict" in
+      declared) ;;
+      undeclared)
+        smoke::error "flow '$name' declares no flow::harnesses; say which harnesses it launches, or 'none'"
+        return 1
+        ;;
+      unsourceable)
+        # "any error above", not "the error above": `source` also returns
+        # non-zero when a flow's last top-level command merely fails, and bash
+        # prints no diagnostic for that. Promising an error that is not there
+        # sends the reader hunting for nothing.
+        smoke::error "flow '$name' could not be sourced to read its harness declaration; see any error above"
+        return 1
+        ;;
+      *)
+        # Neither marker survived, so the subshell died before printing one —
+        # nothing about this flow's declaration is known, and guessing would be
+        # the silent pass this function exists to refuse.
+        smoke::error "flow '$name' produced no harness-declaration verdict; its declaration could not be read"
+        return 1
+        ;;
+    esac
+
+    # Split with `read -a` rather than an unquoted expansion. The tokens are
+    # UNVALIDATED at this point — validating them is the next few lines — and an
+    # unquoted `$raw` would pathname-expand a `*` against the repo root the
+    # entrypoint cd's into, turning the one name the charset gate exists to
+    # refuse into a list of real filenames that quietly passes it. Newlines are
+    # folded first because `read` stops at the first one and flow::harnesses may
+    # print a name per line.
+    tokens=()
+    read -r -a tokens <<< "$(tr '\n' ' ' <<< "$raw")" || true
+    collected=""
+    for item in ${tokens[@]+"${tokens[@]}"}; do
+      # Same charset gate as the shard map's names, for the same reason: these
+      # names are compared through unquoted expansions and are interpolated into
+      # a `harnesses::install_$name` call, so a glob or `@` would alias
+      # everything or expand against the repo root.
+      if [[ ! "$item" =~ ^[A-Za-z0-9._-]+$ ]]; then
+        smoke::error "flow '$name' declares harness '$item', which is not a plain name"
+        return 1
+      fi
+      if [[ " $collected" == *" $item "* ]]; then
+        smoke::error "flow '$name' declares harness '$item' twice"
+        return 1
+      fi
+      collected+="$item "
+    done
+    if [[ -z "$collected" ]]; then
+      smoke::error "flow '$name' declares an empty harness set; say 'none' if it launches no harness"
+      return 1
+    fi
+    if [[ "$collected" == *" none "* || "$collected" == "none "* ]]; then
+      if [[ "$collected" != "none " ]]; then
+        # The COMPANIONS, not the whole set. Printing `collected` names `none`
+        # as one of the things `none` was declared alongside, which is both
+        # false and useless: what the reader has to reconcile is `none` against
+        # the real harnesses, and those are the names to drop or keep. The list
+        # was already in hand — a message that does not read what it has is the
+        # misattribution this whole change is about, wearing a third hat.
+        others=""
+        for item in ${tokens[@]+"${tokens[@]}"}; do
+          [[ "$item" == none ]] && continue
+          others+="$item "
+        done
+        smoke::error "flow '$name' declares 'none' alongside ${others% }; 'none' means no harness and cannot be combined"
+        return 1
+      fi
+      collected=""
+    fi
+    SMOKE_FLOW_HARNESSES["$name"]="$collected"
+  done
+}
 
 # smoke::load_shards SHARDS_FILE
 #
 # Reads the shard map and refuses every state in which a shard split would drop
-# coverage: an unparseable line, a shard missing either list, a shard naming a
+# coverage: an unparseable line, a shard with no flow list, a shard naming a
 # flow the manifest does not, a flow listed twice within one shard, and — the
 # check this file exists for — a flow the manifest names that no shard runs.
 #
-# Requires smoke::load_manifest to have run: the manifest is what the union is
-# checked against, and checking a shard map against nothing would pass vacuously.
+# It also DERIVES each shard's install set as the union of its flows' harness
+# declarations. A shard map cannot declare harnesses at all: the `harnesses` key
+# is refused by name rather than ignored, because a stale line silently skipped
+# would read as a declaration that had taken effect.
+#
+# Requires smoke::load_manifest and smoke::load_flow_harnesses to have run: the
+# manifest is what the union is checked against, and the flow declarations are
+# what the install sets are derived from. Checking a shard map against nothing,
+# or deriving from nothing, would pass vacuously.
 smoke::load_shards() {
   local shards="$1"
   SMOKE_SHARD_NAMES=()
@@ -127,6 +326,10 @@ smoke::load_shards() {
 
   if [[ ${#SMOKE_REQUIRED_BY_FLOW[@]} -eq 0 ]]; then
     smoke::error "smoke::load_shards called before a manifest was loaded; the union check would prove nothing"
+    return 1
+  fi
+  if [[ ${#SMOKE_FLOW_HARNESSES[@]} -eq 0 ]]; then
+    smoke::error "smoke::load_shards called before smoke::load_flow_harnesses; every shard would derive an empty install set"
     return 1
   fi
   if [[ ! -f "$shards" ]]; then
@@ -145,13 +348,20 @@ smoke::load_shards() {
       return 1
     fi
     case "${key:-}" in
-      flows|harnesses) ;;
+      flows) ;;
+      harnesses)
+        # Named rather than folded into the unknown-key case: this key USED to
+        # be the declaration site, so a map still carrying it is a stale edit
+        # someone believes took effect, not a typo.
+        smoke::error "shard map line for '$shard' declares 'harnesses'; harnesses are declared per flow (flow::harnesses) and each shard's set is derived as the union"
+        return 1
+        ;;
       "")
-        smoke::error "shard map line for '$shard' has no key; expected 'flows' or 'harnesses'"
+        smoke::error "shard map line for '$shard' has no key; expected 'flows'"
         return 1
         ;;
       *)
-        smoke::error "shard map line for '$shard' has unknown key '$key'; expected 'flows' or 'harnesses'"
+        smoke::error "shard map line for '$shard' has unknown key '$key'; expected 'flows'"
         return 1
         ;;
     esac
@@ -160,22 +370,11 @@ smoke::load_shards() {
       return 1
     fi
 
-    # Deliberately no nameref: `local -n` needs bash 4.3, while everything else
-    # here is satisfied by bash 4, and a shard map is small enough that two
-    # explicit branches cost less than the version footgun.
-    local existing
-    if [[ "$key" == flows ]]; then
-      existing="${SMOKE_SHARD_FLOWS[$shard]:-}"
-    else
-      existing="${SMOKE_SHARD_HARNESSES[$shard]:-}"
-    fi
-    if [[ -n "$existing" ]]; then
+    if [[ -n "${SMOKE_SHARD_FLOWS[$shard]:-}" ]]; then
       smoke::error "shard '$shard' declares '$key' twice"
       return 1
     fi
-    if [[ -z "${SMOKE_SHARD_FLOWS[$shard]:-}${SMOKE_SHARD_HARNESSES[$shard]:-}" ]]; then
-      SMOKE_SHARD_NAMES+=("$shard")
-    fi
+    SMOKE_SHARD_NAMES+=("$shard")
 
     local collected=""
     for item in $items; do
@@ -193,7 +392,7 @@ smoke::load_shards() {
         smoke::error "shard '$shard' names $key entry '$item' twice"
         return 1
       fi
-      if [[ "$key" == flows && -z "${SMOKE_REQUIRED_BY_FLOW[$item]:-}" ]]; then
+      if [[ -z "${SMOKE_REQUIRED_BY_FLOW[$item]:-}" ]]; then
         smoke::error "shard '$shard' names flow '$item', which the manifest does not"
         return 1
       fi
@@ -204,11 +403,7 @@ smoke::load_shards() {
       smoke::error "shard '$shard' declares an empty $key list"
       return 1
     fi
-    if [[ "$key" == flows ]]; then
-      SMOKE_SHARD_FLOWS["$shard"]="$collected"
-    else
-      SMOKE_SHARD_HARNESSES["$shard"]="$collected"
-    fi
+    SMOKE_SHARD_FLOWS["$shard"]="$collected"
   done < "$shards"
 
   if [[ ${#SMOKE_SHARD_NAMES[@]} -eq 0 ]]; then
@@ -216,16 +411,42 @@ smoke::load_shards() {
     return 1
   fi
 
-  local name
+  # THE DERIVATION. A shard installs exactly the union of what its flows say
+  # they launch, so moving a flow to another job moves its harnesses with it and
+  # there is no second place to keep in step.
+  #
+  # An EMPTY derived set is legitimate and is not refused: a shard whose flows
+  # all declare `none` genuinely installs nothing. The guard that used to sit
+  # here — "a shard that installs nothing cannot launch anything" — was
+  # protecting against a forgotten shard-map line, and the thing that can now be
+  # forgotten is the flow's own declaration, which smoke::load_flow_harnesses
+  # refuses by name. The protection moved with the declaration rather than
+  # being dropped.
+  local name flow harness derived
   for name in "${SMOKE_SHARD_NAMES[@]}"; do
+    # A shard now enters SMOKE_SHARD_NAMES only through its `flows` line, and
+    # that line's list was already proven non-empty above, so this cannot
+    # legitimately happen. It is here so a future change that breaks that chain
+    # fails loudly rather than deriving an empty install set for a job that
+    # believes it runs something.
     if [[ -z "${SMOKE_SHARD_FLOWS[$name]:-}" ]]; then
       smoke::error "shard '$name' declares no flows"
       return 1
     fi
-    if [[ -z "${SMOKE_SHARD_HARNESSES[$name]:-}" ]]; then
-      smoke::error "shard '$name' declares no harnesses; a shard that installs nothing cannot launch anything"
-      return 1
-    fi
+    derived=""
+    for flow in ${SMOKE_SHARD_FLOWS[$name]}; do
+      # ${...+set}, not :-, because "declared none" is the empty string and
+      # must not be confused with a flow whose declaration was never read.
+      if [[ -z "${SMOKE_FLOW_HARNESSES[$flow]+set}" ]]; then
+        smoke::error "shard '$name' names flow '$flow', whose harness declaration was never loaded; its install set cannot be derived"
+        return 1
+      fi
+      for harness in ${SMOKE_FLOW_HARNESSES[$flow]}; do
+        [[ " $derived" == *" $harness "* ]] && continue
+        derived+="$harness "
+      done
+    done
+    SMOKE_SHARD_HARNESSES["$name"]="$derived"
   done
 
   # THE UNION CHECK. Everything above is structural; this is the one that keeps
@@ -233,7 +454,6 @@ smoke::load_shards() {
   # evidence, still has a flow file, and still passes every other guard — it
   # simply never runs, in any job, forever.
   local -a orphans=()
-  local flow
   for flow in "${!SMOKE_REQUIRED_BY_FLOW[@]}"; do
     local covered=0
     for name in "${SMOKE_SHARD_NAMES[@]}"; do
@@ -334,11 +554,18 @@ smoke::require_workflow_shards() {
 # smoke::require_shard_harness_coverage KNOWN_HARNESS...
 #
 # The other half of the union check, for the thing a shard installs rather than
-# the thing it runs. A harness the entrypoint can install but no shard claims
-# would be installed by nobody once the split is on, and the flow needing it
-# would fail with "not found" — a real failure, but one that reads like a broken
-# smoke rather than a shard map with a hole in it. Refusing up front says which
-# it is. Requires smoke::load_shards to have run.
+# the thing it runs. A harness the entrypoint can install but no flow claims
+# would be installed by nobody, and the flow needing it would fail with "not
+# found" — a real failure, but one that reads like a broken smoke rather than a
+# declaration with a hole in it. Refusing up front says which it is.
+#
+# It reads the DERIVED shard sets, so the check is unchanged in what it proves:
+# a harness no shard installs is still a harness nothing installs. What moved is
+# only where the sets come from. The mirror direction — a name nothing can
+# install — names the FLOWS that declared it, because that is the file the fix
+# belongs in.
+#
+# Requires smoke::load_shards to have run.
 smoke::require_shard_harness_coverage() {
   local -a known=("$@")
   if [[ ${#known[@]} -eq 0 ]]; then
@@ -346,23 +573,43 @@ smoke::require_shard_harness_coverage() {
     return 1
   fi
 
+  # Deduplicated across shards. Two shards legitimately claim the same harness
+  # when two of their flows declare it, and iterating the raw concatenation would
+  # report an uninstallable name once per claiming shard — the same defect
+  # printed twice reads like two.
   local claimed="" name harness
   for name in "${SMOKE_SHARD_NAMES[@]}"; do
-    claimed+="${SMOKE_SHARD_HARNESSES[$name]}"
+    for harness in ${SMOKE_SHARD_HARNESSES[$name]}; do
+      [[ " $claimed" == *" $harness "* ]] && continue
+      claimed+="$harness "
+    done
   done
 
   local failed=0
   for harness in "${known[@]}"; do
     if [[ " $claimed" != *" $harness "* ]]; then
-      smoke::error "harness '$harness' is installable but belongs to no shard; it would never be installed"
+      smoke::error "harness '$harness' is installable but no flow declares it; it would never be installed"
       failed=1
     fi
   done
-  # And the other direction: a shard naming a harness nothing can install is a
-  # typo that would otherwise surface as a missing binary deep inside a flow.
+  # And the other direction: a harness nothing can install is a typo that would
+  # otherwise surface as a missing binary deep inside a flow. The declaring
+  # flows are named because the flow file is where the typo is.
+  local flow declarers
   for harness in $claimed; do
     if [[ " ${known[*]} " != *" $harness "* ]]; then
-      smoke::error "a shard names harness '$harness', which this entrypoint cannot install"
+      declarers=""
+      for flow in "${!SMOKE_FLOW_HARNESSES[@]}"; do
+        if [[ " ${SMOKE_FLOW_HARNESSES[$flow]}" == *" $harness "* ]]; then
+          declarers+="$flow "
+        fi
+      done
+      # Sorted: associative-array iteration order is not stable, and a guard
+      # whose message reorders between runs reads like a different failure.
+      if [[ -n "$declarers" ]]; then
+        declarers="$(tr ' ' '\n' <<< "$declarers" | grep -v '^$' | sort | tr '\n' ' ')"
+      fi
+      smoke::error "flow(s) ${declarers:-<unknown> }declare harness '$harness', which this entrypoint cannot install"
       failed=1
     fi
   done
@@ -372,9 +619,12 @@ smoke::require_shard_harness_coverage() {
 # smoke::select_shard NAME
 #
 # Narrows SMOKE_FLOW_FILES to the named shard's flows and sets
-# SMOKE_SELECTED_HARNESSES to the harnesses that shard installs. Selecting an
-# unknown shard is a hard failure naming the ones that exist: a typo'd shard name
-# that silently ran nothing would be a green job that proved nothing at all.
+# SMOKE_SELECTED_HARNESSES to the harnesses that shard installs — the DERIVED
+# union of its flows' own declarations, so a flow moved here brings its harnesses
+# with it. Selecting an unknown shard is a hard failure naming the ones that
+# exist: a typo'd shard name that silently ran nothing would be a green job that
+# proved nothing at all. An EMPTY selection is legitimate: a shard whose flows
+# all declare `none` installs nothing.
 declare -a SMOKE_SELECTED_HARNESSES=()
 smoke::select_shard() {
   local want="$1" name
@@ -408,6 +658,17 @@ smoke::select_shard() {
   fi
 
   mapfile -t SMOKE_FLOW_FILES < <(printf '%s\n' "${keep[@]}" | sort)
+  # `read -a` ASSIGNS the array, so an empty here-string leaves it zero-length
+  # rather than carrying a previous selection forward — a shard whose flows all
+  # declare `none` selects nothing, which is what run.sh's length guard expects.
+  # Verified, not assumed: `a=(one two three); read -r -a a <<< ""` leaves
+  # ${#a[@]} at 0 and returns 0.
+  #
+  # Deliberately no preceding `SMOKE_SELECTED_HARNESSES=()` and no `|| true`.
+  # Both looked like belt-and-braces and were neither: the assignment above
+  # already clears, and a here-string always presents one line so this `read`
+  # cannot return non-zero. Code that cannot fire, carrying a comment that says
+  # what it protects against, is the same overclaim this file refuses elsewhere.
   read -r -a SMOKE_SELECTED_HARNESSES <<< "${SMOKE_SHARD_HARNESSES[$want]}"
 }
 

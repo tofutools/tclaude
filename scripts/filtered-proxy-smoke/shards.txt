@@ -1,13 +1,21 @@
 # Shard map for the filtered-proxy smokes.
 #
-# Each line: <shard-name> <flows|harnesses> <item>...
+# Each line: <shard-name> flows <flow>...
 #
-# A shard is a subset of the flows that one CI job runs, plus the harnesses that
-# job has to install. The split exists because the two halves are independent:
-# flows 10 and 20 exercise the session-layer proxy with Claude Code and Codex,
-# flows 30 and 40 exercise the agentd-owned OpenCode relay — disjoint subnets,
-# disjoint harnesses, disjoint Go packages. Running them as two jobs halves the
-# wall-clock and lets each job install only the harnesses it actually launches.
+# A shard is a subset of the flows that one CI job runs. The split exists because
+# the two halves are independent: flows 10 and 20 exercise the session-layer
+# proxy with Claude Code and Codex, flows 30 and 40 exercise the agentd-owned
+# OpenCode relay — disjoint subnets, disjoint harnesses, disjoint Go packages.
+# Running them as two jobs halves the wall-clock and lets each job install only
+# the harnesses it actually launches.
+#
+# HARNESSES ARE NOT DECLARED HERE. Each flow declares what it launches, in its
+# own file (`flow::harnesses`), and each shard's install set is DERIVED as the
+# union of its flows' declarations. That is why a shard line names flows and
+# nothing else: there is no second list to keep in step, and moving a flow to the
+# other job moves its harnesses with it. A `harnesses` key left in this file is
+# refused BY NAME rather than ignored — a stale line silently skipped would read
+# as a declaration that had taken effect.
 #
 # The split is at the JOB level, not inside one run. `fixture::hosts_add` and
 # `fixture::hosts_restore` (scripts/lib/smoke/fixture.sh) mutate /etc/hosts
@@ -16,37 +24,33 @@
 # within a shard.
 #
 # THE GUARD: run.sh refuses to run unless the union of every shard's flow list
-# covers every flow the manifest names, and unless the union of every shard's
-# harness list covers every harness lib/harnesses.sh knows how to install. A
-# flow that belongs to no shard would silently stop running while both CI jobs
-# stayed green — the vacuous shape the evidence discipline exists to refuse —
-# and a harness that belongs to no shard would be installed by nobody while the
-# flow needing it failed with "not found". Both checks are self-tested in
+# covers every flow the manifest names, and unless the harnesses those flows
+# declare cover every harness lib/harnesses.sh knows how to install. A flow that
+# belongs to no shard would silently stop running while both CI jobs stayed
+# green — the vacuous shape the evidence discipline exists to refuse — and a
+# harness no flow declares would be installed by nobody while the flow needing it
+# failed with "not found". A flow declaring no harness set AT ALL is refused too:
+# a flow that launches none says `none`, so "launches nothing" and "the author
+# forgot" cannot look alike. All of these are self-tested in
 # scripts/lib/smoke/selftest.sh, which every run executes before trusting
-# anything, so the guard cannot rot unnoticed either.
+# anything, so the guards cannot rot unnoticed either.
 #
-# A third check closes the level above: run.sh reads the workflow files and
+# A LAST check closes the level above: run.sh reads the workflow files and
 # refuses to run unless the shard names CI's matrix invokes are exactly the ones
 # declared here. A shard added below but not to the matrix would otherwise
-# satisfy both unions above and still execute nowhere.
+# satisfy every check above and still execute nowhere.
 #
-# Adding a flow therefore costs two edits, both reviewable: a manifest.txt line
-# saying what evidence it must produce, and a shards.txt entry saying which job
-# runs it. Forgetting the second one fails the run rather than passing quietly.
-#
-# RESIDUAL, stated rather than implied: harnesses are declared per SHARD, not per
-# flow, so nothing here knows that 20-harness-egress is the line that needs codex.
-# Moving a flow between shards without moving its harness leaves both unions
-# satisfied and fails in CI with "command not found" inside the flow — a loud
-# failure, but one that reads like a broken smoke rather than a shard map with a
-# hole in it. Declaring harnesses per flow and deriving each shard's set as the
-# union would close it; that is a bigger change than this split, and it is a
-# review question until someone makes it.
+# Adding a flow therefore costs three edits, all reviewable: a manifest.txt line
+# saying what evidence it must produce, a shards.txt entry saying which job runs
+# it, and a `flow::harnesses` declaration in the flow saying what it launches.
+# Forgetting any of them fails validation rather than passing quietly — and, for
+# the harness set, rather than failing later and somewhere else.
 
 # Session-layer proxy floor, policy engine and pinned-harness egress.
+# Derived install set: claude codex — from 20-harness-egress. 10-floor-policy
+# runs a Go test binary inside the floor and declares `none`.
 session flows      10-floor-policy 20-harness-egress
-session harnesses  claude codex
 
 # The agentd-owned OpenCode relay: carriage answer and real floor cooperation.
+# Derived install set: opencode.
 agentd  flows      30-opencode-carriage 40-opencode-floor
-agentd  harnesses  opencode
