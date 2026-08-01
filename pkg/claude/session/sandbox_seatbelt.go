@@ -836,7 +836,10 @@ func seatbeltDaemonReopenDescendants(
 // the complexity buys little. The ruling was DOCUMENT AND DISCLOSE, and the
 // disclosure is the deliverable — see docs/sandboxing.md and the
 // darwinLocalAccessSamePortBypassExpected characterization, which fails if
-// this behaviour changes in EITHER direction.
+// Seatbelt ever NARROWS "localhost" to the loopback interface. It does not
+// detect a WIDENING past this host; that would need a service on the allowed
+// port at an off-machine address, which CI cannot arrange safely. The
+// uncovered direction is named at the constant.
 //
 // Outbound exceptions must be remote predicates. A local-ip predicate observes
 // the unbound socket's source address and Seatbelt treats localhost as matching
