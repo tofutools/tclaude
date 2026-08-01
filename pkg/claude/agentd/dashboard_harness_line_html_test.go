@@ -119,6 +119,8 @@ func TestDashboardHTML_HarnessBadgeAndSandboxWired(t *testing.T) {
 	must("member.state?.sandbox_implementation", "the badge reads the implementation that earned the verdict")
 	must("mode === 'danger-full-access' || mode === 'off'",
 		"a pre-verdict Claude `off` row is a danger badge too, not a padlock on an unconfined agent")
+	must("mode === 'access-control'",
+		"OpenCode's soft access-control mode never earns an OS-sandbox padlock")
 
 	// The tooltip is intentionally limited to four concise lines: resolved
 	// status, implementation owner, applied profile names, and an action hint

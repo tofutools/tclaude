@@ -208,10 +208,12 @@ function sandboxIndicator(member) {
     };
   }
   if (!mode || mode === 'inherit') return null;
-  // `off` is Claude-only (no other harness offers it) and means the OS sandbox
-  // is disabled outright, so it is a danger glyph on a pre-verdict row too —
-  // otherwise every legacy `off` agent keeps a padlock it has not earned.
-  const danger = mode === 'danger-full-access' || mode === 'off' || unenforcedOverride;
+  // These modes explicitly do not provide OS confinement. OpenCode's
+  // `access-control` is a soft command/path filter, not a harness sandbox, so
+  // it must not earn the padlock that confined Codex modes receive through
+  // this pre-verdict fallback.
+  const danger = mode === 'danger-full-access' || mode === 'off'
+    || mode === 'access-control' || unenforcedOverride;
   return {
     status: unenforcedOverride ? 'NOT ENFORCED' : danger ? 'OFF' : 'ON',
     danger,
