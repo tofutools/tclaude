@@ -71,6 +71,17 @@ func TestPaneTreatsMissingTmuxGlobalAsAuthoritativeLegacyMode(t *testing.T) {
 		"a pre-existing pane must stop using external mode after agentd clears it")
 }
 
+func TestTclaudePaneCannotAutoStartServerWhenModeProbeFails(t *testing.T) {
+	t.Setenv(ResourceDelegationDirEnv, "")
+	t.Setenv("TMUX", "/tmp/tmux-1000/tclaude,123,0")
+	swapTmux(t, &launchRecordingTmux{failResourceEnv: true})
+
+	assert.Empty(t, ExternalResourceDelegationDir(),
+		"the disappeared server cannot reveal the newly enabled external root")
+	assert.Equal(t, "-N", ExternalTmuxNoStartArgs("new-session")[0],
+		"a pane from the named tclaude server must never replace its dead server")
+}
+
 func TestExternalLaunchCannotAutoStartServerAfterSuccessfulProbe(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("TMUX", "")

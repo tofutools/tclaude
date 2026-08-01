@@ -50,7 +50,7 @@ func ExternalResourceDelegationDir() string {
 // command that follows it: even if the external server exits in between,
 // new-session fails instead of creating a server in the caller's cgroup.
 func ExternalTmuxNoStartArgs(args ...string) []string {
-	if ExternalResourceDelegationDir() == "" {
+	if ExternalResourceDelegationDir() == "" && !insideTclaudeTmuxServer() {
 		return args
 	}
 	return append([]string{"-N"}, args...)
@@ -59,10 +59,19 @@ func ExternalTmuxNoStartArgs(args ...string) []string {
 // ExternalTmuxNoStartFlag is the shell-rendering counterpart used by the
 // dashboard's PTY command builder.
 func ExternalTmuxNoStartFlag() string {
-	if ExternalResourceDelegationDir() != "" {
+	if ExternalResourceDelegationDir() != "" || insideTclaudeTmuxServer() {
 		return "-N"
 	}
 	return ""
+}
+
+func insideTclaudeTmuxServer() bool {
+	tmux := strings.TrimSpace(os.Getenv("TMUX"))
+	if tmux == "" {
+		return false
+	}
+	socket, _, _ := strings.Cut(tmux, ",")
+	return filepath.Base(filepath.Clean(socket)) == clcommon.TmuxSocketName
 }
 
 func externalTmuxRuntimeName() string {

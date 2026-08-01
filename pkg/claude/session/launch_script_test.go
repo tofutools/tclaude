@@ -36,6 +36,7 @@ type launchRecordingTmux struct {
 	failServerProbe bool
 	resourceEnv     string
 	resourceEnvGone bool
+	failResourceEnv bool
 	serverPID       int
 	paneCwd         string
 }
@@ -68,6 +69,9 @@ func (r *launchRecordingTmux) Command(args ...string) *exec.Cmd {
 	}
 	if r.resourceEnvGone && command == "show-environment" {
 		return exec.Command("printf", "-%s\n", ResourceDelegationDirEnv)
+	}
+	if r.failResourceEnv && command == "show-environment" {
+		return exec.Command("false")
 	}
 	if len(args) > 0 && args[0] == "display-message" &&
 		len(args) > 1 && args[len(args)-1] == "#{pane_current_path}" {
