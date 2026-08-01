@@ -38,6 +38,10 @@ const (
 	seatbeltProxyFloorAgentdSocketEnv = "TCLAUDE_SEATBELT_PROXY_FLOOR_AGENTD_SOCKET"
 	seatbeltProxyFloorHelperTest      = "^TestSeatbeltProxyFloorSmokeHelper$"
 	seatbeltProxyFloorTimeout         = 2 * time.Second
+	// TCL-917 flips this single value after its launch-time collision check
+	// lands. The same-port probe stays: false makes it require Seatbelt EPERM
+	// and changes the evidence marker from LIMITATION to MITIGATED.
+	seatbeltProxyFloorSamePortBypassExpected = true
 	// Darwin's sockaddr_un.sun_path is 104 bytes including its terminator.
 	seatbeltProxyFloorUnixPathCapacity = 104
 )
@@ -193,7 +197,7 @@ func TestSeatbeltProxyFloorSmoke(t *testing.T) {
 		"seatbelt-proxy-floor: HTTP CONNECT carriage: carried",
 		"seatbelt-proxy-floor: SOCKS5 carriage: carried",
 		"seatbelt-proxy-floor: second loopback port: refused with EPERM",
-		"seatbelt-proxy-floor LIMITATION: same-port non-loopback service is directly reachable",
+		seatbeltProxyFloorSamePortMarker(),
 		"seatbelt-proxy-floor: external TCP: refused with EPERM",
 		"seatbelt-proxy-floor: UDP send: refused with EPERM",
 		"seatbelt-proxy-floor: network-bind: refused with EPERM",
@@ -228,14 +232,7 @@ func TestSeatbeltProxyFloorSmokeHelper(t *testing.T) {
 	seatbeltProxyFloorRequireEPERM(t, "second loopback TCP connect",
 		func() error { return seatbeltProxyFloorDialAndClose("tcp4", controlEndpoint) })
 	fmt.Println("seatbelt-proxy-floor: second loopback port: refused with EPERM")
-	// Seatbelt cannot spell "this TCP port, loopback interface only": the host
-	// grammar accepts only "localhost" or "*", and localhost matches every
-	// address assigned to the host. Assert the bypass positively so the test
-	// fails if it disappears as well as if the fixture stops being meaningful.
-	// The launch-time mitigation for this opportunistic collision is tracked by
-	// the follow-up architecture work; zero capability cells depend on it today.
-	seatbeltProxyFloorEchoRoundTrip(t, "tcp", samePortEndpoint, "sandbox-same-port-bypass")
-	fmt.Println("seatbelt-proxy-floor LIMITATION: same-port non-loopback service is directly reachable")
+	seatbeltProxyFloorCharacterizeSamePort(t, samePortEndpoint)
 	seatbeltProxyFloorRequireEPERM(t, "external TCP connect",
 		func() error { return seatbeltProxyFloorDialAndClose("tcp4", "1.1.1.1:443") })
 	fmt.Println("seatbelt-proxy-floor: external TCP: refused with EPERM")
@@ -269,6 +266,30 @@ func seatbeltProxyFloorRequireEPERM(t *testing.T, operation string, run func() e
 	require.Error(t, err, "%s unexpectedly succeeded", operation)
 	require.True(t, errors.Is(err, syscall.EPERM),
 		"%s must fail with Seatbelt EPERM, got %v", operation, err)
+}
+
+func seatbeltProxyFloorCharacterizeSamePort(t *testing.T, endpoint string) {
+	t.Helper()
+	// Seatbelt cannot spell "this TCP port, loopback interface only": the host
+	// grammar accepts only "localhost" or "*", and localhost matches every
+	// address assigned to the host. Assert the bypass positively so the test
+	// fails if it disappears as well as if the fixture stops being meaningful.
+	// TCL-917's launch-time collision mitigation keeps this probe and flips the
+	// one named expectation constant above; zero capability cells depend on it.
+	if seatbeltProxyFloorSamePortBypassExpected {
+		seatbeltProxyFloorEchoRoundTrip(t, "tcp", endpoint, "sandbox-same-port-bypass")
+	} else {
+		seatbeltProxyFloorRequireEPERM(t, "same-port non-loopback TCP connect",
+			func() error { return seatbeltProxyFloorDialAndClose("tcp", endpoint) })
+	}
+	fmt.Println(seatbeltProxyFloorSamePortMarker())
+}
+
+func seatbeltProxyFloorSamePortMarker() string {
+	if seatbeltProxyFloorSamePortBypassExpected {
+		return "seatbelt-proxy-floor LIMITATION: same-port non-loopback service is directly reachable"
+	}
+	return "seatbelt-proxy-floor MITIGATED: same-port non-loopback service is refused with EPERM"
 }
 
 func seatbeltProxyFloorDialAndClose(network, endpoint string) error {
