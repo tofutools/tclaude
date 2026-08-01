@@ -110,15 +110,26 @@ func TestManagedOpenCodeTmuxWatcherToleratesTransientFailures(t *testing.T) {
 	assert.Len(t, fake.calls, 6, "a successful probe must reset the failure count")
 }
 
-func TestStopManagedOpenCodeTmuxCompletesAfterSuccessfulKill(t *testing.T) {
+func TestStopManagedOpenCodeTmuxWaitsForPaneTreeAfterSuccessfulKill(t *testing.T) {
 	fake := &openCodeTmuxProbeFake{results: []bool{true}}
 	previous := clcommon.Default
 	clcommon.Default = fake
 	t.Cleanup(func() { clcommon.Default = previous })
-	process := &openCodeProcess{pid: 4242, tmuxSession: "__tclaude-opencode-stop",
+	child := exec.Command("sleep", "10")
+	require.NoError(t, child.Start())
+	t.Cleanup(func() {
+		_ = child.Process.Kill()
+		_ = child.Wait()
+	})
+	process := &openCodeProcess{pid: child.Process.Pid, tmuxSession: "__tclaude-opencode-stop",
 		done: make(chan error, 1)}
 
+	started := time.Now()
 	stopOpenCodeProcess(db.OpenCodeRuntime{SessionID: "stop-session", PID: process.pid}, process)
+	assert.GreaterOrEqual(t, time.Since(started), openCodeProcessStopWait,
+		"tmux command success must not be treated as pane-tree exit")
+	assert.Less(t, time.Since(started), openCodeProcessStopWait+time.Second,
+		"pane-tree exit wait must remain bounded")
 
 	select {
 	case err := <-process.done:
