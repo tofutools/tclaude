@@ -604,6 +604,13 @@ func TestOpenCodeControlSocketPathLeavesLegacySharedUnstrandedAndUnadvised(t *te
 
 	// The same operator action that strands a private allocation.
 	moved := filepath.Join(t.TempDir(), "moved")
+	// The FIXTURE owns this directory's existence, not production. Without it
+	// the assertion below still relies on production's own MkdirAll having run,
+	// so a regression that moved the derived parent out from under
+	// XDG_DATA_HOME would die inside resolvedTestPath with "lstat: no such
+	// file" instead of saying the control root is not under the new parent.
+	// Still red either way — but pointed at the wrong thing.
+	require.NoError(t, os.MkdirAll(moved, 0o700))
 	t.Setenv("XDG_DATA_HOME", moved)
 
 	after, err := openCodeControlSocketPath(agentID)
