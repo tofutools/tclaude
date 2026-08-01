@@ -114,7 +114,7 @@ done
 
 cat >"$rules" <<EOF
 rdr pass on lo0 inet proto tcp from any to 127.0.0.1 port $original_port -> 127.0.0.1 port $redirect_port
-block return out quick on lo0 inet proto tcp from any to 127.0.0.1 port $block_port
+block return-rst out quick on lo0 inet proto tcp from any to 127.0.0.1 port $block_port
 block return out quick on lo0 inet proto tcp from any to 127.0.0.1 port $gid_port group $probe_gid
 EOF
 
@@ -126,11 +126,25 @@ enable_output="$(sudo pfctl -E 2>&1)"
 echo "$enable_output"
 pf_token="$(sed -nE 's/.*Token[[:space:]]*:[[:space:]]*([0-9]+).*/\1/p' <<<"$enable_output" | tail -1)"
 
-if curl_probe "$block_port" >/dev/null 2>&1; then
-  echo "scoped block rule did not block its loopback target" >&2
+block_error="${RUNNER_TEMP}/tclaude-pf-block-curl.err"
+set +e
+block_time="$(curl --fail --silent --show-error --noproxy '*' \
+  --connect-timeout 2 --output /dev/null --write-out '%{time_total}' \
+  "http://127.0.0.1:$block_port/" 2>"$block_error")"
+block_exit=$?
+set -e
+block_stderr="$(<"$block_error")"
+printf 'scoped block evidence: curl exit=%s time=%ss stderr=%s\n' \
+  "$block_exit" "$block_time" "$block_stderr"
+if [[ "$block_exit" -ne 7 ]]; then
+  echo "scoped return-rst wanted curl exit 7 (connection refused), got $block_exit" >&2
   exit 1
 fi
-echo "--- PASS: macOSPFScopedBlock (0.00s)"
+if ! awk -v elapsed="$block_time" 'BEGIN { exit !(elapsed < 0.5) }'; then
+  echo "scoped return-rst was not immediate: ${block_time}s" >&2
+  exit 1
+fi
+echo "--- PASS: macOSPFScopedBlock (${block_time}s)"
 
 rdr_result="$(curl_probe "$original_port")"
 if [[ "$rdr_result" != "REDIRECTED" ]]; then
