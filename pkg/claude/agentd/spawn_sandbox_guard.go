@@ -214,6 +214,16 @@ func planSandboxProfileAccessForLaunch(
 	}
 	var verdict harness.LaunchOSSandbox
 	var filteredProbe *session.FilteredNetworkPrerequisite
+	if implementation == sandboxpolicy.ImplementationHarnessBuiltin {
+		// Claude's durable "inherit" mode deliberately does not say whether the
+		// native sandbox is enabled: the current managed/project/user settings do.
+		// Resolve that launch-time verdict here just as session new does. Without
+		// it, daemon preflight mistakes every inherited builtin sandbox for
+		// "unconfigured" and blocks spawn/resume before the real launch can pick
+		// up an operator's settings change.
+		verdict = harness.ResolveLaunchOSSandbox(
+			h, sandboxMode, "", modelContext.Cwd)
+	}
 	if implementation.UsesTclaudeLayer() {
 		posture := sandboxpolicy.NetworkHostOpen
 		if requestedNetworkPosture == sandboxpolicy.NetworkIsolatedWithAgentd {
