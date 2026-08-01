@@ -636,6 +636,18 @@ func validateExistingOpenCodeCredential(path string) error {
 	return nil
 }
 
+// openCodeSeedWindowHookForTest runs at the exact instant between the seed's
+// validation and its write, and is nil in production. It exists so the
+// check-then-use window TCL-908 closes can be exercised deterministically:
+// a test that raced a real attacker would be flaky in the direction that hides
+// the defect, and an unexercised window is a claim rather than a property.
+//
+// It is deliberately not a general injection point — it takes no arguments,
+// returns nothing, and cannot influence what the seed does. All it can do is
+// let a test move the filesystem underneath a decision that has already been
+// made, and observe that the decision is not affected.
+var openCodeSeedWindowHookForTest func()
+
 // prepareOpenCodeReadOnlyConfig supplies the one app-owned compatibility file
 // OpenCode 1.18.6 writes before loading a config directory:
 // https://github.com/anomalyco/opencode/blob/v1.18.6/packages/opencode/src/config/config.ts#L295-L312
@@ -682,12 +694,30 @@ func prepareOpenCodeReadOnlyConfig(
 	if configDir == "" || source == "" {
 		return nil
 	}
-	if err := validateOpenCodeReadOnlyConfigSeedSource(source, configDir); err != nil {
+	// The descriptor is opened BEFORE validation and used for both steps, so
+	// the object validated and the object written into are the same one. The
+	// order matters: validating first and opening after would leave exactly the
+	// window this closes (TCL-908).
+	sourceFD, err := openOpenCodeBootstrapDirectory(source, "config")
+	if err != nil {
 		return fmt.Errorf(
 			"opencode_read_only_config_bootstrap: refuse %s OpenCode launch because the read-only config prerequisite could not be established: %w",
 			platform, err)
 	}
-	created, err := ensureOpenCodeBootstrapGitignore(source, "config")
+	defer func() { _ = unix.Close(sourceFD) }()
+	if err := validateOpenCodeReadOnlyConfigSeedSourceAt(
+		sourceFD, source, configDir); err != nil {
+		return fmt.Errorf(
+			"opencode_read_only_config_bootstrap: refuse %s OpenCode launch because the read-only config prerequisite could not be established: %w",
+			platform, err)
+	}
+	if openCodeSeedWindowHookForTest != nil {
+		// The check-then-use window, made reachable on purpose. A test cannot
+		// win a real race deterministically, and a claim that the window is
+		// closed is worth no more than the test that fails when it is open.
+		openCodeSeedWindowHookForTest()
+	}
+	created, err := ensureOpenCodeBootstrapGitignoreAt(sourceFD, source, "config")
 	if err != nil {
 		return fmt.Errorf(
 			"opencode_read_only_config_bootstrap: refuse %s OpenCode launch because the read-only config prerequisite could not be established: %w",
@@ -720,7 +750,21 @@ func prepareOpenCodeReadOnlyConfig(
 // Both answers below are re-derived here instead: the ambient one from the
 // daemon's own environment, the per-agent one from the daemon's own private
 // state parent plus its allocation store.
-func validateOpenCodeReadOnlyConfigSeedSource(source, configDir string) error {
+//
+// The source side of every comparison is the OPEN DESCRIPTOR the caller will
+// write through, not a path (TCL-908). Deciding on a path string and then
+// re-walking it to do the work leaves a window in which the string can change
+// meaning; deciding on the descriptor's kernel identity cannot, because the
+// same descriptor is what openat operates on. source is carried for MESSAGES
+// only — nothing here resolves it.
+func validateOpenCodeReadOnlyConfigSeedSourceAt(
+	sourceFD int,
+	source, configDir string,
+) error {
+	identity, err := openCodeDirectoryIdentityOf(sourceFD, "config")
+	if err != nil {
+		return err
+	}
 	ambient, err := openCodeAmbientAppDir("XDG_CONFIG_HOME", ".config")
 	if err != nil {
 		return fmt.Errorf("resolve ambient OpenCode config for bootstrap: %w", err)
@@ -729,10 +773,10 @@ func validateOpenCodeReadOnlyConfigSeedSource(source, configDir string) error {
 	// or temp root reaches the same directory through a symlink (macOS
 	// /var -> /private/var is the everyday case) would otherwise refuse a bind
 	// the layout itself produced.
-	if resolvedOpenCodeSeedPath(source) == resolvedOpenCodeSeedPath(ambient) {
+	if openCodeDirectoryIs(identity, ambient) {
 		return nil
 	}
-	if resolvedOpenCodeSeedPath(source) == resolvedOpenCodeSeedPath(configDir) {
+	if openCodeDirectoryIs(identity, configDir) {
 		// Both candidates are named on refusal, but the per-agent one leads: a
 		// self-bound source got here, so that is the shape the launch has. The
 		// ambient path still has to appear — a legacy contract replayed after
@@ -820,13 +864,83 @@ func ensureOpenCodeInstallGitignore(installDir string) error {
 	return err
 }
 
+// openOpenCodeBootstrapDirectory pins the directory the bootstrap will be
+// written into, as a kernel object rather than as a path string.
+//
+// Every subsequent step operates through this descriptor with openat, so the
+// directory the caller validated and the directory written into are the same
+// object by construction. Re-walking the path instead — which is what this code
+// used to do — leaves a check-then-use window in which an INTERMEDIATE
+// component can change meaning; O_NOFOLLOW constrains only the final one
+// (TCL-908).
+func openOpenCodeBootstrapDirectory(dir, surface string) (int, error) {
+	fd, err := unix.Open(dir,
+		unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return -1, fmt.Errorf("open OpenCode %s bootstrap directory %q: %w",
+			surface, dir, err)
+	}
+	return fd, nil
+}
+
+// openCodeDirectoryIdentity is a directory's identity as the kernel reports it,
+// which is what "the same directory" has to mean here: a path has more than one
+// true spelling, and a spelling can be made to name a different object between
+// two uses. A device/inode pair taken from an OPEN descriptor cannot.
+type openCodeDirectoryIdentity struct {
+	device uint64
+	inode  uint64
+}
+
+func openCodeDirectoryIdentityOf(fd int, surface string) (openCodeDirectoryIdentity, error) {
+	var stat unix.Stat_t
+	if err := unix.Fstat(fd, &stat); err != nil {
+		return openCodeDirectoryIdentity{}, fmt.Errorf(
+			"inspect OpenCode %s bootstrap directory: %w", surface, err)
+	}
+	return openCodeDirectoryIdentity{
+		device: uint64(stat.Dev), inode: uint64(stat.Ino),
+	}, nil
+}
+
+// openCodeDirectoryIs answers whether an already-open directory IS the
+// directory at path. Symlinks are followed on the path side deliberately: the
+// caller's candidates are daemon-derived answers such as the ambient config app
+// directory, which a host legitimately reaches through a symlink, and the
+// comparison is against the kernel's identity rather than against a spelling.
+func openCodeDirectoryIs(identity openCodeDirectoryIdentity, path string) bool {
+	var stat unix.Stat_t
+	if err := unix.Stat(path, &stat); err != nil {
+		return false
+	}
+	if stat.Mode&unix.S_IFMT != unix.S_IFDIR {
+		return false
+	}
+	return identity == openCodeDirectoryIdentity{
+		device: uint64(stat.Dev), inode: uint64(stat.Ino),
+	}
+}
+
 func ensureOpenCodeBootstrapGitignore(dir, surface string) (bool, error) {
+	dirFD, err := openOpenCodeBootstrapDirectory(dir, surface)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = unix.Close(dirFD) }()
+	return ensureOpenCodeBootstrapGitignoreAt(dirFD, dir, surface)
+}
+
+// ensureOpenCodeBootstrapGitignoreAt writes the bootstrap file relative to an
+// already-open directory. dir is carried for MESSAGES only — no step resolves
+// it — so a caller that has validated a descriptor can be sure the write lands
+// in the object it validated.
+func ensureOpenCodeBootstrapGitignoreAt(dirFD int, dir, surface string) (bool, error) {
 	path := filepath.Join(dir, openCodeInstallBootstrapFile)
-	fd, err := unix.Open(path,
+	fd, err := unix.Openat(dirFD, openCodeInstallBootstrapFile,
 		unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)
 	if err != nil {
 		if err == unix.EEXIST {
-			return false, validateExistingOpenCodeBootstrapGitignore(path, surface)
+			return false, validateExistingOpenCodeBootstrapGitignoreAt(dirFD, path, surface)
 		}
 		return false, fmt.Errorf("create OpenCode %s bootstrap %q: %w", surface, path, err)
 	}
@@ -835,7 +949,10 @@ func ensureOpenCodeBootstrapGitignore(dir, surface string) (bool, error) {
 	defer func() {
 		_ = file.Close()
 		if !keep {
-			_ = os.Remove(path)
+			// Removed through the same descriptor the file was created through,
+			// so a failed write cannot delete an unrelated path that has since
+			// taken this name.
+			_ = unix.Unlinkat(dirFD, openCodeInstallBootstrapFile, 0)
 		}
 	}()
 	if err := unix.Fchmod(fd, 0o600); err != nil {
@@ -851,9 +968,9 @@ func ensureOpenCodeBootstrapGitignore(dir, surface string) (bool, error) {
 	return true, nil
 }
 
-func validateExistingOpenCodeBootstrapGitignore(path, surface string) error {
-	fd, err := unix.Open(
-		path, unix.O_RDONLY|unix.O_NONBLOCK|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+func validateExistingOpenCodeBootstrapGitignoreAt(dirFD int, path, surface string) error {
+	fd, err := unix.Openat(dirFD, openCodeInstallBootstrapFile,
+		unix.O_RDONLY|unix.O_NONBLOCK|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return fmt.Errorf("inspect existing OpenCode %s bootstrap %q: %w", surface, path, err)
 	}
