@@ -307,3 +307,44 @@ test('a target with no refusal anywhere reports no refusal warning', async (t) =
   assertAbsent(mounted.container, '.sbx-launch-blocked', 'and nothing is blocked');
   assert.equal(sandboxPolicyNeedsAttention(target, CONTEXT, 0), false);
 });
+
+// Characterization test for the assignment-naming vocabulary, pinned across all
+// four of its branches BEFORE TCL-913 extracted the value-taking core out of
+// sandboxContextLabel. The extraction moves the strings verbatim; this is what
+// makes "no behaviour change" evidence rather than a claim.
+//
+// Only the group_name branch had coverage before this (the refused-sibling test
+// above), so three of the four were resting on inspection. They are exercised
+// through the renderer because the helper is module-private, which is also the
+// path that actually matters: the operator reads these words.
+test('every assignment-naming branch keeps its exact wording', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { SandboxPolicyResult } = await harness.importDashboardModule('js/management-island.js');
+  const axes = {
+    filesystem: { outcome: 'enforced', tier: '1 read rule', detail: 'enforced here' },
+    network: { outcome: 'enforced', tier: 'list', detail: 'enforced here' },
+    unix_sockets: { outcome: 'enforced', tier: 'unset', detail: 'enforced here' },
+  };
+  const target = {
+    target: { implementation: 'tclaude-layer', harness: 'claude', platform: 'linux' },
+    predicted: true,
+    axes,
+    context_axes: [axes, axes],
+    context_refusals: [null, REFUSAL],
+  };
+  for (const [context, expected] of [
+    [{ group_name: 'crew-x' }, 'group crew-x'],
+    [{ explicit: 'some-profile' }, 'explicit selection'],
+    [{ global: 'global-profile' }, 'global assignment'],
+    [undefined, 'assignment 2'],
+  ]) {
+    const contexts = [{ context: { group_name: 'crew-selected' } }, { context }];
+    const mounted = await harness.mount(harness.html`
+      <${SandboxPolicyResult} target=${target} context=${CONTEXT} contextIndex=${0}
+        contexts=${contexts}/>`);
+    const other = mounted.container.querySelector('.sbx-other-assignments');
+    assert.ok(other, `a refused sibling must be reported for ${JSON.stringify(context)}`);
+    assert.match(other.textContent, new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+      `context ${JSON.stringify(context)} must be named "${expected}"`);
+  }
+});
