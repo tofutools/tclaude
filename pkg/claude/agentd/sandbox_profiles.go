@@ -693,8 +693,7 @@ func handleSandboxProfilesExport(w http.ResponseWriter, r *http.Request) {
 		}
 		if profile.Network != nil &&
 			(len(profile.Network.DenyPacks) > 0 || len(profile.Network.Deny) > 0) {
-			formatVersion = sandboxProfileExportVersion
-			break
+			formatVersion = 10
 		}
 	}
 	writeJSON(w, http.StatusOK, sandboxProfileExportEnvelope{

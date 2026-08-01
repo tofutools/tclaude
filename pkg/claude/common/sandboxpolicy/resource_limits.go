@@ -76,6 +76,9 @@ func NormalizeResourceLimits(in ResourceLimits) (ResourceLimits, error) {
 		if math.IsNaN(*in.CPU) || math.IsInf(*in.CPU, 0) || *in.CPU <= 0 {
 			return ResourceLimits{}, fmt.Errorf("CPU limit must be a positive finite number of cores")
 		}
+		if *in.CPU < float64(CPUCgroupMinimumQuotaMicros)/float64(CPUCgroupPeriodMicros) {
+			return ResourceLimits{}, fmt.Errorf("CPU limit must be at least 0.01 cores for Linux's minimum cgroup quota")
+		}
 		value := *in.CPU
 		out.CPU = &value
 	}

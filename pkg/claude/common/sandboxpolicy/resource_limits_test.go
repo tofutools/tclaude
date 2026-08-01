@@ -48,6 +48,12 @@ func TestNormalizeResourceLimitsPreservesSpellingAndCarriesBytes(t *testing.T) {
 	assert.Equal(t, 0.25, *got.CPU)
 }
 
+func TestNormalizeResourceLimitsRejectsCPUBelowKernelMinimum(t *testing.T) {
+	cpu := 0.009
+	_, err := NormalizeResourceLimits(ResourceLimits{CPU: &cpu})
+	assert.ErrorContains(t, err, "at least 0.01")
+}
+
 func TestCPUQuotaMicros(t *testing.T) {
 	for cores, want := range map[float64]uint64{0.01: 1_000, 0.25: 25_000, 0.5: 50_000, 1: 100_000, 4.5: 450_000} {
 		got, err := CPUQuotaMicros(cores)

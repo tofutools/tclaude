@@ -20,7 +20,8 @@ test('resource limit validation matches the editor contract', () => {
   assert.match(sandboxResourceLimitErrors({ memory: '512' })[0], /unit/);
   assert.match(sandboxResourceLimitErrors({ memory: '0GiB' })[0], /greater than zero/);
   assert.match(sandboxResourceLimitErrors({ memory: '0gib' })[0], /greater than zero/);
-  assert.match(sandboxResourceLimitErrors({ cpu: '500m' })[0], /number of cores/);
+  assert.match(sandboxResourceLimitErrors({ cpu: '500m' })[0], /cores/);
+  assert.match(sandboxResourceLimitErrors({ cpu: '0.009' })[0], /at least 0.01/);
 });
 
 test('profile summary discloses configured resource limits', () => {

@@ -44,6 +44,7 @@ type NewParams struct {
 	SandboxChosenBy       string `short:"T" long:"sandbox-chosen-by" optional:"true" help:"Internal: which resolution tier chose --sandbox"`
 	SandboxSnapshotPath   string `short:"U" long:"sandbox-snapshot-path" optional:"true" help:"Internal: private effective sandbox snapshot handoff"`
 	SandboxSnapshotDigest string `short:"V" long:"sandbox-snapshot-digest" optional:"true" help:"Internal: expected effective sandbox snapshot digest"`
+	ResourceCgroupDir     string `long:"resource-cgroup-dir" optional:"true" help:"Internal: prepared Linux resource cgroup shared with a managed server"`
 	Dir                   string `short:"C" long:"dir" optional:"true" help:"Directory to start session in (defaults to current directory)"`
 	// CwdWriteProof is an internal daemon-to-session capability. The harness
 	// command checks its marker only after tmux has established the pane's cwd
@@ -1610,7 +1611,8 @@ func runNew(params *NewParams) error {
 			resourceCgroupCleanup()
 		}
 	}()
-	if launchSandbox != nil && launchSandbox.Effective.ResourceLimits.Enabled() {
+	if launchSandbox != nil && launchSandbox.Effective.ResourceLimits.Enabled() &&
+		!resourceLimitsAlreadyOverridden(launchSandbox.Effective.AccessNotices) {
 		if err := sandboxpolicy.ValidateResourceLimitTarget(
 			launchSandbox.Effective.ResourceLimits, sandboxImplementation, runtime.GOOS,
 		); err != nil {
@@ -1623,10 +1625,19 @@ func runNew(params *NewParams) error {
 				effectiveSandbox.Effective.AccessNotices = append(effectiveSandbox.Effective.AccessNotices, notice)
 			}
 		} else {
-			wrapped, cleanup, resourceErr := wrapResourceLimitedCommand(
-				sessionID, launchSandbox.Effective.ResourceLimits, harnessCmd,
-				params.AllowUnenforcedSandbox,
-			)
+			var wrapped string
+			var cleanup func()
+			var resourceErr error
+			if strings.TrimSpace(params.ResourceCgroupDir) != "" {
+				wrapped = wrapPreparedResourceCgroupCommand(
+					sessionID, params.ResourceCgroupDir, harnessCmd, params.AllowUnenforcedSandbox)
+				cleanup = func() {}
+			} else {
+				wrapped, cleanup, resourceErr = wrapResourceLimitedCommand(
+					sessionID, launchSandbox.Effective.ResourceLimits, harnessCmd,
+					params.AllowUnenforcedSandbox,
+				)
+			}
 			if resourceErr != nil {
 				if !params.AllowUnenforcedSandbox {
 					return resourceErr

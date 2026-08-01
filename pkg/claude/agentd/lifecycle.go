@@ -4728,10 +4728,26 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		if err != nil {
 			return nil, &spawnFailure{http.StatusUnprocessableEntity, "unsupported_sandbox_profile_network", err.Error()}
 		}
+		resourceCgroupDir, resourceCleanup, resourceErr := prepareManagedServerResourceCgroup(
+			label, p.EffectiveSandbox, p.AllowUnenforcedSandbox)
+		if resourceErr != nil {
+			return nil, &spawnFailure{http.StatusUnprocessableEntity,
+				"unsupported_sandbox_profile_resource_limits", resourceErr.Error()}
+		}
 		openCodeLaunch, err = startOpenCodeRuntimeForSpawn(
 			label, p.Cwd, p.Name, "", permissionJSON,
-			p.SandboxImplementation, sandboxSpec)
+			p.SandboxImplementation, sandboxSpec, resourceCgroupDir)
+		if err != nil && resourceCgroupDir != "" && p.AllowUnenforcedSandbox &&
+			errors.Is(err, errOpenCodeResourceCgroup) {
+			resourceCleanup()
+			appendManagedServerResourceOverride(p.EffectiveSandbox, err)
+			resourceCgroupDir = ""
+			openCodeLaunch, err = startOpenCodeRuntimeForSpawn(
+				label, p.Cwd, p.Name, "", permissionJSON,
+				p.SandboxImplementation, sandboxSpec, "")
+		}
 		if err != nil {
+			resourceCleanup()
 			return nil, &spawnFailure{http.StatusInternalServerError, "spawn",
 				"failed to start managed OpenCode server: " + err.Error()}
 		}
@@ -4742,6 +4758,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		spawnArgs.OpenCodeControlSocketDevice = openCodeLaunch.ControlSocketDevice
 		spawnArgs.OpenCodeControlSocketInode = openCodeLaunch.ControlSocketInode
 		spawnArgs.OpenCodeServerPID = openCodeLaunch.PID
+		spawnArgs.ResourceCgroupDir = resourceCgroupDir
 		if sandboxSpec != nil {
 			spawnArgs.OpenCodeEnvironment = append(
 				[]sandboxpolicy.EnvironmentEntry(nil), sandboxSpec.Contract.Environment...)
@@ -6558,6 +6575,9 @@ func sessionNewArgs(a clcommon.SpawnArgs) []string {
 		args = append(args, "--sandbox-snapshot-path", a.SandboxSnapshotPath,
 			"--sandbox-snapshot-digest", a.SandboxSnapshotDigest)
 	}
+	if a.ResourceCgroupDir != "" {
+		args = append(args, "--resource-cgroup-dir", a.ResourceCgroupDir)
+	}
 	if a.AllowUnenforcedSandbox {
 		args = append(args, "--allow-unenforced-sandbox")
 	}
@@ -7158,11 +7178,26 @@ func liveSpawnResume(a clcommon.SpawnArgs) error {
 		if sandboxErr != nil {
 			return sandboxErr
 		}
+		resourceCgroupDir, resourceCleanup, resourceErr := prepareManagedServerResourceCgroup(
+			a.ConvID, a.EffectiveSandbox, a.AllowUnenforcedSandbox)
+		if resourceErr != nil {
+			return resourceErr
+		}
 		var err error
 		openCodeLaunch, err = startOpenCodeRuntimeForSpawn(
 			a.ConvID, a.Cwd, "", a.ConvID, permissionJSON,
-			a.SandboxImplementation, sandboxSpec)
+			a.SandboxImplementation, sandboxSpec, resourceCgroupDir)
+		if err != nil && resourceCgroupDir != "" && a.AllowUnenforcedSandbox &&
+			errors.Is(err, errOpenCodeResourceCgroup) {
+			resourceCleanup()
+			appendManagedServerResourceOverride(a.EffectiveSandbox, err)
+			resourceCgroupDir = ""
+			openCodeLaunch, err = startOpenCodeRuntimeForSpawn(
+				a.ConvID, a.Cwd, "", a.ConvID, permissionJSON,
+				a.SandboxImplementation, sandboxSpec, "")
+		}
 		if err != nil {
+			resourceCleanup()
 			return err
 		}
 		a.OpenCodeServerURL = openCodeLaunch.ServerURL
@@ -7172,6 +7207,7 @@ func liveSpawnResume(a clcommon.SpawnArgs) error {
 		a.OpenCodeControlSocketDevice = openCodeLaunch.ControlSocketDevice
 		a.OpenCodeControlSocketInode = openCodeLaunch.ControlSocketInode
 		a.OpenCodeServerPID = openCodeLaunch.PID
+		a.ResourceCgroupDir = resourceCgroupDir
 		if sandboxSpec != nil {
 			a.OpenCodeEnvironment = append(
 				[]sandboxpolicy.EnvironmentEntry(nil), sandboxSpec.Contract.Environment...)

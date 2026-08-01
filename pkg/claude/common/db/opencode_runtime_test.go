@@ -42,6 +42,7 @@ func TestOpenCodeRuntimePersistsUnixReplayAuthority(t *testing.T) {
 		Transport:             OpenCodeTransportUnixRelay,
 		ControlSocketPath:     "/tmp/agents/agt_abc/control.sock",
 		ControlSocketDevice:   41, ControlSocketInode: 42,
+		ResourceCgroupDir: "/sys/fs/cgroup/tclaude-spawn",
 	}
 	require.NoError(t, UpsertOpenCodeRuntime(input))
 	got, err := GetOpenCodeRuntime(input.SessionID)
@@ -51,6 +52,7 @@ func TestOpenCodeRuntimePersistsUnixReplayAuthority(t *testing.T) {
 	assert.Equal(t, input.ControlSocketPath, got.ControlSocketPath)
 	assert.Equal(t, input.ControlSocketDevice, got.ControlSocketDevice)
 	assert.Equal(t, input.ControlSocketInode, got.ControlSocketInode)
+	assert.Equal(t, input.ResourceCgroupDir, got.ResourceCgroupDir)
 
 	broken := input
 	broken.SessionID = "spwn-broken"

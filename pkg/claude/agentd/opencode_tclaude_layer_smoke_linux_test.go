@@ -315,7 +315,7 @@ func runOpenCodeTclaudeLayerExecutorSmoke(t *testing.T, filtered bool) {
 	require.NoError(t, err)
 	launch, err := startOpenCodeRuntime(
 		openCodeLayerSmokeSessionID, cwd, "OpenCode layer smoke", "", permissionJSON,
-		string(sandboxpolicy.ImplementationTclaudeLayer), spec)
+		string(sandboxpolicy.ImplementationTclaudeLayer), spec, "")
 	if err != nil {
 		logOpenCodeLayerSmokeServerLogs(t,
 			filepath.Join(allocation.StateRoot, "data", "opencode", "log"))

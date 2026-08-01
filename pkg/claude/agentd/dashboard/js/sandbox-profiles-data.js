@@ -91,8 +91,8 @@ export function sandboxResourceLimitErrors(resourceLimits = {}) {
     errors.push('Memory limit must be greater than zero.');
   }
   const cpu = String(resourceLimits.cpu ?? '').trim();
-  if (cpu && (!/^(?:\d+(?:\.\d+)?|\.\d+)$/.test(cpu) || !Number.isFinite(Number(cpu)) || Number(cpu) <= 0)) {
-    errors.push('CPU limit must be a positive finite number of cores, such as 0.5 or 2.');
+  if (cpu && (!/^(?:\d+(?:\.\d+)?|\.\d+)$/.test(cpu) || !Number.isFinite(Number(cpu)) || Number(cpu) < 0.01)) {
+    errors.push('CPU limit must be at least 0.01 finite cores, such as 0.5 or 2.');
   }
   return errors;
 }

@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/spf13/cobra"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
@@ -55,6 +56,17 @@ func wrapResourceLimitedCommand(
 	command string,
 	allowUnenforced bool,
 ) (string, func(), error) {
+	dir, cleanup, err := PrepareResourceCgroup(sessionID, limits)
+	if err != nil {
+		return "", func() {}, err
+	}
+	return wrapPreparedResourceCgroupCommand(sessionID, dir, command, allowUnenforced), cleanup, nil
+}
+
+// PrepareResourceCgroup creates and configures the shared workload boundary.
+// Agentd uses this before starting an authoritative OpenCode server; ordinary
+// pane-owned harnesses call it through wrapResourceLimitedCommand.
+func PrepareResourceCgroup(sessionID string, limits sandboxpolicy.ResourceLimits) (string, func(), error) {
 	current, err := currentCgroupDir()
 	if err != nil {
 		return "", func() {}, fmt.Errorf("resource limits unavailable: %w", err)
@@ -133,6 +145,10 @@ func wrapResourceLimitedCommand(
 			return "", func() {}, fmt.Errorf("set cpu.max for session %q: %w", sessionID, err)
 		}
 	}
+	return dir, cleanup, nil
+}
+
+func wrapPreparedResourceCgroupCommand(sessionID, dir, command string, allowUnenforced bool) string {
 	wrapper := clcommon.DetectAbsoluteCmd("session", "resource-limit-exec") +
 		" --cgroup-dir " + clcommon.ShellQuoteArg(dir) +
 		" --session-id " + clcommon.ShellQuoteArg(sessionID) +
@@ -140,7 +156,50 @@ func wrapResourceLimitedCommand(
 	if allowUnenforced {
 		wrapper += " --allow-unenforced"
 	}
-	return wrapper, cleanup, nil
+	return wrapper
+}
+
+// ConfigureProcessResourceCgroup asks clone3 to place cmd in the prepared
+// cgroup atomically, before its program executes. The returned cleanup closes
+// the directory FD after Start returns; it does not remove the cgroup.
+func ConfigureProcessResourceCgroup(cmd *exec.Cmd, dir string) (func(), error) {
+	dirFD, err := os.Open(dir)
+	if err != nil {
+		return func() {}, fmt.Errorf("open prepared resource cgroup: %w", err)
+	}
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	cmd.SysProcAttr.UseCgroupFD = true
+	cmd.SysProcAttr.CgroupFD = int(dirFD.Fd())
+	return func() { _ = dirFD.Close() }, nil
+}
+
+// ValidatePreparedResourceCgroup confirms that a durable managed-server
+// boundary still carries the limits requested by the current relaunch.
+func ValidatePreparedResourceCgroup(dir string, limits sandboxpolicy.ResourceLimits) error {
+	if limits.Memory != "" {
+		want, err := sandboxpolicy.ParseMemoryLimitBytes(limits.Memory)
+		if err != nil {
+			return err
+		}
+		got, err := os.ReadFile(filepath.Join(dir, "memory.max"))
+		if err != nil || strings.TrimSpace(string(got)) != strconv.FormatUint(want, 10) {
+			return fmt.Errorf("prepared resource cgroup memory.max no longer matches requested limit")
+		}
+	}
+	if limits.CPU != nil {
+		quota, err := sandboxpolicy.CPUQuotaMicros(*limits.CPU)
+		if err != nil {
+			return err
+		}
+		want := fmt.Sprintf("%d %d", quota, sandboxpolicy.CPUCgroupPeriodMicros)
+		got, err := os.ReadFile(filepath.Join(dir, "cpu.max"))
+		if err != nil || strings.TrimSpace(string(got)) != want {
+			return fmt.Errorf("prepared resource cgroup cpu.max no longer matches requested limit")
+		}
+	}
+	return nil
 }
 
 func containsString(values []string, wanted string) bool {
@@ -204,10 +263,11 @@ func runResourceLimitExec(cgroupDir, sessionID, command string, allowUnenforced 
 	if moveErr != nil && allowUnenforced {
 		noticeErr := fmt.Errorf("attach workload to resource cgroup before release: %w", moveErr)
 		if persistErr := recordResourceLimitRuntimeOverrideForExec(sessionID, noticeErr); persistErr != nil {
-			fmt.Fprintf(os.Stderr, "Warning: record resource-limit override: %v\n", persistErr)
+			moveErr = fmt.Errorf("record required resource-limit override disclosure: %w", persistErr)
+		} else {
+			fmt.Fprintf(os.Stderr, "Warning: %v; launching without configured resource-limit enforcement by operator approval\n", noticeErr)
+			_, moveErr = io.WriteString(gateWrite, "go\n")
 		}
-		fmt.Fprintf(os.Stderr, "Warning: %v; launching without configured resource-limit enforcement by operator approval\n", noticeErr)
-		_, moveErr = io.WriteString(gateWrite, "go\n")
 	}
 	_ = gateWrite.Close()
 	if moveErr != nil {
@@ -216,6 +276,11 @@ func runResourceLimitExec(cgroupDir, sessionID, command string, allowUnenforced 
 		return fmt.Errorf("attach workload to resource cgroup before release: %w", moveErr)
 	}
 	waitErr := child.Wait()
+	if ResourceCgroupOOMKilled(cgroupDir) {
+		if err := recordResourceLimitOOMForExec(sessionID); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: record resource-limit OOM outcome: %v\n", err)
+		}
+	}
 	if err := os.Remove(cgroupDir); err != nil && !errors.Is(err, os.ErrNotExist) {
 		fmt.Fprintf(os.Stderr, "Warning: remove empty resource cgroup %s: %v\n", cgroupDir, err)
 	}
@@ -227,4 +292,20 @@ func runResourceLimitExec(cgroupDir, sessionID, command string, allowUnenforced 
 		os.Exit(exitErr.ExitCode())
 	}
 	return waitErr
+}
+
+func ResourceCgroupOOMKilled(dir string) bool {
+	raw, err := os.ReadFile(filepath.Join(dir, "memory.events"))
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 2 || fields[0] != "oom_kill" {
+			continue
+		}
+		count, parseErr := strconv.ParseUint(fields[1], 10, 64)
+		return parseErr == nil && count > 0
+	}
+	return false
 }

@@ -248,7 +248,7 @@ func TestDashboardSandboxProfileDraftPreviewAndAcknowledge(t *testing.T) {
 	rec := httptest.NewRecorder()
 	serveDashboardSandboxProfiles(rec, dashboardRequest(http.MethodGet, "/api/sandbox-profile-drafts/"+token, ""))
 	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
-	assert.JSONEq(t, `{"profile":{"name":"new-name","filesystem":null,"filesystem_spellings":null,"environment":null}}`, rec.Body.String())
+	assert.JSONEq(t, `{"profile":{"name":"new-name","filesystem":null,"filesystem_spellings":null,"environment":null,"resource_limits":{}}}`, rec.Body.String())
 
 	rec = httptest.NewRecorder()
 	serveDashboardSandboxProfiles(rec, dashboardRequest(http.MethodGet, "/api/sandbox-profile-drafts/"+token, ""))

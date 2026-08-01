@@ -3,7 +3,9 @@
 package session
 
 import (
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -48,6 +50,11 @@ func TestWrapResourceLimitedCommandRendersIndependentAxes(t *testing.T) {
 	cpuMax, err := os.ReadFile(filepath.Join(cgroup, "cpu.max"))
 	require.NoError(t, err)
 	assert.Equal(t, "50000 100000", string(cpuMax))
+	require.NoError(t, ValidatePreparedResourceCgroup(
+		cgroup, sandboxpolicy.ResourceLimits{Memory: "1.5GiB", CPU: &cpu}))
+	changedCPU := 1.0
+	assert.Error(t, ValidatePreparedResourceCgroup(
+		cgroup, sandboxpolicy.ResourceLimits{Memory: "1.5GiB", CPU: &changedCPU}))
 	assert.Contains(t, wrapped, "resource-limit-exec")
 	assert.Contains(t, wrapped, "exec harness")
 	assert.Contains(t, wrapped, "--allow-unenforced")
@@ -85,6 +92,27 @@ func TestResourceDelegationDirUsesSystemdSupervisorParent(t *testing.T) {
 		resourceDelegationDir("/sys/fs/cgroup/user.slice/session.scope"))
 }
 
+func TestConfigureProcessResourceCgroupUsesAtomicClonePlacement(t *testing.T) {
+	dir := t.TempDir()
+	cmd := exec.Command("/bin/true")
+	closeFD, err := ConfigureProcessResourceCgroup(cmd, dir)
+	require.NoError(t, err)
+	t.Cleanup(closeFD)
+	require.NotNil(t, cmd.SysProcAttr)
+	assert.True(t, cmd.SysProcAttr.UseCgroupFD)
+	assert.GreaterOrEqual(t, cmd.SysProcAttr.CgroupFD, 0)
+}
+
+func TestResourceCgroupOOMKilled(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "memory.events"),
+		[]byte("low 0\nhigh 0\nmax 1\noom 1\noom_kill 1\n"), 0o644))
+	assert.True(t, ResourceCgroupOOMKilled(dir))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "memory.events"),
+		[]byte("oom_kill 0\n"), 0o644))
+	assert.False(t, ResourceCgroupOOMKilled(dir))
+}
+
 func TestResourceLimitExecOperatorOverrideFallsBackAfterAttachFailure(t *testing.T) {
 	oldRoot := resourceCgroupRoot
 	resourceCgroupRoot = t.TempDir()
@@ -120,4 +148,21 @@ func TestResourceLimitExecFailsClosedAfterAttachFailure(t *testing.T) {
 
 	err := runResourceLimitExec(dir, "session-runtime-failure", "exit 0", false)
 	assert.ErrorContains(t, err, "attach workload")
+}
+
+func TestResourceLimitExecFailsClosedWhenOverrideDisclosureCannotPersist(t *testing.T) {
+	oldRoot := resourceCgroupRoot
+	resourceCgroupRoot = t.TempDir()
+	t.Cleanup(func() { resourceCgroupRoot = oldRoot })
+	dir := filepath.Join(resourceCgroupRoot, "tclaude-runtime-failure")
+	require.NoError(t, os.Mkdir(dir, 0o755))
+	require.NoError(t, os.Mkdir(filepath.Join(dir, "cgroup.procs"), 0o755))
+	oldRecord := recordResourceLimitRuntimeOverrideForExec
+	recordResourceLimitRuntimeOverrideForExec = func(string, error) error {
+		return errors.New("database unavailable")
+	}
+	t.Cleanup(func() { recordResourceLimitRuntimeOverrideForExec = oldRecord })
+
+	err := runResourceLimitExec(dir, "session-runtime-failure", "exit 0", true)
+	assert.ErrorContains(t, err, "required resource-limit override disclosure")
 }

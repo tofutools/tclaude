@@ -263,7 +263,7 @@ func runOpenCodeProxyCarriageCase(
 	require.NoError(t, err)
 	launch, err := startOpenCodeRuntime(
 		openCodeCarriageSessionID, cwd, "OpenCode carriage arm", "", permissionJSON,
-		string(sandboxpolicy.ImplementationTclaudeLayer), spec)
+		string(sandboxpolicy.ImplementationTclaudeLayer), spec, "")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = stopOpenCodeRuntime(openCodeCarriageSessionID) })
 

@@ -43,6 +43,9 @@ type SpawnArgs struct {
 	// only by the production spawner; callers normally set EffectiveSandbox.
 	SandboxSnapshotPath   string
 	SandboxSnapshotDigest string
+	// ResourceCgroupDir is a prepared Linux workload boundary shared with an
+	// agentd-owned authoritative server. Empty lets session new prepare one.
+	ResourceCgroupDir string
 	// Label is the tclaude-side session ID for a fresh spawn (SpawnNew): the
 	// stable key the hook callback tracks conv-id rotations against, and the
 	// row key in SQLite. It must be unique in the sessions table. Unused by

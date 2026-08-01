@@ -25,3 +25,20 @@ func recordResourceLimitRuntimeOverride(sessionID string, cause error) error {
 }
 
 var recordResourceLimitRuntimeOverrideForExec = recordResourceLimitRuntimeOverride
+
+const ResourceLimitOOMExitReason = "resource_limit_oom"
+
+var recordResourceLimitOOMForExec = func(sessionID string) error {
+	return db.SetSessionExitReason(sessionID, ResourceLimitOOMExitReason)
+}
+
+func resourceLimitsAlreadyOverridden(notices []sandboxpolicy.AccessNotice) bool {
+	for _, notice := range notices {
+		if notice.Axis == "resource_limits" &&
+			notice.Reason == sandboxpolicy.AccessNoticeReasonOperatorUnenforcedLaunchOverride &&
+			notice.Effect == sandboxpolicy.AccessNoticeEffectNotEnforced {
+			return true
+		}
+	}
+	return false
+}
