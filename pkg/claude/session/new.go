@@ -1610,10 +1610,11 @@ func runNew(params *NewParams) error {
 			if !params.AllowUnenforcedSandbox {
 				return fmt.Errorf("unsupported_sandbox_profile_resource_limits: %w", err)
 			}
-			launchSandbox.Effective.AccessNotices = append(
-				launchSandbox.Effective.AccessNotices,
-				resourceLimitOverrideNotice(err),
-			)
+			notice := resourceLimitOverrideNotice(err)
+			launchSandbox.Effective.AccessNotices = append(launchSandbox.Effective.AccessNotices, notice)
+			if effectiveSandbox != nil {
+				effectiveSandbox.Effective.AccessNotices = append(effectiveSandbox.Effective.AccessNotices, notice)
+			}
 		} else {
 			wrapped, cleanup, resourceErr := wrapResourceLimitedCommand(
 				sessionID, launchSandbox.Effective.ResourceLimits, harnessCmd,
@@ -1622,10 +1623,11 @@ func runNew(params *NewParams) error {
 				if !params.AllowUnenforcedSandbox {
 					return resourceErr
 				}
-				launchSandbox.Effective.AccessNotices = append(
-					launchSandbox.Effective.AccessNotices,
-					resourceLimitOverrideNotice(resourceErr),
-				)
+				notice := resourceLimitOverrideNotice(resourceErr)
+				launchSandbox.Effective.AccessNotices = append(launchSandbox.Effective.AccessNotices, notice)
+				if effectiveSandbox != nil {
+					effectiveSandbox.Effective.AccessNotices = append(effectiveSandbox.Effective.AccessNotices, notice)
+				}
 			} else {
 				defer cleanup()
 				harnessCmd = wrapped

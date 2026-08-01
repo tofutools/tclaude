@@ -174,7 +174,7 @@ func planSandboxProfileAccessForLaunch(
 	snapshot *sandboxpolicy.Snapshot,
 	rawImplementation string,
 	modelContext session.ModelTransportLaunchContext,
-	allowUnenforcedNetworkClosed bool,
+	allowUnenforcedSandbox bool,
 ) ([]sandboxpolicy.AccessNotice, *spawnFailure) {
 	if snapshot == nil {
 		return nil, nil
@@ -188,7 +188,7 @@ func planSandboxProfileAccessForLaunch(
 	if err := sandboxpolicy.ValidateResourceLimitTarget(
 		snapshot.Effective.ResourceLimits, implementation, runtime.GOOS,
 	); err != nil {
-		if !allowUnenforcedNetworkClosed {
+		if !allowUnenforcedSandbox {
 			return nil, &spawnFailure{http.StatusUnprocessableEntity,
 				"unsupported_sandbox_profile_resource_limits", err.Error()}
 		}
@@ -306,7 +306,7 @@ func planSandboxProfileAccessForLaunch(
 	}
 	rendered, notices, err := harness.PlanAccessEnforcement(
 		axes, caps, harness.AccessEnforcementOptions{
-			AllowUnenforcedNetworkClosed: allowUnenforcedNetworkClosed,
+			AllowUnenforcedNetworkClosed: allowUnenforcedSandbox,
 		},
 	)
 	notices = append(resourceNotices, notices...)

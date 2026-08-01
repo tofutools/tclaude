@@ -12,8 +12,9 @@ import (
 // retains the operator's authored spelling for portable export and UI editing;
 // ParseMemoryLimitBytes is the authority used by the Linux cgroup renderer.
 type ResourceLimits struct {
-	Memory string   `json:"memory,omitempty"`
-	CPU    *float64 `json:"cpu,omitempty"`
+	Memory      string   `json:"memory,omitempty"`
+	MemoryBytes uint64   `json:"memory_bytes,omitempty"`
+	CPU         *float64 `json:"cpu,omitempty"`
 }
 
 func (r ResourceLimits) Enabled() bool { return r.Memory != "" || r.CPU != nil }
@@ -21,8 +22,8 @@ func (r ResourceLimits) Enabled() bool { return r.Memory != "" || r.CPU != nil }
 var memoryLimitRE = regexp.MustCompile(`^([0-9]+(?:\.[0-9]+)?|\.[0-9]+)([a-zA-Z]*)$`)
 
 // ParseMemoryLimitBytes accepts Kubernetes-like decimal and binary quantities.
-// Bare values are bytes; K/KB, M/MB, G/GB and T/TB are powers of 1000, while
-// Ki/KiB through Ti/TiB are powers of 1024. Suffixes are case-insensitive.
+// K/KB, M/MB, G/GB and T/TB are powers of 1000, while Ki/KiB through Ti/TiB
+// are powers of 1024. B is accepted explicitly; suffixes are case-insensitive.
 func ParseMemoryLimitBytes(input string) (uint64, error) {
 	value := strings.TrimSpace(input)
 	match := memoryLimitRE.FindStringSubmatch(value)
@@ -63,9 +64,13 @@ func ParseMemoryLimitBytes(input string) (uint64, error) {
 func NormalizeResourceLimits(in ResourceLimits) (ResourceLimits, error) {
 	out := ResourceLimits{Memory: strings.TrimSpace(in.Memory)}
 	if out.Memory != "" {
-		if _, err := ParseMemoryLimitBytes(out.Memory); err != nil {
+		bytes, err := ParseMemoryLimitBytes(out.Memory)
+		if err != nil {
 			return ResourceLimits{}, err
 		}
+		out.MemoryBytes = bytes
+	} else if in.MemoryBytes != 0 {
+		return ResourceLimits{}, fmt.Errorf("memory_bytes is derived and requires an authored memory limit")
 	}
 	if in.CPU != nil {
 		if math.IsNaN(*in.CPU) || math.IsInf(*in.CPU, 0) || *in.CPU <= 0 {
@@ -102,14 +107,14 @@ func CPUQuotaMicros(cores float64) (uint64, error) {
 		return 0, fmt.Errorf("CPU limit must be a positive finite number of cores")
 	}
 	quota := math.Ceil(cores * float64(CPUCgroupPeriodMicros))
-	if quota > float64(^uint64(0)) {
+	if quota >= math.Exp2(64) {
 		return 0, fmt.Errorf("CPU limit is outside the supported range")
 	}
 	return uint64(quota), nil
 }
 
 func cloneResourceLimits(in ResourceLimits) ResourceLimits {
-	out := ResourceLimits{Memory: in.Memory}
+	out := ResourceLimits{Memory: in.Memory, MemoryBytes: in.MemoryBytes}
 	if in.CPU != nil {
 		value := *in.CPU
 		out.CPU = &value

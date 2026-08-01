@@ -24,6 +24,7 @@ func TestSandboxProfileCRUDRoundTrip(t *testing.T) {
 
 	sparseID, err := CreateSandboxProfile(&SandboxProfile{Name: "empty"})
 	require.NoError(t, err)
+	cpu := 1.5
 	populatedID, err := CreateSandboxProfile(&SandboxProfile{
 		Name: "populated",
 		Filesystem: []SandboxFilesystemGrant{
@@ -36,6 +37,7 @@ func TestSandboxProfileCRUDRoundTrip(t *testing.T) {
 		},
 		AgentDirectories: []string{"GOLANGCI_LINT_CACHE", "GOCACHE"},
 		NetworkAccess:    sandboxpolicy.NetworkAccessInternet,
+		ResourceLimits:   sandboxpolicy.ResourceLimits{Memory: "4GiB", CPU: &cpu},
 	})
 	require.NoError(t, err)
 
@@ -62,6 +64,10 @@ func TestSandboxProfileCRUDRoundTrip(t *testing.T) {
 	}, got.Environment)
 	assert.Equal(t, []string{"GOCACHE", "GOLANGCI_LINT_CACHE"}, got.AgentDirectories)
 	assert.Equal(t, sandboxpolicy.NetworkAccessInternet, got.NetworkAccess)
+	assert.Equal(t, "4GiB", got.ResourceLimits.Memory)
+	assert.Equal(t, uint64(4*(1<<30)), got.ResourceLimits.MemoryBytes)
+	require.NotNil(t, got.ResourceLimits.CPU)
+	assert.Equal(t, 1.5, *got.ResourceLimits.CPU)
 	assert.False(t, got.CreatedAt.IsZero())
 	assert.False(t, got.UpdatedAt.IsZero())
 

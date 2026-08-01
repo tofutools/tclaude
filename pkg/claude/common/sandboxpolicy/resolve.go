@@ -228,6 +228,7 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 		}
 		if normalized.ResourceLimits.Memory != "" {
 			result.ResourceLimits.Memory = normalized.ResourceLimits.Memory
+			result.ResourceLimits.MemoryBytes = normalized.ResourceLimits.MemoryBytes
 			resourceSource := source
 			result.Provenance.ResourceMemory = &resourceSource
 		}

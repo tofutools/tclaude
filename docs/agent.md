@@ -500,7 +500,11 @@ delegate to.
 Sandbox profiles are operator-authored bundles of filesystem access rules,
 environment configuration, optional agent-owned directory declarations, and
 independent `network` and `unix_sockets` access axes (plus the legacy
-`network_access` compatibility spelling). Filesystem access accepts `read`,
+`network_access` compatibility spelling). On Linux they may also carry
+independent `resource_limits.memory` and `resource_limits.cpu` ceilings.
+Memory accepts a positive decimal quantity with a case-insensitive decimal or
+binary unit, such as `4GB`, `4G`, `4GiB`, `512MB`, or `512MiB`; CPU is a
+positive number of cores, such as `0.5` or `4`. Filesystem access accepts `read`,
 `write`, or `deny`; deny blocks both reads and writes and dominates an
 exact-path grant from any other applied profile. This lets an explicit
 per-spawn profile subtract access inherited from a global or group profile.
@@ -509,6 +513,17 @@ profiles. Environment values
 are stored and displayed as ordinary **non-secret configuration** — do not put
 credentials in them. Profile payload reads and all mutations require the
 `sandbox-profiles.manage` permission.
+
+Resource limits are entirely opt-in: when both fields are blank, launch does
+not probe or modify cgroups. A configured limit uses the host's cgroup v2
+`memory.max` and/or `cpu.max` controller and applies to the aggregate process
+tree, not independently to each child. The current MVP supports Linux with a
+non-`off` sandbox implementation. macOS and implementation `off` are shown as
+unsupported in the effective-policy evaluation and refuse launch by default.
+The existing dashboard **allow launch without enforcement** checkbox remains
+an explicit human override for those failures; when selected, the launch is
+recorded with a degradation notice instead of silently claiming the limits
+were enforced.
 
 New network profiles use `network.baseline`: `deny`, `allow`, or `inherit`.
 Only `deny` may carry `network.packs` and manual `network.allow` entries.
