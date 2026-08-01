@@ -174,7 +174,9 @@ test('a refusal in an unselected context is surfaced, not silently dropped', asy
   // can find the offending assignment. An ordinal like "Assignment 2" matches
   // nothing on screen and leaves the warning unactionable.
   assert.match(other.textContent, /group crew-conflicted/);
-  assert.doesNotMatch(other.textContent, /Assignment 2/);
+  // Lowercase: the ordinal fallback emits "assignment 2", so the capitalised
+  // form this originally used could never match anything the code can produce.
+  assert.doesNotMatch(other.textContent, /assignment 2/);
   assert.equal(sandboxPolicyNeedsAttention(target, CONTEXT, 0), true,
     'a blocked sibling assignment must open the section');
 });

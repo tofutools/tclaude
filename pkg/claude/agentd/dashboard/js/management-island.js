@@ -271,8 +271,16 @@ function SandboxOutcomeBucket({
 
 /* The label the context selector gives an assignment, so a warning about
    another assignment names something the operator can actually locate in the
-   dropdown rather than an opaque ordinal. Kept in step with the selector's own
-   option text below. */
+   dropdown rather than an opaque ordinal.
+
+   It mirrors the selector's option text but does NOT share its discriminator:
+   the selector distinguishes the global assignment by `global === draft.name`,
+   this by the presence of `explicit`. They agree for every role shape that
+   produces more than one context, and this helper only ever runs when there is
+   another assignment to name — the one divergent shape (an unsaved draft named
+   identically to the existing global profile) arises solely in the
+   single-context fallback. Stated rather than claimed "kept in step", so the
+   next person to touch the selector knows the two are not literally coupled. */
 function sandboxContextLabel(contexts, index) {
   const value = contexts?.[index]?.context;
   if (!value) return `assignment ${index + 1}`;

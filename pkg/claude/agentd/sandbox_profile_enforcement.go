@@ -382,16 +382,15 @@ func handleSandboxProfileDraftEnforcement(w http.ResponseWriter, r *http.Request
 			writeError(w, http.StatusBadRequest, "invalid_sandbox_profile", describeErr.Error())
 			return
 		}
-		// Every effective assignment context refusing leaves nothing to describe,
-		// so the target itself is refused rather than carrying a full-length list
-		// of per-context refusals with no surviving verdict between them.
-		if refusal := onlyContextRefusals(contextRefusals); refusal != nil {
-			response.Targets = append(response.Targets, sandboxProfileDraftEnforcementTarget{
-				Target: resolvedTarget, ResolvedBy: resolvedBy,
-				Predicted: false, Refusal: refusal,
-			})
-			continue
-		}
+		// Every context refusing makes the TARGET refused — there is no surviving
+		// verdict to aggregate. It does NOT make the individual refusals
+		// redundant: distinct contexts routinely refuse for distinct reasons,
+		// because the resolver refusal embeds the offending selector and resolver
+		// path. Reporting only the first would force the operator to fix it,
+		// re-preview, and discover the next — which is precisely the fix-and-
+		// re-preview cost this ticket exists to remove, one level down. So the
+		// per-context lists stay populated and every distinct reason is carried.
+		targetRefusal := onlyContextRefusals(contextRefusals)
 		// The display cap truncates the per-context lists, but a refusal must not
 		// be what gets dropped. The aggregate axes deliberately summarize only the
 		// SURVIVING contexts, so a refused context contributes nothing there
@@ -416,7 +415,8 @@ func handleSandboxProfileDraftEnforcement(w http.ResponseWriter, r *http.Request
 		response.Targets = append(response.Targets, sandboxProfileDraftEnforcementTarget{
 			Target:     resolvedTarget,
 			ResolvedBy: resolvedBy,
-			Predicted:  true,
+			Predicted:  targetRefusal == nil,
+			Refusal:    targetRefusal,
 			Axes:       described,
 			NetworkEntries: draftOnlyNetworkEntries(
 				draftOnlyRefused, draftAxes.Network, draftPredicted, body.Draft.Network,

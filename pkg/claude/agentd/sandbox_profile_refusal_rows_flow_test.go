@@ -569,9 +569,23 @@ func TestSandboxProfileDraftEnforcementRefusesTargetWhenEveryContextRefuses(t *t
 	assert.Contains(t, target.Refusal.Message, "proxy_engine_name_authority")
 	assert.Empty(t, target.Axes.Filesystem.Outcome,
 		"an all-refused target must not fabricate an aggregate verdict")
-	assert.Empty(t, target.ContextAxes,
-		"a target-level refusal replaces the per-context lists rather than duplicating them")
-	assert.Empty(t, target.ContextRefusals)
+	// This assertion is INVERTED from the version originally shipped, which
+	// claimed "a target-level refusal replaces the per-context lists rather than
+	// duplicating them". That was wrong, and wrong in this ticket's own
+	// characteristic way: collapsing N refusals to one hides the reasons the
+	// other contexts gave, forcing the operator to fix the first and re-preview
+	// to discover the next — the fix-and-re-preview cost TCL-885 exists to
+	// remove, reproduced one level down. The per-context lists stay populated.
+	require.Len(t, target.ContextRefusals, 2,
+		"every refusing context must keep its own reason")
+	require.Len(t, target.ContextAxes, len(target.ContextRefusals),
+		"the two slices stay index-aligned, as the wire contract states")
+	for i, refusal := range target.ContextRefusals {
+		require.NotNilf(t, refusal, "context %d refused and must say so", i)
+		assert.Contains(t, refusal.Message, "proxy_engine_name_authority")
+		assert.Emptyf(t, target.ContextAxes[i].Network.Outcome,
+			"a refused index carries the zero axes, never a fabricated verdict (context %d)", i)
+	}
 }
 
 // TestSandboxProfileDraftEnforcementCarriesRefusalsPastTheDisplayCap closes a
@@ -741,63 +755,173 @@ func TestSandboxProfileDraftEnforcementDoesNotRefuseOnDraftOnlyConflict(t *testi
 		"rows from a refused evaluation would show verdicts that were never computed")
 }
 
-// TestSandboxProfileEnforcementRefusalKeepsThePredictionCaveat closes a third
-// cold-review gap. A refusal is a prediction like any other and inherits the
-// same qualification; before this fix the refused row skipped the caveat, so on
-// a host that ran no capability probes it read MORE confidently than the
-// enforced rows beside it.
+// TestSandboxProfileEnforcementRefusalKeepsThePredictionCaveat asserts the
+// property directly instead of predicting a particular caveat SENTENCE: a
+// refused row and an enforced row for the SAME target must carry the SAME
+// qualification. Before the fix the refused row carried none, so it read more
+// confidently than the enforced rows beside it.
 //
-// It drives the TOOLING half of the caveat rule rather than the platform half.
-// The platform half is untestable here: the resolver conflict only fires on
-// linux, so the refused row is ALWAYS the linux target, and on a Linux host that
-// is the host platform — meaning a platform-based assertion is skipped exactly
-// where the refused row exists. (An earlier version of this test did that and
-// could not fail on Linux at all.) The tooling half has a hook, applies to the
-// tclaude-layer target the conflict needs, and is host-independent.
+// Two earlier versions of this test were host-dependent in opposite directions,
+// which is why it is written this way now. The caveat rule is platform-first,
+// and the resolver conflict only fires on linux, so the refused row is ALWAYS
+// the linux target: on a Linux host that is the host platform (making a
+// platform-based assertion vacuous), and on a macOS host it is not (making a
+// tooling-based assertion wrong, because the platform sentence wins first).
+// Comparing the two rows to EACH OTHER needs neither prediction and holds on
+// both runners.
 //
 // Falsifiability: drop the `Caveat:` field from the refused row in
-// handleSandboxProfileEnforcement. refused.Caveat is then "" where it now names
-// the missing tooling, and the require below fails — on every platform, not just
-// a non-Linux one.
+// handleSandboxProfileEnforcement. refused.Caveat becomes "" while enforced
+// stays non-empty, so the equality fails and the NotEmpty guard below fails with
+// it — on every platform.
 func TestSandboxProfileEnforcementRefusalKeepsThePredictionCaveat(t *testing.T) {
 	f := newFlow(t)
-	// A host without the layer tooling. Both probes move together: the
-	// disclosure reads presence and the launch reads availability.
+	// Forces a non-empty caveat on a Linux host, where the target platform is
+	// the host platform and only the tooling half can produce one. On macOS the
+	// platform half already produces one; the assertion does not care which,
+	// only that both rows agree.
 	missing := func() error { return errors.New("bwrap: not found in PATH") }
 	t.Cleanup(agentd.SetTclaudeLayerHostAvailabilitiesForTest(missing, missing))
 
-	rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles",
-		resolverConflictProfile("resolver-conflict-caveat"))
-	require.Equalf(t, http.StatusCreated, rec.Code, "body=%s", rec.Body.String())
+	// Same shape, differing only in whether the resolver conflict is present.
+	conflicted := resolverConflictProfile("caveat-conflicted")
+	clean := resolverConflictProfile("caveat-clean")
+	clean["filesystem"] = []any{}
+	for _, body := range []map[string]any{conflicted, clean} {
+		rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", body)
+		require.Equalf(t, http.StatusCreated, rec.Code, "body=%s", rec.Body.String())
+	}
 
-	rec = profileReq(t, f, http.MethodGet,
-		"/v1/sandbox-profiles/resolver-conflict-caveat/enforcement?"+
-			"for=tclaude-layer%2Fclaude%2Flinux&"+
-			"for=harness-builtin%2Fclaude%2Flinux", nil)
+	caveatFor := func(profile string) (string, *refusalJSON) {
+		rec := profileReq(t, f, http.MethodGet,
+			"/v1/sandbox-profiles/"+profile+"/enforcement?"+
+				"for=tclaude-layer%2Fclaude%2Flinux", nil)
+		require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+		var got struct {
+			Targets []struct {
+				Caveat  string       `json:"caveat"`
+				Refusal *refusalJSON `json:"refusal"`
+			} `json:"targets"`
+		}
+		testharness.DecodeJSON(t, rec, &got)
+		require.Len(t, got.Targets, 1)
+		return got.Targets[0].Caveat, got.Targets[0].Refusal
+	}
+
+	refusedCaveat, refusal := caveatFor("caveat-conflicted")
+	enforcedCaveat, noRefusal := caveatFor("caveat-clean")
+
+	// The two rows must genuinely differ in refusal status, or the comparison
+	// below would be comparing a row with itself.
+	require.NotNil(t, refusal, "the conflicted profile must produce a refused row")
+	require.Nil(t, noRefusal, "the clean profile must produce an ordinary row")
+
+	require.NotEmpty(t, enforcedCaveat,
+		"the fixture must produce a caveat at all, or the equality proves nothing")
+	assert.Equal(t, enforcedCaveat, refusedCaveat,
+		"a refused prediction must be qualified exactly as an enforced one for the same target")
+}
+
+// TestSandboxProfileDraftEnforcementKeepsEveryDistinctContextRefusal is the
+// reviewer's reproduction, promoted to a test. Two assignment contexts refuse
+// for DIFFERENT resolvers with DIFFERENT named remedies. Before this fix the
+// collapse reported only the first, and the second resolver path appeared
+// NOWHERE in the response body — so the operator would narrow the first grant,
+// re-preview, and only then learn the second group was blocked too.
+//
+// That is this ticket's own thesis violated inside the ticket: TCL-885 exists
+// because one conflict forced fix-and-re-preview to discover the rest.
+//
+// Falsifiability: restore the collapse (append a target carrying only
+// `onlyContextRefusals(contextRefusals)` and `continue`). ContextRefusals is
+// then empty where it now has two entries, and the whole-body assertion for the
+// second resolver fails — the pre-change body genuinely does not contain
+// "/run/systemd/resolve" anywhere, while the post-change body does.
+func TestSandboxProfileDraftEnforcementKeepsEveryDistinctContextRefusal(t *testing.T) {
+	f := newFlow(t)
+	for _, name := range []string{"crew-nscd", "crew-systemd"} {
+		_, err := db.CreateAgentGroup(name, "")
+		require.NoError(t, err)
+	}
+	for _, body := range []map[string]any{{
+		"name": "global-proxy-distinct", "filesystem": []any{}, "environment": []any{},
+		"network": map[string]any{
+			"baseline": "deny", "engine": "proxy",
+			"allow": []any{map[string]any{"domain": "example.com", "ports": []any{443}}},
+		},
+	}, {
+		"name": "group-nscd", "environment": []any{},
+		"filesystem": []any{map[string]any{"path": "/run/nscd", "access": "read"}},
+	}, {
+		"name": "group-systemd", "environment": []any{},
+		"filesystem": []any{
+			map[string]any{"path": "/run/systemd/resolve", "access": "read"},
+		},
+	}} {
+		rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", body)
+		require.Equalf(t, http.StatusCreated, rec.Code, "body=%s", rec.Body.String())
+	}
+	require.NoError(t, db.SetGlobalSandboxProfile("global-proxy-distinct"))
+	_, err := db.SetAgentGroupSandboxProfile("crew-nscd", "group-nscd")
+	require.NoError(t, err)
+	_, err = db.SetAgentGroupSandboxProfile("crew-systemd", "group-systemd")
+	require.NoError(t, err)
+	globalProfile, err := db.GetSandboxProfile("global-proxy-distinct")
+	require.NoError(t, err)
+	require.NotNil(t, globalProfile)
+
+	rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profile-enforcement", map[string]any{
+		"draft": map[string]any{
+			"id": globalProfile.ID, "name": globalProfile.Name,
+			"filesystem": []any{}, "environment": []any{},
+			"network": map[string]any{
+				"baseline": "deny", "engine": "proxy",
+				"allow": []any{map[string]any{"domain": "example.com", "ports": []any{443}}},
+			},
+			"unix_sockets": map[string]any{},
+		},
+		"targets": []any{map[string]any{
+			"implementation": "tclaude-layer", "harness": "claude", "platform": "linux",
+		}},
+	})
 	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+
+	// The strongest form of the claim, and the one the reviewer's reproduction
+	// used: BOTH resolver paths must appear somewhere in the response at all.
+	// Asserting on the whole body first means a future refactor that moves the
+	// refusals to a different field still fails here if it drops one.
+	body := rec.Body.String()
+	assert.Contains(t, body, "/run/nscd",
+		"the first refusing context's resolver must be reported")
+	assert.Contains(t, body, "/run/systemd/resolve",
+		"the SECOND refusing context's resolver must not vanish from the wire")
 
 	var got struct {
 		Targets []struct {
-			Implementation string       `json:"implementation"`
-			Caveat         string       `json:"caveat"`
-			Refusal        *refusalJSON `json:"refusal"`
+			Predicted       bool           `json:"predicted"`
+			Refusal         *refusalJSON   `json:"refusal"`
+			ContextRefusals []*refusalJSON `json:"context_refusals"`
 		} `json:"targets"`
+		Contexts []struct {
+			Context map[string]string `json:"context"`
+		} `json:"contexts"`
 	}
 	testharness.DecodeJSON(t, rec, &got)
-	require.Len(t, got.Targets, 2)
-	refused, builtin := got.Targets[0], got.Targets[1]
-	require.NotNil(t, refused.Refusal, "the tclaude-layer target is the refused one")
-	require.Nil(t, builtin.Refusal)
+	require.Len(t, got.Targets, 1)
+	require.Len(t, got.Contexts, 2)
+	target := got.Targets[0]
 
-	require.NotEmpty(t, refused.Caveat,
-		"a refused prediction must carry the same qualification as an enforced one")
-	assert.Contains(t, refused.Caveat, "host tooling is not installed")
-	assert.Contains(t, refused.Caveat, "bwrap: not found in PATH",
-		"the caveat names what is missing, not merely that something is")
+	// The target is still refused as a whole — nothing survived to aggregate.
+	assert.False(t, target.Predicted)
+	require.NotNil(t, target.Refusal)
 
-	// Control, so the assertion above cannot pass by the caveat being
-	// unconditional: a harness-builtin target uses no layer tooling and must
-	// carry no tooling caveat on the same host, in the same response.
-	assert.Empty(t, builtin.Caveat,
-		"the caveat follows the tooling rule, not the presence of a refusal")
+	// …and every context still carries its OWN reason.
+	require.Len(t, target.ContextRefusals, 2)
+	reasons := map[string]bool{}
+	for i, refusal := range target.ContextRefusals {
+		require.NotNilf(t, refusal, "context %d refused", i)
+		reasons[refusal.Message] = true
+	}
+	assert.Len(t, reasons, 2,
+		"the two contexts refuse for different resolvers, so their remedies differ")
 }
