@@ -852,16 +852,14 @@ func appendSeatbeltLoopbackNetworkRules(
 // datagram matches no exception (the endpoint's is TCP-only), and network-bind
 // still refuses every listener.
 //
-// The exception is written as a port on Seatbelt's "localhost" rather than on
-// the address the proxy actually bound, so the port is the only thing that
-// discriminates between destinations here. Whether that token means exactly
-// the host-loopback interface — covering 127.0.0.1 and ::1 alike, and nothing
-// bound at a routable local address — is a runtime Seatbelt behavior that no
-// golden can observe, and it is UNVERIFIED until M3.2's smoke measures it on a
-// macOS runner. The intent is the same identity folding the evaluator applies
-// to loopback destinations; if the smoke contradicts it, this generator is
-// what changes. sandboxpolicy.AddrIsLoopbackIdentity governs which endpoints
-// are ACCEPTED above and says nothing about what Seatbelt MATCHES here.
+// The exception spells the exact address and port the proxy bound. M3.2 proved
+// on macOS runner hardware that Seatbelt's "localhost:PORT" token means any
+// address assigned to the host at that port, not just the loopback interface;
+// using it here left a same-port host-local service directly reachable. The
+// generated literal must therefore retain both endpoint axes. The hardware
+// smoke proves the replacement in both directions: the exact proxy endpoint
+// remains reachable while a live non-loopback service at the same port gets
+// EPERM.
 func appendSeatbeltIsolatedNetworkRules(
 	profile *strings.Builder,
 	params []seatbeltProfileParam,
@@ -930,11 +928,12 @@ func appendSeatbeltFloorOutboundDenyRule(
 		profile.WriteString(name)
 		profile.WriteString("\"))))\n")
 	}
-	if port := proxyEndpoint.Port(); port != 0 {
-		// The port is an integer, so nothing operator-controlled is interpolated
-		// into the profile text here.
+	if proxyEndpoint.Port() != 0 {
+		// validateSeatbeltProxyEndpoint already limits this value to a concrete
+		// host-loopback AddrPort. AddrPort.String supplies the bracketed IPv6
+		// spelling when needed, and no operator-controlled text reaches SBPL.
 		fmt.Fprintf(profile,
-			"    (require-not (remote tcp \"localhost:%d\"))\n", port)
+			"    (require-not (remote tcp %q))\n", proxyEndpoint.String())
 	}
 	profile.WriteString("  ))\n")
 }

@@ -113,7 +113,7 @@ func TestRenderSeatbeltProxyFloorGolden(t *testing.T) {
     (require-not
       (remote unix-socket
         (literal (param "AGENTD_SOCKET_0"))))
-    (require-not (remote tcp "localhost:49871"))
+    (require-not (remote tcp "127.0.0.1:49871"))
   ))
 
 (deny file-write*
@@ -177,12 +177,12 @@ func TestSeatbeltProxyFloorOpensExactlyTheProxyPort(t *testing.T) {
 	)
 
 	proxyException := fmt.Sprintf(
-		`(require-not (remote tcp "localhost:%d"))`, proxyFloorProxyPort)
+		`(require-not (remote tcp "127.0.0.1:%d"))`, proxyFloorProxyPort)
 	assert.Equal(t, 1, strings.Count(profile, proxyException),
 		"the proxy port must be excepted exactly once, inside the outbound deny")
 
 	// §8.2's second host-loopback port. Same interface, different port.
-	assert.NotContains(t, profile, fmt.Sprintf("localhost:%d", proxyFloorControlPort),
+	assert.NotContains(t, profile, fmt.Sprintf("127.0.0.1:%d", proxyFloorControlPort),
 		"a control server on a second host-loopback port must stay unreachable")
 	// A port-less loopback exception, or a remote-ip one, would reach every
 	// host-loopback service rather than the proxy.
@@ -227,7 +227,7 @@ func TestSeatbeltProxyFloorDiffersFromTheIsolatedFloorItExtends(t *testing.T) {
 		[]string{proxyFloorAgentdSocket},
 	)
 
-	assert.NotContains(t, isolated, "localhost:",
+	assert.NotContains(t, isolated, "127.0.0.1:",
 		"the isolated floor reaches no IP destination at all")
 	// Everything the isolated floor denies, the proxy floor still denies: the
 	// endpoint is an addition to that floor, not a different one.
@@ -244,7 +244,7 @@ func TestSeatbeltProxyFloorDiffersFromTheIsolatedFloorItExtends(t *testing.T) {
 	// that had quietly gained or lost something else.
 	assert.Equal(t,
 		[]string{fmt.Sprintf(
-			`    (require-not (remote tcp "localhost:%d"))`, proxyFloorProxyPort)},
+			`    (require-not (remote tcp "127.0.0.1:%d"))`, proxyFloorProxyPort)},
 		seatbeltRuleLinesAdded(isolated, proxy),
 		"the proxy floor is the isolated floor plus the endpoint exception, nothing more")
 	assert.Empty(t, seatbeltRuleLinesAdded(proxy, isolated),
@@ -289,7 +289,7 @@ func TestSeatbeltProxyFloorWithoutAllowlistedSocketsStillReachesTheProxy(t *test
 	assert.NotContains(t, profile, "(deny network-outbound)\n",
 		"the blanket outbound deny would cut the sandbox off from its own proxy")
 	assert.Contains(t, profile, fmt.Sprintf(
-		`(require-not (remote tcp "localhost:%d"))`, proxyFloorProxyPort))
+		`(require-not (remote tcp "127.0.0.1:%d"))`, proxyFloorProxyPort))
 	for _, param := range params {
 		assert.NotContains(t, param.name, "AGENTD_SOCKET_",
 			"no socket was allowlisted, so no socket exception may appear")
@@ -328,7 +328,7 @@ func TestSeatbeltProxyFloorKeepsTheEndpointBesideEverySocketException(t *testing
 				t, plan, proxyFloorEndpoint(), allowlisted)
 
 			proxyException := fmt.Sprintf(
-				`(require-not (remote tcp "localhost:%d"))`, proxyFloorProxyPort)
+				`(require-not (remote tcp "127.0.0.1:%d"))`, proxyFloorProxyPort)
 			assert.Equal(t, 1, strings.Count(profile, proxyException),
 				"the endpoint exception must survive a %d-socket floor", count)
 
@@ -354,34 +354,12 @@ func TestSeatbeltProxyFloorKeepsTheEndpointBesideEverySocketException(t *testing
 	}
 }
 
-// Loopback identity is decided by the shared predicate, so every spelling of
-// the host is one destination rather than several. The rendered exception is
-// therefore identical across spellings, and an address outside that space is
-// refused rather than opened.
-//
-// The unspecified addresses the shared predicate also carries are deliberately
-// absent here: they name the host as a DESTINATION but are a wildcard bind as a
-// LISTEN address, and the refusal test above owns them.
-//
-// ::ffff:127.0.0.1 is here because Go's net-to-netip bridge produces mapped
-// spellings from any 16-byte net.IP, so it is a form a launcher really arrives
-// with — not because it discriminates the predicates. It does not: netip's own
-// IsLoopback already unmaps 4-in-6.
-//
-// Worth recording, since it looks like a gap: once the wildcard refusal is in
-// place, AddrIsLoopbackIdentity and a plain IsLoopback agree on every address
-// that can be a real listen address. The identity predicate is wider only by
-// the unspecified addresses (refused above as binds) and the rest of
-// 0.0.0.0/8, which names "this network" and is not an address any host binds.
-// So the reuse of the shared predicate is correct here BY CONSTRUCTION rather
-// than test-enforced, and no fixture below can prove which one is called. It is
-// still the right call to make: the identity question has one owner, and a
-// local IsLoopback here would be a second definition that happens to coincide
-// today.
-func TestSeatbeltProxyFloorUsesTheSharedLoopbackIdentity(t *testing.T) {
-	canonical, _ := renderProxyFloor(
-		t, proxyFloorPlan(t), proxyFloorEndpoint(), []string{proxyFloorAgentdSocket})
-
+// TestSeatbeltProxyFloorPreservesTheValidatedEndpoint pins the two distinct
+// questions at this seam. The shared identity predicate decides whether the
+// bind is host-loopback at all; after that validation, the generated exception
+// must preserve the exact bound address rather than fold every local interface
+// into Seatbelt's broader "localhost" token.
+func TestSeatbeltProxyFloorPreservesTheValidatedEndpoint(t *testing.T) {
 	for _, spelling := range []string{
 		"127.0.0.1", "127.0.0.5", "::1", "::ffff:127.0.0.1",
 	} {
@@ -394,9 +372,14 @@ func TestSeatbeltProxyFloorUsesTheSharedLoopbackIdentity(t *testing.T) {
 			netip.AddrPortFrom(addr, proxyFloorProxyPort),
 			[]string{proxyFloorAgentdSocket},
 		)
-		assert.Equal(t, canonical, profile,
-			"spelling %s names the same host, so it must render the same profile",
-			spelling)
+		exception := fmt.Sprintf(
+			`(require-not (remote tcp %q))`,
+			netip.AddrPortFrom(addr, proxyFloorProxyPort).String(),
+		)
+		assert.Equal(t, 1, strings.Count(profile, exception),
+			"spelling %s must remain the exact proxy bind in the floor", spelling)
+		assert.NotContains(t, profile, `remote tcp "localhost:`,
+			"Seatbelt's localhost token is broader than the loopback interface")
 	}
 }
 
