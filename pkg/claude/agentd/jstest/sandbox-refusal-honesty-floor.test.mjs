@@ -72,8 +72,23 @@ test('a refused target renders as launch-blocked, carrying the capability and it
   // And specifically NOT the missing-axis fallback's wording or bucketing.
   assert.doesNotMatch(container.textContent, /No enforcement verdict was returned/,
     'a refusal must never reach the missing-axis fallback');
-  assert.equal(container.querySelector('.sbx-rule-bucket'), null,
-    'no verdict was reached, so no bucket may claim one');
+  /* TCL-915 narrowed this, and the narrowing is the point rather than a
+     concession. It used to read `querySelector('.sbx-rule-bucket') === null` —
+     no bucket AT ALL — because the TCL-885 minimum rendered none. Option C
+     renders one: a bucket that carries NO verdict and says so. The property
+     that must survive is "no bucket may CLAIM a verdict", so it is now asserted
+     against the three verdict classes by name, which is what it always meant.
+
+     Asserted per class rather than by counting, so a fourth verdict bucket
+     added later cannot slip through a total that still looks right. */
+  for (const verdict of ['applied', 'partial', 'not-applied']) {
+    assert.equal(container.querySelector(`.sbx-rule-bucket-${verdict}`), null,
+      `no verdict was reached, so the ${verdict} bucket must not claim one`);
+  }
+  const unjudged = container.querySelector('.sbx-rule-bucket-unjudged');
+  assert.ok(unjudged, 'the refused target still lists its rules, unjudged');
+  assert.match(unjudged.textContent, /never judged|none carries a verdict/,
+    'listing rules without a verdict is only honest if it SAYS no verdict was reached');
 });
 
 test('an old daemon\'s missing axes render differently from a refusal', async (t) => {
