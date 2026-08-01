@@ -611,7 +611,17 @@ func TestOpenCodeControlSocketPathLeavesLegacySharedUnstrandedAndUnadvised(t *te
 		"legacy-shared derives its control root from the current parent, so it follows the move")
 	assert.NotEqual(t, before, after,
 		"and it really did follow it — equal paths would mean the move never took effect and this test proved nothing")
-	assert.True(t, strings.HasPrefix(after, moved),
+	// resolvedTestPath, not the raw `moved`. openCodeControlSocketPath
+	// EvalSymlinks's the parent before building the control root, so it returns
+	// the RESOLVED spelling — and on macOS the temp root is reached through
+	// /var -> /private/var, so the two differ and a raw comparison fails there
+	// while passing on Linux. This is the trap resolvedTestPath's own comment
+	// in this file warns about, and this assertion walked straight into it: it
+	// went red on macOS CI only.
+	//
+	// Resolved AFTER the call, when production has created the directory —
+	// EvalSymlinks needs it to exist.
+	assert.True(t, strings.HasPrefix(after, resolvedTestPath(t, moved)),
 		"the new control root must sit under the new parent")
 }
 
