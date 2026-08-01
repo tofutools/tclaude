@@ -3,9 +3,9 @@ package sandboxpolicy
 import "net/netip"
 
 // loopbackIdentityPrefixes is the ONE definition of the address space that
-// names the host running the sandbox, or is carried alongside space that does,
-// rather than a routable destination. The "carried alongside" is not a hedge:
-// see the 0.0.0.0/8 row below.
+// names the host running the sandbox rather than a routable destination —
+// with one deliberate exception, at the 0.0.0.0/8 row below, which carries
+// routable space alongside the host spelling it exists for.
 //
 // It is deliberately wider than netip.Addr.IsLoopback, and wider than
 // reachability alone justifies. This comment used to say that Linux routes
@@ -38,7 +38,8 @@ import "net/netip"
 //     with no default route it fails ENETUNREACH, which is what the reviewer
 //     who found this saw: that errno was a property of their route table, not
 //     of the address space. No interface on either host carries a 0/8
-//     address, and neither host's routing state maps any of it on-host. It is
+//     address, and neither host's routing state maps any of the rest on-host.
+//     It is
 //     RFC 6890 "this host on this network", whose registry entry marks it
 //     valid as a SOURCE address and neither a destination nor forwardable.
 //
@@ -57,7 +58,9 @@ import "net/netip"
 // a destination the RFC 6890 registry marks non-forwardable. Narrowing the
 // row is a behaviour change that needs its own scrutiny rather than a docs
 // pass, and the seam for it would be the evaluator — which rows this space is
-// handed to — not this list.
+// handed to — not this list, with the compiler's refusal kept in step (see
+// TCL-899: an address that is neither authorable nor deniable is that trap in
+// reverse).
 //
 // The IPv4-mapped forms are carried so a v6-spelled range covering the same
 // space cannot present a second identity for it.
