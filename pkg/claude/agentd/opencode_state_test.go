@@ -717,16 +717,21 @@ func environmentNames(entries []sandboxpolicy.EnvironmentEntry) string {
 	return strings.Join(names, ",")
 }
 
-// TestOpenCodeInvalidAgentIDIsMatchableFromEveryProducer pins the property
+// TestOpenCodeInvalidAgentIDIsMatchableFromBothProducers pins the property
 // TCL-911 restores: the two functions that refuse a malformed agent id render
 // ONE operator-visible sentence and both answer errors.Is with that sentence's
 // sentinel. Text equality is asserted on full Error() strings so a fix that
 // changed the wording would be caught here rather than by an operator.
 //
+// BOTH, not EVERY: the two producers are enumerated by hand, so a third one
+// added later emitting the literal — the exact failure mode this closes — would
+// not fail here. That invariant is carried by errOpenCodeInvalidAgentID's doc
+// comment, not by this assertion.
+//
 // The text assertions hold on the pre-fix tree as well — that is the point.
 // What fails without the fix is only the errors.Is assertion on
 // allocatePrivateOpenCodeState, which is exactly the drift being closed.
-func TestOpenCodeInvalidAgentIDIsMatchableFromEveryProducer(t *testing.T) {
+func TestOpenCodeInvalidAgentIDIsMatchableFromBothProducers(t *testing.T) {
 	setupTestDB(t)
 	const badID = "agt_not-hex"
 	const wantSentence = `invalid OpenCode state agent id "agt_not-hex"`

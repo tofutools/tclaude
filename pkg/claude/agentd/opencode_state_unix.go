@@ -185,8 +185,9 @@ func validateOpenCodeFilteredProviderDirectory(
 // condition, and two copies can only ever drift apart; one predicate with two
 // presentations cannot.
 //
-// Every producer of this sentence wraps it. A second producer emitting the same
-// operator-visible text as a bare literal would render identically while
+// A rule for whoever adds the next one, not something the compiler or a test
+// can enforce: every producer of this sentence wraps it. A producer emitting
+// the same operator-visible text as a bare literal renders identically while
 // answering errors.Is with false, which is the same drift in a shape that is
 // harder to see (TCL-911).
 var errOpenCodeInvalidAgentID = errors.New("invalid OpenCode state agent id")
