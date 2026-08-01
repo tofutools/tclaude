@@ -1012,17 +1012,57 @@ func TestDarwinTclaudeLayerEnforcesOnlyLoopbackOnlyLists(t *testing.T) {
 		local, ClaudeSandboxOff, "darwin", true,
 	)
 	require.NoError(t, err)
-	assert.Equal(t, EnforceFull, row.NetworkList)
+	// TCL-927: Partial, not Full. This row shipped at Full from TCL-833 and
+	// claimed a loopback confinement Seatbelt cannot express — TCL-917
+	// measured a service on an authored port at a non-loopback address of the
+	// same machine reachable from inside the sandbox. Asserting the exact
+	// level rather than "not None" is what keeps a silent return to Full from
+	// passing here.
+	assert.Equal(t, EnforcePartial, row.NetworkList)
+	// The PORTS axis is genuinely enforced (off-list port refused with EPERM,
+	// measured), so this stays Full. Pinned so a future correction of the
+	// address axis does not quietly take the port claim down with it.
 	assert.Equal(t, EnforceFull, row.NetworkPorts)
 	assert.Equal(t, []NetworkSelectorCapability{{
 		Selector: string(sandboxpolicy.NetworkSelectorLoopback),
-		Level:    EnforceFull,
+		Level:    EnforcePartial,
+		Detail:   SeatbeltNativeLoopbackSelectorDetail,
 	}}, row.NetworkSelectors)
+	// The escape must reach an operator who reads the ROW without opening the
+	// selector, which is the whole reason the condition is populated.
+	//
+	// Asserting equality against the constant would pin the WIRING and nothing
+	// else: it passes for any body, so deleting the load-bearing clause would
+	// regress the disclosure with this test still green. The clause itself is
+	// asserted too.
+	assert.Equal(t, SeatbeltNativeLoopbackCondition, row.NetworkListCondition)
+	assert.Contains(t, row.NetworkListCondition, "not confined to loopback")
+	assert.Contains(t, row.NetworkSelectors[0].Detail, "not confined to loopback")
+
+	// The branch covers Codex as well as Claude Code, and a gate that silently
+	// stopped covering one of them would otherwise pass here.
+	codexRow, err := accessEnforcementTable(
+		MustGet(CodexName), sandboxpolicy.ImplementationTclaudeLayer,
+		local, ClaudeSandboxOff, "darwin", true,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, EnforcePartial, codexRow.NetworkList)
+	assert.Equal(t, row.NetworkSelectors, codexRow.NetworkSelectors)
+	assert.Equal(t, row.NetworkListCondition, codexRow.NetworkListCondition)
 	rendered, notices, err := PlanAccessEnforcement(
 		local, accessEnforcementFromTable(row))
 	require.NoError(t, err)
 	assert.Equal(t, local, rendered)
-	assert.Empty(t, notices)
+	// The plan is still rendered as authored — Partial is a disclosure change,
+	// not a narrowing — but it now carries a degradation notice, because the
+	// enforced set really is wider than what was authored. Asserted positively:
+	// the previous version of this test asserted the notice list was EMPTY,
+	// which is a condition an absent notice satisfies just as well as a
+	// correct one.
+	require.Len(t, notices, 1)
+	assert.Equal(t, "selector_partial", notices[0].Reason)
+	assert.Equal(t, []int{0}, notices[0].Entries)
+	assert.Contains(t, notices[0].Detail, SeatbeltNativeLoopbackSelectorDetail)
 
 	mixed := sandboxpolicy.ResolvedAxes{Network: sandboxpolicy.NetworkRules{
 		Mode: sandboxpolicy.AccessModeList,

@@ -568,11 +568,28 @@ The two halves of that have different evidence, and are worth keeping apart:
   localhost in network address`. This comes from M3.1/M3.2 attempting exactly
   that substitution, not from the run above, and no test currently asserts it.
 
-So **M3.3 may rate Darwin `NetworkList` Partial with that scope stated; it may
-not rate it Full.** This is a cap on a future claim rather than a correction to
-a current one: the cell is already `EnforceNone` and `EnforceFull` is gated on
-`goos == "linux"`, so nothing is over-rated today and no cell changed when this
-was measured.
+So **Darwin `NetworkList` may be rated Partial with that scope stated; it may
+not be rated Full.**
+
+An earlier version of this paragraph called that "a cap on a future claim rather
+than a correction to a current one," on the grounds that the cell was already
+`EnforceNone` and `EnforceFull` was gated on `goos == "linux"`. **That was
+wrong, and it is worth recording why.** A separate Darwin branch — not the
+`goos == "linux"` one — rated Claude Code and Codex `EnforceFull` for
+loopback-only allow lists, with the loopback selector at `Full` and no caveat
+at all. It shipped that way from TCL-833 (#1688), so the measurement above
+*was* a correction to a live claim, and the cell was over-rated for the whole
+period this section claimed it was not.
+
+The error came from reading the platform gate instead of evaluating the rating.
+Probing `PredictAccessEnforcement` directly with `goos = "darwin"` and a
+loopback-only list answers it in one call and does not depend on having found
+every branch. TCL-927 corrects the rating to `Partial` and attaches this
+scope as the selector detail and the row condition.
+
+Only OpenCode was genuinely `EnforceNone` on this path, for reasons of its own
+(no explicit provider to resolve a launch endpoint from); whether it should be
+activated at all is TCL-929.
 
 **Not measured, named so silence is not read as evidence:** external *UDP*
 egress from the native path. It is unmeasured on the proxy floor too — that

@@ -554,12 +554,26 @@ func accessEnforcementTable(
 			goos == "darwin" && filteredNetworkReady &&
 			(h.Name == DefaultName || h.Name == CodexName) &&
 			sandboxpolicy.NetworkRulesAreLoopbackOnly(axes.Network) {
-			caps.NetworkList = EnforceFull
+			// TCL-927: Partial, not Full. The row and its loopback selector
+			// shipped at Full from TCL-833 (#1688) and claimed a confinement
+			// this mechanism does not deliver — TCL-917 measured a service on
+			// an authored port at a non-loopback address of the same machine
+			// reachable from inside the sandbox, and SBPL cannot express
+			// "this port, loopback only" at all. The operator's cap on this
+			// cell is Partial; the Full rating contradicted it.
+			//
+			// The PORTS cell stays Full on purpose: an off-list port is
+			// refused with EPERM, measured. Only the address axis is
+			// unenforced. See SeatbeltNativeLoopbackSelectorDetail for the
+			// full reasoning and the measurement's scope.
+			caps.NetworkList = EnforcePartial
 			caps.NetworkSelectors = []NetworkSelectorCapability{{
 				Selector: string(sandboxpolicy.NetworkSelectorLoopback),
-				Level:    EnforceFull,
+				Level:    EnforcePartial,
+				Detail:   SeatbeltNativeLoopbackSelectorDetail,
 			}}
 			caps.NetworkPorts = EnforceFull
+			caps.NetworkListCondition = SeatbeltNativeLoopbackCondition
 			caps.Mechanism = "tclaude-layer Seatbelt native host-loopback filter"
 		}
 		if implementation == sandboxpolicy.ImplementationTclaudeLayer &&

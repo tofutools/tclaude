@@ -14,6 +14,97 @@ const (
 	FilteredNetworkPortDetail        = "TCP and UDP destination ports are enforced; QUIC is covered as UDP."
 )
 
+// The Darwin native host-loopback filter's disclosure. It is separate from the
+// FilteredNetwork* strings above because the mechanism is different: those
+// describe the Linux packet gateway's synthetic host.tclaude.internal mapping,
+// while Darwin's Local access reaches the REAL host loopback through a Seatbelt
+// rule.
+//
+// WHY THE SELECTOR IS PARTIAL AND NOT FULL. It shipped at Full from TCL-833
+// (#1688) until TCL-927. TCL-917 measured on this exact path
+// (appendSeatbeltLoopbackNetworkRules; run 30691418550, job 91346704723) that a
+// service listening on an AUTHORED PORT at a NON-LOOPBACK address of the same
+// machine is reachable from inside the sandbox. The rule cannot be written any
+// other way: SBPL's grammar accepts only `*` or `localhost` as the host term,
+// `localhost` means every address assigned to the host, and a literal IP is
+// rejected when the profile is parsed ("host must be * or localhost in network
+// address"). So the mechanism cannot express "this port, loopback only" at all.
+//
+// NOT NONE EITHER. Real enforcement happens and is measured: a port outside the
+// authored list is refused with EPERM, and an outbound TCP connect to an
+// external destination is refused. Only the ADDRESS axis is unenforced, which
+// is why the ports cell stays Full and this one moves to Partial.
+//
+// BIND IS NOT RESTRICTED ON THIS POSTURE, and an earlier draft of the string
+// below claimed the opposite. `(deny network-bind)` is emitted only by
+// appendSeatbeltIsolatedNetworkRules; the loopback path deliberately leaves
+// bind alone so local services and the IDE bridge keep working
+// (sandbox_seatbelt_test.go asserts the profile does NOT contain it, and the
+// Darwin Local smoke requires net.Listen to SUCCEED). The false claim came from
+// importing a property measured on the ISOLATED posture into this one — the
+// same held-parameter mistake TCL-917 was about. Do not restore it: an operator
+// must not be told the precondition is one the sandbox cannot arrange.
+//
+// SCOPE OF THE MEASUREMENT. TCP. External UDP was measured on neither Seatbelt
+// path, so the operator-facing strings below say TCP rather than claiming IP
+// generally — the policy recorded in docs/proxy-network-filtering.md. See the
+// same note at appendSeatbeltLoopbackNetworkRules.
+//
+// WIDENING IS NOT DETECTABLE. No test would notice if Apple made `localhost`
+// match addresses beyond this machine: the external-destination assertion moves
+// the address AND the port together, so it is refused on port alone even under
+// a widened host predicate. The strings below therefore describe what is
+// refused TODAY without implying the boundary is monitored.
+//
+// NOT MITIGATED, DELIBERATELY. The operator ruled document-and-disclose and
+// ruled AGAINST a launch-time port-collision check on both Seatbelt paths
+// (TCL-917). Do not re-propose one here.
+const (
+	// SeatbeltNativeLoopbackSelectorDetail is the per-selector disclosure. It
+	// names the escape and its precondition, so an operator can judge their own
+	// exposure rather than discovering it.
+	//
+	// It covers ALL the authored shapes, because appendSeatbeltLoopbackNetworkRules
+	// COALESCES rules rather than emitting one exception per rule:
+	//
+	//	every rule names ports -> the ports are UNIONED into one set and emitted
+	//	                          as tcp+udp exceptions, so what is refused is a
+	//	                          port outside the COMBINED set, not outside any
+	//	                          one rule's ports — the union discards the
+	//	                          rule-to-port pairing
+	//	any rule names none    -> allowAllPorts short-circuits the loop and emits
+	//	                          `(allow network-outbound (remote ip
+	//	                          "localhost:*"))`: every port on every address of
+	//	                          this machine, INCLUDING the mixed case where
+	//	                          other rules did name ports
+	//
+	// An unconditional "a port outside the list is refused" is false for the
+	// second shape, which is the net-local preset. Per-rule phrasing would be
+	// wrong for the first.
+	//
+	// The host term is a separate limit and must not be overstated either. The
+	// grammar accepts "localhost" OR "*" (sandbox_seatbelt.go:789; the deny this
+	// carves an exception out of is itself written `(remote ip "*:*")`). What is
+	// true is that a LITERAL IP is rejected, which makes `localhost` the
+	// NARROWEST spelling available — not the only one. An earlier draft said
+	// "accept only localhost", which misdescribed the mechanism, and a
+	// disclosure that misdescribes the mechanism cannot be relied on to
+	// describe the escape.
+	SeatbeltNativeLoopbackSelectorDetail = "Local-machine rules are not confined to loopback. " +
+		"macOS sandbox rules cannot name an address: the host must be written \"localhost\" or \"*\", and a literal IP is rejected when the profile is parsed, " +
+		"so \"localhost\" — every address assigned to this machine — is the narrowest scope these rules can express. " +
+		"A service listening on an allowed port at another of this machine's addresses, its LAN address for example, is therefore reachable from the sandbox as well. " +
+		"When every rule names ports, the allowed ports are those rules' ports combined and a port outside that combined set is refused; " +
+		"if any rule names no ports, every port on this machine is allowed. " +
+		"Outbound TCP to destinations off this machine is refused."
+
+	// SeatbeltNativeLoopbackCondition carries the same escape on the ROW, so an
+	// operator reading network.list learns it without opening the selector.
+	SeatbeltNativeLoopbackCondition = "Local-machine rules are not confined to loopback: " +
+		"a service listening on an allowed port at another of this machine's addresses is reachable from the sandbox as well. " +
+		"A rule that names no ports allows every port on this machine."
+)
+
 func filteredNetworkDNSCaveat() string {
 	return FilteredNetworkDNSIdentityCaveat + " " + FilteredNetworkDNSLeaseCaveat
 }
