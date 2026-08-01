@@ -2567,9 +2567,13 @@ func costDailyConvKey(r CostDailyRow) string {
 // restate it. A partial retelling is what sent the first reader wrong, and a
 // single source that is paraphrased elsewhere is not single.
 //
-// THE COLUMN CONTRACT, not one writer's habit. Every updated_at in
-// session_cost_daily is some time.Time run through time.RFC3339Nano, but the
-// zone is the WRITER'S, not this process's, and the writers disagree:
+// THE COLUMN CONTRACT, not one writer's habit. When present, updated_at is
+// INTENDED to be an RFC3339Nano spelling; "" means unknown, which the schema
+// default and pre-updated_at history can both leave behind (see the unusable-
+// stamp paragraph below — this is one contract, not two). Nothing enforces the
+// format at the column, so "intended" is the strongest available claim. And
+// where a stamp is present, its zone belongs to the WRITER or the SOURCE it was
+// copied from, not to this process — the writers disagree:
 //
 //   - UpdateSessionCost stamps time.Now(), so those rows carry the local zone
 //     of whatever machine recorded the spend.
