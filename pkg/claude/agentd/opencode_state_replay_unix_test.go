@@ -355,7 +355,14 @@ func TestOpenCodeAnchoredStateTargetsIgnoresOtherHarnesses(t *testing.T) {
 // did not cover.
 func TestPrepareOpenCodeTclaudeLayerStateRefusesReadOnlyStateDirEscape(t *testing.T) {
 	stateRoot, _ := allocatedOpenCodeConfigDir(t)
-	victimParent := filepath.Join(t.TempDir(), "victim-parent")
+	victimTargetRoot := resolvedTestPath(t, t.TempDir())
+	victimAliasRoot := filepath.Join(resolvedTestPath(t, t.TempDir()), "victim-alias")
+	require.NotContains(t, victimTargetRoot, victimAliasRoot,
+		"the target must not contain the alias or the fixture could pass by substring coincidence")
+	require.NotContains(t, victimAliasRoot, victimTargetRoot,
+		"the alias must not contain the target or the fixture could pass by substring coincidence")
+	require.NoError(t, os.Symlink(victimTargetRoot, victimAliasRoot))
+	victimParent := filepath.Join(resolvedTestPath(t, victimAliasRoot), "victim-parent")
 	require.NoError(t, os.MkdirAll(victimParent, 0o700))
 	// The escape hatch: an in-root name that resolves out of the root.
 	require.NoError(t, os.Symlink(victimParent, filepath.Join(stateRoot, "escape")))
