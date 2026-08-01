@@ -320,6 +320,57 @@ Missing or corrupt durable allocation state refuses a replay instead of
 silently returning to shared state. Harness-builtin OpenCode launches are
 unchanged.
 
+#### Recovering an agent stranded by a changed `XDG_DATA_HOME` or `HOME`
+
+A private OpenCode allocation is bound to the private state parent it was
+created under, which is `$XDG_DATA_HOME/tclaude/opencode-agents` (falling back
+to `~/.local/share`). Changing `XDG_DATA_HOME`, or `HOME` when `XDG_DATA_HOME`
+is unset, moves that parent away from the recorded allocation and the agent
+stops launching. This is deliberate — the daemon will not accept a state root
+it cannot re-derive for itself — but it fails closed rather than fixing itself,
+so it needs an operator action.
+
+Two ways out, in the order most operators want them:
+
+1. **Restore the previous `XDG_DATA_HOME` or `HOME`.** If the change was
+   accidental, this is the cheaper fix: it mutates nothing and the existing
+   agent, its conversations and its credentials all come back.
+2. **Recreate the agent.** A new agent allocates under the current parent. Its
+   conversation history and its private OpenCode credentials do not come with
+   it — the old state root is still on disk under the old parent and can be
+   copied out by hand if it is worth keeping.
+
+There is deliberately no command that repoints an existing allocation at the
+new parent. The daemon's rule is that a per-agent state root must be one it
+derives, not one it reads back out of the same database the launch spec comes
+from; a repair that trusted the recorded parent would reintroduce exactly the
+circularity the launch contract exists to prevent.
+
+The refusal names the cause and both remedies at the point of failure, on every
+posture. Which sentence an operator sees depends on how their agent is
+launched:
+
+* **Isolated and filtered** postures use the Unix control relay, so they refuse
+  on the control root — `OpenCode control root … is outside this daemon's
+  private state parent …`.
+* **Host-open** has no control socket and refuses on the state root anchor
+  instead, naming the config bootstrap target or the launch contract's state
+  root.
+
+**Legacy shared agents are never stranded on the control root, and never see
+this remedy.** Their control root is derived from the current parent rather than
+recorded, so it follows the environment change instead of being stranded by it,
+and they are never told to recreate anything. A legacy shared agent moved this
+way gets a new, empty control directory under the new parent rather than a
+refusal on that path.
+
+That is a narrower claim than "unaffected", deliberately. A legacy shared
+agent's contract state root is `~/.opencode`, so changing `HOME` — as opposed to
+`XDG_DATA_HOME` — moves that too, and the state root anchor refuses with
+`… is neither an allocated per-agent state root nor this host's OpenCode state
+root …`. That refusal is about the ambient OpenCode tree following `HOME`, not
+about a stranded allocation, and recreating the agent is not its remedy.
+
 The Linux host-open posture starts with a read-only view of the host root
 unless the profile authors the `unix_sockets` axis; the isolated and filtered
 postures, and host-open with an authored socket axis, use the constructed root

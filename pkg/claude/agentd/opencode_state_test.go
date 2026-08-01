@@ -775,3 +775,82 @@ func TestOpenCodeInvalidAgentIDIsMatchableFromBothProducers(t *testing.T) {
 	assert.ErrorContains(t, missingErr, "refusing shared-state fallback")
 	assert.NotErrorIs(t, missingErr, errOpenCodeInvalidAgentID)
 }
+
+// The replay arm, which had no test at all until a cold review's mutation
+// reverted it and nothing failed (TCL-909).
+//
+// This is the path an isolated or filtered agent takes on RESTART, and it is
+// where a stranded allocation was worst served: openCodeControlSocketPath
+// produced a sentence naming the cause and the way out, and the caller threw it
+// away in favour of "control path is outside its allocated agent authority" — a
+// verdict about a comparison that never ran, because the authority could not be
+// computed at all.
+//
+// Pinned end to end through the production replay entry point rather than by
+// calling the inner helper, because the defect was in the CALLER's handling of
+// the helper's error and a direct call would not have exercised it.
+func TestOpenCodeRuntimeSandboxSpecSurfacesAStrandedControlAuthority(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the Unix relay posture is Linux-only")
+	}
+	setupTestDB(t)
+	shortHome := agentipctest.ShortSocketDir(t)
+	t.Setenv("HOME", shortHome)
+	t.Setenv("USERPROFILE", shortHome)
+	shortData, err := os.MkdirTemp("/tmp", "tcl909-")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(shortData) })
+	t.Setenv("XDG_DATA_HOME", shortData)
+	db.ResetForTest()
+	cwd := filepath.Join(shortHome, "work")
+	require.NoError(t, os.MkdirAll(cwd, 0o700))
+
+	agentID := "agt_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	allocation, err := allocatePrivateOpenCodeState(agentID)
+	require.NoError(t, err)
+	snapshot := sandboxpolicy.EmptySnapshot()
+	snapshot.Effective.NetworkAccess = sandboxpolicy.NetworkAccessNone
+
+	spec, err := openCodeUnixRelayLaunchSpec(
+		string(sandboxpolicy.ImplementationTclaudeLayer),
+		cwd, nil, &snapshot, agentID)
+	require.NoError(t, err)
+	controlPath := filepath.Join(allocation.StateRoot, "control.sock")
+	listener, device, inode, err := opencodeapi.CreateUnixListener(controlPath)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = listener.Close()
+		_ = os.Remove(controlPath)
+	})
+	encoded, err := json.Marshal(spec)
+	require.NoError(t, err)
+	replayable := db.OpenCodeRuntime{
+		Cwd: cwd, SandboxImplementation: string(sandboxpolicy.ImplementationTclaudeLayer),
+		SandboxLaunchSpecJSON: string(encoded),
+		Transport:             db.OpenCodeTransportUnixRelay,
+		ControlSocketPath:     controlPath, ControlSocketDevice: device,
+		ControlSocketInode: inode,
+	}
+
+	// The accepting control. Without it a refusal below could be any of the
+	// dozen other reasons this function rejects a spec.
+	_, err = openCodeRuntimeSandboxSpec(replayable)
+	require.NoError(t, err, "the spec replays before the environment moves")
+
+	// The operator moves their XDG data base. The runtime row, the spec and the
+	// socket on disk are all untouched.
+	t.Setenv("XDG_DATA_HOME", filepath.Join(t.TempDir(), "moved"))
+
+	_, err = openCodeRuntimeSandboxSpec(replayable)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "control authority could not be established",
+		"the caller must say the authority was uncomputable, not report a comparison it never made")
+	require.ErrorContains(t, err, "is outside this daemon's private state parent",
+		"the inner cause has to survive the wrap — that is the whole finding")
+	require.ErrorContains(t, err, openCodeStrandedAllocationRemedy)
+	require.ErrorContains(t, err, "recreate this agent")
+	// The retired sentence, kept as a negative needle: it claimed the path was
+	// outside an authority that had never been computed.
+	require.NotContains(t, err.Error(),
+		"control path is outside its allocated agent authority")
+}

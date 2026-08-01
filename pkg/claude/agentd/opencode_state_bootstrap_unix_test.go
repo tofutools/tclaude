@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -404,14 +405,26 @@ func TestPrepareOpenCodeReadOnlyConfigRefusesAllocationStrandedByEnvChange(t *te
 		"is outside this daemon's private state parent")
 	require.ErrorContains(t, err,
 		"a changed XDG_DATA_HOME or HOME moves that parent away from an existing allocation")
+	// The remedy on THIS path too, not only on the control socket below. A cold
+	// review mutation removed it from here and no test failed — the docs assert
+	// host-open gets a way out, and nothing was holding that claim up.
+	require.ErrorContains(t, err, openCodeStrandedAllocationRemedy)
+	require.ErrorContains(t, err, "recreate this agent")
 	assert.NoFileExists(t, filepath.Join(configDir, openCodeInstallBootstrapFile))
 
 	// The same allocation fails the same way on the control-socket path, which
 	// is the pre-existing rule this one is now consistent with — asserted, so
 	// "consistency gain" is not a claim the PR makes about untested code.
 	_, controlErr := openCodeControlSocketPath(filepath.Base(stateRoot))
-	require.ErrorContains(t, controlErr, "validated direct agent child",
+	require.ErrorContains(t, controlErr,
+		"is outside this daemon's private state parent",
 		"pinned to the reason: an unrelated failure here would keep this test green while the parity claim in the migration note quietly became false")
+	require.ErrorContains(t, controlErr, openCodeStrandedAllocationRemedy,
+		"this is the posture pair operators actually run, so it is the one that most needs the way out")
+	// The retired spelling, kept as a NEGATIVE needle. It covered four distinct
+	// causes and named none of them; if it comes back, this fails rather than
+	// the wording silently regressing to the version TCL-909 removed.
+	require.NotContains(t, controlErr.Error(), "validated direct agent child")
 }
 
 // The self-bind case, driven through the PRODUCTION layout builder rather than
@@ -559,4 +572,87 @@ func TestPrepareOpenCodeReadOnlyConfigAcceptsSymlinkedAmbientConfig(t *testing.T
 
 	require.NoError(t, prepareOpenCodeReadOnlyConfig(spec, "Darwin"))
 	assert.FileExists(t, filepath.Join(ambientConfig, openCodeInstallBootstrapFile))
+}
+
+// The remedy must be UNREACHABLE from a posture that is not stranded. Telling
+// an operator whose agent is fine to recreate it is worse than saying nothing,
+// and it is the failure mode a shared remedy constant invites.
+//
+// Legacy-shared is that posture, and the reason is structural rather than
+// incidental: openCodeControlSocketPath builds its control root as
+// filepath.Join(parent, agentID) from the CURRENT parent, so the root follows
+// an environment change instead of being stranded by it. Private allocations
+// carry a RECORDED root, which is what a moved parent leaves behind.
+//
+// Asserted through the production path both before and after the move, so this
+// is a property of the code rather than a note about it — a later change that
+// made legacy-shared consult a recorded root would fail here rather than start
+// telling unaffected operators to recreate their agents.
+func TestOpenCodeControlSocketPathLeavesLegacySharedUnstrandedAndUnadvised(t *testing.T) {
+	isolatedOpenCodeHost(t)
+	agentID := db.NewAgentID()
+	inserted, err := db.InsertOpenCodeAgentStateAllocation(
+		db.OpenCodeAgentStateAllocation{
+			AgentID: agentID, Mode: db.OpenCodeStateLegacyShared,
+		})
+	require.NoError(t, err)
+	require.True(t, inserted, "the fixture only means anything on a real allocation")
+
+	before, err := openCodeControlSocketPath(agentID)
+	require.NoError(t, err, "control before the move — the accepting control")
+	require.NotEmpty(t, before)
+
+	// The same operator action that strands a private allocation.
+	moved := filepath.Join(t.TempDir(), "moved")
+	// The FIXTURE owns this directory's existence, not production. Without it
+	// the assertion below still relies on production's own MkdirAll having run,
+	// so a regression that moved the derived parent out from under
+	// XDG_DATA_HOME would die inside resolvedTestPath with "lstat: no such
+	// file" instead of saying the control root is not under the new parent.
+	// Still red either way — but pointed at the wrong thing.
+	require.NoError(t, os.MkdirAll(moved, 0o700))
+	t.Setenv("XDG_DATA_HOME", moved)
+
+	after, err := openCodeControlSocketPath(agentID)
+	require.NoError(t, err,
+		"legacy-shared derives its control root from the current parent, so it follows the move")
+	assert.NotEqual(t, before, after,
+		"and it really did follow it — equal paths would mean the move never took effect and this test proved nothing")
+	// resolvedTestPath, not the raw `moved`. openCodeControlSocketPath
+	// EvalSymlinks's the parent before building the control root, so it returns
+	// the RESOLVED spelling — and on macOS the temp root is reached through
+	// /var -> /private/var, so the two differ and a raw comparison fails there
+	// while passing on Linux. This is the trap resolvedTestPath's own comment
+	// in this file warns about, and this assertion walked straight into it: it
+	// went red on macOS CI only.
+	//
+	// resolvedTestPath needs `moved` to exist, and the FIXTURE guarantees that
+	// above rather than production. An earlier version of this comment said the
+	// resolution was placed after the production call "when production has
+	// created the directory" — true when it was written, and made false by the
+	// MkdirAll added above, which exists precisely so this assertion no longer
+	// depends on the code it is testing.
+	assert.True(t, strings.HasPrefix(after, resolvedTestPath(t, moved)),
+		"the new control root must sit under the new parent")
+}
+
+// The private counterpart, kept next to it: the same move on a private
+// allocation DOES strand, and that refusal is the one carrying the remedy. Both
+// halves in one place, because the property under test is the DIFFERENCE
+// between them.
+func TestOpenCodeControlSocketPathAdvisesOnlyTheStrandedPrivateAllocation(t *testing.T) {
+	stateRoot, _ := allocatedOpenCodeConfigDir(t)
+	agentID := filepath.Base(stateRoot)
+
+	_, err := openCodeControlSocketPath(agentID)
+	require.NoError(t, err, "control before the move")
+
+	t.Setenv("XDG_DATA_HOME", filepath.Join(t.TempDir(), "moved"))
+
+	_, err = openCodeControlSocketPath(agentID)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "is outside this daemon's private state parent")
+	require.ErrorContains(t, err, openCodeStrandedAllocationRemedy)
+	require.ErrorContains(t, err, "recreate this agent",
+		"the remedy has to survive as WORDS an operator can act on, not just as a constant reference")
 }

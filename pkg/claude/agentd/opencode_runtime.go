@@ -491,9 +491,32 @@ func openCodeRuntimeSandboxSpec(
 		}
 		agentID := filepath.Base(filepath.Dir(runtime.ControlSocketPath))
 		expectedControlPath, authorityErr := openCodeControlSocketPath(agentID)
-		if authorityErr != nil || expectedControlPath != runtime.ControlSocketPath {
+		// Split, because the two arms are not the same statement and the
+		// combined one could only ever say the second (TCL-909).
+		//
+		// When authorityErr is set the daemon could not COMPUTE the authority,
+		// so "the control path is outside its allocated agent authority" is a
+		// verdict about a comparison that never happened. That mattered
+		// concretely: a replayed isolated or filtered spec whose allocation was
+		// stranded by a changed XDG_DATA_HOME or HOME lands here, and the one
+		// sentence naming that cause — and now the way out of it — was
+		// discarded on the line below.
+		//
+		// Wrapping rather than replacing: the outer sentence still says which
+		// contract failed, which is what this layer knows.
+		if authorityErr != nil {
 			return nil, fmt.Errorf(
-				"OpenCode tclaude-layer v4 runtime control path is outside its allocated agent authority")
+				"OpenCode tclaude-layer v4 runtime control authority could not be established: %w",
+				authorityErr)
+		}
+		if expectedControlPath != runtime.ControlSocketPath {
+			// "does not match", not "is outside". The test is string equality
+			// against one exact socket path, not containment in a region, and
+			// containment language invites the operator to go looking for a
+			// directory boundary that was never consulted.
+			return nil, fmt.Errorf(
+				"OpenCode tclaude-layer v4 runtime control path %q does not match its allocated agent authority %q",
+				runtime.ControlSocketPath, expectedControlPath)
 		}
 	} else if posture != sandboxpolicy.NetworkHostOpen ||
 		runtime.Transport == db.OpenCodeTransportUnixRelay {
