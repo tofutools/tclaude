@@ -44,7 +44,7 @@ type NewParams struct {
 	SandboxChosenBy       string `short:"T" long:"sandbox-chosen-by" optional:"true" help:"Internal: which resolution tier chose --sandbox"`
 	SandboxSnapshotPath   string `short:"U" long:"sandbox-snapshot-path" optional:"true" help:"Internal: private effective sandbox snapshot handoff"`
 	SandboxSnapshotDigest string `short:"V" long:"sandbox-snapshot-digest" optional:"true" help:"Internal: expected effective sandbox snapshot digest"`
-	ResourceCgroupDir     string `long:"resource-cgroup-dir" optional:"true" help:"Internal: prepared Linux resource cgroup shared with a managed server"`
+	ResourceCgroupDir     string `short:"W" long:"resource-cgroup-dir" optional:"true" help:"Internal: prepared Linux resource cgroup shared with a managed server"`
 	Dir                   string `short:"C" long:"dir" optional:"true" help:"Directory to start session in (defaults to current directory)"`
 	// CwdWriteProof is an internal daemon-to-session capability. The harness
 	// command checks its marker only after tmux has established the pane's cwd
