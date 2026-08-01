@@ -295,3 +295,38 @@ func TestCostDailyWalkOrderIsTotal(t *testing.T) {
 			"conv-key groups first and day orders within the group; the conv-less row keys on its own session id")
 	})
 }
+
+// CompareCostStamps is the exported comparison other packages use instead of
+// < and > on this column (TCL-935). Its edge semantics are the load-bearing
+// part: callers rely on an unusable stamp ranking below every usable one, and
+// on two unusable stamps comparing EQUAL so a keep-last-good pick still lands
+// when nothing is stamped at all.
+func TestCompareCostStamps(t *testing.T) {
+	const (
+		earlier = "2026-08-01T12:00:07.9Z"  // sorts LAST as a string
+		later   = "2026-08-01T12:00:07.95Z" // sorts FIRST as a string
+	)
+	require.Greater(t, earlier, later, "fixture precondition: these stamps invert lexically")
+
+	for _, tc := range []struct {
+		name string
+		a, b string
+		want int
+	}{
+		{"LexicallyInvertedPairComparesByInstant", earlier, later, -1},
+		{"AndTheReverse", later, earlier, 1},
+		{"EquivalentSpellingsOfOneInstantAreEqual", "2026-08-01T12:00:07.5Z", "2026-08-01T12:00:07.500Z", 0},
+		{"DifferentOffsetsCompareAsInstants", "2026-08-01T20:00:00+09:00", "2026-08-01T05:00:00-07:00", -1},
+		{"UsableBeatsEmpty", earlier, "", 1},
+		{"EmptyLosesToUsable", "", earlier, -1},
+		{"UsableBeatsUnparseable", earlier, "not-a-timestamp", 1},
+		{"TwoEmptiesAreEqual", "", "", 0},
+		// Equal, not ordered by spelling: a keep-last-good caller uses >= 0,
+		// so this is what lets a model land when no delta carries a stamp.
+		{"EmptyAndUnparseableAreEqual", "", "not-a-timestamp", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, CompareCostStamps(tc.a, tc.b))
+		})
+	}
+}
