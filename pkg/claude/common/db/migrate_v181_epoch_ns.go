@@ -374,10 +374,10 @@ func repairAndValidateRequiredZeroTimestamps(
 	tables []timestampTable,
 ) error {
 	var issues []requiredZeroTimestamp
-	repairSessions := hasRequiredSessionTimestampPair(tables)
+	createdColumn, updatedColumn, repairSessions := sessionTimestampPair(tables)
 	if repairSessions {
 		var err error
-		issues, err = repairLegacySessionZeroTimestamps(ctx, tx)
+		issues, err = repairLegacySessionZeroTimestamps(ctx, tx, createdColumn, updatedColumn)
 		if err != nil {
 			return err
 		}
@@ -419,29 +419,42 @@ func repairAndValidateRequiredZeroTimestamps(
 	if len(issues) == 0 {
 		return nil
 	}
-	formatted := make([]string, 0, len(issues))
-	for _, issue := range issues {
+	const maxDetails = 20
+	detailCount := min(len(issues), maxDetails)
+	formatted := make([]string, 0, detailCount+1)
+	for _, issue := range issues[:detailCount] {
 		formatted = append(formatted, issue.String())
 	}
-	return fmt.Errorf("required timestamp is empty or Go-zero in %d row(s): %s; restore the .pre-v181-epochns.bak backup, replace every listed value with a valid RFC3339 timestamp from a trustworthy source, then retry",
+	if remaining := len(issues) - detailCount; remaining > 0 {
+		formatted = append(formatted, fmt.Sprintf("and %d more", remaining))
+	}
+	return fmt.Errorf("required timestamp is empty, zero, malformed, or out of range in %d row(s): %s; restore the .pre-v181-epochns.bak backup, replace all offending required values with valid RFC3339 timestamps from trustworthy sources, then retry",
 		len(issues), strings.Join(formatted, "; "))
 }
 
-func hasRequiredSessionTimestampPair(tables []timestampTable) bool {
-	var created, updated bool
+func sessionTimestampPair(tables []timestampTable) (created, updated timestampColumn, ok bool) {
+	var haveCreated, haveUpdated bool
 	for _, table := range tables {
 		if table.name != "sessions" {
 			continue
 		}
 		for _, column := range table.columns {
-			created = created || column.name == "created_at" && column.text && !column.sentinel
-			updated = updated || column.name == "updated_at" && column.text && !column.sentinel
+			if column.name == "created_at" && column.text {
+				created, haveCreated = column, true
+			}
+			if column.name == "updated_at" && column.text {
+				updated, haveUpdated = column, true
+			}
 		}
 	}
-	return created && updated
+	return created, updated, haveCreated && haveUpdated
 }
 
-func repairLegacySessionZeroTimestamps(ctx context.Context, tx *sql.Tx) ([]requiredZeroTimestamp, error) {
+func repairLegacySessionZeroTimestamps(
+	ctx context.Context,
+	tx *sql.Tx,
+	createdColumn, updatedColumn timestampColumn,
+) ([]requiredZeroTimestamp, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT rowid, id, created_at, updated_at FROM sessions ORDER BY rowid`)
 	if err != nil {
 		return nil, fmt.Errorf("sessions required-zero census: %w", err)
@@ -455,29 +468,33 @@ func repairLegacySessionZeroTimestamps(ctx context.Context, tx *sql.Tx) ([]requi
 	var issues []requiredZeroTimestamp
 	for rows.Next() {
 		var rowID int64
-		var id, created, updated string
-		if err := rows.Scan(&rowID, &id, &created, &updated); err != nil {
+		var id string
+		var createdRaw, updatedRaw sql.NullString
+		if err := rows.Scan(&rowID, &id, &createdRaw, &updatedRaw); err != nil {
 			_ = rows.Close()
 			return nil, fmt.Errorf("sessions required-zero census: %w", err)
 		}
-		createdMissing := isMissingRequiredLegacyTimestamp(created)
-		updatedMissing := isMissingRequiredLegacyTimestamp(updated)
-		createdGoZero := isLegacyRFC3339ZeroTime(created)
-		updatedGoZero := isLegacyRFC3339ZeroTime(updated)
+		created, updated := createdRaw.String, updatedRaw.String
+		createdMissing := !createdRaw.Valid || isMissingRequiredLegacyTimestamp(created)
+		updatedMissing := !updatedRaw.Valid || isMissingRequiredLegacyTimestamp(updated)
+		createdGoZero := createdRaw.Valid && isLegacyRFC3339ZeroTime(created)
+		updatedGoZero := updatedRaw.Valid && isLegacyRFC3339ZeroTime(updated)
 		switch {
-		case createdGoZero && !updatedMissing && validRequiredLegacyTimestamp(updated):
+		case !createdColumn.sentinel && createdGoZero && !updatedMissing && validRequiredLegacyTimestamp(updated):
 			repairs = append(repairs, repair{rowID: rowID, column: "created_at", value: updated})
 			createdMissing = false
-		case updatedGoZero && !createdMissing && validRequiredLegacyTimestamp(created):
+		case !updatedColumn.sentinel && updatedGoZero && !createdMissing && validRequiredLegacyTimestamp(created):
 			repairs = append(repairs, repair{rowID: rowID, column: "updated_at", value: created})
 			updatedMissing = false
 		}
-		if createdMissing || updatedMissing {
+		createdOffending := !createdColumn.sentinel && createdMissing
+		updatedOffending := !updatedColumn.sentinel && updatedMissing
+		if createdOffending || updatedOffending {
 			var columns []string
-			if createdMissing {
+			if createdOffending {
 				columns = append(columns, "created_at")
 			}
-			if updatedMissing {
+			if updatedOffending {
 				columns = append(columns, "updated_at")
 			}
 			issues = append(issues, requiredZeroTimestamp{
@@ -514,7 +531,8 @@ func legacyTimestampText(raw any) (string, bool) {
 }
 
 func isMissingRequiredLegacyTimestamp(value string) bool {
-	return value == "" || isLegacyRFC3339ZeroTime(value)
+	_, err := parseLegacyDBTime(value)
+	return err != nil
 }
 
 func validRequiredLegacyTimestamp(value string) bool {

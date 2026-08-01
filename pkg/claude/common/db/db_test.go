@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -615,5 +616,44 @@ func TestLegacyImportRepairsMissingRequiredTimestamps(t *testing.T) {
 		require.NoError(t, err, fixture.id)
 		assert.Equal(t, fixture.wantCreated, row.CreatedAt, fixture.id+" created_at")
 		assert.Equal(t, fixture.wantUpdated, row.UpdatedAt, fixture.id+" updated_at")
+	}
+}
+
+func TestLegacyImportTimestampSourceFailureLeavesSourceForRetry(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	ResetForTest()
+
+	sessDir := filepath.Join(dir, ".tclaude", "claude-sessions")
+	require.NoError(t, os.MkdirAll(sessDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(sessDir, "a-valid.json"), []byte(`{
+		"id":"a-valid","tmuxSession":"a-valid","status":"idle",
+		"created":"2025-01-01T00:00:00Z","updated":"2025-01-01T01:00:00Z"
+	}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(sessDir, "b-stat-fails.json"), []byte(`{
+		"id":"b-stat-fails","tmuxSession":"b-stat-fails","status":"idle"
+	}`), 0o644))
+
+	originalEntryInfo := legacySessionEntryInfo
+	legacySessionEntryInfo = func(entry os.DirEntry) (os.FileInfo, error) {
+		if entry.Name() == "b-stat-fails.json" {
+			return nil, errors.New("transient stat failure")
+		}
+		return originalEntryInfo(entry)
+	}
+	t.Cleanup(func() { legacySessionEntryInfo = originalEntryInfo })
+
+	_, err := Open()
+	require.ErrorContains(t, err, "transient stat failure")
+	assert.DirExists(t, sessDir, "failed import leaves the complete source directory available")
+	assert.NoDirExists(t, filepath.Join(dir, ".tclaude", "data", "claude-sessions.migrated"))
+
+	legacySessionEntryInfo = originalEntryInfo
+	ResetForTest()
+	_, err = Open()
+	require.NoError(t, err, "a later Open retries the preserved v0 source")
+	for _, id := range []string{"a-valid", "b-stat-fails"} {
+		_, err := LoadSession(id)
+		require.NoError(t, err, id)
 	}
 }

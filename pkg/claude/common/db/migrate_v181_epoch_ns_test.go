@@ -398,7 +398,8 @@ func TestMigrateV180toV181_ReportsAllUnrepairableRequiredZeros(t *testing.T) {
 	zero := time.Time{}.Format(time.RFC3339Nano)
 	_, err := d.Exec(`INSERT INTO sessions (id, created_at, updated_at) VALUES
 		('both-zero-a', ?, ?),
-		('both-zero-b', ?, ?)`, zero, zero, zero, zero)
+		('both-zero-b', ?, ?),
+		('repair-then-rollback', ?, '2024-01-02T03:04:05Z')`, zero, zero, zero, zero, zero)
 	require.NoError(t, err)
 	_, err = d.Exec(`INSERT INTO notify_state (session_id, notified_at) VALUES ('required-zero', ?)`, zero)
 	require.NoError(t, err)
@@ -407,13 +408,64 @@ func TestMigrateV180toV181_ReportsAllUnrepairableRequiredZeros(t *testing.T) {
 	require.Error(t, err, "unrepairable required-zero census must execute")
 	for _, want := range []string{
 		`id "both-zero-a"`, `id "both-zero-b"`, "notify_state.notified_at", "in 3 row(s)",
-		"restore the .pre-v181-epochns.bak backup", "replace every listed value",
+		"restore the .pre-v181-epochns.bak backup", "replace all offending required values",
 	} {
 		assert.ErrorContains(t, err, want)
 	}
+	var rolledBack string
+	require.NoError(t, d.QueryRow(`SELECT created_at FROM sessions WHERE id = 'repair-then-rollback'`).Scan(&rolledBack))
+	assert.Equal(t, zero, rolledBack, "aggregate failure rolls back a sibling repair that actually ran")
 	var version int
 	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&version))
 	assert.Equal(t, 180, version, "the aggregate failure rolls back all sibling repairs and conversions")
+}
+
+func TestMigrateV180toV181_RepairsRequiredZeroFromOptionalSiblingInHalfAppliedSchema(t *testing.T) {
+	setupTestDB(t)
+	d, err := sql.Open("sqlite", t.TempDir()+"/half-applied.sqlite?_pragma=foreign_keys(1)")
+	require.NoError(t, err)
+	d.SetMaxOpenConns(1)
+	t.Cleanup(func() { _ = d.Close() })
+	zero := time.Time{}.Format(time.RFC3339Nano)
+	valid := "2024-01-02T03:04:05.123456789Z"
+	_, err = d.Exec(`
+		CREATE TABLE schema_version (version INTEGER NOT NULL);
+		INSERT INTO schema_version VALUES (180);
+		CREATE TABLE sessions (
+			id TEXT PRIMARY KEY,
+			created_at TEXT NOT NULL,
+			updated_at TEXT DEFAULT ''
+		);
+		INSERT INTO sessions(id, created_at, updated_at) VALUES
+			('repair-from-optional', ?, ?),
+			('null-optional-control', ?, NULL);
+	`, zero, valid, valid)
+	require.NoError(t, err)
+
+	require.NoError(t, migrateV180toV181(d))
+	var createdNS, updatedNS int64
+	require.NoError(t, d.QueryRow(`SELECT created_at, updated_at FROM sessions WHERE id = 'repair-from-optional'`).
+		Scan(&createdNS, &updatedNS))
+	parsed, err := time.Parse(time.RFC3339Nano, valid)
+	require.NoError(t, err)
+	assert.Equal(t, parsed.UnixNano(), createdNS)
+	assert.Equal(t, parsed.UnixNano(), updatedNS)
+	var optional sql.NullInt64
+	require.NoError(t, d.QueryRow(`SELECT updated_at FROM sessions WHERE id = 'null-optional-control'`).Scan(&optional))
+	assert.False(t, optional.Valid, "NULL in the half-applied optional sibling scans and remains absent")
+}
+
+func TestMigrateV180toV181_CapsRequiredTimestampErrorDetails(t *testing.T) {
+	d := v180FixtureDB(t)
+	for i := 0; i < 23; i++ {
+		_, err := d.Exec(`INSERT INTO notify_state(session_id, notified_at) VALUES (?, 'not-a-time')`, fmt.Sprintf("bad-%02d", i))
+		require.NoError(t, err)
+	}
+
+	err := migrateV180toV181(d)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "in 23 row(s)")
+	assert.ErrorContains(t, err, "and 3 more")
 }
 
 func TestMigrateV180toV181_RejectsEmptyRequiredTimestamp(t *testing.T) {
@@ -536,6 +588,10 @@ func TestMigrateV180toV181_InvalidTimestampMatrix(t *testing.T) {
 				assert.ErrorContains(t, err, column.qualified)
 				assert.ErrorContains(t, err, "rowid")
 				assert.ErrorContains(t, err, fmt.Sprintf("%q", tc.value))
+				if !column.optional {
+					assert.ErrorContains(t, err, "in 1 row(s)", "every required parse failure is caught by the aggregate preflight")
+					assert.ErrorContains(t, err, "replace all offending required values")
+				}
 				var version int
 				require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&version))
 				assert.Equal(t, 180, version)

@@ -45,6 +45,12 @@ func migrate(db *sql.DB) error {
 			return err
 		}
 		if err := importLegacyData(db); err != nil {
+			// createSchema has already committed v1. Put the empty database
+			// back at v0 so a later Open retries the preserved legacy source
+			// instead of walking the partial database to head without it.
+			if cleanupErr := resetFailedFreshImport(db); cleanupErr != nil {
+				return fmt.Errorf("legacy import: %w (also failed to reset fresh schema: %v)", err, cleanupErr)
+			}
 			return err
 		}
 		ver = 1 // createSchema sets version to 1
@@ -3057,7 +3063,10 @@ func importLegacyData(db *sql.DB) error {
 		return nil // no home dir, nothing to import
 	}
 
-	importedSessions := importLegacySessions(db, home)
+	importedSessions, err := importLegacySessions(db, home)
+	if err != nil {
+		return err
+	}
 	importedNotify := importLegacyNotifyState(db, home)
 
 	// Move debug.log from the oldest location
@@ -3095,11 +3104,24 @@ func importLegacyData(db *sql.DB) error {
 	return nil
 }
 
-func importLegacySessions(db *sql.DB, home string) bool {
+func resetFailedFreshImport(db *sql.DB) error {
+	_, err := db.Exec(`
+		DROP TABLE IF EXISTS notify_state;
+		DROP TABLE IF EXISTS sessions;
+		DROP TABLE IF EXISTS schema_version;
+	`)
+	return err
+}
+
+var legacySessionEntryInfo = func(entry os.DirEntry) (os.FileInfo, error) {
+	return entry.Info()
+}
+
+func importLegacySessions(db *sql.DB, home string) (bool, error) {
 	dir := filepath.Join(home, ".tclaude", "claude-sessions")
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return false
+		return false, nil
 	}
 
 	// Collect .auto markers first
@@ -3113,7 +3135,7 @@ func importLegacySessions(db *sql.DB, home string) bool {
 
 	tx, err := db.Begin()
 	if err != nil {
-		return false
+		return false, err
 	}
 	defer func() { _ = tx.Rollback() }()
 
@@ -3152,10 +3174,15 @@ func importLegacySessions(db *sql.DB, home string) bool {
 			updated = created
 		}
 		if created.IsZero() && updated.IsZero() {
-			info, infoErr := entry.Info()
-			if infoErr != nil || info.ModTime().IsZero() {
-				slog.Warn("skipping legacy session without usable timestamps", "id", s.ID, "path", path, "error", infoErr)
-				continue
+			info, infoErr := legacySessionEntryInfo(entry)
+			if infoErr != nil || info == nil || info.ModTime().IsZero() {
+				if infoErr != nil {
+					return false, fmt.Errorf("legacy session %q has no timestamps and stat %s: %w", s.ID, path, infoErr)
+				}
+				if info == nil {
+					return false, fmt.Errorf("legacy session %q has no timestamps and stat %s returned no file info", s.ID, path)
+				}
+				return false, fmt.Errorf("legacy session %q has no timestamps and %s has a zero modification time", s.ID, path)
 			}
 			created, updated = info.ModTime(), info.ModTime()
 		}
@@ -3174,16 +3201,16 @@ func importLegacySessions(db *sql.DB, home string) bool {
 	}
 
 	if imported == 0 {
-		return false
+		return false, nil
 	}
 
 	if err := tx.Commit(); err != nil {
 		slog.Warn("failed to commit session import", "error", err)
-		return false
+		return false, err
 	}
 
 	slog.Info(fmt.Sprintf("imported %d legacy sessions into SQLite", imported))
-	return true
+	return true, nil
 }
 
 func importLegacyNotifyState(db *sql.DB, home string) bool {
