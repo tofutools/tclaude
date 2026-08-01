@@ -588,7 +588,7 @@ func startOpenCodeProcess(
 	sandboxSpec *session.TclaudeLayerLaunchSpec,
 ) (*openCodeProcess, error) {
 	if sandboxSpec != nil {
-		if err := session.PrepareTclaudeLayerHarnessState(*sandboxSpec); err != nil {
+		if err := prepareOpenCodeTclaudeLayerState(sandboxSpec); err != nil {
 			return nil, fmt.Errorf("prepare OpenCode tclaude-layer state: %w", err)
 		}
 		if err := prepareOpenCodeReadOnlyConfigForPlatform(sandboxSpec); err != nil {

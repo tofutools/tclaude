@@ -636,6 +636,171 @@ func validateExistingOpenCodeCredential(path string) error {
 	return nil
 }
 
+// prepareOpenCodeTclaudeLayerState materializes the harness-owned state a
+// frozen OpenCode launch spec names, after proving that the daemon can
+// re-derive every directory it is about to create.
+//
+// session.PrepareTclaudeLayerHarnessState MkdirAll's the contract's StateRoot
+// and every StateDirs entry. The guards it applies on its own are the
+// contract's WriteDirs and ProfileFilesystem — supplied by the same persisted
+// artifact it is validating — and StateRoot carries no WriteDirs requirement at
+// all. A spec tampered with in the database could therefore cause empty
+// mode-0700 directories outside the protected roots (TCL-907).
+//
+// That capability is bounded and nothing is exploitable today: empty
+// directories, no file content, and it needs the DB write access that plants
+// the spec in the first place. It is closed because the launch contract exists
+// so that a persisted artifact cannot steer daemon-side filesystem operations,
+// and "it only creates empty directories" describes today's payload, not the
+// boundary.
+//
+// The proof lives here rather than in session because the authority that can
+// supply it — the OpenCode allocation store plus this daemon's derived private
+// state parent — is this package's. session is harness-agnostic and has no
+// access to it, so pushing the check down would mean re-deriving the authority
+// in a second place, which is what TCL-902 exists to have stopped doing.
+func prepareOpenCodeTclaudeLayerState(spec *session.TclaudeLayerLaunchSpec) error {
+	if spec == nil {
+		return nil
+	}
+	if err := requireOpenCodeAnchoredStateTargets(spec.Contract); err != nil {
+		return err
+	}
+	return session.PrepareTclaudeLayerHarnessState(*spec)
+}
+
+// requireOpenCodeAnchoredStateTargets proves that every directory the replay
+// path is about to create is one this daemon can re-derive, rather than one the
+// persisted contract merely names.
+//
+// A state root is proven exactly one of two ways, matching the two shapes the
+// layouts actually emit:
+//
+//  1. a per-agent root, by the SAME allocation authority the config seed and
+//     the control socket use — requireOpenCodeAllocatedStateRoot;
+//  2. the legacy shared root, by re-deriving it from this host's environment
+//     through session.TclaudeLayerHarnessStateRoot, which is the function
+//     BuildTclaudeLayerLaunchSpec itself uses to produce it.
+//
+// A state directory then has to be below its proven state root, or be one of
+// the four ambient OpenCode XDG app directories this host derives for itself.
+// The second arm is not a loophole for tampering — it is production: the legacy
+// shared posture names exactly those four, and the Darwin private posture
+// replaces StateDirs[2] with the resolved ambient config app directory when one
+// exists (see adaptOpenCodeStateLayoutForPlatform). Both are re-derived here
+// from the daemon's own environment via openCodeAmbientAppDir, the same
+// derivation the layout used, so a contract cannot widen the set by naming
+// something else.
+func requireOpenCodeAnchoredStateTargets(
+	contract session.TclaudeLayerLaunchContract,
+) error {
+	if contract.HarnessName != harness.OpenCodeName {
+		return nil
+	}
+	stateRoot := canonicalOpenCodeRuntimePath(contract.StateRoot)
+	if stateRoot == "" {
+		return fmt.Errorf(
+			"OpenCode launch contract state root %q is not an absolute path",
+			contract.StateRoot)
+	}
+	resolvedRoot, err := requireOpenCodeAnchoredStateRoot(stateRoot)
+	if err != nil {
+		return err
+	}
+	ambient, err := ambientOpenCodeStateAppDirs()
+	if err != nil {
+		return err
+	}
+	for index, dir := range contract.StateDirs {
+		clean := canonicalOpenCodeRuntimePath(dir)
+		if clean == "" {
+			return fmt.Errorf(
+				"OpenCode launch contract state directory %d %q is not an absolute path",
+				index, dir)
+		}
+		// Resolved before comparison, and through the missing-path walker
+		// rather than EvalSymlinks: on a first launch these directories do not
+		// exist yet, which is the whole reason the replay path is creating them.
+		resolved, resolveErr := canonicalizeMissingOpenCodePath(clean)
+		if resolveErr != nil {
+			return fmt.Errorf(
+				"canonicalize OpenCode launch contract state directory %q: %w",
+				dir, resolveErr)
+		}
+		if sandboxpolicy.PathContainsOrEqual(resolvedRoot, resolved) || ambient[resolved] {
+			continue
+		}
+		return fmt.Errorf(
+			"OpenCode launch contract state directory %q is neither below its state root %q nor one of this host's ambient OpenCode state directories",
+			dir, resolvedRoot)
+	}
+	return nil
+}
+
+// requireOpenCodeAnchoredStateRoot returns the resolved state root once it is
+// proven, so a caller cannot accidentally go on to compare against the
+// unproven spelling it was handed.
+func requireOpenCodeAnchoredStateRoot(stateRoot string) (string, error) {
+	resolved, err := canonicalizeMissingOpenCodePath(stateRoot)
+	if err != nil {
+		return "", fmt.Errorf(
+			"canonicalize OpenCode launch contract state root %q: %w", stateRoot, err)
+	}
+	// Which of the two proofs applies is decided on the SAME value
+	// validateOpenCodeV3LaunchContract branches on — the unresolved base name —
+	// so a contract cannot take the private branch there and the legacy branch
+	// here, or the reverse.
+	if openCodeAgentIDRE.MatchString(filepath.Base(stateRoot)) {
+		if err := requireOpenCodeAllocatedStateRoot(resolved,
+			fmt.Sprintf("OpenCode launch contract state root %q", stateRoot),
+			"state root"); err != nil {
+			return "", err
+		}
+		return resolved, nil
+	}
+	legacy, err := session.TclaudeLayerHarnessStateRoot(harness.OpenCodeName)
+	if err != nil {
+		return "", fmt.Errorf("resolve this host's OpenCode state root: %w", err)
+	}
+	resolvedLegacy, err := canonicalizeMissingOpenCodePath(legacy)
+	if err != nil {
+		return "", fmt.Errorf("canonicalize this host's OpenCode state root: %w", err)
+	}
+	if resolved != resolvedLegacy {
+		return "", fmt.Errorf(
+			"OpenCode launch contract state root %q is neither an allocated per-agent state root nor this host's OpenCode state root %q",
+			stateRoot, resolvedLegacy)
+	}
+	return resolved, nil
+}
+
+// ambientOpenCodeStateAppDirs is the set of OpenCode app directories THIS host
+// keeps under its ambient XDG bases, in resolved form. It reuses
+// openCodeAmbientAppDir so there is one derivation of "the ambient OpenCode
+// data/cache/config/state directory" shared with the layout builder and the
+// config seed.
+func ambientOpenCodeStateAppDirs() (map[string]bool, error) {
+	dirs := make(map[string]bool, 4)
+	for _, base := range []struct{ env, fallback string }{
+		{"XDG_DATA_HOME", ".local/share"},
+		{"XDG_CACHE_HOME", ".cache"},
+		{"XDG_CONFIG_HOME", ".config"},
+		{"XDG_STATE_HOME", ".local/state"},
+	} {
+		dir, err := openCodeAmbientAppDir(base.env, base.fallback)
+		if err != nil {
+			return nil, err
+		}
+		resolved, err := canonicalizeMissingOpenCodePath(dir)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"canonicalize ambient OpenCode state directory %q: %w", dir, err)
+		}
+		dirs[resolved] = true
+	}
+	return dirs, nil
+}
+
 // prepareOpenCodeReadOnlyConfig supplies the one app-owned compatibility file
 // OpenCode 1.18.6 writes before loading a config directory:
 // https://github.com/anomalyco/opencode/blob/v1.18.6/packages/opencode/src/config/config.ts#L295-L312
@@ -754,13 +919,10 @@ func validateOpenCodeReadOnlyConfigSeedSource(source, configDir string) error {
 // a launch contract is the one belonging to a private state allocation this
 // daemon actually made, rather than a path a persisted spec merely asserts.
 //
-// It reuses requireOpenCodeStateAllocation — the same allocation authority the
-// launch path itself consults — instead of restating what a legitimate
-// per-agent config path looks like. The allocation store is the same durable
-// database as the launch spec, so existence alone would prove little; the state
-// root is therefore also required to be a direct child of the private state
-// parent THIS daemon derives, the same anchor openCodeControlSocketPath applies
-// to the same allocation.
+// The shape check is this function's own — only the seed cares that a config
+// app directory sits at <state root>/config/opencode. Everything after it is
+// the same question the replay path's mkdir targets ask, so it is asked of
+// requireOpenCodeAllocatedStateRoot rather than restated here.
 func requireOpenCodeAllocatedConfigDir(configDir string) error {
 	resolved := resolvedOpenCodeSeedPath(configDir)
 	configBase := filepath.Dir(resolved)
@@ -770,30 +932,54 @@ func requireOpenCodeAllocatedConfigDir(configDir string) error {
 			"OpenCode config bootstrap target %q does not have the per-agent <state root>/config/opencode shape",
 			configDir)
 	}
+	return requireOpenCodeAllocatedStateRoot(stateRoot,
+		fmt.Sprintf("OpenCode config bootstrap target %q", configDir),
+		"config directory")
+}
+
+// requireOpenCodeAllocatedStateRoot proves that a per-agent state root named by
+// a launch contract is one this daemon actually allocated, rather than a path a
+// persisted artifact merely asserts. Its argument must already be resolved.
+//
+// It reuses requireOpenCodeStateAllocation — the same allocation authority the
+// launch path itself consults — instead of restating what a legitimate
+// per-agent state root looks like. The allocation store is the same durable
+// database as the launch spec, so existence alone would prove little; the state
+// root is therefore also required to be a direct child of the private state
+// parent THIS daemon derives, the same anchor openCodeControlSocketPath applies
+// to the same allocation.
+//
+// One predicate serves two questions that would otherwise drift: where the
+// config bootstrap may write (TCL-902), and which state directories the replay
+// path may create (TCL-907).
+//
+// subject and noun are RENDERING only — the caller's own name for the thing it
+// is asking about ("OpenCode config bootstrap target %q") and for the kind of
+// path it is ("config directory"). They never reach a decision. They exist so
+// one rule can answer two callers without either caller's operator-visible
+// sentence changing to mention the other's subject.
+func requireOpenCodeAllocatedStateRoot(stateRoot, subject, noun string) error {
 	allocation, err := requireOpenCodeStateAllocation(filepath.Base(stateRoot))
 	// Rendered differently, not decided differently: the agent-id rule stays
 	// wholly inside requireOpenCodeStateAllocation. This only declines to quote
 	// an operator's own directory name back at them as an "invalid agent id"
-	// when their path merely happens to end in config/opencode.
+	// when their path merely happens to sit where a per-agent root would.
 	if errors.Is(err, errOpenCodeInvalidAgentID) {
-		return fmt.Errorf(
-			"OpenCode config bootstrap target %q names %q where a per-agent state root was expected",
-			configDir, stateRoot)
+		return fmt.Errorf("%s names %q where a per-agent state root was expected",
+			subject, stateRoot)
 	}
 	if err != nil {
-		return fmt.Errorf(
-			"OpenCode config bootstrap target %q is not an allocated per-agent config directory: %w",
-			configDir, err)
+		return fmt.Errorf("%s is not an allocated per-agent %s: %w", subject, noun, err)
 	}
 	if allocation.Mode != db.OpenCodeStatePrivate ||
 		resolvedOpenCodeSeedPath(allocation.StateRoot) != stateRoot {
 		return fmt.Errorf(
-			"OpenCode config bootstrap target %q does not belong to the %s state allocation of agent %s",
-			configDir, allocation.Mode, allocation.AgentID)
+			"%s does not belong to the %s state allocation of agent %s",
+			subject, allocation.Mode, allocation.AgentID)
 	}
 	parent, err := openCodePrivateStateParent()
 	if err != nil {
-		return fmt.Errorf("resolve OpenCode private state parent for bootstrap: %w", err)
+		return fmt.Errorf("resolve OpenCode private state parent: %w", err)
 	}
 	// Both sides are compared in resolved form. The allocator records a parent it
 	// has already resolved, while this derives one from the live environment, so
@@ -801,8 +987,8 @@ func requireOpenCodeAllocatedConfigDir(configDir string) error {
 	// the same directory.
 	if filepath.Dir(stateRoot) != resolvedOpenCodeSeedPath(parent) {
 		return fmt.Errorf(
-			"OpenCode config bootstrap target %q is outside this daemon's private state parent %q; a changed XDG_DATA_HOME or HOME moves that parent away from an existing allocation",
-			configDir, parent)
+			"%s is outside this daemon's private state parent %q; a changed XDG_DATA_HOME or HOME moves that parent away from an existing allocation",
+			subject, parent)
 	}
 	return nil
 }

@@ -210,7 +210,7 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 	var err error
 	stateRoot := strings.TrimSpace(input.StateRoot)
 	if stateRoot == "" {
-		stateRoot, err = tclaudeLayerHarnessStateRoot(input.HarnessName)
+		stateRoot, err = TclaudeLayerHarnessStateRoot(input.HarnessName)
 		if err != nil {
 			return TclaudeLayerLaunchSpec{}, err
 		}
@@ -2483,7 +2483,7 @@ func tclaudeLayerPhase0WriteDirs(
 	stateRoot := strings.TrimSpace(contract.StateRoot)
 	if stateRoot == "" {
 		var err error
-		stateRoot, err = tclaudeLayerHarnessStateRoot(contract.HarnessName)
+		stateRoot, err = TclaudeLayerHarnessStateRoot(contract.HarnessName)
 		if err != nil {
 			return nil, err
 		}
@@ -2516,7 +2516,17 @@ func tclaudeLayerPhase0WriteDirs(
 	return out, nil
 }
 
-func tclaudeLayerHarnessStateRoot(harnessName string) (string, error) {
+// TclaudeLayerHarnessStateRoot answers "where does THIS host keep the state
+// root of the named harness", from the daemon's own environment. It is the
+// answer BuildTclaudeLayerLaunchSpec uses when a caller supplies no state root
+// of its own.
+//
+// Exported so a caller that must decide whether a persisted contract's state
+// root is the host-derived one asks this question here rather than restating
+// the formula: two places deriving "the OpenCode install state root" could
+// disagree, and the disagreement would show up as a refused legitimate launch
+// (TCL-907).
+func TclaudeLayerHarnessStateRoot(harnessName string) (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("resolve home directory for harness state: %w", err)
