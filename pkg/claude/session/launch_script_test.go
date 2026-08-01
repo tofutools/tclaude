@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -30,15 +31,46 @@ import (
 // to run. new-session invocations succeed (`true`) unless failNewSession is
 // set (`false`); everything else succeeds with empty output.
 type launchRecordingTmux struct {
-	argv           [][]string
-	failNewSession bool
-	paneCwd        string
+	argv            [][]string
+	failNewSession  bool
+	failServerProbe bool
+	resourceEnv     string
+	resourceEnvGone bool
+	failResourceEnv bool
+	serverPID       int
+	paneCwd         string
+}
+
+func recordedTmuxCommand(args []string) string {
+	if len(args) > 1 && args[0] == "-N" {
+		return args[1]
+	}
+	if len(args) > 0 {
+		return args[0]
+	}
+	return ""
 }
 
 func (r *launchRecordingTmux) Command(args ...string) *exec.Cmd {
 	copied := append([]string(nil), args...)
 	r.argv = append(r.argv, copied)
-	if r.failNewSession && len(args) > 0 && args[0] == "new-session" {
+	command := recordedTmuxCommand(args)
+	if r.failNewSession && command == "new-session" {
+		return exec.Command("false")
+	}
+	if r.failServerProbe && command == "display-message" {
+		return exec.Command("false")
+	}
+	if r.serverPID > 0 && command == "display-message" {
+		return exec.Command("printf", "%s\n", strconv.Itoa(r.serverPID))
+	}
+	if r.resourceEnv != "" && command == "show-environment" {
+		return exec.Command("printf", "%s=%s\n", ResourceDelegationDirEnv, r.resourceEnv)
+	}
+	if r.resourceEnvGone && command == "show-environment" {
+		return exec.Command("printf", "-%s\n", ResourceDelegationDirEnv)
+	}
+	if r.failResourceEnv && command == "show-environment" {
 		return exec.Command("false")
 	}
 	if len(args) > 0 && args[0] == "display-message" &&
@@ -52,6 +84,19 @@ func (r *launchRecordingTmux) Command(args ...string) *exec.Cmd {
 	return exec.Command("true")
 }
 
+func TestLaunchExternalDelegationRefusesToAutoSpawnTmuxServer(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("TMUX", "")
+	t.Setenv(ResourceDelegationDirEnv, "/sys/fs/cgroup/system.slice/tclaude-tmux.service")
+	rec := &launchRecordingTmux{failServerProbe: true}
+	swapTmux(t, rec)
+
+	err := launchDetachedTmuxSession("spwn-external", t.TempDir(), "exec claude")
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "external tmux runtime tclaude-tmux.service is unavailable")
+	assert.Empty(t, rec.newSessions(), "external mode must not let new-session auto-spawn a server")
+}
+
 func (r *launchRecordingTmux) ListSessions() (map[string]struct{}, error) {
 	return map[string]struct{}{}, nil
 }
@@ -59,7 +104,7 @@ func (r *launchRecordingTmux) ListSessions() (map[string]struct{}, error) {
 func (r *launchRecordingTmux) newSessions() [][]string {
 	var out [][]string
 	for _, a := range r.argv {
-		if len(a) > 0 && a[0] == "new-session" {
+		if recordedTmuxCommand(a) == "new-session" {
 			out = append(out, a)
 		}
 	}

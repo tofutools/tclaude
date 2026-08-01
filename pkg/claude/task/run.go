@@ -103,6 +103,9 @@ func runInTmux(cwd, taskDir string, detached, watch, excludeTaskFiles bool) erro
 	if err := session.CheckTmuxInstalled(); err != nil {
 		return err
 	}
+	if err := session.RequireExternalTmuxServer(); err != nil {
+		return err
+	}
 	session.EnsureHooksInstalled(false, os.Stdout, os.Stderr)
 
 	// Sync the configured Claude Code transcript-retention override
@@ -146,6 +149,7 @@ func runInTmux(cwd, taskDir string, detached, watch, excludeTaskFiles bool) erro
 		"-c", cwd,
 		"sh", "-c", runnerCmd,
 	}
+	tmuxArgs = session.ExternalTmuxNoStartArgs(tmuxArgs...)
 
 	tmuxCmd := clcommon.TmuxCommand(tmuxArgs...)
 	tmuxCmd.Stdout = os.Stdout

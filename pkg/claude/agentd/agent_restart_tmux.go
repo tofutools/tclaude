@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 // agentRestartTmuxHandoff keeps attached tmux clients alive across the gap
@@ -33,11 +34,15 @@ func beginAgentRestartTmuxHandoff(oldTmux string) *agentRestartTmuxHandoff {
 	if len(clients) == 0 {
 		return nil
 	}
+	if err := session.RequireExternalTmuxServer(); err != nil {
+		slog.Warn("agent restart: external tmux runtime is unavailable", "error", err)
+		return nil
+	}
 	holding := "restart-" + strings.TrimPrefix(generateSpawnLabel(), "spwn-")
-	if err := clcommon.TmuxCommand(
+	if err := clcommon.TmuxCommand(session.ExternalTmuxNoStartArgs(
 		"new-session", "-d", "-s", holding,
 		"sh", "-c", agentRestartHoldingCommand,
-	).Run(); err != nil {
+	)...).Run(); err != nil {
 		slog.Warn("agent restart: could not create tmux client bridge",
 			"from", oldTmux, "bridge", holding, "error", err)
 		return nil

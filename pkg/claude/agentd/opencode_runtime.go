@@ -767,6 +767,9 @@ func configureOpenCodeResourceCgroup(cmd *exec.Cmd, dir string) (func(), error) 
 	if dir == "" {
 		return func() {}, nil
 	}
+	if session.ExternalResourceDelegationDir() != "" {
+		return func() {}, fmt.Errorf("%w: agentd-owned OpenCode servers cannot be placed across systemd units; use the allow-unenforced launch override until tmux-mediated managed-server launch is available (TCL-943)", errOpenCodeResourceCgroup)
+	}
 	cleanup, err := session.ConfigureProcessResourceCgroup(cmd, dir)
 	if err != nil {
 		return func() {}, fmt.Errorf("%w: %v", errOpenCodeResourceCgroup, err)

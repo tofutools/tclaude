@@ -39,6 +39,7 @@ type serveParams struct {
 	Wizard                       bool   `long:"wizard" help:"Open the auto-launched dashboard in 🧙 wizard theme — a purely cosmetic re-skin, same data. Mutually exclusive with --slop (slop wins)."`
 	Terminal                     string `long:"terminal" optional:"true" help:"Terminal emulator for agent shell windows (ghostty, kitty, wezterm, alacritty, foot, iterm2, konsole, gnome-terminal, …). Default: auto-detect. Also settable via the 'terminal' field in config.json."`
 	AgentCloneCooldown           string `long:"agent-clone-cooldown" optional:"true" help:"Minimum cooldown between two clones of the same agent (Go duration, e.g. 1m, 30s; 0 disables). Overrides agent.clone_cooldown in config.json. Default 1m."`
+	ResourceDelegationDir        string `long:"resource-delegation-dir" optional:"true" help:"External delegated cgroup v2 root owned by the long-lived tmux runtime unit. Overrides TCLAUDE_RESOURCE_DELEGATION_DIR and agent.resource_delegation_dir."`
 	DashboardPort                int    `long:"dashboard-port" optional:"true" help:"Fixed loopback port for the dashboard + approval popup. 0 (default) picks a random free port each start. Overrides agent.dashboard_port in config.json. A configured port already in use (or out of range) fails startup rather than falling back to random."`
 	DashboardBind                string `long:"dashboard-bind" optional:"true" help:"Additional host/interface the dashboard + approval server binds to (host only; set the port via --dashboard-port). The 127.0.0.1 loopback endpoint remains available when a concrete non-loopback interface is selected. Set e.g. 0.0.0.0 or :: to expose the dashboard on the network — ONLY behind your own auth (reverse proxy / VPN / mesh), since its own gate is just a cookie + operator token. Overrides agent.dashboard_bind in config.json."`
 	PersistOperatorToken         bool   `long:"persist-operator-token" help:"Persist the operator token across restarts in a 0600 ~/.tclaude/data/operator_token file instead of minting a fresh in-memory one each start. ORs with agent.persist_operator_token in config.json. Default: off (fresh token every boot)."`
@@ -346,6 +347,25 @@ func runServe(p *serveParams) error {
 	// decision, the clone cooldown, and the spawn guardrails. Load it once
 	// up front so every startup knob reads the same snapshot.
 	cfg, _ := config.Load()
+	resourceDelegationDir, resourceDelegationSource := resolveResourceDelegationDir(
+		p.ResourceDelegationDir, cfg)
+	if resourceDelegationDir != "" {
+		validated, validateErr := session.ValidateResourceDelegationDir(resourceDelegationDir)
+		if validateErr != nil {
+			return validateErr
+		}
+		if setErr := os.Setenv(session.ResourceDelegationDirEnv, validated); setErr != nil {
+			return fmt.Errorf("export resource delegation directory: %w", setErr)
+		}
+		if runtimeErr := session.PropagateResourceDelegationToTmux(); runtimeErr != nil {
+			return runtimeErr
+		}
+		slog.Info("external resource delegation enabled",
+			"directory", validated, "source", resourceDelegationSource)
+		fmt.Fprintf(out, "  resource delegation: %s (%s)\n", validated, resourceDelegationSource)
+	} else if clearErr := session.ClearResourceDelegationFromTmux(); clearErr != nil {
+		return clearErr
+	}
 
 	// HTTP listeners for the human-approval popup (Phase B of the
 	// permission story) — the dashboard rides on the same listener. The
@@ -912,6 +932,23 @@ func resolveCloneCooldown(flagValue string, cfg *config.Config) (time.Duration, 
 		}
 	}
 	return defaultCloneCooldown, "default"
+}
+
+// resolveResourceDelegationDir applies the operator-facing precedence for the
+// external cgroup root: serve flag, environment, config file, then unset.
+func resolveResourceDelegationDir(flagValue string, cfg *config.Config) (string, string) {
+	if value := strings.TrimSpace(flagValue); value != "" {
+		return value, "flag"
+	}
+	if value := strings.TrimSpace(os.Getenv(session.ResourceDelegationDirEnv)); value != "" {
+		return value, "environment"
+	}
+	if cfg != nil && cfg.Agent != nil {
+		if value := strings.TrimSpace(cfg.Agent.ResourceDelegationDir); value != "" {
+			return value, "config"
+		}
+	}
+	return "", "legacy self-cgroup derivation"
 }
 
 // parseCloneCooldown parses one tier's raw value. An empty string

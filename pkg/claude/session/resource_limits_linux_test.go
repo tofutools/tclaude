@@ -16,6 +16,8 @@ import (
 
 func fakeCurrentResourceCgroup(t *testing.T, controllers, enabled string) string {
 	t.Helper()
+	t.Setenv(ResourceDelegationDirEnv, "")
+	t.Setenv("TMUX", "")
 	oldRoot := resourceCgroupRoot
 	resourceCgroupRoot = t.TempDir()
 	t.Cleanup(func() { resourceCgroupRoot = oldRoot })
@@ -25,6 +27,135 @@ func fakeCurrentResourceCgroup(t *testing.T, controllers, enabled string) string
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "cgroup.controllers"), []byte(controllers), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "cgroup.subtree_control"), []byte(enabled), 0o644))
 	return dir
+}
+
+func TestPrepareResourceCgroupUsesExplicitExternalDelegationDir(t *testing.T) {
+	current := fakeCurrentResourceCgroup(t, "cpu memory", "")
+	external := filepath.Join(resourceCgroupRoot, "system.slice", "tclaude-tmux.service")
+	require.NoError(t, os.MkdirAll(external, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(external, "cgroup.controllers"), []byte("cpu memory io"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(external, "cgroup.subtree_control"), nil, 0o644))
+	t.Setenv(ResourceDelegationDirEnv, external)
+
+	dir, cleanup, err := PrepareResourceCgroup(
+		"external-session", sandboxpolicy.ResourceLimits{Memory: "256MB"})
+	require.NoError(t, err)
+	t.Cleanup(cleanup)
+	assert.Equal(t, external, filepath.Dir(dir))
+	assert.NotEqual(t, current, filepath.Dir(dir))
+	assert.FileExists(t, filepath.Join(dir, "memory.max"))
+}
+
+func TestPaneRecoversExternalDelegationDirFromTmuxGlobalEnvironment(t *testing.T) {
+	t.Setenv(ResourceDelegationDirEnv, "")
+	t.Setenv("TMUX", "/tmp/tmux.sock,1,0")
+	want := "/sys/fs/cgroup/system.slice/tclaude-tmux.service"
+	swapTmux(t, &launchRecordingTmux{resourceEnv: want})
+
+	assert.Equal(t, want, configuredResourceDelegationDir())
+	assert.Equal(t, want, os.Getenv(ResourceDelegationDirEnv),
+		"the recovered value must reach later launch preflights and child processes")
+	assert.Equal(t, "-N", ExternalTmuxNoStartArgs("new-session")[0],
+		"a pre-existing pane must adopt external mode before its next launch")
+}
+
+func TestPaneTreatsMissingTmuxGlobalAsAuthoritativeLegacyMode(t *testing.T) {
+	t.Setenv(ResourceDelegationDirEnv,
+		"/sys/fs/cgroup/system.slice/tclaude-tmux.service")
+	t.Setenv("TMUX", "/tmp/tmux.sock,1,0")
+	swapTmux(t, &launchRecordingTmux{resourceEnvGone: true})
+
+	assert.Empty(t, ExternalResourceDelegationDir())
+	assert.Empty(t, os.Getenv(ResourceDelegationDirEnv))
+	assert.Equal(t, []string{"new-session"}, ExternalTmuxNoStartArgs("new-session"),
+		"a pre-existing pane must stop using external mode after agentd clears it")
+}
+
+func TestTclaudePaneCannotAutoStartServerWhenModeProbeFails(t *testing.T) {
+	t.Setenv(ResourceDelegationDirEnv, "")
+	t.Setenv("TMUX", "/tmp/tmux-1000/tclaude,123,0")
+	swapTmux(t, &launchRecordingTmux{failResourceEnv: true})
+
+	assert.Empty(t, ExternalResourceDelegationDir(),
+		"the disappeared server cannot reveal the newly enabled external root")
+	assert.Equal(t, "-N", ExternalTmuxNoStartArgs("new-session")[0],
+		"a pane from the named tclaude server must never replace its dead server")
+}
+
+func TestExternalLaunchCannotAutoStartServerAfterSuccessfulProbe(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("TMUX", "")
+	oldRoot, oldProc := resourceCgroupRoot, resourceProcRoot
+	resourceCgroupRoot, resourceProcRoot = t.TempDir(), t.TempDir()
+	t.Cleanup(func() { resourceCgroupRoot, resourceProcRoot = oldRoot, oldProc })
+	external := filepath.Join(resourceCgroupRoot, "system.slice", "tclaude-tmux.service")
+	require.NoError(t, os.MkdirAll(filepath.Join(resourceProcRoot, "4242"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(resourceProcRoot, "4242", "cgroup"),
+		[]byte("0::/system.slice/tclaude-tmux.service/tclaude-tmux\n"), 0o644))
+	t.Setenv(ResourceDelegationDirEnv, external)
+	rec := &launchRecordingTmux{serverPID: 4242, failNewSession: true}
+	swapTmux(t, rec)
+
+	err := launchDetachedTmuxSession("external-race", t.TempDir(), "exec claude")
+	require.Error(t, err)
+	launches := rec.newSessions()
+	require.Len(t, launches, 1)
+	assert.Equal(t, "-N", launches[0][0],
+		"the actual new-session client must refuse to start a replacement server")
+}
+
+func TestValidateExternalTmuxServerCgroupRejectsWrongUnit(t *testing.T) {
+	oldRoot, oldProc := resourceCgroupRoot, resourceProcRoot
+	resourceCgroupRoot, resourceProcRoot = t.TempDir(), t.TempDir()
+	t.Cleanup(func() { resourceCgroupRoot, resourceProcRoot = oldRoot, oldProc })
+	require.NoError(t, os.MkdirAll(filepath.Join(resourceProcRoot, "77"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(resourceProcRoot, "77", "cgroup"),
+		[]byte("0::/system.slice/tclaude-agentd.service/tclaude-supervisor\n"), 0o644))
+	external := filepath.Join(resourceCgroupRoot, "system.slice", "tclaude-tmux.service")
+
+	err := ValidateExternalTmuxServerCgroup(77, external)
+	assert.ErrorContains(t, err, "outside")
+}
+
+func TestClearResourceDelegationFromTmuxRemovesStaleGlobalValue(t *testing.T) {
+	t.Setenv(ResourceDelegationDirEnv, "")
+	rec := &launchRecordingTmux{resourceEnv: "/sys/fs/cgroup/old.service"}
+	swapTmux(t, rec)
+
+	require.NoError(t, ClearResourceDelegationFromTmux())
+	require.Len(t, rec.argv, 2)
+	assert.Equal(t, []string{"-N", "set-environment", "-gu", ResourceDelegationDirEnv}, rec.argv[1])
+}
+
+func TestValidateResourceDelegationDirRequiresContainedCPUAndMemoryRoot(t *testing.T) {
+	fakeCurrentResourceCgroup(t, "cpu memory", "")
+	external := filepath.Join(resourceCgroupRoot, "system.slice", "tclaude-tmux.service")
+	require.NoError(t, os.MkdirAll(external, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(external, "cgroup.controllers"), []byte("cpu memory"), 0o644))
+
+	got, err := ValidateResourceDelegationDir(external)
+	require.NoError(t, err)
+	assert.Equal(t, external, got)
+
+	require.NoError(t, os.WriteFile(filepath.Join(external, "cgroup.controllers"), []byte("memory"), 0o644))
+	_, err = ValidateResourceDelegationDir(external)
+	assert.ErrorContains(t, err, "cpu controller")
+	_, err = ValidateResourceDelegationDir(t.TempDir())
+	assert.ErrorContains(t, err, "must be below")
+}
+
+func TestValidatePreparedResourceCgroupRejectsStoredPathFromPreviousDelegation(t *testing.T) {
+	fakeCurrentResourceCgroup(t, "cpu memory", "")
+	external := filepath.Join(resourceCgroupRoot, "system.slice", "tclaude-tmux.service")
+	old := filepath.Join(resourceCgroupRoot, "system.slice", "tclaude-agentd.service", "tclaude-old")
+	require.NoError(t, os.MkdirAll(external, 0o755))
+	require.NoError(t, os.MkdirAll(old, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(old, "memory.max"), []byte("max"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(old, "cpu.max"), []byte("max 100000"), 0o644))
+	t.Setenv(ResourceDelegationDirEnv, external)
+
+	err := ValidatePreparedResourceCgroup(old, sandboxpolicy.ResourceLimits{})
+	assert.ErrorContains(t, err, "outside the configured resource delegation directory")
 }
 
 func TestWrapResourceLimitedCommandRendersIndependentAxes(t *testing.T) {

@@ -8,6 +8,8 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
+var prepareResourceCgroup = session.PrepareResourceCgroup
+
 func prepareManagedServerResourceCgroup(
 	sessionID string,
 	snapshot *sandboxpolicy.Snapshot,
@@ -29,7 +31,7 @@ func prepareManagedServerResourceCgroup(
 			return "", noop, fmt.Errorf("replace changed OpenCode resource cgroup: %w", stopErr)
 		}
 	}
-	dir, cleanup, err := session.PrepareResourceCgroup(
+	dir, cleanup, err := prepareResourceCgroup(
 		sessionID, snapshot.Effective.ResourceLimits)
 	if err == nil {
 		return dir, cleanup, nil
