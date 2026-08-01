@@ -300,13 +300,17 @@ function sandboxContextLabel(contexts, index) {
    one index holds entries. Those are different questions and only the first has
    a fallback answer:
 
-   - No `context_network_entries` at all. TWO shapes produce this, and the
-     target-wide rows are the right answer for both: an OLD daemon that never
-     computed per-context entries, and a CURRENT daemon that had no effective
-     assignment contexts to compute them for (describePredictedDraftSandboxProfile
-     returns nil for every per-context slice when len(contexts) == 0). The second
-     is the same shape `target.context_axes?.[i] || target.axes` already falls
-     back for, one line above.
+   - No `context_network_entries` at all. THREE shapes produce this, and the
+     fallback is right for all three: an OLD daemon that never computed
+     per-context entries; a CURRENT daemon with no effective assignment contexts
+     to compute them for (describePredictedDraftSandboxProfile returns nil for
+     every per-context slice when len(contexts) == 0); and a target REFUSED
+     OUTRIGHT, whose draft-enforcement append carries only Target/ResolvedBy/
+     Predicted/Refusal and so omits the network entries as well as the axes. The
+     second is the same shape `target.context_axes?.[i] || target.axes` already
+     falls back for, one line above. In the third, `network_entries` is nil too,
+     so the fallback yields [] — and consumers must branch on the refusal before
+     any of this matters, which SandboxPolicyResult does below.
    - The list exists — it is AUTHORITATIVE for every index in it, INCLUDING a
      null one. The daemon writes an explicit null at a refused index to stay
      index-aligned with context_axes, and that null means "this context produced
@@ -318,22 +322,28 @@ function sandboxContextLabel(contexts, index) {
    back. Said plainly because it is a behaviour change the paragraph above does
    not cover: "authoritative for every index IN it" is silent about an index past
    the end. It is unreachable — context_network_entries, context_axes and
-   context_refusals are built in one loop and truncated together
-   (sandbox_profile_enforcement.go:425-433), so they are equal-length, and both
-   call sites are gated on prediction.contexts[effectiveContext] existing — and
-   the strict answer is the right one anyway: an index the daemon never described
-   has no verdict, and the draft-only rows are not it.
+   context_refusals are built in one loop and truncated under the same
+   len(response.Contexts) bound in the draft-enforcement handler, so they are
+   equal-length, and both call sites are gated on
+   prediction.contexts[effectiveContext] existing — and the strict answer is the
+   right one anyway: an index the daemon never described has no verdict, and the
+   draft-only rows are not it.
 
    Null at an index is EXCLUSIVELY the refusal marker, which is what lets this
    treat it as a verdict rather than as missing data. Verified against the only
-   producer, sandbox_profile_prediction.go:68-101: the success path appends
-   `append([]harness.PredictedNetworkEntry{}, ...)`, non-nil even when empty, so
-   a context with genuinely zero network rows serializes as `[]` and never as
-   null; the sole nil-appending path (:84) is the typed-capability refusal, and
-   it writes a non-nil refusal at the SAME index on the line before. A null here
-   therefore always has a refusal beside it — it is never an error swallowed, an
-   early return, or a display cap (the cap truncates whole trailing indexes,
-   sandbox_profile_enforcement.go:431-432, and never nulls one in range).
+   producer, describePredictedDraftSandboxProfile's per-context loop: the success
+   path appends `append([]harness.PredictedNetworkEntry{}, ...)`, non-nil even
+   when empty, so a context with genuinely zero network rows serializes as `[]`
+   and never as null; the sole nil-appending path is the typed-capability
+   refusal, which appends a non-nil refusal at the SAME index in the same block.
+   A null here therefore always has a refusal beside it — it is never an error
+   swallowed (derivation and untyped prediction errors fail the whole request),
+   an early return, or a display cap (the cap drops whole trailing indexes and
+   never nulls one in range).
+
+   Cited by symbol rather than by line on purpose: an earlier draft of this
+   comment carried line numbers that its own follow-up commit invalidated by
+   adding lines above the code they pointed at.
 
    `??` cannot express that, because null is nullish and so takes the fallback in
    exactly the case the fallback is wrong for. Neither can a per-index

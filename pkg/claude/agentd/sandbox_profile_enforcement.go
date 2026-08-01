@@ -48,11 +48,15 @@ import (
 // the cap truncates whole trailing indexes rather than nulling an in-range one.
 //
 // A client may fall back to NetworkEntries only when the field is ABSENT
-// ENTIRELY. Two shapes produce that, and the fallback is right for both: a
-// daemon too old to compute per-context entries, and a current daemon with no
+// ENTIRELY. Three shapes produce that, and the fallback is right for all three:
+// a daemon too old to compute per-context entries; a current daemon with no
 // effective assignment contexts to compute them for (len(contexts) == 0, which
-// nils every per-context slice) — the same shape ContextAxes already degrades
-// to Axes for.
+// nils every per-context slice), the same shape ContextAxes already degrades to
+// Axes for; and a target refused OUTRIGHT, whose append in the draft-enforcement
+// handler sets only Target, ResolvedBy, Predicted and Refusal, so it omits these
+// entries along with the axes. That third shape is this type's own, which is why
+// it is named here: NetworkEntries is nil there too, so the fallback yields
+// nothing, and the branch-on-Refusal-first rule above is what actually governs.
 //
 // TCL-914 closed this on the dashboard side: both consumers of the value — the
 // renderer and the attention check, which previously derived it from two
