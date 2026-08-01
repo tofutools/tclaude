@@ -1,0 +1,3649 @@
+[
+  {
+    "file": "access-island.test.mjs",
+    "line": 28,
+    "start": 1747,
+    "end": 1822,
+    "method": "equal",
+    "args": [
+      "mounted.container.querySelector('tr[data-key=\"sudo-7\"]')",
+      "row"
+    ],
+    "call": "assert.equal(mounted.container.querySelector('tr[data-key=\"sudo-7\"]'), row)",
+    "shape": "same-node"
+  },
+  {
+    "file": "access-island.test.mjs",
+    "line": 29,
+    "start": 1826,
+    "end": 1893,
+    "method": "equal",
+    "args": [
+      "row.querySelector('[data-sudo-countdown]')",
+      "countdown"
+    ],
+    "call": "assert.equal(row.querySelector('[data-sudo-countdown]'), countdown)",
+    "shape": "same-node"
+  },
+  {
+    "file": "access-island.test.mjs",
+    "line": 31,
+    "start": 1942,
+    "end": 1994,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "filter"
+    ],
+    "call": "assert.equal(harness.document.activeElement, filter)",
+    "shape": "same-node"
+  },
+  {
+    "file": "agent-spawn-preact.test.mjs",
+    "line": 655,
+    "start": 32599,
+    "end": 32714,
+    "method": "equal",
+    "args": [
+      "host.querySelector('#agent-spawn-name')",
+      "sameNameNode",
+      "'source refresh preserves the keyed draft DOM'"
+    ],
+    "call": "assert.equal(host.querySelector('#agent-spawn-name'), sameNameNode, 'source refresh preserves the keyed draft DOM')",
+    "shape": "same-node"
+  },
+  {
+    "file": "audit-island.test.mjs",
+    "line": 8,
+    "start": 1424,
+    "end": 1500,
+    "method": "equal",
+    "args": [
+      "mounted.container.querySelector('tr[data-key=\"audit-1\"]')",
+      "row"
+    ],
+    "call": "assert.equal(mounted.container.querySelector('tr[data-key=\"audit-1\"]'), row)",
+    "shape": "same-node"
+  },
+  {
+    "file": "audit-island.test.mjs",
+    "line": 8,
+    "start": 1502,
+    "end": 1551,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "row"
+    ],
+    "call": "assert.equal(harness.document.activeElement, row)",
+    "shape": "same-node"
+  },
+  {
+    "file": "audit-island.test.mjs",
+    "line": 10,
+    "start": 1896,
+    "end": 1948,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "search"
+    ],
+    "call": "assert.equal(harness.document.activeElement, search)",
+    "shape": "same-node"
+  },
+  {
+    "file": "binder-lifecycle.test.mjs",
+    "line": 168,
+    "start": 8864,
+    "end": 8989,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "cog",
+      "'click-away returns focus when it was still inside the dismissed menu'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, cog,\n    'click-away returns focus when it was still inside the dismissed menu')",
+    "shape": "same-node"
+  },
+  {
+    "file": "binder-lifecycle.test.mjs",
+    "line": 175,
+    "start": 9200,
+    "end": 9322,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "cog",
+      "'menu-item dismissal returns focus from the hidden menu to its cog'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, cog,\n    'menu-item dismissal returns focus from the hidden menu to its cog')",
+    "shape": "same-node"
+  },
+  {
+    "file": "cog-menu-filter-preact.test.mjs",
+    "line": 84,
+    "start": 4273,
+    "end": 4337,
+    "method": "equal",
+    "args": [
+      "view.harness.document.activeElement",
+      "view.filter()"
+    ],
+    "call": "assert.equal(view.harness.document.activeElement, view.filter())",
+    "shape": "same-node"
+  },
+  {
+    "file": "config-island.test.mjs",
+    "line": 358,
+    "start": 18103,
+    "end": 18156,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "confirm"
+    ],
+    "call": "assert.equal(harness.document.activeElement, confirm)",
+    "shape": "same-node"
+  },
+  {
+    "file": "config-island.test.mjs",
+    "line": 361,
+    "start": 18250,
+    "end": 18303,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "confirm"
+    ],
+    "call": "assert.equal(harness.document.activeElement, confirm)",
+    "shape": "same-node"
+  },
+  {
+    "file": "config-island.test.mjs",
+    "line": 370,
+    "start": 18712,
+    "end": 18766,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "terminal"
+    ],
+    "call": "assert.equal(harness.document.activeElement, terminal)",
+    "shape": "same-node"
+  },
+  {
+    "file": "config-island.test.mjs",
+    "line": 465,
+    "start": 23677,
+    "end": 23749,
+    "method": "equal",
+    "args": [
+      "mounted.container.querySelector('#cfg-terminal')",
+      "terminal"
+    ],
+    "call": "assert.equal(mounted.container.querySelector('#cfg-terminal'), terminal)",
+    "shape": "same-node"
+  },
+  {
+    "file": "config-island.test.mjs",
+    "line": 467,
+    "start": 23799,
+    "end": 23939,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "mounted.container.querySelector('#cfg-agent-permissions .cfg-list-row:last-of-type input')"
+    ],
+    "call": "assert.equal(harness.document.activeElement,\n    mounted.container.querySelector('#cfg-agent-permissions .cfg-list-row:last-of-type input'))",
+    "shape": "same-node"
+  },
+  {
+    "file": "costs-island.test.mjs",
+    "line": 40,
+    "start": 2324,
+    "end": 2456,
+    "method": "equal",
+    "args": [
+      "mounted.container.querySelector('.cost-col[data-tip]')",
+      "chartColumn",
+      "'snapshot refresh preserves the imperative chart'"
+    ],
+    "call": "assert.equal(mounted.container.querySelector('.cost-col[data-tip]'), chartColumn, 'snapshot refresh preserves the imperative chart')",
+    "shape": "same-node"
+  },
+  {
+    "file": "costs-island.test.mjs",
+    "line": 41,
+    "start": 2460,
+    "end": 2584,
+    "method": "equal",
+    "args": [
+      "harness.document.body.querySelector('.cost-tip')",
+      "tooltip",
+      "'snapshot refresh preserves the open chart tooltip'"
+    ],
+    "call": "assert.equal(harness.document.body.querySelector('.cost-tip'), tooltip, 'snapshot refresh preserves the open chart tooltip')",
+    "shape": "same-node"
+  },
+  {
+    "file": "costs-island.test.mjs",
+    "line": 52,
+    "start": 3129,
+    "end": 3220,
+    "method": "equal",
+    "args": [
+      "mounted.container.querySelector('tr[data-key=\"cost-conv-a-2026-07-10\"]')",
+      "row"
+    ],
+    "call": "assert.equal(mounted.container.querySelector('tr[data-key=\"cost-conv-a-2026-07-10\"]'), row)",
+    "shape": "same-node"
+  },
+  {
+    "file": "costs-island.test.mjs",
+    "line": 53,
+    "start": 3224,
+    "end": 3284,
+    "method": "equal",
+    "args": [
+      "row.querySelector('.rowname').firstChild",
+      "text"
+    ],
+    "call": "assert.equal(row.querySelector('.rowname').firstChild, text)",
+    "shape": "same-node"
+  },
+  {
+    "file": "costs-island.test.mjs",
+    "line": 54,
+    "start": 3288,
+    "end": 3336,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "id"
+    ],
+    "call": "assert.equal(harness.document.activeElement, id)",
+    "shape": "same-node"
+  },
+  {
+    "file": "costs-island.test.mjs",
+    "line": 214,
+    "start": 13396,
+    "end": 13523,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "banner",
+      "'and takes focus, so a keyboard or screen-reader visitor arrives too'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, banner,\n    'and takes focus, so a keyboard or screen-reader visitor arrives too')",
+    "shape": "same-node"
+  },
+  {
+    "file": "credits-island.test.mjs",
+    "line": 32,
+    "start": 1474,
+    "end": 1580,
+    "method": "equal",
+    "args": [
+      "counterHost.querySelector('#slop-credits')",
+      "counter",
+      "'the shell node remains keyed in place'"
+    ],
+    "call": "assert.equal(counterHost.querySelector('#slop-credits'), counter, 'the shell node remains keyed in place')",
+    "shape": "same-node"
+  },
+  {
+    "file": "credits-island.test.mjs",
+    "line": 94,
+    "start": 4140,
+    "end": 4201,
+    "method": "equal",
+    "args": [
+      "board.querySelector('[data-key=\"conv-a\"]')",
+      "row"
+    ],
+    "call": "assert.equal(board.querySelector('[data-key=\"conv-a\"]'), row)",
+    "shape": "same-node"
+  },
+  {
+    "file": "credits-island.test.mjs",
+    "line": 95,
+    "start": 4205,
+    "end": 4340,
+    "method": "equal",
+    "args": [
+      "row.querySelector('.who').firstChild",
+      "whoText",
+      "'a keyed rank reorder preserves the existing browser-selection anchor'"
+    ],
+    "call": "assert.equal(row.querySelector('.who').firstChild, whoText,\n    'a keyed rank reorder preserves the existing browser-selection anchor')",
+    "shape": "same-node"
+  },
+  {
+    "file": "credits-island.test.mjs",
+    "line": 107,
+    "start": 4698,
+    "end": 4759,
+    "method": "equal",
+    "args": [
+      "board.querySelector('[data-key=\"conv-a\"]')",
+      "row"
+    ],
+    "call": "assert.equal(board.querySelector('[data-key=\"conv-a\"]'), row)",
+    "shape": "same-node"
+  },
+  {
+    "file": "debug-preact.test.mjs",
+    "line": 194,
+    "start": 7813,
+    "end": 7908,
+    "method": "equal",
+    "args": [
+      "mounted.container.querySelector('[data-key=\"debug-/api/snapshot\"]')",
+      "snapshotCard"
+    ],
+    "call": "assert.equal(mounted.container.querySelector('[data-key=\"debug-/api/snapshot\"]'), snapshotCard)",
+    "shape": "same-node"
+  },
+  {
+    "file": "debug-preact.test.mjs",
+    "line": 195,
+    "start": 7912,
+    "end": 7995,
+    "method": "equal",
+    "args": [
+      "snapshotCard.querySelector('tr[data-key=\"phase-sessions\"]')",
+      "phaseRow"
+    ],
+    "call": "assert.equal(snapshotCard.querySelector('tr[data-key=\"phase-sessions\"]'), phaseRow)",
+    "shape": "same-node"
+  },
+  {
+    "file": "debug-preact.test.mjs",
+    "line": 198,
+    "start": 8204,
+    "end": 8262,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "snapshotCard"
+    ],
+    "call": "assert.equal(harness.document.activeElement, snapshotCard)",
+    "shape": "same-node"
+  },
+  {
+    "file": "directory-picker-preact.test.mjs",
+    "line": 390,
+    "start": 19680,
+    "end": 19733,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "invoker"
+    ],
+    "call": "assert.equal(harness.document.activeElement, invoker)",
+    "shape": "same-node"
+  },
+  {
+    "file": "dock-preact.test.mjs",
+    "line": 61,
+    "start": 2585,
+    "end": 2682,
+    "method": "equal",
+    "args": [
+      "host.querySelector('.dock-card')",
+      "card",
+      "'stable item key preserves the drag source'"
+    ],
+    "call": "assert.equal(host.querySelector('.dock-card'), card, 'stable item key preserves the drag source')",
+    "shape": "same-node"
+  },
+  {
+    "file": "dock-preact.test.mjs",
+    "line": 62,
+    "start": 2686,
+    "end": 2779,
+    "method": "equal",
+    "args": [
+      "host.querySelector('.dock-card-menu')",
+      "menu",
+      "'open menu node survives the poll'"
+    ],
+    "call": "assert.equal(host.querySelector('.dock-card-menu'), menu, 'open menu node survives the poll')",
+    "shape": "same-node"
+  },
+  {
+    "file": "dock-preact.test.mjs",
+    "line": 71,
+    "start": 3164,
+    "end": 3256,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "cog",
+      "'Escape restores focus to the owning cog'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, cog, 'Escape restores focus to the owning cog')",
+    "shape": "same-node"
+  },
+  {
+    "file": "dock-preact.test.mjs",
+    "line": 94,
+    "start": 4487,
+    "end": 4604,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "cog",
+      "'outside click restores focus when it remained in the hidden menu'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, cog, 'outside click restores focus when it remained in the hidden menu')",
+    "shape": "same-node"
+  },
+  {
+    "file": "dock-preact.test.mjs",
+    "line": 291,
+    "start": 14474,
+    "end": 14575,
+    "method": "equal",
+    "args": [
+      "host.querySelector('.tc-count')",
+      "badge",
+      "'the structured badge key retains DOM identity'"
+    ],
+    "call": "assert.equal(host.querySelector('.tc-count'), badge, 'the structured badge key retains DOM identity')",
+    "shape": "same-node"
+  },
+  {
+    "file": "group-attachment.test.mjs",
+    "line": 118,
+    "start": 4955,
+    "end": 5106,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "emptySummary",
+      "'Escape restores focus to the summary instead of pinning the overlay open'"
+    ],
+    "call": "assert.equal(\n    harness.document.activeElement,\n    emptySummary,\n    'Escape restores focus to the summary instead of pinning the overlay open',\n  )",
+    "shape": "same-node"
+  },
+  {
+    "file": "group-attachment.test.mjs",
+    "line": 149,
+    "start": 6535,
+    "end": 6640,
+    "method": "equal",
+    "args": [
+      "safeSummary.lastElementChild",
+      "fixedSafe",
+      "'fixed mode is the far-right group quick item'"
+    ],
+    "call": "assert.equal(safeSummary.lastElementChild, fixedSafe,\n    'fixed mode is the far-right group quick item')",
+    "shape": "same-node"
+  },
+  {
+    "file": "group-attachment.test.mjs",
+    "line": 165,
+    "start": 7374,
+    "end": 7488,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "fixedEmpty",
+      "'fixed mode restores focus to its stable quick item'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, fixedEmpty,\n    'fixed mode restores focus to its stable quick item')",
+    "shape": "same-node"
+  },
+  {
+    "file": "groups-add-member-preact.test.mjs",
+    "line": 140,
+    "start": 5657,
+    "end": 5709,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "search"
+    ],
+    "call": "assert.equal(harness.document.activeElement, search)",
+    "shape": "same-node"
+  },
+  {
+    "file": "groups-add-member-preact.test.mjs",
+    "line": 146,
+    "start": 5995,
+    "end": 6130,
+    "method": "equal",
+    "args": [
+      "dialogHost.querySelector('#add-member-search')",
+      "search",
+      "'snapshot polling cannot remount the live search transaction'"
+    ],
+    "call": "assert.equal(dialogHost.querySelector('#add-member-search'), search,\n    'snapshot polling cannot remount the live search transaction')",
+    "shape": "same-node"
+  },
+  {
+    "file": "groups-add-member-preact.test.mjs",
+    "line": 163,
+    "start": 6955,
+    "end": 7045,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "cog",
+      "'dismissal restores the group-menu cog'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, cog, 'dismissal restores the group-menu cog')",
+    "shape": "same-node"
+  },
+  {
+    "file": "groups-preact.test.mjs",
+    "line": 96,
+    "start": 3206,
+    "end": 3340,
+    "method": "equal",
+    "args": [
+      "mounted.container.querySelector('.slop-machine')",
+      "machine",
+      "'the parent Preact owner preserves the opaque outer host'"
+    ],
+    "call": "assert.equal(mounted.container.querySelector('.slop-machine'), machine,\n    'the parent Preact owner preserves the opaque outer host')",
+    "shape": "same-node"
+  },
+  {
+    "file": "groups-preact.test.mjs",
+    "line": 206,
+    "start": 8762,
+    "end": 8836,
+    "method": "equal",
+    "args": [
+      "host.querySelector('details[data-group-key=\"alpha\"]')",
+      "alpha"
+    ],
+    "call": "assert.equal(host.querySelector('details[data-group-key=\"alpha\"]'), alpha)",
+    "shape": "same-node"
+  },
+  {
+    "file": "groups-preact.test.mjs",
+    "line": 207,
+    "start": 8840,
+    "end": 8912,
+    "method": "equal",
+    "args": [
+      "host.querySelector('details[data-group-key=\"beta\"]')",
+      "beta"
+    ],
+    "call": "assert.equal(host.querySelector('details[data-group-key=\"beta\"]'), beta)",
+    "shape": "same-node"
+  },
+  {
+    "file": "groups-preact.test.mjs",
+    "line": 208,
+    "start": 8916,
+    "end": 9015,
+    "method": "equal",
+    "args": [
+      "host.querySelector('details:first-child')",
+      "beta",
+      "'snapshot reorder moves keyed nodes'"
+    ],
+    "call": "assert.equal(host.querySelector('details:first-child'), beta, 'snapshot reorder moves keyed nodes')",
+    "shape": "same-node"
+  },
+  {
+    "file": "groups-preact.test.mjs",
+    "line": 210,
+    "start": 9104,
+    "end": 9217,
+    "method": "equal",
+    "args": [
+      "alpha.querySelector('.group-descr-input')",
+      "editor",
+      "'native inline editor identity survives publish'"
+    ],
+    "call": "assert.equal(alpha.querySelector('.group-descr-input'), editor, 'native inline editor identity survives publish')",
+    "shape": "same-node"
+  },
+  {
+    "file": "groups-preact.test.mjs",
+    "line": 221,
+    "start": 9787,
+    "end": 9928,
+    "method": "equal",
+    "args": [
+      "host.querySelector('details[data-group-key=\"alpha\"]')",
+      "alpha",
+      "'the theme repaint preserves keyed group disclosure identity'"
+    ],
+    "call": "assert.equal(host.querySelector('details[data-group-key=\"alpha\"]'), alpha,\n    'the theme repaint preserves keyed group disclosure identity')",
+    "shape": "same-node"
+  },
+  {
+    "file": "groups-preact.test.mjs",
+    "line": 232,
+    "start": 10510,
+    "end": 10634,
+    "method": "equal",
+    "args": [
+      "machine.firstElementChild",
+      "activeReel",
+      "'a same-status publish preserves an in-flight imperative reel pull'"
+    ],
+    "call": "assert.equal(machine.firstElementChild, activeReel,\n    'a same-status publish preserves an in-flight imperative reel pull')",
+    "shape": "same-node"
+  },
+  {
+    "file": "groups-preact.test.mjs",
+    "line": 247,
+    "start": 11403,
+    "end": 11538,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "inspect",
+      "'a neighboring activity chip disappearing does not replace the keyed action'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, inspect,\n    'a neighboring activity chip disappearing does not replace the keyed action')",
+    "shape": "same-node"
+  },
+  {
+    "file": "groups-preact.test.mjs",
+    "line": 276,
+    "start": 12819,
+    "end": 12950,
+    "method": "equal",
+    "args": [
+      "host.querySelector('details[data-group-key=\"alpha\"]')",
+      "alphaNode",
+      "'the keyed group node survives reorder polling'"
+    ],
+    "call": "assert.equal(host.querySelector('details[data-group-key=\"alpha\"]'), alphaNode,\n    'the keyed group node survives reorder polling')",
+    "shape": "same-node"
+  },
+  {
+    "file": "groups-preact.test.mjs",
+    "line": 366,
+    "start": 17409,
+    "end": 17459,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "view"
+    ],
+    "call": "assert.equal(harness.document.activeElement, view)",
+    "shape": "same-node"
+  },
+  {
+    "file": "groups-preact.test.mjs",
+    "line": 467,
+    "start": 22886,
+    "end": 23031,
+    "method": "equal",
+    "args": [
+      "host.querySelector('tr[data-key=\"gate-1\"]')",
+      "pending",
+      "'pending row identity stays label-keyed when agent metadata materializes'"
+    ],
+    "call": "assert.equal(host.querySelector('tr[data-key=\"gate-1\"]'), pending,\n    'pending row identity stays label-keyed when agent metadata materializes')",
+    "shape": "same-node"
+  },
+  {
+    "file": "groups-preact.test.mjs",
+    "line": 469,
+    "start": 23035,
+    "end": 23185,
+    "method": "equal",
+    "args": [
+      "host.querySelector('tr[data-key=\"retired-1\"]')",
+      "retired",
+      "'retired row identity stays conv-id-keyed when agent metadata materializes'"
+    ],
+    "call": "assert.equal(host.querySelector('tr[data-key=\"retired-1\"]'), retired,\n    'retired row identity stays conv-id-keyed when agent metadata materializes')",
+    "shape": "same-node"
+  },
+  {
+    "file": "groups-preact.test.mjs",
+    "line": 574,
+    "start": 27808,
+    "end": 27888,
+    "method": "equal",
+    "args": [
+      "details.querySelector('.group-header-cog .action-menu')",
+      "groupMenu"
+    ],
+    "call": "assert.equal(details.querySelector('.group-header-cog .action-menu'), groupMenu)",
+    "shape": "same-node"
+  },
+  {
+    "file": "groups-preact.test.mjs",
+    "line": 597,
+    "start": 29291,
+    "end": 29387,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "groupCog",
+      "'Escape returns focus to the owning cog'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, groupCog, 'Escape returns focus to the owning cog')",
+    "shape": "same-node"
+  },
+  {
+    "file": "groups-preact.test.mjs",
+    "line": 638,
+    "start": 31454,
+    "end": 31520,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "restoredAlphaTrigger"
+    ],
+    "call": "assert.equal(harness.document.activeElement, restoredAlphaTrigger)",
+    "shape": "same-node"
+  },
+  {
+    "file": "groups-preact.test.mjs",
+    "line": 655,
+    "start": 32529,
+    "end": 32672,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "survivingCog",
+      "'Escape returns focus through the surviving registration after sibling unmount'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, survivingCog,\n    'Escape returns focus through the surviving registration after sibling unmount')",
+    "shape": "same-node"
+  },
+  {
+    "file": "groups-preact.test.mjs",
+    "line": 702,
+    "start": 35093,
+    "end": 35153,
+    "method": "equal",
+    "args": [
+      "row.querySelector('.rowname-input')",
+      "nameInput"
+    ],
+    "call": "assert.equal(row.querySelector('.rowname-input'), nameInput)",
+    "shape": "same-node"
+  },
+  {
+    "file": "groups-preact.test.mjs",
+    "line": 734,
+    "start": 36907,
+    "end": 36976,
+    "method": "equal",
+    "args": [
+      "summary.querySelector('.group-descr-input')",
+      "descrInput"
+    ],
+    "call": "assert.equal(summary.querySelector('.group-descr-input'), descrInput)",
+    "shape": "same-node"
+  },
+  {
+    "file": "groups-preact.test.mjs",
+    "line": 771,
+    "start": 39064,
+    "end": 39165,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "groupCog",
+      "'group rename Escape returns to its menu cog'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, groupCog, 'group rename Escape returns to its menu cog')",
+    "shape": "same-node"
+  },
+  {
+    "file": "groups-preact.test.mjs",
+    "line": 781,
+    "start": 39673,
+    "end": 39825,
+    "method": "equal",
+    "args": [
+      "summary.querySelector('.group-default-profile-select')",
+      "profileSelect",
+      "'profile picker identity survives a publish while choices load'"
+    ],
+    "call": "assert.equal(summary.querySelector('.group-default-profile-select'), profileSelect,\n    'profile picker identity survives a publish while choices load')",
+    "shape": "same-node"
+  },
+  {
+    "file": "groups-preact.test.mjs",
+    "line": 787,
+    "start": 40062,
+    "end": 40121,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "profileSelect"
+    ],
+    "call": "assert.equal(harness.document.activeElement, profileSelect)",
+    "shape": "same-node"
+  },
+  {
+    "file": "groups-preact.test.mjs",
+    "line": 814,
+    "start": 41494,
+    "end": 41597,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "sandboxSelect",
+      "'failed persistence restores picker focus'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, sandboxSelect, 'failed persistence restores picker focus')",
+    "shape": "same-node"
+  },
+  {
+    "file": "groups-preact.test.mjs",
+    "line": 819,
+    "start": 41920,
+    "end": 42060,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "restoredSandboxTrigger",
+      "'Escape focuses the locally committed replacement profile trigger'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, restoredSandboxTrigger,\n    'Escape focuses the locally committed replacement profile trigger')",
+    "shape": "same-node"
+  },
+  {
+    "file": "groups-preact.test.mjs",
+    "line": 1065,
+    "start": 56839,
+    "end": 56971,
+    "method": "equal",
+    "args": [
+      "dialogHost.querySelector('#edit-member-role')",
+      "roleInput",
+      "'polling does not remount the active member transaction'"
+    ],
+    "call": "assert.equal(dialogHost.querySelector('#edit-member-role'), roleInput,\n    'polling does not remount the active member transaction')",
+    "shape": "same-node"
+  },
+  {
+    "file": "groups-preact.test.mjs",
+    "line": 1070,
+    "start": 57175,
+    "end": 57273,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "role",
+      "'explicit close restores the row-cell invoker'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, role, 'explicit close restores the row-cell invoker')",
+    "shape": "same-node"
+  },
+  {
+    "file": "groups-preact.test.mjs",
+    "line": 1094,
+    "start": 58653,
+    "end": 58750,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "cog",
+      "'menu launch restores focus to the owning cog'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, cog, 'menu launch restores focus to the owning cog')",
+    "shape": "same-node"
+  },
+  {
+    "file": "island-lifecycle.test.mjs",
+    "line": 20,
+    "start": 1013,
+    "end": 1052,
+    "method": "equal",
+    "args": [
+      "received.hosts.host",
+      "host"
+    ],
+    "call": "assert.equal(received.hosts.host, host)",
+    "shape": "same-node"
+  },
+  {
+    "file": "jobs-dialog-island.test.mjs",
+    "line": 65,
+    "start": 2608,
+    "end": 2700,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "invoker",
+      "'unmount restores the launcher focus'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, invoker, 'unmount restores the launcher focus')",
+    "shape": "same-node"
+  },
+  {
+    "file": "jobs-island.test.mjs",
+    "line": 114,
+    "start": 5793,
+    "end": 5872,
+    "method": "equal",
+    "args": [
+      "mounted.container.querySelector('tr[data-key=\"cron-1\"]')",
+      "cronRow"
+    ],
+    "call": "assert.equal(mounted.container.querySelector('tr[data-key=\"cron-1\"]'), cronRow)",
+    "shape": "same-node"
+  },
+  {
+    "file": "jobs-island.test.mjs",
+    "line": 115,
+    "start": 5876,
+    "end": 6020,
+    "method": "equal",
+    "args": [
+      "cronRow.querySelector('.rowname').firstChild",
+      "selectedTextNode",
+      "'unchanged text node remains a valid browser-selection anchor'"
+    ],
+    "call": "assert.equal(cronRow.querySelector('.rowname').firstChild, selectedTextNode,\n    'unchanged text node remains a valid browser-selection anchor')",
+    "shape": "same-node"
+  },
+  {
+    "file": "jobs-island.test.mjs",
+    "line": 117,
+    "start": 6024,
+    "end": 6074,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "edit"
+    ],
+    "call": "assert.equal(harness.document.activeElement, edit)",
+    "shape": "same-node"
+  },
+  {
+    "file": "links-preact.test.mjs",
+    "line": 144,
+    "start": 5867,
+    "end": 5931,
+    "method": "equal",
+    "args": [
+      "host.querySelector('tr[data-key=\"link-1\"]')",
+      "first"
+    ],
+    "call": "assert.equal(host.querySelector('tr[data-key=\"link-1\"]'), first)",
+    "shape": "same-node"
+  },
+  {
+    "file": "links-preact.test.mjs",
+    "line": 145,
+    "start": 5935,
+    "end": 5985,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "edit"
+    ],
+    "call": "assert.equal(harness.document.activeElement, edit)",
+    "shape": "same-node"
+  },
+  {
+    "file": "links-preact.test.mjs",
+    "line": 153,
+    "start": 6422,
+    "end": 6474,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "filter"
+    ],
+    "call": "assert.equal(harness.document.activeElement, filter)",
+    "shape": "same-node"
+  },
+  {
+    "file": "links-preact.test.mjs",
+    "line": 188,
+    "start": 7981,
+    "end": 8031,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "from"
+    ],
+    "call": "assert.equal(harness.document.activeElement, from)",
+    "shape": "same-node"
+  },
+  {
+    "file": "links-preact.test.mjs",
+    "line": 258,
+    "start": 11218,
+    "end": 11302,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "host.querySelector('#link-modal-mode')"
+    ],
+    "call": "assert.equal(harness.document.activeElement, host.querySelector('#link-modal-mode'))",
+    "shape": "same-node"
+  },
+  {
+    "file": "links-preact.test.mjs",
+    "line": 275,
+    "start": 12117,
+    "end": 12198,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "host.querySelector('#filter-links')"
+    ],
+    "call": "assert.equal(harness.document.activeElement, host.querySelector('#filter-links'))",
+    "shape": "same-node"
+  },
+  {
+    "file": "links-preact.test.mjs",
+    "line": 290,
+    "start": 12796,
+    "end": 12921,
+    "method": "equal",
+    "args": [
+      "host.querySelector('#link-modal-mode')",
+      "form.mode",
+      "'snapshot publish preserves the Preact-owned draft controls'"
+    ],
+    "call": "assert.equal(host.querySelector('#link-modal-mode'), form.mode, 'snapshot publish preserves the Preact-owned draft controls')",
+    "shape": "same-node"
+  },
+  {
+    "file": "links-preact.test.mjs",
+    "line": 292,
+    "start": 12977,
+    "end": 13032,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "form.mode"
+    ],
+    "call": "assert.equal(harness.document.activeElement, form.mode)",
+    "shape": "same-node"
+  },
+  {
+    "file": "links-preact.test.mjs",
+    "line": 304,
+    "start": 13595,
+    "end": 13647,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "create"
+    ],
+    "call": "assert.equal(harness.document.activeElement, create)",
+    "shape": "same-node"
+  },
+  {
+    "file": "links-preact.test.mjs",
+    "line": 310,
+    "start": 13828,
+    "end": 13881,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "invoker"
+    ],
+    "call": "assert.equal(harness.document.activeElement, invoker)",
+    "shape": "same-node"
+  },
+  {
+    "file": "links-preact.test.mjs",
+    "line": 348,
+    "start": 15440,
+    "end": 15545,
+    "method": "equal",
+    "args": [
+      "host.querySelector('#link-modal-from')",
+      "from",
+      "'publish retains the controlled From element'"
+    ],
+    "call": "assert.equal(host.querySelector('#link-modal-from'), from, 'publish retains the controlled From element')",
+    "shape": "same-node"
+  },
+  {
+    "file": "links-preact.test.mjs",
+    "line": 349,
+    "start": 15549,
+    "end": 15648,
+    "method": "equal",
+    "args": [
+      "host.querySelector('#link-modal-to')",
+      "to",
+      "'publish retains the controlled To element'"
+    ],
+    "call": "assert.equal(host.querySelector('#link-modal-to'), to, 'publish retains the controlled To element')",
+    "shape": "same-node"
+  },
+  {
+    "file": "logs-island.test.mjs",
+    "line": 20,
+    "start": 1457,
+    "end": 1486,
+    "method": "equal",
+    "args": [
+      "rows[1]",
+      "oldRow"
+    ],
+    "call": "assert.equal(rows[1], oldRow)",
+    "shape": "same-node"
+  },
+  {
+    "file": "logs-island.test.mjs",
+    "line": 21,
+    "start": 1490,
+    "end": 1542,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "oldRow"
+    ],
+    "call": "assert.equal(harness.document.activeElement, oldRow)",
+    "shape": "same-node"
+  },
+  {
+    "file": "logs-island.test.mjs",
+    "line": 28,
+    "start": 1919,
+    "end": 1971,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "search"
+    ],
+    "call": "assert.equal(harness.document.activeElement, search)",
+    "shape": "same-node"
+  },
+  {
+    "file": "mail-island.test.mjs",
+    "line": 110,
+    "start": 5882,
+    "end": 5964,
+    "method": "equal",
+    "args": [
+      "mounted.container.querySelectorAll('.mail-row-wrap')[1]",
+      "originalRow"
+    ],
+    "call": "assert.equal(mounted.container.querySelectorAll('.mail-row-wrap')[1], originalRow)",
+    "shape": "same-node"
+  },
+  {
+    "file": "mail-island.test.mjs",
+    "line": 111,
+    "start": 5968,
+    "end": 6045,
+    "method": "equal",
+    "args": [
+      "mounted.container.querySelector('#mail-reader')",
+      "originalReader"
+    ],
+    "call": "assert.equal(mounted.container.querySelector('#mail-reader'), originalReader)",
+    "shape": "same-node"
+  },
+  {
+    "file": "mail-island.test.mjs",
+    "line": 113,
+    "start": 6095,
+    "end": 6154,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "messageFilter"
+    ],
+    "call": "assert.equal(harness.document.activeElement, messageFilter)",
+    "shape": "same-node"
+  },
+  {
+    "file": "mail-island.test.mjs",
+    "line": 169,
+    "start": 9384,
+    "end": 9481,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "mounted.container.querySelector('#filter-messages')"
+    ],
+    "call": "assert.equal(harness.document.activeElement, mounted.container.querySelector('#filter-messages'))",
+    "shape": "same-node"
+  },
+  {
+    "file": "mail-keynav.test.mjs",
+    "line": 145,
+    "start": 6379,
+    "end": 6436,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "listRows[2]"
+    ],
+    "call": "assert.equal(harness.document.activeElement, listRows[2])",
+    "shape": "same-node"
+  },
+  {
+    "file": "mail-keynav.test.mjs",
+    "line": 150,
+    "start": 6573,
+    "end": 6630,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "listRows[1]"
+    ],
+    "call": "assert.equal(harness.document.activeElement, listRows[1])",
+    "shape": "same-node"
+  },
+  {
+    "file": "mail-keynav.test.mjs",
+    "line": 169,
+    "start": 7300,
+    "end": 7357,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "listRows[2]"
+    ],
+    "call": "assert.equal(harness.document.activeElement, listRows[2])",
+    "shape": "same-node"
+  },
+  {
+    "file": "mail-keynav.test.mjs",
+    "line": 188,
+    "start": 8201,
+    "end": 8258,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "listRows[8]"
+    ],
+    "call": "assert.equal(harness.document.activeElement, listRows[8])",
+    "shape": "same-node"
+  },
+  {
+    "file": "mail-keynav.test.mjs",
+    "line": 194,
+    "start": 8425,
+    "end": 8482,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "listRows[0]"
+    ],
+    "call": "assert.equal(harness.document.activeElement, listRows[0])",
+    "shape": "same-node"
+  },
+  {
+    "file": "mail-keynav.test.mjs",
+    "line": 197,
+    "start": 8566,
+    "end": 8624,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "listRows[11]"
+    ],
+    "call": "assert.equal(harness.document.activeElement, listRows[11])",
+    "shape": "same-node"
+  },
+  {
+    "file": "mail-keynav.test.mjs",
+    "line": 214,
+    "start": 9234,
+    "end": 9291,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "listRows[2]"
+    ],
+    "call": "assert.equal(harness.document.activeElement, listRows[2])",
+    "shape": "same-node"
+  },
+  {
+    "file": "mail-keynav.test.mjs",
+    "line": 228,
+    "start": 9881,
+    "end": 9935,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "boxes[0]"
+    ],
+    "call": "assert.equal(harness.document.activeElement, boxes[0])",
+    "shape": "same-node"
+  },
+  {
+    "file": "mail-keynav.test.mjs",
+    "line": 232,
+    "start": 10091,
+    "end": 10146,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "boxFilter"
+    ],
+    "call": "assert.equal(harness.document.activeElement, boxFilter)",
+    "shape": "same-node"
+  },
+  {
+    "file": "mail-keynav.test.mjs",
+    "line": 236,
+    "start": 10219,
+    "end": 10276,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "listRows[0]"
+    ],
+    "call": "assert.equal(harness.document.activeElement, listRows[0])",
+    "shape": "same-node"
+  },
+  {
+    "file": "mail-keynav.test.mjs",
+    "line": 239,
+    "start": 10361,
+    "end": 10420,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "messageFilter"
+    ],
+    "call": "assert.equal(harness.document.activeElement, messageFilter)",
+    "shape": "same-node"
+  },
+  {
+    "file": "mail-keynav.test.mjs",
+    "line": 244,
+    "start": 10603,
+    "end": 10660,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "listRows[1]"
+    ],
+    "call": "assert.equal(harness.document.activeElement, listRows[1])",
+    "shape": "same-node"
+  },
+  {
+    "file": "mail-keynav.test.mjs",
+    "line": 258,
+    "start": 11146,
+    "end": 11198,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "filter"
+    ],
+    "call": "assert.equal(harness.document.activeElement, filter)",
+    "shape": "same-node"
+  },
+  {
+    "file": "mail-keynav.test.mjs",
+    "line": 270,
+    "start": 11630,
+    "end": 11682,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "filter"
+    ],
+    "call": "assert.equal(harness.document.activeElement, filter)",
+    "shape": "same-node"
+  },
+  {
+    "file": "mail-keynav.test.mjs",
+    "line": 289,
+    "start": 12442,
+    "end": 12499,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "listRows[1]"
+    ],
+    "call": "assert.equal(harness.document.activeElement, listRows[1])",
+    "shape": "same-node"
+  },
+  {
+    "file": "mail-keynav.test.mjs",
+    "line": 291,
+    "start": 12545,
+    "end": 12597,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "reader"
+    ],
+    "call": "assert.equal(harness.document.activeElement, reader)",
+    "shape": "same-node"
+  },
+  {
+    "file": "mail-keynav.test.mjs",
+    "line": 295,
+    "start": 12754,
+    "end": 12806,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "reader"
+    ],
+    "call": "assert.equal(harness.document.activeElement, reader)",
+    "shape": "same-node"
+  },
+  {
+    "file": "mail-keynav.test.mjs",
+    "line": 298,
+    "start": 12847,
+    "end": 12904,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "listRows[1]"
+    ],
+    "call": "assert.equal(harness.document.activeElement, listRows[1])",
+    "shape": "same-node"
+  },
+  {
+    "file": "mail-keynav.test.mjs",
+    "line": 300,
+    "start": 12949,
+    "end": 13003,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "boxes[1]"
+    ],
+    "call": "assert.equal(harness.document.activeElement, boxes[1])",
+    "shape": "same-node"
+  },
+  {
+    "file": "mail-keynav.test.mjs",
+    "line": 306,
+    "start": 13262,
+    "end": 13316,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "boxes[1]"
+    ],
+    "call": "assert.equal(harness.document.activeElement, boxes[1])",
+    "shape": "same-node"
+  },
+  {
+    "file": "mail-keynav.test.mjs",
+    "line": 321,
+    "start": 13846,
+    "end": 13903,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "listRows[0]"
+    ],
+    "call": "assert.equal(harness.document.activeElement, listRows[0])",
+    "shape": "same-node"
+  },
+  {
+    "file": "mail-keynav.test.mjs",
+    "line": 330,
+    "start": 14198,
+    "end": 14255,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "listRows[0]"
+    ],
+    "call": "assert.equal(harness.document.activeElement, listRows[0])",
+    "shape": "same-node"
+  },
+  {
+    "file": "mail-keynav.test.mjs",
+    "line": 392,
+    "start": 16965,
+    "end": 17019,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "boxes[2]"
+    ],
+    "call": "assert.equal(harness.document.activeElement, boxes[2])",
+    "shape": "same-node"
+  },
+  {
+    "file": "mail-keynav.test.mjs",
+    "line": 400,
+    "start": 17354,
+    "end": 17408,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "boxes[5]"
+    ],
+    "call": "assert.equal(harness.document.activeElement, boxes[5])",
+    "shape": "same-node"
+  },
+  {
+    "file": "mail-keynav.test.mjs",
+    "line": 413,
+    "start": 17955,
+    "end": 18012,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "listRows[2]"
+    ],
+    "call": "assert.equal(harness.document.activeElement, listRows[2])",
+    "shape": "same-node"
+  },
+  {
+    "file": "mail-keynav.test.mjs",
+    "line": 415,
+    "start": 18081,
+    "end": 18135,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "boxes[3]"
+    ],
+    "call": "assert.equal(harness.document.activeElement, boxes[3])",
+    "shape": "same-node"
+  },
+  {
+    "file": "mail-keynav.test.mjs",
+    "line": 444,
+    "start": 19475,
+    "end": 19528,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "focused"
+    ],
+    "call": "assert.equal(harness.document.activeElement, focused)",
+    "shape": "same-node"
+  },
+  {
+    "file": "management-overlay.test.mjs",
+    "line": 97,
+    "start": 3741,
+    "end": 3846,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "invoker",
+      "'accepted close restores focus to the invoker'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, invoker,\n    'accepted close restores focus to the invoker')",
+    "shape": "same-node"
+  },
+  {
+    "file": "management-preact.test.mjs",
+    "line": 873,
+    "start": 54395,
+    "end": 54550,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "host.querySelector('#profile-editor-harness')",
+      "'hidden autofocus fields cannot retain focus behind the modal'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, host.querySelector('#profile-editor-harness'), 'hidden autofocus fields cannot retain focus behind the modal')",
+    "shape": "same-node"
+  },
+  {
+    "file": "management-preact.test.mjs",
+    "line": 1148,
+    "start": 70000,
+    "end": 70144,
+    "method": "equal",
+    "args": [
+      "diffBody.nextElementSibling",
+      "evaluation",
+      "'evaluation warnings render in their bottom section after the diff, never at the top'"
+    ],
+    "call": "assert.equal(diffBody.nextElementSibling, evaluation,\n    'evaluation warnings render in their bottom section after the diff, never at the top')",
+    "shape": "same-node"
+  },
+  {
+    "file": "management-preact.test.mjs",
+    "line": 1157,
+    "start": 71101,
+    "end": 71208,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "submit",
+      "'focus returns after the editor is interactive again'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, submit, 'focus returns after the editor is interactive again')",
+    "shape": "same-node"
+  },
+  {
+    "file": "management-preact.test.mjs",
+    "line": 1176,
+    "start": 73772,
+    "end": 73874,
+    "method": "notEqual",
+    "args": [
+      "access",
+      "include",
+      "'access and included-profile selects have distinct layout contracts'"
+    ],
+    "call": "assert.notEqual(access, include, 'access and included-profile selects have distinct layout contracts')",
+    "shape": "different-node"
+  },
+  {
+    "file": "management-preact.test.mjs",
+    "line": 1232,
+    "start": 78623,
+    "end": 78708,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "segment(filesystemControls[0], 'write')"
+    ],
+    "call": "assert.equal(harness.document.activeElement, segment(filesystemControls[0], 'write'))",
+    "shape": "same-node"
+  },
+  {
+    "file": "management-preact.test.mjs",
+    "line": 2064,
+    "start": 126392,
+    "end": 126537,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "segment(keyboardMode, 'deny')",
+      "'arrow selection moves the roving focus with the authored value'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, segment(keyboardMode, 'deny'),\n    'arrow selection moves the roving focus with the authored value')",
+    "shape": "same-node"
+  },
+  {
+    "file": "management-preact.test.mjs",
+    "line": 2171,
+    "start": 132922,
+    "end": 133090,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "segment(movedMode, 'allow')",
+      "'a manual row keeps roving focus when its existing mode handler moves it between buckets'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, segment(movedMode, 'allow'),\n    'a manual row keeps roving focus when its existing mode handler moves it between buckets')",
+    "shape": "same-node"
+  },
+  {
+    "file": "management-preact.test.mjs",
+    "line": 2585,
+    "start": 157133,
+    "end": 157272,
+    "method": "equal",
+    "args": [
+      "host.querySelector('#sandbox-profile-editor-global-harness-filter')",
+      "filter",
+      "'snapshot polls preserve the native select node'"
+    ],
+    "call": "assert.equal(host.querySelector('#sandbox-profile-editor-global-harness-filter'), filter, 'snapshot polls preserve the native select node')",
+    "shape": "same-node"
+  },
+  {
+    "file": "management-preact.test.mjs",
+    "line": 3053,
+    "start": 187904,
+    "end": 187955,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "write"
+    ],
+    "call": "assert.equal(harness.document.activeElement, write)",
+    "shape": "same-node"
+  },
+  {
+    "file": "management-preact.test.mjs",
+    "line": 3453,
+    "start": 207730,
+    "end": 207895,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "panel.querySelector('input')",
+      "'the field takes focus without relying on autofocus, which Preact does not implement'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, panel.querySelector('input'),\n    'the field takes focus without relying on autofocus, which Preact does not implement')",
+    "shape": "same-node"
+  },
+  {
+    "file": "management-preact.test.mjs",
+    "line": 3458,
+    "start": 208120,
+    "end": 208172,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "toggle"
+    ],
+    "call": "assert.equal(harness.document.activeElement, toggle)",
+    "shape": "same-node"
+  },
+  {
+    "file": "menu-filter.test.mjs",
+    "line": 258,
+    "start": 11900,
+    "end": 11968,
+    "method": "equal",
+    "args": [
+      "controlled",
+      "menu",
+      "'aria-controls resolves to the menu'"
+    ],
+    "call": "assert.equal(controlled, menu, 'aria-controls resolves to the menu')",
+    "shape": "same-node"
+  },
+  {
+    "file": "menu-filter.test.mjs",
+    "line": 303,
+    "start": 13817,
+    "end": 13865,
+    "method": "equal",
+    "args": [
+      "module.menuActiveItem(menu)",
+      "clone"
+    ],
+    "call": "assert.equal(module.menuActiveItem(menu), clone)",
+    "shape": "same-node"
+  },
+  {
+    "file": "menu-filter.test.mjs",
+    "line": 308,
+    "start": 14093,
+    "end": 14141,
+    "method": "equal",
+    "args": [
+      "module.menuActiveItem(menu)",
+      "clone"
+    ],
+    "call": "assert.equal(module.menuActiveItem(menu), clone)",
+    "shape": "same-node"
+  },
+  {
+    "file": "menu-filter.test.mjs",
+    "line": 312,
+    "start": 14241,
+    "end": 14317,
+    "method": "equal",
+    "args": [
+      "module.menuActiveItem(menu)",
+      "clone",
+      "'unbinding stops tracking'"
+    ],
+    "call": "assert.equal(module.menuActiveItem(menu), clone, 'unbinding stops tracking')",
+    "shape": "same-node"
+  },
+  {
+    "file": "message-access-dialog-preact.test.mjs",
+    "line": 63,
+    "start": 2995,
+    "end": 3116,
+    "method": "equal",
+    "args": [
+      "host.querySelector('#message-create-modal')",
+      "parent",
+      "'opening the keyed child does not recreate its parent'"
+    ],
+    "call": "assert.equal(host.querySelector('#message-create-modal'), parent, 'opening the keyed child does not recreate its parent')",
+    "shape": "same-node"
+  },
+  {
+    "file": "message-access-dialog-preact.test.mjs",
+    "line": 64,
+    "start": 3120,
+    "end": 3182,
+    "method": "equal",
+    "args": [
+      "host.querySelector('#message-create-body')",
+      "body"
+    ],
+    "call": "assert.equal(host.querySelector('#message-create-body'), body)",
+    "shape": "same-node"
+  },
+  {
+    "file": "message-access-dialog-preact.test.mjs",
+    "line": 71,
+    "start": 3586,
+    "end": 3683,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "pickerButton",
+      "'child teardown restores its invoker'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, pickerButton, 'child teardown restores its invoker')",
+    "shape": "same-node"
+  },
+  {
+    "file": "message-access-dialog-preact.test.mjs",
+    "line": 131,
+    "start": 7149,
+    "end": 7217,
+    "method": "equal",
+    "args": [
+      "dialogHost.querySelector('#message-create-body')",
+      "body"
+    ],
+    "call": "assert.equal(dialogHost.querySelector('#message-create-body'), body)",
+    "shape": "same-node"
+  },
+  {
+    "file": "message-access-dialog-preact.test.mjs",
+    "line": 205,
+    "start": 11022,
+    "end": 11138,
+    "method": "equal",
+    "args": [
+      "host.querySelector('#message-create-body')",
+      "body",
+      "'snapshot reconciliation keeps the keyed draft node'"
+    ],
+    "call": "assert.equal(host.querySelector('#message-create-body'), body, 'snapshot reconciliation keeps the keyed draft node')",
+    "shape": "same-node"
+  },
+  {
+    "file": "message-access-dialog-preact.test.mjs",
+    "line": 434,
+    "start": 24771,
+    "end": 24863,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "body",
+      "'the controlled body owns initial focus'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, body, 'the controlled body owns initial focus')",
+    "shape": "same-node"
+  },
+  {
+    "file": "palette-preact.test.mjs",
+    "line": 218,
+    "start": 9092,
+    "end": 9143,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "input"
+    ],
+    "call": "assert.equal(harness.document.activeElement, input)",
+    "shape": "same-node"
+  },
+  {
+    "file": "palette-preact.test.mjs",
+    "line": 250,
+    "start": 11142,
+    "end": 11243,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "button",
+      "'run restores previous focus before the action'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, button, 'run restores previous focus before the action')",
+    "shape": "same-node"
+  },
+  {
+    "file": "plugins-island.test.mjs",
+    "line": 53,
+    "start": 2433,
+    "end": 2514,
+    "method": "equal",
+    "args": [
+      "mounted.container.querySelector('[data-key=\"plugin-canvas\"]')",
+      "card"
+    ],
+    "call": "assert.equal(mounted.container.querySelector('[data-key=\"plugin-canvas\"]'), card)",
+    "shape": "same-node"
+  },
+  {
+    "file": "plugins-island.test.mjs",
+    "line": 54,
+    "start": 2518,
+    "end": 2583,
+    "method": "equal",
+    "args": [
+      "card.querySelector('.rowname').firstChild",
+      "nameText"
+    ],
+    "call": "assert.equal(card.querySelector('.rowname').firstChild, nameText)",
+    "shape": "same-node"
+  },
+  {
+    "file": "plugins-island.test.mjs",
+    "line": 55,
+    "start": 2587,
+    "end": 2637,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "edit"
+    ],
+    "call": "assert.equal(harness.document.activeElement, edit)",
+    "shape": "same-node"
+  },
+  {
+    "file": "plugins-island.test.mjs",
+    "line": 90,
+    "start": 4406,
+    "end": 4456,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "name"
+    ],
+    "call": "assert.equal(harness.document.activeElement, name)",
+    "shape": "same-node"
+  },
+  {
+    "file": "plugins-island.test.mjs",
+    "line": 106,
+    "start": 5251,
+    "end": 5342,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "name",
+      "'Tab wraps to the first dialog control'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, name, 'Tab wraps to the first dialog control')",
+    "shape": "same-node"
+  },
+  {
+    "file": "plugins-island.test.mjs",
+    "line": 108,
+    "start": 5441,
+    "end": 5539,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "submit",
+      "'Shift+Tab wraps to the last dialog control'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, submit, 'Shift+Tab wraps to the last dialog control')",
+    "shape": "same-node"
+  },
+  {
+    "file": "plugins-island.test.mjs",
+    "line": 111,
+    "start": 5644,
+    "end": 5748,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "name",
+      "'Tab from outside is contained at the first control'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, name, 'Tab from outside is contained at the first control')",
+    "shape": "same-node"
+  },
+  {
+    "file": "plugins-island.test.mjs",
+    "line": 114,
+    "start": 5869,
+    "end": 5980,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "submit",
+      "'Shift+Tab from outside is contained at the last control'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, submit, 'Shift+Tab from outside is contained at the last control')",
+    "shape": "same-node"
+  },
+  {
+    "file": "plugins-island.test.mjs",
+    "line": 117,
+    "start": 6109,
+    "end": 6162,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "invoker"
+    ],
+    "call": "assert.equal(harness.document.activeElement, invoker)",
+    "shape": "same-node"
+  },
+  {
+    "file": "preact-harness.test.mjs",
+    "line": 54,
+    "start": 2011,
+    "end": 2061,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "beta"
+    ],
+    "call": "assert.equal(harness.document.activeElement, beta)",
+    "shape": "same-node"
+  },
+  {
+    "file": "preact-harness.test.mjs",
+    "line": 61,
+    "start": 2402,
+    "end": 2483,
+    "method": "equal",
+    "args": [
+      "harness.getByRole(view.container, 'button', { name: 'Beta' })",
+      "beta"
+    ],
+    "call": "assert.equal(harness.getByRole(view.container, 'button', { name: 'Beta' }), beta)",
+    "shape": "same-node"
+  },
+  {
+    "file": "preact-harness.test.mjs",
+    "line": 62,
+    "start": 2487,
+    "end": 2537,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "beta"
+    ],
+    "call": "assert.equal(harness.document.activeElement, beta)",
+    "shape": "same-node"
+  },
+  {
+    "file": "preact-harness.test.mjs",
+    "line": 68,
+    "start": 2751,
+    "end": 2855,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "harness.document.body",
+      "'detached focus falls back to body'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, harness.document.body, 'detached focus falls back to body')",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-editor-dialog.test.mjs",
+    "line": 122,
+    "start": 4246,
+    "end": 4303,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "destructive"
+    ],
+    "call": "assert.equal(harness.document.activeElement, destructive)",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-editor-dialog.test.mjs",
+    "line": 143,
+    "start": 5301,
+    "end": 5353,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "rewire"
+    ],
+    "call": "assert.equal(harness.document.activeElement, rewire)",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-editor-dialog.test.mjs",
+    "line": 183,
+    "start": 7567,
+    "end": 7669,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "harness.getByRole(overlay, 'button', { name: 'Cancel' })"
+    ],
+    "call": "assert.equal(harness.document.activeElement, harness.getByRole(overlay, 'button', { name: 'Cancel' }))",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-editor-dialog.test.mjs",
+    "line": 344,
+    "start": 16510,
+    "end": 16650,
+    "method": "equal",
+    "args": [
+      "harness.document.querySelector('.process-node-modal')",
+      "overlay",
+      "'a rejected gesture confirmation keeps the dialog mounted'"
+    ],
+    "call": "assert.equal(harness.document.querySelector('.process-node-modal'), overlay,\n    'a rejected gesture confirmation keeps the dialog mounted')",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-editor-dialog.test.mjs",
+    "line": 352,
+    "start": 16998,
+    "end": 17074,
+    "method": "equal",
+    "args": [
+      "harness.document.querySelector('.process-node-modal')",
+      "overlay"
+    ],
+    "call": "assert.equal(harness.document.querySelector('.process-node-modal'), overlay)",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-editor-dialog.test.mjs",
+    "line": 429,
+    "start": 21036,
+    "end": 21128,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "first",
+      "'Tab wraps to the first dialog control'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, first, 'Tab wraps to the first dialog control')",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-editor-dialog.test.mjs",
+    "line": 431,
+    "start": 21149,
+    "end": 21249,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "invoker",
+      "'forced parent teardown restores the invoker'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, invoker, 'forced parent teardown restores the invoker')",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-editor-dialog.test.mjs",
+    "line": 445,
+    "start": 21920,
+    "end": 22024,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "label",
+      "'editing a node lands the caret in the label field'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, label, 'editing a node lands the caret in the label field')",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-editor-dialog.test.mjs",
+    "line": 452,
+    "start": 22333,
+    "end": 22505,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "readOnly.querySelector('.process-node-close')",
+      "'a disabled label field yields to the first focusable control'"
+    ],
+    "call": "assert.equal(\n    harness.document.activeElement,\n    readOnly.querySelector('.process-node-close'),\n    'a disabled label field yields to the first focusable control',\n  )",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-editor-dialog.test.mjs",
+    "line": 512,
+    "start": 24986,
+    "end": 25121,
+    "method": "equal",
+    "args": [
+      "overlay.querySelector('.process-node-dialog')",
+      "dialog",
+      "'dynamic stage fields rerender inside the same resizable card'"
+    ],
+    "call": "assert.equal(overlay.querySelector('.process-node-dialog'), dialog,\n    'dynamic stage fields rerender inside the same resizable card')",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-editor-dialog.test.mjs",
+    "line": 550,
+    "start": 26693,
+    "end": 26823,
+    "method": "equal",
+    "args": [
+      "harness.document.querySelector('.process-node-modal')",
+      "overlay",
+      "'rejecting discard keeps the resized draft open'"
+    ],
+    "call": "assert.equal(harness.document.querySelector('.process-node-modal'), overlay,\n    'rejecting discard keeps the resized draft open')",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-editor-dialog.test.mjs",
+    "line": 558,
+    "start": 27039,
+    "end": 27138,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "invoker",
+      "'confirmed close still restores the invoker'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, invoker, 'confirmed close still restores the invoker')",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-editor-dialog.test.mjs",
+    "line": 589,
+    "start": 28547,
+    "end": 28623,
+    "method": "equal",
+    "args": [
+      "harness.document.querySelector('.process-node-modal')",
+      "overlay"
+    ],
+    "call": "assert.equal(harness.document.querySelector('.process-node-modal'), overlay)",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-editor-dialog.test.mjs",
+    "line": 612,
+    "start": 29762,
+    "end": 29838,
+    "method": "equal",
+    "args": [
+      "harness.document.querySelector('.process-node-modal')",
+      "overlay"
+    ],
+    "call": "assert.equal(harness.document.querySelector('.process-node-modal'), overlay)",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-editor-dialog.test.mjs",
+    "line": 693,
+    "start": 34428,
+    "end": 34538,
+    "method": "equal",
+    "args": [
+      "harness.document.querySelector('.process-param-modal')",
+      "overlay",
+      "`${label}: dialog remains open`"
+    ],
+    "call": "assert.equal(harness.document.querySelector('.process-param-modal'), overlay, `${label}: dialog remains open`)",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-editor-dialog.test.mjs",
+    "line": 756,
+    "start": 37704,
+    "end": 37817,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "expected",
+      "`${label}: focus moves to the predictable nearby control`"
+    ],
+    "call": "assert.equal(harness.document.activeElement, expected, `${label}: focus moves to the predictable nearby control`)",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-editor-dialog.test.mjs",
+    "line": 836,
+    "start": 41494,
+    "end": 41571,
+    "method": "equal",
+    "args": [
+      "harness.document.querySelector('.process-param-modal')",
+      "overlay"
+    ],
+    "call": "assert.equal(harness.document.querySelector('.process-param-modal'), overlay)",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-editor-dialog.test.mjs",
+    "line": 871,
+    "start": 43312,
+    "end": 43434,
+    "method": "equal",
+    "args": [
+      "harness.document.querySelector('.process-param-modal')",
+      "overlay",
+      "'navigation rejection keeps the draft open'"
+    ],
+    "call": "assert.equal(harness.document.querySelector('.process-param-modal'), overlay, 'navigation rejection keeps the draft open')",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-editor-dialog.test.mjs",
+    "line": 876,
+    "start": 43642,
+    "end": 43719,
+    "method": "equal",
+    "args": [
+      "harness.document.querySelector('.process-param-modal')",
+      "overlay"
+    ],
+    "call": "assert.equal(harness.document.querySelector('.process-param-modal'), overlay)",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-editor-dialog.test.mjs",
+    "line": 899,
+    "start": 44708,
+    "end": 44766,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "cleanInvoker"
+    ],
+    "call": "assert.equal(harness.document.activeElement, cleanInvoker)",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-editor-dialog.test.mjs",
+    "line": 919,
+    "start": 45680,
+    "end": 45777,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "first",
+      "`${gesture}: Tab wraps to the first control`"
+    ],
+    "call": "assert.equal(harness.document.activeElement, first, `${gesture}: Tab wraps to the first control`)",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-editor-dialog.test.mjs",
+    "line": 928,
+    "start": 46303,
+    "end": 46397,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "invoker",
+      "`${gesture}: invoker focus is restored`"
+    ],
+    "call": "assert.equal(harness.document.activeElement, invoker, `${gesture}: invoker focus is restored`)",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-editor-preact.test.mjs",
+    "line": 81,
+    "start": 3357,
+    "end": 3431,
+    "method": "equal",
+    "args": [
+      "host.querySelector('.process-editor-canvas-host')",
+      "graphHost"
+    ],
+    "call": "assert.equal(host.querySelector('.process-editor-canvas-host'), graphHost)",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-editor-preact.test.mjs",
+    "line": 82,
+    "start": 3435,
+    "end": 3496,
+    "method": "equal",
+    "args": [
+      "host.querySelector('.process-graph')",
+      "graphRoot"
+    ],
+    "call": "assert.equal(host.querySelector('.process-graph'), graphRoot)",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-editor-preact.test.mjs",
+    "line": 86,
+    "start": 3661,
+    "end": 3735,
+    "method": "equal",
+    "args": [
+      "host.querySelector('.process-editor-canvas-host')",
+      "graphHost"
+    ],
+    "call": "assert.equal(host.querySelector('.process-editor-canvas-host'), graphHost)",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-editor-preact.test.mjs",
+    "line": 89,
+    "start": 3913,
+    "end": 3987,
+    "method": "equal",
+    "args": [
+      "host.querySelector('.process-editor-canvas-host')",
+      "graphHost"
+    ],
+    "call": "assert.equal(host.querySelector('.process-editor-canvas-host'), graphHost)",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-editor-preact.test.mjs",
+    "line": 90,
+    "start": 3991,
+    "end": 4127,
+    "method": "equal",
+    "args": [
+      "host.querySelector('.process-graph')",
+      "graphRoot",
+      "'setGraph updates the opaque widget without remounting its host/root'"
+    ],
+    "call": "assert.equal(host.querySelector('.process-graph'), graphRoot,\n    'setGraph updates the opaque widget without remounting its host/root')",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-editor-preact.test.mjs",
+    "line": 387,
+    "start": 18976,
+    "end": 19080,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "nameInput",
+      "'snippet name remains the dialog initial focus'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, nameInput, 'snippet name remains the dialog initial focus')",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-editor-preact.test.mjs",
+    "line": 677,
+    "start": 33746,
+    "end": 33872,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "sourcePort",
+      "'chooser dismissal restores its exact visible connector invoker'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, sourcePort,\n    'chooser dismissal restores its exact visible connector invoker')",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-editor-preact.test.mjs",
+    "line": 942,
+    "start": 47976,
+    "end": 48055,
+    "method": "equal",
+    "args": [
+      "host.querySelector('[aria-label=\"Template display name\"]')",
+      "input"
+    ],
+    "call": "assert.equal(host.querySelector('[aria-label=\"Template display name\"]'), input)",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-editor-preact.test.mjs",
+    "line": 943,
+    "start": 48059,
+    "end": 48110,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "input"
+    ],
+    "call": "assert.equal(harness.document.activeElement, input)",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-editor-preact.test.mjs",
+    "line": 1094,
+    "start": 55543,
+    "end": 55597,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "textarea"
+    ],
+    "call": "assert.equal(harness.document.activeElement, textarea)",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-editor-preact.test.mjs",
+    "line": 1100,
+    "start": 55911,
+    "end": 55965,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "textarea"
+    ],
+    "call": "assert.equal(harness.document.activeElement, textarea)",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-editor-preact.test.mjs",
+    "line": 1103,
+    "start": 56093,
+    "end": 56143,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "send"
+    ],
+    "call": "assert.equal(harness.document.activeElement, send)",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-editor-preact.test.mjs",
+    "line": 1107,
+    "start": 56334,
+    "end": 56429,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "invoker",
+      "'Escape restores the production invoker'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, invoker, 'Escape restores the production invoker')",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-editor-preact.test.mjs",
+    "line": 1115,
+    "start": 56689,
+    "end": 56784,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "invoker",
+      "'Cancel restores the production invoker'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, invoker, 'Cancel restores the production invoker')",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-editor-preact.test.mjs",
+    "line": 1121,
+    "start": 56990,
+    "end": 57097,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "invoker",
+      "'backdrop dismissal restores the production invoker'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, invoker, 'backdrop dismissal restores the production invoker')",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-editor-preact.test.mjs",
+    "line": 1130,
+    "start": 57620,
+    "end": 57713,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "invoker",
+      "'Send restores the production invoker'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, invoker, 'Send restores the production invoker')",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-editor-preact.test.mjs",
+    "line": 1149,
+    "start": 58351,
+    "end": 58401,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "sink"
+    ],
+    "call": "assert.equal(harness.document.activeElement, sink)",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-editor-preact.test.mjs",
+    "line": 1153,
+    "start": 58578,
+    "end": 58671,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "sink",
+      "'Cancel restores the exact shortcut sink'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, sink, 'Cancel restores the exact shortcut sink')",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-editor-preact.test.mjs",
+    "line": 1165,
+    "start": 59140,
+    "end": 59236,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "node",
+      "'confirmation restores the exact graph item'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, node, 'confirmation restores the exact graph item')",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-editor-preact.test.mjs",
+    "line": 1168,
+    "start": 59285,
+    "end": 59352,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "harness.document.body"
+    ],
+    "call": "assert.equal(harness.document.activeElement, harness.document.body)",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-editor-preact.test.mjs",
+    "line": 1172,
+    "start": 59533,
+    "end": 59667,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "harness.document.body",
+      "'an unfocused editor remains unfocused after dialog teardown'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, harness.document.body,\n    'an unfocused editor remains unfocused after dialog teardown')",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-editor-preact.test.mjs",
+    "line": 1201,
+    "start": 60713,
+    "end": 60792,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "overlay.querySelector('textarea')"
+    ],
+    "call": "assert.equal(harness.document.activeElement, overlay.querySelector('textarea'))",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-editor-preact.test.mjs",
+    "line": 1213,
+    "start": 61297,
+    "end": 61350,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "invoker"
+    ],
+    "call": "assert.equal(harness.document.activeElement, invoker)",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-editor-preact.test.mjs",
+    "line": 1246,
+    "start": 62788,
+    "end": 62844,
+    "method": "notEqual",
+    "args": [
+      "harness.document.activeElement",
+      "invoker"
+    ],
+    "call": "assert.notEqual(harness.document.activeElement, invoker)",
+    "shape": "different-node"
+  },
+  {
+    "file": "process-editor-preact.test.mjs",
+    "line": 1252,
+    "start": 63068,
+    "end": 63121,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "invoker"
+    ],
+    "call": "assert.equal(harness.document.activeElement, invoker)",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-editor-preact.test.mjs",
+    "line": 1288,
+    "start": 64698,
+    "end": 64755,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "lowerOpener"
+    ],
+    "call": "assert.equal(harness.document.activeElement, lowerOpener)",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-editor-preact.test.mjs",
+    "line": 1299,
+    "start": 65110,
+    "end": 65164,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "textarea"
+    ],
+    "call": "assert.equal(harness.document.activeElement, textarea)",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-editor-preact.test.mjs",
+    "line": 1313,
+    "start": 65883,
+    "end": 66006,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "textarea",
+      "'the top preview contains focus while the lower overlay yields'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, textarea,\n    'the top preview contains focus while the lower overlay yields')",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-editor-preact.test.mjs",
+    "line": 1321,
+    "start": 66372,
+    "end": 66499,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "lowerOpener",
+      "'preview cleanup returns focus to its still-open owning overlay'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, lowerOpener,\n    'preview cleanup returns focus to its still-open owning overlay')",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-editor-preact.test.mjs",
+    "line": 1327,
+    "start": 66706,
+    "end": 66765,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "editorInvoker"
+    ],
+    "call": "assert.equal(harness.document.activeElement, editorInvoker)",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-editor-preact.test.mjs",
+    "line": 1367,
+    "start": 69172,
+    "end": 69252,
+    "method": "equal",
+    "args": [
+      "harness.document.querySelector('.process-node-modal')",
+      "nodeOverlay"
+    ],
+    "call": "assert.equal(harness.document.querySelector('.process-node-modal'), nodeOverlay)",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-editor-preact.test.mjs",
+    "line": 1373,
+    "start": 69516,
+    "end": 69599,
+    "method": "equal",
+    "args": [
+      "harness.document.querySelector('.process-param-modal')",
+      "paramsOverlay"
+    ],
+    "call": "assert.equal(harness.document.querySelector('.process-param-modal'), paramsOverlay)",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-graph-adapter.test.mjs",
+    "line": 42,
+    "start": 2023,
+    "end": 2129,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "sink",
+      "'empty-canvas shortcuts never require frame focus'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, sink,\n    'empty-canvas shortcuts never require frame focus')",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-graph-adapter.test.mjs",
+    "line": 44,
+    "start": 2133,
+    "end": 2186,
+    "method": "notEqual",
+    "args": [
+      "harness.document.activeElement",
+      "root"
+    ],
+    "call": "assert.notEqual(harness.document.activeElement, root)",
+    "shape": "different-node"
+  },
+  {
+    "file": "process-graph-adapter.test.mjs",
+    "line": 45,
+    "start": 2190,
+    "end": 2242,
+    "method": "notEqual",
+    "args": [
+      "harness.document.activeElement",
+      "svg"
+    ],
+    "call": "assert.notEqual(harness.document.activeElement, svg)",
+    "shape": "different-node"
+  },
+  {
+    "file": "process-graph-adapter.test.mjs",
+    "line": 54,
+    "start": 2590,
+    "end": 2721,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "source",
+      "'an anchored chooser can explicitly retain its visible connector invoker'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, source,\n    'an anchored chooser can explicitly retain its visible connector invoker')",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-graph-adapter.test.mjs",
+    "line": 87,
+    "start": 4482,
+    "end": 4617,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "start",
+      "'painting the focused node at the front leaves the canonical focus owner live'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, start,\n    'painting the focused node at the front leaves the canonical focus owner live')",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-graph-adapter.test.mjs",
+    "line": 318,
+    "start": 17521,
+    "end": 17598,
+    "method": "notEqual",
+    "args": [
+      "restored",
+      "host.querySelector('.process-graph-keyboard-sink')"
+    ],
+    "call": "assert.notEqual(restored, host.querySelector('.process-graph-keyboard-sink'))",
+    "shape": "different-node"
+  },
+  {
+    "file": "process-graph-adapter.test.mjs",
+    "line": 367,
+    "start": 20178,
+    "end": 20356,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "host.querySelector('.process-graph-keyboard-sink')",
+      "'stable shortcut focus survives removal without landing on the editor frame'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, host.querySelector('.process-graph-keyboard-sink'),\n    'stable shortcut focus survives removal without landing on the editor frame')",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-graph-adapter.test.mjs",
+    "line": 589,
+    "start": 31748,
+    "end": 31844,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "port",
+      "'disabled connector owns focus before Space'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, port, 'disabled connector owns focus before Space')",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-graph-adapter.test.mjs",
+    "line": 717,
+    "start": 38798,
+    "end": 38888,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "beforeFocus",
+      "'observation never moves focus'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, beforeFocus, 'observation never moves focus')",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-graph.test.mjs",
+    "line": 186,
+    "start": 10091,
+    "end": 10220,
+    "method": "equal",
+    "args": [
+      "fake.edgeLayer.firstElementChild",
+      "rendered",
+      "'drag frames retain edge focus, listeners, and selection classes'"
+    ],
+    "call": "assert.equal(fake.edgeLayer.firstElementChild, rendered,\n      'drag frames retain edge focus, listeners, and selection classes')",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-node-chooser.test.mjs",
+    "line": 26,
+    "start": 1241,
+    "end": 1341,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "input",
+      "'the searchable control receives initial focus'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, input, 'the searchable control receives initial focus')",
+    "shape": "same-node"
+  },
+  {
+    "file": "process-node-chooser.test.mjs",
+    "line": 151,
+    "start": 7490,
+    "end": 7543,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "trigger"
+    ],
+    "call": "assert.equal(harness.document.activeElement, trigger)",
+    "shape": "same-node"
+  },
+  {
+    "file": "processes-preact.test.mjs",
+    "line": 605,
+    "start": 35909,
+    "end": 35960,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "input"
+    ],
+    "call": "assert.equal(harness.document.activeElement, input)",
+    "shape": "same-node"
+  },
+  {
+    "file": "processes-preact.test.mjs",
+    "line": 778,
+    "start": 46387,
+    "end": 46438,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "input"
+    ],
+    "call": "assert.equal(harness.document.activeElement, input)",
+    "shape": "same-node"
+  },
+  {
+    "file": "processes-preact.test.mjs",
+    "line": 925,
+    "start": 55275,
+    "end": 55364,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "input",
+      "'the editor takes focus when opened'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, input, 'the editor takes focus when opened')",
+    "shape": "same-node"
+  },
+  {
+    "file": "processes-preact.test.mjs",
+    "line": 1059,
+    "start": 64080,
+    "end": 64155,
+    "method": "equal",
+    "args": [
+      "live",
+      "input",
+      "'the refresh does not tear down the open editor'"
+    ],
+    "call": "assert.equal(live, input, 'the refresh does not tear down the open editor')",
+    "shape": "same-node"
+  },
+  {
+    "file": "shell-island.test.mjs",
+    "line": 34,
+    "start": 1800,
+    "end": 1898,
+    "method": "equal",
+    "args": [
+      "usage.container.querySelector('.uw')",
+      "fiveHour",
+      "'stable usage token survives a poll'"
+    ],
+    "call": "assert.equal(usage.container.querySelector('.uw'), fiveHour, 'stable usage token survives a poll')",
+    "shape": "same-node"
+  },
+  {
+    "file": "shell-island.test.mjs",
+    "line": 35,
+    "start": 1902,
+    "end": 2038,
+    "method": "equal",
+    "args": [
+      "meta.container.querySelector('.meta-base').firstChild",
+      "baseText",
+      "'unchanged base URL remains a valid selection anchor'"
+    ],
+    "call": "assert.equal(meta.container.querySelector('.meta-base').firstChild, baseText,\n    'unchanged base URL remains a valid selection anchor')",
+    "shape": "same-node"
+  },
+  {
+    "file": "shell-island.test.mjs",
+    "line": 55,
+    "start": 3011,
+    "end": 3059,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "ok"
+    ],
+    "call": "assert.equal(harness.document.activeElement, ok)",
+    "shape": "same-node"
+  },
+  {
+    "file": "shell-island.test.mjs",
+    "line": 126,
+    "start": 6035,
+    "end": 6104,
+    "method": "equal",
+    "args": [
+      "mounted.container.querySelector('.ga-regular')",
+      "regular"
+    ],
+    "call": "assert.equal(mounted.container.querySelector('.ga-regular'), regular)",
+    "shape": "same-node"
+  },
+  {
+    "file": "shell-island.test.mjs",
+    "line": 127,
+    "start": 6108,
+    "end": 6171,
+    "method": "equal",
+    "args": [
+      "regular.querySelector('.actbot-working')",
+      "working"
+    ],
+    "call": "assert.equal(regular.querySelector('.actbot-working'), working)",
+    "shape": "same-node"
+  },
+  {
+    "file": "shell-island.test.mjs",
+    "line": 128,
+    "start": 6175,
+    "end": 6234,
+    "method": "equal",
+    "args": [
+      "working.querySelector('.actbot-count')",
+      "count"
+    ],
+    "call": "assert.equal(working.querySelector('.actbot-count'), count)",
+    "shape": "same-node"
+  },
+  {
+    "file": "shell-island.test.mjs",
+    "line": 135,
+    "start": 6476,
+    "end": 6611,
+    "method": "equal",
+    "args": [
+      "mounted.container.querySelector('.ga-regular')",
+      "regular",
+      "'theme wording changes do not remount hidden animation rows'"
+    ],
+    "call": "assert.equal(mounted.container.querySelector('.ga-regular'), regular,\n    'theme wording changes do not remount hidden animation rows')",
+    "shape": "same-node"
+  },
+  {
+    "file": "shell-island.test.mjs",
+    "line": 137,
+    "start": 6615,
+    "end": 6678,
+    "method": "equal",
+    "args": [
+      "regular.querySelector('.actbot-working')",
+      "working"
+    ],
+    "call": "assert.equal(regular.querySelector('.actbot-working'), working)",
+    "shape": "same-node"
+  },
+  {
+    "file": "task-link.test.mjs",
+    "line": 112,
+    "start": 5062,
+    "end": 5111,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "url"
+    ],
+    "call": "assert.equal(harness.document.activeElement, url)",
+    "shape": "same-node"
+  },
+  {
+    "file": "task-link.test.mjs",
+    "line": 257,
+    "start": 11956,
+    "end": 12053,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "invoker",
+      "'closing restores the edit-pencil invoker'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, invoker, 'closing restores the edit-pencil invoker')",
+    "shape": "same-node"
+  },
+  {
+    "file": "template-management-preact.test.mjs",
+    "line": 208,
+    "start": 6632,
+    "end": 6791,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "host.querySelector('#template-editor-name')",
+      "'the editor autofocuses its declared initial field'"
+    ],
+    "call": "assert.equal(\n    harness.document.activeElement,\n    host.querySelector('#template-editor-name'),\n    'the editor autofocuses its declared initial field',\n  )",
+    "shape": "same-node"
+  },
+  {
+    "file": "template-management-preact.test.mjs",
+    "line": 253,
+    "start": 8633,
+    "end": 8754,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "nestedFilter",
+      "'only the topmost overlay owns the Tab trap'"
+    ],
+    "call": "assert.equal(\n    harness.document.activeElement,\n    nestedFilter,\n    'only the topmost overlay owns the Tab trap',\n  )",
+    "shape": "same-node"
+  },
+  {
+    "file": "template-management-preact.test.mjs",
+    "line": 377,
+    "start": 12474,
+    "end": 12658,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "host.querySelector('#template-deploy-mission')",
+      "'the deploy dialog honors mission autofocus instead of the first control'"
+    ],
+    "call": "assert.equal(\n    harness.document.activeElement,\n    host.querySelector('#template-deploy-mission'),\n    'the deploy dialog honors mission autofocus instead of the first control',\n  )",
+    "shape": "same-node"
+  },
+  {
+    "file": "terminal-shell-island.test.mjs",
+    "line": 442,
+    "start": 22268,
+    "end": 22369,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "tab('two')",
+      "'Escape restores focus to the invoking tab'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, tab('two'), 'Escape restores focus to the invoking tab')",
+    "shape": "same-node"
+  },
+  {
+    "file": "terminal-shell-island.test.mjs",
+    "line": 451,
+    "start": 22831,
+    "end": 22977,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "host.querySelector('.mux-pane.active button')",
+      "'forward Tab moves into the active pane controls'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, host.querySelector('.mux-pane.active button'),\n    'forward Tab moves into the active pane controls')",
+    "shape": "same-node"
+  },
+  {
+    "file": "terminal-shell-island.test.mjs",
+    "line": 460,
+    "start": 23402,
+    "end": 23499,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "tab('two')",
+      "'reverse Tab restores the invoking tab'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, tab('two'), 'reverse Tab restores the invoking tab')",
+    "shape": "same-node"
+  },
+  {
+    "file": "terminal-shell-island.test.mjs",
+    "line": 466,
+    "start": 24038,
+    "end": 24142,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "tab('three')",
+      "'close tab focuses the surviving active tab'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, tab('three'), 'close tab focuses the surviving active tab')",
+    "shape": "same-node"
+  },
+  {
+    "file": "terminal-shell-island.test.mjs",
+    "line": 482,
+    "start": 25064,
+    "end": 25165,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "tab('three')",
+      "'detach focuses the surviving active tab'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, tab('three'), 'detach focuses the surviving active tab')",
+    "shape": "same-node"
+  },
+  {
+    "file": "terminal-shell-island.test.mjs",
+    "line": 500,
+    "start": 26219,
+    "end": 26314,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "tab('three')",
+      "'close others focuses the kept tab'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, tab('three'), 'close others focuses the kept tab')",
+    "shape": "same-node"
+  },
+  {
+    "file": "terminal-shell-island.test.mjs",
+    "line": 509,
+    "start": 26792,
+    "end": 26962,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "harness.document.querySelector('nav [data-tab=\"groups\"]')",
+      "'close all moves focus to the selected Groups navigation tab'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, harness.document.querySelector('nav [data-tab=\"groups\"]'),\n    'close all moves focus to the selected Groups navigation tab')",
+    "shape": "same-node"
+  },
+  {
+    "file": "terminal-tab-groups.test.mjs",
+    "line": 370,
+    "start": 19787,
+    "end": 19873,
+    "method": "deepEqual",
+    "args": [
+      "[...container.querySelectorAll('.mux-tab-group .mux-tab-label')]",
+      "[]"
+    ],
+    "call": "assert.deepEqual([...container.querySelectorAll('.mux-tab-group .mux-tab-label')], [])",
+    "shape": "empty-node-array"
+  },
+  {
+    "file": "terminal-tab-groups.test.mjs",
+    "line": 409,
+    "start": 21997,
+    "end": 22100,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "rename",
+      "'renaming focuses its input instead of the strip'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, rename, 'renaming focuses its input instead of the strip')",
+    "shape": "same-node"
+  },
+  {
+    "file": "terminal-tab-groups.test.mjs",
+    "line": 506,
+    "start": 27590,
+    "end": 27640,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "bTab"
+    ],
+    "call": "assert.equal(harness.document.activeElement, bTab)",
+    "shape": "same-node"
+  },
+  {
+    "file": "terminal-tab-groups.test.mjs",
+    "line": 518,
+    "start": 28293,
+    "end": 28373,
+    "method": "notEqual",
+    "args": [
+      "movedTab",
+      "bTab",
+      "'the tab node was recreated under a new parent'"
+    ],
+    "call": "assert.notEqual(movedTab, bTab, 'the tab node was recreated under a new parent')",
+    "shape": "different-node"
+  },
+  {
+    "file": "terminal-tab-groups.test.mjs",
+    "line": 519,
+    "start": 28377,
+    "end": 28514,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "movedTab",
+      "'focus followed the tab across the boundary so the next keypress still lands'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, movedTab,\n    'focus followed the tab across the boundary so the next keypress still lands')",
+    "shape": "same-node"
+  },
+  {
+    "file": "terminal-tab-groups.test.mjs",
+    "line": 654,
+    "start": 36678,
+    "end": 36761,
+    "method": "equal",
+    "args": [
+      "tabFor('b')",
+      "bTab",
+      "'the grouped tab element is reused, not recreated'"
+    ],
+    "call": "assert.equal(tabFor('b'), bTab, 'the grouped tab element is reused, not recreated')",
+    "shape": "same-node"
+  },
+  {
+    "file": "terminal-tab-groups.test.mjs",
+    "line": 655,
+    "start": 36765,
+    "end": 36868,
+    "method": "equal",
+    "args": [
+      "tabFor('b').querySelector('.mux-tab-label')",
+      "bLabel",
+      "'the drag-source label is preserved'"
+    ],
+    "call": "assert.equal(tabFor('b').querySelector('.mux-tab-label'), bLabel, 'the drag-source label is preserved')",
+    "shape": "same-node"
+  },
+  {
+    "file": "terminal-tab-groups.test.mjs",
+    "line": 720,
+    "start": 40990,
+    "end": 41076,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "pill()",
+      "'focus stays on the moved group'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, pill(), 'focus stays on the moved group')",
+    "shape": "same-node"
+  },
+  {
+    "file": "terminal-tab-groups.test.mjs",
+    "line": 857,
+    "start": 48441,
+    "end": 48510,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "input",
+      "'and focuses it'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, input, 'and focuses it')",
+    "shape": "same-node"
+  },
+  {
+    "file": "terminal-tab-notifications.test.mjs",
+    "line": 193,
+    "start": 8595,
+    "end": 8711,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "launcher",
+      "'closing hands focus back to whatever raised the reader'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, launcher,\n    'closing hands focus back to whatever raised the reader')",
+    "shape": "same-node"
+  },
+  {
+    "file": "theme-favicon.test.mjs",
+    "line": 36,
+    "start": 1250,
+    "end": 1339,
+    "method": "notEqual",
+    "args": [
+      "regularLink",
+      "initialLink",
+      "'startup replaces the tab-cached favicon node'"
+    ],
+    "call": "assert.notEqual(regularLink, initialLink, 'startup replaces the tab-cached favicon node')",
+    "shape": "different-node"
+  },
+  {
+    "file": "theme-favicon.test.mjs",
+    "line": 41,
+    "start": 1518,
+    "end": 1608,
+    "method": "notEqual",
+    "args": [
+      "wizardLink",
+      "regularLink",
+      "'entering wizard mode replaces the favicon node'"
+    ],
+    "call": "assert.notEqual(wizardLink, regularLink, 'entering wizard mode replaces the favicon node')",
+    "shape": "different-node"
+  },
+  {
+    "file": "theme-favicon.test.mjs",
+    "line": 48,
+    "start": 1896,
+    "end": 1992,
+    "method": "notEqual",
+    "args": [
+      "restoredLink",
+      "wizardLink",
+      "'leaving wizard mode replaces the favicon node again'"
+    ],
+    "call": "assert.notEqual(restoredLink, wizardLink, 'leaving wizard mode replaces the favicon node again')",
+    "shape": "different-node"
+  },
+  {
+    "file": "toolbar-actions-menu.test.mjs",
+    "line": 77,
+    "start": 3790,
+    "end": 3852,
+    "method": "equal",
+    "args": [
+      "view.harness.document.activeElement",
+      "view.filter"
+    ],
+    "call": "assert.equal(view.harness.document.activeElement, view.filter)",
+    "shape": "same-node"
+  },
+  {
+    "file": "transaction-bulk-retire-preact.test.mjs",
+    "line": 291,
+    "start": 14109,
+    "end": 14161,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "opener"
+    ],
+    "call": "assert.equal(harness.document.activeElement, opener)",
+    "shape": "same-node"
+  },
+  {
+    "file": "transaction-delete-group-preact.test.mjs",
+    "line": 222,
+    "start": 9097,
+    "end": 9196,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "opener",
+      "'successful completion restores opener focus'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, opener, 'successful completion restores opener focus')",
+    "shape": "same-node"
+  },
+  {
+    "file": "transaction-delete-group-preact.test.mjs",
+    "line": 462,
+    "start": 20016,
+    "end": 20068,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "opener"
+    ],
+    "call": "assert.equal(harness.document.activeElement, opener)",
+    "shape": "same-node"
+  },
+  {
+    "file": "transaction-delete-preact.test.mjs",
+    "line": 297,
+    "start": 11860,
+    "end": 11912,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "opener"
+    ],
+    "call": "assert.equal(harness.document.activeElement, opener)",
+    "shape": "same-node"
+  },
+  {
+    "file": "transaction-delete-retired-preact.test.mjs",
+    "line": 257,
+    "start": 11686,
+    "end": 11738,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "opener"
+    ],
+    "call": "assert.equal(harness.document.activeElement, opener)",
+    "shape": "same-node"
+  },
+  {
+    "file": "transaction-dialog-preact.test.mjs",
+    "line": 105,
+    "start": 4757,
+    "end": 4809,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "opener"
+    ],
+    "call": "assert.equal(harness.document.activeElement, opener)",
+    "shape": "same-node"
+  },
+  {
+    "file": "transaction-retire-preact.test.mjs",
+    "line": 471,
+    "start": 21454,
+    "end": 21506,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "opener"
+    ],
+    "call": "assert.equal(harness.document.activeElement, opener)",
+    "shape": "same-node"
+  },
+  {
+    "file": "transaction-shutdown-preact.test.mjs",
+    "line": 79,
+    "start": 3253,
+    "end": 3305,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "opener"
+    ],
+    "call": "assert.equal(harness.document.activeElement, opener)",
+    "shape": "same-node"
+  },
+  {
+    "file": "transaction-shutdown-preact.test.mjs",
+    "line": 176,
+    "start": 7955,
+    "end": 8007,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "opener"
+    ],
+    "call": "assert.equal(harness.document.activeElement, opener)",
+    "shape": "same-node"
+  },
+  {
+    "file": "transaction-window-selection-preact.test.mjs",
+    "line": 271,
+    "start": 12408,
+    "end": 12460,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "opener"
+    ],
+    "call": "assert.equal(harness.document.activeElement, opener)",
+    "shape": "same-node"
+  },
+  {
+    "file": "transaction-window-selection-preact.test.mjs",
+    "line": 319,
+    "start": 14913,
+    "end": 14965,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "opener"
+    ],
+    "call": "assert.equal(harness.document.activeElement, opener)",
+    "shape": "same-node"
+  },
+  {
+    "file": "transaction-window-selection-preact.test.mjs",
+    "line": 339,
+    "start": 15777,
+    "end": 15829,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "opener"
+    ],
+    "call": "assert.equal(harness.document.activeElement, opener)",
+    "shape": "same-node"
+  },
+  {
+    "file": "worktree-cleanup.test.mjs",
+    "line": 333,
+    "start": 14432,
+    "end": 14574,
+    "method": "equal",
+    "args": [
+      "harness.document.activeElement",
+      "host.querySelector('#worktree-cleanup-submit')",
+      "'the result phase moves modal focus to Done'"
+    ],
+    "call": "assert.equal(harness.document.activeElement, host.querySelector('#worktree-cleanup-submit'),\n    'the result phase moves modal focus to Done')",
+    "shape": "same-node"
+  }
+]
