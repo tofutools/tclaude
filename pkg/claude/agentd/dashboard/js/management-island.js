@@ -269,7 +269,19 @@ function SandboxOutcomeBucket({
   </details>`;
 }
 
-export function SandboxPolicyResult({ target, context, contextIndex }) {
+/* The label the context selector gives an assignment, so a warning about
+   another assignment names something the operator can actually locate in the
+   dropdown rather than an opaque ordinal. Kept in step with the selector's own
+   option text below. */
+function sandboxContextLabel(contexts, index) {
+  const value = contexts?.[index]?.context;
+  if (!value) return `assignment ${index + 1}`;
+  if (value.group_name) return `group ${value.group_name}`;
+  if (value.explicit) return 'explicit selection';
+  return 'global assignment';
+}
+
+export function SandboxPolicyResult({ target, context, contextIndex, contexts = [] }) {
   const [ruleHelpOpen, setRuleHelpOpen] = useState('');
   const axes = target.context_axes?.[contextIndex] || target.axes || {};
   const networkEntries = target.context_network_entries?.[contextIndex]
@@ -298,11 +310,13 @@ export function SandboxPolicyResult({ target, context, contextIndex }) {
   const otherRefusals = sandboxOtherContextRefusals(target, contextIndex);
   const otherWarnings = [
     ...sandboxOtherAssignmentWarnings(target.axes, axes),
-    ...otherRefusals.map(({ index, refusal }) => ({
-      axis: `refusal-${index ?? 'omitted'}`,
+    // A distinct axis per entry: it is the list key, and several omitted
+    // refusals would otherwise share one.
+    ...otherRefusals.map(({ index, refusal }, position) => ({
+      axis: index === null ? `refusal-omitted-${position}` : `refusal-${index}`,
       label: index === null
         ? 'An assignment omitted from this selector'
-        : `Assignment ${index + 1}`,
+        : sandboxContextLabel(contexts, index),
       outcome: 'refused',
       detail: refusal.message,
     })),
@@ -1435,7 +1449,7 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
         role="status" aria-live="polite" aria-atomic="true">
         <strong>${SANDBOX_PROFILE_LAYERS_LABEL}:</strong> ${sandboxProfileLayersText(selectedEffective.context, 'this draft alone — no global or group sandbox profile applies')}
       </div>`}
-      ${selectedEffective && prediction?.targets?.map((target, index) => html`<${SandboxPolicyResult} key=${index} target=${target} context=${selectedEffective} contextIndex=${effectiveContext}/>`)}
+      ${selectedEffective && prediction?.targets?.map((target, index) => html`<${SandboxPolicyResult} key=${index} target=${target} context=${selectedEffective} contextIndex=${effectiveContext} contexts=${prediction.contexts}/>`)}
       ${(selectedEffective?.notices || []).length > 0 && html`<div class="sbx-a11y-status" role="status" aria-live="polite" aria-atomic="true">Policy composition warning: ${selectedEffective.notices.map((notice) => notice.detail).join('. ')}</div>`}
       ${selectedEffective && html`<details class="sbx-composition-details"><summary>How these rules were combined</summary>
         ${/* The layer list itself is the always-visible row above; this

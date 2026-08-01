@@ -158,15 +158,62 @@ test('a refusal in an unselected context is surfaced, not silently dropped', asy
     context_refusals: [null, REFUSAL],
   };
   // Viewing context 0, which is itself perfectly clean.
+  const contexts = [
+    { context: { group_name: 'crew-clean' } },
+    { context: { group_name: 'crew-conflicted' } },
+  ];
   const mounted = await harness.mount(harness.html`
-    <${SandboxPolicyResult} target=${target} context=${CONTEXT} contextIndex=${0}/>`);
+    <${SandboxPolicyResult} target=${target} context=${CONTEXT} contextIndex=${0}
+      contexts=${contexts}/>`);
   const other = mounted.container.querySelector('.sbx-other-assignments');
   assert.ok(other, 'the refused sibling assignment must be reported');
   assert.ok(other.classList.contains('refused'));
   assert.equal(other.getAttribute('role'), 'alert');
   assert.match(other.textContent, /proxy_engine_name_authority/);
+  // Named with the SAME vocabulary the context selector uses, so the operator
+  // can find the offending assignment. An ordinal like "Assignment 2" matches
+  // nothing on screen and leaves the warning unactionable.
+  assert.match(other.textContent, /group crew-conflicted/);
+  assert.doesNotMatch(other.textContent, /Assignment 2/);
   assert.equal(sandboxPolicyNeedsAttention(target, CONTEXT, 0), true,
     'a blocked sibling assignment must open the section');
+});
+
+test('several omitted refusals each get their own entry', async (t) => {
+  // The daemon can emit more than one refusal past the display cap, and each
+  // must get its own row rather than being collapsed. That is what this test
+  // verifies.
+  //
+  // It does NOT verify the accompanying list-KEY change. Those entries are keyed
+  // by their axis field, and the fix gives each omitted entry a distinct one;
+  // but Preact reconciles correctly with duplicate keys here, so reverting that
+  // half leaves this test passing — confirmed by running it that way. The key
+  // change is a latent-hazard fix with no observable behaviour to assert, and
+  // saying so is the point: a test whose title implies coverage it does not have
+  // is worse than an absent one.
+  const harness = await createPreactHarness(t);
+  const { SandboxPolicyResult } = await harness.importDashboardModule('js/management-island.js');
+  const second = { ...REFUSAL, message: 'missing capability second_distinct_capability' };
+  const target = {
+    target: { implementation: 'tclaude-layer', harness: 'claude', platform: 'linux' },
+    predicted: true,
+    axes: { filesystem: { outcome: 'enforced', tier: '1 read rule', detail: 'aggregate' } },
+    context_axes: [{
+      filesystem: { outcome: 'enforced', tier: '1 read rule', detail: 'enforced here' },
+      network: { outcome: 'enforced', tier: 'list', detail: 'enforced here' },
+      unix_sockets: { outcome: 'enforced', tier: 'unset', detail: 'enforced here' },
+    }],
+    context_refusals: [null],
+    omitted_refusals: [REFUSAL, second],
+  };
+  const mounted = await harness.mount(harness.html`
+    <${SandboxPolicyResult} target=${target} context=${CONTEXT} contextIndex=${0}/>`);
+  const items = mounted.container.querySelectorAll('.sbx-other-assignments li');
+  assert.equal(items.length, 2, 'each omitted refusal needs its own row');
+  const text = [...items].map((item) => item.textContent).join('\n');
+  assert.match(text, /proxy_engine_name_authority/);
+  assert.match(text, /second_distinct_capability/,
+    'a second omitted refusal must not be collapsed into the first');
 });
 
 test('a refusal past the display cap is surfaced via omitted_refusals', async (t) => {

@@ -1,13 +1,14 @@
 package agentd_test
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
-	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/testharness"
@@ -746,57 +747,57 @@ func TestSandboxProfileDraftEnforcementDoesNotRefuseOnDraftOnlyConflict(t *testi
 // a host that ran no capability probes it read MORE confidently than the
 // enforced rows beside it.
 //
+// It drives the TOOLING half of the caveat rule rather than the platform half.
+// The platform half is untestable here: the resolver conflict only fires on
+// linux, so the refused row is ALWAYS the linux target, and on a Linux host that
+// is the host platform — meaning a platform-based assertion is skipped exactly
+// where the refused row exists. (An earlier version of this test did that and
+// could not fail on Linux at all.) The tooling half has a hook, applies to the
+// tclaude-layer target the conflict needs, and is host-independent.
+//
 // Falsifiability: drop the `Caveat:` field from the refused row in
-// handleSandboxProfileEnforcement. The refused target's Caveat is then "" where
-// it is now the non-host-platform sentence, and the require below fails — while
-// the clean target's caveat is unchanged, so the two are compared against each
-// other rather than against a constant.
+// handleSandboxProfileEnforcement. refused.Caveat is then "" where it now names
+// the missing tooling, and the require below fails — on every platform, not just
+// a non-Linux one.
 func TestSandboxProfileEnforcementRefusalKeepsThePredictionCaveat(t *testing.T) {
 	f := newFlow(t)
+	// A host without the layer tooling. Both probes move together: the
+	// disclosure reads presence and the launch reads availability.
+	missing := func() error { return errors.New("bwrap: not found in PATH") }
+	t.Cleanup(agentd.SetTclaudeLayerHostAvailabilitiesForTest(missing, missing))
+
 	rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles",
 		resolverConflictProfile("resolver-conflict-caveat"))
 	require.Equalf(t, http.StatusCreated, rec.Code, "body=%s", rec.Body.String())
 
-	// Predict for a platform that is not this host, so the caveat applies. The
-	// conflict is Linux-only, so the refused row must be the linux one; the
-	// darwin row is the control that shows the caveat is platform-derived.
 	rec = profileReq(t, f, http.MethodGet,
 		"/v1/sandbox-profiles/resolver-conflict-caveat/enforcement?"+
 			"for=tclaude-layer%2Fclaude%2Flinux&"+
-			"for=tclaude-layer%2Fclaude%2Fdarwin", nil)
+			"for=harness-builtin%2Fclaude%2Flinux", nil)
 	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 
 	var got struct {
 		Targets []struct {
-			Platform string       `json:"platform"`
-			Caveat   string       `json:"caveat"`
-			Refusal  *refusalJSON `json:"refusal"`
+			Implementation string       `json:"implementation"`
+			Caveat         string       `json:"caveat"`
+			Refusal        *refusalJSON `json:"refusal"`
 		} `json:"targets"`
 	}
 	testharness.DecodeJSON(t, rec, &got)
 	require.Len(t, got.Targets, 2)
-	refused, other := got.Targets[0], got.Targets[1]
-	require.NotNil(t, refused.Refusal, "the linux target is the refused one")
-	require.Nil(t, other.Refusal, "darwin deploys no proxy engine here")
+	refused, builtin := got.Targets[0], got.Targets[1]
+	require.NotNil(t, refused.Refusal, "the tclaude-layer target is the refused one")
+	require.Nil(t, builtin.Refusal)
 
-	if runtime.GOOS != "linux" {
-		require.NotEmpty(t, refused.Caveat,
-			"a refused prediction must carry the same qualification as an enforced one")
-		assert.Contains(t, refused.Caveat, "non-host platform")
-	}
-	if runtime.GOOS != "darwin" {
-		assert.Contains(t, other.Caveat, "non-host platform",
-			"control: the caveat is derived from the platform, not from the refusal")
-	}
-	// On a Linux host the refused target IS the host platform, so the caveat is
-	// whatever the tooling probe says — the point is that it is computed by the
-	// same helper for both rows rather than skipped for the refused one.
-	assert.Equal(t, sandboxProfileCaveatForPlatform(refused.Platform), refused.Caveat != "",
-		"the refused row's caveat must follow the same rule as every other row")
-}
+	require.NotEmpty(t, refused.Caveat,
+		"a refused prediction must carry the same qualification as an enforced one")
+	assert.Contains(t, refused.Caveat, "host tooling is not installed")
+	assert.Contains(t, refused.Caveat, "bwrap: not found in PATH",
+		"the caveat names what is missing, not merely that something is")
 
-// sandboxProfileCaveatForPlatform mirrors only the platform half of the daemon's
-// caveat rule, which is the half this test can predict from outside.
-func sandboxProfileCaveatForPlatform(platform string) bool {
-	return platform != runtime.GOOS
+	// Control, so the assertion above cannot pass by the caveat being
+	// unconditional: a harness-builtin target uses no layer tooling and must
+	// carry no tooling caveat on the same host, in the same response.
+	assert.Empty(t, builtin.Caveat,
+		"the caveat follows the tooling rule, not the presence of a refusal")
 }
