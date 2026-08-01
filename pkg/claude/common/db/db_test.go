@@ -2,6 +2,8 @@ package db
 
 import (
 	"database/sql"
+	"errors"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -579,4 +581,223 @@ func TestLegacyImport(t *testing.T) {
 	// Old location should be gone (it was moved before the dir rename)
 	_, err = os.Stat(dir + "/.tclaude/data/claude-sessions.migrated/debug.log")
 	assert.True(t, os.IsNotExist(err), "debug.log should not remain in old dir")
+}
+
+func TestLegacyImportRepairsMissingRequiredTimestamps(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	ResetForTest()
+
+	sessDir := filepath.Join(dir, ".tclaude", "claude-sessions")
+	require.NoError(t, os.MkdirAll(sessDir, 0o755))
+	fileStamp := time.Date(2025, 2, 3, 4, 5, 6, 0, time.UTC)
+	createdStamp := time.Date(2025, 3, 4, 5, 6, 7, 0, time.UTC)
+	updatedStamp := time.Date(2025, 4, 5, 6, 7, 8, 0, time.UTC)
+	fixtures := []struct {
+		id, timestamps string
+		wantCreated    time.Time
+		wantUpdated    time.Time
+	}{
+		{"missing-both", "", fileStamp, fileStamp},
+		{"missing-created", `,"updated":"2025-04-05T06:07:08Z"`, updatedStamp, updatedStamp},
+		{"missing-updated", `,"created":"2025-03-04T05:06:07Z"`, createdStamp, createdStamp},
+	}
+	for _, fixture := range fixtures {
+		path := filepath.Join(sessDir, fixture.id+".json")
+		body := fmt.Sprintf(`{"id":%q,"tmuxSession":%q,"status":"idle"%s}`, fixture.id, fixture.id, fixture.timestamps)
+		require.NoError(t, os.WriteFile(path, []byte(body), 0o644))
+		require.NoError(t, os.Chtimes(path, fileStamp, fileStamp))
+	}
+
+	_, err := Open()
+	require.NoError(t, err, "fresh v1 import must survive its own v181 migration")
+	for _, fixture := range fixtures {
+		row, err := LoadSession(fixture.id)
+		require.NoError(t, err, fixture.id)
+		assert.Equal(t, fixture.wantCreated, row.CreatedAt, fixture.id+" created_at")
+		assert.Equal(t, fixture.wantUpdated, row.UpdatedAt, fixture.id+" updated_at")
+	}
+}
+
+func TestLegacyImportTimestampSourceFailureLeavesSourceForRetry(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	ResetForTest()
+
+	sessDir := filepath.Join(dir, ".tclaude", "claude-sessions")
+	require.NoError(t, os.MkdirAll(sessDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(sessDir, "a-valid.json"), []byte(`{
+		"id":"a-valid","tmuxSession":"a-valid","status":"idle",
+		"created":"2025-01-01T00:00:00Z","updated":"2025-01-01T01:00:00Z"
+	}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(sessDir, "b-stat-fails.json"), []byte(`{
+		"id":"b-stat-fails","tmuxSession":"b-stat-fails","status":"idle"
+	}`), 0o644))
+
+	originalEntryInfo := legacySessionEntryInfo
+	legacySessionEntryInfo = func(entry os.DirEntry) (os.FileInfo, error) {
+		if entry.Name() == "b-stat-fails.json" {
+			return nil, errors.New("transient stat failure")
+		}
+		return originalEntryInfo(entry)
+	}
+	t.Cleanup(func() { legacySessionEntryInfo = originalEntryInfo })
+
+	_, err := Open()
+	require.ErrorContains(t, err, "transient stat failure")
+	assert.DirExists(t, sessDir, "failed import leaves the complete source directory available")
+	assert.NoDirExists(t, filepath.Join(dir, ".tclaude", "data", "claude-sessions.migrated"))
+
+	legacySessionEntryInfo = originalEntryInfo
+	ResetForTest()
+	_, err = Open()
+	require.NoError(t, err, "a later Open retries the preserved v0 source")
+	for _, id := range []string{"a-valid", "b-stat-fails"} {
+		_, err := LoadSession(id)
+		require.NoError(t, err, id)
+	}
+}
+
+func TestLegacyImportRejectsUnrepresentableTimestampsBeforeRename(t *testing.T) {
+	for _, tc := range []struct {
+		name, body    string
+		epochFileTime bool
+	}{
+		{
+			name: "epoch_zero",
+			body: `{"id":"bad","created":"1970-01-01T00:00:00Z","updated":"1970-01-01T00:00:01Z"}`,
+		},
+		{
+			name:          "mtime_epoch_zero",
+			body:          `{"id":"bad"}`,
+			epochFileTime: true,
+		},
+		{
+			name: "out_of_range",
+			body: `{"id":"bad","created":"2500-01-01T00:00:00Z","updated":"2500-01-01T00:00:01Z"}`,
+		},
+		{
+			name: "malformed",
+			body: `{"id":"bad","created":"not-a-time","updated":"2025-01-01T00:00:00Z"}`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Setenv("HOME", dir)
+			ResetForTest()
+			sessDir := filepath.Join(dir, ".tclaude", "claude-sessions")
+			require.NoError(t, os.MkdirAll(sessDir, 0o755))
+			path := filepath.Join(sessDir, "bad.json")
+			require.NoError(t, os.WriteFile(path, []byte(tc.body), 0o644))
+			if tc.epochFileTime {
+				epoch := time.Unix(0, 0)
+				require.NoError(t, os.Chtimes(path, epoch, epoch))
+			}
+
+			_, err := Open()
+			require.Error(t, err, "invalid legacy timestamp must fail before v181")
+			assert.DirExists(t, sessDir)
+			assert.NoDirExists(t, filepath.Join(dir, ".tclaude", "data", "claude-sessions.migrated"))
+		})
+	}
+}
+
+func TestOpenSelfHealsIncompleteV1Schema(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	ResetForTest()
+	dbPath := filepath.Join(dir, ".tclaude", "data", "db.sqlite")
+	require.NoError(t, os.MkdirAll(filepath.Dir(dbPath), 0o700))
+	raw, err := sql.Open("sqlite", dbPath)
+	require.NoError(t, err)
+	_, err = raw.Exec(`CREATE TABLE schema_version(version INTEGER NOT NULL); INSERT INTO schema_version VALUES (1)`)
+	require.NoError(t, err)
+	require.NoError(t, raw.Close())
+
+	d, err := Open()
+	require.NoError(t, err, "version=1 with missing v1 tables returns to v0 and rebuilds")
+	var version int
+	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&version))
+	assert.Equal(t, currentVersion, version)
+	for _, table := range []string{"sessions", "notify_state"} {
+		var exists int
+		require.NoError(t, d.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&exists))
+		assert.Equal(t, 1, exists, table)
+	}
+}
+
+func TestMigrateRefusesV1HealingOnMixedHeadShape(t *testing.T) {
+	d := freshMigratedDB(t)
+	require.NoError(t, execPragma(d, `PRAGMA foreign_keys = OFF`))
+	_, err := d.Exec(`UPDATE schema_version SET version = 1; DROP TABLE sessions; DROP TABLE notify_state;`)
+	require.NoError(t, err)
+
+	err = migrate(d)
+	require.ErrorContains(t, err, "refusing to heal incomplete v1 schema")
+	require.ErrorContains(t, err, "unexpected user table")
+	var version int
+	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&version))
+	assert.Equal(t, 1, version, "refusal does not replay migrations over the mixed shape")
+	var headTable int
+	require.NoError(t, d.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'agent_groups'`).Scan(&headTable))
+	assert.Equal(t, 1, headTable, "refusal leaves head-shaped user tables untouched")
+}
+
+func TestOpenRefusesV1HealingWithSQLitePrefixLookalikeTable(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	ResetForTest()
+	dbPath := filepath.Join(dir, ".tclaude", "data", "db.sqlite")
+	require.NoError(t, os.MkdirAll(filepath.Dir(dbPath), 0o700))
+	raw, err := sql.Open("sqlite", dbPath)
+	require.NoError(t, err)
+	_, err = raw.Exec(`
+		CREATE TABLE schema_version(version INTEGER NOT NULL);
+		INSERT INTO schema_version VALUES (1);
+		CREATE TABLE sqlitebackup(value TEXT);
+		INSERT INTO sqlitebackup VALUES ('must-survive');
+	`)
+	require.NoError(t, err)
+	require.NoError(t, raw.Close())
+
+	_, openErr := Open()
+	require.ErrorContains(t, openErr, "refusing to heal incomplete v1 schema")
+	require.ErrorContains(t, openErr, "sqlitebackup")
+	check, err := sql.Open("sqlite", dbPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = check.Close() })
+	var value string
+	require.NoError(t, check.QueryRow(`SELECT value FROM sqlitebackup`).Scan(&value))
+	assert.Equal(t, "must-survive", value, "literal-prefix guard preserves the unexpected user table")
+}
+
+func TestFailedFreshImportRefusesToResetPopulatedV1Tables(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	ResetForTest()
+	dbPath := filepath.Join(dir, ".tclaude", "data", "db.sqlite")
+	require.NoError(t, os.MkdirAll(filepath.Dir(dbPath), 0o700))
+	raw, err := sql.Open("sqlite", dbPath)
+	require.NoError(t, err)
+	require.NoError(t, createSchema(raw))
+	_, err = raw.Exec(`INSERT INTO sessions(id, created_at, updated_at) VALUES
+		('must-survive', '2025-01-01T00:00:00Z', '2025-01-01T01:00:00Z');
+		DROP TABLE schema_version;`)
+	require.NoError(t, err)
+	require.NoError(t, raw.Close())
+
+	sessDir := filepath.Join(dir, ".tclaude", "claude-sessions")
+	require.NoError(t, os.MkdirAll(sessDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(sessDir, "bad.json"), []byte(`{"id":"bad","created":"not-a-time"}`), 0o644))
+
+	_, openErr := Open()
+	assert.Error(t, openErr)
+	assert.DirExists(t, sessDir)
+	check, err := sql.Open("sqlite", dbPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = check.Close() })
+	var count int
+	require.NoError(t, check.QueryRow(`SELECT COUNT(*) FROM sessions WHERE id = 'must-survive'`).Scan(&count))
+	assert.Equal(t, 1, count, "reset refusal preserves pre-existing user data")
+	require.ErrorContains(t, openErr, "refusing to reset failed fresh import: table sessions contains 1 row(s)")
 }

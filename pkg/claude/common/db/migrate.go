@@ -24,6 +24,18 @@ const DefaultHarness = "claude"
 func migrate(db *sql.DB) error {
 	r := migrationReporter
 	ver := schemaVersion(db)
+	if ver == 1 {
+		incomplete, err := incompleteV1Schema(db)
+		if err != nil {
+			return fmt.Errorf("inspect v1 schema: %w", err)
+		}
+		if incomplete {
+			if err := resetFailedFreshImport(db); err != nil {
+				return fmt.Errorf("repair incomplete v1 schema: %w", err)
+			}
+			ver = 0
+		}
+	}
 	if ver > currentVersion {
 		return newerDatabaseVersionError(ver)
 	}
@@ -45,6 +57,12 @@ func migrate(db *sql.DB) error {
 			return err
 		}
 		if err := importLegacyData(db); err != nil {
+			// createSchema has already committed v1. Put the empty database
+			// back at v0 so a later Open retries the preserved legacy source
+			// instead of walking the partial database to head without it.
+			if cleanupErr := resetFailedFreshImport(db); cleanupErr != nil {
+				return fmt.Errorf("legacy import: %w (also failed to reset fresh schema: %v)", err, cleanupErr)
+			}
 			return err
 		}
 		ver = 1 // createSchema sets version to 1
@@ -3057,7 +3075,10 @@ func importLegacyData(db *sql.DB) error {
 		return nil // no home dir, nothing to import
 	}
 
-	importedSessions := importLegacySessions(db, home)
+	importedSessions, err := importLegacySessions(db, home)
+	if err != nil {
+		return err
+	}
 	importedNotify := importLegacyNotifyState(db, home)
 
 	// Move debug.log from the oldest location
@@ -3095,11 +3116,90 @@ func importLegacyData(db *sql.DB) error {
 	return nil
 }
 
-func importLegacySessions(db *sql.DB, home string) bool {
+func resetFailedFreshImport(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, table := range []string{"sessions", "notify_state"} {
+		var exists int
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&exists); err != nil {
+			return err
+		}
+		if exists == 0 {
+			continue
+		}
+		var count int64
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM ` + quoteIdentifier(table)).Scan(&count); err != nil {
+			return err
+		}
+		if count != 0 {
+			return fmt.Errorf("refusing to reset failed fresh import: table %s contains %d row(s)", table, count)
+		}
+	}
+	// Keep all drops atomic, and remove the version marker first even inside
+	// the transaction so this remains safe if the implementation changes.
+	for _, table := range []string{"schema_version", "notify_state", "sessions"} {
+		if _, err := tx.Exec(`DROP TABLE IF EXISTS ` + quoteIdentifier(table)); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func incompleteV1Schema(db *sql.DB) (bool, error) {
+	missingV1Table := false
+	for _, table := range []string{"sessions", "notify_state"} {
+		var exists int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&exists); err != nil {
+			return false, err
+		}
+		if exists == 0 {
+			missingV1Table = true
+		}
+	}
+	if !missingV1Table {
+		return false, nil
+	}
+	rows, err := db.Query(`SELECT name FROM sqlite_master
+		WHERE type = 'table'
+		  AND name NOT IN ('schema_version', 'sessions', 'notify_state')
+		ORDER BY name`)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = rows.Close() }()
+	var unexpected []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return false, err
+		}
+		if strings.HasPrefix(name, "sqlite_") {
+			continue
+		}
+		unexpected = append(unexpected, name)
+	}
+	if err := rows.Err(); err != nil {
+		return false, err
+	}
+	if len(unexpected) != 0 {
+		return false, fmt.Errorf("refusing to heal incomplete v1 schema with %d unexpected user table(s): %s",
+			len(unexpected), strings.Join(unexpected, ", "))
+	}
+	return true, nil
+}
+
+var legacySessionEntryInfo = func(entry os.DirEntry) (os.FileInfo, error) {
+	return entry.Info()
+}
+
+func importLegacySessions(db *sql.DB, home string) (bool, error) {
 	dir := filepath.Join(home, ".tclaude", "claude-sessions")
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return false
+		return false, nil
 	}
 
 	// Collect .auto markers first
@@ -3113,7 +3213,7 @@ func importLegacySessions(db *sql.DB, home string) bool {
 
 	tx, err := db.Begin()
 	if err != nil {
-		return false
+		return false, err
 	}
 	defer func() { _ = tx.Rollback() }()
 
@@ -3131,7 +3231,7 @@ func importLegacySessions(db *sql.DB, home string) bool {
 
 		var s legacySessionJSON
 		if err := json.Unmarshal(data, &s); err != nil {
-			continue
+			return false, fmt.Errorf("decode legacy session %s: %w", path, err)
 		}
 
 		id := strings.TrimSuffix(entry.Name(), ".json")
@@ -3139,13 +3239,46 @@ func importLegacySessions(db *sql.DB, home string) bool {
 		if autoMarkers[id] {
 			autoReg = 1
 		}
+		// Old session JSON could omit one or both timestamps. Prefer the
+		// row's own sibling stamp when one exists; when both are absent, the
+		// JSON file's mtime is the closest durable provenance for when that
+		// session state existed. Never format a zero time into these required
+		// columns: v181 deliberately rejects it.
+		created, updated := s.Created, s.Updated
+		if created.IsZero() && !updated.IsZero() {
+			created = updated
+		}
+		if updated.IsZero() && !created.IsZero() {
+			updated = created
+		}
+		if created.IsZero() && updated.IsZero() {
+			info, infoErr := legacySessionEntryInfo(entry)
+			if infoErr != nil || info == nil || info.ModTime().IsZero() {
+				if infoErr != nil {
+					return false, fmt.Errorf("legacy session %q has no timestamps and stat %s: %w", s.ID, path, infoErr)
+				}
+				if info == nil {
+					return false, fmt.Errorf("legacy session %q has no timestamps and stat %s returned no file info", s.ID, path)
+				}
+				return false, fmt.Errorf("legacy session %q has no timestamps and %s has a zero modification time", s.ID, path)
+			}
+			created, updated = info.ModTime(), info.ModTime()
+		}
+		for _, candidate := range []struct {
+			name  string
+			stamp time.Time
+		}{{"created", created}, {"updated", updated}} {
+			if _, err := timeToUnixNano(candidate.stamp); err != nil {
+				return false, fmt.Errorf("legacy session %q %s timestamp: %w", s.ID, candidate.name, err)
+			}
+		}
 
 		_, err = tx.Exec(`INSERT OR IGNORE INTO sessions
 			(id, tmux_session, pid, cwd, conv_id, status, status_detail, auto_registered, created_at, updated_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			s.ID, s.TmuxSession, s.PID, s.Cwd, s.ConvID,
 			s.Status, s.StatusDetail, autoReg,
-			s.Created.Format(time.RFC3339Nano), s.Updated.Format(time.RFC3339Nano))
+			created.Format(time.RFC3339Nano), updated.Format(time.RFC3339Nano))
 		if err != nil {
 			slog.Warn("failed to import session", "id", s.ID, "error", err)
 			continue
@@ -3154,16 +3287,16 @@ func importLegacySessions(db *sql.DB, home string) bool {
 	}
 
 	if imported == 0 {
-		return false
+		return false, nil
 	}
 
 	if err := tx.Commit(); err != nil {
 		slog.Warn("failed to commit session import", "error", err)
-		return false
+		return false, err
 	}
 
 	slog.Info(fmt.Sprintf("imported %d legacy sessions into SQLite", imported))
-	return true
+	return true, nil
 }
 
 func importLegacyNotifyState(db *sql.DB, home string) bool {

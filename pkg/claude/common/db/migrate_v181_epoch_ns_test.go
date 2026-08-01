@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -366,6 +367,213 @@ func TestMigrateV180toV181_RepairsOptionalGoZeroTimeAsAbsent(t *testing.T) {
 	assert.False(t, lastHook.Valid, "legacy Go zero time is the optional column's absence sentinel")
 }
 
+func TestMigrateV180toV181_RepairsRequiredSessionGoZeroFromSibling(t *testing.T) {
+	d := v180FixtureDB(t)
+	zero := time.Time{}.Format(time.RFC3339Nano)
+	created := "2024-01-02T03:04:05.123456789Z"
+	updated := "2024-02-03T04:05:06.987654321Z"
+	_, err := d.Exec(`INSERT INTO sessions (id, created_at, updated_at) VALUES
+		('repair-created', ?, ?),
+		('repair-updated', ?, ?)`, zero, updated, created, zero)
+	require.NoError(t, err)
+
+	require.NoError(t, migrateV180toV181(d), "both sibling-repair arms must execute")
+	for _, tc := range []struct {
+		id, sibling string
+	}{
+		{"repair-created", updated},
+		{"repair-updated", created},
+	} {
+		var createdNS, updatedNS int64
+		require.NoError(t, d.QueryRow(`SELECT created_at, updated_at FROM sessions WHERE id = ?`, tc.id).
+			Scan(&createdNS, &updatedNS))
+		parsed, err := time.Parse(time.RFC3339Nano, tc.sibling)
+		require.NoError(t, err)
+		assert.Equal(t, parsed.UnixNano(), createdNS, tc.id+" created_at uses sibling provenance")
+		assert.Equal(t, parsed.UnixNano(), updatedNS, tc.id+" updated_at uses sibling provenance")
+	}
+}
+
+func TestMigrateV180toV181_ReportsAllUnrepairableRequiredZeros(t *testing.T) {
+	d := v180FixtureDB(t)
+	zero := time.Time{}.Format(time.RFC3339Nano)
+	_, err := d.Exec(`INSERT INTO sessions (id, created_at, updated_at) VALUES
+		('both-zero-a', ?, ?),
+		('both-zero-b', ?, ?),
+		('repair-then-rollback', ?, '2024-01-02T03:04:05Z')`, zero, zero, zero, zero, zero)
+	require.NoError(t, err)
+	_, err = d.Exec(`INSERT INTO notify_state (session_id, notified_at) VALUES ('required-zero', ?)`, zero)
+	require.NoError(t, err)
+
+	err = migrateV180toV181(d)
+	require.Error(t, err, "unrepairable required-zero census must execute")
+	for _, want := range []string{
+		`id "both-zero-a"`, `id "both-zero-b"`, "notify_state.notified_at", "in 3 row(s)",
+		"restore the .pre-v181-epochns.bak backup", "replace all offending required values",
+	} {
+		assert.ErrorContains(t, err, want)
+	}
+	var rolledBack string
+	require.NoError(t, d.QueryRow(`SELECT created_at FROM sessions WHERE id = 'repair-then-rollback'`).Scan(&rolledBack))
+	assert.Equal(t, zero, rolledBack, "aggregate failure rolls back a sibling repair that actually ran")
+	var version int
+	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&version))
+	assert.Equal(t, 180, version, "the aggregate failure rolls back all sibling repairs and conversions")
+}
+
+func TestMigrateV180toV181_RepairsRequiredZeroFromOptionalSiblingInHalfAppliedSchema(t *testing.T) {
+	setupTestDB(t)
+	d, err := sql.Open("sqlite", t.TempDir()+"/half-applied.sqlite?_pragma=foreign_keys(1)")
+	require.NoError(t, err)
+	d.SetMaxOpenConns(1)
+	t.Cleanup(func() { _ = d.Close() })
+	zero := time.Time{}.Format(time.RFC3339Nano)
+	valid := "2024-01-02T03:04:05.123456789Z"
+	_, err = d.Exec(`
+		CREATE TABLE schema_version (version INTEGER NOT NULL);
+		INSERT INTO schema_version VALUES (180);
+		CREATE TABLE sessions (
+			id TEXT PRIMARY KEY,
+			created_at TEXT NOT NULL,
+			updated_at TEXT DEFAULT ''
+		);
+		INSERT INTO sessions(id, created_at, updated_at) VALUES
+			('repair-from-optional', ?, ?),
+			('null-optional-control', ?, NULL);
+	`, zero, valid, valid)
+	require.NoError(t, err)
+
+	require.NoError(t, migrateV180toV181(d))
+	var createdNS, updatedNS int64
+	require.NoError(t, d.QueryRow(`SELECT created_at, updated_at FROM sessions WHERE id = 'repair-from-optional'`).
+		Scan(&createdNS, &updatedNS))
+	parsed, err := time.Parse(time.RFC3339Nano, valid)
+	require.NoError(t, err)
+	assert.Equal(t, parsed.UnixNano(), createdNS)
+	assert.Equal(t, parsed.UnixNano(), updatedNS)
+	var optional sql.NullInt64
+	require.NoError(t, d.QueryRow(`SELECT updated_at FROM sessions WHERE id = 'null-optional-control'`).Scan(&optional))
+	assert.False(t, optional.Valid, "NULL in the half-applied optional sibling scans and remains absent")
+}
+
+func TestMigrateV180toV181_CapsRequiredTimestampErrorDetails(t *testing.T) {
+	d := v180FixtureDB(t)
+	for i := 0; i < 23; i++ {
+		_, err := d.Exec(`INSERT INTO notify_state(session_id, notified_at) VALUES (?, 'not-a-time')`, fmt.Sprintf("bad-%02d", i))
+		require.NoError(t, err)
+	}
+
+	err := migrateV180toV181(d)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "in 23 row(s)")
+	assert.ErrorContains(t, err, "and 3 more")
+}
+
+func TestRequiredTimestampPreflightAggregatesSQLNull(t *testing.T) {
+	setupTestDB(t)
+	d, err := sql.Open("sqlite", t.TempDir()+"/required-null.sqlite")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = d.Close() })
+	_, err = d.Exec(`CREATE TABLE probe(id INTEGER PRIMARY KEY, required_at TEXT); INSERT INTO probe(required_at) VALUES (NULL)`)
+	require.NoError(t, err)
+	tx, err := d.Begin()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = tx.Rollback() })
+
+	err = repairAndValidateRequiredZeroTimestamps(context.Background(), tx, []timestampTable{{
+		name: "probe", columns: []timestampColumn{{name: "required_at", text: true}},
+	}})
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "probe.required_at")
+	assert.ErrorContains(t, err, "value NULL")
+	assert.ErrorContains(t, err, "in 1 row(s)")
+}
+
+func TestRequiredTimestampStorageClasses_GenericCensus(t *testing.T) {
+	valid := time.Date(2025, 1, 2, 3, 4, 5, 6, time.UTC)
+	for _, tc := range []struct {
+		name      string
+		value     any
+		wantError bool
+	}{
+		{"parseable_blob", []byte(valid.Format(time.RFC3339Nano)), false},
+		{"parseable_integer", valid.UnixNano(), false},
+		{"unparseable_blob", []byte("not-a-time"), true},
+		{"unparseable_integer", int64(0), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setupTestDB(t)
+			d, err := sql.Open("sqlite", t.TempDir()+"/generic-storage.sqlite")
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = d.Close() })
+			_, err = d.Exec(`CREATE TABLE probe(id INTEGER PRIMARY KEY, required_at); INSERT INTO probe(required_at) VALUES (?)`, tc.value)
+			require.NoError(t, err)
+			tx, err := d.Begin()
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = tx.Rollback() })
+			column := timestampColumn{name: "required_at", text: true}
+			err = repairAndValidateRequiredZeroTimestamps(context.Background(), tx, []timestampTable{{
+				name: "probe", columns: []timestampColumn{column},
+			}})
+			if tc.wantError {
+				require.Error(t, err)
+				assert.ErrorContains(t, err, "probe.required_at")
+				return
+			}
+			require.NoError(t, err)
+			require.NoError(t, convertTimestampColumn(context.Background(), tx, "probe", column))
+			var stored int64
+			require.NoError(t, tx.QueryRow(`SELECT required_at FROM probe`).Scan(&stored))
+			assert.Equal(t, valid.UnixNano(), stored, "parseable storage class converts exactly")
+		})
+	}
+}
+
+func TestRequiredTimestampStorageClasses_SessionsCensus(t *testing.T) {
+	created := time.Date(2025, 1, 2, 3, 4, 5, 6, time.UTC)
+	updated := created.Add(time.Second)
+	for _, tc := range []struct {
+		name      string
+		created   any
+		wantError bool
+	}{
+		{"parseable_blob", []byte(created.Format(time.RFC3339Nano)), false},
+		{"parseable_integer", created.UnixNano(), false},
+		{"unparseable_blob", []byte("not-a-time"), true},
+		{"unparseable_integer", int64(0), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setupTestDB(t)
+			d, err := sql.Open("sqlite", t.TempDir()+"/sessions-storage.sqlite")
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = d.Close() })
+			_, err = d.Exec(`CREATE TABLE sessions(id TEXT PRIMARY KEY, created_at, updated_at);
+				INSERT INTO sessions(id, created_at, updated_at) VALUES ('real-session', ?, ?)`, tc.created, updated.UnixNano())
+			require.NoError(t, err)
+			tx, err := d.Begin()
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = tx.Rollback() })
+			createdColumn := timestampColumn{name: "created_at", text: true}
+			updatedColumn := timestampColumn{name: "updated_at", text: true}
+			err = repairAndValidateRequiredZeroTimestamps(context.Background(), tx, []timestampTable{{
+				name: "sessions", columns: []timestampColumn{createdColumn, updatedColumn},
+			}})
+			if tc.wantError {
+				require.Error(t, err)
+				assert.ErrorContains(t, err, `id "real-session"`)
+				return
+			}
+			require.NoError(t, err)
+			require.NoError(t, convertTimestampColumn(context.Background(), tx, "sessions", createdColumn))
+			require.NoError(t, convertTimestampColumn(context.Background(), tx, "sessions", updatedColumn))
+			var createdNS, updatedNS int64
+			require.NoError(t, tx.QueryRow(`SELECT created_at, updated_at FROM sessions WHERE id = 'real-session'`).Scan(&createdNS, &updatedNS))
+			assert.Equal(t, created.UnixNano(), createdNS)
+			assert.Equal(t, updated.UnixNano(), updatedNS)
+		})
+	}
+}
+
 func TestMigrateV180toV181_RejectsEmptyRequiredTimestamp(t *testing.T) {
 	d := v180FixtureDB(t)
 	_, err := d.Exec(`INSERT INTO notify_state (session_id, notified_at) VALUES ('required-empty', '')`)
@@ -445,31 +653,63 @@ func TestDBTimestampRejectsLegacyStorageClasses(t *testing.T) {
 	assert.Equal(t, int64(0), boundary, "read-only inclusive range may start at the Unix epoch")
 }
 
-func TestMigrateV180toV181_RejectsInvalidTimestampsLoudly(t *testing.T) {
+func TestMigrateV180toV181_InvalidTimestampMatrix(t *testing.T) {
 	for _, tc := range []struct {
-		name, value string
+		name, value        string
+		optionalBecomesNil bool
 	}{
-		{"malformed", "not-a-time"},
-		{"go_zero", time.Time{}.Format(time.RFC3339Nano)},
-		{"zero", "1970-01-01T00:00:00Z"},
-		{"out_of_range", "9999-01-01T00:00:00Z"},
+		{name: "malformed", value: "not-a-time"},
+		{name: "go_zero_rfc3339", value: time.Time{}.Format(time.RFC3339Nano), optionalBecomesNil: true},
+		{name: "go_zero_string", value: time.Time{}.String()},
+		{name: "epoch_zero", value: "1970-01-01T00:00:00Z"},
+		{name: "sqlite_datetime_epoch", value: "1970-01-01 00:00:00"},
+		{name: "out_of_range", value: "9999-01-01T00:00:00Z"},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			d := v180FixtureDB(t)
-			_, err := d.Exec(`INSERT INTO notify_state (session_id, notified_at) VALUES ('bad', ?)`, tc.value)
-			require.NoError(t, err)
-			err = migrateV180toV181(d)
-			require.Error(t, err, "failure arm must execute")
-			assert.ErrorContains(t, err, "notify_state.notified_at")
-			assert.ErrorContains(t, err, "rowid")
-			assert.ErrorContains(t, err, fmt.Sprintf("value %q", tc.value))
-			var version int
-			require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&version))
-			assert.Equal(t, 180, version)
-			var storageType string
-			require.NoError(t, d.QueryRow(`SELECT typeof(notified_at) FROM notify_state WHERE session_id = 'bad'`).Scan(&storageType))
-			assert.Equal(t, "text", storageType, "failed conversion rolls back the source row")
-		})
+		for _, column := range []struct {
+			name, qualified string
+			optional        bool
+		}{
+			{name: "required", qualified: "notify_state.notified_at"},
+			{name: "optional", qualified: "sessions.last_hook", optional: true},
+		} {
+			t.Run(column.name+"/"+tc.name, func(t *testing.T) {
+				d := v180FixtureDB(t)
+				var err error
+				if column.optional {
+					_, err = d.Exec(`INSERT INTO sessions (id, created_at, updated_at, last_hook)
+						VALUES ('bad', '2024-01-02T03:04:05Z', '2024-01-02T03:04:06Z', ?)`, tc.value)
+				} else {
+					_, err = d.Exec(`INSERT INTO notify_state (session_id, notified_at) VALUES ('bad', ?)`, tc.value)
+				}
+				require.NoError(t, err)
+				err = migrateV180toV181(d)
+				if column.optional && tc.optionalBecomesNil {
+					require.NoError(t, err)
+					var value sql.NullInt64
+					require.NoError(t, d.QueryRow(`SELECT last_hook FROM sessions WHERE id = 'bad'`).Scan(&value))
+					assert.False(t, value.Valid, "recognized optional Go-zero becomes NULL")
+					return
+				}
+				require.Error(t, err, "failure arm must execute")
+				assert.ErrorContains(t, err, column.qualified)
+				assert.ErrorContains(t, err, "rowid")
+				assert.ErrorContains(t, err, fmt.Sprintf("%q", tc.value))
+				if !column.optional {
+					assert.ErrorContains(t, err, "in 1 row(s)", "every required parse failure is caught by the aggregate preflight")
+					assert.ErrorContains(t, err, "replace all offending required values")
+				}
+				var version int
+				require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&version))
+				assert.Equal(t, 180, version)
+				var storageType string
+				query := `SELECT typeof(notified_at) FROM notify_state WHERE session_id = 'bad'`
+				if column.optional {
+					query = `SELECT typeof(last_hook) FROM sessions WHERE id = 'bad'`
+				}
+				require.NoError(t, d.QueryRow(query).Scan(&storageType))
+				assert.Equal(t, "text", storageType, "failed conversion rolls back the source row")
+			})
+		}
 	}
 }
 
