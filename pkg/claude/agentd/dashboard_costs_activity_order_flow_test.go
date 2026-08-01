@@ -155,3 +155,74 @@ func TestDashboardCosts_DatedRowOutranksUnstampedRowOnTheSameDay(t *testing.T) {
 	assert.Empty(t, out.Agents[1].LastActivity,
 		"the unstamped row reports no last-activity time")
 }
+
+// The >= in collectCosts' model and harness picks is load-bearing, and this is
+// what fails when it becomes >.
+//
+// Those two sites compare with >= 0 rather than > 0 so that EQUAL stamps keep
+// the last good value — and the initial "" modelAt compares EQUAL to a delta
+// that carries no stamp, so metadata still lands when nothing is stamped at
+// all. TestCompareCostStamps pins what the comparator returns; it cannot show
+// that these callers depend on the equality case.
+//
+// Without this test the exact one-line simplification the code comments warn
+// against — folding model and harness in with lastActivity's > — ships green.
+// That is the same shape as the unpinned call site found on #1857: the thing
+// declared load-bearing is the thing nothing fails on.
+func TestDashboardCosts_UnstampedRowStillReportsItsModelAndHarness(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	newFlow(t)
+
+	const conv = "wcub-1111-2222-3333-4444"
+	day := time.Now().Format("2006-01-02")
+
+	conn, err := db.Open()
+	require.NoError(t, err)
+	// A costed row with NO timestamp, carrying denormalised metadata — the
+	// pre-v53 shape, and the case where modelAt and the delta's stamp are
+	// both "" so only an equality-inclusive compare records anything.
+	_, err = conn.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, cost_usd, updated_at, model, harness)
+		VALUES (?, ?, ?, ?, '', ?, ?)`,
+		"wcu-1", day, conv, 1.00, "Fable 5", "codex")
+	require.NoError(t, err, "seed an unstamped but costed row carrying model and harness")
+
+	out := fetchCosts(t, agentd.BuildDashboardHandlerForTest(), "")
+
+	require.Len(t, out.Agents, 1, "one breakdown row per (conv, day)")
+	assert.Equal(t, "Fable 5", out.Agents[0].Model,
+		"an unstamped row still names its model: its stamp compares EQUAL to the initial one, not below it")
+	assert.Equal(t, "codex", out.Agents[0].Harness,
+		"and its harness, by the same equality case")
+	assert.Empty(t, out.Agents[0].LastActivity,
+		"last activity stays unknown — only model and harness are recoverable here")
+}
+
+// The other half of the same >=: among rows sharing one instant, the LAST
+// good value wins. A strict > would freeze the first and ignore every later
+// row stamped at the same moment.
+func TestDashboardCosts_EqualStampsKeepTheLastGoodModel(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	newFlow(t)
+
+	const conv = "wceq-1111-2222-3333-4444"
+	day := time.Now().Format("2006-01-02")
+	stamp := day + "T12:00:07.5Z"
+
+	conn, err := db.Open()
+	require.NoError(t, err)
+	// Same conv, same day, same instant, rising cumulative so both rows
+	// contribute a delta. The later-walked session carries the newer model.
+	_, err = conn.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, cost_usd, updated_at, model, harness)
+		VALUES (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?)`,
+		"wceq-a", day, conv, 1.00, stamp, "Sonnet 5", "claude",
+		"wceq-b", day, conv, 1.25, stamp, "Fable 5", "codex")
+	require.NoError(t, err, "seed two same-instant rows whose models differ")
+
+	out := fetchCosts(t, agentd.BuildDashboardHandlerForTest(), "")
+
+	require.Len(t, out.Agents, 1, "one breakdown row per (conv, day)")
+	assert.Equal(t, "Fable 5", out.Agents[0].Model,
+		"among equal stamps the last good model wins, which a strict > would not do")
+	assert.Equal(t, "codex", out.Agents[0].Harness,
+		"and the last good harness, by the same rule")
+}
