@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 
 export function assertAbsent(found, message) {
-  assert.equal(
-    found && `${found.localName}.${found.getAttribute('class') || ''}`,
-    null,
-    message,
-  );
+  const label = found && `${found.localName}.${found.getAttribute('class') || ''}`;
+  if (message === undefined) {
+    assert.equal(label, null);
+    return;
+  }
+  assert.equal(label, null, message);
 }
