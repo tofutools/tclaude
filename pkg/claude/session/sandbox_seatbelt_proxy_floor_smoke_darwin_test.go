@@ -38,6 +38,8 @@ const (
 	seatbeltProxyFloorAgentdSocketEnv = "TCLAUDE_SEATBELT_PROXY_FLOOR_AGENTD_SOCKET"
 	seatbeltProxyFloorHelperTest      = "^TestSeatbeltProxyFloorSmokeHelper$"
 	seatbeltProxyFloorTimeout         = 2 * time.Second
+	// Darwin's sockaddr_un.sun_path is 104 bytes including its terminator.
+	seatbeltProxyFloorUnixPathCapacity = 104
 )
 
 // TestSeatbeltProxyFloorSmoke is §8.2 test 6. It activates the M3.1-generated
@@ -127,10 +129,16 @@ func TestSeatbeltProxyFloorSmoke(t *testing.T) {
 		}
 	})
 
-	home := t.TempDir()
+	home, err := os.MkdirTemp(os.TempDir(), "sbf-")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(home) })
+	home, err = filepath.EvalSymlinks(home)
+	require.NoError(t, err)
 	t.Setenv("HOME", home)
 	agentdSocket := agentipc.CanonicalSocketPath()
 	require.NotEmpty(t, agentdSocket)
+	require.Less(t, len(agentdSocket), seatbeltProxyFloorUnixPathCapacity,
+		"Darwin sockaddr_un cannot carry the canonical agentd-floor path %q", agentdSocket)
 	require.NoError(t, os.MkdirAll(filepath.Dir(agentdSocket), 0o700))
 	agentdListener, err := net.Listen("unix", agentdSocket)
 	require.NoError(t, err)
