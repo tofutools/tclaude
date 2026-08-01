@@ -158,6 +158,14 @@ func RemoveUnixSocket(runtime db.OpenCodeRuntime) error {
 		return err
 	}
 	if device != runtime.ControlSocketDevice || inode != runtime.ControlSocketInode {
+		// TCL-933 checked this one and DELIBERATELY LEFT IT. Unlike its
+		// near-twin in unlinkSocketIdentity, this condition is purely an
+		// identity comparison: both arms mean the path no longer refers to the
+		// recorded object, so "replaced" is true of the whole disjunction.
+		//
+		// The two sentences differ because the two PREDICATES differ, not
+		// because one was missed. Do not unify them — the other one has
+		// not-a-socket and gated-mode arms that "replaced" would misdescribe.
 		return fmt.Errorf("refusing to remove replaced OpenCode control socket")
 	}
 	return unlinkSocketIdentity(runtime.ControlSocketPath,
@@ -182,7 +190,19 @@ func unlinkSocketIdentity(path string, device, inode int64, requireMode bool) er
 	if int64(stat.Dev) != device || int64(stat.Ino) != inode ||
 		stat.Mode&unix.S_IFMT != unix.S_IFSOCK ||
 		(requireMode && stat.Mode&0o777 != 0o600) {
-		return fmt.Errorf("refusing to remove replaced OpenCode control socket")
+		// TCL-933, and the same guarded-clause shape as the authority-mode
+		// refusal one function away — this is the neighbour that shape's
+		// checklist entry was written for. "replaced" was also asserted for
+		// arms that are not replacement at all (not-a-socket, wrong mode).
+		//
+		// This runs on the cleanup path during an already-failing teardown,
+		// which is where a confidently wrong message costs the most.
+		expected := "the recorded socket"
+		if requireMode {
+			expected = "the recorded mode-0600 socket"
+		}
+		return fmt.Errorf(
+			"refusing to remove OpenCode control socket %q: it is no longer %s", path, expected)
 	}
 	if err := unix.Unlinkat(parentFD, filepath.Base(path), 0); err != nil {
 		return fmt.Errorf("remove OpenCode control socket: %w", err)
@@ -252,7 +272,19 @@ func dialVerifiedUnix(ctx context.Context, runtime db.OpenCodeRuntime) (net.Conn
 	}
 	if credential == nil || credential.Uid != uint32(os.Geteuid()) ||
 		!ProcessInSubtree(runtime.PID, int(credential.Pid)) {
-		return fail(fmt.Errorf("OpenCode control peer is outside the recorded process subtree"))
+		// TCL-933. The retired wording, "is outside the recorded process
+		// subtree", asserted a SPECIFIC SECURITY VERDICT for two arms that
+		// never evaluated subtree membership at all: a nil credential and a
+		// uid mismatch both short-circuit before ProcessInSubtree runs. An
+		// operator reading it went hunting the process hierarchy for what was
+		// actually a missing credential or a different user.
+		//
+		// This is the same never-ran-mechanism shape as the retired
+		// canonicality message, and the most costly instance of it in this
+		// file, because the sentence sounds authoritative about provenance.
+		return fail(fmt.Errorf(
+			"OpenCode control peer could not be proven to belong to the recorded process subtree (credentials %s, expected uid %d)",
+			controlPeerCredentialDescription(credential), os.Geteuid()))
 	}
 	afterDevice, afterInode, err := controlSocketIdentity(runtime.ControlSocketPath)
 	if err != nil {
@@ -286,6 +318,17 @@ func validateControlParent(path string) error {
 // own predicate untouched, and only a five-line formatter with no policy in it
 // is duplicated. If the wording ever changes, change it in both — agentd's
 // copy is the one to follow.
+// controlPeerCredentialDescription renders the credential half of the peer
+// refusal, for the same reason controlStatOwnerDescription exists: a nil
+// credential must not be printed as "uid 0", which would name root as the peer
+// of a connection whose credentials were never obtained.
+func controlPeerCredentialDescription(credential *syscall.Ucred) string {
+	if credential == nil {
+		return "not readable"
+	}
+	return fmt.Sprintf("uid %d, pid %d", credential.Uid, credential.Pid)
+}
+
 func controlStatOwnerDescription(stat *syscall.Stat_t, ok bool) string {
 	if !ok || stat == nil {
 		return "no readable owner"
