@@ -25,6 +25,14 @@ import (
 // evaluator never produced. Consumers must therefore branch on this field before
 // reading Axes — a refused target carries the zero PredictedAccessAxes, which is
 // indistinguishable from an old daemon's missing axes.
+//
+// NetworkEntries is the exception to "carries no verdict": it holds the
+// DRAFT-ONLY prediction, which succeeds independently of this refusal, so a
+// refused target may still have non-empty entries there. They describe the
+// authored draft, not the refused (policy, target) pair, and must not be read
+// as verdicts for it. ContextNetworkEntries carries an explicit nil at a
+// refused index to stay index-aligned — a consumer using `??`/`||` to fall
+// back would silently substitute the draft-only rows.
 type sandboxProfileEnforcementRefusal struct {
 	Kind    string `json:"kind"`
 	Harness string `json:"harness,omitempty"`

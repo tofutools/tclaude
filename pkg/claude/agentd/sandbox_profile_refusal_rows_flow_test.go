@@ -835,8 +835,15 @@ func TestSandboxProfileEnforcementRefusalKeepsThePredictionCaveat(t *testing.T) 
 // Falsifiability: restore the collapse (append a target carrying only
 // `onlyContextRefusals(contextRefusals)` and `continue`). ContextRefusals is
 // then empty where it now has two entries, and the whole-body assertion for the
-// second resolver fails — the pre-change body genuinely does not contain
-// "/run/systemd/resolve" anywhere, while the post-change body does.
+// second resolver fails — the pre-change body does not contain
+// "io.systemd.Resolve" anywhere, while the post-change body does.
+//
+// That string is the resolver SOCKET, deliberately. This comment previously
+// named the DIRECTORY selector "/run/systemd/resolve" and was simply wrong:
+// that path is also ordinary policy data in `contexts[].filesystem`, so it
+// survives the collapse and the assertion built on it passed in both states.
+// The claim was corrected only after a reviewer re-ran the mutation instead of
+// reading this comment — which is the argument for re-running it here too.
 func TestSandboxProfileDraftEnforcementKeepsEveryDistinctContextRefusal(t *testing.T) {
 	f := newFlow(t)
 	for _, name := range []string{"crew-nscd", "crew-systemd"} {
@@ -891,9 +898,19 @@ func TestSandboxProfileDraftEnforcementKeepsEveryDistinctContextRefusal(t *testi
 	// Asserting on the whole body first means a future refactor that moves the
 	// refusals to a different field still fails here if it drops one.
 	body := rec.Body.String()
-	assert.Contains(t, body, "/run/nscd",
+	// These are the SOCKET paths, which appear only inside a refusal message.
+	// The directory selectors (`/run/nscd`, `/run/systemd/resolve`) would NOT
+	// work here: they are also ordinary policy data in `contexts[].filesystem`,
+	// so they are present even when every refusal but the first is discarded.
+	// That is not hypothetical — this assertion originally used the directory
+	// form and was verified vacuous: with the collapse restored the body still
+	// contained "/run/systemd/resolve" and the assertion passed.
+	assert.Contains(t, body, "/run/nscd/socket",
 		"the first refusing context's resolver must be reported")
-	assert.Contains(t, body, "/run/systemd/resolve",
+	// The discriminating one. Only the SECOND context's refusal message carries
+	// this string, so it is absent from the whole body if that refusal is
+	// dropped (verified: false under the collapse, true with it removed).
+	assert.Contains(t, body, "io.systemd.Resolve",
 		"the SECOND refusing context's resolver must not vanish from the wire")
 
 	var got struct {

@@ -278,6 +278,13 @@ export function sandboxPredictionWarnings(prediction) {
     }
   }
   const composition = (prediction?.contexts || []).flatMap((context) => context.notices || []);
+  /* The Set is deliberate and deliberately DISAGREES with the profile editor.
+     N contexts refusing for one reason render as N rows there, each naming its
+     group, because "which and how many assignments are affected" is scope the
+     operator acts on. This is the spawn dialog's one-line summary, which has no
+     room to carry that scope, so identical messages collapse. Do not "fix" one
+     surface to match the other without deciding which question is being asked:
+     the divergence is the answer to two different ones. */
   return { capability: [...new Set(capability)], composition };
 }
 

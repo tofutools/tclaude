@@ -292,8 +292,17 @@ function sandboxContextLabel(contexts, index) {
 export function SandboxPolicyResult({ target, context, contextIndex, contexts = [] }) {
   const [ruleHelpOpen, setRuleHelpOpen] = useState('');
   const axes = target.context_axes?.[contextIndex] || target.axes || {};
-  const networkEntries = target.context_network_entries?.[contextIndex]
-    ?? target.network_entries ?? [];
+  /* A REFUSED context's entry here is `null`, not absent — the daemon emits a
+     null placeholder to keep this list index-aligned with context_axes. `??`
+     treats null as nullish, so a bare fallback would silently substitute
+     target.network_entries, which are the DRAFT-ONLY rows: a different policy's
+     verdicts rendered against a refused context. Unreachable today because the
+     refusal branch below returns first, but the guard is explicit rather than
+     load-bearing on that ordering. */
+  const contextEntries = target.context_network_entries?.[contextIndex];
+  const networkEntries = Array.isArray(contextEntries)
+    ? contextEntries
+    : (target.network_entries ?? []);
   /* TCL-885. A refused target carries NO axes, so it must be read here before
      anything touches `axes` — sandboxRuleBuckets substitutes
      {outcome:'not_enforced', detail:'No enforcement verdict was returned.'} for
