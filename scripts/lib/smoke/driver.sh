@@ -166,25 +166,42 @@ smoke::load_flow_harnesses() {
     # function saying "could not be sourced" with no line number — which is the
     # same misattribution, one level down, that this whole change is about.
     #
+    # NOT a mechanical enforcement of the inert-at-source-time contract, and the
+    # difference matters: capturing `source`'s status at all requires putting it
+    # in a `||` context, which suppresses `set -e` INSIDE the sourced file. A
+    # flow whose top level runs a failing command therefore carries on and
+    # returns 0. That contract is held by review, not by this reader.
+    #
     # The outcome is carried on the FIRST LINE rather than in the exit status.
     # Reserved statuses would be indistinguishable from `flow::harnesses`
     # returning the same number itself: `flow::harnesses() { return 3; }` would
     # be reported as "declares no flow::harnesses", which is a lie about a
-    # declaration that is right there in the file. Both marker paths exit 0, so a
-    # non-zero status can only mean the declaration itself failed.
+    # declaration that is right there in the file.
     raw="$(
       # shellcheck source=/dev/null
       source "$file" >/dev/null || { printf 'unsourceable\n'; exit 0; }
       declare -F flow::harnesses >/dev/null 2>&1 || { printf 'undeclared\n'; exit 0; }
+      # BEFORE the call, so a non-zero status can be attributed. `declared` on
+      # the wire means the declaration was reached; its absence means the
+      # subshell died earlier.
       printf 'declared\n'
       flow::harnesses
     )" || status=$?
-    if [[ "$status" -ne 0 ]]; then
-      smoke::error "flow '$name' flow::harnesses failed with status $status"
-      return 1
-    fi
+    # Verdict FIRST, then attribution. A bare `status != 0` check would blame the
+    # declaration for a flow whose TOP LEVEL exited non-zero — `exit 5` beside a
+    # perfectly good flow::harnesses reported as "flow::harnesses failed with
+    # status 5" is the same lie about a declaration sitting in the file, one
+    # trigger over. The marker is what discriminates, so read it first.
     verdict="${raw%%$'\n'*}"
     raw="${raw#"$verdict"}"
+    if [[ "$status" -ne 0 ]]; then
+      if [[ "$verdict" == declared ]]; then
+        smoke::error "flow '$name' flow::harnesses failed with status $status"
+      else
+        smoke::error "flow '$name' exited with status $status before its harness declaration could be read; a flow must be inert at source time"
+      fi
+      return 1
+    fi
     case "$verdict" in
       declared) ;;
       undeclared)
@@ -192,7 +209,11 @@ smoke::load_flow_harnesses() {
         return 1
         ;;
       unsourceable)
-        smoke::error "flow '$name' could not be sourced to read its harness declaration; see the error above"
+        # "any error above", not "the error above": `source` also returns
+        # non-zero when a flow's last top-level command merely fails, and bash
+        # prints no diagnostic for that. Promising an error that is not there
+        # sends the reader hunting for nothing.
+        smoke::error "flow '$name' could not be sourced to read its harness declaration; see any error above"
         return 1
         ;;
       *)
@@ -600,10 +621,18 @@ smoke::select_shard() {
   fi
 
   mapfile -t SMOKE_FLOW_FILES < <(printf '%s\n' "${keep[@]}" | sort)
-  # A derived set can legitimately be empty, and `read` on an empty here-string
-  # would otherwise be the function's status under `set -e`.
-  SMOKE_SELECTED_HARNESSES=()
-  read -r -a SMOKE_SELECTED_HARNESSES <<< "${SMOKE_SHARD_HARNESSES[$want]}" || true
+  # `read -a` ASSIGNS the array, so an empty here-string leaves it zero-length
+  # rather than carrying a previous selection forward — a shard whose flows all
+  # declare `none` selects nothing, which is what run.sh's length guard expects.
+  # Verified, not assumed: `a=(one two three); read -r -a a <<< ""` leaves
+  # ${#a[@]} at 0 and returns 0.
+  #
+  # Deliberately no preceding `SMOKE_SELECTED_HARNESSES=()` and no `|| true`.
+  # Both looked like belt-and-braces and were neither: the assignment above
+  # already clears, and a here-string always presents one line so this `read`
+  # cannot return non-zero. Code that cannot fire, carrying a comment that says
+  # what it protects against, is the same overclaim this file refuses elsewhere.
+  read -r -a SMOKE_SELECTED_HARNESSES <<< "${SMOKE_SHARD_HARNESSES[$want]}"
 }
 
 # smoke::run_flows LABEL

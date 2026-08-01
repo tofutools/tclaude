@@ -283,6 +283,50 @@ expect_flow_harnesses refuse failing-declaration-status-4 \
   "flow '10-alpha' flow::harnesses failed with status 4" \
   '10-alpha=return 4'
 
+# A flow whose TOP LEVEL exits non-zero, with a perfectly good declaration
+# sitting right there in the file. It must NOT be reported as the declaration
+# failing — that is the same lie one trigger over from the reserved-status
+# collision above, and it is why the verdict is read before the status is
+# attributed. `expect_flow_harnesses` cannot build this one: the failure has to
+# be at top level, outside flow::harnesses.
+expect_flow_top_level() {
+  local name="$1" body="$2" wanted="$3"
+  local dir="$work/flowtop-$name"
+  mkdir -p "$dir/flows"
+  printf '10-alpha TestAlpha\n' > "$dir/manifest.txt"
+  printf 'flow::run() { :; }\n%s\nflow::harnesses() { echo claude; }\n' "$body" \
+    > "$dir/flows/10-alpha.sh"
+  if {
+    smoke::load_manifest "$dir/manifest.txt" "$dir/flows" &&
+      smoke::load_flow_harnesses
+  } > "$dir/out" 2>&1; then
+    printf 'selftest FAIL: flowtop-%s — wanted refuse, got pass\n' "$name"
+    failures=1
+    return
+  fi
+  if ! grep -qF "$wanted" "$dir/out"; then
+    printf 'selftest FAIL: flowtop-%s did not say %q\n' "$name" "$wanted"
+    sed 's/^/    /' "$dir/out"
+    failures=1
+  fi
+  # The discriminating half: it must not be blamed on the declaration, which is
+  # defined and was never even called.
+  if grep -qF 'flow::harnesses failed' "$dir/out"; then
+    printf 'selftest FAIL: flowtop-%s blamed the declaration for a top-level failure\n' "$name"
+    sed 's/^/    /' "$dir/out"
+    failures=1
+  fi
+}
+
+expect_flow_top_level exit-nonzero 'exit 5' \
+  "flow '10-alpha' exited with status 5 before its harness declaration could be read"
+
+# The mirror: a top-level `exit 0` short-circuits the file before either marker
+# is printed. Status is zero and nothing about the declaration is known, so the
+# no-verdict branch must refuse rather than fall through to an empty set.
+expect_flow_top_level exit-zero 'exit 0' \
+  "flow '10-alpha' produced no harness-declaration verdict"
+
 # A flow that cannot be sourced at all: refused, and bash's own diagnostic is
 # left visible so the reader gets a line number rather than only "could not be
 # sourced". `unexpected end of file` is bash's, not ours — its presence in the
@@ -441,14 +485,24 @@ fi
 # a path the entrypoint takes at run time — `read -a` on an empty here-string,
 # then a `for` over a zero-length array under `set -u` — and a case that stopped
 # at load_shards would leave the one shape claimed-supported and never executed.
+#
+# PRE-POISONED on purpose. This is the first selection the file performs, so
+# SMOKE_SELECTED_HARNESSES is still at its `declare -a … =()` initial value and
+# an empty result would be indistinguishable from nothing having happened —
+# the case would pass in a world where selection did not clear at all. Seeding a
+# stale selection first is what makes the emptiness an observation.
+SMOKE_SELECTED_HARNESSES=(stale-claude stale-codex)
 if smoke::select_shard one > "$work/select-derived-empty.out" 2>&1; then
   if [[ ${#SMOKE_SELECTED_HARNESSES[@]} -ne 0 ]]; then
     printf 'selftest FAIL: select-derived-empty selected %q, wanted nothing\n' \
       "${SMOKE_SELECTED_HARNESSES[*]}"
     failures=1
   fi
-  # The loop run.sh performs over the selection, under the same `set -euo
-  # pipefail` it runs with: zero iterations, and no unbound-variable abort.
+  # The SHAPE of the loop run.sh performs, under the same `set -euo pipefail`:
+  # zero iterations, no unbound-variable abort. Stated honestly — this is a
+  # re-implementation, not run.sh's own line, so it cannot catch run.sh's length
+  # guard being deleted. What it does pin is that an empty selection is safe to
+  # iterate at all, which is the property the guard exists to preserve.
   if ! (
     set -euo pipefail
     if [[ ${#SMOKE_SELECTED_HARNESSES[@]} -gt 0 ]]; then
