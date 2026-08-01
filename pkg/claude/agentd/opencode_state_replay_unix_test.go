@@ -240,17 +240,71 @@ func TestOpenCodeAnchoredStateTargetsSurvivesSymlinkedHome(t *testing.T) {
 
 	// The contract carries the RESOLVED spelling, as the production builder
 	// produces it; the anchor derives the unresolved one from HOME.
-	require.NoError(t, requireOpenCodeAnchoredStateTargets(
-		session.TclaudeLayerLaunchContract{
-			HarnessName: harness.OpenCodeName,
-			StateRoot:   filepath.Join(real, ".opencode"),
-			StateDirs: []string{
-				filepath.Join(real, ".local", "share", "opencode"),
-				filepath.Join(real, ".cache", "opencode"),
-				filepath.Join(real, ".config", "opencode"),
-				filepath.Join(real, ".local", "state", "opencode"),
-			},
-		}))
+	accepted := session.TclaudeLayerLaunchContract{
+		HarnessName: harness.OpenCodeName,
+		StateRoot:   filepath.Join(real, ".opencode"),
+		StateDirs: []string{
+			filepath.Join(real, ".local", "share", "opencode"),
+			filepath.Join(real, ".cache", "opencode"),
+			filepath.Join(real, ".config", "opencode"),
+			filepath.Join(real, ".local", "state", "opencode"),
+		},
+	}
+	require.NoError(t, requireOpenCodeAnchoredStateTargets(accepted))
+
+	// NEGATIVE CONTROL. Acceptance alone is satisfied by an anchor that accepts
+	// everything — this test passed unchanged when a reviewer stubbed the legacy
+	// arm out. A non-matching root under the SAME symlinked home must still be
+	// refused, which is what makes the acceptance above evidence that the two
+	// spellings were compared and matched rather than never compared.
+	refused := accepted
+	refused.StateRoot = filepath.Join(real, ".opencode-impostor")
+	require.ErrorContains(t, requireOpenCodeAnchoredStateTargets(refused),
+		"is neither an allocated per-agent state root nor this host's OpenCode state root")
+}
+
+// The filtered posture, driven through the production layout builder and its
+// filtered isolation step. #1832's first round asserted this posture was
+// unaffected without exercising it; a claim about a posture is worth what the
+// test that reaches it is worth.
+func TestPrepareOpenCodeTclaudeLayerStateAcceptsProducedFilteredLayout(t *testing.T) {
+	stateRoot, _ := allocatedOpenCodeConfigDir(t)
+	layout, err := openCodeStateLayoutForAllocation(db.OpenCodeAgentStateAllocation{
+		AgentID:   filepath.Base(stateRoot),
+		Mode:      db.OpenCodeStatePrivate,
+		StateRoot: stateRoot,
+	})
+	require.NoError(t, err)
+	require.NoError(t, isolateOpenCodeFilteredConfig(layout))
+	require.Len(t, layout.stateDirs, 4)
+
+	contract := session.TclaudeLayerLaunchContract{
+		HarnessName:   harness.OpenCodeName,
+		StateRoot:     stateRoot,
+		StateDirs:     layout.stateDirs,
+		WriteDirs:     layout.stateDirs,
+		ReadOnlyBinds: layout.readOnlyBinds,
+	}
+	require.NoError(t, requireOpenCodeAnchoredStateTargets(contract))
+
+	// The filtered posture's directories are all below the state root, so this
+	// acceptance must not be riding on the ambient arm. Moving the ambient bases
+	// away leaves it accepted.
+	//
+	// XDG_DATA_HOME is deliberately NOT moved, and the exclusion is the point
+	// rather than a convenience: it anchors the private state ALLOCATION, not
+	// the ambient answer, so moving it strands the allocation and refuses with
+	// the environment-change message #1822 documented. Including it here made
+	// this test fail for that unrelated reason, which would have read as "the
+	// private posture depends on an ambient directory" — a wrong conclusion
+	// about the code, reached from a fixture that was testing two things at once.
+	for _, name := range []string{
+		"XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME",
+	} {
+		t.Setenv(name, filepath.Join(t.TempDir(), "moved-"+name))
+	}
+	require.NoError(t, requireOpenCodeAnchoredStateTargets(contract),
+		"a private posture names no ambient directory, so it must not depend on one")
 }
 
 // Non-OpenCode launch specs are untouched: the authority this anchor uses is
@@ -265,4 +319,56 @@ func TestOpenCodeAnchoredStateTargetsIgnoresOtherHarnesses(t *testing.T) {
 			StateRoot:   filepath.Join(t.TempDir(), "anything"),
 			StateDirs:   []string{filepath.Join(t.TempDir(), "anything-else")},
 		}))
+}
+
+// F1 from #1832's cold review, CONFIRMED before it was fixed: ReadOnlyStateDirs
+// is a THIRD MkdirAll sink inside PrepareTclaudeLayerHarnessState, and the only
+// containment it applies is LEXICAL against the unresolved state root. A
+// symlink planted inside a genuinely allocated root — by the sandboxed agent
+// that owns that directory — therefore satisfies the lexical test while
+// resolving outside it.
+//
+// The state root here is really allocated, so the anchor's own arms all pass
+// cleanly. This is specifically about the sink the first version of the anchor
+// did not cover.
+func TestPrepareOpenCodeTclaudeLayerStateRefusesReadOnlyStateDirEscape(t *testing.T) {
+	stateRoot, _ := allocatedOpenCodeConfigDir(t)
+	victimParent := filepath.Join(t.TempDir(), "victim-parent")
+	require.NoError(t, os.MkdirAll(victimParent, 0o700))
+	// The escape hatch: an in-root name that resolves out of the root.
+	require.NoError(t, os.Symlink(victimParent, filepath.Join(stateRoot, "escape")))
+	escaped := filepath.Join(stateRoot, "escape", "created-by-daemon")
+	victim := filepath.Join(victimParent, "created-by-daemon")
+	require.NoDirExists(t, victim)
+
+	stateDir := filepath.Join(stateRoot, "data", "opencode")
+	require.NoError(t, os.MkdirAll(stateDir, 0o700))
+	spec := &session.TclaudeLayerLaunchSpec{
+		Version: session.TclaudeLayerLaunchSpecVersion,
+		Contract: session.TclaudeLayerLaunchContract{
+			HarnessName:       harness.OpenCodeName,
+			StateRoot:         stateRoot,
+			StateDirs:         []string{stateDir},
+			WriteDirs:         []string{stateDir},
+			ReadOnlyStateDirs: []string{escaped},
+			ReadOnlyBinds: []session.TclaudeLayerReadOnlyBind{{
+				Source: stateDir, Target: stateDir,
+			}},
+			// Contract-supplied, so it proves nothing — which is the point: the
+			// read-only sink's other gate reads this same persisted artifact.
+			ProfileFilesystem: nil,
+		},
+		Effective: sandboxpolicy.EffectiveProfile{
+			Filesystem: []sandboxpolicy.FilesystemGrant{
+				{Path: escaped, Access: sandboxpolicy.AccessRead},
+			},
+		},
+	}
+
+	err := prepareOpenCodeTclaudeLayerState(spec)
+	assert.NoDirExists(t, victim,
+		"a daemon-side mkdir escaped the state root through an in-root symlink")
+	require.ErrorContains(t, err,
+		"is neither below its state root",
+		"pinned to the reason, not to the presence of any error")
 }

@@ -682,15 +682,24 @@ func prepareOpenCodeTclaudeLayerState(spec *session.TclaudeLayerLaunchSpec) erro
 //     through session.TclaudeLayerHarnessStateRoot, which is the function
 //     BuildTclaudeLayerLaunchSpec itself uses to produce it.
 //
-// A state directory then has to be below its proven state root, or be one of
-// the four ambient OpenCode XDG app directories this host derives for itself.
-// The second arm is not a loophole for tampering — it is production: the legacy
-// shared posture names exactly those four, and the Darwin private posture
-// replaces StateDirs[2] with the resolved ambient config app directory when one
-// exists (see adaptOpenCodeStateLayoutForPlatform). Both are re-derived here
-// from the daemon's own environment via openCodeAmbientAppDir, the same
-// derivation the layout used, so a contract cannot widen the set by naming
-// something else.
+// A mutable state directory then has to be below its proven state root, or be
+// one of the four ambient OpenCode XDG app directories this host derives for
+// itself. The second arm is not a loophole for tampering — it is production:
+// the legacy shared posture names exactly those four, and the Darwin private
+// posture replaces StateDirs[2] with the resolved ambient config app directory
+// when one exists (see adaptOpenCodeStateLayoutForPlatform). Both are
+// re-derived here from the daemon's own environment via openCodeAmbientAppDir,
+// the same derivation the layout used, so a contract cannot widen the set by
+// naming something else.
+//
+// ReadOnlyStateDirs are covered too, and WITHOUT the ambient arm: the renderer
+// already requires them to be below the state root, and no posture emits an
+// ambient one. They need their own resolved check rather than inheriting the
+// renderer's, because the renderer's containment test is LEXICAL against the
+// unresolved state root — so an in-root name that resolves outside the root
+// satisfies it. A symlink planted inside an allocated state root by the very
+// agent that owns that directory is exactly that shape, which makes this the
+// third mkdir sink in the same function rather than a hypothetical one.
 func requireOpenCodeAnchoredStateTargets(
 	contract session.TclaudeLayerLaunchContract,
 ) error {
@@ -707,32 +716,60 @@ func requireOpenCodeAnchoredStateTargets(
 	if err != nil {
 		return err
 	}
-	ambient, err := ambientOpenCodeStateAppDirs()
-	if err != nil {
-		return err
-	}
-	for index, dir := range contract.StateDirs {
-		clean := canonicalOpenCodeRuntimePath(dir)
-		if clean == "" {
+	// Derived lazily, and only when a directory is not below the state root.
+	// A Linux private posture has no ambient state directory at all, and
+	// computing the set eagerly would make that posture fail on an environment
+	// it never consults.
+	var ambient map[string]bool
+	// An ordered slice, not a map: a contract with a problem in both groups must
+	// produce the SAME refusal every time it is replayed, and Go randomizes map
+	// iteration.
+	for _, group := range []struct {
+		kind string
+		dirs []string
+		// Only mutable state directories may name an ambient directory. The
+		// read-only ones are always below the state root in every posture.
+		allowAmbient bool
+	}{
+		{kind: "state directory", dirs: contract.StateDirs, allowAmbient: true},
+		{kind: "read-only state directory", dirs: contract.ReadOnlyStateDirs},
+	} {
+		kind := group.kind
+		for index, dir := range group.dirs {
+			clean := canonicalOpenCodeRuntimePath(dir)
+			if clean == "" {
+				return fmt.Errorf(
+					"OpenCode launch contract %s %d %q is not an absolute path",
+					kind, index, dir)
+			}
+			// Resolved before comparison, and through the missing-path walker
+			// rather than EvalSymlinks: on a first launch these directories do
+			// not exist yet, which is the whole reason the replay path is
+			// creating them.
+			resolved, resolveErr := canonicalizeMissingOpenCodePath(clean)
+			if resolveErr != nil {
+				return fmt.Errorf(
+					"canonicalize OpenCode launch contract %s %q: %w",
+					kind, dir, resolveErr)
+			}
+			if sandboxpolicy.PathContainsOrEqual(resolvedRoot, resolved) {
+				continue
+			}
+			if group.allowAmbient {
+				if ambient == nil {
+					ambient, err = ambientOpenCodeStateAppDirs()
+					if err != nil {
+						return err
+					}
+				}
+				if ambient[resolved] {
+					continue
+				}
+			}
 			return fmt.Errorf(
-				"OpenCode launch contract state directory %d %q is not an absolute path",
-				index, dir)
+				"OpenCode launch contract %s %q is neither below its state root %q nor one of this host's ambient OpenCode state directories",
+				kind, dir, resolvedRoot)
 		}
-		// Resolved before comparison, and through the missing-path walker
-		// rather than EvalSymlinks: on a first launch these directories do not
-		// exist yet, which is the whole reason the replay path is creating them.
-		resolved, resolveErr := canonicalizeMissingOpenCodePath(clean)
-		if resolveErr != nil {
-			return fmt.Errorf(
-				"canonicalize OpenCode launch contract state directory %q: %w",
-				dir, resolveErr)
-		}
-		if sandboxpolicy.PathContainsOrEqual(resolvedRoot, resolved) || ambient[resolved] {
-			continue
-		}
-		return fmt.Errorf(
-			"OpenCode launch contract state directory %q is neither below its state root %q nor one of this host's ambient OpenCode state directories",
-			dir, resolvedRoot)
 	}
 	return nil
 }
@@ -752,8 +789,7 @@ func requireOpenCodeAnchoredStateRoot(stateRoot string) (string, error) {
 	// here, or the reverse.
 	if openCodeAgentIDRE.MatchString(filepath.Base(stateRoot)) {
 		if err := requireOpenCodeAllocatedStateRoot(resolved,
-			fmt.Sprintf("OpenCode launch contract state root %q", stateRoot),
-			"state root"); err != nil {
+			openCodeStateRootSubject(stateRoot, resolved), "state root"); err != nil {
 			return "", err
 		}
 		return resolved, nil
@@ -772,6 +808,24 @@ func requireOpenCodeAnchoredStateRoot(stateRoot string) (string, error) {
 			stateRoot, resolvedLegacy)
 	}
 	return resolved, nil
+}
+
+// openCodeStateRootSubject names a contract's state root the way an operator
+// has to see it to act on a refusal.
+//
+// The branch above is chosen on the UNRESOLVED base name, so that the launch
+// contract's validator and this cannot disagree about which arm applies, but
+// the allocation is looked up under the RESOLVED one. When a leaf symlink makes
+// those differ, quoting only the resolved path reports a directory the operator
+// never wrote, with no hint that a link was followed — the refusal would consume
+// information its message did not.
+func openCodeStateRootSubject(stateRoot, resolved string) string {
+	if resolved == stateRoot {
+		return fmt.Sprintf("OpenCode launch contract state root %q", stateRoot)
+	}
+	return fmt.Sprintf(
+		"OpenCode launch contract state root %q (a symlink, resolving to %q)",
+		stateRoot, resolved)
 }
 
 // ambientOpenCodeStateAppDirs is the set of OpenCode app directories THIS host
