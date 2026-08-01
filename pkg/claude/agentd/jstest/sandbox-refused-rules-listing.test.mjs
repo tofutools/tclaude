@@ -214,6 +214,45 @@ test('the refusal banner carries the kind and the message verbatim', async (t) =
   assert.match(alert.textContent, /select the Packet filter engine/);
 });
 
+test('a refused target composes its unjudged rules with a named cap-omitted refusal', async (t) => {
+  const harness = await createPreactHarness(t);
+  const target = {
+    ...REFUSED_TARGET,
+    omitted_refusals: [{ ...REFUSAL, context: { group_name: 'crew-10' } }],
+  };
+  const container = await render(harness, target);
+
+  // Option C is positively present on this render: the selected target's own
+  // authored rules are listed without a verdict, and its refusal is announced.
+  assert.equal(bucketOfRule(container, FS_RULE), 'sbx-rule-bucket-unjudged');
+  assert.equal(bucketOfRule(container, NET_RULE), 'sbx-rule-bucket-unjudged');
+  const unjudged = container.querySelector('.sbx-rule-bucket-unjudged');
+  assert.ok(unjudged, 'the selected target lists its rules as unjudged');
+  const note = unjudged.querySelector('.sbx-bucket-note');
+  assert.ok(note, 'the unjudged list explains that evaluation never reached a verdict');
+  assert.match(note.textContent, /none carries a verdict/);
+  const launchBlocked = container.querySelector('.sbx-launch-blocked');
+  assert.ok(launchBlocked, 'the selected target refusal is announced');
+  assert.match(launchBlocked.textContent, /select the Packet filter engine/);
+
+  // TCL-913 is positively present on that SAME render: the cap-omitted
+  // refusal has its assignment identity, rather than merely avoiding the old
+  // placeholder. Compare printable labels so a failure never formats a node.
+  const otherAssignments = container.querySelector('.sbx-other-assignments');
+  assert.ok(otherAssignments, 'the cap-omitted refusal is announced');
+  const labels = [...otherAssignments.querySelectorAll('li > strong')]
+    .map((element) => element.textContent);
+  assert.deepEqual(labels, ['group crew-10:']);
+  assert.doesNotMatch(otherAssignments.textContent, /An assignment omitted from this selector/);
+
+  // The assignment identity remains a sibling warning, not content nested in
+  // the selected target's refusal. Strings keep this assertion bounded too.
+  const resultClasses = [...container.querySelector('.sbx-policy-result').children]
+    .map((element) => element.getAttribute('class'));
+  assert.ok(resultClasses.includes('sbx-other-assignments refused'));
+  assert.ok(resultClasses.includes('sbx-launch-blocked'));
+});
+
 test('a target that WAS evaluated keeps its verdict buckets untouched', async (t) => {
   /* The scoping control. Without it, "the refused target renders correctly" is
      compatible with having broken every other target's rendering.
