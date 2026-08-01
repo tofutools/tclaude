@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assertAbsent } from './assertions.mjs';
+import { assertAbsent, assertSameNode } from './assertions.mjs';
 import { createPreactHarness, getByRole } from './preact-harness.mjs';
 
 test('shell island reacts to snapshots while preserving keyed usage and footer nodes', async (t) => {
@@ -31,8 +31,8 @@ test('shell island reacts to snapshots while preserving keyed usage and footer n
 
   state.beginRequest();
   await harness.act(() => state.commitRequest(2, { ...snapshot, generated_at: '2026-07-13T10:00:02Z' }));
-  assert.equal(usage.container.querySelector('.uw'), fiveHour, 'stable usage token survives a poll');
-  assert.equal(meta.container.querySelector('.meta-base').firstChild, baseText,
+  assertSameNode(usage.container.querySelector('.uw'), fiveHour, 'stable usage token survives a poll');
+  assertSameNode(meta.container.querySelector('.meta-base').firstChild, baseText,
     'unchanged base URL remains a valid selection anchor');
 
   feedback.showStatus('live');
@@ -52,7 +52,7 @@ test('shell confirmation keeps capture-Escape semantics and feedback cleanup', a
   let accepted;
   await harness.act(() => { accepted = feedback.confirm({ title: 'Proceed?', body: 'Careful', okLabel: 'Do it' }); });
   const ok = getByRole(mounted.container, 'button', { name: 'Do it' });
-  assert.equal(harness.document.activeElement, ok);
+  assertSameNode(harness.document.activeElement, ok);
   let shortcut;
   await harness.act(() => {
     shortcut = harness.fireEvent(harness.document, 'keydown', { key: 'Enter', ctrlKey: true });
@@ -123,18 +123,18 @@ test('global activity keeps keyed native bot identity across polls and wizard ch
       { conv_id: 'c', online: true, state: { status: 'working' } },
     ) }],
   }));
-  assert.equal(mounted.container.querySelector('.ga-regular'), regular);
-  assert.equal(regular.querySelector('.actbot-working'), working);
-  assert.equal(working.querySelector('.actbot-count'), count);
+  assertSameNode(mounted.container.querySelector('.ga-regular'), regular);
+  assertSameNode(regular.querySelector('.actbot-working'), working);
+  assertSameNode(working.querySelector('.actbot-count'), count);
   assert.equal(count.textContent, '3');
 
   harness.document.body.classList.add('wizard');
   await harness.act(() => harness.document.dispatchEvent(new harness.window.CustomEvent(
     'tclaude:wizard', { detail: { active: true } },
   )));
-  assert.equal(mounted.container.querySelector('.ga-regular'), regular,
+  assertSameNode(mounted.container.querySelector('.ga-regular'), regular,
     'theme wording changes do not remount hidden animation rows');
-  assert.equal(regular.querySelector('.actbot-working'), working);
+  assertSameNode(regular.querySelector('.actbot-working'), working);
   assert.match(mounted.container.querySelector('#global-activity').title, /familiars channeling/);
   await mounted.unmount();
 });

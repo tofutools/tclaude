@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertSameNode } from './assertions.mjs';
 import { createPreactHarness, getByRole } from './preact-harness.mjs';
 
 const storage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
@@ -50,9 +51,9 @@ test('Plugins island renders loading/filter/error states and preserves keyed foc
   edit.focus();
   const nameText = card.querySelector('.rowname').firstChild;
   await harness.act(() => { snapshot.value = page(); });
-  assert.equal(mounted.container.querySelector('[data-key="plugin-canvas"]'), card);
-  assert.equal(card.querySelector('.rowname').firstChild, nameText);
-  assert.equal(harness.document.activeElement, edit);
+  assertSameNode(mounted.container.querySelector('[data-key="plugin-canvas"]'), card);
+  assertSameNode(card.querySelector('.rowname').firstChild, nameText);
+  assertSameNode(harness.document.activeElement, edit);
 
   const filter = getByRole(mounted.container, 'textbox', { name: 'Filter plugins' });
   await harness.input(filter, 'github');
@@ -87,7 +88,7 @@ test('Plugins modal supports create/edit fields, actions, and listener cleanup',
   assert.match(dialog.textContent, /New plugin/);
   assert.equal(dialog.querySelectorAll('.plugin-step-edit').length, 1);
   const name = dialog.querySelector('#plugin-modal-name');
-  assert.equal(harness.document.activeElement, name);
+  assertSameNode(harness.document.activeElement, name);
   await harness.input(name, 'demo');
   assert.equal(state.modal.value.name, 'demo');
   assert.ok(dialog.querySelector('#plugin-modal-add-step'));
@@ -103,18 +104,18 @@ test('Plugins modal supports create/edit fields, actions, and listener cleanup',
   const submit = dialog.querySelector('#plugin-modal-submit');
   submit.focus();
   await harness.act(() => harness.fireEvent(submit, 'keydown', { key: 'Tab' }));
-  assert.equal(harness.document.activeElement, name, 'Tab wraps to the first dialog control');
+  assertSameNode(harness.document.activeElement, name, 'Tab wraps to the first dialog control');
   await harness.act(() => harness.fireEvent(name, 'keydown', { key: 'Tab', shiftKey: true }));
-  assert.equal(harness.document.activeElement, submit, 'Shift+Tab wraps to the last dialog control');
+  assertSameNode(harness.document.activeElement, submit, 'Shift+Tab wraps to the last dialog control');
   invoker.focus();
   await harness.act(() => harness.fireEvent(invoker, 'keydown', { key: 'Tab' }));
-  assert.equal(harness.document.activeElement, name, 'Tab from outside is contained at the first control');
+  assertSameNode(harness.document.activeElement, name, 'Tab from outside is contained at the first control');
   invoker.focus();
   await harness.act(() => harness.fireEvent(invoker, 'keydown', { key: 'Tab', shiftKey: true }));
-  assert.equal(harness.document.activeElement, submit, 'Shift+Tab from outside is contained at the last control');
+  assertSameNode(harness.document.activeElement, submit, 'Shift+Tab from outside is contained at the last control');
   await harness.act(() => harness.fireEvent(submit, 'keydown', { key: 'Escape' }));
   assert.equal(state.modal.value, null);
-  assert.equal(harness.document.activeElement, invoker);
+  assertSameNode(harness.document.activeElement, invoker);
   assert.ok(calls.includes('refresh'));
   await mounted.unmount();
   invoker.remove();

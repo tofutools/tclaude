@@ -5,7 +5,7 @@
 // rendered into a hidden tab section would never be visible.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assertAbsent } from './assertions.mjs';
+import { assertAbsent, assertSameNode } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 function installHosts(harness) {
@@ -190,7 +190,7 @@ test('the quick reader mounts on its own body-level host and answers every surfa
   // the length of the exit animation. Focus does not wait for it.
   assert.ok(mounted.container.querySelector('.human-notification-drawer.closing'),
     'closing plays the exit animation instead of vanishing');
-  assert.equal(harness.document.activeElement, launcher,
+  assertSameNode(harness.document.activeElement, launcher,
     'closing hands focus back to whatever raised the reader');
   await harness.act(async () => { await new Promise((done) => setTimeout(done, 40)); });
   assertAbsent(mounted.container.querySelector('.human-notification-drawer'));

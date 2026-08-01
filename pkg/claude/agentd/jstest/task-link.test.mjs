@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assertAbsent } from './assertions.mjs';
+import { assertAbsent, assertSameNode } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 function deferred() {
@@ -109,7 +109,7 @@ test('task-link dialog prefills, selects the URL, and submits the changed pair',
   assert.equal(host.querySelector('#task-link-label').value, 'Launch task');
   // The shared dialog lifecycle focuses the first control and honours
   // data-select-on-focus, so the prefilled URL is focused for quick replacement.
-  assert.equal(harness.document.activeElement, url);
+  assertSameNode(harness.document.activeElement, url);
 
   await harness.input(host.querySelector('#task-link-label'), 'Release task');
   host.querySelector('#task-link-save').click();
@@ -254,7 +254,7 @@ test('dirty task-link dialog confirms discard and restores the invoker', async (
   await harness.act(() => new Promise((r) => setTimeout(r, 0)));
   assertAbsent(host.querySelector('#task-link-modal'), 'a confirmed discard closes the dialog');
   assert.equal(confirmations, 2);
-  assert.equal(harness.document.activeElement, invoker, 'closing restores the edit-pencil invoker');
+  assertSameNode(harness.document.activeElement, invoker, 'closing restores the edit-pencil invoker');
 });
 
 test('Enter saves only from a field, never composing, never via a global hotkey', async (t) => {

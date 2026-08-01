@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assertAbsent } from './assertions.mjs';
+import { assertAbsent, assertDifferentNode, assertSameNode } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 const catalog = [{ name: 'claude', display_name: 'Claude Code', models: ['sonnet'], effort_levels: ['low', 'high'], can_sandbox: true, can_builtin_os_sandbox: true, sandbox_modes: ['inherit', 'on'], default_sandbox: 'inherit', can_approval: true, approval_modes: ['inherit', 'plan'], default_approval: 'inherit', approval_mode_help: { inherit: 'keep settings', plan: 'plan only' }, can_tools: false, tools_modes: [], default_tools: '', tools_mode_help: {}, can_auto_review: false, can_ask_timeout: true, ask_timeout_modes: ['inherit', '60s'], default_ask_timeout: 'inherit', can_remote_control: true, can_auto_memory: true, can_dir_trust: true, dir_trust_store: '~/.claude.json' }, { name: 'codex', display_name: 'Codex CLI', models: [], can_sandbox: true, can_builtin_os_sandbox: true, sandbox_modes: ['workspace-write'], default_sandbox: 'workspace-write', can_approval: true, approval_modes: ['never', 'untrusted', 'on-failure', 'on-request'], default_approval: 'never', approval_mode_help: { never: 'never prompt', untrusted: 'ask for untrusted', 'on-failure': 'deprecated retry', 'on-request': 'ask when requested' }, can_tools: false, tools_modes: [], default_tools: '', tools_mode_help: {}, can_auto_review: true, can_remote_control: false, can_auto_memory: false, can_ssh_workaround: true, can_dir_trust: true, dir_trust_store: '~/.codex/config.toml' }, { name: 'opencode', display_name: 'OpenCode', models: [], effort_levels: [], can_sandbox: true, can_builtin_os_sandbox: false, sandbox_modes: ['off'], default_sandbox: 'off', sandbox_mode_help: { off: '⚠ No tclaude OS containment' }, can_approval: false, approval_modes: [], default_approval: '', can_tools: true, tools_modes: ['allow', 'ask', 'deny'], default_tools: 'allow', tools_mode_help: { allow: 'allow tools', ask: 'ask for tools', deny: 'deny tools' }, can_auto_review: false, can_remote_control: false, can_auto_memory: false, can_dir_trust: false, dir_trust_store: '' }];
@@ -870,7 +870,7 @@ test('local profile editor skips its hidden autofocus field', async (t) => {
   mountManagementIsland({ host, state, actions: { saveProfile() {} }, confirmDiscard: async () => true, openProfilePermissions() {}, registerCleanup(fn) { cleanups.push(fn); } });
   await harness.act(() => Promise.resolve());
   assert.equal(host.querySelector('#profile-editor-name').closest('[hidden]') !== null, true);
-  assert.equal(harness.document.activeElement, host.querySelector('#profile-editor-harness'), 'hidden autofocus fields cannot retain focus behind the modal');
+  assertSameNode(harness.document.activeElement, host.querySelector('#profile-editor-harness'), 'hidden autofocus fields cannot retain focus behind the modal');
   cleanups.reverse().forEach((fn) => fn());
 });
 
@@ -1145,7 +1145,7 @@ test('sandbox save preview renders a focused line diff and restores the editor o
   assert.match(modal.querySelector('#sandbox-profile-diff-sub').textContent, /1 line\(s\) added, 1 removed/);
   const diffBody = modal.querySelector('#sandbox-profile-diff-body');
   const evaluation = modal.querySelector('#sandbox-profile-diff-evaluation');
-  assert.equal(diffBody.nextElementSibling, evaluation,
+  assertSameNode(diffBody.nextElementSibling, evaluation,
     'evaluation warnings render in their bottom section after the diff, never at the top');
   assert.equal(evaluation.querySelector('h4').textContent, 'Evaluation warnings');
   assert.equal(evaluation.querySelector('.sbx-composition-warning').getAttribute('role'), 'alert');
@@ -1154,7 +1154,7 @@ test('sandbox save preview renders a focused line diff and restores the editor o
   assert.equal(harness.document.activeElement.id, 'sandbox-profile-diff-confirm');
   const editor = host.querySelector('#sandbox-profile-editor-modal'); assert.equal(editor.inert, true); assert.equal(editor.getAttribute('aria-hidden'), 'true');
   modal.querySelector('#sandbox-profile-diff-cancel').click(); state.busy.value = ''; await harness.act(() => Promise.resolve());
-  assert.equal(await decision, false); assertAbsent(host.querySelector('#sandbox-profile-diff-modal')); assert.equal(editor.inert, false); assert.equal(editor.hasAttribute('aria-hidden'), false); assert.ok(host.querySelector('#sandbox-profile-editor-modal')); assert.equal(harness.document.activeElement, submit, 'focus returns after the editor is interactive again');
+  assert.equal(await decision, false); assertAbsent(host.querySelector('#sandbox-profile-diff-modal')); assert.equal(editor.inert, false); assert.equal(editor.hasAttribute('aria-hidden'), false); assert.ok(host.querySelector('#sandbox-profile-editor-modal')); assertSameNode(harness.document.activeElement, submit, 'focus returns after the editor is interactive again');
   cleanups.reverse().forEach((fn) => fn());
 });
 
@@ -1173,7 +1173,7 @@ test('sandbox editor owns nested rows, raw validation, dirty discard, and save-i
   const path = host.querySelector('.sbx-path'); path.value = '/cache'; path.dispatchEvent(new harness.window.Event('input', { bubbles: true })); await harness.act(() => Promise.resolve());
   assert.equal(harness.document.activeElement === path || path.value === '/cache', true);
   host.querySelector('.sbx-include-add').click(); host.querySelector('.sbx-agent-add').click(); await harness.act(() => Promise.resolve());
-  const access = host.querySelector('.sbx-access'); const include = host.querySelector('.sbx-inc-name'); assert.ok(access); assert.ok(include); assert.notEqual(access, include, 'access and included-profile selects have distinct layout contracts'); include.querySelector('option[value="base"]').selected = true; include.dispatchEvent(new harness.window.Event('change', { bubbles: true })); const agentDir = host.querySelector('.sbx-agent-name'); agentDir.value = 'GOCACHE'; agentDir.dispatchEvent(new harness.window.Event('input', { bubbles: true })); await harness.act(() => Promise.resolve());
+  const access = host.querySelector('.sbx-access'); const include = host.querySelector('.sbx-inc-name'); assert.ok(access); assert.ok(include); assertDifferentNode(access, include, 'access and included-profile selects have distinct layout contracts'); include.querySelector('option[value="base"]').selected = true; include.dispatchEvent(new harness.window.Event('change', { bubbles: true })); const agentDir = host.querySelector('.sbx-agent-name'); agentDir.value = 'GOCACHE'; agentDir.dispatchEvent(new harness.window.Event('input', { bubbles: true })); await harness.act(() => Promise.resolve());
   state.busy.value = 'sandbox-save'; await harness.act(() => Promise.resolve()); assert.equal(host.querySelector('#sandbox-profile-editor-modal .modal-buttons button').disabled, true);
   state.busy.value = ''; await harness.act(() => Promise.resolve());
   host.querySelector('.sbx-advanced-toggle').click(); await harness.act(() => Promise.resolve());
@@ -1229,7 +1229,7 @@ test('sandbox filesystem and socket rows reuse accessible segmented controls whi
   readRadio.focus();
   await harness.act(() => harness.fireEvent(readRadio, 'keydown', { key: 'ArrowRight' }));
   assert.equal(segmentedValue(filesystemControls[0]), 'write');
-  assert.equal(harness.document.activeElement, segment(filesystemControls[0], 'write'));
+  assertSameNode(harness.document.activeElement, segment(filesystemControls[0], 'write'));
   await harness.act(() => harness.fireEvent(segment(filesystemControls[0], 'write'), 'keydown', { key: 'End' }));
   assert.equal(segmentedValue(filesystemControls[0]), 'deny');
   await harness.act(() => harness.fireEvent(segment(filesystemControls[0], 'deny'), 'keydown', { key: 'Home' }));
@@ -2061,7 +2061,7 @@ test('new deny drafts apply default pack references once and pack rows stay read
   assert.equal(segment(keyboardMode, 'deny').classList.contains('sbx-state-deny'), true);
   assert.equal(segment(keyboardMode, 'deny').classList.contains('is-selected'), true);
   assert.equal(segment(keyboardMode, 'deny').getAttribute('tabindex'), '0');
-  assert.equal(harness.document.activeElement, segment(keyboardMode, 'deny'),
+  assertSameNode(harness.document.activeElement, segment(keyboardMode, 'deny'),
     'arrow selection moves the roving focus with the authored value');
   await harness.act(() => harness.fireEvent(segment(keyboardMode, 'deny'), 'keydown', { key: 'ArrowLeft' }));
   assert.equal(segmentedValue(keyboardMode), 'allow');
@@ -2168,7 +2168,7 @@ test('network packs and manual destinations author deny mode without inline verd
   await harness.act(() => harness.fireEvent(authoredDeny, 'keydown', { key: 'ArrowLeft' }));
   const movedMode = network.querySelector('.sbx-network-rule-mode');
   assert.equal(segmentedValue(movedMode), 'allow');
-  assert.equal(harness.document.activeElement, segment(movedMode, 'allow'),
+  assertSameNode(harness.document.activeElement, segment(movedMode, 'allow'),
     'a manual row keeps roving focus when its existing mode handler moves it between buckets');
   await harness.act(() => harness.fireEvent(segment(movedMode, 'allow'), 'keydown', { key: 'ArrowRight' }));
   assert.equal(segmentedValue(network.querySelector('.sbx-network-rule-mode')), 'deny');
@@ -2582,7 +2582,7 @@ test('global harness filesystem rows start folded, remain immutable, and are nev
   }
   state.updateTemplates([{ name: 'snapshot-poll' }], []);
   await harness.act(() => Promise.resolve());
-  assert.equal(host.querySelector('#sandbox-profile-editor-global-harness-filter'), filter, 'snapshot polls preserve the native select node');
+  assertSameNode(host.querySelector('#sandbox-profile-editor-global-harness-filter'), filter, 'snapshot polls preserve the native select node');
   assert.equal(pollValueReads, 0, 'snapshot polls do not reconcile the open editor select');
   assert.equal(pollSelectedWrites, 0, 'snapshot polls do not reapply controlled options and close the native dropdown');
   state.sandboxProfiles.value = [{ name: 'new-registry-profile', filesystem: [], environment: [] }];
@@ -3050,7 +3050,7 @@ test('role editor preserves missing profile references and nested permission foc
   const profile = [...host.querySelectorAll('option')].find((option) => option.value === 'removed-profile'); assert.match(profile.textContent, /missing/);
   assert.match(host.querySelector('#role-editor-name').placeholder, /reviewer/); assert.equal(host.querySelector('#role-editor-model').tagName, 'SELECT'); assert.ok([...host.querySelector('#role-editor-harness').options].some((option) => option.value === 'claude'));
   const write = [...host.querySelectorAll('.ta-perms-list input')][1]; write.focus(); write.checked = true; write.dispatchEvent(new harness.window.Event('change', { bubbles: true })); await harness.act(() => Promise.resolve());
-  assert.equal(harness.document.activeElement, write); assert.match(host.querySelector('.cron-create-label').parentElement.parentElement.textContent, /reviewer|Role/i);
+  assertSameNode(harness.document.activeElement, write); assert.match(host.querySelector('.cron-create-label').parentElement.parentElement.textContent, /reviewer|Role/i);
   host.querySelector('#role-editor-modal .primary').click(); await harness.act(() => Promise.resolve()); assert.ok(saved); assert.deepEqual(saved.payload.permissions, ['read', 'write']);
   cleanups.reverse().forEach((fn) => fn());
 });
@@ -3450,12 +3450,12 @@ test('the mount panel takes focus, closes on Escape, and returns focus to its ro
   await harness.act(() => harness.fireEvent(toggle, 'click'));
   const panel = host.querySelector('#sandbox-profile-editor-mount-panel-0');
   assert.equal(toggle.getAttribute('aria-controls'), panel.id);
-  assert.equal(harness.document.activeElement, panel.querySelector('input'),
+  assertSameNode(harness.document.activeElement, panel.querySelector('input'),
     'the field takes focus without relying on autofocus, which Preact does not implement');
 
   await harness.act(() => harness.fireEvent(panel, 'keydown', { key: 'Escape' }));
   assertAbsent(host.querySelector('#sandbox-profile-editor-mount-panel-0'), 'Escape dismisses the popover rather than the whole modal');
-  assert.equal(harness.document.activeElement, toggle);
+  assertSameNode(harness.document.activeElement, toggle);
   unmount();
 });
 

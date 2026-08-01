@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assertAbsent } from './assertions.mjs';
+import { assertAbsent, assertSameNode } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 test('directory picker state serializes requests and settles explicit results', async (t) => {
@@ -387,7 +387,7 @@ test('Preact picker navigates host folders, chooses, cancels, and restores focus
   await harness.act(() => Promise.resolve());
   assert.deepEqual(await chosen, { path: '/home/me' });
   assertAbsent(host.querySelector('#directory-picker-modal'));
-  assert.equal(harness.document.activeElement, invoker);
+  assertSameNode(harness.document.activeElement, invoker);
 
   let canceled;
   await harness.act(() => { canceled = state.open({}); });

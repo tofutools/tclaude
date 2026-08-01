@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assertAbsent } from './assertions.mjs';
+import { assertAbsent, assertSameNode } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 test('group attachments enforce http(s) again at the render boundary', async (t) => {
@@ -115,7 +115,7 @@ test('group attachments enforce http(s) again at the render boundary', async (t)
   harness.document.dispatchEvent(escape);
   await harness.act(() => Promise.resolve());
   assertAbsent(host.querySelector('#task-link-modal'), 'Escape closes the attachment editor');
-  assert.equal(
+  assertSameNode(
     harness.document.activeElement,
     emptySummary,
     'Escape restores focus to the summary instead of pinning the overlay open',
@@ -146,7 +146,7 @@ test('group attachments enforce http(s) again at the render boundary', async (t)
     'fixed mode keeps the link/ticket label in the DOM');
   assertAbsent(fixedSafe.querySelector('.qo-text'), 'the fixed label does not participate in quick-item auto-folding');
   const safeSummary = host.querySelector('details[data-group-key="safe"] > summary');
-  assert.equal(safeSummary.lastElementChild, fixedSafe,
+  assertSameNode(safeSummary.lastElementChild, fixedSafe,
     'fixed mode is the far-right group quick item');
 
   const fixedEmpty = attachment('empty');
@@ -162,7 +162,7 @@ test('group attachments enforce http(s) again at the render boundary', async (t)
   assert.ok(host.querySelector('#task-link-modal'), 'the fixed quick item opens the editor');
   harness.document.dispatchEvent(escape);
   await harness.act(() => Promise.resolve());
-  assert.equal(harness.document.activeElement, fixedEmpty,
+  assertSameNode(harness.document.activeElement, fixedEmpty,
     'fixed mode restores focus to its stable quick item');
 
   const fixedHostless = attachment('hostless');

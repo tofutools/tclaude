@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertSameNode } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 const dashboardStub = `
@@ -165,14 +166,14 @@ test('static toolbar menu owns its persistent nodes across idempotent reinstalls
   item.focus();
   harness.fireEvent(harness.document.querySelector('#outside'), 'click', { button: 0 });
   assert.equal(menu.classList.contains('open'), false, 'light dismissal is menu-owned');
-  assert.equal(harness.document.activeElement, cog,
+  assertSameNode(harness.document.activeElement, cog,
     'click-away returns focus when it was still inside the dismissed menu');
 
   harness.fireEvent(cog, 'click', { button: 0 });
   item.focus();
   harness.fireEvent(item, 'click', { button: 0 });
   assert.equal(menu.classList.contains('open'), false, 'menu items dismiss their menu');
-  assert.equal(harness.document.activeElement, cog,
+  assertSameNode(harness.document.activeElement, cog,
     'menu-item dismissal returns focus from the hidden menu to its cog');
 
   first();

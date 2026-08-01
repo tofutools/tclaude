@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertSameNode } from './assertions.mjs';
 import { createPreactHarness, getByRole } from './preact-harness.mjs';
 
 const prefs = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
@@ -25,10 +26,10 @@ test('Access island owns navigation, filtering, keyed rows, and local countdowns
   const countdown = row.querySelector('[data-sudo-countdown]');
   const filter = getByRole(mounted.container, 'textbox', { name: 'Filter active sudo grants' }); filter.focus();
   now += 1000; await harness.act(() => state.tick(now));
-  assert.equal(mounted.container.querySelector('tr[data-key="sudo-7"]'), row);
-  assert.equal(row.querySelector('[data-sudo-countdown]'), countdown);
+  assertSameNode(mounted.container.querySelector('tr[data-key="sudo-7"]'), row);
+  assertSameNode(row.querySelector('[data-sudo-countdown]'), countdown);
   assert.equal(countdown.textContent, '4s');
-  assert.equal(harness.document.activeElement, filter);
+  assertSameNode(harness.document.activeElement, filter);
   await harness.input(filter, 'missing');
   assert.match(mounted.container.textContent, /0 \/ 1/);
   let navigated;

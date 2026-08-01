@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assertAbsent } from './assertions.mjs';
+import { assertAbsent, assertSameNode } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 function worktree(path, overrides = {}) {
@@ -330,7 +330,7 @@ test('failed cleanup freezes an exact retry and successful partial outcomes rema
   assert.match(host.querySelector('#worktree-cleanup-list').textContent, /git refused/);
   assert.equal(settled, false, 'HTTP 200 does not close the result phase');
   assertAbsent(host.querySelector('#worktree-cleanup-cancel'));
-  assert.equal(harness.document.activeElement, host.querySelector('#worktree-cleanup-submit'),
+  assertSameNode(harness.document.activeElement, host.querySelector('#worktree-cleanup-submit'),
     'the result phase moves modal focus to Done');
   host.querySelector('#worktree-cleanup-submit').click();
   assert.equal((await pending).response.failed, 1);

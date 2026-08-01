@@ -8,7 +8,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assertAbsent } from './assertions.mjs';
+import { assertAbsent, assertSameNode } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 async function core(t) {
@@ -255,7 +255,7 @@ test('the filter box aims a RESOLVABLE aria-activedescendant at the cursor', asy
   const controls = input.getAttribute('aria-controls');
   assert.ok(controls, 'the box declares what it controls');
   const controlled = document.getElementById(controls);
-  assert.equal(controlled, menu, 'aria-controls resolves to the menu');
+  assertSameNode(controlled, menu, 'aria-controls resolves to the menu');
   assert.equal(controlled.contains(document.getElementById(active.id)), true,
     'and that menu contains the referenced item');
 
@@ -300,14 +300,14 @@ test('hover moves the same single cursor the keyboard uses', async (t) => {
 
   const clone = menu.querySelector('[data-act="clone-group"]');
   harness.fireEvent(clone, 'mouseover');
-  assert.equal(module.menuActiveItem(menu), clone);
+  assertSameNode(module.menuActiveItem(menu), clone);
   assert.equal(input.getAttribute('aria-activedescendant'), clone.id);
 
   // A disabled row must not steal the cursor from a runnable one.
   harness.fireEvent(menu.querySelector('[data-act="export-summary"]'), 'mouseover');
-  assert.equal(module.menuActiveItem(menu), clone);
+  assertSameNode(module.menuActiveItem(menu), clone);
 
   unbind();
   harness.fireEvent(menu.querySelector('[data-act="delete-group"]'), 'mouseover');
-  assert.equal(module.menuActiveItem(menu), clone, 'unbinding stops tracking');
+  assertSameNode(module.menuActiveItem(menu), clone, 'unbinding stops tracking');
 });

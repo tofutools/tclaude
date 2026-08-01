@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assertAbsent } from './assertions.mjs';
+import { assertAbsent, assertDifferentNode, assertSameNode } from './assertions.mjs';
 import { createPreactHarness, getByRole } from './preact-harness.mjs';
 
 function memoryPrefs(initial = {}) {
@@ -367,7 +367,9 @@ test('the strip renders group stacks with a collapsing pill, a join drop target,
   await harness.act(() => harness.fireEvent(pill, 'click', { detail: 0 }));
   assert.equal(state.activeKey.value, 'c');
   assert.equal(container.querySelector('.mux-tab-group').classList.contains('collapsed'), true);
-  assert.deepEqual([...container.querySelectorAll('.mux-tab-group .mux-tab-label')], []);
+  const collapsedGroupLabelCount = container.querySelectorAll('.mux-tab-group .mux-tab-label').length;
+  assert.equal(collapsedGroupLabelCount, 0,
+    `expected no tab labels in the collapsed group; found ${collapsedGroupLabelCount}`);
   await harness.act(() => harness.fireEvent(
     getByRole(container, 'button', { name: 'infra, 2 terminals' }), 'click', { detail: 0 },
   ));
@@ -406,7 +408,7 @@ test('the strip renders group stacks with a collapsing pill, a join drop target,
 
   await harness.act(() => harness.fireEvent(getByRole(menu, 'menuitem', { name: 'Rename group…' }), 'click'));
   const rename = container.querySelector('.mux-group-rename');
-  assert.equal(harness.document.activeElement, rename, 'renaming focuses its input instead of the strip');
+  assertSameNode(harness.document.activeElement, rename, 'renaming focuses its input instead of the strip');
   rename.value = 'platform';
   await harness.act(() => harness.fireEvent(rename, 'keydown', { key: 'Enter' }));
   assert.equal(state.groups.value[0].name, 'platform');
@@ -503,7 +505,7 @@ test('a keyboard step across a group boundary keeps focus on the moving tab', as
 
   const bTab = tabFor('b');
   bTab.focus();
-  assert.equal(harness.document.activeElement, bTab);
+  assertSameNode(harness.document.activeElement, bTab);
   // b is the right edge of the stack; the next step reparents it out of the
   // group wrapper into the strip. Without a deliberate refocus a real browser
   // drops focus to <body> and the next arrow key is swallowed.
@@ -515,8 +517,8 @@ test('a keyboard step across a group boundary keeps focus on the moving tab', as
   // render; let it drain before reading activeElement.
   await new Promise((resolve) => { queueMicrotask(resolve); });
   const movedTab = tabFor('b');
-  assert.notEqual(movedTab, bTab, 'the tab node was recreated under a new parent');
-  assert.equal(harness.document.activeElement, movedTab,
+  assertDifferentNode(movedTab, bTab, 'the tab node was recreated under a new parent');
+  assertSameNode(harness.document.activeElement, movedTab,
     'focus followed the tab across the boundary so the next keypress still lands');
 });
 
@@ -651,8 +653,8 @@ test('starting a drag on a grouped tab preserves its DOM node so the native drag
   // recreate the grouped tab or its drag-source label: a browser aborts a
   // native drag the instant its source node is replaced, which is what made
   // grabbing a grouped tab "do nothing" most of the time.
-  assert.equal(tabFor('b'), bTab, 'the grouped tab element is reused, not recreated');
-  assert.equal(tabFor('b').querySelector('.mux-tab-label'), bLabel, 'the drag-source label is preserved');
+  assertSameNode(tabFor('b'), bTab, 'the grouped tab element is reused, not recreated');
+  assertSameNode(tabFor('b').querySelector('.mux-tab-label'), bLabel, 'the drag-source label is preserved');
   assert.equal(bTab.classList.contains('dragging'), true, 'and the drag actually started');
 });
 
@@ -717,7 +719,7 @@ test('dragging a group pill moves the whole stack; Alt+Shift moves it by keyboar
   assert.deepEqual(stripKeys(), ['[a,b]', 'c'], 'the keyboard move mirrors the drag');
   // Focus follows the moved pill so the next keypress still lands on it.
   await new Promise((resolve) => { queueMicrotask(resolve); });
-  assert.equal(harness.document.activeElement, pill(), 'focus stays on the moved group');
+  assertSameNode(harness.document.activeElement, pill(), 'focus stays on the moved group');
 });
 
 test('a rename committed by blur still respects a preceding Escape', async (t) => {
@@ -854,7 +856,7 @@ test('double-click renames a group without collapsing it or moving the active te
   await harness.act(() => harness.fireEvent(pill, 'dblclick'));
   const input = container.querySelector('.mux-group-rename');
   assert.ok(input, 'the double-click opens the inline rename field');
-  assert.equal(harness.document.activeElement, input, 'and focuses it');
+  assertSameNode(harness.document.activeElement, input, 'and focuses it');
   input.value = 'platform';
   await harness.act(() => harness.fireEvent(input, 'keydown', { key: 'Enter' }));
   assert.equal(state.groups.value[0].name, 'platform', 'the typed name is committed');

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assertAbsent } from './assertions.mjs';
+import { assertAbsent, assertSameNode } from './assertions.mjs';
 import { createPreactHarness, getByRole } from './preact-harness.mjs';
 
 function key(window, target, value) {
@@ -23,7 +23,7 @@ test('anchored node chooser exposes the full vocabulary and supports search, key
 
   const dialog = getByRole(host, 'dialog', { name: 'Create connected node' });
   const input = getByRole(dialog, 'combobox', { name: 'Choose a node type to connect' });
-  assert.equal(harness.document.activeElement, input, 'the searchable control receives initial focus');
+  assertSameNode(harness.document.activeElement, input, 'the searchable control receives initial focus');
   assert.equal(dialog.style.left, '125px');
   assert.equal(dialog.style.top, '98px', 'the chooser sits just below the drop point');
   assert.equal(dialog.querySelectorAll('[role="option"]').length, 6, 'all canonical node types are offered');
@@ -148,5 +148,5 @@ test('Escape from the Cancel button closes and restores focus', async (t) => {
   cancel.focus();
   key(harness.window, cancel, 'Escape');
   assert.equal(dispose.element.isConnected, false);
-  assert.equal(harness.document.activeElement, trigger);
+  assertSameNode(harness.document.activeElement, trigger);
 });

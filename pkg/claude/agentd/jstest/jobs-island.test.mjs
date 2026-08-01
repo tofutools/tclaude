@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertSameNode } from './assertions.mjs';
 import { createPreactHarness, getByRole } from './preact-harness.mjs';
 
 function prefs() {
@@ -111,10 +112,10 @@ test('Jobs island renders reactively and preserves keyed DOM/focus across polls'
     state.beginRequest(2);
     state.commitRequest(2);
   });
-  assert.equal(mounted.container.querySelector('tr[data-key="cron-1"]'), cronRow);
-  assert.equal(cronRow.querySelector('.rowname').firstChild, selectedTextNode,
+  assertSameNode(mounted.container.querySelector('tr[data-key="cron-1"]'), cronRow);
+  assertSameNode(cronRow.querySelector('.rowname').firstChild, selectedTextNode,
     'unchanged text node remains a valid browser-selection anchor');
-  assert.equal(harness.document.activeElement, edit);
+  assertSameNode(harness.document.activeElement, edit);
 
   await harness.act(() => {
     snapshot.value = {

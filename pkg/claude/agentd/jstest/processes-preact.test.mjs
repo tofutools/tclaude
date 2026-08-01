@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assertAbsent } from './assertions.mjs';
+import { assertAbsent, assertSameNode } from './assertions.mjs';
 import { createHash } from 'node:crypto';
 import { createPreactHarness } from './preact-harness.mjs';
 
@@ -602,7 +602,7 @@ test('renaming a template round-trips the head edit view and changes only the di
   await harness.act(() => harness.fireEvent(invoker, 'click'));
   const input = mounted.container.querySelector('[data-process-rename-input]');
   assert.equal(input.value, 'Old name', 'the dialog opens on the current display name');
-  assert.equal(harness.document.activeElement, input);
+  assertSameNode(harness.document.activeElement, input);
 
   input.value = 'New name';
   await harness.act(() => harness.fireEvent(input, 'input'));
@@ -775,7 +775,7 @@ test('the Templates list renames inline on click, committing an immediate CAS sa
   await harness.act(() => harness.fireEvent(trigger, 'click'));
   const input = mounted.container.querySelector('[data-process-name-input="inline"]');
   assert.ok(input, 'clicking the name swaps in an editor');
-  assert.equal(harness.document.activeElement, input);
+  assertSameNode(harness.document.activeElement, input);
 
   input.value = 'Renamed inline';
   await harness.act(() => harness.fireEvent(input, 'keydown', { key: 'Enter' }));
@@ -922,7 +922,7 @@ test('the Templates list edits a description inline and commits only that field'
   await harness.act(() => harness.fireEvent(trigger, 'click'));
   const input = mounted.container.querySelector('[data-process-description-input="described"]');
   assert.ok(input, 'clicking the description swaps in an editor');
-  assert.equal(harness.document.activeElement, input, 'the editor takes focus when opened');
+  assertSameNode(harness.document.activeElement, input, 'the editor takes focus when opened');
   assert.equal(input.value, 'Old description', 'the edit starts from the current description');
 
   input.value = 'Ships the release train';
@@ -1056,7 +1056,7 @@ test('a list refresh under an open description editor cannot substitute a newer 
   });
   await harness.act(() => Promise.resolve());
   const live = mounted.container.querySelector('[data-process-description-input="described"]');
-  assert.equal(live, input, 'the refresh does not tear down the open editor');
+  assertSameNode(live, input, 'the refresh does not tear down the open editor');
   assert.equal(live.value, 'my stale draft', 'nor does it discard the operator draft');
 
   await harness.act(() => harness.fireEvent(live, 'keydown', { key: 'Enter' }));

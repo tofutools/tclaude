@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assertAbsent } from './assertions.mjs';
+import { assertAbsent, assertDifferentNode, assertSameNode } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 async function mountedAdapter(t, events = {}, options = {}) {
@@ -39,10 +39,10 @@ test('editor canvas frame is never a focus target and shortcuts use its hidden s
   assert.equal(sink.getAttribute('tabindex'), '-1', 'the shortcut sink is programmatic-only');
 
   adapter.focus();
-  assert.equal(harness.document.activeElement, sink,
+  assertSameNode(harness.document.activeElement, sink,
     'empty-canvas shortcuts never require frame focus');
-  assert.notEqual(harness.document.activeElement, root);
-  assert.notEqual(harness.document.activeElement, svg);
+  assertDifferentNode(harness.document.activeElement, root);
+  assertDifferentNode(harness.document.activeElement, svg);
 
   const source = host.querySelector('[data-node-id="start"] .process-port-out');
   const focusElement = harness.window.HTMLElement.prototype.focus;
@@ -51,7 +51,7 @@ test('editor canvas frame is never a focus target and shortcuts use its hidden s
     value(options) { return focusElement.call(this, options); },
   });
   assert.equal(adapter.focusPort('start', 'out'), true);
-  assert.equal(harness.document.activeElement, source,
+  assertSameNode(harness.document.activeElement, source,
     'an anchored chooser can explicitly retain its visible connector invoker');
 });
 
@@ -84,7 +84,7 @@ test('editor interaction layering raises one node without changing semantic laye
   start.addEventListener('blur', () => { blurs += 1; });
   start.focus();
   adapter.setSelection({ type: 'node', id: 'start' });
-  assert.equal(harness.document.activeElement, start,
+  assertSameNode(harness.document.activeElement, start,
     'painting the focused node at the front leaves the canonical focus owner live');
   assert.equal(blurs, 0, 'raising does not synthesize blur');
   assert.equal(frontNodeLayer.firstElementChild?.dataset.nodeId, 'start');
@@ -315,7 +315,7 @@ test('undo-style graph removal cancels a missing keyboard source exactly once', 
   const restored = harness.document.activeElement;
   assert.equal(restored?.dataset.nodeId, 'end',
     'keyboard source removal restores a surviving visible graph item');
-  assert.notEqual(restored, host.querySelector('.process-graph-keyboard-sink'));
+  assertDifferentNode(restored, host.querySelector('.process-graph-keyboard-sink'));
 
   adapter.setGraph({ nodes: [{ id: 'end', type: 'end', label: 'End' }], edges: [] });
   harness.fireEvent(host.querySelector('.process-graph-svg'), 'keydown', { key: 'Escape' });
@@ -364,7 +364,7 @@ test('undo-style graph removal cancels a missing pointer source exactly once', a
   assert.deepEqual(adapter.interactionSnapshot(), {
     generation: active.generation + 1, active: false,
   }, 'reload freshness observes the pointer cancellation generation');
-  assert.equal(harness.document.activeElement, host.querySelector('.process-graph-keyboard-sink'),
+  assertSameNode(harness.document.activeElement, host.querySelector('.process-graph-keyboard-sink'),
     'stable shortcut focus survives removal without landing on the editor frame');
   assert.equal(host.querySelector('[data-node-id="end"] .process-port-out').getAttribute('r'), '6');
 
@@ -586,7 +586,7 @@ test('disabled connectors preserve middle-button and Space-primary pan priority'
   harness.fireEvent(port, 'pointerdown', {
     button: 0, pointerId: 66, pointerType: 'mouse', clientX: 40, clientY: 60,
   });
-  assert.equal(harness.document.activeElement, port, 'disabled connector owns focus before Space');
+  assertSameNode(harness.document.activeElement, port, 'disabled connector owns focus before Space');
   assert.match(tooltip.textContent, /End nodes cannot/);
   assert.equal(port.getAttribute('aria-describedby'), tooltip.id);
 
@@ -714,7 +714,7 @@ test('graph adapter observes in-canvas pointer coordinates passively and invalid
   });
   assert.equal(move.defaultPrevented, false);
   assert.equal(adapter.hasActiveInteraction(), false, 'observation never starts pointer ownership');
-  assert.equal(harness.document.activeElement, beforeFocus, 'observation never moves focus');
+  assertSameNode(harness.document.activeElement, beforeFocus, 'observation never moves focus');
   assert.deepEqual(observed, [['move', 450.25, 280.5]]);
   assert.equal(adapter.containsClientPoint(450.25, 280.5), true);
   assert.equal(adapter.containsClientPoint(901, 280.5), false);

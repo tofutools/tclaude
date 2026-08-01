@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertSameNode } from './assertions.mjs';
 import { createPreactHarness, getByRole } from './preact-harness.mjs';
 
 test('declarative descriptor resolves named multi-hosts and preserves cleanup', async (t) => {
@@ -17,7 +18,7 @@ test('declarative descriptor resolves named multi-hosts and preserves cleanup', 
     }),
   });
   const cleanup = await mountIslandDescriptor(descriptor, { api: 'dependency' });
-  assert.equal(received.hosts.host, host);
+  assertSameNode(received.hosts.host, host);
   assert.equal(received.hosts.badge, badge);
   assert.equal(received.dependencies.api, 'dependency');
   assert.equal(host.dataset.islandOwner, 'described');

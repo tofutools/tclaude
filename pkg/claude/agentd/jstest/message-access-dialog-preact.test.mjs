@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assertAbsent } from './assertions.mjs';
+import { assertAbsent, assertSameNode } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 function snapshot({ members = [], groups, online = true, slugs = [], permissions } = {}) {
@@ -60,15 +60,15 @@ test('child chooser keeps the keyed parent draft mounted and cancellation return
   pickerButton.click();
   await harness.act(() => Promise.resolve());
   assert.ok(host.querySelector('#cron-pick-target-modal'));
-  assert.equal(host.querySelector('#message-create-modal'), parent, 'opening the keyed child does not recreate its parent');
-  assert.equal(host.querySelector('#message-create-body'), body);
+  assertSameNode(host.querySelector('#message-create-modal'), parent, 'opening the keyed child does not recreate its parent');
+  assertSameNode(host.querySelector('#message-create-body'), body);
   assert.equal(body.value, 'draft survives');
 
   await harness.act(() => harness.fireEvent(harness.document, 'keydown', { key: 'Escape' }));
   assertAbsent(host.querySelector('#cron-pick-target-modal'));
   assert.notEqual(host.querySelector('#message-create-modal'), null, 'stacked Escape closes only the chooser');
   assert.equal(host.querySelector('#message-create-body').value, 'draft survives');
-  assert.equal(harness.document.activeElement, pickerButton, 'child teardown restores its invoker');
+  assertSameNode(harness.document.activeElement, pickerButton, 'child teardown restores its invoker');
   await mounted.unmount();
 });
 
@@ -128,7 +128,7 @@ test('mounted island registers the launcher seam and snapshot subscription prese
   const body = dialogHost.querySelector('#message-create-body');
   await harness.input(body, 'retained by subscription');
   await harness.act(() => { snapshotSignal.value = snapshot({ members: [member('a'), member('b')] }); });
-  assert.equal(dialogHost.querySelector('#message-create-body'), body);
+  assertSameNode(dialogHost.querySelector('#message-create-body'), body);
   assert.equal(body.value, 'retained by subscription');
   assert.equal(dialogHost.querySelector('#message-create-members-count').textContent, '2 of 2 selected');
 
@@ -202,7 +202,7 @@ test('scoped message follows live-all membership and sends exact group role payl
 
   const next = snapshot({ members: [member('a'), member('b'), member('c')] });
   await rerender(next);
-  assert.equal(host.querySelector('#message-create-body'), body, 'snapshot reconciliation keeps the keyed draft node');
+  assertSameNode(host.querySelector('#message-create-body'), body, 'snapshot reconciliation keeps the keyed draft node');
   assert.equal(body.value, 'hello live roster');
   assert.equal(host.querySelector('#message-create-members-count').textContent, '3 of 3 selected');
   assert.equal(host.querySelectorAll('#message-create-members input[type="checkbox"]:checked').length, 3,
@@ -431,7 +431,7 @@ test('operator composer keeps target and attachment snapshot atomic with single-
   const { host, mounted } = await mountDialogs(harness, state, actions, snapshot({ groups: [] }));
   const body = host.querySelector('#operator-message-body');
   await harness.act(() => Promise.resolve());
-  assert.equal(harness.document.activeElement, body, 'the controlled body owns initial focus');
+  assertSameNode(harness.document.activeElement, body, 'the controlled body owns initial focus');
   await harness.input(body, 'queued body');
   await harness.input(host.querySelector('#operator-message-subject'), 'subject');
   const file = { name: 'proof.txt', size: 5 };

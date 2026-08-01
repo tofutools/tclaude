@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertSameNode } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 test('credits counter keeps its exact shell contract and bumps reactively', async (t) => {
@@ -29,7 +30,7 @@ test('credits counter keeps its exact shell contract and bumps reactively', asyn
     /No jackpots yet/);
 
   await harness.act(() => state.recordWin('win-mega'));
-  assert.equal(counterHost.querySelector('#slop-credits'), counter, 'the shell node remains keyed in place');
+  assertSameNode(counterHost.querySelector('#slop-credits'), counter, 'the shell node remains keyed in place');
   assert.equal(counter.textContent, '🪙 777');
   assert.ok(counter.classList.contains('slop-credits-bump'));
 
@@ -91,8 +92,8 @@ test('credits event bridge feeds a keyed Preact leaderboard and cleans up listen
       'tclaude:slopfx', { detail: { fx: 'win-pull', conv: 'conv-b' } },
     ));
   });
-  assert.equal(board.querySelector('[data-key="conv-a"]'), row);
-  assert.equal(row.querySelector('.who').firstChild, whoText,
+  assertSameNode(board.querySelector('[data-key="conv-a"]'), row);
+  assertSameNode(row.querySelector('.who').firstChild, whoText,
     'a keyed rank reorder preserves the existing browser-selection anchor');
   assert.equal(board.querySelector('li').dataset.key, 'conv-b', 'higher win count reorders by key');
 
@@ -104,7 +105,7 @@ test('credits event bridge feeds a keyed Preact leaderboard and cleans up listen
   await harness.act(() => harness.document.dispatchEvent(
     new harness.window.CustomEvent('tclaude:snapshot'),
   ));
-  assert.equal(board.querySelector('[data-key="conv-a"]'), row);
+  assertSameNode(board.querySelector('[data-key="conv-a"]'), row);
   assert.equal(row.querySelector('.who').textContent, 'Alicia');
 
   cleanup();

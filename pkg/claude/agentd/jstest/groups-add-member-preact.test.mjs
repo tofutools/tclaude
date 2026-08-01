@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assertAbsent } from './assertions.mjs';
+import { assertAbsent, assertSameNode } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 function memoryPrefs() {
@@ -137,13 +137,13 @@ test('group menu launches a polling-stable dirty picker and restores its cog foc
   await harness.act(() => harness.fireEvent(add, 'click'));
   await harness.act(() => Promise.resolve());
   const search = dialogHost.querySelector('#add-member-search');
-  assert.equal(harness.document.activeElement, search);
+  assertSameNode(harness.document.activeElement, search);
   assert.equal(cog.getAttribute('aria-expanded'), 'false');
   await harness.input(search, 'work');
   await harness.act(() => state.publish(snapshot([{ name: 'alpha', members: [], online: 0 }], {
     ungrouped: [{ conv_id: 'worker', title: 'Worker updated', online: true }],
   })));
-  assert.equal(dialogHost.querySelector('#add-member-search'), search,
+  assertSameNode(dialogHost.querySelector('#add-member-search'), search,
     'snapshot polling cannot remount the live search transaction');
   assert.equal(search.value, 'work', 'snapshot polling cannot overwrite the query');
   await harness.input(search, 'missing candidate');
@@ -160,7 +160,7 @@ test('group menu launches a polling-stable dirty picker and restores its cog foc
   await harness.act(() => Promise.resolve());
   await harness.act(() => Promise.resolve());
   assert.equal(state.addMemberDialog.value, null);
-  assert.equal(harness.document.activeElement, cog, 'dismissal restores the group-menu cog');
+  assertSameNode(harness.document.activeElement, cog, 'dismissal restores the group-menu cog');
 
   await dialog.unmount();
   await list.unmount();

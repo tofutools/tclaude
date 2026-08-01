@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assertAbsent } from './assertions.mjs';
+import { assertAbsent, assertSameNode } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 function deferred() {
@@ -268,7 +268,7 @@ test('window picker preserves bucket overlap, synthetic buckets, and filter-inde
   assert.equal(submitted.group, undefined);
   assert.ok(Object.isFrozen(submitted));
   assert.ok(Object.isFrozen(submitted.convs));
-  assert.equal(harness.document.activeElement, opener);
+  assertSameNode(harness.document.activeElement, opener);
   await mounted.pending;
   await mounted.mounted.unmount();
 });
@@ -316,7 +316,7 @@ test('window picker freezes retries, blocks busy dismissal, and restores focus a
   second.resolve({ targeted: 2, focused: 2 });
   await harness.act(() => second.promise);
   assertAbsent(host.querySelector('#window-modal'));
-  assert.equal(harness.document.activeElement, opener);
+  assertSameNode(harness.document.activeElement, opener);
   await mounted.pending;
   await mounted.mounted.unmount();
 });
@@ -336,7 +336,7 @@ test('window picker Escape is topmost-only and idle cancellation restores its op
   escape(harness);
   await harness.act(() => Promise.resolve());
   assertAbsent(host.querySelector('#window-modal'));
-  assert.equal(harness.document.activeElement, opener);
+  assertSameNode(harness.document.activeElement, opener);
   assert.equal(await mounted.pending, null);
   await mounted.mounted.unmount();
 });
