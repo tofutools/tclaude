@@ -2565,19 +2565,67 @@ func costDailyConvKey(r CostDailyRow) string {
 // precondition — (conv-key, day, updated_at CHRONOLOGICALLY, session_id) —
 // by parsing the timestamp rather than comparing its spelling.
 //
-// The comparison is exact and platform-independent: time.Parse recovers the
-// instant regardless of how many fractional digits RFC3339Nano chose to emit,
-// so the walk's contract ("the tie-break is chronological, and this matters")
-// is true by construction instead of by format coincidence.
+// WHY THE SPELLING CANNOT BE TRUSTED (TCL-932). This is the one authoritative
+// statement of the rule; UpdateSessionCost and AllCostDailyRows point here
+// rather than restate it, because it is ZONE-DEPENDENT and a partial retelling
+// is what sent the first reader wrong.
+//
+// Stamps are written time.RFC3339Nano over time.Now(), so they carry the LOCAL
+// zone and the fractional second has its TRAILING ZEROS TRIMMED. The column is
+// variable-width, SQLite compares it as TEXT, and there are TWO distinct
+// inversions — each reachable in a different zone, which is why neither
+// reproduces everywhere:
+//
+//   - Under UTC the stamp ends in 'Z' (0x5A), which is ABOVE both '.' (0x2E)
+//     and every digit (0x30-0x39). A stamp that stops early therefore sorts
+//     AFTER its own extensions: "…07Z" after "…07.000001Z", "…07.9Z" after
+//     "…07.95Z". Exactly: the order inverts iff the earlier stamp's trimmed
+//     fraction is a proper PREFIX of the later one's, and a whole second —
+//     fraction trimmed away entirely — is the empty-prefix case. This is the
+//     shape that reached CI.
+//
+//   - Under a numeric offset the stamp ends in '+' (0x2B) or '-' (0x2D), both
+//     BELOW '.' and every digit. The prefix inversion above therefore CANNOT
+//     HAPPEN AT ALL, which is why this defect presented as UTC-only and why
+//     the rule above will not reproduce on a developer machine in a zone.
+//     Offsets get their own inversion instead: a DST transition puts two
+//     offsets inside one local day, and the later instant carries the smaller
+//     offset —
+//
+//     earlier 2026-10-25T02:59:00+02:00 (00:59Z)
+//     later   2026-10-25T02:00:00+01:00 (01:00Z)
+//
+//     — which is lexically inverted. Note both land on the SAME day value, so
+//     the outer day key does not shield it, which is the half a reader would
+//     assume is safe.
+//
+// Both are fixed by the same thing, and neither by widening the format:
+// compare parsed instants. time.Parse recovers the instant whatever spelling
+// or offset was emitted, so the walk's contract ("the tie-break is
+// chronological, and this matters") is true by construction instead of by
+// format coincidence.
+//
+// So the CODE here is MORE CORRECT than the comments around it used to claim:
+// the DST shape is handled, and was handled before anyone noticed it existed.
+// That is worth stating rather than quietly enjoying — a fix that outperforms
+// its own documentation only ever bites the next reader, who trusts the
+// documentation.
 //
 // The order is TOTAL. Rows that share an instant, and rows whose stamps are
 // both unusable, fall through to session_id — the same final tiebreaker the
 // query has always applied — so no pair is left to the sort's discretion.
 //
-// An absent or unparseable stamp sorts FIRST, which is what the lexical order
-// already did ("" precedes every real stamp). Preserving that rather than
-// inventing a new position keeps this change to the defect: rows written before
-// updated_at existed keep the place in the walk they have always had.
+// An absent or unparseable stamp sorts FIRST, so every row the walk cannot
+// place in time forms one contiguous block ahead of every row it can, and none
+// interleaves between two dated rows.
+//
+// For "" — the documented value for an unknown stamp, and the only unusable
+// value this package's writers can produce — that is the position lexical
+// order already gave it, so rows written before updated_at existed keep the
+// place in the walk they have always had. A non-empty UNPARSEABLE stamp does
+// move: "not-a-timestamp" sorted LAST before ('n' > '2'). That is a deliberate
+// behaviour change, not a preservation, and is said plainly because a change
+// described as a preservation is this ticket's own defect in miniature.
 //
 // Day needs no parsing — it is fixed-width "2006-01-02", where lexical and
 // chronological order coincide. Only the variable-width field was ever the
