@@ -33,9 +33,9 @@ func (openCodeApproval) Modes() []string {
 func (openCodeApproval) ModeHelp(policy string) string {
 	switch strings.TrimSpace(policy) {
 	case OpenCodeApprovalDeny:
-		return "Fail-closed approval default: path-scoped reads and the access-control tool baseline run, while edits, web, and unlisted tools are denied without prompting."
+		return "Fail-closed approval default: path-scoped reads run, while edits, web, and unlisted permissions are denied without prompting. Built-in tools follow the separate Tool governance setting."
 	case OpenCodeApprovalAsk:
-		return "Access-control tools remain enabled. Ask a human before representable edits and permitted web tools. ⚠ Detached agents can block waiting."
+		return "Ask a human before representable edits and permitted web tools. Built-in tools follow the separate Tool governance setting. ⚠ Detached agents can block waiting."
 	case OpenCodeApprovalAllowTools:
 		return "Automatically allow scoped edits and explicitly enabled web tools. Access-control tools remain governed by the separate Tool governance setting."
 	default:
