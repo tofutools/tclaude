@@ -1,8 +1,6 @@
 package agentd
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -37,24 +35,28 @@ func TestResolveResourceDelegationDirPrecedence(t *testing.T) {
 
 func TestManagedServerDropsStoredCgroupFromPreviousDelegationBeforeReprepare(t *testing.T) {
 	setupTestDB(t)
-	old := filepath.Join(t.TempDir(), "tclaude-old")
-	require.NoError(t, os.Mkdir(old, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(old, "memory.max"), []byte("128000000"), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(old, "cpu.max"), []byte("max 100000"), 0o644))
 	require.NoError(t, db.UpsertOpenCodeRuntime(db.OpenCodeRuntime{
 		SessionID: "managed-old-cgroup", ConvID: "ses_old_cgroup",
 		ServerURL: "http://127.0.0.1:43210", Cwd: t.TempDir(),
-		ResourceCgroupDir: old,
+		ResourceCgroupDir: "/sys/fs/cgroup/system.slice/tclaude-agentd.service/tclaude-old",
 	}))
 	t.Setenv(session.ResourceDelegationDirEnv,
 		"/sys/fs/cgroup/system.slice/tclaude-tmux.service")
+	previousPrepare := prepareResourceCgroup
+	prepareResourceCgroup = func(sessionID string, limits sandboxpolicy.ResourceLimits) (string, func(), error) {
+		assert.Equal(t, "managed-old-cgroup", sessionID)
+		assert.Equal(t, "128MB", limits.Memory)
+		return "/sys/fs/cgroup/system.slice/tclaude-tmux.service/tclaude-new", func() {}, nil
+	}
+	t.Cleanup(func() { prepareResourceCgroup = previousPrepare })
 	snapshot := &sandboxpolicy.Snapshot{Effective: sandboxpolicy.EffectiveProfile{
 		ResourceLimits: sandboxpolicy.ResourceLimits{Memory: "128MB"},
 	}}
 
-	_, _, err := prepareManagedServerResourceCgroup(
+	dir, _, err := prepareManagedServerResourceCgroup(
 		"managed-old-cgroup", snapshot, false)
-	require.Error(t, err, "the test host does not provide the configured external root")
+	require.NoError(t, err)
+	assert.Equal(t, "/sys/fs/cgroup/system.slice/tclaude-tmux.service/tclaude-new", dir)
 	stored, lookupErr := db.GetOpenCodeRuntime("managed-old-cgroup")
 	require.NoError(t, lookupErr)
 	assert.Nil(t, stored, "the invalid old-root runtime must be stopped before a fresh cgroup is prepared")
