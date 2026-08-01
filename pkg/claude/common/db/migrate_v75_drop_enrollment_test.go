@@ -39,7 +39,7 @@ func TestMigrateV74toV75_DropsEnrollment(t *testing.T) {
 	mustExec(t, d, `CREATE INDEX IF NOT EXISTS idx_agent_enrollment_active
 		ON agent_enrollment(conv_id) WHERE retired_at = ''`)
 	mustExec(t, d, `INSERT INTO agent_enrollment (conv_id, enrolled_at, enrolled_via)
-		VALUES ('c1', '2020-01-01T00:00:00Z', 'spawn')`)
+		VALUES ('c1', 1577836800000000000, 'spawn')`)
 	_, _, err = EnsureAgentForConv("c1", "spawn")
 	require.NoError(t, err)
 
@@ -75,7 +75,7 @@ func TestMigrateV74toV75_HealsDriftBeforeDrop(t *testing.T) {
 
 		// An active enrollment that never got its actor row (a dropped dual-write).
 		mustExec(t, d, `INSERT INTO agent_enrollment (conv_id, enrolled_at, enrolled_via)
-			VALUES ('a-conv', '2020-01-01T00:00:00Z', 'spawn')`)
+			VALUES ('a-conv', 1577836800000000000, 'spawn')`)
 		require.Empty(t, mustAgentIDForConv(t, "a-conv"), "precondition: no actor yet")
 
 		require.NoError(t, migrateV74toV75(d), "migrateV74toV75")
@@ -98,7 +98,7 @@ func TestMigrateV74toV75_HealsDriftBeforeDrop(t *testing.T) {
 		ensureEnrollmentTableForTest(t, d)
 		mustExec(t, d, `INSERT INTO agent_enrollment
 			(conv_id, enrolled_at, enrolled_via, retired_at, retired_by, retire_reason)
-			VALUES ('r-conv', '2020-01-01T00:00:00Z', 'spawn', '2020-02-02T00:00:00Z', 'human', 'cleanup')`)
+			VALUES ('r-conv', 1577836800000000000, 'spawn', 1580601600000000000, 'human', 'cleanup')`)
 		pre, err := GetAgent(agentID)
 		require.NoError(t, err)
 		require.NotNil(t, pre)
@@ -130,9 +130,9 @@ func TestMigrateV74toV75_HealsDriftBeforeDrop(t *testing.T) {
 		ensureEnrollmentTableForTest(t, d)
 		mustExec(t, d, `INSERT INTO agent_enrollment
 			(conv_id, enrolled_at, enrolled_via, retired_at, retired_by, retire_reason)
-			VALUES ('old-gen', '2020-01-01T00:00:00Z', 'spawn', '2020-02-02T00:00:00Z', 'system:reincarnate', 'superseded')`)
+			VALUES ('old-gen', 1577836800000000000, 'spawn', 1580601600000000000, 'system:reincarnate', 'superseded')`)
 		mustExec(t, d, `INSERT INTO agent_enrollment (conv_id, enrolled_at, enrolled_via)
-			VALUES ('new-gen', '2020-03-03T00:00:00Z', 'reincarnate')`)
+			VALUES ('new-gen', 1583193600000000000, 'reincarnate')`)
 
 		require.NoError(t, migrateV74toV75(d), "migrateV74toV75")
 

@@ -448,13 +448,13 @@ func GenerationsForAgent(agentID string) ([]AgentConversation, error) {
 	for rows.Next() {
 		var (
 			c        AgentConversation
-			linkedAt string
+			linkedAt dbTimestamp
 		)
 		c.AgentID = agentID
 		if err := rows.Scan(&c.ConvID, &c.Role, &c.Reason, &linkedAt); err != nil {
 			return nil, err
 		}
-		c.LinkedAt, _ = time.Parse(time.RFC3339Nano, linkedAt)
+		c.LinkedAt = linkedAt.Time()
 		out = append(out, c)
 	}
 	return out, rows.Err()
@@ -697,17 +697,17 @@ func RetireAgentByID(agentID, by, reason string) (bool, error) {
 	byAgent, _ := agentIDForConvTx(tx, by)
 	res, err := tx.Exec(`UPDATE agents
 		SET retired_at = ?, retired_by = ?, retire_reason = ?, retired_by_agent = ?
-		WHERE agent_id = ? AND retired_at = ''`,
-		time.Now().Format(time.RFC3339Nano), by, reason, byAgent, agentID)
+		WHERE agent_id = ? AND retired_at IS NULL`,
+		dbTime(time.Now()), by, reason, byAgent, agentID)
 	if err != nil {
 		return false, err
 	}
 	n, _ := res.RowsAffected()
 	if n > 0 {
 		if _, err := tx.Exec(`UPDATE agent_recovery SET status = ?, reason_code = 'retire',
-			next_attempt_at = '', lease_token = '', lease_expires_at = '', updated_at = ?
+			next_attempt_at = NULL, lease_token = '', lease_expires_at = NULL, updated_at = ?
 			WHERE agent_id = ? AND status IN (?, ?, ?)`, AgentRecoveryStatusCancelled,
-			time.Now().Format(time.RFC3339Nano), agentID, AgentRecoveryStatusCrashed,
+			dbTime(time.Now()), agentID, AgentRecoveryStatusCrashed,
 			AgentRecoveryStatusBackoff, AgentRecoveryStatusRestarting); err != nil {
 			return false, err
 		}
@@ -742,8 +742,8 @@ func ReinstateAgentByID(agentID string) (bool, error) {
 	}
 	defer func() { _ = tx.Rollback() }()
 	res, err := tx.Exec(`UPDATE agents
-		SET retired_at = '', retired_by = '', retire_reason = '', retired_by_agent = ''
-		WHERE agent_id = ? AND retired_at != ''`, agentID)
+		SET retired_at = NULL, retired_by = '', retire_reason = '', retired_by_agent = ''
+		WHERE agent_id = ? AND retired_at IS NOT NULL`, agentID)
 	if err != nil {
 		return false, err
 	}
@@ -755,8 +755,8 @@ func ReinstateAgentByID(agentID string) (bool, error) {
 	// mail cancelled via the conv's owning actor is keyed by to_conv, so the
 	// revive matches either the stable agent_id or any of its generations.
 	if _, err := tx.Exec(`UPDATE agent_messages
-		SET nudge_cancelled_at = '', nudge_cancel_reason = ''
-		WHERE nudge_cancelled_at != '' AND delivered_at = '' AND read_at = ''
+		SET nudge_cancelled_at = NULL, nudge_cancel_reason = ''
+		WHERE nudge_cancelled_at IS NOT NULL AND delivered_at IS NULL AND read_at IS NULL
 		  AND (to_agent = ? OR to_conv IN (
 			SELECT conv_id FROM agent_conversations WHERE agent_id = ?))`,
 		agentID, agentID); err != nil {
@@ -772,11 +772,11 @@ func ReinstateAgentByID(agentID string) (bool, error) {
 // the retired roster; only an actor a human explicitly retired (its retired_at
 // dual-written by db.RetireAgent) does. Active reports one row per live actor
 // (its current_conv).
-func ListActiveAgents() ([]*Agent, error) { return listAgents(`retired_at = ''`) }
+func ListActiveAgents() ([]*Agent, error) { return listAgents(`retired_at IS NULL`) }
 
 // ListRetiredAgents returns the retired actors (the dashboard reinstate
 // candidates).
-func ListRetiredAgents() ([]*Agent, error) { return listAgents(`retired_at != ''`) }
+func ListRetiredAgents() ([]*Agent, error) { return listAgents(`retired_at IS NOT NULL`) }
 
 // ListAgentRosterState returns the active actors' current conversation ids and
 // the retired actor count in one lightweight scan. Snapshot callers need only
@@ -793,11 +793,12 @@ func ListAgentRosterState() (activeConvIDs []string, retiredTotal int, err error
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
-		var convID, retiredAt string
+		var convID string
+		var retiredAt dbTimestamp
 		if err := rows.Scan(&convID, &retiredAt); err != nil {
 			return nil, 0, err
 		}
-		if retiredAt == "" {
+		if !retiredAt.valid {
 			activeConvIDs = append(activeConvIDs, convID)
 		} else {
 			retiredTotal++
@@ -1015,6 +1016,7 @@ func PendingNamesByConv() (map[string]string, error) {
 // by both *sql.DB and *sql.Tx.
 type dbExecQuerier interface {
 	Exec(query string, args ...any) (sql.Result, error)
+	Query(query string, args ...any) (*sql.Rows, error)
 	QueryRow(query string, args ...any) *sql.Row
 }
 
@@ -1056,7 +1058,7 @@ func agentIDForConvTx(q dbExecQuerier, convID string) (string, error) {
 func insertAgentTx(q dbExecQuerier, agentID, convID, via string, now time.Time) error {
 	_, err := q.Exec(`INSERT INTO agents
 		(agent_id, current_conv_id, created_at, created_via) VALUES (?, ?, ?, ?)`,
-		agentID, convID, now.Format(time.RFC3339Nano), via)
+		agentID, convID, dbTime(now), via)
 	return err
 }
 
@@ -1081,7 +1083,7 @@ func linkConvTx(q dbExecQuerier, convID, agentID, role, reason string, now time.
 	}
 	if _, err = q.Exec(`INSERT INTO agent_conversations
 		(conv_id, agent_id, role, reason, linked_at) VALUES (?, ?, ?, ?, ?)`,
-		convID, agentID, role, reason, now.Format(time.RFC3339Nano)); err != nil {
+		convID, agentID, role, reason, dbTime(now)); err != nil {
 		return err
 	}
 	// Fill owner rows written before this conv enrolled (a sessions row predates
@@ -1124,7 +1126,7 @@ func advanceAgentToNewConv(tx dbExecQuerier, agentID, oldConv, newConv, reason, 
 	if existing == "" {
 		if _, err := tx.Exec(`INSERT INTO agent_conversations
 			(conv_id, agent_id, role, reason, linked_at) VALUES (?, ?, ?, ?, ?)`,
-			newConv, agentID, ConvRoleGeneration, reason, now.Format(time.RFC3339Nano)); err != nil {
+			newConv, agentID, ConvRoleGeneration, reason, dbTime(now)); err != nil {
 			return false, err
 		}
 	}
@@ -1236,12 +1238,12 @@ func absorbBareSuccessorActorTx(tx dbExecQuerier, keepAgentID, newConv string) (
 
 func scanAgent(s rowScanner) (*Agent, error) {
 	var a Agent
-	var createdAt, retiredAt string
+	var createdAt, retiredAt dbTimestamp
 	if err := s.Scan(&a.AgentID, &a.CurrentConvID, &createdAt, &a.CreatedVia,
 		&retiredAt, &a.RetiredBy, &a.RetireReason, &a.PendingName, &a.RetiredByAgent); err != nil {
 		return nil, err
 	}
-	a.CreatedAt = parseTimeOrZero(createdAt)
-	a.RetiredAt = parseTimeOrZero(retiredAt)
+	a.CreatedAt = createdAt.Time()
+	a.RetiredAt = retiredAt.Time()
 	return &a, nil
 }

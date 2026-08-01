@@ -106,21 +106,9 @@ func migrateV144toV145(d *sql.DB) error {
 		}
 	}
 	if haveSessions && sessionLaunchColumns == 15 {
-		rows, err := tx.Query(`SELECT id FROM sessions ORDER BY julianday(created_at), rowid`)
+		sessionIDs, err := sessionIDsByCreatedAt(tx, "")
 		if err != nil {
 			return fmt.Errorf("migrate v144→v145 (list sessions): %w", err)
-		}
-		var sessionIDs []string
-		for rows.Next() {
-			var id string
-			if err := rows.Scan(&id); err != nil {
-				_ = rows.Close()
-				return fmt.Errorf("migrate v144→v145 (scan session): %w", err)
-			}
-			sessionIDs = append(sessionIDs, id)
-		}
-		if err := rows.Close(); err != nil {
-			return fmt.Errorf("migrate v144→v145 (close sessions): %w", err)
 		}
 		for _, id := range sessionIDs {
 			if err := projectSessionRelaunchProfilesTx(tx, id, relaunchProjectionOptions{

@@ -89,6 +89,9 @@ func migrateV72toV73(db *sql.DB) error {
 		return fmt.Errorf("migrate v72→v73: begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	if err := canonicalizeV73Timestamps(tx); err != nil {
+		return fmt.Errorf("migrate v72→v73 (canonicalize timestamps): %w", err)
+	}
 
 	rebuilds := []agentKeyRebuild{
 		{
@@ -203,6 +206,87 @@ func migrateV72toV73(db *sql.DB) error {
 		return fmt.Errorf("migrate v72→v73 (version): %w", err)
 	}
 	return tx.Commit()
+}
+
+const v73CanonicalTimestampLayout = "2006-01-02T15:04:05.000000000Z"
+
+// canonicalizeV73Timestamps makes the rebuilds' lexical ORDER BY clauses exact
+// without SQLite floating-point date conversion. All timestamp-bearing source
+// columns are normalized to fixed-width UTC nanoseconds, not only the four
+// columns used for survivor selection, so malformed legacy state fails before
+// any destructive table swap. revoked_at is the sole optional source value.
+func canonicalizeV73Timestamps(tx *sql.Tx) error {
+	specs := []struct {
+		table, column string
+		optional      bool
+	}{
+		{"agent_group_members", "joined_at", false},
+		{"agent_group_owners", "granted_at", false},
+		{"agent_permissions", "granted_at", false},
+		{"agent_sudo_grants", "granted_at", false},
+		{"agent_sudo_grants", "expires_at", false},
+		{"agent_sudo_grants", "revoked_at", true},
+		{"agent_notify_prefs", "updated_at", false},
+	}
+	for _, spec := range specs {
+		var have int
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?`, spec.table, spec.column).Scan(&have); err != nil {
+			return fmt.Errorf("%s.%s probe: %w", spec.table, spec.column, err)
+		}
+		if have == 0 {
+			continue
+		}
+		query := `SELECT rowid, ` + quoteIdentifier(spec.column) + ` FROM ` + quoteIdentifier(spec.table)
+		rows, err := tx.Query(query)
+		if err != nil {
+			return fmt.Errorf("%s.%s read: %w", spec.table, spec.column, err)
+		}
+		type update struct {
+			rowID int64
+			value string
+		}
+		var updates []update
+		for rows.Next() {
+			var rowID int64
+			var raw any
+			if err := rows.Scan(&rowID, &raw); err != nil {
+				_ = rows.Close()
+				return fmt.Errorf("%s.%s scan: %w", spec.table, spec.column, err)
+			}
+			var value string
+			switch typed := raw.(type) {
+			case string:
+				value = typed
+			case []byte:
+				value = string(typed)
+			default:
+				_ = rows.Close()
+				return fmt.Errorf("%s.%s rowid %d: expected TEXT timestamp, got %T", spec.table, spec.column, rowID, raw)
+			}
+			if value == "" && spec.optional {
+				continue
+			}
+			parsed, err := parseLegacyDBTime(value)
+			if err != nil {
+				_ = rows.Close()
+				return fmt.Errorf("%s.%s rowid %d value %q: %w", spec.table, spec.column, rowID, value, err)
+			}
+			updates = append(updates, update{rowID: rowID, value: parsed.UTC().Format(v73CanonicalTimestampLayout)})
+		}
+		if err := rows.Close(); err != nil {
+			return fmt.Errorf("%s.%s close: %w", spec.table, spec.column, err)
+		}
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("%s.%s rows: %w", spec.table, spec.column, err)
+		}
+		stmt := `UPDATE ` + quoteIdentifier(spec.table) + ` SET ` + quoteIdentifier(spec.column) + ` = ? WHERE rowid = ?`
+		for _, update := range updates {
+			if _, err := tx.Exec(stmt, update.value, update.rowID); err != nil {
+				return fmt.Errorf("%s.%s rowid %d update: %w", spec.table, spec.column, update.rowID, err)
+			}
+		}
+	}
+	return nil
 }
 
 // agentKeyRebuild describes a single conv_id → agent_id table rebuild.

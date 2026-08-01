@@ -37,17 +37,20 @@ func GetAskThread(termKey, cwd string) (*AskThread, error) {
 		return nil, err
 	}
 	var t AskThread
+	var createdAt, updatedAt dbTimestamp
 	err = db.QueryRow(
 		`SELECT term_key, cwd, conv_id, harness, created_at, updated_at
 		   FROM ask_threads WHERE term_key = ? AND cwd = ?`,
 		termKey, cwd,
-	).Scan(&t.TermKey, &t.Cwd, &t.ConvID, &t.Harness, &t.CreatedAt, &t.UpdatedAt)
+	).Scan(&t.TermKey, &t.Cwd, &t.ConvID, &t.Harness, &createdAt, &updatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
+	t.CreatedAt = exportTimestamp(createdAt)
+	t.UpdatedAt = exportTimestamp(updatedAt)
 	return &t, nil
 }
 
@@ -60,7 +63,7 @@ func SetAskThread(termKey, cwd, convID, harness string) error {
 	if err != nil {
 		return err
 	}
-	now := time.Now().Format(time.RFC3339Nano)
+	now := dbTime(time.Now())
 	// agent_id is dual-written from conv_id; excluded.agent_id re-derives it on
 	// conflict so a thread that moves to a new conv (or whose conv enrolls later)
 	// tracks the right actor.

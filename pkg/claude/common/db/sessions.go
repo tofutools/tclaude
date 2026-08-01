@@ -236,6 +236,9 @@ func SaveSession(s *SessionRow) error {
 		return err
 	}
 	s.UpdatedAt = time.Now()
+	if s.CreatedAt.IsZero() {
+		s.CreatedAt = s.UpdatedAt
+	}
 
 	// An empty Harness defaults to "claude" so a caller that hasn't set
 	// it writes the same value the column DEFAULT would, not "".
@@ -310,7 +313,7 @@ func SaveSession(s *SessionRow) error {
 			exit_launch_gate_state = CASE WHEN excluded.exit_callback_generation <> '' THEN excluded.exit_launch_gate_state ELSE sessions.exit_launch_gate_state END`,
 		s.ID, s.TmuxSession, s.PID, s.Cwd, s.ConvID,
 		s.Status, s.StatusDetail, s.SubagentCount, s.SubagentsJSON, s.BgShellsJSON, s.MonitorsJSON, boolToInt(s.AutoRegistered),
-		s.CreatedAt.Format(time.RFC3339Nano), s.UpdatedAt.Format(time.RFC3339Nano), s.LastHook.Format(time.RFC3339Nano), harness, s.SandboxMode, sandboxImplementation, s.SandboxModeSource, s.OSSandboxState, s.OSSandboxSource, boolToInt(s.OSSandboxUnverified), s.AskUserQuestionTimeout, effectiveSandbox, s.ApprovalPolicy, boolToInt(s.ApprovalAutoReview), s.ResumeProvenance, s.ConvID,
+		dbTime(s.CreatedAt), dbTime(s.UpdatedAt), nullableDBTime(s.LastHook), harness, s.SandboxMode, sandboxImplementation, s.SandboxModeSource, s.OSSandboxState, s.OSSandboxSource, boolToInt(s.OSSandboxUnverified), s.AskUserQuestionTimeout, effectiveSandbox, s.ApprovalPolicy, boolToInt(s.ApprovalAutoReview), s.ResumeProvenance, s.ConvID,
 		s.ExitLaunchGeneration, s.ExitLaunchGateState)
 	if err != nil {
 		return err
@@ -342,7 +345,7 @@ func InsertSessionResumeAnchor(convID, cwd, harness, provenance string, now time
 	if harness == "" {
 		harness = DefaultHarness
 	}
-	stamp := now.Format(time.RFC3339Nano)
+	stamp := dbTime(now)
 	res, err := d.Exec(`INSERT INTO sessions
 		(id, cwd, conv_id, status, created_at, updated_at, harness, resume_provenance, agent_id)
 		SELECT ?, ?, ?, 'exited', ?, ?, ?, ?, `+agentForConvExpr+`
@@ -754,7 +757,7 @@ func CleanupOldExited(maxAge time.Duration) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	cutoff := time.Now().Add(-maxAge).Format(time.RFC3339Nano)
+	cutoff := dbTime(time.Now().Add(-maxAge))
 	result, err := db.Exec(`DELETE FROM sessions WHERE status = 'exited' AND updated_at < ?`, cutoff)
 	if err != nil {
 		return 0, err
@@ -769,12 +772,12 @@ func MaxUpdatedAt() (time.Time, error) {
 	if err != nil {
 		return time.Time{}, err
 	}
-	var s sql.NullString
-	err = db.QueryRow(`SELECT MAX(updated_at) FROM sessions`).Scan(&s)
-	if err != nil || !s.Valid {
+	var updatedAt dbTimestamp
+	err = db.QueryRow(`SELECT MAX(updated_at) FROM sessions`).Scan(&updatedAt)
+	if err != nil || !updatedAt.valid {
 		return time.Time{}, err
 	}
-	return time.Parse(time.RFC3339Nano, s.String)
+	return updatedAt.Time(), nil
 }
 
 // scanSession scans a single session row. sql.ErrNoRows (an empty *sql.Row)
@@ -790,9 +793,10 @@ func scanSession(row *sql.Row) (*SessionRow, error) {
 func scanSessionRow(s rowScanner) (*SessionRow, error) {
 	var row SessionRow
 	var autoReg, remoteCtl, autoMemory, approvalAutoReview, osSandboxUnverified int
-	var createdStr, updatedStr, lastHookStr, effectiveSandbox, contextFeatures string
+	var createdAt, updatedAt, lastHook dbTimestamp
+	var effectiveSandbox, contextFeatures string
 	if err := s.Scan(&row.ID, &row.TmuxSession, &row.PID, &row.Cwd, &row.ConvID,
-		&row.Status, &row.StatusDetail, &row.SubagentCount, &row.SubagentsJSON, &row.BgShellsJSON, &row.MonitorsJSON, &autoReg, &createdStr, &updatedStr, &lastHookStr, &row.Harness, &row.SandboxMode, &row.SandboxImplementation, &row.SandboxModeSource, &row.OSSandboxState, &row.OSSandboxSource, &osSandboxUnverified, &row.AskUserQuestionTimeout, &effectiveSandbox, &remoteCtl, &autoMemory, &contextFeatures, &row.AutoCompactWindow, &row.ApprovalPolicy, &approvalAutoReview, &row.ResumeProvenance); err != nil {
+		&row.Status, &row.StatusDetail, &row.SubagentCount, &row.SubagentsJSON, &row.BgShellsJSON, &row.MonitorsJSON, &autoReg, &createdAt, &updatedAt, &lastHook, &row.Harness, &row.SandboxMode, &row.SandboxImplementation, &row.SandboxModeSource, &row.OSSandboxState, &row.OSSandboxSource, &osSandboxUnverified, &row.AskUserQuestionTimeout, &effectiveSandbox, &remoteCtl, &autoMemory, &contextFeatures, &row.AutoCompactWindow, &row.ApprovalPolicy, &approvalAutoReview, &row.ResumeProvenance); err != nil {
 		return nil, err
 	}
 	row.AutoRegistered = autoReg != 0
@@ -806,11 +810,9 @@ func scanSessionRow(s rowScanner) (*SessionRow, error) {
 	if err != nil {
 		return nil, fmt.Errorf("decode session %q effective sandbox: %w", row.ID, err)
 	}
-	row.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdStr)
-	row.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedStr)
-	if lastHookStr != "" {
-		row.LastHook, _ = time.Parse(time.RFC3339Nano, lastHookStr)
-	}
+	row.CreatedAt = createdAt.Time()
+	row.UpdatedAt = updatedAt.Time()
+	row.LastHook = lastHook.Time()
 	return &row, nil
 }
 
@@ -835,7 +837,7 @@ func UpdateSessionLastHook(id string, t time.Time) error {
 	if err != nil {
 		return err
 	}
-	_, err = db.Exec(`UPDATE sessions SET last_hook = ? WHERE id = ?`, t.Format(time.RFC3339Nano), id)
+	_, err = db.Exec(`UPDATE sessions SET last_hook = ? WHERE id = ?`, dbTime(t), id)
 	return err
 }
 
@@ -875,8 +877,8 @@ func MarkSessionExitedIfUnchanged(id, observedStatus string, observedUpdatedAt t
 			subagent_count = 0, subagents_json = '', bg_shells_json = '', monitors_json = '',
 			exit_reason = COALESCE(exit_reason, NULLIF(?, ''))
 		WHERE id = ? AND status = ? AND updated_at = ?`,
-		time.Now().Format(time.RFC3339Nano),
-		fallbackExitReason, id, observedStatus, observedUpdatedAt.Format(time.RFC3339Nano))
+		dbTime(time.Now()),
+		fallbackExitReason, id, observedStatus, dbTime(observedUpdatedAt))
 	if err != nil {
 		return false, err
 	}
@@ -905,8 +907,8 @@ func SetSessionStatusIfUnchanged(
 	res, err := d.Exec(`UPDATE sessions
 		SET status = ?, status_detail = ?, updated_at = ?
 		WHERE id = ? AND status = ? AND updated_at = ?`,
-		status, detail, at.Format(time.RFC3339Nano),
-		id, observedStatus, observedUpdatedAt.Format(time.RFC3339Nano))
+		status, detail, dbTime(at),
+		id, observedStatus, dbTime(observedUpdatedAt))
 	if err != nil {
 		return false, err
 	}
@@ -972,7 +974,7 @@ func MarkSessionsIdleAfterInterrupt(convID string) (int64, error) {
 		SET status = 'idle', status_detail = '', updated_at = ?,
 			subagent_count = 0, subagents_json = ''
 		WHERE conv_id = ? AND status = 'working'`,
-		time.Now().Format(time.RFC3339Nano), convID)
+		dbTime(time.Now()), convID)
 	if err != nil {
 		return 0, err
 	}
@@ -1284,7 +1286,7 @@ func (b *ContextSnapshotWriteBatch) Commit() (result ContextSnapshotWriteBatchRe
 			execResult, err = tx.Exec(`UPDATE sessions
 				SET context_pct = 0, tokens_input = 0, tokens_output = 0, nudged_pct = 0
 				WHERE id = ? AND conv_id = ? AND created_at = ?`,
-				operation.sessionID, operation.convID, operation.createdAt.Format(time.RFC3339Nano))
+				operation.sessionID, operation.convID, dbTime(operation.createdAt))
 			timing.Update = time.Since(stageStarted)
 			if err == nil {
 				stageStarted = time.Now()
@@ -1302,7 +1304,7 @@ func (b *ContextSnapshotWriteBatch) Commit() (result ContextSnapshotWriteBatchRe
 				WHERE id = ? AND conv_id = ? AND created_at = ? AND context_window_size = ?`,
 				operation.pct, operation.tokensInput, operation.tokensOutput, operation.window,
 				operation.sessionID, operation.convID,
-				operation.createdAt.Format(time.RFC3339Nano), operation.window)
+				dbTime(operation.createdAt), operation.window)
 			timing.Update = time.Since(stageStarted)
 			if err == nil {
 				stageStarted = time.Now()
@@ -1319,7 +1321,7 @@ func (b *ContextSnapshotWriteBatch) Commit() (result ContextSnapshotWriteBatchRe
 				SET context_pct = ?, tokens_input = ?, tokens_output = ?, context_window_size = ?
 				WHERE id = ? AND conv_id = ? AND created_at = ?`,
 				operation.pct, operation.tokensInput, operation.tokensOutput, operation.window,
-				operation.sessionID, operation.convID, operation.createdAt.Format(time.RFC3339Nano))
+				operation.sessionID, operation.convID, dbTime(operation.createdAt))
 			timing.Update = time.Since(stageStarted)
 			if err == nil {
 				stageStarted = time.Now()
@@ -1449,7 +1451,7 @@ func UpdateContextSnapshotIfWindowUnchangedTimed(
 		SET context_pct = ?, tokens_input = ?, tokens_output = ?, context_window_size = ?
 		WHERE id = ? AND conv_id = ? AND created_at = ? AND context_window_size = ?`,
 		pct, tokensInput, tokensOutput, windowSize,
-		sessionID, convID, createdAt.Format(time.RFC3339Nano), windowSize)
+		sessionID, convID, dbTime(createdAt), windowSize)
 	timing.ExecCommit = time.Since(stageStarted)
 	if err != nil {
 		return false, err
@@ -1867,7 +1869,7 @@ func UpdateSessionEffortForGeneration(
 	defer func() { _ = tx.Rollback() }()
 	result, err := tx.Exec(`UPDATE sessions SET effort_level = ?
 		WHERE id = ? AND conv_id = ? AND created_at = ?`,
-		level, sessionID, convID, createdAt.Format(time.RFC3339Nano))
+		level, sessionID, convID, dbTime(createdAt))
 	if err != nil {
 		return false, err
 	}
@@ -2003,7 +2005,7 @@ func UpdateSessionCost(sessionID string, costUSD float64) error {
 			                ELSE session_cost_daily.agent_id END,
 			harness  = CASE WHEN excluded.harness <> '' THEN excluded.harness
 			                ELSE session_cost_daily.harness END`,
-		now.Format(costDayFormat), costUSD, now.Format(time.RFC3339Nano), sessionID)
+		now.Format(costDayFormat), costUSD, dbTime(now), sessionID)
 	if err != nil {
 		return err
 	}
@@ -2085,7 +2087,7 @@ func UpdateSessionVirtualCost(sessionID string, costUSD float64) error {
 			                ELSE session_cost_daily.agent_id END,
 			harness  = CASE WHEN excluded.harness <> '' THEN excluded.harness
 			                ELSE session_cost_daily.harness END`,
-		now.Format(costDayFormat), costUSD, now.Format(time.RFC3339Nano), sessionID)
+		now.Format(costDayFormat), costUSD, dbTime(now), sessionID)
 	if err != nil {
 		return err
 	}
@@ -2188,7 +2190,7 @@ func ReplaceSessionVirtualCostHistory(
 				                ELSE session_cost_daily.agent_id END,
 				harness  = CASE WHEN excluded.harness <> '' THEN excluded.harness
 				                ELSE session_cost_daily.harness END`,
-			snapshot.Day, snapshot.CostUSD, updatedAt.Format(time.RFC3339Nano), snapshot.Model, sessionID); err != nil {
+			snapshot.Day, snapshot.CostUSD, dbTime(updatedAt), snapshot.Model, sessionID); err != nil {
 			return err
 		}
 	}
@@ -2229,7 +2231,7 @@ func ReplaceSessionVirtualCostHistoryForGeneration(
 	err = tx.QueryRow(`UPDATE sessions SET virtual_cost_usd = ?
 		WHERE id = ? AND conv_id = ? AND created_at = ?
 		RETURNING conv_id`,
-		totalUSD, sessionID, expectedConvID, expectedCreatedAt.Format(time.RFC3339Nano)).Scan(&convID)
+		totalUSD, sessionID, expectedConvID, dbTime(expectedCreatedAt)).Scan(&convID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -2272,7 +2274,7 @@ func ReplaceSessionVirtualCostHistoryForGeneration(
 				                ELSE session_cost_daily.agent_id END,
 				harness  = CASE WHEN excluded.harness <> '' THEN excluded.harness
 				                ELSE session_cost_daily.harness END`,
-			snapshot.Day, snapshot.CostUSD, updatedAt.Format(time.RFC3339Nano), snapshot.Model, sessionID); err != nil {
+			snapshot.Day, snapshot.CostUSD, dbTime(updatedAt), snapshot.Model, sessionID); err != nil {
 			return false, err
 		}
 	}
@@ -2537,9 +2539,11 @@ func AllCostDailyRows() ([]CostDailyRow, error) {
 	var out []CostDailyRow
 	for rows.Next() {
 		var r CostDailyRow
-		if err := rows.Scan(&r.SessionID, &r.Day, &r.ConvID, &r.CostUSD, &r.VirtualCostUSD, &r.UpdatedAt, &r.Model, &r.Harness); err != nil {
+		var updatedAt dbTimestamp
+		if err := rows.Scan(&r.SessionID, &r.Day, &r.ConvID, &r.CostUSD, &r.VirtualCostUSD, &updatedAt, &r.Model, &r.Harness); err != nil {
 			return nil, err
 		}
+		r.UpdatedAt = exportTimestamp(updatedAt)
 		out = append(out, r)
 	}
 	sortCostDailyRowsForWalk(out)

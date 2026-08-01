@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -363,7 +364,7 @@ func SetConversationResumeProfile(convID string, profile ConversationResumeProfi
 	_, err = d.Exec(`INSERT INTO conversation_resume_profiles (conv_id, profile_json, updated_at)
 		VALUES (?, ?, ?)
 		ON CONFLICT(conv_id) DO UPDATE SET profile_json = excluded.profile_json, updated_at = excluded.updated_at`,
-		convID, raw, time.Now().UTC().Format(time.RFC3339Nano))
+		convID, raw, dbTime(time.Now().UTC()))
 	return err
 }
 
@@ -419,7 +420,8 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 		return nil
 	}
 	var rowID int64
-	var convID, cwd, harnessName, sandboxMode, sandboxImplementation, approvalPolicy, modelID, effort, askTimeout, provenance, createdAt string
+	var convID, cwd, harnessName, sandboxMode, sandboxImplementation, approvalPolicy, modelID, effort, askTimeout, provenance string
+	var createdAtStamp migrationBridgeTimestamp
 	var approvalAutoReview, remoteControl, autoMemory int
 	var contextWindowSize int64
 	var contextFeaturesRaw, autoCompactWindow string
@@ -472,13 +474,14 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 		&rowID, &convID, &cwd, &harnessName, &sandboxMode, &sandboxImplementation, &sandboxModeSource,
 		&approvalPolicy, &approvalAutoReview, &modelID, &effort,
 		&contextWindowSize, &askTimeout, &remoteControl,
-		&autoMemory, &contextFeaturesRaw, &autoCompactWindow, &provenance, &createdAt)
+		&autoMemory, &contextFeaturesRaw, &autoCompactWindow, &provenance, &createdAtStamp)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
+	createdAt := createdAtStamp.Text()
 	convID = strings.TrimSpace(convID)
 	if convID == "" {
 		return nil
@@ -619,7 +622,7 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 	if _, err := q.Exec(`INSERT INTO conversation_resume_profiles (conv_id, profile_json, updated_at)
 		VALUES (?, ?, ?)
 		ON CONFLICT(conv_id) DO UPDATE SET profile_json = excluded.profile_json, updated_at = excluded.updated_at`,
-		convID, conversationRaw, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		convID, conversationRaw, dbTime(time.Now().UTC())); err != nil {
 		return err
 	}
 	var haveAgentSpine int
@@ -738,8 +741,8 @@ func sessionProjectionIsOlder(existing *ConversationResumeProfile, createdAt str
 	if existing == nil || existing.SourceSessionCreatedAt == "" {
 		return false
 	}
-	currentTime, currentErr := time.Parse(time.RFC3339Nano, existing.SourceSessionCreatedAt)
-	incomingTime, incomingErr := time.Parse(time.RFC3339Nano, createdAt)
+	currentTime, currentErr := parseLegacyDBTime(existing.SourceSessionCreatedAt)
+	incomingTime, incomingErr := parseLegacyDBTime(createdAt)
 	if currentErr == nil && incomingErr == nil && !incomingTime.Equal(currentTime) {
 		return incomingTime.Before(currentTime)
 	}
@@ -774,18 +777,65 @@ func projectLatestSessionRelaunchProfilesForConvTx(q dbExecQuerier, convID strin
 	if haveProfiles == 0 {
 		return nil // enrollment during the pre-v145 migration chain
 	}
-	var sessionID string
-	err := q.QueryRow(`SELECT id FROM sessions WHERE conv_id = ?
-		ORDER BY julianday(created_at) DESC, rowid DESC LIMIT 1`, strings.TrimSpace(convID)).Scan(&sessionID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil
-	}
+	sessionIDs, err := sessionIDsByCreatedAt(q, strings.TrimSpace(convID))
 	if err != nil {
 		return err
 	}
+	if len(sessionIDs) == 0 {
+		return nil
+	}
+	sessionID := sessionIDs[len(sessionIDs)-1]
 	return projectSessionRelaunchProfilesTx(q, sessionID, relaunchProjectionOptions{
 		RemoteControl: true, AutoMemory: true, ContextFeatures: true, AutoCompactWindow: true,
 	})
+}
+
+// sessionIDsByCreatedAt provides exact chronological ordering on both sides of
+// v181: historical callers expose RFC3339Nano text, current callers expose
+// Unix-nanosecond INTEGERs. Parsing in Go avoids SQLite's inexact
+// floating-point date conversion and uses rowid as the deterministic
+// equal-instant tiebreaker.
+func sessionIDsByCreatedAt(q dbExecQuerier, convID string) ([]string, error) {
+	query := `SELECT id, rowid, created_at FROM sessions`
+	var args []any
+	if convID != "" {
+		query += ` WHERE conv_id = ?`
+		args = append(args, convID)
+	}
+	rows, err := q.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	type sessionStamp struct {
+		id    string
+		rowID int64
+		at    time.Time
+	}
+	var stamps []sessionStamp
+	for rows.Next() {
+		var stamp sessionStamp
+		var at migrationBridgeTimestamp
+		if err := rows.Scan(&stamp.id, &stamp.rowID, &at); err != nil {
+			return nil, fmt.Errorf("session created_at: %w", err)
+		}
+		stamp.at = at.Time()
+		stamps = append(stamps, stamp)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	sort.Slice(stamps, func(i, j int) bool {
+		if !stamps[i].at.Equal(stamps[j].at) {
+			return stamps[i].at.Before(stamps[j].at)
+		}
+		return stamps[i].rowID < stamps[j].rowID
+	})
+	ids := make([]string, len(stamps))
+	for i := range stamps {
+		ids[i] = stamps[i].id
+	}
+	return ids, nil
 }
 
 // execSessionUpdateAndProject applies an out-of-band session update and its

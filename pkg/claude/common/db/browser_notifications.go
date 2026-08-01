@@ -55,8 +55,8 @@ func enqueueBrowserNotificationAt(sessionID, title, body string, now time.Time) 
 // their wall-clock text under different UTC offsets. At a DST fall-back a
 // local-time stamp would make a 70-minute-old row read as fresh (and hide
 // expired rows from the prune) for an hour.
-func stamp(t time.Time) string {
-	return t.UTC().Format(time.RFC3339Nano)
+func stamp(t time.Time) any {
+	return dbTime(t.UTC())
 }
 
 // pruneBrowserNotifications drops expired rows. Best-effort by design: a
@@ -117,11 +117,11 @@ func listBrowserNotificationsSinceAt(afterID int64, now time.Time) ([]BrowserNot
 	var items []BrowserNotification
 	for rows.Next() {
 		var n BrowserNotification
-		var created string
+		var created dbTimestamp
 		if err := rows.Scan(&n.ID, &n.SessionID, &n.Title, &n.Body, &created); err != nil {
 			return nil, 0, err
 		}
-		n.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
+		n.CreatedAt = created.Time()
 		items = append(items, n)
 	}
 	if err := rows.Err(); err != nil {

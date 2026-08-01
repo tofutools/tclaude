@@ -22,7 +22,7 @@ func TestMigrateV112toV113AddsSandboxProfileIncludes(t *testing.T) {
 	assert.Equal(t, 113, version)
 
 	// Pre-existing rows fall back to the empty-array default and load cleanly.
-	mustExec(t, d, `INSERT INTO sandbox_profiles (name, created_at, updated_at) VALUES ('legacy', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`)
+	mustExec(t, d, `INSERT INTO sandbox_profiles (name, created_at, updated_at) VALUES ('legacy', 1767225600000000000, 1767225600000000000)`)
 	p, err := GetSandboxProfile("legacy")
 	require.NoError(t, err)
 	require.NotNil(t, p)

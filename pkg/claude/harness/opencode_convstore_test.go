@@ -53,7 +53,7 @@ func TestOpenCodeConvStore_ListConvsMapsDirectoryAndCaches(t *testing.T) {
 	assert.Equal(t, "Alpha native title", all[0].Summary)
 	assert.Equal(t, OpenCodeName, all[0].Harness)
 	assert.Equal(t, "2026-07-23T12:01:16Z", all[0].Created)
-	assert.Equal(t, int64(1784808077), all[0].FileMtime)
+	assert.Equal(t, int64(1784808077386000000), all[0].FileMtime)
 
 	local, err := store.ListConvs("/work/a")
 	require.NoError(t, err)

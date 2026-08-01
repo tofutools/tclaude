@@ -37,7 +37,7 @@ func TestMigrateV96toV97_AddsColumn(t *testing.T) {
 	// A pre-existing profile (without the new column) must survive the ALTER and
 	// read back with the default.
 	mustExec(t, d, `INSERT INTO spawn_profiles (name, created_at, updated_at)
-		VALUES ('legacy', '2026-07-04T00:00:00Z', '2026-07-04T00:00:00Z')`)
+		VALUES ('legacy', 1783123200000000000, 1783123200000000000)`)
 
 	require.NoError(t, migrateV96toV97(d), "v96→v97")
 

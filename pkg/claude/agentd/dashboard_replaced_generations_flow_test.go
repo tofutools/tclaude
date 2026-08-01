@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -181,9 +182,11 @@ func TestReplacedGenerations_DefaultNewestReplacementFirst(t *testing.T) {
 	// distinct second so the newest-replacement-first order is deterministic.
 	setSucceededAt := func(oldConv, ts string) {
 		t.Helper()
+		at, err := time.Parse(time.RFC3339Nano, ts)
+		require.NoError(t, err)
 		d, err := db.Open()
 		require.NoError(t, err)
-		_, err = d.Exec(`UPDATE agent_conv_succession SET succeeded_at = ? WHERE old_conv_id = ?`, ts, oldConv)
+		_, err = d.Exec(`UPDATE agent_conv_succession SET succeeded_at = ? WHERE old_conv_id = ?`, at.UnixNano(), oldConv)
 		require.NoError(t, err)
 	}
 	// X replaced at 00:00:01, Y replaced at 00:00:03 → Y is the newer

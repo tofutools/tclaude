@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -169,6 +170,17 @@ func TestSessionEntry_ArchivedAt_JSON(t *testing.T) {
 	assert.NotContains(t, string(b), "archived_at", "active entry omits the field (omitempty)")
 }
 
+func TestSessionEntry_FileMtime_JSONUsesRFC3339Nano(t *testing.T) {
+	mtime := time.Date(2026, 8, 1, 16, 13, 0, 123456789, time.UTC)
+	b, err := json.Marshal(SessionEntry{SessionID: "a", FileMtime: mtime.UnixNano()})
+	require.NoError(t, err)
+
+	var wire map[string]any
+	require.NoError(t, json.Unmarshal(b, &wire))
+	assert.Equal(t, mtime.Format(time.RFC3339Nano), wire["fileMtime"])
+	assert.NotEqual(t, float64(mtime.UnixNano()), wire["fileMtime"], "raw database nanoseconds leaked onto JSON wire")
+}
+
 // TestArchivedTitleSuffixRegex pins the degraded-mode fail-closed matcher
 // (used only when conv_index.archived_at is unreadable — see
 // LoadSessionsIndexWithOptions). It must recognise the `-x` / `-x-<N>`
@@ -300,6 +312,28 @@ func TestSessionsIndex_SurgicalUpdatesPreserveUnknownFields(t *testing.T) {
 	assert.NotNil(t, byID["ccc"], "ccc missing after insert")
 	_, ok := byID["bbb"]
 	assert.False(t, ok, "bbb not removed")
+}
+
+func TestSessionsIndex_LegacyWriterKeepsMillisecondMtime(t *testing.T) {
+	tmpDir := t.TempDir()
+	indexPath := filepath.Join(tmpDir, "sessions-index.json")
+	require.NoError(t, os.WriteFile(indexPath, []byte(`{"version":1,"entries":[]}`), 0600))
+
+	mtime := time.Date(2026, 8, 1, 16, 13, 0, 123456789, time.UTC)
+	require.NoError(t, UpsertSessionsIndexEntry(tmpDir, SessionEntry{
+		SessionID: "legacy-reader", FileMtime: mtime.UnixNano(),
+	}))
+
+	var oldReader struct {
+		Entries []struct {
+			FileMtime int64 `json:"fileMtime"`
+		} `json:"entries"`
+	}
+	data, err := os.ReadFile(indexPath)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(data, &oldReader))
+	require.Len(t, oldReader.Entries, 1)
+	assert.Equal(t, mtime.UnixMilli(), oldReader.Entries[0].FileMtime)
 }
 
 // When the file doesn't exist, helpers no-op — they never create it.
@@ -449,7 +483,7 @@ func TestLoadSessionsIndex_RescansStaleStub(t *testing.T) {
 		ConvID:     sessionID,
 		ProjectDir: tmpDir,
 		FullPath:   path,
-		FileMtime:  info.ModTime().Unix(),
+		FileMtime:  info.ModTime().UnixNano(),
 		FileSize:   info.Size(),
 	}), "seed stub row")
 
@@ -483,7 +517,7 @@ func TestRefreshConvIndexEntry_RescansStaleStub(t *testing.T) {
 		ConvID:     sessionID,
 		ProjectDir: tmpDir,
 		FullPath:   path,
-		FileMtime:  info.ModTime().Unix(),
+		FileMtime:  info.ModTime().UnixNano(),
 		FileSize:   info.Size(),
 	}), "seed stub row")
 

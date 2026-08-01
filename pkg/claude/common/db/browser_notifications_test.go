@@ -1,7 +1,6 @@
 package db
 
 import (
-	"strings"
 	"testing"
 	"time"
 
@@ -147,9 +146,9 @@ func TestBrowserNotificationsTimestampsAreUTC(t *testing.T) {
 
 	d, err := Open()
 	require.NoError(t, err)
-	var created string
+	var created dbTimestamp
 	require.NoError(t, d.QueryRow(`SELECT created_at FROM browser_notifications`).Scan(&created))
-	assert.True(t, strings.HasSuffix(created, "Z"), "created_at must be UTC, got %q", created)
+	assert.Equal(t, now.UTC(), created.Time(), "created_at must preserve the UTC instant")
 
 	// And it is still delivered when the reader is in yet another zone.
 	items, _, err := listBrowserNotificationsSinceAt(0, now.In(time.FixedZone("UTC-11", -11*3600)))

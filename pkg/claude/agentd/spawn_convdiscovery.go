@@ -97,7 +97,7 @@ func convEntryCreated(e convops.SessionEntry) time.Time {
 		}
 	}
 	if e.FileMtime > 0 {
-		return time.Unix(e.FileMtime, 0)
+		return time.Unix(0, e.FileMtime)
 	}
 	return time.Time{}
 }

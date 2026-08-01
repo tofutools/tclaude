@@ -40,7 +40,7 @@ func TestMigrateV82toV83_AddsColumns(t *testing.T) {
 
 	// A pre-existing pending row (without the new columns) must survive the
 	// ALTER and read back with the defaults.
-	mustExec(t, d, `INSERT INTO pending_spawns (label, group_id, created_at) VALUES ('lbl', 1, '2026-06-29T00:00:00Z')`)
+	mustExec(t, d, `INSERT INTO pending_spawns (label, group_id, created_at) VALUES ('lbl', 1, 1782691200000000000)`)
 
 	require.NoError(t, migrateV82toV83(d), "v82→v83")
 

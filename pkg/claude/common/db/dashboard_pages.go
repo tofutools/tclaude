@@ -53,7 +53,7 @@ func retiredAgentQ(q string) (string, []any) {
 }
 
 // ListRetiredAgentsPage returns one newest-retirement-first page of retired
-// actors (agents.retired_at != ”), filtered by q and windowed by offset/limit.
+// actors (agents.retired_at != ''), filtered by q and windowed by offset/limit.
 // limit <= 0 returns the whole (q-filtered) set with no LIMIT — the modal
 // "show all" path. The conv_index LEFT JOIN (PK conv_id, so 1:1) only exists to
 // let the title columns participate in the q filter; it never multiplies rows.
@@ -66,7 +66,7 @@ func ListRetiredAgentsPage(q string, offset, limit int) ([]*Agent, error) {
 	sql := `SELECT ` + retiredAgentCols + `
 		FROM agents a
 		LEFT JOIN conv_index ci ON ci.conv_id = a.current_conv_id
-		WHERE a.retired_at != ''` + qClause + `
+		WHERE a.retired_at IS NOT NULL` + qClause + `
 		ORDER BY a.retired_at DESC, a.agent_id`
 	if limit > 0 {
 		sql += ` LIMIT ? OFFSET ?`
@@ -96,7 +96,7 @@ func CountRetiredAgents(q string) (total, totalUnfiltered int, err error) {
 	if err != nil {
 		return 0, 0, err
 	}
-	if err = d.QueryRow(`SELECT COUNT(*) FROM agents WHERE retired_at != ''`).Scan(&totalUnfiltered); err != nil {
+	if err = d.QueryRow(`SELECT COUNT(*) FROM agents WHERE retired_at IS NOT NULL`).Scan(&totalUnfiltered); err != nil {
 		return 0, 0, err
 	}
 	if q == "" {
@@ -105,7 +105,7 @@ func CountRetiredAgents(q string) (total, totalUnfiltered int, err error) {
 	qClause, args := retiredAgentQ(q)
 	sql := `SELECT COUNT(*) FROM agents a
 		LEFT JOIN conv_index ci ON ci.conv_id = a.current_conv_id
-		WHERE a.retired_at != ''` + qClause
+		WHERE a.retired_at IS NOT NULL` + qClause
 	if err = d.QueryRow(sql, args...).Scan(&total); err != nil {
 		return 0, 0, err
 	}
@@ -118,7 +118,7 @@ func CountRetiredAgents(q string) (total, totalUnfiltered int, err error) {
 // listing: live (non-sidechain, non-archived) conv_index rows that are NOT a
 // generation of any agent (the SQL form of the old ListAgentConvIDs exclusion).
 const nonAgentConvBase = `FROM conv_index
-	WHERE is_sidechain = 0 AND archived_at = ''
+	WHERE is_sidechain = 0 AND archived_at IS NULL
 	  AND conv_id NOT IN (SELECT conv_id FROM agent_conversations)`
 
 // nonAgentConvQ builds the optional q predicate (title / conv-id LIKE) for the
@@ -251,13 +251,14 @@ func ListReplacedGenerationsPage(q string, offset, limit int) ([]*ReplacedGenera
 	var out []*ReplacedGenerationRow
 	for rows.Next() {
 		var (
-			r     ReplacedGenerationRow
-			tsRaw string
+			r                      ReplacedGenerationRow
+			succeededAt, retiredAt dbTimestamp
 		)
-		if err := rows.Scan(&r.OldConvID, &r.Reason, &tsRaw, &r.AgentID, &r.CurrentConvID, &r.RetiredAt); err != nil {
+		if err := rows.Scan(&r.OldConvID, &r.Reason, &succeededAt, &r.AgentID, &r.CurrentConvID, &retiredAt); err != nil {
 			return nil, err
 		}
-		r.SucceededAt, _ = time.Parse(time.RFC3339, tsRaw)
+		r.SucceededAt = succeededAt.Time()
+		r.RetiredAt = exportTimestamp(retiredAt)
 		out = append(out, &r)
 	}
 	return out, rows.Err()

@@ -38,7 +38,7 @@ func TestMigrateV87toV88_AddsColumn(t *testing.T) {
 	// ALTER and read back with the default.
 	mustExec(t, d, `INSERT INTO group_templates
 		(name, descr, default_context, created_at, updated_at)
-		VALUES ('legacy', 'd', 'ctx', '2026-07-03T00:00:00Z', '2026-07-03T00:00:00Z')`)
+		VALUES ('legacy', 'd', 'ctx', 1783036800000000000, 1783036800000000000)`)
 
 	require.NoError(t, migrateV87toV88(d), "v87→v88")
 

@@ -190,7 +190,7 @@ func cronConvToAgentTx(tx *sql.Tx, convID string) (string, error) {
 // on agent_id (JOH-26 PR3a); each LEFT JOIN resolves the actor back to its
 // CURRENT conv so OwnerConv / TargetConv present (and the fire path delivers to)
 // the live generation. LEFT JOIN + COALESCE so a group-target job (target_agent
-// ”) or an owner-less job keeps an empty string rather than dropping the row.
+// '') or an owner-less job keeps an empty string rather than dropping the row.
 // The 21 projected columns match scanAgentCronJob's field order. owner_agent /
 // target_agent are projected raw (the stable keys) alongside the LEFT-JOIN-
 // resolved current convs.
@@ -253,7 +253,7 @@ func insertAgentCronJob(j *AgentCronJob, routingCaller *string) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	now := time.Now().UTC().Format(time.RFC3339)
+	now := dbTime(time.Now().UTC())
 	kind := j.TargetKind
 	if kind == "" {
 		kind = CronTargetConv
@@ -261,7 +261,7 @@ func insertAgentCronJob(j *AgentCronJob, routingCaller *string) (int64, error) {
 	res, err := tx.Exec(`INSERT INTO agent_cron_jobs
 		(name, owner_agent, target_kind, target_agent, group_id, target_role, interval_seconds,
 		 cron_expr, subject, body, enabled, run_immediately, queue_when_offline, operator_authored, created_at, last_run_at, last_run_status)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '')`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, '')`,
 		j.Name, ownerAgent, kind, targetAgent, j.GroupID, j.TargetRole, j.IntervalSeconds,
 		j.CronExpr, j.Subject, j.Body, boolToInt(j.Enabled), boolToInt(j.RunImmediately), boolToInt(j.QueueWhenOffline), boolToInt(j.OperatorAuthored), now)
 	if err != nil {
@@ -278,14 +278,14 @@ func insertAgentCronJob(j *AgentCronJob, routingCaller *string) (int64, error) {
 }
 
 func requireCronRoutingGroupWrite(tx *sql.Tx, groupID int64, callerConv string) error {
-	var archivedAt string
+	var archivedAt dbTimestamp
 	if err := tx.QueryRow(`SELECT archived_at FROM agent_groups WHERE id = ?`, groupID).Scan(&archivedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrAgentCronRoutingGroupNotFound
 		}
 		return err
 	}
-	if archivedAt != "" {
+	if archivedAt.valid {
 		return ErrAgentCronRoutingGroupArchived
 	}
 	// The human operator is entitled to route through any active group.
@@ -302,7 +302,7 @@ func requireCronRoutingGroupWrite(tx *sql.Tx, groupID int64, callerConv string) 
 	var allowed int
 	err = tx.QueryRow(`SELECT EXISTS(
 		SELECT 1 FROM agents a
-		WHERE a.agent_id = ? AND a.retired_at = '' AND (
+		WHERE a.agent_id = ? AND a.retired_at IS NULL AND (
 			EXISTS (SELECT 1 FROM agent_group_members m
 				WHERE m.group_id = ? AND m.agent_id = a.agent_id)
 			OR EXISTS (SELECT 1 FROM agent_group_owners o
@@ -325,11 +325,11 @@ func requireLiveCronOwner(tx *sql.Tx, ownerAgent string) error {
 	if ownerAgent == "" {
 		return nil
 	}
-	var retiredAt string
+	var retiredAt dbTimestamp
 	if err := tx.QueryRow(`SELECT retired_at FROM agents WHERE agent_id = ?`, ownerAgent).Scan(&retiredAt); err != nil {
 		return err
 	}
-	if retiredAt != "" {
+	if retiredAt.valid {
 		return ErrAgentCronOwnerRetired
 	}
 	return nil
@@ -341,21 +341,22 @@ func requireLiveCronOwner(tx *sql.Tx, ownerAgent string) error {
 // never depends on RowsAffected being zero.
 func requireLiveAgentCronJobOwner(tx *sql.Tx, id int64) (bool, error) {
 	var ownerAgent string
-	var retiredAt sql.NullString
-	err := tx.QueryRow(`SELECT j.owner_agent, a.retired_at
+	var matchedAgent sql.NullString
+	var retiredAt dbTimestamp
+	err := tx.QueryRow(`SELECT j.owner_agent, a.agent_id, a.retired_at
 		FROM agent_cron_jobs j
 		LEFT JOIN agents a ON a.agent_id = j.owner_agent
-		WHERE j.id = ?`, id).Scan(&ownerAgent, &retiredAt)
+		WHERE j.id = ?`, id).Scan(&ownerAgent, &matchedAgent, &retiredAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
 	if err != nil {
 		return false, err
 	}
-	if ownerAgent != "" && !retiredAt.Valid {
+	if ownerAgent != "" && !matchedAgent.Valid {
 		return true, fmt.Errorf("cron job %d owner agent %s does not exist", id, ownerAgent)
 	}
-	if retiredAt.String != "" {
+	if retiredAt.valid {
 		return true, ErrAgentCronOwnerRetired
 	}
 	return true, nil
@@ -384,7 +385,7 @@ func GetRunnableAgentCronJob(id int64) (*AgentCronJob, error) {
 		return nil, err
 	}
 	row := d.QueryRow(cronSelect+` WHERE j.id = ? AND j.enabled = 1
-		AND (j.owner_agent = '' OR ow.retired_at = '')`, id)
+		AND (j.owner_agent = '' OR ow.retired_at IS NULL)`, id)
 	j, err := scanAgentCronJob(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -416,7 +417,7 @@ func getLiveOwnerAgentCronJob(id int64, afterLiveMiss func()) (*AgentCronJob, er
 	}
 	defer func() { _ = tx.Rollback() }()
 	row := tx.QueryRow(cronSelect+` WHERE j.id = ?
-		AND (j.owner_agent = '' OR ow.retired_at = '')`, id)
+		AND (j.owner_agent = '' OR ow.retired_at IS NULL)`, id)
 	j, err := scanAgentCronJob(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		if afterLiveMiss != nil {
@@ -424,7 +425,7 @@ func getLiveOwnerAgentCronJob(id int64, afterLiveMiss func()) (*AgentCronJob, er
 		}
 		var retiredOwner int
 		if lookupErr := tx.QueryRow(`SELECT COUNT(*) FROM agent_cron_jobs j
-			JOIN agents a ON a.agent_id = j.owner_agent AND a.retired_at <> ''
+			JOIN agents a ON a.agent_id = j.owner_agent AND a.retired_at IS NOT NULL
 			WHERE j.id = ?`, id).Scan(&retiredOwner); lookupErr != nil {
 			return nil, lookupErr
 		}
@@ -476,7 +477,7 @@ func ListDueAgentCronJobs(now time.Time) ([]*AgentCronJob, error) {
 	// authority row. The active-owner predicate is the scheduler-side defense:
 	// even a hand-edited/re-enabled stale row cannot execute for a retired actor.
 	jobs, err := listAgentCronJobs(d, cronSelect+`
-		WHERE j.owner_agent = '' OR ow.retired_at = ''
+		WHERE j.owner_agent = '' OR ow.retired_at IS NULL
 		ORDER BY j.id`)
 	if err != nil {
 		return nil, err
@@ -531,7 +532,7 @@ func UpdateAgentCronJobLastRun(id int64, when time.Time, status string) error {
 		return err
 	}
 	_, err = d.Exec(`UPDATE agent_cron_jobs SET last_run_at = ?, last_run_status = ?
-		WHERE id = ?`, when.UTC().Format(time.RFC3339), status, id)
+		WHERE id = ?`, dbTime(when.UTC()), status, id)
 	return err
 }
 
@@ -539,7 +540,7 @@ func UpdateAgentCronJobLastRun(id int64, when time.Time, status string) error {
 // the last_run_at timestamp (so re-enabling a paused job doesn't
 // immediately fire if it ran recently).
 //
-// It also clears any auto-disabled marker (disabled_reason → ”): an explicit
+// It also clears any auto-disabled marker (disabled_reason → ''): an explicit
 // enable/disable is a human-managed decision, so the job stops being a
 // candidate for the group-resume auto-re-enable (JOH-345). A job the human
 // manually re-enabled after an emptying retire therefore won't be silently
@@ -575,7 +576,7 @@ func SetAgentCronJobEnabled(id int64, enabled bool) error {
 // nobody to receive them. Returns the number of jobs disabled.
 //
 // The `enabled = 1` guard is the crux: a job the human already disabled by hand
-// (enabled=0, disabled_reason=”) is left untouched, so a later resume does not
+// (enabled=0, disabled_reason='') is left untouched, so a later resume does not
 // silently re-enable it. Only jobs this call paused carry the marker.
 func DisableGroupTargetCronJobsForRetire(groupID int64) (int, error) {
 	d, err := Open()
@@ -595,11 +596,11 @@ func DisableGroupTargetCronJobsForRetire(groupID int64) (int, error) {
 
 // ReenableGroupRetiredCronJobs re-enables every group-target cron job for
 // groupID that tclaude auto-disabled on an emptying retire (disabled_reason =
-// CronDisabledReasonGroupRetired), clearing the marker back to ”. Called when a
+// CronDisabledReasonGroupRetired), clearing the marker back to ''. Called when a
 // group is resumed. Returns the number of jobs re-enabled.
 //
 // The disabled_reason match is the crux: only jobs THIS mechanism paused are
-// touched — a job the human disabled by hand (disabled_reason=”) stays
+// touched — a job the human disabled by hand (disabled_reason='') stays
 // disabled. last_run_at is deliberately left alone (like SetAgentCronJobEnabled),
 // so re-enabling after a long pause does not fire a flood of catch-ups.
 func ReenableGroupRetiredCronJobs(groupID int64) (int, error) {
@@ -611,7 +612,7 @@ func ReenableGroupRetiredCronJobs(groupID int64) (int, error) {
 		`UPDATE agent_cron_jobs SET enabled = 1, disabled_reason = ''
 		 WHERE target_kind = ? AND group_id = ? AND disabled_reason = ?
 		 AND (owner_agent = '' OR EXISTS (
-			SELECT 1 FROM agents WHERE agent_id = owner_agent AND retired_at = ''
+			SELECT 1 FROM agents WHERE agent_id = owner_agent AND retired_at IS NULL
 		 ))`,
 		CronTargetGroup, groupID, CronDisabledReasonGroupRetired)
 	if err != nil {
@@ -821,7 +822,7 @@ func InsertAgentCronRun(r *AgentCronRun) (int64, error) {
 	res, err := d.Exec(`INSERT INTO agent_cron_runs
 		(job_id, fired_at, status, error_msg)
 		VALUES (?, ?, ?, ?)`,
-		r.JobID, r.FiredAt.UTC().Format(time.RFC3339), r.Status, r.ErrorMsg)
+		r.JobID, dbTime(r.FiredAt.UTC()), r.Status, r.ErrorMsg)
 	if err != nil {
 		return 0, err
 	}
@@ -858,11 +859,11 @@ func ListAgentCronRunsForJob(jobID int64, limit int) ([]*AgentCronRun, error) {
 	var out []*AgentCronRun
 	for rows.Next() {
 		var r AgentCronRun
-		var fired string
+		var fired dbTimestamp
 		if err := rows.Scan(&r.ID, &r.JobID, &fired, &r.Status, &r.ErrorMsg); err != nil {
 			return nil, err
 		}
-		r.FiredAt = parseTimeOrZero(fired)
+		r.FiredAt = fired.Time()
 		out = append(out, &r)
 	}
 	return out, rows.Err()
@@ -871,7 +872,7 @@ func ListAgentCronRunsForJob(jobID int64, limit int) ([]*AgentCronRun, error) {
 func scanAgentCronJob(s rowScanner) (*AgentCronJob, error) {
 	var j AgentCronJob
 	var enabled, runImmediately, queueWhenOffline, operatorAuthored int
-	var created, lastRun string
+	var created, lastRun dbTimestamp
 	err := s.Scan(&j.ID, &j.Name, &j.OwnerConv, &j.TargetKind, &j.TargetConv, &j.GroupID,
 		&j.IntervalSeconds, &j.Subject, &j.Body, &enabled, &created,
 		&lastRun, &j.LastRunStatus, &j.OwnerAgent, &j.TargetAgent, &j.CronExpr, &j.TargetRole,
@@ -886,7 +887,7 @@ func scanAgentCronJob(s rowScanner) (*AgentCronJob, error) {
 	j.RunImmediately = runImmediately != 0
 	j.QueueWhenOffline = queueWhenOffline != 0
 	j.OperatorAuthored = operatorAuthored != 0
-	j.CreatedAt = parseTimeOrZero(created)
-	j.LastRunAt = parseTimeOrZero(lastRun)
+	j.CreatedAt = created.Time()
+	j.LastRunAt = lastRun.Time()
 	return &j, nil
 }

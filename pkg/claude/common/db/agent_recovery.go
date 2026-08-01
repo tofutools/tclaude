@@ -70,21 +70,20 @@ type AgentRecovery struct {
 	UpdatedAt                                   time.Time
 }
 
-func recoveryTime(t time.Time) string {
+func recoveryTime(t time.Time) any {
 	if t.IsZero() {
-		return ""
+		return nil
 	}
-	return t.UTC().Format(time.RFC3339Nano)
+	return dbTime(t.UTC())
 }
 
-func parseRecoveryTime(raw string) time.Time {
-	t, _ := time.Parse(time.RFC3339Nano, raw)
-	return t
+func parseRecoveryTime(raw dbTimestamp) time.Time {
+	return raw.Time()
 }
 
 func scanAgentRecovery(s interface{ Scan(...any) error }) (*AgentRecovery, error) {
 	var r AgentRecovery
-	var next, lease, started, exited, recovered, healthy, updated string
+	var next, lease, started, exited, recovered, healthy, updated dbTimestamp
 	var code sql.NullInt64
 	var crashNotified, backoffNotified int
 	err := s.Scan(&r.AgentID, &r.ConvID, &r.PredecessorSessionID, &r.PredecessorGeneration,
@@ -143,8 +142,8 @@ func DueAgentRecoveries(now time.Time) ([]AgentRecovery, error) {
 		return nil, err
 	}
 	rows, err := d.Query(agentRecoverySelect+` WHERE
-		(status IN (?, ?) AND next_attempt_at <> '' AND next_attempt_at <= ?)
-		OR (status = ? AND lease_expires_at <> '' AND lease_expires_at <= ?)
+		(status IN (?, ?) AND next_attempt_at IS NOT NULL AND next_attempt_at <= ?)
+		OR (status = ? AND lease_expires_at IS NOT NULL AND lease_expires_at <= ?)
 		ORDER BY next_attempt_at, agent_id`, AgentRecoveryStatusCrashed,
 		AgentRecoveryStatusBackoff, recoveryTime(now), AgentRecoveryStatusRestarting, recoveryTime(now))
 	if err != nil {
@@ -224,7 +223,7 @@ func ClaimAgentRecovery(agentID, generation string, now time.Time) (*AgentRecove
 	res, err := d.Exec(`UPDATE agent_recovery SET status = ?, lease_token = ?,
 		lease_expires_at = ?, attempt_started_at = ?, updated_at = ?
 		WHERE agent_id = ? AND predecessor_generation = ?
-		AND status IN (?, ?) AND next_attempt_at <> '' AND next_attempt_at <= ?`,
+		AND status IN (?, ?) AND next_attempt_at IS NOT NULL AND next_attempt_at <= ?`,
 		AgentRecoveryStatusRestarting, token, recoveryTime(now.Add(AgentRecoveryLaunchLease)),
 		recoveryTime(now), recoveryTime(now), agentID, generation,
 		AgentRecoveryStatusCrashed, AgentRecoveryStatusBackoff, recoveryTime(now))
@@ -254,8 +253,8 @@ func recoveryFailureUpdate(r AgentRecovery, now time.Time, reason string) (bool,
 	}
 	res, err := d.Exec(`UPDATE agent_recovery SET status = ?, reason_code = ?,
 		consecutive_crashes = ?, backoff_step = ?, next_attempt_at = ?,
-		backoff_seconds = ?, lease_token = '', lease_expires_at = '',
-		attempt_started_at = '', updated_at = ? WHERE agent_id = ?
+		backoff_seconds = ?, lease_token = '', lease_expires_at = NULL,
+		attempt_started_at = NULL, updated_at = ? WHERE agent_id = ?
 		AND predecessor_generation = ? AND status = ? AND lease_token = ?`,
 		AgentRecoveryStatusBackoff, reason, n, n-1, recoveryTime(now.Add(delay)),
 		int(delay/time.Second), recoveryTime(now), r.AgentID, r.PredecessorGeneration,
@@ -277,7 +276,7 @@ func SuppressAgentRecovery(r AgentRecovery, now time.Time, reason string) (bool,
 		return false, err
 	}
 	res, err := d.Exec(`UPDATE agent_recovery SET status = ?, reason_code = ?,
-		next_attempt_at = '', lease_token = '', lease_expires_at = '', updated_at = ?
+		next_attempt_at = NULL, lease_token = '', lease_expires_at = NULL, updated_at = ?
 		WHERE agent_id = ? AND predecessor_generation = ? AND status = ?
 		AND lease_token = ?`, AgentRecoveryStatusSuppressed, boundedRecoveryReason(reason),
 		recoveryTime(now), r.AgentID, r.PredecessorGeneration,
@@ -307,7 +306,7 @@ func ConfirmAgentRecovery(r AgentRecovery, successorSession, successorGeneration
 		return false, err
 	}
 	res, err := d.Exec(`UPDATE agent_recovery SET status = ?, reason_code = '',
-		next_attempt_at = '', lease_token = '', lease_expires_at = '',
+		next_attempt_at = NULL, lease_token = '', lease_expires_at = NULL,
 		successor_session_id = ?, successor_generation = ?, recovered_at = ?,
 		healthy_since = ?, updated_at = ? WHERE agent_id = ?
 		AND predecessor_generation = ? AND status = ?`, AgentRecoveryStatusRecovered,
@@ -329,7 +328,7 @@ func CancelAgentRecoveryForConv(convID, reason string, now time.Time) (bool, err
 		return false, err
 	}
 	res, err := d.Exec(`UPDATE agent_recovery SET status = ?, reason_code = ?,
-		next_attempt_at = '', lease_token = '', lease_expires_at = '', updated_at = ?
+		next_attempt_at = NULL, lease_token = '', lease_expires_at = NULL, updated_at = ?
 		WHERE agent_id = (`+agentForConvExpr+`) AND status IN (?, ?, ?)`,
 		AgentRecoveryStatusCancelled, boundedRecoveryReason(reason), recoveryTime(now), convID,
 		AgentRecoveryStatusCrashed, AgentRecoveryStatusBackoff, AgentRecoveryStatusRestarting)
@@ -348,7 +347,7 @@ func CancelAgentRecoveryGeneration(r AgentRecovery, reason string, now time.Time
 		return false, err
 	}
 	res, err := d.Exec(`UPDATE agent_recovery SET status = ?, reason_code = ?,
-		next_attempt_at = '', lease_token = '', lease_expires_at = '', updated_at = ?
+		next_attempt_at = NULL, lease_token = '', lease_expires_at = NULL, updated_at = ?
 		WHERE agent_id = ? AND predecessor_generation = ? AND status IN (?, ?, ?)`,
 		AgentRecoveryStatusCancelled, boundedRecoveryReason(reason), recoveryTime(now),
 		r.AgentID, r.PredecessorGeneration, AgentRecoveryStatusCrashed,
@@ -374,9 +373,9 @@ func BeginManualAgentRecovery(convID string, now time.Time) (*AgentRecovery, err
 		return nil, err
 	}
 	res, err := d.Exec(`UPDATE agent_recovery SET status = ?, reason_code = 'manual_resume',
-		next_attempt_at = '', lease_token = ?, lease_expires_at = ?,
+		next_attempt_at = NULL, lease_token = ?, lease_expires_at = ?,
 		attempt_started_at = ?, successor_session_id = '', successor_generation = '',
-		recovered_at = '', healthy_since = '', updated_at = ? WHERE agent_id = ?
+		recovered_at = NULL, healthy_since = NULL, updated_at = ? WHERE agent_id = ?
 		AND predecessor_generation = ? AND status IN (?, ?, ?, ?, ?, ?)`,
 		AgentRecoveryStatusRestarting, token, recoveryTime(now.Add(AgentRecoveryLaunchLease)),
 		recoveryTime(now), recoveryTime(now), r.AgentID, r.PredecessorGeneration,
@@ -408,7 +407,7 @@ func AgentRecoveryClaimCurrent(r AgentRecovery) (bool, error) {
 		SELECT 1 FROM agent_recovery ar JOIN agents a ON a.agent_id = ar.agent_id
 		WHERE ar.agent_id = ? AND ar.predecessor_generation = ?
 		AND ar.status = ? AND ar.lease_token = ?
-		AND a.retired_at = '' AND a.current_conv_id = ar.conv_id
+		AND a.retired_at IS NULL AND a.current_conv_id = ar.conv_id
 	)`, r.AgentID, r.PredecessorGeneration, AgentRecoveryStatusRestarting, r.LeaseToken).Scan(&ok)
 	return ok == 1, err
 }
@@ -422,7 +421,7 @@ func ResetHealthyAgentRecovery(r AgentRecovery, now time.Time) (bool, error) {
 	res, err := d.Exec(`DELETE FROM agent_recovery WHERE agent_id = ?
 		AND predecessor_generation = ? AND successor_session_id = ?
 		AND successor_generation = ? AND status = ?
-		AND healthy_since <> '' AND healthy_since <= ?`, r.AgentID,
+		AND healthy_since IS NOT NULL AND healthy_since <= ?`, r.AgentID,
 		r.PredecessorGeneration, r.SuccessorSessionID, r.SuccessorGeneration,
 		AgentRecoveryStatusRecovered, cutoff)
 	if err != nil {
@@ -451,7 +450,7 @@ func boundedRecoveryReason(reason string) string {
 func recoveryAuditDetail(r AgentRecovery, reason string, now time.Time) string {
 	next := "unavailable"
 	if !r.NextAttemptAt.IsZero() {
-		next = recoveryTime(r.NextAttemptAt)
+		next = r.NextAttemptAt.UTC().Format(time.RFC3339Nano)
 	}
 	elapsedBackoff, liveConfirmation := 0, 0
 	if !r.NextAttemptAt.IsZero() && r.BackoffSeconds > 0 {
@@ -519,14 +518,15 @@ func reconcileAgentRecoveryCandidateTx(tx *sql.Tx, meta exitSessionMeta, e Audit
 	if strings.TrimSpace(meta.ResumeProvenance) == "" {
 		reason = "resume_provenance_missing"
 	}
-	var currentConv, retiredAt string
+	var currentConv string
+	var retiredAt dbTimestamp
 	if err := tx.QueryRow(`SELECT current_conv_id, retired_at FROM agents WHERE agent_id = ?`, meta.AgentID).Scan(&currentConv, &retiredAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil
 		}
 		return err
 	}
-	if retiredAt != "" || currentConv != meta.ConvID {
+	if retiredAt.valid || currentConv != meta.ConvID {
 		return nil
 	}
 	var latestSession string
@@ -538,7 +538,8 @@ func reconcileAgentRecoveryCandidateTx(tx *sql.Tx, meta exitSessionMeta, e Audit
 	}
 
 	var oldCount int
-	var oldStatus, oldGeneration, healthyRaw string
+	var oldStatus, oldGeneration string
+	var healthyRaw dbTimestamp
 	err := tx.QueryRow(`SELECT consecutive_crashes, status, predecessor_generation, healthy_since
 		FROM agent_recovery WHERE agent_id = ?`, meta.AgentID).Scan(&oldCount, &oldStatus, &oldGeneration, &healthyRaw)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -584,10 +585,10 @@ func reconcileAgentRecoveryCandidateTx(tx *sql.Tx, meta exitSessionMeta, e Audit
 		exit_event_id=excluded.exit_event_id, status=excluded.status,
 		reason_code=excluded.reason_code, consecutive_crashes=excluded.consecutive_crashes,
 		backoff_step=excluded.backoff_step, next_attempt_at=excluded.next_attempt_at,
-		backoff_seconds=excluded.backoff_seconds, lease_token='', lease_expires_at='',
-		attempt_started_at='', successor_session_id='', successor_generation='',
+		backoff_seconds=excluded.backoff_seconds, lease_token='', lease_expires_at = NULL,
+		attempt_started_at = NULL, successor_session_id='', successor_generation='',
 		last_exit_code=excluded.last_exit_code, last_exit_signal=excluded.last_exit_signal,
-		last_exit_at=excluded.last_exit_at, recovered_at='', healthy_since='',
+		last_exit_at=excluded.last_exit_at, recovered_at = NULL, healthy_since = NULL,
 		updated_at=excluded.updated_at`,
 		meta.AgentID, meta.ConvID, e.SessionID, meta.CallbackGeneration, e.EventID,
 		status, reason, count, count-1, recoveryTime(next), int(delay/time.Second),

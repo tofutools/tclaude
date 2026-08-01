@@ -109,7 +109,7 @@ func InitGroupProcess(groupID int64, phases []ProcessPhase, actor string) error 
 	}
 	first := phases[0].Name
 	now := time.Now()
-	nowStr := now.Format(time.RFC3339Nano)
+	nowStr := dbTime(now)
 	tx, err := d.Begin()
 	if err != nil {
 		return err
@@ -146,7 +146,8 @@ func GetGroupProcessState(groupID int64) (*GroupProcessState, error) {
 		return nil, err
 	}
 	var st GroupProcessState
-	var proc, started string
+	var proc string
+	var started dbTimestamp
 	err = d.QueryRow(
 		`SELECT group_id, process, current_phase, phase_started_at
 		 FROM group_process_state WHERE group_id = ?`, groupID).
@@ -158,7 +159,7 @@ func GetGroupProcessState(groupID int64) (*GroupProcessState, error) {
 		return nil, err
 	}
 	st.Process = processFromJSON(proc)
-	st.PhaseStartedAt = parseTimeOrZero(started)
+	st.PhaseStartedAt = started.Time()
 	return &st, nil
 }
 
@@ -189,7 +190,7 @@ func AdvanceGroupProcess(groupID int64, toPhase, actor string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	now := time.Now().Format(time.RFC3339Nano)
+	now := dbTime(time.Now())
 	if _, err := tx.Exec(
 		`UPDATE group_process_state SET current_phase = ?, phase_started_at = ? WHERE group_id = ?`,
 		toPhase, now, groupID); err != nil {
@@ -226,11 +227,11 @@ func ListGroupProcessTransitions(groupID int64) ([]GroupProcessTransition, error
 	out := []GroupProcessTransition{}
 	for rows.Next() {
 		var tr GroupProcessTransition
-		var at string
+		var at dbTimestamp
 		if err := rows.Scan(&tr.ID, &tr.GroupID, &tr.FromPhase, &tr.ToPhase, &at, &tr.Actor); err != nil {
 			return nil, err
 		}
-		tr.At = parseTimeOrZero(at)
+		tr.At = at.Time()
 		out = append(out, tr)
 	}
 	return out, rows.Err()

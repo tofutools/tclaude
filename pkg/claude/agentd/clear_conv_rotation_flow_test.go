@@ -62,7 +62,7 @@ func setupClearedAgent(t *testing.T, f *testharness.Flow) *db.AgentGroup {
 	require.NoError(t, err)
 	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
 		ConvID: clearAgentConv, FullPath: cc.JsonlPath, FileSize: info.Size(),
-		FileMtime: info.ModTime().Unix(), CustomTitle: clearAgentTitle, IndexedAt: time.Now(),
+		FileMtime: info.ModTime().UnixNano(), CustomTitle: clearAgentTitle, IndexedAt: time.Now(),
 	}))
 	f.HaveMember(clearGroup, clearAgentConv)
 	f.HaveMember(clearGroup, clearPeerConv)

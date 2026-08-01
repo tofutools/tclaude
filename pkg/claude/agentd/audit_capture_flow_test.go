@@ -108,7 +108,7 @@ func TestAudit_ForceStopCorrelatesSystemExitObservation(t *testing.T) {
 	d, err := db.Open()
 	require.NoError(t, err)
 	_, err = d.Exec(`UPDATE sessions SET created_at = ? WHERE conv_id = ?`,
-		time.Now().Add(-2*time.Minute).UTC().Format(time.RFC3339Nano), worker.ConvID)
+		time.Now().Add(-2*time.Minute).UTC().UnixNano(), worker.ConvID)
 	require.NoError(t, err)
 	require.Equal(t, 1, agentd.RunReaperTickForTest(time.Now()))
 

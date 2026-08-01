@@ -221,7 +221,7 @@ func TestCleanupOldExited(t *testing.T) {
 	_, err := db.Exec(`INSERT INTO sessions
 		(id, tmux_session, pid, cwd, conv_id, status, status_detail, auto_registered, created_at, updated_at)
 		VALUES (?, '', 0, '', '', 'exited', '', 0, ?, ?)`,
-		old.ID, old.CreatedAt.Format(time.RFC3339Nano), old.UpdatedAt.Format(time.RFC3339Nano))
+		old.ID, dbTime(old.CreatedAt), dbTime(old.UpdatedAt))
 	require.NoError(t, err, "insert old session")
 
 	// Create a fresh "exited" session

@@ -94,8 +94,8 @@ func TestEffectiveSandboxSnapshotRoundTripsAgentAndPendingSpawn(t *testing.T) {
 	require.NotNil(t, pending.EffectiveSandbox)
 	assert.True(t, reflect.DeepEqual(snapshot, *pending.EffectiveSandbox))
 
-	mustExec(t, d, `INSERT INTO agents (agent_id, current_conv_id, created_at) VALUES ('agt_snap', 'conv-snap', 'now')`)
-	mustExec(t, d, `INSERT INTO agent_conversations (conv_id, agent_id, linked_at) VALUES ('conv-snap', 'agt_snap', 'now')`)
+	mustExec(t, d, `INSERT INTO agents (agent_id, current_conv_id, created_at) VALUES ('agt_snap', 'conv-snap', 1767225600000000000)`)
+	mustExec(t, d, `INSERT INTO agent_conversations (conv_id, agent_id, linked_at) VALUES ('conv-snap', 'agt_snap', 1767225600000000000)`)
 	require.NoError(t, SetAgentEffectiveSandboxConfig("agt_snap", &snapshot))
 	got, err := AgentEffectiveSandboxConfigForConv("conv-snap")
 	require.NoError(t, err)

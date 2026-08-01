@@ -286,7 +286,7 @@ func TestAgentRecovery_HealthyRuntimeResetsLaterCrashToInitialDelay(t *testing.T
 	require.NoError(t, err)
 	_, err = database.Exec(`UPDATE agent_recovery SET status=?, consecutive_crashes=7,
 		healthy_since=? WHERE agent_id=?`, AgentRecoveryStatusRecovered,
-		now.Add(-AgentRecoveryHealthyReset-time.Second).Format(time.RFC3339Nano), agentID)
+		dbTime(now.Add(-AgentRecoveryHealthyReset-time.Second)), agentID)
 	require.NoError(t, err)
 	beforeReset, err := AgentRecoveryForAgent(agentID)
 	require.NoError(t, err)

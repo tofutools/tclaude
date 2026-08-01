@@ -61,16 +61,16 @@ func TestMigrateV76toV77_BackfillsAgentRefs(t *testing.T) {
 
 	// audit_log: actor is a predecessor generation of actorA; target is actorB.
 	mustExec(t, d, `INSERT INTO audit_log (at, actor_conv, target_conv, verb)
-		VALUES ('2020-01-01T00:00:00Z', 'g0', 'convB', 'spawn')`)
+		VALUES (1577836800000000000, 'g0', 'convB', 'spawn')`)
 	// audit_log: a target that is not an actor stays ''.
 	mustExec(t, d, `INSERT INTO audit_log (at, actor_conv, target_conv, verb)
-		VALUES ('2020-01-02T00:00:00Z', 'convB', 'plain', 'message')`)
+		VALUES (1577923200000000000, 'convB', 'plain', 'message')`)
 	// sessions: a session running the head generation g1.
 	mustExec(t, d, `INSERT INTO sessions (id, conv_id, created_at, updated_at)
-		VALUES ('s1', 'g1', '2020-01-01T00:00:00Z', '2020-01-01T00:00:00Z')`)
+		VALUES ('s1', 'g1', 1577836800000000000, 1577836800000000000)`)
 	// agent_conv_succession: g0 → g1, both actorA; resolves via either conv.
 	mustExec(t, d, `INSERT INTO agent_conv_succession (old_conv_id, new_conv_id, succeeded_at)
-		VALUES ('g0', 'g1', '2020-01-01T00:00:00Z')`)
+		VALUES ('g0', 'g1', 1577836800000000000)`)
 
 	require.NoError(t, migrateV76toV77(d), "v76→v77 backfill")
 

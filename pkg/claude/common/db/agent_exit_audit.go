@@ -109,16 +109,16 @@ type exitSessionMeta struct {
 	ConvID             string
 	AgentID            string
 	Status             string
-	CreatedAt          string
+	CreatedAt          dbTimestamp
 	ExitReason         string
 	Intent             string
 	IntentEventID      string
 	IntentGeneration   string
-	IntentAt           sql.NullString
+	IntentAt           dbTimestamp
 	CallbackGeneration string
 	CallbackTokenHash  string
 	CallbackPaneID     string
-	CallbackUsedAt     sql.NullString
+	CallbackUsedAt     dbTimestamp
 	LaunchGateState    string
 	Harness            string
 	ResumeProvenance   string
@@ -336,7 +336,7 @@ func SetSessionExitIntent(sessionID, action, relatedEventID string, at time.Time
 	err = d.QueryRow(`UPDATE sessions SET exit_intent = ?,
 		exit_intent_event_id = ?, exit_intent_generation = exit_callback_generation,
 		exit_intent_at = ? WHERE id = ? RETURNING exit_callback_generation`,
-		action, relatedEventID, at.UTC().Format(time.RFC3339Nano), sessionID).Scan(&generation)
+		action, relatedEventID, dbTime(at.UTC()), sessionID).Scan(&generation)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return SessionExitIntentRef{}, fmt.Errorf("set exit intent: session not found")
@@ -366,7 +366,7 @@ func SetSessionExitIntentIfTarget(sessionID, tmuxSession, generation, action, re
 	var got string
 	err = d.QueryRow(`UPDATE sessions SET exit_intent = ?, exit_intent_event_id = ?, exit_intent_generation = exit_callback_generation, exit_intent_at = ?
 		WHERE id = ? AND tmux_session = ? AND exit_callback_generation = ? RETURNING exit_callback_generation`,
-		action, relatedEventID, at.UTC().Format(time.RFC3339Nano), sessionID, tmuxSession, generation).Scan(&got)
+		action, relatedEventID, dbTime(at.UTC()), sessionID, tmuxSession, generation).Scan(&got)
 	if err != nil {
 		return SessionExitIntentRef{}, err
 	}
@@ -561,7 +561,7 @@ func recordAgentExitObservationTx(tx *sql.Tx, o AgentExitObservation, auth *Exit
 
 	launchIdentity := meta.CallbackGeneration
 	if launchIdentity == "" {
-		launchIdentity = o.SessionID + "\x00" + meta.CreatedAt + "\x00" + meta.TmuxSession
+		launchIdentity = o.SessionID + "\x00" + meta.CreatedAt.RFC3339Nano() + "\x00" + meta.TmuxSession
 	}
 	dedupKey, eventID := exitEventIdentity(launchIdentity)
 	existing, err := loadExitAuditByDedup(tx, dedupKey)
@@ -688,8 +688,8 @@ func markSessionExitedAndRecordObservationOnce(
 			exit_reason = COALESCE(exit_reason, NULLIF(?, ''))
 		WHERE id = ? AND status = ? AND updated_at = ?
 			AND exit_callback_generation = ?`,
-		time.Now().Format(time.RFC3339Nano), fallbackExitReason,
-		id, observedStatus, observedUpdatedAt.Format(time.RFC3339Nano), o.ExpectedGeneration)
+		dbTime(time.Now()), fallbackExitReason,
+		id, observedStatus, dbTime(observedUpdatedAt), o.ExpectedGeneration)
 	if err != nil {
 		return false, AgentExitRecordResult{}, err
 	}
@@ -751,7 +751,7 @@ func recordSessionEndExitObservationOnce(o AgentExitObservation) (bool, AgentExi
 		updated_at = ?, subagent_count = 0, subagents_json = '', bg_shells_json = '', monitors_json = '',
 		exit_reason = CASE WHEN ? <> '' THEN ? ELSE exit_reason END
 		WHERE id = ? AND exit_callback_generation = ?`,
-		time.Now().Format(time.RFC3339Nano), o.Reason, o.Reason,
+		dbTime(time.Now()), o.Reason, o.Reason,
 		o.SessionID, o.ExpectedGeneration)
 	if err != nil {
 		return false, AgentExitRecordResult{}, err
@@ -809,15 +809,11 @@ func loadExitSessionMeta(tx *sql.Tx, sessionID string) (exitSessionMeta, error) 
 	return m, nil
 }
 
-func recentExitIntent(at sql.NullString, now time.Time) bool {
-	if !at.Valid || at.String == "" {
+func recentExitIntent(at dbTimestamp, now time.Time) bool {
+	if !at.valid {
 		return false
 	}
-	parsed, err := time.Parse(time.RFC3339Nano, at.String)
-	if err != nil {
-		return false
-	}
-	age := now.Sub(parsed)
+	age := now.Sub(at.Time())
 	return age >= 0 && age <= agentExitIntentMaxAge
 }
 
@@ -825,13 +821,13 @@ func consumeExitCallback(tx *sql.Tx, sessionID string, m exitSessionMeta, auth E
 	if !isLowerHex(auth.Generation, 32) || !isLowerHex(auth.TokenHash, 64) || !validPaneID(auth.PaneID) {
 		return fmt.Errorf("%w: invalid proof", ErrExitCallbackRejected)
 	}
-	if m.CallbackUsedAt.Valid || m.CallbackGeneration == "" || m.CallbackTokenHash == "" || m.CallbackPaneID == "" ||
+	if m.CallbackUsedAt.valid || m.CallbackGeneration == "" || m.CallbackTokenHash == "" || m.CallbackPaneID == "" ||
 		subtle.ConstantTimeCompare([]byte(auth.Generation), []byte(m.CallbackGeneration)) != 1 ||
 		subtle.ConstantTimeCompare([]byte(auth.TokenHash), []byte(m.CallbackTokenHash)) != 1 ||
 		subtle.ConstantTimeCompare([]byte(auth.PaneID), []byte(m.CallbackPaneID)) != 1 {
 		return fmt.Errorf("%w: stale, replayed, or mismatched proof", ErrExitCallbackRejected)
 	}
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := dbTime(time.Now().UTC())
 	res, err := tx.Exec(`UPDATE sessions SET exit_callback_used_at = ?
 		WHERE id = ? AND exit_callback_generation = ?
 		AND exit_callback_token_hash = ? AND exit_callback_pane_id = ?

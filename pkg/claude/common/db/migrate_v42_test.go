@@ -34,7 +34,7 @@ func TestMigrateV41toV42_AddsGroupTemplates(t *testing.T) {
 	// A template + an agent insert cleanly post-migration.
 	res, err := d.Exec(`
 		INSERT INTO group_templates (name, descr, default_context, created_at, updated_at)
-		VALUES ('feature-team', 'a team', 'shared context', '2026-05-16T00:00:00Z', '2026-05-16T00:00:00Z')`)
+		VALUES ('feature-team', 'a team', 'shared context', 1778889600000000000, 1778889600000000000)`)
 	require.NoError(t, err, "insert template")
 	tid, err := res.LastInsertId()
 	require.NoError(t, err)
@@ -49,7 +49,7 @@ func TestMigrateV41toV42_AddsGroupTemplates(t *testing.T) {
 	// The UNIQUE constraint on name rejects a duplicate template.
 	_, err = d.Exec(`
 		INSERT INTO group_templates (name, descr, default_context, created_at, updated_at)
-		VALUES ('feature-team', '', '', '2026-05-16T00:00:00Z', '2026-05-16T00:00:00Z')`)
+		VALUES ('feature-team', '', '', 1778889600000000000, 1778889600000000000)`)
 	require.Error(t, err, "duplicate template name rejected by UNIQUE constraint")
 }
 
@@ -68,7 +68,7 @@ func TestMigrateV41toV42_FreshSchema(t *testing.T) {
 
 	res, err := d.Exec(`
 		INSERT INTO group_templates (name, descr, default_context, created_at, updated_at)
-		VALUES ('t', '', '', '2026-05-16T00:00:00Z', '2026-05-16T00:00:00Z')`)
+		VALUES ('t', '', '', 1778889600000000000, 1778889600000000000)`)
 	require.NoError(t, err, "insert template")
 	tid, err := res.LastInsertId()
 	require.NoError(t, err)

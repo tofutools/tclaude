@@ -2,6 +2,7 @@ package db
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -127,10 +128,11 @@ func TestGroupExport_GroupPermissionsRoundTrip(t *testing.T) {
 	assert.Equal(t, []string{"groups.spawn", "human.notify"}, got)
 	d, err := Open()
 	require.NoError(t, err)
-	var grantedAt, grantedBy string
+	var grantedAt dbTimestamp
+	var grantedBy string
 	require.NoError(t, d.QueryRow(`SELECT granted_at, granted_by FROM agent_group_permissions WHERE group_id = ? AND slug = ?`,
 		dst.ID, "groups.spawn").Scan(&grantedAt, &grantedBy))
-	assert.Equal(t, exp.Group.Permissions[0].GrantedAt, grantedAt, "timestamp preserved")
+	assert.Equal(t, exp.Group.Permissions[0].GrantedAt, grantedAt.Time().Format(time.RFC3339Nano), "timestamp preserved")
 	assert.Equal(t, exp.Group.Permissions[0].GrantedBy, grantedBy, "attribution preserved")
 }
 
@@ -226,7 +228,7 @@ func TestGroupExport_GroupTargetCronJob_RoundTrips(t *testing.T) {
 }
 
 // actorMeta is the raw agents-table metadata the import's enrollment replay
-// touches, read as stored strings (no time-parse coupling).
+// touches, rendered as their compatibility strings at this test boundary.
 type actorMeta struct {
 	createdAt, createdVia, retiredAt, retiredBy, retireReason, pendingName string
 }
@@ -236,10 +238,15 @@ func readActorMeta(t *testing.T, agentID string) actorMeta {
 	d, err := Open()
 	require.NoError(t, err, "open db")
 	var m actorMeta
+	var createdAt, retiredAt dbTimestamp
 	require.NoError(t, d.QueryRow(`SELECT created_at, created_via, retired_at,
 		retired_by, retire_reason, pending_name FROM agents WHERE agent_id = ?`, agentID).Scan(
-		&m.createdAt, &m.createdVia, &m.retiredAt, &m.retiredBy, &m.retireReason, &m.pendingName),
+		&createdAt, &m.createdVia, &retiredAt, &m.retiredBy, &m.retireReason, &m.pendingName),
 		"read actor metadata")
+	m.createdAt = createdAt.Time().Format(time.RFC3339Nano)
+	if retiredAt.valid {
+		m.retiredAt = retiredAt.Time().Format(time.RFC3339Nano)
+	}
 	return m
 }
 
@@ -256,8 +263,8 @@ func TestImportGroup_PreexistingRetiredActorCollisionRollsBack(t *testing.T) {
 	require.NoError(t, err, "seed local actor")
 	d, err := Open()
 	require.NoError(t, err, "open db")
-	_, err = d.Exec(`UPDATE agents SET created_at = '2020-01-01T00:00:00Z',
-		retired_at = '2021-01-01T00:00:00Z', retired_by = 'local-human',
+	_, err = d.Exec(`UPDATE agents SET created_at = 1577836800000000000,
+		retired_at = 1609459200000000000, retired_by = 'local-human',
 		retire_reason = 'local-reason', pending_name = 'local-pending'
 		WHERE agent_id = ?`, localAgent)
 	require.NoError(t, err, "stamp local metadata")

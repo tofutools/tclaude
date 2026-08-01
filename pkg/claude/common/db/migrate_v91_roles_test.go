@@ -38,7 +38,7 @@ func TestMigrateV90toV91_AddsRolesAndRoleRef(t *testing.T) {
 
 	// A pre-existing template + agent (without role_ref) must survive the ALTER.
 	mustExec(t, d, `INSERT INTO group_templates (name, descr, default_context, created_at, updated_at)
-		VALUES ('legacy', 'd', '', '2026-07-03T00:00:00Z', '2026-07-03T00:00:00Z')`)
+		VALUES ('legacy', 'd', '', 1783036800000000000, 1783036800000000000)`)
 	var tid int64
 	require.NoError(t, d.QueryRow(`SELECT id FROM group_templates WHERE name = 'legacy'`).Scan(&tid))
 	mustExec(t, d, `INSERT INTO group_template_agents (template_id, ordinal, name)

@@ -58,7 +58,7 @@ func TestAgentTags_CascadeOnAgentDelete(t *testing.T) {
 	require.NoError(t, err, "Open")
 
 	mustExec(t, d, `INSERT INTO agents (agent_id, current_conv_id, created_at)
-		VALUES ('agt_tagged', 'conv-tagged', '2026-07-04T00:00:00Z')`)
+		VALUES ('agt_tagged', 'conv-tagged', 1783123200000000000)`)
 	require.NoError(t, AddAgentTags("agt_tagged", "tf:squad", "priority"))
 
 	tags, err := ListAgentTags("agt_tagged")

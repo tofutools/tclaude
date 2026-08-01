@@ -31,7 +31,7 @@ func TestMigrateV86toV87_AddsColumn(t *testing.T) {
 		(id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count,
 		 auto_registered, created_at, updated_at)
 		VALUES ('legacy-sess', 'tmux-legacy', 1234, '/tmp', 'conv-legacy', 'idle', '', 2,
-		 0, '2026-07-02T00:00:00Z', '2026-07-02T00:00:00Z')`)
+		 0, 1782950400000000000, 1782950400000000000)`)
 
 	require.NoError(t, migrateV86toV87(d), "v86→v87")
 

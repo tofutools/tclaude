@@ -40,7 +40,7 @@ func TestDBCache_FreshEntryNotRescanned(t *testing.T) {
 		ConvID:      sessionID,
 		ProjectDir:  dir,
 		FullPath:    jsonlPath,
-		FileMtime:   info.ModTime().Unix(),
+		FileMtime:   info.ModTime().UnixNano(),
 		FirstPrompt: "cached prompt",
 		Created:     "2026-03-01T10:00:00Z",
 		IndexedAt:   info.ModTime(),
@@ -108,7 +108,7 @@ func TestDBCache_ForceRescanIgnoresMtime(t *testing.T) {
 		ConvID:      sessionID,
 		ProjectDir:  dir,
 		FullPath:    jsonlPath,
-		FileMtime:   info.ModTime().Unix(),
+		FileMtime:   info.ModTime().UnixNano(),
 		FirstPrompt: "old",
 	}))
 

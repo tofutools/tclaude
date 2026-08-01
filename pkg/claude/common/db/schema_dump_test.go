@@ -87,6 +87,56 @@ func TestSchemaStructured(t *testing.T) {
 	require.Equal(t, "agent", ident["to_agent"], "to_agent -> agent")
 }
 
+func TestSchemaTimestampColumnsAreInteger(t *testing.T) {
+	d := freshMigratedDB(t)
+	info, err := SchemaStructured(d)
+	require.NoError(t, err)
+	strictTables := map[string]bool{}
+	tableRows, err := d.Query(`SELECT name, strict FROM pragma_table_list WHERE type = 'table'`)
+	require.NoError(t, err)
+	for tableRows.Next() {
+		var name string
+		var strict bool
+		require.NoError(t, tableRows.Scan(&name, &strict))
+		strictTables[name] = strict
+	}
+	require.NoError(t, tableRows.Close())
+	require.NoError(t, tableRows.Err())
+
+	var timestampColumns []string
+	var timestampNames []string
+	seenNames := map[string]bool{}
+	for _, table := range info.Tables {
+		for _, column := range table.Columns {
+			if !isTimestampColumn(column.Name) {
+				continue
+			}
+			require.True(t, strictTables[table.Name], "%s timestamp table must reject TEXT storage", table.Name)
+			qualified := table.Name + "." + column.Name
+			timestampColumns = append(timestampColumns, qualified)
+			if !seenNames[column.Name] {
+				seenNames[column.Name] = true
+				timestampNames = append(timestampNames, column.Name)
+			}
+			require.Equal(t, "INTEGER", column.Type, qualified)
+		}
+	}
+	require.NotEmpty(t, timestampColumns)
+	t.Logf("timestamp columns (%d): %v", len(timestampColumns), timestampColumns)
+
+	rows, err := d.Query(`SELECT type, name, sql FROM sqlite_master
+		WHERE type IN ('table', 'index', 'trigger', 'view') AND sql IS NOT NULL`)
+	require.NoError(t, err)
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var objectType, name, statement string
+		require.NoError(t, rows.Scan(&objectType, &name, &statement))
+		require.Equalf(t, statement, rewriteTimestampSentinelPredicates(statement, timestampNames),
+			"%s %s retains an empty-string timestamp predicate", objectType, name)
+	}
+	require.NoError(t, rows.Err())
+}
+
 // TestClassifyIdentityColumn pins the conv/agent column-name classifier.
 func TestClassifyIdentityColumn(t *testing.T) {
 	cases := []struct {

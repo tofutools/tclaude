@@ -45,7 +45,7 @@ func TestMigrateV40toV41_AddsTargetKind(t *testing.T) {
 			(name, owner_conv, target_conv, group_id, interval_seconds,
 			 subject, body, enabled, created_at)
 			VALUES ('legacy', 'owner-conv', 'target-conv', 0, 600,
-			        'subj', 'body', 1, '2026-05-16T00:00:00Z');
+			        'subj', 'body', 1, 1778889600000000000);
 	`)
 	require.NoError(t, err, "seed v40 schema")
 
@@ -71,7 +71,7 @@ func TestMigrateV40toV41_AddsTargetKind(t *testing.T) {
 			(name, owner_conv, target_kind, target_conv, group_id,
 			 interval_seconds, body, enabled, created_at)
 			VALUES ('multicast', 'owner-conv', 'group', '', 7, 600,
-			        'ping', 1, '2026-05-16T00:00:00Z')`)
+			        'ping', 1, 1778889600000000000)`)
 	require.NoError(t, err, "insert group-kind job")
 
 	// The CHECK constraint rejects a target_kind outside {conv, group},
@@ -80,7 +80,7 @@ func TestMigrateV40toV41_AddsTargetKind(t *testing.T) {
 		INSERT INTO agent_cron_jobs
 			(name, owner_conv, target_kind, target_conv, group_id,
 			 interval_seconds, body, enabled, created_at)
-			VALUES ('bad', 'o', 'banana', '', 0, 600, 'x', 1, '2026-05-16T00:00:00Z')`)
+			VALUES ('bad', 'o', 'banana', '', 0, 600, 'x', 1, 1778889600000000000)`)
 	require.Error(t, err, "target_kind CHECK rejects an unknown value")
 
 	var n int
@@ -107,7 +107,7 @@ func TestMigrateV40toV41_FreshSchemaHasTargetKind(t *testing.T) {
 	_, err = d.Exec(`
 		INSERT INTO agent_cron_jobs
 			(name, owner_agent, target_agent, interval_seconds, body, enabled, created_at)
-			VALUES ('c', 'o', 't', 600, 'b', 1, '2026-05-16T00:00:00Z')`)
+			VALUES ('c', 'o', 't', 600, 'b', 1, 1778889600000000000)`)
 	require.NoError(t, err, "insert without target_kind")
 	var kind string
 	require.NoError(t, d.QueryRow(

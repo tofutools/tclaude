@@ -38,7 +38,7 @@ func SetDashboardPref(key, value string) error {
 	}
 	_, err = db.Exec(
 		`INSERT OR REPLACE INTO dashboard_prefs (key, value, updated_at) VALUES (?, ?, ?)`,
-		key, value, time.Now().Format(time.RFC3339Nano))
+		key, value, dbTime(time.Now()))
 	return err
 }
 
@@ -111,7 +111,7 @@ func SetDashboardProfileRef(nameKey, idKey, name string, id int64) error {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	now := time.Now().Format(time.RFC3339Nano)
+	now := dbTime(time.Now())
 	if _, err := tx.Exec(`INSERT OR REPLACE INTO dashboard_prefs (key, value, updated_at) VALUES (?, ?, ?)`, nameKey, name, now); err != nil {
 		return err
 	}

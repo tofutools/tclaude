@@ -42,7 +42,7 @@ func TestMigrateV88toV89_AddsColumns(t *testing.T) {
 	// ALTER and read the launch fields back as the defaults.
 	mustExec(t, d, `INSERT INTO group_templates
 		(name, descr, default_context, created_at, updated_at)
-		VALUES ('legacy', 'd', 'ctx', '2026-07-03T00:00:00Z', '2026-07-03T00:00:00Z')`)
+		VALUES ('legacy', 'd', 'ctx', 1783036800000000000, 1783036800000000000)`)
 	mustExec(t, d, `INSERT INTO group_template_agents
 		(template_id, ordinal, name, role, descr, initial_message, is_owner, permissions)
 		VALUES ((SELECT id FROM group_templates WHERE name = 'legacy'), 0, 'lead', 'r', '', '', 0, '[]')`)

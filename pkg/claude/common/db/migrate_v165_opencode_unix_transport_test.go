@@ -22,7 +22,7 @@ func TestMigrateV165KeepsExistingOpenCodeRuntimesOnLoopback(t *testing.T) {
 	_, err = d.Exec(`
 		INSERT INTO opencode_runtimes
 			(session_id, server_url, password, pid, cwd, created_at, updated_at)
-		VALUES ('legacy', 'http://127.0.0.1:44100', 'pw', 42, '/tmp', 'now', 'now')
+		VALUES ('legacy', 'http://127.0.0.1:44100', 'pw', 42, '/tmp', 1767225600000000000, 1767225600000000000)
 	`)
 	require.NoError(t, err)
 

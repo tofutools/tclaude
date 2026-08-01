@@ -142,7 +142,7 @@ func TestStandDown_RetiresSweepsAndKeepsGroup(t *testing.T) {
 	d, err := db.Open()
 	require.NoError(t, err)
 	_, err = d.Exec(`UPDATE sessions SET created_at = ? WHERE conv_id = ?`,
-		time.Now().Add(-2*time.Minute).UTC().Format(time.RFC3339Nano), sd.Members[0].ConvID)
+		time.Now().Add(-2*time.Minute).UTC().UnixNano(), sd.Members[0].ConvID)
 	require.NoError(t, err)
 	_ = agentd.RunReaperTickForTest(time.Now())
 	exits, err := db.ListAuditLog(db.AuditLogFilter{Verb: db.AuditVerbAgentExit})

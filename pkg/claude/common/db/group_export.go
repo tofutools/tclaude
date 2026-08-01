@@ -70,6 +70,7 @@ func CollectGroupExport(name string) (*groupexport.Export, error) {
 		SourceHome:    home,
 		SourceOS:      runtime.GOOS,
 	}
+	var groupCreatedAt, groupArchivedAt dbTimestamp
 
 	// --- the group row ---
 	// default_model is intentionally NOT selected: the vestigial column was
@@ -81,9 +82,11 @@ func CollectGroupExport(name string) (*groupexport.Export, error) {
 		FROM agent_groups WHERE id = ?`, g.ID).Scan(
 		&exp.Group.Descr, &exp.Group.DefaultContext,
 		&exp.Group.AttachmentURL, &exp.Group.AttachmentLabel,
-		&exp.Group.MaxMembers, &exp.Group.CreatedAt, &exp.Group.ArchivedAt); err != nil {
+		&exp.Group.MaxMembers, &groupCreatedAt, &groupArchivedAt); err != nil {
 		return nil, fmt.Errorf("collect group row: %w", err)
 	}
+	exp.Group.CreatedAt = exportTimestamp(groupCreatedAt)
+	exp.Group.ArchivedAt = exportTimestamp(groupArchivedAt)
 	if exp.Group.Permissions, err = collectGroupPermissions(d, g.ID); err != nil {
 		return nil, fmt.Errorf("collect group permissions: %w", err)
 	}
@@ -155,9 +158,11 @@ func collectGroupPermissions(d *sql.DB, groupID int64) ([]groupexport.GroupPermi
 	out := []groupexport.GroupPermission{}
 	for rows.Next() {
 		var p groupexport.GroupPermission
-		if err := rows.Scan(&p.Slug, &p.GrantedAt, &p.GrantedBy); err != nil {
+		var grantedAt dbTimestamp
+		if err := rows.Scan(&p.Slug, &grantedAt, &p.GrantedBy); err != nil {
 			return nil, err
 		}
+		p.GrantedAt = exportTimestamp(grantedAt)
 		out = append(out, p)
 	}
 	return out, rows.Err()
@@ -178,6 +183,10 @@ func inClause(ids []string) (string, []any) {
 	return "IN (" + strings.Repeat("?, ", len(ids)-1) + "?)", args
 }
 
+func exportTimestamp(value dbTimestamp) string {
+	return value.RFC3339Nano()
+}
+
 func collectMembers(d *sql.DB, groupID int64) ([]groupexport.Member, error) {
 	// Membership is agent-keyed (JOH-26); export each member by its actor's
 	// current conv so re-import re-adds it by conv (which re-resolves to an
@@ -193,9 +202,11 @@ func collectMembers(d *sql.DB, groupID int64) ([]groupexport.Member, error) {
 	var out []groupexport.Member
 	for rows.Next() {
 		var m groupexport.Member
-		if err := rows.Scan(&m.ConvID, &m.Role, &m.Descr, &m.JoinedAt); err != nil {
+		var joinedAt dbTimestamp
+		if err := rows.Scan(&m.ConvID, &m.Role, &m.Descr, &joinedAt); err != nil {
 			return nil, fmt.Errorf("scan member: %w", err)
 		}
+		m.JoinedAt = exportTimestamp(joinedAt)
 		out = append(out, m)
 	}
 	return out, rows.Err()
@@ -213,9 +224,11 @@ func collectOwners(d *sql.DB, groupID int64) ([]groupexport.Owner, error) {
 	var out []groupexport.Owner
 	for rows.Next() {
 		var o groupexport.Owner
-		if err := rows.Scan(&o.ConvID, &o.GrantedAt, &o.GrantedBy); err != nil {
+		var grantedAt dbTimestamp
+		if err := rows.Scan(&o.ConvID, &grantedAt, &o.GrantedBy); err != nil {
 			return nil, fmt.Errorf("scan owner: %w", err)
 		}
+		o.GrantedAt = exportTimestamp(grantedAt)
 		out = append(out, o)
 	}
 	return out, rows.Err()
@@ -232,9 +245,11 @@ func collectAudit(d *sql.DB, groupID int64) ([]groupexport.AuditEntry, error) {
 	var out []groupexport.AuditEntry
 	for rows.Next() {
 		var a groupexport.AuditEntry
-		if err := rows.Scan(&a.OldName, &a.NewName, &a.ByConv, &a.At); err != nil {
+		var at dbTimestamp
+		if err := rows.Scan(&a.OldName, &a.NewName, &a.ByConv, &at); err != nil {
 			return nil, fmt.Errorf("scan audit: %w", err)
 		}
+		a.At = exportTimestamp(at)
 		out = append(out, a)
 	}
 	return out, rows.Err()
@@ -252,11 +267,15 @@ func collectMessages(d *sql.DB, groupID int64) ([]groupexport.Message, error) {
 	var out []groupexport.Message
 	for rows.Next() {
 		var m groupexport.Message
+		var createdAt, deliveredAt, readAt dbTimestamp
 		if err := rows.Scan(&m.ID, &m.FromConv, &m.ToConv, &m.Subject, &m.Body,
-			&m.CreatedAt, &m.DeliveredAt, &m.ReadAt, &m.ParentID,
+			&createdAt, &deliveredAt, &readAt, &m.ParentID,
 			&m.ToRecipients, &m.CcRecipients, &m.OriginalToConv); err != nil {
 			return nil, fmt.Errorf("scan message: %w", err)
 		}
+		m.CreatedAt = exportTimestamp(createdAt)
+		m.DeliveredAt = exportTimestamp(deliveredAt)
+		m.ReadAt = exportTimestamp(readAt)
 		out = append(out, m)
 	}
 	return out, rows.Err()
@@ -283,11 +302,14 @@ func collectCronJobs(d *sql.DB, groupID int64) ([]groupexport.CronJob, []string,
 	var ids []string
 	for rows.Next() {
 		var j groupexport.CronJob
+		var createdAt, lastRunAt dbTimestamp
 		if err := rows.Scan(&j.ID, &j.Name, &j.TargetKind, &j.OwnerConv, &j.TargetConv,
-			&j.IntervalSeconds, &j.Subject, &j.Body, &j.Enabled, &j.RunImmediately, &j.QueueWhenOffline, &j.CreatedAt,
-			&j.LastRunAt, &j.LastRunStatus); err != nil {
+			&j.IntervalSeconds, &j.Subject, &j.Body, &j.Enabled, &j.RunImmediately, &j.QueueWhenOffline, &createdAt,
+			&lastRunAt, &j.LastRunStatus); err != nil {
 			return nil, nil, fmt.Errorf("scan cron job: %w", err)
 		}
+		j.CreatedAt = exportTimestamp(createdAt)
+		j.LastRunAt = exportTimestamp(lastRunAt)
 		out = append(out, j)
 		ids = append(ids, fmt.Sprintf("%d", j.ID))
 	}
@@ -309,9 +331,11 @@ func collectCronRuns(d *sql.DB, jobIDs []string) ([]groupexport.CronRun, error) 
 	var out []groupexport.CronRun
 	for rows.Next() {
 		var r groupexport.CronRun
-		if err := rows.Scan(&r.JobID, &r.FiredAt, &r.Status, &r.ErrorMsg); err != nil {
+		var firedAt dbTimestamp
+		if err := rows.Scan(&r.JobID, &firedAt, &r.Status, &r.ErrorMsg); err != nil {
 			return nil, fmt.Errorf("scan cron run: %w", err)
 		}
+		r.FiredAt = exportTimestamp(firedAt)
 		out = append(out, r)
 	}
 	return out, rows.Err()
@@ -330,9 +354,11 @@ func collectPermissions(d *sql.DB, convIDs []string) ([]groupexport.Permission, 
 	var out []groupexport.Permission
 	for rows.Next() {
 		var p groupexport.Permission
-		if err := rows.Scan(&p.ConvID, &p.Slug, &p.Effect, &p.GrantedAt, &p.GrantedBy); err != nil {
+		var grantedAt dbTimestamp
+		if err := rows.Scan(&p.ConvID, &p.Slug, &p.Effect, &grantedAt, &p.GrantedBy); err != nil {
 			return nil, fmt.Errorf("scan permission: %w", err)
 		}
+		p.GrantedAt = exportTimestamp(grantedAt)
 		out = append(out, p)
 	}
 	return out, rows.Err()
@@ -359,10 +385,13 @@ func collectEnrollments(d *sql.DB, convIDs []string) ([]groupexport.Enrollment, 
 	var out []groupexport.Enrollment
 	for rows.Next() {
 		var e groupexport.Enrollment
-		if err := rows.Scan(&e.ConvID, &e.EnrolledAt, &e.EnrolledVia, &e.RetiredAt,
+		var enrolledAt, retiredAt dbTimestamp
+		if err := rows.Scan(&e.ConvID, &enrolledAt, &e.EnrolledVia, &retiredAt,
 			&e.RetiredBy, &e.RetireReason, &e.PendingName); err != nil {
 			return nil, fmt.Errorf("scan enrollment: %w", err)
 		}
+		e.EnrolledAt = exportTimestamp(enrolledAt)
+		e.RetiredAt = exportTimestamp(retiredAt)
 		out = append(out, e)
 	}
 	return out, rows.Err()
@@ -380,9 +409,11 @@ func collectWorkdirs(d *sql.DB, convIDs []string) ([]groupexport.Workdir, error)
 	var out []groupexport.Workdir
 	for rows.Next() {
 		var w groupexport.Workdir
-		if err := rows.Scan(&w.ConvID, &w.UpdatedAt); err != nil {
+		var updatedAt dbTimestamp
+		if err := rows.Scan(&w.ConvID, &updatedAt); err != nil {
 			return nil, fmt.Errorf("scan workdir: %w", err)
 		}
+		w.UpdatedAt = exportTimestamp(updatedAt)
 		out = append(out, w)
 	}
 	return out, rows.Err()
@@ -401,10 +432,14 @@ func collectSudoGrants(d *sql.DB, convIDs []string) ([]groupexport.SudoGrant, er
 	var out []groupexport.SudoGrant
 	for rows.Next() {
 		var s groupexport.SudoGrant
-		if err := rows.Scan(&s.ConvID, &s.Slug, &s.GrantedAt, &s.ExpiresAt,
-			&s.GrantedBy, &s.Reason, &s.RevokedAt); err != nil {
+		var grantedAt, expiresAt, revokedAt dbTimestamp
+		if err := rows.Scan(&s.ConvID, &s.Slug, &grantedAt, &expiresAt,
+			&s.GrantedBy, &s.Reason, &revokedAt); err != nil {
 			return nil, fmt.Errorf("scan sudo grant: %w", err)
 		}
+		s.GrantedAt = exportTimestamp(grantedAt)
+		s.ExpiresAt = exportTimestamp(expiresAt)
+		s.RevokedAt = exportTimestamp(revokedAt)
 		out = append(out, s)
 	}
 	return out, rows.Err()
@@ -422,9 +457,11 @@ func collectHeadAliases(d *sql.DB, convIDs []string) ([]groupexport.HeadAlias, e
 	var out []groupexport.HeadAlias
 	for rows.Next() {
 		var h groupexport.HeadAlias
-		if err := rows.Scan(&h.Handle, &h.AnchorConvID, &h.CreatedAt, &h.ByConv); err != nil {
+		var createdAt dbTimestamp
+		if err := rows.Scan(&h.Handle, &h.AnchorConvID, &createdAt, &h.ByConv); err != nil {
 			return nil, fmt.Errorf("scan head alias: %w", err)
 		}
+		h.CreatedAt = exportTimestamp(createdAt)
 		out = append(out, h)
 	}
 	return out, rows.Err()
@@ -446,9 +483,11 @@ func collectSuccessions(d *sql.DB, convIDs []string) ([]groupexport.Succession, 
 	var out []groupexport.Succession
 	for rows.Next() {
 		var s groupexport.Succession
-		if err := rows.Scan(&s.OldConvID, &s.NewConvID, &s.Reason, &s.SucceededAt); err != nil {
+		var succeededAt dbTimestamp
+		if err := rows.Scan(&s.OldConvID, &s.NewConvID, &s.Reason, &succeededAt); err != nil {
 			return nil, fmt.Errorf("scan succession: %w", err)
 		}
+		s.SucceededAt = exportTimestamp(succeededAt)
 		out = append(out, s)
 	}
 	return out, rows.Err()
@@ -470,9 +509,11 @@ func collectSpawnHist(d *sql.DB, convIDs []string) ([]groupexport.SpawnHist, err
 	var out []groupexport.SpawnHist
 	for rows.Next() {
 		var s groupexport.SpawnHist
-		if err := rows.Scan(&s.SpawnerConvID, &s.SpawnedAt); err != nil {
+		var spawnedAt dbTimestamp
+		if err := rows.Scan(&s.SpawnerConvID, &spawnedAt); err != nil {
 			return nil, fmt.Errorf("scan spawn history: %w", err)
 		}
+		s.SpawnedAt = exportTimestamp(spawnedAt)
 		out = append(out, s)
 	}
 	return out, rows.Err()
@@ -493,9 +534,11 @@ func collectCloneHist(d *sql.DB, convIDs []string) ([]groupexport.CloneHist, err
 	var out []groupexport.CloneHist
 	for rows.Next() {
 		var c groupexport.CloneHist
-		if err := rows.Scan(&c.SourceConvID, &c.ClonedAt); err != nil {
+		var clonedAt dbTimestamp
+		if err := rows.Scan(&c.SourceConvID, &clonedAt); err != nil {
 			return nil, fmt.Errorf("scan clone history: %w", err)
 		}
+		c.ClonedAt = exportTimestamp(clonedAt)
 		out = append(out, c)
 	}
 	return out, rows.Err()
@@ -727,13 +770,13 @@ func (c *importCtx) run() error {
 // rejected by ensureActor before any row can attach. The whole scrub shares the
 // import transaction, so failure rolls back the group and every imported row.
 func (c *importCtx) scrubRetiredActorAuthority() error {
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := dbTime(time.Now().UTC())
 	for agentID := range c.createdActors {
-		var retiredAt string
+		var retiredAt dbTimestamp
 		if err := c.tx.QueryRow(`SELECT retired_at FROM agents WHERE agent_id = ?`, agentID).Scan(&retiredAt); err != nil {
 			return fmt.Errorf("import: inspect actor retirement: %w", err)
 		}
-		if retiredAt == "" {
+		if !retiredAt.valid {
 			continue
 		}
 		for _, stmt := range []struct {
@@ -743,7 +786,7 @@ func (c *importCtx) scrubRetiredActorAuthority() error {
 			{`DELETE FROM agent_group_owners WHERE agent_id = ?`, []any{agentID}},
 			{`DELETE FROM agent_group_members WHERE agent_id = ?`, []any{agentID}},
 			{`DELETE FROM agent_permissions WHERE agent_id = ?`, []any{agentID}},
-			{`UPDATE agent_sudo_grants SET revoked_at = ? WHERE agent_id = ? AND revoked_at = ''`, []any{now, agentID}},
+			{`UPDATE agent_sudo_grants SET revoked_at = ? WHERE agent_id = ? AND revoked_at IS NULL`, []any{now, agentID}},
 			{`UPDATE agent_cron_jobs SET enabled = 0, disabled_reason = ? WHERE owner_agent = ? AND enabled = 1`, []any{CronDisabledReasonAgentRetired, agentID}},
 			// Same scrub for standing orders: an import must not be able to
 			// introduce an ACTIVE high-authority instruction owned by an actor
@@ -775,6 +818,10 @@ func (c *importCtx) backfillAgentCompanions() error {
 
 func (c *importCtx) group() error {
 	g := c.exp.Group
+	createdAt := g.CreatedAt
+	if createdAt == "" {
+		createdAt = time.Now().UTC().Format(time.RFC3339Nano)
+	}
 	// default_model is not inserted: the vestigial column was dropped
 	// (JOH-220). A pre-v2 archive that still carried one is handled by
 	// legacyDefaultModelProfile below, which synthesizes a default spawn
@@ -785,7 +832,7 @@ func (c *importCtx) group() error {
 			 attachment_label, max_members, created_at, archived_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		c.plan.TargetName, g.Descr, c.plan.TargetCwd, g.DefaultContext,
-		g.AttachmentURL, g.AttachmentLabel, g.MaxMembers, g.CreatedAt, g.ArchivedAt)
+		g.AttachmentURL, g.AttachmentLabel, g.MaxMembers, requiredImportDBTime(createdAt), nullableDBTimeText(g.ArchivedAt))
 	if err != nil {
 		return fmt.Errorf("import: create group: %w", err)
 	}
@@ -799,11 +846,18 @@ func (c *importCtx) group() error {
 		}
 		if _, err := c.tx.Exec(`INSERT OR IGNORE INTO agent_group_permissions
 			(group_id, slug, granted_at, granted_by) VALUES (?, ?, ?, ?)`,
-			c.newGroupID, permission.Slug, grantedAt, permission.GrantedBy); err != nil {
+			c.newGroupID, permission.Slug, requiredImportDBTime(grantedAt), permission.GrantedBy); err != nil {
 			return fmt.Errorf("import: group permission %q: %w", permission.Slug, err)
 		}
 	}
 	return c.legacyDefaultModelProfile()
+}
+
+func requiredImportDBTime(value string) any {
+	if value == "" {
+		return dbTime(time.Now().UTC())
+	}
+	return dbTimeText(value)
 }
 
 // legacyDefaultModelProfile preserves the spawn default of a PRE-v2
@@ -825,7 +879,7 @@ func (c *importCtx) legacyDefaultModelProfile() error {
 	if err != nil {
 		return fmt.Errorf("import: pick legacy default-model profile name: %w", err)
 	}
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := dbTime(time.Now().UTC())
 	// harness 'claude': a legacy default_model passed the Claude-only model
 	// gate by construction. Only name/harness/model are set; every other
 	// field takes its column default.
@@ -858,7 +912,7 @@ func (c *importCtx) members() error {
 		if _, err := c.tx.Exec(`
 			INSERT INTO agent_group_members (group_id, agent_id, role, descr, joined_at)
 			VALUES (?, ?, ?, ?, ?)`,
-			c.newGroupID, agentID, m.Role, m.Descr, m.JoinedAt); err != nil {
+			c.newGroupID, agentID, m.Role, m.Descr, requiredImportDBTime(m.JoinedAt)); err != nil {
 			return fmt.Errorf("import: member %s: %w", m.ConvID, err)
 		}
 	}
@@ -875,7 +929,7 @@ func (c *importCtx) owners() error {
 		if _, err := c.tx.Exec(`
 			INSERT INTO agent_group_owners (group_id, agent_id, granted_at, granted_by)
 			VALUES (?, ?, ?, ?)`,
-			c.newGroupID, agentID, o.GrantedAt, o.GrantedBy); err != nil {
+			c.newGroupID, agentID, requiredImportDBTime(o.GrantedAt), o.GrantedBy); err != nil {
 			return fmt.Errorf("import: owner %s: %w", o.ConvID, err)
 		}
 	}
@@ -887,7 +941,7 @@ func (c *importCtx) audit() error {
 		if _, err := c.tx.Exec(`
 			INSERT INTO agent_group_audit (group_id, old_name, new_name, by_conv, at)
 			VALUES (?, ?, ?, ?, ?)`,
-			c.newGroupID, a.OldName, a.NewName, c.rc(a.ByConv), a.At); err != nil {
+			c.newGroupID, a.OldName, a.NewName, c.rc(a.ByConv), requiredImportDBTime(a.At)); err != nil {
 			return fmt.Errorf("import: audit row: %w", err)
 		}
 	}
@@ -904,7 +958,7 @@ func (c *importCtx) permissions() error {
 		if _, err := c.tx.Exec(`
 			INSERT INTO agent_permissions (agent_id, slug, effect, granted_at, granted_by)
 			VALUES (?, ?, ?, ?, ?)`,
-			agentID, p.Slug, p.Effect, p.GrantedAt, p.GrantedBy); err != nil {
+			agentID, p.Slug, p.Effect, requiredImportDBTime(p.GrantedAt), p.GrantedBy); err != nil {
 			return fmt.Errorf("import: permission %s/%s: %w", p.ConvID, p.Slug, err)
 		}
 	}
@@ -940,7 +994,7 @@ func (c *importCtx) enrollments() error {
 		}
 		if e.EnrolledAt != "" {
 			if _, err := c.tx.Exec(`UPDATE agents SET created_at = ? WHERE agent_id = ?`,
-				e.EnrolledAt, agentID); err != nil {
+				requiredImportDBTime(e.EnrolledAt), agentID); err != nil {
 				return fmt.Errorf("import: enrollment %s created_at: %w", e.ConvID, err)
 			}
 		}
@@ -953,7 +1007,7 @@ func (c *importCtx) enrollments() error {
 		if e.RetiredAt != "" {
 			if _, err := c.tx.Exec(`UPDATE agents
 				SET retired_at = ?, retired_by = ?, retire_reason = ? WHERE agent_id = ?`,
-				e.RetiredAt, e.RetiredBy, e.RetireReason, agentID); err != nil {
+				requiredImportDBTime(e.RetiredAt), e.RetiredBy, e.RetireReason, agentID); err != nil {
 				return fmt.Errorf("import: enrollment %s retire: %w", e.ConvID, err)
 			}
 		}
@@ -969,7 +1023,7 @@ func (c *importCtx) workdirs() error {
 		if _, err := c.tx.Exec(`
 			INSERT INTO agent_workdir (conv_id, dir, updated_at, worktree_root, branch)
 			VALUES (?, ?, ?, '', '')`,
-			c.rc(w.ConvID), c.plan.TargetCwd, w.UpdatedAt); err != nil {
+			c.rc(w.ConvID), c.plan.TargetCwd, requiredImportDBTime(w.UpdatedAt)); err != nil {
 			return fmt.Errorf("import: workdir %s: %w", w.ConvID, err)
 		}
 	}
@@ -987,8 +1041,8 @@ func (c *importCtx) sudoGrants() error {
 			INSERT INTO agent_sudo_grants
 				(agent_id, slug, granted_at, expires_at, granted_by, reason, revoked_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			agentID, s.Slug, s.GrantedAt, s.ExpiresAt, s.GrantedBy,
-			s.Reason, s.RevokedAt); err != nil {
+			agentID, s.Slug, requiredImportDBTime(s.GrantedAt), nullableDBTimeText(s.ExpiresAt), s.GrantedBy,
+			s.Reason, nullableDBTimeText(s.RevokedAt)); err != nil {
 			return fmt.Errorf("import: sudo grant %s/%s: %w", s.ConvID, s.Slug, err)
 		}
 	}
@@ -1007,7 +1061,7 @@ func (c *importCtx) headAliases() error {
 			INSERT OR IGNORE INTO agent_head_aliases
 				(handle, anchor_conv_id, created_at, by_conv)
 			VALUES (?, ?, ?, ?)`,
-			h.Handle, c.rc(h.AnchorConvID), h.CreatedAt, c.rc(h.ByConv))
+			h.Handle, c.rc(h.AnchorConvID), requiredImportDBTime(h.CreatedAt), c.rc(h.ByConv))
 		if err != nil {
 			return fmt.Errorf("import: head alias %s: %w", h.Handle, err)
 		}
@@ -1034,7 +1088,7 @@ func (c *importCtx) successions() error {
 			INSERT OR IGNORE INTO agent_conv_succession
 				(old_conv_id, new_conv_id, reason, succeeded_at)
 			VALUES (?, ?, ?, ?)`,
-			oldConv, newConv, s.Reason, s.SucceededAt); err != nil {
+			oldConv, newConv, s.Reason, requiredImportDBTime(s.SucceededAt)); err != nil {
 			return fmt.Errorf("import: succession %s: %w", s.OldConvID, err)
 		}
 	}
@@ -1051,7 +1105,7 @@ func (c *importCtx) spawnHist() error {
 		}
 		if _, err := c.tx.Exec(`
 			INSERT INTO agent_spawn_history (spawner_agent_id, spawned_at)
-			VALUES (?, ?)`, agentID, s.SpawnedAt); err != nil {
+			VALUES (?, ?)`, agentID, requiredImportDBTime(s.SpawnedAt)); err != nil {
 			return fmt.Errorf("import: spawn history: %w", err)
 		}
 	}
@@ -1068,7 +1122,7 @@ func (c *importCtx) cloneHist() error {
 		}
 		if _, err := c.tx.Exec(`
 			INSERT INTO agent_clone_history (source_agent_id, cloned_at)
-			VALUES (?, ?)`, agentID, h.ClonedAt); err != nil {
+			VALUES (?, ?)`, agentID, requiredImportDBTime(h.ClonedAt)); err != nil {
 			return fmt.Errorf("import: clone history: %w", err)
 		}
 	}
@@ -1115,8 +1169,8 @@ func (c *importCtx) cronJobsAndRuns() error {
 				 subject, body, enabled, run_immediately, queue_when_offline, created_at, last_run_at, last_run_status)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			j.Name, kind, ownerAgent, targetAgent, c.newGroupID,
-			j.IntervalSeconds, j.Subject, j.Body, j.Enabled, j.RunImmediately, j.QueueWhenOffline, j.CreatedAt,
-			j.LastRunAt, j.LastRunStatus)
+			j.IntervalSeconds, j.Subject, j.Body, j.Enabled, j.RunImmediately, j.QueueWhenOffline, requiredImportDBTime(j.CreatedAt),
+			nullableDBTimeText(j.LastRunAt), j.LastRunStatus)
 		if err != nil {
 			return fmt.Errorf("import: cron job %q: %w", j.Name, err)
 		}
@@ -1133,7 +1187,7 @@ func (c *importCtx) cronJobsAndRuns() error {
 		}
 		if _, err := c.tx.Exec(`
 			INSERT INTO agent_cron_runs (job_id, fired_at, status, error_msg)
-			VALUES (?, ?, ?, ?)`, newJobID, r.FiredAt, r.Status, r.ErrorMsg); err != nil {
+			VALUES (?, ?, ?, ?)`, newJobID, requiredImportDBTime(r.FiredAt), r.Status, r.ErrorMsg); err != nil {
 			return fmt.Errorf("import: cron run: %w", err)
 		}
 	}
@@ -1171,7 +1225,7 @@ func (c *importCtx) messages() error {
 			 COALESCE((SELECT agent_id FROM agent_conversations WHERE conv_id = ?), ''),
 			 ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)`,
 			c.newGroupID, c.rc(m.FromConv), c.rc(m.ToConv), c.rc(m.FromConv), c.rc(m.ToConv),
-			m.Subject, m.Body, m.CreatedAt, m.DeliveredAt, m.ReadAt, toRecipientsJSON,
+			m.Subject, m.Body, requiredImportDBTime(m.CreatedAt), nullableDBTimeText(m.DeliveredAt), nullableDBTimeText(m.ReadAt), toRecipientsJSON,
 			ccRecipientsJSON,
 			recipientAgentsJSON(c.tx, recipientsFromJSON(toRecipientsJSON)),
 			recipientAgentsJSON(c.tx, recipientsFromJSON(ccRecipientsJSON)),

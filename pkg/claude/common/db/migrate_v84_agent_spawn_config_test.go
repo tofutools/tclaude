@@ -37,7 +37,7 @@ func TestMigrateV83toV84_AddsColumn(t *testing.T) {
 	// A pre-existing agent row (without the new column) must survive the ALTER
 	// and read back with the default.
 	mustExec(t, d, `INSERT INTO agents (agent_id, current_conv_id, created_at)
-		VALUES ('agt_existing', 'conv-existing', '2026-06-29T00:00:00Z')`)
+		VALUES ('agt_existing', 'conv-existing', 1782691200000000000)`)
 
 	require.NoError(t, migrateV83toV84(d), "v83→v84")
 

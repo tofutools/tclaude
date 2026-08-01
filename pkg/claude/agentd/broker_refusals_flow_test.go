@@ -74,16 +74,13 @@ func pidReuseProcTree(t *testing.T) int {
 
 // stampUpdatedAt pins a row's updated_at so the ORDER BY the resolver reads
 // is deterministic. SaveSession always stamps time.Now(), and two saves in
-// the same test can land close enough together that RFC3339Nano's
-// variable-width fraction does not sort the way wall-clock did.
+// the same test can land close enough together to collide.
 func stampUpdatedAt(t *testing.T, sessionID string, at time.Time) {
 	t.Helper()
 	handle, err := db.Open()
 	require.NoError(t, err)
-	// Truncated to the second so both rows format to the same width and
-	// the string comparison the query performs is unambiguous.
 	res, err := handle.Exec(`UPDATE sessions SET updated_at = ? WHERE id = ?`,
-		at.UTC().Truncate(time.Second).Format(time.RFC3339Nano), sessionID)
+		at.UTC().Truncate(time.Second).UnixNano(), sessionID)
 	require.NoError(t, err)
 	affected, err := res.RowsAffected()
 	require.NoError(t, err)

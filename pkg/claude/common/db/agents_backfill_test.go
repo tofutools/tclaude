@@ -58,7 +58,7 @@ func enroll(t *testing.T, d *sql.DB, conv, via, pendingName, retiredAt string) {
 	t.Helper()
 	mustExec(t, d, `INSERT INTO agent_enrollment
 		(conv_id, enrolled_at, enrolled_via, retired_at, retired_by, retire_reason, pending_name)
-		VALUES (?, '2020-01-01T00:00:00Z', ?, ?, '', '', ?)`,
+		VALUES (?, 1577836800000000000, ?, ?, '', '', ?)`,
 		conv, via, retiredAt, pendingName)
 }
 
@@ -74,7 +74,7 @@ func TestBackfillAgentsCollapsesSuccessionChain(t *testing.T) {
 	enroll(t, d, "old", "spawn", "", "")
 	enroll(t, d, "new", "reincarnate", "", "")
 	mustExec(t, d, `INSERT INTO agent_conv_succession (old_conv_id, new_conv_id, reason, succeeded_at)
-		VALUES ('old', 'new', 'reincarnate', '2020-01-01T00:00:01Z')`)
+		VALUES ('old', 'new', 'reincarnate', 1577836801000000000)`)
 
 	require.NoError(t, backfillAgents(d), "backfillAgents")
 
@@ -105,9 +105,9 @@ func TestBackfillAgentsMultiHopChain(t *testing.T) {
 	enroll(t, d, "b", "reincarnate", "", "")
 	enroll(t, d, "c", "clear", "", "")
 	mustExec(t, d, `INSERT INTO agent_conv_succession (old_conv_id, new_conv_id, reason, succeeded_at)
-		VALUES ('a', 'b', 'reincarnate', '2020-01-01T00:00:01Z')`)
+		VALUES ('a', 'b', 'reincarnate', 1577836801000000000)`)
 	mustExec(t, d, `INSERT INTO agent_conv_succession (old_conv_id, new_conv_id, reason, succeeded_at)
-		VALUES ('b', 'c', 'clear', '2020-01-01T00:00:02Z')`)
+		VALUES ('b', 'c', 'clear', 1577836802000000000)`)
 
 	require.NoError(t, backfillAgents(d), "backfillAgents")
 
@@ -163,7 +163,7 @@ func TestBackfillAgentsCarriesHeadFacts(t *testing.T) {
 	enroll(t, d, "old", "spawn", "worker-old", "2020-01-02T00:00:00Z")
 	enroll(t, d, "new", "reincarnate", "worker-live", "")
 	mustExec(t, d, `INSERT INTO agent_conv_succession (old_conv_id, new_conv_id, reason, succeeded_at)
-		VALUES ('old', 'new', 'reincarnate', '2020-01-01T00:00:01Z')`)
+		VALUES ('old', 'new', 'reincarnate', 1577836801000000000)`)
 
 	require.NoError(t, backfillAgents(d), "backfillAgents")
 
@@ -207,7 +207,7 @@ func TestBackfillAgentsCoversIdentityOnlyConv(t *testing.T) {
 	// is one of the conv-keyed sources collectAgentConvs scans (the clone/spawn
 	// history + cron tables went agent-keyed in v74, JOH-26 PR3a).
 	mustExec(t, d, `INSERT INTO agent_head_aliases (handle, anchor_conv_id, created_at, by_conv)
-		VALUES ('lonely-alias', 'lonely', '2020-01-01T00:00:00Z', '')`)
+		VALUES ('lonely-alias', 'lonely', 1577836800000000000, '')`)
 
 	require.NoError(t, backfillAgents(d), "backfillAgents")
 
@@ -230,7 +230,7 @@ func TestBackfillAgentsIdempotent(t *testing.T) {
 	enroll(t, d, "new", "reincarnate", "", "")
 	enroll(t, d, "fork", "clone", "", "")
 	mustExec(t, d, `INSERT INTO agent_conv_succession (old_conv_id, new_conv_id, reason, succeeded_at)
-		VALUES ('old', 'new', 'reincarnate', '2020-01-01T00:00:01Z')`)
+		VALUES ('old', 'new', 'reincarnate', 1577836801000000000)`)
 
 	require.NoError(t, backfillAgents(d), "first backfill")
 	firstCount := countAgents(t, d)

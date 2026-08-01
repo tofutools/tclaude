@@ -117,7 +117,7 @@ func CreateSandboxProfile(p *SandboxProfile) (int64, error) {
 		return 0, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	now := time.Now().Format(time.RFC3339Nano)
+	now := dbTime(time.Now())
 	res, err := tx.Exec(`INSERT INTO sandbox_profiles
 		(name, filesystem_json, filesystem_spellings_json, environment_json, agent_directories_json, network_access, network_json, unix_sockets_json, resource_limits_json, includes_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.Name, payload.filesystem, payload.filesystemSpellings, payload.environment, payload.agentDirectories,
@@ -180,13 +180,13 @@ func updateSandboxProfile(p *SandboxProfile, revision string) error {
 	} else if err != nil {
 		return err
 	}
-	now := time.Now().Format(time.RFC3339Nano)
+	now := dbTime(time.Now())
 	query := `UPDATE sandbox_profiles SET name = ?, filesystem_json = ?, filesystem_spellings_json = ?, environment_json = ?, agent_directories_json = ?, network_access = ?, network_json = ?, unix_sockets_json = ?, resource_limits_json = ?, includes_json = ?, updated_at = ? WHERE id = ?`
 	args := []any{p.Name, payload.filesystem, payload.filesystemSpellings, payload.environment, payload.agentDirectories,
 		p.NetworkAccess, payload.network, payload.unixSockets, payload.resourceLimits, payload.includes, now, p.ID}
 	if revision != "" {
 		query += ` AND updated_at = ?`
-		args = append(args, revision)
+		args = append(args, dbTimeText(revision))
 	}
 	res, err := tx.Exec(query, args...)
 	if err != nil {
@@ -607,7 +607,8 @@ const sandboxProfileSelect = `SELECT id, name, filesystem_json, filesystem_spell
 
 func scanSandboxProfile(row rowScanner) (*SandboxProfile, error) {
 	var p SandboxProfile
-	var filesystemJSON, filesystemSpellingsJSON, environmentJSON, agentDirectoriesJSON, networkJSON, unixSocketsJSON, resourceLimitsJSON, includesJSON, createdAt, updatedAt string
+	var filesystemJSON, filesystemSpellingsJSON, environmentJSON, agentDirectoriesJSON, networkJSON, unixSocketsJSON, resourceLimitsJSON, includesJSON string
+	var createdAt, updatedAt dbTimestamp
 	if err := row.Scan(
 		&p.ID, &p.Name, &filesystemJSON, &filesystemSpellingsJSON, &environmentJSON, &agentDirectoriesJSON,
 		&p.NetworkAccess, &networkJSON, &unixSocketsJSON, &resourceLimitsJSON, &includesJSON, &createdAt, &updatedAt,
@@ -664,8 +665,8 @@ func scanSandboxProfile(row rowScanner) (*SandboxProfile, error) {
 	if p.Includes == nil {
 		p.Includes = []string{}
 	}
-	p.CreatedAt = parseTimeOrZero(createdAt)
-	p.UpdatedAt = parseTimeOrZero(updatedAt)
+	p.CreatedAt = createdAt.Time()
+	p.UpdatedAt = updatedAt.Time()
 	// These paths were canonical at persistence time, but that is not a durable
 	// authorization proof: directories can be replaced by symlinks later. The
 	// TCL-320 launch/application boundary must call sandboxpolicy.Normalize
@@ -793,7 +794,7 @@ func ImportSandboxProfilesWithOptions(profiles []*SandboxProfile, opts SandboxPr
 	if err != nil {
 		return result, err
 	}
-	now := time.Now().Format(time.RFC3339Nano)
+	now := dbTime(time.Now())
 	for _, item := range plans {
 		if item.skipped {
 			result.Skipped = append(result.Skipped, item.profile.Name)

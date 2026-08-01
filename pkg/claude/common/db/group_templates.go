@@ -76,7 +76,7 @@ type WorkPatternEntry struct {
 // workPatternToJSON marshals a work pattern for the
 // group_templates.work_pattern TEXT column. An empty pattern stores as
 // "[]" (the permsToJSON convention) so a reader can json.Unmarshal it
-// unconditionally; legacy rows hold ” and read back as empty.
+// unconditionally; legacy rows hold '' and read back as empty.
 func workPatternToJSON(entries []WorkPatternEntry) string {
 	if len(entries) == 0 {
 		return "[]"
@@ -89,7 +89,7 @@ func workPatternToJSON(entries []WorkPatternEntry) string {
 }
 
 // workPatternFromJSON parses the work_pattern TEXT column back into a
-// slice. A blank (” — pre-v87 rows) or malformed value yields an empty
+// slice. A blank ('' — pre-v87 rows) or malformed value yields an empty
 // (non-nil) slice.
 func workPatternFromJSON(s string) []WorkPatternEntry {
 	out := []WorkPatternEntry{}
@@ -307,7 +307,7 @@ func CreateGroupTemplate(t *GroupTemplate) (int64, error) {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	now := time.Now().Format(time.RFC3339Nano)
+	now := dbTime(time.Now())
 	res, err := tx.Exec(
 		`INSERT INTO group_templates (name, descr, default_context, per_agent_worktrees, work_pattern, process, rhythms, wave_max_wait, created_at, updated_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -352,7 +352,7 @@ func UpdateGroupTemplate(t *GroupTemplate) error {
 		`UPDATE group_templates SET name = ?, descr = ?, default_context = ?, per_agent_worktrees = ?, work_pattern = ?, process = ?, rhythms = ?, wave_max_wait = ?, updated_at = ?
 		 WHERE id = ?`,
 		t.Name, t.Descr, t.DefaultContext, t.PerAgentWorktrees, workPatternToJSON(t.WorkPattern), processToJSON(t.Process),
-		rhythmsToJSON(t.Rhythms), t.WaveMaxWait, time.Now().Format(time.RFC3339Nano), t.ID)
+		rhythmsToJSON(t.Rhythms), t.WaveMaxWait, dbTime(time.Now()), t.ID)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return ErrGroupTemplateNameTaken
@@ -566,12 +566,13 @@ func listTemplateAgents(d *sql.DB, templateID int64) ([]GroupTemplateAgent, erro
 
 func scanGroupTemplate(s rowScanner) (*GroupTemplate, error) {
 	var t GroupTemplate
-	var createdAt, updatedAt, workPattern, process, rhythms string
+	var workPattern, process, rhythms string
+	var createdAt, updatedAt dbTimestamp
 	if err := s.Scan(&t.ID, &t.Name, &t.Descr, &t.DefaultContext, &t.PerAgentWorktrees, &workPattern, &process, &rhythms, &t.WaveMaxWait, &createdAt, &updatedAt); err != nil {
 		return nil, err
 	}
-	t.CreatedAt = parseTimeOrZero(createdAt)
-	t.UpdatedAt = parseTimeOrZero(updatedAt)
+	t.CreatedAt = createdAt.Time()
+	t.UpdatedAt = updatedAt.Time()
 	t.Agents = []GroupTemplateAgent{}
 	t.WorkPattern = workPatternFromJSON(workPattern)
 	t.Process = processFromJSON(process)

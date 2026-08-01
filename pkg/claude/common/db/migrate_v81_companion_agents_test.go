@@ -57,15 +57,15 @@ func TestMigrateV80toV81_BackfillsCompanionAgents(t *testing.T) {
 	// human_messages: an agent-sent notification + a human-initiated one (empty
 	// from_conv, e.g. the worktree-cleanup system message).
 	mustExec(t, d, `INSERT INTO human_messages (id, from_conv, body, created_at)
-		VALUES (1, 'senderConv', 'hi', '2020-01-01T00:00:00Z')`)
+		VALUES (1, 'senderConv', 'hi', 1577836800000000000)`)
 	mustExec(t, d, `INSERT INTO human_messages (id, from_conv, body, created_at)
-		VALUES (2, '', 'system', '2020-01-02T00:00:00Z')`)
+		VALUES (2, '', 'system', 1577923200000000000)`)
 	// pending_spawns: an agent-initiated spawn (reply-to + spawned-by both actors)
 	// and a human-initiated one (both empty).
 	mustExec(t, d, `INSERT INTO pending_spawns (label, group_id, reply_to_conv, spawned_by_conv, created_at)
-		VALUES ('lbl-agent', 1, 'replyConv', 'spawnerConv', '2020-01-01T00:00:00Z')`)
+		VALUES ('lbl-agent', 1, 'replyConv', 'spawnerConv', 1577836800000000000)`)
 	mustExec(t, d, `INSERT INTO pending_spawns (label, group_id, reply_to_conv, spawned_by_conv, created_at)
-		VALUES ('lbl-human', 1, '', '', '2020-01-02T00:00:00Z')`)
+		VALUES ('lbl-human', 1, '', '', 1577923200000000000)`)
 
 	require.NoError(t, migrateV80toV81(d), "v80→v81 backfill")
 

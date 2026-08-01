@@ -208,8 +208,8 @@ func TestDashboardCosts_MultiDayResumeSplitsAndFlags(t *testing.T) {
 	require.NoError(t, err)
 	_, err = conn.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, cost_usd, updated_at)
 		VALUES (?, ?, ?, ?, ?), (?, ?, ?, ?, ?)`,
-		"spwn-md1", d1, conv, 16.44, day1.Format(time.RFC3339Nano),
-		"md-resume", d2, conv, 20.08, now.Format(time.RFC3339Nano))
+		"spwn-md1", d1, conv, 16.44, day1.UnixNano(),
+		"md-resume", d2, conv, 20.08, now.UnixNano())
 	require.NoError(t, err, "seed a two-day resume")
 
 	from := now.AddDate(0, 0, -7).Format("2006-01-02")
@@ -280,8 +280,8 @@ func TestDashboardCosts_ToParamBoundsCompletedMonth(t *testing.T) {
 	require.NoError(t, err)
 	_, err = conn.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, cost_usd, updated_at)
 		VALUES (?, ?, ?, ?, ?), (?, ?, ?, ?, ?)`,
-		"spwn-last", midLast.Format("2006-01-02"), convLast, 4.20, midLast.Format(time.RFC3339Nano),
-		"spwn-now", now.Format("2006-01-02"), convNow, 9.99, now.Format(time.RFC3339Nano))
+		"spwn-last", midLast.Format("2006-01-02"), convLast, 4.20, midLast.UnixNano(),
+		"spwn-now", now.Format("2006-01-02"), convNow, 9.99, now.UnixNano())
 	require.NoError(t, err, "seed last-month + today spend")
 
 	fromKey := lastMonthFirst.Format("2006-01-02")
@@ -446,24 +446,24 @@ func TestDashboardCosts_LastActivityTimeOrdersWithinDay(t *testing.T) {
 	now := time.Now()
 	day := now.Format("2006-01-02")
 	y, m, d0 := now.Date()
-	early := time.Date(y, m, d0, 1, 0, 0, 0, now.Location()).Format(time.RFC3339Nano)
-	late := time.Date(y, m, d0, 2, 0, 0, 0, now.Location()).Format(time.RFC3339Nano)
+	early := time.Date(y, m, d0, 1, 0, 0, 0, now.Location())
+	late := time.Date(y, m, d0, 2, 0, 0, 0, now.Location())
 
 	conn, err := db.Open()
 	require.NoError(t, err)
 	_, err = conn.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, cost_usd, updated_at)
 		VALUES (?, ?, ?, ?, ?), (?, ?, ?, ?, ?)`,
-		"wcl-1", day, convLate, 0.10, late,
-		"wce-1", day, convEarly, 5.00, early)
+		"wcl-1", day, convLate, 0.10, late.UnixNano(),
+		"wce-1", day, convEarly, 5.00, early.UnixNano())
 	require.NoError(t, err, "seed two same-day rows with explicit times")
 
 	out := fetchCosts(t, agentd.BuildDashboardHandlerForTest(), "")
 
 	require.Len(t, out.Agents, 2, "one breakdown row per conv")
 	assert.Equal(t, convLate, out.Agents[0].ConvID, "later activity sorts first despite the lower spend")
-	assert.Equal(t, late, out.Agents[0].LastActivity, "precise last-activity timestamp surfaced on the wire")
+	assert.Equal(t, late.UTC().Format(time.RFC3339Nano), out.Agents[0].LastActivity, "precise last-activity timestamp surfaced on the wire")
 	assert.Equal(t, convEarly, out.Agents[1].ConvID, "pricier-but-earlier agent sorts below")
-	assert.Equal(t, early, out.Agents[1].LastActivity)
+	assert.Equal(t, early.UTC().Format(time.RFC3339Nano), out.Agents[1].LastActivity)
 }
 
 // seedAgentCostSession writes a sessions row tied to a conv and

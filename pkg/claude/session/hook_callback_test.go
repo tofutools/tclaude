@@ -907,7 +907,7 @@ func TestWaitForClearedIdentityIndexUsesMetadataOnlyOrdering(t *testing.T) {
 		time.Sleep(25 * time.Millisecond)
 		updated <- db.UpsertConvIndex(&db.ConvIndexRow{
 			ConvID: convID, FullPath: path, FileSize: info.Size(),
-			FileMtime: info.ModTime().Unix(), CustomTitle: "fresh", IndexedAt: time.Now(),
+			FileMtime: info.ModTime().UnixNano(), CustomTitle: "fresh", IndexedAt: time.Now(),
 		})
 	}()
 

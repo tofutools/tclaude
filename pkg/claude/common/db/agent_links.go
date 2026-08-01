@@ -62,7 +62,7 @@ func InsertAgentGroupLink(fromID, toID int64, mode, byConv string) (int64, error
 	res, err := d.Exec(
 		`INSERT INTO agent_group_links (from_group_id, to_group_id, mode, created_at, by_conv, by_agent)
 		 VALUES (?, ?, ?, ?, ?, `+agentForConvExpr+`)`,
-		fromID, toID, mode, time.Now().Format(time.RFC3339Nano), byConv, byConv)
+		fromID, toID, mode, dbTime(time.Now()), byConv, byConv)
 	if err != nil {
 		if isUniqueConstraintErr(err) {
 			return 0, ErrLinkExists
@@ -340,10 +340,10 @@ func scanAgentGroupLink(scanner interface {
 	Scan(dest ...any) error
 }) (*AgentGroupLink, error) {
 	var l AgentGroupLink
-	var createdAt string
+	var createdAt dbTimestamp
 	if err := scanner.Scan(&l.ID, &l.FromGroupID, &l.ToGroupID, &l.Mode, &createdAt, &l.ByConv, &l.ByAgent); err != nil {
 		return nil, err
 	}
-	l.CreatedAt = parseTimeOrZero(createdAt)
+	l.CreatedAt = createdAt.Time()
 	return &l, nil
 }

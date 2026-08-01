@@ -178,7 +178,7 @@ func syncOpenCodeConvIndex(sessions []openCodeSession) []convops.SessionEntry {
 func openCodeSessionEntry(session openCodeSession) convops.SessionEntry {
 	return convops.SessionEntry{
 		SessionID:    session.ID,
-		FileMtime:    openCodeMillisToUnix(session.Updated),
+		FileMtime:    openCodeMillisToUnixNano(session.Updated),
 		Summary:      session.Title,
 		MessageCount: 0,
 		Created:      openCodeMillisToRFC3339(session.Created),
@@ -207,11 +207,15 @@ func openCodeEntryDBRow(entry convops.SessionEntry) *db.ConvIndexRow {
 	}
 }
 
-func openCodeMillisToUnix(ms int64) int64 {
+func openCodeMillisToUnixNano(ms int64) int64 {
 	if ms <= 0 {
 		return 0
 	}
-	return ms / int64(time.Second/time.Millisecond)
+	const maxUnixNanoMillis = int64(^uint64(0)>>1) / int64(time.Millisecond)
+	if ms > maxUnixNanoMillis {
+		return 0
+	}
+	return ms * int64(time.Millisecond)
 }
 
 func openCodeMillisToRFC3339(ms int64) string {

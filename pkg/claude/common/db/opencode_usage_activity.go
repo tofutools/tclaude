@@ -59,11 +59,11 @@ func UpsertOpenCodeUsageActivity(row OpenCodeUsageActivity) error {
 			model_id = excluded.model_id,
 			observed_at = excluded.observed_at`,
 		row.SessionID, row.MessageID, row.ConvID, row.ProviderID, row.ModelID,
-		row.ObservedAt.UTC().Format(time.RFC3339Nano))
+		dbTime(row.ObservedAt.UTC()))
 	if err != nil {
 		return fmt.Errorf("upsert OpenCode usage activity: %w", err)
 	}
-	cutoff := time.Now().Add(-OpenCodeUsageActivityRetention).UTC().Format(time.RFC3339Nano)
+	cutoff := dbTime(time.Now().Add(-OpenCodeUsageActivityRetention).UTC())
 	if _, err := tx.Exec(`DELETE FROM opencode_usage_activity WHERE observed_at < ?`, cutoff); err != nil {
 		return fmt.Errorf("upsert OpenCode usage activity: prune: %w", err)
 	}
@@ -129,7 +129,7 @@ func MarkOpenCodePricingStepsRemoved(
 			(conv_id, message_id, removed_at) VALUES (?, ?, ?)
 			ON CONFLICT(conv_id, message_id) DO UPDATE SET
 				removed_at = excluded.removed_at`,
-			convID, messageID, removedAt.UTC().Format(time.RFC3339Nano)); err != nil {
+			convID, messageID, dbTime(removedAt.UTC())); err != nil {
 			return fmt.Errorf("mark OpenCode pricing steps removed: remember removal: %w", err)
 		}
 	} else if strings.TrimSpace(sessionID) != "" {
@@ -138,7 +138,7 @@ func MarkOpenCodePricingStepsRemoved(
 			return fmt.Errorf("mark OpenCode pricing steps removed: clear activity: %w", err)
 		}
 	}
-	cutoff := time.Now().Add(-OpenCodeUsageActivityRetention).UTC().Format(time.RFC3339Nano)
+	cutoff := dbTime(time.Now().Add(-OpenCodeUsageActivityRetention).UTC())
 	if _, err := tx.Exec(`DELETE FROM opencode_usage_step_removals WHERE removed_at < ?`, cutoff); err != nil {
 		return fmt.Errorf("mark OpenCode pricing steps removed: prune: %w", err)
 	}
@@ -177,7 +177,7 @@ func OpenCodePricingStepsRemoved(convID string, now time.Time) (map[string]bool,
 	if err != nil {
 		return nil, err
 	}
-	cutoff := now.Add(-OpenCodeUsageActivityRetention).UTC().Format(time.RFC3339Nano)
+	cutoff := dbTime(now.Add(-OpenCodeUsageActivityRetention).UTC())
 	rows, err := d.Query(`SELECT message_id FROM opencode_usage_step_removals
 		WHERE conv_id = ? AND removed_at >= ?`, convID, cutoff)
 	if err != nil {
@@ -234,11 +234,11 @@ func ReplaceOpenCodeUsageActivity(
 			(session_id, message_id, conv_id, provider_id, model_id, observed_at)
 			VALUES (?, ?, ?, ?, ?, ?)`,
 			row.SessionID, row.MessageID, row.ConvID, row.ProviderID, row.ModelID,
-			row.ObservedAt.UTC().Format(time.RFC3339Nano)); err != nil {
+			dbTime(row.ObservedAt.UTC())); err != nil {
 			return fmt.Errorf("replace OpenCode usage activity: insert: %w", err)
 		}
 	}
-	cutoff := now.Add(-OpenCodeUsageActivityRetention).UTC().Format(time.RFC3339Nano)
+	cutoff := dbTime(now.Add(-OpenCodeUsageActivityRetention).UTC())
 	if _, err := tx.Exec(`DELETE FROM opencode_usage_activity WHERE observed_at < ?`, cutoff); err != nil {
 		return fmt.Errorf("replace OpenCode usage activity: prune: %w", err)
 	}
@@ -258,7 +258,7 @@ func OpenCodeUsageActivityBetween(from, to time.Time) ([]OpenCodeUsageActivity, 
 		FROM opencode_usage_activity
 		WHERE observed_at >= ? AND observed_at <= ?
 		ORDER BY observed_at, session_id, message_id`,
-		from.UTC().Format(time.RFC3339Nano), to.UTC().Format(time.RFC3339Nano))
+		dbTimeBoundary(from.UTC()), dbTimeBoundary(to.UTC()))
 	if err != nil {
 		return nil, fmt.Errorf("read OpenCode usage activity: %w", err)
 	}
@@ -266,15 +266,12 @@ func OpenCodeUsageActivityBetween(from, to time.Time) ([]OpenCodeUsageActivity, 
 	out := make([]OpenCodeUsageActivity, 0)
 	for rows.Next() {
 		var row OpenCodeUsageActivity
-		var observed string
+		var observed dbTimestamp
 		if err := rows.Scan(&row.SessionID, &row.MessageID, &row.ConvID,
 			&row.ProviderID, &row.ModelID, &observed); err != nil {
 			return nil, fmt.Errorf("read OpenCode usage activity: scan: %w", err)
 		}
-		row.ObservedAt, err = time.Parse(time.RFC3339Nano, observed)
-		if err != nil {
-			return nil, fmt.Errorf("read OpenCode usage activity: observed_at: %w", err)
-		}
+		row.ObservedAt = observed.Time()
 		out = append(out, row)
 	}
 	if err := rows.Err(); err != nil {
@@ -291,7 +288,7 @@ func HasOpenCodeUsageActivitySince(since time.Time) (bool, error) {
 	var have int
 	err = d.QueryRow(`SELECT EXISTS(
 		SELECT 1 FROM opencode_usage_activity WHERE observed_at >= ? LIMIT 1
-	)`, since.UTC().Format(time.RFC3339Nano)).Scan(&have)
+	)`, dbTime(since.UTC())).Scan(&have)
 	if err != nil {
 		return false, fmt.Errorf("check OpenCode usage activity: %w", err)
 	}

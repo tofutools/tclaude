@@ -15,7 +15,7 @@ func TestMigrateV159toV160AddsSandboxImplementation(t *testing.T) {
 	mustExec(t, d, `ALTER TABLE sessions DROP COLUMN sandbox_implementation`)
 	mustExec(t, d, `UPDATE schema_version SET version = 159`)
 	mustExec(t, d, `INSERT INTO sessions (id, status, created_at, updated_at)
-		VALUES ('legacy-session', 'idle', '2026-07-26T00:00:00Z', '2026-07-26T00:00:00Z')`)
+		VALUES ('legacy-session', 'idle', 1785024000000000000, 1785024000000000000)`)
 
 	require.NoError(t, migrateV159toV160(d))
 

@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"log/slog"
 	"time"
 )
 
@@ -99,7 +98,7 @@ func InsertExportJob(j *ExportJob) (int64, error) {
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+agentForConvExpr+`, `+agentForConvExpr+`)`,
 		j.ConvID, j.WorkerConvID, j.GroupName, j.Title, j.Instructions, j.Preset, status, j.Error,
 		j.ArtifactPath, j.ArtifactName, j.ArtifactSize, j.ContentType,
-		created.Format(time.RFC3339Nano), updated.Format(time.RFC3339Nano), j.ConvID, j.WorkerConvID)
+		dbTime(created), dbTime(updated), j.ConvID, j.WorkerConvID)
 	if err != nil {
 		return 0, fmt.Errorf("insert export job: %w", err)
 	}
@@ -148,7 +147,7 @@ func SetExportJobWorkerConv(id int64, workerConvID string) (bool, error) {
 	// Keep worker_agent_id in step with worker_conv_id (derived from it).
 	res, err := d.Exec(
 		`UPDATE export_jobs SET worker_conv_id = ?, worker_agent_id = `+agentForConvExpr+`, updated_at = ? WHERE id = ?`,
-		workerConvID, workerConvID, time.Now().Format(time.RFC3339Nano), id)
+		workerConvID, workerConvID, dbTime(time.Now()), id)
 	if err != nil {
 		return false, fmt.Errorf("set export job worker conv: %w", err)
 	}
@@ -169,7 +168,7 @@ func MarkExportJobRequested(id int64) (bool, error) {
 	res, err := d.Exec(
 		`UPDATE export_jobs SET status = ?, updated_at = ?
 		 WHERE id = ? AND status = ?`,
-		ExportStatusRequested, time.Now().Format(time.RFC3339Nano), id, ExportStatusCloning)
+		ExportStatusRequested, dbTime(time.Now()), id, ExportStatusCloning)
 	if err != nil {
 		return false, fmt.Errorf("mark export job requested: %w", err)
 	}
@@ -188,7 +187,7 @@ func MarkExportJobRunning(id int64) (bool, error) {
 	res, err := d.Exec(
 		`UPDATE export_jobs SET status = ?, updated_at = ?
 		 WHERE id = ? AND status = ?`,
-		ExportStatusRunning, time.Now().Format(time.RFC3339Nano), id, ExportStatusRequested)
+		ExportStatusRunning, dbTime(time.Now()), id, ExportStatusRequested)
 	if err != nil {
 		return false, fmt.Errorf("mark export job running: %w", err)
 	}
@@ -214,7 +213,7 @@ func SetExportJobReady(id int64, path, name string, size int64, contentType stri
 		    artifact_size = ?, content_type = ?, updated_at = ?
 		WHERE id = ? AND status != ?`,
 		ExportStatusReady, path, name, size, contentType,
-		time.Now().Format(time.RFC3339Nano), id, ExportStatusReady)
+		dbTime(time.Now()), id, ExportStatusReady)
 	if err != nil {
 		return false, fmt.Errorf("set export job ready: %w", err)
 	}
@@ -233,7 +232,7 @@ func FailExportJob(id int64, reason string) (bool, error) {
 	res, err := d.Exec(
 		`UPDATE export_jobs SET status = ?, error = ?, updated_at = ?
 		 WHERE id = ? AND status != ?`,
-		ExportStatusFailed, reason, time.Now().Format(time.RFC3339Nano), id, ExportStatusReady)
+		ExportStatusFailed, reason, dbTime(time.Now()), id, ExportStatusReady)
 	if err != nil {
 		return false, fmt.Errorf("fail export job: %w", err)
 	}
@@ -411,30 +410,18 @@ func DeleteExportJob(id int64) (bool, error) {
 	return n > 0, nil
 }
 
-// scanExportJob reads one export_jobs row, parsing the RFC3339Nano timestamps.
+// scanExportJob reads one export_jobs row.
 // Takes the package-shared rowScanner (see agent.go) so both *sql.Row and
 // *sql.Rows callers reuse it.
-// A corrupt timestamp leaves the field zero (logged) rather than failing the
-// whole read — the same tolerance ListHumanMessages applies.
 func scanExportJob(s rowScanner) (*ExportJob, error) {
 	var j ExportJob
-	var created, updated string
+	var created, updated dbTimestamp
 	if err := s.Scan(&j.ID, &j.ConvID, &j.WorkerConvID, &j.GroupName, &j.Title, &j.Instructions,
 		&j.Preset, &j.Status, &j.Error, &j.ArtifactPath, &j.ArtifactName,
 		&j.ArtifactSize, &j.ContentType, &created, &updated); err != nil {
 		return nil, err
 	}
-	if t, err := time.Parse(time.RFC3339Nano, created); err == nil {
-		j.CreatedAt = t
-	} else {
-		slog.Warn("export_jobs: unparseable created_at, leaving zero",
-			"id", j.ID, "value", created, "error", err)
-	}
-	if t, err := time.Parse(time.RFC3339Nano, updated); err == nil {
-		j.UpdatedAt = t
-	} else {
-		slog.Warn("export_jobs: unparseable updated_at, leaving zero",
-			"id", j.ID, "value", updated, "error", err)
-	}
+	j.CreatedAt = created.Time()
+	j.UpdatedAt = updated.Time()
 	return &j, nil
 }

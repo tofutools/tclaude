@@ -61,14 +61,16 @@ func retiredConvID(r dashRetired) string   { return r.ConvID }
 func convConvID(c dashConversation) string { return c.ConvID }
 func replacedConvID(r dashReplaced) string { return r.ConvID }
 
-// setRetiredAt forces a retired actor's retired_at to a fixed RFC3339 stamp so
+// setRetiredAt forces a retired actor's retired_at to a fixed instant so
 // the newest-first ordering is deterministic (HaveRetiredAgent stamps "now",
 // which collides at second precision for fast back-to-back retires).
 func setRetiredAt(t *testing.T, conv, ts string) {
 	t.Helper()
+	at, err := time.Parse(time.RFC3339Nano, ts)
+	require.NoError(t, err)
 	d, err := db.Open()
 	require.NoError(t, err)
-	_, err = d.Exec(`UPDATE agents SET retired_at = ? WHERE current_conv_id = ?`, ts, conv)
+	_, err = d.Exec(`UPDATE agents SET retired_at = ? WHERE current_conv_id = ?`, at.UnixNano(), conv)
 	require.NoError(t, err)
 }
 

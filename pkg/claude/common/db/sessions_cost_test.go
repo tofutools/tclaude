@@ -239,7 +239,7 @@ func TestReplaceSessionVirtualCostHistoryRedistributesAndClearsProjection(t *tes
 		(session_id, day, conv_id, virtual_cost_usd, updated_at, harness)
 		VALUES (?, ?, ?, ?, ?, ?)`,
 		"vc-replace", yesterday, "conv-vc-replace", 4,
-		time.Now().AddDate(0, 0, -1).Format(time.RFC3339Nano), "opencode")
+		dbTime(time.Now().AddDate(0, 0, -1)), "opencode")
 	require.NoError(t, err)
 
 	require.NoError(t, ReplaceSessionVirtualCostHistory("vc-replace", 1, []VirtualCostDailySnapshot{
@@ -556,7 +556,7 @@ func TestSumCostSinceDay_ReinstateSameDayNoDoubleCount(t *testing.T) {
 			UpdatedAt: "2026-07-02T15:23:11+02:00"}, // reinstated, carry-forward, later
 	} {
 		_, err := d.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, cost_usd, updated_at)
-			VALUES (?, ?, ?, ?, ?)`, r.SessionID, r.Day, r.ConvID, r.CostUSD, r.UpdatedAt)
+			VALUES (?, ?, ?, ?, ?)`, r.SessionID, r.Day, r.ConvID, r.CostUSD, dbTimeText(r.UpdatedAt))
 		require.NoError(t, err, "seed %s", r.SessionID)
 	}
 
@@ -725,7 +725,7 @@ func TestAllCostDailyRows_ChronologicalTieBreak(t *testing.T) {
 			UpdatedAt: "2026-07-02T12:45:09+02:00"}, // original, earlier
 	} {
 		_, err := d.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, cost_usd, updated_at)
-			VALUES (?, ?, ?, ?, ?)`, r.SessionID, r.Day, r.ConvID, r.CostUSD, r.UpdatedAt)
+			VALUES (?, ?, ?, ?, ?)`, r.SessionID, r.Day, r.ConvID, r.CostUSD, dbTimeText(r.UpdatedAt))
 		require.NoError(t, err, "seed %s", r.SessionID)
 	}
 

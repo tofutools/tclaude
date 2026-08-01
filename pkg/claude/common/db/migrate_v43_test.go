@@ -82,7 +82,7 @@ func TestMigrateV42toV43_FreshSchemaHasExitReason(t *testing.T) {
 		(id, tmux_session, pid, cwd, conv_id, status, status_detail,
 		 subagent_count, auto_registered, created_at, updated_at, last_hook)
 		VALUES ('s1', '', 0, '', 'c1', 'idle', '', 0, 0,
-		        '2026-05-16T00:00:00Z', '2026-05-16T00:00:00Z', '')`)
+		        1778889600000000000, 1778889600000000000, NULL)`)
 	require.NoError(t, err, "insert session without exit_reason")
 	var reason sql.NullString
 	require.NoError(t, d.QueryRow(

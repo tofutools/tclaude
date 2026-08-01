@@ -46,7 +46,7 @@ func TestMigrateV71toV72_BackfillsExistingAgents(t *testing.T) {
 	enroll(t, d, "old", "spawn", "", "")
 	enroll(t, d, "new", "reincarnate", "live-name", "")
 	mustExec(t, d, `INSERT INTO agent_conv_succession (old_conv_id, new_conv_id, reason, succeeded_at)
-		VALUES ('old', 'new', 'reincarnate', '2020-01-01T00:00:01Z')`)
+		VALUES ('old', 'new', 'reincarnate', 1577836801000000000)`)
 	mustExec(t, d, `UPDATE schema_version SET version = 71`)
 
 	require.NoError(t, migrateV71toV72(d), "re-run migration backfills existing agents")

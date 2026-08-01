@@ -30,7 +30,7 @@ func SaveCodexTelemetryCheckpointContext(ctx context.Context, sessionID string, 
 		VALUES (?, ?, 0, ?)
 		ON CONFLICT(session_id) DO UPDATE SET
 			data = excluded.data, failure_count = 0, updated_at = excluded.updated_at`,
-		sessionID, string(data), time.Now().UTC().Format(time.RFC3339Nano))
+		sessionID, string(data), dbTime(time.Now().UTC()))
 	return err
 }
 
@@ -57,8 +57,8 @@ func SaveCodexTelemetryCheckpointForSessionGenerationContext(
 		)
 		ON CONFLICT(session_id) DO UPDATE SET
 			data = excluded.data, failure_count = 0, updated_at = excluded.updated_at`,
-		sessionID, string(data), time.Now().UTC().Format(time.RFC3339Nano),
-		sessionID, convID, createdAt.Format(time.RFC3339Nano))
+		sessionID, string(data), dbTime(time.Now().UTC()),
+		sessionID, convID, dbTime(createdAt))
 	if err != nil {
 		return false, err
 	}
@@ -100,7 +100,7 @@ func IncrementCodexTelemetryCheckpointFailures(sessionID string) (int, error) {
 		SET failure_count = failure_count + 1, updated_at = ?
 		WHERE session_id = ?
 		RETURNING failure_count`,
-		time.Now().UTC().Format(time.RFC3339Nano), sessionID).Scan(&failures)
+		dbTime(time.Now().UTC()), sessionID).Scan(&failures)
 	if err == sql.ErrNoRows {
 		return 0, nil
 	}

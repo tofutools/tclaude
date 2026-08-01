@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 )
@@ -74,9 +73,9 @@ func insertHumanMessage(exec humanMessageExecer, m *HumanMessage) (int64, error)
 	if created.IsZero() {
 		created = time.Now()
 	}
-	readAt := ""
+	var readAt any
 	if !m.ReadAt.IsZero() {
-		readAt = m.ReadAt.Format(time.RFC3339Nano)
+		readAt = dbTime(m.ReadAt)
 	}
 	// Dual-write the stable sender ref (JOH-321 F2): from_agent is DERIVED from
 	// from_conv via agent_conversations (agentForConvExpr), the same boundary the
@@ -90,7 +89,7 @@ func insertHumanMessage(exec humanMessageExecer, m *HumanMessage) (int64, error)
 			 process_run_id, process_node_id, process_command_id)
 		VALUES (?, `+agentForConvExpr+`, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		m.FromConv, m.FromConv, m.FromTitle, m.GroupName, m.Subject, m.Body,
-		created.Format(time.RFC3339Nano), readAt, m.ProcessRunID, m.ProcessNodeID, m.ProcessCommandID)
+		dbTime(created), readAt, m.ProcessRunID, m.ProcessNodeID, m.ProcessCommandID)
 	if err != nil {
 		return 0, fmt.Errorf("insert human message: %w", err)
 	}
@@ -280,28 +279,13 @@ func ListHumanMessages() ([]*HumanMessage, error) {
 	var out []*HumanMessage
 	for rows.Next() {
 		var m HumanMessage
-		var created, readAt string
+		var created, readAt dbTimestamp
 		if err := rows.Scan(&m.ID, &m.FromConv, &m.FromAgent, &m.FromTitle, &m.GroupName,
 			&m.Subject, &m.Body, &created, &readAt, &m.ProcessRunID, &m.ProcessNodeID, &m.ProcessCommandID); err != nil {
 			return nil, err
 		}
-		if t, err := time.Parse(time.RFC3339Nano, created); err == nil {
-			m.CreatedAt = t
-		} else {
-			// A corrupt timestamp leaves the field zero rather than
-			// failing the whole list — but log it so the corruption is
-			// diagnosable instead of silently swallowed.
-			slog.Warn("human_messages: unparseable created_at, leaving zero",
-				"id", m.ID, "value", created, "error", err)
-		}
-		if readAt != "" {
-			if t, err := time.Parse(time.RFC3339Nano, readAt); err == nil {
-				m.ReadAt = t
-			} else {
-				slog.Warn("human_messages: unparseable read_at, leaving zero",
-					"id", m.ID, "value", readAt, "error", err)
-			}
-		}
+		m.CreatedAt = created.Time()
+		m.ReadAt = readAt.Time()
 		out = append(out, &m)
 	}
 	if err := rows.Err(); err != nil {
@@ -332,7 +316,7 @@ func GetHumanMessage(id int64) (*HumanMessage, error) {
 		FROM human_messages
 		WHERE id = ?`, id)
 	var m HumanMessage
-	var created, readAt string
+	var created, readAt dbTimestamp
 	switch err := row.Scan(&m.ID, &m.FromConv, &m.FromAgent, &m.FromTitle, &m.GroupName,
 		&m.Subject, &m.Body, &created, &readAt, &m.ProcessRunID, &m.ProcessNodeID, &m.ProcessCommandID); {
 	case errors.Is(err, sql.ErrNoRows):
@@ -340,20 +324,8 @@ func GetHumanMessage(id int64) (*HumanMessage, error) {
 	case err != nil:
 		return nil, err
 	}
-	if t, err := time.Parse(time.RFC3339Nano, created); err == nil {
-		m.CreatedAt = t
-	} else {
-		slog.Warn("human_messages: unparseable created_at, leaving zero",
-			"id", m.ID, "value", created, "error", err)
-	}
-	if readAt != "" {
-		if t, err := time.Parse(time.RFC3339Nano, readAt); err == nil {
-			m.ReadAt = t
-		} else {
-			slog.Warn("human_messages: unparseable read_at, leaving zero",
-				"id", m.ID, "value", readAt, "error", err)
-		}
-	}
+	m.CreatedAt = created.Time()
+	m.ReadAt = readAt.Time()
 	m.Attachment, err = GetHumanMessageAttachment(m.ID)
 	if err != nil {
 		return nil, err
@@ -374,17 +346,15 @@ func FindHumanMessageForProcessCommand(commandID, subject string) (*HumanMessage
 		       process_run_id, process_node_id, process_command_id
 		FROM human_messages WHERE process_command_id = ? AND subject = ? ORDER BY id ASC LIMIT 1`, commandID, subject)
 	var m HumanMessage
-	var created, readAt string
+	var created, readAt dbTimestamp
 	if err := row.Scan(&m.ID, &m.FromConv, &m.FromAgent, &m.FromTitle, &m.GroupName,
 		&m.Subject, &m.Body, &created, &readAt, &m.ProcessRunID, &m.ProcessNodeID, &m.ProcessCommandID); errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	} else if err != nil {
 		return nil, err
 	}
-	m.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
-	if readAt != "" {
-		m.ReadAt, _ = time.Parse(time.RFC3339Nano, readAt)
-	}
+	m.CreatedAt = created.Time()
+	m.ReadAt = readAt.Time()
 	return &m, nil
 }
 
@@ -396,7 +366,7 @@ func CountUnreadHumanMessages() (int, error) {
 		return 0, err
 	}
 	var n int
-	if err := d.QueryRow(`SELECT COUNT(*) FROM human_messages WHERE read_at = ''`).Scan(&n); err != nil {
+	if err := d.QueryRow(`SELECT COUNT(*) FROM human_messages WHERE read_at IS NULL`).Scan(&n); err != nil {
 		return 0, err
 	}
 	return n, nil
@@ -412,8 +382,8 @@ func MarkHumanMessageRead(id int64) (bool, error) {
 		return false, err
 	}
 	res, err := d.Exec(
-		`UPDATE human_messages SET read_at = ? WHERE id = ? AND read_at = ''`,
-		time.Now().Format(time.RFC3339Nano), id)
+		`UPDATE human_messages SET read_at = ? WHERE id = ? AND read_at IS NULL`,
+		dbTime(time.Now()), id)
 	if err != nil {
 		return false, fmt.Errorf("mark human message read: %w", err)
 	}
@@ -432,7 +402,7 @@ func MarkHumanMessageUnread(id int64) (bool, error) {
 		return false, err
 	}
 	res, err := d.Exec(
-		`UPDATE human_messages SET read_at = '' WHERE id = ? AND read_at != ''`, id)
+		`UPDATE human_messages SET read_at = NULL WHERE id = ? AND read_at IS NOT NULL`, id)
 	if err != nil {
 		return false, fmt.Errorf("mark human message unread: %w", err)
 	}
@@ -448,8 +418,8 @@ func MarkAllHumanMessagesRead() (int, error) {
 		return 0, err
 	}
 	res, err := d.Exec(
-		`UPDATE human_messages SET read_at = ? WHERE read_at = ''`,
-		time.Now().Format(time.RFC3339Nano))
+		`UPDATE human_messages SET read_at = ? WHERE read_at IS NULL`,
+		dbTime(time.Now()))
 	if err != nil {
 		return 0, fmt.Errorf("mark all human messages read: %w", err)
 	}
@@ -465,7 +435,7 @@ func DeleteReadHumanMessages() (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	res, err := d.Exec(`DELETE FROM human_messages WHERE read_at != ''`)
+	res, err := d.Exec(`DELETE FROM human_messages WHERE read_at IS NOT NULL`)
 	if err != nil {
 		return 0, fmt.Errorf("delete read human messages: %w", err)
 	}
@@ -478,7 +448,7 @@ func DeleteReadHumanMessages() (int, error) {
 // dashboard clear-read action; filesystem removal happens after commit and an
 // agentd reconciler retries any failed removal.
 func DeleteReadHumanMessagesWithAttachments() (int, []string, error) {
-	return deleteHumanMessagesWithAttachments("read_at != ''", nil)
+	return deleteHumanMessagesWithAttachments("read_at IS NOT NULL", nil)
 }
 
 // DeleteHumanMessage hard-deletes a single message by id, regardless of

@@ -87,7 +87,7 @@ func TestGenerationsForAgent_OrdersByLinkNotLexicalTimestamp(t *testing.T) {
 		"g1": "2026-06-30T20:13:43.0000018Z",
 		"g2": "2026-06-30T20:13:43.0000025Z",
 	} {
-		_, err = d.Exec(`UPDATE agent_conversations SET linked_at = ? WHERE conv_id = ?`, at, conv)
+		_, err = d.Exec(`UPDATE agent_conversations SET linked_at = ? WHERE conv_id = ?`, dbTimeText(at), conv)
 		require.NoError(t, err, "stamp linked_at for %s", conv)
 	}
 

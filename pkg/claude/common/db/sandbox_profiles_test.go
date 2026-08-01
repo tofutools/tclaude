@@ -604,7 +604,7 @@ func TestResolveEffectiveSandboxSnapshotComposesAtomicValuesAndStableProvenance(
 		{Name: "TIER", Value: "explicit"},
 	}})
 	require.NoError(t, err)
-	mustExec(t, d, `INSERT INTO agent_groups (name, created_at) VALUES ('crew', 'now')`)
+	mustExec(t, d, `INSERT INTO agent_groups (name, created_at) VALUES ('crew', 1767225600000000000)`)
 	var groupID int64
 	require.NoError(t, d.QueryRow(`SELECT id FROM agent_groups WHERE name = 'crew'`).Scan(&groupID))
 	require.NoError(t, SetGlobalSandboxProfile("global"))

@@ -66,8 +66,8 @@ func ClaimSpawnSlot(spawnerConvID string, maxPerWindow int, window time.Duration
 	// correctly when the offset is identical, and a caller may hand us
 	// a local-zoned time.
 	now = now.UTC()
-	threshold := now.Add(-window).Format(time.RFC3339Nano)
-	nowStr := now.Format(time.RFC3339Nano)
+	threshold := dbTime(now.Add(-window))
+	nowStr := dbTime(now)
 
 	// INSERT only if the caller's spawn count inside the window is
 	// still below the cap. SQLite executes INSERT ... SELECT ... WHERE
@@ -120,7 +120,7 @@ func CountSpawnsSince(spawnerConvID string, since time.Time) (int, error) {
 	err = d.QueryRow(`
 		SELECT COUNT(*) FROM agent_spawn_history
 		WHERE spawner_agent_id = ? AND spawned_at > ?`,
-		spawnerAgentID, since.UTC().Format(time.RFC3339Nano)).Scan(&n)
+		spawnerAgentID, dbTime(since.UTC())).Scan(&n)
 	if err != nil {
 		return 0, err
 	}

@@ -47,7 +47,8 @@ func TestSaveSubscriptionUsageSampleCoalescesFifteenMinuteBucket(t *testing.T) {
 	require.NoError(t, d.QueryRow(`SELECT COUNT(*) FROM subscription_usage_windows`).Scan(&windows))
 	assert.Equal(t, 1, samples)
 	assert.Equal(t, 2, windows, "a newer partial reading preserves other genuinely observed windows")
-	var sampledAt, observedAt, source, name string
+	var sampledAt, observedAt dbTimestamp
+	var source, name string
 	var duration int64
 	var pct float64
 	require.NoError(t, d.QueryRow(`SELECT s.sampled_at, w.observed_at, w.source,
@@ -55,8 +56,8 @@ func TestSaveSubscriptionUsageSampleCoalescesFifteenMinuteBucket(t *testing.T) {
 		FROM subscription_usage_samples s JOIN subscription_usage_windows w ON w.sample_id = s.id
 		WHERE w.window_name = 'seven_day'`).
 		Scan(&sampledAt, &observedAt, &source, &name, &duration, &pct))
-	assert.Equal(t, base.Format(time.RFC3339Nano), sampledAt)
-	assert.Equal(t, newer.ObservedAt.Format(time.RFC3339Nano), observedAt)
+	assert.Equal(t, base, sampledAt.Time())
+	assert.Equal(t, newer.ObservedAt, observedAt.Time())
 	assert.Equal(t, "api", source)
 	assert.Equal(t, "seven_day", name)
 	assert.Equal(t, int64((7*24*time.Hour)/time.Second), duration)
@@ -172,15 +173,15 @@ func TestPruneSubscriptionUsageHistoryCascadesWindows(t *testing.T) {
 	require.NoError(t, err)
 	now := time.Now().UTC()
 	oldResult, err := d.Exec(`INSERT INTO subscription_usage_samples(provider, sampled_at)
-		VALUES ('anthropic', ?)`, now.Add(-100*24*time.Hour).Format(time.RFC3339Nano))
+		VALUES ('anthropic', ?)`, dbTime(now.Add(-100*24*time.Hour)))
 	require.NoError(t, err)
 	oldID, err := oldResult.LastInsertId()
 	require.NoError(t, err)
 	_, err = d.Exec(`INSERT INTO subscription_usage_windows(sample_id, window_name, used_percent, observed_at)
-		VALUES (?, 'seven_day', 40, ?)`, oldID, now.Add(-100*24*time.Hour).Format(time.RFC3339Nano))
+		VALUES (?, 'seven_day', 40, ?)`, oldID, dbTime(now.Add(-100*24*time.Hour)))
 	require.NoError(t, err)
 	_, err = d.Exec(`INSERT INTO subscription_usage_samples(provider, sampled_at)
-		VALUES ('anthropic', ?)`, now.Add(-time.Hour).Format(time.RFC3339Nano))
+		VALUES ('anthropic', ?)`, dbTime(now.Add(-time.Hour)))
 	require.NoError(t, err)
 
 	deleted, err := PruneSubscriptionUsageHistory(now.Add(-DefaultSubscriptionUsageRetention))

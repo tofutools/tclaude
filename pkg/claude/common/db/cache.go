@@ -32,8 +32,8 @@ func SaveUsageCache(data json.RawMessage, fetchedAt, lastAttemptAt time.Time) er
 	_, err = db.Exec(`INSERT OR REPLACE INTO usage_cache (id, data, fetched_at, last_attempt_at)
 		VALUES (1, ?, ?, ?)`,
 		string(data),
-		fetchedAt.Format(time.RFC3339Nano),
-		lastAttemptAt.Format(time.RFC3339Nano))
+		nullableDBTime(fetchedAt),
+		nullableDBTime(lastAttemptAt))
 	return err
 }
 
@@ -43,9 +43,10 @@ func LoadUsageCache() (*UsageCacheRow, error) {
 	if err != nil {
 		return nil, err
 	}
-	var dataStr, fetchedStr, attemptStr string
+	var dataStr string
+	var fetchedAt, lastAttemptAt dbTimestamp
 	err = db.QueryRow(`SELECT data, fetched_at, last_attempt_at FROM usage_cache WHERE id = 1`).
-		Scan(&dataStr, &fetchedStr, &attemptStr)
+		Scan(&dataStr, &fetchedAt, &lastAttemptAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -55,8 +56,8 @@ func LoadUsageCache() (*UsageCacheRow, error) {
 	row := &UsageCacheRow{
 		Data: json.RawMessage(dataStr),
 	}
-	row.FetchedAt, _ = time.Parse(time.RFC3339Nano, fetchedStr)
-	row.LastAttemptAt, _ = time.Parse(time.RFC3339Nano, attemptStr)
+	row.FetchedAt = fetchedAt.Time()
+	row.LastAttemptAt = lastAttemptAt.Time()
 	return row, nil
 }
 
@@ -100,9 +101,10 @@ func SaveCodexUsageCacheIfNewer(data json.RawMessage, observedAt time.Time, sour
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	var existingData, observedStr string
+	var existingData string
+	var existingObserved dbTimestamp
 	err = tx.QueryRow(`SELECT data, observed_at FROM codex_usage_cache WHERE id = 1`).
-		Scan(&existingData, &observedStr)
+		Scan(&existingData, &existingObserved)
 	if err != nil && err != sql.ErrNoRows {
 		return false, err
 	}
@@ -117,8 +119,7 @@ func SaveCodexUsageCacheIfNewer(data json.RawMessage, observedAt time.Time, sour
 			return false, nil
 		}
 		identityRepair = incomingAccount && !existingAccount
-		if existing, parseErr := time.Parse(time.RFC3339Nano, observedStr); parseErr == nil &&
-			!identityRepair && !observedAt.After(existing) {
+		if !identityRepair && !observedAt.After(existingObserved.Time()) {
 			cacheNewer = false
 		}
 	}
@@ -142,8 +143,8 @@ func SaveCodexUsageCacheIfNewer(data json.RawMessage, observedAt time.Time, sour
 		_, err = tx.Exec(`INSERT OR REPLACE INTO codex_usage_cache (id, data, observed_at, updated_at, source)
 			VALUES (1, ?, ?, ?, ?)`,
 			string(data),
-			observedAt.UTC().Format(time.RFC3339Nano),
-			now.UTC().Format(time.RFC3339Nano),
+			dbTime(observedAt.UTC()),
+			dbTime(now.UTC()),
 			source)
 		if err != nil {
 			return false, err
@@ -188,9 +189,10 @@ func LoadCodexUsageCache() (*CodexUsageCacheRow, error) {
 	if err != nil {
 		return nil, err
 	}
-	var dataStr, observedStr, updatedStr, source string
+	var dataStr, source string
+	var observedAt, updatedAt dbTimestamp
 	err = db.QueryRow(`SELECT data, observed_at, updated_at, source FROM codex_usage_cache WHERE id = 1`).
-		Scan(&dataStr, &observedStr, &updatedStr, &source)
+		Scan(&dataStr, &observedAt, &updatedAt, &source)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -201,8 +203,8 @@ func LoadCodexUsageCache() (*CodexUsageCacheRow, error) {
 		Data:   json.RawMessage(dataStr),
 		Source: source,
 	}
-	row.ObservedAt, _ = time.Parse(time.RFC3339Nano, observedStr)
-	row.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedStr)
+	row.ObservedAt = observedAt.Time()
+	row.UpdatedAt = updatedAt.Time()
 	return row, nil
 }
 
@@ -215,10 +217,12 @@ func LoadDashboardUsageCaches() (*UsageCacheRow, *CodexUsageCacheRow, bool, erro
 	if err != nil {
 		return nil, nil, false, err
 	}
-	var usageData, fetchedStr, attemptStr sql.NullString
-	var codexData, observedStr, updatedStr, source sql.NullString
+	var usageData sql.NullString
+	var fetchedAt, lastAttemptAt dbTimestamp
+	var codexData, source sql.NullString
+	var observedAt, updatedAt dbTimestamp
 	var hasHistory bool
-	historyCutoff := time.Now().UTC().Add(-DefaultSubscriptionUsageRetention).Format(time.RFC3339Nano)
+	historyCutoff := dbTime(time.Now().UTC().Add(-DefaultSubscriptionUsageRetention))
 	err = d.QueryRow(`SELECT
 			u.data, u.fetched_at, u.last_attempt_at,
 			c.data, c.observed_at, c.updated_at, c.source,
@@ -226,16 +230,16 @@ func LoadDashboardUsageCaches() (*UsageCacheRow, *CodexUsageCacheRow, bool, erro
 		FROM (SELECT 1) singleton
 		LEFT JOIN usage_cache u ON u.id = 1
 		LEFT JOIN codex_usage_cache c ON c.id = 1`, historyCutoff).Scan(
-		&usageData, &fetchedStr, &attemptStr,
-		&codexData, &observedStr, &updatedStr, &source, &hasHistory)
+		&usageData, &fetchedAt, &lastAttemptAt,
+		&codexData, &observedAt, &updatedAt, &source, &hasHistory)
 	if err != nil {
 		return nil, nil, false, err
 	}
 	var usage *UsageCacheRow
 	if usageData.Valid {
 		usage = &UsageCacheRow{Data: json.RawMessage(usageData.String)}
-		usage.FetchedAt, _ = time.Parse(time.RFC3339Nano, fetchedStr.String)
-		usage.LastAttemptAt, _ = time.Parse(time.RFC3339Nano, attemptStr.String)
+		usage.FetchedAt = fetchedAt.Time()
+		usage.LastAttemptAt = lastAttemptAt.Time()
 	}
 	var codex *CodexUsageCacheRow
 	if codexData.Valid {
@@ -243,8 +247,8 @@ func LoadDashboardUsageCaches() (*UsageCacheRow, *CodexUsageCacheRow, bool, erro
 			Data:   json.RawMessage(codexData.String),
 			Source: source.String,
 		}
-		codex.ObservedAt, _ = time.Parse(time.RFC3339Nano, observedStr.String)
-		codex.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedStr.String)
+		codex.ObservedAt = observedAt.Time()
+		codex.UpdatedAt = updatedAt.Time()
 	}
 	return usage, codex, hasHistory, nil
 }
@@ -260,8 +264,8 @@ func TryClaimUsageFetch(ttl time.Duration) (bool, error) {
 		return false, err
 	}
 
-	cutoff := time.Now().Add(-ttl).Format(time.RFC3339Nano)
-	now := time.Now().Format(time.RFC3339Nano)
+	cutoff := dbTime(time.Now().Add(-ttl))
+	now := dbTime(time.Now())
 
 	// Try to claim: update only if stale or missing
 	result, err := db.Exec(`UPDATE usage_cache SET last_attempt_at = ?
@@ -304,7 +308,7 @@ func SaveGitCache(repoHash string, data json.RawMessage, fetchedAt time.Time) er
 	}
 	_, err = db.Exec(`INSERT OR REPLACE INTO git_cache (repo_hash, data, fetched_at)
 		VALUES (?, ?, ?)`,
-		repoHash, string(data), fetchedAt.Format(time.RFC3339Nano))
+		repoHash, string(data), dbTime(fetchedAt))
 	return err
 }
 
@@ -314,9 +318,10 @@ func LoadGitCache(repoHash string) (*GitCacheRow, error) {
 	if err != nil {
 		return nil, err
 	}
-	var dataStr, fetchedStr string
+	var dataStr string
+	var fetchedAt dbTimestamp
 	err = db.QueryRow(`SELECT data, fetched_at FROM git_cache WHERE repo_hash = ?`, repoHash).
-		Scan(&dataStr, &fetchedStr)
+		Scan(&dataStr, &fetchedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -326,6 +331,6 @@ func LoadGitCache(repoHash string) (*GitCacheRow, error) {
 	row := &GitCacheRow{
 		Data: json.RawMessage(dataStr),
 	}
-	row.FetchedAt, _ = time.Parse(time.RFC3339Nano, fetchedStr)
+	row.FetchedAt = fetchedAt.Time()
 	return row, nil
 }

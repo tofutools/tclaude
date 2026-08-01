@@ -50,7 +50,7 @@ func setSessionUpdatedAt(t *testing.T, id string, updatedAt time.Time) {
 	d, err := db.Open()
 	require.NoError(t, err)
 	result, err := d.Exec(`UPDATE sessions SET updated_at = ? WHERE id = ?`,
-		updatedAt.Format(time.RFC3339Nano), id)
+		updatedAt.UnixNano(), id)
 	require.NoError(t, err)
 	rows, err := result.RowsAffected()
 	require.NoError(t, err)

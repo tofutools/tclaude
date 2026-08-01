@@ -172,7 +172,7 @@ func releaseExpiredNudgeClaims(now time.Time) {
 			continue
 		}
 		token := db.AgentMessageNudgeClaim{
-			ClaimedAt: m.NudgeClaimedAt.Format(time.RFC3339Nano),
+			ClaimedAt: m.NudgeClaimedAt.UnixNano(),
 			Attempt:   m.NudgeAttempts,
 		}
 		// An old claim can still be making forward progress through this

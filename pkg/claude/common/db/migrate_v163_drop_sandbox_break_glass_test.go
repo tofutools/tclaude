@@ -80,7 +80,7 @@ func TestMigrateV163DropsBreakGlassWithoutWidening(t *testing.T) {
 	_, err := d.Exec(`INSERT INTO sandbox_profiles
 		(name, filesystem_json, environment_json, includes_json, agent_directories_json,
 		 network_access, break_glass_filesystem_json, created_at, updated_at)
-		VALUES ('debugger', ?, '[]', '[]', '[]', '', ?, 'now', 'now')`,
+		VALUES ('debugger', ?, '[]', '[]', '[]', '', ?, 1767225600000000000, 1767225600000000000)`,
 		ordinaryFilesystem, breakGlass)
 	require.NoError(t, err)
 
@@ -133,7 +133,7 @@ func TestMigrateV163IsIdempotent(t *testing.T) {
 		(name, filesystem_json, environment_json, includes_json, agent_directories_json,
 		 network_access, break_glass_filesystem_json, created_at, updated_at)
 		VALUES ('debugger', '[]', '[]', '[]', '[]', '',
-		        '[{"path":"/home/dev/.tclaude/data","access":"read"}]', 'now', 'now')`)
+		        '[{"path":"/home/dev/.tclaude/data","access":"read"}]', 1767225600000000000, 1767225600000000000)`)
 	require.NoError(t, err)
 
 	require.NoError(t, migrateV162toV163(d))
@@ -151,7 +151,7 @@ func TestMigrateV163StaysSilentWithoutBreakGlass(t *testing.T) {
 	_, err := d.Exec(`INSERT INTO sandbox_profiles
 		(name, filesystem_json, environment_json, includes_json, agent_directories_json,
 		 network_access, break_glass_filesystem_json, created_at, updated_at)
-		VALUES ('ordinary', '[{"path":"/home/dev/work","access":"write"}]', '[]', '[]', '[]', '', '[]', 'now', 'now')`)
+		VALUES ('ordinary', '[{"path":"/home/dev/work","access":"write"}]', '[]', '[]', '[]', '', '[]', 1767225600000000000, 1767225600000000000)`)
 	require.NoError(t, err)
 
 	require.NoError(t, migrateV162toV163(d))
@@ -179,7 +179,7 @@ func TestMigrateV163DisclosureNotifiesTheTerminal(t *testing.T) {
 		(name, filesystem_json, environment_json, includes_json, agent_directories_json,
 		 network_access, break_glass_filesystem_json, created_at, updated_at)
 		VALUES ('debugger', '[]', '[]', '[]', '[]', '',
-		        '[{"path":"/home/dev/.tclaude/data","access":"write"}]', 'now', 'now')`)
+		        '[{"path":"/home/dev/.tclaude/data","access":"write"}]', 1767225600000000000, 1767225600000000000)`)
 	require.NoError(t, err)
 
 	require.NoError(t, migrateV162toV163(d))
@@ -197,10 +197,10 @@ func TestMigrateV163SurvivesUnreadableBreakGlassJSON(t *testing.T) {
 	_, err := d.Exec(`INSERT INTO sandbox_profiles
 		(name, filesystem_json, environment_json, includes_json, agent_directories_json,
 		 network_access, break_glass_filesystem_json, created_at, updated_at)
-		VALUES ('corrupt', '[]', '[]', '[]', '[]', '', 'not valid json', 'now', 'now')`)
+		VALUES ('corrupt', '[]', '[]', '[]', '[]', '', 'not valid json', 1767225600000000000, 1767225600000000000)`)
 	require.NoError(t, err)
 
 	require.NoError(t, migrateV162toV163(d))
 	assert.False(t, hasColumn(t, d, "sandbox_profiles", "break_glass_filesystem_json"))
-	assert.Equal(t, 180, currentVersion, "tripwire: bump this with the next migration")
+	assert.Equal(t, 181, currentVersion, "tripwire: bump this with the next migration")
 }

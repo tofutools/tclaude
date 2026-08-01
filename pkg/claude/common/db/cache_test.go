@@ -356,9 +356,9 @@ func TestSchemaV1ToV2Migration(t *testing.T) {
 	require.NoError(t, err, "Open")
 
 	// Verify the cache tables exist by inserting into them
-	_, err = d.Exec(`INSERT INTO usage_cache (id, data, fetched_at, last_attempt_at) VALUES (1, '{}', '', '')`)
+	_, err = d.Exec(`INSERT INTO usage_cache (id, data, fetched_at, last_attempt_at) VALUES (1, '{}', NULL, NULL)`)
 	require.NoError(t, err, "insert into usage_cache")
-	_, err = d.Exec(`INSERT INTO git_cache (repo_hash, data, fetched_at) VALUES ('test', '{}', '')`)
+	_, err = d.Exec(`INSERT INTO git_cache (repo_hash, data, fetched_at) VALUES ('test', '{}', NULL)`)
 	require.NoError(t, err, "insert into git_cache")
 
 	// Verify schema version is 2

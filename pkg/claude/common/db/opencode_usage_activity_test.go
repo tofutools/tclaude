@@ -68,7 +68,7 @@ func TestOpenCodeUsageActivityFollowsConversationAcrossResumeAndPrunes(t *testin
 		(session_id, message_id, conv_id, provider_id, model_id, observed_at)
 		VALUES (?, ?, ?, ?, ?, ?)`,
 		"spawn", "msg-expired", "ses-other", "openai", "gpt-a",
-		now.Add(-OpenCodeUsageActivityRetention-time.Hour).Format(time.RFC3339Nano))
+		dbTime(now.Add(-OpenCodeUsageActivityRetention-time.Hour)))
 	require.NoError(t, err)
 	require.NoError(t, UpsertOpenCodeUsageActivity(OpenCodeUsageActivity{
 		SessionID: "live", MessageID: "msg-new", ConvID: "ses-live",
@@ -103,7 +103,7 @@ func TestOpenCodePricingStepRemovalFollowsConversationClearsActivityAndExpires(t
 	_, err = d.Exec(`INSERT INTO opencode_usage_step_removals
 		(conv_id, message_id, removed_at) VALUES (?, ?, ?)`,
 		"ses-resume", "msg-expired",
-		now.Add(-OpenCodeUsageActivityRetention-time.Hour).Format(time.RFC3339Nano))
+		dbTime(now.Add(-OpenCodeUsageActivityRetention-time.Hour)))
 	require.NoError(t, err)
 	removed, err = OpenCodePricingStepsRemoved("ses-resume", now)
 	require.NoError(t, err)

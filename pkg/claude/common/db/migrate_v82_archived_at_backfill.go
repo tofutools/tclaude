@@ -73,7 +73,7 @@ func migrateV81toV82(db *sql.DB) error {
 				WHERE s.old_conv_id = conv_index.conv_id
 				  AND s.reason = 'reincarnate'
 			)
-			WHERE archived_at = ''
+			WHERE archived_at = '' OR archived_at IS NULL
 			  AND conv_id IN (
 			      SELECT old_conv_id FROM agent_conv_succession
 			      WHERE old_conv_id IS NOT NULL AND old_conv_id != ''

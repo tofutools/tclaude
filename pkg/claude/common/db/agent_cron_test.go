@@ -238,7 +238,7 @@ func TestInsertAgentCronJobWithRoutingAuthority_ReadsAuthorityAfterBeginImmediat
 			mutate: func(t *testing.T, tx *sql.Tx, groupID int64, _ string) {
 				t.Helper()
 				_, err := tx.Exec(`UPDATE agent_groups SET archived_at = ? WHERE id = ?`,
-					time.Now().UTC().Format(time.RFC3339Nano), groupID)
+					dbTime(time.Now().UTC()), groupID)
 				require.NoError(t, err)
 			},
 			wantError: ErrAgentCronRoutingGroupArchived,
@@ -642,11 +642,9 @@ func pinCronTimes(t *testing.T, id int64, created time.Time, lastRun *time.Time)
 	t.Helper()
 	d, err := Open()
 	require.NoError(t, err, "Open")
-	mustExec(t, d, `UPDATE agent_cron_jobs SET created_at = '`+
-		created.UTC().Format(time.RFC3339)+`' WHERE id = `+fmt.Sprint(id))
+	mustExec(t, d, `UPDATE agent_cron_jobs SET created_at = ? WHERE id = ?`, dbTime(created.UTC()), id)
 	if lastRun != nil {
-		mustExec(t, d, `UPDATE agent_cron_jobs SET last_run_at = '`+
-			lastRun.UTC().Format(time.RFC3339)+`' WHERE id = `+fmt.Sprint(id))
+		mustExec(t, d, `UPDATE agent_cron_jobs SET last_run_at = ? WHERE id = ?`, dbTime(lastRun.UTC()), id)
 	}
 }
 

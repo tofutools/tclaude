@@ -32,7 +32,7 @@ var SystemTags = []string{
 type SessionEntry struct {
 	SessionID    string `json:"sessionId"`
 	FullPath     string `json:"fullPath"`
-	FileMtime    int64  `json:"fileMtime"`
+	FileMtime    int64  `json:"-"` // Unix nanoseconds internally; MarshalJSON renders RFC3339Nano.
 	FirstPrompt  string `json:"firstPrompt"`
 	Summary      string `json:"summary,omitempty"`
 	CustomTitle  string `json:"customTitle,omitempty"`
@@ -88,6 +88,39 @@ type SessionEntry struct {
 	// parseJSONLSession scan and never persisted; ScanAndUpsertFile
 	// uses it to recover a session stuck 'working' on the dashboard.
 	LastTurnInterrupted bool `json:"-"`
+}
+
+// MarshalJSON keeps the repository-owned JSON boundary independent of the
+// SQLite representation. FileMtime is an int64 Unix-nanosecond cache key in
+// memory and in SQLite, but JSON consumers receive the same RFC3339Nano form
+// as the other conversation timestamps.
+func (e SessionEntry) MarshalJSON() ([]byte, error) {
+	type sessionEntryJSON SessionEntry
+	fileMtime := ""
+	if e.FileMtime != 0 {
+		fileMtime = time.Unix(0, e.FileMtime).UTC().Format(time.RFC3339Nano)
+	}
+	return json.Marshal(struct {
+		sessionEntryJSON
+		FileMtime string `json:"fileMtime"`
+	}{sessionEntryJSON: sessionEntryJSON(e), FileMtime: fileMtime})
+}
+
+// marshalLegacySessionEntry is deliberately separate from MarshalJSON. Claude
+// Code's sessions-index.json predates tclaude's JSON contract and old readers
+// expect fileMtime as Unix milliseconds, so this compatibility writer keeps
+// that exact legacy shape without exposing the internal nanosecond integer on
+// current CLI/API JSON surfaces.
+func marshalLegacySessionEntry(e SessionEntry) ([]byte, error) {
+	type legacySessionEntryJSON SessionEntry
+	fileMtime := int64(0)
+	if e.FileMtime != 0 {
+		fileMtime = time.Unix(0, e.FileMtime).UnixMilli()
+	}
+	return json.Marshal(struct {
+		legacySessionEntryJSON
+		FileMtime int64 `json:"fileMtime"`
+	}{legacySessionEntryJSON: legacySessionEntryJSON(e), FileMtime: fileMtime})
 }
 
 // DisplayTitle returns the best available title for display
@@ -230,7 +263,7 @@ func LoadSessionsIndexWithOptions(projectPath string, opts LoadSessionsIndexOpti
 		if err != nil {
 			continue
 		}
-		fileMtime := info.ModTime().Unix()
+		fileMtime := info.ModTime().UnixNano()
 		fileSize := info.Size()
 
 		// Serve a fresh, non-stub cache hit without re-scanning.
@@ -699,7 +732,7 @@ func RefreshConvIndexEntry(convID string) *db.ConvIndexRow {
 	// A stub row is never trusted as fresh — it only records that the
 	// last scan found nothing indexable. Re-scan it (cheap; stub files
 	// are tiny) so a stub written by older scanning logic self-heals.
-	if info.ModTime().Unix() <= row.FileMtime && info.Size() == row.FileSize && !isStubRow(row) {
+	if info.ModTime().UnixNano() <= row.FileMtime && info.Size() == row.FileSize && !isStubRow(row) {
 		return row
 	}
 	if FollowAndUpsertFile(row.FullPath) == nil {
@@ -749,7 +782,7 @@ func upsertScanResult(filePath, convID, projectDir string, info os.FileInfo, sca
 			ConvID:     convID,
 			ProjectDir: projectDir,
 			FullPath:   filePath,
-			FileMtime:  info.ModTime().Unix(),
+			FileMtime:  info.ModTime().UnixNano(),
 			FileSize:   info.Size(),
 			IndexedAt:  time.Now(),
 		}
@@ -910,7 +943,7 @@ func UpsertSessionsIndexEntry(projectPath string, entry SessionEntry) error {
 	if err != nil || !exists {
 		return err
 	}
-	newRaw, err := json.Marshal(entry)
+	newRaw, err := marshalLegacySessionEntry(entry)
 	if err != nil {
 		return err
 	}
@@ -1117,7 +1150,7 @@ func CopyConversationToPath(convID, destPath string, global bool) (*CopyConversa
 	newEntry := SessionEntry{
 		SessionID:        newConvID,
 		FullPath:         dstConvFile,
-		FileMtime:        dstInfo.ModTime().UnixMilli(),
+		FileMtime:        dstInfo.ModTime().UnixNano(),
 		FirstPrompt:      srcEntry.FirstPrompt,
 		Summary:          srcEntry.Summary,
 		CustomTitle:      srcEntry.CustomTitle,

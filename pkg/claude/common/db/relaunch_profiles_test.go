@@ -61,10 +61,11 @@ func TestContextSnapshotTokenOnlyFastPathPreservesProjection(t *testing.T) {
 		convID    = "context-window-projection-conv"
 		sessionID = "context-window-projection-session"
 	)
-	require.NoError(t, SaveSession(&SessionRow{
+	row := &SessionRow{
 		ID: sessionID, ConvID: convID, Cwd: "/tmp/context-window-projection",
 		Harness: DefaultHarness, Status: "idle",
-	}))
+	}
+	require.NoError(t, SaveSession(row))
 	require.NoError(t, UpdateContextSnapshot(sessionID, 25, 10, 20, 1_000_000))
 	profile, err := ConversationResumeProfileForConv(convID)
 	require.NoError(t, err)
@@ -75,12 +76,12 @@ func TestContextSnapshotTokenOnlyFastPathPreservesProjection(t *testing.T) {
 
 	d, err := Open()
 	require.NoError(t, err)
-	const sentinel = "same-window-must-not-project"
-	_, err = d.Exec(`UPDATE conversation_resume_profiles SET updated_at = ? WHERE conv_id = ?`, sentinel, convID)
+	sentinel := time.Date(2025, 1, 2, 3, 4, 5, 6, time.UTC)
+	_, err = d.Exec(`UPDATE conversation_resume_profiles SET updated_at = ? WHERE conv_id = ?`, dbTime(sentinel), convID)
 	require.NoError(t, err)
 
 	updated, err := UpdateContextSnapshotIfWindowUnchanged(
-		sessionID, convID, time.Time{}, 50, 100, 200, 1_000_000,
+		sessionID, convID, row.CreatedAt, 50, 100, 200, 1_000_000,
 	)
 	require.NoError(t, err)
 	require.True(t, updated)
@@ -89,15 +90,15 @@ func TestContextSnapshotTokenOnlyFastPathPreservesProjection(t *testing.T) {
 	assert.Equal(t, float64(50), snapshot.ContextPct)
 	assert.Equal(t, int64(100), snapshot.TokensInput)
 	assert.Equal(t, int64(200), snapshot.TokensOutput)
-	var profileUpdatedAt string
+	var profileUpdatedAt dbTimestamp
 	require.NoError(t, d.QueryRow(
 		`SELECT updated_at FROM conversation_resume_profiles WHERE conv_id = ?`, convID,
 	).Scan(&profileUpdatedAt))
-	assert.Equal(t, sentinel, profileUpdatedAt,
+	assert.Equal(t, sentinel, profileUpdatedAt.Time(),
 		"token-only context changes must not rewrite durable relaunch profiles")
 
 	updated, err = UpdateContextSnapshotIfWindowUnchanged(
-		sessionID, convID, time.Time{}, 60, 120, 240, 200_000,
+		sessionID, convID, row.CreatedAt, 60, 120, 240, 200_000,
 	)
 	require.NoError(t, err)
 	assert.False(t, updated, "a changed window must fall back to full projection")
@@ -105,7 +106,7 @@ func TestContextSnapshotTokenOnlyFastPathPreservesProjection(t *testing.T) {
 	require.NoError(t, d.QueryRow(
 		`SELECT updated_at FROM conversation_resume_profiles WHERE conv_id = ?`, convID,
 	).Scan(&profileUpdatedAt))
-	assert.NotEqual(t, sentinel, profileUpdatedAt,
+	assert.NotEqual(t, sentinel, profileUpdatedAt.Time(),
 		"a context-window change still projects durable relaunch state")
 	profile, err = ConversationResumeProfileForConv(convID)
 	require.NoError(t, err)
@@ -123,22 +124,24 @@ func TestContextSnapshotWriteBatchCommitsFullAndFastUpdatesTogether(t *testing.T
 		fastConv    = "context-batch-fast-conv"
 		fastSession = "context-batch-fast-session"
 	)
-	require.NoError(t, SaveSession(&SessionRow{
+	fullRow := &SessionRow{
 		ID: fullSession, ConvID: fullConv, Cwd: "/tmp/context-batch-full",
 		Harness: DefaultHarness, Status: "idle",
-	}))
-	require.NoError(t, SaveSession(&SessionRow{
+	}
+	require.NoError(t, SaveSession(fullRow))
+	fastRow := &SessionRow{
 		ID: fastSession, ConvID: fastConv, Cwd: "/tmp/context-batch-fast",
 		Harness: DefaultHarness, Status: "idle",
-	}))
+	}
+	require.NoError(t, SaveSession(fastRow))
 	require.NoError(t, UpdateContextSnapshot(fastSession, 20, 20, 2, 200_000))
 
 	batch := NewContextSnapshotWriteBatch()
 	fullIndex := batch.UpdateContextSnapshot(
-		fullSession, fullConv, time.Time{}, 40, 400, 40, 1_000_000,
+		fullSession, fullConv, fullRow.CreatedAt, 40, 400, 40, 1_000_000,
 	)
 	fastIndex := batch.UpdateContextSnapshotIfWindowUnchanged(
-		fastSession, fastConv, time.Time{}, 30, 300, 30, 200_000,
+		fastSession, fastConv, fastRow.CreatedAt, 30, 300, 30, 200_000,
 	)
 
 	before, err := GetContextSnapshot(fullSession)
@@ -178,28 +181,30 @@ func TestContextSnapshotWriteBatchIsolatesProjectionFailure(t *testing.T) {
 		goodConv    = "context-batch-good-conv"
 		goodSession = "context-batch-good-session"
 	)
-	require.NoError(t, SaveSession(&SessionRow{
+	badRow := &SessionRow{
 		ID: badSession, ConvID: badConv, Cwd: "/tmp/context-batch-bad",
 		Harness: DefaultHarness, Status: "idle",
-	}))
-	require.NoError(t, SaveSession(&SessionRow{
+	}
+	require.NoError(t, SaveSession(badRow))
+	goodRow := &SessionRow{
 		ID: goodSession, ConvID: goodConv, Cwd: "/tmp/context-batch-good",
 		Harness: DefaultHarness, Status: "idle",
-	}))
+	}
+	require.NoError(t, SaveSession(goodRow))
 	require.NoError(t, UpdateContextSnapshot(goodSession, 20, 20, 2, 200_000))
 	d, err := Open()
 	require.NoError(t, err)
 	_, err = d.Exec(`UPDATE conversation_resume_profiles
-		SET profile_json = '{"version":99}', updated_at = 'now'
+		SET profile_json = '{"version":99}', updated_at = 1767225600000000000
 		WHERE conv_id = ?`, badConv)
 	require.NoError(t, err)
 
 	batch := NewContextSnapshotWriteBatch()
 	badIndex := batch.UpdateContextSnapshot(
-		badSession, badConv, time.Time{}, 40, 400, 40, 1_000_000,
+		badSession, badConv, badRow.CreatedAt, 40, 400, 40, 1_000_000,
 	)
 	goodIndex := batch.UpdateContextSnapshotIfWindowUnchanged(
-		goodSession, goodConv, time.Time{}, 30, 300, 30, 200_000,
+		goodSession, goodConv, goodRow.CreatedAt, 30, 300, 30, 200_000,
 	)
 	result, err := batch.Commit()
 	require.NoError(t, err, "an operation error must not abort the outer transaction")
@@ -587,7 +592,7 @@ func TestDurableRelaunchProfilesRejectUnknownVersions(t *testing.T) {
 	_, err = d.Exec(`UPDATE agents SET relaunch_profile = '{"version":99}' WHERE agent_id = ?`, agentID)
 	require.NoError(t, err)
 	_, err = d.Exec(`INSERT INTO conversation_resume_profiles (conv_id, profile_json, updated_at)
-		VALUES (?, '{"version":99}', 'now')`, convID)
+		VALUES (?, '{"version":99}', 1767225600000000000)`, convID)
 	require.NoError(t, err)
 
 	_, err = AgentRelaunchProfileForConv(convID)

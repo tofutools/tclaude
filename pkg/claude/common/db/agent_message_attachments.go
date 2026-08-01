@@ -96,7 +96,7 @@ func countUnprocessedRegularMessageBacklog(q dbExecQuerier, m *AgentMessage) (in
 		if agentID != "" {
 			var n int
 			err = q.QueryRow(`SELECT COUNT(*) FROM agent_messages
-				WHERE regular_send = 1 AND processed_at = '' AND (
+				WHERE regular_send = 1 AND processed_at IS NULL AND (
 					(to_agent = ? AND pin_gen = 0) OR
 					(to_agent = '' AND to_conv IN (
 						SELECT conv_id FROM agent_conversations WHERE agent_id = ?)))`,
@@ -106,7 +106,7 @@ func countUnprocessedRegularMessageBacklog(q dbExecQuerier, m *AgentMessage) (in
 	}
 	var n int
 	err := q.QueryRow(`SELECT COUNT(*) FROM agent_messages
-		WHERE to_conv = ? AND (pin_gen = 1 OR to_agent = '') AND regular_send = 1 AND processed_at = ''`,
+		WHERE to_conv = ? AND (pin_gen = 1 OR to_agent = '') AND regular_send = 1 AND processed_at IS NULL`,
 		m.ToConv).Scan(&n)
 	return n, err
 }

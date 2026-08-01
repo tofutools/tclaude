@@ -2,6 +2,7 @@ package db
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -41,27 +42,30 @@ func TestMigrateV81toV82_BackfillsArchivedAt(t *testing.T) {
 	//   cleared   — a /clear predecessor, active → must STAY active (not -x-renamed,
 	//               forward /clear doesn't stamp the column; backfill must match)
 	mustExec(t, d, `INSERT INTO conv_index (conv_id, project_dir, full_path, archived_at) VALUES
-		('pred',    '/p', '/p/pred.jsonl',    ''),
-		('head',    '/p', '/p/head.jsonl',    ''),
-		('live-x',  '/p', '/p/live-x.jsonl',  ''),
-		('manual',  '/p', '/p/manual.jsonl',  '2020-01-01T00:00:00Z'),
-		('cleared', '/p', '/p/cleared.jsonl', '')`)
+		('pred',    '/p', '/p/pred.jsonl',    NULL),
+		('head',    '/p', '/p/head.jsonl',    NULL),
+		('live-x',  '/p', '/p/live-x.jsonl',  NULL),
+		('manual',  '/p', '/p/manual.jsonl',  1577836800000000000),
+		('cleared', '/p', '/p/cleared.jsonl', NULL)`)
 
 	// succession edges. reason='reincarnate' for the real predecessors;
 	// orphan→head3 has NO conv_index row (silent no-op); cleared→head4 is a
 	// /clear rotation (reason='clear') that must be left visible.
 	mustExec(t, d, `INSERT INTO agent_conv_succession (old_conv_id, new_conv_id, reason, succeeded_at) VALUES
-		('pred',    'head',  'reincarnate', '2026-05-01T10:00:00Z'),
-		('manual',  'head2', 'reincarnate', '2026-05-02T10:00:00Z'),
-		('orphan',  'head3', 'reincarnate', '2026-05-03T10:00:00Z'),
-		('cleared', 'head4', 'clear',       '2026-05-04T10:00:00Z')`)
+		('pred',    'head',  'reincarnate', 1777629600000000000),
+		('manual',  'head2', 'reincarnate', 1777716000000000000),
+		('orphan',  'head3', 'reincarnate', 1777802400000000000),
+		('cleared', 'head4', 'clear',       1777888800000000000)`)
 
 	require.NoError(t, migrateV81toV82(d), "v81→v82")
 
 	archivedAt := func(convID string) string {
-		var v string
+		var v dbTimestamp
 		require.NoError(t, d.QueryRow(`SELECT archived_at FROM conv_index WHERE conv_id = ?`, convID).Scan(&v))
-		return v
+		if !v.valid {
+			return ""
+		}
+		return v.Time().Format(time.RFC3339Nano)
 	}
 
 	assert.Equal(t, "2026-05-01T10:00:00Z", archivedAt("pred"), "reincarnate predecessor stamped from succeeded_at")

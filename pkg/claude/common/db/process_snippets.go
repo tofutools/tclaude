@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -18,7 +17,6 @@ const (
 	MaxProcessSnippetEnvelopeBytes  = 256 << 10
 	MaxProcessSnippetNameRunes      = 80
 	MaxProcessSnippetNameBytes      = 160
-	maxProcessSnippetTimestampBytes = 64
 )
 
 var (
@@ -53,14 +51,6 @@ func NewProcessSnippetID() string {
 	return ProcessSnippetIDPrefix + hex.EncodeToString(b[:])
 }
 
-func parseSnippetTime(value string) (time.Time, error) {
-	parsed, err := time.Parse(time.RFC3339Nano, value)
-	if err != nil {
-		return time.Time{}, fmt.Errorf("invalid process snippet timestamp: %w", err)
-	}
-	return parsed, nil
-}
-
 func validProcessSnippetID(value string) bool {
 	if len(value) != len(ProcessSnippetIDPrefix)+32 || !strings.HasPrefix(value, ProcessSnippetIDPrefix) {
 		return false
@@ -75,18 +65,19 @@ func validProcessSnippetID(value string) bool {
 
 func scanListedProcessSnippet(scanner interface{ Scan(...any) error }) (ProcessSnippet, error) {
 	var snippet ProcessSnippet
-	var created, updated string
+	var created, updated dbTimestamp
 	var storedBytes int64
 	if err := scanner.Scan(&snippet.ID, &snippet.Name, &snippet.EnvelopeJSON, &snippet.Revision, &created, &updated, &storedBytes); err != nil {
 		return ProcessSnippet{}, err
 	}
-	var err error
-	if snippet.CreatedAt, err = parseSnippetTime(created); err != nil {
+	if !created.valid {
 		snippet.Corrupt = true
 	}
-	if snippet.UpdatedAt, err = parseSnippetTime(updated); err != nil {
+	if !updated.valid {
 		snippet.Corrupt = true
 	}
+	snippet.CreatedAt = created.Time()
+	snippet.UpdatedAt = updated.Time()
 	if snippet.Name == "" || !utf8.ValidString(snippet.Name) ||
 		utf8.RuneCountInString(snippet.Name) > MaxProcessSnippetNameRunes || len(snippet.Name) > MaxProcessSnippetNameBytes {
 		snippet.Corrupt = true
@@ -119,12 +110,11 @@ func ListProcessSnippets() (ProcessSnippetLibrary, error) {
 		CASE WHEN length(CAST(name AS BLOB)) <= ? THEN name ELSE '' END,
 		CASE WHEN length(CAST(envelope_json AS BLOB)) <= ? THEN envelope_json ELSE '' END,
 		CASE WHEN typeof(revision) = 'integer' THEN revision ELSE 0 END,
-		CASE WHEN length(CAST(created_at AS BLOB)) <= ? THEN created_at ELSE '' END,
-		CASE WHEN length(CAST(updated_at AS BLOB)) <= ? THEN updated_at ELSE '' END,
+		CASE WHEN typeof(created_at) = 'integer' THEN created_at END,
+		CASE WHEN typeof(updated_at) = 'integer' THEN updated_at END,
 		length(CAST(envelope_json AS BLOB))
 		FROM process_snippets ORDER BY name_key, id LIMIT ?`,
-		len(ProcessSnippetIDPrefix)+32, MaxProcessSnippetNameBytes, MaxProcessSnippetEnvelopeBytes,
-		maxProcessSnippetTimestampBytes, maxProcessSnippetTimestampBytes, MaxProcessSnippetCount)
+		len(ProcessSnippetIDPrefix)+32, MaxProcessSnippetNameBytes, MaxProcessSnippetEnvelopeBytes, MaxProcessSnippetCount)
 	if err != nil {
 		return ProcessSnippetLibrary{}, err
 	}
@@ -215,7 +205,7 @@ func CreateProcessSnippet(name, nameKey, envelopeJSON string) (ProcessSnippet, i
 	_, err = tx.Exec(`INSERT INTO process_snippets
 		(id, name, name_key, envelope_json, revision, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?)`, snippet.ID, snippet.Name, nameKey,
-		snippet.EnvelopeJSON, snippet.Revision, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano))
+		snippet.EnvelopeJSON, snippet.Revision, dbTime(now), dbTime(now))
 	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "unique") {
 			return ProcessSnippet{}, 0, ErrProcessSnippetNameExists
@@ -245,7 +235,7 @@ func RenameProcessSnippet(id, name, nameKey string, revision int64) (ProcessSnip
 	if _, err := lockProcessSnippetLibrary(tx); err != nil {
 		return ProcessSnippet{}, 0, err
 	}
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := dbTime(time.Now().UTC())
 	result, err := tx.Exec(`UPDATE process_snippets
 		SET name = ?, name_key = ?, revision = revision + 1, updated_at = ?
 		WHERE id = ? AND revision = ?`, name, nameKey, now, id, revision)
@@ -276,11 +266,11 @@ func RenameProcessSnippet(id, name, nameKey string, revision int64) (ProcessSnip
 		CASE WHEN length(CAST(name AS BLOB)) <= ? THEN name ELSE '' END,
 		CASE WHEN length(CAST(envelope_json AS BLOB)) <= ? THEN envelope_json ELSE '' END,
 		CASE WHEN typeof(revision) = 'integer' THEN revision ELSE 0 END,
-		CASE WHEN length(CAST(created_at AS BLOB)) <= ? THEN created_at ELSE '' END,
-		CASE WHEN length(CAST(updated_at AS BLOB)) <= ? THEN updated_at ELSE '' END,
+		CASE WHEN typeof(created_at) = 'integer' THEN created_at END,
+		CASE WHEN typeof(updated_at) = 'integer' THEN updated_at END,
 		length(CAST(envelope_json AS BLOB))
 		FROM process_snippets WHERE id = ?`, len(ProcessSnippetIDPrefix)+32, MaxProcessSnippetNameBytes,
-		MaxProcessSnippetEnvelopeBytes, maxProcessSnippetTimestampBytes, maxProcessSnippetTimestampBytes, id))
+		MaxProcessSnippetEnvelopeBytes, id))
 	if err != nil {
 		return ProcessSnippet{}, 0, err
 	}

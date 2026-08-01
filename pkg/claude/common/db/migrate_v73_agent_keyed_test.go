@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -54,14 +55,37 @@ func TestMigrateV72toV73_CollapsesGenerationsDeterministically(t *testing.T) {
 	// One actor, two generations: old → new (succession edge ⇒ same actor).
 	enroll(t, d, "old", "spawn", "", "")
 	enroll(t, d, "new", "reincarnate", "", "")
+	actorID := newAgentID()
+	createdAt := dbTime(time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC))
+	mustExec(t, d, `INSERT INTO agents (agent_id, current_conv_id, created_at, created_via)
+		VALUES (?, 'new', ?, 'test')`, actorID, createdAt)
+	mustExec(t, d, `INSERT INTO agent_conversations (conv_id, agent_id, role, reason, linked_at)
+		VALUES ('old', ?, 'generation', 'test', ?), ('new', ?, 'head', 'test', ?)`,
+		actorID, createdAt, actorID, createdAt)
 	mustExec(t, d, `INSERT INTO agent_conv_succession (old_conv_id, new_conv_id, reason, succeeded_at)
-		VALUES ('old', 'new', 'reincarnate', '2020-01-02T00:00:00Z')`)
+		VALUES ('old', 'new', 'reincarnate', ?)`, dbTime(time.Date(2020, 1, 2, 0, 0, 0, 0, time.UTC)))
 
 	// Both generations are members of alpha; the newer one (new) holds 'lead'.
+	// These spellings are lexically inverted across offsets: old is 00:59Z and
+	// new is 01:00Z even though old's wall-clock text (02:59) sorts later.
 	mustExec(t, d, `INSERT INTO agent_group_members (group_id, conv_id, role, descr, joined_at)
-		VALUES (?, 'old', 'member', '', '2020-01-01T00:00:00Z')`, groupID)
+		VALUES (?, 'old', 'member', '', '2020-01-01T02:59:00+02:00')`, groupID)
 	mustExec(t, d, `INSERT INTO agent_group_members (group_id, conv_id, role, descr, joined_at)
-		VALUES (?, 'new', 'lead', '', '2020-01-02T00:00:00Z')`, groupID)
+		VALUES (?, 'new', 'lead', '', '2020-01-01T02:00:00+01:00')`, groupID)
+
+	// A trimmed whole-second spelling sorts after its later fractional
+	// extension as text. Exact canonicalization must still keep the latter.
+	mustExec(t, d, `INSERT INTO agent_group_owners (group_id, conv_id, granted_at, granted_by)
+		VALUES (?, 'old', '2020-01-01T00:00:07Z', 'old')`, groupID)
+	mustExec(t, d, `INSERT INTO agent_group_owners (group_id, conv_id, granted_at, granted_by)
+		VALUES (?, 'new', '2020-01-01T00:00:07.000001Z', 'new')`, groupID)
+
+	// Negative control: ordinary same-zone whole-second spellings already sort
+	// correctly. The canonicalization must preserve that result too.
+	mustExec(t, d, `INSERT INTO agent_notify_prefs (conv_id, mode, updated_at)
+		VALUES ('old', 'off', '2020-01-01T00:00:00Z')`)
+	mustExec(t, d, `INSERT INTO agent_notify_prefs (conv_id, mode, updated_at)
+		VALUES ('new', 'on', '2020-01-02T00:00:00Z')`)
 
 	// Conflicting permission overrides for the same slug: the OLDER generation
 	// denies, the NEWER grants. DENY must win despite being older.
@@ -69,6 +93,16 @@ func TestMigrateV72toV73_CollapsesGenerationsDeterministically(t *testing.T) {
 		VALUES ('old', 'self.compact', '2020-01-01T00:00:00Z', '', 'deny')`)
 	mustExec(t, d, `INSERT INTO agent_permissions (conv_id, slug, granted_at, granted_by, effect)
 		VALUES ('new', 'self.compact', '2020-01-02T00:00:00Z', '', 'grant')`)
+
+	// Controls prove both ordering shapes before the migration runs: the old
+	// lexical query really does choose the wrong member for the offset pair,
+	// while it chooses the right notify preference for the non-inverting pair.
+	var lexicalRole, lexicalMode string
+	require.NoError(t, d.QueryRow(`SELECT role FROM agent_group_members WHERE group_id = ? ORDER BY joined_at DESC LIMIT 1`, groupID).
+		Scan(&lexicalRole))
+	assert.Equal(t, "member", lexicalRole, "control: legacy lexical ordering must reproduce the defect")
+	require.NoError(t, d.QueryRow(`SELECT mode FROM agent_notify_prefs ORDER BY updated_at DESC LIMIT 1`).Scan(&lexicalMode))
+	assert.Equal(t, "on", lexicalMode, "negative control: non-inverting legacy spellings already order correctly")
 
 	require.NoError(t, migrateV72toV73(d), "v72→v73 cutover")
 
@@ -94,6 +128,12 @@ func TestMigrateV72toV73_CollapsesGenerationsDeterministically(t *testing.T) {
 	assert.Equal(t, 1, memCount, "two generations' memberships collapsed to one")
 	assert.Equal(t, oldA, memAgent, "membership is keyed on the actor")
 	assert.Equal(t, "lead", memRole, "newest generation's role wins the collapse")
+	var ownerBy string
+	require.NoError(t, d.QueryRow(`SELECT granted_by FROM agent_group_owners WHERE group_id = ?`, groupID).Scan(&ownerBy))
+	assert.Equal(t, "new", ownerBy, "fractionally newer owner survives the collapse")
+	var notifyMode string
+	require.NoError(t, d.QueryRow(`SELECT mode FROM agent_notify_prefs WHERE agent_id = ?`, oldA).Scan(&notifyMode))
+	assert.Equal(t, "on", notifyMode, "non-inverting newest preference still survives")
 
 	// Exactly one permission row, and DENY won the grant/deny collision.
 	var permCount int
@@ -103,6 +143,38 @@ func TestMigrateV72toV73_CollapsesGenerationsDeterministically(t *testing.T) {
 		oldA).Scan(&permCount, &permEffect))
 	assert.Equal(t, 1, permCount, "two generations' overrides collapsed to one")
 	assert.Equal(t, "deny", permEffect, "DENY wins a grant/deny collapse, regardless of recency")
+}
+
+func TestMigrateV72toV73_RejectsInvalidTimestampsLoudly(t *testing.T) {
+	for _, tc := range []struct {
+		name, value string
+	}{
+		{"malformed", "not-a-time"},
+		{"zero", "1970-01-01T00:00:00Z"},
+		{"out_of_range", "9999-01-01T00:00:00Z"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setupTestDB(t)
+			d, err := Open()
+			require.NoError(t, err)
+			seedV72ConvKeyedIdentity(t, d)
+			agentID := newAgentID()
+			mustExec(t, d, `INSERT INTO agents (agent_id, current_conv_id, created_at, created_via)
+				VALUES (?, 'mapped', ?, 'test')`, agentID, dbTime(time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)))
+			mustExec(t, d, `INSERT INTO agent_conversations (conv_id, agent_id, role, reason, linked_at)
+				VALUES ('mapped', ?, 'head', 'test', ?)`, agentID, dbTime(time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)))
+			mustExec(t, d, `INSERT INTO agent_group_members (group_id, conv_id, role, descr, joined_at)
+				VALUES (1, 'mapped', 'member', '', ?)`, tc.value)
+
+			err = migrateV72toV73(d)
+			require.Error(t, err, "failure arm must execute")
+			assert.ErrorContains(t, err, "agent_group_members.joined_at")
+			assert.ErrorContains(t, err, "rowid")
+			var version int
+			require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&version))
+			assert.Equal(t, 72, version, "failed canonicalization must not advance")
+		})
+	}
 }
 
 // TestUnmappedIdentityRows_DetectsOrphan checks the strict coverage gate: it
@@ -119,9 +191,9 @@ func TestUnmappedIdentityRows_DetectsOrphan(t *testing.T) {
 	// One actor mapping 'mapped'; 'orphan' is deliberately left unmapped.
 	agentID := newAgentID()
 	mustExec(t, d, `INSERT INTO agents (agent_id, current_conv_id, created_at, created_via)
-		VALUES (?, 'mapped', '2020-01-01T00:00:00Z', 'test')`, agentID)
+		VALUES (?, 'mapped', 1577836800000000000, 'test')`, agentID)
 	mustExec(t, d, `INSERT INTO agent_conversations (conv_id, agent_id, role, reason, linked_at)
-		VALUES ('mapped', ?, 'head', 'test', '2020-01-01T00:00:00Z')`, agentID)
+		VALUES ('mapped', ?, 'head', 'test', 1577836800000000000)`, agentID)
 
 	mustExec(t, d, `INSERT INTO agent_group_members (group_id, conv_id, role, descr, joined_at)
 		VALUES (1, 'mapped', 'member', '', '2020-01-01T00:00:00Z')`)

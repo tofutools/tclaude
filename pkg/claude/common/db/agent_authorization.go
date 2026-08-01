@@ -139,7 +139,7 @@ func RetireAgentAuthorizationByConv(convID, by, reason string) (RetireAgentAutho
 	out.PermsRevoked, _ = res.RowsAffected()
 
 	res, err = tx.Exec(`UPDATE agent_sudo_grants SET revoked_at = ?
-		WHERE agent_id = ? AND revoked_at = ''`, time.Now().Format(time.RFC3339Nano), agentID)
+		WHERE agent_id = ? AND revoked_at IS NULL`, dbTime(time.Now()), agentID)
 	if err != nil {
 		return RetireAgentAuthorizationOutcome{}, fmt.Errorf("revoke sudo grants: %w", err)
 	}
@@ -148,8 +148,8 @@ func RetireAgentAuthorizationByConv(convID, by, reason string) (RetireAgentAutho
 	byAgent, _ := agentIDForConvTx(tx, by)
 	res, err = tx.Exec(`UPDATE agents
 		SET retired_at = ?, retired_by = ?, retire_reason = ?, retired_by_agent = ?
-		WHERE agent_id = ? AND retired_at = ''`,
-		time.Now().Format(time.RFC3339Nano), by, reason, byAgent, agentID)
+		WHERE agent_id = ? AND retired_at IS NULL`,
+		dbTime(time.Now()), by, reason, byAgent, agentID)
 	if err != nil {
 		return RetireAgentAuthorizationOutcome{}, fmt.Errorf("retire: %w", err)
 	}

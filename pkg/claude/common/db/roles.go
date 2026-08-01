@@ -68,7 +68,7 @@ func CreateRole(rl *Role) (int64, error) {
 			return 0, err
 		}
 	}
-	now := time.Now().Format(time.RFC3339Nano)
+	now := dbTime(time.Now())
 	res, err := d.Exec(
 		`INSERT INTO roles
 		   (name, descr, brief, spawn_profile, spawn_profile_id, harness, model, effort, sandbox, approval, tools,
@@ -112,7 +112,7 @@ func UpdateRole(rl *Role) error {
 		 WHERE id = ?`,
 		rl.Name, rl.Descr, rl.Brief, rl.SpawnProfile, profileID, rl.Harness, rl.Model, rl.Effort,
 		rl.Sandbox, rl.Approval, rl.ToolGovernance, permsToJSON(rl.Permissions),
-		time.Now().Format(time.RFC3339Nano), rl.ID)
+		dbTime(time.Now()), rl.ID)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return ErrRoleNameTaken
@@ -241,13 +241,14 @@ const roleSelect = `SELECT id, name, descr, brief,
 
 func scanRole(s rowScanner) (*Role, error) {
 	var rl Role
-	var perms, createdAt, updatedAt string
+	var perms string
+	var createdAt, updatedAt dbTimestamp
 	if err := s.Scan(&rl.ID, &rl.Name, &rl.Descr, &rl.Brief, &rl.SpawnProfile, &rl.SpawnProfileID, &rl.Harness,
 		&rl.Model, &rl.Effort, &rl.Sandbox, &rl.Approval, &rl.ToolGovernance, &perms, &createdAt, &updatedAt); err != nil {
 		return nil, err
 	}
 	rl.Permissions = permsFromJSON(perms)
-	rl.CreatedAt = parseTimeOrZero(createdAt)
-	rl.UpdatedAt = parseTimeOrZero(updatedAt)
+	rl.CreatedAt = createdAt.Time()
+	rl.UpdatedAt = updatedAt.Time()
 	return &rl, nil
 }

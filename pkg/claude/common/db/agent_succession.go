@@ -35,7 +35,7 @@ func RecordConvSuccession(oldConv, newConv, reason string) error {
 	if err != nil {
 		return err
 	}
-	now := time.Now().UTC().Format(time.RFC3339)
+	now := dbTime(time.Now().UTC())
 	// agent_id is dual-written from the edge's actor (resolved via the
 	// predecessor, which is always enrolled); excluded.agent_id re-derives it on
 	// conflict so a re-pointed successor stays correct.

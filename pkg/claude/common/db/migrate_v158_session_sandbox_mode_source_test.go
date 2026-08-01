@@ -16,7 +16,7 @@ func TestMigrateV157toV158AddsSandboxModeSourceColumn(t *testing.T) {
 	mustExec(t, d, `UPDATE schema_version SET version = 157`)
 	mustExec(t, d, `INSERT INTO sessions (id, tmux_session, pid, cwd, conv_id, status, created_at, updated_at)
 		VALUES ('legacy-session', 'tc-legacy', 0, '/tmp', 'conv-legacy', 'idle',
-		        '2026-07-25T09:00:00Z', '2026-07-25T09:00:00Z')`)
+		        1784970000000000000, 1784970000000000000)`)
 
 	require.NoError(t, migrateV157toV158(d))
 
