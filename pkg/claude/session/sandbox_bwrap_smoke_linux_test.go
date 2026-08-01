@@ -832,7 +832,7 @@ func startTclaudeLayerSmokeAgentd(t *testing.T, tclaudeBinary, socket string) fu
 	cmd.Stderr = &output
 	require.NoError(t, cmd.Start())
 	deadline := time.Now().Add(15 * time.Second)
-	for !agentipc.SocketReachable(socket) {
+	for !tclaudeLayerSmokeAgentdReady(socket) {
 		if cmd.ProcessState != nil && cmd.ProcessState.Exited() {
 			t.Fatalf("smoke agentd exited during startup: %s", output.String())
 		}
@@ -848,6 +848,27 @@ func startTclaudeLayerSmokeAgentd(t *testing.T, tclaudeBinary, socket string) fu
 		_ = cmd.Wait()
 		db.ResetForTest()
 	}
+}
+
+// tclaudeLayerSmokeAgentdReady waits for the HTTP server rather than merely
+// observing its bound Unix socket. Agentd performs startup work after binding
+// and before Serve starts; advancing on connect alone can let this smoke's
+// deliberately inert tmux listener block that work indefinitely.
+func tclaudeLayerSmokeAgentdReady(socket string) bool {
+	conn, err := net.DialTimeout("unix", socket, 100*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = conn.Close() }()
+	if err := conn.SetDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
+		return false
+	}
+	if _, err := io.WriteString(conn,
+		"GET /v1/whoami HTTP/1.1\r\nHost: _\r\nConnection: close\r\n\r\n"); err != nil {
+		return false
+	}
+	status, err := bufio.NewReader(conn).ReadString('\n')
+	return err == nil && strings.HasPrefix(status, "HTTP/")
 }
 
 func copyTestBinary(t *testing.T, source, destination string) {
