@@ -63,6 +63,7 @@ func TestSessionPK_FullUUID_NoPrefixCollision(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 
 	// Same first 8 hex ("d0e9fa14"), different full UUIDs — the exact shape
 	// that used to collide on the truncated PK.
@@ -109,6 +110,7 @@ func TestFindSession_StaleTmuxName_PrefersLiveOwner(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 
 	stale := "d0e9fa14-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 	live := "d0e9fa14-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
@@ -175,6 +177,7 @@ func TestLiveSessionOwningID_GuardsLivePKReuse(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 
 	convUUID := "d0e9fa14-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 	prevTmux := clcommon.Default
@@ -225,6 +228,7 @@ func TestLiveSessionForConv_FindsLiveByConvID_RegardlessOfPK(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 
 	prevTmux := clcommon.Default
 	clcommon.Default = fakeTmux{alive: map[string]bool{"spwn-abc123": true, "bbbbbbbb": true}}
@@ -278,6 +282,7 @@ func TestLiveSessionForConv_MultiRow_PrefersLiveOverFreshDead(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 
 	prevTmux := clcommon.Default
 	clcommon.Default = fakeTmux{alive: map[string]bool{"livename": true}} // "spwn-stale" is dead
@@ -313,6 +318,7 @@ func TestFindSession_PrefersLiveOwnerOverExitedNamesake(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 
 	prevTmux := clcommon.Default
 	clcommon.Default = fakeTmux{alive: map[string]bool{"d0e9fa14": true}} // the live owner's pane

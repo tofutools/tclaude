@@ -3,10 +3,10 @@ package statusbar
 import (
 	"testing"
 
-	"github.com/tofutools/tclaude/pkg/claude/common/db"
-	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 // resetTestDB points the DB at a fresh temp home and resets the singleton, so a
@@ -15,9 +15,11 @@ import (
 func resetTestDB(t *testing.T) {
 	t.Helper()
 	dir := t.TempDir()
+	db.ObserveTCL930SidecarsAtCleanup(t, dir, "statusbar-auto-compact")
 	t.Setenv("HOME", dir)
 	t.Setenv("USERPROFILE", dir)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 }
 
 // insertSession writes the minimum session row GetSessionAutoCompactWindow reads

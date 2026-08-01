@@ -17,8 +17,10 @@ import (
 func setupTestCache(t *testing.T) {
 	t.Helper()
 	tmp := t.TempDir()
+	db.ObserveTCL930SidecarsAtCleanup(t, tmp, "usageapi")
 	t.Setenv("HOME", tmp)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 }
 
 // stubFuncs replaces fetchFunc, credentialCandidatesFunc, and refreshTokenFunc

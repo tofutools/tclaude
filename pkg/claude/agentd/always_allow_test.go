@@ -13,9 +13,11 @@ import (
 func resetTestDB(t *testing.T) {
 	t.Helper()
 	dir := t.TempDir()
+	db.ObserveTCL930SidecarsAtCleanup(t, dir, "agentd-always-allow")
 	t.Setenv("HOME", dir)
 	t.Setenv("USERPROFILE", dir)
 	db.ResetForTest()
+	cleanupAgentdTestDB(t)
 }
 
 // TestPermissionRegistry_AutoGrantableSet pins the EXACT set of slugs the

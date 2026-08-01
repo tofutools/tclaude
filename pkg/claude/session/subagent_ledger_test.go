@@ -26,6 +26,7 @@ func ledgerWorld(t *testing.T, sessionID, convID string, seed *SessionState) fun
 	// a task-runner var leaking in from the host doesn't change paths.
 	t.Setenv("TCLAUDE_TASK_SIGNAL", "")
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 
 	if seed == nil {
 		seed = &SessionState{Status: StatusIdle}

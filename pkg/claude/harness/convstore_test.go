@@ -17,8 +17,10 @@ import (
 func withTestDB(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
+	db.ObserveTCL930SidecarsAtCleanup(t, dir, "harness-convstore")
 	t.Setenv("HOME", dir)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 	return dir
 }
 

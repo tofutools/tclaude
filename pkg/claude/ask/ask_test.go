@@ -114,8 +114,11 @@ func forceConvExists(t *testing.T, exists bool) {
 // recipe db's own setupTestDB uses, exported here via db.ResetForTest).
 func setupAskTestDB(t *testing.T) {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir())
+	home := t.TempDir()
+	db.ObserveTCL930SidecarsAtCleanup(t, home, "ask")
+	t.Setenv("HOME", home)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 }
 
 // fakeRun is a stand-in for the harness subprocess: it records every runPlan

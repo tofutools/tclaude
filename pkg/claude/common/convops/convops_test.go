@@ -19,8 +19,10 @@ import (
 func setupTestDB(t *testing.T) {
 	t.Helper()
 	dir := t.TempDir()
+	db.ObserveTCL930SidecarsAtCleanup(t, dir, "convops")
 	t.Setenv("HOME", dir)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 }
 
 func TestSessionEntry_DisplayTitle(t *testing.T) {

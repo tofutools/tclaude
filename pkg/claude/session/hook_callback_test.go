@@ -132,6 +132,7 @@ func TestRunHookCallback_SessionEndMarksExited(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 
 	require.NoError(t, SaveSessionState(&SessionState{
 		ID:     "reap-sess",
@@ -288,6 +289,7 @@ func TestRunHookCallback_SessionEndUntrackedConvNotRegistered(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 
 	feedHook(t, "", map[string]any{
 		"session_id":      "deadbeef-0355-4e23-9283-4af96443a58f",
@@ -362,6 +364,7 @@ func TestRunHookCallback_ShellRowIgnoresAllHooks(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 
 	require.NoError(t, SaveSessionState(&SessionState{
 		ID:      "shell-sess",
@@ -524,6 +527,7 @@ func TestRunHookCallback_SessionStartFromSubagentIgnored(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 
 	require.NoError(t, SaveSessionState(&SessionState{
 		ID:     "substart-sess",
@@ -622,6 +626,7 @@ func TestRunHookCallback_StopFailureMarksError(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 
 	require.NoError(t, SaveSessionState(&SessionState{
 		ID:     "err-sess",
@@ -651,6 +656,7 @@ func TestRunHookCallback_StopFailureMissingTypeDefaultsUnknown(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 
 	require.NoError(t, SaveSessionState(&SessionState{
 		ID:     "err-sess2",
@@ -679,6 +685,7 @@ func TestRunHookCallback_ErrorClearedByNextEvent(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 
 	require.NoError(t, SaveSessionState(&SessionState{
 		ID:     "err-sess3",
@@ -720,6 +727,7 @@ func TestRunHookCallback_NotificationIdlePromptClearsWorking(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 
 	require.NoError(t, SaveSessionState(&SessionState{
 		ID:           "idle-sess",
@@ -771,6 +779,7 @@ func TestRunHookCallback_NotificationIdlePromptDoesNotAnnounceIdleWithBackground
 			dir := t.TempDir()
 			t.Setenv("HOME", dir)
 			db.ResetForTest()
+			t.Cleanup(db.ResetForTest)
 
 			var notifiedTo []string
 			prev := notifyOnStateTransition
@@ -823,6 +832,7 @@ func TestNeedsIdentityMigration(t *testing.T) {
 	t.Run("active agent, fresh new conv, no edge -> migrate", func(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
 		db.ResetForTest()
+		t.Cleanup(db.ResetForTest)
 		mustEnsureAgent(t, "conv-old")
 		got, err := needsIdentityMigration("conv-old", "conv-new")
 		require.NoError(t, err)
@@ -831,6 +841,7 @@ func TestNeedsIdentityMigration(t *testing.T) {
 	t.Run("plain (un-enrolled) old conv -> no migration", func(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
 		db.ResetForTest()
+		t.Cleanup(db.ResetForTest)
 		got, err := needsIdentityMigration("conv-old", "conv-new")
 		require.NoError(t, err)
 		assert.False(t, got, "a plain conversation's /clear must not migrate")
@@ -860,6 +871,7 @@ func TestNeedsIdentityMigration(t *testing.T) {
 	t.Run("new conv is already an agent -> no migration (collision guard)", func(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
 		db.ResetForTest()
+		t.Cleanup(db.ResetForTest)
 		mustEnsureAgent(t, "conv-old")
 		mustEnsureAgent(t, "conv-new")
 		got, err := needsIdentityMigration("conv-old", "conv-new")
@@ -1188,6 +1200,7 @@ func TestRunHookCallback_TaskRunnerConvRotationAdvances(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 	taskSignalEnv(t, dir)
 
 	require.NoError(t, SaveSessionState(&SessionState{
@@ -1250,6 +1263,7 @@ func TestRunHookCallback_TaskRunnerStopWritesSignalAfterRotation(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 	sig := taskSignalEnv(t, dir)
 
 	require.NoError(t, SaveSessionState(&SessionState{
@@ -1358,6 +1372,7 @@ func TestRunHookCallback_TaskModeSuppressesNotifications(t *testing.T) {
 		dir := t.TempDir()
 		t.Setenv("HOME", dir)
 		db.ResetForTest()
+		t.Cleanup(db.ResetForTest)
 		taskSignalEnv(t, dir)
 		calls = 0
 
@@ -1377,6 +1392,7 @@ func TestRunHookCallback_TaskModeSuppressesNotifications(t *testing.T) {
 		t.Setenv("HOME", dir)
 		t.Setenv("TCLAUDE_TASK_SIGNAL", "") // explicitly NOT task mode
 		db.ResetForTest()
+		t.Cleanup(db.ResetForTest)
 		calls = 0
 
 		require.NoError(t, SaveSessionState(&SessionState{

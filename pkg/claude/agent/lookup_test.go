@@ -19,6 +19,7 @@ import (
 func setupTestDB(t *testing.T) {
 	t.Helper()
 	dir := t.TempDir()
+	db.ObserveTCL930SidecarsAtCleanup(t, dir, "agent-lookup")
 	t.Setenv("HOME", dir)
 	// Hide any inherited env that would resolve `.` to a real conv-id.
 	t.Setenv("TCLAUDE_SESSION_ID", "")
@@ -28,6 +29,7 @@ func setupTestDB(t *testing.T) {
 	whoamiViaDaemon = func() string { return "" }
 	t.Cleanup(func() { whoamiViaDaemon = prevWhoami })
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 }
 
 func TestCurrentConvID_PrefersDaemonOverEnvironment(t *testing.T) {

@@ -14,9 +14,12 @@ import (
 // isolated from the real environment and from each other.
 func isolateCacheAndDB(t *testing.T) {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir())
+	home := t.TempDir()
+	db.ObserveTCL930SidecarsAtCleanup(t, home, "session-launch-lock")
+	t.Setenv("HOME", home)
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 }
 
 // Two resumes of the same conversation must not both proceed: the second
