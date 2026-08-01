@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertAbsent } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 test('usage chart renders even time ticks and unified immediate tooltips', async (t) => {
@@ -144,7 +145,7 @@ test('usage chart renders even time ticks and unified immediate tooltips', async
   await harness.act(() => harness.fireEvent(resetKeyboardTargets[0], 'blur'));
 
   const nowTarget = view.container.querySelector('.usage-now-mark .usage-marker-hit-target');
-  assert.equal(view.container.querySelector('.usage-now-mark text'), null, 'now is labelled by its tooltip only');
+  assertAbsent(view.container.querySelector('.usage-now-mark text'), 'now is labelled by its tooltip only');
   await harness.act(() => harness.fireEvent(hoverSurface, 'mousemove', {
     clientX: Number(nowTarget.getAttribute('x1')), clientY: 50,
   }));
@@ -168,7 +169,7 @@ test('usage chart renders even time ticks and unified immediate tooltips', async
   }));
   assert.match(view.container.querySelector('.usage-chart-tooltip.forecast').textContent, /Prediction.*100\.0%.*6d before reset/s);
   await harness.act(() => harness.fireEvent(hoverSurface, 'mouseleave'));
-  assert.equal(view.container.querySelector('.usage-chart-tooltip'), null);
+  assertAbsent(view.container.querySelector('.usage-chart-tooltip'));
 
   await view.rerender(harness.preact.h(UsageHistoryChart, {
     series,
@@ -176,8 +177,7 @@ test('usage chart renders even time ticks and unified immediate tooltips', async
     generatedAt: new Date(now).toISOString(),
     lookaheadHours: 5,
   }));
-  assert.equal(view.container.querySelector('.usage-scheduled-reset'), null,
-    'a reset beyond the chosen lookahead is not clamped onto the chart edge');
+  assertAbsent(view.container.querySelector('.usage-scheduled-reset'), 'a reset beyond the chosen lookahead is not clamped onto the chart edge');
   assert.match(view.container.querySelector('.usage-forecast-hit-target').getAttribute('aria-label'), /30\.7%/);
 
   await view.unmount();

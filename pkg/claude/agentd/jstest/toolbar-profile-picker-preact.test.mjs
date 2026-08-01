@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertAbsent } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 async function mountPicker(t, overrides = {}) {
@@ -44,7 +45,7 @@ test('toolbar profile controls replace each chip with an in-place select', async
   await picker.harness.act(async () => {});
   const select = picker.profileHost.querySelector('.toolbar-profile-select');
   assert.ok(select, 'the profile chip is replaced inside its stable toolbar host');
-  assert.equal(picker.profileHost.querySelector('button'), null);
+  assertAbsent(picker.profileHost.querySelector('button'));
   assert.ok(picker.sandboxHost.querySelector('#dashboard-default-sandbox-profile'),
     'the other toolbar control remains interactive');
   assert.equal(select.querySelector('option[value="/new-profile"]').textContent, '＋ new profile…');

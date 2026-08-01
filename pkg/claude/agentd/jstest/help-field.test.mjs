@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertAbsent } from './assertions.mjs';
 import { readFileSync } from 'node:fs';
 import { createPreactHarness } from './preact-harness.mjs';
 
@@ -146,7 +147,7 @@ test('HelpField keeps the ⚠ caveat visible outside the popover anchor', async 
   // The popover is absolutely positioned against .spawn-field-with-help. If the
   // caveat lived inside that box it would grow the anchor and shove the popover
   // up off its own control, so it must be a sibling.
-  assert.equal(caveat.closest('.spawn-field-with-help'), null);
+  assertAbsent(caveat.closest('.spawn-field-with-help'));
   assert.ok(host.querySelector('.spawn-field-help-column').contains(caveat));
 
   // The describedby span already announces the full help, which contains this
@@ -156,14 +157,14 @@ test('HelpField keeps the ⚠ caveat visible outside the popover anchor', async 
 
   // Help with no ⚠ renders no caveat line at all.
   await rerender(harness.preact.h(HelpField, { ...props, help: 'Never request approval; failures return to the model.' }));
-  assert.equal(host.querySelector('#demo-caveat'), null);
+  assertAbsent(host.querySelector('#demo-caveat'));
 
   // Help can be transiently empty while the sandbox-profile preview loads. That
   // must leave nothing behind: an empty description would be a focusable,
   // unnamed, blank tooltip in the tab order, and a dangling aria-describedby.
   await rerender(harness.preact.h(HelpField, { ...props, help: '' }));
-  assert.equal(host.querySelector('.spawn-field-help-trigger'), null);
-  assert.equal(host.querySelector('#demo-hint'), null, 'no empty tooltip is left in the tab order');
+  assertAbsent(host.querySelector('.spawn-field-help-trigger'));
+  assertAbsent(host.querySelector('#demo-hint'), 'no empty tooltip is left in the tab order');
   assert.equal(host.querySelector('#demo').getAttribute('aria-describedby'), null,
     'aria-describedby does not dangle');
   // The trigger column stays reserved, so the select does not resize when the
@@ -214,6 +215,6 @@ test('HelpDisclosure marks a caveat in colour, glyph, and accessible name', asyn
   // Warn is a presentation of the same disclosure, not a second mechanism: an
   // empty one still leaves nothing focusable and unnamed behind.
   await rerender(harness.preact.h(HelpDisclosure, { ...props, warn: true, help: '' }));
-  assert.equal(host.querySelector('.spawn-field-help-trigger'), null);
-  assert.equal(host.querySelector('#demo-impl-help'), null);
+  assertAbsent(host.querySelector('.spawn-field-help-trigger'));
+  assertAbsent(host.querySelector('#demo-impl-help'));
 });

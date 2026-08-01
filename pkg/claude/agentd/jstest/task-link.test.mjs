@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertAbsent } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 function deferred() {
@@ -76,7 +77,7 @@ test('task cells separate navigation from editing and retain raw edit values', a
   assert.ok(empty.querySelector('.task-attach'));
   assert.equal(empty.querySelector('.task-attach').dataset.act, 'edit-task');
   assert.match(empty.textContent, /✧ bind quest/);
-  assert.equal(empty.querySelector('a'), null);
+  assertAbsent(empty.querySelector('a'));
 
   const set = taskCell('set');
   const link = set.querySelector('a.task-ref.task-link');
@@ -89,7 +90,7 @@ test('task cells separate navigation from editing and retain raw edit values', a
   assert.equal(edit.textContent, '✎');
 
   const unsafe = taskCell('unsafe');
-  assert.equal(unsafe.querySelector('a'), null, 'stored unsafe values remain inert');
+  assertAbsent(unsafe.querySelector('a'), 'stored unsafe values remain inert');
   assert.ok(unsafe.querySelector('.task-edit-icon'), 'an unsafe legacy value remains editable');
   await mounted.unmount();
 });
@@ -251,7 +252,7 @@ test('dirty task-link dialog confirms discard and restores the invoker', async (
 
   escape();
   await harness.act(() => new Promise((r) => setTimeout(r, 0)));
-  assert.equal(host.querySelector('#task-link-modal'), null, 'a confirmed discard closes the dialog');
+  assertAbsent(host.querySelector('#task-link-modal'), 'a confirmed discard closes the dialog');
   assert.equal(confirmations, 2);
   assert.equal(harness.document.activeElement, invoker, 'closing restores the edit-pencil invoker');
 });

@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertAbsent } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 test('group attachments enforce http(s) again at the render boundary', async (t) => {
@@ -79,24 +80,19 @@ test('group attachments enforce http(s) again at the render boundary', async (t)
     assert.notEqual(element?.getAttribute('tabindex'), '-1');
     assert.equal(element?.hasAttribute('hidden'), false);
   };
-  assert.equal(
-    host.querySelector('.group-attachment'),
-    null,
-    'the absent/default-off feature mode keeps every stored attachment dark',
-  );
+  assertAbsent(host.querySelector('.group-attachment'), 'the absent/default-off feature mode keeps every stored attachment dark');
 
   await mounted.rerender(view('float'));
   const safe = attachment('safe');
   assert.ok(safe.classList.contains('group-attachment-float'));
-  assert.equal(safe.querySelector('.group-attachment-label'), null,
-    'float mode stays icon-only');
+  assertAbsent(safe.querySelector('.group-attachment-label'), 'float mode stays icon-only');
   assert.equal(safe.querySelector('a')?.getAttribute('href'), 'https://example.com/project');
   assert.equal(safe.querySelector('a')?.textContent, '📎', 'the floating control stays icon-only');
   assert.match(safe.querySelector('a')?.getAttribute('title'), /Safe project/);
   assertTabReachable(safe.querySelector('a'));
 
   const unsafe = attachment('unsafe');
-  assert.equal(unsafe.querySelector('a'), null, 'a bad stored row must never become a live link');
+  assertAbsent(unsafe.querySelector('a'), 'a bad stored row must never become a live link');
   assert.equal(unsafe.querySelector('.group-attachment-invalid').textContent, '📎');
   assert.match(
     unsafe.querySelector('.group-attachment-invalid').getAttribute('aria-label'),
@@ -118,7 +114,7 @@ test('group attachments enforce http(s) again at the render boundary', async (t)
   Object.defineProperty(escape, 'key', { value: 'Escape' });
   harness.document.dispatchEvent(escape);
   await harness.act(() => Promise.resolve());
-  assert.equal(host.querySelector('#task-link-modal'), null, 'Escape closes the attachment editor');
+  assertAbsent(host.querySelector('#task-link-modal'), 'Escape closes the attachment editor');
   assert.equal(
     harness.document.activeElement,
     emptySummary,
@@ -131,11 +127,7 @@ test('group attachments enforce http(s) again at the render boundary', async (t)
   await harness.act(() => {
     featureSnapshot.value = { group_attachments_mode: 'off' };
   });
-  assert.equal(
-    host.querySelector('#task-link-modal'),
-    null,
-    'a live enabled-to-disabled snapshot immediately hides the open editor',
-  );
+  assertAbsent(host.querySelector('#task-link-modal'), 'a live enabled-to-disabled snapshot immediately hides the open editor');
   assert.equal(
     state.view.value.dialog,
     null,
@@ -143,8 +135,7 @@ test('group attachments enforce http(s) again at the render boundary', async (t)
   );
 
   await mounted.rerender(view('fixed'));
-  assert.equal(host.querySelector('.group-attachment-float'), null,
-    'fixed mode does not retain the floating overlay');
+  assertAbsent(host.querySelector('.group-attachment-float'), 'fixed mode does not retain the floating overlay');
 
   const fixedSafe = attachment('safe');
   assert.ok(fixedSafe.classList.contains('group-attachment-fixed'));
@@ -153,8 +144,7 @@ test('group attachments enforce http(s) again at the render boundary', async (t)
     'a set fixed attachment shows link text without a paperclip');
   assert.equal(fixedSafe.querySelector('.group-attachment-label')?.textContent, 'Safe project',
     'fixed mode keeps the link/ticket label in the DOM');
-  assert.equal(fixedSafe.querySelector('.qo-text'), null,
-    'the fixed label does not participate in quick-item auto-folding');
+  assertAbsent(fixedSafe.querySelector('.qo-text'), 'the fixed label does not participate in quick-item auto-folding');
   const safeSummary = host.querySelector('details[data-group-key="safe"] > summary');
   assert.equal(safeSummary.lastElementChild, fixedSafe,
     'fixed mode is the far-right group quick item');
@@ -165,7 +155,7 @@ test('group attachments enforce http(s) again at the render boundary', async (t)
     'an unset fixed attachment stays paperclip-only');
   assert.equal(fixedEmpty.querySelector('.group-attachment-icon')?.textContent, '📎',
     'the empty paperclip has its own dimmable glyph without dimming the button');
-  assert.equal(fixedEmpty.querySelector('.group-attachment-label'), null);
+  assertAbsent(fixedEmpty.querySelector('.group-attachment-label'));
   fixedEmpty.focus();
   fixedEmpty.click();
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
@@ -176,8 +166,7 @@ test('group attachments enforce http(s) again at the render boundary', async (t)
     'fixed mode restores focus to its stable quick item');
 
   const fixedHostless = attachment('hostless');
-  assert.equal(fixedHostless.querySelector('a'), null,
-    'http(s) without a host must remain inert in fixed mode');
+  assertAbsent(fixedHostless.querySelector('a'), 'http(s) without a host must remain inert in fixed mode');
   assert.equal(fixedHostless.querySelector('.group-attachment-invalid')?.textContent, 'No host',
     'a set but unsafe fixed attachment also shows its text without a paperclip');
   assertTabReachable(fixedHostless.querySelector('.group-attachment-invalid'));

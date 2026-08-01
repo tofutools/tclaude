@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertAbsent } from './assertions.mjs';
 import { createPreactHarness, getByRole } from './preact-harness.mjs';
 
 function encodedSeed(seed) {
@@ -207,7 +208,7 @@ test('standalone lifecycle connects before the real composer loads and sends thr
       await new Promise((resolve) => setImmediate(resolve));
     }
   });
-  assert.equal(dialogHost.querySelector('#operator-message-modal'), null);
+  assertAbsent(dialogHost.querySelector('#operator-message-modal'));
   assert.deepEqual(requests.map(({ url }) => url), ['/api/operator-message']);
   assert.deepEqual(JSON.parse(requests[0].options.body), {
     to: 'agt_solo',
@@ -381,10 +382,10 @@ test('standalone Preact shell renders solo chrome around an opaque active widget
     });
     await Promise.resolve();
   });
-  assert.equal(host.querySelector('[role="tablist"]'), null);
-  assert.equal(host.querySelector('[title="Move this terminal to its own browser tab"]'), null);
+  assertAbsent(host.querySelector('[role="tablist"]'));
+  assertAbsent(host.querySelector('[title="Move this terminal to its own browser tab"]'));
   assert.ok(host.querySelector('[title="Move this terminal back to its dashboard tab"]'));
-  assert.equal(host.querySelector('#mux-empty'), null);
+  assertAbsent(host.querySelector('#mux-empty'));
   assert.equal(fake.widgets.length, 1);
   assert.equal(fake.widgets[0].child.parentElement.classList.contains('mux-pane-xterm-fit'), true);
   assert.equal(fake.widgets[0].child.parentElement.parentElement.classList.contains('mux-pane-xterm'), true,
@@ -393,8 +394,7 @@ test('standalone Preact shell renders solo chrome around an opaque active widget
   assert.equal(fake.widgets[0].connectCount, 1);
   assert.equal(harness.document.title, 'solo terminal — tclaude terminals');
 
-  assert.equal(host.querySelector('[title*="queued message"]'), null,
-    'the composer control stays absent until its optional island is ready');
+  assertAbsent(host.querySelector('[title*="queued message"]'), 'the composer control stays absent until its optional island is ready');
   const unavailableChord = new harness.window.Event('keydown', { bubbles: true, cancelable: true });
   Object.defineProperties(unavailableChord, {
     key: { value: 'm' }, code: { value: 'KeyM' }, metaKey: { value: true },
@@ -487,7 +487,7 @@ test('dragging the solo header title off the header sends the terminal back to t
   await harness.act(() => harness.fireEvent(title, 'dragstart', { dataTransfer: transfer }));
   assert.equal(transfer.data['application/x-tclaude-terminal-tab'], 'solo');
   await dragOver({ clientX: 300, clientY: 60 });
-  assert.equal(host.querySelector('.mux-drag-out-hint'), null, 'a drag still near the header is a near-miss');
+  assertAbsent(host.querySelector('.mux-drag-out-hint'), 'a drag still near the header is a near-miss');
   await dragOver({ clientX: 300, clientY: 400 });
   assert.match(host.querySelector('.mux-drag-out-hint').textContent, /back to the dashboard/);
   assert.equal(header.classList.contains('drag-out-armed'), true);

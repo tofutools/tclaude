@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertAbsent } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 test('imperative Costs chart owns descendants, tooltip listeners, updates, and cleanup', async (t) => {
@@ -20,9 +21,9 @@ test('imperative Costs chart owns descendants, tooltip listeners, updates, and c
   assert.equal(harness.document.body.querySelector('.cost-tip .cost-tip-row')?.textContent.includes('claude'), true);
   cleanup();
   assert.equal(host.childElementCount, 0);
-  assert.equal(harness.document.body.querySelector('.cost-tip'), null);
+  assertAbsent(harness.document.body.querySelector('.cost-tip'));
   harness.fireEvent(column, 'mousemove', { clientX: 20, clientY: 30 });
-  assert.equal(harness.document.body.querySelector('.cost-tip'), null, 'removed listener cannot recreate tooltip');
+  assertAbsent(harness.document.body.querySelector('.cost-tip'), 'removed listener cannot recreate tooltip');
 });
 
 test('Costs chart names a single-day harness when the selected span has multiple harnesses', async (t) => {

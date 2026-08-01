@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertAbsent } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 /* TCL-914. ONE PREDICATE FOR THE PER-CONTEXT NETWORK ENTRIES.
@@ -158,8 +159,7 @@ test('a populated per-context entry is used instead of the target-wide entries',
 
   assert.equal(bucketOfRule(container, ALLOW_RULE_LABEL), 'sbx-rule-bucket-partial',
     'the per-context verdict decides the bucket');
-  assert.equal(launchBlocked, null,
-    'the draft-only refusal belongs to a different policy and must not block this one');
+  assertAbsent(launchBlocked, 'the draft-only refusal belongs to a different policy and must not block this one');
   assert.equal(needsAttention, false, 'both readers must agree the context is fine');
 });
 
@@ -203,8 +203,7 @@ test('a null per-context entry is a verdict, not a gap to fill from the draft', 
 
   assert.equal(bucketOfRule(container, ALLOW_RULE_LABEL), 'sbx-rule-bucket-applied',
     'no entries for this context means the axis verdict stands, not the draft row');
-  assert.equal(launchBlocked, null,
-    'a draft-only refusal must not be rendered as a refusal of this context');
+  assertAbsent(launchBlocked, 'a draft-only refusal must not be rendered as a refusal of this context');
   assert.equal(needsAttention, false,
     'the attention check reads the same value through the same helper');
 });

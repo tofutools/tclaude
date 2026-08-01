@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertAbsent } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 function deferred() {
@@ -92,7 +93,7 @@ test('guarded overlay Cancel shares busy, dirty-confirmation, stack, and focus c
   await flush(harness);
   assert.equal(confirmations, 2);
   assert.equal(closes, 1);
-  assert.equal(overlay(), null);
+  assertAbsent(overlay());
   assert.equal(harness.document.activeElement, invoker,
     'accepted close restores focus to the invoker');
 

@@ -8,6 +8,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertAbsent } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 async function core(t) {
@@ -139,7 +140,7 @@ test('resetActive restores the untouched menu, cursor included', async (t) => {
 
   // The open/close edges ask for a clean slate.
   module.applyMenuFilter(menu, '', { input, resetActive: true });
-  assert.equal(module.menuActiveItem(menu), null);
+  assertAbsent(module.menuActiveItem(menu));
   assert.equal(input.hasAttribute('aria-activedescendant'), false);
   assert.equal(menu.hasAttribute(module.EMPTY_ATTR), false);
   assert.deepEqual(shown(module, menu), ['+ add member', '🧹 cleanup worktrees…',
@@ -209,7 +210,7 @@ test('disabled items are listed but skipped by the keyboard', async (t) => {
   module.applyMenuFilter(menu, 'export needs', { input });
   assert.deepEqual(shown(module, menu), ['summary…'],
     'a disabled item stays visible so its title can explain why');
-  assert.equal(module.menuActiveItem(menu), null, 'but it is never the Enter target');
+  assertAbsent(module.menuActiveItem(menu), 'but it is never the Enter target');
 
   const handled = module.handleMenuFilterKeyDown(menu, {
     key: 'Enter', currentTarget: input, preventDefault() {}, stopPropagation() {},
@@ -282,7 +283,7 @@ test('Escape clears a live query first and closes only on the second press', asy
   assert.equal(cleared, 1);
   assert.equal(stopped, 1, 'and kept from the document handler that would close');
   // Clearing is a start-over: the cursor went with the query that placed it.
-  assert.equal(module.menuActiveItem(menu), null);
+  assertAbsent(module.menuActiveItem(menu));
   assert.equal(input.hasAttribute('aria-activedescendant'), false);
 
   assert.equal(escape(false), false, 'an empty box lets Escape through to close');

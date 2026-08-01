@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertAbsent } from './assertions.mjs';
 import { createPreactHarness, getByRole } from './preact-harness.mjs';
 
 test('shell island reacts to snapshots while preserving keyed usage and footer nodes', async (t) => {
@@ -84,7 +85,7 @@ test('shell confirmation keeps capture-Escape semantics and feedback cleanup', a
   const body = mounted.container.querySelector('#confirm-body');
   assert.equal(body.textContent, 'Status: ON\nProfile: base');
   assert.equal(body.classList.contains('confirm-body-preformatted'), true);
-  assert.equal(mounted.container.querySelector('#confirm-cancel'), null);
+  assertAbsent(mounted.container.querySelector('#confirm-cancel'));
   const close = getByRole(mounted.container, 'button', { name: 'Close' });
   assert.equal(close.classList.contains('confirm-danger'), false);
   await harness.act(() => close.click());

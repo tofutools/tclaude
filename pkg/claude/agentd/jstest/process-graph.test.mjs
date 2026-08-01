@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertAbsent } from './assertions.mjs';
 import {
   ProcessGraph, interactionNode, isGraphTypingTarget, normalizeWheelDelta,
 } from '../dashboard/js/process-graph.js';
@@ -36,7 +37,7 @@ test('every node kind keeps its bounded label inside the shape and clear of conn
       const label = rendered.querySelector('.process-node-label-inside');
       const clip = rendered.querySelector('.process-node-label-clip rect');
       assert.ok(label && clip, `${entry.type} renders the shared inside-label frame`);
-      assert.equal(rendered.querySelector('.process-node-label-peripheral'), null);
+      assertAbsent(rendered.querySelector('.process-node-label-peripheral'));
       assert.equal(rendered.getAttribute('aria-label'), `${fullLabel}, ${entry.compound ? 'collapsed compound' : entry.type}`,
         `${entry.type} retains the untruncated accessible name`);
       assert.ok(label.querySelectorAll('tspan').length <= Number(label.dataset.labelMaxLines));
@@ -50,7 +51,7 @@ test('every node kind keeps its bounded label inside the shape and clear of conn
       assert.ok(bottom < outputPortTop, `${entry.type} label clears the full output-port disc`);
 
       const ports = ProcessGraph.prototype.renderPortNode.call(fake, node);
-      assert.equal(ports.parentNode, null, 'ports remain a sibling-layer group, not node descendants');
+      assertAbsent(ports.parentNode, 'ports remain a sibling-layer group, not node descendants');
       assert.equal(ports.querySelector('.process-port-in').getAttribute('cy'), String(-entry.height / 2));
       assert.equal(ports.querySelector('.process-port-out').getAttribute('cy'), String(entry.height / 2));
       assert.equal(ports.querySelector('.process-port-in').getAttribute('aria-label'), `Input port for ${fullLabel}`);
@@ -79,7 +80,7 @@ test('node overlay anchors render only for information disclosed by the node', (
     const clean = render();
     const empty = render({ overlay: {} });
     for (const [label, node] of [['undefined', clean], ['empty', empty]]) {
-      assert.equal(node.querySelector('.process-overlay-anchor'), null, `${label} overlay has no placeholder anchor`);
+      assertAbsent(node.querySelector('.process-overlay-anchor'), `${label} overlay has no placeholder anchor`);
       assert.equal(node.getAttribute('aria-label'), 'Work, task', `${label} overlay adds no accessible disclosure`);
     }
 
@@ -99,7 +100,7 @@ test('node overlay anchors render only for information disclosed by the node', (
     });
     const statusAnchor = status.querySelector('.process-overlay-anchor');
     assert.ok(statusAnchor, 'viewer/status information retains the shared anchor');
-    assert.equal(statusAnchor.querySelector('.process-overlay-tooltip'), null, 'status without issues does not invent a tooltip');
+    assertAbsent(statusAnchor.querySelector('.process-overlay-tooltip'), 'status without issues does not invent a tooltip');
     assert.match(status.getAttribute('aria-label'), /●, running, 2\/4, attempt 1, retry 0/);
 
     for (const node of [clean, empty, diagnostic, status]) {
@@ -912,8 +913,7 @@ test('selecting a connector reveals a label the pin rule hides', () => {
   // A lone 'pass' connector: the default rule declutters it away.
   fake.renderEdges(layout.edges);
   const group = fake.edgeLayer.querySelector('.process-edge');
-  assert.equal(group.querySelector('.process-edge-label'), null,
-    'a lone generic outcome starts hidden');
+  assertAbsent(group.querySelector('.process-edge-label'), 'a lone generic outcome starts hidden');
   // The outcome must stay in the accessible name even while visually hidden.
   assert.match(group.getAttribute('aria-label'), /pass/,
     'decluttering is visual only; the key stays in the accessible name');
@@ -926,7 +926,7 @@ test('selecting a connector reveals a label the pin rule hides', () => {
 
   // And deselecting hides it again.
   ProcessGraph.prototype.select.call(fake, null);
-  assert.equal(fake.edgeLayer.querySelector('.process-edge-label'), null);
+  assertAbsent(fake.edgeLayer.querySelector('.process-edge-label'));
   } finally {
     globalThis.document = previousDocument;
   }

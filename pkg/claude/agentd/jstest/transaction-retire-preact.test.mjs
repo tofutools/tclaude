@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertAbsent } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 function deferred() {
@@ -437,7 +438,7 @@ test('retire renderer preserves copy, corrected worktree defaults, coupling, and
   assert.match(host.querySelector('#retire-modal').textContent, /non-destructive soft-delete/);
   assert.match(host.querySelector('#retire-modal .theme-copy-wizard').textContent, /plain conversation/,
     'wizard copy is rendered concurrently so a live theme flip cannot reset state');
-  assert.equal(host.querySelector('#retire-wt-row'), null, 'worktree row stays hidden while probing');
+  assertAbsent(host.querySelector('#retire-wt-row'), 'worktree row stays hidden while probing');
   assert.equal(host.querySelector('#retire-shutdown').hasAttribute('checked'), true);
   assert.equal(harness.document.activeElement.id, 'retire-ok');
 
@@ -466,7 +467,7 @@ test('retire renderer preserves copy, corrected worktree defaults, coupling, and
 
   host.querySelector('#retire-cancel').click();
   await harness.act(() => Promise.resolve());
-  assert.equal(host.querySelector('#retire-modal'), null);
+  assertAbsent(host.querySelector('#retire-modal'));
   assert.equal(harness.document.activeElement, opener);
   assert.equal(await mounted.pending, null);
   await mounted.mounted.unmount();
@@ -525,8 +526,7 @@ test('retire renderer aborts stale probes and ignores their late generations', a
     kind: 'linked', path: '/stale', branch: 'stale', removable: true,
   });
   await mounted.harness.act(() => Promise.resolve());
-  assert.equal(mounted.host.querySelector('#retire-wt-row'), null,
-    'a prior generation cannot paint the reopened transaction');
+  assertAbsent(mounted.host.querySelector('#retire-wt-row'), 'a prior generation cannot paint the reopened transaction');
   second.resolve({
     kind: 'linked', path: '/current', branch: 'current', removable: true,
   });
@@ -628,7 +628,7 @@ test('retire failure stays inline with frozen choices and explicit retry', async
     '/api/agents/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/retire?shutdown=0',
     '/api/agents/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/retire?shutdown=0',
   ]);
-  assert.equal(host.querySelector('#retire-modal'), null);
+  assertAbsent(host.querySelector('#retire-modal'));
   assert.deepEqual(notices, [['retired: Retry target']]);
   assert.equal(refreshes, 1);
   assert.deepEqual(await completion, { ok: true, response: {} });
@@ -653,6 +653,6 @@ test('concrete retire dialog yields Escape to a higher painted overlay', async (
   blocker.remove();
   escape();
   await mounted.harness.act(() => Promise.resolve());
-  assert.equal(mounted.host.querySelector('#retire-modal'), null);
+  assertAbsent(mounted.host.querySelector('#retire-modal'));
   await mounted.mounted.unmount();
 });

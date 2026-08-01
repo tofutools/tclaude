@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertAbsent } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 function memoryPrefs() {
@@ -195,7 +196,7 @@ test('promotion-only retry restores initial keyboard selection after pool failur
     confirmDiscard=${async () => true}
   />`, host);
   const search = host.querySelector('#add-member-search');
-  assert.equal(host.querySelector('.add-member-row.highlighted'), null);
+  assertAbsent(host.querySelector('.add-member-row.highlighted'));
   assert.equal(search.hasAttribute('aria-activedescendant'), false,
     'the loading combobox does not claim a missing active option');
 
@@ -296,8 +297,7 @@ test('add-member picker owns async pool retry, IME navigation and optimistic add
     agents: [{ conv_id: 'dormant', agent_id: 'agt-dormant', title: 'Dormant', online: false }],
   })));
   await harness.act(() => Promise.resolve());
-  assert.equal(host.querySelector('.add-member-row.highlighted'), null,
-    'polling disappearance clears selection instead of falling back to index zero');
+  assertAbsent(host.querySelector('.add-member-row.highlighted'), 'polling disappearance clears selection instead of falling back to index zero');
   assert.equal(search.hasAttribute('aria-activedescendant'), false,
     'the focused combobox omits its active descendant while selection is empty');
   await harness.act(() => harness.fireEvent(search, 'keydown', { key: 'Enter' }));
@@ -309,8 +309,7 @@ test('add-member picker owns async pool retry, IME navigation and optimistic add
     ],
     agents: [{ conv_id: 'dormant', agent_id: 'agt-dormant', title: 'Dormant', online: false }],
   })));
-  assert.equal(host.querySelector('.add-member-row.highlighted'), null,
-    'a later poll cannot silently restore selection without a user gesture');
+  assertAbsent(host.querySelector('.add-member-row.highlighted'), 'a later poll cannot silently restore selection without a user gesture');
   await harness.act(() => harness.fireEvent(search, 'keydown', { key: 'ArrowDown' }));
   assert.equal(host.querySelector('.add-member-row.highlighted .rowname').textContent, 'Bravo',
     'Arrow navigation explicitly selects again after disappearance');
