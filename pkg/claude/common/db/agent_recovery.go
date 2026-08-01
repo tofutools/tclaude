@@ -19,6 +19,8 @@ const (
 	AgentRecoveryStatusSuppressed = "suppressed"
 	AgentRecoveryStatusCancelled  = "cancelled"
 
+	AgentRecoveryReasonManualResume = "manual_resume"
+
 	AuditVerbAgentRecoveryEligible   = "managed_agent.recovery_eligible"
 	AuditVerbAgentRecoverySuppressed = "managed_agent.recovery_suppressed"
 	AuditVerbAgentRecoveryStarted    = "managed_agent.recovery_started"
@@ -305,11 +307,13 @@ func ConfirmAgentRecovery(r AgentRecovery, successorSession, successorGeneration
 	if err != nil {
 		return false, err
 	}
-	res, err := d.Exec(`UPDATE agent_recovery SET status = ?, reason_code = '',
+	res, err := d.Exec(`UPDATE agent_recovery SET status = ?,
+		reason_code = CASE WHEN reason_code = ? THEN ? ELSE '' END,
 		next_attempt_at = NULL, lease_token = '', lease_expires_at = NULL,
 		successor_session_id = ?, successor_generation = ?, recovered_at = ?,
 		healthy_since = ?, updated_at = ? WHERE agent_id = ?
 		AND predecessor_generation = ? AND status = ?`, AgentRecoveryStatusRecovered,
+		AgentRecoveryReasonManualResume, AgentRecoveryReasonManualResume,
 		successorSession, successorGeneration, recoveryTime(now), recoveryTime(now),
 		recoveryTime(now), r.AgentID, r.PredecessorGeneration, AgentRecoveryStatusRestarting)
 	if err != nil {
@@ -372,12 +376,12 @@ func BeginManualAgentRecovery(convID string, now time.Time) (*AgentRecovery, err
 	if err != nil {
 		return nil, err
 	}
-	res, err := d.Exec(`UPDATE agent_recovery SET status = ?, reason_code = 'manual_resume',
+	res, err := d.Exec(`UPDATE agent_recovery SET status = ?, reason_code = ?,
 		next_attempt_at = NULL, lease_token = ?, lease_expires_at = ?,
 		attempt_started_at = ?, successor_session_id = '', successor_generation = '',
 		recovered_at = NULL, healthy_since = NULL, updated_at = ? WHERE agent_id = ?
 		AND predecessor_generation = ? AND status IN (?, ?, ?, ?, ?, ?)`,
-		AgentRecoveryStatusRestarting, token, recoveryTime(now.Add(AgentRecoveryLaunchLease)),
+		AgentRecoveryStatusRestarting, AgentRecoveryReasonManualResume, token, recoveryTime(now.Add(AgentRecoveryLaunchLease)),
 		recoveryTime(now), recoveryTime(now), r.AgentID, r.PredecessorGeneration,
 		AgentRecoveryStatusCrashed, AgentRecoveryStatusBackoff, AgentRecoveryStatusRestarting,
 		AgentRecoveryStatusSuppressed, AgentRecoveryStatusCancelled, AgentRecoveryStatusRecovered)

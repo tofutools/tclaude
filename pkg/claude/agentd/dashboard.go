@@ -2331,6 +2331,12 @@ func stateForConvInSessionsBatched(
 // healthy reset and audit trail, but a live agent stops looking exceptional on
 // its first post-confirmation hook or after one minute without another hook.
 func recoveryStatusVisible(r db.AgentRecovery, lastHook time.Time, alive bool, now time.Time) bool {
+	// A manual resume temporarily shares the recovery ledger so its successor
+	// can prove enough healthy runtime to reset the crash streak. It is not an
+	// automatic recovery, however, and must never surface as one operationally.
+	if r.ReasonCode == db.AgentRecoveryReasonManualResume {
+		return false
+	}
 	if r.Status == db.AgentRecoveryStatusCancelled {
 		return false
 	}

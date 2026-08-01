@@ -33,3 +33,18 @@ func TestRecoveryStatusVisible_NonRecoveredStatesRemainVisible(t *testing.T) {
 	}
 	assert.False(t, recoveryStatusVisible(db.AgentRecovery{Status: db.AgentRecoveryStatusCancelled}, now, false, now))
 }
+
+func TestRecoveryStatusVisible_ManualResumeIsNeverRecoveryHighlight(t *testing.T) {
+	now := time.Now().UTC()
+	for _, status := range []string{
+		db.AgentRecoveryStatusRestarting,
+		db.AgentRecoveryStatusRecovered,
+	} {
+		r := db.AgentRecovery{
+			Status:      status,
+			ReasonCode:  db.AgentRecoveryReasonManualResume,
+			RecoveredAt: now,
+		}
+		assert.False(t, recoveryStatusVisible(r, now.Add(-time.Second), true, now), status)
+	}
+}
