@@ -289,11 +289,43 @@ function sandboxContextLabel(contexts, index) {
   return 'global assignment';
 }
 
+/* TCL-914. The network entries for ONE assignment context — the single
+   definition shared by both readers of that value. SandboxPolicyResult decides
+   what to RENDER and sandboxPolicyNeedsAttention decides whether to RAISE
+   ATTENTION; those are the same question about the same context, so they get one
+   predicate. They previously each spelled the expression out, and nothing kept
+   the two copies in step.
+
+   The fallback keys on whether the daemon sent the LIST AT ALL, never on whether
+   one index holds entries. Those are different questions and only the first has
+   a fallback answer:
+
+   - No `context_network_entries` at all — an OLD daemon, which never computed
+     per-context entries. The target-wide draft-only rows are the best answer
+     available, so this degrades to the behaviour that shipped before the field
+     existed.
+   - The list exists — it is AUTHORITATIVE for every index in it, INCLUDING a
+     null one. The daemon writes an explicit null at a refused index to stay
+     index-aligned with context_axes, and that null means "this context produced
+     no entries". That is a VERDICT, not a gap: filling it from
+     `target.network_entries` would attribute the DRAFT-ONLY prediction — a
+     different policy, which no launch uses — to this context.
+
+   `??` cannot express that, because null is nullish and so takes the fallback in
+   exactly the case the fallback is wrong for. Neither can a per-index
+   `Array.isArray` check that falls back on a miss: handed an explicit null it
+   returns `target.network_entries`, which is what `??` already did. */
+function sandboxContextNetworkEntries(target, contextIndex) {
+  const perContext = target?.context_network_entries;
+  if (!Array.isArray(perContext)) return target?.network_entries ?? [];
+  const entries = perContext[contextIndex];
+  return Array.isArray(entries) ? entries : [];
+}
+
 export function SandboxPolicyResult({ target, context, contextIndex, contexts = [] }) {
   const [ruleHelpOpen, setRuleHelpOpen] = useState('');
   const axes = target.context_axes?.[contextIndex] || target.axes || {};
-  const networkEntries = target.context_network_entries?.[contextIndex]
-    ?? target.network_entries ?? [];
+  const networkEntries = sandboxContextNetworkEntries(target, contextIndex);
   /* TCL-885. A refused target carries NO axes, so it must be read here before
      anything touches `axes` — sandboxRuleBuckets substitutes
      {outcome:'not_enforced', detail:'No enforcement verdict was returned.'} for
@@ -373,8 +405,7 @@ export function SandboxPolicyResult({ target, context, contextIndex, contexts = 
 
 export function sandboxPolicyNeedsAttention(target, context, contextIndex) {
   const axes = target.context_axes?.[contextIndex] || target.axes || {};
-  const networkEntries = target.context_network_entries?.[contextIndex]
-    ?? target.network_entries ?? [];
+  const networkEntries = sandboxContextNetworkEntries(target, contextIndex);
   return sandboxRuleBuckets(
     axes, context, networkEntries, sandboxTargetRefusal(target, contextIndex),
   ).launchRefused
