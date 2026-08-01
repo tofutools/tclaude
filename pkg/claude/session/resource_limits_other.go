@@ -20,6 +20,8 @@ func PrepareResourceCgroup(string, sandboxpolicy.ResourceLimits) (string, func()
 
 func wrapPreparedResourceCgroupCommand(string, string, string, bool) string { return "" }
 
+func WrapPreparedResourceCgroupCommand(string, string, string, bool) string { return "" }
+
 func ConfigureProcessResourceCgroup(*exec.Cmd, string) (func(), error) {
 	return func() {}, fmt.Errorf("resource limits are Linux only")
 }

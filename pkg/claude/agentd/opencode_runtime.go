@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
@@ -22,6 +23,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
@@ -72,11 +74,14 @@ const (
 )
 
 type openCodeProcess struct {
-	cmd     *exec.Cmd
-	done    chan error
-	cancel  context.CancelFunc
-	sseDone chan struct{}
-	convID  string
+	cmd         *exec.Cmd
+	pid         int
+	tmuxSession string
+	done        chan error
+	doneOnce    sync.Once
+	cancel      context.CancelFunc
+	sseDone     chan struct{}
+	convID      string
 	// exited is set (under openCodeProcesses' lock) once cmd.Wait returns, so a
 	// consumer that had not yet registered its cancel at death time is never
 	// started against an already-dead server. Only processes with a cmd.Wait
@@ -272,7 +277,7 @@ func startOpenCodeRuntime(
 			lastErr = err
 			continue
 		}
-		runtime.PID = process.cmd.Process.Pid
+		runtime.PID = process.rootPID()
 		if err := db.UpsertOpenCodeRuntime(runtime); err != nil {
 			stopOpenCodeProcess(runtime, process)
 			return nil, fmt.Errorf("persist OpenCode runtime: %w", err)
@@ -648,12 +653,17 @@ func startOpenCodeProcess(
 		return nil, fmt.Errorf(
 			"prepare OpenCode filtered provider authority: %w", err)
 	}
-	cmd := exec.Command(command, args...)
-	cmd.Dir = runtime.Cwd
-	cmd.Env = openCodeServerEnvironment(os.Environ(), sandboxSpec)
-	cmd.Env = append(cmd.Env,
+	serverEnvironment := openCodeServerEnvironment(os.Environ(), sandboxSpec)
+	serverEnvironment = append(serverEnvironment,
 		"OPENCODE_SERVER_USERNAME="+openCodeServerUsername,
 		"OPENCODE_SERVER_PASSWORD="+runtime.Password)
+	if session.ExternalResourceDelegationDir() != "" {
+		return startOpenCodeProcessThroughTmux(
+			runtime, command, args, serverEnvironment, unixHandshake != nil)
+	}
+	cmd := exec.Command(command, args...)
+	cmd.Dir = runtime.Cwd
+	cmd.Env = serverEnvironment
 	cmd.Stdout = io.Discard
 	stderr := newSpawnStderrCapture()
 	cmd.Stderr = stderr
@@ -672,7 +682,7 @@ func startOpenCodeProcess(
 	for _, file := range extraFiles {
 		_ = file.Close()
 	}
-	process := &openCodeProcess{cmd: cmd, done: make(chan error, 1), convID: runtime.ConvID}
+	process := &openCodeProcess{cmd: cmd, pid: cmd.Process.Pid, done: make(chan error, 1), convID: runtime.ConvID}
 	openCodeProcesses.Lock()
 	openCodeProcesses.bySession[runtime.SessionID] = process
 	openCodeProcesses.Unlock()
@@ -683,8 +693,7 @@ func startOpenCodeProcess(
 				slog.Warn("OpenCode resource limit: record OOM outcome", "session_id", runtime.SessionID, "error", recordErr)
 			}
 		}
-		process.done <- err
-		close(process.done)
+		process.finish(err)
 		finishOpenCodeProcessExit(process, runtime.SessionID, cmd.Process.Pid, err, stderr)
 		if runtime.ResourceCgroupDir != "" {
 			_ = os.Remove(runtime.ResourceCgroupDir)
@@ -763,12 +772,231 @@ func startOpenCodeProcess(
 		runtime.ServerURL, openCodeStartupTimeout)
 }
 
+func (process *openCodeProcess) rootPID() int {
+	if process == nil {
+		return 0
+	}
+	if process.pid > 0 {
+		return process.pid
+	}
+	if process.cmd != nil && process.cmd.Process != nil {
+		return process.cmd.Process.Pid
+	}
+	return 0
+}
+
+func (process *openCodeProcess) finish(err error) {
+	process.doneOnce.Do(func() {
+		process.done <- err
+		close(process.done)
+	})
+}
+
+func openCodeManagedTmuxSession(sessionID string) string {
+	sum := sha256.Sum256([]byte(sessionID))
+	return fmt.Sprintf("__tclaude-opencode-%x", sum[:10])
+}
+
+type openCodeTmuxHandshake struct {
+	dir        string
+	statusPath string
+	gatePath   string
+	status     *os.File
+	gate       *os.File
+}
+
+func prepareOpenCodeTmuxHandshake() (*openCodeTmuxHandshake, error) {
+	dir, err := os.MkdirTemp("", "tclaude-opencode-launch-")
+	if err != nil {
+		return nil, fmt.Errorf("create OpenCode tmux handshake directory: %w", err)
+	}
+	h := &openCodeTmuxHandshake{dir: dir,
+		statusPath: filepath.Join(dir, "authority"), gatePath: filepath.Join(dir, "gate")}
+	fail := func(err error) (*openCodeTmuxHandshake, error) {
+		h.close()
+		return nil, err
+	}
+	if err := syscall.Mkfifo(h.statusPath, 0o600); err != nil {
+		return fail(fmt.Errorf("create OpenCode tmux authority fifo: %w", err))
+	}
+	if err := syscall.Mkfifo(h.gatePath, 0o600); err != nil {
+		return fail(fmt.Errorf("create OpenCode tmux launch gate: %w", err))
+	}
+	h.status, err = os.OpenFile(h.statusPath, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return fail(fmt.Errorf("open OpenCode tmux authority fifo: %w", err))
+	}
+	return h, nil
+}
+
+func (h *openCodeTmuxHandshake) close() {
+	if h == nil {
+		return
+	}
+	if h.status != nil {
+		_ = h.status.Close()
+	}
+	if h.gate != nil {
+		_ = h.gate.Close()
+	}
+	if h.dir != "" {
+		_ = os.RemoveAll(h.dir)
+	}
+}
+
+func (h *openCodeTmuxHandshake) connectGate(deadline time.Time) error {
+	for time.Now().Before(deadline) {
+		gate, err := os.OpenFile(h.gatePath, os.O_WRONLY|syscall.O_NONBLOCK, 0)
+		if err == nil {
+			h.gate = gate
+			return syscall.SetNonblock(int(h.status.Fd()), false)
+		}
+		if !errors.Is(err, syscall.ENXIO) {
+			return fmt.Errorf("open OpenCode tmux launch gate: %w", err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return fmt.Errorf("OpenCode tmux launch gate did not become ready")
+}
+
+func shellJoinOpenCodeCommand(command string, args []string) string {
+	parts := make([]string, 0, len(args)+1)
+	parts = append(parts, clcommon.ShellQuoteArg(command))
+	for _, arg := range args {
+		parts = append(parts, clcommon.ShellQuoteArg(arg))
+	}
+	return strings.Join(parts, " ")
+}
+
+func openCodeTmuxLaunchCommand(runtime db.OpenCodeRuntime, command string, args []string,
+	handshake *openCodeTmuxHandshake) string {
+	serverCommand := shellJoinOpenCodeCommand(command, args)
+	if handshake != nil {
+		serverCommand += " 3>" + clcommon.ShellQuoteArg(handshake.statusPath) +
+			" 4<" + clcommon.ShellQuoteArg(handshake.gatePath)
+	}
+	if runtime.ResourceCgroupDir != "" {
+		serverCommand = session.WrapPreparedResourceCgroupCommand(
+			runtime.SessionID, runtime.ResourceCgroupDir, serverCommand, false)
+	}
+	return "exec " + serverCommand
+}
+
+func startOpenCodeProcessThroughTmux(runtime *db.OpenCodeRuntime, command string,
+	args, serverEnvironment []string, needsUnixHandshake bool) (*openCodeProcess, error) {
+	var handshake *openCodeTmuxHandshake
+	var err error
+	if needsUnixHandshake {
+		handshake, err = prepareOpenCodeTmuxHandshake()
+		if err != nil {
+			return nil, err
+		}
+		defer handshake.close()
+	}
+	tmuxSession := openCodeManagedTmuxSession(runtime.SessionID)
+	tmuxArgs := []string{"new-session", "-d", "-s", tmuxSession, "-c", runtime.Cwd,
+		"-x", "80", "-y", "24"}
+	for _, entry := range serverEnvironment {
+		tmuxArgs = append(tmuxArgs, "-e", entry)
+	}
+	tmuxArgs = append(tmuxArgs, openCodeTmuxLaunchCommand(*runtime, command, args, handshake))
+	stderr := newSpawnStderrCapture()
+	launch := clcommon.Default.Command(session.ExternalTmuxNoStartArgs(tmuxArgs...)...)
+	launch.Stderr = stderr
+	if err := launch.Run(); err != nil {
+		return nil, fmt.Errorf("launch OpenCode server through external tmux: %w: %s", err, stderr.String())
+	}
+	pidOut, err := clcommon.Default.Command(session.ExternalTmuxNoStartArgs(
+		"display-message", "-p", "-t", clcommon.ExactTarget(tmuxSession)+":0.0", "#{pane_pid}")...).Output()
+	if err != nil {
+		_ = clcommon.Default.Command(session.ExternalTmuxNoStartArgs(
+			"kill-session", "-t", clcommon.ExactTarget(tmuxSession))...).Run()
+		return nil, fmt.Errorf("read OpenCode tmux process root: %w", err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(pidOut)))
+	if err != nil || pid <= 1 {
+		_ = clcommon.Default.Command("-N", "kill-session", "-t",
+			clcommon.ExactTarget(tmuxSession)).Run()
+		return nil, fmt.Errorf("external tmux returned invalid OpenCode process root %q", strings.TrimSpace(string(pidOut)))
+	}
+	process := &openCodeProcess{pid: pid, tmuxSession: tmuxSession,
+		done: make(chan error, 1), convID: runtime.ConvID}
+	openCodeProcesses.Lock()
+	openCodeProcesses.bySession[runtime.SessionID] = process
+	openCodeProcesses.Unlock()
+	runtime.PID = pid
+	go watchOpenCodeTmuxProcess(process, *runtime)
+	if handshake != nil {
+		if err := handshake.connectGate(time.Now().Add(openCodeStartupTimeout)); err != nil {
+			stopOpenCodeProcess(*runtime, process)
+			return nil, err
+		}
+		authority, err := opencodeapi.ReadUnixLaunchAuthority(handshake.status)
+		if err != nil {
+			stopOpenCodeProcess(*runtime, process)
+			return nil, err
+		}
+		if err := persistAndAcknowledgeOpenCodeUnixLaunch(runtime, authority, handshake.gate); err != nil {
+			stopOpenCodeProcess(*runtime, process)
+			return nil, err
+		}
+	}
+	deadline := time.Now().Add(openCodeStartupTimeout)
+	for time.Now().Before(deadline) {
+		select {
+		case err := <-process.done:
+			if err == nil {
+				err = fmt.Errorf("server exited before health check")
+			}
+			paneOutput := captureOpenCodeTmuxPane(tmuxSession)
+			stopOpenCodeProcess(*runtime, process)
+			return nil, fmt.Errorf("OpenCode server failed during startup: %w: %s", err, paneOutput)
+		default:
+		}
+		if openCodeHealthy(*runtime) {
+			return process, nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	paneOutput := captureOpenCodeTmuxPane(tmuxSession)
+	stopOpenCodeProcess(*runtime, process)
+	return nil, fmt.Errorf("OpenCode server at %s did not become healthy within %s: %s",
+		runtime.ServerURL, openCodeStartupTimeout, paneOutput)
+}
+
+func captureOpenCodeTmuxPane(tmuxSession string) string {
+	out, err := clcommon.Default.Command(
+		"-N", "capture-pane", "-p", "-S", "-200", "-t",
+		clcommon.ExactTarget(tmuxSession)+":0.0").CombinedOutput()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func watchOpenCodeTmuxProcess(process *openCodeProcess, runtime db.OpenCodeRuntime) {
+	for {
+		err := clcommon.Default.Command(
+			"-N", "has-session", "-t", clcommon.ExactTarget(process.tmuxSession)).Run()
+		if err != nil {
+			openCodeProcesses.Lock()
+			stopping := process.stopping
+			openCodeProcesses.Unlock()
+			var waitErr error
+			if !stopping {
+				waitErr = fmt.Errorf("managed tmux session exited")
+			}
+			process.finish(waitErr)
+			finishOpenCodeProcessExit(process, runtime.SessionID, process.pid, waitErr, nil)
+			return
+		}
+		time.Sleep(time.Second)
+	}
+}
+
 func configureOpenCodeResourceCgroup(cmd *exec.Cmd, dir string) (func(), error) {
 	if dir == "" {
 		return func() {}, nil
-	}
-	if session.ExternalResourceDelegationDir() != "" {
-		return func() {}, fmt.Errorf("%w: agentd-owned OpenCode servers cannot be placed across systemd units; use the allow-unenforced launch override until tmux-mediated managed-server launch is available (TCL-943)", errOpenCodeResourceCgroup)
 	}
 	cleanup, err := session.ConfigureProcessResourceCgroup(cmd, dir)
 	if err != nil {
@@ -2029,7 +2257,7 @@ func reconcileOpenCodeRuntime(sessionID string) bool {
 		slog.Error("OpenCode server restart failed", "session", sessionID, "error", err)
 		return false
 	}
-	runtime.PID = process.cmd.Process.Pid
+	runtime.PID = process.rootPID()
 	if err := db.UpsertOpenCodeRuntime(*runtime); err != nil {
 		slog.Error("OpenCode server restart state could not be persisted",
 			"session", sessionID, "error", err)
@@ -2054,8 +2282,7 @@ func openCodeRuntimeSafeToReplace(runtime db.OpenCodeRuntime) bool {
 	openCodeProcesses.Lock()
 	known := openCodeProcesses.bySession[runtime.SessionID]
 	openCodeProcesses.Unlock()
-	if known != nil && known.cmd != nil && known.cmd.Process != nil &&
-		known.cmd.Process.Pid == runtime.PID {
+	if known != nil && known.rootPID() == runtime.PID {
 		return true
 	}
 	return opencodeapi.RuntimeOwnsEndpoint(runtime)
@@ -2140,6 +2367,21 @@ func stopOpenCodeProcess(runtime db.OpenCodeRuntime, known *openCodeProcess) {
 					"session", runtime.SessionID, "timeout", openCodeProcessStopWait)
 			}
 		}
+		if process.tmuxSession != "" {
+			killErr := clcommon.Default.Command(
+				"-N", "kill-session", "-t", clcommon.ExactTarget(process.tmuxSession)).Run()
+			select {
+			case <-process.done:
+			case <-time.After(openCodeProcessStopWait):
+				if !terminateOpenCodeProcessTree(runtime.PID, openCodeProcessStopWait) {
+					removeControlSocket = false
+					slog.Warn("OpenCode tmux process tree did not exit",
+						"session", runtime.SessionID, "pid", runtime.PID, "tmux_error", killErr)
+				}
+				process.finish(killErr)
+			}
+			return
+		}
 		if process.cmd != nil && process.cmd.Process != nil {
 			_ = process.cmd.Process.Signal(os.Interrupt)
 			select {
@@ -2167,8 +2409,13 @@ func stopOpenCodeProcess(runtime db.OpenCodeRuntime, known *openCodeProcess) {
 		switch {
 		case openCodeRuntimeVerified(runtime):
 			recordedTree := opencodeapi.RecordedProcessSubtree(runtime.PID)
-			if recovered, err := os.FindProcess(runtime.PID); err == nil {
-				_ = recovered.Kill()
+			tmuxSession := openCodeManagedTmuxSession(runtime.SessionID)
+			panePID := openCodeTmuxPanePID(tmuxSession)
+			if panePID == runtime.PID {
+				_ = clcommon.Default.Command(
+					"-N", "kill-session", "-t", clcommon.ExactTarget(tmuxSession)).Run()
+			} else {
+				killOpenCodePIDs(recordedTree)
 			}
 			if !waitForOpenCodePIDsExit(recordedTree, openCodeProcessStopWait) {
 				removeControlSocket = false
@@ -2186,6 +2433,31 @@ func stopOpenCodeProcess(runtime db.OpenCodeRuntime, known *openCodeProcess) {
 				"endpoint", runtime.ServerURL)
 		}
 	}
+}
+
+func killOpenCodePIDs(pids []int) {
+	for i := len(pids) - 1; i >= 0; i-- {
+		if recovered, err := os.FindProcess(pids[i]); err == nil {
+			_ = recovered.Kill()
+		}
+	}
+}
+
+func terminateOpenCodeProcessTree(pid int, timeout time.Duration) bool {
+	pids := opencodeapi.RecordedProcessSubtree(pid)
+	killOpenCodePIDs(pids)
+	return waitForOpenCodePIDsExit(pids, timeout)
+}
+
+func openCodeTmuxPanePID(tmuxSession string) int {
+	out, err := clcommon.Default.Command(
+		"-N", "display-message", "-p", "-t", clcommon.ExactTarget(tmuxSession)+":0.0",
+		"#{pane_pid}").Output()
+	if err != nil {
+		return 0
+	}
+	pid, _ := strconv.Atoi(strings.TrimSpace(string(out)))
+	return pid
 }
 
 func waitForOpenCodeRuntimeRelease(runtime db.OpenCodeRuntime, timeout time.Duration) bool {

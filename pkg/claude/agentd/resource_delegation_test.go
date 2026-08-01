@@ -1,14 +1,17 @@
 package agentd
 
 import (
-	"os/exec"
+	"io"
+	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/opencodeapi"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
@@ -34,15 +37,67 @@ func TestResolveResourceDelegationDirPrecedence(t *testing.T) {
 	assert.Equal(t, "legacy self-cgroup derivation", source)
 }
 
-func TestManagedOpenCodeExternalResourceCgroupRequiresExplicitDegradation(t *testing.T) {
+func TestManagedOpenCodeExternalResourceCgroupLaunchUsesTmuxWrapper(t *testing.T) {
 	t.Setenv("TMUX", "")
 	t.Setenv(session.ResourceDelegationDirEnv,
 		"/sys/fs/cgroup/system.slice/tclaude-tmux.service")
-	_, err := configureOpenCodeResourceCgroup(exec.Command("true"),
-		"/sys/fs/cgroup/system.slice/tclaude-tmux.service/tclaude-test")
-	require.Error(t, err)
-	assert.ErrorIs(t, err, errOpenCodeResourceCgroup)
-	assert.ErrorContains(t, err, "cannot be placed across systemd units")
+	runtime := db.OpenCodeRuntime{
+		SessionID: "managed-external", ResourceCgroupDir: "/sys/fs/cgroup/system.slice/tclaude-tmux.service/tclaude-test",
+	}
+	command := openCodeTmuxLaunchCommand(runtime, "/opt/opencode",
+		[]string{"serve", "--port", "43210"}, nil)
+	assert.Contains(t, command, "session resource-limit-exec")
+	assert.Contains(t, command, "--cgroup-dir")
+	assert.Contains(t, command, "tclaude-tmux.service/tclaude-test")
+	assert.Contains(t, command, "'/opt/opencode serve --port 43210'")
+}
+
+func TestManagedOpenCodeTmuxSessionNameIsStableAndBounded(t *testing.T) {
+	first := openCodeManagedTmuxSession("ses_same")
+	assert.Equal(t, first, openCodeManagedTmuxSession("ses_same"))
+	assert.NotEqual(t, first, openCodeManagedTmuxSession("ses_other"))
+	assert.Regexp(t, `^__tclaude-opencode-[0-9a-f]{20}$`, first)
+}
+
+func TestManagedOpenCodeTmuxUnixHandshakeCrossesProcessBoundary(t *testing.T) {
+	handshake, err := prepareOpenCodeTmuxHandshake()
+	require.NoError(t, err)
+	t.Cleanup(handshake.close)
+
+	childDone := make(chan error, 1)
+	go func() {
+		status, openErr := os.OpenFile(handshake.statusPath, os.O_WRONLY, 0)
+		if openErr != nil {
+			childDone <- openErr
+			return
+		}
+		defer status.Close()
+		gate, openErr := os.Open(handshake.gatePath)
+		if openErr != nil {
+			childDone <- openErr
+			return
+		}
+		defer gate.Close()
+		if writeErr := opencodeapi.WriteUnixLaunchAuthority(status,
+			opencodeapi.UnixLaunchAuthority{Device: 41, Inode: 42}); writeErr != nil {
+			childDone <- writeErr
+			return
+		}
+		var acknowledgement [1]byte
+		_, readErr := io.ReadFull(gate, acknowledgement[:])
+		if readErr == nil && acknowledgement[0] != 1 {
+			readErr = io.ErrUnexpectedEOF
+		}
+		childDone <- readErr
+	}()
+
+	require.NoError(t, handshake.connectGate(time.Now().Add(time.Second)))
+	authority, err := opencodeapi.ReadUnixLaunchAuthority(handshake.status)
+	require.NoError(t, err)
+	assert.Equal(t, opencodeapi.UnixLaunchAuthority{Device: 41, Inode: 42}, authority)
+	_, err = handshake.gate.Write([]byte{1})
+	require.NoError(t, err)
+	require.NoError(t, <-childDone)
 }
 
 func TestManagedServerDropsStoredCgroupFromPreviousDelegationBeforeReprepare(t *testing.T) {
