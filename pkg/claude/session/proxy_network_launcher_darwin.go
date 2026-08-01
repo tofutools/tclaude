@@ -39,6 +39,15 @@ var serveDarwinFilteringProxy = func(
 	return server.Serve(listener)
 }
 
+var (
+	darwinProxyTerminalForegroundGroup = func(fd int) (int, error) {
+		return unix.IoctlGetInt(fd, unix.TIOCGPGRP)
+	}
+	darwinProxySetTerminalForegroundGroup = func(fd, pgid int) error {
+		return unix.IoctlSetPointerInt(fd, unix.TIOCSPGRP, pgid)
+	}
+)
+
 // darwinProxyLaunchSpec is the input that has to cross the rendered shell
 // command. Seatbelt cannot be rendered until the launcher owns the real
 // ephemeral port, so the same inputs the ordinary Darwin renderer consumes are
@@ -249,21 +258,25 @@ func runDarwinProxyLauncher(spec darwinProxyLaunchSpec) (int, error) {
 // also become the terminal foreground group; otherwise its first read would be
 // stopped by SIGTTIN. Non-terminal server launches simply skip this handoff.
 func darwinProxyGiveTerminalTo(pgid int) (func(), error) {
-	old, err := unix.IoctlGetInt(int(os.Stdin.Fd()), unix.TIOCGPGRP)
+	old, err := darwinProxyTerminalForegroundGroup(int(os.Stdin.Fd()))
 	if err != nil {
-		if errors.Is(err, syscall.ENOTTY) {
+		// Darwin reports ENODEV rather than ENOTTY for some non-terminal
+		// descriptors, including the CI runner's stdin. Both mean there is no
+		// foreground process group to hand off; a real terminal error remains
+		// fatal so an interactive child cannot be left stopped in the background.
+		if errors.Is(err, syscall.ENOTTY) || errors.Is(err, syscall.ENODEV) {
 			return func() {}, nil
 		}
 		return nil, fmt.Errorf("inspect Darwin launcher terminal foreground group: %w", err)
 	}
 	signal.Ignore(syscall.SIGTTOU)
-	if err := unix.IoctlSetPointerInt(
-		int(os.Stdin.Fd()), unix.TIOCSPGRP, pgid); err != nil {
+	if err := darwinProxySetTerminalForegroundGroup(
+		int(os.Stdin.Fd()), pgid); err != nil {
 		signal.Reset(syscall.SIGTTOU)
 		return nil, fmt.Errorf("give Darwin sandbox the terminal foreground: %w", err)
 	}
 	return func() {
-		_ = unix.IoctlSetPointerInt(int(os.Stdin.Fd()), unix.TIOCSPGRP, old)
+		_ = darwinProxySetTerminalForegroundGroup(int(os.Stdin.Fd()), old)
 		signal.Reset(syscall.SIGTTOU)
 	}, nil
 }

@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -351,6 +352,26 @@ func TestDarwinProxyLauncherProductionPath(t *testing.T) {
 	code, err := runDarwinProxyLauncher(spec)
 	require.NoError(t, err)
 	assert.Zero(t, code)
+}
+
+func TestDarwinProxyLauncherTreatsENODEVAsNonTerminal(t *testing.T) {
+	oldGet := darwinProxyTerminalForegroundGroup
+	oldSet := darwinProxySetTerminalForegroundGroup
+	darwinProxyTerminalForegroundGroup = func(int) (int, error) {
+		return 0, syscall.ENODEV
+	}
+	darwinProxySetTerminalForegroundGroup = func(int, int) error {
+		t.Fatal("a non-terminal descriptor has no foreground group to set")
+		return nil
+	}
+	t.Cleanup(func() {
+		darwinProxyTerminalForegroundGroup = oldGet
+		darwinProxySetTerminalForegroundGroup = oldSet
+	})
+
+	restore, err := darwinProxyGiveTerminalTo(4242)
+	require.NoError(t, err)
+	restore()
 }
 
 func darwinProxyLauncherTestPlan(t *testing.T, port int) sandboxpolicy.MountPlan {
