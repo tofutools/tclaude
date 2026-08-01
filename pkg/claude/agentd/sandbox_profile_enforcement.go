@@ -33,20 +33,36 @@ import (
 // as verdicts for it. ContextNetworkEntries carries an explicit nil at a
 // refused index to stay index-aligned.
 //
-// The dashboard currently resolves that nil with `??`, which treats it as
-// absent and falls back to these draft-only rows. That is unreachable in
-// practice, because the renderer returns on the refusal before the value is
-// read — and that holds for BOTH consumers of the value, since sandboxRuleBuckets
-// returns on the refusal before the entries are used. It is a known gap, tracked
-// in TCL-914, rather than hardened here: an attempt to guard it in this PR was
-// reverted for being more error-prone than the path it protected.
+// That nil is a VERDICT, not a gap: once ContextNetworkEntries is present it is
+// authoritative for every index in it, and nil at an index means "this context
+// produced no entries". It must never be filled from NetworkEntries above.
 //
-// TCL-914 also covers what is underneath it. SandboxPolicyResult and
-// sandboxPolicyNeedsAttention derive this value from two independent copies of
-// the same expression. They cannot disagree TODAY — the copies are identical, so
-// every shape the daemon emits resolves the same way in both. The defect is that
-// nothing makes them stay identical, so a change to one silently diverges from
-// the other.
+// What makes that safe to rely on is that nil at an index is EXCLUSIVELY the
+// refusal marker. describePredictedDraftSandboxProfile is the only producer, and
+// its success path appends a non-nil slice even when empty, so a context with
+// genuinely zero network rows emits [] rather than null; the one path that
+// appends nil is the typed-capability refusal, which writes a non-nil entry to
+// ContextRefusals at the same index. A nil here therefore always has a refusal
+// beside it. No error swallow, early return, or display cap can produce one:
+// derivation and untyped prediction errors fail the whole request instead, and
+// the cap truncates whole trailing indexes rather than nulling an in-range one.
+//
+// A client may fall back to NetworkEntries only when the field is ABSENT
+// ENTIRELY. Three shapes produce that, and the fallback is right for all three:
+// a daemon too old to compute per-context entries; a current daemon with no
+// effective assignment contexts to compute them for (len(contexts) == 0, which
+// nils every per-context slice), the same shape ContextAxes already degrades to
+// Axes for; and a target refused OUTRIGHT, whose append in the draft-enforcement
+// handler sets only Target, ResolvedBy, Predicted and Refusal, so it omits these
+// entries along with the axes. That third shape is this type's own, which is why
+// it is named here: NetworkEntries is nil there too, so the fallback yields
+// nothing, and the branch-on-Refusal-first rule above is what actually governs.
+//
+// TCL-914 closed this on the dashboard side: both consumers of the value — the
+// renderer and the attention check, which previously derived it from two
+// independent copies of the same expression — now read it through one helper,
+// `sandboxContextNetworkEntries` in management-island.js, whose fallback keys on
+// the presence of the list rather than on the contents of one index.
 type sandboxProfileEnforcementRefusal struct {
 	Kind    string `json:"kind"`
 	Harness string `json:"harness,omitempty"`
