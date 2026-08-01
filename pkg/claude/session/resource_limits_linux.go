@@ -111,31 +111,7 @@ func ValidateResourceDelegationDir(dir string) (string, error) {
 }
 
 func configuredResourceDelegationDir() string {
-	if dir := strings.TrimSpace(os.Getenv(ResourceDelegationDirEnv)); dir != "" {
-		return dir
-	}
-	// A pane that survived an agentd restart retains its original process
-	// environment. Agentd also publishes the resolved root into tmux's global
-	// environment, so resource-limited launches initiated from such a pane can
-	// recover the current setting instead of deriving a workload-local root.
-	if strings.TrimSpace(os.Getenv("TMUX")) == "" {
-		return ""
-	}
-	raw, err := clcommon.TmuxCommand(
-		"show-environment", "-g", ResourceDelegationDirEnv,
-	).Output()
-	if err != nil {
-		return ""
-	}
-	prefix := ResourceDelegationDirEnv + "="
-	if value := strings.TrimSpace(string(raw)); strings.HasPrefix(value, prefix) {
-		dir := strings.TrimSpace(strings.TrimPrefix(value, prefix))
-		if dir != "" {
-			_ = os.Setenv(ResourceDelegationDirEnv, dir)
-			return dir
-		}
-	}
-	return ""
+	return ExternalResourceDelegationDir()
 }
 
 func wrapResourceLimitedCommand(

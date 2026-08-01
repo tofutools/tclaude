@@ -17,7 +17,32 @@ const ResourceDelegationDirEnv = "TCLAUDE_RESOURCE_DELEGATION_DIR"
 // ExternalResourceDelegationDir returns the configured external delegation
 // root, or empty when tclaude should derive the root from its own cgroup.
 func ExternalResourceDelegationDir() string {
-	return strings.TrimSpace(os.Getenv(ResourceDelegationDirEnv))
+	inherited := strings.TrimSpace(os.Getenv(ResourceDelegationDirEnv))
+	if strings.TrimSpace(os.Getenv("TMUX")) == "" {
+		return inherited
+	}
+	// Long-lived panes retain their process environment across agentd mode
+	// changes. The tmux-global value is the live authority for those panes:
+	// agentd sets it on legacy→external and explicitly unsets it on the reverse
+	// transition. If the server cannot answer, retain the inherited value so an
+	// external-mode pane still fails closed with -N.
+	out, err := clcommon.TmuxCommand(
+		"-N", "show-environment", "-g", ResourceDelegationDirEnv,
+	).CombinedOutput()
+	if err != nil {
+		return inherited
+	}
+	value := strings.TrimSpace(string(out))
+	prefix := ResourceDelegationDirEnv + "="
+	if strings.HasPrefix(value, prefix) {
+		dir := strings.TrimSpace(strings.TrimPrefix(value, prefix))
+		if dir != "" {
+			_ = os.Setenv(ResourceDelegationDirEnv, dir)
+			return dir
+		}
+	}
+	_ = os.Unsetenv(ResourceDelegationDirEnv)
+	return ""
 }
 
 // ExternalTmuxNoStartArgs adds tmux's client-level "never start the server"
@@ -57,6 +82,10 @@ func RequireExternalTmuxServer() error {
 	if dir == "" {
 		return nil
 	}
+	return requireExternalTmuxServer(dir)
+}
+
+func requireExternalTmuxServer(dir string) error {
 	out, err := clcommon.TmuxCommand("-N", "display-message", "-p", "#{pid}").CombinedOutput()
 	if err != nil {
 		detail := strings.TrimSpace(string(out))
@@ -82,11 +111,14 @@ func RequireExternalTmuxServer() error {
 // created after agentd starts. The explicit cgroup path is also consumed by
 // agentd and its session-new subprocesses before pane creation.
 func PropagateResourceDelegationToTmux() error {
-	dir := ExternalResourceDelegationDir()
+	// Read the process environment directly here. If agentd itself was started
+	// inside an old pane, that pane's tmux-global value describes the previous
+	// mode and must not override the newly resolved serve flag/env/config.
+	dir := strings.TrimSpace(os.Getenv(ResourceDelegationDirEnv))
 	if dir == "" {
 		return nil
 	}
-	if err := RequireExternalTmuxServer(); err != nil {
+	if err := requireExternalTmuxServer(dir); err != nil {
 		return err
 	}
 	if out, err := clcommon.TmuxCommand(

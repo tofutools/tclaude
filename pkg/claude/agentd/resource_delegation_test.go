@@ -35,6 +35,7 @@ func TestResolveResourceDelegationDirPrecedence(t *testing.T) {
 }
 
 func TestManagedOpenCodeExternalResourceCgroupRequiresExplicitDegradation(t *testing.T) {
+	t.Setenv("TMUX", "")
 	t.Setenv(session.ResourceDelegationDirEnv,
 		"/sys/fs/cgroup/system.slice/tclaude-tmux.service")
 	_, err := configureOpenCodeResourceCgroup(exec.Command("true"),
@@ -46,6 +47,7 @@ func TestManagedOpenCodeExternalResourceCgroupRequiresExplicitDegradation(t *tes
 
 func TestManagedServerDropsStoredCgroupFromPreviousDelegationBeforeReprepare(t *testing.T) {
 	setupTestDB(t)
+	t.Setenv("TMUX", "")
 	require.NoError(t, db.UpsertOpenCodeRuntime(db.OpenCodeRuntime{
 		SessionID: "managed-old-cgroup", ConvID: "ses_old_cgroup",
 		ServerURL: "http://127.0.0.1:43210", Cwd: t.TempDir(),

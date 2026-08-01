@@ -35,6 +35,7 @@ type launchRecordingTmux struct {
 	failNewSession  bool
 	failServerProbe bool
 	resourceEnv     string
+	resourceEnvGone bool
 	serverPID       int
 	paneCwd         string
 }
@@ -65,6 +66,9 @@ func (r *launchRecordingTmux) Command(args ...string) *exec.Cmd {
 	if r.resourceEnv != "" && command == "show-environment" {
 		return exec.Command("printf", "%s=%s\n", ResourceDelegationDirEnv, r.resourceEnv)
 	}
+	if r.resourceEnvGone && command == "show-environment" {
+		return exec.Command("printf", "-%s\n", ResourceDelegationDirEnv)
+	}
 	if len(args) > 0 && args[0] == "display-message" &&
 		len(args) > 1 && args[len(args)-1] == "#{pane_current_path}" {
 		return exec.Command("printf", "%s", r.paneCwd)
@@ -78,6 +82,7 @@ func (r *launchRecordingTmux) Command(args ...string) *exec.Cmd {
 
 func TestLaunchExternalDelegationRefusesToAutoSpawnTmuxServer(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("TMUX", "")
 	t.Setenv(ResourceDelegationDirEnv, "/sys/fs/cgroup/system.slice/tclaude-tmux.service")
 	rec := &launchRecordingTmux{failServerProbe: true}
 	swapTmux(t, rec)

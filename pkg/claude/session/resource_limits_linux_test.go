@@ -55,10 +55,25 @@ func TestPaneRecoversExternalDelegationDirFromTmuxGlobalEnvironment(t *testing.T
 	assert.Equal(t, want, configuredResourceDelegationDir())
 	assert.Equal(t, want, os.Getenv(ResourceDelegationDirEnv),
 		"the recovered value must reach later launch preflights and child processes")
+	assert.Equal(t, "-N", ExternalTmuxNoStartArgs("new-session")[0],
+		"a pre-existing pane must adopt external mode before its next launch")
+}
+
+func TestPaneTreatsMissingTmuxGlobalAsAuthoritativeLegacyMode(t *testing.T) {
+	t.Setenv(ResourceDelegationDirEnv,
+		"/sys/fs/cgroup/system.slice/tclaude-tmux.service")
+	t.Setenv("TMUX", "/tmp/tmux.sock,1,0")
+	swapTmux(t, &launchRecordingTmux{resourceEnvGone: true})
+
+	assert.Empty(t, ExternalResourceDelegationDir())
+	assert.Empty(t, os.Getenv(ResourceDelegationDirEnv))
+	assert.Equal(t, []string{"new-session"}, ExternalTmuxNoStartArgs("new-session"),
+		"a pre-existing pane must stop using external mode after agentd clears it")
 }
 
 func TestExternalLaunchCannotAutoStartServerAfterSuccessfulProbe(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("TMUX", "")
 	oldRoot, oldProc := resourceCgroupRoot, resourceProcRoot
 	resourceCgroupRoot, resourceProcRoot = t.TempDir(), t.TempDir()
 	t.Cleanup(func() { resourceCgroupRoot, resourceProcRoot = oldRoot, oldProc })
