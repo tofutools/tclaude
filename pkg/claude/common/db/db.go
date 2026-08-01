@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"runtime/debug"
 	"sort"
 	"sync"
 	"testing"
@@ -218,9 +217,6 @@ func Open() (*sql.DB, error) {
 	if dbReady {
 		return globalDB, initErr
 	}
-	if os.Getenv("TCL930_TRACE_DB_OPEN") != "" {
-		fmt.Fprintf(os.Stderr, "TCL930_DB_OPEN path=%s\n%s", DBPath(), debug.Stack())
-	}
 	// Mark ready up front: even on an init error we cache the failed result
 	// (globalDB stays nil, initErr set) rather than retrying the full chain
 	// on every call — same memoization the previous sync.Once gave.
@@ -339,27 +335,6 @@ func Open() (*sql.DB, error) {
 		maybeCaptureTemplate(globalDB)
 	}
 	return globalDB, initErr
-}
-
-// ObserveTCL930SidecarsAtCleanup is temporary migration instrumentation.
-func ObserveTCL930SidecarsAtCleanup(t testing.TB, home, family string) {
-	t.Helper()
-	t.Cleanup(func() {
-		matches, err := filepath.Glob(filepath.Join(home, ".tclaude", "data", "db.sqlite-*"))
-		if err != nil {
-			t.Fatalf("TCL-930 cleanup probe %s could not list SQLite sidecars: %v", family, err)
-		}
-		names := make([]string, 0, len(matches))
-		for _, match := range matches {
-			names = append(names, filepath.Base(match))
-		}
-		sort.Strings(names)
-		wantEmpty := os.Getenv("TCL930_EXPECT_EMPTY") == "1"
-		if (len(names) == 0) != wantEmpty {
-			t.Fatalf("TCL-930 cleanup probe %s: sidecars=%v wantEmpty=%t", family, names, wantEmpty)
-		}
-		t.Logf("TCL-930 cleanup probe %s PASS sidecars=%v wantEmpty=%t", family, names, wantEmpty)
-	})
 }
 
 // Close closes the singleton database connection if it is open.

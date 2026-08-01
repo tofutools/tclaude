@@ -19,7 +19,6 @@ import (
 func setupTestDB(t *testing.T) {
 	t.Helper()
 	dir := t.TempDir()
-	db.ObserveTCL930SidecarsAtCleanup(t, dir, "agent-lookup")
 	t.Setenv("HOME", dir)
 	// Hide any inherited env that would resolve `.` to a real conv-id.
 	t.Setenv("TCLAUDE_SESSION_ID", "")

@@ -89,7 +89,6 @@ func newMockOllama(t *testing.T, dims int, contextLimit int) *httptest.Server {
 func setupEmbeddingsTestDB(t *testing.T) {
 	t.Helper()
 	dir := t.TempDir()
-	db.ObserveTCL930SidecarsAtCleanup(t, dir, "conv-embeddings")
 	t.Setenv("HOME", dir)
 	db.ResetForTest()
 	t.Cleanup(db.ResetForTest)

@@ -23,7 +23,6 @@ import (
 func setupDelivery(t *testing.T, delivery string) (marker string) {
 	t.Helper()
 	home := t.TempDir()
-	db.ObserveTCL930SidecarsAtCleanup(t, home, "notify-delivery")
 	t.Setenv("HOME", home)
 	db.ResetForTest()
 	t.Cleanup(db.ResetForTest)

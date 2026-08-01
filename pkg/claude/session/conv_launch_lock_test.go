@@ -14,9 +14,7 @@ import (
 // isolated from the real environment and from each other.
 func isolateCacheAndDB(t *testing.T) {
 	t.Helper()
-	home := t.TempDir()
-	db.ObserveTCL930SidecarsAtCleanup(t, home, "session-launch-lock")
-	t.Setenv("HOME", home)
+	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	db.ResetForTest()
 	t.Cleanup(db.ResetForTest)

@@ -114,9 +114,7 @@ func forceConvExists(t *testing.T, exists bool) {
 // recipe db's own setupTestDB uses, exported here via db.ResetForTest).
 func setupAskTestDB(t *testing.T) {
 	t.Helper()
-	home := t.TempDir()
-	db.ObserveTCL930SidecarsAtCleanup(t, home, "ask")
-	t.Setenv("HOME", home)
+	t.Setenv("HOME", t.TempDir())
 	db.ResetForTest()
 	t.Cleanup(db.ResetForTest)
 }
