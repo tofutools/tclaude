@@ -179,9 +179,21 @@ func validateOpenCodeFilteredProviderDirectory(
 	return nil
 }
 
+// errOpenCodeInvalidAgentID lets a caller recognize "that name is not an agent
+// id" without applying openCodeAgentIDRE itself. A caller that re-derived the
+// rule to phrase its own message would own a second copy of a refusal
+// condition, and two copies can only ever drift apart; one predicate with two
+// presentations cannot.
+//
+// Every producer of this sentence wraps it. A second producer emitting the same
+// operator-visible text as a bare literal would render identically while
+// answering errors.Is with false, which is the same drift in a shape that is
+// harder to see (TCL-911).
+var errOpenCodeInvalidAgentID = errors.New("invalid OpenCode state agent id")
+
 func allocatePrivateOpenCodeState(agentID string) (*db.OpenCodeAgentStateAllocation, error) {
 	if !openCodeAgentIDRE.MatchString(agentID) {
-		return nil, fmt.Errorf("invalid OpenCode state agent id %q", agentID)
+		return nil, fmt.Errorf("%w %q", errOpenCodeInvalidAgentID, agentID)
 	}
 	if existing, err := db.GetOpenCodeAgentStateAllocation(agentID); err != nil {
 		return nil, err
@@ -243,13 +255,6 @@ func allocatePrivateOpenCodeState(agentID string) (*db.OpenCodeAgentStateAllocat
 	}
 	return &allocation, nil
 }
-
-// errOpenCodeInvalidAgentID lets a caller recognize "that name is not an agent
-// id" without applying openCodeAgentIDRE itself. A caller that re-derived the
-// rule to phrase its own message would own a second copy of a refusal
-// condition, and two copies can only ever drift apart; one predicate with two
-// presentations cannot.
-var errOpenCodeInvalidAgentID = errors.New("invalid OpenCode state agent id")
 
 func requireOpenCodeStateAllocation(agentID string) (*db.OpenCodeAgentStateAllocation, error) {
 	if !openCodeAgentIDRE.MatchString(agentID) {
