@@ -405,6 +405,11 @@ func TestPrepareOpenCodeReadOnlyConfigRefusesAllocationStrandedByEnvChange(t *te
 		"is outside this daemon's private state parent")
 	require.ErrorContains(t, err,
 		"a changed XDG_DATA_HOME or HOME moves that parent away from an existing allocation")
+	// The remedy on THIS path too, not only on the control socket below. A cold
+	// review mutation removed it from here and no test failed — the docs assert
+	// host-open gets a way out, and nothing was holding that claim up.
+	require.ErrorContains(t, err, openCodeStrandedAllocationRemedy)
+	require.ErrorContains(t, err, "recreate this agent")
 	assert.NoFileExists(t, filepath.Join(configDir, openCodeInstallBootstrapFile))
 
 	// The same allocation fails the same way on the control-socket path, which

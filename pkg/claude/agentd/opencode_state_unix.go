@@ -1333,10 +1333,18 @@ func requireOpenCodeAllocatedStateRoot(stateRoot, subject, noun string) error {
 	// has already resolved, while this derives one from the live environment, so
 	// a symlinked home or XDG base makes the two disagree as strings while naming
 	// the same directory.
-	if filepath.Dir(stateRoot) != resolvedOpenCodeSeedPath(parent) {
+	resolvedParent := resolvedOpenCodeSeedPath(parent)
+	if filepath.Dir(stateRoot) != resolvedParent {
+		// resolvedParent, not parent. The comparison two lines up runs on the
+		// RESOLVED form, and printing the unresolved spelling is the exact
+		// defect this family exists to remove: on a symlinked HOME or
+		// XDG_DATA_HOME the operator is handed a path that is not the one the
+		// check tested and cannot be matched against their own. The sibling
+		// refusal in openCodeControlSocketPath already shows the compared
+		// value; this now agrees with it.
 		return fmt.Errorf(
 			"%s is outside this daemon's private state parent %q; a changed XDG_DATA_HOME or HOME moves that parent away from an existing allocation — %s",
-			subject, parent, openCodeStrandedAllocationRemedy)
+			subject, resolvedParent, openCodeStrandedAllocationRemedy)
 	}
 	return nil
 }

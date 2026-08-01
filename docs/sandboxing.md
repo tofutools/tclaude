@@ -357,11 +357,19 @@ launched:
   instead, naming the config bootstrap target or the launch contract's state
   root.
 
-**Legacy shared agents are not affected.** Their control root is derived from
-the current parent rather than recorded, so it follows the environment change
-instead of being stranded by it, and they are never told to recreate anything.
-Note that a legacy shared agent moved this way gets a new, empty control
-directory under the new parent rather than a refusal.
+**Legacy shared agents are never stranded on the control root, and never see
+this remedy.** Their control root is derived from the current parent rather than
+recorded, so it follows the environment change instead of being stranded by it,
+and they are never told to recreate anything. A legacy shared agent moved this
+way gets a new, empty control directory under the new parent rather than a
+refusal on that path.
+
+That is a narrower claim than "unaffected", deliberately. A legacy shared
+agent's contract state root is `~/.opencode`, so changing `HOME` — as opposed to
+`XDG_DATA_HOME` — moves that too, and the state root anchor refuses with
+`… is neither an allocated per-agent state root nor this host's OpenCode state
+root …`. That refusal is about the ambient OpenCode tree following `HOME`, not
+about a stranded allocation, and recreating the agent is not its remedy.
 
 The Linux host-open posture starts with a read-only view of the host root
 unless the profile authors the `unix_sockets` axis; the isolated and filtered

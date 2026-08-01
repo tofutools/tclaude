@@ -510,8 +510,12 @@ func openCodeRuntimeSandboxSpec(
 				authorityErr)
 		}
 		if expectedControlPath != runtime.ControlSocketPath {
+			// "does not match", not "is outside". The test is string equality
+			// against one exact socket path, not containment in a region, and
+			// containment language invites the operator to go looking for a
+			// directory boundary that was never consulted.
 			return nil, fmt.Errorf(
-				"OpenCode tclaude-layer v4 runtime control path %q is outside its allocated agent authority %q",
+				"OpenCode tclaude-layer v4 runtime control path %q does not match its allocated agent authority %q",
 				runtime.ControlSocketPath, expectedControlPath)
 		}
 	} else if posture != sandboxpolicy.NetworkHostOpen ||
