@@ -401,9 +401,17 @@ func repairAndValidateRequiredZeroTimestamps(
 					return fmt.Errorf("%s.%s required-zero census: %w", table.name, column.name, err)
 				}
 				value, ok := legacyTimestampText(raw)
-				if ok && isMissingRequiredLegacyTimestamp(value) {
+				if !ok || isMissingRequiredLegacyTimestamp(value) {
+					displayValue := fmt.Sprintf("%q", value)
+					if !ok {
+						if raw == nil {
+							displayValue = "NULL"
+						} else {
+							displayValue = fmt.Sprintf("%v (%T)", raw, raw)
+						}
+					}
 					issues = append(issues, requiredZeroTimestamp{
-						table: table.name, columns: column.name, row: fmt.Sprintf("rowid %d", rowID), values: fmt.Sprintf("%q", value),
+						table: table.name, columns: column.name, row: fmt.Sprintf("rowid %d", rowID), values: displayValue,
 					})
 				}
 			}

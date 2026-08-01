@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -466,6 +467,26 @@ func TestMigrateV180toV181_CapsRequiredTimestampErrorDetails(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "in 23 row(s)")
 	assert.ErrorContains(t, err, "and 3 more")
+}
+
+func TestRequiredTimestampPreflightAggregatesSQLNull(t *testing.T) {
+	setupTestDB(t)
+	d, err := sql.Open("sqlite", t.TempDir()+"/required-null.sqlite")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = d.Close() })
+	_, err = d.Exec(`CREATE TABLE probe(id INTEGER PRIMARY KEY, required_at TEXT); INSERT INTO probe(required_at) VALUES (NULL)`)
+	require.NoError(t, err)
+	tx, err := d.Begin()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = tx.Rollback() })
+
+	err = repairAndValidateRequiredZeroTimestamps(context.Background(), tx, []timestampTable{{
+		name: "probe", columns: []timestampColumn{{name: "required_at", text: true}},
+	}})
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "probe.required_at")
+	assert.ErrorContains(t, err, "value NULL")
+	assert.ErrorContains(t, err, "in 1 row(s)")
 }
 
 func TestMigrateV180toV181_RejectsEmptyRequiredTimestamp(t *testing.T) {

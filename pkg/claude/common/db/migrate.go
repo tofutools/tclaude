@@ -24,6 +24,18 @@ const DefaultHarness = "claude"
 func migrate(db *sql.DB) error {
 	r := migrationReporter
 	ver := schemaVersion(db)
+	if ver == 1 {
+		incomplete, err := incompleteV1Schema(db)
+		if err != nil {
+			return fmt.Errorf("inspect v1 schema: %w", err)
+		}
+		if incomplete {
+			if err := resetFailedFreshImport(db); err != nil {
+				return fmt.Errorf("repair incomplete v1 schema: %w", err)
+			}
+			ver = 0
+		}
+	}
 	if ver > currentVersion {
 		return newerDatabaseVersionError(ver)
 	}
@@ -3105,12 +3117,48 @@ func importLegacyData(db *sql.DB) error {
 }
 
 func resetFailedFreshImport(db *sql.DB) error {
-	_, err := db.Exec(`
-		DROP TABLE IF EXISTS notify_state;
-		DROP TABLE IF EXISTS sessions;
-		DROP TABLE IF EXISTS schema_version;
-	`)
-	return err
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, table := range []string{"sessions", "notify_state"} {
+		var exists int
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&exists); err != nil {
+			return err
+		}
+		if exists == 0 {
+			continue
+		}
+		var count int64
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM ` + quoteIdentifier(table)).Scan(&count); err != nil {
+			return err
+		}
+		if count != 0 {
+			return fmt.Errorf("refusing to reset failed fresh import: table %s contains %d row(s)", table, count)
+		}
+	}
+	// Keep all drops atomic, and remove the version marker first even inside
+	// the transaction so this remains safe if the implementation changes.
+	for _, table := range []string{"schema_version", "notify_state", "sessions"} {
+		if _, err := tx.Exec(`DROP TABLE IF EXISTS ` + quoteIdentifier(table)); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func incompleteV1Schema(db *sql.DB) (bool, error) {
+	for _, table := range []string{"sessions", "notify_state"} {
+		var exists int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&exists); err != nil {
+			return false, err
+		}
+		if exists == 0 {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 var legacySessionEntryInfo = func(entry os.DirEntry) (os.FileInfo, error) {
@@ -3153,7 +3201,7 @@ func importLegacySessions(db *sql.DB, home string) (bool, error) {
 
 		var s legacySessionJSON
 		if err := json.Unmarshal(data, &s); err != nil {
-			continue
+			return false, fmt.Errorf("decode legacy session %s: %w", path, err)
 		}
 
 		id := strings.TrimSuffix(entry.Name(), ".json")
@@ -3185,6 +3233,14 @@ func importLegacySessions(db *sql.DB, home string) (bool, error) {
 				return false, fmt.Errorf("legacy session %q has no timestamps and %s has a zero modification time", s.ID, path)
 			}
 			created, updated = info.ModTime(), info.ModTime()
+		}
+		for _, candidate := range []struct {
+			name  string
+			stamp time.Time
+		}{{"created", created}, {"updated", updated}} {
+			if _, err := timeToUnixNano(candidate.stamp); err != nil {
+				return false, fmt.Errorf("legacy session %q %s timestamp: %w", s.ID, candidate.name, err)
+			}
 		}
 
 		_, err = tx.Exec(`INSERT OR IGNORE INTO sessions
