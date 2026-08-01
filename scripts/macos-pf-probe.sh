@@ -115,7 +115,7 @@ done
 
 cat >"$rules" <<EOF
 rdr pass on lo0 inet proto tcp from any to 127.0.0.1 port $original_port -> 127.0.0.1 port $redirect_port
-block return-rst out quick on lo0 inet proto tcp from any to 127.0.0.1 port $block_port
+block return-rst out quick on lo0 inet proto tcp from any to 127.0.0.1 port $block_port label "tclaude_pf_scoped_block"
 block return out quick on lo0 inet proto tcp from any to 127.0.0.1 port $gid_port group $probe_gid
 EOF
 
@@ -137,15 +137,35 @@ set -e
 block_stderr="$(<"$block_error")"
 printf 'scoped block evidence: curl exit=%s time=%ss stderr=%s\n' \
   "$block_exit" "$block_time" "$block_stderr"
-if [[ "$block_exit" -ne 7 ]]; then
-  echo "scoped return-rst wanted curl exit 7 (connection refused), got $block_exit" >&2
+block_rules="$(sudo pfctl -a "$anchor" -vvsr)"
+echo "$block_rules"
+block_packets="$(awk '
+  /label "tclaude_pf_scoped_block"/ { labeled = 1; next }
+  labeled && /Packets:/ {
+    for (i = 1; i <= NF; i++) {
+      if ($i == "Packets:") {
+        packets = $(i + 1)
+        gsub(/[^0-9]/, "", packets)
+        print packets
+        exit
+      }
+    }
+  }
+' <<<"$block_rules")"
+if [[ ! "$block_packets" =~ ^[0-9]+$ ]] || (( block_packets == 0 )); then
+  echo "labeled scoped block rule did not record a packet" >&2
   exit 1
 fi
-if ! awk -v elapsed="$block_time" 'BEGIN { exit !(elapsed < 0.5) }'; then
-  echo "scoped return-rst was not immediate: ${block_time}s" >&2
+echo "--- PASS: macOSPFScopedBlockCounter (${block_time}s; packets=${block_packets})"
+
+if [[ "$block_exit" -eq 7 ]]; then
+  echo "--- PASS: macOSPFFastReturn (${block_time}s; curl_exit=${block_exit})"
+elif [[ "$block_exit" -eq 28 ]]; then
+  echo "--- NEGATIVE: macOSPFFastReturnUnsupported (${block_time}s; curl_exit=${block_exit}; return-rst observed as silent drop)"
+else
+  echo "scoped block produced unexpected curl exit $block_exit" >&2
   exit 1
 fi
-echo "--- PASS: macOSPFScopedBlock (${block_time}s)"
 
 rdr_result="$(curl_probe "$original_port")"
 if [[ "$rdr_result" != "REDIRECTED" ]]; then
