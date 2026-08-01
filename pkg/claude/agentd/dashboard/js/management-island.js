@@ -407,11 +407,21 @@ export function SandboxPolicyResult({ target, context, contextIndex, contexts = 
     ...sandboxOtherAssignmentWarnings(target.axes, axes),
     // A distinct axis per entry: it is the list key, and several omitted
     // refusals would otherwise share one.
-    ...otherRefusals.map(({ index, refusal }, position) => ({
+    ...otherRefusals.map(({ index, refusal, context: assignment }, position) => ({
       axis: index === null ? `refusal-omitted-${position}` : `refusal-${index}`,
-      label: index === null
-        ? 'An assignment omitted from this selector'
-        : sandboxContextLabel(contexts, index),
+      /* An omitted assignment has no index to name it by, so the daemon sends
+         its context beside the refusal (TCL-913) and it is named with the SAME
+         vocabulary as a listed one. The unnamed wording is the compat path, not
+         a default: it is what a response carrying no identity degrades to —
+         either from a daemon predating the field, or from one that could not
+         resolve the assignment. Both are ABSENT rather than empty, so this
+         branch is decidable; an empty identity would be named "global
+         assignment" by the helper, which is a confident wrong answer. */
+      label: assignment
+        ? sandboxContextLabelFor(assignment)
+        : index === null
+          ? 'An assignment omitted from this selector'
+          : sandboxContextLabel(contexts, index),
       outcome: 'refused',
       detail: refusal.message,
     })),
