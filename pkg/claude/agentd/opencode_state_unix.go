@@ -772,6 +772,17 @@ func requireOpenCodeAnchoredStateTargets(
 					continue
 				}
 			}
+			// The comparison that just failed was on RESOLVED, so resolved is
+			// what the refusal has to show. Quoting only the contract's
+			// spelling produces a sentence that contradicts itself in the one
+			// case that reaches it: "<root>/escape/x is not below <root>" is
+			// read as a broken containment check, not as "escape is a symlink".
+			// Same rule openCodeStateRootSubject states for the state root —
+			// a refusal must not consume information its message withholds.
+			subject := fmt.Sprintf("%s %q", kind, dir)
+			if resolved != clean {
+				subject = fmt.Sprintf("%s %q (resolving to %q)", kind, dir, resolved)
+			}
 			// Worded per group. The read-only arm runs with allowAmbient
 			// false, so offering "nor one of this host's ambient directories"
 			// there names a criterion it never applies — and a directory that
@@ -781,12 +792,12 @@ func requireOpenCodeAnchoredStateTargets(
 			// the cause.
 			if !group.allowAmbient {
 				return fmt.Errorf(
-					"OpenCode launch contract %s %q is not below its state root %q",
-					kind, dir, resolvedRoot)
+					"OpenCode launch contract %s is not below its state root %q",
+					subject, resolvedRoot)
 			}
 			return fmt.Errorf(
-				"OpenCode launch contract %s %q is neither below its state root %q nor one of this host's ambient OpenCode state directories",
-				kind, dir, resolvedRoot)
+				"OpenCode launch contract %s is neither below its state root %q nor one of this host's ambient OpenCode state directories",
+				subject, resolvedRoot)
 		}
 	}
 	return nil
@@ -833,10 +844,10 @@ func requireOpenCodeAnchoredStateRoot(stateRoot string) (string, error) {
 //
 // The branch above is chosen on the UNRESOLVED base name, so that the launch
 // contract's validator and this cannot disagree about which arm applies, but
-// the allocation is looked up under the RESOLVED one. When a leaf symlink makes
-// those differ, quoting only the resolved path reports a directory the operator
-// never wrote, with no hint that a link was followed — the refusal would consume
-// information its message did not.
+// the allocation is looked up under the RESOLVED one. When a symlink in ANY
+// component makes those differ, quoting only the resolved path reports a
+// directory the operator never wrote, with no hint that a link was followed —
+// the refusal would consume information its message did not.
 func openCodeStateRootSubject(stateRoot, resolved string) string {
 	if resolved == stateRoot {
 		return fmt.Sprintf("OpenCode launch contract state root %q", stateRoot)

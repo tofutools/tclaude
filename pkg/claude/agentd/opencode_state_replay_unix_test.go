@@ -400,6 +400,14 @@ func TestPrepareOpenCodeTclaudeLayerStateRefusesReadOnlyStateDirEscape(t *testin
 	require.NotContains(t, err.Error(),
 		"nor one of this host's ambient OpenCode state directories",
 		"the read-only arm must not offer a criterion it never applies")
+	// The containment test ran on the RESOLVED path, so the refusal has to show
+	// it. Without this the sentence contradicts itself in the only case that
+	// reaches this arm: the quoted directory literally begins with the quoted
+	// state root, because the escape is a symlink the message never mentions.
+	require.Contains(t, err.Error(), "(resolving to ",
+		"a refusal decided on the resolved path must not quote only the contract spelling")
+	require.Contains(t, err.Error(), victim,
+		"the resolved path shown must be where the escape actually lands")
 }
 
 // The refusal subject must not attribute the symlink to the LEAF. The
