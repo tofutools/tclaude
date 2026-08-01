@@ -53,6 +53,36 @@ if [[ "${pipeline_status[0]}" -ne 0 || "${pipeline_status[1]}" -ne 0 ]] ||
   exit 1
 fi
 
+cooperation_log="$RUNNER_TEMP/pinned-proxy-harness-cooperation-darwin.log"
+set +e
+go test ./pkg/claude/session -run '^TestPinnedProxyHarnessCooperationDarwin$' -count=1 -v -timeout=420s |
+  tee "$cooperation_log"
+pipeline_status=("${PIPESTATUS[@]}")
+set -e
+if [[ "${pipeline_status[0]}" -ne 0 || "${pipeline_status[1]}" -ne 0 ]] ||
+  ! grep -q '^--- PASS: TestPinnedProxyHarnessCooperationDarwin ' "$cooperation_log"; then
+  {
+    echo "### Pinned Darwin proxy-harness cooperation smoke did not complete"
+    echo
+    echo "The real shipped Darwin launcher did not report an explicit pass for both pinned plain-CLI harnesses."
+    echo "A skip, missing/renamed test, build-tag mismatch, or zero-test success is a hard failure."
+  } >> "$GITHUB_STEP_SUMMARY"
+  echo "::error::TestPinnedProxyHarnessCooperationDarwin did not report an explicit pass"
+  exit 1
+fi
+
+failure_control_log="$RUNNER_TEMP/pinned-proxy-harness-cooperation-darwin-failure-control.log"
+set +e
+go test ./pkg/claude/session -run '^TestPinnedProxyHarnessCooperationDarwinFailureControl$' -count=1 -v -timeout=30s |
+  tee "$failure_control_log"
+pipeline_status=("${PIPESTATUS[@]}")
+set -e
+if [[ "${pipeline_status[0]}" -ne 0 || "${pipeline_status[1]}" -ne 0 ]] ||
+  ! grep -q '^--- PASS: TestPinnedProxyHarnessCooperationDarwinFailureControl ' "$failure_control_log"; then
+  echo "::error::TestPinnedProxyHarnessCooperationDarwinFailureControl did not report an explicit pass"
+  exit 1
+fi
+
 refusal_log="$RUNNER_TEMP/stacked-seatbelt-refusal.log"
 set +e
 go test ./pkg/claude/session -run '^TestStackedSandboxDarwinRefusal$' -count=1 -v -timeout=30s |
@@ -69,4 +99,6 @@ printf '%s\n' \
   "Seatbelt smoke evidence complete:" \
   "--- PASS: TestTclaudeLayerDarwinSmoke" \
   "--- PASS: TestSeatbeltProxyFloorSmoke" \
+  "--- PASS: TestPinnedProxyHarnessCooperationDarwin" \
+  "--- PASS: TestPinnedProxyHarnessCooperationDarwinFailureControl" \
   "--- PASS: TestStackedSandboxDarwinRefusal"

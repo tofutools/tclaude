@@ -496,12 +496,24 @@ named CI smoke. Cells follow the activation record
 (`proxyEngineActivatedSmokes`), never a proposal and never a static scan of a
 binary.
 
-Currently activated: **Claude Code 2.1.220, Codex 0.145.0 and OpenCode 1.18.6,
-on Linux.** The two plain-CLI harnesses are backed by
+Currently activated: **Claude Code 2.1.220, Codex 0.145.0 and OpenCode 1.18.6
+on Linux; Claude Code 2.1.220 and Codex 0.145.0 on Darwin.** The Linux
+plain-CLI harnesses are backed by
 `TestPinnedProxyHarnessCooperation` and `TestPinnedProxyToolEgress`; Codex was
 activated one milestone after Claude Code, from the same runs rather than from
 new ones — the evidence was green from the first shard run, and what was missing
 was the record, which is the rule working rather than an exception to it.
+
+The two Darwin rows are backed by
+`TestPinnedProxyHarnessCooperationDarwin`. It invokes the built tclaude binary's
+shipped Darwin proxy launcher, runs each pinned harness with deliberately
+invalid credentials, observes the expected model origin in the production
+proxy's CONNECT decision log, and executes a deliberate undeclared CONNECT
+refusal. `TestPinnedProxyHarnessCooperationDarwinFailureControl` runs the same
+in-sandbox probe without the launcher and proves the evidence arm fails when
+the launcher-owned endpoint injection is absent. OpenCode remains unactivated
+on Darwin: its agentd-owned server boundary requires its own pinned smoke and
+does not inherit the plain-CLI evidence.
 
 OpenCode (TCL-891) is backed by `TestOpenCodeProxyFloorCooperation`
 (smoke flow `40-opencode-floor`, green named run `30654121316`) plus the shared
@@ -551,14 +563,10 @@ level where it is still real: the record lookup's fail-closed default for a name
 the record does not mention, plus a check that no row is present-but-empty (which
 would activate cells naming no evidence).
 
-The Darwin boundary beside it asserts the platform gate **directly** as well as
-through a rating, and the reason is a trap worth recording. For ordinary
-allow-list axes the Darwin rating is `EnforceNone` for an earlier reason too, so
-a rating-only assertion would not fail if the platform gate were deleted. The
-axes that *do* reach the proxy branch on Darwin are loopback-only allow rows plus
-a deny row — `NetworkRulesAreLoopbackOnly` ignores `Deny`, so the readiness check
-holds while the deny row still selects the engine — and that shape is asserted
-too. The domination is therefore **axes-specific, not structural**.
+The activation record is platform-keyed. Linux evidence cannot populate a
+Darwin row and the Darwin plain-CLI smoke cannot populate OpenCode's row. The
+record-to-cells test asserts both activated Darwin rows, the unactivated
+OpenCode row, and the TCL-917 aggregate `Partial` cap directly.
 
 ### Darwin `NetworkList` is capped at Partial (TCL-917)
 

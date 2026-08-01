@@ -298,11 +298,20 @@ func PredictAccessEnforcement(
 			return PredictedAccessEnforcement{}, err
 		}
 	}
+	filteredNetworkReady := platform == "linux"
+	if platform == "darwin" {
+		deployedEngine, engineErr :=
+			sandboxpolicy.DeployedNetworkEngineForRules(axes.Network)
+		if engineErr != nil {
+			return PredictedAccessEnforcement{}, engineErr
+		}
+		filteredNetworkReady =
+			deployedEngine == sandboxpolicy.NetworkEngineProxy ||
+				sandboxpolicy.NetworkRulesAreLoopbackOnly(axes.Network)
+	}
 	row, err := accessEnforcementTable(
 		h, implementation, axes, validatedBuiltinMode, platform,
-		platform == "linux" ||
-			(platform == "darwin" &&
-				sandboxpolicy.NetworkRulesAreLoopbackOnly(axes.Network)),
+		filteredNetworkReady,
 	)
 	if err != nil {
 		return PredictedAccessEnforcement{}, err
@@ -548,6 +557,17 @@ func accessEnforcementTable(
 						caps.NetworkDenySelectors[index].Detail + " " +
 							OpenCodeFilteredExplicitProviderCaveat)
 				}
+			}
+			if goos == "darwin" {
+				// TCL-928 activates the measured evaluator cells, but Darwin's
+				// Seatbelt floor keeps the aggregate row at Partial. SBPL's
+				// localhost:PORT selector reaches every address assigned to the
+				// Mac, so a same-port service on another local address bypasses
+				// the proxy. TCL-917 ruled document-and-disclose and explicitly
+				// ruled against a launch-time collision check.
+				caps.NetworkList = EnforcePartial
+				caps.NetworkListCondition = appendPredictionSentence(
+					caps.NetworkListCondition, SeatbeltProxyFloorCondition)
 			}
 		}
 		if implementation == sandboxpolicy.ImplementationTclaudeLayer &&

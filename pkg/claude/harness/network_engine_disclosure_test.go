@@ -488,64 +488,37 @@ func TestProxyEngineActivationIsScopedToItsEvidence(t *testing.T) {
 	// keys on presence, so an entry added with an empty slice would activate
 	// cells while naming no evidence at all — the exact thing the record exists
 	// to prevent, and the one authoring mistake the coupling above cannot see.
-	for _, name := range Names() {
-		if _, listed := proxyEngineActivatedSmokes[name]; !listed {
-			continue
+	for goos, rows := range proxyEngineActivatedSmokes {
+		for name := range rows {
+			assert.NotEmptyf(t, ProxyEngineActivationSmokesForPlatform(name, goos),
+				"%s/%s has a row but names no smoke, so its cells rest on nothing", goos, name)
 		}
-		assert.NotEmptyf(t, ProxyEngineActivationSmokes(name),
-			"%s has a row but names no smoke, so its cells rest on nothing", name)
 	}
 
-	// Boundary 2: Darwin is M3 and activates on its own Seatbelt smokes. Asked
-	// of both activated harnesses, because the record is keyed by harness and
-	// the platform gate sits beside that lookup rather than inside it.
-	//
-	// TWO SUBJECTS, because the obvious one is not discriminating on its own.
-	// For the discriminating allow-list axes used above, Darwin's rating is
-	// EnforceNone for an EARLIER reason as well, so asserting only that rating
-	// would leave the platform gate unpinned — deleting the goos check would
-	// not fail it. Both a rating-level subject where the branch IS reachable on
-	// Darwin, and the predicate itself, are therefore asserted.
-	//
-	// The reachable-on-Darwin shape is loopback-only allow rows plus a deny row:
-	// NetworkRulesAreLoopbackOnly ignores Deny, so filteredNetworkReady holds on
-	// Darwin, while the deny row makes the policy discriminating and selects the
-	// proxy engine. Without the platform gate the deny selectors below appear —
-	// verified for the two plain-CLI harnesses, which is what makes this a real
-	// rating-level subject rather than a decorative one. It does NOT discriminate
-	// for OpenCode, whose Darwin deny cells stay empty for another reason, and
-	// that is precisely why the predicate assertion below is asserted for every
-	// harness rather than left to this one.
-	darwinReachable := rules
-	darwinReachable.Mode = sandboxpolicy.AccessModeList
-	darwinReachable.Allow = []sandboxpolicy.NetworkAllowEntry{{Loopback: true}}
-	darwinReachable.Deny = []sandboxpolicy.NetworkAllowEntry{
-		{Host: "denied.example.com"},
-	}
-	for _, activated := range activatedProxyEngineHarnesses(t) {
+	// Boundary 2: Darwin has its own evidence rows. The two pinned plain-CLI
+	// harnesses activate at Partial because TCL-917 caps the Seatbelt floor;
+	// OpenCode remains unactivated until its distinct server boundary is smoked.
+	for _, name := range []string{DefaultName, CodexName} {
+		activated := MustGet(name)
 		darwin, err := PredictAccessEnforcement(
 			activated, sandboxpolicy.ImplementationTclaudeLayer, axes, "", "darwin",
 		)
-		require.NoErrorf(t, err, "harness %s", activated.Name)
-		assert.Equalf(t, EnforceNone, darwin.NetworkList,
-			"Linux evidence does not activate the Darwin floor for %s",
-			activated.Name)
-
-		reachable, err := PredictAccessEnforcement(
-			activated, sandboxpolicy.ImplementationTclaudeLayer,
-			sandboxpolicy.ResolvedAxes{Network: darwinReachable}, "", "darwin",
-		)
-		require.NoErrorf(t, err, "harness %s", activated.Name)
-		assert.Emptyf(t, reachable.NetworkDenySelectors,
-			"the Darwin proxy branch is reachable for these axes, and Linux evidence must not populate its deny cells for %s",
-			activated.Name)
-
-		// And the gate itself, so the boundary fails when the gate goes rather
-		// than only when something downstream of it happens to notice.
-		assert.Falsef(t, proxyEngineActivated(activated.Name, "darwin"),
-			"the platform gate, not an incidental one, is what keeps %s unactivated on Darwin",
-			activated.Name)
+		require.NoErrorf(t, err, "harness %s", name)
+		assert.Equalf(t, EnforcePartial, darwin.NetworkList,
+			"Darwin proxy cells for %s must retain the TCL-917 Partial cap", name)
+		assert.Contains(t, darwin.NetworkListCondition, SeatbeltProxyFloorCondition)
+		assert.Truef(t, proxyEngineActivated(name, "darwin"),
+			"%s must be backed by the Darwin activation record", name)
+		assert.Equal(t, []string{"TestPinnedProxyHarnessCooperationDarwin"},
+			ProxyEngineActivationSmokesForPlatform(name, "darwin"))
 	}
+	assert.False(t, proxyEngineActivated(OpenCodeName, "darwin"))
+	openCodeDarwin, err := PredictAccessEnforcement(
+		MustGet(OpenCodeName), sandboxpolicy.ImplementationTclaudeLayer,
+		axes, "", "darwin",
+	)
+	require.NoError(t, err)
+	assert.Equal(t, EnforceNone, openCodeDarwin.NetworkList)
 
 	// Boundary 3: the packet gateway is untouched. Its DNS caveat is the marker
 	// — if the proxy branch had leaked into it, that caveat would be gone.
