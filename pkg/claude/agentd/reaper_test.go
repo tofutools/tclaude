@@ -48,6 +48,7 @@ func TestSessionReaper_OpenCodeServerLossOverridesLivePane(t *testing.T) {
 	t.Setenv("HOME", dir)
 	t.Setenv("USERPROFILE", dir)
 	db.ResetForTest()
+	cleanupAgentdTestDB(t)
 
 	const sessionID = "spwn-opencode-loss"
 	require.NoError(t, session.SaveSessionState(&session.SessionState{
@@ -84,6 +85,7 @@ func TestSessionReaper_ReapsDeadCodexSessionAndNotifies(t *testing.T) {
 	t.Setenv("HOME", dir)
 	t.Setenv("USERPROFILE", dir)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 	// tick() sees the alive session and fires a debounced goBackground
 	// flush (maybeFlushUndelivered → drainNudgeLoop) that touches the
 	// singleton DB under $HOME/.tclaude. Drain it before t.TempDir's
@@ -172,6 +174,7 @@ func TestSessionReaper_FirstTickRecordsReconciliation(t *testing.T) {
 	t.Setenv("HOME", dir)
 	t.Setenv("USERPROFILE", dir)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 	t.Cleanup(bgWG.Wait)
 	require.NoError(t, session.SaveSessionState(&session.SessionState{
 		ID: "dead-before-start", ConvID: "dead-conv-12345678",

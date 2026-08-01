@@ -156,6 +156,7 @@ func TestRunHookCallback_DelayedPredecessorSessionEndCannotExitRelaunch(t *testi
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 	const predecessor = "11111111111111111111111111111111"
 	const successor = "22222222222222222222222222222222"
 	require.NoError(t, SaveSessionStateForLaunch(&SessionState{
@@ -182,6 +183,7 @@ func TestRunHookCallback_SessionEndClearKeepsStatus(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 
 	require.NoError(t, SaveSessionState(&SessionState{
 		ID:     "clear-sess",
@@ -216,6 +218,7 @@ func TestRunHookCallback_SessionEndResumeKeepsStatus(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 
 	require.NoError(t, SaveSessionState(&SessionState{
 		ID:     "resume-sess",
@@ -248,6 +251,7 @@ func TestRunHookCallback_SessionEndFromSubagentIgnored(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 
 	require.NoError(t, SaveSessionState(&SessionState{
 		ID:     "sub-sess",
@@ -321,6 +325,7 @@ func TestRunHookCallback_ForeignProcessHooksIgnored(t *testing.T) {
 			dir := t.TempDir()
 			t.Setenv("HOME", dir)
 			db.ResetForTest()
+			t.Cleanup(db.ResetForTest)
 
 			require.NoError(t, SaveSessionState(&SessionState{
 				ID:     "host-sess",
@@ -389,6 +394,7 @@ func TestRunHookCallback_AnnouncedTransitionAdvancesConv(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 
 	require.NoError(t, SaveSessionState(&SessionState{
 		ID:     "trans-sess",
@@ -423,6 +429,7 @@ func TestRunHookCallback_PendingConvHookStillProcessed(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 
 	require.NoError(t, SaveSessionState(&SessionState{
 		ID:     "retry-sess",
@@ -458,6 +465,7 @@ func TestRunHookCallback_PostCompactExemptFromForeignGuard(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 
 	require.NoError(t, SaveSessionState(&SessionState{
 		ID:      "pc-sess",
@@ -544,6 +552,7 @@ func TestRunHookCallback_SessionEndRecordsExitReason(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 
 	require.NoError(t, SaveSessionState(&SessionState{
 		ID:     "end-sess",
@@ -581,6 +590,7 @@ func TestRunHookCallback_SessionStartClearsExitReason(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 
 	require.NoError(t, SaveSessionState(&SessionState{
 		ID:     "start-sess",
@@ -828,6 +838,7 @@ func TestNeedsIdentityMigration(t *testing.T) {
 	t.Run("retired old agent -> no migration", func(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
 		db.ResetForTest()
+		t.Cleanup(db.ResetForTest)
 		mustEnsureAgent(t, "conv-old")
 		_, err := db.RetireAgent("conv-old", "test", "test")
 		require.NoError(t, err)
@@ -838,6 +849,7 @@ func TestNeedsIdentityMigration(t *testing.T) {
 	t.Run("succession edge already recorded -> no retry", func(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
 		db.ResetForTest()
+		t.Cleanup(db.ResetForTest)
 		mustEnsureAgent(t, "conv-old")
 		require.NoError(t, db.RecordConvSuccession("conv-old", "conv-new", "clear"))
 		got, err := needsIdentityMigration("conv-old", "conv-new")
@@ -860,6 +872,7 @@ func TestWaitForClearedIdentityIndexUsesMetadataOnlyOrdering(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 	const convID = "11111111-1111-1111-1111-111111111111"
 	cwd := filepath.Join(home, "project")
 	projectDir := convops.GetClaudeProjectPath(cwd)
@@ -898,6 +911,7 @@ func TestMigrateClearedIdentityRecoversTitleWithoutMonitor(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 	const oldConv = "11111111-1111-1111-1111-111111111111"
 	const newConv = "22222222-2222-2222-2222-222222222222"
 	cwd := filepath.Join(home, "project")
@@ -932,6 +946,7 @@ func TestRunHookCallback_ClearMigratesAgentIdentity(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 
 	const sessionID, oldConv, newConv = "clear-mig-sess", "conv-clear-old", "conv-clear-new"
 
@@ -995,6 +1010,7 @@ func TestRunHookCallback_SessionStartEnrollsLaunchedConv(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 
 	require.NoError(t, SaveSessionState(&SessionState{
 		ID:      "start-sess",
@@ -1029,6 +1045,7 @@ func TestRunHookCallback_SessionStartNamesActorPreEnrolledByReconcile(t *testing
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 
 	require.NoError(t, SaveSessionState(&SessionState{
 		ID:      "reconciled-start-sess",
@@ -1061,6 +1078,7 @@ func TestRunHookCallback_SessionStartDoesNotResurrectRetired(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 
 	require.NoError(t, SaveSessionState(&SessionState{
 		ID:     "retd-sess",
@@ -1092,6 +1110,7 @@ func TestRunHookCallback_SubagentSessionStartDoesNotEnroll(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 
 	require.NoError(t, SaveSessionState(&SessionState{
 		ID:     "sub-sess",
@@ -1122,6 +1141,7 @@ func TestRunHookCallback_NonSessionStartDoesNotEnroll(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 
 	require.NoError(t, SaveSessionState(&SessionState{
 		ID:     "mid-sess",
@@ -1198,6 +1218,7 @@ func TestRunHookCallback_TaskRunnerSessionStartDoesNotEnroll(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 	taskSignalEnv(t, dir)
 
 	require.NoError(t, SaveSessionState(&SessionState{
@@ -1275,6 +1296,7 @@ func TestRunHookCallback_TaskRunnerRotationDoesNotMigrateIdentity(t *testing.T) 
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 	taskSignalEnv(t, dir)
 
 	require.NoError(t, SaveSessionState(&SessionState{

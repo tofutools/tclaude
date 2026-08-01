@@ -21,6 +21,7 @@ func TestApplyHook_CodexHooksDoNotReadRolloutTelemetry(t *testing.T) {
 	t.Setenv("HOME", dir)
 	t.Setenv("USERPROFILE", dir)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 
 	const convID = "019ec004-4250-79b1-9ade-ebaea4170170"
 	const sessionID = "agent-codex"

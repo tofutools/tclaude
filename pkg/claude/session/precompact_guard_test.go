@@ -124,6 +124,7 @@ func TestDecidePreCompact(t *testing.T) {
 			dir := t.TempDir()
 			t.Setenv("HOME", dir)
 			db.ResetForTest()
+			t.Cleanup(db.ResetForTest)
 
 			cfg := config.DefaultConfig()
 			cfg.PreCompactGuard = c.guard
@@ -198,6 +199,7 @@ func TestRunHookCallback_PreCompactEmitsBlockOnStdout(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 
 	cfg := config.DefaultConfig()
 	cfg.PreCompactGuard = &config.PreCompactGuardConfig{Enabled: true}

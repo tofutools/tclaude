@@ -26,6 +26,7 @@ func TestHookHarnessNudgeCarriesTrustedOriginThroughTurn(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	db.ResetForTest()
+	cleanupAgentdTestDB(t)
 	previousTmux := clcommon.Default
 	clcommon.Default = &commandRecordingTmux{}
 	t.Cleanup(func() { clcommon.Default = previousTmux })
@@ -157,6 +158,7 @@ func TestOpenCodeNudgeArmsOnlyTrustedStandingOrderMessages(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	db.ResetForTest()
+	cleanupAgentdTestDB(t)
 	previousTmux := clcommon.Default
 	clcommon.Default = &commandRecordingTmux{}
 	t.Cleanup(func() { clcommon.Default = previousTmux })

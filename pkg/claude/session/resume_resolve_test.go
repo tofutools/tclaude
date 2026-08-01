@@ -18,6 +18,7 @@ func TestResolveResumeConv_Claude(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 
 	cwd := "/home/u/proj"
 	convID := "abcdef01-2345-6789-abcd-ef0123456789"

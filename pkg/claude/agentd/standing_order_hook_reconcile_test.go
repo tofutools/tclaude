@@ -18,6 +18,7 @@ func TestStandingOrderGroupLifecycleReconcilesNativeHookDeclarations(t *testing.
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	db.ResetForTest()
+	cleanupAgentdTestDB(t)
 	setAgentdTestHookCommand(t)
 
 	groupID, err := db.CreateAgentGroup("native-hook-lifecycle", "")

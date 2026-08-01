@@ -276,6 +276,7 @@ func TestRecordApprovalDecision_WritesPopupRow(t *testing.T) {
 	t.Setenv("HOME", dir)
 	t.Setenv("USERPROFILE", dir)
 	db.ResetForTest()
+	cleanupAgentdTestDB(t)
 
 	req := &approvalRequest{
 		perm:        "tool.bash",
@@ -346,6 +347,7 @@ func TestRecordApprovalRequest_WritesAgentRow(t *testing.T) {
 	t.Setenv("HOME", dir)
 	t.Setenv("USERPROFILE", dir)
 	db.ResetForTest()
+	cleanupAgentdTestDB(t)
 
 	req := &approvalRequest{
 		perm:        "human.clipboard",

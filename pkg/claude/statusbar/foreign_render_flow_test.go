@@ -107,6 +107,7 @@ func TestStatusbar_ForeignRenderLeavesParentRowIntact(t *testing.T) {
 	// rebase it drives is not what these tests are about.
 	t.Setenv(harness.AutoCompactWindowEnvVar, "")
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 	require.NoError(t, db.SaveSession(&db.SessionRow{ID: "sess-parent", ConvID: "conv-parent"}))
 	t.Setenv("TCLAUDE_SESSION_ID", "sess-parent")
 
@@ -161,6 +162,7 @@ func TestStatusbar_OwnRenderUpdatesRow(t *testing.T) {
 	// rebase it drives is not what these tests are about.
 	t.Setenv(harness.AutoCompactWindowEnvVar, "")
 	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 	require.NoError(t, db.SaveSession(&db.SessionRow{ID: "sess-parent", ConvID: "conv-parent"}))
 	t.Setenv("TCLAUDE_SESSION_ID", "sess-parent")
 
