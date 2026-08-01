@@ -476,10 +476,10 @@ func normalizeNetworkAllowEntry(in NetworkAllowEntry, index int, field string) (
 		}
 		prefix = prefix.Masked()
 		// Ordering is load-bearing and asserted by test: unmapping first means
-		// the loopback refusal sees one address form, so a mapped spelling of
-		// the identity space (::ffff:127.0.0.1/128 -> 127.0.0.1/32) is still
-		// caught by the IPv4 entries of the one list. Running the refusal first
-		// would leave it depending on that list's mapped entries alone.
+		// the loopback-row refusal sees one address form, so a mapped spelling
+		// (::ffff:127.0.0.1/128 -> 127.0.0.1/32) is still caught by the IPv4
+		// authority entries. Running the refusal first would leave it depending
+		// on the mapped entries alone.
 		prefix = UnmapPrefix(prefix)
 		if PrefixIntersectsLoopbackRowAuthority(prefix) {
 			// Naming the space matters: 0.0.0.0 and :: reach the host too,
@@ -488,7 +488,8 @@ func normalizeNetworkAllowEntry(in NetworkAllowEntry, index int, field string) (
 			return NetworkAllowEntry{}, fmt.Errorf(
 				`network.%s[%d].cidr %q covers address space governed by loopback rows `+
 					`(127.0.0.0/8, ::1, the exact 0.0.0.0 and :: addresses, and their IPv4-mapped forms), `+
-					`which the loopback selector alone governs; use {"loopback": true} instead`,
+					`which CIDR rows cannot govern; use {"loopback": true} for that portion, `+
+					`and if the CIDR also covers other addresses, split it and keep CIDR rows for the remainder`,
 				field, index, out.CIDR,
 			)
 		}

@@ -298,8 +298,10 @@ func TestLoopbackRowAuthorityCIDRRowsAreUnauthorable(t *testing.T) {
 					require.Errorf(t, err,
 						"%s cidr %q overlaps the host-loopback identity space and must not compile",
 						polarity, cidr)
-					assert.Containsf(t, err.Error(), `use {"loopback": true} instead`,
+					assert.Containsf(t, err.Error(), `use {"loopback": true} for that portion`,
 						"the refusal must name the remedy, not just refuse: %s cidr %q", polarity, cidr)
+					assert.Containsf(t, err.Error(), "split it and keep CIDR rows for the remainder",
+						"the refusal must preserve mixed-range intent: %s cidr %q", polarity, cidr)
 					assert.Containsf(t, err.Error(), "address space governed by loopback rows",
 						"the refusal must name what it refused: %s cidr %q", polarity, cidr)
 				}
@@ -446,6 +448,75 @@ func TestNonUnspecifiedZeronetCIDRRowsAreAuthorableAndEffective(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestMixedZeronetDenyMigrationPreservesIntent exercises the migration the
+// authoring refusal prescribes. A rejected 0/8 deny is replaced by a loopback
+// deny for exact 0.0.0.0 plus the canonical CIDR decomposition of the rest;
+// every resulting row compiles and fires, while an address outside 0/8 remains
+// allowed under the open baseline.
+func TestMixedZeronetDenyMigrationPreservesIntent(t *testing.T) {
+	_, err := sandboxproxy.NewEvaluator(sandboxpolicy.NetworkRules{
+		Mode:   sandboxpolicy.AccessModeOpen,
+		Deny:   []sandboxpolicy.NetworkAllowEntry{{CIDR: "0.0.0.0/8"}},
+		Engine: sandboxpolicy.NetworkEngineProxy,
+	})
+	require.Error(t, err, "the mixed CIDR must be split before it can be effective")
+	assert.ErrorContains(t, err, `use {"loopback": true} for that portion`)
+	assert.ErrorContains(t, err, "split it and keep CIDR rows for the remainder")
+
+	addrFromUint32 := func(value uint32) netip.Addr {
+		return netip.AddrFrom4([4]byte{
+			byte(value >> 24), byte(value >> 16), byte(value >> 8), byte(value),
+		})
+	}
+	uint32FromAddr := func(addr netip.Addr) uint32 {
+		bytes := addr.As4()
+		return uint32(bytes[0])<<24 | uint32(bytes[1])<<16 |
+			uint32(bytes[2])<<8 | uint32(bytes[3])
+	}
+
+	deny := []sandboxpolicy.NetworkAllowEntry{{Loopback: true}}
+	cursor := uint32(1)
+	for bits := 32; bits >= 9; bits-- {
+		prefix := netip.PrefixFrom(addrFromUint32(cursor), bits)
+		require.Equal(t, cursor, uint32FromAddr(prefix.Masked().Addr()),
+			"the generated remainder prefix must start at the uncovered cursor")
+		deny = append(deny, sandboxpolicy.NetworkAllowEntry{CIDR: prefix.String()})
+		cursor += uint32(1) << uint(32-bits)
+	}
+	require.Equal(t, uint32(1)<<24, cursor,
+		"the split rows must cover every non-unspecified address in 0/8")
+
+	evaluator, err := sandboxproxy.NewEvaluator(sandboxpolicy.NetworkRules{
+		Mode:   sandboxpolicy.AccessModeOpen,
+		Deny:   deny,
+		Engine: sandboxpolicy.NetworkEngineProxy,
+	})
+	require.NoError(t, err, "the prescribed split must be authorable")
+
+	zero, err := sandboxproxy.ParseTarget("0.0.0.0", 443)
+	require.NoError(t, err)
+	assert.Equal(t, sandboxproxy.VerdictDeniedByRule, evaluator.Evaluate(zero).Verdict,
+		"the loopback row must preserve the deny at exact 0.0.0.0")
+
+	for _, entry := range deny[1:] {
+		prefix := netip.MustParsePrefix(entry.CIDR)
+		start := uint32FromAddr(prefix.Addr())
+		size := uint32(1) << uint(32-prefix.Bits())
+		for _, value := range []uint32{start, start + size - 1} {
+			target, parseErr := sandboxproxy.ParseTarget(addrFromUint32(value).String(), 443)
+			require.NoError(t, parseErr)
+			assert.Equalf(t, sandboxproxy.VerdictDeniedByRule,
+				evaluator.Evaluate(target).Verdict,
+				"the split deny row %s must fire at %s", entry.CIDR, target.Host())
+		}
+	}
+
+	outside, err := sandboxproxy.ParseTarget("1.0.0.0", 443)
+	require.NoError(t, err)
+	assert.Equal(t, sandboxproxy.VerdictAllowed, evaluator.Evaluate(outside).Verdict,
+		"the split must not become a blanket deny")
 }
 
 // The two polarities must not converge on one string again. A single shared
