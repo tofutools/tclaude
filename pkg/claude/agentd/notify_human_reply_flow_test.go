@@ -99,7 +99,7 @@ func TestHumanReply_NoSubject_UsesFallback(t *testing.T) {
 	rows, err := db.ListAgentMessagesForConv(sender, 100)
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
-	assert.Equal(t, "Reply from the human operator to message #"+itoa64(msgID), rows[0].Subject)
+	assert.Equal(t, "Reply from the human operator to original message #"+itoa64(msgID), rows[0].Subject)
 }
 
 // Scenario: replying to an OFFLINE agent is blocked with 409 — the

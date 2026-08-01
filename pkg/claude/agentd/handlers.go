@@ -1439,7 +1439,7 @@ func messageInlineText(m *db.AgentMessage) (string, bool) {
 	}
 	b.WriteString("; delivery: inline")
 	if m.ParentID > 0 {
-		fmt.Fprintf(&b, "; in reply to message #%d", m.ParentID)
+		fmt.Fprintf(&b, "; in reply to original message #%d", m.ParentID)
 	}
 	if m.Subject != "" {
 		fmt.Fprintf(&b, "; subject: %s", m.Subject)

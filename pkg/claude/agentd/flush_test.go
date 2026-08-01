@@ -198,7 +198,7 @@ func TestInlineReplyIdentifiesOriginalMessage(t *testing.T) {
 	})
 	require.NoError(t, err)
 	nudge := messageNudgeText(id)
-	assert.Contains(t, nudge, "; delivery: inline; in reply to message #42]")
+	assert.Contains(t, nudge, "; delivery: inline; in reply to original message #42]")
 }
 
 func TestStartupContextNeverUsesRegularMessageInlining(t *testing.T) {

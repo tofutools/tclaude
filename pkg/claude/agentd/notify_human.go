@@ -839,7 +839,7 @@ func handleDashboardHumanMessagesDelete(w http.ResponseWriter, r *http.Request) 
 func replySubjectFor(orig string, originalMessageID int64) string {
 	orig = strings.TrimSpace(orig)
 	if orig == "" {
-		return fmt.Sprintf("Reply from the human operator to message #%d", originalMessageID)
+		return fmt.Sprintf("Reply from the human operator to original message #%d", originalMessageID)
 	}
 	// Bound the echoed subject. Truncate on a RUNE boundary — a byte slice
 	// could split a multi-byte character and leave invalid UTF-8 in the
