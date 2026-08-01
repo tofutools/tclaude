@@ -828,27 +828,7 @@ jobs:
         env:
           TCLAUDE_SANDBOX_V2_SMOKE: "1"
           TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY: ${{ runner.temp }}/tclaude-sandbox-v2
-        run: |
-          smoke_log="$RUNNER_TEMP/tclaude-layer-darwin-smoke.log"
-          go test ./pkg/claude/session -run '^TestTclaudeLayerDarwinSmoke$' -count=1 -v -timeout=120s |
-            tee "$smoke_log"
-          if ! grep -q '^--- PASS: TestTclaudeLayerDarwinSmoke ' "$smoke_log"; then
-            {
-              echo "### Sandbox v2 Seatbelt smoke did not complete"
-              echo
-              echo "The test command exited successfully without reporting that the named real smoke passed."
-              echo "The test name, build constraints, or smoke gate likely changed; see the test log."
-            } >> "$GITHUB_STEP_SUMMARY"
-            echo "::error::TestTclaudeLayerDarwinSmoke did not report an explicit pass"
-            exit 1
-          fi
-          refusal_log="$RUNNER_TEMP/stacked-seatbelt-refusal.log"
-          go test ./pkg/claude/session -run '^TestStackedSandboxDarwinRefusal$' -count=1 -v -timeout=30s |
-            tee "$refusal_log"
-          if ! grep -q '^--- PASS: TestStackedSandboxDarwinRefusal ' "$refusal_log"; then
-            echo "::error::TestStackedSandboxDarwinRefusal did not report an explicit pass"
-            exit 1
-          fi
+        run: bash scripts/seatbelt-smoke/driver.sh
 
       - name: Run OpenCode Seatbelt executor smoke
         env:
