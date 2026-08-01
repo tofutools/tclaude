@@ -261,9 +261,23 @@ expect_flow_harnesses refuse empty-output \
   '10-alpha=:'
 
 # ...and `none` alongside a real name is a contradiction rather than a superset.
+# The message must name the COMPANIONS, not the whole set: "alongside none codex"
+# would list `none` as one of the things `none` conflicts with, which is false
+# and tells the reader nothing about what to drop.
 expect_flow_harnesses refuse none-plus-name \
-  "declares 'none' alongside" \
-  '10-alpha=echo none codex'
+  "flow '10-alpha' declares 'none' alongside codex opencode;" \
+  '10-alpha=echo none codex opencode'
+if grep -qF "alongside none" "$work/flowharness-none-plus-name/out"; then
+  printf "selftest FAIL: flowharness-none-plus-name listed 'none' as its own companion\n"
+  sed 's/^/    /' "$work/flowharness-none-plus-name/out"
+  failures=1
+fi
+# The token order is preserved, so `none` appearing LAST must still report only
+# the real names — a companion list built by trimming a prefix or suffix would
+# pass the case above and fail this one.
+expect_flow_harnesses refuse none-plus-name-trailing \
+  "flow '10-alpha' declares 'none' alongside codex opencode;" \
+  '10-alpha=echo codex opencode none'
 
 # A declaration the reader cannot evaluate must fail rather than record nothing.
 expect_flow_harnesses refuse failing-declaration \

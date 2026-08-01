@@ -256,7 +256,18 @@ smoke::load_flow_harnesses() {
     fi
     if [[ "$collected" == *" none "* || "$collected" == "none "* ]]; then
       if [[ "$collected" != "none " ]]; then
-        smoke::error "flow '$name' declares 'none' alongside ${collected% }; 'none' means no harness and cannot be combined"
+        # The COMPANIONS, not the whole set. Printing `collected` names `none`
+        # as one of the things `none` was declared alongside, which is both
+        # false and useless: what the reader has to reconcile is `none` against
+        # the real harnesses, and those are the names to drop or keep. The list
+        # was already in hand — a message that does not read what it has is the
+        # misattribution this whole change is about, wearing a third hat.
+        local others=""
+        for item in ${tokens[@]+"${tokens[@]}"}; do
+          [[ "$item" == none ]] && continue
+          others+="$item "
+        done
+        smoke::error "flow '$name' declares 'none' alongside ${others% }; 'none' means no harness and cannot be combined"
         return 1
       fi
       collected=""
