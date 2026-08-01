@@ -151,7 +151,7 @@ smoke::load_flow_harnesses() {
     return 1
   fi
 
-  local file name raw status verdict item collected
+  local file name raw status verdict item collected others
   local -a tokens=()
   for file in "${SMOKE_FLOW_FILES[@]}"; do
     name="$(basename "$file" .sh)"
@@ -212,11 +212,11 @@ smoke::load_flow_harnesses() {
     # (`set -e` does not save it: the command substitution sits on the left of
     # `||`, which suppresses it inside.)
     #
-    # A correct version must therefore capture the declaration's own failure
-    # explicitly as well — `flow::harnesses || { printf 'declfail:%s\n' "$?";
-    # exit 0; }` before the trailing marker — which is three interacting markers
-    # and a parse to close a case the contract already excludes. Deliberately
-    # not spent.
+    # A correct version must therefore make the trailing marker CARRY the status
+    # — `flow::harnesses; printf 'complete %s\n' "$?"` — because `$?` is gone the
+    # moment anything runs after the call, and a bare `complete` would also be
+    # tokenized as a harness name. That is a second marker plus a parse, to close
+    # a case the contract already excludes. Deliberately not spent.
     verdict="${raw%%$'\n'*}"
     raw="${raw#"$verdict"}"
     if [[ "$status" -ne 0 ]]; then
@@ -287,7 +287,7 @@ smoke::load_flow_harnesses() {
         # the real harnesses, and those are the names to drop or keep. The list
         # was already in hand — a message that does not read what it has is the
         # misattribution this whole change is about, wearing a third hat.
-        local others=""
+        others=""
         for item in ${tokens[@]+"${tokens[@]}"}; do
           [[ "$item" == none ]] && continue
           others+="$item "
