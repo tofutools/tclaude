@@ -1039,11 +1039,9 @@ func TestResolvedAddressHonorsDenyRows(t *testing.T) {
 	}
 }
 
-// TestUnspecifiedAddressIsHostLoopback covers the other spellings that reach
-// the host itself. connect() to the unspecified address of either family lands
-// on local loopback, and Linux routes 0.0.0.0/8 to the local host, so these
-// must be governed by the loopback selector under every baseline — including
-// an open one, where an authored loopback row cannot even be expressed.
+// TestUnspecifiedAddressIsHostLoopback covers the exact unspecified spellings
+// that reach the host itself. They remain governed by loopback rows under every
+// baseline; non-unspecified 0/8 is covered separately as reserved CIDR space.
 func TestUnspecifiedAddressIsHostLoopback(t *testing.T) {
 	openDeny := openRules(
 		[]sandboxpolicy.NetworkAllowEntry{{Domain: "tracker.example"}})
@@ -1051,7 +1049,7 @@ func TestUnspecifiedAddressIsHostLoopback(t *testing.T) {
 		{Loopback: true, Ports: []int{8080}},
 	}, nil)
 
-	for _, host := range []string{"0.0.0.0", "::", "0.1.2.3"} {
+	for _, host := range []string{"0.0.0.0", "::"} {
 		t.Run("open baseline refuses "+host, func(t *testing.T) {
 			evaluator := mustEvaluator(t, openDeny)
 			target := mustTarget(t, host, 8080)

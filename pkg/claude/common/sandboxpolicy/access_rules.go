@@ -481,13 +481,13 @@ func normalizeNetworkAllowEntry(in NetworkAllowEntry, index int, field string) (
 		// caught by the IPv4 entries of the one list. Running the refusal first
 		// would leave it depending on that list's mapped entries alone.
 		prefix = UnmapPrefix(prefix)
-		if PrefixIntersectsLoopbackIdentity(prefix) {
+		if PrefixIntersectsLoopbackRowAuthority(prefix) {
 			// Naming the space matters: 0.0.0.0 and :: reach the host too,
 			// so "covers loopback" alone reads as wrong to an operator who
 			// authored neither 127.0.0.0/8 nor ::1.
 			return NetworkAllowEntry{}, fmt.Errorf(
-				`network.%s[%d].cidr %q covers the host-loopback identity space `+
-					`(127.0.0.0/8, ::1, 0.0.0.0/8, ::, and their IPv4-mapped forms), `+
+				`network.%s[%d].cidr %q covers address space governed by loopback rows `+
+					`(127.0.0.0/8, ::1, the exact 0.0.0.0 and :: addresses, and their IPv4-mapped forms), `+
 					`which the loopback selector alone governs; use {"loopback": true} instead`,
 				field, index, out.CIDR,
 			)

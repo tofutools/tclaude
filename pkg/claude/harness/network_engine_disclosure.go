@@ -336,7 +336,7 @@ const (
 	//	rows alone — match() takes that branch before any cidr row is
 	//	considered — so a cidr deny overlapping that space never applied. That
 	//	shape is no longer authorable (TCL-899): the compiler refuses such a
-	//	row against sandboxpolicy.PrefixIntersectsLoopbackIdentity, naming the
+	//	row against sandboxpolicy.PrefixIntersectsLoopbackRowAuthority, naming the
 	//	loopback selector as the remedy, so an operator can no longer author a
 	//	deny that silently never fires. The cell stopped disclosing it, because
 	//	a disclosure that outlives its escape teaches a workaround for a hole
