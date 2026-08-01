@@ -616,6 +616,49 @@ func accessEnforcementTable(
 			caps.NetworkListRefusal =
 				"missing capability unsupported_filtered_model_transport: OpenCode's local presets name no explicit provider and OpenCode exposes no effective-config read of its own loader, so their launch endpoint cannot be resolved; use an explicit-provider OpenCode config, use Claude Code or Codex with a resolvable provider, or use network open"
 		}
+		// TCL-931. The rule above fires on the EXACT preset shapes. This one
+		// covers the rest of the local-only-intent family, and it exists
+		// because the gap between them was NON-MONOTONIC: a bare loopback
+		// preset was refused, while the same preset with a PORT — a strictly
+		// tighter policy — fell through both predicates and planned OPEN.
+		// Tightening the authored policy made the launch more permissive.
+		//
+		// That is the exact inversion the comment above argues against for the
+		// adjacent shape, reached through a predicate gap rather than a
+		// decision. See IsLocalOnlyNetworkIntent for why this asks a different
+		// question than the recognizers rather than widening them.
+		//
+		// WHY THIS IS GATED ON EnforceNone RATHER THAN ON goos == "darwin".
+		// The harm is not "macOS"; it is "this platform and harness cannot
+		// enforce the policy, so the plan widens it to open". Keying on the
+		// unenforceability itself keeps Linux untouched — its cells are
+		// activated, so the clause is false there and a port-scoped loopback
+		// list still plans as an enforced list, with the launch-time general
+		// resolve handling the provider question exactly as it does today.
+		// It also self-retires: if OpenCode's Darwin cells are ever activated
+		// (TCL-929 says do not, but if that changes), this stops firing on its
+		// own instead of lingering as a stale platform special case.
+		//
+		// The empty-refusal clause preserves the more specific message above
+		// when both would apply, rather than overwriting it with this one.
+		if implementation == sandboxpolicy.ImplementationTclaudeLayer &&
+			!proxyCellsActivated &&
+			h.Name == OpenCodeName &&
+			caps.NetworkList == EnforceNone &&
+			caps.NetworkListRefusal == "" &&
+			IsLocalOnlyNetworkIntent(axes.Network) {
+			caps.NetworkSelectors = nil
+			caps.NetworkPorts = EnforceNone
+			caps.NetworkDenySelectors = nil
+			caps.NetworkDenyPorts = EnforceNone
+			caps.NetworkListCondition = ""
+			// The remedy list deliberately omits "use an explicit-provider
+			// OpenCode config": a provider does not help here. This platform
+			// does not activate OpenCode's local enforcement at all, so the
+			// list would be unenforced with or without one.
+			caps.NetworkListRefusal =
+				"missing capability unsupported_filtered_network_posture: this platform does not enforce OpenCode's local-only network list, so the launch would start with outbound network access fully open rather than restricted to this machine; use Claude Code or Codex, which enforce a local-only list here, or use network open deliberately if unrestricted outbound is intended"
+		}
 		if axes.Network.Mode == sandboxpolicy.AccessModeClosed {
 			caps.SocketClosed = EnforceFull
 			// M3 materializes the resolved list at launch. Seatbelt provides

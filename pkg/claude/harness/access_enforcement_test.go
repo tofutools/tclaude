@@ -1000,6 +1000,135 @@ func TestPlanAccessEnforcementPersistsPerSelectorPartialDetails(t *testing.T) {
 	assert.Contains(t, notices[0].Detail, FilteredNetworkDNSIdentityCaveat)
 }
 
+// TCL-931. A loopback rule carrying a PORT is a strictly tighter policy than
+// the bare loopback preset. Before this test's subject, tightening it that way
+// made the launch strictly MORE permissive on a platform that cannot enforce
+// OpenCode's local list: the bare preset was refused, and the port-scoped form
+// fell through both preset recognizers and planned OPEN.
+//
+// The assertions are deliberately two-directional. Asserting only that darwin
+// refuses would pass for a fix that refused every OpenCode filtered list on
+// every platform, which would be a Linux regression — Linux enforces this shape
+// and must keep planning it as a list.
+//
+// SCOPE OF WHAT THIS PROVES. Everything here is the capability/plan layer,
+// which is fully provable from any host because goos is a PARAMETER to
+// accessEnforcementTable rather than runtime.GOOS. It does NOT prove that a
+// real Darwin host cannot launch this shape; the launch seam reads
+// runtime.GOOS, so that needs a Darwin runner. The refusal reaching a launch
+// is not asserted here — it is structural: PlanAccessEnforcement returns the
+// refusal as an error, and the guard, the launcher and the watcher all reach
+// it through ResolveAccessEnforcement + PlanAccessEnforcement.
+func TestOpenCodeLocalOnlyIntentIsRefusedWhereItCannotBeEnforced(t *testing.T) {
+	listOf := func(allow ...sandboxpolicy.NetworkAllowEntry) sandboxpolicy.ResolvedAxes {
+		return sandboxpolicy.ResolvedAxes{Network: sandboxpolicy.NetworkRules{
+			Mode: sandboxpolicy.AccessModeList, Allow: allow,
+		}}
+	}
+	portScoped := listOf(sandboxpolicy.NetworkAllowEntry{
+		Loopback: true, Ports: []int{8080},
+	})
+	// Two loopback rows, so the subject is the local-only FAMILY and not one
+	// entry that happens to carry a port.
+	repeated := listOf(
+		sandboxpolicy.NetworkAllowEntry{Loopback: true, Ports: []int{8080}},
+		sandboxpolicy.NetworkAllowEntry{Loopback: true, Ports: []int{9090}},
+	)
+	plan := func(t *testing.T, h *Harness, axes sandboxpolicy.ResolvedAxes, goos string) (
+		accessEnforcementTableRow, error,
+	) {
+		t.Helper()
+		row, err := accessEnforcementTable(
+			h, sandboxpolicy.ImplementationTclaudeLayer, axes, ClaudeSandboxOff, goos, true)
+		require.NoError(t, err)
+		_, _, planErr := PlanAccessEnforcement(axes, accessEnforcementFromTable(row))
+		return row, planErr
+	}
+
+	// THE DEFECT: darwin OpenCode must refuse rather than widen to open.
+	for _, tc := range []struct {
+		name string
+		axes sandboxpolicy.ResolvedAxes
+	}{
+		{"port-scoped", portScoped},
+		{"repeated loopback rows", repeated},
+	} {
+		t.Run("darwin/opencode/"+tc.name, func(t *testing.T) {
+			row, planErr := plan(t, MustGet(OpenCodeName), tc.axes, "darwin")
+			require.Error(t, planErr,
+				"a local-only OpenCode list this platform cannot enforce must be refused, not widened to open")
+			// Discriminating, not merely "an error happened": the refusal must
+			// be THIS one, and must not offer the explicit-provider remedy,
+			// which does not help when the platform never activates the cells.
+			assert.Contains(t, planErr.Error(), "unsupported_filtered_network_posture")
+			assert.Contains(t, planErr.Error(), "outbound network access fully open")
+			assert.NotContains(t, planErr.Error(), "explicit-provider OpenCode config")
+			assert.Equal(t, EnforceNone, row.NetworkList)
+		})
+	}
+
+	// THE BARE PRESET keeps its own, more specific refusal rather than being
+	// overwritten by the broader one.
+	t.Run("darwin/opencode/bare preset keeps its own message", func(t *testing.T) {
+		_, planErr := plan(t, MustGet(OpenCodeName),
+			listOf(sandboxpolicy.NetworkAllowEntry{Loopback: true}), "darwin")
+		require.Error(t, planErr)
+		assert.Contains(t, planErr.Error(), "unsupported_filtered_model_transport")
+	})
+
+	// NO LINUX REGRESSION. Linux activates these cells, so the same shapes must
+	// still plan as an enforced list. Without this, a fix that refused
+	// everywhere would pass the assertions above.
+	for _, tc := range []struct {
+		name string
+		axes sandboxpolicy.ResolvedAxes
+	}{
+		{"port-scoped", portScoped},
+		{"repeated loopback rows", repeated},
+	} {
+		t.Run("linux/opencode/"+tc.name, func(t *testing.T) {
+			row, planErr := plan(t, MustGet(OpenCodeName), tc.axes, "linux")
+			require.NoError(t, planErr,
+				"Linux enforces this shape; refusing it here would remove a working explicit-provider configuration")
+			assert.Equal(t, EnforceFull, row.NetworkList)
+		})
+	}
+
+	// THE OTHER HARNESSES are untouched on the same platform and shape, which
+	// is what makes this a harness-specific gap rather than a platform rule.
+	for _, name := range []string{DefaultName, CodexName} {
+		t.Run("darwin/"+name+"/port-scoped stays enforced", func(t *testing.T) {
+			row, planErr := plan(t, MustGet(name), portScoped, "darwin")
+			require.NoError(t, planErr)
+			assert.Equal(t, EnforcePartial, row.NetworkList,
+				"TCL-927 rates this Partial; it must not become a refusal or Full")
+		})
+	}
+
+	// THE GENERAL WIDEN-TO-OPEN DOCTRINE is explicitly NOT changed: a policy
+	// that is not local-only intent still widens with a notice on darwin, for
+	// every harness including OpenCode.
+	t.Run("darwin/doctrine untouched for non-local-intent lists", func(t *testing.T) {
+		domainOnly := listOf(sandboxpolicy.NetworkAllowEntry{
+			Domain: "api.example.com", Ports: []int{443},
+		})
+		for _, name := range []string{DefaultName, CodexName, OpenCodeName} {
+			row, planErr := plan(t, MustGet(name), domainOnly, "darwin")
+			require.NoErrorf(t, planErr, "harness %s", name)
+			assert.Equalf(t, EnforceNone, row.NetworkList,
+				"harness %s must still widen a non-local-intent list to open", name)
+		}
+	})
+
+	// The predicate answers the INTENT question, not the recognizer one. A
+	// port-scoped loopback list is local-only intent while being neither preset.
+	t.Run("predicate separates intent from recognition", func(t *testing.T) {
+		assert.True(t, IsLocalOnlyNetworkIntent(portScoped.Network))
+		assert.False(t, IsLocalAccessNetworkPreset(portScoped.Network))
+		assert.False(t, IsLocalModelAPIsNetworkPreset(portScoped.Network))
+	})
+}
+
 func TestDarwinTclaudeLayerEnforcesOnlyLoopbackOnlyLists(t *testing.T) {
 	local := sandboxpolicy.ResolvedAxes{Network: sandboxpolicy.NetworkRules{
 		Mode: sandboxpolicy.AccessModeList,

@@ -177,6 +177,43 @@ func IsLocalAccessNetworkPreset(rules sandboxpolicy.NetworkRules) bool {
 		len(rules.Allow[0].Ports) == 0
 }
 
+// IsLocalOnlyNetworkIntent answers a DIFFERENT QUESTION from the two preset
+// recognizers around it, and the distinction is the whole point of it existing.
+//
+//	IsLocalAccessNetworkPreset / IsLocalModelAPIsNetworkPreset
+//	    "is this the EXACT wire shape the editor emits?"
+//	    Deliberately strict. A port-scoped or repeated loopback entry is an
+//	    ordinary Access list to them, and that strictness is correct: it is what
+//	    stops a list that merely RESEMBLES a preset from being treated as one.
+//
+//	sandboxpolicy.NetworkRulesAreLoopbackOnly
+//	    "can Darwin's native Seatbelt path ENFORCE this?"
+//	    A mechanism-capability question.
+//
+//	IsLocalOnlyNetworkIntent (this one)
+//	    "does this policy AUTHORIZE NOTHING OFF THIS MACHINE, such that starting
+//	    it with open outbound would invert what the operator asked for?"
+//
+// TCL-931 existed because the third question had no predicate and borrowed the
+// first. A loopback rule carrying a port is local-only in intent but is not the
+// preset, so it fell through the refusal and planned OPEN on a platform that
+// cannot enforce it — tightening the policy made the launch strictly more
+// permissive. Widening the recognizers would have "fixed" it by breaking the
+// job they actually do.
+//
+// PRECEDENT, so the indirection reads as a decision rather than ceremony:
+// TCL-916 split one list that was answering both an identity question and a
+// row-authority question, for the same reason. Two questions that agree on
+// every input available today are still two questions, and the agreement is a
+// coincidence of extension, not of meaning. Naming them apart is what makes a
+// later divergence a compile-time edit instead of a silent behavior change.
+//
+// It delegates today because the answers currently coincide. If they ever
+// diverge, this body changes and its callers do not.
+func IsLocalOnlyNetworkIntent(rules sandboxpolicy.NetworkRules) bool {
+	return sandboxpolicy.NetworkRulesAreLoopbackOnly(rules)
+}
+
 // IsLocalModelAPIsNetworkPreset recognizes the daemon-normalized wire shape
 // behind the editor's Local + model APIs convenience. It is intentionally
 // exact: any extra selector, port, subdomain widening, or destination is an
