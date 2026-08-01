@@ -13,9 +13,13 @@ cd "$repo_root"
 : "${RUNNER_TEMP:?RUNNER_TEMP must name the CI artifact directory}"
 
 smoke_log="$RUNNER_TEMP/tclaude-layer-darwin-smoke.log"
+set +e
 go test ./pkg/claude/session -run '^TestTclaudeLayerDarwinSmoke$' -count=1 -v -timeout=120s |
   tee "$smoke_log"
-if ! grep -q '^--- PASS: TestTclaudeLayerDarwinSmoke ' "$smoke_log"; then
+pipeline_status=("${PIPESTATUS[@]}")
+set -e
+if [[ "${pipeline_status[0]}" -ne 0 || "${pipeline_status[1]}" -ne 0 ]] ||
+  ! grep -q '^--- PASS: TestTclaudeLayerDarwinSmoke ' "$smoke_log"; then
   {
     echo "### Sandbox v2 Seatbelt smoke did not complete"
     echo
@@ -27,9 +31,13 @@ if ! grep -q '^--- PASS: TestTclaudeLayerDarwinSmoke ' "$smoke_log"; then
 fi
 
 proxy_floor_log="$RUNNER_TEMP/seatbelt-proxy-floor-smoke.log"
+set +e
 go test ./pkg/claude/session -run '^TestSeatbeltProxyFloorSmoke$' -count=1 -v -timeout=120s |
   tee "$proxy_floor_log"
-if ! grep -q '^--- PASS: TestSeatbeltProxyFloorSmoke ' "$proxy_floor_log"; then
+pipeline_status=("${PIPESTATUS[@]}")
+set -e
+if [[ "${pipeline_status[0]}" -ne 0 || "${pipeline_status[1]}" -ne 0 ]] ||
+  ! grep -q '^--- PASS: TestSeatbeltProxyFloorSmoke ' "$proxy_floor_log"; then
   {
     echo "### Seatbelt proxy-floor smoke did not complete"
     echo
@@ -41,9 +49,13 @@ if ! grep -q '^--- PASS: TestSeatbeltProxyFloorSmoke ' "$proxy_floor_log"; then
 fi
 
 refusal_log="$RUNNER_TEMP/stacked-seatbelt-refusal.log"
+set +e
 go test ./pkg/claude/session -run '^TestStackedSandboxDarwinRefusal$' -count=1 -v -timeout=30s |
   tee "$refusal_log"
-if ! grep -q '^--- PASS: TestStackedSandboxDarwinRefusal ' "$refusal_log"; then
+pipeline_status=("${PIPESTATUS[@]}")
+set -e
+if [[ "${pipeline_status[0]}" -ne 0 || "${pipeline_status[1]}" -ne 0 ]] ||
+  ! grep -q '^--- PASS: TestStackedSandboxDarwinRefusal ' "$refusal_log"; then
   echo "::error::TestStackedSandboxDarwinRefusal did not report an explicit pass"
   exit 1
 fi
