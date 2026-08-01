@@ -64,16 +64,39 @@ const (
 	// names the escape and its precondition, so an operator can judge their own
 	// exposure rather than discovering it.
 	//
-	// It covers BOTH authored shapes. A rule naming ports is enforced on those
-	// ports; a rule naming NO ports takes the allowAllPorts path and emits
-	// `(allow network-outbound (remote ip "localhost:*"))`, which is every port
-	// on every address of this machine. Saying only "the authored ports are
-	// enforced" would be false for that shape, which is the net-local preset.
+	// It covers ALL the authored shapes, because appendSeatbeltLoopbackNetworkRules
+	// COALESCES rules rather than emitting one exception per rule:
+	//
+	//	every rule names ports -> the ports are UNIONED into one set and emitted
+	//	                          as tcp+udp exceptions, so what is refused is a
+	//	                          port outside the COMBINED set, not outside any
+	//	                          one rule's ports — the union discards the
+	//	                          rule-to-port pairing
+	//	any rule names none    -> allowAllPorts short-circuits the loop and emits
+	//	                          `(allow network-outbound (remote ip
+	//	                          "localhost:*"))`: every port on every address of
+	//	                          this machine, INCLUDING the mixed case where
+	//	                          other rules did name ports
+	//
+	// An unconditional "a port outside the list is refused" is false for the
+	// second shape, which is the net-local preset. Per-rule phrasing would be
+	// wrong for the first.
+	//
+	// The host term is a separate limit and must not be overstated either. The
+	// grammar accepts "localhost" OR "*" (sandbox_seatbelt.go:789; the deny this
+	// carves an exception out of is itself written `(remote ip "*:*")`). What is
+	// true is that a LITERAL IP is rejected, which makes `localhost` the
+	// NARROWEST spelling available — not the only one. An earlier draft said
+	// "accept only localhost", which misdescribed the mechanism, and a
+	// disclosure that misdescribes the mechanism cannot be relied on to
+	// describe the escape.
 	SeatbeltNativeLoopbackSelectorDetail = "Local-machine rules are not confined to loopback. " +
-		"macOS sandbox rules accept only \"localhost\" as the host, which means every address assigned to this machine, " +
-		"so a service listening on an allowed port at another of this machine's addresses — its LAN address, for example — is reachable from the sandbox as well. " +
-		"A rule that names ports allows only those ports; a rule that names no ports allows every port on this machine. " +
-		"Outbound TCP to destinations off this machine is refused, as is a port outside the list."
+		"macOS sandbox rules cannot name an address: the host must be written \"localhost\" or \"*\", and a literal IP is rejected when the profile is parsed, " +
+		"so \"localhost\" — every address assigned to this machine — is the narrowest scope these rules can express. " +
+		"A service listening on an allowed port at another of this machine's addresses, its LAN address for example, is therefore reachable from the sandbox as well. " +
+		"When every rule names ports, the allowed ports are those rules' ports combined and a port outside that combined set is refused; " +
+		"if any rule names no ports, every port on this machine is allowed. " +
+		"Outbound TCP to destinations off this machine is refused."
 
 	// SeatbeltNativeLoopbackCondition carries the same escape on the ROW, so an
 	// operator reading network.list learns it without opening the selector.
