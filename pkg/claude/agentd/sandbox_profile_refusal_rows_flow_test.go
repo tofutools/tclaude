@@ -3,7 +3,9 @@ package agentd_test
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -950,4 +952,135 @@ func TestSandboxProfileDraftEnforcementKeepsEveryDistinctContextRefusal(t *testi
 	}
 	assert.Len(t, reasons, 2,
 		"the two contexts refuse for different resolvers, so their remedies differ")
+}
+
+// TestSandboxProfileDraftEnforcementNamesTheAssignmentPastTheDisplayCap covers
+// TCL-913. #1824 made a cap-omitted refusal REACH the client; it arrived with no
+// identity, so the editor could only say "An assignment omitted from this
+// selector" and the operator had to hunt for which of the omitted assignments
+// was blocked. The daemon has the name at collection time — the slice expression
+// that gathered the refusals discarded the index that named them.
+//
+// This is an IDENTIFICATION assertion, not a disclosure one: the refusal itself
+// was already disclosed and that is covered by the test above.
+//
+// Falsifiability, verified by mutation rather than asserted: drop the
+// entry.Context assignment in handleSandboxProfileDraftEnforcement's omitted
+// loop. The names then appear NOWHERE in the response — the whole-body assertion
+// below fails on the raw JSON, and the per-entry set assertion fails with an
+// empty set. Pre-change value is an empty set, post-change is {crew-10, crew-11};
+// they DIFFER, and the mutation was confirmed to produce that failure.
+//
+// The names are asserted against the WHOLE BODY on purpose (#1824's pattern): a
+// future refactor that moves the identity to a different field still fails here
+// if it drops it, rather than passing because this test read the old field.
+// crew-10 and crew-11 are the two assignments BEYOND the cap, so they appear
+// nowhere else in the response — which is what makes their presence in the body
+// evidence of this fix rather than of the contexts list.
+func TestSandboxProfileDraftEnforcementNamesTheAssignmentPastTheDisplayCap(t *testing.T) {
+	f := newFlow(t)
+	for i := range 12 {
+		_, err := db.CreateAgentGroup(fmt.Sprintf("crew-%02d", i), "")
+		require.NoError(t, err)
+	}
+	for _, body := range []map[string]any{{
+		"name": "global-proxy-ident", "filesystem": []any{}, "environment": []any{},
+		"network": map[string]any{
+			"baseline": "deny", "engine": "proxy",
+			"allow": []any{map[string]any{"domain": "example.com", "ports": []any{443}}},
+		},
+	}, {
+		"name": "group-resolver-ident", "environment": []any{},
+		"filesystem": []any{
+			map[string]any{"path": "/run/systemd/resolve", "access": "read"},
+		},
+	}} {
+		rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", body)
+		require.Equalf(t, http.StatusCreated, rec.Code, "body=%s", rec.Body.String())
+	}
+	require.NoError(t, db.SetGlobalSandboxProfile("global-proxy-ident"))
+	for _, name := range []string{"crew-10", "crew-11"} {
+		_, err := db.SetAgentGroupSandboxProfile(name, "group-resolver-ident")
+		require.NoError(t, err)
+	}
+	globalProfile, err := db.GetSandboxProfile("global-proxy-ident")
+	require.NoError(t, err)
+	require.NotNil(t, globalProfile)
+
+	rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profile-enforcement", map[string]any{
+		"draft": map[string]any{
+			"id": globalProfile.ID, "name": globalProfile.Name,
+			"filesystem": []any{}, "environment": []any{},
+			"network": map[string]any{
+				"baseline": "deny", "engine": "proxy",
+				"allow": []any{map[string]any{"domain": "example.com", "ports": []any{443}}},
+			},
+			"unix_sockets": map[string]any{},
+		},
+		"targets": []any{map[string]any{
+			"implementation": "tclaude-layer", "harness": "claude", "platform": "linux",
+		}},
+	})
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	body := rec.Body.String()
+
+	var got struct {
+		Targets []struct {
+			OmittedRefusals []struct {
+				Kind    string            `json:"kind"`
+				Message string            `json:"message"`
+				Context map[string]string `json:"context"`
+			} `json:"omitted_refusals"`
+		} `json:"targets"`
+		Contexts []struct {
+			Context map[string]string `json:"context"`
+		} `json:"contexts"`
+	}
+	testharness.DecodeJSON(t, rec, &got)
+	require.Len(t, got.Targets, 1)
+	omitted := got.Targets[0].OmittedRefusals
+
+	// The fixture must actually reach the code under test: two refusals PAST
+	// the cap. Without this the identity assertions below would pass vacuously
+	// on an empty list.
+	require.Len(t, omitted, 2,
+		"fixture must produce two cap-omitted refusals, or nothing below is under test")
+	require.Len(t, got.Contexts, 10, "the display cap must still apply")
+
+	// The names must be absent from the DISPLAYED contexts, or their presence
+	// in the body would prove nothing about the omitted entries.
+	for i, context := range got.Contexts {
+		assert.NotContainsf(t, []string{"crew-10", "crew-11"}, context.Context["group_name"],
+			"displayed context %d must not be one of the omitted assignments", i)
+	}
+
+	// The identification itself: each omitted refusal names its own assignment,
+	// and the two are DISTINCT — one identity repeated twice would satisfy a
+	// bare "is it named" check while still misdirecting the operator.
+	named := map[string]string{}
+	for _, entry := range omitted {
+		require.NotEmptyf(t, entry.Context,
+			"omitted refusal %q carries no assignment identity", entry.Message)
+		name := entry.Context["group_name"]
+		require.NotEmpty(t, name, "the omitted assignment must be nameable")
+		named[name] = entry.Message
+	}
+	assert.Equal(t, []string{"crew-10", "crew-11"}, slices.Sorted(maps.Keys(named)),
+		"each cap-omitted refusal must name the assignment it belongs to")
+
+	// Whole-body: the names must survive onto the wire at all. This is what a
+	// refactor moving the field would still have to satisfy.
+	assert.Contains(t, body, "crew-10",
+		"the omitted assignment's name must reach the client somewhere in the response")
+	assert.Contains(t, body, "crew-11")
+
+	// The wire shape stays backward compatible: the refusal fields remain flat
+	// alongside the new key rather than nesting under it, so a client that
+	// predates TCL-913 reads exactly what it read before.
+	for _, entry := range omitted {
+		assert.Equal(t, harness.SandboxCapabilityNetworkAllowlist, entry.Kind,
+			"kind must stay a top-level key on the refusal object")
+		assert.Contains(t, entry.Message, "proxy_engine_name_authority",
+			"message must stay a top-level key on the refusal object")
+	}
 }

@@ -307,3 +307,108 @@ test('a target with no refusal anywhere reports no refusal warning', async (t) =
   assertAbsent(mounted.container, '.sbx-launch-blocked', 'and nothing is blocked');
   assert.equal(sandboxPolicyNeedsAttention(target, CONTEXT, 0), false);
 });
+
+// Characterization test for the assignment-naming vocabulary, pinned across all
+// four of its branches BEFORE TCL-913 extracted the value-taking core out of
+// sandboxContextLabel. The extraction moves the strings verbatim; this is what
+// makes "no behaviour change" evidence rather than a claim.
+//
+// Only the group_name branch had coverage before this (the refused-sibling test
+// above), so three of the four were resting on inspection. They are exercised
+// through the renderer because the helper is module-private, which is also the
+// path that actually matters: the operator reads these words.
+test('every assignment-naming branch keeps its exact wording', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { SandboxPolicyResult } = await harness.importDashboardModule('js/management-island.js');
+  const axes = {
+    filesystem: { outcome: 'enforced', tier: '1 read rule', detail: 'enforced here' },
+    network: { outcome: 'enforced', tier: 'list', detail: 'enforced here' },
+    unix_sockets: { outcome: 'enforced', tier: 'unset', detail: 'enforced here' },
+  };
+  const target = {
+    target: { implementation: 'tclaude-layer', harness: 'claude', platform: 'linux' },
+    predicted: true,
+    axes,
+    context_axes: [axes, axes],
+    context_refusals: [null, REFUSAL],
+  };
+  for (const [context, expected] of [
+    [{ group_name: 'crew-x' }, 'group crew-x'],
+    [{ explicit: 'some-profile' }, 'explicit selection'],
+    [{ global: 'global-profile' }, 'global assignment'],
+    [undefined, 'assignment 2'],
+  ]) {
+    const contexts = [{ context: { group_name: 'crew-selected' } }, { context }];
+    const mounted = await harness.mount(harness.html`
+      <${SandboxPolicyResult} target=${target} context=${CONTEXT} contextIndex=${0}
+        contexts=${contexts}/>`);
+    const other = mounted.container.querySelector('.sbx-other-assignments');
+    assert.ok(other, `a refused sibling must be reported for ${JSON.stringify(context)}`);
+    // EXACT, not substring: the test claims the wording is unchanged, and a
+    // regex/includes check passes just as happily on "explicit selection
+    // (draft)". Asserting the label element's whole text is what makes the
+    // name of this test true. Compared as a small printable string rather
+    // than by handing a DOM node to the diff formatter.
+    const labels = [...other.querySelectorAll('li > strong')].map((el) => el.textContent);
+    assert.deepEqual(labels, [`${expected}:`],
+      `context ${JSON.stringify(context)} must be named exactly "${expected}"`);
+  }
+});
+
+// TCL-913 end to end through the renderer: a refusal past the display cap is
+// NAMED, using the same vocabulary a listed assignment gets.
+test('a cap-omitted refusal names its assignment', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { SandboxPolicyResult } = await harness.importDashboardModule('js/management-island.js');
+  const axes = {
+    filesystem: { outcome: 'enforced', tier: '1 read rule', detail: 'enforced here' },
+    network: { outcome: 'enforced', tier: 'list', detail: 'enforced here' },
+    unix_sockets: { outcome: 'enforced', tier: 'unset', detail: 'enforced here' },
+  };
+  const target = {
+    target: { implementation: 'tclaude-layer', harness: 'claude', platform: 'linux' },
+    predicted: true,
+    axes,
+    context_axes: [axes],
+    context_refusals: [null],
+    omitted_refusals: [{ ...REFUSAL, context: { group_name: 'crew-10' } }],
+  };
+  const mounted = await harness.mount(harness.html`
+    <${SandboxPolicyResult} target=${target} context=${CONTEXT} contextIndex=${0}/>`);
+  const other = mounted.container.querySelector('.sbx-other-assignments');
+  assert.ok(other, 'the omitted refusal must still be reported');
+  // Named with the SAME wording a listed assignment gets, which is the point:
+  // the operator can find it in the selector.
+  assert.match(other.textContent, /group crew-10/);
+  // And the unnamed placeholder must be GONE for this entry — asserting only
+  // the presence of the name would pass while the old wording sat beside it.
+  assert.doesNotMatch(other.textContent, /An assignment omitted from this selector/);
+});
+
+// The compat path, which is the half most likely to rot: a daemon that sends no
+// identity must still render exactly what it rendered before TCL-913.
+test('a cap-omitted refusal without an identity keeps the pre-TCL-913 wording', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { SandboxPolicyResult } = await harness.importDashboardModule('js/management-island.js');
+  const axes = {
+    filesystem: { outcome: 'enforced', tier: '1 read rule', detail: 'enforced here' },
+    network: { outcome: 'enforced', tier: 'list', detail: 'enforced here' },
+    unix_sockets: { outcome: 'enforced', tier: 'unset', detail: 'enforced here' },
+  };
+  const target = {
+    target: { implementation: 'tclaude-layer', harness: 'claude', platform: 'linux' },
+    predicted: true,
+    axes,
+    context_axes: [axes],
+    context_refusals: [null],
+    omitted_refusals: [REFUSAL],
+  };
+  const mounted = await harness.mount(harness.html`
+    <${SandboxPolicyResult} target=${target} context=${CONTEXT} contextIndex=${0}/>`);
+  const other = mounted.container.querySelector('.sbx-other-assignments');
+  assert.ok(other, 'the omitted refusal must still be reported');
+  assert.match(other.textContent, /An assignment omitted from this selector/);
+  // It must NOT invent a name. "global assignment" is what an empty identity
+  // would produce, so its absence is the specific misnaming being ruled out.
+  assert.doesNotMatch(other.textContent, /global assignment/);
+});

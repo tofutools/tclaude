@@ -292,13 +292,25 @@ function SandboxOutcomeBucket({
    another assignment to name — the one divergent shape (an unsaved draft named
    identically to the existing global profile) arises solely in the
    single-context fallback. Stated rather than claimed "kept in step", so the
-   next person to touch the selector knows the two are not literally coupled. */
-function sandboxContextLabel(contexts, index) {
-  const value = contexts?.[index]?.context;
-  if (!value) return `assignment ${index + 1}`;
+   next person to touch the selector knows the two are not literally coupled.
+
+   This is the vocabulary itself, taking the context VALUE rather than a list
+   and an index. An assignment past the display cap has no index to be looked
+   up by — the daemon sends its context beside the refusal (TCL-913) — so the
+   naming has to be reachable without one. Returns null for a missing value so
+   the ordinal fallback stays with the index-based caller below, where there is
+   an N to show; an omitted assignment has none. */
+function sandboxContextLabelFor(value) {
+  if (!value) return null;
   if (value.group_name) return `group ${value.group_name}`;
   if (value.explicit) return 'explicit selection';
   return 'global assignment';
+}
+
+/* The index-based caller: names a LISTED assignment, and falls back to the
+   ordinal when the index has no context behind it. */
+function sandboxContextLabel(contexts, index) {
+  return sandboxContextLabelFor(contexts?.[index]?.context) ?? `assignment ${index + 1}`;
 }
 
 /* TCL-914. The network entries for ONE assignment context — the single
@@ -398,11 +410,21 @@ export function SandboxPolicyResult({ target, context, contextIndex, contexts = 
     ...sandboxOtherAssignmentWarnings(target.axes, axes),
     // A distinct axis per entry: it is the list key, and several omitted
     // refusals would otherwise share one.
-    ...otherRefusals.map(({ index, refusal }, position) => ({
+    ...otherRefusals.map(({ index, refusal, context: assignment }, position) => ({
       axis: index === null ? `refusal-omitted-${position}` : `refusal-${index}`,
-      label: index === null
-        ? 'An assignment omitted from this selector'
-        : sandboxContextLabel(contexts, index),
+      /* An omitted assignment has no index to name it by, so the daemon sends
+         its context beside the refusal (TCL-913) and it is named with the SAME
+         vocabulary as a listed one. The unnamed wording is the compat path, not
+         a default: it is what a response carrying no identity degrades to —
+         either from a daemon predating the field, or from one that could not
+         resolve the assignment. Both are ABSENT rather than empty, so this
+         branch is decidable; an empty identity would be named "global
+         assignment" by the helper, which is a confident wrong answer. */
+      label: assignment
+        ? sandboxContextLabelFor(assignment)
+        : index === null
+          ? 'An assignment omitted from this selector'
+          : sandboxContextLabel(contexts, index),
       outcome: 'refused',
       detail: refusal.message,
     })),

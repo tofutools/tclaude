@@ -249,9 +249,26 @@ export function sandboxOtherContextRefusals(target = {}, contextIndex = null) {
   // contribute nothing to the aggregate either (it summarizes surviving contexts
   // only) — so without these the editor would claim every assignment was checked
   // while a refusal among the omitted ones went unmentioned.
+  // TCL-913: an omitted assignment has no index to look its name up by, so the
+  // daemon sends the assignment's own context beside the refusal and it is
+  // passed through here. The KEY IS DROPPED, never defaulted: a daemon that
+  // predates the field and a daemon that sent an empty identity must not look
+  // the same to the caller, or the compat branch below cannot be decided — and
+  // an absent identity is exactly what makes the renderer fall back to today's
+  // unnamed wording rather than to a blank.
   return [
     ...listed,
-    ...(target.omitted_refusals || []).map((refusal) => ({ index: null, refusal })),
+    // filter(Boolean) keeps the tolerance the previous non-destructuring form
+    // had for free: destructuring a null entry THROWS, and this list feeds
+    // sandboxPolicyNeedsAttention, which previously only read .length and so
+    // survived one. The daemon drops nil refusals, so this is unreachable from
+    // a current one; the point is that a future daemon sending one degrades to
+    // a missing row rather than to a dead preview panel.
+    ...(target.omitted_refusals || []).filter(Boolean).map(({ context, ...refusal }) => ({
+      index: null,
+      refusal,
+      ...(context ? { context } : {}),
+    })),
   ];
 }
 
@@ -280,8 +297,9 @@ export function sandboxPredictionWarnings(prediction) {
   const composition = (prediction?.contexts || []).flatMap((context) => context.notices || []);
   /* The Set is deliberate and deliberately DISAGREES with the profile editor.
      N contexts refusing for one reason render as N rows there — each naming its
-     group, except cap-omitted ones, which can only say an assignment was omitted
-     (TCL-913) — because "which and how many assignments are affected" is scope
+     group, cap-omitted ones included, since TCL-913 carries the assignment's
+     identity beside the refusal — because "which and how many assignments are
+     affected" is scope
      the operator acts on. This is the spawn dialog's one-line summary, which has no
      room to carry that scope, so identical messages collapse. Do not "fix" one
      surface to match the other without deciding which question is being asked:
