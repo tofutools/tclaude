@@ -56,7 +56,15 @@ func TestOpenCodeFilteredProviderDirectoryNamesTheArmThatFired(t *testing.T) {
 	})
 
 	t.Run("EmptyDirectoryIsNotToldItIsNotEmpty", func(t *testing.T) {
-		dir := t.TempDir()
+		// resolvedTestPath, not the raw t.TempDir(). The entry-count arm is
+		// the THIRD one, and the canonicality arm before it refuses any path
+		// that differs from its own resolution — which on macOS every temp
+		// path does, because /var is reached through a symlink to
+		// /private/var. Passing the raw path fired the wrong arm there while
+		// passing on Linux, so this subtest asserted nothing about the
+		// condition it names on half the matrix. Caught by CI, not by
+		// inspection.
+		dir := resolvedTestPath(t, t.TempDir())
 		err := validateOpenCodeFilteredProviderDirectory(dir, "XDG config directory")
 		require.Error(t, err, "an empty directory has no marker and must be refused")
 		assert.Contains(t, err.Error(), "does not hold exactly one entry")
@@ -72,7 +80,12 @@ func TestOpenCodeFilteredProviderDirectoryNamesTheArmThatFired(t *testing.T) {
 	// path Lstats as a real directory and still differs from its resolution,
 	// which is what an ancestor link produces.
 	t.Run("NonCanonicalPathNamesBothArms", func(t *testing.T) {
-		root := t.TempDir()
+		// Resolved for the same macOS reason as above, but here it protects a
+		// PASSING assertion rather than a failing one: a raw temp root is
+		// already non-canonical on macOS, so the arm would fire for the
+		// platform's /var symlink instead of the one this fixture builds, and
+		// the subtest would pass while testing nothing it names.
+		root := resolvedTestPath(t, t.TempDir())
 		require.NoError(t, os.MkdirAll(filepath.Join(root, "real", "opencode"), 0o700))
 		require.NoError(t, os.Symlink(
 			filepath.Join(root, "real"), filepath.Join(root, "link")))
