@@ -187,7 +187,7 @@ func ValidatePreparedResourceCgroup(dir string, limits sandboxpolicy.ResourceLim
 		wantMemory = strconv.FormatUint(want, 10)
 	}
 	gotMemory, err := os.ReadFile(filepath.Join(dir, "memory.max"))
-	if err != nil && !(limits.Memory == "" && errors.Is(err, os.ErrNotExist)) {
+	if err != nil && (limits.Memory != "" || !errors.Is(err, os.ErrNotExist)) {
 		return fmt.Errorf("prepared resource cgroup memory.max no longer matches requested limit")
 	}
 	if err == nil && strings.TrimSpace(string(gotMemory)) != wantMemory {
@@ -202,7 +202,7 @@ func ValidatePreparedResourceCgroup(dir string, limits sandboxpolicy.ResourceLim
 		wantCPU = fmt.Sprintf("%d %d", quota, sandboxpolicy.CPUCgroupPeriodMicros)
 	}
 	gotCPU, err := os.ReadFile(filepath.Join(dir, "cpu.max"))
-	if err != nil && !(limits.CPU == nil && errors.Is(err, os.ErrNotExist)) {
+	if err != nil && (limits.CPU != nil || !errors.Is(err, os.ErrNotExist)) {
 		return fmt.Errorf("prepared resource cgroup cpu.max no longer matches requested limit")
 	}
 	if err == nil && strings.TrimSpace(string(gotCPU)) != wantCPU {
