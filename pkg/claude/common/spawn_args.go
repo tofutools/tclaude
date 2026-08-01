@@ -43,6 +43,9 @@ type SpawnArgs struct {
 	// only by the production spawner; callers normally set EffectiveSandbox.
 	SandboxSnapshotPath   string
 	SandboxSnapshotDigest string
+	// ResourceCgroupDir is a prepared Linux workload boundary shared with an
+	// agentd-owned authoritative server. Empty lets session new prepare one.
+	ResourceCgroupDir string
 	// Label is the tclaude-side session ID for a fresh spawn (SpawnNew): the
 	// stable key the hook callback tracks conv-id rotations against, and the
 	// row key in SQLite. It must be unique in the sessions table. Unused by
@@ -148,6 +151,9 @@ type SpawnArgs struct {
 	// Empty and harness-builtin both preserve the default argv; tclaude-layer
 	// forwards the experimental --sandbox-impl opt-in on relaunch.
 	SandboxImplementation string
+	// AllowUnenforcedSandbox is a one-shot dashboard-operator authorization.
+	// It is forwarded only for a fresh birth; relaunch paths leave it false.
+	AllowUnenforcedSandbox bool
 
 	// SandboxChosenBy names the resolution tier that supplied Sandbox — an
 	// explicit request field, or the named / group-default / global-default

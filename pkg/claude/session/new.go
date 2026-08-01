@@ -33,7 +33,8 @@ import (
 type NewParams struct {
 	// ManagedLaunch marks agentd's forked session wrapper. The daemon already
 	// resolved profile precedence, so the child must use the exact passed shape.
-	ManagedLaunch bool `long:"managed-launch" help:"Internal: launch parameters were resolved by agentd"`
+	ManagedLaunch          bool `long:"managed-launch" help:"Internal: launch parameters were resolved by agentd"`
+	AllowUnenforcedSandbox bool `long:"allow-unenforced-sandbox" help:"Internal: operator authorized launch when sandbox enforcement is unavailable"`
 	// SandboxChosenBy is the resolution tier that supplied --sandbox, as
 	// resolved by the daemon spawn boundary ("explicit", `global default
 	// profile "x"`, …). The badge attributes the launch's containment to it, so
@@ -43,6 +44,7 @@ type NewParams struct {
 	SandboxChosenBy       string `short:"T" long:"sandbox-chosen-by" optional:"true" help:"Internal: which resolution tier chose --sandbox"`
 	SandboxSnapshotPath   string `short:"U" long:"sandbox-snapshot-path" optional:"true" help:"Internal: private effective sandbox snapshot handoff"`
 	SandboxSnapshotDigest string `short:"V" long:"sandbox-snapshot-digest" optional:"true" help:"Internal: expected effective sandbox snapshot digest"`
+	ResourceCgroupDir     string `short:"W" long:"resource-cgroup-dir" optional:"true" help:"Internal: prepared Linux resource cgroup shared with a managed server"`
 	Dir                   string `short:"C" long:"dir" optional:"true" help:"Directory to start session in (defaults to current directory)"`
 	// CwdWriteProof is an internal daemon-to-session capability. The harness
 	// command checks its marker only after tmux has established the pane's cwd
@@ -269,6 +271,7 @@ func NewCmd() *cobra.Command {
 	// Allow arbitrary args so post-'--' args pass through to claude without cobra rejecting them.
 	cmd.Args = cobra.ArbitraryArgs
 	_ = cmd.Flags().MarkHidden("managed-launch")
+	_ = cmd.Flags().MarkHidden("allow-unenforced-sandbox")
 	_ = cmd.Flags().MarkHidden("cwd-write-proof")
 	_ = cmd.Flags().MarkHidden("dir-write-proof")
 	_ = cmd.Flags().MarkHidden("codex-git-common-dir")
@@ -1268,7 +1271,7 @@ func runNew(params *NewParams) error {
 		}
 		if outerLayer {
 			plannedEffective := launchSandbox.Effective
-			plannedEffective.AccessNotices = sandboxpolicy.ReplaceAccessDegradationNotices(
+			plannedEffective.AccessNotices = replaceAccessDegradationNotices(
 				plannedEffective.AccessNotices, notices...,
 			)
 			resolvedModel := harness.ResolvedModelTransport{Model: model}
@@ -1333,12 +1336,12 @@ func runNew(params *NewParams) error {
 				return materializationErr
 			}
 		}
-		launchSandbox.Effective.AccessNotices = sandboxpolicy.ReplaceAccessDegradationNotices(
+		launchSandbox.Effective.AccessNotices = replaceAccessDegradationNotices(
 			launchSandbox.Effective.AccessNotices, notices...,
 		)
 		sandboxpolicy.SetUnixSocketLaunchMaterialization(launchSandbox, materialization)
 		if effectiveSandbox != nil {
-			effectiveSandbox.Effective.AccessNotices = sandboxpolicy.ReplaceAccessDegradationNotices(
+			effectiveSandbox.Effective.AccessNotices = replaceAccessDegradationNotices(
 				effectiveSandbox.Effective.AccessNotices, notices...,
 			)
 			sandboxpolicy.SetUnixSocketLaunchMaterialization(
@@ -1601,6 +1604,55 @@ func runNew(params *NewParams) error {
 			return fmt.Errorf("wrap harness with tclaude-layer: %w", err)
 		}
 	}
+	resourceCgroupCleanup := func() {}
+	resourceCgroupOwnedByPane := false
+	defer func() {
+		if !resourceCgroupOwnedByPane {
+			resourceCgroupCleanup()
+		}
+	}()
+	if launchSandbox != nil && launchSandbox.Effective.ResourceLimits.Enabled() &&
+		!resourceLimitsAlreadyOverridden(launchSandbox.Effective.AccessNotices) {
+		if err := sandboxpolicy.ValidateResourceLimitTarget(
+			launchSandbox.Effective.ResourceLimits, sandboxImplementation, runtime.GOOS,
+		); err != nil {
+			if !params.AllowUnenforcedSandbox {
+				return fmt.Errorf("unsupported_sandbox_profile_resource_limits: %w", err)
+			}
+			notice := resourceLimitOverrideNotice(err)
+			launchSandbox.Effective.AccessNotices = append(launchSandbox.Effective.AccessNotices, notice)
+			if effectiveSandbox != nil {
+				effectiveSandbox.Effective.AccessNotices = append(effectiveSandbox.Effective.AccessNotices, notice)
+			}
+		} else {
+			var wrapped string
+			var cleanup func()
+			var resourceErr error
+			if strings.TrimSpace(params.ResourceCgroupDir) != "" {
+				wrapped = wrapPreparedResourceCgroupCommand(
+					sessionID, params.ResourceCgroupDir, harnessCmd, params.AllowUnenforcedSandbox)
+				cleanup = func() {}
+			} else {
+				wrapped, cleanup, resourceErr = wrapResourceLimitedCommand(
+					sessionID, launchSandbox.Effective.ResourceLimits, harnessCmd,
+					params.AllowUnenforcedSandbox,
+				)
+			}
+			if resourceErr != nil {
+				if !params.AllowUnenforcedSandbox {
+					return resourceErr
+				}
+				notice := resourceLimitOverrideNotice(resourceErr)
+				launchSandbox.Effective.AccessNotices = append(launchSandbox.Effective.AccessNotices, notice)
+				if effectiveSandbox != nil {
+					effectiveSandbox.Effective.AccessNotices = append(effectiveSandbox.Effective.AccessNotices, notice)
+				}
+			} else {
+				resourceCgroupCleanup = cleanup
+				harnessCmd = wrapped
+			}
+		}
+	}
 	if launchProfilePath != "" {
 		// The launch-specific profile must remain present until Codex exits: it
 		// may not have loaded the file when tmux reports the pane ready. Keeping
@@ -1655,6 +1707,7 @@ func runNew(params *NewParams) error {
 	if err := launchDetachedTmuxSession(tmuxSession, cwd, harnessCmd, CodexProfileMarkerArgs(launchProfilePath)...); err != nil {
 		return err
 	}
+	resourceCgroupOwnedByPane = true
 	// killLaunchPane tears the just-launched pane down on a late launch
 	// failure. It also reclaims launch-profile removal for the parent defer:
 	// a killed pane's shell never reaches its own cleanup trailer, so leaving
@@ -1662,6 +1715,7 @@ func runNew(params *NewParams) error {
 	killLaunchPane := func() {
 		launchProfileOwnedByPane = false
 		_ = clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(tmuxSession)).Run()
+		resourceCgroupCleanup()
 	}
 	if stackedProof != nil {
 		if err := WaitForStackedBindingReadiness(stackedProof.ReadyPath); err != nil {

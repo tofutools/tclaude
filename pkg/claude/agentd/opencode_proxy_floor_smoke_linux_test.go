@@ -268,7 +268,7 @@ func TestOpenCodeProxyFloorCooperation(t *testing.T) {
 	require.NoError(t, err)
 	launch, err := startOpenCodeRuntime(
 		openCodeFloorSessionID, cwd, "OpenCode floor arm", "", permissionJSON,
-		string(sandboxpolicy.ImplementationTclaudeLayer), spec)
+		string(sandboxpolicy.ImplementationTclaudeLayer), spec, "")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = stopOpenCodeRuntime(openCodeFloorSessionID) })
 

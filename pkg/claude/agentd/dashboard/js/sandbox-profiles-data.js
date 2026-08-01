@@ -54,6 +54,9 @@ export function sandboxProfileSummary(profile) {
   if (inc.length) parts.push(`${inc.length} include${inc.length === 1 ? '' : 's'}`);
   if (env.length) parts.push(`${env.length} env key${env.length === 1 ? '' : 's'}`);
   if (own.length) parts.push(`${own.length} agent dir${own.length === 1 ? '' : 's'}`);
+  const limits = profile.resource_limits || {};
+  if (limits.memory) parts.push(`memory ${limits.memory}`);
+  if (limits.cpu != null) parts.push(`CPU ${limits.cpu}`);
   const authoredNetwork = sandboxNetworkAuthoring(profile);
   if (authoredNetwork.baseline === 'allow') parts.push('network allow all');
   if (authoredNetwork.baseline === 'deny') {
@@ -67,6 +70,31 @@ export function sandboxProfileSummary(profile) {
   const axes = sandboxAccessAxes(profile);
   if (axes.unix_sockets.mode) parts.push(`sockets ${axes.unix_sockets.mode}${axes.unix_sockets.mode === 'list' ? ` (${axes.unix_sockets.allow.length})` : ''}`);
   return parts.join(' · ') || 'no sandbox rules';
+}
+
+export function sandboxResourceLimitsForWire(resourceLimits = {}) {
+  const memory = String(resourceLimits.memory ?? '').trim();
+  const cpuText = String(resourceLimits.cpu ?? '').trim();
+  return {
+    ...(memory ? { memory } : {}),
+    ...(cpuText ? { cpu: Number(cpuText) } : {}),
+  };
+}
+
+export function sandboxResourceLimitErrors(resourceLimits = {}) {
+  const errors = [];
+  const memory = String(resourceLimits.memory ?? '').trim();
+  if (memory && !/^(?:\d+(?:\.\d+)?|\.\d+)(?:[KMGT](?:I(?:B)?|B)?|B)$/i.test(memory)) {
+    errors.push('Memory limit must be a positive quantity with a B, K/KB/KiB, M/MB/MiB, G/GB/GiB, or T/TB/TiB unit.');
+  }
+  if (memory && /^(?:0+(?:\.0*)?|\.0+)[A-Za-z]+$/i.test(memory)) {
+    errors.push('Memory limit must be greater than zero.');
+  }
+  const cpu = String(resourceLimits.cpu ?? '').trim();
+  if (cpu && (!/^(?:\d+(?:\.\d+)?|\.\d+)$/.test(cpu) || !Number.isFinite(Number(cpu)) || Number(cpu) < 0.01)) {
+    errors.push('CPU limit must be at least 0.01 finite cores, such as 0.5 or 2.');
+  }
+  return errors;
 }
 
 // The editor always authors the compositional baseline shape. Legacy mode-based

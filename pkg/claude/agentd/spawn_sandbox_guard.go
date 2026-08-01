@@ -174,21 +174,41 @@ func planSandboxProfileAccessForLaunch(
 	snapshot *sandboxpolicy.Snapshot,
 	rawImplementation string,
 	modelContext session.ModelTransportLaunchContext,
-	allowUnenforcedNetworkClosed bool,
+	allowUnenforcedSandbox bool,
 ) ([]sandboxpolicy.AccessNotice, *spawnFailure) {
-	if snapshot == nil ||
-		(snapshot.Effective.Network == nil && snapshot.Effective.UnixSockets == nil) {
+	if snapshot == nil {
 		return nil, nil
-	}
-	h, err := harness.Resolve(harnessOrDefault(harnessName))
-	if err != nil {
-		return nil, &spawnFailure{http.StatusUnprocessableEntity,
-			"unsupported_sandbox_profile_access", err.Error()}
 	}
 	implementation, err := sandboxpolicy.NormalizeImplementation(rawImplementation)
 	if err != nil {
 		return nil, &spawnFailure{http.StatusUnprocessableEntity,
 			"invalid_sandbox_implementation", err.Error()}
+	}
+	resourceNotices := []sandboxpolicy.AccessNotice{}
+	if err := sandboxpolicy.ValidateResourceLimitTarget(
+		snapshot.Effective.ResourceLimits, implementation, runtime.GOOS,
+	); err != nil {
+		if !allowUnenforcedSandbox {
+			return nil, &spawnFailure{http.StatusUnprocessableEntity,
+				"unsupported_sandbox_profile_resource_limits", err.Error()}
+		}
+		resourceNotices = append(resourceNotices, sandboxpolicy.AccessNotice{
+			Class:  sandboxpolicy.AccessNoticeClassDegradation,
+			Axis:   "resource_limits",
+			Reason: sandboxpolicy.AccessNoticeReasonOperatorUnenforcedLaunchOverride,
+			Effect: sandboxpolicy.AccessNoticeEffectNotEnforced,
+			Detail: "the human operator used the dashboard launch override; configured CPU and memory limits are not enforced: " + err.Error(),
+		})
+		snapshot.Effective.AccessNotices = sandboxpolicy.ReplaceAccessDegradationNotices(
+			snapshot.Effective.AccessNotices, resourceNotices...)
+	}
+	if snapshot.Effective.Network == nil && snapshot.Effective.UnixSockets == nil {
+		return resourceNotices, nil
+	}
+	h, err := harness.Resolve(harnessOrDefault(harnessName))
+	if err != nil {
+		return nil, &spawnFailure{http.StatusUnprocessableEntity,
+			"unsupported_sandbox_profile_access", err.Error()}
 	}
 	axes, err := sandboxpolicy.EffectiveAccessAxes(snapshot.Effective)
 	if err != nil {
@@ -296,9 +316,10 @@ func planSandboxProfileAccessForLaunch(
 	}
 	rendered, notices, err := harness.PlanAccessEnforcement(
 		axes, caps, harness.AccessEnforcementOptions{
-			AllowUnenforcedNetworkClosed: allowUnenforcedNetworkClosed,
+			AllowUnenforcedNetworkClosed: allowUnenforcedSandbox,
 		},
 	)
+	notices = append(resourceNotices, notices...)
 	if err != nil {
 		return nil, sandboxCapabilitySpawnFailure(
 			err, "unsupported_sandbox_profile_access")

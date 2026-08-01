@@ -122,6 +122,30 @@ through one.
 If MCP reachability matters to your threat model, control it where MCP servers
 are configured — not in the sandbox profile.
 
+## Linux CPU and memory limits
+
+Sandbox profiles can optionally constrain the aggregate workload process tree
+with cgroup v2. `resource_limits.memory` renders to `memory.max`, while
+`resource_limits.cpu` renders to `cpu.max` with a fixed 100 ms period. These
+limits are orthogonal to bubblewrap: they work with any non-`off` sandbox
+implementation on Linux. They do not make the guest report a smaller machine;
+interfaces such as `/proc/meminfo` may still describe host memory.
+
+Leaving both fields blank preserves the previous launch path exactly: tclaude
+does not probe controllers, create a cgroup, or add a wrapper. Configured limits
+are Linux-only in this MVP. A macOS launch, an `off` implementation, or a Linux
+host without usable delegated cgroup v2 controllers refuses by default. The
+dashboard's existing **allow launch without enforcement** checkbox is the
+operator-controlled escape hatch and records a visible degradation notice.
+
+When agentd is run as a systemd service, its unit must delegate the required
+controllers to an otherwise empty parent. With systemd 254 or newer, configure
+`Delegate=cpu memory`, `DelegateSubgroup=tclaude-supervisor`, and
+`OOMPolicy=continue`; the subgroup keeps agentd out of the constrained workload
+siblings and leaves the delegated unit node process-free. A delegation or
+controller failure is reported at launch with an actionable error; tclaude
+never widens a configured limit without the explicit operator override.
+
 ## Experimental `tclaude-layer` on Linux and macOS
 
 `tclaude session new --sandbox-impl tclaude-layer` runs the tool-executing

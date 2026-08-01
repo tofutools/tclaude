@@ -151,6 +151,7 @@ type Profile struct {
 	NetworkAccess       NetworkAccess        `json:"network_access,omitempty"`
 	Network             *NetworkRules        `json:"network,omitempty"`
 	UnixSockets         *UnixSocketRules     `json:"unix_sockets,omitempty"`
+	ResourceLimits      ResourceLimits       `json:"resource_limits,omitempty"`
 	Includes            []string             `json:"includes,omitempty"`
 }
 
@@ -268,11 +269,15 @@ func normalize(in Profile, allowMissing, authoring bool) (Profile, []string, err
 		return Profile{}, nil, err
 	}
 	missing = append(missing, socketMissing...)
+	resourceLimits, err := NormalizeResourceLimits(in.ResourceLimits)
+	if err != nil {
+		return Profile{}, nil, err
+	}
 	sort.Strings(missing)
 	return Profile{
 		Name: name, Filesystem: filesystem, FilesystemSpellings: filesystemSpellings,
 		Environment: environment, AgentDirectories: agentDirectories, NetworkAccess: networkAccess,
-		Network: network, UnixSockets: unixSockets, Includes: includes,
+		Network: network, UnixSockets: unixSockets, ResourceLimits: resourceLimits, Includes: includes,
 	}, missing, nil
 }
 

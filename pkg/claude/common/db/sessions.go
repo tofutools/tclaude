@@ -159,6 +159,50 @@ type SessionRow struct {
 	ExitLaunchGateState  string
 }
 
+// AppendSessionSandboxAccessNotice records a launch-time degradation that was
+// discovered after the pane started. It updates both the session launch row
+// and the stable agent snapshot so production read and relaunch paths agree.
+func AppendSessionSandboxAccessNotice(sessionID string, notice sandboxpolicy.AccessNotice) error {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return errors.New("AppendSessionSandboxAccessNotice: session id required")
+	}
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var raw, agentID string
+	if err := tx.QueryRow(`SELECT effective_sandbox_config, agent_id FROM sessions WHERE id = ?`, sessionID).Scan(&raw, &agentID); err != nil {
+		return err
+	}
+	snapshot, err := unmarshalEffectiveSandboxSnapshot(raw)
+	if err != nil {
+		return err
+	}
+	if snapshot == nil {
+		return errors.New("session has no effective sandbox snapshot")
+	}
+	snapshot.Effective.AccessNotices = append(snapshot.Effective.AccessNotices, notice)
+	raw, err = marshalEffectiveSandboxSnapshot(snapshot)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE sessions SET effective_sandbox_config = ? WHERE id = ?`, raw, sessionID); err != nil {
+		return err
+	}
+	if strings.TrimSpace(agentID) != "" {
+		if _, err := tx.Exec(`UPDATE agents SET effective_sandbox_config = ? WHERE agent_id = ?`, raw, agentID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 // SaveSession inserts or updates a session, setting updated_at to now.
 //
 // On an existing row this is an UPSERT that writes ONLY the columns

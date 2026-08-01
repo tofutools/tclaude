@@ -94,6 +94,7 @@ func FlattenWithNotices(in Profile, lookup LookupProfile) (Profile, []AccessNoti
 		Environment:      make([]EnvironmentEntry, 0, len(parts.environment)),
 		AgentDirectories: make([]string, 0, len(parts.agentDirectories)),
 		NetworkAccess:    parts.networkAccess,
+		ResourceLimits:   parts.resourceLimits,
 	}
 	if parts.hasFilesystemSpellings {
 		out.FilesystemSpellings = &FilesystemSpellings{
@@ -189,6 +190,7 @@ type flattenedParts struct {
 	unixSockets             UnixSocketRules
 	hasNewNetwork           bool
 	hasNewUnixSockets       bool
+	resourceLimits          ResourceLimits
 	networkListContributors []string
 	socketListContributors  []string
 }
@@ -298,6 +300,13 @@ func (f *flattener) compose(p Profile) *flattenedParts {
 		if parts.networkAccess != NetworkAccessInherit {
 			out.networkAccess = parts.networkAccess
 		}
+		if parts.resourceLimits.Memory != "" {
+			out.resourceLimits.Memory = parts.resourceLimits.Memory
+		}
+		if parts.resourceLimits.CPU != nil {
+			value := *parts.resourceLimits.CPU
+			out.resourceLimits.CPU = &value
+		}
 		out.network = intersectNetworkRules(out.network, parts.network)
 		out.unixSockets = intersectUnixSocketRules(out.unixSockets, parts.unixSockets)
 		out.hasNewNetwork = out.hasNewNetwork || parts.hasNewNetwork
@@ -338,6 +347,13 @@ func (f *flattener) compose(p Profile) *flattenedParts {
 	}
 	if p.NetworkAccess != NetworkAccessInherit {
 		out.networkAccess = p.NetworkAccess
+	}
+	if p.ResourceLimits.Memory != "" {
+		out.resourceLimits.Memory = p.ResourceLimits.Memory
+	}
+	if p.ResourceLimits.CPU != nil {
+		value := *p.ResourceLimits.CPU
+		out.resourceLimits.CPU = &value
 	}
 	own := composeProfileAccessAxes(p)
 	out.network = intersectNetworkRules(out.network, own.network)

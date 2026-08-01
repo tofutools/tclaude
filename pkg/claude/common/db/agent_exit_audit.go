@@ -1055,7 +1055,7 @@ func validExitAction(v string) bool {
 func validExitReason(v string) bool {
 	switch v {
 	case "logout", "prompt_input_exit", "bypass_permissions_disabled", "other",
-		"soft_exit", "unexpected":
+		"soft_exit", "unexpected", "resource_limit_oom":
 		return true
 	default:
 		return false

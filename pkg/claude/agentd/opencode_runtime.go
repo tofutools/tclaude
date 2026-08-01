@@ -107,6 +107,8 @@ var (
 	openCodeProjectorApplyLocksMu sync.Mutex // guards the map, not the per-key tokens
 )
 
+var errOpenCodeResourceCgroup = errors.New("OpenCode resource cgroup placement failed")
+
 type openCodeProjectorApplyLock struct {
 	token chan struct{}
 	users int
@@ -156,6 +158,7 @@ var (
 func startOpenCodeRuntime(
 	sessionID, cwd, title, resumeID, permissionJSON, sandboxImplementation string,
 	sandboxSpec *session.TclaudeLayerLaunchSpec,
+	resourceCgroupDir string,
 ) (*openCodeLaunch, error) {
 	permissionJSON = strings.TrimSpace(permissionJSON)
 	if permissionJSON == "" {
@@ -198,6 +201,7 @@ func startOpenCodeRuntime(
 		sameSandbox := implementationErr == nil &&
 			string(existingImplementation) == sandboxImplementation &&
 			existing.SandboxLaunchSpecJSON == sandboxSpecJSON &&
+			existing.ResourceCgroupDir == resourceCgroupDir &&
 			existing.Transport == transport &&
 			existing.ControlSocketPath == controlPath
 		if sameCwd && sameSandbox && openCodeHealthyAfterRetries(*existing,
@@ -258,9 +262,13 @@ func startOpenCodeRuntime(
 			SandboxLaunchSpecJSON: sandboxSpecJSON,
 			Transport:             transport,
 			ControlSocketPath:     controlPath,
+			ResourceCgroupDir:     resourceCgroupDir,
 		}
 		process, err := startOpenCodeProcess(&runtime, sandboxSpec)
 		if err != nil {
+			if errors.Is(err, errOpenCodeResourceCgroup) {
+				return nil, err
+			}
 			lastErr = err
 			continue
 		}
@@ -650,7 +658,15 @@ func startOpenCodeProcess(
 	stderr := newSpawnStderrCapture()
 	cmd.Stderr = stderr
 	cmd.ExtraFiles = extraFiles
+	closeCgroupFD, err := configureOpenCodeResourceCgroup(cmd, runtime.ResourceCgroupDir)
+	if err != nil {
+		return nil, err
+	}
+	defer closeCgroupFD()
 	if err := cmd.Start(); err != nil {
+		if runtime.ResourceCgroupDir != "" {
+			return nil, fmt.Errorf("%w: start server: %v", errOpenCodeResourceCgroup, err)
+		}
 		return nil, err
 	}
 	for _, file := range extraFiles {
@@ -662,9 +678,17 @@ func startOpenCodeProcess(
 	openCodeProcesses.Unlock()
 	go func() {
 		err := cmd.Wait()
+		if runtime.ResourceCgroupDir != "" && session.ResourceCgroupOOMKilled(runtime.ResourceCgroupDir) {
+			if recordErr := db.SetSessionExitReason(runtime.SessionID, session.ResourceLimitOOMExitReason); recordErr != nil {
+				slog.Warn("OpenCode resource limit: record OOM outcome", "session_id", runtime.SessionID, "error", recordErr)
+			}
+		}
 		process.done <- err
 		close(process.done)
 		finishOpenCodeProcessExit(process, runtime.SessionID, cmd.Process.Pid, err, stderr)
+		if runtime.ResourceCgroupDir != "" {
+			_ = os.Remove(runtime.ResourceCgroupDir)
+		}
 	}()
 	runtime.PID = cmd.Process.Pid
 	if unixHandshake != nil {
@@ -737,6 +761,17 @@ func startOpenCodeProcess(
 	stopOpenCodeProcess(*runtime, process)
 	return nil, fmt.Errorf("OpenCode server at %s did not become healthy within %s",
 		runtime.ServerURL, openCodeStartupTimeout)
+}
+
+func configureOpenCodeResourceCgroup(cmd *exec.Cmd, dir string) (func(), error) {
+	if dir == "" {
+		return func() {}, nil
+	}
+	cleanup, err := session.ConfigureProcessResourceCgroup(cmd, dir)
+	if err != nil {
+		return func() {}, fmt.Errorf("%w: %v", errOpenCodeResourceCgroup, err)
+	}
+	return cleanup, nil
 }
 
 func openCodeServeProcessExec(

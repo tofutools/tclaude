@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// SnapshotVersion 8 adds the network and Unix-socket access axes plus their
+// SnapshotVersion 9 adds Linux resource limits. Version 8 added the network and Unix-socket access axes plus their
 // persisted access notices. Version 7 removes break_glass_filesystem, the one sanctioned
 // exception to the protected-root wall (TCL-791). Version 6 added
 // ProfilesOmitted, a lifecycle-significant launch contract that prevents
@@ -18,7 +18,7 @@ import (
 // bump preserved the fail-closed downgrade property, where an older binary
 // rejects a newer snapshot rather than ignoring a marker it does not
 // understand. Version 5 removed the retired read-baseline mechanism (TCL-623).
-const SnapshotVersion = 8
+const SnapshotVersion = 9
 
 // AppliedProfile preserves stable registry provenance without making the
 // registry row authoritative after resolution. The effective values in the
@@ -113,6 +113,9 @@ func RequireContained(parent, child Snapshot) error {
 		if value, ok := parentEnv[entry.Name]; !ok || value != entry.Value {
 			return fmt.Errorf("environment variable %q is new or changed from the parent snapshot", entry.Name)
 		}
+	}
+	if err := requireResourceLimitsContained(parent.Effective.ResourceLimits, child.Effective.ResourceLimits); err != nil {
+		return err
 	}
 	if parent.Effective.Network == nil && child.Effective.Network == nil &&
 		!networkAccessContained(parent.Effective.NetworkAccess, child.Effective.NetworkAccess) {
@@ -471,11 +474,14 @@ func UnconfinedLaunchSnapshot(in Snapshot) Snapshot {
 	effective.NetworkAccess = NetworkAccessInherit
 	effective.Network = nil
 	effective.UnixSockets = nil
+	effective.ResourceLimits = ResourceLimits{}
 	effective.AccessNotices = nil
 	effective.Provenance.Filesystem = nil
 	effective.Provenance.AgentDirectories = nil
 	effective.Provenance.Network = nil
 	effective.Provenance.UnixSockets = nil
+	effective.Provenance.ResourceMemory = nil
+	effective.Provenance.ResourceCPU = nil
 	out := NewSnapshot(effective, in.Applied)
 	out.ResolutionGroupID = in.ResolutionGroupID
 	return out
@@ -501,16 +507,18 @@ func RevalidateSnapshot(in Snapshot) (Snapshot, error) {
 		in.Effective.NetworkAccess != NetworkAccessInherit ||
 		in.Effective.Network != nil ||
 		in.Effective.UnixSockets != nil ||
+		in.Effective.ResourceLimits.Enabled() ||
 		len(in.Effective.AccessNotices) > 0 ||
 		in.UnixSocketMaterialization != nil) {
 		return Snapshot{}, fmt.Errorf("omitted sandbox-profile snapshot contains profile values")
 	}
 	normalized, _, err := NormalizeForPersistence(Profile{
-		Name:          "effective-sandbox-snapshot",
-		Filesystem:    in.Effective.Filesystem,
-		Environment:   in.Effective.Environment,
-		NetworkAccess: in.Effective.NetworkAccess,
-		UnixSockets:   in.Effective.UnixSockets,
+		Name:           "effective-sandbox-snapshot",
+		Filesystem:     in.Effective.Filesystem,
+		Environment:    in.Effective.Environment,
+		NetworkAccess:  in.Effective.NetworkAccess,
+		UnixSockets:    in.Effective.UnixSockets,
+		ResourceLimits: in.Effective.ResourceLimits,
 	})
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("revalidate effective sandbox snapshot: %w", err)
@@ -570,6 +578,9 @@ func RevalidateSnapshot(in Snapshot) (Snapshot, error) {
 	if !reflect.DeepEqual(normalized.UnixSockets, in.Effective.UnixSockets) {
 		return Snapshot{}, fmt.Errorf("effective sandbox Unix-socket rules changed since resolution")
 	}
+	if !reflect.DeepEqual(normalized.ResourceLimits, in.Effective.ResourceLimits) {
+		return Snapshot{}, fmt.Errorf("effective sandbox resource limits changed since resolution")
+	}
 	if in.UnixSocketMaterialization != nil {
 		planned, err := PlannedEffectiveAccessAxes(in.Effective)
 		if err != nil {
@@ -620,7 +631,7 @@ func NormalizeSnapshotVersion(in Snapshot) (Snapshot, error) {
 	// snapshots instead would strand live agents on upgrade for no security
 	// gain, and there is no operator present at decode time to receive an error
 	// — the v163 migration's durable disclosure is what informs them.
-	case 1, 2, 3, 4, 5, 6, 7, SnapshotVersion:
+	case 1, 2, 3, 4, 5, 6, 7, 8, SnapshotVersion:
 		in.Version = SnapshotVersion
 		return in, nil
 	default:
@@ -664,6 +675,7 @@ func cloneEffectiveProfile(in EffectiveProfile) EffectiveProfile {
 		NetworkAccess:    in.NetworkAccess,
 		Network:          cloneNetworkRulesPtr(in.Network),
 		UnixSockets:      cloneUnixSocketRulesPtr(in.UnixSockets),
+		ResourceLimits:   cloneResourceLimits(in.ResourceLimits),
 		AccessNotices:    cloneAccessNotices(in.AccessNotices),
 		Provenance: ResolutionProvenance{
 			Applied:          cloneProfileSources(in.Provenance.Applied),
@@ -672,6 +684,8 @@ func cloneEffectiveProfile(in EffectiveProfile) EffectiveProfile {
 			AgentDirectories: make(map[string][]ProfileSource, len(in.Provenance.AgentDirectories)),
 			Network:          nil,
 			UnixSockets:      nil,
+			ResourceMemory:   nil,
+			ResourceCPU:      nil,
 		},
 	}
 	for path, sources := range in.Provenance.Filesystem {
@@ -690,6 +704,14 @@ func cloneEffectiveProfile(in EffectiveProfile) EffectiveProfile {
 	if in.Provenance.UnixSockets != nil {
 		source := cloneProfileSource(*in.Provenance.UnixSockets)
 		out.Provenance.UnixSockets = &source
+	}
+	if in.Provenance.ResourceMemory != nil {
+		source := cloneProfileSource(*in.Provenance.ResourceMemory)
+		out.Provenance.ResourceMemory = &source
+	}
+	if in.Provenance.ResourceCPU != nil {
+		source := cloneProfileSource(*in.Provenance.ResourceCPU)
+		out.Provenance.ResourceCPU = &source
 	}
 	// The SAME canonical order normalizeFilesystem produces. RevalidateSnapshot
 	// compares the two with an order-sensitive DeepEqual, so a snapshot sorted by

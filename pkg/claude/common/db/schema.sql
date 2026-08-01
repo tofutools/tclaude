@@ -718,7 +718,7 @@ CREATE TABLE sandbox_profiles (
 			environment_json TEXT NOT NULL DEFAULT '[]',
 			created_at       TEXT NOT NULL,
 			updated_at       TEXT NOT NULL
-		, includes_json TEXT NOT NULL DEFAULT '[]', agent_directories_json TEXT NOT NULL DEFAULT '[]', network_access TEXT NOT NULL DEFAULT '', network_json TEXT NOT NULL DEFAULT '', unix_sockets_json TEXT NOT NULL DEFAULT '', filesystem_spellings_json TEXT NOT NULL DEFAULT '');
+		, includes_json TEXT NOT NULL DEFAULT '[]', agent_directories_json TEXT NOT NULL DEFAULT '[]', network_access TEXT NOT NULL DEFAULT '', network_json TEXT NOT NULL DEFAULT '', unix_sockets_json TEXT NOT NULL DEFAULT '', filesystem_spellings_json TEXT NOT NULL DEFAULT '', resource_limits_json TEXT NOT NULL DEFAULT '{}');
 
 CREATE TABLE sandbox_profile_global_assignment (
 			id           INTEGER PRIMARY KEY CHECK (id = 1),
@@ -966,7 +966,7 @@ CREATE TABLE opencode_runtimes (
 			cwd        TEXT NOT NULL,
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL
-		, permission_json TEXT NOT NULL DEFAULT '', sandbox_implementation TEXT NOT NULL DEFAULT 'harness-builtin', sandbox_launch_spec_json TEXT NOT NULL DEFAULT '', transport TEXT NOT NULL DEFAULT 'loopback-tcp', control_socket_path TEXT NOT NULL DEFAULT '', control_socket_device INTEGER NOT NULL DEFAULT 0, control_socket_inode INTEGER NOT NULL DEFAULT 0);
+		, permission_json TEXT NOT NULL DEFAULT '', sandbox_implementation TEXT NOT NULL DEFAULT 'harness-builtin', sandbox_launch_spec_json TEXT NOT NULL DEFAULT '', transport TEXT NOT NULL DEFAULT 'loopback-tcp', control_socket_path TEXT NOT NULL DEFAULT '', control_socket_device INTEGER NOT NULL DEFAULT 0, control_socket_inode INTEGER NOT NULL DEFAULT 0, resource_cgroup_dir TEXT NOT NULL DEFAULT '');
 
 CREATE TABLE opencode_usage_activity (
 			session_id  TEXT NOT NULL,

@@ -37,8 +37,11 @@ type OpenCodeRuntime struct {
 	// PermissionJSON is the exact ordered OpenCode session ruleset agentd
 	// verifies and re-applies after healthy reuse or a serve restart.
 	PermissionJSON string
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	// ResourceCgroupDir is the prepared Linux workload boundary shared by the
+	// authoritative server and its attach pane. Empty means unlimited.
+	ResourceCgroupDir string
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
 }
 
 func UpsertOpenCodeRuntime(runtime OpenCodeRuntime) error {
@@ -58,8 +61,8 @@ func UpsertOpenCodeRuntime(runtime OpenCodeRuntime) error {
 		INSERT INTO opencode_runtimes
 			(session_id, conv_id, server_url, password, pid, cwd, sandbox_implementation,
 			 sandbox_launch_spec_json, transport, control_socket_path,
-			 control_socket_device, control_socket_inode, permission_json, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			 control_socket_device, control_socket_inode, permission_json, resource_cgroup_dir, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(session_id) DO UPDATE SET
 			conv_id = excluded.conv_id,
 			server_url = excluded.server_url,
@@ -73,11 +76,12 @@ func UpsertOpenCodeRuntime(runtime OpenCodeRuntime) error {
 			control_socket_device = excluded.control_socket_device,
 			control_socket_inode = excluded.control_socket_inode,
 			permission_json = excluded.permission_json,
+			resource_cgroup_dir = excluded.resource_cgroup_dir,
 			updated_at = excluded.updated_at
 	`, runtime.SessionID, runtime.ConvID, runtime.ServerURL, runtime.Password,
 		runtime.PID, runtime.Cwd, runtime.SandboxImplementation, runtime.SandboxLaunchSpecJSON,
 		normalizeOpenCodeTransport(runtime.Transport), runtime.ControlSocketPath,
-		runtime.ControlSocketDevice, runtime.ControlSocketInode, runtime.PermissionJSON,
+		runtime.ControlSocketDevice, runtime.ControlSocketInode, runtime.PermissionJSON, runtime.ResourceCgroupDir,
 		runtime.CreatedAt.Format(time.RFC3339Nano),
 		runtime.UpdatedAt.Format(time.RFC3339Nano))
 	return err
@@ -91,7 +95,7 @@ func GetOpenCodeRuntime(sessionID string) (*OpenCodeRuntime, error) {
 	row := d.QueryRow(`
 		SELECT session_id, conv_id, server_url, password, pid, cwd, sandbox_implementation,
 			sandbox_launch_spec_json, transport, control_socket_path,
-			control_socket_device, control_socket_inode, permission_json, created_at, updated_at
+			control_socket_device, control_socket_inode, permission_json, resource_cgroup_dir, created_at, updated_at
 		FROM opencode_runtimes WHERE session_id = ?
 	`, sessionID)
 	runtime, err := scanOpenCodeRuntime(row)
@@ -109,7 +113,7 @@ func GetOpenCodeRuntimeByConvID(convID string) (*OpenCodeRuntime, error) {
 	row := d.QueryRow(`
 		SELECT session_id, conv_id, server_url, password, pid, cwd, sandbox_implementation,
 			sandbox_launch_spec_json, transport, control_socket_path,
-			control_socket_device, control_socket_inode, permission_json, created_at, updated_at
+			control_socket_device, control_socket_inode, permission_json, resource_cgroup_dir, created_at, updated_at
 		FROM opencode_runtimes WHERE conv_id = ? ORDER BY created_at DESC LIMIT 1
 	`, convID)
 	runtime, err := scanOpenCodeRuntime(row)
@@ -135,7 +139,7 @@ func FindOpenCodeRuntimeByPID(pid int) (*OpenCodeRuntime, error) {
 	row := d.QueryRow(`
 		SELECT session_id, conv_id, server_url, password, pid, cwd, sandbox_implementation,
 			sandbox_launch_spec_json, transport, control_socket_path,
-			control_socket_device, control_socket_inode, permission_json, created_at, updated_at
+			control_socket_device, control_socket_inode, permission_json, resource_cgroup_dir, created_at, updated_at
 		FROM opencode_runtimes WHERE pid = ? ORDER BY updated_at DESC LIMIT 1
 	`, pid)
 	runtime, err := scanOpenCodeRuntime(row)
@@ -153,7 +157,7 @@ func ListOpenCodeRuntimes() ([]OpenCodeRuntime, error) {
 	rows, err := d.Query(`
 		SELECT session_id, conv_id, server_url, password, pid, cwd, sandbox_implementation,
 			sandbox_launch_spec_json, transport, control_socket_path,
-			control_socket_device, control_socket_inode, permission_json, created_at, updated_at
+			control_socket_device, control_socket_inode, permission_json, resource_cgroup_dir, created_at, updated_at
 		FROM opencode_runtimes ORDER BY created_at
 	`)
 	if err != nil {
@@ -190,7 +194,7 @@ func scanOpenCodeRuntime(row openCodeRuntimeScanner) (*OpenCodeRuntime, error) {
 	if err := row.Scan(&runtime.SessionID, &runtime.ConvID, &runtime.ServerURL,
 		&runtime.Password, &runtime.PID, &runtime.Cwd, &runtime.SandboxImplementation,
 		&runtime.SandboxLaunchSpecJSON, &runtime.Transport, &runtime.ControlSocketPath,
-		&runtime.ControlSocketDevice, &runtime.ControlSocketInode, &runtime.PermissionJSON,
+		&runtime.ControlSocketDevice, &runtime.ControlSocketInode, &runtime.PermissionJSON, &runtime.ResourceCgroupDir,
 		&created, &updated); err != nil {
 		return nil, err
 	}

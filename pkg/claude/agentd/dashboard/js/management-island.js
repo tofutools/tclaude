@@ -12,6 +12,8 @@ import {
   sandboxOtherAssignmentWarnings,
   sandboxOtherContextRefusals,
   sandboxProfileSummary,
+	sandboxResourceLimitErrors,
+	sandboxResourceLimitsForWire,
   sandboxRuleBuckets,
   sandboxTargetLabel,
   sandboxTargetRefusal,
@@ -497,6 +499,12 @@ export function SandboxPolicyResult({ target, context, contextIndex, contexts = 
     <${SandboxOutcomeBucket} bucket=${buckets.notApplied} open=${true}
       helpOpen=${ruleHelpOpen} setHelpOpen=${setRuleHelpOpen}
       helpPrefix=${helpPrefix} targetLabel=${targetLabel}/>`}
+    ${(context.resource_limits?.memory || context.resource_limits?.cpu != null) && html`<div class="sbx-resource-evaluation">
+      <strong>Resource limits — Linux only</strong>
+      ${context.resource_limits.memory && html`<div>Memory: ${context.resource_limits.memory} → ${context.memory_limit_bytes} bytes (<code>memory.max</code>)</div>`}
+      ${context.resource_limits.cpu != null && html`<div>CPU: ${context.resource_limits.cpu} cores → <code>cpu.max ${context.cpu_max}</code></div>`}
+      <div>${refusal?.kind === 'unsupported_resource_limits' ? 'This target cannot enforce these limits.' : 'This Linux target can enforce the requested cgroup-v2 limits; live controller delegation is checked again before launch.'}</div>
+    </div>`}
     <details class="sbx-target-details"><summary>Evaluation details</summary>
       ${target.target.sandbox ? html`<div>Sandbox mode: ${sandboxModeDetail(target.target.harness, target.target.sandbox)}</div>` : null}
       ${target.resolved_by
@@ -1279,10 +1287,10 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
     const axes = sandboxAccessAxes(seed || {});
     const network = sandboxNetworkAuthoring(seed || {});
     const filesystem_spellings = clone(seed?.filesystem_spellings ?? null);
-    return { id: seed?.id || 0, name: seed?.name || '', filesystem: sandboxFilesystemEditorRows(seed?.filesystem || [], filesystem_spellings), filesystem_spellings, environment: clone(seed?.environment || []), includes: clone(seed?.includes || []), agent_directories: clone(seed?.agent_directories || []), network_access: '', network, unix_sockets: axes.unix_sockets };
+    return { id: seed?.id || 0, name: seed?.name || '', filesystem: sandboxFilesystemEditorRows(seed?.filesystem || [], filesystem_spellings), filesystem_spellings, environment: clone(seed?.environment || []), includes: clone(seed?.includes || []), agent_directories: clone(seed?.agent_directories || []), network_access: '', network, unix_sockets: axes.unix_sockets, resource_limits: { memory: seed?.resource_limits?.memory || '', cpu: seed?.resource_limits?.cpu == null ? '' : String(seed.resource_limits.cpu) } };
   }, [descriptor]);
   const initialFilesystemWire = sandboxFilesystemWire(baseline, baseline);
-  const [draft, setDraft] = useState(() => clone(baseline)); const [advanced, setAdvanced] = useState(false); const [rawFS, setRawFS] = useState(() => JSON.stringify(initialFilesystemWire.filesystem, null, 2)); const [rawSpellings, setRawSpellings] = useState(() => JSON.stringify(initialFilesystemWire.filesystem_spellings, null, 2)); const [rawEnv, setRawEnv] = useState(() => JSON.stringify(baseline.environment, null, 2)); const [rawIncludes, setRawIncludes] = useState(() => JSON.stringify(baseline.includes, null, 2)); const [rawAgentDirs, setRawAgentDirs] = useState(() => JSON.stringify(baseline.agent_directories, null, 2)); const [rawNetwork, setRawNetwork] = useState(() => JSON.stringify(baseline.network, null, 2)); const [rawSockets, setRawSockets] = useState(() => JSON.stringify(baseline.unix_sockets, null, 2));
+  const [draft, setDraft] = useState(() => clone(baseline)); const [advanced, setAdvanced] = useState(false); const [rawFS, setRawFS] = useState(() => JSON.stringify(initialFilesystemWire.filesystem, null, 2)); const [rawSpellings, setRawSpellings] = useState(() => JSON.stringify(initialFilesystemWire.filesystem_spellings, null, 2)); const [rawEnv, setRawEnv] = useState(() => JSON.stringify(baseline.environment, null, 2)); const [rawIncludes, setRawIncludes] = useState(() => JSON.stringify(baseline.includes, null, 2)); const [rawAgentDirs, setRawAgentDirs] = useState(() => JSON.stringify(baseline.agent_directories, null, 2)); const [rawNetwork, setRawNetwork] = useState(() => JSON.stringify(baseline.network, null, 2)); const [rawSockets, setRawSockets] = useState(() => JSON.stringify(baseline.unix_sockets, null, 2)); const [rawResources, setRawResources] = useState(() => JSON.stringify(sandboxResourceLimitsForWire(baseline.resource_limits), null, 2));
   // The audited common-rule presets. They are pure row inserters: nothing from
   // the catalog is persisted, so a profile never depends on it being loaded.
   const [commonRules, setCommonRules] = useState({ version: 0, categories: [], informational: [], global_filesystem: [], global_network: [], global_unix_sockets: [], network_packs: [], network_templates: [], socket_templates: [], global_config_warnings: [] });
@@ -1366,11 +1374,11 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
     return next;
   }) }));
   const setEnv = (index, patch) => setDraft((value) => ({ ...value, environment: value.environment.map((row, i) => i === index ? { ...row, ...patch } : row) }));
-  const parseRaw = () => { const filesystem = JSON.parse(rawFS || '[]'); const filesystem_spellings = JSON.parse(rawSpellings || 'null'); const environment = JSON.parse(rawEnv || '[]'); const includes = JSON.parse(rawIncludes || '[]'); const agent_directories = JSON.parse(rawAgentDirs || '[]'); const network = JSON.parse(rawNetwork || '{}'); const unix_sockets = JSON.parse(rawSockets || '{}'); if (![filesystem, environment, includes, agent_directories].every(Array.isArray)) throw new Error('filesystem, environment, includes and agent dirs must be arrays'); if (filesystem_spellings !== null && (!filesystem_spellings || Array.isArray(filesystem_spellings))) throw new Error('filesystem spellings must be a JSON object or null'); if (!network || typeof network !== 'object' || Array.isArray(network) || !unix_sockets || typeof unix_sockets !== 'object' || Array.isArray(unix_sockets)) throw new Error('network and unix sockets must be JSON objects'); if (network.allow != null && !Array.isArray(network.allow) || network.deny != null && !Array.isArray(network.deny) || unix_sockets.allow != null && !Array.isArray(unix_sockets.allow)) throw new Error('network allow/deny and Unix-socket allow fields must be arrays'); if (network.packs != null && !Array.isArray(network.packs) || network.deny_packs != null && !Array.isArray(network.deny_packs)) throw new Error('network packs and deny_packs must be arrays'); const rowError = accessRowShapeError(network, unix_sockets); if (rowError) throw new Error(rowError); const axes = sandboxAccessAxes({ network, unix_sockets }); return { filesystem, filesystem_spellings, environment, includes, agent_directories, network: axes.network, unix_sockets: axes.unix_sockets }; };
+  const parseRaw = () => { const filesystem = JSON.parse(rawFS || '[]'); const filesystem_spellings = JSON.parse(rawSpellings || 'null'); const environment = JSON.parse(rawEnv || '[]'); const includes = JSON.parse(rawIncludes || '[]'); const agent_directories = JSON.parse(rawAgentDirs || '[]'); const network = JSON.parse(rawNetwork || '{}'); const unix_sockets = JSON.parse(rawSockets || '{}'); const resource_limits = JSON.parse(rawResources || '{}'); if (![filesystem, environment, includes, agent_directories].every(Array.isArray)) throw new Error('filesystem, environment, includes and agent dirs must be arrays'); if (filesystem_spellings !== null && (!filesystem_spellings || Array.isArray(filesystem_spellings))) throw new Error('filesystem spellings must be a JSON object or null'); if (!network || typeof network !== 'object' || Array.isArray(network) || !unix_sockets || typeof unix_sockets !== 'object' || Array.isArray(unix_sockets) || !resource_limits || typeof resource_limits !== 'object' || Array.isArray(resource_limits)) throw new Error('network and unix sockets must be JSON objects; resource limits must be a JSON object'); if (network.allow != null && !Array.isArray(network.allow) || network.deny != null && !Array.isArray(network.deny) || unix_sockets.allow != null && !Array.isArray(unix_sockets.allow)) throw new Error('network allow/deny and Unix-socket allow fields must be arrays'); if (network.packs != null && !Array.isArray(network.packs) || network.deny_packs != null && !Array.isArray(network.deny_packs)) throw new Error('network packs and deny_packs must be arrays'); const resourceErrors = sandboxResourceLimitErrors(resource_limits); if (resourceErrors.length) throw new Error(resourceErrors[0]); const rowError = accessRowShapeError(network, unix_sockets); if (rowError) throw new Error(rowError); const axes = sandboxAccessAxes({ network, unix_sockets }); return { filesystem, filesystem_spellings, environment, includes, agent_directories, network: axes.network, unix_sockets: axes.unix_sockets, resource_limits: sandboxResourceLimitsForWire(resource_limits) }; };
   const applyRaw = () => { try { const parsed = parseRaw(); setDraft((value) => ({ ...value, ...parsed, filesystem: sandboxFilesystemEditorRows(parsed.filesystem, parsed.filesystem_spellings) })); state.error.value = ''; return true; } catch (error) { state.error.value = error.message || String(error); return false; } };
-  const toggleAdvanced = () => { if (advanced && !applyRaw()) return; if (!advanced) { const wire = sandboxFilesystemWire(draft, baseline); setRawFS(JSON.stringify(wire.filesystem, null, 2)); setRawSpellings(JSON.stringify(wire.filesystem_spellings, null, 2)); setRawEnv(JSON.stringify(draft.environment, null, 2)); setRawIncludes(JSON.stringify(draft.includes, null, 2)); setRawAgentDirs(JSON.stringify(draft.agent_directories, null, 2)); setRawNetwork(JSON.stringify(draft.network, null, 2)); setRawSockets(JSON.stringify(draft.unix_sockets, null, 2)); } setAdvanced(!advanced); };
+  const toggleAdvanced = () => { if (advanced && !applyRaw()) return; if (!advanced) { const wire = sandboxFilesystemWire(draft, baseline); setRawFS(JSON.stringify(wire.filesystem, null, 2)); setRawSpellings(JSON.stringify(wire.filesystem_spellings, null, 2)); setRawEnv(JSON.stringify(draft.environment, null, 2)); setRawIncludes(JSON.stringify(draft.includes, null, 2)); setRawAgentDirs(JSON.stringify(draft.agent_directories, null, 2)); setRawNetwork(JSON.stringify(draft.network, null, 2)); setRawSockets(JSON.stringify(draft.unix_sockets, null, 2)); setRawResources(JSON.stringify(sandboxResourceLimitsForWire(draft.resource_limits), null, 2)); } setAdvanced(!advanced); };
   const submit = async () => {
-    let value = { ...draft, ...sandboxFilesystemWire(draft, baseline) };
+    let value = { ...draft, ...sandboxFilesystemWire(draft, baseline), resource_limits: sandboxResourceLimitsForWire(draft.resource_limits) };
     if (advanced) { try { value = { ...draft, ...parseRaw() }; } catch (error) { state.error.value = error.message || String(error); return; } }
     await actions.saveSandbox({ draft: value, original: seed, options });
   };
@@ -1382,7 +1390,7 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
     wasSaving.current = saving;
   }, [saving]);
   useEffect(() => { if (advanced) return undefined; let active = true; const generation = ++directoryGeneration.current; const filesystem = clone(draft.filesystem); const timer = setTimeout(async () => { try { const result = await actions.inspectDirectories(filesystem); if (active && generation === directoryGeneration.current) setDirectoryStatus({ missing: result?.missing || [], creatable: result?.creatable || [] }); } catch (_) { if (active && generation === directoryGeneration.current) setDirectoryStatus({ missing: [], creatable: [] }); } }, 300); return () => { active = false; clearTimeout(timer); }; }, [advanced, filesystemSignature]);
-  let predictionDraft = { ...draft, ...sandboxFilesystemWire(draft, baseline) };
+  let predictionDraft = { ...draft, ...sandboxFilesystemWire(draft, baseline), resource_limits: sandboxResourceLimitsForWire(draft.resource_limits) };
   let predictionDraftError = '';
   if (advanced) {
     try { predictionDraft = { ...draft, ...parseRaw() }; }
@@ -1399,12 +1407,12 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
   const networkPackVisibilityError = hiddenNetworkPacks.length
     ? `Saving is paused because release-owned network intent cannot be displayed for: ${hiddenNetworkPacks.join(', ')}.${commonRuleFeedBusy ? ' The pack catalog is still loading.' : commonRuleFeedError ? ` Catalog error: ${commonRuleFeedError}` : ' Retry the common-rule catalog.'}`
     : '';
-  const accessErrors = sandboxAccessDraftErrors(draft);
+  const accessErrors = [...sandboxAccessDraftErrors(draft), ...sandboxResourceLimitErrors(draft.resource_limits)];
   // Raw JSON is authoritative while Advanced is open, so a repaired raw axis
   // can resume preview even if the hidden structured draft remains invalid.
   const predictionAccessErrors = predictionDraftError ? [] : advanced
     ? [
-      ...sandboxAccessDraftErrors(predictionDraft),
+      ...sandboxAccessDraftErrors(predictionDraft), ...sandboxResourceLimitErrors(predictionDraft.resource_limits),
       ...(networkPackVisibilityError ? [networkPackVisibilityError] : []),
     ]
     : [
@@ -1444,9 +1452,25 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
     return () => { active = false; clearTimeout(timer); };
   }, [predictionSignature]);
   const createMissing = async () => { const filesystem = clone(draft.filesystem); const signature = JSON.stringify(filesystem); const generation = ++directoryGeneration.current; setDirectoryBusy(true); state.error.value = ''; try { const result = await actions.createDirectories(filesystem); const refreshed = await actions.inspectDirectories(filesystem); if (generation === directoryGeneration.current && signature === latestFilesystem.current) { const created = result?.created || []; state.error.value = `Created ${created.length} sandbox director${created.length === 1 ? 'y' : 'ies'}.`; setDirectoryStatus({ missing: refreshed?.missing || [], creatable: refreshed?.creatable || [] }); } } catch (error) { if (generation === directoryGeneration.current) state.error.value = error.message || String(error); } finally { setDirectoryBusy(false); } };
-  const configureWithAgent = () => { let value = { ...draft, ...sandboxFilesystemWire(draft, baseline) }; if (advanced) { try { value = { ...draft, ...parseRaw() }; } catch (error) { state.error.value = error.message || String(error); return; } } const editExisting = options.editExisting ?? !!seed; const targetName = editExisting ? options.targetName || seed?.name || '' : ''; state.closeDialog(); void actions.configureSandboxWithAgent(value, { targetName, editExisting, cloneSourceName: options.cloneSourceName, onCreate: options.onCreate }); };
+  const configureWithAgent = () => {
+    let value = { ...draft, ...sandboxFilesystemWire(draft, baseline), resource_limits: sandboxResourceLimitsForWire(draft.resource_limits) };
+    if (advanced) {
+      try { value = { ...draft, ...parseRaw() }; }
+      catch (error) { state.error.value = error.message || String(error); return; }
+    }
+    const handoffErrors = [
+      ...sandboxAccessDraftErrors(value),
+      ...sandboxResourceLimitErrors(value.resource_limits),
+      ...(networkPackVisibilityError ? [networkPackVisibilityError] : []),
+    ];
+    if (handoffErrors.length) { state.error.value = handoffErrors[0]; return; }
+    const editExisting = options.editExisting ?? !!seed;
+    const targetName = editExisting ? options.targetName || seed?.name || '' : '';
+    state.closeDialog();
+    void actions.configureSandboxWithAgent(value, { targetName, editExisting, cloneSourceName: options.cloneSourceName, onCreate: options.onCreate });
+  };
   const structuredFilesystemWire = sandboxFilesystemWire(draft, baseline);
-  const rawDirty = advanced && [rawFS !== JSON.stringify(structuredFilesystemWire.filesystem, null, 2), rawSpellings !== JSON.stringify(structuredFilesystemWire.filesystem_spellings, null, 2), rawEnv !== JSON.stringify(draft.environment, null, 2), rawIncludes !== JSON.stringify(draft.includes, null, 2), rawAgentDirs !== JSON.stringify(draft.agent_directories, null, 2), rawNetwork !== JSON.stringify(draft.network, null, 2), rawSockets !== JSON.stringify(draft.unix_sockets, null, 2)].some(Boolean);
+  const rawDirty = advanced && [rawFS !== JSON.stringify(structuredFilesystemWire.filesystem, null, 2), rawSpellings !== JSON.stringify(structuredFilesystemWire.filesystem_spellings, null, 2), rawEnv !== JSON.stringify(draft.environment, null, 2), rawIncludes !== JSON.stringify(draft.includes, null, 2), rawAgentDirs !== JSON.stringify(draft.agent_directories, null, 2), rawNetwork !== JSON.stringify(draft.network, null, 2), rawSockets !== JSON.stringify(draft.unix_sockets, null, 2), rawResources !== JSON.stringify(sandboxResourceLimitsForWire(draft.resource_limits), null, 2)].some(Boolean);
   // A preset inserts ordinary deny rows and then forgets it ever existed: no
   // stored ID, no hidden state. Paths already present in the table are left
   // exactly as authored rather than silently re-denied, and the notice says so.
@@ -1517,6 +1541,15 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
         ${commonRuleNotice.warning ? html`<span class="sbx-common-rule-warn">⚠ ${commonRuleNotice.warning}</span>` : null}
         <button type="button" class="sbx-common-rule-dismiss" aria-label="Dismiss common-rule notice" onClick=${() => setCommonRuleNotice(null)}>×</button>
       </div>`}
+    </${SandboxSection}>
+    <${SandboxSection} id="sandbox-profile-editor-resource-limits-section" label="Resource limits — Linux only"
+      help="Optional hard cgroup-v2 ceilings for the aggregate managed agent workload. Child test and build processes share the same budget. Linux harness-builtin, tclaude-layer, and stacked launches can enforce them; macOS and sandbox implementation off cannot. Blank fields preserve the existing launch path and do not probe cgroups."
+      hidden=${advanced} entryCount=${Number(!!draft.resource_limits.memory) + Number(String(draft.resource_limits.cpu ?? '').trim() !== '')}>
+      <div class="sbx-resource-intro"><strong>Linux only.</strong> Limits cover the harness and all descendant test/build workers. Generic host-memory views such as <code>/proc/meminfo</code> may still show total host RAM.</div>
+      <div class="sbx-resource-fields">
+        <label>Memory <input id="sandbox-profile-editor-memory-limit" value=${draft.resource_limits.memory} placeholder="e.g. 4GiB or 512MB" autocomplete="off" spellcheck="false" onInput=${(event) => setDraft((value) => ({ ...value, resource_limits: { ...value.resource_limits, memory: event.currentTarget.value } }))}/></label>
+        <label>CPU cores <input id="sandbox-profile-editor-cpu-limit" value=${draft.resource_limits.cpu} placeholder="e.g. 0.5 or 2" inputmode="decimal" autocomplete="off" spellcheck="false" onInput=${(event) => setDraft((value) => ({ ...value, resource_limits: { ...value.resource_limits, cpu: event.currentTarget.value } }))}/></label>
+      </div>
     </${SandboxSection}>
     <${SandboxSection} id="sandbox-profile-editor-environment-section" label="Environment"
       help=${ENVIRONMENT_HELP} hidden=${advanced} entryCount=${draft.environment.length}><div class="sbx-rows">${draft.environment.map((row, index) => html`<div key=${index} class="sbx-row sbx-environment-row"><input class="sbx-env-name" value=${row.name || ''} placeholder="NAME" onInput=${(event) => setEnv(index, { name: event.currentTarget.value })}/><input class="sbx-env-value" value=${row.value || ''} placeholder="value" onInput=${(event) => setEnv(index, { value: event.currentTarget.value })}/><button type="button" onClick=${() => setDraft((value) => ({ ...value, environment: value.environment.filter((_, i) => i !== index) }))}>×</button></div>`)}</div><button type="button" class="sbx-add-row" onClick=${() => setDraft((value) => ({ ...value, environment: [...value.environment, { name: '', value: '' }] }))}>＋ add variable</button></${SandboxSection}>
@@ -1603,7 +1636,7 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
     </${SandboxSection}>
     ${!advanced && accessErrors.map((error, index) => html`<div key=${index} class="sbx-access-validation" role="alert">⚠ ${error}</div>`)}
     ${!advanced && directoryStatus.missing.length > 0 && html`<div class="sbx-missing"><span>${directoryStatus.missing.length} director${directoryStatus.missing.length === 1 ? 'y does' : 'ies do'} not exist. Saving is allowed; read/write rules activate on a later launch, while deny targets must exist before launch.</span>${directoryStatus.creatable.length > 0 && html`<button type="button" disabled=${directoryBusy || saving} onClick=${createMissing}>${directoryBusy ? 'Creating…' : `Create ${directoryStatus.creatable.length} missing director${directoryStatus.creatable.length === 1 ? 'y' : 'ies'}`}</button>`}</div>`}
-    <button type="button" class="sbx-advanced-toggle" aria-expanded=${advanced} onClick=${toggleAdvanced}>${advanced ? '▾' : '▸'} Advanced — edit raw JSON</button>${advanced && html`<div class="sbx-advanced-body"><${Row} label="Filesystem JSON"><textarea id="sandbox-profile-editor-filesystem" rows="6" value=${rawFS} onInput=${(event) => setRawFS(event.currentTarget.value)}/></${Row}><${Row} label="Filesystem spellings JSON"><textarea id="sandbox-profile-editor-filesystem-spellings" rows="6" value=${rawSpellings} onInput=${(event) => setRawSpellings(event.currentTarget.value)}/></${Row}><${Row} label="Environment JSON"><textarea id="sandbox-profile-editor-environment" rows="6" value=${rawEnv} onInput=${(event) => setRawEnv(event.currentTarget.value)}/></${Row}><${Row} label="Network JSON"><textarea id="sandbox-profile-editor-network" rows="6" value=${rawNetwork} onInput=${(event) => setRawNetwork(event.currentTarget.value)}/></${Row}><${Row} label="Unix sockets JSON"><textarea id="sandbox-profile-editor-unix-sockets" rows="6" value=${rawSockets} onInput=${(event) => setRawSockets(event.currentTarget.value)}/></${Row}><${Row} label="Includes JSON"><textarea id="sandbox-profile-editor-includes" rows="3" value=${rawIncludes} onInput=${(event) => setRawIncludes(event.currentTarget.value)}/></${Row}><${Row} label="Agent dirs JSON"><textarea id="sandbox-profile-editor-agent-directories" rows="3" value=${rawAgentDirs} onInput=${(event) => setRawAgentDirs(event.currentTarget.value)}/></${Row}></div>`}
+    <button type="button" class="sbx-advanced-toggle" aria-expanded=${advanced} onClick=${toggleAdvanced}>${advanced ? '▾' : '▸'} Advanced — edit raw JSON</button>${advanced && html`<div class="sbx-advanced-body"><${Row} label="Filesystem JSON"><textarea id="sandbox-profile-editor-filesystem" rows="6" value=${rawFS} onInput=${(event) => setRawFS(event.currentTarget.value)}/></${Row}><${Row} label="Filesystem spellings JSON"><textarea id="sandbox-profile-editor-filesystem-spellings" rows="6" value=${rawSpellings} onInput=${(event) => setRawSpellings(event.currentTarget.value)}/></${Row}><${Row} label="Environment JSON"><textarea id="sandbox-profile-editor-environment" rows="6" value=${rawEnv} onInput=${(event) => setRawEnv(event.currentTarget.value)}/></${Row}><${Row} label="Network JSON"><textarea id="sandbox-profile-editor-network" rows="6" value=${rawNetwork} onInput=${(event) => setRawNetwork(event.currentTarget.value)}/></${Row}><${Row} label="Unix sockets JSON"><textarea id="sandbox-profile-editor-unix-sockets" rows="6" value=${rawSockets} onInput=${(event) => setRawSockets(event.currentTarget.value)}/></${Row}><${Row} label="Resource limits JSON"><textarea id="sandbox-profile-editor-resource-limits" rows="3" value=${rawResources} onInput=${(event) => setRawResources(event.currentTarget.value)}/></${Row}><${Row} label="Includes JSON"><textarea id="sandbox-profile-editor-includes" rows="3" value=${rawIncludes} onInput=${(event) => setRawIncludes(event.currentTarget.value)}/></${Row}><${Row} label="Agent dirs JSON"><textarea id="sandbox-profile-editor-agent-directories" rows="3" value=${rawAgentDirs} onInput=${(event) => setRawAgentDirs(event.currentTarget.value)}/></${Row}></div>`}
     <div role="alert" class="cron-create-error">${state.error.value}</div><div class="modal-buttons"><button disabled=${saving || directoryBusy} onClick=${() => { void requestClose(); }}>Cancel</button><button id="sandbox-profile-editor-scribe" disabled=${saving || directoryBusy} onClick=${configureWithAgent}>🤖 configure with agent</button><span class="spacer"></span><button ref=${submitRef} id="sandbox-profile-editor-submit" class="primary" disabled=${submitBlocked} onClick=${submit}>${saving ? 'Saving…' : 'Save sandbox profile'}</button></div></${Overlay}>`;
 }
 
@@ -1645,7 +1678,7 @@ function SandboxImport({ current, state, actions, confirmDiscard }) {
     setError(''); setBusy('inspect');
     try {
       const parsed = JSON.parse(raw);
-      if (parsed?.format !== 'tclaude-sandbox-profiles' || ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10].includes(parsed?.format_version)) throw new Error('not a tclaude sandbox-profile export');
+      if (parsed?.format !== 'tclaude-sandbox-profiles' || ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].includes(parsed?.format_version)) throw new Error('not a tclaude sandbox-profile export');
       const found = await actions.inspectSandboxBundle(parsed);
       setEnvelope(parsed); setPreview(found);
     } catch (e) {
