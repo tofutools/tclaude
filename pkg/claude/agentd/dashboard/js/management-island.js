@@ -289,11 +289,77 @@ function sandboxContextLabel(contexts, index) {
   return 'global assignment';
 }
 
+/* TCL-914. The network entries for ONE assignment context — the single
+   definition shared by both readers of that value. SandboxPolicyResult decides
+   what to RENDER and sandboxPolicyNeedsAttention decides whether to RAISE
+   ATTENTION; those are the same question about the same context, so they get one
+   predicate. They previously each spelled the expression out, and nothing kept
+   the two copies in step.
+
+   The fallback keys on whether the daemon sent the LIST AT ALL, never on whether
+   one index holds entries. Those are different questions and only the first has
+   a fallback answer:
+
+   - No `context_network_entries` at all. THREE shapes produce this, and the
+     fallback is right for all three: an OLD daemon that never computed
+     per-context entries; a CURRENT daemon with no effective assignment contexts
+     to compute them for (describePredictedDraftSandboxProfile returns nil for
+     every per-context slice when len(contexts) == 0); and a target REFUSED
+     OUTRIGHT, whose draft-enforcement append carries only Target/ResolvedBy/
+     Predicted/Refusal and so omits the network entries as well as the axes. The
+     second is the same shape `target.context_axes?.[i] || target.axes` already
+     falls back for, one line above. In the third, `network_entries` is nil too,
+     so the fallback yields [] — and consumers must branch on the refusal before
+     any of this matters, which SandboxPolicyResult does below.
+   - The list exists — it is AUTHORITATIVE for every index in it, INCLUDING a
+     null one. The daemon writes an explicit null at a refused index to stay
+     index-aligned with context_axes, and that null means "this context produced
+     no entries". That is a VERDICT, not a gap: filling it from
+     `target.network_entries` would attribute the DRAFT-ONLY prediction — a
+     different policy, which no launch uses — to this context.
+
+   An index NOT in the list returns [] as well, where the old expression fell
+   back. Said plainly because it is a behaviour change the paragraph above does
+   not cover: "authoritative for every index IN it" is silent about an index past
+   the end. It is unreachable — context_network_entries, context_axes and
+   context_refusals are built in one loop and truncated under the same
+   len(response.Contexts) bound in the draft-enforcement handler, so they are
+   equal-length, and both call sites are gated on
+   prediction.contexts[effectiveContext] existing — and the strict answer is the
+   right one anyway: an index the daemon never described has no verdict, and the
+   draft-only rows are not it.
+
+   Null at an index is EXCLUSIVELY the refusal marker, which is what lets this
+   treat it as a verdict rather than as missing data. Verified against the only
+   producer, describePredictedDraftSandboxProfile's per-context loop: the success
+   path appends `append([]harness.PredictedNetworkEntry{}, ...)`, non-nil even
+   when empty, so a context with genuinely zero network rows serializes as `[]`
+   and never as null; the sole nil-appending path is the typed-capability
+   refusal, which appends a non-nil refusal at the SAME index in the same block.
+   A null here therefore always has a refusal beside it — it is never an error
+   swallowed (derivation and untyped prediction errors fail the whole request),
+   an early return, or a display cap (the cap drops whole trailing indexes and
+   never nulls one in range).
+
+   Cited by symbol rather than by line on purpose: an earlier draft of this
+   comment carried line numbers that its own follow-up commit invalidated by
+   adding lines above the code they pointed at.
+
+   `??` cannot express that, because null is nullish and so takes the fallback in
+   exactly the case the fallback is wrong for. Neither can a per-index
+   `Array.isArray` check that falls back on a miss: handed an explicit null it
+   returns `target.network_entries`, which is what `??` already did. */
+function sandboxContextNetworkEntries(target, contextIndex) {
+  const perContext = target?.context_network_entries;
+  if (!Array.isArray(perContext)) return target?.network_entries ?? [];
+  const entries = perContext[contextIndex];
+  return Array.isArray(entries) ? entries : [];
+}
+
 export function SandboxPolicyResult({ target, context, contextIndex, contexts = [] }) {
   const [ruleHelpOpen, setRuleHelpOpen] = useState('');
   const axes = target.context_axes?.[contextIndex] || target.axes || {};
-  const networkEntries = target.context_network_entries?.[contextIndex]
-    ?? target.network_entries ?? [];
+  const networkEntries = sandboxContextNetworkEntries(target, contextIndex);
   /* TCL-885. A refused target carries NO axes, so it must be read here before
      anything touches `axes` — sandboxRuleBuckets substitutes
      {outcome:'not_enforced', detail:'No enforcement verdict was returned.'} for
@@ -373,8 +439,7 @@ export function SandboxPolicyResult({ target, context, contextIndex, contexts = 
 
 export function sandboxPolicyNeedsAttention(target, context, contextIndex) {
   const axes = target.context_axes?.[contextIndex] || target.axes || {};
-  const networkEntries = target.context_network_entries?.[contextIndex]
-    ?? target.network_entries ?? [];
+  const networkEntries = sandboxContextNetworkEntries(target, contextIndex);
   return sandboxRuleBuckets(
     axes, context, networkEntries, sandboxTargetRefusal(target, contextIndex),
   ).launchRefused

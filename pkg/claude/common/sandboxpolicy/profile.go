@@ -159,7 +159,7 @@ var environmentNameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 var reservedEnvironmentNames = map[string]struct{}{
 	"HOME": {}, "PATH": {}, "SHELL": {}, "TMPDIR": {}, "TMP": {}, "TEMP": {},
 	"CLAUDE_CONFIG_DIR": {}, "XDG_CONFIG_HOME": {}, "TMUX": {}, "TMUX_PANE": {},
-	"NODE_OPTIONS": {}, "BASH_ENV": {}, "ENV": {},
+	"BASH_ENV": {}, "ENV": {},
 }
 
 var reservedEnvironmentPrefixes = []string{
