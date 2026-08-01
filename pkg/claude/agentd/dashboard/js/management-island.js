@@ -10,9 +10,11 @@ import {
   sandboxAccessDraftErrors,
   sandboxNetworkAuthoring,
   sandboxOtherAssignmentWarnings,
+  sandboxOtherContextRefusals,
   sandboxProfileSummary,
   sandboxRuleBuckets,
   sandboxTargetLabel,
+  sandboxTargetRefusal,
 } from './sandbox-profiles-data.js';
 import { CODEX_BUILTIN_FILTERED_NETWORK_DETAIL } from './sandbox-network-disclosure.js';
 import { pickDirectory } from './helpers.js';
@@ -267,13 +269,66 @@ function SandboxOutcomeBucket({
   </details>`;
 }
 
-function SandboxPolicyResult({ target, context, contextIndex }) {
+/* The label the context selector gives an assignment, so a warning about
+   another assignment names something the operator can actually locate in the
+   dropdown rather than an opaque ordinal.
+
+   It mirrors the selector's option text but does NOT share its discriminator:
+   the selector distinguishes the global assignment by `global === draft.name`,
+   this by the presence of `explicit`. They agree for every role shape that
+   produces more than one context, and this helper only ever runs when there is
+   another assignment to name — the one divergent shape (an unsaved draft named
+   identically to the existing global profile) arises solely in the
+   single-context fallback. Stated rather than claimed "kept in step", so the
+   next person to touch the selector knows the two are not literally coupled. */
+function sandboxContextLabel(contexts, index) {
+  const value = contexts?.[index]?.context;
+  if (!value) return `assignment ${index + 1}`;
+  if (value.group_name) return `group ${value.group_name}`;
+  if (value.explicit) return 'explicit selection';
+  return 'global assignment';
+}
+
+export function SandboxPolicyResult({ target, context, contextIndex, contexts = [] }) {
   const [ruleHelpOpen, setRuleHelpOpen] = useState('');
   const axes = target.context_axes?.[contextIndex] || target.axes || {};
   const networkEntries = target.context_network_entries?.[contextIndex]
     ?? target.network_entries ?? [];
-  const buckets = sandboxRuleBuckets(axes, context, networkEntries);
-  const otherWarnings = sandboxOtherAssignmentWarnings(target.axes, axes);
+  /* TCL-885. A refused target carries NO axes, so it must be read here before
+     anything touches `axes` — sandboxRuleBuckets substitutes
+     {outcome:'not_enforced', detail:'No enforcement verdict was returned.'} for
+     a missing axis, and a refusal that fell into that path would render as
+     "unsupported, no verdict returned" with launchRefused FALSE: an operator
+     told nothing is wrong while the launch is blocked.
+
+     This branch is a deliberate MINIMUM, not the ticket's row type. The row-type
+     design is the operator's open decision; this reuses the existing
+     .sbx-launch-blocked element so the preview cannot regress below today's
+     honest refusal in the meantime. Whatever the operator picks refines what
+     this renders, not whether it exists — so keep it structureless: capability
+     text and remedy, no buckets, no grouping, no vocabulary of its own. */
+  const refusal = sandboxTargetRefusal(target, contextIndex);
+  const buckets = sandboxRuleBuckets(axes, context, networkEntries, refusal);
+  /* A refusal in an assignment context the operator is NOT looking at, plus any
+     from contexts past the display cap. The pre-existing axis-based check cannot
+     find these: a refused context contributes nothing to the aggregate axes by
+     design, so there is no verdict for it to compare. Without this the editor
+     would render a clean preview for the selected context and say nothing at all
+     about an assignment whose launch is blocked. */
+  const otherRefusals = sandboxOtherContextRefusals(target, contextIndex);
+  const otherWarnings = [
+    ...sandboxOtherAssignmentWarnings(target.axes, axes),
+    // A distinct axis per entry: it is the list key, and several omitted
+    // refusals would otherwise share one.
+    ...otherRefusals.map(({ index, refusal }, position) => ({
+      axis: index === null ? `refusal-omitted-${position}` : `refusal-${index}`,
+      label: index === null
+        ? 'An assignment omitted from this selector'
+        : sandboxContextLabel(contexts, index),
+      outcome: 'refused',
+      detail: refusal.message,
+    })),
+  ];
   const otherLaunchRefused = otherWarnings.some((warning) => warning.outcome === 'refused');
   const partialCount = buckets.partial.rules.length;
   const unsupportedCount = buckets.notApplied.rules.length;
@@ -290,13 +345,15 @@ function SandboxPolicyResult({ target, context, contextIndex }) {
       <div>The overall safety check includes every assignment, including any omitted from the selector.</div>
       <ul>${otherWarnings.map((warning) => html`<li key=${warning.axis}><strong>${warning.label}:</strong> ${warning.detail}</li>`)}</ul>
     </div>`}
-    ${buckets.launchRefused && html`<div class="sbx-launch-blocked" role="alert">This target refuses the launch. Unsupported rules are not silently skipped.</div>`}
+    ${buckets.launchRefused && html`<div class="sbx-launch-blocked" role="alert">${refusal
+    ? `This target cannot enforce this policy, so the launch is refused. ${refusal.message}`
+    : 'This target refuses the launch. Unsupported rules are not silently skipped.'}</div>`}
     ${/* The Applied bucket ships closed — a fully supported policy needs no
          attention. A remapped rule is the exception: the editor row shows only a
          glyph, so this line is where the host → sandbox mapping is actually
          legible, and a mapping two collapses deep is not a disclosure. Only
          profiles that use a mount path are affected. */ ''}
-    <${SandboxOutcomeBucket} bucket=${buckets.applied} open=${buckets.applied.hasMountPath === true}
+    ${!refusal && html`<${SandboxOutcomeBucket} bucket=${buckets.applied} open=${buckets.applied.hasMountPath === true}
       helpOpen=${ruleHelpOpen} setHelpOpen=${setRuleHelpOpen}
       helpPrefix=${helpPrefix} targetLabel=${targetLabel}/>
     <${SandboxOutcomeBucket} bucket=${buckets.partial} open=${true}
@@ -304,7 +361,7 @@ function SandboxPolicyResult({ target, context, contextIndex }) {
       helpPrefix=${helpPrefix} targetLabel=${targetLabel}/>
     <${SandboxOutcomeBucket} bucket=${buckets.notApplied} open=${true}
       helpOpen=${ruleHelpOpen} setHelpOpen=${setRuleHelpOpen}
-      helpPrefix=${helpPrefix} targetLabel=${targetLabel}/>
+      helpPrefix=${helpPrefix} targetLabel=${targetLabel}/>`}
     <details class="sbx-target-details"><summary>Evaluation details</summary>
       ${target.target.sandbox ? html`<div>Sandbox mode: ${sandboxModeDetail(target.target.harness, target.target.sandbox)}</div>` : null}
       ${target.resolved_by
@@ -314,12 +371,15 @@ function SandboxPolicyResult({ target, context, contextIndex }) {
   </div>`;
 }
 
-function sandboxPolicyNeedsAttention(target, context, contextIndex) {
+export function sandboxPolicyNeedsAttention(target, context, contextIndex) {
   const axes = target.context_axes?.[contextIndex] || target.axes || {};
   const networkEntries = target.context_network_entries?.[contextIndex]
     ?? target.network_entries ?? [];
-  return sandboxRuleBuckets(axes, context, networkEntries).launchRefused
-    || sandboxOtherAssignmentWarnings(target.axes, axes).length > 0;
+  return sandboxRuleBuckets(
+    axes, context, networkEntries, sandboxTargetRefusal(target, contextIndex),
+  ).launchRefused
+    || sandboxOtherAssignmentWarnings(target.axes, axes).length > 0
+    || sandboxOtherContextRefusals(target, contextIndex).length > 0;
 }
 
 function accessRowShapeError(network, unixSockets) {
@@ -1397,7 +1457,7 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
         role="status" aria-live="polite" aria-atomic="true">
         <strong>${SANDBOX_PROFILE_LAYERS_LABEL}:</strong> ${sandboxProfileLayersText(selectedEffective.context, 'this draft alone — no global or group sandbox profile applies')}
       </div>`}
-      ${selectedEffective && prediction?.targets?.map((target, index) => html`<${SandboxPolicyResult} key=${index} target=${target} context=${selectedEffective} contextIndex=${effectiveContext}/>`)}
+      ${selectedEffective && prediction?.targets?.map((target, index) => html`<${SandboxPolicyResult} key=${index} target=${target} context=${selectedEffective} contextIndex=${effectiveContext} contexts=${prediction.contexts}/>`)}
       ${(selectedEffective?.notices || []).length > 0 && html`<div class="sbx-a11y-status" role="status" aria-live="polite" aria-atomic="true">Policy composition warning: ${selectedEffective.notices.map((notice) => notice.detail).join('. ')}</div>`}
       ${selectedEffective && html`<details class="sbx-composition-details"><summary>How these rules were combined</summary>
         ${/* The layer list itself is the always-visible row above; this

@@ -221,15 +221,71 @@ export function sandboxAccessDraftErrors(draft) {
   return errors;
 }
 
+/* A per-target refusal (TCL-885). The daemon returns it when this target's
+   harness cannot enforce this policy at all — decided BEFORE any individual rule
+   was judged, so the target carries no axes. It is deliberately its own field
+   rather than an axis outcome: `sandboxRuleBuckets` already substitutes
+   {outcome:'not_enforced'} for an axis an OLD daemon omitted, and a refusal
+   folded into that path would be indistinguishable from that fallback — a
+   refusal silently reading as "not enforced" is the exact failure this ticket
+   removes. Every consumer must call this BEFORE reading axes.
+
+   `contextIndex` selects the effective-assignment context the editor is showing;
+   a refusal formed only in that context wins over the target-wide one. */
+export function sandboxTargetRefusal(target = {}, contextIndex = null) {
+  const scoped = Number.isInteger(contextIndex)
+    ? target.context_refusals?.[contextIndex] : null;
+  return scoped || target.refusal || null;
+}
+
+/* Contexts OTHER than the one on screen that this target refuses. The overall
+   safety check covers every assignment, so a refusal in an unselected context
+   must still be visible — the same contract sandboxOtherAssignmentWarnings
+   carries for axis verdicts. */
+export function sandboxOtherContextRefusals(target = {}, contextIndex = null) {
+  const listed = (target.context_refusals || []).flatMap((refusal, index) =>
+    refusal && index !== contextIndex ? [{ index, refusal }] : []);
+  // Assignments past the display cap have no index of their own, and they
+  // contribute nothing to the aggregate either (it summarizes surviving contexts
+  // only) — so without these the editor would claim every assignment was checked
+  // while a refusal among the omitted ones went unmentioned.
+  return [
+    ...listed,
+    ...(target.omitted_refusals || []).map((refusal) => ({ index: null, refusal })),
+  ];
+}
+
 export function sandboxPredictionWarnings(prediction) {
   const capability = [];
   for (const target of prediction?.targets || []) {
+    // A refused target has no axes to iterate. Reading them anyway would report
+    // a fully-enforced profile, which is the most dangerous possible summary of
+    // a target that cannot run the policy at all.
+    const refusals = [
+      target.refusal,
+      ...(target.context_refusals || []),
+      ...(target.omitted_refusals || []),
+    ].filter(Boolean);
+    // Prefixed, because these land in the same flat warning line as
+    // "partially enforced" details. "This launch will be REFUSED" and "network
+    // is partly enforced" are not the same news, and an unlabelled join makes
+    // them read alike.
+    capability.push(...refusals.map((refusal) => `Launch refused: ${refusal.message}`));
+    if (target.refusal) continue;
     for (const axis of ['filesystem', 'environment', 'agent_directories', 'network', 'unix_sockets']) {
       const verdict = target.axes?.[axis];
       if (verdict && verdict.outcome !== 'enforced') capability.push(verdict.detail);
     }
   }
   const composition = (prediction?.contexts || []).flatMap((context) => context.notices || []);
+  /* The Set is deliberate and deliberately DISAGREES with the profile editor.
+     N contexts refusing for one reason render as N rows there — each naming its
+     group, except cap-omitted ones, which can only say an assignment was omitted
+     (TCL-913) — because "which and how many assignments are affected" is scope
+     the operator acts on. This is the spawn dialog's one-line summary, which has no
+     room to carry that scope, so identical messages collapse. Do not "fix" one
+     surface to match the other without deciding which question is being asked:
+     the divergence is the answer to two different ones. */
   return { capability: [...new Set(capability)], composition };
 }
 
@@ -339,12 +395,17 @@ function bucketKey(outcome) {
 // concrete effective rules grouped only by whether this target supports them.
 // `axes` should be the selected assignment's context_axes entry when present;
 // callers fall back to the target-wide worst-case axes for older daemons.
-export function sandboxRuleBuckets(axes = {}, context = {}, networkEntries = []) {
+// `refusal` short-circuits the whole bucketing: see sandboxTargetRefusal. A
+// refused target produces NO buckets rather than empty ones, because an empty
+// "Fully supported rules" bucket is itself a verdict, and none was reached. The
+// missing-axis fallback below must never be the path a refusal takes.
+export function sandboxRuleBuckets(axes = {}, context = {}, networkEntries = [], refusal = null) {
   const buckets = {
     applied: { key: 'applied', label: 'Fully supported rules', rules: [], items: [], reasons: [], hasMountPath: false },
     partial: { key: 'partial', label: 'Partially supported rules', rules: [], items: [], reasons: [], hasMountPath: false },
     notApplied: { key: 'not-applied', label: 'Unsupported rules', rules: [], items: [], reasons: [], hasMountPath: false },
   };
+  if (refusal) return { ...buckets, launchRefused: true, refusal };
   const networkPredictions = new Map();
   for (const prediction of networkEntries || []) {
     for (const key of prediction.keys || []) networkPredictions.set(key, prediction);
@@ -383,7 +444,7 @@ export function sandboxRuleBuckets(axes = {}, context = {}, networkEntries = [])
       }
     }
   }
-  return { ...buckets, launchRefused };
+  return { ...buckets, launchRefused, refusal: null };
 }
 
 const outcomeRank = {
