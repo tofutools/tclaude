@@ -61,10 +61,9 @@ func ClaimSpawnSlot(spawnerConvID string, maxPerWindow int, window time.Duration
 	if err != nil {
 		return err
 	}
-	// Normalise to UTC so the stored timestamps and the WHERE-clause
-	// threshold are in one zone — RFC3339Nano strings only compare
-	// correctly when the offset is identical, and a caller may hand us
-	// a local-zoned time.
+	// Canonicalise the caller's wall clock to UTC before deriving the stored
+	// instant and its threshold. INTEGER epoch comparisons are zone-independent;
+	// this removes location and monotonic-clock baggage at the boundary.
 	now = now.UTC()
 	threshold := dbTime(now.Add(-window))
 	nowStr := dbTime(now)

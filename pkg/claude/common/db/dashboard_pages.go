@@ -53,7 +53,7 @@ func retiredAgentQ(q string) (string, []any) {
 }
 
 // ListRetiredAgentsPage returns one newest-retirement-first page of retired
-// actors (agents.retired_at != ''), filtered by q and windowed by offset/limit.
+// actors (agents.retired_at IS NOT NULL), filtered by q and windowed by offset/limit.
 // limit <= 0 returns the whole (q-filtered) set with no LIMIT — the modal
 // "show all" path. The conv_index LEFT JOIN (PK conv_id, so 1:1) only exists to
 // let the title columns participate in the q filter; it never multiplies rows.

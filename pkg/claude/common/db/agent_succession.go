@@ -237,8 +237,8 @@ func ListAgentConvSuccessions() ([]*AgentConvSuccession, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Tie-break by rowid DESC so two writes within the same RFC3339
-	// second still have a deterministic order in the listing.
+	// Tie-break by rowid DESC so equal succeeded_at instants still have a
+	// deterministic insertion order in the listing.
 	rows, err := d.Query(`SELECT old_conv_id, new_conv_id, reason, succeeded_at
 		FROM agent_conv_succession ORDER BY succeeded_at DESC, rowid DESC`)
 	if err != nil {

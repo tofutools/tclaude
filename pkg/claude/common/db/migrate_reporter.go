@@ -209,21 +209,21 @@ var migrationSteps = []migrationStep{
 // commands never install a reporter, so they migrate silently: this output is
 // agentd-startup-only.
 //
-// A nil callback field is skipped. When the DB is already at head (or, rarely,
-// past it) migrate() applies nothing and fires ONLY AlreadyCurrent — none of
-// the Begin/Applying/Applied/Done bookends run — so a normal restart still
-// emits a single "nothing to migrate" line instead of the earlier silence
-// (which left an operator unable to tell a no-op restart from a migration that
-// failed before it could report anything).
+// A nil callback field is skipped. When the DB is already exactly at head,
+// migrate() applies nothing and fires ONLY AlreadyCurrent — none of the
+// Begin/Applying/Applied/Done bookends run — so a normal restart still emits a
+// single "nothing to migrate" line instead of the earlier silence (which left
+// an operator unable to tell a no-op restart from a migration that failed
+// before it could report anything). A DB past this binary's head is refused
+// before any callback fires because its storage representations may be newer
+// than this binary's readers.
 type MigrationReporter struct {
 	// AlreadyCurrent fires once, INSTEAD of the whole Begin…Done sequence, when
-	// migrate() finds no forward work: the DB is already at head (version ==
-	// head) or, pathologically, past it (version > head — a newer binary wrote
-	// the schema, so this older binary applies nothing and may not understand
-	// it). version is the DB's actual schema version; head is the version this
-	// binary knows (currentVersion), passed so the consumer can distinguish the
-	// benign at-head case from the version > head anomaly without importing the
-	// constant. This is the only callback that fires on a no-op restart.
+	// migrate() finds the DB already exactly at head. version is the DB's actual
+	// schema version and head is the version this binary knows (currentVersion),
+	// passed so the consumer can report the no-op without importing the constant.
+	// This is the only callback that fires on a no-op restart. A version greater
+	// than head is an error and fires no reporter callback.
 	AlreadyCurrent func(version, head int)
 	// Begin fires once before the first migration runs, when there is work to
 	// do. from is the DB's current schema version (0 for a brand-new DB), to

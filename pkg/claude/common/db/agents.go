@@ -393,16 +393,10 @@ func ConvsForAgent(agentID string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Order by rowid (link-insertion order), NOT linked_at. linked_at is stored
-	// as RFC3339Nano, whose trimmed / variable-width fractional seconds make a
-	// lexicographic string sort disagree with chronological order: a value that
-	// lands exactly on a whole second formats with no fraction at all ("…43Z"),
-	// and '.' < 'Z', so it sorts AFTER a same-second value that does have one
-	// ("…43.0001Z") — and since the strings differ, the old rowid tiebreaker
-	// never engaged. rowid is monotonic with insertion, which IS the link order:
-	// generations are appended as they happen at runtime, and the v72 backfill
-	// stamps every migrated row with the same linked_at (so it already leaned on
-	// the rowid tiebreaker). See GenerationsForAgent + generations_test.go.
+	// rowid is the link-insertion order this API promises. Generations append as
+	// they happen, while the v72 backfill deliberately gives all migrated rows
+	// the same linked_at, so the unique insertion key also keeps those ties
+	// deterministic. See GenerationsForAgent + generations_test.go.
 	rows, err := d.Query(`SELECT conv_id FROM agent_conversations
 		WHERE agent_id = ? ORDER BY rowid`, agentID)
 	if err != nil {
@@ -436,8 +430,7 @@ func GenerationsForAgent(agentID string) ([]AgentConversation, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Oldest link first, ordered by rowid (link-insertion order) — NOT linked_at,
-	// whose RFC3339Nano string sort is not chronological. See ConvsForAgent.
+	// Oldest link first by the rowid link-insertion order. See ConvsForAgent.
 	rows, err := d.Query(`SELECT conv_id, role, reason, linked_at
 		FROM agent_conversations WHERE agent_id = ? ORDER BY rowid`, agentID)
 	if err != nil {

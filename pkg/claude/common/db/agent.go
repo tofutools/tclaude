@@ -2795,8 +2795,8 @@ func ListAllUndeliveredAgentMessages() ([]*AgentMessage, error) {
 // flush-on-online path's job; this sweep only re-nudges about already-
 // delivered traffic, so "reminder" means exactly that.
 //
-// Ordering is by id (insertion order), NOT created_at, for the same
-// RFC3339Nano lexical-sort reason ListUndeliveredAgentMessagesFor documents.
+// Ordering is by id (insertion order) so reminders have a stable total order
+// even when several messages carry the same created_at instant.
 func ListDeliveredUnreadAgentMessages() ([]*AgentMessage, error) {
 	db, err := Open()
 	if err != nil {
@@ -2828,10 +2828,10 @@ type AgentMessageNudgeClaim struct {
 }
 
 // ClaimAgentMessageNudge atomically acquires a short-lived nudge lease without
-// marking the message delivered. The returned token is the exact Unix-nanosecond timestamp
-// plus monotonically-incremented per-message attempt number stored by the same
-// UPDATE. Completion/release must present both, so even two RFC3339Nano stamps
-// that serialize identically cannot let a stale worker mutate a newer claim.
+// marking the message delivered. The returned token is the exact Unix-nanosecond
+// timestamp plus a monotonically-incremented per-message attempt number stored
+// by the same UPDATE. Completion/release must present both, so even two claims
+// made at the same instant cannot let a stale worker mutate a newer claim.
 func ClaimAgentMessageNudge(id int64, now time.Time) (token AgentMessageNudgeClaim, claimed bool, err error) {
 	db, err := Open()
 	if err != nil {
@@ -3327,8 +3327,8 @@ func actorMatchClause(pairs ...[2]string) (string, []any) {
 // inbox/outbox: it selects rows matching convCol = conv OR agentCol = agent,
 // ordered most-recent-first, skipping whichever of conv/agent is empty (see
 // actorMatchClause). convCol/agentCol must be literal column names, never user
-// input — they are interpolated into SQL. Ordering is by id DESC for the same
-// RFC3339Nano lexical-sort reason listAgentMessagesByCol documents.
+// input — they are interpolated into SQL. Ordering by id DESC gives the actor
+// mailbox a stable newest-insertion-first total order.
 func listAgentMessagesForActor(convCol, agentCol, conv, agent string, limit int) ([]*AgentMessage, error) {
 	where, args := actorMatchClause([2]string{convCol, conv}, [2]string{agentCol, agent})
 	if where == "" {
@@ -3365,15 +3365,9 @@ func listAgentMessagesForActor(convCol, agentCol, conv, agent string, limit int)
 // `from_conv`, `to_agent` or `from_agent`), never user input — it's
 // interpolated into SQL.
 //
-// Ordering is by id DESC (autoincrement = insertion order), NOT created_at.
-// created_at is an RFC3339Nano string compared lexically by SQLite: a time on
-// a whole second serialises with no fractional part ("…:00Z") and sorts AFTER
-// a later same-second value ("…:00.004Z") because '.' < 'Z'. ORDER BY
-// created_at could therefore return a newer row as "older" — and with LIMIT,
-// silently drop the genuinely-newest row. This is the same RFC3339Nano flake
-// already fixed for the undelivered-queue query in #242 (see
-// ListUndeliveredAgentMessagesFor); id is monotonic with insertion, giving a
-// correct, total most-recent-first order independent of the timestamp format.
+// Ordering is by id DESC because the mailbox contract is newest insertion
+// first. The autoincrement key supplies a unique total order for LIMIT even
+// when multiple rows have the same created_at instant.
 func listAgentMessagesByCol(col, value string, limit int) ([]*AgentMessage, error) {
 	db, err := Open()
 	if err != nil {
@@ -3716,8 +3710,8 @@ func sqlPlaceholders(n int) string {
 
 // ListMailboxPage returns one newest-first page of the rows matching f.
 // limit <= 0 means "no limit" (the whole match); offset < 0 is clamped to
-// 0. Ordered by id DESC (insertion order), not created_at, for the same
-// RFC3339Nano lexical-sort reason listAgentMessagesByCol documents.
+// 0. Ordered by id DESC for stable newest-insertion-first pagination, including
+// rows that share the same created_at instant.
 func ListMailboxPage(f MailboxFilter, limit, offset int) ([]*AgentMessage, error) {
 	d, err := Open()
 	if err != nil {

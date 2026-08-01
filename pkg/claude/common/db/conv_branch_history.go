@@ -362,10 +362,9 @@ func DeleteConvBranchHistory(convID string) error {
 	return err
 }
 
-// fmtBranchTime renders a timestamp for storage — RFC3339Nano in UTC so
-// the stored strings sort lexically (the ORDER BY in ListConvBranchHistory
-// relies on it). A zero time stores as "" rather than the year-1 string,
-// matching parseTimeOrZero's empty-is-zero convention.
+// fmtBranchTime converts an optional branch timestamp to the guarded database
+// representation. A zero time stores as SQL NULL; present values store as
+// integer Unix nanoseconds.
 func fmtBranchTime(t time.Time) any {
 	if t.IsZero() {
 		return nil

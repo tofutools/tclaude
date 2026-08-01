@@ -308,10 +308,8 @@ func CountAuditLog(f AuditLogFilter) (int, error) {
 
 // PruneAuditLog deletes rows older than cutoff and returns the number
 // removed. Used by the daemon's periodic cleanup to enforce the
-// configurable retention window. The cutoff is compared against the
-// RFC3339Nano `at` text: a `<` comparison against a far-away cutoff is
-// unaffected by the sub-second lexical-misorder hazard (that only
-// reshuffles rows within the same whole second), so this is safe.
+// configurable retention window. Since v181, `at` and the cutoff argument are
+// guarded integer Unix nanoseconds, so the SQL comparison is chronological.
 func PruneAuditLog(cutoff time.Time) (int64, error) {
 	d, err := Open()
 	if err != nil {

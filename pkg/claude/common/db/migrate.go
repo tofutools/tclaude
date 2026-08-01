@@ -53,7 +53,9 @@ func migrate(db *sql.DB) error {
 	// Only walk the chain announcing progress when there is actually forward
 	// work to do. Keep the post-create check explicit as well as the fast path
 	// above: neither entry point may let an older binary open a newer schema and
-	// then silently decode values using stale storage assumptions.
+	// then silently decode values using stale storage assumptions. The greater-
+	// than arm is deliberately redundant defensive code and cannot fire while
+	// the fast-path guard above remains in place.
 	if ver > currentVersion {
 		return newerDatabaseVersionError(ver)
 	}

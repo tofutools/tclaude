@@ -3,10 +3,22 @@ package db
 import (
 	"database/sql"
 	"database/sql/driver"
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
 )
+
+var errTimestampRepresentation = errors.New("database timestamp representation")
+
+// IsTimestampRepresentationError reports whether err came from converting a
+// timestamp to the guarded INTEGER nanosecond representation. Callers that
+// treat the database as a rebuildable cache can use this to distinguish a
+// lossy timestamp write, which must remain loud, from unrelated persistence
+// failures that may safely degrade to an uncached result.
+func IsTimestampRepresentationError(err error) bool {
+	return errors.Is(err, errTimestampRepresentation)
+}
 
 // dbTimestamp is the only production scan target for an INTEGER timestamp.
 // In particular it intentionally rejects string/[]byte inputs: database/sql
@@ -119,7 +131,7 @@ type textUnixNanoValue struct {
 func (v textUnixNanoValue) Value() (driver.Value, error) {
 	parsed, err := parseLegacyDBTime(v.value)
 	if err != nil {
-		return nil, fmt.Errorf("database timestamp %q: %w", v.value, err)
+		return nil, fmt.Errorf("%w: database timestamp %q: %w", errTimestampRepresentation, v.value, err)
 	}
 	return timeToUnixNano(parsed)
 }
@@ -177,14 +189,17 @@ func timeToUnixNano(value time.Time) (int64, error) {
 
 func guardedUnixNano(value time.Time, allowEpoch bool) (int64, error) {
 	if value.IsZero() {
-		return 0, fmt.Errorf("database timestamp is zero; use nullableDBTime for an absent timestamp")
+		return 0, fmt.Errorf("%w: database timestamp is zero; use nullableDBTime for an absent timestamp",
+			errTimestampRepresentation)
 	}
 	ns := value.UnixNano()
 	if ns == 0 && !allowEpoch {
-		return 0, fmt.Errorf("database timestamp %s maps to reserved zero", value.Format(time.RFC3339Nano))
+		return 0, fmt.Errorf("%w: database timestamp %s maps to reserved zero",
+			errTimestampRepresentation, value.Format(time.RFC3339Nano))
 	}
 	if !time.Unix(0, ns).Equal(value) {
-		return 0, fmt.Errorf("database timestamp %s is outside the Unix-nanosecond range", value.Format(time.RFC3339Nano))
+		return 0, fmt.Errorf("%w: database timestamp %s is outside the Unix-nanosecond range",
+			errTimestampRepresentation, value.Format(time.RFC3339Nano))
 	}
 	return ns, nil
 }

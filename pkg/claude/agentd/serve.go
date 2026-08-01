@@ -792,15 +792,7 @@ func runServe(p *serveParams) error {
 // only here, before the first Open(), so no CLI command ever inherits it.
 func openDatabaseReportingMigrations(out io.Writer) error {
 	db.SetMigrationReporter(&db.MigrationReporter{
-		AlreadyCurrent: func(version, head int) {
-			if version > head {
-				// The DB schema was written by a NEWER tclaude than this
-				// binary: we applied nothing, and this older binary may not
-				// understand the newer schema. Flag it rather than reassure.
-				fmt.Fprintf(out, "WARNING: database schema is v%d, newer than this binary (v%d); no migrations applied\n", version, head)
-				slog.Warn("db: schema newer than this binary; no migrations applied", "db_version", version, "binary_version", head)
-				return
-			}
+		AlreadyCurrent: func(version, _ int) {
 			fmt.Fprintf(out, "database schema already up to date (v%d); no migrations needed\n", version)
 			slog.Info("db: schema already up to date; no migrations applied", "version", version)
 		},

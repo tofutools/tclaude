@@ -132,9 +132,10 @@ func (s openCodeConvStore) ListConvs(cwd string) ([]convops.SessionEntry, error)
 // syncOpenCodeConvIndex keeps the common cache useful for dashboard and title
 // readers without making it the source of truth. A successful CLI snapshot
 // inserts/refreshes every OpenCode row and evicts OpenCode rows absent from the
-// snapshot. Read failures only degrade enrichment, but write failures propagate
-// so a present timestamp that cannot be represented never becomes silent cache
-// absence.
+// snapshot. Cache failures degrade enrichment rather than hiding source CLI
+// sessions. Timestamp representation failures are logged at error level with
+// the source values and skip the cache row, so the invalid instant stays loud
+// without letting one bad third-party value blank the source listing.
 func syncOpenCodeConvIndex(sessions []openCodeSession) ([]convops.SessionEntry, error) {
 	cached := map[string]*db.ConvIndexRow{}
 	if rows, err := db.ListAllConvIndex(); err != nil {
@@ -164,7 +165,14 @@ func syncOpenCodeConvIndex(sessions []openCodeSession) ([]convops.SessionEntry, 
 			}
 		}
 		if err := db.UpsertConvIndex(openCodeEntryDBRow(entry)); err != nil {
-			return nil, fmt.Errorf("opencode convstore: cache %s: %w", session.ID, err)
+			if db.IsTimestampRepresentationError(err) {
+				slog.Error("opencode convstore: timestamp cannot be represented; cache row skipped",
+					"conv", session.ID, "created_millis", session.Created,
+					"updated_millis", session.Updated, "error", err)
+			} else {
+				slog.Warn("opencode convstore: conv_index upsert failed; continuing from CLI",
+					"conv", session.ID, "error", err)
+			}
 		}
 		entries = append(entries, entry)
 	}

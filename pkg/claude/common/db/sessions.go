@@ -1962,9 +1962,9 @@ func UpdateSessionCost(sessionID string, costUSD float64) error {
 	// The model CASE mirrors conv_id: a render that carries no model
 	// (the empty-context ones before a turn's first response) keeps the
 	// last good value rather than blanking it.
-	// Since v181 this is stored as guarded Unix nanoseconds, so SQL ordering is
-	// chronological regardless of the writer's original RFC3339 spelling or
-	// zone. The row is UPSERTED, so rowid still cannot stand in for recency.
+	// Use updated_at directly for chronology: since v181 it is guarded integer
+	// Unix nanoseconds. This is semantically necessary, not an encoding
+	// workaround—the row is UPSERTED, so rowid cannot stand in for recency.
 	now := time.Now()
 	// agent_id is denormalised in alongside conv_id, with the same keep-last-good
 	// CASE guard. Prefer the session's persisted agent_id (the v77 companion,

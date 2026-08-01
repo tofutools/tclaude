@@ -241,8 +241,7 @@ func FailExportJob(id int64, reason string) (bool, error) {
 }
 
 // ListExportJobsForConv returns a conversation's export jobs, newest first
-// (by id = insertion order, NOT created_at — the RFC3339Nano lexical-sort
-// hazard, see ListHumanMessages). limit <= 0 returns all of them. Powers the
+// by the unique id insertion order. limit <= 0 returns all of them. Powers the
 // modal's "Previous exports" history panel.
 func ListExportJobsForConv(convID string, limit int) ([]*ExportJob, error) {
 	d, err := Open()
@@ -277,8 +276,7 @@ func ListExportJobsForConv(convID string, limit int) ([]*ExportJob, error) {
 }
 
 // ListExportJobs returns export jobs across ALL conversations, newest first
-// (by id = insertion order, NOT created_at — the RFC3339Nano lexical-sort
-// hazard, see ListHumanMessages). limit <= 0 returns all of them. Powers the
+// by the unique id insertion order. limit <= 0 returns all of them. Powers the
 // dashboard Jobs tab's export-jobs listing (rides the /api/snapshot poll).
 func ListExportJobs(limit int) ([]*ExportJob, error) {
 	d, err := Open()
@@ -359,8 +357,9 @@ func DeleteExportJobsForConv(convID string) ([]int64, error) {
 // (TTL prune of finished work + its artifacts); when false it returns every
 // stale job (used to time out requested/running jobs that never completed).
 //
-// Parsed and filtered in Go rather than via a lexical SQL comparison on the
-// RFC3339Nano string, which would misorder around whole-second boundaries.
+// TODO: push the cutoff and terminal predicates into SQL now that v181 stores
+// updated_at as an orderable INTEGER. Keep the existing Go-side filter in this
+// migration increment so its behavior changes only with a dedicated test pass.
 func ListStaleExportJobs(before time.Time, terminalOnly bool) ([]*ExportJob, error) {
 	d, err := Open()
 	if err != nil {

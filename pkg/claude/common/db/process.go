@@ -209,9 +209,8 @@ func AdvanceGroupProcess(groupID int64, toPhase, actor string) (string, error) {
 }
 
 // ListGroupProcessTransitions returns a group's phase-change log oldest-first
-// (ORDER BY id — never by the RFC3339Nano `at` string, which misorders rows
-// inside the same whole second). Returns an empty (non-nil) slice when there
-// are none.
+// by its id insertion sequence, which also gives equal-at transitions a stable
+// order. Returns an empty (non-nil) slice when there are none.
 func ListGroupProcessTransitions(groupID int64) ([]GroupProcessTransition, error) {
 	d, err := Open()
 	if err != nil {
