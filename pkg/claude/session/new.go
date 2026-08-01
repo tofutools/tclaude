@@ -2559,6 +2559,9 @@ func launchDetachedTmuxSession(tmuxSession, cwd, cmd string, markerArgs ...strin
 			return fmt.Errorf("process cwd is gone and re-homing to %q failed: %w", cwd, cerr)
 		}
 	}
+	if err := RequireExternalTmuxServer(); err != nil {
+		return err
+	}
 	scriptPath, cleanupScript, err := writeLaunchScript(cmd)
 	if err != nil {
 		return err

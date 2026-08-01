@@ -153,6 +153,7 @@ func TestValidate_RejectsBadValues(t *testing.T) {
 		{"dashboard port too high", func(c *Config) { c.Agent = &AgentConfig{DashboardPort: 70000} }, "dashboard_port"},
 		{"dashboard port negative", func(c *Config) { c.Agent = &AgentConfig{DashboardPort: -1} }, "dashboard_port"},
 		{"dashboard bind with a port", func(c *Config) { c.Agent = &AgentConfig{DashboardBind: "0.0.0.0:8080"} }, "dashboard_bind"},
+		{"resource delegation dir relative", func(c *Config) { c.Agent = &AgentConfig{ResourceDelegationDir: "system.slice/tclaude-tmux.service"} }, "resource_delegation_dir"},
 		{"bad sudo duration", func(c *Config) { c.Agent = &AgentConfig{Sudo: &SudoConfig{MaxDuration: "ages"}} }, "sudo.max_duration"},
 		{"transition missing to", func(c *Config) {
 			c.Notifications = &NotificationConfig{Transitions: []TransitionRule{{From: "idle"}}}

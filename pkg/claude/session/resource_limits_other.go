@@ -28,6 +28,10 @@ func ValidatePreparedResourceCgroup(string, sandboxpolicy.ResourceLimits) error 
 	return fmt.Errorf("resource limits are Linux only")
 }
 
+func ValidateResourceDelegationDir(string) (string, error) {
+	return "", fmt.Errorf("external resource delegation is Linux only")
+}
+
 func ResourceCgroupOOMKilled(string) bool { return false }
 
 func resourceLimitExecCmd() *cobra.Command {

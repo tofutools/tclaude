@@ -16,6 +16,8 @@ import (
 
 func fakeCurrentResourceCgroup(t *testing.T, controllers, enabled string) string {
 	t.Helper()
+	t.Setenv(ResourceDelegationDirEnv, "")
+	t.Setenv("TMUX", "")
 	oldRoot := resourceCgroupRoot
 	resourceCgroupRoot = t.TempDir()
 	t.Cleanup(func() { resourceCgroupRoot = oldRoot })
@@ -25,6 +27,65 @@ func fakeCurrentResourceCgroup(t *testing.T, controllers, enabled string) string
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "cgroup.controllers"), []byte(controllers), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "cgroup.subtree_control"), []byte(enabled), 0o644))
 	return dir
+}
+
+func TestPrepareResourceCgroupUsesExplicitExternalDelegationDir(t *testing.T) {
+	current := fakeCurrentResourceCgroup(t, "cpu memory", "")
+	external := filepath.Join(resourceCgroupRoot, "system.slice", "tclaude-tmux.service")
+	require.NoError(t, os.MkdirAll(external, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(external, "cgroup.controllers"), []byte("cpu memory io"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(external, "cgroup.subtree_control"), nil, 0o644))
+	t.Setenv(ResourceDelegationDirEnv, external)
+
+	dir, cleanup, err := PrepareResourceCgroup(
+		"external-session", sandboxpolicy.ResourceLimits{Memory: "256MB"})
+	require.NoError(t, err)
+	t.Cleanup(cleanup)
+	assert.Equal(t, external, filepath.Dir(dir))
+	assert.NotEqual(t, current, filepath.Dir(dir))
+	assert.FileExists(t, filepath.Join(dir, "memory.max"))
+}
+
+func TestPaneRecoversExternalDelegationDirFromTmuxGlobalEnvironment(t *testing.T) {
+	t.Setenv(ResourceDelegationDirEnv, "")
+	t.Setenv("TMUX", "/tmp/tmux.sock,1,0")
+	want := "/sys/fs/cgroup/system.slice/tclaude-tmux.service"
+	swapTmux(t, &launchRecordingTmux{resourceEnv: want})
+
+	assert.Equal(t, want, configuredResourceDelegationDir())
+	assert.Equal(t, want, os.Getenv(ResourceDelegationDirEnv),
+		"the recovered value must reach later launch preflights and child processes")
+}
+
+func TestValidateResourceDelegationDirRequiresContainedCPUAndMemoryRoot(t *testing.T) {
+	fakeCurrentResourceCgroup(t, "cpu memory", "")
+	external := filepath.Join(resourceCgroupRoot, "system.slice", "tclaude-tmux.service")
+	require.NoError(t, os.MkdirAll(external, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(external, "cgroup.controllers"), []byte("cpu memory"), 0o644))
+
+	got, err := ValidateResourceDelegationDir(external)
+	require.NoError(t, err)
+	assert.Equal(t, external, got)
+
+	require.NoError(t, os.WriteFile(filepath.Join(external, "cgroup.controllers"), []byte("memory"), 0o644))
+	_, err = ValidateResourceDelegationDir(external)
+	assert.ErrorContains(t, err, "cpu controller")
+	_, err = ValidateResourceDelegationDir(t.TempDir())
+	assert.ErrorContains(t, err, "must be below")
+}
+
+func TestValidatePreparedResourceCgroupRejectsStoredPathFromPreviousDelegation(t *testing.T) {
+	fakeCurrentResourceCgroup(t, "cpu memory", "")
+	external := filepath.Join(resourceCgroupRoot, "system.slice", "tclaude-tmux.service")
+	old := filepath.Join(resourceCgroupRoot, "system.slice", "tclaude-agentd.service", "tclaude-old")
+	require.NoError(t, os.MkdirAll(external, 0o755))
+	require.NoError(t, os.MkdirAll(old, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(old, "memory.max"), []byte("max"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(old, "cpu.max"), []byte("max 100000"), 0o644))
+	t.Setenv(ResourceDelegationDirEnv, external)
+
+	err := ValidatePreparedResourceCgroup(old, sandboxpolicy.ResourceLimits{})
+	assert.ErrorContains(t, err, "outside the configured resource delegation directory")
 }
 
 func TestWrapResourceLimitedCommandRendersIndependentAxes(t *testing.T) {

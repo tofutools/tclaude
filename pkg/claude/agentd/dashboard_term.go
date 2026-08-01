@@ -19,6 +19,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 // In-browser terminal fallback for the dashboard's "open terminal" /
@@ -106,6 +107,10 @@ func handleDashboardTermWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := termSessionName(res.ConvID, which)
+	if err := session.RequireExternalTmuxServer(); err != nil {
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
 	cmd := fmt.Sprintf("tmux -L %s %s new-session -A -s %s -c %s",
 		clcommon.TmuxSocketName, webTerminalTmuxFlags(), shellSingleQuote(name), shellSingleQuote(dir))
 	runPTYOverWS(w, r, cmd, name)
@@ -172,6 +177,10 @@ func handleDashboardGroupTermWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sessName := groupTermSessionName(g.Name)
+	if err := session.RequireExternalTmuxServer(); err != nil {
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
 	cmd := fmt.Sprintf("tmux -L %s %s new-session -A -s %s -c %s",
 		clcommon.TmuxSocketName, webTerminalTmuxFlags(), shellSingleQuote(sessName), shellSingleQuote(dir))
 	runPTYOverWS(w, r, cmd, sessName)

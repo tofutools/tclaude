@@ -146,6 +146,30 @@ siblings and leaves the delegated unit node process-free. A delegation or
 controller failure is reported at launch with an actionable error; tclaude
 never widens a configured limit without the explicit operator override.
 
+For deployments where tmux panes must survive agentd service upgrades, put the
+`-L tclaude` tmux server in a separate, long-lived systemd unit with
+`Delegate=cpu memory`, then start agentd with the delegated unit cgroup as its
+external root:
+
+```bash
+tclaude agentd serve \
+  --resource-delegation-dir /sys/fs/cgroup/system.slice/tclaude-tmux.service
+```
+
+The same value may be supplied through
+`TCLAUDE_RESOURCE_DELEGATION_DIR` or
+`agent.resource_delegation_dir` in `config.json`. Precedence is CLI flag,
+environment, config file, then the legacy agentd-unit derivation above. Agentd
+validates that the directory is below `/sys/fs/cgroup`, is a real directory,
+and exposes both the `cpu` and `memory` controllers before accepting requests.
+
+In external mode, the tmux server must already be running. Agentd probes it and
+exports the delegation setting into its global environment, but deliberately
+does not start or own that server: allowing `tmux new-session` to create it
+would place the server back inside agentd's service cgroup. If the external
+runtime is unavailable, startup and later session creation fail with an error
+naming the runtime unit rather than silently creating a replacement server.
+
 ## Experimental `tclaude-layer` on Linux and macOS
 
 `tclaude session new --sandbox-impl tclaude-layer` runs the tool-executing

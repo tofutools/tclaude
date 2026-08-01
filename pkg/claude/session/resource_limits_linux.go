@@ -50,6 +50,72 @@ func resourceDelegationDir(current string) string {
 	return current
 }
 
+// ValidateResourceDelegationDir checks an explicit external cgroup root at
+// agentd startup, before any launch can depend on it. The external runtime is
+// expected to delegate both supported axes even when current profiles use only
+// one of them.
+func ValidateResourceDelegationDir(dir string) (string, error) {
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		return "", nil
+	}
+	if !filepath.IsAbs(dir) {
+		return "", fmt.Errorf("resource delegation directory %q must be absolute", dir)
+	}
+	dir = filepath.Clean(dir)
+	rel, err := filepath.Rel(resourceCgroupRoot, dir)
+	if err != nil || rel == "." || filepath.IsAbs(rel) || rel == ".." ||
+		strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("resource delegation directory %q must be below %s", dir, resourceCgroupRoot)
+	}
+	info, err := os.Lstat(dir)
+	if err != nil {
+		return "", fmt.Errorf("inspect resource delegation directory %q: %w", dir, err)
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("resource delegation directory %q is not a real directory", dir)
+	}
+	controllersRaw, err := os.ReadFile(filepath.Join(dir, "cgroup.controllers"))
+	if err != nil {
+		return "", fmt.Errorf("read resource delegation controllers in %q: %w", dir, err)
+	}
+	available := strings.Fields(string(controllersRaw))
+	for _, controller := range []string{"cpu", "memory"} {
+		if !containsString(available, controller) {
+			return "", fmt.Errorf("resource delegation directory %q does not provide the cgroup v2 %s controller; configure its external runtime unit with Delegate=cpu memory, or leave --resource-delegation-dir unset and configure tclaude-agentd.service with Delegate=cpu memory and DelegateSubgroup=%s", dir, controller, resourceSupervisorCgroup)
+		}
+	}
+	return dir, nil
+}
+
+func configuredResourceDelegationDir() string {
+	if dir := strings.TrimSpace(os.Getenv(ResourceDelegationDirEnv)); dir != "" {
+		return dir
+	}
+	// A pane that survived an agentd restart retains its original process
+	// environment. Agentd also publishes the resolved root into tmux's global
+	// environment, so resource-limited launches initiated from such a pane can
+	// recover the current setting instead of deriving a workload-local root.
+	if strings.TrimSpace(os.Getenv("TMUX")) == "" {
+		return ""
+	}
+	raw, err := clcommon.TmuxCommand(
+		"show-environment", "-g", ResourceDelegationDirEnv,
+	).Output()
+	if err != nil {
+		return ""
+	}
+	prefix := ResourceDelegationDirEnv + "="
+	if value := strings.TrimSpace(string(raw)); strings.HasPrefix(value, prefix) {
+		dir := strings.TrimSpace(strings.TrimPrefix(value, prefix))
+		if dir != "" {
+			_ = os.Setenv(ResourceDelegationDirEnv, dir)
+			return dir
+		}
+	}
+	return ""
+}
+
 func wrapResourceLimitedCommand(
 	sessionID string,
 	limits sandboxpolicy.ResourceLimits,
@@ -67,14 +133,23 @@ func wrapResourceLimitedCommand(
 // Agentd uses this before starting an authoritative OpenCode server; ordinary
 // pane-owned harnesses call it through wrapResourceLimitedCommand.
 func PrepareResourceCgroup(sessionID string, limits sandboxpolicy.ResourceLimits) (string, func(), error) {
-	current, err := currentCgroupDir()
-	if err != nil {
-		return "", func() {}, fmt.Errorf("resource limits unavailable: %w", err)
+	delegation := configuredResourceDelegationDir()
+	if delegation != "" {
+		validated, err := ValidateResourceDelegationDir(delegation)
+		if err != nil {
+			return "", func() {}, err
+		}
+		delegation = validated
+	} else {
+		current, err := currentCgroupDir()
+		if err != nil {
+			return "", func() {}, fmt.Errorf("resource limits unavailable: %w", err)
+		}
+		delegation = resourceDelegationDir(current)
 	}
-	delegation := resourceDelegationDir(current)
 	controllersRaw, err := os.ReadFile(filepath.Join(delegation, "cgroup.controllers"))
 	if err != nil {
-		return "", func() {}, fmt.Errorf("resource limits require a delegated cgroup v2 service subtree: %w", err)
+		return "", func() {}, fmt.Errorf("resource limits require a delegated cgroup v2 service subtree (set --resource-delegation-dir to an external delegated root, or configure tclaude-agentd.service with Delegate=cpu memory and DelegateSubgroup=%s): %w", resourceSupervisorCgroup, err)
 	}
 	available := strings.Fields(string(controllersRaw))
 	needed := []string{}
@@ -86,7 +161,7 @@ func PrepareResourceCgroup(sessionID string, limits sandboxpolicy.ResourceLimits
 	}
 	for _, controller := range needed {
 		if !containsString(available, controller) {
-			return "", func() {}, fmt.Errorf("resource limits require delegated cgroup v2 %s controller; configure tclaude-agentd.service with Delegate=cpu memory and DelegateSubgroup=%s", controller, resourceSupervisorCgroup)
+			return "", func() {}, fmt.Errorf("resource limits require delegated cgroup v2 %s controller; configure the external --resource-delegation-dir runtime with Delegate=cpu memory, or configure tclaude-agentd.service with Delegate=cpu memory and DelegateSubgroup=%s", controller, resourceSupervisorCgroup)
 		}
 	}
 	enabledRaw, err := os.ReadFile(filepath.Join(delegation, "cgroup.subtree_control"))
@@ -102,7 +177,7 @@ func PrepareResourceCgroup(sessionID string, limits sandboxpolicy.ResourceLimits
 	}
 	if len(toEnable) > 0 {
 		if err := os.WriteFile(filepath.Join(delegation, "cgroup.subtree_control"), []byte(strings.Join(toEnable, " ")), 0o644); err != nil {
-			return "", func() {}, fmt.Errorf("enable delegated cgroup v2 controllers %s: %w (tclaude-agentd.service needs Delegate=cpu memory and DelegateSubgroup=%s)", strings.Join(needed, ", "), err, resourceSupervisorCgroup)
+			return "", func() {}, fmt.Errorf("enable delegated cgroup v2 controllers %s: %w (the external --resource-delegation-dir runtime needs Delegate=cpu memory, or tclaude-agentd.service needs Delegate=cpu memory and DelegateSubgroup=%s)", strings.Join(needed, ", "), err, resourceSupervisorCgroup)
 		}
 	}
 	digest := sha256.Sum256([]byte(sessionID))
@@ -178,6 +253,9 @@ func ConfigureProcessResourceCgroup(cmd *exec.Cmd, dir string) (func(), error) {
 // ValidatePreparedResourceCgroup confirms that a durable managed-server
 // boundary still carries the limits requested by the current relaunch.
 func ValidatePreparedResourceCgroup(dir string, limits sandboxpolicy.ResourceLimits) error {
+	if delegation := configuredResourceDelegationDir(); delegation != "" && filepath.Dir(filepath.Clean(dir)) != filepath.Clean(delegation) {
+		return fmt.Errorf("prepared resource cgroup is outside the configured resource delegation directory")
+	}
 	wantMemory := "max"
 	if limits.Memory != "" {
 		want, err := sandboxpolicy.ParseMemoryLimitBytes(limits.Memory)

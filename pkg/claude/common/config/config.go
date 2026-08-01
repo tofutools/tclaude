@@ -1640,9 +1640,13 @@ type AgentConfig struct {
 	DisableTray                     bool                `json:"disable_tray,omitempty"` // suppress the agentd tray icon; --no-tray ORs with it
 	BranchHistoryPREnrichment       bool                `json:"branch_history_pr_enrichment,omitempty"`
 	CloneCooldown                   string              `json:"clone_cooldown,omitempty"`
-	SpawnGroupRestriction           *bool               `json:"spawn_group_restriction,omitempty"`
-	SpawnAllowedGroups              []string            `json:"spawn_allowed_groups,omitempty"`
-	SpawnMaxPerHour                 *int                `json:"spawn_max_per_hour,omitempty"`
+	// ResourceDelegationDir selects a cgroup v2 root delegated to an external,
+	// long-lived tmux runtime unit. agentd serve's flag and environment
+	// override it; empty preserves the legacy self-cgroup derivation.
+	ResourceDelegationDir string   `json:"resource_delegation_dir,omitempty"`
+	SpawnGroupRestriction *bool    `json:"spawn_group_restriction,omitempty"`
+	SpawnAllowedGroups    []string `json:"spawn_allowed_groups,omitempty"`
+	SpawnMaxPerHour       *int     `json:"spawn_max_per_hour,omitempty"`
 
 	// RetiredCleanup is the opt-in long-horizon auto-cleanup that fully
 	// DELETES agents/conversations that have been retired for a very long
@@ -2595,6 +2599,9 @@ func Validate(c *Config) []string {
 
 	if c.Agent != nil {
 		a := c.Agent
+		if dir := strings.TrimSpace(a.ResourceDelegationDir); dir != "" && !filepath.IsAbs(dir) {
+			errs = append(errs, fmt.Sprintf("agent.resource_delegation_dir %q must be an absolute path", dir))
+		}
 		if a.CloneCooldown != "" {
 			if d, err := time.ParseDuration(a.CloneCooldown); err != nil {
 				errs = append(errs, fmt.Sprintf("agent.clone_cooldown %q is not a valid duration (e.g. \"1m\", \"30s\", \"0\")", a.CloneCooldown))
