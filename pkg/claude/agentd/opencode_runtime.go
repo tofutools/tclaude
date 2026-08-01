@@ -948,12 +948,17 @@ func openCodeTmuxLaunchCommand(runtime db.OpenCodeRuntime, command string, args,
 	serverCommand := strings.Join(parts, " ")
 	if handshake != nil {
 		serverCommand += " 3>" + clcommon.ShellQuoteArg(handshake.statusPath) +
-			" 4<" + clcommon.ShellQuoteArg(handshake.gatePath) +
-			" 2>" + clcommon.ShellQuoteArg(handshake.stderrPath)
+			" 4<" + clcommon.ShellQuoteArg(handshake.gatePath)
 	}
 	if runtime.ResourceCgroupDir != "" {
 		serverCommand = session.WrapPreparedResourceCgroupCommand(
 			runtime.SessionID, runtime.ResourceCgroupDir, serverCommand, false)
+	}
+	// Capture outside the optional resource-limit wrapper. Failures in that
+	// wrapper, or in the shell while opening the handshake FIFOs, happen before
+	// the inner launcher runs and would otherwise disappear with tmux's pane.
+	if handshake != nil {
+		serverCommand += " 2>" + clcommon.ShellQuoteArg(handshake.stderrPath)
 	}
 	return "exec " + serverCommand
 }

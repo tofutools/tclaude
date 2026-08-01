@@ -4,6 +4,7 @@ package agentd
 
 import (
 	"os/exec"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -43,4 +44,7 @@ func TestManagedOpenCodeSandboxLaunchCapturesStderrOutsideTmuxPane(t *testing.T)
 	assert.Contains(t, command, "3>/private/authority")
 	assert.Contains(t, command, "4</private/gate")
 	assert.Contains(t, command, "2>/private/stderr")
+	assert.True(t, strings.LastIndex(command, "2>/private/stderr") >
+		strings.LastIndex(command, "resource-limit-exec"),
+		"stderr capture must wrap the resource-limit launcher")
 }
