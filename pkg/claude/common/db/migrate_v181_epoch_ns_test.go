@@ -352,6 +352,20 @@ func TestMigrateV180toV181_RoundTripsLegacySpellingsExactly(t *testing.T) {
 	assert.False(t, absent.Valid, "a genuine optional timestamp preserves absence as NULL")
 }
 
+func TestMigrateV180toV181_RepairsOptionalGoZeroTimeAsAbsent(t *testing.T) {
+	d := v180FixtureDB(t)
+	_, err := d.Exec(`INSERT INTO sessions (id, created_at, updated_at, last_hook)
+		VALUES ('zero-last-hook', '2024-01-02T03:04:05Z', '2024-01-02T03:04:06Z', ?)`,
+		time.Time{}.Format(time.RFC3339Nano))
+	require.NoError(t, err)
+
+	require.NoError(t, migrateV180toV181(d))
+
+	var lastHook sql.NullInt64
+	require.NoError(t, d.QueryRow(`SELECT last_hook FROM sessions WHERE id = 'zero-last-hook'`).Scan(&lastHook))
+	assert.False(t, lastHook.Valid, "legacy Go zero time is the optional column's absence sentinel")
+}
+
 func TestMigrateV180toV181_RejectsEmptyRequiredTimestamp(t *testing.T) {
 	d := v180FixtureDB(t)
 	_, err := d.Exec(`INSERT INTO notify_state (session_id, notified_at) VALUES ('required-empty', '')`)
@@ -436,6 +450,7 @@ func TestMigrateV180toV181_RejectsInvalidTimestampsLoudly(t *testing.T) {
 		name, value string
 	}{
 		{"malformed", "not-a-time"},
+		{"go_zero", time.Time{}.Format(time.RFC3339Nano)},
 		{"zero", "1970-01-01T00:00:00Z"},
 		{"out_of_range", "9999-01-01T00:00:00Z"},
 	} {
