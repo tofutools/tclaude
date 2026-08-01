@@ -192,6 +192,17 @@ smoke::load_flow_harnesses() {
     # perfectly good flow::harnesses reported as "flow::harnesses failed with
     # status 5" is the same lie about a declaration sitting in the file, one
     # trigger over. The marker is what discriminates, so read it first.
+    #
+    # RESIDUE, stated rather than implied: one path still cannot be attributed.
+    # A flow with a top-level `trap 'exit 7' EXIT` AND a declaration present is
+    # reported as the declaration failing, because by then `declared` has been
+    # printed and flow::harnesses has actually run — the trap fires after
+    # everything, so no marker can discriminate. It is ruled out by the
+    # inert-at-source-time contract above and no flow in the tree does it; all
+    # four set their traps inside flow::run. Closing it mechanically would mean a
+    # SECOND marker printed after flow::harnesses, with its absence meaning
+    # "died after the declaration" — symmetric with what is here, and deliberately
+    # not spent, since the contract already excludes the case.
     verdict="${raw%%$'\n'*}"
     raw="${raw#"$verdict"}"
     if [[ "$status" -ne 0 ]]; then
