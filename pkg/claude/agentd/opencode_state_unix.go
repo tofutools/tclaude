@@ -718,7 +718,7 @@ func requireOpenCodeAnchoredStateTargets(
 			"OpenCode launch contract state root %q is not an absolute path",
 			contract.StateRoot)
 	}
-	resolvedRoot, err := requireOpenCodeAnchoredStateRoot(stateRoot)
+	resolvedRoot, err := requireOpenCodeAnchoredStateRoot(contract.StateRoot, stateRoot)
 	if err != nil {
 		return err
 	}
@@ -826,11 +826,11 @@ func requireOpenCodeAnchoredStateTargets(
 // requireOpenCodeAnchoredStateRoot returns the resolved state root once it is
 // proven, so a caller cannot accidentally go on to compare against the
 // unproven spelling it was handed.
-func requireOpenCodeAnchoredStateRoot(stateRoot string) (string, error) {
+func requireOpenCodeAnchoredStateRoot(spelled, stateRoot string) (string, error) {
 	resolved, err := canonicalizeMissingOpenCodePath(stateRoot)
 	if err != nil {
 		return "", fmt.Errorf(
-			"canonicalize OpenCode launch contract state root %q: %w", stateRoot, err)
+			"canonicalize OpenCode launch contract state root %q: %w", spelled, err)
 	}
 	// Which of the two proofs applies is decided on the SAME value
 	// validateOpenCodeV3LaunchContract branches on — the unresolved base name —
@@ -838,7 +838,7 @@ func requireOpenCodeAnchoredStateRoot(stateRoot string) (string, error) {
 	// here, or the reverse.
 	if openCodeAgentIDRE.MatchString(filepath.Base(stateRoot)) {
 		if err := requireOpenCodeAllocatedStateRoot(resolved,
-			openCodeStateRootSubject(stateRoot, resolved), "state root"); err != nil {
+			openCodeStateRootSubject(spelled, stateRoot, resolved), "state root"); err != nil {
 			return "", err
 		}
 		return resolved, nil
@@ -852,9 +852,17 @@ func requireOpenCodeAnchoredStateRoot(stateRoot string) (string, error) {
 		return "", fmt.Errorf("canonicalize this host's OpenCode state root: %w", err)
 	}
 	if resolved != resolvedLegacy {
+		// Both operands shown in the form they were COMPARED in. Printing
+		// stateRoot here put an unresolved left side against a resolved right
+		// side, so on a symlinked HOME the two sat in different namespaces with
+		// nothing saying why — and after a ".." the left side was a path the
+		// contract never contained and the kernel would never produce, because
+		// Clean collapses ".." lexically. The private arm above avoids this by
+		// going through openCodeStateRootSubject; this arm did not, and no
+		// per-delta review reached it because no delta touched it.
 		return "", fmt.Errorf(
-			"OpenCode launch contract state root %q is neither an allocated per-agent state root nor this host's OpenCode state root %q",
-			stateRoot, resolvedLegacy)
+			"%s is neither an allocated per-agent state root nor this host's OpenCode state root %q",
+			openCodeStateRootSubject(spelled, stateRoot, resolved), resolvedLegacy)
 	}
 	return resolved, nil
 }
@@ -868,19 +876,24 @@ func requireOpenCodeAnchoredStateRoot(stateRoot string) (string, error) {
 // component makes those differ, quoting only the resolved path reports a
 // directory the operator never wrote, with no hint that a link was followed —
 // the refusal would consume information its message did not.
-func openCodeStateRootSubject(stateRoot, resolved string) string {
-	if resolved == stateRoot {
-		return fmt.Sprintf("OpenCode launch contract state root %q", stateRoot)
+func openCodeStateRootSubject(spelled, stateRoot, resolved string) string {
+	// Quotes what the CONTRACT said, and appends the value the check ran on
+	// when they differ. Two transformations sit between them — lexical
+	// normalization (canonicalOpenCodeRuntimePath) and symlink resolution — and
+	// an earlier version quoted the normalized form while calling it the
+	// contract's, so a contract naming "/p/link/../agt_1f" was refused with
+	// "/p/agt_1f" presented as its own words.
+	//
+	// "Tested as", not "resolving to": Clean collapses "..", including one that
+	// follows a symlink, before anything is resolved, so naming resolution as
+	// the mechanism invites kernel semantics the code never applies. Claim the
+	// VALUE and stop. Same wording as the state-directory arm, deliberately —
+	// the two drifting apart is what this whole class came from.
+	if resolved == spelled {
+		return fmt.Sprintf("OpenCode launch contract state root %q", spelled)
 	}
-	// "resolving to", NOT "a symlink": the inequality is produced by a symlink
-	// in ANY component, and attributing it to the leaf is wrong exactly where
-	// this message is most often read. A symlinked HOME or XDG_DATA_HOME — the
-	// host shape #1822 documented — makes every per-agent refusal print this,
-	// and telling an operator their state root is a symlink when they wrote it
-	// literally sends them looking for something that is not there.
 	return fmt.Sprintf(
-		"OpenCode launch contract state root %q (resolving to %q)",
-		stateRoot, resolved)
+		"OpenCode launch contract state root %q (tested as %q)", spelled, resolved)
 }
 
 // ambientOpenCodeStateAppDirs is the set of OpenCode app directories THIS host

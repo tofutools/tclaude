@@ -430,12 +430,22 @@ func TestOpenCodeStateRootSubjectDoesNotBlameTheLeaf(t *testing.T) {
 	require.NotEqual(t, stateRoot, resolved,
 		"the fixture only discriminates if resolution actually changes the path")
 
-	subject := openCodeStateRootSubject(stateRoot, resolved)
-	assert.Contains(t, subject, "resolving to",
-		"the resolved path still has to be shown; hiding it is what #1822 fixed")
-	// The retired spelling as a negative needle: this is the claim that was wrong.
+	// The contract's own spelling carries a ".." so the lexical step is visible
+	// too: the subject must quote what the CONTRACT said and append what the
+	// check ran on, not silently substitute one for the other.
+	spelled := filepath.Join(link, "extra") + "/../" + leaf
+	subject := openCodeStateRootSubject(spelled, stateRoot, resolved)
+	assert.Contains(t, subject, spelled,
+		"the contract's own words must appear; quoting the normalized form as its own is what misled")
+	assert.Contains(t, subject, resolved,
+		"the value the check ran on still has to be shown; hiding it is what #1822 fixed")
+	// Two retired spellings as negative needles. Both named a MECHANISM the
+	// code does not perform: the leaf is not the symlink, and Clean is not
+	// resolution.
 	assert.NotContains(t, subject, "a symlink",
 		"the leaf here is a literal directory; only a component above it is a link")
+	assert.NotContains(t, subject, "resolving to",
+		"Clean collapses \"..\" lexically before anything resolves; naming resolution invites kernel semantics")
 }
 
 // A purely LEXICAL escape — ".." with no symlink anywhere — must also show the
@@ -461,4 +471,39 @@ func TestOpenCodeAnchoredStateTargetsShowsTheTestedPathForLexicalEscapes(t *test
 		"a lexical escape is transformed too, and the refusal must say what it tested")
 	require.NotContains(t, err.Error(), "resolving to",
 		"Clean is not symlink resolution; naming it that invites kernel semantics")
+}
+
+// The LEGACY arm's refusal, which four rounds of per-delta review never reached
+// because no delta touched it. It compares resolved against resolvedLegacy and
+// used to print the UNRESOLVED left side against the RESOLVED right side, so on
+// a symlinked host the two operands sat in different namespaces with nothing
+// saying why. The private arm avoided that via openCodeStateRootSubject; this
+// one did not.
+func TestOpenCodeAnchoredStateRootLegacyArmShowsBothOperandsAsCompared(t *testing.T) {
+	home := isolatedOpenCodeHost(t)
+	require.NoError(t, os.MkdirAll(filepath.Join(home, ".opencode"), 0o700))
+
+	// Not agent-id shaped, so it takes the legacy arm; reached through a
+	// symlinked component so the spelling and the compared value differ.
+	real := filepath.Join(home, "real-parent")
+	require.NoError(t, os.MkdirAll(filepath.Join(real, "not-an-agent"), 0o700))
+	link := filepath.Join(home, "link-parent")
+	require.NoError(t, os.Symlink(real, link))
+	// String concatenation, NOT filepath.Join, and with a ".." so the spelling
+	// and the cleaned form actually DIFFER. Built with Join first, this test
+	// passed under a mutation that dropped the contract's spelling entirely —
+	// because with nothing to clean the two values were the same string, so
+	// substituting one for the other changed nothing. The hazard has to survive
+	// to the code under test.
+	spelled := link + "/extra/../not-an-agent"
+	cleaned := canonicalOpenCodeRuntimePath(spelled)
+	require.NotEqual(t, spelled, cleaned,
+		"the fixture only discriminates if the contract's spelling differs from the cleaned form")
+
+	_, err := requireOpenCodeAnchoredStateRoot(spelled, cleaned)
+	require.ErrorContains(t, err, "is neither an allocated per-agent state root")
+	require.Contains(t, err.Error(), spelled,
+		"the contract's own spelling must appear")
+	require.Contains(t, err.Error(), "(tested as ",
+		"the operand the comparison actually ran on must be shown, not silently substituted")
 }
