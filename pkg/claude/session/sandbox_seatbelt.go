@@ -910,8 +910,13 @@ func appendSeatbeltLoopbackNetworkRules(
 // it also admits a different service on a non-loopback local address at the
 // same port. Replacing localhost with the bound IP is not representable —
 // sandbox-exec rejects literal hosts with "host must be * or localhost in
-// network address". The smoke characterizes that limitation explicitly and no
-// capability cell may activate this floor until the follow-up closes it.
+// network address". The smoke characterizes that limitation explicitly.
+//
+// No capability cell may activate this floor while it stands — and TCL-917
+// decided it will stand: the operator ruled document-and-disclose rather than
+// a launch-time collision check, so there is no follow-up that closes it. A
+// Darwin rating may be Partial with the scope stated, never Full. See the
+// activation record in docs/proxy-network-filtering.md.
 // sandboxpolicy.AddrIsLoopbackIdentity governs which endpoints are accepted by
 // the renderer; it cannot narrow what Seatbelt's localhost token matches.
 func appendSeatbeltIsolatedNetworkRules(

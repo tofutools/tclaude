@@ -1179,7 +1179,11 @@ before running the real filesystem/network smoke and the OpenCode executor
 smoke, and fails if either named test does not report its explicit top-level
 PASS line. `TestTclaudeLayerDarwinSmoke` includes strict Local access: an
 allowed real-host loopback port connects, another listening loopback port and
-public egress fail with `EPERM`, and local bind remains available.
+public TCP egress fail with `EPERM`, and local bind remains available. It also
+characterizes the **address** axis, not only the port one: a different service
+on the *allowed* port at a non-loopback local address is reachable, which is
+the scope limit described above. Listing only the port assertions is what let
+that limit go unnoticed, so the pair is stated together.
 The CI job installs the deliberately pinned `opencode-ai@1.18.6` used by the
 Linux executor smoke. To repeat the filesystem smoke on a macOS host:
 

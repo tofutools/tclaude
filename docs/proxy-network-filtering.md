@@ -545,10 +545,18 @@ A ceiling on what any future Darwin activation may claim, recorded here so it is
 not rediscovered when a cell is proposed.
 
 A Seatbelt loopback rule scopes to **a port set across all host-local
-addresses**, not to the loopback interface. `localhost` in SBPL means every
-address assigned to the host, and literal IPs are rejected at profile parse
-time, so "this port, loopback only" is not expressible at all. Measured on the
-native path — CI run `30691418550`, job `91346704723`.
+addresses**, not to the loopback interface, so "this port, loopback only" is
+not expressible at all.
+
+The two halves of that have different evidence, and are worth keeping apart:
+
+- **`localhost` matches every address assigned to the host.** Measured on the
+  native path — CI run `30691418550`, job `91346704723`. That job is **red by
+  design**: the probe reported its finding by failing deliberately, because a
+  passing log is one nobody reads.
+- **Literal IPs are rejected at profile parse time**, with `host must be * or
+  localhost in network address`. This comes from M3.1/M3.2 attempting exactly
+  that substitution, not from the run above, and no test currently asserts it.
 
 So **M3.3 may rate Darwin `NetworkList` Partial with that scope stated; it may
 not rate it Full.** This is a cap on a future claim rather than a correction to
@@ -569,6 +577,8 @@ refusing a launch because an unrelated program holds a port is how a sandbox
 gets switched off, and the scenario is narrow. The ruling was document and
 disclose. If a Darwin proxy is ever wired up, revisit the question **then**,
 with the seam in front of you; this is not a permanent "never".
+
+### What the first activation run showed
 
 What the first activation run (on-main run `30609001363`) actually showed, as
 distinct from what was hypothesized:

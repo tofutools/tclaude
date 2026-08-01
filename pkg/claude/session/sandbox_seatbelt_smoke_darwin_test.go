@@ -524,6 +524,25 @@ func runDarwinSeatbeltSmokeHelper(
 		t.Fatal("darwin tclaude-layer smoke timed out")
 	}
 	require.NoErrorf(t, err, "darwin tclaude-layer smoke output: %s", output.String())
+	if networkLocal {
+		// THE HELPER MUST REPORT THAT IT RAN THIS BRANCH. Without this, the
+		// Local-access characterization is satisfied by absence: if the
+		// networkLocal env plumbing ever breaks, the helper falls into the
+		// host-open branch, whose one network assertion is that the host
+		// listener connects — and under this plan that port IS allowed, so it
+		// passes. The same-port address axis, the denied-port axis and the
+		// external-TCP axis would all silently vanish and the smoke would stay
+		// green. The parent binding its control and passing its own
+		// out-of-sandbox check would produce no signal either.
+		//
+		// Asserting the marker turns that into a failure, because the marker is
+		// only printed from inside the branch. Mirrors the proxy-floor smoke,
+		// which asserts every marker it expects for the same reason.
+		assert.Contains(t, output.String(), darwinLocalAccessSamePortMarker(),
+			"the Local-access smoke must report the same-port characterization it executed;"+
+				" its absence means the branch did not run, not that it passed\noutput:\n%s",
+			output.String())
+	}
 }
 
 func TestTclaudeLayerDarwinSmokeHelper(t *testing.T) {
@@ -646,9 +665,14 @@ func TestTclaudeLayerDarwinSmokeHelper(t *testing.T) {
 		// concludes "the loopback rule is scoped to loopback", which is what
 		// this rule does NOT do.
 		//
-		// Asserted POSITIVELY as the current behaviour: this fails if the
-		// bypass disappears as well as if it widens, which is what makes it a
-		// characterization rather than a permanent excuse.
+		// Asserted POSITIVELY as the current behaviour, so this fails if the
+		// bypass DISAPPEARS — that is what makes it a characterization rather
+		// than a permanent excuse.
+		//
+		// It does NOT detect widening. If Apple ever made "localhost" match
+		// addresses beyond this host, this assertion would still pass; the
+		// 1.1.1.1:53 EPERM assertion below is what catches that. Saying so
+		// because the pair covers both directions and neither one alone does.
 		samePortListener := os.Getenv(darwinSmokeSamePortListenerEnv)
 		require.NotEmpty(t, samePortListener,
 			"the same-port non-loopback control must be supplied, or this characterization silently measures nothing")
@@ -772,7 +796,21 @@ func TestTclaudeLayerDarwinSmokeHelper(t *testing.T) {
 // notice a change in Seatbelt's behaviour: a green run that silently measured
 // nothing is exactly what this characterization exists to prevent. The
 // inventory is in the failure so "no address existed" can never be confused
-// with "the probe was not written". Matches the proxy-floor smoke's handling.
+// with "the probe was not written". That fatal-rather-than-skip decision is
+// the proxy-floor smoke's, deliberately.
+//
+// IT DOES NOT COPY THAT SMOKE'S COLLISION HANDLING, and the difference is
+// forced rather than chosen. The proxy floor reserves the non-loopback side at
+// port 0 FIRST and then asks loopback for that exact port, so a transient
+// collision can retry the whole pair. Here the loopback listener already
+// exists — it is bound before the host-open posture runs and its address is
+// handed to that helper — so the port is an input, not something this function
+// may choose. A collision is therefore possible and unretriable.
+//
+// The two failure modes get DISTINCT messages for that reason: "no candidate
+// address" and "the port was taken" are different problems, and a collision
+// reported as the former would send an investigator to look for a runner
+// networking fault that does not exist.
 func darwinLocalAccessSamePortControl(t *testing.T, port int) (net.Listener, string) {
 	t.Helper()
 	interfaces, err := net.Interfaces()
@@ -818,8 +856,13 @@ func darwinLocalAccessSamePortControl(t *testing.T, port int) (net.Listener, str
 			continue
 		}
 		t.Cleanup(func() { _ = listener.Close() })
-		// Accepts, so the in-sandbox result turns on Seatbelt's verdict rather
-		// than on whether anything answered.
+		// Drains the backlog so the control behaves like a live service rather
+		// than a bound-and-ignored socket. Note this is not what makes the
+		// measurement sound: a TCP handshake completes from the backlog whether
+		// or not anything accepts, so the connect would succeed regardless. What
+		// makes the result attributable is that the control is bound to a
+		// DIFFERENT ADDRESS than the allowed listener, so a successful connect
+		// cannot have landed on the allowed one.
 		go func() {
 			for {
 				conn, acceptErr := listener.Accept()
@@ -831,8 +874,12 @@ func darwinLocalAccessSamePortControl(t *testing.T, port int) (net.Listener, str
 		}()
 		return listener, inventory
 	}
-	t.Fatalf("no non-loopback local address accepted a bind on port %d: %s\nrunner interfaces:\n%s",
-		port, strings.Join(failures, "; "), inventory)
+	t.Fatalf("PORT COLLISION, not a runner networking fault: %d candidate non-loopback "+
+		"local address(es) exist, but none could bind port %d because something else "+
+		"already holds it there. The loopback listener fixed this port before this "+
+		"function ran, so it cannot retry with a different one.\nbind attempts:\n%s\n"+
+		"runner interfaces:\n%s",
+		len(candidates), port, strings.Join(failures, "; "), inventory)
 	return nil, inventory
 }
 

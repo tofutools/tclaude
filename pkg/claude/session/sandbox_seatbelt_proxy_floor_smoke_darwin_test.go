@@ -38,9 +38,13 @@ const (
 	seatbeltProxyFloorAgentdSocketEnv = "TCLAUDE_SEATBELT_PROXY_FLOOR_AGENTD_SOCKET"
 	seatbeltProxyFloorHelperTest      = "^TestSeatbeltProxyFloorSmokeHelper$"
 	seatbeltProxyFloorTimeout         = 2 * time.Second
-	// TCL-917 flips this single value after its launch-time collision check
-	// lands. The same-port probe stays: false makes it require Seatbelt EPERM
-	// and changes the evidence marker from LIMITATION to MITIGATED.
+	// TCL-917 RULED AGAINST the launch-time collision check this comment
+	// previously said would land, so nothing is pending: the decision was
+	// document and disclose, and this value is expected to stay true until
+	// Apple changes what "localhost" matches. Flipping it is still the entire
+	// change if that happens — false makes the same-port probe require
+	// Seatbelt EPERM and turns the evidence marker from LIMITATION to
+	// MITIGATED.
 	seatbeltProxyFloorSamePortBypassExpected = true
 	// Darwin's sockaddr_un.sun_path is 104 bytes including its terminator.
 	seatbeltProxyFloorUnixPathCapacity = 104
@@ -57,7 +61,9 @@ const (
 // matches every address assigned to this host at that port. Therefore a live
 // service on a non-loopback local address at the proxy's port remains directly
 // reachable. This is a documented hole, not a successful isolation assertion;
-// any change in either direction is news and must update the follow-up design.
+// any change in either direction is news. There is no follow-up design to
+// update: TCL-917 ruled document-and-disclose and built no mitigation, so the
+// change that news would prompt is flipping the expectation constant above.
 func TestSeatbeltProxyFloorSmoke(t *testing.T) {
 	if os.Getenv("TCLAUDE_SANDBOX_V2_SMOKE") != "1" {
 		t.Skip("set TCLAUDE_SANDBOX_V2_SMOKE=1 on macOS to exercise sandbox-exec")
