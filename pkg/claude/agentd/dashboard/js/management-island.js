@@ -292,13 +292,14 @@ function SandboxOutcomeBucket({
    another assignment to name — the one divergent shape (an unsaved draft named
    identically to the existing global profile) arises solely in the
    single-context fallback. Stated rather than claimed "kept in step", so the
-   next person to touch the selector knows the two are not literally coupled. */
-/* The vocabulary itself, taking the context VALUE rather than a list and an
-   index. An assignment past the display cap has no index to be looked up by —
-   the daemon sends its context beside the refusal (TCL-913) — so the naming
-   has to be reachable without one. Returns null for a missing value so the
-   ordinal fallback stays with the index-based caller below, where there is an
-   N to show; an omitted assignment has none. */
+   next person to touch the selector knows the two are not literally coupled.
+
+   This is the vocabulary itself, taking the context VALUE rather than a list
+   and an index. An assignment past the display cap has no index to be looked
+   up by — the daemon sends its context beside the refusal (TCL-913) — so the
+   naming has to be reachable without one. Returns null for a missing value so
+   the ordinal fallback stays with the index-based caller below, where there is
+   an N to show; an omitted assignment has none. */
 function sandboxContextLabelFor(value) {
   if (!value) return null;
   if (value.group_name) return `group ${value.group_name}`;
@@ -306,6 +307,8 @@ function sandboxContextLabelFor(value) {
   return 'global assignment';
 }
 
+/* The index-based caller: names a LISTED assignment, and falls back to the
+   ordinal when the index has no context behind it. */
 function sandboxContextLabel(contexts, index) {
   return sandboxContextLabelFor(contexts?.[index]?.context) ?? `assignment ${index + 1}`;
 }

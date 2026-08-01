@@ -467,17 +467,24 @@ func handleSandboxProfileDraftEnforcement(w http.ResponseWriter, r *http.Request
 		// identity was previously discarded (TCL-913) — the slice expression
 		// kept the refusal and threw away the only thing that named it.
 		omittedFrom := min(len(contextRefusals), len(response.Contexts))
+		// Guarded rather than assumed, and guarded on the PRECONDITION rather
+		// than on the index. A bounds check alone only catches misalignment
+		// that overflows; a SHIFT stays in bounds and names a real but wrong
+		// assignment, which is the one outcome worse than naming none. The
+		// alignment is a one-append-per-context property of the producer, so
+		// the honest test is that the lengths still agree — if a future edit
+		// there ever drops or adds an entry, every identity goes missing and
+		// the client falls back to its unnamed wording, which is today's
+		// behaviour. Both checks are kept: the length equality is what makes
+		// the claim true, the bounds check is what makes it obvious.
+		alignedWithContexts := len(contextRefusals) == len(contexts)
 		omittedRefusals := []sandboxProfileOmittedRefusal{}
 		for offset, refusal := range contextRefusals[omittedFrom:] {
 			if refusal == nil {
 				continue
 			}
 			entry := sandboxProfileOmittedRefusal{sandboxProfileEnforcementRefusal: refusal}
-			// Guarded rather than assumed: if the alignment ever stops holding,
-			// the identity goes missing and the client falls back to its
-			// unnamed wording, which is today's behaviour. It must never index
-			// a different assignment and name the wrong one.
-			if index := omittedFrom + offset; index < len(contexts) {
+			if index := omittedFrom + offset; alignedWithContexts && index < len(contexts) {
 				entry.Context = contexts[index].Context
 			}
 			omittedRefusals = append(omittedRefusals, entry)

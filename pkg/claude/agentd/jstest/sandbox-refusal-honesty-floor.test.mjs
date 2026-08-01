@@ -344,8 +344,14 @@ test('every assignment-naming branch keeps its exact wording', async (t) => {
         contexts=${contexts}/>`);
     const other = mounted.container.querySelector('.sbx-other-assignments');
     assert.ok(other, `a refused sibling must be reported for ${JSON.stringify(context)}`);
-    assert.match(other.textContent, new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
-      `context ${JSON.stringify(context)} must be named "${expected}"`);
+    // EXACT, not substring: the test claims the wording is unchanged, and a
+    // regex/includes check passes just as happily on "explicit selection
+    // (draft)". Asserting the label element's whole text is what makes the
+    // name of this test true. Compared as a small printable string rather
+    // than by handing a DOM node to the diff formatter.
+    const labels = [...other.querySelectorAll('li > strong')].map((el) => el.textContent);
+    assert.deepEqual(labels, [`${expected}:`],
+      `context ${JSON.stringify(context)} must be named exactly "${expected}"`);
   }
 });
 
