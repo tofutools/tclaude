@@ -276,7 +276,18 @@ func collectCosts(from, to time.Time, factor float64, includeWhatIf bool) (costs
 			a.real += d.usd
 			realTotal += d.usd
 		}
-		if d.updatedAt > a.lastActivity {
+		// Compared as INSTANTS, not as strings (TCL-935). These stamps are
+		// RFC3339Nano, whose spelling does not sort chronologically — see
+		// db.sortCostDailyRowsForWalk for the contract. Comparing them with >
+		// showed the EARLIER spend as a slice's last activity, and since the
+		// breakdown below sorts on this field it mis-ordered whole rows.
+		//
+		// Last-writer-wins would be wrong here even though the rows now arrive
+		// chronologically: the walk groups a conv-less row under its own
+		// session id, while this slice key is the RAW conv id, so every
+		// conv-less row on a day collapses into one slice whose deltas arrive
+		// in session-id order rather than in time order.
+		if db.CompareCostStamps(d.updatedAt, a.lastActivity) > 0 {
 			a.lastActivity = d.updatedAt
 		}
 		// Prefer the model denormalised onto the cost row — it survives the
@@ -287,14 +298,21 @@ func collectCosts(from, to time.Time, factor float64, includeWhatIf bool) (costs
 		if m == "" {
 			m = models[d.sessionID]
 		}
-		if m != "" && d.updatedAt >= a.modelAt {
+		// >= 0, not > 0: keeping the LAST value among equal stamps preserves
+		// the existing tie-break, and the initial "" modelAt compares equal to
+		// a delta that carries no stamp, so a model still lands when nothing
+		// is stamped at all. This is a keep-last-GOOD pick, not a last-write —
+		// the m != "" guard is what stops a model-less delta blanking a value
+		// recorded earlier, so it cannot be folded in with lastActivity above.
+		if m != "" && db.CompareCostStamps(d.updatedAt, a.modelAt) >= 0 {
 			a.model, a.modelAt = m, d.updatedAt
 		}
 		h := d.harness
 		if h == "" {
 			h = harnesses[d.sessionID]
 		}
-		if h != "" && d.updatedAt >= a.harnessAt {
+		// Same keep-last-good shape as model above.
+		if h != "" && db.CompareCostStamps(d.updatedAt, a.harnessAt) >= 0 {
 			a.harness, a.harnessAt = h, d.updatedAt
 		}
 		if d.day > convMaxDay[d.convID] {
@@ -379,8 +397,8 @@ func costKind(real, whatif float64) string {
 // day's date (its activity is provably no earlier, and resolved finer).
 func sortCostAgentRows(agents []costAgentRow) {
 	sort.Slice(agents, func(i, j int) bool {
-		if ki, kj := costRowRecencyKey(agents[i]), costRowRecencyKey(agents[j]); ki != kj {
-			return ki > kj
+		if c := compareCostRowRecency(agents[i], agents[j]); c != 0 {
+			return c > 0
 		}
 		if agents[i].CostUSD != agents[j].CostUSD {
 			return agents[i].CostUSD > agents[j].CostUSD
@@ -389,20 +407,42 @@ func sortCostAgentRows(agents []costAgentRow) {
 	})
 }
 
-// costRowRecencyKey is the string the breakdown sorts recency on. With
-// a precise timestamp it's the RFC3339Nano value (lexically ordered —
-// the local offset is constant across rows, so string order is time
-// order); without one it's the calendar day floored to midnight, which
-// sorts just below any same-day timestamp. Both forms share the
-// "2006-01-02" prefix, so cross-form comparison still orders by day.
-func costRowRecencyKey(a costAgentRow) string {
-	if a.LastActivity != "" {
-		return a.LastActivity
+// compareCostRowRecency orders two breakdown rows by recency, returning
+// -1, 0 or 1. It is deliberately TWO-TIER rather than one string key.
+//
+// The single-key form this replaces built "the RFC3339Nano value, else the
+// calendar day floored to midnight" and compared it lexically, justified by
+// the local offset being constant across rows. That premise is false
+// (TCL-935): LastActivity is copied straight from session_cost_daily.updated_at,
+// whose zone belongs to whichever writer produced it — see
+// db.sortCostDailyRowsForWalk. Trimmed fractions break the lexical order
+// within a single zone too, so even constant offsets would not have saved it.
+//
+// Day first, then precision, then instant:
+//
+//   - LastDay is fixed-width "2006-01-02", where lexical and chronological
+//     order coincide, and it is always the slice's own day — so the coarse
+//     tier needs no parsing and cannot be knocked over by a spelling.
+//   - Within one day a row with a known time outranks one with only the date,
+//     which is the original intent: its activity is provably no earlier and is
+//     resolved finer.
+//   - Two known times compare as INSTANTS.
+func compareCostRowRecency(a, b costAgentRow) int {
+	if a.LastDay != b.LastDay {
+		if a.LastDay > b.LastDay {
+			return 1
+		}
+		return -1
 	}
-	if a.LastDay != "" {
-		return a.LastDay + "T00:00:00"
+	switch {
+	case a.LastActivity != "" && b.LastActivity == "":
+		return 1
+	case a.LastActivity == "" && b.LastActivity != "":
+		return -1
+	case a.LastActivity == "" && b.LastActivity == "":
+		return 0
 	}
-	return ""
+	return db.CompareCostStamps(a.LastActivity, b.LastActivity)
 }
 
 // handleDashboardCosts serves GET /api/costs?from=YYYY-MM-DD[&to=YYYY-MM-DD] —
