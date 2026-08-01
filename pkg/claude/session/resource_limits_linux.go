@@ -20,13 +20,18 @@ import (
 )
 
 var resourceCgroupRoot = "/sys/fs/cgroup"
+var resourceProcRoot = "/proc"
 
 const resourceSupervisorCgroup = "tclaude-supervisor"
 
 func currentCgroupDir() (string, error) {
-	raw, err := os.ReadFile("/proc/self/cgroup")
+	return processCgroupDir("self")
+}
+
+func processCgroupDir(pid string) (string, error) {
+	raw, err := os.ReadFile(filepath.Join(resourceProcRoot, pid, "cgroup"))
 	if err != nil {
-		return "", fmt.Errorf("read current cgroup: %w", err)
+		return "", fmt.Errorf("read process %s cgroup: %w", pid, err)
 	}
 	for _, line := range strings.Split(string(raw), "\n") {
 		if !strings.HasPrefix(line, "0::") {
@@ -36,7 +41,24 @@ func currentCgroupDir() (string, error) {
 		clean := filepath.Clean("/" + rel)
 		return filepath.Join(resourceCgroupRoot, strings.TrimPrefix(clean, "/")), nil
 	}
-	return "", errors.New("cgroup v2 unified hierarchy was not found in /proc/self/cgroup")
+	return "", fmt.Errorf("cgroup v2 unified hierarchy was not found for process %s", pid)
+}
+
+// ValidateExternalTmuxServerCgroup proves that the server answering the named
+// socket was started by the configured external runtime rather than left over
+// from an earlier agentd-owned launch.
+func ValidateExternalTmuxServerCgroup(pid int, delegation string) error {
+	current, err := processCgroupDir(strconv.Itoa(pid))
+	if err != nil {
+		return err
+	}
+	delegation = filepath.Clean(delegation)
+	rel, err := filepath.Rel(delegation, current)
+	if err != nil || filepath.IsAbs(rel) || rel == ".." ||
+		strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("tmux server PID %d is in %s, outside %s", pid, current, delegation)
+	}
+	return nil
 }
 
 // resourceDelegationDir returns the process-free delegated node under which

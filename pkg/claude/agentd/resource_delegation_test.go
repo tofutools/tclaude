@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"os/exec"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -31,6 +32,16 @@ func TestResolveResourceDelegationDirPrecedence(t *testing.T) {
 	got, source = resolveResourceDelegationDir("", nil)
 	assert.Empty(t, got)
 	assert.Equal(t, "legacy self-cgroup derivation", source)
+}
+
+func TestManagedOpenCodeExternalResourceCgroupRequiresExplicitDegradation(t *testing.T) {
+	t.Setenv(session.ResourceDelegationDirEnv,
+		"/sys/fs/cgroup/system.slice/tclaude-tmux.service")
+	_, err := configureOpenCodeResourceCgroup(exec.Command("true"),
+		"/sys/fs/cgroup/system.slice/tclaude-tmux.service/tclaude-test")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, errOpenCodeResourceCgroup)
+	assert.ErrorContains(t, err, "cannot be placed across systemd units")
 }
 
 func TestManagedServerDropsStoredCgroupFromPreviousDelegationBeforeReprepare(t *testing.T) {

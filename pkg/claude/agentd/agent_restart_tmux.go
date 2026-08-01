@@ -39,10 +39,10 @@ func beginAgentRestartTmuxHandoff(oldTmux string) *agentRestartTmuxHandoff {
 		return nil
 	}
 	holding := "restart-" + strings.TrimPrefix(generateSpawnLabel(), "spwn-")
-	if err := clcommon.TmuxCommand(
+	if err := clcommon.TmuxCommand(session.ExternalTmuxNoStartArgs(
 		"new-session", "-d", "-s", holding,
 		"sh", "-c", agentRestartHoldingCommand,
-	).Run(); err != nil {
+	)...).Run(); err != nil {
 		slog.Warn("agent restart: could not create tmux client bridge",
 			"from", oldTmux, "bridge", holding, "error", err)
 		return nil

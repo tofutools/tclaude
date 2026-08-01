@@ -149,6 +149,7 @@ func runInTmux(cwd, taskDir string, detached, watch, excludeTaskFiles bool) erro
 		"-c", cwd,
 		"sh", "-c", runnerCmd,
 	}
+	tmuxArgs = session.ExternalTmuxNoStartArgs(tmuxArgs...)
 
 	tmuxCmd := clcommon.TmuxCommand(tmuxArgs...)
 	tmuxCmd.Stdout = os.Stdout

@@ -363,6 +363,8 @@ func runServe(p *serveParams) error {
 		slog.Info("external resource delegation enabled",
 			"directory", validated, "source", resourceDelegationSource)
 		fmt.Fprintf(out, "  resource delegation: %s (%s)\n", validated, resourceDelegationSource)
+	} else if clearErr := session.ClearResourceDelegationFromTmux(); clearErr != nil {
+		return clearErr
 	}
 
 	// HTTP listeners for the human-approval popup (Phase B of the

@@ -111,8 +111,9 @@ func handleDashboardTermWS(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
 	}
+	clientFlags := strings.TrimSpace(webTerminalTmuxFlags() + " " + session.ExternalTmuxNoStartFlag())
 	cmd := fmt.Sprintf("tmux -L %s %s new-session -A -s %s -c %s",
-		clcommon.TmuxSocketName, webTerminalTmuxFlags(), shellSingleQuote(name), shellSingleQuote(dir))
+		clcommon.TmuxSocketName, clientFlags, shellSingleQuote(name), shellSingleQuote(dir))
 	runPTYOverWS(w, r, cmd, name)
 }
 
@@ -181,8 +182,9 @@ func handleDashboardGroupTermWS(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
 	}
+	clientFlags := strings.TrimSpace(webTerminalTmuxFlags() + " " + session.ExternalTmuxNoStartFlag())
 	cmd := fmt.Sprintf("tmux -L %s %s new-session -A -s %s -c %s",
-		clcommon.TmuxSocketName, webTerminalTmuxFlags(), shellSingleQuote(sessName), shellSingleQuote(dir))
+		clcommon.TmuxSocketName, clientFlags, shellSingleQuote(sessName), shellSingleQuote(dir))
 	runPTYOverWS(w, r, cmd, sessName)
 }
 

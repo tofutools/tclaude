@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -34,19 +35,34 @@ type launchRecordingTmux struct {
 	failNewSession  bool
 	failServerProbe bool
 	resourceEnv     string
+	serverPID       int
 	paneCwd         string
+}
+
+func recordedTmuxCommand(args []string) string {
+	if len(args) > 1 && args[0] == "-N" {
+		return args[1]
+	}
+	if len(args) > 0 {
+		return args[0]
+	}
+	return ""
 }
 
 func (r *launchRecordingTmux) Command(args ...string) *exec.Cmd {
 	copied := append([]string(nil), args...)
 	r.argv = append(r.argv, copied)
-	if r.failNewSession && len(args) > 0 && args[0] == "new-session" {
+	command := recordedTmuxCommand(args)
+	if r.failNewSession && command == "new-session" {
 		return exec.Command("false")
 	}
-	if r.failServerProbe && len(args) > 0 && args[0] == "show-options" {
+	if r.failServerProbe && command == "display-message" {
 		return exec.Command("false")
 	}
-	if r.resourceEnv != "" && len(args) > 0 && args[0] == "show-environment" {
+	if r.serverPID > 0 && command == "display-message" {
+		return exec.Command("printf", "%s\n", strconv.Itoa(r.serverPID))
+	}
+	if r.resourceEnv != "" && command == "show-environment" {
 		return exec.Command("printf", "%s=%s\n", ResourceDelegationDirEnv, r.resourceEnv)
 	}
 	if len(args) > 0 && args[0] == "display-message" &&
@@ -79,7 +95,7 @@ func (r *launchRecordingTmux) ListSessions() (map[string]struct{}, error) {
 func (r *launchRecordingTmux) newSessions() [][]string {
 	var out [][]string
 	for _, a := range r.argv {
-		if len(a) > 0 && a[0] == "new-session" {
+		if recordedTmuxCommand(a) == "new-session" {
 			out = append(out, a)
 		}
 	}

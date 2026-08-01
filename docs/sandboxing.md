@@ -148,8 +148,9 @@ never widens a configured limit without the explicit operator override.
 
 For deployments where tmux panes must survive agentd service upgrades, put the
 `-L tclaude` tmux server in a separate, long-lived systemd unit with
-`Delegate=cpu memory`, then start agentd with the delegated unit cgroup as its
-external root:
+`Delegate=cpu memory` and `DelegateSubgroup=tclaude-tmux`, then start agentd
+with the delegated unit cgroup (the parent of that subgroup) as its external
+root:
 
 ```bash
 tclaude agentd serve \
@@ -169,6 +170,17 @@ does not start or own that server: allowing `tmux new-session` to create it
 would place the server back inside agentd's service cgroup. If the external
 runtime is unavailable, startup and later session creation fail with an error
 naming the runtime unit rather than silently creating a replacement server.
+Agentd also verifies that the server PID is already inside the configured
+delegation tree.
+
+Managed OpenCode servers are an interim exception because agentd cannot use
+`clone3` to place its own child across systemd unit boundaries. In external
+mode, OpenCode plus configured resource limits therefore refuses by default or
+uses the existing explicit **allow launch without enforcement** degradation.
+The degraded server is an ordinary agentd child and must be stopped with
+agentd (for example with systemd's default `KillMode=control-group`); do not
+configure it to survive agentd restarts. A tmux-mediated managed-server launch
+is tracked as TCL-943 to restore both enforcement and upgrade survival.
 
 ## Experimental `tclaude-layer` on Linux and macOS
 
