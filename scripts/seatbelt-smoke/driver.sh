@@ -13,6 +13,7 @@ cd "$repo_root"
 : "${RUNNER_TEMP:?RUNNER_TEMP must name the CI artifact directory}"
 if [[ -z "${GITHUB_STEP_SUMMARY:-}" ]]; then
   GITHUB_STEP_SUMMARY="$RUNNER_TEMP/seatbelt-smoke-summary.md"
+  : > "$GITHUB_STEP_SUMMARY"
   trap '[[ ! -s "$GITHUB_STEP_SUMMARY" ]] || cat "$GITHUB_STEP_SUMMARY" >&2' EXIT
 fi
 
