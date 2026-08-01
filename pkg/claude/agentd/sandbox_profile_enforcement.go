@@ -35,9 +35,24 @@ import (
 //
 // That nil is a VERDICT, not a gap: once ContextNetworkEntries is present it is
 // authoritative for every index in it, and nil at an index means "this context
-// produced no entries". It must never be filled from NetworkEntries above. The
-// only fallback a client may take is when the field is ABSENT ENTIRELY, which
-// says the daemon is too old to compute per-context entries at all.
+// produced no entries". It must never be filled from NetworkEntries above.
+//
+// What makes that safe to rely on is that nil at an index is EXCLUSIVELY the
+// refusal marker. describePredictedDraftSandboxProfile is the only producer, and
+// its success path appends a non-nil slice even when empty, so a context with
+// genuinely zero network rows emits [] rather than null; the one path that
+// appends nil is the typed-capability refusal, which writes a non-nil entry to
+// ContextRefusals at the same index. A nil here therefore always has a refusal
+// beside it. No error swallow, early return, or display cap can produce one:
+// derivation and untyped prediction errors fail the whole request instead, and
+// the cap truncates whole trailing indexes rather than nulling an in-range one.
+//
+// A client may fall back to NetworkEntries only when the field is ABSENT
+// ENTIRELY. Two shapes produce that, and the fallback is right for both: a
+// daemon too old to compute per-context entries, and a current daemon with no
+// effective assignment contexts to compute them for (len(contexts) == 0, which
+// nils every per-context slice) — the same shape ContextAxes already degrades
+// to Axes for.
 //
 // TCL-914 closed this on the dashboard side: both consumers of the value — the
 // renderer and the attention check, which previously derived it from two
