@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -533,6 +534,8 @@ func legacyTimestampText(raw any) (string, bool) {
 		return value, true
 	case []byte:
 		return string(value), true
+	case int64:
+		return strconv.FormatInt(value, 10), true
 	default:
 		return "", false
 	}
@@ -650,13 +653,8 @@ func convertTimestampColumn(ctx context.Context, tx *sql.Tx, table string, colum
 			updates = append(updates, conversion{rowID: rowID, value: ns})
 			continue
 		}
-		var textValue string
-		switch value := raw.(type) {
-		case string:
-			textValue = value
-		case []byte:
-			textValue = string(value)
-		default:
+		textValue, ok := legacyTimestampText(raw)
+		if !ok {
 			return fmt.Errorf("%s.%s rowid %d: expected TEXT timestamp, got %T", table, column.name, rowID, raw)
 		}
 		if textValue == "" {

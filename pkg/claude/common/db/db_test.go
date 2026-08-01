@@ -726,6 +726,23 @@ func TestOpenSelfHealsIncompleteV1Schema(t *testing.T) {
 	}
 }
 
+func TestMigrateRefusesV1HealingOnMixedHeadShape(t *testing.T) {
+	d := freshMigratedDB(t)
+	require.NoError(t, execPragma(d, `PRAGMA foreign_keys = OFF`))
+	_, err := d.Exec(`UPDATE schema_version SET version = 1; DROP TABLE sessions; DROP TABLE notify_state;`)
+	require.NoError(t, err)
+
+	err = migrate(d)
+	require.ErrorContains(t, err, "refusing to heal incomplete v1 schema")
+	require.ErrorContains(t, err, "unexpected user table")
+	var version int
+	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&version))
+	assert.Equal(t, 1, version, "refusal does not replay migrations over the mixed shape")
+	var headTable int
+	require.NoError(t, d.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'agent_groups'`).Scan(&headTable))
+	assert.Equal(t, 1, headTable, "refusal leaves head-shaped user tables untouched")
+}
+
 func TestFailedFreshImportRefusesToResetPopulatedV1Tables(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
@@ -745,8 +762,8 @@ func TestFailedFreshImportRefusesToResetPopulatedV1Tables(t *testing.T) {
 	require.NoError(t, os.MkdirAll(sessDir, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(sessDir, "bad.json"), []byte(`{"id":"bad","created":"not-a-time"}`), 0o644))
 
-	_, err = Open()
-	require.ErrorContains(t, err, "refusing to reset failed fresh import: table sessions contains 1 row(s)")
+	_, openErr := Open()
+	assert.Error(t, openErr)
 	assert.DirExists(t, sessDir)
 	check, err := sql.Open("sqlite", dbPath)
 	require.NoError(t, err)
@@ -754,4 +771,5 @@ func TestFailedFreshImportRefusesToResetPopulatedV1Tables(t *testing.T) {
 	var count int
 	require.NoError(t, check.QueryRow(`SELECT COUNT(*) FROM sessions WHERE id = 'must-survive'`).Scan(&count))
 	assert.Equal(t, 1, count, "reset refusal preserves pre-existing user data")
+	require.ErrorContains(t, openErr, "refusing to reset failed fresh import: table sessions contains 1 row(s)")
 }

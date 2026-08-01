@@ -3149,16 +3149,43 @@ func resetFailedFreshImport(db *sql.DB) error {
 }
 
 func incompleteV1Schema(db *sql.DB) (bool, error) {
+	missingV1Table := false
 	for _, table := range []string{"sessions", "notify_state"} {
 		var exists int
 		if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&exists); err != nil {
 			return false, err
 		}
 		if exists == 0 {
-			return true, nil
+			missingV1Table = true
 		}
 	}
-	return false, nil
+	if !missingV1Table {
+		return false, nil
+	}
+	rows, err := db.Query(`SELECT name FROM sqlite_master
+		WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+		  AND name NOT IN ('schema_version', 'sessions', 'notify_state')
+		ORDER BY name`)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = rows.Close() }()
+	var unexpected []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return false, err
+		}
+		unexpected = append(unexpected, name)
+	}
+	if err := rows.Err(); err != nil {
+		return false, err
+	}
+	if len(unexpected) != 0 {
+		return false, fmt.Errorf("refusing to heal incomplete v1 schema with %d unexpected user table(s): %s",
+			len(unexpected), strings.Join(unexpected, ", "))
+	}
+	return true, nil
 }
 
 var legacySessionEntryInfo = func(entry os.DirEntry) (os.FileInfo, error) {

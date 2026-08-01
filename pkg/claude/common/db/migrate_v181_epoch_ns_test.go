@@ -489,6 +489,91 @@ func TestRequiredTimestampPreflightAggregatesSQLNull(t *testing.T) {
 	assert.ErrorContains(t, err, "in 1 row(s)")
 }
 
+func TestRequiredTimestampStorageClasses_GenericCensus(t *testing.T) {
+	valid := time.Date(2025, 1, 2, 3, 4, 5, 6, time.UTC)
+	for _, tc := range []struct {
+		name      string
+		value     any
+		wantError bool
+	}{
+		{"parseable_blob", []byte(valid.Format(time.RFC3339Nano)), false},
+		{"parseable_integer", valid.UnixNano(), false},
+		{"unparseable_blob", []byte("not-a-time"), true},
+		{"unparseable_integer", int64(0), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setupTestDB(t)
+			d, err := sql.Open("sqlite", t.TempDir()+"/generic-storage.sqlite")
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = d.Close() })
+			_, err = d.Exec(`CREATE TABLE probe(id INTEGER PRIMARY KEY, required_at); INSERT INTO probe(required_at) VALUES (?)`, tc.value)
+			require.NoError(t, err)
+			tx, err := d.Begin()
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = tx.Rollback() })
+			column := timestampColumn{name: "required_at", text: true}
+			err = repairAndValidateRequiredZeroTimestamps(context.Background(), tx, []timestampTable{{
+				name: "probe", columns: []timestampColumn{column},
+			}})
+			if tc.wantError {
+				require.Error(t, err)
+				assert.ErrorContains(t, err, "probe.required_at")
+				return
+			}
+			require.NoError(t, err)
+			require.NoError(t, convertTimestampColumn(context.Background(), tx, "probe", column))
+			var stored int64
+			require.NoError(t, tx.QueryRow(`SELECT required_at FROM probe`).Scan(&stored))
+			assert.Equal(t, valid.UnixNano(), stored, "parseable storage class converts exactly")
+		})
+	}
+}
+
+func TestRequiredTimestampStorageClasses_SessionsCensus(t *testing.T) {
+	created := time.Date(2025, 1, 2, 3, 4, 5, 6, time.UTC)
+	updated := created.Add(time.Second)
+	for _, tc := range []struct {
+		name      string
+		created   any
+		wantError bool
+	}{
+		{"parseable_blob", []byte(created.Format(time.RFC3339Nano)), false},
+		{"parseable_integer", created.UnixNano(), false},
+		{"unparseable_blob", []byte("not-a-time"), true},
+		{"unparseable_integer", int64(0), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setupTestDB(t)
+			d, err := sql.Open("sqlite", t.TempDir()+"/sessions-storage.sqlite")
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = d.Close() })
+			_, err = d.Exec(`CREATE TABLE sessions(id TEXT PRIMARY KEY, created_at, updated_at);
+				INSERT INTO sessions(id, created_at, updated_at) VALUES ('real-session', ?, ?)`, tc.created, updated.UnixNano())
+			require.NoError(t, err)
+			tx, err := d.Begin()
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = tx.Rollback() })
+			createdColumn := timestampColumn{name: "created_at", text: true}
+			updatedColumn := timestampColumn{name: "updated_at", text: true}
+			err = repairAndValidateRequiredZeroTimestamps(context.Background(), tx, []timestampTable{{
+				name: "sessions", columns: []timestampColumn{createdColumn, updatedColumn},
+			}})
+			if tc.wantError {
+				require.Error(t, err)
+				assert.ErrorContains(t, err, `id "real-session"`)
+				return
+			}
+			require.NoError(t, err)
+			require.NoError(t, convertTimestampColumn(context.Background(), tx, "sessions", createdColumn))
+			require.NoError(t, convertTimestampColumn(context.Background(), tx, "sessions", updatedColumn))
+			var createdNS, updatedNS int64
+			require.NoError(t, tx.QueryRow(`SELECT created_at, updated_at FROM sessions WHERE id = 'real-session'`).Scan(&createdNS, &updatedNS))
+			assert.Equal(t, created.UnixNano(), createdNS)
+			assert.Equal(t, updated.UnixNano(), updatedNS)
+		})
+	}
+}
+
 func TestMigrateV180toV181_RejectsEmptyRequiredTimestamp(t *testing.T) {
 	d := v180FixtureDB(t)
 	_, err := d.Exec(`INSERT INTO notify_state (session_id, notified_at) VALUES ('required-empty', '')`)
