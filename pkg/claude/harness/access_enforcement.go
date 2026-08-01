@@ -259,12 +259,6 @@ func ResolveAccessEnforcement(
 			osSandbox.State, osSandbox.Source,
 		)
 	}
-	if osSandbox.Unverified {
-		return AccessEnforcement{}, fmt.Errorf(
-			"access enforcement requires a verified functioning OS sandbox; verdict is %q from %q but higher-precedence configuration could not be verified",
-			osSandbox.State, osSandbox.Source,
-		)
-	}
 	row, err := accessEnforcementTable(
 		h, implementation, axes, validatedBuiltinMode, runtime.GOOS,
 		osSandbox.FilteredNetwork,

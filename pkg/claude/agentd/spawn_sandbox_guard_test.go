@@ -113,7 +113,7 @@ func TestPlanSandboxProfileAccessResolvesInheritedClaudeSandboxSettings(t *testi
 	)
 	require.NotNil(t, failure,
 		"an unreadable higher-precedence settings tier must not count as positive sandbox evidence")
-	require.Contains(t, failure.Msg, "higher-precedence configuration could not be verified")
+	require.Contains(t, failure.Msg, "higher-precedence Claude settings could not be verified")
 }
 
 func TestPlanSandboxProfileAccessPersistsDetectedProbeWhenVerdictCannotFlip(t *testing.T) {
