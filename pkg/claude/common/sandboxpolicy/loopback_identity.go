@@ -5,11 +5,49 @@ import "net/netip"
 // loopbackIdentityPrefixes is the ONE definition of the address space that
 // names the host running the sandbox rather than a routable destination.
 //
-// It is deliberately wider than netip.Addr.IsLoopback. Linux routes 0.0.0.0/8
-// to the local host, and connect() to the unspecified address of either family
-// lands on local loopback, so those are further spellings of host loopback. The
-// IPv4-mapped forms are carried so a v6-spelled range covering the same space
-// cannot present a second identity for it.
+// It is deliberately wider than netip.Addr.IsLoopback, and wider than
+// reachability alone justifies. This comment used to say that Linux routes
+// 0.0.0.0/8 to the local host. It does not — on either platform we ship — and
+// the two halves of that sentence come apart (TCL-910, probe output quoted in
+// the PR; measured on an Azure Linux runner, kernel 6.17, and macOS 26.4):
+//
+//   - The UNSPECIFIED address of either family does land on the local host,
+//     but not by routing, and the platforms arrive there by different
+//     mechanisms. Linux resolves it in the route lookup itself:
+//     "ip route get 0.0.0.0" reports "local 0.0.0.0 dev lo src 127.0.0.1".
+//     macOS does not — "route -n get -inet 0.0.0.0" there returns the DEFAULT
+//     route via the LAN gateway — and connect() still lands on 127.0.0.1, so
+//     there the substitution happens in the connect path, below the route
+//     table. For :: both platforms substitute in the connect path: a dial of
+//     [::] reaches a ::1-ONLY listener on hosts whose route table calls ::
+//     unreachable. This is why the claim cannot be stated once for "either
+//     family" and left there.
+//
+//   - The REST of 0.0.0.0/8 reaches the local host on neither platform, and
+//     is not special-cased at all: it is ordinary destination space resolved
+//     through the route table like any other. On the routed Linux host
+//     "ip route get 0.0.0.1" returns "via <gateway> dev eth0" — OFF the host
+//     — and the connect times out; on macOS it likewise resolves to the
+//     default gateway and fails EHOSTUNREACH. On a host with no default route
+//     it fails ENETUNREACH, which is what the reviewer who found this saw:
+//     that errno was a property of their route table, not of the address
+//     space. Neither kernel's local table carries any part of 0/8. It is
+//     RFC 6890 "this host on this network" — valid as a SOURCE address, not
+//     as a destination.
+//
+// The /8 row stays regardless and is NOT narrowed here. Be careful about what
+// the over-inclusion buys, because the two sides are not symmetric: at
+// AUTHORING it only ever tightens, refusing cidr rows over space that turns
+// out to be unreachable, so nothing is permitted that should be denied. At
+// EVALUATION it hands those addresses to the loopback rows alone, so an
+// allow-loopback posture admits a dial to something like 0.0.0.1 that leaves
+// the host instead of staying on it — undeliverable anywhere, since RFC 6890
+// space is not forwarded, but still not the same statement as "over-inclusion
+// can only refuse more". Narrowing the row is a behaviour change that needs
+// its own scrutiny rather than a docs pass.
+//
+// The IPv4-mapped forms are carried so a v6-spelled range covering the same
+// space cannot present a second identity for it.
 //
 // Two consumers read this list and they must never disagree:
 //
@@ -26,8 +64,9 @@ import "net/netip"
 var loopbackIdentityPrefixes = []netip.Prefix{
 	netip.MustParsePrefix("127.0.0.0/8"),
 	netip.MustParsePrefix("::1/128"),
-	// "This network". Reaches the local host, and carries the unspecified
-	// IPv4 address.
+	// "This network" (RFC 6890): source-only space. It carries the
+	// unspecified IPv4 address, which does reach the local host; the rest of
+	// the /8 does not, and is covered deliberately — see above.
 	netip.MustParsePrefix("0.0.0.0/8"),
 	// The unspecified IPv6 address.
 	netip.MustParsePrefix("::/128"),
