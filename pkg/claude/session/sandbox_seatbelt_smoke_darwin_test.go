@@ -542,6 +542,13 @@ func runDarwinSeatbeltSmokeHelper(
 			"the Local-access smoke must report the same-port characterization it executed;"+
 				" its absence means the branch did not run, not that it passed\noutput:\n%s",
 			output.String())
+		// Re-emitted from the parent so the evidence is READABLE IN CI. The
+		// helper's stdout is captured into output and discarded on success, so
+		// asserting the marker proves the branch ran to this test but leaves
+		// nothing in the job log for anyone auditing later — and this is a
+		// characterization whose entire value is that a future reader can see
+		// what it observed without re-running it.
+		t.Logf("Local-access characterization executed: %s", darwinLocalAccessSamePortMarker())
 	}
 }
 
