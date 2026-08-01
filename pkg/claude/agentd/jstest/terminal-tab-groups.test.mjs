@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertAbsent } from './assertions.mjs';
 import { createPreactHarness, getByRole } from './preact-harness.mjs';
 
 function memoryPrefs(initial = {}) {
@@ -417,7 +418,7 @@ test('the strip renders group stacks with a collapsing pill, a join drop target,
   await harness.act(() => harness.fireEvent(
     getByRole(container, 'menuitem', { name: 'Ungroup tabs' }), 'click',
   ));
-  assert.equal(container.querySelector('.mux-tab-group'), null);
+  assertAbsent(container.querySelector('.mux-tab-group'));
   assert.equal(container.querySelectorAll('[role="tab"]').length, 3, 'ungrouping keeps every terminal');
 });
 
@@ -707,7 +708,7 @@ test('dragging a group pill moves the whole stack; Alt+Shift moves it by keyboar
   assert.deepEqual(stripKeys(), ['c', '[a,b]'], 'the group moved as one block, after c');
   assert.equal(state.groupMembers(groupId).map((pane) => pane.key).join(), 'a,b', 'membership intact');
   assert.match(container.querySelector('[role="status"]').textContent, /Moved group infra \(2 terminals\)/);
-  assert.equal(container.querySelector('.mux-tab-group.dragging'), null, 'the drag state clears on drop');
+  assertAbsent(container.querySelector('.mux-tab-group.dragging'), 'the drag state clears on drop');
 
   // Keyboard: Alt+Shift+Left hops the stack back over c.
   const back = pill();

@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertAbsent } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 function deferred() {
@@ -134,7 +135,7 @@ test('group cleanup preserves owner opt-in and submits only checked enabled rows
     'the daemon still receives the explicit owner permission gate');
   assert.match(host.querySelector('#cleanup-hint').textContent, /1 removed/);
   assert.equal(host.querySelector('#cleanup-submit').textContent, 'Done');
-  assert.equal(host.querySelector('#cleanup-cancel'), null);
+  assertAbsent(host.querySelector('#cleanup-cancel'));
   host.querySelector('#cleanup-submit').click();
   assert.deepEqual(await pending, { kind: 'cleanup', response: { removed: 1 } });
 });

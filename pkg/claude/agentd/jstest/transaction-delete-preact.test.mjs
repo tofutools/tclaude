@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertAbsent } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 function deferred() {
@@ -69,7 +70,7 @@ test('delete before probe completion freezes the safe no-worktree choice and abo
     },
   });
   const { harness, host } = mounted;
-  assert.equal(host.querySelector('#delete-agent-wt-row'), null);
+  assertAbsent(host.querySelector('#delete-agent-wt-row'));
   assert.equal(harness.document.activeElement.id, 'delete-agent-ok');
   host.querySelector('#delete-agent-ok').click();
   await harness.act(() => Promise.resolve());
@@ -218,7 +219,7 @@ test('delete closes over stale probe generations and ignores their late response
     kind: 'linked', path: '/repo/stale', branch: 'stale', shared: false, removable: true,
   });
   await mounted.harness.act(() => Promise.resolve());
-  assert.equal(mounted.host.querySelector('#delete-agent-wt-row'), null);
+  assertAbsent(mounted.host.querySelector('#delete-agent-wt-row'));
   second.resolve({
     kind: 'linked', path: '/repo/current', branch: 'current', shared: false, removable: true,
   });
@@ -292,7 +293,7 @@ test('delete yields topmost Escape, guards backdrop drags, and restores its open
   assert.ok(host.querySelector('#delete-agent-modal'));
   escape(harness);
   await harness.act(() => Promise.resolve());
-  assert.equal(host.querySelector('#delete-agent-modal'), null);
+  assertAbsent(host.querySelector('#delete-agent-modal'));
   assert.equal(harness.document.activeElement, opener);
   assert.equal(await mounted.pending, null);
   await mounted.mounted.unmount();

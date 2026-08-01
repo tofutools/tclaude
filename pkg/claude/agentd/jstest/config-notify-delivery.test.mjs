@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertAbsent } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 // Mounts the Config tab over a given saved config and returns the mounted
@@ -70,6 +71,6 @@ test('the browser permission control reports an unsupported context instead of o
 
   const section = mounted.container.querySelector('#cfg-notif-delivery').closest('.cfg-field');
   assert.match(section.textContent, /cannot raise notifications/i);
-  assert.equal(section.querySelector('button'), null, 'no grant button when the API is absent');
+  assertAbsent(section.querySelector('button'), 'no grant button when the API is absent');
   await mounted.unmount();
 });

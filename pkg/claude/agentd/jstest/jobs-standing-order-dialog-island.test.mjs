@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertAbsent } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 function snapshot() {
@@ -89,7 +90,7 @@ test('standing-order dialog authors a prompt RE2 condition', async (t) => {
     configurable: true, writable: true, value: 'user.prompt',
   });
   await harness.act(() => harness.fireEvent(trigger, 'change'));
-  assert.equal(mounted.container.querySelector('#standing-order-sources'), null);
+  assertAbsent(mounted.container.querySelector('#standing-order-sources'));
   assert.match(mounted.container.textContent,
     /prompt-text triggers remain unsupported because its event stream omits the prompt/);
 

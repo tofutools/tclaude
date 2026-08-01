@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertAbsent } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 const templates = [{
@@ -265,7 +266,7 @@ test('Preact group-create synchronously blocks duplicate submit, blocks busy clo
   host.querySelector('#group-create-submit').click();
   await flush(harness);
   assert.equal(attempts, 2);
-  assert.equal(host.querySelector('#group-create-modal'), null);
+  assertAbsent(host.querySelector('#group-create-modal'));
   await mounted.cleanup();
 });
 
@@ -340,7 +341,7 @@ test('dirty group-create Cancel, backdrop, and Escape all honor rejected and acc
     allowDiscard = true;
     await dismiss();
     await flush(harness);
-    assert.equal(host.querySelector('#group-create-modal'), null, 'accepted discard closes the draft');
+    assertAbsent(host.querySelector('#group-create-modal'), 'accepted discard closes the draft');
   };
 
   await openDirty();

@@ -17,6 +17,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertAbsent } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 async function memberTable(t) {
@@ -105,9 +106,8 @@ test('the refusal badge marks an agent whose telemetry agentd is dropping', asyn
   await t.test('a healthy agent carries no badge and gains no line', async () => {
     const mounted = await mount({ harness: 'claude' });
     try {
-      assert.equal(mounted.container.querySelector('.broker-refusal-badge'), null);
-      assert.equal(mounted.container.querySelector('.agent-harness'), null,
-        'an unremarkable pre-tick row must not grow a line just to say nothing');
+      assertAbsent(mounted.container.querySelector('.broker-refusal-badge'));
+      assertAbsent(mounted.container.querySelector('.agent-harness'), 'an unremarkable pre-tick row must not grow a line just to say nothing');
     } finally {
       await mounted.unmount();
     }
@@ -120,7 +120,7 @@ test('the refusal badge marks an agent whose telemetry agentd is dropping', asyn
       { harness: 'claude', model: 'Opus 4.8' }]) {
       const mounted = await mount(state);
       try {
-        assert.equal(mounted.container.querySelector('.broker-refusal-badge'), null);
+        assertAbsent(mounted.container.querySelector('.broker-refusal-badge'));
       } finally {
         await mounted.unmount();
       }
@@ -243,7 +243,7 @@ test('the machine-level notice reports refusals a badge may not show', async (t)
     ]) {
       const mounted = await mount(snapshot);
       try {
-        assert.equal(mounted.container.querySelector('.broker-refusal-notice'), null);
+        assertAbsent(mounted.container.querySelector('.broker-refusal-notice'));
       } finally {
         await mounted.unmount();
       }

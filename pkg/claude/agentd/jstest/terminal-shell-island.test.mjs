@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertAbsent } from './assertions.mjs';
 import { createPreactHarness, getByRole } from './preact-harness.mjs';
 
 function installHosts(harness) {
@@ -218,8 +219,7 @@ test('dashboard terminal feature owns three hosts while preserving opaque xterm 
   assert.equal(fake.widgets[0].child, opaqueChild, 'reorder keeps the keyed xterm host intact');
   assert.equal(fake.widgets[0].disposeCount, 0);
   assert.equal(fake.widgets[1].disposeCount, 0, 'reorder neither closes nor reconnects a terminal');
-  assert.equal(host.querySelector('.drop-before,.drop-after,.dragging'), null,
-    'drop clears every transient drag marker');
+  assertAbsent(host.querySelector('.drop-before,.drop-after,.dragging'), 'drop clears every transient drag marker');
 
   const movedOneTab = [...host.querySelectorAll('[role="tab"]')]
     .find((tab) => tab.querySelector('.mux-tab-label').textContent === 'one');
@@ -263,8 +263,7 @@ test('dashboard terminal feature owns three hosts while preserving opaque xterm 
   }));
   assert.deepEqual([...host.querySelectorAll('[role="tab"] .mux-tab-label')].map((tab) => tab.textContent),
     ['two', 'one'], 'a cancelled drag leaves order unchanged');
-  assert.equal(host.querySelector('.drop-before,.drop-after,.dragging'), null,
-    'drag cancellation clears source and target state');
+  assertAbsent(host.querySelector('.drop-before,.drop-after,.dragging'), 'drag cancellation clears source and target state');
 
   const closeOne = getByRole(host, 'button', { name: 'Close one' });
   await harness.act(() => harness.fireEvent(closeOne, 'click'));
@@ -439,7 +438,7 @@ test('terminal tab context menu supports pointer and keyboard detach and close a
   assert.equal(harness.document.activeElement.textContent, 'New group from this tab',
     'opening focuses the first action');
   await harness.act(() => harness.fireEvent(pointerMenu, 'keydown', { key: 'Escape' }));
-  assert.equal(host.querySelector('[role="menu"]'), null);
+  assertAbsent(host.querySelector('[role="menu"]'));
   assert.equal(harness.document.activeElement, tab('two'), 'Escape restores focus to the invoking tab');
   await harness.act(() => harness.fireEvent(tab('two'), 'contextmenu', { clientX: 24, clientY: 32 }));
   const tabMenu = getByRole(host, 'menu', { name: 'Actions for two' });
@@ -447,7 +446,7 @@ test('terminal tab context menu supports pointer and keyboard detach and close a
     harness.fireEvent(tabMenu, 'keydown', { key: 'Tab' });
     await Promise.resolve();
   });
-  assert.equal(host.querySelector('[role="menu"]'), null, 'Tab dismisses the floating menu');
+  assertAbsent(host.querySelector('[role="menu"]'), 'Tab dismisses the floating menu');
   assert.equal(tab('two').getAttribute('aria-expanded'), 'false');
   assert.equal(harness.document.activeElement, host.querySelector('.mux-pane.active button'),
     'forward Tab moves into the active pane controls');
@@ -457,7 +456,7 @@ test('terminal tab context menu supports pointer and keyboard detach and close a
     harness.fireEvent(reverseMenu, 'keydown', { key: 'Tab', shiftKey: true });
     await Promise.resolve();
   });
-  assert.equal(host.querySelector('[role="menu"]'), null, 'Shift+Tab dismisses the floating menu');
+  assertAbsent(host.querySelector('[role="menu"]'), 'Shift+Tab dismisses the floating menu');
   assert.equal(harness.document.activeElement, tab('two'), 'reverse Tab restores the invoking tab');
   await harness.act(() => harness.fireEvent(tab('two'), 'contextmenu', { clientX: 24, clientY: 32 }));
   const reopenedMenu = getByRole(host, 'menu', { name: 'Actions for two' });
@@ -529,7 +528,7 @@ test('throwaway modal omits Detach, ignores Escape, and confirms backdrop close'
     fetchImpl: async () => { throw new Error('throwaway close must not detach'); },
   });
   await harness.act(() => openTermModal({ wsPath: '/scratch', label: 'scratch' }));
-  assert.equal(modalHost.querySelector('#term-session-detach'), null);
+  assertAbsent(modalHost.querySelector('#term-session-detach'));
   const overlay = modalHost.querySelector('#term-session-modal');
   const escape = harness.fireEvent(overlay, 'keydown', { key: 'Escape' });
   assert.equal(escape.defaultPrevented, false, 'Escape remains terminal input, not a shell close key');
@@ -597,7 +596,7 @@ test('terminal button and shortcut route through the mounted Preact operator com
   assert.deepEqual(JSON.parse(requests[0].options.body), {
     to: 'agt_worker', subject: '', body: 'from terminal', attachment_token: '',
   });
-  assert.equal(dialogHost.querySelector('#operator-message-modal'), null);
+  assertAbsent(dialogHost.querySelector('#operator-message-modal'));
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
   assert.equal(fake.widgets[0].activeEdges.length, beforeRestore + 1,
     'composer close restores the exact terminal pane through its action boundary');
@@ -673,8 +672,7 @@ test('dragging a terminal tab clear of the strip detaches it into its own window
   transfer.dropEffect = '';
 
   const nearMiss = await dragOver({ clientX: 120, clientY: 60, dataTransfer: transfer });
-  assert.equal(host.querySelector('.mux-drag-out-hint'), null,
-    'a drag hovering just past the strip is still a reorder near-miss');
+  assertAbsent(host.querySelector('.mux-drag-out-hint'), 'a drag hovering just past the strip is still a reorder near-miss');
   assert.equal(strip.classList.contains('drag-out-armed'), false);
   // A browser draws the no-drop cursor over anything that has not accepted the
   // drag, which made a gesture that works look like one that cannot.
@@ -697,7 +695,7 @@ test('dragging a terminal tab clear of the strip detaches it into its own window
     await Promise.resolve();
   });
   assert.deepEqual(labels(), ['one'], 'the dragged terminal leaves the dashboard strip');
-  assert.equal(host.querySelector('.mux-drag-out-hint'), null, 'the gesture clears its own hint');
+  assertAbsent(host.querySelector('.mux-drag-out-hint'), 'the gesture clears its own hint');
   assert.equal(fake.widgets[1].disposeCount, 1, 'drag detach disposes the dashboard widget');
   assert.match(opened.at(-1).url, /^\/terminals\?solo=1#open=/,
     'drag detach reuses the standalone handoff, not a new session');

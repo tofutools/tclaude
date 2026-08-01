@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertAbsent } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 async function mountedAdapter(t, events = {}, options = {}) {
@@ -90,10 +91,8 @@ test('editor interaction layering raises one node without changing semantic laye
   assert.equal(frontPortLayer.firstElementChild?.dataset.nodeId, 'start');
   assert.equal(frontNodeLayer.getAttribute('aria-hidden'), 'true');
   assert.equal(frontPortLayer.getAttribute('aria-hidden'), 'true');
-  assert.equal(frontNodeLayer.querySelector('[role], [tabindex], [aria-label]'), null,
-    'the paint/hit copy never joins the accessibility tree');
-  assert.equal(frontPortLayer.querySelector('[role], [tabindex], [aria-label]'), null,
-    'copied ports never duplicate canonical button ownership');
+  assertAbsent(frontNodeLayer.querySelector('[role], [tabindex], [aria-label]'), 'the paint/hit copy never joins the accessibility tree');
+  assertAbsent(frontPortLayer.querySelector('[role], [tabindex], [aria-label]'), 'copied ports never duplicate canonical button ownership');
   assert.deepEqual(nodeOrder(), canonicalNodeOrder);
   assert.deepEqual(portOrder(), canonicalPortOrder);
   assert.equal(host.querySelector('.process-edge-path').getAttribute('d'), edgePath,
@@ -237,7 +236,7 @@ test('editor connection feedback covers pointer, keyboard, timing, and cleanup w
 
   harness.fireEvent(svg, 'pointercancel', { pointerId: 21, pointerType: 'mouse', clientX: 18, clientY: 28 });
   assert.equal(host.querySelector('.process-graph').classList.contains('is-connecting'), false);
-  assert.equal(host.querySelector('.is-connection-valid, .is-connection-invalid, .is-connection-source'), null);
+  assertAbsent(host.querySelector('.is-connection-valid, .is-connection-invalid, .is-connection-source'));
   assert.equal(tooltip.textContent, '');
   assert.equal(hitTarget.hasAttribute('aria-describedby'), false);
   assert.equal(received.at(-1)[1].cancelled, true);
@@ -308,7 +307,7 @@ test('undo-style graph removal cancels a missing keyboard source exactly once', 
     targetNodeId: null, targetPort: null, keyboard: true, cancelled: true,
     cancellation: 'source-removed',
   });
-  assert.equal(host.querySelector('.process-editor-band'), null, 'cancellation removes the rubber band');
+  assertAbsent(host.querySelector('.process-editor-band'), 'cancellation removes the rubber band');
   assert.equal(host.querySelector('.process-graph').classList.contains('is-connecting'), false);
   assert.deepEqual(adapter.interactionSnapshot(), {
     generation: active.generation + 1, active: false,
@@ -360,7 +359,7 @@ test('undo-style graph removal cancels a missing pointer source exactly once', a
     nodeId: 'start', port: 'out', targetNodeId: null, targetPort: null,
     cancelled: true, cancellation: 'source-removed',
   });
-  assert.equal(host.querySelector('.process-editor-band'), null);
+  assertAbsent(host.querySelector('.process-editor-band'));
   assert.equal(host.querySelector('.process-graph').classList.contains('is-connecting'), false);
   assert.deepEqual(adapter.interactionSnapshot(), {
     generation: active.generation + 1, active: false,
@@ -396,10 +395,10 @@ test('editor metadata removes semantic ports and cancels stale pointer/keyboard 
     { id: 'end', type: 'end', label: 'End', portAvailability: { in: true, out: false } },
   ];
   adapter.setGraph({ nodes: editorNodes({ in: false, out: true }), edges: [] });
-  assert.equal(host.querySelector('[data-node-id="start"] .process-port-in'), null);
+  assertAbsent(host.querySelector('[data-node-id="start"] .process-port-in'));
   assert.ok(host.querySelector('[data-node-id="start"] .process-port-out'));
   assert.ok(host.querySelector('[data-node-id="end"] .process-port-in'));
-  assert.equal(host.querySelector('[data-node-id="end"] .process-port-out'), null);
+  assertAbsent(host.querySelector('[data-node-id="end"] .process-port-out'));
 
   let source = host.querySelector('[data-node-id="start"] .process-port-out');
   harness.fireEvent(source, 'keydown', { key: 'Enter' });
@@ -456,7 +455,7 @@ test('same-source activation toggles keyboard feedback off with pointer lifecycl
   assert.equal(keyboardEnds[0][1].targetPort, 'out');
   assert.equal(keyboardEnds[0][1].keyboard, true);
   assert.equal(source.getAttribute('aria-pressed'), 'false');
-  assert.equal(host.querySelector('.process-editor-band'), null);
+  assertAbsent(host.querySelector('.process-editor-band'));
   assert.equal(host.querySelector('.process-graph').classList.contains('is-connecting'), false);
   const keyboardEnded = adapter.interactionSnapshot();
   assert.deepEqual(keyboardEnded, {
@@ -478,7 +477,7 @@ test('same-source activation toggles keyboard feedback off with pointer lifecycl
     'same-source pointer release ends through the same adapter lifecycle');
   assert.equal(pointerEnds[1][1].targetNodeId, 'start');
   assert.equal(pointerEnds[1][1].targetPort, 'out');
-  assert.equal(host.querySelector('.process-editor-band'), null);
+  assertAbsent(host.querySelector('.process-editor-band'));
   assert.deepEqual(adapter.interactionSnapshot(), {
     generation: keyboardEnded.generation + 2, active: false,
   });
@@ -573,7 +572,7 @@ test('disabled connectors preserve middle-button and Space-primary pan priority'
     button: 1, pointerId: 65, pointerType: 'mouse', clientX: 10, clientY: 20,
   });
   assert.equal(adapter.interactionSnapshot().active, true);
-  assert.equal(host.querySelector('.process-editor-band'), null);
+  assertAbsent(host.querySelector('.process-editor-band'));
   harness.fireEvent(svg, 'pointermove', {
     button: 1, pointerId: 65, pointerType: 'mouse', clientX: 30, clientY: 50,
   });
@@ -600,7 +599,7 @@ test('disabled connectors preserve middle-button and Space-primary pan priority'
     button: 0, pointerId: 67, pointerType: 'mouse', clientX: 40, clientY: 60,
   });
   assert.equal(adapter.interactionSnapshot().active, true);
-  assert.equal(host.querySelector('.process-editor-band'), null);
+  assertAbsent(host.querySelector('.process-editor-band'));
   assert.equal(tooltip.textContent, '', 'starting navigation clears disabled feedback');
   assert.equal(port.hasAttribute('aria-describedby'), false);
   harness.fireEvent(svg, 'pointermove', {
@@ -666,8 +665,7 @@ test('graph adapter translates semantic events and keeps transient pointer frame
   });
 
   const svg = host.querySelector('.process-graph-svg');
-  assert.equal(host.querySelector('.process-action-tooltip'), null,
-    'viewer adapters without an editor feedback policy stay inert');
+  assertAbsent(host.querySelector('.process-action-tooltip'), 'viewer adapters without an editor feedback policy stay inert');
   svg.setPointerCapture = () => {};
   svg.releasePointerCapture = () => {};
   const node = host.querySelector('.process-node[data-node-id="start"]');
@@ -695,7 +693,7 @@ test('graph adapter translates semantic events and keeps transient pointer frame
   harness.fireEvent(svg, 'pointermove', { pointerId: 3, pointerType: 'mouse', clientX: 30, clientY: 40 });
   assert.match(host.querySelector('.process-editor-band').getAttribute('d'), /30 40$/);
   harness.fireEvent(svg, 'pointercancel', { pointerId: 3, pointerType: 'mouse', clientX: 30, clientY: 40 });
-  assert.equal(host.querySelector('.process-editor-band'), null);
+  assertAbsent(host.querySelector('.process-editor-band'));
   assert.deepEqual(received.map(([kind]) => kind), ['start', 'commit', 'cancel', 'port-start', 'port-end']);
 });
 
@@ -829,7 +827,7 @@ test('released lost capture completes a connector drop through the normal termin
   assert.equal(ended[0].targetPort, 'in');
   assert.deepEqual(ended[0].point, adapter.clientToGraph(80, 90));
   assert.equal(adapter.hasActiveInteraction(), false);
-  assert.equal(host.querySelector('.process-editor-band'), null);
+  assertAbsent(host.querySelector('.process-editor-band'));
 });
 
 test('a drag whose terminal event was lost cannot poison the next drag commit', async (t) => {

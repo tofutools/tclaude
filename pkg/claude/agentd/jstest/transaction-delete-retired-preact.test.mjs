@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertAbsent } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 function deferred() {
@@ -246,13 +247,13 @@ test('delete-retired submits only checked visible identities and failure returns
   assert.match(host.querySelector('#delete-retired-list').textContent, /disk busy/);
   assert.match(host.querySelector('#delete-retired-error').textContent, /worktree was kept/);
   assert.equal(host.querySelector('#delete-retired-submit').textContent, 'Done');
-  assert.equal(host.querySelector('#delete-retired-cancel'), null);
+  assertAbsent(host.querySelector('#delete-retired-cancel'));
   assert.equal(finishes, 0, 'the per-item result stays mounted until the human closes it');
 
   host.querySelector('#delete-retired-submit').click();
   await harness.act(() => Promise.resolve());
   assert.equal(finishes, 1);
-  assert.equal(host.querySelector('#delete-retired-modal'), null);
+  assertAbsent(host.querySelector('#delete-retired-modal'));
   assert.equal(harness.document.activeElement, opener);
   assert.deepEqual(await opened.pending, {
     kind: 'delete-retired-preview', response: await second.promise,

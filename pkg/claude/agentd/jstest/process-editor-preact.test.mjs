@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertAbsent } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 function deferred() {
@@ -67,16 +68,14 @@ test('Preact editor shell keeps one graph host across chrome, selection, and mod
   const graphRoot = host.querySelector('.process-graph');
   assert.ok(graphHost && graphRoot);
   assert.deepEqual([...host.querySelectorAll('.process-node')].map((node) => node.dataset.nodeId), ['start']);
-  assert.equal(host.querySelector('.process-node[data-node-id="end"]'), null,
-    'the production blank controller/Preact path does not recreate an End node');
+  assertAbsent(host.querySelector('.process-node[data-node-id="end"]'), 'the production blank controller/Preact path does not recreate an End node');
   assert.equal(host.querySelectorAll('.process-edge').length, 0);
   assert.equal(editor.selection, null);
   assert.equal(editor.model.dirty, false);
   assert.equal(editor.model.canUndo, false);
   assert.ok(host.querySelector('[data-process-title-edit]'),
     'a blank template still owns a renameable title; only its id is server-assigned');
-  assert.equal(host.querySelector('.process-editor-id-input'), null,
-    'no id field is offered at creation');
+  assertAbsent(host.querySelector('.process-editor-id-input'), 'no id field is offered at creation');
 
   await harness.act(() => editor.status('poll updated'));
   assert.equal(host.querySelector('.process-editor-canvas-host'), graphHost);
@@ -433,7 +432,7 @@ test('custom snippets create, keyboard-insert, rename, and delete through the Pr
   await deletePromise;
   await harness.act(async () => { await Promise.resolve(); });
   assert.equal(deleted, true);
-  assert.equal(host.querySelector(`.process-palette-card[data-palette-item*="${id}"]`), null);
+  assertAbsent(host.querySelector(`.process-palette-card[data-palette-item*="${id}"]`));
   assert.match(host.querySelector('.process-palette-state').textContent, /No custom snippets/);
   editor.destroy();
 });
@@ -457,7 +456,7 @@ test('initial custom-snippet load blocks save instead of stranding a fast mutati
   assert.equal(editor.canSaveSelectionAsSnippet(), false);
   assert.equal(await editor.saveSelectionAsSnippet(), false);
   assert.equal(posts, 0);
-  assert.equal(host.querySelector('#process-snippet-name-modal'), null);
+  assertAbsent(host.querySelector('#process-snippet-name-modal'));
   assert.match(host.querySelector('.process-palette-state').textContent, /Loading custom snippets/);
 
   initial.resolve({
@@ -639,9 +638,9 @@ test('Preact editor projects every canonical node kind through the inside-label 
     const label = node?.querySelector('.process-node-label-inside');
     const ports = host.querySelector(`.process-node-ports[data-node-id="${id}"]`);
     assert.ok(node && label && ports, `${type} renders through the real graph adapter`);
-    assert.equal(node.querySelector('.process-node-label-peripheral'), null);
+    assertAbsent(node.querySelector('.process-node-label-peripheral'));
     assert.ok(node.getAttribute('aria-label').startsWith(`${before.template.nodes[id].name}, ${type}`));
-    assert.equal(ports.closest('.process-node'), null, `${type} connector controls remain outside the node button`);
+    assertAbsent(ports.closest('.process-node'), `${type} connector controls remain outside the node button`);
     const input = ports.querySelector('.process-port-in');
     const output = ports.querySelector('.process-port-out');
     assert.equal(!!input, type !== 'start', `${type} input presence follows editor semantics`);
@@ -850,7 +849,7 @@ test('Preact editor reveals only diagnostic-bearing node overlays without moving
   const end = host.querySelector('.process-node[data-node-id="end"]');
   const marker = start.querySelector('.process-overlay-anchor');
   assert.ok(marker, 'mapped validation information renders its shared anchor');
-  assert.equal(end.querySelector('.process-overlay-anchor'), null, 'the clean sibling stays undecorated');
+  assertAbsent(end.querySelector('.process-overlay-anchor'), 'the clean sibling stays undecorated');
   assert.match(start.getAttribute('aria-label'), /E_START: Start needs attention/);
   assert.match(marker.querySelector('.process-overlay-tooltip').textContent, /Start needs attention/);
   assert.deepEqual(layoutGeometry(), beforeGeometry, 'overlay disclosure does not change graph geometry');
@@ -1063,8 +1062,7 @@ test('external review summaries render bounded identity and truncation details t
   assert.equal((graph.match(new RegExp(CHANGE_SUMMARY_MARKERS.omittedNodeIDs, 'g')) || []).length, 3,
     'each category separately marks IDs omitted by the 12-item list cap');
   assert.match(source, /source preview truncated at characters, UTF-8 bytes limits/);
-  assert.equal(host.querySelector('.process-external-graph-summary em'), null,
-    'ID text resembling markup remains a text node rather than becoming HTML');
+  assertAbsent(host.querySelector('.process-external-graph-summary em'), 'ID text resembling markup remains a text node rather than becoming HTML');
   const rendered = `${graph}\n${source}`;
   assert.ok([...rendered].length <= CHANGE_SUMMARY_LIMITS.renderedCharacters);
   assert.ok(new TextEncoder().encode(rendered).length <= CHANGE_SUMMARY_LIMITS.renderedBytes);
@@ -1210,7 +1208,7 @@ test('scribe preview backdrop cancels without sending and restores editor intera
     'backdrop close cancels the native pointer focus step before restoring the invoker');
   assert.equal(await request, false);
   assert.equal(sends, 0, 'backdrop cancellation never crosses the scribe send boundary');
-  assert.equal(host.querySelector('.process-scribe-preview-overlay'), null);
+  assertAbsent(host.querySelector('.process-scribe-preview-overlay'));
   assert.equal(editorRoot.hasAttribute('inert'), false);
   assert.equal(harness.document.activeElement, invoker);
   editor.destroy();
@@ -1249,7 +1247,7 @@ test('forced scribe modal disposal removes its listener, inert boundary, and foc
 
   await harness.act(() => editor.modalDispose(null));
   assert.equal(await pending, null);
-  assert.equal(host.querySelector('.process-scribe-preview-overlay'), null);
+  assertAbsent(host.querySelector('.process-scribe-preview-overlay'));
   assert.equal(editorRoot.hasAttribute('inert'), false);
   assert.equal(harness.document.activeElement, invoker);
   assert.equal(keydownListeners.size, 0, 'forced disposal removes the document focus listener');
@@ -1317,14 +1315,14 @@ test('stacked scribe preview alone owns Tab and Escape, then returns focus to th
 
   await harness.act(() => harness.fireEvent(textarea, 'keydown', { key: 'Escape' }));
   assert.equal(await pending, null);
-  assert.equal(host.querySelector('.process-scribe-preview-overlay'), null);
+  assertAbsent(host.querySelector('.process-scribe-preview-overlay'));
   assert.ok(harness.document.querySelector('#scribe-preview-lower-overlay'));
   assert.equal(lowerCloses, 0, 'the preview Escape does not dismiss the lower overlay');
   assert.equal(harness.document.activeElement, lowerOpener,
     'preview cleanup returns focus to its still-open owning overlay');
 
   await harness.act(() => harness.fireEvent(lowerOpener, 'keydown', { key: 'Escape' }));
-  assert.equal(harness.document.querySelector('#scribe-preview-lower-overlay'), null);
+  assertAbsent(harness.document.querySelector('#scribe-preview-lower-overlay'));
   assert.equal(lowerCloses, 1);
   assert.equal(harness.document.activeElement, editorInvoker);
   await lowerMount.unmount();

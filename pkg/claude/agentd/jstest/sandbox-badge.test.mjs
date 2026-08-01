@@ -9,6 +9,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertAbsent } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 const CASES = [
@@ -221,7 +222,7 @@ test('SandboxBadge keeps its posture semantics with the compact tooltip', async 
       try {
         const el = mounted.container.querySelector('.sandbox-badge');
         if (row.absent) {
-          assert.equal(el, null, 'expected no badge');
+          assertAbsent(el, 'expected no badge');
           return;
         }
         assert.ok(el, 'expected a badge');
@@ -351,8 +352,7 @@ test('SandboxBadge gates the adjacent recorded-facts chevron without changing th
   };
   const defaultMounted = await harness.mount(harness.html`<${SandboxBadge} member=${member} />`);
   try {
-    assert.equal(defaultMounted.container.querySelector('.sandbox-details-chevron'), null,
-      'recorded details are hidden by default');
+    assertAbsent(defaultMounted.container.querySelector('.sandbox-details-chevron'), 'recorded details are hidden by default');
   } finally {
     await defaultMounted.unmount();
   }
@@ -504,7 +504,7 @@ test('the sandbox glyph rides the harness line, left of the remote indicator', a
     };
     const mounted = await mount({ conv_id: 'c1', online: true, state });
     try {
-      assert.equal(mounted.container.querySelector('.agent-harness'), null);
+      assertAbsent(mounted.container.querySelector('.agent-harness'));
     } finally {
       await mounted.unmount();
     }

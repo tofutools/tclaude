@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertAbsent } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 const groups = [{
@@ -611,7 +612,7 @@ test('Preact agent-spawn renders the unenforced-network checkbox under the sandb
     assert.equal(description.textContent, label.title);
     assert.equal(label.contains(description), false,
       'the description must not become part of the checkbox accessible name');
-    assert.equal(host.querySelector('#agent-spawn-allow-unenforced-sandbox-hint'), null);
+    assertAbsent(host.querySelector('#agent-spawn-allow-unenforced-sandbox-hint'));
 
     Object.defineProperty(checkbox, 'checked', {
       configurable: true, writable: true, value: true,
@@ -687,15 +688,13 @@ test('Preact agent-spawn owner renders profile/custom/capability states without 
     calls.some(([kind, , , harnessName]) => kind === 'launch-defaults' && harnessName === 'codex'),
     'the resolved default is re-asked for the newly selected harness',
   );
-  assert.equal(host.querySelector('#agent-spawn-sandbox-impl-hint'), null,
-    'an inherited target stays neutral because the profile chain has not resolved yet');
+  assertAbsent(host.querySelector('#agent-spawn-sandbox-impl-hint'), 'an inherited target stays neutral because the profile chain has not resolved yet');
   assert.equal(host.querySelector('#agent-spawn-sandbox-row').hidden, true,
     'the Codex mode stays hidden until its built-in sandbox is explicitly selected');
   const codexImpl = host.querySelector('#agent-spawn-sandbox-impl');
   setValue(codexImpl, 'harness-builtin');
   await harness.act(() => harness.fireEvent(codexImpl, 'change'));
-  assert.equal(host.querySelector('#agent-spawn-sandbox-impl-hint'), null,
-    'the Codex caveat is disclosure copy, never a paragraph under the row');
+  assertAbsent(host.querySelector('#agent-spawn-sandbox-impl-hint'), 'the Codex caveat is disclosure copy, never a paragraph under the row');
   const codexCaveatTrigger = host.querySelector('#agent-spawn-sandbox-impl-row .spawn-field-help-trigger');
   assert.equal(codexCaveatTrigger.textContent, '!',
     'a caveat marks its own trigger so it is not mistaken for ordinary field help');
@@ -1161,7 +1160,7 @@ test('Preact agent-spawn collapses mode help behind [?] and keeps only ⚠ cavea
   // Fixture help carries no ⚠, so no caveat line is on screen at all. The
   // caveat path itself is covered against real harness copy in
   // help-field.test.mjs.
-  assert.equal(host.querySelector('.spawn-field-caveat'), null);
+  assertAbsent(host.querySelector('.spawn-field-caveat'));
   mounted.cleanup();
 });
 
@@ -1208,8 +1207,7 @@ test('Preact agent-spawn shows the daemon unsandboxed-autonomy warning and clear
     await harness.act(() => harness.fireEvent(sandbox, 'change'));
     await harness.act(async () => { await new Promise((resolve) => setTimeout(resolve, 400)); });
     await flush(harness);
-    assert.equal(host.querySelector('#agent-spawn-autonomy-warning'), null,
-      'a clean re-probe clears the warning');
+    assertAbsent(host.querySelector('#agent-spawn-autonomy-warning'), 'a clean re-probe clears the warning');
 
     const sandboxImpl = host.querySelector('#agent-spawn-sandbox-impl');
     setValue(sandboxImpl, 'tclaude-layer');
@@ -1251,8 +1249,8 @@ test('Preact agent-spawn renders sandbox boundary disclosures as info, not warni
     assert.equal(notice.querySelector('[role="status"]').getAttribute('role'), 'status');
     assert.match(notice.querySelector('.spawn-field-hint.info').textContent,
       /tclaude's built-in OS sandbox/);
-    assert.equal(notice.querySelector('.spawn-field-hint.warn'), null);
-    assert.equal(host.querySelector('#agent-spawn-autonomy-warning'), null);
+    assertAbsent(notice.querySelector('.spawn-field-hint.warn'));
+    assertAbsent(host.querySelector('#agent-spawn-autonomy-warning'));
   } finally {
     mounted.cleanup();
   }

@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertAbsent } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 function deferred() {
@@ -91,7 +92,7 @@ test('dirty clone Cancel rejects and accepts through the overlay close transacti
   host.querySelector('#clone-agent-cancel').click();
   await harness.act(() => Promise.resolve());
   assert.equal(confirmations, 2);
-  assert.equal(host.querySelector('#clone-agent-modal'), null);
+  assertAbsent(host.querySelector('#clone-agent-modal'));
   await mounted.cleanup();
 });
 
@@ -137,7 +138,7 @@ test('reincarnate dialog gates force mode and preserves plain DOM hooks', async 
   force.checked = true;
   force.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
   await harness.act(() => Promise.resolve());
-  assert.equal(host.querySelector('#reincarnate-self-fields'), null);
+  assertAbsent(host.querySelector('#reincarnate-self-fields'));
   assert.match(host.querySelector('#reincarnate-agent-modal').textContent, /<prev>-r-<N>/,
     'HTM help copy must render angle brackets as text rather than encoded entities');
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
@@ -391,7 +392,7 @@ test('a dirty draft retains ownership when another family launches in the same t
   await harness.act(() => Promise.resolve());
   assert.equal(state.dialog.value, owner);
   assert.equal(host.querySelector('#clone-agent-followup').value, 'unsaved handoff');
-  assert.equal(host.querySelector('#task-link-modal'), null);
+  assertAbsent(host.querySelector('#task-link-modal'));
   await mounted.cleanup();
 });
 

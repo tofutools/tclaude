@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertAbsent } from './assertions.mjs';
 import { createPreactHarness, getByRole } from './preact-harness.mjs';
 
 function key(window, target, value) {
@@ -74,7 +75,7 @@ test('node chooser pointer choice, Escape, Cancel, and click-away never double-r
   open();
   await Promise.resolve();
   outside.dispatchEvent(new harness.window.Event('pointerdown', { bubbles: true }));
-  assert.equal(host.querySelector('.process-node-chooser'), null);
+  assertAbsent(host.querySelector('.process-node-chooser'));
   assert.deepEqual(chosen, ['wait']);
   assert.equal(restored, 3);
 
@@ -82,7 +83,7 @@ test('node chooser pointer choice, Escape, Cancel, and click-away never double-r
   await Promise.resolve();
   dispose();
   dispose();
-  assert.equal(host.querySelector('.process-node-chooser'), null);
+  assertAbsent(host.querySelector('.process-node-chooser'));
   assert.equal(restored, 3, 'unmount disposal does not move focus into a retiring graph host');
   outside.dispatchEvent(new harness.window.Event('pointerdown', { bubbles: true }));
   assert.equal(restored, 3, 'explicit disposal removes the document click-away listener');

@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertAbsent } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 function deferred() {
@@ -217,7 +218,7 @@ test('delete-group renderer preserves detach defaults, explicit selection, and r
   second.resolve({ ok: true, retired: 2, detached: 1 });
   await harness.act(() => second.promise);
   await harness.act(() => Promise.resolve());
-  assert.equal(host.querySelector('#delete-group-modal'), null);
+  assertAbsent(host.querySelector('#delete-group-modal'));
   assert.equal(harness.document.activeElement, opener, 'successful completion restores opener focus');
   assert.deepEqual(await opened.pending, { ok: true, retired: 2, detached: 1 });
 });
@@ -457,7 +458,7 @@ test('delete-group yields topmost Escape, guards backdrop drags, and restores it
   assert.ok(host.querySelector('#delete-group-modal'), 'an unpaired backdrop click is guarded');
   escape(harness);
   await harness.act(() => Promise.resolve());
-  assert.equal(host.querySelector('#delete-group-modal'), null);
+  assertAbsent(host.querySelector('#delete-group-modal'));
   assert.equal(harness.document.activeElement, opener);
   assert.equal(await opened.pending, null);
 });
@@ -470,9 +471,9 @@ test('late delete-group rejection cannot repaint a dialog whose keyed owner was 
   opened.host.querySelector('#delete-group-submit').click();
   await opened.harness.act(() => Promise.resolve());
   await opened.harness.act(() => { opened.state.close(); });
-  assert.equal(opened.host.querySelector('#delete-group-modal'), null);
+  assertAbsent(opened.host.querySelector('#delete-group-modal'));
   pendingAction.reject(new Error('late failure'));
   await opened.harness.act(() => pendingAction.promise.catch(() => {}));
-  assert.equal(opened.host.querySelector('#delete-group-modal'), null);
-  assert.equal(opened.host.querySelector('#delete-group-error'), null);
+  assertAbsent(opened.host.querySelector('#delete-group-modal'));
+  assertAbsent(opened.host.querySelector('#delete-group-error'));
 });

@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertAbsent } from './assertions.mjs';
 import { createPreactHarness, getByRole } from './preact-harness.mjs';
 
 const storage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
@@ -39,7 +40,7 @@ test('Costs island renders controls and preserves keyed table focus/selection ac
   assert.equal(mounted.container.querySelector('.cost-col[data-tip]'), chartColumn, 'snapshot refresh preserves the imperative chart');
   assert.equal(harness.document.body.querySelector('.cost-tip'), tooltip, 'snapshot refresh preserves the open chart tooltip');
   await harness.act(() => { activeTab.value = 'groups'; });
-  assert.equal(harness.document.body.querySelector('.cost-tip'), null, 'leaving Costs removes its body-level tooltip');
+  assertAbsent(harness.document.body.querySelector('.cost-tip'), 'leaving Costs removes its body-level tooltip');
   await harness.act(() => { activeTab.value = 'costs'; });
 
   const row = mounted.container.querySelector('tr[data-key="cost-conv-a-2026-07-10"]');
@@ -90,7 +91,7 @@ test('Costs island exposes loading/error/what-if visibility and production clean
   const realAmount = mounted.container.querySelector('tr[data-key="cost-conv-a-2026-07-10"] .cost-amt');
   const whatIfAmount = mounted.container.querySelector('tr[data-key="cost-conv-b-2026-07-10"] .cost-amt');
   assert.match(realAmount.textContent.replace(/\s+/g, ''), /^\$3\.00$/, 'a real row is the bare amount');
-  assert.equal(realAmount.querySelector('.cost-whatif-mark'), null, 'a real row carries no WHAT-IF marker');
+  assertAbsent(realAmount.querySelector('.cost-whatif-mark'), 'a real row carries no WHAT-IF marker');
   assert.match(whatIfAmount.textContent.replace(/\s+/g, ''), /^\$2\.00⚠︎$/,
     'a hypothetical row is the bare amount plus one text-presentation ⚠ marker');
   const mark = whatIfAmount.querySelector('.cost-whatif-mark');
@@ -191,8 +192,7 @@ test('Costs rows carry an accurate, banner-linked WHAT-IF marker', async (t) => 
 
   assert.equal(cell('conv-a').title, '$3.0000 real spend', 'a real row is named real');
   assert.equal(cell('conv-b').title, '$2.0000 estimated (WHAT-IF)', 'a hypothetical row is named an estimate');
-  assert.equal(cell('conv-d').querySelector('.cost-whatif-mark'), null,
-    'a zero-cost row (kind "") is not marked as an estimate');
+  assertAbsent(cell('conv-d').querySelector('.cost-whatif-mark'), 'a zero-cost row (kind "") is not marked as an estimate');
 
   // Clicking through. A modified click belongs to the browser — the marker is a
   // real anchor and ⌘/Ctrl-click must still open it — while a plain click is

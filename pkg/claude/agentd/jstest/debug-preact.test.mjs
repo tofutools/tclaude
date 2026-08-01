@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertAbsent } from './assertions.mjs';
 import { createPreactHarness, getByRole } from './preact-harness.mjs';
 
 const phase = (name, p50 = 2, children = []) => ({
@@ -155,7 +156,7 @@ test('Debug island keys endpoint and phase DOM and owns only an active 10s timer
   const snapshotCard = cards[0];
   const phaseRow = snapshotCard.querySelector('tr[data-key="phase-sessions"]');
   assert.ok(phaseRow);
-  assert.equal(snapshotCard.querySelector('tr[data-key="phase-sessions.session_rows"]'), null);
+  assertAbsent(snapshotCard.querySelector('tr[data-key="phase-sessions.session_rows"]'));
   await harness.act(() => harness.fireEvent(
     getByRole(snapshotCard, 'button', { name: /Expand sessions phase breakdown/ }),
     'click',

@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertAbsent } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 test('template model preserves the complete replace payload and stale references', async (t) => {
@@ -501,22 +502,14 @@ test('deploy and group dialogs preserve native controls, collision preview, and 
   await harness.act(() => Promise.resolve());
   const staleBase = host.querySelector('#template-deploy-wt-base');
   assert.equal(staleBase.closest('[hidden]') !== null, true);
-  assert.equal(
-    staleBase.querySelector('option[value="release"]'),
-    null,
-    'changing repositories immediately removes stale branch choices',
-  );
+  assertAbsent(staleBase.querySelector('option[value="release"]'), 'changing repositories immediately removes stale branch choices');
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
   const reloadedBase = host.querySelector('#template-deploy-wt-base');
   assert.ok(
     reloadedBase.querySelector('option[value="main"]'),
     'a changed repository loads its own default branch',
   );
-  assert.equal(
-    reloadedBase.querySelector('option[value="release"]'),
-    null,
-    'branches from the previous repository do not leak into the new picker',
-  );
+  assertAbsent(reloadedBase.querySelector('option[value="release"]'), 'branches from the previous repository do not leak into the new picker');
   reinforce.checked = true;
   reinforce.dispatchEvent(
     new harness.window.Event('change', { bubbles: true }),

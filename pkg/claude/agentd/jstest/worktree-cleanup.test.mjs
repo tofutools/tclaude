@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertAbsent } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 function worktree(path, overrides = {}) {
@@ -245,8 +246,7 @@ test('rescan preserves present exact-path choices but forgets them after success
   await harness.act(() => harness.fireEvent(orphan, 'change'));
   host.querySelector('#worktree-cleanup-rescan').click();
   await flush(harness);
-  assert.equal(checkbox(host, '/repo-orphan'), null,
-    'a successful rescan can establish that the touched path is absent');
+  assertAbsent(checkbox(host, '/repo-orphan'), 'a successful rescan can establish that the touched path is absent');
 
   host.querySelector('#worktree-cleanup-rescan').click();
   await flush(harness);
@@ -329,7 +329,7 @@ test('failed cleanup freezes an exact retry and successful partial outcomes rema
   assert.match(host.querySelector('#worktree-cleanup-list').textContent, /main repo — never removed/);
   assert.match(host.querySelector('#worktree-cleanup-list').textContent, /git refused/);
   assert.equal(settled, false, 'HTTP 200 does not close the result phase');
-  assert.equal(host.querySelector('#worktree-cleanup-cancel'), null);
+  assertAbsent(host.querySelector('#worktree-cleanup-cancel'));
   assert.equal(harness.document.activeElement, host.querySelector('#worktree-cleanup-submit'),
     'the result phase moves modal focus to Done');
   host.querySelector('#worktree-cleanup-submit').click();

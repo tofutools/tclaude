@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertAbsent } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 function deferred() {
@@ -314,7 +315,7 @@ test('window picker freezes retries, blocks busy dismissal, and restores focus a
 
   second.resolve({ targeted: 2, focused: 2 });
   await harness.act(() => second.promise);
-  assert.equal(host.querySelector('#window-modal'), null);
+  assertAbsent(host.querySelector('#window-modal'));
   assert.equal(harness.document.activeElement, opener);
   await mounted.pending;
   await mounted.mounted.unmount();
@@ -334,7 +335,7 @@ test('window picker Escape is topmost-only and idle cancellation restores its op
   covering.remove();
   escape(harness);
   await harness.act(() => Promise.resolve());
-  assert.equal(host.querySelector('#window-modal'), null);
+  assertAbsent(host.querySelector('#window-modal'));
   assert.equal(harness.document.activeElement, opener);
   assert.equal(await mounted.pending, null);
   await mounted.mounted.unmount();
