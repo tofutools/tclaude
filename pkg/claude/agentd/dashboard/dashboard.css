@@ -5067,6 +5067,9 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
   margin: .3rem 0 .35rem;
   padding: .05rem .35rem;
 }
+.sbx-refusal-kind-label {
+  opacity: .75;
+}
 .sbx-refusal-detail {
   color: #f0b6b1;
   font-size: .86rem;

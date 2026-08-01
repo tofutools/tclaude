@@ -203,17 +203,24 @@ test('the refusal banner carries the kind and the message verbatim', async (t) =
   const alert = container.querySelector('.sbx-launch-blocked');
   assert.ok(alert, 'the refusal is announced');
   assert.equal(alert.getAttribute('role'), 'alert');
-  assert.equal(alert.querySelector('.sbx-refusal-kind').textContent, REFUSAL.kind,
-    'the capability kind is shown as its own token, quotable in a bug report');
+  // Equality on the whole chip, so neither the prefix nor the token can drift
+  // unnoticed. The token stays verbatim and quotable in a bug report.
+  assert.equal(alert.querySelector('.sbx-refusal-kind').textContent,
+    `Capability: ${REFUSAL.kind}`,
+    'the capability kind is shown as its own token, introduced by visible text');
   assert.equal(alert.querySelector('.sbx-refusal-detail').textContent, REFUSAL.message,
     'the evaluator\'s text is rendered verbatim, remedies clause included');
   // The remedies specifically, so a truncation that kept the cause still fails.
   assert.match(alert.textContent, /select the Packet filter engine/);
 });
 
-test('an unaffected target in the same request keeps its verdict buckets untouched', async (t) => {
+test('a target that WAS evaluated keeps its verdict buckets untouched', async (t) => {
   /* The scoping control. Without it, "the refused target renders correctly" is
-     compatible with having broken every other target's rendering. */
+     compatible with having broken every other target's rendering.
+
+     Named for what it actually mounts. An earlier name said "in the same
+     request", which this does not exercise — each target renders in its own
+     mount. The property is real; the name overclaimed the setup. */
   const harness = await createPreactHarness(t);
   const container = await render(harness, CLEAN_TARGET);
 
@@ -225,4 +232,53 @@ test('an unaffected target in the same request keeps its verdict buckets untouch
   assert.equal(bucketOfRule(container, NET_RULE), 'sbx-rule-bucket-applied');
   assertAbsent(container, '.sbx-bucket-note',
     'and it carries no not-evaluated disclaimer');
+});
+
+test('a refused target renders EXACTLY one bucket, closed against a new class', async (t) => {
+  /* The Option B tripwire, asserted as a CLOSED SET rather than as the absence
+     of three known-bad classes. Cold review showed the open form is genuinely
+     weaker: re-introducing Option B verbatim — a "Blocked rules" bucket, one row
+     per rule, outcome 'refused', rendered on the refused target — passed the
+     whole suite. Enumerating known-bad names cannot catch a name you did not
+     think of, which is exactly the case that matters. */
+  const harness = await createPreactHarness(t);
+  const container = await render(harness, REFUSED_TARGET);
+  const classes = [...container.querySelectorAll('.sbx-rule-bucket')]
+    .map((bucket) => [...bucket.classList].find((n) => n.startsWith('sbx-rule-bucket-')));
+  assert.deepEqual(classes, ['sbx-rule-bucket-unjudged'],
+    'any second bucket on a refused target claims a verdict that was never reached');
+});
+
+test('a refused target with NO rules renders no bucket at all', async (t) => {
+  /* The note reads "These are the rules this profile would apply", which is
+     FALSE over an empty policy, and a bucket headed "Rules not evaluated  0"
+     invites reading the zero as a finding. Nothing to list means nothing to
+     say — the banner already carries the whole story. */
+  const harness = await createPreactHarness(t);
+  const { SandboxPolicyResult } = await harness.importDashboardModule('js/management-island.js');
+  const mounted = await harness.mount(harness.html`
+    <${SandboxPolicyResult} target=${REFUSED_TARGET} context=${{}} contextIndex=${0}/>`);
+
+  assert.ok(mounted.container.querySelector('.sbx-launch-blocked'),
+    'the refusal is still announced — this suppresses the LIST, not the verdict');
+  assertAbsent(mounted.container, '.sbx-rule-bucket-unjudged',
+    'an empty policy has no rules to list, so the bucket must not claim otherwise');
+  assert.doesNotMatch(mounted.container.textContent, /rules this profile would apply/,
+    'and the note must not assert rules exist when none do');
+});
+
+test('the capability kind is announced as a capability, not as bare prose', async (t) => {
+  /* refusal.kind is a raw machine token inside role="alert". The monospace chip
+     tells a sighted reader "this is an identifier"; that cue does not survive
+     into speech, where the token would run on from the sentence before it as
+     though it were prose. The prefix is visible text so it carries on BOTH
+     channels rather than living in an aria-label only one of them reads. */
+  const harness = await createPreactHarness(t);
+  const container = await render(harness, REFUSED_TARGET);
+  const kind = container.querySelector('.sbx-refusal-kind');
+  assert.ok(kind, 'the kind is rendered');
+  assert.match(kind.textContent, /^Capability:\s/,
+    'the token is introduced by visible text, not by styling alone');
+  assert.match(kind.textContent, new RegExp(REFUSAL.kind.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+    'and the kind itself is still present verbatim');
 });

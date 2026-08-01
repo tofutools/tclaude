@@ -111,9 +111,9 @@ func TestDashboardHTML_SandboxProfilesUI(t *testing.T) {
 		`id="sandbox-profile-editor-common-rule-notice"`:                               "an insertion reports what it added, warning included",
 		`class="sbx-common-rule-warn"`:                                                 "preset warnings are visible before and after insertion",
 		`.sbx-common-rule-notice {`:                                                    "the insertion notice has its own caution styling",
-		`.sbx-rule-bucket-unjudged {`:                                                  "TCL-915: the not-evaluated bucket is styled apart from the three verdict buckets",
 		`.sbx-bucket-note {`:                                                           "TCL-915: the not-evaluated disclaimer has its own styling",
-		`.sbx-refusal-kind {`:                                                          "TCL-915: the capability kind is a distinct token in the refusal banner",
+		`.sbx-refusal-kind {`:                                                           "TCL-915: the capability kind is a distinct token in the refusal banner",
+		`.sbx-refusal-detail {`:                                                         "TCL-915: the verbatim refusal message has its own styling",
 		`function loadCommonRuleCatalog()`:                                             "the repurposed catalog feeds the preset menu",
 		`[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].includes(parsed?.format_version)`:             "import accepts every export envelope version, including network-deny v10",
 		`if (body?.code) error.code = body.code`:                                       "request failures preserve the daemon's typed code",
@@ -185,6 +185,70 @@ func TestDashboardHTML_SandboxProfilesUI(t *testing.T) {
 	// return would be a silent regression at whichever site kept it.
 	if strings.Contains(dashboardAssets, "context_network_entries?.[contextIndex]") {
 		t.Error("a consumer derives the per-context network entries itself again; use sandboxContextNetworkEntries")
+	}
+}
+
+// TCL-915. Option C's not-evaluated bucket must be VISUALLY DISTINCT from the
+// three verdict buckets, so a grey collapsed bucket can never read as a judged
+// outcome. That constraint had no test at all: the jstest harness renders
+// through linkedom, which applies no stylesheets, so every JS assertion passes
+// identically whatever the styling says.
+//
+// A substring needle on `.sbx-rule-bucket-unjudged {` does not cover it either
+// — cold review demonstrated that rewriting the block to be byte-identical to
+// the red `.sbx-rule-bucket-not-applied` verdict bucket leaves the needle, the
+// Go suite and all 1315 jstests green. Existence is not distinctness.
+//
+// So this compares the declarations the operator's constraint is actually
+// about, rather than asserting a colour by name: the not-evaluated bucket must
+// share a border colour with NONE of the three verdicts, and must be the only
+// one with no background tint.
+func TestDashboardSandboxUnjudgedBucketIsVisuallyDistinct(t *testing.T) {
+	css := string(mustReadFS(dashboardAssetsFS, "dashboard.css"))
+	declarations := func(selector string) string {
+		marker := selector + " {"
+		start := strings.Index(css, marker)
+		if start < 0 {
+			t.Fatalf("dashboard.css has no %q rule", selector)
+		}
+		body := css[start+len(marker):]
+		end := strings.Index(body, "}")
+		if end < 0 {
+			t.Fatalf("%q rule is unterminated", selector)
+		}
+		return body[:end]
+	}
+	property := func(selector, name string) string {
+		for line := range strings.SplitSeq(declarations(selector), ";") {
+			key, value, ok := strings.Cut(line, ":")
+			if ok && strings.TrimSpace(key) == name {
+				return strings.TrimSpace(value)
+			}
+		}
+		return ""
+	}
+
+	const unjudged = ".sbx-rule-bucket-unjudged"
+	unjudgedBorder := property(unjudged, "border-left-color")
+	if unjudgedBorder == "" {
+		t.Fatal("the not-evaluated bucket declares no border-left-color, so it inherits a verdict's")
+	}
+	for _, verdict := range []string{
+		".sbx-rule-bucket-applied", ".sbx-rule-bucket-partial", ".sbx-rule-bucket-not-applied",
+	} {
+		if got := property(verdict, "border-left-color"); got == unjudgedBorder {
+			t.Errorf("the not-evaluated bucket shares its border colour %q with %s, so a "+
+				"collapsed bucket reads as that verdict", got, verdict)
+		}
+		if property(verdict, "background") == "" {
+			t.Errorf("%s lost its background tint, which is the second channel the "+
+				"not-evaluated bucket is distinguished on", verdict)
+		}
+	}
+	// The second channel: every verdict bucket is tinted, this one is not.
+	if got := property(unjudged, "background"); got != "transparent" {
+		t.Errorf("the not-evaluated bucket has background %q, want transparent so it differs "+
+			"from the verdict buckets on tint as well as on border colour", got)
 	}
 }
 

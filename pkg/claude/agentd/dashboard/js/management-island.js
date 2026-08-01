@@ -437,15 +437,28 @@ export function SandboxPolicyResult({ target, context, contextIndex, contexts = 
           separate ticket. */ ''}
     ${buckets.launchRefused && html`<div class="sbx-launch-blocked" role="alert">${refusal
     ? html`<strong>This target cannot enforce this policy, so the launch is refused.</strong>
-      <span class="sbx-refusal-kind">${refusal.kind}</span>
+      ${/* The kind is a raw machine token. Sighted readers get "this is an
+            identifier" from the monospace chip; that cue does not survive into
+            speech, where it would run straight on from the sentence above as
+            though it were prose. The visible prefix says what it is on BOTH
+            channels rather than hiding the answer in an aria-label only one of
+            them reads. */ ''}
+      <span class="sbx-refusal-kind"><span class="sbx-refusal-kind-label">Capability: </span>${refusal.kind}</span>
       <div class="sbx-refusal-detail">${refusal.message}</div>`
     : 'This target refuses the launch. Unsupported rules are not silently skipped.'}</div>`}
     ${/* Listed, never judged. Ships COLLAPSED: these rules carry no verdict, so
           they are reference material rather than something needing attention —
           the banner above is what needs attention. This is a pure ADDITION; the
           `!refusal` guard below is untouched, so the three verdict buckets stay
-          suppressed exactly as before. */ ''}
-    ${refusal && html`<${SandboxOutcomeBucket} bucket=${buckets.unjudged} open=${false}
+          suppressed exactly as before.
+
+          Suppressed entirely when there is nothing to list. The note reads
+          "These are the rules this profile would apply", which is FALSE over an
+          empty policy, and a bucket headed "Rules not evaluated  0" invites
+          reading the zero as a finding. Nothing to list means nothing to say;
+          the banner already carries the whole story. */ ''}
+    ${refusal && buckets.unjudged.items.length > 0 && html`<${SandboxOutcomeBucket}
+      bucket=${buckets.unjudged} open=${false}
       helpOpen=${ruleHelpOpen} setHelpOpen=${setRuleHelpOpen}
       helpPrefix=${helpPrefix} targetLabel=${targetLabel}/>`}
     ${/* The Applied bucket ships closed — a fully supported policy needs no

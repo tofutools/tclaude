@@ -83,21 +83,31 @@ test('a refused target renders as launch-blocked, carrying the capability and it
   // And specifically NOT the missing-axis fallback's wording or bucketing.
   assert.doesNotMatch(container.textContent, /No enforcement verdict was returned/,
     'a refusal must never reach the missing-axis fallback');
-  /* TCL-915 narrowed this, and the narrowing is the point rather than a
-     concession. It used to read `querySelector('.sbx-rule-bucket') === null` —
-     no bucket AT ALL — because the TCL-885 minimum rendered none. Option C
-     renders one: a bucket that carries NO verdict and says so. The property
-     that must survive is "no bucket may CLAIM a verdict", so it is now asserted
-     against the three verdict classes by name, which is what it always meant.
+  /* TCL-915 narrowed this. It used to read
+     `querySelector('.sbx-rule-bucket') === null` — no bucket AT ALL — which was
+     true of the TCL-885 minimum and is false by design under Option C, which
+     renders one bucket that carries no verdict and says so.
 
-     Asserted per class rather than by counting, so a fourth verdict bucket
-     added later cannot slip through a total that still looks right. */
-  for (const verdict of ['applied', 'partial', 'not-applied']) {
-    assertAbsent(container, `.sbx-rule-bucket-${verdict}`,
-      `no verdict was reached, so the ${verdict} bucket must not claim one`);
-  }
+     THE EXACT SET, not an enumeration of known-bad classes. A first attempt
+     asserted the three verdict classes were absent by name and was caught by
+     cold review as GENUINELY WEAKER: re-introducing Option B verbatim — a fifth
+     "Blocked rules" bucket, one row per rule, outcome 'refused', on the refused
+     target — passed the whole suite green. That is the ticket's single
+     prohibited outcome shipping undetected.
+
+     The justification written alongside that attempt was backwards. It claimed
+     per-class assertions stop a bucket "added later" that a count would miss;
+     the truth is the reverse — a closed set is what catches an unknown class,
+     and naming three known ones is precisely the form that cannot. Recorded
+     rather than quietly corrected, because the wrong reasoning is what made the
+     weaker assertion look like the stronger one. */
+  const bucketClasses = [...container.querySelectorAll('.sbx-rule-bucket')]
+    .map((bucket) => [...bucket.classList].find((name) => name.startsWith('sbx-rule-bucket-')));
+  assert.deepEqual(bucketClasses, ['sbx-rule-bucket-unjudged'],
+    'a refused target renders EXACTLY the unjudged bucket — any other bucket, '
+    + 'including a new class, claims a verdict that was never reached');
+
   const unjudged = container.querySelector('.sbx-rule-bucket-unjudged');
-  assert.ok(unjudged, 'the refused target still lists its rules, unjudged');
   assert.match(unjudged.textContent, /never judged|none carries a verdict/,
     'listing rules without a verdict is only honest if it SAYS no verdict was reached');
 });
