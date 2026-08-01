@@ -805,19 +805,32 @@ func validateOpenCodeReadOnlyConfigSeedSourceAt(
 	}
 	// The SECOND of the two acceptance routes. The ambient one is just above;
 	// this comment used to claim there was exactly one, which a cold review
-	// corrected. Neither has a window, but for different reasons: `ambient` is
-	// derived once from the daemon's own environment and Stat-ed once, never
-	// re-read, while this one compares the pinned descriptor against a path
-	// requireOpenCodeAllocatedConfigDir validated and returned.
+	// corrected.
+	//
+	// The two are not equally tight, and saying they were was the second thing
+	// corrected here. The ambient route genuinely has no window: `ambient` is
+	// derived from the daemon's own environment with no filesystem read, and
+	// Stat-ed exactly once. This route validates a path and then Stats that
+	// string, so the candidate side is resolved by the kernel a second time —
+	// inherent to comparing a descriptor against a PATH, and unavoidable short
+	// of opening the candidate too. What makes it safe is not the absence of a
+	// second resolution but that both ends are daemon-derived and sit behind
+	// the same DB-write precondition.
 	//
 	// An earlier shape read configDir twice — once to compare against the
 	// descriptor, once to look the allocation up — which left the residual
 	// window this closes: an intermediate component changing meaning between
 	// those two reads proved the identity about one directory and the
 	// allocation about another, and the write then landed in the first.
-	// configDir now only ever SELECTS which allocation to ask about. Selecting
-	// the wrong one cannot buy anything, because the answer still has to be the
-	// directory the descriptor is open on.
+	// configDir is now read once on that path rather than twice. It does still
+	// SHAPE the answer — the returned path is built from a local derived from
+	// it — so the earlier wording here, that it "only ever selects which
+	// allocation to ask about", was made wrong by the fix above and is
+	// corrected rather than left standing. What carries the safety is the
+	// equality check inside requireOpenCodeAllocatedConfigDir, which forces
+	// that local to equal the allocation's own recorded root: selecting the
+	// wrong allocation cannot buy anything, because the answer still has to be
+	// the directory the descriptor is open on.
 	allocated, allocErr := requireOpenCodeAllocatedConfigDir(configDir)
 	if allocErr == nil && openCodeDirectoryIs(identity, allocated) {
 		return nil
@@ -896,11 +909,21 @@ func requireOpenCodeAllocatedConfigDir(configDir string) (string, error) {
 			configDir, parent)
 	}
 	// Built from stateRoot — the local that was VALIDATED above — and never from
-	// a fresh walk. Every input this function inspects is resolved exactly once:
-	// configDir at the top, allocation.StateRoot in the equality check, parent in
-	// the containment check. That single-walk property is what closes the window,
-	// and it is the whole reason this returns a value instead of letting the
+	// a fresh walk. WITHIN THIS FUNCTION'S OWN BODY each input is resolved
+	// exactly once: configDir at the top, allocation.StateRoot in the equality
+	// check, parent in the containment check. That is what closes the window
+	// here, and the whole reason this returns a value instead of letting the
 	// caller re-derive one.
+	//
+	// Scoped deliberately, because a stronger claim was made and refuted: the
+	// allocation authority ALSO reads allocation.StateRoot, via
+	// requireOpenCodeStateAllocation -> validateOpenCodeStateAllocation, which
+	// Lstats it and EvalSymlinks it before this function's own equality check
+	// resolves it a third time. So "resolved exactly once" is false end to end.
+	// Those reads establish a different property (the recorded root is a real,
+	// non-symlink, unprotected directory) and live behind the same DB-write
+	// precondition, but the honest statement is about this body, not the call
+	// graph.
 	//
 	// An earlier version returned resolvedOpenCodeSeedPath(allocation.StateRoot)
 	// here, reasoning that it was proven equal to stateRoot above and so was
