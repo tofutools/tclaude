@@ -648,14 +648,20 @@ func validateExistingOpenCodeCredential(path string) error {
 //   - It is nil in production. No non-test file assigns it; the only writer is
 //     the test that arms it and restores nil in t.Cleanup.
 //   - It takes no arguments, so it is told nothing about the launch.
-//   - It returns nothing, so it cannot report a decision, cannot abort, and
-//     cannot redirect the write.
 //
-// Therefore it cannot influence what the seed decides or what it writes. The
-// only thing it can affect is WHEN a test observes the seed — it lets a test
-// move the filesystem underneath a decision that has already been made, and
-// then assert the decision was not affected. Reaching the write still requires
-// passing every check above it.
+// The nil-in-production point is the one carrying the guarantee, and it is the
+// only one that does. Do NOT read the signature as a second guarantee: an ARMED
+// hook is a closure with full package scope, so it can panic, and it can act on
+// the filesystem — creating the bootstrap file itself would turn the openat
+// below into EEXIST and divert the seed down its existing-file branch. "Returns
+// nothing" therefore means it is told nothing and reports nothing, NOT that an
+// armed hook cannot affect the outcome. In production it is never armed, which
+// is why none of that is reachable.
+//
+// (An earlier version of this comment claimed the signature made it unable to
+// abort or redirect the write. A cold reviewer refuted that by inspection. The
+// correction is kept visible because a prescriptive safety comment that
+// overstates its own argument is worse than a shorter true one.)
 //
 // It lives in production code rather than in a _test file because production
 // code references it, and Go cannot resolve a non-test reference to a
@@ -671,7 +677,7 @@ var openCodeSeedWindowHookForTest func()
 // Only the config app directory actually named by the launch contract is
 // eligible — and, since the contract only names it and does not prove it, only
 // when that directory is one this daemon can re-derive for itself (see
-// validateOpenCodeReadOnlyConfigSeedSource) — and only when it is served by a
+// validateOpenCodeReadOnlyConfigSeedSourceAt) — and only when it is served by a
 // daemon-final read-only bind. Without the file, Config.loadInstanceState fails
 // its own write and the first session creation answers HTTP 500 (EROFS on
 // Linux).
@@ -690,7 +696,7 @@ var openCodeSeedWindowHookForTest func()
 // Because the write target comes from a bind SOURCE — which the launch
 // contract's own validation does not constrain, it checks targets — the source
 // is separately confined to the two directories the layouts emit before
-// anything is created; see validateOpenCodeReadOnlyConfigSeedSource. Neither
+// anything is created; see validateOpenCodeReadOnlyConfigSeedSourceAt. Neither
 // of those two directories is taken on the contract's word: the contract names
 // state directories, it does not prove them.
 //
@@ -747,7 +753,7 @@ func prepareOpenCodeReadOnlyConfig(
 	return nil
 }
 
-// validateOpenCodeReadOnlyConfigSeedSource constrains where the bootstrap may
+// validateOpenCodeReadOnlyConfigSeedSourceAt constrains where the bootstrap may
 // be written. The launch contract's own validation covers bind TARGETS, and
 // the seed goes to a SOURCE, so without this a persisted spec replayed by
 // runtime reconciliation could direct a daemon-side file creation anywhere.
@@ -791,18 +797,35 @@ func validateOpenCodeReadOnlyConfigSeedSourceAt(
 	if openCodeDirectoryIs(identity, ambient) {
 		return nil
 	}
-	if openCodeDirectoryIs(identity, configDir) {
-		// Both candidates are named on refusal, but the per-agent one leads: a
-		// self-bound source got here, so that is the shape the launch has. The
-		// ambient path still has to appear — a legacy contract replayed after
-		// the daemon's XDG_CONFIG_HOME changed also lands here, and the ambient
-		// mismatch is what its operator must act on.
-		if err := requireOpenCodeAllocatedConfigDir(configDir); err != nil {
-			return fmt.Errorf(
-				"read-only OpenCode config bind source %q is not an allocated per-agent config directory (%w), and does not resolve to this host's ambient OpenCode config %q",
-				source, err, ambient)
-		}
+	// EXACTLY ONE predicate decides acceptance, and both of its sides are
+	// things the daemon holds or derives: the pinned descriptor, and a path
+	// built from the allocation store's own recorded state root.
+	//
+	// An earlier shape read configDir twice — once to compare against the
+	// descriptor, once to look the allocation up — which left the residual
+	// window this closes: an intermediate component changing meaning between
+	// those two reads proved the identity about one directory and the
+	// allocation about another, and the write then landed in the first.
+	// configDir now only ever SELECTS which allocation to ask about. Selecting
+	// the wrong one cannot buy anything, because the answer still has to be the
+	// directory the descriptor is open on.
+	allocated, allocErr := requireOpenCodeAllocatedConfigDir(configDir)
+	if allocErr == nil && openCodeDirectoryIs(identity, allocated) {
 		return nil
+	}
+	// Acceptance is settled above. Everything below only chooses WORDING, so a
+	// path read here cannot affect the outcome — at worst it mis-words a
+	// refusal that has already been decided.
+	//
+	// Both candidates are named, but the per-agent one leads when the source is
+	// self-bound, because that is the shape the launch has. The ambient path
+	// still has to appear — a legacy contract replayed after the daemon's
+	// XDG_CONFIG_HOME changed also lands here, and the ambient mismatch is what
+	// its operator must act on.
+	if allocErr != nil && openCodeDirectoryIs(identity, configDir) {
+		return fmt.Errorf(
+			"read-only OpenCode config bind source %q is not an allocated per-agent config directory (%w), and does not resolve to this host's ambient OpenCode config %q",
+			source, allocErr, ambient)
 	}
 	return fmt.Errorf(
 		"read-only OpenCode config bind source %q is neither an allocated per-agent config directory nor this host's ambient OpenCode config %q",
@@ -820,12 +843,12 @@ func validateOpenCodeReadOnlyConfigSeedSourceAt(
 // root is therefore also required to be a direct child of the private state
 // parent THIS daemon derives, the same anchor openCodeControlSocketPath applies
 // to the same allocation.
-func requireOpenCodeAllocatedConfigDir(configDir string) error {
+func requireOpenCodeAllocatedConfigDir(configDir string) (string, error) {
 	resolved := resolvedOpenCodeSeedPath(configDir)
 	configBase := filepath.Dir(resolved)
 	stateRoot := filepath.Dir(configBase)
 	if filepath.Base(resolved) != "opencode" || filepath.Base(configBase) != "config" {
-		return fmt.Errorf(
+		return "", fmt.Errorf(
 			"OpenCode config bootstrap target %q does not have the per-agent <state root>/config/opencode shape",
 			configDir)
 	}
@@ -835,35 +858,42 @@ func requireOpenCodeAllocatedConfigDir(configDir string) error {
 	// an operator's own directory name back at them as an "invalid agent id"
 	// when their path merely happens to end in config/opencode.
 	if errors.Is(err, errOpenCodeInvalidAgentID) {
-		return fmt.Errorf(
+		return "", fmt.Errorf(
 			"OpenCode config bootstrap target %q names %q where a per-agent state root was expected",
 			configDir, stateRoot)
 	}
 	if err != nil {
-		return fmt.Errorf(
+		return "", fmt.Errorf(
 			"OpenCode config bootstrap target %q is not an allocated per-agent config directory: %w",
 			configDir, err)
 	}
 	if allocation.Mode != db.OpenCodeStatePrivate ||
 		resolvedOpenCodeSeedPath(allocation.StateRoot) != stateRoot {
-		return fmt.Errorf(
+		return "", fmt.Errorf(
 			"OpenCode config bootstrap target %q does not belong to the %s state allocation of agent %s",
 			configDir, allocation.Mode, allocation.AgentID)
 	}
 	parent, err := openCodePrivateStateParent()
 	if err != nil {
-		return fmt.Errorf("resolve OpenCode private state parent for bootstrap: %w", err)
+		return "", fmt.Errorf("resolve OpenCode private state parent for bootstrap: %w", err)
 	}
 	// Both sides are compared in resolved form. The allocator records a parent it
 	// has already resolved, while this derives one from the live environment, so
 	// a symlinked home or XDG base makes the two disagree as strings while naming
 	// the same directory.
 	if filepath.Dir(stateRoot) != resolvedOpenCodeSeedPath(parent) {
-		return fmt.Errorf(
+		return "", fmt.Errorf(
 			"OpenCode config bootstrap target %q is outside this daemon's private state parent %q; a changed XDG_DATA_HOME or HOME moves that parent away from an existing allocation",
 			configDir, parent)
 	}
-	return nil
+	// Returned so the caller settles acceptance against a path this function
+	// produced, rather than re-reading configDir a second time — the double read
+	// was the residual window. Built from the allocation's own recorded state
+	// root, though that is presentation rather than protection: it was proven
+	// equal to the resolved one above, so it is the same string either way.
+	// Reading configDir exactly once is what closes the window.
+	return filepath.Join(
+		resolvedOpenCodeSeedPath(allocation.StateRoot), "config", "opencode"), nil
 }
 
 func resolvedOpenCodeSeedPath(path string) string {

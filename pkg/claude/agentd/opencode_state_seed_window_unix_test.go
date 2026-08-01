@@ -154,3 +154,89 @@ func mustReadlink(t *testing.T, path string) string {
 	require.NoError(t, err)
 	return target
 }
+
+// Acceptance now rests on ONE comparison — the pinned descriptor against the
+// path this function returns — so what that path is made of decides whether the
+// residual window #1834's cold review demonstrated stays shut. Handed an alias,
+// it must answer with the resolved directory, never with the argument as given:
+// echoing it back would put a caller-supplied string on the deciding side.
+//
+// SCOPE, ESTABLISHED BY MUTATION, NOT BY READING. A first version of this test
+// claimed the stronger property "the answer is derived from the STORE rather
+// than from the argument", and mutating the return to the argument's own
+// resolved form did not fail it. That is not a weak assertion — the two are the
+// same string by construction: the function has already proven
+// resolvedOpenCodeSeedPath(allocation.StateRoot) == stateRoot, and the two
+// basenames are pinned to config/opencode just above, so joining them back
+// reproduces the resolved argument exactly. Absent a concurrent flip no test can
+// separate them, and the claim was withdrawn rather than restated.
+//
+// What genuinely closed the window is therefore NOT provable here: it is that
+// configDir is read exactly once, so there is no second read to race. That is a
+// property of the code's shape, checkable by inspection, and this test does not
+// carry it.
+func TestRequireOpenCodeAllocatedConfigDirAnswersInResolvedForm(t *testing.T) {
+	stateRoot, configDir := allocatedOpenCodeConfigDir(t)
+	alias := filepath.Join(t.TempDir(), "alias-root")
+	require.NoError(t, os.Symlink(stateRoot, alias))
+	aliasConfig := filepath.Join(alias, "config", "opencode")
+
+	allocated, err := requireOpenCodeAllocatedConfigDir(aliasConfig)
+	require.NoError(t, err)
+	assert.Equal(t, configDir, allocated,
+		"the answer must be the resolved directory")
+	assert.NotEqual(t, aliasConfig, allocated,
+		"echoing the argument back would put a caller-supplied string on the deciding side")
+
+	// And it still refuses what it should, so the equality above is not simply
+	// a function that returns a path for anything.
+	_, err = requireOpenCodeAllocatedConfigDir(
+		filepath.Join(t.TempDir(), "config", "opencode"))
+	require.ErrorContains(t, err, "names")
+}
+
+// The EEXIST branch inspects the existing file through the same descriptor. A
+// cold-review mutation showed it reverting to a path re-open with no test
+// failing, so the branch is pinned here: with the intermediate component
+// repointed at a victim that holds a NON-REGULAR .gitignore, a path re-walk
+// would inspect the victim's and refuse, while the descriptor sees the real
+// directory's regular file and accepts.
+func TestValidateExistingOpenCodeBootstrapInspectsThroughTheDescriptor(t *testing.T) {
+	real := t.TempDir()
+	realApp := filepath.Join(real, "opencode")
+	require.NoError(t, os.MkdirAll(realApp, 0o700))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(realApp, openCodeInstallBootstrapFile),
+		[]byte(openCodeInstallGitignore), 0o600))
+
+	victim := t.TempDir()
+	victimApp := filepath.Join(victim, "opencode")
+	require.NoError(t, os.MkdirAll(victimApp, 0o700))
+	// A non-regular entry, which the existing-file inspection refuses.
+	require.NoError(t, os.Mkdir(
+		filepath.Join(victimApp, openCodeInstallBootstrapFile), 0o700))
+
+	link := filepath.Join(t.TempDir(), "base")
+	require.NoError(t, os.Symlink(real, link))
+	source := filepath.Join(link, "opencode")
+
+	dirFD, err := openOpenCodeBootstrapDirectory(source, "config")
+	require.NoError(t, err)
+	defer func() { _ = unix.Close(dirFD) }()
+
+	require.NoError(t, os.Remove(link))
+	require.NoError(t, os.Symlink(victim, link))
+	require.Equal(t, victim, mustReadlink(t, link))
+
+	created, err := ensureOpenCodeBootstrapGitignoreAt(dirFD, source, "config")
+	require.NoError(t, err,
+		"the existing-file inspection must read the descriptor's directory, not the path's")
+	assert.False(t, created, "the file already exists in the pinned directory")
+
+	// Discriminating control: the path-addressed form of the same situation
+	// reaches the victim's non-regular entry and refuses. Without it, NoError
+	// above is equally consistent with the swap never having taken effect.
+	_, pathErr := ensureOpenCodeBootstrapGitignore(source, "config")
+	require.ErrorContains(t, pathErr, "is not a regular file",
+		"addressing by path is what let the swap change which file was inspected")
+}
