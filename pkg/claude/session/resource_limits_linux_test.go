@@ -74,5 +74,32 @@ func TestWrapResourceLimitedCommandFailsWhenControllerIsNotDelegated(t *testing.
 	_, _, err := wrapResourceLimitedCommand(
 		"cpu-missing", sandboxpolicy.ResourceLimits{CPU: &cpu}, "harness",
 	)
-	assert.ErrorContains(t, err, "Delegate=yes")
+	assert.ErrorContains(t, err, "Delegate=cpu memory")
+}
+
+func TestResourceDelegationDirUsesSystemdSupervisorParent(t *testing.T) {
+	assert.Equal(t, "/sys/fs/cgroup/system.slice/tclaude-agentd.service",
+		resourceDelegationDir("/sys/fs/cgroup/system.slice/tclaude-agentd.service/tclaude-supervisor"))
+	assert.Equal(t, "/sys/fs/cgroup/user.slice/session.scope",
+		resourceDelegationDir("/sys/fs/cgroup/user.slice/session.scope"))
+}
+
+func TestRemoveStaleResourceCgroupsOnlyRemovesEmptyWorkloadDirectories(t *testing.T) {
+	root := t.TempDir()
+	empty := filepath.Join(root, "tclaude-empty")
+	busy := filepath.Join(root, "tclaude-busy")
+	supervisor := filepath.Join(root, resourceSupervisorCgroup)
+	require.NoError(t, os.Mkdir(empty, 0o755))
+	require.NoError(t, os.Mkdir(busy, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(busy, "marker"), []byte("busy"), 0o644))
+	require.NoError(t, os.Mkdir(supervisor, 0o755))
+
+	removeStaleResourceCgroups(root)
+
+	_, err := os.Stat(empty)
+	assert.ErrorIs(t, err, os.ErrNotExist)
+	_, err = os.Stat(busy)
+	assert.NoError(t, err)
+	_, err = os.Stat(supervisor)
+	assert.NoError(t, err)
 }

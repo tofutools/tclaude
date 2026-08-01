@@ -139,11 +139,12 @@ dashboard's existing **allow launch without enforcement** checkbox is the
 operator-controlled escape hatch and records a visible degradation notice.
 
 When agentd is run as a systemd service, its unit must delegate the required
-controllers to an otherwise empty child cgroup (for example with
-`Delegate=yes`) and use `OOMPolicy=continue`, so a workload OOM kills the
-limited workload rather than restarting agentd. A delegation or controller
-failure is reported at launch with an actionable error; tclaude never widens a
-configured limit without the explicit operator override.
+controllers to an otherwise empty parent. With systemd 254 or newer, configure
+`Delegate=cpu memory`, `DelegateSubgroup=tclaude-supervisor`, and
+`OOMPolicy=continue`; the subgroup keeps agentd out of the constrained workload
+siblings and leaves the delegated unit node process-free. A delegation or
+controller failure is reported at launch with an actionable error; tclaude
+never widens a configured limit without the explicit operator override.
 
 ## Experimental `tclaude-layer` on Linux and macOS
 

@@ -20,6 +20,8 @@ import (
 
 var resourceCgroupRoot = "/sys/fs/cgroup"
 
+const resourceSupervisorCgroup = "tclaude-supervisor"
+
 func currentCgroupDir() (string, error) {
 	raw, err := os.ReadFile("/proc/self/cgroup")
 	if err != nil {
@@ -36,6 +38,17 @@ func currentCgroupDir() (string, error) {
 	return "", errors.New("cgroup v2 unified hierarchy was not found in /proc/self/cgroup")
 }
 
+// resourceDelegationDir returns the process-free delegated node under which
+// workload cgroups may be created. systemd's DelegateSubgroup setting places
+// agentd and its ordinary children in tclaude-supervisor, leaving the unit
+// cgroup itself available as the controller-owning inner node.
+func resourceDelegationDir(current string) string {
+	if filepath.Base(current) == resourceSupervisorCgroup {
+		return filepath.Dir(current)
+	}
+	return current
+}
+
 func wrapResourceLimitedCommand(
 	sessionID string,
 	limits sandboxpolicy.ResourceLimits,
@@ -45,7 +58,8 @@ func wrapResourceLimitedCommand(
 	if err != nil {
 		return "", func() {}, fmt.Errorf("resource limits unavailable: %w", err)
 	}
-	controllersRaw, err := os.ReadFile(filepath.Join(current, "cgroup.controllers"))
+	delegation := resourceDelegationDir(current)
+	controllersRaw, err := os.ReadFile(filepath.Join(delegation, "cgroup.controllers"))
 	if err != nil {
 		return "", func() {}, fmt.Errorf("resource limits require a delegated cgroup v2 service subtree: %w", err)
 	}
@@ -59,10 +73,10 @@ func wrapResourceLimitedCommand(
 	}
 	for _, controller := range needed {
 		if !containsString(available, controller) {
-			return "", func() {}, fmt.Errorf("resource limits require delegated cgroup v2 %s controller; add Delegate=yes to tclaude-agentd.service", controller)
+			return "", func() {}, fmt.Errorf("resource limits require delegated cgroup v2 %s controller; configure tclaude-agentd.service with Delegate=cpu memory and DelegateSubgroup=%s", controller, resourceSupervisorCgroup)
 		}
 	}
-	enabledRaw, err := os.ReadFile(filepath.Join(current, "cgroup.subtree_control"))
+	enabledRaw, err := os.ReadFile(filepath.Join(delegation, "cgroup.subtree_control"))
 	if err != nil {
 		return "", func() {}, fmt.Errorf("inspect delegated cgroup controllers: %w", err)
 	}
@@ -74,12 +88,13 @@ func wrapResourceLimitedCommand(
 		}
 	}
 	if len(toEnable) > 0 {
-		if err := os.WriteFile(filepath.Join(current, "cgroup.subtree_control"), []byte(strings.Join(toEnable, " ")), 0o644); err != nil {
-			return "", func() {}, fmt.Errorf("enable delegated cgroup v2 controllers %s: %w (tclaude-agentd.service needs Delegate=yes and an empty delegated parent)", strings.Join(needed, ", "), err)
+		if err := os.WriteFile(filepath.Join(delegation, "cgroup.subtree_control"), []byte(strings.Join(toEnable, " ")), 0o644); err != nil {
+			return "", func() {}, fmt.Errorf("enable delegated cgroup v2 controllers %s: %w (tclaude-agentd.service needs Delegate=cpu memory and DelegateSubgroup=%s)", strings.Join(needed, ", "), err, resourceSupervisorCgroup)
 		}
 	}
+	removeStaleResourceCgroups(delegation)
 	digest := sha256.Sum256([]byte(sessionID))
-	dir := filepath.Join(current, fmt.Sprintf("tclaude-%x", digest[:10]))
+	dir := filepath.Join(delegation, fmt.Sprintf("tclaude-%x", digest[:10]))
 	if err := os.Mkdir(dir, 0o755); err != nil {
 		return "", func() {}, fmt.Errorf("create resource cgroup for session %q: %w", sessionID, err)
 	}
@@ -113,6 +128,20 @@ func wrapResourceLimitedCommand(
 	return wrapper, cleanup, nil
 }
 
+func removeStaleResourceCgroups(delegation string) {
+	entries, err := os.ReadDir(delegation)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if entry.IsDir() && strings.HasPrefix(entry.Name(), "tclaude-") && entry.Name() != resourceSupervisorCgroup {
+			// cgroupfs refuses removal while processes remain. Thus this only
+			// reclaims empty leftovers from a prior daemon or launch crash.
+			_ = os.Remove(filepath.Join(delegation, entry.Name()))
+		}
+	}
+}
+
 func containsString(values []string, wanted string) bool {
 	for _, value := range values {
 		if value == wanted {
@@ -143,7 +172,7 @@ func runResourceLimitExec(cgroupDir, command string) error {
 		return err
 	}
 	cgroupDir = filepath.Clean(cgroupDir)
-	if filepath.Dir(cgroupDir) != current || !strings.HasPrefix(filepath.Base(cgroupDir), "tclaude-") {
+	if filepath.Dir(cgroupDir) != resourceDelegationDir(current) || !strings.HasPrefix(filepath.Base(cgroupDir), "tclaude-") || filepath.Base(cgroupDir) == resourceSupervisorCgroup {
 		return errors.New("resource-limit-exec received a cgroup outside the current delegated subtree")
 	}
 	info, err := os.Lstat(cgroupDir)

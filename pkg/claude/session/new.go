@@ -1603,6 +1603,13 @@ func runNew(params *NewParams) error {
 			return fmt.Errorf("wrap harness with tclaude-layer: %w", err)
 		}
 	}
+	resourceCgroupCleanup := func() {}
+	resourceCgroupOwnedByPane := false
+	defer func() {
+		if !resourceCgroupOwnedByPane {
+			resourceCgroupCleanup()
+		}
+	}()
 	if launchSandbox != nil && launchSandbox.Effective.ResourceLimits.Enabled() {
 		if err := sandboxpolicy.ValidateResourceLimitTarget(
 			launchSandbox.Effective.ResourceLimits, sandboxImplementation, runtime.GOOS,
@@ -1629,7 +1636,7 @@ func runNew(params *NewParams) error {
 					effectiveSandbox.Effective.AccessNotices = append(effectiveSandbox.Effective.AccessNotices, notice)
 				}
 			} else {
-				defer cleanup()
+				resourceCgroupCleanup = cleanup
 				harnessCmd = wrapped
 			}
 		}
@@ -1688,6 +1695,7 @@ func runNew(params *NewParams) error {
 	if err := launchDetachedTmuxSession(tmuxSession, cwd, harnessCmd, CodexProfileMarkerArgs(launchProfilePath)...); err != nil {
 		return err
 	}
+	resourceCgroupOwnedByPane = true
 	// killLaunchPane tears the just-launched pane down on a late launch
 	// failure. It also reclaims launch-profile removal for the parent defer:
 	// a killed pane's shell never reaches its own cleanup trailer, so leaving
@@ -1695,6 +1703,7 @@ func runNew(params *NewParams) error {
 	killLaunchPane := func() {
 		launchProfileOwnedByPane = false
 		_ = clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(tmuxSession)).Run()
+		resourceCgroupCleanup()
 	}
 	if stackedProof != nil {
 		if err := WaitForStackedBindingReadiness(stackedProof.ReadyPath); err != nil {
