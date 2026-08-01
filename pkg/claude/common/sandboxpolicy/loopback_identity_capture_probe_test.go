@@ -15,7 +15,6 @@ import (
 	"bytes"
 	"fmt"
 	"net"
-	"os"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -64,8 +63,13 @@ func tcl916CaptureSYN(target string, port int) tcl916CaptureResult {
 		"dst host %s and tcp dst port %d and tcp[tcpflags] & tcp-syn != 0",
 		target, port,
 	)
+	// alarm survives exec, so tcpdump itself receives SIGALRM after four
+	// seconds when the filter sees nothing. Bounding the child directly is
+	// important: signaling sudo does not reliably terminate its child on
+	// macOS, and a null capture must still reach the caller-owned report.
 	cmd := exec.Command(
-		"sudo", "-n", "tcpdump", "-n", "-l", "-i", "any", "-c", "1", filter,
+		"sudo", "-n", "/usr/bin/perl", "-e", "alarm shift; exec @ARGV", "4",
+		"tcpdump", "-n", "-l", "-i", "any", "-c", "1", filter,
 	)
 	var stdout bytes.Buffer
 	stderr := &tcl916ReadyBuffer{ready: make(chan struct{})}
@@ -86,8 +90,7 @@ func tcl916CaptureSYN(target string, port int) tcl916CaptureResult {
 		result.stderr = stderr.String()
 		return result
 	case <-time.After(5 * time.Second):
-		_ = cmd.Process.Signal(os.Interrupt)
-		result.waitErr = <-waited
+		result.waitErr = fmt.Errorf("tcpdump did not become ready or exit within 5s")
 		result.stdout = stdout.String()
 		result.stderr = stderr.String()
 		return result
@@ -101,13 +104,8 @@ func tcl916CaptureSYN(target string, port int) tcl916CaptureResult {
 		_ = conn.Close()
 	}
 
-	select {
-	case result.waitErr = <-waited:
-		result.observed = result.waitErr == nil && strings.TrimSpace(stdout.String()) != ""
-	case <-time.After(2 * time.Second):
-		_ = cmd.Process.Signal(os.Interrupt)
-		result.waitErr = <-waited
-	}
+	result.waitErr = <-waited
+	result.observed = result.waitErr == nil && strings.TrimSpace(stdout.String()) != ""
 	result.stdout = stdout.String()
 	result.stderr = stderr.String()
 	return result
