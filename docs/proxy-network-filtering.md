@@ -550,6 +550,14 @@ A Seatbelt loopback rule scopes to **a port set across all host-local
 addresses**, not to the loopback interface, so "this port, loopback only" is
 not expressible at all.
 
+"Loopback rule" here means the rule Seatbelt renders on macOS, and it is **not**
+this document's *loopback-row authority* — the two are unrelated mechanisms that
+share a word. The `0.0.0.0/8` split between loopback rows and CIDR rows is a
+property of the proxy engine's evaluator; Seatbelt has no row-authority concept
+to split, only the single host token `localhost`, which is exactly why its scope
+collapses to a port set. Nothing in that split loosens or tightens what is
+described below.
+
 The two halves of that have different evidence, and are worth keeping apart:
 
 - **`localhost` matches every address assigned to the host.** Measured on the

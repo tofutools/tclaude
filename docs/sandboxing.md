@@ -708,8 +708,16 @@ So allowing Local access on port N also allows anything else **on this same
 machine** listening on port N, including a service bound only to the host's LAN
 address. Everything involved belongs to the machine the agent already runs on:
 this is not egress, and a service bound to `0.0.0.0` was already reachable
-through the loopback rule in any case. The gap needs a second service, on the
-same port, bound exclusively to a non-loopback address.
+through the Seatbelt rule in any case, since `localhost` covers whichever
+address the connect names. The gap needs a second service, on the same port,
+bound exclusively to a non-loopback address.
+
+Note this is a different mechanism from the proxy engine's **loopback rows**
+described above, and the `0.0.0.0/8` authority split stated there does not
+apply here. Seatbelt has no row-authority concept to split: it has one host
+token, `localhost`, which is why the scope is a port set. Reading the two
+paragraphs as one model is the mistake to avoid — they share the word
+"loopback" and share nothing else.
 
 Ports outside the list are denied, and outbound **TCP** connections to
 addresses beyond this machine are denied. Bind/inbound behavior is left alone
