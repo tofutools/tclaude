@@ -249,9 +249,20 @@ export function sandboxOtherContextRefusals(target = {}, contextIndex = null) {
   // contribute nothing to the aggregate either (it summarizes surviving contexts
   // only) — so without these the editor would claim every assignment was checked
   // while a refusal among the omitted ones went unmentioned.
+  // TCL-913: an omitted assignment has no index to look its name up by, so the
+  // daemon sends the assignment's own context beside the refusal and it is
+  // passed through here. The KEY IS DROPPED, never defaulted: a daemon that
+  // predates the field and a daemon that sent an empty identity must not look
+  // the same to the caller, or the compat branch below cannot be decided — and
+  // an absent identity is exactly what makes the renderer fall back to today's
+  // unnamed wording rather than to a blank.
   return [
     ...listed,
-    ...(target.omitted_refusals || []).map((refusal) => ({ index: null, refusal })),
+    ...(target.omitted_refusals || []).map(({ context, ...refusal }) => ({
+      index: null,
+      refusal,
+      ...(context ? { context } : {}),
+    })),
   ];
 }
 
