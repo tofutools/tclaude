@@ -369,6 +369,42 @@ func TestSweepStaleTUIConsoleErrorFiles(t *testing.T) {
 	}
 }
 
+// TestRunTUIConsoleInTmux_DegradesWhenItCannotPrepareAnErrorFile keeps the
+// launcher's one diagnostic from being able to fail the daemon. The error file
+// is how a console reports a failure it has no screen left to print on, so a
+// console that cannot have one belongs on this terminal, where its failures are
+// visible — and every way that file can fail means the private data directory
+// is unusable, which the singleton lock and the database open are moments away
+// from saying properly.
+func TestRunTUIConsoleInTmux_DegradesWhenItCannotPrepareAnErrorFile(t *testing.T) {
+	// A HOME that is a regular file: config.DataDir() resolves under it and the
+	// MkdirAll cannot succeed.
+	home := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(home, nil, 0o600); err != nil {
+		t.Fatalf("seed the unusable home: %v", err)
+	}
+	t.Setenv("HOME", home)
+	rec := installConsoleTmuxRec(t, &consoleTmuxRec{})
+	tuiConsoleStubAncestry(t, false)
+	tuiConsoleStubTerminal(t, true)
+	// Pin that no EARLIER degradation applies, so the decline below can only be
+	// the error file — otherwise this would keep passing if the host simply had
+	// no tmux.
+	if reason := tuiConsoleUnavailable(&serveParams{TUI: true}); reason != "" {
+		t.Fatalf("this host declined for %q before the error file was ever reached", reason)
+	}
+
+	handled, err := runTUIConsoleInTmux(&serveParams{TUI: true})
+
+	if handled || err != nil {
+		t.Fatalf("runTUIConsoleInTmux = (%v, %v), want (false, nil) so the console runs in place",
+			handled, err)
+	}
+	if rec.issued("new-session") {
+		t.Fatalf("a declined relaunch must create no session, got %v", rec.calls)
+	}
+}
+
 // TestStartTUIConsoleSession_LaunchShape pins what actually reaches tmux: a
 // detached session under the console's own name, and a launch script rather
 // than a bare argv — the script is what re-exports THIS process's environment,

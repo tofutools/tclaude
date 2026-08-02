@@ -195,12 +195,25 @@ func runTUIConsoleInTmux(p *serveParams) (handled bool, err error) {
 		return false, nil
 	}
 
+	// The error file is how a console reports a startup failure it has no screen
+	// left to print on, so a console that cannot have one is a console whose
+	// failures would be invisible — which is reason enough to keep it on this
+	// terminal instead, where they are not. Failing startup over it would also
+	// be the wrong message: every way this can fail means the private data
+	// directory is unusable, and the singleton lock and the database open are
+	// moments away with errors that say so.
 	errorFile, removeErrorFile, err := newTUIConsoleErrorFile()
 	if err != nil {
-		return true, err
+		slog.Warn("tui: could not prepare the console's startup-error file; console keeps this terminal",
+			"error", err, "module", "agentd")
+		fmt.Fprintf(os.Stderr, "tclaude: could not prepare the terminal UI's error file (%v); running the terminal UI in this window\n", err)
+		return false, nil
 	}
+	// Registered only now, so nothing is cleaned up that was never created.
 	defer removeErrorFile()
 
+	// From here the console's own tmux session is the plan, and a tmux that
+	// cannot deliver it is a real failure rather than a host to route around.
 	name := session.UniqueTmuxSessionName(tuiConsoleSessionBase)
 	if err := startTUIConsoleSession(name, exe, errorFile); err != nil {
 		return true, err
