@@ -100,6 +100,11 @@ func TestOpenCodeFileMtime_AboveUnixNanoRangeSkipsCacheLoudlyWithoutHidingSessio
 
 func TestOpenCodeConvStore_GenericCacheFailureDoesNotHideCLISessions(t *testing.T) {
 	withTestDB(t)
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+
 	d, err := db.Open()
 	require.NoError(t, err)
 	_, err = d.Exec(`CREATE TRIGGER reject_opencode_cache_fixture
@@ -126,6 +131,21 @@ func TestOpenCodeConvStore_GenericCacheFailureDoesNotHideCLISessions(t *testing.
 	row, err := db.GetConvIndex(session.ID)
 	require.NoError(t, err)
 	assert.Nil(t, row, "the listing came from the CLI even though its cache write failed")
+
+	// Pin the split direction, not just the degrade. Skipping the cache row and
+	// still listing the session holds on the representation-error arm too, so
+	// without a level assertion a change that misclassified ordinary transient
+	// cache failures as representation failures would log every one of them at
+	// ERROR on a deliberately quiet path, and no test would fail.
+	// Matched against the full record rather than a bare "level=WARN", so
+	// unrelated migration logging in the same buffer can neither satisfy nor
+	// break the assertion.
+	assert.Contains(t, logs.String(),
+		`level=WARN msg="opencode convstore: conv_index upsert failed; continuing from CLI"`)
+	assert.NotContains(t, logs.String(), `level=ERROR msg="opencode convstore:`,
+		"an ordinary cache failure is a quiet degrade, not a loud representation failure")
+	assert.Contains(t, logs.String(), session.ID)
+	assert.Contains(t, logs.String(), "generic cache failure fixture")
 }
 
 func TestOpenCodeConvStore_ResolveLocalGlobalAndAmbiguous(t *testing.T) {
