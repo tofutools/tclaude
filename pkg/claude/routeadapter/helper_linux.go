@@ -77,6 +77,24 @@ func RunHelper(ctx context.Context, cfg HelperConfig) error {
 	}
 }
 
+// ValidateHelper performs one authenticated, read-only discovery before the
+// outer launch releases the harness. It makes the readiness marker mean that
+// the inherited credential was not only consumed, but accepted by agentd.
+func ValidateHelper(ctx context.Context, cfg HelperConfig) error {
+	if strings.TrimSpace(cfg.SocketPath) == "" || strings.TrimSpace(cfg.AgentID) == "" || strings.TrimSpace(cfg.ConvID) == "" || strings.TrimSpace(cfg.LaunchGeneration) == "" || strings.TrimSpace(cfg.Credential) == "" {
+		return errors.New("route helper launch identity is incomplete")
+	}
+	if len(cfg.GroupIDs) == 0 {
+		return errors.New("route helper requires at least one explicit group")
+	}
+	var payload struct {
+		Routes []routeRecord `json:"routes"`
+	}
+	return GetUnixJSON(ctx, cfg.SocketPath,
+		"/v1/routes?group_id="+strconv.FormatInt(cfg.GroupIDs[0], 10),
+		cfg.Credential, &payload)
+}
+
 type helperHandle struct {
 	cancel context.CancelFunc
 	done   chan struct{}

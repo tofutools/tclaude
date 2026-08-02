@@ -13,21 +13,24 @@ import (
 func TestSessionArgsRouteHelperCredentialNeverEntersArgv(t *testing.T) {
 	const bearer = "route-helper-bearer-must-not-leak"
 	args := sessionNewArgs(clcommon.SpawnArgs{
-		Label:                       "lbl",
-		Cwd:                         "/tmp/x",
-		RouteHelperAgentID:          "agt_test",
-		RouteHelperConvID:           "conv_test",
-		RouteHelperLaunchGeneration: "generation_test",
-		RouteHelperCredential:       bearer,
-		RouteHelperCredentialPath:   "/home/test/.tclaude/api/route-helper-credential.fifo",
-		RouteHelperGroupIDs:         []int64{42},
+		Label:                                  "lbl",
+		Cwd:                                    "/tmp/x",
+		RouteHelperAgentID:                     "agt_test",
+		RouteHelperConvID:                      "conv_test",
+		RouteHelperLaunchGeneration:            "generation_test",
+		RouteHelperCredential:                  bearer,
+		RouteHelperCredentialHandoffSocketPath: "/home/test/.tclaude/data/route-helper-handoff.sock",
+		RouteHelperGroupIDs:                    []int64{42},
 	})
 	rendered := strings.Join(args, " ")
 	if strings.Contains(rendered, bearer) {
 		t.Fatalf("route helper bearer leaked into session-new argv: %q", rendered)
 	}
-	if !strings.Contains(rendered, "--route-helper-credential-path") {
-		t.Fatalf("route helper argv omitted the one-shot handoff path: %q", rendered)
+	if !strings.Contains(rendered, "--route-helper-credential-handoff-socket") {
+		t.Fatalf("route helper argv omitted the one-shot FD handoff endpoint: %q", rendered)
+	}
+	if strings.Contains(rendered, "credential-fifo") || strings.Contains(rendered, "credential-path") {
+		t.Fatalf("route helper argv retained the retired credential pathname contract: %q", rendered)
 	}
 }
 

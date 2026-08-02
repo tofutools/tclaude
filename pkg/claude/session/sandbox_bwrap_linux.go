@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
@@ -218,6 +219,37 @@ func tclaudeLayerCommand(
 	return relay + engine + " -- " + command, nil
 }
 
+func tclaudeLayerCommandWithRouteHelper(
+	binary string,
+	phase0WriteDirs []string,
+	privateWriteDirs []TclaudeLayerPrivateWriteDir,
+	finalHideDirs []string,
+	readOnlyBinds []TclaudeLayerReadOnlyBind,
+	socketPaths []string,
+	plan sandboxpolicy.MountPlan,
+	helper TclaudeLayerRouteHelper,
+	harnessCommand string,
+) (string, error) {
+	credentialFD := tclaudeLayerRouteHelperGuestFD(plan)
+	helper.CredentialFD = credentialFD
+	wrapper, err := wrapTclaudeLayerRouteHelper(binary, helper, harnessCommand)
+	if err != nil {
+		return "", err
+	}
+	command, err := bwrapCommand(binary, phase0WriteDirs, privateWriteDirs,
+		finalHideDirs, readOnlyBinds, socketPaths, plan, wrapper)
+	if err != nil {
+		return "", err
+	}
+	command = tclaudeLayerPreserveRouteHelperFD(command)
+	engine, err := tclaudeLayerEnginePrefix(plan)
+	if err != nil {
+		return "", err
+	}
+	return tclaudeLayerRouteHelperBootstrapPrefix(helper) +
+		tclaudeLayerRelayPrefix() + " --preserve-fds 1" + engine + " -- " + command, nil
+}
+
 // tclaudeLayerEnginePrefix contributes the supervisor flag for whichever
 // filtering engine this plan deploys, and nothing when it deploys none.
 //
@@ -269,6 +301,64 @@ func tclaudeLayerStackedCommand(
 		relay += " --stacked-ready " + clcommon.ShellQuoteArg(readyPath)
 	}
 	return relay + " -- " + command, nil
+}
+
+func tclaudeLayerStackedCommandWithRouteHelper(
+	binary string,
+	phase0WriteDirs []string,
+	privateWriteDirs []TclaudeLayerPrivateWriteDir,
+	finalHideDirs []string,
+	readOnlyBinds []TclaudeLayerReadOnlyBind,
+	socketPaths []string,
+	plan sandboxpolicy.MountPlan,
+	helper TclaudeLayerRouteHelper,
+	manifestPath, manifestSHA256, readyPath string,
+	consume bool,
+	harnessCommand string,
+) (string, error) {
+	if plan.NetworkPosture == sandboxpolicy.NetworkFiltered {
+		return "", fmt.Errorf("stacked filtered-network launches are not enabled in M2b")
+	}
+	helper.CredentialFD = tclaudeLayerRouteHelperGuestFD(plan)
+	wrapper, err := wrapTclaudeLayerRouteHelper(binary, helper, harnessCommand)
+	if err != nil {
+		return "", err
+	}
+	command, err := bwrapCommand(binary, phase0WriteDirs, privateWriteDirs,
+		finalHideDirs, readOnlyBinds, socketPaths, plan, wrapper)
+	if err != nil {
+		return "", err
+	}
+	command = tclaudeLayerPreserveRouteHelperFD(command)
+	relay := tclaudeLayerRelayPrefix() + " --preserve-fds 1"
+	relay += " --stacked-binding " + clcommon.ShellQuoteArg(manifestPath)
+	relay += " --stacked-binding-sha256 " + clcommon.ShellQuoteArg(manifestSHA256)
+	if consume {
+		relay += " --stacked-consume"
+	}
+	if readyPath != "" {
+		relay += " --stacked-ready " + clcommon.ShellQuoteArg(readyPath)
+	}
+	return tclaudeLayerRouteHelperBootstrapPrefix(helper) + relay + " -- " + command, nil
+}
+
+func tclaudeLayerRouteHelperGuestFD(plan sandboxpolicy.MountPlan) int {
+	engineDescriptors, _ := tclaudeLayerRelayEngineDescriptors(plan)
+	return tclaudeLayerRelayStatusFD + 1 + engineDescriptors
+}
+
+func tclaudeLayerPreserveRouteHelperFD(command string) string {
+	return strings.Replace(command, " -- /bin/sh -c ", " --preserve-fds 1 -- /bin/sh -c ", 1)
+}
+
+func tclaudeLayerRouteHelperBootstrapPrefix(helper TclaudeLayerRouteHelper) string {
+	cli := tclaudeLayerRouteHelperCLI
+	if strings.TrimSpace(helper.BinaryPath) != "" {
+		cli = helper.BinaryPath
+	}
+	return clcommon.ShellQuoteArg(cli) + " session " +
+		tclaudeLayerRouteHelperBootstrapCommand + " --handoff-socket " +
+		clcommon.ShellQuoteArg(helper.HandoffSocketPath) + " -- "
 }
 
 func tclaudeLayerServerCommand(

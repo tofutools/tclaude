@@ -6712,7 +6712,7 @@ func sessionNewArgs(a clcommon.SpawnArgs) []string {
 			"--route-helper-agent-id", a.RouteHelperAgentID,
 			"--route-helper-conv-id", a.RouteHelperConvID,
 			"--route-helper-launch-generation", a.RouteHelperLaunchGeneration,
-			"--route-helper-credential-path", a.RouteHelperCredentialPath)
+			"--route-helper-credential-handoff-socket", a.RouteHelperCredentialHandoffSocketPath)
 		for _, groupID := range a.RouteHelperGroupIDs {
 			args = append(args, "--route-helper-group-id", strconv.FormatInt(groupID, 10))
 		}
@@ -6845,7 +6845,7 @@ func sessionResumeArgs(a clcommon.SpawnArgs) []string {
 			"--route-helper-agent-id", a.RouteHelperAgentID,
 			"--route-helper-conv-id", a.RouteHelperConvID,
 			"--route-helper-launch-generation", a.RouteHelperLaunchGeneration,
-			"--route-helper-credential-path", a.RouteHelperCredentialPath)
+			"--route-helper-credential-handoff-socket", a.RouteHelperCredentialHandoffSocketPath)
 		for _, groupID := range a.RouteHelperGroupIDs {
 			args = append(args, "--route-helper-group-id", strconv.FormatInt(groupID, 10))
 		}
@@ -7133,7 +7133,7 @@ func liveSpawnNew(a clcommon.SpawnArgs) error {
 	}
 	routeCredentialCleanup := func() {}
 	if a.RouteHelperCredential != "" {
-		a.RouteHelperCredentialPath, routeCredentialCleanup, err = prepareRouteHelperCredentialFIFO(a.RouteHelperCredential)
+		a.RouteHelperCredentialHandoffSocketPath, routeCredentialCleanup, err = prepareRouteHelperCredentialHandoff(a.RouteHelperCredential)
 		if err != nil {
 			cleanup()
 			return err
@@ -7365,7 +7365,7 @@ func liveSpawnResume(a clcommon.SpawnArgs) error {
 	}
 	routeCredentialCleanup := func() {}
 	if a.RouteHelperCredential != "" {
-		a.RouteHelperCredentialPath, routeCredentialCleanup, err = prepareRouteHelperCredentialFIFO(a.RouteHelperCredential)
+		a.RouteHelperCredentialHandoffSocketPath, routeCredentialCleanup, err = prepareRouteHelperCredentialHandoff(a.RouteHelperCredential)
 		if err != nil {
 			cleanup()
 			if openCodeLaunch != nil {

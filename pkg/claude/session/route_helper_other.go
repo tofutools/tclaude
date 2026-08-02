@@ -17,3 +17,14 @@ func tclaudeLayerRouteHelperCmd() *cobra.Command {
 		},
 	}
 }
+
+func tclaudeLayerRouteHelperBootstrapCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:    tclaudeLayerRouteHelperBootstrapCommand,
+		Short:  "Receive the route helper credential FD and exec the Linux relay (internal)",
+		Hidden: true,
+		RunE: func(*cobra.Command, []string) error {
+			return fmt.Errorf("%s is only available on Linux", tclaudeLayerRouteHelperBootstrapCommand)
+		},
+	}
+}

@@ -189,6 +189,7 @@ func Cmd() *cobra.Command {
 			exitCallbackCmd(),
 			tclaudeLayerWinchRelayCmd(),
 			tclaudeLayerRouteHelperCmd(),
+			tclaudeLayerRouteHelperBootstrapCmd(),
 			tclaudeLayerFilteredBootstrapCmd(),
 			tclaudeLayerFilteredNFTCmd(),
 			tclaudeLayerProxyBootstrapCmd(),

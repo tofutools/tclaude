@@ -256,11 +256,11 @@ type NewParams struct {
 	// RouteHelper* are an internal daemon-to-session handoff. The daemon mints
 	// the launch generation and opaque credential before the pane starts; callers
 	// provide those with the pre-enrolled identity and explicit route groups.
-	RouteHelperAgentID          string  `long:"route-helper-agent-id" optional:"true" help:"Internal: stable identity for the Linux group-route helper"`
-	RouteHelperConvID           string  `long:"route-helper-conv-id" optional:"true" help:"Internal: conversation identity for the Linux group-route helper"`
-	RouteHelperLaunchGeneration string  `long:"route-helper-launch-generation" optional:"true" help:"Internal: launch generation for the Linux group-route helper"`
-	RouteHelperCredentialPath   string  `long:"route-helper-credential-path" optional:"true" help:"Internal: one-shot credential handoff for the Linux group-route helper"`
-	RouteHelperGroupIDs         []int64 `long:"route-helper-group-id" optional:"true" help:"Internal: explicit route-enabled group for the Linux group-route helper"`
+	RouteHelperAgentID                     string  `long:"route-helper-agent-id" optional:"true" help:"Internal: stable identity for the Linux group-route helper"`
+	RouteHelperConvID                      string  `long:"route-helper-conv-id" optional:"true" help:"Internal: conversation identity for the Linux group-route helper"`
+	RouteHelperLaunchGeneration            string  `long:"route-helper-launch-generation" optional:"true" help:"Internal: launch generation for the Linux group-route helper"`
+	RouteHelperCredentialHandoffSocketPath string  `long:"route-helper-credential-handoff-socket" optional:"true" help:"Internal: one-shot credential FD handoff socket for the Linux group-route helper"`
+	RouteHelperGroupIDs                    []int64 `long:"route-helper-group-id" optional:"true" help:"Internal: explicit route-enabled group for the Linux group-route helper"`
 }
 
 func NewCmd() *cobra.Command {
@@ -290,7 +290,7 @@ func NewCmd() *cobra.Command {
 	_ = cmd.Flags().MarkHidden("route-helper-agent-id")
 	_ = cmd.Flags().MarkHidden("route-helper-conv-id")
 	_ = cmd.Flags().MarkHidden("route-helper-launch-generation")
-	_ = cmd.Flags().MarkHidden("route-helper-credential-path")
+	_ = cmd.Flags().MarkHidden("route-helper-credential-handoff-socket")
 	_ = cmd.Flags().MarkHidden("route-helper-group-id")
 
 	// Register completion for --resume flag
@@ -919,11 +919,11 @@ func runNew(params *NewParams) error {
 	// Build the harness command with all environment variables forwarded.
 	exitGeneration := newExitLaunchGeneration(sessionID, tmuxSession)
 	var routeHelper *TclaudeLayerRouteHelper
-	if params.RouteHelperAgentID != "" || params.RouteHelperConvID != "" || params.RouteHelperLaunchGeneration != "" || params.RouteHelperCredentialPath != "" || len(params.RouteHelperGroupIDs) > 0 {
+	if params.RouteHelperAgentID != "" || params.RouteHelperConvID != "" || params.RouteHelperLaunchGeneration != "" || params.RouteHelperCredentialHandoffSocketPath != "" || len(params.RouteHelperGroupIDs) > 0 {
 		if !outerLayer || !tclaudeLayerWrapsPane(h.Name) {
 			return fmt.Errorf("linux group-route helper requires a pane-authoritative tclaude-layer launch")
 		}
-		if strings.TrimSpace(params.RouteHelperAgentID) == "" || strings.TrimSpace(params.RouteHelperConvID) == "" || strings.TrimSpace(params.RouteHelperLaunchGeneration) == "" || strings.TrimSpace(params.RouteHelperCredentialPath) == "" || len(params.RouteHelperGroupIDs) == 0 {
+		if strings.TrimSpace(params.RouteHelperAgentID) == "" || strings.TrimSpace(params.RouteHelperConvID) == "" || strings.TrimSpace(params.RouteHelperLaunchGeneration) == "" || strings.TrimSpace(params.RouteHelperCredentialHandoffSocketPath) == "" || len(params.RouteHelperGroupIDs) == 0 {
 			return fmt.Errorf("linux group-route helper launch identity is incomplete")
 		}
 		socketFloor := sandboxpolicy.AgentdSocketFloor()
@@ -938,13 +938,13 @@ func runNew(params *NewParams) error {
 			return fmt.Errorf("linux group-route helper executable is unavailable: %w", helperBinaryErr)
 		}
 		routeHelper = &TclaudeLayerRouteHelper{
-			BinaryPath:       filepath.Clean(helperBinary),
-			SocketPath:       socketFloor[0],
-			AgentID:          strings.TrimSpace(params.RouteHelperAgentID),
-			ConvID:           strings.TrimSpace(params.RouteHelperConvID),
-			LaunchGeneration: strings.TrimSpace(params.RouteHelperLaunchGeneration),
-			CredentialPath:   strings.TrimSpace(params.RouteHelperCredentialPath),
-			GroupIDs:         append([]int64(nil), params.RouteHelperGroupIDs...),
+			BinaryPath:        filepath.Clean(helperBinary),
+			SocketPath:        socketFloor[0],
+			AgentID:           strings.TrimSpace(params.RouteHelperAgentID),
+			ConvID:            strings.TrimSpace(params.RouteHelperConvID),
+			LaunchGeneration:  strings.TrimSpace(params.RouteHelperLaunchGeneration),
+			HandoffSocketPath: strings.TrimSpace(params.RouteHelperCredentialHandoffSocketPath),
+			GroupIDs:          append([]int64(nil), params.RouteHelperGroupIDs...),
 		}
 		exitGeneration = routeHelper.LaunchGeneration
 	}

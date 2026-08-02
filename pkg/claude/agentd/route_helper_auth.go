@@ -4,17 +4,11 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
-	"fmt"
-	"io"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
-	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -49,6 +43,9 @@ func mintRouteHelperCredential(agentID, convID string) (credential, launchGenera
 	if err != nil {
 		return "", "", err
 	}
+	// A new launch generation supersedes every predecessor capability for this
+	// conversation, even when route authority itself remains continuous.
+	revokeRouteHelperCredentials(convID, "")
 	routeHelperCredentials.Lock()
 	routeHelperCredentials.items[credential] = routeHelperCredential{
 		agentID: agentID, convID: convID, launchGeneration: launchGeneration,
@@ -64,61 +61,6 @@ func randomRouteHelperSecret(size int) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(buf), nil
-}
-
-// prepareRouteHelperCredentialFIFO creates the one-shot secret handoff used
-// by the pane-local helper. The FIFO path is safe to carry through the launch
-// argv; the bearer itself exists only in this daemon goroutine and in the
-// helper's first read. A missing pane consumes no credential: the bounded
-// writer timeout removes the FIFO without ever persisting the secret.
-func prepareRouteHelperCredentialFIFO(credential string) (string, func(), error) {
-	credential = strings.TrimSpace(credential)
-	if credential == "" {
-		return "", func() {}, errors.New("route helper credential is empty")
-	}
-	dir := filepath.Join(config.DataDir(), "route-helper-credentials")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", func() {}, fmt.Errorf("create route helper credential directory: %w", err)
-	}
-	if err := os.Chmod(dir, 0o700); err != nil {
-		return "", func() {}, fmt.Errorf("protect route helper credential directory: %w", err)
-	}
-	name, err := randomRouteHelperSecret(16)
-	if err != nil {
-		return "", func() {}, err
-	}
-	path := filepath.Join(dir, "credential-"+name+".fifo")
-	if err := syscall.Mkfifo(path, 0o600); err != nil {
-		return "", func() {}, fmt.Errorf("create route helper credential FIFO: %w", err)
-	}
-	var once sync.Once
-	cleanup := func() { once.Do(func() { _ = os.Remove(path) }) }
-	go func() {
-		ticker := time.NewTicker(25 * time.Millisecond)
-		defer ticker.Stop()
-		timer := time.NewTimer(5 * time.Minute)
-		defer timer.Stop()
-		for {
-			f, openErr := os.OpenFile(path, os.O_WRONLY|syscall.O_NONBLOCK, 0)
-			if openErr == nil {
-				_, _ = io.WriteString(f, credential)
-				_ = f.Close()
-				cleanup()
-				return
-			}
-			if !errors.Is(openErr, syscall.ENXIO) && !errors.Is(openErr, syscall.ENOENT) {
-				cleanup()
-				return
-			}
-			select {
-			case <-ticker.C:
-			case <-timer.C:
-				cleanup()
-				return
-			}
-		}
-	}()
-	return path, cleanup, nil
 }
 
 func revokeRouteHelperCredentials(convID, launchGeneration string) {
@@ -157,14 +99,22 @@ func routeHelperCredentialCurrent(capability routeHelperCredential) bool {
 	if capability.convID == "" || capability.agentID == "" || capability.launchGeneration == "" {
 		return false
 	}
-	// A resume capability is minted before the replacement session row exists.
-	// Do not compare it to the predecessor row here: doing so would consume the
-	// capability during that launch window. The route broker performs the same
-	// generation check when a route is actually attached, and the old
-	// capability is revoked by the SessionEnd/reaper path.
 	rows, err := db.FindSessionsByConvID(capability.convID)
 	if err != nil {
 		return false
+	}
+	// The newest non-exited session row is the live launch authority. A
+	// capability from any other generation is stale on read-only discovery too;
+	// this closes the predecessor window before a route mutation occurs.
+	for _, row := range rows {
+		if strings.EqualFold(strings.TrimSpace(row.Status), "exited") {
+			continue
+		}
+		identity, identityErr := db.GetSessionExitLaunchIdentity(row.ID)
+		if identityErr == nil && strings.TrimSpace(identity.Generation) != "" {
+			return identity.Generation == capability.launchGeneration
+		}
+		break
 	}
 	for _, row := range rows {
 		identity, identityErr := db.GetSessionExitLaunchIdentity(row.ID)
