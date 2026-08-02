@@ -105,6 +105,7 @@ func TestBuildNotifyHumanPayload_ZipAndSeparateOverrides(t *testing.T) {
 		&notifyHumanParams{Attach: files}, notifyAttachZip, &stderr)
 	require.Equal(t, rcOK, rc, stderr.String())
 	assert.Equal(t, "export.zip", name)
+	assert.Equal(t, "application/zip", contentType)
 
 	stderr.Reset()
 	single := writeAttachFiles(t, 1)
