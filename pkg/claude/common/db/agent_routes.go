@@ -246,6 +246,57 @@ func markAgentRoutesPublisherLostTx(tx *sql.Tx, publisherConvID, launchGeneratio
 	return nil
 }
 
+// markAgentRouteConsumerLeasesLostTx closes every open lease owned by the
+// exiting consumer conversation and launch generation. Keeping the stable
+// actor, conversation, and launch generation in the predicate prevents an
+// exit callback from an older generation from revoking a relaunch's lease.
+// It runs in the same authoritative transaction as the session-exit CAS.
+func markAgentRouteConsumerLeasesLostTx(tx *sql.Tx, consumerAgentID, consumerConvID, launchGeneration, reason string) error {
+	if strings.TrimSpace(consumerAgentID) == "" || strings.TrimSpace(consumerConvID) == "" {
+		return nil
+	}
+	rows, err := tx.Query(`SELECT l.id, l.route_id, r.group_id, l.consumer_agent_id, l.consumer_conv_id
+		FROM agent_route_leases l JOIN agent_routes r ON r.id = l.route_id
+		WHERE l.consumer_agent_id = ? AND l.consumer_conv_id = ? AND l.state = ?
+			AND (? = '' OR l.consumer_launch_generation = ?)`,
+		consumerAgentID, consumerConvID, RouteLeaseOpen, launchGeneration, launchGeneration)
+	if err != nil {
+		return err
+	}
+	type leaseOwner struct {
+		id, routeID, consumerAgent, consumerConv string
+		groupID                                  int64
+	}
+	var leases []leaseOwner
+	for rows.Next() {
+		var lease leaseOwner
+		if err := rows.Scan(&lease.id, &lease.routeID, &lease.groupID, &lease.consumerAgent, &lease.consumerConv); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		leases = append(leases, lease)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	now := time.Now()
+	for _, lease := range leases {
+		if _, err := tx.Exec(`UPDATE agent_route_leases
+			SET state = ?, closed_at = ?
+			WHERE id = ? AND state = ?`, RouteLeaseClosed, dbTime(now), lease.id, RouteLeaseOpen); err != nil {
+			return err
+		}
+		if err := insertRouteAuditTx(tx, now, "consumer-lost", "ok", lease.groupID, lease.routeID, lease.id, lease.consumerAgent, lease.consumerConv, reason); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func OpenAgentRouteLease(routeID, consumerAgentID, consumerConvID, launchGeneration string, groupGeneration int64) (*AgentRouteLease, error) {
 	if strings.TrimSpace(consumerAgentID) == "" || strings.TrimSpace(launchGeneration) == "" {
 		return nil, errors.New("consumer agent and launch generation are required")

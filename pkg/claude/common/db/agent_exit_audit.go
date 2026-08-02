@@ -712,6 +712,9 @@ func markSessionExitedAndRecordObservationOnce(
 	if err := markAgentRoutesPublisherLostTx(tx, meta.ConvID, o.ExpectedGeneration, "publisher session exited"); err != nil {
 		return false, AgentExitRecordResult{}, err
 	}
+	if err := markAgentRouteConsumerLeasesLostTx(tx, meta.AgentID, meta.ConvID, o.ExpectedGeneration, "consumer session exited"); err != nil {
+		return false, AgentExitRecordResult{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return false, AgentExitRecordResult{}, err
 	}
@@ -780,6 +783,9 @@ func recordSessionEndExitObservationOnce(o AgentExitObservation) (bool, AgentExi
 		return false, AgentExitRecordResult{}, err
 	}
 	if err := markAgentRoutesPublisherLostTx(tx, meta.ConvID, o.ExpectedGeneration, "publisher session exited"); err != nil {
+		return false, AgentExitRecordResult{}, err
+	}
+	if err := markAgentRouteConsumerLeasesLostTx(tx, meta.AgentID, meta.ConvID, o.ExpectedGeneration, "consumer session exited"); err != nil {
 		return false, AgentExitRecordResult{}, err
 	}
 	if err := tx.Commit(); err != nil {

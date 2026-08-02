@@ -279,3 +279,117 @@ func TestBrokerEnforcesRouteAndAgentConnectionBounds(t *testing.T) {
 	writeFrame(t, pair.pubPeer, routebroker.Frame{Kind: routebroker.KindClose, Stream: opened.Stream})
 	require.Equal(t, routebroker.KindClose, readFrame(t, pair.conPeer).Kind)
 }
+
+func TestBrokerLateFramesAfterCloseStayStreamLocal(t *testing.T) {
+	auth := newTestAuthorizer()
+	b := newBroker(t, auth, routebroker.Config{})
+	publisher, consumerA := auths()
+	consumerB := consumerA
+	consumerB.LeaseID = "lease-b"
+	consumerB.AgentID = "consumer-b"
+
+	pubBroker, pubPeer := net.Pipe()
+	consumerABroker, consumerAPeer := net.Pipe()
+	consumerBBroker, consumerBPeer := net.Pipe()
+	pubDone := make(chan error, 1)
+	consumerADone := make(chan error, 1)
+	consumerBDone := make(chan error, 1)
+	go func() { pubDone <- b.AttachPublisher(context.Background(), publisher, pubBroker) }()
+	require.Eventually(t, func() bool { return b.Metrics().PublisherChannels == 1 }, time.Second, time.Millisecond)
+	go func() { consumerADone <- b.AttachConsumer(context.Background(), consumerA, consumerABroker) }()
+	go func() { consumerBDone <- b.AttachConsumer(context.Background(), consumerB, consumerBBroker) }()
+	require.Eventually(t, func() bool { return b.Metrics().ConsumerChannels == 2 }, time.Second, time.Millisecond)
+	t.Cleanup(func() {
+		_ = pubPeer.Close()
+		_ = consumerAPeer.Close()
+		_ = consumerBPeer.Close()
+	})
+
+	writeFrame(t, consumerAPeer, routebroker.Frame{Kind: routebroker.KindOpen, Stream: 1})
+	openedA := readFrame(t, pubPeer)
+	writeFrame(t, consumerBPeer, routebroker.Frame{Kind: routebroker.KindOpen, Stream: 1})
+	openedB := readFrame(t, pubPeer)
+	require.NotEqual(t, openedA.Stream, openedB.Stream)
+
+	// Closing A removes its live stream immediately, but its bounded tombstone
+	// absorbs a DATA frame already in flight from the opposite direction.
+	writeFrame(t, consumerAPeer, routebroker.Frame{Kind: routebroker.KindClose, Stream: 1})
+	require.Equal(t, routebroker.KindClose, readFrame(t, pubPeer).Kind)
+	writeFrame(t, pubPeer, routebroker.Frame{Kind: routebroker.KindData, Stream: openedA.Stream, Payload: []byte("late")})
+	writeFrame(t, pubPeer, routebroker.Frame{Kind: routebroker.KindData, Stream: openedB.Stream, Payload: []byte("unrelated")})
+	forwarded := readFrame(t, consumerBPeer)
+	require.Equal(t, routebroker.KindData, forwarded.Kind)
+	require.Equal(t, uint64(1), forwarded.Stream)
+	require.Equal(t, []byte("unrelated"), forwarded.Payload)
+
+	// The publisher reader is still healthy after the late frame, and the
+	// unrelated consumer remains attached.
+	writeFrame(t, pubPeer, routebroker.Frame{Kind: routebroker.KindPing})
+	require.Equal(t, routebroker.KindPong, readFrame(t, pubPeer).Kind)
+	select {
+	case err := <-pubDone:
+		t.Fatalf("publisher exited after late frame: %v", err)
+	default:
+	}
+	select {
+	case err := <-consumerBDone:
+		t.Fatalf("unrelated consumer exited after late frame: %v", err)
+	default:
+	}
+}
+
+func TestBrokerAgentConnectionBoundIsBrokerWide(t *testing.T) {
+	auth := newTestAuthorizer()
+	b := newBroker(t, auth, routebroker.Config{MaxConnectionsPerRoute: 4, MaxConnectionsPerAgent: 1})
+	publisherA, consumerA := auths()
+	publisherB := publisherA
+	publisherB.RouteID = "route-b"
+	publisherB.ConvID = "publisher-b-conv"
+	consumerB := consumerA
+	consumerB.RouteID = "route-b"
+	consumerB.LeaseID = "lease-b"
+
+	pubABroker, pubAPeer := net.Pipe()
+	pubBBroker, pubBPeer := net.Pipe()
+	consumerABroker, consumerAPeer := net.Pipe()
+	consumerBBroker, consumerBPeer := net.Pipe()
+	otherBroker, otherPeer := net.Pipe()
+	pubADone := make(chan error, 1)
+	pubBDone := make(chan error, 1)
+	consumerADone := make(chan error, 1)
+	consumerBDone := make(chan error, 1)
+	otherDone := make(chan error, 1)
+	go func() { pubADone <- b.AttachPublisher(context.Background(), publisherA, pubABroker) }()
+	go func() { pubBDone <- b.AttachPublisher(context.Background(), publisherB, pubBBroker) }()
+	require.Eventually(t, func() bool { return b.Metrics().PublisherChannels == 2 }, time.Second, time.Millisecond)
+	go func() { consumerADone <- b.AttachConsumer(context.Background(), consumerA, consumerABroker) }()
+	go func() { consumerBDone <- b.AttachConsumer(context.Background(), consumerB, consumerBBroker) }()
+	other := consumerB
+	other.LeaseID = "lease-other"
+	other.AgentID = "other-consumer"
+	go func() { otherDone <- b.AttachConsumer(context.Background(), other, otherBroker) }()
+	require.Eventually(t, func() bool { return b.Metrics().ConsumerChannels == 3 }, time.Second, time.Millisecond)
+	t.Cleanup(func() {
+		_ = pubAPeer.Close()
+		_ = pubBPeer.Close()
+		_ = consumerAPeer.Close()
+		_ = consumerBPeer.Close()
+		_ = otherPeer.Close()
+	})
+
+	writeFrame(t, consumerAPeer, routebroker.Frame{Kind: routebroker.KindOpen, Stream: 1})
+	openedA := readFrame(t, pubAPeer)
+	require.Equal(t, routebroker.KindOpen, openedA.Kind)
+
+	// The same consumer agent is already at the broker-wide cap on route A.
+	writeFrame(t, consumerBPeer, routebroker.Frame{Kind: routebroker.KindOpen, Stream: 1})
+	rejected := readFrame(t, consumerBPeer)
+	require.Equal(t, routebroker.KindOpenError, rejected.Kind)
+	require.Contains(t, string(rejected.Payload), "agent connection limit")
+
+	// A different agent can still open on route B, proving the counter is
+	// global per agent rather than a shared global capacity.
+	writeFrame(t, otherPeer, routebroker.Frame{Kind: routebroker.KindOpen, Stream: 1})
+	openedOther := readFrame(t, pubBPeer)
+	require.Equal(t, routebroker.KindOpen, openedOther.Kind)
+}

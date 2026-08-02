@@ -283,6 +283,122 @@ func TestRoutesAuthority_OrdinaryPublisherExitWithdrawsLeases(t *testing.T) {
 	require.Equal(t, "route_open_refused", body["code"])
 }
 
+// An ordinary consumer process exit must close only leases owned by that
+// consumer generation at the reaper's authoritative session-exit seam. The
+// attached broker channel is closed by the same database authority change;
+// unrelated publisher and consumer channels remain usable.
+func TestRoutesBroker_OrdinaryConsumerExitClosesItsLease(t *testing.T) {
+	f := newFlow(t)
+	const publisher = "route-consumer-exit-publisher"
+	const consumer = "route-consumer-exit"
+	const survivor = "route-consumer-survivor"
+	f.HaveConvWithTitle(publisher, "publisher")
+	f.HaveConvWithTitle(consumer, "consumer")
+	f.HaveConvWithTitle(survivor, "survivor")
+	f.HaveAliveSession(publisher, "route-consumer-exit-pub-session", "route-consumer-exit-pub-tmux", f.TestCwd("route-consumer-exit-pub"))
+	f.HaveAliveSession(consumer, "route-consumer-exit-session", "route-consumer-exit-tmux", f.TestCwd("route-consumer-exit"))
+	f.HaveAliveSession(survivor, "route-consumer-survivor-session", "route-consumer-survivor-tmux", f.TestCwd("route-consumer-survivor"))
+	f.HaveGroup("consumer-exit-group")
+	f.HaveMember("consumer-exit-group", publisher)
+	f.HaveMember("consumer-exit-group", consumer)
+	f.HaveMember("consumer-exit-group", survivor)
+	g, err := db.GetAgentGroupByName("consumer-exit-group")
+	require.NoError(t, err)
+	require.NotNil(t, g)
+	require.NoError(t, db.ReplaceAgentGroupPermissions(g.ID, []string{agentd.PermRoutesPublish, agentd.PermRoutesConsume}, "test"))
+
+	rec, route := serveRouteAgent(t, f, http.MethodPost, "/v1/routes/publish", publisher, map[string]any{
+		"group": "consumer-exit-group", "name": "api", "target": "tcp://127.0.0.1:43132",
+	})
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	routeID := route["id"].(string)
+	rec, exitingLease := serveRouteAgent(t, f, http.MethodPost, "/v1/routes/open", consumer, map[string]any{
+		"route_id": routeID, "group": "consumer-exit-group",
+	})
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	rec, survivorLease := serveRouteAgent(t, f, http.MethodPost, "/v1/routes/open", survivor, map[string]any{
+		"route_id": routeID, "group": "consumer-exit-group",
+	})
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+
+	publisherAuth := routebroker.PublisherAuth{
+		RouteID: route["id"].(string), AgentID: route["publisher_agent_id"].(string), ConvID: route["publisher_conv_id"].(string),
+		LaunchGeneration: route["publisher_launch_generation"].(string), GroupGeneration: int64(route["group_generation"].(float64)),
+	}
+	consumerAuth := func(lease map[string]any) routebroker.ConsumerAuth {
+		return routebroker.ConsumerAuth{
+			LeaseID: lease["id"].(string), RouteID: routeID, AgentID: lease["consumer_agent_id"].(string), ConvID: lease["consumer_conv_id"].(string),
+			LaunchGeneration: lease["consumer_launch_generation"].(string), GroupGeneration: int64(lease["group_generation"].(float64)),
+		}
+	}
+	b := agentd.NewGroupRouteBrokerForTest()
+	t.Cleanup(func() { require.NoError(t, b.Close()) })
+	publisherBroker, publisherPeer := net.Pipe()
+	exitingBroker, exitingPeer := net.Pipe()
+	survivorBroker, survivorPeer := net.Pipe()
+	publisherDone := make(chan error, 1)
+	exitingDone := make(chan error, 1)
+	survivorDone := make(chan error, 1)
+	go func() { publisherDone <- b.AttachPublisher(context.Background(), publisherAuth, publisherBroker) }()
+	require.Eventually(t, func() bool { return b.Metrics().PublisherChannels == 1 }, time.Second, time.Millisecond)
+	go func() {
+		exitingDone <- b.AttachConsumer(context.Background(), consumerAuth(exitingLease), exitingBroker)
+	}()
+	go func() {
+		survivorDone <- b.AttachConsumer(context.Background(), consumerAuth(survivorLease), survivorBroker)
+	}()
+	require.Eventually(t, func() bool { return b.Metrics().ConsumerChannels == 2 }, time.Second, time.Millisecond)
+	t.Cleanup(func() {
+		_ = publisherPeer.Close()
+		_ = exitingPeer.Close()
+		_ = survivorPeer.Close()
+	})
+
+	writeRouteBrokerFrame(t, exitingPeer, routebroker.Frame{Kind: routebroker.KindOpen, Stream: 1})
+	_ = readRouteBrokerFrame(t, publisherPeer)
+	writeRouteBrokerFrame(t, survivorPeer, routebroker.Frame{Kind: routebroker.KindOpen, Stream: 1})
+	_ = readRouteBrokerFrame(t, publisherPeer)
+
+	f.MarkOffline("route-consumer-exit-tmux")
+	reaper := agentd.NewSessionReaperForTest(0, func(string, string) {})
+	require.Equal(t, 1, reaper.Tick())
+	closed, err := db.GetAgentRouteLease(exitingLease["id"].(string))
+	require.NoError(t, err)
+	require.Equal(t, db.RouteLeaseClosed, closed.State)
+	open, err := db.GetAgentRouteLease(survivorLease["id"].(string))
+	require.NoError(t, err)
+	require.Equal(t, db.RouteLeaseOpen, open.State)
+
+	_ = exitingPeer.SetReadDeadline(time.Now().Add(time.Second))
+	_, readErr := exitingPeer.Read(make([]byte, 1))
+	require.Error(t, readErr)
+	// The consumer detach informs the publisher about its stream before the
+	// publisher's control channel remains available for unrelated work.
+	require.Equal(t, routebroker.KindClose, readRouteBrokerFrame(t, publisherPeer).Kind)
+	writeRouteBrokerFrame(t, publisherPeer, routebroker.Frame{Kind: routebroker.KindPing})
+	require.Equal(t, routebroker.KindPong, readRouteBrokerFrame(t, publisherPeer).Kind)
+	writeRouteBrokerFrame(t, survivorPeer, routebroker.Frame{Kind: routebroker.KindPing})
+	require.Equal(t, routebroker.KindPong, readRouteBrokerFrame(t, survivorPeer).Kind)
+	require.Eventually(t, func() bool {
+		select {
+		case <-exitingDone:
+			return true
+		default:
+			return false
+		}
+	}, time.Second, time.Millisecond, "exiting consumer channel did not close")
+	select {
+	case err := <-publisherDone:
+		t.Fatalf("publisher closed after unrelated consumer exit: %v", err)
+	default:
+	}
+	select {
+	case err := <-survivorDone:
+		t.Fatalf("surviving consumer closed after unrelated consumer exit: %v", err)
+	default:
+	}
+}
+
 func TestRoutesAuthority_GenerationsPublisherLossAndRename(t *testing.T) {
 	f := newFlow(t)
 	const publisher = "route-generation-pub"

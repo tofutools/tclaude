@@ -36,8 +36,10 @@ func GroupRouteBroker() *routebroker.Broker { return groupRouteBroker }
 // from sharing global channel state with the process-wide broker.
 func NewGroupRouteBrokerForTest() *routebroker.Broker {
 	broker, err := routebroker.New(routebroker.Config{
-		Authorizer:             databaseRouteAuthority{},
-		AuthorityCheckInterval: 5 * time.Millisecond,
+		Authorizer: databaseRouteAuthority{},
+		// Keep the test authority poll quick while leaving enough room for
+		// SQLite-backed checks under the race detector before failing closed.
+		AuthorityCheckInterval: 50 * time.Millisecond,
 	})
 	if err != nil {
 		panic(err)
@@ -108,6 +110,10 @@ func (databaseRouteAuthority) AuthorizeConsumer(ctx context.Context, auth routeb
 	member, err := db.FindAgentMemberInGroup(group.ID, auth.AgentID)
 	if err != nil || member == nil {
 		return errors.New("consumer is no longer a group member")
+	}
+	agent, err := db.GetAgent(auth.AgentID)
+	if err != nil || agent == nil || !agent.Active() || agent.CurrentConvID != auth.ConvID {
+		return errors.New("consumer is no longer live")
 	}
 	if current, known := knownRouteLaunchGeneration(auth.ConvID); known && current != auth.LaunchGeneration {
 		return errors.New("consumer launch generation is stale")

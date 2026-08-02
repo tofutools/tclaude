@@ -71,6 +71,7 @@ const (
 	defaultQueuedFramesPerStream  = 4
 	defaultWriteTimeout           = 5 * time.Second
 	defaultAuthorityCheckInterval = 250 * time.Millisecond
+	tombstoneTTL                  = 30 * time.Second
 )
 
 var (
@@ -129,7 +130,10 @@ type Broker struct {
 	mu     sync.Mutex
 	closed bool
 	routes map[string]*routeState
-	wg     sync.WaitGroup
+	// Broker-wide accounting prevents one agent from multiplying its budget
+	// by opening streams on several routes. All changes happen under b.mu.
+	agentStreams map[string]int
+	wg           sync.WaitGroup
 
 	routesMetric              atomic.Uint64
 	publishersMetric          atomic.Uint64
@@ -147,7 +151,7 @@ type routeState struct {
 	consumers    map[*session]struct{}
 	streams      map[uint64]*stream
 	nextStreamID uint64
-	agentStreams map[string]int
+	tombstones   map[uint64]streamTombstone
 }
 
 type role uint8
@@ -188,6 +192,12 @@ type stream struct {
 	agentID             string
 	consumerHalfClosed  bool
 	publisherHalfClosed bool
+}
+
+type streamTombstone struct {
+	consumer  *session
+	localID   uint64
+	expiresAt time.Time
 }
 
 type outbound struct {
@@ -251,6 +261,7 @@ func New(cfg Config) (*Broker, error) {
 		logger:                   logger,
 		onEvent:                  cfg.OnEvent,
 		routes:                   make(map[string]*routeState),
+		agentStreams:             make(map[string]int),
 	}, nil
 }
 
@@ -393,7 +404,7 @@ func (b *Broker) newSession(ctx context.Context, r role, publisher PublisherAuth
 func (b *Broker) getRouteLocked(id string) *routeState {
 	r := b.routes[id]
 	if r == nil {
-		r = &routeState{id: id, consumers: make(map[*session]struct{}), streams: make(map[uint64]*stream), agentStreams: make(map[string]int), nextStreamID: 1}
+		r = &routeState{id: id, consumers: make(map[*session]struct{}), streams: make(map[uint64]*stream), tombstones: make(map[uint64]streamTombstone), nextStreamID: 1}
 		b.routes[id] = r
 		b.routesMetric.Add(1)
 	}
@@ -521,8 +532,17 @@ func (b *Broker) openStream(consumer *session, localID uint64) error {
 		b.mu.Unlock()
 		return ErrClosed
 	}
+	b.pruneTombstonesLocked(r)
 	for _, existing := range r.streams {
 		if existing.consumer == consumer && existing.localID == localID {
+			b.mu.Unlock()
+			_ = consumer.enqueue(localID, Frame{Kind: KindOpenError, Stream: localID, Payload: []byte("duplicate stream id")}, true)
+			b.rejectedStreamsMetric.Add(1)
+			return nil
+		}
+	}
+	for _, tombstone := range r.tombstones {
+		if tombstone.consumer == consumer && tombstone.localID == localID {
 			b.mu.Unlock()
 			_ = consumer.enqueue(localID, Frame{Kind: KindOpenError, Stream: localID, Payload: []byte("duplicate stream id")}, true)
 			b.rejectedStreamsMetric.Add(1)
@@ -546,7 +566,7 @@ func (b *Broker) openStream(consumer *session, localID uint64) error {
 		return nil
 	}
 	agentID := consumer.consumerAuth.AgentID
-	if r.agentStreams[agentID] >= b.maxConnectionsPerAgent {
+	if b.agentStreams[agentID] >= b.maxConnectionsPerAgent {
 		b.mu.Unlock()
 		if err := consumer.enqueue(localID, Frame{Kind: KindOpenError, Stream: localID, Payload: []byte("agent connection limit")}, true); err != nil {
 			return err
@@ -558,7 +578,7 @@ func (b *Broker) openStream(consumer *session, localID uint64) error {
 	r.nextStreamID++
 	stream := &stream{globalID: globalID, localID: localID, consumer: consumer, agentID: agentID}
 	r.streams[globalID] = stream
-	r.agentStreams[agentID]++
+	b.agentStreams[agentID]++
 	publisher := r.publisher
 	streamCount := len(r.streams)
 	b.streamsMetric.Add(1)
@@ -578,9 +598,12 @@ func (b *Broker) openStream(consumer *session, localID uint64) error {
 
 func (b *Broker) forwardFromConsumer(consumer *session, frame Frame) error {
 	b.mu.Lock()
-	stream := b.findConsumerStreamLocked(consumer, frame.Stream)
+	stream, tombstone := b.findConsumerStreamLocked(consumer, frame.Stream)
 	if stream == nil {
 		b.mu.Unlock()
+		if tombstone {
+			return nil
+		}
 		return fmt.Errorf("%w: unknown consumer stream", ErrProtocol)
 	}
 	publisher := stream.consumer.route.publisher
@@ -613,9 +636,13 @@ func (b *Broker) forwardFromPublisher(publisher *session, frame Frame) error {
 		b.mu.Unlock()
 		return ErrClosed
 	}
+	b.pruneTombstonesLocked(r)
 	stream := r.streams[frame.Stream]
 	if stream == nil {
 		b.mu.Unlock()
+		if _, ok := r.tombstones[frame.Stream]; ok {
+			return nil
+		}
 		return fmt.Errorf("%w: unknown publisher stream", ErrProtocol)
 	}
 	if frame.Kind == KindHalfClose {
@@ -639,13 +666,64 @@ func (b *Broker) forwardFromPublisher(publisher *session, frame Frame) error {
 	return nil
 }
 
-func (b *Broker) findConsumerStreamLocked(consumer *session, localID uint64) *stream {
-	for _, stream := range consumer.route.streams {
+func (b *Broker) findConsumerStreamLocked(consumer *session, localID uint64) (*stream, bool) {
+	r := consumer.route
+	if r == nil {
+		return nil, false
+	}
+	b.pruneTombstonesLocked(r)
+	for _, stream := range r.streams {
 		if stream.consumer == consumer && stream.localID == localID {
-			return stream
+			return stream, false
 		}
 	}
-	return nil
+	for _, tombstone := range r.tombstones {
+		if tombstone.consumer == consumer && tombstone.localID == localID {
+			return nil, true
+		}
+	}
+	return nil, false
+}
+
+func (b *Broker) pruneTombstonesLocked(r *routeState) {
+	now := time.Now()
+	for id, tombstone := range r.tombstones {
+		if !tombstone.expiresAt.After(now) {
+			delete(r.tombstones, id)
+		}
+	}
+}
+
+func (b *Broker) addTombstoneLocked(r *routeState, stream *stream) {
+	b.pruneTombstonesLocked(r)
+	maxTombstones := b.maxConnectionsPerRoute * 2
+	if maxTombstones < 16 {
+		maxTombstones = 16
+	}
+	for len(r.tombstones) >= maxTombstones {
+		var oldestID uint64
+		var oldest time.Time
+		for id, tombstone := range r.tombstones {
+			if oldestID == 0 || tombstone.expiresAt.Before(oldest) {
+				oldestID = id
+				oldest = tombstone.expiresAt
+			}
+		}
+		delete(r.tombstones, oldestID)
+	}
+	r.tombstones[stream.globalID] = streamTombstone{
+		consumer:  stream.consumer,
+		localID:   stream.localID,
+		expiresAt: time.Now().Add(tombstoneTTL),
+	}
+}
+
+func (b *Broker) decrementAgentStreamLocked(agentID string) {
+	if b.agentStreams[agentID] > 1 {
+		b.agentStreams[agentID]--
+	} else {
+		delete(b.agentStreams, agentID)
+	}
 }
 
 // removeStream removes routing state immediately. A keep*Writer flag is used
@@ -665,11 +743,8 @@ func (b *Broker) removeStream(stream *stream, keepPublisherWriter, keepConsumerW
 		return
 	}
 	delete(r.streams, stream.globalID)
-	if r.agentStreams[stream.agentID] > 1 {
-		r.agentStreams[stream.agentID]--
-	} else {
-		delete(r.agentStreams, stream.agentID)
-	}
+	b.decrementAgentStreamLocked(stream.agentID)
+	b.addTombstoneLocked(r, stream)
 	b.streamsMetric.Add(^uint64(0))
 	publisher := r.publisher
 	b.mu.Unlock()
@@ -705,15 +780,11 @@ func (b *Broker) detach(s *session) {
 		}
 		for id, stream := range r.streams {
 			delete(r.streams, id)
-			if r.agentStreams[stream.agentID] > 1 {
-				r.agentStreams[stream.agentID]--
-			} else {
-				delete(r.agentStreams, stream.agentID)
-			}
+			b.decrementAgentStreamLocked(stream.agentID)
+			b.addTombstoneLocked(r, stream)
 			b.streamsMetric.Add(^uint64(0))
 			stream.consumer.removeWriter(stream.localID)
 		}
-		r.agentStreams = make(map[string]int)
 	} else {
 		delete(r.consumers, s)
 		for id, stream := range r.streams {
@@ -721,11 +792,8 @@ func (b *Broker) detach(s *session) {
 				continue
 			}
 			delete(r.streams, id)
-			if r.agentStreams[stream.agentID] > 1 {
-				r.agentStreams[stream.agentID]--
-			} else {
-				delete(r.agentStreams, stream.agentID)
-			}
+			b.decrementAgentStreamLocked(stream.agentID)
+			b.addTombstoneLocked(r, stream)
 			b.streamsMetric.Add(^uint64(0))
 			publisher := r.publisher
 			notifyPublisher = append(notifyPublisher, pendingClose{stream: stream, publisher: publisher})
