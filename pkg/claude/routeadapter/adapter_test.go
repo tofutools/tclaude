@@ -2,6 +2,7 @@ package routeadapter
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -93,6 +94,89 @@ func TestAdapterForwardsOpaqueTCPThroughBroker(t *testing.T) {
 	if got, want := string(response), "reply:opaque"; got != want {
 		t.Fatalf("response = %q, want %q", got, want)
 	}
+}
+
+// slowAuthorizer delays publisher authorization so an immediate consumer open
+// deterministically reproduces the window in which the broker had not yet
+// registered the route.
+type slowAuthorizer struct{ delay time.Duration }
+
+func (s slowAuthorizer) AuthorizePublisher(context.Context, routebroker.PublisherAuth) error {
+	time.Sleep(s.delay)
+	return nil
+}
+func (slowAuthorizer) AuthorizeConsumer(context.Context, routebroker.ConsumerAuth) error { return nil }
+
+type refusePublisher struct{ allowAll }
+
+func (refusePublisher) AuthorizePublisher(context.Context, routebroker.PublisherAuth) error {
+	return errors.New("publisher refused")
+}
+
+func TestAdapterPublishWaitsForBrokerRouteRegistration(t *testing.T) {
+	targetPort, consumerPort := freePort(t), freePort(t)
+	target, err := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(targetPort)))
+	require.NoError(t, err)
+	defer target.Close()
+	go func() {
+		conn, acceptErr := target.Accept()
+		if acceptErr != nil {
+			return
+		}
+		defer conn.Close()
+		payload := make([]byte, 6)
+		if _, readErr := io.ReadFull(conn, payload); readErr == nil {
+			_, _ = conn.Write([]byte("reply:" + string(payload)))
+		}
+	}()
+
+	broker, err := routebroker.New(routebroker.Config{Authorizer: slowAuthorizer{delay: 100 * time.Millisecond}})
+	require.NoError(t, err)
+	defer broker.Close()
+	adapter, err := New(broker, []int{targetPort, consumerPort})
+	require.NoError(t, err)
+	defer adapter.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err = adapter.Publish(ctx, Publisher{
+		RouteID: "route-ready", AgentID: "publisher", ConvID: "publisher-conv",
+		LaunchGeneration: "publisher-launch", GroupGeneration: 1,
+		Target: "tcp://127.0.0.1:" + strconv.Itoa(targetPort),
+	})
+	require.NoError(t, err)
+	endpoint, err := adapter.Open(ctx, Consumer{
+		LeaseID: "lease-ready", RouteID: "route-ready", AgentID: "consumer",
+		ConvID: "consumer-conv", LaunchGeneration: "consumer-launch", GroupGeneration: 1,
+	})
+	require.NoError(t, err)
+	// No settling delay: a consumer that connects the instant Publish returns
+	// must still reach the publisher target.
+	conn, err := net.DialTimeout("tcp4", endpoint, time.Second)
+	require.NoError(t, err)
+	defer conn.Close()
+	_, err = conn.Write([]byte("opaque"))
+	require.NoError(t, err)
+	response := make([]byte, 12)
+	_, err = io.ReadFull(conn, response)
+	require.NoError(t, err)
+	require.Equal(t, "reply:opaque", string(response))
+}
+
+func TestAdapterPublishReportsRefusedAuthority(t *testing.T) {
+	port := freePort(t)
+	broker, err := routebroker.New(routebroker.Config{Authorizer: refusePublisher{}})
+	require.NoError(t, err)
+	defer broker.Close()
+	adapter, err := New(broker, []int{port})
+	require.NoError(t, err)
+	defer adapter.Close()
+	_, err = adapter.Publish(context.Background(), Publisher{
+		RouteID: "route-refused", AgentID: "publisher", ConvID: "publisher-conv",
+		LaunchGeneration: "publisher-launch", GroupGeneration: 1,
+		Target: "tcp://127.0.0.1:" + strconv.Itoa(port),
+	})
+	require.ErrorIs(t, err, routebroker.ErrUnauthorized)
+	require.Empty(t, adapter.RouteIDs())
 }
 
 func TestAdapterRejectsUnreservedPublisherTarget(t *testing.T) {

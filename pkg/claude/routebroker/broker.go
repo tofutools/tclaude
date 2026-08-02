@@ -270,8 +270,24 @@ func New(cfg Config) (*Broker, error) {
 // peer exits, authority is revoked, or the broker is closed. The call is
 // intended to run in the adapter's goroutine and returns after cleanup.
 func (b *Broker) AttachPublisher(ctx context.Context, auth PublisherAuth, conn net.Conn) error {
+	return b.AttachPublisherReady(ctx, auth, conn, nil)
+}
+
+// AttachPublisherReady is AttachPublisher with a registration barrier. ready is
+// called exactly once and before the channel is served: with nil once the
+// session owns the route, or with the failure that stopped it from attaching.
+// A caller that hands out consumer endpoints must wait for it; otherwise a
+// consumer racing this goroutine is answered "publisher unavailable" and its
+// connection is torn down even though the route was accepted. ready runs on
+// the attaching goroutine ahead of the serve loop, so it must not block.
+func (b *Broker) AttachPublisherReady(ctx context.Context, auth PublisherAuth, conn net.Conn, ready func(error)) error {
+	if ready == nil {
+		ready = func(error) {}
+	}
 	if conn == nil {
-		return fmt.Errorf("route broker: nil publisher channel")
+		err := fmt.Errorf("route broker: nil publisher channel")
+		ready(err)
+		return err
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -280,7 +296,9 @@ func (b *Broker) AttachPublisher(ctx context.Context, auth PublisherAuth, conn n
 		b.rejectedConnectionsMetric.Add(1)
 		b.emit(Event{Kind: "publisher-rejected", Role: rolePublisher.string(), RouteID: auth.RouteID, AgentID: auth.AgentID, Error: "authority refused"})
 		_ = conn.Close()
-		return fmt.Errorf("%w: publisher: %v", ErrUnauthorized, err)
+		err = fmt.Errorf("%w: publisher: %v", ErrUnauthorized, err)
+		ready(err)
+		return err
 	}
 	s := b.newSession(ctx, rolePublisher, auth, ConsumerAuth{}, conn)
 	// Claim the wait-group slot before publishing the session under b.mu so
@@ -291,6 +309,7 @@ func (b *Broker) AttachPublisher(ctx context.Context, auth PublisherAuth, conn n
 		b.mu.Unlock()
 		s.close()
 		b.wg.Done()
+		ready(ErrClosed)
 		return ErrClosed
 	}
 	r := b.getRouteLocked(auth.RouteID)
@@ -299,6 +318,7 @@ func (b *Broker) AttachPublisher(ctx context.Context, auth PublisherAuth, conn n
 		s.close()
 		b.wg.Done()
 		b.rejectedConnectionsMetric.Add(1)
+		ready(ErrPublisherAttached)
 		return ErrPublisherAttached
 	}
 	r.publisher = s
@@ -306,6 +326,7 @@ func (b *Broker) AttachPublisher(ctx context.Context, auth PublisherAuth, conn n
 	b.publishersMetric.Add(1)
 	b.mu.Unlock()
 	b.emit(Event{Kind: "publisher-attached", Role: rolePublisher.string(), RouteID: auth.RouteID, AgentID: auth.AgentID})
+	ready(nil)
 	return b.serveSession(s, ctx)
 }
 
