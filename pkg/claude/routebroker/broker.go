@@ -587,10 +587,6 @@ func (b *Broker) forwardFromConsumer(consumer *session, frame Frame) error {
 	if frame.Kind == KindHalfClose {
 		stream.consumerHalfClosed = true
 	}
-	if frame.Kind == KindClose {
-		// Keep the stream record until the close frame has been queued so the
-		// publisher sees the same global ID as all preceding frames.
-	}
 	b.mu.Unlock()
 	if publisher == nil {
 		return ErrClosed
