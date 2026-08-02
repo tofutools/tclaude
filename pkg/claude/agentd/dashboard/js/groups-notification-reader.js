@@ -4,6 +4,7 @@ import htm from 'htm';
 import { relTime, shortAgentId } from './helpers.js';
 import { humanNotificationMatchesSender } from './human-notification-attention.js';
 import { openHumanNotifications } from './mail-bridge.js';
+import { attachmentHref, messageAttachments } from './human-attachments.js';
 import { openHumanReplyModal } from './message-access-dialog-controller.js';
 import { hasShownOverlay } from './overlay-stack.js';
 
@@ -102,22 +103,24 @@ export async function persistHumanMessageRead(state, id, read, onError) {
 }
 
 function Attachment({ message }) {
-  const attachment = message.attachment;
-  if (!attachment) return null;
-  const href = `/api/human-messages/${encodeURIComponent(message.id)}/attachment`;
-  const filename = attachment.filename || 'attachment';
-  return html`<div class="human-notification-drawer-attachment">
-    <a class="human-notification-drawer-file-link" href=${href}
-      download=${attachment.filename || ''} title=${`Download ${filename}`}>
-      <span class="human-notification-drawer-file-icon" aria-hidden="true">▣</span>
-      <span class="human-notification-drawer-file">
-        <strong>${filename}</strong>
-        <span>${attachment.content_type || 'file'} · ${attachmentSize(attachment.size_bytes)}</span>
-      </span>
-    </a>
-    <a class="human-notification-drawer-download" href=${href}
-      download=${attachment.filename || ''} title="Download this agent-published file">Download</a>
-  </div>`;
+  const attachments = messageAttachments(message);
+  if (!attachments.length) return null;
+  return html`<${Fragment}>${attachments.map((attachment, index) => {
+    const href = attachmentHref(message, attachment);
+    const filename = attachment.filename || 'attachment';
+    return html`<div class="human-notification-drawer-attachment" key=${attachment.id || index}>
+      <a class="human-notification-drawer-file-link" href=${href}
+        download=${attachment.filename || ''} title=${`Download ${filename}`}>
+        <span class="human-notification-drawer-file-icon" aria-hidden="true">▣</span>
+        <span class="human-notification-drawer-file">
+          <strong>${filename}</strong>
+          <span>${attachment.content_type || 'file'} · ${attachmentSize(attachment.size_bytes)}</span>
+        </span>
+      </a>
+      <a class="human-notification-drawer-download" href=${href}
+        download=${attachment.filename || ''} title="Download this agent-published file">Download</a>
+    </div>`;
+  })}</${Fragment}>`;
 }
 
 export function GroupsNotificationReader({

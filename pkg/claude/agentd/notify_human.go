@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"mime"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -74,6 +75,12 @@ const maxNotifyHumanRequestBytes = 6*(maxNotifyHumanBodyLen+maxNotifyHumanSubjec
 const maxNotifyHumanAttachmentBytes = 256 << 20
 
 const maxNotifyHumanAttachmentContentTypeBytes = 256
+
+// maxNotifyHumanAttachmentsPerMessage bounds how many separate files one
+// notification may publish. The CLI packages anything larger as a single
+// archive (see notifyHumanAutoZipFileCount), so this is the daemon-side floor
+// under that policy — a message stays a message, not a file browser.
+const maxNotifyHumanAttachmentsPerMessage = 20
 
 var (
 	humanMessageAttachmentsMu             sync.Mutex
@@ -147,10 +154,17 @@ func handleNotifyHuman(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"id": id, "delivered": true})
 }
 
-// handleNotifyHumanAttachment receives one binary artifact plus base64url JSON
-// metadata in X-Tclaude-Notify-Metadata. Keeping metadata out of the binary body
-// lets the daemon stream/cap the file and avoids exposing an agent filesystem
-// path to the dashboard. Multiple agent paths arrive as one CLI-built zip.
+// handleNotifyHumanAttachment receives the published artifact(s) plus base64url
+// JSON metadata in X-Tclaude-Notify-Metadata. Keeping metadata out of the binary
+// body lets the daemon stream/cap the files and avoids exposing an agent
+// filesystem path to the dashboard.
+//
+// Two body shapes are accepted. A raw body is one artifact named by
+// metadata.name — the original single-file (and CLI-built zip) upload.
+// A multipart/form-data body carries several artifacts, one per file part,
+// each keeping its own filename and content type: the CLI sends a small file
+// set that way so the dashboard can show — and preview — each file instead of
+// one opaque export.zip.
 func handleNotifyHumanAttachment(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
@@ -181,10 +195,18 @@ func handleNotifyHumanAttachment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "subject is too long")
 		return
 	}
-	contentType, err := normalizeHumanMessageAttachmentContentType(r.Header.Get("Content-Type"))
+	multipartBoundary, err := notifyHumanMultipartBoundary(r.Header.Get("Content-Type"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 		return
+	}
+	var singleContentType string
+	if multipartBoundary == "" {
+		singleContentType, err = normalizeHumanMessageAttachmentContentType(r.Header.Get("Content-Type"))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+			return
+		}
 	}
 	select {
 	case humanMessageAttachmentUploadSlot <- struct{}{}:
@@ -199,7 +221,7 @@ func handleNotifyHumanAttachment(w http.ResponseWriter, r *http.Request) {
 	}
 	agentID, _ := db.AgentIDForConv(callerConv)
 	humanMessageAttachmentsMu.Lock()
-	err = checkHumanMessageAttachmentQuota(agentID, callerConv, max(r.ContentLength, 0))
+	err = checkHumanMessageAttachmentQuota(agentID, callerConv, max(r.ContentLength, 0), 1)
 	humanMessageAttachmentsMu.Unlock()
 	if err != nil {
 		writeHumanMessageAttachmentQuotaError(w, err)
@@ -210,66 +232,181 @@ func handleNotifyHumanAttachment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "io", "create attachment directory: "+err.Error())
 		return
 	}
-	f, err := os.CreateTemp(incoming, "artifact-*")
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "io", "create attachment file: "+err.Error())
-		return
-	}
-	path := f.Name()
-	var written int64
+	// One deadline and one byte budget for the whole upload, however many parts
+	// it carries: a multipart body must not buy a sender extra time or bytes.
 	var timedOut atomic.Bool
 	stopUploadTimer := humanMessageAttachmentStartUploadTimer(humanMessageAttachmentUploadTimeout, func() {
 		timedOut.Store(true)
 		_ = r.Body.Close()
 	})
+	capped := http.MaxBytesReader(w, r.Body, maxNotifyHumanAttachmentBytes)
+	var attachments []*db.HumanMessageAttachment
+	if multipartBoundary == "" {
+		attachments, err = receiveSingleNotifyHumanAttachment(capped, incoming, meta.Name, singleContentType)
+	} else {
+		attachments, err = receiveMultipartNotifyHumanAttachments(capped, multipartBoundary, incoming)
+	}
+	stopUploadTimer()
+	if err != nil {
+		removeStoredAttachmentFiles(attachments)
+		writeNotifyHumanAttachmentUploadError(w, err, timedOut.Load())
+		return
+	}
+	// Best-effort on platforms/filesystems that permit directory fsync. The
+	// per-file sync above is mandatory; reconciliation repairs a missing or
+	// truncated referenced file after a system crash if directory durability
+	// lagged.
+	_ = syncDirectory(incoming)
+	var written int64
+	for _, a := range attachments {
+		written += a.SizeBytes
+	}
+	humanMessageAttachmentsMu.Lock()
+	defer humanMessageAttachmentsMu.Unlock()
+	if err := checkHumanMessageAttachmentQuota(agentID, callerConv, written, len(attachments)); err != nil {
+		removeStoredAttachmentFiles(attachments)
+		writeHumanMessageAttachmentQuotaError(w, err)
+		return
+	}
+	message, fromTitle, groupName := newHumanMessageRow(callerConv, meta.Subject, meta.Body, "", "", "")
+	id, err := db.InsertHumanMessageWithAttachments(message, attachments)
+	if err != nil {
+		removeStoredAttachmentFiles(attachments)
+		writeError(w, http.StatusInternalServerError, "io", "record attachment: "+err.Error())
+		return
+	}
+	dispatchHumanMessageNotification(callerConv, fromTitle, groupName, meta.Subject, meta.Body)
+	names := make([]string, 0, len(attachments))
+	for _, a := range attachments {
+		names = append(names, a.Filename)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"id": id, "delivered": true, "attachment": names[0], "attachments": names,
+	})
+}
+
+// errTooManyNotifyHumanAttachments is the per-message file-count refusal. The
+// CLI zips large sets itself, so hitting this means a sender bypassed that.
+var errTooManyNotifyHumanAttachments = fmt.Errorf(
+	"a notification carries at most %d files — package a larger set as one archive",
+	maxNotifyHumanAttachmentsPerMessage)
+
+func notifyHumanMultipartBoundary(contentType string) (string, error) {
+	if strings.TrimSpace(contentType) == "" {
+		return "", nil
+	}
+	mediaType, params, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		return "", fmt.Errorf("invalid content type: %w", err)
+	}
+	if !strings.HasPrefix(mediaType, "multipart/") {
+		return "", nil
+	}
+	boundary := params["boundary"]
+	if boundary == "" {
+		return "", fmt.Errorf("multipart upload is missing its boundary")
+	}
+	return boundary, nil
+}
+
+func receiveSingleNotifyHumanAttachment(body io.Reader, incoming, name, contentType string) ([]*db.HumanMessageAttachment, error) {
+	a, err := storeNotifyHumanAttachment(body, incoming, name, contentType)
+	if a == nil {
+		return nil, err
+	}
+	return []*db.HumanMessageAttachment{a}, err
+}
+
+func receiveMultipartNotifyHumanAttachments(body io.Reader, boundary, incoming string) ([]*db.HumanMessageAttachment, error) {
+	reader := multipart.NewReader(body, boundary)
+	var out []*db.HumanMessageAttachment
+	for {
+		part, err := reader.NextPart()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return out, err
+		}
+		if part.FileName() == "" {
+			_ = part.Close()
+			continue // non-file form field: no artifact to store
+		}
+		if len(out) >= maxNotifyHumanAttachmentsPerMessage {
+			_ = part.Close()
+			return out, errTooManyNotifyHumanAttachments
+		}
+		contentType, err := normalizeHumanMessageAttachmentContentType(part.Header.Get("Content-Type"))
+		if err != nil {
+			_ = part.Close()
+			return out, err
+		}
+		a, storeErr := storeNotifyHumanAttachment(part, incoming, sanitizeExportFilename(part.FileName()), contentType)
+		_ = part.Close()
+		if a != nil {
+			out = append(out, a)
+		}
+		if storeErr != nil {
+			return out, storeErr
+		}
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("multipart upload carried no files")
+	}
+	return out, nil
+}
+
+// storeNotifyHumanAttachment streams one artifact into the daemon's private
+// directory and returns its (not yet committed) metadata. A non-nil attachment
+// is returned even alongside an error so the caller can clean up the partial
+// file it names.
+func storeNotifyHumanAttachment(src io.Reader, incoming, name, declaredType string) (*db.HumanMessageAttachment, error) {
+	f, err := os.CreateTemp(incoming, "artifact-*")
+	if err != nil {
+		return nil, fmt.Errorf("create attachment file: %w", err)
+	}
+	a := &db.HumanMessageAttachment{Filename: name, ContentType: declaredType, StoragePath: f.Name()}
+	var head sniffBuffer
 	if err = f.Chmod(0o600); err == nil {
-		written, err = io.Copy(f, http.MaxBytesReader(w, r.Body, maxNotifyHumanAttachmentBytes))
+		a.SizeBytes, err = io.Copy(f, io.TeeReader(src, &head))
 		if err == nil {
 			err = f.Sync()
 		}
 	}
-	stopUploadTimer()
 	closeErr := f.Close()
 	if err == nil {
 		err = closeErr
 	}
 	if err != nil {
-		_ = os.Remove(path)
-		if timedOut.Load() {
-			writeError(w, http.StatusRequestTimeout, "timeout", "attachment upload timed out")
-			return
+		return a, err
+	}
+	a.ContentType = resolveAttachmentContentType(declaredType, head.Bytes())
+	return a, nil
+}
+
+func removeStoredAttachmentFiles(attachments []*db.HumanMessageAttachment) {
+	for _, a := range attachments {
+		if a != nil && a.StoragePath != "" {
+			_ = os.Remove(a.StoragePath)
 		}
-		var tooLarge *http.MaxBytesError
-		if errors.As(err, &tooLarge) {
-			writeError(w, http.StatusRequestEntityTooLarge, "too_large", "attachment exceeds the 256 MiB limit")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "io", "store attachment: "+err.Error())
+	}
+}
+
+func writeNotifyHumanAttachmentUploadError(w http.ResponseWriter, err error, timedOut bool) {
+	if timedOut {
+		writeError(w, http.StatusRequestTimeout, "timeout", "attachment upload timed out")
 		return
 	}
-	// Best-effort on platforms/filesystems that permit directory fsync. File
-	// sync above is mandatory; reconciliation below repairs a missing/truncated
-	// referenced file after a system crash if directory durability lagged.
-	_ = syncDirectory(incoming)
-	humanMessageAttachmentsMu.Lock()
-	defer humanMessageAttachmentsMu.Unlock()
-	if err := checkHumanMessageAttachmentQuota(agentID, callerConv, written); err != nil {
-		_ = os.Remove(path)
-		writeHumanMessageAttachmentQuotaError(w, err)
+	var tooLarge *http.MaxBytesError
+	if errors.As(err, &tooLarge) {
+		writeError(w, http.StatusRequestEntityTooLarge, "too_large", "attachment exceeds the 256 MiB limit")
 		return
 	}
-	message, fromTitle, groupName := newHumanMessageRow(callerConv, meta.Subject, meta.Body, "", "", "")
-	id, err := db.InsertHumanMessageWithAttachment(message, &db.HumanMessageAttachment{
-		Filename: meta.Name, ContentType: contentType,
-		SizeBytes: written, StoragePath: path,
-	})
-	if err != nil {
-		_ = os.Remove(path)
-		writeError(w, http.StatusInternalServerError, "io", "record attachment: "+err.Error())
+	if errors.Is(err, errTooManyNotifyHumanAttachments) {
+		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 		return
 	}
-	dispatchHumanMessageNotification(callerConv, fromTitle, groupName, meta.Subject, meta.Body)
-	writeJSON(w, http.StatusOK, map[string]any{"id": id, "delivered": true, "attachment": meta.Name})
+	writeError(w, http.StatusInternalServerError, "io", "store attachment: "+err.Error())
 }
 
 func humanMessageAttachmentsBaseDir() string {
@@ -299,12 +436,19 @@ func normalizeHumanMessageAttachmentContentType(raw string) (string, error) {
 	return canonical, nil
 }
 
-func checkHumanMessageAttachmentQuota(agentID, convID string, incoming int64) error {
+// checkHumanMessageAttachmentQuota rejects an upload of incoming bytes spread
+// over incomingFiles new rows when it would push the daemon-wide or per-sender
+// storage past its limit.
+func checkHumanMessageAttachmentQuota(agentID, convID string, incoming int64, incomingFiles int) error {
 	totalBytes, senderBytes, totalCount, senderCount, err := db.HumanMessageAttachmentUsage(agentID, convID)
 	if err != nil {
 		return fmt.Errorf("check attachment quota: %w", err)
 	}
-	if totalCount >= maxHumanMessageAttachmentTotalCount || senderCount >= maxHumanMessageAttachmentSenderCount ||
+	if incomingFiles < 1 {
+		incomingFiles = 1
+	}
+	if totalCount+incomingFiles > maxHumanMessageAttachmentTotalCount ||
+		senderCount+incomingFiles > maxHumanMessageAttachmentSenderCount ||
 		quotaWouldExceed(totalBytes, incoming, maxHumanMessageAttachmentTotalBytes) ||
 		quotaWouldExceed(senderBytes, incoming, maxHumanMessageAttachmentSenderBytes) {
 		return errHumanMessageAttachmentQuota
@@ -388,7 +532,7 @@ func runHumanMessageAttachmentCleanup() {
 			referenced[path] = struct{}{} // transient error: fail closed
 			continue
 		}
-		if err := db.DeleteHumanMessageAttachment(attachment.MessageID); err != nil {
+		if err := db.DeleteHumanMessageAttachment(attachment.ID); err != nil {
 			slog.Warn("human message attachment: drop broken metadata failed",
 				"message", attachment.MessageID, "path", path, "error", err)
 			referenced[path] = struct{}{}
@@ -560,22 +704,50 @@ func notifyHumanCallerGroup(callerConv string) string {
 // dashboardHumanMessage is the wire shape of one Messages-tab row in the
 // dashboard snapshot.
 type dashboardHumanMessage struct {
-	ID         int64                            `json:"id"`
-	FromConv   string                           `json:"from_conv"`
-	FromAgent  string                           `json:"from_agent"`
-	FromTitle  string                           `json:"from_title"`
-	Group      string                           `json:"group"`
-	Subject    string                           `json:"subject"`
-	Body       string                           `json:"body"`
-	CreatedAt  string                           `json:"created_at"`
-	Read       bool                             `json:"read"`
-	Attachment *dashboardHumanMessageAttachment `json:"attachment,omitempty"`
+	ID        int64  `json:"id"`
+	FromConv  string `json:"from_conv"`
+	FromAgent string `json:"from_agent"`
+	FromTitle string `json:"from_title"`
+	Group     string `json:"group"`
+	Subject   string `json:"subject"`
+	Body      string `json:"body"`
+	CreatedAt string `json:"created_at"`
+	Read      bool   `json:"read"`
+	// Attachment is the first published file, kept for surfaces that show a
+	// single download card; Attachments carries the full set.
+	Attachment  *dashboardHumanMessageAttachment   `json:"attachment,omitempty"`
+	Attachments []*dashboardHumanMessageAttachment `json:"attachments,omitempty"`
 }
 
+// dashboardHumanMessageAttachment is one downloadable file on a notification.
+// URL is the download route for this exact file; Previewable is the daemon's
+// verdict (raster image, content-sniff confirmed) on whether the dashboard may
+// render it inline instead of only offering a download.
 type dashboardHumanMessageAttachment struct {
+	ID          int64  `json:"id"`
 	Filename    string `json:"filename"`
 	ContentType string `json:"content_type"`
 	SizeBytes   int64  `json:"size_bytes"`
+	URL         string `json:"url"`
+	Previewable bool   `json:"previewable"`
+}
+
+func dashboardHumanMessageAttachmentView(messageID int64, a *db.HumanMessageAttachment) *dashboardHumanMessageAttachment {
+	if a == nil {
+		return nil
+	}
+	return &dashboardHumanMessageAttachment{
+		ID:          a.ID,
+		Filename:    a.Filename,
+		ContentType: a.ContentType,
+		SizeBytes:   a.SizeBytes,
+		URL:         humanMessageAttachmentURL(messageID, a.ID),
+		Previewable: attachmentPreviewable(a.ContentType),
+	}
+}
+
+func humanMessageAttachmentURL(messageID, attachmentID int64) string {
+	return fmt.Sprintf("/api/human-messages/%d/attachments/%d", messageID, attachmentID)
 }
 
 // buildHumanMessagesSnapshot loads the human_messages rows for the
@@ -651,10 +823,11 @@ func buildHumanMessagesSnapshot() ([]dashboardHumanMessage, int) {
 			CreatedAt: m.CreatedAt.Format(time.RFC3339),
 			Read:      m.IsRead(),
 		}
-		if m.Attachment != nil {
-			view.Attachment = &dashboardHumanMessageAttachment{
-				Filename: m.Attachment.Filename, ContentType: m.Attachment.ContentType, SizeBytes: m.Attachment.SizeBytes,
-			}
+		for _, a := range m.Attachments {
+			view.Attachments = append(view.Attachments, dashboardHumanMessageAttachmentView(m.ID, a))
+		}
+		if len(view.Attachments) > 0 {
+			view.Attachment = view.Attachments[0]
 		}
 		out = append(out, view)
 	}
@@ -663,26 +836,31 @@ func buildHumanMessagesSnapshot() ([]dashboardHumanMessage, int) {
 
 // handleDashboardHumanMessageAttachment is the cookie-authenticated download
 // surface. The browser receives only an attachment URL, never its daemon path.
+//
+// Routes:
+//
+//	/api/human-messages/{id}/attachments/{attachmentID}  one specific file
+//	/api/human-messages/{id}/attachment                  the first file (legacy)
+//
+// `?inline=1` serves the bytes for display rather than download, and ONLY for a
+// previewable raster image (see human_attachment_preview.go) — agent-published
+// bytes must never be rendered as an active document in the dashboard origin.
 func handleDashboardHumanMessageAttachment(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
 		return
 	}
-	if r.Method != http.MethodGet {
+	// HEAD is served like GET (net/http drops the body): the dashboard's image
+	// viewer preflights an attachment before deciding to display it.
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		http.Error(w, "GET only", http.StatusMethodNotAllowed)
 		return
 	}
-	rest := strings.TrimPrefix(r.URL.Path, "/api/human-messages/")
-	parts := strings.Split(rest, "/")
-	if len(parts) != 2 || parts[1] != "attachment" {
+	messageID, attachmentID, ok := parseHumanMessageAttachmentPath(r.URL.Path)
+	if !ok {
 		http.NotFound(w, r)
 		return
 	}
-	id, err := strconv.ParseInt(parts[0], 10, 64)
-	if err != nil || id <= 0 {
-		http.NotFound(w, r)
-		return
-	}
-	a, err := db.GetHumanMessageAttachment(id)
+	a, err := resolveHumanMessageAttachment(messageID, attachmentID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -697,13 +875,53 @@ func handleDashboardHumanMessageAttachment(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	defer func() { _ = f.Close() }()
-	disposition := mime.FormatMediaType("attachment", map[string]string{"filename": a.Filename})
+	dispositionType := "attachment"
+	if r.URL.Query().Get("inline") == "1" && attachmentPreviewable(a.ContentType) {
+		dispositionType = "inline"
+	}
+	disposition := mime.FormatMediaType(dispositionType, map[string]string{"filename": a.Filename})
 	w.Header().Set("Content-Disposition", disposition)
 	w.Header().Set("Content-Type", a.ContentType)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Length", strconv.FormatInt(a.SizeBytes, 10))
 	if _, err := io.Copy(w, f); err != nil {
-		slog.Warn("human message attachment: stream failed", "message", id, "error", err)
+		slog.Warn("human message attachment: stream failed", "message", messageID, "error", err)
 	}
+}
+
+// parseHumanMessageAttachmentPath returns the message id and, for the explicit
+// per-file route, the attachment id (0 means "the message's first attachment").
+func parseHumanMessageAttachmentPath(path string) (messageID, attachmentID int64, ok bool) {
+	parts := strings.Split(strings.TrimPrefix(path, "/api/human-messages/"), "/")
+	if len(parts) < 2 || len(parts) > 3 {
+		return 0, 0, false
+	}
+	messageID, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil || messageID <= 0 {
+		return 0, 0, false
+	}
+	switch {
+	case len(parts) == 2 && parts[1] == "attachment":
+		return messageID, 0, true
+	case len(parts) == 3 && parts[1] == "attachments":
+		attachmentID, err = strconv.ParseInt(parts[2], 10, 64)
+		if err != nil || attachmentID <= 0 {
+			return 0, 0, false
+		}
+		return messageID, attachmentID, true
+	}
+	return 0, 0, false
+}
+
+func resolveHumanMessageAttachment(messageID, attachmentID int64) (*db.HumanMessageAttachment, error) {
+	if attachmentID > 0 {
+		return db.GetHumanMessageAttachment(messageID, attachmentID)
+	}
+	attachments, err := db.ListHumanMessageAttachmentsFor(messageID)
+	if err != nil || len(attachments) == 0 {
+		return nil, err
+	}
+	return attachments[0], nil
 }
 
 // handleDashboardHumanMessagesRead serves POST /api/human-messages/read

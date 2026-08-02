@@ -48,14 +48,6 @@ CREATE TABLE sandbox_profile_global_assignment (
 			profile_id   INTEGER NOT NULL REFERENCES sandbox_profiles(id) ON DELETE CASCADE
 		);
 
-CREATE TABLE human_message_attachments (
-			message_id   INTEGER PRIMARY KEY REFERENCES human_messages(id) ON DELETE CASCADE,
-			filename     TEXT NOT NULL,
-			content_type TEXT NOT NULL DEFAULT 'application/octet-stream',
-			size_bytes   INTEGER NOT NULL,
-			storage_path TEXT NOT NULL
-		);
-
 CREATE TABLE spawn_profile_aliases (
 			alias TEXT PRIMARY KEY,
 			profile_id INTEGER NOT NULL REFERENCES spawn_profiles(id) ON DELETE CASCADE
@@ -1120,4 +1112,17 @@ CREATE TABLE "agent_standing_order_group_scopes" (
 
 CREATE INDEX idx_agent_standing_order_group_scopes_group
 			ON agent_standing_order_group_scopes(group_id, order_id);
+
+CREATE TABLE "human_message_attachments" (
+			id           INTEGER PRIMARY KEY AUTOINCREMENT,
+			message_id   INTEGER NOT NULL REFERENCES human_messages(id) ON DELETE CASCADE,
+			seq          INTEGER NOT NULL DEFAULT 0,
+			filename     TEXT NOT NULL,
+			content_type TEXT NOT NULL DEFAULT 'application/octet-stream',
+			size_bytes   INTEGER NOT NULL,
+			storage_path TEXT NOT NULL
+		) STRICT;
+
+CREATE INDEX idx_human_message_attachments_message
+		ON human_message_attachments(message_id, seq, id);
 

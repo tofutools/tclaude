@@ -49,10 +49,10 @@ func TestNotifyHuman_AttachmentDownloadAndDelete(t *testing.T) {
 	msgs, err := db.ListHumanMessages()
 	require.NoError(t, err)
 	require.Len(t, msgs, 1)
-	require.NotNil(t, msgs[0].Attachment)
-	assert.Equal(t, "report.md", msgs[0].Attachment.Filename)
-	assert.Equal(t, int64(16), msgs[0].Attachment.SizeBytes)
-	storedPath := msgs[0].Attachment.StoragePath
+	require.NotNil(t, msgs[0].Attachment())
+	assert.Equal(t, "report.md", msgs[0].Attachment().Filename)
+	assert.Equal(t, int64(16), msgs[0].Attachment().SizeBytes)
+	storedPath := msgs[0].Attachment().StoragePath
 
 	dash := dashHandlerForTest(t)
 	download := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodGet,
@@ -88,8 +88,8 @@ func TestNotifyHuman_ZeroByteAttachment(t *testing.T) {
 	msgs, err := db.ListHumanMessages()
 	require.NoError(t, err)
 	require.Len(t, msgs, 1)
-	require.NotNil(t, msgs[0].Attachment)
-	assert.Zero(t, msgs[0].Attachment.SizeBytes)
+	require.NotNil(t, msgs[0].Attachment())
+	assert.Zero(t, msgs[0].Attachment().SizeBytes)
 }
 
 func TestNotifyHuman_AttachmentQuotaRejectedBeforeStorage(t *testing.T) {
@@ -213,15 +213,15 @@ func TestHumanMessageAttachmentCleanupDropsTruncatedReference(t *testing.T) {
 	msgs, err := db.ListHumanMessages()
 	require.NoError(t, err)
 	require.Len(t, msgs, 1)
-	require.NotNil(t, msgs[0].Attachment)
-	path := msgs[0].Attachment.StoragePath
+	require.NotNil(t, msgs[0].Attachment())
+	path := msgs[0].Attachment().StoragePath
 	require.NoError(t, os.WriteFile(path, []byte("x"), 0o600))
 
 	agentd.RunHumanMessageAttachmentCleanupForTest()
 	message, err := db.GetHumanMessage(msgs[0].ID)
 	require.NoError(t, err)
 	require.NotNil(t, message)
-	assert.Nil(t, message.Attachment, "broken bytes remove the download card but preserve the message")
+	assert.Nil(t, message.Attachment(), "broken bytes remove the download card but preserve the message")
 	_, err = os.Stat(path)
 	assert.True(t, os.IsNotExist(err))
 }

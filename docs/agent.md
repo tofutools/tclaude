@@ -2049,7 +2049,8 @@ for Claude Code, plus both `~/.agents/skills/` and `$CODEX_HOME/skills`
 - **`human-notify`** — send the human a notification via
   `tclaude agent notify-human`; it lands in the dashboard
   [Messages tab](dashboard.md#messages). Add repeatable `--attach <path>` flags
-  to publish generated files or directories as a downloadable artifact.
+  to publish generated files or directories as downloadable artifacts (a small
+  set of files stays separate; a directory or a large set is zipped).
 - **`human-clipboard`** — copy text to the human's system clipboard via
   `tclaude agent clipboard`; the daemon runs the platform copy tool on
   the host. Gated on `human.clipboard` (explicit grant or `--ask-human`

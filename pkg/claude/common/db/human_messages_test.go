@@ -234,13 +234,13 @@ func TestHumanMessages_DeleteOne(t *testing.T) {
 
 func TestHumanMessages_AttachmentInsertAndClearReturnExactPaths(t *testing.T) {
 	setupTestDB(t)
-	readID, err := InsertHumanMessageWithAttachment(
+	readID, err := InsertHumanMessageWithAttachments(
 		&HumanMessage{FromConv: "c", Body: "read"},
-		&HumanMessageAttachment{Filename: "read.txt", SizeBytes: 1, StoragePath: "/private/read"})
+		[]*HumanMessageAttachment{{Filename: "read.txt", SizeBytes: 1, StoragePath: "/private/read"}})
 	require.NoError(t, err)
-	unreadID, err := InsertHumanMessageWithAttachment(
+	unreadID, err := InsertHumanMessageWithAttachments(
 		&HumanMessage{FromConv: "c", Body: "unread"},
-		&HumanMessageAttachment{Filename: "unread.txt", SizeBytes: 1, StoragePath: "/private/unread"})
+		[]*HumanMessageAttachment{{Filename: "unread.txt", SizeBytes: 1, StoragePath: "/private/unread"}})
 	require.NoError(t, err)
 	_, err = MarkHumanMessageRead(readID)
 	require.NoError(t, err)
@@ -258,8 +258,8 @@ func TestHumanMessages_AttachmentInsertAndClearReturnExactPaths(t *testing.T) {
 	left, err := GetHumanMessage(unreadID)
 	require.NoError(t, err)
 	require.NotNil(t, left)
-	require.NotNil(t, left.Attachment)
-	assert.Equal(t, "/private/unread", left.Attachment.StoragePath)
+	require.NotNil(t, left.Attachment())
+	assert.Equal(t, "/private/unread", left.Attachment().StoragePath)
 	total, sender, totalCount, senderCount, err = HumanMessageAttachmentUsage("", "c")
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), total)

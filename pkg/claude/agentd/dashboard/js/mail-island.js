@@ -10,6 +10,7 @@ import {
   moveRowSelection,
 } from './mail-keynav.js';
 import { idTooltip, relTime, shortAgentId, shortId } from './helpers.js';
+import { attachmentHref, messageAttachments } from './human-attachments.js';
 import { dashboardState } from './snapshot-store.js';
 
 const html = htm.bind(h);
@@ -362,14 +363,15 @@ function attachmentSize(bytes) {
 }
 
 function HumanAttachment({ message }) {
-  if (!message.attachment) return null;
-  const attachment = message.attachment;
-  return html`<div class="mail-attachment">
-    <span class="mail-attachment-label">Agent file</span>
-    <a href=${`/api/human-messages/${encodeURIComponent(message.id)}/attachment`}
-      download=${attachment.filename || ''} title="Download this agent-published file">⤓ ${attachment.filename || 'attachment'}</a>
-    <span class="mail-attachment-size">${attachmentSize(attachment.size_bytes)}</span>
-  </div>`;
+  const attachments = messageAttachments(message);
+  if (!attachments.length) return null;
+  return html`<${Fragment}>${attachments.map((attachment, index) => html`
+    <div class="mail-attachment" key=${attachment.id || index}>
+      <span class="mail-attachment-label">Agent file</span>
+      <a href=${attachmentHref(message, attachment)}
+        download=${attachment.filename || ''} title="Download this agent-published file">⤓ ${attachment.filename || 'attachment'}</a>
+      <span class="mail-attachment-size">${attachmentSize(attachment.size_bytes)}</span>
+    </div>`)}</${Fragment}>`;
 }
 
 function HeaderRow({ label, children }) {
