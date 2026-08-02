@@ -45,6 +45,7 @@ type PendingSpawn struct {
 	Name           string
 	InitialMessage string
 	GroupContext   string
+	ProfileContext string
 	ReplyToConv    string
 	SpawnedByConv  string
 	// ReplyToAgent / SpawnedByAgent are the stable agent_id companions of
@@ -106,12 +107,12 @@ func InsertPendingSpawn(p *PendingSpawn) error {
 	}
 	_, err = db.Exec(`
 		INSERT OR REPLACE INTO pending_spawns
-			(label, agent_id, launching, group_id, role, descr, name, initial_message, group_context,
+			(label, agent_id, launching, group_id, role, descr, name, initial_message, group_context, profile_context,
 			 reply_to_conv, spawned_by_conv, reply_to_agent, spawned_by_agent,
 			 worktree_path, worktree_branch, is_owner, permission_overrides, process_command_id,
 			 task_url, task_label, effective_sandbox_config, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+agentForConvExpr+`, `+agentForConvExpr+`, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		p.Label, p.AgentID, boolToInt(p.Launching), p.GroupID, p.Role, p.Descr, p.Name, p.InitialMessage, p.GroupContext,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+agentForConvExpr+`, `+agentForConvExpr+`, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		p.Label, p.AgentID, boolToInt(p.Launching), p.GroupID, p.Role, p.Descr, p.Name, p.InitialMessage, p.GroupContext, p.ProfileContext,
 		p.ReplyToConv, p.SpawnedByConv, p.ReplyToConv, p.SpawnedByConv,
 		p.WorktreePath, p.WorktreeBranch, boolToInt(p.IsOwner), marshalPermissionOverrides(p.PermissionOverrides), p.ProcessCommandID,
 		p.TaskURL, p.TaskLabel, effectiveSandbox,
@@ -162,7 +163,7 @@ func GetPendingSpawn(label string) (*PendingSpawn, error) {
 		return nil, err
 	}
 	row := db.QueryRow(`
-		SELECT label, agent_id, launching, group_id, role, descr, name, initial_message, group_context,
+		SELECT label, agent_id, launching, group_id, role, descr, name, initial_message, group_context, profile_context,
 			reply_to_conv, spawned_by_conv, reply_to_agent, spawned_by_agent,
 			worktree_path, worktree_branch, is_owner, permission_overrides, process_command_id,
 			task_url, task_label, effective_sandbox_config, created_at
@@ -182,7 +183,7 @@ func ListPendingSpawns() ([]*PendingSpawn, error) {
 		return nil, err
 	}
 	rows, err := db.Query(`
-		SELECT label, agent_id, launching, group_id, role, descr, name, initial_message, group_context,
+		SELECT label, agent_id, launching, group_id, role, descr, name, initial_message, group_context, profile_context,
 			reply_to_conv, spawned_by_conv, reply_to_agent, spawned_by_agent,
 			worktree_path, worktree_branch, is_owner, permission_overrides, process_command_id,
 			task_url, task_label, effective_sandbox_config, created_at
@@ -349,7 +350,7 @@ func scanPendingSpawn(s rowScanner) (*PendingSpawn, error) {
 	var effectiveSandbox string
 	var createdAt dbTimestamp
 	if err := s.Scan(&p.Label, &p.AgentID, &launching, &p.GroupID, &p.Role, &p.Descr, &p.Name,
-		&p.InitialMessage, &p.GroupContext, &p.ReplyToConv, &p.SpawnedByConv,
+		&p.InitialMessage, &p.GroupContext, &p.ProfileContext, &p.ReplyToConv, &p.SpawnedByConv,
 		&p.ReplyToAgent, &p.SpawnedByAgent,
 		&p.WorktreePath, &p.WorktreeBranch, &isOwner, &permOverrides, &p.ProcessCommandID,
 		&p.TaskURL, &p.TaskLabel, &effectiveSandbox, &createdAt); err != nil {

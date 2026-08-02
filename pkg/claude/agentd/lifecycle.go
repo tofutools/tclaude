@@ -2568,6 +2568,7 @@ func spawnAuditProfileSnapshot(p *db.SpawnProfile) any {
 		"role":                          p.Role,
 		"descr":                         p.Descr,
 		"initial_message":               redactedAuditText(p.InitialMessage),
+		"startup_context":               redactedAuditText(p.StartupContext),
 		"sync_worktree":                 p.SyncWorktree,
 		"auto_focus":                    p.AutoFocus,
 		"include_group_default_context": p.IncludeGroupDefaultContext,
@@ -2627,6 +2628,7 @@ func spawnAuditResolution(p spawnParams, launch *agent.ResolvedLaunch, requested
 			"reply_to_conv":             p.ReplyToConv,
 			"spawned_by_conv":           p.SpawnedByConv,
 			"include_group_context":     p.GroupContext != "",
+			"profile_context":           redactedAuditText(p.ProfileContext),
 			"is_owner":                  p.IsOwner,
 			"permission_overrides":      permissions,
 			"timeout":                   p.Timeout.String(),
@@ -3072,6 +3074,17 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		return
 	}
 	contextFeaturesNote = cfNote
+	// Profile guidance resolves as one whole text block from the highest
+	// compatible tier. It has no per-spawn override: unlike initial_message this
+	// is policy attached to the selected model/profile, not a task default.
+	profileContext, _, profileContextNote, fieldFail := resolveStringLaunchField(
+		"startup_context", "", h.Name, profileTiers,
+		func(p *db.SpawnProfile) string { return p.StartupContext },
+		func(raw string) (string, error) { return strings.TrimSpace(raw), nil })
+	if fieldFail != nil {
+		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
+		return
+	}
 	resolvedLaunch := &agent.ResolvedLaunch{
 		Harness: agent.ResolvedField{Value: h.Name, Source: harnessSource},
 		Model:   agent.ResolvedField{Value: body.Model, Source: modelSource, Note: modelNote},
@@ -3087,7 +3100,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	if body.SandboxImplementation == "" && sandboxImplNote != "" {
 		resolvedLaunch.Notes = append(resolvedLaunch.Notes, sandboxImplNote)
 	}
-	for _, note := range []string{sandboxNote, approvalNote, toolsNote, askTimeoutNote, autoCompactWindowNote, autoReviewNote, trustDirNote, autoMemoryNote, sshWorkaroundNote, contextFeaturesNote} {
+	for _, note := range []string{sandboxNote, approvalNote, toolsNote, askTimeoutNote, autoCompactWindowNote, autoReviewNote, trustDirNote, autoMemoryNote, sshWorkaroundNote, contextFeaturesNote, profileContextNote} {
 		if note != "" {
 			resolvedLaunch.Notes = append(resolvedLaunch.Notes, note)
 		}
@@ -3483,6 +3496,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		TaskURL:                    strings.TrimSpace(body.TaskURL),
 		TaskLabel:                  strings.TrimSpace(body.TaskLabel),
 		InitialMessage:             body.InitialMessage,
+		ProfileContext:             profileContext,
 		Attachments:                attachments,
 		Cwd:                        cwd,
 		WorktreePath:               worktreePath,
@@ -3798,6 +3812,10 @@ type spawnParams struct {
 	// briefing, or "" to omit it. The caller has already applied any
 	// opt-out, so executeSpawn injects it verbatim.
 	GroupContext string
+	// ProfileContext is guidance attached to the resolved spawn profile. It is
+	// a distinct briefing section so the caller's task and group-context opt-out
+	// cannot replace or suppress model-specific instructions.
+	ProfileContext string
 	// ReplyToConv is the resolved sender of the startup briefing —
 	// "" for a human-initiated spawn.
 	ReplyToConv string
@@ -4322,6 +4340,12 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 	if fail != nil {
 		return fail
 	}
+	p.ProfileContext, _, _, fail = resolveStringLaunchField("startup_context", p.ProfileContext, h.Name, tiers,
+		func(prof *db.SpawnProfile) string { return prof.StartupContext },
+		func(raw string) (string, error) { return strings.TrimSpace(raw), nil })
+	if fail != nil {
+		return fail
+	}
 	p.SandboxImplementation, _, _, fail = resolveStringLaunchField(
 		sandboxImplementationField, p.SandboxImplementation, h.Name, tiers,
 		func(prof *db.SpawnProfile) string { return prof.SandboxImplementation },
@@ -4800,7 +4824,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		// An inlined copy must be born delivered + read in the same INSERT;
 		// inserting it unread and fixing it up after launch leaves a window where
 		// the online-message flush can claim and inject a redundant nudge.
-		spawnContextBody := buildSpawnContextBody(groupName, p.GroupContext, p.InitialMessage, p.Attachments)
+		spawnContextBody := buildSpawnContextBody(groupName, p.GroupContext, p.ProfileContext, p.InitialMessage, p.Attachments)
 		inlineCap := spawnInlineMaxChars()
 		briefingInlined = spawnContextBody != "" && spawnBriefingFitsLaunch(spawnContextBody, inlineCap)
 		mid, actorCreated, fail := enrollSpawnedConv(g, p, preConvID, briefingInlined)
@@ -4857,7 +4881,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		// once the inbox row + id exist. No conv-id is known here, so the welcome
 		// carries no inbox-message id (msgID 0). (CC on the legacy-injection
 		// revert reports its id via hook and needs no seed, so it is excluded.)
-		spawnContextBody := buildSpawnContextBody(groupName, p.GroupContext, p.InitialMessage, p.Attachments)
+		spawnContextBody := buildSpawnContextBody(groupName, p.GroupContext, p.ProfileContext, p.InitialMessage, p.Attachments)
 		spawnArgs.InitialPrompt = buildSpawnSeedPrompt(p.Name, p.Role, p.Descr, groupName,
 			p.InitialMessage != "", spawnContextBody, p.WorktreePath, p.WorktreeBranch,
 			resolveSpawnerTitle(p.SpawnedByConv, p.SpawnedByAgent), spawnInlineMaxChars())
@@ -5457,6 +5481,7 @@ func pendingSpawnFromParams(g *db.AgentGroup, p spawnParams, label string) *db.P
 		Name:                p.Name,
 		InitialMessage:      p.InitialMessage,
 		GroupContext:        p.GroupContext,
+		ProfileContext:      p.ProfileContext,
 		ReplyToConv:         p.ReplyToConv,
 		SpawnedByConv:       p.SpawnedByConv,
 		WorktreePath:        p.WorktreePath,
@@ -5635,7 +5660,7 @@ func finishSpawnEnrollment(g *db.AgentGroup, p spawnParams, convID string) *spaw
 	// to an operator-induced, recoverable, cosmetic window.
 	h := harnessForConv(convID)
 	groupName := spawnGroupName(g)
-	contextBody := buildSpawnContextBody(groupName, p.GroupContext, p.InitialMessage, p.Attachments)
+	contextBody := buildSpawnContextBody(groupName, p.GroupContext, p.ProfileContext, p.InitialMessage, p.Attachments)
 	welcomeInSeed := h.NeedsSpawnSeed() && spawnBriefingFitsLaunch(contextBody, spawnInlineMaxChars())
 	briefingInlined := contextBody != "" && welcomeInSeed
 	// actorCreated is deliberately dropped here: this path runs post-connect
@@ -5898,7 +5923,7 @@ func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string, briefingI
 	// verbatim regardless. The welcome line points the agent at the
 	// message; the spawn path marks it delivered once the welcome lands.
 	groupName := spawnGroupName(g)
-	spawnContext := buildSpawnContextBody(groupName, p.GroupContext, p.InitialMessage, p.Attachments)
+	spawnContext := buildSpawnContextBody(groupName, p.GroupContext, p.ProfileContext, p.InitialMessage, p.Attachments)
 	var spawnContextMsgID int64
 	if spawnContext != "" {
 		// Address the briefing FROM the reply-to actor's LIVE generation. On the
@@ -6220,16 +6245,17 @@ func persistSpawnTitle(convID, name string) {
 }
 
 // buildSpawnContextBody assembles the startup briefing delivered to a
-// freshly-spawned agent's inbox. It stitches together up to two
-// sections — the group's shared startup context and the per-spawn
-// task brief — under plain-text headers, with a divider when both are
+// freshly-spawned agent's inbox. It stitches together up to four
+// sections — the group's shared context, profile-specific guidance and the
+// per-spawn task brief — under plain-text headers, with dividers when needed.
 // present.
 //
-// Either input may be empty (or whitespace-only); when both are, the
+// Every input may be empty (or whitespace-only); when all are empty, the
 // result is "" and the caller skips the inbox insert entirely, so an
 // agent with nothing to brief never gets an empty message.
-func buildSpawnContextBody(groupName, groupContext, initialMessage string, attachments []string) string {
+func buildSpawnContextBody(groupName, groupContext, profileContext, initialMessage string, attachments []string) string {
 	groupContext = strings.TrimSpace(groupContext)
+	profileContext = strings.TrimSpace(profileContext)
 	initialMessage = strings.TrimSpace(initialMessage)
 
 	var sections []string
@@ -6237,6 +6263,10 @@ func buildSpawnContextBody(groupName, groupContext, initialMessage string, attac
 		sections = append(sections, fmt.Sprintf(
 			"Group %q startup context — shared guidance for every agent spawned into this group:\n\n%s",
 			groupName, groupContext))
+	}
+	if profileContext != "" {
+		sections = append(sections,
+			"Spawn profile startup context — guidance attached to this agent's launch profile:\n\n"+profileContext)
 	}
 	if initialMessage != "" {
 		sections = append(sections, "Your task brief:\n\n"+initialMessage)

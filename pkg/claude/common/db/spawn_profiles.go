@@ -101,6 +101,10 @@ type SpawnProfile struct {
 	Role           string
 	Descr          string
 	InitialMessage string
+	// StartupContext is durable guidance delivered to every agent that resolves
+	// this profile. Unlike InitialMessage it is not a spawn-dialog task default:
+	// it is an additional briefing section, so a per-spawn task cannot replace it.
+	StartupContext string
 
 	// Dialog toggles; nil = unset.
 	SyncWorktree               *bool
@@ -172,15 +176,15 @@ func CreateSpawnProfile(p *SpawnProfile) (int64, error) {
 		   (name, disabled, disabled_reason, operator_only, harness, model, effort, sandbox, sandbox_implementation, approval, tools, ask_user_question_timeout,
 		    auto_compact_window,
 		    auto_review, trust_dir,
-		    agent_name, role, descr, initial_message,
+		    agent_name, role, descr, initial_message, startup_context,
 		    sync_worktree, auto_focus, include_group_default_context, remote_control, auto_memory, ssh_workaround,
 		    is_owner, permission_overrides, context_features,
 		    created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.Name, p.Disabled, p.DisabledReason, p.OperatorOnly, p.Harness, p.Model, p.Effort, p.Sandbox, p.SandboxImplementation, p.Approval, p.ToolGovernance, p.AskUserQuestionTimeout,
 		p.AutoCompactWindow,
 		boolPtrToNull(p.AutoReview), boolPtrToNull(p.TrustDir),
-		p.AgentName, p.Role, p.Descr, p.InitialMessage,
+		p.AgentName, p.Role, p.Descr, p.InitialMessage, p.StartupContext,
 		boolPtrToNull(p.SyncWorktree), boolPtrToNull(p.AutoFocus),
 		boolPtrToNull(p.IncludeGroupDefaultContext), boolPtrToNull(p.RemoteControl),
 		boolPtrToNull(p.AutoMemory), boolPtrToNull(p.SSHWorkaround),
@@ -232,7 +236,7 @@ func UpdateSpawnProfile(p *SpawnProfile) error {
 		   sandbox_implementation = ?, approval = ?, tools = ?,
 		   ask_user_question_timeout = ?, auto_compact_window = ?,
 		   auto_review = ?, trust_dir = ?,
-		   agent_name = ?, role = ?, descr = ?, initial_message = ?,
+		   agent_name = ?, role = ?, descr = ?, initial_message = ?, startup_context = ?,
 		   sync_worktree = ?, auto_focus = ?, include_group_default_context = ?, remote_control = ?,
 		   auto_memory = ?, ssh_workaround = ?,
 		   is_owner = ?, permission_overrides = ?, context_features = ?,
@@ -242,7 +246,7 @@ func UpdateSpawnProfile(p *SpawnProfile) error {
 		p.SandboxImplementation, p.Approval, p.ToolGovernance,
 		p.AskUserQuestionTimeout, p.AutoCompactWindow,
 		boolPtrToNull(p.AutoReview), boolPtrToNull(p.TrustDir),
-		p.AgentName, p.Role, p.Descr, p.InitialMessage,
+		p.AgentName, p.Role, p.Descr, p.InitialMessage, p.StartupContext,
 		boolPtrToNull(p.SyncWorktree), boolPtrToNull(p.AutoFocus),
 		boolPtrToNull(p.IncludeGroupDefaultContext), boolPtrToNull(p.RemoteControl),
 		boolPtrToNull(p.AutoMemory), boolPtrToNull(p.SSHWorkaround),
@@ -489,7 +493,7 @@ func isSpawnProfileHandleViolation(err error) bool {
 const spawnProfileSelect = `SELECT id, name, disabled, disabled_reason, operator_only, harness, model, effort, sandbox,
 	sandbox_implementation, approval,
 	tools, ask_user_question_timeout, auto_compact_window,
-	auto_review, trust_dir, agent_name, role, descr, initial_message,
+	auto_review, trust_dir, agent_name, role, descr, initial_message, startup_context,
 	sync_worktree, auto_focus, include_group_default_context, remote_control, auto_memory, ssh_workaround,
 	is_owner, permission_overrides, context_features, created_at, updated_at
 	FROM spawn_profiles`
@@ -503,7 +507,7 @@ func scanSpawnProfile(s rowScanner) (*SpawnProfile, error) {
 	if err := s.Scan(&p.ID, &p.Name, &disabled, &p.DisabledReason, &p.OperatorOnly, &p.Harness, &p.Model, &p.Effort, &p.Sandbox,
 		&p.SandboxImplementation, &p.Approval,
 		&p.ToolGovernance, &p.AskUserQuestionTimeout, &p.AutoCompactWindow,
-		&autoReview, &trustDir, &p.AgentName, &p.Role, &p.Descr, &p.InitialMessage,
+		&autoReview, &trustDir, &p.AgentName, &p.Role, &p.Descr, &p.InitialMessage, &p.StartupContext,
 		&syncWorktree, &autoFocus, &includeCtx, &remoteControl, &autoMemory, &sshWorkaround,
 		&isOwner, &permOverrides, &contextFeatures, &createdAt, &updatedAt); err != nil {
 		return nil, err

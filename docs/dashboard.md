@@ -775,10 +775,18 @@ itself creates the clone beside it.
 
 Reusable launch presets for agents. A spawn profile can carry the harness,
 model, effort, sandbox / permission-mode defaults, OpenCode tool governance,
-agent name, role, description,
-initial message, dialog toggles, owner default, and per-slug permission
+agent name, role, description, initial message, profile-specific startup
+context, dialog toggles, owner default, and per-slug permission
 overrides. It deliberately does **not** carry a working directory or worktree:
 those stay per-spawn.
+
+**Profile context** is durable guidance for the kind of agent the profile
+launches—for example, model-specific working preferences. It is injected as
+its own startup-briefing section, alongside (and independently from) the
+group's shared context and the per-spawn task brief. Changing the task does not
+replace it, and opting out of group context does not suppress it. When several
+profile tiers participate, the highest-precedence compatible profile with
+non-empty context wins; contexts are not concatenated.
 
 A profile may also have multiple **aliases**: alternate handles such as
 `codex-reviewer` for a canonically named `gpt5.6-sol-high` profile. Aliases

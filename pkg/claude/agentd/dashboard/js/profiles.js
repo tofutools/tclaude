@@ -300,7 +300,8 @@ function profileDetailChips(p) {
   text('name', p.agent_name);
   text('role', p.role);
   text('descr', p.descr);
-  if (p.initial_message) parts.push(`initial message · ${p.initial_message.length} chars`);
+	if (p.initial_message) parts.push(`initial message · ${p.initial_message.length} chars`);
+	if (p.startup_context) parts.push(`profile context · ${p.startup_context.length} chars`);
   toggle('sync-wt', p.sync_worktree);
   toggle('focus', p.auto_focus);
   toggle('group-ctx', p.include_group_default_context);

@@ -245,13 +245,13 @@ func TestBuildSpawnAttachmentsSection(t *testing.T) {
 }
 
 func TestBuildSpawnContextBody_IncludesAttachments(t *testing.T) {
-	body := buildSpawnContextBody("team", "", "do the thing", []string{"/tmp/shot.png"})
+	body := buildSpawnContextBody("team", "", "", "do the thing", []string{"/tmp/shot.png"})
 	assert.Contains(t, body, "Your task brief:")
 	assert.Contains(t, body, "do the thing")
 	assert.Contains(t, body, "Attached files")
 	assert.Contains(t, body, "/tmp/shot.png")
 
 	// No attachments → no attachment section, brief unchanged.
-	plain := buildSpawnContextBody("team", "", "do the thing", nil)
+	plain := buildSpawnContextBody("team", "", "", "do the thing", nil)
 	assert.NotContains(t, plain, "Attached files")
 }

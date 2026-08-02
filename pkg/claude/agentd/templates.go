@@ -750,6 +750,9 @@ type templateAgentLaunch struct {
 	// resolveContextFeaturesLaunchField). Empty means the agent keeps Claude
 	// Code's own startup context.
 	ContextFeatures map[string]string
+	// StartupContext is the guidance carried by the highest compatible profile
+	// tier. It is delivered separately from the template agent's task brief.
+	StartupContext string
 	// ContextFeaturesSet distinguishes "traced this member and it trims nothing"
 	// from "could not trace it at all" (a pruned session row). The map alone
 	// cannot: ResolveContextFeatures returns nil for an all-default map, so both
@@ -1256,6 +1259,15 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 	if cfNote != "" {
 		notes = append(notes, cfNote)
 	}
+	startupContext, _, ctxNote, fail := resolveStringLaunchField("startup_context", "", h.Name, tiers,
+		func(p *db.SpawnProfile) string { return p.StartupContext },
+		func(raw string) (string, error) { return strings.TrimSpace(raw), nil })
+	if fail != nil {
+		return templateAgentLaunch{}, fail
+	}
+	if ctxNote != "" {
+		notes = append(notes, ctxNote)
+	}
 	// Codex sandbox cwd-safety: a writable Codex sandbox confines writes to the
 	// cwd subtree, so a cwd at/above $HOME would expose ~/.tclaude / ~/.codex /
 	// ~/.claude. Refuse per-agent here, mirroring handleGroupSpawn's guard.
@@ -1282,6 +1294,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 		SSHWorkaround:          sshWorkaround,
 		SSHWorkaroundSet:       sshWorkaroundSet,
 		ContextFeatures:        contextFeatures,
+		StartupContext:         startupContext,
 		AskUserQuestionTimeout: askTimeout,
 		AutoCompactWindow:      autoCompactWindow,
 		SandboxImplementation:  sandboxImplementation,

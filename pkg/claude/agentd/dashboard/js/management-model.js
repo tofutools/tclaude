@@ -69,6 +69,7 @@ export function profileDraft(seed = null, { editExisting = true, local = null, c
     ssh_workaround: seed?.ssh_workaround !== false,
     agent_name: seed?.agent_name || '', role: seed?.role || '', descr: seed?.descr || '',
     initial_message: seed?.initial_message || '', sync_worktree: triValue(seed?.sync_worktree),
+    startup_context: seed?.startup_context || '',
     auto_focus: triValue(seed?.auto_focus), include_group_default_context: triValue(seed?.include_group_default_context),
     is_owner: triValue(seed?.is_owner), permission_overrides: { ...(seed?.permission_overrides || {}) },
     context_features: { ...(seed?.context_features || {}) },
@@ -81,6 +82,7 @@ export function profilePayload(draft, original = null, catalog = [], { local = f
     name: draft.name.trim(), harness: draft.harness, model: draft.model.trim(), effort: draft.effort,
     agent_name: draft.agent_name.trim(), role: draft.role.trim(), descr: draft.descr.trim(),
     initial_message: draft.initial_message, disabled: !!draft.disabled,
+    startup_context: draft.startup_context,
     operator_only: !!draft.operator_only,
   };
   if (draft.disabled_reason.trim()) body.disabled_reason = draft.disabled_reason.trim();
