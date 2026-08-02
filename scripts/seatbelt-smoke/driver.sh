@@ -83,6 +83,36 @@ if [[ "${pipeline_status[0]}" -ne 0 || "${pipeline_status[1]}" -ne 0 ]] ||
   exit 1
 fi
 
+opencode_cooperation_log="$RUNNER_TEMP/opencode-proxy-cooperation-darwin.log"
+set +e
+go test ./pkg/claude/agentd -run '^TestOpenCodeProxyCooperationDarwin$' -count=1 -v -timeout=180s |
+  tee "$opencode_cooperation_log"
+pipeline_status=("${PIPESTATUS[@]}")
+set -e
+if [[ "${pipeline_status[0]}" -ne 0 || "${pipeline_status[1]}" -ne 0 ]] ||
+  ! grep -q '^--- PASS: TestOpenCodeProxyCooperationDarwin ' "$opencode_cooperation_log"; then
+  {
+    echo "### OpenCode Darwin proxy cooperation smoke did not complete"
+    echo
+    echo "The pinned managed OpenCode server did not report model-origin HTTP CONNECT through the production launcher."
+    echo "A skip, missing/renamed test, build-tag mismatch, or zero-test success is a hard failure."
+  } >> "$GITHUB_STEP_SUMMARY"
+  echo "::error::TestOpenCodeProxyCooperationDarwin did not report an explicit pass"
+  exit 1
+fi
+
+opencode_failure_control_log="$RUNNER_TEMP/opencode-proxy-cooperation-darwin-failure-control.log"
+set +e
+go test ./pkg/claude/agentd -run '^TestOpenCodeProxyCooperationDarwinFailureControl$' -count=1 -v -timeout=60s |
+  tee "$opencode_failure_control_log"
+pipeline_status=("${PIPESTATUS[@]}")
+set -e
+if [[ "${pipeline_status[0]}" -ne 0 || "${pipeline_status[1]}" -ne 0 ]] ||
+  ! grep -q '^--- PASS: TestOpenCodeProxyCooperationDarwinFailureControl ' "$opencode_failure_control_log"; then
+  echo "::error::TestOpenCodeProxyCooperationDarwinFailureControl did not report an explicit pass"
+  exit 1
+fi
+
 refusal_log="$RUNNER_TEMP/stacked-seatbelt-refusal.log"
 set +e
 go test ./pkg/claude/session -run '^TestStackedSandboxDarwinRefusal$' -count=1 -v -timeout=30s |
@@ -101,4 +131,6 @@ printf '%s\n' \
   "--- PASS: TestSeatbeltProxyFloorSmoke" \
   "--- PASS: TestPinnedProxyHarnessCooperationDarwin" \
   "--- PASS: TestPinnedProxyHarnessCooperationDarwinFailureControl" \
+  "--- PASS: TestOpenCodeProxyCooperationDarwin" \
+  "--- PASS: TestOpenCodeProxyCooperationDarwinFailureControl" \
   "--- PASS: TestStackedSandboxDarwinRefusal"

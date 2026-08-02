@@ -156,9 +156,10 @@ var (
 	// never calls. session.ResolveTclaudeLayerServerForEngine applies the same
 	// TclaudeLayerFloorPosture mapping the plain-CLI launch path already uses,
 	// rather than a second answer to the same question (TCL-891).
-	resolveOpenCodeTclaudeLayer = session.ResolveTclaudeLayerServerForEngine
-	wrapOpenCodeTclaudeLayer    = session.WrapTclaudeLayerServerSpec
-	openCodeRelayExecutable     = os.Executable
+	resolveOpenCodeTclaudeLayer              = session.ResolveTclaudeLayerServerForEngine
+	wrapOpenCodeTclaudeLayer                 = session.WrapTclaudeLayerServerSpec
+	wrapOpenCodeTclaudeLayerWithLoopbackBind = session.WrapTclaudeLayerServerSpecWithLoopbackBind
+	openCodeRelayExecutable                  = os.Executable
 )
 
 func startOpenCodeRuntime(
@@ -1564,7 +1565,7 @@ func openCodeServeExec(
 		if parseErr != nil || bindPort < 1 || bindPort > 65535 {
 			return "", nil, fmt.Errorf("parse OpenCode loopback control port %q", port)
 		}
-		wrapped, err = session.WrapTclaudeLayerServerSpecWithLoopbackBind(
+		wrapped, err = wrapOpenCodeTclaudeLayerWithLoopbackBind(
 			bwrapBinary, *sandboxSpec, bindPort, serveCommand)
 	} else {
 		wrapped, err = wrapOpenCodeTclaudeLayer(bwrapBinary, *sandboxSpec, serveCommand)

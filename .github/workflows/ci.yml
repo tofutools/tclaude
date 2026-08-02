@@ -261,6 +261,7 @@ jobs:
       - name: Run sandbox v2 bubblewrap smoke
         env:
           TCLAUDE_SANDBOX_V2_SMOKE: "1"
+          TCLAUDE_OPENCODE_PROXY_DARWIN_SMOKE: "1"
           TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY: ${{ runner.temp }}/tclaude-sandbox-v2
         run: |
           smoke_log="$RUNNER_TEMP/tclaude-layer-bubblewrap-smoke.log"
