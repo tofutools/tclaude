@@ -1400,24 +1400,38 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
   .human-attachment-preview-label, .image-preview-image { transition: none; }
 }
 
-/* Human-notify Markdown attachments. An image announces itself with a
-   thumbnail; a document cannot, so it gets a compact inline control that sits
-   in the attachment card's row beside the download link rather than above it. */
+/* Human-notify Markdown attachments. The document renders in the card itself,
+   on its own full-width row below the file line, because it IS the message.
+   The control beside the download link opens the original source instead. */
 .human-attachment-markdown-trigger {
   display: inline-flex; align-items: center; gap: 6px; padding: 5px 9px;
   border: 1px solid #30363d; border-radius: 4px; background: #21262d;
   color: #c9d1d9; cursor: pointer; font: inherit; font-size: 12px;
 }
-.human-attachment-markdown-trigger:hover,
+.human-attachment-markdown-trigger:hover:not(:disabled),
 .human-attachment-markdown-trigger:focus-visible {
   border-color: #58a6ff; color: #f0f6fc;
 }
 .human-attachment-markdown-trigger:focus-visible {
   outline: 2px solid #58a6ff; outline-offset: 2px;
 }
+.human-attachment-markdown-trigger:disabled { opacity: .4; cursor: default; }
 .human-attachment-markdown-icon { color: #58a6ff; font-size: 13px; line-height: 1; }
 
-/* Shared Markdown document viewer. Like the image viewer it is a real
+/* The rendered document sits on its own row inside the attachment card, so the
+   file line and its controls stay put at the top however long the document is. */
+.markdown-attachment-document {
+  flex: 0 0 100%; min-width: 0; margin-top: 10px; padding-top: 12px;
+  border-top: 1px solid #30363d;
+}
+.markdown-attachment-state {
+  display: flex; flex-direction: column; gap: 4px;
+  color: #8b949e; font-size: 12px;
+}
+.markdown-attachment-state strong { color: #f0f6fc; font-size: 13px; }
+.markdown-attachment-state span { color: #8b949e; font-size: 11px; }
+
+/* Shared Markdown source view. Like the image viewer it is a real
    .modal-overlay, so the dashboard's overlay stack, Escape routing, and
    refresh suspension all see it. */
 .markdown-preview-overlay {
@@ -1443,46 +1457,33 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
 }
 .markdown-preview-heading span { color: #8b949e; font-size: 11px; white-space: nowrap; }
 .markdown-preview-header-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
-.markdown-preview-download, .markdown-preview-close,
-.markdown-preview-footer button {
+.markdown-preview-download, .markdown-preview-close {
   border: 1px solid #30363d; border-radius: 4px; background: #21262d;
   color: #c9d1d9; cursor: pointer; font: inherit; font-size: 12px;
 }
 .markdown-preview-download { padding: 5px 9px; border-color: #1f6feb; color: #58a6ff; text-decoration: none; }
 .markdown-preview-download:hover, .markdown-preview-download:focus-visible { background: rgba(31, 111, 235, .14); }
 .markdown-preview-close { width: 30px; height: 30px; padding: 0; color: #8b949e; font-size: 19px; }
-.markdown-preview-close:hover, .markdown-preview-close:focus-visible,
-.markdown-preview-footer button:hover:not(:disabled), .markdown-preview-footer button:focus-visible {
+.markdown-preview-close:hover, .markdown-preview-close:focus-visible {
   border-color: #58a6ff; color: #f0f6fc;
 }
 .markdown-preview-stage {
   position: relative; min-height: 0; flex: 1; overflow: auto;
-  padding: 26px 30px; background: #0b1016;
+  padding: 22px 24px; background: #0b1016;
 }
-.markdown-preview-state, .markdown-document-state {
+.markdown-document-state {
   display: flex; flex-direction: column; gap: 5px; max-width: 420px;
   margin: 8px auto; padding: 12px 14px; border: 1px solid #3d4a58;
   border-radius: 6px; background: rgba(13, 17, 23, .92);
   color: #8b949e; font-size: 12px; text-align: center;
 }
-.markdown-preview-state strong, .markdown-document-state strong { color: #f0f6fc; font-size: 13px; }
-.markdown-preview-state span, .markdown-document-state span { color: #8b949e; font-size: 11px; }
+.markdown-document-state strong { color: #f0f6fc; font-size: 13px; }
+.markdown-document-state span { color: #8b949e; font-size: 11px; }
 .markdown-preview-source {
   margin: 0; color: #c9d1d9; font-size: 12px; line-height: 1.55;
   white-space: pre-wrap; overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
-.markdown-preview-footer {
-  display: flex; align-items: center; gap: 8px; min-height: 54px;
-  padding: 0 14px; border-top: 1px solid #30363d; background: #161b22;
-}
-.markdown-preview-footer-file {
-  max-width: 34%; overflow: hidden; color: #c9d1d9;
-  text-overflow: ellipsis; white-space: nowrap; font-size: 11px;
-}
-.markdown-preview-footer-size { color: #8b949e; font-size: 11px; }
-.markdown-preview-footer button { height: 28px; padding: 2px 10px; }
-.markdown-preview-footer button:disabled { opacity: .4; cursor: default; }
-.markdown-preview-toggle[aria-pressed="true"] { border-color: #1f6feb; color: #58a6ff; }
 
 /* The rendered document. Every element here is one markdown-model.js allows,
    so this list doubles as the visible half of that allowlist. */
@@ -1544,8 +1545,7 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
   .markdown-preview-header-actions { flex: 0 0 auto; }
   .markdown-preview-download { padding: 5px 7px; font-size: 11px; }
   .markdown-preview-stage { padding: 16px 14px; }
-  .markdown-preview-footer { min-height: 52px; padding: 0 10px; }
-  .markdown-preview-footer-file { max-width: 42%; }
+  .markdown-attachment-document { margin-top: 8px; padding-top: 10px; }
 }
 
 /* ─── Reader skins for the cosmetic themes ────────────────────────────

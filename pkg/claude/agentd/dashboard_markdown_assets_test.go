@@ -75,7 +75,7 @@ func TestDashboardMarkdownImportMap(t *testing.T) {
 // this fails the build if the implementation ever takes the innerHTML shortcut,
 // which would silently turn a document into markup.
 func TestDashboardMarkdownRendersWithoutHTMLInjection(t *testing.T) {
-	for _, name := range []string{"js/markdown-model.js", "js/markdown-document.js", "js/markdown-preview-overlay.js"} {
+	for _, name := range []string{"js/markdown-model.js", "js/markdown-document.js", "js/markdown-attachment.js"} {
 		source := dashboardAssetFile(t, name)
 		for _, forbidden := range []string{"innerHTML", "insertAdjacentHTML", "dangerouslySetInnerHTML", ".render("} {
 			if strings.Contains(source, forbidden) {
@@ -96,31 +96,35 @@ func TestDashboardMarkdownRendersWithoutHTMLInjection(t *testing.T) {
 	}
 }
 
-// TestDashboardMarkdownViewerWired keeps both notification surfaces offering the
-// viewer. The drawer and Messages render attachments independently, so a file
-// readable in one and download-only in the other is a real and easy regression.
+// TestDashboardMarkdownViewerWired keeps both notification surfaces rendering
+// the document. The drawer and Messages render attachments independently, so a
+// file readable in one and download-only in the other is a real and easy
+// regression.
 func TestDashboardMarkdownViewerWired(t *testing.T) {
 	// Naming the component is enough: the module graph test resolves the import
 	// it must come from, so pinning the import statement's exact spelling would
 	// only break on a reformat.
 	for _, name := range []string{"js/groups-notification-reader.js", "js/mail-island.js"} {
-		if !strings.Contains(dashboardAssetFile(t, name), "MarkdownAttachmentPreview") {
-			t.Errorf("%s does not offer the shared Markdown viewer", name)
+		if !strings.Contains(dashboardAssetFile(t, name), "MarkdownAttachment") {
+			t.Errorf("%s does not render published Markdown documents", name)
 		}
 	}
 
-	overlay := dashboardAssetFile(t, "js/markdown-preview-overlay.js")
+	source := dashboardAssetFile(t, "js/markdown-attachment.js")
 	for needle, why := range map[string]string{
-		`role="dialog"`:     "the document viewer exposes dialog semantics",
-		`aria-modal="true"`: "the document viewer is modal",
+		`role="dialog"`:     "the source view exposes dialog semantics",
+		`aria-modal="true"`: "the source view is modal",
 	} {
-		if !strings.Contains(overlay, needle) {
-			t.Errorf("markdown viewer source missing %q (%s)", needle, why)
+		if !strings.Contains(source, needle) {
+			t.Errorf("markdown attachment source missing %q (%s)", needle, why)
 		}
 	}
 
 	css := dashboardAssetFile(t, "dashboard.css")
-	for _, rule := range []string{".markdown-preview-dialog {", ".markdown-document {", ".human-attachment-markdown-trigger {"} {
+	for _, rule := range []string{
+		".markdown-preview-dialog {", ".markdown-document {",
+		".markdown-attachment-document {", ".human-attachment-markdown-trigger {",
+	} {
 		if !strings.Contains(css, rule) {
 			t.Errorf("dashboard CSS is missing the %s rule", rule)
 		}

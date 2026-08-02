@@ -1424,13 +1424,18 @@ A published **Markdown document** gets the same treatment in reading form. A
 file the daemon recognises as Markdown — by a `text/markdown` or
 `text/x-markdown` media type, or by a `.md`/`.markdown`/`.mdown`/`.mkd`/`.mkdn`
 name, at most 1 MiB, and whose leading bytes are UTF-8 text rather than binary —
-carries a **View** control beside its download link. That opens a modal document
-viewer with the file rendered: headings, lists, tables, fenced code, block
-quotes, links, and images, plus a **Show source** toggle for the original text,
-and the same missing-file, Escape-to-return, and download behaviour as the image
-overlay (minus its HEAD preflight — reading the document is the same request).
-Both the quick notification reader and Messages offer it, and both use the same
-overlay.
+is **rendered in the message itself**, on its own row inside the attachment card:
+headings, lists, tables, fenced code, block quotes, links, and images. A report
+an agent wrote to be read is the content of that notification, so it is not put
+behind a control. The card keeps its file line, size, and download link above the
+document, and adds a **View source** control that opens the original Markdown in
+a modal — the reverse of the usual arrangement, since the rendered form is
+already on screen. Both the quick notification reader and Messages render it, and
+both share the same components.
+
+The document is fetched when the message is shown; a file the cleanup already
+removed, or one that cannot be read, says so in the document's place and leaves
+the download link alone.
 
 Rendering is done by the vendored [markdown-it](https://github.com/markdown-it/markdown-it)
 parser (`dashboard/vendor/markdown-it/`), loaded on demand so the dashboard's

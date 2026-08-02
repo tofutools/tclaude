@@ -2051,8 +2051,8 @@ for Claude Code, plus both `~/.agents/skills/` and `$CODEX_HOME/skills`
   [Messages tab](dashboard.md#messages). Add repeatable `--attach <path>` flags
   to publish generated files or directories as downloadable artifacts (a small
   set of files stays separate; a directory or a large set is zipped). An
-  attached image gets a thumbnail and an attached `.md` file a rendered
-  document viewer, so a written report is worth sending as Markdown.
+  attached image gets a thumbnail and an attached `.md` file is rendered in
+  the message, so a written report is worth sending as Markdown.
 - **`human-clipboard`** — copy text to the human's system clipboard via
   `tclaude agent clipboard`; the daemon runs the platform copy tool on
   the host. Gated on `human.clipboard` (explicit grant or `--ask-human`

@@ -8,7 +8,7 @@ import { attachmentHref, messageAttachments } from './human-attachments.js';
 import { openHumanReplyModal } from './message-access-dialog-controller.js';
 import { hasShownOverlay } from './overlay-stack.js';
 import { ImageAttachmentPreview } from './image-preview-overlay.js';
-import { MarkdownAttachmentPreview } from './markdown-preview-overlay.js';
+import { MarkdownAttachment } from './markdown-attachment.js';
 
 const html = htm.bind(h);
 const readWrites = new Map();
@@ -112,7 +112,6 @@ function Attachment({ message }) {
     const filename = attachment.filename || 'attachment';
     return html`<div class="human-notification-drawer-attachment" key=${attachment.id || index}>
       <${ImageAttachmentPreview} messageID=${message.id} attachment=${attachment} surface="drawer" />
-      <${MarkdownAttachmentPreview} messageID=${message.id} attachment=${attachment} surface="drawer" />
       <a class="human-notification-drawer-file-link" href=${href}
         download=${attachment.filename || ''} title=${`Download ${filename}`}>
         <span class="human-notification-drawer-file-icon" aria-hidden="true">▣</span>
@@ -123,6 +122,7 @@ function Attachment({ message }) {
       </a>
       <a class="human-notification-drawer-download" href=${href}
         download=${attachment.filename || ''} title="Download this agent-published file">Download</a>
+      <${MarkdownAttachment} messageID=${message.id} attachment=${attachment} surface="drawer" />
     </div>`;
   })}</${Fragment}>`;
 }
