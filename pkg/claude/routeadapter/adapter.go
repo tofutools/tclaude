@@ -21,6 +21,11 @@ import (
 
 const maxPayload = routebroker.MaxFramePayload
 
+// attachBarrierTimeout bounds how long Publish waits for the broker to take
+// ownership of the route. It only has to cover the authority's local checks;
+// anything slower is a stalled authority, not a slow publish.
+const attachBarrierTimeout = 10 * time.Second
+
 type Publisher struct {
 	RouteID          string
 	AgentID          string
@@ -222,7 +227,11 @@ func (a *Adapter) publish(ctx context.Context, publisher Publisher, pool []int) 
 	go a.publisherLoop(channelCtx, channel, publisher.Target)
 	// Publish only reports success once the broker owns the route. Returning
 	// earlier lets a consumer that opens immediately race the attach goroutine
-	// and be refused with "publisher unavailable".
+	// and be refused with "publisher unavailable". The wait is bounded on its
+	// own timer: callers deliberately pass a channel-lifetime context, so a
+	// stalled authority must fail this call rather than hold it open.
+	timer := time.NewTimer(attachBarrierTimeout)
+	defer timer.Stop()
 	select {
 	case err := <-ready:
 		if err != nil {
@@ -232,6 +241,9 @@ func (a *Adapter) publish(ctx context.Context, publisher Publisher, pool []int) 
 	case <-channelCtx.Done():
 		a.CloseRoute(publisher.RouteID)
 		return 0, fmt.Errorf("attach publisher route %q: %w", publisher.RouteID, channelCtx.Err())
+	case <-timer.C:
+		a.CloseRoute(publisher.RouteID)
+		return 0, fmt.Errorf("attach publisher route %q: %w", publisher.RouteID, context.DeadlineExceeded)
 	}
 	return port, nil
 }

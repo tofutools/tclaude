@@ -393,3 +393,53 @@ func TestBrokerAgentConnectionBoundIsBrokerWide(t *testing.T) {
 	openedOther := readFrame(t, pubBPeer)
 	require.Equal(t, routebroker.KindOpen, openedOther.Kind)
 }
+
+func TestBrokerAttachPublisherReadySignalsEveryOutcome(t *testing.T) {
+	auth := newTestAuthorizer()
+	b := newBroker(t, auth, routebroker.Config{})
+	publisher, _ := auths()
+
+	ready := make(chan error, 1)
+	require.Error(t, b.AttachPublisherReady(context.Background(), publisher, nil, func(err error) { ready <- err }))
+	require.Error(t, <-ready)
+
+	// Success signals nil, and only after the route is owned: a consumer that
+	// opens the instant ready fires must not be told the publisher is missing.
+	pubBroker, pubPeer := net.Pipe()
+	t.Cleanup(func() { _ = pubPeer.Close() })
+	attachDone := make(chan error, 1)
+	go func() {
+		attachDone <- b.AttachPublisherReady(context.Background(), publisher, pubBroker, func(err error) { ready <- err })
+	}()
+	require.NoError(t, <-ready)
+	require.Equal(t, uint64(1), b.Metrics().PublisherChannels)
+
+	// A second publisher on the same route is refused through ready.
+	dupBroker, dupPeer := net.Pipe()
+	t.Cleanup(func() { _ = dupPeer.Close() })
+	require.ErrorIs(t, b.AttachPublisherReady(context.Background(), publisher, dupBroker, func(err error) { ready <- err }), routebroker.ErrPublisherAttached)
+	require.ErrorIs(t, <-ready, routebroker.ErrPublisherAttached)
+
+	// A refused authority reports through ready rather than failing silently.
+	auth.revokePublisher("route-b")
+	refusedBroker, refusedPeer := net.Pipe()
+	t.Cleanup(func() { _ = refusedPeer.Close() })
+	refused := publisher
+	refused.RouteID = "route-b"
+	require.ErrorIs(t, b.AttachPublisherReady(context.Background(), refused, refusedBroker, func(err error) { ready <- err }), routebroker.ErrUnauthorized)
+	require.ErrorIs(t, <-ready, routebroker.ErrUnauthorized)
+
+	_ = pubPeer.Close()
+	require.NoError(t, <-attachDone)
+}
+
+func TestBrokerAttachPublisherReadyReportsClosedBroker(t *testing.T) {
+	b, err := routebroker.New(routebroker.Config{Authorizer: newTestAuthorizer()})
+	require.NoError(t, err)
+	require.NoError(t, b.Close())
+	conn, peer := net.Pipe()
+	defer peer.Close()
+	ready := make(chan error, 1)
+	require.ErrorIs(t, b.AttachPublisherReady(context.Background(), routebroker.PublisherAuth{RouteID: "route-a"}, conn, func(err error) { ready <- err }), routebroker.ErrClosed)
+	require.ErrorIs(t, <-ready, routebroker.ErrClosed)
+}

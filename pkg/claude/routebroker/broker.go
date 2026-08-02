@@ -278,7 +278,8 @@ func (b *Broker) AttachPublisher(ctx context.Context, auth PublisherAuth, conn n
 // session owns the route, or with the failure that stopped it from attaching.
 // A caller that hands out consumer endpoints must wait for it; otherwise a
 // consumer racing this goroutine is answered "publisher unavailable" and its
-// connection is torn down even though the route was accepted.
+// connection is torn down even though the route was accepted. ready runs on
+// the attaching goroutine ahead of the serve loop, so it must not block.
 func (b *Broker) AttachPublisherReady(ctx context.Context, auth PublisherAuth, conn net.Conn, ready func(error)) error {
 	if ready == nil {
 		ready = func(error) {}
