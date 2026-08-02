@@ -288,9 +288,15 @@ Ownership is only ever claimed on a definite answer. If the check cannot tell
 whether a server is running — no tmux on `PATH`, a tmux too old for the `-N`
 probe flag, a permission error — the console starts nothing, changes nothing,
 and kills nothing; tmux goes back to starting a server implicitly the first time
-something needs one. The same rule applies on the way out: a server it cannot
-re-verify at exit is left running rather than killed on a guess. Both cases are
-logged to `output.log`.
+something needs one.
+
+Much the same holds on the way out. A server the console cannot re-verify at
+exit is left running rather than killed on a guess, and so is one whose pid no
+longer answers as the pid it started — that server died and something else took
+the socket. The one exception is a console that could not read a pid for its own
+server at startup: the check *before* the start had already said no server was
+running, so whatever answers at exit is what this run put there, and it is
+killed. All of these are logged to `output.log`.
 
 The same applies to an [external tmux runtime](sandboxing.md): when
 `--resource-delegation-dir` (or its config/environment equivalent) points the
