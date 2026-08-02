@@ -78,6 +78,30 @@ func installTUITmuxRec(t *testing.T, delegationDir string, pids ...string) *tuiT
 	return rec
 }
 
+// TestTmuxServerOwnershipRequested pins the opt-in: taking over the tmux
+// server's lifetime happens only when the operator asked for it AND there is a
+// console to tie that lifetime to. Default-off is the point of the flag — a
+// daemon that quietly started killing agent panes on exit would be a surprising
+// upgrade — and --own-tmux-server without --tui has nothing to attach to.
+func TestTmuxServerOwnershipRequested(t *testing.T) {
+	cases := map[string]struct {
+		params serveParams
+		want   bool
+	}{
+		"neither flag":              {serveParams{}, false},
+		"tui alone stays hands-off": {serveParams{TUI: true}, false},
+		"flag without a console":    {serveParams{OwnTmuxServer: true}, false},
+		"both":                      {serveParams{TUI: true, OwnTmuxServer: true}, true},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := tmuxServerOwnershipRequested(&tc.params); got != tc.want {
+				t.Errorf("tmuxServerOwnershipRequested(%+v) = %v, want %v", tc.params, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestStartTUITmuxServer_StartsEmptyThenKills pins the whole `serve --tui`
 // tmux-server lifetime on a host with no server yet: the probe gets tmux's "no
 // server running", one invocation brings the server up and turns exit-empty off

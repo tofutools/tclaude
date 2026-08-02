@@ -26,6 +26,16 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
+// tmuxServerOwnershipRequested reports whether this daemon should tie the
+// tclaude tmux server's lifetime to its own — `--own-tmux-server`, which is off
+// by default and needs the console to attach that lifetime to. The flag without
+// --tui is inert (runServe says so on the way past) rather than an error: it is
+// the kind of thing that ends up in a shell alias or a unit file next to flags
+// that do apply, and refusing to start over it would be worse than ignoring it.
+func tmuxServerOwnershipRequested(p *serveParams) bool {
+	return p.TUI && p.OwnTmuxServer
+}
+
 // tuiTmuxServerArgs is the single tmux invocation that starts the server and
 // pins it there. Both commands deliberately run on ONE client connection: a
 // bare `start-server` in its own process leaves a server holding no sessions
