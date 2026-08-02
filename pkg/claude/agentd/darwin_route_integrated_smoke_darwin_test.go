@@ -210,6 +210,14 @@ func startDarwinRouteSmokeLaunch(t *testing.T, home, helper, role, convID, agent
 	ready := filepath.Join(control, "ready")
 	stop := filepath.Join(control, "stop")
 	endpoint := filepath.Join(control, "endpoint")
+	snapshot := sandboxpolicy.EmptySnapshot()
+	// Route-capable Seatbelt launches must carry an actual isolated floor. A
+	// plain tclaude-layer request otherwise remains host-open and is correctly
+	// refused by the route-slot renderer.
+	snapshot.Effective.NetworkAccess = sandboxpolicy.NetworkAccessNone
+	snapshot.Effective.Network = &sandboxpolicy.NetworkRules{Mode: sandboxpolicy.AccessModeClosed}
+	snapshotPath, snapshotDigest, err := sandboxpolicy.WriteSnapshotFile(control, snapshot)
+	require.NoError(t, err)
 
 	original := harness.MustGet(harness.DefaultName)
 	replacement := *original
@@ -223,7 +231,8 @@ func startDarwinRouteSmokeLaunch(t *testing.T, home, helper, role, convID, agent
 	cwd := filepath.Join(home, "work")
 	params := &session.NewParams{
 		ManagedLaunch: true, Harness: harness.DefaultName,
-		SandboxImpl:        string(sandboxpolicy.ImplementationTclaudeLayer),
+		SandboxImpl:         string(sandboxpolicy.ImplementationTclaudeLayer),
+		SandboxSnapshotPath: snapshotPath, SandboxSnapshotDigest: snapshotDigest,
 		DarwinRouteCapable: true, DarwinRouteAgentID: agentID,
 		SessionID: convID, Dir: cwd, Detached: true,
 	}
@@ -298,6 +307,20 @@ func darwinRouteSmokePort(t *testing.T, endpoint string) int {
 	return port
 }
 
+func assertDarwinRouteSmokeSlotReleased(t *testing.T, slot int) {
+	t.Helper()
+	d, err := db.Open()
+	require.NoError(t, err)
+	var claims int
+	require.NoError(t, d.QueryRow(
+		"SELECT COUNT(*) FROM darwin_route_slot_claims WHERE slot = ?", slot,
+	).Scan(&claims))
+	require.Zero(t, claims, "reaped consumer slot must have no durable claim")
+	listener, err := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(slot)))
+	require.NoError(t, err, "reaped consumer listener must release its exact slot")
+	require.NoError(t, listener.Close())
+}
+
 func serveDarwinRouteSmoke(t *testing.T, handler http.Handler, method, path, convID string, body any) (*httptest.ResponseRecorder, map[string]any) {
 	t.Helper()
 	req := testharness.JSONRequest(t, method, path, body)
@@ -327,6 +350,9 @@ func TestDarwinRouteCapabilityIntegratedSmoke(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	t.Setenv("TMUX", "")
+	// One slot per launch keeps the exact claim/listener we observe below
+	// unambiguous while preserving the production allocator and RunNew path.
+	t.Setenv("TCLAUDE_DARWIN_ROUTE_SLOT_COUNT", "1")
 	work := filepath.Join(home, "work")
 	require.NoError(t, os.MkdirAll(work, 0o700))
 	db.ResetForTest()
@@ -341,9 +367,12 @@ func TestDarwinRouteCapabilityIntegratedSmoke(t *testing.T) {
 
 	const groupName = "tcl951-integrated-group"
 	const publisherConv = "77000000-0000-4000-8000-000000000951"
-	const consumerAConv = "77000000-0000-4000-8000-000000000952"
-	const consumerBConv = "77000000-0000-4000-8000-000000000953"
+	const withdrawalConv = "77000000-0000-4000-8000-000000000952"
+	const consumerAConv = "77000000-0000-4000-8000-000000000953"
+	const consumerBConv = "77000000-0000-4000-8000-000000000954"
 	publisherAgent, _, err := db.EnsureAgentForConv(publisherConv, "TCL-951 integrated smoke")
+	require.NoError(t, err)
+	withdrawalAgent, _, err := db.EnsureAgentForConv(withdrawalConv, "TCL-951 integrated smoke")
 	require.NoError(t, err)
 	consumerAAgent, _, err := db.EnsureAgentForConv(consumerAConv, "TCL-951 integrated smoke")
 	require.NoError(t, err)
@@ -351,7 +380,7 @@ func TestDarwinRouteCapabilityIntegratedSmoke(t *testing.T) {
 	require.NoError(t, err)
 	groupID, err := db.CreateAgentGroup(groupName, "TCL-951 integrated Seatbelt route evidence")
 	require.NoError(t, err)
-	for _, conv := range []string{publisherConv, consumerAConv, consumerBConv} {
+	for _, conv := range []string{publisherConv, withdrawalConv, consumerAConv, consumerBConv} {
 		require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: groupID, ConvID: conv}))
 	}
 	group, err := db.GetAgentGroupByID(groupID)
@@ -366,7 +395,7 @@ func TestDarwinRouteCapabilityIntegratedSmoke(t *testing.T) {
 	reaper.Tick()
 	pubReady := waitDarwinRouteSmokeFile(t, publisher.ready, "publisher:seatbelt-ready:neighbor-denied")
 	t.Logf("TCL-951 integrated publisher readiness: %s", pubReady)
-	consumerA := startDarwinRouteSmokeLaunch(t, home, helper, "consumer", consumerAConv, consumerAAgent)
+	withdrawal := startDarwinRouteSmokeLaunch(t, home, helper, "consumer", withdrawalConv, withdrawalAgent)
 	reaper.Tick()
 
 	handler := BuildHandlerForTest()
@@ -379,63 +408,105 @@ func TestDarwinRouteCapabilityIntegratedSmoke(t *testing.T) {
 
 	// A consumer that selects a group it does not belong to is refused by the
 	// production M1 API before the Darwin adapter can allocate a listener.
-	rec, _ = serveDarwinRouteSmoke(t, handler, http.MethodPost, "/v1/routes/open", consumerAConv, map[string]any{
-		"route_id": routeID, "group": "tcl951-wrong-group", "launch_generation": consumerA.gen,
+	rec, _ = serveDarwinRouteSmoke(t, handler, http.MethodPost, "/v1/routes/open", withdrawalConv, map[string]any{
+		"route_id": routeID, "group": "tcl951-wrong-group", "launch_generation": withdrawal.gen,
 	})
 	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
-	rec, leaseA := serveDarwinRouteSmoke(t, handler, http.MethodPost, "/v1/routes/open", consumerAConv, map[string]any{
-		"route_id": routeID, "group": groupName, "launch_generation": consumerA.gen,
+	rec, leaseWithdrawal := serveDarwinRouteSmoke(t, handler, http.MethodPost, "/v1/routes/open", withdrawalConv, map[string]any{
+		"route_id": routeID, "group": groupName, "launch_generation": withdrawal.gen,
 	})
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
-	endpointA := leaseA["endpoint"].(string)
-	require.Contains(t, consumerA.launch.Slots, darwinRouteSmokePort(t, endpointA), "adapter listener must use the consumer's exact launch pool")
-	require.NoError(t, os.WriteFile(consumerA.endpoint, []byte(endpointA), 0o600))
-	waitDarwinRouteSmokeFile(t, consumerA.ready, "consumer:opaque-exchange-ready")
+	endpointWithdrawal := leaseWithdrawal["endpoint"].(string)
+	require.Contains(t, withdrawal.launch.Slots, darwinRouteSmokePort(t, endpointWithdrawal), "adapter listener must use the consumer's exact launch pool")
+	require.NoError(t, os.WriteFile(withdrawal.endpoint, []byte(endpointWithdrawal), 0o600))
+	waitDarwinRouteSmokeFile(t, withdrawal.ready, "consumer:opaque-exchange-ready")
 
 	rec, _ = serveDarwinRouteSmoke(t, handler, http.MethodDelete, "/v1/routes/"+routeID, publisherConv, nil)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	waitDarwinRouteSmokeFile(t, consumerA.ready, "consumer:endpoint-closed")
+	waitDarwinRouteSmokeFile(t, withdrawal.ready, "consumer:endpoint-closed")
 	require.Eventually(t, func() bool { return len(routeAdapterLeaseIDs()) == 0 }, 5*time.Second, 50*time.Millisecond)
-	stopDarwinRouteSmokeLaunch(t, consumerA, reaper)
-	assertDarwinRouteSmokeLaunchClosed(t, consumerA)
+	stopDarwinRouteSmokeLaunch(t, withdrawal, reaper)
+	assertDarwinRouteSmokeLaunchClosed(t, withdrawal)
 
-	// The consumer's idle SessionEnd/reaper path released its exact claim.
-	consumerB := startDarwinRouteSmokeLaunch(t, home, helper, "consumer", consumerBConv, consumerBAgent)
+	// Consumer A is intentionally killed while its route remains published.
+	// This is the idle SessionEnd/reaper path whose exact claim and listener
+	// must disappear without disturbing the publisher's unrelated claim.
+	consumerA := startDarwinRouteSmokeLaunch(t, home, helper, "consumer", consumerAConv, consumerAAgent)
 	reaper.Tick()
-
-	// Re-publish on the still-live publisher and leave this route to the
-	// publisher death path. The consumer must observe closure after reaping.
-	rec, routeB := serveDarwinRouteSmoke(t, handler, http.MethodPost, "/v1/routes/publish", publisherConv, map[string]any{
-		"group": groupName, "name": "publisher-death", "target": target, "launch_generation": publisher.gen,
+	rec, routeIdle := serveDarwinRouteSmoke(t, handler, http.MethodPost, "/v1/routes/publish", publisherConv, map[string]any{
+		"group": groupName, "name": "idle-consumer", "target": target, "launch_generation": publisher.gen,
 	})
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
-	routeBID := routeB["id"].(string)
-	rec, leaseB := serveDarwinRouteSmoke(t, handler, http.MethodPost, "/v1/routes/open", consumerBConv, map[string]any{
-		"route_id": routeBID, "group": groupName, "launch_generation": consumerB.gen,
+	idleRouteID := routeIdle["id"].(string)
+	rec, leaseA := serveDarwinRouteSmoke(t, handler, http.MethodPost, "/v1/routes/open", consumerAConv, map[string]any{
+		"route_id": idleRouteID, "group": groupName, "launch_generation": consumerA.gen,
 	})
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
-	endpointB := leaseB["endpoint"].(string)
-	require.Contains(t, consumerB.launch.Slots, darwinRouteSmokePort(t, endpointB), "reused adapter listener must use the new consumer's exact launch pool")
-	require.NoError(t, os.WriteFile(consumerB.endpoint, []byte(endpointB), 0o600))
-	waitDarwinRouteSmokeFile(t, consumerB.ready, "consumer:opaque-exchange-ready")
+	endpointA := leaseA["endpoint"].(string)
+	consumerASlot := darwinRouteSmokePort(t, endpointA)
+	require.Contains(t, consumerA.launch.Slots, consumerASlot, "adapter listener must use consumer A's exact launch pool")
+	require.NoError(t, os.WriteFile(consumerA.endpoint, []byte(endpointA), 0o600))
+	waitDarwinRouteSmokeFile(t, consumerA.ready, "consumer:opaque-exchange-ready")
 	// Kill the now-idle consumer while the route remains published. Its real
 	// SessionEnd/reaper transaction must close the exact lease/listener and
 	// release the launch claim without withdrawing the publisher route.
-	stopDarwinRouteSmokeLaunch(t, consumerB, reaper)
-	assertDarwinRouteSmokeLaunchClosed(t, consumerB)
-	leaseBRow, err := db.GetAgentRouteLease(leaseB["id"].(string))
+	stopDarwinRouteSmokeLaunch(t, consumerA, reaper)
+	assertDarwinRouteSmokeLaunchClosed(t, consumerA)
+	assertDarwinRouteSmokeSlotReleased(t, consumerASlot)
+	leaseARow, err := db.GetAgentRouteLease(leaseA["id"].(string))
 	require.NoError(t, err)
-	require.Equal(t, db.RouteLeaseClosed, leaseBRow.State)
-	routeBRow, err := db.GetAgentRoute(routeBID)
+	require.Equal(t, db.RouteLeaseClosed, leaseARow.State)
+	idleRouteRow, err := db.GetAgentRoute(idleRouteID)
 	require.NoError(t, err)
-	require.Equal(t, db.RouteStateReady, routeBRow.State)
+	require.Equal(t, db.RouteStateReady, idleRouteRow.State)
 	require.Eventually(t, func() bool { return len(routeAdapterLeaseIDs()) == 0 }, 5*time.Second, 50*time.Millisecond)
+	publisherStillActive, err := db.GetDarwinRouteLaunch(publisher.agentID, publisher.convID, publisher.gen)
+	require.NoError(t, err)
+	require.Equal(t, db.DarwinRouteLaunchActive, publisherStillActive.State, "idle consumer cleanup must retain unrelated publisher claim")
 
+	// Consumer B is launched only after A's exact slot is released. Its real
+	// adapter endpoint must use B's exact newly claimed pool and transfer bytes
+	// before the publisher-death assertion below.
+	consumerB := startDarwinRouteSmokeLaunch(t, home, helper, "consumer", consumerBConv, consumerBAgent)
+	reaper.Tick()
+	rec, routeDeath := serveDarwinRouteSmoke(t, handler, http.MethodPost, "/v1/routes/publish", publisherConv, map[string]any{
+		"group": groupName, "name": "publisher-death", "target": target, "launch_generation": publisher.gen,
+	})
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	deathRouteID := routeDeath["id"].(string)
+	rec, leaseB := serveDarwinRouteSmoke(t, handler, http.MethodPost, "/v1/routes/open", consumerBConv, map[string]any{
+		"route_id": deathRouteID, "group": groupName, "launch_generation": consumerB.gen,
+	})
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	endpointB := leaseB["endpoint"].(string)
+	require.Contains(t, consumerB.launch.Slots, darwinRouteSmokePort(t, endpointB), "consumer B adapter listener must use its exact launch pool")
+	require.NoError(t, os.WriteFile(consumerB.endpoint, []byte(endpointB), 0o600))
+	waitDarwinRouteSmokeFile(t, consumerB.ready, "consumer:opaque-exchange-ready")
+	t.Logf("TCL-951 exact slot release/reuse: consumerA=%d released; consumerB=%d exact listener active", consumerASlot, darwinRouteSmokePort(t, endpointB))
+
+	// The endpoint is still live here: only now is the publisher session
+	// stopped/reaped, so closure is attributable to publisher death rather than
+	// an earlier consumer withdrawal or idle-consumer cleanup.
 	stopDarwinRouteSmokeLaunch(t, publisher, reaper)
 	assertDarwinRouteSmokeLaunchClosed(t, publisher)
-	rec, routeView := serveDarwinRouteSmoke(t, handler, http.MethodGet, "/v1/routes/"+routeBID, consumerBConv, nil)
+	assertDarwinRouteSmokeSlotReleased(t, publisher.launch.Slots[0])
+	waitDarwinRouteSmokeFile(t, consumerB.ready, "consumer:endpoint-closed")
+	rec, routeView := serveDarwinRouteSmoke(t, handler, http.MethodGet, "/v1/routes/"+deathRouteID, consumerBConv, nil)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	require.Equal(t, db.RouteStatePublisherLost, routeView["state"])
+	deathLeaseRow, err := db.GetAgentRouteLease(leaseB["id"].(string))
+	require.NoError(t, err)
+	require.Equal(t, db.RouteLeaseClosed, deathLeaseRow.State)
+	require.Eventually(t, func() bool {
+		conn, dialErr := net.DialTimeout("tcp4", endpointB, 250*time.Millisecond)
+		if dialErr == nil {
+			_ = conn.Close()
+			return false
+		}
+		return true
+	}, 5*time.Second, 50*time.Millisecond, "publisher death must close/refuse the live consumer endpoint")
+	stopDarwinRouteSmokeLaunch(t, consumerB, reaper)
+	assertDarwinRouteSmokeLaunchClosed(t, consumerB)
 
 	require.Eventually(t, func() bool {
 		darwinRouteAdapterState.Lock()
