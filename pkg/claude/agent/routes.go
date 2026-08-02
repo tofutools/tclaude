@@ -65,7 +65,7 @@ type routeListCLI struct {
 	GroupID         int64           `json:"group_id,omitempty"`
 	Group           string          `json:"group,omitempty"`
 	GroupGeneration int64           `json:"group_generation,omitempty"`
-	Routes          []routeCLI      `json:"routes,omitempty"`
+	Routes          []routeCLI      `json:"routes"`
 	Groups          []routeGroupCLI `json:"groups,omitempty"`
 }
 
@@ -306,7 +306,7 @@ func routesCloseCmd() *cobra.Command {
 	return boa.CmdT[routesCloseParams]{
 		Use:         "close <route>",
 		Short:       "Close a consumer lease",
-		Long:        "Closes the current consumer lease. Pass the lease ID printed by routes open, or a route reference together with --group. Publisher withdrawal remains an explicit API operation and is not performed by this command.",
+		Long:        "Closes the caller's own route or consumer lease. Pass the lease ID printed by routes open, or a route reference together with --group. The daemon decides whether the caller owns the published route or an open consumer lease.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *routesCloseParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Group).SetAlternativesFunc(completeGroupNames)
@@ -335,14 +335,36 @@ func runRoutesClose(p *routesCloseParams, stdout, stderr io.Writer) int {
 	leaseID := ref
 	var route routeCLI
 	if !strings.HasPrefix(ref, "rlease_") {
-		if group == "" {
-			fmt.Fprintln(stderr, "Error: --group is required when closing a route reference")
-			return rcInvalidArg
-		}
 		var rc int
-		_, route, rc = resolveRouteCLIReference(ref, group, stderr)
+		if strings.HasPrefix(ref, "rte_") {
+			_, route, rc = resolveRouteCLIReference(ref, group, stderr)
+		} else {
+			if group == "" {
+				fmt.Fprintln(stderr, "Error: --group is required when closing a route reference")
+				return rcInvalidArg
+			}
+			_, route, rc = resolveRouteCLIReference(ref, group, stderr)
+		}
 		if rc != rcOK {
 			return rc
+		}
+		var withdrawn routeCLI
+		if err := DaemonRequest(http.MethodDelete, "/v1/routes/"+url.PathEscape(route.ID), nil, &withdrawn, DaemonOpts{}); err == nil {
+			if p.JSON {
+				return writeRouteJSON(stdout, withdrawn)
+			}
+			friendly := withdrawn.Reference
+			if friendly == "" {
+				friendly = route.Reference
+			}
+			fmt.Fprintf(stdout, "Closed published route %s.\n", friendly)
+			return rcOK
+		} else if !routeCloseMayFallBackToLease(err) {
+			fmt.Fprintf(stderr, "Error: %v\n", err)
+			return MapDaemonErrorToRC(err)
+		}
+		if group == "" {
+			group = route.Group
 		}
 		var leases struct {
 			Leases []routeLeaseCLI `json:"leases"`
@@ -377,6 +399,14 @@ func runRoutesClose(p *routesCloseParams, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stdout, "Closed route lease %s.\n", lease.ID)
 	return rcOK
+}
+
+func routeCloseMayFallBackToLease(err error) bool {
+	de, ok := err.(*DaemonError)
+	if !ok {
+		return false
+	}
+	return de.Code == "route_not_owner" || de.Code == "route_permission"
 }
 
 func routeListPath(group string) string {

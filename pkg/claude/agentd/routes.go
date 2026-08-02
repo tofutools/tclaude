@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -507,8 +509,8 @@ func handleRoutePublish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := strings.TrimSpace(body.Name)
-	if name == "" || len(name) > 128 || strings.ContainsAny(name, "/\r\n") {
-		writeRouteError(w, http.StatusBadRequest, "route_invalid_name", "route name must be 1–128 characters without slash or newline")
+	if name == "" || len(name) > 128 || !utf8.ValidString(name) || strings.ContainsRune(name, '/') || strings.IndexFunc(name, unicode.IsControl) >= 0 {
+		writeRouteError(w, http.StatusBadRequest, "route_invalid_name", "route name must be 1–128 bytes without slash or control characters")
 		return
 	}
 	if strings.TrimSpace(body.Target) == "" {

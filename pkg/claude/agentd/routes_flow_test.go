@@ -3,6 +3,7 @@ package agentd_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +17,42 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/routebroker"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
+
+func TestRoutesList_OmittedGroupRefusesAmbiguousAgentSelection(t *testing.T) {
+	f := newFlow(t)
+	const caller = "route-list-ambiguous"
+	f.HaveConvWithTitle(caller, "caller")
+	f.HaveGroup("routes-alpha")
+	f.HaveGroup("routes-beta")
+	f.HaveMember("routes-alpha", caller)
+	f.HaveMember("routes-beta", caller)
+
+	rec, body := serveRouteAgent(t, f, http.MethodGet, "/v1/routes", caller, nil)
+	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+	require.Equal(t, "ambiguous", body["code"])
+	require.Contains(t, body["error"], "routes-alpha")
+	require.Contains(t, body["error"], "routes-beta")
+}
+
+func TestRoutesPublish_ResponseCarriesFriendlyAndStableReferences(t *testing.T) {
+	f := newFlow(t)
+	const publisher = "route-reference-publisher"
+	f.HaveConvWithTitle(publisher, "publisher")
+	f.HaveGroup("route-reference-group")
+	f.HaveMember("route-reference-group", publisher)
+	g, err := db.GetAgentGroupByName("route-reference-group")
+	require.NoError(t, err)
+	require.NoError(t, db.ReplaceAgentGroupPermissions(g.ID, []string{agentd.PermRoutesPublish}, "test"))
+	agentID, err := db.AgentIDForConv(publisher)
+	require.NoError(t, err)
+
+	rec, route := serveRouteAgent(t, f, http.MethodPost, "/v1/routes/publish", publisher, map[string]any{
+		"group": "route-reference-group", "name": "api", "target": "tcp://127.0.0.1:43127",
+	})
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	require.Equal(t, agentID+"/api", route["reference"])
+	require.Equal(t, fmt.Sprintf("%d/%s/api", g.ID, agentID), route["stable_reference"])
+}
 
 func serveRouteAgent(t *testing.T, f *testharness.Flow, method, path, convID string, body any) (*httptest.ResponseRecorder, map[string]any) {
 	t.Helper()
