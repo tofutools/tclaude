@@ -727,10 +727,13 @@ func handleRouteAction(w http.ResponseWriter, r *http.Request, route *db.AgentRo
 			writeRouteError(w, http.StatusConflict, "route_adapter", err.Error())
 			return
 		}
-		view := routeLeaseViewFor(lease)
-		if enabled {
-			view.Endpoint = endpoint
+		if enabled && strings.TrimSpace(endpoint) != "" {
+			// Darwin may have a usable listener before the sibling helper's
+			// asynchronous status callback. Publish it through the same monotonic
+			// state machine so subsequent lease reads agree with this response.
+			_ = setRouteConsumerEndpointReady(lease.ID, endpoint)
 		}
+		view := routeLeaseViewFor(lease)
 		writeJSON(w, http.StatusCreated, view)
 	case "withdraw":
 		convID, agentID, ok := requireRouteCapability(w, r, g, PermRoutesPublish)
