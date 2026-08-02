@@ -218,6 +218,25 @@ func tclaudeLayerCommand(
 	return relay + engine + " -- " + command, nil
 }
 
+func tclaudeLayerCommandWithRouteSlots(
+	binary string,
+	phase0WriteDirs []string,
+	privateWriteDirs []TclaudeLayerPrivateWriteDir,
+	finalHideDirs []string,
+	readOnlyBinds []TclaudeLayerReadOnlyBind,
+	socketPaths []string,
+	plan sandboxpolicy.MountPlan,
+	routeSlots []int,
+	harnessCommand string,
+) (string, error) {
+	if len(routeSlots) != 0 {
+		return "", fmt.Errorf("Darwin route slots are unsupported on Linux")
+	}
+	return tclaudeLayerCommand(
+		binary, phase0WriteDirs, privateWriteDirs, finalHideDirs,
+		readOnlyBinds, socketPaths, plan, harnessCommand)
+}
+
 // tclaudeLayerEnginePrefix contributes the supervisor flag for whichever
 // filtering engine this plan deploys, and nothing when it deploys none.
 //

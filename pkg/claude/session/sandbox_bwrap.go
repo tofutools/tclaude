@@ -48,6 +48,9 @@ type TclaudeLayerLaunchContract struct {
 	// pre-engine behavior byte for byte. Whether the selection deploys anything
 	// is decided by sandboxpolicy.DeployedNetworkEngine, never here.
 	NetworkEngine sandboxpolicy.NetworkEngine `json:"network_engine,omitempty"`
+	// DarwinRouteSlots is the exact bounded TCP pool admitted by a
+	// route-capable Darwin launch. It has no effect on Linux.
+	DarwinRouteSlots []int `json:"darwin_route_slots,omitempty"`
 }
 
 type TclaudeLayerOpenCodeControl struct {
@@ -106,6 +109,9 @@ type TclaudeLayerLaunchInput struct {
 	// contract field of the same name; production callers leave it unset until
 	// the selection surface exists.
 	NetworkEngine sandboxpolicy.NetworkEngine
+	// DarwinRouteSlots is populated only by the route-capable Darwin launch
+	// seam. Registry authority and leases remain in agentd.
+	DarwinRouteSlots []int
 }
 
 // tclaudeLayerContractNetworkEngine derives the launch contract's engine from
@@ -181,6 +187,9 @@ func TclaudeLayerNetworkEngine(
 // renderer consumes. Callers may persist the result and re-render it later
 // without consulting launch-time UI or profile-registry state.
 func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLaunchSpec, error) {
+	if err := ValidateDarwinRouteSlots(input.DarwinRouteSlots); err != nil {
+		return TclaudeLayerLaunchSpec{}, err
+	}
 	cwd := canonicalSandboxPath(input.Cwd)
 	if cwd == "" {
 		return TclaudeLayerLaunchSpec{}, fmt.Errorf("tclaude-layer launch cwd %q is not an absolute canonical path", input.Cwd)
@@ -296,6 +305,7 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 		WriteDirs:         contractWriteDirs,
 		ProfileFilesystem: profileFilesystem,
 		OpenCodeControl:   input.OpenCodeControl,
+		DarwinRouteSlots:  append([]int(nil), input.DarwinRouteSlots...),
 	}
 	contract.NetworkEngine, err = tclaudeLayerContractNetworkEngine(effective, input)
 	if err != nil {
@@ -938,6 +948,22 @@ func WrapTclaudeLayerSpec(
 		tclaudeLayerSpecRenderInput(spec)
 	if err != nil {
 		return "", err
+	}
+	if len(spec.Contract.DarwinRouteSlots) > 0 {
+		if runtime.GOOS != "darwin" {
+			return "", fmt.Errorf("Darwin route slots are unsupported on %s", runtime.GOOS)
+		}
+		return tclaudeLayerCommandWithRouteSlots(
+			binary,
+			phase0WriteDirs,
+			privateWriteDirs,
+			finalHideDirs,
+			readOnlyBinds,
+			socketPaths,
+			plan,
+			spec.Contract.DarwinRouteSlots,
+			harnessCommand,
+		)
 	}
 	return tclaudeLayerCommand(
 		binary,
