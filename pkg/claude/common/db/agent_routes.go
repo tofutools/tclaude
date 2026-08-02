@@ -151,6 +151,48 @@ func ListAgentRoutes(groupID int64) ([]*AgentRoute, error) {
 	return out, rows.Err()
 }
 
+// ListAgentRoutesBatch returns the route registry rows grouped by active
+// group. This keeps the dashboard's read-only route poll to one bounded query
+// rather than one query per group.
+func ListAgentRoutesBatch(groupIDs []int64) (map[int64][]*AgentRoute, error) {
+	out := make(map[int64][]*AgentRoute, len(groupIDs))
+	if len(groupIDs) == 0 {
+		return out, nil
+	}
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	placeholders := make([]string, len(groupIDs))
+	args := make([]any, len(groupIDs))
+	for i, groupID := range groupIDs {
+		placeholders[i] = "?"
+		args[i] = groupID
+	}
+	rows, err := d.Query(`SELECT r.id, r.group_id, g.name, r.publisher_agent_id,
+		r.publisher_conv_id, r.publisher_launch_generation, r.group_generation,
+		r.name, r.transport, r.target, r.state, r.created_at, r.withdrawn_at,
+		r.withdraw_reason
+		FROM agent_routes r JOIN agent_groups g ON g.id = r.group_id
+		WHERE r.group_id IN (`+strings.Join(placeholders, ",")+
+		`) ORDER BY r.group_id, r.created_at, r.id`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		route, scanErr := scanAgentRoute(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		out[route.GroupID] = append(out[route.GroupID], route)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // WithdrawAgentRoute is owner-scoped and idempotent for an already withdrawn
 // route. It also closes all outstanding leases so a withdrawn route cannot
 // leave stale consumer authority behind.
@@ -401,6 +443,55 @@ func ListAgentRouteLeases(groupID int64, consumerAgentID, consumerConvID string)
 		out = append(out, &lease)
 	}
 	return out, rows.Err()
+}
+
+// ListAgentRouteLeasesBatch returns every lease grouped by route group. It is
+// intentionally a read-only, bounded companion to ListAgentRouteLeases for
+// operator surfaces that need to show the full route topology. The caller
+// supplies the active group IDs, so archived/unrelated route history is never
+// pulled into a polling payload.
+func ListAgentRouteLeasesBatch(groupIDs []int64) (map[int64][]*AgentRouteLease, error) {
+	out := make(map[int64][]*AgentRouteLease, len(groupIDs))
+	if len(groupIDs) == 0 {
+		return out, nil
+	}
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	placeholders := make([]string, len(groupIDs))
+	args := make([]any, len(groupIDs))
+	for i, groupID := range groupIDs {
+		placeholders[i] = "?"
+		args[i] = groupID
+	}
+	rows, err := d.Query(`SELECT r.group_id, l.id, l.route_id, l.consumer_agent_id,
+		l.consumer_conv_id, l.consumer_launch_generation, l.group_generation,
+		l.state, l.opened_at, l.closed_at
+		FROM agent_route_leases l JOIN agent_routes r ON r.id = l.route_id
+		WHERE r.group_id IN (`+strings.Join(placeholders, ",")+
+		`) ORDER BY r.group_id, l.opened_at, l.id`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var groupID int64
+		var lease AgentRouteLease
+		var openedAt, closedAt dbTimestamp
+		if err := rows.Scan(&groupID, &lease.ID, &lease.RouteID, &lease.ConsumerAgentID,
+			&lease.ConsumerConvID, &lease.ConsumerLaunchGeneration, &lease.GroupGeneration,
+			&lease.State, &openedAt, &closedAt); err != nil {
+			return nil, err
+		}
+		lease.OpenedAt = openedAt.Time()
+		lease.ClosedAt = closedAt.Time()
+		out[groupID] = append(out[groupID], &lease)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func CloseAgentRouteLease(leaseID, consumerAgentID, consumerConvID string) error {

@@ -298,6 +298,9 @@
 </nav>
 <main>
   <section id="tab-groups" class="active">
+    <!-- Groups keeps the compact roster as the default view; the dedicated
+         Route map island owns its read-only graph/list/detail surface. -->
+    <div id="groups-route-map-root"></div>
     <div class="filter-bar">
       <!-- Preact owns the Groups query, visibility menu and column controls.
            display:contents keeps their existing filter-bar flex geometry. -->

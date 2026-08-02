@@ -84,7 +84,13 @@ function activeLocationFromDOM() {
   const navBtn = $$('nav [data-tab]').find(b => b.classList.contains('active'));
   const tab = navBtn ? navBtn.dataset.tab : DEFAULT_TAB;
   const loc = { tab };
-  if (tab === 'access') {
+  if (tab === 'groups') {
+    const island = featureState('groups');
+    if (island?.subview?.value === 'routes') {
+      loc.subtab = 'routes';
+      if (island.routeSelection?.value) loc.selection = island.routeSelection.value;
+    }
+  } else if (tab === 'access') {
     const sub = $$('#tab-access .access-subtab').find(b => b.classList.contains('active'));
     if (sub) loc.subtab = sub.dataset.subtab;
   } else if (tab === 'jobs') {
@@ -137,6 +143,12 @@ function requestJobsLocation(loc) {
   }));
 }
 
+function requestGroupsLocation(loc) {
+  document.dispatchEvent(new CustomEvent('tclaude:restore-location', {
+    detail: { location: normalizeLocation(loc) },
+  }));
+}
+
 // activate brings `loc` forward in the UI by clicking the matching controls,
 // under the `applying` guard so the resulting clicks don't re-enter the
 // observer. Going through the real nav button's .click() (rather than poking
@@ -159,6 +171,8 @@ function activate(loc) {
       requestTerminalsLocation(loc);
     } else if (loc.tab === 'jobs') {
       requestJobsLocation(loc);
+    } else if (loc.tab === 'groups') {
+      requestGroupsLocation(loc);
     } else if (loc.tab === 'processes') {
       // Processes restores through its island rather than a subtab click, for
       // two reasons. A click can only pick a subtab — it can never reopen the

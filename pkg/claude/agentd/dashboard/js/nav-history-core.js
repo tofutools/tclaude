@@ -51,6 +51,7 @@ export const KNOWN_TABS = new Set([
 // A second segment not listed here is dropped on parse (fall back to the tab's
 // default view) so a renamed/removed subtab degrades gracefully.
 export const KNOWN_SUBTABS = {
+  groups: new Set(['members', 'routes']),
   access: new Set(['permissions', 'slugs', 'sudo']),
   jobs: new Set(['exports', 'cron-jobs', 'standing-orders']),
   processes: new Set(['templates']),
@@ -61,6 +62,7 @@ export const KNOWN_SUBTABS = {
 //   - processes/templates/<template-id> — the template editor is open on it.
 // A selection parsed under any other tab/subtab is dropped.
 export const SELECTABLE_SUBTABS = {
+  groups: new Set(['routes']),
   processes: new Set(['templates']),
 };
 

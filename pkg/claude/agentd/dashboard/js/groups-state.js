@@ -175,6 +175,8 @@ export function createGroupsState({
   const memberEditor = signal(null);
   const addMemberDialog = signal(null);
   const standingOrdersDialog = signal(null);
+  const subview = signal('members');
+  const routeSelection = signal('');
   const renderRevision = signal(0);
   let initialized = false;
   let nextMemberEditorLaunchID = 0;
@@ -243,6 +245,12 @@ export function createGroupsState({
 
   function rerender() {
     renderRevision.value++;
+  }
+
+  function setSubview(value, selection = '') {
+    const next = value === 'routes' ? 'routes' : 'members';
+    subview.value = next;
+    routeSelection.value = next === 'routes' ? String(selection || '') : '';
   }
 
   function openMemberEditor(member, group, focus = 'title') {
@@ -342,9 +350,9 @@ export function createGroupsState({
 
   return Object.freeze({
     snapshot, query, visibility, viewOpen, memberEditor, addMemberDialog,
-    standingOrdersDialog, renderRevision,
+    standingOrdersDialog, subview, routeSelection, renderRevision,
     view, columnOptions, deviationCount,
-    initialize, publish, setQuery, setVisible, setColumnShown, rerender,
+    initialize, publish, setQuery, setVisible, setColumnShown, rerender, setSubview,
     openMemberEditor, closeMemberEditor,
     openAddMember, closeAddMember, optimisticAddMember,
     openStandingOrders, closeStandingOrders,
