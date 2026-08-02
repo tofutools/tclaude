@@ -218,8 +218,8 @@ func proxyEngineHarnessCarriageNotice(harnessName string) string {
 // on success passes silently. TestProxyEngineActivationIsScopedToItsEvidence
 // keeps it by asserting the record-to-cells coupling in BOTH directions over
 // every registered harness and both platforms, and by failing if either side of
-// that coupling has no subject at all. Darwin deliberately lists only the two
-// plain-CLI harnesses: OpenCode's server boundary needs separate evidence.
+// that coupling has no subject at all. OpenCode's Darwin row cites its distinct
+// agentd-owned server smoke rather than inheriting the plain-CLI evidence.
 var proxyEngineActivatedSmokes = map[string]map[string][]string{
 	"linux": {
 		DefaultName: {
@@ -251,8 +251,9 @@ var proxyEngineActivatedSmokes = map[string]map[string][]string{
 		},
 	},
 	"darwin": {
-		DefaultName: {"TestPinnedProxyHarnessCooperationDarwin"},
-		CodexName:   {"TestPinnedProxyHarnessCooperationDarwin"},
+		DefaultName:  {"TestPinnedProxyHarnessCooperationDarwin"},
+		CodexName:    {"TestPinnedProxyHarnessCooperationDarwin"},
+		OpenCodeName: {"TestOpenCodeProxyCooperationDarwin"},
 	},
 }
 

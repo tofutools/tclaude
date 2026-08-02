@@ -36,6 +36,71 @@ const (
 	openCodeDarwinProxyMarkerEnv     = "TCLAUDE_OPENCODE_DARWIN_PROXY_MARKER"
 )
 
+func TestOpenCodeServeExecUsesDarwinProxyServerBoundary(t *testing.T) {
+	previousResolve := resolveOpenCodeTclaudeLayer
+	previousWrap := wrapOpenCodeTclaudeLayer
+	previousBindWrap := wrapOpenCodeTclaudeLayerWithLoopbackBind
+	t.Cleanup(func() {
+		resolveOpenCodeTclaudeLayer = previousResolve
+		wrapOpenCodeTclaudeLayer = previousWrap
+		wrapOpenCodeTclaudeLayerWithLoopbackBind = previousBindWrap
+	})
+	resolveOpenCodeTclaudeLayer = func(
+		posture sandboxpolicy.NetworkPosture,
+		_ sandboxpolicy.RootPosture,
+		engine sandboxpolicy.NetworkEngine,
+	) (string, harness.LaunchOSSandbox, error) {
+		assert.Equal(t, sandboxpolicy.NetworkFiltered, posture)
+		assert.Equal(t, sandboxpolicy.NetworkEngineProxy, engine)
+		return "/usr/bin/sandbox-exec", harness.LaunchOSSandbox{}, nil
+	}
+	wrapOpenCodeTclaudeLayer = func(
+		string, session.TclaudeLayerLaunchSpec, string,
+	) (string, error) {
+		t.Fatal("Darwin's filtered proxy path must use the loopback-bind renderer")
+		return "", nil
+	}
+	capturedPort := 0
+	wrapOpenCodeTclaudeLayerWithLoopbackBind = func(
+		binary string,
+		_ session.TclaudeLayerLaunchSpec,
+		port int,
+		command string,
+	) (string, error) {
+		assert.Equal(t, "/usr/bin/sandbox-exec", binary)
+		assert.Contains(t, command, "--hostname 127.0.0.1")
+		capturedPort = port
+		return "wrapped-opencode-server", nil
+	}
+	spec := openCodeDarwinProxyServeTestSpec()
+
+	command, args, err := openCodeServeExec("/usr/bin/opencode", "43210", spec)
+	require.NoError(t, err)
+	assert.Equal(t, 43210, capturedPort)
+	assert.Equal(t, "sh", command)
+	assert.Equal(t, []string{"-c", "exec wrapped-opencode-server"}, args)
+
+	for _, port := range []string{"not-a-port", "0", "65536"} {
+		_, _, err = openCodeServeExec("/usr/bin/opencode", port, spec)
+		require.ErrorContains(t, err, "parse OpenCode loopback control port")
+	}
+}
+
+func openCodeDarwinProxyServeTestSpec() *session.TclaudeLayerLaunchSpec {
+	return &session.TclaudeLayerLaunchSpec{
+		Version: session.TclaudeLayerLaunchSpecVersion,
+		Effective: sandboxpolicy.EffectiveProfile{
+			Network: &sandboxpolicy.NetworkRules{
+				Mode:   sandboxpolicy.AccessModeList,
+				Engine: sandboxpolicy.NetworkEngineProxy,
+				Allow: []sandboxpolicy.NetworkAllowEntry{{
+					Domain: openCodeDarwinProxyOrigin, Ports: []int{443},
+				}},
+			},
+		},
+	}
+}
+
 // TestOpenCodeProxyCooperationDarwin is OpenCode's TCL-827 §8.2 test-7 arm.
 // It launches the pinned, agentd-owned OpenCode server through the shipped
 // Darwin filtering-proxy launcher and requires the production decision record

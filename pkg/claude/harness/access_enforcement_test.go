@@ -1045,7 +1045,9 @@ func TestOpenCodeLocalOnlyIntentIsRefusedWhereItCannotBeEnforced(t *testing.T) {
 		return row, planErr
 	}
 
-	// THE DEFECT: darwin OpenCode must refuse rather than widen to open.
+	// THE DEFECT: darwin OpenCode must refuse rather than widen to open. These
+	// shapes do not deploy the proxy, so activating that engine does not change
+	// their native-path refusal.
 	for _, tc := range []struct {
 		name string
 		axes sandboxpolicy.ResolvedAxes
@@ -1059,7 +1061,7 @@ func TestOpenCodeLocalOnlyIntentIsRefusedWhereItCannotBeEnforced(t *testing.T) {
 				"a local-only OpenCode list this platform cannot enforce must be refused, not widened to open")
 			// Discriminating, not merely "an error happened": the refusal must
 			// be THIS one, and must not offer the explicit-provider remedy,
-			// which does not help when the platform never activates the cells.
+			// which does not help on this native path.
 			assert.Contains(t, planErr.Error(), "unsupported_filtered_network_posture")
 			assert.Contains(t, planErr.Error(), "outbound network access fully open")
 			assert.NotContains(t, planErr.Error(), "explicit-provider OpenCode config")
@@ -1105,9 +1107,8 @@ func TestOpenCodeLocalOnlyIntentIsRefusedWhereItCannotBeEnforced(t *testing.T) {
 		})
 	}
 
-	// The two pinned plain-CLI harnesses now activate this general proxy shape
-	// on Darwin, while OpenCode retains the widen-to-open doctrine until its
-	// distinct server boundary has evidence.
+	// Every harness activates this general proxy shape on Darwin, with OpenCode
+	// backed by its distinct agentd-owned server smoke.
 	t.Run("darwin/non-local-intent activation follows evidence", func(t *testing.T) {
 		domainOnly := listOf(sandboxpolicy.NetworkAllowEntry{
 			Domain: "api.example.com", Ports: []int{443},
@@ -1121,7 +1122,9 @@ func TestOpenCodeLocalOnlyIntentIsRefusedWhereItCannotBeEnforced(t *testing.T) {
 		}
 		row, planErr := plan(t, MustGet(OpenCodeName), domainOnly, "darwin")
 		require.NoError(t, planErr)
-		assert.Equal(t, EnforceNone, row.NetworkList)
+		assert.Equal(t, EnforcePartial, row.NetworkList)
+		assert.Contains(t, row.NetworkListCondition,
+			OpenCodeFilteredExplicitProviderCaveat)
 	})
 
 	// The predicate answers the INTENT question, not the recognizer one. A

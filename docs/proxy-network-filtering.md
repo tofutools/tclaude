@@ -497,23 +497,39 @@ named CI smoke. Cells follow the activation record
 binary.
 
 Currently activated: **Claude Code 2.1.220, Codex 0.145.0 and OpenCode 1.18.6
-on Linux; Claude Code 2.1.220 and Codex 0.145.0 on Darwin.** The Linux
+on Linux and Darwin.** The Linux
 plain-CLI harnesses are backed by
 `TestPinnedProxyHarnessCooperation` and `TestPinnedProxyToolEgress`; Codex was
 activated one milestone after Claude Code, from the same runs rather than from
 new ones — the evidence was green from the first shard run, and what was missing
 was the record, which is the rule working rather than an exception to it.
 
-The two Darwin rows are backed by
+The two Darwin plain-CLI rows are backed by
 `TestPinnedProxyHarnessCooperationDarwin`. It invokes the built tclaude binary's
 shipped Darwin proxy launcher, runs each pinned harness with deliberately
 invalid credentials, observes the expected model origin in the production
 proxy's CONNECT decision log, and executes a deliberate undeclared CONNECT
 refusal. `TestPinnedProxyHarnessCooperationDarwinFailureControl` runs the same
 in-sandbox probe without the launcher and proves the evidence arm fails when
-the launcher-owned endpoint injection is absent. OpenCode remains unactivated
-on Darwin: its agentd-owned server boundary requires its own pinned smoke and
-does not inherit the plain-CLI evidence.
+the launcher-owned endpoint injection is absent.
+
+OpenCode's Darwin row is instead backed by
+`TestOpenCodeProxyCooperationDarwin` (green CI run `30725801280`, Seatbelt job
+`91437178424`). It starts pinned OpenCode 1.18.6 through the real agentd-owned
+server boundary and shipped Darwin proxy launcher, uses deliberately invalid
+provider credentials, and requires the production decision log to record an
+allowed HTTP CONNECT to `api.openai.com:443`. A distinct undeclared destination
+must be refused, so synthetic control traffic cannot stand in for the model
+origin. `TestOpenCodeProxyCooperationDarwinFailureControl` removes only the
+managed server's loopback bind carveout; the same server must then fail to start
+and cannot produce the model-origin decision. Both named tests and the driver's
+completion sentinel are anti-skip requirements in the Seatbelt CI job.
+
+That carveout permits OpenCode to bind its authenticated agentd-owned control
+endpoint on one loopback port while every other listener remains denied. It
+does not overcome Seatbelt's host-wide meaning of `localhost:PORT`: a same-port
+service on another address assigned to the Mac remains within the TCL-917
+limitation, so the activated aggregate row is still `Partial`, never `Full`.
 
 OpenCode (TCL-891) is backed by `TestOpenCodeProxyFloorCooperation`
 (smoke flow `40-opencode-floor`, green named run `30654121316`) plus the shared
@@ -565,8 +581,8 @@ would activate cells naming no evidence).
 
 The activation record is platform-keyed. Linux evidence cannot populate a
 Darwin row and the Darwin plain-CLI smoke cannot populate OpenCode's row. The
-record-to-cells test asserts both activated Darwin rows, the unactivated
-OpenCode row, and the TCL-917 aggregate `Partial` cap directly.
+record-to-cells test asserts all three activated Darwin rows, OpenCode's
+distinct smoke name, and the TCL-917 aggregate `Partial` cap directly.
 
 ### Darwin `NetworkList` is capped at Partial (TCL-917)
 
@@ -614,9 +630,11 @@ loopback-only list answers it in one call and does not depend on having found
 every branch. TCL-927 corrects the rating to `Partial` and attaches this
 scope as the selector detail and the row condition.
 
-Only OpenCode was genuinely `EnforceNone` on this path, for reasons of its own
-(no explicit provider to resolve a launch endpoint from); whether it should be
-activated at all is TCL-929.
+Before TCL-928, only OpenCode was genuinely `EnforceNone` on this path because
+its agentd-owned server boundary had no Darwin proxy-cooperation evidence. Its
+activated row still carries the explicit-provider caveat: the proxy can decide
+the destination at connect time, but a preset that names no provider still
+cannot resolve OpenCode's model transport for launch.
 
 **Not measured, named so silence is not read as evidence:** external *UDP*
 egress from the native path. It is unmeasured on the proxy floor too — that
