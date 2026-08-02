@@ -1,18 +1,23 @@
-//go:build !darwin
+//go:build !linux && !darwin
 
 package agentd
 
 import (
 	"context"
+	"errors"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/routebroker"
 )
 
-func routeAdapterPublish(context.Context, *db.AgentRoute) (bool, error) { return false, nil }
+var errGroupRoutesUnsupported = errors.New("group routes are unsupported on this platform; route activation is limited to Linux and Darwin")
+
+func routeAdapterPublish(context.Context, *db.AgentRoute) (bool, error) {
+	return true, errGroupRoutesUnsupported
+}
 
 func routeAdapterOpen(context.Context, *db.AgentRoute, *db.AgentRouteLease) (string, bool, error) {
-	return "", false, nil
+	return "", true, errGroupRoutesUnsupported
 }
 
 func routeAdapterCloseRoute(string)             {}

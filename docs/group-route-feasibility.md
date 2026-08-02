@@ -97,3 +97,16 @@ mesh networking out of the first contract.
 
 If either arm fails, revise the design record and downstream tickets before
 implementation.
+
+## M6 activation follow-on
+
+The feasibility probes above remain the lower-level boundary evidence. The
+cross-platform production activation cells and their disclosure contract are
+documented in [Group routes](group-routes.md) and run in the same workflow:
+`TestLinuxRouteCapabilityIntegratedSmoke` exercises Bubblewrap, the production
+agentd API, authenticated Unix relay, and `routeadapter`; the Darwin cell
+exercises `session.RunNew`, Seatbelt, exact slots, and the production adapter.
+Those cells assert the exact checked-out head and cover current-generation
+authority, negative route cases, sustained ordinary messaging, and lifecycle
+withdrawal. The dashboard Route map remains opt-in via
+`features.groups_route_map`.

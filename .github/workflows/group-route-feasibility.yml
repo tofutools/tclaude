@@ -7,6 +7,7 @@ on:
       - .github/workflows/group-route-feasibility.yml
       - scripts/group-route-feasibility/**
       - docs/group-route-feasibility.md
+      - docs/group-routes.md
       - pkg/claude/agentd/**
       - pkg/claude/common/db/**
       - pkg/claude/routeadapter/**
@@ -59,12 +60,32 @@ jobs:
           set -o pipefail
           scripts/group-route-feasibility/run.sh 2>&1 | tee "$RUNNER_TEMP/group-route-feasibility-linux.log"
 
+      - name: Run TCL-952 exact-head Linux production route smoke
+        shell: bash
+        env:
+          TCLAUDE_LINUX_ROUTE_CAPABILITY_SMOKE: "1"
+          EXPECTED_HEAD: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -o pipefail
+          go test ./pkg/claude/agentd \
+            -run '^TestLinuxRouteCapabilityIntegratedSmoke$' -count=1 -timeout 600s -v \
+            2>&1 | tee "$RUNNER_TEMP/tcl-952-linux-route-smoke.log"
+          grep -q -- '--- PASS: TestLinuxRouteCapabilityIntegratedSmoke' "$RUNNER_TEMP/tcl-952-linux-route-smoke.log"
+          grep -q 'TCL-952 Linux exact checked-out head:' "$RUNNER_TEMP/tcl-952-linux-route-smoke.log"
+          grep -q 'policy-floor:host-and-internet-denied' "$RUNNER_TEMP/tcl-952-linux-route-smoke.log"
+          grep -q 'TCL-952 Linux negative evidence:' "$RUNNER_TEMP/tcl-952-linux-route-smoke.log"
+          grep -q 'TCL-952 Linux sustained route evidence:' "$RUNNER_TEMP/tcl-952-linux-route-smoke.log"
+          grep -q 'TCL-952 Linux publisher-exit evidence:' "$RUNNER_TEMP/tcl-952-linux-route-smoke.log"
+          grep -q 'TCL-952 Linux evidence: POSITIVE' "$RUNNER_TEMP/tcl-952-linux-route-smoke.log"
+
       - name: Upload Linux evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: group-route-feasibility-linux
-          path: ${{ runner.temp }}/group-route-feasibility-linux.log
+          path: |
+            ${{ runner.temp }}/group-route-feasibility-linux.log
+            ${{ runner.temp }}/tcl-952-linux-route-smoke.log
 
   darwin:
     name: Darwin Seatbelt port-pool feasibility
@@ -99,7 +120,7 @@ jobs:
           set -o pipefail
           scripts/group-route-feasibility/run.sh 2>&1 | tee "$RUNNER_TEMP/group-route-feasibility-darwin.log"
 
-      - name: Run TCL-951 exact-head production route smoke
+      - name: Run TCL-952 exact-head Darwin production route smoke
         shell: bash
         env:
           TCLAUDE_DARWIN_ROUTE_CAPABILITY_SMOKE: "1"
@@ -108,11 +129,15 @@ jobs:
           set -o pipefail
           go test ./pkg/claude/agentd \
             -run '^TestDarwinRouteCapabilityIntegratedSmoke$' -count=1 -timeout 600s -v \
-            2>&1 | tee "$RUNNER_TEMP/tcl-951-darwin-route-smoke.log"
-          grep -q -- '--- PASS: TestDarwinRouteCapabilityIntegratedSmoke' "$RUNNER_TEMP/tcl-951-darwin-route-smoke.log"
-          grep -q 'TCL-951 integrated exact checked-out head:' "$RUNNER_TEMP/tcl-951-darwin-route-smoke.log"
-          grep -q 'TCL-951 integrated route evidence: POSITIVE' "$RUNNER_TEMP/tcl-951-darwin-route-smoke.log"
-          grep -q 'TCL-951 disclosure: Partial' "$RUNNER_TEMP/tcl-951-darwin-route-smoke.log"
+            2>&1 | tee "$RUNNER_TEMP/tcl-952-darwin-route-smoke.log"
+          grep -q -- '--- PASS: TestDarwinRouteCapabilityIntegratedSmoke' "$RUNNER_TEMP/tcl-952-darwin-route-smoke.log"
+          grep -q 'TCL-952 Darwin exact checked-out head:' "$RUNNER_TEMP/tcl-952-darwin-route-smoke.log"
+          grep -q 'publisher:policy-floor:internet-denied' "$RUNNER_TEMP/tcl-952-darwin-route-smoke.log"
+          grep -q 'publisher:policy-floor:host-' "$RUNNER_TEMP/tcl-952-darwin-route-smoke.log"
+          grep -q 'TCL-952 Darwin negative evidence:' "$RUNNER_TEMP/tcl-952-darwin-route-smoke.log"
+          grep -q 'TCL-952 Darwin sustained route evidence:' "$RUNNER_TEMP/tcl-952-darwin-route-smoke.log"
+          grep -q 'TCL-952 Darwin evidence: POSITIVE' "$RUNNER_TEMP/tcl-952-darwin-route-smoke.log"
+          grep -q 'TCL-952 disclosure: Partial' "$RUNNER_TEMP/tcl-952-darwin-route-smoke.log"
           grep -q 'TCL-947 Darwin evidence: POSITIVE' "$RUNNER_TEMP/group-route-feasibility-darwin.log"
           grep -q 'TCL-947 Darwin localhost: LIMITATION' "$RUNNER_TEMP/group-route-feasibility-darwin.log"
 
@@ -122,7 +147,7 @@ jobs:
           set -o pipefail
           go test ./pkg/claude/session \
             -run 'TestBuildTclaudeLayerLaunchSpec|TestSeatbeltProxyFloorCanCarveOneManagedServerBind' \
-            -count=1 -timeout 600s 2>&1 | tee "$RUNNER_TEMP/tcl-951-preserved-cells.log"
+            -count=1 -timeout 600s 2>&1 | tee "$RUNNER_TEMP/tcl-952-preserved-cells.log"
 
       - name: Run supplemental Darwin route contract and bridge cells
         shell: bash
@@ -130,7 +155,7 @@ jobs:
           set -o pipefail
           go test ./pkg/claude/agentd \
             -run '^TestDarwinRouteAdapter(RefusesMissingLaunchContracts|ProductionBridgeUsesExactContracts)$' \
-            -count=1 -timeout 600s -v 2>&1 | tee "$RUNNER_TEMP/tcl-951-route-authority.log"
+            -count=1 -timeout 600s -v 2>&1 | tee "$RUNNER_TEMP/tcl-952-route-authority.log"
 
       - name: Upload Darwin evidence
         if: always()
@@ -139,6 +164,6 @@ jobs:
           name: group-route-feasibility-darwin
           path: |
             ${{ runner.temp }}/group-route-feasibility-darwin.log
-            ${{ runner.temp }}/tcl-951-darwin-route-smoke.log
-            ${{ runner.temp }}/tcl-951-preserved-cells.log
-            ${{ runner.temp }}/tcl-951-route-authority.log
+            ${{ runner.temp }}/tcl-952-darwin-route-smoke.log
+            ${{ runner.temp }}/tcl-952-preserved-cells.log
+            ${{ runner.temp }}/tcl-952-route-authority.log

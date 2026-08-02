@@ -186,3 +186,19 @@ func routeEndpointRefusalDetail(err error) string {
 		return "route adapter attachment refused"
 	}
 }
+
+// Linux publishers and consumers attach through their namespace-local helper
+// after the durable route/lease row exists. There is no host-side endpoint to
+// allocate here; returning false keeps the API response in the pending state
+// until the helper reports its local listener through the authenticated
+// endpoint-status seam.
+func routeAdapterPublish(context.Context, *db.AgentRoute) (bool, error) { return false, nil }
+
+func routeAdapterOpen(context.Context, *db.AgentRoute, *db.AgentRouteLease) (string, bool, error) {
+	return "", false, nil
+}
+
+func routeAdapterCloseRoute(string)             {}
+func routeAdapterCloseLease(string)             {}
+func routeAdapterCloseAll()                     {}
+func routeAdapterBrokerEvent(routebroker.Event) {}

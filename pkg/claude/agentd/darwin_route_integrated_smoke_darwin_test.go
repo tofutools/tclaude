@@ -37,9 +37,11 @@ const (
 	darwinRouteSmokeHelperRun      = "^TestDarwinRouteSmokeChild$"
 	darwinRouteSmokeOpaque         = "tcl951-integrated-opaque"
 	darwinRouteSmokeProviderPort   = 45200
+	darwinRouteSmokeHostPort       = 45210
 	darwinRouteSmokePublisherSlot  = 45201
 	darwinRouteSmokeWithdrawalSlot = 45202
 	darwinRouteSmokeReusableSlot   = 45203
+	darwinRouteSmokeCount          = 96
 )
 
 // routeSmokeSpawner is the only fake in this cell. It replaces the external
@@ -107,6 +109,27 @@ func darwinRouteSmokePublisher(t *testing.T, ready, stop string) {
 		t.Fatalf("unreserved neighboring port %d was bindable inside Seatbelt", neighbor)
 	}
 	darwinRouteSmokeWrite(ready, fmt.Sprintf("publisher:seatbelt-ready:neighbor-denied:%d:pid=%d", neighbor, os.Getpid()))
+	hostConn, hostErr := net.DialTimeout("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(darwinRouteSmokeHostPort)), 300*time.Millisecond)
+	if hostConn != nil {
+		_ = hostConn.Close()
+	}
+	if hostErr == nil {
+		// This is the documented Darwin Partial boundary: Seatbelt cannot
+		// distinguish every same-host localhost destination from the exact
+		// route slots. Record it rather than treating it as a policy failure.
+		darwinRouteSmokeWrite(ready, "publisher:policy-floor:host-localhost-limitation")
+	} else {
+		darwinRouteSmokeWrite(ready, "publisher:policy-floor:host-denied")
+	}
+	internetConn, internetErr := net.DialTimeout("tcp4", "1.1.1.1:443", 300*time.Millisecond)
+	if internetConn != nil {
+		_ = internetConn.Close()
+	}
+	if internetErr == nil {
+		darwinRouteSmokeWrite(ready, "publisher:policy-floor:internet-reachable")
+		t.Fatal("Seatbelt route launch reached the Internet")
+	}
+	darwinRouteSmokeWrite(ready, "publisher:policy-floor:internet-denied")
 
 	go func() {
 		for {
@@ -116,9 +139,14 @@ func darwinRouteSmokePublisher(t *testing.T, ready, stop string) {
 			}
 			go func() {
 				defer conn.Close()
-				payload := make([]byte, len(darwinRouteSmokeOpaque))
-				if _, readErr := io.ReadFull(conn, payload); readErr == nil && string(payload) == darwinRouteSmokeOpaque {
-					_, _ = conn.Write([]byte("reply:" + darwinRouteSmokeOpaque))
+				for {
+					payload := make([]byte, len(darwinRouteSmokeOpaque))
+					if _, readErr := io.ReadFull(conn, payload); readErr != nil || string(payload) != darwinRouteSmokeOpaque {
+						return
+					}
+					if _, writeErr := conn.Write([]byte("reply:" + darwinRouteSmokeOpaque)); writeErr != nil {
+						return
+					}
 				}
 			}()
 		}
@@ -169,6 +197,21 @@ func darwinRouteSmokeConsumer(t *testing.T, ready, stop, endpointFile string) {
 		t.Fatal("unexpected route response")
 	}
 	darwinRouteSmokeWrite(ready, "consumer:opaque-exchange-ready:pid="+strconv.Itoa(os.Getpid()))
+	for i := 1; i < darwinRouteSmokeCount; i++ {
+		if _, err := conn.Write([]byte(darwinRouteSmokeOpaque)); err != nil {
+			darwinRouteSmokeWrite(ready, "consumer:sustained-write-failure:"+err.Error())
+			t.Fatal(err)
+		}
+		response := make([]byte, len("reply:")+len(darwinRouteSmokeOpaque))
+		if _, err := io.ReadFull(conn, response); err != nil {
+			darwinRouteSmokeWrite(ready, "consumer:sustained-reply-failure:"+err.Error())
+			t.Fatal(err)
+		}
+		if string(response) != "reply:"+darwinRouteSmokeOpaque {
+			t.Fatal("unexpected sustained route response")
+		}
+	}
+	darwinRouteSmokeWrite(ready, fmt.Sprintf("consumer:sustained-route-traffic:%d", darwinRouteSmokeCount))
 	for {
 		_ = conn.SetReadDeadline(time.Now().Add(250 * time.Millisecond))
 		var one [1]byte
@@ -313,10 +356,14 @@ func waitDarwinRouteSmokeFile(t *testing.T, path string, contains string) string
 func darwinRouteSmokeTerminalMarker(marker string) bool {
 	for _, line := range strings.Split(marker, "\n") {
 		for _, prefix := range []string{
+			"publisher:neighbor-allowed:",
+			"publisher:policy-floor:internet-reachable",
 			"consumer:endpoint-timeout",
 			"consumer:dial-failure:",
 			"consumer:write-failure:",
 			"consumer:reply-read-failure:",
+			"consumer:sustained-write-failure:",
+			"consumer:sustained-reply-failure:",
 			"consumer:reply-unexpected",
 		} {
 			if strings.HasPrefix(strings.TrimSpace(line), prefix) {
@@ -404,7 +451,7 @@ func TestDarwinRouteCapabilityIntegratedSmoke(t *testing.T) {
 	if expectedHead := strings.TrimSpace(os.Getenv("EXPECTED_HEAD")); expectedHead != "" {
 		require.Equal(t, expectedHead, actualHead, "dedicated evidence must run the requested exact checkout")
 	}
-	t.Logf("TCL-951 integrated exact checked-out head: %s", actualHead)
+	t.Logf("TCL-952 Darwin exact checked-out head: %s", actualHead)
 
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -415,6 +462,9 @@ func TestDarwinRouteCapabilityIntegratedSmoke(t *testing.T) {
 	t.Setenv("TCLAUDE_DARWIN_ROUTE_SLOT_COUNT", "1")
 	work := filepath.Join(home, "work")
 	require.NoError(t, os.MkdirAll(work, 0o700))
+	hostControl, err := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(darwinRouteSmokeHostPort)))
+	require.NoError(t, err, "host control listener must be available for the policy-floor probe")
+	defer hostControl.Close()
 	db.ResetForTest()
 	cleanupAgentdTestDB(t)
 	routeAdapterCloseAll()
@@ -476,7 +526,8 @@ func TestDarwinRouteCapabilityIntegratedSmoke(t *testing.T) {
 	publisher := startDarwinRouteSmokeLaunch(t, home, helper, "publisher", publisherConv, publisherAgent)
 	reaper.Tick()
 	pubReady := waitDarwinRouteSmokeFile(t, publisher.ready, "publisher:seatbelt-ready:neighbor-denied")
-	t.Logf("TCL-951 integrated publisher readiness: %s", pubReady)
+	pubReady = waitDarwinRouteSmokeFile(t, publisher.ready, "publisher:policy-floor:internet-denied")
+	t.Logf("TCL-952 Darwin publisher readiness: %s", pubReady)
 	withdrawal := startDarwinRouteSmokeLaunch(t, home, helper, "consumer", withdrawalConv, withdrawalAgent)
 	reaper.Tick()
 
@@ -488,6 +539,19 @@ func TestDarwinRouteCapabilityIntegratedSmoke(t *testing.T) {
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
 	waitDarwinRouteSmokePublisherChannels(t, 1)
 	routeID := route["id"].(string)
+	rec, staleBody := serveDarwinRouteSmoke(t, handler, http.MethodPost, "/v1/routes/publish", publisherConv, map[string]any{
+		"group": groupName, "name": "stale", "target": target, "launch_generation": "stale-generation",
+	})
+	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+	var staleView map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &staleView), rec.Body.String())
+	require.Equal(t, "route_generation_stale", staleView["code"], staleBody["code"])
+	rec, staleBody = serveDarwinRouteSmoke(t, handler, http.MethodPost, "/v1/routes/publish", publisherConv, map[string]any{
+		"group": groupName, "group_generation": group.RouteGeneration - 1, "name": "stale-group", "target": target, "launch_generation": publisher.gen,
+	})
+	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+	require.Equal(t, "route_conflict", staleBody["code"])
+	t.Log("TCL-952 Darwin negative evidence: stale group and launch generations denied")
 
 	// A consumer that selects a group it does not belong to is refused by the
 	// production M1 API before the Darwin adapter can allocate a listener.
@@ -508,6 +572,18 @@ func TestDarwinRouteCapabilityIntegratedSmoke(t *testing.T) {
 	require.Equal(t, endpointWithdrawal, leaseView.Endpoint)
 	require.NoError(t, os.WriteFile(withdrawal.endpoint, []byte(endpointWithdrawal), 0o600))
 	waitDarwinRouteSmokeFile(t, withdrawal.ready, "consumer:opaque-exchange-ready")
+	waitDarwinRouteSmokeFile(t, withdrawal.ready, fmt.Sprintf("consumer:sustained-route-traffic:%d", darwinRouteSmokeCount))
+	for i := 0; i < darwinRouteSmokeCount; i++ {
+		rec, _ = serveDarwinRouteSmoke(t, handler, http.MethodPost, "/v1/messages", publisherConv, map[string]any{
+			"to": withdrawalConv, "body": fmt.Sprintf("darwin-route-smoke-message-%d", i),
+		})
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	}
+	t.Log("TCL-952 Darwin sustained route evidence: ordinary messaging remained responsive")
+	rec, currentRoute := serveDarwinRouteSmoke(t, handler, http.MethodGet, "/v1/routes/"+routeID, withdrawalConv, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Equal(t, db.RouteStateReady, currentRoute["state"])
+	t.Logf("TCL-952 Darwin launch disclosure: route capability current; route=%s group-generation=%v", routeID, currentRoute["group_generation"])
 
 	rec, _ = serveDarwinRouteSmoke(t, handler, http.MethodDelete, "/v1/routes/"+routeID, publisherConv, nil)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
@@ -604,6 +680,6 @@ func TestDarwinRouteCapabilityIntegratedSmoke(t *testing.T) {
 		darwinRouteAdapterState.Unlock()
 		return adapter == nil || (len(adapter.RouteIDs()) == 0 && len(adapter.LeaseIDs()) == 0)
 	}, 5*time.Second, 50*time.Millisecond)
-	t.Log("TCL-951 integrated route evidence: POSITIVE runNew/Seatbelt/M1/M2 opaque exchange")
-	t.Log("TCL-951 disclosure: Partial; Darwin localhost authorization is exact-slot, while same-port local reachability remains the documented Seatbelt limitation")
+	t.Log("TCL-952 Darwin evidence: POSITIVE runNew/Seatbelt/M1/M2 opaque exchange")
+	t.Log("TCL-952 disclosure: Partial; Darwin localhost authorization is exact-slot, while same-port local reachability remains the documented Seatbelt limitation")
 }
