@@ -343,6 +343,12 @@ func openConsumerStream(ctx context.Context, conn net.Conn, streams *consumerStr
 		case refusal = <-answer:
 			answerTimer.Stop()
 		case <-answerTimer.C:
+			// The broker only leaves an OPEN unanswered once it has allocated
+			// the stream, so abandoning it silently would strand that stream —
+			// and its route and agent connection budget — until the whole
+			// channel detaches. CLOSE is safe even with an answer in flight:
+			// the broker tombstones the stream and drops the late frame.
+			_ = w.write(routebroker.Frame{Kind: routebroker.KindClose, Stream: id})
 			streams.dropPending(id)
 			_ = conn.Close()
 			return

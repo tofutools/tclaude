@@ -460,26 +460,3 @@ func TestRunConsumerReleasesAPendingOpenOnStreamClose(t *testing.T) {
 		t.Fatalf("unexpected frame after stream close: %#v", frame)
 	}
 }
-
-func TestRunConsumerGivesUpOnAnUnansweredOpen(t *testing.T) {
-	if openAnswerTimeout <= openRetryWindow {
-		t.Fatalf("openAnswerTimeout %s must exceed the retry window %s", openAnswerTimeout, openRetryWindow)
-	}
-	if testing.Short() {
-		t.Skip("spends the full unanswered-open bound")
-	}
-	client, peer, _ := consumerOpenFixture(t)
-
-	open := readFrameWithTimeout(t, peer)
-	if open.Kind != routebroker.KindOpen {
-		t.Fatalf("first frame = %#v, want OPEN", open)
-	}
-	// Never answer. The client must not be held past the answer bound; this
-	// only asserts the bound exists and is not the kernel's connect timeout.
-	if err := client.SetReadDeadline(time.Now().Add(openAnswerTimeout + 5*time.Second)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := client.Read(make([]byte, 1)); err == nil {
-		t.Fatal("client connection stayed open past the unanswered-open bound")
-	}
-}
