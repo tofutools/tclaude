@@ -85,6 +85,7 @@ type profileJSON struct {
 	Role           string `json:"role,omitempty"`
 	Descr          string `json:"descr,omitempty"`
 	InitialMessage string `json:"initial_message,omitempty"`
+	StartupContext string `json:"startup_context,omitempty"`
 
 	// Dialog toggles.
 	SyncWorktree               *bool `json:"sync_worktree,omitempty"`
@@ -363,7 +364,7 @@ func profilesCreateCmd() *cobra.Command {
 		Short: "Create a spawn profile from a JSON file",
 		Long: "Reads a spawn-profile definition as JSON from --file (or --file - for stdin) and creates it. The JSON " +
 			"shape is what 'profiles show <name> --json' emits: {name, aliases, harness, model, effort, sandbox, approval, " +
-			"agent_name, role, descr, initial_message, is_owner, permission_overrides, …}. A profile carries multi-line " +
+			"agent_name, role, descr, initial_message, startup_context, is_owner, permission_overrides, …}. A profile carries multi-line " +
 			"and permission state, so it is supplied as a file rather than via flags. Gated on profiles.manage.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *profilesCreateParams, _ *cobra.Command, _ []string) {
@@ -684,6 +685,9 @@ func printProfileHuman(w io.Writer, p profileJSON) {
 	}
 	if p.Descr != "" {
 		fmt.Fprintf(w, "  descr:   %s\n", p.Descr)
+	}
+	if p.StartupContext != "" {
+		fmt.Fprintf(w, "  startup context: %d chars\n", len(p.StartupContext))
 	}
 
 	// Launch fields in a stable order.

@@ -40,6 +40,7 @@ type wireProfile struct {
 	Tools          string   `json:"tools"`
 	AutoReview     *bool    `json:"auto_review"`
 	SyncWorktree   *bool    `json:"sync_worktree"`
+	StartupContext string   `json:"startup_context"`
 }
 
 func TestSpawnProfiles_CodexApprovalPoliciesRoundTrip(t *testing.T) {

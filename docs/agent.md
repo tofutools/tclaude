@@ -474,6 +474,13 @@ tclaude agent profiles enable <name>
 tclaude agent profiles disable <name>
 ```
 
+Profiles may carry `startup_context`, multi-line guidance injected into every
+agent that resolves that profile. This is distinct from `initial_message`:
+`initial_message` merely pre-fills a replaceable task brief, while
+`startup_context` remains a separate section alongside group context and the
+actual task. The highest-precedence compatible profile with a non-empty value
+wins; profile contexts are not merged.
+
 A disabled profile remains listed, editable, exportable, and referenced by
 aliases, defaults, roles, templates, and process performers. Any spawn that
 would use it fails with `profile_disabled` and the stored reason; `tclaude ask`

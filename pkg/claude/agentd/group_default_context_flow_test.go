@@ -107,6 +107,56 @@ func TestGroupDefaultContext_OptOutSkipsInjection(t *testing.T) {
 	f.AssertSpawnInitialPrompt(spawn.ConvID, "Wait for the first instruction", 10*time.Second)
 }
 
+// Profile context is policy attached to the launch profile, not another task
+// default or a flavor of group context. It therefore survives both an explicit
+// task and the caller opting out of the group's shared guidance.
+func TestSpawnProfileContext_InjectedIndependently(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
+		"name": "model-tuned", "harness": "claude",
+		"startup_context": "For this model, state assumptions before making broad edits.",
+	}).Code)
+	require.Equal(t, http.StatusOK,
+		patchGroup(t, f, "alpha", map[string]any{"default_context": "GROUP GUIDANCE MUST BE OMITTED"}))
+
+	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{
+		"name": "worker", "profile": "model-tuned",
+		"initial_message":       "Implement the requested change.",
+		"include_group_context": false,
+	})
+	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+
+	msg := soleInboxMessage(t, spawn.ConvID)
+	assert.Contains(t, msg.Body, "Spawn profile startup context")
+	assert.Contains(t, msg.Body, "state assumptions before making broad edits")
+	assert.Contains(t, msg.Body, "Implement the requested change")
+	assert.NotContains(t, msg.Body, "GROUP GUIDANCE MUST BE OMITTED")
+}
+
+func TestSpawnProfileContext_SkipsForeignHigherTier(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
+		"name": "claude-guidance", "harness": "claude",
+		"startup_context": "CLAUDE-ONLY GUIDANCE",
+	}).Code)
+	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
+		"name": "codex-guidance", "harness": "codex",
+		"startup_context": "CODEX-COMPATIBLE GUIDANCE",
+	}).Code)
+	_, err := db.SetAgentGroupDefaultProfile("alpha", "codex-guidance")
+	require.NoError(t, err)
+
+	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{
+		"name": "worker", "harness": "codex", "profile": "claude-guidance",
+	})
+	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+	msg := soleInboxMessage(t, spawn.ConvID)
+	assert.Contains(t, msg.Body, "CODEX-COMPATIBLE GUIDANCE")
+	assert.NotContains(t, msg.Body, "CLAUDE-ONLY GUIDANCE")
+}
+
 // Scenario: a group with no startup context, spawned into with no task
 // brief. There is nothing to brief, so no inbox message is created and
 // the welcome tells the agent to wait.

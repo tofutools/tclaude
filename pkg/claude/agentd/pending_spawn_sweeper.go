@@ -209,6 +209,7 @@ func sweepOnePendingSpawn(ps *db.PendingSpawn) {
 		Name:             ps.Name,
 		InitialMessage:   ps.InitialMessage,
 		GroupContext:     ps.GroupContext,
+		ProfileContext:   ps.ProfileContext,
 		ReplyToConv:      ps.ReplyToConv,
 		SpawnedByConv:    ps.SpawnedByConv,
 		// The durable agent_id companions (JOH-321 F2): minutes have passed since

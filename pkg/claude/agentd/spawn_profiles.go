@@ -99,6 +99,10 @@ type spawnProfileJSON struct {
 	Role           string `json:"role,omitempty"`
 	Descr          string `json:"descr,omitempty"`
 	InitialMessage string `json:"initial_message,omitempty"`
+	// StartupContext is profile-owned guidance injected into every resolved
+	// spawn's briefing. It is deliberately separate from InitialMessage, which
+	// is only a replaceable task default in the spawn dialog.
+	StartupContext string `json:"startup_context,omitempty"`
 
 	// Dialog toggles.
 	SyncWorktree               *bool `json:"sync_worktree,omitempty"`
@@ -148,6 +152,7 @@ func profileToJSON(p *db.SpawnProfile) spawnProfileJSON {
 		Role:                       p.Role,
 		Descr:                      p.Descr,
 		InitialMessage:             p.InitialMessage,
+		StartupContext:             p.StartupContext,
 		SyncWorktree:               p.SyncWorktree,
 		AutoFocus:                  p.AutoFocus,
 		IncludeGroupDefaultContext: p.IncludeGroupDefaultContext,
@@ -361,6 +366,12 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 			fmt.Sprintf("initial_message must be at most %d characters; newlines and tabs "+
 				"are allowed but other control characters are not", agent.MaxInitialMessageBytes)}
 	}
+	startupContext := strings.TrimSpace(body.StartupContext)
+	if !isValidInitialMessage(startupContext) {
+		return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg",
+			fmt.Sprintf("startup_context must be at most %d characters; newlines and tabs "+
+				"are allowed but other control characters are not", agent.MaxInitialMessageBytes)}
+	}
 
 	// Birth-time permission overrides: same registry + effect validation the
 	// spawn boundary applies, so a profile can't persist an unknown slug. A
@@ -404,6 +415,7 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 		Role:                       strings.TrimSpace(body.Role),
 		Descr:                      strings.TrimSpace(body.Descr),
 		InitialMessage:             im,
+		StartupContext:             startupContext,
 		SyncWorktree:               body.SyncWorktree,
 		AutoFocus:                  body.AutoFocus,
 		IncludeGroupDefaultContext: body.IncludeGroupDefaultContext,
@@ -660,7 +672,7 @@ func handleSpawnProfileFromAgent(w http.ResponseWriter, r *http.Request) {
 
 const (
 	profileExportFormat  = "tclaude-spawn-profiles"
-	profileExportVersion = 4
+	profileExportVersion = 5
 )
 
 type profileExportEnvelope struct {

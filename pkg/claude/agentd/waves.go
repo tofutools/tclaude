@@ -214,6 +214,7 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 			Role:                    a.Role,
 			Descr:                   a.Descr,
 			InitialMessage:          a.InitialMessage,
+			ProfileContext:          launch.StartupContext,
 			Cwd:                     agentCwd,
 			WorktreePath:            agentWorktreePath,
 			WorktreeBranch:          agentWorktreeBranch,

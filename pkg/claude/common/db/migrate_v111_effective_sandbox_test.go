@@ -87,11 +87,12 @@ func TestEffectiveSandboxSnapshotRoundTripsAgentAndPendingSpawn(t *testing.T) {
 		Scope: sandboxpolicy.ScopeGlobal, ID: 7, Name: "base", UpdatedAt: time.Unix(123, 0).UTC(),
 	}}
 	require.NoError(t, InsertPendingSpawn(&PendingSpawn{
-		Label: "pending-one", GroupID: 1, EffectiveSandbox: &snapshot,
+		Label: "pending-one", GroupID: 1, ProfileContext: "model-specific guidance", EffectiveSandbox: &snapshot,
 	}))
 	pending, err := GetPendingSpawn("pending-one")
 	require.NoError(t, err)
 	require.NotNil(t, pending.EffectiveSandbox)
+	assert.Equal(t, "model-specific guidance", pending.ProfileContext)
 	assert.True(t, reflect.DeepEqual(snapshot, *pending.EffectiveSandbox))
 
 	mustExec(t, d, `INSERT INTO agents (agent_id, current_conv_id, created_at) VALUES ('agt_snap', 'conv-snap', 1767225600000000000)`)
