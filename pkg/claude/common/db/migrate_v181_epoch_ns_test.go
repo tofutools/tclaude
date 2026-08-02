@@ -95,11 +95,12 @@ func TestMigrateV180toV181_ConvertsEveryTimestampAndPreservesSchemaGraph(t *test
 	require.Equal(t, beforeTriggers, triggerDefinitions(t, d), "all triggers survive the rebuild")
 
 	fresh := freshMigratedDB(t)
+	require.NoError(t, migrateV181toV182(d), "advance upgraded fixture to current schema")
 	upgradedSchema, err := SchemaSQL(d)
 	require.NoError(t, err)
 	freshSchema, err := SchemaSQL(fresh)
 	require.NoError(t, err)
-	require.Equal(t, freshSchema, upgradedSchema, "upgraded schema matches a fresh v181 schema")
+	require.Equal(t, freshSchema, upgradedSchema, "upgraded schema matches a fresh current schema")
 }
 
 type qualifiedTimestampColumn struct{ table, column string }

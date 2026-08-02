@@ -17,6 +17,13 @@ func migrateV181toV182(db *sql.DB) error {
 		{"spawn_profiles", "startup_context"},
 		{"pending_spawns", "profile_context"},
 	} {
+		var haveTable int
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, col.table).Scan(&haveTable); err != nil {
+			return fmt.Errorf("migrate v181→v182: probe table %s: %w", col.table, err)
+		}
+		if haveTable == 0 {
+			continue
+		}
 		var have int
 		if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?`, col.table, col.name).Scan(&have); err != nil {
 			return fmt.Errorf("migrate v181→v182: probe %s.%s: %w", col.table, col.name, err)

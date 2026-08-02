@@ -115,7 +115,7 @@ func TestSpawnProfilesExportImport_EnabledProfileRetainsReason(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	var bundle profileBundle
 	testharness.DecodeJSON(t, rec, &bundle)
-	require.Equal(t, 4, bundle.FormatVersion)
+	require.Equal(t, 5, bundle.FormatVersion)
 	require.Len(t, bundle.Profiles, 1)
 	assert.False(t, bundle.Profiles[0].Disabled)
 	assert.Equal(t, "previous provider outage", bundle.Profiles[0].DisabledReason)
