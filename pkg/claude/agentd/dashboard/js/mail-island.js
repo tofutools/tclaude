@@ -13,6 +13,7 @@ import { idTooltip, relTime, shortAgentId, shortId } from './helpers.js';
 import { attachmentHref, messageAttachments } from './human-attachments.js';
 import { dashboardState } from './snapshot-store.js';
 import { ImageAttachmentPreview } from './image-preview-overlay.js';
+import { MarkdownAttachment } from './markdown-attachment.js';
 
 const html = htm.bind(h);
 
@@ -373,6 +374,7 @@ function HumanAttachment({ message }) {
       <a href=${attachmentHref(message, attachment)}
         download=${attachment.filename || ''} title="Download this agent-published file">⤓ ${attachment.filename || 'attachment'}</a>
       <span class="mail-attachment-size">${attachmentSize(attachment.size_bytes)}</span>
+      <${MarkdownAttachment} messageID=${message.id} attachment=${attachment} surface="messages" />
     </div>`)}</${Fragment}>`;
 }
 

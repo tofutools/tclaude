@@ -52,7 +52,9 @@ async function materializeDashboardModules(t) {
 
   const targets = new Map();
   for (const [specifier, target] of Object.entries(importMap.imports)) {
-    assert.match(target, /^\/static\/vendor\/preact\/[^/]+\.js$/);
+    // Every mapped target must be an embedded same-origin vendor module —
+    // the property dashboard_preact_assets_test.go asserts for the browser.
+    assert.match(target, /^\/static\/vendor\/[a-z0-9-]+\/[^/]+\.m?js$/);
     const source = join(dashboardDir, target.slice('/static/'.length));
     const output = join(workDir, target.slice('/static/'.length));
     await mkdir(dirname(output), { recursive: true });

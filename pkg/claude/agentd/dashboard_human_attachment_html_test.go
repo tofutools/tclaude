@@ -22,8 +22,8 @@ func TestDashboardHTML_HumanAttachmentWired(t *testing.T) {
 		}
 	}
 	for needle, why := range map[string]string{
-		"export function messageAttachments(":                              "surfaces share one reading of the attachment list",
-		"/api/human-messages/${encodeURIComponent(message.id)}/attachment": "the card falls back to the authenticated download route",
+		"export function messageAttachments(":                             "surfaces share one reading of the attachment list",
+		"/api/human-messages/${encodeURIComponent(messageID)}/attachment": "the card falls back to the authenticated download route",
 	} {
 		if !strings.Contains(shared, needle) {
 			t.Errorf("shared attachment helper missing %q (%s)", needle, why)

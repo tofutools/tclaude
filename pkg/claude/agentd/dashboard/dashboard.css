@@ -1399,6 +1399,155 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
 @media (prefers-reduced-motion: reduce) {
   .human-attachment-preview-label, .image-preview-image { transition: none; }
 }
+
+/* Human-notify Markdown attachments. The document renders in the card itself,
+   on its own full-width row below the file line, because it IS the message.
+   The control beside the download link opens the original source instead. */
+.human-attachment-markdown-trigger {
+  display: inline-flex; align-items: center; gap: 6px; padding: 5px 9px;
+  border: 1px solid #30363d; border-radius: 4px; background: #21262d;
+  color: #c9d1d9; cursor: pointer; font: inherit; font-size: 12px;
+}
+.human-attachment-markdown-trigger:hover:not(:disabled),
+.human-attachment-markdown-trigger:focus-visible {
+  border-color: #58a6ff; color: #f0f6fc;
+}
+.human-attachment-markdown-trigger:focus-visible {
+  outline: 2px solid #58a6ff; outline-offset: 2px;
+}
+.human-attachment-markdown-trigger:disabled { opacity: .4; cursor: default; }
+.human-attachment-markdown-icon { color: #58a6ff; font-size: 13px; line-height: 1; }
+
+/* The rendered document sits on its own row inside the attachment card, so the
+   file line and its controls stay put at the top however long the document is. */
+.markdown-attachment-document {
+  flex: 0 0 100%; min-width: 0; margin-top: 10px; padding-top: 12px;
+  border-top: 1px solid #30363d;
+}
+.markdown-attachment-state {
+  display: flex; flex-direction: column; gap: 4px;
+  color: #8b949e; font-size: 12px;
+}
+.markdown-attachment-state strong { color: #f0f6fc; font-size: 13px; }
+.markdown-attachment-state span { color: #8b949e; font-size: 11px; }
+
+/* Shared Markdown source view. Like the image viewer it is a real
+   .modal-overlay, so the dashboard's overlay stack, Escape routing, and
+   refresh suspension all see it. */
+.markdown-preview-overlay {
+  padding: 16px; background: rgba(0, 0, 0, .82);
+  backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px);
+}
+.markdown-preview-dialog {
+  width: min(900px, calc(100vw - 32px));
+  height: min(860px, calc(100vh - 32px)); min-height: 0;
+  display: flex; flex-direction: column; overflow: hidden;
+  border: 1px solid #364454; border-radius: 9px;
+  background: #0b1016; color: #c9d1d9;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, .62);
+}
+.markdown-preview-header {
+  display: flex; align-items: center; gap: 12px; min-height: 58px;
+  padding: 0 16px; border-bottom: 1px solid #30363d; background: #161b22;
+}
+.markdown-preview-heading { min-width: 0; display: flex; align-items: baseline; gap: 9px; }
+.markdown-preview-heading h2 {
+  min-width: 0; margin: 0; overflow: hidden; color: #f0f6fc;
+  font-size: 14px; text-overflow: ellipsis; white-space: nowrap;
+}
+.markdown-preview-heading span { color: #8b949e; font-size: 11px; white-space: nowrap; }
+.markdown-preview-header-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.markdown-preview-download, .markdown-preview-close {
+  border: 1px solid #30363d; border-radius: 4px; background: #21262d;
+  color: #c9d1d9; cursor: pointer; font: inherit; font-size: 12px;
+}
+.markdown-preview-download { padding: 5px 9px; border-color: #1f6feb; color: #58a6ff; text-decoration: none; }
+.markdown-preview-download:hover, .markdown-preview-download:focus-visible { background: rgba(31, 111, 235, .14); }
+.markdown-preview-close { width: 30px; height: 30px; padding: 0; color: #8b949e; font-size: 19px; }
+.markdown-preview-close:hover, .markdown-preview-close:focus-visible {
+  border-color: #58a6ff; color: #f0f6fc;
+}
+.markdown-preview-stage {
+  position: relative; min-height: 0; flex: 1; overflow: auto;
+  padding: 22px 24px; background: #0b1016;
+}
+.markdown-document-state {
+  display: flex; flex-direction: column; gap: 5px; max-width: 420px;
+  margin: 8px auto; padding: 12px 14px; border: 1px solid #3d4a58;
+  border-radius: 6px; background: rgba(13, 17, 23, .92);
+  color: #8b949e; font-size: 12px; text-align: center;
+}
+.markdown-document-state strong { color: #f0f6fc; font-size: 13px; }
+.markdown-document-state span { color: #8b949e; font-size: 11px; }
+.markdown-preview-source {
+  margin: 0; color: #c9d1d9; font-size: 12px; line-height: 1.55;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+/* The rendered document. Every element here is one markdown-model.js allows,
+   so this list doubles as the visible half of that allowlist. */
+.markdown-document {
+  color: #c9d1d9; font-size: 13.5px; line-height: 1.65; overflow-wrap: anywhere;
+}
+.markdown-document > :first-child { margin-top: 0; }
+.markdown-document > :last-child { margin-bottom: 0; }
+.markdown-document h1, .markdown-document h2, .markdown-document h3,
+.markdown-document h4, .markdown-document h5, .markdown-document h6 {
+  margin: 26px 0 12px; color: #f0f6fc; font-weight: 600; line-height: 1.3;
+}
+.markdown-document h1 { font-size: 21px; padding-bottom: 7px; border-bottom: 1px solid #30363d; }
+.markdown-document h2 { font-size: 17px; padding-bottom: 6px; border-bottom: 1px solid #30363d; }
+.markdown-document h3 { font-size: 15px; }
+.markdown-document h4 { font-size: 13.5px; }
+.markdown-document h5, .markdown-document h6 { font-size: 12.5px; color: #b7c0ca; }
+.markdown-document p { margin: 0 0 13px; }
+.markdown-document a { color: #58a6ff; text-decoration: none; }
+.markdown-document a:hover { text-decoration: underline; }
+.markdown-document strong { color: #f0f6fc; font-weight: 600; }
+.markdown-document s { color: #8b949e; }
+.markdown-document ul, .markdown-document ol { margin: 0 0 13px; padding-left: 26px; }
+.markdown-document li { margin: 3px 0; }
+.markdown-document li > ul, .markdown-document li > ol { margin-bottom: 0; }
+.markdown-document blockquote {
+  margin: 0 0 13px; padding: 2px 0 2px 14px;
+  border-left: 3px solid #364454; color: #8b949e;
+}
+.markdown-document hr { margin: 20px 0; border: 0; border-top: 1px solid #30363d; }
+.markdown-document code {
+  padding: .15em .38em; border-radius: 4px; background: #1b2430;
+  color: #e6edf3; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: .88em;
+}
+.markdown-document pre {
+  margin: 0 0 13px; padding: 12px 14px; overflow-x: auto;
+  border: 1px solid #26303c; border-radius: 6px; background: #11171f;
+}
+.markdown-document pre code { padding: 0; border-radius: 0; background: none; font-size: 12px; }
+.markdown-document img { max-width: 100%; height: auto; border-radius: 5px; }
+.markdown-document table {
+  margin: 0 0 13px; border-collapse: collapse; display: block;
+  max-width: 100%; overflow-x: auto; font-size: 12.5px;
+}
+.markdown-document th, .markdown-document td {
+  padding: 6px 11px; border: 1px solid #30363d;
+}
+.markdown-document th { background: #161b22; color: #f0f6fc; font-weight: 600; }
+.markdown-document tbody tr:nth-child(even) { background: rgba(22, 27, 34, .55); }
+
+@media (max-width: 720px) {
+  .markdown-preview-overlay { padding: 0; }
+  .markdown-preview-dialog { width: 100%; height: 100%; border: 0; border-radius: 0; }
+  .markdown-preview-header { min-height: 52px; padding: 0 12px; }
+  .markdown-preview-heading { min-width: 0; flex: 1; display: block; overflow: hidden; }
+  .markdown-preview-heading h2 { max-width: 100%; }
+  .markdown-preview-heading span { display: block; overflow: hidden; margin-top: 2px; text-overflow: ellipsis; }
+  .markdown-preview-header-actions { flex: 0 0 auto; }
+  .markdown-preview-download { padding: 5px 7px; font-size: 11px; }
+  .markdown-preview-stage { padding: 16px 14px; }
+  .markdown-attachment-document { margin-top: 8px; padding-top: 10px; }
+}
+
 /* ─── Reader skins for the cosmetic themes ────────────────────────────
    The reader is chrome, so it re-skins with the shell the way the dock does:
    the grimoire under body.wizard, the casino under body.slop. Both are kept
