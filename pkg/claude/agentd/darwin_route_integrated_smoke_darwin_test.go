@@ -429,6 +429,18 @@ func assertDarwinRouteSmokeSlotReleased(t *testing.T, slot int) {
 	require.NoError(t, listener.Close())
 }
 
+func waitDarwinRouteSmokeAdapterLeaseClosed(t *testing.T, leaseID string) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		for _, activeLeaseID := range routeAdapterLeaseIDs() {
+			if activeLeaseID == leaseID {
+				return false
+			}
+		}
+		return true
+	}, 5*time.Second, 50*time.Millisecond, "production adapter must close lease %s after durable reaper closure", leaseID)
+}
+
 func serveDarwinRouteSmoke(t *testing.T, handler http.Handler, method, path, convID string, body any) (*httptest.ResponseRecorder, map[string]any) {
 	t.Helper()
 	req := testharness.JSONRequest(t, method, path, body)
@@ -639,6 +651,7 @@ func TestDarwinRouteCapabilityIntegratedSmoke(t *testing.T) {
 	// release the launch claim without withdrawing the publisher route.
 	stopDarwinRouteSmokeLaunch(t, consumerA, reaper)
 	assertDarwinRouteSmokeLaunchClosed(t, consumerA)
+	waitDarwinRouteSmokeAdapterLeaseClosed(t, leaseA["id"].(string))
 	assertDarwinRouteSmokeSlotReleased(t, consumerASlot)
 	leaseARow, err := db.GetAgentRouteLease(leaseA["id"].(string))
 	require.NoError(t, err)

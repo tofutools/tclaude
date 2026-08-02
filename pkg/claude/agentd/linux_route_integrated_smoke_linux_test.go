@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -47,7 +48,8 @@ const (
 	linuxRouteM6HostEnv    = "TCL952_LINUX_ROUTE_HOST_PORT"
 	linuxRouteM6Opaque     = "tcl952-linux-opaque"
 	linuxRouteM6Count      = 96
-	linuxRouteM6HelperPath = "/tcl952-route-helper"
+	linuxRouteM6HelperDir  = "/run/tcl952-route"
+	linuxRouteM6HelperPath = linuxRouteM6HelperDir + "/helper"
 )
 
 func parseLinuxRouteM6PublisherDescriptor(raw string) (string, int64, error) {
@@ -368,13 +370,31 @@ func (p *linuxRouteM6Process) kill(t *testing.T) {
 	if exited, _ := p.exited(); !exited {
 		require.NoError(t, p.cmd.Process.Kill())
 	}
-	require.NoError(t, p.wait())
+	err := p.wait()
+	require.True(t, linuxRouteM6ExpectedKilled(err), "intentional publisher kill must report SIGKILL, got %v", err)
+}
+
+func linuxRouteM6ExpectedKilled(err error) bool {
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ProcessState == nil {
+		return false
+	}
+	status, ok := exitErr.Sys().(syscall.WaitStatus)
+	return ok && status.Signaled() && status.Signal() == syscall.SIGKILL
+}
+
+func TestLinuxRouteM6ExpectedKilled(t *testing.T) {
+	killed := exec.Command("sh", "-c", "kill -KILL $$").Run()
+	require.True(t, linuxRouteM6ExpectedKilled(killed), "shell SIGKILL must be recognized: %v", killed)
+	normalExit := exec.Command("sh", "-c", "exit 1").Run()
+	require.False(t, linuxRouteM6ExpectedKilled(normalExit), "ordinary child failure must remain visible")
+	require.False(t, linuxRouteM6ExpectedKilled(errors.New("unexpected child failure")))
 }
 
 func linuxRouteM6BubblewrapArgs(executable, control string) []string {
 	return []string{
 		"--die-with-parent", "--unshare-all", "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc",
-		"--tmpfs", "/tmp", "--bind", control, control,
+		"--tmpfs", "/tmp", "--tmpfs", "/run", "--dir", linuxRouteM6HelperDir, "--bind", control, control,
 		"--ro-bind", executable, linuxRouteM6HelperPath,
 		"--", linuxRouteM6HelperPath, "-test.run=^TestLinuxRouteM6Child$", "-test.count=1",
 	}
@@ -395,6 +415,24 @@ func TestLinuxRouteM6BubblewrapArgsKeepHelperVisible(t *testing.T) {
 	}
 	require.GreaterOrEqual(t, bindIndex, 0)
 	require.Equal(t, linuxRouteM6HelperPath, args[bindIndex+2], "helper must be rebound outside the overlaid /tmp")
+	runIndex := -1
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == "--tmpfs" && args[i+1] == "/run" {
+			runIndex = i
+			break
+		}
+	}
+	require.GreaterOrEqual(t, runIndex, 0)
+	dirIndex := -1
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == "--dir" && args[i+1] == linuxRouteM6HelperDir {
+			dirIndex = i
+			break
+		}
+	}
+	require.GreaterOrEqual(t, dirIndex, 0)
+	require.Less(t, runIndex, dirIndex, "private /run tmpfs must precede the helper directory")
+	require.Less(t, dirIndex, bindIndex, "helper directory must exist before the read-only helper bind")
 	commandIndex := -1
 	for i, arg := range args {
 		if arg == "--" {
@@ -408,7 +446,7 @@ func TestLinuxRouteM6BubblewrapArgsKeepHelperVisible(t *testing.T) {
 	require.Equal(t, linuxRouteM6HelperPath, args[bindIndex+2])
 	for i, arg := range args {
 		if arg == "--tmpfs" {
-			require.Equal(t, "/tmp", args[i+1])
+			require.Contains(t, []string{"/tmp", "/run"}, args[i+1])
 		}
 	}
 }
