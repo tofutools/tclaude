@@ -292,7 +292,7 @@ func TestSeatbeltLoopbackBindRequiresProxyFloor(t *testing.T) {
 		43210,
 	)
 	require.ErrorContains(t, err,
-		"Seatbelt loopback bind exception requires the filtering proxy floor")
+		"seatbelt loopback bind exception requires the filtering proxy floor")
 }
 
 // seatbeltRuleLinesAdded reports the rule lines present in got and absent from
