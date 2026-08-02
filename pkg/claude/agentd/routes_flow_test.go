@@ -1,7 +1,9 @@
 package agentd_test
 
 import (
+	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/routebroker"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -24,6 +27,83 @@ func serveRouteAgent(t *testing.T, f *testharness.Flow, method, path, convID str
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out), "decode route response: %s", rec.Body.String())
 	}
 	return rec, out
+}
+
+func TestRoutesBroker_DatabaseAuthorityClosesWithdrawnChannels(t *testing.T) {
+	f := newFlow(t)
+	const publisher = "route-broker-publisher"
+	const consumer = "route-broker-consumer"
+	f.HaveConvWithTitle(publisher, "publisher")
+	f.HaveConvWithTitle(consumer, "consumer")
+	f.HaveGroup("broker-group")
+	f.HaveMember("broker-group", publisher)
+	f.HaveMember("broker-group", consumer)
+	g, err := db.GetAgentGroupByName("broker-group")
+	require.NoError(t, err)
+	require.NoError(t, db.ReplaceAgentGroupPermissions(g.ID, []string{agentd.PermRoutesPublish, agentd.PermRoutesConsume}, "test"))
+
+	rec, route := serveRouteAgent(t, f, http.MethodPost, "/v1/routes/publish", publisher, map[string]any{
+		"group": "broker-group", "name": "api", "target": "tcp://127.0.0.1:43127",
+	})
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	routeID := route["id"].(string)
+	rec, lease := serveRouteAgent(t, f, http.MethodPost, "/v1/routes/open", consumer, map[string]any{
+		"route_id": routeID, "group": "broker-group",
+	})
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+
+	publisherAuth := routebroker.PublisherAuth{
+		RouteID: routeID, AgentID: route["publisher_agent_id"].(string), ConvID: route["publisher_conv_id"].(string),
+		LaunchGeneration: route["publisher_launch_generation"].(string), GroupGeneration: int64(route["group_generation"].(float64)),
+	}
+	consumerAuth := routebroker.ConsumerAuth{
+		LeaseID: lease["id"].(string), RouteID: routeID, AgentID: lease["consumer_agent_id"].(string), ConvID: lease["consumer_conv_id"].(string),
+		LaunchGeneration: lease["consumer_launch_generation"].(string), GroupGeneration: int64(lease["group_generation"].(float64)),
+	}
+	b := agentd.NewGroupRouteBrokerForTest()
+	t.Cleanup(func() { require.NoError(t, b.Close()) })
+	publisherBroker, publisherPeer := net.Pipe()
+	consumerBroker, consumerPeer := net.Pipe()
+	publisherDone := make(chan error, 1)
+	consumerDone := make(chan error, 1)
+	go func() { publisherDone <- b.AttachPublisher(context.Background(), publisherAuth, publisherBroker) }()
+	require.Eventually(t, func() bool { return b.Metrics().PublisherChannels == 1 }, time.Second, time.Millisecond)
+	go func() { consumerDone <- b.AttachConsumer(context.Background(), consumerAuth, consumerBroker) }()
+	t.Cleanup(func() { _ = publisherPeer.Close(); _ = consumerPeer.Close() })
+
+	// Withdraw through the M1 API. The broker's periodic authority check must
+	// fail already-attached channels closed; no payload is needed to prove this
+	// lifecycle seam.
+	writeRouteBrokerFrame(t, consumerPeer, routebroker.Frame{Kind: routebroker.KindOpen, Stream: 1})
+	_ = readRouteBrokerFrame(t, publisherPeer)
+	rec, _ = serveRouteAgent(t, f, http.MethodDelete, "/v1/routes/"+routeID, publisher, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	_ = consumerPeer.SetReadDeadline(time.Now().Add(time.Second))
+	_, readErr := consumerPeer.Read(make([]byte, 1))
+	require.Error(t, readErr)
+	select {
+	case <-publisherDone:
+	case <-time.After(time.Second):
+		t.Fatal("withdrawn publisher channel did not close")
+	}
+	select {
+	case <-consumerDone:
+	case <-time.After(time.Second):
+		t.Fatal("withdrawn consumer channel did not close")
+	}
+}
+
+func writeRouteBrokerFrame(t *testing.T, conn net.Conn, frame routebroker.Frame) {
+	t.Helper()
+	require.NoError(t, routebroker.WriteFrame(conn, frame, routebroker.MaxFramePayload))
+}
+
+func readRouteBrokerFrame(t *testing.T, conn net.Conn) routebroker.Frame {
+	t.Helper()
+	_ = conn.SetReadDeadline(time.Now().Add(time.Second))
+	frame, err := routebroker.ReadFrame(conn, routebroker.MaxFramePayload)
+	require.NoError(t, err)
+	return frame
 }
 
 func TestRoutesAuthority_ExactGroupAndIndependentCapabilities(t *testing.T) {

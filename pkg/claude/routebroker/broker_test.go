@@ -258,3 +258,24 @@ func TestBrokerAuthorityRevocationAndShutdownFailClosed(t *testing.T) {
 		t.Fatal("publisher did not leave on broker shutdown")
 	}
 }
+
+func TestBrokerEnforcesRouteAndAgentConnectionBounds(t *testing.T) {
+	auth := newTestAuthorizer()
+	b := newBroker(t, auth, routebroker.Config{MaxConnectionsPerRoute: 1, MaxConnectionsPerAgent: 1})
+	publisher, consumer := auths()
+	pair := attachPair(t, b, publisher, consumer)
+
+	writeFrame(t, pair.conPeer, routebroker.Frame{Kind: routebroker.KindOpen, Stream: 1})
+	opened := readFrame(t, pair.pubPeer)
+	writeFrame(t, pair.conPeer, routebroker.Frame{Kind: routebroker.KindOpen, Stream: 2})
+	rejected := readFrame(t, pair.conPeer)
+	require.Equal(t, routebroker.KindOpenError, rejected.Kind)
+	require.Equal(t, uint64(2), rejected.Stream)
+	require.Contains(t, string(rejected.Payload), "route connection limit")
+
+	// The first connection is still active, so the bound remains visible in
+	// metadata and no second publisher OPEN was emitted.
+	require.Equal(t, uint64(1), b.Metrics().Streams)
+	writeFrame(t, pair.pubPeer, routebroker.Frame{Kind: routebroker.KindClose, Stream: opened.Stream})
+	require.Equal(t, routebroker.KindClose, readFrame(t, pair.conPeer).Kind)
+}

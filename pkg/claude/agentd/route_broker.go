@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/routebroker"
@@ -29,6 +30,20 @@ func newGroupRouteBroker() *routebroker.Broker {
 
 // GroupRouteBroker returns the in-process broker supervised by agentd.
 func GroupRouteBroker() *routebroker.Broker { return groupRouteBroker }
+
+// NewGroupRouteBrokerForTest returns an isolated broker wired to the same M1
+// database authority as the daemon-owned instance. It keeps lifecycle tests
+// from sharing global channel state with the process-wide broker.
+func NewGroupRouteBrokerForTest() *routebroker.Broker {
+	broker, err := routebroker.New(routebroker.Config{
+		Authorizer:             databaseRouteAuthority{},
+		AuthorityCheckInterval: 5 * time.Millisecond,
+	})
+	if err != nil {
+		panic(err)
+	}
+	return broker
+}
 
 // databaseRouteAuthority binds the platform-neutral channel seam to M1's
 // durable route and lease records. It never receives a payload, and every
