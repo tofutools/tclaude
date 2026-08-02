@@ -98,16 +98,23 @@ mesh networking out of the first contract.
 If either arm fails, revise the design record and downstream tickets before
 implementation.
 
-## Darwin M6 activation follow-on
+## M6 activation follow-on
 
 The feasibility probes above remain the lower-level boundary evidence. The
-Darwin production activation cell is documented in [Group routes](group-routes.md)
-and runs in this workflow. `TestDarwinRouteCapabilityIntegratedSmoke` exercises
-`session.RunNew`, Seatbelt, exact slots, the production adapter, and the
-agentd API. It asserts the exact checked-out head and covers current-generation
-authority, negative route cases, 96/96 ordinary messages during sustained
-opaque traffic, lifecycle withdrawal, exact slot release/reuse, publisher
-death, and the documented Darwin `Partial` result.
+production activation cells run in this same workflow and are documented in
+[Group routes](group-routes.md).
 
-This follow-on is Darwin-only evidence. It does not make a Linux activation
-claim; the exact-head macOS artifact is the authority for this closeout.
+`TestLinuxRouteCapabilityIntegratedSmoke` exercises Bubblewrap, the production
+agentd API, the authenticated Unix relay, and `routeadapter`. It covers
+current-generation authority, negative route cases, sustained ordinary
+messaging, publisher withdrawal, and generation-bound publisher-exit cleanup.
+
+`TestDarwinRouteCapabilityIntegratedSmoke` exercises `session.RunNew`, Seatbelt,
+exact slots, the production adapter, and the agentd API. It covers
+current-generation authority, negative route cases, 96/96 ordinary messages
+during sustained opaque traffic, lifecycle withdrawal, exact slot release/reuse,
+publisher death, and the documented Darwin `Partial` result.
+
+Both cells assert the exact checked-out head, and each platform's artifact is
+the authority for that platform's claim. The dashboard Route map remains opt-in
+via `features.groups_route_map`.

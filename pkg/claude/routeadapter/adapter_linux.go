@@ -138,7 +138,7 @@ func RunPublisher(ctx context.Context, channel net.Conn, rawTarget string) error
 	}
 	stopOnContext(ctx, channel)
 	w := &connWriter{conn: channel}
-	streams := &publisherStreams{items: make(map[uint64]net.Conn)}
+	streams := &publisherStreams{items: make(map[uint64]*helperPublisherStream)}
 	defer streams.closeAll()
 	defer channel.Close()
 
@@ -159,48 +159,64 @@ func RunPublisher(ctx context.Context, channel net.Conn, rawTarget string) error
 			if frame.Stream == 0 {
 				return routebroker.ErrInvalidStreamID
 			}
-			go openPublisherStream(ctx, target, frame.Stream, streams, w)
-		case routebroker.KindData:
-			conn, ok := streams.get(frame.Stream)
-			if !ok {
-				return fmt.Errorf("publisher received data for unknown stream %d", frame.Stream)
+			// The stream is admitted here, synchronously, so data that a client
+			// wrote immediately after connecting cannot arrive before the stream
+			// this channel already accepted exists. Only the dial is deferred.
+			stream := newHelperPublisherStream()
+			if !streams.add(frame.Stream, stream) {
+				_ = w.write(routebroker.Frame{Kind: routebroker.KindOpenError, Stream: frame.Stream, Payload: []byte(routebroker.OpenErrorDuplicatePublisherStream)})
+				continue
 			}
-			if _, err := conn.Write(frame.Payload); err != nil {
+			go openPublisherStream(ctx, target, frame.Stream, stream, streams, w)
+		case routebroker.KindData:
+			stream, ok := streams.get(frame.Stream)
+			if !ok {
+				// Data for a stream this channel never admitted, or has already
+				// closed, is a single-stream condition. Failing the channel here
+				// would take every other route stream down with it.
 				_ = w.write(routebroker.Frame{Kind: routebroker.KindClose, Stream: frame.Stream})
-				streams.remove(frame.Stream)
+				continue
+			}
+			if err := stream.write(frame.Payload); err != nil {
+				_ = w.write(routebroker.Frame{Kind: routebroker.KindClose, Stream: frame.Stream})
+				streams.removeAndClose(frame.Stream)
 			}
 		case routebroker.KindHalfClose:
-			conn, ok := streams.get(frame.Stream)
+			stream, ok := streams.get(frame.Stream)
 			if !ok {
 				continue
 			}
-			if tcp, ok := conn.(*net.TCPConn); ok {
-				_ = tcp.CloseWrite()
-			}
+			stream.closeWrite()
 		case routebroker.KindClose:
-			if conn, ok := streams.remove(frame.Stream); ok {
-				_ = conn.Close()
-			}
+			streams.removeAndClose(frame.Stream)
 		default:
 			return fmt.Errorf("publisher received invalid frame kind %d", frame.Kind)
 		}
 	}
 }
 
-func openPublisherStream(ctx context.Context, target string, streamID uint64, streams *publisherStreams, w *connWriter) {
+func openPublisherStream(ctx context.Context, target string, streamID uint64, stream *helperPublisherStream, streams *publisherStreams, w *connWriter) {
 	dialer := net.Dialer{Timeout: publisherDialTimeout}
 	conn, err := dialer.DialContext(ctx, "tcp", target)
 	if err != nil {
+		// The stream was admitted before the dial, so it has to be withdrawn
+		// here rather than simply never having existed.
+		streams.removeAndClose(streamID)
 		_ = w.write(routebroker.Frame{Kind: routebroker.KindOpenError, Stream: streamID, Payload: []byte(routebroker.OpenErrorTargetUnavailable)})
 		return
 	}
-	if !streams.add(streamID, conn) {
+	// Anything buffered while the dial was in flight reaches the target before
+	// OPEN_OK, so the peer never observes the stream out of order.
+	if err := stream.attach(conn); err != nil {
+		// attach only fails once the stream has already been closed on this
+		// channel, so the peer has withdrawn it and CLOSE is the honest answer.
 		_ = conn.Close()
-		_ = w.write(routebroker.Frame{Kind: routebroker.KindOpenError, Stream: streamID, Payload: []byte(routebroker.OpenErrorDuplicatePublisherStream)})
+		streams.removeAndClose(streamID)
+		_ = w.write(routebroker.Frame{Kind: routebroker.KindClose, Stream: streamID})
 		return
 	}
 	if err := w.write(routebroker.Frame{Kind: routebroker.KindOpenOK, Stream: streamID}); err != nil {
-		streams.remove(streamID)
+		streams.removeAndClose(streamID)
 		return
 	}
 	go func() {
@@ -492,27 +508,122 @@ func stopOnContext(ctx context.Context, closer io.Closer) {
 	}()
 }
 
-type publisherStreams struct {
-	mu    sync.Mutex
-	items map[uint64]net.Conn
+// publisherPendingLimit bounds how much a stream may buffer while its target
+// dial is still in flight. The window is a loopback connect, so this only ever
+// holds the frames a client wrote immediately after connecting.
+const publisherPendingLimit = 1 << 20
+
+var errPublisherStreamClosed = errors.New("publisher stream is closed")
+
+// publisherStream is one publisher-side stream. The target dial deliberately
+// runs off the channel read loop, so a stream is admitted before its connection
+// exists. Payloads arriving in that window are held in arrival order and
+// flushed on attach, which keeps a client that writes immediately after
+// connecting from racing its own OPEN.
+//
+// Every write to the target happens under mu, so the read loop and the dialing
+// goroutine cannot interleave a flush with a later frame and reorder the stream.
+type helperPublisherStream struct {
+	mu           sync.Mutex
+	conn         net.Conn
+	pending      [][]byte
+	pendingBytes int
+	halfClosed   bool
+	closed       bool
 }
 
-func (s *publisherStreams) add(id uint64, conn net.Conn) bool {
+func newHelperPublisherStream() *helperPublisherStream { return &helperPublisherStream{} }
+
+func (s *helperPublisherStream) write(payload []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return errPublisherStreamClosed
+	}
+	if s.conn == nil {
+		if s.pendingBytes+len(payload) > publisherPendingLimit {
+			return errors.New("publisher stream exceeded its pre-connection buffer")
+		}
+		s.pending = append(s.pending, payload)
+		s.pendingBytes += len(payload)
+		return nil
+	}
+	_, err := s.conn.Write(payload)
+	return err
+}
+
+// attach adopts the dialed connection and flushes whatever arrived while the
+// dial was in flight, preserving arrival order and any half-close already asked
+// for on this stream.
+func (s *helperPublisherStream) attach(conn net.Conn) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return errPublisherStreamClosed
+	}
+	s.conn = conn
+	for _, payload := range s.pending {
+		if _, err := conn.Write(payload); err != nil {
+			s.pending, s.pendingBytes = nil, 0
+			return err
+		}
+	}
+	s.pending, s.pendingBytes = nil, 0
+	if s.halfClosed {
+		s.closeWriteLocked()
+	}
+	return nil
+}
+
+// closeWrite carries the consumer's half-close through to the target. Before the
+// dial completes it is remembered, so an early half-close is not lost.
+func (s *helperPublisherStream) closeWrite() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.closeWriteLocked()
+}
+
+func (s *helperPublisherStream) closeWriteLocked() {
+	if s.conn == nil {
+		s.halfClosed = true
+		return
+	}
+	if tcp, ok := s.conn.(*net.TCPConn); ok {
+		_ = tcp.CloseWrite()
+	}
+}
+
+func (s *helperPublisherStream) close() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.closed = true
+	s.pending, s.pendingBytes = nil, 0
+	if s.conn != nil {
+		_ = s.conn.Close()
+	}
+}
+
+type publisherStreams struct {
+	mu    sync.Mutex
+	items map[uint64]*helperPublisherStream
+}
+
+func (s *publisherStreams) add(id uint64, stream *helperPublisherStream) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, exists := s.items[id]; exists {
 		return false
 	}
-	s.items[id] = conn
+	s.items[id] = stream
 	return true
 }
-func (s *publisherStreams) get(id uint64) (net.Conn, bool) {
+func (s *publisherStreams) get(id uint64) (*helperPublisherStream, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	c, ok := s.items[id]
 	return c, ok
 }
-func (s *publisherStreams) remove(id uint64) (net.Conn, bool) {
+func (s *publisherStreams) remove(id uint64) (*helperPublisherStream, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	c, ok := s.items[id]
@@ -523,14 +634,14 @@ func (s *publisherStreams) remove(id uint64) (net.Conn, bool) {
 }
 func (s *publisherStreams) removeAndClose(id uint64) {
 	if c, ok := s.remove(id); ok {
-		_ = c.Close()
+		c.close()
 	}
 }
 func (s *publisherStreams) closeAll() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for id, c := range s.items {
-		_ = c.Close()
+		c.close()
 		delete(s.items, id)
 	}
 }

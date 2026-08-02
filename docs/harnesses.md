@@ -205,19 +205,17 @@ instead of slash-command injection).
 Legend: ✅ supported · ⚙️ available, opt-in / configured elsewhere · ⚠️ partial ·
 ❌ not available.
 
-### Darwin group-route activation
+### Group-route activation matrix
 
-Group routes are a tclaude platform capability shared by harnesses; the
-harness selected for a session does not widen the Darwin route boundary. See
-[Group routes](group-routes.md) for the Darwin contract and exact-head
-evidence.
+Group routes are a tclaude platform capability shared by harnesses; the harness
+selected for a session does not widen the route boundary. See
+[Group routes](group-routes.md) for the contract and exact-head evidence.
 
 | Host boundary | Activation status | Evidence contract |
 |---|---|---|
+| Linux | ✅ Full, with a route-capable launch | Authenticated namespace-local helper and opaque named TCP stream; the existing provider/host policy floor remains in force. |
 | macOS | ⚠️ Partial | Bounded exact Seatbelt TCP slots; same-port host-local reachability remains disclosed; provider and Internet policy floors remain in force. |
-
-This entry records the Darwin closeout only. It is not a Linux activation
-claim.
+| Other platforms | ❌ unavailable | Explicit unsupported error; no silent policy downgrade. |
 
 ### Sandbox & approval defaults (Codex)
 
