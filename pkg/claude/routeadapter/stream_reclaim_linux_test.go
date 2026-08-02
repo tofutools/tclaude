@@ -92,6 +92,13 @@ func TestSequentialShortLivedConnectionsOutliveTheRouteLimit(t *testing.T) {
 	if refused := broker.Metrics().RejectedStreams; refused != 0 {
 		t.Fatalf("rejected streams = %d, want 0 across %d short-lived exchanges", refused, exchanges)
 	}
+	// The last exchange's client sees EOF from the half-close the broker
+	// forwards just before it reclaims, so give that final reclamation a
+	// moment rather than racing it.
+	deadline := time.Now().Add(5 * time.Second)
+	for broker.Metrics().Streams != 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
 	if live := broker.Metrics().Streams; live != 0 {
 		t.Fatalf("live streams = %d after %d completed exchanges, want 0", live, exchanges)
 	}
