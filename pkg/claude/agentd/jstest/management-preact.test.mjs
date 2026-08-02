@@ -166,7 +166,7 @@ test('OpenCode profile editor recommends its sandboxed autonomous pair', async (
   ]);
   const state = createManagementState();
   state.openDialog({
-    kind: 'profile-editor', seed: { name: 'opencode-defaults', harness: 'opencode' },
+    kind: 'profile-editor', seed: null,
     options: {}, catalog, sandboxImpl,
   });
   const recommendedSaves = [];
@@ -179,6 +179,12 @@ test('OpenCode profile editor recommends its sandboxed autonomous pair', async (
     confirmDiscard: async () => true, openProfilePermissions() {}, registerCleanup(fn) { recommendedCleanups.push(fn); },
   });
   await harness.act(() => Promise.resolve());
+  const name = recommendedHost.querySelector('#profile-editor-name');
+  name.value = 'opencode-defaults';
+  await harness.act(() => harness.fireEvent(name, 'input'));
+  const harnessSelect = recommendedHost.querySelector('#profile-editor-harness');
+  choose(harnessSelect, 'opencode');
+  await harness.act(() => harness.fireEvent(harnessSelect, 'change'));
   const recommendedSandbox = recommendedHost.querySelector('#profile-editor-sandbox-impl');
   assert.equal(selectedValue(recommendedSandbox), 'tclaude-layer');
   assert.match([...recommendedSandbox.options]
