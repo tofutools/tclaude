@@ -47,6 +47,72 @@ type cloneGroupResp struct {
 	} `json:"members"`
 }
 
+func makeRouteEligibleCloneSource(t *testing.T, f *testharness.Flow, convID, groupName, label string) *db.AgentGroup {
+	t.Helper()
+	f.HaveConvWithTitle(convID, "route-worker")
+	f.HaveAliveSession(convID, label, "tmux-"+label, f.TestCwd("route"))
+	group := f.HaveGroup(groupName)
+	f.HaveMember(groupName, convID)
+	require.NoError(t, db.ReplaceAgentGroupPermissions(group.ID,
+		[]string{agentd.PermRoutesPublish, agentd.PermRoutesConsume}, "test"))
+	row, err := db.LoadSession(label)
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	row.SandboxImplementation = string(sandboxpolicy.ImplementationTclaudeLayer)
+	require.NoError(t, db.SaveSession(row))
+	agentID, err := db.AgentIDForConv(convID)
+	require.NoError(t, err)
+	effective := sandboxpolicy.EffectiveProfile{NetworkAccess: sandboxpolicy.NetworkAccessNone}
+	snapshot := sandboxpolicy.NewSnapshot(effective, nil)
+	snapshot.ResolutionGroupID = group.ID
+	require.NoError(t, db.SetAgentEffectiveSandboxConfig(agentID, &snapshot))
+	return group
+}
+
+func TestGroupsClone_RouteHelperContractCoversNoCopyAndCopy(t *testing.T) {
+	t.Run("no-copy", func(t *testing.T) {
+		f := newFlow(t)
+		const source = "route-no-copy-source-111111111111"
+		makeRouteEligibleCloneSource(t, f, source, "route-no-copy", "spwn-route-no-copy")
+		response := groupCloneRequest(t, f, "route-no-copy", nil)
+		require.Len(t, response.Members, 1)
+		require.Empty(t, response.Members[0].Error)
+		clonedGroup, err := db.GetAgentGroupByName(response.Group)
+		require.NoError(t, err)
+		require.NotNil(t, clonedGroup)
+		helper, ok := f.World.SpawnRouteHelper(response.Members[0].NewConv)
+		require.True(t, ok)
+		assert.Equal(t, []int64{clonedGroup.ID}, helper.GroupIDs,
+			"the helper must receive the cloned destination group, not the source group")
+		assert.Equal(t, response.Members[0].NewConv, helper.ConvID)
+		assert.NotEmpty(t, helper.AgentID)
+		assert.NotEmpty(t, helper.LaunchGeneration)
+		assert.NotEmpty(t, helper.Credential)
+	})
+
+	t.Run("copy", func(t *testing.T) {
+		f := newFlow(t)
+		const source = "e1e1e1e1-aaaa-bbbb-cccc-111111111111"
+		makeRouteEligibleCloneSource(t, f, source, "route-copy", "spwn-route-copy")
+		r := agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost,
+			"/v1/groups/route-copy/clone", map[string]any{}))
+		rec := testharness.Serve(f.Mux, r)
+		require.Equal(t, http.StatusOK, rec.Code, "group copy clone: %s", rec.Body.String())
+		var response cloneGroupResp
+		testharness.DecodeJSON(t, rec, &response)
+		require.Len(t, response.Members, 1)
+		require.Empty(t, response.Members[0].Error)
+		clonedGroup, err := db.GetAgentGroupByName(response.Group)
+		require.NoError(t, err)
+		require.NotNil(t, clonedGroup)
+		helper, ok := f.World.SpawnRouteHelper(response.Members[0].NewConv)
+		require.True(t, ok)
+		assert.Equal(t, []int64{clonedGroup.ID}, helper.GroupIDs)
+		assert.Equal(t, response.Members[0].NewConv, helper.ConvID)
+		assert.NotEmpty(t, helper.Credential)
+	})
+}
+
 // Scenario: clone a 2-member group with no explicit name. Default name
 // should be "<src>-c-1"; the source group is left untouched; both
 // members spawn fresh conv-ids in the new group, each renamed to a

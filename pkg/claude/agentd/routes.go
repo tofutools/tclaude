@@ -170,6 +170,18 @@ func knownRouteLaunchGeneration(convID string) (string, bool) {
 }
 
 func routeCallerAgent(w http.ResponseWriter, r *http.Request) (string, string, bool) {
+	// The namespace helper is a sibling process, not a harness descendant.
+	// Its opaque capability is accepted only on the read-only route discovery
+	// endpoints; route mutation remains requireAgent-authenticated.
+	if r.Method == http.MethodGet {
+		if capability, present, valid := routeHelperCredentialForRequest(r); present {
+			if !valid {
+				writeRouteError(w, http.StatusUnauthorized, "route_helper_auth", "route helper credential is missing, stale, or invalid")
+				return "", "", false
+			}
+			return capability.convID, capability.agentID, true
+		}
+	}
 	convID, ok := requireAgent(w, r)
 	if !ok {
 		return "", "", false

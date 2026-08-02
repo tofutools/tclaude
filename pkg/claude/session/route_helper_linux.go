@@ -13,6 +13,7 @@ func tclaudeLayerRouteHelperCmd() *cobra.Command {
 		agentID          string
 		convID           string
 		launchGeneration string
+		credential       string
 		groupIDs         []int64
 	)
 	cmd := &cobra.Command{
@@ -23,7 +24,7 @@ func tclaudeLayerRouteHelperCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return routeadapter.RunHelper(cmd.Context(), routeadapter.HelperConfig{
 				SocketPath: socketPath, AgentID: agentID, ConvID: convID,
-				LaunchGeneration: launchGeneration, GroupIDs: groupIDs,
+				LaunchGeneration: launchGeneration, Credential: credential, GroupIDs: groupIDs,
 			})
 		},
 	}
@@ -31,6 +32,7 @@ func tclaudeLayerRouteHelperCmd() *cobra.Command {
 	cmd.Flags().StringVar(&agentID, "agent-id", "", "stable agent identity (internal)")
 	cmd.Flags().StringVar(&convID, "conv-id", "", "conversation identity (internal)")
 	cmd.Flags().StringVar(&launchGeneration, "launch-generation", "", "launch generation (internal)")
+	cmd.Flags().StringVar(&credential, "credential", "", "opaque helper credential (internal)")
 	cmd.Flags().Int64SliceVar(&groupIDs, "group-id", nil, "explicit route-enabled group id (repeatable)")
 	return cmd
 }

@@ -29,17 +29,18 @@ func registerV1RouteAdapter(mux *http.ServeMux) {
 // checked before hijacking; after the 101 response the connection carries only
 // routebroker frames.
 func handleRouteChannel(w http.ResponseWriter, r *http.Request) {
-	convID, ok := requireAgent(w, r)
+	capability, ok := requireRouteHelperCredential(w, r)
 	if !ok {
 		return
 	}
 	role := strings.TrimSpace(r.Header.Get("X-Tclaude-Route-Role"))
 	routeID := strings.TrimSpace(r.Header.Get("X-Tclaude-Route-ID"))
-	agentID, err := db.AgentIDForConv(convID)
-	if err != nil || agentID == "" {
-		writeRouteError(w, http.StatusForbidden, "route_identity", "caller has no stable agent identity")
+	if strings.TrimSpace(r.Header.Get("X-Tclaude-Route-Agent-ID")) != capability.agentID || strings.TrimSpace(r.Header.Get("X-Tclaude-Route-Conv-ID")) != capability.convID {
+		writeRouteError(w, http.StatusForbidden, "route_identity", "route helper identity headers do not match its capability")
 		return
 	}
+	convID, agentID := capability.convID, capability.agentID
+	var err error
 	if routeID == "" {
 		writeRouteError(w, http.StatusBadRequest, "route_channel", "route id is required")
 		return

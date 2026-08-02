@@ -67,6 +67,7 @@ type TclaudeLayerRouteHelper struct {
 	AgentID          string  `json:"agent_id"`
 	ConvID           string  `json:"conv_id"`
 	LaunchGeneration string  `json:"launch_generation"`
+	Credential       string  `json:"-"`
 	GroupIDs         []int64 `json:"group_ids"`
 }
 
@@ -129,7 +130,7 @@ func validateTclaudeLayerRouteHelper(effective sandboxpolicy.EffectiveProfile, h
 		return nil
 	}
 	if runtime.GOOS != "linux" {
-		return fmt.Errorf("Linux group-route helper is unavailable on %s", runtime.GOOS)
+		return fmt.Errorf("linux group-route helper is unavailable on %s", runtime.GOOS)
 	}
 	if strings.TrimSpace(helper.SocketPath) == "" || !filepath.IsAbs(filepath.Clean(helper.SocketPath)) {
 		return fmt.Errorf("route helper agentd socket path must be absolute")
@@ -137,7 +138,7 @@ func validateTclaudeLayerRouteHelper(effective sandboxpolicy.EffectiveProfile, h
 	if helper.BinaryPath != "" && !filepath.IsAbs(filepath.Clean(helper.BinaryPath)) {
 		return fmt.Errorf("route helper binary path must be absolute")
 	}
-	if strings.TrimSpace(helper.AgentID) == "" || strings.TrimSpace(helper.ConvID) == "" || strings.TrimSpace(helper.LaunchGeneration) == "" {
+	if strings.TrimSpace(helper.AgentID) == "" || strings.TrimSpace(helper.ConvID) == "" || strings.TrimSpace(helper.LaunchGeneration) == "" || strings.TrimSpace(helper.Credential) == "" {
 		return fmt.Errorf("route helper launch identity is incomplete")
 	}
 	if len(helper.GroupIDs) == 0 {
@@ -1233,7 +1234,7 @@ func TclaudeLayerUnixRelayServerExecArgs(
 		return nil, fmt.Errorf("unix-relay server renderer requires inherited descriptors and a command")
 	}
 	if spec.Contract.RouteHelper != nil {
-		return nil, fmt.Errorf("Linux group-route helper requires a shell-wrapped pane launch; unix-relay server argv cannot supervise it")
+		return nil, fmt.Errorf("linux group-route helper requires a shell-wrapped pane launch; unix-relay server argv cannot supervise it")
 	}
 	phase0WriteDirs, privateWriteDirs, finalHideDirs, readOnlyBinds, socketPaths, plan, err :=
 		tclaudeLayerSpecRenderInput(spec)
@@ -2870,7 +2871,7 @@ const tclaudeLayerRouteHelperCLI = "tclaude"
 
 func wrapTclaudeLayerRouteHelper(binary string, helper TclaudeLayerRouteHelper, harnessCommand string) (string, error) {
 	if runtime.GOOS != "linux" {
-		return "", fmt.Errorf("Linux group-route helper is unavailable on %s", runtime.GOOS)
+		return "", fmt.Errorf("linux group-route helper is unavailable on %s", runtime.GOOS)
 	}
 	if strings.TrimSpace(binary) == "" {
 		return "", errors.New("route helper launch binary is required")
@@ -2885,6 +2886,7 @@ func wrapTclaudeLayerRouteHelper(binary string, helper TclaudeLayerRouteHelper, 
 		"--agent-id", clcommon.ShellQuoteArg(helper.AgentID),
 		"--conv-id", clcommon.ShellQuoteArg(helper.ConvID),
 		"--launch-generation", clcommon.ShellQuoteArg(helper.LaunchGeneration),
+		"--credential", clcommon.ShellQuoteArg(helper.Credential),
 	}
 	for _, groupID := range helper.GroupIDs {
 		args = append(args, "--group-id", clcommon.ShellQuoteArg(strconv.FormatInt(groupID, 10)))

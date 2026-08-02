@@ -1,3 +1,5 @@
+//go:build linux
+
 package session
 
 import (
@@ -14,6 +16,7 @@ func testRouteHelper() *TclaudeLayerRouteHelper {
 		AgentID:          "agt_test",
 		ConvID:           "conv_test",
 		LaunchGeneration: "launch_test",
+		Credential:       "credential_test",
 		GroupIDs:         []int64{42},
 	}
 }

@@ -143,11 +143,14 @@ type SpawnArgs struct {
 
 	// RouteHelper* are an internal, Linux-only handoff for a route-capable
 	// tclaude-layer launch. The session child derives the exact exit-launch
-	// generation after it has chosen the tmux name, so only the pre-enrolled
-	// identity and explicit group scope cross this boundary.
-	RouteHelperAgentID  string
-	RouteHelperConvID   string
-	RouteHelperGroupIDs []int64
+	// generation from the daemon-minted capability, so only the pre-enrolled
+	// identity, explicit group scope, and launch-scoped opaque credential cross this
+	// boundary. The credential is never persisted by the session child.
+	RouteHelperAgentID          string
+	RouteHelperConvID           string
+	RouteHelperLaunchGeneration string
+	RouteHelperCredential       string
+	RouteHelperGroupIDs         []int64
 
 	// Sandbox is the launch-time OS-sandbox mode for harnesses that take one
 	// (Codex's --sandbox, or the managed-profile pseudo-mode); "" omits it. The

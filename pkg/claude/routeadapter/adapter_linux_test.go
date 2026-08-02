@@ -179,7 +179,7 @@ func TestDialUnixChannelUsesAuthenticatedUpgradeHeaders(t *testing.T) {
 			serverDone <- readErr
 			return
 		}
-		if req.Header.Get(channelHeaderRole) != RolePublisher || req.Header.Get(channelHeaderID) != "rte_test" {
+		if req.Header.Get(channelHeaderRole) != RolePublisher || req.Header.Get(channelHeaderID) != "rte_test" || req.Header.Get("X-Tclaude-Route-Helper-Credential") != "credential_test" {
 			serverDone <- errors.New("upgrade headers were not carried")
 			return
 		}
@@ -188,7 +188,7 @@ func TestDialUnixChannelUsesAuthenticatedUpgradeHeaders(t *testing.T) {
 	}()
 
 	conn, err := DialUnixChannel(context.Background(), socketPath, ChannelAuth{
-		Role: RolePublisher, RouteID: "rte_test", AgentID: "agt_test", ConvID: "conv_test", LaunchGeneration: "launch_test", GroupGeneration: 1,
+		Role: RolePublisher, RouteID: "rte_test", AgentID: "agt_test", ConvID: "conv_test", LaunchGeneration: "launch_test", GroupGeneration: 1, Credential: "credential_test",
 	})
 	if err != nil {
 		t.Fatal(err)

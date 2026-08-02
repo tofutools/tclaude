@@ -4729,6 +4729,14 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		ContextFeatures:            p.ContextFeatures,
 		AutoCompactWindow:          p.AutoCompactWindow,
 	}
+	routeHelperConvID := ""
+	routeHelperGeneration := ""
+	routeHelperCommitted := false
+	defer func() {
+		if routeHelperConvID != "" && !routeHelperCommitted {
+			revokeRouteHelperCredentials(routeHelperConvID, routeHelperGeneration)
+		}
+	}()
 
 	var openCodeLaunch *openCodeLaunch
 	if spawnHarness.UsesAuthoritativeServer() {
@@ -4933,9 +4941,21 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 			}
 			return nil, &spawnFailure{http.StatusInternalServerError, "route_authority", "could not resolve route helper identity: " + agentErr.Error()}
 		}
+		routeCredential, routeGeneration, credentialErr := mintRouteHelperCredential(agentID, preConvID)
+		if credentialErr != nil {
+			rollbackSpawnEnrollment(g, preConvID, preMsgID, preActorCreated)
+			if openCodeLaunch != nil {
+				_ = stopOpenCodeRuntime(openCodeLaunch.SessionID)
+			}
+			return nil, &spawnFailure{http.StatusInternalServerError, "route_authority", "could not mint route helper credential: " + credentialErr.Error()}
+		}
 		spawnArgs.RouteHelperAgentID = agentID
 		spawnArgs.RouteHelperConvID = preConvID
+		spawnArgs.RouteHelperLaunchGeneration = routeGeneration
+		spawnArgs.RouteHelperCredential = routeCredential
 		spawnArgs.RouteHelperGroupIDs = []int64{g.ID}
+		routeHelperConvID = preConvID
+		routeHelperGeneration = routeGeneration
 	}
 
 	// Final dir write-proof re-assertion, as late as possible before the fork:
@@ -5237,6 +5257,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		if outcomeTmux == "" {
 			outcomeTmux = label
 		}
+		routeHelperCommitted = true
 		return &spawnOutcome{AgentID: p.AgentID, ConvID: preConvID, Label: label, TmuxSession: outcomeTmux, FocusMode: focusMode,
 			Harness: p.Harness, Model: p.Model, Effort: p.Effort}, nil
 	}
@@ -6689,7 +6710,9 @@ func sessionNewArgs(a clcommon.SpawnArgs) []string {
 	if a.RouteHelperAgentID != "" && a.RouteHelperConvID != "" {
 		args = append(args,
 			"--route-helper-agent-id", a.RouteHelperAgentID,
-			"--route-helper-conv-id", a.RouteHelperConvID)
+			"--route-helper-conv-id", a.RouteHelperConvID,
+			"--route-helper-launch-generation", a.RouteHelperLaunchGeneration,
+			"--route-helper-credential", a.RouteHelperCredential)
 		for _, groupID := range a.RouteHelperGroupIDs {
 			args = append(args, "--route-helper-group-id", strconv.FormatInt(groupID, 10))
 		}
@@ -6820,7 +6843,9 @@ func sessionResumeArgs(a clcommon.SpawnArgs) []string {
 	if a.RouteHelperAgentID != "" && a.RouteHelperConvID != "" {
 		args = append(args,
 			"--route-helper-agent-id", a.RouteHelperAgentID,
-			"--route-helper-conv-id", a.RouteHelperConvID)
+			"--route-helper-conv-id", a.RouteHelperConvID,
+			"--route-helper-launch-generation", a.RouteHelperLaunchGeneration,
+			"--route-helper-credential", a.RouteHelperCredential)
 		for _, groupID := range a.RouteHelperGroupIDs {
 			args = append(args, "--route-helper-group-id", strconv.FormatInt(groupID, 10))
 		}
@@ -7403,7 +7428,7 @@ func prepareRouteHelperResumeArgs(a *clcommon.SpawnArgs) error {
 		return nil
 	}
 	if a.SandboxImplementation != string(sandboxpolicy.ImplementationTclaudeLayer) || a.Harness == harness.OpenCodeName {
-		return errors.New("Linux group routes require a pane-authoritative tclaude-layer resume")
+		return errors.New("linux group routes require a pane-authoritative tclaude-layer resume")
 	}
 	agentID, err := db.AgentIDForConv(a.ConvID)
 	if err != nil || strings.TrimSpace(agentID) == "" {
@@ -7414,6 +7439,12 @@ func prepareRouteHelperResumeArgs(a *clcommon.SpawnArgs) error {
 	}
 	a.RouteHelperAgentID = agentID
 	a.RouteHelperConvID = a.ConvID
+	credential, generation, credentialErr := mintRouteHelperCredential(agentID, a.ConvID)
+	if credentialErr != nil {
+		return fmt.Errorf("mint route helper credential for resume: %w", credentialErr)
+	}
+	a.RouteHelperLaunchGeneration = generation
+	a.RouteHelperCredential = credential
 	a.RouteHelperGroupIDs = routeGroups
 	return nil
 }

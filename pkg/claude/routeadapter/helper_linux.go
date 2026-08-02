@@ -24,16 +24,19 @@ type HelperConfig struct {
 	AgentID          string
 	ConvID           string
 	LaunchGeneration string
+	Credential       string
 	GroupIDs         []int64
 	PollInterval     time.Duration
 }
 
 // RunHelper watches the M1 route/lease read surfaces and attaches endpoint
 // channels as routes are published or consumed after launch. It retries
-// through an agentd restart and returns only when its enclosing sandbox is
-// being torn down.
+// transient socket and authority failures and returns only when its enclosing
+// sandbox is being torn down. A daemon restart intentionally invalidates the
+// launch-scoped credential; the enclosing session must be relaunched to mint a
+// replacement helper contract.
 func RunHelper(ctx context.Context, cfg HelperConfig) error {
-	if strings.TrimSpace(cfg.SocketPath) == "" || strings.TrimSpace(cfg.AgentID) == "" || strings.TrimSpace(cfg.ConvID) == "" || strings.TrimSpace(cfg.LaunchGeneration) == "" {
+	if strings.TrimSpace(cfg.SocketPath) == "" || strings.TrimSpace(cfg.AgentID) == "" || strings.TrimSpace(cfg.ConvID) == "" || strings.TrimSpace(cfg.LaunchGeneration) == "" || strings.TrimSpace(cfg.Credential) == "" {
 		return errors.New("route helper launch identity is incomplete")
 	}
 	if len(cfg.GroupIDs) == 0 {
@@ -94,7 +97,7 @@ func syncPublisherRoutes(ctx context.Context, cfg HelperConfig, active map[strin
 			Routes []routeRecord `json:"routes"`
 		}
 		path := "/v1/routes?group_id=" + strconv.FormatInt(groupID, 10)
-		if err := GetUnixJSON(ctx, cfg.SocketPath, path, &payload); err != nil {
+		if err := GetUnixJSON(ctx, cfg.SocketPath, path, cfg.Credential, &payload); err != nil {
 			if firstErr == nil {
 				firstErr = err
 			}
@@ -113,7 +116,7 @@ func syncPublisherRoutes(ctx context.Context, cfg HelperConfig, active map[strin
 			active[route.ID] = handle
 			go func(route routeRecord, id string, h *helperHandle) {
 				defer close(h.done)
-				auth := ChannelAuth{Role: RolePublisher, RouteID: route.ID, AgentID: cfg.AgentID, ConvID: cfg.ConvID, LaunchGeneration: cfg.LaunchGeneration, GroupGeneration: route.GroupGeneration}
+				auth := ChannelAuth{Role: RolePublisher, RouteID: route.ID, AgentID: cfg.AgentID, ConvID: cfg.ConvID, LaunchGeneration: cfg.LaunchGeneration, GroupGeneration: route.GroupGeneration, Credential: cfg.Credential}
 				channel, err := DialUnixChannel(handleCtx, cfg.SocketPath, auth)
 				if err == nil {
 					_ = RunPublisher(handleCtx, channel, route.Target)
@@ -138,7 +141,7 @@ func syncConsumerLeases(ctx context.Context, cfg HelperConfig, active map[string
 			Leases []leaseRecord `json:"leases"`
 		}
 		path := "/v1/routes/leases?group_id=" + strconv.FormatInt(groupID, 10)
-		if err := GetUnixJSON(ctx, cfg.SocketPath, path, &payload); err != nil {
+		if err := GetUnixJSON(ctx, cfg.SocketPath, path, cfg.Credential, &payload); err != nil {
 			if firstErr == nil {
 				firstErr = err
 			}
@@ -152,7 +155,7 @@ func syncConsumerLeases(ctx context.Context, cfg HelperConfig, active map[string
 			if _, exists := active[lease.ID]; exists {
 				continue
 			}
-			route, err := loadRoute(ctx, cfg.SocketPath, lease.RouteID)
+			route, err := loadRoute(ctx, cfg.SocketPath, lease.RouteID, cfg.Credential)
 			if err != nil || route.State != "ready" {
 				continue
 			}
@@ -170,7 +173,7 @@ func syncConsumerLeases(ctx context.Context, cfg HelperConfig, active map[string
 			active[lease.ID] = handle
 			go func(lease leaseRecord, h *helperHandle) {
 				defer close(h.done)
-				auth := ChannelAuth{Role: RoleConsumer, RouteID: lease.RouteID, LeaseID: lease.ID, AgentID: cfg.AgentID, ConvID: cfg.ConvID, LaunchGeneration: cfg.LaunchGeneration, GroupGeneration: lease.GroupGeneration, ConsumerEndpoint: endpoint}
+				auth := ChannelAuth{Role: RoleConsumer, RouteID: lease.RouteID, LeaseID: lease.ID, AgentID: cfg.AgentID, ConvID: cfg.ConvID, LaunchGeneration: cfg.LaunchGeneration, GroupGeneration: lease.GroupGeneration, ConsumerEndpoint: endpoint, Credential: cfg.Credential}
 				channel, err := DialUnixChannel(handleCtx, cfg.SocketPath, auth)
 				if err == nil {
 					_ = RunConsumer(handleCtx, channel, listener)
@@ -218,16 +221,16 @@ type leaseRecord struct {
 	State                    string `json:"state"`
 }
 
-func loadRoute(ctx context.Context, socketPath, routeID string) (routeRecord, error) {
+func loadRoute(ctx context.Context, socketPath, routeID, credential string) (routeRecord, error) {
 	var route routeRecord
-	err := GetUnixJSON(ctx, socketPath, "/v1/routes/"+routeID, &route)
+	err := GetUnixJSON(ctx, socketPath, "/v1/routes/"+routeID, credential, &route)
 	return route, err
 }
 
 // GetUnixJSON is the read-only half of the launch helper's agentd client. It
 // uses a real Unix socket and preserves response limits so a daemon error or
 // proxy cannot make a helper allocate unbounded memory.
-func GetUnixJSON(ctx context.Context, socketPath, path string, out any) error {
+func GetUnixJSON(ctx context.Context, socketPath, path, credential string, out any) error {
 	if !strings.HasPrefix(path, "/") || strings.ContainsAny(path, "\r\n") {
 		return errors.New("invalid agentd route path")
 	}
@@ -244,6 +247,9 @@ func GetUnixJSON(ctx context.Context, socketPath, path string, out any) error {
 		return err
 	}
 	req.Header.Set("Connection", "close")
+	if strings.TrimSpace(credential) != "" {
+		req.Header.Set("X-Tclaude-Route-Helper-Credential", credential)
+	}
 	if err := req.Write(conn); err != nil {
 		return err
 	}

@@ -58,6 +58,7 @@ type ChannelAuth struct {
 	LaunchGeneration string
 	GroupGeneration  int64
 	ConsumerEndpoint string
+	Credential       string
 }
 
 // ValidatePublisherTarget accepts only an explicit TCP loopback address. A
@@ -345,6 +346,9 @@ func DialUnixChannel(ctx context.Context, socketPath string, auth ChannelAuth) (
 	req.Header.Set(channelHeaderConv, auth.ConvID)
 	req.Header.Set(channelHeaderLaunch, auth.LaunchGeneration)
 	req.Header.Set(channelHeaderGroupGeneration, strconv.FormatInt(auth.GroupGeneration, 10))
+	if auth.Credential != "" {
+		req.Header.Set("X-Tclaude-Route-Helper-Credential", auth.Credential)
+	}
 	if auth.ConsumerEndpoint != "" {
 		req.Header.Set(channelHeaderEndpoint, auth.ConsumerEndpoint)
 	}
