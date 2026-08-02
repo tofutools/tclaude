@@ -94,7 +94,8 @@ func TestOpenCodeProxyCooperationDarwinFailureControl(t *testing.T) {
 		_ int,
 		command string,
 	) (string, error) {
-		return session.WrapTclaudeLayerServerSpec(binary, spec, command)
+		return session.WrapTclaudeLayerServerSpecWithLoopbackBind(
+			binary, spec, 0, command)
 	}
 	t.Cleanup(func() { wrapOpenCodeTclaudeLayerWithLoopbackBind = previous })
 

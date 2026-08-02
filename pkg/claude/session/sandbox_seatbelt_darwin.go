@@ -325,9 +325,18 @@ func tclaudeLayerServerCommand(
 	plan sandboxpolicy.MountPlan,
 	serverCommand string,
 ) (string, error) {
-	return tclaudeLayerServerCommandWithLoopbackBind(
-		binary, phase0WriteDirs, privateWriteDirs, finalHideDirs,
-		readOnlyBinds, socketPaths, plan, 0, serverCommand)
+	return tclaudeLayerDarwinCommand(
+		binary,
+		phase0WriteDirs,
+		privateWriteDirs,
+		finalHideDirs,
+		readOnlyBinds,
+		socketPaths,
+		plan,
+		serverCommand,
+		2,
+		0,
+	)
 }
 
 func tclaudeLayerServerCommandWithLoopbackBind(
@@ -341,6 +350,9 @@ func tclaudeLayerServerCommandWithLoopbackBind(
 	loopbackBindPort int,
 	serverCommand string,
 ) (string, error) {
+	// The Darwin OpenCode server uses an authenticated TCP control endpoint,
+	// not the inherited Unix listener and relay executable used by the v4
+	// Linux server boundary. Nothing above this launcher supplies fd 3 or 4.
 	return tclaudeLayerDarwinCommand(
 		binary,
 		phase0WriteDirs,
@@ -350,7 +362,7 @@ func tclaudeLayerServerCommandWithLoopbackBind(
 		socketPaths,
 		plan,
 		serverCommand,
-		2,
+		0,
 		loopbackBindPort,
 	)
 }

@@ -332,6 +332,8 @@ func TestTclaudeLayerDarwinCommandDefersProxyFloorToLauncher(t *testing.T) {
 		darwinProxyLauncherPrefix()+" --launch ")
 	spec, err = decodeDarwinProxyLaunchSpec(encoded)
 	require.NoError(t, err)
+	assert.Zero(t, spec.PreserveFDs,
+		"the Darwin TCP control boundary has no inherited server descriptors")
 	assert.Equal(t, 43210, spec.LoopbackBindPort,
 		"the managed server control port must cross the deferred launcher boundary")
 }
