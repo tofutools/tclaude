@@ -98,14 +98,23 @@ mesh networking out of the first contract.
 If either arm fails, revise the design record and downstream tickets before
 implementation.
 
-## Activation follow-on
+## M6 activation follow-on
 
-The probes above remain the lower-level boundary evidence. Linux production
-activation and its disclosure contract are documented in
-[Group routes](group-routes.md) and run in this same workflow:
+The feasibility probes above remain the lower-level boundary evidence. The
+production activation cells run in this same workflow and are documented in
+[Group routes](group-routes.md).
+
 `TestLinuxRouteCapabilityIntegratedSmoke` exercises Bubblewrap, the production
-agentd API, the authenticated Unix relay, and `routeadapter`. It asserts the
-exact checked-out head and covers current-generation authority, negative route
-cases, sustained ordinary messaging, and lifecycle withdrawal. Darwin production
-activation is not claimed by this workflow. The dashboard Route map remains
-opt-in via `features.groups_route_map`.
+agentd API, the authenticated Unix relay, and `routeadapter`. It covers
+current-generation authority, negative route cases, sustained ordinary
+messaging, publisher withdrawal, and generation-bound publisher-exit cleanup.
+
+`TestDarwinRouteCapabilityIntegratedSmoke` exercises `session.RunNew`, Seatbelt,
+exact slots, the production adapter, and the agentd API. It covers
+current-generation authority, negative route cases, 96/96 ordinary messages
+during sustained opaque traffic, lifecycle withdrawal, exact slot release/reuse,
+publisher death, and the documented Darwin `Partial` result.
+
+Both cells assert the exact checked-out head, and each platform's artifact is
+the authority for that platform's claim. The dashboard Route map remains opt-in
+via `features.groups_route_map`.

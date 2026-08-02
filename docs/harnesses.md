@@ -214,7 +214,7 @@ selected for a session does not widen the route boundary. See
 | Host boundary | Activation status | Evidence contract |
 |---|---|---|
 | Linux | ✅ Full, with a route-capable launch | Authenticated namespace-local helper and opaque named TCP stream; the existing provider/host policy floor remains in force. |
-| macOS | ➖ not activated | Bounded exact Seatbelt TCP slots exist at the feasibility level; production activation is not claimed yet. |
+| macOS | ⚠️ Partial | Bounded exact Seatbelt TCP slots; same-port host-local reachability remains disclosed; provider and Internet policy floors remain in force. |
 | Other platforms | ❌ unavailable | Explicit unsupported error; no silent policy downgrade. |
 
 ### Sandbox & approval defaults (Codex)
