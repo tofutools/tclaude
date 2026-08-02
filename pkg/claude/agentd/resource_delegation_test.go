@@ -118,6 +118,7 @@ func TestManagedOpenCodeTmuxUnixHandshakeCrossesProcessBoundary(t *testing.T) {
 	handshake, err := prepareOpenCodeTmuxHandshake()
 	require.NoError(t, err)
 	t.Cleanup(handshake.close)
+	assert.True(t, handshake.needsUnixHandshake())
 
 	childDone := make(chan error, 1)
 	go func() {
@@ -212,6 +213,7 @@ func TestManagedOpenCodeTmuxLoopbackLaunchFilesRetainStartupStderr(t *testing.T)
 
 	assert.Empty(t, launchFiles.statusPath)
 	assert.Empty(t, launchFiles.gatePath)
+	assert.False(t, launchFiles.needsUnixHandshake())
 	assert.Equal(t, os.FileMode(0o600), mustFileMode(t, launchFiles.stderrPath))
 	require.NoError(t, os.WriteFile(launchFiles.stderrPath,
 		[]byte("resource-limit-exec: unknown flag: --hostname\n"), 0o600))

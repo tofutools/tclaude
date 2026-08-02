@@ -909,6 +909,10 @@ func (h *openCodeTmuxHandshake) close() {
 	}
 }
 
+func (h *openCodeTmuxHandshake) needsUnixHandshake() bool {
+	return h != nil && h.statusPath != "" && h.gatePath != ""
+}
+
 func (h *openCodeTmuxHandshake) connectGate(deadline time.Time) error {
 	for time.Now().Before(deadline) {
 		gate, err := os.OpenFile(h.gatePath, os.O_WRONLY|syscall.O_NONBLOCK, 0)
@@ -988,7 +992,7 @@ func openCodeTmuxLaunchCommand(runtime db.OpenCodeRuntime, command string, args,
 	// Capture outside the optional resource-limit wrapper. Failures in that
 	// wrapper, or in the shell while opening the handshake FIFOs, happen before
 	// the inner launcher runs and would otherwise disappear with tmux's pane.
-	if handshake != nil {
+	if handshake.needsUnixHandshake() {
 		serverCommand += " 2>" + clcommon.ShellQuoteArg(handshake.stderrPath)
 	}
 	return "exec " + serverCommand
