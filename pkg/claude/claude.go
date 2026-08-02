@@ -9,6 +9,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/ask"
+	"github.com/tofutools/tclaude/pkg/claude/calculator"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/terminal"
 	"github.com/tofutools/tclaude/pkg/claude/conv"
@@ -40,6 +41,7 @@ func Cmd() *cobra.Command {
 		Long:        "Coding-agent utilities.\n\nWhen run without a subcommand, starts a new coding session in the current directory.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
+			calculator.Cmd(),
 			conv.Cmd(),
 			session.Cmd(),
 			worktree.Cmd(),
