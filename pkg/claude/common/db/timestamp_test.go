@@ -55,10 +55,11 @@ func TestDBTimeText_ValidTextBindsAsUnixNanoseconds(t *testing.T) {
 		instant.Format(time.RFC3339Nano),
 		"2026-08-01T14:34:56.789+02:00", // same instant, non-UTC caller offset
 	} {
+		// require.NoError is the whole control here: a sentinel that leaked onto
+		// clean conversions would have to surface as an error first.
 		value, err := dbTimeText(text).Value()
-		require.NoError(t, err)
+		require.NoError(t, err, "text %q", text)
 		assert.Equal(t, instant.UnixNano(), value, "text %q", text)
-		assert.False(t, IsTimestampRepresentationError(err))
 	}
 }
 
