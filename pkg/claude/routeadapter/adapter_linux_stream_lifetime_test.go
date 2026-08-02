@@ -62,10 +62,17 @@ type publisherHarness struct {
 
 func startPublisherHarness(t *testing.T, target string) *publisherHarness {
 	t.Helper()
+	return startPublisherHarnessWithContext(t, context.Background(), target)
+}
+
+// startPublisherHarnessWithContext is the same harness under a caller-owned
+// context, so a test can prove what cancellation tears down.
+func startPublisherHarnessWithContext(t *testing.T, ctx context.Context, target string) *publisherHarness {
+	t.Helper()
 	brokerSide, publisherSide := net.Pipe()
 	h := &publisherHarness{brokerSide: brokerSide, done: make(chan error, 1)}
 	h.cond = sync.NewCond(&h.mu)
-	go func() { h.done <- RunPublisher(context.Background(), publisherSide, target) }()
+	go func() { h.done <- RunPublisher(ctx, publisherSide, target) }()
 	go func() {
 		for {
 			frame, err := routebroker.ReadFrame(brokerSide, routebroker.MaxFramePayload)

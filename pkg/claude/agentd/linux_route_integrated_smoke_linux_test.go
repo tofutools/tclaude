@@ -993,12 +993,27 @@ func TestLinuxRouteCapabilityIntegratedSmoke(t *testing.T) {
 	t.Logf("TCL-952 Linux launch disclosure: route capability current; route=%s group-generation=%d", routeID, routeGroupGeneration)
 	rec, _ = serveLinuxRouteM6(t, handler, http.MethodDelete, "/v1/routes/"+routeID, publisherConv, nil)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	// Both channel closures must be caused by the withdrawal, so neither stop
+	// file may be written until both have been observed. Writing a stop file
+	// first would close the consumer itself and let the cell pass on evidence it
+	// manufactured rather than on what withdrawal actually tore down.
 	waitLinuxRouteM6Marker(t, publisherPaths.Ready, "channel-closed", pub)
+	waitLinuxRouteM6Marker(t, consumerPaths.Ready, "channel-closed", consumer)
+	// The durable records behind those closures are asserted through the
+	// production read paths, so the cell cannot pass on socket behaviour alone.
+	rec, withdrawn := serveLinuxRouteM6(t, handler, http.MethodGet, "/v1/routes/"+routeID, consumerConv, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Equal(t, db.RouteStateWithdrawn, withdrawn["state"], "explicit withdrawal must be visible through the route read path")
+	withdrawnLease, err := db.GetAgentRouteLease(leaseID)
+	require.NoError(t, err)
+	require.Equal(t, db.RouteLeaseClosed, withdrawnLease.State, "withdrawal must close the consumer lease")
+	require.Eventually(t, func() bool { return GroupRouteBroker().Metrics().PublisherChannels == 0 }, 5*time.Second, 10*time.Millisecond,
+		"withdrawal must detach the publisher channel")
 	require.NoError(t, os.WriteFile(publisherPaths.Stop, []byte("stop"), 0o600))
 	require.NoError(t, os.WriteFile(consumerPaths.Stop, []byte("stop"), 0o600))
 	pub.stop(t)
 	consumer.stop(t)
-	t.Log("TCL-952 Linux lifecycle evidence: publisher withdrawal closed attached channels")
+	t.Log("TCL-952 Linux lifecycle evidence: publisher withdrawal closed both attached channels; route withdrawn and lease closed through the production read path")
 
 	// A second route is kept solely to attribute publisher-exit withdrawal to
 	// the lifecycle event rather than the explicit DELETE above.

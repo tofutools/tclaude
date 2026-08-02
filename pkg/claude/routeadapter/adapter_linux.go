@@ -162,12 +162,16 @@ func RunPublisher(ctx context.Context, channel net.Conn, rawTarget string) error
 			// The stream is admitted here, synchronously, so data that a client
 			// wrote immediately after connecting cannot arrive before the stream
 			// this channel already accepted exists. Only the dial is deferred.
-			stream := newHelperPublisherStream()
-			if !streams.add(frame.Stream, stream) {
-				_ = w.write(routebroker.Frame{Kind: routebroker.KindOpenError, Stream: frame.Stream, Payload: []byte(routebroker.OpenErrorDuplicatePublisherStream)})
+			streamID := frame.Stream
+			stream := newHelperPublisherStream(func() {
+				streams.removeAndClose(streamID)
+				_ = w.write(routebroker.Frame{Kind: routebroker.KindClose, Stream: streamID})
+			})
+			if !streams.add(streamID, stream) {
+				_ = w.write(routebroker.Frame{Kind: routebroker.KindOpenError, Stream: streamID, Payload: []byte(routebroker.OpenErrorDuplicatePublisherStream)})
 				continue
 			}
-			go openPublisherStream(ctx, target, frame.Stream, stream, streams, w)
+			go openPublisherStream(ctx, target, streamID, stream, streams, w)
 		case routebroker.KindData:
 			stream, ok := streams.get(frame.Stream)
 			if !ok {
@@ -205,8 +209,8 @@ func openPublisherStream(ctx context.Context, target string, streamID uint64, st
 		_ = w.write(routebroker.Frame{Kind: routebroker.KindOpenError, Stream: streamID, Payload: []byte(routebroker.OpenErrorTargetUnavailable)})
 		return
 	}
-	// Anything buffered while the dial was in flight reaches the target before
-	// OPEN_OK, so the peer never observes the stream out of order.
+	// Anything buffered while the dial was in flight is queued ahead of what
+	// follows it, so the peer never observes the stream out of order.
 	if err := stream.attach(conn); err != nil {
 		// attach only fails once the stream has already been closed on this
 		// channel, so the peer has withdrawn it and CLOSE is the honest answer.
@@ -508,98 +512,158 @@ func stopOnContext(ctx context.Context, closer io.Closer) {
 	}()
 }
 
-// publisherPendingLimit bounds how much a stream may buffer while its target
-// dial is still in flight. The window is a loopback connect, so this only ever
-// holds the frames a client wrote immediately after connecting.
+// publisherPendingLimit bounds how much one stream may hold for its target. It
+// covers the dial window and, equally, a target that has stopped reading: since
+// the channel read loop never writes to a target itself, the only backpressure
+// a wedged target can apply is against its own stream's bound.
 const publisherPendingLimit = 1 << 20
 
-var errPublisherStreamClosed = errors.New("publisher stream is closed")
+// publisherTargetWriteTimeout bounds a single write to the target, so a
+// connection that is open but permanently unreadable still fails its own stream
+// rather than parking that stream's pump forever.
+const publisherTargetWriteTimeout = 30 * time.Second
 
-// publisherStream is one publisher-side stream. The target dial deliberately
-// runs off the channel read loop, so a stream is admitted before its connection
-// exists. Payloads arriving in that window are held in arrival order and
-// flushed on attach, which keeps a client that writes immediately after
-// connecting from racing its own OPEN.
+var (
+	errPublisherStreamClosed  = errors.New("publisher stream is closed")
+	errPublisherStreamBacklog = errors.New("publisher stream exceeded its target buffer")
+)
+
+// helperPublisherStream is one publisher-side stream. The target dial
+// deliberately runs off the channel read loop, so a stream is admitted before
+// its connection exists, and payloads arriving in that window are held in
+// arrival order. A client that writes immediately after connecting therefore
+// cannot race its own OPEN.
 //
-// Every write to the target happens under mu, so the read loop and the dialing
-// goroutine cannot interleave a flush with a later frame and reorder the stream.
+// A single pump goroutine owns every write to the target, and the mutex is
+// never held across target I/O. That is what keeps one target which has stopped
+// reading from stalling the other streams and the control frames that share its
+// channel: the read loop only ever appends to a bounded queue. A stream whose
+// target stops accepting bytes fails alone, once its own bound is reached.
 type helperPublisherStream struct {
 	mu           sync.Mutex
+	wake         *sync.Cond
 	conn         net.Conn
 	pending      [][]byte
 	pendingBytes int
 	halfClosed   bool
 	closed       bool
+	// fail retires this one stream when its target write fails. It runs off the
+	// read loop, so it must not assume the read loop is still running.
+	fail func()
 }
 
-func newHelperPublisherStream() *helperPublisherStream { return &helperPublisherStream{} }
+func newHelperPublisherStream(fail func()) *helperPublisherStream {
+	s := &helperPublisherStream{fail: fail}
+	s.wake = sync.NewCond(&s.mu)
+	return s
+}
 
+// write queues one payload for the target. It never performs target I/O, so the
+// channel read loop that calls it cannot be parked by a target that has stopped
+// reading.
 func (s *helperPublisherStream) write(payload []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
 		return errPublisherStreamClosed
 	}
-	if s.conn == nil {
-		if s.pendingBytes+len(payload) > publisherPendingLimit {
-			return errors.New("publisher stream exceeded its pre-connection buffer")
-		}
-		s.pending = append(s.pending, payload)
-		s.pendingBytes += len(payload)
-		return nil
+	if s.pendingBytes+len(payload) > publisherPendingLimit {
+		return errPublisherStreamBacklog
 	}
-	_, err := s.conn.Write(payload)
-	return err
-}
-
-// attach adopts the dialed connection and flushes whatever arrived while the
-// dial was in flight, preserving arrival order and any half-close already asked
-// for on this stream.
-func (s *helperPublisherStream) attach(conn net.Conn) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed {
-		return errPublisherStreamClosed
-	}
-	s.conn = conn
-	for _, payload := range s.pending {
-		if _, err := conn.Write(payload); err != nil {
-			s.pending, s.pendingBytes = nil, 0
-			return err
-		}
-	}
-	s.pending, s.pendingBytes = nil, 0
-	if s.halfClosed {
-		s.closeWriteLocked()
-	}
+	s.pending = append(s.pending, payload)
+	s.pendingBytes += len(payload)
+	s.wake.Signal()
 	return nil
 }
 
-// closeWrite carries the consumer's half-close through to the target. Before the
-// dial completes it is remembered, so an early half-close is not lost.
+// attach adopts the dialed connection and starts the pump, which flushes
+// whatever arrived while the dial was in flight before anything that follows it.
+func (s *helperPublisherStream) attach(conn net.Conn) error {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return errPublisherStreamClosed
+	}
+	s.conn = conn
+	s.wake.Signal()
+	s.mu.Unlock()
+	go s.pump()
+	return nil
+}
+
+// closeWrite carries the consumer's half-close through to the target. It is
+// recorded rather than applied, so it lands after everything the consumer sent
+// before it, whether or not the dial has completed.
 func (s *helperPublisherStream) closeWrite() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.closeWriteLocked()
+	s.halfClosed = true
+	s.wake.Signal()
 }
 
-func (s *helperPublisherStream) closeWriteLocked() {
-	if s.conn == nil {
-		s.halfClosed = true
+// pump is the only writer to the target.
+func (s *helperPublisherStream) pump() {
+	for {
+		s.mu.Lock()
+		for len(s.pending) == 0 && !s.halfClosed && !s.closed {
+			s.wake.Wait()
+		}
+		if s.closed {
+			s.mu.Unlock()
+			return
+		}
+		if len(s.pending) > 0 {
+			payload := s.pending[0]
+			s.pending = s.pending[1:]
+			s.pendingBytes -= len(payload)
+			conn := s.conn
+			s.mu.Unlock()
+			// The deadline bounds the write, and because close() closes the
+			// connection outside the mutex, a close interrupts a write already
+			// in flight instead of waiting it out.
+			_ = conn.SetWriteDeadline(time.Now().Add(publisherTargetWriteTimeout))
+			if _, err := conn.Write(payload); err != nil {
+				s.failStream()
+				return
+			}
+			continue
+		}
+		conn := s.conn
+		s.halfClosed = false
+		s.mu.Unlock()
+		if tcp, ok := conn.(*net.TCPConn); ok {
+			_ = tcp.CloseWrite()
+		}
+	}
+}
+
+// failStream retires a stream whose target stopped accepting bytes. The stream
+// is the blast radius; the channel and its other streams keep running.
+func (s *helperPublisherStream) failStream() {
+	s.mu.Lock()
+	alreadyClosed := s.closed
+	s.mu.Unlock()
+	if alreadyClosed || s.fail == nil {
 		return
 	}
-	if tcp, ok := s.conn.(*net.TCPConn); ok {
-		_ = tcp.CloseWrite()
-	}
+	s.fail()
 }
 
 func (s *helperPublisherStream) close() {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	if s.closed {
+		s.mu.Unlock()
+		return
+	}
 	s.closed = true
 	s.pending, s.pendingBytes = nil, 0
-	if s.conn != nil {
-		_ = s.conn.Close()
+	conn := s.conn
+	s.wake.Broadcast()
+	s.mu.Unlock()
+	// Closing outside the mutex is what lets a close interrupt an in-flight
+	// write to a target that stopped reading, rather than queueing behind it.
+	if conn != nil {
+		_ = conn.Close()
 	}
 }
 
@@ -637,12 +701,17 @@ func (s *publisherStreams) removeAndClose(id uint64) {
 		c.close()
 	}
 }
+
+// closeAll detaches the whole registry first and closes afterwards, so a target
+// that is slow to close cannot hold the registry mutex against the streams that
+// are still trying to make progress.
 func (s *publisherStreams) closeAll() {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	for id, c := range s.items {
+	items := s.items
+	s.items = make(map[uint64]*helperPublisherStream)
+	s.mu.Unlock()
+	for _, c := range items {
 		c.close()
-		delete(s.items, id)
 	}
 }
 
