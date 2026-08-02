@@ -700,9 +700,16 @@ func markSessionExitedAndRecordObservationOnce(
 	if n != 1 {
 		return false, AgentExitRecordResult{}, nil
 	}
+	meta, err := loadExitSessionMeta(tx, id)
+	if err != nil {
+		return false, AgentExitRecordResult{}, err
+	}
 	o.ObservedState = "exited"
 	result, entry, changed, err := recordAgentExitObservationTx(tx, o, nil)
 	if err != nil {
+		return false, AgentExitRecordResult{}, err
+	}
+	if err := markAgentRoutesPublisherLostTx(tx, meta.ConvID, o.ExpectedGeneration, "publisher session exited"); err != nil {
 		return false, AgentExitRecordResult{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -763,9 +770,16 @@ func recordSessionEndExitObservationOnce(o AgentExitObservation) (bool, AgentExi
 	if n != 1 {
 		return false, AgentExitRecordResult{}, nil
 	}
+	meta, err := loadExitSessionMeta(tx, o.SessionID)
+	if err != nil {
+		return false, AgentExitRecordResult{}, err
+	}
 	o.ObservedState = "exited"
 	result, entry, changed, err := recordAgentExitObservationTx(tx, o, nil)
 	if err != nil {
+		return false, AgentExitRecordResult{}, err
+	}
+	if err := markAgentRoutesPublisherLostTx(tx, meta.ConvID, o.ExpectedGeneration, "publisher session exited"); err != nil {
 		return false, AgentExitRecordResult{}, err
 	}
 	if err := tx.Commit(); err != nil {

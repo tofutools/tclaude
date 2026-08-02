@@ -181,11 +181,7 @@ func routeCallerAgent(w http.ResponseWriter, r *http.Request) (string, string, b
 	return convID, agentID, true
 }
 
-// requireRouteCapability is deliberately separate from requirePermission:
-// requirePermission sees group grants as a union. This check accepts a group
-// grant only when it belongs to this exact target group, while preserving the
-// established explicit per-agent/default/sudo and deny precedence.
-func requireRouteCapability(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, slug string) (string, string, bool) {
+func requireRouteMembership(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) (string, string, bool) {
 	convID, agentID, ok := routeCallerAgent(w, r)
 	if !ok {
 		return "", "", false
@@ -199,10 +195,25 @@ func requireRouteCapability(w http.ResponseWriter, r *http.Request, g *db.AgentG
 		writeRouteError(w, http.StatusForbidden, "route_not_member", fmt.Sprintf("caller is not a member of target group %q", g.Name))
 		return "", "", false
 	}
+	return convID, agentID, true
+}
 
-	// An explicit per-agent deny is authoritative for routes. This keeps a
-	// caller's opt-out effective even when another grant source (including a
-	// transient sudo elevation) exists.
+// requireRouteCapability is deliberately separate from requirePermission:
+// requirePermission sees group grants as a union. This check accepts a group
+// grant only when it belongs to this exact target group, while preserving the
+// established explicit per-agent/default/sudo and deny precedence.
+func requireRouteCapability(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, slug string) (string, string, bool) {
+	convID, agentID, ok := requireRouteMembership(w, r, g)
+	if !ok {
+		return "", "", false
+	}
+
+	// Match the central permission resolver: a live, matching sudo grant is
+	// authoritative over a permanent deny. Ordinary group grants remain
+	// target-group scoped below rather than using the union resolver.
+	if grantID, err := db.LookupActiveSudoGrantID(convID, slug); err == nil && grantID != 0 {
+		return convID, agentID, true
+	}
 	if effect, exists, err := db.AgentPermissionOverride(convID, slug); err != nil {
 		writeRouteError(w, http.StatusInternalServerError, "route_authority", "could not resolve permission")
 		return "", "", false
@@ -211,11 +222,6 @@ func requireRouteCapability(w http.ResponseWriter, r *http.Request, g *db.AgentG
 			writeRoutePermissionRefusal(w, g, slug)
 			return "", "", false
 		}
-		return convID, agentID, true
-	}
-	// Sudo is an explicit one-shot human grant, but only an actual active row
-	// authorizes the operation; a nil lookup is not a grant.
-	if grantID, err := db.LookupActiveSudoGrantID(convID, slug); err == nil && grantID != 0 {
 		return convID, agentID, true
 	}
 	if granted, err := db.HasAgentGroupPermissionForAgent(agentID, g.ID, slug); err != nil {
@@ -308,17 +314,7 @@ func handleRoutesList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if classify(peerFromContext(r.Context())) == classAgent {
-		convID, _, ok := routeCallerAgent(w, r)
-		if !ok {
-			return
-		}
-		member, err := db.FindAgentMemberInGroup(g.ID, mustRouteAgentID(convID))
-		if err != nil {
-			writeRouteError(w, http.StatusInternalServerError, "route_authority", "could not verify group membership")
-			return
-		}
-		if member == nil {
-			writeRouteError(w, http.StatusForbidden, "route_not_member", "caller is not a member of target group")
+		if _, _, ok := requireRouteMembership(w, r, g); !ok {
 			return
 		}
 	} else if classify(peerFromContext(r.Context())) != classHuman {
@@ -340,11 +336,6 @@ func handleRoutesList(w http.ResponseWriter, r *http.Request) {
 func parseRouteGroupID(raw string) int64 {
 	id, _ := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
 	return id
-}
-
-func mustRouteAgentID(convID string) string {
-	agentID, _ := db.AgentIDForConv(convID)
-	return agentID
 }
 
 func handleRoutePublish(w http.ResponseWriter, r *http.Request) {
@@ -412,7 +403,7 @@ func handleRouteByID(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		if classify(peerFromContext(r.Context())) == classAgent {
-			if _, _, ok := requireRouteCapability(w, r, g, PermRoutesConsume); !ok {
+			if _, _, ok := requireRouteMembership(w, r, g); !ok {
 				return
 			}
 		} else if classify(peerFromContext(r.Context())) != classHuman {

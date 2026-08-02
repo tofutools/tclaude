@@ -189,6 +189,63 @@ func MarkAgentRoutePublisherLost(routeID, reason string) error {
 	return tx.Commit()
 }
 
+// markAgentRoutesPublisherLostTx withdraws every ready route owned by one
+// publisher launch and closes its open leases. It runs inside the
+// authoritative session-exit transaction, so a normal process exit cannot
+// leave a consumable route behind while the reaper or SessionEnd hook settles
+// the session row.
+func markAgentRoutesPublisherLostTx(tx *sql.Tx, publisherConvID, launchGeneration, reason string) error {
+	if strings.TrimSpace(publisherConvID) == "" {
+		return nil
+	}
+	rows, err := tx.Query(`SELECT id, group_id, publisher_agent_id, publisher_conv_id
+		FROM agent_routes
+		WHERE publisher_conv_id = ? AND state IN (?, ?)
+			AND (? = '' OR publisher_launch_generation = ?)`,
+		publisherConvID, RouteStateReady, RouteStateDraining, launchGeneration, launchGeneration)
+	if err != nil {
+		return err
+	}
+	type routeOwner struct {
+		id, publisherAgent, publisherConv string
+		groupID                           int64
+	}
+	var routes []routeOwner
+	for rows.Next() {
+		var route routeOwner
+		if err := rows.Scan(&route.id, &route.groupID, &route.publisherAgent, &route.publisherConv); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		routes = append(routes, route)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	now := time.Now()
+	for _, route := range routes {
+		if _, err := tx.Exec(`UPDATE agent_routes
+			SET state = ?, withdrawn_at = ?, withdraw_reason = ?
+			WHERE id = ? AND state IN (?, ?)`,
+			RouteStatePublisherLost, dbTime(now), reason, route.id, RouteStateReady, RouteStateDraining); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`UPDATE agent_route_leases
+			SET state = ?, closed_at = ?
+			WHERE route_id = ? AND state = ?`, RouteLeaseClosed, dbTime(now), route.id, RouteLeaseOpen); err != nil {
+			return err
+		}
+		if err := insertRouteAuditTx(tx, now, "publisher-lost", "ok", route.groupID, route.id, "", route.publisherAgent, route.publisherConv, reason); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func OpenAgentRouteLease(routeID, consumerAgentID, consumerConvID, launchGeneration string, groupGeneration int64) (*AgentRouteLease, error) {
 	if strings.TrimSpace(consumerAgentID) == "" || strings.TrimSpace(launchGeneration) == "" {
 		return nil, errors.New("consumer agent and launch generation are required")

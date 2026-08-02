@@ -808,56 +808,6 @@ CREATE TABLE "agent_group_permissions" (
 CREATE INDEX idx_agent_group_permissions_slug
 			ON agent_group_permissions(slug);
 
-CREATE TABLE "agent_routes" (
-			id TEXT PRIMARY KEY,
-			group_id INTEGER NOT NULL REFERENCES agent_groups(id) ON DELETE CASCADE,
-			publisher_agent_id TEXT NOT NULL REFERENCES agents(agent_id) ON DELETE CASCADE,
-			publisher_conv_id TEXT NOT NULL DEFAULT '',
-			publisher_launch_generation TEXT NOT NULL,
-			group_generation INTEGER NOT NULL,
-			name TEXT NOT NULL,
-			transport TEXT NOT NULL,
-			target TEXT NOT NULL,
-			state TEXT NOT NULL CHECK(state IN ('ready', 'draining', 'withdrawn', 'publisher-lost')),
-			created_at INTEGER NOT NULL,
-			withdrawn_at INTEGER,
-			withdraw_reason TEXT NOT NULL DEFAULT '',
-			UNIQUE(group_id, publisher_agent_id, name)
-		) STRICT;
-
-CREATE INDEX idx_agent_routes_group_state ON agent_routes(group_id, state);
-CREATE INDEX idx_agent_routes_publisher ON agent_routes(publisher_agent_id, state);
-
-CREATE TABLE "agent_route_leases" (
-			id TEXT PRIMARY KEY,
-			route_id TEXT NOT NULL REFERENCES agent_routes(id) ON DELETE CASCADE,
-			consumer_agent_id TEXT NOT NULL REFERENCES agents(agent_id) ON DELETE CASCADE,
-			consumer_conv_id TEXT NOT NULL DEFAULT '',
-			consumer_launch_generation TEXT NOT NULL,
-			group_generation INTEGER NOT NULL,
-			state TEXT NOT NULL CHECK(state IN ('open', 'closed')),
-			opened_at INTEGER NOT NULL,
-			closed_at INTEGER
-		) STRICT;
-
-CREATE INDEX idx_agent_route_leases_route_state ON agent_route_leases(route_id, state);
-CREATE INDEX idx_agent_route_leases_consumer ON agent_route_leases(consumer_agent_id, state);
-
-CREATE TABLE "agent_route_audit" (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			at INTEGER NOT NULL,
-			action TEXT NOT NULL,
-			result TEXT NOT NULL,
-			group_id INTEGER,
-			route_id TEXT NOT NULL DEFAULT '',
-			lease_id TEXT NOT NULL DEFAULT '',
-			actor_agent_id TEXT NOT NULL DEFAULT '',
-			actor_conv_id TEXT NOT NULL DEFAULT '',
-			detail TEXT NOT NULL DEFAULT ''
-		) STRICT;
-
-CREATE INDEX idx_agent_route_audit_route ON agent_route_audit(route_id, at);
-
 CREATE TABLE "dashboard_session_grace" (
 			token_hash TEXT PRIMARY KEY,
 			expires_at INTEGER NOT NULL,
@@ -1170,3 +1120,56 @@ CREATE TABLE "agent_standing_order_group_scopes" (
 
 CREATE INDEX idx_agent_standing_order_group_scopes_group
 			ON agent_standing_order_group_scopes(group_id, order_id);
+
+CREATE TABLE agent_routes (
+			id TEXT PRIMARY KEY,
+			group_id INTEGER NOT NULL REFERENCES agent_groups(id) ON DELETE CASCADE,
+			publisher_agent_id TEXT NOT NULL REFERENCES agents(agent_id) ON DELETE CASCADE,
+			publisher_conv_id TEXT NOT NULL DEFAULT '',
+			publisher_launch_generation TEXT NOT NULL,
+			group_generation INTEGER NOT NULL,
+			name TEXT NOT NULL,
+			transport TEXT NOT NULL,
+			target TEXT NOT NULL,
+			state TEXT NOT NULL CHECK(state IN ('ready', 'draining', 'withdrawn', 'publisher-lost')),
+			created_at INTEGER NOT NULL,
+			withdrawn_at INTEGER,
+			withdraw_reason TEXT NOT NULL DEFAULT '',
+			UNIQUE(group_id, publisher_agent_id, name)
+		) STRICT;
+
+CREATE INDEX idx_agent_routes_group_state ON agent_routes(group_id, state);
+
+CREATE INDEX idx_agent_routes_publisher ON agent_routes(publisher_agent_id, state);
+
+CREATE TABLE agent_route_leases (
+			id TEXT PRIMARY KEY,
+			route_id TEXT NOT NULL REFERENCES agent_routes(id) ON DELETE CASCADE,
+			consumer_agent_id TEXT NOT NULL REFERENCES agents(agent_id) ON DELETE CASCADE,
+			consumer_conv_id TEXT NOT NULL DEFAULT '',
+			consumer_launch_generation TEXT NOT NULL,
+			group_generation INTEGER NOT NULL,
+			state TEXT NOT NULL CHECK(state IN ('open', 'closed')),
+			opened_at INTEGER NOT NULL,
+			closed_at INTEGER
+		) STRICT;
+
+CREATE INDEX idx_agent_route_leases_route_state ON agent_route_leases(route_id, state);
+
+CREATE INDEX idx_agent_route_leases_consumer ON agent_route_leases(consumer_agent_id, state);
+
+CREATE TABLE agent_route_audit (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			at INTEGER NOT NULL,
+			action TEXT NOT NULL,
+			result TEXT NOT NULL,
+			group_id INTEGER,
+			route_id TEXT NOT NULL DEFAULT '',
+			lease_id TEXT NOT NULL DEFAULT '',
+			actor_agent_id TEXT NOT NULL DEFAULT '',
+			actor_conv_id TEXT NOT NULL DEFAULT '',
+			detail TEXT NOT NULL DEFAULT ''
+		) STRICT;
+
+CREATE INDEX idx_agent_route_audit_route ON agent_route_audit(route_id, at);
+

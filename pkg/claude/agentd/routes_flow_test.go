@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
@@ -30,9 +31,11 @@ func TestRoutesAuthority_ExactGroupAndIndependentCapabilities(t *testing.T) {
 	const publisher = "route-publisher-0001"
 	const consumer = "route-consumer-0002"
 	const stranger = "route-stranger-0003"
+	const inspector = "route-inspector-0004"
 	f.HaveConvWithTitle(publisher, "publisher")
 	f.HaveConvWithTitle(consumer, "consumer")
 	f.HaveConvWithTitle(stranger, "stranger")
+	f.HaveConvWithTitle(inspector, "inspector")
 	f.HaveGroup("alpha")
 	f.HaveGroup("beta")
 	f.HaveGroup("caps")
@@ -41,6 +44,7 @@ func TestRoutesAuthority_ExactGroupAndIndependentCapabilities(t *testing.T) {
 	f.HaveMember("beta", stranger)
 	f.HaveMember("caps", publisher)
 	f.HaveMember("caps", consumer)
+	f.HaveMember("caps", inspector)
 
 	alpha, err := db.GetAgentGroupByName("alpha")
 	require.NoError(t, err)
@@ -53,11 +57,11 @@ func TestRoutesAuthority_ExactGroupAndIndependentCapabilities(t *testing.T) {
 	require.NotNil(t, caps)
 	require.NoError(t, db.ReplaceAgentGroupPermissions(alpha.ID, []string{agentd.PermRoutesPublish}, "test"))
 	require.NoError(t, db.ReplaceAgentGroupPermissions(beta.ID, nil, "test"))
-	require.NoError(t, db.ReplaceAgentGroupPermissions(caps.ID, []string{agentd.PermRoutesConsume}, "test"))
+	require.NoError(t, db.ReplaceAgentGroupPermissions(caps.ID, nil, "test"))
 
 	// A group grant is scoped to its exact target group. The publisher is an
 	// alpha member, but cannot use alpha's grant to publish into beta.
-	rec, route := serveRouteAgent(t, f, http.MethodPost, "/v1/routes/publish", publisher, map[string]any{
+	rec, _ := serveRouteAgent(t, f, http.MethodPost, "/v1/routes/publish", publisher, map[string]any{
 		"group": "alpha", "name": "api", "target": "tcp://127.0.0.1:43127",
 	})
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
@@ -81,29 +85,47 @@ func TestRoutesAuthority_ExactGroupAndIndependentCapabilities(t *testing.T) {
 
 	// Publish and consume are independent. A consumer with neither a group
 	// consume grant nor a default must be refused, then can consume through an
-	// explicit per-agent grant without gaining publish authority.
-	// The capabilities-only group grants consume but not publish, so these are
-	// genuinely independent decisions.
+	// explicit per-agent grant without gaining publish authority. The member-only
+	// inspector has no route slugs; inspection is a membership-only operation.
 	rec, body = serveRouteAgent(t, f, http.MethodPost, "/v1/routes/publish", publisher, map[string]any{
 		"group": "caps", "name": "before-grant", "target": "tcp://127.0.0.1:43129",
 	})
 	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
 	require.Equal(t, "route_permission", body["code"])
 	require.NoError(t, db.GrantAgentPermission(publisher, agentd.PermRoutesPublish, "test"))
-	rec, route = serveRouteAgent(t, f, http.MethodPost, "/v1/routes/publish", publisher, map[string]any{
+	rec, route := serveRouteAgent(t, f, http.MethodPost, "/v1/routes/publish", publisher, map[string]any{
 		"group": "caps", "name": "api", "target": "tcp://127.0.0.1:43129",
 	})
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
 	routeID, ok := route["id"].(string)
 	require.True(t, ok)
 	require.NoError(t, db.SetAgentPermissionOverride(consumer, agentd.PermRoutesConsume, db.PermEffectDeny, "test"))
+	rec, _ = serveRouteAgent(t, f, http.MethodGet, "/v1/routes/"+routeID, inspector, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	rec, body = serveRouteAgent(t, f, http.MethodPost, "/v1/routes/open", consumer, map[string]any{
 		"route_id": routeID, "group": "caps",
 	})
 	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
 	require.Equal(t, "route_permission", body["code"])
+	sudoID, err := db.InsertSudoGrant(&db.SudoGrant{
+		ConvID: consumer, Slug: agentd.PermRoutesConsume,
+		ExpiresAt: time.Now().Add(time.Hour), GrantedBy: "test", Reason: "route review",
+	})
+	require.NoError(t, err)
+	rec, sudoLease := serveRouteAgent(t, f, http.MethodPost, "/v1/routes/open", consumer, map[string]any{
+		"route_id": routeID, "group": "caps",
+	})
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	sudoLeaseID := sudoLease["id"].(string)
+	_, err = db.RevokeSudoGrant(sudoID)
+	require.NoError(t, err)
+	consumerAgentID, err := db.AgentIDForConv(consumer)
+	require.NoError(t, err)
+	require.NotEmpty(t, consumerAgentID)
+	require.NoError(t, db.CloseAgentRouteLease(sudoLeaseID, consumerAgentID, consumer))
 	_, err = db.RevokeAgentPermission(consumer, agentd.PermRoutesConsume)
 	require.NoError(t, err)
+	require.NoError(t, db.GrantAgentPermission(consumer, agentd.PermRoutesConsume, "test"))
 	rec, lease := serveRouteAgent(t, f, http.MethodPost, "/v1/routes/open", consumer, map[string]any{
 		"route_id": routeID, "group": "caps",
 	})
@@ -130,6 +152,55 @@ func TestRoutesAuthority_ExactGroupAndIndependentCapabilities(t *testing.T) {
 	rec, body = serveRouteAgent(t, f, http.MethodGet, "/v1/routes?group=alpha", stranger, nil)
 	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
 	require.Equal(t, "route_not_member", body["code"])
+}
+
+// An ordinary publisher process exit must withdraw its routes at the same
+// authoritative lifecycle seam that marks the session exited. The reaper is
+// the production path for a pane that disappears without a SessionEnd hook.
+func TestRoutesAuthority_OrdinaryPublisherExitWithdrawsLeases(t *testing.T) {
+	f := newFlow(t)
+	const publisher = "route-exit-publisher"
+	const consumer = "route-exit-consumer"
+	f.HaveConvWithTitle(publisher, "publisher")
+	f.HaveConvWithTitle(consumer, "consumer")
+	f.HaveAliveSession(publisher, "route-exit-session", "route-exit-tmux", f.TestCwd("route-exit"))
+	f.HaveGroup("exit-group")
+	f.HaveMember("exit-group", publisher)
+	f.HaveMember("exit-group", consumer)
+	g, err := db.GetAgentGroupByName("exit-group")
+	require.NoError(t, err)
+	require.NotNil(t, g)
+	require.NoError(t, db.ReplaceAgentGroupPermissions(g.ID, []string{agentd.PermRoutesPublish, agentd.PermRoutesConsume}, "test"))
+
+	rec, route := serveRouteAgent(t, f, http.MethodPost, "/v1/routes/publish", publisher, map[string]any{
+		"group": "exit-group", "name": "api", "target": "tcp://127.0.0.1:43131",
+	})
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	routeID, ok := route["id"].(string)
+	require.True(t, ok)
+	rec, lease := serveRouteAgent(t, f, http.MethodPost, "/v1/routes/open", consumer, map[string]any{
+		"route_id": routeID, "group": "exit-group",
+	})
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	leaseID, ok := lease["id"].(string)
+	require.True(t, ok)
+
+	f.MarkOffline("route-exit-tmux")
+	reaper := agentd.NewSessionReaperForTest(0, func(string, string) {})
+	require.Equal(t, 1, reaper.Tick())
+
+	updated, err := db.GetAgentRoute(routeID)
+	require.NoError(t, err)
+	require.Equal(t, db.RouteStatePublisherLost, updated.State)
+	closed, err := db.GetAgentRouteLease(leaseID)
+	require.NoError(t, err)
+	require.Equal(t, db.RouteLeaseClosed, closed.State)
+
+	rec, body := serveRouteAgent(t, f, http.MethodPost, "/v1/routes/open", consumer, map[string]any{
+		"route_id": routeID, "group": "exit-group",
+	})
+	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+	require.Equal(t, "route_open_refused", body["code"])
 }
 
 func TestRoutesAuthority_GenerationsPublisherLossAndRename(t *testing.T) {
