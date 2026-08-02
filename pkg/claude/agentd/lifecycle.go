@@ -4841,6 +4841,9 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 			"Darwin route-capable launches require the preset-conversation launch seam"}
 	}
 	routeEnabled := false
+	if runtime.GOOS == "darwin" && p.DarwinRouteCapable && g != nil {
+		routeEnabled = true
+	}
 	if runtime.GOOS == "linux" && g != nil {
 		var routeErr error
 		routeEnabled, routeErr = db.IsAgentGroupRouteEnabled(g.ID, PermRoutesPublish, PermRoutesConsume)
@@ -4982,6 +4985,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		spawnArgs.RouteHelperLaunchGeneration = routeGeneration
 		spawnArgs.RouteHelperCredential = routeCredential
 		spawnArgs.RouteHelperGroupIDs = []int64{g.ID}
+		spawnArgs.RouteHelperProxyOnly = runtime.GOOS == "darwin"
 		routeHelperConvID = preConvID
 		routeHelperGeneration = routeGeneration
 	}
@@ -6741,6 +6745,9 @@ func sessionNewArgs(a clcommon.SpawnArgs) []string {
 			"--route-helper-conv-id", a.RouteHelperConvID,
 			"--route-helper-launch-generation", a.RouteHelperLaunchGeneration,
 			"--route-helper-credential-handoff-socket", a.RouteHelperCredentialHandoffSocketPath)
+		if a.RouteHelperProxyOnly {
+			args = append(args, "--route-helper-proxy-only")
+		}
 		for _, groupID := range a.RouteHelperGroupIDs {
 			args = append(args, "--route-helper-group-id", strconv.FormatInt(groupID, 10))
 		}
@@ -6875,6 +6882,9 @@ func sessionResumeArgs(a clcommon.SpawnArgs) []string {
 			"--route-helper-conv-id", a.RouteHelperConvID,
 			"--route-helper-launch-generation", a.RouteHelperLaunchGeneration,
 			"--route-helper-credential-handoff-socket", a.RouteHelperCredentialHandoffSocketPath)
+		if a.RouteHelperProxyOnly {
+			args = append(args, "--route-helper-proxy-only")
+		}
 		for _, groupID := range a.RouteHelperGroupIDs {
 			args = append(args, "--route-helper-group-id", strconv.FormatInt(groupID, 10))
 		}
@@ -7472,7 +7482,10 @@ func liveSpawnResume(a clcommon.SpawnArgs) error {
 // support both Claude and Codex; OpenCode's server boundary has no pane-local
 // helper and is refused when its group has opted into routes.
 func prepareRouteHelperResumeArgs(a *clcommon.SpawnArgs) error {
-	if runtime.GOOS != "linux" || a == nil || strings.TrimSpace(a.ConvID) == "" {
+	if (runtime.GOOS != "linux" && runtime.GOOS != "darwin") || a == nil || strings.TrimSpace(a.ConvID) == "" {
+		return nil
+	}
+	if runtime.GOOS == "darwin" && !a.DarwinRouteCapable {
 		return nil
 	}
 	groups, err := db.ListGroupsForConv(a.ConvID)
@@ -7511,6 +7524,7 @@ func prepareRouteHelperResumeArgs(a *clcommon.SpawnArgs) error {
 	a.RouteHelperLaunchGeneration = generation
 	a.RouteHelperCredential = credential
 	a.RouteHelperGroupIDs = routeGroups
+	a.RouteHelperProxyOnly = runtime.GOOS == "darwin"
 	return nil
 }
 

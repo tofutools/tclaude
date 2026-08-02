@@ -207,9 +207,9 @@ func knownRouteLaunchGeneration(convID string) (string, bool) {
 }
 
 func routeCallerAgent(w http.ResponseWriter, r *http.Request) (string, string, bool) {
-	// The namespace helper is a sibling process, not a harness descendant.
-	// Its opaque capability is accepted only on the read-only route discovery
-	// endpoints; route mutation remains requireAgent-authenticated.
+	// The namespace helper is a sibling process, not a harness descendant. Its
+	// opaque capability is accepted on read-only route discovery; mutation uses
+	// the narrower consume-lifecycle helper below.
 	if r.Method == http.MethodGet {
 		if capability, present, valid := routeHelperCredentialForRequest(r); present {
 			if !valid {
@@ -229,6 +229,26 @@ func routeCallerAgent(w http.ResponseWriter, r *http.Request) (string, string, b
 		return "", "", false
 	}
 	return convID, agentID, true
+}
+
+func requireRouteConsumeCapability(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) (string, string, bool) {
+	if capability, present, valid := routeHelperCredentialForRequest(r); present {
+		if !valid {
+			writeRouteError(w, http.StatusUnauthorized, "route_helper_auth", "route helper credential is missing, stale, or invalid")
+			return "", "", false
+		}
+		member, err := db.FindAgentMemberInGroup(g.ID, capability.agentID)
+		if err != nil {
+			writeRouteError(w, http.StatusInternalServerError, "route_authority", "could not verify group membership")
+			return "", "", false
+		}
+		if member == nil {
+			writeRouteError(w, http.StatusForbidden, "route_not_member", "caller is not a member of the target group")
+			return "", "", false
+		}
+		return requireRoutePermissionForIdentity(w, r, g, capability.convID, capability.agentID, PermRoutesConsume)
+	}
+	return requireRouteCapability(w, r, g, PermRoutesConsume)
 }
 
 func requireRouteMembership(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) (string, string, bool) {
@@ -258,6 +278,10 @@ func requireRouteCapability(w http.ResponseWriter, r *http.Request, g *db.AgentG
 		return "", "", false
 	}
 
+	return requireRoutePermissionForIdentity(w, r, g, convID, agentID, slug)
+}
+
+func requireRoutePermissionForIdentity(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, convID, agentID, slug string) (string, string, bool) {
 	// Match the central permission resolver: a live, matching sudo grant is
 	// authoritative over a permanent deny. Ordinary group grants remain
 	// target-group scoped below rather than using the union resolver.
@@ -700,7 +724,7 @@ func handleRouteAction(w http.ResponseWriter, r *http.Request, route *db.AgentRo
 				return
 			}
 		}
-		convID, agentID, ok := requireRouteCapability(w, r, g, PermRoutesConsume)
+		convID, agentID, ok := requireRouteConsumeCapability(w, r, g)
 		if !ok {
 			return
 		}
@@ -797,7 +821,7 @@ func handleRouteLeaseClose(w http.ResponseWriter, r *http.Request) {
 		writeRouteError(w, http.StatusNotFound, "route_group", "route target group no longer exists")
 		return
 	}
-	convID, agentID, ok := requireRouteCapability(w, r, g, PermRoutesConsume)
+	convID, agentID, ok := requireRouteConsumeCapability(w, r, g)
 	if !ok {
 		return
 	}

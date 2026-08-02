@@ -38,7 +38,7 @@ func TestRoutesEndpointRegistrationAsyncFlow(t *testing.T) {
 		"group": groupName, "name": "api", "target": "tcp://127.0.0.1:43127",
 	})
 	require.Equal(t, http.StatusCreated, response.Code, response.Body.String())
-	response, lease := serveEndpointRouteRequest(t, http.MethodPost, "/v1/routes/open", consumer, map[string]any{
+	response, lease := serveEndpointHelperRouteRequest(t, credential, http.MethodPost, "/v1/routes/open", map[string]any{
 		"route_id": route["id"], "group": groupName, "launch_generation": launchGeneration,
 	})
 	require.Equal(t, http.StatusCreated, response.Code, response.Body.String())
@@ -75,6 +75,19 @@ func serveEndpointRouteRequest(t *testing.T, method, path, convID string, body a
 	require.NoError(t, err)
 	req := httptest.NewRequest(method, path, bytes.NewReader(payload))
 	req = AsAgentPeer(req, convID)
+	rec := httptest.NewRecorder()
+	buildMux().ServeHTTP(rec, req)
+	var out map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out), rec.Body.String())
+	return rec, out
+}
+
+func serveEndpointHelperRouteRequest(t *testing.T, credential, method, path string, body any) (*httptest.ResponseRecorder, map[string]any) {
+	t.Helper()
+	payload, err := json.Marshal(body)
+	require.NoError(t, err)
+	req := httptest.NewRequest(method, path, bytes.NewReader(payload))
+	req.Header.Set(routeHelperCredentialHeader, credential)
 	rec := httptest.NewRecorder()
 	buildMux().ServeHTTP(rec, req)
 	var out map[string]any

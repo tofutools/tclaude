@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -48,6 +49,22 @@ type Config struct {
 	// RouteIdentity binds every route request to the consumer's stable group,
 	// agent, conversation, launch generation, and open M1 lease.
 	RouteIdentity RouteIdentity
+}
+
+// RouteLeaseReleaser closes the M5 lease selected for one route connection.
+// It is optional so existing test and embedding resolvers remain source
+// compatible; production authorities implement it to bind lease lifetime to
+// the upstream connection lifetime.
+type RouteLeaseReleaser interface {
+	ReleaseRoute(context.Context, RouteResolution) error
+}
+
+// RouteIdentityProvider selects the exact target-group generation for a
+// request when a launch belongs to more than one explicit group. The provider
+// receives only the opaque route selector and must return a generation-bound
+// identity; it cannot broaden the launch's agent/conversation authority.
+type RouteIdentityProvider interface {
+	IdentityForRoute(context.Context, RouteRequest) (RouteIdentity, error)
 }
 
 // Server carries and filters cooperative traffic for one sandbox. It serves
@@ -310,11 +327,25 @@ func (s *Server) connectRoute(
 		RouteID: target.RouteID,
 		Detail:  refusalDetail(target, VerdictNotAuthorized),
 	}
-	if s.route == nil || !s.identity.valid() {
+	if s.route == nil || strings.TrimSpace(s.identity.AgentID) == "" ||
+		strings.TrimSpace(s.identity.ConvID) == "" || strings.TrimSpace(s.identity.LaunchGeneration) == "" {
 		s.report(carriage, target, refused)
 		return nil, refused, nil
 	}
 	request := RouteRequest{Identity: s.identity, RouteID: target.RouteID, Port: target.Port}
+	if provider, ok := s.route.(RouteIdentityProvider); ok {
+		identity, identityErr := provider.IdentityForRoute(ctx, request)
+		if identityErr != nil {
+			s.report(carriage, target, refused)
+			s.reportError(carriage, fmt.Errorf("resolve named route group: %w", identityErr))
+			return nil, refused, nil
+		}
+		request.Identity = identity
+	}
+	if !request.Identity.valid() {
+		s.report(carriage, target, refused)
+		return nil, refused, nil
+	}
 	resolution, err := s.route.ResolveRoute(ctx, request)
 	if err != nil {
 		s.report(carriage, target, refused)
@@ -322,6 +353,7 @@ func (s *Server) connectRoute(
 		return nil, refused, nil
 	}
 	if err := validateRouteResolution(request, resolution); err != nil {
+		s.releaseRoute(resolution)
 		s.report(carriage, target, refused)
 		s.reportError(carriage, fmt.Errorf("validate named route: %w", err))
 		return nil, refused, nil
@@ -330,14 +362,41 @@ func (s *Server) connectRoute(
 	conn, err := s.dialer.ConnectRoute(ctx, resolution.Endpoint)
 	s.report(carriage, target, decision)
 	if err != nil {
+		s.releaseRoute(resolution)
 		s.reportError(carriage, err)
 		return nil, decision, err
 	}
-	if !s.track(conn) {
+	leaseConn := &routeLeaseConn{Conn: conn, release: func() {
+		s.releaseRoute(resolution)
+	}}
+	if !s.track(leaseConn) {
 		_ = conn.Close()
+		leaseConn.releaseOnce.Do(leaseConn.release)
 		return nil, decision, fmt.Errorf("proxy is closing")
 	}
-	return conn, decision, nil
+	return leaseConn, decision, nil
+}
+
+func (s *Server) releaseRoute(resolution RouteResolution) {
+	releaser, ok := s.route.(RouteLeaseReleaser)
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = releaser.ReleaseRoute(ctx, resolution)
+}
+
+type routeLeaseConn struct {
+	net.Conn
+	release     func()
+	releaseOnce sync.Once
+}
+
+func (c *routeLeaseConn) Close() error {
+	err := c.Conn.Close()
+	c.releaseOnce.Do(c.release)
+	return err
 }
 
 // bufferedConn preserves bytes the carriage parser already pulled into its

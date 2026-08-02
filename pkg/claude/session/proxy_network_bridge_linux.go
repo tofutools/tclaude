@@ -3,6 +3,7 @@
 package session
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -84,14 +85,15 @@ var _ = [1]struct{}{}[proxyNetworkHostsFD-
 // preparedProxyNetworkRelay is the host half of the bridge, owned by the
 // launch supervisor for exactly the sandbox's lifetime.
 type preparedProxyNetworkRelay struct {
-	SetupArgs    []string
-	Command      []string
-	Files        []*os.File
-	SyncListener *net.UnixListener
-	Sync         *net.UnixConn
-	SyncDir      string
-	Rules        sandboxpolicy.FilteredNetworkRuleSet
-	Server       *sandboxproxy.Server
+	SetupArgs      []string
+	Command        []string
+	Files          []*os.File
+	SyncListener   *net.UnixListener
+	Sync           *net.UnixConn
+	SyncDir        string
+	Rules          sandboxpolicy.FilteredNetworkRuleSet
+	Server         *sandboxproxy.Server
+	RouteAuthority *proxyRouteAuthority
 	// Wait carries the proxy's own exit. A receive on it while the sandbox is
 	// still alive is a fail-closed teardown, exactly as a pasta exit is under
 	// the packet engine.
@@ -275,6 +277,9 @@ func (p *preparedProxyNetworkRelay) Close() {
 	if p.Server != nil {
 		_ = p.Server.Close()
 	}
+	if p.RouteAuthority != nil {
+		p.RouteAuthority.Close()
+	}
 	if p.Sync != nil {
 		_ = p.Sync.Close()
 	}
@@ -371,11 +376,23 @@ func (p *preparedProxyNetworkRelay) waitListenerReady(namespacePID int) error {
 	if err != nil {
 		return err
 	}
-	server, err := sandboxproxy.NewFromRuleSet(
-		p.Rules, sandboxproxy.Config{
-			OnDecision: logProxyNetworkDecision,
-			OnError:    logProxyNetworkError,
-		})
+	config := sandboxproxy.Config{
+		OnDecision: logProxyNetworkDecision,
+		OnError:    logProxyNetworkError,
+	}
+	if p.RouteAuthority != nil {
+		identity, identityErr := p.RouteAuthority.Identity(context.Background())
+		if identityErr != nil {
+			_ = listener.Close()
+			return fmt.Errorf("build route authority identity: %w", identityErr)
+		}
+		config.RouteResolver = p.RouteAuthority
+		config.RouteIdentity = identity
+		config.Dialer = &sandboxproxy.Dialer{
+			RouteDial: linuxNamespaceRouteDial(namespacePID),
+		}
+	}
+	server, err := sandboxproxy.NewFromRuleSet(p.Rules, config)
 	if err != nil {
 		_ = listener.Close()
 		return fmt.Errorf("build filtering proxy: %w", err)

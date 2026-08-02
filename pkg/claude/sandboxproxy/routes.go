@@ -8,16 +8,15 @@ import (
 )
 
 // RouteIdentity is the consumer-side stable identity the route authority must
-// check for every synthetic destination. Display names are intentionally absent:
-// group and agent IDs, conversation and launch generations, and the M1 lease
-// are the authority boundary.
+// check for every synthetic destination. Display names are intentionally
+// absent. A lease is deliberately not part of this server-wide identity: one
+// listener may carry multiple routes, each with its own active M1 lease.
 type RouteIdentity struct {
 	GroupID          int64
 	GroupGeneration  int64
 	AgentID          string
 	ConvID           string
 	LaunchGeneration string
-	LeaseID          string
 }
 
 // RouteAuth is a short compatibility spelling for callers that use "auth" for
@@ -28,8 +27,7 @@ func (i RouteIdentity) valid() bool {
 	return i.GroupID > 0 && i.GroupGeneration > 0 &&
 		strings.TrimSpace(i.AgentID) != "" &&
 		strings.TrimSpace(i.ConvID) != "" &&
-		strings.TrimSpace(i.LaunchGeneration) != "" &&
-		strings.TrimSpace(i.LeaseID) != ""
+		strings.TrimSpace(i.LaunchGeneration) != ""
 }
 
 // RouteRequest is one route connection request. The route ID comes from the
@@ -47,7 +45,10 @@ type RouteRequest struct {
 // The publisher fields carry the stable route owner identity through the
 // authority seam for audit and stale-generation checks.
 type RouteResolution struct {
-	RouteID                   string
+	RouteID string
+	// LeaseID is selected by the authority for this exact route request. It
+	// must never be supplied by a server-wide listener identity.
+	LeaseID                   string
 	GroupID                   int64
 	GroupGeneration           int64
 	PublisherAgentID          string
@@ -76,6 +77,9 @@ func validateRouteResolution(request RouteRequest, resolution RouteResolution) e
 	if strings.TrimSpace(request.RouteID) == "" ||
 		resolution.RouteID != request.RouteID {
 		return fmt.Errorf("route authority returned a mismatched route identity")
+	}
+	if strings.TrimSpace(resolution.LeaseID) == "" {
+		return fmt.Errorf("route authority returned no active lease")
 	}
 	if resolution.GroupID != request.Identity.GroupID ||
 		resolution.GroupGeneration != request.Identity.GroupGeneration {

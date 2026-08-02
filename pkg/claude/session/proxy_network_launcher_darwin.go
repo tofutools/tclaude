@@ -3,6 +3,7 @@
 package session
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -12,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -77,6 +79,7 @@ type darwinProxyLaunchSpec struct {
 	PreserveFDs      int                           `json:"preserve_fds,omitempty"`
 	LoopbackBindPort int                           `json:"loopback_bind_port,omitempty"`
 	RouteSlots       []int                         `json:"route_slots,omitempty"`
+	RouteAuthority   *proxyRouteAuthorityConfig    `json:"route_authority,omitempty"`
 }
 
 func darwinProxyLauncherCommand(spec darwinProxyLaunchSpec) (string, error) {
@@ -93,6 +96,9 @@ func darwinProxyLauncherCommand(spec darwinProxyLaunchSpec) (string, error) {
 		return "", fmt.Errorf("darwin proxy launcher has invalid loopback bind port %d", spec.LoopbackBindPort)
 	}
 	if err := ValidateDarwinRouteSlots(spec.RouteSlots); err != nil {
+		return "", err
+	}
+	if err := validateDarwinProxyRouteAuthority(spec.RouteAuthority); err != nil {
 		return "", err
 	}
 	data, err := json.Marshal(spec)
@@ -143,7 +149,24 @@ func decodeDarwinProxyLaunchSpec(encoded string) (darwinProxyLaunchSpec, error) 
 	if err := ValidateDarwinRouteSlots(spec.RouteSlots); err != nil {
 		return darwinProxyLaunchSpec{}, err
 	}
+	if err := validateDarwinProxyRouteAuthority(spec.RouteAuthority); err != nil {
+		return darwinProxyLaunchSpec{}, err
+	}
 	return spec, nil
+}
+
+func validateDarwinProxyRouteAuthority(authority *proxyRouteAuthorityConfig) error {
+	if authority == nil {
+		return nil
+	}
+	if strings.TrimSpace(authority.SocketPath) == "" || !filepath.IsAbs(filepath.Clean(authority.SocketPath)) ||
+		strings.TrimSpace(authority.HandoffSocketPath) == "" || !filepath.IsAbs(filepath.Clean(authority.HandoffSocketPath)) ||
+		strings.TrimSpace(authority.AgentID) == "" ||
+		strings.TrimSpace(authority.ConvID) == "" || strings.TrimSpace(authority.LaunchGeneration) == "" ||
+		len(authority.GroupIDs) == 0 {
+		return fmt.Errorf("Darwin proxy route authority metadata is incomplete")
+	}
+	return nil
 }
 
 func tclaudeLayerDarwinProxyLauncherCmd() *cobra.Command {
@@ -194,13 +217,29 @@ func runDarwinProxyLauncher(spec darwinProxyLaunchSpec) (int, error) {
 		defer func() { _ = routeReservation.Release() }()
 	}
 
-	server, err := sandboxproxy.NewFromRuleSet(
-		*spec.Plan.FilteredNetwork,
-		sandboxproxy.Config{
-			OnDecision: logProxyNetworkDecision,
-			OnError:    logProxyNetworkError,
-		},
-	)
+	config := sandboxproxy.Config{
+		OnDecision: logProxyNetworkDecision,
+		OnError:    logProxyNetworkError,
+	}
+	var routeAuthority *proxyRouteAuthority
+	if spec.RouteAuthority != nil {
+		credential, credentialErr := receiveProxyRouteCredential(spec.RouteAuthority.HandoffSocketPath)
+		if credentialErr != nil {
+			_ = listener.Close()
+			return 125, credentialErr
+		}
+		routeAuthority = newProxyRouteAuthority(*spec.RouteAuthority, credential)
+		defer routeAuthority.Close()
+		identity, identityErr := routeAuthority.Identity(context.Background())
+		if identityErr != nil {
+			_ = listener.Close()
+			return 125, fmt.Errorf("build Darwin route authority identity: %w", identityErr)
+		}
+		config.RouteResolver = routeAuthority
+		config.RouteIdentity = identity
+		config.Dialer = &sandboxproxy.Dialer{RouteDial: darwinHostRouteDial}
+	}
+	server, err := sandboxproxy.NewFromRuleSet(*spec.Plan.FilteredNetwork, config)
 	if err != nil {
 		_ = listener.Close()
 		return 125, fmt.Errorf("build Darwin filtering proxy: %w", err)

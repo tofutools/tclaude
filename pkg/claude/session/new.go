@@ -265,6 +265,7 @@ type NewParams struct {
 	RouteHelperLaunchGeneration            string  `long:"route-helper-launch-generation" optional:"true" help:"Internal: launch generation for the Linux group-route helper"`
 	RouteHelperCredentialHandoffSocketPath string  `long:"route-helper-credential-handoff-socket" optional:"true" help:"Internal: one-shot credential FD handoff socket for the Linux group-route helper"`
 	RouteHelperGroupIDs                    []int64 `long:"route-helper-group-id" optional:"true" help:"Internal: explicit route-enabled group for the Linux group-route helper"`
+	RouteHelperProxyOnly                   bool    `long:"route-helper-proxy-only" optional:"true" help:"Internal: carry route authority to the Darwin filtering proxy without a namespace helper"`
 }
 
 func NewCmd() *cobra.Command {
@@ -927,6 +928,12 @@ func runNew(params *NewParams) error {
 		if !outerLayer || !tclaudeLayerWrapsPane(h.Name) {
 			return fmt.Errorf("linux group-route helper requires a pane-authoritative tclaude-layer launch")
 		}
+		if params.RouteHelperProxyOnly && runtime.GOOS != "darwin" {
+			return fmt.Errorf("Darwin route proxy authority requires macOS")
+		}
+		if !params.RouteHelperProxyOnly && runtime.GOOS != "linux" {
+			return fmt.Errorf("linux group-route helper requires Linux")
+		}
 		if strings.TrimSpace(params.RouteHelperAgentID) == "" || strings.TrimSpace(params.RouteHelperConvID) == "" || strings.TrimSpace(params.RouteHelperLaunchGeneration) == "" || strings.TrimSpace(params.RouteHelperCredentialHandoffSocketPath) == "" || len(params.RouteHelperGroupIDs) == 0 {
 			return fmt.Errorf("linux group-route helper launch identity is incomplete")
 		}
@@ -949,6 +956,7 @@ func runNew(params *NewParams) error {
 			LaunchGeneration:  strings.TrimSpace(params.RouteHelperLaunchGeneration),
 			HandoffSocketPath: strings.TrimSpace(params.RouteHelperCredentialHandoffSocketPath),
 			GroupIDs:          append([]int64(nil), params.RouteHelperGroupIDs...),
+			ProxyOnly:         params.RouteHelperProxyOnly,
 		}
 		exitGeneration = routeHelper.LaunchGeneration
 	}

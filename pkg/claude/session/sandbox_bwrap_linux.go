@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
@@ -229,6 +230,7 @@ func tclaudeLayerCommandWithRouteSlots(
 	plan sandboxpolicy.MountPlan,
 	routeSlots []int,
 	_ *DarwinRouteSlotReservation,
+	_ *TclaudeLayerRouteHelper,
 	harnessCommand string,
 ) (string, error) {
 	if len(routeSlots) != 0 {
@@ -266,8 +268,9 @@ func tclaudeLayerCommandWithRouteHelper(
 	if err != nil {
 		return "", err
 	}
+	routeFlags := tclaudeLayerRouteAuthorityRelayFlags(plan, helper)
 	return tclaudeLayerRouteHelperBootstrapPrefix(helper) +
-		tclaudeLayerRelayPrefix() + " --preserve-fds 1" + engine + " -- " + command, nil
+		tclaudeLayerRelayPrefix() + " --preserve-fds 1" + engine + routeFlags + " -- " + command, nil
 }
 
 // tclaudeLayerEnginePrefix contributes the supervisor flag for whichever
@@ -365,6 +368,20 @@ func tclaudeLayerStackedCommandWithRouteHelper(
 func tclaudeLayerRouteHelperGuestFD(plan sandboxpolicy.MountPlan) int {
 	engineDescriptors, _ := tclaudeLayerRelayEngineDescriptors(plan)
 	return tclaudeLayerRelayStatusFD + 1 + engineDescriptors
+}
+
+func tclaudeLayerRouteAuthorityRelayFlags(plan sandboxpolicy.MountPlan, helper TclaudeLayerRouteHelper) string {
+	if !tclaudeLayerPlanDeploysProxy(plan) || helper.ProxyOnly {
+		return ""
+	}
+	flags := " --route-helper-socket " + clcommon.ShellQuoteArg(helper.SocketPath) +
+		" --route-helper-agent-id " + clcommon.ShellQuoteArg(helper.AgentID) +
+		" --route-helper-conv-id " + clcommon.ShellQuoteArg(helper.ConvID) +
+		" --route-helper-launch-generation " + clcommon.ShellQuoteArg(helper.LaunchGeneration)
+	for _, groupID := range helper.GroupIDs {
+		flags += " --route-helper-group-id " + strconv.FormatInt(groupID, 10)
+	}
+	return flags
 }
 
 func tclaudeLayerPreserveRouteHelperFD(command string) string {

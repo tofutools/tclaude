@@ -74,6 +74,16 @@ type routeTestResolver struct {
 	resolveCall func(RouteRequest) (RouteResolution, error)
 }
 
+type routeReleaseResolver struct {
+	routeTestResolver
+	released chan RouteResolution
+}
+
+func (r *routeReleaseResolver) ReleaseRoute(_ context.Context, resolution RouteResolution) error {
+	r.released <- resolution
+	return nil
+}
+
 func (r *routeTestResolver) ResolveRoute(_ context.Context, request RouteRequest) (RouteResolution, error) {
 	r.mu.Lock()
 	r.requests = append(r.requests, request)
@@ -130,7 +140,6 @@ func routeIdentity() RouteIdentity {
 		AgentID:          "agt-consumer",
 		ConvID:           "conv-consumer",
 		LaunchGeneration: "launch-consumer",
-		LeaseID:          "rlease-consumer",
 	}
 }
 
@@ -139,6 +148,7 @@ func routeResolution(t *testing.T, routeID string, addr net.Addr) RouteResolutio
 	tcpAddr := addr.(*net.TCPAddr)
 	return RouteResolution{
 		RouteID:                   routeID,
+		LeaseID:                   "rlease-" + routeID,
 		GroupID:                   41,
 		GroupGeneration:           7,
 		PublisherAgentID:          "agt-publisher",
@@ -173,14 +183,25 @@ func routeHTTPConnect(t *testing.T, proxyAddr, authority string) error {
 }
 
 func TestNamedRoutesShareOneHTTPAndSOCKSListenerConcurrently(t *testing.T) {
-	routeID := "rte-concurrent"
-	host, err := SyntheticRouteHost(routeID)
-	if err != nil {
-		t.Fatal(err)
+	routeIDs := []string{"rte-concurrent-a", "rte-concurrent-b"}
+	hosts := make([]string, len(routeIDs))
+	for i, routeID := range routeIDs {
+		var err error
+		hosts[i], err = SyntheticRouteHost(routeID)
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
-	origin := newTestOrigin(t)
+	origins := []*testOrigin{newTestOrigin(t), newTestOrigin(t)}
 	resolver := &routeTestResolver{}
-	resolver.resolution = routeResolution(t, routeID, origin.addr)
+	resolver.resolveCall = func(request RouteRequest) (RouteResolution, error) {
+		for i, routeID := range routeIDs {
+			if request.RouteID == routeID {
+				return routeResolution(t, routeID, origins[i].addr), nil
+			}
+		}
+		return RouteResolution{}, fmt.Errorf("unknown route %q", request.RouteID)
+	}
 	// Keep the setup in one helper-shaped block so both protocol clients use
 	// the same listener and the same route authority.
 	dialer := &Dialer{
@@ -210,6 +231,8 @@ func TestNamedRoutesShareOneHTTPAndSOCKSListenerConcurrently(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
+			routeIndex := i % len(routeIDs)
+			host := hosts[routeIndex]
 			if i%2 == 0 {
 				if err := routeHTTPConnect(t, proxyAddr, net.JoinHostPort(host, "443")); err != nil {
 					t.Errorf("HTTP route %d: %v", i, err)
@@ -225,8 +248,10 @@ func TestNamedRoutesShareOneHTTPAndSOCKSListenerConcurrently(t *testing.T) {
 	if got := resolver.count(); got != 6 {
 		t.Fatalf("route resolver calls = %d, want 6", got)
 	}
-	if got := origin.connections(); got != 6 {
-		t.Fatalf("route upstream connections = %d, want 6", got)
+	for i, origin := range origins {
+		if got := origin.connections(); got != 3 {
+			t.Fatalf("route %s upstream connections = %d, want 3", routeIDs[i], got)
+		}
 	}
 }
 
@@ -261,6 +286,7 @@ func TestNamedRouteAuthorityIdentityAndEndpointValidation(t *testing.T) {
 	request := RouteRequest{Identity: routeIdentity(), RouteID: "rte-a", Port: 443}
 	valid := RouteResolution{
 		RouteID:                   "rte-a",
+		LeaseID:                   "lease-a",
 		GroupID:                   41,
 		GroupGeneration:           7,
 		PublisherAgentID:          "publisher",
@@ -286,5 +312,46 @@ func TestNamedRouteAuthorityIdentityAndEndpointValidation(t *testing.T) {
 				t.Fatal("invalid route resolution was accepted")
 			}
 		})
+	}
+}
+
+func TestNamedRouteLeaseClosesWithUpstreamConnection(t *testing.T) {
+	origin := newTestOrigin(t)
+	resolver := &routeReleaseResolver{
+		routeTestResolver: routeTestResolver{resolution: routeResolution(t, "lease-route", origin.addr)},
+		released:          make(chan RouteResolution, 1),
+	}
+	server, err := New(Config{
+		Rules:         openRules(nil),
+		Dialer:        &Dialer{Timeout: time.Second},
+		RouteResolver: resolver,
+		RouteIdentity: routeIdentity(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	host, err := SyntheticRouteHost("lease-route")
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := ParseTarget(host, 443)
+	if err != nil {
+		t.Fatal(err)
+	}
+	upstream, decision, dialErr := server.connect(context.Background(), CarriageHTTP, target)
+	if dialErr != nil || !decision.Allowed() {
+		t.Fatalf("route connect = decision=%+v err=%v", decision, dialErr)
+	}
+	if err := upstream.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case resolution := <-resolver.released:
+		if resolution.LeaseID != "rlease-lease-route" {
+			t.Fatalf("released resolution = %#v", resolution)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("route lease was not released when upstream closed")
 	}
 }
