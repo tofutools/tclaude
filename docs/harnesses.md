@@ -205,6 +205,18 @@ instead of slash-command injection).
 Legend: ✅ supported · ⚙️ available, opt-in / configured elsewhere · ⚠️ partial ·
 ❌ not available.
 
+### Group-route activation matrix
+
+Group routes are a tclaude platform capability shared by harnesses; the harness
+selected for a session does not widen the route boundary. See
+[Group routes](group-routes.md) for the contract and exact-head evidence.
+
+| Host boundary | Activation status | Evidence contract |
+|---|---|---|
+| Linux | ✅ Full, with a route-capable launch | Authenticated namespace-local helper and opaque named TCP stream; the existing provider/host policy floor remains in force. |
+| macOS | ➖ not activated | Bounded exact Seatbelt TCP slots exist at the feasibility level; production activation is not claimed yet. |
+| Other platforms | ❌ unavailable | Explicit unsupported error; no silent policy downgrade. |
+
 ### Sandbox & approval defaults (Codex)
 
 Codex has a built-in OS-level sandbox and an approval policy, both selectable at

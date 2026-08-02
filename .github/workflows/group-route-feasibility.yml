@@ -7,6 +7,7 @@ on:
       - .github/workflows/group-route-feasibility.yml
       - scripts/group-route-feasibility/**
       - docs/group-route-feasibility.md
+      - docs/group-routes.md
       - pkg/claude/agentd/**
       - pkg/claude/common/db/**
       - pkg/claude/routeadapter/**
@@ -59,12 +60,34 @@ jobs:
           set -o pipefail
           scripts/group-route-feasibility/run.sh 2>&1 | tee "$RUNNER_TEMP/group-route-feasibility-linux.log"
 
+      - name: Run exact-head Linux production route activation smoke
+        shell: bash
+        env:
+          TCLAUDE_LINUX_ROUTE_CAPABILITY_SMOKE: "1"
+          EXPECTED_HEAD: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -o pipefail
+          go test ./pkg/claude/agentd \
+            -run '^TestLinuxRouteCapabilityIntegratedSmoke$' -count=1 -timeout 600s -v \
+            2>&1 | tee "$RUNNER_TEMP/tcl-952-linux-route-smoke.log"
+          grep -q -- '--- PASS: TestLinuxRouteCapabilityIntegratedSmoke' "$RUNNER_TEMP/tcl-952-linux-route-smoke.log"
+          grep -q 'TCL-952 Linux exact checked-out head:' "$RUNNER_TEMP/tcl-952-linux-route-smoke.log"
+          grep -q 'policy-floor:host-and-internet-denied' "$RUNNER_TEMP/tcl-952-linux-route-smoke.log"
+          grep -q 'TCL-952 Linux publisher stage evidence:' "$RUNNER_TEMP/tcl-952-linux-route-smoke.log"
+          grep -q 'TCL-952 Linux consumer stage evidence:' "$RUNNER_TEMP/tcl-952-linux-route-smoke.log"
+          grep -q 'TCL-952 Linux negative evidence:' "$RUNNER_TEMP/tcl-952-linux-route-smoke.log"
+          grep -q 'TCL-952 Linux sustained route evidence:' "$RUNNER_TEMP/tcl-952-linux-route-smoke.log"
+          grep -q 'TCL-952 Linux publisher-exit evidence:' "$RUNNER_TEMP/tcl-952-linux-route-smoke.log"
+          grep -q 'TCL-952 Linux evidence: POSITIVE' "$RUNNER_TEMP/tcl-952-linux-route-smoke.log"
+
       - name: Upload Linux evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: group-route-feasibility-linux
-          path: ${{ runner.temp }}/group-route-feasibility-linux.log
+          path: |
+            ${{ runner.temp }}/group-route-feasibility-linux.log
+            ${{ runner.temp }}/tcl-952-linux-route-smoke.log
 
   darwin:
     name: Darwin Seatbelt port-pool feasibility

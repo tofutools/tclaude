@@ -97,3 +97,15 @@ mesh networking out of the first contract.
 
 If either arm fails, revise the design record and downstream tickets before
 implementation.
+
+## Activation follow-on
+
+The probes above remain the lower-level boundary evidence. Linux production
+activation and its disclosure contract are documented in
+[Group routes](group-routes.md) and run in this same workflow:
+`TestLinuxRouteCapabilityIntegratedSmoke` exercises Bubblewrap, the production
+agentd API, the authenticated Unix relay, and `routeadapter`. It asserts the
+exact checked-out head and covers current-generation authority, negative route
+cases, sustained ordinary messaging, and lifecycle withdrawal. Darwin production
+activation is not claimed by this workflow. The dashboard Route map remains
+opt-in via `features.groups_route_map`.

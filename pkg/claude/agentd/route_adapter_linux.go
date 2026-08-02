@@ -176,6 +176,22 @@ var _ interface {
 	Hijack() (net.Conn, *bufio.ReadWriter, error)
 } = (*statusRec)(nil)
 
+// Linux publishers and consumers attach through their namespace-local helper
+// after the durable route/lease row exists, so there is no host-side endpoint to
+// allocate here. Reporting "not enabled" keeps the API response in its pending
+// state until the helper reports its own listener through the authenticated
+// endpoint-status seam; the real attach happens in handleRouteChannel above.
+func routeAdapterPublish(context.Context, *db.AgentRoute) (bool, error) { return false, nil }
+
+func routeAdapterOpen(context.Context, *db.AgentRoute, *db.AgentRouteLease) (string, bool, error) {
+	return "", false, nil
+}
+
+func routeAdapterCloseRoute(string)             {}
+func routeAdapterCloseLease(string)             {}
+func routeAdapterCloseAll()                     {}
+func routeAdapterBrokerEvent(routebroker.Event) {}
+
 func routeEndpointRefusalDetail(err error) string {
 	switch {
 	case errors.Is(err, routebroker.ErrConsumerLimit):
