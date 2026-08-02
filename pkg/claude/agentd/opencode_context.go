@@ -399,9 +399,55 @@ func fetchOpenCodeModelCatalog(ctx context.Context, runtime db.OpenCodeRuntime) 
 				limits[key] = model.Limit.Context
 			}
 			if model.Cost != nil {
-				prices[key] = *model.Cost
+				prices[key] = openCodeEffectiveModelPrice(provider.ID, modelID, *model.Cost)
 			}
 		}
 	}
 	return limits, prices, nil
+}
+
+// openCodeEffectiveModelPrice keeps OpenCode's native catalog authoritative
+// except for the OpenAI subscription adapter's deliberate all-zero billing
+// rates. Zero there means "covered by subscription", not "this model is free":
+// use the same public API rate table that powers Codex WHAT-IF estimates.
+func openCodeEffectiveModelPrice(providerID, modelID string, native openCodeModelPrice) openCodeModelPrice {
+	if strings.TrimSpace(providerID) != "openai" || !openCodeModelPriceIsZero(native) {
+		return native
+	}
+	pricing, ok := harness.LookupOpenAIModelPricing(modelID)
+	if !ok {
+		return native
+	}
+	price := openCodeModelPrice{
+		Input:  pricing.Short.InputPerMTok,
+		Output: pricing.Short.OutputPerMTok,
+		Cache: openCodeCachePrice{
+			Read: pricing.Short.CachedInputPerMTok, Write: pricing.Short.CacheWritePerMTok,
+		},
+	}
+	if pricing.Long != nil {
+		price.Tiers = []openCodePriceTier{{
+			Input: pricing.Long.InputPerMTok, Output: pricing.Long.OutputPerMTok,
+			Cache: openCodeCachePrice{
+				Read: pricing.Long.CachedInputPerMTok, Write: pricing.Long.CacheWritePerMTok,
+			},
+		}}
+		price.Tiers[0].Tier.Type = "context"
+		price.Tiers[0].Tier.Size = harness.OpenAIShortContextInputMax
+	}
+	return price
+}
+
+func openCodeModelPriceIsZero(price openCodeModelPrice) bool {
+	if price.Input != 0 || price.Output != 0 || price.Cache.Read != 0 || price.Cache.Write != 0 {
+		return false
+	}
+	for _, tier := range price.Tiers {
+		if tier.Input != 0 || tier.Output != 0 || tier.Cache.Read != 0 || tier.Cache.Write != 0 {
+			return false
+		}
+	}
+	return price.ExperimentalOver200K == nil ||
+		(price.ExperimentalOver200K.Input == 0 && price.ExperimentalOver200K.Output == 0 &&
+			price.ExperimentalOver200K.Cache.Read == 0 && price.ExperimentalOver200K.Cache.Write == 0)
 }

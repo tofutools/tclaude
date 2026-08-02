@@ -16,15 +16,22 @@ type CodexTokenCost struct {
 	Observed time.Time
 }
 
-type codexModelPrice struct {
+// OpenAIModelPrice is one OpenAI API pricing tier, expressed in USD per
+// million tokens. CacheWritePerMTok is populated where OpenAI publishes a
+// distinct cache-write rate even though Codex rollouts do not expose that
+// token category.
+type OpenAIModelPrice struct {
 	InputPerMTok       float64
 	CachedInputPerMTok float64
+	CacheWritePerMTok  float64
 	OutputPerMTok      float64
 }
 
-type codexModelPricing struct {
-	Short codexModelPrice
-	Long  *codexModelPrice
+// OpenAIModelPricing contains the ordinary and optional long-context tiers
+// shared by subscription-backed harnesses' WHAT-IF projections.
+type OpenAIModelPricing struct {
+	Short OpenAIModelPrice
+	Long  *OpenAIModelPrice
 }
 
 // codexModelPrices lists models whose ordinary-input, cached-read, and output
@@ -35,53 +42,61 @@ type codexModelPricing struct {
 // means the pricing page does not list long-context rates for that model. Pro
 // rows list no cached-input discount, so cached input is charged at the regular
 // input rate.
-var codexModelPrices = map[string]codexModelPricing{
+var codexModelPrices = map[string]OpenAIModelPricing{
 	"gpt-5.6-sol": {
-		Short: codexModelPrice{InputPerMTok: 5.00, CachedInputPerMTok: 0.50, OutputPerMTok: 30.00},
-		Long:  &codexModelPrice{InputPerMTok: 10.00, CachedInputPerMTok: 1.00, OutputPerMTok: 45.00},
+		Short: OpenAIModelPrice{InputPerMTok: 5.00, CachedInputPerMTok: 0.50, CacheWritePerMTok: 6.25, OutputPerMTok: 30.00},
+		Long:  &OpenAIModelPrice{InputPerMTok: 10.00, CachedInputPerMTok: 1.00, CacheWritePerMTok: 12.50, OutputPerMTok: 45.00},
 	},
 	"gpt-5.6-terra": {
-		Short: codexModelPrice{InputPerMTok: 2.00, CachedInputPerMTok: 0.20, OutputPerMTok: 12.00},
-		Long:  &codexModelPrice{InputPerMTok: 4.00, CachedInputPerMTok: 0.40, OutputPerMTok: 18.00},
+		Short: OpenAIModelPrice{InputPerMTok: 2.00, CachedInputPerMTok: 0.20, CacheWritePerMTok: 2.50, OutputPerMTok: 12.00},
+		Long:  &OpenAIModelPrice{InputPerMTok: 4.00, CachedInputPerMTok: 0.40, CacheWritePerMTok: 5.00, OutputPerMTok: 18.00},
 	},
 	"gpt-5.6-luna": {
-		Short: codexModelPrice{InputPerMTok: 0.20, CachedInputPerMTok: 0.02, OutputPerMTok: 1.20},
-		Long:  &codexModelPrice{InputPerMTok: 0.40, CachedInputPerMTok: 0.04, OutputPerMTok: 1.80},
+		Short: OpenAIModelPrice{InputPerMTok: 0.20, CachedInputPerMTok: 0.02, CacheWritePerMTok: 0.25, OutputPerMTok: 1.20},
+		Long:  &OpenAIModelPrice{InputPerMTok: 0.40, CachedInputPerMTok: 0.04, CacheWritePerMTok: 0.50, OutputPerMTok: 1.80},
 	},
 	"gpt-5.5": {
-		Short: codexModelPrice{InputPerMTok: 5.00, CachedInputPerMTok: 0.50, OutputPerMTok: 30.00},
-		Long:  &codexModelPrice{InputPerMTok: 10.00, CachedInputPerMTok: 1.00, OutputPerMTok: 45.00},
+		Short: OpenAIModelPrice{InputPerMTok: 5.00, CachedInputPerMTok: 0.50, OutputPerMTok: 30.00},
+		Long:  &OpenAIModelPrice{InputPerMTok: 10.00, CachedInputPerMTok: 1.00, OutputPerMTok: 45.00},
 	},
 	"gpt-5.5-pro": {
-		Short: codexModelPrice{InputPerMTok: 30.00, CachedInputPerMTok: 30.00, OutputPerMTok: 180.00},
-		Long:  &codexModelPrice{InputPerMTok: 60.00, CachedInputPerMTok: 60.00, OutputPerMTok: 270.00},
+		Short: OpenAIModelPrice{InputPerMTok: 30.00, CachedInputPerMTok: 30.00, OutputPerMTok: 180.00},
+		Long:  &OpenAIModelPrice{InputPerMTok: 60.00, CachedInputPerMTok: 60.00, OutputPerMTok: 270.00},
 	},
 	"gpt-5.4": {
-		Short: codexModelPrice{InputPerMTok: 2.50, CachedInputPerMTok: 0.25, OutputPerMTok: 15.00},
-		Long:  &codexModelPrice{InputPerMTok: 5.00, CachedInputPerMTok: 0.50, OutputPerMTok: 22.50},
+		Short: OpenAIModelPrice{InputPerMTok: 2.50, CachedInputPerMTok: 0.25, OutputPerMTok: 15.00},
+		Long:  &OpenAIModelPrice{InputPerMTok: 5.00, CachedInputPerMTok: 0.50, OutputPerMTok: 22.50},
 	},
 	"gpt-5.4-mini": {
-		Short: codexModelPrice{InputPerMTok: 0.75, CachedInputPerMTok: 0.075, OutputPerMTok: 4.50},
+		Short: OpenAIModelPrice{InputPerMTok: 0.75, CachedInputPerMTok: 0.075, OutputPerMTok: 4.50},
 	},
 	"gpt-5.4-nano": {
-		Short: codexModelPrice{InputPerMTok: 0.20, CachedInputPerMTok: 0.02, OutputPerMTok: 1.25},
+		Short: OpenAIModelPrice{InputPerMTok: 0.20, CachedInputPerMTok: 0.02, OutputPerMTok: 1.25},
 	},
 	"gpt-5.4-pro": {
-		Short: codexModelPrice{InputPerMTok: 30.00, CachedInputPerMTok: 30.00, OutputPerMTok: 180.00},
-		Long:  &codexModelPrice{InputPerMTok: 60.00, CachedInputPerMTok: 60.00, OutputPerMTok: 270.00},
+		Short: OpenAIModelPrice{InputPerMTok: 30.00, CachedInputPerMTok: 30.00, OutputPerMTok: 180.00},
+		Long:  &OpenAIModelPrice{InputPerMTok: 60.00, CachedInputPerMTok: 60.00, OutputPerMTok: 270.00},
 	},
 	// Current specialized Codex row. gpt-5-codex is kept as the common Codex
 	// CLI/profile alias used across tclaude even when the public pricing row
 	// carries a dated minor version.
 	"gpt-5.3-codex": {
-		Short: codexModelPrice{InputPerMTok: 1.75, CachedInputPerMTok: 0.175, OutputPerMTok: 14.00},
+		Short: OpenAIModelPrice{InputPerMTok: 1.75, CachedInputPerMTok: 0.175, OutputPerMTok: 14.00},
 	},
 	"gpt-5-codex": {
-		Short: codexModelPrice{InputPerMTok: 1.75, CachedInputPerMTok: 0.175, OutputPerMTok: 14.00},
+		Short: OpenAIModelPrice{InputPerMTok: 1.75, CachedInputPerMTok: 0.175, OutputPerMTok: 14.00},
 	},
 	// gpt-5.3-codex-spark is intentionally absent: it is a research preview
 	// whose rate is not final. Unknown prices remain unestimated rather than
 	// borrowing another model's rate.
+}
+
+// LookupOpenAIModelPricing returns the same API-rate catalog used by Codex's
+// WHAT-IF projection. Other subscription-backed OpenAI harnesses use this when
+// their native provider adapter deliberately reports zero billing rates.
+func LookupOpenAIModelPricing(model string) (OpenAIModelPricing, bool) {
+	pricing, ok := codexModelPrices[strings.TrimSpace(model)]
+	return pricing, ok
 }
 
 // CodexVirtualCostFromRollout reads rolloutPath and estimates cumulative
@@ -162,7 +177,7 @@ func codexVirtualCost(model string, usage codexTokenUsage) (float64, bool) {
 		return 0, false
 	}
 	price := pricing.Short
-	if pricing.Long != nil && usage.InputTokens > codexShortContextInputMax {
+	if pricing.Long != nil && usage.InputTokens > OpenAIShortContextInputMax {
 		price = *pricing.Long
 	}
 	cachedInput := usage.CachedInputTokens
@@ -185,7 +200,7 @@ func codexUsageHasBillableTokens(usage codexTokenUsage) bool {
 	return usage.InputTokens > 0 || usage.CachedInputTokens > 0 || usage.OutputTokens > 0
 }
 
-// codexShortContextInputMax is the largest per-request input that receives
+// OpenAIShortContextInputMax is the largest per-request input that receives
 // OpenAI's short-context price. A request above this boundary is priced at the
 // long-context rate for all of its input and output tokens.
-const codexShortContextInputMax = 272_000
+const OpenAIShortContextInputMax = 272_000

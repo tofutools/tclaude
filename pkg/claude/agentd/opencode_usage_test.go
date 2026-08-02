@@ -266,6 +266,40 @@ func TestApplyOpenCodeVirtualCostUsageIsReplaySafeAndHandlesModelChanges(t *test
 	assert.Len(t, rows, 3, "replays are also idempotent in provider activity history")
 }
 
+func TestOpenCodeModelCatalogFallsBackForZeroPricedOpenAISubscription(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/config/providers", r.URL.Path)
+		_, _ = w.Write([]byte(`{"providers":[` +
+			`{"id":"openai","models":{"gpt-5.6-sol":{"cost":{"input":0,"output":0,"cache":{"read":0,"write":0}},"limit":{"context":1050000}}}},` +
+			`{"id":"local","models":{"free":{"cost":{"input":0,"output":0,"cache":{"read":0,"write":0}},"limit":{"context":200000}}}}]}`))
+	}))
+	t.Cleanup(server.Close)
+	runtime := db.OpenCodeRuntime{
+		SessionID: "oc-zero-price", ConvID: "ses-zero-price", ServerURL: server.URL,
+		Password: "pw", PID: os.Getpid(), Cwd: t.TempDir(),
+	}
+
+	_, prices, err := fetchOpenCodeModelCatalog(context.Background(), runtime)
+	require.NoError(t, err)
+	price := prices["openai/gpt-5.6-sol"]
+	assert.Equal(t, 5.0, price.Input)
+	assert.Equal(t, 30.0, price.Output)
+	assert.Equal(t, 0.5, price.Cache.Read)
+	assert.Equal(t, 6.25, price.Cache.Write)
+	require.Len(t, price.Tiers, 1)
+	assert.Equal(t, float64(harness.OpenAIShortContextInputMax), price.Tiers[0].Tier.Size)
+	assert.Equal(t, openCodeModelPrice{}, prices["local/free"],
+		"zero-priced non-OpenAI models remain genuinely free")
+
+	zero := 0.0
+	projected := projectOpenCodeMessageCost(openCodeContextUsage{
+		MessageID: "msg", ProviderID: "openai", ModelID: "gpt-5.6-sol", ReportedCost: &zero,
+		Input: 1_000, Output: 100, Reasoning: 50, CacheRead: 200, CacheWrite: 10,
+	}, prices, config.DefaultOpenCodeLegacyLongContextPricingCutoff)
+	require.True(t, projected.eligible)
+	assert.InDelta(t, 0.0096625, projected.usd, 1e-12)
+}
+
 func TestOpenCodeVirtualCostRetainsHistoryAcrossTransientCatalogFailure(t *testing.T) {
 	setupTestDB(t)
 	resetOpenCodeLimitCacheForTest()
