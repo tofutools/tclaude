@@ -13,9 +13,12 @@ authoritative evidence for Darwin; a local run is useful for iteration only.
 
 ## Gate state
 
-**Positive feasibility gate on exact-head CI run [30744475927](https://github.com/tofutools/tclaude/actions/runs/30744475927).** Both platform arms completed on
-`c7ce00f2d2c1f3fbf280ba71ff0affc856336884`; neither was skipped. The probe
-emitted explicit positive, negative, and limitation markers. This is evidence
+The exact-head CI workflow is the feasibility gate. It must pass both platform
+arms at the frozen commit, with the checkout assertion proving that the runner
+tested the requested commit rather than a synthetic pull-request merge. The
+final run URL and SHA are recorded in the PR and Linear evidence comment after
+the frozen rerun; this committed report intentionally describes the stable
+evidence shape without embedding a self-referential run link. This is evidence
 for the bounded contract below, not a production capability activation.
 
 ## Linux arm
@@ -36,7 +39,7 @@ agentd-owned broker:
 
 The probe fails closed when any required observation is missing.
 
-Observed Linux markers from the exact-head run:
+Required Linux success markers:
 
 ```text
 TCL-947 Linux evidence: POSITIVE
@@ -67,14 +70,14 @@ The host-wide localhost limitation is disclosed rather than hidden behind a
 launch-time collision check. Publisher applications must accept a tclaude-
 selected slot; broker-held consumer slots are the safer bounded-pool side.
 
-Observed Darwin markers from the exact-head run:
+Required Darwin success markers:
 
 ```text
 TCL-947 Darwin profile: POSITIVE exact-port pool=8 rendered-slots=9
 TCL-947 Darwin collision: POSITIVE publisher slot collision=EADDRINUSE; no workaround invented
-TCL-947 Darwin localhost: LIMITATION Seatbelt localhost:<port> reached non-loopback 192.168.64.3:49186
-TCL-947 Darwin evidence: POSITIVE broker-held consumer endpoint=49185 reached publisher slot=49184 with opaque TCP bytes
-TCL-947 Darwin negative: non-reserved neighbor=49192 and external TCP were refused by Seatbelt
+TCL-947 Darwin localhost: LIMITATION Seatbelt localhost:<port> reached non-loopback <address>:<port>
+TCL-947 Darwin evidence: POSITIVE broker-held consumer endpoint=<port> reached publisher slot=<port> with opaque TCP bytes
+TCL-947 Darwin negative: non-reserved neighbor=<port> and external TCP were refused by Seatbelt
 ```
 
 The profile marker's `rendered-slots=9` count includes the eight exact

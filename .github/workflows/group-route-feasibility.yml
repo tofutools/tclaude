@@ -21,8 +21,18 @@ jobs:
     name: Linux namespace relay feasibility
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout exact head
+      - name: Checkout requested commit
         uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+
+      - name: Assert checked-out requested commit
+        env:
+          EXPECTED_HEAD: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: |
+          actual_head="$(git rev-parse HEAD)"
+          printf 'requested head: %s\nchecked-out HEAD: %s\n' "$EXPECTED_HEAD" "$actual_head"
+          test "$actual_head" = "$EXPECTED_HEAD"
 
       - name: Set up Go
         uses: actions/setup-go@v7
@@ -56,8 +66,18 @@ jobs:
     name: Darwin Seatbelt port-pool feasibility
     runs-on: macos-latest
     steps:
-      - name: Checkout exact head
+      - name: Checkout requested commit
         uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+
+      - name: Assert checked-out requested commit
+        env:
+          EXPECTED_HEAD: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: |
+          actual_head="$(git rev-parse HEAD)"
+          printf 'requested head: %s\nchecked-out HEAD: %s\n' "$EXPECTED_HEAD" "$actual_head"
+          test "$actual_head" = "$EXPECTED_HEAD"
 
       - name: Set up Go
         uses: actions/setup-go@v7

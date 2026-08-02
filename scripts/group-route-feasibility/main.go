@@ -89,7 +89,7 @@ func main() {
 
 func runLinux() error {
 	if runtime.GOOS != "linux" {
-		return fmt.Errorf("Linux probe requires Linux, got %s", runtime.GOOS)
+		return fmt.Errorf("linux probe requires Linux, got %s", runtime.GOOS)
 	}
 	if _, err := exec.LookPath("bwrap"); err != nil {
 		return fmt.Errorf("bwrap is required: %w", err)
@@ -99,7 +99,7 @@ func runLinux() error {
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(root)
+	defer func() { _ = os.RemoveAll(root) }()
 	if err := os.Chmod(root, 0o700); err != nil {
 		return err
 	}
@@ -112,12 +112,12 @@ func runLinux() error {
 	if err != nil {
 		return fmt.Errorf("host control listener: %w", err)
 	}
-	defer hostControl.Close()
+	defer func() { _ = hostControl.Close() }()
 	broker, err := newLinuxBroker(filepath.Join(root, "broker.sock"))
 	if err != nil {
 		return err
 	}
-	defer broker.Close()
+	defer func() { _ = broker.Close() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), probeTimeout)
 	defer cancel()
@@ -557,7 +557,7 @@ func startBwrap(ctx context.Context, executable, shared, mode, marker string, po
 
 func runDarwin() error {
 	if runtime.GOOS != "darwin" {
-		return fmt.Errorf("Darwin probe requires macOS, got %s", runtime.GOOS)
+		return fmt.Errorf("darwin probe requires macOS, got %s", runtime.GOOS)
 	}
 	const poolSize = 8
 	if _, err := os.Stat("/usr/bin/sandbox-exec"); err != nil {
@@ -567,7 +567,7 @@ func runDarwin() error {
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(root)
+	defer func() { _ = os.RemoveAll(root) }()
 	executable, err := copyExecutable(root, os.Args[0])
 	if err != nil {
 		return err
@@ -734,7 +734,7 @@ func runDarwinConsumer(marker string, brokerPort, neighborPort int) error {
 	}
 	if string(got) != string(expected) {
 		conn.Close()
-		return fmt.Errorf("Darwin opaque response mismatch: got %x want %x", got, expected)
+		return fmt.Errorf("darwin opaque response mismatch: got %x want %x", got, expected)
 	}
 	conn.Close()
 	if err := requireEPERM(func() error {
@@ -1033,5 +1033,3 @@ func requireEPERM(fn func() error) error {
 func isErrno(err, want error) bool {
 	return err != nil && errors.Is(err, want)
 }
-
-func finishChildOutput(_ *exec.Cmd) string { return "" }
