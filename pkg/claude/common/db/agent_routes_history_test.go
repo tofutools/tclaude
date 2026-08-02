@@ -49,6 +49,52 @@ func TestDashboardRouteProjectionBoundsTerminalHistoryAndKeepsOpenLease(t *testi
 	require.Contains(t, leaseIDs(leases[groupID]), open.ID)
 }
 
+func TestDashboardRouteProjectionKeepsAllOpenLeasesSeparateFromTerminalHistory(t *testing.T) {
+	setupTestDB(t)
+	groupID, err := CreateAgentGroup("lease-history", "")
+	require.NoError(t, err)
+	agentID, _, err := EnsureAgentForConv("lease-history-conv", "test")
+	require.NoError(t, err)
+	require.NoError(t, AddAgentGroupMember(&AgentGroupMember{GroupID: groupID, ConvID: "lease-history-conv"}))
+	group, err := GetAgentGroupByName("lease-history")
+	require.NoError(t, err)
+	route, err := CreateAgentRoute(groupID, agentID, "lease-history-conv", "generation", group.RouteGeneration,
+		"lease-history-route", "tcp", "tcp://127.0.0.1:40100")
+	require.NoError(t, err)
+
+	// Seed more terminal rows than the history budget, then leave more than
+	// that budget open at the same time. Open leases must never compete with
+	// terminal rows for the terminal-history window.
+	for i := 0; i < DashboardRouteLeaseHistoryPerRoute+4; i++ {
+		closed, openErr := OpenAgentRouteLease(route.ID, agentID, "lease-history-conv", "generation", group.RouteGeneration)
+		require.NoError(t, openErr)
+		require.NoError(t, CloseAgentRouteLease(closed.ID, agentID, "lease-history-conv"))
+	}
+	const openCount = DashboardRouteLeaseHistoryPerRoute + 1
+	openIDs := make(map[string]struct{}, openCount)
+	for i := 0; i < openCount; i++ {
+		open, openErr := OpenAgentRouteLease(route.ID, agentID, "lease-history-conv", "generation", group.RouteGeneration)
+		require.NoError(t, openErr)
+		openIDs[open.ID] = struct{}{}
+	}
+
+	leases, err := ListAgentRouteLeasesBatch([]int64{groupID})
+	require.NoError(t, err)
+	var openSeen, terminalSeen int
+	for _, lease := range leases[groupID] {
+		if lease.State == RouteLeaseOpen {
+			openSeen++
+			if _, ok := openIDs[lease.ID]; !ok {
+				t.Errorf("unexpected open lease %q in bounded projection", lease.ID)
+			}
+		} else {
+			terminalSeen++
+		}
+	}
+	require.Equal(t, openCount, openSeen, "every simultaneous open lease must survive")
+	require.Equal(t, DashboardRouteLeaseHistoryPerRoute, terminalSeen, "only configured terminal history survives")
+}
+
 func routeIDs(routes []*AgentRoute) []string {
 	ids := make([]string, 0, len(routes))
 	for _, route := range routes {

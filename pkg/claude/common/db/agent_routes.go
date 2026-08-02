@@ -493,7 +493,7 @@ func ListAgentRouteLeasesBatch(groupIDs []int64) (map[int64][]*AgentRouteLease, 
 	}
 	queryArgs := []any{RouteStateReady, RouteStateDraining}
 	queryArgs = append(queryArgs, args...)
-	queryArgs = append(queryArgs, DashboardRouteHistoryPerGroup, RouteLeaseOpen, DashboardRouteLeaseHistoryPerRoute)
+	queryArgs = append(queryArgs, DashboardRouteHistoryPerGroup, RouteLeaseOpen, RouteLeaseOpen, RouteLeaseOpen, DashboardRouteLeaseHistoryPerRoute)
 	rows, err := d.Query(`WITH ranked_routes AS (
 		SELECT r.id, r.group_id,
 			ROW_NUMBER() OVER (
@@ -509,18 +509,24 @@ func ListAgentRouteLeasesBatch(groupIDs []int64) (map[int64][]*AgentRouteLease, 
 		), ranked_leases AS (
 		SELECT rr.group_id, l.id, l.route_id, l.consumer_agent_id,
 			l.consumer_conv_id, l.consumer_launch_generation, l.group_generation,
+			l.state, l.opened_at, l.closed_at, 0 AS terminal_rank
+		FROM agent_route_leases l JOIN retained_routes rr ON rr.id = l.route_id
+		WHERE l.state = ?
+		UNION ALL
+		SELECT rr.group_id, l.id, l.route_id, l.consumer_agent_id,
+			l.consumer_conv_id, l.consumer_launch_generation, l.group_generation,
 			l.state, l.opened_at, l.closed_at,
 			ROW_NUMBER() OVER (
 				PARTITION BY l.route_id
-				ORDER BY CASE WHEN l.state = ? THEN 0 ELSE 1 END,
-					l.opened_at DESC, l.id DESC
-			) AS projection_rank
+				ORDER BY l.opened_at DESC, l.id DESC
+			) AS terminal_rank
 		FROM agent_route_leases l JOIN retained_routes rr ON rr.id = l.route_id
+		WHERE l.state != ?
 		)
 		SELECT group_id, id, route_id, consumer_agent_id, consumer_conv_id,
 			consumer_launch_generation, group_generation, state, opened_at, closed_at
 		FROM ranked_leases
-		WHERE projection_rank <= ?
+		WHERE state = ? OR terminal_rank <= ?
 		ORDER BY group_id, route_id, CASE WHEN state = ? THEN 0 ELSE 1 END,
 			opened_at DESC, id DESC`, append(queryArgs, RouteLeaseOpen)...)
 	if err != nil {
