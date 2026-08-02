@@ -70,6 +70,29 @@ func EncodeDarwinRouteSlots(slots []int) (string, error) {
 	return strings.Join(values, ","), nil
 }
 
+// ParseDarwinRouteSlots decodes the comma-separated exact pool carried in a
+// route-capable launch environment. Empty input is rejected so a malformed
+// contract cannot silently become an unbounded or host-scanned route policy.
+func ParseDarwinRouteSlots(raw string) ([]int, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, fmt.Errorf("Darwin route slot pool is empty")
+	}
+	parts := strings.Split(raw, ",")
+	slots := make([]int, len(parts))
+	for i, part := range parts {
+		port, err := strconv.Atoi(strings.TrimSpace(part))
+		if err != nil {
+			return nil, fmt.Errorf("Darwin route slot %q is not an integer", part)
+		}
+		slots[i] = port
+	}
+	if err := ValidateDarwinRouteSlots(slots); err != nil {
+		return nil, err
+	}
+	return slots, nil
+}
+
 // DarwinRouteSlotReservation holds exact TCP listeners while a Seatbelt
 // profile is rendered and the child is admitted.
 type DarwinRouteSlotReservation struct {
@@ -113,6 +136,29 @@ func ReserveDarwinRouteSlotsAt(slots []int) (*DarwinRouteSlotReservation, error)
 			return nil, fmt.Errorf("reserve Darwin route slot %d: %w", port, err)
 		}
 		reservation.listeners = append(reservation.listeners, listener)
+	}
+	return reservation, nil
+}
+
+// ReserveDarwinRouteSlots allocates the configured bounded pool from the
+// kernel's ephemeral TCP allocator and keeps every listener open until the
+// caller has rendered and admitted its Seatbelt child. No host-wide scan or
+// retry loop is used.
+func ReserveDarwinRouteSlots() (*DarwinRouteSlotReservation, error) {
+	size, err := DarwinRouteSlotCount()
+	if err != nil {
+		return nil, err
+	}
+	reservation := &DarwinRouteSlotReservation{}
+	for range size {
+		listener, listenErr := net.Listen("tcp4", "127.0.0.1:0")
+		if listenErr != nil {
+			_ = reservation.Release()
+			return nil, fmt.Errorf("allocate Darwin route slot: %w", listenErr)
+		}
+		port := listener.Addr().(*net.TCPAddr).Port
+		reservation.listeners = append(reservation.listeners, listener)
+		reservation.slots = append(reservation.slots, port)
 	}
 	return reservation, nil
 }

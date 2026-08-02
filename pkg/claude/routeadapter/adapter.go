@@ -1,0 +1,498 @@
+// Package routeadapter contains the Darwin raw-TCP endpoint bridge for the
+// platform-neutral group-route broker. It owns listeners and slot leases, but
+// receives all route authority through routebroker.Authorizer.
+package routeadapter
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"net/netip"
+	"net/url"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/tofutools/tclaude/pkg/claude/routebroker"
+)
+
+const maxPayload = routebroker.MaxFramePayload
+
+type Publisher struct {
+	RouteID          string
+	AgentID          string
+	ConvID           string
+	LaunchGeneration string
+	GroupGeneration  int64
+	Target           string
+}
+
+type Consumer struct {
+	LeaseID          string
+	RouteID          string
+	AgentID          string
+	ConvID           string
+	LaunchGeneration string
+	GroupGeneration  int64
+}
+
+type Adapter struct {
+	broker *routebroker.Broker
+	mu     sync.Mutex
+	ports  []int
+	used   map[string]int
+	routes map[string]*publisherState
+	leases map[string]*consumerState
+	closed bool
+}
+
+type publisherState struct {
+	port   int
+	conn   net.Conn
+	cancel context.CancelFunc
+}
+
+type consumerState struct {
+	port     int
+	routeID  string
+	agentID  string
+	listener net.Listener
+	cancel   context.CancelFunc
+}
+
+func New(broker *routebroker.Broker, ports []int) (*Adapter, error) {
+	if broker == nil {
+		return nil, errors.New("route adapter requires a broker")
+	}
+	if err := validatePorts(ports); err != nil {
+		return nil, err
+	}
+	return &Adapter{
+		broker: broker,
+		ports:  append([]int(nil), ports...),
+		used:   make(map[string]int, len(ports)),
+		routes: make(map[string]*publisherState),
+		leases: make(map[string]*consumerState),
+	}, nil
+}
+
+func validatePorts(ports []int) error {
+	if len(ports) == 0 || len(ports) > 16 {
+		return fmt.Errorf("route adapter requires 1–16 exact ports")
+	}
+	seen := make(map[int]struct{}, len(ports))
+	for _, port := range ports {
+		if port < 1 || port > 65535 {
+			return fmt.Errorf("route adapter port %d is outside TCP range", port)
+		}
+		if _, ok := seen[port]; ok {
+			return fmt.Errorf("route adapter port %d is duplicated", port)
+		}
+		seen[port] = struct{}{}
+	}
+	return nil
+}
+
+func targetPort(target string) (int, error) {
+	u, err := url.Parse(strings.TrimSpace(target))
+	if err != nil || u.Scheme != "tcp" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+		return 0, fmt.Errorf("route target must be tcp://127.0.0.1:<port>")
+	}
+	host, portText, err := net.SplitHostPort(u.Host)
+	if err != nil {
+		return 0, fmt.Errorf("route target must include a TCP port: %w", err)
+	}
+	ip, err := netip.ParseAddr(host)
+	if err != nil || !ip.Is4() || !ip.IsLoopback() || ip.IsUnspecified() {
+		return 0, fmt.Errorf("route target must use an IPv4 loopback address")
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil || port < 1 || port > 65535 {
+		return 0, fmt.Errorf("route target has invalid TCP port %q", portText)
+	}
+	return port, nil
+}
+
+func (a *Adapter) acquire(key string, requested int) (int, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.closed {
+		return 0, errors.New("route adapter is closed")
+	}
+	if old, ok := a.used[key]; ok {
+		if requested != 0 && requested != old {
+			return 0, fmt.Errorf("route key %q already owns slot %d", key, old)
+		}
+		return old, nil
+	}
+	if requested != 0 {
+		for _, port := range a.ports {
+			if port == requested {
+				for owner, used := range a.used {
+					if used == requested {
+						return 0, fmt.Errorf("route slot %d is already leased by %s", requested, owner)
+					}
+				}
+				a.used[key] = requested
+				return requested, nil
+			}
+		}
+		return 0, fmt.Errorf("route slot %d is not in the pre-authorized pool", requested)
+	}
+	for _, port := range a.ports {
+		occupied := false
+		for _, used := range a.used {
+			if used == port {
+				occupied = true
+				break
+			}
+		}
+		if !occupied {
+			a.used[key] = port
+			return port, nil
+		}
+	}
+	return 0, errors.New("route adapter slot pool exhausted")
+}
+
+func (a *Adapter) release(key string) {
+	a.mu.Lock()
+	delete(a.used, key)
+	a.mu.Unlock()
+}
+
+// Publish attaches a daemon-owned publisher channel. The target application
+// remains responsible for binding the exact pre-authorized target slot.
+func (a *Adapter) Publish(ctx context.Context, publisher Publisher) (int, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if strings.TrimSpace(publisher.RouteID) == "" {
+		return 0, errors.New("publisher route ID is required")
+	}
+	port, err := targetPort(publisher.Target)
+	if err != nil {
+		return 0, err
+	}
+	if _, err := a.acquire(publisher.RouteID, port); err != nil {
+		return 0, err
+	}
+	channel, peer := net.Pipe()
+	channelCtx, cancel := context.WithCancel(ctx)
+	state := &publisherState{port: port, conn: channel, cancel: cancel}
+	a.mu.Lock()
+	if _, exists := a.routes[publisher.RouteID]; exists {
+		a.mu.Unlock()
+		cancel()
+		_ = channel.Close()
+		a.release(publisher.RouteID)
+		return 0, fmt.Errorf("route %q publisher already attached", publisher.RouteID)
+	}
+	a.routes[publisher.RouteID] = state
+	a.mu.Unlock()
+	go func() {
+		_ = a.broker.AttachPublisher(channelCtx, routebroker.PublisherAuth{
+			RouteID: publisher.RouteID, AgentID: publisher.AgentID, ConvID: publisher.ConvID,
+			LaunchGeneration: publisher.LaunchGeneration, GroupGeneration: publisher.GroupGeneration,
+		}, peer)
+		a.mu.Lock()
+		delete(a.routes, publisher.RouteID)
+		a.mu.Unlock()
+		a.release(publisher.RouteID)
+	}()
+	go a.publisherLoop(channelCtx, channel, publisher.Target)
+	return port, nil
+}
+
+// Open creates the broker-held consumer listener and returns its exact local
+// endpoint. The listener is outside the sandbox; the consumer process only
+// needs outbound permission for this pre-authorized slot.
+func (a *Adapter) Open(ctx context.Context, consumer Consumer) (string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if strings.TrimSpace(consumer.LeaseID) == "" || strings.TrimSpace(consumer.RouteID) == "" {
+		return "", errors.New("consumer lease and route IDs are required")
+	}
+	port, err := a.acquire(consumer.LeaseID, 0)
+	if err != nil {
+		return "", err
+	}
+	listener, err := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+	if err != nil {
+		a.release(consumer.LeaseID)
+		return "", fmt.Errorf("bind consumer route slot %d: %w", port, err)
+	}
+	channelCtx, cancel := context.WithCancel(ctx)
+	a.mu.Lock()
+	a.leases[consumer.LeaseID] = &consumerState{port: port, routeID: consumer.RouteID, agentID: consumer.AgentID, listener: listener, cancel: cancel}
+	a.mu.Unlock()
+	go a.acceptConsumers(channelCtx, listener, consumer)
+	return net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), nil
+}
+
+func (a *Adapter) CloseRoute(routeID string) {
+	a.mu.Lock()
+	state := a.routes[routeID]
+	delete(a.routes, routeID)
+	leaseIDs := make([]string, 0)
+	for leaseID, lease := range a.leases {
+		if lease.routeID == routeID {
+			leaseIDs = append(leaseIDs, leaseID)
+		}
+	}
+	a.mu.Unlock()
+	if state != nil {
+		state.cancel()
+		_ = state.conn.Close()
+	}
+	for _, leaseID := range leaseIDs {
+		a.CloseLease(leaseID)
+	}
+	a.release(routeID)
+}
+
+// CloseConsumer drops endpoint listeners owned by one consumer identity after
+// the M1 authority revokes that consumer's lease. Route IDs are included so a
+// stale agent event cannot tear down a same-agent lease on another route.
+func (a *Adapter) CloseConsumer(routeID, agentID string) {
+	a.mu.Lock()
+	leaseIDs := make([]string, 0)
+	for leaseID, lease := range a.leases {
+		if lease.routeID == routeID && lease.agentID == agentID {
+			leaseIDs = append(leaseIDs, leaseID)
+		}
+	}
+	a.mu.Unlock()
+	for _, leaseID := range leaseIDs {
+		a.CloseLease(leaseID)
+	}
+}
+
+func (a *Adapter) CloseLease(leaseID string) {
+	a.mu.Lock()
+	state := a.leases[leaseID]
+	delete(a.leases, leaseID)
+	a.mu.Unlock()
+	if state != nil {
+		state.cancel()
+		_ = state.listener.Close()
+	}
+	a.release(leaseID)
+}
+
+func (a *Adapter) Close() {
+	a.mu.Lock()
+	a.closed = true
+	routes := make([]string, 0, len(a.routes))
+	for id := range a.routes {
+		routes = append(routes, id)
+	}
+	leases := make([]string, 0, len(a.leases))
+	for id := range a.leases {
+		leases = append(leases, id)
+	}
+	a.mu.Unlock()
+	for _, id := range routes {
+		a.CloseRoute(id)
+	}
+	for _, id := range leases {
+		a.CloseLease(id)
+	}
+}
+
+func (a *Adapter) acceptConsumers(ctx context.Context, listener net.Listener, consumer Consumer) {
+	defer func() {
+		a.mu.Lock()
+		delete(a.leases, consumer.LeaseID)
+		a.mu.Unlock()
+		a.release(consumer.LeaseID)
+	}()
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		go a.consumerStream(ctx, conn, consumer)
+	}
+}
+
+func (a *Adapter) consumerStream(ctx context.Context, raw net.Conn, consumer Consumer) {
+	defer raw.Close()
+	brokerConn, adapterConn := net.Pipe()
+	streamCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go func() {
+		_ = a.broker.AttachConsumer(streamCtx, routebroker.ConsumerAuth{
+			LeaseID: consumer.LeaseID, RouteID: consumer.RouteID, AgentID: consumer.AgentID,
+			ConvID: consumer.ConvID, LaunchGeneration: consumer.LaunchGeneration,
+			GroupGeneration: consumer.GroupGeneration,
+		}, brokerConn)
+	}()
+	if err := routebroker.WriteFrame(adapterConn, routebroker.Frame{Kind: routebroker.KindOpen, Stream: 1}, maxPayload); err != nil {
+		_ = adapterConn.Close()
+		return
+	}
+	firstErr := make(chan error, 2)
+	go func() { firstErr <- copyRawToBroker(raw, adapterConn) }()
+	go func() { firstErr <- copyBrokerToRaw(adapterConn, raw) }()
+	<-firstErr
+	_ = raw.Close()
+	_ = adapterConn.Close()
+	<-firstErr
+}
+
+func copyRawToBroker(raw net.Conn, broker net.Conn) error {
+	buf := make([]byte, maxPayload)
+	for {
+		n, err := raw.Read(buf)
+		if n > 0 {
+			if writeErr := routebroker.WriteFrame(broker, routebroker.Frame{Kind: routebroker.KindData, Stream: 1, Payload: append([]byte(nil), buf[:n]...)}, maxPayload); writeErr != nil {
+				return writeErr
+			}
+		}
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				_ = routebroker.WriteFrame(broker, routebroker.Frame{Kind: routebroker.KindHalfClose, Stream: 1}, maxPayload)
+			}
+			return err
+		}
+	}
+}
+
+func copyBrokerToRaw(broker net.Conn, raw net.Conn) error {
+	for {
+		frame, err := routebroker.ReadFrame(broker, maxPayload)
+		if err != nil {
+			return err
+		}
+		switch frame.Kind {
+		case routebroker.KindOpenOK:
+		case routebroker.KindData:
+			if _, err := raw.Write(frame.Payload); err != nil {
+				return err
+			}
+		case routebroker.KindHalfClose:
+			if tcp, ok := raw.(*net.TCPConn); ok {
+				_ = tcp.CloseWrite()
+			}
+		case routebroker.KindClose, routebroker.KindOpenError:
+			return io.EOF
+		default:
+			return fmt.Errorf("consumer adapter received unexpected broker frame %d", frame.Kind)
+		}
+	}
+}
+
+type publisherStream struct {
+	conn net.Conn
+}
+
+func (a *Adapter) publisherLoop(ctx context.Context, brokerConn net.Conn, target string) {
+	defer brokerConn.Close()
+	var writeMu sync.Mutex
+	streams := make(map[uint64]*publisherStream)
+	var streamsMu sync.Mutex
+	closeStreams := func() {
+		streamsMu.Lock()
+		defer streamsMu.Unlock()
+		for id, stream := range streams {
+			_ = stream.conn.Close()
+			delete(streams, id)
+		}
+	}
+	defer closeStreams()
+	for {
+		frame, err := routebroker.ReadFrame(brokerConn, maxPayload)
+		if err != nil {
+			return
+		}
+		switch frame.Kind {
+		case routebroker.KindOpen:
+			dialer := net.Dialer{Timeout: 5 * time.Second}
+			conn, dialErr := dialer.DialContext(ctx, "tcp4", targetAddress(target))
+			if dialErr != nil {
+				writeMu.Lock()
+				_ = routebroker.WriteFrame(brokerConn, routebroker.Frame{Kind: routebroker.KindOpenError, Stream: frame.Stream, Payload: []byte("publisher target unavailable")}, maxPayload)
+				writeMu.Unlock()
+				continue
+			}
+			streamsMu.Lock()
+			streams[frame.Stream] = &publisherStream{conn: conn}
+			streamsMu.Unlock()
+			writeMu.Lock()
+			err = routebroker.WriteFrame(brokerConn, routebroker.Frame{Kind: routebroker.KindOpenOK, Stream: frame.Stream}, maxPayload)
+			writeMu.Unlock()
+			if err != nil {
+				return
+			}
+			go a.publisherStreamReader(ctx, brokerConn, &writeMu, &streamsMu, streams, frame.Stream, conn)
+		case routebroker.KindData, routebroker.KindHalfClose, routebroker.KindClose:
+			streamsMu.Lock()
+			stream := streams[frame.Stream]
+			streamsMu.Unlock()
+			if stream == nil {
+				continue
+			}
+			if frame.Kind == routebroker.KindData {
+				if _, err := stream.conn.Write(frame.Payload); err != nil {
+					_ = stream.conn.Close()
+				}
+			} else if frame.Kind == routebroker.KindHalfClose {
+				if tcp, ok := stream.conn.(*net.TCPConn); ok {
+					_ = tcp.CloseWrite()
+				}
+			} else {
+				_ = stream.conn.Close()
+			}
+		case routebroker.KindPing:
+			writeMu.Lock()
+			err = routebroker.WriteFrame(brokerConn, routebroker.Frame{Kind: routebroker.KindPong}, maxPayload)
+			writeMu.Unlock()
+			if err != nil {
+				return
+			}
+		case routebroker.KindPong:
+			// Keepalive responses carry no stream data.
+		default:
+			return
+		}
+	}
+}
+
+func targetAddress(target string) string {
+	u, _ := url.Parse(target)
+	return u.Host
+}
+
+func (a *Adapter) publisherStreamReader(ctx context.Context, brokerConn net.Conn, writeMu, streamsMu *sync.Mutex, streams map[uint64]*publisherStream, id uint64, conn net.Conn) {
+	buf := make([]byte, maxPayload)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		n, err := conn.Read(buf)
+		if n > 0 {
+			writeMu.Lock()
+			writeErr := routebroker.WriteFrame(brokerConn, routebroker.Frame{Kind: routebroker.KindData, Stream: id, Payload: append([]byte(nil), buf[:n]...)}, maxPayload)
+			writeMu.Unlock()
+			if writeErr != nil {
+				return
+			}
+		}
+		if err != nil {
+			writeMu.Lock()
+			_ = routebroker.WriteFrame(brokerConn, routebroker.Frame{Kind: routebroker.KindClose, Stream: id}, maxPayload)
+			writeMu.Unlock()
+			streamsMu.Lock()
+			delete(streams, id)
+			streamsMu.Unlock()
+			return
+		}
+	}
+}

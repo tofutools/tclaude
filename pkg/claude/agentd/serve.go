@@ -310,10 +310,11 @@ func runServe(p *serveParams) error {
 	if err := openDatabaseReportingMigrations(os.Stdout); err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}
-	// The M2 broker is deliberately in-process. It has no endpoint listener
-	// yet, but any future adapters attach through this supervised instance;
-	// close it on every daemon exit so no route channel survives shutdown.
+	// The M2 broker is deliberately in-process. The opt-in Darwin adapter
+	// attaches its exact-slot listeners through this supervised instance;
+	// close both on every daemon exit so no route channel survives shutdown.
 	defer func() {
+		routeAdapterCloseAll()
 		if err := GroupRouteBroker().Close(); err != nil {
 			slog.Warn("group-route broker: shutdown incomplete", "error", err)
 		}
@@ -778,6 +779,7 @@ func runServe(p *serveParams) error {
 	if err := processRuns.shutdown(ctx); err != nil {
 		slog.Warn("process runtime: shutdown did not drain", "error", err)
 	}
+	routeAdapterCloseAll()
 	if err := GroupRouteBroker().Close(); err != nil {
 		slog.Warn("group-route broker: shutdown incomplete", "error", err)
 	}

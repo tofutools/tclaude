@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -65,6 +66,7 @@ type routeLeaseView struct {
 	GroupGeneration          int64  `json:"group_generation"`
 	State                    string `json:"state"`
 	OpenedAt                 string `json:"opened_at"`
+	Endpoint                 string `json:"endpoint,omitempty"`
 	ClosedAt                 string `json:"closed_at,omitempty"`
 }
 
@@ -288,7 +290,9 @@ func refreshRoutePublisher(route *db.AgentRoute) *db.AgentRoute {
 	if route == nil || route.State != db.RouteStateReady || routePublisherLive(route) {
 		return route
 	}
-	_ = db.MarkAgentRoutePublisherLost(route.ID, "publisher generation is no longer current")
+	if err := db.MarkAgentRoutePublisherLost(route.ID, "publisher generation is no longer current"); err == nil {
+		routeAdapterCloseRoute(route.ID)
+	}
 	updated, err := db.GetAgentRoute(route.ID)
 	if err == nil && updated != nil {
 		return updated
@@ -384,6 +388,13 @@ func handleRoutePublish(w http.ResponseWriter, r *http.Request) {
 		writeRouteError(w, http.StatusConflict, "route_conflict", err.Error())
 		return
 	}
+	// The adapter lifetime is the durable route/lease lifecycle, not the
+	// short-lived HTTP request context that created it.
+	if _, err := routeAdapterPublish(context.Background(), route); err != nil {
+		_ = db.WithdrawAgentRoute(route.ID, agentID, convID, "Darwin route adapter activation failed")
+		writeRouteError(w, http.StatusConflict, "route_adapter", err.Error())
+		return
+	}
 	writeJSON(w, http.StatusCreated, routeViewFor(route))
 }
 
@@ -424,6 +435,7 @@ func handleRouteByID(w http.ResponseWriter, r *http.Request) {
 			writeRouteError(w, http.StatusConflict, "route_transition", err.Error())
 			return
 		}
+		routeAdapterCloseRoute(route.ID)
 		writeJSON(w, http.StatusOK, routeViewFor(refreshRoutePublisher(mustRoute(route.ID))))
 	case http.MethodPost:
 		handleRouteAction(w, r, route, g)
@@ -482,7 +494,17 @@ func handleRouteAction(w http.ResponseWriter, r *http.Request, route *db.AgentRo
 			writeRouteError(w, http.StatusConflict, "route_open_refused", err.Error())
 			return
 		}
-		writeJSON(w, http.StatusCreated, routeLeaseViewFor(lease))
+		endpoint, enabled, err := routeAdapterOpen(context.Background(), route, lease)
+		if err != nil {
+			_ = db.CloseAgentRouteLease(lease.ID, agentID, convID)
+			writeRouteError(w, http.StatusConflict, "route_adapter", err.Error())
+			return
+		}
+		view := routeLeaseViewFor(lease)
+		if enabled {
+			view.Endpoint = endpoint
+		}
+		writeJSON(w, http.StatusCreated, view)
 	case "withdraw":
 		convID, agentID, ok := requireRouteCapability(w, r, g, PermRoutesPublish)
 		if !ok {
@@ -496,6 +518,7 @@ func handleRouteAction(w http.ResponseWriter, r *http.Request, route *db.AgentRo
 			writeRouteError(w, http.StatusConflict, "route_transition", err.Error())
 			return
 		}
+		routeAdapterCloseRoute(route.ID)
 		writeJSON(w, http.StatusOK, routeViewFor(mustRoute(route.ID)))
 	default:
 		writeRouteError(w, http.StatusNotFound, "route_action", "unknown route action")
@@ -556,6 +579,7 @@ func handleRouteLeaseClose(w http.ResponseWriter, r *http.Request) {
 		writeRouteError(w, http.StatusConflict, "route_transition", err.Error())
 		return
 	}
+	routeAdapterCloseLease(lease.ID)
 	updated, _ := db.GetAgentRouteLease(lease.ID)
 	writeJSON(w, http.StatusOK, routeLeaseViewFor(updated))
 }
