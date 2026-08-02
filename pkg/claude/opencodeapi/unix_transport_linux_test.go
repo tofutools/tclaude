@@ -408,6 +408,10 @@ func foreignOwnedSocket(t *testing.T, requireMode0600 bool) string {
 		}
 		return candidate
 	}
+	if os.Getenv("CI") != "" && os.Geteuid() != 0 {
+		t.Fatal("no foreign-owned socket in non-root Linux CI; " +
+			"the control-socket ownership refusal was not exercised")
+	}
 	t.Skip("no foreign-owned socket on this host to exercise the ownership refusal")
 	return ""
 }
