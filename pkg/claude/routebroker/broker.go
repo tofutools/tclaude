@@ -314,6 +314,18 @@ func (b *Broker) AttachPublisher(ctx context.Context, auth PublisherAuth, conn n
 // consumer channels may attach to one route, subject to the configured
 // bounded count.
 func (b *Broker) AttachConsumer(ctx context.Context, auth ConsumerAuth, conn net.Conn) error {
+	return b.attachConsumer(ctx, auth, conn, nil)
+}
+
+// AttachConsumerWithReady admits a consumer and invokes ready only after the
+// lease has passed authority and capacity admission. Adapters use this seam
+// when their transport handshake must not be exposed before the broker has
+// reserved the consumer slot.
+func (b *Broker) AttachConsumerWithReady(ctx context.Context, auth ConsumerAuth, conn net.Conn, ready func() error) error {
+	return b.attachConsumer(ctx, auth, conn, ready)
+}
+
+func (b *Broker) attachConsumer(ctx context.Context, auth ConsumerAuth, conn net.Conn, ready func() error) error {
 	if conn == nil {
 		return fmt.Errorf("route broker: nil consumer channel")
 	}
@@ -348,6 +360,15 @@ func (b *Broker) AttachConsumer(ctx context.Context, auth ConsumerAuth, conn net
 	consumerCount := len(r.consumers)
 	b.consumersMetric.Add(1)
 	b.mu.Unlock()
+	if ready != nil {
+		if err := ready(); err != nil {
+			s.close()
+			b.detach(s)
+			b.wg.Done()
+			b.rejectedConnectionsMetric.Add(1)
+			return err
+		}
+	}
 	b.emit(Event{Kind: "consumer-attached", Role: roleConsumer.string(), RouteID: auth.RouteID, AgentID: auth.AgentID, LeaseID: auth.LeaseID, Connections: consumerCount})
 	return b.serveSession(s, ctx)
 }

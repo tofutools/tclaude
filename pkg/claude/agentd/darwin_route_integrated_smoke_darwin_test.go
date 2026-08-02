@@ -501,6 +501,11 @@ func TestDarwinRouteCapabilityIntegratedSmoke(t *testing.T) {
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
 	endpointWithdrawal := leaseWithdrawal["endpoint"].(string)
 	require.Contains(t, withdrawal.launch.Slots, darwinRouteSmokePort(t, endpointWithdrawal), "adapter listener must use the consumer's exact launch pool")
+	leaseRow, err := db.GetAgentRouteLease(leaseWithdrawal["id"].(string))
+	require.NoError(t, err)
+	leaseView := routeLeaseViewFor(leaseRow)
+	require.Equal(t, "ready", leaseView.EndpointState, "synchronous adapter endpoint must be visible through stable lease reads")
+	require.Equal(t, endpointWithdrawal, leaseView.Endpoint)
 	require.NoError(t, os.WriteFile(withdrawal.endpoint, []byte(endpointWithdrawal), 0o600))
 	waitDarwinRouteSmokeFile(t, withdrawal.ready, "consumer:opaque-exchange-ready")
 

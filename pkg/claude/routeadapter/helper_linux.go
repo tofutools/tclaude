@@ -4,6 +4,7 @@ package routeadapter
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,6 +12,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -179,11 +181,13 @@ func syncConsumerLeases(ctx context.Context, cfg HelperConfig, active map[string
 			}
 			listener, err := net.Listen("tcp4", "127.0.0.1:0")
 			if err != nil {
+				_ = reportConsumerEndpoint(ctx, cfg, lease.ID, "refused", "", "consumer local endpoint unavailable")
 				return err
 			}
 			endpoint := "tcp://" + listener.Addr().String()
 			if _, err := ValidateConsumerEndpoint(endpoint); err != nil {
 				_ = listener.Close()
+				_ = reportConsumerEndpoint(ctx, cfg, lease.ID, "refused", "", "consumer local endpoint is unsupported")
 				return err
 			}
 			handleCtx, cancel := context.WithCancel(ctx)
@@ -193,11 +197,13 @@ func syncConsumerLeases(ctx context.Context, cfg HelperConfig, active map[string
 				defer close(h.done)
 				auth := ChannelAuth{Role: RoleConsumer, RouteID: lease.RouteID, LeaseID: lease.ID, AgentID: cfg.AgentID, ConvID: cfg.ConvID, LaunchGeneration: cfg.LaunchGeneration, GroupGeneration: lease.GroupGeneration, ConsumerEndpoint: endpoint, Credential: cfg.Credential}
 				channel, err := DialUnixChannel(handleCtx, cfg.SocketPath, auth)
-				if err == nil {
-					_ = RunConsumer(handleCtx, channel, listener)
-				} else {
+				if err != nil {
+					_ = reportConsumerEndpoint(handleCtx, cfg, lease.ID, "refused", "", "route adapter channel refused")
 					_ = listener.Close()
+					return
 				}
+				_ = reportConsumerEndpoint(handleCtx, cfg, lease.ID, "ready", endpoint, "")
+				_ = RunConsumer(handleCtx, channel, listener)
 			}(lease, handle)
 		}
 	}
@@ -245,6 +251,18 @@ func loadRoute(ctx context.Context, socketPath, routeID, credential string) (rou
 	return route, err
 }
 
+func reportConsumerEndpoint(ctx context.Context, cfg HelperConfig, leaseID, state, endpoint, detail string) error {
+	path := "/v1/routes/leases/" + url.PathEscape(strings.TrimSpace(leaseID)) + "/endpoint"
+	body := map[string]string{"state": state}
+	if endpoint != "" {
+		body["endpoint"] = endpoint
+	}
+	if detail != "" {
+		body["error"] = detail
+	}
+	return PostUnixJSON(ctx, cfg.SocketPath, path, cfg.Credential, body, nil)
+}
+
 // GetUnixJSON is the read-only half of the launch helper's agentd client. It
 // uses a real Unix socket and preserves response limits so a daemon error or
 // proxy cannot make a helper allocate unbounded memory.
@@ -279,6 +297,53 @@ func GetUnixJSON(ctx context.Context, socketPath, path, credential string, out a
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
 		return fmt.Errorf("agentd route read refused: %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
+	return json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(out)
+}
+
+// PostUnixJSON is the bounded write-back half of the launch helper's agentd
+// client. It is limited to the helper's endpoint status callback; route
+// publication and lease lifecycle mutations remain agent-authenticated API
+// calls.
+func PostUnixJSON(ctx context.Context, socketPath, path, credential string, in, out any) error {
+	if !strings.HasPrefix(path, "/") || strings.ContainsAny(path, "\r\n") {
+		return errors.New("invalid agentd route path")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	payload, err := json.Marshal(in)
+	if err != nil {
+		return err
+	}
+	conn, err := (&net.Dialer{}).DialContext(ctx, "unix", socketPath)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://tclaude.invalid"+path, bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Connection", "close")
+	req.Header.Set("Content-Type", "application/json")
+	if strings.TrimSpace(credential) != "" {
+		req.Header.Set("X-Tclaude-Route-Helper-Credential", credential)
+	}
+	if err := req.Write(conn); err != nil {
+		return err
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(conn), req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		responseBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+		return fmt.Errorf("agentd route status refused: %s: %s", resp.Status, strings.TrimSpace(string(responseBody)))
+	}
+	if out == nil {
+		return nil
 	}
 	return json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(out)
 }

@@ -259,6 +259,41 @@ func TestBrokerAuthorityRevocationAndShutdownFailClosed(t *testing.T) {
 	}
 }
 
+func TestConsumerCapacityAdmissionPrecedesReadyCallback(t *testing.T) {
+	auth := newTestAuthorizer()
+	b := newBroker(t, auth, routebroker.Config{MaxConsumersPerRoute: 1})
+	firstBroker, firstChannel := net.Pipe()
+	firstReady := make(chan struct{})
+	firstAuth := routebroker.ConsumerAuth{LeaseID: "lease-first", RouteID: "route-capacity", AgentID: "consumer-first", ConvID: "consumer-first-conv", LaunchGeneration: "launch-first", GroupGeneration: 1}
+	go func() {
+		_ = b.AttachConsumerWithReady(context.Background(), firstAuth, firstBroker, func() error {
+			close(firstReady)
+			return nil
+		})
+	}()
+	require.Eventually(t, func() bool { return b.Metrics().ConsumerChannels == 1 }, time.Second, time.Millisecond)
+	select {
+	case <-firstReady:
+	case <-time.After(time.Second):
+		t.Fatal("first consumer was not admitted")
+	}
+
+	secondBroker, secondPeer := net.Pipe()
+	defer secondPeer.Close()
+	secondReady := false
+	secondAuth := firstAuth
+	secondAuth.LeaseID = "lease-second"
+	secondAuth.AgentID = "consumer-second"
+	err := b.AttachConsumerWithReady(context.Background(), secondAuth, secondBroker, func() error {
+		secondReady = true
+		return nil
+	})
+	require.ErrorIs(t, err, routebroker.ErrConsumerLimit)
+	require.False(t, secondReady, "capacity refusal must happen before the ready callback")
+	require.Equal(t, uint64(1), b.Metrics().ConsumerChannels)
+	_ = firstChannel.Close()
+}
+
 func TestBrokerEnforcesRouteAndAgentConnectionBounds(t *testing.T) {
 	auth := newTestAuthorizer()
 	b := newBroker(t, auth, routebroker.Config{MaxConnectionsPerRoute: 1, MaxConnectionsPerAgent: 1})
