@@ -76,6 +76,24 @@ func TestManagedOpenCodeTmuxSessionNameIsStableAndBounded(t *testing.T) {
 	assert.Regexp(t, `^__tclaude-opencode-[0-9a-f]{20}$`, first)
 }
 
+func TestManagedOpenCodeTmuxLaunchUsesBoundedPrivateBashScript(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	largeEnvironment := "LARGE_VALUE=" + strings.Repeat("x", 64*1024)
+	args, cleanup, err := openCodeTmuxLaunchArgs(db.OpenCodeRuntime{}, "/opt/opencode",
+		[]string{"serve"}, []string{largeEnvironment}, nil)
+	require.NoError(t, err)
+	t.Cleanup(cleanup)
+
+	require.Equal(t, "/bin/bash", args[0])
+	require.Len(t, args, 2)
+	assert.Less(t, len(strings.Join(args, "\x00")), 2048,
+		"generated command must not scale tmux's initial argv")
+	assert.Contains(t, args[1], "launch-scripts")
+	raw, err := os.ReadFile(args[1])
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), largeEnvironment)
+}
+
 func TestManagedOpenCodeTmuxReclaimsReservedOrphan(t *testing.T) {
 	fake := &openCodeTmuxProbeFake{results: []bool{true, true}}
 	previous := clcommon.Default

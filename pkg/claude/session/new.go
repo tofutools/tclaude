@@ -2475,6 +2475,14 @@ func writeLaunchScript(cmd string) (string, func(), error) {
 	return path, cleanup, nil
 }
 
+// WriteLaunchScript creates the same private, self-deleting pane bootstrap
+// used by ordinary harness launches. Managed runtimes use it when they need
+// custom tmux session options without putting an unbounded command in tmux's
+// size-limited initial argv.
+func WriteLaunchScript(cmd string) (string, func(), error) {
+	return writeLaunchScript(cmd)
+}
+
 const launchScriptPrefix = "launch-"
 
 func cleanupStaleLaunchScripts(dir string, now time.Time) {

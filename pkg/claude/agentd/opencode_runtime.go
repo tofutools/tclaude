@@ -992,20 +992,24 @@ func openCodeTmuxLaunchCommand(runtime db.OpenCodeRuntime, command string, args,
 	// Capture outside the optional resource-limit wrapper. Failures in that
 	// wrapper, or in the shell while opening the handshake FIFOs, happen before
 	// the inner launcher runs and would otherwise disappear with tmux's pane.
-	if handshake.needsUnixHandshake() {
+	if handshake != nil && handshake.stderrPath != "" {
 		serverCommand += " 2>" + clcommon.ShellQuoteArg(handshake.stderrPath)
 	}
 	return "exec " + serverCommand
 }
 
 func openCodeTmuxLaunchArgs(runtime db.OpenCodeRuntime, command string, args,
-	serverEnvironment []string, handshake *openCodeTmuxHandshake) []string {
-	// Multiple command arguments make tmux execute them directly. Do not pass
-	// this command as tmux's single shell-command: tmux would parse it with the
-	// user's default shell, while the nested sandbox/resource wrappers use
-	// POSIX shell quoting that is not portable to shells such as fish.
-	return []string{"/bin/bash", "-c", openCodeTmuxLaunchCommand(
-		runtime, command, args, serverEnvironment, handshake)}
+	serverEnvironment []string, handshake *openCodeTmuxHandshake) ([]string, func(), error) {
+	// Keep the generated command out of tmux's size-limited initial argv and
+	// away from the user's default shell. The private script self-deletes as
+	// its first action; tmux execs Bash directly because it receives multiple
+	// command arguments.
+	scriptPath, cleanup, err := session.WriteLaunchScript(openCodeTmuxLaunchCommand(
+		runtime, command, args, serverEnvironment, handshake))
+	if err != nil {
+		return nil, func() {}, err
+	}
+	return []string{"/bin/bash", scriptPath}, cleanup, nil
 }
 
 func startOpenCodeProcessThroughTmux(runtime *db.OpenCodeRuntime, command string,
@@ -1023,12 +1027,17 @@ func startOpenCodeProcessThroughTmux(runtime *db.OpenCodeRuntime, command string
 	}
 	tmuxArgs := []string{"new-session", "-d", "-s", tmuxSession, "-c", runtime.Cwd,
 		"-x", "80", "-y", "24"}
-	tmuxArgs = append(tmuxArgs, openCodeTmuxLaunchArgs(
-		*runtime, command, args, serverEnvironment, handshake)...)
+	launchArgs, cleanupScript, err := openCodeTmuxLaunchArgs(
+		*runtime, command, args, serverEnvironment, handshake)
+	if err != nil {
+		return nil, err
+	}
+	tmuxArgs = append(tmuxArgs, launchArgs...)
 	stderr := newSpawnStderrCapture()
 	launch := clcommon.Default.Command(session.ExternalTmuxNoStartArgs(tmuxArgs...)...)
 	launch.Stderr = stderr
 	if err := launch.Run(); err != nil {
+		cleanupScript()
 		return nil, fmt.Errorf("launch OpenCode server through external tmux: %w: %s", err, stderr.String())
 	}
 	pidOut, err := clcommon.Default.Command(session.ExternalTmuxNoStartArgs(
@@ -1051,7 +1060,7 @@ func startOpenCodeProcessThroughTmux(runtime *db.OpenCodeRuntime, command string
 	openCodeProcesses.Unlock()
 	runtime.PID = pid
 	go watchOpenCodeTmuxProcess(process, *runtime)
-	if handshake != nil {
+	if handshake.needsUnixHandshake() {
 		if err := handshake.connectGate(time.Now().Add(openCodeStartupTimeout)); err != nil {
 			output := captureOpenCodeTmuxStartup(handshake, tmuxSession)
 			stopOpenCodeProcess(*runtime, process)
