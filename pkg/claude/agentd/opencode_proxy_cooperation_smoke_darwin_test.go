@@ -4,6 +4,7 @@ package agentd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
@@ -99,6 +100,115 @@ func openCodeDarwinProxyServeTestSpec() *session.TclaudeLayerLaunchSpec {
 			},
 		},
 	}
+}
+
+func TestReconcileOpenCodeDarwinFilteredRuntimeReplaysPersistedLoopbackSpec(
+	t *testing.T,
+) {
+	setupTestDB(t)
+	cwd := t.TempDir()
+	previousResolve := resolveOpenCodeTclaudeLayer
+	resolveOpenCodeTclaudeLayer = func(
+		posture sandboxpolicy.NetworkPosture,
+		_ sandboxpolicy.RootPosture,
+		engine sandboxpolicy.NetworkEngine,
+	) (string, harness.LaunchOSSandbox, error) {
+		require.Equal(t, sandboxpolicy.NetworkFiltered, posture)
+		require.Equal(t, sandboxpolicy.NetworkEngineProxy, engine)
+		return "/usr/bin/sandbox-exec", harness.LaunchOSSandbox{}, nil
+	}
+	t.Cleanup(func() { resolveOpenCodeTclaudeLayer = previousResolve })
+
+	config := map[string]any{
+		"enabled_providers": []string{"test"},
+		"provider": map[string]any{
+			"test": map[string]any{
+				"npm":       "@ai-sdk/openai-compatible",
+				"whitelist": []string{"test-model"},
+				"models": map[string]any{
+					"test-model": map[string]any{},
+				},
+				"options": map[string]string{
+					"baseURL": "https://" + openCodeDarwinProxyOrigin + "/v1",
+					"apiKey":  "invalid-replay-test-key",
+				},
+			},
+		},
+	}
+	configJSON, err := json.Marshal(config)
+	require.NoError(t, err)
+	snapshot := sandboxpolicy.EmptySnapshot()
+	snapshot.Effective.Network = &sandboxpolicy.NetworkRules{
+		Mode: sandboxpolicy.AccessModeList, Engine: sandboxpolicy.NetworkEngineProxy,
+		Allow: []sandboxpolicy.NetworkAllowEntry{{
+			Host: openCodeDarwinProxyOrigin, Ports: []int{443},
+		}},
+	}
+	snapshot.Effective.Environment = []sandboxpolicy.EnvironmentEntry{{
+		Name: "OPENCODE_CONFIG_CONTENT", Value: string(configJSON),
+	}}
+	agentID := db.NewAgentID()
+	_, err = allocatePrivateOpenCodeState(agentID)
+	require.NoError(t, err)
+	spec, err := openCodeTclaudeLayerLaunchSpec(
+		string(sandboxpolicy.ImplementationTclaudeLayer),
+		cwd, nil, &snapshot, agentID)
+	require.NoError(t, err)
+	require.NoError(t, prepareOpenCodeTclaudeLayerState(spec))
+	require.NoError(t, prepareOpenCodeReadOnlyConfigForPlatform(spec))
+	implementation, encoded, err := openCodeSandboxRecord(
+		string(sandboxpolicy.ImplementationTclaudeLayer), spec)
+	require.NoError(t, err)
+	runtimeRow := db.OpenCodeRuntime{
+		SessionID:             "opencode-darwin-filtered-replay",
+		ConvID:                "ses-darwin-filtered-replay",
+		ServerURL:             "http://127.0.0.1:0",
+		Password:              "private",
+		Cwd:                   cwd,
+		PID:                   99_999_999,
+		PermissionJSON:        openCodeTestPermissionJSON,
+		SandboxImplementation: implementation,
+		SandboxLaunchSpecJSON: encoded,
+		Transport:             db.OpenCodeTransportLoopbackTCP,
+	}
+
+	replayed, err := openCodeRuntimeSandboxSpec(runtimeRow)
+	require.NoError(t, err)
+	require.NotNil(t, replayed)
+	assert.Equal(t, session.TclaudeLayerLaunchSpecVersion, replayed.Version)
+
+	packetNeighbor := *spec
+	packetNeighbor.Effective.Network = &sandboxpolicy.NetworkRules{
+		Mode: sandboxpolicy.AccessModeList, Engine: sandboxpolicy.NetworkEnginePacket,
+		Allow: []sandboxpolicy.NetworkAllowEntry{{
+			Host: openCodeDarwinProxyOrigin, Ports: []int{443},
+		}},
+	}
+	_, packetEncoded, err := openCodeSandboxRecord(
+		string(sandboxpolicy.ImplementationTclaudeLayer), &packetNeighbor)
+	require.NoError(t, err)
+	packetRuntime := runtimeRow
+	packetRuntime.SandboxLaunchSpecJSON = packetEncoded
+	_, err = openCodeRuntimeSandboxSpec(packetRuntime)
+	require.ErrorContains(t, err, "restart requires the host-open loopback control plane")
+
+	previousRestart := restartOpenCodeProcess
+	restartAttempted := false
+	restartOpenCodeProcess = func(
+		_ *db.OpenCodeRuntime,
+		restartedSpec *session.TclaudeLayerLaunchSpec,
+	) (*openCodeProcess, error) {
+		restartAttempted = true
+		require.NotNil(t, restartedSpec)
+		assert.Equal(t, sandboxpolicy.NetworkEngineProxy,
+			restartedSpec.Contract.NetworkEngine)
+		return nil, errors.New("stop after observing Darwin filtered replay")
+	}
+	t.Cleanup(func() { restartOpenCodeProcess = previousRestart })
+	require.NoError(t, db.UpsertOpenCodeRuntime(runtimeRow))
+	assert.False(t, reconcileOpenCodeRuntime(runtimeRow.SessionID))
+	assert.True(t, restartAttempted,
+		"a crashed Darwin filtered loopback runtime must reach restart")
 }
 
 // TestOpenCodeProxyCooperationDarwin is OpenCode's TCL-827 §8.2 test-7 arm.

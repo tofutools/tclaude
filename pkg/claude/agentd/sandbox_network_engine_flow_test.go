@@ -260,14 +260,16 @@ func TestNetworkEngineDisclosureRendersThroughTheEnforcementAPI(t *testing.T) {
 	assert.NotContains(t, codex, harness.ProxyEngineOpenCodeCarriageNotice,
 		"a harness whose tool egress is measured over both carriages must not claim SOCKS is unreachable")
 
-	// The not-activated sentence must still be REACHABLE through this API, or
-	// the assertion above degenerates into "nothing ever says it". Darwin is
-	// the real, permanent subject for that until the M3 Seatbelt smokes exist:
-	// no harness has a Darwin record, and the platform is part of the target.
+	// OpenCode's Darwin row activates from its distinct managed-server smoke.
+	// The API accepts only real launch platforms, and every registered harness
+	// now has evidence on both, so the fail-closed unlisted case stays covered
+	// directly at the activation-record seam rather than invented here.
 	darwin := detailForTarget(t, "engine-proxy-discriminating",
 		"tclaude-layer%2Fopencode%2Fdarwin")
-	assert.Contains(t, darwin, "not activated",
-		"an unactivated platform must still disclose that through the same surface")
+	assert.NotContains(t, darwin, "not activated")
+	assert.Contains(t, darwin, harness.ProxyEngineDarwinMechanism)
+	assert.Contains(t, darwin, harness.SeatbeltProxyFloorCondition,
+		"the activated Darwin surface must retain the TCL-917 Partial disclosure")
 
 	// A selection on a policy that needs no filtering is latent, not an error.
 	latent := detailFor(t, "engine-proxy-latent")

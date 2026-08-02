@@ -19,7 +19,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
+	goruntime "runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -495,6 +495,21 @@ func openCodeRuntimeSandboxSpec(
 	if err != nil {
 		return nil, err
 	}
+	// Darwin keeps the authenticated loopback control transport when its
+	// filtered model path is carried by the proxy. This is the only filtered
+	// v3 replay shape; Linux remains on v4's inherited Unix relay below.
+	darwinFilteredLoopback := false
+	if goruntime.GOOS == "darwin" &&
+		spec.Version == session.TclaudeLayerLaunchSpecVersion &&
+		posture == sandboxpolicy.NetworkFiltered &&
+		spec.Contract.NetworkEngine == sandboxpolicy.NetworkEngineProxy &&
+		runtime.Transport == db.OpenCodeTransportLoopbackTCP {
+		engine, engineErr := session.TclaudeLayerNetworkEngine(spec.Effective)
+		if engineErr != nil {
+			return nil, engineErr
+		}
+		darwinFilteredLoopback = engine == sandboxpolicy.NetworkEngineProxy
+	}
 	if spec.Version == session.TclaudeLayerUnixRelaySpecVersion {
 		if (posture != sandboxpolicy.NetworkIsolatedWithAgentd &&
 			posture != sandboxpolicy.NetworkFiltered) ||
@@ -533,8 +548,9 @@ func openCodeRuntimeSandboxSpec(
 				"OpenCode tclaude-layer v4 runtime control path %q does not match its allocated agent authority %q",
 				runtime.ControlSocketPath, expectedControlPath)
 		}
-	} else if posture != sandboxpolicy.NetworkHostOpen ||
-		runtime.Transport == db.OpenCodeTransportUnixRelay {
+	} else if !darwinFilteredLoopback &&
+		(posture != sandboxpolicy.NetworkHostOpen ||
+			runtime.Transport == db.OpenCodeTransportUnixRelay) {
 		return nil, fmt.Errorf(
 			"unsupported_sandbox_profile_network: OpenCode tclaude-layer restart requires the host-open loopback control plane and endpoint-ownership proof")
 	}
@@ -1523,7 +1539,7 @@ func openCodeServeExec(
 		return executable, serveArgs, nil
 	}
 	filteredDarwinProxy := false
-	if runtime.GOOS == "darwin" && openCodeFilteredNetworkSpec(sandboxSpec) {
+	if goruntime.GOOS == "darwin" && openCodeFilteredNetworkSpec(sandboxSpec) {
 		engine, engineErr := session.TclaudeLayerNetworkEngine(sandboxSpec.Effective)
 		if engineErr != nil {
 			return "", nil, engineErr
@@ -1617,12 +1633,12 @@ func openCodeTclaudeLayerLaunchSpec(
 			if filteredErr != nil {
 				return nil, filteredErr
 			}
-			if runtime.GOOS == "darwin" {
+			if goruntime.GOOS == "darwin" {
 				return buildOpenCodeTclaudeLayerLaunchSpec(
 					cwd, gitWriteDirs, snapshot, agentID, false, true,
 					privateSessionIDs...)
 			}
-			if runtime.GOOS != "linux" {
+			if goruntime.GOOS != "linux" {
 				return nil, fmt.Errorf("OpenCode filtered networking requires Linux or macOS")
 			}
 			return buildOpenCodeTclaudeLayerLaunchSpec(
@@ -1657,7 +1673,7 @@ func openCodeUnixRelayLaunchSpec(
 	agentID string,
 	privateSessionIDs ...string,
 ) (*session.TclaudeLayerLaunchSpec, error) {
-	if runtime.GOOS != "linux" {
+	if goruntime.GOOS != "linux" {
 		return nil, fmt.Errorf("OpenCode Unix relay is Linux-only")
 	}
 	normalized, err := sandboxpolicy.NormalizeImplementation(implementation)
