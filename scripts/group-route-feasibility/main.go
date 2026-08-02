@@ -363,6 +363,7 @@ type linuxPeer struct {
 	conn       net.Conn
 	reader     *bufio.Reader
 	connectReq chan struct{}
+	done       chan struct{}
 }
 
 func newLinuxBroker(socket string) (*linuxBroker, error) {
@@ -396,7 +397,10 @@ func (b *linuxBroker) serve() {
 			}
 			continue
 		}
-		go b.handle(&linuxPeer{conn: conn, reader: bufio.NewReader(conn), connectReq: make(chan struct{}, 1)})
+		go b.handle(&linuxPeer{
+			conn: conn, reader: bufio.NewReader(conn),
+			connectReq: make(chan struct{}, 1), done: make(chan struct{}),
+		})
 	}
 }
 
@@ -435,6 +439,7 @@ func (b *linuxBroker) handle(peer *linuxPeer) {
 			return
 		}
 		b.pubStream <- peer
+		<-peer.done
 	case "OPEN":
 		if fields[1] != groupName || fields[2] != groupRouteName {
 			_, _ = fmt.Fprintln(peer.conn, "DENY unauthorized-group")
@@ -465,6 +470,7 @@ func (b *linuxBroker) handle(peer *linuxPeer) {
 			if err := relayPeers(stream, peer); err != nil {
 				fmt.Fprintf(os.Stderr, "group-route-feasibility: %v\n", err)
 			}
+			close(stream.done)
 		case <-time.After(5 * time.Second):
 			return
 		}
