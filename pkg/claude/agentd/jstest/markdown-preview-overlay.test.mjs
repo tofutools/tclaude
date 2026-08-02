@@ -53,8 +53,8 @@ test('a Markdown attachment opens an accessible viewer and renders the document'
     <${MarkdownAttachmentPreview} messageID=${42} attachment=${attachment} surface="messages" />
   `);
   const trigger = mounted.container.querySelector('.human-attachment-markdown-trigger');
-  assert.ok(trigger, 'a Markdown attachment exposes a read button');
-  assert.equal(trigger.getAttribute('aria-label'), 'Read plan.md');
+  assert.ok(trigger, 'a Markdown attachment exposes a view button');
+  assert.equal(trigger.getAttribute('aria-label'), 'View plan.md');
   assert.equal(mounted.container.querySelector('.markdown-preview-overlay'), null);
 
   await harness.act(() => {

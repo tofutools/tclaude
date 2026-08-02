@@ -21,9 +21,9 @@
      before any preloaded module's bare specifiers (preact / @preact/signals /
      htm) need resolving — declaring it after the preloads it governs errors on
      strict engines and is noisy on lenient ones. markdown-it is deliberately
-     absent from that preload block: it is a third of a megabyte that only a
-     notification carrying a Markdown file ever needs, so the viewer imports it
-     on demand and the map is what makes that dynamic import resolve. -->
+     absent from that preload block: it is ~130 KiB that only a notification
+     carrying a Markdown file ever needs, so the viewer imports it on demand
+     and the map is what makes that dynamic import resolve. -->
 <script type="importmap">
 {
   "imports": {

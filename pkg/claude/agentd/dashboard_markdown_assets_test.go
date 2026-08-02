@@ -57,8 +57,8 @@ func TestDashboardMarkdownImportMap(t *testing.T) {
 	if !strings.Contains(html, mapping) {
 		t.Errorf("dashboard import map missing %s", mapping)
 	}
-	// The parser is a third of a megabyte serving one optional surface. It must
-	// stay out of the boot graph, or every dashboard load pays for it.
+	// The parser is ~130 KiB serving one optional surface. It must stay out of
+	// the boot graph, or every dashboard load pays for it.
 	for _, m := range bootVendorPreload {
 		if strings.Contains(m, "markdown-it") {
 			t.Errorf("markdown-it is preloaded on boot (%s); the viewer imports it on demand", m)
@@ -83,16 +83,16 @@ func TestDashboardMarkdownRendersWithoutHTMLInjection(t *testing.T) {
 			}
 		}
 	}
-	model := dashboardAssetFile(t, "js/markdown-model.js")
-	for needle, why := range map[string]string{
-		"html: false":                     "markdown-it must not turn raw HTML in a document into markup",
-		"export function markdownToTree(": "the token walk is the surface the pure jstest suite exercises",
-		"parser.parse(":                   "the viewer parses to tokens rather than rendering to HTML",
-		"noopener noreferrer":             "a document's links must not get a handle back to the dashboard",
-	} {
-		if !strings.Contains(model, needle) {
-			t.Errorf("js/markdown-model.js missing %q (%s)", needle, why)
-		}
+	// The parser option is the one property that has no behavioural test to
+	// stand on: with html:true the walk would still produce an allowlisted
+	// tree, just one built from markup the document supplied. Everything else
+	// this file could assert about the model — the token walk, the link
+	// hardening, the URL rejections — is pinned by behaviour in
+	// jstest/markdown-model.test.mjs instead, where a passing string proves
+	// something.
+	if model := dashboardAssetFile(t, "js/markdown-model.js"); !strings.Contains(model, "html: false") {
+		t.Error("js/markdown-model.js must construct markdown-it with html:false, " +
+			"or raw HTML in an agent's document becomes markup")
 	}
 }
 
@@ -100,23 +100,19 @@ func TestDashboardMarkdownRendersWithoutHTMLInjection(t *testing.T) {
 // viewer. The drawer and Messages render attachments independently, so a file
 // readable in one and download-only in the other is a real and easy regression.
 func TestDashboardMarkdownViewerWired(t *testing.T) {
+	// Naming the component is enough: the module graph test resolves the import
+	// it must come from, so pinning the import statement's exact spelling would
+	// only break on a reformat.
 	for _, name := range []string{"js/groups-notification-reader.js", "js/mail-island.js"} {
-		source := dashboardAssetFile(t, name)
-		for needle, why := range map[string]string{
-			"MarkdownAttachmentPreview": "the surface offers the shared Markdown viewer",
-			"import { MarkdownAttachmentPreview } from './markdown-preview-overlay.js';": "the viewer is the shared one, not a local copy",
-		} {
-			if !strings.Contains(source, needle) {
-				t.Errorf("%s missing %q (%s)", name, needle, why)
-			}
+		if !strings.Contains(dashboardAssetFile(t, name), "MarkdownAttachmentPreview") {
+			t.Errorf("%s does not offer the shared Markdown viewer", name)
 		}
 	}
 
 	overlay := dashboardAssetFile(t, "js/markdown-preview-overlay.js")
 	for needle, why := range map[string]string{
-		`role="dialog"`:                          "the document viewer exposes dialog semantics",
-		`aria-modal="true"`:                      "the document viewer is modal",
-		"if (!attachment?.markdown) return null": "the viewer is offered only on the daemon's verdict",
+		`role="dialog"`:     "the document viewer exposes dialog semantics",
+		`aria-modal="true"`: "the document viewer is modal",
 	} {
 		if !strings.Contains(overlay, needle) {
 			t.Errorf("markdown viewer source missing %q (%s)", needle, why)

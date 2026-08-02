@@ -89,8 +89,8 @@ implies `--zip` when several paths are attached. The daemon copies the bytes int
 private data directory, and the Messages reader exposes an authenticated
 download button, so this also works through remote dashboard access. The reader
 renders some types in place rather than only offering the download: an image
-gets a thumbnail and a zoomable preview, and a Markdown file under 1 MiB gets a
-**Read** control that opens the document rendered — so a written report is
+gets a thumbnail and a zoomable preview, and a Markdown file up to 1 MiB gets a
+**View** control that opens the document rendered — so a written report is
 better sent as `report.md` than as `report.txt`. The cap is
 256 MiB per published artifact. Deleting the message deletes the stored bytes.
 Top-level symlinks are rejected; pass the resolved path explicitly. Stored

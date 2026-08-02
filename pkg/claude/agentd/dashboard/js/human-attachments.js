@@ -13,5 +13,18 @@ export function messageAttachments(message) {
 }
 
 export function attachmentHref(message, attachment) {
-  return attachment?.url || `/api/human-messages/${encodeURIComponent(message.id)}/attachment`;
+  return attachmentHrefByID(message.id, attachment);
+}
+
+// attachmentHrefByID is the same route for a surface that holds the message id
+// rather than the message — the inline viewers, which are handed one file.
+export function attachmentHrefByID(messageID, attachment) {
+  return attachment?.url || `/api/human-messages/${encodeURIComponent(messageID)}/attachment`;
+}
+
+export function attachmentSize(bytes) {
+  const size = Number(bytes || 0);
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(size < 10 * 1024 ? 1 : 0)} KiB`;
+  return `${(size / (1024 * 1024)).toFixed(size < 10 * 1024 * 1024 ? 1 : 0)} MiB`;
 }

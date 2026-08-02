@@ -126,6 +126,35 @@ func TestHumanMessageAttachmentMarkdownRejectsOversizedAndMissing(t *testing.T) 
 	}), "a file that cannot be read is not claimed to be renderable")
 }
 
+// The probe is cached because the dashboard's 2-second poll would otherwise
+// reopen every historical document. A cached positive deliberately survives
+// file cleanup: the viewer then reaches the authenticated route and shows its
+// own missing-file state, instead of the control vanishing from under the
+// operator mid-read.
+func TestHumanMessageAttachmentMarkdownCachesItsVerdict(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cached.md")
+	require.NoError(t, os.WriteFile(path, []byte("# cached\n"), 0o600))
+	a := &db.HumanMessageAttachment{
+		Filename:    "cached.md",
+		ContentType: "text/markdown",
+		SizeBytes:   9,
+		StoragePath: path,
+	}
+	require.True(t, humanMessageAttachmentMarkdown(a))
+
+	require.NoError(t, os.Remove(path))
+	assert.True(t, humanMessageAttachmentMarkdown(a),
+		"a probed document stays renderable after cleanup removes the file")
+
+	// A file never probed before cleanup is a different case: there is nothing
+	// to serve and nothing cached, so it is not claimed to be renderable.
+	assert.False(t, humanMessageAttachmentMarkdown(&db.HumanMessageAttachment{
+		Filename:    "never-probed.md",
+		ContentType: "text/markdown",
+		StoragePath: filepath.Join(t.TempDir(), "never-probed.md"),
+	}))
+}
+
 // The Markdown and image probes share one cache, so their keys must not be able
 // to answer each other's question.
 func TestHumanMessageAttachmentVerdictsDoNotShareCacheEntries(t *testing.T) {

@@ -1421,28 +1421,34 @@ Escape-to-return while keeping the original download action available. SVG
 and other non-raster files remain download-only.
 
 A published **Markdown document** gets the same treatment in reading form. A
-file the daemon recognises as Markdown — by `text/markdown` media type or by a
-`.md`/`.markdown`/`.mdown`/`.mkd`/`.mkdn` name, under 1 MiB, and whose leading
-bytes are UTF-8 text rather than binary — carries a **Read** control beside its
-download link. That opens a modal document viewer with the file rendered:
-headings, lists, tables, fenced code, block quotes, links, and images, plus a
-**Show source** toggle for the original text and the same missing-file,
-Escape-to-return, and download behaviour as the image overlay. Both the quick
-notification reader and Messages offer it, and both use the same overlay.
+file the daemon recognises as Markdown — by a `text/markdown` or
+`text/x-markdown` media type, or by a `.md`/`.markdown`/`.mdown`/`.mkd`/`.mkdn`
+name, at most 1 MiB, and whose leading bytes are UTF-8 text rather than binary —
+carries a **View** control beside its download link. That opens a modal document
+viewer with the file rendered: headings, lists, tables, fenced code, block
+quotes, links, and images, plus a **Show source** toggle for the original text,
+and the same missing-file, Escape-to-return, and download behaviour as the image
+overlay (minus its HEAD preflight — reading the document is the same request).
+Both the quick notification reader and Messages offer it, and both use the same
+overlay.
 
 Rendering is done by the vendored [markdown-it](https://github.com/markdown-it/markdown-it)
 parser (`dashboard/vendor/markdown-it/`), loaded on demand so the dashboard's
-boot graph does not carry it. The dashboard never asks the parser for HTML: it
-walks the token stream into a plain tree of allowlisted elements and attributes
-and renders that as Preact vnodes, so a document's own `<script>` or
+boot graph does not carry its ~130 KiB. The dashboard never asks the parser for
+HTML: it walks the token stream into a plain tree of allowlisted elements and
+attributes and renders that as Preact vnodes, so a document's own `<script>` or
 `onerror=` reaches the operator as visible characters, and a `javascript:` or
 `data:text/html` target never becomes a link. Document links open in a new tab
-with `rel="noopener noreferrer"`. Images may load from `http(s)` or from a
-`data:` raster URI; an image the viewer will not load degrades to its alt text.
+with `rel="noopener noreferrer"`, and only absolute `http(s)`/`mailto` targets
+become links at all — a relative or fragment target would resolve against the
+dashboard's own origin rather than the repository its author meant, so it keeps
+its text and loses the anchor. Images may load from `http(s)` or from a `data:`
+raster URI, and carry `referrerpolicy="no-referrer"` so a remote one cannot
+learn the dashboard's address; an image the viewer will not load degrades to its
+alt text.
 
-The daemon copies the bytes
-into its private data directory, so remote dashboards download through an
-authenticated route rather than receiving access to the agent's filesystem.
+The daemon copies the bytes into its private data directory, so remote
+dashboards download through an authenticated route rather than receiving access to the agent's filesystem.
 Deleting the message deletes its stored artifact too. Uploads are capped at
 256 MiB each, 512 MiB per stable agent, and 2 GiB daemon-wide; the CLI rejects
 top-level symlinks and asks the agent to pass the resolved path explicitly.

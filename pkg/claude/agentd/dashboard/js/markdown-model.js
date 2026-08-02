@@ -49,8 +49,8 @@ const ALLOWED_TAGS = new Set([
   'table', 'thead', 'tbody', 'tr', 'th', 'td',
 ]);
 
-// Schemes an anchor may carry. Relative and fragment targets are allowed too
-// (see safeURL). markdown-it's own validateLink already rejects javascript:,
+// The only schemes an anchor may carry, and only spelled absolutely (see
+// safeURL). markdown-it's own validateLink already rejects javascript:,
 // vbscript: and file:, but the viewer does not rely on a parser option for the
 // property that matters most here.
 const LINK_SCHEMES = new Set(['http:', 'https:', 'mailto:']);
@@ -73,11 +73,14 @@ function safeURL(value, { image = false } = {}) {
   if (image && DATA_IMAGE.test(raw)) return raw;
   let parsed;
   try {
-    // Resolving against a base is what classifies the value: a relative path or
-    // a bare fragment inherits the base's https, while anything naming its own
-    // scheme (javascript:, data:, file:, …) surfaces it here. The original
-    // spelling is what gets returned, so a relative link stays relative.
-    parsed = new URL(raw, 'https://tclaude.invalid/');
+    // Parsed with NO base, so only an absolute URL naming its own scheme
+    // survives. That rejects javascript:, data: and file: by scheme, and
+    // rejects the relative forms — `./notes.md`, `/api/x`, `#section`,
+    // `//host/y` — for a different reason: the author meant them to resolve
+    // against their own repository, and the only thing they can actually
+    // resolve against here is the dashboard's origin. A link that would
+    // silently retarget at the operator's own daemon is worse than no link.
+    parsed = new URL(raw);
   } catch {
     return null;
   }
@@ -109,6 +112,11 @@ function attributesFor(tag, attrs) {
     if (!src) return out;
     out.src = src;
     out.loading = 'lazy';
+    // A remote image is the one thing in a document that reaches the network
+    // on its own, without the operator clicking anything. It stays supported,
+    // but it does not get to learn which dashboard host asked for it: the
+    // daemon's whole attachment design keeps its address off the wire.
+    out.referrerpolicy = 'no-referrer';
     return out;
   }
   if (tag === 'ol') {
@@ -173,7 +181,10 @@ function walk(tokens) {
   for (const token of tokens) {
     switch (token.type) {
       case 'inline':
-        top().children.push(...walk(token.children || []));
+        // Appended one at a time rather than spread: a single paragraph of a
+        // large document can carry more inline nodes than an argument list
+        // holds, and blowing the stack would lose the whole document.
+        for (const node of walk(token.children || [])) top().children.push(node);
         continue;
       case 'text':
         if (token.content) top().children.push(token.content);
@@ -209,13 +220,19 @@ function walk(tokens) {
     const tag = String(token.tag || '').toLowerCase();
     const allowed = ALLOWED_TAGS.has(tag);
     if (token.nesting === 1) {
-      if (!allowed) {
-        // Unknown container: keep the content, lose the wrapper. Pushing the
-        // current top again keeps the stack balanced against the closing token.
+      const attrs = allowed ? attributesFor(tag, token.attrs) : null;
+      // Two ways to end up transparent: a container this walk does not build at
+      // all, and an anchor whose target was refused. An anchor with no href is
+      // not a link, and leaving one behind would render as link-coloured text
+      // that silently does nothing when the operator clicks it — so the words
+      // survive and the anchor does not, the same way a refused image degrades
+      // to its alt text. Pushing the current top again keeps the stack balanced
+      // against the closing token either way.
+      if (!allowed || (tag === 'a' && !attrs.href)) {
         stack.push(top());
         continue;
       }
-      const node = element(tag, attributesFor(tag, token.attrs), []);
+      const node = element(tag, attrs, []);
       top().children.push(node);
       stack.push(node);
     } else if (token.nesting === -1) {
@@ -230,7 +247,10 @@ function walk(tokens) {
 // markdownToTree parses Markdown source into the viewer's document tree. Nodes
 // are `{ tag, attrs, children }`; a child that is a string is literal text.
 export function markdownToTree(parser, source) {
-  const text = String(source ?? '');
+  // A leading byte-order mark is legal in a UTF-8 file and the daemon's sniff
+  // accepts one, but markdown-it does not strip it — left in place it glues
+  // itself to the first `#` and turns the document's title into a paragraph.
+  const text = String(source ?? '').replace(/^\uFEFF/, '');
   if (!text.trim()) return [];
   return walk(parser.parse(text, {}));
 }

@@ -87,14 +87,33 @@ test('an empty or blank document produces no nodes', async (t) => {
 test('links are allowlisted, opened away from the dashboard, and titled', async (t) => {
   const { markdownToTree, parser } = await loadModel(t);
   const tree = markdownToTree(parser,
-    '[docs](https://example.invalid/docs "Docs") and [mail](mailto:ops@example.invalid) and [rel](./notes.md)');
-  const [docs, mail, rel] = findAll(tree, 'a');
+    '[docs](https://example.invalid/docs "Docs") and [mail](mailto:ops@example.invalid)');
+  const [docs, mail] = findAll(tree, 'a');
   assert.equal(docs.attrs.href, 'https://example.invalid/docs');
   assert.equal(docs.attrs.title, 'Docs');
   assert.equal(docs.attrs.target, '_blank');
   assert.equal(docs.attrs.rel, 'noopener noreferrer');
   assert.equal(mail.attrs.href, 'mailto:ops@example.invalid');
-  assert.equal(rel.attrs.href, './notes.md', 'a relative target stays relative');
+});
+
+// A relative target means the author's own repository, and the only thing it
+// can resolve against in the viewer is the dashboard's own origin. Rather than
+// render a link that quietly retargets at the operator's daemon, keep the words
+// and drop the anchor.
+test('targets the viewer cannot resolve keep their text and lose the link', async (t) => {
+  const { markdownToTree, parser } = await loadModel(t);
+  for (const source of [
+    '[notes](./notes.md)',
+    '[api](/api/human-messages/1/attachment)',
+    '[section](#heading)',
+    '[protocol relative](//example.invalid/y)',
+    '[ftp](ftp://host.invalid/x "Tip")',
+  ]) {
+    const tree = markdownToTree(parser, source);
+    assert.equal(findAll(tree, 'a').length, 0, `${source} builds no anchor`);
+    assert.match(tree.map(text).join(''), /notes|api|section|protocol relative|ftp/,
+      `${source} keeps its link text`);
+  }
 });
 
 test('raw HTML in an agent document is shown, never honoured', async (t) => {
@@ -143,6 +162,9 @@ test('dangerous link and image targets are dropped, safe ones kept', async (t) =
   assert.equal(remote.attrs.alt, 'shot');
   assert.equal(remote.attrs.title, 'Shot');
   assert.equal(remote.attrs.loading, 'lazy');
+  // A remote image is the one thing a document fetches without a click, so it
+  // must not carry the dashboard's address to a host the agent chose.
+  assert.equal(remote.attrs.referrerpolicy, 'no-referrer');
 
   const inline = find(markdownToTree(parser, '![dot](data:image/png;base64,iVBORw0KGgo=)'), 'img');
   assert.equal(inline.attrs.src, 'data:image/png;base64,iVBORw0KGgo=');
@@ -166,4 +188,69 @@ test('only the attributes each element is allowed to carry survive', async (t) =
 test('the parser is loaded once and shared', async (t) => {
   const { loadMarkdownParser, parser } = await loadModel(t);
   assert.equal(await loadMarkdownParser(), parser);
+});
+
+test('a byte-order mark does not swallow the first block', async (t) => {
+  const { markdownToTree, parser } = await loadModel(t);
+  const tree = markdownToTree(parser, '﻿# Title\n\nbody\n');
+  assert.equal(text(find(tree, 'h1')), 'Title', 'a BOM-prefixed heading is still a heading');
+});
+
+// A single block can hold more inline nodes than an argument list takes, and
+// the daemon deliberately admits documents up to 1 MiB. Losing the whole
+// document to a stack overflow inside the walk is not an acceptable answer.
+test('a document dense with inline nodes still renders', async (t) => {
+  const { markdownToTree, parser } = await loadModel(t);
+  const tree = markdownToTree(parser, `${'*a* '.repeat(200000)}\n`);
+  assert.equal(findAll(tree, 'em').length, 200000);
+});
+
+// The property the whole design rests on, asserted over a corpus rather than
+// over a handful of chosen inputs: whatever a document contains, every element
+// built from it is one the viewer allows and every attribute is one that
+// element may carry. This is the test that has to survive a parser upgrade.
+test('no document can produce a tag or attribute outside the allowlists', async (t) => {
+  const { markdownToTree, parser } = await loadModel(t);
+  const ALLOWED_TAGS = new Set([
+    'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'hr', 'br',
+    'ul', 'ol', 'li', 'pre', 'code', 'em', 'strong', 's', 'a', 'img',
+    'table', 'thead', 'tbody', 'tr', 'th', 'td',
+  ]);
+  const ALLOWED_ATTRS = new Set(['title', 'href', 'target', 'rel', 'src', 'loading',
+    'referrerpolicy', 'start', 'style', 'class', 'alt']);
+
+  // Deterministic pseudo-randomness: a fixed seed keeps a failure reproducible
+  // and keeps this suite from flaking in CI.
+  let seed = 0x2f6e2b1;
+  const rand = (n) => {
+    seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+    return seed % n;
+  };
+  const fragments = [
+    '<img src=x onerror="alert(1)">', '<script>alert(1)</script>', '<iframe src=//x>',
+    '<style>*{}</style>', '<a href="javascript:alert(1)">x</a>', '<svg onload=alert(1)>',
+    '[x](javascript:alert(1))', '[x](data:text/html;base64,PHN2Zz4=)', '[x](vbscript:m)',
+    '![x](data:image/svg+xml;base64,PHN2Zz4=)', '![x](https://h.invalid/a.png)',
+    '```js" onload="alert(1)\nx\n```', '```\nplain\n```', '# h', '## h2', '> q', '---',
+    '- a\n- b', '1. a\n2. b', '| a | b |\n| --- | ---: |\n| 1 | 2 |', '**b** *i* ~~s~~ `c`',
+    'https://bare.invalid/link', '[t](https://ok.invalid "ti")', '﻿bom', ' ',
+    '    indented code', '<!-- comment -->', '</p>', '<p onclick=x>', '&lt;&gt;&amp;',
+    'text\n\n', '  ', '\t\ttab', 'a'.repeat(200),
+  ];
+
+  for (let doc = 0; doc < 3000; doc += 1) {
+    const parts = [];
+    for (let i = 0, n = 1 + rand(9); i < n; i += 1) parts.push(fragments[rand(fragments.length)]);
+    const source = parts.join('\n\n');
+    const stack = [...markdownToTree(parser, source)];
+    while (stack.length) {
+      const node = stack.pop();
+      if (typeof node === 'string') continue;
+      assert.ok(ALLOWED_TAGS.has(node.tag), `tag ${node.tag} escaped the allowlist via:\n${source}`);
+      for (const name of Object.keys(node.attrs || {})) {
+        assert.ok(ALLOWED_ATTRS.has(name), `attribute ${name} escaped the allowlist via:\n${source}`);
+      }
+      stack.push(...(node.children || []));
+    }
+  }
 });

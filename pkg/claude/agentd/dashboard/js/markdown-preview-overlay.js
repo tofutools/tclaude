@@ -8,26 +8,13 @@ import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { useDialogFocus } from './dialog-focus.js';
 import { isTopmostOverlay } from './overlay-stack.js';
+import { attachmentHrefByID, attachmentSize } from './human-attachments.js';
 import { MarkdownDocument } from './markdown-document.js';
 
 const html = htm.bind(h);
 
-// A notification can publish several files, each with its own download URL.
-// Fall back to the legacy single-artifact route for a snapshot that predates
-// the per-file one.
-function attachmentURL(messageID, attachment) {
-  return attachment?.url || `/api/human-messages/${encodeURIComponent(messageID)}/attachment`;
-}
-
 function safeIDPart(value) {
   return String(value ?? '').replace(/[^a-zA-Z0-9_-]/g, '-');
-}
-
-function attachmentSize(bytes) {
-  const size = Number(bytes || 0);
-  if (size < 1024) return `${size} B`;
-  if (size < 1024 * 1024) return `${(size / 1024).toFixed(size < 10 * 1024 ? 1 : 0)} KiB`;
-  return `${(size / (1024 * 1024)).toFixed(size < 10 * 1024 * 1024 ? 1 : 0)} MiB`;
 }
 
 function LoadState({ state }) {
@@ -56,7 +43,7 @@ export function MarkdownAttachmentPreview({ messageID, attachment, surface = 'at
   const [showSource, setShowSource] = useState(false);
   const overlayRef = useRef(null);
   const closeRef = useRef(null);
-  const href = attachment ? attachmentURL(messageID, attachment) : '';
+  const href = attachment ? attachmentHrefByID(messageID, attachment) : '';
   const filename = attachment?.filename || 'document.md';
   // Several viewers can share a message, so the attachment id keeps the
   // dialog's labelling ids unique.
@@ -97,11 +84,16 @@ export function MarkdownAttachmentPreview({ messageID, attachment, surface = 'at
 
   if (!attachment?.markdown) return null;
 
+  // The trigger is labelled "View", not "Read": both surfaces that host it carry
+  // a read/unread vocabulary of their own — "Mark read" sits a few lines below
+  // it in the drawer, and Messages has an unread badge — so a "Read" button
+  // beside an attachment would parse as marking the notification rather than as
+  // opening the document.
   return html`<${Fragment}>
     <button type="button" class="human-attachment-markdown-trigger"
-      onClick=${() => setOpen(true)} aria-label=${`Read ${filename}`}>
+      onClick=${() => setOpen(true)} aria-label=${`View ${filename}`}>
       <span class="human-attachment-markdown-icon" aria-hidden="true">¶</span>
-      <span class="human-attachment-markdown-label">Read</span>
+      <span class="human-attachment-markdown-label">View</span>
     </button>
     ${open && html`<div ref=${overlayRef} class="modal-overlay show markdown-preview-overlay"
       onMouseDown=${(event) => {
