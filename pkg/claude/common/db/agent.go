@@ -138,6 +138,10 @@ func ReplaceAgentGroupPermissions(groupID int64, slugs []string, grantedBy strin
 	if exists == 0 {
 		return sql.ErrNoRows
 	}
+	var hadRouteCapability int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM agent_group_permissions WHERE group_id = ? AND slug IN ('routes.publish', 'routes.consume')`, groupID).Scan(&hadRouteCapability); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(`DELETE FROM agent_group_permissions WHERE group_id = ?`, groupID); err != nil {
 		return err
 	}
@@ -149,6 +153,11 @@ func ReplaceAgentGroupPermissions(groupID int64, slugs []string, grantedBy strin
 		}
 		seen[slug] = true
 		if _, err := tx.Exec(`INSERT INTO agent_group_permissions (group_id, slug, granted_at, granted_by) VALUES (?, ?, ?, ?)`, groupID, slug, now, grantedBy); err != nil {
+			return err
+		}
+	}
+	if hadRouteCapability > 0 || seen["routes.publish"] || seen["routes.consume"] {
+		if _, err := tx.Exec(`UPDATE agent_groups SET route_generation = route_generation + 1 WHERE id = ?`, groupID); err != nil {
 			return err
 		}
 	}
@@ -1900,11 +1909,22 @@ func RemoveAllAgentGroupMembershipsForConv(convID string) (int64, error) {
 	if agentID == "" {
 		return 0, nil
 	}
-	res, err := db.Exec(`DELETE FROM agent_group_members WHERE agent_id = ?`, agentID)
+	tx, err := db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec(`UPDATE agent_groups SET route_generation = route_generation + 1 WHERE id IN (SELECT group_id FROM agent_group_members WHERE agent_id = ?)`, agentID); err != nil {
+		return 0, err
+	}
+	res, err := tx.Exec(`DELETE FROM agent_group_members WHERE agent_id = ?`, agentID)
 	if err != nil {
 		return 0, err
 	}
 	n, _ := res.RowsAffected()
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
 	return n, nil
 }
 

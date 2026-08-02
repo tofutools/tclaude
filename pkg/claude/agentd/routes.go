@@ -1,10 +1,12 @@
 package agentd
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -14,6 +16,8 @@ import (
 )
 
 const routeAPIVersion = "v1"
+
+var errRouteStaleLaunchGeneration = errors.New("launch generation is stale")
 
 type routePublishRequest struct {
 	Group            string `json:"group"`
@@ -93,6 +97,12 @@ func routeGroup(group string, groupID int64) (*db.AgentGroup, error) {
 		if g == nil {
 			return nil, sql.ErrNoRows
 		}
+		if named := strings.TrimSpace(group); named != "" {
+			selected, selectErr := routeGroup(named, 0)
+			if selectErr != nil || selected == nil || selected.ID != g.ID {
+				return nil, errors.New("group and group_id select different groups")
+			}
+		}
 		return g, nil
 	}
 	group = strings.TrimSpace(group)
@@ -126,6 +136,9 @@ func routeGeneration(g *db.AgentGroup, requested *int64) int64 {
 func routeLaunchGeneration(convID, supplied string) (string, error) {
 	supplied = strings.TrimSpace(supplied)
 	if supplied != "" {
+		if current, known := knownRouteLaunchGeneration(convID); known && current != supplied {
+			return "", fmt.Errorf("%w: current launch generation is %q", errRouteStaleLaunchGeneration, current)
+		}
 		return supplied, nil
 	}
 	rows, err := db.FindSessionsByConvID(convID)
@@ -187,12 +200,9 @@ func requireRouteCapability(w http.ResponseWriter, r *http.Request, g *db.AgentG
 		return "", "", false
 	}
 
-	// Sudo is the strongest established source and remains a one-shot explicit
-	// human grant. A permanent per-agent deny continues to suppress ordinary
-	// grants; the existing resolver intentionally lets active sudo win.
-	if _, err := db.LookupActiveSudoGrantID(convID, slug); err == nil {
-		return convID, agentID, true
-	}
+	// An explicit per-agent deny is authoritative for routes. This keeps a
+	// caller's opt-out effective even when another grant source (including a
+	// transient sudo elevation) exists.
 	if effect, exists, err := db.AgentPermissionOverride(convID, slug); err != nil {
 		writeRouteError(w, http.StatusInternalServerError, "route_authority", "could not resolve permission")
 		return "", "", false
@@ -203,14 +213,24 @@ func requireRouteCapability(w http.ResponseWriter, r *http.Request, g *db.AgentG
 		}
 		return convID, agentID, true
 	}
+	// Sudo is an explicit one-shot human grant, but only an actual active row
+	// authorizes the operation; a nil lookup is not a grant.
+	if grantID, err := db.LookupActiveSudoGrantID(convID, slug); err == nil && grantID != 0 {
+		return convID, agentID, true
+	}
 	if granted, err := db.HasAgentGroupPermissionForAgent(agentID, g.ID, slug); err != nil {
 		writeRouteError(w, http.StatusInternalServerError, "route_authority", "could not resolve target-group permission")
 		return "", "", false
 	} else if granted {
 		return convID, agentID, true
 	}
-	cfg, _ := config.Load()
-	if cfg != nil && cfg.HasDefaultPermission(slug) {
+	defaultAllowed := false
+	if defaults, ok := r.Context().Value(permissionDefaultsKey{}).(map[string]bool); ok {
+		defaultAllowed = defaults[slug]
+	} else if cfg, _ := config.Load(); cfg != nil {
+		defaultAllowed = cfg.HasDefaultPermission(slug)
+	}
+	if defaultAllowed {
 		return convID, agentID, true
 	}
 	writeRoutePermissionRefusal(w, g, slug)
@@ -344,6 +364,10 @@ func handleRoutePublish(w http.ResponseWriter, r *http.Request) {
 	}
 	launchGeneration, err := routeLaunchGeneration(convID, body.LaunchGeneration)
 	if err != nil {
+		if errors.Is(err, errRouteStaleLaunchGeneration) {
+			writeRouteError(w, http.StatusConflict, "route_generation_stale", err.Error())
+			return
+		}
 		writeRouteError(w, http.StatusInternalServerError, "route_authority", "could not resolve launch generation")
 		return
 	}
@@ -387,7 +411,12 @@ func handleRouteByID(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case http.MethodGet:
-		if _, _, ok := requireRouteCapability(w, r, g, PermRoutesConsume); !ok {
+		if classify(peerFromContext(r.Context())) == classAgent {
+			if _, _, ok := requireRouteCapability(w, r, g, PermRoutesConsume); !ok {
+				return
+			}
+		} else if classify(peerFromContext(r.Context())) != classHuman {
+			_, _, _ = routeCallerAgent(w, r)
 			return
 		}
 		writeJSON(w, http.StatusOK, routeViewFor(route))
@@ -430,6 +459,10 @@ func handleRouteAction(w http.ResponseWriter, r *http.Request, route *db.AgentRo
 			writeRouteError(w, http.StatusBadRequest, "route_invalid_argument", "route_id does not match path")
 			return
 		}
+		if body.Group == "" && body.GroupID == 0 {
+			writeRouteError(w, http.StatusBadRequest, "route_group", "explicit group selection is required")
+			return
+		}
 		if body.Group != "" || body.GroupID != 0 {
 			selected, err := routeGroup(body.Group, body.GroupID)
 			if err != nil || selected.ID != g.ID {
@@ -446,6 +479,10 @@ func handleRouteAction(w http.ResponseWriter, r *http.Request, route *db.AgentRo
 		}
 		launchGeneration, err := routeLaunchGeneration(convID, body.LaunchGeneration)
 		if err != nil {
+			if errors.Is(err, errRouteStaleLaunchGeneration) {
+				writeRouteError(w, http.StatusConflict, "route_generation_stale", err.Error())
+				return
+			}
 			writeRouteError(w, http.StatusInternalServerError, "route_authority", "could not resolve launch generation")
 			return
 		}
@@ -480,6 +517,10 @@ func handleRouteOpenCollection(w http.ResponseWriter, r *http.Request) {
 		writeRouteError(w, http.StatusBadRequest, "route_invalid_argument", "route_id and group are required")
 		return
 	}
+	if strings.TrimSpace(body.Group) == "" && body.GroupID == 0 {
+		writeRouteError(w, http.StatusBadRequest, "route_group", "explicit group selection is required")
+		return
+	}
 	route, err := db.GetAgentRoute(body.RouteID)
 	if err != nil || route == nil {
 		writeRouteError(w, http.StatusNotFound, "route_not_found", "no such route")
@@ -490,6 +531,8 @@ func handleRouteOpenCollection(w http.ResponseWriter, r *http.Request) {
 	cloned := r.Clone(r.Context())
 	cloned.SetPathValue("route", route.ID)
 	cloned.SetPathValue("action", "open")
+	payload, _ := json.Marshal(body)
+	cloned.Body = io.NopCloser(bytes.NewReader(payload))
 	handleRouteByID(w, cloned)
 }
 

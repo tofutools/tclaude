@@ -204,7 +204,8 @@ func OpenAgentRouteLease(routeID, consumerAgentID, consumerConvID, launchGenerat
 	defer func() { _ = tx.Rollback() }()
 	var groupID int64
 	var routeState string
-	if err := tx.QueryRow(`SELECT group_id, state FROM agent_routes WHERE id = ?`, routeID).Scan(&groupID, &routeState); err != nil {
+	var routeGeneration int64
+	if err := tx.QueryRow(`SELECT group_id, state, group_generation FROM agent_routes WHERE id = ?`, routeID).Scan(&groupID, &routeState, &routeGeneration); err != nil {
 		return nil, err
 	}
 	if routeState != RouteStateReady {
@@ -216,6 +217,9 @@ func OpenAgentRouteLease(routeID, consumerAgentID, consumerConvID, launchGenerat
 	}
 	if currentGeneration != groupGeneration {
 		return nil, fmt.Errorf("stale group generation: expected %d, current %d", groupGeneration, currentGeneration)
+	}
+	if routeGeneration != currentGeneration {
+		return nil, fmt.Errorf("route has stale group generation: route %d, current %d", routeGeneration, currentGeneration)
 	}
 	var members int
 	if err := tx.QueryRow(`SELECT COUNT(*) FROM agent_group_members m JOIN agents a ON a.agent_id = m.agent_id AND a.retired_at IS NULL WHERE m.group_id = ? AND m.agent_id = ?`, groupID, consumerAgentID).Scan(&members); err != nil {
@@ -325,7 +329,7 @@ func transitionAgentRoute(routeID, publisherAgentID, publisherConvID, state, rea
 }
 
 func insertRouteAuditTx(tx *sql.Tx, at time.Time, action, result string, groupID int64, routeID, leaseID, agentID, convID, detail string) error {
-	_, err := tx.Exec(`INSERT INTO agent_route_audit (at, action, result, group_id, route_id, lease_id, actor_agent_id, actor_conv_id, detail) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, dbTime(at), action, result, groupID, routeID, leaseID, agentID, convID, detail)
+	_, err := tx.Exec(`INSERT INTO agent_route_audit (at, action, result, group_id, route_id, lease_id, actor_agent_id, actor_conv_id, detail) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, dbTime(at), action, result, groupID, routeID, leaseID, agentID, convID, detail)
 	return err
 }
 

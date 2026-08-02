@@ -1704,6 +1704,9 @@ var errNotifConfigMalformed = errors.New("notifications config.json is malformed
 // `conv` accepts a title / prefix / full conv-id selector and is
 // resolved through agent.ResolveSelector — same rules as the CLI.
 func dashboardAddMember(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
+	if !routeMembershipMutationAllowed(w, g) {
+		return
+	}
 	var body struct {
 		Conv  string `json:"conv"`
 		Role  string `json:"role,omitempty"`
@@ -1746,6 +1749,9 @@ func dashboardSpawnInGroup(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 }
 
 func dashboardRemoveMember(w http.ResponseWriter, g *db.AgentGroup, convSelector string) {
+	if !routeMembershipMutationAllowed(w, g) {
+		return
+	}
 	if u, err := url.PathUnescape(convSelector); err == nil {
 		convSelector = u
 	}
