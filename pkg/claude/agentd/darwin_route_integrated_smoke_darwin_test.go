@@ -30,12 +30,15 @@ import (
 )
 
 const (
-	darwinRouteSmokeRoleEnv     = "TCL951_CHILD_ROLE"
-	darwinRouteSmokeReadyEnv    = "TCL951_CHILD_READY"
-	darwinRouteSmokeStopEnv     = "TCL951_CHILD_STOP"
-	darwinRouteSmokeEndpointEnv = "TCL951_CHILD_ENDPOINT"
-	darwinRouteSmokeHelperRun   = "^TestDarwinRouteSmokeChild$"
-	darwinRouteSmokeOpaque      = "tcl951-integrated-opaque"
+	darwinRouteSmokeRoleEnv        = "TCL951_CHILD_ROLE"
+	darwinRouteSmokeReadyEnv       = "TCL951_CHILD_READY"
+	darwinRouteSmokeStopEnv        = "TCL951_CHILD_STOP"
+	darwinRouteSmokeEndpointEnv    = "TCL951_CHILD_ENDPOINT"
+	darwinRouteSmokeHelperRun      = "^TestDarwinRouteSmokeChild$"
+	darwinRouteSmokeOpaque         = "tcl951-integrated-opaque"
+	darwinRouteSmokePublisherSlot  = 45201
+	darwinRouteSmokeWithdrawalSlot = 45202
+	darwinRouteSmokeReusableSlot   = 45203
 )
 
 // routeSmokeSpawner is the only fake in this cell. It replaces the external
@@ -211,11 +214,17 @@ func startDarwinRouteSmokeLaunch(t *testing.T, home, helper, role, convID, agent
 	stop := filepath.Join(control, "stop")
 	endpoint := filepath.Join(control, "endpoint")
 	snapshot := sandboxpolicy.EmptySnapshot()
-	// Route-capable Seatbelt launches must carry an actual isolated floor. A
-	// plain tclaude-layer request otherwise remains host-open and is correctly
-	// refused by the route-slot renderer.
-	snapshot.Effective.NetworkAccess = sandboxpolicy.NetworkAccessNone
-	snapshot.Effective.Network = &sandboxpolicy.NetworkRules{Mode: sandboxpolicy.AccessModeClosed}
+	// Route-capable Seatbelt launches use the production filtered proxy floor
+	// for hosted Claude traffic. The route slots are an exact additional
+	// carveout in that floor, while all other direct binds/neighbors remain
+	// denied.
+	snapshot.Effective.Network = &sandboxpolicy.NetworkRules{
+		Mode:   sandboxpolicy.AccessModeList,
+		Engine: sandboxpolicy.NetworkEngineProxy,
+		Allow: []sandboxpolicy.NetworkAllowEntry{{
+			Host: "api.anthropic.com", Ports: []int{443},
+		}},
+	}
 	snapshotPath, snapshotDigest, err := sandboxpolicy.WriteSnapshotFile(control, snapshot)
 	require.NoError(t, err)
 
@@ -234,7 +243,7 @@ func startDarwinRouteSmokeLaunch(t *testing.T, home, helper, role, convID, agent
 		SandboxImpl:         string(sandboxpolicy.ImplementationTclaudeLayer),
 		SandboxSnapshotPath: snapshotPath, SandboxSnapshotDigest: snapshotDigest,
 		DarwinRouteCapable: true, DarwinRouteAgentID: agentID,
-		SessionID: convID, Dir: cwd, Detached: true,
+		SessionID: convID, Model: "sonnet", Dir: cwd, Detached: true,
 	}
 	// A launch error is evidence failure: it must never be logged and ignored.
 	require.NoError(t, session.RunNew(params), "route-capable %s launch must complete production runNew", role)
@@ -360,6 +369,28 @@ func TestDarwinRouteCapabilityIntegratedSmoke(t *testing.T) {
 	routeAdapterCloseAll()
 	t.Cleanup(routeAdapterCloseAll)
 
+	// The production allocator is kernel-ephemeral. This dedicated evidence
+	// cell uses the existing reservation seam to make A -> B reuse exact and
+	// deterministic: B is offered A's port only after A's listener is reaped.
+	slotQueue := [][]int{
+		{darwinRouteSmokePublisherSlot},
+		{darwinRouteSmokeWithdrawalSlot},
+		{darwinRouteSmokeReusableSlot},
+		{darwinRouteSmokeReusableSlot},
+	}
+	restoreSlotAllocator := session.SetDarwinRouteSlotAllocatorForTest(func() (*session.DarwinRouteSlotReservation, error) {
+		if len(slotQueue) == 0 {
+			return nil, fmt.Errorf("integrated route smoke exhausted deterministic slot queue")
+		}
+		reservation, reserveErr := session.ReserveDarwinRouteSlotsAt(slotQueue[0])
+		if reserveErr != nil {
+			return nil, reserveErr
+		}
+		slotQueue = slotQueue[1:]
+		return reservation, nil
+	})
+	t.Cleanup(restoreSlotAllocator)
+
 	helper := filepath.Join(work, "tcl951-route-helper")
 	data, err := os.ReadFile(os.Args[0])
 	require.NoError(t, err)
@@ -447,6 +478,8 @@ func TestDarwinRouteCapabilityIntegratedSmoke(t *testing.T) {
 	require.Contains(t, consumerA.launch.Slots, consumerASlot, "adapter listener must use consumer A's exact launch pool")
 	require.NoError(t, os.WriteFile(consumerA.endpoint, []byte(endpointA), 0o600))
 	waitDarwinRouteSmokeFile(t, consumerA.ready, "consumer:opaque-exchange-ready")
+	_, err = session.ReserveDarwinRouteSlotsAt([]int{consumerASlot})
+	require.Error(t, err, "allocator must not reclaim consumer A's exact slot while its endpoint is live")
 	// Kill the now-idle consumer while the route remains published. Its real
 	// SessionEnd/reaper transaction must close the exact lease/listener and
 	// release the launch claim without withdrawing the publisher route.
@@ -479,7 +512,8 @@ func TestDarwinRouteCapabilityIntegratedSmoke(t *testing.T) {
 	})
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
 	endpointB := leaseB["endpoint"].(string)
-	require.Contains(t, consumerB.launch.Slots, darwinRouteSmokePort(t, endpointB), "consumer B adapter listener must use its exact launch pool")
+	require.Equal(t, consumerASlot, consumerB.launch.Slots[0], "consumer B must reclaim consumer A's exact released slot")
+	require.Equal(t, consumerASlot, darwinRouteSmokePort(t, endpointB), "consumer B adapter listener must use the reclaimed exact slot")
 	require.NoError(t, os.WriteFile(consumerB.endpoint, []byte(endpointB), 0o600))
 	waitDarwinRouteSmokeFile(t, consumerB.ready, "consumer:opaque-exchange-ready")
 	t.Logf("TCL-951 exact slot release/reuse: consumerA=%d released; consumerB=%d exact listener active", consumerASlot, darwinRouteSmokePort(t, endpointB))

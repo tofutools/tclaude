@@ -152,11 +152,29 @@ func ReserveDarwinRouteSlotsAt(slots []int) (*DarwinRouteSlotReservation, error)
 	return reservation, nil
 }
 
-// ReserveDarwinRouteSlots allocates the configured bounded pool from the
+var darwinRouteSlotAllocator = reserveDarwinRouteSlots
+
+// SetDarwinRouteSlotAllocatorForTest swaps the bounded allocator used by
+// ReserveDarwinRouteSlots and returns a restore function. Production callers
+// keep the kernel-ephemeral allocator; the hook exists only for exact-slot
+// lifecycle evidence that must deterministically reuse a released port.
+func SetDarwinRouteSlotAllocatorForTest(
+	allocator func() (*DarwinRouteSlotReservation, error),
+) func() {
+	previous := darwinRouteSlotAllocator
+	darwinRouteSlotAllocator = allocator
+	return func() { darwinRouteSlotAllocator = previous }
+}
+
+func ReserveDarwinRouteSlots() (*DarwinRouteSlotReservation, error) {
+	return darwinRouteSlotAllocator()
+}
+
+// reserveDarwinRouteSlots allocates the configured bounded pool from the
 // kernel's ephemeral TCP allocator and keeps every listener open until the
 // caller has rendered and admitted its Seatbelt child. No host-wide scan or
 // retry loop is used.
-func ReserveDarwinRouteSlots() (*DarwinRouteSlotReservation, error) {
+func reserveDarwinRouteSlots() (*DarwinRouteSlotReservation, error) {
 	size, err := DarwinRouteSlotCount()
 	if err != nil {
 		return nil, err
