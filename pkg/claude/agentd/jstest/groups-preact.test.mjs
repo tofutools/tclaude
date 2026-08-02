@@ -914,8 +914,8 @@ test('native member rows preserve the legacy field, capability and selector matr
   const richRow = rows.find((row) => row.dataset.key === 'conv-rich');
   const fixedRow = rows.find((row) => row.dataset.key === 'conv-fixed');
   const backgroundRow = rows.find((row) => row.dataset.key === 'conv-background');
-  assert.equal(table.querySelectorAll('thead th').length, 11);
-  assert.equal(richRow.children.length, 11, 'header/body alignment follows the shared visible-column list');
+  assert.equal(table.querySelectorAll('thead th').length, 10);
+  assert.equal(richRow.children.length, 10, 'header/body alignment follows the shared visible-column list');
   assert.equal(richRow.className, 'dnd-draggable');
   assert.equal(richRow.draggable, true);
   assert.equal(richRow.dataset.dndSourceGroup, 'alpha');

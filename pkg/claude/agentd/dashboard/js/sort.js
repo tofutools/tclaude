@@ -186,11 +186,12 @@ function applySortState(rows, accessors, st) {
 // the header (sortHead) and the body stay aligned by construction and a
 // NEW column plugs in by adding one entry here (+ its cell + accessor).
 // `hideable: true` marks the columns the "▾ view" popover offers to hide;
-// the controls (ctl) and Name (title) columns are load-bearing identity
-// and always render. Default visibility is "shown" — hiding is opt-in.
+// `defaultHidden: true` makes a hideable column start off until opted in.
+// The controls (ctl) and Name (title) columns are load-bearing identity and
+// always render.
 const MEMBER_COLS = [
   { key: 'ctl',    label: '' },
-  { key: 'id',     label: 'ID',          col: 'id',     hideable: true },
+  { key: 'id',     label: 'ID',          col: 'id',     hideable: true, defaultHidden: true },
   { key: 'title',  label: 'Name',        col: 'title' },
   { key: 'state',  label: 'State',       col: 'state',  hideable: true },
   { key: 'last',   label: 'Last',        col: 'last',   hideable: true },

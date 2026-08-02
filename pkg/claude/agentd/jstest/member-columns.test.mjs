@@ -29,20 +29,20 @@ const visKeys = () => visibleMemberCols().map(c => c.key);
 
 // --- defaults ----------------------------------------------------------
 
-test('with no pref, every column is visible and nothing deviates', () => {
+test('with no pref, ID is hidden by default and nothing deviates', () => {
   reset();
-  assert.deepEqual(visKeys(), MEMBER_COLS.map(c => c.key));
-  assert.equal(memberColHidden('id'), false);
+  assert.deepEqual(visKeys(), MEMBER_COLS.filter(c => c.key !== 'id').map(c => c.key));
+  assert.equal(memberColHidden('id'), true);
   assert.equal(memberColDeviationCount(), 0);
 });
 
 // --- hiding a hideable column -----------------------------------------
 
-test('hiding a column drops it from the visible list and counts as a deviation', () => {
+test('hiding a shown column drops it from the visible list and counts as a deviation', () => {
   reset();
-  setMemberColHidden('id', true);
-  assert.equal(memberColHidden('id'), true);
-  assert.ok(!visKeys().includes('id'), 'id is gone from the visible columns');
+  setMemberColHidden('state', true);
+  assert.equal(memberColHidden('state'), true);
+  assert.ok(!visKeys().includes('state'), 'state is gone from the visible columns');
   // The load-bearing identity columns stay regardless.
   assert.ok(visKeys().includes('ctl') && visKeys().includes('title'));
   assert.equal(memberColDeviationCount(), 1);
@@ -53,15 +53,15 @@ test('order is preserved when a middle column is hidden', () => {
   setMemberColHidden('state', true);
   // visibleMemberCols is MEMBER_COLS minus the hidden entry, same order — so
   // the header (sortHead) and each row emit the same cells in the same order.
-  assert.deepEqual(visKeys(), MEMBER_COLS.filter(c => c.key !== 'state').map(c => c.key));
+  assert.deepEqual(visKeys(), MEMBER_COLS.filter(c => !['id', 'state'].includes(c.key)).map(c => c.key));
 });
 
 test('unhiding restores the column and clears the deviation', () => {
   reset();
-  setMemberColHidden('id', true);
-  setMemberColHidden('id', false);
-  assert.equal(memberColHidden('id'), false);
-  assert.ok(visKeys().includes('id'));
+  setMemberColHidden('state', true);
+  setMemberColHidden('state', false);
+  assert.equal(memberColHidden('state'), false);
+  assert.ok(visKeys().includes('state'));
   assert.equal(memberColDeviationCount(), 0);
 });
 
@@ -92,8 +92,8 @@ test('the controls and Name columns can never be hidden', () => {
 
 test('a malformed pref degrades to "everything at its default"', () => {
   dashPrefs.setItem(KEY, 'not-json{');
-  assert.equal(memberColHidden('id'), false);
-  assert.deepEqual(visKeys(), MEMBER_COLS.map(c => c.key));
+  assert.equal(memberColHidden('id'), true);
+  assert.deepEqual(visKeys(), MEMBER_COLS.filter(c => c.key !== 'id').map(c => c.key));
   assert.equal(memberColDeviationCount(), 0);
   reset();
 });
@@ -102,51 +102,39 @@ test('a legacy array-shaped pref is ignored rather than misread', () => {
   // An earlier prototype stored a JSON array; the current store is an object
   // map. An array must not be read as deviations — degrade to defaults.
   dashPrefs.setItem(KEY, JSON.stringify(['id', 'cwd']));
-  assert.equal(memberColHidden('id'), false);
+  assert.equal(memberColHidden('id'), true);
   assert.equal(memberColDeviationCount(), 0);
   reset();
 });
 
 test('a stale key for a removed column is pruned and never counted', () => {
-  dashPrefs.setItem(KEY, JSON.stringify({ id: true, ghost_col: true }));
+  dashPrefs.setItem(KEY, JSON.stringify({ state: true, ghost_col: true }));
   // ghost_col isn't a real hideable column, so it doesn't count...
   assert.equal(memberColDeviationCount(), 1);
   // ...and the next legit write drops it from storage entirely.
   setMemberColHidden('cwd', true);
   const stored = JSON.parse(dashPrefs.getItem(KEY));
   assert.ok(!('ghost_col' in stored), 'stale key pruned on write');
-  assert.deepEqual(Object.keys(stored).sort(), ['cwd', 'id']);
+  assert.deepEqual(Object.keys(stored).sort(), ['cwd', 'state']);
   reset();
 });
 
 // --- default-hidden columns (the contract new opt-in columns rely on) --
 
-test('a defaultHidden column starts hidden; showing it is the deviation', () => {
-  // No shipped column defaults hidden yet, so exercise the contract against a
-  // real MEMBER_COLS entry by flipping its flag for the duration of the test
-  // (restored in finally). This is the path a link-style column — e.g. the
-  // Task column — plugs into with `defaultHidden: true`.
-  const role = MEMBER_COLS.find(c => c.key === 'role');
-  const prev = role.defaultHidden;
-  role.defaultHidden = true;
-  try {
-    reset();
-    // Hidden out of the box, with NO stored pref — so it's not a deviation.
-    assert.equal(memberColHidden('role'), true);
-    assert.ok(!visKeys().includes('role'));
-    assert.equal(memberColDeviationCount(), 0);
-    // Opting it in deviates from the default.
-    setMemberColHidden('role', false);
-    assert.equal(memberColHidden('role'), false);
-    assert.ok(visKeys().includes('role'));
-    assert.equal(memberColDeviationCount(), 1);
-    // Setting it back to its (hidden) default drops the stored deviation.
-    setMemberColHidden('role', true);
-    assert.equal(memberColHidden('role'), true);
-    assert.equal(memberColDeviationCount(), 0);
-  } finally {
-    if (prev === undefined) delete role.defaultHidden;
-    else role.defaultHidden = prev;
-    reset();
-  }
+test('the default-hidden ID column starts hidden; showing it is the deviation', () => {
+  reset();
+  // Hidden out of the box, with NO stored pref — so it is not a deviation.
+  assert.equal(memberColHidden('id'), true);
+  assert.ok(!visKeys().includes('id'));
+  assert.equal(memberColDeviationCount(), 0);
+  // Opting it in deviates from the default.
+  setMemberColHidden('id', false);
+  assert.equal(memberColHidden('id'), false);
+  assert.ok(visKeys().includes('id'));
+  assert.equal(memberColDeviationCount(), 1);
+  // Setting it back to its (hidden) default drops the stored deviation.
+  setMemberColHidden('id', true);
+  assert.equal(memberColHidden('id'), true);
+  assert.equal(memberColDeviationCount(), 0);
+  reset();
 });
