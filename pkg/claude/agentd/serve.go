@@ -45,7 +45,7 @@ type serveParams struct {
 	PersistOperatorToken         bool   `long:"persist-operator-token" help:"Persist the operator token across restarts in a 0600 ~/.tclaude/data/operator_token file instead of minting a fresh in-memory one each start. ORs with agent.persist_operator_token in config.json. Default: off (fresh token every boot)."`
 	PersistOperatorTokenKeychain bool   `long:"persist-operator-token-keychain" help:"Explicitly persist the operator token in the OS keychain instead of the private file. Implies persistence and ORs with agent.persist_operator_token_keychain in config.json. Existing tokens are not migrated between stores."`
 	NoPrintHumanToken            bool   `long:"no-print-human-token" help:"Skip printing the operator token (TCLAUDE_HUMAN_TOKEN) banner on startup, and keep the --tui console's dashboard sign-in link off the screen with it. The token is still minted and honored — this only suppresses what is shown. Useful with -p / non-interactive launches where the startup output is scraped or logged."`
-	TUI                          bool   `long:"tui" help:"Run a terminal UI in this window — a simplified dashboard that lists agents, starts new ones, and goes to an agent's tmux session with enter. On its own it REPLACES the web dashboard: no loopback dashboard listener is started, so browser deep links and human-approval requests are unavailable (grant access with 'tclaude agent permissions grant' instead). Pass --dashboard-port, --dashboard-bind or --auto-launch-dashboard alongside it to run the web dashboard as well. Startup output other than schema migrations goes to output.log instead of stdout, which the UI owns, and the operator token is shown inside the UI. Quitting the TUI shuts the daemon down. Pass --own-tmux-server to tie the tclaude tmux server's lifetime to this daemon as well."`
+	TUI                          bool   `long:"tui" help:"Run a terminal UI in this window — a simplified dashboard that lists agents, starts new ones, and goes to an agent's tmux session with enter. On its own it REPLACES the web dashboard: no loopback dashboard listener is started, so browser deep links and human-approval requests are unavailable (grant access with 'tclaude agent permissions grant' instead). Pass --dashboard-port, --dashboard-bind or --auto-launch-dashboard alongside it to run the web dashboard as well. Startup output other than schema migrations goes to output.log instead of stdout, which the UI owns, and the operator token is shown inside the UI. The UI gets a tmux session of its own on the tclaude server (so enter on an agent switches the tmux client instead of taking the terminal, and you can switch back with tmux's own keys), which is closed again on exit; hosts with no tmux, no terminal, or an external tmux runtime run it in this window instead, and a --tui started from inside tmux stays where it is. Quitting the UI — or detaching from its session — shuts the daemon down. Pass --own-tmux-server to tie the tclaude tmux server's lifetime to this daemon as well."`
 	OwnTmuxServer                bool   `long:"own-tmux-server" help:"With --tui, own the tclaude tmux server for this daemon's lifetime WHEN IT STARTS ONE: with no server running it starts an empty one (with exit-empty off, so it stays up with no agents on it) and kills it on exit, taking every session started on it along. A server that was already running — from an earlier daemon, a session started outside it, or an external resource-delegation unit — is left alone in both directions. Default: off, leaving the tmux server to come and go as tmux itself decides, and leaving agent panes running for the next daemon to pick up. Has no effect without --tui."`
 }
 
@@ -244,7 +244,26 @@ func tokenBannerInTUI(p *serveParams) bool {
 	return p.TUI && !p.NoPrintHumanToken
 }
 
-func runServe(p *serveParams) error {
+func runServe(p *serveParams) (err error) {
+	// A console started by a launcher has no terminal of its own to fail on —
+	// its pane is destroyed the moment this function returns — so hand whatever
+	// it returns back to the launcher, which still has the operator's screen.
+	// Deferred first so it runs last, on the final value of err. A no-op for
+	// every other run.
+	defer func() { recordTUIConsoleStartupError(err) }()
+
+	// `serve --tui` runs its console in a tmux session of its own. That takes a
+	// second process — a bubbletea program cannot move the terminal it already
+	// owns into tmux — so this one becomes the launcher and the daemon proper
+	// runs inside the session it creates (see tui_console_session.go). The
+	// console reaching this point again from inside that session, or from an
+	// operator's own tmux, falls through and runs here as it always did.
+	if tuiConsoleRelaunchRequested(p) {
+		if handled, relaunchErr := runTUIConsoleInTmux(p); handled {
+			return relaunchErr
+		}
+	}
+
 	// Startup narration target. Under --tui this is io.Discard: the console
 	// owns the terminal, so every fmt.Fprintf below goes nowhere while slog
 	// still records the same events in output.log.
@@ -408,6 +427,16 @@ func runServe(p *serveParams) error {
 	// into a hang on the way out.
 	ownsTmuxServer := false
 	switch {
+	case tuiConsoleOwnsTmuxServer():
+		// A console running in a tmux session of its own did not start that
+		// server: its launcher did, before any session existed, and the
+		// launcher is what kills it again once this daemon has exited. Probing
+		// from in here would only ever find the server the console is sitting
+		// on and decline. All that is left to inherit is the fact of ownership,
+		// which the quit confirmation needs.
+		ownsTmuxServer = true
+		slog.Info("tui: console's launcher owns the tclaude tmux server for this run",
+			"module", "agentd")
 	case tmuxServerOwnershipRequested(p):
 		stopTmuxServer, owned := startTUITmuxServer()
 		ownsTmuxServer = owned

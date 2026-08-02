@@ -83,11 +83,12 @@ confirmation acts on the agent it names even if the listing re-sorted under the
 cursor in the meantime.
 
 **enter** on a live agent does what it does in `tclaude session watch` — it
-puts you on that agent's pane. When agentd itself runs inside tmux it uses
-`switch-client`, so the console stays live in its own window and tmux's own
-keys bring you back; outside tmux it attaches, and the console repaints when
-you detach with `ctrl-b d`. Only an operator console can do this (see the
-identity note below).
+puts you on that agent's pane. Because the console has [a tmux session of its
+own](#the-consoles-own-tmux-session), this is `switch-client`: the console
+stays live in its own window and tmux's own keys bring you back. On the hosts
+where the console cannot get a session (see that section), it attaches instead,
+and repaints when you detach with `ctrl-b d`. Only an operator console can do
+this (see the identity note below).
 
 **enter** on an *offline* agent turns it back on instead — the console's
 `tclaude agent resume`, and the same move the dashboard's grey status dot
@@ -264,6 +265,45 @@ an operator token, so an agent cannot promote itself with an inherited
 `TCLAUDE_HUMAN_TOKEN`). The UI says so in a note under its header; start the
 daemon from a plain shell to get an operator console.
 
+### The console's own tmux session
+
+`agentd serve --tui` gives the console a tmux session of its own on the
+`-L tclaude` server — named `tclaude-console` — and takes it down again when
+the run ends. It sits alongside your agents, so **enter** on an agent is tmux's
+`switch-client` rather than a handover of the terminal: the console keeps
+drawing in its own window, `ctrl-b` and friends move you between it and an
+agent, and you come back to a console that never stopped updating.
+
+A bubbletea program cannot move the terminal it already owns into tmux, so this
+takes two processes. The one you launched creates the session, starts the real
+daemon inside it, and attaches your terminal; the daemon in the session is the
+one that holds the lock, the database and the sockets. You do not normally see
+the difference — the same command, the same screen, the same exit status.
+
+**Detaching from the console (`ctrl-b d`) ends the run**, exactly as quitting
+does. `agentd serve` is a foreground process whose face is the console, so
+losing sight of it stops the daemon rather than leaving one nobody can see. It
+is stopped politely — SIGTERM first, so it drains and flushes like any other
+shutdown — and killed only if it will not go.
+
+Some hosts cannot give the console a session, and there the console simply
+draws in your terminal as it always did, saying which reason applied:
+
+- **No tmux installed.** Nothing to create a session on.
+- **No terminal** (`-p`, a scraped or piped launch). tmux cannot attach a
+  session to a pipe.
+- **An [external tmux runtime](sandboxing.md)** owns the server. Its sessions
+  live in a separate, longer-lived unit, and putting the daemon's own session
+  there would run it inside the delegated cgroup and tie its life to something
+  meant to outlive it.
+- **You started it from inside tmux already.** The console appears in the tmux
+  you are in, rather than a second one you would have to go and find — and
+  **enter** already uses `switch-client` there.
+
+A startup failure inside the session — `another agentd already owns …`, a port
+that is taken — is reported on your own terminal, not left in a pane that is
+destroyed a moment later.
+
 ### The tmux server under `--tui` (`--own-tmux-server`)
 
 By default the `-L tclaude` tmux server's lifetime has nothing to do with the
@@ -275,7 +315,9 @@ tclaude agentd serve --tui --own-tmux-server
 ```
 
 ties the two together for as long as the console runs — but only for a server
-the console started itself. At startup the daemon looks for one:
+the console started itself. The look-up happens in the launcher, *before* the
+console's own session exists, so it sees the host as you left it rather than
+the server that session would have started. It finds one of two things:
 
 - **Nothing running.** It starts an empty server and turns `exit-empty` off, so
   the server stays up while there are no agents on it instead of appearing and

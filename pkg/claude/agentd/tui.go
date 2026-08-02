@@ -82,9 +82,11 @@ type tuiStartup struct {
 	// the screen may be a credential. It already covers the token banner by
 	// leaving operatorToken empty; it covers the dashboard sign-in link too.
 	suppressSecrets bool
-	// ownsTmuxServer is set when this daemon started the tclaude tmux server
-	// itself and will kill it on the way out (see startTUITmuxServer). It
-	// changes what quitting MEANS — every session on that server goes with it,
+	// ownsTmuxServer is set when this console's run started the tclaude tmux
+	// server itself and will kill it on the way out — by this daemon
+	// (startTUITmuxServer) or, when the console has a tmux session of its own,
+	// by the launcher that gave it one. It changes what quitting MEANS —
+	// every session on that server goes with it,
 	// rather than being left running for the next daemon — so the console has to
 	// say so before it acts on q.
 	ownsTmuxServer bool
@@ -1485,7 +1487,10 @@ func (m tuiModel) attachCmd(agentName, convID, tmuxSession string) tea.Cmd {
 }
 
 // realTUIAttachToPane is the production handover, and it has two shapes
-// because agentd's own terminal may already be a tmux client:
+// because agentd's own terminal may already be a tmux client. Under a normal
+// `serve --tui` it always is — the console is given a tmux session of its own
+// (see tui_console_session.go), which is largely what that session is FOR — so
+// the second shape is now the fallback for the hosts that cannot have one:
 //
 //   - Inside tmux, `switch-client` moves that client to the agent's session.
 //     It returns immediately and the console keeps running in its own window,
