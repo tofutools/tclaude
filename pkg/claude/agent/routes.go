@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -23,6 +24,9 @@ const (
 	maxRouteCLINameBytes  = 128
 	maxRouteCLIRefBytes   = 512
 	maxRouteCLIGroupBytes = 256
+
+	routeEndpointWaitTimeout  = 5 * time.Second
+	routeEndpointPollInterval = 100 * time.Millisecond
 )
 
 type routeCLI struct {
@@ -58,6 +62,8 @@ type routeLeaseCLI struct {
 	OpenedAt                 string `json:"opened_at"`
 	ClosedAt                 string `json:"closed_at,omitempty"`
 	Endpoint                 string `json:"endpoint,omitempty"`
+	EndpointState            string `json:"endpoint_state"`
+	EndpointError            string `json:"endpoint_error,omitempty"`
 }
 
 type routeListCLI struct {
@@ -210,6 +216,15 @@ func runRoutesOpen(p *routesOpenParams, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
+	waitGroup := group
+	if waitGroup == "" {
+		waitGroup = route.Group
+	}
+	lease, err := waitForRouteEndpoint(lease, waitGroup)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return rcIOFailure
+	}
 	if lease.RouteReference == "" {
 		lease.RouteReference = route.Reference
 	}
@@ -227,6 +242,93 @@ func runRoutesOpen(p *routesOpenParams, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, "Consumer endpoint: pending platform adapter allocation")
 	}
 	return rcOK
+}
+
+type routeEndpointWaitError struct {
+	leaseID string
+	state   string
+	detail  string
+	timeout bool
+}
+
+func (e *routeEndpointWaitError) Error() string {
+	if e.timeout {
+		return fmt.Sprintf("route lease %s did not become endpoint-ready within %s (state: %s; helper or platform adapter may be unavailable)", e.leaseID, routeEndpointWaitTimeout, e.state)
+	}
+	if e.detail != "" {
+		return fmt.Sprintf("route lease %s endpoint refused (%s): %s", e.leaseID, e.state, e.detail)
+	}
+	return fmt.Sprintf("route lease %s reached terminal endpoint state %q", e.leaseID, e.state)
+}
+
+func waitForRouteEndpoint(initial routeLeaseCLI, group string) (routeLeaseCLI, error) {
+	if initial.EndpointState == "ready" && initial.Endpoint != "" {
+		return initial, nil
+	}
+	deadline := time.NewTimer(routeEndpointWaitTimeout)
+	defer deadline.Stop()
+	poll := func() (routeLeaseCLI, error) {
+		var payload struct {
+			Leases []routeLeaseCLI `json:"leases"`
+		}
+		if err := DaemonRequest(http.MethodGet, routeLeasesPath(group), nil, &payload, DaemonOpts{}); err != nil {
+			return routeLeaseCLI{}, err
+		}
+		for _, lease := range payload.Leases {
+			if lease.ID == initial.ID {
+				switch lease.EndpointState {
+				case "ready":
+					if lease.Endpoint != "" {
+						return lease, nil
+					}
+				case "refused", "closed":
+					return lease, &routeEndpointWaitError{leaseID: lease.ID, state: lease.EndpointState, detail: lease.EndpointError}
+				}
+				return lease, nil
+			}
+		}
+		return routeLeaseCLI{ID: initial.ID, EndpointState: "pending"}, nil
+	}
+	last := initial
+	if current, err := poll(); err != nil {
+		return routeLeaseCLI{}, err
+	} else {
+		if current.EndpointState == "ready" && current.Endpoint != "" {
+			return current, nil
+		}
+		if current.EndpointState == "refused" || current.EndpointState == "closed" {
+			return current, &routeEndpointWaitError{leaseID: current.ID, state: current.EndpointState, detail: current.EndpointError}
+		}
+		last = current
+	}
+	interval := routeEndpointPollInterval
+	if interval <= 0 {
+		interval = time.Millisecond
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-deadline.C:
+			state := last.EndpointState
+			if state == "" {
+				state = "pending"
+			}
+			return last, &routeEndpointWaitError{leaseID: initial.ID, state: state, timeout: true}
+		case <-ticker.C:
+			current, err := poll()
+			if err != nil {
+				return routeLeaseCLI{}, err
+			}
+			last = current
+			if current.EndpointState == "ready" && current.Endpoint != "" {
+				return current, nil
+			}
+			if current.EndpointState == "refused" || current.EndpointState == "closed" {
+				return current, &routeEndpointWaitError{leaseID: current.ID, state: current.EndpointState, detail: current.EndpointError}
+			}
+		}
+	}
 }
 
 type routesLsParams struct {

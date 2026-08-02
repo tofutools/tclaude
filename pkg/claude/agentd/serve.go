@@ -1149,6 +1149,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("POST /v1/routes/publish", handleRoutePublish)
 	mux.HandleFunc("POST /v1/routes/open", handleRouteOpenCollection)
 	mux.HandleFunc("GET /v1/routes/leases", handleRouteLeasesList)
+	mux.HandleFunc("POST /v1/routes/leases/{lease}/endpoint", handleRouteLeaseEndpointStatus)
 	mux.HandleFunc("DELETE /v1/routes/leases/{lease}", handleRouteLeaseClose)
 	mux.HandleFunc("POST /v1/routes/{route}/{action}", handleRouteByID)
 	mux.HandleFunc("/v1/routes/{route}", handleRouteByID)

@@ -31,14 +31,18 @@ func TestRunRoutesPublishJSONUsesVersionedDaemonSurface(t *testing.T) {
 	assert.Empty(t, stderr.String())
 }
 
-func TestRunRoutesOpenResolvesFriendlyReferenceAndPrintsEndpoint(t *testing.T) {
+func TestRunRoutesOpenWaitsForAsynchronousEndpointAndPrintsEndpoint(t *testing.T) {
 	var calls []capturedReq
 	stubDaemon(t, &calls, func(method, path string) (int, string, string) {
 		switch {
 		case method == http.MethodGet && path == "/v1/routes?group=team":
 			return 200, "", `{"api_version":"v1","group_id":7,"group":"team","routes":[{"id":"rte_api","group_id":7,"group":"team","publisher_agent_id":"agt_pub","name":"api","reference":"agt_pub/api","state":"ready"}]}`
 		case method == http.MethodPost && path == "/v1/routes/open":
-			return 201, "", `{"api_version":"v1","id":"rlease_api","route_id":"rte_api","route_reference":"agt_pub/api","state":"open","endpoint":"tcp://127.0.0.1:45810"}`
+			return 201, "", `{"api_version":"v1","id":"rlease_api","route_id":"rte_api","route_reference":"agt_pub/api","state":"open","endpoint_state":"pending"}`
+		case method == http.MethodGet && path == "/v1/routes/leases?group=team" && len(calls) == 3:
+			return 200, "", `{"api_version":"v1","leases":[{"id":"rlease_api","route_id":"rte_api","state":"open","endpoint_state":"pending"}]}`
+		case method == http.MethodGet && path == "/v1/routes/leases?group=team":
+			return 200, "", `{"api_version":"v1","leases":[{"id":"rlease_api","route_id":"rte_api","state":"open","endpoint_state":"ready","endpoint":"tcp://127.0.0.1:45810"}]}`
 		default:
 			return 500, "unexpected", ""
 		}
@@ -47,7 +51,7 @@ func TestRunRoutesOpenResolvesFriendlyReferenceAndPrintsEndpoint(t *testing.T) {
 
 	rc := runRoutesOpen(&routesOpenParams{Reference: "agt_pub/api", Group: "team"}, &stdout, &stderr)
 	require.Equal(t, rcOK, rc, "stderr=%q", stderr.String())
-	require.Len(t, calls, 2)
+	require.Len(t, calls, 4)
 	assert.Equal(t, "/v1/routes?group=team", calls[0].path)
 	assert.Equal(t, "/v1/routes/open", calls[1].path)
 	body, ok := calls[1].body.(map[string]any)
@@ -56,6 +60,29 @@ func TestRunRoutesOpenResolvesFriendlyReferenceAndPrintsEndpoint(t *testing.T) {
 	assert.Equal(t, "team", body["group"])
 	assert.Contains(t, stdout.String(), "Consumer endpoint: tcp://127.0.0.1:45810")
 	assert.Empty(t, stderr.String())
+}
+
+func TestRunRoutesOpenReportsTerminalEndpointRefusal(t *testing.T) {
+	var calls []capturedReq
+	stubDaemon(t, &calls, func(method, path string) (int, string, string) {
+		switch {
+		case method == http.MethodGet && path == "/v1/routes?group=team":
+			return 200, "", `{"routes":[{"id":"rte_api","group":"team","publisher_agent_id":"agt_pub","name":"api","reference":"agt_pub/api","state":"ready"}]}`
+		case method == http.MethodPost && path == "/v1/routes/open":
+			return 201, "", `{"id":"rlease_api","route_id":"rte_api","state":"open","endpoint_state":"pending"}`
+		case method == http.MethodGet && path == "/v1/routes/leases?group=team":
+			return 200, "", `{"leases":[{"id":"rlease_api","route_id":"rte_api","state":"open","endpoint_state":"refused","endpoint_error":"route adapter channel refused"}]}`
+		default:
+			return 500, "unexpected", ""
+		}
+	})
+	var stdout, stderr bytes.Buffer
+
+	rc := runRoutesOpen(&routesOpenParams{Reference: "agt_pub/api", Group: "team", JSON: true}, &stdout, &stderr)
+	assert.Equal(t, rcIOFailure, rc)
+	assert.Empty(t, stdout.String())
+	assert.Contains(t, stderr.String(), "endpoint refused")
+	assert.Contains(t, stderr.String(), "route adapter channel refused")
 }
 
 func TestRunRoutesLsAmbiguousGroupIsNonZero(t *testing.T) {

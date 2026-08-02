@@ -146,6 +146,9 @@ func handleRouteChannel(w http.ResponseWriter, r *http.Request) {
 		setRouteConsumerEndpoint(strings.TrimSpace(r.Header.Get("X-Tclaude-Route-Lease-ID")), consumerEndpoint)
 	}
 	if err := attach(r.Context(), conn); err != nil {
+		if role == routeadapter.RoleConsumer {
+			setRouteConsumerEndpointRefused(strings.TrimSpace(r.Header.Get("X-Tclaude-Route-Lease-ID")), routeEndpointRefusalDetail(err))
+		}
 		_ = conn.Close()
 	}
 	if role == routeadapter.RoleConsumer {
@@ -158,3 +161,14 @@ func handleRouteChannel(w http.ResponseWriter, r *http.Request) {
 var _ interface {
 	Hijack() (net.Conn, *bufio.ReadWriter, error)
 } = (*statusRec)(nil)
+
+func routeEndpointRefusalDetail(err error) string {
+	switch {
+	case errors.Is(err, routebroker.ErrConsumerLimit):
+		return "route adapter capacity exhausted"
+	case errors.Is(err, routebroker.ErrUnauthorized):
+		return "route adapter authorization refused"
+	default:
+		return "route adapter attachment refused"
+	}
+}

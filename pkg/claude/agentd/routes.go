@@ -75,6 +75,8 @@ type routeLeaseView struct {
 	OpenedAt                 string `json:"opened_at"`
 	ClosedAt                 string `json:"closed_at,omitempty"`
 	Endpoint                 string `json:"endpoint,omitempty"`
+	EndpointState            string `json:"endpoint_state"`
+	EndpointError            string `json:"endpoint_error,omitempty"`
 }
 
 func routeViewFor(r *db.AgentRoute) routeView {
@@ -90,7 +92,13 @@ func routeLeaseViewFor(l *db.AgentRouteLease) routeLeaseView {
 	if route, err := db.GetAgentRoute(l.RouteID); err == nil && route != nil {
 		routeReference = routeReferenceFor(route)
 	}
-	v := routeLeaseView{APIVersion: routeAPIVersion, ID: l.ID, RouteID: l.RouteID, RouteReference: routeReference, ConsumerAgentID: l.ConsumerAgentID, ConsumerConvID: l.ConsumerConvID, ConsumerLaunchGeneration: l.ConsumerLaunchGeneration, GroupGeneration: l.GroupGeneration, State: l.State, OpenedAt: l.OpenedAt.UTC().Format("2006-01-02T15:04:05.999999999Z07:00"), Endpoint: routeConsumerEndpointForLease(l.ID)}
+	endpointStatus := routeConsumerEndpointStatusForLease(l.ID)
+	if l.State != db.RouteLeaseOpen {
+		endpointStatus = routeConsumerEndpointStatus{state: "closed"}
+	} else if endpointStatus.state == "" {
+		endpointStatus.state = "pending"
+	}
+	v := routeLeaseView{APIVersion: routeAPIVersion, ID: l.ID, RouteID: l.RouteID, RouteReference: routeReference, ConsumerAgentID: l.ConsumerAgentID, ConsumerConvID: l.ConsumerConvID, ConsumerLaunchGeneration: l.ConsumerLaunchGeneration, GroupGeneration: l.GroupGeneration, State: l.State, OpenedAt: l.OpenedAt.UTC().Format("2006-01-02T15:04:05.999999999Z07:00"), Endpoint: endpointStatus.endpoint, EndpointState: endpointStatus.state, EndpointError: endpointStatus.err}
 	if !l.ClosedAt.IsZero() {
 		v.ClosedAt = l.ClosedAt.UTC().Format("2006-01-02T15:04:05.999999999Z07:00")
 	}
@@ -355,7 +363,8 @@ func handleRoutesList(w http.ResponseWriter, r *http.Request) {
 	// groups, which is useful for the operator/dashboard read surface.
 	if groupName == "" && groupID == 0 {
 		peerClass := classify(peerFromContext(r.Context()))
-		if peerClass == classAgent {
+		switch peerClass {
+		case classAgent:
 			_, agentID, ok := routeCallerAgent(w, r)
 			if !ok {
 				return
@@ -375,7 +384,7 @@ func handleRoutesList(w http.ResponseWriter, r *http.Request) {
 				writeRouteError(w, http.StatusConflict, "ambiguous", routeGroupCandidatesMessage(groups))
 				return
 			}
-		} else if peerClass == classHuman {
+		case classHuman:
 			handleAllRouteGroupsList(w)
 			return
 		}
@@ -469,6 +478,74 @@ func handleRouteLeasesList(w http.ResponseWriter, r *http.Request) {
 		out = append(out, routeLeaseViewFor(lease))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"api_version": routeAPIVersion, "group_id": g.ID, "group": g.Name, "group_generation": g.RouteGeneration, "leases": out})
+}
+
+type routeEndpointStatusRequest struct {
+	State    string `json:"state"`
+	Endpoint string `json:"endpoint,omitempty"`
+	Error    string `json:"error,omitempty"`
+}
+
+// handleRouteLeaseEndpointStatus is the narrow write-back seam for a sibling
+// namespace helper. The helper's launch capability may report only its own
+// consumer lease; all route and generation authority remains in agentd.
+func handleRouteLeaseEndpointStatus(w http.ResponseWriter, r *http.Request) {
+	capability, present, valid := routeHelperCredentialForRequest(r)
+	if !present || !valid {
+		writeRouteError(w, http.StatusUnauthorized, "route_helper_auth", "route helper credential is missing, stale, or invalid")
+		return
+	}
+	lease, err := db.GetAgentRouteLease(r.PathValue("lease"))
+	if errors.Is(err, sql.ErrNoRows) || lease == nil {
+		writeRouteError(w, http.StatusNotFound, "route_lease_not_found", "no such route lease")
+		return
+	}
+	if lease.ConsumerAgentID != capability.agentID || lease.ConsumerConvID != capability.convID {
+		writeRouteError(w, http.StatusForbidden, "route_identity", "route helper does not own this lease")
+		return
+	}
+	if lease.ConsumerLaunchGeneration != capability.launchGeneration {
+		writeRouteError(w, http.StatusForbidden, "route_generation_stale", "route helper launch generation does not match this lease")
+		return
+	}
+	if lease.State != db.RouteLeaseOpen {
+		writeRouteError(w, http.StatusConflict, "route_endpoint_closed", "route lease is no longer open")
+		return
+	}
+	var body routeEndpointStatusRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeRouteError(w, http.StatusBadRequest, "route_invalid_argument", "endpoint status must be a JSON object")
+		return
+	}
+	state := strings.ToLower(strings.TrimSpace(body.State))
+	switch state {
+	case "ready":
+		endpoint := strings.TrimSpace(body.Endpoint)
+		_, endpointErr := validateRouteConsumerEndpoint(endpoint)
+		if endpointErr != nil {
+			writeRouteError(w, http.StatusBadRequest, "route_endpoint_invalid", endpointErr.Error())
+			return
+		}
+		setRouteConsumerEndpointReady(lease.ID, endpoint)
+	case "pending":
+		if strings.TrimSpace(body.Endpoint) != "" || strings.TrimSpace(body.Error) != "" {
+			writeRouteError(w, http.StatusBadRequest, "route_invalid_argument", "pending endpoint status cannot include endpoint or error")
+			return
+		}
+		setRouteConsumerEndpointPending(lease.ID)
+	case "refused":
+		detail := strings.TrimSpace(body.Error)
+		if detail == "" || len(detail) > 256 || !utf8.ValidString(detail) || strings.IndexFunc(detail, unicode.IsControl) >= 0 {
+			writeRouteError(w, http.StatusBadRequest, "route_invalid_argument", "refused endpoint status requires a 1–256 byte printable error")
+			return
+		}
+		setRouteConsumerEndpointRefused(lease.ID, detail)
+	default:
+		writeRouteError(w, http.StatusBadRequest, "route_invalid_argument", "endpoint status must be ready, pending, or refused")
+		return
+	}
+	updated, _ := db.GetAgentRouteLease(lease.ID)
+	writeJSON(w, http.StatusOK, routeLeaseViewFor(updated))
 }
 
 func parseRouteGroupID(raw string) int64 {
