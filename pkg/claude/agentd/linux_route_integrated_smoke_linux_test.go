@@ -27,6 +27,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/routeadapter"
+	"github.com/tofutools/tclaude/pkg/claude/routebroker"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -701,6 +702,116 @@ func waitLinuxRouteM6Marker(t *testing.T, path, marker string, processes ...*lin
 	return last
 }
 
+// linuxRouteM6GroupGeneration reads the authoritative group generation out of a
+// route or lease API response.
+//
+// The helper must present exactly the generation its own route or lease row
+// carries, because that is what the production authority compares. Every
+// membership and permission mutation advances a group's route generation, so a
+// value snapshotted from the group before those mutations is refused by
+// POST /v1/routes/channel as a stale publisher identity — a refusal about the
+// fixture's bookkeeping rather than the boundary under test. Taking it from the
+// response also matches how a real helper learns its route identity.
+func linuxRouteM6GroupGeneration(t *testing.T, view map[string]any) int64 {
+	t.Helper()
+	raw, ok := view["group_generation"].(float64)
+	require.True(t, ok, "route API response must expose group_generation: %v", view)
+	generation := int64(raw)
+	require.Positive(t, generation, "group generation must be positive: %v", view)
+	return generation
+}
+
+// TestLinuxRouteChannelPinsCurrentGroupGeneration pins the exact generation
+// identity POST /v1/routes/channel admits. It runs in ordinary CI without
+// Bubblewrap and covers both directions: the generation a publish/open response
+// hands back is accepted, and a generation snapshotted before a group mutation
+// is refused. Regression guard for the second TCL-960 boundary, where the smoke
+// presented a pre-permission-grant snapshot and was correctly refused 403
+// route_authority.
+func TestLinuxRouteChannelPinsCurrentGroupGeneration(t *testing.T) {
+	setupTestDB(t)
+	const publisherConv = "tcl960-generation-publisher"
+	const consumerConv = "tcl960-generation-consumer"
+	publisherAgent, _, err := db.EnsureAgentForConv(publisherConv, "TCL-960 generation pin")
+	require.NoError(t, err)
+	consumerAgent, _, err := db.EnsureAgentForConv(consumerConv, "TCL-960 generation pin")
+	require.NoError(t, err)
+	groupID, err := db.CreateAgentGroup("tcl960-generation-pin", "generation pin")
+	require.NoError(t, err)
+	require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: groupID, ConvID: publisherConv}))
+	require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: groupID, ConvID: consumerConv}))
+
+	// Snapshot the group exactly as a fixture that captures its generation too
+	// early would, then perform an ordinary mutation that advances it.
+	snapshot, err := db.GetAgentGroupByID(groupID)
+	require.NoError(t, err)
+	require.NoError(t, db.ReplaceAgentGroupPermissions(groupID, []string{PermRoutesPublish, PermRoutesConsume}, "TCL-960"))
+	group, err := db.GetAgentGroupByID(groupID)
+	require.NoError(t, err)
+	require.Greater(t, group.RouteGeneration, snapshot.RouteGeneration,
+		"granting route permissions must advance the group route generation")
+
+	publisherCredential, publisherGeneration, err := mintRouteHelperCredential(publisherAgent, publisherConv)
+	require.NoError(t, err)
+	consumerCredential, consumerGeneration, err := mintRouteHelperCredential(consumerAgent, consumerConv)
+	require.NoError(t, err)
+	require.NotEmpty(t, publisherCredential)
+	require.NotEmpty(t, consumerCredential)
+	t.Cleanup(func() {
+		revokeRouteHelperCredentials(publisherConv, "")
+		revokeRouteHelperCredentials(consumerConv, "")
+	})
+	saveLinuxRouteM6Session(t, publisherConv, publisherGeneration)
+	saveLinuxRouteM6Session(t, consumerConv, consumerGeneration)
+
+	target, err := net.Listen("tcp4", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer target.Close()
+
+	handler := BuildHandlerForTest()
+	rec, route := serveLinuxRouteM6(t, handler, http.MethodPost, "/v1/routes/publish", publisherConv, map[string]any{
+		"group": group.Name, "name": "pin", "target": "tcp://" + target.Addr().String(), "launch_generation": publisherGeneration,
+	})
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	routeID := route["id"].(string)
+	publishedGeneration := linuxRouteM6GroupGeneration(t, route)
+	require.Equal(t, group.RouteGeneration, publishedGeneration,
+		"a published route must carry the group's current route generation")
+	require.NotEqual(t, snapshot.RouteGeneration, publishedGeneration,
+		"the pre-mutation snapshot must not be usable as the route's generation")
+
+	// AuthorizePublisher is the exact check POST /v1/routes/channel runs before
+	// it will hijack the connection and admit a data channel.
+	publisherAuth := routebroker.PublisherAuth{
+		RouteID: routeID, AgentID: publisherAgent, ConvID: publisherConv,
+		LaunchGeneration: publisherGeneration, GroupGeneration: publishedGeneration,
+	}
+	require.NoError(t, databaseRouteAuthority{}.AuthorizePublisher(context.Background(), publisherAuth),
+		"the generation the publish response returned must be admitted")
+	stalePublisher := publisherAuth
+	stalePublisher.GroupGeneration = snapshot.RouteGeneration
+	require.Error(t, databaseRouteAuthority{}.AuthorizePublisher(context.Background(), stalePublisher),
+		"a generation snapshotted before a group mutation must stay refused")
+
+	rec, lease := serveLinuxRouteM6(t, handler, http.MethodPost, "/v1/routes/open", consumerConv, map[string]any{
+		"route_id": routeID, "group": group.Name, "launch_generation": consumerGeneration,
+	})
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	leaseGeneration := linuxRouteM6GroupGeneration(t, lease)
+	require.Equal(t, publishedGeneration, leaseGeneration,
+		"a lease must carry the same current group generation as its route")
+	consumerAuth := routebroker.ConsumerAuth{
+		LeaseID: lease["id"].(string), RouteID: routeID, AgentID: consumerAgent, ConvID: consumerConv,
+		LaunchGeneration: consumerGeneration, GroupGeneration: leaseGeneration,
+	}
+	require.NoError(t, databaseRouteAuthority{}.AuthorizeConsumer(context.Background(), consumerAuth),
+		"the generation the open response returned must be admitted")
+	staleConsumer := consumerAuth
+	staleConsumer.GroupGeneration = snapshot.RouteGeneration
+	require.Error(t, databaseRouteAuthority{}.AuthorizeConsumer(context.Background(), staleConsumer),
+		"a consumer generation snapshotted before a group mutation must stay refused")
+}
+
 func saveLinuxRouteM6Session(t *testing.T, convID, generation string) string {
 	t.Helper()
 	sessionID := "tcl952-linux-route-" + strings.ReplaceAll(convID, "-", "")
@@ -802,7 +913,8 @@ func TestLinuxRouteCapabilityIntegratedSmoke(t *testing.T) {
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
 	routeID := route["id"].(string)
 	require.Equal(t, "ready", route["state"])
-	require.NoError(t, os.WriteFile(publisherPaths.Descriptor, []byte(routeID+"|"+strconv.FormatInt(group.RouteGeneration, 10)), 0o600))
+	routeGroupGeneration := linuxRouteM6GroupGeneration(t, route)
+	require.NoError(t, os.WriteFile(publisherPaths.Descriptor, []byte(routeID+"|"+strconv.FormatInt(routeGroupGeneration, 10)), 0o600))
 	pubEvidence := waitLinuxRouteM6Marker(t, publisherPaths.Ready, "policy-floor:host-and-internet-denied", pub)
 	t.Logf("TCL-952 Linux publisher policy floor: %s", pubEvidence)
 	pubStages := waitLinuxRouteM6Marker(t, publisherPaths.Ready, "channel-attached", pub)
@@ -817,7 +929,7 @@ func TestLinuxRouteCapabilityIntegratedSmoke(t *testing.T) {
 	})
 	require.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
 	require.Equal(t, "route_not_found", body["code"])
-	staleGroupGeneration := group.RouteGeneration - 1
+	staleGroupGeneration := routeGroupGeneration - 1
 	rec, body = serveLinuxRouteM6(t, handler, http.MethodPost, "/v1/routes/publish", publisherConv, map[string]any{
 		"group": group.Name, "group_generation": staleGroupGeneration, "name": "stale-group", "target": targetLine, "launch_generation": publisherGeneration,
 	})
@@ -849,7 +961,7 @@ func TestLinuxRouteCapabilityIntegratedSmoke(t *testing.T) {
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
 	leaseID := lease["id"].(string)
 	require.Equal(t, "pending", lease["endpoint_state"])
-	require.NoError(t, os.WriteFile(consumerPaths.Lease, []byte(leaseID+"|"+routeID+"|"+strconv.FormatInt(group.RouteGeneration, 10)), 0o600))
+	require.NoError(t, os.WriteFile(consumerPaths.Lease, []byte(leaseID+"|"+routeID+"|"+strconv.FormatInt(linuxRouteM6GroupGeneration(t, lease), 10)), 0o600))
 	_ = endpoint // The child reports the endpoint through the authenticated status callback.
 	consumerStages := waitLinuxRouteM6Marker(t, consumerPaths.Ready, "channel-attached", consumer)
 	t.Logf("TCL-952 Linux consumer stage evidence: %s", strings.Join(linuxRouteM6Stages(consumerStages), " -> "))
@@ -878,7 +990,7 @@ func TestLinuxRouteCapabilityIntegratedSmoke(t *testing.T) {
 	rec, current := serveLinuxRouteM6(t, handler, http.MethodGet, "/v1/routes/"+routeID, consumerConv, nil)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	require.Equal(t, db.RouteStateReady, current["state"])
-	t.Logf("TCL-952 Linux launch disclosure: route capability current; route=%s group-generation=%d", routeID, group.RouteGeneration)
+	t.Logf("TCL-952 Linux launch disclosure: route capability current; route=%s group-generation=%d", routeID, routeGroupGeneration)
 	rec, _ = serveLinuxRouteM6(t, handler, http.MethodDelete, "/v1/routes/"+routeID, publisherConv, nil)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	waitLinuxRouteM6Marker(t, publisherPaths.Ready, "channel-closed", pub)
@@ -911,7 +1023,7 @@ func TestLinuxRouteCapabilityIntegratedSmoke(t *testing.T) {
 	})
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
 	exitRouteID := exitRoute["id"].(string)
-	require.NoError(t, os.WriteFile(publisherPaths.Descriptor, []byte(exitRouteID+"|"+strconv.FormatInt(group.RouteGeneration, 10)), 0o600))
+	require.NoError(t, os.WriteFile(publisherPaths.Descriptor, []byte(exitRouteID+"|"+strconv.FormatInt(linuxRouteM6GroupGeneration(t, exitRoute), 10)), 0o600))
 	waitLinuxRouteM6Marker(t, publisherPaths.Ready, "channel-attached", exitPub)
 	require.NoError(t, os.Remove(consumerPaths.Stop))
 	require.NoError(t, os.Remove(consumerPaths.Lease))
@@ -924,7 +1036,7 @@ func TestLinuxRouteCapabilityIntegratedSmoke(t *testing.T) {
 	})
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
 	exitLeaseID := exitLease["id"].(string)
-	require.NoError(t, os.WriteFile(consumerPaths.Lease, []byte(exitLeaseID+"|"+exitRouteID+"|"+strconv.FormatInt(group.RouteGeneration, 10)), 0o600))
+	require.NoError(t, os.WriteFile(consumerPaths.Lease, []byte(exitLeaseID+"|"+exitRouteID+"|"+strconv.FormatInt(linuxRouteM6GroupGeneration(t, exitLease), 10)), 0o600))
 	waitLinuxRouteM6Marker(t, consumerPaths.Ready, "channel-attached", exitConsumer)
 	exitPub.kill(t)
 	observedExitSession, err := db.LoadSession(exitSessionID)
