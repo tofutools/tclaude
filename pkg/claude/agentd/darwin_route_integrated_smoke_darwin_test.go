@@ -194,7 +194,12 @@ func darwinRouteSmokeWrite(path, value string) {
 	if path == "" {
 		return
 	}
-	_ = os.WriteFile(path, []byte(value), 0o600)
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
+	if err != nil {
+		return
+	}
+	_, _ = file.WriteString(value + "\n")
+	_ = file.Close()
 }
 
 func darwinRouteSmokeExists(path string) bool {
@@ -306,15 +311,17 @@ func waitDarwinRouteSmokeFile(t *testing.T, path string, contains string) string
 }
 
 func darwinRouteSmokeTerminalMarker(marker string) bool {
-	for _, prefix := range []string{
-		"consumer:endpoint-timeout",
-		"consumer:dial-failure:",
-		"consumer:write-failure:",
-		"consumer:reply-read-failure:",
-		"consumer:reply-unexpected",
-	} {
-		if strings.HasPrefix(marker, prefix) {
-			return true
+	for _, line := range strings.Split(marker, "\n") {
+		for _, prefix := range []string{
+			"consumer:endpoint-timeout",
+			"consumer:dial-failure:",
+			"consumer:write-failure:",
+			"consumer:reply-read-failure:",
+			"consumer:reply-unexpected",
+		} {
+			if strings.HasPrefix(strings.TrimSpace(line), prefix) {
+				return true
+			}
 		}
 	}
 	return false
