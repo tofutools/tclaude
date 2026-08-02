@@ -264,6 +264,74 @@ an operator token, so an agent cannot promote itself with an inherited
 `TCLAUDE_HUMAN_TOKEN`). The UI says so in a note under its header; start the
 daemon from a plain shell to get an operator console.
 
+### The tmux server under `--tui` (`--own-tmux-server`)
+
+By default the `-L tclaude` tmux server's lifetime has nothing to do with the
+daemon's: tmux starts one implicitly the first time something needs it, and
+agent panes outlive the daemon that spawned them.
+
+```bash
+tclaude agentd serve --tui --own-tmux-server
+```
+
+ties the two together for as long as the console runs — but only for a server
+the console started itself. At startup the daemon looks for one:
+
+- **Nothing running.** It starts an empty server and turns `exit-empty` off, so
+  the server stays up while there are no agents on it instead of appearing and
+  disappearing underneath the console. On exit the daemon runs `kill-server`,
+  which **takes every session started on it down too**. That is a stronger
+  teardown than a bare `agentd serve`, which leaves agent panes running for the
+  next daemon to pick up — and it matches what `--tui` already is: a foreground
+  process whose whole face is the console.
+- **A server is already up.** It belongs to whoever started it — an earlier
+  daemon, a `tclaude session new` from a plain shell, your own tmux — so the
+  console leaves it exactly as it found it. Its `exit-empty` is not changed, and
+  quitting the console does not kill it or its sessions.
+
+The flag needs the console: without `--tui` there is no daemon-lifetime to tie a
+server to, so it is ignored and startup says so.
+
+When the console owns the server, its quit confirmation says so
+(`Quit and shut down agentd + its tmux sessions?`) instead of the plain wording.
+
+Ownership is only ever claimed on a definite answer. If the check cannot tell
+whether a server is running — no tmux on `PATH`, a tmux too old for the `-N`
+probe flag, a permission error — the console starts nothing, changes nothing,
+and kills nothing; tmux goes back to starting a server implicitly the first time
+something needs one.
+
+Much the same holds on the way out. A server the console cannot re-verify at
+exit is left running rather than killed on a guess, and so is one whose pid no
+longer answers as the pid it started — that server died and something else took
+the socket. The one exception is a console that could not read a pid for its own
+server at startup: the check *before* the start had already said no server was
+running, so whatever answers at exit is what this run put there, and it is
+killed. All of these are logged to `output.log`.
+
+An [external tmux runtime](sandboxing.md) is refused the same way: when
+`--resource-delegation-dir` (or its config/environment equivalent) points the
+server at a separate, longer-lived systemd unit, the flag neither starts nor
+kills it. That server is somebody else's, and its panes are meant to outlive
+agentd.
+
+So on a host where the tmux server survives your daemons, the flag changes
+nothing about their lifetime; it is on a clean host that the console's server
+comes and goes with it.
+
+One consequence worth knowing: `exit-empty off` outlives the process that set
+it. If an owning daemon is killed outright — `SIGKILL`, an OOM kill — its
+teardown never runs, and the empty server it started stays up indefinitely
+instead of exiting on its own. The next `--tui` run finds it and, by the rule
+above, treats it as somebody else's. Clear it with:
+
+```bash
+tmux -L tclaude kill-server   # only when you know nothing is running on it
+```
+
+The standalone terminal dashboard below does none of this. It is an HTTP client
+of somebody else's daemon, so quitting it stops nothing.
+
 ### Standalone / remote terminal dashboard
 
 The same terminal UI can run as a separate HTTP client:

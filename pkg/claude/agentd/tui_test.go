@@ -511,6 +511,23 @@ func TestTUIQuitAsksBeforeShuttingTheDaemonDown(t *testing.T) {
 	assert.IsType(t, tea.QuitMsg{}, cmd())
 }
 
+// When this daemon started the tmux server, quitting kills it and every session
+// on it (see startTUITmuxServer). The operator decides at the prompt, and the
+// slog line announcing ownership goes to output.log where they cannot see it,
+// so the prompt itself has to carry the consequence.
+func TestTUIQuitPromptWarnsWhenItOwnsTheTmuxServer(t *testing.T) {
+	m := newTUIModel(nil)
+	m.mode = tuiModeConfirmQuit
+	assert.Equal(t, "Quit and shut down agentd? [y / any other key = cancel]", m.confirmPrompt(),
+		"a server this daemon did not start keeps running, so the plain wording stands")
+
+	m.ownsTmuxServer = true
+	prompt := m.confirmPrompt()
+	assert.Contains(t, prompt, "its tmux sessions")
+	assert.LessOrEqual(t, lipgloss.Width("  "+prompt), 80,
+		"confirmPrompt is budgeted as exactly one line")
+}
+
 // Delete on an offline agent retires it. Retiring revokes the agent's
 // authority, so the console asks first and then uses the daemon's own verb.
 func TestTUIRetireAsksThenPostsToTheDaemon(t *testing.T) {
