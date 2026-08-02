@@ -36,6 +36,7 @@ const (
 	filteredGatewayAllowedPrefix6Env = "TCLAUDE_FILTERED_ALLOWED_PREFIX6"
 	filteredGatewayAllowedPortEnv    = "TCLAUDE_FILTERED_ALLOWED_PORT"
 	filteredGatewayDeniedPortEnv     = "TCLAUDE_FILTERED_DENIED_PORT"
+	filteredGatewayUDPSourcePortEnv  = "TCLAUDE_FILTERED_UDP_SOURCE_PORT"
 	filteredGatewayLoopbackPortEnv   = "TCLAUDE_FILTERED_LOOPBACK_PORT"
 	filteredGatewayLoopbackDenyEnv   = "TCLAUDE_FILTERED_LOOPBACK_DENIED_PORT"
 	filteredGatewayReadyPathEnv      = "TCLAUDE_FILTERED_READY_PATH"
@@ -59,6 +60,11 @@ func TestFilteredSmokeExecutableNameMatchesPastaVariantsOnly(t *testing.T) {
 	assert.True(t, filteredSmokeExecutableNameMatches("pasta.avx2", "pasta"))
 	assert.False(t, filteredSmokeExecutableNameMatches("pasta-helper", "pasta"))
 	assert.False(t, filteredSmokeExecutableNameMatches("passt", "pasta"))
+}
+
+func TestFilteredSmokeUDPLocalAddrUsesFixturePort(t *testing.T) {
+	t.Setenv(filteredGatewayUDPSourcePortEnv, "20000")
+	assert.Equal(t, 20000, filteredSmokeUDPLocalAddr(t).Port)
 }
 
 // TestTclaudeLayerFilteredNetworkSmoke is the named executing CI boundary for
@@ -989,7 +995,7 @@ func filteredSmokeUDPRoundTrip(t *testing.T, network, address string) {
 	t.Helper()
 	remote, err := net.ResolveUDPAddr(network, address)
 	require.NoError(t, err)
-	connection, err := net.DialUDP(network, nil, remote)
+	connection, err := net.DialUDP(network, filteredSmokeUDPLocalAddr(t), remote)
 	require.NoError(t, err)
 	defer func() { _ = connection.Close() }()
 	require.NoError(t, connection.SetDeadline(time.Now().Add(filteredGatewayConnectionTimeout)))
@@ -1006,7 +1012,7 @@ func filteredSmokeUDPDenied(t *testing.T, network, address string) {
 	t.Helper()
 	remote, err := net.ResolveUDPAddr(network, address)
 	require.NoError(t, err)
-	connection, err := net.DialUDP(network, nil, remote)
+	connection, err := net.DialUDP(network, filteredSmokeUDPLocalAddr(t), remote)
 	require.NoError(t, err)
 	defer func() { _ = connection.Close() }()
 	require.NoError(t, connection.SetDeadline(time.Now().Add(filteredGatewayConnectionTimeout)))
@@ -1018,6 +1024,17 @@ func filteredSmokeUDPDenied(t *testing.T, network, address string) {
 	buffer := make([]byte, 64)
 	_, err = connection.Read(buffer)
 	require.Errorf(t, err, "%s deny %s", network, address)
+}
+
+func filteredSmokeUDPLocalAddr(t *testing.T) *net.UDPAddr {
+	t.Helper()
+	// pasta preserves the guest's UDP source port on its host-side flow
+	// socket. An isolated network namespace cannot see the host's ephemeral
+	// allocations, so letting both kernels choose from the same range makes
+	// the smoke susceptible to an unrelated host socket winning that port.
+	// CI supplies a preflighted port outside the host ephemeral range.
+	return &net.UDPAddr{Port: requireFilteredSmokePort(
+		t, filteredGatewayUDPSourcePortEnv)}
 }
 
 func waitForFilteredSmokeReady(
