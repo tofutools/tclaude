@@ -15,6 +15,22 @@ func migrateV182toV183(db *sql.DB) error {
 		return fmt.Errorf("migrate v182→v183 (group routes): begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	haveGroups, err := txTableExists(tx, "agent_groups")
+	if err != nil {
+		return fmt.Errorf("migrate v182→v183 (group routes): probe agent_groups: %w", err)
+	}
+	// Historical migration-heal fixtures can legitimately reach head without
+	// the optional group subsystem (the v55/v60 half-applied contracts). There
+	// is no route registry to install without its parent table, so advance the
+	// version while preserving the fixture's converged shape. A real database
+	// with agent_groups still takes the strict route-schema path below; errors
+	// from that path remain fatal rather than being masked.
+	if !haveGroups {
+		if _, err := tx.Exec(`UPDATE schema_version SET version = 183`); err != nil {
+			return fmt.Errorf("migrate v182→v183 (group routes, no-op): %w", err)
+		}
+		return tx.Commit()
+	}
 	var haveRouteGeneration int
 	if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('agent_groups') WHERE name = 'route_generation'`).Scan(&haveRouteGeneration); err != nil {
 		return fmt.Errorf("migrate v182→v183 (group routes): probe route generation: %w", err)
