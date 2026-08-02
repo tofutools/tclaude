@@ -437,7 +437,7 @@ func TestOpenCodeTelemetryTargetsLaunchEnrollmentConversationRow(t *testing.T) {
 		ReportedCost: float64ptr(0), Input: 10_000, Output: 100, CreatedAt: time.Now(),
 	}
 	persistOpenCodeContextUsage(context.Background(), runtime, usage)
-	persistOpenCodeModelSlug(runtime, usage)
+	persistOpenCodeRuntimeMetadata(runtime, usage)
 	applyOpenCodeVirtualCostUsage(context.Background(), runtime, usage)
 
 	snap, err := db.GetContextSnapshot(convID)
@@ -937,23 +937,26 @@ func TestApplyOpenCodeCost_IgnoresForeignConversation(t *testing.T) {
 	assert.Zero(t, snap.CostUSD, "foreign conversation must not write cost")
 }
 
-func TestPersistOpenCodeModelSlug(t *testing.T) {
+func TestPersistOpenCodeRuntimeMetadata(t *testing.T) {
 	setupTestDB(t)
 	const sessionID, convID = "oc-model-session", "ses_model"
 	seedOpenCodeUsageSession(t, sessionID, convID)
 	runtime := db.OpenCodeRuntime{SessionID: sessionID, ConvID: convID}
 
 	// Missing halves are a no-op.
-	persistOpenCodeModelSlug(runtime, openCodeContextUsage{ProviderID: "openai"})
+	persistOpenCodeRuntimeMetadata(runtime, openCodeContextUsage{ProviderID: "openai"})
 	snap, err := db.GetContextSnapshot(sessionID)
 	require.NoError(t, err)
 	assert.Empty(t, snap.Model, "incomplete model identity must not be written")
 
-	persistOpenCodeModelSlug(runtime, openCodeContextUsage{ProviderID: "openai", ModelID: "gpt-5.6-terra"})
+	persistOpenCodeRuntimeMetadata(runtime, openCodeContextUsage{
+		ProviderID: "openai", ModelID: "gpt-5.6-terra", Variant: "high",
+	})
 	snap, err = db.GetContextSnapshot(sessionID)
 	require.NoError(t, err)
 	assert.Equal(t, "openai/gpt-5.6-terra", snap.Model)
 	assert.Equal(t, "openai/gpt-5.6-terra", snap.ModelID)
+	assert.Equal(t, "high", snap.EffortLevel)
 }
 
 // TestBackfillOpenCodeContextUsage drives the reconnect/resume path against a
@@ -995,7 +998,7 @@ func TestBackfillOpenCodeContextUsage(t *testing.T) {
 				`{"info":{"id":"msg_a1","role":"assistant","providerID":"openai","modelID":"gpt-5.6-terra",` +
 				`"time":{"created":100},"cost":0,"tokens":{"input":10000,"output":200,"reasoning":0,"cache":{"read":0,"write":0}}}},` +
 				// Newer assistant turn — this one wins.
-				`{"info":{"id":"msg_a2","role":"assistant","providerID":"openai","modelID":"gpt-5.6-terra",` +
+				`{"info":{"id":"msg_a2","role":"assistant","providerID":"openai","modelID":"gpt-5.6-terra","variant":"xhigh",` +
 				`"time":{"created":200},"cost":0,"tokens":{"input":80000,"output":4000,"reasoning":1000,"cache":{"read":20000,"write":0}}},` +
 				`"parts":[` +
 				`{"id":"part-a","messageID":"msg_a2","type":"step-finish","cost":0,` +
@@ -1023,6 +1026,7 @@ func TestBackfillOpenCodeContextUsage(t *testing.T) {
 	assert.Equal(t, int64(272000), snap.ContextWindowSize)
 	assert.InDelta(t, float64(105000)/272000*100, snap.ContextPct, 1e-6)
 	assert.Equal(t, "openai/gpt-5.6-terra", snap.Model)
+	assert.Equal(t, "xhigh", snap.EffortLevel)
 	assert.InDelta(t, 2.257, snap.VirtualCostUSD, 1e-12,
 		"recovery prices every persisted step, including one whose top-level update was interrupted")
 }

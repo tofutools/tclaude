@@ -467,6 +467,25 @@ test('the sandbox glyph rides the harness line, left of the remote indicator', a
     }
   });
 
+  await t.test('OpenCode uses OC and hides only the visible provider prefix', async () => {
+    const mounted = await mount({
+      conv_id: 'opencode-meta', online: true,
+      state: {
+        harness: 'opencode', model: 'openai/gpt-5.6-sol', effort_level: 'high',
+      },
+    });
+    try {
+      const line = mounted.container.querySelector('.agent-harness');
+      assert.equal(line.querySelector('.harness-name').textContent, 'OC');
+      assert.equal(line.querySelector('.harness-model').textContent, 'gpt-5.6-sol');
+      assert.equal(line.querySelector('.harness-effort').textContent, 'hi');
+      assert.match(line.title, /Model: openai\/gpt-5\.6-sol/,
+        'the full provider-qualified identity remains available in the tooltip');
+    } finally {
+      await mounted.unmount();
+    }
+  });
+
   const confined = {
     harness: 'claude', model: 'Opus 4.8 (1M context)', effort_level: 'high',
     sandbox_mode: 'inherit', os_sandbox_state: 'on',

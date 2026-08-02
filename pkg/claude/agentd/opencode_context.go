@@ -81,12 +81,14 @@ const (
 // openCodeContextUsage is the token accounting carried on one OpenCode
 // assistant message. The bucket names mirror OpenCode's own message schema
 // (`tokens: {input, output, reasoning, cache: {read, write}}`); ProviderID and
-// ModelID key the context-window lookup.
+// ModelID key the context-window lookup; Variant is OpenCode's name for the
+// selected reasoning-effort level.
 type openCodeContextUsage struct {
 	SessionID  string
 	MessageID  string
 	ProviderID string
 	ModelID    string
+	Variant    string
 	CreatedAt  time.Time
 	// ReportedCost is OpenCode's real cost for this assistant message. A
 	// present zero identifies the subscription-backed path; nil is ambiguous
@@ -126,6 +128,7 @@ type openCodeMessageUpdatedEvent struct {
 			Role       string   `json:"role"`
 			ProviderID string   `json:"providerID"`
 			ModelID    string   `json:"modelID"`
+			Variant    string   `json:"variant"`
 			SessionID  string   `json:"sessionID"`
 			Cost       *float64 `json:"cost"`
 			Time       struct {
@@ -177,6 +180,7 @@ func parseOpenCodeContextUsage(event json.RawMessage, convID string) (openCodeCo
 		MessageID:    info.ID,
 		ProviderID:   info.ProviderID,
 		ModelID:      info.ModelID,
+		Variant:      info.Variant,
 		ReportedCost: info.Cost,
 		Input:        info.Tokens.Input,
 		Output:       info.Tokens.Output,

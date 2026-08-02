@@ -35,7 +35,7 @@ func TestDashboardHTML_HarnessLineWired(t *testing.T) {
 	// The always-visible label is shortModel()-compressed; the FULL name
 	// stays in the tooltip (the title attr / the status-dot tip).
 	must("function shortModel(", "shortModel compressor is defined")
-	must("${shortModel(model)}", "the visible chip uses the shortened model")
+	must("${shortModel(model, harness)}", "the visible chip uses the harness-aware shortened model")
 	must("'Last used model' : 'Model'", "harnessLine's tooltip keeps the FULL model name and labels offline values as historical")
 
 	// The reasoning-effort level (JOH-37) trails the model — "CC · O4.8 1M
@@ -74,6 +74,8 @@ func TestDashboardHTML_HarnessLineWired(t *testing.T) {
 	must("const HARNESS_LABELS = {", "per-harness label map replaces the CC constant")
 	must("claude: { short: 'CC', long: 'Claude Code' }", "claude keeps its CC label")
 	must("codex: { short: 'Codex', long: 'Codex CLI' }", "codex has its own label")
+	must("opencode: { short: 'OC', long: 'OpenCode' }", "OpenCode uses the compact OC label")
+	must("if (harness === 'opencode')", "OpenCode model display removes its provider prefix")
 	must("state.harness", "HarnessLine reads the harness tag off the agent's state")
 }
 
