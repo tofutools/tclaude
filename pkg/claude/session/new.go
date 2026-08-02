@@ -33,8 +33,12 @@ import (
 type NewParams struct {
 	// ManagedLaunch marks agentd's forked session wrapper. The daemon already
 	// resolved profile precedence, so the child must use the exact passed shape.
-	ManagedLaunch          bool `long:"managed-launch" help:"Internal: launch parameters were resolved by agentd"`
-	AllowUnenforcedSandbox bool `long:"allow-unenforced-sandbox" help:"Internal: operator authorized launch when sandbox enforcement is unavailable"`
+	ManagedLaunch bool `long:"managed-launch" help:"Internal: launch parameters were resolved by agentd"`
+	// DarwinRouteCapable is an explicit internal launch seam. It is never
+	// inferred from the host environment or ordinary sandbox selection.
+	DarwinRouteCapable     bool   `short:"Q" long:"darwin-route-capable" help:"Internal: launch exact Darwin route slots"`
+	DarwinRouteAgentID     string `short:"I" long:"darwin-route-agent-id" optional:"true" help:"Internal: stable agent identity for Darwin route slots"`
+	AllowUnenforcedSandbox bool   `long:"allow-unenforced-sandbox" help:"Internal: operator authorized launch when sandbox enforcement is unavailable"`
 	// SandboxChosenBy is the resolution tier that supplied --sandbox, as
 	// resolved by the daemon spawn boundary ("explicit", `global default
 	// profile "x"`, …). The badge attributes the launch's containment to it, so
@@ -1442,6 +1446,54 @@ func runNew(params *NewParams) error {
 	if params.SessionID != "" && fullConvID == "" {
 		rowConvID = params.SessionID
 	}
+	var darwinRouteReservation *DarwinRouteSlotReservation
+	darwinRouteRegistered := false
+	darwinRouteCommitted := false
+	defer func() {
+		if darwinRouteReservation != nil {
+			_ = darwinRouteReservation.Release()
+		}
+		if darwinRouteRegistered && !darwinRouteCommitted {
+			if err := db.DeleteDarwinRouteLaunch(params.DarwinRouteAgentID, rowConvID, exitGeneration); err != nil {
+				slog.Warn("Darwin route launch cleanup failed", "conv", rowConvID, "error", err)
+			}
+		}
+	}()
+	if params.DarwinRouteCapable {
+		if runtime.GOOS != "darwin" {
+			return fmt.Errorf("darwin route-capable launch requires macOS")
+		}
+		if !outerLayer || !tclaudeLayerWrapsPane(h.Name) {
+			return fmt.Errorf("darwin route-capable launch requires the pane tclaude-layer")
+		}
+		if rowConvID == "" {
+			return fmt.Errorf("darwin route-capable launch requires a conversation generation")
+		}
+		resolvedAgentID, resolveErr := db.AgentIDForConv(rowConvID)
+		if resolveErr != nil {
+			return fmt.Errorf("resolve Darwin route agent identity: %w", resolveErr)
+		}
+		if params.DarwinRouteAgentID != "" && params.DarwinRouteAgentID != resolvedAgentID {
+			return fmt.Errorf("darwin route agent identity does not match conversation owner")
+		}
+		params.DarwinRouteAgentID = resolvedAgentID
+		if params.DarwinRouteAgentID == "" {
+			return fmt.Errorf("darwin route-capable launch requires a stable agent identity")
+		}
+		darwinRouteReservation, err = ReserveDarwinRouteSlots()
+		if err != nil {
+			return fmt.Errorf("reserve Darwin route launch slots: %w", err)
+		}
+		// Claim the kernel-reserved slots before any launch contract is
+		// rendered. The normalized DB claims are the logical exclusion that
+		// survives reservation-FD closure; every later rendering/launch step
+		// is therefore downstream of one pending exact-generation claim.
+		if err := db.RegisterDarwinRouteLaunch(
+			params.DarwinRouteAgentID, rowConvID, exitGeneration, darwinRouteReservation.Slots()); err != nil {
+			return fmt.Errorf("register Darwin route launch contract: %w", err)
+		}
+		darwinRouteRegistered = true
+	}
 
 	launchCreated := time.Now()
 	state := &SessionState{
@@ -1612,7 +1664,14 @@ func runNew(params *NewParams) error {
 			GitWriteDirs:     launchGitWriteDirs,
 			Snapshot:         launchSandbox,
 			PrivateWriteDirs: privateAttachmentWriteDirs,
-			RouteHelper:      routeHelper,
+			DarwinRouteSlots: func() []int {
+				if darwinRouteReservation == nil {
+					return nil
+				}
+				return darwinRouteReservation.Slots()
+			}(),
+			DarwinRouteReservation: darwinRouteReservation,
+			RouteHelper:            routeHelper,
 		})
 		if specErr != nil {
 			return fmt.Errorf("build tclaude-layer launch spec: %w", specErr)
@@ -1752,6 +1811,16 @@ func runNew(params *NewParams) error {
 	if err := launchDetachedTmuxSession(tmuxSession, cwd, harnessCmd, CodexProfileMarkerArgs(launchProfilePath)...); err != nil {
 		return err
 	}
+	if darwinRouteReservation != nil {
+		if err := db.ActivateDarwinRouteLaunch(params.DarwinRouteAgentID, rowConvID, exitGeneration); err != nil {
+			_ = clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(tmuxSession)).Run()
+			return fmt.Errorf("activate Darwin route launch contract: %w", err)
+		}
+		if err := darwinRouteReservation.Release(); err != nil {
+			return fmt.Errorf("release Darwin route launch reservation: %w", err)
+		}
+		darwinRouteReservation = nil
+	}
 	resourceCgroupOwnedByPane = true
 	// killLaunchPane tears the just-launched pane down on a late launch
 	// failure. It also reclaims launch-profile removal for the parent defer:
@@ -1879,6 +1948,7 @@ func runNew(params *NewParams) error {
 	// The pane is up and bound; from here the row belongs to the live session
 	// (an attach failure below must not delete it).
 	launchRowCommitted = true
+	darwinRouteCommitted = true
 	return announceAndAttach(fmt.Sprintf("Created session %s", tmuxSession), sessionID, tmuxSession, cwd, params.Detached)
 }
 

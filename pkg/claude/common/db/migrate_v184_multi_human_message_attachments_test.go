@@ -75,6 +75,8 @@ func TestMigrateV183toV184_PreservesLegacyAttachmentAndAllowsSeveral(t *testing.
 func TestMigrateV183toV184_MatchesFreshSchema(t *testing.T) {
 	d := v183FixtureDB(t)
 	require.NoError(t, migrateV183toV184(d))
+	require.NoError(t, migrateV184toV185(d))
+	require.NoError(t, migrateV185toV186(d))
 	upgraded, err := SchemaSQL(d)
 	require.NoError(t, err)
 	fresh, err := SchemaSQL(freshMigratedDB(t))

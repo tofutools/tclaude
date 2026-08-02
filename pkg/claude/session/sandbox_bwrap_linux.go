@@ -219,6 +219,26 @@ func tclaudeLayerCommand(
 	return relay + engine + " -- " + command, nil
 }
 
+func tclaudeLayerCommandWithRouteSlots(
+	binary string,
+	phase0WriteDirs []string,
+	privateWriteDirs []TclaudeLayerPrivateWriteDir,
+	finalHideDirs []string,
+	readOnlyBinds []TclaudeLayerReadOnlyBind,
+	socketPaths []string,
+	plan sandboxpolicy.MountPlan,
+	routeSlots []int,
+	_ *DarwinRouteSlotReservation,
+	harnessCommand string,
+) (string, error) {
+	if len(routeSlots) != 0 {
+		return "", fmt.Errorf("darwin route slots are unsupported on Linux")
+	}
+	return tclaudeLayerCommand(
+		binary, phase0WriteDirs, privateWriteDirs, finalHideDirs,
+		readOnlyBinds, socketPaths, plan, harnessCommand)
+}
+
 func tclaudeLayerCommandWithRouteHelper(
 	binary string,
 	phase0WriteDirs []string,

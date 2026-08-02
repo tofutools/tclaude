@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -29,7 +30,15 @@ func serveRouteAgent(t *testing.T, f *testharness.Flow, method, path, convID str
 	return rec, out
 }
 
+func skipDarwinRouteAuthorityFlow(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "darwin" {
+		t.Skip("Darwin route authority requires an enrolled production launch contract; dedicated Seatbelt evidence covers this path")
+	}
+}
+
 func TestRoutesBroker_DatabaseAuthorityClosesWithdrawnChannels(t *testing.T) {
+	skipDarwinRouteAuthorityFlow(t)
 	f := newFlow(t)
 	const publisher = "route-broker-publisher"
 	const consumer = "route-broker-consumer"
@@ -107,6 +116,7 @@ func readRouteBrokerFrame(t *testing.T, conn net.Conn) routebroker.Frame {
 }
 
 func TestRoutesAuthority_ExactGroupAndIndependentCapabilities(t *testing.T) {
+	skipDarwinRouteAuthorityFlow(t)
 	f := newFlow(t)
 	const publisher = "route-publisher-0001"
 	const consumer = "route-consumer-0002"
@@ -238,6 +248,7 @@ func TestRoutesAuthority_ExactGroupAndIndependentCapabilities(t *testing.T) {
 // authoritative lifecycle seam that marks the session exited. The reaper is
 // the production path for a pane that disappears without a SessionEnd hook.
 func TestRoutesAuthority_OrdinaryPublisherExitWithdrawsLeases(t *testing.T) {
+	skipDarwinRouteAuthorityFlow(t)
 	f := newFlow(t)
 	const publisher = "route-exit-publisher"
 	const consumer = "route-exit-consumer"
@@ -288,6 +299,7 @@ func TestRoutesAuthority_OrdinaryPublisherExitWithdrawsLeases(t *testing.T) {
 // attached broker channel is closed by the same database authority change;
 // unrelated publisher and consumer channels remain usable.
 func TestRoutesBroker_OrdinaryConsumerExitClosesItsLease(t *testing.T) {
+	skipDarwinRouteAuthorityFlow(t)
 	f := newFlow(t)
 	const publisher = "route-consumer-exit-publisher"
 	const consumer = "route-consumer-exit"
@@ -400,6 +412,7 @@ func TestRoutesBroker_OrdinaryConsumerExitClosesItsLease(t *testing.T) {
 }
 
 func TestRoutesAuthority_GenerationsPublisherLossAndRename(t *testing.T) {
+	skipDarwinRouteAuthorityFlow(t)
 	f := newFlow(t)
 	const publisher = "route-generation-pub"
 	const consumer = "route-generation-con"
@@ -464,6 +477,7 @@ func TestRoutesAuthority_GenerationsPublisherLossAndRename(t *testing.T) {
 }
 
 func TestRoutesAuthority_OnlineMembershipMutationRequiresOfflineRoster(t *testing.T) {
+	skipDarwinRouteAuthorityFlow(t)
 	f := newFlow(t)
 	const online = "route-online-member"
 	const added = "route-offline-add"

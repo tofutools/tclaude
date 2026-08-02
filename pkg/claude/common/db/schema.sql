@@ -1178,3 +1178,31 @@ CREATE TABLE "human_message_attachments" (
 CREATE INDEX idx_human_message_attachments_message
 		ON human_message_attachments(message_id, seq, id);
 
+CREATE TABLE darwin_route_launches (
+			agent_id TEXT NOT NULL,
+			conv_id TEXT NOT NULL,
+			launch_generation TEXT NOT NULL,
+			slots TEXT NOT NULL,
+			state TEXT NOT NULL CHECK(state IN ('pending', 'active', 'closed')),
+			created_at INTEGER NOT NULL,
+			closed_at INTEGER,
+			PRIMARY KEY(agent_id, conv_id, launch_generation)
+		) STRICT;
+
+CREATE INDEX idx_darwin_route_launches_identity
+			ON darwin_route_launches(agent_id, conv_id, launch_generation, state);
+
+CREATE TABLE darwin_route_slot_claims (
+			slot INTEGER NOT NULL CHECK(slot BETWEEN 1 AND 65535),
+			agent_id TEXT NOT NULL,
+			conv_id TEXT NOT NULL,
+			launch_generation TEXT NOT NULL,
+			state TEXT NOT NULL CHECK(state IN ('pending', 'active')),
+			created_at INTEGER NOT NULL,
+			PRIMARY KEY(slot),
+			UNIQUE(agent_id, conv_id, launch_generation, slot)
+		) STRICT;
+
+CREATE INDEX idx_darwin_route_slot_claims_identity
+			ON darwin_route_slot_claims(agent_id, conv_id, launch_generation, state);
+
