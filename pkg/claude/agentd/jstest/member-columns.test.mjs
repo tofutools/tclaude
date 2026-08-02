@@ -119,7 +119,7 @@ test('a stale key for a removed column is pruned and never counted', () => {
   reset();
 });
 
-// --- default-hidden columns (the contract new opt-in columns rely on) --
+// --- default-hidden columns --------------------------------------------
 
 test('the default-hidden ID column starts hidden; showing it is the deviation', () => {
   reset();
