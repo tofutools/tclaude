@@ -11,6 +11,7 @@ import {
 } from './mail-keynav.js';
 import { idTooltip, relTime, shortAgentId, shortId } from './helpers.js';
 import { dashboardState } from './snapshot-store.js';
+import { ImageAttachmentPreview } from './image-preview-overlay.js';
 
 const html = htm.bind(h);
 
@@ -365,6 +366,7 @@ function HumanAttachment({ message }) {
   if (!message.attachment) return null;
   const attachment = message.attachment;
   return html`<div class="mail-attachment">
+    <${ImageAttachmentPreview} messageID=${message.id} attachment=${attachment} surface="messages" />
     <span class="mail-attachment-label">Agent file</span>
     <a href=${`/api/human-messages/${encodeURIComponent(message.id)}/attachment`}
       download=${attachment.filename || ''} title="Download this agent-published file">⤓ ${attachment.filename || 'attachment'}</a>

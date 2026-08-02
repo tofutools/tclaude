@@ -406,7 +406,8 @@ An amber **!** floating over the start of an agent's name means that agent has
 sent one or more unread notifications to the human with
 `tclaude agent notify-human`. Hovering it previews the newest one; selecting it
 opens the quick reader — a right-hand drawer that pages through that agent's
-notifications, downloads an attached file, replies, and offers **Open in
+notifications, previews an attached raster image, downloads the original,
+replies, and offers **Open in
 Messages ↗** for the full **Messages → Human** view filtered to that agent.
 Opening a notification in the reader does **not** mark it read — glancing at a
 message never silently clears the mark. Use the reader's **Mark read** action
@@ -1341,7 +1342,11 @@ terminal. When the badge shows waiting work, selecting **Messages** opens the
 oldest pending access request, or the oldest unread notification when no access
 request is pending. An agent can add `--attach <path>` (repeatable) to publish
 a generated file, directory, or set of files. The message reader shows a
-download card;
+download card; daemon-verified PNG, JPEG, GIF, WebP, and AVIF attachments also
+show a contain-fit thumbnail. Selecting the thumbnail opens the shared image
+preview overlay, which supports zoom, authenticated missing-file checks, and
+Escape-to-return while keeping the original download action available. SVG
+and other non-raster files remain download-only.
 directories and multiple paths arrive as a zip. The daemon copies the bytes
 into its private data directory, so remote dashboards download through an
 authenticated route rather than receiving access to the agent's filesystem.
