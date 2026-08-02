@@ -103,6 +103,16 @@ const (
 	SeatbeltNativeLoopbackCondition = "Local-machine rules are not confined to loopback: " +
 		"a service listening on an allowed port at another of this machine's addresses is reachable from the sandbox as well. " +
 		"A rule that names no ports allows every port on this machine."
+
+	// SeatbeltProxyFloorCondition carries TCL-917's narrower proxy-floor form
+	// of the same SBPL limitation. The launcher owns an ephemeral port, so this
+	// does not widen an authored destination or port. It does mean that an
+	// unrelated service already listening on that same port at another address
+	// of the Mac is directly reachable. The operator ruled document-and-disclose
+	// and ruled against a launch-time collision check.
+	SeatbeltProxyFloorCondition = "The macOS proxy floor is port-exact but not confined to loopback: " +
+		"an unrelated service listening on the launcher's proxy port at another address of this machine is directly reachable from the sandbox. " +
+		"The launcher does not scan for or refuse that narrow collision."
 )
 
 func filteredNetworkDNSCaveat() string {

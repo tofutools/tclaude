@@ -1105,19 +1105,23 @@ func TestOpenCodeLocalOnlyIntentIsRefusedWhereItCannotBeEnforced(t *testing.T) {
 		})
 	}
 
-	// THE GENERAL WIDEN-TO-OPEN DOCTRINE is explicitly NOT changed: a policy
-	// that is not local-only intent still widens with a notice on darwin, for
-	// every harness including OpenCode.
-	t.Run("darwin/doctrine untouched for non-local-intent lists", func(t *testing.T) {
+	// The two pinned plain-CLI harnesses now activate this general proxy shape
+	// on Darwin, while OpenCode retains the widen-to-open doctrine until its
+	// distinct server boundary has evidence.
+	t.Run("darwin/non-local-intent activation follows evidence", func(t *testing.T) {
 		domainOnly := listOf(sandboxpolicy.NetworkAllowEntry{
 			Domain: "api.example.com", Ports: []int{443},
 		})
-		for _, name := range []string{DefaultName, CodexName, OpenCodeName} {
+		domainOnly.Network.Engine = sandboxpolicy.NetworkEngineProxy
+		for _, name := range []string{DefaultName, CodexName} {
 			row, planErr := plan(t, MustGet(name), domainOnly, "darwin")
 			require.NoErrorf(t, planErr, "harness %s", name)
-			assert.Equalf(t, EnforceNone, row.NetworkList,
-				"harness %s must still widen a non-local-intent list to open", name)
+			assert.Equalf(t, EnforcePartial, row.NetworkList,
+				"harness %s must retain the TCL-917 Darwin cap", name)
 		}
+		row, planErr := plan(t, MustGet(OpenCodeName), domainOnly, "darwin")
+		require.NoError(t, planErr)
+		assert.Equal(t, EnforceNone, row.NetworkList)
 	})
 
 	// The predicate answers the INTENT question, not the recognizer one. A

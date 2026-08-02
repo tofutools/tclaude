@@ -179,8 +179,8 @@ func proxyEngineHarnessCarriageNotice(harnessName string) string {
 }
 
 // proxyEngineActivatedSmokes is the §8.3 activation record: per harness, the
-// named CI smokes whose green run is the evidence for that harness's Linux
-// `engine: proxy` capability cells.
+// named CI smokes whose green run is the evidence for that harness and
+// platform's `engine: proxy` capability cells.
 //
 // This map IS the capability matrix row. A harness absent from it has no
 // evidence and keeps `EnforceNone`, which is the honest rating for "not
@@ -218,45 +218,49 @@ func proxyEngineHarnessCarriageNotice(harnessName string) string {
 // on success passes silently. TestProxyEngineActivationIsScopedToItsEvidence
 // keeps it by asserting the record-to-cells coupling in BOTH directions over
 // every registered harness and both platforms, and by failing if either side of
-// that coupling has no subject at all.
-var proxyEngineActivatedSmokes = map[string][]string{
-	DefaultName: {
-		"TestPinnedProxyHarnessCooperation",
-		"TestPinnedProxyToolEgress",
+// that coupling has no subject at all. Darwin deliberately lists only the two
+// plain-CLI harnesses: OpenCode's server boundary needs separate evidence.
+var proxyEngineActivatedSmokes = map[string]map[string][]string{
+	"linux": {
+		DefaultName: {
+			"TestPinnedProxyHarnessCooperation",
+			"TestPinnedProxyToolEgress",
+		},
+		CodexName: {
+			"TestPinnedProxyHarnessCooperation",
+			"TestPinnedProxyToolEgress",
+		},
+		// TCL-891. OpenCode's row cites a DIFFERENT harness-dependent smoke from
+		// the two above, and that is the substance of the ticket rather than a
+		// naming detail: it launches through the agentd-owned Unix-relay server
+		// boundary, not as a plain CLI, and that boundary REFUSED this engine
+		// outright until the inherited-descriptor contract was generalized to it.
+		// TestOpenCodeProxyFloorCooperation is the first measurement of OpenCode
+		// behind a real proxy floor that was possible at all — green named run
+		// 30654121316, the run in which the smoke first executed.
+		//
+		// TestPinnedProxyToolEgress is cited here on the same terms it is cited
+		// above: its subject is the FLOOR, not the client on top of it, and the
+		// proxy floor is one construction shared by every row. It is NOT a claim
+		// about OpenCode's own tools — see ProxyEngineOpenCodeCarriageNotice, which
+		// says what is blocked for this harness rather than what was measured of
+		// its tool egress.
+		OpenCodeName: {
+			"TestOpenCodeProxyFloorCooperation",
+			"TestPinnedProxyToolEgress",
+		},
 	},
-	CodexName: {
-		"TestPinnedProxyHarnessCooperation",
-		"TestPinnedProxyToolEgress",
-	},
-	// TCL-891. OpenCode's row cites a DIFFERENT harness-dependent smoke from
-	// the two above, and that is the substance of the ticket rather than a
-	// naming detail: it launches through the agentd-owned Unix-relay server
-	// boundary, not as a plain CLI, and that boundary REFUSED this engine
-	// outright until the inherited-descriptor contract was generalized to it.
-	// TestOpenCodeProxyFloorCooperation is the first measurement of OpenCode
-	// behind a real proxy floor that was possible at all — green named run
-	// 30654121316, the run in which the smoke first executed.
-	//
-	// TestPinnedProxyToolEgress is cited here on the same terms it is cited
-	// above: its subject is the FLOOR, not the client on top of it, and the
-	// proxy floor is one construction shared by every row. It is NOT a claim
-	// about OpenCode's own tools — see ProxyEngineOpenCodeCarriageNotice, which
-	// says what is blocked for this harness rather than what was measured of
-	// its tool egress.
-	OpenCodeName: {
-		"TestOpenCodeProxyFloorCooperation",
-		"TestPinnedProxyToolEgress",
+	"darwin": {
+		DefaultName: {"TestPinnedProxyHarnessCooperationDarwin"},
+		CodexName:   {"TestPinnedProxyHarnessCooperationDarwin"},
 	},
 }
 
 // proxyEngineActivated reports whether this harness's proxy-engine cells have
-// their evidence on this platform. Linux only: the Darwin floor is M3, and it
-// activates on its own Seatbelt smokes rather than inheriting these.
+// their evidence on this platform. Each platform has its own named smokes;
+// evidence never crosses the platform boundary.
 func proxyEngineActivated(harnessName, goos string) bool {
-	if goos != "linux" {
-		return false
-	}
-	_, activated := proxyEngineActivatedSmokes[harnessName]
+	_, activated := proxyEngineActivatedSmokes[goos][harnessName]
 	return activated
 }
 
@@ -271,7 +275,13 @@ func ProxyEngineActivated(harnessName, goos string) bool {
 // ProxyEngineActivationSmokes returns the smokes backing one harness's cells,
 // for disclosure surfaces and tests. The result is a copy.
 func ProxyEngineActivationSmokes(harnessName string) []string {
-	return append([]string(nil), proxyEngineActivatedSmokes[harnessName]...)
+	return ProxyEngineActivationSmokesForPlatform(harnessName, "linux")
+}
+
+// ProxyEngineActivationSmokesForPlatform returns the evidence backing one
+// harness's cells on one platform. The result is a copy.
+func ProxyEngineActivationSmokesForPlatform(harnessName, goos string) []string {
+	return append([]string(nil), proxyEngineActivatedSmokes[goos][harnessName]...)
 }
 
 // §5.1 and §5.2 selector details. The headline is the mirror-image relationship
