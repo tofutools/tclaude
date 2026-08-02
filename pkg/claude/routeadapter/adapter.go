@@ -208,17 +208,31 @@ func (a *Adapter) publish(ctx context.Context, publisher Publisher, pool []int) 
 	}
 	a.routes[publisher.RouteID] = state
 	a.mu.Unlock()
+	ready := make(chan error, 1)
 	go func() {
-		_ = a.broker.AttachPublisher(channelCtx, routebroker.PublisherAuth{
+		_ = a.broker.AttachPublisherReady(channelCtx, routebroker.PublisherAuth{
 			RouteID: publisher.RouteID, AgentID: publisher.AgentID, ConvID: publisher.ConvID,
 			LaunchGeneration: publisher.LaunchGeneration, GroupGeneration: publisher.GroupGeneration,
-		}, peer)
+		}, peer, func(err error) { ready <- err })
 		// A publisher channel ending is authoritative for the endpoint
 		// lifetime. Close idle listeners as well as any active streams; no M2
 		// consumer event is required for this cleanup.
 		a.CloseRoute(publisher.RouteID)
 	}()
 	go a.publisherLoop(channelCtx, channel, publisher.Target)
+	// Publish only reports success once the broker owns the route. Returning
+	// earlier lets a consumer that opens immediately race the attach goroutine
+	// and be refused with "publisher unavailable".
+	select {
+	case err := <-ready:
+		if err != nil {
+			a.CloseRoute(publisher.RouteID)
+			return 0, fmt.Errorf("attach publisher route %q: %w", publisher.RouteID, err)
+		}
+	case <-channelCtx.Done():
+		a.CloseRoute(publisher.RouteID)
+		return 0, fmt.Errorf("attach publisher route %q: %w", publisher.RouteID, channelCtx.Err())
+	}
 	return port, nil
 }
 
