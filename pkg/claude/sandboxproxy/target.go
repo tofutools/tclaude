@@ -16,9 +16,11 @@
 package sandboxproxy
 
 import (
+	"encoding/base32"
 	"fmt"
 	"net/netip"
 	"strconv"
+	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
@@ -35,6 +37,9 @@ const (
 	// TargetKindLiteral is an IP literal the client stated: an HTTP CONNECT to
 	// a literal, or a SOCKS5 ATYP=IPV4/IPV6 address.
 	TargetKindLiteral TargetKind = "literal"
+	// TargetKindRoute is a stable group-route identity in the reserved
+	// synthetic route namespace. It is never evaluated as a DNS name.
+	TargetKindRoute TargetKind = "route"
 )
 
 // Target is the one tuple both carriages produce and the evaluator consumes.
@@ -46,7 +51,78 @@ type Target struct {
 	// Addr is set for TargetKindLiteral, always unmapped so an IPv4-mapped
 	// IPv6 literal cannot present a second identity for the same address.
 	Addr netip.Addr
-	Port int
+	// RouteID is set for TargetKindRoute. It is decoded from the synthetic
+	// hostname and is the only route identity the proxy carries from the
+	// client; mutable display names never enter this field.
+	RouteID string
+	Port    int
+}
+
+// SyntheticRouteDomain is an RFC 2606 .invalid namespace reserved for route
+// identities. A name in this namespace must never be sent to ordinary DNS or
+// the Internet dial path, even when a profile happens to allow the suffix.
+const SyntheticRouteDomain = "route.tclaude.invalid"
+
+const syntheticRouteLabelPrefix = "r-"
+
+var syntheticRouteEncoding = base32.StdEncoding.WithPadding(base32.NoPadding)
+
+// SyntheticRouteHost returns the non-DNS hostname clients use for a named
+// route. The opaque route ID is encoded rather than copied into a DNS label so
+// identities containing separators remain unambiguous. M1 route IDs are
+// bounded opaque IDs; keeping the encoded label within DNS's 63-byte limit is
+// also a useful guard against accidental display-name use.
+func SyntheticRouteHost(routeID string) (string, error) {
+	routeID = strings.TrimSpace(routeID)
+	if routeID == "" {
+		return "", fmt.Errorf("route ID is required")
+	}
+	if len(routeID) > 40 {
+		return "", fmt.Errorf("route ID is too long")
+	}
+	encoded := strings.ToLower(syntheticRouteEncoding.EncodeToString([]byte(routeID)))
+	label := syntheticRouteLabelPrefix + encoded
+	if len(label) > 63 {
+		return "", fmt.Errorf("route ID does not fit the synthetic route namespace")
+	}
+	return label + "." + SyntheticRouteDomain, nil
+}
+
+// ParseSyntheticRouteHost decodes a reserved route hostname. It returns
+// ("", nil) for an ordinary hostname and an error for a malformed name inside
+// the reserved namespace. The latter distinction is what prevents malformed
+// route-looking names from falling through to public DNS policy.
+func ParseSyntheticRouteHost(host string) (string, error) {
+	normalized, err := sandboxpolicy.NormalizeNetworkTargetName(host)
+	if err != nil {
+		return "", err
+	}
+	suffix := "." + SyntheticRouteDomain
+	if normalized == SyntheticRouteDomain {
+		return "", fmt.Errorf("synthetic route namespace root is not a route")
+	}
+	if !strings.HasSuffix(normalized, suffix) {
+		return "", nil
+	}
+	withoutSuffix := strings.TrimSuffix(normalized, suffix)
+	if strings.Contains(withoutSuffix, ".") ||
+		!strings.HasPrefix(withoutSuffix, syntheticRouteLabelPrefix) {
+		return "", fmt.Errorf("synthetic route hostname has an invalid identity")
+	}
+	encoded := strings.TrimPrefix(withoutSuffix, syntheticRouteLabelPrefix)
+	if encoded == "" {
+		return "", fmt.Errorf("synthetic route hostname has an empty identity")
+	}
+	decoded, err := syntheticRouteEncoding.DecodeString(strings.ToUpper(encoded))
+	if err != nil || len(decoded) == 0 || len(decoded) > 40 {
+		return "", fmt.Errorf("synthetic route hostname has an invalid identity")
+	}
+	routeID := string(decoded)
+	canonical, err := SyntheticRouteHost(routeID)
+	if err != nil || canonical != normalized {
+		return "", fmt.Errorf("synthetic route hostname has a non-canonical identity")
+	}
+	return routeID, nil
 }
 
 // ParseTarget builds a Target from the host and port a carriage read. host is
@@ -75,6 +151,11 @@ func ParseTarget(host string, port int) (Target, error) {
 		// error names the rule that rejected it, which is the diagnostic value.
 		return Target{}, fmt.Errorf("target host (%d bytes) is not a usable name: %w",
 			len(host), err)
+	}
+	if routeID, routeErr := ParseSyntheticRouteHost(name); routeErr != nil {
+		return Target{}, routeErr
+	} else if routeID != "" {
+		return Target{Kind: TargetKindRoute, Name: name, RouteID: routeID, Port: port}, nil
 	}
 	return Target{Kind: TargetKindName, Name: name, Port: port}, nil
 }

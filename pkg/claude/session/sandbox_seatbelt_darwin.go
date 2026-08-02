@@ -185,11 +185,12 @@ func tclaudeLayerCommandWithRouteSlots(
 	plan sandboxpolicy.MountPlan,
 	routeSlots []int,
 	preReservation *DarwinRouteSlotReservation,
+	routeHelper *TclaudeLayerRouteHelper,
 	harnessCommand string,
 ) (string, error) {
 	return tclaudeLayerDarwinCommandWithRouteSlots(
 		binary, phase0WriteDirs, privateWriteDirs, finalHideDirs,
-		readOnlyBinds, socketPaths, plan, harnessCommand, 0, 0, routeSlots, preReservation)
+		readOnlyBinds, socketPaths, plan, harnessCommand, 0, 0, routeSlots, preReservation, routeHelper)
 }
 
 func tclaudeLayerDarwinCommand(
@@ -207,7 +208,7 @@ func tclaudeLayerDarwinCommand(
 	return tclaudeLayerDarwinCommandWithRouteSlots(
 		binary, phase0WriteDirs, privateWriteDirs, finalHideDirs,
 		readOnlyBinds, socketPaths, plan, harnessCommand,
-		preserveFDs, loopbackBindPort, nil, nil)
+		preserveFDs, loopbackBindPort, nil, nil, nil)
 }
 
 func tclaudeLayerDarwinCommandWithRouteSlots(
@@ -223,6 +224,7 @@ func tclaudeLayerDarwinCommandWithRouteSlots(
 	loopbackBindPort int,
 	routeSlots []int,
 	preReservation *DarwinRouteSlotReservation,
+	routeHelper *TclaudeLayerRouteHelper,
 ) (string, error) {
 	if err := ValidateDarwinRouteSlots(routeSlots); err != nil {
 		return "", err
@@ -252,6 +254,7 @@ func tclaudeLayerDarwinCommandWithRouteSlots(
 			PreserveFDs:      preserveFDs,
 			LoopbackBindPort: loopbackBindPort,
 			RouteSlots:       append([]int(nil), routeSlots...),
+			RouteAuthority:   proxyRouteAuthorityConfigFromHelper(routeHelper),
 		})
 	}
 	if loopbackBindPort != 0 {

@@ -28,6 +28,10 @@ type Dialer struct {
 	// net.Dialer. It is never handed a name, so no second resolution can
 	// select an address the blocker did not clear.
 	DialAddr func(ctx context.Context, network, addr string) (net.Conn, error)
+	// RouteDial connects to an already-authorized route endpoint. It is used
+	// only for synthetic route targets; ordinary Internet targets keep using
+	// DialAddr and therefore retain their existing policy path.
+	RouteDial func(ctx context.Context, endpoint netip.AddrPort) (net.Conn, error)
 	// Timeout bounds a single connection attempt. Zero uses
 	// DefaultDialTimeout.
 	Timeout time.Duration
@@ -123,6 +127,24 @@ func (d *Dialer) Connect(
 		lastErr = fmt.Errorf("no address answered for %s", target)
 	}
 	return nil, Decision{Verdict: VerdictAllowed}, lastErr
+}
+
+// ConnectRoute dials an authority-supplied loopback endpoint directly. Route
+// endpoints are never passed through name resolution or net/http proxy
+// discovery; validation happens before this method is called and the address
+// is kept as a literal all the way to DialAddr.
+func (d *Dialer) ConnectRoute(
+	ctx context.Context,
+	endpoint netip.AddrPort,
+) (net.Conn, error) {
+	if !endpoint.IsValid() || endpoint.Addr().Zone() != "" ||
+		!endpoint.Addr().IsLoopback() || endpoint.Addr().IsUnspecified() {
+		return nil, fmt.Errorf("route endpoint is not a valid loopback address")
+	}
+	if d != nil && d.RouteDial != nil {
+		return d.RouteDial(ctx, endpoint)
+	}
+	return d.dialAddr(ctx, endpoint.Addr(), int(endpoint.Port()))
 }
 
 // candidates returns the addresses to try, in resolver order. A literal target

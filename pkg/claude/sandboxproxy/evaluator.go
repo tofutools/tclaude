@@ -37,6 +37,9 @@ const (
 // carriage-equivalence test asserts.
 type Decision struct {
 	Verdict Verdict
+	// RouteID is set for a synthetic route decision. It is stable authority
+	// metadata, never carried payload or a mutable display name.
+	RouteID string
 	// Rule is the deny row that refused or the allow row that authorized. It
 	// is nil when no row was involved: an open baseline authorizing by
 	// default, or a refusal for want of any match.
@@ -94,6 +97,16 @@ func NewEvaluatorFromRuleSet(
 // before any resolution. Deny is evaluated first and wins every overlap, so
 // authoring order cannot change a result.
 func (e *Evaluator) Evaluate(target Target) Decision {
+	// Synthetic group-route identities belong to the route authority, not to
+	// ordinary network policy. Keep this guard in the evaluator as well as in
+	// Server.connect so a caller cannot accidentally authorize a route host by
+	// adding a broad DNS suffix rule.
+	if target.Kind == TargetKindRoute {
+		return Decision{
+			Verdict: VerdictNotAuthorized,
+			Detail:  refusalDetail(target, VerdictNotAuthorized),
+		}
+	}
 	// Host loopback has two spellings — the literal and the name — and they
 	// are one identity. Matching both against the same name keeps a deny row
 	// from refusing one spelling while admitting the other.
@@ -245,6 +258,12 @@ func (e *Evaluator) EvaluateResolvedAddress(
 	target Target,
 	addr netip.Addr,
 ) Decision {
+	if target.Kind == TargetKindRoute {
+		return Decision{
+			Verdict: VerdictNotAuthorized,
+			Detail:  refusalDetail(target, VerdictNotAuthorized),
+		}
+	}
 	addr = addr.Unmap()
 	if !addr.IsValid() {
 		return Decision{
@@ -351,6 +370,11 @@ func isReservedDestination(addr netip.Addr) bool {
 // raw client bytes.
 func refusalDetail(target Target, verdict Verdict) string {
 	destination := target.String()
+	if target.Kind == TargetKindRoute && verdict == VerdictNotAuthorized {
+		return "tclaude filtering proxy refused " + destination +
+			": the synthetic route target is not an ordinary DNS destination. " +
+			"Remedy: use an active same-group route lease."
+	}
 	switch verdict {
 	case VerdictDeniedByRule:
 		return "tclaude filtering proxy refused " + destination +

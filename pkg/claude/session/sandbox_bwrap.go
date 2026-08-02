@@ -74,6 +74,9 @@ type TclaudeLayerRouteHelper struct {
 	HandoffSocketPath string  `json:"-"`
 	CredentialFD      int     `json:"-"`
 	GroupIDs          []int64 `json:"group_ids"`
+	// ProxyOnly carries the same launch-scoped capability to the host Darwin
+	// filtering proxy, where no namespace-local Linux helper is needed.
+	ProxyOnly bool `json:"proxy_only,omitempty"`
 }
 
 // TclaudeLayerPrivateWriteDir hides a daemon-owned shared parent and reopens
@@ -138,7 +141,11 @@ func validateTclaudeLayerRouteHelper(effective sandboxpolicy.EffectiveProfile, h
 	if helper == nil {
 		return nil
 	}
-	if runtime.GOOS != "linux" {
+	if helper.ProxyOnly {
+		if runtime.GOOS != "darwin" {
+			return fmt.Errorf("darwin route proxy authority is unavailable on %s", runtime.GOOS)
+		}
+	} else if runtime.GOOS != "linux" {
 		return fmt.Errorf("linux group-route helper is unavailable on %s", runtime.GOOS)
 	}
 	if strings.TrimSpace(helper.SocketPath) == "" || !filepath.IsAbs(filepath.Clean(helper.SocketPath)) {
@@ -1046,6 +1053,7 @@ func WrapTclaudeLayerSpec(
 			plan,
 			spec.Contract.DarwinRouteSlots,
 			spec.Contract.DarwinRouteReservation,
+			spec.Contract.RouteHelper,
 			harnessCommand,
 		)
 	}

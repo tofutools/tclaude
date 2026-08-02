@@ -41,6 +41,38 @@ type stackedRelayBindingOptions struct {
 	// the other.
 	ProxyPolicy string
 	PreserveFDs int
+	// Route authority metadata is descriptive launch identity only. The
+	// capability arrives separately on fd 3 through the existing one-shot
+	// handoff and is never represented in these fields.
+	RouteSocketPath       string
+	RouteAgentID          string
+	RouteConvID           string
+	RouteLaunchGeneration string
+	RouteGroupIDs         []int64
+}
+
+func routeAuthorityMetadataPresent(binding stackedRelayBindingOptions) bool {
+	return strings.TrimSpace(binding.RouteSocketPath) != "" ||
+		strings.TrimSpace(binding.RouteAgentID) != "" ||
+		strings.TrimSpace(binding.RouteConvID) != "" ||
+		strings.TrimSpace(binding.RouteLaunchGeneration) != "" ||
+		len(binding.RouteGroupIDs) > 0
+}
+
+func validateRouteAuthorityMetadata(binding stackedRelayBindingOptions, proxyActive bool) error {
+	if !routeAuthorityMetadataPresent(binding) {
+		return nil
+	}
+	if !proxyActive || binding.PreserveFDs != 1 {
+		return fmt.Errorf("route authority metadata requires the filtering proxy and one preserved capability descriptor")
+	}
+	if strings.TrimSpace(binding.RouteSocketPath) == "" ||
+		strings.TrimSpace(binding.RouteAgentID) == "" ||
+		strings.TrimSpace(binding.RouteConvID) == "" ||
+		strings.TrimSpace(binding.RouteLaunchGeneration) == "" || len(binding.RouteGroupIDs) == 0 {
+		return fmt.Errorf("route authority metadata is incomplete")
+	}
+	return nil
 }
 
 // tclaudeLayerWinchRelayCmd stays outside bubblewrap and outside the terminal
@@ -109,6 +141,11 @@ func tclaudeLayerWinchRelayCmd() *cobra.Command {
 		0,
 		"consecutive inherited descriptors starting at fd 3 (internal)",
 	)
+	cmd.Flags().StringVar(&binding.RouteSocketPath, "route-helper-socket", "", "route authority Unix socket (internal)")
+	cmd.Flags().StringVar(&binding.RouteAgentID, "route-helper-agent-id", "", "route authority agent identity (internal)")
+	cmd.Flags().StringVar(&binding.RouteConvID, "route-helper-conv-id", "", "route authority conversation identity (internal)")
+	cmd.Flags().StringVar(&binding.RouteLaunchGeneration, "route-helper-launch-generation", "", "route authority launch generation (internal)")
+	cmd.Flags().Int64SliceVar(&binding.RouteGroupIDs, "route-helper-group-id", nil, "route authority target group (internal)")
 	return cmd
 }
 
@@ -181,9 +218,38 @@ func runTclaudeLayerWinchRelay(
 		return 125, err
 	}
 	defer proxy.Close()
+	if err := validateRouteAuthorityMetadata(binding, proxy.Active()); err != nil {
+		return 125, err
+	}
+	if proxy.Active() && routeAuthorityMetadataPresent(binding) {
+		credential, credentialErr := readRouteHelperCredentialFD(3)
+		if credentialErr != nil {
+			return 125, credentialErr
+		}
+		proxy.RouteAuthority = newProxyRouteAuthority(proxyRouteAuthorityConfig{
+			SocketPath: binding.RouteSocketPath, AgentID: binding.RouteAgentID,
+			ConvID: binding.RouteConvID, LaunchGeneration: binding.RouteLaunchGeneration,
+			GroupIDs: append([]int64(nil), binding.RouteGroupIDs...),
+		}, credential)
+	}
 	preservedFiles := make([]*os.File, 0, binding.PreserveFDs)
 	for index := 0; index < binding.PreserveFDs; index++ {
 		fd := 3 + index
+		if index == 0 && proxy.RouteAuthority != nil {
+			readEnd, writeEnd, pipeErr := os.Pipe()
+			if pipeErr != nil {
+				return 125, fmt.Errorf("recreate route helper credential pipe: %w", pipeErr)
+			}
+			credential := proxy.RouteAuthority.credentialValue()
+			if _, pipeErr = io.WriteString(writeEnd, credential); pipeErr != nil {
+				_ = readEnd.Close()
+				_ = writeEnd.Close()
+				return 125, fmt.Errorf("stage route helper credential pipe: %w", pipeErr)
+			}
+			_ = writeEnd.Close()
+			preservedFiles = append(preservedFiles, readEnd)
+			continue
+		}
 		if _, err := unix.FcntlInt(uintptr(fd), unix.F_GETFD, 0); err != nil {
 			for _, file := range preservedFiles {
 				_ = file.Close()
