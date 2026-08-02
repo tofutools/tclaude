@@ -69,6 +69,13 @@ Every child wait is bounded strictly below the host's marker deadline, and a
 control path that was never handed to the child fails at once rather than
 consuming the wait budget.
 
+A publisher admits a stream as soon as the channel opens it, and dials the
+target off the read loop. Bytes a client writes immediately after connecting are
+held in arrival order and flushed when the target connects, so a short-lived
+connection cannot race its own open. A frame for a stream the channel does not
+know closes that one stream; it never fails the channel and never disturbs the
+other streams on the same route.
+
 A helper must present the group generation carried by its own route or lease
 row. Every membership and permission change advances a group's route generation,
 so a generation captured before such a change is refused by the channel endpoint
