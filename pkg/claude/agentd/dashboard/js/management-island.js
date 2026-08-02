@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { profileSummary, profileAliasesLabel, profileChoices, findProfileByHandle } from './profiles.js';
 import { roleSummary } from './roles.js';
-import { AUTO_MEMORY_TRI_OPTIONS, dirtyDraft, harnessByName, harnessDefaults, profileDraft, profilePayload, readTri, roleDraft, rolePayload, TRI_OPTIONS } from './management-model.js';
+import { AUTO_MEMORY_TRI_OPTIONS, dirtyDraft, harnessByName, harnessDefaults, profileDraft, profileHarnessDefaults, profilePayload, readTri, roleDraft, rolePayload, TRI_OPTIONS } from './management-model.js';
 import { registerManagementController } from './management-controller.js';
 import {
   sandboxAccessAxes,
@@ -979,18 +979,22 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
   }, [draft.harness, draft.sandbox, draft.sandbox_implementation, draft.approval, profile]);
   const updateHarness = (harness) => {
     const h = harnessByName(catalog, harness);
-    const defaults = harnessDefaults(h);
     setCustomModel(false);
-    setDraft((current) => ({
-      ...current, harness, model: '', effort: '', ...defaults,
-      trust_dir: '', remote_control: '', auto_memory: '',
-      ssh_workaround: !!h?.can_ssh_workaround,
-      // Keep every explicit implementation visible across harness switches.
-      // An incapable selection gets an inline refusal warning and the server
-      // remains the apply authority.
-      sandbox_implementation: current.sandbox_implementation,
-      sandbox_implementation_cleared: null,
-    }));
+    setDraft((current) => {
+      const defaults = profile
+        ? profileHarnessDefaults(h, current.sandbox_implementation)
+        : harnessDefaults(h);
+      return {
+        ...current, harness, model: '', effort: '', ...defaults,
+        trust_dir: '', remote_control: '', auto_memory: '',
+        ssh_workaround: !!h?.can_ssh_workaround,
+        // Keep every explicit implementation visible across harness switches.
+        // An incapable selection gets an inline refusal warning and the server
+        // remains the apply authority.
+        sandbox_implementation: current.sandbox_implementation || defaults.sandbox_implementation || '',
+        sandbox_implementation_cleared: null,
+      };
+    });
   };
   const [helpOpen, setHelpOpen] = useState('');
   const modelID = profile ? 'profile-editor-model' : 'role-editor-model';
@@ -998,6 +1002,9 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
   const sandboxID = profile ? 'profile-editor-sandbox' : 'role-editor-sandbox';
   const toolsID = profile ? 'profile-editor-tools' : 'role-editor-tools';
   const approvalLabel = draft.harness === 'codex' ? 'Approval policy' : 'Permission mode';
+  const recommendedApproval = profile
+    ? hEntry?.profile_recommended_approval || hEntry?.default_approval
+    : hEntry?.default_approval;
   const approvalHelp = hEntry?.approval_mode_help?.[draft.approval] || '';
   const sandboxHelp = sandboxModeHelpForImplementation(
     hEntry?.sandbox_mode_help?.[draft.sandbox],
@@ -1090,7 +1097,9 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
     ...current, sandbox_implementation: value, sandbox_implementation_cleared: null,
   }))}
             options=${[['', `Unset (${RESOLVED_DEFAULTS_LABEL.toLowerCase()} at spawn)`],
-    ...sandboxImplOptions.map((option) => [option.value, option.label])]} />
+    ...sandboxImplOptions.map((option) => [option.value,
+      option.label + (option.value === hEntry?.profile_recommended_sandbox_implementation
+        ? ' (recommended)' : '')])]} />
           <${HelpDisclosure} id="profile-editor-sandbox-impl"
             descriptionID="profile-editor-sandbox-impl-help" label="Sandbox"
             help=${sandboxImplHelp} warn=${!!sandboxImplCaveat}
@@ -1122,7 +1131,7 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
       disabled=${!showSandboxMode} />
     <${HelpField} id=${approvalID} label=${approvalLabel} title="Controls when the harness requests approval; it does not change the sandbox."
       value=${draft.approval}
-      options=${(hEntry?.approval_modes || []).map((value) => ({ value, label: approvalPolicyLabel(draft.harness, value, hEntry.default_approval) }))}
+      options=${(hEntry?.approval_modes || []).map((value) => ({ value, label: approvalPolicyLabel(draft.harness, value, recommendedApproval) }))}
       onChange=${(event) => change(setDraft, 'approval', event.currentTarget.value)}
       help=${approvalHelp} open=${helpOpen === approvalID} setOpen=${setHelpOpen}
       disabled=${!hEntry?.can_approval || !showApprovalControls} />

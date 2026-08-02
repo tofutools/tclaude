@@ -800,6 +800,12 @@ uncheck anything that should not travel. Import reads a bundle, previews every
 profile, lets you uncheck rows, and handles existing-name conflicts per profile
 by renaming or overwriting.
 
+New or previously unpinned OpenCode profiles start from a paired recommendation:
+the **tclaude built-in OS sandbox** and permission mode **allow-tools**. The
+sandbox keeps that autonomous permission posture confined. This is a profile
+authoring recommendation, not a change to an unprofiled OpenCode launch, whose
+approval fallback remains `deny`.
+
 **clone** is the way to spin a variant off an existing profile. It opens the
 ordinary editor on a copy, pre-filled with a free `<name>-copy` handle, so the
 duplicate is reviewed and validated like any hand-written profile before it is

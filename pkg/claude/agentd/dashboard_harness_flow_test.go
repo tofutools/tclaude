@@ -128,6 +128,10 @@ func TestDashboardSnapshot_HarnessCatalog(t *testing.T) {
 	assert.True(t, opencode.CanApproval)
 	assert.Equal(t, []string{"deny", "ask", "allow-tools"}, opencode.ApprovalModes)
 	assert.Equal(t, "deny", opencode.DefaultApproval)
+	assert.Equal(t, "allow-tools", opencode.ProfileApproval,
+		"sandboxed OpenCode spawn profiles recommend autonomous scoped tools")
+	assert.Equal(t, "tclaude-layer", opencode.ProfileSandboxImpl,
+		"the autonomous profile recommendation is paired with tclaude OS containment")
 	for _, mode := range opencode.ApprovalModes {
 		assert.NotEmpty(t, opencode.ApprovalModeHelp[mode], "help for %s", mode)
 	}
