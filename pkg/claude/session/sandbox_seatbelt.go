@@ -67,7 +67,30 @@ func renderSeatbeltProfile(
 	daemonReadOnlyPaths []string,
 	privateWriteDirs ...TclaudeLayerPrivateWriteDir,
 ) (string, []seatbeltProfileParam, error) {
+	return renderSeatbeltProfileWithLoopbackBind(
+		phase0WriteDirs, requiredSocketPaths, plan, proxyEndpoint,
+		protectedRoots, tmuxSocketDir, runtimeTempDir, identity,
+		daemonReadOnlyPaths, 0, privateWriteDirs...)
+}
+
+func renderSeatbeltProfileWithLoopbackBind(
+	phase0WriteDirs, requiredSocketPaths []string,
+	plan sandboxpolicy.MountPlan,
+	proxyEndpoint netip.AddrPort,
+	protectedRoots []string,
+	tmuxSocketDir, runtimeTempDir string,
+	identity seatbeltIdentityLookup,
+	daemonReadOnlyPaths []string,
+	loopbackBindPort int,
+	privateWriteDirs ...TclaudeLayerPrivateWriteDir,
+) (string, []seatbeltProfileParam, error) {
 	deploysProxy := tclaudeLayerPlanDeploysProxy(plan)
+	if loopbackBindPort < 0 || loopbackBindPort > 65535 {
+		return "", nil, fmt.Errorf("invalid Seatbelt loopback bind port %d", loopbackBindPort)
+	}
+	if loopbackBindPort != 0 && !deploysProxy {
+		return "", nil, fmt.Errorf("Seatbelt loopback bind exception requires the filtering proxy floor")
+	}
 	switch plan.NetworkPosture {
 	case sandboxpolicy.NetworkHostOpen, sandboxpolicy.NetworkIsolatedWithAgentd:
 	case sandboxpolicy.NetworkFiltered:
@@ -283,6 +306,7 @@ func renderSeatbeltProfile(
 		runtimeTempDir,
 		plan,
 		proxyEndpoint,
+		loopbackBindPort,
 		identity,
 	)
 	return profile, params, nil
@@ -633,6 +657,7 @@ func compileSeatbeltDenyRegions(
 	runtimeTempDir string,
 	plan sandboxpolicy.MountPlan,
 	proxyEndpoint netip.AddrPort,
+	loopbackBindPort int,
 	identity seatbeltIdentityLookup,
 ) (string, []seatbeltProfileParam) {
 	var profile strings.Builder
@@ -653,7 +678,7 @@ func compileSeatbeltDenyRegions(
 	switch tclaudeLayerPlanFloorPosture(plan) {
 	case sandboxpolicy.NetworkIsolatedWithAgentd:
 		params = appendSeatbeltIsolatedNetworkRules(
-			&profile, params, nodes, proxyEndpoint)
+			&profile, params, nodes, proxyEndpoint, loopbackBindPort)
 	case sandboxpolicy.NetworkFiltered:
 		appendSeatbeltLoopbackNetworkRules(&profile, plan.FilteredNetwork)
 	}
@@ -927,6 +952,7 @@ func appendSeatbeltIsolatedNetworkRules(
 	params []seatbeltProfileParam,
 	nodes []seatbeltRegionNode,
 	proxyEndpoint netip.AddrPort,
+	loopbackBindPort int,
 ) []seatbeltProfileParam {
 	exceptions := make([]int, 0, 1)
 	for index, node := range nodes {
@@ -954,7 +980,18 @@ func appendSeatbeltIsolatedNetworkRules(
 		profile.WriteString("\n; Isolated networking denies host/public connectivity and listeners.\n")
 		profile.WriteString("; Only allowlisted connects at the parameterized socket spellings are excepted.\n")
 	}
-	profile.WriteString("(deny network-bind)\n")
+	if loopbackBindPort == 0 {
+		profile.WriteString("(deny network-bind)\n")
+	} else {
+		// This is the managed server's authenticated loopback control listener,
+		// allocated by agentd and carried at the runtime wrapping boundary. Every
+		// other listener remains denied. Seatbelt's localhost token has the same
+		// host-wide address limitation as the proxy connect exception, so Darwin
+		// capability disclosure remains capped at Partial (TCL-917).
+		fmt.Fprintf(profile,
+			"(deny network-bind (require-not (local tcp \"localhost:%d\")))\n",
+			loopbackBindPort)
+	}
 	if len(exceptions) == 0 && !proxyFloor {
 		profile.WriteString("(deny network-outbound)\n")
 		return params

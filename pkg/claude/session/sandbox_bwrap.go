@@ -1081,12 +1081,27 @@ func WrapTclaudeLayerServerSpec(
 	spec TclaudeLayerLaunchSpec,
 	serverCommand string,
 ) (string, error) {
+	return WrapTclaudeLayerServerSpecWithLoopbackBind(
+		binary, spec, 0, serverCommand)
+}
+
+// WrapTclaudeLayerServerSpecWithLoopbackBind renders an agentd-owned server
+// boundary whose runtime control listener is known only after the frozen spec
+// was built. Darwin uses the port to carve exactly that bind out of the proxy
+// floor's listener deny; Linux refuses a nonzero value because its filtered
+// OpenCode control plane is an inherited Unix listener rather than a TCP bind.
+func WrapTclaudeLayerServerSpecWithLoopbackBind(
+	binary string,
+	spec TclaudeLayerLaunchSpec,
+	loopbackBindPort int,
+	serverCommand string,
+) (string, error) {
 	phase0WriteDirs, privateWriteDirs, finalHideDirs, readOnlyBinds, socketPaths, plan, err :=
 		tclaudeLayerSpecRenderInput(spec)
 	if err != nil {
 		return "", err
 	}
-	return tclaudeLayerServerCommand(
+	return tclaudeLayerServerCommandWithLoopbackBind(
 		binary,
 		phase0WriteDirs,
 		privateWriteDirs,
@@ -1094,6 +1109,7 @@ func WrapTclaudeLayerServerSpec(
 		readOnlyBinds,
 		socketPaths,
 		plan,
+		loopbackBindPort,
 		serverCommand,
 	)
 }

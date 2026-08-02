@@ -62,6 +62,7 @@ type darwinProxyLaunchSpec struct {
 	Plan             sandboxpolicy.MountPlan       `json:"plan"`
 	HarnessCommand   string                        `json:"harness_command"`
 	PreserveFDs      int                           `json:"preserve_fds,omitempty"`
+	LoopbackBindPort int                           `json:"loopback_bind_port,omitempty"`
 }
 
 func darwinProxyLauncherCommand(spec darwinProxyLaunchSpec) (string, error) {
@@ -73,6 +74,9 @@ func darwinProxyLauncherCommand(spec darwinProxyLaunchSpec) (string, error) {
 	}
 	if spec.PreserveFDs != 0 && spec.PreserveFDs != 2 {
 		return "", fmt.Errorf("Darwin proxy launcher can preserve only the server boundary's two descriptors")
+	}
+	if spec.LoopbackBindPort < 0 || spec.LoopbackBindPort > 65535 {
+		return "", fmt.Errorf("Darwin proxy launcher has invalid loopback bind port %d", spec.LoopbackBindPort)
 	}
 	data, err := json.Marshal(spec)
 	if err != nil {
@@ -115,6 +119,9 @@ func decodeDarwinProxyLaunchSpec(encoded string) (darwinProxyLaunchSpec, error) 
 	}
 	if spec.PreserveFDs != 0 && spec.PreserveFDs != 2 {
 		return darwinProxyLaunchSpec{}, fmt.Errorf("Darwin proxy launcher can preserve only the server boundary's two descriptors")
+	}
+	if spec.LoopbackBindPort < 0 || spec.LoopbackBindPort > 65535 {
+		return darwinProxyLaunchSpec{}, fmt.Errorf("Darwin proxy launcher has invalid loopback bind port %d", spec.LoopbackBindPort)
 	}
 	return spec, nil
 }
@@ -180,6 +187,7 @@ func runDarwinProxyLauncher(spec darwinProxyLaunchSpec) (int, error) {
 		spec.Plan,
 		spec.HarnessCommand,
 		endpoint,
+		spec.LoopbackBindPort,
 	)
 	if err != nil {
 		_ = listener.Close()

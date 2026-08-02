@@ -322,6 +322,18 @@ func TestTclaudeLayerDarwinCommandDefersProxyFloorToLauncher(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 2, spec.PreserveFDs,
 		"the OpenCode server boundary keeps its launcher-owned descriptor pair")
+	assert.Zero(t, spec.LoopbackBindPort,
+		"the ordinary server renderer must not invent a listener exception")
+
+	serverCommand, err = tclaudeLayerServerCommandWithLoopbackBind(
+		darwinSeatbeltExecutable, nil, nil, nil, nil, nil, plan, 43210, "true")
+	require.NoError(t, err)
+	encoded = strings.TrimPrefix(serverCommand,
+		darwinProxyLauncherPrefix()+" --launch ")
+	spec, err = decodeDarwinProxyLaunchSpec(encoded)
+	require.NoError(t, err)
+	assert.Equal(t, 43210, spec.LoopbackBindPort,
+		"the managed server control port must cross the deferred launcher boundary")
 }
 
 func TestDarwinProxyLauncherProductionPath(t *testing.T) {

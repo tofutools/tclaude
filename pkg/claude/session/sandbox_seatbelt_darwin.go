@@ -172,7 +172,7 @@ func tclaudeLayerCommand(
 ) (string, error) {
 	return tclaudeLayerDarwinCommand(
 		binary, phase0WriteDirs, privateWriteDirs, finalHideDirs,
-		readOnlyBinds, socketPaths, plan, harnessCommand, 0)
+		readOnlyBinds, socketPaths, plan, harnessCommand, 0, 0)
 }
 
 func tclaudeLayerDarwinCommand(
@@ -185,6 +185,7 @@ func tclaudeLayerDarwinCommand(
 	plan sandboxpolicy.MountPlan,
 	harnessCommand string,
 	preserveFDs int,
+	loopbackBindPort int,
 ) (string, error) {
 	if tclaudeLayerPlanDeploysProxy(plan) {
 		return darwinProxyLauncherCommand(darwinProxyLaunchSpec{
@@ -197,11 +198,15 @@ func tclaudeLayerDarwinCommand(
 			Plan:             plan,
 			HarnessCommand:   harnessCommand,
 			PreserveFDs:      preserveFDs,
+			LoopbackBindPort: loopbackBindPort,
 		})
+	}
+	if loopbackBindPort != 0 {
+		return "", fmt.Errorf("Darwin loopback bind exception requires the filtering proxy floor")
 	}
 	return renderDarwinSeatbeltCommand(
 		binary, phase0WriteDirs, privateWriteDirs, finalHideDirs,
-		readOnlyBinds, socketPaths, plan, harnessCommand, netip.AddrPort{})
+		readOnlyBinds, socketPaths, plan, harnessCommand, netip.AddrPort{}, 0)
 }
 
 func renderDarwinSeatbeltCommand(
@@ -214,6 +219,7 @@ func renderDarwinSeatbeltCommand(
 	plan sandboxpolicy.MountPlan,
 	harnessCommand string,
 	proxyEndpoint netip.AddrPort,
+	loopbackBindPort int,
 ) (string, error) {
 	switch plan.NetworkPosture {
 	case sandboxpolicy.NetworkHostOpen, sandboxpolicy.NetworkIsolatedWithAgentd:
@@ -284,7 +290,7 @@ func renderDarwinSeatbeltCommand(
 	if err != nil {
 		return "", err
 	}
-	profile, params, err := renderSeatbeltProfile(
+	profile, params, err := renderSeatbeltProfileWithLoopbackBind(
 		filteredContract,
 		socketPaths,
 		filteredPlan,
@@ -294,6 +300,7 @@ func renderDarwinSeatbeltCommand(
 		runtimeTempDir,
 		darwinSeatbeltLstatIdentity,
 		readOnlyPaths,
+		loopbackBindPort,
 		canonicalPrivateWriteDirs...,
 	)
 	if err != nil {
@@ -318,6 +325,22 @@ func tclaudeLayerServerCommand(
 	plan sandboxpolicy.MountPlan,
 	serverCommand string,
 ) (string, error) {
+	return tclaudeLayerServerCommandWithLoopbackBind(
+		binary, phase0WriteDirs, privateWriteDirs, finalHideDirs,
+		readOnlyBinds, socketPaths, plan, 0, serverCommand)
+}
+
+func tclaudeLayerServerCommandWithLoopbackBind(
+	binary string,
+	phase0WriteDirs []string,
+	privateWriteDirs []TclaudeLayerPrivateWriteDir,
+	finalHideDirs []string,
+	readOnlyBinds []TclaudeLayerReadOnlyBind,
+	socketPaths []string,
+	plan sandboxpolicy.MountPlan,
+	loopbackBindPort int,
+	serverCommand string,
+) (string, error) {
 	return tclaudeLayerDarwinCommand(
 		binary,
 		phase0WriteDirs,
@@ -328,6 +351,7 @@ func tclaudeLayerServerCommand(
 		plan,
 		serverCommand,
 		2,
+		loopbackBindPort,
 	)
 }
 

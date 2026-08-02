@@ -1521,23 +1521,36 @@ func openCodeServeExec(
 	if sandboxSpec == nil {
 		return executable, serveArgs, nil
 	}
-	if sandboxSpec.Effective.NetworkAccess != sandboxpolicy.NetworkAccessInherit &&
+	filteredDarwinProxy := false
+	if runtime.GOOS == "darwin" && openCodeFilteredNetworkSpec(sandboxSpec) {
+		engine, engineErr := session.TclaudeLayerNetworkEngine(sandboxSpec.Effective)
+		if engineErr != nil {
+			return "", nil, engineErr
+		}
+		filteredDarwinProxy = engine == sandboxpolicy.NetworkEngineProxy
+	}
+	if !filteredDarwinProxy &&
+		sandboxSpec.Effective.NetworkAccess != sandboxpolicy.NetworkAccessInherit &&
 		sandboxSpec.Effective.NetworkAccess != sandboxpolicy.NetworkAccessInternet {
 		return "", nil, fmt.Errorf(
 			"unsupported_sandbox_profile_network: OpenCode tclaude-layer requires the host-open loopback control plane and endpoint-ownership proof",
 		)
 	}
+	resolvePosture := sandboxpolicy.NetworkHostOpen
+	if filteredDarwinProxy {
+		resolvePosture = sandboxpolicy.NetworkFiltered
+	}
 	root, err := session.TclaudeLayerRootPosture(
-		sandboxpolicy.NetworkHostOpen, sandboxSpec.Effective)
+		resolvePosture, sandboxSpec.Effective)
 	if err != nil {
 		return "", nil, err
 	}
-	hostOpenEngine, err := session.TclaudeLayerNetworkEngine(sandboxSpec.Effective)
+	engine, err := session.TclaudeLayerNetworkEngine(sandboxSpec.Effective)
 	if err != nil {
 		return "", nil, err
 	}
 	bwrapBinary, _, err := resolveOpenCodeTclaudeLayer(
-		sandboxpolicy.NetworkHostOpen, root, hostOpenEngine)
+		resolvePosture, root, engine)
 	if err != nil {
 		return "", nil, err
 	}
@@ -1545,7 +1558,17 @@ func openCodeServeExec(
 	for _, arg := range serveArgs {
 		serveCommand += " " + clcommon.ShellQuoteArg(arg)
 	}
-	wrapped, err := wrapOpenCodeTclaudeLayer(bwrapBinary, *sandboxSpec, serveCommand)
+	wrapped := ""
+	if filteredDarwinProxy {
+		bindPort, parseErr := strconv.Atoi(port)
+		if parseErr != nil || bindPort < 1 || bindPort > 65535 {
+			return "", nil, fmt.Errorf("parse OpenCode loopback control port %q", port)
+		}
+		wrapped, err = session.WrapTclaudeLayerServerSpecWithLoopbackBind(
+			bwrapBinary, *sandboxSpec, bindPort, serveCommand)
+	} else {
+		wrapped, err = wrapOpenCodeTclaudeLayer(bwrapBinary, *sandboxSpec, serveCommand)
+	}
 	if err != nil {
 		return "", nil, fmt.Errorf("wrap OpenCode server with tclaude-layer: %w", err)
 	}
@@ -1593,8 +1616,13 @@ func openCodeTclaudeLayerLaunchSpec(
 			if filteredErr != nil {
 				return nil, filteredErr
 			}
+			if runtime.GOOS == "darwin" {
+				return buildOpenCodeTclaudeLayerLaunchSpec(
+					cwd, gitWriteDirs, snapshot, agentID, false, true,
+					privateSessionIDs...)
+			}
 			if runtime.GOOS != "linux" {
-				return nil, fmt.Errorf("OpenCode filtered Unix relay is Linux-only")
+				return nil, fmt.Errorf("OpenCode filtered networking requires Linux or macOS")
 			}
 			return buildOpenCodeTclaudeLayerLaunchSpec(
 				cwd, gitWriteDirs, snapshot, agentID, true, true,
