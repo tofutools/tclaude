@@ -52,11 +52,12 @@ func logProxyNetworkDecision(
 		"port", target.Port,
 		"verdict", string(decision.Verdict),
 	}
-	if target.Kind == sandboxproxy.TargetKindName {
+	switch target.Kind {
+	case sandboxproxy.TargetKindName:
 		attrs = append(attrs, "host", target.Name)
-	} else if target.Kind == sandboxproxy.TargetKindRoute {
+	case sandboxproxy.TargetKindRoute:
 		attrs = append(attrs, "route_id", target.RouteID)
-	} else {
+	default:
 		attrs = append(attrs, "address", target.Addr.String())
 	}
 	if decision.Rule != nil {
