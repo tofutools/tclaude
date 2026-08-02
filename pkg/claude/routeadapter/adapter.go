@@ -67,8 +67,10 @@ func New(broker *routebroker.Broker, ports []int) (*Adapter, error) {
 	if broker == nil {
 		return nil, errors.New("route adapter requires a broker")
 	}
-	if err := validatePorts(ports); err != nil {
-		return nil, err
+	if len(ports) > 0 {
+		if err := validatePorts(ports); err != nil {
+			return nil, err
+		}
 	}
 	return &Adapter{
 		broker: broker,
@@ -116,7 +118,7 @@ func targetPort(target string) (int, error) {
 	return port, nil
 }
 
-func (a *Adapter) acquire(key string, requested int) (int, error) {
+func (a *Adapter) acquire(key string, requested int, pool []int) (int, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.closed {
@@ -129,7 +131,7 @@ func (a *Adapter) acquire(key string, requested int) (int, error) {
 		return old, nil
 	}
 	if requested != 0 {
-		for _, port := range a.ports {
+		for _, port := range pool {
 			if port == requested {
 				for owner, used := range a.used {
 					if used == requested {
@@ -142,7 +144,7 @@ func (a *Adapter) acquire(key string, requested int) (int, error) {
 		}
 		return 0, fmt.Errorf("route slot %d is not in the pre-authorized pool", requested)
 	}
-	for _, port := range a.ports {
+	for _, port := range pool {
 		occupied := false
 		for _, used := range a.used {
 			if used == port {
@@ -167,6 +169,19 @@ func (a *Adapter) release(key string) {
 // Publish attaches a daemon-owned publisher channel. The target application
 // remains responsible for binding the exact pre-authorized target slot.
 func (a *Adapter) Publish(ctx context.Context, publisher Publisher) (int, error) {
+	return a.publish(ctx, publisher, a.ports)
+}
+
+// PublishWithSlots attaches a publisher only when its target is in the exact
+// slot pool registered for that launch generation.
+func (a *Adapter) PublishWithSlots(ctx context.Context, publisher Publisher, slots []int) (int, error) {
+	if err := validatePorts(slots); err != nil {
+		return 0, err
+	}
+	return a.publish(ctx, publisher, slots)
+}
+
+func (a *Adapter) publish(ctx context.Context, publisher Publisher, pool []int) (int, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -177,7 +192,7 @@ func (a *Adapter) Publish(ctx context.Context, publisher Publisher) (int, error)
 	if err != nil {
 		return 0, err
 	}
-	if _, err := a.acquire(publisher.RouteID, port); err != nil {
+	if _, err := a.acquire(publisher.RouteID, port, pool); err != nil {
 		return 0, err
 	}
 	channel, peer := net.Pipe()
@@ -198,10 +213,10 @@ func (a *Adapter) Publish(ctx context.Context, publisher Publisher) (int, error)
 			RouteID: publisher.RouteID, AgentID: publisher.AgentID, ConvID: publisher.ConvID,
 			LaunchGeneration: publisher.LaunchGeneration, GroupGeneration: publisher.GroupGeneration,
 		}, peer)
-		a.mu.Lock()
-		delete(a.routes, publisher.RouteID)
-		a.mu.Unlock()
-		a.release(publisher.RouteID)
+		// A publisher channel ending is authoritative for the endpoint
+		// lifetime. Close idle listeners as well as any active streams; no M2
+		// consumer event is required for this cleanup.
+		a.CloseRoute(publisher.RouteID)
 	}()
 	go a.publisherLoop(channelCtx, channel, publisher.Target)
 	return port, nil
@@ -211,13 +226,26 @@ func (a *Adapter) Publish(ctx context.Context, publisher Publisher) (int, error)
 // endpoint. The listener is outside the sandbox; the consumer process only
 // needs outbound permission for this pre-authorized slot.
 func (a *Adapter) Open(ctx context.Context, consumer Consumer) (string, error) {
+	return a.open(ctx, consumer, a.ports)
+}
+
+// OpenWithSlots creates a consumer listener using only the exact pool owned
+// by the consumer launch generation.
+func (a *Adapter) OpenWithSlots(ctx context.Context, consumer Consumer, slots []int) (string, error) {
+	if err := validatePorts(slots); err != nil {
+		return "", err
+	}
+	return a.open(ctx, consumer, slots)
+}
+
+func (a *Adapter) open(ctx context.Context, consumer Consumer, pool []int) (string, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	if strings.TrimSpace(consumer.LeaseID) == "" || strings.TrimSpace(consumer.RouteID) == "" {
 		return "", errors.New("consumer lease and route IDs are required")
 	}
-	port, err := a.acquire(consumer.LeaseID, 0)
+	port, err := a.acquire(consumer.LeaseID, 0, pool)
 	if err != nil {
 		return "", err
 	}
@@ -304,6 +332,29 @@ func (a *Adapter) Close() {
 	}
 }
 
+// RouteIDs and LeaseIDs are snapshots used by the generation reconciler. The
+// adapter never infers authority from these maps; agentd compares them with
+// durable M1 rows before closing stale listeners.
+func (a *Adapter) RouteIDs() []string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	ids := make([]string, 0, len(a.routes))
+	for id := range a.routes {
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+func (a *Adapter) LeaseIDs() []string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	ids := make([]string, 0, len(a.leases))
+	for id := range a.leases {
+		ids = append(ids, id)
+	}
+	return ids
+}
+
 func (a *Adapter) acceptConsumers(ctx context.Context, listener net.Listener, consumer Consumer) {
 	defer func() {
 		a.mu.Lock()
@@ -336,13 +387,25 @@ func (a *Adapter) consumerStream(ctx context.Context, raw net.Conn, consumer Con
 		_ = adapterConn.Close()
 		return
 	}
-	firstErr := make(chan error, 2)
-	go func() { firstErr <- copyRawToBroker(raw, adapterConn) }()
-	go func() { firstErr <- copyBrokerToRaw(adapterConn, raw) }()
-	<-firstErr
+	type directionResult struct {
+		rawToBroker bool
+		err         error
+	}
+	results := make(chan directionResult, 2)
+	go func() { results <- directionResult{rawToBroker: true, err: copyRawToBroker(raw, adapterConn)} }()
+	go func() { results <- directionResult{err: copyBrokerToRaw(adapterConn, raw)} }()
+	first := <-results
+	// A local client CloseWrite is only a read-side EOF. Keep the broker
+	// channel and accepted listener alive for the publisher's reverse data.
+	if first.rawToBroker && errors.Is(first.err, io.EOF) {
+		<-results
+		_ = raw.Close()
+		_ = adapterConn.Close()
+		return
+	}
 	_ = raw.Close()
 	_ = adapterConn.Close()
-	<-firstErr
+	<-results
 }
 
 func copyRawToBroker(raw net.Conn, broker net.Conn) error {
@@ -437,15 +500,16 @@ func (a *Adapter) publisherLoop(ctx context.Context, brokerConn net.Conn, target
 			if stream == nil {
 				continue
 			}
-			if frame.Kind == routebroker.KindData {
+			switch frame.Kind {
+			case routebroker.KindData:
 				if _, err := stream.conn.Write(frame.Payload); err != nil {
 					_ = stream.conn.Close()
 				}
-			} else if frame.Kind == routebroker.KindHalfClose {
+			case routebroker.KindHalfClose:
 				if tcp, ok := stream.conn.(*net.TCPConn); ok {
 					_ = tcp.CloseWrite()
 				}
-			} else {
+			case routebroker.KindClose:
 				_ = stream.conn.Close()
 			}
 		case routebroker.KindPing:
@@ -487,11 +551,11 @@ func (a *Adapter) publisherStreamReader(ctx context.Context, brokerConn net.Conn
 		}
 		if err != nil {
 			writeMu.Lock()
-			_ = routebroker.WriteFrame(brokerConn, routebroker.Frame{Kind: routebroker.KindClose, Stream: id}, maxPayload)
+			// EOF on the publisher target is a read-side half-close. The
+			// consumer may still send reverse-direction data until M2 closes
+			// the stream explicitly.
+			_ = routebroker.WriteFrame(brokerConn, routebroker.Frame{Kind: routebroker.KindHalfClose, Stream: id}, maxPayload)
 			writeMu.Unlock()
-			streamsMu.Lock()
-			delete(streams, id)
-			streamsMu.Unlock()
 			return
 		}
 	}

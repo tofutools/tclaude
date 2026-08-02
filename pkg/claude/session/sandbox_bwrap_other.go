@@ -52,6 +52,7 @@ func tclaudeLayerCommandWithRouteSlots(
 	[]string,
 	sandboxpolicy.MountPlan,
 	[]int,
+	*DarwinRouteSlotReservation,
 	string,
 ) (string, error) {
 	return "", fmt.Errorf("Darwin route slots are unsupported on this platform")

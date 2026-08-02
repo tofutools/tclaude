@@ -37,15 +37,15 @@ func DarwinRouteSlotCount() (int, error) {
 // launch. It intentionally does not scan the host or retry collisions.
 func ValidateDarwinRouteSlots(slots []int) error {
 	if len(slots) > DarwinRouteSlotCountMax {
-		return fmt.Errorf("Darwin route slot pool has %d entries; maximum is %d", len(slots), DarwinRouteSlotCountMax)
+		return fmt.Errorf("darwin route slot pool has %d entries; maximum is %d", len(slots), DarwinRouteSlotCountMax)
 	}
 	seen := make(map[int]struct{}, len(slots))
 	for _, port := range slots {
 		if port < 1 || port > 65535 {
-			return fmt.Errorf("Darwin route slot port %d is outside TCP port range", port)
+			return fmt.Errorf("darwin route slot port %d is outside TCP port range", port)
 		}
 		if _, ok := seen[port]; ok {
-			return fmt.Errorf("Darwin route slot port %d is duplicated", port)
+			return fmt.Errorf("darwin route slot port %d is duplicated", port)
 		}
 		seen[port] = struct{}{}
 	}
@@ -76,14 +76,14 @@ func EncodeDarwinRouteSlots(slots []int) (string, error) {
 func ParseDarwinRouteSlots(raw string) ([]int, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return nil, fmt.Errorf("Darwin route slot pool is empty")
+		return nil, fmt.Errorf("darwin route slot pool is empty")
 	}
 	parts := strings.Split(raw, ",")
 	slots := make([]int, len(parts))
 	for i, part := range parts {
 		port, err := strconv.Atoi(strings.TrimSpace(part))
 		if err != nil {
-			return nil, fmt.Errorf("Darwin route slot %q is not an integer", part)
+			return nil, fmt.Errorf("darwin route slot %q is not an integer", part)
 		}
 		slots[i] = port
 	}
@@ -105,6 +105,18 @@ func (r *DarwinRouteSlotReservation) Slots() []int {
 		return nil
 	}
 	return append([]int(nil), r.slots...)
+}
+
+func sameDarwinRouteSlots(a, b []int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func (r *DarwinRouteSlotReservation) Release() error {

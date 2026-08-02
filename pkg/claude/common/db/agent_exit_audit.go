@@ -715,6 +715,9 @@ func markSessionExitedAndRecordObservationOnce(
 	if err := markAgentRouteConsumerLeasesLostTx(tx, meta.AgentID, meta.ConvID, o.ExpectedGeneration, "consumer session exited"); err != nil {
 		return false, AgentExitRecordResult{}, err
 	}
+	if err := MarkDarwinRouteLaunchClosedTx(tx, meta.AgentID, meta.ConvID, o.ExpectedGeneration, time.Now()); err != nil {
+		return false, AgentExitRecordResult{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return false, AgentExitRecordResult{}, err
 	}
@@ -786,6 +789,9 @@ func recordSessionEndExitObservationOnce(o AgentExitObservation) (bool, AgentExi
 		return false, AgentExitRecordResult{}, err
 	}
 	if err := markAgentRouteConsumerLeasesLostTx(tx, meta.AgentID, meta.ConvID, o.ExpectedGeneration, "consumer session exited"); err != nil {
+		return false, AgentExitRecordResult{}, err
+	}
+	if err := MarkDarwinRouteLaunchClosedTx(tx, meta.AgentID, meta.ConvID, o.ExpectedGeneration, time.Now()); err != nil {
 		return false, AgentExitRecordResult{}, err
 	}
 	if err := tx.Commit(); err != nil {

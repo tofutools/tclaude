@@ -227,10 +227,11 @@ func tclaudeLayerCommandWithRouteSlots(
 	socketPaths []string,
 	plan sandboxpolicy.MountPlan,
 	routeSlots []int,
+	_ *DarwinRouteSlotReservation,
 	harnessCommand string,
 ) (string, error) {
 	if len(routeSlots) != 0 {
-		return "", fmt.Errorf("Darwin route slots are unsupported on Linux")
+		return "", fmt.Errorf("darwin route slots are unsupported on Linux")
 	}
 	return tclaudeLayerCommand(
 		binary, phase0WriteDirs, privateWriteDirs, finalHideDirs,

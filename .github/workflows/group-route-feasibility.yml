@@ -7,6 +7,10 @@ on:
       - .github/workflows/group-route-feasibility.yml
       - scripts/group-route-feasibility/**
       - docs/group-route-feasibility.md
+      - pkg/claude/agentd/**
+      - pkg/claude/common/db/**
+      - pkg/claude/routeadapter/**
+      - pkg/claude/session/**
   workflow_dispatch:
 
 permissions:
@@ -90,9 +94,51 @@ jobs:
           set -o pipefail
           scripts/group-route-feasibility/run.sh 2>&1 | tee "$RUNNER_TEMP/group-route-feasibility-darwin.log"
 
+      - name: Run TCL-951 exact-head production route smoke
+        shell: bash
+        env:
+          TCLAUDE_DARWIN_ROUTE_CAPABILITY_SMOKE: "1"
+        run: |
+          set -o pipefail
+          go test ./pkg/claude/session ./pkg/claude/routeadapter \
+            -run 'TestDarwinRouteCapabilityExactHeadSmoke|TestAdapter' -count=1 -timeout 600s -v \
+            2>&1 | tee "$RUNNER_TEMP/tcl-951-darwin-route-smoke.log"
+          grep -q 'TCL-951 exact checked-out head:' "$RUNNER_TEMP/tcl-951-darwin-route-smoke.log"
+          grep -q 'TCL-951 disclosure: Partial' "$RUNNER_TEMP/tcl-951-darwin-route-smoke.log"
+          grep -q 'TCL-947 Darwin evidence: POSITIVE' "$RUNNER_TEMP/group-route-feasibility-darwin.log"
+          grep -q 'TCL-947 Darwin localhost: LIMITATION' "$RUNNER_TEMP/group-route-feasibility-darwin.log"
+
+      - name: Compile preserved proxy and OpenCode route cells
+        shell: bash
+        run: |
+          set -o pipefail
+          go test ./pkg/claude/session \
+            -run 'TestBuildTclaudeLayerLaunchSpec|TestSeatbeltProxyFloorCanCarveOneManagedServerBind' \
+            -count=1 -timeout 600s 2>&1 | tee "$RUNNER_TEMP/tcl-951-preserved-cells.log"
+
+      - name: Run Darwin route authority lifecycle cells
+        shell: bash
+        run: |
+          set -o pipefail
+          go test ./pkg/claude/agentd \
+            -run 'TestRoutesBroker_DatabaseAuthorityClosesWithdrawnChannels|TestRoutesAuthority_ExactGroupAndIndependentCapabilities|TestRoutesAuthority_OrdinaryPublisherExitWithdrawsLeases|TestRoutesBroker_OrdinaryConsumerExitClosesItsLease|TestRoutesAuthority_GenerationsPublisherLossAndRename' \
+            -count=1 -timeout 600s -v 2>&1 | tee "$RUNNER_TEMP/tcl-951-route-authority.log"
+          for marker in \
+            TestRoutesBroker_DatabaseAuthorityClosesWithdrawnChannels \
+            TestRoutesAuthority_ExactGroupAndIndependentCapabilities \
+            TestRoutesAuthority_OrdinaryPublisherExitWithdrawsLeases \
+            TestRoutesBroker_OrdinaryConsumerExitClosesItsLease \
+            TestRoutesAuthority_GenerationsPublisherLossAndRename; do
+            grep -q -- "--- PASS: $marker" "$RUNNER_TEMP/tcl-951-route-authority.log"
+          done
+
       - name: Upload Darwin evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: group-route-feasibility-darwin
-          path: ${{ runner.temp }}/group-route-feasibility-darwin.log
+          path: |
+            ${{ runner.temp }}/group-route-feasibility-darwin.log
+            ${{ runner.temp }}/tcl-951-darwin-route-smoke.log
+            ${{ runner.temp }}/tcl-951-preserved-cells.log
+            ${{ runner.temp }}/tcl-951-route-authority.log

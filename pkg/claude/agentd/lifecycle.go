@@ -3727,6 +3727,8 @@ type spawnParams struct {
 	// (see appendSandboxImplementationFlag). Resolved and host-gated at the
 	// spawn boundary before the params are built.
 	SandboxImplementation string
+	DarwinRouteCapable    bool
+	DarwinRouteAgentID    string
 	// AllowUnenforcedSandbox is the already-authorized dashboard-only decision
 	// to widen the exact closed-network/EnforceNone refusal. It is birth-only:
 	// resume, reincarnate, clone, and every non-dashboard spawn path leave it
@@ -4717,6 +4719,8 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		Sandbox:                    p.SandboxMode,
 		SandboxChosenBy:            p.SandboxModeSource,
 		SandboxImplementation:      p.SandboxImplementation,
+		DarwinRouteCapable:         p.DarwinRouteCapable,
+		DarwinRouteAgentID:         p.DarwinRouteAgentID,
 		AllowUnenforcedSandbox:     p.AllowUnenforcedSandbox,
 		AskUserQuestionTimeout:     p.AskUserQuestionTimeout,
 		Approval:                   p.ApprovalPolicy,
@@ -4823,6 +4827,10 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	// an unknown name (returns nil), and SupportsLaunchEnrollment is nil-safe,
 	// so a bad harness degrades to the legacy path rather than panicking.
 	launchEnroll := spawnHarness.SupportsLaunchEnrollment() && !spawnUsesLegacyInjection()
+	if p.DarwinRouteCapable && !launchEnroll {
+		return nil, &spawnFailure{http.StatusUnprocessableEntity, "darwin_route_launch",
+			"Darwin route-capable launches require the preset-conversation launch seam"}
+	}
 	var preConvID string
 	var preMsgID int64
 	var preActorCreated bool
@@ -4859,6 +4867,26 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		preMsgID = mid
 		preActorCreated = actorCreated
 		spawnArgs.SessionID = preConvID
+		if p.DarwinRouteCapable {
+			resolvedAgentID, resolveErr := db.AgentIDForConv(preConvID)
+			if resolveErr != nil {
+				rollbackSpawnEnrollment(g, preConvID, preMsgID, preActorCreated)
+				return nil, &spawnFailure{http.StatusInternalServerError, "darwin_route_launch",
+					"resolve Darwin route agent identity: " + resolveErr.Error()}
+			}
+			if p.DarwinRouteAgentID != "" && p.DarwinRouteAgentID != resolvedAgentID {
+				rollbackSpawnEnrollment(g, preConvID, preMsgID, preActorCreated)
+				return nil, &spawnFailure{http.StatusConflict, "darwin_route_launch",
+					"darwin route agent identity does not match conversation owner"}
+			}
+			p.DarwinRouteAgentID = resolvedAgentID
+			if p.DarwinRouteAgentID == "" {
+				rollbackSpawnEnrollment(g, preConvID, preMsgID, preActorCreated)
+				return nil, &spawnFailure{http.StatusConflict, "darwin_route_launch",
+					"Darwin route-capable launch has no stable agent identity"}
+			}
+			spawnArgs.DarwinRouteAgentID = p.DarwinRouteAgentID
+		}
 		// Match the legacy path's title gate: a name that isn't a valid rename
 		// title is not applied as the launch --name (claude records it as the
 		// conversation title), but it is still kept as the pending name (set by
@@ -6664,6 +6692,7 @@ func sessionNewArgs(a clcommon.SpawnArgs) []string {
 	args = appendHarnessFlag(args, a.Harness)
 	args = appendSandboxArgs(args, a.Harness, a.Sandbox)
 	args = appendSandboxImplementationFlag(args, a.SandboxImplementation)
+	args = appendDarwinRouteFlags(args, a.DarwinRouteCapable, a.DarwinRouteAgentID)
 	args = appendSandboxChosenByFlag(args, a.SandboxChosenBy)
 	args = appendAskTimeoutFlag(args, a.AskUserQuestionTimeout)
 	args = appendApprovalFlag(args, a.Approval)
@@ -6798,6 +6827,7 @@ func sessionResumeArgs(a clcommon.SpawnArgs) []string {
 	args = appendHarnessFlag(args, a.Harness)
 	args = appendSandboxArgs(args, a.Harness, a.Sandbox)
 	args = appendSandboxImplementationFlag(args, a.SandboxImplementation)
+	args = appendDarwinRouteFlags(args, a.DarwinRouteCapable, a.DarwinRouteAgentID)
 	args = appendSandboxChosenByFlag(args, a.SandboxChosenBy)
 	args = appendAskTimeoutFlag(args, a.AskUserQuestionTimeout)
 	args = appendApprovalFlag(args, a.Approval)
@@ -6916,6 +6946,17 @@ func appendSandboxImplementationFlag(args []string, implementation string) []str
 	if err == nil && strings.TrimSpace(implementation) != "" &&
 		normalized != sandboxpolicy.ImplementationHarnessBuiltin {
 		args = append(args, "--sandbox-impl", string(normalized))
+	}
+	return args
+}
+
+func appendDarwinRouteFlags(args []string, capable bool, agentID string) []string {
+	if !capable {
+		return args
+	}
+	args = append(args, "--darwin-route-capable")
+	if strings.TrimSpace(agentID) != "" {
+		args = append(args, "--darwin-route-agent-id", agentID)
 	}
 	return args
 }

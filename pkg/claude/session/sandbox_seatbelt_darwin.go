@@ -184,11 +184,12 @@ func tclaudeLayerCommandWithRouteSlots(
 	socketPaths []string,
 	plan sandboxpolicy.MountPlan,
 	routeSlots []int,
+	preReservation *DarwinRouteSlotReservation,
 	harnessCommand string,
 ) (string, error) {
 	return tclaudeLayerDarwinCommandWithRouteSlots(
 		binary, phase0WriteDirs, privateWriteDirs, finalHideDirs,
-		readOnlyBinds, socketPaths, plan, harnessCommand, 0, 0, routeSlots)
+		readOnlyBinds, socketPaths, plan, harnessCommand, 0, 0, routeSlots, preReservation)
 }
 
 func tclaudeLayerDarwinCommand(
@@ -206,7 +207,7 @@ func tclaudeLayerDarwinCommand(
 	return tclaudeLayerDarwinCommandWithRouteSlots(
 		binary, phase0WriteDirs, privateWriteDirs, finalHideDirs,
 		readOnlyBinds, socketPaths, plan, harnessCommand,
-		preserveFDs, loopbackBindPort, nil)
+		preserveFDs, loopbackBindPort, nil, nil)
 }
 
 func tclaudeLayerDarwinCommandWithRouteSlots(
@@ -221,11 +222,12 @@ func tclaudeLayerDarwinCommandWithRouteSlots(
 	preserveFDs int,
 	loopbackBindPort int,
 	routeSlots []int,
+	preReservation *DarwinRouteSlotReservation,
 ) (string, error) {
 	if err := ValidateDarwinRouteSlots(routeSlots); err != nil {
 		return "", err
 	}
-	if len(routeSlots) > 0 && !tclaudeLayerPlanDeploysProxy(plan) {
+	if len(routeSlots) > 0 && !tclaudeLayerPlanDeploysProxy(plan) && preReservation == nil {
 		reservation, reserveErr := ReserveDarwinRouteSlotsAt(routeSlots)
 		if reserveErr != nil {
 			return "", fmt.Errorf("reserve Darwin route slots before Seatbelt rendering: %w", reserveErr)
@@ -233,6 +235,11 @@ func tclaudeLayerDarwinCommandWithRouteSlots(
 		defer func() { _ = reservation.Release() }()
 	}
 	if tclaudeLayerPlanDeploysProxy(plan) {
+		if preReservation != nil {
+			if err := preReservation.Release(); err != nil {
+				return "", fmt.Errorf("release Darwin route slots for proxy launcher: %w", err)
+			}
+		}
 		return darwinProxyLauncherCommand(darwinProxyLaunchSpec{
 			Binary:           binary,
 			Phase0WriteDirs:  phase0WriteDirs,

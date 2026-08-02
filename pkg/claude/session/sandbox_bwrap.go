@@ -50,7 +50,8 @@ type TclaudeLayerLaunchContract struct {
 	NetworkEngine sandboxpolicy.NetworkEngine `json:"network_engine,omitempty"`
 	// DarwinRouteSlots is the exact bounded TCP pool admitted by a
 	// route-capable Darwin launch. It has no effect on Linux.
-	DarwinRouteSlots []int `json:"darwin_route_slots,omitempty"`
+	DarwinRouteSlots       []int                       `json:"darwin_route_slots,omitempty"`
+	DarwinRouteReservation *DarwinRouteSlotReservation `json:"-"`
 }
 
 type TclaudeLayerOpenCodeControl struct {
@@ -111,7 +112,8 @@ type TclaudeLayerLaunchInput struct {
 	NetworkEngine sandboxpolicy.NetworkEngine
 	// DarwinRouteSlots is populated only by the route-capable Darwin launch
 	// seam. Registry authority and leases remain in agentd.
-	DarwinRouteSlots []int
+	DarwinRouteSlots       []int
+	DarwinRouteReservation *DarwinRouteSlotReservation
 }
 
 // tclaudeLayerContractNetworkEngine derives the launch contract's engine from
@@ -189,6 +191,9 @@ func TclaudeLayerNetworkEngine(
 func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLaunchSpec, error) {
 	if err := ValidateDarwinRouteSlots(input.DarwinRouteSlots); err != nil {
 		return TclaudeLayerLaunchSpec{}, err
+	}
+	if input.DarwinRouteReservation != nil && !sameDarwinRouteSlots(input.DarwinRouteSlots, input.DarwinRouteReservation.Slots()) {
+		return TclaudeLayerLaunchSpec{}, fmt.Errorf("darwin route reservation does not match launch slots")
 	}
 	cwd := canonicalSandboxPath(input.Cwd)
 	if cwd == "" {
@@ -295,17 +300,18 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 		return TclaudeLayerLaunchSpec{}, err
 	}
 	contract := TclaudeLayerLaunchContract{
-		HarnessName:       input.HarnessName,
-		StateRoot:         stateRoot,
-		StateDirs:         stateDirs,
-		ReadOnlyStateDirs: readOnlyStateDirs,
-		Environment:       append([]sandboxpolicy.EnvironmentEntry(nil), input.Environment...),
-		FinalHideDirs:     append([]string(nil), input.FinalHideDirs...),
-		ReadOnlyBinds:     append([]TclaudeLayerReadOnlyBind(nil), input.ReadOnlyBinds...),
-		WriteDirs:         contractWriteDirs,
-		ProfileFilesystem: profileFilesystem,
-		OpenCodeControl:   input.OpenCodeControl,
-		DarwinRouteSlots:  append([]int(nil), input.DarwinRouteSlots...),
+		HarnessName:            input.HarnessName,
+		StateRoot:              stateRoot,
+		StateDirs:              stateDirs,
+		ReadOnlyStateDirs:      readOnlyStateDirs,
+		Environment:            append([]sandboxpolicy.EnvironmentEntry(nil), input.Environment...),
+		FinalHideDirs:          append([]string(nil), input.FinalHideDirs...),
+		ReadOnlyBinds:          append([]TclaudeLayerReadOnlyBind(nil), input.ReadOnlyBinds...),
+		WriteDirs:              contractWriteDirs,
+		ProfileFilesystem:      profileFilesystem,
+		OpenCodeControl:        input.OpenCodeControl,
+		DarwinRouteSlots:       append([]int(nil), input.DarwinRouteSlots...),
+		DarwinRouteReservation: input.DarwinRouteReservation,
 	}
 	contract.NetworkEngine, err = tclaudeLayerContractNetworkEngine(effective, input)
 	if err != nil {
@@ -951,7 +957,7 @@ func WrapTclaudeLayerSpec(
 	}
 	if len(spec.Contract.DarwinRouteSlots) > 0 {
 		if runtime.GOOS != "darwin" {
-			return "", fmt.Errorf("Darwin route slots are unsupported on %s", runtime.GOOS)
+			return "", fmt.Errorf("darwin route slots are unsupported on %s", runtime.GOOS)
 		}
 		return tclaudeLayerCommandWithRouteSlots(
 			binary,
@@ -962,6 +968,7 @@ func WrapTclaudeLayerSpec(
 			socketPaths,
 			plan,
 			spec.Contract.DarwinRouteSlots,
+			spec.Contract.DarwinRouteReservation,
 			harnessCommand,
 		)
 	}

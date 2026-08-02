@@ -4,86 +4,94 @@ package agentd
 
 import (
 	"context"
+	"database/sql"
 	"errors"
-	"os"
 	"sync"
+	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/routeadapter"
 	"github.com/tofutools/tclaude/pkg/claude/routebroker"
-	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
-// The adapter is deliberately opt-in. A daemon with no exact route-slot
-// environment remains an M1 registry/M2 broker only; enabling the Darwin
-// endpoint bridge requires the same bounded pool that the launch contract
-// exposed to route-capable children.
+// The adapter is deliberately not configured from an environment variable.
+// A route endpoint is admitted only after the caller's exact launch
+// generation has a durable slot contract in SQLite.
 var darwinRouteAdapterState struct {
 	sync.Mutex
 	adapter *routeadapter.Adapter
-	slots   []int
+	cancel  context.CancelFunc
 }
 
 func configuredDarwinRouteAdapter() (*routeadapter.Adapter, bool, error) {
-	raw := os.Getenv(session.DarwinRouteSlotsEnv)
-	if raw == "" {
-		return nil, false, nil
-	}
-	slots, err := session.ParseDarwinRouteSlots(raw)
-	if err != nil {
-		return nil, true, err
-	}
 	darwinRouteAdapterState.Lock()
 	defer darwinRouteAdapterState.Unlock()
 	if darwinRouteAdapterState.adapter != nil {
-		if !sameIntSlice(darwinRouteAdapterState.slots, slots) {
-			return nil, true, errors.New("Darwin route slot pool changed while agentd is running")
-		}
 		return darwinRouteAdapterState.adapter, true, nil
 	}
-	adapter, err := routeadapter.New(GroupRouteBroker(), slots)
+	adapter, err := routeadapter.New(GroupRouteBroker(), nil)
 	if err != nil {
 		return nil, true, err
 	}
+	ctx, cancel := context.WithCancel(context.Background())
 	darwinRouteAdapterState.adapter = adapter
-	darwinRouteAdapterState.slots = append([]int(nil), slots...)
+	darwinRouteAdapterState.cancel = cancel
+	go reconcileDarwinRouteAdapter(ctx, adapter)
 	return adapter, true, nil
 }
 
-func sameIntSlice(a, b []int) bool {
-	if len(a) != len(b) {
-		return false
+func darwinRouteLaunch(agentID, convID, generation string) (*db.DarwinRouteLaunch, bool, error) {
+	launch, err := db.GetDarwinRouteLaunch(agentID, convID, generation)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, false, nil
 	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
+	if err != nil {
+		return nil, true, err
 	}
-	return true
+	if launch.State != db.DarwinRouteLaunchActive {
+		return nil, true, errors.New("Darwin route launch is stale or not active")
+	}
+	return launch, true, nil
 }
 
 func routeAdapterPublish(ctx context.Context, route *db.AgentRoute) (bool, error) {
-	adapter, enabled, err := configuredDarwinRouteAdapter()
+	launch, enabled, err := darwinRouteLaunch(route.PublisherAgentID, route.PublisherConvID, route.PublisherLaunchGeneration)
 	if err != nil || !enabled {
 		return enabled, err
 	}
-	_, err = adapter.Publish(ctx, routeadapter.Publisher{
+	adapter, _, err := configuredDarwinRouteAdapter()
+	if err != nil {
+		return true, err
+	}
+	_, err = adapter.PublishWithSlots(ctx, routeadapter.Publisher{
 		RouteID: route.ID, AgentID: route.PublisherAgentID, ConvID: route.PublisherConvID,
 		LaunchGeneration: route.PublisherLaunchGeneration, GroupGeneration: route.GroupGeneration,
 		Target: route.Target,
-	})
+	}, launch.Slots)
 	return true, err
 }
 
 func routeAdapterOpen(ctx context.Context, route *db.AgentRoute, lease *db.AgentRouteLease) (string, bool, error) {
-	adapter, enabled, err := configuredDarwinRouteAdapter()
+	consumer, enabled, err := darwinRouteLaunch(lease.ConsumerAgentID, lease.ConsumerConvID, lease.ConsumerLaunchGeneration)
 	if err != nil || !enabled {
 		return "", enabled, err
 	}
-	endpoint, err := adapter.Open(ctx, routeadapter.Consumer{
+	// A consumer contract alone cannot create a superficially successful
+	// endpoint: the publisher must have its own active route-capable contract.
+	if _, publisherEnabled, publisherErr := darwinRouteLaunch(
+		route.PublisherAgentID, route.PublisherConvID, route.PublisherLaunchGeneration); publisherErr != nil {
+		return "", true, publisherErr
+	} else if !publisherEnabled {
+		return "", true, errors.New("route publisher launch is not route-capable")
+	}
+	adapter, _, err := configuredDarwinRouteAdapter()
+	if err != nil {
+		return "", true, err
+	}
+	endpoint, err := adapter.OpenWithSlots(ctx, routeadapter.Consumer{
 		LeaseID: lease.ID, RouteID: route.ID, AgentID: lease.ConsumerAgentID, ConvID: lease.ConsumerConvID,
 		LaunchGeneration: lease.ConsumerLaunchGeneration, GroupGeneration: lease.GroupGeneration,
-	})
+	}, consumer.Slots)
 	return endpoint, true, err
 }
 
@@ -108,16 +116,21 @@ func routeAdapterCloseLease(leaseID string) {
 func routeAdapterCloseAll() {
 	darwinRouteAdapterState.Lock()
 	adapter := darwinRouteAdapterState.adapter
+	cancel := darwinRouteAdapterState.cancel
 	darwinRouteAdapterState.adapter = nil
-	darwinRouteAdapterState.slots = nil
+	darwinRouteAdapterState.cancel = nil
 	darwinRouteAdapterState.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 	if adapter != nil {
 		adapter.Close()
 	}
 }
 
 func routeAdapterBrokerEvent(event routebroker.Event) {
-	if event.Kind != "authority-revoked" && event.Kind != "publisher-detached" {
+	if event.Kind != "authority-revoked" && event.Kind != "publisher-detached" &&
+		event.Kind != "publisher-rejected" && event.Kind != "consumer-rejected" {
 		return
 	}
 	darwinRouteAdapterState.Lock()
@@ -128,7 +141,41 @@ func routeAdapterBrokerEvent(event routebroker.Event) {
 	}
 	if event.Role == "publisher" {
 		adapter.CloseRoute(event.RouteID)
-	} else if event.Kind == "authority-revoked" && event.Role == "consumer" {
+	} else if event.Role == "consumer" &&
+		(event.Kind == "authority-revoked" || event.Kind == "consumer-rejected") {
 		adapter.CloseConsumer(event.RouteID, event.AgentID)
+	}
+}
+
+func reconcileDarwinRouteAdapter(ctx context.Context, adapter *routeadapter.Adapter) {
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			reconcileDarwinRouteAdapterOnce(adapter)
+		}
+	}
+}
+
+func reconcileDarwinRouteAdapterOnce(adapter *routeadapter.Adapter) {
+	for _, leaseID := range adapter.LeaseIDs() {
+		lease, err := db.GetAgentRouteLease(leaseID)
+		if err != nil || lease == nil || lease.State != db.RouteLeaseOpen {
+			adapter.CloseLease(leaseID)
+		}
+	}
+	for _, routeID := range adapter.RouteIDs() {
+		route, err := db.GetAgentRoute(routeID)
+		if err != nil || route == nil || route.State != db.RouteStateReady || !routePublisherLive(route) {
+			adapter.CloseRoute(routeID)
+			continue
+		}
+		launch, enabled, launchErr := darwinRouteLaunch(route.PublisherAgentID, route.PublisherConvID, route.PublisherLaunchGeneration)
+		if launchErr != nil || !enabled || launch == nil {
+			adapter.CloseRoute(routeID)
+		}
 	}
 }

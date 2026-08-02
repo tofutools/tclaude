@@ -31,6 +31,27 @@ func TestSessionArgs_ManagedLaunchMarker(t *testing.T) {
 	}
 }
 
+func TestSessionArgs_DarwinRouteCapabilityIsExplicitAndGenerationIdentityCarries(t *testing.T) {
+	for name, args := range map[string][]string{
+		"new": sessionNewArgs(clcommon.SpawnArgs{
+			Label: "lbl", Cwd: "/tmp/x", DarwinRouteCapable: true, DarwinRouteAgentID: "agt_test",
+		}),
+		"resume": sessionResumeArgs(clcommon.SpawnArgs{
+			ConvID: "conv-1", Cwd: "/tmp/x", DarwinRouteCapable: true, DarwinRouteAgentID: "agt_test",
+		}),
+	} {
+		if !slices.Contains(args, "--darwin-route-capable") {
+			t.Fatalf("%s route capability must be explicit in argv: %v", name, args)
+		}
+		if i := slices.Index(args, "--darwin-route-agent-id"); i < 0 || i+1 >= len(args) || args[i+1] != "agt_test" {
+			t.Fatalf("%s stable route agent identity missing from argv: %v", name, args)
+		}
+	}
+	if args := sessionNewArgs(clcommon.SpawnArgs{Label: "lbl", Cwd: "/tmp/x"}); slices.Contains(args, "--darwin-route-capable") {
+		t.Fatalf("ordinary launches must not activate Darwin route capability: %v", args)
+	}
+}
+
 func TestSessionNewArgs_InternalWriteProofFlags(t *testing.T) {
 	bare := sessionNewArgs(clcommon.SpawnArgs{Label: "lbl", Cwd: "/tmp/x"})
 	if slices.Contains(bare, "--cwd-write-proof") {

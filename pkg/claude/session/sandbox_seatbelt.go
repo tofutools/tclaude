@@ -107,7 +107,7 @@ func renderSeatbeltProfileWithLoopbackBindAndRouteSlots(
 		return "", nil, err
 	}
 	if len(routeSlots) > 0 && tclaudeLayerPlanFloorPosture(plan) == sandboxpolicy.NetworkHostOpen {
-		return "", nil, fmt.Errorf("Darwin route slots require an isolated or filtered Seatbelt network floor")
+		return "", nil, fmt.Errorf("darwin route slots require an isolated or filtered Seatbelt network floor")
 	}
 	if loopbackBindPort < 0 || loopbackBindPort > 65535 {
 		return "", nil, fmt.Errorf("invalid Seatbelt loopback bind port %d", loopbackBindPort)
@@ -1039,6 +1039,10 @@ func appendSeatbeltIsolatedNetworkRules(
 		profile.WriteString("(deny network-bind)\n")
 	} else {
 		sort.Ints(bindSlots)
+		if len(bindSlots) == 1 && len(routeSlots) == 0 && loopbackBindPort != 0 {
+			fmt.Fprintf(profile, "(deny network-bind (require-not (local tcp \"localhost:%d\")))\n", bindSlots[0])
+			return params
+		}
 		profile.WriteString("(deny network-bind\n  (require-all\n")
 		for _, port := range bindSlots {
 			// Seatbelt's localhost token is host-wide. This exact exception is
