@@ -551,17 +551,13 @@ func TestDarwinRouteCapabilityIntegratedSmoke(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, db.DarwinRouteLaunchActive, publisherStillActive.State, "idle consumer cleanup must retain unrelated publisher claim")
 
-	// Consumer B is launched only after A's exact slot is released. Its real
-	// adapter endpoint must use B's exact newly claimed pool and transfer bytes
-	// before the publisher-death assertion below.
+	// Consumer B is launched only after A's exact slot is released. Reuse the
+	// still-published idle route so the publisher's one-slot contract remains
+	// intact; B's real adapter endpoint must use its exact newly claimed pool
+	// and transfer bytes before the publisher-death assertion below.
 	consumerB := startDarwinRouteSmokeLaunch(t, home, helper, "consumer", consumerBConv, consumerBAgent)
 	reaper.Tick()
-	rec, routeDeath := serveDarwinRouteSmoke(t, handler, http.MethodPost, "/v1/routes/publish", publisherConv, map[string]any{
-		"group": groupName, "name": "publisher-death", "target": target, "launch_generation": publisher.gen,
-	})
-	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
-	waitDarwinRouteSmokePublisherChannels(t, 2)
-	deathRouteID := routeDeath["id"].(string)
+	deathRouteID := idleRouteID
 	rec, leaseB := serveDarwinRouteSmoke(t, handler, http.MethodPost, "/v1/routes/open", consumerBConv, map[string]any{
 		"route_id": deathRouteID, "group": groupName, "launch_generation": consumerB.gen,
 	})
