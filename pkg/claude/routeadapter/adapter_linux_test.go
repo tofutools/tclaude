@@ -321,7 +321,8 @@ func TestRunConsumerDoesNotReopenARefusedOpen(t *testing.T) {
 func TestRunConsumerGivesUpAfterTheRetryWindow(t *testing.T) {
 	client, peer, _ := consumerOpenFixture(t)
 
-	deadline := time.Now().Add(openRetryWindow + 5*time.Second)
+	started := time.Now()
+	deadline := started.Add(openRetryWindow + 5*time.Second)
 	opens := 0
 	for time.Now().Before(deadline) {
 		_ = peer.SetReadDeadline(time.Now().Add(time.Second))
@@ -342,6 +343,10 @@ func TestRunConsumerGivesUpAfterTheRetryWindow(t *testing.T) {
 	}
 	if opens < 2 {
 		t.Fatalf("open attempts = %d, want more than one", opens)
+	}
+	// Retries must span the window rather than burning through instantly.
+	if elapsed := time.Since(started); elapsed < openRetryWindow {
+		t.Fatalf("gave up after %s, want at least the %s window", elapsed, openRetryWindow)
 	}
 	if err := client.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
 		t.Fatal(err)
@@ -424,5 +429,57 @@ func TestConsumerReachesAPublisherThatAttachesLate(t *testing.T) {
 	}
 	if string(response) != "reply:opaque" {
 		t.Fatalf("response = %q", response)
+	}
+	// Prove the reopen was actually exercised: the first open was refused
+	// while no publisher was attached.
+	if got := broker.Metrics().RejectedStreams; got == 0 {
+		t.Fatal("no stream was refused, so the reopen path was never taken")
+	}
+}
+
+func TestRunConsumerReleasesAPendingOpenOnStreamClose(t *testing.T) {
+	client, peer, _ := consumerOpenFixture(t)
+
+	open := readFrameWithTimeout(t, peer)
+	if open.Kind != routebroker.KindOpen {
+		t.Fatalf("first frame = %#v, want OPEN", open)
+	}
+	// A CLOSE instead of an open answer must end the client connection now,
+	// not leave the opener parked on an answer that will never arrive.
+	if err := routebroker.WriteFrame(peer, routebroker.Frame{Kind: routebroker.KindClose, Stream: open.Stream}, routebroker.MaxFramePayload); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Read(make([]byte, 1)); err == nil {
+		t.Fatal("client connection stayed open after the stream was closed")
+	}
+	_ = peer.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+	if frame, err := routebroker.ReadFrame(peer, routebroker.MaxFramePayload); err == nil {
+		t.Fatalf("unexpected frame after stream close: %#v", frame)
+	}
+}
+
+func TestRunConsumerGivesUpOnAnUnansweredOpen(t *testing.T) {
+	if openAnswerTimeout <= openRetryWindow {
+		t.Fatalf("openAnswerTimeout %s must exceed the retry window %s", openAnswerTimeout, openRetryWindow)
+	}
+	if testing.Short() {
+		t.Skip("spends the full unanswered-open bound")
+	}
+	client, peer, _ := consumerOpenFixture(t)
+
+	open := readFrameWithTimeout(t, peer)
+	if open.Kind != routebroker.KindOpen {
+		t.Fatalf("first frame = %#v, want OPEN", open)
+	}
+	// Never answer. The client must not be held past the answer bound; this
+	// only asserts the bound exists and is not the kernel's connect timeout.
+	if err := client.SetReadDeadline(time.Now().Add(openAnswerTimeout + 5*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Read(make([]byte, 1)); err == nil {
+		t.Fatal("client connection stayed open past the unanswered-open bound")
 	}
 }

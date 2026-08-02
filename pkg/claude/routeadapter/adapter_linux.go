@@ -49,6 +49,13 @@ const (
 	openRetryWindow         = 2 * time.Second
 	openRetryInitialBackoff = 25 * time.Millisecond
 	openRetryMaxBackoff     = 250 * time.Millisecond
+	// publisherDialTimeout keeps a target that silently drops SYNs from
+	// holding a stream open for the kernel's connect timeout.
+	publisherDialTimeout = 5 * time.Second
+	// openAnswerTimeout bounds one unanswered OPEN. It is comfortably longer
+	// than the publisher's own dial timeout, so it only fires when the answer
+	// is genuinely lost rather than merely slow.
+	openAnswerTimeout = 10 * time.Second
 )
 
 // openAnswerChannelGone is a local, never-transmitted refusal used to release
@@ -181,7 +188,7 @@ func RunPublisher(ctx context.Context, channel net.Conn, rawTarget string) error
 }
 
 func openPublisherStream(ctx context.Context, target string, streamID uint64, streams *publisherStreams, w *connWriter) {
-	dialer := net.Dialer{}
+	dialer := net.Dialer{Timeout: publisherDialTimeout}
 	conn, err := dialer.DialContext(ctx, "tcp", target)
 	if err != nil {
 		_ = w.write(routebroker.Frame{Kind: routebroker.KindOpenError, Stream: streamID, Payload: []byte(routebroker.OpenErrorTargetUnavailable)})
@@ -327,10 +334,23 @@ func openConsumerStream(ctx context.Context, conn net.Conn, streams *consumerStr
 			_ = conn.Close()
 			return
 		}
+		// The answer itself is bounded too. A publisher whose target neither
+		// accepts nor refuses leaves OPEN unanswered, and the local client
+		// would otherwise sit unread for the kernel's connect timeout.
+		answerTimer := time.NewTimer(openAnswerTimeout)
 		var refusal []byte
 		select {
 		case refusal = <-answer:
+			answerTimer.Stop()
+		case <-answerTimer.C:
+			streams.dropPending(id)
+			_ = conn.Close()
+			return
 		case <-ctx.Done():
+			answerTimer.Stop()
+			// The stream may already exist on the broker side. Nothing sends
+			// CLOSE for it here because the same cancellation tears the whole
+			// channel down, and the broker reclaims its streams on detach.
 			streams.dropPending(id)
 			_ = conn.Close()
 			return
@@ -537,15 +557,23 @@ func (s *consumerStreams) addPending(conn net.Conn) (uint64, chan []byte) {
 // stream.
 func (s *consumerStreams) resolveOpen(id uint64, payload []byte) bool {
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.resolvePendingLocked(id, payload)
+}
+
+// resolvePendingLocked hands an answer to a waiting opener, if there is one.
+// The send never blocks: the channel is buffered and single-use, so an answer
+// whose opener has already left must not stall the registry lock.
+func (s *consumerStreams) resolvePendingLocked(id uint64, payload []byte) bool {
 	answer, ok := s.opens[id]
-	if ok {
-		delete(s.opens, id)
-	}
-	s.mu.Unlock()
 	if !ok {
 		return false
 	}
-	answer <- payload
+	delete(s.opens, id)
+	select {
+	case answer <- payload:
+	default:
+	}
 	return true
 }
 
@@ -564,6 +592,10 @@ func (s *consumerStreams) get(id uint64) (net.Conn, bool) {
 func (s *consumerStreams) remove(id uint64) (net.Conn, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// Tearing a stream down also ends any open still waiting on it, so an
+	// opener cannot be left parked on an answer that will never arrive while
+	// holding a socket that was just closed under it.
+	s.resolvePendingLocked(id, []byte(openAnswerChannelGone))
 	c, ok := s.items[id]
 	if ok {
 		delete(s.items, id)
@@ -581,9 +613,8 @@ func (s *consumerStreams) closeAll() {
 	// Release openers waiting on an answer that is no longer coming. The
 	// sentinel is local and never reaches the wire; it only has to be a
 	// refusal that reopening cannot clear.
-	for id, answer := range s.opens {
-		answer <- []byte(openAnswerChannelGone)
-		delete(s.opens, id)
+	for id := range s.opens {
+		s.resolvePendingLocked(id, []byte(openAnswerChannelGone))
 	}
 	for id, c := range s.items {
 		_ = c.Close()
