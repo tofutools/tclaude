@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -43,7 +44,7 @@ func configuredDarwinRouteAdapter() (*routeadapter.Adapter, bool, error) {
 func darwinRouteLaunch(agentID, convID, generation string) (*db.DarwinRouteLaunch, bool, error) {
 	launch, err := db.GetDarwinRouteLaunch(agentID, convID, generation)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, false, nil
+		return nil, true, errors.New("Darwin route launch contract is missing or not route-capable")
 	}
 	if err != nil {
 		return nil, true, err
@@ -80,7 +81,7 @@ func routeAdapterOpen(ctx context.Context, route *db.AgentRoute, lease *db.Agent
 	// endpoint: the publisher must have its own active route-capable contract.
 	if _, publisherEnabled, publisherErr := darwinRouteLaunch(
 		route.PublisherAgentID, route.PublisherConvID, route.PublisherLaunchGeneration); publisherErr != nil {
-		return "", true, publisherErr
+		return "", true, fmt.Errorf("publisher launch contract: %w", publisherErr)
 	} else if !publisherEnabled {
 		return "", true, errors.New("route publisher launch is not route-capable")
 	}
@@ -130,7 +131,7 @@ func routeAdapterCloseAll() {
 
 func routeAdapterBrokerEvent(event routebroker.Event) {
 	if event.Kind != "authority-revoked" && event.Kind != "publisher-detached" &&
-		event.Kind != "publisher-rejected" && event.Kind != "consumer-rejected" {
+		event.Kind != "consumer-rejected" {
 		return
 	}
 	darwinRouteAdapterState.Lock()
@@ -139,11 +140,19 @@ func routeAdapterBrokerEvent(event routebroker.Event) {
 	if adapter == nil {
 		return
 	}
-	if event.Role == "publisher" {
+	if event.Role == "publisher" &&
+		(event.Kind == "authority-revoked" || event.Kind == "publisher-detached") {
 		adapter.CloseRoute(event.RouteID)
 	} else if event.Role == "consumer" &&
 		(event.Kind == "authority-revoked" || event.Kind == "consumer-rejected") {
-		adapter.CloseConsumer(event.RouteID, event.AgentID)
+		if event.LeaseID != "" {
+			adapter.CloseLease(event.LeaseID)
+		} else {
+			// Older/third-party event producers may not carry a lease. The
+			// durable authority is the fallback; it reconciles each listener
+			// by its exact lease instead of broad route+agent teardown.
+			reconcileDarwinRouteAdapterOnce(adapter)
+		}
 	}
 }
 

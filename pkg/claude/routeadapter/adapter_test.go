@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/routebroker"
 )
 
@@ -253,4 +254,28 @@ func TestAdapterIdleLeaseCleanupReusesOnlyClosedSlot(t *testing.T) {
 	}
 	adapter.CloseLease("lease-live")
 	_ = second
+}
+
+func TestAdapterCloseLeaseDoesNotCloseSiblingSameAgentRoute(t *testing.T) {
+	firstPort, secondPort := freePort(t), freePort(t)
+	broker, err := routebroker.New(routebroker.Config{Authorizer: allowAll{}})
+	require.NoError(t, err)
+	defer broker.Close()
+	adapter, err := New(broker, []int{firstPort, secondPort})
+	require.NoError(t, err)
+	defer adapter.Close()
+	first, err := adapter.Open(context.Background(), Consumer{LeaseID: "lease-sibling-a", RouteID: "route-sibling", AgentID: "same-agent"})
+	require.NoError(t, err)
+	second, err := adapter.Open(context.Background(), Consumer{LeaseID: "lease-sibling-b", RouteID: "route-sibling", AgentID: "same-agent"})
+	require.NoError(t, err)
+	adapter.CloseLease("lease-sibling-a")
+	if got := adapter.LeaseIDs(); len(got) != 1 || got[0] != "lease-sibling-b" {
+		t.Fatalf("leases after exact close = %v, want [lease-sibling-b]", got)
+	}
+	conn, err := net.DialTimeout("tcp4", second, time.Second)
+	require.NoError(t, err)
+	_ = conn.Close()
+	if first == second {
+		t.Fatal("sibling lease unexpectedly reused the closed endpoint")
+	}
 }

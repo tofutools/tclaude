@@ -116,21 +116,15 @@ jobs:
             -run 'TestBuildTclaudeLayerLaunchSpec|TestSeatbeltProxyFloorCanCarveOneManagedServerBind' \
             -count=1 -timeout 600s 2>&1 | tee "$RUNNER_TEMP/tcl-951-preserved-cells.log"
 
-      - name: Run Darwin route authority lifecycle cells
+      - name: Run Darwin route contract and bridge cells
         shell: bash
         run: |
           set -o pipefail
           go test ./pkg/claude/agentd \
-            -run 'TestRoutesBroker_DatabaseAuthorityClosesWithdrawnChannels|TestRoutesAuthority_ExactGroupAndIndependentCapabilities|TestRoutesAuthority_OrdinaryPublisherExitWithdrawsLeases|TestRoutesBroker_OrdinaryConsumerExitClosesItsLease|TestRoutesAuthority_GenerationsPublisherLossAndRename' \
+            -run '^TestDarwinRouteAdapter(RefusesMissingLaunchContracts|ProductionBridgeUsesExactContracts)$' \
             -count=1 -timeout 600s -v 2>&1 | tee "$RUNNER_TEMP/tcl-951-route-authority.log"
-          for marker in \
-            TestRoutesBroker_DatabaseAuthorityClosesWithdrawnChannels \
-            TestRoutesAuthority_ExactGroupAndIndependentCapabilities \
-            TestRoutesAuthority_OrdinaryPublisherExitWithdrawsLeases \
-            TestRoutesBroker_OrdinaryConsumerExitClosesItsLease \
-            TestRoutesAuthority_GenerationsPublisherLossAndRename; do
-            grep -q -- "--- PASS: $marker" "$RUNNER_TEMP/tcl-951-route-authority.log"
-          done
+          grep -q -- '--- PASS: TestDarwinRouteAdapterRefusesMissingLaunchContracts' "$RUNNER_TEMP/tcl-951-route-authority.log"
+          grep -q -- '--- PASS: TestDarwinRouteAdapterProductionBridgeUsesExactContracts' "$RUNNER_TEMP/tcl-951-route-authority.log"
 
       - name: Upload Darwin evidence
         if: always()

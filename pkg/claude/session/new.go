@@ -1440,6 +1440,15 @@ func runNew(params *NewParams) error {
 		if err != nil {
 			return fmt.Errorf("reserve Darwin route launch slots: %w", err)
 		}
+		// Claim the kernel-reserved slots before any launch contract is
+		// rendered. The normalized DB claims are the logical exclusion that
+		// survives reservation-FD closure; every later rendering/launch step
+		// is therefore downstream of one pending exact-generation claim.
+		if err := db.RegisterDarwinRouteLaunch(
+			params.DarwinRouteAgentID, rowConvID, exitGeneration, darwinRouteReservation.Slots()); err != nil {
+			return fmt.Errorf("register Darwin route launch contract: %w", err)
+		}
+		darwinRouteRegistered = true
 	}
 
 	launchCreated := time.Now()
@@ -1653,13 +1662,6 @@ func runNew(params *NewParams) error {
 		if err != nil {
 			return fmt.Errorf("wrap harness with tclaude-layer: %w", err)
 		}
-	}
-	if darwinRouteReservation != nil {
-		if err := db.RegisterDarwinRouteLaunch(
-			params.DarwinRouteAgentID, rowConvID, exitGeneration, darwinRouteReservation.Slots()); err != nil {
-			return fmt.Errorf("register Darwin route launch contract: %w", err)
-		}
-		darwinRouteRegistered = true
 	}
 	resourceCgroupCleanup := func() {}
 	resourceCgroupOwnedByPane := false
