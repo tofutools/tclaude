@@ -44,12 +44,18 @@ export function harnessDefaults(harness) {
 // harness's bare-launch defaults. OpenCode profiles pin tclaude's OS sandbox,
 // which makes allow-tools an appropriate autonomous posture; an unprofiled
 // OpenCode launch retains its fail-closed approval default.
-export function profileHarnessDefaults(harness) {
+export function profileHarnessDefaults(harness, pinnedSandboxImplementation = '') {
+  const defaults = harnessDefaults(harness);
+  const recommendedImplementation = harness?.profile_recommended_sandbox_implementation || '';
+  const sandboxImplementation = pinnedSandboxImplementation || recommendedImplementation;
+  const recommendsPairedApproval = !!recommendedImplementation
+    && sandboxImplementation === recommendedImplementation;
   return {
-    ...harnessDefaults(harness),
-    approval: harness?.profile_recommended_approval
-      || harness?.default_approval || harness?.approval_modes?.[0] || '',
-    sandbox_implementation: harness?.profile_recommended_sandbox_implementation || '',
+    ...defaults,
+    approval: recommendsPairedApproval
+      ? harness?.profile_recommended_approval || defaults.approval
+      : defaults.approval,
+    sandbox_implementation: sandboxImplementation,
   };
 }
 
@@ -61,7 +67,7 @@ export function profileHarnessDefaults(harness) {
 export function profileDraft(seed = null, { editExisting = true, local = null, cloneSourceName = '' } = {}, catalog = []) {
   const harness = defaultHarness(catalog, seed?.harness);
   const h = harnessByName(catalog, harness);
-  const defaults = profileHarnessDefaults(h);
+  const defaults = profileHarnessDefaults(h, seed?.sandbox_implementation);
   const sandbox = seed?.sandbox || defaults.sandbox;
   return {
     name: !local && (editExisting || cloneSourceName) ? seed?.name || '' : '', aliases_text: (seed?.aliases || []).join(', '), harness,

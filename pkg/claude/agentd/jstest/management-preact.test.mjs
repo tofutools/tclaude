@@ -87,6 +87,11 @@ test('management model preserves full-replace profile and role semantics', async
   );
   assert.equal(recommendedOpenCodePayload.approval, 'allow-tools');
   assert.equal(recommendedOpenCodePayload.sandbox_implementation, 'tclaude-layer');
+  const unconfinedOpenCode = model.profileDraft({
+    name: 'open-off', harness: 'opencode', sandbox_implementation: 'off',
+  }, {}, catalog);
+  assert.equal(unconfinedOpenCode.approval, 'deny',
+    'an explicit sandbox opt-out must not independently inherit the autonomous recommendation');
   assert.deepEqual(model.harnessDefaults({ sandbox_modes: ['on'], approval_modes: ['plan'], tools_modes: ['deny'], ask_timeout_modes: ['60s'] }), { sandbox: 'on', approval: 'plan', tools: 'deny', approval_reviewer: '', ask_user_question_timeout: '60s' });
 });
 
@@ -228,6 +233,9 @@ test('OpenCode profile editor preserves explicit sandbox and tool overrides', as
   assert.deepEqual([...sandbox.options].map((option) => option.value),
     ['', 'tclaude-layer', 'stacked', 'off']);
   assert.equal(selectedValue(sandbox), 'off');
+  const approval = host.querySelector('#profile-editor-approval');
+  assert.equal(selectedValue(approval), 'deny',
+    'an unpinned permission mode stays fail-closed when the profile explicitly disables containment');
   assert.equal(host.querySelector('#profile-editor-sandbox-row').hidden, true,
     'OpenCode has no built-in OS sandbox mode to reveal');
   assert.match(host.textContent, /Sandbox OFF/);
@@ -239,7 +247,16 @@ test('OpenCode profile editor preserves explicit sandbox and tool overrides', as
   assert.equal(saves.length, 1);
   assert.equal(saves[0].payload.harness, 'opencode');
   assert.equal(saves[0].payload.sandbox_implementation, 'off');
+  assert.equal(saves[0].payload.approval, 'deny');
   assert.equal(saves[0].payload.tools, 'deny');
+  const harnessSelect = host.querySelector('#profile-editor-harness');
+  choose(harnessSelect, 'claude');
+  await harness.act(() => harness.fireEvent(harnessSelect, 'change'));
+  choose(harnessSelect, 'opencode');
+  await harness.act(() => harness.fireEvent(harnessSelect, 'change'));
+  assert.equal(selectedValue(host.querySelector('#profile-editor-sandbox-impl')), 'off');
+  assert.equal(selectedValue(host.querySelector('#profile-editor-approval')), 'deny',
+    'a preserved Off implementation also suppresses the autonomous recommendation on a harness switch');
   cleanups.reverse().forEach((fn) => fn());
 });
 

@@ -979,18 +979,22 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
   }, [draft.harness, draft.sandbox, draft.sandbox_implementation, draft.approval, profile]);
   const updateHarness = (harness) => {
     const h = harnessByName(catalog, harness);
-    const defaults = profile ? profileHarnessDefaults(h) : harnessDefaults(h);
     setCustomModel(false);
-    setDraft((current) => ({
-      ...current, harness, model: '', effort: '', ...defaults,
-      trust_dir: '', remote_control: '', auto_memory: '',
-      ssh_workaround: !!h?.can_ssh_workaround,
-      // Keep every explicit implementation visible across harness switches.
-      // An incapable selection gets an inline refusal warning and the server
-      // remains the apply authority.
-      sandbox_implementation: current.sandbox_implementation || defaults.sandbox_implementation || '',
-      sandbox_implementation_cleared: null,
-    }));
+    setDraft((current) => {
+      const defaults = profile
+        ? profileHarnessDefaults(h, current.sandbox_implementation)
+        : harnessDefaults(h);
+      return {
+        ...current, harness, model: '', effort: '', ...defaults,
+        trust_dir: '', remote_control: '', auto_memory: '',
+        ssh_workaround: !!h?.can_ssh_workaround,
+        // Keep every explicit implementation visible across harness switches.
+        // An incapable selection gets an inline refusal warning and the server
+        // remains the apply authority.
+        sandbox_implementation: current.sandbox_implementation || defaults.sandbox_implementation || '',
+        sandbox_implementation_cleared: null,
+      };
+    });
   };
   const [helpOpen, setHelpOpen] = useState('');
   const modelID = profile ? 'profile-editor-model' : 'role-editor-model';
