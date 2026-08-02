@@ -82,6 +82,12 @@ type tuiStartup struct {
 	// the screen may be a credential. It already covers the token banner by
 	// leaving operatorToken empty; it covers the dashboard sign-in link too.
 	suppressSecrets bool
+	// ownsTmuxServer is set when this daemon started the tclaude tmux server
+	// itself and will kill it on the way out (see startTUITmuxServer). It
+	// changes what quitting MEANS — every session on that server goes with it,
+	// rather than being left running for the next daemon — so the console has to
+	// say so before it acts on q.
+	ownsTmuxServer bool
 }
 
 func startServeTUI(quit *quitter, startup tuiStartup) func() error {
@@ -94,6 +100,7 @@ func startServeTUI(quit *quitter, startup tuiStartup) func() error {
 	m := newTUIModel(newInProcessTUIAPI())
 	m.dashboardURL = startup.dashboardURL
 	m.suppressSecrets = startup.suppressSecrets
+	m.ownsTmuxServer = startup.ownsTmuxServer
 	// The first screen is drawn before the first tick.
 	m = m.refreshDashboardLink(time.Now())
 	m.tokenLines = tuiOperatorTokenLines(startup.operatorToken, startup.tokenSource)
@@ -593,6 +600,9 @@ type tuiModel struct {
 	// suppressSecrets is --no-print-human-token: this terminal's output is
 	// scraped or logged, so the console shows no credential of any kind.
 	suppressSecrets bool
+	// ownsTmuxServer means quitting kills the tmux server this daemon started,
+	// and every session on it (see startTUITmuxServer). Read by confirmPrompt.
+	ownsTmuxServer bool
 	// tokenLines is the operator-token block this console shows in place of
 	// the stdout banner, empty when stdout printed it. showTokenBanner is the
 	// startup presentation of that block; it goes away on the first keystroke,
@@ -2411,13 +2421,20 @@ func (m tuiModel) confirmPrompt() string {
 		}
 		if m.startingShell {
 			// A shell launch runs in THIS process, unlike an agent spawn — which
-			// forks its own `tclaude session new` and outlives the daemon. Quitting
-			// mid-launch kills it between writing its session row and arming the
-			// pane's exit guard, so the rollback never runs and a launch-pending
-			// row is left behind. Cheap to clean up, worth a word before it
-			// happens. Kept inside 80 columns: confirmPrompt is budgeted as
-			// exactly one line.
+			// forks its own `tclaude session new`. Quitting mid-launch kills it
+			// between writing its session row and arming the pane's exit guard, so
+			// the rollback never runs and a launch-pending row is left behind.
+			// Cheap to clean up, worth a word before it happens. Kept inside 80
+			// columns: confirmPrompt is budgeted as exactly one line.
 			return "Shell still starting — quit and shut down agentd? [y / any other key = cancel]"
+		}
+		if m.ownsTmuxServer {
+			// This daemon started the tmux server, so quitting kills it and takes
+			// every session on it — the agents this console spawned included. The
+			// plain wording below would be a lie here: it reads as "the daemon
+			// stops and the panes carry on", which is what happens only when the
+			// server was already running and belongs to somebody else.
+			return "Quit and shut down agentd + its tmux sessions? [y / any other key = cancel]"
 		}
 		return "Quit and shut down agentd? [y / any other key = cancel]"
 	case tuiModeConfirmStop:

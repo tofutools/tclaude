@@ -45,7 +45,7 @@ type serveParams struct {
 	PersistOperatorToken         bool   `long:"persist-operator-token" help:"Persist the operator token across restarts in a 0600 ~/.tclaude/data/operator_token file instead of minting a fresh in-memory one each start. ORs with agent.persist_operator_token in config.json. Default: off (fresh token every boot)."`
 	PersistOperatorTokenKeychain bool   `long:"persist-operator-token-keychain" help:"Explicitly persist the operator token in the OS keychain instead of the private file. Implies persistence and ORs with agent.persist_operator_token_keychain in config.json. Existing tokens are not migrated between stores."`
 	NoPrintHumanToken            bool   `long:"no-print-human-token" help:"Skip printing the operator token (TCLAUDE_HUMAN_TOKEN) banner on startup, and keep the --tui console's dashboard sign-in link off the screen with it. The token is still minted and honored — this only suppresses what is shown. Useful with -p / non-interactive launches where the startup output is scraped or logged."`
-	TUI                          bool   `long:"tui" help:"Run a terminal UI in this window — a simplified dashboard that lists agents, starts new ones, and goes to an agent's tmux session with enter. On its own it REPLACES the web dashboard: no loopback dashboard listener is started, so browser deep links and human-approval requests are unavailable (grant access with 'tclaude agent permissions grant' instead). Pass --dashboard-port, --dashboard-bind or --auto-launch-dashboard alongside it to run the web dashboard as well. Startup output other than schema migrations goes to output.log instead of stdout, which the UI owns, and the operator token is shown inside the UI. Quitting the TUI shuts the daemon down."`
+	TUI                          bool   `long:"tui" help:"Run a terminal UI in this window — a simplified dashboard that lists agents, starts new ones, and goes to an agent's tmux session with enter. On its own it REPLACES the web dashboard: no loopback dashboard listener is started, so browser deep links and human-approval requests are unavailable (grant access with 'tclaude agent permissions grant' instead). Pass --dashboard-port, --dashboard-bind or --auto-launch-dashboard alongside it to run the web dashboard as well. Startup output other than schema migrations goes to output.log instead of stdout, which the UI owns, and the operator token is shown inside the UI. Quitting the TUI shuts the daemon down. This mode also owns the tclaude tmux server WHEN IT STARTS ONE: with no server running it starts an empty one (with exit-empty off, so it stays up with no agents in it) and kills it on exit, taking every session started on it along. A server that was already running — from an earlier daemon, a session started outside it, or an external resource-delegation unit — is left alone in both directions."`
 }
 
 func serveCmd() *cobra.Command {
@@ -365,6 +365,37 @@ func runServe(p *serveParams) error {
 		fmt.Fprintf(out, "  resource delegation: %s (%s)\n", validated, resourceDelegationSource)
 	} else if clearErr := session.ClearResourceDelegationFromTmux(); clearErr != nil {
 		return clearErr
+	}
+
+	// Under --tui the daemon owns the tclaude tmux server for the console's
+	// lifetime — but only one it started itself: with no server running it
+	// starts an empty one with exit-empty off, so it stays up with no agents in
+	// it, and kills it outright on the way out. A server that was already there
+	// is left alone in both directions. Placed after the resource-delegation
+	// resolution above because that decides whether this daemon may own a server
+	// at all, and before anything that can create a session, so the probe sees
+	// the host as the operator left it.
+	//
+	// Shutdown order, since it is easy to misread: defers run LIFO, so this one
+	// — registered here, before the cron/sweep defer far below — runs AFTER
+	// `close(cronStop)`, after stopTUI has given the terminal back, and after
+	// the graceful drain at the end of this function, which is inline rather
+	// than deferred and so has already completed.
+	//
+	// close(cronStop) signals the background sweeps; it does not await them, and
+	// none of them register with a WaitGroup. A sweep can therefore still be
+	// mid-tick when the kill lands. That is deliberate: what a late sweep does
+	// is read tmux and conclude the sessions are gone (true — the kill ends
+	// them) or relaunch one, which the next daemon's reaper reconciles the way
+	// it reconciles any pane that died while nothing was watching. Awaiting
+	// every sweep instead would put shutdown behind whatever the slowest one is
+	// doing, several of which poll the network, turning a self-correcting race
+	// into a hang on the way out.
+	ownsTmuxServer := false
+	if p.TUI {
+		stopTmuxServer, owned := startTUITmuxServer()
+		ownsTmuxServer = owned
+		defer stopTmuxServer()
 	}
 
 	// HTTP listeners for the human-approval popup (Phase B of the
@@ -714,6 +745,7 @@ func runServe(p *serveParams) error {
 		startup := tuiStartup{
 			dashboardURL:    popupBaseURL,
 			suppressSecrets: p.NoPrintHumanToken,
+			ownsTmuxServer:  ownsTmuxServer,
 		}
 		if tokenBannerInTUI(p) {
 			startup.operatorToken, startup.tokenSource = operatorTok, tokenSrc
