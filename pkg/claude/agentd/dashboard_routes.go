@@ -14,6 +14,16 @@ type dashboardRouteMemberIdentity struct {
 	online bool
 }
 
+var dashboardRouteMapPlatform = runtime.GOOS
+
+// SetRouteMapPlatformForTest lets browser smoke tests exercise the disclosed
+// Darwin capacity boundary while rendering on a Linux CI host.
+func SetRouteMapPlatformForTest(platform string) func() {
+	previous := dashboardRouteMapPlatform
+	dashboardRouteMapPlatform = platform
+	return func() { dashboardRouteMapPlatform = previous }
+}
+
 // buildDashboardRouteMap projects the route authority into a safe operator
 // view. It resolves names from the already-built roster, compares the
 // generation-bound route rows with current group/member state, and intentionally
@@ -23,11 +33,24 @@ func buildDashboardRouteMap(
 	groupViews []dashboardGroup,
 	routesByGroup map[int64][]*db.AgentRoute,
 	leasesByGroup map[int64][]*db.AgentRouteLease,
+	darwinUsedByGroup map[int64]int,
 ) dashboardRouteMap {
-	result := dashboardRouteMap{Platform: runtime.GOOS, Routes: []dashboardRoute{}}
-	if runtime.GOOS == "darwin" {
+	result := dashboardRouteMap{Platform: dashboardRouteMapPlatform, Routes: []dashboardRoute{}}
+	if dashboardRouteMapPlatform == "darwin" {
 		if slots, err := session.DarwinRouteSlotCount(); err == nil {
 			result.DarwinSlots = slots
+			result.DarwinCapacity = make(map[string]dashboardDarwinCapacity, len(groups))
+			for _, group := range groups {
+				if group == nil {
+					continue
+				}
+				used := darwinUsedByGroup[group.ID]
+				available := slots - used
+				if available < 0 {
+					available = 0
+				}
+				result.DarwinCapacity[group.Name] = dashboardDarwinCapacity{Used: used, Available: available, Total: slots}
+			}
 		}
 		result.DarwinBoundary = "Partial: localhost route selectors are host-wide on Darwin"
 	}

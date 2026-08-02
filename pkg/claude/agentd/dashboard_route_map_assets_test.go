@@ -8,7 +8,7 @@ import (
 func TestDashboardRouteMapAssetsAreReadOnlyAndResponsive(t *testing.T) {
 	js := dashboardAssetFile(t, "js/groups-route-map.js")
 	for _, needle := range []string{
-		"Graph", "Exact list", "Route detail", "route_map", "darwin_boundary",
+		"Graph", "Exact list", "Route detail", "route_map", "darwin_boundary", "darwin_capacity", "reserved",
 		"tclaude:navigated", "tclaude:restore-location", "Stable reference",
 		"Endpoint addresses, targets, capabilities, credentials, and payload data are never shown",
 	} {

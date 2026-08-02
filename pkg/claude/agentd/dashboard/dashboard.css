@@ -15736,6 +15736,7 @@ body.wizard .usage-history-error { color: #f0a3bf; }
 .route-map-edge { color: var(--edge, #8b949e); cursor: pointer; outline: none; }
 .route-map-edge line { stroke: currentColor; stroke-width: 2; marker-end: url(#route-map-arrow); }
 .route-map-edge text { fill: currentColor; font: 600 11px ui-monospace, SFMono-Regular, Menlo, monospace; paint-order: stroke; stroke: var(--panel, #0d1117); stroke-width: 4px; }
+.route-map-edge-status { font-size: 9px !important; opacity: .82; }
 .route-map-edge:hover, .route-map-edge:focus, .route-map-edge.is-focused { color: var(--accent, #58a6ff); }
 .route-map-edge.is-focused line { stroke-width: 3.5; }
 .route-map-node { color: var(--text, #e6edf3); }

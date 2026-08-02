@@ -1603,10 +1603,17 @@ type dashboardGroup struct {
 }
 
 type dashboardRouteMap struct {
-	Platform       string           `json:"platform"`
-	DarwinSlots    int              `json:"darwin_slots,omitempty"`
-	DarwinBoundary string           `json:"darwin_boundary,omitempty"`
-	Routes         []dashboardRoute `json:"routes"`
+	Platform       string                             `json:"platform"`
+	DarwinSlots    int                                `json:"darwin_slots,omitempty"`
+	DarwinBoundary string                             `json:"darwin_boundary,omitempty"`
+	DarwinCapacity map[string]dashboardDarwinCapacity `json:"darwin_capacity,omitempty"`
+	Routes         []dashboardRoute                   `json:"routes"`
+}
+
+type dashboardDarwinCapacity struct {
+	Used      int `json:"used"`
+	Available int `json:"available"`
+	Total     int `json:"total"`
 }
 
 type dashboardRoute struct {
@@ -2604,20 +2611,27 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		groupIDs[i] = group.ID
 	}
 	var (
-		membersByGroup map[int64][]*db.AgentGroupMember
-		ownersByGroup  map[int64][]*db.AgentGroupOwner
-		routesByGroup  map[int64][]*db.AgentRoute
-		leasesByGroup  map[int64][]*db.AgentRouteLease
-		membersErr     error
-		ownersErr      error
-		routesErr      error
-		leasesErr      error
+		membersByGroup    map[int64][]*db.AgentGroupMember
+		ownersByGroup     map[int64][]*db.AgentGroupOwner
+		routesByGroup     map[int64][]*db.AgentRoute
+		leasesByGroup     map[int64][]*db.AgentRouteLease
+		darwinUsedByGroup map[int64]int
+		membersErr        error
+		ownersErr         error
+		routesErr         error
+		leasesErr         error
+		darwinClaimsErr   error
 	)
 	span.addChildren("preload", runSnapshotNamedLoads(
 		snapshotNamedLoad{"group_members", func() { membersByGroup, membersErr = db.ListAgentGroupMembersBatch(groupIDs) }},
 		snapshotNamedLoad{"group_owners", func() { ownersByGroup, ownersErr = db.ListAgentGroupOwnersBatch(groupIDs) }},
 		snapshotNamedLoad{"routes", func() { routesByGroup, routesErr = db.ListAgentRoutesBatch(groupIDs) }},
 		snapshotNamedLoad{"route_leases", func() { leasesByGroup, leasesErr = db.ListAgentRouteLeasesBatch(groupIDs) }},
+		snapshotNamedLoad{"darwin_route_claims", func() {
+			if dashboardRouteMapPlatform == "darwin" {
+				darwinUsedByGroup, darwinClaimsErr = db.ListDarwinRouteSlotClaimCountsByGroup(groupIDs)
+			}
+		}},
 	)...)
 	if membersErr != nil {
 		slog.Warn("snapshot: failed to preload group members", "error", membersErr)
@@ -2630,6 +2644,9 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 	if leasesErr != nil {
 		slog.Warn("snapshot: failed to preload route leases", "error", leasesErr)
+	}
+	if darwinClaimsErr != nil {
+		slog.Warn("snapshot: failed to preload Darwin route slot claims", "error", darwinClaimsErr)
 	}
 
 	// Notification-filter state: the per-agent overrides plus the set
@@ -3091,7 +3108,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	// Route rows and leases were read alongside the roster. Resolve their
 	// friendly labels only after group member rows are assembled so this
 	// projection adds no per-route/per-member database work to the poll.
-	out.RouteMap = buildDashboardRouteMap(groups, out.Groups, routesByGroup, leasesByGroup)
+	out.RouteMap = buildDashboardRouteMap(groups, out.Groups, routesByGroup, leasesByGroup, darwinUsedByGroup)
 	for convID, slugs := range allGrants {
 		addAgent(convID)
 		copySlice := append([]string{}, slugs...)

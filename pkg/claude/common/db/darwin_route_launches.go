@@ -194,6 +194,48 @@ func GetDarwinRouteLaunch(agentID, convID, generation string) (*DarwinRouteLaunc
 	return getDarwinRouteLaunchQuery(darwinRouteLaunchQuery(d.QueryRow), agentID, convID, generation)
 }
 
+// ListDarwinRouteSlotClaimCountsByGroup returns the currently reserved slot
+// count for each requested group. Slot claims, rather than route rows, are the
+// authority for Darwin capacity; a launch can reserve slots before it has a
+// named route and one agent may be visible in more than one group.
+func ListDarwinRouteSlotClaimCountsByGroup(groupIDs []int64) (map[int64]int, error) {
+	out := make(map[int64]int, len(groupIDs))
+	if len(groupIDs) == 0 {
+		return out, nil
+	}
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	placeholders := make([]string, len(groupIDs))
+	args := make([]any, len(groupIDs))
+	for i, groupID := range groupIDs {
+		placeholders[i] = "?"
+		args[i] = groupID
+	}
+	rows, err := d.Query(`SELECT m.group_id, COUNT(DISTINCT c.slot)
+		FROM darwin_route_slot_claims c
+		JOIN agent_group_members m ON m.agent_id = c.agent_id
+		WHERE m.group_id IN (`+strings.Join(placeholders, ",")+
+		`) AND c.state IN (?, ?)
+		GROUP BY m.group_id`, append(args, DarwinRouteLaunchPending, DarwinRouteLaunchActive)...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var groupID, count int
+		if err := rows.Scan(&groupID, &count); err != nil {
+			return nil, err
+		}
+		out[int64(groupID)] = count
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func DeleteDarwinRouteLaunch(agentID, convID, generation string) error {
 	if err := validateDarwinRouteLaunchIdentity(agentID, convID, generation); err != nil {
 		return err

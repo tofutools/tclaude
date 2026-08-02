@@ -92,7 +92,8 @@ function RouteGraph({ routes, members, selected, onSelect }) {
         const focused = selected === route.id;
         return html`<g key=${key} class=${`route-map-edge${focused ? ' is-focused' : ''}`} onClick=${() => onSelect(route.id)} tabindex="0" role="button" aria-label=${`${route.name} from ${route.publisher_name || 'hidden publisher'} to ${consumer.consumer_name || 'hidden consumer'}`}>
           <line x1=${from.x} y1=${from.y} x2=${to.x} y2=${to.y} marker-end="url(#route-map-arrow)" />
-          <text x=${(from.x + to.x) / 2} y=${(from.y + to.y) / 2 - 8} text-anchor="middle">${route.name}</text>
+          <text x=${(from.x + to.x) / 2} y=${(from.y + to.y) / 2 - 10} text-anchor="middle">${route.name}</text>
+          <text class="route-map-edge-status" x=${(from.x + to.x) / 2} y=${(from.y + to.y) / 2 + 7} text-anchor="middle">${statusLabel(route.state)} · ${statusLabel(consumer.endpoint_state)}</text>
         </g>`;
       })}
       ${nodes.map((node) => html`<${GraphNode} key=${node.id} node=${node} position=${positions.get(node.id)} focused=${edges.some(({ route, consumer }) => selected === route.id && (route.publisher_agent_id === node.id || consumer.consumer_agent_id === node.id))} />`)}
@@ -144,6 +145,10 @@ export function GroupsRouteMap({ state }) {
   }, [groupName, groups.length, groups[0]?.name]);
   const routes = routesForGroup(map, groupName);
   const members = groups.find((group) => group.name === groupName)?.members || [];
+  const darwinCapacity = map.darwin_capacity?.[groupName] || null;
+  const darwinCapacityText = darwinCapacity
+    ? `${darwinCapacity.used}/${darwinCapacity.total} reserved · ${darwinCapacity.available} available`
+    : 'Select a group for scoped capacity';
   const isRoutes = state.subview.value === 'routes';
   useEffect(() => {
     const filterBar = document.querySelector('#groups-filter-root')?.parentElement;
@@ -180,7 +185,7 @@ export function GroupsRouteMap({ state }) {
       <div class="route-map-mode" role="group" aria-label="Route map view mode"><button type="button" class=${mode === 'graph' ? 'active' : ''} aria-pressed=${mode === 'graph'} onClick=${() => setMode('graph')}>Graph</button><button type="button" class=${mode === 'list' ? 'active' : ''} aria-pressed=${mode === 'list'} onClick=${() => setMode('list')}>Exact list</button></div>
       <span class="route-map-count" aria-live="polite">${routes.length} route${routes.length === 1 ? '' : 's'}</span>
     </div>`}
-    ${isRoutes && map.platform === 'darwin' && html`<div class="route-map-disclosure" role="note">Darwin bounded capacity: ${map.darwin_slots || 'configured'} slots · ${map.darwin_boundary || 'Partial boundary disclosed'}</div>`}
+    ${isRoutes && map.platform === 'darwin' && html`<div class="route-map-disclosure" role="note">Darwin bounded capacity: ${darwinCapacityText} · ${map.darwin_boundary || 'Partial boundary disclosed'}</div>`}
     ${isRoutes && (!routes.length ? html`<div class="route-map-empty"><strong>No named routes in this group.</strong><span>When the route authority has records, this surface will show explicit publisher → consumer leases.</span></div>` : html`<div class=${`route-map-content route-map-mode-${mode}`}>
       ${mode === 'graph' && html`<${RouteGraph} routes=${routes} members=${members} selected=${selectedRouteID} onSelect=${navigateRoute} />`}
       ${mode === 'list' && html`<div class="route-map-table-wrap"><table class="route-map-table"><caption class="sr-only">Exact named route listing</caption><thead><tr><th>Route</th><th>Publisher</th><th>Consumer</th><th>Transport</th><th>Lifecycle</th><th>Health</th></tr></thead><tbody>${routes.map((route) => html`<tr key=${route.id} class=${selectedRouteID === route.id ? 'is-selected' : ''} onClick=${() => navigateRoute(route.id)}><td><button type="button" class="route-map-link">${route.name}</button><code>${route.stable_reference}</code></td><td>${friendlyEndpoint(route.publisher_name, route.publisher_boundary)}</td><td>${route.consumers?.length ? route.consumers.map((consumer) => html`<span class="route-map-consumer-line" key=${consumer.id}>${friendlyEndpoint(consumer.consumer_name, consumer.boundary)} · ${statusLabel(consumer.endpoint_state)}</span>`) : html`<span class="route-map-muted">none</span>`}</td><td>${route.transport || 'unknown'}</td><td><span class=${routeStatusClass(route.state)}>${statusLabel(route.state)}</span></td><td><span class=${routeStatusClass(route.generation_health)}>${statusLabel(route.generation_health)}</span> · ${statusLabel(route.publisher_health)}</td></tr>`)}</tbody></table></div>`}

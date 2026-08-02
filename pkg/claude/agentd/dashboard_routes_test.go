@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 func TestBuildDashboardRouteMapSafeProjection(t *testing.T) {
@@ -41,6 +42,7 @@ func TestBuildDashboardRouteMapSafeProjection(t *testing.T) {
 	got := buildDashboardRouteMap(groups, views,
 		map[int64][]*db.AgentRoute{1: {route}},
 		map[int64][]*db.AgentRouteLease{1: {lease}},
+		map[int64]int{},
 	)
 	if len(got.Routes) != 1 {
 		t.Fatalf("route count = %d, want 1", len(got.Routes))
@@ -78,12 +80,29 @@ func TestBuildDashboardRouteMapDisclosesBoundariesAndRestartHealth(t *testing.T)
 	}
 	route := &db.AgentRoute{ID: "rte_stale", GroupID: 1, GroupName: "alpha", PublisherAgentID: "agt_wrong", PublisherConvID: "old", PublisherLaunchGeneration: "old", GroupGeneration: 2, Name: "stale", Transport: "tcp", State: db.RouteStatePublisherLost}
 	lease := &db.AgentRouteLease{ID: "rlease_hidden", RouteID: route.ID, ConsumerAgentID: "agt_missing", ConsumerConvID: "missing", GroupGeneration: 2, State: db.RouteLeaseClosed}
-	got := buildDashboardRouteMap(groups, views, map[int64][]*db.AgentRoute{1: {route}}, map[int64][]*db.AgentRouteLease{1: {lease}})
+	got := buildDashboardRouteMap(groups, views, map[int64][]*db.AgentRoute{1: {route}}, map[int64][]*db.AgentRouteLease{1: {lease}}, map[int64]int{})
 	view := got.Routes[0]
 	if view.GenerationHealth != "stale" || view.PublisherBoundary != "wrong-group" || view.PublisherHealth != "wrong-group" {
 		t.Fatalf("wrong-group publisher projection = %#v", view)
 	}
 	if view.Consumers[0].Boundary != "hidden" || view.Consumers[0].ConsumerHealth != "hidden" || view.Consumers[0].EndpointState != "closed" {
 		t.Fatalf("hidden consumer projection = %#v", view.Consumers[0])
+	}
+}
+
+func TestBuildDashboardRouteMapUsesAuthoritativeDarwinCapacity(t *testing.T) {
+	t.Cleanup(SetRouteMapPlatformForTest("darwin"))
+	groups := []*db.AgentGroup{{ID: 1, Name: "alpha", RouteGeneration: 1}}
+	got := buildDashboardRouteMap(groups, []dashboardGroup{{Name: "alpha"}}, nil, nil, map[int64]int{1: 6})
+	capacity, ok := got.DarwinCapacity["alpha"]
+	if !ok {
+		t.Fatal("missing alpha Darwin capacity")
+	}
+	total, err := session.DarwinRouteSlotCount()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if capacity.Used != 6 || capacity.Total != total || capacity.Available != total-6 {
+		t.Fatalf("Darwin capacity = %#v, want 6/%d/%d", capacity, total-6, total)
 	}
 }
