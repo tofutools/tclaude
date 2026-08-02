@@ -94,3 +94,34 @@ test('non-previewable attachments keep the ordinary download-only surface', asyn
   assert.equal(mounted.container.querySelector('.human-attachment-preview-trigger'), null);
   await mounted.unmount();
 });
+
+test('a published file is previewed through its own per-file URL', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { ImageAttachmentPreview } = await harness.importDashboardModule(
+    'js/image-preview-overlay.js',
+  );
+  const savedFetch = globalThis.fetch;
+  const requests = [];
+  globalThis.fetch = async (url, options) => {
+    requests.push({ url, options });
+    return { ok: true, status: 200 };
+  };
+  t.after(() => { globalThis.fetch = savedFetch; });
+
+  // One notification can publish several files, so the item carries the URL
+  // that identifies it — the legacy route names only the first.
+  const second = { ...attachment, id: 9, filename: 'guild.png', url: '/api/human-messages/42/attachments/9' };
+  const mounted = await harness.mount(harness.html`
+    <${ImageAttachmentPreview} messageID=${42} attachment=${second} surface="messages" />
+  `);
+  await harness.act(() => {
+    mounted.container.querySelector('.human-attachment-preview-trigger').click();
+  });
+  await harness.act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+
+  const dialog = mounted.container.querySelector('[role="dialog"]');
+  assert.equal(dialog.querySelector('.image-preview-download').getAttribute('href'),
+    '/api/human-messages/42/attachments/9');
+  assert.equal(requests[0].url, '/api/human-messages/42/attachments/9');
+  await mounted.unmount();
+});

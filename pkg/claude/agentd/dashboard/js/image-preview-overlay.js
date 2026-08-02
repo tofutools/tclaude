@@ -6,8 +6,11 @@ import { isTopmostOverlay } from './overlay-stack.js';
 
 const html = htm.bind(h);
 
-function attachmentURL(messageID) {
-  return `/api/human-messages/${encodeURIComponent(messageID)}/attachment`;
+// A notification can publish several files, each with its own download URL.
+// Fall back to the legacy single-artifact route for a snapshot that predates
+// the per-file one.
+function attachmentURL(messageID, attachment) {
+  return attachment?.url || `/api/human-messages/${encodeURIComponent(messageID)}/attachment`;
 }
 
 function safeIDPart(value) {
@@ -49,9 +52,11 @@ export function ImageAttachmentPreview({ messageID, attachment, surface = 'attac
   const [zoom, setZoom] = useState(1);
   const overlayRef = useRef(null);
   const closeRef = useRef(null);
-  const href = attachment ? attachmentURL(messageID) : '';
+  const href = attachment ? attachmentURL(messageID, attachment) : '';
   const filename = attachment?.filename || 'attachment';
-  const titleID = `image-preview-title-${surface}-${safeIDPart(messageID)}`;
+  // Several previews can share a message, so the attachment id keeps the
+  // dialog's labelling ids unique.
+  const titleID = `image-preview-title-${surface}-${safeIDPart(messageID)}-${safeIDPart(attachment?.id ?? 0)}`;
   const detailsID = `${titleID}-details`;
 
   const close = useCallback(() => setOpen(false), []);

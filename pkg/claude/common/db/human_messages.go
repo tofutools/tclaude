@@ -37,18 +37,30 @@ type HumanMessage struct {
 	ProcessRunID     string
 	ProcessNodeID    string
 	ProcessCommandID string
-	Attachment       *HumanMessageAttachment
+	Attachments      []*HumanMessageAttachment
 }
 
 // HumanMessageAttachment is one daemon-owned downloadable artifact published
-// with a human notification. Multiple input paths are packaged as one zip by
-// the CLI, keeping the message surface compact while still delivering a set.
+// with a human notification. A message can carry several: the CLI delivers a
+// small set of files individually (so images stay previewable) and only
+// packages a large set or a directory as one zip.
 type HumanMessageAttachment struct {
+	ID          int64
 	MessageID   int64
+	Seq         int
 	Filename    string
 	ContentType string
 	SizeBytes   int64
 	StoragePath string
+}
+
+// Attachment returns the message's first published file, or nil when it has
+// none — the single-artifact view older surfaces still render.
+func (m *HumanMessage) Attachment() *HumanMessageAttachment {
+	if len(m.Attachments) == 0 {
+		return nil
+	}
+	return m.Attachments[0]
 }
 
 // IsRead reports whether the message has been marked read.
@@ -96,11 +108,11 @@ func insertHumanMessage(exec humanMessageExecer, m *HumanMessage) (int64, error)
 	return res.LastInsertId()
 }
 
-// InsertHumanMessageWithAttachment commits the message and attachment metadata
-// together. The caller must have already written StoragePath and removes it if
-// this transaction fails; a committed message can therefore never be visible
-// without its attachment row.
-func InsertHumanMessageWithAttachment(m *HumanMessage, a *HumanMessageAttachment) (int64, error) {
+// InsertHumanMessageWithAttachments commits the message and every attachment's
+// metadata together, in the given order. The caller must have already written
+// each StoragePath and removes them if this transaction fails; a committed
+// message can therefore never be visible without its attachment rows.
+func InsertHumanMessageWithAttachments(m *HumanMessage, attachments []*HumanMessageAttachment) (int64, error) {
 	d, err := Open()
 	if err != nil {
 		return 0, err
@@ -114,9 +126,12 @@ func InsertHumanMessageWithAttachment(m *HumanMessage, a *HumanMessageAttachment
 	if err != nil {
 		return 0, err
 	}
-	a.MessageID = id
-	if err := insertHumanMessageAttachment(tx, a); err != nil {
-		return 0, err
+	for i, a := range attachments {
+		a.MessageID = id
+		a.Seq = i
+		if err := insertHumanMessageAttachment(tx, a); err != nil {
+			return 0, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return 0, fmt.Errorf("commit human message attachment: %w", err)
@@ -135,12 +150,14 @@ func InsertHumanMessageAttachment(a *HumanMessageAttachment) error {
 }
 
 func insertHumanMessageAttachment(exec humanMessageExecer, a *HumanMessageAttachment) error {
-	_, err := exec.Exec(`INSERT INTO human_message_attachments
-		(message_id, filename, content_type, size_bytes, storage_path)
-		VALUES (?, ?, ?, ?, ?)`, a.MessageID, a.Filename, a.ContentType, a.SizeBytes, a.StoragePath)
+	res, err := exec.Exec(`INSERT INTO human_message_attachments
+		(message_id, seq, filename, content_type, size_bytes, storage_path)
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		a.MessageID, a.Seq, a.Filename, a.ContentType, a.SizeBytes, a.StoragePath)
 	if err != nil {
 		return fmt.Errorf("insert human message attachment: %w", err)
 	}
+	a.ID, _ = res.LastInsertId()
 	return nil
 }
 
@@ -151,7 +168,7 @@ func ListHumanMessageAttachments() ([]*HumanMessageAttachment, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT message_id, filename, content_type, size_bytes, storage_path
+	rows, err := d.Query(`SELECT id, message_id, seq, filename, content_type, size_bytes, storage_path
 		FROM human_message_attachments`)
 	if err != nil {
 		return nil, err
@@ -160,7 +177,8 @@ func ListHumanMessageAttachments() ([]*HumanMessageAttachment, error) {
 	var attachments []*HumanMessageAttachment
 	for rows.Next() {
 		var a HumanMessageAttachment
-		if err := rows.Scan(&a.MessageID, &a.Filename, &a.ContentType, &a.SizeBytes, &a.StoragePath); err != nil {
+		if err := rows.Scan(&a.ID, &a.MessageID, &a.Seq, &a.Filename, &a.ContentType,
+			&a.SizeBytes, &a.StoragePath); err != nil {
 			return nil, err
 		}
 		attachments = append(attachments, &a)
@@ -192,27 +210,30 @@ func HumanMessageAttachmentUsage(agentID, convID string) (totalBytes, senderByte
 	return totalBytes, senderBytes, totalCount, senderCount, err
 }
 
-// DeleteHumanMessageAttachment removes stale metadata while preserving the
-// human message itself (which remains readable without a download card).
-func DeleteHumanMessageAttachment(messageID int64) error {
+// DeleteHumanMessageAttachment removes one attachment's stale metadata by its
+// own id, preserving the human message itself (which remains readable without
+// that download card) and its other attachments.
+func DeleteHumanMessageAttachment(attachmentID int64) error {
 	d, err := Open()
 	if err != nil {
 		return err
 	}
-	_, err = d.Exec(`DELETE FROM human_message_attachments WHERE message_id = ?`, messageID)
+	_, err = d.Exec(`DELETE FROM human_message_attachments WHERE id = ?`, attachmentID)
 	return err
 }
 
-// GetHumanMessageAttachment returns a message's attachment, if any.
-func GetHumanMessageAttachment(messageID int64) (*HumanMessageAttachment, error) {
+// GetHumanMessageAttachment returns one attachment of a message by its id, or
+// (nil, nil) when the pair does not exist. The message id is part of the lookup
+// so a download URL can only reach the attachment it names.
+func GetHumanMessageAttachment(messageID, attachmentID int64) (*HumanMessageAttachment, error) {
 	d, err := Open()
 	if err != nil {
 		return nil, err
 	}
 	var a HumanMessageAttachment
-	err = d.QueryRow(`SELECT message_id, filename, content_type, size_bytes, storage_path
-		FROM human_message_attachments WHERE message_id = ?`, messageID).
-		Scan(&a.MessageID, &a.Filename, &a.ContentType, &a.SizeBytes, &a.StoragePath)
+	err = d.QueryRow(`SELECT id, message_id, seq, filename, content_type, size_bytes, storage_path
+		FROM human_message_attachments WHERE message_id = ? AND id = ?`, messageID, attachmentID).
+		Scan(&a.ID, &a.MessageID, &a.Seq, &a.Filename, &a.ContentType, &a.SizeBytes, &a.StoragePath)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -220,6 +241,31 @@ func GetHumanMessageAttachment(messageID int64) (*HumanMessageAttachment, error)
 		return nil, err
 	}
 	return &a, nil
+}
+
+// ListHumanMessageAttachmentsFor returns one message's attachments in
+// publication order.
+func ListHumanMessageAttachmentsFor(messageID int64) ([]*HumanMessageAttachment, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(`SELECT id, message_id, seq, filename, content_type, size_bytes, storage_path
+		FROM human_message_attachments WHERE message_id = ? ORDER BY seq, id`, messageID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []*HumanMessageAttachment
+	for rows.Next() {
+		var a HumanMessageAttachment
+		if err := rows.Scan(&a.ID, &a.MessageID, &a.Seq, &a.Filename, &a.ContentType,
+			&a.SizeBytes, &a.StoragePath); err != nil {
+			return nil, err
+		}
+		out = append(out, &a)
+	}
+	return out, rows.Err()
 }
 
 func attachHumanMessageArtifacts(d *sql.DB, messages []*HumanMessage) error {
@@ -230,19 +276,20 @@ func attachHumanMessageArtifacts(d *sql.DB, messages []*HumanMessage) error {
 	for _, m := range messages {
 		byID[m.ID] = m
 	}
-	rows, err := d.Query(`SELECT message_id, filename, content_type, size_bytes, storage_path
-		FROM human_message_attachments`)
+	rows, err := d.Query(`SELECT id, message_id, seq, filename, content_type, size_bytes, storage_path
+		FROM human_message_attachments ORDER BY message_id, seq, id`)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var a HumanMessageAttachment
-		if err := rows.Scan(&a.MessageID, &a.Filename, &a.ContentType, &a.SizeBytes, &a.StoragePath); err != nil {
+		if err := rows.Scan(&a.ID, &a.MessageID, &a.Seq, &a.Filename, &a.ContentType,
+			&a.SizeBytes, &a.StoragePath); err != nil {
 			return err
 		}
 		if m := byID[a.MessageID]; m != nil {
-			m.Attachment = &a
+			m.Attachments = append(m.Attachments, &a)
 		}
 	}
 	return rows.Err()
@@ -318,7 +365,7 @@ func GetHumanMessage(id int64) (*HumanMessage, error) {
 	}
 	m.CreatedAt = created.Time()
 	m.ReadAt = readAt.Time()
-	m.Attachment, err = GetHumanMessageAttachment(m.ID)
+	m.Attachments, err = ListHumanMessageAttachmentsFor(m.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -440,7 +487,7 @@ func DeleteReadHumanMessages() (int, error) {
 // dashboard clear-read action; filesystem removal happens after commit and an
 // agentd reconciler retries any failed removal.
 func DeleteReadHumanMessagesWithAttachments() (int, []string, error) {
-	return deleteHumanMessagesWithAttachments("read_at IS NOT NULL", nil)
+	return deleteHumanMessagesWithAttachments("read_at IS NOT NULL", "m.read_at IS NOT NULL", nil)
 }
 
 // DeleteHumanMessage hard-deletes a single message by id, regardless of
@@ -500,10 +547,15 @@ func DeleteHumanMessagesWithAttachments(ids []int64) (int, []string, error) {
 		placeholders[i] = "?"
 		args[i] = id
 	}
-	return deleteHumanMessagesWithAttachments("id IN ("+strings.Join(placeholders, ",")+")", args)
+	idList := "(" + strings.Join(placeholders, ",") + ")"
+	return deleteHumanMessagesWithAttachments("id IN "+idList, "m.id IN "+idList, args)
 }
 
-func deleteHumanMessagesWithAttachments(where string, args []any) (int, []string, error) {
+// deleteHumanMessagesWithAttachments deletes the human_messages rows matching
+// where and returns the storage paths its attachments owned. joinWhere is the
+// same predicate written against the `m` alias — human_message_attachments has
+// an `id` column of its own, so the attachment join needs the qualified form.
+func deleteHumanMessagesWithAttachments(where, joinWhere string, args []any) (int, []string, error) {
 	d, err := Open()
 	if err != nil {
 		return 0, nil, err
@@ -516,7 +568,7 @@ func deleteHumanMessagesWithAttachments(where string, args []any) (int, []string
 	rows, err := tx.Query(`SELECT a.storage_path
 		FROM human_message_attachments a
 		JOIN human_messages m ON m.id = a.message_id
-		WHERE `+where, args...)
+		WHERE `+joinWhere, args...)
 	if err != nil {
 		return 0, nil, fmt.Errorf("list deleted human message attachments: %w", err)
 	}

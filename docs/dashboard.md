@@ -1341,19 +1341,22 @@ human-notify channel — an explicit nudge surface kept separate from the busy
 terminal. When the badge shows waiting work, selecting **Messages** opens the
 oldest pending access request, or the oldest unread notification when no access
 request is pending. An agent can add `--attach <path>` (repeatable) to publish
-a generated file, directory, or set of files. The message reader shows a
-download card; daemon-verified PNG, JPEG, GIF, WebP, and AVIF attachments also
+a generated file, directory, or set of files. The message reader shows one
+download card per published file. Up to 20 attached files arrive as separate
+downloads — so an image stays viewable instead of being buried in an archive —
+while a directory or a larger set is packaged as one zip. `--zip` and
+`--separate` force either shape, and `--name` (which renames a single download)
+implies `--zip`. Daemon-verified PNG, JPEG, GIF, WebP, and AVIF attachments also
 show a contain-fit thumbnail. Selecting the thumbnail opens the shared image
 preview overlay, which supports zoom, authenticated missing-file checks, and
 Escape-to-return while keeping the original download action available. SVG
-and other non-raster files remain download-only. Directories and multiple paths
-arrive as a zip. The daemon copies the bytes
+and other non-raster files remain download-only. The daemon copies the bytes
 into its private data directory, so remote dashboards download through an
 authenticated route rather than receiving access to the agent's filesystem.
 Deleting the message deletes its stored artifact too. Uploads are capped at
 256 MiB each, 512 MiB per stable agent, and 2 GiB daemon-wide; the CLI rejects
 top-level symlinks and asks the agent to pass the resolved path explicitly.
-Count caps of 100 attachments per stable agent and 1,000 daemon-wide prevent
+Count caps of 1,000 published files per stable agent and 10,000 daemon-wide prevent
 empty or tiny files from exhausting database rows and filesystem inodes.
 
 The three mail panes are keyboard-navigable the way a desktop mail client is.

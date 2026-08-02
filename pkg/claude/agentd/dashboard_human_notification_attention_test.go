@@ -26,7 +26,7 @@ func TestHumanNotificationAttentionAssetsAreWired(t *testing.T) {
 		"quick reader":    {"js/groups-notification-reader.js", "GroupsNotificationReader"},
 		"reader a11y":     {"js/groups-notification-reader.js", "aria-live=\"polite\""},
 		"read action":     {"js/groups-notification-reader.js", "/api/human-messages/read"},
-		"attachment":      {"js/groups-notification-reader.js", "/attachment"},
+		"attachment":      {"js/groups-notification-reader.js", "attachmentHref(message, attachment)"},
 		"mail bridge":     {"js/mail-bridge.js", "openHumanNotifications"},
 		"mail controller": {"js/mail.js", "selectMessage(first.id)"},
 		"group a11y":      {"js/groups-list.js", "a member has unread notifications"},

@@ -80,16 +80,20 @@ sidesteps shell quoting (an inline backtick is eaten by the shell).
 Same reasoning as `tclaude agent message --file`.
 
 Use repeatable `--attach <path>` flags when the result itself is a file the
-human should receive. A single file keeps its name and type. A directory is
-zipped as `<directory>.zip`; multiple paths are combined into `export.zip`.
-`--name` overrides the download filename. The daemon copies the bytes into its
+human should receive. A single file keeps its name and type. Up to 20 attached
+files are published SEPARATELY, each keeping its own name and type, so the
+human can open an image instead of unpacking an archive. A directory (zipped as
+`<directory>.zip`) or a larger set is packaged into `export.zip`. Force either
+shape with `--zip` / `--separate`. `--name` overrides the download filename and
+implies `--zip` when several paths are attached. The daemon copies the bytes into its
 private data directory, and the Messages reader exposes an authenticated
 download button, so this also works through remote dashboard access. The cap is
 256 MiB per published artifact. Deleting the message deletes the stored bytes.
 Top-level symlinks are rejected; pass the resolved path explicitly. Stored
 attachments are also capped at 512 MiB per stable agent and 2 GiB total, so
 delete older attachment messages before publishing when a quota is full. Count
-caps (100 per stable agent, 1,000 total) also apply, including to empty files.
+caps (1,000 published files per stable agent, 10,000 total) also apply,
+including to empty files.
 
 ## Permission
 
