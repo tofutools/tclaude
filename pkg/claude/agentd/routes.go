@@ -94,7 +94,9 @@ func routeLeaseViewFor(l *db.AgentRouteLease) routeLeaseView {
 	}
 	endpointStatus := routeConsumerEndpointStatusForLease(l.ID)
 	if l.State != db.RouteLeaseOpen {
-		endpointStatus = routeConsumerEndpointStatus{state: "closed"}
+		if endpointStatus.state != "refused" {
+			endpointStatus = routeConsumerEndpointStatus{state: "closed"}
+		}
 	} else if endpointStatus.state == "" {
 		endpointStatus.state = "pending"
 	}
@@ -526,7 +528,10 @@ func handleRouteLeaseEndpointStatus(w http.ResponseWriter, r *http.Request) {
 			writeRouteError(w, http.StatusBadRequest, "route_endpoint_invalid", endpointErr.Error())
 			return
 		}
-		setRouteConsumerEndpointReady(lease.ID, endpoint)
+		if !setRouteConsumerEndpointReady(lease.ID, endpoint) {
+			writeRouteError(w, http.StatusConflict, "route_endpoint_terminal", "route lease endpoint has already reached a terminal state")
+			return
+		}
 	case "pending":
 		if strings.TrimSpace(body.Endpoint) != "" || strings.TrimSpace(body.Error) != "" {
 			writeRouteError(w, http.StatusBadRequest, "route_invalid_argument", "pending endpoint status cannot include endpoint or error")
@@ -537,6 +542,10 @@ func handleRouteLeaseEndpointStatus(w http.ResponseWriter, r *http.Request) {
 		detail := strings.TrimSpace(body.Error)
 		if detail == "" || len(detail) > 256 || !utf8.ValidString(detail) || strings.IndexFunc(detail, unicode.IsControl) >= 0 {
 			writeRouteError(w, http.StatusBadRequest, "route_invalid_argument", "refused endpoint status requires a 1–256 byte printable error")
+			return
+		}
+		if err := db.CloseAgentRouteLease(lease.ID, capability.agentID, capability.convID); err != nil {
+			writeRouteError(w, http.StatusConflict, "route_transition", "could not close refused route lease")
 			return
 		}
 		setRouteConsumerEndpointRefused(lease.ID, detail)
@@ -771,10 +780,15 @@ func handleRouteLeaseClose(w http.ResponseWriter, r *http.Request) {
 		writeRouteError(w, http.StatusForbidden, "route_not_owner", "only the lease owner may close this lease")
 		return
 	}
+	if lease.State != db.RouteLeaseOpen {
+		writeJSON(w, http.StatusOK, routeLeaseViewFor(lease))
+		return
+	}
 	if err := db.CloseAgentRouteLease(lease.ID, agentID, convID); err != nil {
 		writeRouteError(w, http.StatusConflict, "route_transition", err.Error())
 		return
 	}
+	setRouteConsumerEndpointClosed(lease.ID)
 	updated, _ := db.GetAgentRouteLease(lease.ID)
 	writeJSON(w, http.StatusOK, routeLeaseViewFor(updated))
 }

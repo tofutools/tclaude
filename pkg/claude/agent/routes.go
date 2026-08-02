@@ -24,7 +24,9 @@ const (
 	maxRouteCLINameBytes  = 128
 	maxRouteCLIRefBytes   = 512
 	maxRouteCLIGroupBytes = 256
+)
 
+var (
 	routeEndpointWaitTimeout  = 5 * time.Second
 	routeEndpointPollInterval = 100 * time.Millisecond
 )
@@ -220,9 +222,21 @@ func runRoutesOpen(p *routesOpenParams, stdout, stderr io.Writer) int {
 	if waitGroup == "" {
 		waitGroup = route.Group
 	}
+	openedLease := lease
 	lease, err := waitForRouteEndpoint(lease, waitGroup)
 	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
+		cleanupID := openedLease.ID
+		if lease.ID != "" {
+			cleanupID = lease.ID
+		}
+		message := err.Error()
+		if cleanupID != "" {
+			var closed routeLeaseCLI
+			if closeErr := DaemonRequest(http.MethodDelete, "/v1/routes/leases/"+url.PathEscape(cleanupID), nil, &closed, DaemonOpts{}); closeErr != nil {
+				message += fmt.Sprintf("; lease cleanup failed: %v", closeErr)
+			}
+		}
+		fmt.Fprintf(stderr, "Error: %s\n", message)
 		return rcIOFailure
 	}
 	if lease.RouteReference == "" {

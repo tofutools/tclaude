@@ -64,6 +64,7 @@ func TestRoutesEndpointRegistrationAsyncFlow(t *testing.T) {
 	require.Equal(t, http.StatusOK, statusResponse.Code, statusResponse.Body.String())
 	response, leases = serveEndpointHelperList(t, credential, groupID)
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	require.Equal(t, db.RouteLeaseClosed, leases[0]["state"])
 	require.Equal(t, "refused", leases[0]["endpoint_state"])
 	require.Equal(t, "route adapter channel refused", leases[0]["endpoint_error"])
 }

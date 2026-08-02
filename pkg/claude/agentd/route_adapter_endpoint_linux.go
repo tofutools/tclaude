@@ -10,6 +10,7 @@ import (
 
 var routeConsumerEndpoints sync.Map
 var routeConsumerEndpointStatuses sync.Map
+var routeConsumerEndpointStatusMu sync.Mutex
 
 type routeConsumerEndpointStatus struct {
 	state    string
@@ -26,15 +27,10 @@ func routeConsumerEndpointForLease(leaseID string) string {
 	return endpoint
 }
 
-func setRouteConsumerEndpoint(leaseID, endpoint string) {
-	if leaseID != "" && endpoint != "" {
-		routeConsumerEndpoints.Store(leaseID, endpoint)
-		routeConsumerEndpointStatuses.Store(leaseID, routeConsumerEndpointStatus{state: "ready", endpoint: endpoint})
-	}
-}
-
 func clearRouteConsumerEndpoint(leaseID string) {
 	if leaseID != "" {
+		routeConsumerEndpointStatusMu.Lock()
+		defer routeConsumerEndpointStatusMu.Unlock()
 		routeConsumerEndpoints.Delete(leaseID)
 		if value, ok := routeConsumerEndpointStatuses.Load(leaseID); ok {
 			if status, ok := value.(routeConsumerEndpointStatus); ok && status.state == "ready" {
@@ -45,6 +41,8 @@ func clearRouteConsumerEndpoint(leaseID string) {
 }
 
 func routeConsumerEndpointStatusForLease(leaseID string) routeConsumerEndpointStatus {
+	routeConsumerEndpointStatusMu.Lock()
+	defer routeConsumerEndpointStatusMu.Unlock()
 	if value, ok := routeConsumerEndpointStatuses.Load(leaseID); ok {
 		if status, ok := value.(routeConsumerEndpointStatus); ok {
 			return status
@@ -56,15 +54,31 @@ func routeConsumerEndpointStatusForLease(leaseID string) routeConsumerEndpointSt
 	return routeConsumerEndpointStatus{}
 }
 
-func setRouteConsumerEndpointReady(leaseID, endpoint string) {
-	if leaseID != "" && endpoint != "" {
-		routeConsumerEndpoints.Store(leaseID, endpoint)
-		routeConsumerEndpointStatuses.Store(leaseID, routeConsumerEndpointStatus{state: "ready", endpoint: endpoint})
+func setRouteConsumerEndpointReady(leaseID, endpoint string) bool {
+	if leaseID == "" || endpoint == "" {
+		return false
 	}
+	routeConsumerEndpointStatusMu.Lock()
+	defer routeConsumerEndpointStatusMu.Unlock()
+	if value, ok := routeConsumerEndpointStatuses.Load(leaseID); ok {
+		if status, ok := value.(routeConsumerEndpointStatus); ok && (status.state == "refused" || status.state == "closed") {
+			return false
+		}
+	}
+	routeConsumerEndpoints.Store(leaseID, endpoint)
+	routeConsumerEndpointStatuses.Store(leaseID, routeConsumerEndpointStatus{state: "ready", endpoint: endpoint})
+	return true
 }
 
 func setRouteConsumerEndpointRefused(leaseID, detail string) {
 	if leaseID != "" {
+		routeConsumerEndpointStatusMu.Lock()
+		defer routeConsumerEndpointStatusMu.Unlock()
+		if value, ok := routeConsumerEndpointStatuses.Load(leaseID); ok {
+			if status, ok := value.(routeConsumerEndpointStatus); ok && (status.state == "refused" || status.state == "closed") {
+				return
+			}
+		}
 		routeConsumerEndpoints.Delete(leaseID)
 		routeConsumerEndpointStatuses.Store(leaseID, routeConsumerEndpointStatus{state: "refused", err: detail})
 	}
@@ -72,8 +86,24 @@ func setRouteConsumerEndpointRefused(leaseID, detail string) {
 
 func setRouteConsumerEndpointPending(leaseID string) {
 	if leaseID != "" {
+		routeConsumerEndpointStatusMu.Lock()
+		defer routeConsumerEndpointStatusMu.Unlock()
+		if value, ok := routeConsumerEndpointStatuses.Load(leaseID); ok {
+			if status, ok := value.(routeConsumerEndpointStatus); ok && (status.state == "refused" || status.state == "closed") {
+				return
+			}
+		}
 		routeConsumerEndpoints.Delete(leaseID)
 		routeConsumerEndpointStatuses.Store(leaseID, routeConsumerEndpointStatus{state: "pending"})
+	}
+}
+
+func setRouteConsumerEndpointClosed(leaseID string) {
+	if leaseID != "" {
+		routeConsumerEndpointStatusMu.Lock()
+		defer routeConsumerEndpointStatusMu.Unlock()
+		routeConsumerEndpoints.Delete(leaseID)
+		routeConsumerEndpointStatuses.Store(leaseID, routeConsumerEndpointStatus{state: "closed"})
 	}
 }
 

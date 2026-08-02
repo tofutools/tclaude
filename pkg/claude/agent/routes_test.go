@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -72,6 +73,8 @@ func TestRunRoutesOpenReportsTerminalEndpointRefusal(t *testing.T) {
 			return 201, "", `{"id":"rlease_api","route_id":"rte_api","state":"open","endpoint_state":"pending"}`
 		case method == http.MethodGet && path == "/v1/routes/leases?group=team":
 			return 200, "", `{"leases":[{"id":"rlease_api","route_id":"rte_api","state":"open","endpoint_state":"refused","endpoint_error":"route adapter channel refused"}]}`
+		case method == http.MethodDelete && path == "/v1/routes/leases/rlease_api":
+			return 200, "", `{"id":"rlease_api","route_id":"rte_api","state":"closed","endpoint_state":"closed"}`
 		default:
 			return 500, "unexpected", ""
 		}
@@ -80,9 +83,41 @@ func TestRunRoutesOpenReportsTerminalEndpointRefusal(t *testing.T) {
 
 	rc := runRoutesOpen(&routesOpenParams{Reference: "agt_pub/api", Group: "team", JSON: true}, &stdout, &stderr)
 	assert.Equal(t, rcIOFailure, rc)
+	assert.Len(t, calls, 4)
+	assert.Equal(t, http.MethodDelete, calls[3].method)
+	assert.Equal(t, "/v1/routes/leases/rlease_api", calls[3].path)
 	assert.Empty(t, stdout.String())
 	assert.Contains(t, stderr.String(), "endpoint refused")
 	assert.Contains(t, stderr.String(), "route adapter channel refused")
+}
+
+func TestRunRoutesOpenTimeoutClosesLease(t *testing.T) {
+	previousTimeout, previousPoll := routeEndpointWaitTimeout, routeEndpointPollInterval
+	routeEndpointWaitTimeout, routeEndpointPollInterval = 5*time.Millisecond, time.Millisecond
+	t.Cleanup(func() { routeEndpointWaitTimeout, routeEndpointPollInterval = previousTimeout, previousPoll })
+	var calls []capturedReq
+	stubDaemon(t, &calls, func(method, path string) (int, string, string) {
+		switch {
+		case method == http.MethodGet && path == "/v1/routes?group=team":
+			return 200, "", `{"routes":[{"id":"rte_api","group":"team","publisher_agent_id":"agt_pub","name":"api","reference":"agt_pub/api","state":"ready"}]}`
+		case method == http.MethodPost && path == "/v1/routes/open":
+			return 201, "", `{"id":"rlease_api","route_id":"rte_api","state":"open","endpoint_state":"pending"}`
+		case method == http.MethodGet && path == "/v1/routes/leases?group=team":
+			return 200, "", `{"leases":[{"id":"rlease_api","route_id":"rte_api","state":"open","endpoint_state":"pending"}]}`
+		case method == http.MethodDelete && path == "/v1/routes/leases/rlease_api":
+			return 200, "", `{"id":"rlease_api","route_id":"rte_api","state":"closed","endpoint_state":"closed"}`
+		default:
+			return 500, "unexpected", ""
+		}
+	})
+	var stdout, stderr bytes.Buffer
+
+	rc := runRoutesOpen(&routesOpenParams{Reference: "agt_pub/api", Group: "team"}, &stdout, &stderr)
+	assert.Equal(t, rcIOFailure, rc)
+	assert.Contains(t, stderr.String(), "did not become endpoint-ready")
+	assert.NotContains(t, stderr.String(), "cleanup failed")
+	assert.Empty(t, stdout.String())
+	assert.Equal(t, http.MethodDelete, calls[len(calls)-1].method)
 }
 
 func TestRunRoutesLsAmbiguousGroupIsNonZero(t *testing.T) {

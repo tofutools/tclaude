@@ -66,6 +66,7 @@ func handleRouteChannel(w http.ResponseWriter, r *http.Request) {
 	launchGeneration = capability.launchGeneration
 
 	var attach func(context.Context, net.Conn) error
+	var consumerAuth routebroker.ConsumerAuth
 	consumerEndpoint := ""
 	switch role {
 	case routeadapter.RolePublisher:
@@ -108,16 +109,13 @@ func handleRouteChannel(w http.ResponseWriter, r *http.Request) {
 			writeRouteError(w, http.StatusForbidden, "route_endpoint_not_local", endpointErr.Error())
 			return
 		}
-		auth := routebroker.ConsumerAuth{
+		consumerAuth = routebroker.ConsumerAuth{
 			LeaseID: leaseID, RouteID: routeID, AgentID: agentID, ConvID: convID,
 			LaunchGeneration: launchGeneration, GroupGeneration: groupGeneration,
 		}
-		if authErr := (databaseRouteAuthority{}).AuthorizeConsumer(r.Context(), auth); authErr != nil {
+		if authErr := (databaseRouteAuthority{}).AuthorizeConsumer(r.Context(), consumerAuth); authErr != nil {
 			writeRouteError(w, http.StatusForbidden, "route_authority", authErr.Error())
 			return
-		}
-		attach = func(ctx context.Context, conn net.Conn) error {
-			return GroupRouteBroker().AttachConsumer(ctx, auth, conn)
 		}
 	default:
 		writeRouteError(w, http.StatusBadRequest, "route_channel", "role must be publisher or consumer")
@@ -134,6 +132,31 @@ func handleRouteChannel(w http.ResponseWriter, r *http.Request) {
 		writeRouteError(w, http.StatusInternalServerError, "route_channel", fmt.Sprintf("hijack route channel: %v", err))
 		return
 	}
+	if role == routeadapter.RoleConsumer {
+		leaseID := strings.TrimSpace(r.Header.Get("X-Tclaude-Route-Lease-ID"))
+		err := GroupRouteBroker().AttachConsumerWithReady(r.Context(), consumerAuth, conn, func() error {
+			lease, err := db.GetAgentRouteLease(leaseID)
+			if err != nil || lease == nil || lease.State != db.RouteLeaseOpen {
+				return errors.New("route lease reached a terminal state before readiness")
+			}
+			if _, err := rw.WriteString("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: tclaude-route-v1\r\n\r\n"); err != nil {
+				return err
+			}
+			if err := rw.Flush(); err != nil {
+				return err
+			}
+			if !setRouteConsumerEndpointReady(leaseID, consumerEndpoint) {
+				return errors.New("route endpoint reached a terminal state before readiness")
+			}
+			return nil
+		})
+		if err != nil {
+			_ = db.CloseAgentRouteLease(leaseID, consumerAuth.AgentID, consumerAuth.ConvID)
+			setRouteConsumerEndpointRefused(leaseID, routeEndpointRefusalDetail(err))
+		}
+		clearRouteConsumerEndpoint(leaseID)
+		return
+	}
 	if _, err := rw.WriteString("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: tclaude-route-v1\r\n\r\n"); err != nil {
 		_ = conn.Close()
 		return
@@ -142,17 +165,8 @@ func handleRouteChannel(w http.ResponseWriter, r *http.Request) {
 		_ = conn.Close()
 		return
 	}
-	if role == routeadapter.RoleConsumer {
-		setRouteConsumerEndpoint(strings.TrimSpace(r.Header.Get("X-Tclaude-Route-Lease-ID")), consumerEndpoint)
-	}
 	if err := attach(r.Context(), conn); err != nil {
-		if role == routeadapter.RoleConsumer {
-			setRouteConsumerEndpointRefused(strings.TrimSpace(r.Header.Get("X-Tclaude-Route-Lease-ID")), routeEndpointRefusalDetail(err))
-		}
 		_ = conn.Close()
-	}
-	if role == routeadapter.RoleConsumer {
-		clearRouteConsumerEndpoint(strings.TrimSpace(r.Header.Get("X-Tclaude-Route-Lease-ID")))
 	}
 }
 
