@@ -38,8 +38,9 @@ import (
 // and JS as static assets under /static/ (see registerDashboardRoutes).
 // The dashboard shell, feature islands, and retained imperative integrations
 // load source JS as native ES modules.
-// Preact, HTM, and Signals are vendored under dashboard/vendor/preact/ and an
-// import map gives application modules normal package specifiers. Islands are
+// Preact, HTM, and Signals are vendored under dashboard/vendor/preact/, and
+// markdown-it (the Markdown viewer's parser) under dashboard/vendor/markdown-it/;
+// an import map gives application modules normal package specifiers. Islands are
 // dynamically loaded so a missing optional feature module cannot prevent the
 // static entry graph from linking.
 //
@@ -79,6 +80,9 @@ func mustReadFS(fsys fs.FS, name string) []byte {
 // outright, so this is load-bearing for the dashboard, not cosmetic.
 func init() {
 	_ = mime.AddExtensionType(".js", "text/javascript")
+	// Vendored bundles keep their upstream filenames, and markdown-it's browser
+	// ES module ships as .mjs — a type the host table often does not carry.
+	_ = mime.AddExtensionType(".mjs", "text/javascript")
 	_ = mime.AddExtensionType(".css", "text/css")
 	_ = mime.AddExtensionType(".map", "application/json")
 }

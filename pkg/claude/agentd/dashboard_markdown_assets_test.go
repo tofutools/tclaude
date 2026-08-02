@@ -1,0 +1,132 @@
+package agentd
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"io/fs"
+	"strings"
+	"testing"
+)
+
+// TestDashboardMarkdownVendorAssets pins the vendored markdown-it bundle. A
+// silent swap of a parser that renders agent-published text is exactly the
+// change that must be deliberate, so the hashes live here and in
+// dashboard/vendor/markdown-it/README.md together.
+func TestDashboardMarkdownVendorAssets(t *testing.T) {
+	wantHashes := map[string]string{
+		"vendor/markdown-it/markdown-it.esm.min.mjs":     "eb0a6cb2beb08326ea4d3e0e3b25ac72c1e6f119a619d9bbe061e72000ffa118",
+		"vendor/markdown-it/markdown-it.esm.min.mjs.map": "a1fccb4bda2e184b3f5e25b8dd7d020bedc30975e0e8bfec89d03811aee3312a",
+	}
+	for name, want := range wantHashes {
+		data, err := fs.ReadFile(dashboardAssetsFS, name)
+		if err != nil {
+			t.Errorf("embedded dashboard asset %q not found: %v", name, err)
+			continue
+		}
+		got := sha256.Sum256(data)
+		if hex.EncodeToString(got[:]) != want {
+			t.Errorf("embedded dashboard asset %q hash changed; update the vendored manifest intentionally", name)
+		}
+	}
+
+	for _, name := range []string{
+		"vendor/markdown-it/LICENSE-markdown-it.txt",
+		"vendor/markdown-it/README.md",
+	} {
+		data, err := fs.ReadFile(dashboardAssetsFS, name)
+		if err != nil {
+			t.Errorf("embedded dashboard asset %q not found: %v", name, err)
+			continue
+		}
+		if len(data) == 0 {
+			t.Errorf("embedded dashboard asset %q is empty", name)
+		}
+	}
+
+	// The browser bundle is self-contained. If an upgrade ever brings one that
+	// imports its dependencies instead, the module would 404 at runtime.
+	bundle := string(mustReadFS(dashboardAssetsFS, "vendor/markdown-it/markdown-it.esm.min.mjs"))
+	if strings.Contains(bundle, "from\"") || strings.Contains(bundle, "from '") {
+		t.Error("vendored markdown-it bundle carries external imports; it must be the self-contained dist/browser build")
+	}
+}
+
+func TestDashboardMarkdownImportMap(t *testing.T) {
+	html := string(dashboardIndexHTML)
+	const mapping = `"markdown-it": "/static/vendor/markdown-it/markdown-it.esm.min.mjs"`
+	if !strings.Contains(html, mapping) {
+		t.Errorf("dashboard import map missing %s", mapping)
+	}
+	// The parser is a third of a megabyte serving one optional surface. It must
+	// stay out of the boot graph, or every dashboard load pays for it.
+	for _, m := range bootVendorPreload {
+		if strings.Contains(m, "markdown-it") {
+			t.Errorf("markdown-it is preloaded on boot (%s); the viewer imports it on demand", m)
+		}
+	}
+	if strings.Contains(dashboardAssetFile(t, "js/dashboard.js"), "markdown") {
+		t.Error("the dashboard entrypoint statically reaches the Markdown viewer; it must stay lazily loaded")
+	}
+}
+
+// TestDashboardMarkdownRendersWithoutHTMLInjection pins the property the whole
+// design rests on: agent-published Markdown becomes Preact vnodes drawn from an
+// allowlist, never an HTML string. Behaviour is covered by the jstest suites;
+// this fails the build if the implementation ever takes the innerHTML shortcut,
+// which would silently turn a document into markup.
+func TestDashboardMarkdownRendersWithoutHTMLInjection(t *testing.T) {
+	for _, name := range []string{"js/markdown-model.js", "js/markdown-document.js", "js/markdown-preview-overlay.js"} {
+		source := dashboardAssetFile(t, name)
+		for _, forbidden := range []string{"innerHTML", "insertAdjacentHTML", "dangerouslySetInnerHTML", ".render("} {
+			if strings.Contains(source, forbidden) {
+				t.Errorf("%s uses %q; the Markdown viewer must build vnodes from the token stream, not inject markup", name, forbidden)
+			}
+		}
+	}
+	model := dashboardAssetFile(t, "js/markdown-model.js")
+	for needle, why := range map[string]string{
+		"html: false":                     "markdown-it must not turn raw HTML in a document into markup",
+		"export function markdownToTree(": "the token walk is the surface the pure jstest suite exercises",
+		"parser.parse(":                   "the viewer parses to tokens rather than rendering to HTML",
+		"noopener noreferrer":             "a document's links must not get a handle back to the dashboard",
+	} {
+		if !strings.Contains(model, needle) {
+			t.Errorf("js/markdown-model.js missing %q (%s)", needle, why)
+		}
+	}
+}
+
+// TestDashboardMarkdownViewerWired keeps both notification surfaces offering the
+// viewer. The drawer and Messages render attachments independently, so a file
+// readable in one and download-only in the other is a real and easy regression.
+func TestDashboardMarkdownViewerWired(t *testing.T) {
+	for _, name := range []string{"js/groups-notification-reader.js", "js/mail-island.js"} {
+		source := dashboardAssetFile(t, name)
+		for needle, why := range map[string]string{
+			"MarkdownAttachmentPreview": "the surface offers the shared Markdown viewer",
+			"import { MarkdownAttachmentPreview } from './markdown-preview-overlay.js';": "the viewer is the shared one, not a local copy",
+		} {
+			if !strings.Contains(source, needle) {
+				t.Errorf("%s missing %q (%s)", name, needle, why)
+			}
+		}
+	}
+
+	overlay := dashboardAssetFile(t, "js/markdown-preview-overlay.js")
+	for needle, why := range map[string]string{
+		`role="dialog"`:                          "the document viewer exposes dialog semantics",
+		`aria-modal="true"`:                      "the document viewer is modal",
+		"if (!attachment?.markdown) return null": "the viewer is offered only on the daemon's verdict",
+	} {
+		if !strings.Contains(overlay, needle) {
+			t.Errorf("markdown viewer source missing %q (%s)", needle, why)
+		}
+	}
+
+	css := dashboardAssetFile(t, "dashboard.css")
+	for _, rule := range []string{".markdown-preview-dialog {", ".markdown-document {", ".human-attachment-markdown-trigger {"} {
+		if !strings.Contains(css, rule) {
+			t.Errorf("dashboard CSS is missing the %s rule", rule)
+		}
+	}
+}

@@ -1418,7 +1418,29 @@ implies `--zip`. Daemon-verified PNG, JPEG, GIF, WebP, and AVIF attachments also
 show a contain-fit thumbnail. Selecting the thumbnail opens the shared image
 preview overlay, which supports zoom, authenticated missing-file checks, and
 Escape-to-return while keeping the original download action available. SVG
-and other non-raster files remain download-only. The daemon copies the bytes
+and other non-raster files remain download-only.
+
+A published **Markdown document** gets the same treatment in reading form. A
+file the daemon recognises as Markdown — by `text/markdown` media type or by a
+`.md`/`.markdown`/`.mdown`/`.mkd`/`.mkdn` name, under 1 MiB, and whose leading
+bytes are UTF-8 text rather than binary — carries a **Read** control beside its
+download link. That opens a modal document viewer with the file rendered:
+headings, lists, tables, fenced code, block quotes, links, and images, plus a
+**Show source** toggle for the original text and the same missing-file,
+Escape-to-return, and download behaviour as the image overlay. Both the quick
+notification reader and Messages offer it, and both use the same overlay.
+
+Rendering is done by the vendored [markdown-it](https://github.com/markdown-it/markdown-it)
+parser (`dashboard/vendor/markdown-it/`), loaded on demand so the dashboard's
+boot graph does not carry it. The dashboard never asks the parser for HTML: it
+walks the token stream into a plain tree of allowlisted elements and attributes
+and renders that as Preact vnodes, so a document's own `<script>` or
+`onerror=` reaches the operator as visible characters, and a `javascript:` or
+`data:text/html` target never becomes a link. Document links open in a new tab
+with `rel="noopener noreferrer"`. Images may load from `http(s)` or from a
+`data:` raster URI; an image the viewer will not load degrades to its alt text.
+
+The daemon copies the bytes
 into its private data directory, so remote dashboards download through an
 authenticated route rather than receiving access to the agent's filesystem.
 Deleting the message deletes its stored artifact too. Uploads are capped at
