@@ -305,7 +305,7 @@ type routesCloseParams struct {
 func routesCloseCmd() *cobra.Command {
 	return boa.CmdT[routesCloseParams]{
 		Use:         "close <route>",
-		Short:       "Close a consumer lease",
+		Short:       "Close a published route or consumer lease",
 		Long:        "Closes the caller's own route or consumer lease. Pass the lease ID printed by routes open, or a route reference together with --group. The daemon decides whether the caller owns the published route or an open consumer lease.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *routesCloseParams, _ *cobra.Command) error {
