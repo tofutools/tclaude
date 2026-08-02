@@ -31,11 +31,9 @@ golangci-lint run ./...
 go install .
 ```
 
-CI runs `go test ./...` and `golangci-lint run ./...`. Prefer pushing PRs
-early and letting CI do that work; do not duplicate the full test/lint suite
-locally before pushing. Do make sure your changes at least build, and run
-focused local tests when they help your own iteration on the code you are
-changing.
+CI runs `go test ./...` and `golangci-lint run ./...`. Do make sure your changes at 
+least build, and run focused local tests when they help your own iteration on the code 
+you are changing.
 
 Platform target: Linux and macOS. WSL is treated as Linux for practical use.
 Native Windows is not a supported development target; do not design new
@@ -147,15 +145,14 @@ rendered mock of what is wanted; either side re-renders and replies with an
 updated image, passing an absolute path the peer can read in the message body
 (`tclaude agent send` carries text only — attachments exist only on
 notify-human), iterating on the design together before any production code is
-written. Bring
-the human in with notify-human whenever a decision is taste rather than
-mechanics.
+written. Bring the human in with notify-human whenever a decision is taste 
+rather than mechanics.
 
 ## Git, commits, and PRs
 
-When making feature or fix changes as an agent, use a git worktree and open a
-PR unless the operator gives different instructions. It is fine to force-push a
-feature branch; never force-push `main`.
+When making feature or fix changes as an agent, create a feature branch unless the 
+operator gives different instructions. It is fine to force-push a feature branch; 
+never force-push `main`.
 
 Do not include remote-access/session links in commits, PR descriptions, or PR
 comments. In particular, do not add `Claude-Session:` trailers or
@@ -165,13 +162,8 @@ PR descriptions should start with a short `Background / Purpose` section that
 explains why the PR exists. Then summarize the implementation and list tests or
 verification.
 
-Every PR needs a real cold review, but the review must not delay the PR
-itself. Open the PR first, then trigger the cold review against it. When
-presenting a PR to the operator while the review is still pending, say so.
-Apply fixes once the review completes: push them directly to the PR if it is
-still open; if the operator chose to merge early, address findings in a
-follow-up PR, and escalate anything serious (such as a security regression)
-to the operator directly rather than only filing the follow-up.
+Every PR needs a real cold review, but make a commit to the feature branch first.
+Apply fixes once the review completes: make another commit to the feature branch. 
 CodeRabbit is enough for small/routine PRs only when it produced actual review
 feedback; a green CodeRabbit check that skipped because of quota is not a
 review. Larger, riskier, or more judgment-heavy PRs should get an independent
