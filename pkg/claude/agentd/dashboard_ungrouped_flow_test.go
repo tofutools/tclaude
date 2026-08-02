@@ -169,6 +169,8 @@ type dashHarness struct {
 	SandboxModeHelp            map[string]string `json:"sandbox_mode_help"`
 	ApprovalModes              []string          `json:"approval_modes"`
 	DefaultApproval            string            `json:"default_approval"`
+	ProfileApproval            string            `json:"profile_recommended_approval"`
+	ProfileSandboxImpl         string            `json:"profile_recommended_sandbox_implementation"`
 	ApprovalModeHelp           map[string]string `json:"approval_mode_help"`
 	ToolsModes                 []string          `json:"tools_modes"`
 	DefaultTools               string            `json:"default_tools"`

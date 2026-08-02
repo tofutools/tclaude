@@ -1250,6 +1250,16 @@ type dashboardHarness struct {
 	// DefaultApproval is the recommended approval mode the dialog pre-selects
 	// (Claude Code: auto). "" when ApprovalModes is empty.
 	DefaultApproval string `json:"default_approval"`
+	// ProfileRecommendedApproval is the approval mode a newly authored spawn
+	// profile should pin when that recommendation intentionally differs from the
+	// harness's unprofiled fallback. OpenCode uses allow-tools together with the
+	// profile recommendation for tclaude-layer; its bare-launch default remains
+	// deny so an unprofiled, unconfined launch does not gain autonomy.
+	ProfileRecommendedApproval string `json:"profile_recommended_approval,omitempty"`
+	// ProfileRecommendedSandboxImplementation is the matching OS-containment
+	// recommendation for spawn profiles. It is separate from DefaultSandbox,
+	// which is the harness-native mode axis rather than the implementation axis.
+	ProfileRecommendedSandboxImplementation string `json:"profile_recommended_sandbox_implementation,omitempty"`
 	// ApprovalModeHelp maps each approval mode to a one-line hint (notably
 	// whether it is safe for a detached agent). {} (not null) when the harness
 	// surfaces no approval modes, so the JS lookup is always safe.
@@ -1407,6 +1417,10 @@ func buildHarnessCatalog() []dashboardHarness {
 			CanTclaudeLayer:            session.ValidateTclaudeLayerHarness(h.Name) == nil,
 			CanStacked:                 h.SupportsNestedSandbox(),
 			TclaudeLayerServerBoundary: session.TclaudeLayerUsesServerBoundary(h.Name),
+		}
+		if h.Name == harness.OpenCodeName {
+			dh.ProfileRecommendedApproval = harness.OpenCodeApprovalAllowTools
+			dh.ProfileRecommendedSandboxImplementation = string(sandboxpolicy.ImplementationTclaudeLayer)
 		}
 		if dh.CanAutoCompactWindow {
 			dh.AutoCompactWindowMin = harness.MinAutoCompactWindow

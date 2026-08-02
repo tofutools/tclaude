@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { assertAbsent, assertDifferentNode, assertSameNode } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
-const catalog = [{ name: 'claude', display_name: 'Claude Code', models: ['sonnet'], effort_levels: ['low', 'high'], can_sandbox: true, can_builtin_os_sandbox: true, sandbox_modes: ['inherit', 'on'], default_sandbox: 'inherit', can_approval: true, approval_modes: ['inherit', 'plan'], default_approval: 'inherit', approval_mode_help: { inherit: 'keep settings', plan: 'plan only' }, can_tools: false, tools_modes: [], default_tools: '', tools_mode_help: {}, can_auto_review: false, can_ask_timeout: true, ask_timeout_modes: ['inherit', '60s'], default_ask_timeout: 'inherit', can_remote_control: true, can_auto_memory: true, can_dir_trust: true, dir_trust_store: '~/.claude.json' }, { name: 'codex', display_name: 'Codex CLI', models: [], can_sandbox: true, can_builtin_os_sandbox: true, sandbox_modes: ['workspace-write'], default_sandbox: 'workspace-write', can_approval: true, approval_modes: ['never', 'untrusted', 'on-failure', 'on-request'], default_approval: 'never', approval_mode_help: { never: 'never prompt', untrusted: 'ask for untrusted', 'on-failure': 'deprecated retry', 'on-request': 'ask when requested' }, can_tools: false, tools_modes: [], default_tools: '', tools_mode_help: {}, can_auto_review: true, can_remote_control: false, can_auto_memory: false, can_ssh_workaround: true, can_dir_trust: true, dir_trust_store: '~/.codex/config.toml' }, { name: 'opencode', display_name: 'OpenCode', models: [], effort_levels: [], can_sandbox: true, can_builtin_os_sandbox: false, sandbox_modes: ['off'], default_sandbox: 'off', sandbox_mode_help: { off: '⚠ No tclaude OS containment' }, can_approval: false, approval_modes: [], default_approval: '', can_tools: true, tools_modes: ['allow', 'ask', 'deny'], default_tools: 'allow', tools_mode_help: { allow: 'allow tools', ask: 'ask for tools', deny: 'deny tools' }, can_auto_review: false, can_remote_control: false, can_auto_memory: false, can_dir_trust: false, dir_trust_store: '' }];
+const catalog = [{ name: 'claude', display_name: 'Claude Code', models: ['sonnet'], effort_levels: ['low', 'high'], can_sandbox: true, can_builtin_os_sandbox: true, sandbox_modes: ['inherit', 'on'], default_sandbox: 'inherit', can_approval: true, approval_modes: ['inherit', 'plan'], default_approval: 'inherit', approval_mode_help: { inherit: 'keep settings', plan: 'plan only' }, can_tools: false, tools_modes: [], default_tools: '', tools_mode_help: {}, can_auto_review: false, can_ask_timeout: true, ask_timeout_modes: ['inherit', '60s'], default_ask_timeout: 'inherit', can_remote_control: true, can_auto_memory: true, can_dir_trust: true, dir_trust_store: '~/.claude.json' }, { name: 'codex', display_name: 'Codex CLI', models: [], can_sandbox: true, can_builtin_os_sandbox: true, sandbox_modes: ['workspace-write'], default_sandbox: 'workspace-write', can_approval: true, approval_modes: ['never', 'untrusted', 'on-failure', 'on-request'], default_approval: 'never', approval_mode_help: { never: 'never prompt', untrusted: 'ask for untrusted', 'on-failure': 'deprecated retry', 'on-request': 'ask when requested' }, can_tools: false, tools_modes: [], default_tools: '', tools_mode_help: {}, can_auto_review: true, can_remote_control: false, can_auto_memory: false, can_ssh_workaround: true, can_dir_trust: true, dir_trust_store: '~/.codex/config.toml' }, { name: 'opencode', display_name: 'OpenCode', models: [], effort_levels: [], can_sandbox: true, can_builtin_os_sandbox: false, sandbox_modes: ['access-control', 'tclaude-layer', 'off'], default_sandbox: 'access-control', sandbox_mode_help: { 'access-control': 'soft rules', 'tclaude-layer': 'OS containment', off: '⚠ No tclaude OS containment' }, can_approval: true, approval_modes: ['deny', 'ask', 'allow-tools'], default_approval: 'deny', profile_recommended_approval: 'allow-tools', approval_mode_help: { deny: 'deny edits', ask: 'ask for edits', 'allow-tools': 'allow scoped edits' }, profile_recommended_sandbox_implementation: 'tclaude-layer', can_tools: true, tools_modes: ['allow', 'ask', 'deny'], default_tools: 'allow', tools_mode_help: { allow: 'allow tools', ask: 'ask for tools', deny: 'deny tools' }, can_auto_review: false, can_remote_control: false, can_auto_memory: false, can_dir_trust: false, dir_trust_store: '' }];
 
 const sandboxImpl = {
   options: [
@@ -79,6 +79,14 @@ test('management model preserves full-replace profile and role semantics', async
   assert.equal(model.profilePayload(legacyOff, {
     name: 'legacy-off', harness: 'codex', sandbox: 'danger-full-access',
   }, catalog).sandbox_implementation, undefined);
+  const recommendedOpenCode = model.profileDraft({ name: 'open', harness: 'opencode' }, {}, catalog);
+  assert.equal(recommendedOpenCode.approval, 'allow-tools');
+  assert.equal(recommendedOpenCode.sandbox_implementation, 'tclaude-layer');
+  const recommendedOpenCodePayload = model.profilePayload(
+    recommendedOpenCode, { name: 'open', harness: 'opencode' }, catalog,
+  );
+  assert.equal(recommendedOpenCodePayload.approval, 'allow-tools');
+  assert.equal(recommendedOpenCodePayload.sandbox_implementation, 'tclaude-layer');
   assert.deepEqual(model.harnessDefaults({ sandbox_modes: ['on'], approval_modes: ['plan'], tools_modes: ['deny'], ask_timeout_modes: ['60s'] }), { sandbox: 'on', approval: 'plan', tools: 'deny', approval_reviewer: '', ask_user_question_timeout: '60s' });
 });
 
@@ -151,7 +159,41 @@ test('Codex profile permission modes populate, survive harness switches, save, a
   cleanups.reverse().forEach((fn) => fn());
 });
 
-test('OpenCode profile editor selects sandbox implementation or off and saves tool governance', async (t) => {
+test('OpenCode profile editor recommends its sandboxed autonomous pair', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  state.openDialog({
+    kind: 'profile-editor', seed: { name: 'opencode-defaults', harness: 'opencode' },
+    options: {}, catalog, sandboxImpl,
+  });
+  const recommendedSaves = [];
+  const recommendedCleanups = [];
+  const recommendedHost = harness.document.createElement('div');
+  harness.document.body.appendChild(recommendedHost);
+  mountManagementIsland({
+    host: recommendedHost, state,
+    actions: { async saveProfile(value) { recommendedSaves.push(value); }, async loadUnsandboxedAutonomy() { return { warnings: [] }; } },
+    confirmDiscard: async () => true, openProfilePermissions() {}, registerCleanup(fn) { recommendedCleanups.push(fn); },
+  });
+  await harness.act(() => Promise.resolve());
+  const recommendedSandbox = recommendedHost.querySelector('#profile-editor-sandbox-impl');
+  assert.equal(selectedValue(recommendedSandbox), 'tclaude-layer');
+  assert.match([...recommendedSandbox.options]
+    .find((option) => option.value === 'tclaude-layer').textContent, /recommended/);
+  const recommendedApproval = recommendedHost.querySelector('#profile-editor-approval');
+  assert.equal(selectedValue(recommendedApproval), 'allow-tools');
+  assert.match([...recommendedApproval.options]
+    .find((option) => option.value === 'allow-tools').textContent, /recommended/);
+  await harness.act(() => harness.fireEvent(recommendedHost.querySelector('#profile-editor-submit'), 'click'));
+  assert.equal(recommendedSaves[0].payload.sandbox_implementation, 'tclaude-layer');
+  assert.equal(recommendedSaves[0].payload.approval, 'allow-tools');
+  recommendedCleanups.reverse().forEach((fn) => fn());
+});
+
+test('OpenCode profile editor preserves explicit sandbox and tool overrides', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
     harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
@@ -261,7 +303,7 @@ test('profile editor names the harness-owned sandbox after the selected harness'
     [...host.querySelector('#profile-editor-sandbox-impl').options].map((option) => option.textContent),
     [
       'Unset (resolved defaults at spawn)',
-      'tclaude built-in OS sandbox (experimental)',
+      'tclaude built-in OS sandbox (experimental) (recommended)',
       'Stacked: tclaude + OpenCode (experimental)',
       'Off',
     ],

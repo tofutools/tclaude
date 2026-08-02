@@ -40,6 +40,19 @@ export function harnessDefaults(harness) {
   };
 }
 
+// Spawn-profile recommendations may deliberately be a safer pair than the
+// harness's bare-launch defaults. OpenCode profiles pin tclaude's OS sandbox,
+// which makes allow-tools an appropriate autonomous posture; an unprofiled
+// OpenCode launch retains its fail-closed approval default.
+export function profileHarnessDefaults(harness) {
+  return {
+    ...harnessDefaults(harness),
+    approval: harness?.profile_recommended_approval
+      || harness?.default_approval || harness?.approval_modes?.[0] || '',
+    sandbox_implementation: harness?.profile_recommended_sandbox_implementation || '',
+  };
+}
+
 // A create-from-seed (editExisting:false) normally clears the name: the seed is
 // a live agent's launch state or a template's inline spec, which carries no
 // handle worth reusing. A CLONE is the exception — its seed arrives with a
@@ -48,7 +61,7 @@ export function harnessDefaults(harness) {
 export function profileDraft(seed = null, { editExisting = true, local = null, cloneSourceName = '' } = {}, catalog = []) {
   const harness = defaultHarness(catalog, seed?.harness);
   const h = harnessByName(catalog, harness);
-  const defaults = harnessDefaults(h);
+  const defaults = profileHarnessDefaults(h);
   const sandbox = seed?.sandbox || defaults.sandbox;
   return {
     name: !local && (editExisting || cloneSourceName) ? seed?.name || '' : '', aliases_text: (seed?.aliases || []).join(', '), harness,
@@ -58,8 +71,7 @@ export function profileDraft(seed = null, { editExisting = true, local = null, c
     approval: seed?.approval || defaults.approval, tools: seed?.tools || defaults.tools,
     ask_user_question_timeout: seed?.ask_user_question_timeout || defaults.ask_user_question_timeout,
     auto_compact_window: seed?.auto_compact_window || '',
-    // "" = unset, so the profile stays silent and lower spawn tiers still speak.
-    sandbox_implementation: seed?.sandbox_implementation || '',
+    sandbox_implementation: seed?.sandbox_implementation || defaults.sandbox_implementation,
     // Retained for backward-compatible local draft shape. Harness switches no
     // longer discard an explicit implementation selection.
     sandbox_implementation_cleared: null,
