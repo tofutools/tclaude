@@ -9,10 +9,9 @@ import (
 )
 
 type dashboardRouteMemberIdentity struct {
-	name    string
-	conv    string
-	online  bool
-	groupID int64
+	name   string
+	conv   string
+	online bool
 }
 
 // buildDashboardRouteMap projects the route authority into a safe operator
@@ -33,13 +32,11 @@ func buildDashboardRouteMap(
 		result.DarwinBoundary = "Partial: localhost route selectors are host-wide on Darwin"
 	}
 
-	groupByID := make(map[int64]*db.AgentGroup, len(groups))
 	viewByID := make(map[int64]dashboardGroup, len(groups))
 	for i, group := range groups {
 		if group == nil {
 			continue
 		}
-		groupByID[group.ID] = group
 		if i < len(groupViews) {
 			viewByID[group.ID] = groupViews[i]
 		}
@@ -58,7 +55,7 @@ func buildDashboardRouteMap(
 			if agentID == "" {
 				continue
 			}
-			identity := dashboardRouteMemberIdentity{name: safeRouteName(member.Title), conv: member.ConvID, online: member.Online, groupID: groupID}
+			identity := dashboardRouteMemberIdentity{name: safeRouteName(member.Title), conv: member.ConvID, online: member.Online}
 			members[agentID] = identity
 			if _, exists := identityByAgent[agentID]; !exists {
 				identityByAgent[agentID] = identity
@@ -85,7 +82,7 @@ func buildDashboardRouteMap(
 				continue
 			}
 			publisherID := strings.TrimSpace(route.PublisherAgentID)
-			publisher, publisherBoundary := routeMemberState(publisherID, route.PublisherConvID, group.ID, members, identityByAgent)
+			publisher, publisherBoundary := routeMemberState(publisherID, route.PublisherConvID, members, identityByAgent)
 			generationHealth := "current"
 			if route.GroupGeneration != group.RouteGeneration {
 				generationHealth = "stale"
@@ -112,7 +109,7 @@ func buildDashboardRouteMap(
 					continue
 				}
 				consumerID := strings.TrimSpace(lease.ConsumerAgentID)
-				consumer, boundary := routeMemberState(consumerID, lease.ConsumerConvID, group.ID, members, identityByAgent)
+				consumer, boundary := routeMemberState(consumerID, lease.ConsumerConvID, members, identityByAgent)
 				endpointState := routeConsumerEndpointStatusForLease(lease.ID).state
 				if lease.State != db.RouteLeaseOpen {
 					if endpointState != "refused" {
@@ -147,7 +144,7 @@ type routeMemberView struct {
 	health string
 }
 
-func routeMemberState(agentID, convID string, groupID int64, members map[string]dashboardRouteMemberIdentity, all map[string]dashboardRouteMemberIdentity) (routeMemberView, string) {
+func routeMemberState(agentID, convID string, members map[string]dashboardRouteMemberIdentity, all map[string]dashboardRouteMemberIdentity) (routeMemberView, string) {
 	if member, ok := members[agentID]; ok {
 		health := "current"
 		if member.conv != convID {
