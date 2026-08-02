@@ -41,6 +41,8 @@ func TestOpenCodeSandboxAlwaysExposesResolvedExecutable(t *testing.T) {
 	realExecutable := filepath.Join(root, "install", "opencode")
 	require.NoError(t, os.MkdirAll(filepath.Dir(realExecutable), 0o700))
 	require.NoError(t, os.WriteFile(realExecutable, []byte("binary"), 0o700))
+	canonicalExecutable, err := filepath.EvalSymlinks(realExecutable)
+	require.NoError(t, err)
 	linkedExecutable := filepath.Join(root, "opencode")
 	require.NoError(t, os.Symlink(realExecutable, linkedExecutable))
 	existing := session.TclaudeLayerReadOnlyBind{
@@ -52,10 +54,10 @@ func TestOpenCodeSandboxAlwaysExposesResolvedExecutable(t *testing.T) {
 
 	resolved, err := exposeOpenCodeExecutable(spec, linkedExecutable)
 	require.NoError(t, err)
-	assert.Equal(t, realExecutable, resolved)
+	assert.Equal(t, canonicalExecutable, resolved)
 	require.Len(t, spec.Contract.ReadOnlyBinds, 2)
 	assert.Equal(t, session.TclaudeLayerReadOnlyBind{
-		Source: realExecutable, Target: realExecutable,
+		Source: canonicalExecutable, Target: canonicalExecutable,
 	}, spec.Contract.ReadOnlyBinds[0])
 	assert.Equal(t, existing, spec.Contract.ReadOnlyBinds[1],
 		"provider/config seals must retain their existing tail order")
