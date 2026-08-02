@@ -202,7 +202,7 @@ func tclaudeLayerDarwinCommand(
 		})
 	}
 	if loopbackBindPort != 0 {
-		return "", fmt.Errorf("Darwin loopback bind exception requires the filtering proxy floor")
+		return "", fmt.Errorf("darwin loopback bind exception requires the filtering proxy floor")
 	}
 	return renderDarwinSeatbeltCommand(
 		binary, phase0WriteDirs, privateWriteDirs, finalHideDirs,

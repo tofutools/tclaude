@@ -89,7 +89,7 @@ func renderSeatbeltProfileWithLoopbackBind(
 		return "", nil, fmt.Errorf("invalid Seatbelt loopback bind port %d", loopbackBindPort)
 	}
 	if loopbackBindPort != 0 && !deploysProxy {
-		return "", nil, fmt.Errorf("Seatbelt loopback bind exception requires the filtering proxy floor")
+		return "", nil, fmt.Errorf("seatbelt loopback bind exception requires the filtering proxy floor")
 	}
 	switch plan.NetworkPosture {
 	case sandboxpolicy.NetworkHostOpen, sandboxpolicy.NetworkIsolatedWithAgentd:

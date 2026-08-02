@@ -514,8 +514,8 @@ in-sandbox probe without the launcher and proves the evidence arm fails when
 the launcher-owned endpoint injection is absent.
 
 OpenCode's Darwin row is instead backed by
-`TestOpenCodeProxyCooperationDarwin` (green CI run `30725801280`, Seatbelt job
-`91437178424`). It starts pinned OpenCode 1.18.6 through the real agentd-owned
+`TestOpenCodeProxyCooperationDarwin` (green Seatbelt job `91437178424` in CI
+run `30725801280`). It starts pinned OpenCode 1.18.6 through the real agentd-owned
 server boundary and shipped Darwin proxy launcher, uses deliberately invalid
 provider credentials, and requires the production decision log to record an
 allowed HTTP CONNECT to `api.openai.com:443`. A distinct undeclared destination

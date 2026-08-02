@@ -89,7 +89,7 @@ func darwinProxyLauncherCommand(spec darwinProxyLaunchSpec) (string, error) {
 		return "", fmt.Errorf("Darwin proxy launcher can preserve only the server boundary's two descriptors")
 	}
 	if spec.LoopbackBindPort < 0 || spec.LoopbackBindPort > 65535 {
-		return "", fmt.Errorf("Darwin proxy launcher has invalid loopback bind port %d", spec.LoopbackBindPort)
+		return "", fmt.Errorf("darwin proxy launcher has invalid loopback bind port %d", spec.LoopbackBindPort)
 	}
 	data, err := json.Marshal(spec)
 	if err != nil {
@@ -134,7 +134,7 @@ func decodeDarwinProxyLaunchSpec(encoded string) (darwinProxyLaunchSpec, error) 
 		return darwinProxyLaunchSpec{}, fmt.Errorf("Darwin proxy launcher can preserve only the server boundary's two descriptors")
 	}
 	if spec.LoopbackBindPort < 0 || spec.LoopbackBindPort > 65535 {
-		return darwinProxyLaunchSpec{}, fmt.Errorf("Darwin proxy launcher has invalid loopback bind port %d", spec.LoopbackBindPort)
+		return darwinProxyLaunchSpec{}, fmt.Errorf("darwin proxy launcher has invalid loopback bind port %d", spec.LoopbackBindPort)
 	}
 	return spec, nil
 }
