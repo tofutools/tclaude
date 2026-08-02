@@ -3116,7 +3116,7 @@ func consumeOpenCodeEventLocked(
 				persistOpenCodeContextUsage(ctx, runtime, usage)
 				// TCL-673: record the provider/model slug from the root message so
 				// child model calls do not replace the parent's dashboard model.
-				persistOpenCodeModelSlug(runtime, usage)
+				persistOpenCodeRuntimeMetadata(runtime, usage)
 			}
 			// TCL-708: the same authoritative per-message usage drives the native
 			// catalog what-if projection and provider-aware Usage coverage index.

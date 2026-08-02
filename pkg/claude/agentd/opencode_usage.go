@@ -35,17 +35,21 @@ import (
 // through persistOpenCodeContextUsage so there is exactly one context write
 // path.
 
-// persistOpenCodeModelSlug records the provider-qualified model identity
-// ("openai/gpt-5.6-terra") from the assistant message the context snapshot came
-// from, feeding the dashboard model column and the session_cost_daily model
-// denormalisation. A no-op when either half is missing.
-func persistOpenCodeModelSlug(runtime db.OpenCodeRuntime, usage openCodeContextUsage) {
-	if usage.ProviderID == "" || usage.ModelID == "" {
-		return
-	}
+// persistOpenCodeRuntimeMetadata records the provider-qualified model identity
+// ("openai/gpt-5.6-terra") and reasoning variant from the assistant message
+// the context snapshot came from. OpenCode calls reasoning effort `variant`.
+// Either value is independently optional so a partial event cannot erase good
+// metadata already recorded on the session.
+func persistOpenCodeRuntimeMetadata(runtime db.OpenCodeRuntime, usage openCodeContextUsage) {
 	sessionID := openCodeTelemetrySessionID(runtime)
-	if err := db.UpdateSessionModelSlug(sessionID, usage.ProviderID+"/"+usage.ModelID); err != nil {
-		slog.Debug("OpenCode model slug could not be persisted",
+	if usage.ProviderID != "" && usage.ModelID != "" {
+		if err := db.UpdateSessionModelSlug(sessionID, usage.ProviderID+"/"+usage.ModelID); err != nil {
+			slog.Debug("OpenCode model slug could not be persisted",
+				"session", sessionID, "error", err, "module", "agentd")
+		}
+	}
+	if err := db.UpdateSessionEffort(sessionID, usage.Variant); err != nil {
+		slog.Debug("OpenCode reasoning variant could not be persisted",
 			"session", sessionID, "error", err, "module", "agentd")
 	}
 }
@@ -305,6 +309,7 @@ type openCodeHistoryMessage struct {
 		Role       string   `json:"role"`
 		ProviderID string   `json:"providerID"`
 		ModelID    string   `json:"modelID"`
+		Variant    string   `json:"variant"`
 		Cost       *float64 `json:"cost"`
 		Time       struct {
 			Created int64 `json:"created"`
@@ -1437,6 +1442,7 @@ func backfillOpenCodeContextUsage(ctx context.Context, runtime db.OpenCodeRuntim
 			MessageID:    m.Info.ID,
 			ProviderID:   m.Info.ProviderID,
 			ModelID:      m.Info.ModelID,
+			Variant:      m.Info.Variant,
 			ReportedCost: m.Info.Cost,
 			Input:        m.Info.Tokens.Input,
 			Output:       m.Info.Tokens.Output,
@@ -1583,7 +1589,7 @@ func backfillOpenCodeContextUsage(ctx context.Context, runtime db.OpenCodeRuntim
 		return true
 	}
 	persistOpenCodeContextUsage(ctx, runtime, latest)
-	persistOpenCodeModelSlug(runtime, latest)
+	persistOpenCodeRuntimeMetadata(runtime, latest)
 	if !openCodeProjectorCurrent(ctx, runtime.SessionID) {
 		return false
 	}

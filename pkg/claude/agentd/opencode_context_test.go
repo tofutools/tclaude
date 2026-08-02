@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -42,10 +43,11 @@ func TestParseOpenCodeContextUsage(t *testing.T) {
 		ok    bool
 	}{
 		{
-			name:  "assistant usage",
-			event: openCodeMessageUpdatedEventJSON("evt_1", convID, "openai", "gpt-5.4", 1000, 200, 50, 300, 10),
+			name: "assistant usage",
+			event: strings.Replace(openCodeMessageUpdatedEventJSON("evt_1", convID, "openai", "gpt-5.4", 1000, 200, 50, 300, 10),
+				`"modelID":"gpt-5.4"`, `"modelID":"gpt-5.4","variant":"high"`, 1),
 			want: openCodeContextUsage{
-				SessionID: convID, MessageID: "msg_1", ProviderID: "openai", ModelID: "gpt-5.4",
+				SessionID: convID, MessageID: "msg_1", ProviderID: "openai", ModelID: "gpt-5.4", Variant: "high",
 				Input: 1000, Output: 200, Reasoning: 50, CacheRead: 300, CacheWrite: 10,
 			},
 			ok: true,

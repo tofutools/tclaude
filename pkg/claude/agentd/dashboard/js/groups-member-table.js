@@ -60,6 +60,7 @@ function AgentStatusDot({ member }) {
 const HARNESS_LABELS = {
   claude: { short: 'CC', long: 'Claude Code' },
   codex: { short: 'Codex', long: 'Codex CLI' },
+  opencode: { short: 'OC', long: 'OpenCode' },
 };
 
 function harnessLabels(name) {
@@ -71,9 +72,16 @@ function harnessLong(name) {
   return harnessLabels(name).long;
 }
 
-function shortModel(model) {
+function shortModel(model, harness = '') {
   let main = String(model || '').trim();
   if (!main) return '';
+  // OpenCode identifies models as provider/model on the wire. The provider is
+  // retained in the row tooltip and persisted metadata, but repeating it in
+  // the narrow visible token makes mixed-harness rows needlessly lopsided.
+  if (harness === 'opencode') {
+    const separator = main.indexOf('/');
+    if (separator >= 0 && separator < main.length - 1) main = main.slice(separator + 1);
+  }
   let size = '';
   const paren = main.match(/\(([^)]*)\)\s*$/);
   if (paren) {
@@ -165,7 +173,7 @@ export function HarnessLine({ member, snapshot }) {
   if (cost > 0) title += ` — API cost this session: $${cost.toFixed(4)} (API/enterprise pricing — no subscription limits)`;
   if (virtualCost > 0) title += ` — WHAT-IF cost this session: $${virtualCost.toFixed(4)} (estimated if billed pay-per-token — you're on a subscription, so this is hypothetical, not a real charge)`;
   return html`<div class="agent-harness" title=${title}>
-    <span class=${metadataClass} role="note" aria-label=${title}><span class="harness-name">${labels.short}</span><span class="harness-sep">·</span><span class="harness-model">${shortModel(model)}</span>
+    <span class=${metadataClass} role="note" aria-label=${title}><span class="harness-name">${labels.short}</span><span class="harness-sep">·</span><span class="harness-model">${shortModel(model, harness)}</span>
       ${effort ? html`<span class="harness-effort" title=${effort}>${shortEffort(effort)}</span>` : null}
       ${cost > 0 ? html`<span class="harness-cost">${cost >= 0.005 ? `$${cost.toFixed(2)}` : '<1¢'}</span>` : null}
       ${virtualCost > 0 ? html`<span class="harness-cost harness-cost-whatif" title="Estimated pay-per-token-equivalent cost this session — hypothetical, not a real charge (subscription)">${virtualCost >= 0.005 ? `≈$${virtualCost.toFixed(2)}` : '≈<1¢'}</span>` : null}

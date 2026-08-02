@@ -1811,15 +1811,19 @@ func runNew(params *NewParams) error {
 		AutoCompactWindow: autoCompactWindow,
 		RemoteControl:     remoteControl,
 	})
-	if h.Name == harness.CodexName {
+	// Claude reports its live model and effort through the statusline hook.
+	// Codex and OpenCode have no equivalent startup callback, so seed the
+	// validated launch choices immediately; their telemetry paths can replace
+	// these values after an in-session model/effort change.
+	if h.Name == harness.CodexName || h.Name == harness.OpenCodeName {
 		if err := db.UpdateSessionModel(sessionID, model); err != nil {
-			slog.Warn("failed to seed Codex session model", "session_id", sessionID, "error", err)
+			slog.Warn("failed to seed session model", "harness", h.Name, "session_id", sessionID, "error", err)
 		}
 		if err := db.UpdateSessionModelID(sessionID, model); err != nil {
-			slog.Warn("failed to seed Codex session model id", "session_id", sessionID, "error", err)
+			slog.Warn("failed to seed session model id", "harness", h.Name, "session_id", sessionID, "error", err)
 		}
 		if err := db.UpdateSessionEffort(sessionID, effort); err != nil {
-			slog.Warn("failed to seed Codex session effort", "session_id", sessionID, "error", err)
+			slog.Warn("failed to seed session effort", "harness", h.Name, "session_id", sessionID, "error", err)
 		}
 	}
 	if err := exitGuard.release(); err != nil {
