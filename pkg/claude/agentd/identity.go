@@ -367,6 +367,11 @@ const (
 	// that also carries hooks and permission config, so not
 	// default-granted (effectively human-only).
 	PermSettingsDefaultModel = "settings.default-model"
+	// Group-route authority is deliberately split: publishing exposes a
+	// publisher-owned listener, while consuming opens a lease to a peer route.
+	// Neither slug is a global default and neither substitutes for membership.
+	PermRoutesPublish = "routes.publish"
+	PermRoutesConsume = "routes.consume"
 )
 
 // permResolution is the verdict of the non-interactive permission

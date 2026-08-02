@@ -46,6 +46,9 @@ type AgentGroup struct {
 	// v1 is structure-only: it shapes the dashboard tree but does not (yet)
 	// inherit permissions, message routing, or spawn-target down the tree.
 	ParentGroupID *int64
+	// RouteGeneration advances on every membership mutation. Route records
+	// snapshot it so an offline roster change invalidates stale authority.
+	RouteGeneration int64
 }
 
 // IsArchived reports whether the group has been soft-deleted via
@@ -172,6 +175,51 @@ func HasAgentGroupPermission(convID, slug string) (bool, error) {
 		JOIN agent_group_members gm ON gm.group_id = gp.group_id
 		JOIN agents a ON a.agent_id = gm.agent_id AND a.retired_at IS NULL
 		WHERE gm.agent_id = ? AND gp.slug = ?`, agentID, slug).Scan(&n)
+	return n > 0, err
+}
+
+// HasAgentGroupPermissionForGroup reports whether convID is a current member
+// of groupID and that exact group grants slug. It intentionally does not use
+// the union-shaped HasAgentGroupPermission helper: route authorization must
+// preserve the target-group provenance of a capability.
+func HasAgentGroupPermissionForGroup(convID string, groupID int64, slug string) (bool, error) {
+	agentID, err := AgentIDForConv(convID)
+	if err != nil || agentID == "" {
+		return false, err
+	}
+	return HasAgentGroupPermissionForAgent(agentID, groupID, slug)
+}
+
+// HasAgentGroupPermissionForAgent is the stable-identity variant used by
+// lifecycle paths that already resolved an actor. The group must be active.
+func HasAgentGroupPermissionForAgent(agentID string, groupID int64, slug string) (bool, error) {
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	var n int
+	err = d.QueryRow(`
+		SELECT COUNT(*)
+		FROM agent_group_permissions gp
+		JOIN agent_groups g ON g.id = gp.group_id AND g.archived_at IS NULL
+		JOIN agent_group_members gm ON gm.group_id = gp.group_id
+		JOIN agents a ON a.agent_id = gm.agent_id AND a.retired_at IS NULL
+		WHERE gm.agent_id = ? AND gp.group_id = ? AND gp.slug = ?`,
+		agentID, groupID, slug).Scan(&n)
+	return n > 0, err
+}
+
+// IsAgentGroupRouteEnabled reports whether a group has either route
+// capability in its own policy. Group membership remains ordinary unless the
+// group deliberately opts into the route contract.
+func IsAgentGroupRouteEnabled(groupID int64, publishSlug, consumeSlug string) (bool, error) {
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	var n int
+	err = d.QueryRow(`SELECT COUNT(*) FROM agent_group_permissions
+		WHERE group_id = ? AND slug IN (?, ?)`, groupID, publishSlug, consumeSlug).Scan(&n)
 	return n > 0, err
 }
 
@@ -1143,7 +1191,7 @@ const agentGroupSelect = `SELECT id, name, descr, default_cwd, default_context,
 	CASE WHEN source_template_id IS NULL THEN source_template
 	     ELSE COALESCE((SELECT name FROM group_templates WHERE id = source_template_id), source_template) END,
 	COALESCE(source_template_id, 0),
-	created_at, archived_at, parent_id FROM agent_groups`
+	created_at, archived_at, parent_id, route_generation FROM agent_groups`
 
 const agentGroupAliasedSelect = `SELECT g.id, g.name, g.descr, g.default_cwd, g.default_context,
 	CASE WHEN g.default_profile_id IS NULL THEN g.default_profile
@@ -1155,7 +1203,7 @@ const agentGroupAliasedSelect = `SELECT g.id, g.name, g.descr, g.default_cwd, g.
 	CASE WHEN g.source_template_id IS NULL THEN g.source_template
 	     ELSE COALESCE((SELECT name FROM group_templates WHERE id = g.source_template_id), g.source_template) END,
 	COALESCE(g.source_template_id, 0),
-	g.created_at, g.archived_at, g.parent_id`
+	g.created_at, g.archived_at, g.parent_id, g.route_generation`
 
 // GetAgentGroupByName returns the group with the given name, or nil if not
 // found.
@@ -1497,6 +1545,9 @@ func AddAgentGroupMember(m *AgentGroupMember) error {
 	if n == 0 {
 		return fmt.Errorf("AddAgentGroupMember: agent %s is retired", agentID)
 	}
+	if _, err := db.Exec(`UPDATE agent_groups SET route_generation = route_generation + 1 WHERE id = ?`, m.GroupID); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -1555,8 +1606,14 @@ func RemoveAgentGroupMember(groupID int64, convID string) error {
 	if agentID == "" {
 		return nil
 	}
-	_, err = db.Exec(`DELETE FROM agent_group_members WHERE group_id = ? AND agent_id = ?`,
+	res, err := db.Exec(`DELETE FROM agent_group_members WHERE group_id = ? AND agent_id = ?`,
 		groupID, agentID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		_, err = db.Exec(`UPDATE agent_groups SET route_generation = route_generation + 1 WHERE id = ?`, groupID)
+	}
 	return err
 }
 
@@ -4045,7 +4102,7 @@ func scanAgentGroup(s rowScanner) (*AgentGroup, error) {
 	if err := s.Scan(&g.ID, &g.Name, &g.Descr, &g.DefaultCwd, &g.DefaultContext,
 		&g.DefaultProfile, &g.SandboxProfile, &g.SandboxProfileID,
 		&g.MaxMembers, &g.NotifyEnabled, &remoteControl, &g.AttachmentURL, &g.AttachmentLabel, &g.Mission,
-		&g.SourceTemplate, &g.SourceTemplateID, &createdAt, &archivedAt, &parentID); err != nil {
+		&g.SourceTemplate, &g.SourceTemplateID, &createdAt, &archivedAt, &parentID, &g.RouteGeneration); err != nil {
 		return nil, err
 	}
 	g.RemoteControl = nullToBoolPtr(remoteControl)

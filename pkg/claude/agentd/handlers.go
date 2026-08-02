@@ -4098,6 +4098,9 @@ func handleGroupMembersAdd(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 	if !requireGroupActive(w, g) {
 		return
 	}
+	if !routeMembershipMutationAllowed(w, g) {
+		return
+	}
 	var body struct {
 		Conv  string `json:"conv"`
 		Role  string `json:"role,omitempty"`
@@ -4172,6 +4175,9 @@ func handleGroupMembersRemove(w http.ResponseWriter, r *http.Request, g *db.Agen
 		return
 	}
 	if !requireGroupActive(w, g) {
+		return
+	}
+	if !routeMembershipMutationAllowed(w, g) {
 		return
 	}
 	res, _, err := agent.ResolveSelector(convSelector)

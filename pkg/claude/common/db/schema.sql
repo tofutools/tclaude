@@ -195,7 +195,7 @@ CREATE TABLE "agent_groups" (
 			name        TEXT NOT NULL UNIQUE,
 			descr       TEXT NOT NULL DEFAULT '',
 			created_at  INTEGER NOT NULL
-		, archived_at INTEGER, default_cwd TEXT NOT NULL DEFAULT '', default_context TEXT NOT NULL DEFAULT '', max_members INTEGER NOT NULL DEFAULT 0, notify_enabled INTEGER NOT NULL DEFAULT 1, default_profile TEXT NOT NULL DEFAULT '', remote_control INTEGER, mission TEXT NOT NULL DEFAULT '', source_template TEXT NOT NULL DEFAULT '', parent_id INTEGER REFERENCES agent_groups(id) ON DELETE SET NULL, default_profile_id INTEGER, source_template_id INTEGER, sandbox_profile TEXT NOT NULL DEFAULT '', sandbox_profile_id INTEGER, attachment_url TEXT NOT NULL DEFAULT '', attachment_label TEXT NOT NULL DEFAULT '') STRICT;
+		, archived_at INTEGER, default_cwd TEXT NOT NULL DEFAULT '', default_context TEXT NOT NULL DEFAULT '', max_members INTEGER NOT NULL DEFAULT 0, notify_enabled INTEGER NOT NULL DEFAULT 1, default_profile TEXT NOT NULL DEFAULT '', remote_control INTEGER, mission TEXT NOT NULL DEFAULT '', source_template TEXT NOT NULL DEFAULT '', parent_id INTEGER REFERENCES agent_groups(id) ON DELETE SET NULL, default_profile_id INTEGER, source_template_id INTEGER, sandbox_profile TEXT NOT NULL DEFAULT '', sandbox_profile_id INTEGER, attachment_url TEXT NOT NULL DEFAULT '', attachment_label TEXT NOT NULL DEFAULT '', route_generation INTEGER NOT NULL DEFAULT 0) STRICT;
 
 CREATE INDEX idx_agent_groups_archived
 			ON agent_groups(archived_at);
@@ -808,6 +808,56 @@ CREATE TABLE "agent_group_permissions" (
 CREATE INDEX idx_agent_group_permissions_slug
 			ON agent_group_permissions(slug);
 
+CREATE TABLE "agent_routes" (
+			id TEXT PRIMARY KEY,
+			group_id INTEGER NOT NULL REFERENCES agent_groups(id) ON DELETE CASCADE,
+			publisher_agent_id TEXT NOT NULL REFERENCES agents(agent_id) ON DELETE CASCADE,
+			publisher_conv_id TEXT NOT NULL DEFAULT '',
+			publisher_launch_generation TEXT NOT NULL,
+			group_generation INTEGER NOT NULL,
+			name TEXT NOT NULL,
+			transport TEXT NOT NULL,
+			target TEXT NOT NULL,
+			state TEXT NOT NULL CHECK(state IN ('ready', 'draining', 'withdrawn', 'publisher-lost')),
+			created_at INTEGER NOT NULL,
+			withdrawn_at INTEGER,
+			withdraw_reason TEXT NOT NULL DEFAULT '',
+			UNIQUE(group_id, publisher_agent_id, name)
+		) STRICT;
+
+CREATE INDEX idx_agent_routes_group_state ON agent_routes(group_id, state);
+CREATE INDEX idx_agent_routes_publisher ON agent_routes(publisher_agent_id, state);
+
+CREATE TABLE "agent_route_leases" (
+			id TEXT PRIMARY KEY,
+			route_id TEXT NOT NULL REFERENCES agent_routes(id) ON DELETE CASCADE,
+			consumer_agent_id TEXT NOT NULL REFERENCES agents(agent_id) ON DELETE CASCADE,
+			consumer_conv_id TEXT NOT NULL DEFAULT '',
+			consumer_launch_generation TEXT NOT NULL,
+			group_generation INTEGER NOT NULL,
+			state TEXT NOT NULL CHECK(state IN ('open', 'closed')),
+			opened_at INTEGER NOT NULL,
+			closed_at INTEGER
+		) STRICT;
+
+CREATE INDEX idx_agent_route_leases_route_state ON agent_route_leases(route_id, state);
+CREATE INDEX idx_agent_route_leases_consumer ON agent_route_leases(consumer_agent_id, state);
+
+CREATE TABLE "agent_route_audit" (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			at INTEGER NOT NULL,
+			action TEXT NOT NULL,
+			result TEXT NOT NULL,
+			group_id INTEGER,
+			route_id TEXT NOT NULL DEFAULT '',
+			lease_id TEXT NOT NULL DEFAULT '',
+			actor_agent_id TEXT NOT NULL DEFAULT '',
+			actor_conv_id TEXT NOT NULL DEFAULT '',
+			detail TEXT NOT NULL DEFAULT ''
+		) STRICT;
+
+CREATE INDEX idx_agent_route_audit_route ON agent_route_audit(route_id, at);
+
 CREATE TABLE "dashboard_session_grace" (
 			token_hash TEXT PRIMARY KEY,
 			expires_at INTEGER NOT NULL,
@@ -1120,4 +1170,3 @@ CREATE TABLE "agent_standing_order_group_scopes" (
 
 CREATE INDEX idx_agent_standing_order_group_scopes_group
 			ON agent_standing_order_group_scopes(group_id, order_id);
-
