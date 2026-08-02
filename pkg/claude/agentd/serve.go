@@ -310,6 +310,14 @@ func runServe(p *serveParams) error {
 	if err := openDatabaseReportingMigrations(os.Stdout); err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}
+	// The M2 broker is deliberately in-process. It has no endpoint listener
+	// yet, but any future adapters attach through this supervised instance;
+	// close it on every daemon exit so no route channel survives shutdown.
+	defer func() {
+		if err := GroupRouteBroker().Close(); err != nil {
+			slog.Warn("group-route broker: shutdown incomplete", "error", err)
+		}
+	}()
 	// The Take2 runtime keeps one checkpoint schema and no migrators: a schema
 	// change before graduation wipes incompatible run rows (and their cascading
 	// evidence) while template authoring and every other table stay untouched.
@@ -769,6 +777,9 @@ func runServe(p *serveParams) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	if err := processRuns.shutdown(ctx); err != nil {
 		slog.Warn("process runtime: shutdown did not drain", "error", err)
+	}
+	if err := GroupRouteBroker().Close(); err != nil {
+		slog.Warn("group-route broker: shutdown incomplete", "error", err)
 	}
 	_ = srv.Shutdown(ctx)
 	if popupSrv != nil {

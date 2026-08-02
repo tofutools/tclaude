@@ -1,7 +1,9 @@
 package agentd_test
 
 import (
+	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/routebroker"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -24,6 +27,83 @@ func serveRouteAgent(t *testing.T, f *testharness.Flow, method, path, convID str
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out), "decode route response: %s", rec.Body.String())
 	}
 	return rec, out
+}
+
+func TestRoutesBroker_DatabaseAuthorityClosesWithdrawnChannels(t *testing.T) {
+	f := newFlow(t)
+	const publisher = "route-broker-publisher"
+	const consumer = "route-broker-consumer"
+	f.HaveConvWithTitle(publisher, "publisher")
+	f.HaveConvWithTitle(consumer, "consumer")
+	f.HaveGroup("broker-group")
+	f.HaveMember("broker-group", publisher)
+	f.HaveMember("broker-group", consumer)
+	g, err := db.GetAgentGroupByName("broker-group")
+	require.NoError(t, err)
+	require.NoError(t, db.ReplaceAgentGroupPermissions(g.ID, []string{agentd.PermRoutesPublish, agentd.PermRoutesConsume}, "test"))
+
+	rec, route := serveRouteAgent(t, f, http.MethodPost, "/v1/routes/publish", publisher, map[string]any{
+		"group": "broker-group", "name": "api", "target": "tcp://127.0.0.1:43127",
+	})
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	routeID := route["id"].(string)
+	rec, lease := serveRouteAgent(t, f, http.MethodPost, "/v1/routes/open", consumer, map[string]any{
+		"route_id": routeID, "group": "broker-group",
+	})
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+
+	publisherAuth := routebroker.PublisherAuth{
+		RouteID: routeID, AgentID: route["publisher_agent_id"].(string), ConvID: route["publisher_conv_id"].(string),
+		LaunchGeneration: route["publisher_launch_generation"].(string), GroupGeneration: int64(route["group_generation"].(float64)),
+	}
+	consumerAuth := routebroker.ConsumerAuth{
+		LeaseID: lease["id"].(string), RouteID: routeID, AgentID: lease["consumer_agent_id"].(string), ConvID: lease["consumer_conv_id"].(string),
+		LaunchGeneration: lease["consumer_launch_generation"].(string), GroupGeneration: int64(lease["group_generation"].(float64)),
+	}
+	b := agentd.NewGroupRouteBrokerForTest()
+	t.Cleanup(func() { require.NoError(t, b.Close()) })
+	publisherBroker, publisherPeer := net.Pipe()
+	consumerBroker, consumerPeer := net.Pipe()
+	publisherDone := make(chan error, 1)
+	consumerDone := make(chan error, 1)
+	go func() { publisherDone <- b.AttachPublisher(context.Background(), publisherAuth, publisherBroker) }()
+	require.Eventually(t, func() bool { return b.Metrics().PublisherChannels == 1 }, time.Second, time.Millisecond)
+	go func() { consumerDone <- b.AttachConsumer(context.Background(), consumerAuth, consumerBroker) }()
+	t.Cleanup(func() { _ = publisherPeer.Close(); _ = consumerPeer.Close() })
+
+	// Withdraw through the M1 API. The broker's periodic authority check must
+	// fail already-attached channels closed; no payload is needed to prove this
+	// lifecycle seam.
+	writeRouteBrokerFrame(t, consumerPeer, routebroker.Frame{Kind: routebroker.KindOpen, Stream: 1})
+	_ = readRouteBrokerFrame(t, publisherPeer)
+	rec, _ = serveRouteAgent(t, f, http.MethodDelete, "/v1/routes/"+routeID, publisher, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	_ = consumerPeer.SetReadDeadline(time.Now().Add(time.Second))
+	_, readErr := consumerPeer.Read(make([]byte, 1))
+	require.Error(t, readErr)
+	select {
+	case <-publisherDone:
+	case <-time.After(time.Second):
+		t.Fatal("withdrawn publisher channel did not close")
+	}
+	select {
+	case <-consumerDone:
+	case <-time.After(time.Second):
+		t.Fatal("withdrawn consumer channel did not close")
+	}
+}
+
+func writeRouteBrokerFrame(t *testing.T, conn net.Conn, frame routebroker.Frame) {
+	t.Helper()
+	require.NoError(t, routebroker.WriteFrame(conn, frame, routebroker.MaxFramePayload))
+}
+
+func readRouteBrokerFrame(t *testing.T, conn net.Conn) routebroker.Frame {
+	t.Helper()
+	_ = conn.SetReadDeadline(time.Now().Add(time.Second))
+	frame, err := routebroker.ReadFrame(conn, routebroker.MaxFramePayload)
+	require.NoError(t, err)
+	return frame
 }
 
 func TestRoutesAuthority_ExactGroupAndIndependentCapabilities(t *testing.T) {
@@ -201,6 +281,122 @@ func TestRoutesAuthority_OrdinaryPublisherExitWithdrawsLeases(t *testing.T) {
 	})
 	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
 	require.Equal(t, "route_open_refused", body["code"])
+}
+
+// An ordinary consumer process exit must close only leases owned by that
+// consumer generation at the reaper's authoritative session-exit seam. The
+// attached broker channel is closed by the same database authority change;
+// unrelated publisher and consumer channels remain usable.
+func TestRoutesBroker_OrdinaryConsumerExitClosesItsLease(t *testing.T) {
+	f := newFlow(t)
+	const publisher = "route-consumer-exit-publisher"
+	const consumer = "route-consumer-exit"
+	const survivor = "route-consumer-survivor"
+	f.HaveConvWithTitle(publisher, "publisher")
+	f.HaveConvWithTitle(consumer, "consumer")
+	f.HaveConvWithTitle(survivor, "survivor")
+	f.HaveAliveSession(publisher, "route-consumer-exit-pub-session", "route-consumer-exit-pub-tmux", f.TestCwd("route-consumer-exit-pub"))
+	f.HaveAliveSession(consumer, "route-consumer-exit-session", "route-consumer-exit-tmux", f.TestCwd("route-consumer-exit"))
+	f.HaveAliveSession(survivor, "route-consumer-survivor-session", "route-consumer-survivor-tmux", f.TestCwd("route-consumer-survivor"))
+	f.HaveGroup("consumer-exit-group")
+	f.HaveMember("consumer-exit-group", publisher)
+	f.HaveMember("consumer-exit-group", consumer)
+	f.HaveMember("consumer-exit-group", survivor)
+	g, err := db.GetAgentGroupByName("consumer-exit-group")
+	require.NoError(t, err)
+	require.NotNil(t, g)
+	require.NoError(t, db.ReplaceAgentGroupPermissions(g.ID, []string{agentd.PermRoutesPublish, agentd.PermRoutesConsume}, "test"))
+
+	rec, route := serveRouteAgent(t, f, http.MethodPost, "/v1/routes/publish", publisher, map[string]any{
+		"group": "consumer-exit-group", "name": "api", "target": "tcp://127.0.0.1:43132",
+	})
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	routeID := route["id"].(string)
+	rec, exitingLease := serveRouteAgent(t, f, http.MethodPost, "/v1/routes/open", consumer, map[string]any{
+		"route_id": routeID, "group": "consumer-exit-group",
+	})
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	rec, survivorLease := serveRouteAgent(t, f, http.MethodPost, "/v1/routes/open", survivor, map[string]any{
+		"route_id": routeID, "group": "consumer-exit-group",
+	})
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+
+	publisherAuth := routebroker.PublisherAuth{
+		RouteID: route["id"].(string), AgentID: route["publisher_agent_id"].(string), ConvID: route["publisher_conv_id"].(string),
+		LaunchGeneration: route["publisher_launch_generation"].(string), GroupGeneration: int64(route["group_generation"].(float64)),
+	}
+	consumerAuth := func(lease map[string]any) routebroker.ConsumerAuth {
+		return routebroker.ConsumerAuth{
+			LeaseID: lease["id"].(string), RouteID: routeID, AgentID: lease["consumer_agent_id"].(string), ConvID: lease["consumer_conv_id"].(string),
+			LaunchGeneration: lease["consumer_launch_generation"].(string), GroupGeneration: int64(lease["group_generation"].(float64)),
+		}
+	}
+	b := agentd.NewGroupRouteBrokerForTest()
+	t.Cleanup(func() { require.NoError(t, b.Close()) })
+	publisherBroker, publisherPeer := net.Pipe()
+	exitingBroker, exitingPeer := net.Pipe()
+	survivorBroker, survivorPeer := net.Pipe()
+	publisherDone := make(chan error, 1)
+	exitingDone := make(chan error, 1)
+	survivorDone := make(chan error, 1)
+	go func() { publisherDone <- b.AttachPublisher(context.Background(), publisherAuth, publisherBroker) }()
+	require.Eventually(t, func() bool { return b.Metrics().PublisherChannels == 1 }, time.Second, time.Millisecond)
+	go func() {
+		exitingDone <- b.AttachConsumer(context.Background(), consumerAuth(exitingLease), exitingBroker)
+	}()
+	go func() {
+		survivorDone <- b.AttachConsumer(context.Background(), consumerAuth(survivorLease), survivorBroker)
+	}()
+	require.Eventually(t, func() bool { return b.Metrics().ConsumerChannels == 2 }, time.Second, time.Millisecond)
+	t.Cleanup(func() {
+		_ = publisherPeer.Close()
+		_ = exitingPeer.Close()
+		_ = survivorPeer.Close()
+	})
+
+	writeRouteBrokerFrame(t, exitingPeer, routebroker.Frame{Kind: routebroker.KindOpen, Stream: 1})
+	_ = readRouteBrokerFrame(t, publisherPeer)
+	writeRouteBrokerFrame(t, survivorPeer, routebroker.Frame{Kind: routebroker.KindOpen, Stream: 1})
+	_ = readRouteBrokerFrame(t, publisherPeer)
+
+	f.MarkOffline("route-consumer-exit-tmux")
+	reaper := agentd.NewSessionReaperForTest(0, func(string, string) {})
+	require.Equal(t, 1, reaper.Tick())
+	closed, err := db.GetAgentRouteLease(exitingLease["id"].(string))
+	require.NoError(t, err)
+	require.Equal(t, db.RouteLeaseClosed, closed.State)
+	open, err := db.GetAgentRouteLease(survivorLease["id"].(string))
+	require.NoError(t, err)
+	require.Equal(t, db.RouteLeaseOpen, open.State)
+
+	_ = exitingPeer.SetReadDeadline(time.Now().Add(time.Second))
+	_, readErr := exitingPeer.Read(make([]byte, 1))
+	require.Error(t, readErr)
+	// The consumer detach informs the publisher about its stream before the
+	// publisher's control channel remains available for unrelated work.
+	require.Equal(t, routebroker.KindClose, readRouteBrokerFrame(t, publisherPeer).Kind)
+	writeRouteBrokerFrame(t, publisherPeer, routebroker.Frame{Kind: routebroker.KindPing})
+	require.Equal(t, routebroker.KindPong, readRouteBrokerFrame(t, publisherPeer).Kind)
+	writeRouteBrokerFrame(t, survivorPeer, routebroker.Frame{Kind: routebroker.KindPing})
+	require.Equal(t, routebroker.KindPong, readRouteBrokerFrame(t, survivorPeer).Kind)
+	require.Eventually(t, func() bool {
+		select {
+		case <-exitingDone:
+			return true
+		default:
+			return false
+		}
+	}, time.Second, time.Millisecond, "exiting consumer channel did not close")
+	select {
+	case err := <-publisherDone:
+		t.Fatalf("publisher closed after unrelated consumer exit: %v", err)
+	default:
+	}
+	select {
+	case err := <-survivorDone:
+		t.Fatalf("surviving consumer closed after unrelated consumer exit: %v", err)
+	default:
+	}
 }
 
 func TestRoutesAuthority_GenerationsPublisherLossAndRename(t *testing.T) {
