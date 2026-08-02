@@ -157,17 +157,30 @@ test('dangerous link and image targets are dropped, safe ones kept', async (t) =
   assert.equal(findAll(refused, 'img').length, 0);
   assert.equal(text(refused[0]), 'the shot', 'a refused image degrades to its alt text');
 
-  const remote = find(markdownToTree(parser, '![shot](https://example.invalid/a.png "Shot")'), 'img');
-  assert.equal(remote.attrs.src, 'https://example.invalid/a.png');
-  assert.equal(remote.attrs.alt, 'shot');
-  assert.equal(remote.attrs.title, 'Shot');
-  assert.equal(remote.attrs.loading, 'lazy');
-  // A remote image is the one thing a document fetches without a click, so it
-  // must not carry the dashboard's address to a host the agent chose.
-  assert.equal(remote.attrs.referrerpolicy, 'no-referrer');
-
-  const inline = find(markdownToTree(parser, '![dot](data:image/png;base64,iVBORw0KGgo=)'), 'img');
+  const inline = find(markdownToTree(parser, '![dot](data:image/png;base64,iVBORw0KGgo= "Dot")'), 'img');
   assert.equal(inline.attrs.src, 'data:image/png;base64,iVBORw0KGgo=');
+  assert.equal(inline.attrs.alt, 'dot');
+  assert.equal(inline.attrs.title, 'Dot');
+  assert.equal(inline.attrs.loading, 'lazy');
+});
+
+// An <img> is the only thing a document fetches with no click, and the author
+// may be an agent confined by this project's own egress boundary. A remote src
+// would borrow the operator's unfiltered browser to make the request the agent
+// could not, so images are inline-only and a remote one degrades to alt text.
+test('a document cannot make the browser fetch a remote image', async (t) => {
+  const { markdownToTree, parser } = await loadModel(t);
+  for (const source of [
+    '![beacon](https://example.invalid/a.png)',
+    '![beacon](http://example.invalid/a.png)',
+    '![beacon](//example.invalid/a.png)',
+    '![beacon](./local.png)',
+    '![beacon](/api/human-messages/1/attachment)',
+  ]) {
+    const tree = markdownToTree(parser, source);
+    assert.equal(findAll(tree, 'img').length, 0, `${source} builds no image element`);
+    assert.match(tree.map(text).join(''), /beacon/, `${source} keeps its alt text`);
+  }
 });
 
 test('only the attributes each element is allowed to carry survive', async (t) => {
@@ -217,7 +230,7 @@ test('no document can produce a tag or attribute outside the allowlists', async 
     'table', 'thead', 'tbody', 'tr', 'th', 'td',
   ]);
   const ALLOWED_ATTRS = new Set(['title', 'href', 'target', 'rel', 'src', 'loading',
-    'referrerpolicy', 'start', 'style', 'class', 'alt']);
+    'start', 'style', 'class', 'alt']);
 
   // Deterministic pseudo-randomness: a fixed seed keeps a failure reproducible
   // and keeps this suite from flaking in CI.
