@@ -505,7 +505,7 @@ func (a *Adapter) publisherLoop(ctx context.Context, brokerConn net.Conn, target
 			conn, dialErr := dialer.DialContext(ctx, "tcp4", targetAddress(target))
 			if dialErr != nil {
 				writeMu.Lock()
-				_ = routebroker.WriteFrame(brokerConn, routebroker.Frame{Kind: routebroker.KindOpenError, Stream: frame.Stream, Payload: []byte("publisher target unavailable")}, maxPayload)
+				_ = routebroker.WriteFrame(brokerConn, routebroker.Frame{Kind: routebroker.KindOpenError, Stream: frame.Stream, Payload: []byte(routebroker.OpenErrorTargetUnavailable)}, maxPayload)
 				writeMu.Unlock()
 				continue
 			}

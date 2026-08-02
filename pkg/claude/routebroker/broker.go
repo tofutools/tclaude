@@ -586,7 +586,7 @@ func (b *Broker) openStream(consumer *session, localID uint64) error {
 	for _, existing := range r.streams {
 		if existing.consumer == consumer && existing.localID == localID {
 			b.mu.Unlock()
-			_ = consumer.enqueue(localID, Frame{Kind: KindOpenError, Stream: localID, Payload: []byte("duplicate stream id")}, true)
+			_ = consumer.enqueue(localID, Frame{Kind: KindOpenError, Stream: localID, Payload: []byte(OpenErrorDuplicateStream)}, true)
 			b.rejectedStreamsMetric.Add(1)
 			return nil
 		}
@@ -594,14 +594,14 @@ func (b *Broker) openStream(consumer *session, localID uint64) error {
 	for _, tombstone := range r.tombstones {
 		if tombstone.consumer == consumer && tombstone.localID == localID {
 			b.mu.Unlock()
-			_ = consumer.enqueue(localID, Frame{Kind: KindOpenError, Stream: localID, Payload: []byte("duplicate stream id")}, true)
+			_ = consumer.enqueue(localID, Frame{Kind: KindOpenError, Stream: localID, Payload: []byte(OpenErrorDuplicateStream)}, true)
 			b.rejectedStreamsMetric.Add(1)
 			return nil
 		}
 	}
 	if r.publisher == nil {
 		b.mu.Unlock()
-		if err := consumer.enqueue(localID, Frame{Kind: KindOpenError, Stream: localID, Payload: []byte("publisher unavailable")}, true); err != nil {
+		if err := consumer.enqueue(localID, Frame{Kind: KindOpenError, Stream: localID, Payload: []byte(OpenErrorPublisherUnavailable)}, true); err != nil {
 			return err
 		}
 		b.rejectedStreamsMetric.Add(1)
@@ -609,7 +609,7 @@ func (b *Broker) openStream(consumer *session, localID uint64) error {
 	}
 	if len(r.streams) >= b.maxConnectionsPerRoute {
 		b.mu.Unlock()
-		if err := consumer.enqueue(localID, Frame{Kind: KindOpenError, Stream: localID, Payload: []byte("route connection limit")}, true); err != nil {
+		if err := consumer.enqueue(localID, Frame{Kind: KindOpenError, Stream: localID, Payload: []byte(OpenErrorRouteLimit)}, true); err != nil {
 			return err
 		}
 		b.rejectedStreamsMetric.Add(1)
@@ -618,7 +618,7 @@ func (b *Broker) openStream(consumer *session, localID uint64) error {
 	agentID := consumer.consumerAuth.AgentID
 	if b.agentStreams[agentID] >= b.maxConnectionsPerAgent {
 		b.mu.Unlock()
-		if err := consumer.enqueue(localID, Frame{Kind: KindOpenError, Stream: localID, Payload: []byte("agent connection limit")}, true); err != nil {
+		if err := consumer.enqueue(localID, Frame{Kind: KindOpenError, Stream: localID, Payload: []byte(OpenErrorAgentLimit)}, true); err != nil {
 			return err
 		}
 		b.rejectedStreamsMetric.Add(1)
