@@ -193,6 +193,9 @@ type stream struct {
 	agentID             string
 	consumerHalfClosed  bool
 	publisherHalfClosed bool
+	// reclaimed marks the stream as already retired by a dual half-close, so
+	// the two session loops cannot both act on the same second half-close.
+	reclaimed bool
 }
 
 type streamTombstone struct {
@@ -657,8 +660,10 @@ func (b *Broker) forwardFromConsumer(consumer *session, frame Frame) error {
 		return fmt.Errorf("%w: unknown consumer stream", ErrProtocol)
 	}
 	publisher := stream.consumer.route.publisher
+	reclaim := false
 	if frame.Kind == KindHalfClose {
 		stream.consumerHalfClosed = true
+		reclaim = b.claimStreamReclaimLocked(stream)
 	}
 	b.mu.Unlock()
 	if publisher == nil {
@@ -675,6 +680,8 @@ func (b *Broker) forwardFromConsumer(consumer *session, frame Frame) error {
 	}
 	if frame.Kind == KindClose {
 		b.removeStream(stream, true, false)
+	} else if reclaim {
+		b.reclaimHalfClosedStream(stream, publisher)
 	}
 	return nil
 }
@@ -695,8 +702,10 @@ func (b *Broker) forwardFromPublisher(publisher *session, frame Frame) error {
 		}
 		return fmt.Errorf("%w: unknown publisher stream", ErrProtocol)
 	}
+	reclaim := false
 	if frame.Kind == KindHalfClose {
 		stream.publisherHalfClosed = true
+		reclaim = b.claimStreamReclaimLocked(stream)
 	}
 	consumer := stream.consumer
 	localID := stream.localID
@@ -712,8 +721,50 @@ func (b *Broker) forwardFromPublisher(publisher *session, frame Frame) error {
 	}
 	if frame.Kind == KindClose || frame.Kind == KindOpenError {
 		b.removeStream(stream, false, true)
+	} else if reclaim {
+		b.reclaimHalfClosedStream(stream, publisher)
 	}
 	return nil
+}
+
+// claimStreamReclaimLocked reports whether this caller is the one that must
+// retire a stream whose two directions have now both half-closed. Each session
+// loop can reach the second half-close, so the claim — rather than the flag
+// pair alone — is what makes reclamation, and its accounting, happen once.
+func (b *Broker) claimStreamReclaimLocked(s *stream) bool {
+	if !s.consumerHalfClosed || !s.publisherHalfClosed || s.reclaimed {
+		return false
+	}
+	s.reclaimed = true
+	return true
+}
+
+// reclaimHalfClosedStream retires a stream that both directions have finished
+// with. An ordinary request/response ends exactly this way and neither endpoint
+// has a reason to send CLOSE, so waiting for one holds the completed stream on
+// the route and agent budgets until the whole channel detaches — enough
+// short-lived exchanges then exhaust the route and healthy opens are refused.
+//
+// Both endpoints are told, because the reclamation is what releases their own
+// local sockets. The notice is queued behind the half-close that triggered it,
+// so each peer still observes the orderly shutdown before the stream ends.
+func (b *Broker) reclaimHalfClosedStream(stream *stream, publisher *session) {
+	consumer := stream.consumer
+	globalID := stream.globalID
+	localID := stream.localID
+	// Both writers keep their queues: each is about to receive a terminal
+	// CLOSE, which flushes what it still holds and then retires the writer.
+	b.removeStream(stream, true, true)
+	if publisher != nil {
+		if err := publisher.enqueue(globalID, Frame{Kind: KindClose, Stream: globalID}, true); err != nil && errors.Is(err, ErrBackpressure) {
+			publisher.close()
+		}
+	}
+	if consumer != nil {
+		if err := consumer.enqueue(localID, Frame{Kind: KindClose, Stream: localID}, true); err != nil && errors.Is(err, ErrBackpressure) {
+			consumer.close()
+		}
+	}
 }
 
 func (b *Broker) findConsumerStreamLocked(consumer *session, localID uint64) (*stream, bool) {

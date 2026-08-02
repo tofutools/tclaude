@@ -145,7 +145,7 @@ func TestBrokerForwardsOpaqueConcurrentStreamsWithSafeIDs(t *testing.T) {
 
 func TestBrokerPreservesHalfCloseAndConsumerExit(t *testing.T) {
 	auth := newTestAuthorizer()
-	b := newBroker(t, auth, routebroker.Config{})
+	b := newBroker(t, auth, routebroker.Config{WriteTimeout: 5 * time.Second})
 	publisher, consumer := auths()
 	pair := attachPair(t, b, publisher, consumer)
 
@@ -154,20 +154,172 @@ func TestBrokerPreservesHalfCloseAndConsumerExit(t *testing.T) {
 	writeFrame(t, pair.pubPeer, routebroker.Frame{Kind: routebroker.KindOpenOK, Stream: opened.Stream})
 	_ = readFrame(t, pair.conPeer)
 
+	// One direction ending is not the stream ending: the reverse direction
+	// still carries the publisher's reply.
 	writeFrame(t, pair.conPeer, routebroker.Frame{Kind: routebroker.KindHalfClose, Stream: 1})
 	finToPublisher := readFrame(t, pair.pubPeer)
 	require.Equal(t, routebroker.KindHalfClose, finToPublisher.Kind)
 	writeFrame(t, pair.pubPeer, routebroker.Frame{Kind: routebroker.KindData, Stream: opened.Stream, Payload: []byte("final publisher bytes")})
 	require.Equal(t, []byte("final publisher bytes"), readFrame(t, pair.conPeer).Payload)
+	require.Equal(t, uint64(1), b.Metrics().Streams, "a one-sided half-close must not retire the stream")
+
+	// The second half-close does end it. Both endpoints are told, after the
+	// orderly shutdown they were owed.
 	writeFrame(t, pair.pubPeer, routebroker.Frame{Kind: routebroker.KindHalfClose, Stream: opened.Stream})
 	require.Equal(t, routebroker.KindHalfClose, readFrame(t, pair.conPeer).Kind)
+	consumerReclaim := readFrame(t, pair.conPeer)
+	require.Equal(t, routebroker.KindClose, consumerReclaim.Kind)
+	require.Equal(t, uint64(1), consumerReclaim.Stream)
+	publisherReclaim := readFrame(t, pair.pubPeer)
+	require.Equal(t, routebroker.KindClose, publisherReclaim.Kind)
+	require.Equal(t, opened.Stream, publisherReclaim.Stream)
+	require.Equal(t, uint64(0), b.Metrics().Streams)
 
 	// A consumer process disappearing without a CLOSE still informs the
 	// publisher, allowing the endpoint adapter to close its local target.
+	writeFrame(t, pair.conPeer, routebroker.Frame{Kind: routebroker.KindOpen, Stream: 2})
+	live := readFrame(t, pair.pubPeer)
+	require.Equal(t, routebroker.KindOpen, live.Kind)
 	_ = pair.conPeer.Close()
 	consumerClose := readFrame(t, pair.pubPeer)
 	require.Equal(t, routebroker.KindClose, consumerClose.Kind)
-	require.Equal(t, opened.Stream, consumerClose.Stream)
+	require.Equal(t, live.Stream, consumerClose.Stream)
+}
+
+// dualHalfClose ends one stream the way an ordinary request/response does:
+// both directions half-close and neither endpoint sends CLOSE. It returns once
+// the broker has told both endpoints the stream was reclaimed.
+func dualHalfClose(t *testing.T, pair attached, localID, globalID uint64) {
+	t.Helper()
+	writeFrame(t, pair.conPeer, routebroker.Frame{Kind: routebroker.KindHalfClose, Stream: localID})
+	fin := readFrame(t, pair.pubPeer)
+	require.Equal(t, routebroker.KindHalfClose, fin.Kind)
+	require.Equal(t, globalID, fin.Stream)
+	writeFrame(t, pair.pubPeer, routebroker.Frame{Kind: routebroker.KindHalfClose, Stream: globalID})
+	require.Equal(t, routebroker.KindHalfClose, readFrame(t, pair.conPeer).Kind)
+	require.Equal(t, routebroker.KindClose, readFrame(t, pair.conPeer).Kind)
+	require.Equal(t, routebroker.KindClose, readFrame(t, pair.pubPeer).Kind)
+}
+
+func openStream(t *testing.T, pair attached, localID uint64) uint64 {
+	t.Helper()
+	writeFrame(t, pair.conPeer, routebroker.Frame{Kind: routebroker.KindOpen, Stream: localID})
+	opened := readFrame(t, pair.pubPeer)
+	require.Equal(t, routebroker.KindOpen, opened.Kind)
+	return opened.Stream
+}
+
+// TestBrokerDualHalfCloseReleasesOneRouteSlot pins the accounting: a completed
+// stream frees exactly the budget it took. Freeing none exhausts the route one
+// short-lived exchange at a time; freeing more than one would let a route carry
+// more concurrent streams than its limit allows.
+func TestBrokerDualHalfCloseReleasesOneRouteSlot(t *testing.T) {
+	auth := newTestAuthorizer()
+	b := newBroker(t, auth, routebroker.Config{MaxConnectionsPerRoute: 2, MaxConnectionsPerAgent: 16, WriteTimeout: 5 * time.Second})
+	publisher, consumer := auths()
+	pair := attachPair(t, b, publisher, consumer)
+
+	first := openStream(t, pair, 1)
+	_ = openStream(t, pair, 2)
+	require.Equal(t, uint64(2), b.Metrics().Streams)
+
+	dualHalfClose(t, pair, 1, first)
+	require.Equal(t, uint64(1), b.Metrics().Streams)
+
+	// The freed slot is usable again...
+	_ = openStream(t, pair, 3)
+	// ...and only that one slot was freed: the still-live stream keeps the
+	// route at its bound.
+	writeFrame(t, pair.conPeer, routebroker.Frame{Kind: routebroker.KindOpen, Stream: 4})
+	refused := readFrame(t, pair.conPeer)
+	require.Equal(t, routebroker.KindOpenError, refused.Kind)
+	require.Equal(t, uint64(4), refused.Stream)
+	require.Contains(t, string(refused.Payload), "route connection limit")
+}
+
+// TestBrokerDualHalfCloseReleasesOneAgentSlot is the same claim for the
+// broker-wide per-agent counter, which a route-limit assertion cannot see.
+func TestBrokerDualHalfCloseReleasesOneAgentSlot(t *testing.T) {
+	auth := newTestAuthorizer()
+	b := newBroker(t, auth, routebroker.Config{MaxConnectionsPerRoute: 16, MaxConnectionsPerAgent: 2, WriteTimeout: 5 * time.Second})
+	publisher, consumer := auths()
+	pair := attachPair(t, b, publisher, consumer)
+
+	first := openStream(t, pair, 1)
+	_ = openStream(t, pair, 2)
+	dualHalfClose(t, pair, 1, first)
+
+	_ = openStream(t, pair, 3)
+	writeFrame(t, pair.conPeer, routebroker.Frame{Kind: routebroker.KindOpen, Stream: 4})
+	refused := readFrame(t, pair.conPeer)
+	require.Equal(t, routebroker.KindOpenError, refused.Kind)
+	require.Contains(t, string(refused.Payload), "agent connection limit")
+}
+
+// TestBrokerSequentialShortLivedStreamsStayWithinTheRouteLimit runs far more
+// completed exchanges than one route may hold at once, on a single pair of
+// channels, as a short-lived-connection workload does.
+func TestBrokerSequentialShortLivedStreamsStayWithinTheRouteLimit(t *testing.T) {
+	const exchanges = 96
+
+	auth := newTestAuthorizer()
+	b := newBroker(t, auth, routebroker.Config{WriteTimeout: 5 * time.Second})
+	publisher, consumer := auths()
+	pair := attachPair(t, b, publisher, consumer)
+
+	for i := range uint64(exchanges) {
+		localID := i + 1
+		globalID := openStream(t, pair, localID)
+		writeFrame(t, pair.pubPeer, routebroker.Frame{Kind: routebroker.KindOpenOK, Stream: globalID})
+		require.Equal(t, routebroker.KindOpenOK, readFrame(t, pair.conPeer).Kind)
+		writeFrame(t, pair.conPeer, routebroker.Frame{Kind: routebroker.KindData, Stream: localID, Payload: []byte("request")})
+		require.Equal(t, []byte("request"), readFrame(t, pair.pubPeer).Payload)
+		writeFrame(t, pair.pubPeer, routebroker.Frame{Kind: routebroker.KindData, Stream: globalID, Payload: []byte("reply")})
+		require.Equal(t, []byte("reply"), readFrame(t, pair.conPeer).Payload)
+		dualHalfClose(t, pair, localID, globalID)
+	}
+
+	require.Equal(t, uint64(0), b.Metrics().Streams)
+	require.Equal(t, uint64(0), b.Metrics().RejectedStreams, "no exchange may be refused for capacity")
+}
+
+// TestBrokerLateFramesAfterDualHalfCloseStayStreamLocal proves reclamation
+// keeps the bounded-tombstone contract: an endpoint that sends its own CLOSE
+// after the broker already retired the stream is absorbed rather than failing
+// the channel it shares with live streams.
+func TestBrokerLateFramesAfterDualHalfCloseStayStreamLocal(t *testing.T) {
+	auth := newTestAuthorizer()
+	b := newBroker(t, auth, routebroker.Config{WriteTimeout: 5 * time.Second})
+	publisher, consumer := auths()
+	pair := attachPair(t, b, publisher, consumer)
+
+	retired := openStream(t, pair, 1)
+	live := openStream(t, pair, 2)
+	dualHalfClose(t, pair, 1, retired)
+
+	// Terminal frames both endpoints may still have in flight for the retired
+	// stream are dropped, along with a late DATA from the publisher.
+	writeFrame(t, pair.conPeer, routebroker.Frame{Kind: routebroker.KindClose, Stream: 1})
+	writeFrame(t, pair.pubPeer, routebroker.Frame{Kind: routebroker.KindClose, Stream: retired})
+	writeFrame(t, pair.pubPeer, routebroker.Frame{Kind: routebroker.KindData, Stream: retired, Payload: []byte("late")})
+
+	// The unrelated stream on the same channels is untouched.
+	writeFrame(t, pair.pubPeer, routebroker.Frame{Kind: routebroker.KindData, Stream: live, Payload: []byte("unrelated")})
+	forwarded := readFrame(t, pair.conPeer)
+	require.Equal(t, routebroker.KindData, forwarded.Kind)
+	require.Equal(t, uint64(2), forwarded.Stream)
+	require.Equal(t, []byte("unrelated"), forwarded.Payload)
+	writeFrame(t, pair.conPeer, routebroker.Frame{Kind: routebroker.KindData, Stream: 2, Payload: []byte("still open")})
+	require.Equal(t, []byte("still open"), readFrame(t, pair.pubPeer).Payload)
+
+	select {
+	case err := <-pair.pubDone:
+		t.Fatalf("publisher exited after late frames: %v", err)
+	case err := <-pair.conDone:
+		t.Fatalf("consumer exited after late frames: %v", err)
+	default:
+	}
+	require.Equal(t, uint64(1), b.Metrics().Streams)
 }
 
 func TestBrokerSlowConsumerIsBoundedAndDoesNotBlockAnotherConsumer(t *testing.T) {
