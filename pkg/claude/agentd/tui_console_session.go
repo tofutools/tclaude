@@ -92,6 +92,15 @@ var tuiConsoleStdioIsTerminal = func() bool {
 	return term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
 }
 
+// tuiConsoleTmuxInstalled reports whether tmux is on PATH. Indirected for the
+// same reason as the probes around it: a test that is not about tmux's presence
+// must not silently change meaning on a machine that lacks it — CI's macOS
+// runner does, and every test past this point would otherwise take the "no
+// tmux" exit instead of the branch it came to check.
+var tuiConsoleTmuxInstalled = func() bool {
+	return session.CheckTmuxInstalled() == nil
+}
+
 // tuiConsoleHasHarnessAncestor reports whether this process is running under a
 // coding harness, by the same process-tree walk the identity middleware
 // classifies callers with. Indirected for tests, whose own ancestry depends on
@@ -154,7 +163,7 @@ func tuiConsoleUnavailable(p *serveParams) string {
 	if tuiConsoleHasHarnessAncestor() {
 		return "this process runs under a coding harness, whose ancestry the console must keep"
 	}
-	if err := session.CheckTmuxInstalled(); err != nil {
+	if !tuiConsoleTmuxInstalled() {
 		return "tmux is not installed"
 	}
 	if !tuiConsoleStdioIsTerminal() {

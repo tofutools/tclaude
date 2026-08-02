@@ -169,8 +169,7 @@ func TestTUIConsoleRelaunchRequested(t *testing.T) {
 // its lifetime to something meant to outlive it.
 func TestTUIConsoleUnavailable_ExternalTmuxRuntime(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	tuiConsoleStubAncestry(t, false)
-	tuiConsoleStubTerminal(t, true)
+	tuiConsoleStubHost(t)
 	dir := "/sys/fs/cgroup/system.slice/tclaude-tmux.service"
 
 	reason := tuiConsoleUnavailable(&serveParams{TUI: true, ResourceDelegationDir: dir})
@@ -180,16 +179,33 @@ func TestTUIConsoleUnavailable_ExternalTmuxRuntime(t *testing.T) {
 	}
 }
 
+// TestTUIConsoleUnavailable_NoTmux is the plainest degradation, and now the
+// only test that asserts it. It used to be asserted by accident on every host
+// without tmux, which is how five other tests stopped testing what they said.
+func TestTUIConsoleUnavailable_NoTmux(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	tuiConsoleStubHost(t)
+	tuiConsoleStubTmux(t, false)
+
+	reason := tuiConsoleUnavailable(&serveParams{TUI: true})
+
+	if !strings.Contains(reason, "tmux is not installed") {
+		t.Fatalf("tuiConsoleUnavailable = %q, want it to name the missing tmux", reason)
+	}
+}
+
 // TestTUIConsoleUnavailable_NoTerminal covers the degradation that matters for
 // scripted launches: tmux cannot attach a session to a pipe, so a console
 // without a terminal keeps the one it has instead of failing startup.
 func TestTUIConsoleUnavailable_NoTerminal(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	tuiConsoleStubAncestry(t, false)
+	tuiConsoleStubHost(t)
 	tuiConsoleStubTerminal(t, false)
 
-	if reason := tuiConsoleUnavailable(&serveParams{TUI: true}); reason == "" {
-		t.Fatal("a console with no terminal must report a reason, not claim a tmux session")
+	reason := tuiConsoleUnavailable(&serveParams{TUI: true})
+
+	if !strings.Contains(reason, "terminal") {
+		t.Fatalf("tuiConsoleUnavailable = %q, want it to name the missing terminal", reason)
 	}
 }
 
@@ -199,7 +215,7 @@ func TestTUIConsoleUnavailable_NoTerminal(t *testing.T) {
 func TestRunTUIConsoleInTmux_DegradesInsteadOfFailing(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	rec := installConsoleTmuxRec(t, &consoleTmuxRec{})
-	tuiConsoleStubAncestry(t, false)
+	tuiConsoleStubHost(t)
 	tuiConsoleStubTerminal(t, false)
 
 	handled, err := runTUIConsoleInTmux(&serveParams{TUI: true})
@@ -222,8 +238,8 @@ func TestRunTUIConsoleInTmux_DegradesInsteadOfFailing(t *testing.T) {
 func TestTUIConsoleUnavailable_HarnessAncestorKeepsItsClassification(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("TMUX", "")
+	tuiConsoleStubHost(t)
 	tuiConsoleStubAncestry(t, true)
-	tuiConsoleStubTerminal(t, true)
 
 	reason := tuiConsoleUnavailable(&serveParams{TUI: true})
 
@@ -239,8 +255,7 @@ func TestTUIConsoleUnavailable_HarnessAncestorKeepsItsClassification(t *testing.
 func TestRunTUIConsoleInTmux_HappyPath(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	rec := installConsoleTmuxRec(t, &consoleTmuxRec{})
-	tuiConsoleStubAncestry(t, false)
-	tuiConsoleStubTerminal(t, true)
+	tuiConsoleStubHost(t)
 
 	handled, err := runTUIConsoleInTmux(&serveParams{TUI: true})
 
@@ -268,8 +283,7 @@ func TestRunTUIConsoleInTmux_ReportsTheConsolesOwnError(t *testing.T) {
 		consoleError: "another agentd already owns /home/x/.tclaude/data",
 		attachStderr: "no sessions",
 	})
-	tuiConsoleStubAncestry(t, false)
-	tuiConsoleStubTerminal(t, true)
+	tuiConsoleStubHost(t)
 
 	handled, err := runTUIConsoleInTmux(&serveParams{TUI: true})
 
@@ -289,8 +303,7 @@ func TestRunTUIConsoleInTmux_ReportsTheConsolesOwnError(t *testing.T) {
 func TestRunTUIConsoleInTmux_AFailedAttachIsNotASilentSuccess(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	installConsoleTmuxRec(t, &consoleTmuxRec{attachStderr: "can't find session: tclaude-console"})
-	tuiConsoleStubAncestry(t, false)
-	tuiConsoleStubTerminal(t, true)
+	tuiConsoleStubHost(t)
 
 	handled, err := runTUIConsoleInTmux(&serveParams{TUI: true})
 
@@ -385,8 +398,7 @@ func TestRunTUIConsoleInTmux_DegradesWhenItCannotPrepareAnErrorFile(t *testing.T
 	}
 	t.Setenv("HOME", home)
 	rec := installConsoleTmuxRec(t, &consoleTmuxRec{})
-	tuiConsoleStubAncestry(t, false)
-	tuiConsoleStubTerminal(t, true)
+	tuiConsoleStubHost(t)
 	// Pin that no EARLIER degradation applies, so the decline below can only be
 	// the error file — otherwise this would keep passing if the host simply had
 	// no tmux.
@@ -620,6 +632,26 @@ func TestTokenWithheldForTmuxConsole(t *testing.T) {
 
 // tuiConsoleStubTerminal pins the terminal probe for a test process that has no
 // terminal of its own.
+func tuiConsoleStubTmux(t *testing.T, installed bool) {
+	t.Helper()
+	prev := tuiConsoleTmuxInstalled
+	tuiConsoleTmuxInstalled = func() bool { return installed }
+	t.Cleanup(func() { tuiConsoleTmuxInstalled = prev })
+}
+
+// tuiConsoleStubHost pins EVERY host probe tuiConsoleUnavailable consults, to
+// the answers of a host that can give the console a session. Tests override the
+// one they are about; the rest are pinned so the result cannot come from the
+// machine the test happens to run on. CI's macOS runner has no tmux, which
+// silently turned five of these into assertions about that instead — and
+// quietly satisfied two more for the wrong reason.
+func tuiConsoleStubHost(t *testing.T) {
+	t.Helper()
+	tuiConsoleStubAncestry(t, false)
+	tuiConsoleStubTmux(t, true)
+	tuiConsoleStubTerminal(t, true)
+}
+
 func tuiConsoleStubTerminal(t *testing.T, isTerminal bool) {
 	t.Helper()
 	prev := tuiConsoleStdioIsTerminal
