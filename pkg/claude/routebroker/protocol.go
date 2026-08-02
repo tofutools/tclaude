@@ -59,6 +59,29 @@ var (
 	ErrInvalidStreamID = errors.New("route broker stream id is invalid")
 )
 
+// OPEN_ERROR payloads are a closed set of stable tokens rather than free text,
+// so a consumer can tell a condition that a later reopen clears from one that
+// it never will. They are part of the wire contract; do not reword them.
+const (
+	OpenErrorPublisherUnavailable     = "publisher unavailable"
+	OpenErrorTargetUnavailable        = "publisher target unavailable"
+	OpenErrorDuplicateStream          = "duplicate stream id"
+	OpenErrorDuplicatePublisherStream = "duplicate publisher stream"
+	OpenErrorRouteLimit               = "route connection limit"
+	OpenErrorAgentLimit               = "agent connection limit"
+)
+
+// OpenErrorIsTransient reports whether reopening the stream can succeed later
+// without anything else changing. Only the publisher channel's absence
+// qualifies: that is a daemon/helper lifecycle state which resolves on its own
+// when the publisher reattaches. A refused open — limits, duplicate IDs — will
+// be refused again, and an unreachable target is the publishing application's
+// own state, which the consumer's client should see as a failed connect rather
+// than a hang.
+func OpenErrorIsTransient(payload []byte) bool {
+	return string(payload) == OpenErrorPublisherUnavailable
+}
+
 // MaxFramePayload is the default upper bound for one frame's opaque payload.
 // It is intentionally small enough that one malicious peer cannot allocate a
 // large object per stream. Configured brokers may choose a lower bound.
