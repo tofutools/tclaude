@@ -370,6 +370,39 @@ func GetAgentRouteLease(leaseID string) (*AgentRouteLease, error) {
 	return &lease, nil
 }
 
+// ListAgentRouteLeases returns open and historical leases for one consumer in
+// a selected group. The group predicate is part of the query so a helper
+// polling multiple groups cannot accidentally observe a lease from another
+// route-enabled group.
+func ListAgentRouteLeases(groupID int64, consumerAgentID, consumerConvID string) ([]*AgentRouteLease, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(`SELECT l.id, l.route_id, l.consumer_agent_id, l.consumer_conv_id,
+		l.consumer_launch_generation, l.group_generation, l.state, l.opened_at, l.closed_at
+		FROM agent_route_leases l JOIN agent_routes r ON r.id = l.route_id
+		WHERE r.group_id = ? AND l.consumer_agent_id = ? AND l.consumer_conv_id = ?
+		ORDER BY l.opened_at, l.id`, groupID, consumerAgentID, consumerConvID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []*AgentRouteLease
+	for rows.Next() {
+		var lease AgentRouteLease
+		var openedAt, closedAt dbTimestamp
+		if err := rows.Scan(&lease.ID, &lease.RouteID, &lease.ConsumerAgentID, &lease.ConsumerConvID,
+			&lease.ConsumerLaunchGeneration, &lease.GroupGeneration, &lease.State, &openedAt, &closedAt); err != nil {
+			return nil, err
+		}
+		lease.OpenedAt = openedAt.Time()
+		lease.ClosedAt = closedAt.Time()
+		out = append(out, &lease)
+	}
+	return out, rows.Err()
+}
+
 func CloseAgentRouteLease(leaseID, consumerAgentID, consumerConvID string) error {
 	d, err := Open()
 	if err != nil {

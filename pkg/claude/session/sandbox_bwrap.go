@@ -1,6 +1,7 @@
 package session
 
 import (
+	"errors"
 	"fmt"
 	"net/netip"
 	"net/url"
@@ -48,11 +49,25 @@ type TclaudeLayerLaunchContract struct {
 	// pre-engine behavior byte for byte. Whether the selection deploys anything
 	// is decided by sandboxpolicy.DeployedNetworkEngine, never here.
 	NetworkEngine sandboxpolicy.NetworkEngine `json:"network_engine,omitempty"`
+	RouteHelper   *TclaudeLayerRouteHelper    `json:"route_helper,omitempty"`
 }
 
 type TclaudeLayerOpenCodeControl struct {
 	Transport  string `json:"transport"`
 	SocketPath string `json:"socket_path"`
+}
+
+// TclaudeLayerRouteHelper is the launch-owned identity used by the Linux
+// namespace-local group-route helper. It is deliberately opt-in: ordinary
+// tclaude-layer launches receive no route watcher and retain their existing
+// network semantics byte-for-byte.
+type TclaudeLayerRouteHelper struct {
+	BinaryPath       string  `json:"binary_path,omitempty"`
+	SocketPath       string  `json:"socket_path"`
+	AgentID          string  `json:"agent_id"`
+	ConvID           string  `json:"conv_id"`
+	LaunchGeneration string  `json:"launch_generation"`
+	GroupIDs         []int64 `json:"group_ids"`
 }
 
 // TclaudeLayerPrivateWriteDir hides a daemon-owned shared parent and reopens
@@ -106,6 +121,46 @@ type TclaudeLayerLaunchInput struct {
 	// contract field of the same name; production callers leave it unset until
 	// the selection surface exists.
 	NetworkEngine sandboxpolicy.NetworkEngine
+	RouteHelper   *TclaudeLayerRouteHelper
+}
+
+func validateTclaudeLayerRouteHelper(effective sandboxpolicy.EffectiveProfile, helper *TclaudeLayerRouteHelper) error {
+	if helper == nil {
+		return nil
+	}
+	if runtime.GOOS != "linux" {
+		return fmt.Errorf("Linux group-route helper is unavailable on %s", runtime.GOOS)
+	}
+	if strings.TrimSpace(helper.SocketPath) == "" || !filepath.IsAbs(filepath.Clean(helper.SocketPath)) {
+		return fmt.Errorf("route helper agentd socket path must be absolute")
+	}
+	if helper.BinaryPath != "" && !filepath.IsAbs(filepath.Clean(helper.BinaryPath)) {
+		return fmt.Errorf("route helper binary path must be absolute")
+	}
+	if strings.TrimSpace(helper.AgentID) == "" || strings.TrimSpace(helper.ConvID) == "" || strings.TrimSpace(helper.LaunchGeneration) == "" {
+		return fmt.Errorf("route helper launch identity is incomplete")
+	}
+	if len(helper.GroupIDs) == 0 {
+		return fmt.Errorf("route helper requires at least one explicit group id")
+	}
+	seen := make(map[int64]struct{}, len(helper.GroupIDs))
+	for _, groupID := range helper.GroupIDs {
+		if groupID <= 0 {
+			return fmt.Errorf("route helper group id must be positive")
+		}
+		if _, exists := seen[groupID]; exists {
+			return fmt.Errorf("route helper group id %d is duplicated", groupID)
+		}
+		seen[groupID] = struct{}{}
+	}
+	posture, err := TclaudeLayerNetworkPosture(effective)
+	if err != nil {
+		return fmt.Errorf("resolve route helper network posture: %w", err)
+	}
+	if posture == sandboxpolicy.NetworkHostOpen {
+		return fmt.Errorf("route helper requires a private tclaude-layer network namespace; host-open launches cannot establish a publisher-local target claim")
+	}
+	return nil
 }
 
 // tclaudeLayerContractNetworkEngine derives the launch contract's engine from
@@ -193,6 +248,9 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 			return TclaudeLayerLaunchSpec{}, fmt.Errorf("freeze tclaude-layer filesystem: %w", err)
 		}
 		effective.Filesystem = filesystem
+	}
+	if err := validateTclaudeLayerRouteHelper(effective, input.RouteHelper); err != nil {
+		return TclaudeLayerLaunchSpec{}, err
 	}
 	profileFilesystem := append([]sandboxpolicy.FilesystemGrant(nil), effective.Filesystem...)
 	gitWriteDirs := append([]string(nil), input.GitWriteDirs...)
@@ -300,6 +358,20 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 	contract.NetworkEngine, err = tclaudeLayerContractNetworkEngine(effective, input)
 	if err != nil {
 		return TclaudeLayerLaunchSpec{}, err
+	}
+	if input.RouteHelper != nil {
+		routeHelper := *input.RouteHelper
+		routeHelper.GroupIDs = append([]int64(nil), input.RouteHelper.GroupIDs...)
+		contract.RouteHelper = &routeHelper
+		if binaryPath := filepath.Clean(strings.TrimSpace(routeHelper.BinaryPath)); binaryPath != "." && binaryPath != "" {
+			if info, statErr := os.Stat(binaryPath); statErr != nil || !info.Mode().IsRegular() {
+				if statErr == nil {
+					statErr = errors.New("not a regular file")
+				}
+				return TclaudeLayerLaunchSpec{}, fmt.Errorf("route helper binary %q is unavailable: %w", binaryPath, statErr)
+			}
+			contract.ReadOnlyBinds = append(contract.ReadOnlyBinds, TclaudeLayerReadOnlyBind{Source: binaryPath, Target: binaryPath})
+		}
 	}
 	if input.Snapshot != nil && input.Snapshot.UnixSocketMaterialization != nil {
 		paths := append([]string(nil), input.Snapshot.UnixSocketMaterialization.Paths...)
@@ -934,10 +1006,20 @@ func WrapTclaudeLayerSpec(
 	spec TclaudeLayerLaunchSpec,
 	harnessCommand string,
 ) (string, error) {
+	if err := validateTclaudeLayerRouteHelper(spec.Effective, spec.Contract.RouteHelper); err != nil {
+		return "", err
+	}
 	phase0WriteDirs, privateWriteDirs, finalHideDirs, readOnlyBinds, socketPaths, plan, err :=
 		tclaudeLayerSpecRenderInput(spec)
 	if err != nil {
 		return "", err
+	}
+	if spec.Contract.RouteHelper != nil {
+		wrapped, helperErr := wrapTclaudeLayerRouteHelper(binary, *spec.Contract.RouteHelper, harnessCommand)
+		if helperErr != nil {
+			return "", helperErr
+		}
+		harnessCommand = wrapped
 	}
 	return tclaudeLayerCommand(
 		binary,
@@ -1050,10 +1132,20 @@ func WrapTclaudeLayerStackedSpec(
 	consume bool,
 	harnessCommand string,
 ) (string, error) {
+	if err := validateTclaudeLayerRouteHelper(spec.Effective, spec.Contract.RouteHelper); err != nil {
+		return "", err
+	}
 	phase0WriteDirs, privateWriteDirs, finalHideDirs, readOnlyBinds, socketPaths, plan, err :=
 		tclaudeLayerSpecRenderInput(spec)
 	if err != nil {
 		return "", err
+	}
+	if spec.Contract.RouteHelper != nil {
+		wrapped, helperErr := wrapTclaudeLayerRouteHelper(binary, *spec.Contract.RouteHelper, harnessCommand)
+		if helperErr != nil {
+			return "", helperErr
+		}
+		harnessCommand = wrapped
 	}
 	return tclaudeLayerStackedCommand(
 		binary,
@@ -1096,10 +1188,20 @@ func WrapTclaudeLayerServerSpecWithLoopbackBind(
 	loopbackBindPort int,
 	serverCommand string,
 ) (string, error) {
+	if err := validateTclaudeLayerRouteHelper(spec.Effective, spec.Contract.RouteHelper); err != nil {
+		return "", err
+	}
 	phase0WriteDirs, privateWriteDirs, finalHideDirs, readOnlyBinds, socketPaths, plan, err :=
 		tclaudeLayerSpecRenderInput(spec)
 	if err != nil {
 		return "", err
+	}
+	if spec.Contract.RouteHelper != nil {
+		wrapped, helperErr := wrapTclaudeLayerRouteHelper(binary, *spec.Contract.RouteHelper, serverCommand)
+		if helperErr != nil {
+			return "", helperErr
+		}
+		serverCommand = wrapped
 	}
 	return tclaudeLayerServerCommandWithLoopbackBind(
 		binary,
@@ -1129,6 +1231,9 @@ func TclaudeLayerUnixRelayServerExecArgs(
 	}
 	if preserveFDs != 2 || len(serverArgv) == 0 {
 		return nil, fmt.Errorf("unix-relay server renderer requires inherited descriptors and a command")
+	}
+	if spec.Contract.RouteHelper != nil {
+		return nil, fmt.Errorf("Linux group-route helper requires a shell-wrapped pane launch; unix-relay server argv cannot supervise it")
 	}
 	phase0WriteDirs, privateWriteDirs, finalHideDirs, readOnlyBinds, socketPaths, plan, err :=
 		tclaudeLayerSpecRenderInput(spec)
@@ -2758,6 +2863,39 @@ func bwrapBindSourceExists(path string) (bool, error) {
 	default:
 		return false, err
 	}
+}
+
+const tclaudeLayerRouteHelperCommand = "tclaude-layer-route-helper"
+const tclaudeLayerRouteHelperCLI = "tclaude"
+
+func wrapTclaudeLayerRouteHelper(binary string, helper TclaudeLayerRouteHelper, harnessCommand string) (string, error) {
+	if runtime.GOOS != "linux" {
+		return "", fmt.Errorf("Linux group-route helper is unavailable on %s", runtime.GOOS)
+	}
+	if strings.TrimSpace(binary) == "" {
+		return "", errors.New("route helper launch binary is required")
+	}
+	cli := tclaudeLayerRouteHelperCLI
+	if path := strings.TrimSpace(helper.BinaryPath); path != "" {
+		cli = path
+	}
+	args := []string{
+		clcommon.ShellQuoteArg(cli), "session", tclaudeLayerRouteHelperCommand,
+		"--socket", clcommon.ShellQuoteArg(helper.SocketPath),
+		"--agent-id", clcommon.ShellQuoteArg(helper.AgentID),
+		"--conv-id", clcommon.ShellQuoteArg(helper.ConvID),
+		"--launch-generation", clcommon.ShellQuoteArg(helper.LaunchGeneration),
+	}
+	for _, groupID := range helper.GroupIDs {
+		args = append(args, "--group-id", clcommon.ShellQuoteArg(strconv.FormatInt(groupID, 10)))
+	}
+	command := strings.Join(args, " ")
+	// Keep the shell as the helper's parent until the harness exits. The EXIT
+	// cleanup therefore covers normal completion, terminal teardown, and a
+	// harness crash; the helper cannot be reparented as an orphan inside the
+	// Bubblewrap namespace. It retries agentd failures itself, preserving route
+	// channels across daemon restarts.
+	return command + " & route_helper_pid=$!; route_helper_cleanup() { kill \"$route_helper_pid\" 2>/dev/null; wait \"$route_helper_pid\" 2>/dev/null; }; trap route_helper_cleanup EXIT; trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM; " + harnessCommand + "; route_helper_status=$?; exit $route_helper_status", nil
 }
 
 func bwrapCommand(

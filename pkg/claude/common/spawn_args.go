@@ -141,6 +141,14 @@ type SpawnArgs struct {
 	OpenCodeEnvironment    []sandboxpolicy.EnvironmentEntry
 	OpenCodeStateIsolation string
 
+	// RouteHelper* are an internal, Linux-only handoff for a route-capable
+	// tclaude-layer launch. The session child derives the exact exit-launch
+	// generation after it has chosen the tmux name, so only the pre-enrolled
+	// identity and explicit group scope cross this boundary.
+	RouteHelperAgentID  string
+	RouteHelperConvID   string
+	RouteHelperGroupIDs []int64
+
 	// Sandbox is the launch-time OS-sandbox mode for harnesses that take one
 	// (Codex's --sandbox, or the managed-profile pseudo-mode); "" omits it. The
 	// daemon resolves it to the harness's secure default before spawning so a

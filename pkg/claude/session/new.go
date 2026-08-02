@@ -252,6 +252,13 @@ type NewParams struct {
 	// injection. A direct human launch may set it to choose a specific id.
 	// Mutually exclusive with --resume; Claude-Code-only; must be a valid UUID.
 	SessionID string `long:"session-id" optional:"true" help:"Use a specific conversation id (UUID) for a fresh Claude Code session (claude --session-id). Mutually exclusive with --resume"`
+
+	// RouteHelper* are an internal daemon-to-session handoff. The exact exit
+	// launch generation is derived after the tmux name is chosen; callers only
+	// provide the pre-enrolled identity and explicit route-enabled groups.
+	RouteHelperAgentID  string  `long:"route-helper-agent-id" optional:"true" help:"Internal: stable identity for the Linux group-route helper"`
+	RouteHelperConvID   string  `long:"route-helper-conv-id" optional:"true" help:"Internal: conversation identity for the Linux group-route helper"`
+	RouteHelperGroupIDs []int64 `long:"route-helper-group-id" optional:"true" help:"Internal: explicit route-enabled group for the Linux group-route helper"`
 }
 
 func NewCmd() *cobra.Command {
@@ -278,6 +285,9 @@ func NewCmd() *cobra.Command {
 	_ = cmd.Flags().MarkHidden("codex-git-common-dir-pinned")
 	_ = cmd.Flags().MarkHidden("git-worktree-write-dir")
 	_ = cmd.Flags().MarkHidden("git-worktree-write-dirs-pinned")
+	_ = cmd.Flags().MarkHidden("route-helper-agent-id")
+	_ = cmd.Flags().MarkHidden("route-helper-conv-id")
+	_ = cmd.Flags().MarkHidden("route-helper-group-id")
 
 	// Register completion for --resume flag
 	_ = cmd.RegisterFlagCompletionFunc("resume", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
@@ -904,6 +914,34 @@ func runNew(params *NewParams) error {
 	// authorizes callers from Unix-socket peer credentials and recorded PIDs.
 	// Build the harness command with all environment variables forwarded.
 	exitGeneration := newExitLaunchGeneration(sessionID, tmuxSession)
+	var routeHelper *TclaudeLayerRouteHelper
+	if params.RouteHelperAgentID != "" || params.RouteHelperConvID != "" || len(params.RouteHelperGroupIDs) > 0 {
+		if !outerLayer || !tclaudeLayerWrapsPane(h.Name) {
+			return fmt.Errorf("Linux group-route helper requires a pane-authoritative tclaude-layer launch")
+		}
+		if strings.TrimSpace(params.RouteHelperAgentID) == "" || strings.TrimSpace(params.RouteHelperConvID) == "" || len(params.RouteHelperGroupIDs) == 0 {
+			return fmt.Errorf("Linux group-route helper launch identity is incomplete")
+		}
+		socketFloor := sandboxpolicy.AgentdSocketFloor()
+		if len(socketFloor) == 0 || strings.TrimSpace(socketFloor[0]) == "" {
+			return fmt.Errorf("Linux group-route helper agentd socket is unavailable")
+		}
+		helperBinary, helperBinaryErr := os.Executable()
+		if helperBinaryErr != nil || strings.TrimSpace(helperBinary) == "" {
+			if helperBinaryErr == nil {
+				helperBinaryErr = errors.New("executable path is empty")
+			}
+			return fmt.Errorf("Linux group-route helper executable is unavailable: %w", helperBinaryErr)
+		}
+		routeHelper = &TclaudeLayerRouteHelper{
+			BinaryPath:       filepath.Clean(helperBinary),
+			SocketPath:       socketFloor[0],
+			AgentID:          strings.TrimSpace(params.RouteHelperAgentID),
+			ConvID:           strings.TrimSpace(params.RouteHelperConvID),
+			LaunchGeneration: exitGeneration,
+			GroupIDs:         append([]int64(nil), params.RouteHelperGroupIDs...),
+		}
+	}
 	additionalEnv := map[string]string{
 		"TCLAUDE_SESSION_ID":      sessionID,
 		"TCLAUDE_EXIT_GENERATION": exitGeneration,
@@ -1568,6 +1606,7 @@ func runNew(params *NewParams) error {
 			GitWriteDirs:     launchGitWriteDirs,
 			Snapshot:         launchSandbox,
 			PrivateWriteDirs: privateAttachmentWriteDirs,
+			RouteHelper:      routeHelper,
 		})
 		if specErr != nil {
 			return fmt.Errorf("build tclaude-layer launch spec: %w", specErr)

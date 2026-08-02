@@ -65,27 +65,37 @@ type ChannelAuth struct {
 // publisher-local claim depend on mutable DNS and could turn a route into a
 // host or Internet relay.
 func ValidatePublisherTarget(raw string) (string, error) {
+	return validateLoopbackEndpoint(raw, ErrInvalidTarget)
+}
+
+// ValidateConsumerEndpoint applies the same namespace-local address contract
+// to the ephemeral listener returned by a consumer helper.
+func ValidateConsumerEndpoint(raw string) (string, error) {
+	return validateLoopbackEndpoint(raw, errors.New("route consumer endpoint is not a namespace-local loopback listener"))
+}
+
+func validateLoopbackEndpoint(raw string, invalid error) (string, error) {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil || u.Scheme != "tcp" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
-		return "", fmt.Errorf("%w: target must be tcp://<loopback-ip>:<port>", ErrInvalidTarget)
+		return "", fmt.Errorf("%w: address must be tcp://<loopback-ip>:<port>", invalid)
 	}
 	if u.Host == "" {
-		return "", fmt.Errorf("%w: target is missing an address", ErrInvalidTarget)
+		return "", fmt.Errorf("%w: address is missing a host", invalid)
 	}
 	host, port, err := net.SplitHostPort(u.Host)
 	if err != nil {
-		return "", fmt.Errorf("%w: target address is invalid: %v", ErrInvalidTarget, err)
+		return "", fmt.Errorf("%w: address is invalid: %v", invalid, err)
 	}
 	if strings.TrimSpace(host) == "" {
-		return "", fmt.Errorf("%w: target host is empty", ErrInvalidTarget)
+		return "", fmt.Errorf("%w: host is empty", invalid)
 	}
 	addr, err := netip.ParseAddr(host)
 	if err != nil || !addr.IsLoopback() {
-		return "", fmt.Errorf("%w: target host %q is not a loopback IP", ErrInvalidTarget, host)
+		return "", fmt.Errorf("%w: host %q is not a loopback IP", invalid, host)
 	}
 	portNumber, err := strconv.Atoi(port)
 	if err != nil || portNumber < 1 || portNumber > 65535 {
-		return "", fmt.Errorf("%w: target port %q is invalid", ErrInvalidTarget, port)
+		return "", fmt.Errorf("%w: port %q is invalid", invalid, port)
 	}
 	return net.JoinHostPort(addr.String(), strconv.Itoa(portNumber)), nil
 }
@@ -171,7 +181,6 @@ func openPublisherStream(ctx context.Context, target string, streamID uint64, st
 		return
 	}
 	go func() {
-		defer streams.removeAndClose(streamID)
 		buf := make([]byte, 32<<10)
 		for {
 			n, readErr := conn.Read(buf)
@@ -185,6 +194,7 @@ func openPublisherStream(ctx context.Context, target string, streamID uint64, st
 					_ = w.write(routebroker.Frame{Kind: routebroker.KindHalfClose, Stream: streamID})
 				} else {
 					_ = w.write(routebroker.Frame{Kind: routebroker.KindClose, Stream: streamID})
+					streams.removeAndClose(streamID)
 				}
 				return
 			}
@@ -278,7 +288,6 @@ func RunConsumer(ctx context.Context, channel net.Conn, listener net.Listener) e
 }
 
 func readConsumerStream(ctx context.Context, id uint64, conn net.Conn, streams *consumerStreams, w *connWriter) {
-	defer streams.removeAndClose(id)
 	buf := make([]byte, 32<<10)
 	for {
 		n, err := conn.Read(buf)
@@ -292,6 +301,7 @@ func readConsumerStream(ctx context.Context, id uint64, conn net.Conn, streams *
 				_ = w.write(routebroker.Frame{Kind: routebroker.KindHalfClose, Stream: id})
 			} else if ctx.Err() == nil {
 				_ = w.write(routebroker.Frame{Kind: routebroker.KindClose, Stream: id})
+				streams.removeAndClose(id)
 			}
 			return
 		}
