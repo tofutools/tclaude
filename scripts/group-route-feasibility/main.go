@@ -241,8 +241,8 @@ func runLinuxPublisher(marker string, _ int, hostEndpoint string) error {
 	if _, err := fmt.Fprintln(broker, "STREAM"); err != nil {
 		return err
 	}
-	if err := relayFixed(appConn, bufio.NewReader(appConn), broker, reader); err != nil {
-		return err
+	if err := relayFixed(broker, reader, appConn, bufio.NewReader(appConn)); err != nil {
+		return fmt.Errorf("publisher fixed relay: %w", err)
 	}
 	if err := <-appDone; err != nil {
 		return fmt.Errorf("publisher namespace-local service: %w", err)
@@ -311,7 +311,7 @@ func runLinuxConsumer(marker string) error {
 		return err
 	}
 	if err := relayFixed(localConn, bufio.NewReader(localConn), broker, reader); err != nil {
-		return err
+		return fmt.Errorf("consumer fixed relay: %w", err)
 	}
 	if err := <-clientDone; err != nil {
 		return err
@@ -462,7 +462,9 @@ func (b *linuxBroker) handle(peer *linuxPeer) {
 			if err != nil || strings.TrimSpace(line) != "STREAM" {
 				return
 			}
-			_ = relayPeers(stream, peer)
+			if err := relayPeers(stream, peer); err != nil {
+				fmt.Fprintf(os.Stderr, "group-route-feasibility: %v\n", err)
+			}
 		case <-time.After(5 * time.Second):
 			return
 		}
@@ -479,7 +481,10 @@ func (b *linuxBroker) Close() error {
 }
 
 func relayPeers(publisher, consumer *linuxPeer) error {
-	return relayFixed(consumer.conn, consumer.reader, publisher.conn, publisher.reader)
+	if err := relayFixed(consumer.conn, consumer.reader, publisher.conn, publisher.reader); err != nil {
+		return fmt.Errorf("broker fixed relay: %w", err)
+	}
+	return nil
 }
 
 // relayFixed is deliberately bounded to the one opaque exchange this probe
