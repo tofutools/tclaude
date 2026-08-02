@@ -2652,6 +2652,9 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	if !requireGroupActive(w, g) {
 		return
 	}
+	if !routeMembershipMutationAllowed(w, g) {
+		return
+	}
 	// agent.SpawnRequest is the single shared request shape — the same
 	// type `tclaude agent spawn`, `tclaude --join-group`, and the
 	// dashboard's spawn modal marshal — so the wire contract can't drift
