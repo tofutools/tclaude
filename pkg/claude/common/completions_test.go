@@ -135,11 +135,11 @@ func TestBuildEnvExports(t *testing.T) {
 
 // TestBuildEnvExports_StripsTUIConsoleHandshake keeps the `agentd serve --tui`
 // launcher↔console variables out of every pane the console goes on to launch.
-// They describe one specific console process — its tmux session, who owns the
-// tmux server, where its startup failure goes — so an agent pane that inherited
-// them would answer for a daemon it is not, and would write over the only
-// channel that console's launcher has for reporting a failure. The prefix is
-// stripped wholesale so a fourth variable cannot be added and forgotten here.
+// They describe one specific console process — its tmux session, where its
+// startup failure goes — so an agent pane that inherited them would answer for a
+// daemon it is not, and would write over the only channel that console's
+// launcher has for reporting a failure. The prefix is stripped wholesale so a
+// third variable cannot be added and forgotten here.
 func TestBuildEnvExports_StripsTUIConsoleHandshake(t *testing.T) {
 	t.Setenv(TUIConsoleEnvPrefix+"SESSION", "tclaude-console")
 	t.Setenv(TUIConsoleEnvPrefix+"ERROR_FILE", "/home/x/.tclaude/data/tui-console-error-1")

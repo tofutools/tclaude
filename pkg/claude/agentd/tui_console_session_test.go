@@ -90,8 +90,8 @@ func TestTUIConsoleRelaunchRequested(t *testing.T) {
 		consoleEnv string
 		want       bool
 	}{
-		"no console at all":       {serveParams{}, "", "", false},
-		"tui from a plain shell":  {serveParams{TUI: true}, "", "", true},
+		"no console at all":      {serveParams{}, "", "", false},
+		"tui from a plain shell": {serveParams{TUI: true}, "", "", true},
 		"tui inside the operator's own tmux": {
 			serveParams{TUI: true}, "/tmp/tmux-1000/default,123,0", "", false},
 		"the console the launcher started": {
@@ -109,10 +109,9 @@ func TestTUIConsoleRelaunchRequested(t *testing.T) {
 }
 
 // TestTUIConsoleUnavailable_ExternalTmuxRuntime keeps the console off a
-// delegated tmux server for the same reason startTUITmuxServer keeps its hands
-// off one: that server is a separate, longer-lived unit, so putting the daemon's
-// own session on it would run it inside the delegated cgroup and hand its
-// lifetime to something meant to outlive it.
+// delegated tmux server: it is a separate, longer-lived unit, so putting the
+// daemon's own session on it would run it inside the delegated cgroup and hand
+// its lifetime to something meant to outlive it.
 func TestTUIConsoleUnavailable_ExternalTmuxRuntime(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	tuiConsoleStubTerminal(t, true)
@@ -166,7 +165,7 @@ func TestStartTUIConsoleSession_LaunchShape(t *testing.T) {
 	t.Setenv("TCLAUDE_CONSOLE_LAUNCH_PROBE", "carried-through")
 
 	if err := startTUIConsoleSession("tclaude-console", "/usr/local/bin/tclaude",
-		"/tmp/err", true); err != nil {
+		"/tmp/err"); err != nil {
 		t.Fatalf("startTUIConsoleSession: %v", err)
 	}
 
@@ -192,7 +191,6 @@ func TestStartTUIConsoleSession_LaunchShape(t *testing.T) {
 	for _, want := range []string{
 		"export " + tuiConsoleSessionEnv + "=tclaude-console",
 		"export " + tuiConsoleErrorFileEnv + "=/tmp/err",
-		"export " + tuiConsoleOwnsServerEnv + "=1",
 		"export TCLAUDE_CONSOLE_LAUNCH_PROBE=carried-through",
 		// `exec` so #{pane_pid} is the daemon itself and the shutdown path's
 		// SIGTERM is not swallowed by a surviving `sh` wrapper.
@@ -204,40 +202,16 @@ func TestStartTUIConsoleSession_LaunchShape(t *testing.T) {
 	}
 }
 
-// TestStartTUIConsoleSession_OwnershipIsNotAsserted keeps the ownership
-// handshake honest in the other direction: a launcher that did not take the
-// tmux server must not leave a console believing its quit will take the
-// server's other sessions down.
-func TestStartTUIConsoleSession_OwnershipIsNotAsserted(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	rec := installConsoleTmuxRec(t, &consoleTmuxRec{})
-
-	if err := startTUIConsoleSession("tclaude-console", "/usr/local/bin/tclaude",
-		"/tmp/err", false); err != nil {
-		t.Fatalf("startTUIConsoleSession: %v", err)
-	}
-
-	call, _ := rec.call("new-session")
-	raw, err := os.ReadFile(call[len(call)-1])
-	if err != nil {
-		t.Fatalf("read launch script: %v", err)
-	}
-	if strings.Contains(string(raw), tuiConsoleOwnsServerEnv) {
-		t.Fatalf("launch script asserts tmux-server ownership nobody took:\n%s", raw)
-	}
-}
-
 // TestStartTUIConsoleSession_FailedCreateIsFatal is the one place the console
 // does NOT degrade to this terminal: the decision to relaunch has been made,
-// the launcher may already have taken the tmux server, and a tmux that refuses
-// to create the session ("bad session name", "can't create socket") is a real
-// failure the operator has to see rather than a host capability to route
-// around.
+// and a tmux that refuses to create the session ("bad session name", "can't
+// create socket") is a real failure the operator has to see rather than a host
+// capability to route around.
 func TestStartTUIConsoleSession_FailedCreateIsFatal(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	installConsoleTmuxRec(t, &consoleTmuxRec{failCreate: true})
 
-	err := startTUIConsoleSession("tclaude-console", "/usr/local/bin/tclaude", "/tmp/err", false)
+	err := startTUIConsoleSession("tclaude-console", "/usr/local/bin/tclaude", "/tmp/err")
 
 	if err == nil || !strings.Contains(err.Error(), "tclaude-console") {
 		t.Fatalf("startTUIConsoleSession = %v, want an error naming the session it could not create", err)
@@ -335,19 +309,6 @@ func TestRecordTUIConsoleStartupError_OnlyForALaunchedConsole(t *testing.T) {
 	}
 }
 
-// TestTUIConsoleOwnsTmuxServer pins the inherited half of the ownership
-// handshake: only the launcher's own "1" counts, so a console reading a
-// leftover or malformed value never tells the operator that quitting will take
-// their agent panes with it.
-func TestTUIConsoleOwnsTmuxServer(t *testing.T) {
-	for value, want := range map[string]bool{"1": true, "": false, "0": false, "true": false} {
-		t.Setenv(tuiConsoleOwnsServerEnv, value)
-		if got := tuiConsoleOwnsTmuxServer(); got != want {
-			t.Errorf("tuiConsoleOwnsTmuxServer() with %q = %v, want %v", value, got, want)
-		}
-	}
-}
-
 // tuiConsoleStubTerminal pins the terminal probe for a test process that has no
 // terminal of its own.
 func tuiConsoleStubTerminal(t *testing.T, isTerminal bool) {
@@ -356,4 +317,3 @@ func tuiConsoleStubTerminal(t *testing.T, isTerminal bool) {
 	tuiConsoleStdioIsTerminal = func() bool { return isTerminal }
 	t.Cleanup(func() { tuiConsoleStdioIsTerminal = prev })
 }
-

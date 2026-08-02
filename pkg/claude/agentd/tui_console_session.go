@@ -40,21 +40,16 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
-// The launcher → console handshake. All three share
-// clcommon.TUIConsoleEnvPrefix, which BuildEnvExports strips from every pane it
-// launches: they describe one specific console process, and an agent pane that
-// inherited them would answer for a daemon it is not (and, in the error file's
-// case, overwrite the launcher's only channel for a startup failure).
+// The launcher → console handshake. Both share clcommon.TUIConsoleEnvPrefix,
+// which BuildEnvExports strips from every pane the console launches: they
+// describe one specific console process, and an agent pane that inherited them
+// would answer for a daemon it is not (and, in the error file's case, overwrite
+// the launcher's only channel for a startup failure).
 const (
 	// tuiConsoleSessionEnv names the console's own tmux session. Its presence
 	// is what tells the inner daemon it was started by a launcher rather than
 	// by an operator who happened to be sitting in tmux.
 	tuiConsoleSessionEnv = clcommon.TUIConsoleEnvPrefix + "SESSION"
-	// tuiConsoleOwnsServerEnv is set when the launcher took ownership of the
-	// tclaude tmux server on the console's behalf (--own-tmux-server). The
-	// console needs to know because its quit confirmation has to say that
-	// quitting takes the server's other sessions with it.
-	tuiConsoleOwnsServerEnv = clcommon.TUIConsoleEnvPrefix + "OWNS_TMUX_SERVER"
 	// tuiConsoleErrorFileEnv is where the inner daemon writes a startup failure
 	// so the launcher can print it on the real terminal. Without it the message
 	// would be drawn into a pane that is destroyed a moment later, and a
@@ -117,14 +112,15 @@ func tuiConsoleUnavailable(p *serveParams) string {
 		// something to break here.
 		return "stdin/stdout is not a terminal"
 	}
-	// The same line startTUITmuxServer draws, for the same reason: that server
-	// belongs to a separate, longer-lived unit, and putting the console's
-	// session on it would run the daemon inside the delegated cgroup and hand
-	// its lifetime to a unit that is meant to outlive it. Resolved from flag /
-	// environment / config exactly as runServe resolves it later.
+	// An external tmux runtime puts the server in a separate, longer-lived
+	// systemd unit precisely so it survives agentd (see docs/sandboxing.md).
+	// Putting the console's session on it would run the daemon inside the
+	// delegated cgroup and tie its life to a unit meant to outlive it. Resolved
+	// from flag / environment / config exactly as runServe resolves it later.
 	cfg, _ := config.Load()
-	if dir, _ := resolveResourceDelegationDir(p.ResourceDelegationDir, cfg); strings.TrimSpace(dir) != "" {
-		return "an external tmux runtime owns the tclaude server (" + strings.TrimSpace(dir) + ")"
+	dir, _ := resolveResourceDelegationDir(p.ResourceDelegationDir, cfg)
+	if dir = strings.TrimSpace(dir); dir != "" {
+		return "an external tmux runtime owns the tclaude server (" + dir + ")"
 	}
 	return ""
 }
@@ -147,22 +143,6 @@ func runTUIConsoleInTmux(p *serveParams) (handled bool, err error) {
 		return false, nil
 	}
 
-	// Server ownership moves to the launcher, because the launcher is what
-	// brings the server into existence: creating the console's session starts
-	// one, so by the time the inner daemon probed it would always find a
-	// "pre-existing" server and decline the ownership the operator asked for.
-	// Taking it here — before any session exists — sees the host as the
-	// operator left it, exactly as an in-place console would.
-	stopTmuxServer := func() {}
-	ownsTmuxServer := false
-	if tmuxServerOwnershipRequested(p) {
-		stopTmuxServer, ownsTmuxServer = startTUITmuxServer()
-	}
-	// Runs after the console session is stopped below: kill-server would take
-	// that session (and the daemon in it) down without giving it a chance to
-	// drain.
-	defer stopTmuxServer()
-
 	errorFile, removeErrorFile, err := newTUIConsoleErrorFile()
 	if err != nil {
 		return true, err
@@ -170,7 +150,7 @@ func runTUIConsoleInTmux(p *serveParams) (handled bool, err error) {
 	defer removeErrorFile()
 
 	name := session.UniqueTmuxSessionName(tuiConsoleSessionBase)
-	if err := startTUIConsoleSession(name, exe, errorFile, ownsTmuxServer); err != nil {
+	if err := startTUIConsoleSession(name, exe, errorFile); err != nil {
 		return true, err
 	}
 
@@ -193,13 +173,6 @@ func runTUIConsoleInTmux(p *serveParams) (handled bool, err error) {
 	return true, nil
 }
 
-// tuiConsoleOwnsTmuxServer reports whether the launcher took the tclaude tmux
-// server's ownership on this console's behalf. Read by runServe, which must
-// then neither re-probe nor register a teardown of its own.
-func tuiConsoleOwnsTmuxServer() bool {
-	return os.Getenv(tuiConsoleOwnsServerEnv) == "1"
-}
-
 // startTUIConsoleSession creates the detached session the console runs in.
 //
 // The daemon is launched through a private launch script rather than a bare
@@ -209,13 +182,10 @@ func tuiConsoleOwnsTmuxServer() bool {
 // environment first, so the console starts with what the operator actually has
 // (and, unlike `new-session -e`, without putting any of it in `ps` output or
 // depending on a tmux new enough to take the flag).
-func startTUIConsoleSession(name, exe, errorFile string, ownsTmuxServer bool) error {
+func startTUIConsoleSession(name, exe, errorFile string) error {
 	env := map[string]string{
 		tuiConsoleSessionEnv:   name,
 		tuiConsoleErrorFileEnv: errorFile,
-	}
-	if ownsTmuxServer {
-		env[tuiConsoleOwnsServerEnv] = "1"
 	}
 	// `exec` so the pane's #{pane_pid} IS the daemon: the shutdown path below
 	// signals that pid, and a surviving `sh` wrapper would swallow the SIGTERM
@@ -241,7 +211,7 @@ func startTUIConsoleSession(name, exe, errorFile string, ownsTmuxServer bool) er
 			name, err, strings.TrimSpace(string(out)))
 	}
 	slog.Info("tui: console running in its own tmux session",
-		"tmux_session", name, "owns_tmux_server", ownsTmuxServer, "module", "agentd")
+		"tmux_session", name, "module", "agentd")
 	return nil
 }
 

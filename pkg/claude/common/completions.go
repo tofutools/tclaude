@@ -257,9 +257,9 @@ func ShellQuoteArg(s string) string {
 // TUIConsoleEnvPrefix marks the private handshake between `agentd serve --tui`
 // and the console it starts in a tmux session of its own (see
 // pkg/claude/agentd/tui_console_session.go). Every variable under it describes
-// ONE console process — its tmux session, who owns the tmux server, where a
-// startup failure goes — so BuildEnvExports strips the whole family rather than
-// letting a pane that console launches inherit answers about a daemon it is not.
+// ONE console process — its tmux session, where a startup failure goes — so
+// BuildEnvExports strips the whole family rather than letting a pane that
+// console launches inherit answers about a daemon it is not.
 const TUIConsoleEnvPrefix = "TCLAUDE_TUI_CONSOLE_"
 
 // BuildEnvExports builds a shell command prefix that exports all environment variables.
