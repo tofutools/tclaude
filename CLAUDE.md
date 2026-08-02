@@ -163,7 +163,6 @@ explains why the PR exists. Then summarize the implementation and list tests or
 verification.
 
 Every PR needs a real cold review, but make a commit to the feature branch first.
-Apply fixes once the review completes: make another commit to the feature branch. 
 CodeRabbit is enough for small/routine PRs only when it produced actual review
 feedback; a green CodeRabbit check that skipped because of quota is not a
 review. Larger, riskier, or more judgment-heavy PRs should get an independent
