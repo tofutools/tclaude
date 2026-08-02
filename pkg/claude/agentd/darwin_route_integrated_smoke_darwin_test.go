@@ -210,6 +210,7 @@ func darwinRouteSmokeConsumer(t *testing.T, ready, stop, endpointFile string) {
 		if string(response) != "reply:"+darwinRouteSmokeOpaque {
 			t.Fatal("unexpected sustained route response")
 		}
+		time.Sleep(5 * time.Millisecond)
 	}
 	darwinRouteSmokeWrite(ready, fmt.Sprintf("consumer:sustained-route-traffic:%d", darwinRouteSmokeCount))
 	for {
@@ -555,10 +556,16 @@ func TestDarwinRouteCapabilityIntegratedSmoke(t *testing.T) {
 
 	// A consumer that selects a group it does not belong to is refused by the
 	// production M1 API before the Darwin adapter can allocate a listener.
-	rec, _ = serveDarwinRouteSmoke(t, handler, http.MethodPost, "/v1/routes/open", withdrawalConv, map[string]any{
+	rec, unpublishedBody := serveDarwinRouteSmoke(t, handler, http.MethodPost, "/v1/routes/open", withdrawalConv, map[string]any{
+		"route_id": "rte_unpublished-neighbor", "group": groupName, "launch_generation": withdrawal.gen,
+	})
+	require.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
+	require.Equal(t, "route_not_found", unpublishedBody["code"])
+	rec, wrongGroupBody := serveDarwinRouteSmoke(t, handler, http.MethodPost, "/v1/routes/open", withdrawalConv, map[string]any{
 		"route_id": routeID, "group": "tcl951-wrong-group", "launch_generation": withdrawal.gen,
 	})
 	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+	require.Equal(t, "route_group", wrongGroupBody["code"])
 	rec, leaseWithdrawal := serveDarwinRouteSmoke(t, handler, http.MethodPost, "/v1/routes/open", withdrawalConv, map[string]any{
 		"route_id": routeID, "group": groupName, "launch_generation": withdrawal.gen,
 	})
@@ -572,14 +579,26 @@ func TestDarwinRouteCapabilityIntegratedSmoke(t *testing.T) {
 	require.Equal(t, endpointWithdrawal, leaseView.Endpoint)
 	require.NoError(t, os.WriteFile(withdrawal.endpoint, []byte(endpointWithdrawal), 0o600))
 	waitDarwinRouteSmokeFile(t, withdrawal.ready, "consumer:opaque-exchange-ready")
-	waitDarwinRouteSmokeFile(t, withdrawal.ready, fmt.Sprintf("consumer:sustained-route-traffic:%d", darwinRouteSmokeCount))
+	ordinaryAccepted := 0
+	ordinaryObserved := 0
 	for i := 0; i < darwinRouteSmokeCount; i++ {
-		rec, _ = serveDarwinRouteSmoke(t, handler, http.MethodPost, "/v1/messages", publisherConv, map[string]any{
-			"to": withdrawalConv, "body": fmt.Sprintf("darwin-route-smoke-message-%d", i),
+		messageBody := fmt.Sprintf("darwin-route-smoke-message-%d", i)
+		rec, sent := serveDarwinRouteSmoke(t, handler, http.MethodPost, "/v1/messages", publisherConv, map[string]any{
+			"to": withdrawalConv, "body": messageBody,
 		})
 		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		ordinaryAccepted++
+		messageID, ok := sent["id"].(float64)
+		require.True(t, ok, "ordinary message response must expose its id: %s", rec.Body.String())
+		rec, _ = serveDarwinRouteSmoke(t, handler, http.MethodGet, "/v1/messages/"+strconv.FormatInt(int64(messageID), 10), withdrawalConv, nil)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		require.Contains(t, rec.Body.String(), messageBody)
+		ordinaryObserved++
 	}
-	t.Log("TCL-952 Darwin sustained route evidence: ordinary messaging remained responsive")
+	waitDarwinRouteSmokeFile(t, withdrawal.ready, fmt.Sprintf("consumer:sustained-route-traffic:%d", darwinRouteSmokeCount))
+	require.Equal(t, darwinRouteSmokeCount, ordinaryAccepted, "all ordinary messages must be accepted")
+	require.Equal(t, ordinaryAccepted, ordinaryObserved, "all accepted ordinary messages must be observed through the recipient read path")
+	t.Logf("TCL-952 Darwin sustained route evidence: ordinary messaging accepted=%d observed=%d while opaque traffic continued", ordinaryAccepted, ordinaryObserved)
 	rec, currentRoute := serveDarwinRouteSmoke(t, handler, http.MethodGet, "/v1/routes/"+routeID, withdrawalConv, nil)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	require.Equal(t, db.RouteStateReady, currentRoute["state"])

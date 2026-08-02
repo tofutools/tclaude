@@ -19,6 +19,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -46,7 +47,31 @@ const (
 	linuxRouteM6HostEnv    = "TCL952_LINUX_ROUTE_HOST_PORT"
 	linuxRouteM6Opaque     = "tcl952-linux-opaque"
 	linuxRouteM6Count      = 96
+	linuxRouteM6HelperPath = "/tcl952-route-helper"
 )
+
+func parseLinuxRouteM6PublisherDescriptor(raw string) (string, int64, error) {
+	parts := strings.Split(strings.TrimSpace(raw), "|")
+	if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" {
+		return "", 0, fmt.Errorf("publisher route descriptor must be route-id|group-generation")
+	}
+	groupGeneration, err := strconv.ParseInt(strings.TrimSpace(parts[1]), 10, 64)
+	if err != nil {
+		return "", 0, fmt.Errorf("publisher route descriptor group generation: %w", err)
+	}
+	return strings.TrimSpace(parts[0]), groupGeneration, nil
+}
+
+func TestLinuxRouteM6PublisherDescriptorSchema(t *testing.T) {
+	routeID, generation, err := parseLinuxRouteM6PublisherDescriptor("rte_test|7")
+	require.NoError(t, err)
+	require.Equal(t, "rte_test", routeID)
+	require.EqualValues(t, 7, generation)
+	_, _, err = parseLinuxRouteM6PublisherDescriptor("rte_test|7|extra")
+	require.Error(t, err)
+	_, _, err = parseLinuxRouteM6PublisherDescriptor("rte_test|not-a-generation")
+	require.Error(t, err)
+}
 
 // TestLinuxRouteM6Child is run only by the dedicated exact-head workflow. The
 // child executes the production routeadapter in a real unshared Bubblewrap
@@ -119,13 +144,11 @@ func linuxRouteM6Publisher(t *testing.T) {
 
 	descriptor, err := linuxRouteM6WaitFile(os.Getenv(linuxRouteM6RouteEnv), 30*time.Second)
 	require.NoError(t, err)
-	parts := strings.Split(strings.TrimSpace(descriptor), "|")
-	require.Len(t, parts, 3)
-	groupGeneration, err := strconv.ParseInt(parts[2], 10, 64)
+	routeID, groupGeneration, err := parseLinuxRouteM6PublisherDescriptor(descriptor)
 	require.NoError(t, err)
 	channel, err := routeadapter.DialUnixChannel(context.Background(), os.Getenv(linuxRouteM6SocketEnv), routeadapter.ChannelAuth{
 		Role:             routeadapter.RolePublisher,
-		RouteID:          parts[0],
+		RouteID:          routeID,
 		AgentID:          os.Getenv(linuxRouteM6AgentEnv),
 		ConvID:           os.Getenv(linuxRouteM6ConvEnv),
 		LaunchGeneration: os.Getenv(linuxRouteM6GenEnv),
@@ -199,6 +222,7 @@ func linuxRouteM6Consumer(t *testing.T) {
 		_ = conn.Close()
 		require.NoError(t, err)
 		require.Equal(t, "reply:"+linuxRouteM6Opaque, string(response))
+		time.Sleep(5 * time.Millisecond)
 	}
 	linuxRouteM6Write(t, fmt.Sprintf("sustained-route-traffic:%d", linuxRouteM6Count))
 	select {
@@ -296,6 +320,31 @@ type linuxRouteM6Process struct {
 	cmd     *exec.Cmd
 	control string
 	output  *bytes.Buffer
+	done    chan struct{}
+	mu      sync.Mutex
+	err     error
+}
+
+func (p *linuxRouteM6Process) exited() (bool, error) {
+	if p == nil {
+		return true, nil
+	}
+	select {
+	case <-p.done:
+		p.mu.Lock()
+		err := p.err
+		p.mu.Unlock()
+		return true, err
+	default:
+		return false, nil
+	}
+}
+
+func (p *linuxRouteM6Process) wait() error {
+	<-p.done
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.err
 }
 
 func (p *linuxRouteM6Process) stop(t *testing.T) {
@@ -303,9 +352,64 @@ func (p *linuxRouteM6Process) stop(t *testing.T) {
 	if p == nil || p.cmd == nil || p.cmd.Process == nil {
 		return
 	}
-	_ = os.WriteFile(filepath.Join(p.control, "stop"), []byte("stop"), 0o600)
-	if err := p.cmd.Wait(); err != nil {
+	if exited, _ := p.exited(); !exited {
+		_ = os.WriteFile(filepath.Join(p.control, "stop"), []byte("stop"), 0o600)
+	}
+	if err := p.wait(); err != nil {
 		t.Fatalf("Linux route smoke child exited: %v\n%s", err, p.output.String())
+	}
+}
+
+func (p *linuxRouteM6Process) kill(t *testing.T) {
+	t.Helper()
+	if p == nil || p.cmd == nil || p.cmd.Process == nil {
+		return
+	}
+	if exited, _ := p.exited(); !exited {
+		require.NoError(t, p.cmd.Process.Kill())
+	}
+	require.NoError(t, p.wait())
+}
+
+func linuxRouteM6BubblewrapArgs(executable, control string) []string {
+	return []string{
+		"--die-with-parent", "--unshare-all", "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc",
+		"--tmpfs", "/tmp", "--bind", control, control,
+		"--ro-bind", executable, linuxRouteM6HelperPath,
+		"--", linuxRouteM6HelperPath, "-test.run=^TestLinuxRouteM6Child$", "-test.count=1",
+	}
+}
+
+func TestLinuxRouteM6BubblewrapArgsKeepHelperVisible(t *testing.T) {
+	control := "/tmp/tcl952-route-control"
+	executable := "/tmp/go-build/tcl952-agentd.test"
+	args := linuxRouteM6BubblewrapArgs(executable, control)
+	require.Contains(t, args, "--tmpfs")
+	require.Contains(t, args, "/tmp")
+	bindIndex := -1
+	for i := 0; i+3 < len(args); i++ {
+		if args[i] == "--ro-bind" && args[i+1] == executable {
+			bindIndex = i
+			break
+		}
+	}
+	require.GreaterOrEqual(t, bindIndex, 0)
+	require.Equal(t, linuxRouteM6HelperPath, args[bindIndex+2], "helper must be rebound outside the overlaid /tmp")
+	commandIndex := -1
+	for i, arg := range args {
+		if arg == "--" {
+			commandIndex = i + 1
+			break
+		}
+	}
+	require.GreaterOrEqual(t, commandIndex, 0)
+	require.NotEqual(t, executable, args[commandIndex], "final exec must use the namespace-visible helper path")
+	require.Equal(t, linuxRouteM6HelperPath, args[commandIndex])
+	require.Equal(t, linuxRouteM6HelperPath, args[bindIndex+2])
+	for i, arg := range args {
+		if arg == "--tmpfs" {
+			require.Equal(t, "/tmp", args[i+1])
+		}
 	}
 }
 
@@ -315,7 +419,7 @@ func startLinuxRouteM6Process(t *testing.T, role, socketPath, control, credentia
 	require.NoError(t, err)
 	ready := filepath.Join(control, role+".ready")
 	stop := filepath.Join(control, role+".stop")
-	cmd := exec.Command("bwrap", "--die-with-parent", "--unshare-all", "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp", "--bind", control, control, "--ro-bind", executable, executable, "--", executable, "-test.run=^TestLinuxRouteM6Child$", "-test.count=1")
+	cmd := exec.Command("bwrap", linuxRouteM6BubblewrapArgs(executable, control)...)
 	cmd.Env = append(os.Environ(),
 		linuxRouteM6ChildEnv+"=1",
 		linuxRouteM6RoleEnv+"="+role,
@@ -333,13 +437,20 @@ func startLinuxRouteM6Process(t *testing.T, role, socketPath, control, credentia
 	cmd.Stdout = output
 	cmd.Stderr = output
 	require.NoError(t, cmd.Start())
-	process := &linuxRouteM6Process{cmd: cmd, control: control, output: output}
+	process := &linuxRouteM6Process{cmd: cmd, control: control, output: output, done: make(chan struct{})}
+	go func() {
+		err := cmd.Wait()
+		process.mu.Lock()
+		process.err = err
+		process.mu.Unlock()
+		close(process.done)
+	}()
 	t.Cleanup(func() {
-		if cmd.Process != nil {
+		if exited, _ := process.exited(); !exited {
 			_ = os.WriteFile(stop, []byte("cleanup"), 0o600)
 			_ = cmd.Process.Kill()
-			_ = cmd.Wait()
 		}
+		_ = process.wait()
 	})
 	return process
 }
@@ -355,7 +466,7 @@ func serveLinuxRouteM6(t *testing.T, handler http.Handler, method, path, convID 
 	return rec, out
 }
 
-func waitLinuxRouteM6Marker(t *testing.T, path, marker string) string {
+func waitLinuxRouteM6Marker(t *testing.T, path, marker string, processes ...*linuxRouteM6Process) string {
 	t.Helper()
 	deadline := time.Now().Add(30 * time.Second)
 	var last string
@@ -364,6 +475,11 @@ func waitLinuxRouteM6Marker(t *testing.T, path, marker string) string {
 			last = string(raw)
 			if strings.Contains(last, marker) {
 				return last
+			}
+		}
+		for _, process := range processes {
+			if exited, err := process.exited(); exited {
+				t.Fatalf("Linux route smoke child exited before marker %q: %v\n%s", marker, err, process.output.String())
 			}
 		}
 		time.Sleep(20 * time.Millisecond)
@@ -460,7 +576,7 @@ func TestLinuxRouteCapabilityIntegratedSmoke(t *testing.T) {
 
 	pub := startLinuxRouteM6Process(t, "publisher", socketPath, control, publisherCredential, publisherAgent, publisherConv, publisherGeneration, hostPort)
 	pubReadyPath := filepath.Join(control, "publisher.ready")
-	pubTarget := waitLinuxRouteM6Marker(t, pubReadyPath, "target=")
+	pubTarget := waitLinuxRouteM6Marker(t, pubReadyPath, "target=", pub)
 	targetLine := pubTarget[strings.LastIndex(pubTarget, "target=")+len("target="):]
 	targetLine = strings.TrimSpace(strings.Split(targetLine, "\n")[0])
 
@@ -472,9 +588,9 @@ func TestLinuxRouteCapabilityIntegratedSmoke(t *testing.T) {
 	routeID := route["id"].(string)
 	require.Equal(t, "ready", route["state"])
 	require.NoError(t, os.WriteFile(filepath.Join(control, "publisher.route"), []byte(routeID+"|"+strconv.FormatInt(group.RouteGeneration, 10)), 0o600))
-	pubEvidence := waitLinuxRouteM6Marker(t, pubReadyPath, "policy-floor:host-and-internet-denied")
+	pubEvidence := waitLinuxRouteM6Marker(t, pubReadyPath, "policy-floor:host-and-internet-denied", pub)
 	t.Logf("TCL-952 Linux publisher policy floor: %s", pubEvidence)
-	waitLinuxRouteM6Marker(t, pubReadyPath, "channel-attached")
+	waitLinuxRouteM6Marker(t, pubReadyPath, "channel-attached", pub)
 	require.Eventually(t, func() bool { return GroupRouteBroker().Metrics().PublisherChannels == 1 }, time.Second, 10*time.Millisecond)
 
 	// Negative evidence is intentionally adjacent to the positive route: an
@@ -510,7 +626,7 @@ func TestLinuxRouteCapabilityIntegratedSmoke(t *testing.T) {
 
 	consumer := startLinuxRouteM6Process(t, "consumer", socketPath, control, consumerCredential, consumerAgent, consumerConv, consumerGeneration, hostPort)
 	consumerReadyPath := filepath.Join(control, "consumer.ready")
-	consumerEndpointLine := waitLinuxRouteM6Marker(t, consumerReadyPath, "listener=")
+	consumerEndpointLine := waitLinuxRouteM6Marker(t, consumerReadyPath, "listener=", consumer)
 	endpoint := strings.TrimSpace(strings.Split(consumerEndpointLine[strings.LastIndex(consumerEndpointLine, "listener=")+len("listener="):], "\n")[0])
 	rec, lease := serveLinuxRouteM6(t, handler, http.MethodPost, "/v1/routes/open", consumerConv, map[string]any{
 		"route_id": routeID, "group": group.Name, "launch_generation": consumerGeneration,
@@ -520,24 +636,28 @@ func TestLinuxRouteCapabilityIntegratedSmoke(t *testing.T) {
 	require.Equal(t, "pending", lease["endpoint_state"])
 	require.NoError(t, os.WriteFile(filepath.Join(control, "consumer.lease"), []byte(leaseID+"|"+routeID+"|"+strconv.FormatInt(group.RouteGeneration, 10)), 0o600))
 	_ = endpoint // The child reports the endpoint through the authenticated status callback.
-	waitLinuxRouteM6Marker(t, consumerReadyPath, "channel-attached")
+	waitLinuxRouteM6Marker(t, consumerReadyPath, "channel-attached", consumer)
 
-	messageErrors := make(chan error, 1)
-	go func() {
-		for i := 0; i < linuxRouteM6Count; i++ {
-			rec, _ := serveLinuxRouteM6(t, handler, http.MethodPost, "/v1/messages", publisherConv, map[string]any{
-				"to": consumerConv, "body": fmt.Sprintf("route-smoke-message-%d", i),
-			})
-			if rec.Code != http.StatusOK {
-				messageErrors <- fmt.Errorf("ordinary message %d returned status %d", i, rec.Code)
-				return
-			}
-		}
-		messageErrors <- nil
-	}()
-	waitLinuxRouteM6Marker(t, consumerReadyPath, fmt.Sprintf("sustained-route-traffic:%d", linuxRouteM6Count))
-	require.NoError(t, <-messageErrors, "ordinary tclaude messaging must remain responsive during route traffic")
-	t.Log("TCL-952 Linux sustained route evidence: ordinary messaging remained responsive")
+	ordinaryAccepted := 0
+	ordinaryObserved := 0
+	for i := 0; i < linuxRouteM6Count; i++ {
+		messageBody := fmt.Sprintf("route-smoke-message-%d", i)
+		rec, sent := serveLinuxRouteM6(t, handler, http.MethodPost, "/v1/messages", publisherConv, map[string]any{
+			"to": consumerConv, "body": messageBody,
+		})
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		ordinaryAccepted++
+		messageID, ok := sent["id"].(float64)
+		require.True(t, ok, "ordinary message response must expose its id: %s", rec.Body.String())
+		rec, _ = serveLinuxRouteM6(t, handler, http.MethodGet, "/v1/messages/"+strconv.FormatInt(int64(messageID), 10), consumerConv, nil)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		require.Contains(t, rec.Body.String(), messageBody)
+		ordinaryObserved++
+	}
+	waitLinuxRouteM6Marker(t, consumerReadyPath, fmt.Sprintf("sustained-route-traffic:%d", linuxRouteM6Count), consumer)
+	require.Equal(t, linuxRouteM6Count, ordinaryAccepted, "all ordinary messages must be accepted")
+	require.Equal(t, ordinaryAccepted, ordinaryObserved, "all accepted ordinary messages must be observed through the recipient read path")
+	t.Logf("TCL-952 Linux sustained route evidence: ordinary messaging accepted=%d observed=%d while opaque traffic continued", ordinaryAccepted, ordinaryObserved)
 
 	rec, current := serveLinuxRouteM6(t, handler, http.MethodGet, "/v1/routes/"+routeID, consumerConv, nil)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
@@ -545,7 +665,7 @@ func TestLinuxRouteCapabilityIntegratedSmoke(t *testing.T) {
 	t.Logf("TCL-952 Linux launch disclosure: route capability current; route=%s group-generation=%d", routeID, group.RouteGeneration)
 	rec, _ = serveLinuxRouteM6(t, handler, http.MethodDelete, "/v1/routes/"+routeID, publisherConv, nil)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	waitLinuxRouteM6Marker(t, pubReadyPath, "channel-closed")
+	waitLinuxRouteM6Marker(t, pubReadyPath, "channel-closed", pub)
 	require.NoError(t, os.WriteFile(filepath.Join(control, "publisher.stop"), []byte("stop"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(control, "consumer.stop"), []byte("stop"), 0o600))
 	pub.stop(t)
@@ -560,7 +680,7 @@ func TestLinuxRouteCapabilityIntegratedSmoke(t *testing.T) {
 	require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: groupID, ConvID: exitPublisherConv}))
 	exitCredential, exitGeneration, err := mintRouteHelperCredential(exitPublisherAgent, exitPublisherConv)
 	require.NoError(t, err)
-	saveLinuxRouteM6Session(t, exitPublisherConv, exitGeneration)
+	exitSessionID := saveLinuxRouteM6Session(t, exitPublisherConv, exitGeneration)
 	// The first publisher used role-scoped marker files. Remove its terminal
 	// markers before starting the second child so the exit-withdrawal cell
 	// cannot consume stale route or stop state.
@@ -569,7 +689,7 @@ func TestLinuxRouteCapabilityIntegratedSmoke(t *testing.T) {
 	require.NoError(t, os.Remove(filepath.Join(control, "publisher.ready")))
 	exitPub := startLinuxRouteM6Process(t, "publisher", socketPath, control, exitCredential, exitPublisherAgent, exitPublisherConv, exitGeneration, hostPort)
 	exitReadyPath := filepath.Join(control, "publisher.ready")
-	exitTargetOutput := waitLinuxRouteM6Marker(t, exitReadyPath, "target=")
+	exitTargetOutput := waitLinuxRouteM6Marker(t, exitReadyPath, "target=", exitPub)
 	exitTarget := strings.TrimSpace(strings.Split(exitTargetOutput[strings.LastIndex(exitTargetOutput, "target=")+len("target="):], "\n")[0])
 	rec, exitRoute := serveLinuxRouteM6(t, handler, http.MethodPost, "/v1/routes/publish", exitPublisherConv, map[string]any{
 		"group": group.Name, "name": "publisher-exit", "target": exitTarget, "launch_generation": exitGeneration,
@@ -577,15 +697,52 @@ func TestLinuxRouteCapabilityIntegratedSmoke(t *testing.T) {
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
 	exitRouteID := exitRoute["id"].(string)
 	require.NoError(t, os.WriteFile(filepath.Join(control, "publisher.route"), []byte(exitRouteID+"|"+strconv.FormatInt(group.RouteGeneration, 10)), 0o600))
-	waitLinuxRouteM6Marker(t, exitReadyPath, "channel-attached")
-	require.NoError(t, exitPub.cmd.Process.Kill())
-	require.NoError(t, exitPub.cmd.Wait())
-	_, err = db.RetireAgentAuthorizationByConv(exitPublisherConv, "TCL-952", "publisher exit smoke")
+	waitLinuxRouteM6Marker(t, exitReadyPath, "channel-attached", exitPub)
+	require.NoError(t, os.Remove(filepath.Join(control, "consumer.stop")))
+	require.NoError(t, os.Remove(filepath.Join(control, "consumer.lease")))
+	require.NoError(t, os.Remove(filepath.Join(control, "consumer.ready")))
+	exitConsumer := startLinuxRouteM6Process(t, "consumer", socketPath, control, consumerCredential, consumerAgent, consumerConv, consumerGeneration, hostPort)
+	exitConsumerReadyPath := filepath.Join(control, "consumer.ready")
+	exitConsumerEndpointOutput := waitLinuxRouteM6Marker(t, exitConsumerReadyPath, "listener=", exitConsumer)
+	exitConsumerEndpoint := strings.TrimSpace(strings.Split(exitConsumerEndpointOutput[strings.LastIndex(exitConsumerEndpointOutput, "listener=")+len("listener="):], "\n")[0])
+	rec, exitLease := serveLinuxRouteM6(t, handler, http.MethodPost, "/v1/routes/open", consumerConv, map[string]any{
+		"route_id": exitRouteID, "group": group.Name, "launch_generation": consumerGeneration,
+	})
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	exitLeaseID := exitLease["id"].(string)
+	require.NoError(t, os.WriteFile(filepath.Join(control, "consumer.lease"), []byte(exitLeaseID+"|"+exitRouteID+"|"+strconv.FormatInt(group.RouteGeneration, 10)), 0o600))
+	waitLinuxRouteM6Marker(t, exitConsumerReadyPath, "channel-attached", exitConsumer)
+	exitPub.kill(t)
+	observedExitSession, err := db.LoadSession(exitSessionID)
 	require.NoError(t, err)
+	require.Equal(t, "working", observedExitSession.Status)
+	exitAccepted, _, err := db.MarkSessionExitedAndRecordObservationIfUnchanged(
+		exitSessionID, observedExitSession.Status, observedExitSession.UpdatedAt, "unexpected",
+		db.AgentExitObservation{
+			At: time.Now(), SessionID: exitSessionID, Observer: db.AgentExitObserverReaper,
+			CauseKind: db.AgentExitCauseDisappeared, ObservedState: "exited", ExpectedGeneration: exitGeneration,
+		},
+	)
+	require.NoError(t, err)
+	require.True(t, exitAccepted, "generation-bound production reaper transaction must accept the publisher exit")
+	revokeRouteHelperCredentials(exitPublisherConv, exitGeneration)
 	rec, exitView := serveLinuxRouteM6(t, handler, http.MethodGet, "/v1/routes/"+exitRouteID, consumerConv, nil)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	require.Equal(t, db.RouteStatePublisherLost, exitView["state"])
-	t.Log("TCL-952 Linux publisher-exit evidence: route withdrawn after publisher process exit")
+	exitLeaseRow, err := db.GetAgentRouteLease(exitLeaseID)
+	require.NoError(t, err)
+	require.Equal(t, db.RouteLeaseClosed, exitLeaseRow.State)
+	waitLinuxRouteM6Marker(t, exitConsumerReadyPath, "channel-closed", exitConsumer)
+	require.Eventually(t, func() bool { return GroupRouteBroker().Metrics().PublisherChannels == 0 }, time.Second, 10*time.Millisecond)
+	require.Eventually(t, func() bool {
+		conn, dialErr := net.DialTimeout("tcp4", strings.TrimPrefix(exitConsumerEndpoint, "tcp://"), 250*time.Millisecond)
+		if dialErr == nil {
+			_ = conn.Close()
+			return false
+		}
+		return true
+	}, 5*time.Second, 50*time.Millisecond, "publisher exit must close the consumer endpoint")
+	t.Log("TCL-952 Linux publisher-exit evidence: generation-bound reaper transaction withdrew route, closed lease/channel/endpoint")
 
 	t.Log("TCL-952 Linux evidence: POSITIVE production routeadapter/bwrap opaque TCP activation")
 }
