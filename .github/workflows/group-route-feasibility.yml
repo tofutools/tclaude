@@ -1,0 +1,78 @@
+name: Group-route feasibility
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/group-route-feasibility.yml
+      - scripts/group-route-feasibility/**
+      - docs/group-route-feasibility.md
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: group-route-feasibility-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: Linux namespace relay feasibility
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact head
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Install Bubblewrap
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes bubblewrap
+
+      - name: Unlock and verify user namespaces
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          bwrap --die-with-parent --unshare-all --ro-bind / / --dev /dev --proc /proc --tmpfs /tmp -- true
+
+      - name: Run Linux evidence probe
+        shell: bash
+        run: |
+          set -o pipefail
+          scripts/group-route-feasibility/run.sh 2>&1 | tee "$RUNNER_TEMP/group-route-feasibility-linux.log"
+
+      - name: Upload Linux evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: group-route-feasibility-linux
+          path: ${{ runner.temp }}/group-route-feasibility-linux.log
+
+  darwin:
+    name: Darwin Seatbelt port-pool feasibility
+    runs-on: macos-latest
+    steps:
+      - name: Checkout exact head
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Run Darwin evidence probe
+        shell: bash
+        run: |
+          set -o pipefail
+          scripts/group-route-feasibility/run.sh 2>&1 | tee "$RUNNER_TEMP/group-route-feasibility-darwin.log"
+
+      - name: Upload Darwin evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: group-route-feasibility-darwin
+          path: ${{ runner.temp }}/group-route-feasibility-darwin.log
