@@ -49,8 +49,8 @@ export function ImageAttachmentPreview({ messageID, attachment, surface = 'attac
   const [zoom, setZoom] = useState(1);
   const overlayRef = useRef(null);
   const closeRef = useRef(null);
-  const href = attachmentURL(messageID);
-  const filename = attachment.filename || 'attachment';
+  const href = attachment ? attachmentURL(messageID) : '';
+  const filename = attachment?.filename || 'attachment';
   const titleID = `image-preview-title-${surface}-${safeIDPart(messageID)}`;
   const detailsID = `${titleID}-details`;
 
@@ -109,7 +109,8 @@ export function ImageAttachmentPreview({ messageID, attachment, surface = 'attac
               onClick=${close} aria-label="Close image preview" title="Close (Esc)">×</button>
           </div>
         </header>
-        <div class="image-preview-stage" data-zoomed=${zoom > 1}>
+        <div class="image-preview-stage" data-zoomed=${zoom > 1} tabIndex="0" role="region"
+          aria-label="Image canvas; scroll to pan when zoomed">
           <${PreviewState} state=${loadState} />
           ${(loadState === 'loading' || loadState === 'ready') && html`<img
             class="image-preview-image" src=${href} alt=${filename}

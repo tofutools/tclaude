@@ -1346,8 +1346,8 @@ download card; daemon-verified PNG, JPEG, GIF, WebP, and AVIF attachments also
 show a contain-fit thumbnail. Selecting the thumbnail opens the shared image
 preview overlay, which supports zoom, authenticated missing-file checks, and
 Escape-to-return while keeping the original download action available. SVG
-and other non-raster files remain download-only.
-directories and multiple paths arrive as a zip. The daemon copies the bytes
+and other non-raster files remain download-only. Directories and multiple paths
+arrive as a zip. The daemon copies the bytes
 into its private data directory, so remote dashboards download through an
 authenticated route rather than receiving access to the agent's filesystem.
 Deleting the message deletes its stored artifact too. Uploads are capped at

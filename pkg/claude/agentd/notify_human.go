@@ -596,6 +596,19 @@ func humanMessageAttachmentPreviewable(a *db.HumanMessageAttachment) bool {
 	if _, ok := previewableHumanImageTypes[mediaType]; !ok {
 		return false
 	}
+	cacheKey := humanMessageAttachmentPreviewCacheKey(a.StoragePath, mediaType)
+	humanMessageAttachmentPreviewCache.Lock()
+	previewable, ok := humanMessageAttachmentPreviewCache.entries[cacheKey]
+	humanMessageAttachmentPreviewCache.Unlock()
+	if ok {
+		return previewable
+	}
+
+	// Attachment paths are daemon-owned and immutable after upload. Cache a
+	// completed probe so the 2-second dashboard snapshot poll does not reopen
+	// every historical image. A cached positive result intentionally survives
+	// file cleanup: the preview then reaches the authenticated route and shows
+	// its missing-file state instead of tearing the thumbnail out of the UI.
 	f, err := os.Open(a.StoragePath)
 	if err != nil {
 		return false
@@ -606,7 +619,17 @@ func humanMessageAttachmentPreviewable(a *db.HumanMessageAttachment) bool {
 	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
 		return false
 	}
-	return humanImageHeaderMatches(mediaType, header[:n])
+	previewable = humanImageHeaderMatches(mediaType, header[:n])
+	humanMessageAttachmentPreviewCache.Lock()
+	if len(humanMessageAttachmentPreviewCache.entries) >= maxHumanMessageAttachmentPreviewCacheEntries {
+		for key := range humanMessageAttachmentPreviewCache.entries {
+			delete(humanMessageAttachmentPreviewCache.entries, key)
+			break
+		}
+	}
+	humanMessageAttachmentPreviewCache.entries[cacheKey] = previewable
+	humanMessageAttachmentPreviewCache.Unlock()
+	return previewable
 }
 
 var previewableHumanImageTypes = map[string]struct{}{
@@ -615,6 +638,17 @@ var previewableHumanImageTypes = map[string]struct{}{
 	"image/jpeg": {},
 	"image/png":  {},
 	"image/webp": {},
+}
+
+const maxHumanMessageAttachmentPreviewCacheEntries = 2048
+
+var humanMessageAttachmentPreviewCache = struct {
+	sync.Mutex
+	entries map[string]bool
+}{entries: make(map[string]bool)}
+
+func humanMessageAttachmentPreviewCacheKey(storagePath, mediaType string) string {
+	return storagePath + "\x00" + mediaType
 }
 
 func humanImageHeaderMatches(mediaType string, header []byte) bool {
