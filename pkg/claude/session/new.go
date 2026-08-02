@@ -33,8 +33,12 @@ import (
 type NewParams struct {
 	// ManagedLaunch marks agentd's forked session wrapper. The daemon already
 	// resolved profile precedence, so the child must use the exact passed shape.
-	ManagedLaunch          bool `long:"managed-launch" help:"Internal: launch parameters were resolved by agentd"`
-	AllowUnenforcedSandbox bool `long:"allow-unenforced-sandbox" help:"Internal: operator authorized launch when sandbox enforcement is unavailable"`
+	ManagedLaunch bool `long:"managed-launch" help:"Internal: launch parameters were resolved by agentd"`
+	// DarwinRouteCapable is an explicit internal launch seam. It is never
+	// inferred from the host environment or ordinary sandbox selection.
+	DarwinRouteCapable     bool   `short:"Q" long:"darwin-route-capable" help:"Internal: launch exact Darwin route slots"`
+	DarwinRouteAgentID     string `short:"I" long:"darwin-route-agent-id" optional:"true" help:"Internal: stable agent identity for Darwin route slots"`
+	AllowUnenforcedSandbox bool   `long:"allow-unenforced-sandbox" help:"Internal: operator authorized launch when sandbox enforcement is unavailable"`
 	// SandboxChosenBy is the resolution tier that supplied --sandbox, as
 	// resolved by the daemon spawn boundary ("explicit", `global default
 	// profile "x"`, …). The badge attributes the launch's containment to it, so
@@ -252,6 +256,15 @@ type NewParams struct {
 	// injection. A direct human launch may set it to choose a specific id.
 	// Mutually exclusive with --resume; Claude-Code-only; must be a valid UUID.
 	SessionID string `long:"session-id" optional:"true" help:"Use a specific conversation id (UUID) for a fresh Claude Code session (claude --session-id). Mutually exclusive with --resume"`
+
+	// RouteHelper* are an internal daemon-to-session handoff. The daemon mints
+	// the launch generation and opaque credential before the pane starts; callers
+	// provide those with the pre-enrolled identity and explicit route groups.
+	RouteHelperAgentID                     string  `long:"route-helper-agent-id" optional:"true" help:"Internal: stable identity for the Linux group-route helper"`
+	RouteHelperConvID                      string  `long:"route-helper-conv-id" optional:"true" help:"Internal: conversation identity for the Linux group-route helper"`
+	RouteHelperLaunchGeneration            string  `long:"route-helper-launch-generation" optional:"true" help:"Internal: launch generation for the Linux group-route helper"`
+	RouteHelperCredentialHandoffSocketPath string  `long:"route-helper-credential-handoff-socket" optional:"true" help:"Internal: one-shot credential FD handoff socket for the Linux group-route helper"`
+	RouteHelperGroupIDs                    []int64 `long:"route-helper-group-id" optional:"true" help:"Internal: explicit route-enabled group for the Linux group-route helper"`
 }
 
 func NewCmd() *cobra.Command {
@@ -278,6 +291,11 @@ func NewCmd() *cobra.Command {
 	_ = cmd.Flags().MarkHidden("codex-git-common-dir-pinned")
 	_ = cmd.Flags().MarkHidden("git-worktree-write-dir")
 	_ = cmd.Flags().MarkHidden("git-worktree-write-dirs-pinned")
+	_ = cmd.Flags().MarkHidden("route-helper-agent-id")
+	_ = cmd.Flags().MarkHidden("route-helper-conv-id")
+	_ = cmd.Flags().MarkHidden("route-helper-launch-generation")
+	_ = cmd.Flags().MarkHidden("route-helper-credential-handoff-socket")
+	_ = cmd.Flags().MarkHidden("route-helper-group-id")
 
 	// Register completion for --resume flag
 	_ = cmd.RegisterFlagCompletionFunc("resume", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
@@ -904,6 +922,36 @@ func runNew(params *NewParams) error {
 	// authorizes callers from Unix-socket peer credentials and recorded PIDs.
 	// Build the harness command with all environment variables forwarded.
 	exitGeneration := newExitLaunchGeneration(sessionID, tmuxSession)
+	var routeHelper *TclaudeLayerRouteHelper
+	if params.RouteHelperAgentID != "" || params.RouteHelperConvID != "" || params.RouteHelperLaunchGeneration != "" || params.RouteHelperCredentialHandoffSocketPath != "" || len(params.RouteHelperGroupIDs) > 0 {
+		if !outerLayer || !tclaudeLayerWrapsPane(h.Name) {
+			return fmt.Errorf("linux group-route helper requires a pane-authoritative tclaude-layer launch")
+		}
+		if strings.TrimSpace(params.RouteHelperAgentID) == "" || strings.TrimSpace(params.RouteHelperConvID) == "" || strings.TrimSpace(params.RouteHelperLaunchGeneration) == "" || strings.TrimSpace(params.RouteHelperCredentialHandoffSocketPath) == "" || len(params.RouteHelperGroupIDs) == 0 {
+			return fmt.Errorf("linux group-route helper launch identity is incomplete")
+		}
+		socketFloor := sandboxpolicy.AgentdSocketFloor()
+		if len(socketFloor) == 0 || strings.TrimSpace(socketFloor[0]) == "" {
+			return fmt.Errorf("linux group-route helper agentd socket is unavailable")
+		}
+		helperBinary, helperBinaryErr := os.Executable()
+		if helperBinaryErr != nil || strings.TrimSpace(helperBinary) == "" {
+			if helperBinaryErr == nil {
+				helperBinaryErr = errors.New("executable path is empty")
+			}
+			return fmt.Errorf("linux group-route helper executable is unavailable: %w", helperBinaryErr)
+		}
+		routeHelper = &TclaudeLayerRouteHelper{
+			BinaryPath:        filepath.Clean(helperBinary),
+			SocketPath:        socketFloor[0],
+			AgentID:           strings.TrimSpace(params.RouteHelperAgentID),
+			ConvID:            strings.TrimSpace(params.RouteHelperConvID),
+			LaunchGeneration:  strings.TrimSpace(params.RouteHelperLaunchGeneration),
+			HandoffSocketPath: strings.TrimSpace(params.RouteHelperCredentialHandoffSocketPath),
+			GroupIDs:          append([]int64(nil), params.RouteHelperGroupIDs...),
+		}
+		exitGeneration = routeHelper.LaunchGeneration
+	}
 	additionalEnv := map[string]string{
 		"TCLAUDE_SESSION_ID":      sessionID,
 		"TCLAUDE_EXIT_GENERATION": exitGeneration,
@@ -1398,6 +1446,54 @@ func runNew(params *NewParams) error {
 	if params.SessionID != "" && fullConvID == "" {
 		rowConvID = params.SessionID
 	}
+	var darwinRouteReservation *DarwinRouteSlotReservation
+	darwinRouteRegistered := false
+	darwinRouteCommitted := false
+	defer func() {
+		if darwinRouteReservation != nil {
+			_ = darwinRouteReservation.Release()
+		}
+		if darwinRouteRegistered && !darwinRouteCommitted {
+			if err := db.DeleteDarwinRouteLaunch(params.DarwinRouteAgentID, rowConvID, exitGeneration); err != nil {
+				slog.Warn("Darwin route launch cleanup failed", "conv", rowConvID, "error", err)
+			}
+		}
+	}()
+	if params.DarwinRouteCapable {
+		if runtime.GOOS != "darwin" {
+			return fmt.Errorf("darwin route-capable launch requires macOS")
+		}
+		if !outerLayer || !tclaudeLayerWrapsPane(h.Name) {
+			return fmt.Errorf("darwin route-capable launch requires the pane tclaude-layer")
+		}
+		if rowConvID == "" {
+			return fmt.Errorf("darwin route-capable launch requires a conversation generation")
+		}
+		resolvedAgentID, resolveErr := db.AgentIDForConv(rowConvID)
+		if resolveErr != nil {
+			return fmt.Errorf("resolve Darwin route agent identity: %w", resolveErr)
+		}
+		if params.DarwinRouteAgentID != "" && params.DarwinRouteAgentID != resolvedAgentID {
+			return fmt.Errorf("darwin route agent identity does not match conversation owner")
+		}
+		params.DarwinRouteAgentID = resolvedAgentID
+		if params.DarwinRouteAgentID == "" {
+			return fmt.Errorf("darwin route-capable launch requires a stable agent identity")
+		}
+		darwinRouteReservation, err = ReserveDarwinRouteSlots()
+		if err != nil {
+			return fmt.Errorf("reserve Darwin route launch slots: %w", err)
+		}
+		// Claim the kernel-reserved slots before any launch contract is
+		// rendered. The normalized DB claims are the logical exclusion that
+		// survives reservation-FD closure; every later rendering/launch step
+		// is therefore downstream of one pending exact-generation claim.
+		if err := db.RegisterDarwinRouteLaunch(
+			params.DarwinRouteAgentID, rowConvID, exitGeneration, darwinRouteReservation.Slots()); err != nil {
+			return fmt.Errorf("register Darwin route launch contract: %w", err)
+		}
+		darwinRouteRegistered = true
+	}
 
 	launchCreated := time.Now()
 	state := &SessionState{
@@ -1568,6 +1664,14 @@ func runNew(params *NewParams) error {
 			GitWriteDirs:     launchGitWriteDirs,
 			Snapshot:         launchSandbox,
 			PrivateWriteDirs: privateAttachmentWriteDirs,
+			DarwinRouteSlots: func() []int {
+				if darwinRouteReservation == nil {
+					return nil
+				}
+				return darwinRouteReservation.Slots()
+			}(),
+			DarwinRouteReservation: darwinRouteReservation,
+			RouteHelper:            routeHelper,
 		})
 		if specErr != nil {
 			return fmt.Errorf("build tclaude-layer launch spec: %w", specErr)
@@ -1707,6 +1811,16 @@ func runNew(params *NewParams) error {
 	if err := launchDetachedTmuxSession(tmuxSession, cwd, harnessCmd, CodexProfileMarkerArgs(launchProfilePath)...); err != nil {
 		return err
 	}
+	if darwinRouteReservation != nil {
+		if err := db.ActivateDarwinRouteLaunch(params.DarwinRouteAgentID, rowConvID, exitGeneration); err != nil {
+			_ = clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(tmuxSession)).Run()
+			return fmt.Errorf("activate Darwin route launch contract: %w", err)
+		}
+		if err := darwinRouteReservation.Release(); err != nil {
+			return fmt.Errorf("release Darwin route launch reservation: %w", err)
+		}
+		darwinRouteReservation = nil
+	}
 	resourceCgroupOwnedByPane = true
 	// killLaunchPane tears the just-launched pane down on a late launch
 	// failure. It also reclaims launch-profile removal for the parent defer:
@@ -1834,6 +1948,7 @@ func runNew(params *NewParams) error {
 	// The pane is up and bound; from here the row belongs to the live session
 	// (an attach failure below must not delete it).
 	launchRowCommitted = true
+	darwinRouteCommitted = true
 	return announceAndAttach(fmt.Sprintf("Created session %s", tmuxSession), sessionID, tmuxSession, cwd, params.Detached)
 }
 

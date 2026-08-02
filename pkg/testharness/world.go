@@ -96,6 +96,18 @@ type World struct {
 	// via post-connect tmux injection.
 	spawnNames          map[string]string
 	spawnInitialPrompts map[string]string
+	spawnRouteHelpers   map[string]RouteHelperLaunch
+}
+
+// RouteHelperLaunch is the daemon-to-pane route-helper contract captured at
+// the spawner boundary. Credentials are intentionally only observable in
+// tests; production keeps them out of persisted launch/session state.
+type RouteHelperLaunch struct {
+	AgentID          string
+	ConvID           string
+	LaunchGeneration string
+	Credential       string
+	GroupIDs         []int64
 }
 
 // New builds a World wired to a fresh tmpdir HOME, a clean test DB,
@@ -145,7 +157,27 @@ func New(t *testing.T) *World {
 		spawnGitWriteDirs:   map[string][]string{},
 		spawnNames:          map[string]string{},
 		spawnInitialPrompts: map[string]string{},
+		spawnRouteHelpers:   map[string]RouteHelperLaunch{},
 	}
+}
+
+// RecordSpawnRouteHelper captures the explicit route-helper handoff threaded
+// into a spawned pane, keyed by the launched conversation.
+func (w *World) RecordSpawnRouteHelper(convID string, helper RouteHelperLaunch) {
+	w.spawnMu.Lock()
+	defer w.spawnMu.Unlock()
+	helper.GroupIDs = append([]int64(nil), helper.GroupIDs...)
+	w.spawnRouteHelpers[convID] = helper
+}
+
+// SpawnRouteHelper returns the route-helper handoff recorded for a launched
+// conversation and whether that launch reached the spawner boundary.
+func (w *World) SpawnRouteHelper(convID string) (RouteHelperLaunch, bool) {
+	w.spawnMu.Lock()
+	defer w.spawnMu.Unlock()
+	helper, ok := w.spawnRouteHelpers[convID]
+	helper.GroupIDs = append([]int64(nil), helper.GroupIDs...)
+	return helper, ok
 }
 
 // RecordSpawnName captures the launch-arg display name (`claude --name`) a

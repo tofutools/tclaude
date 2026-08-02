@@ -280,6 +280,9 @@ func handleWhoamiHook(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "hook", "failed to apply hook event")
 		return
 	}
+	if req.Input.HookEventName == "SessionEnd" && req.Input.Reason != "clear" && req.Input.Reason != "resume" {
+		revokeRouteHelperCredentials(row.ConvID, req.ExitGeneration)
+	}
 	var stdout bytes.Buffer
 	if err := resp.Write(&stdout, req.Input.HookEventName); err != nil {
 		writeError(w, http.StatusInternalServerError, "hook", "failed to encode hook response")

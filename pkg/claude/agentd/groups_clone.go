@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -143,6 +144,17 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 		writeError(w, http.StatusInternalServerError, "io", "load cloned group policy: "+err.Error())
 		return
 	}
+	var routeHelperGroupIDs []int64
+	if runtime.GOOS == "linux" {
+		routeEnabled, routeErr := db.IsAgentGroupRouteEnabled(newGroupID, PermRoutesPublish, PermRoutesConsume)
+		if routeErr != nil {
+			writeError(w, http.StatusInternalServerError, "route_authority", "resolve cloned group route capability: "+routeErr.Error())
+			return
+		}
+		if routeEnabled {
+			routeHelperGroupIDs = []int64{newGroupID}
+		}
+	}
 
 	granter := "system:groups.clone"
 	if caller != "" {
@@ -206,12 +218,13 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 		// so it can ride the launch argv when the clone is launch-enrolled.
 		newTitle := uniqueCloneTitle(agent.FreshTitle(m.ConvID))
 		spawned, spawnErr := cloneSpawnOnce(cloneSpawnParams{
-			SourceConv: m.ConvID,
-			Cwd:        cwd,
-			NoCopyConv: body.NoCopyConv,
-			Effort:     effort,
-			Model:      model,
-			Title:      newTitle,
+			SourceConv:          m.ConvID,
+			Cwd:                 cwd,
+			NoCopyConv:          body.NoCopyConv,
+			Effort:              effort,
+			Model:               model,
+			Title:               newTitle,
+			RouteHelperGroupIDs: routeHelperGroupIDs,
 		})
 		if spawnErr != nil {
 			results = append(results, memberResult{

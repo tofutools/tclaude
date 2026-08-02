@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -88,6 +89,10 @@ type cloneSpawnParams struct {
 	// 0 — a solo clone with no groups — is a direct message, the universal-
 	// inbox transport.
 	HandoffGroupID int64
+	// RouteHelperGroupIDs is the route-enabled destination-group plan captured
+	// from the source before either clone shape starts. Membership is still
+	// copied by the existing post-spawn identity step.
+	RouteHelperGroupIDs []int64
 }
 
 // cloneSpawnResult is cloneSpawnOnce's success value.
@@ -253,6 +258,21 @@ func cloneSpawnOnce(p cloneSpawnParams) (cloneSpawnResult, *cloneSpawnError) {
 	// that recorded none (a non-Claude or pre-column source).
 	askTimeout := relaunch.AskUserQuestionTimeout
 	approval, autoReview := relaunch.Approval, relaunch.AutoReview
+	if len(p.RouteHelperGroupIDs) > 0 {
+		if srcHarness != harness.DefaultName || relaunch.SandboxImplementation != string(sandboxpolicy.ImplementationTclaudeLayer) {
+			return cloneSpawnResult{}, &cloneSpawnError{Status: http.StatusUnprocessableEntity, Code: "unsupported_group_route_launch", Msg: "Linux group routes require a pane-authoritative tclaude-layer clone"}
+		}
+		if effectiveSandbox == nil {
+			return cloneSpawnResult{}, &cloneSpawnError{Status: http.StatusUnprocessableEntity, Code: "unsupported_group_route_launch", Msg: "Linux group routes require a frozen private network posture for the clone"}
+		}
+		posture, postureErr := session.TclaudeLayerNetworkPosture(effectiveSandbox.Effective)
+		if postureErr != nil {
+			return cloneSpawnResult{}, &cloneSpawnError{Status: http.StatusUnprocessableEntity, Code: "unsupported_group_route_launch", Msg: "resolve clone route posture: " + postureErr.Error()}
+		}
+		if posture == sandboxpolicy.NetworkHostOpen {
+			return cloneSpawnResult{}, &cloneSpawnError{Status: http.StatusUnprocessableEntity, Code: "unsupported_group_route_launch", Msg: "Linux group routes require a private tclaude-layer network namespace"}
+		}
+	}
 
 	// Launch enrollment (TCL-732) — the clone twin of TCL-731's reincarnation
 	// fix. A Claude Code clone can be born named, and (when the caller gave a
@@ -290,6 +310,36 @@ func cloneSpawnOnce(p cloneSpawnParams) (cloneSpawnResult, *cloneSpawnError) {
 	cloneHarness, _ := harness.Resolve(srcHarness)
 	launchEnroll := cloneSupportsArgvEnrollment(cloneHarness) && !spawnUsesLegacyInjection() && p.FollowUp != ""
 	res := cloneSpawnResult{LaunchEnrolled: launchEnroll}
+	routeHelperPrepared := false
+	routeHelperCommitted := false
+	defer func() {
+		if routeHelperPrepared && !routeHelperCommitted {
+			_, _ = db.DeleteAgentByConvID(newConv)
+			revokeRouteHelperCredentials(newConv, "")
+		}
+	}()
+	prepareRouteHelper := func(args *clcommon.SpawnArgs) *cloneSpawnError {
+		if len(p.RouteHelperGroupIDs) == 0 {
+			return nil
+		}
+		agentID, _, ensureErr := db.EnsureAgentForConv(newConv, "clone")
+		if ensureErr != nil {
+			return &cloneSpawnError{Status: http.StatusInternalServerError, Code: "route_authority", Msg: "reserve clone route identity: " + ensureErr.Error()}
+		}
+		credential, generation, credentialErr := mintRouteHelperCredential(agentID, newConv)
+		if credentialErr != nil {
+			_, _ = db.DeleteAgentByConvID(newConv)
+			return &cloneSpawnError{Status: http.StatusInternalServerError, Code: "route_authority", Msg: "mint clone route helper credential: " + credentialErr.Error()}
+		}
+		args.RouteHelperAgentID = agentID
+		args.RouteHelperConvID = newConv
+		args.RouteHelperLaunchGeneration = generation
+		args.RouteHelperCredential = credential
+		args.RouteHelperGroupIDs = append([]int64(nil), p.RouteHelperGroupIDs...)
+		routeHelperPrepared = true
+		return nil
+	}
+	commitRouteHelper := func() { routeHelperCommitted = true }
 	// enrollLaunch stamps the clone's name and first-turn handoff onto the
 	// launch args once its conv-id is known — preset by the caller on the
 	// no-copy branch, minted by the jsonl fork on the copy branch.
@@ -384,9 +434,13 @@ func cloneSpawnOnce(p cloneSpawnParams) (cloneSpawnResult, *cloneSpawnError) {
 		// handoff can ride the same argv, exactly as reincarnate's successor
 		// does. Without enrollment the id is whatever the harness mints, and the
 		// poll below discovers it.
-		if launchEnroll {
+		if launchEnroll || len(p.RouteHelperGroupIDs) > 0 {
 			newConv = convops.GenerateUUID()
 			proofArgs.SessionID = newConv
+		}
+		if routeErr := prepareRouteHelper(&proofArgs); routeErr != nil {
+			agentDirectoryCleanup()
+			return cloneSpawnResult{}, routeErr
 		}
 		enrollLaunch(&proofArgs, newConv)
 		// A wrapper that dies before the pane exists (a bad executable, a
@@ -433,6 +487,7 @@ func cloneSpawnOnce(p cloneSpawnParams) (cloneSpawnResult, *cloneSpawnError) {
 							armRemoteControlOnNewRow(label)
 						}
 						res.NewConv, res.NewTmux, res.Label = newConv, newTmux, label
+						commitRouteHelper()
 						return res, nil
 					}
 				} else if s.ConvID != "" {
@@ -442,6 +497,7 @@ func cloneSpawnOnce(p cloneSpawnParams) (cloneSpawnResult, *cloneSpawnError) {
 						armRemoteControlOnNewRow(label)
 					}
 					res.NewConv, res.NewTmux, res.Label = s.ConvID, newTmux, label
+					commitRouteHelper()
 					return res, nil
 				}
 			}
@@ -523,6 +579,10 @@ func cloneSpawnOnce(p cloneSpawnParams) (cloneSpawnResult, *cloneSpawnError) {
 	proofArgs.AutoMemory = autoMemory
 	proofArgs.ContextFeatures = contextFeatures
 	proofArgs.AutoCompactWindow = autoCompactWindow
+	if routeErr := prepareRouteHelper(&proofArgs); routeErr != nil {
+		agentDirectoryCleanup()
+		return cloneSpawnResult{}, routeErr
+	}
 	// The forked jsonl already fixes the clone's conv-id, so the copy path needs
 	// no --session-id: the name and handoff ride the resume argv directly.
 	enrollLaunch(&proofArgs, newConv)
@@ -574,6 +634,7 @@ func cloneSpawnOnce(p cloneSpawnParams) (cloneSpawnResult, *cloneSpawnError) {
 				armRemoteControlOnNewRow(label)
 			}
 			res.NewConv, res.NewTmux, res.Label = newConv, newTmux, label
+			commitRouteHelper()
 			return res, nil
 		}
 		time.Sleep(250 * time.Millisecond)
@@ -603,6 +664,7 @@ func cloneSpawnOnce(p cloneSpawnParams) (cloneSpawnResult, *cloneSpawnError) {
 	slog.Warn("clone: copy-path poll timed out; tmux session never registered",
 		"new_conv", newConv, "deadline", reincarnateSpawnTimeout)
 	res.NewConv, res.NewTmux, res.Label, res.Warn = newConv, newTmux, label, warn
+	commitRouteHelper()
 	return res, nil
 }
 
@@ -1055,6 +1117,19 @@ func runCloneOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 			oldMembers = append(oldMembers, m)
 		}
 	}
+	var routeHelperGroupIDs []int64
+	if runtime.GOOS == "linux" {
+		for _, group := range oldGroups {
+			enabled, enabledErr := db.IsAgentGroupRouteEnabled(group.ID, PermRoutesPublish, PermRoutesConsume)
+			if enabledErr != nil {
+				writeError(w, http.StatusInternalServerError, "route_authority", "could not resolve clone route capability: "+enabledErr.Error())
+				return
+			}
+			if enabled {
+				routeHelperGroupIDs = append(routeHelperGroupIDs, group.ID)
+			}
+		}
+	}
 	oldOwnedIDs, err := db.ListGroupsOwnedBy(target)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io",
@@ -1168,20 +1243,21 @@ func runCloneOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 	// model + effort; "" falls back to the harness default.
 	effort, model := relaunch.Effort, relaunch.Model
 	spawned, spawnErr := cloneSpawnOnce(cloneSpawnParams{
-		SourceConv:        target,
-		Cwd:               cwd,
-		NoCopyConv:        noCopyConv,
-		Effort:            effort,
-		Model:             model,
-		ProofToken:        proofToken,
-		ProofCwd:          proofToken != "",
-		ProofDirs:         proofDirs,
-		CodexGitCommonDir: codexGitCommonDir,
-		GitWriteDirs:      gitWriteDirs,
-		Title:             newTitle,
-		FollowUp:          followUp,
-		HandoffFrom:       caller,
-		HandoffGroupID:    handoffGroupID,
+		SourceConv:          target,
+		Cwd:                 cwd,
+		NoCopyConv:          noCopyConv,
+		Effort:              effort,
+		Model:               model,
+		ProofToken:          proofToken,
+		ProofCwd:            proofToken != "",
+		ProofDirs:           proofDirs,
+		CodexGitCommonDir:   codexGitCommonDir,
+		GitWriteDirs:        gitWriteDirs,
+		Title:               newTitle,
+		FollowUp:            followUp,
+		HandoffFrom:         caller,
+		HandoffGroupID:      handoffGroupID,
+		RouteHelperGroupIDs: routeHelperGroupIDs,
 	})
 	if spawnErr != nil {
 		spawnErr.write(w)

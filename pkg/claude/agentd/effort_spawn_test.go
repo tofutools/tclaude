@@ -2,12 +2,37 @@ package agentd
 
 import (
 	"slices"
+	"strings"
 	"testing"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
+
+func TestSessionArgsRouteHelperCredentialNeverEntersArgv(t *testing.T) {
+	const bearer = "route-helper-bearer-must-not-leak"
+	args := sessionNewArgs(clcommon.SpawnArgs{
+		Label:                                  "lbl",
+		Cwd:                                    "/tmp/x",
+		RouteHelperAgentID:                     "agt_test",
+		RouteHelperConvID:                      "conv_test",
+		RouteHelperLaunchGeneration:            "generation_test",
+		RouteHelperCredential:                  bearer,
+		RouteHelperCredentialHandoffSocketPath: "/home/test/.tclaude/data/route-helper-handoff.sock",
+		RouteHelperGroupIDs:                    []int64{42},
+	})
+	rendered := strings.Join(args, " ")
+	if strings.Contains(rendered, bearer) {
+		t.Fatalf("route helper bearer leaked into session-new argv: %q", rendered)
+	}
+	if !strings.Contains(rendered, "--route-helper-credential-handoff-socket") {
+		t.Fatalf("route helper argv omitted the one-shot FD handoff endpoint: %q", rendered)
+	}
+	if strings.Contains(rendered, "credential-fifo") || strings.Contains(rendered, "credential-path") {
+		t.Fatalf("route helper argv retained the retired credential pathname contract: %q", rendered)
+	}
+}
 
 // TestSessionNewArgs_EffortOmittedWhenUnset is the acceptance check for
 // the spawn path's forked `tclaude session new`: with no effort chosen,
@@ -28,6 +53,27 @@ func TestSessionArgs_ManagedLaunchMarker(t *testing.T) {
 		if !slices.Contains(args, "--managed-launch") {
 			t.Fatalf("%s: agentd must mark its already-resolved session launch, got %v", name, args)
 		}
+	}
+}
+
+func TestSessionArgs_DarwinRouteCapabilityIsExplicitAndGenerationIdentityCarries(t *testing.T) {
+	for name, args := range map[string][]string{
+		"new": sessionNewArgs(clcommon.SpawnArgs{
+			Label: "lbl", Cwd: "/tmp/x", DarwinRouteCapable: true, DarwinRouteAgentID: "agt_test",
+		}),
+		"resume": sessionResumeArgs(clcommon.SpawnArgs{
+			ConvID: "conv-1", Cwd: "/tmp/x", DarwinRouteCapable: true, DarwinRouteAgentID: "agt_test",
+		}),
+	} {
+		if !slices.Contains(args, "--darwin-route-capable") {
+			t.Fatalf("%s route capability must be explicit in argv: %v", name, args)
+		}
+		if i := slices.Index(args, "--darwin-route-agent-id"); i < 0 || i+1 >= len(args) || args[i+1] != "agt_test" {
+			t.Fatalf("%s stable route agent identity missing from argv: %v", name, args)
+		}
+	}
+	if args := sessionNewArgs(clcommon.SpawnArgs{Label: "lbl", Cwd: "/tmp/x"}); slices.Contains(args, "--darwin-route-capable") {
+		t.Fatalf("ordinary launches must not activate Darwin route capability: %v", args)
 	}
 }
 

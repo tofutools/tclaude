@@ -1,0 +1,281 @@
+package routeadapter
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"net"
+	"strconv"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/routebroker"
+)
+
+type allowAll struct{}
+
+func (allowAll) AuthorizePublisher(context.Context, routebroker.PublisherAuth) error { return nil }
+func (allowAll) AuthorizeConsumer(context.Context, routebroker.ConsumerAuth) error   { return nil }
+
+func freePort(t *testing.T) int {
+	t.Helper()
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	listener.Close()
+	return port
+}
+
+func TestAdapterForwardsOpaqueTCPThroughBroker(t *testing.T) {
+	targetPort := freePort(t)
+	consumerPort := freePort(t)
+	target, err := net.Listen("tcp4", "127.0.0.1:"+strconv.Itoa(targetPort))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer target.Close()
+	go func() {
+		conn, acceptErr := target.Accept()
+		if acceptErr != nil {
+			return
+		}
+		defer conn.Close()
+		payload := make([]byte, 6)
+		if _, readErr := io.ReadFull(conn, payload); readErr == nil {
+			_, _ = conn.Write([]byte("reply:" + string(payload)))
+		}
+	}()
+
+	broker, err := routebroker.New(routebroker.Config{
+		Authorizer:             allowAll{},
+		AuthorityCheckInterval: 10 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer broker.Close()
+	adapter, err := New(broker, []int{targetPort, consumerPort})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer adapter.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if _, err := adapter.Publish(ctx, Publisher{
+		RouteID: "route-a", AgentID: "publisher", ConvID: "publisher-conv",
+		LaunchGeneration: "publisher-launch", GroupGeneration: 1,
+		Target: "tcp://127.0.0.1:" + strconv.Itoa(targetPort),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	endpoint, err := adapter.Open(ctx, Consumer{
+		LeaseID: "lease-a", RouteID: "route-a", AgentID: "consumer", ConvID: "consumer-conv",
+		LaunchGeneration: "consumer-launch", GroupGeneration: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := net.DialTimeout("tcp4", endpoint, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if _, err := conn.Write([]byte("opaque")); err != nil {
+		t.Fatal(err)
+	}
+	response := make([]byte, 12)
+	if _, err := io.ReadFull(conn, response); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(response), "reply:opaque"; got != want {
+		t.Fatalf("response = %q, want %q", got, want)
+	}
+}
+
+func TestAdapterRejectsUnreservedPublisherTarget(t *testing.T) {
+	broker, err := routebroker.New(routebroker.Config{Authorizer: allowAll{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer broker.Close()
+	adapter, err := New(broker, []int{41301})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer adapter.Close()
+	if _, err := adapter.Publish(context.Background(), Publisher{
+		RouteID: "route-a", AgentID: "publisher", ConvID: "publisher-conv", LaunchGeneration: "launch",
+		Target: "tcp://127.0.0.1:41302",
+	}); err == nil {
+		t.Fatal("publisher target outside exact pool was accepted")
+	}
+}
+
+func TestAdapterRefusesAnOccupiedConsumerSlot(t *testing.T) {
+	port := freePort(t)
+	occupied, err := net.Listen("tcp4", "127.0.0.1:"+strconv.Itoa(port))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer occupied.Close()
+	b, err := routebroker.New(routebroker.Config{Authorizer: allowAll{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	adapter, err := New(b, []int{port})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer adapter.Close()
+	if _, err := adapter.Open(context.TODO(), Consumer{LeaseID: "lease-a", RouteID: "route-a"}); err == nil {
+		t.Fatal("consumer accepted an occupied exact slot")
+	}
+}
+
+func TestAdapterPublisherEOFPreservesReverseDirection(t *testing.T) {
+	targetPort := freePort(t)
+	consumerPort := freePort(t)
+	target, err := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(targetPort)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer target.Close()
+	serverDone := make(chan error, 1)
+	go func() {
+		conn, acceptErr := target.Accept()
+		if acceptErr != nil {
+			serverDone <- acceptErr
+			return
+		}
+		defer conn.Close()
+		payload, readErr := io.ReadAll(conn)
+		if readErr != nil {
+			serverDone <- readErr
+			return
+		}
+		if string(payload) != "request" {
+			serverDone <- fmt.Errorf("target payload = %q", payload)
+			return
+		}
+		if _, err := conn.Write([]byte("reverse")); err != nil {
+			serverDone <- err
+			return
+		}
+		if tcp, ok := conn.(*net.TCPConn); ok {
+			_ = tcp.CloseWrite()
+		}
+		serverDone <- nil
+	}()
+
+	broker, err := routebroker.New(routebroker.Config{Authorizer: allowAll{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer broker.Close()
+	adapter, err := New(broker, []int{targetPort, consumerPort})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer adapter.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := adapter.Publish(ctx, Publisher{
+		RouteID: "route-half-close", AgentID: "publisher", ConvID: "publisher-conv",
+		LaunchGeneration: "publisher-launch", GroupGeneration: 1,
+		Target: "tcp://127.0.0.1:" + strconv.Itoa(targetPort),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	endpoint, err := adapter.Open(ctx, Consumer{
+		LeaseID: "lease-half-close", RouteID: "route-half-close", AgentID: "consumer",
+		ConvID: "consumer-conv", LaunchGeneration: "consumer-launch", GroupGeneration: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := net.DialTimeout("tcp4", endpoint, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tcp := conn.(*net.TCPConn)
+	if _, err := tcp.Write([]byte("request")); err != nil {
+		t.Fatal(err)
+	}
+	if err := tcp.CloseWrite(); err != nil {
+		t.Fatal(err)
+	}
+	response, err := io.ReadAll(tcp)
+	_ = conn.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(response), "reverse"; got != want {
+		t.Fatalf("reverse response = %q, want %q", got, want)
+	}
+	if err := <-serverDone; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAdapterIdleLeaseCleanupReusesOnlyClosedSlot(t *testing.T) {
+	firstPort, secondPort := freePort(t), freePort(t)
+	broker, err := routebroker.New(routebroker.Config{Authorizer: allowAll{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer broker.Close()
+	adapter, err := New(broker, []int{firstPort, secondPort})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer adapter.Close()
+	first, err := adapter.Open(context.Background(), Consumer{LeaseID: "lease-idle", RouteID: "route-a", AgentID: "agent-a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := adapter.Open(context.Background(), Consumer{LeaseID: "lease-live", RouteID: "route-b", AgentID: "agent-b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	adapter.CloseLease("lease-idle")
+	if got := adapter.LeaseIDs(); len(got) != 1 || got[0] != "lease-live" {
+		t.Fatalf("leases after idle cleanup = %v, want [lease-live]", got)
+	}
+	third, err := adapter.Open(context.Background(), Consumer{LeaseID: "lease-reuse", RouteID: "route-c", AgentID: "agent-c"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if third != first {
+		t.Fatalf("reused endpoint = %q, want closed endpoint %q", third, first)
+	}
+	adapter.CloseLease("lease-live")
+	_ = second
+}
+
+func TestAdapterCloseLeaseDoesNotCloseSiblingSameAgentRoute(t *testing.T) {
+	firstPort, secondPort := freePort(t), freePort(t)
+	broker, err := routebroker.New(routebroker.Config{Authorizer: allowAll{}})
+	require.NoError(t, err)
+	defer broker.Close()
+	adapter, err := New(broker, []int{firstPort, secondPort})
+	require.NoError(t, err)
+	defer adapter.Close()
+	first, err := adapter.Open(context.Background(), Consumer{LeaseID: "lease-sibling-a", RouteID: "route-sibling", AgentID: "same-agent"})
+	require.NoError(t, err)
+	second, err := adapter.Open(context.Background(), Consumer{LeaseID: "lease-sibling-b", RouteID: "route-sibling", AgentID: "same-agent"})
+	require.NoError(t, err)
+	adapter.CloseLease("lease-sibling-a")
+	if got := adapter.LeaseIDs(); len(got) != 1 || got[0] != "lease-sibling-b" {
+		t.Fatalf("leases after exact close = %v, want [lease-sibling-b]", got)
+	}
+	conn, err := net.DialTimeout("tcp4", second, time.Second)
+	require.NoError(t, err)
+	_ = conn.Close()
+	if first == second {
+		t.Fatal("sibling lease unexpectedly reused the closed endpoint")
+	}
+}
