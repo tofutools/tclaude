@@ -13692,6 +13692,74 @@ body:not(.dock-open) .dock-toggle-chevron { transform: rotate(180deg); }
 .dock-collapse:hover { color: #58a6ff; border-color: #2a3340; background: #21262d; }
 .dock-body { flex: 1 1 auto; overflow-y: auto; padding: 8px; }
 
+/* The dock body is an independent scroll surface, so it needs the same
+   dashboard scrollbar treatment as the Messages panes. Keep the card-details
+   popover on the same skin when a long profile or role needs to scroll there.
+   Firefox has no ::-webkit-scrollbar surface; the standardized fallback stays
+   behind the feature query so Chromium can use the richer hover treatments. */
+#agent-dock .dock-body,
+#agent-dock .dock-card-details {
+  --dock-scrollbar-track: #0d1117;
+  --dock-scrollbar-corner: #161b22;
+  --dock-scrollbar-thumb-color: #6e7681;
+  --dock-scrollbar-thumb: #6e7681;
+  --dock-scrollbar-thumb-hover: #8b949e;
+  --dock-scrollbar-thumb-active: #b1bac4;
+}
+@supports not selector(::-webkit-scrollbar) {
+  #agent-dock .dock-body,
+  #agent-dock .dock-card-details {
+    scrollbar-width: thin;
+    scrollbar-color: var(--dock-scrollbar-thumb-color) var(--dock-scrollbar-track);
+  }
+}
+#agent-dock .dock-body::-webkit-scrollbar,
+#agent-dock .dock-card-details::-webkit-scrollbar { width: 10px; height: 10px; }
+#agent-dock .dock-body::-webkit-scrollbar-track,
+#agent-dock .dock-card-details::-webkit-scrollbar-track { background: var(--dock-scrollbar-track); }
+#agent-dock .dock-body::-webkit-scrollbar-corner,
+#agent-dock .dock-card-details::-webkit-scrollbar-corner { background: var(--dock-scrollbar-corner); }
+#agent-dock .dock-body::-webkit-scrollbar-thumb,
+#agent-dock .dock-card-details::-webkit-scrollbar-thumb {
+  background: var(--dock-scrollbar-thumb); border-radius: 6px;
+}
+#agent-dock .dock-body::-webkit-scrollbar-thumb:hover,
+#agent-dock .dock-card-details::-webkit-scrollbar-thumb:hover { background: var(--dock-scrollbar-thumb-hover); }
+#agent-dock .dock-body::-webkit-scrollbar-thumb:active,
+#agent-dock .dock-card-details::-webkit-scrollbar-thumb:active { background: var(--dock-scrollbar-thumb-active); }
+
+/* Vegas/slop mode uses the casino's oxblood track and gilded thumb. Cover both
+   the full casino re-skin and the regular-mode Vegas opt-in; the latter still
+   only changes this scrollbar surface, leaving the rest of the dashboard's
+   regular chrome untouched. */
+body.slop #agent-dock .dock-body,
+body.slop #agent-dock .dock-card-details,
+body.vegas #agent-dock .dock-body,
+body.vegas #agent-dock .dock-card-details {
+  --dock-scrollbar-track: #2a0808;
+  --dock-scrollbar-corner: #4a0a0a;
+  --dock-scrollbar-thumb-color: #d4a017;
+  --dock-scrollbar-thumb: linear-gradient(180deg, #d4a017, #8b0000);
+  --dock-scrollbar-thumb-hover: linear-gradient(180deg, #ffe88c, #a31515);
+  --dock-scrollbar-thumb-active: linear-gradient(180deg, #fff0ad, #d4a017);
+}
+
+/* Wizard mode turns the same scroll surfaces into violet "scroll" bars with
+   a gilded edge, matching the wizard Messages and dialog scrollbars. */
+body.wizard #agent-dock .dock-body,
+body.wizard #agent-dock .dock-card-details {
+  --dock-scrollbar-track: #140f28;
+  --dock-scrollbar-corner: #211832;
+  --dock-scrollbar-thumb-color: #7a5db0;
+  --dock-scrollbar-thumb: linear-gradient(180deg, #7a5db0, #3a2a63);
+  --dock-scrollbar-thumb-hover: linear-gradient(180deg, #8f6fca, #4a367d);
+  --dock-scrollbar-thumb-active: linear-gradient(180deg, #a98fdc, #5c458f);
+}
+body.wizard #agent-dock .dock-body::-webkit-scrollbar-thumb,
+body.wizard #agent-dock .dock-card-details::-webkit-scrollbar-thumb {
+  border: 1px solid #d9b45a;
+}
+
 .dock-section { margin-bottom: 12px; }
 .dock-section:last-child { margin-bottom: 0; }
 /* Each section is a <details> now (JOH-388 req 5) — collapsible on its own.
