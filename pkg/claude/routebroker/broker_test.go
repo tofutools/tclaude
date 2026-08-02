@@ -1,0 +1,260 @@
+package routebroker_test
+
+import (
+	"context"
+	"errors"
+	"net"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/routebroker"
+)
+
+type testAuthorizer struct {
+	mu             sync.Mutex
+	deadPublishers map[string]bool
+	deadConsumers  map[string]bool
+}
+
+func newTestAuthorizer() *testAuthorizer {
+	return &testAuthorizer{deadPublishers: make(map[string]bool), deadConsumers: make(map[string]bool)}
+}
+
+func (a *testAuthorizer) AuthorizePublisher(_ context.Context, auth routebroker.PublisherAuth) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.deadPublishers[auth.RouteID] {
+		return errors.New("publisher withdrawn")
+	}
+	return nil
+}
+
+func (a *testAuthorizer) AuthorizeConsumer(_ context.Context, auth routebroker.ConsumerAuth) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.deadConsumers[auth.LeaseID] {
+		return errors.New("lease closed")
+	}
+	return nil
+}
+
+func (a *testAuthorizer) revokeConsumer(lease string) {
+	a.mu.Lock()
+	a.deadConsumers[lease] = true
+	a.mu.Unlock()
+}
+
+func (a *testAuthorizer) revokePublisher(route string) {
+	a.mu.Lock()
+	a.deadPublishers[route] = true
+	a.mu.Unlock()
+}
+
+func newBroker(t *testing.T, auth *testAuthorizer, cfg routebroker.Config) *routebroker.Broker {
+	t.Helper()
+	cfg.Authorizer = auth
+	if cfg.AuthorityCheckInterval == 0 {
+		cfg.AuthorityCheckInterval = 10 * time.Millisecond
+	}
+	if cfg.WriteTimeout == 0 {
+		cfg.WriteTimeout = 100 * time.Millisecond
+	}
+	b, err := routebroker.New(cfg)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, b.Close()) })
+	return b
+}
+
+type attached struct {
+	pubPeer net.Conn
+	conPeer net.Conn
+	pubDone chan error
+	conDone chan error
+}
+
+func attachPair(t *testing.T, b *routebroker.Broker, publisher routebroker.PublisherAuth, consumer routebroker.ConsumerAuth) attached {
+	t.Helper()
+	pubBroker, pubPeer := net.Pipe()
+	conBroker, conPeer := net.Pipe()
+	pair := attached{pubPeer: pubPeer, conPeer: conPeer, pubDone: make(chan error, 1), conDone: make(chan error, 1)}
+	go func() { pair.pubDone <- b.AttachPublisher(context.Background(), publisher, pubBroker) }()
+	require.Eventually(t, func() bool { return b.Metrics().PublisherChannels == 1 }, time.Second, time.Millisecond)
+	go func() { pair.conDone <- b.AttachConsumer(context.Background(), consumer, conBroker) }()
+	t.Cleanup(func() {
+		_ = pubPeer.Close()
+		_ = conPeer.Close()
+	})
+	return pair
+}
+
+func auths() (routebroker.PublisherAuth, routebroker.ConsumerAuth) {
+	return routebroker.PublisherAuth{RouteID: "route-a", AgentID: "publisher", ConvID: "publisher-conv", LaunchGeneration: "pub-launch", GroupGeneration: 7}, routebroker.ConsumerAuth{LeaseID: "lease-a", RouteID: "route-a", AgentID: "consumer", ConvID: "consumer-conv", LaunchGeneration: "con-launch", GroupGeneration: 7}
+}
+
+func readFrame(t *testing.T, conn net.Conn) routebroker.Frame {
+	t.Helper()
+	_ = conn.SetReadDeadline(time.Now().Add(time.Second))
+	frame, err := routebroker.ReadFrame(conn, routebroker.MaxFramePayload)
+	require.NoError(t, err)
+	return frame
+}
+
+func writeFrame(t *testing.T, conn net.Conn, frame routebroker.Frame) {
+	t.Helper()
+	require.NoError(t, routebroker.WriteFrame(conn, frame, routebroker.MaxFramePayload))
+}
+
+func TestBrokerForwardsOpaqueConcurrentStreamsWithSafeIDs(t *testing.T) {
+	auth := newTestAuthorizer()
+	b := newBroker(t, auth, routebroker.Config{})
+	publisher, consumer := auths()
+	pair := attachPair(t, b, publisher, consumer)
+
+	writeFrame(t, pair.conPeer, routebroker.Frame{Kind: routebroker.KindOpen, Stream: 41})
+	openedA := readFrame(t, pair.pubPeer)
+	require.Equal(t, routebroker.KindOpen, openedA.Kind)
+	require.NotEqual(t, uint64(0), openedA.Stream)
+	writeFrame(t, pair.pubPeer, routebroker.Frame{Kind: routebroker.KindOpenOK, Stream: openedA.Stream})
+	ackA := readFrame(t, pair.conPeer)
+	require.Equal(t, routebroker.KindOpenOK, ackA.Kind)
+	require.Equal(t, uint64(41), ackA.Stream)
+
+	writeFrame(t, pair.conPeer, routebroker.Frame{Kind: routebroker.KindData, Stream: 41, Payload: []byte("consumer-stream-a")})
+	dataA := readFrame(t, pair.pubPeer)
+	require.Equal(t, openedA.Stream, dataA.Stream)
+	require.Equal(t, []byte("consumer-stream-a"), dataA.Payload)
+	writeFrame(t, pair.pubPeer, routebroker.Frame{Kind: routebroker.KindData, Stream: openedA.Stream, Payload: []byte("publisher-stream-a")})
+	backA := readFrame(t, pair.conPeer)
+	require.Equal(t, uint64(41), backA.Stream)
+	require.Equal(t, []byte("publisher-stream-a"), backA.Payload)
+
+	writeFrame(t, pair.conPeer, routebroker.Frame{Kind: routebroker.KindOpen, Stream: 42})
+	openedB := readFrame(t, pair.pubPeer)
+	require.Equal(t, routebroker.KindOpen, openedB.Kind)
+	require.NotEqual(t, openedA.Stream, openedB.Stream, "broker IDs must discriminate concurrent streams")
+	writeFrame(t, pair.pubPeer, routebroker.Frame{Kind: routebroker.KindOpenOK, Stream: openedB.Stream})
+	require.Equal(t, routebroker.KindOpenOK, readFrame(t, pair.conPeer).Kind)
+
+	writeFrame(t, pair.conPeer, routebroker.Frame{Kind: routebroker.KindClose, Stream: 41})
+	closeA := readFrame(t, pair.pubPeer)
+	require.Equal(t, routebroker.KindClose, closeA.Kind)
+	require.Equal(t, openedA.Stream, closeA.Stream)
+}
+
+func TestBrokerPreservesHalfCloseAndConsumerExit(t *testing.T) {
+	auth := newTestAuthorizer()
+	b := newBroker(t, auth, routebroker.Config{})
+	publisher, consumer := auths()
+	pair := attachPair(t, b, publisher, consumer)
+
+	writeFrame(t, pair.conPeer, routebroker.Frame{Kind: routebroker.KindOpen, Stream: 1})
+	opened := readFrame(t, pair.pubPeer)
+	writeFrame(t, pair.pubPeer, routebroker.Frame{Kind: routebroker.KindOpenOK, Stream: opened.Stream})
+	_ = readFrame(t, pair.conPeer)
+
+	writeFrame(t, pair.conPeer, routebroker.Frame{Kind: routebroker.KindHalfClose, Stream: 1})
+	finToPublisher := readFrame(t, pair.pubPeer)
+	require.Equal(t, routebroker.KindHalfClose, finToPublisher.Kind)
+	writeFrame(t, pair.pubPeer, routebroker.Frame{Kind: routebroker.KindData, Stream: opened.Stream, Payload: []byte("final publisher bytes")})
+	require.Equal(t, []byte("final publisher bytes"), readFrame(t, pair.conPeer).Payload)
+	writeFrame(t, pair.pubPeer, routebroker.Frame{Kind: routebroker.KindHalfClose, Stream: opened.Stream})
+	require.Equal(t, routebroker.KindHalfClose, readFrame(t, pair.conPeer).Kind)
+
+	// A consumer process disappearing without a CLOSE still informs the
+	// publisher, allowing the endpoint adapter to close its local target.
+	_ = pair.conPeer.Close()
+	consumerClose := readFrame(t, pair.pubPeer)
+	require.Equal(t, routebroker.KindClose, consumerClose.Kind)
+	require.Equal(t, opened.Stream, consumerClose.Stream)
+}
+
+func TestBrokerSlowConsumerIsBoundedAndDoesNotBlockAnotherConsumer(t *testing.T) {
+	auth := newTestAuthorizer()
+	b := newBroker(t, auth, routebroker.Config{MaxQueuedFramesPerStream: 1, WriteTimeout: time.Second})
+	publisher, slowConsumer := auths()
+	pubBroker, pubPeer := net.Pipe()
+	slowBroker, slowPeer := net.Pipe()
+	fastBroker, fastPeer := net.Pipe()
+	pubDone := make(chan error, 1)
+	slowDone := make(chan error, 1)
+	fastDone := make(chan error, 1)
+	go func() { pubDone <- b.AttachPublisher(context.Background(), publisher, pubBroker) }()
+	require.Eventually(t, func() bool { return b.Metrics().PublisherChannels == 1 }, time.Second, time.Millisecond)
+	go func() { slowDone <- b.AttachConsumer(context.Background(), slowConsumer, slowBroker) }()
+	fastAuth := slowConsumer
+	fastAuth.LeaseID = "lease-fast"
+	fastAuth.AgentID = "fast-consumer"
+	go func() { fastDone <- b.AttachConsumer(context.Background(), fastAuth, fastBroker) }()
+	t.Cleanup(func() {
+		_ = pubPeer.Close()
+		_ = slowPeer.Close()
+		_ = fastPeer.Close()
+	})
+
+	writeFrame(t, slowPeer, routebroker.Frame{Kind: routebroker.KindOpen, Stream: 1})
+	slowOpen := readFrame(t, pubPeer)
+	writeFrame(t, fastPeer, routebroker.Frame{Kind: routebroker.KindOpen, Stream: 1})
+	fastOpen := readFrame(t, pubPeer)
+	require.NotEqual(t, slowOpen.Stream, fastOpen.Stream)
+
+	// The slow peer never reads its OPEN_OK. Its stream writer is therefore
+	// blocked in a deadline-bounded socket write, but the broker's publisher
+	// reader and the other consumer writer continue independently.
+	writeFrame(t, pubPeer, routebroker.Frame{Kind: routebroker.KindOpenOK, Stream: slowOpen.Stream})
+	writeFrame(t, pubPeer, routebroker.Frame{Kind: routebroker.KindOpenOK, Stream: fastOpen.Stream})
+	fastOK := readFrame(t, fastPeer)
+	require.Equal(t, routebroker.KindOpenOK, fastOK.Kind, "slow consumer must not block an unrelated consumer")
+	require.Equal(t, uint64(1), fastOK.Stream)
+
+	// A second frame exceeds the one-frame queue while the slow write remains
+	// blocked. The slow channel is failed closed; the publisher channel stays
+	// usable and its route memory remains bounded.
+	writeFrame(t, pubPeer, routebroker.Frame{Kind: routebroker.KindData, Stream: slowOpen.Stream, Payload: []byte("bounded-1")})
+	writeFrame(t, pubPeer, routebroker.Frame{Kind: routebroker.KindData, Stream: slowOpen.Stream, Payload: []byte("bounded-2")})
+	require.Eventually(t, func() bool { return b.Metrics().RejectedStreams > 0 }, time.Second, 5*time.Millisecond)
+	writeFrame(t, pubPeer, routebroker.Frame{Kind: routebroker.KindData, Stream: fastOpen.Stream, Payload: []byte("fast-after-slow")})
+	fastData := readFrame(t, fastPeer)
+	require.Equal(t, []byte("fast-after-slow"), fastData.Payload)
+}
+
+func TestBrokerAuthorityRevocationAndShutdownFailClosed(t *testing.T) {
+	auth := newTestAuthorizer()
+	b := newBroker(t, auth, routebroker.Config{AuthorityCheckInterval: 5 * time.Millisecond})
+	publisher, consumer := auths()
+	pair := attachPair(t, b, publisher, consumer)
+	auth.revokeConsumer(consumer.LeaseID)
+	require.Eventually(t, func() bool {
+		_ = pair.conPeer.SetReadDeadline(time.Now().Add(10 * time.Millisecond))
+		_, err := pair.conPeer.Read(make([]byte, 1))
+		return err != nil
+	}, time.Second, 5*time.Millisecond)
+	select {
+	case <-pair.conDone:
+	case <-time.After(time.Second):
+		t.Fatal("revoked consumer did not leave")
+	}
+
+	// Publisher withdrawal closes all remaining route channels, even when
+	// the consumer's own lease has not yet been revoked.
+	auth2 := newTestAuthorizer()
+	b2 := newBroker(t, auth2, routebroker.Config{AuthorityCheckInterval: 5 * time.Millisecond})
+	publisher2, consumer2 := auths()
+	pair2 := attachPair(t, b2, publisher2, consumer2)
+	auth2.revokePublisher(publisher2.RouteID)
+	require.Eventually(t, func() bool {
+		_ = pair2.conPeer.SetReadDeadline(time.Now().Add(10 * time.Millisecond))
+		_, err := pair2.conPeer.Read(make([]byte, 1))
+		return err != nil
+	}, time.Second, 5*time.Millisecond)
+
+	// Close is the daemon shutdown seam and is idempotent.
+	require.NoError(t, b2.Close())
+	require.NoError(t, b2.Close())
+	select {
+	case <-pair2.pubDone:
+	case <-time.After(time.Second):
+		t.Fatal("publisher did not leave on broker shutdown")
+	}
+}
