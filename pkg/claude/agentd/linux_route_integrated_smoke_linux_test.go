@@ -1038,6 +1038,12 @@ func TestLinuxRouteCapabilityIntegratedSmoke(t *testing.T) {
 	exitLeaseID := exitLease["id"].(string)
 	require.NoError(t, os.WriteFile(consumerPaths.Lease, []byte(exitLeaseID+"|"+exitRouteID+"|"+strconv.FormatInt(linuxRouteM6GroupGeneration(t, exitLease), 10)), 0o600))
 	waitLinuxRouteM6Marker(t, consumerPaths.Ready, "channel-attached", exitConsumer)
+	// This cell is about what a publisher *exit* tears down, so the consumer
+	// must be finished with the route before the publisher is killed. Attaching
+	// is not enough: the consumer opens its short-lived connections as soon as
+	// it attaches, and killing the publisher underneath that loop fails an
+	// in-flight exchange on a teardown the cell deliberately caused.
+	waitLinuxRouteM6Marker(t, consumerPaths.Ready, fmt.Sprintf("sustained-route-traffic:%d", linuxRouteM6Count), exitConsumer, exitPub)
 	exitPub.kill(t)
 	observedExitSession, err := db.LoadSession(exitSessionID)
 	require.NoError(t, err)
