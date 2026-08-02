@@ -23,13 +23,18 @@ package agentd
 // also what a `serve --tui` started from inside the operator's own tmux does.
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
+	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -72,10 +77,28 @@ const (
 	tuiConsoleStopPoll  = 100 * time.Millisecond
 )
 
+// Where the launcher keeps the console's startup-error file, how long a
+// stranded one survives before the next launcher sweeps it, and the cap on what
+// is read back out of it.
+const (
+	tuiConsoleStateDirName    = "tui-console"
+	tuiConsoleErrorFileMaxAge = 24 * time.Hour
+	tuiConsoleMaxErrorBytes   = 4096
+)
+
 // tuiConsoleStdioIsTerminal reports whether this process has a terminal to give
 // tmux. Indirected for tests, which have neither.
 var tuiConsoleStdioIsTerminal = func() bool {
 	return term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
+}
+
+// tuiConsoleHasHarnessAncestor reports whether this process is running under a
+// coding harness, by the same process-tree walk the identity middleware
+// classifies callers with. Indirected for tests, whose own ancestry depends on
+// what ran `go test`.
+var tuiConsoleHasHarnessAncestor = func() bool {
+	_, hasAncestor := convIDForPID(os.Getpid())
+	return hasAncestor
 }
 
 // tuiConsoleRelaunchRequested reports whether this process should become the
@@ -102,6 +125,18 @@ func tuiConsoleRelaunchRequested(p *serveParams) bool {
 // daemon that refused to start over it would be a worse trade than a console
 // that draws where it always used to.
 func tuiConsoleUnavailable(p *serveParams) string {
+	// The security-relevant one, and the reason it comes first. The daemon
+	// classifies its own console by process ancestry — a harness ancestor beats
+	// an operator token, so `serve --tui` from an agent's pane gets an
+	// agent-class console (see the identity note in tui.go). Relaunching
+	// reparents the daemon under the tmux server, which ERASES that ancestor.
+	// insideTmux() covers the ordinary case, but TMUX is an environment variable
+	// the caller owns: `env -u TMUX tclaude agentd serve --tui` from an agent's
+	// pane would otherwise come back as an operator console. Checking the
+	// process tree makes the guard structural instead.
+	if tuiConsoleHasHarnessAncestor() {
+		return "this process runs under a coding harness, whose ancestry the console must keep"
+	}
 	if err := session.CheckTmuxInstalled(); err != nil {
 		return "tmux is not installed"
 	}
@@ -154,12 +189,23 @@ func runTUIConsoleInTmux(p *serveParams) (handled bool, err error) {
 		return true, err
 	}
 
+	// One teardown, reachable from two directions: the attach returning below,
+	// and a signal that kills the launcher outright. Without the second, an ssh
+	// drop or a closed terminal window would leave the console session — and
+	// the daemon inside it — running with no client and nothing left to stop
+	// them, which is exactly the "nobody can see it" state the foreground
+	// contract exists to prevent. The next `serve --tui` would then fail on the
+	// singleton lock with no hint of where the daemon actually is.
+	stop := sync.OnceFunc(func() { stopTUIConsoleSession(name) })
+	stopTrapping := trapTUIConsoleSignals(stop)
+	defer stopTrapping()
+
 	attachErr := attachToTUIConsoleSession(name)
 	// Unconditional: on the ordinary path the daemon has already exited and
 	// this finds nothing, and on every other path — a detach, an attach that
 	// never got off the ground — it is what keeps `serve --tui` the foreground
 	// process it says it is.
-	stopTUIConsoleSession(name)
+	stop()
 
 	// The daemon's own error outranks the client's: a console that failed to
 	// start takes its session with it, which the attach then reports as
@@ -234,20 +280,59 @@ func tuiConsoleArgv(exe string) string {
 // destroyed and tmux detaches the client) or because they detached by hand.
 // Which of the two it was is stopTUIConsoleSession's question.
 //
-// Exit status 1 is not a failure, the same reading session.attachToSessionWithFlags
-// applies: tmux exits 1 on a plain detach AND on the session ending underneath
-// the client, which is precisely how a console quits. Anything else — a tmux
-// that could not open the terminal, a binary that is not there — is real, and
-// the console's own error file outranks it either way.
+// Exit status 1 alone is not a failure, the same reading
+// session.attachToSessionWithFlags applies: tmux exits 1 on a plain detach AND
+// on the session ending underneath the client, which is precisely how a console
+// quits. What tells those apart from a real failure is stderr — tmux writes
+// "[detached (from session …)]" to STDOUT on a clean detach and keeps stderr
+// empty, while "no sessions", "can't find session" and "open terminal failed"
+// all land on stderr. Without that discrimination a console whose pane died
+// before the daemon could write its error file would exit 0 having run nothing.
+//
+// stderr is teed rather than captured: the operator should still see tmux's own
+// words on their terminal, and the copy is only there to be turned into an
+// error.
 func attachToTUIConsoleSession(name string) error {
 	cmd := clcommon.Default.Command("attach-session", "-t", clcommon.ExactTarget(name))
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	var stderr bytes.Buffer
+	cmd.Stdin, cmd.Stdout = os.Stdin, os.Stdout
+	cmd.Stderr = io.MultiWriter(os.Stderr, &stderr)
 	err := cmd.Run()
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+		if msg := boundTUIConsoleText(stderr.String()); msg != "" {
+			return errors.New(msg)
+		}
 		return nil
 	}
 	return err
+}
+
+// trapTUIConsoleSignals runs stop on the signals that would otherwise kill the
+// launcher without it, and returns the call that stops trapping.
+//
+// It does NOT exit: stopping the console destroys its tmux session, which
+// detaches the client, which returns the attach below into the ordinary exit
+// path with every deferred cleanup intact. SIGINT is included for completeness
+// rather than for ctrl-c — tmux holds the terminal in raw mode while attached,
+// so ctrl-c reaches the console as a keystroke, not a signal.
+func trapTUIConsoleSignals(stop func()) func() {
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	done := make(chan struct{})
+	go func() {
+		select {
+		case sig := <-sigs:
+			slog.Info("tui: launcher signalled; stopping the console it started",
+				"signal", sig.String(), "module", "agentd")
+			stop()
+		case <-done:
+		}
+	}()
+	return func() {
+		signal.Stop(sigs)
+		close(done)
+	}
 }
 
 // stopTUIConsoleSession ends the console session if it is still there, which
@@ -258,6 +343,12 @@ func attachToTUIConsoleSession(name string) error {
 // SIGTERM first, aimed at the pane's own pid, so the daemon takes its ordinary
 // shutdown path — draining HTTP, flushing checkpoints, releasing the singleton
 // lock. kill-session is the backstop for one that does not go.
+//
+// The pid is read from tmux and then signalled, so in principle the daemon
+// could exit and its pid be reused in between, sending SIGTERM to a stranger.
+// tuiConsolePanePID is therefore the LAST thing read before the signal — the
+// window is a single syscall wide, and closing it entirely would need a pidfd
+// this code has no other reason to carry.
 func stopTUIConsoleSession(name string) {
 	if !tuiConsoleSessionAlive(name) {
 		return
@@ -328,17 +419,22 @@ func waitForTUIConsoleSessionGone(name string) bool {
 }
 
 // newTUIConsoleErrorFile creates the private file the console writes a startup
-// failure to. It lives beside the launch scripts, under the same 0700 data
-// directory, because it carries whatever runServe put in an error.
+// failure to. It carries whatever runServe put in an error, so it lives under
+// the 0700 private data directory — in a subdirectory of its own, like the
+// launch scripts, so a launcher that never got to clean up (a SIGKILL, a lost
+// host) litters a corner rather than the data root. Stale ones are swept here
+// for the same reason: nothing else ever will.
 func newTUIConsoleErrorFile() (string, func(), error) {
-	dir := strings.TrimSpace(config.DataDir())
-	if dir == "" {
+	base := strings.TrimSpace(config.DataDir())
+	if base == "" {
 		return "", func() {}, fmt.Errorf("resolve the private data directory for the terminal UI's error file")
 	}
+	dir := filepath.Join(base, tuiConsoleStateDirName)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", func() {}, fmt.Errorf("create the private data directory: %w", err)
+		return "", func() {}, fmt.Errorf("create the terminal UI's private directory: %w", err)
 	}
-	f, err := os.CreateTemp(dir, "tui-console-error-*")
+	sweepStaleTUIConsoleErrorFiles(dir, time.Now())
+	f, err := os.CreateTemp(dir, "error-*")
 	if err != nil {
 		return "", func() {}, fmt.Errorf("create the terminal UI's error file: %w", err)
 	}
@@ -356,16 +452,44 @@ func newTUIConsoleErrorFile() (string, func(), error) {
 	return path, remove, nil
 }
 
-// readTUIConsoleError returns what the console recorded on its way out, bounded
-// because it is read back into an error the launcher prints.
+// sweepStaleTUIConsoleErrorFiles removes error files old enough that no live
+// launcher can still be waiting on them. Best-effort throughout: a directory
+// that cannot be read or an entry that cannot be removed is not a reason to
+// refuse to start a console.
+func sweepStaleTUIConsoleErrorFiles(dir string, now time.Time) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasPrefix(entry.Name(), "error-") {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil || now.Sub(info.ModTime()) < tuiConsoleErrorFileMaxAge {
+			continue
+		}
+		_ = os.Remove(filepath.Join(dir, entry.Name()))
+	}
+}
+
+// readTUIConsoleError returns what the console recorded on its way out.
 func readTUIConsoleError(path string) string {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return ""
 	}
-	msg := strings.TrimSpace(string(raw))
-	if len(msg) > 4096 {
-		msg = msg[:4096]
+	return boundTUIConsoleText(string(raw))
+}
+
+// boundTUIConsoleText trims and caps text on its way into an error the launcher
+// prints on the operator's terminal. Both sources are small in practice — one
+// runServe error, or a line or two from tmux — and neither is worth trusting
+// with the size of what it writes.
+func boundTUIConsoleText(raw string) string {
+	msg := strings.TrimSpace(raw)
+	if len(msg) > tuiConsoleMaxErrorBytes {
+		msg = msg[:tuiConsoleMaxErrorBytes]
 	}
 	return msg
 }

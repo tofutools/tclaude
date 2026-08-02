@@ -9,7 +9,9 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 )
@@ -24,11 +26,39 @@ type consoleTmuxRec struct {
 	aliveAnswers []bool
 	panePID      string
 	failCreate   bool
+	// attachStderr is what the stand-in `attach-session` writes to stderr
+	// before exiting 1 — how tmux reports "no sessions" under a console that
+	// died before it could write its own error file.
+	attachStderr string
+	// consoleError is written to the error file the launch script names, as the
+	// inner daemon would on a startup failure. Applied when attach runs, since
+	// that is when a real console would already have failed.
+	consoleError string
+	// launchScript is the path new-session was told to run.
+	launchScript string
 }
 
 func (r *consoleTmuxRec) Command(args ...string) *exec.Cmd {
 	r.calls = append(r.calls, append([]string(nil), args...))
 	switch {
+	case slices.Contains(args, "new-session"):
+		if r.failCreate {
+			return exec.Command("false")
+		}
+		r.launchScript = args[len(args)-1]
+		return exec.Command("true")
+	case slices.Contains(args, "attach-session"):
+		if r.consoleError != "" {
+			_ = os.WriteFile(r.consoleErrorFilePath(), []byte(r.consoleError), 0o600)
+		}
+		if r.attachStderr != "" {
+			// tmux's own shape for a failed attach: the message on stderr,
+			// exit 1. The script is a compile-time constant; only the message
+			// the test chose is interpolated, through argv rather than the
+			// script body.
+			return exec.Command("sh", "-c", `printf '%s\n' "$1" >&2; exit 1`, "sh", r.attachStderr)
+		}
+		return exec.Command("true")
 	case slices.Contains(args, "has-session"):
 		alive := false
 		if len(r.aliveAnswers) > 0 {
@@ -43,10 +73,25 @@ func (r *consoleTmuxRec) Command(args ...string) *exec.Cmd {
 			return exec.Command("false")
 		}
 		return exec.Command("echo", r.panePID)
-	case r.failCreate && slices.Contains(args, "new-session"):
-		return exec.Command("false")
 	}
 	return exec.Command("true")
+}
+
+// consoleErrorFilePath digs the error-file path back out of the launch script
+// the launcher wrote, which is the only place it exists — the launcher picks it
+// itself and never returns it.
+func (r *consoleTmuxRec) consoleErrorFilePath() string {
+	raw, err := os.ReadFile(r.launchScript)
+	if err != nil {
+		return ""
+	}
+	for line := range strings.SplitSeq(string(raw), "; ") {
+		prefix := "export " + tuiConsoleErrorFileEnv + "="
+		if after, ok := strings.CutPrefix(strings.TrimSpace(line), prefix); ok {
+			return strings.Trim(after, "'")
+		}
+	}
+	return ""
 }
 
 func (r *consoleTmuxRec) ListSessions() (map[string]struct{}, error) {
@@ -77,6 +122,16 @@ func installConsoleTmuxRec(t *testing.T, rec *consoleTmuxRec) *consoleTmuxRec {
 	clcommon.Default = rec
 	t.Cleanup(func() { clcommon.Default = prev })
 	return rec
+}
+
+// tuiConsoleStubAncestry pins the harness-ancestry probe. Tests must set it
+// either way: the test binary's own ancestry is whatever ran `go test`, which
+// on a developer's machine is quite often a coding agent.
+func tuiConsoleStubAncestry(t *testing.T, hasHarnessAncestor bool) {
+	t.Helper()
+	prev := tuiConsoleHasHarnessAncestor
+	tuiConsoleHasHarnessAncestor = func() bool { return hasHarnessAncestor }
+	t.Cleanup(func() { tuiConsoleHasHarnessAncestor = prev })
 }
 
 // TestTUIConsoleRelaunchRequested pins when `serve --tui` hands itself to a
@@ -114,6 +169,7 @@ func TestTUIConsoleRelaunchRequested(t *testing.T) {
 // its lifetime to something meant to outlive it.
 func TestTUIConsoleUnavailable_ExternalTmuxRuntime(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	tuiConsoleStubAncestry(t, false)
 	tuiConsoleStubTerminal(t, true)
 	dir := "/sys/fs/cgroup/system.slice/tclaude-tmux.service"
 
@@ -129,6 +185,7 @@ func TestTUIConsoleUnavailable_ExternalTmuxRuntime(t *testing.T) {
 // without a terminal keeps the one it has instead of failing startup.
 func TestTUIConsoleUnavailable_NoTerminal(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	tuiConsoleStubAncestry(t, false)
 	tuiConsoleStubTerminal(t, false)
 
 	if reason := tuiConsoleUnavailable(&serveParams{TUI: true}); reason == "" {
@@ -142,6 +199,7 @@ func TestTUIConsoleUnavailable_NoTerminal(t *testing.T) {
 func TestRunTUIConsoleInTmux_DegradesInsteadOfFailing(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	rec := installConsoleTmuxRec(t, &consoleTmuxRec{})
+	tuiConsoleStubAncestry(t, false)
 	tuiConsoleStubTerminal(t, false)
 
 	handled, err := runTUIConsoleInTmux(&serveParams{TUI: true})
@@ -154,6 +212,163 @@ func TestRunTUIConsoleInTmux_DegradesInsteadOfFailing(t *testing.T) {
 	}
 }
 
+// TestTUIConsoleUnavailable_HarnessAncestorKeepsItsClassification is the
+// security guard, and the reason the ancestry check does not simply trust TMUX.
+// The daemon classifies its own console by walking the process tree — a harness
+// ancestor beats an operator token — and relaunching reparents the daemon under
+// the tmux server, erasing that ancestor. `env -u TMUX tclaude agentd serve
+// --tui` from an agent's pane would otherwise turn an agent-class console into
+// an operator one.
+func TestTUIConsoleUnavailable_HarnessAncestorKeepsItsClassification(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("TMUX", "")
+	tuiConsoleStubAncestry(t, true)
+	tuiConsoleStubTerminal(t, true)
+
+	reason := tuiConsoleUnavailable(&serveParams{TUI: true})
+
+	if !strings.Contains(reason, "coding harness") {
+		t.Fatalf("tuiConsoleUnavailable = %q, want it to decline on the harness ancestor", reason)
+	}
+}
+
+// TestRunTUIConsoleInTmux_HappyPath walks the whole launcher once: create the
+// session, hand it the terminal, and stop it afterwards. The stop is
+// unconditional by design, so a console that quit on its own must still be
+// probed for and found gone.
+func TestRunTUIConsoleInTmux_HappyPath(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	rec := installConsoleTmuxRec(t, &consoleTmuxRec{})
+	tuiConsoleStubAncestry(t, false)
+	tuiConsoleStubTerminal(t, true)
+
+	handled, err := runTUIConsoleInTmux(&serveParams{TUI: true})
+
+	if !handled || err != nil {
+		t.Fatalf("runTUIConsoleInTmux = (%v, %v), want (true, nil)", handled, err)
+	}
+	for _, want := range []string{"new-session", "attach-session", "has-session"} {
+		if !rec.issued(want) {
+			t.Errorf("launcher never issued %s; calls were %v", want, rec.calls)
+		}
+	}
+	if rec.issued("kill-session") {
+		t.Fatalf("a console that quit on its own must not be killed, got %v", rec.calls)
+	}
+}
+
+// TestRunTUIConsoleInTmux_ReportsTheConsolesOwnError is why the error file
+// exists. The console's pane is destroyed moments after it fails, so its
+// message has to be handed back to the launcher, which still has a terminal to
+// print it on — and it outranks whatever tmux made of attaching to a session
+// that was already gone.
+func TestRunTUIConsoleInTmux_ReportsTheConsolesOwnError(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	installConsoleTmuxRec(t, &consoleTmuxRec{
+		consoleError: "another agentd already owns /home/x/.tclaude/data",
+		attachStderr: "no sessions",
+	})
+	tuiConsoleStubAncestry(t, false)
+	tuiConsoleStubTerminal(t, true)
+
+	handled, err := runTUIConsoleInTmux(&serveParams{TUI: true})
+
+	if !handled || err == nil {
+		t.Fatalf("runTUIConsoleInTmux = (%v, %v), want the console's failure reported", handled, err)
+	}
+	if !strings.Contains(err.Error(), "another agentd already owns") {
+		t.Fatalf("error = %q, want the console's own message rather than tmux's", err)
+	}
+}
+
+// TestRunTUIConsoleInTmux_AFailedAttachIsNotASilentSuccess covers the case with
+// no error file to fall back on: the pane died before the daemon could write
+// one, so all that is left is tmux's complaint. tmux exits 1 on a clean detach
+// too, so without reading stderr this path would return success from a run that
+// never started a console.
+func TestRunTUIConsoleInTmux_AFailedAttachIsNotASilentSuccess(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	installConsoleTmuxRec(t, &consoleTmuxRec{attachStderr: "can't find session: tclaude-console"})
+	tuiConsoleStubAncestry(t, false)
+	tuiConsoleStubTerminal(t, true)
+
+	handled, err := runTUIConsoleInTmux(&serveParams{TUI: true})
+
+	if !handled || err == nil {
+		t.Fatalf("runTUIConsoleInTmux = (%v, %v), want a failed attach reported", handled, err)
+	}
+	if !strings.Contains(err.Error(), "can't find session") {
+		t.Fatalf("error = %q, want tmux's own complaint", err)
+	}
+}
+
+// TestAttachToTUIConsoleSession_PlainDetachIsNotAFailure is the other side of
+// that rule. A detach and a dead session both exit 1; only one of them says
+// anything on stderr, and the operator quitting the console must not be
+// reported as an error.
+func TestAttachToTUIConsoleSession_PlainDetachIsNotAFailure(t *testing.T) {
+	installConsoleTmuxRec(t, &consoleTmuxRec{attachStderr: ""})
+
+	if err := attachToTUIConsoleSession("tclaude-console"); err != nil {
+		t.Fatalf("attachToTUIConsoleSession = %v, want a clean detach to be no error", err)
+	}
+}
+
+// TestTrapTUIConsoleSignals_StopsTheConsole is the foreground contract under a
+// launcher that is killed rather than detached from — an ssh drop, a closed
+// terminal window. Without it the console session and the daemon in it would
+// survive with no client, invisible, and would then block the next `serve
+// --tui` on the singleton lock.
+func TestTrapTUIConsoleSignals_StopsTheConsole(t *testing.T) {
+	stopped := make(chan struct{})
+	stopTrapping := trapTUIConsoleSignals(func() { close(stopped) })
+	defer stopTrapping()
+
+	if err := syscall.Kill(os.Getpid(), syscall.SIGHUP); err != nil {
+		t.Fatalf("signal this process: %v", err)
+	}
+
+	select {
+	case <-stopped:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a signalled launcher must stop the console it started")
+	}
+}
+
+// TestSweepStaleTUIConsoleErrorFiles keeps a launcher that never got to clean
+// up — a SIGKILL, a lost host — from accumulating error files forever, without
+// touching one a live launcher may still be waiting on.
+func TestSweepStaleTUIConsoleErrorFiles(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now()
+	stale := filepath.Join(dir, "error-old")
+	fresh := filepath.Join(dir, "error-new")
+	unrelated := filepath.Join(dir, "something-else")
+	for _, p := range []string{stale, fresh, unrelated} {
+		if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
+			t.Fatalf("seed %s: %v", p, err)
+		}
+	}
+	old := now.Add(-2 * tuiConsoleErrorFileMaxAge)
+	if err := os.Chtimes(stale, old, old); err != nil {
+		t.Fatalf("age the stale file: %v", err)
+	}
+	if err := os.Chtimes(unrelated, old, old); err != nil {
+		t.Fatalf("age the unrelated file: %v", err)
+	}
+
+	sweepStaleTUIConsoleErrorFiles(dir, now)
+
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Errorf("stale error file survived the sweep (stat err %v)", err)
+	}
+	for _, p := range []string{fresh, unrelated} {
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("sweep removed %s, which it had no business touching: %v", p, err)
+		}
+	}
+}
+
 // TestStartTUIConsoleSession_LaunchShape pins what actually reaches tmux: a
 // detached session under the console's own name, and a launch script rather
 // than a bare argv — the script is what re-exports THIS process's environment,
@@ -163,6 +378,10 @@ func TestStartTUIConsoleSession_LaunchShape(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	rec := installConsoleTmuxRec(t, &consoleTmuxRec{})
 	t.Setenv("TCLAUDE_CONSOLE_LAUNCH_PROBE", "carried-through")
+	stubArgs := []string{"tclaude", "agentd", "serve", "--tui", "--dashboard-port", "8321"}
+	prevArgs := os.Args
+	os.Args = stubArgs
+	t.Cleanup(func() { os.Args = prevArgs })
 
 	if err := startTUIConsoleSession("tclaude-console", "/usr/local/bin/tclaude",
 		"/tmp/err"); err != nil {
@@ -195,6 +414,10 @@ func TestStartTUIConsoleSession_LaunchShape(t *testing.T) {
 		// `exec` so #{pane_pid} is the daemon itself and the shutdown path's
 		// SIGTERM is not swallowed by a surviving `sh` wrapper.
 		"exec " + clcommon.ShellQuoteArg("/usr/local/bin/tclaude"),
+		// The invocation itself has to survive into the pane, --tui included:
+		// the console inside the session is a `serve --tui` in every respect
+		// except that it finds itself inside tmux.
+		" agentd serve --tui --dashboard-port 8321",
 	} {
 		if !strings.Contains(script, want) {
 			t.Errorf("launch script is missing %q\n---\n%s", want, script)
@@ -296,16 +519,20 @@ func TestTUIConsoleStartupErrorRoundTrip(t *testing.T) {
 }
 
 // TestRecordTUIConsoleStartupError_OnlyForALaunchedConsole keeps the daemon
-// that nobody launched — a plain `agentd serve` — from writing anywhere.
+// that nobody launched — a plain `agentd serve` — from writing anywhere. The
+// path it WOULD have used is created first, so the assertion fails if the
+// unset-env guard is dropped rather than passing for want of a target.
 func TestRecordTUIConsoleStartupError_OnlyForALaunchedConsole(t *testing.T) {
-	dir := t.TempDir()
+	path := filepath.Join(t.TempDir(), "console-error")
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatalf("seed the error file: %v", err)
+	}
 	t.Setenv(tuiConsoleErrorFileEnv, "")
 
 	recordTUIConsoleStartupError(errors.New("boom"))
 
-	entries, err := os.ReadDir(dir)
-	if err != nil || len(entries) != 0 {
-		t.Fatalf("an unlaunched daemon wrote %v (err %v), want nothing", entries, err)
+	if got := readTUIConsoleError(path); got != "" {
+		t.Fatalf("an unlaunched daemon wrote %q, want nothing", got)
 	}
 }
 

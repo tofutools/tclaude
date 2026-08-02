@@ -299,10 +299,26 @@ draws in your terminal as it always did, saying which reason applied:
 - **You started it from inside tmux already.** The console appears in the tmux
   you are in, rather than a second one you would have to go and find — and
   **enter** already uses `switch-client` there.
+- **You started it from inside an agent's pane.** The daemon classifies its own
+  console by process ancestry, and a harness ancestor makes it an agent-class
+  console (see the identity note above). Relaunching would reparent the daemon
+  under the tmux server and erase that ancestor, so the console stays where it
+  is — including when `TMUX` has been unset.
 
 A startup failure inside the session — `another agentd already owns …`, a port
 that is taken — is reported on your own terminal, not left in a pane that is
 destroyed a moment later.
+
+The console session is an ordinary tmux session and shows up in
+`tmux -L tclaude ls` as `tclaude-console`, so it is worth recognising before you
+go killing sessions by hand. If you ever do find one with no client on it — a
+launcher that was `SIGKILL`ed cannot run its teardown — that is where the daemon
+still is, and the next `serve --tui` will refuse to start until it is gone:
+
+```bash
+tmux -L tclaude attach -t tclaude-console   # go look at it, then quit with q
+tmux -L tclaude kill-session -t tclaude-console
+```
 
 The **tmux server's** lifetime stays tmux's business, not the daemon's. The
 console's session is what starts a server on a clean host and what keeps it up
