@@ -511,6 +511,30 @@ func TestTUIQuitAsksBeforeShuttingTheDaemonDown(t *testing.T) {
 	assert.IsType(t, tea.QuitMsg{}, cmd())
 }
 
+// A console in a tmux pane has nowhere safe to print the operator token, and
+// says so rather than leaving the operator hunting for a banner that used to be
+// there. The note itself carries no secret — a persisted token's path is not
+// the token, and is the one thing that still helps.
+func TestTUIWithheldTokenLinesExplainAndPointSomewhere(t *testing.T) {
+	ephemeral := tuiWithheldTokenLines(tokenSource{kind: tokenSourceEphemeral})
+	joined := strings.Join(ephemeral, " ")
+	assert.Contains(t, joined, "withheld")
+	assert.Contains(t, joined, "--persist-operator-token",
+		"an ephemeral token has nowhere to be read from, so the note must offer one")
+
+	persisted := tuiWithheldTokenLines(tokenSource{
+		kind: tokenSourceFile, path: "/home/x/.tclaude/data/operator_token"})
+	assert.Contains(t, strings.Join(persisted, " "), "/home/x/.tclaude/data/operator_token",
+		"a persisted token's path is not a secret and is what the operator needs")
+
+	for _, lines := range [][]string{ephemeral, persisted} {
+		for _, line := range lines {
+			assert.LessOrEqual(t, lipgloss.Width("  "+line), 80,
+				"the token block is budgeted to the console's width")
+		}
+	}
+}
+
 // Quitting stops the daemon and takes the console's own tmux session with it,
 // and nothing else: the agents keep their panes for the next daemon to pick up.
 // The prompt says exactly that much.

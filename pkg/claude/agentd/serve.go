@@ -231,16 +231,40 @@ func serveStdout(p *serveParams) io.Writer {
 	return os.Stdout
 }
 
-// tokenBannerInTUI reports whether the operator-token banner belongs inside
-// the terminal console instead of on stdout. It always does when the console
-// is running: stdout is discarded there (see serveStdout), so the console is
-// the only place the operator can read the token — to sign in to the web
-// dashboard when one is up, or to export for a CLI in another window when one
-// is not.
+// consoleSecretsOffScreen reports whether NOTHING the console draws may be a
+// credential — the operator token, a dashboard sign-in link, anything else
+// added later. Two independent reasons, and the console cannot tell them apart
+// because it does not need to:
 //
-// --no-print-human-token still means what it says: no banner anywhere.
+//   - --no-print-human-token: the operator has said this terminal's output is
+//     scraped or logged.
+//   - The console is running in a tmux session of its own, so its "terminal" is
+//     a pane on the shared tclaude server that `capture-pane` can read
+//     (see tuiConsoleInOwnTmuxSession).
+func consoleSecretsOffScreen(p *serveParams) bool {
+	return p.NoPrintHumanToken || tuiConsoleInOwnTmuxSession()
+}
+
+// tokenBannerInTUI reports whether the operator-token banner belongs inside
+// the terminal console instead of on stdout. It does when the console is
+// running AND the console's screen is the operator's own terminal: stdout is
+// discarded under --tui (see serveStdout), so that screen is the only place
+// left to read the token.
+//
+// It is deliberately NOT true for a console in a tmux pane. That console has
+// nowhere safe to show the token, and the operator gets a note saying so
+// instead — see tuiWithheldTokenLines.
 func tokenBannerInTUI(p *serveParams) bool {
-	return p.TUI && !p.NoPrintHumanToken
+	return p.TUI && !consoleSecretsOffScreen(p)
+}
+
+// tokenWithheldForTmuxConsole reports whether the console should explain a
+// missing token rather than simply not showing one. --no-print-human-token
+// means the operator asked for silence and gets it; a tmux console is the
+// daemon's own decision, so it owes an explanation and a way to get the token
+// anyway.
+func tokenWithheldForTmuxConsole(p *serveParams) bool {
+	return p.TUI && !p.NoPrintHumanToken && tuiConsoleInOwnTmuxSession()
 }
 
 func runServe(p *serveParams) (err error) {
@@ -740,11 +764,17 @@ func runServe(p *serveParams) (err error) {
 	stopTUI := func() error { return nil }
 	if p.TUI {
 		startup := tuiStartup{
-			dashboardURL:    popupBaseURL,
-			suppressSecrets: p.NoPrintHumanToken,
+			dashboardURL:         popupBaseURL,
+			suppressSecrets:      consoleSecretsOffScreen(p),
+			tokenWithheldForTmux: tokenWithheldForTmuxConsole(p),
 		}
 		if tokenBannerInTUI(p) {
 			startup.operatorToken, startup.tokenSource = operatorTok, tokenSrc
+		}
+		if startup.tokenWithheldForTmux {
+			// The source still travels: where a persisted token lives is not
+			// itself a secret, and it is the whole of what the note can offer.
+			startup.tokenSource = tokenSrc
 		}
 		stopTUI = startServeTUI(quit, startup)
 	}

@@ -536,6 +536,52 @@ func TestRecordTUIConsoleStartupError_OnlyForALaunchedConsole(t *testing.T) {
 	}
 }
 
+// TestConsoleSecretsOffScreen is the rule that replaced "is this the
+// operator?" for deciding what may be drawn. A console in a tmux pane is not a
+// private screen — `tmux -L tclaude capture-pane` reads it, scrollback and all,
+// from any process that can reach the server — so being the operator no longer
+// earns a token or a dashboard sign-in link.
+func TestConsoleSecretsOffScreen(t *testing.T) {
+	cases := map[string]struct {
+		params     serveParams
+		consoleEnv string
+		want       bool
+	}{
+		"console on the operator's own terminal": {serveParams{TUI: true}, "", false},
+		"console in a tmux pane":                 {serveParams{TUI: true}, "tclaude-console", true},
+		"operator asked for silence":             {serveParams{TUI: true, NoPrintHumanToken: true}, "", true},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv(tuiConsoleSessionEnv, tc.consoleEnv)
+			if got := consoleSecretsOffScreen(&tc.params); got != tc.want {
+				t.Errorf("consoleSecretsOffScreen = %v, want %v", got, tc.want)
+			}
+			if banner := tokenBannerInTUI(&tc.params); banner == tc.want {
+				t.Errorf("tokenBannerInTUI = %v with secrets-off-screen %v; the token "+
+					"banner must be exactly the inverse", banner, tc.want)
+			}
+		})
+	}
+}
+
+// TestTokenWithheldForTmuxConsole separates the two reasons a token can be
+// missing. --no-print-human-token is the operator asking for silence and gets
+// it; a tmux console is the daemon's own call, so it owes an explanation.
+func TestTokenWithheldForTmuxConsole(t *testing.T) {
+	t.Setenv(tuiConsoleSessionEnv, "tclaude-console")
+	if !tokenWithheldForTmuxConsole(&serveParams{TUI: true}) {
+		t.Error("a tmux console must explain the token it is not showing")
+	}
+	if tokenWithheldForTmuxConsole(&serveParams{TUI: true, NoPrintHumanToken: true}) {
+		t.Error("--no-print-human-token asked for silence; explaining is still output")
+	}
+	t.Setenv(tuiConsoleSessionEnv, "")
+	if tokenWithheldForTmuxConsole(&serveParams{TUI: true}) {
+		t.Error("a console on its own terminal shows the token, so it withholds nothing")
+	}
+}
+
 // tuiConsoleStubTerminal pins the terminal probe for a test process that has no
 // terminal of its own.
 func tuiConsoleStubTerminal(t *testing.T, isTerminal bool) {

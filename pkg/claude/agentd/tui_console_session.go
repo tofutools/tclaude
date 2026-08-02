@@ -118,6 +118,23 @@ func tuiConsoleRelaunchRequested(p *serveParams) bool {
 	return !insideTmux() && os.Getenv(tuiConsoleSessionEnv) == ""
 }
 
+// tuiConsoleInOwnTmuxSession reports whether this daemon is the console a
+// launcher started in a tmux session of its own — as opposed to one drawing
+// straight onto the operator's terminal.
+//
+// What it decides is what may go ON that screen. A tmux pane is not the private
+// terminal the operator is sitting at: its contents, scrollback included, are
+// readable with `tmux -L tclaude capture-pane` by anything that can reach the
+// server, which on an unsandboxed host includes the agents this very console
+// spawns. So a console in a pane draws no credential — not the operator token,
+// not a dashboard sign-in link. canMintDashboardLink already reasoned exactly
+// this way about a console started from inside an agent's pane; the difference
+// now is that an OPERATOR console can be in a pane too, and being the operator
+// is no longer enough to make the screen private.
+func tuiConsoleInOwnTmuxSession() bool {
+	return os.Getenv(tuiConsoleSessionEnv) != ""
+}
+
 // tuiConsoleUnavailable names the reason this host cannot give the console a
 // tmux session of its own, or "" when it can. Every one of them degrades to the
 // pre-existing behaviour — the console in this terminal — rather than failing

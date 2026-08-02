@@ -77,11 +77,17 @@ type tuiStartup struct {
 	// --no-print-human-token suppressed it entirely.
 	operatorToken string
 	tokenSource   tokenSource
-	// suppressSecrets is --no-print-human-token: the operator has said this
-	// terminal's output is scraped or logged, so nothing the console can put on
-	// the screen may be a credential. It already covers the token banner by
-	// leaving operatorToken empty; it covers the dashboard sign-in link too.
+	// suppressSecrets means nothing the console draws may be a credential —
+	// either because --no-print-human-token said this terminal's output is
+	// scraped or logged, or because the console is in a tmux pane that
+	// capture-pane can read (see consoleSecretsOffScreen). It already covers the
+	// token banner by leaving operatorToken empty; it covers the dashboard
+	// sign-in link too.
 	suppressSecrets bool
+	// tokenWithheldForTmux distinguishes the second of those reasons, which is
+	// the daemon's own decision rather than the operator's. It owes an
+	// explanation for the token that is not there, and a way to get one anyway.
+	tokenWithheldForTmux bool
 }
 
 func startServeTUI(quit *quitter, startup tuiStartup) func() error {
@@ -96,7 +102,11 @@ func startServeTUI(quit *quitter, startup tuiStartup) func() error {
 	m.suppressSecrets = startup.suppressSecrets
 	// The first screen is drawn before the first tick.
 	m = m.refreshDashboardLink(time.Now())
-	m.tokenLines = tuiOperatorTokenLines(startup.operatorToken, startup.tokenSource)
+	if startup.tokenWithheldForTmux {
+		m.tokenLines = tuiWithheldTokenLines(startup.tokenSource)
+	} else {
+		m.tokenLines = tuiOperatorTokenLines(startup.operatorToken, startup.tokenSource)
+	}
 	m.showTokenBanner = len(m.tokenLines) > 0
 
 	prog := tea.NewProgram(m, tea.WithContext(ctx))
@@ -2324,6 +2334,30 @@ func tuiOperatorTokenLines(tok string, src tokenSource) []string {
 		lines = append(lines, "  (persisted at "+src.path+" — stable across restarts, export once)")
 	}
 	return lines
+}
+
+// tuiWithheldTokenLines is what the token block says on a console that has
+// nowhere safe to print a token: its screen is a tmux pane, and `capture-pane`
+// makes that screen readable by anything that can reach the tclaude tmux
+// server. Silence would be worse than useless here — the operator would go
+// looking for a banner that used to be there — so the block explains itself and
+// points at the one place a token can still be read from.
+//
+// Nothing in it is a secret: a persisted token's PATH is not the token, and it
+// is exactly what the operator needs to read it out of band.
+func tuiWithheldTokenLines(src tokenSource) []string {
+	lines := []string{
+		"Operator token withheld: this console is a tmux pane, and anything that",
+		"can reach the tclaude tmux server could read a token printed here.",
+	}
+	switch src.kind {
+	case tokenSourceKeychain:
+		return append(lines, "  It is in the OS keychain — export it from there.")
+	case tokenSourceFile:
+		return append(lines, "  It is in "+src.path+" — export it from there.")
+	}
+	return append(lines,
+		"  Restart with --persist-operator-token to read it from a private file.")
 }
 
 // writeTokenBlock writes the token lines at the given indent.

@@ -245,6 +245,23 @@ shown *inside* the UI. It appears at the top on startup, disappears on your
 first keystroke, and `?` brings it back for as long as the daemon runs.
 `--no-print-human-token` suppresses it there as everywhere else.
 
+**Not, however, when the console is in [a tmux session of its
+own](#the-consoles-own-tmux-session)** — which is the default. That screen is a
+tmux pane, and `tmux -L tclaude capture-pane` reads a pane's contents and its
+scrollback from any process that can reach the server; on an unsandboxed host
+that includes the agents this console spawns, and the operator token is exactly
+the credential that would let one of them act as you. (Sandboxed agents cannot:
+the tmux socket is hidden from them — see [sandboxing](sandboxing.md).) So the
+console prints no token there, and no dashboard sign-in link either; it says so
+in the block where the token used to be. Two ways to get one anyway:
+
+- `--persist-operator-token` puts it in a private `0600` file and the console
+  tells you the path, which is not itself a secret. Same for
+  `--persist-operator-token-keychain`.
+- Start the console on your own terminal instead — from inside your own tmux, or
+  on a host where it degrades (see the list in that section). The token is
+  printed there as it always was.
+
 With **no** dashboard listener (a bare `--tui`), two things are worth knowing:
 
 - `tclaude agent dashboard` and the tray's **Open dashboard** have nothing to
@@ -308,6 +325,10 @@ draws in your terminal as it always did, saying which reason applied:
 A startup failure inside the session — `another agentd already owns …`, a port
 that is taken — is reported on your own terminal, not left in a pane that is
 destroyed a moment later.
+
+Because a pane is not a private screen, the console prints no operator token and
+no dashboard sign-in link while it is in one — see [Output under
+`--tui`](#output-under---tui) for how to get the token anyway.
 
 The console session is an ordinary tmux session and shows up in
 `tmux -L tclaude ls` as `tclaude-console`, so it is worth recognising before you
