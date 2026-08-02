@@ -40,7 +40,7 @@ const (
 
 	groupRouteName = "api"
 	groupName      = "group-a"
-	brokerSocket   = "/route/broker.sock"
+	brokerSocket   = "/tmp/route/broker.sock"
 
 	probeTimeout = 30 * time.Second
 )
@@ -492,13 +492,13 @@ func relayReaders(left net.Conn, leftReader *bufio.Reader, right net.Conn, right
 }
 
 func startBwrap(ctx context.Context, executable, shared, mode, marker string, port, brokerPort, hostPort int) *exec.Cmd {
-	marker = filepath.Join("/route", filepath.Base(marker))
+	marker = filepath.Join("/tmp/route", filepath.Base(marker))
 	args := []string{
 		"--die-with-parent", "--unshare-all",
 		"--ro-bind", "/", "/",
 		"--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp",
-		"--dir", "/route", "--bind", shared, "/route", "--chdir", "/",
-		"--", "/route/probe", "--mode", mode, "--marker", marker,
+		"--dir", "/tmp/route", "--bind", shared, "/tmp/route", "--chdir", "/",
+		"--", "/tmp/route/probe", "--mode", mode, "--marker", marker,
 		"--port", strconv.Itoa(port), "--broker-port", strconv.Itoa(brokerPort),
 		"--endpoint", fmt.Sprintf("127.0.0.1:%d", hostPort),
 	}
