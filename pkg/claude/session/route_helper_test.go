@@ -107,6 +107,8 @@ func TestRouteHelperWrapperClosesCredentialFDBeforeHarness(t *testing.T) {
 }
 
 func TestRouteHelperRenderCarriesOnlyPreservedFDIntoSandbox(t *testing.T) {
+	proxyBridgeConstructedRootFixture(t)
+
 	helper := *testRouteHelper()
 	helper.BinaryPath, _ = os.Executable()
 	effective := sandboxpolicy.EffectiveProfile{NetworkAccess: sandboxpolicy.NetworkAccessNone}
