@@ -125,6 +125,28 @@ func routeHelperCredentialCurrent(capability routeHelperCredential) bool {
 	return true
 }
 
+// routeHelperCapabilityActive is a read-only capability discovery seam for
+// dashboard health. It never returns the opaque credential and reuses the
+// same exact-generation validation as route requests.
+func routeHelperCapabilityActive(agentID, convID, generation string) bool {
+	agentID = strings.TrimSpace(agentID)
+	convID = strings.TrimSpace(convID)
+	generation = strings.TrimSpace(generation)
+	if agentID == "" || convID == "" || generation == "" {
+		return false
+	}
+	routeHelperCredentials.RLock()
+	var match routeHelperCredential
+	for _, capability := range routeHelperCredentials.items {
+		if capability.agentID == agentID && capability.convID == convID && capability.launchGeneration == generation {
+			match = capability
+			break
+		}
+	}
+	routeHelperCredentials.RUnlock()
+	return match.agentID != "" && routeHelperCredentialCurrent(match)
+}
+
 func requireRouteHelperCredential(w http.ResponseWriter, r *http.Request) (routeHelperCredential, bool) {
 	capability, present, valid := routeHelperCredentialForRequest(r)
 	if !present || !valid {

@@ -31,7 +31,7 @@ function routeGroups(snapshot) {
 
 function routesForGroup(routeMap, groupName) {
   const routes = routeMap?.routes || [];
-  return groupName ? routes.filter((route) => route.group === groupName) : routes;
+  return groupName ? routes.filter((route) => route.group === groupName) : [];
 }
 
 function edgeRows(routes) {
@@ -59,7 +59,7 @@ function RouteGraph({ routes, members, selected, onSelect }) {
   for (const member of members || []) {
     const id = String(member.agent_id || member.conv_id || '');
     if (!id || byID.has(id)) continue;
-    const node = { id, name: member.title || 'unnamed agent', health: member.online ? 'current' : 'offline' };
+    const node = { id, name: member.title || 'unnamed agent', health: member.route_health || (member.online ? 'current' : 'offline') };
     byID.set(id, node);
     nodes.push(node);
   }
@@ -136,7 +136,7 @@ export function GroupsRouteMap({ state }) {
     document.addEventListener('tclaude:restore-location', restore);
     return () => document.removeEventListener('tclaude:restore-location', restore);
   }, [state]);
-  const selectedRoute = useMemo(() => (map.routes || []).find((route) => route.id === selectedRouteID) || null, [map.routes, selectedRouteID]);
+  const selectedRoute = useMemo(() => (map.routes || []).find((route) => route.id === selectedRouteID && route.group === groupName) || null, [map.routes, selectedRouteID, groupName]);
   useEffect(() => {
     if (selectedRoute?.group) setGroupName(selectedRoute.group);
   }, [selectedRoute?.id, selectedRoute?.group]);
@@ -147,7 +147,7 @@ export function GroupsRouteMap({ state }) {
   const members = groups.find((group) => group.name === groupName)?.members || [];
   const darwinCapacity = map.darwin_capacity?.[groupName] || null;
   const darwinCapacityText = darwinCapacity
-    ? `${darwinCapacity.used}/${darwinCapacity.total} reserved · ${darwinCapacity.available} available`
+    ? `${darwinCapacity.used}/${darwinCapacity.total} in use across ${darwinCapacity.pools} per-launch pools · ${darwinCapacity.available} available`
     : 'Select a group for scoped capacity';
   const isRoutes = state.subview.value === 'routes';
   useEffect(() => {
@@ -174,14 +174,17 @@ export function GroupsRouteMap({ state }) {
       : { tab: 'groups' };
     document.dispatchEvent(new CustomEvent('tclaude:navigated', { detail: { location } }));
   };
-  const selectGroup = (event) => setGroupName(event.currentTarget.value);
+  const selectGroup = (event) => {
+    setGroupName(event.currentTarget.value);
+    state.setSubview('routes', '');
+  };
   return html`<div class=${`groups-route-map-surface${isRoutes ? ' is-routes' : ''}`}>
     <div class="groups-subnav" role="tablist" aria-label="Groups views">
       <button type="button" role="tab" aria-selected=${state.subview.value === 'members'} class=${state.subview.value === 'members' ? 'active' : ''} onClick=${() => changeSubview('members')}>Members</button>
       <button type="button" role="tab" aria-selected=${state.subview.value === 'routes'} class=${state.subview.value === 'routes' ? 'active' : ''} onClick=${() => changeSubview('routes')}>Route map</button>
     </div>
     ${isRoutes && html`<div class="route-map-toolbar">
-      <label>Group <select value=${groupName} onChange=${selectGroup}><option value="">All groups</option>${groups.map((group) => html`<option key=${group.name} value=${group.name}>${group.name}</option>`)}</select></label>
+      <label>Group <select value=${groupName} onChange=${selectGroup}>${groups.map((group) => html`<option key=${group.name} value=${group.name}>${group.name}</option>`)}</select></label>
       <div class="route-map-mode" role="group" aria-label="Route map view mode"><button type="button" class=${mode === 'graph' ? 'active' : ''} aria-pressed=${mode === 'graph'} onClick=${() => setMode('graph')}>Graph</button><button type="button" class=${mode === 'list' ? 'active' : ''} aria-pressed=${mode === 'list'} onClick=${() => setMode('list')}>Exact list</button></div>
       <span class="route-map-count" aria-live="polite">${routes.length} route${routes.length === 1 ? '' : 's'}</span>
     </div>`}

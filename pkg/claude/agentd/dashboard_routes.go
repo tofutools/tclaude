@@ -5,13 +5,13 @@ import (
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
-	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 type dashboardRouteMemberIdentity struct {
 	name   string
 	conv   string
 	online bool
+	health string
 }
 
 var dashboardRouteMapPlatform = runtime.GOOS
@@ -33,24 +33,28 @@ func buildDashboardRouteMap(
 	groupViews []dashboardGroup,
 	routesByGroup map[int64][]*db.AgentRoute,
 	leasesByGroup map[int64][]*db.AgentRouteLease,
-	darwinUsedByGroup map[int64]int,
+	darwinLaunchesByGroup map[int64][]*db.DarwinRouteLaunch,
 ) dashboardRouteMap {
 	result := dashboardRouteMap{Platform: dashboardRouteMapPlatform, Routes: []dashboardRoute{}}
 	if dashboardRouteMapPlatform == "darwin" {
-		if slots, err := session.DarwinRouteSlotCount(); err == nil {
-			result.DarwinSlots = slots
-			result.DarwinCapacity = make(map[string]dashboardDarwinCapacity, len(groups))
-			for _, group := range groups {
-				if group == nil {
+		result.DarwinCapacity = make(map[string]dashboardDarwinCapacity, len(groups))
+		for i, group := range groups {
+			if group == nil || i >= len(groupViews) || !routeMapGroupEnabled(groupViews[i]) {
+				continue
+			}
+			launches := darwinLaunchesByGroup[group.ID]
+			selectors := darwinActiveSelectors(routesByGroup[group.ID], leasesByGroup[group.ID])
+			capacity := dashboardDarwinCapacity{Pools: len(launches)}
+			for _, launch := range launches {
+				if launch == nil {
 					continue
 				}
-				used := darwinUsedByGroup[group.ID]
-				available := slots - used
-				if available < 0 {
-					available = 0
-				}
-				result.DarwinCapacity[group.Name] = dashboardDarwinCapacity{Used: used, Available: available, Total: slots}
+				capacity.Total += len(launch.Slots)
+				capacity.Used += selectors[darwinLaunchKey(launch.AgentID, launch.ConvID, launch.LaunchGeneration)]
 			}
+			capacity.Available = capacity.Total - capacity.Used
+			result.DarwinCapacity[group.Name] = capacity
+			result.DarwinSlots = maxInt(result.DarwinSlots, capacity.Total)
 		}
 		result.DarwinBoundary = "Partial: localhost route selectors are host-wide on Darwin"
 	}
@@ -78,7 +82,7 @@ func buildDashboardRouteMap(
 			if agentID == "" {
 				continue
 			}
-			identity := dashboardRouteMemberIdentity{name: safeRouteName(member.Title), conv: member.ConvID, online: member.Online}
+			identity := dashboardRouteMemberIdentity{name: safeRouteName(member.Title), conv: member.ConvID, online: member.Online, health: member.RouteHealth}
 			members[agentID] = identity
 			if _, exists := identityByAgent[agentID]; !exists {
 				identityByAgent[agentID] = identity
@@ -162,6 +166,77 @@ func buildDashboardRouteMap(
 	return result
 }
 
+func maxInt(left, right int) int {
+	if left > right {
+		return left
+	}
+	return right
+}
+
+func routeMapGroupEnabled(view dashboardGroup) bool {
+	return routePermissionsEnabled(view.Permissions)
+}
+
+func routePermissionsEnabled(permissions []string) bool {
+	hasPublish, hasConsume := false, false
+	for _, permission := range permissions {
+		hasPublish = hasPublish || permission == PermRoutesPublish
+		hasConsume = hasConsume || permission == PermRoutesConsume
+	}
+	return hasPublish && hasConsume
+}
+
+// dashboardRouteHealth checks the launch capability itself. A route or lease
+// row is not evidence that the current online generation can serve routes;
+// this status is also emitted for members with no route rows yet.
+func dashboardRouteHealth(group *db.AgentGroup, permissions []string, member *convRowBundle, darwinLaunches []*db.DarwinRouteLaunch) string {
+	if group == nil || member == nil || !member.Online || !routePermissionsEnabled(permissions) {
+		return ""
+	}
+	capable := false
+	if dashboardRouteMapPlatform == "darwin" {
+		for _, launch := range darwinLaunches {
+			if launch != nil && launch.State == db.DarwinRouteLaunchActive &&
+				launch.AgentID == member.AgentID && launch.ConvID == member.ConvID &&
+				launch.LaunchGeneration == member.LaunchGeneration {
+				capable = true
+				break
+			}
+		}
+	} else {
+		capable = routeHelperCapabilityActive(member.AgentID, member.ConvID, member.LaunchGeneration)
+	}
+	if capable {
+		return "current"
+	}
+	return "restart-needed"
+}
+
+func darwinLaunchKey(agentID, convID, generation string) string {
+	return agentID + "\x00" + convID + "\x00" + generation
+}
+
+// darwinActiveSelectors is the read-only adapter seam for occupancy. A ready
+// or draining route consumes one publisher selector; every open lease consumes
+// one consumer selector. Matching is exact on agent, conversation, and launch
+// generation, so stale launches cannot inflate a current pool.
+func darwinActiveSelectors(routes []*db.AgentRoute, leases []*db.AgentRouteLease) map[string]int {
+	selectors := make(map[string]int)
+	for _, route := range routes {
+		if route == nil || (route.State != db.RouteStateReady && route.State != db.RouteStateDraining) {
+			continue
+		}
+		selectors[darwinLaunchKey(route.PublisherAgentID, route.PublisherConvID, route.PublisherLaunchGeneration)]++
+	}
+	for _, lease := range leases {
+		if lease == nil || lease.State != db.RouteLeaseOpen {
+			continue
+		}
+		selectors[darwinLaunchKey(lease.ConsumerAgentID, lease.ConsumerConvID, lease.ConsumerLaunchGeneration)]++
+	}
+	return selectors
+}
+
 type routeMemberView struct {
 	name   string
 	health string
@@ -172,6 +247,8 @@ func routeMemberState(agentID, convID string, members map[string]dashboardRouteM
 		health := "current"
 		if member.conv != convID {
 			health = "restart-needed"
+		} else if member.health != "" && member.health != "current" {
+			health = member.health
 		} else if !member.online {
 			health = "offline"
 		}

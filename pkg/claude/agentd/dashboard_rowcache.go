@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"maps"
+	"strings"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
@@ -91,13 +92,17 @@ func (rc *snapshotRowCache) rowWorkPhasesSince(baseline map[string]time.Duration
 // those are keyed by agent-id from a separate snapshot-wide preload, so each
 // caller grafts them onto its own copy of Links.
 type convRowBundle struct {
+	ConvID  string
 	AgentID string
 	Title   string
 	Created string
 	Loc     agentLocationView
 	Links   repoLinksView
 	Online  bool
-	State   agentState
+	// LaunchGeneration is the exact live session generation used by route
+	// capability checks. It stays internal to the snapshot projection.
+	LaunchGeneration string
+	State            agentState
 }
 
 // newSnapshotRowCache bulk-loads every table the snapshot rows read, keyed by
@@ -223,12 +228,14 @@ func (rc *snapshotRowCache) viewFor(convID string) *convRowBundle {
 	}
 	loc := rc.locs[convID]
 	b := &convRowBundle{
-		AgentID: rc.agentID(convID),
-		Title:   rc.titleFor(convID),
-		Created: rc.createdFor(convID),
-		Loc:     loc,
-		Links:   branchLinksForRow(convID, loc, rc.workspaces[convID], rc.gitCache),
-		Online:  isConvOnlineInSessions(rc.sessions[convID], rc.alive),
+		ConvID:           convID,
+		AgentID:          rc.agentID(convID),
+		Title:            rc.titleFor(convID),
+		Created:          rc.createdFor(convID),
+		Loc:              loc,
+		Links:            branchLinksForRow(convID, loc, rc.workspaces[convID], rc.gitCache),
+		Online:           isConvOnlineInSessions(rc.sessions[convID], rc.alive),
+		LaunchGeneration: currentLaunchGeneration(rc.sessions[convID]),
 		State: stateForConvInSessionsBatched(rc.sessions[convID], rc.alive, &rc.codexContextBatch, func(timing codexTelemetryTiming) {
 			rc.codexTelemetryTiming = rc.codexTelemetryTiming.add(timing)
 		}, rc.addRowWork),
@@ -236,6 +243,19 @@ func (rc *snapshotRowCache) viewFor(convID string) *convRowBundle {
 	b.State.TemporarySandboxMode = rc.agents[convID].TemporarySandboxMode
 	rc.memo[convID] = b
 	return b
+}
+
+func currentLaunchGeneration(rows []*db.SessionRow) string {
+	for _, row := range rows {
+		if row == nil || strings.EqualFold(strings.TrimSpace(row.Status), "exited") {
+			continue
+		}
+		identity, err := db.GetSessionExitLaunchIdentity(row.ID)
+		if err == nil && strings.TrimSpace(identity.Generation) != "" {
+			return strings.TrimSpace(identity.Generation)
+		}
+	}
+	return ""
 }
 
 func (rc *snapshotRowCache) flushCodexContextWrites() error {

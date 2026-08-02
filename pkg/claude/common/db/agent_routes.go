@@ -151,9 +151,19 @@ func ListAgentRoutes(groupID int64) ([]*AgentRoute, error) {
 	return out, rows.Err()
 }
 
-// ListAgentRoutesBatch returns the route registry rows grouped by active
-// group. This keeps the dashboard's read-only route poll to one bounded query
-// rather than one query per group.
+// DashboardRouteHistoryPerGroup is the hard projection bound for route
+// registry history. Current routes are retained first; only the newest
+// terminal rows consume the remainder of this per-group budget.
+const DashboardRouteHistoryPerGroup = 64
+
+// DashboardRouteLeaseHistoryPerRoute is the hard projection bound for lease
+// history. Every open lease is retained, followed by the newest closed leases
+// for each retained route.
+const DashboardRouteLeaseHistoryPerRoute = 8
+
+// ListAgentRoutesBatch returns a bounded route registry projection grouped by
+// active group. Current routes are retained before terminal history, so a
+// route that is currently ready or draining cannot be evicted by old cycles.
 func ListAgentRoutesBatch(groupIDs []int64) (map[int64][]*AgentRoute, error) {
 	out := make(map[int64][]*AgentRoute, len(groupIDs))
 	if len(groupIDs) == 0 {
@@ -169,13 +179,30 @@ func ListAgentRoutesBatch(groupIDs []int64) (map[int64][]*AgentRoute, error) {
 		placeholders[i] = "?"
 		args[i] = groupID
 	}
-	rows, err := d.Query(`SELECT r.id, r.group_id, g.name, r.publisher_agent_id,
-		r.publisher_conv_id, r.publisher_launch_generation, r.group_generation,
-		r.name, r.transport, r.target, r.state, r.created_at, r.withdrawn_at,
-		r.withdraw_reason
+	queryArgs := []any{RouteStateReady, RouteStateDraining}
+	queryArgs = append(queryArgs, args...)
+	queryArgs = append(queryArgs, DashboardRouteHistoryPerGroup, RouteStateReady, RouteStateDraining)
+	rows, err := d.Query(`WITH ranked_routes AS (
+		SELECT r.id, r.group_id, g.name AS group_name, r.publisher_agent_id,
+			r.publisher_conv_id, r.publisher_launch_generation, r.group_generation,
+			r.name AS route_name, r.transport, r.target, r.state, r.created_at, r.withdrawn_at,
+			r.withdraw_reason,
+			ROW_NUMBER() OVER (
+				PARTITION BY r.group_id
+				ORDER BY CASE WHEN r.state IN (?, ?) THEN 0 ELSE 1 END,
+					r.created_at DESC, r.id DESC
+			) AS projection_rank
 		FROM agent_routes r JOIN agent_groups g ON g.id = r.group_id
 		WHERE r.group_id IN (`+strings.Join(placeholders, ",")+
-		`) ORDER BY r.group_id, r.created_at, r.id`, args...)
+		`)
+	)
+	SELECT id, group_id, group_name, publisher_agent_id, publisher_conv_id,
+		publisher_launch_generation, group_generation, route_name, transport, target,
+		state, created_at, withdrawn_at, withdraw_reason
+	FROM ranked_routes
+	WHERE projection_rank <= ?
+	ORDER BY group_id, CASE WHEN state IN (?, ?) THEN 0 ELSE 1 END,
+		created_at DESC, id DESC`, queryArgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -445,11 +472,10 @@ func ListAgentRouteLeases(groupID int64, consumerAgentID, consumerConvID string)
 	return out, rows.Err()
 }
 
-// ListAgentRouteLeasesBatch returns every lease grouped by route group. It is
-// intentionally a read-only, bounded companion to ListAgentRouteLeases for
-// operator surfaces that need to show the full route topology. The caller
-// supplies the active group IDs, so archived/unrelated route history is never
-// pulled into a polling payload.
+// ListAgentRouteLeasesBatch returns a bounded lease projection grouped by route
+// group. All open leases survive, followed by the newest closed leases for
+// each retained route. The retained-route CTE prevents old route history from
+// widening the dashboard payload indefinitely.
 func ListAgentRouteLeasesBatch(groupIDs []int64) (map[int64][]*AgentRouteLease, error) {
 	out := make(map[int64][]*AgentRouteLease, len(groupIDs))
 	if len(groupIDs) == 0 {
@@ -465,12 +491,38 @@ func ListAgentRouteLeasesBatch(groupIDs []int64) (map[int64][]*AgentRouteLease, 
 		placeholders[i] = "?"
 		args[i] = groupID
 	}
-	rows, err := d.Query(`SELECT r.group_id, l.id, l.route_id, l.consumer_agent_id,
-		l.consumer_conv_id, l.consumer_launch_generation, l.group_generation,
-		l.state, l.opened_at, l.closed_at
-		FROM agent_route_leases l JOIN agent_routes r ON r.id = l.route_id
+	queryArgs := []any{RouteStateReady, RouteStateDraining}
+	queryArgs = append(queryArgs, args...)
+	queryArgs = append(queryArgs, DashboardRouteHistoryPerGroup, RouteLeaseOpen, DashboardRouteLeaseHistoryPerRoute)
+	rows, err := d.Query(`WITH ranked_routes AS (
+		SELECT r.id, r.group_id,
+			ROW_NUMBER() OVER (
+				PARTITION BY r.group_id
+				ORDER BY CASE WHEN r.state IN (?, ?) THEN 0 ELSE 1 END,
+					r.created_at DESC, r.id DESC
+			) AS projection_rank
+		FROM agent_routes r
 		WHERE r.group_id IN (`+strings.Join(placeholders, ",")+
-		`) ORDER BY r.group_id, l.opened_at, l.id`, args...)
+		`)), retained_routes AS (
+		SELECT id, group_id FROM ranked_routes
+		WHERE projection_rank <= ?
+		), ranked_leases AS (
+		SELECT rr.group_id, l.id, l.route_id, l.consumer_agent_id,
+			l.consumer_conv_id, l.consumer_launch_generation, l.group_generation,
+			l.state, l.opened_at, l.closed_at,
+			ROW_NUMBER() OVER (
+				PARTITION BY l.route_id
+				ORDER BY CASE WHEN l.state = ? THEN 0 ELSE 1 END,
+					l.opened_at DESC, l.id DESC
+			) AS projection_rank
+		FROM agent_route_leases l JOIN retained_routes rr ON rr.id = l.route_id
+		)
+		SELECT group_id, id, route_id, consumer_agent_id, consumer_conv_id,
+			consumer_launch_generation, group_generation, state, opened_at, closed_at
+		FROM ranked_leases
+		WHERE projection_rank <= ?
+		ORDER BY group_id, route_id, CASE WHEN state = ? THEN 0 ELSE 1 END,
+			opened_at DESC, id DESC`, append(queryArgs, RouteLeaseOpen)...)
 	if err != nil {
 		return nil, err
 	}

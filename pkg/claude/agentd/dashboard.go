@@ -1614,6 +1614,7 @@ type dashboardDarwinCapacity struct {
 	Used      int `json:"used"`
 	Available int `json:"available"`
 	Total     int `json:"total"`
+	Pools     int `json:"pools"`
 }
 
 type dashboardRoute struct {
@@ -1678,9 +1679,12 @@ type dashboardMember struct {
 	// tagsView carries the per-agent tag set (chips in the Description
 	// column) — see tags.go.
 	tagsView
-	Online bool       `json:"online"`
-	Owner  bool       `json:"owner,omitempty"`
-	State  agentState `json:"state"`
+	Online bool `json:"online"`
+	// RouteHealth is a safe capability status for route-enabled groups. It is
+	// deliberately a status-only projection; launch generations remain local.
+	RouteHealth string     `json:"route_health,omitempty"`
+	Owner       bool       `json:"owner,omitempty"`
+	State       agentState `json:"state"`
 	// Notify is the per-agent override ("on"/"off", "" = inherit);
 	// NotifyEffective folds the agent + group levels together (the
 	// global switch is separate — snapshot.notifications_enabled).
@@ -2611,25 +2615,25 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		groupIDs[i] = group.ID
 	}
 	var (
-		membersByGroup    map[int64][]*db.AgentGroupMember
-		ownersByGroup     map[int64][]*db.AgentGroupOwner
-		routesByGroup     map[int64][]*db.AgentRoute
-		leasesByGroup     map[int64][]*db.AgentRouteLease
-		darwinUsedByGroup map[int64]int
-		membersErr        error
-		ownersErr         error
-		routesErr         error
-		leasesErr         error
-		darwinClaimsErr   error
+		membersByGroup        map[int64][]*db.AgentGroupMember
+		ownersByGroup         map[int64][]*db.AgentGroupOwner
+		routesByGroup         map[int64][]*db.AgentRoute
+		leasesByGroup         map[int64][]*db.AgentRouteLease
+		darwinLaunchesByGroup map[int64][]*db.DarwinRouteLaunch
+		membersErr            error
+		ownersErr             error
+		routesErr             error
+		leasesErr             error
+		darwinLaunchesErr     error
 	)
 	span.addChildren("preload", runSnapshotNamedLoads(
 		snapshotNamedLoad{"group_members", func() { membersByGroup, membersErr = db.ListAgentGroupMembersBatch(groupIDs) }},
 		snapshotNamedLoad{"group_owners", func() { ownersByGroup, ownersErr = db.ListAgentGroupOwnersBatch(groupIDs) }},
 		snapshotNamedLoad{"routes", func() { routesByGroup, routesErr = db.ListAgentRoutesBatch(groupIDs) }},
 		snapshotNamedLoad{"route_leases", func() { leasesByGroup, leasesErr = db.ListAgentRouteLeasesBatch(groupIDs) }},
-		snapshotNamedLoad{"darwin_route_claims", func() {
+		snapshotNamedLoad{"darwin_route_launches", func() {
 			if dashboardRouteMapPlatform == "darwin" {
-				darwinUsedByGroup, darwinClaimsErr = db.ListDarwinRouteSlotClaimCountsByGroup(groupIDs)
+				darwinLaunchesByGroup, darwinLaunchesErr = db.ListActiveDarwinRouteLaunchesByGroup(groupIDs)
 			}
 		}},
 	)...)
@@ -2645,8 +2649,8 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	if leasesErr != nil {
 		slog.Warn("snapshot: failed to preload route leases", "error", leasesErr)
 	}
-	if darwinClaimsErr != nil {
-		slog.Warn("snapshot: failed to preload Darwin route slot claims", "error", darwinClaimsErr)
+	if darwinLaunchesErr != nil {
+		slog.Warn("snapshot: failed to preload Darwin route launch contracts", "error", darwinLaunchesErr)
 	}
 
 	// Notification-filter state: the per-agent overrides plus the set
@@ -3039,6 +3043,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 				State:             b.State,
 				Notify:            notifyPrefs[m.ConvID],
 				NotifyEffective:   notifyEffective(m.ConvID),
+				RouteHealth:       dashboardRouteHealth(g, groupPermissions, b, darwinLaunchesByGroup[g.ID]),
 			})
 			if b.Online {
 				dg.Online++
@@ -3080,6 +3085,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 				State:             b.State,
 				Notify:            notifyPrefs[ownerConv],
 				NotifyEffective:   notifyEffective(ownerConv),
+				RouteHealth:       dashboardRouteHealth(g, groupPermissions, b, darwinLaunchesByGroup[g.ID]),
 			})
 			// Pure-owners are reachable via this group too — surface
 			// the group on the agent's row in the Agents view so
@@ -3108,7 +3114,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	// Route rows and leases were read alongside the roster. Resolve their
 	// friendly labels only after group member rows are assembled so this
 	// projection adds no per-route/per-member database work to the poll.
-	out.RouteMap = buildDashboardRouteMap(groups, out.Groups, routesByGroup, leasesByGroup, darwinUsedByGroup)
+	out.RouteMap = buildDashboardRouteMap(groups, out.Groups, routesByGroup, leasesByGroup, darwinLaunchesByGroup)
 	for convID, slugs := range allGrants {
 		addAgent(convID)
 		copySlice := append([]string{}, slugs...)

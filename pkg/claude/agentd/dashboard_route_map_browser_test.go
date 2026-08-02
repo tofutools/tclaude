@@ -50,22 +50,18 @@ func TestDashSnapGroupsRouteMap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	legacy, err := db.AgentIDForConv("f1000000-0000-4000-8000-000000000004")
-	if err != nil {
-		t.Fatal(err)
-	}
 	watcher, err := db.AgentIDForConv(badgesConv)
 	if err != nil {
 		t.Fatal(err)
 	}
-	makeRoute := func(name, publisherAgent, publisherConv, consumerAgent, consumerConv string, generation int64) (*db.AgentRouteLease, error) {
-		route, routeErr := db.CreateAgentRoute(group.ID, publisherAgent, publisherConv, "publisher-launch", generation, name, "tcp", "tcp://127.0.0.1:9000")
+	makeRoute := func(name, publisherAgent, publisherConv, publisherGeneration, consumerAgent, consumerConv, consumerGeneration string, generation int64) (*db.AgentRouteLease, error) {
+		route, routeErr := db.CreateAgentRoute(group.ID, publisherAgent, publisherConv, publisherGeneration, generation, name, "tcp", "tcp://127.0.0.1:9000")
 		if routeErr != nil {
 			return nil, routeErr
 		}
-		return db.OpenAgentRouteLease(route.ID, consumerAgent, consumerConv, "consumer-launch", generation)
+		return db.OpenAgentRouteLease(route.ID, consumerAgent, consumerConv, consumerGeneration, generation)
 	}
-	staleLease, err := makeRoute("legacy-stale", publisher, "f1000000-0000-4000-8000-000000000001", consumer, "f1000000-0000-4000-8000-000000000002", group.RouteGeneration)
+	staleLease, err := makeRoute("legacy-stale", publisher, "f1000000-0000-4000-8000-000000000001", "darwin-launch", consumer, "f1000000-0000-4000-8000-000000000002", "consumer-launch", group.RouteGeneration)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,16 +80,32 @@ func TestDashSnapGroupsRouteMap(t *testing.T) {
 	if err := db.ActivateDarwinRouteLaunch(publisher, "f1000000-0000-4000-8000-000000000001", "darwin-launch"); err != nil {
 		t.Fatal(err)
 	}
+	if err := db.ReplaceAgentGroupPermissions(group.ID, []string{agentd.PermRoutesPublish, agentd.PermRoutesConsume}, "TCL-956"); err != nil {
+		t.Fatal(err)
+	}
+	group, err = db.GetAgentGroupByID(group.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.RegisterDarwinRouteLaunch(watcher, badgesConv, "darwin-watch", []int{42001, 42002, 42003, 42004}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.ActivateDarwinRouteLaunch(watcher, badgesConv, "darwin-watch"); err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() {
 		if err := db.DeleteDarwinRouteLaunch(publisher, "f1000000-0000-4000-8000-000000000001", "darwin-launch"); err != nil {
 			t.Logf("delete Darwin route fixture: %v", err)
 		}
+		if err := db.DeleteDarwinRouteLaunch(watcher, badgesConv, "darwin-watch"); err != nil {
+			t.Logf("delete Darwin watcher route fixture: %v", err)
+		}
 	})
-	readyLease, err := makeRoute("metrics-ready", charts, "f1000000-0000-4000-8000-000000000003", watcher, badgesConv, group.RouteGeneration)
+	readyLease, err := makeRoute("metrics-ready", charts, "f1000000-0000-4000-8000-000000000003", "publisher-launch", watcher, badgesConv, "consumer-launch", group.RouteGeneration)
 	if err != nil {
 		t.Fatal(err)
 	}
-	refusedLease, err := makeRoute("events-refused", watcher, badgesConv, legacy, "f1000000-0000-4000-8000-000000000004", group.RouteGeneration)
+	refusedLease, err := makeRoute("events-refused", watcher, badgesConv, "publisher-launch", watcher, badgesConv, "darwin-watch", group.RouteGeneration)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,8 +191,10 @@ func routeMapGraphJS() string {
   if (!detail || !detail.textContent.includes('Route detail')) throw new Error('route-map graph: selected detail missing');
   if (!detail.textContent.includes('pending') || detail.textContent.includes('127.0.0.1') || detail.textContent.includes('publisher-launch')) throw new Error('route-map graph: unsafe or pending detail state missing');
   if (!document.querySelector('.route-map-mode button')) throw new Error('route-map graph: list toggle missing');
+  var groupSelect = document.querySelector('.route-map-toolbar select');
+  if (!groupSelect || [...groupSelect.options].some(function(option) { return option.value === ''; })) throw new Error('route-map graph: unscoped All groups option leaked');
   var disclosure = document.querySelector('.route-map-disclosure');
-  if (!disclosure || !disclosure.textContent.includes('6/8 reserved') || !disclosure.textContent.includes('2 available') || !disclosure.textContent.includes('Partial')) throw new Error('route-map graph: Darwin used/available Partial disclosure missing');
+  if (!disclosure || !disclosure.textContent.includes('2/10 in use across 2 per-launch pools') || !disclosure.textContent.includes('8 available') || !disclosure.textContent.includes('Partial')) throw new Error('route-map graph: Darwin per-launch used/available Partial disclosure missing');
 })();`
 }
 
@@ -196,6 +210,19 @@ func routeMapListDetailJS() string {
   }
   if (!routeTab) throw new Error('route-map list: subnav did not mount');
   routeTab.click();
+  var groupSelect;
+  deadline = Date.now() + 5000;
+  while (!(groupSelect = document.querySelector('.route-map-toolbar select')) && Date.now() < deadline) {
+    await new Promise(function(resolve) { setTimeout(resolve, 40); });
+  }
+  if (!groupSelect) throw new Error('route-map list: group scope control missing');
+  groupSelect.value = 'infra-crew';
+  groupSelect.dispatchEvent(new Event('change', {bubbles: true}));
+  await new Promise(function(resolve) { requestAnimationFrame(function() { requestAnimationFrame(resolve); }); });
+  if (document.querySelector('.route-map-detail:not(.route-map-detail-empty)')) throw new Error('route-map list: cross-group route detail survived group change');
+  groupSelect.value = 'frontend-squad';
+  groupSelect.dispatchEvent(new Event('change', {bubbles: true}));
+  await new Promise(function(resolve) { requestAnimationFrame(function() { requestAnimationFrame(resolve); }); });
   var listButton;
   deadline = Date.now() + 5000;
   while (Date.now() < deadline) {
@@ -221,6 +248,6 @@ func routeMapListDetailJS() string {
   if (!detail || !detail.textContent.includes('Stable reference') || !detail.textContent.includes('refused')) throw new Error('route-map detail: safe refused detail did not open');
   if (detail.textContent.includes('127.0.0.1') || detail.textContent.includes('publisher-launch') || detail.textContent.includes('consumer-launch')) throw new Error('route-map detail: secret route fields leaked');
   var disclosure = document.querySelector('.route-map-disclosure');
-  if (!disclosure || !disclosure.textContent.includes('6/8 reserved') || !disclosure.textContent.includes('2 available') || !disclosure.textContent.includes('Partial')) throw new Error('route-map detail: Darwin used/available Partial disclosure missing');
+  if (!disclosure || !disclosure.textContent.includes('2/10 in use across 2 per-launch pools') || !disclosure.textContent.includes('8 available') || !disclosure.textContent.includes('Partial')) throw new Error('route-map detail: Darwin per-launch used/available Partial disclosure missing');
 })();`
 }
