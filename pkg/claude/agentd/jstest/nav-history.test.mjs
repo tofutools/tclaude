@@ -175,6 +175,33 @@ test('a bare /terminals with no terminals open still falls back', async (t) => {
   assert.deepEqual(restores, []);
 });
 
+test('a Groups Route map deep link falls back when the opt-in flag is off', async (t) => {
+  const harness = await createPreactHarness(t);
+  installShell(harness);
+  harness.document.body.classList.add('hide-groups-route-map');
+  const browsing = installBrowsingContext(t, harness, '/groups/routes/rte_123');
+  const [{ registerFeatureState }, { initNavHistory }] = await Promise.all([
+    harness.importDashboardModule('js/feature-state-registry.js'),
+    harness.importDashboardModule('js/nav-history.js'),
+  ]);
+  const groupsSubview = harness.signals.signal('members');
+  const routeSelection = harness.signals.signal('');
+  const unregister = registerFeatureState('groups', {
+    subview: groupsSubview, routeSelection,
+  });
+  t.after(unregister);
+  const restores = [];
+  harness.document.addEventListener('tclaude:restore-location',
+    (event) => restores.push(event.detail.location));
+
+  initNavHistory();
+
+  assert.equal(browsing.at(), '/', 'disabled Route map deep links fall back to Members');
+  assert.deepEqual(restores, [], 'disabled fallback does not synthesize a route restore');
+  assert.equal(groupsSubview.value, 'members');
+  assert.equal(routeSelection.value, '');
+});
+
 test('an explicit Groups Route map deep link restores without changing Members fallback semantics', async (t) => {
   const harness = await createPreactHarness(t);
   installShell(harness);

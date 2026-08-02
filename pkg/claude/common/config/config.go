@@ -147,6 +147,11 @@ type Config struct {
 // until a feature graduates and its flag is removed. Each flag documents its
 // default; change it here or in the dashboard Config tab to test locally.
 type FeaturesConfig struct {
+	// GroupsRouteMap enables the opt-in read-only Members | Route map subview
+	// in the Groups dashboard. It defaults off so the route projection and its
+	// additional snapshot reads stay absent until an operator opts in.
+	GroupsRouteMap bool `json:"groups_route_map,omitempty"`
+
 	// Processes enables the in-development Processes feature — BPMN-lite
 	// repeatable process graphs (drag-and-drop template editor, long-running
 	// instantiated runs, live viewer). While in development the flag gates the
@@ -206,6 +211,12 @@ const ProcessesDisabledMessage = "process commands are disabled; set features.pr
 // a bare Load() result without nil checks.
 func (c *Config) ProcessesEnabled() bool {
 	return c != nil && c.Features != nil && c.Features.Processes
+}
+
+// GroupsRouteMapEnabled reports whether the opt-in Groups Members | Route map
+// dashboard subview is enabled. It defaults off and is nil-safe.
+func (c *Config) GroupsRouteMapEnabled() bool {
+	return c != nil && c.Features != nil && c.Features.GroupsRouteMap
 }
 
 // GroupAttachmentsMode reports how the dashboard should expose the

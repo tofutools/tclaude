@@ -121,7 +121,8 @@ function RouteDetail({ route, onClose }) {
 
 export function GroupsRouteMap({ state }) {
   const snapshot = state.snapshot.value;
-  const map = snapshot?.route_map || { routes: [] };
+  const enabled = snapshot?.groups_route_map_enabled === true;
+  const map = enabled ? (snapshot?.route_map || { routes: [] }) : { routes: [] };
   const groups = routeGroups(snapshot);
   const selectedRouteID = state.routeSelection.value;
   const initialGroup = groups[0]?.name || '';
@@ -131,11 +132,16 @@ export function GroupsRouteMap({ state }) {
     const restore = (event) => {
       const location = event.detail?.location;
       if (location?.tab !== 'groups') return;
-      state.setSubview(location.subtab === 'routes' ? 'routes' : 'members', location.selection || '');
+      state.setSubview(enabled && location.subtab === 'routes' ? 'routes' : 'members', enabled ? (location.selection || '') : '');
     };
     document.addEventListener('tclaude:restore-location', restore);
     return () => document.removeEventListener('tclaude:restore-location', restore);
-  }, [state]);
+  }, [enabled, state]);
+  useEffect(() => {
+    if (!enabled && (state.subview.value === 'routes' || state.routeSelection.value)) {
+      state.setSubview('members', '');
+    }
+  }, [enabled, state]);
   const selectedRoute = useMemo(() => (map.routes || []).find((route) => route.id === selectedRouteID && route.group === groupName) || null, [map.routes, selectedRouteID, groupName]);
   useEffect(() => {
     if (selectedRoute?.group) setGroupName(selectedRoute.group);
@@ -149,7 +155,7 @@ export function GroupsRouteMap({ state }) {
   const darwinCapacityText = darwinCapacity
     ? `${darwinCapacity.used}/${darwinCapacity.total} in use across ${darwinCapacity.pools} per-launch pools · ${darwinCapacity.available} available`
     : 'Select a group for scoped capacity';
-  const isRoutes = state.subview.value === 'routes';
+  const isRoutes = enabled && state.subview.value === 'routes';
   useEffect(() => {
     const filterBar = document.querySelector('#groups-filter-root')?.parentElement;
     const list = document.querySelector('#groups-list');
@@ -178,6 +184,7 @@ export function GroupsRouteMap({ state }) {
     setGroupName(event.currentTarget.value);
     state.setSubview('routes', '');
   };
+  if (!enabled) return null;
   return html`<div class=${`groups-route-map-surface${isRoutes ? ' is-routes' : ''}`}>
     <div class="groups-subnav" role="tablist" aria-label="Groups views">
       <button type="button" role="tab" aria-selected=${state.subview.value === 'members'} class=${state.subview.value === 'members' ? 'active' : ''} onClick=${() => changeSubview('members')}>Members</button>

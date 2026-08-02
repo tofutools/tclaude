@@ -952,8 +952,9 @@ type snapshotPayload struct {
 	Links []dashboardLink `json:"links"`
 	// RouteMap is the read-only Groups/Route map projection. It is loaded from
 	// the route authority's durable rows in one bounded batch and deliberately
-	// omits target, endpoint, launch-generation, and capability material.
-	RouteMap dashboardRouteMap `json:"route_map"`
+	// omits target, endpoint, launch-generation, and capability material. It is
+	// omitted entirely while the opt-in Groups Route map flag is off.
+	RouteMap *dashboardRouteMap `json:"route_map,omitempty"`
 	// Usage is the account-wide subscription usage readout (5h + 7d
 	// rolling windows) rendered in the dashboard's top bar. Always
 	// present — Available=false carries the graceful "n/a" state.
@@ -1018,6 +1019,10 @@ type snapshotPayload struct {
 	// surface. It is re-read on every snapshot so changing config takes effect
 	// without restarting agentd, matching processRoute.
 	ProcessesEnabled bool `json:"processes_enabled"`
+	// GroupsRouteMapEnabled gates the experimental Members | Route map Groups
+	// subview and its bounded route projection. Re-read on every snapshot so a
+	// Config-tab change takes effect without restarting agentd.
+	GroupsRouteMapEnabled bool `json:"groups_route_map_enabled"`
 	// GroupAttachmentsMode selects the experimental paperclip presentation on
 	// group titles: off, float, or fixed. The attachment data and API remain
 	// available while the mode is off, so existing references are not
@@ -2600,6 +2605,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		defaults = append(defaults, cfg.Agent.DefaultPermissions...)
 	}
 	sort.Strings(defaults)
+	groupsRouteMapEnabled := cfg.GroupsRouteMapEnabled()
 
 	// agentRows: union of (every group member) + (every conv-id with
 	// explicit grants). Keyed by conv-id so members appearing in
@@ -2629,10 +2635,18 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	span.addChildren("preload", runSnapshotNamedLoads(
 		snapshotNamedLoad{"group_members", func() { membersByGroup, membersErr = db.ListAgentGroupMembersBatch(groupIDs) }},
 		snapshotNamedLoad{"group_owners", func() { ownersByGroup, ownersErr = db.ListAgentGroupOwnersBatch(groupIDs) }},
-		snapshotNamedLoad{"routes", func() { routesByGroup, routesErr = db.ListAgentRoutesBatch(groupIDs) }},
-		snapshotNamedLoad{"route_leases", func() { leasesByGroup, leasesErr = db.ListAgentRouteLeasesBatch(groupIDs) }},
+		snapshotNamedLoad{"routes", func() {
+			if groupsRouteMapEnabled {
+				routesByGroup, routesErr = db.ListAgentRoutesBatch(groupIDs)
+			}
+		}},
+		snapshotNamedLoad{"route_leases", func() {
+			if groupsRouteMapEnabled {
+				leasesByGroup, leasesErr = db.ListAgentRouteLeasesBatch(groupIDs)
+			}
+		}},
 		snapshotNamedLoad{"darwin_route_launches", func() {
-			if dashboardRouteMapPlatform == "darwin" {
+			if groupsRouteMapEnabled && dashboardRouteMapPlatform == "darwin" {
 				darwinLaunchesByGroup, darwinLaunchesErr = db.ListActiveDarwinRouteLaunchesByGroup(groupIDs)
 			}
 		}},
@@ -2917,6 +2931,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		ShowAgentHideButton:      cfg.ShowAgentHideButton(),
 		ShowGroupDescription:     cfg.ShowGroupDescription(),
 		ProcessesEnabled:         cfg.ProcessesEnabled(),
+		GroupsRouteMapEnabled:    groupsRouteMapEnabled,
 		GroupAttachmentsMode:     cfg.GroupAttachmentsMode(),
 		TerminalPaletteShortcut:  cfg.TerminalCommandPaletteShortcutEnabled(),
 		RecordedSandboxDetails:   cfg.RecordedSandboxDetailsEnabled(),
@@ -3025,6 +3040,10 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		for _, m := range members {
 			memberSet[m.ConvID] = true
 			b := rc.viewFor(m.ConvID)
+			var routeHealth string
+			if groupsRouteMapEnabled {
+				routeHealth = dashboardRouteHealth(g, groupPermissions, b, darwinLaunchesByGroup[g.ID])
+			}
 			links := b.Links.withPresentedPRs(presentedPRsFor(b.AgentID)).
 				withFreshestPRStates(freshPRStates)
 			dg.Members = append(dg.Members, dashboardMember{
@@ -3043,7 +3062,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 				State:             b.State,
 				Notify:            notifyPrefs[m.ConvID],
 				NotifyEffective:   notifyEffective(m.ConvID),
-				RouteHealth:       dashboardRouteHealth(g, groupPermissions, b, darwinLaunchesByGroup[g.ID]),
+				RouteHealth:       routeHealth,
 			})
 			if b.Online {
 				dg.Online++
@@ -3068,6 +3087,10 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			b := rc.viewFor(ownerConv)
+			var routeHealth string
+			if groupsRouteMapEnabled {
+				routeHealth = dashboardRouteHealth(g, groupPermissions, b, darwinLaunchesByGroup[g.ID])
+			}
 			ownerLinks := b.Links.withPresentedPRs(presentedPRsFor(b.AgentID)).
 				withFreshestPRStates(freshPRStates)
 			dg.Members = append(dg.Members, dashboardMember{
@@ -3085,7 +3108,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 				State:             b.State,
 				Notify:            notifyPrefs[ownerConv],
 				NotifyEffective:   notifyEffective(ownerConv),
-				RouteHealth:       dashboardRouteHealth(g, groupPermissions, b, darwinLaunchesByGroup[g.ID]),
+				RouteHealth:       routeHealth,
 			})
 			// Pure-owners are reachable via this group too — surface
 			// the group on the agent's row in the Agents view so
@@ -3114,7 +3137,10 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	// Route rows and leases were read alongside the roster. Resolve their
 	// friendly labels only after group member rows are assembled so this
 	// projection adds no per-route/per-member database work to the poll.
-	out.RouteMap = buildDashboardRouteMap(groups, out.Groups, routesByGroup, leasesByGroup, darwinLaunchesByGroup)
+	if groupsRouteMapEnabled {
+		routeMap := buildDashboardRouteMap(groups, out.Groups, routesByGroup, leasesByGroup, darwinLaunchesByGroup)
+		out.RouteMap = &routeMap
+	}
 	for convID, slugs := range allGrants {
 		addAgent(convID)
 		copySlice := append([]string{}, slugs...)

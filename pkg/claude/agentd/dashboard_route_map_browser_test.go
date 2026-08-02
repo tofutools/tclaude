@@ -10,6 +10,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/agentd/dashsnap"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -24,6 +25,17 @@ func TestDashSnapGroupsRouteMap(t *testing.T) {
 
 	f := newFlow(t)
 	seedDashSnapFixture(t, f)
+	featureConfig, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if featureConfig.Features == nil {
+		featureConfig.Features = &config.FeaturesConfig{}
+	}
+	featureConfig.Features.GroupsRouteMap = true
+	if err := config.Save(featureConfig); err != nil {
+		t.Fatal(err)
+	}
 	groups, err := db.ListAgentGroups()
 	if err != nil {
 		t.Fatal(err)
