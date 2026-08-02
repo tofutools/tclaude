@@ -88,6 +88,11 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Install tmux for the production launch cell
+        run: |
+          brew install tmux
+          tmux -V
+
       - name: Run Darwin evidence probe
         shell: bash
         run: |
@@ -98,12 +103,15 @@ jobs:
         shell: bash
         env:
           TCLAUDE_DARWIN_ROUTE_CAPABILITY_SMOKE: "1"
+          EXPECTED_HEAD: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
         run: |
           set -o pipefail
-          go test ./pkg/claude/session ./pkg/claude/routeadapter \
-            -run 'TestDarwinRouteCapabilityExactHeadSmoke|TestAdapter' -count=1 -timeout 600s -v \
+          go test ./pkg/claude/agentd \
+            -run '^TestDarwinRouteCapabilityIntegratedSmoke$' -count=1 -timeout 600s -v \
             2>&1 | tee "$RUNNER_TEMP/tcl-951-darwin-route-smoke.log"
-          grep -q 'TCL-951 exact checked-out head:' "$RUNNER_TEMP/tcl-951-darwin-route-smoke.log"
+          grep -q -- '--- PASS: TestDarwinRouteCapabilityIntegratedSmoke' "$RUNNER_TEMP/tcl-951-darwin-route-smoke.log"
+          grep -q 'TCL-951 integrated exact checked-out head:' "$RUNNER_TEMP/tcl-951-darwin-route-smoke.log"
+          grep -q 'TCL-951 integrated route evidence: POSITIVE' "$RUNNER_TEMP/tcl-951-darwin-route-smoke.log"
           grep -q 'TCL-951 disclosure: Partial' "$RUNNER_TEMP/tcl-951-darwin-route-smoke.log"
           grep -q 'TCL-947 Darwin evidence: POSITIVE' "$RUNNER_TEMP/group-route-feasibility-darwin.log"
           grep -q 'TCL-947 Darwin localhost: LIMITATION' "$RUNNER_TEMP/group-route-feasibility-darwin.log"
@@ -116,15 +124,13 @@ jobs:
             -run 'TestBuildTclaudeLayerLaunchSpec|TestSeatbeltProxyFloorCanCarveOneManagedServerBind' \
             -count=1 -timeout 600s 2>&1 | tee "$RUNNER_TEMP/tcl-951-preserved-cells.log"
 
-      - name: Run Darwin route contract and bridge cells
+      - name: Run supplemental Darwin route contract and bridge cells
         shell: bash
         run: |
           set -o pipefail
           go test ./pkg/claude/agentd \
             -run '^TestDarwinRouteAdapter(RefusesMissingLaunchContracts|ProductionBridgeUsesExactContracts)$' \
             -count=1 -timeout 600s -v 2>&1 | tee "$RUNNER_TEMP/tcl-951-route-authority.log"
-          grep -q -- '--- PASS: TestDarwinRouteAdapterRefusesMissingLaunchContracts' "$RUNNER_TEMP/tcl-951-route-authority.log"
-          grep -q -- '--- PASS: TestDarwinRouteAdapterProductionBridgeUsesExactContracts' "$RUNNER_TEMP/tcl-951-route-authority.log"
 
       - name: Upload Darwin evidence
         if: always()
