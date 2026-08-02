@@ -287,6 +287,7 @@ jobs:
           TCLAUDE_FILTERED_ALLOWED_PREFIX6: "fd00:823::/120"
           TCLAUDE_FILTERED_ALLOWED_PORT: "41001"
           TCLAUDE_FILTERED_DENIED_PORT: "41002"
+          TCLAUDE_FILTERED_UDP_SOURCE_PORT: "20000"
         run: |
           namespace=tclaude-filtered-target
           host_link=tclflt0
@@ -316,6 +317,22 @@ jobs:
           # EXIT alone would let a cancelled job — GitHub sends SIGINT first —
           # exit 0 with its fixture half torn down.
           smoke::trap_cleanup cleanup
+
+          # pasta preserves a guest UDP flow's source port on its host-side
+          # socket. Keep the smoke's source outside the host allocator's range,
+          # and fail as a fixture error if a real listener already owns it.
+          udp_source_port="$TCLAUDE_FILTERED_UDP_SOURCE_PORT"
+          read -r ephemeral_low ephemeral_high \
+            </proc/sys/net/ipv4/ip_local_port_range
+          if (( udp_source_port >= ephemeral_low && udp_source_port <= ephemeral_high )); then
+            echo "::error::Filtered-network UDP source port $udp_source_port is inside host ephemeral range $ephemeral_low-$ephemeral_high"
+            exit 1
+          fi
+          if ss -H -lun "sport = :$udp_source_port" | grep -q .; then
+            echo "::error::Filtered-network UDP source port $udp_source_port is already bound on the host"
+            ss -H -lunp "sport = :$udp_source_port" || true
+            exit 1
+          fi
 
           sudo ip netns add "$namespace"
           sudo ip link add "$host_link" type veth peer name "$peer_link"
