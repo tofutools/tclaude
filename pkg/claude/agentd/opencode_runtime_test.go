@@ -36,6 +36,33 @@ func (write openCodeWriterFunc) Write(data []byte) (int, error) {
 	return write(data)
 }
 
+func TestOpenCodeSandboxAlwaysExposesResolvedExecutable(t *testing.T) {
+	root := t.TempDir()
+	realExecutable := filepath.Join(root, "install", "opencode")
+	require.NoError(t, os.MkdirAll(filepath.Dir(realExecutable), 0o700))
+	require.NoError(t, os.WriteFile(realExecutable, []byte("binary"), 0o700))
+	canonicalExecutable, err := filepath.EvalSymlinks(realExecutable)
+	require.NoError(t, err)
+	linkedExecutable := filepath.Join(root, "opencode")
+	require.NoError(t, os.Symlink(realExecutable, linkedExecutable))
+	existing := session.TclaudeLayerReadOnlyBind{
+		Source: filepath.Join(root, "config"), Target: filepath.Join(root, "state"),
+	}
+	spec := &session.TclaudeLayerLaunchSpec{Contract: session.TclaudeLayerLaunchContract{
+		ReadOnlyBinds: []session.TclaudeLayerReadOnlyBind{existing},
+	}}
+
+	resolved, err := exposeOpenCodeExecutable(spec, linkedExecutable)
+	require.NoError(t, err)
+	assert.Equal(t, canonicalExecutable, resolved)
+	require.Len(t, spec.Contract.ReadOnlyBinds, 2)
+	assert.Equal(t, session.TclaudeLayerReadOnlyBind{
+		Source: canonicalExecutable, Target: canonicalExecutable,
+	}, spec.Contract.ReadOnlyBinds[0])
+	assert.Equal(t, existing, spec.Contract.ReadOnlyBinds[1],
+		"provider/config seals must retain their existing tail order")
+}
+
 func TestOpenCodeUnixLaunchPersistsAuthorityBeforeAcknowledgement(t *testing.T) {
 	setupTestDB(t)
 	runtime := db.OpenCodeRuntime{

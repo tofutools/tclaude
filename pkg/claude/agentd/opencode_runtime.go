@@ -624,17 +624,21 @@ func startOpenCodeProcess(
 	runtime *db.OpenCodeRuntime,
 	sandboxSpec *session.TclaudeLayerLaunchSpec,
 ) (*openCodeProcess, error) {
+	executable, err := harness.OpenCodeExecutable()
+	if err != nil {
+		return nil, fmt.Errorf("find OpenCode executable: %w", err)
+	}
 	if sandboxSpec != nil {
+		executable, err = exposeOpenCodeExecutable(sandboxSpec, executable)
+		if err != nil {
+			return nil, err
+		}
 		if err := prepareOpenCodeTclaudeLayerState(sandboxSpec); err != nil {
 			return nil, fmt.Errorf("prepare OpenCode tclaude-layer state: %w", err)
 		}
 		if err := prepareOpenCodeReadOnlyConfigForPlatform(sandboxSpec); err != nil {
 			return nil, err
 		}
-	}
-	executable, err := harness.OpenCodeExecutable()
-	if err != nil {
-		return nil, fmt.Errorf("find OpenCode executable: %w", err)
 	}
 	parsed, err := url.Parse(runtime.ServerURL)
 	if err != nil {
@@ -773,6 +777,25 @@ func startOpenCodeProcess(
 		runtime.ServerURL, openCodeStartupTimeout)
 }
 
+func exposeOpenCodeExecutable(spec *session.TclaudeLayerLaunchSpec, executable string) (string, error) {
+	resolved, err := filepath.EvalSymlinks(executable)
+	if err != nil {
+		return "", fmt.Errorf("resolve OpenCode executable for sandbox: %w", err)
+	}
+	resolved, err = filepath.Abs(resolved)
+	if err != nil {
+		return "", fmt.Errorf("resolve absolute OpenCode executable for sandbox: %w", err)
+	}
+	// The executable is launch infrastructure, not profile-authored access.
+	// Reopen exactly this file read-only even when a constructed root or a
+	// broad deny hides its installation directory. OpenCode's mutable XDG
+	// roots remain the separate daemon-owned writable state contract.
+	bind := session.TclaudeLayerReadOnlyBind{Source: resolved, Target: resolved}
+	spec.Contract.ReadOnlyBinds = append(
+		[]session.TclaudeLayerReadOnlyBind{bind}, spec.Contract.ReadOnlyBinds...)
+	return resolved, nil
+}
+
 func (process *openCodeProcess) rootPID() int {
 	if process == nil {
 		return 0
@@ -810,10 +833,15 @@ type openCodeTmuxHandshake struct {
 var openCodeTmuxHandshakeDataDir = tclcommon.TclaudeDataDir
 
 func prepareOpenCodeTmuxHandshake() (*openCodeTmuxHandshake, error) {
+	return prepareOpenCodeTmuxLaunchFiles(true)
+}
+
+func prepareOpenCodeTmuxLaunchFiles(needsUnixHandshake bool) (*openCodeTmuxHandshake, error) {
 	// The launcher is forked by the external tmux runtime, which may have a
-	// different private temporary-directory namespace from agentd. Keep the
-	// cross-process handshake in tclaude's private persistent state instead of
-	// assuming that os.TempDir is shared between the two services.
+	// different private temporary-directory namespace from agentd. Keep its
+	// startup diagnostics and optional cross-process handshake in tclaude's
+	// private persistent state instead of assuming that os.TempDir is shared
+	// between the two services.
 	dataDir := strings.TrimSpace(openCodeTmuxHandshakeDataDir())
 	if dataDir == "" {
 		return nil, fmt.Errorf("resolve private OpenCode tmux handshake directory")
@@ -836,18 +864,10 @@ func prepareOpenCodeTmuxHandshake() (*openCodeTmuxHandshake, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create OpenCode tmux handshake directory: %w", err)
 	}
-	h := &openCodeTmuxHandshake{dir: dir,
-		statusPath: filepath.Join(dir, "authority"), gatePath: filepath.Join(dir, "gate"),
-		stderrPath: filepath.Join(dir, "stderr")}
+	h := &openCodeTmuxHandshake{dir: dir, stderrPath: filepath.Join(dir, "stderr")}
 	fail := func(err error) (*openCodeTmuxHandshake, error) {
 		h.close()
 		return nil, err
-	}
-	if err := syscall.Mkfifo(h.statusPath, 0o600); err != nil {
-		return fail(fmt.Errorf("create OpenCode tmux authority fifo: %w", err))
-	}
-	if err := syscall.Mkfifo(h.gatePath, 0o600); err != nil {
-		return fail(fmt.Errorf("create OpenCode tmux launch gate: %w", err))
 	}
 	stderr, err := os.OpenFile(h.stderrPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
@@ -855,6 +875,17 @@ func prepareOpenCodeTmuxHandshake() (*openCodeTmuxHandshake, error) {
 	}
 	if err := stderr.Close(); err != nil {
 		return fail(fmt.Errorf("close OpenCode tmux startup stderr: %w", err))
+	}
+	if !needsUnixHandshake {
+		return h, nil
+	}
+	h.statusPath = filepath.Join(dir, "authority")
+	h.gatePath = filepath.Join(dir, "gate")
+	if err := syscall.Mkfifo(h.statusPath, 0o600); err != nil {
+		return fail(fmt.Errorf("create OpenCode tmux authority fifo: %w", err))
+	}
+	if err := syscall.Mkfifo(h.gatePath, 0o600); err != nil {
+		return fail(fmt.Errorf("create OpenCode tmux launch gate: %w", err))
 	}
 	h.status, err = os.OpenFile(h.statusPath, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
@@ -876,6 +907,10 @@ func (h *openCodeTmuxHandshake) close() {
 	if h.dir != "" {
 		_ = os.RemoveAll(h.dir)
 	}
+}
+
+func (h *openCodeTmuxHandshake) needsUnixHandshake() bool {
+	return h != nil && h.statusPath != "" && h.gatePath != ""
 }
 
 func (h *openCodeTmuxHandshake) connectGate(deadline time.Time) error {
@@ -946,7 +981,7 @@ func openCodeTmuxLaunchCommand(runtime db.OpenCodeRuntime, command string, args,
 	}
 	parts = append(parts, shellJoinOpenCodeCommand(command, args))
 	serverCommand := strings.Join(parts, " ")
-	if handshake != nil {
+	if handshake != nil && handshake.statusPath != "" && handshake.gatePath != "" {
 		serverCommand += " 3>" + clcommon.ShellQuoteArg(handshake.statusPath) +
 			" 4<" + clcommon.ShellQuoteArg(handshake.gatePath)
 	}
@@ -957,35 +992,52 @@ func openCodeTmuxLaunchCommand(runtime db.OpenCodeRuntime, command string, args,
 	// Capture outside the optional resource-limit wrapper. Failures in that
 	// wrapper, or in the shell while opening the handshake FIFOs, happen before
 	// the inner launcher runs and would otherwise disappear with tmux's pane.
-	if handshake != nil {
+	if handshake != nil && handshake.stderrPath != "" {
 		serverCommand += " 2>" + clcommon.ShellQuoteArg(handshake.stderrPath)
 	}
 	return "exec " + serverCommand
+}
+
+func openCodeTmuxLaunchArgs(runtime db.OpenCodeRuntime, command string, args,
+	serverEnvironment []string, handshake *openCodeTmuxHandshake) ([]string, func(), error) {
+	// Keep the generated command out of tmux's size-limited initial argv and
+	// away from the user's default shell. The private script self-deletes as
+	// its first action; tmux execs Bash directly because it receives multiple
+	// command arguments.
+	scriptPath, cleanup, err := session.WriteLaunchScript(openCodeTmuxLaunchCommand(
+		runtime, command, args, serverEnvironment, handshake))
+	if err != nil {
+		return nil, func() {}, err
+	}
+	return []string{"/bin/bash", scriptPath}, cleanup, nil
 }
 
 func startOpenCodeProcessThroughTmux(runtime *db.OpenCodeRuntime, command string,
 	args, serverEnvironment []string, needsUnixHandshake bool) (*openCodeProcess, error) {
 	var handshake *openCodeTmuxHandshake
 	var err error
-	if needsUnixHandshake {
-		handshake, err = prepareOpenCodeTmuxHandshake()
-		if err != nil {
-			return nil, err
-		}
-		defer handshake.close()
+	handshake, err = prepareOpenCodeTmuxLaunchFiles(needsUnixHandshake)
+	if err != nil {
+		return nil, err
 	}
+	defer handshake.close()
 	tmuxSession := openCodeManagedTmuxSession(runtime.SessionID)
 	if err := reclaimOrphanedOpenCodeTmuxSession(tmuxSession); err != nil {
 		return nil, err
 	}
 	tmuxArgs := []string{"new-session", "-d", "-s", tmuxSession, "-c", runtime.Cwd,
 		"-x", "80", "-y", "24"}
-	tmuxArgs = append(tmuxArgs, openCodeTmuxLaunchCommand(
-		*runtime, command, args, serverEnvironment, handshake))
+	launchArgs, cleanupScript, err := openCodeTmuxLaunchArgs(
+		*runtime, command, args, serverEnvironment, handshake)
+	if err != nil {
+		return nil, err
+	}
+	tmuxArgs = append(tmuxArgs, launchArgs...)
 	stderr := newSpawnStderrCapture()
 	launch := clcommon.Default.Command(session.ExternalTmuxNoStartArgs(tmuxArgs...)...)
 	launch.Stderr = stderr
 	if err := launch.Run(); err != nil {
+		cleanupScript()
 		return nil, fmt.Errorf("launch OpenCode server through external tmux: %w: %s", err, stderr.String())
 	}
 	pidOut, err := clcommon.Default.Command(session.ExternalTmuxNoStartArgs(
@@ -1008,7 +1060,7 @@ func startOpenCodeProcessThroughTmux(runtime *db.OpenCodeRuntime, command string
 	openCodeProcesses.Unlock()
 	runtime.PID = pid
 	go watchOpenCodeTmuxProcess(process, *runtime)
-	if handshake != nil {
+	if handshake.needsUnixHandshake() {
 		if err := handshake.connectGate(time.Now().Add(openCodeStartupTimeout)); err != nil {
 			output := captureOpenCodeTmuxStartup(handshake, tmuxSession)
 			stopOpenCodeProcess(*runtime, process)

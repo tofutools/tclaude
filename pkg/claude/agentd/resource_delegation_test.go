@@ -76,6 +76,24 @@ func TestManagedOpenCodeTmuxSessionNameIsStableAndBounded(t *testing.T) {
 	assert.Regexp(t, `^__tclaude-opencode-[0-9a-f]{20}$`, first)
 }
 
+func TestManagedOpenCodeTmuxLaunchUsesBoundedPrivateBashScript(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	largeEnvironment := "LARGE_VALUE=" + strings.Repeat("x", 64*1024)
+	args, cleanup, err := openCodeTmuxLaunchArgs(db.OpenCodeRuntime{}, "/opt/opencode",
+		[]string{"serve"}, []string{largeEnvironment}, nil)
+	require.NoError(t, err)
+	t.Cleanup(cleanup)
+
+	require.Equal(t, "/bin/bash", args[0])
+	require.Len(t, args, 2)
+	assert.Less(t, len(strings.Join(args, "\x00")), 2048,
+		"generated command must not scale tmux's initial argv")
+	assert.Contains(t, args[1], "launch-scripts")
+	raw, err := os.ReadFile(args[1])
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), largeEnvironment)
+}
+
 func TestManagedOpenCodeTmuxReclaimsReservedOrphan(t *testing.T) {
 	fake := &openCodeTmuxProbeFake{results: []bool{true, true}}
 	previous := clcommon.Default
@@ -118,6 +136,7 @@ func TestManagedOpenCodeTmuxUnixHandshakeCrossesProcessBoundary(t *testing.T) {
 	handshake, err := prepareOpenCodeTmuxHandshake()
 	require.NoError(t, err)
 	t.Cleanup(handshake.close)
+	assert.True(t, handshake.needsUnixHandshake())
 
 	childDone := make(chan error, 1)
 	go func() {
@@ -202,6 +221,22 @@ func TestManagedOpenCodeTmuxHandshakeDoesNotUseProcessTempDir(t *testing.T) {
 	assert.Equal(t, os.FileMode(0o700), mustFileMode(t,
 		filepath.Join(dataDir, "opencode-launch-handshakes")))
 	assert.Equal(t, os.FileMode(0o600), mustFileMode(t, handshake.stderrPath))
+}
+
+func TestManagedOpenCodeTmuxLoopbackLaunchFilesRetainStartupStderr(t *testing.T) {
+	setOpenCodeTmuxHandshakeDataDirForTest(t)
+	launchFiles, err := prepareOpenCodeTmuxLaunchFiles(false)
+	require.NoError(t, err)
+	t.Cleanup(launchFiles.close)
+
+	assert.Empty(t, launchFiles.statusPath)
+	assert.Empty(t, launchFiles.gatePath)
+	assert.False(t, launchFiles.needsUnixHandshake())
+	assert.Equal(t, os.FileMode(0o600), mustFileMode(t, launchFiles.stderrPath))
+	require.NoError(t, os.WriteFile(launchFiles.stderrPath,
+		[]byte("resource-limit-exec: unknown flag: --hostname\n"), 0o600))
+	assert.Equal(t, "resource-limit-exec: unknown flag: --hostname",
+		captureOpenCodeTmuxStartup(launchFiles, "missing-tmux-session"))
 }
 
 func TestManagedOpenCodeTmuxStartupRetainsStderrAfterPaneExit(t *testing.T) {

@@ -166,6 +166,43 @@ func TestConvIDForPID_OpenCodeRuntimeResolvesViaMatchedAncestorParent(t *testing
 		"the matched OpenCode ancestor's parent must be checked against opencode_runtimes")
 }
 
+func TestConvIDForPID_OpenCodeRuntimeResolvesWhenPackagedProcessIsBun(t *testing.T) {
+	setupTestDB(t)
+
+	const (
+		peerPID  = 8350
+		shellPID = 8250
+		servePID = 8150
+	)
+	const convID = "ses_opencode_bun_runtime"
+	require.NoError(t, db.UpsertOpenCodeRuntime(db.OpenCodeRuntime{
+		SessionID:             "spwn-bun-runtime",
+		ConvID:                convID,
+		ServerURL:             "http://127.0.0.1:43214",
+		Password:              "private",
+		PID:                   servePID,
+		Cwd:                   "/tmp/project",
+		SandboxImplementation: string(sandboxpolicy.ImplementationTclaudeLayer),
+	}))
+	fakeProcTree{
+		name: map[int]string{
+			peerPID:  "tclaude",
+			shellPID: "sh",
+			servePID: "bun",
+		},
+		parent: map[int]int{
+			peerPID:  shellPID,
+			shellPID: servePID,
+		},
+	}.install(t)
+	withOpenCodeRuntimeVerified(t, true)
+
+	gotConv, hasAncestor := convIDForPID(peerPID)
+	assert.True(t, hasAncestor)
+	assert.Equal(t, convID, gotConv,
+		"the recorded live runtime pid must identify OpenCode even when macOS reports bun")
+}
+
 func TestConvIDForPID_OpenCodeWrappedRuntimeResolvesThroughBoundedAncestors(t *testing.T) {
 	setupTestDB(t)
 	const (
