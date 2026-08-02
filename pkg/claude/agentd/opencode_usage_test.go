@@ -374,6 +374,49 @@ func TestOpenCodeVirtualCostWaitsForResumeSessionRow(t *testing.T) {
 		"the authoritative resume backfill persists without waiting for a later message")
 }
 
+func TestOpenCodeTelemetryTargetsLaunchEnrollmentConversationRow(t *testing.T) {
+	setupTestDB(t)
+	resetOpenCodeLimitCacheForTest()
+	resetOpenCodeVirtualCostStateForTest()
+	t.Cleanup(resetOpenCodeLimitCacheForTest)
+	t.Cleanup(resetOpenCodeVirtualCostStateForTest)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"providers":[{"id":"openai","models":{"gpt-5.6-sol":{` +
+			`"cost":{"input":5,"output":30,"cache":{"read":0.5,"write":6.25}},` +
+			`"limit":{"context":1050000}}}}]}`))
+	}))
+	t.Cleanup(server.Close)
+
+	const runtimeLabel, convID = "spwn-opencode", "ses_opencode"
+	seedOpenCodeUsageSession(t, convID, convID)
+	runtime := db.OpenCodeRuntime{
+		SessionID: runtimeLabel, ConvID: convID, ServerURL: server.URL,
+		Password: "pw", PID: os.Getpid(), Cwd: t.TempDir(),
+	}
+	openCodeVirtualCostState.Lock()
+	openCodeVirtualCostState.hydratedSession = map[string]bool{runtimeLabel: true}
+	openCodeVirtualCostState.Unlock()
+
+	usage := openCodeContextUsage{
+		MessageID: "msg-sol", ProviderID: "openai", ModelID: "gpt-5.6-sol",
+		ReportedCost: float64ptr(0), Input: 10_000, Output: 100, CreatedAt: time.Now(),
+	}
+	persistOpenCodeContextUsage(context.Background(), runtime, usage)
+	persistOpenCodeModelSlug(runtime, usage)
+	applyOpenCodeVirtualCostUsage(context.Background(), runtime, usage)
+
+	snap, err := db.GetContextSnapshot(convID)
+	require.NoError(t, err)
+	assert.Equal(t, "openai/gpt-5.6-sol", snap.Model)
+	assert.Equal(t, int64(10_000), snap.TokensInput)
+	assert.Equal(t, int64(100), snap.TokensOutput)
+	assert.InDelta(t, 0.053, snap.VirtualCostUSD, 1e-12)
+	exists, err := db.SessionExists(runtimeLabel)
+	require.NoError(t, err)
+	assert.False(t, exists, "the managed-server label is not a sessions row after launch enrollment")
+}
+
 func openCodeStepUpdatedEventJSON(convID, messageID, partID string, input int64) json.RawMessage {
 	return json.RawMessage(fmt.Sprintf(`{"id":"evt-%s","type":"message.part.updated","properties":{`+
 		`"sessionID":%q,"part":{"id":%q,"messageID":%q,"sessionID":%q,"type":"step-finish",`+

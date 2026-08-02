@@ -43,10 +43,30 @@ func persistOpenCodeModelSlug(runtime db.OpenCodeRuntime, usage openCodeContextU
 	if usage.ProviderID == "" || usage.ModelID == "" {
 		return
 	}
-	if err := db.UpdateSessionModelSlug(runtime.SessionID, usage.ProviderID+"/"+usage.ModelID); err != nil {
+	sessionID := openCodeTelemetrySessionID(runtime)
+	if err := db.UpdateSessionModelSlug(sessionID, usage.ProviderID+"/"+usage.ModelID); err != nil {
 		slog.Debug("OpenCode model slug could not be persisted",
-			"session", runtime.SessionID, "error", err, "module", "agentd")
+			"session", sessionID, "error", err, "module", "agentd")
 	}
+}
+
+// openCodeTelemetrySessionID resolves the sessions row owned by a managed
+// OpenCode runtime. Fresh daemon spawns supervise the server under a temporary
+// label, while launch enrollment gives `session new` the already-minted
+// OpenCode conversation ID as its row ID. Older/legacy launches used the label
+// for both, so prefer that row when it exists and otherwise target the conv ID.
+func openCodeTelemetrySessionID(runtime db.OpenCodeRuntime) string {
+	if runtime.SessionID != "" {
+		if exists, err := db.SessionExists(runtime.SessionID); err == nil && exists {
+			return runtime.SessionID
+		}
+	}
+	if runtime.ConvID != "" && runtime.ConvID != runtime.SessionID {
+		if exists, err := db.SessionExists(runtime.ConvID); err == nil && exists {
+			return runtime.ConvID
+		}
+	}
+	return runtime.SessionID
 }
 
 type openCodeSessionUpdatedEvent struct {
@@ -175,7 +195,7 @@ func persistOpenCodeRealCost(runtime db.OpenCodeRuntime, cost float64) error {
 	if retained, err := db.MaxRealCostForConv(runtime.ConvID); err == nil && retained > cost {
 		cost = retained
 	}
-	return db.UpdateSessionCost(runtime.SessionID, cost)
+	return db.UpdateSessionCost(openCodeTelemetrySessionID(runtime), cost)
 }
 
 func applyOpenCodeSessionDeletion(
@@ -839,7 +859,7 @@ func openCodeActivityForUsage(runtime db.OpenCodeRuntime, usage openCodeContextU
 		observedAt = time.Now()
 	}
 	return db.OpenCodeUsageActivity{
-		SessionID: runtime.SessionID, MessageID: usage.MessageID, ConvID: runtime.ConvID,
+		SessionID: openCodeTelemetrySessionID(runtime), MessageID: usage.MessageID, ConvID: runtime.ConvID,
 		ProviderID: usage.ProviderID, ModelID: usage.ModelID, ObservedAt: observedAt,
 	}
 }
@@ -867,26 +887,27 @@ func ensureOpenCodeVirtualCostStateLocked(sessionID string) (
 	return messages, usages
 }
 
-func waitForOpenCodeCostSessionRow(ctx context.Context, sessionID string) bool {
+func waitForOpenCodeCostSessionRow(ctx context.Context, runtime db.OpenCodeRuntime) (string, bool) {
 	deadline := time.Now().Add(openCodeHookRowWait)
 	for {
+		sessionID := openCodeTelemetrySessionID(runtime)
 		exists, err := db.SessionExists(sessionID)
 		if err != nil {
 			slog.Debug("OpenCode virtual cost session lookup failed",
 				"session", sessionID, "error", err, "module", "agentd")
-			return false
+			return "", false
 		}
 		if exists {
-			return true
+			return sessionID, true
 		}
 		if time.Now().After(deadline) {
 			slog.Debug("OpenCode virtual cost session row did not appear before timeout",
-				"session", sessionID, "module", "agentd")
-			return false
+				"session", runtime.SessionID, "conv_id", runtime.ConvID, "module", "agentd")
+			return "", false
 		}
 		select {
 		case <-ctx.Done():
-			return false
+			return "", false
 		case <-time.After(openCodeHookRowRetryDelay):
 		}
 	}
@@ -900,7 +921,8 @@ func projectAndPersistOpenCodeCostState(ctx context.Context, runtime db.OpenCode
 	// child `session new` process inserts the local session row. Keep the
 	// recovered usage state in memory while waiting for that row, otherwise the
 	// first authoritative backfill can become a silent UPDATE/INSERT no-op.
-	if !waitForOpenCodeCostSessionRow(ctx, runtime.SessionID) {
+	sessionID, found := waitForOpenCodeCostSessionRow(ctx, runtime)
+	if !found {
 		return
 	}
 	if !openCodeProjectorCurrent(ctx, runtime.SessionID) {
@@ -995,9 +1017,9 @@ func projectAndPersistOpenCodeCostState(ctx context.Context, runtime db.OpenCode
 			Day: day, CostUSD: cumulative, UpdatedAt: contribution.updatedAt, Model: contribution.model,
 		})
 	}
-	if err := db.ReplaceSessionVirtualCostHistory(runtime.SessionID, total, snapshots); err != nil {
+	if err := db.ReplaceSessionVirtualCostHistory(sessionID, total, snapshots); err != nil {
 		slog.Warn("OpenCode virtual cost could not be persisted",
-			"session", runtime.SessionID, "error", err, "module", "agentd")
+			"session", sessionID, "error", err, "module", "agentd")
 		return
 	}
 	if !openCodeProjectorCurrent(ctx, runtime.SessionID) {
@@ -1226,7 +1248,7 @@ func replaceOpenCodeVirtualCostUsage(
 		usageState[usage.MessageID] = state
 	}
 	if err := db.ReplaceOpenCodeUsageActivity(
-		runtime.SessionID, runtime.ConvID, activity, time.Now(),
+		openCodeTelemetrySessionID(runtime), runtime.ConvID, activity, time.Now(),
 	); err != nil {
 		slog.Debug("OpenCode usage activity backfill could not be persisted",
 			"session", runtime.SessionID, "error", err, "module", "agentd")
@@ -1545,10 +1567,12 @@ func backfillOpenCodeContextUsage(ctx context.Context, runtime db.OpenCodeRuntim
 	if !openCodeProjectorCurrent(ctx, runtime.SessionID) {
 		return false
 	}
-	if realCost > 0 && waitForOpenCodeCostSessionRow(ctx, runtime.SessionID) {
-		if err := persistOpenCodeRealCost(runtime, realCost); err != nil {
-			slog.Warn("OpenCode real cost backfill could not be persisted",
-				"session", runtime.SessionID, "error", err, "module", "agentd")
+	if realCost > 0 {
+		if sessionID, found := waitForOpenCodeCostSessionRow(ctx, runtime); found {
+			if err := persistOpenCodeRealCost(runtime, realCost); err != nil {
+				slog.Warn("OpenCode real cost backfill could not be persisted",
+					"session", sessionID, "error", err, "module", "agentd")
+			}
 		}
 	}
 	if !openCodeProjectorCurrent(ctx, runtime.SessionID) {

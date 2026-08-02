@@ -217,9 +217,10 @@ func openCodeContextSnapshot(usage openCodeContextUsage, windowSize int64) (pct 
 func persistOpenCodeContextUsage(ctx context.Context, runtime db.OpenCodeRuntime, usage openCodeContextUsage) {
 	windowSize := openCodeContextWindow(ctx, runtime, usage.ProviderID, usage.ModelID)
 	pct, tokensInput, tokensOutput := openCodeContextSnapshot(usage, windowSize)
-	if err := db.UpdateContextSnapshot(runtime.SessionID, pct, tokensInput, tokensOutput, windowSize); err != nil {
+	sessionID := openCodeTelemetrySessionID(runtime)
+	if err := db.UpdateContextSnapshot(sessionID, pct, tokensInput, tokensOutput, windowSize); err != nil {
 		slog.Debug("OpenCode context snapshot could not be persisted",
-			"session", runtime.SessionID, "error", err, "module", "agentd")
+			"session", sessionID, "error", err, "module", "agentd")
 	}
 }
 
