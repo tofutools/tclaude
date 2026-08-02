@@ -1259,12 +1259,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 	if cfNote != "" {
 		notes = append(notes, cfNote)
 	}
-	startupContext, _, ctxNote, fail := resolveStringLaunchField("startup_context", "", h.Name, tiers,
-		func(p *db.SpawnProfile) string { return p.StartupContext },
-		func(raw string) (string, error) { return strings.TrimSpace(raw), nil })
-	if fail != nil {
-		return templateAgentLaunch{}, fail
-	}
+	startupContext, ctxNote := resolveProfileStartupContext(h.Name, tiers)
 	if ctxNote != "" {
 		notes = append(notes, ctxNote)
 	}
@@ -3776,8 +3771,9 @@ func handleTemplateFromGroup(w http.ResponseWriter, r *http.Request) {
 // from-group re-snapshot. The traced profile's OBSERVABLE fields win (harness /
 // model / effort / sandbox + the member's live permission grants); prev's
 // NON-observable, curated fields carry forward: approval and tool governance
-// (never recorded on a session row), the ask-timeout, the trust_dir / auto_review / remote_control
-// toggles, and any deny permission overrides (only grants are observable).
+// (never recorded on a session row), profile startup context, the ask-timeout,
+// the trust_dir / auto_review / remote_control toggles, and any deny permission
+// overrides (only grants are observable).
 // prev's is_owner is deliberately dropped — ownership IS observable and rides
 // the agent row's own owner flag. Returns nil when neither side carries
 // anything.
@@ -3798,6 +3794,9 @@ func mergeSnapshotInlineProfile(prev, traced *db.SpawnProfile) *db.SpawnProfile 
 	}
 	if out.AskUserQuestionTimeout == "" {
 		out.AskUserQuestionTimeout = prev.AskUserQuestionTimeout
+	}
+	if out.StartupContext == "" {
+		out.StartupContext = prev.StartupContext
 	}
 	out.AutoReview = prev.AutoReview
 	out.TrustDir = prev.TrustDir
@@ -3842,6 +3841,7 @@ func mergeSnapshotInlineProfile(prev, traced *db.SpawnProfile) *db.SpawnProfile 
 	}
 	if out.Harness == "" && out.Model == "" && out.Effort == "" && out.Sandbox == "" &&
 		out.Approval == "" && out.ToolGovernance == "" && out.AskUserQuestionTimeout == "" &&
+		out.StartupContext == "" &&
 		out.AutoCompactWindow == "" && out.SandboxImplementation == "" &&
 		out.AutoReview == nil && out.TrustDir == nil && out.RemoteControl == nil && out.AutoMemory == nil &&
 		out.SSHWorkaround == nil &&

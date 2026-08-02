@@ -76,7 +76,7 @@ type WorkPatternEntry struct {
 // workPatternToJSON marshals a work pattern for the
 // group_templates.work_pattern TEXT column. An empty pattern stores as
 // "[]" (the permsToJSON convention) so a reader can json.Unmarshal it
-// unconditionally; legacy rows hold '' and read back as empty.
+// unconditionally; legacy rows hold ” and read back as empty.
 func workPatternToJSON(entries []WorkPatternEntry) string {
 	if len(entries) == 0 {
 		return "[]"
@@ -89,7 +89,7 @@ func workPatternToJSON(entries []WorkPatternEntry) string {
 }
 
 // workPatternFromJSON parses the work_pattern TEXT column back into a
-// slice. A blank ('' — pre-v87 rows) or malformed value yields an empty
+// slice. A blank (” — pre-v87 rows) or malformed value yields an empty
 // (non-nil) slice.
 func workPatternFromJSON(s string) []WorkPatternEntry {
 	out := []WorkPatternEntry{}
@@ -199,6 +199,7 @@ type templateInlineProfileJSON struct {
 	IsOwner                *bool             `json:"is_owner,omitempty"`
 	PermissionOverrides    map[string]string `json:"permission_overrides,omitempty"`
 	ContextFeatures        map[string]string `json:"context_features,omitempty"`
+	StartupContext         string            `json:"startup_context,omitempty"`
 }
 
 // inlineProfileToJSON marshals a template-local profile for the
@@ -226,6 +227,7 @@ func inlineProfileToJSON(p *SpawnProfile) string {
 		IsOwner:                p.IsOwner,
 		PermissionOverrides:    p.PermissionOverrides,
 		ContextFeatures:        p.ContextFeatures,
+		StartupContext:         p.StartupContext,
 	})
 	if err != nil {
 		return ""
@@ -262,6 +264,7 @@ func inlineProfileFromJSON(s string) *SpawnProfile {
 		IsOwner:                j.IsOwner,
 		PermissionOverrides:    j.PermissionOverrides,
 		ContextFeatures:        j.ContextFeatures,
+		StartupContext:         j.StartupContext,
 	}
 }
 

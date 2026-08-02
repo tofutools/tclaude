@@ -3077,14 +3077,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// Profile guidance resolves as one whole text block from the highest
 	// compatible tier. It has no per-spawn override: unlike initial_message this
 	// is policy attached to the selected model/profile, not a task default.
-	profileContext, _, profileContextNote, fieldFail := resolveStringLaunchField(
-		"startup_context", "", h.Name, profileTiers,
-		func(p *db.SpawnProfile) string { return p.StartupContext },
-		func(raw string) (string, error) { return strings.TrimSpace(raw), nil })
-	if fieldFail != nil {
-		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
-		return
-	}
+	profileContext, profileContextNote := resolveProfileStartupContext(h.Name, profileTiers)
 	resolvedLaunch := &agent.ResolvedLaunch{
 		Harness: agent.ResolvedField{Value: h.Name, Source: harnessSource},
 		Model:   agent.ResolvedField{Value: body.Model, Source: modelSource, Note: modelNote},
@@ -4110,6 +4103,30 @@ func profileMatchesHarness(prof *db.SpawnProfile, harnessName string) bool {
 	return prof != nil && harnessOrDefault(prof.Harness) == harnessOrDefault(harnessName)
 }
 
+// resolveProfileStartupContext chooses the highest-precedence non-empty
+// guidance whose profile belongs to the resolved harness. Free text has no
+// catalog validator, so resolveStringLaunchField cannot provide this gate: its
+// validator-success path intentionally permits generic cross-harness launch
+// values. Startup guidance is not generic—it is attached to a model/profile—so
+// a foreign higher tier must be disclosed and skipped.
+func resolveProfileStartupContext(harnessName string, tiers []launchProfileTier) (string, string) {
+	var notes []string
+	for _, tier := range tiers {
+		if tier.profile == nil {
+			continue
+		}
+		context := strings.TrimSpace(tier.profile.StartupContext)
+		if context == "" {
+			continue
+		}
+		if profileMatchesHarness(tier.profile, harnessName) {
+			return context, strings.Join(notes, "; ")
+		}
+		notes = append(notes, fmt.Sprintf("%s startup_context ignored (not valid for %s)", tier.source, harnessName))
+	}
+	return "", strings.Join(notes, "; ")
+}
+
 // resolveStringLaunchField applies explicit > named > group > global for one
 // launch field. Explicit values are direct intent and fail loudly. A profile
 // value invalid for a foreign resolved harness is ambient configuration: skip
@@ -4340,11 +4357,8 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 	if fail != nil {
 		return fail
 	}
-	p.ProfileContext, _, _, fail = resolveStringLaunchField("startup_context", p.ProfileContext, h.Name, tiers,
-		func(prof *db.SpawnProfile) string { return prof.StartupContext },
-		func(raw string) (string, error) { return strings.TrimSpace(raw), nil })
-	if fail != nil {
-		return fail
+	if strings.TrimSpace(p.ProfileContext) == "" {
+		p.ProfileContext, _ = resolveProfileStartupContext(h.Name, tiers)
 	}
 	p.SandboxImplementation, _, _, fail = resolveStringLaunchField(
 		sandboxImplementationField, p.SandboxImplementation, h.Name, tiers,

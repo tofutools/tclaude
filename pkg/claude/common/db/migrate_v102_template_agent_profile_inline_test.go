@@ -82,6 +82,7 @@ func TestGroupTemplateAgent_ProfileInlineRoundTrip(t *testing.T) {
 		ToolGovernance:         "deny",
 		AskUserQuestionTimeout: "",
 		TrustDir:               &tr,
+		StartupContext:         "Use the profile-specific workflow.",
 		IsOwner:                &tr,
 		PermissionOverrides:    map[string]string{"templates.manage": "grant", "human.notify": "deny"},
 	}
@@ -107,6 +108,7 @@ func TestGroupTemplateAgent_ProfileInlineRoundTrip(t *testing.T) {
 	assert.Equal(t, "high", lead.ProfileInline.Effort)
 	assert.Equal(t, "access-control", lead.ProfileInline.Sandbox)
 	assert.Equal(t, "deny", lead.ProfileInline.ToolGovernance)
+	assert.Equal(t, "Use the profile-specific workflow.", lead.ProfileInline.StartupContext)
 	require.NotNil(t, lead.ProfileInline.TrustDir)
 	assert.True(t, *lead.ProfileInline.TrustDir)
 	require.NotNil(t, lead.ProfileInline.IsOwner)

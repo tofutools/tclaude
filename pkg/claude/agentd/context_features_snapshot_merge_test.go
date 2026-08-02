@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -61,6 +62,13 @@ func TestMergeSnapshotInlineProfile_ObservedTrimsWin(t *testing.T) {
 		assert.Equal(t, map[string]string{"artifact": "off"}, out.ContextFeatures,
 			"the live member's trims replace the template's — no union of the two")
 	}
+}
+
+func TestMergeSnapshotInlineProfile_PreservesStartupContext(t *testing.T) {
+	prev := &db.SpawnProfile{StartupContext: "Keep the curated model guidance."}
+	out := mergeSnapshotInlineProfile(prev, &db.SpawnProfile{Model: "sonnet"})
+	require.NotNil(t, out)
+	assert.Equal(t, "Keep the curated model guidance.", out.StartupContext)
 }
 
 func TestTraceMemberLaunchMarksAnObservedEmptyTrimSet(t *testing.T) {

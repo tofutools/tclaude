@@ -134,6 +134,29 @@ func TestSpawnProfileContext_InjectedIndependently(t *testing.T) {
 	assert.NotContains(t, msg.Body, "GROUP GUIDANCE MUST BE OMITTED")
 }
 
+func TestSpawnProfileContext_SkipsForeignHigherTier(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
+		"name": "claude-guidance", "harness": "claude",
+		"startup_context": "CLAUDE-ONLY GUIDANCE",
+	}).Code)
+	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
+		"name": "codex-guidance", "harness": "codex",
+		"startup_context": "CODEX-COMPATIBLE GUIDANCE",
+	}).Code)
+	_, err := db.SetAgentGroupDefaultProfile("alpha", "codex-guidance")
+	require.NoError(t, err)
+
+	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{
+		"name": "worker", "harness": "codex", "profile": "claude-guidance",
+	})
+	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+	msg := soleInboxMessage(t, spawn.ConvID)
+	assert.Contains(t, msg.Body, "CODEX-COMPATIBLE GUIDANCE")
+	assert.NotContains(t, msg.Body, "CLAUDE-ONLY GUIDANCE")
+}
+
 // Scenario: a group with no startup context, spawned into with no task
 // brief. There is nothing to brief, so no inbox message is created and
 // the welcome tells the agent to wait.

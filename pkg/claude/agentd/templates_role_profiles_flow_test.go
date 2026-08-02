@@ -114,6 +114,35 @@ func TestGroupTemplate_PerRoleLaunchProfiles_InlineOverridesProfile(t *testing.T
 	assert.Equal(t, "opus", got, "the inline override wins over the referenced profile")
 }
 
+func TestGroupTemplate_ProfileInlineStartupContextRoundTripsAndDeploys(t *testing.T) {
+	f := newFlow(t)
+	require.Equal(t, http.StatusCreated, humanReq(t, f, http.MethodPost, "/v1/templates", map[string]any{
+		"name": "inline-context-team",
+		"agents": []map[string]any{{
+			"name": "worker",
+			"profile_inline": map[string]any{
+				"harness": "claude", "startup_context": "INLINE PROFILE GUIDANCE",
+			},
+		}},
+	}).Code)
+
+	tmpl, err := db.GetGroupTemplate("inline-context-team")
+	require.NoError(t, err)
+	require.NotNil(t, tmpl)
+	require.NotNil(t, tmpl.Agents[0].ProfileInline)
+	assert.Equal(t, "INLINE PROFILE GUIDANCE", tmpl.Agents[0].ProfileInline.StartupContext)
+
+	rec := humanReq(t, f, http.MethodPost, "/v1/templates/inline-context-team/instantiate",
+		map[string]any{"group_name": "inline-context-group"})
+	require.Equalf(t, http.StatusCreated, rec.Code, "instantiate: %s", rec.Body.String())
+	var res instantiateResult
+	testharness.DecodeJSON(t, rec, &res)
+	require.Equal(t, 1, res.Spawned)
+	agentd.WaitForBackgroundForTest()
+	msg := soleInboxMessage(t, res.Agents[0].ConvID)
+	assert.Contains(t, msg.Body, "INLINE PROFILE GUIDANCE")
+}
+
 func TestGroupTemplate_DisabledProfileStaysReferencedButBlocksInstantiate(t *testing.T) {
 	f := newFlow(t)
 	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
