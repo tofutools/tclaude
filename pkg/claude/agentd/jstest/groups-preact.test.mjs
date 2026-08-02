@@ -933,7 +933,9 @@ test('native member rows preserve the legacy field, capability and selector matr
   // With the recorded-details opt-in, the sandbox group and remote indicator
   // are the tail of this one line — glyph, adjacent details chevron, then
   // remote — not a second line under the control cell.
-  assert.match(harnessLine.textContent, /CC·O4\.8 1Mhigh<1¢≈\$0\.42🔒›📱/);
+  assert.match(harnessLine.textContent, /CC·O4\.8 1Mhi<1¢≈\$0\.42🔒›📱/);
+  assert.equal(harnessLine.querySelector('.harness-effort').textContent, 'hi');
+  assert.equal(harnessLine.querySelector('.harness-effort').title, 'high');
   assert.match(harnessLine.title, /WHAT-IF cost this session/);
   const sandboxGlyph = harnessLine.querySelector('.sandbox-badge');
   assert.equal(sandboxGlyph.textContent, '🔒');

@@ -39,11 +39,20 @@ func TestDashboardHTML_HarnessLineWired(t *testing.T) {
 	must("'Last used model' : 'Model'", "harnessLine's tooltip keeps the FULL model name and labels offline values as historical")
 
 	// The reasoning-effort level (JOH-37) trails the model — "CC · O4.8 1M
-	// high" — read off state.effort_level, with its own styled span and a
-	// tooltip clause. Omitted when absent so models without effort support
+	// hi" — read off state.effort_level, with its own styled span and a
+	// full-name tooltip. Omitted when absent so models without effort support
 	// stay at "CC · O4.8 1M".
 	must("state.effort_level", "HarnessLine reads the effort level off the agent's state")
+	must("const EFFORT_LABELS = {", "effort levels have compact display labels")
+	must("low: 'lw'", "low effort is displayed as lw")
+	must("medium: 'md'", "medium effort is displayed as md")
+	must("high: 'hi'", "high effort is displayed as hi")
+	must("xhigh: 'xi'", "xhigh effort is displayed as xi")
+	must("max: 'mx'", "max effort is displayed as mx")
+	must("function shortEffort(effort)", "the compact effort display has a named transform")
 	must("harness-effort", "the effort token has its own span")
+	must("title=${effort}", "the effort token keeps the full value in its tooltip")
+	must("${shortEffort(effort)}", "the effort token renders the compact value")
 	must("'Last used effort' : 'Effort'", "harnessLine's tooltip names live effort and labels offline effort as historical")
 
 	// Status-dot tooltip surfaces the harness+model on hover (the brief's
