@@ -150,11 +150,16 @@ function applySort(tableKey, rows, accessors) {
   return applySortState(rows, accessors, sortState[tableKey]);
 }
 
-// Native table heads read the same module-owned state as applySort. Return a
+// Native table heads read the same module-owned state as applySort. When a
+// table supplies its currently visible columns, an active sort on a hidden
+// column is ignored so rows do not appear sorted by an invisible key. Return a
 // copy so a component cannot mutate the shared sort owner.
-function tableSortState(tableKey) {
+function tableSortState(tableKey, visibleCols) {
   const value = sortState[tableKey] || persistedTableSort(tableKey);
-  return value ? { ...value } : null;
+  if (!value || (visibleCols && !visibleCols.some((column) => column.col === value.col))) {
+    return null;
+  }
+  return { ...value };
 }
 
 // applySortState is the renderer-agnostic form used by Preact feature models.

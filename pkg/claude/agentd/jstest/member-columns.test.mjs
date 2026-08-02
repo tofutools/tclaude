@@ -119,6 +119,18 @@ test('a stale key for a removed column is pruned and never counted', () => {
   reset();
 });
 
+test('an old hidden-ID preference follows the new default without a badge', () => {
+  dashPrefs.setItem(KEY, JSON.stringify({ id: true }));
+  assert.equal(memberColHidden('id'), true);
+  assert.equal(memberColDeviationCount(), 0);
+
+  // Any later write prunes the now-redundant legacy entry as well.
+  setMemberColHidden('state', true);
+  const stored = JSON.parse(dashPrefs.getItem(KEY));
+  assert.deepEqual(Object.keys(stored), ['state']);
+  reset();
+});
+
 // --- default-hidden columns --------------------------------------------
 
 test('the default-hidden ID column starts hidden; showing it is the deviation', () => {

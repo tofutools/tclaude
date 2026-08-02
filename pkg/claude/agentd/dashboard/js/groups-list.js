@@ -192,7 +192,7 @@ function GroupMenuItems({ group, members, snapshot, actions }) {
 }
 
 function SortHead({ table, columns }) {
-  const active = tableSortState(table);
+  const active = tableSortState(table, columns);
   return html`<thead><tr>${columns.map((column) => {
     const label = column.wizardLabel
       ? html`<${ThemeText} regular=${column.label} wizard=${column.wizardLabel} />`
