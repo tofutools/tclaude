@@ -194,6 +194,60 @@ func GetDarwinRouteLaunch(agentID, convID, generation string) (*DarwinRouteLaunc
 	return getDarwinRouteLaunchQuery(darwinRouteLaunchQuery(d.QueryRow), agentID, convID, generation)
 }
 
+// ListActiveDarwinRouteLaunchesByGroup returns the exact active per-launch
+// pools visible through each requested group. The launch row, rather than the
+// slot-claim rows, is authoritative for the denominator: claims contain one
+// row for every reserved pool slot and therefore do not represent occupancy.
+func ListActiveDarwinRouteLaunchesByGroup(groupIDs []int64) (map[int64][]*DarwinRouteLaunch, error) {
+	out := make(map[int64][]*DarwinRouteLaunch, len(groupIDs))
+	if len(groupIDs) == 0 {
+		return out, nil
+	}
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	placeholders := make([]string, len(groupIDs))
+	args := make([]any, len(groupIDs))
+	for i, groupID := range groupIDs {
+		placeholders[i] = "?"
+		args[i] = groupID
+	}
+	rows, err := d.Query(`SELECT m.group_id, l.agent_id, l.conv_id,
+		l.launch_generation, l.slots, l.state, l.created_at, l.closed_at
+		FROM darwin_route_launches l
+		JOIN agent_group_members m ON m.agent_id = l.agent_id
+		WHERE m.group_id IN (`+strings.Join(placeholders, ",")+
+		`) AND l.state = ?
+		ORDER BY m.group_id, l.created_at, l.agent_id, l.conv_id, l.launch_generation`, append(args, DarwinRouteLaunchActive)...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var groupID int64
+		var launch DarwinRouteLaunch
+		var rawSlots string
+		var createdAt, closedAt dbTimestamp
+		if err := rows.Scan(&groupID, &launch.AgentID, &launch.ConvID,
+			&launch.LaunchGeneration, &rawSlots, &launch.State, &createdAt, &closedAt); err != nil {
+			return nil, err
+		}
+		var err error
+		launch.Slots, err = decodeDarwinRouteLaunchSlots(rawSlots)
+		if err != nil {
+			return nil, err
+		}
+		launch.CreatedAt = createdAt.Time()
+		launch.ClosedAt = closedAt.Time()
+		out[groupID] = append(out[groupID], &launch)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func DeleteDarwinRouteLaunch(agentID, convID, generation string) error {
 	if err := validateDarwinRouteLaunchIdentity(agentID, convID, generation); err != nil {
 		return err

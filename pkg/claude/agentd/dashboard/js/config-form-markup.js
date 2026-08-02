@@ -570,6 +570,11 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
         <span class="cfg-hint">BPMN-lite repeatable process graphs with a drag-and-drop template editor. Runtime execution is temporarily unavailable while the engine is rebuilt. Stored as <code>features.processes</code>.</span>
       </div>
       <div class="cfg-field">
+        <span class="cfg-label">Groups Route map</span>
+        <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-feature-groups-route-map" /> enable the opt-in <strong>Members | Route map</strong> Groups view</label>
+        <span class="cfg-hint">Read-only agent route leases and health for selected groups. Off by default; the route map and its snapshot projection stay absent until enabled. Takes effect on the next dashboard refresh. Stored as <code>features.groups_route_map</code>.</span>
+      </div>
+      <div class="cfg-field">
         <span class="cfg-label">Group attachments</span>
         <${ConfigSelect} id="cfg-feature-group-attachments" aria-label="Group attachment presentation">
           <option value="off">Off</option>

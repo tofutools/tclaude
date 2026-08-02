@@ -61,6 +61,19 @@ function tabAvailable(tab) {
   return !!(btn && btn.offsetParent !== null);
 }
 
+// The Groups Route map is an opt-in subview of an otherwise available tab.
+// refresh.js mirrors the server snapshot flag onto this body class before the
+// router sees the first snapshot, so a bookmarked /groups/routes URL follows
+// the same stale-target fallback as a hidden top-level tab.
+function groupsRouteMapAvailable() {
+  return !document.body.classList.contains('hide-groups-route-map');
+}
+
+function locationAvailable(loc) {
+  return tabAvailable(loc.tab)
+    && !(loc.tab === 'groups' && loc.subtab === 'routes' && !groupsRouteMapAvailable());
+}
+
 // pendingTerminalAttach reports whether `loc` is a terminals deep link that is
 // merely NOT ATTACHED YET rather than genuinely stale. It is the one location
 // that is legitimately unavailable at the moment we restore it: panes do not
@@ -84,7 +97,13 @@ function activeLocationFromDOM() {
   const navBtn = $$('nav [data-tab]').find(b => b.classList.contains('active'));
   const tab = navBtn ? navBtn.dataset.tab : DEFAULT_TAB;
   const loc = { tab };
-  if (tab === 'access') {
+  if (tab === 'groups') {
+    const island = featureState('groups');
+    if (island?.subview?.value === 'routes') {
+      loc.subtab = 'routes';
+      if (island.routeSelection?.value) loc.selection = island.routeSelection.value;
+    }
+  } else if (tab === 'access') {
     const sub = $$('#tab-access .access-subtab').find(b => b.classList.contains('active'));
     if (sub) loc.subtab = sub.dataset.subtab;
   } else if (tab === 'jobs') {
@@ -137,6 +156,12 @@ function requestJobsLocation(loc) {
   }));
 }
 
+function requestGroupsLocation(loc) {
+  document.dispatchEvent(new CustomEvent('tclaude:restore-location', {
+    detail: { location: normalizeLocation(loc) },
+  }));
+}
+
 // activate brings `loc` forward in the UI by clicking the matching controls,
 // under the `applying` guard so the resulting clicks don't re-enter the
 // observer. Going through the real nav button's .click() (rather than poking
@@ -159,6 +184,18 @@ function activate(loc) {
       requestTerminalsLocation(loc);
     } else if (loc.tab === 'jobs') {
       requestJobsLocation(loc);
+    } else if (loc.tab === 'groups') {
+      // Bare Groups is already the default Members view on boot. Avoid
+      // broadcasting a synthetic restore for stale-target fallback (for
+      // example /terminals with no panes), which would look like a user
+      // navigation to observers. A bare Groups pop from Route map still has
+      // to return the island to Members; explicit route locations always do.
+      const groups = featureState('groups');
+      if (loc.subtab || loc.selection || groups?.subview?.value === 'routes') {
+        requestGroupsLocation(
+          loc.subtab === 'routes' && !groupsRouteMapAvailable() ? { tab: 'groups' } : loc,
+        );
+      }
     } else if (loc.tab === 'processes') {
       // Processes restores through its island rather than a subtab click, for
       // two reasons. A click can only pick a subtab — it can never reopen the
@@ -262,7 +299,7 @@ function reconcileLocation() {
   if (!ready || applying) return;
   const loc = activeLocationFromDOM();
   if (!ROUTABLE_TABS.has(loc.tab)) return;
-  if (locEquals(loc, current(stack))) return; // no drift
+  if (locEquals(loc, current(stack)) && locationAvailable(current(stack))) return; // no drift
   // Reconcile ONLY an involuntary re-location: the entry we're on points at a
   // tab that is no longer available, so the dashboard auto-left it (e.g. the
   // Terminals tab after the last terminal closed). A drift while the current
@@ -272,7 +309,7 @@ function reconcileLocation() {
   // /processes/templates/<id> selection (it reads the island's location
   // signal), so this guard is no longer also protecting against silently
   // stripping one; keep it for the back-entry reason alone.
-  if (tabAvailable(current(stack).tab)) return;
+  if (locationAvailable(current(stack))) return;
   stack = replaceCurrent(stack, loc);
   history.replaceState(serializeStack(stack), '', urlFor(loc));
 }
@@ -293,7 +330,8 @@ function onPopstate(e) {
   // back-stack (e.g. terminals closed while you were on another tab), so
   // activating it would strand the user on a blank hidden section. Fall back to
   // the default in place, mirroring the init-time guard.
-  if (current(stack).tab !== DEFAULT_TAB && !tabAvailable(current(stack).tab)
+  if (!locationAvailable(current(stack))
+    && !(current(stack).tab === DEFAULT_TAB && !current(stack).subtab)
     && !pendingTerminalAttach(current(stack))) {
     stack = replaceCurrent(stack, normalizeLocation({ tab: DEFAULT_TAB }));
   }
@@ -339,7 +377,9 @@ export function initNavHistory() {
   // tab is CSS-hidden) has nothing to show — fall back to the default rather
   // than stranding on a blank section. Runs here, after the tab binders and
   // the Terminal Shell island set the visibility classes.
-  if (loc.tab !== DEFAULT_TAB && !tabAvailable(loc.tab) && !pendingTerminalAttach(loc)) {
+  if (!locationAvailable(loc)
+    && !(loc.tab === DEFAULT_TAB && !loc.subtab)
+    && !pendingTerminalAttach(loc)) {
     loc = normalizeLocation({ tab: DEFAULT_TAB });
     stack = initialState(loc);
   }

@@ -175,6 +175,70 @@ test('a bare /terminals with no terminals open still falls back', async (t) => {
   assert.deepEqual(restores, []);
 });
 
+test('a Groups Route map deep link falls back when the opt-in flag is off', async (t) => {
+  const harness = await createPreactHarness(t);
+  installShell(harness);
+  harness.document.body.classList.add('hide-groups-route-map');
+  const browsing = installBrowsingContext(t, harness, '/groups/routes/rte_123');
+  const [{ registerFeatureState }, { initNavHistory }] = await Promise.all([
+    harness.importDashboardModule('js/feature-state-registry.js'),
+    harness.importDashboardModule('js/nav-history.js'),
+  ]);
+  const groupsSubview = harness.signals.signal('members');
+  const routeSelection = harness.signals.signal('');
+  const unregister = registerFeatureState('groups', {
+    subview: groupsSubview, routeSelection,
+  });
+  t.after(unregister);
+  const restores = [];
+  harness.document.addEventListener('tclaude:restore-location',
+    (event) => restores.push(event.detail.location));
+
+  initNavHistory();
+
+  assert.equal(browsing.at(), '/', 'disabled Route map deep links fall back to Members');
+  assert.deepEqual(restores, [], 'disabled fallback does not synthesize a route restore');
+  assert.equal(groupsSubview.value, 'members');
+  assert.equal(routeSelection.value, '');
+});
+
+test('an explicit Groups Route map deep link restores without changing Members fallback semantics', async (t) => {
+  const harness = await createPreactHarness(t);
+  installShell(harness);
+  const browsing = installBrowsingContext(t, harness, '/groups/routes/rte_123');
+  const [{ registerFeatureState }, { initNavHistory }] = await Promise.all([
+    harness.importDashboardModule('js/feature-state-registry.js'),
+    harness.importDashboardModule('js/nav-history.js'),
+  ]);
+  const groupsSubview = harness.signals.signal('members');
+  const routeSelection = harness.signals.signal('');
+  const unregister = registerFeatureState('groups', {
+    subview: groupsSubview, routeSelection,
+  });
+  t.after(unregister);
+  const restores = [];
+  harness.document.addEventListener('tclaude:restore-location',
+    (event) => restores.push(event.detail.location));
+
+  initNavHistory();
+
+  assert.equal(browsing.at(), '/groups/routes/rte_123');
+  assert.deepEqual(restores, [{ tab: 'groups', subtab: 'routes', selection: 'rte_123' }],
+    'an explicit Route map deep link still asks Groups to restore the route detail');
+
+  // Once the Route map is active, a browser Back to bare Groups must ask the
+  // island to return to Members. This is distinct from boot fallback, where
+  // Members is already the default and no restore event should be synthesized.
+  groupsSubview.value = 'routes';
+  routeSelection.value = 'rte_123';
+  browsing.history.replaceState(browsing.history.state, '', '/');
+  browsing.calls.length = 0;
+  restores.length = 0;
+  harness.window.dispatchEvent(new harness.window.Event('popstate'));
+  assert.deepEqual(restores, [{ tab: 'groups' }],
+    'a Route map to Members traversal remains an explicit restore');
+});
+
 test('switching between two terminals pushes one entry each', async (t) => {
   const harness = await createPreactHarness(t);
   installShell(harness);

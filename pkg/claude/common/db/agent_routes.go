@@ -151,6 +151,75 @@ func ListAgentRoutes(groupID int64) ([]*AgentRoute, error) {
 	return out, rows.Err()
 }
 
+// DashboardRouteHistoryPerGroup is the hard projection bound for route
+// registry history. Current routes are retained first; only the newest
+// terminal rows consume the remainder of this per-group budget.
+const DashboardRouteHistoryPerGroup = 64
+
+// DashboardRouteLeaseHistoryPerRoute is the hard projection bound for lease
+// history. Every open lease is retained, followed by the newest closed leases
+// for each retained route.
+const DashboardRouteLeaseHistoryPerRoute = 8
+
+// ListAgentRoutesBatch returns a bounded route registry projection grouped by
+// active group. Current routes are retained before terminal history, so a
+// route that is currently ready or draining cannot be evicted by old cycles.
+func ListAgentRoutesBatch(groupIDs []int64) (map[int64][]*AgentRoute, error) {
+	out := make(map[int64][]*AgentRoute, len(groupIDs))
+	if len(groupIDs) == 0 {
+		return out, nil
+	}
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	placeholders := make([]string, len(groupIDs))
+	args := make([]any, len(groupIDs))
+	for i, groupID := range groupIDs {
+		placeholders[i] = "?"
+		args[i] = groupID
+	}
+	queryArgs := []any{RouteStateReady, RouteStateDraining}
+	queryArgs = append(queryArgs, args...)
+	queryArgs = append(queryArgs, DashboardRouteHistoryPerGroup, RouteStateReady, RouteStateDraining)
+	rows, err := d.Query(`WITH ranked_routes AS (
+		SELECT r.id, r.group_id, g.name AS group_name, r.publisher_agent_id,
+			r.publisher_conv_id, r.publisher_launch_generation, r.group_generation,
+			r.name AS route_name, r.transport, r.target, r.state, r.created_at, r.withdrawn_at,
+			r.withdraw_reason,
+			ROW_NUMBER() OVER (
+				PARTITION BY r.group_id
+				ORDER BY CASE WHEN r.state IN (?, ?) THEN 0 ELSE 1 END,
+					r.created_at DESC, r.id DESC
+			) AS projection_rank
+		FROM agent_routes r JOIN agent_groups g ON g.id = r.group_id
+		WHERE r.group_id IN (`+strings.Join(placeholders, ",")+
+		`)
+	)
+	SELECT id, group_id, group_name, publisher_agent_id, publisher_conv_id,
+		publisher_launch_generation, group_generation, route_name, transport, target,
+		state, created_at, withdrawn_at, withdraw_reason
+	FROM ranked_routes
+	WHERE projection_rank <= ?
+	ORDER BY group_id, CASE WHEN state IN (?, ?) THEN 0 ELSE 1 END,
+		created_at DESC, id DESC`, queryArgs...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		route, scanErr := scanAgentRoute(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		out[route.GroupID] = append(out[route.GroupID], route)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // WithdrawAgentRoute is owner-scoped and idempotent for an already withdrawn
 // route. It also closes all outstanding leases so a withdrawn route cannot
 // leave stale consumer authority behind.
@@ -401,6 +470,86 @@ func ListAgentRouteLeases(groupID int64, consumerAgentID, consumerConvID string)
 		out = append(out, &lease)
 	}
 	return out, rows.Err()
+}
+
+// ListAgentRouteLeasesBatch returns a bounded lease projection grouped by route
+// group. All open leases survive, followed by the newest closed leases for
+// each retained route. The retained-route CTE prevents old route history from
+// widening the dashboard payload indefinitely.
+func ListAgentRouteLeasesBatch(groupIDs []int64) (map[int64][]*AgentRouteLease, error) {
+	out := make(map[int64][]*AgentRouteLease, len(groupIDs))
+	if len(groupIDs) == 0 {
+		return out, nil
+	}
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	placeholders := make([]string, len(groupIDs))
+	args := make([]any, len(groupIDs))
+	for i, groupID := range groupIDs {
+		placeholders[i] = "?"
+		args[i] = groupID
+	}
+	queryArgs := []any{RouteStateReady, RouteStateDraining}
+	queryArgs = append(queryArgs, args...)
+	queryArgs = append(queryArgs, DashboardRouteHistoryPerGroup, RouteLeaseOpen, RouteLeaseOpen, RouteLeaseOpen, DashboardRouteLeaseHistoryPerRoute)
+	rows, err := d.Query(`WITH ranked_routes AS (
+		SELECT r.id, r.group_id,
+			ROW_NUMBER() OVER (
+				PARTITION BY r.group_id
+				ORDER BY CASE WHEN r.state IN (?, ?) THEN 0 ELSE 1 END,
+					r.created_at DESC, r.id DESC
+			) AS projection_rank
+		FROM agent_routes r
+		WHERE r.group_id IN (`+strings.Join(placeholders, ",")+
+		`)), retained_routes AS (
+		SELECT id, group_id FROM ranked_routes
+		WHERE projection_rank <= ?
+		), ranked_leases AS (
+		SELECT rr.group_id, l.id, l.route_id, l.consumer_agent_id,
+			l.consumer_conv_id, l.consumer_launch_generation, l.group_generation,
+			l.state, l.opened_at, l.closed_at, 0 AS terminal_rank
+		FROM agent_route_leases l JOIN retained_routes rr ON rr.id = l.route_id
+		WHERE l.state = ?
+		UNION ALL
+		SELECT rr.group_id, l.id, l.route_id, l.consumer_agent_id,
+			l.consumer_conv_id, l.consumer_launch_generation, l.group_generation,
+			l.state, l.opened_at, l.closed_at,
+			ROW_NUMBER() OVER (
+				PARTITION BY l.route_id
+				ORDER BY l.opened_at DESC, l.id DESC
+			) AS terminal_rank
+		FROM agent_route_leases l JOIN retained_routes rr ON rr.id = l.route_id
+		WHERE l.state != ?
+		)
+		SELECT group_id, id, route_id, consumer_agent_id, consumer_conv_id,
+			consumer_launch_generation, group_generation, state, opened_at, closed_at
+		FROM ranked_leases
+		WHERE state = ? OR terminal_rank <= ?
+		ORDER BY group_id, route_id, CASE WHEN state = ? THEN 0 ELSE 1 END,
+			opened_at DESC, id DESC`, append(queryArgs, RouteLeaseOpen)...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var groupID int64
+		var lease AgentRouteLease
+		var openedAt, closedAt dbTimestamp
+		if err := rows.Scan(&groupID, &lease.ID, &lease.RouteID, &lease.ConsumerAgentID,
+			&lease.ConsumerConvID, &lease.ConsumerLaunchGeneration, &lease.GroupGeneration,
+			&lease.State, &openedAt, &closedAt); err != nil {
+			return nil, err
+		}
+		lease.OpenedAt = openedAt.Time()
+		lease.ClosedAt = closedAt.Time()
+		out[groupID] = append(out[groupID], &lease)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func CloseAgentRouteLease(leaseID, consumerAgentID, consumerConvID string) error {

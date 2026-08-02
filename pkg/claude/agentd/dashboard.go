@@ -950,6 +950,11 @@ type snapshotPayload struct {
 	// to annotate group rows with outbound/inbound counts. Empty slice
 	// (not nil) so JS .length / .map() are safe.
 	Links []dashboardLink `json:"links"`
+	// RouteMap is the read-only Groups/Route map projection. It is loaded from
+	// the route authority's durable rows in one bounded batch and deliberately
+	// omits target, endpoint, launch-generation, and capability material. It is
+	// omitted entirely while the opt-in Groups Route map flag is off.
+	RouteMap *dashboardRouteMap `json:"route_map,omitempty"`
 	// Usage is the account-wide subscription usage readout (5h + 7d
 	// rolling windows) rendered in the dashboard's top bar. Always
 	// present — Available=false carries the graceful "n/a" state.
@@ -1014,6 +1019,10 @@ type snapshotPayload struct {
 	// surface. It is re-read on every snapshot so changing config takes effect
 	// without restarting agentd, matching processRoute.
 	ProcessesEnabled bool `json:"processes_enabled"`
+	// GroupsRouteMapEnabled gates the experimental Members | Route map Groups
+	// subview and its bounded route projection. Re-read on every snapshot so a
+	// Config-tab change takes effect without restarting agentd.
+	GroupsRouteMapEnabled bool `json:"groups_route_map_enabled"`
 	// GroupAttachmentsMode selects the experimental paperclip presentation on
 	// group titles: off, float, or fixed. The attachment data and API remain
 	// available while the mode is off, so existing references are not
@@ -1577,7 +1586,8 @@ type dashboardGroup struct {
 	// parent_id that doesn't resolve to a live group (should not happen — the
 	// FK is ON DELETE SET NULL) is shipped as "" so the child renders
 	// top-level rather than dangling.
-	Parent string `json:"parent,omitempty"`
+	Parent          string `json:"parent,omitempty"`
+	RouteGeneration int64  `json:"route_generation"`
 	// Process is the group's advisory process state (JOH-242): the current
 	// phase, the ordered phase map, and the transition log. nil for a group
 	// with no process (the phase chip + advance control render only when set).
@@ -1595,6 +1605,50 @@ type dashboardGroup struct {
 	Scribe  bool              `json:"scribe,omitempty"`
 	Members []dashboardMember `json:"members"`
 	Online  int               `json:"online"`
+}
+
+type dashboardRouteMap struct {
+	Platform       string                             `json:"platform"`
+	DarwinSlots    int                                `json:"darwin_slots,omitempty"`
+	DarwinBoundary string                             `json:"darwin_boundary,omitempty"`
+	DarwinCapacity map[string]dashboardDarwinCapacity `json:"darwin_capacity,omitempty"`
+	Routes         []dashboardRoute                   `json:"routes"`
+}
+
+type dashboardDarwinCapacity struct {
+	Used      int `json:"used"`
+	Available int `json:"available"`
+	Total     int `json:"total"`
+	Pools     int `json:"pools"`
+}
+
+type dashboardRoute struct {
+	ID                string                   `json:"id"`
+	GroupID           int64                    `json:"group_id"`
+	Group             string                   `json:"group"`
+	StableReference   string                   `json:"stable_reference"`
+	Name              string                   `json:"name"`
+	Transport         string                   `json:"transport"`
+	State             string                   `json:"state"`
+	CreatedAt         string                   `json:"created_at"`
+	GroupGeneration   int64                    `json:"group_generation"`
+	GenerationHealth  string                   `json:"generation_health"`
+	PublisherAgentID  string                   `json:"publisher_agent_id"`
+	PublisherName     string                   `json:"publisher_name"`
+	PublisherHealth   string                   `json:"publisher_health"`
+	PublisherBoundary string                   `json:"publisher_boundary"`
+	Consumers         []dashboardRouteConsumer `json:"consumers"`
+}
+
+type dashboardRouteConsumer struct {
+	ID               string `json:"id"`
+	ConsumerAgentID  string `json:"consumer_agent_id"`
+	ConsumerName     string `json:"consumer_name"`
+	State            string `json:"state"`
+	EndpointState    string `json:"endpoint_state"`
+	GenerationHealth string `json:"generation_health"`
+	ConsumerHealth   string `json:"consumer_health"`
+	Boundary         string `json:"boundary"`
 }
 
 // dashboardMember.Owner mirrors the memberJSON convention from
@@ -1630,9 +1684,12 @@ type dashboardMember struct {
 	// tagsView carries the per-agent tag set (chips in the Description
 	// column) — see tags.go.
 	tagsView
-	Online bool       `json:"online"`
-	Owner  bool       `json:"owner,omitempty"`
-	State  agentState `json:"state"`
+	Online bool `json:"online"`
+	// RouteHealth is a safe capability status for route-enabled groups. It is
+	// deliberately a status-only projection; launch generations remain local.
+	RouteHealth string     `json:"route_health,omitempty"`
+	Owner       bool       `json:"owner,omitempty"`
+	State       agentState `json:"state"`
 	// Notify is the per-agent override ("on"/"off", "" = inherit);
 	// NotifyEffective folds the agent + group levels together (the
 	// global switch is separate — snapshot.notifications_enabled).
@@ -2548,6 +2605,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		defaults = append(defaults, cfg.Agent.DefaultPermissions...)
 	}
 	sort.Strings(defaults)
+	groupsRouteMapEnabled := cfg.GroupsRouteMapEnabled()
 
 	// agentRows: union of (every group member) + (every conv-id with
 	// explicit grants). Keyed by conv-id so members appearing in
@@ -2563,20 +2621,50 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		groupIDs[i] = group.ID
 	}
 	var (
-		membersByGroup map[int64][]*db.AgentGroupMember
-		ownersByGroup  map[int64][]*db.AgentGroupOwner
-		membersErr     error
-		ownersErr      error
+		membersByGroup        map[int64][]*db.AgentGroupMember
+		ownersByGroup         map[int64][]*db.AgentGroupOwner
+		routesByGroup         map[int64][]*db.AgentRoute
+		leasesByGroup         map[int64][]*db.AgentRouteLease
+		darwinLaunchesByGroup map[int64][]*db.DarwinRouteLaunch
+		membersErr            error
+		ownersErr             error
+		routesErr             error
+		leasesErr             error
+		darwinLaunchesErr     error
 	)
 	span.addChildren("preload", runSnapshotNamedLoads(
 		snapshotNamedLoad{"group_members", func() { membersByGroup, membersErr = db.ListAgentGroupMembersBatch(groupIDs) }},
 		snapshotNamedLoad{"group_owners", func() { ownersByGroup, ownersErr = db.ListAgentGroupOwnersBatch(groupIDs) }},
+		snapshotNamedLoad{"routes", func() {
+			if groupsRouteMapEnabled {
+				routesByGroup, routesErr = db.ListAgentRoutesBatch(groupIDs)
+			}
+		}},
+		snapshotNamedLoad{"route_leases", func() {
+			if groupsRouteMapEnabled {
+				leasesByGroup, leasesErr = db.ListAgentRouteLeasesBatch(groupIDs)
+			}
+		}},
+		snapshotNamedLoad{"darwin_route_launches", func() {
+			if groupsRouteMapEnabled && dashboardRouteMapPlatform == "darwin" {
+				darwinLaunchesByGroup, darwinLaunchesErr = db.ListActiveDarwinRouteLaunchesByGroup(groupIDs)
+			}
+		}},
 	)...)
 	if membersErr != nil {
 		slog.Warn("snapshot: failed to preload group members", "error", membersErr)
 	}
 	if ownersErr != nil {
 		slog.Warn("snapshot: failed to preload group owners", "error", ownersErr)
+	}
+	if routesErr != nil {
+		slog.Warn("snapshot: failed to preload group routes", "error", routesErr)
+	}
+	if leasesErr != nil {
+		slog.Warn("snapshot: failed to preload route leases", "error", leasesErr)
+	}
+	if darwinLaunchesErr != nil {
+		slog.Warn("snapshot: failed to preload Darwin route launch contracts", "error", darwinLaunchesErr)
 	}
 
 	// Notification-filter state: the per-agent overrides plus the set
@@ -2843,6 +2931,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		ShowAgentHideButton:      cfg.ShowAgentHideButton(),
 		ShowGroupDescription:     cfg.ShowGroupDescription(),
 		ProcessesEnabled:         cfg.ProcessesEnabled(),
+		GroupsRouteMapEnabled:    groupsRouteMapEnabled,
 		GroupAttachmentsMode:     cfg.GroupAttachmentsMode(),
 		TerminalPaletteShortcut:  cfg.TerminalCommandPaletteShortcutEnabled(),
 		RecordedSandboxDetails:   cfg.RecordedSandboxDetailsEnabled(),
@@ -2914,7 +3003,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		var groupPermissions []string
 		gt.track(&gt.perms, func() { groupPermissions, _ = db.ListAgentGroupPermissions(g.ID) })
 		attachment := groupAttachmentViewFor(g)
-		dg := dashboardGroup{Name: g.Name, Descr: g.Descr, AttachmentURL: attachment.URL, AttachmentLabel: attachment.Label, AttachmentLabelOverride: attachment.LabelOverride, DefaultCwd: g.DefaultCwd, DefaultContext: g.DefaultContext, DefaultProfile: g.DefaultProfile, SandboxProfile: g.SandboxProfile, Permissions: groupPermissions, MaxMembers: g.MaxMembers, NotifyEnabled: g.NotifyEnabled, RemoteControlPolicy: remoteControlPolicyToWire(g.RemoteControl), Mission: g.Mission, SourceTemplate: g.SourceTemplate, Scribe: isScribeGroup(g), Members: []dashboardMember{}}
+		dg := dashboardGroup{Name: g.Name, Descr: g.Descr, AttachmentURL: attachment.URL, AttachmentLabel: attachment.Label, AttachmentLabelOverride: attachment.LabelOverride, DefaultCwd: g.DefaultCwd, DefaultContext: g.DefaultContext, DefaultProfile: g.DefaultProfile, SandboxProfile: g.SandboxProfile, Permissions: groupPermissions, MaxMembers: g.MaxMembers, NotifyEnabled: g.NotifyEnabled, RemoteControlPolicy: remoteControlPolicyToWire(g.RemoteControl), Mission: g.Mission, SourceTemplate: g.SourceTemplate, Scribe: isScribeGroup(g), RouteGeneration: g.RouteGeneration, Members: []dashboardMember{}}
 		if g.ParentGroupID != nil {
 			dg.Parent = groupNameByID[*g.ParentGroupID]
 		}
@@ -2951,6 +3040,10 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		for _, m := range members {
 			memberSet[m.ConvID] = true
 			b := rc.viewFor(m.ConvID)
+			var routeHealth string
+			if groupsRouteMapEnabled {
+				routeHealth = dashboardRouteHealth(g, groupPermissions, b, darwinLaunchesByGroup[g.ID])
+			}
 			links := b.Links.withPresentedPRs(presentedPRsFor(b.AgentID)).
 				withFreshestPRStates(freshPRStates)
 			dg.Members = append(dg.Members, dashboardMember{
@@ -2969,6 +3062,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 				State:             b.State,
 				Notify:            notifyPrefs[m.ConvID],
 				NotifyEffective:   notifyEffective(m.ConvID),
+				RouteHealth:       routeHealth,
 			})
 			if b.Online {
 				dg.Online++
@@ -2993,6 +3087,10 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			b := rc.viewFor(ownerConv)
+			var routeHealth string
+			if groupsRouteMapEnabled {
+				routeHealth = dashboardRouteHealth(g, groupPermissions, b, darwinLaunchesByGroup[g.ID])
+			}
 			ownerLinks := b.Links.withPresentedPRs(presentedPRsFor(b.AgentID)).
 				withFreshestPRStates(freshPRStates)
 			dg.Members = append(dg.Members, dashboardMember{
@@ -3010,6 +3108,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 				State:             b.State,
 				Notify:            notifyPrefs[ownerConv],
 				NotifyEffective:   notifyEffective(ownerConv),
+				RouteHealth:       routeHealth,
 			})
 			// Pure-owners are reachable via this group too — surface
 			// the group on the agent's row in the Agents view so
@@ -3035,6 +3134,13 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	codexAfterGroups := rc.codexTelemetryTiming.total
 	span.addChildren("groups", gt.phases()...)
 	span.markExcluding("groups", codexAfterGroups-codexAfterPayload)
+	// Route rows and leases were read alongside the roster. Resolve their
+	// friendly labels only after group member rows are assembled so this
+	// projection adds no per-route/per-member database work to the poll.
+	if groupsRouteMapEnabled {
+		routeMap := buildDashboardRouteMap(groups, out.Groups, routesByGroup, leasesByGroup, darwinLaunchesByGroup)
+		out.RouteMap = &routeMap
+	}
 	for convID, slugs := range allGrants {
 		addAgent(convID)
 		copySlice := append([]string{}, slugs...)

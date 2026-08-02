@@ -217,6 +217,11 @@ export async function refresh(options) {
     // a degraded snapshot cannot close panes or consume a later retirement.
     reconcileTerminalsForAgentRoster(data.agents, data.agent_roster_authoritative);
     setLastSnapshot(data);
+    // Groups Route map is a server-owned opt-in surface. Apply its visibility
+    // before rendering the Groups island and before publishing the snapshot so
+    // deep-link/history restoration never observes a route subview while the
+    // flag is off. The island also clears a stale route selection defensively.
+    document.body.classList.toggle('hide-groups-route-map', data.groups_route_map_enabled !== true);
     syncDashDefaultProfile(data.spawn_profile_default);
     renderGroupsTab();
     renderTemplatesTab();
