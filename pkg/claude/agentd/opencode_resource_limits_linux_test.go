@@ -33,6 +33,19 @@ func TestManagedOpenCodeExternalResourceCgroupLaunchUsesTmuxWrapper(t *testing.T
 	assert.Contains(t, command, "'env HOME=/srv/agent /opt/opencode serve --port 43210'")
 }
 
+func TestManagedOpenCodeTmuxLaunchUsesExplicitBashArgv(t *testing.T) {
+	runtime := db.OpenCodeRuntime{
+		SessionID: "managed-external", ResourceCgroupDir: "/sys/fs/cgroup/tclaude-test",
+	}
+	args := openCodeTmuxLaunchArgs(runtime, "/opt/opencode",
+		[]string{"serve", "--hostname", "127.0.0.1"}, nil, nil)
+
+	require.Len(t, args, 3)
+	assert.Equal(t, []string{"/bin/bash", "-c"}, args[:2])
+	assert.Contains(t, args[2], "session resource-limit-exec")
+	assert.Contains(t, args[2], "--hostname 127.0.0.1")
+}
+
 func TestManagedOpenCodeSandboxLaunchCapturesStderrOutsideTmuxPane(t *testing.T) {
 	handshake := &openCodeTmuxHandshake{
 		statusPath: "/private/authority", gatePath: "/private/gate",
@@ -47,4 +60,14 @@ func TestManagedOpenCodeSandboxLaunchCapturesStderrOutsideTmuxPane(t *testing.T)
 	assert.True(t, strings.LastIndex(command, "2>/private/stderr") >
 		strings.LastIndex(command, "resource-limit-exec"),
 		"stderr capture must wrap the resource-limit launcher")
+}
+
+func TestManagedOpenCodeLoopbackLaunchCapturesStderrWithoutHandshake(t *testing.T) {
+	launchFiles := &openCodeTmuxHandshake{stderrPath: "/private/stderr"}
+	command := openCodeTmuxLaunchCommand(db.OpenCodeRuntime{}, "/opt/opencode",
+		[]string{"serve"}, nil, launchFiles)
+
+	assert.NotContains(t, command, "3>")
+	assert.NotContains(t, command, "4<")
+	assert.Contains(t, command, "2>/private/stderr")
 }

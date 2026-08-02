@@ -204,6 +204,21 @@ func TestManagedOpenCodeTmuxHandshakeDoesNotUseProcessTempDir(t *testing.T) {
 	assert.Equal(t, os.FileMode(0o600), mustFileMode(t, handshake.stderrPath))
 }
 
+func TestManagedOpenCodeTmuxLoopbackLaunchFilesRetainStartupStderr(t *testing.T) {
+	setOpenCodeTmuxHandshakeDataDirForTest(t)
+	launchFiles, err := prepareOpenCodeTmuxLaunchFiles(false)
+	require.NoError(t, err)
+	t.Cleanup(launchFiles.close)
+
+	assert.Empty(t, launchFiles.statusPath)
+	assert.Empty(t, launchFiles.gatePath)
+	assert.Equal(t, os.FileMode(0o600), mustFileMode(t, launchFiles.stderrPath))
+	require.NoError(t, os.WriteFile(launchFiles.stderrPath,
+		[]byte("resource-limit-exec: unknown flag: --hostname\n"), 0o600))
+	assert.Equal(t, "resource-limit-exec: unknown flag: --hostname",
+		captureOpenCodeTmuxStartup(launchFiles, "missing-tmux-session"))
+}
+
 func TestManagedOpenCodeTmuxStartupRetainsStderrAfterPaneExit(t *testing.T) {
 	setOpenCodeTmuxHandshakeDataDirForTest(t)
 	handshake, err := prepareOpenCodeTmuxHandshake()
