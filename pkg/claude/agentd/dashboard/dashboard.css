@@ -763,7 +763,7 @@ button.tool:hover { border-color: #58a6ff; }
    the reader instead of forcing a horizontal scroll. */
 .mail-reader-body a { color: #58a6ff; text-decoration: none; overflow-wrap: anywhere; }
 .mail-reader-body a:hover { text-decoration: underline; }
-.mail-attachment { margin-top: 14px; padding: 10px 12px; border: 1px solid #30363d; border-radius: 6px; display: flex; align-items: center; gap: 9px; background: #0d1117; }
+.mail-attachment { margin-top: 14px; padding: 10px 12px; border: 1px solid #30363d; border-radius: 6px; display: flex; align-items: center; flex-wrap: wrap; gap: 9px; background: #0d1117; }
 .mail-attachment-label { color: #8b949e; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
 .mail-attachment a { color: #58a6ff; font-weight: 600; text-decoration: none; overflow-wrap: anywhere; }
 .mail-attachment a:hover { text-decoration: underline; }
@@ -1220,8 +1220,12 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
 .human-notification-drawer-body a { color: #58a6ff; text-decoration: none; }
 .human-notification-drawer-body a:hover { text-decoration: underline; }
 .human-notification-drawer-attachment {
-  display: flex; align-items: center; gap: 10px; margin-top: 20px; padding-right: 12px;
+  display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 20px;
+  padding: 8px 12px 0 8px;
   border: 1px solid #30363d; border-radius: 6px; background: #161b22;
+}
+.human-notification-drawer-attachment > .human-attachment-preview-trigger {
+  flex: 0 0 100%; margin-bottom: 2px;
 }
 .human-notification-drawer-file-link {
   min-width: 0; align-self: stretch; flex: 1; display: flex; align-items: center;
@@ -1260,6 +1264,140 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
 .human-notification-drawer-actions button:hover { border-color: #58a6ff; color: #f0f6fc; }
 .human-notification-drawer-actions button.primary {
   border-color: #1f6feb; background: #0d3a66; color: #dbeafe;
+}
+
+/* Human-notify image attachments. The thumbnail is deliberately a button
+   rather than a link: it opens the shared overlay, while the adjacent file
+   link remains the stable download path for every attachment type. */
+.human-attachment-preview-trigger {
+  position: relative; display: block; width: 100%; min-width: 0; padding: 0;
+  border: 0; border-radius: 5px; background: #0d1117; color: inherit;
+  cursor: pointer; text-align: left; overflow: hidden;
+}
+.human-attachment-preview-trigger:focus-visible {
+  outline: 2px solid #58a6ff; outline-offset: 2px;
+}
+.human-attachment-preview-thumb {
+  display: block; width: 100%; height: 136px; object-fit: contain;
+  border: 1px solid #30363d; border-radius: 5px;
+  background-color: #111820;
+  background-image: linear-gradient(45deg, #18212a 25%, transparent 25%),
+    linear-gradient(-45deg, #18212a 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #18212a 75%),
+    linear-gradient(-45deg, transparent 75%, #18212a 75%);
+  background-position: 0 0, 0 9px, 9px -9px, -9px 0;
+  background-size: 18px 18px;
+}
+.human-attachment-preview-label {
+  position: absolute; right: 8px; bottom: 8px; padding: 4px 7px;
+  border: 1px solid #1f6feb; border-radius: 4px;
+  background: rgba(13, 17, 23, .9); color: #dbeafe; font-size: 11px;
+  opacity: 0; transform: translateY(2px); transition: opacity .12s ease, transform .12s ease;
+}
+.human-attachment-preview-trigger:hover .human-attachment-preview-label,
+.human-attachment-preview-trigger:focus-visible .human-attachment-preview-label {
+  opacity: 1; transform: translateY(0);
+}
+.mail-attachment > .human-attachment-preview-trigger {
+  flex: 0 0 100%; order: -1;
+}
+
+/* Shared single-image viewer. It is a real .modal-overlay so the dashboard's
+   overlay stack, Escape routing, and refresh suspension all see it. */
+.image-preview-overlay {
+  padding: 16px; background: rgba(0, 0, 0, .82);
+  backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px);
+}
+.image-preview-dialog {
+  width: min(1100px, calc(100vw - 32px));
+  height: min(860px, calc(100vh - 32px)); min-height: 0;
+  display: flex; flex-direction: column; overflow: hidden;
+  border: 1px solid #364454; border-radius: 9px;
+  background: #0b1016; color: #c9d1d9;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, .62);
+}
+.image-preview-header {
+  display: flex; align-items: center; gap: 12px; min-height: 58px;
+  padding: 0 16px; border-bottom: 1px solid #30363d; background: #161b22;
+}
+.image-preview-heading { min-width: 0; display: flex; align-items: baseline; gap: 9px; }
+.image-preview-heading h2 {
+  min-width: 0; margin: 0; overflow: hidden; color: #f0f6fc;
+  font-size: 14px; text-overflow: ellipsis; white-space: nowrap;
+}
+.image-preview-heading span { color: #8b949e; font-size: 11px; white-space: nowrap; }
+.image-preview-header-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.image-preview-download, .image-preview-close,
+.image-preview-footer button {
+  border: 1px solid #30363d; border-radius: 4px; background: #21262d;
+  color: #c9d1d9; cursor: pointer; font: inherit; font-size: 12px;
+}
+.image-preview-download { padding: 5px 9px; border-color: #1f6feb; color: #58a6ff; text-decoration: none; }
+.image-preview-download:hover, .image-preview-download:focus-visible { background: rgba(31, 111, 235, .14); }
+.image-preview-close { width: 30px; height: 30px; padding: 0; color: #8b949e; font-size: 19px; }
+.image-preview-close:hover, .image-preview-close:focus-visible,
+.image-preview-footer button:hover:not(:disabled), .image-preview-footer button:focus-visible {
+  border-color: #58a6ff; color: #f0f6fc;
+}
+.image-preview-stage {
+  position: relative; min-height: 0; flex: 1; display: flex;
+  align-items: center; justify-content: center; overflow: auto; padding: 24px;
+  background-color: #111820;
+  background-image: linear-gradient(45deg, #18212a 25%, transparent 25%),
+    linear-gradient(-45deg, #18212a 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #18212a 75%),
+    linear-gradient(-45deg, transparent 75%, #18212a 75%);
+  background-position: 0 0, 0 12px, 12px -12px, -12px 0;
+  background-size: 24px 24px;
+}
+.image-preview-stage[data-zoomed="true"] {
+  align-items: flex-start; justify-content: flex-start; cursor: default;
+}
+.image-preview-image {
+  display: block; max-width: 100%; max-height: 100%; width: auto; height: auto;
+  object-fit: contain; transform-origin: center; transition: transform .15s ease;
+  box-shadow: 0 12px 35px rgba(0, 0, 0, .42);
+}
+.image-preview-stage[data-zoomed="true"] .image-preview-image {
+  cursor: default; transform-origin: top left;
+}
+.image-preview-state {
+  position: absolute; z-index: 1; left: 50%; top: 50%;
+  display: flex; flex-direction: column; gap: 5px; max-width: min(420px, calc(100% - 40px));
+  padding: 12px 14px; border: 1px solid #3d4a58; border-radius: 6px;
+  background: rgba(13, 17, 23, .92); color: #c9d1d9; text-align: center;
+  transform: translate(-50%, -50%); box-shadow: 0 10px 28px rgba(0, 0, 0, .45);
+}
+.image-preview-state strong { color: #f0f6fc; font-size: 13px; }
+.image-preview-state span { color: #8b949e; font-size: 11px; }
+.image-preview-footer {
+  display: flex; align-items: center; gap: 8px; min-height: 54px;
+  padding: 0 14px; border-top: 1px solid #30363d; background: #161b22;
+}
+.image-preview-footer-file {
+  max-width: 34%; overflow: hidden; color: #c9d1d9;
+  text-overflow: ellipsis; white-space: nowrap; font-size: 11px;
+}
+.image-preview-footer-size, .image-preview-zoom-label { color: #8b949e; font-size: 11px; }
+.image-preview-footer button { min-width: 31px; height: 28px; padding: 2px 7px; }
+.image-preview-footer button:disabled { opacity: .4; cursor: default; }
+
+@media (max-width: 720px) {
+  .image-preview-overlay { padding: 0; }
+  .image-preview-dialog { width: 100%; height: 100%; border: 0; border-radius: 0; }
+  .image-preview-header { min-height: 52px; padding: 0 12px; }
+  .image-preview-heading { min-width: 0; flex: 1; display: block; overflow: hidden; }
+  .image-preview-heading h2 { max-width: 100%; }
+  .image-preview-heading span { display: block; overflow: hidden; margin-top: 2px; text-overflow: ellipsis; }
+  .image-preview-header-actions { flex: 0 0 auto; }
+  .image-preview-download { padding: 5px 7px; font-size: 11px; }
+  .image-preview-stage { padding: 12px; }
+  .image-preview-footer { min-height: 52px; padding: 0 10px; }
+  .image-preview-footer-file { max-width: 42%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .human-attachment-preview-label, .image-preview-image { transition: none; }
 }
 /* ─── Reader skins for the cosmetic themes ────────────────────────────
    The reader is chrome, so it re-skins with the shell the way the dock does:
