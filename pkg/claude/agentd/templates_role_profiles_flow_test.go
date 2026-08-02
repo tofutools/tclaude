@@ -27,7 +27,10 @@ func TestGroupTemplate_PerRoleLaunchProfiles_DistinctModels(t *testing.T) {
 
 	// A cheap profile the tester role points at by name.
 	require.Equalf(t, http.StatusCreated,
-		createProfile(t, f, map[string]any{"name": "cheap", "model": "haiku"}).Code,
+		createProfile(t, f, map[string]any{
+			"name": "cheap", "model": "haiku",
+			"startup_context": "Use the economical reviewer workflow.",
+		}).Code,
 		"create profile")
 
 	createBody := map[string]any{
@@ -75,6 +78,9 @@ func TestGroupTemplate_PerRoleLaunchProfiles_DistinctModels(t *testing.T) {
 	assert.NotEqual(t, leadModel, testerModel, "the two roles resolved to distinct models")
 	testerEffort, _ := f.World.SpawnEffort(convByName["tester"])
 	assert.Equal(t, "", testerEffort, "tester's profile sets no effort, so none is threaded")
+	testerBriefing := soleInboxMessage(t, convByName["tester"])
+	assert.Contains(t, testerBriefing.Body, "Use the economical reviewer workflow.",
+		"a template's referenced profile context reaches the spawned agent")
 }
 
 // Scenario: an inline model override wins over the referenced profile — the
