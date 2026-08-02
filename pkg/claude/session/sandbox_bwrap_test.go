@@ -633,6 +633,30 @@ func TestBuildTclaudeLayerLaunchSpecMaterializesSharedContract(t *testing.T) {
 	}
 }
 
+func TestBuildTclaudeLayerLaunchSpecBindsDarwinReservationToContract(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cwd := filepath.Join(home, "work")
+	require.NoError(t, os.MkdirAll(cwd, 0o700))
+	reservation := &DarwinRouteSlotReservation{slots: []int{41301, 41302}}
+	spec, err := BuildTclaudeLayerLaunchSpec(TclaudeLayerLaunchInput{
+		HarnessName:            harness.DefaultName,
+		Cwd:                    cwd,
+		DarwinRouteSlots:       []int{41301, 41302},
+		DarwinRouteReservation: reservation,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []int{41301, 41302}, spec.Contract.DarwinRouteSlots)
+	assert.Same(t, reservation, spec.Contract.DarwinRouteReservation)
+	_, err = BuildTclaudeLayerLaunchSpec(TclaudeLayerLaunchInput{
+		HarnessName:            harness.DefaultName,
+		Cwd:                    cwd,
+		DarwinRouteSlots:       []int{41301},
+		DarwinRouteReservation: reservation,
+	})
+	require.ErrorContains(t, err, "does not match")
+}
+
 func TestTclaudeLayerOpenCodeStateDirsRespectXDGRoots(t *testing.T) {
 	home, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)

@@ -76,6 +76,7 @@ type darwinProxyLaunchSpec struct {
 	HarnessCommand   string                        `json:"harness_command"`
 	PreserveFDs      int                           `json:"preserve_fds,omitempty"`
 	LoopbackBindPort int                           `json:"loopback_bind_port,omitempty"`
+	RouteSlots       []int                         `json:"route_slots,omitempty"`
 }
 
 func darwinProxyLauncherCommand(spec darwinProxyLaunchSpec) (string, error) {
@@ -90,6 +91,9 @@ func darwinProxyLauncherCommand(spec darwinProxyLaunchSpec) (string, error) {
 	}
 	if spec.LoopbackBindPort < 0 || spec.LoopbackBindPort > 65535 {
 		return "", fmt.Errorf("darwin proxy launcher has invalid loopback bind port %d", spec.LoopbackBindPort)
+	}
+	if err := ValidateDarwinRouteSlots(spec.RouteSlots); err != nil {
+		return "", err
 	}
 	data, err := json.Marshal(spec)
 	if err != nil {
@@ -136,6 +140,9 @@ func decodeDarwinProxyLaunchSpec(encoded string) (darwinProxyLaunchSpec, error) 
 	if spec.LoopbackBindPort < 0 || spec.LoopbackBindPort > 65535 {
 		return darwinProxyLaunchSpec{}, fmt.Errorf("darwin proxy launcher has invalid loopback bind port %d", spec.LoopbackBindPort)
 	}
+	if err := ValidateDarwinRouteSlots(spec.RouteSlots); err != nil {
+		return darwinProxyLaunchSpec{}, err
+	}
 	return spec, nil
 }
 
@@ -176,6 +183,16 @@ func runDarwinProxyLauncher(spec darwinProxyLaunchSpec) (int, error) {
 		_ = listener.Close()
 		return 125, err
 	}
+	var routeReservation *DarwinRouteSlotReservation
+	if len(spec.RouteSlots) > 0 {
+		reservation, reserveErr := ReserveDarwinRouteSlotsAt(spec.RouteSlots)
+		if reserveErr != nil {
+			_ = listener.Close()
+			return 125, fmt.Errorf("reserve Darwin route slots before Seatbelt rendering: %w", reserveErr)
+		}
+		routeReservation = reservation
+		defer func() { _ = routeReservation.Release() }()
+	}
 
 	server, err := sandboxproxy.NewFromRuleSet(
 		*spec.Plan.FilteredNetwork,
@@ -190,7 +207,7 @@ func runDarwinProxyLauncher(spec darwinProxyLaunchSpec) (int, error) {
 	}
 	defer func() { _ = server.Close() }()
 
-	seatbeltCommand, err := renderDarwinSeatbeltCommand(
+	seatbeltCommand, err := renderDarwinSeatbeltCommandWithRouteSlots(
 		spec.Binary,
 		spec.Phase0WriteDirs,
 		spec.PrivateWriteDirs,
@@ -201,6 +218,7 @@ func runDarwinProxyLauncher(spec darwinProxyLaunchSpec) (int, error) {
 		spec.HarnessCommand,
 		endpoint,
 		spec.LoopbackBindPort,
+		spec.RouteSlots,
 	)
 	if err != nil {
 		_ = listener.Close()
@@ -233,6 +251,14 @@ func runDarwinProxyLauncher(spec darwinProxyLaunchSpec) (int, error) {
 	}
 	if err := child.Start(); err != nil {
 		return 125, fmt.Errorf("start Darwin Seatbelt sandbox: %w", err)
+	}
+	if routeReservation != nil {
+		if err := routeReservation.Release(); err != nil {
+			_ = syscall.Kill(-child.Process.Pid, syscall.SIGKILL)
+			_ = child.Wait()
+			return 125, fmt.Errorf("release Darwin route slot reservation after launch: %w", err)
+		}
+		routeReservation = nil
 	}
 
 	restoreForeground, err := darwinProxyGiveTerminalTo(child.Process.Pid)

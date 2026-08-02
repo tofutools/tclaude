@@ -167,6 +167,10 @@ type SpawnArgs struct {
 	// Empty and harness-builtin both preserve the default argv; tclaude-layer
 	// forwards the experimental --sandbox-impl opt-in on relaunch.
 	SandboxImplementation string
+	// DarwinRouteCapable is an explicit internal production/test seam. It is
+	// never inferred from the host environment or ordinary sandbox settings.
+	DarwinRouteCapable bool
+	DarwinRouteAgentID string
 	// AllowUnenforcedSandbox is a one-shot dashboard-operator authorization.
 	// It is forwarded only for a fresh birth; relaunch paths leave it false.
 	AllowUnenforcedSandbox bool

@@ -175,6 +175,23 @@ func tclaudeLayerCommand(
 		readOnlyBinds, socketPaths, plan, harnessCommand, 0, 0)
 }
 
+func tclaudeLayerCommandWithRouteSlots(
+	binary string,
+	phase0WriteDirs []string,
+	privateWriteDirs []TclaudeLayerPrivateWriteDir,
+	finalHideDirs []string,
+	readOnlyBinds []TclaudeLayerReadOnlyBind,
+	socketPaths []string,
+	plan sandboxpolicy.MountPlan,
+	routeSlots []int,
+	preReservation *DarwinRouteSlotReservation,
+	harnessCommand string,
+) (string, error) {
+	return tclaudeLayerDarwinCommandWithRouteSlots(
+		binary, phase0WriteDirs, privateWriteDirs, finalHideDirs,
+		readOnlyBinds, socketPaths, plan, harnessCommand, 0, 0, routeSlots, preReservation)
+}
+
 func tclaudeLayerDarwinCommand(
 	binary string,
 	phase0WriteDirs []string,
@@ -187,7 +204,42 @@ func tclaudeLayerDarwinCommand(
 	preserveFDs int,
 	loopbackBindPort int,
 ) (string, error) {
+	return tclaudeLayerDarwinCommandWithRouteSlots(
+		binary, phase0WriteDirs, privateWriteDirs, finalHideDirs,
+		readOnlyBinds, socketPaths, plan, harnessCommand,
+		preserveFDs, loopbackBindPort, nil, nil)
+}
+
+func tclaudeLayerDarwinCommandWithRouteSlots(
+	binary string,
+	phase0WriteDirs []string,
+	privateWriteDirs []TclaudeLayerPrivateWriteDir,
+	finalHideDirs []string,
+	readOnlyBinds []TclaudeLayerReadOnlyBind,
+	socketPaths []string,
+	plan sandboxpolicy.MountPlan,
+	harnessCommand string,
+	preserveFDs int,
+	loopbackBindPort int,
+	routeSlots []int,
+	preReservation *DarwinRouteSlotReservation,
+) (string, error) {
+	if err := ValidateDarwinRouteSlots(routeSlots); err != nil {
+		return "", err
+	}
+	if len(routeSlots) > 0 && !tclaudeLayerPlanDeploysProxy(plan) && preReservation == nil {
+		reservation, reserveErr := ReserveDarwinRouteSlotsAt(routeSlots)
+		if reserveErr != nil {
+			return "", fmt.Errorf("reserve Darwin route slots before Seatbelt rendering: %w", reserveErr)
+		}
+		defer func() { _ = reservation.Release() }()
+	}
 	if tclaudeLayerPlanDeploysProxy(plan) {
+		if preReservation != nil {
+			if err := preReservation.Release(); err != nil {
+				return "", fmt.Errorf("release Darwin route slots for proxy launcher: %w", err)
+			}
+		}
 		return darwinProxyLauncherCommand(darwinProxyLaunchSpec{
 			Binary:           binary,
 			Phase0WriteDirs:  phase0WriteDirs,
@@ -199,14 +251,15 @@ func tclaudeLayerDarwinCommand(
 			HarnessCommand:   harnessCommand,
 			PreserveFDs:      preserveFDs,
 			LoopbackBindPort: loopbackBindPort,
+			RouteSlots:       append([]int(nil), routeSlots...),
 		})
 	}
 	if loopbackBindPort != 0 {
 		return "", fmt.Errorf("darwin loopback bind exception requires the filtering proxy floor")
 	}
-	return renderDarwinSeatbeltCommand(
+	return renderDarwinSeatbeltCommandWithRouteSlots(
 		binary, phase0WriteDirs, privateWriteDirs, finalHideDirs,
-		readOnlyBinds, socketPaths, plan, harnessCommand, netip.AddrPort{}, 0)
+		readOnlyBinds, socketPaths, plan, harnessCommand, netip.AddrPort{}, 0, routeSlots)
 }
 
 func renderDarwinSeatbeltCommand(
@@ -220,6 +273,25 @@ func renderDarwinSeatbeltCommand(
 	harnessCommand string,
 	proxyEndpoint netip.AddrPort,
 	loopbackBindPort int,
+) (string, error) {
+	return renderDarwinSeatbeltCommandWithRouteSlots(
+		binary, phase0WriteDirs, privateWriteDirs, finalHideDirs,
+		readOnlyBinds, socketPaths, plan, harnessCommand, proxyEndpoint,
+		loopbackBindPort, nil)
+}
+
+func renderDarwinSeatbeltCommandWithRouteSlots(
+	binary string,
+	phase0WriteDirs []string,
+	privateWriteDirs []TclaudeLayerPrivateWriteDir,
+	finalHideDirs []string,
+	readOnlyBinds []TclaudeLayerReadOnlyBind,
+	socketPaths []string,
+	plan sandboxpolicy.MountPlan,
+	harnessCommand string,
+	proxyEndpoint netip.AddrPort,
+	loopbackBindPort int,
+	routeSlots []int,
 ) (string, error) {
 	switch plan.NetworkPosture {
 	case sandboxpolicy.NetworkHostOpen, sandboxpolicy.NetworkIsolatedWithAgentd:
@@ -290,7 +362,7 @@ func renderDarwinSeatbeltCommand(
 	if err != nil {
 		return "", err
 	}
-	profile, params, err := renderSeatbeltProfileWithLoopbackBind(
+	profile, params, err := renderSeatbeltProfileWithLoopbackBindAndRouteSlots(
 		filteredContract,
 		socketPaths,
 		filteredPlan,
@@ -301,6 +373,7 @@ func renderDarwinSeatbeltCommand(
 		darwinSeatbeltLstatIdentity,
 		readOnlyPaths,
 		loopbackBindPort,
+		routeSlots,
 		canonicalPrivateWriteDirs...,
 	)
 	if err != nil {
@@ -310,6 +383,14 @@ func renderDarwinSeatbeltCommand(
 	command := clcommon.ShellQuoteArg(binary) + " -p " + clcommon.ShellQuoteArg(profile)
 	for _, param := range params {
 		command += " " + clcommon.ShellQuoteArg("-D"+param.name+"="+param.path)
+	}
+	if len(routeSlots) > 0 {
+		encoded, encodeErr := EncodeDarwinRouteSlots(routeSlots)
+		if encodeErr != nil {
+			return "", encodeErr
+		}
+		harnessCommand = "export " + DarwinRouteSlotsEnv + "=" +
+			clcommon.ShellQuoteArg(encoded) + "; " + harnessCommand
 	}
 	command += " -- /bin/sh -c " + clcommon.ShellQuoteArg(harnessCommand)
 	return command, nil

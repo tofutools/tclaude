@@ -674,30 +674,31 @@ func TestDashboardAssets_GroupQuickFoldWired(t *testing.T) {
 	}
 }
 
-// TestDashboardAssets_GroupProfileBrainDimming guards the per-group spawn
-// profile indicator's deliberately narrow brightness states. The glyph needs
-// its own wrapper so a broad summary/chip hover cannot light it; it is bright
-// only under direct pointer hover, or while its group is open and the profile
-// chip is not marked unset.
-func TestDashboardAssets_GroupProfileBrainDimming(t *testing.T) {
+// TestDashboardAssets_GroupProfileIconDimming guards the per-group spawn and
+// sandbox profile indicators' deliberately narrow brightness states. The
+// glyphs need their own wrapper so a broad summary/chip hover cannot light
+// them; they are bright only under direct pointer hover, or while their group
+// is open and the profile chip is not marked unset.
+func TestDashboardAssets_GroupProfileIconDimming(t *testing.T) {
 	groups := dashboardAssetFile(t, "js/groups-list.js")
 	css := dashboardAssetFile(t, "dashboard.css")
 	for _, needle := range []string{
-		`<span class="group-default-profile-icon">🧠</span>`,
-		".group-default-profile-icon:hover,",
-		"details[data-group-key][open] > summary .group-default-model:not(.unset) > .group-default-profile-icon",
+		`<span class="group-profile-icon">${sandbox ? '🛡' : '🧠'}</span>`,
+		".group-profile-icon:hover,",
+		"details[data-group-key][open] > summary .group-default-model:not(.unset) > .group-profile-icon",
+		"details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .group-profile-icon",
 	} {
 		if !strings.Contains(groups+css, needle) {
-			t.Errorf("dashboard assets missing %q — group profile brain dimming regressed", needle)
+			t.Errorf("dashboard assets missing %q — group profile icon dimming regressed", needle)
 		}
 	}
-	iconRule := regexp.MustCompile(`(?s)\.group-default-profile-icon\s*\{([^}]*)\}`).FindStringSubmatch(css)
+	iconRule := regexp.MustCompile(`(?s)\.group-profile-icon\s*\{([^}]*)\}`).FindStringSubmatch(css)
 	if len(iconRule) != 2 {
-		t.Fatal("dashboard CSS is missing the group profile brain's base rule")
+		t.Fatal("dashboard CSS is missing the group profile icon's base rule")
 	}
 	for _, declaration := range []string{"color: #d4d4d4;", "opacity: 0.35;"} {
 		if !strings.Contains(iconRule[1], declaration) {
-			t.Errorf("group profile brain base rule missing %q", declaration)
+			t.Errorf("group profile icon base rule missing %q", declaration)
 		}
 	}
 	for _, forbidden := range []string{

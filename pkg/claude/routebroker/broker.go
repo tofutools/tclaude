@@ -93,6 +93,7 @@ type Event struct {
 	Role        string
 	RouteID     string
 	AgentID     string
+	LeaseID     string
 	StreamID    uint64
 	Connections int
 	Bytes       int
@@ -333,7 +334,7 @@ func (b *Broker) attachConsumer(ctx context.Context, auth ConsumerAuth, conn net
 	}
 	if err := b.authorizer.AuthorizeConsumer(ctx, auth); err != nil {
 		b.rejectedConnectionsMetric.Add(1)
-		b.emit(Event{Kind: "consumer-rejected", Role: roleConsumer.string(), RouteID: auth.RouteID, AgentID: auth.AgentID, Error: "authority refused"})
+		b.emit(Event{Kind: "consumer-rejected", Role: roleConsumer.string(), RouteID: auth.RouteID, AgentID: auth.AgentID, LeaseID: auth.LeaseID, Error: "authority refused"})
 		_ = conn.Close()
 		return fmt.Errorf("%w: consumer: %v", ErrUnauthorized, err)
 	}
@@ -368,7 +369,7 @@ func (b *Broker) attachConsumer(ctx context.Context, auth ConsumerAuth, conn net
 			return err
 		}
 	}
-	b.emit(Event{Kind: "consumer-attached", Role: roleConsumer.string(), RouteID: auth.RouteID, AgentID: auth.AgentID, Connections: consumerCount})
+	b.emit(Event{Kind: "consumer-attached", Role: roleConsumer.string(), RouteID: auth.RouteID, AgentID: auth.AgentID, LeaseID: auth.LeaseID, Connections: consumerCount})
 	return b.serveSession(s, ctx)
 }
 
@@ -446,12 +447,12 @@ func (b *Broker) serveSession(s *session, callerCtx context.Context) error {
 			if s.ctx.Err() != nil || errors.Is(err, net.ErrClosed) || errors.Is(err, io.EOF) {
 				return nil
 			}
-			b.emit(Event{Kind: "channel-error", Role: s.role.string(), RouteID: s.routeID(), AgentID: s.agentID(), Error: "frame read failed"})
+			b.emit(Event{Kind: "channel-error", Role: s.role.string(), RouteID: s.routeID(), AgentID: s.agentID(), LeaseID: s.leaseID(), Error: "frame read failed"})
 			return err
 		}
 		if err := b.handleFrame(s, frame); err != nil {
 			if errors.Is(err, ErrBackpressure) {
-				b.emit(Event{Kind: "channel-backpressure", Role: s.role.string(), RouteID: s.routeID(), AgentID: s.agentID(), StreamID: frame.Stream, Error: "bounded queue full"})
+				b.emit(Event{Kind: "channel-backpressure", Role: s.role.string(), RouteID: s.routeID(), AgentID: s.agentID(), LeaseID: s.leaseID(), StreamID: frame.Stream, Error: "bounded queue full"})
 			}
 			s.close()
 			return err
@@ -476,7 +477,7 @@ func (s *session) watchAuthority() {
 			}
 			cancel()
 			if err != nil {
-				s.broker.emit(Event{Kind: "authority-revoked", Role: s.role.string(), RouteID: s.routeID(), AgentID: s.agentID(), Error: "authority no longer valid"})
+				s.broker.emit(Event{Kind: "authority-revoked", Role: s.role.string(), RouteID: s.routeID(), AgentID: s.agentID(), LeaseID: s.leaseID(), Error: "authority no longer valid"})
 				s.close()
 				return
 			}
@@ -503,6 +504,13 @@ func (s *session) agentID() string {
 		return s.publisherAuth.AgentID
 	}
 	return s.consumerAuth.AgentID
+}
+
+func (s *session) leaseID() string {
+	if s.role == roleConsumer {
+		return s.consumerAuth.LeaseID
+	}
+	return ""
 }
 
 func (b *Broker) handleFrame(s *session, frame Frame) error {
@@ -604,7 +612,7 @@ func (b *Broker) openStream(consumer *session, localID uint64) error {
 	streamCount := len(r.streams)
 	b.streamsMetric.Add(1)
 	b.mu.Unlock()
-	b.emit(Event{Kind: "stream-open", Role: roleConsumer.string(), RouteID: r.id, AgentID: agentID, StreamID: globalID, Connections: streamCount})
+	b.emit(Event{Kind: "stream-open", Role: roleConsumer.string(), RouteID: r.id, AgentID: agentID, LeaseID: consumer.consumerAuth.LeaseID, StreamID: globalID, Connections: streamCount})
 	if err := publisher.enqueue(globalID, Frame{Kind: KindOpen, Stream: globalID}, false); err != nil {
 		if errors.Is(err, ErrBackpressure) {
 			b.rejectedStreamsMetric.Add(1)
@@ -775,7 +783,7 @@ func (b *Broker) removeStream(stream *stream, keepPublisherWriter, keepConsumerW
 	if publisher != nil && !keepPublisherWriter {
 		publisher.removeWriter(stream.globalID)
 	}
-	b.emit(Event{Kind: "stream-closed", Role: roleConsumer.string(), RouteID: r.id, AgentID: stream.agentID, StreamID: stream.globalID})
+	b.emit(Event{Kind: "stream-closed", Role: roleConsumer.string(), RouteID: r.id, AgentID: stream.agentID, LeaseID: stream.consumer.consumerAuth.LeaseID, StreamID: stream.globalID})
 }
 
 func (b *Broker) detach(s *session) {
@@ -839,7 +847,7 @@ func (b *Broker) detach(s *session) {
 				}
 			}
 		}
-		b.emit(Event{Kind: "consumer-detached", Role: roleConsumer.string(), RouteID: r.id, AgentID: s.agentID()})
+		b.emit(Event{Kind: "consumer-detached", Role: roleConsumer.string(), RouteID: r.id, AgentID: s.agentID(), LeaseID: s.leaseID()})
 	}
 	if s.role == rolePublisher {
 		b.publishersMetric.Add(^uint64(0))
@@ -931,6 +939,9 @@ func (b *Broker) emit(event Event) {
 	}
 	if b.logger != nil && event.Kind != "stream-data" {
 		attrs := []any{"role", event.Role, "route_id", event.RouteID, "agent_id", event.AgentID}
+		if event.LeaseID != "" {
+			attrs = append(attrs, "lease_id", event.LeaseID)
+		}
 		if event.StreamID != 0 {
 			attrs = append(attrs, "stream_id", event.StreamID)
 		}

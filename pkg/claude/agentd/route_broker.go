@@ -11,14 +11,14 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/routebroker"
 )
 
-// GroupRouteBroker is the daemon-owned M2 data-plane engine. Endpoint
-// adapters attach their already-authenticated channels here in a later
-// milestone; this ticket intentionally does not add platform listeners or
-// activation paths.
+// GroupRouteBroker is the daemon-owned M2 data-plane engine. On Darwin, the
+// bounded route adapter attaches authenticated channels here only when the
+// exact launch slot pool is explicitly configured; other platforms retain
+// the platform-neutral broker seam without endpoint activation.
 var groupRouteBroker = newGroupRouteBroker()
 
 func newGroupRouteBroker() *routebroker.Broker {
-	broker, err := routebroker.New(routebroker.Config{Authorizer: databaseRouteAuthority{}})
+	broker, err := routebroker.New(routebroker.Config{Authorizer: databaseRouteAuthority{}, OnEvent: routeAdapterBrokerEvent})
 	if err != nil {
 		// databaseRouteAuthority is a concrete, non-nil implementation. Keep
 		// construction centralized so a future invalid config cannot leave a
@@ -40,6 +40,7 @@ func NewGroupRouteBrokerForTest() *routebroker.Broker {
 		// Keep the test authority poll quick while leaving enough room for
 		// SQLite-backed checks under the race detector before failing closed.
 		AuthorityCheckInterval: 50 * time.Millisecond,
+		OnEvent:                routeAdapterBrokerEvent,
 	})
 	if err != nil {
 		panic(err)
