@@ -3,6 +3,7 @@
 package agentd
 
 import (
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -34,16 +35,22 @@ func TestManagedOpenCodeExternalResourceCgroupLaunchUsesTmuxWrapper(t *testing.T
 }
 
 func TestManagedOpenCodeTmuxLaunchUsesExplicitBashArgv(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	runtime := db.OpenCodeRuntime{
 		SessionID: "managed-external", ResourceCgroupDir: "/sys/fs/cgroup/tclaude-test",
 	}
-	args := openCodeTmuxLaunchArgs(runtime, "/opt/opencode",
+	args, cleanup, err := openCodeTmuxLaunchArgs(runtime, "/opt/opencode",
 		[]string{"serve", "--hostname", "127.0.0.1"}, nil, nil)
+	require.NoError(t, err)
+	t.Cleanup(cleanup)
 
-	require.Len(t, args, 3)
-	assert.Equal(t, []string{"/bin/bash", "-c"}, args[:2])
-	assert.Contains(t, args[2], "session resource-limit-exec")
-	assert.Contains(t, args[2], "--hostname 127.0.0.1")
+	require.Len(t, args, 2)
+	assert.Equal(t, "/bin/bash", args[0])
+	assert.Contains(t, args[1], "launch-scripts")
+	raw, err := os.ReadFile(args[1])
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), "session resource-limit-exec")
+	assert.Contains(t, string(raw), "--hostname 127.0.0.1")
 }
 
 func TestManagedOpenCodeSandboxLaunchCapturesStderrOutsideTmuxPane(t *testing.T) {
