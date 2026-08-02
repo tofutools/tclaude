@@ -212,6 +212,8 @@ focus on workflows and the behavior that is easy to miss from help text.
 
 - [Agent coordination](agent.md) — identity, groups, messaging, lifecycle,
   profiles, permissions, skills, task forces, and scheduling.
+- [Group routes](group-routes.md) — Darwin route activation boundary, launch
+  disclosure, and exact-head evidence.
 - [Agent dashboard](dashboard.md) — the browser operations console.
 - [Remote control](remote-control.md) — Claude Code's built-in phone/website
   access, managed per agent or group.

@@ -205,6 +205,20 @@ instead of slash-command injection).
 Legend: ✅ supported · ⚙️ available, opt-in / configured elsewhere · ⚠️ partial ·
 ❌ not available.
 
+### Darwin group-route activation
+
+Group routes are a tclaude platform capability shared by harnesses; the
+harness selected for a session does not widen the Darwin route boundary. See
+[Group routes](group-routes.md) for the Darwin contract and exact-head
+evidence.
+
+| Host boundary | Activation status | Evidence contract |
+|---|---|---|
+| macOS | ⚠️ Partial | Bounded exact Seatbelt TCP slots; same-port host-local reachability remains disclosed; provider and Internet policy floors remain in force. |
+
+This entry records the Darwin closeout only. It is not a Linux activation
+claim.
+
 ### Sandbox & approval defaults (Codex)
 
 Codex has a built-in OS-level sandbox and an approval policy, both selectable at
