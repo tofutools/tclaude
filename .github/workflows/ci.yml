@@ -261,7 +261,6 @@ jobs:
       - name: Run sandbox v2 bubblewrap smoke
         env:
           TCLAUDE_SANDBOX_V2_SMOKE: "1"
-          TCLAUDE_OPENCODE_PROXY_DARWIN_SMOKE: "1"
           TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY: ${{ runner.temp }}/tclaude-sandbox-v2
         run: |
           smoke_log="$RUNNER_TEMP/tclaude-layer-bubblewrap-smoke.log"
@@ -836,6 +835,7 @@ jobs:
       - name: Run sandbox v2 Seatbelt smoke
         env:
           TCLAUDE_SANDBOX_V2_SMOKE: "1"
+          TCLAUDE_OPENCODE_PROXY_DARWIN_SMOKE: "1"
           TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY: ${{ runner.temp }}/tclaude-sandbox-v2
         run: |
           driver_log="$RUNNER_TEMP/seatbelt-smoke-driver.log"
