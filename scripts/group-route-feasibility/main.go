@@ -224,6 +224,15 @@ func runLinuxPublisher(marker string, _ int, hostEndpoint string) error {
 	if err != nil || strings.TrimSpace(line) != "CONNECT" {
 		return fmt.Errorf("publisher connect request missing: %q (%v)", strings.TrimSpace(line), err)
 	}
+	appDone := make(chan error, 1)
+	go func() {
+		service, acceptErr := app.Accept()
+		if acceptErr != nil {
+			appDone <- acceptErr
+			return
+		}
+		appDone <- serveEcho(service)
+	}()
 	appConn, err := net.DialTimeout("tcp4", endpoint, 5*time.Second)
 	if err != nil {
 		return fmt.Errorf("publisher namespace-local helper dial: %w", err)
@@ -234,6 +243,9 @@ func runLinuxPublisher(marker string, _ int, hostEndpoint string) error {
 	}
 	if err := relay(appConn, broker); err != nil {
 		return err
+	}
+	if err := <-appDone; err != nil {
+		return fmt.Errorf("publisher namespace-local service: %w", err)
 	}
 	return writeMarker(marker, map[string]string{
 		"netns": ns, "endpoint": endpoint, "bind": "pass",
