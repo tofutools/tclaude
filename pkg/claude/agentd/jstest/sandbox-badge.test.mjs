@@ -449,6 +449,24 @@ test('the sandbox glyph rides the harness line, left of the remote indicator', a
   const { HarnessLine } = await harness.importDashboardModule('js/groups-member-table.js');
 
   const mount = async (member) => harness.mount(harness.html`<${HarnessLine} member=${member} />`);
+
+  await t.test('shortens effort levels and keeps the full value on the tooltip', async () => {
+    const labels = { low: 'lw', medium: 'md', high: 'hi', xhigh: 'xi', max: 'mx' };
+    for (const [effort, label] of Object.entries(labels)) {
+      const mounted = await mount({
+        conv_id: `effort-${effort}`, online: true,
+        state: { harness: 'claude', model: 'Opus 4.8', effort_level: effort },
+      });
+      try {
+        const token = mounted.container.querySelector('.harness-effort');
+        assert.equal(token.textContent, label, `${effort} uses its compact label`);
+        assert.equal(token.title, effort, `${effort} keeps its full value in the tooltip`);
+      } finally {
+        await mounted.unmount();
+      }
+    }
+  });
+
   const confined = {
     harness: 'claude', model: 'Opus 4.8 (1M context)', effort_level: 'high',
     sandbox_mode: 'inherit', os_sandbox_state: 'on',
@@ -462,7 +480,7 @@ test('the sandbox glyph rides the harness line, left of the remote indicator', a
       assert.ok(line.querySelector('.sandbox-badge'), 'the glyph belongs to the harness line');
       assert.equal(mounted.container.querySelectorAll('.sandbox-badge').length, 1);
       const text = line.textContent.replace(/\s+/g, ' ').trim();
-      assert.match(text, /high\s*🔒/, 'the glyph trails the effort token');
+      assert.match(text, /hi\s*🔒/, 'the glyph trails the effort token');
     } finally {
       await mounted.unmount();
     }

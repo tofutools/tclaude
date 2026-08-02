@@ -86,6 +86,18 @@ function shortModel(model) {
   return size ? `${core} ${size}` : core;
 }
 
+const EFFORT_LABELS = {
+  low: 'lw',
+  medium: 'md',
+  high: 'hi',
+  xhigh: 'xi',
+  max: 'mx',
+};
+
+function shortEffort(effort) {
+  return EFFORT_LABELS[effort] || effort;
+}
+
 function RemoteBadge({ member }) {
   if (!member.online || !member.state?.remote_control) return null;
   const title = 'Remote Access is ON — this agent is reachable from the Claude app/phone. Click to open its live session (Claude Code TUI) in a web terminal; Ctrl/Cmd-click opens it without leaving this tab. Best-known state (the harness has no readback); toggle it from the row’s ⚙ menu.';
@@ -154,7 +166,7 @@ export function HarnessLine({ member, snapshot }) {
   if (virtualCost > 0) title += ` — WHAT-IF cost this session: $${virtualCost.toFixed(4)} (estimated if billed pay-per-token — you're on a subscription, so this is hypothetical, not a real charge)`;
   return html`<div class="agent-harness" title=${title}>
     <span class=${metadataClass} role="note" aria-label=${title}><span class="harness-name">${labels.short}</span><span class="harness-sep">·</span><span class="harness-model">${shortModel(model)}</span>
-      ${effort ? html`<span class="harness-effort">${effort}</span>` : null}
+      ${effort ? html`<span class="harness-effort" title=${effort}>${shortEffort(effort)}</span>` : null}
       ${cost > 0 ? html`<span class="harness-cost">${cost >= 0.005 ? `$${cost.toFixed(2)}` : '<1¢'}</span>` : null}
       ${virtualCost > 0 ? html`<span class="harness-cost harness-cost-whatif" title="Estimated pay-per-token-equivalent cost this session — hypothetical, not a real charge (subscription)">${virtualCost >= 0.005 ? `≈$${virtualCost.toFixed(2)}` : '≈<1¢'}</span>` : null}
     </span>${sandbox}${remote}${refused}
