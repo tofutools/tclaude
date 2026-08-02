@@ -172,7 +172,15 @@ function activate(loc) {
     } else if (loc.tab === 'jobs') {
       requestJobsLocation(loc);
     } else if (loc.tab === 'groups') {
-      requestGroupsLocation(loc);
+      // Bare Groups is already the default Members view on boot. Avoid
+      // broadcasting a synthetic restore for stale-target fallback (for
+      // example /terminals with no panes), which would look like a user
+      // navigation to observers. A bare Groups pop from Route map still has
+      // to return the island to Members; explicit route locations always do.
+      const groups = featureState('groups');
+      if (loc.subtab || loc.selection || groups?.subview?.value === 'routes') {
+        requestGroupsLocation(loc);
+      }
     } else if (loc.tab === 'processes') {
       // Processes restores through its island rather than a subtab click, for
       // two reasons. A click can only pick a subtab — it can never reopen the
