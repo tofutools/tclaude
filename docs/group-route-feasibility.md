@@ -13,9 +13,10 @@ authoritative evidence for Darwin; a local run is useful for iteration only.
 
 ## Gate state
 
-**Pending exact-head CI evidence.** The probe emits explicit positive,
-negative, limitation, and failure markers. A green workflow is not sufficient
-if either platform arm was skipped or its named evidence was absent.
+**Positive feasibility gate on exact-head CI run [30744475927](https://github.com/tofutools/tclaude/actions/runs/30744475927).** Both platform arms completed on
+`c7ce00f2d2c1f3fbf280ba71ff0affc856336884`; neither was skipped. The probe
+emitted explicit positive, negative, and limitation markers. This is evidence
+for the bounded contract below, not a production capability activation.
 
 ## Linux arm
 
@@ -34,6 +35,15 @@ agentd-owned broker:
 | network namespace IDs | three distinct IDs, all distinct from host | no ambient peer namespace was reused |
 
 The probe fails closed when any required observation is missing.
+
+Observed Linux markers from the exact-head run:
+
+```text
+TCL-947 Linux evidence: POSITIVE
+linux route: opaque TCP stream carried through host Unix broker; consumer endpoint was created after launch
+linux authorization: third group denied; direct publisher endpoint and host control endpoint unavailable from namespaces
+linux policy floor: --unshare-all; no namespace join, bridge, nftables rule, or ambient peer network
+```
 
 ## Darwin arm
 
@@ -56,6 +66,20 @@ publisher.
 The host-wide localhost limitation is disclosed rather than hidden behind a
 launch-time collision check. Publisher applications must accept a tclaude-
 selected slot; broker-held consumer slots are the safer bounded-pool side.
+
+Observed Darwin markers from the exact-head run:
+
+```text
+TCL-947 Darwin profile: POSITIVE exact-port pool=8 rendered-slots=9
+TCL-947 Darwin collision: POSITIVE publisher slot collision=EADDRINUSE; no workaround invented
+TCL-947 Darwin localhost: LIMITATION Seatbelt localhost:<port> reached non-loopback 192.168.64.3:49186
+TCL-947 Darwin evidence: POSITIVE broker-held consumer endpoint=49185 reached publisher slot=49184 with opaque TCP bytes
+TCL-947 Darwin negative: non-reserved neighbor=49192 and external TCP were refused by Seatbelt
+```
+
+The profile marker's `rendered-slots=9` count includes the eight exact
+outbound exceptions plus the one exact publisher `network-bind` exception; the
+pool itself is eight slots.
 
 ## Recommended contract after a positive gate
 
