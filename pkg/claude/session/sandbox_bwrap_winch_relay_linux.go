@@ -144,21 +144,19 @@ func runTclaudeLayerWinchRelay(
 		}
 	}
 	if binding.PreserveFDs != 0 {
-		// The two-fd contract is the OpenCode launcher's, and it is the same
-		// under either filtering engine: the listener and the relay executable,
-		// and nothing else. A count this supervisor did not render is refused
-		// rather than preserved on faith.
-		if binding.PreserveFDs != 2 {
+		// One preserved descriptor is the route-helper credential FD. Two are
+		// the OpenCode launcher's listener and relay executable. A count this
+		// supervisor did not render is refused rather than preserved on faith.
+		if binding.PreserveFDs != 1 && binding.PreserveFDs != 2 {
 			return 125, fmt.Errorf(
-				"inherited descriptor preservation requires the OpenCode two-fd contract")
+				"inherited descriptor preservation requires the route-helper one-fd or OpenCode two-fd contract")
 		}
-		// An engine policy is required because preservation is only ever
+		// An engine policy is required for the OpenCode pair because preservation is only ever
 		// rendered WITH a supervisor: a plan that deploys no engine passes the
 		// launcher's descriptors straight to bubblewrap and never reaches this
-		// process at all. Preserve-fds arriving without a policy therefore
-		// means the renderer and the supervisor disagree about the launch, and
-		// the fd numbers the harness was told to name would be wrong.
-		if strings.TrimSpace(binding.FilteredPolicy) == "" &&
+		// process at all. The route-helper one-fd contract is intentionally
+		// available without an engine.
+		if binding.PreserveFDs == 2 && strings.TrimSpace(binding.FilteredPolicy) == "" &&
 			strings.TrimSpace(binding.ProxyPolicy) == "" {
 			return 125, fmt.Errorf(
 				"inherited descriptor preservation requires a filtering engine policy")
@@ -255,6 +253,12 @@ func runTclaudeLayerWinchRelay(
 		return 125, fmt.Errorf("start bubblewrap: %w", err)
 	}
 	_ = statusW.Close()
+	// Bubblewrap now owns duplicates of every preserved descriptor. Drop the
+	// relay's copies immediately; the shell/helper topology must have exactly
+	// one live credential FD path, not a parent-side duplicate.
+	for _, file := range preservedFiles {
+		_ = file.Close()
+	}
 	if len(engineFiles) > 0 {
 		// The child owns duplicates of the sealed bootstrap image and policy
 		// files. The parent drops the bootstrap image specifically, because it

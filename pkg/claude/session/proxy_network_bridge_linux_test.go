@@ -711,7 +711,7 @@ func TestWinchRelayPreservationRequiresAnEnginePolicy(t *testing.T) {
 		[]string{"/bin/true"}, nil,
 		stackedRelayBindingOptions{PreserveFDs: 3, ProxyPolicy: "x"})
 	assert.Equal(t, 125, code)
-	assert.ErrorContains(t, err, "requires the OpenCode two-fd contract")
+	assert.ErrorContains(t, err, "requires the route-helper one-fd or OpenCode two-fd contract")
 }
 
 // TestBuildTclaudeLayerLaunchSpecRefusesAnInvalidEngine keeps the launch input

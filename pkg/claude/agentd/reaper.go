@@ -504,6 +504,7 @@ func (r *sessionReaper) tick(now time.Time) (reaped int) {
 			// flipped status back. Leave it; re-evaluated next sweep.
 			continue
 		}
+		revokeRouteHelperCredentials(st.ConvID, launchIdentity.Generation)
 		delete(r.deadPaneRecordFailure, st.ID)
 		reaped++
 		if paneEvidence != nil {
