@@ -19,7 +19,7 @@ func TestBuildExportArtifact_SingleFile(t *testing.T) {
 	require.NoError(t, os.WriteFile(p, []byte("# hi\n"), 0o644))
 
 	var stderr bytes.Buffer
-	data, name, ct, rc := buildExportArtifact([]string{p}, "", &stderr)
+	data, name, ct, rc := buildExportArtifact([]string{p}, "", false, &stderr)
 	require.Equal(t, rcOK, rc, stderr.String())
 	assert.Equal(t, []byte("# hi\n"), data, "single file passes through verbatim")
 	assert.Equal(t, "summary.md", name)
@@ -32,7 +32,7 @@ func TestBuildExportArtifact_SingleFileNameOverride(t *testing.T) {
 	require.NoError(t, os.WriteFile(p, []byte("x"), 0o644))
 
 	var stderr bytes.Buffer
-	_, name, _, rc := buildExportArtifact([]string{p}, "renamed.txt", &stderr)
+	_, name, _, rc := buildExportArtifact([]string{p}, "renamed.txt", false, &stderr)
 	require.Equal(t, rcOK, rc, stderr.String())
 	assert.Equal(t, "renamed.txt", name)
 }
@@ -45,7 +45,7 @@ func TestBuildExportArtifact_MultipleFilesZipped(t *testing.T) {
 	require.NoError(t, os.WriteFile(b, []byte("b,b"), 0o644))
 
 	var stderr bytes.Buffer
-	data, name, ct, rc := buildExportArtifact([]string{a, b}, "", &stderr)
+	data, name, ct, rc := buildExportArtifact([]string{a, b}, "", false, &stderr)
 	require.Equal(t, rcOK, rc, stderr.String())
 	assert.Equal(t, "export.zip", name)
 	assert.Equal(t, "application/zip", ct)
@@ -66,7 +66,7 @@ func TestBuildExportArtifact_MultipleFilesZipped(t *testing.T) {
 
 func TestBuildExportArtifact_MissingFile(t *testing.T) {
 	var stderr bytes.Buffer
-	_, _, _, rc := buildExportArtifact([]string{"/no/such/file"}, "", &stderr)
+	_, _, _, rc := buildExportArtifact([]string{"/no/such/file"}, "", false, &stderr)
 	assert.Equal(t, rcInvalidArg, rc)
 	assert.NotEmpty(t, stderr.String())
 }
@@ -75,7 +75,7 @@ func TestBuildExportArtifact_DirectoryPackaged(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "result.txt"), []byte("done"), 0o644))
 	var stderr bytes.Buffer
-	data, name, contentType, rc := buildExportArtifact([]string{dir}, "", &stderr)
+	data, name, contentType, rc := buildExportArtifact([]string{dir}, "", false, &stderr)
 	require.Equal(t, rcOK, rc, stderr.String())
 	assert.Equal(t, filepath.Base(dir)+".zip", name)
 	assert.Equal(t, "application/zip", contentType)
@@ -92,7 +92,7 @@ func TestBuildExportArtifact_SymlinkedDirectoryRejected(t *testing.T) {
 	link := filepath.Join(dir, "dist")
 	require.NoError(t, os.Symlink(target, link))
 	var stderr bytes.Buffer
-	_, _, _, rc := buildExportArtifact([]string{link}, "", &stderr)
+	_, _, _, rc := buildExportArtifact([]string{link}, "", false, &stderr)
 	assert.Equal(t, rcInvalidArg, rc)
 	assert.Contains(t, stderr.String(), "symlink")
 }

@@ -90,8 +90,13 @@ var (
 	errHumanMessageAttachmentQuota              = errors.New("human message attachment storage quota exceeded")
 	maxHumanMessageAttachmentSenderBytes  int64 = 512 << 20 // 512 MiB per stable agent
 	maxHumanMessageAttachmentTotalBytes   int64 = 2 << 30   // 2 GiB daemon-wide
-	maxHumanMessageAttachmentSenderCount        = 100
-	maxHumanMessageAttachmentTotalCount         = 1000
+	// Count quotas guard database rows and filesystem inodes, not bytes. They
+	// are per-FILE, and one notification may now publish up to
+	// maxNotifyHumanAttachmentsPerMessage of them, so they are sized so that a
+	// sender still gets roughly the same number of NOTIFICATIONS as when an
+	// attachment was always a single artifact.
+	maxHumanMessageAttachmentSenderCount = 1000
+	maxHumanMessageAttachmentTotalCount  = 10000
 )
 
 // humanMessageAttachmentStartUploadTimer is a test seam around the upload's
@@ -285,11 +290,15 @@ func handleNotifyHumanAttachment(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// errBadNotifyHumanUpload marks a malformed upload — the sender's fault, so it
+// answers 400 rather than being reported as a daemon failure.
+var errBadNotifyHumanUpload = errors.New("malformed attachment upload")
+
 // errTooManyNotifyHumanAttachments is the per-message file-count refusal. The
 // CLI zips large sets itself, so hitting this means a sender bypassed that.
-var errTooManyNotifyHumanAttachments = fmt.Errorf(
-	"a notification carries at most %d files — package a larger set as one archive",
-	maxNotifyHumanAttachmentsPerMessage)
+var errTooManyNotifyHumanAttachments = fmt.Errorf("%w: a notification carries at most %d files"+
+	" — package a larger set as one archive",
+	errBadNotifyHumanUpload, maxNotifyHumanAttachmentsPerMessage)
 
 func notifyHumanMultipartBoundary(contentType string) (string, error) {
 	if strings.TrimSpace(contentType) == "" {
@@ -326,7 +335,9 @@ func receiveMultipartNotifyHumanAttachments(body io.Reader, boundary, incoming s
 			break
 		}
 		if err != nil {
-			return out, err
+			// A body the daemon cannot parse is a malformed request; an
+			// over-budget one still unwraps to MaxBytesError and stays a 413.
+			return out, fmt.Errorf("%w: %w", errBadNotifyHumanUpload, err)
 		}
 		if part.FileName() == "" {
 			_ = part.Close()
@@ -339,7 +350,7 @@ func receiveMultipartNotifyHumanAttachments(body io.Reader, boundary, incoming s
 		contentType, err := normalizeHumanMessageAttachmentContentType(part.Header.Get("Content-Type"))
 		if err != nil {
 			_ = part.Close()
-			return out, err
+			return out, fmt.Errorf("%w: %w", errBadNotifyHumanUpload, err)
 		}
 		a, storeErr := storeNotifyHumanAttachment(part, incoming, sanitizeExportFilename(part.FileName()), contentType)
 		_ = part.Close()
@@ -351,7 +362,7 @@ func receiveMultipartNotifyHumanAttachments(body io.Reader, boundary, incoming s
 		}
 	}
 	if len(out) == 0 {
-		return nil, fmt.Errorf("multipart upload carried no files")
+		return nil, fmt.Errorf("%w: it carried no files", errBadNotifyHumanUpload)
 	}
 	return out, nil
 }
@@ -402,7 +413,9 @@ func writeNotifyHumanAttachmentUploadError(w http.ResponseWriter, err error, tim
 		writeError(w, http.StatusRequestEntityTooLarge, "too_large", "attachment exceeds the 256 MiB limit")
 		return
 	}
-	if errors.Is(err, errTooManyNotifyHumanAttachments) {
+	// A malformed body is the sender's error, not the daemon's — the single-body
+	// path already answers 400 for the same mistakes.
+	if errors.Is(err, errBadNotifyHumanUpload) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 		return
 	}

@@ -16,8 +16,21 @@ func TestResolveAttachmentContentType(t *testing.T) {
 		"a mislabeled payload is recorded as what its bytes say")
 	assert.Equal(t, "application/octet-stream", resolveAttachmentContentType("image/png", nil),
 		"an empty file claiming to be an image is stored as opaque bytes")
-	assert.Equal(t, "application/zip", resolveAttachmentContentType("application/zip", pngBytes),
-		"non-image declarations are left alone — only inline display needs proof")
+	assert.Equal(t, "application/octet-stream",
+		resolveAttachmentContentType("image/png", []byte("\x00\x01unrecognised payload")),
+		"a previewable claim sniffing to nothing recognisable is demoted")
+	// Go cannot sniff AVIF/HEIC/TIFF/SVG, and none of them are previewable, so
+	// an honest file keeps the type that describes it.
+	for _, declared := range []string{"image/avif", "image/heic", "image/tiff", "image/svg+xml"} {
+		assert.Equal(t, declared, resolveAttachmentContentType(declared, []byte("\x00\x01ftypavif")),
+			"an honest non-previewable image keeps its type")
+	}
+	assert.Equal(t, "text/markdown; charset=utf-8",
+		resolveAttachmentContentType("text/markdown; charset=utf-8", []byte("# Notes\n")),
+		"sniffing is coarse, so a non-image declaration is left alone")
+	assert.Equal(t, "text/html; charset=utf-8",
+		resolveAttachmentContentType("image/svg+xml", []byte("<html><body>hi</body></html>")),
+		"an image claim contradicted by recognised bytes still loses")
 }
 
 func TestAttachmentPreviewable(t *testing.T) {

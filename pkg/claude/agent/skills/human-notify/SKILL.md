@@ -92,7 +92,8 @@ download button, so this also works through remote dashboard access. The cap is
 Top-level symlinks are rejected; pass the resolved path explicitly. Stored
 attachments are also capped at 512 MiB per stable agent and 2 GiB total, so
 delete older attachment messages before publishing when a quota is full. Count
-caps (100 per stable agent, 1,000 total) also apply, including to empty files.
+caps (1,000 published files per stable agent, 10,000 total) also apply,
+including to empty files.
 
 ## Permission
 

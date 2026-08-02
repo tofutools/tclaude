@@ -44,21 +44,41 @@ func (b *sniffBuffer) Write(p []byte) (int, error) {
 func (b *sniffBuffer) Bytes() []byte { return b.head }
 
 // resolveAttachmentContentType decides the content type an attachment is stored
-// and served with. A declared image type survives only when the bytes agree
-// with it; anything else falls back to the sniffed type, so a .png that is
-// really HTML is recorded (and served) as what it is.
+// and served with.
+//
+// A claim the bytes contradict never survives: when sniffing RECOGNISES a
+// different type, that type wins, so a .png that is really HTML is recorded
+// (and served) as HTML. A previewable claim must additionally be positively
+// confirmed — an unrecognised payload calling itself image/png becomes opaque
+// bytes rather than something the dashboard would display inline.
+//
+// Everything else keeps what the sender declared. That matters for honest
+// formats Go cannot sniff (AVIF, HEIC, TIFF, SVG): they are simply not
+// previewable, which the allowlist already ensures, so there is no reason to
+// throw away their real type.
 func resolveAttachmentContentType(declared string, head []byte) string {
-	if !strings.HasPrefix(strings.ToLower(declared), "image/") {
+	// Only an image claim is worth checking. Sniffing is coarse — it reports
+	// markdown as text/plain — so letting it rewrite ordinary declarations
+	// would lose real information for nothing.
+	if !strings.HasPrefix(baseMediaType(declared), "image/") {
 		return declared
 	}
-	if len(head) == 0 {
+	sniffed := ""
+	if len(head) > 0 {
+		sniffed = http.DetectContentType(head)
+	}
+	switch {
+	case baseMediaType(sniffed) == baseMediaType(declared):
+		return declared
+	// "application/octet-stream" is DetectContentType's "I don't recognise
+	// this", not a positive verdict — it can demote a preview claim but must
+	// not overwrite an honest type.
+	case sniffed != "" && baseMediaType(sniffed) != "application/octet-stream":
+		return sniffed
+	case attachmentPreviewable(declared):
 		return "application/octet-stream"
 	}
-	sniffed := http.DetectContentType(head)
-	if baseMediaType(sniffed) == baseMediaType(declared) {
-		return declared
-	}
-	return sniffed
+	return declared
 }
 
 func baseMediaType(contentType string) string {

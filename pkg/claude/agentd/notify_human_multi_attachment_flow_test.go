@@ -200,3 +200,36 @@ func TestNotifyHuman_AttachmentDownloadIsScopedToItsMessage(t *testing.T) {
 			"/attachments/"+strconv.FormatInt(other.ID, 10), nil))
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 }
+
+// A malformed upload is the sender's mistake: it must answer 400, the way the
+// single-body path already does, rather than being reported as a daemon fault.
+func TestNotifyHuman_MalformedMultipartIsARequestError(t *testing.T) {
+	f := newFlow(t)
+	const conv = "malf-1111-2222-3333-4444"
+	f.HaveConvWithTitle(conv, "malformer")
+	require.NoError(t, db.GrantAgentPermission(conv, agentd.PermHumanNotify, "test"))
+
+	// A multipart body carrying only non-file fields publishes nothing.
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+	require.NoError(t, writer.WriteField("note", "no files here"))
+	require.NoError(t, writer.Close())
+	metadata, err := json.Marshal(map[string]string{"body": "nothing attached"})
+	require.NoError(t, err)
+	req, err := http.NewRequest(http.MethodPost, "/v1/notify-human/attachment", &buf)
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("X-Tclaude-Notify-Metadata", base64.RawURLEncoding.EncodeToString(metadata))
+	rec := testharness.Serve(f.Mux, agentd.AsAgentPeer(req, conv))
+	assert.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+
+	// A part whose content type cannot be parsed is equally a bad request.
+	rec = postNotifyMultipartAttachments(t, f.Mux, conv, []notifyFile{
+		{"broken.png", "image/png; charset=", onePixelPNG},
+	})
+	assert.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+
+	msgs, err := db.ListHumanMessages()
+	require.NoError(t, err)
+	assert.Empty(t, msgs, "a refused upload publishes no message")
+}

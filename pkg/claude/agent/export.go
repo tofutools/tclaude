@@ -171,7 +171,7 @@ func runExportSubmit(p *exportSubmitParams, stdout, stderr io.Writer) int {
 		return rc
 	}
 
-	data, name, contentType, rc := buildExportArtifact(p.Files, p.Name, stderr)
+	data, name, contentType, rc := buildExportArtifact(p.Files, p.Name, false, stderr)
 	if rc != rcOK {
 		return rc
 	}
@@ -201,8 +201,9 @@ func runExportSubmit(p *exportSubmitParams, stdout, stderr io.Writer) int {
 
 // buildExportArtifact reads the given paths and produces the upload payload:
 // a single file is sent as-is; directories and path sets become zip archives.
-// nameOverride, when set, becomes the download filename.
-func buildExportArtifact(files []string, nameOverride string, stderr io.Writer) ([]byte, string, string, int) {
+// forceZip archives even a lone regular file, for a caller whose flag promised
+// an archive. nameOverride, when set, becomes the download filename.
+func buildExportArtifact(files []string, nameOverride string, forceZip bool, stderr io.Writer) ([]byte, string, string, int) {
 	// Validate every path up front so a bad path fails before any upload.
 	infos := make([]os.FileInfo, len(files))
 	for i, f := range files {
@@ -222,7 +223,7 @@ func buildExportArtifact(files []string, nameOverride string, stderr io.Writer) 
 		infos[i] = info
 	}
 
-	if len(files) == 1 && !infos[0].IsDir() {
+	if len(files) == 1 && !infos[0].IsDir() && !forceZip {
 		data, err := readFileCapped(files[0])
 		if err != nil {
 			if errors.Is(err, errExportArtifactTooLarge) {
@@ -250,10 +251,15 @@ func buildExportArtifact(files []string, nameOverride string, stderr io.Writer) 
 	}
 	name := strings.TrimSpace(nameOverride)
 	if name == "" {
-		if len(files) == 1 && infos[0].IsDir() {
-			name = filepath.Base(filepath.Clean(files[0])) + ".zip"
-		} else {
+		switch base := filepath.Base(filepath.Clean(files[0])); {
+		case len(files) != 1:
 			name = "export.zip"
+		case infos[0].IsDir():
+			name = base + ".zip"
+		default:
+			// A lone file forced into an archive: name the archive after the
+			// file, not "report.md.zip".
+			name = strings.TrimSuffix(base, filepath.Ext(base)) + ".zip"
 		}
 	}
 	return data, name, "application/zip", rcOK

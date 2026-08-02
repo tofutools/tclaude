@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -127,6 +126,12 @@ func runNotifyHuman(p *notifyHumanParams, stdin io.Reader, stdout, stderr io.Wri
 // (maxNotifyHumanAttachmentsPerMessage).
 const notifyHumanAutoZipFileCount = 20
 
+// maxSeparateAttachmentBytes bounds the assembled multipart body. Separate
+// attachments are uncompressed, so this is the same total budget the zip path
+// enforces — reached sooner. A var only so tests can exercise the boundary
+// without writing 256 MiB.
+var maxSeparateAttachmentBytes = maxExportArtifactBytes
+
 type notifyAttachMode int
 
 const (
@@ -178,13 +183,26 @@ func buildNotifyHumanPayload(p *notifyHumanParams, mode notifyAttachMode, stderr
 				len(files), notifyHumanAutoZipFileCount)
 			return nil, "", "", "", rcInvalidArg
 		}
-		data, contentType, rc := buildMultipartAttachments(files, stderr)
-		if rc != rcOK {
+		data, contentType, tooLarge, rc := buildMultipartAttachments(files, stderr)
+		switch {
+		case rc != rcOK:
 			return nil, "", "", "", rc
+		// Separate attachments are sent uncompressed, so a file set that fits
+		// the limit as an archive can overflow it here. In auto mode that is
+		// exactly when packaging is the better answer, so fall back to it
+		// rather than refusing an upload that used to work.
+		case tooLarge && mode == notifyAttachAuto:
+			break
+		case tooLarge:
+			fmt.Fprintf(stderr,
+				"Error: the attached files exceed the %d MiB limit when published separately — use --zip\n",
+				maxExportArtifactBytes>>20)
+			return nil, "", "", "", rcInvalidArg
+		default:
+			return data, "", contentType, fmt.Sprintf("%d files (%s)", len(files), humanBytes(len(data))), rcOK
 		}
-		return data, "", contentType, fmt.Sprintf("%d files (%s)", len(files), humanBytes(len(data))), rcOK
 	}
-	data, name, contentType, rc = buildExportArtifact(p.Attach, p.Name, stderr)
+	data, name, contentType, rc = buildExportArtifact(p.Attach, p.Name, mode == notifyAttachZip, stderr)
 	if rc != rcOK {
 		return nil, "", "", "", rc
 	}
@@ -243,21 +261,15 @@ func countFilesUnder(root string) (int, error) {
 // buildMultipartAttachments packages each file as its own part, so the
 // dashboard shows (and can preview) them individually. Base names collide
 // across directories, so duplicates are disambiguated the same way zip entries
-// are.
-func buildMultipartAttachments(files []string, stderr io.Writer) ([]byte, string, int) {
-	var buf bytes.Buffer
-	writer := multipart.NewWriter(&buf)
+// are. The body accumulates into a capped buffer — the same total budget the
+// zip path enforces — and reports tooLarge instead of growing without bound.
+func buildMultipartAttachments(files []string, stderr io.Writer) (
+	data []byte, contentType string, tooLarge bool, rc int,
+) {
+	buf := &cappedArtifactBuffer{limit: maxSeparateAttachmentBytes}
+	writer := multipart.NewWriter(buf)
 	seen := make(map[string]int)
 	for _, file := range files {
-		data, err := readFileCapped(file)
-		if err != nil {
-			if errors.Is(err, errExportArtifactTooLarge) {
-				fmt.Fprintf(stderr, "Error: attachment is over the %d MiB limit\n", maxExportArtifactBytes>>20)
-				return nil, "", rcInvalidArg
-			}
-			fmt.Fprintf(stderr, "Error: reading %q: %v\n", file, err)
-			return nil, "", rcIOFailure
-		}
 		name := uniqueZipName(safeZipComponent(filepath.Base(filepath.Clean(file))), seen)
 		header := make(textproto.MIMEHeader)
 		header.Set("Content-Disposition",
@@ -265,16 +277,34 @@ func buildMultipartAttachments(files []string, stderr io.Writer) ([]byte, string
 		header.Set("Content-Type", contentTypeForName(name))
 		part, err := writer.CreatePart(header)
 		if err == nil {
-			_, err = part.Write(data)
+			err = copyAttachmentPart(part, file)
+		}
+		if errors.Is(err, errExportArtifactTooLarge) {
+			return nil, "", true, rcOK
 		}
 		if err != nil {
-			fmt.Fprintf(stderr, "Error: building upload: %v\n", err)
-			return nil, "", rcIOFailure
+			fmt.Fprintf(stderr, "Error: reading %q: %v\n", file, err)
+			return nil, "", false, rcIOFailure
 		}
 	}
 	if err := writer.Close(); err != nil {
+		if errors.Is(err, errExportArtifactTooLarge) {
+			return nil, "", true, rcOK
+		}
 		fmt.Fprintf(stderr, "Error: building upload: %v\n", err)
-		return nil, "", rcIOFailure
+		return nil, "", false, rcIOFailure
 	}
-	return buf.Bytes(), writer.FormDataContentType(), rcOK
+	return buf.Bytes(), writer.FormDataContentType(), false, rcOK
+}
+
+// copyAttachmentPart streams one file into its multipart part, so only the
+// assembled body — not another whole copy of every file — is held in memory.
+func copyAttachmentPart(part io.Writer, path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+	_, err = io.Copy(part, f)
+	return err
 }

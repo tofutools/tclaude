@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"archive/zip"
 	"bytes"
 	"io"
 	"mime"
@@ -150,8 +151,59 @@ func TestBuildMultipartAttachments_DisambiguatesNameCollisions(t *testing.T) {
 	require.NoError(t, os.WriteFile(b, []byte("second"), 0o644))
 
 	var stderr bytes.Buffer
-	data, contentType, rc := buildMultipartAttachments([]string{a, b}, &stderr)
+	data, contentType, tooLarge, rc := buildMultipartAttachments([]string{a, b}, &stderr)
 	require.Equal(t, rcOK, rc, stderr.String())
+	require.False(t, tooLarge)
 	parts := readParts(t, data, contentType)
 	assert.Equal(t, map[string]string{"shot.png": "first", "shot-1.png": "second"}, parts)
+}
+
+// Separate attachments travel uncompressed, so a set that fits the limit as an
+// archive can overflow it. The body must stop growing at the cap instead of
+// buffering every file without bound, and auto mode must package the set
+// rather than refusing it.
+func TestBuildNotifyHumanPayload_OversizeSetFallsBackToZip(t *testing.T) {
+	files := writeAttachFiles(t, 3)
+	restore := maxSeparateAttachmentBytes
+	maxSeparateAttachmentBytes = 64 // smaller than three parts plus their headers
+	t.Cleanup(func() { maxSeparateAttachmentBytes = restore })
+
+	var stderr bytes.Buffer
+	data, contentType, tooLarge, rc := buildMultipartAttachments(files, &stderr)
+	require.Equal(t, rcOK, rc, stderr.String())
+	assert.True(t, tooLarge, "the assembled body is refused at the cap, not grown past it")
+	assert.Nil(t, data)
+	assert.Empty(t, contentType)
+
+	stderr.Reset()
+	_, name, contentType, _, rc := buildNotifyHumanPayload(
+		&notifyHumanParams{Attach: files}, notifyAttachAuto, &stderr)
+	require.Equal(t, rcOK, rc, stderr.String())
+	assert.Equal(t, "export.zip", name, "auto mode packages what will not fit separately")
+	assert.Equal(t, "application/zip", contentType)
+
+	// With --separate there is no fallback, so the agent is told to use --zip.
+	stderr.Reset()
+	_, _, _, _, rc = buildNotifyHumanPayload(
+		&notifyHumanParams{Attach: files}, notifyAttachSeparate, &stderr)
+	assert.Equal(t, rcInvalidArg, rc)
+	assert.Contains(t, stderr.String(), "use --zip")
+}
+
+// --zip promises an archive, so it must produce one even for a lone file.
+func TestBuildNotifyHumanPayload_ZipHonoursSingleFile(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "report.md")
+	require.NoError(t, os.WriteFile(p, []byte("# hi\n"), 0o644))
+
+	var stderr bytes.Buffer
+	data, name, contentType, _, rc := buildNotifyHumanPayload(
+		&notifyHumanParams{Attach: []string{p}, Zip: true}, notifyAttachZip, &stderr)
+	require.Equal(t, rcOK, rc, stderr.String())
+	assert.Equal(t, "report.zip", name)
+	assert.Equal(t, "application/zip", contentType)
+	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	require.NoError(t, err)
+	require.Len(t, zr.File, 1)
+	assert.Equal(t, "report.md", zr.File[0].Name)
 }
