@@ -55,6 +55,15 @@ func handleRouteChannel(w http.ResponseWriter, r *http.Request) {
 		writeRouteError(w, http.StatusBadRequest, "route_channel", "launch generation is required")
 		return
 	}
+	// The caller-supplied generation is descriptive only.  The bearer
+	// capability is the authoritative launch binding; accepting a different
+	// header here would let one launch present another launch's route identity
+	// to the M1 broker.
+	if launchGeneration != capability.launchGeneration {
+		writeRouteError(w, http.StatusForbidden, "route_identity", "route helper launch generation does not match its capability")
+		return
+	}
+	launchGeneration = capability.launchGeneration
 
 	var attach func(context.Context, net.Conn) error
 	consumerEndpoint := ""

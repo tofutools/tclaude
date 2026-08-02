@@ -67,7 +67,7 @@ type TclaudeLayerRouteHelper struct {
 	AgentID          string  `json:"agent_id"`
 	ConvID           string  `json:"conv_id"`
 	LaunchGeneration string  `json:"launch_generation"`
-	Credential       string  `json:"-"`
+	CredentialPath   string  `json:"-"`
 	GroupIDs         []int64 `json:"group_ids"`
 }
 
@@ -138,7 +138,7 @@ func validateTclaudeLayerRouteHelper(effective sandboxpolicy.EffectiveProfile, h
 	if helper.BinaryPath != "" && !filepath.IsAbs(filepath.Clean(helper.BinaryPath)) {
 		return fmt.Errorf("route helper binary path must be absolute")
 	}
-	if strings.TrimSpace(helper.AgentID) == "" || strings.TrimSpace(helper.ConvID) == "" || strings.TrimSpace(helper.LaunchGeneration) == "" || strings.TrimSpace(helper.Credential) == "" {
+	if strings.TrimSpace(helper.AgentID) == "" || strings.TrimSpace(helper.ConvID) == "" || strings.TrimSpace(helper.LaunchGeneration) == "" || strings.TrimSpace(helper.CredentialPath) == "" || !filepath.IsAbs(filepath.Clean(helper.CredentialPath)) {
 		return fmt.Errorf("route helper launch identity is incomplete")
 	}
 	if len(helper.GroupIDs) == 0 {
@@ -1410,6 +1410,9 @@ func tclaudeLayerSpecRenderInput(
 		}
 	}
 	socketPaths := sandboxpolicy.AgentdSocketFloor()
+	if helper := spec.Contract.RouteHelper; helper != nil && strings.TrimSpace(helper.CredentialPath) != "" {
+		socketPaths = appendUniqueDir(socketPaths, filepath.Clean(helper.CredentialPath))
+	}
 	if tclaudeLayerPlanUsesConstructedRoot(plan) &&
 		spec.Effective.UnixSockets != nil {
 		var authoredSockets []string
@@ -2886,18 +2889,29 @@ func wrapTclaudeLayerRouteHelper(binary string, helper TclaudeLayerRouteHelper, 
 		"--agent-id", clcommon.ShellQuoteArg(helper.AgentID),
 		"--conv-id", clcommon.ShellQuoteArg(helper.ConvID),
 		"--launch-generation", clcommon.ShellQuoteArg(helper.LaunchGeneration),
-		"--credential", clcommon.ShellQuoteArg(helper.Credential),
+		"--credential-fifo", clcommon.ShellQuoteArg(helper.CredentialPath),
 	}
 	for _, groupID := range helper.GroupIDs {
 		args = append(args, "--group-id", clcommon.ShellQuoteArg(strconv.FormatInt(groupID, 10)))
 	}
 	command := strings.Join(args, " ")
+	// Keep the bearer read in the helper process and wait for its readiness
+	// marker before the harness is exec'd. The shell sees only this marker and
+	// the non-secret FIFO path; it never reads or stores the credential bytes.
+	readyFIFO := "/tmp/tclaude-route-helper-ready-$$"
+	bootstrap := "route_helper_ready_fifo=" + readyFIFO + "; " +
+		"mkfifo \"$route_helper_ready_fifo\" || exit 126; " +
+		command + " >\"$route_helper_ready_fifo\" 2>&1 & route_helper_pid=$!; " +
+		"IFS= read -r route_helper_ready <\"$route_helper_ready_fifo\"; route_helper_ready_status=$?; " +
+		"rm -f -- \"$route_helper_ready_fifo\"; " +
+		"if [ $route_helper_ready_status -ne 0 ] || [ \"$route_helper_ready\" != ready ]; then " +
+		"kill \"$route_helper_pid\" 2>/dev/null; wait \"$route_helper_pid\" 2>/dev/null; exit 126; fi; "
 	// Keep the shell as the helper's parent until the harness exits. The EXIT
 	// cleanup therefore covers normal completion, terminal teardown, and a
 	// harness crash; the helper cannot be reparented as an orphan inside the
 	// Bubblewrap namespace. It retries agentd failures itself, preserving route
 	// channels across daemon restarts.
-	return command + " & route_helper_pid=$!; route_helper_cleanup() { kill \"$route_helper_pid\" 2>/dev/null; wait \"$route_helper_pid\" 2>/dev/null; }; trap route_helper_cleanup EXIT; trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM; " + harnessCommand + "; route_helper_status=$?; exit $route_helper_status", nil
+	return bootstrap + "route_helper_cleanup() { kill \"$route_helper_pid\" 2>/dev/null; wait \"$route_helper_pid\" 2>/dev/null; }; trap route_helper_cleanup EXIT; trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM; " + harnessCommand + "; route_helper_status=$?; exit $route_helper_status", nil
 }
 
 func bwrapCommand(

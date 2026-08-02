@@ -16,7 +16,7 @@ func testRouteHelper() *TclaudeLayerRouteHelper {
 		AgentID:          "agt_test",
 		ConvID:           "conv_test",
 		LaunchGeneration: "launch_test",
-		Credential:       "credential_test",
+		CredentialPath:   "/home/test/.tclaude/api/route-helper-credential.fifo",
 		GroupIDs:         []int64{42},
 	}
 }
@@ -48,5 +48,14 @@ func TestRouteHelperWrapsHarnessWithCleanupTrap(t *testing.T) {
 		if !strings.Contains(wrapped, want) {
 			t.Fatalf("wrapped command missing %q: %s", want, wrapped)
 		}
+	}
+	if strings.Contains(wrapped, "credential_test") {
+		t.Fatalf("wrapped command leaked the bearer credential: %s", wrapped)
+	}
+	if !strings.Contains(wrapped, "--credential-fifo /home/test/.tclaude/api/route-helper-credential.fifo") {
+		t.Fatalf("wrapped command did not carry the non-secret FIFO path: %s", wrapped)
+	}
+	if strings.Index(wrapped, "IFS= read -r route_helper_ready") > strings.Index(wrapped, "harness --run") {
+		t.Fatalf("harness starts before the helper consumes its credential: %s", wrapped)
 	}
 }

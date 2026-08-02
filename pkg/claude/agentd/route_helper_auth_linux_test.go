@@ -42,7 +42,11 @@ func TestRouteHelperSiblingProcess(t *testing.T) {
 	req.Header.Set("X-Tclaude-Route-ID", os.Getenv("TCLAUDE_ROUTE_HELPER_ROUTE"))
 	req.Header.Set("X-Tclaude-Route-Agent-ID", os.Getenv("TCLAUDE_ROUTE_HELPER_AGENT"))
 	req.Header.Set("X-Tclaude-Route-Conv-ID", os.Getenv("TCLAUDE_ROUTE_HELPER_CONV"))
-	req.Header.Set("X-Tclaude-Route-Launch-Generation", os.Getenv("TCLAUDE_ROUTE_HELPER_GENERATION"))
+	launchGeneration := os.Getenv("TCLAUDE_ROUTE_HELPER_GENERATION")
+	if override := os.Getenv("TCLAUDE_ROUTE_HELPER_GENERATION_OVERRIDE"); override != "" {
+		launchGeneration = override
+	}
+	req.Header.Set("X-Tclaude-Route-Launch-Generation", launchGeneration)
 	req.Header.Set("X-Tclaude-Route-Group-Generation", os.Getenv("TCLAUDE_ROUTE_HELPER_GROUP_GENERATION"))
 	require.NoError(t, req.Write(conn))
 	response, err := http.ReadResponse(bufio.NewReader(conn), req)
@@ -58,10 +62,7 @@ func TestRouteHelperSiblingProcess(t *testing.T) {
 func TestRouteHelperSiblingAttachesWithCapability(t *testing.T) {
 	setupTestDB(t)
 
-	const (
-		convID           = "route-helper-sibling-conv"
-		launchGeneration = "route-helper-sibling-launch"
-	)
+	const convID = "route-helper-sibling-conv"
 	agentID, _, err := db.EnsureAgentForConv(convID, "test")
 	require.NoError(t, err)
 	groupID, err := db.CreateAgentGroup("route-helper-sibling-group", "")
@@ -70,12 +71,14 @@ func TestRouteHelperSiblingAttachesWithCapability(t *testing.T) {
 	require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: groupID, ConvID: convID, Role: "worker"}))
 	group, err := db.GetAgentGroupByID(groupID)
 	require.NoError(t, err)
+	credential, launchGeneration, err := mintRouteHelperCredential(agentID, convID)
+	require.NoError(t, err)
+	t.Cleanup(func() { revokeRouteHelperCredentials(convID, "") })
 	route, err := db.CreateAgentRoute(groupID, agentID, convID, launchGeneration, group.RouteGeneration,
 		"sibling", "tcp", "tcp://127.0.0.1:39001")
 	require.NoError(t, err)
-	credential, _, err := mintRouteHelperCredential(agentID, convID)
-	require.NoError(t, err)
-	t.Cleanup(func() { revokeRouteHelperCredentials(convID, "") })
+	require.Equal(t, launchGeneration, route.PublisherLaunchGeneration,
+		"route authority must use the capability's minted launch generation")
 
 	socketPath := filepath.Join("/tmp", "tclaude-rh-"+strconv.Itoa(os.Getpid())+"-"+strconv.FormatInt(time.Now().UnixNano(), 10)+".sock")
 	t.Cleanup(func() { _ = os.Remove(socketPath) })
@@ -130,6 +133,14 @@ func TestRouteHelperSiblingAttachesWithCapability(t *testing.T) {
 
 	wrong := startSibling("not-the-minted-capability", http.StatusUnauthorized)
 	require.NoError(t, wrong.Run(), "a sibling with only guessed identity must be refused")
+
+	mismatchedGeneration := func() *exec.Cmd {
+		cmd := startSibling(credential, http.StatusForbidden)
+		cmd.Env = append(cmd.Env, "TCLAUDE_ROUTE_HELPER_GENERATION_OVERRIDE=other-launch-generation")
+		return cmd
+	}
+	mismatch := mismatchedGeneration()
+	require.NoError(t, mismatch.Run(), "a capability must not authorize a mismatched launch generation")
 
 	revokeRouteHelperCredentials(convID, "")
 	stale := startSibling(credential, http.StatusUnauthorized)

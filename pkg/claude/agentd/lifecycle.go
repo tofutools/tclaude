@@ -6712,7 +6712,7 @@ func sessionNewArgs(a clcommon.SpawnArgs) []string {
 			"--route-helper-agent-id", a.RouteHelperAgentID,
 			"--route-helper-conv-id", a.RouteHelperConvID,
 			"--route-helper-launch-generation", a.RouteHelperLaunchGeneration,
-			"--route-helper-credential", a.RouteHelperCredential)
+			"--route-helper-credential-path", a.RouteHelperCredentialPath)
 		for _, groupID := range a.RouteHelperGroupIDs {
 			args = append(args, "--route-helper-group-id", strconv.FormatInt(groupID, 10))
 		}
@@ -6845,7 +6845,7 @@ func sessionResumeArgs(a clcommon.SpawnArgs) []string {
 			"--route-helper-agent-id", a.RouteHelperAgentID,
 			"--route-helper-conv-id", a.RouteHelperConvID,
 			"--route-helper-launch-generation", a.RouteHelperLaunchGeneration,
-			"--route-helper-credential", a.RouteHelperCredential)
+			"--route-helper-credential-path", a.RouteHelperCredentialPath)
 		for _, groupID := range a.RouteHelperGroupIDs {
 			args = append(args, "--route-helper-group-id", strconv.FormatInt(groupID, 10))
 		}
@@ -7131,6 +7131,14 @@ func liveSpawnNew(a clcommon.SpawnArgs) error {
 	if err != nil {
 		return err
 	}
+	routeCredentialCleanup := func() {}
+	if a.RouteHelperCredential != "" {
+		a.RouteHelperCredentialPath, routeCredentialCleanup, err = prepareRouteHelperCredentialFIFO(a.RouteHelperCredential)
+		if err != nil {
+			cleanup()
+			return err
+		}
+	}
 	label := a.Label
 	// effort, model, sandbox, approval, autoReview and trustDir are validated at
 	// the spawn boundary (handleGroupSpawn / the `agent spawn` CLI) before they
@@ -7167,6 +7175,7 @@ func liveSpawnNew(a clcommon.SpawnArgs) error {
 	}
 	detachSpawn(cmd)
 	if err := cmd.Start(); err != nil {
+		routeCredentialCleanup()
 		cleanup()
 		return err
 	}
@@ -7174,6 +7183,7 @@ func liveSpawnNew(a clcommon.SpawnArgs) error {
 	if a.CwdWriteProof != "" || a.DirWriteProof != "" {
 		defer cleanup()
 		if err := cmd.Wait(); err != nil {
+			routeCredentialCleanup()
 			slog.Error("spawn subprocess exited with error",
 				"label", label, "pid", pid, "err", err,
 				"stderr", stderr.String(), "stderr_truncated", stderr.Truncated())
@@ -7184,6 +7194,7 @@ func liveSpawnNew(a clcommon.SpawnArgs) error {
 	go func() {
 		defer cleanup()
 		if err := cmd.Wait(); err != nil {
+			routeCredentialCleanup()
 			slog.Error("spawn subprocess exited with error",
 				"label", label, "pid", pid, "err", err,
 				"stderr", stderr.String(), "stderr_truncated", stderr.Truncated())
@@ -7352,6 +7363,17 @@ func liveSpawnResume(a clcommon.SpawnArgs) error {
 		}
 		return err
 	}
+	routeCredentialCleanup := func() {}
+	if a.RouteHelperCredential != "" {
+		a.RouteHelperCredentialPath, routeCredentialCleanup, err = prepareRouteHelperCredentialFIFO(a.RouteHelperCredential)
+		if err != nil {
+			cleanup()
+			if openCodeLaunch != nil {
+				_ = stopOpenCodeRuntime(openCodeLaunch.SessionID)
+			}
+			return err
+		}
+	}
 	convID := a.ConvID
 	args := sessionResumeArgs(a)
 	cmd := exec.Command("tclaude", args...)
@@ -7380,6 +7402,7 @@ func liveSpawnResume(a clcommon.SpawnArgs) error {
 	}
 	detachSpawn(cmd)
 	if err := cmd.Start(); err != nil {
+		routeCredentialCleanup()
 		cleanup()
 		if openCodeLaunch != nil {
 			_ = stopOpenCodeRuntime(openCodeLaunch.SessionID)
@@ -7389,6 +7412,7 @@ func liveSpawnResume(a clcommon.SpawnArgs) error {
 	pid := cmd.Process.Pid
 	defer cleanup()
 	if err := cmd.Wait(); err != nil {
+		routeCredentialCleanup()
 		if openCodeLaunch != nil {
 			_ = stopOpenCodeRuntime(openCodeLaunch.SessionID)
 		}
