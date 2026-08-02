@@ -141,6 +141,22 @@ type SpawnArgs struct {
 	OpenCodeEnvironment    []sandboxpolicy.EnvironmentEntry
 	OpenCodeStateIsolation string
 
+	// RouteHelper* are an internal, Linux-only handoff for a route-capable
+	// tclaude-layer launch. The session child derives the exact exit-launch
+	// generation from the daemon-minted capability, so only the pre-enrolled
+	// identity, explicit group scope, and a non-secret one-shot credential FD
+	// handoff socket cross this boundary. The credential is never persisted or
+	// serialized by the session child.
+	RouteHelperAgentID          string
+	RouteHelperConvID           string
+	RouteHelperLaunchGeneration string
+	// RouteHelperCredential stays in daemon memory until live spawning writes
+	// it to the one-shot helper handoff. It must never be serialized into the
+	// session-new argv or environment.
+	RouteHelperCredential                  string
+	RouteHelperCredentialHandoffSocketPath string
+	RouteHelperGroupIDs                    []int64
+
 	// Sandbox is the launch-time OS-sandbox mode for harnesses that take one
 	// (Codex's --sandbox, or the managed-profile pseudo-mode); "" omits it. The
 	// daemon resolves it to the harness's secure default before spawning so a

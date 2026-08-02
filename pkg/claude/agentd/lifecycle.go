@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -4732,6 +4733,14 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		ContextFeatures:            p.ContextFeatures,
 		AutoCompactWindow:          p.AutoCompactWindow,
 	}
+	routeHelperConvID := ""
+	routeHelperGeneration := ""
+	routeHelperCommitted := false
+	defer func() {
+		if routeHelperConvID != "" && !routeHelperCommitted {
+			revokeRouteHelperCredentials(routeHelperConvID, routeHelperGeneration)
+		}
+	}()
 
 	var openCodeLaunch *openCodeLaunch
 	if spawnHarness.UsesAuthoritativeServer() {
@@ -4830,6 +4839,17 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	if p.DarwinRouteCapable && !launchEnroll {
 		return nil, &spawnFailure{http.StatusUnprocessableEntity, "darwin_route_launch",
 			"Darwin route-capable launches require the preset-conversation launch seam"}
+	}
+	routeEnabled := false
+	if runtime.GOOS == "linux" && g != nil {
+		var routeErr error
+		routeEnabled, routeErr = db.IsAgentGroupRouteEnabled(g.ID, PermRoutesPublish, PermRoutesConsume)
+		if routeErr != nil {
+			return nil, &spawnFailure{http.StatusInternalServerError, "route_authority", "could not resolve group route capability: " + routeErr.Error()}
+		}
+		if routeEnabled && (!layeredLaunch || !launchEnroll) {
+			return nil, &spawnFailure{http.StatusUnprocessableEntity, "unsupported_group_route_launch", "Linux group routes require a pre-enrolled pane-authoritative tclaude-layer launch"}
+		}
 	}
 	var preConvID string
 	var preMsgID int64
@@ -4930,6 +4950,40 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		spawnArgs.InitialPrompt = buildSpawnSeedPrompt(p.Name, p.Role, p.Descr, groupName,
 			p.InitialMessage != "", spawnContextBody, p.WorktreePath, p.WorktreeBranch,
 			resolveSpawnerTitle(p.SpawnedByConv, p.SpawnedByAgent), spawnInlineMaxChars())
+	}
+	// A Linux route-capable group must launch the namespace helper with a
+	// pre-enrolled identity. If the launch shape cannot prove that identity
+	// before the pane starts (for example Codex's seed-based conv-id), refuse
+	// the route-enabled launch instead of producing an agent whose advertised
+	// routes can never attach.
+	if routeEnabled {
+		if preConvID == "" {
+			rollbackSpawnEnrollment(g, preConvID, preMsgID, preActorCreated)
+			return nil, &spawnFailure{http.StatusInternalServerError, "route_authority", "pre-enrolled route helper conversation identity is empty"}
+		}
+		agentID, agentErr := db.AgentIDForConv(preConvID)
+		if agentErr != nil || strings.TrimSpace(agentID) == "" {
+			rollbackSpawnEnrollment(g, preConvID, preMsgID, preActorCreated)
+			if agentErr == nil {
+				agentErr = errors.New("stable agent identity is empty")
+			}
+			return nil, &spawnFailure{http.StatusInternalServerError, "route_authority", "could not resolve route helper identity: " + agentErr.Error()}
+		}
+		routeCredential, routeGeneration, credentialErr := mintRouteHelperCredential(agentID, preConvID)
+		if credentialErr != nil {
+			rollbackSpawnEnrollment(g, preConvID, preMsgID, preActorCreated)
+			if openCodeLaunch != nil {
+				_ = stopOpenCodeRuntime(openCodeLaunch.SessionID)
+			}
+			return nil, &spawnFailure{http.StatusInternalServerError, "route_authority", "could not mint route helper credential: " + credentialErr.Error()}
+		}
+		spawnArgs.RouteHelperAgentID = agentID
+		spawnArgs.RouteHelperConvID = preConvID
+		spawnArgs.RouteHelperLaunchGeneration = routeGeneration
+		spawnArgs.RouteHelperCredential = routeCredential
+		spawnArgs.RouteHelperGroupIDs = []int64{g.ID}
+		routeHelperConvID = preConvID
+		routeHelperGeneration = routeGeneration
 	}
 
 	// Final dir write-proof re-assertion, as late as possible before the fork:
@@ -5231,6 +5285,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		if outcomeTmux == "" {
 			outcomeTmux = label
 		}
+		routeHelperCommitted = true
 		return &spawnOutcome{AgentID: p.AgentID, ConvID: preConvID, Label: label, TmuxSession: outcomeTmux, FocusMode: focusMode,
 			Harness: p.Harness, Model: p.Model, Effort: p.Effort}, nil
 	}
@@ -6680,6 +6735,16 @@ func sessionNewArgs(a clcommon.SpawnArgs) []string {
 	if a.SessionID != "" {
 		args = append(args, "--session-id", a.SessionID)
 	}
+	if a.RouteHelperAgentID != "" && a.RouteHelperConvID != "" {
+		args = append(args,
+			"--route-helper-agent-id", a.RouteHelperAgentID,
+			"--route-helper-conv-id", a.RouteHelperConvID,
+			"--route-helper-launch-generation", a.RouteHelperLaunchGeneration,
+			"--route-helper-credential-handoff-socket", a.RouteHelperCredentialHandoffSocketPath)
+		for _, groupID := range a.RouteHelperGroupIDs {
+			args = append(args, "--route-helper-group-id", strconv.FormatInt(groupID, 10))
+		}
+	}
 	if a.Name != "" {
 		args = append(args, "--name", a.Name)
 	}
@@ -6803,6 +6868,16 @@ func sessionResumeArgs(a clcommon.SpawnArgs) []string {
 	}
 	if a.GitWorktreeWriteDirsPinned {
 		args = append(args, "--git-worktree-write-dirs-pinned")
+	}
+	if a.RouteHelperAgentID != "" && a.RouteHelperConvID != "" {
+		args = append(args,
+			"--route-helper-agent-id", a.RouteHelperAgentID,
+			"--route-helper-conv-id", a.RouteHelperConvID,
+			"--route-helper-launch-generation", a.RouteHelperLaunchGeneration,
+			"--route-helper-credential-handoff-socket", a.RouteHelperCredentialHandoffSocketPath)
+		for _, groupID := range a.RouteHelperGroupIDs {
+			args = append(args, "--route-helper-group-id", strconv.FormatInt(groupID, 10))
+		}
 	}
 	// Launch-enrollment fields on a RESUME: a clone forks its source's jsonl and
 	// resumes into it, so its display name and first-turn handoff have to ride
@@ -7097,6 +7172,14 @@ func liveSpawnNew(a clcommon.SpawnArgs) error {
 	if err != nil {
 		return err
 	}
+	routeCredentialCleanup := func() {}
+	if a.RouteHelperCredential != "" {
+		a.RouteHelperCredentialHandoffSocketPath, routeCredentialCleanup, err = prepareRouteHelperCredentialHandoff(a.RouteHelperCredential)
+		if err != nil {
+			cleanup()
+			return err
+		}
+	}
 	label := a.Label
 	// effort, model, sandbox, approval, autoReview and trustDir are validated at
 	// the spawn boundary (handleGroupSpawn / the `agent spawn` CLI) before they
@@ -7133,6 +7216,7 @@ func liveSpawnNew(a clcommon.SpawnArgs) error {
 	}
 	detachSpawn(cmd)
 	if err := cmd.Start(); err != nil {
+		routeCredentialCleanup()
 		cleanup()
 		return err
 	}
@@ -7140,6 +7224,7 @@ func liveSpawnNew(a clcommon.SpawnArgs) error {
 	if a.CwdWriteProof != "" || a.DirWriteProof != "" {
 		defer cleanup()
 		if err := cmd.Wait(); err != nil {
+			routeCredentialCleanup()
 			slog.Error("spawn subprocess exited with error",
 				"label", label, "pid", pid, "err", err,
 				"stderr", stderr.String(), "stderr_truncated", stderr.Truncated())
@@ -7150,6 +7235,7 @@ func liveSpawnNew(a clcommon.SpawnArgs) error {
 	go func() {
 		defer cleanup()
 		if err := cmd.Wait(); err != nil {
+			routeCredentialCleanup()
 			slog.Error("spawn subprocess exited with error",
 				"label", label, "pid", pid, "err", err,
 				"stderr", stderr.String(), "stderr_truncated", stderr.Truncated())
@@ -7215,6 +7301,9 @@ func openCodeAttachProcessEnvironment(environment []string) []string {
 // or rejects the detached launch, so callers learn whether this resume won the
 // launch reservation and can roll back refreshed actor state on failure.
 func liveSpawnResume(a clcommon.SpawnArgs) error {
+	if err := prepareRouteHelperResumeArgs(&a); err != nil {
+		return err
+	}
 	privateAttachmentRootCreated := false
 	resumeLaunched := false
 	defer func() {
@@ -7315,6 +7404,17 @@ func liveSpawnResume(a clcommon.SpawnArgs) error {
 		}
 		return err
 	}
+	routeCredentialCleanup := func() {}
+	if a.RouteHelperCredential != "" {
+		a.RouteHelperCredentialHandoffSocketPath, routeCredentialCleanup, err = prepareRouteHelperCredentialHandoff(a.RouteHelperCredential)
+		if err != nil {
+			cleanup()
+			if openCodeLaunch != nil {
+				_ = stopOpenCodeRuntime(openCodeLaunch.SessionID)
+			}
+			return err
+		}
+	}
 	convID := a.ConvID
 	args := sessionResumeArgs(a)
 	cmd := exec.Command("tclaude", args...)
@@ -7343,6 +7443,7 @@ func liveSpawnResume(a clcommon.SpawnArgs) error {
 	}
 	detachSpawn(cmd)
 	if err := cmd.Start(); err != nil {
+		routeCredentialCleanup()
 		cleanup()
 		if openCodeLaunch != nil {
 			_ = stopOpenCodeRuntime(openCodeLaunch.SessionID)
@@ -7352,6 +7453,7 @@ func liveSpawnResume(a clcommon.SpawnArgs) error {
 	pid := cmd.Process.Pid
 	defer cleanup()
 	if err := cmd.Wait(); err != nil {
+		routeCredentialCleanup()
 		if openCodeLaunch != nil {
 			_ = stopOpenCodeRuntime(openCodeLaunch.SessionID)
 		}
@@ -7361,6 +7463,54 @@ func liveSpawnResume(a clcommon.SpawnArgs) error {
 		return fmt.Errorf("resume session wrapper failed: %w: %s", err, stderr.String())
 	}
 	resumeLaunched = true
+	return nil
+}
+
+// prepareRouteHelperResumeArgs restores the namespace-local helper for every
+// known resume surface (group resume, recovery, reincarnation, and clone).
+// The resumed conversation already has a stable identity, so this path can
+// support both Claude and Codex; OpenCode's server boundary has no pane-local
+// helper and is refused when its group has opted into routes.
+func prepareRouteHelperResumeArgs(a *clcommon.SpawnArgs) error {
+	if runtime.GOOS != "linux" || a == nil || strings.TrimSpace(a.ConvID) == "" {
+		return nil
+	}
+	groups, err := db.ListGroupsForConv(a.ConvID)
+	if err != nil {
+		return fmt.Errorf("resolve route-enabled groups for resume: %w", err)
+	}
+	var routeGroups []int64
+	for _, group := range groups {
+		enabled, enabledErr := db.IsAgentGroupRouteEnabled(group.ID, PermRoutesPublish, PermRoutesConsume)
+		if enabledErr != nil {
+			return fmt.Errorf("resolve route capability for group %d: %w", group.ID, enabledErr)
+		}
+		if enabled {
+			routeGroups = append(routeGroups, group.ID)
+		}
+	}
+	if len(routeGroups) == 0 {
+		return nil
+	}
+	if a.SandboxImplementation != string(sandboxpolicy.ImplementationTclaudeLayer) || a.Harness == harness.OpenCodeName {
+		return errors.New("linux group routes require a pane-authoritative tclaude-layer resume")
+	}
+	agentID, err := db.AgentIDForConv(a.ConvID)
+	if err != nil || strings.TrimSpace(agentID) == "" {
+		if err == nil {
+			err = errors.New("stable agent identity is empty")
+		}
+		return fmt.Errorf("resolve route helper identity for resume: %w", err)
+	}
+	a.RouteHelperAgentID = agentID
+	a.RouteHelperConvID = a.ConvID
+	credential, generation, credentialErr := mintRouteHelperCredential(agentID, a.ConvID)
+	if credentialErr != nil {
+		return fmt.Errorf("mint route helper credential for resume: %w", credentialErr)
+	}
+	a.RouteHelperLaunchGeneration = generation
+	a.RouteHelperCredential = credential
+	a.RouteHelperGroupIDs = routeGroups
 	return nil
 }
 

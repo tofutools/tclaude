@@ -249,6 +249,11 @@ func (s *simSpawner) SpawnNew(args clcommon.SpawnArgs) error {
 	s.w.RecordSpawnCodexGitCommonDirPinned(cc.ConvID, args.CodexGitCommonDirPinned)
 	s.w.RecordSpawnName(cc.ConvID, args.Name)
 	s.w.RecordSpawnInitialPrompt(cc.ConvID, args.InitialPrompt)
+	s.w.RecordSpawnRouteHelper(cc.ConvID, RouteHelperLaunch{
+		AgentID: args.RouteHelperAgentID, ConvID: args.RouteHelperConvID,
+		LaunchGeneration: args.RouteHelperLaunchGeneration, Credential: args.RouteHelperCredential,
+		GroupIDs: args.RouteHelperGroupIDs,
+	})
 	// Use cc.Cwd (post-default-substitution) so the SessionRow agrees
 	// with the .jsonl's actual on-disk location. Otherwise an empty
 	// body.Cwd leaves the row with cwd="" and downstream cwd lookups
@@ -362,6 +367,11 @@ func (s *simSpawner) SpawnResume(args clcommon.SpawnArgs) error {
 	s.w.RecordSpawnCodexGitCommonDirPinned(convID, args.CodexGitCommonDirPinned)
 	s.w.RecordSpawnName(convID, args.Name)
 	s.w.RecordSpawnInitialPrompt(convID, args.InitialPrompt)
+	s.w.RecordSpawnRouteHelper(convID, RouteHelperLaunch{
+		AgentID: args.RouteHelperAgentID, ConvID: args.RouteHelperConvID,
+		LaunchGeneration: args.RouteHelperLaunchGeneration, Credential: args.RouteHelperCredential,
+		GroupIDs: args.RouteHelperGroupIDs,
+	})
 	label := generateResumeLabel()
 	// Resume mints a fresh session row / TCLAUDE_SESSION_ID; track it.
 	cc.SessionID = label

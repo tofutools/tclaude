@@ -2,12 +2,37 @@ package agentd
 
 import (
 	"slices"
+	"strings"
 	"testing"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
+
+func TestSessionArgsRouteHelperCredentialNeverEntersArgv(t *testing.T) {
+	const bearer = "route-helper-bearer-must-not-leak"
+	args := sessionNewArgs(clcommon.SpawnArgs{
+		Label:                                  "lbl",
+		Cwd:                                    "/tmp/x",
+		RouteHelperAgentID:                     "agt_test",
+		RouteHelperConvID:                      "conv_test",
+		RouteHelperLaunchGeneration:            "generation_test",
+		RouteHelperCredential:                  bearer,
+		RouteHelperCredentialHandoffSocketPath: "/home/test/.tclaude/data/route-helper-handoff.sock",
+		RouteHelperGroupIDs:                    []int64{42},
+	})
+	rendered := strings.Join(args, " ")
+	if strings.Contains(rendered, bearer) {
+		t.Fatalf("route helper bearer leaked into session-new argv: %q", rendered)
+	}
+	if !strings.Contains(rendered, "--route-helper-credential-handoff-socket") {
+		t.Fatalf("route helper argv omitted the one-shot FD handoff endpoint: %q", rendered)
+	}
+	if strings.Contains(rendered, "credential-fifo") || strings.Contains(rendered, "credential-path") {
+		t.Fatalf("route helper argv retained the retired credential pathname contract: %q", rendered)
+	}
+}
 
 // TestSessionNewArgs_EffortOmittedWhenUnset is the acceptance check for
 // the spawn path's forked `tclaude session new`: with no effort chosen,

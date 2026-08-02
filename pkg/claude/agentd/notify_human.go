@@ -19,6 +19,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
@@ -731,7 +732,8 @@ type dashboardHumanMessage struct {
 // dashboardHumanMessageAttachment is one downloadable file on a notification.
 // URL is the download route for this exact file; Previewable is the daemon's
 // verdict (raster image, content-sniff confirmed) on whether the dashboard may
-// render it inline instead of only offering a download.
+// render it inline instead of only offering a download. Markdown is the
+// equivalent verdict for the Markdown document viewer.
 type dashboardHumanMessageAttachment struct {
 	ID          int64  `json:"id"`
 	Filename    string `json:"filename"`
@@ -739,6 +741,7 @@ type dashboardHumanMessageAttachment struct {
 	SizeBytes   int64  `json:"size_bytes"`
 	URL         string `json:"url"`
 	Previewable bool   `json:"previewable,omitempty"`
+	Markdown    bool   `json:"markdown,omitempty"`
 }
 
 func dashboardHumanMessageAttachmentView(messageID int64, a *db.HumanMessageAttachment) *dashboardHumanMessageAttachment {
@@ -752,6 +755,7 @@ func dashboardHumanMessageAttachmentView(messageID int64, a *db.HumanMessageAtta
 		SizeBytes:   a.SizeBytes,
 		URL:         humanMessageAttachmentURL(messageID, a.ID),
 		Previewable: humanMessageAttachmentPreviewable(a),
+		Markdown:    humanMessageAttachmentMarkdown(a),
 	}
 }
 
@@ -819,6 +823,121 @@ var previewableHumanImageTypes = map[string]struct{}{
 	"image/jpeg": {},
 	"image/png":  {},
 	"image/webp": {},
+}
+
+// humanMessageAttachmentMarkdown is the daemon's verdict on whether the
+// dashboard should offer its Markdown document viewer for this file. It is
+// decided here for the same reason Previewable is: the browser-facing
+// Content-Type comes from the publishing agent, so it is a claim, not evidence.
+//
+// The bar is lower than an image's, because the viewer treats the file as text
+// either way — markdown-it parses with HTML disabled and the dashboard builds
+// the document out of allowlisted elements, so a mislabelled payload renders as
+// visible characters rather than as markup. What the checks below are for is
+// avoiding a useless offer: a binary shown as mojibake, or a file large enough
+// to lock the tab up while it renders. Either way the download stays.
+func humanMessageAttachmentMarkdown(a *db.HumanMessageAttachment) bool {
+	if a == nil || a.SizeBytes > maxMarkdownHumanAttachmentBytes {
+		return false
+	}
+	if !declaresMarkdown(a) {
+		return false
+	}
+	cacheKey := humanMessageAttachmentMarkdownCacheKey(a.StoragePath)
+	humanMessageAttachmentPreviewCache.Lock()
+	markdown, ok := humanMessageAttachmentPreviewCache.entries[cacheKey]
+	humanMessageAttachmentPreviewCache.Unlock()
+	if ok {
+		return markdown
+	}
+
+	// Same caching contract as the image probe: attachment paths are
+	// daemon-owned and immutable after upload, so one completed sniff serves
+	// every later dashboard poll, and a cached positive survives file cleanup
+	// so the viewer reaches the authenticated route and shows its own
+	// missing-file state.
+	f, err := os.Open(a.StoragePath)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = f.Close() }()
+	var header [512]byte
+	n, err := io.ReadFull(f, header[:])
+	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
+		return false
+	}
+	markdown = looksLikeUTF8Text(header[:n], n == len(header))
+	humanMessageAttachmentPreviewCache.Lock()
+	if len(humanMessageAttachmentPreviewCache.entries) >= maxHumanMessageAttachmentPreviewCacheEntries {
+		for key := range humanMessageAttachmentPreviewCache.entries {
+			delete(humanMessageAttachmentPreviewCache.entries, key)
+			break
+		}
+	}
+	humanMessageAttachmentPreviewCache.entries[cacheKey] = markdown
+	humanMessageAttachmentPreviewCache.Unlock()
+	return markdown
+}
+
+// declaresMarkdown reports whether the attachment presents itself as Markdown,
+// by media type or by the extension a human reads in the filename. Either alone
+// is enough: `tclaude agent notify-human` types .md as text/markdown, but a file
+// published through another path can arrive as text/plain or octet-stream and
+// still be the document the operator wants rendered.
+func declaresMarkdown(a *db.HumanMessageAttachment) bool {
+	if mediaType, _, err := mime.ParseMediaType(a.ContentType); err == nil {
+		if _, ok := markdownHumanAttachmentTypes[mediaType]; ok {
+			return true
+		}
+	}
+	_, ok := markdownHumanAttachmentExtensions[strings.ToLower(filepath.Ext(a.Filename))]
+	return ok
+}
+
+// looksLikeUTF8Text rejects the payloads that would render as mojibake: a NUL
+// byte is the classic binary tell, and invalid UTF-8 means the browser cannot
+// decode the file as the text the viewer would present. truncated says the
+// sample stopped at the buffer rather than at end-of-file, in which case a
+// final incomplete rune is the sample's fault, not the file's.
+func looksLikeUTF8Text(sample []byte, truncated bool) bool {
+	if bytes.IndexByte(sample, 0) >= 0 {
+		return false
+	}
+	if truncated {
+		// Drop a trailing partial rune (at most 3 bytes) before validating.
+		for i := 0; i < utf8.UTFMax-1 && len(sample) > 0; i++ {
+			if utf8.Valid(sample) {
+				return true
+			}
+			sample = sample[:len(sample)-1]
+		}
+	}
+	return utf8.Valid(sample)
+}
+
+// maxMarkdownHumanAttachmentBytes bounds what the viewer will offer to parse
+// and lay out in the operator's browser. A Markdown document that exceeds it is
+// still downloadable; it is just not worth freezing the tab over.
+const maxMarkdownHumanAttachmentBytes = 1 << 20 // 1 MiB
+
+var markdownHumanAttachmentTypes = map[string]struct{}{
+	"text/markdown":   {},
+	"text/x-markdown": {},
+}
+
+var markdownHumanAttachmentExtensions = map[string]struct{}{
+	".md":       {},
+	".markdown": {},
+	".mdown":    {},
+	".mkd":      {},
+	".mkdn":     {},
+}
+
+// humanMessageAttachmentMarkdownCacheKey shares the preview cache with the
+// image probe. The discriminator cannot collide with an image key, whose second
+// field is always a parsed media type.
+func humanMessageAttachmentMarkdownCacheKey(storagePath string) string {
+	return storagePath + "\x00#markdown"
 }
 
 const maxHumanMessageAttachmentPreviewCacheEntries = 2048

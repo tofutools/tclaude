@@ -47,6 +47,28 @@ type cloneGroupResp struct {
 	} `json:"members"`
 }
 
+func makeRouteEligibleCloneSource(t *testing.T, f *testharness.Flow, convID, groupName, label string) *db.AgentGroup {
+	t.Helper()
+	f.HaveConvWithTitle(convID, "route-worker")
+	f.HaveAliveSession(convID, label, "tmux-"+label, f.TestCwd("route"))
+	group := f.HaveGroup(groupName)
+	f.HaveMember(groupName, convID)
+	require.NoError(t, db.ReplaceAgentGroupPermissions(group.ID,
+		[]string{agentd.PermRoutesPublish, agentd.PermRoutesConsume}, "test"))
+	row, err := db.LoadSession(label)
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	row.SandboxImplementation = string(sandboxpolicy.ImplementationTclaudeLayer)
+	require.NoError(t, db.SaveSession(row))
+	agentID, err := db.AgentIDForConv(convID)
+	require.NoError(t, err)
+	effective := sandboxpolicy.EffectiveProfile{NetworkAccess: sandboxpolicy.NetworkAccessNone}
+	snapshot := sandboxpolicy.NewSnapshot(effective, nil)
+	snapshot.ResolutionGroupID = group.ID
+	require.NoError(t, db.SetAgentEffectiveSandboxConfig(agentID, &snapshot))
+	return group
+}
+
 // Scenario: clone a 2-member group with no explicit name. Default name
 // should be "<src>-c-1"; the source group is left untouched; both
 // members spawn fresh conv-ids in the new group, each renamed to a

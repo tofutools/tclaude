@@ -79,7 +79,7 @@ func routeViewFor(r *db.AgentRoute) routeView {
 }
 
 func routeLeaseViewFor(l *db.AgentRouteLease) routeLeaseView {
-	v := routeLeaseView{APIVersion: routeAPIVersion, ID: l.ID, RouteID: l.RouteID, ConsumerAgentID: l.ConsumerAgentID, ConsumerConvID: l.ConsumerConvID, ConsumerLaunchGeneration: l.ConsumerLaunchGeneration, GroupGeneration: l.GroupGeneration, State: l.State, OpenedAt: l.OpenedAt.UTC().Format("2006-01-02T15:04:05.999999999Z07:00")}
+	v := routeLeaseView{APIVersion: routeAPIVersion, ID: l.ID, RouteID: l.RouteID, ConsumerAgentID: l.ConsumerAgentID, ConsumerConvID: l.ConsumerConvID, ConsumerLaunchGeneration: l.ConsumerLaunchGeneration, GroupGeneration: l.GroupGeneration, State: l.State, OpenedAt: l.OpenedAt.UTC().Format("2006-01-02T15:04:05.999999999Z07:00"), Endpoint: routeConsumerEndpointForLease(l.ID)}
 	if !l.ClosedAt.IsZero() {
 		v.ClosedAt = l.ClosedAt.UTC().Format("2006-01-02T15:04:05.999999999Z07:00")
 	}
@@ -171,6 +171,18 @@ func knownRouteLaunchGeneration(convID string) (string, bool) {
 }
 
 func routeCallerAgent(w http.ResponseWriter, r *http.Request) (string, string, bool) {
+	// The namespace helper is a sibling process, not a harness descendant.
+	// Its opaque capability is accepted only on the read-only route discovery
+	// endpoints; route mutation remains requireAgent-authenticated.
+	if r.Method == http.MethodGet {
+		if capability, present, valid := routeHelperCredentialForRequest(r); present {
+			if !valid {
+				writeRouteError(w, http.StatusUnauthorized, "route_helper_auth", "route helper credential is missing, stale, or invalid")
+				return "", "", false
+			}
+			return capability.convID, capability.agentID, true
+		}
+	}
 	convID, ok := requireAgent(w, r)
 	if !ok {
 		return "", "", false
@@ -337,6 +349,31 @@ func handleRoutesList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"api_version": routeAPIVersion, "group_id": g.ID, "group": g.Name, "group_generation": g.RouteGeneration, "routes": out})
 }
 
+// handleRouteLeasesList is the launch-helper read surface. It is intentionally
+// consumer-scoped: a helper can discover only its own leases, and group
+// membership is checked before the durable rows are read.
+func handleRouteLeasesList(w http.ResponseWriter, r *http.Request) {
+	g, err := routeGroup(r.URL.Query().Get("group"), parseRouteGroupID(r.URL.Query().Get("group_id")))
+	if err != nil {
+		writeRouteError(w, http.StatusBadRequest, "route_group", err.Error())
+		return
+	}
+	convID, agentID, ok := requireRouteMembership(w, r, g)
+	if !ok {
+		return
+	}
+	leases, err := db.ListAgentRouteLeases(g.ID, agentID, convID)
+	if err != nil {
+		writeRouteError(w, http.StatusInternalServerError, "route_io", "route lease registry unavailable")
+		return
+	}
+	out := make([]routeLeaseView, 0, len(leases))
+	for _, lease := range leases {
+		out = append(out, routeLeaseViewFor(lease))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"api_version": routeAPIVersion, "group_id": g.ID, "group": g.Name, "group_generation": g.RouteGeneration, "leases": out})
+}
+
 func parseRouteGroupID(raw string) int64 {
 	id, _ := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
 	return id
@@ -381,6 +418,10 @@ func handleRoutePublish(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.TrimSpace(body.Target) == "" {
 		writeRouteError(w, http.StatusBadRequest, "route_invalid_target", "target is required")
+		return
+	}
+	if err := validateLinuxRoutePublishTarget(strings.TrimSpace(body.Target)); err != nil {
+		writeRouteError(w, http.StatusBadRequest, "route_target_not_local", err.Error())
 		return
 	}
 	route, err := db.CreateAgentRoute(g.ID, agentID, convID, launchGeneration, routeGeneration(g, body.GroupGeneration), name, transport, strings.TrimSpace(body.Target))

@@ -8,6 +8,7 @@ import { attachmentHref, messageAttachments } from './human-attachments.js';
 import { openHumanReplyModal } from './message-access-dialog-controller.js';
 import { hasShownOverlay } from './overlay-stack.js';
 import { ImageAttachmentPreview } from './image-preview-overlay.js';
+import { MarkdownAttachment } from './markdown-attachment.js';
 
 const html = htm.bind(h);
 const readWrites = new Map();
@@ -121,6 +122,7 @@ function Attachment({ message }) {
       </a>
       <a class="human-notification-drawer-download" href=${href}
         download=${attachment.filename || ''} title="Download this agent-published file">Download</a>
+      <${MarkdownAttachment} messageID=${message.id} attachment=${attachment} surface="drawer" />
     </div>`;
   })}</${Fragment}>`;
 }
