@@ -8,30 +8,30 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func v182FixtureDB(t *testing.T) *sql.DB {
+func v183FixtureDB(t *testing.T) *sql.DB {
 	t.Helper()
 	setupTestDB(t)
-	d, err := sql.Open("sqlite", t.TempDir()+"/v182.sqlite?_pragma=foreign_keys(1)")
+	d, err := sql.Open("sqlite", t.TempDir()+"/v183.sqlite?_pragma=foreign_keys(1)")
 	require.NoError(t, err)
 	d.SetMaxOpenConns(1)
 	t.Cleanup(func() { _ = d.Close() })
 	require.NoError(t, createSchema(d))
 	for _, step := range migrationSteps {
-		if step.version > 182 {
+		if step.version > 183 {
 			break
 		}
 		require.NoErrorf(t, step.apply(d), "migration v%d", step.version)
 	}
 	var version int
 	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&version))
-	require.Equal(t, 182, version, "fixture must prove the v183 step has not run")
+	require.Equal(t, 183, version, "fixture must prove the v184 step has not run")
 	return d
 }
 
 // A v116 attachment survives the rebuild as its message's first file, and the
 // table now accepts several attachments per message.
-func TestMigrateV182toV183_PreservesLegacyAttachmentAndAllowsSeveral(t *testing.T) {
-	d := v182FixtureDB(t)
+func TestMigrateV183toV184_PreservesLegacyAttachmentAndAllowsSeveral(t *testing.T) {
+	d := v183FixtureDB(t)
 	_, err := d.Exec(`INSERT INTO human_messages (id, from_conv, from_agent, from_title, group_name,
 		subject, body, created_at) VALUES (7, 'c1', '', '', '', 'art', 'ready', 1)`)
 	require.NoError(t, err)
@@ -40,10 +40,10 @@ func TestMigrateV182toV183_PreservesLegacyAttachmentAndAllowsSeveral(t *testing.
 		VALUES (7, 'export.zip', 'application/zip', 12, '/private/export.zip')`)
 	require.NoError(t, err)
 
-	require.NoError(t, migrateV182toV183(d))
+	require.NoError(t, migrateV183toV184(d))
 	var version int
 	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&version))
-	require.Equal(t, 183, version)
+	require.Equal(t, 184, version)
 
 	var id, messageID, seq int64
 	var filename string
@@ -72,9 +72,9 @@ func TestMigrateV182toV183_PreservesLegacyAttachmentAndAllowsSeveral(t *testing.
 }
 
 // The upgraded schema must match what a fresh database gets.
-func TestMigrateV182toV183_MatchesFreshSchema(t *testing.T) {
-	d := v182FixtureDB(t)
-	require.NoError(t, migrateV182toV183(d))
+func TestMigrateV183toV184_MatchesFreshSchema(t *testing.T) {
+	d := v183FixtureDB(t)
+	require.NoError(t, migrateV183toV184(d))
 	upgraded, err := SchemaSQL(d)
 	require.NoError(t, err)
 	fresh, err := SchemaSQL(freshMigratedDB(t))

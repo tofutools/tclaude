@@ -76,6 +76,13 @@ func TestDashboardHTML_DockPalette(t *testing.T) {
 		"a collapsed dock slides off-screen")
 	must("body.dock-anim #agent-dock { transition: transform", "the slide is gated behind .dock-anim (no flash-in on load)")
 	must("body.wizard #agent-dock .dock-card {", "the wizard skin is scoped under #agent-dock")
+	// The dock owns its own overflow surface, so its scrollbar follows the
+	// dashboard's regular, Vegas, and wizard skins instead of the browser UA.
+	must("#agent-dock .dock-body::-webkit-scrollbar", "the right-panel scrollbar has explicit WebKit geometry")
+	must("scrollbar-color: var(--dock-scrollbar-thumb-color) var(--dock-scrollbar-track)", "the right-panel scrollbar has a Firefox fallback")
+	must("body.slop #agent-dock .dock-body", "the casino/Vegas scrollbar skin covers slop mode")
+	must("body.vegas #agent-dock .dock-body", "the casino/Vegas scrollbar skin covers regular-mode Vegas")
+	must("body.wizard #agent-dock .dock-body", "the wizard scrollbar skin covers the right panel")
 	// JOH-388 req 5: each category is a collapsible <details>; its per-section
 	// fold persists via dashPrefs and the disclosure chevron flips on [open].
 	must(".dock-section[open] > .dock-section-head .dock-section-chevron", "the section chevron flips with the <details> open state")

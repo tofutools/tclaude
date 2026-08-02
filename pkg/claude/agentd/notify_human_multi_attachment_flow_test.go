@@ -135,10 +135,10 @@ func TestNotifyHuman_SeparateAttachmentsEachDownloadable(t *testing.T) {
 	}
 }
 
-// Scenario: a previewable image is served inline on request, while a payload
-// that only CLAIMS to be an image is stored as what it really is and can never
-// be displayed in the dashboard origin.
-func TestNotifyHuman_InlinePreviewOnlyForConfirmedRasterImages(t *testing.T) {
+// Scenario: previewability is the daemon's verdict on the BYTES, per published
+// file — a payload that only claims to be an image never reaches the preview
+// surface, and every attachment is still downloadable through its own URL.
+func TestNotifyHuman_PreviewableIsPerFileAndByteVerified(t *testing.T) {
 	f := newFlow(t)
 	const conv = "snif-1111-2222-3333-4444"
 	f.HaveConvWithTitle(conv, "sniffer")
@@ -147,35 +147,45 @@ func TestNotifyHuman_InlinePreviewOnlyForConfirmedRasterImages(t *testing.T) {
 	rec := postNotifyMultipartAttachments(t, f.Mux, conv, []notifyFile{
 		{"real.png", "image/png", onePixelPNG},
 		{"fake.png", "image/png", "<html><script>alert(1)</script></html>"},
+		{"art.svg", "image/svg+xml", "<svg xmlns=\"http://www.w3.org/2000/svg\"/>"},
 	})
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 
 	msgs, err := db.ListHumanMessages()
 	require.NoError(t, err)
 	require.Len(t, msgs, 1)
-	require.Len(t, msgs[0].Attachments, 2)
-	assert.Equal(t, "image/png", msgs[0].Attachments[0].ContentType)
-	assert.NotContains(t, msgs[0].Attachments[1].ContentType, "image/",
-		"a mislabeled payload is stored as what its bytes say")
+	require.Len(t, msgs[0].Attachments, 3)
 
 	dash := dashHandlerForTest(t)
-	base := "/api/human-messages/" + strconv.FormatInt(msgs[0].ID, 10) + "/attachments/"
-	inlineReal := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodGet,
-		base+strconv.FormatInt(msgs[0].Attachments[0].ID, 10)+"?inline=1", nil))
-	require.Equal(t, http.StatusOK, inlineReal.Code)
-	assert.Contains(t, inlineReal.Header().Get("Content-Disposition"), "inline")
+	var payload struct {
+		Messages []struct {
+			ID          int64 `json:"id"`
+			Attachments []struct {
+				Filename    string `json:"filename"`
+				URL         string `json:"url"`
+				Previewable bool   `json:"previewable"`
+			} `json:"attachments"`
+		} `json:"messages"`
+	}
+	snap := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodGet, "/api/snapshot", nil))
+	require.Equal(t, http.StatusOK, snap.Code, snap.Body.String())
+	testharness.DecodeJSON(t, snap, &payload)
+	require.Len(t, payload.Messages, 1)
+	attachments := payload.Messages[0].Attachments
+	require.Len(t, attachments, 3)
+	assert.True(t, attachments[0].Previewable, "a real PNG is previewable")
+	assert.False(t, attachments[1].Previewable, "bytes that are not an image never preview")
+	assert.False(t, attachments[2].Previewable, "SVG is an active document, not a picture")
 
-	inlineFake := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodGet,
-		base+strconv.FormatInt(msgs[0].Attachments[1].ID, 10)+"?inline=1", nil))
-	require.Equal(t, http.StatusOK, inlineFake.Code)
-	assert.Contains(t, inlineFake.Header().Get("Content-Disposition"), "attachment",
-		"non-image bytes are only ever downloaded")
-	assert.Equal(t, "nosniff", inlineFake.Header().Get("X-Content-Type-Options"))
-
-	// The image viewer preflights with HEAD before displaying an attachment.
-	head := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodHead,
-		base+strconv.FormatInt(msgs[0].Attachments[0].ID, 10), nil))
-	assert.Equal(t, http.StatusOK, head.Code)
+	// Each file is still its own download, and the viewer's HEAD preflight
+	// works against the per-file route.
+	for _, attachment := range attachments {
+		head := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodHead, attachment.URL, nil))
+		require.Equal(t, http.StatusOK, head.Code, attachment.Filename)
+		assert.Equal(t, "nosniff", head.Header().Get("X-Content-Type-Options"))
+		assert.Contains(t, head.Header().Get("Content-Disposition"), "attachment",
+			"agent bytes are downloaded, never rendered as a document")
+	}
 }
 
 // Scenario: an attachment id that belongs to another message is not reachable

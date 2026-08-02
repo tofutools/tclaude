@@ -95,8 +95,9 @@ func TestMigrateV180toV181_ConvertsEveryTimestampAndPreservesSchemaGraph(t *test
 	require.Equal(t, beforeTriggers, triggerDefinitions(t, d), "all triggers survive the rebuild")
 
 	fresh := freshMigratedDB(t)
-	require.NoError(t, migrateV181toV182(d), "advance upgraded fixture toward current schema")
-	require.NoError(t, migrateV182toV183(d), "advance upgraded fixture to current schema")
+	require.NoError(t, migrateV181toV182(d), "advance upgraded fixture through v182")
+	require.NoError(t, migrateV182toV183(d), "advance upgraded fixture through v183")
+	require.NoError(t, migrateV183toV184(d), "advance upgraded fixture to current schema")
 	upgradedSchema, err := SchemaSQL(d)
 	require.NoError(t, err)
 	freshSchema, err := SchemaSQL(fresh)

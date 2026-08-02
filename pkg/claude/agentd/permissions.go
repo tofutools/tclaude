@@ -312,6 +312,14 @@ var permissionRegistry = []PermSlug{
 		Slug:        PermSettingsDefaultModel,
 		Description: "Set or clear the user-level default Claude model — the \"model\" key in ~/.claude/settings.json, which every claude launched without --model falls back to. Rewrites a config file in the human's home, so not default-granted (effectively human-only).",
 	},
+	{
+		Slug:        PermRoutesPublish,
+		Description: "Register and withdraw routes owned by the caller. Requires current membership in the explicitly selected target group; not globally default-granted.",
+	},
+	{
+		Slug:        PermRoutesConsume,
+		Description: "Open/lease a published route and close the caller's own lease. Requires current membership in the explicitly selected target group; not globally default-granted.",
+	},
 }
 
 // Permission slugs for the permissions-management endpoints themselves.

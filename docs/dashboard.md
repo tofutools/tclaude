@@ -406,7 +406,8 @@ An amber **!** floating over the start of an agent's name means that agent has
 sent one or more unread notifications to the human with
 `tclaude agent notify-human`. Hovering it previews the newest one; selecting it
 opens the quick reader — a right-hand drawer that pages through that agent's
-notifications, downloads an attached file, replies, and offers **Open in
+notifications, previews an attached raster image, downloads the original,
+replies, and offers **Open in
 Messages ↗** for the full **Messages → Human** view filtered to that agent.
 Opening a notification in the reader does **not** mark it read — glancing at a
 message never silently clears the mark. Use the reader's **Mark read** action
@@ -1345,7 +1346,11 @@ download card per published file. Up to 20 attached files arrive as separate
 downloads — so an image stays viewable instead of being buried in an archive —
 while a directory or a larger set is packaged as one zip. `--zip` and
 `--separate` force either shape, and `--name` (which renames a single download)
-implies `--zip`. The daemon copies the bytes
+implies `--zip`. Daemon-verified PNG, JPEG, GIF, WebP, and AVIF attachments also
+show a contain-fit thumbnail. Selecting the thumbnail opens the shared image
+preview overlay, which supports zoom, authenticated missing-file checks, and
+Escape-to-return while keeping the original download action available. SVG
+and other non-raster files remain download-only. The daemon copies the bytes
 into its private data directory, so remote dashboards download through an
 authenticated route rather than receiving access to the agent's filesystem.
 Deleting the message deletes its stored artifact too. Uploads are capped at

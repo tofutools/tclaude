@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -377,9 +378,8 @@ func storeNotifyHumanAttachment(src io.Reader, incoming, name, declaredType stri
 		return nil, fmt.Errorf("create attachment file: %w", err)
 	}
 	a := &db.HumanMessageAttachment{Filename: name, ContentType: declaredType, StoragePath: f.Name()}
-	var head sniffBuffer
 	if err = f.Chmod(0o600); err == nil {
-		a.SizeBytes, err = io.Copy(f, io.TeeReader(src, &head))
+		a.SizeBytes, err = io.Copy(f, src)
 		if err == nil {
 			err = f.Sync()
 		}
@@ -388,11 +388,7 @@ func storeNotifyHumanAttachment(src io.Reader, incoming, name, declaredType stri
 	if err == nil {
 		err = closeErr
 	}
-	if err != nil {
-		return a, err
-	}
-	a.ContentType = resolveAttachmentContentType(declaredType, head.Bytes())
-	return a, nil
+	return a, err
 }
 
 func removeStoredAttachmentFiles(attachments []*db.HumanMessageAttachment) {
@@ -742,7 +738,7 @@ type dashboardHumanMessageAttachment struct {
 	ContentType string `json:"content_type"`
 	SizeBytes   int64  `json:"size_bytes"`
 	URL         string `json:"url"`
-	Previewable bool   `json:"previewable"`
+	Previewable bool   `json:"previewable,omitempty"`
 }
 
 func dashboardHumanMessageAttachmentView(messageID int64, a *db.HumanMessageAttachment) *dashboardHumanMessageAttachment {
@@ -755,12 +751,106 @@ func dashboardHumanMessageAttachmentView(messageID int64, a *db.HumanMessageAtta
 		ContentType: a.ContentType,
 		SizeBytes:   a.SizeBytes,
 		URL:         humanMessageAttachmentURL(messageID, a.ID),
-		Previewable: attachmentPreviewable(a.ContentType),
+		Previewable: humanMessageAttachmentPreviewable(a),
 	}
 }
 
+// humanMessageAttachmentURL is the download route for one published file. The
+// legacy /attachment route stays as an alias for a message's first file.
 func humanMessageAttachmentURL(messageID, attachmentID int64) string {
 	return fmt.Sprintf("/api/human-messages/%d/attachments/%d", messageID, attachmentID)
+}
+
+// humanMessageAttachmentPreviewable is deliberately decided by the daemon,
+// not by the browser-facing Content-Type alone. Agents control that header;
+// accepting image/* here would let a non-image payload opt into the preview
+// surface. Keep this raster-only until the dashboard has an explicit safe SVG
+// policy, and require the bytes to match the declared type as well.
+func humanMessageAttachmentPreviewable(a *db.HumanMessageAttachment) bool {
+	if a == nil {
+		return false
+	}
+	mediaType, _, err := mime.ParseMediaType(a.ContentType)
+	if err != nil {
+		return false
+	}
+	if _, ok := previewableHumanImageTypes[mediaType]; !ok {
+		return false
+	}
+	cacheKey := humanMessageAttachmentPreviewCacheKey(a.StoragePath, mediaType)
+	humanMessageAttachmentPreviewCache.Lock()
+	previewable, ok := humanMessageAttachmentPreviewCache.entries[cacheKey]
+	humanMessageAttachmentPreviewCache.Unlock()
+	if ok {
+		return previewable
+	}
+
+	// Attachment paths are daemon-owned and immutable after upload. Cache a
+	// completed probe so the 2-second dashboard snapshot poll does not reopen
+	// every historical image. A cached positive result intentionally survives
+	// file cleanup: the preview then reaches the authenticated route and shows
+	// its missing-file state instead of tearing the thumbnail out of the UI.
+	f, err := os.Open(a.StoragePath)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = f.Close() }()
+	var header [32]byte
+	n, err := io.ReadFull(f, header[:])
+	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
+		return false
+	}
+	previewable = humanImageHeaderMatches(mediaType, header[:n])
+	humanMessageAttachmentPreviewCache.Lock()
+	if len(humanMessageAttachmentPreviewCache.entries) >= maxHumanMessageAttachmentPreviewCacheEntries {
+		for key := range humanMessageAttachmentPreviewCache.entries {
+			delete(humanMessageAttachmentPreviewCache.entries, key)
+			break
+		}
+	}
+	humanMessageAttachmentPreviewCache.entries[cacheKey] = previewable
+	humanMessageAttachmentPreviewCache.Unlock()
+	return previewable
+}
+
+var previewableHumanImageTypes = map[string]struct{}{
+	"image/avif": {},
+	"image/gif":  {},
+	"image/jpeg": {},
+	"image/png":  {},
+	"image/webp": {},
+}
+
+const maxHumanMessageAttachmentPreviewCacheEntries = 2048
+
+var humanMessageAttachmentPreviewCache = struct {
+	sync.Mutex
+	entries map[string]bool
+}{entries: make(map[string]bool)}
+
+func humanMessageAttachmentPreviewCacheKey(storagePath, mediaType string) string {
+	return storagePath + "\x00" + mediaType
+}
+
+func humanImageHeaderMatches(mediaType string, header []byte) bool {
+	switch mediaType {
+	case "image/avif":
+		// AVIF is an ISO-BMFF file. The major brand is normally at bytes 8–12;
+		// accepting the compatible brand at the same position covers the common
+		// avif/avis variants without treating arbitrary ftyp files as images.
+		return len(header) >= 12 && bytes.Equal(header[4:8], []byte("ftyp")) &&
+			(bytes.Equal(header[8:12], []byte("avif")) || bytes.Equal(header[8:12], []byte("avis")))
+	case "image/gif":
+		return len(header) >= 6 && (bytes.Equal(header[:6], []byte("GIF87a")) || bytes.Equal(header[:6], []byte("GIF89a")))
+	case "image/jpeg":
+		return len(header) >= 3 && header[0] == 0xff && header[1] == 0xd8 && header[2] == 0xff
+	case "image/png":
+		return len(header) >= 8 && bytes.Equal(header[:8], []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a})
+	case "image/webp":
+		return len(header) >= 12 && bytes.Equal(header[:4], []byte("RIFF")) && bytes.Equal(header[8:12], []byte("WEBP"))
+	default:
+		return false
+	}
 }
 
 // buildHumanMessagesSnapshot loads the human_messages rows for the
@@ -854,18 +944,14 @@ func buildHumanMessagesSnapshot() ([]dashboardHumanMessage, int) {
 //
 //	/api/human-messages/{id}/attachments/{attachmentID}  one specific file
 //	/api/human-messages/{id}/attachment                  the first file (legacy)
-//
-// `?inline=1` serves the bytes for display rather than download, and ONLY for a
-// previewable raster image (see human_attachment_preview.go) — agent-published
-// bytes must never be rendered as an active document in the dashboard origin.
 func handleDashboardHumanMessageAttachment(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
 		return
 	}
-	// HEAD is served like GET (net/http drops the body): the dashboard's image
-	// viewer preflights an attachment before deciding to display it.
+	// HEAD is served like GET, minus the body: the dashboard's image viewer
+	// preflights an attachment before deciding to display it.
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		http.Error(w, "GET only", http.StatusMethodNotAllowed)
+		http.Error(w, "GET or HEAD only", http.StatusMethodNotAllowed)
 		return
 	}
 	messageID, attachmentID, ok := parseHumanMessageAttachmentPath(r.URL.Path)
@@ -888,15 +974,14 @@ func handleDashboardHumanMessageAttachment(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	defer func() { _ = f.Close() }()
-	dispositionType := "attachment"
-	if r.URL.Query().Get("inline") == "1" && attachmentPreviewable(a.ContentType) {
-		dispositionType = "inline"
-	}
-	disposition := mime.FormatMediaType(dispositionType, map[string]string{"filename": a.Filename})
+	disposition := mime.FormatMediaType("attachment", map[string]string{"filename": a.Filename})
 	w.Header().Set("Content-Disposition", disposition)
 	w.Header().Set("Content-Type", a.ContentType)
-	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Length", strconv.FormatInt(a.SizeBytes, 10))
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	if r.Method == http.MethodHead {
+		return
+	}
 	if _, err := io.Copy(w, f); err != nil {
 		slog.Warn("human message attachment: stream failed", "message", messageID, "error", err)
 	}

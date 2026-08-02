@@ -60,6 +60,14 @@ func TestNotifyHuman_AttachmentDownloadAndDelete(t *testing.T) {
 	require.Equal(t, http.StatusOK, download.Code, download.Body.String())
 	assert.Equal(t, "# Result\n\nDone.\n", download.Body.String())
 	assert.Contains(t, download.Header().Get("Content-Disposition"), "report.md")
+	assert.Equal(t, "nosniff", download.Header().Get("X-Content-Type-Options"))
+
+	head := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodHead,
+		"/api/human-messages/"+strconv.FormatInt(delivered.ID, 10)+"/attachment", nil))
+	require.Equal(t, http.StatusOK, head.Code, head.Body.String())
+	assert.Empty(t, head.Body.String())
+	assert.Equal(t, download.Header().Get("Content-Length"), head.Header().Get("Content-Length"))
+	assert.Equal(t, "nosniff", head.Header().Get("X-Content-Type-Options"))
 
 	orphan := filepath.Join(filepath.Dir(storedPath), "artifact-crash-orphan")
 	require.NoError(t, os.WriteFile(orphan, []byte("orphan"), 0o600))
