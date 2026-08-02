@@ -211,3 +211,218 @@ func readFrameWithTimeout(t *testing.T, conn net.Conn) routebroker.Frame {
 	_ = conn.SetReadDeadline(time.Time{})
 	return frame
 }
+
+// consumerOpenFixture wires RunConsumer to an in-test channel peer standing in
+// for the broker, and returns a dialled local client connection.
+func consumerOpenFixture(t *testing.T) (client net.Conn, peer net.Conn, done chan error) {
+	t.Helper()
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	channel, peer := net.Pipe()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	done = make(chan error, 1)
+	go func() { done <- RunConsumer(ctx, channel, listener) }()
+	client, err = net.Dial("tcp4", listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = client.Close(); _ = peer.Close() })
+	return client, peer, done
+}
+
+func TestRunConsumerReopensWhilePublisherIsAbsent(t *testing.T) {
+	client, peer, _ := consumerOpenFixture(t)
+
+	// The client writes immediately, as a real client would; those bytes must
+	// survive the reopen rather than being forwarded into a stream that the
+	// publisher never got.
+	if _, err := client.Write([]byte("request")); err != nil {
+		t.Fatal(err)
+	}
+
+	first := readFrameWithTimeout(t, peer)
+	if first.Kind != routebroker.KindOpen {
+		t.Fatalf("first frame = %#v, want OPEN", first)
+	}
+	if err := routebroker.WriteFrame(peer, routebroker.Frame{
+		Kind: routebroker.KindOpenError, Stream: first.Stream,
+		Payload: []byte(routebroker.OpenErrorPublisherUnavailable),
+	}, routebroker.MaxFramePayload); err != nil {
+		t.Fatal(err)
+	}
+
+	// The publisher reattaches, so the reopen is accepted.
+	second := readFrameWithTimeout(t, peer)
+	if second.Kind != routebroker.KindOpen {
+		t.Fatalf("second frame = %#v, want a reopened OPEN", second)
+	}
+	if second.Stream == first.Stream {
+		t.Fatalf("reopen reused stream id %d", second.Stream)
+	}
+	if err := routebroker.WriteFrame(peer, routebroker.Frame{Kind: routebroker.KindOpenOK, Stream: second.Stream}, routebroker.MaxFramePayload); err != nil {
+		t.Fatal(err)
+	}
+
+	data := readFrameWithTimeout(t, peer)
+	if data.Kind != routebroker.KindData || data.Stream != second.Stream || string(data.Payload) != "request" {
+		t.Fatalf("data frame = %#v, want the buffered request on the reopened stream", data)
+	}
+
+	// The reverse direction still reaches the client, and the connection was
+	// never reset under it.
+	if err := routebroker.WriteFrame(peer, routebroker.Frame{Kind: routebroker.KindData, Stream: second.Stream, Payload: []byte("reverse")}, routebroker.MaxFramePayload); err != nil {
+		t.Fatal(err)
+	}
+	got := make([]byte, len("reverse"))
+	if err := client.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.ReadFull(client, got); err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "reverse" {
+		t.Fatalf("reverse payload = %q", got)
+	}
+}
+
+func TestRunConsumerDoesNotReopenARefusedOpen(t *testing.T) {
+	client, peer, _ := consumerOpenFixture(t)
+
+	open := readFrameWithTimeout(t, peer)
+	if open.Kind != routebroker.KindOpen {
+		t.Fatalf("first frame = %#v, want OPEN", open)
+	}
+	if err := routebroker.WriteFrame(peer, routebroker.Frame{
+		Kind: routebroker.KindOpenError, Stream: open.Stream,
+		Payload: []byte(routebroker.OpenErrorTargetUnavailable),
+	}, routebroker.MaxFramePayload); err != nil {
+		t.Fatal(err)
+	}
+
+	// A non-transient refusal fails the client's connection straight away
+	// instead of holding it open for the retry window.
+	if err := client.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Read(make([]byte, 1)); err == nil {
+		t.Fatal("client connection stayed open after a non-transient refusal")
+	}
+
+	// And no reopen was attempted.
+	_ = peer.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+	if frame, err := routebroker.ReadFrame(peer, routebroker.MaxFramePayload); err == nil {
+		t.Fatalf("unexpected frame after a non-transient refusal: %#v", frame)
+	}
+}
+
+func TestRunConsumerGivesUpAfterTheRetryWindow(t *testing.T) {
+	client, peer, _ := consumerOpenFixture(t)
+
+	deadline := time.Now().Add(openRetryWindow + 5*time.Second)
+	opens := 0
+	for time.Now().Before(deadline) {
+		_ = peer.SetReadDeadline(time.Now().Add(time.Second))
+		frame, err := routebroker.ReadFrame(peer, routebroker.MaxFramePayload)
+		if err != nil {
+			break
+		}
+		if frame.Kind != routebroker.KindOpen {
+			t.Fatalf("frame = %#v, want OPEN", frame)
+		}
+		opens++
+		if err := routebroker.WriteFrame(peer, routebroker.Frame{
+			Kind: routebroker.KindOpenError, Stream: frame.Stream,
+			Payload: []byte(routebroker.OpenErrorPublisherUnavailable),
+		}, routebroker.MaxFramePayload); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if opens < 2 {
+		t.Fatalf("open attempts = %d, want more than one", opens)
+	}
+	if err := client.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Read(make([]byte, 1)); err == nil {
+		t.Fatal("client connection stayed open past the retry window")
+	}
+}
+
+// TestConsumerReachesAPublisherThatAttachesLate exercises the whole chain —
+// consumer helper, broker, publisher helper — across the window the consumer
+// used to fail in: the client connects while no publisher channel is attached.
+func TestConsumerReachesAPublisherThatAttachesLate(t *testing.T) {
+	target, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = target.Close() })
+	go func() {
+		conn, acceptErr := target.Accept()
+		if acceptErr != nil {
+			return
+		}
+		defer conn.Close()
+		payload := make([]byte, 6)
+		if _, readErr := io.ReadFull(conn, payload); readErr == nil {
+			_, _ = conn.Write([]byte("reply:" + string(payload)))
+		}
+	}()
+
+	broker, err := routebroker.New(routebroker.Config{Authorizer: allowAll{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = broker.Close() })
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	t.Cleanup(cancel)
+
+	// Only the consumer side exists at first.
+	conBroker, conPeer := net.Pipe()
+	go func() {
+		_ = broker.AttachConsumer(ctx, routebroker.ConsumerAuth{
+			LeaseID: "lease-late", RouteID: "route-late", AgentID: "consumer",
+			ConvID: "consumer-conv", LaunchGeneration: "consumer-launch", GroupGeneration: 1,
+		}, conBroker)
+	}()
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = RunConsumer(ctx, conPeer, listener) }()
+
+	client, err := net.Dial("tcp4", listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	if _, err := client.Write([]byte("opaque")); err != nil {
+		t.Fatal(err)
+	}
+
+	// The publisher attaches only after the client is already connected and
+	// has been refused at least once.
+	time.Sleep(100 * time.Millisecond)
+	pubBroker, pubPeer := net.Pipe()
+	go func() {
+		_ = broker.AttachPublisher(ctx, routebroker.PublisherAuth{
+			RouteID: "route-late", AgentID: "publisher", ConvID: "publisher-conv",
+			LaunchGeneration: "publisher-launch", GroupGeneration: 1,
+		}, pubBroker)
+	}()
+	go func() { _ = RunPublisher(ctx, pubPeer, "tcp://"+target.Addr().String()) }()
+
+	if err := client.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	response := make([]byte, len("reply:opaque"))
+	if _, err := io.ReadFull(client, response); err != nil {
+		t.Fatalf("client never reached the late publisher: %v", err)
+	}
+	if string(response) != "reply:opaque" {
+		t.Fatalf("response = %q", response)
+	}
+}

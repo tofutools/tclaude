@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/routebroker"
 )
@@ -39,6 +40,20 @@ const (
 	channelHeaderGroupGeneration = "X-Tclaude-Route-Group-Generation"
 	channelHeaderEndpoint        = "X-Tclaude-Route-Consumer-Endpoint"
 )
+
+// Bounds on reopening a stream whose publisher channel is absent. The window
+// is deliberately short: it should cover a helper reattach — a poll tick or a
+// few — without turning a route whose publisher is simply gone into a long
+// hang for every client that connects.
+const (
+	openRetryWindow         = 2 * time.Second
+	openRetryInitialBackoff = 25 * time.Millisecond
+	openRetryMaxBackoff     = 250 * time.Millisecond
+)
+
+// openAnswerChannelGone is a local, never-transmitted refusal used to release
+// openers when the route channel itself goes away.
+const openAnswerChannelGone = "route channel closed"
 
 var (
 	ErrInvalidTarget  = errors.New("route publisher target is not a namespace-local loopback endpoint")
@@ -169,12 +184,12 @@ func openPublisherStream(ctx context.Context, target string, streamID uint64, st
 	dialer := net.Dialer{}
 	conn, err := dialer.DialContext(ctx, "tcp", target)
 	if err != nil {
-		_ = w.write(routebroker.Frame{Kind: routebroker.KindOpenError, Stream: streamID, Payload: []byte("publisher target unavailable")})
+		_ = w.write(routebroker.Frame{Kind: routebroker.KindOpenError, Stream: streamID, Payload: []byte(routebroker.OpenErrorTargetUnavailable)})
 		return
 	}
 	if !streams.add(streamID, conn) {
 		_ = conn.Close()
-		_ = w.write(routebroker.Frame{Kind: routebroker.KindOpenError, Stream: streamID, Payload: []byte("duplicate publisher stream")})
+		_ = w.write(routebroker.Frame{Kind: routebroker.KindOpenError, Stream: streamID, Payload: []byte(routebroker.OpenErrorDuplicatePublisherStream)})
 		return
 	}
 	if err := w.write(routebroker.Frame{Kind: routebroker.KindOpenOK, Stream: streamID}); err != nil {
@@ -229,13 +244,7 @@ func RunConsumer(ctx context.Context, channel net.Conn, listener net.Listener) e
 				acceptErr <- err
 				return
 			}
-			id := streams.add(conn)
-			if err := w.write(routebroker.Frame{Kind: routebroker.KindOpen, Stream: id}); err != nil {
-				streams.removeAndClose(id)
-				acceptErr <- err
-				return
-			}
-			go readConsumerStream(ctx, id, conn, streams, w)
+			go openConsumerStream(ctx, conn, streams, w)
 		}
 	}()
 
@@ -262,8 +271,19 @@ func RunConsumer(ctx context.Context, channel net.Conn, listener net.Listener) e
 			}
 		case routebroker.KindOpenOK:
 			// The local socket is already accepted; OPEN_OK only confirms the
-			// publisher side has connected to its target.
-		case routebroker.KindOpenError, routebroker.KindClose:
+			// publisher side has connected to its target. It also releases the
+			// local reader, which must not forward bytes the publisher has no
+			// stream for yet.
+			streams.resolveOpen(frame.Stream, nil)
+		case routebroker.KindOpenError:
+			// Hand the refusal to the opener, which decides whether reopening
+			// can help. It owns the socket until then.
+			if !streams.resolveOpen(frame.Stream, frame.Payload) {
+				if conn, ok := streams.remove(frame.Stream); ok {
+					_ = conn.Close()
+				}
+			}
+		case routebroker.KindClose:
 			if conn, ok := streams.remove(frame.Stream); ok {
 				_ = conn.Close()
 			}
@@ -284,6 +304,56 @@ func RunConsumer(ctx context.Context, channel net.Conn, listener net.Listener) e
 			}
 		default:
 			return fmt.Errorf("consumer received invalid frame kind %d", frame.Kind)
+		}
+	}
+}
+
+// openConsumerStream owns one accepted local connection until the route has a
+// stream for it. Local bytes are not forwarded before OPEN_OK: the publisher
+// helper dials its target asynchronously, so data that arrives ahead of the
+// confirmation has no stream to land in.
+//
+// A publisher channel that is merely absent — agentd restart, helper restart,
+// publisher relaunch — is refused as transient, and reopening once it returns
+// is what the caller's client would otherwise have to do itself, except the
+// client cannot: it is already connected, and would see a reset instead.
+func openConsumerStream(ctx context.Context, conn net.Conn, streams *consumerStreams, w *connWriter) {
+	deadline := time.Now().Add(openRetryWindow)
+	backoff := openRetryInitialBackoff
+	for {
+		id, answer := streams.addPending(conn)
+		if err := w.write(routebroker.Frame{Kind: routebroker.KindOpen, Stream: id}); err != nil {
+			streams.dropPending(id)
+			_ = conn.Close()
+			return
+		}
+		var refusal []byte
+		select {
+		case refusal = <-answer:
+		case <-ctx.Done():
+			streams.dropPending(id)
+			_ = conn.Close()
+			return
+		}
+		if refusal == nil {
+			readConsumerStream(ctx, id, conn, streams, w)
+			return
+		}
+		streams.dropPending(id)
+		if !routebroker.OpenErrorIsTransient(refusal) || !time.Now().Before(deadline) {
+			_ = conn.Close()
+			return
+		}
+		timer := time.NewTimer(backoff)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			timer.Stop()
+			_ = conn.Close()
+			return
+		}
+		if backoff *= 2; backoff > openRetryMaxBackoff {
+			backoff = openRetryMaxBackoff
 		}
 	}
 }
@@ -442,16 +512,48 @@ func (s *publisherStreams) closeAll() {
 type consumerStreams struct {
 	mu     sync.Mutex
 	items  map[uint64]net.Conn
+	opens  map[uint64]chan []byte
 	nextID uint64
 }
 
-func (s *consumerStreams) add(conn net.Conn) uint64 {
+// addPending registers a stream whose OPEN has not been answered yet. The
+// returned channel carries nil for OPEN_OK or the OPEN_ERROR payload.
+func (s *consumerStreams) addPending(conn net.Conn) (uint64, chan []byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	id := s.nextID
 	s.nextID++
 	s.items[id] = conn
-	return id
+	if s.opens == nil {
+		s.opens = make(map[uint64]chan []byte)
+	}
+	answer := make(chan []byte, 1)
+	s.opens[id] = answer
+	return id, answer
+}
+
+// resolveOpen delivers an open answer and reports whether one was pending. A
+// late or duplicate answer is dropped rather than closing an established
+// stream.
+func (s *consumerStreams) resolveOpen(id uint64, payload []byte) bool {
+	s.mu.Lock()
+	answer, ok := s.opens[id]
+	if ok {
+		delete(s.opens, id)
+	}
+	s.mu.Unlock()
+	if !ok {
+		return false
+	}
+	answer <- payload
+	return true
+}
+
+func (s *consumerStreams) dropPending(id uint64) {
+	s.mu.Lock()
+	delete(s.opens, id)
+	delete(s.items, id)
+	s.mu.Unlock()
 }
 func (s *consumerStreams) get(id uint64) (net.Conn, bool) {
 	s.mu.Lock()
@@ -476,6 +578,13 @@ func (s *consumerStreams) removeAndClose(id uint64) {
 func (s *consumerStreams) closeAll() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// Release openers waiting on an answer that is no longer coming. The
+	// sentinel is local and never reaches the wire; it only has to be a
+	// refusal that reopening cannot clear.
+	for id, answer := range s.opens {
+		answer <- []byte(openAnswerChannelGone)
+		delete(s.opens, id)
+	}
 	for id, c := range s.items {
 		_ = c.Close()
 		delete(s.items, id)
