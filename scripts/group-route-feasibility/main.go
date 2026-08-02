@@ -241,7 +241,7 @@ func runLinuxPublisher(marker string, _ int, hostEndpoint string) error {
 	if _, err := fmt.Fprintln(broker, "STREAM"); err != nil {
 		return err
 	}
-	if err := relay(appConn, broker); err != nil {
+	if err := relayFixed(appConn, bufio.NewReader(appConn), broker, reader); err != nil {
 		return err
 	}
 	if err := <-appDone; err != nil {
@@ -310,7 +310,7 @@ func runLinuxConsumer(marker string) error {
 	if _, err := fmt.Fprintln(broker, "STREAM"); err != nil {
 		return err
 	}
-	if err := relay(localConn, broker); err != nil {
+	if err := relayFixed(localConn, bufio.NewReader(localConn), broker, reader); err != nil {
 		return err
 	}
 	if err := <-clientDone; err != nil {
@@ -479,7 +479,28 @@ func (b *linuxBroker) Close() error {
 }
 
 func relayPeers(publisher, consumer *linuxPeer) error {
-	return relayReaders(publisher.conn, publisher.reader, consumer.conn, consumer.reader)
+	return relayFixed(consumer.conn, consumer.reader, publisher.conn, publisher.reader)
+}
+
+// relayFixed is deliberately bounded to the one opaque exchange this probe
+// needs. A real broker would multiplex streams, but this evidence must not
+// accidentally turn EOF on one half of a test fixture into a premature close
+// of the other half. The framing is outside the payload: the payload itself is
+// copied byte-for-byte and the service returns its SHA-256 digest.
+func relayFixed(source net.Conn, sourceReader *bufio.Reader, target net.Conn, targetReader *bufio.Reader) error {
+	request := make([]byte, len(opaquePayload))
+	if _, err := io.ReadFull(sourceReader, request); err != nil {
+		return err
+	}
+	if _, err := target.Write(request); err != nil {
+		return err
+	}
+	response := make([]byte, len(responseFor(opaquePayload)))
+	if _, err := io.ReadFull(targetReader, response); err != nil {
+		return err
+	}
+	_, err := source.Write(response)
+	return err
 }
 
 func relay(left, right net.Conn) error {
