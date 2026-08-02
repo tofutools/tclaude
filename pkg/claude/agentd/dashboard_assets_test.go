@@ -676,15 +676,16 @@ func TestDashboardAssets_GroupQuickFoldWired(t *testing.T) {
 
 // TestDashboardAssets_GroupProfileIconDimming guards the per-group spawn and
 // sandbox profile indicators' deliberately narrow brightness states. The
-// glyphs need their own wrapper so a broad summary/chip hover cannot light
-// them; they are bright only under direct pointer hover, or while their group
-// is open and the profile chip is not marked unset.
+// glyphs need their own wrapper so the chip's text-color hover cannot brighten
+// them indirectly; they should follow the whole clickable chip's hover area,
+// or stay bright while their group is open and the profile is set.
 func TestDashboardAssets_GroupProfileIconDimming(t *testing.T) {
 	groups := dashboardAssetFile(t, "js/groups-list.js")
 	css := dashboardAssetFile(t, "dashboard.css")
 	for _, needle := range []string{
 		`<span class="group-profile-icon">${sandbox ? '🛡' : '🧠'}</span>`,
-		".group-profile-icon:hover,",
+		".group-default-model:hover > .group-profile-icon,",
+		".group-sandbox-profile:hover > .group-profile-icon,",
 		"details[data-group-key][open] > summary .group-default-model:not(.unset) > .group-profile-icon",
 		"details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .group-profile-icon",
 	} {

@@ -3623,9 +3623,9 @@ details[data-group-key][open] > summary .group-sandbox-profile {
 .group-default-model.unset, .user-default-model.unset, .group-sandbox-profile.unset, .global-sandbox-profile.unset { color: #484f58; font-style: italic; }
 .group-default-model.unset:hover, .user-default-model.unset:hover, .group-sandbox-profile.unset:hover, .global-sandbox-profile.unset:hover { color: #d4d4d4; }
 /* Keep an unset per-group profile visibly dormant. The glyph is independent
-   from the chip so hovering the group header or the profile label does not
-   brighten it: only a pointer directly over the glyph does. An open group
-   also shows it at full brightness when a profile is actually selected. */
+   from the chip's text color, but follows the whole clickable chip for its
+   hover brightness. An open group also shows it at full brightness when a
+   profile is actually selected. */
 .group-profile-icon {
   display: inline-block;
   /* Pin monochrome/text emoji fallbacks so the parent chip's hover color
@@ -3634,7 +3634,8 @@ details[data-group-key][open] > summary .group-sandbox-profile {
   opacity: 0.35;
   transition: opacity 0.15s ease;
 }
-.group-profile-icon:hover,
+.group-default-model:hover > .group-profile-icon,
+.group-sandbox-profile:hover > .group-profile-icon,
 details[data-group-key][open] > summary .group-default-model:not(.unset) > .group-profile-icon,
 details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .group-profile-icon {
   opacity: 1;
