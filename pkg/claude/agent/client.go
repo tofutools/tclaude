@@ -756,11 +756,11 @@ func MapDaemonErrorToRC(err error) int {
 		return rcIOFailure
 	}
 	switch de.Code {
-	case "not_found":
+	case "not_found", "route_not_found", "route_lease_not_found":
 		return rcNotFound
 	case "ambiguous":
 		return rcAmbiguous
-	case "invalid_arg":
+	case "invalid_arg", "route_invalid_argument", "route_invalid_name", "route_invalid_target", "route_invalid_transport", "route_group":
 		return rcInvalidArg
 	case "auth":
 		return rcAuth

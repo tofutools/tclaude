@@ -16,6 +16,7 @@ func Cmd() *cobra.Command {
 		Long:        "Look up other agents (named conversations), send messages, and manage allow-listed groups.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
+			routesCmd(),
 			whoamiCmd(),
 			renameCmd(),
 			taskCmd(),

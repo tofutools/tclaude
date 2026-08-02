@@ -47,18 +47,24 @@ type routeView struct {
 	PublisherLaunchGeneration string `json:"publisher_launch_generation"`
 	GroupGeneration           int64  `json:"group_generation"`
 	Name                      string `json:"name"`
-	Transport                 string `json:"transport"`
-	Target                    string `json:"target"`
-	State                     string `json:"state"`
-	CreatedAt                 string `json:"created_at"`
-	WithdrawnAt               string `json:"withdrawn_at,omitempty"`
-	WithdrawReason            string `json:"withdraw_reason,omitempty"`
+	// Reference is intentionally friendly enough to paste into an agent
+	// message. StableReference carries the numeric group identity so a group
+	// rename cannot change the route selector.
+	Reference       string `json:"reference"`
+	StableReference string `json:"stable_reference"`
+	Transport       string `json:"transport"`
+	Target          string `json:"target"`
+	State           string `json:"state"`
+	CreatedAt       string `json:"created_at"`
+	WithdrawnAt     string `json:"withdrawn_at,omitempty"`
+	WithdrawReason  string `json:"withdraw_reason,omitempty"`
 }
 
 type routeLeaseView struct {
 	APIVersion               string `json:"api_version"`
 	ID                       string `json:"id"`
 	RouteID                  string `json:"route_id"`
+	RouteReference           string `json:"route_reference,omitempty"`
 	ConsumerAgentID          string `json:"consumer_agent_id"`
 	ConsumerConvID           string `json:"consumer_conv_id,omitempty"`
 	ConsumerLaunchGeneration string `json:"consumer_launch_generation"`
@@ -70,7 +76,7 @@ type routeLeaseView struct {
 }
 
 func routeViewFor(r *db.AgentRoute) routeView {
-	v := routeView{APIVersion: routeAPIVersion, ID: r.ID, GroupID: r.GroupID, Group: r.GroupName, PublisherAgentID: r.PublisherAgentID, PublisherConvID: r.PublisherConvID, PublisherLaunchGeneration: r.PublisherLaunchGeneration, GroupGeneration: r.GroupGeneration, Name: r.Name, Transport: r.Transport, Target: r.Target, State: r.State, CreatedAt: r.CreatedAt.UTC().Format("2006-01-02T15:04:05.999999999Z07:00"), WithdrawReason: r.WithdrawReason}
+	v := routeView{APIVersion: routeAPIVersion, ID: r.ID, GroupID: r.GroupID, Group: r.GroupName, PublisherAgentID: r.PublisherAgentID, PublisherConvID: r.PublisherConvID, PublisherLaunchGeneration: r.PublisherLaunchGeneration, GroupGeneration: r.GroupGeneration, Name: r.Name, Reference: routeReferenceFor(r), StableReference: stableRouteReferenceFor(r), Transport: r.Transport, Target: r.Target, State: r.State, CreatedAt: r.CreatedAt.UTC().Format("2006-01-02T15:04:05.999999999Z07:00"), WithdrawReason: r.WithdrawReason}
 	if !r.WithdrawnAt.IsZero() {
 		v.WithdrawnAt = r.WithdrawnAt.UTC().Format("2006-01-02T15:04:05.999999999Z07:00")
 	}
@@ -78,11 +84,29 @@ func routeViewFor(r *db.AgentRoute) routeView {
 }
 
 func routeLeaseViewFor(l *db.AgentRouteLease) routeLeaseView {
-	v := routeLeaseView{APIVersion: routeAPIVersion, ID: l.ID, RouteID: l.RouteID, ConsumerAgentID: l.ConsumerAgentID, ConsumerConvID: l.ConsumerConvID, ConsumerLaunchGeneration: l.ConsumerLaunchGeneration, GroupGeneration: l.GroupGeneration, State: l.State, OpenedAt: l.OpenedAt.UTC().Format("2006-01-02T15:04:05.999999999Z07:00"), Endpoint: routeConsumerEndpointForLease(l.ID)}
+	routeReference := ""
+	if route, err := db.GetAgentRoute(l.RouteID); err == nil && route != nil {
+		routeReference = routeReferenceFor(route)
+	}
+	v := routeLeaseView{APIVersion: routeAPIVersion, ID: l.ID, RouteID: l.RouteID, RouteReference: routeReference, ConsumerAgentID: l.ConsumerAgentID, ConsumerConvID: l.ConsumerConvID, ConsumerLaunchGeneration: l.ConsumerLaunchGeneration, GroupGeneration: l.GroupGeneration, State: l.State, OpenedAt: l.OpenedAt.UTC().Format("2006-01-02T15:04:05.999999999Z07:00"), Endpoint: routeConsumerEndpointForLease(l.ID)}
 	if !l.ClosedAt.IsZero() {
 		v.ClosedAt = l.ClosedAt.UTC().Format("2006-01-02T15:04:05.999999999Z07:00")
 	}
 	return v
+}
+
+func routeReferenceFor(r *db.AgentRoute) string {
+	if r == nil {
+		return ""
+	}
+	return strings.TrimSpace(r.PublisherAgentID) + "/" + strings.TrimSpace(r.Name)
+}
+
+func stableRouteReferenceFor(r *db.AgentRoute) string {
+	if r == nil {
+		return ""
+	}
+	return strconv.FormatInt(r.GroupID, 10) + "/" + strings.TrimSpace(r.PublisherAgentID) + "/" + strings.TrimSpace(r.Name)
 }
 
 func writeRouteError(w http.ResponseWriter, status int, code, detail string) {
@@ -321,7 +345,40 @@ func handleRoutes(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleRoutesList(w http.ResponseWriter, r *http.Request) {
-	g, err := routeGroup(r.URL.Query().Get("group"), parseRouteGroupID(r.URL.Query().Get("group_id")))
+	groupName := strings.TrimSpace(r.URL.Query().Get("group"))
+	groupID := parseRouteGroupID(r.URL.Query().Get("group_id"))
+	// A caller may omit --group only when the selection is unambiguous. This
+	// keeps `routes ls` convenient for a one-group agent while refusing to
+	// guess for a member of several groups. Human callers can inspect all
+	// groups, which is useful for the operator/dashboard read surface.
+	if groupName == "" && groupID == 0 {
+		peerClass := classify(peerFromContext(r.Context()))
+		if peerClass == classAgent {
+			_, agentID, ok := routeCallerAgent(w, r)
+			if !ok {
+				return
+			}
+			groups, groupsErr := db.ListGroupsForAgent(agentID)
+			if groupsErr != nil {
+				writeRouteError(w, http.StatusInternalServerError, "route_io", "could not resolve caller groups")
+				return
+			}
+			switch len(groups) {
+			case 0:
+				writeRouteError(w, http.StatusBadRequest, "route_group", "explicit group selection is required")
+				return
+			case 1:
+				groupID = groups[0].ID
+			default:
+				writeRouteError(w, http.StatusConflict, "ambiguous", routeGroupCandidatesMessage(groups))
+				return
+			}
+		} else if peerClass == classHuman {
+			handleAllRouteGroupsList(w)
+			return
+		}
+	}
+	g, err := routeGroup(groupName, groupID)
 	if err != nil {
 		writeRouteError(w, http.StatusBadRequest, "route_group", err.Error())
 		return
@@ -344,6 +401,47 @@ func handleRoutesList(w http.ResponseWriter, r *http.Request) {
 		out = append(out, routeViewFor(refreshRoutePublisher(route)))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"api_version": routeAPIVersion, "group_id": g.ID, "group": g.Name, "group_generation": g.RouteGeneration, "routes": out})
+}
+
+func routeGroupCandidatesMessage(groups []*db.AgentGroup) string {
+	names := make([]string, 0, len(groups))
+	for _, group := range groups {
+		if group == nil {
+			continue
+		}
+		names = append(names, fmt.Sprintf("%s (#%d)", group.Name, group.ID))
+	}
+	return fmt.Sprintf("group selection is ambiguous; pass --group (candidates: %s)", strings.Join(names, ", "))
+}
+
+func handleAllRouteGroupsList(w http.ResponseWriter) {
+	groups, err := db.ListAgentGroups()
+	if err != nil {
+		writeRouteError(w, http.StatusInternalServerError, "route_io", "route registry unavailable")
+		return
+	}
+	outGroups := make([]map[string]any, 0, len(groups))
+	for _, group := range groups {
+		if group == nil {
+			continue
+		}
+		routes, routesErr := db.ListAgentRoutes(group.ID)
+		if routesErr != nil {
+			writeRouteError(w, http.StatusInternalServerError, "route_io", "route registry unavailable")
+			return
+		}
+		views := make([]routeView, 0, len(routes))
+		for _, route := range routes {
+			views = append(views, routeViewFor(refreshRoutePublisher(route)))
+		}
+		outGroups = append(outGroups, map[string]any{
+			"group_id":         group.ID,
+			"group":            group.Name,
+			"group_generation": group.RouteGeneration,
+			"routes":           views,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"api_version": routeAPIVersion, "groups": outGroups})
 }
 
 // handleRouteLeasesList is the launch-helper read surface. It is intentionally
