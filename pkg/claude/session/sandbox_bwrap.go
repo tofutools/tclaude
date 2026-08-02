@@ -143,7 +143,7 @@ func validateTclaudeLayerRouteHelper(effective sandboxpolicy.EffectiveProfile, h
 	}
 	if helper.ProxyOnly {
 		if runtime.GOOS != "darwin" {
-			return fmt.Errorf("Darwin route proxy authority is unavailable on %s", runtime.GOOS)
+			return fmt.Errorf("darwin route proxy authority is unavailable on %s", runtime.GOOS)
 		}
 	} else if runtime.GOOS != "linux" {
 		return fmt.Errorf("linux group-route helper is unavailable on %s", runtime.GOOS)

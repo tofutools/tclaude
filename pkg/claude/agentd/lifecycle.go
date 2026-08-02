@@ -4840,10 +4840,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		return nil, &spawnFailure{http.StatusUnprocessableEntity, "darwin_route_launch",
 			"Darwin route-capable launches require the preset-conversation launch seam"}
 	}
-	routeEnabled := false
-	if runtime.GOOS == "darwin" && p.DarwinRouteCapable && g != nil {
-		routeEnabled = true
-	}
+	routeEnabled := runtime.GOOS == "darwin" && p.DarwinRouteCapable && g != nil
 	if runtime.GOOS == "linux" && g != nil {
 		var routeErr error
 		routeEnabled, routeErr = db.IsAgentGroupRouteEnabled(g.ID, PermRoutesPublish, PermRoutesConsume)

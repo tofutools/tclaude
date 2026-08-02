@@ -399,6 +399,14 @@ func (c *routeLeaseConn) Close() error {
 	return err
 }
 
+func (c *routeLeaseConn) CloseWrite() error {
+	half, ok := c.Conn.(writeCloser)
+	if !ok {
+		return fmt.Errorf("route upstream does not support write half-close")
+	}
+	return half.CloseWrite()
+}
+
 // bufferedConn preserves bytes the carriage parser already pulled into its
 // reader. A client may pipeline payload immediately after its CONNECT request
 // or SOCKS5 request — a TLS ClientHello commonly arrives in the same segment —

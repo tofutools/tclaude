@@ -25,12 +25,12 @@ func linuxNamespaceRouteDial(namespacePID int) func(context.Context, netip.AddrP
 		if err != nil {
 			return nil, fmt.Errorf("open original network namespace: %w", err)
 		}
-		defer unix.Close(original)
+		defer func() { _ = unix.Close(original) }()
 		target, err := unix.Open("/proc/"+strconv.Itoa(namespacePID)+"/ns/net", unix.O_RDONLY|unix.O_CLOEXEC, 0)
 		if err != nil {
 			return nil, fmt.Errorf("open sandbox network namespace: %w", err)
 		}
-		defer unix.Close(target)
+		defer func() { _ = unix.Close(target) }()
 		if err := unix.Setns(target, unix.CLONE_NEWNET); err != nil {
 			return nil, fmt.Errorf("enter sandbox network namespace: %w", err)
 		}

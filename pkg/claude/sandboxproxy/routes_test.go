@@ -3,6 +3,7 @@ package sandboxproxy
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -10,6 +11,7 @@ import (
 	"net/netip"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -353,5 +355,108 @@ func TestNamedRouteLeaseClosesWithUpstreamConnection(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("route lease was not released when upstream closed")
+	}
+}
+
+func TestRouteLeaseConnPreservesHalfCloseUntilFullClose(t *testing.T) {
+	clientListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clientListener.Close()
+	clientPeer, err := net.Dial("tcp", clientListener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clientPeer.Close()
+	clientConn, err := clientListener.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clientConn.Close()
+
+	publisherListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer publisherListener.Close()
+	publisherPeer, err := net.Dial("tcp", publisherListener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer publisherPeer.Close()
+	upstreamConn, err := publisherListener.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer upstreamConn.Close()
+
+	_ = clientPeer.SetDeadline(time.Now().Add(5 * time.Second))
+	_ = publisherPeer.SetDeadline(time.Now().Add(5 * time.Second))
+	var releases atomic.Int32
+	upstream := &routeLeaseConn{
+		Conn: upstreamConn,
+		release: func() {
+			releases.Add(1)
+		},
+	}
+	pipeDone := make(chan struct{})
+	go func() {
+		pipe(clientConn, upstream)
+		close(pipeDone)
+	}()
+
+	const request = "client request"
+	if _, err := io.WriteString(clientPeer, request); err != nil {
+		t.Fatal(err)
+	}
+	if err := clientPeer.(*net.TCPConn).CloseWrite(); err != nil {
+		t.Fatal(err)
+	}
+	gotRequest := make([]byte, len(request))
+	if _, err := io.ReadFull(publisherPeer, gotRequest); err != nil {
+		t.Fatal(err)
+	}
+	if string(gotRequest) != request {
+		t.Fatalf("publisher request = %q, want %q", gotRequest, request)
+	}
+	if _, err := publisherPeer.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
+		t.Fatalf("publisher read after client half-close = %v, want EOF", err)
+	}
+	if got := releases.Load(); got != 0 {
+		t.Fatalf("lease releases after client half-close = %d, want 0", got)
+	}
+
+	const response = "publisher response"
+	if _, err := io.WriteString(publisherPeer, response); err != nil {
+		t.Fatal(err)
+	}
+	gotResponse := make([]byte, len(response))
+	if _, err := io.ReadFull(clientPeer, gotResponse); err != nil {
+		t.Fatal(err)
+	}
+	if string(gotResponse) != response {
+		t.Fatalf("client response = %q, want %q", gotResponse, response)
+	}
+	if got := releases.Load(); got != 0 {
+		t.Fatalf("lease releases before terminal close = %d, want 0", got)
+	}
+
+	if err := upstream.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-pipeDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("tunnel did not finish after terminal close")
+	}
+	if got := releases.Load(); got != 1 {
+		t.Fatalf("lease releases after terminal close = %d, want 1", got)
+	}
+	if err := upstream.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+		t.Fatal(err)
+	}
+	if got := releases.Load(); got != 1 {
+		t.Fatalf("lease releases after repeated close = %d, want 1", got)
 	}
 }

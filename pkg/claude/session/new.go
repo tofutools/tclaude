@@ -929,7 +929,7 @@ func runNew(params *NewParams) error {
 			return fmt.Errorf("linux group-route helper requires a pane-authoritative tclaude-layer launch")
 		}
 		if params.RouteHelperProxyOnly && runtime.GOOS != "darwin" {
-			return fmt.Errorf("Darwin route proxy authority requires macOS")
+			return fmt.Errorf("darwin route proxy authority requires macOS")
 		}
 		if !params.RouteHelperProxyOnly && runtime.GOOS != "linux" {
 			return fmt.Errorf("linux group-route helper requires Linux")

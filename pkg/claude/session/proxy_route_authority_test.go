@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -68,18 +69,19 @@ func TestProxyRouteAuthorityOpensAndReleasesGenerationBoundLease(t *testing.T) {
 		t.Fatalf("route authority metadata serialized a capability: %s", encoded)
 	}
 	authority := newProxyRouteAuthority(config, "capability-only-in-memory")
-	identity, err := authority.Identity(nil)
+	ctx := context.Background()
+	identity, err := authority.Identity(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	resolution, err := authority.ResolveRoute(nil, sandboxproxy.RouteRequest{Identity: identity, RouteID: "route-a", Port: 43127})
+	resolution, err := authority.ResolveRoute(ctx, sandboxproxy.RouteRequest{Identity: identity, RouteID: "route-a", Port: 43127})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if resolution.LeaseID != "lease-a" || resolution.Endpoint.Port() != 43128 {
 		t.Fatalf("resolution = %#v", resolution)
 	}
-	if err := authority.ReleaseRoute(nil, resolution); err != nil {
+	if err := authority.ReleaseRoute(ctx, resolution); err != nil {
 		t.Fatal(err)
 	}
 	if seenCredential.Load() < 5 || closed.Load() != 1 {
@@ -87,11 +89,11 @@ func TestProxyRouteAuthorityOpensAndReleasesGenerationBoundLease(t *testing.T) {
 	}
 	old := identity
 	old.LaunchGeneration = "predecessor"
-	if _, err := authority.ResolveRoute(nil, sandboxproxy.RouteRequest{Identity: old, RouteID: "route-a", Port: 43127}); err == nil {
+	if _, err := authority.ResolveRoute(ctx, sandboxproxy.RouteRequest{Identity: old, RouteID: "route-a", Port: 43127}); err == nil {
 		t.Fatal("predecessor launch unexpectedly resolved a route")
 	}
 	authority.Close()
-	if _, err := authority.Identity(nil); err == nil {
+	if _, err := authority.Identity(ctx); err == nil {
 		t.Fatal("closed route authority retained its capability")
 	}
 	_ = os.Remove(socketPath)
