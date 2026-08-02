@@ -287,6 +287,13 @@ func waitDarwinRouteSmokeFile(t *testing.T, path string, contains string) string
 	return string(raw)
 }
 
+func waitDarwinRouteSmokePublisherChannels(t *testing.T, want uint64) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		return GroupRouteBroker().Metrics().PublisherChannels == want
+	}, time.Second, time.Millisecond, "waiting for %d attached route publisher channels", want)
+}
+
 func stopDarwinRouteSmokeLaunch(t *testing.T, launch darwinRouteSmokeLaunch, reaper *SessionReaperHandle) {
 	t.Helper()
 	reaper.Tick()
@@ -439,6 +446,7 @@ func TestDarwinRouteCapabilityIntegratedSmoke(t *testing.T) {
 		"group": groupName, "name": "integrated", "target": target, "launch_generation": publisher.gen,
 	})
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	waitDarwinRouteSmokePublisherChannels(t, 1)
 	routeID := route["id"].(string)
 
 	// A consumer that selects a group it does not belong to is refused by the
@@ -460,6 +468,7 @@ func TestDarwinRouteCapabilityIntegratedSmoke(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	waitDarwinRouteSmokeFile(t, withdrawal.ready, "consumer:endpoint-closed")
 	require.Eventually(t, func() bool { return len(routeAdapterLeaseIDs()) == 0 }, 5*time.Second, 50*time.Millisecond)
+	waitDarwinRouteSmokePublisherChannels(t, 0)
 	stopDarwinRouteSmokeLaunch(t, withdrawal, reaper)
 	assertDarwinRouteSmokeLaunchClosed(t, withdrawal)
 
@@ -472,6 +481,7 @@ func TestDarwinRouteCapabilityIntegratedSmoke(t *testing.T) {
 		"group": groupName, "name": "idle-consumer", "target": target, "launch_generation": publisher.gen,
 	})
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	waitDarwinRouteSmokePublisherChannels(t, 1)
 	idleRouteID := routeIdle["id"].(string)
 	rec, leaseA := serveDarwinRouteSmoke(t, handler, http.MethodPost, "/v1/routes/open", consumerAConv, map[string]any{
 		"route_id": idleRouteID, "group": groupName, "launch_generation": consumerA.gen,
@@ -510,6 +520,7 @@ func TestDarwinRouteCapabilityIntegratedSmoke(t *testing.T) {
 		"group": groupName, "name": "publisher-death", "target": target, "launch_generation": publisher.gen,
 	})
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	waitDarwinRouteSmokePublisherChannels(t, 2)
 	deathRouteID := routeDeath["id"].(string)
 	rec, leaseB := serveDarwinRouteSmoke(t, handler, http.MethodPost, "/v1/routes/open", consumerBConv, map[string]any{
 		"route_id": deathRouteID, "group": groupName, "launch_generation": consumerB.gen,
