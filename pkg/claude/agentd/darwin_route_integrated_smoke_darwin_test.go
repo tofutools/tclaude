@@ -145,21 +145,28 @@ func darwinRouteSmokeConsumer(t *testing.T, ready, stop, endpointFile string) {
 		darwinRouteSmokeWrite(ready, "consumer:endpoint-timeout")
 		t.Fatal("consumer endpoint was not published")
 	}
+	darwinRouteSmokeWrite(ready, "consumer:endpoint-acquired")
 	conn, err := net.DialTimeout("tcp4", endpoint, 5*time.Second)
 	if err != nil {
-		darwinRouteSmokeWrite(ready, "consumer:dial-error:"+err.Error())
+		darwinRouteSmokeWrite(ready, "consumer:dial-failure:"+err.Error())
 		t.Fatal(err)
 	}
 	defer conn.Close()
+	darwinRouteSmokeWrite(ready, "consumer:dial-success")
 	if _, err := conn.Write([]byte(darwinRouteSmokeOpaque)); err != nil {
+		darwinRouteSmokeWrite(ready, "consumer:write-failure:"+err.Error())
 		t.Fatal(err)
 	}
+	darwinRouteSmokeWrite(ready, "consumer:write-success")
 	response := make([]byte, len("reply:")+len(darwinRouteSmokeOpaque))
 	if _, err := io.ReadFull(conn, response); err != nil {
+		darwinRouteSmokeWrite(ready, "consumer:reply-read-failure:"+err.Error())
 		t.Fatal(err)
 	}
+	darwinRouteSmokeWrite(ready, "consumer:reply-read-success")
 	if string(response) != "reply:"+darwinRouteSmokeOpaque {
-		t.Fatalf("unexpected route response %q", response)
+		darwinRouteSmokeWrite(ready, "consumer:reply-unexpected")
+		t.Fatal("unexpected route response")
 	}
 	darwinRouteSmokeWrite(ready, "consumer:opaque-exchange-ready:pid="+strconv.Itoa(os.Getpid()))
 	for {
@@ -279,12 +286,38 @@ func startDarwinRouteSmokeLaunch(t *testing.T, home, helper, role, convID, agent
 func waitDarwinRouteSmokeFile(t *testing.T, path string, contains string) string {
 	t.Helper()
 	var raw []byte
-	require.Eventually(t, func() bool {
-		var err error
-		raw, err = os.ReadFile(path)
-		return err == nil && (contains == "" || strings.Contains(string(raw), contains))
-	}, 30*time.Second, 50*time.Millisecond, "waiting for %s to contain %q", path, contains)
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		current, err := os.ReadFile(path)
+		if err == nil {
+			raw = current
+			marker := strings.TrimSpace(string(current))
+			if contains == "" || strings.Contains(marker, contains) {
+				return string(raw)
+			}
+			if darwinRouteSmokeTerminalMarker(marker) {
+				require.Failf(t, "route smoke child reached terminal stage", "marker %q in %s while waiting for %q", marker, path, contains)
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	require.Failf(t, "route smoke file condition never satisfied", "waiting for %s to contain %q; last marker %q", path, contains, strings.TrimSpace(string(raw)))
 	return string(raw)
+}
+
+func darwinRouteSmokeTerminalMarker(marker string) bool {
+	for _, prefix := range []string{
+		"consumer:endpoint-timeout",
+		"consumer:dial-failure:",
+		"consumer:write-failure:",
+		"consumer:reply-read-failure:",
+		"consumer:reply-unexpected",
+	} {
+		if strings.HasPrefix(marker, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func waitDarwinRouteSmokePublisherChannels(t *testing.T, want uint64) {
