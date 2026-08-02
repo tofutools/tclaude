@@ -179,6 +179,32 @@ deny-wins ordering, label-bound suffix matching, literal-only CIDR, and the
 private-destination blocker are identical across the two by construction rather
 than by parallel maintenance.
 
+### Named group-route carriage
+
+The same listener also carries an active M1 group route when a launch supplies
+the `sandboxproxy.RouteResolver` authority seam. Clients address a route with
+the opaque hostname returned by `sandboxproxy.SyntheticRouteHost(routeID)`, in
+the reserved `*.route.tclaude.invalid` namespace. The route ID is encoded into
+the hostname; mutable route and group display names are not identities. The
+`.invalid` suffix is reserved, and malformed names in that namespace are
+refused before ordinary DNS is considered.
+
+The resolver receives the consumer's stable group ID and generation, agent and
+conversation IDs, launch generation, lease ID, route ID, and requested port.
+It must verify current same-group membership and the M1 route/lease authority,
+including publisher identity, then return only the route adapter's loopback IP
+endpoint. The proxy validates that identity and endpoint again and dials the
+literal directly; it never sends a route name through DNS or an ambient proxy.
+The existing policy evaluator and Internet dial path remain unchanged for
+ordinary names and literals.
+
+Compatibility is limited to clients that cooperate with the launch-owned
+proxy variables: HTTP CONNECT clients use `HTTP_PROXY`/`HTTPS_PROXY`, and
+SOCKS-aware TCP clients use `ALL_PROXY=socks5h://…`. The route carriage does
+not claim support for proxy-unaware clients, UDP/QUIC, TLS termination, or
+arbitrary harness protocol behavior. Those clients continue to require the
+existing raw TCP local-forward route where one is available.
+
 **No CA is installed, for any harness.** `CONNECT` is a tunnel, so there is no
 TLS interception and nothing to trust: `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`,
 Rust rustls trust stores, and Go's `x509` roots are all untouched. This removes
@@ -795,6 +821,7 @@ The main implementation seams are:
 | SOCKS5 handling | `pkg/claude/sandboxproxy/socks5.go` |
 | Policy evaluation and the private-destination blocker | `pkg/claude/sandboxproxy/evaluator.go` |
 | Listener, accept loop, and host-side dial | `pkg/claude/sandboxproxy/server.go`, `dial.go` |
+| Reserved named-route namespace and M1 authority seam | `pkg/claude/sandboxproxy/routes.go`, `target.go` |
 | Linux bootstrap and descriptor handoff | `pkg/claude/session/proxy_network_bridge_linux.go` |
 | Darwin endpoint binding, Seatbelt launch, and supervision | `pkg/claude/session/proxy_network_launcher_darwin.go` |
 | The proxy environment the launcher owns, and the NO_PROXY disclosure | `pkg/claude/session/proxy_network_env.go` |

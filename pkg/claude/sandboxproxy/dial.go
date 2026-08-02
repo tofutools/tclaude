@@ -125,6 +125,21 @@ func (d *Dialer) Connect(
 	return nil, Decision{Verdict: VerdictAllowed}, lastErr
 }
 
+// ConnectRoute dials an authority-supplied loopback endpoint directly. Route
+// endpoints are never passed through name resolution or net/http proxy
+// discovery; validation happens before this method is called and the address
+// is kept as a literal all the way to DialAddr.
+func (d *Dialer) ConnectRoute(
+	ctx context.Context,
+	endpoint netip.AddrPort,
+) (net.Conn, error) {
+	if !endpoint.IsValid() || endpoint.Addr().Zone() != "" ||
+		!endpoint.Addr().IsLoopback() || endpoint.Addr().IsUnspecified() {
+		return nil, fmt.Errorf("route endpoint is not a valid loopback address")
+	}
+	return d.dialAddr(ctx, endpoint.Addr(), int(endpoint.Port()))
+}
+
 // candidates returns the addresses to try, in resolver order. A literal target
 // is its own single candidate: it is never re-resolved.
 func (d *Dialer) candidates(

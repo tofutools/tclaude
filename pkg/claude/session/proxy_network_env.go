@@ -54,6 +54,8 @@ func logProxyNetworkDecision(
 	}
 	if target.Kind == sandboxproxy.TargetKindName {
 		attrs = append(attrs, "host", target.Name)
+	} else if target.Kind == sandboxproxy.TargetKindRoute {
+		attrs = append(attrs, "route_id", target.RouteID)
 	} else {
 		attrs = append(attrs, "address", target.Addr.String())
 	}

@@ -40,6 +40,14 @@ type Config struct {
 	// OnError, when set, observes non-policy failures: malformed carriage
 	// handshakes and upstream connection errors.
 	OnError func(Carriage, error)
+	// RouteResolver resolves reserved synthetic route identities through the
+	// caller's M1 authority. It is optional so existing Internet-only proxy
+	// launches retain their exact behavior; a route request without it fails
+	// closed and never reaches ordinary DNS or dial policy.
+	RouteResolver RouteResolver
+	// RouteIdentity binds every route request to the consumer's stable group,
+	// agent, conversation, launch generation, and open M1 lease.
+	RouteIdentity RouteIdentity
 }
 
 // Server carries and filters cooperative traffic for one sandbox. It serves
@@ -49,6 +57,8 @@ type Server struct {
 	dialer     *Dialer
 	onDecision func(Carriage, Target, Decision)
 	onError    func(Carriage, error)
+	route      RouteResolver
+	identity   RouteIdentity
 
 	// baseCtx bounds every upstream connection attempt to the server's own
 	// lifetime, so Close aborts dials in flight as well as carried tunnels.
@@ -93,6 +103,8 @@ func newServer(evaluator *Evaluator, cfg Config) *Server {
 		dialer:     dialer,
 		onDecision: cfg.OnDecision,
 		onError:    cfg.OnError,
+		route:      cfg.RouteResolver,
+		identity:   cfg.RouteIdentity,
 		baseCtx:    ctx,
 		stop:       stop,
 		conns:      make(map[net.Conn]struct{}),
@@ -245,6 +257,9 @@ func (s *Server) connect(
 	carriage Carriage,
 	target Target,
 ) (net.Conn, Decision, error) {
+	if target.Kind == TargetKindRoute {
+		return s.connectRoute(ctx, carriage, target)
+	}
 	decision := s.evaluator.Evaluate(target)
 	if !decision.Allowed() {
 		s.report(carriage, target, decision)
@@ -273,6 +288,51 @@ func (s *Server) connect(
 	// upstream copy finishes, and the upstream-to-client copy stays blocked
 	// reading a socket nothing closes — leaking a goroutine and a socket per
 	// tunnel, which is exactly what Close promises not to do.
+	if !s.track(conn) {
+		_ = conn.Close()
+		return nil, decision, fmt.Errorf("proxy is closing")
+	}
+	return conn, decision, nil
+}
+
+// connectRoute performs the same authorize-then-dial sequence as the normal
+// proxy path, but through the M1 route authority rather than DNS and the
+// Internet policy evaluator. The endpoint is required to be loopback and is
+// dialled by IP literal, so an authority result cannot turn a route name into
+// an arbitrary host or ambient-proxy escape.
+func (s *Server) connectRoute(
+	ctx context.Context,
+	carriage Carriage,
+	target Target,
+) (net.Conn, Decision, error) {
+	refused := Decision{
+		Verdict: VerdictNotAuthorized,
+		RouteID: target.RouteID,
+		Detail:  refusalDetail(target, VerdictNotAuthorized),
+	}
+	if s.route == nil || !s.identity.valid() {
+		s.report(carriage, target, refused)
+		return nil, refused, nil
+	}
+	request := RouteRequest{Identity: s.identity, RouteID: target.RouteID, Port: target.Port}
+	resolution, err := s.route.ResolveRoute(ctx, request)
+	if err != nil {
+		s.report(carriage, target, refused)
+		s.reportError(carriage, fmt.Errorf("resolve named route: %w", err))
+		return nil, refused, nil
+	}
+	if err := validateRouteResolution(request, resolution); err != nil {
+		s.report(carriage, target, refused)
+		s.reportError(carriage, fmt.Errorf("validate named route: %w", err))
+		return nil, refused, nil
+	}
+	decision := Decision{Verdict: VerdictAllowed, RouteID: target.RouteID}
+	conn, err := s.dialer.ConnectRoute(ctx, resolution.Endpoint)
+	s.report(carriage, target, decision)
+	if err != nil {
+		s.reportError(carriage, err)
+		return nil, decision, err
+	}
 	if !s.track(conn) {
 		_ = conn.Close()
 		return nil, decision, fmt.Errorf("proxy is closing")
