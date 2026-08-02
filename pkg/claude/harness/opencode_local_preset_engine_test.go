@@ -181,13 +181,14 @@ func TestOpenCodeLocalPresetKeepsTheRefusalWhereProxyCellsAreNotActivated(t *tes
 	engine, err := sandboxpolicy.DeployedNetworkEngineForRules(rules)
 	require.NoError(t, err)
 	require.Equal(t, sandboxpolicy.NetworkEngineProxy, engine)
-	require.False(t, ProxyEngineActivated(OpenCodeName, "darwin"),
-		"this case is about an UNACTIVATED platform; if Darwin activates, rewrite it")
+	const unactivatedPlatform = "freebsd"
+	require.False(t, ProxyEngineActivated(OpenCodeName, unactivatedPlatform),
+		"this case is about an unactivated platform")
 
 	axes := sandboxpolicy.ResolvedAxes{Network: rules}
 	predicted, err := PredictAccessEnforcement(
 		MustGet(OpenCodeName), sandboxpolicy.ImplementationTclaudeLayer,
-		axes, "", "darwin",
+		axes, "", unactivatedPlatform,
 	)
 	require.NoError(t, err)
 	assert.Equal(t, EnforceNone, predicted.NetworkList)
@@ -197,7 +198,7 @@ func TestOpenCodeLocalPresetKeepsTheRefusalWhereProxyCellsAreNotActivated(t *tes
 	// condition this call returns a widened, open policy with a notice.
 	row, err := accessEnforcementTable(
 		MustGet(OpenCodeName), sandboxpolicy.ImplementationTclaudeLayer,
-		axes, OpenCodeSandboxTclaudeLayer, "darwin", true,
+		axes, OpenCodeSandboxTclaudeLayer, unactivatedPlatform, true,
 	)
 	require.NoError(t, err)
 	rendered, _, err := PlanAccessEnforcement(axes, accessEnforcementFromTable(row))

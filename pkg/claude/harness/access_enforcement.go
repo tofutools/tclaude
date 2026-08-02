@@ -655,9 +655,9 @@ func accessEnforcementTable(
 		// activated, so the clause is false there and a port-scoped loopback
 		// list still plans as an enforced list, with the launch-time general
 		// resolve handling the provider question exactly as it does today.
-		// It also self-retires: if OpenCode's Darwin cells are ever activated
-		// (TCL-929 says do not, but if that changes), this stops firing on its
-		// own instead of lingering as a stale platform special case.
+		// It also self-retires: OpenCode's Darwin cells activated in TCL-928,
+		// so this no longer fires there and remains only for an unactivated
+		// future platform instead of lingering as a stale Darwin special case.
 		//
 		// The empty-refusal clause preserves the more specific message above
 		// when both would apply, rather than overwriting it with this one.

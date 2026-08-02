@@ -253,6 +253,48 @@ func TestSeatbeltProxyFloorDiffersFromTheIsolatedFloorItExtends(t *testing.T) {
 		"the proxy floor must remove nothing the isolated floor denies")
 }
 
+func TestSeatbeltProxyFloorCanCarveOneManagedServerBind(t *testing.T) {
+	const controlPort = 43210
+	profile, _, err := renderSeatbeltProfileWithLoopbackBind(
+		nil,
+		[]string{proxyFloorAgentdSocket},
+		proxyFloorPlan(t),
+		proxyFloorEndpoint(),
+		[]string{"/Users/dev/.tclaude/data"},
+		"/private/tmp/tmux-501",
+		"/private/var/folders/ab/runtime/T",
+		nil,
+		nil,
+		controlPort,
+	)
+	require.NoError(t, err)
+	assert.Contains(t, profile,
+		`(deny network-bind (require-not (local tcp "localhost:43210")))`)
+	assert.NotContains(t, profile, "(allow network-bind")
+	assert.NotContains(t, profile, `(local tcp "localhost:*")`)
+	assert.NotContains(t, profile, fmt.Sprintf("localhost:%d", proxyFloorControlPort),
+		"only the runtime-owned control port may be carved out")
+	assert.Equal(t, 1, strings.Count(profile, "(deny network-bind"),
+		"the carveout must narrow the existing deny, not add a competing rule")
+}
+
+func TestSeatbeltLoopbackBindRequiresProxyFloor(t *testing.T) {
+	_, _, err := renderSeatbeltProfileWithLoopbackBind(
+		nil,
+		nil,
+		sandboxpolicy.MountPlan{NetworkPosture: sandboxpolicy.NetworkHostOpen},
+		netip.AddrPort{},
+		[]string{"/Users/dev/.tclaude/data"},
+		"/private/tmp/tmux-501",
+		"/private/var/folders/ab/runtime/T",
+		nil,
+		nil,
+		43210,
+	)
+	require.ErrorContains(t, err,
+		"seatbelt loopback bind exception requires the filtering proxy floor")
+}
+
 // seatbeltRuleLinesAdded reports the rule lines present in got and absent from
 // base, as an ordered multiset difference. Comment and blank lines are dropped:
 // they carry no policy.

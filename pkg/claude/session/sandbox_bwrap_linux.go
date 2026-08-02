@@ -281,6 +281,25 @@ func tclaudeLayerServerCommand(
 	plan sandboxpolicy.MountPlan,
 	serverCommand string,
 ) (string, error) {
+	return tclaudeLayerServerCommandWithLoopbackBind(
+		binary, phase0WriteDirs, privateWriteDirs, finalHideDirs,
+		readOnlyBinds, socketPaths, plan, 0, serverCommand)
+}
+
+func tclaudeLayerServerCommandWithLoopbackBind(
+	binary string,
+	phase0WriteDirs []string,
+	privateWriteDirs []TclaudeLayerPrivateWriteDir,
+	finalHideDirs []string,
+	readOnlyBinds []TclaudeLayerReadOnlyBind,
+	socketPaths []string,
+	plan sandboxpolicy.MountPlan,
+	loopbackBindPort int,
+	serverCommand string,
+) (string, error) {
+	if loopbackBindPort != 0 {
+		return "", fmt.Errorf("loopback server bind exceptions are Darwin-only")
+	}
 	command, err := bwrapCommand(
 		binary,
 		phase0WriteDirs,

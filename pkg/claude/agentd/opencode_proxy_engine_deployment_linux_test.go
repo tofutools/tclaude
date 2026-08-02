@@ -210,14 +210,15 @@ func TestOpenCodeProxyEngineCellsFollowTheActivationRecord(t *testing.T) {
 		"TestOpenCodeProxyFloorCooperation",
 		"the row must name the smoke that actually measured OpenCode behind the floor")
 
-	// Darwin, read for the ONE claim it can support: the not-activated sentence
-	// is still reachable for this harness somewhere, so the assertion below
+	// A synthetic unactivated platform, read for the ONE claim it can support:
+	// the not-activated sentence is still reachable for this harness somewhere,
+	// so the assertion below
 	// that it has retired on Linux is a change rather than a disappearance.
 	// Deliberately NOT used as proof that the rating is gated on evidence — see
 	// the header.
 	unactivated, err := harness.PredictAccessEnforcement(
 		harness.MustGet(harness.OpenCodeName),
-		sandboxpolicy.ImplementationTclaudeLayer, axes, "", "darwin",
+		sandboxpolicy.ImplementationTclaudeLayer, axes, "", "freebsd",
 	)
 	require.NoError(t, err)
 	assert.Equal(t, harness.EnforceNone, unactivated.NetworkList)

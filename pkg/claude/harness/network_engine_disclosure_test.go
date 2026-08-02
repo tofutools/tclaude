@@ -495,9 +495,9 @@ func TestProxyEngineActivationIsScopedToItsEvidence(t *testing.T) {
 		}
 	}
 
-	// Boundary 2: Darwin has its own evidence rows. The two pinned plain-CLI
-	// harnesses activate at Partial because TCL-917 caps the Seatbelt floor;
-	// OpenCode remains unactivated until its distinct server boundary is smoked.
+	// Boundary 2: Darwin has its own evidence rows. Every harness activates at
+	// Partial because TCL-917 caps the Seatbelt floor, while OpenCode cites its
+	// distinct agentd-owned server smoke rather than the plain-CLI smoke.
 	for _, name := range []string{DefaultName, CodexName} {
 		activated := MustGet(name)
 		darwin, err := PredictAccessEnforcement(
@@ -512,13 +512,19 @@ func TestProxyEngineActivationIsScopedToItsEvidence(t *testing.T) {
 		assert.Equal(t, []string{"TestPinnedProxyHarnessCooperationDarwin"},
 			ProxyEngineActivationSmokesForPlatform(name, "darwin"))
 	}
-	assert.False(t, proxyEngineActivated(OpenCodeName, "darwin"))
+	assert.True(t, proxyEngineActivated(OpenCodeName, "darwin"))
 	openCodeDarwin, err := PredictAccessEnforcement(
 		MustGet(OpenCodeName), sandboxpolicy.ImplementationTclaudeLayer,
 		axes, "", "darwin",
 	)
 	require.NoError(t, err)
-	assert.Equal(t, EnforceNone, openCodeDarwin.NetworkList)
+	assert.Equal(t, EnforcePartial, openCodeDarwin.NetworkList)
+	assert.Contains(t, openCodeDarwin.NetworkListCondition,
+		SeatbeltProxyFloorCondition)
+	assert.Contains(t, openCodeDarwin.NetworkListCondition,
+		OpenCodeFilteredExplicitProviderCaveat)
+	assert.Equal(t, []string{"TestOpenCodeProxyCooperationDarwin"},
+		ProxyEngineActivationSmokesForPlatform(OpenCodeName, "darwin"))
 
 	// Boundary 3: the packet gateway is untouched. Its DNS caveat is the marker
 	// — if the proxy branch had leaked into it, that caveat would be gone.

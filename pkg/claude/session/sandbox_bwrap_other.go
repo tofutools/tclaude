@@ -74,6 +74,21 @@ func tclaudeLayerServerCommand(
 		"tclaude-layer server wrapping requires Linux/bubblewrap or macOS/Seatbelt")
 }
 
+func tclaudeLayerServerCommandWithLoopbackBind(
+	string,
+	[]string,
+	[]TclaudeLayerPrivateWriteDir,
+	[]string,
+	[]TclaudeLayerReadOnlyBind,
+	[]string,
+	sandboxpolicy.MountPlan,
+	int,
+	string,
+) (string, error) {
+	return "", fmt.Errorf(
+		"tclaude-layer server wrapping requires Linux/bubblewrap or macOS/Seatbelt")
+}
+
 func tclaudeLayerUnixRelayServerCommandArgs(
 	_ TclaudeLayerLaunchSpec,
 	bwrapArgv []string,
