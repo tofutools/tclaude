@@ -36,6 +36,7 @@ const (
 	darwinRouteSmokeEndpointEnv    = "TCL951_CHILD_ENDPOINT"
 	darwinRouteSmokeHelperRun      = "^TestDarwinRouteSmokeChild$"
 	darwinRouteSmokeOpaque         = "tcl951-integrated-opaque"
+	darwinRouteSmokeProviderPort   = 45200
 	darwinRouteSmokePublisherSlot  = 45201
 	darwinRouteSmokeWithdrawalSlot = 45202
 	darwinRouteSmokeReusableSlot   = 45203
@@ -214,17 +215,20 @@ func startDarwinRouteSmokeLaunch(t *testing.T, home, helper, role, convID, agent
 	stop := filepath.Join(control, "stop")
 	endpoint := filepath.Join(control, "endpoint")
 	snapshot := sandboxpolicy.EmptySnapshot()
-	// Route-capable Seatbelt launches use the production filtered proxy floor
-	// for hosted Claude traffic. The route slots are an exact additional
-	// carveout in that floor, while all other direct binds/neighbors remain
-	// denied.
+	// Route-capable Seatbelt launches use the production filtered native
+	// loopback floor with a concrete provider route. The route slots are exact
+	// additional carveouts in that floor, while all other direct
+	// binds/neighbors remain denied.
 	snapshot.Effective.Network = &sandboxpolicy.NetworkRules{
-		Mode:   sandboxpolicy.AccessModeList,
-		Engine: sandboxpolicy.NetworkEngineProxy,
+		Mode: sandboxpolicy.AccessModeList,
 		Allow: []sandboxpolicy.NetworkAllowEntry{{
-			Host: "api.anthropic.com", Ports: []int{443},
+			Loopback: true, Ports: []int{darwinRouteSmokeProviderPort},
 		}},
 	}
+	snapshot.Effective.Environment = []sandboxpolicy.EnvironmentEntry{{
+		Name:  "ANTHROPIC_BASE_URL",
+		Value: "http://localhost:" + strconv.Itoa(darwinRouteSmokeProviderPort) + "/v1",
+	}}
 	snapshotPath, snapshotDigest, err := sandboxpolicy.WriteSnapshotFile(control, snapshot)
 	require.NoError(t, err)
 
