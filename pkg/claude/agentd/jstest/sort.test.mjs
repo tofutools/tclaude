@@ -19,7 +19,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  cycleSort, sortHead, applySort, loadSortState,
+  cycleSort, sortHead, applySort, loadSortState, tableSortState,
   persistTableSort,
   MEMBER_COLS, MEMBER_ACCESSORS,
   RETIRED_COLS, RETIRED_ACCESSORS,
@@ -42,6 +42,18 @@ test('legacy sort writes preserve feature-island entries added after boot', () =
     sudo: { col: 'slug', dir: 'desc' },
     jobs: { col: 'name', dir: 'desc' },
   });
+  dashPrefs.removeItem('tclaude.dash.sort');
+  loadSortState();
+});
+
+test('tableSortState ignores a sort on a column hidden from the current view', () => {
+  dashPrefs.setItem('tclaude.dash.sort', JSON.stringify({
+    members: { col: 'id', dir: 'asc' },
+  }));
+  loadSortState();
+  const visible = MEMBER_COLS.filter((column) => column.key !== 'id');
+  assert.equal(tableSortState('members', visible), null);
+  assert.deepEqual(tableSortState('members', MEMBER_COLS), { col: 'id', dir: 'asc' });
   dashPrefs.removeItem('tclaude.dash.sort');
   loadSortState();
 });

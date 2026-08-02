@@ -84,7 +84,8 @@ function setMemberColHidden(key, hidden) {
   const next = {};
   // Carry forward existing deviations for still-valid columns.
   for (const [k, v] of Object.entries(dev)) {
-    if (valid.has(k)) next[k] = !!v;
+    const existing = colByKey(k);
+    if (valid.has(k) && !!v !== defaultHidden(existing)) next[k] = !!v;
   }
   if (hidden === defaultHidden(c)) {
     delete next[key]; // back to following the default
@@ -106,8 +107,10 @@ function visibleMemberCols() {
 // glance shows the table's columns have been customised (a column sitting at
 // its default, hidden or shown, is NOT a deviation and doesn't count).
 function memberColDeviationCount() {
-  const valid = new Set(hideableMemberCols().map((c) => c.key));
-  return Object.keys(deviations()).filter((k) => valid.has(k)).length;
+  return Object.entries(deviations()).filter(([key, value]) => {
+    const c = colByKey(key);
+    return c?.hideable && !!value !== defaultHidden(c);
+  }).length;
 }
 
 export {

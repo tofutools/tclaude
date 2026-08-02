@@ -1,7 +1,7 @@
 import { h, render } from 'preact';
 import { useLayoutEffect, useRef } from 'preact/hooks';
 import htm from 'htm';
-import { applySort, MEMBER_ACCESSORS } from './sort.js';
+import { applySortState, tableSortState, MEMBER_ACCESSORS } from './sort.js';
 import { visibleMemberCols, memberColHidden } from './member-columns.js';
 import {
   shortAgentId, idTooltip, relTime, shortCwd, harnessCanRename, harnessCanRemoteControl,
@@ -881,6 +881,7 @@ function MemberRow({ member, group, ungrouped, snapshot, actions, columns, table
 
 export function MemberTable({ members, group, tableKey, ungrouped = false, snapshot, actions, SortHead }) {
   const columns = visibleMemberCols();
-  return html`<table><${SortHead} table="members" columns=${columns} /><tbody>${applySort('members', members, MEMBER_ACCESSORS).map((member) => html`<${MemberRow} key=${member.conv_id} member=${member} group=${group} tableKey=${tableKey} ungrouped=${ungrouped} snapshot=${snapshot} actions=${actions} columns=${columns} />`)}</tbody></table>`;
+  const activeSort = tableSortState('members', columns);
+  return html`<table><${SortHead} table="members" columns=${columns} /><tbody>${applySortState(members, MEMBER_ACCESSORS, activeSort).map((member) => html`<${MemberRow} key=${member.conv_id} member=${member} group=${group} tableKey=${tableKey} ungrouped=${ungrouped} snapshot=${snapshot} actions=${actions} columns=${columns} />`)}</tbody></table>`;
 }
 // dashboard-imperative-boundary: media-effects

@@ -900,10 +900,16 @@ test('native member rows preserve the legacy field, capability and selector matr
     ],
     sudo: [{ conv_id: 'conv-rich', slug: 'groups.manage', remaining_seconds: 90 }],
   };
-  const [{ createGroupsState }, { GroupsList }] = await Promise.all([
+  const [{ createGroupsState }, { GroupsList }, { dashPrefs }, { loadSortState }] = await Promise.all([
     harness.importDashboardModule('js/groups-state.js'),
     harness.importDashboardModule('js/groups-island.js'),
+    harness.importDashboardModule('js/prefs.js'),
+    harness.importDashboardModule('js/sort.js'),
   ]);
+  dashPrefs.setItem('tclaude.dash.sort', JSON.stringify({
+    members: { col: 'id', dir: 'asc' },
+  }));
+  loadSortState();
   const state = createGroupsState({ prefs: memoryPrefs(), resetOffsets: () => {}, ...stateDependencies() });
   state.initialize();
   state.publish(fullSnapshot);
@@ -914,8 +920,10 @@ test('native member rows preserve the legacy field, capability and selector matr
   const richRow = rows.find((row) => row.dataset.key === 'conv-rich');
   const fixedRow = rows.find((row) => row.dataset.key === 'conv-fixed');
   const backgroundRow = rows.find((row) => row.dataset.key === 'conv-background');
-  assert.equal(table.querySelectorAll('thead th').length, 11);
-  assert.equal(richRow.children.length, 11, 'header/body alignment follows the shared visible-column list');
+  assert.deepEqual(rows.map((row) => row.dataset.key), ['conv-rich', 'conv-fixed', 'conv-background'],
+    'a persisted sort on hidden ID is ignored in favor of server order');
+  assert.equal(table.querySelectorAll('thead th').length, 10);
+  assert.equal(richRow.children.length, 10, 'header/body alignment follows the shared visible-column list');
   assert.equal(richRow.className, 'dnd-draggable');
   assert.equal(richRow.draggable, true);
   assert.equal(richRow.dataset.dndSourceGroup, 'alpha');
