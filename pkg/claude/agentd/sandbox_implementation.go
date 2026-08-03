@@ -148,6 +148,48 @@ func resolveSandboxImplementationMode(
 	return mode, nil
 }
 
+// sandboxImplementationPostureFailure is the post-resolution HARNESS-POSTURE
+// gate, and it sits beside the host gate below for the same structural reason
+// that one exists: it must run on the value the precedence chain settled on,
+// on every launch path, and it must refuse rather than degrade.
+//
+// It is a THIRD kind of unusability, distinct from the two the file header
+// names. Host availability is a property of the machine and harness
+// applicability a property of the descriptor; this is a property of the
+// harness's own MUTABLE CONFIGURATION, which no tier of tclaude's resolution
+// can see and which an operator can change between any two launches. Copilot is
+// the case that forced it: its command sandbox lives in settings.json with no
+// launch flag, so "tclaude's layer is the only wall" is a claim that has to be
+// re-checked at every launch rather than resolved once and recorded.
+//
+// Checking it here rather than only in planSandboxProfileAccessForLaunch is
+// deliberate: that function returns early for a launch with no sandbox profile
+// at all, and a Copilot spawn that pins tclaude-layer without authoring a
+// policy is exactly the launch whose single-boundary claim needs verifying.
+//
+// The environment is the daemon's own, because a daemon spawn has no
+// pass-through arguments and its profile environment is applied downstream —
+// where the profile-aware call in planSandboxProfileAccessForLaunch re-checks
+// it against the composed launch environment.
+func sandboxImplementationPostureFailure(
+	harnessName, implementation string,
+) *spawnFailure {
+	normalized, err := sandboxpolicy.NormalizeImplementation(implementation)
+	if err != nil || !normalized.UsesTclaudeLayer() {
+		return nil
+	}
+	h, err := harness.Resolve(harnessOrDefault(harnessName))
+	if err != nil {
+		return &spawnFailure{http.StatusUnprocessableEntity,
+			"unsupported_sandbox_profile_access", err.Error()}
+	}
+	if err := session.ValidateTclaudeLayerHarnessPosture(h, nil, nil); err != nil {
+		return sandboxCapabilitySpawnFailure(
+			err, harness.SandboxCapabilityCopilotInnerSandbox)
+	}
+	return nil
+}
+
 // sandboxImplementationHostFailure is the post-resolution host gate. It runs on
 // the value the precedence chain settled on, whichever tier supplied it, and
 // refuses the launch outright rather than degrading to harness-builtin.

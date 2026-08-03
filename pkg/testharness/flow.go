@@ -995,6 +995,21 @@ func (f *Flow) Resume(convID string) ResumeResp {
 	return resp
 }
 
+// ResumeTolerating drives POST /v1/agent/{conv}/resume and returns the outcome
+// WITHOUT fatal-on-error, so tests can exercise the refusal paths — a launch
+// posture that no longer verifies, an unavailable host capability — and inspect
+// the daemon's typed failure. Mirrors CloneWith / ReincarnateWith. Resume above
+// stays fatal-on-error, since most callers want a resume that worked.
+func (f *Flow) ResumeTolerating(convID string) ResumeResp {
+	f.T.Helper()
+	rec := f.do(http.MethodPost, "/v1/agent/"+convID+"/resume", nil)
+	var resp ResumeResp
+	resp.Code = rec.Code
+	resp.Raw = rec.Body.Bytes()
+	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+	return resp
+}
+
 // StopResp parses POST /v1/agent/{conv}/stop. Action distinguishes the
 // graceful soft-stop ("soft_stopped") from the harness-has-no-soft-exit
 // hard kill ("killed_no_soft_exit"), a force kill ("killed"), and the

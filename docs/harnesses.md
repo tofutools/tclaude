@@ -242,7 +242,10 @@ covers **interactive human sessions**:
 | **Rename / compact / graceful stop** | ✅ in-pane `/rename`, `/compact`, `/exit`. `/exit` closes the *current* session: with other sessions open in the same CLI it foregrounds the newest remaining one instead of quitting, so tclaude keeps its hard-kill fallback for a pane that doesn't actually exit |
 | **Hooks / live status** | ✅ `<COPILOT_HOME>/hooks/tclaude.json` — a tclaude-**owned** drop-in file, merged by Copilot with the user's own hooks; no trust step, no `config.json` involvement. Registers `SessionStart`, `UserPromptSubmit`, `PostToolUse`, `Stop`, `SessionEnd`, so a pane reports working/idle per turn. See [below](#copilot-hooks) for what is deliberately left out |
 | **Conversation store** | ✅ cold list / resolve / cwd filter / title / existence, read from Copilot's own per-session `<COPILOT_HOME>/session-state/<id>/` files. No SQLite access at all — see [below](#copilot-conversation-store) |
-| **Everything else in the matrix** | ➖ not yet — no ad-hoc ask, sandbox, approval, tool governance, directory pre-trust, remote control, usage/cost, or status bar. Copilot's *own* command sandboxing was evaluated and deliberately not advertised — see [below](#copilots-own-command-sandboxing) |
+| **Sandbox** | ⚠️ `inherit` (default) / `off` — an *assertion*, not a lever. Copilot's own command sandbox has no launch flag, so tclaude can neither enable nor disable it; `off` means "verified not engaged" and is what `--sandbox-impl tclaude-layer` resolves to. See [below](#copilot-and-tclaudes-outer-sandbox). Copilot's *own* command sandboxing was separately evaluated and deliberately not advertised as a harness-builtin implementation — see [below](#copilots-own-command-sandboxing) |
+| **tclaude-layer (outer OS sandbox)** | ✅ Linux bubblewrap / macOS Seatbelt, with Copilot's pre-approved directory catalog composed into the mount plan |
+| **Model transport under a filtered network** | ⚠️ the default first-party GitHub Copilot route only (`api.githubcopilot.com`, `api.github.com`); every route-moving input is refused rather than followed |
+| **Everything else in the matrix** | ➖ not yet — no ad-hoc ask, approval, tool governance, directory pre-trust, remote control, usage/cost, or status bar |
 
 Two consequences are worth stating plainly:
 
@@ -272,6 +275,77 @@ Two Copilot options tclaude deliberately never emits: `--mouse` / `--no-mouse`
 (an explicit value is **persisted** to the user's configuration, so it is not
 a per-spawn flag), and `-p/--prompt` (headless mode, which exits after
 completion — a TUI pane wants `-i`).
+
+#### Copilot and tclaude's outer sandbox
+
+Copilot ships a real OS sandbox — Microsoft Execution Containers (MXC), which
+uses bubblewrap on Linux and Seatbelt on macOS — but it is **experimental, off
+by default, and has no launch flag and no environment variable**. It is
+configured only by the `sandbox` key of `<COPILOT_HOME>/settings.json` and by
+the in-pane `/sandbox enable|disable`, which is itself only registered when
+experimental features are on (`copilot help sandbox`, pinned 1.0.77).
+
+That single fact shapes everything below. tclaude cannot switch Copilot's wall
+off for one launch, so running Copilot under `--sandbox-impl tclaude-layer`
+does not disable the inner sandbox — it **asserts** the inner sandbox is not
+engaged, and refuses the launch when it cannot verify that:
+
+| Copilot configuration | Result under `tclaude-layer` |
+|---|---|
+| No `settings.json`, or one that does not mention `sandbox` | ✅ launches — the CLI documents the sandbox as disabled by default |
+| `sandbox.enabled: false` | ✅ launches |
+| `sandbox.enabled: true` | ❌ refused — two stacked policies would make the effective confinement their unreviewed intersection while the recorded posture named one |
+| Unreadable, unparsable, or oddly shaped settings (`"sandbox": true`, `"enabled": "true"`) | ❌ refused — an unverifiable posture, not an absent one |
+| `experimental: true` | ❌ refused — it registers the in-pane `/sandbox` command, so the wall could be switched on mid-session |
+| A pass-through `--experimental` argument | ❌ refused, for the same reason |
+
+tclaude never edits your `settings.json` and never relocates `COPILOT_HOME`
+to work around this. Both would be silent changes to state you own — and
+relocating the home would split Copilot's session store from the conversation
+store and hooks. The remedy is always yours to apply, and every refusal names
+the file and the key.
+
+The check runs on **every** path that starts a Copilot pane — spawn, resume,
+clone, reincarnate, and template/wave deploys — rather than once at spawn.
+Copilot's sandbox setting lives in a file you can edit between two launches, so
+a posture verified at spawn time is not evidence about a resume.
+
+**Which directories a confined Copilot launch gets.** They come from one
+catalog, resolved per launch, shared with any future consumer of Copilot's own
+policy: `COPILOT_HOME` (read/write — the one hard requirement), the package
+cache (read/write/**execute**), and the Microsoft DeveloperTools device-id cache
+(read/write, best effort), plus the launch's temp directory, the agentd socket,
+and the two executables when they apply. Two details are easy to get wrong:
+
+- The package cache is **exec-bearing**. Copilot unpacks bundled binaries
+  (ripgrep, tgrep, prebuilt native modules) there and runs them, so a `noexec`
+  mount would break tool search rather than produce a permission error.
+- On macOS the package cache moves to `~/Library/Caches/copilot`, while the
+  device-id cache stays XDG-shaped at `~/.cache/Microsoft/DeveloperTools` —
+  the bundled runtime that writes it has no darwin branch. The two live in
+  different trees on macOS and the same one on Linux.
+
+The catalog refuses rather than widens: a `COPILOT_HOME` pointing at `$HOME`, a
+`COPILOT_CACHE_HOME` landing on `~/.cache`, a grant covering the workspace, and
+an agentd socket path inside `~/.tclaude/data` are each a failed launch, not a
+mount rule.
+
+**Filtered networking.** A Copilot launch under a filtered network policy is
+admitted only on the default first-party GitHub Copilot route: model traffic to
+`api.githubcopilot.com` and the `/copilot_internal` control plane on
+`api.github.com` (the `net-github-copilot` pack covers both). Anything that
+moves that route is refused rather than followed — `COPILOT_API_URL`, `GH_HOST`
+/ `COPILOT_GH_HOST`, the `copilotUrl` and `proxyUrl` settings keys, and the
+whole `COPILOT_PROVIDER_*` BYOK family. A BYOK endpoint is refused even though
+it resolves concretely: being resolvable is not being approved.
+
+Two limits, stated rather than implied. The destinations above are what a
+credential-free startup can be observed to need; **post-authentication traffic
+has not been enumerated**, so a subscribed session may reach hosts the pack
+does not name — those are denied at the wall, visibly, rather than silently
+allowed. And the enterprise CAPI host is deliberately absent: how a launch
+selects it is not inspectable ahead of time, so that posture is refused instead
+of granted an extra destination.
 
 #### Copilot conversation store
 

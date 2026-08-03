@@ -1243,6 +1243,19 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 	if launchConfig.TemporarySandboxMode {
 		effectiveSandbox = temporarySandboxLaunchSnapshot(harnessName, stableEffectiveSandbox)
 	}
+	// The harness's own sandbox configuration is re-verified on every relaunch,
+	// never replayed from the recorded posture. For a harness tclaude can
+	// switch off at launch the recorded mode IS the posture; for one configured
+	// out of band it is only a record of what was true at spawn time, and an
+	// operator can have enabled the harness's own wall since. Replaying the
+	// record would resume an agent under two stacked boundaries while still
+	// claiming one.
+	if fail := sandboxImplementationPostureFailure(
+		harnessName, relaunchSandboxImplementation); fail != nil {
+		res.Action = "error"
+		res.Detail = "sandbox_posture_changed: " + fail.Msg
+		return res
+	}
 	if fail := sandboxProfileCapabilityFailure(
 		harnessName,
 		relaunchSandbox,
@@ -3022,6 +3035,14 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
+	// Posture gate, beside the host gate and on the same terms: a harness whose
+	// own OS sandbox tclaude cannot switch off has to have its configuration
+	// verified at every launch, or the recorded single-boundary claim outlives
+	// the configuration it was made about.
+	if fail := sandboxImplementationPostureFailure(h.Name, body.SandboxImplementation); fail != nil {
+		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		return
+	}
 	var autoReviewSet, trustDirSet, sshWorkaroundSet bool
 	var autoReviewNote, trustDirNote, autoMemoryNote, sshWorkaroundNote, contextFeaturesNote string
 	body.AutoReview, autoReviewSet, autoReviewNote, fieldFail = resolveBoolLaunchField(
@@ -4380,6 +4401,9 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 	// a host that cannot run it without ever meeting a refusal. Same predicate,
 	// second call site: an unbypassable gate, not a second opinion.
 	if fail := sandboxImplementationHostFailure(h.Name, p.SandboxImplementation); fail != nil {
+		return fail
+	}
+	if fail := sandboxImplementationPostureFailure(h.Name, p.SandboxImplementation); fail != nil {
 		return fail
 	}
 	p.AutoReview, p.AutoReviewSet, _, fail = resolveBoolLaunchField("auto_review", p.AutoReview,
