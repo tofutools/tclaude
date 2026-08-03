@@ -72,11 +72,21 @@ import (
 // GRANTS access. For lexical lattice work on already-canonical paths, use
 // PathContainsOrEqual.
 //
-// On a case-sensitive volume this collapses to exactly PathContainsOrEqual's
-// answer for every pair that is not a deliberate case/NFC variant of a
-// protected path — such a pair never gets past step 2, which is lexical. That
-// property is now a fact about pure functions rather than something that
-// depends on a probe answering correctly.
+// On a case-sensitive volume this collapses to PathContainsOrEqual's answer for
+// every pair that is not a case/NFC variant of a protected path — such a pair
+// never gets past step 2, which is lexical. That property is now a fact about
+// pure functions rather than something that depends on a probe answering
+// correctly.
+//
+// "Case/NFC variant" is meant in ToLower+NFC's terms, which are slightly wider
+// than case alone: ToLower is not injective beyond case, so a pair like U+212A
+// KELVIN SIGN and "k", or U+0130 and "i", also nominates and reaches steps 3-4.
+// Every such divergence from PathContainsOrEqual is an over-REFUSAL — the extra
+// pairs are exactly the ones a folding volume might merge — and when both
+// spellings exist os.SameFile refutes them and the answer returns to false. So
+// the collapse is exact in the direction that matters (this guard never allows
+// something PathContainsOrEqual would refuse) and slightly conservative in the
+// other.
 func GuardContainsOrEqual(dir, target string) bool { return guardContainsOrEqual(dir, target) }
 
 // GuardPathsIntersect reports whether either of a, b contains-or-equals the

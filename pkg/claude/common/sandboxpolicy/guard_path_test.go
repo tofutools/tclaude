@@ -152,7 +152,6 @@ func TestGuardContainsOrEqualDistinctCaseSiblingsStaySeparate(t *testing.T) {
 	assert.False(t, GuardPathsIntersect(upper, lower))
 }
 
-
 func TestGuardContainsOrEqualSymlinkAliasIsSpellingOnly(t *testing.T) {
 	root := tempRoot(t)
 	real := filepath.Join(root, "real")
@@ -171,14 +170,6 @@ func TestGuardContainsOrEqualSymlinkAliasIsSpellingOnly(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, GuardContainsOrEqual(real, resolved))
 }
-
-
-
-
-
-
-
-
 
 // TestGuardContainsOrEqualRelativePathsAnswerLexically pins the precondition:
 // only an absolute path names a real directory, so a relative one must get the
@@ -216,7 +207,6 @@ func TestGuardContainsOrEqualFollowsSymlinkedFinalComponent(t *testing.T) {
 	assert.True(t, GuardPathsIntersect(variant, real))
 }
 
-
 func TestGuardPathPrefixMatchesDirDepth(t *testing.T) {
 	prefix, ok := guardPathPrefix("/a/b", "/A/B/c/d")
 	require.True(t, ok)
@@ -232,8 +222,6 @@ func TestGuardPathPrefixMatchesDirDepth(t *testing.T) {
 	assert.False(t, ok)
 }
 
-
-
 func TestFoldGuardPathMatchesTheSeatbeltEmitterRule(t *testing.T) {
 	// session.seatbeltFoldedPath is norm.NFC(strings.ToLower(filepath.Clean)).
 	// The validator has to nominate exactly the spellings the emitter merges,
@@ -244,8 +232,6 @@ func TestFoldGuardPathMatchesTheSeatbeltEmitterRule(t *testing.T) {
 			foldGuardPath(path))
 	}
 }
-
-
 
 // TestGuardRefusesEveryUnresolvableFoldedNomination is the core of the
 // simplified contract, and it asserts the SAME outcome on every volume — no
@@ -322,4 +308,77 @@ func TestGuardIsUnaffectedByNeighbouringFileNames(t *testing.T) {
 	assert.Equal(t, before,
 		GuardContainsOrEqual(protected, filepath.Join(root, "protected", "leaf")),
 		"an unrelated neighbouring filename must not change the guard's answer")
+}
+
+// TestGuardNeverAllowsWhatByteExactContainmentRefuses pins the safety direction
+// of the guard's relationship to pathContainsOrEqual: the guard may refuse MORE,
+// never less. That one-way property is what makes it safe to substitute for the
+// byte-exact comparison at every refusal site.
+//
+// It matters because the collapse is not exact. strings.ToLower is not injective
+// beyond case, so pairs like U+212A KELVIN SIGN vs "k", or U+0130 vs "i",
+// nominate a collision and reach the identity steps even though they are not
+// case variants in the everyday sense. Those are over-refusals, and over-refusal
+// is the harmless direction — the extra pairs are precisely the ones a folding
+// volume might merge.
+func TestGuardNeverAllowsWhatByteExactContainmentRefuses(t *testing.T) {
+	root := tempRoot(t)
+
+	pairs := [][2]string{
+		{root, root},
+		{root, filepath.Join(root, "child")},
+		{filepath.Join(root, "a"), filepath.Join(root, "b")},
+		{filepath.Join(root, "K"), filepath.Join(root, "K")},        // KELVIN SIGN
+		{filepath.Join(root, "i"), filepath.Join(root, "İ")},        // dotted capital I
+		{filepath.Join(root, "ſ"), filepath.Join(root, "s")},        // long s
+		{filepath.Join(root, "café"), filepath.Join(root, "café")}, // NFC vs NFD
+		{"/", filepath.Join(root, "deep", "path")},
+		{filepath.Join(root, "deep", "path"), "/"},
+		{"", ""},
+		{root, ""},
+	}
+
+	for _, pair := range pairs {
+		dir, target := pair[0], pair[1]
+		if pathContainsOrEqual(dir, target) && !GuardContainsOrEqual(dir, target) {
+			t.Errorf("GuardContainsOrEqual(%q, %q) = false but pathContainsOrEqual = true: "+
+				"the guard must never allow what the byte-exact comparison refuses",
+				dir, target)
+		}
+	}
+}
+
+// TestGuardOverRefusalIsRefutedByFileIdentity is the other half: an over-refusal
+// from the widened nomination is not permanent. When both spellings actually
+// exist as distinct directories, os.SameFile refutes the nomination and the
+// guard returns to the byte-exact answer — so the widening costs nothing for
+// paths that are really there.
+func TestGuardOverRefusalIsRefutedByFileIdentity(t *testing.T) {
+	root := tempRoot(t)
+
+	// U+212A KELVIN SIGN lowercases to "k", so these nominate as a collision
+	// without being a case variant of one another.
+	kelvin := filepath.Join(root, "K")
+	plain := filepath.Join(root, "k")
+
+	// Unresolvable: nothing can refute the nomination, so the guard refuses.
+	assert.True(t, GuardContainsOrEqual(kelvin, plain),
+		"an unresolvable folded nomination must refuse")
+
+	require.NoError(t, os.MkdirAll(kelvin, 0o755))
+	require.NoError(t, os.MkdirAll(plain, 0o755))
+
+	kelvinInfo, err := os.Lstat(kelvin)
+	require.NoError(t, err)
+	plainInfo, err := os.Lstat(plain)
+	require.NoError(t, err)
+	if os.SameFile(kelvinInfo, plainInfo) {
+		// This volume genuinely merges them, so refusing is the correct answer.
+		assert.True(t, GuardContainsOrEqual(kelvin, plain),
+			"one inode means one directory, which must refuse")
+		return
+	}
+	assert.False(t, GuardContainsOrEqual(kelvin, plain),
+		"two distinct inodes refute the nomination, so the guard must allow — "+
+			"the widened fold must not survive contact with the filesystem")
 }
