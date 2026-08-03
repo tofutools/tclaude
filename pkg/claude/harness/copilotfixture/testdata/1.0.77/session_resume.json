@@ -1,0 +1,109 @@
+{
+  "cliVersion": "1.0.77",
+  "requests": [
+    {
+      "path": "/v1/chat/completions",
+      "initiator": "user",
+      "interactionType": "conversation-user",
+      "authorizationPresent": true,
+      "authorizationEmpty": true,
+      "bodyKeys": [
+        "messages",
+        "model",
+        "stream",
+        "stream_options",
+        "tools"
+      ],
+      "model": "copilotfixture-mock-model",
+      "stream": true,
+      "streamIncludeUsage": true,
+      "messageRoles": [
+        "system",
+        "user"
+      ],
+      "toolNames": [
+        "bash",
+        "create",
+        "edit",
+        "fetch_copilot_cli_documentation",
+        "glob",
+        "grep",
+        "list_agents",
+        "list_bash",
+        "read_agent",
+        "read_bash",
+        "session_store_sql",
+        "skill",
+        "sql",
+        "stop_bash",
+        "task",
+        "view",
+        "write_agent"
+      ],
+      "promptDigest": "sha256:4de5e57d21c34ac5"
+    },
+    {
+      "path": "/v1/chat/completions",
+      "initiator": "user",
+      "interactionType": "conversation-user",
+      "authorizationPresent": true,
+      "authorizationEmpty": true,
+      "bodyKeys": [
+        "messages",
+        "model",
+        "stream",
+        "stream_options",
+        "tools"
+      ],
+      "model": "copilotfixture-mock-model",
+      "stream": true,
+      "streamIncludeUsage": true,
+      "messageRoles": [
+        "system",
+        "user",
+        "assistant",
+        "user"
+      ],
+      "toolNames": [
+        "bash",
+        "create",
+        "edit",
+        "fetch_copilot_cli_documentation",
+        "glob",
+        "grep",
+        "list_agents",
+        "list_bash",
+        "read_agent",
+        "read_bash",
+        "session_store_sql",
+        "skill",
+        "sql",
+        "stop_bash",
+        "task",
+        "view",
+        "write_agent"
+      ],
+      "promptDigest": "sha256:0d94602772a42512"
+    }
+  ],
+  "events": {
+    "types": [
+      "session.skills_loaded",
+      "session.tools_updated",
+      "user.message",
+      "assistant.turn_start",
+      "model.call_start",
+      "assistant.message_start",
+      "assistant.message_delta",
+      "assistant.message_delta",
+      "assistant.message_delta",
+      "assistant.message",
+      "assistant.turn_end",
+      "assistant.idle",
+      "result"
+    ],
+    "resultExitCode": 0,
+    "resultSessionId": "\u003cuuid\u003e",
+    "assistantText": "MOCK RESUMED TURN"
+  }
+}

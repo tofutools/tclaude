@@ -1,0 +1,131 @@
+{
+  "cliVersion": "1.0.77",
+  "requests": [
+    {
+      "path": "/v1/chat/completions",
+      "initiator": "user",
+      "interactionType": "conversation-user",
+      "authorizationPresent": true,
+      "authorizationEmpty": true,
+      "bodyKeys": [
+        "messages",
+        "model",
+        "stream",
+        "stream_options",
+        "tools"
+      ],
+      "model": "copilotfixture-mock-model",
+      "stream": true,
+      "streamIncludeUsage": true,
+      "messageRoles": [
+        "system",
+        "user"
+      ],
+      "toolNames": [
+        "bash",
+        "create",
+        "edit",
+        "fetch_copilot_cli_documentation",
+        "glob",
+        "grep",
+        "list_agents",
+        "list_bash",
+        "read_agent",
+        "read_bash",
+        "session_store_sql",
+        "skill",
+        "sql",
+        "stop_bash",
+        "task",
+        "view",
+        "write_agent"
+      ],
+      "promptDigest": "sha256:790b123dad1b06d4"
+    },
+    {
+      "path": "/v1/chat/completions",
+      "initiator": "agent",
+      "authorizationPresent": true,
+      "authorizationEmpty": true,
+      "bodyKeys": [
+        "messages",
+        "model",
+        "stream",
+        "stream_options",
+        "tools"
+      ],
+      "model": "copilotfixture-mock-model",
+      "stream": true,
+      "streamIncludeUsage": true,
+      "messageRoles": [
+        "system",
+        "user",
+        "assistant",
+        "tool"
+      ],
+      "toolNames": [
+        "bash",
+        "create",
+        "edit",
+        "fetch_copilot_cli_documentation",
+        "glob",
+        "grep",
+        "list_agents",
+        "list_bash",
+        "read_agent",
+        "read_bash",
+        "session_store_sql",
+        "skill",
+        "sql",
+        "stop_bash",
+        "task",
+        "view",
+        "write_agent"
+      ],
+      "promptDigest": "sha256:67e0f98dcff29f1a"
+    }
+  ],
+  "events": {
+    "types": [
+      "session.skills_loaded",
+      "session.tools_updated",
+      "user.message",
+      "assistant.turn_start",
+      "model.call_start",
+      "assistant.tool_call_delta",
+      "assistant.message",
+      "tool.execution_start",
+      "session.background_tasks_changed",
+      "session.background_tasks_changed",
+      "session.background_tasks_changed",
+      "session.background_tasks_changed",
+      "session.background_tasks_changed",
+      "session.background_tasks_changed",
+      "tool.execution_partial_result",
+      "tool.execution_partial_result",
+      "session.background_tasks_changed",
+      "session.background_tasks_changed",
+      "session.background_tasks_changed",
+      "session.background_tasks_changed",
+      "session.background_tasks_changed",
+      "tool.execution_complete",
+      "assistant.turn_end",
+      "assistant.turn_start",
+      "model.call_start",
+      "assistant.message_start",
+      "assistant.message_delta",
+      "assistant.message_delta",
+      "assistant.message_delta",
+      "assistant.message_delta",
+      "assistant.message",
+      "assistant.turn_end",
+      "assistant.idle",
+      "session.background_tasks_changed",
+      "session.background_tasks_changed",
+      "result"
+    ],
+    "resultExitCode": 0,
+    "resultSessionId": "\u003cuuid\u003e",
+    "assistantText": "MOCK TOOL FOLLOW UP"
+  }
+}

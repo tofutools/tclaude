@@ -268,6 +268,54 @@ Two Copilot options tclaude deliberately never emits: `--mouse` / `--no-mouse`
 a per-spawn flag), and `-p/--prompt` (headless mode, which exits after
 completion — a TUI pane wants `-i`).
 
+#### Compatibility fixtures
+
+The evidence that closes the gap above lives in
+`pkg/claude/harness/copilotfixture`. It runs the **real pinned CLI**
+(`@github/copilot@1.0.77`) against a deterministic localhost mock provider and
+diffs sanitized observations against goldens in `testdata/<version>/`.
+
+The path is **credential-free by construction**. Setting
+`COPILOT_PROVIDER_BASE_URL` activates Copilot's BYOK mode, which the CLI
+documents as not requiring GitHub authentication; on top of that the runner
+removes every GitHub/Copilot token variable from the child environment and sets
+`COPILOT_OFFLINE=true`, so a regression back into an auth dependency fails the
+suite instead of passing on a machine that happens to be logged in. No
+credential, enterprise policy, or real session content is involved.
+
+Runs are also hermetic. `COPILOT_HOME` alone is not enough: it covers
+config/session state, while `COPILOT_CACHE_HOME` redirects only Copilot's own
+package cache and the bundled `Microsoft/DeveloperTools` cache still resolves
+through `XDG_CACHE_HOME` then `HOME`. The runner redirects all four.
+
+Scenarios covered: streaming text, a tool-call round trip, deterministic
+provider failure, session enrollment plus exact resume, `--model` precedence,
+`--effort` pass-through, and a launch driven by the **production spawner's own
+command string** rather than a parallel flag table that could drift from it.
+
+Fixtures record *shape*, never content: endpoint, body key set, message roles,
+tool-name set, the `x-initiator` discriminator, and event-type sequence. The
+~26 kB system prompt and the tool schemas are reduced to a digest — committing
+them would be a large, version-coupled blob that churns on every CLI bump while
+proving nothing tclaude depends on. UUIDs, timestamps, ports, and absolute
+paths are normalized before anything is written.
+
+Running it, given the pinned CLI on PATH:
+
+```bash
+TCLAUDE_COPILOT_FIXTURE_SMOKE=1 go test ./pkg/claude/harness/copilotfixture/...
+```
+
+Without that variable the real-binary scenarios skip and only the (binary-free)
+sanitizer unit tests run, so `go test ./...` stays green on a machine with no
+Copilot install. CI runs the gated job on Linux and fails if any scenario
+reports anything other than an explicit pass.
+
+Version drift is deliberately manual: the pin lives in `version.go`, the test
+asserts `copilot --version` matches it, and re-recording is an explicit
+`-update` run whose diff **is** the compatibility evidence — so a floating or
+auto-updating install cannot absorb a contract change silently.
+
 ### Sandbox & approval defaults (Codex)
 
 Codex has a built-in OS-level sandbox and an approval policy, both selectable at
