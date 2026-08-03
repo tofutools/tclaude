@@ -364,8 +364,8 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 	// The successor's session row and pane exist before RotateAgentConv links
 	// its conversation to the actor, so for that window nothing durable says
 	// the row is an agent's. Claim it for the whole orchestration, which is
-	// where that link lands — see agentLaunchLabels.
-	defer claimAgentLaunchLabel(label)()
+	// where that link lands — see agentLaunchIdentities.
+	defer claimAgentLaunchIdentity(label)()
 	relaunchPolicy, policyErr := resolveResumeSandboxPolicy(
 		target, relaunch.SSHWorkaround, label)
 	if policyErr != nil {

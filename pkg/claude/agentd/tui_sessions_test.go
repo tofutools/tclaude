@@ -3,6 +3,7 @@ package agentd
 import (
 	"errors"
 	"net/http"
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -527,28 +528,78 @@ func TestListLocalNonAgentSessionsSkipsAPendingSpawn(t *testing.T) {
 		"with neither marker left the row really is a plain session")
 }
 
-// Reincarnate and clone mint a label with no pending row, so they carry an
-// in-memory claim for the same window instead.
+// Reincarnate and clone mint a launch with no pending row, so they carry an
+// in-memory claim for the same window instead. Which id they claim depends on
+// which one they mint first — a no-copy launch has only a label, a copy clone
+// forks the jsonl and so knows the conv-id before the row exists — and the
+// listing has to honour a claim on either.
 func TestListLocalNonAgentSessionsSkipsAnInFlightRelaunch(t *testing.T) {
-	setupTestDB(t)
-	withAliveTmux(t, "spwn-def456")
-	saveSessionRow(t, &session.SessionState{
-		ID: "spwn-def456", TmuxSession: "spwn-def456", Status: session.StatusRunning,
-	})
+	const conv = "77777777-2222-4333-8444-555555555555"
+	for _, tc := range []struct {
+		name     string
+		claim    string
+		row      session.SessionState
+		wantName string
+	}{
+		{
+			name:     "claimed by label",
+			claim:    "spwn-def456",
+			row:      session.SessionState{ID: "spwn-def456", TmuxSession: "spwn-def456"},
+			wantName: "spwn-def456",
+		},
+		{
+			// The copy path's row carries the conv it was launched with; its
+			// label is only discovered from that row afterwards, so the conv
+			// is the only id the claim can be made on.
+			name:     "claimed by conv-id",
+			claim:    conv,
+			row:      session.SessionState{ID: "spwn-ghi789", TmuxSession: "spwn-ghi789", ConvID: conv},
+			wantName: "spwn-ghi789",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setupTestDB(t)
+			withAliveTmux(t, tc.row.TmuxSession)
+			row := tc.row
+			row.Status = session.StatusRunning
+			saveSessionRow(t, &row)
 
-	release := claimAgentLaunchLabel("spwn-def456")
-	require.Empty(t, listedSessionNames(t), "a relaunching agent is not a session")
+			release := claimAgentLaunchIdentity(tc.claim)
+			require.Empty(t, listedSessionNames(t), "a relaunching agent is not a session")
 
-	release()
-	assert.Equal(t, []string{"spwn-def456"}, listedSessionNames(t),
-		"and the claim is released with the launch that held it")
+			release()
+			assert.Equal(t, []string{tc.wantName}, listedSessionNames(t),
+				"and the claim is released with the launch that held it")
+		})
+	}
+}
+
+// cloneSpawnOnce hands its launch claim to the caller rather than releasing it
+// on return — the clone is only an agent once the caller has linked it, so
+// releasing and re-claiming a moment later would reopen the very window the
+// claim exists to close. That makes releasing somebody else's job, so every
+// caller has to do it; a real clone is driven end to end in
+// TestTUIConsoleCloneLeavesNoStrandedLaunchClaim.
+func TestEveryCloneSpawnCallerReleasesTheLaunchClaim(t *testing.T) {
+	// A cheap structural guard against a new caller silently leaking one: the
+	// symbol is only ever read where the release is run.
+	for _, file := range []string{"clone.go", "export.go", "groups_clone.go"} {
+		src, err := os.ReadFile(file)
+		require.NoError(t, err)
+		body := string(src)
+		if !strings.Contains(body, "cloneSpawnOnce(cloneSpawnParams{") {
+			continue
+		}
+		assert.Contains(t, body, "ReleaseLaunchClaim",
+			"%s calls cloneSpawnOnce, so it must release the launch claim it is handed", file)
+	}
 }
 
 // The claim counts, so a nested or retried claim releases correctly instead of
 // the first release clearing both, and releasing twice is a no-op.
 func TestAgentLaunchLabelClaimsAreCounted(t *testing.T) {
-	first := claimAgentLaunchLabel("spwn-nested")
-	second := claimAgentLaunchLabel("spwn-nested")
+	first := claimAgentLaunchIdentity("spwn-nested")
+	second := claimAgentLaunchIdentity("spwn-nested")
 	require.True(t, agentLaunchInFlight("spwn-nested"))
 
 	first()

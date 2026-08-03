@@ -570,6 +570,32 @@ func TestTUIConsoleListsAPlainCodingSessionUntilItBecomesAnAgent(t *testing.T) {
 	assert.NotContains(t, view, "(session)")
 }
 
+// A clone's session row and pane exist before its conversation is linked to an
+// actor, so the launch holds an in-flight claim to keep the console from
+// listing — and offering to kill — a materialising agent as a plain session.
+// That claim is handed from cloneSpawnOnce to its caller, which makes
+// releasing it somebody else's job: a caller that forgets strands it, and the
+// clone's pane would then be missing from every surface that consults it.
+func TestTUIConsoleCloneLeavesNoStrandedLaunchClaim(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("dev")
+	sp := f.Spawn("dev", "worker")
+	require.Equal(t, 0, agentd.AgentLaunchClaimsForTest(), "a settled spawn holds nothing")
+
+	cloned := f.CloneFresh(sp.ConvID)
+	require.NotEmpty(t, cloned.NewConv)
+	assert.Equal(t, 0, agentd.AgentLaunchClaimsForTest(),
+		"a finished clone must release the claim its launch held")
+
+	// And the clone is an agent on the console, never a plain session.
+	c := newTUIConsole(t)
+	c.Refresh()
+	view := c.View()
+	assert.Contains(t, view, "2 agents (2 online)")
+	assert.Contains(t, view, "0 sessions")
+	assert.NotContains(t, view, "(session)")
+}
+
 // A session whose pane has gone is not listed: there is nothing to go to and
 // no resume verb behind it. `tclaude session ls -a` is where those live.
 func TestTUIConsoleListsLiveSessionsOnly(t *testing.T) {

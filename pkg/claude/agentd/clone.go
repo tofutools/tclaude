@@ -109,6 +109,13 @@ type cloneSpawnResult struct {
 	// surfaces it as an HTTP response `warning` field so the dashboard can show
 	// "started but not online yet" instead of a generic success toast.
 	Warn string
+	// ReleaseLaunchClaim ends the in-flight claim that keeps the clone's live
+	// pane out of the terminal console's plain-session listing (see
+	// agentLaunchIdentities). It is HANDED OVER rather than released here: the
+	// clone is only an agent once the caller's EnsureAgentForConv has linked
+	// it, so the claim has to outlive this function. The caller must defer it.
+	// Non-nil on success; an error return releases the claim itself.
+	ReleaseLaunchClaim func()
 
 	// LaunchEnrolled reports that the clone was born named (and, when a
 	// FollowUp was given, briefed) from its own launch argv. Callers MUST skip
@@ -159,12 +166,27 @@ func cloneSSHWorkaround(relaunch *durableRelaunchConfig) bool {
 //
 // Extracted from runCloneOrchestration so groups-clone and the export clone can
 // reuse the same race handling without duplicating it.
-func cloneSpawnOnce(p cloneSpawnParams) (cloneSpawnResult, *cloneSpawnError) {
+func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSpawnError) {
 	sourceConv, cwd, noCopyConv := p.SourceConv, p.Cwd, p.NoCopyConv
 	effort, model := p.Effort, p.Model
 	proofToken, proofCwd, proofDirs := p.ProofToken, p.ProofCwd, p.ProofDirs
 	codexGitCommonDir, gitWriteDirs := p.CodexGitCommonDir, p.GitWriteDirs
 	var newConv, newTmux, label, warn string
+	// The clone's session row and pane exist before its conversation is linked
+	// to an actor, so for that window nothing durable says the row is an
+	// agent's and the terminal console would list it — and offer to kill it —
+	// as a plain session. Each branch below claims whichever identity it mints
+	// first, as early as it has one. A successful return hands the release to
+	// the caller, which holds it through EnsureAgentForConv; every error return
+	// releases here, so no error path can strand a claim.
+	releaseLaunchClaim := func() {}
+	defer func() {
+		if cerr == nil {
+			spawned.ReleaseLaunchClaim = releaseLaunchClaim
+			return
+		}
+		releaseLaunchClaim()
+	}()
 	relaunch, err := durableRelaunchConfigForConv(sourceConv)
 	if err != nil {
 		state, stateErr := db.AgentState(sourceConv)
@@ -385,11 +407,9 @@ func cloneSpawnOnce(p cloneSpawnParams) (cloneSpawnResult, *cloneSpawnError) {
 
 	if noCopyConv {
 		label = generateSpawnLabel()
-		// The clone's session row and pane exist before its conversation is
-		// linked to an actor, so for that window nothing durable says the row
-		// is an agent's — see agentLaunchLabels. The caller re-claims the
-		// returned label and holds it through EnsureAgentForConv.
-		defer claimAgentLaunchLabel(label)()
+		// No conv-id exists yet on this path; the row this launch writes is
+		// keyed by the label.
+		releaseLaunchClaim = claimAgentLaunchIdentity(label)
 		agentDirectoryCleanup := func() {}
 		if effectiveSandbox != nil {
 			materialized, cleanup, materializeErr := prepareCodexSSHWorkaroundForNewLaunch(
@@ -542,6 +562,12 @@ func cloneSpawnOnce(p cloneSpawnParams) (cloneSpawnResult, *cloneSpawnError) {
 		}
 	}
 	newConv = copyResult.NewConvID
+	// The forked jsonl fixes the conv-id before the launch, so that is what
+	// this path claims: the row it writes carries this conv, and its label is
+	// only discovered from the row afterwards. Without this the clone is a
+	// killable "(session)" row for the whole poll below whenever no sandbox
+	// snapshot triggers the early EnsureAgentForConv.
+	releaseLaunchClaim = claimAgentLaunchIdentity(newConv)
 	agentDirectoryCleanup := func() {}
 	if effectiveSandbox != nil {
 		materialized, cleanup, materializeErr := prepareCodexSSHWorkaroundForNewLaunch(
@@ -1269,10 +1295,12 @@ func runCloneOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 		return
 	}
 	newConv, newTmux, label, warn := spawned.NewConv, spawned.NewTmux, spawned.Label, spawned.Warn
-	// Carry the launch claim across the hand-back from cloneSpawnOnce, so the
-	// new row is never briefly indistinguishable from a plain session between
-	// the spawn returning and EnsureAgentForConv linking it below.
-	defer claimAgentLaunchLabel(label)()
+	// Take over the launch claim rather than re-claiming: releasing in
+	// cloneSpawnOnce and claiming again here would leave the new row briefly
+	// indistinguishable from a plain session, which is the window the claim
+	// exists to close. It runs out at the end of this handler, well after
+	// EnsureAgentForConv below has made the clone an agent for good.
+	defer spawned.ReleaseLaunchClaim()
 
 	// A clone is an agent in its own right. The identity copy below
 	// registers it via the group/grant DB hooks when the original had

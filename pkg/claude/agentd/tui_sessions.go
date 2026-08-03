@@ -27,7 +27,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
-// agentLaunchLabels names the session labels this daemon has launched FOR AN
+// agentLaunchIdentities names the identities this daemon has launched FOR AN
 // AGENT and is still waiting on. It exists because a launch creates its
 // session row — and its tmux pane — before the conversation is linked to an
 // actor, so for that window the row is indistinguishable from a plain session
@@ -38,50 +38,62 @@ import (
 // on its way into the roster, and — much worse — offer the operator a delete
 // that kills a materialising agent's pane behind the daemon's back.
 //
+// An identity is whichever of the two id spaces the launch knows first, since
+// the row can be matched on either: the session label (a no-copy clone or a
+// reincarnate mints one before the conv exists) or the conv-id (a copy clone
+// forks the jsonl first, so the conv is known before the label). The listing
+// tests both — see listLocalNonAgentSessions.
+//
 // The /v1/spawn path is already covered by its durable pending_spawns row,
 // which outlives the daemon; this covers reincarnate and clone, which mint a
-// label without one. It is deliberately in-memory: an entry only has to
+// launch without one. It is deliberately in-memory: an entry only has to
 // outlive the launch that holds it, and a daemon that dies mid-launch has
 // orphaned that launch anyway.
-var agentLaunchLabels = struct {
+var agentLaunchIdentities = struct {
 	sync.Mutex
-	labels map[string]int
-}{labels: map[string]int{}}
+	ids map[string]int
+}{ids: map[string]int{}}
 
-// claimAgentLaunchLabel marks label as an agent launch in flight and returns
+// claimAgentLaunchIdentity marks id as an agent launch in flight and returns
 // its release. Callers defer the release at the scope that owns the launch, so
-// a panic or an early error return cannot strand the claim. It counts rather
-// than sets: a label is unique per launch, but counting makes a retried or
-// nested claim release correctly instead of the first release clearing both.
-func claimAgentLaunchLabel(label string) func() {
-	if label == "" {
+// a panic or an early error return cannot strand the claim; a launch that
+// spans two scopes hands the release over rather than releasing and
+// re-claiming, which would open exactly the window the claim exists to close.
+// It counts rather than sets: an id is unique per launch, but counting makes a
+// retried or overlapping claim release correctly instead of the first release
+// clearing both.
+func claimAgentLaunchIdentity(id string) func() {
+	if id == "" {
 		return func() {}
 	}
-	agentLaunchLabels.Lock()
-	agentLaunchLabels.labels[label]++
-	agentLaunchLabels.Unlock()
+	agentLaunchIdentities.Lock()
+	agentLaunchIdentities.ids[id]++
+	agentLaunchIdentities.Unlock()
 	released := false
 	return func() {
 		if released {
 			return
 		}
 		released = true
-		agentLaunchLabels.Lock()
-		defer agentLaunchLabels.Unlock()
-		if agentLaunchLabels.labels[label] <= 1 {
-			delete(agentLaunchLabels.labels, label)
+		agentLaunchIdentities.Lock()
+		defer agentLaunchIdentities.Unlock()
+		if agentLaunchIdentities.ids[id] <= 1 {
+			delete(agentLaunchIdentities.ids, id)
 			return
 		}
-		agentLaunchLabels.labels[label]--
+		agentLaunchIdentities.ids[id]--
 	}
 }
 
-// agentLaunchInFlight reports whether label belongs to an agent launch this
+// agentLaunchInFlight reports whether id belongs to an agent launch this
 // daemon is still waiting on.
-func agentLaunchInFlight(label string) bool {
-	agentLaunchLabels.Lock()
-	defer agentLaunchLabels.Unlock()
-	_, claimed := agentLaunchLabels.labels[label]
+func agentLaunchInFlight(id string) bool {
+	if id == "" {
+		return false
+	}
+	agentLaunchIdentities.Lock()
+	defer agentLaunchIdentities.Unlock()
+	_, claimed := agentLaunchIdentities.ids[id]
 	return claimed
 }
 
@@ -210,7 +222,9 @@ func listLocalNonAgentSessions() ([]tuiSessionRow, error) {
 		if _, isPending := pending[st.ID]; isPending {
 			continue
 		}
-		if agentLaunchInFlight(st.ID) {
+		// Either id space: a launch claims whichever it knows first, and the
+		// row can be matched on either — see agentLaunchIdentities.
+		if agentLaunchInFlight(st.ID) || agentLaunchInFlight(st.ConvID) {
 			continue
 		}
 		if prev, dup := byTmux[st.TmuxSession]; !dup || st.Updated.After(prev.Updated) {
