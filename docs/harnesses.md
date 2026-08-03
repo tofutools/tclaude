@@ -252,9 +252,12 @@ Two consequences are worth stating plainly:
   classification fails closed for a harness with no approval catalog, so a
   Copilot child is refused rather than spawned with an unproven posture.
 
-The restraint is deliberate rather than incidental. This adapter was written
-against the official GitHub documentation, without a Copilot binary available
-to record fixtures. Documented launch flags are a stable contract; a
+The restraint is deliberate rather than incidental. This adapter was FIRST
+written against the official GitHub documentation alone, with no Copilot binary
+available to record fixtures — which is why so much of the matrix is still
+empty. Each row leaves that state only when the fixture lab below can prove it
+against the real pinned binary; hooks are the first to have done so.
+Documented launch flags are a stable contract; a
 session-state layout, a hook payload, or a sandbox/approval guarantee is not —
 and a descriptor that advertises a contract tclaude cannot honor is worse than
 one that advertises none, because callers detect an absent contract and degrade

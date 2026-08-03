@@ -47,6 +47,7 @@ func TestCopilotHookCommand_RedirectsStdout(t *testing.T) {
 	require.NoError(t, copilotHookInstaller{}.Install())
 	file := readCopilotHooksFileForTest(t, copilotHookInstaller{}.ConfigTarget())
 	for _, event := range CopilotHookEvents {
+		require.Lenf(t, file.Hooks[event], 1, "event %s", event)
 		assert.Equal(t, command, file.Hooks[event][0].Command, "event %s", event)
 	}
 }
@@ -326,6 +327,7 @@ func TestCopilotHookInstaller_EmptyFileInstalls(t *testing.T) {
 	require.NoError(t, copilotHookInstaller{}.Install())
 
 	file := readCopilotHooksFileForTest(t, path)
+	require.Len(t, file.Hooks["Stop"], 1)
 	assert.Equal(t, command, file.Hooks["Stop"][0].Command)
 }
 
