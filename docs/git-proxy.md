@@ -160,23 +160,45 @@ The repository's own `.git/config`, `.git/hooks/*` and `.gitattributes` are all
 files the agent can write, and every one of them can name a program for git to
 run. The proxy therefore treats repo-local configuration as hostile.
 
-| Vector | What the proxy does |
-|---|---|
-| `.git/hooks/pre-push`, `reference-transaction`, … | `core.hooksPath` is pinned to a daemon-owned empty directory. |
-| `.gitattributes` filter programs | Only `fetch` / `push` / `ls-remote` run in the daemon; none updates the working tree. |
-| `ext::<command>` remote URLs | Refused by the URL parser **and** by `protocol.ext.allow=never`. |
-| `file://` and local-path remotes | Refused — they have no host to allow-list. |
-| `http://` and `git://` remotes | Refused — no cleartext credentials, no unauthenticated transport. |
-| `url.<base>.insteadOf` rewrites | Cannot be reset by a `-c` override, so instead each validated URL must be a **fixed point** of git's own rewriting. A repository that would redirect it is refused. |
-| `remote.<name>.pushurl` | Validated separately from the fetch URL — otherwise push would be aimed somewhere unchecked. |
-| `remote.<name>.uploadpack` / `receivepack` / `vcs` / `proxy` | **Refused outright** — a repository that sets one of these is refused rather than "neutralized". These keys select a *program*, and `uploadpack`/`receivepack` are read first-wins across config scopes, so a `-c` override does **not** displace a repo-local value. The stock programs are additionally passed as `--upload-pack` / `--receive-pack` flags, which do override config. |
-| `core.sshCommand`, `core.alternateRefsCommand`, `core.fsmonitor`, `core.editor`, `core.pager`, `gpg.program`, `diff.external`, `http.proxy` | All pinned. |
-| A repo-local `credential.helper` (an arbitrary command) | The helper list is reset, then repopulated from **global/system** configuration only, so your real helper keeps working. |
-| Argument injection | Every parameter is charset-validated and refused if it begins with `-`. There is no passthrough flag and no `--` escape. |
-| A hung transport | Every call is time-bounded and runs in a private process group that is killed after `Wait`, so an `ssh` child cannot outlive the request. |
-| Secrets in `/proc` | Tokens travel in the child's environment or a `0600` file, never in argv. PR bodies and comments go through `--body-file`. |
+There are two mechanisms, and it matters which one is doing the work.
+**Pinning** (`git -c key=value`) is used where it is known to be effective.
+**Refusal** — rejecting the whole operation — is used everywhere else, because
+pinning turns out not to be uniformly reliable: `remote.<n>.uploadpack` is read
+first-wins across config scopes so a `-c` override never displaces a repo-local
+value, a URL-scoped `http.<url>.proxy` outranks a generic `-c http.proxy=`, and
+`url.*.insteadOf` has no reset form at all. Which keys `-c` wins is a property
+of git's config reader that varies per key and can change between versions, so
+the load-bearing measures do not depend on it.
 
-Nothing here ever runs a shell.
+| Vector | Mechanism | What the proxy does |
+|---|---|---|
+| `.git/hooks/pre-push`, `reference-transaction`, … | pin | `core.hooksPath` → a daemon-owned empty directory. |
+| `core.askPass` — a program run to obtain a credential | pin | Pinned empty. Git consults askpass **before** the terminal, so `GIT_TERMINAL_PROMPT=0` does not close this and clearing `GIT_ASKPASS` only removes the env-var route. |
+| `core.sshCommand`, `core.alternateRefsCommand`, `core.fsmonitor`, `core.gitProxy`, `core.editor`, `core.pager`, `gpg.program`, `diff.external` | pin | All pinned. |
+| `.gitattributes` filter programs | design | Only `fetch` / `push` / `ls-remote` run in the daemon; none updates the working tree. |
+| `ext::<command>` remote URLs | refuse + pin | Refused by the URL parser **and** by `protocol.ext.allow=never`. |
+| `file://`, local paths, `http://`, `git://` | refuse | No host to allow-list, cleartext credentials, or unauthenticated transport. |
+| `url.<base>.insteadOf` rewrites | refuse | Each validated URL must be a **fixed point** of git's own rewriting; a repository that would redirect it is refused. |
+| **Several `remote.<n>.url` values** | refuse | `git remote get-url` reports only the first, but `git push` contacts **every** one. All are read with `--all` and each must pass the allow-list. |
+| `remote.<name>.pushurl` | refuse | Validated separately from the fetch URL. |
+| `remote.<n>.uploadpack` / `receivepack` / `vcs` / `proxy` | refuse (+ flag) | A repository that sets one is refused. The stock programs additionally ride as `--upload-pack` / `--receive-pack` **flags**, which do override config where `-c` does not. |
+| `http.*` — `proxy`, `sslVerify`, `sslCAInfo`, `curloptResolve`, `extraHeader`, … | refuse | Any `http.*` key outside a tiny performance-only safe set is refused. In its URL-scoped form this family outranks any override the proxy could set, and it is the route by which a credential would be handed to an attacker-chosen endpoint. |
+| Submodule recursion | pin + flag | `fetch`/`push.recurseSubmodules` and `submodule.recurse` pinned off, plus `--no-recurse-submodules`. A submodule's own config names hosts the allow-list never saw. |
+| A `.git` **gitfile** redirecting `GIT_DIR` elsewhere | refuse | The resolved git directory must live under the work-tree root, so a one-line `.git` file cannot aim the daemon at another repository's config, refs and remotes. |
+| A work tree at or above `$HOME` | refuse | Stops an agent launched outside a repository from having git walk up into the operator's home. |
+| A repo-local `credential.helper` (an arbitrary command) | pin | The helper list is reset, then repopulated from **global/system** configuration only, so your real helper keeps working. |
+| Argument injection | validate | Every parameter is charset-validated and refused if it begins with `-`. No passthrough flag, no `--` escape. |
+| A hung transport | bound | Every call is time-bounded and runs in a private process group killed after `Wait`, so an `ssh` child cannot outlive the request. |
+| Secrets in `/proc` | design | Tokens travel in the child's environment or a `0600` file, never in argv. PR bodies and comments go through `--body-file`. |
+
+Nothing here ever runs a shell. A configuration probe that cannot be *run* is
+treated as a refusal, not as "nothing configured" — a gate that reads a failed
+check as clean is worse than no gate.
+
+These are not paper claims: `pkg/claude/agentd/gitproxy_realgit_test.go` runs
+real `git` against a throwaway repository and asserts each pin has its claimed
+effect, **paired with a control run** proving the hostile configuration would
+otherwise have worked.
 
 For GitHub specifically, `gh` runs in a **neutral directory** — never the
 agent's repository — and always with an explicit `--repo <owner>/<repo>` derived
@@ -227,6 +249,10 @@ tclaude agent github pr create # → audit verb "github.pr.create"
 | `this repository rewrites its … URL (url.*.insteadOf)` | The repo has a rewrite rule that would redirect the validated URL. Remove it, or point the remote directly at the real URL. |
 | `refusing an 'ext::' remote URL` | The remote names a command, not a server. Something has rewritten `.git/config`; inspect it. |
 | `this repository sets remote.X.uploadpack …` | The repository configures a program-selecting key for that remote. Remove it with `git config --unset remote.X.uploadpack` (or `receivepack` / `vcs` / `proxy`). |
+| `this repository configures http.…` | An `http.*` setting that can redirect the connection or weaken TLS. Remove it, or move it to your global config only if you genuinely need it — the proxy refuses it wherever it is set. |
+| `git directory … lives outside the work tree` | The checkout uses a `.git` gitfile pointing elsewhere — most often a **linked worktree**, which the proxy does not operate on. Run the proxy from the main checkout. |
+| `contains the operator's home directory` | Your launch directory is not inside a repository, so git walked up into `$HOME`. Work inside an actual project checkout. |
+| `could not inspect this repository's configuration` | A config probe failed to run. The proxy refuses rather than assuming the repository is safe; check that `git` works in that directory. |
 | `tool_missing` | `git` or `gh` is not installed on the host running agentd. |
 | A push hangs then times out | Usually a passphrase-protected key that is not loaded into an ssh-agent. The proxy runs `ssh -o BatchMode=yes`, so it fails rather than prompting — load the key with `ssh-add`, or set `ssh_key`. |
 

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -39,27 +40,33 @@ type gitProxyRecorder struct {
 	mu       sync.Mutex
 	calls    []agentd.ProxyCommand
 	repoRoot string
-	remotes  map[string]string // remote name -> URL
-	branch   string
+	// gitDir overrides the reported --absolute-git-dir, to model a `.git`
+	// GITFILE that points the daemon at another repository's metadata.
+	gitDir  string
+	remotes map[string]string // remote name -> URL (",".joined for several)
+	branch  string
 	// rewriteTo, when set for a URL, makes `ls-remote --get-url <url>` answer
 	// with something else — simulating a repo-local url.*.insteadOf rewrite.
 	rewriteTo map[string]string
-	// remoteConfig seeds `git config --get <key>` answers, so a test can model
-	// a repository that sets a program-selecting remote.<n>.* key.
-	remoteConfig map[string]string
+	// repoConfig seeds the repository configuration the hostile-config probe
+	// sees, keyed by canonical git config name.
+	repoConfig map[string]string
 	// network is the canned result for the actual fetch/push/ls-remote call.
 	network agentd.ProxyResult
+	// configProbeFails models a config probe that could not run — the gate
+	// must refuse rather than read that as "nothing configured".
+	configProbeFails bool
 	// gh is the canned result for a `gh` invocation.
 	gh agentd.ProxyResult
 }
 
 func newGitProxyRecorder(repoRoot string) *gitProxyRecorder {
 	return &gitProxyRecorder{
-		repoRoot:     repoRoot,
-		remotes:      map[string]string{"origin": gitProxyTestRemote},
-		branch:       "feat/thing",
-		rewriteTo:    map[string]string{},
-		remoteConfig: map[string]string{},
+		repoRoot:   repoRoot,
+		remotes:    map[string]string{"origin": gitProxyTestRemote},
+		branch:     "feat/thing",
+		rewriteTo:  map[string]string{},
+		repoConfig: map[string]string{},
 	}
 }
 
@@ -97,19 +104,43 @@ func (r *gitProxyRecorder) exec(_ context.Context, cmd agentd.ProxyCommand) (age
 		if slices.Contains(sub, "--show-toplevel") {
 			return agentd.ProxyResult{Stdout: r.repoRoot + "\n"}, nil
 		}
+		if slices.Contains(sub, "--absolute-git-dir") {
+			// An ordinary repository: the git dir sits inside the work tree.
+			// A test that wants the redirected (gitfile) shape overrides this.
+			if r.gitDir != "" {
+				return agentd.ProxyResult{Stdout: r.gitDir + "\n"}, nil
+			}
+			return agentd.ProxyResult{Stdout: filepath.Join(r.repoRoot, ".git") + "\n"}, nil
+		}
 		if slices.Contains(sub, "--abbrev-ref") {
 			return agentd.ProxyResult{Stdout: r.branch + "\n"}, nil
 		}
 		return miss, nil
 	case "config":
-		// `config --get remote.<n>.<key>` is the program-selecting-config
-		// probe; anything the test seeded into remoteConfig is reported as
-		// present. Everything else (the global/system credential-helper reads)
-		// answers "unset".
-		if len(sub) > 1 && sub[1] == "--get" {
-			if v, ok := r.remoteConfig[sub[len(sub)-1]]; ok {
-				return agentd.ProxyResult{Stdout: v + "\n"}, nil
+		// `config --name-only --get-regexp <pattern>` is the hostile-config
+		// probe. Answer it from repoConfig, matching git's own contract: exit 1
+		// means "no key matched", which the daemon must read as "clean" — while
+		// any OTHER failure it must read as "refuse". Everything else (the
+		// global/system credential-helper reads) answers "unset".
+		if slices.Contains(sub, "--get-regexp") {
+			if r.configProbeFails {
+				return agentd.ProxyResult{ExitCode: 128, Stderr: "stub: probe exploded"}, nil
 			}
+			re, err := regexp.Compile(sub[len(sub)-1])
+			if err != nil {
+				return miss, nil
+			}
+			var matched []string
+			for key := range r.repoConfig {
+				if re.MatchString(key) {
+					matched = append(matched, key)
+				}
+			}
+			if len(matched) == 0 {
+				return miss, nil // git's exit 1 = no matching key
+			}
+			slices.Sort(matched)
+			return agentd.ProxyResult{Stdout: strings.Join(matched, "\n") + "\n"}, nil
 		}
 		return miss, nil
 	case "remote":
@@ -127,7 +158,14 @@ func (r *gitProxyRecorder) exec(_ context.Context, cmd agentd.ProxyCommand) (age
 			if !ok {
 				return miss, nil
 			}
-			return agentd.ProxyResult{Stdout: url + "\n"}, nil
+			// A remote may carry SEVERAL urls; the test model spells them
+			// comma-separated. `--all` reports every one, the bare form only
+			// the first — which is the asymmetry the daemon has to survive.
+			urls := strings.Split(url, ",")
+			if !slices.Contains(sub, "--all") {
+				urls = urls[:1]
+			}
+			return agentd.ProxyResult{Stdout: strings.Join(urls, "\n") + "\n"}, nil
 		}
 		return miss, nil
 	case "ls-remote":
@@ -406,7 +444,7 @@ func TestGitProxy_RefusesProgramSelectingRemoteConfig(t *testing.T) {
 	for _, key := range []string{"uploadpack", "receivepack", "vcs", "proxy"} {
 		t.Run(key, func(t *testing.T) {
 			f, rec := gitProxyWorld(t, []string{"github.com/tofutools"})
-			rec.remoteConfig["remote.origin."+key] = "sh -c 'touch /tmp/pwned'"
+			rec.repoConfig["remote.origin."+key] = "sh -c 'touch /tmp/pwned'"
 			require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitPush, "test"))
 
 			res := gitProxyPost(t, f, "/v1/git/push", map[string]any{"branch": "feat/thing"})
@@ -416,6 +454,116 @@ func TestGitProxy_RefusesProgramSelectingRemoteConfig(t *testing.T) {
 			assert.Empty(t, rec.networkCalls(), "nothing may reach the network")
 		})
 	}
+}
+
+// TestGitProxy_RefusesHostileHTTPConfig covers the `http.*` family.
+//
+// This one is the exfiltration case: `http.<url>.proxy` plus
+// `http.<url>.sslVerify=false` routes the connection through a host the agent
+// chooses and stops git objecting to its certificate, handing that host the
+// operator's credential. It cannot be pinned away — a URL-scoped entry beats a
+// generic `-c http.proxy=` by specificity — so it is refused instead.
+func TestGitProxy_RefusesHostileHTTPConfig(t *testing.T) {
+	for _, key := range []string{
+		"http.proxy",
+		"http.https://github.com/.proxy",
+		"http.sslverify",
+		"http.https://github.com/.sslverify",
+		"http.sslcainfo",
+		"http.curloptresolve",
+		"http.extraheader",
+	} {
+		t.Run(key, func(t *testing.T) {
+			f, rec := gitProxyWorld(t, []string{"github.com/tofutools"})
+			rec.repoConfig[key] = "attacker-controlled"
+			require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitPush, "test"))
+
+			res := gitProxyPost(t, f, "/v1/git/push", map[string]any{"branch": "feat/thing"})
+			assert.Equal(t, http.StatusForbidden, res.Code, "body=%s", res.Body.String())
+			assert.Contains(t, res.Body.String(), key, "the refusal must name the offending key")
+			assert.Empty(t, rec.networkCalls())
+		})
+	}
+}
+
+// TestGitProxy_AllowsInnocuousHTTPConfig — the http.* refusal must not be so
+// broad that an ordinary tuned repository stops working.
+func TestGitProxy_AllowsInnocuousHTTPConfig(t *testing.T) {
+	f, rec := gitProxyWorld(t, []string{"github.com/tofutools"})
+	rec.repoConfig["http.postbuffer"] = "524288000"
+	rec.repoConfig["http.version"] = "HTTP/1.1"
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitPush, "test"))
+
+	res := gitProxyPost(t, f, "/v1/git/push", map[string]any{"branch": "feat/thing"})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+	assert.Len(t, rec.networkCalls(), 1)
+}
+
+// TestGitProxy_ValidatesEveryConfiguredRemoteURL — a remote may carry SEVERAL
+// urls, and `git push` contacts every one while `git remote get-url` reports
+// only the first. Validating just the first would let a repository keep an
+// allow-listed URL in position one and append an arbitrary second host.
+func TestGitProxy_ValidatesEveryConfiguredRemoteURL(t *testing.T) {
+	f, rec := gitProxyWorld(t, []string{"github.com/tofutools"})
+	rec.remotes["origin"] = gitProxyTestRemote + ",https://attacker.example.invalid/x/y.git"
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitPush, "test"))
+
+	res := gitProxyPost(t, f, "/v1/git/push", map[string]any{"branch": "feat/thing"})
+	assert.Equal(t, http.StatusForbidden, res.Code, "body=%s", res.Body.String())
+	assert.Contains(t, res.Body.String(), "attacker.example.invalid")
+	assert.Empty(t, rec.networkCalls(), "the repository must not be sent anywhere")
+}
+
+// TestGitProxy_RefusesRedirectedGitDir — a `.git` GITFILE leaves the work-tree
+// root pointing at the agent's own directory while the actual GIT_DIR (config,
+// refs, objects and therefore remotes) lives in another repository entirely.
+func TestGitProxy_RefusesRedirectedGitDir(t *testing.T) {
+	f, rec := gitProxyWorld(t, []string{"github.com/tofutools"})
+	rec.gitDir = "/home/operator/private-victim/.git"
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitRead, "test"))
+
+	res := gitProxyPost(t, f, "/v1/git/ls-remote", map[string]any{})
+	assert.Equal(t, http.StatusConflict, res.Code, "body=%s", res.Body.String())
+	assert.Contains(t, res.Body.String(), "outside the work tree")
+	assert.Empty(t, rec.networkCalls())
+}
+
+// TestGitProxy_ConfigProbeFailureRefuses — a gate that reads a failed probe as
+// "nothing configured" fails OPEN, which is worse than having no gate: it looks
+// protective and is not.
+func TestGitProxy_ConfigProbeFailureRefuses(t *testing.T) {
+	f, rec := gitProxyWorld(t, []string{"github.com/tofutools"})
+	rec.configProbeFails = true
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitPush, "test"))
+
+	res := gitProxyPost(t, f, "/v1/git/push", map[string]any{"branch": "feat/thing"})
+	assert.Equal(t, http.StatusInternalServerError, res.Code, "body=%s", res.Body.String())
+	assert.Contains(t, res.Body.String(), "refusing")
+	assert.Empty(t, rec.networkCalls())
+}
+
+// TestGitProxy_PinsCloseTheAskPassAndSubmoduleRoutes.
+//
+// core.askPass runs a program to obtain a credential and git consults it
+// BEFORE the terminal, so GIT_TERMINAL_PROMPT=0 does not close it and clearing
+// GIT_ASKPASS from the environment only removes the env-var route. Submodule
+// recursion dials a host named by a submodule's own config, which the
+// allow-list never inspected.
+func TestGitProxy_PinsCloseTheAskPassAndSubmoduleRoutes(t *testing.T) {
+	f, rec := gitProxyWorld(t, []string{"github.com/tofutools"})
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitPush, "test"))
+
+	res := gitProxyPost(t, f, "/v1/git/push", map[string]any{"branch": "feat/thing"})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+
+	push := rec.networkCalls()[0]
+	joined := strings.Join(push.Args, " ")
+	assert.Contains(t, joined, "-c core.askPass=",
+		"core.askPass is consulted before the terminal; GIT_TERMINAL_PROMPT=0 does not close it")
+	assert.Contains(t, joined, "-c core.gitProxy=")
+	assert.Contains(t, joined, "-c push.recurseSubmodules=no")
+	assert.Contains(t, joined, "-c submodule.recurse=false")
+	assert.Contains(t, push.Args, "--no-recurse-submodules")
 }
 
 // TestGitProxy_FetchPinsTheTransportProgram — the read verbs get the same

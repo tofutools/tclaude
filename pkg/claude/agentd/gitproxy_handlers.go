@@ -3,7 +3,9 @@ package agentd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -113,7 +115,7 @@ func remoteOrDefault(name string) string {
 func decodeGitProxyBody(w http.ResponseWriter, r *http.Request, out any) bool {
 	r.Body = http.MaxBytesReader(w, r.Body, maxGitProxyRequestBytes)
 	dec := json.NewDecoder(r.Body)
-	if err := dec.Decode(out); err != nil && err.Error() != "EOF" {
+	if err := dec.Decode(out); err != nil && !errors.Is(err, io.EOF) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 		return false
 	}
@@ -137,7 +139,7 @@ func handleGitProxyRemotes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	s, fault := newGitProxySession(ctx, convID, "")
+	s, fault := newGitProxySession(ctx, convID)
 	if fault != nil {
 		writeProxyFault(w, fault)
 		return
@@ -157,25 +159,68 @@ func handleGitProxyRemotes(w http.ResponseWriter, r *http.Request) {
 		if i >= maxGitProxyRemotes {
 			break
 		}
-		view := gitProxyRemoteView{Name: name}
-		if validateRemoteName(name) != nil {
-			// A remote whose own name we would refuse is reported rather than
-			// hidden: the agent needs to know why it cannot use it.
-			view.RefusedFor = "the remote name is outside the accepted charset"
-			resp.Remotes = append(resp.Remotes, view)
-			continue
-		}
-		view.FetchURL = s.gitProbe(ctx, "remote", "get-url", "--", name)
-		view.PushURL = s.gitProbe(ctx, "remote", "get-url", "--push", "--", name)
-		if resolved, fault := resolveProxyRemote(ctx, s, name); fault == nil {
-			view.Allowed = true
-			view.RemoteRef = resolved.FetchRef.Key()
-		} else {
-			view.RefusedFor = fault.Msg
-		}
-		resp.Remotes = append(resp.Remotes, view)
+		resp.Remotes = append(resp.Remotes, describeProxyRemote(ctx, s, name))
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// describeProxyRemote answers "could I use this remote?" for the listing.
+//
+// It deliberately runs the CHEAP half of the gate — the URLs and the allow-list
+// — rather than the full resolveProxyRemote. This route is an unauthenticated-
+// to-the-network local read that an agent may call freely, and running every
+// gate for every remote would turn one GET into hundreds of subprocesses. The
+// expensive checks (the config-family probes, the insteadOf fixed point) still
+// run on the operation itself, which is the only place their answer matters.
+//
+// The consequence is honest and worth stating: a remote shown as allowed here
+// can still be refused by an actual fetch or push, and the refusal will say
+// why. The listing answers "is this remote on the allow-list", not "is this
+// repository in a state the proxy will act on".
+func describeProxyRemote(ctx context.Context, s *gitProxySession, name string) gitProxyRemoteView {
+	view := gitProxyRemoteView{Name: name}
+	if validateRemoteName(name) != nil {
+		// A remote whose own name we would refuse is reported rather than
+		// hidden: the agent needs to know why it cannot use it.
+		view.RefusedFor = "the remote name is outside the accepted charset"
+		return view
+	}
+	fetchURLs, fault := s.remoteURLs(ctx, name, false)
+	if fault != nil {
+		view.RefusedFor = fault.Msg
+		return view
+	}
+	if len(fetchURLs) == 0 {
+		view.RefusedFor = "no URL is configured for this remote"
+		return view
+	}
+	pushURLs, _ := s.remoteURLs(ctx, name, true)
+	if len(pushURLs) == 0 {
+		pushURLs = fetchURLs
+	}
+	view.FetchURL = strings.Join(fetchURLs, ", ")
+	view.PushURL = strings.Join(pushURLs, ", ")
+
+	// Every configured URL must pass, not just the first — that asymmetry is
+	// exactly what a second, unlisted url line would exploit.
+	for _, raw := range append(append([]string{}, fetchURLs...), pushURLs...) {
+		ref, err := parseRemoteURL(raw)
+		if err != nil {
+			view.RefusedFor = err.Error()
+			return view
+		}
+		if !remoteAllowed(ref, s.policy.AllowedRemotes) {
+			view.RefusedFor = fmt.Sprintf(
+				"%s is not on the operator's allow-list (allowed: %s)",
+				ref.Key(), strings.Join(s.policy.AllowedRemotes, ", "))
+			return view
+		}
+		if view.RemoteRef == "" {
+			view.RemoteRef = ref.Key()
+		}
+	}
+	view.Allowed = true
+	return view
 }
 
 // handleGitProxyLsRemote serves POST /v1/git/ls-remote — the cheapest
@@ -240,7 +285,7 @@ func handleGitProxyFetch(w http.ResponseWriter, r *http.Request) {
 		writeProxyFault(w, fault)
 		return
 	}
-	args := []string{"fetch", gitProxyUploadPack}
+	args := []string{"fetch", gitProxyUploadPack, "--no-recurse-submodules"}
 	if body.Prune {
 		args = append(args, "--prune")
 	}
@@ -311,7 +356,7 @@ func handleGitProxyPush(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	args := []string{"push", gitProxyReceivePack}
+	args := []string{"push", gitProxyReceivePack, "--no-recurse-submodules"}
 	if body.ForceWithLease {
 		if !s.policy.AllowForcePush {
 			writeError(w, http.StatusForbidden, "force_push_disabled",
@@ -341,7 +386,7 @@ func openProxyRemote(ctx context.Context, convID, requestedRemote string) (
 	*gitProxySession, resolvedRemote, *proxyFault,
 ) {
 	name := remoteOrDefault(requestedRemote)
-	s, fault := newGitProxySession(ctx, convID, name)
+	s, fault := newGitProxySession(ctx, convID)
 	if fault != nil {
 		return nil, resolvedRemote{}, fault
 	}

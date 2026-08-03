@@ -9,12 +9,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/resumeprovenance"
 	tclcommon "github.com/tofutools/tclaude/pkg/common"
 )
@@ -56,23 +58,39 @@ import (
 //     command outright and `file:` escapes the allow-list, so the transport
 //     is pinned to https/ssh at the git level AND the parsed URL is
 //     independently required to be one of those two.
-//   - remote.<name>.uploadpack / receivepack / vcs / proxy select a PROGRAM
-//     rather than a destination. A `-c` override does NOT displace the first
-//     two — git reads them first-wins across scopes, so a repo-local value
-//     beats the command line — so the proxy does two things instead: it
-//     refuses outright when a repository sets any of them
-//     (refuseDangerousRemoteConfig), and it passes the stock programs as
-//     --upload-pack / --receive-pack FLAGS, which do override config.
-//   - core.sshCommand, core.alternateRefsCommand, core.fsmonitor,
-//     core.editor, core.pager, gpg.program, diff.external and http.proxy are
-//     all pinned, because each is a command-execution or redirection vector.
-//   - url.<base>.insteadOf cannot be reset by a `-c` override, so it is
-//     defeated by a fixed-point check instead: a repo whose configuration
-//     would rewrite the URL we validated is refused rather than followed.
-//     See resolveProxyRemote.
+//   - core.askPass names a program git runs to obtain a credential, and it is
+//     consulted BEFORE the terminal — so GIT_TERMINAL_PROMPT=0 does not close
+//     it. It is pinned empty. core.sshCommand, core.alternateRefsCommand,
+//     core.fsmonitor, core.gitProxy, core.editor, core.pager, gpg.program and
+//     diff.external are pinned for the same reason.
+//   - Submodule recursion would dial a host named by a submodule's own
+//     configuration, which the allow-list never inspected. Pinned off and
+//     passed --no-recurse-submodules.
 //   - credential.helper is reset and then re-populated from GLOBAL/SYSTEM
 //     configuration only, so an operator's real helper keeps working while a
 //     repo-local one — an arbitrary command — is dropped.
+//
+// PINNING IS NOT UNIFORMLY RELIABLE, which shapes everything above. Three
+// separate classes of key turned out to resist `-c`:
+//
+//   - remote.<name>.uploadpack / receivepack are read FIRST-WINS across
+//     scopes, so a repo-local value beats the command line outright ("more
+//     than one uploadpack given, using the first").
+//   - http.<url>.* entries beat a generic `-c http.proxy=` by URL specificity,
+//     and http.sslVerify / sslCAInfo / curloptResolve have no generic form
+//     worth pinning at all.
+//   - url.<base>.insteadOf has no reset form.
+//
+// So the load-bearing mechanism is REFUSAL, not neutralization:
+// refuseHostileRepoConfig rejects the whole operation when the repository
+// carries any of those families (see dangerousRemoteKeys / safeHTTPKeys), and
+// resolveProxyRemote requires each validated URL to be a fixed point of git's
+// own rewriting. The stock transport programs additionally ride as
+// --upload-pack / --receive-pack FLAGS, which DO override config.
+//
+// One more consequence of not trusting the repository: `git remote get-url`
+// reports only the FIRST url, while `git push` contacts EVERY configured one.
+// Every URL is validated, via --all.
 //
 // Nothing here ever runs a shell, and no agent-supplied string ever becomes a
 // git flag: every parameter is charset-validated and refused if it begins with
@@ -341,10 +359,25 @@ func gitProxyConfigPins(hooksDir, sshCommand string, credentialHelpers []string)
 		"core.fsmonitor=false",
 		"core.alternateRefsCommand=",
 		"core.sshCommand=" + sshCommand,
+		// core.askPass runs a program to obtain a credential, and git consults
+		// it BEFORE the terminal — so GIT_TERMINAL_PROMPT=0 does not close it
+		// and clearing GIT_ASKPASS/SSH_ASKPASS from the environment only
+		// removes the env-var route. Without this pin, a repo-local
+		// `core.askPass = ./pwn.sh` executes on the daemon host as the
+		// operator during any authenticating fetch or push.
+		"core.askPass=",
+		"core.gitProxy=",
 		"core.editor=false",
 		"core.pager=cat",
 		"gpg.program=false",
 		"diff.external=",
+		// Submodule recursion would dial whatever host a submodule's own
+		// configuration names — a destination the allow-list never saw. The
+		// protocol pins would still apply to that transport; the allow-list
+		// would not. The verbs also pass --no-recurse-submodules.
+		"fetch.recurseSubmodules=no",
+		"push.recurseSubmodules=no",
+		"submodule.recurse=false",
 		// Transport restriction. protocol.allow is the default for protocols
 		// without a specific setting, so denying it and re-allowing exactly
 		// https+ssh refuses ext:: (arbitrary command execution) and file://.
@@ -400,9 +433,14 @@ func gitProxyEnv() []string {
 		"GIT_TERMINAL_PROMPT=0",
 	}
 	for _, name := range []string{
-		"PATH",          // git needs its helper binaries (git-remote-https, ssh)
-		"HOME",          // ~/.gitconfig, ~/.ssh/config — operator-owned
-		"TMPDIR",        // git writes temporary pack files
+		"PATH",   // git needs its helper binaries (git-remote-https, ssh)
+		"HOME",   // ~/.gitconfig, ~/.ssh/config — operator-owned
+		"TMPDIR", // git writes temporary pack files
+		// XDG_CONFIG_HOME must be forwarded for the same reason HOME is: an
+		// operator whose git config (and therefore credential.helper) lives
+		// under a non-default XDG root would otherwise have it silently
+		// dropped, both here and in globalCredentialHelpers.
+		"XDG_CONFIG_HOME",
 		"SSH_AUTH_SOCK", // the preferred credential path: no secret in the child
 	} {
 		if v, ok := os.LookupEnv(name); ok && v != "" {
@@ -469,7 +507,7 @@ type gitProxySession struct {
 // newGitProxySession resolves the operator policy, the agent's repository and
 // the hardened argv prefix for one request. remoteName may be empty for
 // operations that name no remote.
-func newGitProxySession(ctx context.Context, convID, remoteName string) (*gitProxySession, *proxyFault) {
+func newGitProxySession(ctx context.Context, convID string) (*gitProxySession, *proxyFault) {
 	cfg, err := config.Load()
 	if err != nil {
 		return nil, faultf(500, "config", "could not read the daemon configuration: %v", err)
@@ -508,36 +546,103 @@ const (
 )
 
 // dangerousRemoteKeys are the per-remote configuration keys that select a
-// PROGRAM rather than describe a destination. The proxy refuses outright when a
-// repository sets one, instead of trying to neutralize it.
+// PROGRAM rather than describe a destination.
 //
-// Refusal rather than override is deliberate. `uploadpack` and `receivepack`
-// are first-wins keys that a `-c` override cannot displace at all; `vcs`
-// selects a `git-remote-<value>` helper binary; `proxy` redirects the
-// connection. Some are overridable and some are not, and that asymmetry is a
-// property of git's config reader that could change. A repository that sets any
-// of them is doing something the proxy has no reason to support, so the honest
-// answer is to stop rather than to guess which neutralization still works.
+// Refusal rather than override is deliberate, and the reason generalises. Three
+// separate attempts to neutralize repo-local configuration with `-c` have
+// turned out not to work: `uploadpack`/`receivepack` are first-wins across
+// scopes so a `-c` override never displaces them, and URL-scoped `http.<url>.*`
+// entries beat a generic `-c http.proxy=` by specificity. Which keys a `-c`
+// override actually wins is a property of git's config reader, it varies per
+// key, and it can change between versions. A repository that sets any of these
+// is doing something the proxy has no reason to support, so the honest answer
+// is to stop rather than to guess which neutralization still holds.
 var dangerousRemoteKeys = []string{"uploadpack", "receivepack", "vcs", "proxy"}
 
-// refuseDangerousRemoteConfig fails closed when the agent's repository
-// configures a program-selecting key for the named remote.
+// safeHTTPKeys are the only `http.*` settings a repository may carry. They are
+// performance and protocol-version knobs with no security effect.
 //
-// It reads the EFFECTIVE value (not `--local`), so a value arriving through an
-// include, or through the operator's own global config, is caught too. That is
-// the conservative direction: an operator who has genuinely set
-// remote.origin.uploadpack globally gets a clear refusal rather than a silently
-// different transport program.
-func refuseDangerousRemoteConfig(ctx context.Context, s *gitProxySession, remoteName string) *proxyFault {
-	for _, key := range dangerousRemoteKeys {
-		full := "remote." + remoteName + "." + key
-		if value := s.gitProbe(ctx, "config", "--get", "--", full); value != "" {
-			return faultf(http.StatusForbidden, "remote_config_refused",
-				"this repository sets %s, which selects a program rather than a destination; "+
-					"the proxy refuses to run against a remote configured that way", full)
+// Everything else in that family is refused, rather than enumerated as a
+// deny-list, because the dangerous set is large and open-ended — proxy,
+// sslVerify, sslCAInfo, sslCert, curloptResolve (a DNS override!), extraHeader,
+// followRedirects, the proxySSL* family — and every one of them can be written
+// in the URL-scoped `http.<url>.<key>` form that outranks a generic pin.
+var safeHTTPKeys = map[string]bool{
+	"http.postbuffer":    true,
+	"http.lowspeedlimit": true,
+	"http.lowspeedtime":  true,
+	"http.maxrequests":   true,
+	"http.version":       true,
+}
+
+// refuseHostileRepoConfig fails CLOSED when the agent's repository carries
+// configuration that could redirect the connection, weaken its TLS, or run a
+// program.
+//
+// It reads the EFFECTIVE configuration rather than `--local`, so a value
+// arriving through an `include.path`, through `config.worktree`, or through the
+// operator's own global file is caught too. That is the conservative direction:
+// an operator who has genuinely set `http.sslVerify` globally gets a clear
+// refusal naming the key, rather than a silently weakened connection.
+//
+// A probe that could not RUN is treated as a refusal, not as "nothing
+// configured". That distinction is the whole reason gitProbeStrict exists — a
+// gate that reads a timed-out subprocess as "clean" is worse than no gate.
+func refuseHostileRepoConfig(ctx context.Context, s *gitProxySession, remoteName string) *proxyFault {
+	// One regexp probe for the whole per-remote family, rather than one probe
+	// per key: cheaper, and it catches a dangerous key we have not enumerated
+	// by surfacing it for the suffix check below.
+	remotePattern := "^remote\\." + regexp.QuoteMeta(remoteName) + "\\."
+	keys, fault := s.configKeys(ctx, remotePattern)
+	if fault != nil {
+		return fault
+	}
+	for _, key := range keys {
+		suffix := key[strings.LastIndexByte(key, '.')+1:]
+		for _, dangerous := range dangerousRemoteKeys {
+			if suffix == dangerous {
+				return faultf(http.StatusForbidden, "remote_config_refused",
+					"this repository sets %s, which selects a program rather than a destination; "+
+						"the proxy refuses to run against a remote configured that way", key)
+			}
 		}
 	}
+
+	httpKeys, fault := s.configKeys(ctx, "^http\\.")
+	if fault != nil {
+		return fault
+	}
+	for _, key := range httpKeys {
+		if safeHTTPKeys[key] {
+			continue
+		}
+		return faultf(http.StatusForbidden, "http_config_refused",
+			"this repository configures %s; that family can redirect the connection or disable "+
+				"certificate verification — and in its URL-scoped form it outranks any override the "+
+				"proxy could set — so the proxy refuses to run against it", key)
+	}
 	return nil
+}
+
+// configKeys lists the configured keys matching a git config regexp. It returns
+// no error for "no matches" (git's exit 1) and a refusal for anything else,
+// including a probe that never ran.
+func (s *gitProxySession) configKeys(ctx context.Context, pattern string) ([]string, *proxyFault) {
+	out, exitCode, ran := s.gitProbeStrict(ctx, "config", "--name-only", "--get-regexp", "--", pattern)
+	if !ran {
+		return nil, faultf(http.StatusInternalServerError, "config_probe_failed",
+			"could not inspect this repository's configuration for %s; refusing rather than "+
+				"assuming it is safe", pattern)
+	}
+	if exitCode == 1 {
+		return nil, nil // git's "no matching key"
+	}
+	if exitCode != 0 {
+		return nil, faultf(http.StatusInternalServerError, "config_probe_failed",
+			"inspecting this repository's configuration for %s failed (git exit %d); refusing "+
+				"rather than assuming it is safe", pattern, exitCode)
+	}
+	return splitNonEmptyLines(out), nil
 }
 
 // git runs a hardened git command in the agent's repository.
@@ -555,14 +660,33 @@ func (s *gitProxySession) git(ctx context.Context, args ...string) (ProxyResult,
 // non-zero exit as "no answer" rather than an error. Probes are questions about
 // the repository ("what is the current branch?"), and an unanswerable question
 // is handled by the caller, not surfaced as a subprocess failure.
+//
+// Use this only where "" is a SAFE answer. A security gate must not: for those,
+// use gitProbeStrict, which distinguishes "git said no" from "the probe did not
+// run". See refuseHostileRepoConfig.
 func (s *gitProxySession) gitProbe(ctx context.Context, args ...string) string {
+	value, _, _ := s.gitProbeStrict(ctx, args...)
+	return value
+}
+
+// gitProbeStrict is gitProbe with the outcome split three ways, because a gate
+// that reads a failed probe as "nothing configured" fails OPEN.
+//
+//	value          trimmed stdout (empty unless exit == 0)
+//	exitCode       git's exit status; 1 conventionally means "not found"
+//	ran            false when the subprocess could not be executed at all
+//	               (spawn failure, timeout) — never a statement about content
+func (s *gitProxySession) gitProbeStrict(ctx context.Context, args ...string) (value string, exitCode int, ran bool) {
 	probeCtx, cancel := context.WithTimeout(ctx, gitProxyProbeTimeout)
 	defer cancel()
 	res, err := s.git(probeCtx, args...)
-	if err != nil || res.ExitCode != 0 {
-		return ""
+	if err != nil || res.TimedOut {
+		return "", -1, false
 	}
-	return strings.TrimSpace(res.Stdout)
+	if res.ExitCode != 0 {
+		return "", res.ExitCode, true
+	}
+	return strings.TrimSpace(res.Stdout), 0, true
 }
 
 // ---------------------------------------------------------------------------
@@ -632,7 +756,62 @@ func resolveProxyRepo(ctx context.Context, gitPath, convID string) (string, *pro
 		return "", faultf(500, "repo_unresolved",
 			"git reported a non-absolute work-tree root %q", root)
 	}
-	return filepath.Clean(root), nil
+	root = filepath.Clean(root)
+
+	// The work tree is not the whole story. A `.git` GITFILE ("gitdir: …")
+	// leaves the toplevel pointing at the agent's own directory while the
+	// actual GIT_DIR — config, refs, objects and therefore remotes — lives
+	// somewhere else entirely. Without this check an agent could drop a
+	// one-line .git file naming another repository's admin dir and have the
+	// daemon list, fetch into, and push from a repo that is not its own.
+	//
+	// Linked worktrees legitimately use a gitfile too, but theirs points at
+	// <common>/worktrees/<name>, which is not under the work tree either — so
+	// the check is deliberately "the git dir must be under the work-tree root",
+	// which admits the ordinary .git directory and refuses redirection. A
+	// linked worktree therefore cannot be proxied from; that is a narrower
+	// capability than being able to aim at an arbitrary repository.
+	gitDirRes, err := proxyExec(probeCtx, ProxyCommand{
+		Tool: "git",
+		Path: gitPath,
+		Args: []string{"-C", resolved, "rev-parse", "--absolute-git-dir"},
+		Dir:  resolved,
+		Env:  gitProxyEnv(),
+	})
+	if err != nil {
+		return "", faultf(500, "repo_unresolved", "could not inspect the repository: %v", err)
+	}
+	gitDir := strings.TrimSpace(gitDirRes.Stdout)
+	if gitDirRes.ExitCode != 0 || gitDir == "" {
+		return "", faultf(409, "not_a_repo",
+			"could not resolve the git directory for %s", resolved)
+	}
+	if resolvedGitDir, err := filepath.EvalSymlinks(gitDir); err == nil {
+		gitDir = resolvedGitDir
+	}
+	if !sandboxpolicy.PathContainsOrEqual(root, filepath.Clean(gitDir)) {
+		return "", faultf(409, "git_dir_redirected",
+			"this work tree's git directory (%s) lives outside the work tree (%s); "+
+				"the proxy only operates on a repository whose own metadata it can attribute to you",
+			gitDir, root)
+	}
+
+	// An agent launched somewhere that is not itself a repository makes git
+	// walk upward, and if the operator's home happens to be a dotfiles repo the
+	// daemon would end up operating on THAT. Refuse the shape rather than the
+	// symptom: a work tree at or above home is never the agent's own project.
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		if resolvedHome, err := filepath.EvalSymlinks(home); err == nil {
+			home = resolvedHome
+		}
+		if sandboxpolicy.PathContainsOrEqual(root, filepath.Clean(home)) {
+			return "", faultf(409, "repo_too_broad",
+				"the git work tree containing your launch directory is %s, which contains the "+
+					"operator's home directory; refusing to treat that as your project repository",
+				root)
+		}
+	}
+	return root, nil
 }
 
 // recordedLaunchDir returns the immutable physical launch directory recorded
@@ -861,47 +1040,87 @@ func resolveProxyRemote(ctx context.Context, s *gitProxySession, name string) (r
 	if fault := validateRemoteName(name); fault != nil {
 		return resolvedRemote{}, fault
 	}
-	if fault := refuseDangerousRemoteConfig(ctx, s, name); fault != nil {
+	if fault := refuseHostileRepoConfig(ctx, s, name); fault != nil {
 		return resolvedRemote{}, fault
 	}
-	fetchURL := s.gitProbe(ctx, "remote", "get-url", "--", name)
-	if fetchURL == "" {
+	// --all, not the bare form. A remote may carry SEVERAL url / pushurl
+	// values, and `git push <name>` contacts EVERY one of them — while `git
+	// remote get-url <name>` reports only the first. Validating just the first
+	// would let a repository keep an allow-listed URL in position one and
+	// append an arbitrary second host that every gate here never sees.
+	fetchURLs, fault := s.remoteURLs(ctx, name, false)
+	if fault != nil {
+		return resolvedRemote{}, fault
+	}
+	if len(fetchURLs) == 0 {
 		return resolvedRemote{}, faultf(404, "unknown_remote",
 			"no remote named %q is configured in %s", name, filepath.Base(s.repoRoot))
 	}
-	pushURL := s.gitProbe(ctx, "remote", "get-url", "--push", "--", name)
-	if pushURL == "" {
-		pushURL = fetchURL
+	pushURLs, fault := s.remoteURLs(ctx, name, true)
+	if fault != nil {
+		return resolvedRemote{}, fault
+	}
+	if len(pushURLs) == 0 {
+		pushURLs = fetchURLs
 	}
 
-	out := resolvedRemote{Name: name, FetchURL: fetchURL, PushURL: pushURL}
-	var err error
-	if out.FetchRef, err = parseRemoteURL(fetchURL); err != nil {
-		return resolvedRemote{}, faultf(403, "remote_refused", "remote %q fetch URL: %v", name, err)
-	}
-	if out.PushRef, err = parseRemoteURL(pushURL); err != nil {
-		return resolvedRemote{}, faultf(403, "remote_refused", "remote %q push URL: %v", name, err)
+	out := resolvedRemote{
+		Name:     name,
+		FetchURL: fetchURLs[0],
+		PushURL:  pushURLs[0],
 	}
 	for _, check := range []struct {
 		label string
-		url   string
-		ref   remoteRef
+		urls  []string
 	}{
-		{"fetch", fetchURL, out.FetchRef},
-		{"push", pushURL, out.PushRef},
+		{"fetch", fetchURLs},
+		{"push", pushURLs},
 	} {
-		if !remoteAllowed(check.ref, s.policy.AllowedRemotes) {
-			return resolvedRemote{}, faultf(403, "remote_not_allowed",
-				"remote %q (%s %s) is not on the operator's allow-list; allowed: %s",
-				name, check.label, check.ref.Key(), strings.Join(s.policy.AllowedRemotes, ", "))
-		}
-		if rewritten := s.gitProbe(ctx, "ls-remote", "--get-url", "--", check.url); rewritten != check.url {
-			return resolvedRemote{}, faultf(403, "remote_rewritten",
-				"this repository rewrites its %s URL (url.*.insteadOf); refusing to follow a redirect that was not validated",
-				check.label)
+		for _, raw := range check.urls {
+			ref, err := parseRemoteURL(raw)
+			if err != nil {
+				return resolvedRemote{}, faultf(403, "remote_refused",
+					"remote %q %s URL: %v", name, check.label, err)
+			}
+			if !remoteAllowed(ref, s.policy.AllowedRemotes) {
+				return resolvedRemote{}, faultf(403, "remote_not_allowed",
+					"remote %q (%s %s) is not on the operator's allow-list; allowed: %s",
+					name, check.label, ref.Key(), strings.Join(s.policy.AllowedRemotes, ", "))
+			}
+			if rewritten := s.gitProbe(ctx, "ls-remote", "--get-url", "--", raw); rewritten != raw {
+				return resolvedRemote{}, faultf(403, "remote_rewritten",
+					"this repository rewrites its %s URL (url.*.insteadOf); refusing to follow a redirect that was not validated",
+					check.label)
+			}
+			if check.label == "fetch" && raw == out.FetchURL {
+				out.FetchRef = ref
+			}
+			if check.label == "push" && raw == out.PushURL {
+				out.PushRef = ref
+			}
 		}
 	}
 	return out, nil
+}
+
+// remoteURLs lists every URL configured for a remote, in git's own order.
+func (s *gitProxySession) remoteURLs(ctx context.Context, name string, push bool) ([]string, *proxyFault) {
+	args := []string{"remote", "get-url", "--all"}
+	if push {
+		args = append(args, "--push")
+	}
+	args = append(args, "--", name)
+	out, exitCode, ran := s.gitProbeStrict(ctx, args...)
+	if !ran {
+		return nil, faultf(http.StatusInternalServerError, "config_probe_failed",
+			"could not read the URLs configured for remote %q; refusing rather than guessing", name)
+	}
+	if exitCode != 0 {
+		// git exits non-zero for both "no such remote" and "no pushurl set".
+		// Both are legitimately "nothing here" for the caller to interpret.
+		return nil, nil
+	}
+	return splitNonEmptyLines(out), nil
 }
 
 // validateRemoteName bounds a remote name. Git's own rules are looser, but a

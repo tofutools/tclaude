@@ -167,9 +167,12 @@ func (g *ghProxySession) gh(ctx context.Context, args ...string) (ProxyResult, e
 	})
 }
 
-// bodyFile writes free text to a 0600 file in the daemon's private tree and
-// returns its path plus a cleanup func. The file is how a PR body reaches gh
-// without ever appearing in argv.
+// bodyFile writes free text to a 0600 file under TMPDIR and returns its path
+// plus a cleanup func. The file is how a PR body reaches gh without ever
+// appearing in argv, where /proc would expose it for the life of the process.
+//
+// The mode, not the location, is what protects it: this is an ordinary temp
+// file, removed as soon as gh has run.
 func (g *ghProxySession) bodyFile(body string) (string, func(), *proxyFault) {
 	f, err := os.CreateTemp("", "tclaude-ghproxy-*.md")
 	if err != nil {
