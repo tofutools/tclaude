@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
@@ -63,6 +64,13 @@ func TestPaneTreatsMissingTmuxGlobalAsAuthoritativeLegacyMode(t *testing.T) {
 	t.Setenv(ResourceDelegationDirEnv,
 		"/sys/fs/cgroup/system.slice/tclaude-tmux.service")
 	t.Setenv("TMUX", "/tmp/tmux.sock,1,0")
+	// This pane is deliberately NOT on tclaude's socket, and the -N assertion
+	// below depends on it staying that way. insideTclaudeTmuxServer treats a
+	// process that cannot read the config as being on tclaude's server (a
+	// sandboxed agent resolves the wrong socket name), so clear the agent
+	// marker — otherwise the result depends on whether the test binary itself
+	// happens to run inside a tclaude-managed agent.
+	t.Setenv(agentipc.SocketEnv, "")
 	swapTmux(t, &launchRecordingTmux{resourceEnvGone: true})
 
 	assert.Empty(t, ExternalResourceDelegationDir())

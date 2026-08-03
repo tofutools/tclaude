@@ -2422,6 +2422,33 @@ func Load() (*Config, error) {
 	return &config, nil
 }
 
+// PrivateConfigUnreadable reports whether this process could not actually read
+// the operator's private config, so every value Load returned is the built-in
+// default rather than the operator's setting. Load reports no error for a
+// sandboxed agent on purpose — an agent must not warn before every `tclaude
+// agent` command — which leaves callers unable to tell "the operator chose the
+// default" from "we never got to look". Callers that would otherwise fail OPEN
+// on that ambiguity use this to fail closed instead.
+//
+// The environment marker alone is not enough to conclude that: a daemon started
+// with a custom --socket exports SocketEnv into its OWN environment and can read
+// its config perfectly well, and treating it as blind would change behavior for
+// a process that is not an agent at all. So the marker only selects who is worth
+// probing, and an actual open decides. A denied read and a hidden path both
+// count as blind — a sandbox may surface either, and the two are not
+// distinguishable from in here.
+func PrivateConfigUnreadable() bool {
+	if !privateConfigIntentionallyInaccessible() {
+		return false
+	}
+	f, err := os.Open(ConfigPath())
+	if err != nil {
+		return true
+	}
+	_ = f.Close()
+	return false
+}
+
 // privateConfigIntentionallyInaccessible reports whether this process is an
 // agent whose sandbox deliberately denies ~/.tclaude. New tclaude-spawned
 // sessions carry SocketEnv; CODEX_PERMISSION_PROFILE also covers already

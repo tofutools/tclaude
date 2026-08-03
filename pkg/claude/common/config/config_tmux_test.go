@@ -2,11 +2,15 @@ package config
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 )
 
 // The socket name reaches tmux argv, a filepath.Join for the sandbox
@@ -68,6 +72,41 @@ func TestValidateTmuxSocketName(t *testing.T) {
 	errs := Validate(&Config{Tmux: &TmuxConfig{SocketName: "../escape"}})
 	assert.Len(t, errs, 1)
 	assert.Contains(t, errs[0], "tmux.socket_name")
+}
+
+// PrivateConfigUnreadable answers "is every value Load gave me a default
+// because I never got to look?" — callers fail closed on it, so a false
+// positive changes behavior for a process that is not blind at all.
+func TestPrivateConfigUnreadable(t *testing.T) {
+	writeConfig := func(t *testing.T) string {
+		t.Helper()
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv("USERPROFILE", home)
+		return home
+	}
+
+	t.Run("ordinary process", func(t *testing.T) {
+		writeConfig(t)
+		t.Setenv(agentipc.SocketEnv, "")
+		assert.False(t, PrivateConfigUnreadable(), "no agent marker, nothing to probe")
+	})
+
+	t.Run("sandboxed agent that cannot reach the config", func(t *testing.T) {
+		home := writeConfig(t)
+		t.Setenv(agentipc.SocketEnv, filepath.Join(home, ".tclaude", "api", "agentd.sock"))
+		assert.True(t, PrivateConfigUnreadable())
+	})
+
+	t.Run("daemon with a custom socket that can", func(t *testing.T) {
+		home := writeConfig(t)
+		dir := filepath.Join(home, ".tclaude", "data")
+		require.NoError(t, os.MkdirAll(dir, 0o700))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{}`), 0o600))
+		t.Setenv(agentipc.SocketEnv, filepath.Join(home, "custom-agentd.sock"))
+		assert.False(t, PrivateConfigUnreadable(),
+			"--socket exports the same marker but the config is right there")
+	})
 }
 
 // A configured socket name must survive the JSON round trip the config file and

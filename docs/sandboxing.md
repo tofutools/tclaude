@@ -147,7 +147,10 @@ controller failure is reported at launch with an actionable error; tclaude
 never widens a configured limit without the explicit operator override.
 
 For deployments where tmux panes must survive agentd service upgrades, put the
-`-L tclaude` tmux server in a separate, long-lived systemd unit with
+`-L tclaude` tmux server (or whatever `tmux.socket_name` is set to — see
+[Tmux socket name](sessions.md#tmux-socket-name); the unit's `ExecStart` must
+name the same socket agentd resolves, or the delegation probe validates a server
+agentd never uses) in a separate, long-lived systemd unit with
 `Delegate=cpu memory` and `DelegateSubgroup=tclaude-tmux`, then start agentd
 with the delegated unit cgroup (the parent of that subgroup) as its external
 root:

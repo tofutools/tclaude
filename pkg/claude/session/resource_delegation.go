@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 )
 
 // ResourceDelegationDirEnv carries agentd's external cgroup delegation root
@@ -71,7 +72,18 @@ func insideTclaudeTmuxServer() bool {
 		return false
 	}
 	socket, _, _ := strings.Cut(tmux, ",")
-	return filepath.Base(filepath.Clean(socket)) == clcommon.TmuxSocketName()
+	if filepath.Base(filepath.Clean(socket)) == clcommon.TmuxSocketName() {
+		return true
+	}
+	// The comparison above needs the CONFIGURED socket name, and a sandboxed
+	// agent is denied ~/.tclaude/data, so its resolution silently degrades to
+	// the default. Against a non-default tmux.socket_name that turns into a
+	// false negative, and the caller drops the -N guard — the exact fail-open
+	// -N exists to prevent, since the pane an agent runs in always belongs to
+	// tclaude's server. Prefer the false positive: -N only ever refuses to
+	// START a server, so an over-eager guard costs a clear error, while an
+	// absent one silently creates a second server in the caller's cgroup.
+	return config.PrivateConfigUnreadable()
 }
 
 func externalTmuxRuntimeName() string {

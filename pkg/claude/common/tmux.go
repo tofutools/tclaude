@@ -1,6 +1,7 @@
 package common
 
 import (
+	"log/slog"
 	"os/exec"
 	"strings"
 	"sync"
@@ -28,9 +29,19 @@ func TmuxSocketName() string {
 	tmuxSocketMu.Lock()
 	defer tmuxSocketMu.Unlock()
 	if tmuxSocketName == "" {
-		// Load falls back to DefaultConfig on a missing or unreadable file and
-		// already logs why, so an error here is just "the default socket".
-		cfg, _ := config.Load()
+		cfg, err := config.Load()
+		if err != nil {
+			// Load already logged the parse/read failure, but its message says
+			// nothing about tmux. Falling back to the default socket when a
+			// name WAS configured moves this process onto a different tmux
+			// server, where it finds none of the running panes — say so, or the
+			// operator has no way to connect "I broke a comma in config.json"
+			// to "all my agents vanished".
+			slog.Warn("Unable to read tmux.socket_name; falling back to the default tmux server",
+				"socket", config.DefaultTmuxSocketName,
+				"hint", "if config.json sets a socket name, fix the file and restart tclaude",
+				"err", err)
+		}
 		tmuxSocketName = cfg.ResolvedTmuxSocketName()
 	}
 	return tmuxSocketName

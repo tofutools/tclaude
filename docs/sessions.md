@@ -408,9 +408,13 @@ Ctrl+B D
 }
 ```
 
-Every tclaude-issued tmux command then uses `-L work`, and so must yours (`tmux -L work ls`). The name is limited to 1–64 characters of `[A-Za-z0-9._-]`: it becomes a filename under `$TMUX_TMPDIR/tmux-$UID`, and tclaude also derives the sandbox socket-deny path from it. A blank value, or one outside that charset, falls back to `tclaude` — the dashboard's config editor refuses the latter at save time rather than storing a value that would have no effect.
+Every tclaude-issued tmux command then uses `-L work`, and so must yours (`tmux -L work ls`). The name is limited to 1–64 characters of `[A-Za-z0-9._-]`, and `.` and `..` are refused as well: it becomes a filename under `$TMUX_TMPDIR/tmux-$UID`, and tclaude also derives the sandbox socket-deny path from it. A blank value, or one the gate rejects, falls back to `tclaude` — the dashboard's config editor refuses the latter at save time rather than storing a value that would have no effect. So does a `config.json` tclaude cannot parse, whatever the syntax error is about; the fallback is logged.
 
-The name is read once per process, so a change applies only to processes started afterwards: restart `tclaude agentd` and reattach any client. Sessions already running on the old socket keep running, but tclaude no longer sees them — they reappear if you set the name back. Point two socket names at the same machine and you get two independent sets of panes sharing one tclaude database, so prefer changing this once at setup rather than switching back and forth.
+**Drain your sessions before changing this.** The name is read once per process, so the change applies only to processes started afterwards: restart `tclaude agentd` and reattach any client. Panes already running on the old socket keep running, but they are now on a server tclaude no longer talks to, and their rows do **not** disappear — a live harness process keeps them listed as alive, so the dashboard shows agents you can no longer reach and messages sent to them are silently dropped. Panes launched before the change also have the old socket baked into their pane-exit hook, so their exit is neither audited nor cleaned up. Setting the name back restores them, but the clean path is to exit every session first.
+
+Two socket names on one machine give you two independent sets of panes sharing a single tclaude database, so treat this as a setup-time choice rather than a switch to flip.
+
+Known limitation: a **sandboxed** agent is denied `~/.tclaude/data`, so a `tclaude` command it runs inside its own pane cannot read the configured name and falls back to `tclaude`. Commands an agent issues through the agentd socket (`tclaude agent …`) are unaffected — they never touch tmux — but in-pane tmux paths such as `tclaude task run` will target the default socket. They fail closed rather than starting a stray server.
 
 ### Tmux session names
 

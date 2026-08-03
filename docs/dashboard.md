@@ -303,7 +303,8 @@ daemon from a plain shell to get an operator console.
 
 By default the `-L tclaude` tmux server's lifetime has nothing to do with the
 daemon's: tmux starts one implicitly the first time something needs it, and
-agent panes outlive the daemon that spawned them.
+agent panes outlive the daemon that spawned them. (The socket name is
+configurable — see [Tmux socket name](sessions.md#tmux-socket-name).)
 
 ```bash
 tclaude agentd serve --tui --own-tmux-server
@@ -396,6 +397,9 @@ with:
 ```bash
 tmux -L tclaude kill-server   # only when you know nothing is running on it
 ```
+
+(substituting your `tmux.socket_name` for `tclaude` if you set one — see
+[Tmux socket name](sessions.md#tmux-socket-name))
 
 The standalone terminal dashboard below does none of this. It is an HTTP client
 of somebody else's daemon, so quitting it stops nothing.

@@ -16,6 +16,11 @@ import (
 func TestPrepareClaudeSandboxLaunchDeniesOnlyTclaudeTmuxSocket(t *testing.T) {
 	tmuxBase := t.TempDir()
 	t.Setenv("TMUX_TMPDIR", tmuxBase)
+	// Pin a NON-default socket name and assert against that literal below. The
+	// deny path must follow the configured name; comparing it to another
+	// TmuxSocketName() call would pass even if the deny path stopped consulting
+	// the config at all.
+	defer clcommon.SetTmuxSocketNameForTest("work-2")()
 	originalDenies := []string{"/opt/secret"}
 	claude := MustGet(DefaultName)
 	require.True(t, claude.SupportsHostControlSandbox())
@@ -28,7 +33,7 @@ func TestPrepareClaudeSandboxLaunchDeniesOnlyTclaudeTmuxSocket(t *testing.T) {
 	canonicalTmuxBase, err := filepath.EvalSymlinks(tmuxBase)
 	require.NoError(t, err)
 	socketPath := filepath.Join(
-		canonicalTmuxBase, fmt.Sprintf("tmux-%d", os.Getuid()), clcommon.TmuxSocketName())
+		canonicalTmuxBase, fmt.Sprintf("tmux-%d", os.Getuid()), "work-2")
 	assert.Equal(t, []string{"/opt/secret", socketPath}, spec.SandboxDenyDirs)
 	assert.Equal(t, []string{"/opt/secret"}, originalDenies,
 		"preparing a launch must not mutate the caller's slice")
