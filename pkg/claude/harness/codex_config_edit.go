@@ -43,32 +43,65 @@ func editCodexConfigFile(
 	plan func([]byte) (bool, []byte, error),
 	prepare func(string, []byte, os.FileMode) (*atomicFileReplacement, error),
 ) error {
+	return editHarnessConfigFile("Codex config", configPath, defaultPerm, plan, prepare)
+}
+
+// EditCopilotConfigFile applies the same serialization to Copilot's
+// COPILOT_HOME config.json, which needs it for the same reason and one more:
+// two concurrent tclaude spawns pre-trusting DIFFERENT directories both
+// read-modify-write the single `trustedFolders` array, so a plain
+// read→plan→rename would silently drop one dir's entry and leave that pane
+// parked on the modal it was seeded to clear. Read-modify-write under the lock
+// with a post-stage recheck makes the two seeds compose instead.
+//
+// It shares the codex mutex and lock discipline deliberately: the concurrency
+// hazard is per-FILE and the two files are distinct, so the only cost is that
+// two edits of different harnesses' configs serialize against each other —
+// which is microseconds on a path that runs at most once per spawned directory.
+func EditCopilotConfigFile(
+	configPath string,
+	defaultPerm os.FileMode,
+	plan func([]byte) (bool, []byte, error),
+) error {
+	return editHarnessConfigFile("Copilot config", configPath, defaultPerm, plan, prepareAtomicWriteFile)
+}
+
+// editHarnessConfigFile is the harness-agnostic mechanism behind both wrappers.
+// label names the file in every error, so a refusal an operator reads still
+// says which harness's configuration is at fault.
+func editHarnessConfigFile(
+	label string,
+	configPath string,
+	defaultPerm os.FileMode,
+	plan func([]byte) (bool, []byte, error),
+	prepare func(string, []byte, os.FileMode) (*atomicFileReplacement, error),
+) error {
 	codexConfigEditMu.Lock()
 	defer codexConfigEditMu.Unlock()
 
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
-		return fmt.Errorf("create Codex config directory: %w", err)
+		return fmt.Errorf("create %s directory: %w", label, err)
 	}
 	fileLock := flock.New(configPath + ".tclaude.lock")
 	lockCtx, cancelLock := context.WithTimeout(context.Background(), codexConfigLockTimeout)
 	defer cancelLock()
 	locked, err := fileLock.TryLockContext(lockCtx, codexConfigLockRetry)
 	if err != nil {
-		return fmt.Errorf("lock Codex config: %w", err)
+		return fmt.Errorf("lock %s: %w", label, err)
 	}
 	if !locked {
-		return fmt.Errorf("lock Codex config: timed out after %s", codexConfigLockTimeout)
+		return fmt.Errorf("lock %s: timed out after %s", label, codexConfigLockTimeout)
 	}
 	defer func() { _ = fileLock.Unlock() }()
 
 	for attempt := 1; attempt <= codexConfigEditMaxAttempts; attempt++ {
 		target, err := atomicWriteTarget(configPath)
 		if err != nil {
-			return fmt.Errorf("resolve Codex config target: %w", err)
+			return fmt.Errorf("resolve %s target: %w", label, err)
 		}
 		before, err := readFileAllowMissing(target)
 		if err != nil {
-			return fmt.Errorf("read Codex config: %w", err)
+			return fmt.Errorf("read %s: %w", label, err)
 		}
 		changed, out, err := plan(before)
 		if err != nil {
@@ -93,12 +126,12 @@ func editCodexConfigFile(
 		currentTarget, err := atomicWriteTarget(configPath)
 		if err != nil {
 			replacement.discard()
-			return fmt.Errorf("recheck Codex config target: %w", err)
+			return fmt.Errorf("recheck %s target: %w", label, err)
 		}
 		current, err := readFileAllowMissing(currentTarget)
 		if err != nil {
 			replacement.discard()
-			return fmt.Errorf("recheck Codex config: %w", err)
+			return fmt.Errorf("recheck %s: %w", label, err)
 		}
 		if currentTarget != target || !bytes.Equal(current, before) {
 			replacement.discard()
@@ -110,7 +143,7 @@ func editCodexConfigFile(
 		}
 		return nil
 	}
-	return fmt.Errorf("codex config kept changing during edit; retry later")
+	return fmt.Errorf("%s kept changing during edit; retry later", label)
 }
 
 func readFileAllowMissing(path string) ([]byte, error) {

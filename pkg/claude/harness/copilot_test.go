@@ -93,6 +93,17 @@ func TestCopilotDescriptor(t *testing.T) {
 	if !h.SupportsConvs() {
 		t.Errorf("SupportsConvs() = false, want true now that the store is fixture-backed")
 	}
+	// TCL-973: the folder-trust modal was measured on a real pty (it blocks
+	// before the CLI contacts the provider at all) and the seeding contract
+	// that clears it is wired, so the flag is a claim tclaude can honour.
+	// DirTrustStore must name the file that editor writes — the dashboard's
+	// consent copy is derived from it.
+	if !h.SupportsDirTrust() {
+		t.Errorf("SupportsDirTrust() = false, want true now that trustedFolders seeding is wired")
+	}
+	if got := DirTrustStore(h); got != "$COPILOT_HOME/config.json" {
+		t.Errorf("DirTrustStore() = %q, want the COPILOT_HOME-relative config.json", got)
+	}
 	for name, got := range map[string]bool{
 		"SupportsAsk":              h.SupportsAsk(),
 		"SupportsBuiltinOSSandbox": h.SupportsBuiltinOSSandbox(),
@@ -100,7 +111,6 @@ func TestCopilotDescriptor(t *testing.T) {
 		"SupportsToolGovernance":   h.SupportsToolGovernance(),
 		"SupportsAutoReview":       h.SupportsAutoReview(),
 		"SupportsAskTimeout":       h.SupportsAskTimeout(),
-		"SupportsDirTrust":         h.SupportsDirTrust(),
 		"SupportsBackgroundShells": h.SupportsBackgroundShells(),
 		"SupportsMonitors":         h.SupportsMonitors(),
 		"UsesAuthoritativeServer":  h.UsesAuthoritativeServer(),

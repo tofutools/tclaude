@@ -35,10 +35,11 @@ func TestResolveTrustDir_UnsetAlwaysPasses(t *testing.T) {
 }
 
 func TestResolveTrustDir_AcceptedForBothTrustDialogHarnesses(t *testing.T) {
-	// The parity assertion: Claude Code and Codex both block on a trust dialog
-	// and both expose a seedable trust record, so the opt-in must be accepted
-	// for both. A regression that re-narrows this to Codex fails here.
-	for _, name := range []string{DefaultName, CodexName} {
+	// The parity assertion: Claude Code, Codex and Copilot all block on a
+	// trust dialog and all expose a seedable trust record, so the opt-in must
+	// be accepted for each. A regression that re-narrows this to Codex fails
+	// here.
+	for _, name := range []string{DefaultName, CodexName, CopilotName} {
 		h, err := Resolve(name)
 		require.NoError(t, err)
 		require.True(t, h.SupportsDirTrust(), "%s must declare dir trust", name)
@@ -81,6 +82,13 @@ func TestDirTrustStore_NamesEachHarnessStore(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "~/.codex/config.toml", DirTrustStore(codex))
 
+	// Copilot's store is named relative to COPILOT_HOME on purpose: a profile
+	// can relocate it, so consent copy naming ~/.copilot would be wrong for
+	// exactly the operator who moved it.
+	copilot, err := Resolve(CopilotName)
+	require.NoError(t, err)
+	assert.Equal(t, "$COPILOT_HOME/config.json", DirTrustStore(copilot))
+
 	opencode, err := Resolve(OpenCodeName)
 	require.NoError(t, err)
 	assert.Empty(t, DirTrustStore(opencode), "a harness with no dir trust names no store")
@@ -113,11 +121,67 @@ func TestEnsureDirTrusted_RejectsRelativeDirForBothHarnesses(t *testing.T) {
 	// trust record on the resolved launch cwd, so a relative path would write
 	// an entry that never matches. Asserted through the dispatch so neither
 	// branch can lose the check.
-	for _, name := range []string{DefaultName, CodexName} {
+	for _, name := range []string{DefaultName, CodexName, CopilotName} {
 		h, err := Resolve(name)
 		require.NoError(t, err)
 		assert.Error(t, EnsureDirTrusted(h, "relative/dir"), "%s must reject a relative dir", name)
 	}
+}
+
+// EnsureDirTrusted dispatches to the COPILOT editor, driven against a temp HOME
+// so no real Copilot config is touched.
+func TestEnsureDirTrusted_DispatchesToCopilotEditor(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv(CopilotHomeEnvVar, "")
+	const dir = "/work/proj"
+
+	h, err := Resolve(CopilotName)
+	require.NoError(t, err)
+	require.NoError(t, EnsureDirTrusted(h, dir))
+
+	data, err := os.ReadFile(filepath.Join(home, ".copilot", CopilotConfigFileName))
+	require.NoError(t, err, "the copilot store was created")
+	var root struct {
+		TrustedFolders []string `json:"trustedFolders"`
+	}
+	require.NoError(t, json.Unmarshal(data, &root))
+	assert.Equal(t, []string{dir}, root.TrustedFolders)
+
+	// Dispatch, not "write them all".
+	_, statErr := os.Stat(filepath.Join(home, ".claude.json"))
+	assert.True(t, os.IsNotExist(statErr))
+	_, statErr = os.Stat(filepath.Join(home, ".codex", "config.toml"))
+	assert.True(t, os.IsNotExist(statErr))
+}
+
+// The launch-aware entry point is what a spawn whose profile relocates
+// COPILOT_HOME goes through; the two fixed-path harnesses must ignore the
+// environment entirely rather than accidentally keying off it.
+func TestEnsureDirTrustedForLaunch_UsesTheLaunchCopilotHome(t *testing.T) {
+	ambient := t.TempDir()
+	t.Setenv("HOME", ambient)
+	relocated := filepath.Join(t.TempDir(), "launch-home")
+	getenv := func(name string) string {
+		if name == CopilotHomeEnvVar {
+			return relocated
+		}
+		return ""
+	}
+
+	copilot, err := Resolve(CopilotName)
+	require.NoError(t, err)
+	require.NoError(t, EnsureDirTrustedForLaunch(copilot, "/work/proj", getenv, ambient))
+	_, statErr := os.Stat(filepath.Join(relocated, CopilotConfigFileName))
+	assert.NoError(t, statErr, "the launch's COPILOT_HOME must carry the entry")
+
+	// Claude Code's store is keyed on the operator's home, not on the launch
+	// environment, so the same call writes exactly where it always did.
+	claude, err := Resolve(DefaultName)
+	require.NoError(t, err)
+	require.NoError(t, EnsureDirTrustedForLaunch(claude, "/work/proj", getenv, ambient))
+	_, statErr = os.Stat(filepath.Join(ambient, ".claude.json"))
+	assert.NoError(t, statErr)
 }
 
 // EnsureDirTrusted dispatches to the CLAUDE editor for the Claude harness —

@@ -565,6 +565,14 @@ func seedScribeDirTrust(harnessName, dir string) {
 		if err := harness.EnsureClaudeDirTrusted(dir); err != nil {
 			slog.Warn("scribe: pre-trust claude workdir failed", "dir", dir, "error", err)
 		}
+	case harness.CopilotName:
+		// Copilot's modal blocks BEFORE the CLI contacts the provider, so a
+		// scribe pane that hits it never reaches its first turn at all. The
+		// ambient COPILOT_HOME is the right one here: the scribe spawns
+		// through the daemon's own environment, not a relocating profile.
+		if err := harness.EnsureCopilotDirTrusted(dir); err != nil {
+			slog.Warn("scribe: pre-trust copilot workdir failed", "dir", dir, "error", err)
+		}
 	default:
 		// A harness with no known trust store (or one added later without a
 		// seeding path wired here). Skip rather than guess — the pane may raise

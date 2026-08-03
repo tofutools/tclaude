@@ -24,9 +24,10 @@ const CopilotName = "copilot"
 // a launch-time name, an initial submitted prompt, and three in-pane control
 // commands — plus, since TCL-972, hooks and, since TCL-976, a cold ConvStore,
 // both of which the fixture lab promoted from "undocumented" to "observed from
-// the real binary". Sandbox, Approval, ToolGovernance, ModelTransport, DirTrust
-// and Ask are still left nil for a later, fixture-backed wave (TCL-965 phases
-// 2-5).
+// the real binary", and — since TCL-973 — directory trust, promoted on the same
+// terms from a real-pty measurement of the startup modal. Approval,
+// ToolGovernance and Ask are still left nil for a later, fixture-backed wave
+// (TCL-965 phases 2-5).
 func init() {
 	Register(&Harness{
 		Name:        CopilotName,
@@ -79,6 +80,22 @@ func init() {
 		// makes Copilot emit Claude Code's payload — so live status needs an
 		// installer and nothing else. Everything still nil below stays nil.
 		Hooks: copilotHookInstaller{},
+
+		// TCL-973: Copilot has the same startup folder-trust modal Codex and
+		// Claude Code do, and it is STRICTLY EARLIER than theirs in
+		// consequence — measured on a real pty with a fresh COPILOT_HOME, the
+		// pane parks on it before the CLI contacts the provider at all, so an
+		// unattended agent never reaches its first turn.
+		//
+		// The flag is set here because the contract behind it is now wired:
+		// copilot_dir_trust.go seeds `trustedFolders` in COPILOT_HOME's
+		// config.json, which is the ONLY input measured to clear the modal
+		// short of COPILOT_ALLOW_ALL=true (a blanket tool/path/URL promotion
+		// tclaude will not make on an operator's behalf). No launch flag
+		// clears it. Everything still nil below stays nil: ApprovalCatalog
+		// and Ask remain unwired, so this changes what a spawn can START, not
+		// what it is allowed to DO once running.
+		DirTrust: true,
 
 		// Copilot's SessionEnd is not proof of an exit: observed only on clean
 		// runs, impossible on a SIGKILL, and at-least-once rather than
