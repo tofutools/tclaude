@@ -1435,22 +1435,46 @@ func UpdateContextSnapshotForGeneration(
 	}
 	// The window itself changed (or the row has none yet), so the full
 	// projecting write is needed — still generation-guarded.
-	if err := execSessionUpdateAndProjectTimed(sessionID, relaunchProjectionOptions{}, nil,
-		`UPDATE sessions
-			SET context_pct = ?, tokens_input = ?, tokens_output = ?, context_window_size = ?
-			WHERE id = ? AND conv_id = ? AND created_at = ?`,
-		pct, tokensInput, tokensOutput, windowSize,
-		sessionID, convID, dbTime(createdAt)); err != nil {
-		return false, err
-	}
-	// A generation mismatch and a genuine write are indistinguishable here
-	// (the projecting helper does not surface rows-affected), so confirm by
-	// reading the row back rather than reporting an unverified success.
-	stored, err := GetContextSnapshot(sessionID)
+	//
+	// This does not go through execSessionUpdateAndProjectTimed: that helper
+	// discards the statement result, and inferring success by reading the row
+	// back afterwards would report a FALSE POSITIVE whenever a recreated
+	// generation happens to hold the same values. The returned bool is
+	// rows-affected semantics, so it is taken from the UPDATE itself, inside
+	// the same transaction as the projection.
+	d, err := Open()
 	if err != nil {
 		return false, err
 	}
-	return stored.ContextWindowSize == windowSize && stored.TokensOutput == tokensOutput, nil
+	tx, err := d.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	result, err := tx.Exec(`UPDATE sessions
+		SET context_pct = ?, tokens_input = ?, tokens_output = ?, context_window_size = ?
+		WHERE id = ? AND conv_id = ? AND created_at = ?`,
+		pct, tokensInput, tokensOutput, windowSize,
+		sessionID, convID, dbTime(createdAt))
+	if err != nil {
+		return false, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if affected == 0 {
+		// The generation moved on. Nothing was written, so there is nothing to
+		// reproject and no transaction worth committing.
+		return false, nil
+	}
+	if err := projectSessionRelaunchProfilesTx(tx, sessionID, relaunchProjectionOptions{}); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // UpdateContextSnapshotIfWindowUnchanged is the token-only fast path for a
