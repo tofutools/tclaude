@@ -76,12 +76,16 @@ func TestCopilotDefaultCachePlacementMatchesBaseline(t *testing.T) {
 	assert.Equal(t, wantPackageCache, paths[harness.CopilotBaselinePackageCache],
 		"the baseline's default package-cache resolution does not match this platform")
 
-	// The device-id cache is XDG-shaped on BOTH platforms. Asserting it here,
-	// beside the package cache, is what makes the split visible: on darwin these
-	// two rows deliberately live in different trees.
+	// The device-id cache is the second half of the split, and on darwin it is a
+	// THIRD tree: not XDG, and not the Library/Caches the package cache uses.
+	// Asserting it here, beside the package cache, is what makes that visible.
 	wantDeviceID := filepath.Join(dirs.Root, ".cache", "Microsoft", "DeveloperTools")
+	if runtime.GOOS == "darwin" {
+		wantDeviceID = filepath.Join(
+			dirs.Root, "Library", "Application Support", "Microsoft", "DeveloperTools")
+	}
 	assert.Equal(t, wantDeviceID, paths[harness.CopilotBaselineDeviceIDCache],
-		"the device-id cache must stay XDG-shaped on every platform")
+		"the baseline's default device-id resolution does not match this platform")
 
 	// Now the observation half: the CLI must actually have written where the
 	// catalog says. A claim that merely agreed with itself would prove nothing.
@@ -96,8 +100,9 @@ func TestCopilotDefaultCachePlacementMatchesBaseline(t *testing.T) {
 	deviceID := filepath.Join(wantDeviceID, "deviceid")
 	_, err = os.Stat(deviceID)
 	require.NoError(t, err,
-		"the bundled runtime did not write %s; the device-id row's XDG shape is the "+
-			"claim this asserts, and on darwin it is the one that has no platform branch",
+		"the bundled runtime did not write %s; the device-id row's platform shape is the "+
+			"claim this asserts, and on darwin it is the row that follows the Microsoft "+
+			"device-id convention rather than Copilot's own cache resolver",
 		deviceID)
 
 	// Nothing may have landed in the OTHER platform's location: a CLI that wrote

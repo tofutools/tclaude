@@ -240,6 +240,20 @@ type Dirs struct {
 func NewSandboxDirs(t *testing.T) Dirs {
 	t.Helper()
 	root := t.TempDir()
+	// Canonicalized because the CLI records its cwd resolved: on macOS t.TempDir
+	// hands back /var/folders/… while Copilot writes /private/var/folders/… into
+	// workspace.yaml, and every scenario that compares a path it passed in
+	// against a path the CLI wrote back would be measuring that symlink instead
+	// of the behavior it names.
+	//
+	// This makes the fixture lab's own paths unambiguous. It does NOT address
+	// the production question of how tclaude should match an operator-supplied
+	// cwd against Copilot's resolved spelling — see the ConvStore cwd-spelling
+	// follow-up; that comparison lives in copilot_convstore.go and is not
+	// something a test directory layout can decide.
+	if resolved, err := filepath.EvalSymlinks(root); err == nil {
+		root = resolved
+	}
 	d := Dirs{
 		Root:     root,
 		Home:     filepath.Join(root, "copilot-home"),

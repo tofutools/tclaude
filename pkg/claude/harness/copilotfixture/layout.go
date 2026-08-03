@@ -9,6 +9,8 @@ import (
 	"slices"
 	"sort"
 	"strings"
+
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 // Disk-layout observation for the sandbox baseline (TCL-975).
@@ -48,10 +50,17 @@ type BaselineLayout struct {
 	Cache SessionLayout `json:"cache"`
 
 	// XDGCache is the XDG_CACHE_HOME tree, which is a DIFFERENT root from the
-	// package cache: COPILOT_CACHE_HOME selects the latter, while the bundled
-	// runtime resolves its Microsoft/DeveloperTools device-id file here on
-	// every platform, macOS included.
+	// package cache: COPILOT_CACHE_HOME selects the latter. On Linux the
+	// device-id file lands inside this tree; on macOS it does not, which is why
+	// DeviceIDCache below is observed as its own root rather than read out of
+	// here.
 	XDGCache SessionLayout `json:"xdgCache"`
+
+	// DeviceIDCache is the Microsoft DeveloperTools directory, observed at
+	// whatever location the baseline catalog resolves for THIS platform. It is
+	// listed separately so the one row whose tree moves between platforms is
+	// visible as itself rather than as an absence somewhere else.
+	DeviceIDCache SessionLayout `json:"deviceIdCache"`
 
 	// WorkDir is the launch working directory, whose grant belongs to the
 	// caller and is deliberately not part of the baseline catalog.
@@ -86,14 +95,30 @@ func ObserveBaselineLayout(dirs Dirs) (BaselineLayout, error) {
 	if err != nil {
 		return BaselineLayout{}, err
 	}
+	deviceIDRoot, err := deviceIDCacheDir(dirs)
+	if err != nil {
+		return BaselineLayout{}, err
+	}
+	deviceID, err := walkNormalized(deviceIDRoot, nil)
+	if err != nil {
+		return BaselineLayout{}, err
+	}
 
-	covered := []string{dirs.Home, dirs.Cache, dirs.XDGCache, dirs.WorkDir}
+	covered := []string{dirs.Home, dirs.Cache, dirs.XDGCache, dirs.WorkDir, deviceIDRoot}
 	var outside []string
 	err = filepath.WalkDir(dirs.Root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		if path == dirs.Root {
+			return nil
+		}
+		// A covered root's own parent chain is covered with it. The catalog says
+		// so explicitly for the device-id row — the runtime creates Microsoft/
+		// and DeveloperTools/, and on macOS the Library/Application Support
+		// chain above them — so recording those parents as uncovered HOME writes
+		// would report a violation the grant already answers.
+		if d.IsDir() && isAncestorOfAny(path, covered) {
 			return nil
 		}
 		if slices.Contains(covered, path) {
@@ -123,9 +148,48 @@ func ObserveBaselineLayout(dirs Dirs) (BaselineLayout, error) {
 		CopilotHome:         copilotHome,
 		Cache:               cache,
 		XDGCache:            xdgCache,
+		DeviceIDCache:       deviceID,
 		WorkDir:             work,
 		HomeOutsideBaseline: dedupeSorted(outside),
 	}, nil
+}
+
+// deviceIDCacheDir asks the CATALOG where this platform's device-id file lives
+// rather than re-deriving it here. The observer's job is to check the catalog
+// against the disk; a second copy of the platform branch would let both drift
+// together and still agree.
+func deviceIDCacheDir(dirs Dirs) (string, error) {
+	env := map[string]string{
+		harness.CopilotHomeEnvVar:      dirs.Home,
+		harness.CopilotCacheHomeEnvVar: dirs.Cache,
+		"XDG_CACHE_HOME":               dirs.XDGCache,
+	}
+	entries, err := harness.CopilotSandboxBaseline(harness.CopilotBaselineInput{
+		Home:      dirs.Root,
+		Getenv:    func(k string) string { return env[k] },
+		Workspace: dirs.WorkDir,
+	})
+	if err != nil {
+		return "", fmt.Errorf("copilotfixture: resolving the device-id cache: %w", err)
+	}
+	for _, e := range entries {
+		if e.ID == harness.CopilotBaselineDeviceIDCache {
+			return e.Path, nil
+		}
+	}
+	return "", fmt.Errorf("copilotfixture: the baseline has no %s row",
+		harness.CopilotBaselineDeviceIDCache)
+}
+
+// isAncestorOfAny reports whether dir is a strict parent of one of the roots.
+func isAncestorOfAny(dir string, roots []string) bool {
+	prefix := dir + string(filepath.Separator)
+	for _, root := range roots {
+		if strings.HasPrefix(root, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // walkNormalized lists root's contents as normalized relative paths. collapse,

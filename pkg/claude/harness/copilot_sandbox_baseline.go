@@ -44,13 +44,16 @@ import (
 //	packageCache = COPILOT_CACHE_HOME
 //	               ?? (darwin: $HOME/Library/Caches/copilot)
 //	               ?? ($XDG_CACHE_HOME ?? $HOME/.cache)/copilot
-//	deviceIDDir  = ($XDG_CACHE_HOME ?? $HOME/.cache)/Microsoft/DeveloperTools
+//	deviceIDDir  = (darwin: $HOME/Library/Application Support/Microsoft/DeveloperTools)
+//	               ?? ($XDG_CACHE_HOME ?? $HOME/.cache)/Microsoft/DeveloperTools
 //
 // Note the macOS split, which is the platform difference that matters most
-// here and the one an operator is least likely to expect: the package cache
-// moves to ~/Library/Caches/copilot, while the device-id cache stays
-// XDG-shaped at ~/.cache — the bundled Rust runtime that writes it has no
-// darwin branch at all.
+// here and the one an operator is least likely to expect: on macOS these two
+// caches land in two DIFFERENT Library trees, neither of them XDG-shaped. The
+// package cache follows Copilot's own resolver to ~/Library/Caches/copilot,
+// while the device-id file follows the Microsoft device-id convention to
+// ~/Library/Application Support. XDG_CACHE_HOME is set in the macOS fixture
+// run and moves neither of them.
 //
 // What is deliberately NOT in the catalog:
 //
@@ -276,7 +279,7 @@ func CopilotSandboxBaseline(in CopilotBaselineInput) ([]CopilotBaselineEntry, er
 
 	stateDir, stateSource := copilotStateDir(getenv, home)
 	packageCache, packageSource := copilotPackageCacheDir(goos, getenv, home)
-	deviceIDDir, deviceIDSource := copilotDeviceIDCacheDir(getenv, home)
+	deviceIDDir, deviceIDSource := copilotDeviceIDCacheDir(goos, getenv, home)
 
 	entries := []CopilotBaselineEntry{
 		{
@@ -323,8 +326,9 @@ func CopilotSandboxBaseline(in CopilotBaselineInput) ([]CopilotBaselineEntry, er
 				"The grant implies its parent chain being creatable: the runtime makes " +
 				"Microsoft/ and DeveloperTools/ itself on a fresh cache.",
 			Evidence: "Written on every observed launch; with the directory read-only the launch " +
-				"still succeeds. Note this row is XDG-shaped on macOS too — the runtime that " +
-				"writes it has no darwin branch, unlike the package cache.",
+				"still succeeds. On macOS it is NOT XDG-shaped and NOT beside the package " +
+				"cache: the credential-free darwin fixture run, with XDG_CACHE_HOME set, wrote " +
+				"it under $HOME/Library/Application Support instead.",
 		},
 	}
 
@@ -463,11 +467,25 @@ func copilotPackageCacheDir(goos string, getenv func(string) string, home string
 	return filepath.Join(base, "copilot"), baseSource + "/copilot"
 }
 
-// copilotDeviceIDCacheDir resolves the Microsoft DeveloperTools cache. The
-// bundled runtime reads XDG_CACHE_HOME (falling back to $HOME/.cache) on every
-// platform — there is no darwin branch — so on macOS this row and the package
-// cache above deliberately live in two different trees.
-func copilotDeviceIDCacheDir(getenv func(string) string, home string) (path, source string) {
+// copilotDeviceIDCacheDir resolves the Microsoft DeveloperTools cache.
+//
+// The bundled runtime writes this file through the Microsoft device-id
+// convention's platform directory rather than through Copilot's own cache
+// resolver, so it lands in a THIRD tree on macOS: not the XDG cache, and not
+// $HOME/Library/Caches where the package cache goes.
+//
+//	darwin: $HOME/Library/Application Support/Microsoft/DeveloperTools
+//	else:   ($XDG_CACHE_HOME ?? $HOME/.cache)/Microsoft/DeveloperTools
+//
+// XDG_CACHE_HOME is deliberately NOT consulted on darwin: the credential-free
+// macOS fixture run sets it and the runtime still writes to Application
+// Support, so honoring it there would name a directory the CLI never touches
+// while leaving the one it does touch ungranted.
+func copilotDeviceIDCacheDir(goos string, getenv func(string) string, home string) (path, source string) {
+	if goos == "darwin" {
+		return filepath.Join(home, "Library", "Application Support", "Microsoft", "DeveloperTools"),
+			"$HOME/Library/Application Support/Microsoft/DeveloperTools (macOS default)"
+	}
 	base, baseSource := xdgCacheBase(getenv, home)
 	return filepath.Join(base, "Microsoft", "DeveloperTools"),
 		baseSource + "/Microsoft/DeveloperTools"

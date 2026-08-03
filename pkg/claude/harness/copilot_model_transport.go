@@ -112,11 +112,11 @@ func (copilotModelTransport) ResolveModelTransport(
 ) (ModelTransportRequirement, error) {
 	if !resolved.ProviderResolved {
 		return ModelTransportRequirement{}, fmt.Errorf(
-			"Copilot provider configuration was not resolved")
+			"copilot provider configuration was not resolved")
 	}
 	if endpoint := strings.TrimSpace(resolved.BaseURL); endpoint != "" {
 		return ModelTransportRequirement{}, fmt.Errorf(
-			"Copilot launch resolves to custom provider endpoint %q; a user-controlled BYOK "+
+			"this Copilot launch resolves to custom provider endpoint %q; a user-controlled BYOK "+
 				"endpoint is not an approved first-party transport for filtered networking. "+
 				"Remove the COPILOT_PROVIDER_* configuration to use the first-party GitHub "+
 				"Copilot route, or use network open", endpoint)
@@ -124,7 +124,7 @@ func (copilotModelTransport) ResolveModelTransport(
 	provider := strings.ToLower(strings.TrimSpace(resolved.Provider))
 	if provider != "" && provider != CopilotName {
 		return ModelTransportRequirement{}, fmt.Errorf(
-			"Copilot launch resolves to provider %q, which has no reviewed filtered-network "+
+			"this Copilot launch resolves to provider %q, which has no reviewed filtered-network "+
 				"endpoint; use the first-party GitHub Copilot route or network open",
 			resolved.Provider)
 	}
