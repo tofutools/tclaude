@@ -26,6 +26,11 @@
         "TestCopilotPermissionToolApprovalGate/unsafe-command/allow-all-tools",
         "TestCopilotPermissionToolApprovalGate/safe-command/no-flags",
         "TestCopilotPermissionHeadlessIsNotEvidence"
+      ],
+      "corroborating": [
+        "NOT measured here beyond the two commands this suite samples (echo, rm); reported by the copilot-permission-wire analyst on an independent PTY rig with trust granted and no allow flags: 'echo probe-tool-ran' EXECUTED with no prompt, while 'rm -f victim.txt', 'curl -s https://github.com', 'git push origin main' and 'echo pwned > file.txt' all BLOCKED. Shell redirection counting as a write is the notable one. If it holds, the gate is per-COMMAND risk classification rather than per-tool, which is a materially different thing for a spawner to reason about than a tool allowlist.",
+        "NOT measured by anyone, and worth stating so nobody assumes otherwise: the safe-command allowlist is NOT enumerated. Five commands have been sampled across two rigs. A detached-agent default must not be built on a guess about which commands auto-approve; the only safe reading is that ANY command may block unless a permission flag says otherwise.",
+        "NOT measured: approval behaviour for the built-in write tools (create/edit). An attempt was made on the peer rig but passed the wrong argument name and returned a schema error, so those rows measure a malformed call rather than an approval outcome. Recorded here specifically so the inconclusive result is not later mistaken for a negative one."
       ]
     },
     {
