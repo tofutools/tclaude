@@ -1,7 +1,9 @@
 package conv
 
 import (
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -26,13 +28,27 @@ import (
 // Claude Code is skipped: the caller already tried its rich resolver, and its
 // index is authoritative rather than a cache, so a miss there is a real miss.
 //
-// A resolve error (an ambiguous prefix, or an unreadable store) is SURFACED
-// rather than folded into "not found": a caller about to report "no such
-// conversation" must not do so because a store could not be read.
+// EVERY store is consulted before answering, rather than the first hit
+// winning. `conv archive` accepts an 8-character prefix, and a prefix that
+// matches conversations in two different harnesses is genuinely ambiguous —
+// silently archiving whichever harness sorts first would act on a
+// conversation the operator did not name.
+//
+// A single store's resolve failure does NOT abort the search. It is recorded
+// and reported only if nothing else matched: an unreadable Codex store must
+// not turn `conv archive <copilot-id>` into a Codex error, which is what
+// returning early would do (harness.Names is sorted, and "codex" precedes
+// "copilot"). Failing to read a store is still surfaced when it could be the
+// reason for a miss, so a caller never reports "no such conversation" on the
+// strength of a store it could not read.
 func ensureIndexedConv(idPrefix string) (*db.ConvIndexRow, error) {
 	if idPrefix == "" {
 		return nil, nil
 	}
+	var (
+		matches  []*convRefWithHarness
+		failures []error
+	)
 	for _, name := range harness.Names() {
 		if name == harness.DefaultName {
 			continue
@@ -47,35 +63,60 @@ func ensureIndexedConv(idPrefix string) (*db.ConvIndexRow, error) {
 		// of where the shell happened to be.
 		ref, err := h.Convs.Resolve(idPrefix, "", true)
 		if err != nil {
-			return nil, fmt.Errorf("%s: %w", name, err)
+			failures = append(failures, fmt.Errorf("%s: %w", name, err))
+			continue
 		}
 		if ref == nil {
 			continue
 		}
-		// A store that maintains the cache (Copilot, OpenCode) fills in the
-		// full row — title, timestamps, counts — as a side effect of listing.
-		// The error is deliberately ignored: enrichment is a bonus, and the
-		// minimal row written below is enough for the caller either way.
-		_, _ = h.Convs.ListConvs("")
-		if row, err := db.GetConvIndex(ref.ConvID); err == nil && row != nil {
-			return row, nil
+		matches = append(matches, &convRefWithHarness{Ref: ref, Harness: h})
+	}
+	if len(matches) > 1 {
+		names := make([]string, 0, len(matches))
+		for _, match := range matches {
+			names = append(names, match.Ref.Harness)
 		}
-		// A store that does NOT maintain the cache still has to be archivable,
-		// so write the minimum the column needs: identity, project and
-		// harness. The title stays empty rather than guessed.
-		title, _ := h.Convs.Title(ref.ConvID)
-		row := &db.ConvIndexRow{
-			ConvID:      ref.ConvID,
-			ProjectDir:  ref.ProjectPath,
-			ProjectPath: ref.ProjectPath,
-			Summary:     title,
-			IndexedAt:   time.Now(),
-			Harness:     ref.Harness,
+		return nil, fmt.Errorf(
+			"ambiguous conversation id %q: matches conversations in %s — use the full id",
+			idPrefix, strings.Join(names, " and "))
+	}
+	if len(matches) == 0 {
+		if len(failures) > 0 {
+			return nil, errors.Join(failures...)
 		}
-		if err := db.UpsertConvIndex(row); err != nil {
-			return nil, fmt.Errorf("%s: cache conversation %s: %w", name, ref.ConvID, err)
-		}
+		return nil, nil
+	}
+
+	match := matches[0]
+	// A store that maintains the cache (Copilot, OpenCode) fills in the full
+	// row — title, timestamps, counts — as a side effect of listing. The error
+	// is deliberately ignored: enrichment is a bonus, and the minimal row
+	// written below is enough for the caller either way.
+	_, _ = match.Harness.Convs.ListConvs("")
+	if row, err := db.GetConvIndex(match.Ref.ConvID); err == nil && row != nil {
 		return row, nil
 	}
-	return nil, nil
+	// A store that does NOT maintain the cache still has to be archivable, so
+	// write the minimum the column needs: identity, project and harness. The
+	// title stays empty rather than guessed.
+	title, _ := match.Harness.Convs.Title(match.Ref.ConvID)
+	row := &db.ConvIndexRow{
+		ConvID:      match.Ref.ConvID,
+		ProjectDir:  match.Ref.ProjectPath,
+		ProjectPath: match.Ref.ProjectPath,
+		Summary:     title,
+		IndexedAt:   time.Now(),
+		Harness:     match.Ref.Harness,
+	}
+	if err := db.UpsertConvIndex(row); err != nil {
+		return nil, fmt.Errorf("cache conversation %s: %w", match.Ref.ConvID, err)
+	}
+	return row, nil
+}
+
+// convRefWithHarness pairs a resolved reference with the store that resolved
+// it, so the ambiguity check can run before any store is asked to do work.
+type convRefWithHarness struct {
+	Ref     *harness.ConvRef
+	Harness *harness.Harness
 }

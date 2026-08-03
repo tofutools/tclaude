@@ -61,6 +61,14 @@ type copilotContextRefreshState struct {
 	checkpointLoaded bool
 	checkpointAt     time.Time
 
+	// refreshing is the in-flight guard. Everything below the claim is
+	// mutated WITHOUT the package mutex, so exactly one goroutine per session
+	// may be past a claim at a time. The throttle alone cannot provide that:
+	// it measures from the START of the previous refresh, so a full rebuild of
+	// a large log outlives its own throttle window and a second caller would
+	// otherwise enter concurrently.
+	refreshing bool
+
 	// persisted mirrors the last values written to the row, so an unchanged
 	// projection costs no SQLite write at all.
 	persistedOutput int64
@@ -90,6 +98,7 @@ func refreshCopilotContextSnapshotOnRead(sess *db.SessionRow, alive bool) {
 	if !ok {
 		return
 	}
+	defer releaseCopilotContextRefresh(state)
 
 	home := harness.CopilotHome()
 	if home == "" {
@@ -117,7 +126,7 @@ func refreshCopilotContextSnapshotOnRead(sess *db.SessionRow, alive bool) {
 	}
 
 	persistCopilotContextSnapshot(sess, state, snap)
-	persistCopilotCheckpoint(sess.ID, state)
+	persistCopilotCheckpoint(sess, state)
 }
 
 // claimCopilotContextRefresh returns the session's follower state when this
@@ -134,17 +143,27 @@ func claimCopilotContextRefresh(sess *db.SessionRow, now time.Time) (*copilotCon
 	}
 	state := copilotContextRefreshMu.states[sess.ID]
 	if state == nil || state.convID != sess.ConvID || !state.createdAt.Equal(sess.CreatedAt) {
+		// A generation change abandons the old state entirely — including any
+		// refresh still in flight against it, which now writes into an object
+		// nothing will read again.
 		state = &copilotContextRefreshState{
 			follower:  &harness.CopilotTelemetryFollower{},
 			convID:    sess.ConvID,
 			createdAt: sess.CreatedAt,
 		}
 		copilotContextRefreshMu.states[sess.ID] = state
-	} else if now.Sub(state.lastRefresh) < copilotContextRefreshInterval {
+	} else if state.refreshing || now.Sub(state.lastRefresh) < copilotContextRefreshInterval {
 		return nil, false
 	}
+	state.refreshing = true
 	state.lastRefresh = now
 	return state, true
+}
+
+func releaseCopilotContextRefresh(state *copilotContextRefreshState) {
+	copilotContextRefreshMu.Lock()
+	defer copilotContextRefreshMu.Unlock()
+	state.refreshing = false
 }
 
 // loadCopilotCheckpoint primes the follower from its durable checkpoint once
@@ -172,7 +191,7 @@ func loadCopilotCheckpoint(sessionID string, state *copilotContextRefreshState) 
 	state.checkpointAt = time.Now()
 }
 
-func persistCopilotCheckpoint(sessionID string, state *copilotContextRefreshState) {
+func persistCopilotCheckpoint(sess *db.SessionRow, state *copilotContextRefreshState) {
 	if !state.checkpointAt.IsZero() &&
 		time.Since(state.checkpointAt) < copilotCheckpointPersistMinInterval {
 		return
@@ -180,18 +199,24 @@ func persistCopilotCheckpoint(sessionID string, state *copilotContextRefreshStat
 	data, ok, err := state.follower.Checkpoint()
 	if err != nil {
 		slog.Warn("copilot-telemetry: failed to encode durable follower checkpoint",
-			"session_id", sessionID, "error", err, "module", "agentd")
+			"session_id", sess.ID, "error", err, "module", "agentd")
 		return
 	}
 	if !ok {
 		return
 	}
-	if err := db.SaveCopilotTelemetryCheckpoint(sessionID, data); err != nil {
+	// Generation-guarded: a session pruned and recreated between the claim and
+	// this write must not inherit the previous conversation's cursor. A refused
+	// write is a normal outcome, not an error.
+	saved, err := db.SaveCopilotTelemetryCheckpoint(sess.ID, sess.ConvID, sess.CreatedAt, data)
+	if err != nil {
 		slog.Warn("copilot-telemetry: failed to persist durable follower checkpoint",
-			"session_id", sessionID, "error", err, "module", "agentd")
+			"session_id", sess.ID, "error", err, "module", "agentd")
 		return
 	}
-	state.checkpointAt = time.Now()
+	if saved {
+		state.checkpointAt = time.Now()
+	}
 }
 
 // persistCopilotContextSnapshot writes the harness-agnostic context columns
@@ -216,19 +241,34 @@ func persistCopilotContextSnapshot(
 	pct := state.persistedPct
 
 	if snap.Usage != nil {
-		// The shutdown record's totals supersede the running per-turn sum:
-		// they are Copilot's own accounting for the same session.
-		input = snap.Usage.InputTokens
-		if snap.Usage.OutputTokens > 0 {
-			output = snap.Usage.OutputTokens
+		if snap.Usage.InputTokens > 0 {
+			input = snap.Usage.InputTokens
 		}
+		// The larger of the two, NOT the shutdown figure. A shutdown record in
+		// a log that is still growing means the session was RESUMED, which is
+		// the case this whole follower exists for: taking the shutdown total
+		// unconditionally would pin tokens_output to its pre-resume value and
+		// stop the one durable per-turn figure from ever advancing again.
+		// Copilot's own accounting wins while it is ahead; the running sum
+		// takes over once the new lifetime passes it.
+		output = max(output, snap.Usage.OutputTokens)
 	}
 	if snap.HasContext {
-		if snap.Context.TokenLimit > 0 {
-			window = snap.Context.TokenLimit
-		}
-		if computed := snap.Context.Pct(); computed > 0 {
-			pct = computed
+		// The window and the percentage move TOGETHER or not at all. They
+		// describe the same observation, and carrying one forward past a
+		// change in the other produces a row that is internally false: a
+		// session.truncation discloses a limit but no total occupancy, so
+		// updating the window alone would pair a fresh (possibly much larger)
+		// denominator with a stale numerator's percentage and render an
+		// occupancy Copilot never reported.
+		observedPct := snap.Context.Pct()
+		observedWindow := snap.Context.TokenLimit
+		if observedPct > 0 {
+			window, pct = observedWindow, observedPct
+		} else if observedWindow > 0 && observedWindow != window {
+			// A limit with no computable occupancy: record the limit and drop
+			// the percentage rather than keep one that no longer applies to it.
+			window, pct = observedWindow, 0
 		}
 	}
 
@@ -236,9 +276,21 @@ func persistCopilotContextSnapshot(
 		window == state.persistedWindow && pct == state.persistedPct {
 		return
 	}
-	if err := db.UpdateContextSnapshot(sess.ID, pct, input, output, window); err != nil {
+	// Generation-guarded, for the same reason the checkpoint write is. This
+	// projection was derived from a log read that began BEFORE the write: a
+	// session pruned and recreated in between would otherwise receive the
+	// previous conversation's tokens and window on its brand-new row.
+	updated, err := db.UpdateContextSnapshotForGeneration(
+		sess.ID, sess.ConvID, sess.CreatedAt, pct, input, output, window)
+	if err != nil {
 		slog.Warn("copilot-telemetry: failed to persist context snapshot",
 			"session_id", sess.ID, "error", err, "module", "agentd")
+		return
+	}
+	if !updated {
+		// The generation moved on. Leave `persisted*` alone so this state is
+		// not mistaken for a mirror of a row it never wrote; the next claim
+		// rebuilds the follower for the new generation anyway.
 		return
 	}
 	state.persistedOutput = output

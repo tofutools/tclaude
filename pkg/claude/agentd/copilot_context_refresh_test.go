@@ -23,6 +23,21 @@ func resetCopilotContextRefreshStateForTest() {
 	copilotContextRefreshMu.stopping = false
 }
 
+// expireCopilotContextRefreshThrottle lets a test drive consecutive refreshes
+// WITHOUT dropping the follower or the persisted mirror.
+//
+// This distinction is load-bearing: resetting the whole state makes the second
+// refresh a fresh full rescan, so every carry-forward and supersede rule in
+// persistCopilotContextSnapshot would go untested while still being reported
+// as covered.
+func expireCopilotContextRefreshThrottle() {
+	copilotContextRefreshMu.Lock()
+	defer copilotContextRefreshMu.Unlock()
+	for _, state := range copilotContextRefreshMu.states {
+		state.lastRefresh = time.Time{}
+	}
+}
+
 const copilotRefreshConvID = "3f2a1b0c-9d8e-4f76-8a55-1c2d3e4f5a6b"
 
 // copilotRefreshHome lays out a COPILOT_HOME with one session log and points
@@ -156,7 +171,9 @@ func TestCopilotContextRefreshRepairsCorruptCheckpoint(t *testing.T) {
 		`{"type":"assistant.message","data":{"model":"gpt-5.4","outputTokens":7}}`)
 
 	sess := copilotRefreshSession(t, sessionID)
-	require.NoError(t, db.SaveCopilotTelemetryCheckpoint(sessionID, []byte(`{"version":999}`)))
+	saved, err := db.SaveCopilotTelemetryCheckpoint(sessionID, sess.ConvID, sess.CreatedAt, []byte(`{"version":999}`))
+	require.NoError(t, err)
+	require.True(t, saved)
 
 	refreshCopilotContextSnapshotOnRead(sess, true)
 
@@ -217,4 +234,149 @@ func TestCopilotContextRefreshToleratesMissingLog(t *testing.T) {
 	checkpoint, err := db.LoadCopilotTelemetryCheckpoint(sess.ID)
 	require.NoError(t, err)
 	assert.Nil(t, checkpoint, "a session with no log must not leave a checkpoint behind")
+}
+
+// TestCopilotOutputTokensAdvanceAfterAResume is the regression the cold review
+// found. A log that still grows AND already contains a session.shutdown is
+// exactly a resumed session — the case this follower exists for. Taking the
+// shutdown total unconditionally pinned tokens_output to its pre-resume value
+// and stopped the one durable per-turn figure from ever advancing again.
+func TestCopilotOutputTokensAdvanceAfterAResume(t *testing.T) {
+	setupTestDB(t)
+	resetCopilotContextRefreshStateForTest()
+	t.Cleanup(resetCopilotContextRefreshStateForTest)
+
+	home := copilotRefreshHome(t)
+	path := copilotRefreshLogPath(home)
+	appendCopilotRefreshEvents(t, path,
+		`{"type":"session.start","data":{"sessionId":"s","selectedModel":"gpt-5.4"}}`,
+		`{"type":"assistant.message","data":{"model":"gpt-5.4","outputTokens":100}}`,
+		`{"type":"session.shutdown","data":{"shutdownType":"routine","currentTokens":1000,`+
+			`"modelMetrics":{"gpt-5.4":{"requests":{"count":1},"usage":{"inputTokens":500,"outputTokens":100}}}}}`,
+		`{"type":"session.resume","data":{"resumeTime":"2026-01-01T00:00:00Z","eventCount":3,"selectedModel":"gpt-5.4"}}`)
+
+	sess := copilotRefreshSession(t, "copilot-resumed-session")
+	refreshCopilotContextSnapshotOnRead(sess, true)
+
+	snap, err := db.GetContextSnapshot(sess.ID)
+	require.NoError(t, err)
+	require.Equal(t, int64(100), snap.TokensOutput)
+	require.Equal(t, int64(500), snap.TokensInput)
+
+	// The resumed lifetime produces real work. Note: no state reset, so the
+	// persisted mirror and the follower are the same ones as above.
+	expireCopilotContextRefreshThrottle()
+	appendCopilotRefreshEvents(t, path,
+		`{"type":"assistant.message","data":{"model":"gpt-5.4","outputTokens":900}}`)
+	refreshCopilotContextSnapshotOnRead(sess, true)
+
+	snap, err = db.GetContextSnapshot(sess.ID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1000), snap.TokensOutput,
+		"the running per-turn sum must overtake the pre-resume shutdown total")
+	assert.Equal(t, int64(500), snap.TokensInput,
+		"input has no live source, so the shutdown figure is carried forward, not zeroed")
+}
+
+// TestCopilotContextWindowAndPctMoveTogether is the second cold-review
+// regression: session.truncation discloses a token LIMIT but no total
+// occupancy, so updating the window while keeping the previous percentage
+// produced a row describing an occupancy Copilot never reported.
+func TestCopilotContextWindowAndPctMoveTogether(t *testing.T) {
+	setupTestDB(t)
+	resetCopilotContextRefreshStateForTest()
+	t.Cleanup(resetCopilotContextRefreshStateForTest)
+
+	home := copilotRefreshHome(t)
+	path := copilotRefreshLogPath(home)
+	appendCopilotRefreshEvents(t, path,
+		`{"type":"session.start","data":{"sessionId":"s","selectedModel":"gpt-5.4"}}`,
+		`{"type":"session.compaction_start","data":{"currentTokens":90000,"tokenLimit":128000,"trigger":"threshold"}}`)
+
+	sess := copilotRefreshSession(t, "copilot-window-session")
+	refreshCopilotContextSnapshotOnRead(sess, true)
+
+	snap, err := db.GetContextSnapshot(sess.ID)
+	require.NoError(t, err)
+	require.Equal(t, int64(128000), snap.ContextWindowSize)
+	require.InDelta(t, 70.3125, snap.ContextPct, 0.001)
+
+	// A truncation under a much wider window. Carrying the old 70.3% forward
+	// against 400000 would render ~281k tokens occupied out of nothing.
+	expireCopilotContextRefreshThrottle()
+	appendCopilotRefreshEvents(t, path,
+		`{"type":"session.truncation","data":{"tokenLimit":400000,"preTruncationTokensInMessages":9000,`+
+			`"preTruncationMessagesLength":9,"postTruncationTokensInMessages":1000,`+
+			`"postTruncationMessagesLength":2,"tokensRemovedDuringTruncation":8000,`+
+			`"messagesRemovedDuringTruncation":7,"performedBy":"BasicTruncator"}}`)
+	refreshCopilotContextSnapshotOnRead(sess, true)
+
+	snap, err = db.GetContextSnapshot(sess.ID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(400000), snap.ContextWindowSize, "the fresh limit is recorded")
+	assert.Zero(t, snap.ContextPct,
+		"a limit with no disclosed occupancy must drop the percentage, never keep a stale one")
+}
+
+// TestCopilotContextRefreshIsSerializedPerSession pins the in-flight guard.
+// The 2s throttle alone does not serialize anything: it measures from the
+// START of the previous refresh, so a full rebuild that outlives its own
+// throttle window would let a second caller in concurrently.
+func TestCopilotContextRefreshIsSerializedPerSession(t *testing.T) {
+	setupTestDB(t)
+	resetCopilotContextRefreshStateForTest()
+	t.Cleanup(resetCopilotContextRefreshStateForTest)
+
+	copilotRefreshHome(t)
+	sess := copilotRefreshSession(t, "copilot-serialized")
+
+	first, ok := claimCopilotContextRefresh(sess, time.Now())
+	require.True(t, ok, "the first caller claims the session")
+
+	// A second caller arriving long after the throttle window, while the first
+	// refresh is still running, must be refused.
+	_, ok = claimCopilotContextRefresh(sess, time.Now().Add(time.Hour))
+	assert.False(t, ok, "a refresh already in flight must exclude a concurrent one")
+
+	releaseCopilotContextRefresh(first)
+	_, ok = claimCopilotContextRefresh(sess, time.Now().Add(time.Hour))
+	assert.True(t, ok, "and the next caller proceeds once it is released")
+}
+
+// TestCopilotContextRefreshRefusesAStaleGeneration pins the guard on the row
+// write itself: a session pruned and recreated between the log read and the
+// write must not receive the previous conversation's tokens.
+func TestCopilotContextRefreshRefusesAStaleGeneration(t *testing.T) {
+	setupTestDB(t)
+	resetCopilotContextRefreshStateForTest()
+	t.Cleanup(resetCopilotContextRefreshStateForTest)
+
+	home := copilotRefreshHome(t)
+	appendCopilotRefreshEvents(t, copilotRefreshLogPath(home),
+		`{"type":"assistant.message","data":{"model":"gpt-5.4","outputTokens":77}}`)
+
+	const sessionID = "copilot-generation"
+	sess := copilotRefreshSession(t, sessionID)
+
+	// The row is recreated under the same id with a different generation,
+	// exactly as a prune-and-respawn would leave it, while `sess` still
+	// describes the old one.
+	recreated := &db.SessionRow{
+		ID: sessionID, ConvID: "11111111-2222-4333-8444-999999999999",
+		TmuxSession: "copilot-pane", Status: "idle",
+		Harness: harness.CopilotName, CreatedAt: sess.CreatedAt.Add(time.Minute),
+	}
+	require.NoError(t, db.SaveSession(recreated))
+
+	refreshCopilotContextSnapshotOnRead(sess, true)
+
+	snap, err := db.GetContextSnapshot(sessionID)
+	require.NoError(t, err)
+	assert.Zero(t, snap.TokensOutput,
+		"a stale generation's projection must not land on the recreated row")
+
+	checkpoint, err := db.LoadCopilotTelemetryCheckpoint(sessionID)
+	require.NoError(t, err)
+	assert.Nil(t, checkpoint,
+		"nor may its follower cursor be attached to the recreated row")
 }

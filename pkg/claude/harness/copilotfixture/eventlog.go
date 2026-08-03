@@ -121,7 +121,14 @@ func (s *EventLogSanitizer) SanitizeLog(raw []byte) ([]byte, error) {
 func (s *EventLogSanitizer) sanitizeLine(line []byte) ([]byte, error) {
 	var event map[string]any
 	if err := json.Unmarshal(line, &event); err != nil {
-		return append([]byte(nil), line...), nil
+		// An unparsable line is kept — a half-flushed tail is a case the
+		// follower must survive — but it is still REDACTED. The only lines a
+		// real run fails to parse are truncated tails of the largest records,
+		// which are exactly `system.message` and `tool.execution_complete`:
+		// raw prompt and raw tool output, the two things bulkFields exists to
+		// keep out of testdata. Passing such a fragment through verbatim would
+		// bypass every replacement in this file.
+		return []byte(s.rewriteString(string(line))), nil
 	}
 	eventType, _ := event["type"].(string)
 	if data, ok := event["data"].(map[string]any); ok {

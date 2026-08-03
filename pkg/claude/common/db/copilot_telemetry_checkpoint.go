@@ -1,7 +1,9 @@
 package db
 
 import (
+	"context"
 	"encoding/json"
+	"time"
 )
 
 // Copilot's durable follower checkpoint.
@@ -25,9 +27,23 @@ import (
 // caller.
 
 // SaveCopilotTelemetryCheckpoint replaces one Copilot session's follower
-// checkpoint. Validation belongs to the harness package.
-func SaveCopilotTelemetryCheckpoint(sessionID string, data json.RawMessage) error {
-	return SaveCodexTelemetryCheckpoint(sessionID, data)
+// checkpoint, but only while the session row is still the generation the
+// caller observed. Validation of the blob belongs to the harness package.
+//
+// The generation guard matters because a session id can be pruned and
+// recreated while the daemon's in-memory follower survives. The existence
+// check and the UPSERT are one statement, so the recreated row cannot end up
+// holding the previous conversation's cursor and totals.
+//
+// Reports whether the write landed; false means the generation had already
+// moved on, which is a normal outcome and not an error.
+func SaveCopilotTelemetryCheckpoint(
+	sessionID, convID string,
+	createdAt time.Time,
+	data json.RawMessage,
+) (bool, error) {
+	return SaveCodexTelemetryCheckpointForSessionGenerationContext(
+		context.Background(), sessionID, convID, createdAt, data)
 }
 
 // LoadCopilotTelemetryCheckpoint returns one Copilot session's checkpoint, or
