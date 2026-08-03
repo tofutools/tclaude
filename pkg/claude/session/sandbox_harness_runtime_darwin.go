@@ -15,9 +15,11 @@ var darwinClaudeRuntimeTempBase = "/private/tmp"
 
 // tclaudeLayerHarnessRuntimeWriteDirs prepares writable host paths required by
 // the harness before any tool subprocess starts. Claude Code stages Bash tool
-// invocations below /private/tmp/claude-<uid>, independently of Darwin's
-// standard $TMPDIR. The outer Seatbelt layer must therefore carry this path as
-// launch-contract authority even when Claude's own inner sandbox is disabled.
+// invocations below /private/tmp/claude-<uid> and writes per-command cwd state
+// to unpredictable /tmp/claude-*-cwd files, independently of Darwin's standard
+// $TMPDIR. Since /tmp resolves to /private/tmp on macOS, the outer Seatbelt
+// layer must carry the canonical temp root as launch-contract authority even
+// when Claude's own inner sandbox is disabled.
 func tclaudeLayerHarnessRuntimeWriteDirs(harnessName string) ([]string, error) {
 	if harnessName != harness.DefaultName {
 		return nil, nil
@@ -58,5 +60,5 @@ func tclaudeLayerHarnessRuntimeWriteDirs(harnessName string) ([]string, error) {
 		}
 		return nil, fmt.Errorf("canonicalize Claude runtime scratch root %q: %w", path, err)
 	}
-	return []string{path}, nil
+	return []string{base, path}, nil
 }
