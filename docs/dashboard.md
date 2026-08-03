@@ -314,11 +314,13 @@ the console started itself. At startup the daemon looks for one:
 
 - **Nothing running.** It starts an empty server and turns `exit-empty` off, so
   the server stays up while there are no agents on it instead of appearing and
-  disappearing underneath the console. On exit the daemon runs `kill-server`,
-  which **takes every session started on it down too**. That is a stronger
-  teardown than a bare `agentd serve`, which leaves agent panes running for the
-  next daemon to pick up — and it matches what `--tui` already is: a foreground
-  process whose whole face is the console.
+  disappearing underneath the console. On exit the daemon runs `kill-server` —
+  but **only if the server is still empty**. `exit-empty off` outlives the
+  console, so an empty server would otherwise linger forever with nothing to
+  end it; a server that has picked up sessions is left running instead, because
+  by then the console is gone and the agents on it would be killed with no
+  chance to object. Either way the daemon prints which of the two it did on the
+  way out.
 - **A server is already up.** It belongs to whoever started it — an earlier
   daemon, a `tclaude session new` from a plain shell, your own tmux — so the
   console leaves it exactly as it found it. Its `exit-empty` is not changed, and
@@ -328,7 +330,33 @@ The flag needs the console: without `--tui` there is no daemon-lifetime to tie a
 server to, so it is ignored and startup says so.
 
 When the console owns the server, its quit confirmation says so
-(`Quit and shut down agentd + its tmux sessions?`) instead of the plain wording.
+(`Quit + shut down agentd (and tmux if empty)?`) instead of the plain wording.
+
+"Empty" means no session with anything still running in it. The check reads
+every pane on the server (`list-panes -a`) and counts a session as live when any
+of its panes is, so a session whose harness pane has exited while a second window
+still runs something keeps the server up. A session left behind as a
+retained-dead corpse — scrollback from an agent that has already exited, which is
+what `remain-on-exit` is for — does not, so the ordinary "agent ran, exited, you
+quit" path still ends in a shut-down server.
+
+A server that survives gets its `exit-empty` released back to tmux's default, so
+it exits on its own once those last sessions end rather than lingering pinned.
+
+The exit line naming the outcome goes to stdout, after the console has given the
+terminal back, so it is on the scrollback you land on. Every outcome says
+something — a silent exit would be indistinguishable from a daemon that never
+owned a server at all:
+
+```
+tmux server shut down: it had no sessions left on it
+tmux server left running: 2 sessions still on it (it will exit when they do)
+tmux server left running: could not check whether it still has sessions
+tmux server left running: could not confirm it is the one this daemon started
+tmux server left running: it is not the one this daemon started
+tmux server was already gone; nothing to shut down
+tmux server could not be shut down: <error>
+```
 
 Ownership is only ever claimed on a definite answer. If the check cannot tell
 whether a server is running — no tmux on `PATH`, a tmux too old for the `-N`
@@ -339,10 +367,14 @@ something needs one.
 Much the same holds on the way out. A server the console cannot re-verify at
 exit is left running rather than killed on a guess, and so is one whose pid no
 longer answers as the pid it started — that server died and something else took
-the socket. The one exception is a console that could not read a pid for its own
-server at startup: the check *before* the start had already said no server was
-running, so whatever answers at exit is what this run put there, and it is
-killed. All of these are logged to `output.log`.
+the socket, so it is not inspected or killed at all. A server whose pane listing
+itself fails is left running for the same reason: an answer that could not be
+read is not permission to kill — which is why the check does not go through the
+dashboard's ordinary session read, whose documented semantics turn any failed
+listing into "nothing is alive". The one exception is a console that could
+not read a pid for its own server at startup: the check *before* the start had
+already said no server was running, so whatever answers at exit is what this run
+put there, and it is killed if empty. All of these are logged to `output.log`.
 
 An [external tmux runtime](sandboxing.md) is refused the same way: when
 `--resource-delegation-dir` (or its config/environment equivalent) points the
@@ -356,9 +388,10 @@ comes and goes with it.
 
 One consequence worth knowing: `exit-empty off` outlives the process that set
 it. If an owning daemon is killed outright — `SIGKILL`, an OOM kill — its
-teardown never runs, and the empty server it started stays up indefinitely
-instead of exiting on its own. The next `--tui` run finds it and, by the rule
-above, treats it as somebody else's. Clear it with:
+teardown never runs, so it never releases the option, and the empty server it
+started stays up indefinitely instead of exiting on its own. The next `--tui`
+run finds it and, by the rule above, treats it as somebody else's. Clear it
+with:
 
 ```bash
 tmux -L tclaude kill-server   # only when you know nothing is running on it
@@ -1029,6 +1062,14 @@ that a denied Home must reopen. Includes never hide origin: previews attribute
 every filesystem row to the profile and scope that introduced it.
 Agent-initiated spawns, resume, and reincarnation cannot drop an effective deny
 row, nor reopen a path beneath one that the parent did not reopen.
+
+When agentd runs on macOS, the editor also shows a collapsed **Compatibility —
+macOS only** section. **Allow Mach service registration** is off by default and
+authors `darwin_allow_mach_register: true`. The setting enables headless
+browser/XPC process startup by adding `(allow mach-register)` to tclaude's own
+Seatbelt profile. It does not alter Claude Code's or Codex's built-in sandbox,
+so launches that use only a harness-owned implementation do not gain the
+capability.
 
 **🤖 configure with agent** summons a fresh, independently named sandbox scribe
 for either a new profile or the draft currently open in the editor. Existing

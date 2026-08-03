@@ -2651,6 +2651,11 @@ func tclaudeLayerPhase0WriteDirs(
 		}
 	}
 	candidates := append([]string{stateRoot}, contract.WriteDirs...)
+	runtimeWriteDirs, err := tclaudeLayerHarnessRuntimeWriteDirs(contract.HarnessName)
+	if err != nil {
+		return nil, err
+	}
+	candidates = append(candidates, runtimeWriteDirs...)
 	agentDirectoryNames := make(map[string]bool, len(effective.AgentDirectories))
 	for _, name := range effective.AgentDirectories {
 		agentDirectoryNames[name] = true

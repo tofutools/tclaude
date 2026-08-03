@@ -85,7 +85,7 @@ func handleSandboxCommonRuleCatalog(w http.ResponseWriter, r *http.Request) {
 
 const (
 	sandboxProfileExportFormat        = "tclaude-sandbox-profiles"
-	sandboxProfileExportVersion       = 11
+	sandboxProfileExportVersion       = 12
 	sandboxProfileExportVersionLegacy = 9
 )
 
@@ -95,19 +95,20 @@ const (
 var sandboxProfileBeforeMkdir = func(string) {}
 
 type sandboxProfileJSON struct {
-	ID                  int64                              `json:"id,omitempty"`
-	Name                string                             `json:"name"`
-	Filesystem          []sandboxpolicy.FilesystemGrant    `json:"filesystem"`
-	FilesystemSpellings *sandboxpolicy.FilesystemSpellings `json:"filesystem_spellings"`
-	Environment         []sandboxpolicy.EnvironmentEntry   `json:"environment"`
-	AgentDirectories    []string                           `json:"agent_directories,omitempty"`
-	NetworkAccess       sandboxpolicy.NetworkAccess        `json:"network_access,omitempty"`
-	Network             *sandboxpolicy.NetworkRules        `json:"network,omitempty"`
-	UnixSockets         *sandboxpolicy.UnixSocketRules     `json:"unix_sockets,omitempty"`
-	ResourceLimits      sandboxpolicy.ResourceLimits       `json:"resource_limits,omitempty"`
-	Includes            []string                           `json:"includes,omitempty"`
-	CreatedAt           string                             `json:"created_at,omitempty"`
-	UpdatedAt           string                             `json:"updated_at,omitempty"`
+	ID                      int64                              `json:"id,omitempty"`
+	Name                    string                             `json:"name"`
+	Filesystem              []sandboxpolicy.FilesystemGrant    `json:"filesystem"`
+	FilesystemSpellings     *sandboxpolicy.FilesystemSpellings `json:"filesystem_spellings"`
+	Environment             []sandboxpolicy.EnvironmentEntry   `json:"environment"`
+	AgentDirectories        []string                           `json:"agent_directories,omitempty"`
+	NetworkAccess           sandboxpolicy.NetworkAccess        `json:"network_access,omitempty"`
+	Network                 *sandboxpolicy.NetworkRules        `json:"network,omitempty"`
+	UnixSockets             *sandboxpolicy.UnixSocketRules     `json:"unix_sockets,omitempty"`
+	ResourceLimits          sandboxpolicy.ResourceLimits       `json:"resource_limits,omitempty"`
+	DarwinAllowMachRegister bool                               `json:"darwin_allow_mach_register,omitempty"`
+	Includes                []string                           `json:"includes,omitempty"`
+	CreatedAt               string                             `json:"created_at,omitempty"`
+	UpdatedAt               string                             `json:"updated_at,omitempty"`
 	// Tombstones. TCL-791 removed break-glass; these fields exist ONLY so a
 	// payload still carrying them is refused loudly rather than silently
 	// dropped as an unknown JSON key. Detection is on the RAW JSON, so it works
@@ -149,7 +150,8 @@ func sandboxProfileToJSON(p *db.SandboxProfile, localFields bool) sandboxProfile
 		FilesystemSpellings: p.FilesystemSpellings,
 		Environment:         p.Environment, AgentDirectories: p.AgentDirectories,
 		NetworkAccess: sandboxpolicy.LegacyNetworkAccessForExport(p.Network, p.NetworkAccess),
-		Network:       p.Network, UnixSockets: p.UnixSockets, ResourceLimits: p.ResourceLimits, Includes: p.Includes,
+		Network:       p.Network, UnixSockets: p.UnixSockets, ResourceLimits: p.ResourceLimits,
+		DarwinAllowMachRegister: p.DarwinAllowMachRegister, Includes: p.Includes,
 	}
 	if localFields {
 		out.ID = p.ID
@@ -168,7 +170,8 @@ func buildSandboxProfile(body sandboxProfileJSON) (*db.SandboxProfile, []string,
 		Name: body.Name, Filesystem: body.Filesystem,
 		FilesystemSpellings: body.FilesystemSpellings,
 		Environment:         body.Environment, AgentDirectories: body.AgentDirectories, NetworkAccess: body.NetworkAccess,
-		Network: body.Network, UnixSockets: body.UnixSockets, ResourceLimits: body.ResourceLimits, Includes: body.Includes,
+		Network: body.Network, UnixSockets: body.UnixSockets, ResourceLimits: body.ResourceLimits,
+		DarwinAllowMachRegister: body.DarwinAllowMachRegister, Includes: body.Includes,
 	}
 	var normalized sandboxpolicy.Profile
 	var missing []string
@@ -186,7 +189,8 @@ func buildSandboxProfile(body sandboxProfileJSON) (*db.SandboxProfile, []string,
 		FilesystemSpellings: normalized.FilesystemSpellings,
 		Environment:         normalized.Environment, AgentDirectories: normalized.AgentDirectories,
 		NetworkAccess: normalized.NetworkAccess, Network: normalized.Network,
-		UnixSockets: normalized.UnixSockets, ResourceLimits: normalized.ResourceLimits, Includes: normalized.Includes,
+		UnixSockets: normalized.UnixSockets, ResourceLimits: normalized.ResourceLimits,
+		DarwinAllowMachRegister: normalized.DarwinAllowMachRegister, Includes: normalized.Includes,
 	}, missing, nil
 }
 
@@ -195,7 +199,8 @@ func buildSandboxProfileForImport(body sandboxProfileJSON) (*db.SandboxProfile, 
 		Name: body.Name, Filesystem: body.Filesystem,
 		FilesystemSpellings: body.FilesystemSpellings,
 		Environment:         body.Environment, AgentDirectories: body.AgentDirectories, NetworkAccess: body.NetworkAccess,
-		Network: body.Network, UnixSockets: body.UnixSockets, ResourceLimits: body.ResourceLimits, Includes: body.Includes,
+		Network: body.Network, UnixSockets: body.UnixSockets, ResourceLimits: body.ResourceLimits,
+		DarwinAllowMachRegister: body.DarwinAllowMachRegister, Includes: body.Includes,
 	})
 	if err != nil {
 		return nil, nil, err
@@ -205,7 +210,8 @@ func buildSandboxProfileForImport(body sandboxProfileJSON) (*db.SandboxProfile, 
 		FilesystemSpellings: normalized.FilesystemSpellings,
 		Environment:         normalized.Environment, AgentDirectories: normalized.AgentDirectories,
 		NetworkAccess: normalized.NetworkAccess, Network: normalized.Network,
-		UnixSockets: normalized.UnixSockets, ResourceLimits: normalized.ResourceLimits, Includes: normalized.Includes,
+		UnixSockets: normalized.UnixSockets, ResourceLimits: normalized.ResourceLimits,
+		DarwinAllowMachRegister: normalized.DarwinAllowMachRegister, Includes: normalized.Includes,
 	}, missing, nil
 }
 
@@ -687,12 +693,18 @@ func handleSandboxProfilesExport(w http.ResponseWriter, r *http.Request) {
 	}
 	formatVersion := sandboxProfileExportVersionLegacy
 	for _, profile := range out {
-		if profile.ResourceLimits.Enabled() {
+		if profile.DarwinAllowMachRegister {
 			formatVersion = sandboxProfileExportVersion
 			break
 		}
+		if profile.ResourceLimits.Enabled() {
+			if formatVersion < 11 {
+				formatVersion = 11
+			}
+		}
 		if profile.Network != nil &&
-			(len(profile.Network.DenyPacks) > 0 || len(profile.Network.Deny) > 0) {
+			(len(profile.Network.DenyPacks) > 0 || len(profile.Network.Deny) > 0) &&
+			formatVersion < 10 {
 			formatVersion = 10
 		}
 	}
@@ -930,6 +942,16 @@ func supportedSandboxProfileExport(format string, version int) bool {
 
 func validateSandboxProfileExportVersionContent(env sandboxProfileExportEnvelope) *spawnFailure {
 	for _, profile := range env.Profiles {
+		if env.FormatVersion < 12 && profile.DarwinAllowMachRegister {
+			return &spawnFailure{
+				Status: http.StatusBadRequest,
+				Kind:   "invalid_format",
+				Msg: fmt.Sprintf(
+					"sandbox profile %q contains Darwin mach-register access, which requires export format version 12",
+					profile.Name,
+				),
+			}
+		}
 		if env.FormatVersion < 11 && profile.ResourceLimits.Enabled() {
 			return &spawnFailure{
 				Status: http.StatusBadRequest,

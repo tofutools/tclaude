@@ -509,6 +509,12 @@ environment configuration, optional agent-owned directory declarations, and
 independent `network` and `unix_sockets` access axes (plus the legacy
 `network_access` compatibility spelling). On Linux they may also carry
 independent `resource_limits.memory` and `resource_limits.cpu` ceilings.
+On macOS, `darwin_allow_mach_register: true` is an opt-in compatibility
+capability for multi-process browser and XPC workloads such as headless
+Chrome/Chromium and Playwright WebKit. It adds `(allow mach-register)` only to
+the tclaude-owned Seatbelt layer. It cannot change the Seatbelt profiles owned
+by Claude Code or Codex, and it broadens every process inside that tclaude
+layer rather than granting one browser by executable name.
 Memory accepts a positive decimal quantity with a case-insensitive decimal or
 binary unit, such as `4GB`, `4G`, `4GiB`, `512MB`, or `512MiB`; CPU is a
 positive number of cores at or above `0.01`, such as `0.5` or `4`. Filesystem access accepts `read`,

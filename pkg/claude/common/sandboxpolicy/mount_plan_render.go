@@ -161,6 +161,7 @@ func RenderMountPlanWithEngine(
 	}
 	plan.NetworkPosture = posture
 	plan.RootPosture = RootPostureForAxes(axes)
+	plan.DarwinAllowMachRegister = effective.DarwinAllowMachRegister
 	if err := ValidateNetworkEngine(selected); err != nil {
 		return MountPlan{}, fmt.Errorf("resolve network filtering engine: %w", err)
 	}

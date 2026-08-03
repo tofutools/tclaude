@@ -689,6 +689,10 @@ func compileSeatbeltDenyRegions(
 	var profile strings.Builder
 	profile.WriteString("(version 1)\n")
 	profile.WriteString("(allow default)\n\n")
+	if plan.DarwinAllowMachRegister {
+		profile.WriteString("; Optional compatibility capability for headless Chromium and similar helpers.\n")
+		profile.WriteString("(allow mach-register)\n\n")
+	}
 	profile.WriteString("; Filesystem policy is deny-only. Positive descendants are carved out\n")
 	profile.WriteString("; inside each deny predicate so plan precedence does not depend on\n")
 	profile.WriteString("; Seatbelt allow/deny rule selection.\n")

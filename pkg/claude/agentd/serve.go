@@ -46,7 +46,7 @@ type serveParams struct {
 	PersistOperatorTokenKeychain bool   `long:"persist-operator-token-keychain" help:"Explicitly persist the operator token in the OS keychain instead of the private file. Implies persistence and ORs with agent.persist_operator_token_keychain in config.json. Existing tokens are not migrated between stores."`
 	NoPrintHumanToken            bool   `long:"no-print-human-token" help:"Skip printing the operator token (TCLAUDE_HUMAN_TOKEN) banner on startup, and keep the --tui console's dashboard sign-in link off the screen with it. The token is still minted and honored — this only suppresses what is shown. Useful with -p / non-interactive launches where the startup output is scraped or logged."`
 	TUI                          bool   `long:"tui" help:"Run a terminal UI in this window — a simplified dashboard that lists agents, starts new ones, and goes to an agent's tmux session with enter. On its own it REPLACES the web dashboard: no loopback dashboard listener is started, so browser deep links and human-approval requests are unavailable (grant access with 'tclaude agent permissions grant' instead). Pass --dashboard-port, --dashboard-bind or --auto-launch-dashboard alongside it to run the web dashboard as well. Startup output other than schema migrations goes to output.log instead of stdout, which the UI owns, and the operator token is shown inside the UI. Quitting the TUI shuts the daemon down. Pass --own-tmux-server to tie the tclaude tmux server's lifetime to this daemon as well."`
-	OwnTmuxServer                bool   `long:"own-tmux-server" help:"With --tui, own the tclaude tmux server for this daemon's lifetime WHEN IT STARTS ONE: with no server running it starts an empty one (with exit-empty off, so it stays up with no agents on it) and kills it on exit, taking every session started on it along. A server that was already running — from an earlier daemon, a session started outside it, or an external resource-delegation unit — is left alone in both directions. Default: off, leaving the tmux server to come and go as tmux itself decides, and leaving agent panes running for the next daemon to pick up. Has no effect without --tui."`
+	OwnTmuxServer                bool   `long:"own-tmux-server" help:"With --tui, own the tclaude tmux server for this daemon's lifetime WHEN IT STARTS ONE: with no server running it starts an empty one (with exit-empty off, so it stays up with no agents on it) and kills it on exit IF IT IS STILL EMPTY, reporting on exit whether it was shut down or left running with sessions on it. A server that was already running — from an earlier daemon, a session started outside it, or an external resource-delegation unit — is left alone in both directions. Default: off, leaving the tmux server to come and go as tmux itself decides, and leaving agent panes running for the next daemon to pick up. Has no effect without --tui."`
 }
 
 func serveCmd() *cobra.Command {
@@ -380,8 +380,9 @@ func runServe(p *serveParams) error {
 	// With --tui AND --own-tmux-server the daemon owns the tclaude tmux server
 	// for the console's lifetime — but only one it started itself: with no
 	// server running it starts an empty one with exit-empty off, so it stays up
-	// with no agents in it, and kills it outright on the way out. A server that
-	// was already there is left alone in both directions.
+	// with no agents in it, and kills it on the way out if it is still empty
+	// then. A server that was already there is left alone in both directions,
+	// and so is an owned one that has picked up sessions.
 	//
 	// It is opt-in because tying the server's lifetime to a daemon changes what
 	// quitting costs: agent panes normally outlive it. Without --tui the flag has
@@ -410,7 +411,11 @@ func runServe(p *serveParams) error {
 	ownsTmuxServer := false
 	switch {
 	case tmuxServerOwnershipRequested(p):
-		stopTmuxServer, owned := startTUITmuxServer()
+		// os.Stdout, not `out`: `out` is io.Discard under --tui because the
+		// console owns the terminal, but by the time this teardown runs the
+		// console has handed it back, and whether the operator's tmux sessions
+		// survived the quit is the last thing they need to read.
+		stopTmuxServer, owned := startTUITmuxServer(os.Stdout)
 		ownsTmuxServer = owned
 		defer stopTmuxServer()
 	case p.OwnTmuxServer:
