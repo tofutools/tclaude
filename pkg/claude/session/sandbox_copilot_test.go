@@ -1,6 +1,7 @@
 package session
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -208,4 +209,108 @@ func TestValidateTclaudeLayerHarnessPostureReadsTheLaunchEnvironment(t *testing.
 	require.Error(t, err,
 		"the gate must inspect the settings file the LAUNCH environment selects")
 	assert.Contains(t, err.Error(), profileHome)
+}
+
+// TestRunNewRefusesCopilotTclaudeLayerWithNoSandboxProfile is the F1
+// regression, and it is a direct-CLI test on purpose.
+//
+// The posture gate was reachable only from inside the access-axes block, which
+// runs when a profile declares network or socket rules. So the SIMPLEST way to
+// reach the feature —
+//
+//	tclaude session new --harness copilot --sandbox-impl tclaude-layer
+//
+// with no profile at all — went straight to launch with neither the assert-off
+// gate nor the pass-through-argument refusal ever running, while the recorded
+// posture claimed tclaude's layer was the only boundary. A daemon spawn was
+// covered because agentd has its own gate; the direct CLI had nothing.
+//
+// The test drives runNew itself rather than the validator, because "which call
+// sites reach the validator" is precisely what was wrong. Asserting on
+// ValidateTclaudeLayerHarnessPosture directly would have passed throughout.
+func TestRunNewRefusesCopilotTclaudeLayerWithNoSandboxProfile(t *testing.T) {
+	home, workspace := copilotLaunchRoot(t)
+	require.NoError(t, os.MkdirAll(filepath.Join(home, ".copilot"), 0o700))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(home, ".copilot", harness.CopilotSettingsFileName),
+		[]byte(`{"sandbox":{"enabled":true}}`), 0o600))
+
+	prevCheck := ClaudeAncestorCheck
+	ClaudeAncestorCheck = func() bool { return false }
+	t.Cleanup(func() { ClaudeAncestorCheck = prevCheck })
+	swapTmux(t, &launchRecordingTmux{})
+
+	err := runNew(&NewParams{
+		Label:       "spwn-copilot-noprofile",
+		Harness:     harness.CopilotName,
+		SandboxImpl: string(sandboxpolicy.ImplementationTclaudeLayer),
+		Dir:         workspace,
+		Detached:    true,
+	})
+	require.Error(t, err,
+		"a no-profile tclaude-layer Copilot launch must be refused: nothing else on this "+
+			"path verifies that Copilot's own sandbox is off")
+	var capErr *harness.SandboxCapabilityError
+	require.ErrorAs(t, err, &capErr)
+	assert.Equal(t, harness.SandboxCapabilityCopilotInnerSandbox, capErr.Kind)
+	assert.Contains(t, capErr.Message, "sandbox.enabled")
+}
+
+// TestRunNewRefusesCopilotTclaudeLayerExtraExperimentalArg covers the argv half
+// of the same hole. The pass-through refusal lived behind the same block, so a
+// no-profile launch could hand Copilot `--experimental` — re-registering the
+// in-pane `/sandbox` command — with nothing to stop it.
+func TestRunNewRefusesCopilotTclaudeLayerExtraExperimentalArg(t *testing.T) {
+	_, workspace := copilotLaunchRoot(t)
+
+	prevCheck := ClaudeAncestorCheck
+	ClaudeAncestorCheck = func() bool { return false }
+	t.Cleanup(func() { ClaudeAncestorCheck = prevCheck })
+	swapTmux(t, &launchRecordingTmux{})
+
+	// Pass-through arguments are taken from the real command line (everything
+	// after `--`), which is what an operator actually types, so the test has to
+	// go through the same source rather than a struct field the CLI never sets.
+	previousArgs := os.Args
+	os.Args = []string{"tclaude", "session", "new", "--", "--experimental"}
+	t.Cleanup(func() { os.Args = previousArgs })
+
+	err := runNew(&NewParams{
+		Label:       "spwn-copilot-experimental",
+		Harness:     harness.CopilotName,
+		SandboxImpl: string(sandboxpolicy.ImplementationTclaudeLayer),
+		Dir:         workspace,
+		Detached:    true,
+	})
+	require.Error(t, err, "the argv gate must run on a no-profile launch too")
+	var capErr *harness.SandboxCapabilityError
+	require.ErrorAs(t, err, &capErr)
+	assert.Equal(t, harness.SandboxCapabilityCopilotInnerSandbox, capErr.Kind)
+	assert.Contains(t, capErr.Message, "--experimental")
+}
+
+// TestRunNewAcceptsCopilotTclaudeLayerWithCleanPosture is the other half: the
+// hoisted gate must not turn every ordinary Copilot launch into a refusal.
+// Without it, a fix for the hole above could pass both tests above by refusing
+// unconditionally.
+func TestRunNewAcceptsCopilotTclaudeLayerWithCleanPosture(t *testing.T) {
+	_, workspace := copilotLaunchRoot(t)
+
+	prevCheck := ClaudeAncestorCheck
+	ClaudeAncestorCheck = func() bool { return false }
+	t.Cleanup(func() { ClaudeAncestorCheck = prevCheck })
+	swapTmux(t, &launchRecordingTmux{})
+
+	err := runNew(&NewParams{
+		Label:       "spwn-copilot-clean",
+		Harness:     harness.CopilotName,
+		SandboxImpl: string(sandboxpolicy.ImplementationTclaudeLayer),
+		Dir:         workspace,
+		Detached:    true,
+	})
+	var capErr *harness.SandboxCapabilityError
+	if errors.As(err, &capErr) &&
+		capErr.Kind == harness.SandboxCapabilityCopilotInnerSandbox {
+		t.Fatalf("a clean Copilot posture must not be refused by the assert-off gate: %v", err)
+	}
 }

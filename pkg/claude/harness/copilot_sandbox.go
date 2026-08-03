@@ -438,3 +438,138 @@ func copilotInnerSandboxError(message string) *SandboxCapabilityError {
 		Message: message,
 	}
 }
+
+// CopilotSettingsSource is one merged top-level settings key: its raw value and
+// the file that supplied it.
+type CopilotSettingsSource struct {
+	// Raw is the key's value as written in the winning file.
+	Raw json.RawMessage
+	// Path is the file the value came from, so a refusal can name the file an
+	// operator has to edit rather than the one being overwritten.
+	Path string
+}
+
+// ResolveCopilotMergedSettings returns Copilot's effective top-level settings —
+// settings.json overlaid by the legacy config.json, whole key by whole key.
+//
+// This is the SHARED reader. Anything in tclaude that decides something from a
+// Copilot settings key must go through it rather than opening settings.json
+// directly, because every property that makes the naive read wrong lives here:
+// the second file, its precedence, the shallow whole-key replacement, and the
+// comment-led managed stub. A second parser that got any of those wrong would
+// not fail loudly — it would quietly answer a question about a file the launch
+// is not going to use. That is exactly how the model-transport route gate came
+// to admit a legacy `copilotUrl` override that then broke against the network
+// wall instead of being refused with a reason.
+//
+// The returned map is keyed by the top-level settings key. A missing file
+// contributes nothing; an unreadable or unparsable one is an error, since a
+// launch decided from a file tclaude could not read is a launch decided on a
+// guess.
+func ResolveCopilotMergedSettings(
+	getenv func(string) string,
+	home string,
+) (map[string]CopilotSettingsSource, error) {
+	stateDir, err := CopilotStateDirForLaunch(getenv, home)
+	if err != nil {
+		return nil, err
+	}
+	merged := map[string]CopilotSettingsSource{}
+	// Weakest first: the legacy file overwrites, whole key by whole key.
+	for _, path := range []string{
+		filepath.Join(stateDir, CopilotSettingsFileName),
+		filepath.Join(stateDir, CopilotConfigFileName),
+	} {
+		data, readErr := os.ReadFile(path)
+		if errors.Is(readErr, os.ErrNotExist) {
+			continue
+		}
+		if readErr != nil {
+			return nil, copilotInnerSandboxError(fmt.Sprintf(
+				"cannot read Copilot settings %s: %v; tclaude cannot tell what this launch is "+
+					"configured to do, so it is refused rather than started on an unverified "+
+					"reading", path, readErr))
+		}
+		var file map[string]json.RawMessage
+		if err := json.Unmarshal(stripCopilotLineComments(data), &file); err != nil {
+			return nil, copilotInnerSandboxError(fmt.Sprintf(
+				"cannot parse Copilot settings %s as a JSON object: %v; fix the file or use "+
+					"another posture", path, err))
+		}
+		for key, raw := range file {
+			merged[key] = CopilotSettingsSource{Raw: raw, Path: path}
+		}
+	}
+	return merged, nil
+}
+
+// CopilotStateDirForLaunch resolves the COPILOT_HOME a launch will use, with
+// the absoluteness check that copilotStateDir deliberately does not perform.
+//
+// Exported because more than one gate needs the same directory AND the same
+// refusal: a relative COPILOT_HOME makes tclaude and Copilot resolve the same
+// value against different working directories, so tclaude would be inspecting
+// files the launch never opens and reading their absence as consent.
+func CopilotStateDirForLaunch(getenv func(string) string, home string) (string, error) {
+	if getenv == nil {
+		getenv = os.Getenv
+	}
+	home = filepath.Clean(strings.TrimSpace(home))
+	if home == "" || home == "." || !filepath.IsAbs(home) {
+		return "", copilotInnerSandboxError(fmt.Sprintf(
+			"Copilot's configuration needs an absolute home directory to resolve %s from, got %q",
+			CopilotHomeEnvVar, home))
+	}
+	stateDir, _ := copilotStateDir(getenv, home)
+	if !filepath.IsAbs(stateDir) {
+		return "", copilotInnerSandboxError(fmt.Sprintf(
+			"%s is relative (%q), so tclaude and Copilot would resolve it against different "+
+				"working directories and inspect different settings files; set an absolute path",
+			CopilotHomeEnvVar, stateDir))
+	}
+	return stateDir, nil
+}
+
+// CopilotRouteMovingSettingsKeys are the settings keys that move Copilot's
+// model endpoint away from the first-party route.
+//
+// The two are NOT equally established, and saying so matters for how a reader
+// weighs the refusal:
+//
+//   - `proxyUrl` is the live, material one. Measured on 1.0.77, it really does
+//     send the launch's model traffic somewhere the authored allow list never
+//     approved.
+//   - `copilotUrl` appears inert and is undocumented at this version. It is
+//     refused CONSERVATIVELY — it is named in the shipped runtime and would be
+//     the obvious lever if it were wired up, and a refusal costs an operator
+//     one setting while a miss costs the network wall its meaning.
+func CopilotRouteMovingSettingsKeys() []string {
+	return []string{"copilotUrl", "proxyUrl"}
+}
+
+// CopilotRouteMovingSettingsKey reports the merged settings key that moves the
+// endpoint, with the file that set it, or "" when the launch keeps the default
+// route.
+//
+// Presence alone is not enough: an explicit null or empty string leaves the
+// default route in place, and refusing over one would send an operator hunting
+// for a setting that changes nothing. A non-string value is ambiguous rather
+// than absent and is refused by NAME.
+func CopilotRouteMovingSettingsKey(
+	merged map[string]CopilotSettingsSource,
+) (key, path string) {
+	for _, candidate := range CopilotRouteMovingSettingsKeys() {
+		source, found := merged[candidate]
+		if !found {
+			continue
+		}
+		var value string
+		if err := json.Unmarshal(source.Raw, &value); err != nil {
+			return candidate, source.Path
+		}
+		if strings.TrimSpace(value) != "" {
+			return candidate, source.Path
+		}
+	}
+	return "", ""
+}

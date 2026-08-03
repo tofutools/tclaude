@@ -357,6 +357,17 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 		if grantErr != nil {
 			return TclaudeLayerLaunchSpec{}, grantErr
 		}
+		// Writable rows become state DIRECTORIES. Every writable row the catalog
+		// produces today is a directory, so this holds — but it is a property of
+		// the catalog, not of the loop. A future writable row naming a FILE or a
+		// SOCKET (the agentd endpoint row is already rw, and is feature-
+		// conditional rather than absent by construction) would be prepared as a
+		// directory here, which is wrong in a way that would surface as a
+		// confusing mkdir rather than as a refusal. Left as-is deliberately: it
+		// is not reachable from any launch this branch can produce, and widening
+		// the switch on speculation would add an untested path to a security
+		// boundary. Revisit with CopilotNodeKind if a writable non-directory row
+		// is ever added (see TCL-978 review finding F3).
 		for _, grant := range grants.Grants {
 			switch grant.Access {
 			case sandboxpolicy.AccessWrite:

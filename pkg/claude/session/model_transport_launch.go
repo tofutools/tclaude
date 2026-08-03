@@ -333,13 +333,13 @@ func resolveCopilotModelTransport(
 				"resolver for it; remove the variable to use the first-party route, or use network open",
 				variable))
 	}
-	if variable, err := copilotSettingsRouteVariable(environment); err != nil {
+	if variable, path, err := copilotSettingsRouteVariable(environment); err != nil {
 		return harness.ResolvedModelTransport{}, modelTransportLaunchError(h, err.Error())
 	} else if variable != "" {
 		return harness.ResolvedModelTransport{}, modelTransportLaunchError(h,
-			fmt.Sprintf("Copilot settings key %s moves the model route away from the default "+
+			fmt.Sprintf("Copilot settings key %s in %s moves the model route away from the default "+
 				"first-party GitHub Copilot service; remove it to use the first-party route, or use network open",
-				variable))
+				variable, path))
 	}
 	return harness.ResolvedModelTransport{
 		Model: context.Model,
@@ -352,57 +352,53 @@ func resolveCopilotModelTransport(
 }
 
 // copilotSettingsRouteVariable reports the settings key that moves Copilot's
-// endpoint, or "" when the file leaves the default route in place.
+// endpoint, or "" when the launch leaves the default route in place.
 //
-// A missing file is the default route — Copilot ships no settings.json until
-// something writes one. An unreadable or unparsable file is an error rather
-// than a default, for the same reason the assert-off gate treats it as one: the
-// launch would be claiming a route nobody verified.
-func copilotSettingsRouteVariable(environment map[string]string) (string, error) {
+// It goes through the SHARED two-file reader rather than opening settings.json
+// itself, and that is the whole point of the function now. An earlier version
+// read settings.json alone, so a route key in the legacy config.json — which
+// wins, because the CLI migrates it over settings.json at startup — was
+// admitted as "default route".
+//
+// What that actually costs depends on the launch, and the honest version is
+// narrower than "a bypass":
+//
+//   - A filtered launch that DOES run tclaude's managed proxy engine is not
+//     exploitable through this: the launcher injects the proxy environment, and
+//     environment precedence beats the on-disk `proxyUrl`, so the disk value
+//     never takes effect.
+//   - A filtered launch WITHOUT the managed proxy engine is the residual. There
+//     the on-disk `proxyUrl` is live, and it can tunnel model traffic through
+//     loopback or through any host the allow list already permits — inside the
+//     wall, past the destination review the wall exists to enforce.
+//
+// Either way the pre-fix behavior was wrong in the direction that hides the
+// problem: the launch was admitted and then merely broke against the wall,
+// instead of being refused with a reason an operator can act on.
+//
+// The returned path is the file that actually set the key, so the remedy names
+// the file an operator must edit rather than the one being overwritten.
+func copilotSettingsRouteVariable(environment map[string]string) (variable, path string, err error) {
 	home := strings.TrimSpace(environment["HOME"])
-	stateDir := strings.TrimSpace(environment[harness.CopilotHomeEnvVar])
-	if stateDir == "" {
-		if home == "" {
-			return "", fmt.Errorf(
-				"cannot locate the Copilot home because HOME and %s are unset, so the launch "+
-					"model route cannot be resolved; set %s or use network open",
-				harness.CopilotHomeEnvVar, harness.CopilotHomeEnvVar)
-		}
-		stateDir = filepath.Join(home, ".copilot")
+	getenv := func(name string) string { return strings.TrimSpace(environment[name]) }
+	if home == "" && getenv(harness.CopilotHomeEnvVar) == "" {
+		return "", "", fmt.Errorf(
+			"cannot locate the Copilot home because HOME and %s are unset, so the launch "+
+				"model route cannot be resolved; set %s or use network open",
+			harness.CopilotHomeEnvVar, harness.CopilotHomeEnvVar)
 	}
-	path := filepath.Join(stateDir, harness.CopilotSettingsFileName)
-	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return "", nil
+	// A launch whose HOME is unset but whose COPILOT_HOME is absolute is still
+	// resolvable; the shared resolver needs a home only to build the default.
+	if home == "" {
+		home = filepath.Dir(getenv(harness.CopilotHomeEnvVar))
 	}
-	if err != nil {
-		return "", fmt.Errorf(
-			"cannot inspect Copilot settings %s: %v; fix its visibility or use network open", path, err)
+	merged, mergedErr := harness.ResolveCopilotMergedSettings(getenv, home)
+	if mergedErr != nil {
+		return "", "", fmt.Errorf(
+			"%v; fix the file or use network open", mergedErr)
 	}
-	var settings map[string]json.RawMessage
-	if err := json.Unmarshal(data, &settings); err != nil {
-		return "", fmt.Errorf(
-			"cannot parse Copilot settings %s; fix the file or use network open", path)
-	}
-	for _, key := range []string{"copilotUrl", "proxyUrl"} {
-		raw, found := settings[key]
-		if !found {
-			continue
-		}
-		// Presence alone is not enough: an explicit null or empty string leaves
-		// the default route in place, and refusing over one would send an
-		// operator hunting for a setting that changes nothing.
-		var value string
-		if err := json.Unmarshal(raw, &value); err != nil {
-			// A non-string value is ambiguous rather than absent, so it is
-			// refused by NAME here instead of being read as unset.
-			return key, nil
-		}
-		if strings.TrimSpace(value) != "" {
-			return key, nil
-		}
-	}
-	return "", nil
+	variable, path = harness.CopilotRouteMovingSettingsKey(merged)
+	return variable, path, nil
 }
 
 func resolveClaudeModelTransport(

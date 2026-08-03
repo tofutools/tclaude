@@ -228,3 +228,134 @@ func TestResolveCopilotModelTransportProxyRegression(t *testing.T) {
 			"will inject its own proxy variables afterwards: %v", err)
 	}
 }
+
+// writeCopilotLaunchFile writes any file into the launch's Copilot home, so a
+// case can describe the two-file world the route gate actually faces.
+func writeCopilotLaunchFile(t *testing.T, home, name, body string) {
+	t.Helper()
+	dir := filepath.Join(home, ".copilot")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatalf("prepare Copilot home: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
+		t.Fatalf("write %s: %v", name, err)
+	}
+}
+
+// TestResolveCopilotModelTransportReadsTheLegacyConfigRoute is the F2
+// regression, and the bug it pins was invisible from inside this gate.
+//
+// The route check read settings.json alone. Copilot migrates the legacy
+// config.json OVER settings.json at startup and the legacy file wins, so a
+// `copilotUrl` living there was reported as "no routing keys, default route".
+// The residual this closes is specific, and worth stating narrowly rather than
+// as "a bypass": a filtered launch that runs tclaude's managed proxy engine is
+// unaffected, because the injected proxy environment beats the on-disk value.
+// A filtered launch WITHOUT that engine is the exposed one — there the on-disk
+// `proxyUrl` is live and can tunnel model traffic through loopback or any
+// already-allowed host, inside the wall and past the destination review the
+// wall exists to perform. Pre-fix, that launch was admitted and then merely
+// broke against the wall instead of being refused with a reason.
+//
+// The empty/replacement arms matter for the opposite reason: the merge is
+// shallow at the top level, so a legacy file that sets a route key REPLACES the
+// canonical one, and a legacy file that is silent leaves it alone. Getting that
+// backwards would either miss an override or refuse a launch that has none.
+func TestResolveCopilotModelTransportReadsTheLegacyConfigRoute(t *testing.T) {
+	h := harness.MustGet(harness.CopilotName)
+	for _, tc := range []struct {
+		name       string
+		settings   string
+		config     string
+		wantRefuse bool
+		wantKey    string
+		wantFile   string
+	}{
+		{
+			// proxyUrl first because it is the MATERIAL one: measured on 1.0.77
+			// it really does send model traffic somewhere the allow list never
+			// approved. This exact shape — a legacy-only proxyUrl — is what the
+			// pre-fix gate admitted.
+			name:       "a live proxyUrl living only in the legacy config",
+			config:     `{"proxyUrl":"http://proxy.corp.example:3128"}`,
+			wantRefuse: true, wantKey: "proxyUrl", wantFile: harness.CopilotConfigFileName,
+		},
+		{
+			// copilotUrl is refused conservatively rather than because it is
+			// known to be live: it appears inert and undocumented at 1.0.77, but
+			// it is named in the shipped runtime and would be the obvious lever
+			// if wired up. A refusal costs one setting; a miss costs the wall
+			// its meaning.
+			name:       "a conservative copilotUrl refusal from the legacy config",
+			config:     `{"copilotUrl":"https://copilot-api.example.ghe.com"}`,
+			wantRefuse: true, wantKey: "copilotUrl", wantFile: harness.CopilotConfigFileName,
+		},
+		{
+			name:       "the legacy config sets a route beside an unrelated canonical key",
+			settings:   `{"theme":"dark"}`,
+			config:     `{"proxyUrl":"http://proxy.corp.example:3128"}`,
+			wantRefuse: true, wantKey: "proxyUrl", wantFile: harness.CopilotConfigFileName,
+		},
+		{
+			name:       "the legacy config REPLACES the canonical route key",
+			settings:   `{"copilotUrl":"https://one.example"}`,
+			config:     `{"copilotUrl":"https://two.example"}`,
+			wantRefuse: true, wantKey: "copilotUrl", wantFile: harness.CopilotConfigFileName,
+		},
+		{
+			name: "a legacy config that CLEARS the route key leaves the default route",
+			// Whole-key replacement, so an empty string in the legacy file
+			// genuinely removes the override rather than merging under it.
+			settings: `{"copilotUrl":"https://one.example"}`,
+			config:   `{"copilotUrl":""}`,
+		},
+		{
+			name:     "a legacy config silent about routing leaves the canonical value alone",
+			settings: `{"theme":"dark"}`,
+			config:   `{"banner":"never"}`,
+		},
+		{
+			name:     "the managed post-migration stub is the ordinary posture",
+			settings: `{"theme":"dark"}`,
+			config: "// User settings belong in settings.json.\n" +
+				"// This file is managed automatically.\n" +
+				"{\n  \"firstLaunchAt\": \"2026-03-11T00:00:00.000Z\"\n}\n",
+		},
+		{
+			name:       "an unparsable legacy config is refused, not read as absent",
+			settings:   `{"theme":"dark"}`,
+			config:     `{"copilotUrl": `,
+			wantRefuse: true, wantFile: harness.CopilotConfigFileName,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			context, home := copilotLaunchContext(t, nil)
+			if tc.settings != "" {
+				writeCopilotLaunchSettings(t, home, tc.settings)
+			}
+			writeCopilotLaunchFile(t, home, harness.CopilotConfigFileName, tc.config)
+
+			_, err := ResolveTclaudeLayerModelTransport(h, context)
+			if !tc.wantRefuse {
+				if err != nil {
+					t.Fatalf("got %v, want the first-party route accepted", err)
+				}
+				return
+			}
+			var capErr *harness.SandboxCapabilityError
+			if !errors.As(err, &capErr) {
+				t.Fatalf("got %v, want a refusal", err)
+			}
+			if tc.wantKey != "" && !strings.Contains(capErr.Message, tc.wantKey) {
+				t.Errorf("message %q does not name the settings key", capErr.Message)
+			}
+			// The remedy has to name the file that actually decides. Pointing an
+			// operator at settings.json when config.json overrides it is advice
+			// that does not work.
+			if !strings.Contains(capErr.Message, tc.wantFile) {
+				t.Errorf("message %q does not name the deciding file %s",
+					capErr.Message, tc.wantFile)
+			}
+		})
+	}
+}

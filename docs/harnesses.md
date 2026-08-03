@@ -244,7 +244,7 @@ covers **interactive human sessions**:
 | **Conversation store** | ✅ cold list / resolve / cwd filter / title / existence, read from Copilot's own per-session `<COPILOT_HOME>/session-state/<id>/` files. No SQLite access at all — see [below](#copilot-conversation-store) |
 | **Sandbox** | ⚠️ `inherit` (default) / `off` — an *assertion*, not a lever. Copilot's own command sandbox has no launch flag, so tclaude can neither enable nor disable it; `off` means "verified not engaged" and is what `--sandbox-impl tclaude-layer` resolves to. See [below](#copilot-and-tclaudes-outer-sandbox). Copilot's *own* command sandboxing was separately evaluated and deliberately not advertised as a harness-builtin implementation — see [below](#copilots-own-command-sandboxing) |
 | **tclaude-layer (outer OS sandbox)** | ✅ Linux bubblewrap / macOS Seatbelt, with Copilot's pre-approved directory catalog composed into the mount plan |
-| **Model transport under a filtered network** | ⚠️ the default first-party GitHub Copilot route only (`api.githubcopilot.com`, `api.github.com`); every route-moving input is refused rather than followed |
+| **Model transport under a filtered network** | ⚠️ the default first-party GitHub Copilot route only (`api.githubcopilot.com`, `api.github.com`); every route-moving input is refused rather than followed, read from both settings files with the same precedence as the sandbox key |
 | **Everything else in the matrix** | ➖ not yet — no ad-hoc ask, approval, tool governance, directory pre-trust, remote control, usage/cost, or status bar |
 
 Two consequences are worth stating plainly:
@@ -338,8 +338,11 @@ Note that `experimental` is not evidence in the other direction: it gates the
 no experimental flag anywhere, which is why the `sandbox.enabled` check above
 is the one that decides and `experimental` only adds a refusal on top.
 
-The check runs on **every** path that starts a Copilot pane — spawn, resume,
-clone, reincarnate, and template/wave deploys — rather than once at spawn.
+The check runs on **every** path that starts a Copilot pane — a direct
+`session new`, spawn, resume, clone, reincarnate, and template/wave deploys —
+and on every such launch whether or not it carries a sandbox profile, because
+the single-boundary claim comes from the *implementation* choice rather than
+from any access rule. It is not run once at spawn.
 Copilot's sandbox setting lives in a file you can edit between two launches, so
 a posture verified at spawn time is not evidence about a resume.
 
