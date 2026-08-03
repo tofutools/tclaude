@@ -113,7 +113,7 @@ func handleDashboardTermWS(w http.ResponseWriter, r *http.Request) {
 	}
 	clientFlags := strings.TrimSpace(webTerminalTmuxFlags() + " " + session.ExternalTmuxNoStartFlag())
 	cmd := fmt.Sprintf("tmux -L %s %s new-session -A -s %s -c %s",
-		clcommon.TmuxSocketName, clientFlags, shellSingleQuote(name), shellSingleQuote(dir))
+		shellSingleQuote(clcommon.TmuxSocketName()), clientFlags, shellSingleQuote(name), shellSingleQuote(dir))
 	runPTYOverWS(w, r, cmd, name)
 }
 
@@ -184,7 +184,7 @@ func handleDashboardGroupTermWS(w http.ResponseWriter, r *http.Request) {
 	}
 	clientFlags := strings.TrimSpace(webTerminalTmuxFlags() + " " + session.ExternalTmuxNoStartFlag())
 	cmd := fmt.Sprintf("tmux -L %s %s new-session -A -s %s -c %s",
-		clcommon.TmuxSocketName, clientFlags, shellSingleQuote(sessName), shellSingleQuote(dir))
+		shellSingleQuote(clcommon.TmuxSocketName()), clientFlags, shellSingleQuote(sessName), shellSingleQuote(dir))
 	runPTYOverWS(w, r, cmd, sessName)
 }
 

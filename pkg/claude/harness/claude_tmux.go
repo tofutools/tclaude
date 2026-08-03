@@ -23,7 +23,7 @@ func ClaudeTmuxSocketDenyPath() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolve Claude tmux socket deny path: %w", err)
 	}
-	return filepath.Join(dir, clcommon.TmuxSocketName), nil
+	return filepath.Join(dir, clcommon.TmuxSocketName()), nil
 }
 
 // PrepareClaudeSandboxLaunch adds the tclaude tmux server socket to every

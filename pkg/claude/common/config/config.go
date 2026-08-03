@@ -126,6 +126,10 @@ type Config struct {
 	// model-assisted display naming. Absent → all defaults.
 	Session *SessionConfig `json:"session,omitempty"`
 
+	// Tmux holds settings for the tmux server tclaude hosts its panes on —
+	// see TmuxConfig. Absent → the default `tmux -L tclaude` server.
+	Tmux *TmuxConfig `json:"tmux,omitempty"`
+
 	// TUI holds the color scheme for tclaude's interactive terminal views
 	// (`session ls -w`, `conv ls -w`, `agent inbox -w`) — see TUIConfig.
 	// Absent → the default scheme.
@@ -362,6 +366,79 @@ func (c *Config) ResolvedTmuxNameStyle() string {
 // Nil-safe and opt-in so the default launch path remains free and immediate.
 func (c *Config) AutoNameFromPromptEnabled() bool {
 	return c != nil && c.Session != nil && c.Session.AutoNameFromPrompt
+}
+
+// DefaultTmuxSocketName is the tmux server socket name tclaude uses when
+// config tmux.socket_name is absent or unusable — the historical hardcoded
+// value.
+const DefaultTmuxSocketName = "tclaude"
+
+// maxTmuxSocketNameLen bounds a configured socket name. tmux appends the name
+// to $TMUX_TMPDIR/tmux-UID, so it shares the platform's filename budget; 64 is
+// far below every such limit and still leaves room for a descriptive name.
+const maxTmuxSocketNameLen = 64
+
+// TmuxConfig holds settings for the tmux server tclaude hosts its panes on.
+type TmuxConfig struct {
+	// SocketName is the tmux socket name passed as `tmux -L <name>` for every
+	// tclaude-issued tmux command. It namespaces tclaude's panes away from the
+	// operator's own tmux server; changing it moves tclaude to a different
+	// (initially empty) server, so sessions on the old socket become invisible
+	// to tclaude until the name is changed back.
+	//
+	// Absent / blank keeps DefaultTmuxSocketName. The value is resolved once
+	// per process, so a change takes effect for newly started processes only —
+	// restart agentd, and reattach any client, after editing it.
+	//
+	// The name is charset-gated (see ValidTmuxSocketName): it reaches tmux
+	// argv, a filepath.Join for the sandbox socket-deny path, and shell command
+	// strings the dashboard's PTY terminals run.
+	SocketName string `json:"socket_name,omitempty"`
+}
+
+// ValidTmuxSocketName reports whether name is safe to use as a tmux socket
+// name. The gate is deliberately narrow: the value becomes a single path
+// component under $TMUX_TMPDIR/tmux-UID (so a separator or a dot-entry could
+// point the socket — and the sandbox deny path derived from it — somewhere
+// else entirely) and is also rendered into shell command strings. Anything
+// outside [A-Za-z0-9._-] is refused rather than escaped.
+func ValidTmuxSocketName(name string) bool {
+	if name == "" || len(name) > maxTmuxSocketNameLen {
+		return false
+	}
+	if name == "." || name == ".." {
+		return false
+	}
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == '.' || r == '_' || r == '-':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// ResolvedTmuxSocketName returns the effective `tmux -L` socket name. Nil-safe;
+// an absent block, a blank value, or a name that fails ValidTmuxSocketName all
+// fall back to DefaultTmuxSocketName, so a hand-edited typo degrades to today's
+// behavior instead of pointing tclaude at an unusable socket. Validate reports
+// the same bad value as a save-time error for callers that can refuse it.
+func (c *Config) ResolvedTmuxSocketName() string {
+	if c == nil || c.Tmux == nil {
+		return DefaultTmuxSocketName
+	}
+	name := strings.TrimSpace(c.Tmux.SocketName)
+	if name == "" {
+		return DefaultTmuxSocketName
+	}
+	if !ValidTmuxSocketName(name) {
+		slog.Warn("Invalid tmux.socket_name; using default",
+			"value", name, "default", DefaultTmuxSocketName)
+		return DefaultTmuxSocketName
+	}
+	return name
 }
 
 // Activity-bot style values — the per-mode choices in ActivityBotsConfig.
@@ -2554,6 +2631,18 @@ func Validate(c *Config) []string {
 		}
 		if v := c.RateLimit.SevenDayPercentMaxUsed; v <= 0 || v > 100 {
 			errs = append(errs, fmt.Sprintf("ratelimit.seven_day_percent_max_used %g is out of range (>0 and ≤100)", v))
+		}
+	}
+
+	// A blank socket name is the "use the default" spelling and stays legal; a
+	// non-blank one that cannot be a socket name is a typo worth refusing at
+	// save time, because the running processes would silently keep the default
+	// and the operator would see no effect at all.
+	if t := c.Tmux; t != nil {
+		if name := strings.TrimSpace(t.SocketName); name != "" && !ValidTmuxSocketName(name) {
+			errs = append(errs, fmt.Sprintf(
+				"tmux.socket_name %q must be 1–%d characters of [A-Za-z0-9._-] (or absent for %q)",
+				t.SocketName, maxTmuxSocketNameLen, DefaultTmuxSocketName))
 		}
 	}
 

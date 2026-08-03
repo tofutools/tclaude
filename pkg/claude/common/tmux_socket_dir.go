@@ -8,7 +8,8 @@ import (
 )
 
 // TclaudeTmuxSocketDir returns the private directory holding tclaude's named
-// tmux socket (`tmux -L tclaude`). tmux uses $TMUX_TMPDIR/tmux-UID when that
+// tmux socket (`tmux -L <socket>`, see TmuxSocketName). tmux uses
+// $TMUX_TMPDIR/tmux-UID when that
 // variable is set and /tmp/tmux-UID otherwise. Blocking the directory covers
 // both the current socket and a server created after policy rendering.
 //

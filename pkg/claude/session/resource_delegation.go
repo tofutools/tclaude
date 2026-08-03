@@ -71,7 +71,7 @@ func insideTclaudeTmuxServer() bool {
 		return false
 	}
 	socket, _, _ := strings.Cut(tmux, ",")
-	return filepath.Base(filepath.Clean(socket)) == clcommon.TmuxSocketName
+	return filepath.Base(filepath.Clean(socket)) == clcommon.TmuxSocketName()
 }
 
 func externalTmuxRuntimeName() string {

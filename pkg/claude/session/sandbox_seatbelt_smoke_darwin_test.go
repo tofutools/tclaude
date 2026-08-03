@@ -200,7 +200,7 @@ func TestTclaudeLayerDarwinSmoke(t *testing.T) {
 	tmuxSocketDir, err := clcommon.TclaudeTmuxSocketDir()
 	require.NoError(t, err)
 	require.NoError(t, os.MkdirAll(tmuxSocketDir, 0o700))
-	tmuxSocket := filepath.Join(tmuxSocketDir, "tclaude")
+	tmuxSocket := filepath.Join(tmuxSocketDir, clcommon.TmuxSocketName())
 	tmuxListener, err := net.Listen("unix", tmuxSocket)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tmuxListener.Close() })

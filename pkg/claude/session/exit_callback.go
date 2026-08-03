@@ -228,7 +228,7 @@ func (g *exitLaunchGuard) hookCommand() (string, error) {
 		"--signal", clcommon.ShellQuoteArg("#{pane_dead_signal}"),
 	}
 	callback := "run-shell " + clcommon.ShellQuoteArg(strings.Join(args, " "))
-	tmuxPrefix := "tmux -L " + clcommon.ShellQuoteArg(clcommon.TmuxSocketName)
+	tmuxPrefix := "tmux -L " + clcommon.ShellQuoteArg(clcommon.TmuxSocketName())
 	paneTarget := clcommon.ShellQuoteArg(g.paneID)
 	sessionTarget := clcommon.ShellQuoteArg(clcommon.ExactTarget(g.tmuxSession))
 	expected := clcommon.ShellQuoteArg(g.tmuxSession + "|" + g.paneID + "|1|" + g.generation)

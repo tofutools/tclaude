@@ -81,7 +81,7 @@ func handleTUIAttachWS(w http.ResponseWriter, r *http.Request) {
 	// would push the sequence at an emulator that may not render it.
 	command := fmt.Sprintf(
 		"exec tmux -L %s attach-session -t %s",
-		shellSingleQuote(clcommon.TmuxSocketName),
+		shellSingleQuote(clcommon.TmuxSocketName()),
 		shellSingleQuote(clcommon.ExactTarget(sess.TmuxSession)),
 	)
 	runPTYOverWS(w, r, command, "")

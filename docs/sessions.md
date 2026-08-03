@@ -383,7 +383,7 @@ adapter for the same flow. An explicit rename always wins.
 
 ## Tmux Integration
 
-tmux is run with `-L tclaude` to create an isolated environemt and a namespace for sessions. 
+tmux is run with `-L tclaude` to create an isolated environemt and a namespace for sessions. The socket name is configurable — see [Tmux socket name](#tmux-socket-name) below; the examples here assume the default.
 
 ```bash
 # List all tclaude tmux sessions
@@ -395,6 +395,22 @@ tmux -L tclaude attach -t abc123
 # Detach from inside tmux
 Ctrl+B D
 ```
+
+### Tmux socket name
+
+`tclaude` is the default socket name. Change it via `~/.tclaude/data/config.json`:
+
+```json
+{
+  "tmux": {
+    "socket_name": "work"
+  }
+}
+```
+
+Every tclaude-issued tmux command then uses `-L work`, and so must yours (`tmux -L work ls`). The name is limited to 1–64 characters of `[A-Za-z0-9._-]`: it becomes a filename under `$TMUX_TMPDIR/tmux-$UID`, and tclaude also derives the sandbox socket-deny path from it. A blank value, or one outside that charset, falls back to `tclaude` — the dashboard's config editor refuses the latter at save time rather than storing a value that would have no effect.
+
+The name is read once per process, so a change applies only to processes started afterwards: restart `tclaude agentd` and reattach any client. Sessions already running on the old socket keep running, but tclaude no longer sees them — they reappear if you set the name back. Point two socket names at the same machine and you get two independent sets of panes sharing one tclaude database, so prefer changing this once at setup rather than switching back and forth.
 
 ### Tmux session names
 

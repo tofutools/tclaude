@@ -3,10 +3,55 @@ package common
 import (
 	"os/exec"
 	"strings"
+	"sync"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 )
 
-// TmuxSocketName is the named socket for tclaude's independent tmux server.
-const TmuxSocketName = "tclaude"
+// tmuxSocketName caches the resolved `tmux -L` socket name. It is empty until
+// the first TmuxSocketName call — ResolvedTmuxSocketName never returns "", so
+// the zero value is an unambiguous "not resolved yet".
+var (
+	tmuxSocketMu   sync.Mutex
+	tmuxSocketName string
+)
+
+// TmuxSocketName returns the named socket for tclaude's independent tmux
+// server — config tmux.socket_name, defaulting to "tclaude".
+//
+// The config file is read at most once per process and the answer is cached:
+// every tmux command in a process must target the same server, and re-reading
+// mid-run would let a config edit split a running daemon's commands across two
+// sockets. Changing the name therefore takes effect for newly started
+// processes only.
+func TmuxSocketName() string {
+	tmuxSocketMu.Lock()
+	defer tmuxSocketMu.Unlock()
+	if tmuxSocketName == "" {
+		// Load falls back to DefaultConfig on a missing or unreadable file and
+		// already logs why, so an error here is just "the default socket".
+		cfg, _ := config.Load()
+		tmuxSocketName = cfg.ResolvedTmuxSocketName()
+	}
+	return tmuxSocketName
+}
+
+// SetTmuxSocketNameForTest pins the resolved socket name and returns a restore
+// func that puts the previous value back. Tests only — it exists so a test can
+// exercise a non-default socket without writing an operator config file. The
+// empty string clears the cache instead of pinning, so a test that has pointed
+// HOME at a fixture directory can force the next call to re-read the config.
+func SetTmuxSocketNameForTest(name string) func() {
+	tmuxSocketMu.Lock()
+	defer tmuxSocketMu.Unlock()
+	previous := tmuxSocketName
+	tmuxSocketName = name
+	return func() {
+		tmuxSocketMu.Lock()
+		defer tmuxSocketMu.Unlock()
+		tmuxSocketName = previous
+	}
+}
 
 // Tmux is the boundary surface flow tests inject through. The default
 // LiveTmux runs the real tmux binary; tests assign a fake to Default
@@ -32,7 +77,7 @@ type Tmux interface {
 // parallel tests on the same package — flow tests don't t.Parallel.
 var Default Tmux = LiveTmux{}
 
-// LiveTmux is the production impl: forks `tmux -L tclaude <args>`.
+// LiveTmux is the production impl: forks `tmux -L <socket> <args>`.
 // Exported so tests can wrap it (e.g., a recording proxy that
 // forwards to LiveTmux for some calls and to a fake for others).
 type LiveTmux struct{}
@@ -77,9 +122,9 @@ func TmuxCommand(args ...string) *exec.Cmd {
 	return Default.Command(args...)
 }
 
-// TmuxArgs prepends -L tclaude to the given tmux arguments.
+// TmuxArgs prepends `-L <socket>` to the given tmux arguments.
 func TmuxArgs(args ...string) []string {
-	return append([]string{"-L", TmuxSocketName}, args...)
+	return append([]string{"-L", TmuxSocketName()}, args...)
 }
 
 // TmuxHyperlinksFeature is the tmux terminal-feature name for OSC 8 hyperlink
