@@ -108,6 +108,13 @@ func SandboxOffMode(h *Harness) (string, error) {
 		mode = SandboxDangerFull
 	case OpenCodeName:
 		mode = OpenCodeSandboxOff
+	case CopilotName:
+		// Copilot's `off` is an ASSERTION that its own sandbox is not engaged,
+		// not a lever that disables one — tclaude has no such lever. That still
+		// makes it the right answer here: a temporary operator unlock wants the
+		// posture with no tclaude-claimed containment, and for Copilot that is
+		// the mode whose containment claim is "none of mine".
+		mode = CopilotSandboxOff
 	default:
 		return "", fmt.Errorf("harness %q has no sandbox-off mode", h.Name)
 	}

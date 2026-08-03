@@ -1337,6 +1337,14 @@ func runNew(params *NewParams) error {
 			plannedEffective.AccessNotices = replaceAccessDegradationNotices(
 				plannedEffective.AccessNotices, notices...,
 			)
+			// Before anything else in the outer-layer branch: a harness whose
+			// own sandbox cannot be turned off by the launch has to have its
+			// posture verified, or the whole branch proceeds on the assumption
+			// that tclaude's layer is the only boundary.
+			if err := ValidateTclaudeLayerHarnessPosture(
+				h, plannedEffective.Environment, extraArgs); err != nil {
+				return err
+			}
 			resolvedModel := harness.ResolvedModelTransport{Model: model}
 			plannedAxes, plannedAxesErr := sandboxpolicy.PlannedEffectiveAccessAxes(
 				plannedEffective)

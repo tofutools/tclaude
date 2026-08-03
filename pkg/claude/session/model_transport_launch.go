@@ -56,6 +56,8 @@ func ResolveTclaudeLayerModelTransport(
 		return resolveCodexModelTransport(h, context, environment)
 	case harness.OpenCodeName:
 		return resolveOpenCodeModelTransport(h, context, environment)
+	case harness.CopilotName:
+		return resolveCopilotModelTransport(h, context, environment)
 	default:
 		return harness.ResolvedModelTransport{
 			Model: context.Model,
@@ -292,6 +294,115 @@ func ValidateTclaudeLayerOpenCodeLocalModelTransport(
 	}
 	return modelTransportLaunchError(h,
 		"OpenCode's local presets name no explicit provider and OpenCode exposes no effective-config read of its own loader, so their launch endpoint cannot be resolved; use an explicit-provider OpenCode config, use Claude Code or Codex with a resolvable provider, or use network open")
+}
+
+// resolveCopilotModelTransport admits exactly one Copilot route: the default
+// first-party GitHub Copilot service. It resolves no endpoint of its own —
+// the destination set is the harness descriptor's, read from the pinned CLI's
+// shipped runtime (see harness/copilot_model_transport.go) — so everything
+// this function does is REFUSE the launches whose route it cannot vouch for.
+//
+// Two refusal sources, because Copilot has two ways to move its endpoint:
+//
+//   - The launch environment. COPILOT_API_URL, GH_HOST / COPILOT_GH_HOST and
+//     the COPILOT_PROVIDER_* BYOK family each select a different service. Their
+//     values are deliberately never inspected: following one would resolve a
+//     user-controlled endpoint, which is exactly what BYOK is refused for.
+//   - The settings file, whose `copilotUrl` key does the same thing from disk.
+//     It is read from the SAME COPILOT_HOME the sandbox baseline and the
+//     assert-off gate resolve, so all three agree on which file governs a
+//     launch.
+//
+// Proxy variables are NOT inspected here. ResolveTclaudeLayerModelTransport
+// already refuses a launch carrying an inherited proxy value before it reaches
+// any harness resolver, and tclaude's own proxy-engine injection happens after
+// that gate — so a managed launch is never refused for the proxy variables
+// tclaude itself sets.
+func resolveCopilotModelTransport(
+	h *harness.Harness,
+	context ModelTransportLaunchContext,
+	environment map[string]string,
+) (harness.ResolvedModelTransport, error) {
+	for _, variable := range harness.CopilotRouteMovingEnvVars() {
+		if strings.TrimSpace(environment[variable]) == "" {
+			continue
+		}
+		return harness.ResolvedModelTransport{}, modelTransportLaunchError(h,
+			fmt.Sprintf("Copilot launch variable %s selects a model route other than the default "+
+				"first-party GitHub Copilot service, and tclaude has no reviewed filtered-network "+
+				"resolver for it; remove the variable to use the first-party route, or use network open",
+				variable))
+	}
+	if variable, err := copilotSettingsRouteVariable(environment); err != nil {
+		return harness.ResolvedModelTransport{}, modelTransportLaunchError(h, err.Error())
+	} else if variable != "" {
+		return harness.ResolvedModelTransport{}, modelTransportLaunchError(h,
+			fmt.Sprintf("Copilot settings key %s moves the model route away from the default "+
+				"first-party GitHub Copilot service; remove it to use the first-party route, or use network open",
+				variable))
+	}
+	return harness.ResolvedModelTransport{
+		Model: context.Model,
+		// The provider name is the harness's own: Copilot's first-party service
+		// is not one of the model vendors behind it, and naming a vendor here
+		// would suggest a route to that vendor's API that this launch never takes.
+		Provider:         harness.CopilotName,
+		ProviderResolved: true,
+	}, nil
+}
+
+// copilotSettingsRouteVariable reports the settings key that moves Copilot's
+// endpoint, or "" when the file leaves the default route in place.
+//
+// A missing file is the default route — Copilot ships no settings.json until
+// something writes one. An unreadable or unparsable file is an error rather
+// than a default, for the same reason the assert-off gate treats it as one: the
+// launch would be claiming a route nobody verified.
+func copilotSettingsRouteVariable(environment map[string]string) (string, error) {
+	home := strings.TrimSpace(environment["HOME"])
+	stateDir := strings.TrimSpace(environment[harness.CopilotHomeEnvVar])
+	if stateDir == "" {
+		if home == "" {
+			return "", fmt.Errorf(
+				"cannot locate the Copilot home because HOME and %s are unset, so the launch "+
+					"model route cannot be resolved; set %s or use network open",
+				harness.CopilotHomeEnvVar, harness.CopilotHomeEnvVar)
+		}
+		stateDir = filepath.Join(home, ".copilot")
+	}
+	path := filepath.Join(stateDir, harness.CopilotSettingsFileName)
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf(
+			"cannot inspect Copilot settings %s: %v; fix its visibility or use network open", path, err)
+	}
+	var settings map[string]json.RawMessage
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return "", fmt.Errorf(
+			"cannot parse Copilot settings %s; fix the file or use network open", path)
+	}
+	for _, key := range []string{"copilotUrl", "proxyUrl"} {
+		raw, found := settings[key]
+		if !found {
+			continue
+		}
+		// Presence alone is not enough: an explicit null or empty string leaves
+		// the default route in place, and refusing over one would send an
+		// operator hunting for a setting that changes nothing.
+		var value string
+		if err := json.Unmarshal(raw, &value); err != nil {
+			// A non-string value is ambiguous rather than absent, so it is
+			// refused by NAME here instead of being read as unset.
+			return key, nil
+		}
+		if strings.TrimSpace(value) != "" {
+			return key, nil
+		}
+	}
+	return "", nil
 }
 
 func resolveClaudeModelTransport(

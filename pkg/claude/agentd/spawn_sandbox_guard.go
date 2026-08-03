@@ -345,6 +345,18 @@ func planSandboxProfileAccessForLaunch(
 				verdict.FilteredNetwork,
 		))
 	}
+	if implementation.UsesTclaudeLayer() {
+		// Runs for EVERY tclaude-layer spawn, not only the filtered ones below:
+		// a harness whose own sandbox tclaude cannot switch off has to have its
+		// posture verified whatever the network policy is, or a host-open
+		// tclaude-layer spawn would silently stack two filesystem boundaries.
+		if err := session.ValidateTclaudeLayerHarnessPosture(
+			h, snapshot.Effective.Environment, modelContext.ExtraArgs,
+		); err != nil {
+			return nil, sandboxCapabilitySpawnFailure(
+				err, harness.SandboxCapabilityCopilotInnerSandbox)
+		}
+	}
 	if implementation.UsesTclaudeLayer() &&
 		renderedNetworkPosture == sandboxpolicy.NetworkFiltered {
 		plannedEffective := snapshot.Effective
