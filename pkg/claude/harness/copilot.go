@@ -43,6 +43,14 @@ func init() {
 		// installer and nothing else. Everything still nil below stays nil.
 		Hooks: copilotHookInstaller{},
 
+		// Copilot announces the session AFTER the prompt: the recorded event
+		// order is UserPromptSubmit, UserPromptTransformed, SessionStart, …
+		// (copilotfixture/testdata/<version>/hooks). Every other harness does
+		// the opposite, and the status machine's SessionStart handling assumed
+		// it, so this flag is what stops a late SessionStart from reporting a
+		// busy agent as idle for the rest of its first turn.
+		SessionStartAfterPrompt: true,
+
 		// Copilot's conv-id is knowable before the pane starts: `--session-id
 		// <uuid>` creates the session under a caller-chosen id, and `--name` /
 		// `-i <prompt>` carry the title and the first turn as launch args. That

@@ -184,6 +184,18 @@ type Harness struct {
 	// exclusive in practice.
 	SeedsFirstTurn bool
 
+	// SessionStartAfterPrompt marks a harness that announces a session AFTER
+	// the first prompt of that session rather than before it.
+	//
+	// Every harness tclaude supported before GitHub Copilot CLI fires
+	// SessionStart first, which is why the status machine could treat it as
+	// "nothing is running yet" and settle the session to idle. Copilot's
+	// recorded event order is UserPromptSubmit, UserPromptTransformed,
+	// SessionStart, ..., so the same reset would blank a turn that had just
+	// started. The hook path consults this instead of switching on a harness
+	// name; see session.lateSessionStart.
+	SessionStartAfterPrompt bool
+
 	// ServerAuthoritative marks a harness whose conversation lives in a
 	// daemon-owned side server rather than in the pane process. The pane is
 	// only an attach client. agentd must start/authenticate that server,
@@ -452,6 +464,13 @@ func (h *Harness) SupportsLaunchEnrollment() bool {
 // Harness.SeedsFirstTurn.
 func (h *Harness) NeedsSpawnSeed() bool {
 	return h != nil && h.SeedsFirstTurn && h.Spawn != nil
+}
+
+// AnnouncesSessionAfterPrompt reports whether this harness fires SessionStart
+// after the turn's first prompt event. Nil-safe: an unknown or legacy harness
+// row keeps the historical prompt-after-session ordering.
+func (h *Harness) AnnouncesSessionAfterPrompt() bool {
+	return h != nil && h.SessionStartAfterPrompt
 }
 
 // UsesAuthoritativeServer reports whether agentd must own a side server for

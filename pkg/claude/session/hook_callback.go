@@ -109,6 +109,33 @@ func HookCallbackCmd() *cobra.Command {
 // treated as an exit — better to over-report "exited" (the reaper /
 // next hook will correct a live session) than to leave a dead one as
 // "idle".
+// lateSessionStart reports whether this SessionStart arrived INSIDE a turn that
+// is already running, in which case clearing the session to idle would be a
+// lie.
+//
+// Every harness tclaude knew before Copilot announces a session before the
+// first prompt of that session, so SessionStart meaning "nothing is running
+// yet" was safe. GitHub Copilot CLI inverts it: the recorded event order is
+// UserPromptSubmit, UserPromptTransformed, SessionStart, ... — the prompt comes
+// FIRST (see pkg/claude/harness/copilotfixture/testdata/*/hooks). Applied
+// unchanged, the idle reset would blank the working status the prompt just set
+// and report a busy agent as free for the rest of its first turn — the exact
+// signal group coordination, idle notifications and the dashboard all read.
+//
+// The rule is deliberately deterministic and narrow: only for a harness whose
+// descriptor declares the inverted order, and only when the session is
+// CURRENTLY working. An idle session still settles to idle, and every other
+// harness is untouched. No timing window is involved — a stale "working" row
+// left by a killed pane is the reaper's job (tmux/PID liveness already owns
+// exit detection), not something to guess at from hook arrival gaps.
+func lateSessionStart(state *SessionState) bool {
+	if state == nil || state.Status != StatusWorking {
+		return false
+	}
+	h, ok := harness.Get(state.Harness)
+	return ok && h.AnnouncesSessionAfterPrompt()
+}
+
 func sessionEndIsExit(reason string) bool {
 	return reason != "clear" && reason != "resume"
 }
@@ -1113,7 +1140,7 @@ func applyHook(ctx context.Context, input HookCallbackInput, envSessionID string
 			state.BgShells = nil
 			state.Monitors = nil
 		}
-		if input.Source != "compact" {
+		if input.Source != "compact" && !lateSessionStart(state) {
 			state.Status = StatusIdle
 			state.StatusDetail = ""
 		}

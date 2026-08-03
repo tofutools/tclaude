@@ -8,6 +8,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"time"
 
@@ -59,8 +60,24 @@ const (
 // Code's vocabulary because that is what selects the compatible payload
 // dialect. Every one of them was observed firing from the real binary.
 //
-// Two events that DO fire are deliberately not installed:
+// Stop is the one that makes the rest worth having: it fires exactly ONCE at
+// the end of a user turn — after a pure text answer and after a multi-call
+// tool round trip alike — so Copilot gets a real UserPromptSubmit->working,
+// Stop->idle transition instead of a session that enters "working" and never
+// leaves. Without it tclaude would have to choose between a permanently busy
+// agent and no status at all.
 //
+// THREE events that DO fire are deliberately not installed:
+//
+//   - PreToolUse is a SAFETY exclusion, not a taste one. Copilot denies the
+//     tool call when a PreToolUse hook exits non-zero ("Denied by preToolUse
+//     hook (hook errored)"), and tclaude's callback legitimately exits
+//     non-zero when its receiver is unavailable. Installing it would mean a
+//     degraded tclaude daemon breaks the user's Copilot tools — an
+//     unacceptable price for a status detail PostToolUse reports a moment
+//     later anyway. (A shell-level `|| true` guard would make the command
+//     exit-neutral; that is a deliberate future refinement, not something to
+//     assume on the strength of an argument.)
 //   - UserPromptTransformed fires for the same turn as UserPromptSubmit, so
 //     registering both would double-count one prompt. Its payload also carries
 //     the model-facing rendering of the prompt (injected reminder blocks and
@@ -83,11 +100,24 @@ const (
 var CopilotHookEvents = []string{
 	"SessionStart",
 	"UserPromptSubmit",
-	"PreToolUse",
 	"PostToolUse",
 	"Stop",
 	"SessionEnd",
 }
+
+// copilotHookTimeoutSec bounds how long a Copilot turn can block on tclaude's
+// callback. Copilot runs hooks SEQUENTIALLY and BLOCKS the session on each
+// one, and its default timeout is 30 SECONDS — so a wedged callback (an
+// unreachable daemon, a locked database) would stall the operator's agent for
+// half a minute per event, repeatedly. A timeout is also the benign failure:
+// a hook Copilot kills lets the turn proceed, unlike the non-zero exit that
+// denies a tool call.
+//
+// Two seconds is far above what the callback does (a local SQLite write, or
+// one loopback request in the brokered path) and far below anything a human
+// would sit through. Losing an occasional status update to a slow machine is
+// the right trade against stalling every turn.
+const copilotHookTimeoutSec = 2
 
 // CopilotHomeEnvVar is Copilot CLI's own override for its home directory.
 // tclaude honors it so an operator who relocates COPILOT_HOME (and the
@@ -125,12 +155,14 @@ func copilotHooksPath() string {
 const copilotHookFileVersion = 1
 
 // copilotCommandHook is one entry in an event's array. Copilot's hook config
-// is an internally-tagged union; "command" is the shell form. The optional
-// fields (timeoutSec, matcher) are omitted: tclaude wants every event
-// regardless of tool, and the callback is a fast local write.
+// is an internally-tagged union; "command" is the shell form (the type field
+// is optional in 1.0.77, but tclaude writes it so the entry stays unambiguous
+// if the union ever grows a different default). No "matcher" is written:
+// tclaude wants every event regardless of which tool ran.
 type copilotCommandHook struct {
-	Type    string `json:"type"`
-	Command string `json:"command"`
+	Type       string `json:"type"`
+	Command    string `json:"command"`
+	TimeoutSec int    `json:"timeoutSec"`
 }
 
 // copilotHookFile is the whole drop-in document.
@@ -148,7 +180,31 @@ var copilotHookCommandString = func() string {
 	return clcommon.DetectAbsoluteCmd("session", "hook-callback")
 }
 
-func copilotHookCommandStr() string { return copilotHookCommandString() }
+// copilotHookStdoutSink is appended to every installed command, and it is a
+// SAFETY measure rather than tidiness.
+//
+// Copilot reads a hook's STDOUT as a control channel. A Stop hook that prints
+// {"decision":"block"} makes the CLI run the agent again — a recorded probe
+// turned one 0.8s turn into nine forced continuation cycles, with Stop and
+// SessionEnd each firing nine times. The other recognized keys can rewrite the
+// user's prompt, change tool arguments, or decide a permission.
+//
+// tclaude's callback is not supposed to print anything on these events, but
+// "not supposed to" is not a guarantee across future changes to a shared code
+// path (the PreCompact gate and standing orders both legitimately write
+// response documents on other harnesses). Redirecting to /dev/null makes it
+// impossible for tclaude to steer someone's Copilot agent by accident. Stderr
+// is left alone: Copilot ignores it, and it is where diagnostics belong.
+//
+// The consequence is deliberate and load-bearing: tclaude cannot use Copilot's
+// hook response channel at all while this is here. That is the correct default
+// until a response contract is designed and verified — see the standing-order
+// note on CopilotHookEvents.
+const copilotHookStdoutSink = " >/dev/null"
+
+func copilotHookCommandStr() string {
+	return copilotHookCommandString() + copilotHookStdoutSink
+}
 
 // copilotHookInstaller installs the tclaude callback into the owned drop-in
 // file. It implements plain HookInstaller and deliberately NOT
@@ -184,7 +240,10 @@ func (copilotHookInstaller) Check() (installed bool, missing []string, needsRepa
 		return false, []string{"all (" + err.Error() + ")"}, true
 	}
 
-	want := copilotHookCommandStr()
+	want, err := copilotDesiredHookEntry()
+	if err != nil {
+		return false, []string{"all (" + err.Error() + ")"}, false
+	}
 	if file.Version != copilotHookFileVersion {
 		needsRepair = true
 	}
@@ -269,8 +328,7 @@ func planCopilotHookInstall(path string) ([]byte, error) {
 		file.Hooks = map[string][]json.RawMessage{}
 	}
 
-	want := copilotHookCommandStr()
-	entry, err := json.Marshal(copilotCommandHook{Type: "command", Command: want})
+	entry, err := copilotDesiredHookEntry()
 	if err != nil {
 		return nil, err
 	}
@@ -349,32 +407,59 @@ func emptyFileAsNotExist(path string) error {
 	return &os.PathError{Op: "read", Path: path, Err: os.ErrNotExist}
 }
 
+// copilotDesiredHookEntry is the exact entry tclaude wants in every
+// registered event: the harness-agnostic callback, bounded by an explicit
+// timeout. Every install/check comparison goes through this one value, so a
+// change to the entry's SHAPE (the timeout landing, a field being added) is
+// detected as drift and repaired, not just a change to the binary path.
+func copilotDesiredHookEntry() (json.RawMessage, error) {
+	return json.Marshal(copilotCommandHook{
+		Type:       "command",
+		Command:    copilotHookCommandStr(),
+		TimeoutSec: copilotHookTimeoutSec,
+	})
+}
+
 // copilotHooksContain reports whether an event's entries already include the
-// tclaude callback with the current command.
-func copilotHooksContain(entries []json.RawMessage, want string) bool {
+// current tclaude entry, compared semantically so key order in the file is
+// irrelevant.
+func copilotHooksContain(entries []json.RawMessage, want json.RawMessage) bool {
 	for _, raw := range entries {
-		if copilotHookCommandOf(raw) == want {
+		if copilotHookEntryEqual(raw, want) {
 			return true
 		}
 	}
 	return false
 }
 
-// copilotHooksNeedCleanup reports whether an event's entries carry a stale
-// (wrong-binary) tclaude hook or a duplicate of the current one.
-func copilotHooksNeedCleanup(entries []json.RawMessage, want string) bool {
+// copilotHooksNeedCleanup reports whether an event's entries carry a tclaude
+// hook that is not the current one — a stale binary path, a missing timeout
+// from an older tclaude, an unknown extra field — or a duplicate of it.
+func copilotHooksNeedCleanup(entries []json.RawMessage, want json.RawMessage) bool {
 	ours := 0
 	for _, raw := range entries {
-		command := copilotHookCommandOf(raw)
-		if !isTclaudeHookCommand(command) {
+		if !isTclaudeHookCommand(copilotHookCommandOf(raw)) {
 			continue
 		}
-		if command != want {
+		if !copilotHookEntryEqual(raw, want) {
 			return true
 		}
 		ours++
 	}
 	return ours > 1
+}
+
+// copilotHookEntryEqual compares two entries by decoded content rather than
+// bytes, so an entry a human reformatted still counts as current.
+func copilotHookEntryEqual(a, b json.RawMessage) bool {
+	var left, right map[string]any
+	if err := json.Unmarshal(a, &left); err != nil {
+		return false
+	}
+	if err := json.Unmarshal(b, &right); err != nil {
+		return false
+	}
+	return reflect.DeepEqual(left, right)
 }
 
 // removeOurCopilotHooks strips every tclaude entry from an event's entries.

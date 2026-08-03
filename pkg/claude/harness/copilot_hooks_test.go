@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -23,12 +24,31 @@ func seedCopilotHome(t *testing.T) (home, command string) {
 
 	bin := filepath.Join(t.TempDir(), "tclaude")
 	require.NoError(t, os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o755))
-	command = bin + " session hook-callback"
 
 	old := copilotHookCommandString
-	copilotHookCommandString = func() string { return command }
+	copilotHookCommandString = func() string { return bin + " session hook-callback" }
 	t.Cleanup(func() { copilotHookCommandString = old })
-	return home, command
+	// The installed command is the callback PLUS the stdout sink; tests assert
+	// against what actually lands in the file.
+	return home, copilotHookCommandStr()
+}
+
+// TestCopilotHookCommand_RedirectsStdout pins the safety property behind the
+// whole design: Copilot treats a hook's stdout as a CONTROL CHANNEL (a Stop
+// hook printing {"decision":"block"} makes the agent keep working), so every
+// installed command must discard it.
+func TestCopilotHookCommand_RedirectsStdout(t *testing.T) {
+	_, command := seedCopilotHome(t)
+	assert.True(t, strings.HasSuffix(command, " >/dev/null"),
+		"installed command must discard stdout, got %q", command)
+	assert.True(t, isTclaudeHookCommand(command),
+		"the redirect must not stop tclaude recognising its own hook for repair")
+
+	require.NoError(t, copilotHookInstaller{}.Install())
+	file := readCopilotHooksFileForTest(t, copilotHookInstaller{}.ConfigTarget())
+	for _, event := range CopilotHookEvents {
+		assert.Equal(t, command, file.Hooks[event][0].Command, "event %s", event)
+	}
 }
 
 // readCopilotHooksFileForTest reads the installed drop-in file as a plain
@@ -36,16 +56,18 @@ func seedCopilotHome(t *testing.T) (home, command string) {
 func readCopilotHooksFileForTest(t *testing.T, path string) struct {
 	Version int `json:"version"`
 	Hooks   map[string][]struct {
-		Type    string `json:"type"`
-		Command string `json:"command"`
+		Type       string `json:"type"`
+		Command    string `json:"command"`
+		TimeoutSec int    `json:"timeoutSec"`
 	} `json:"hooks"`
 } {
 	t.Helper()
 	var file struct {
 		Version int `json:"version"`
 		Hooks   map[string][]struct {
-			Type    string `json:"type"`
-			Command string `json:"command"`
+			Type       string `json:"type"`
+			Command    string `json:"command"`
+			TimeoutSec int    `json:"timeoutSec"`
 		} `json:"hooks"`
 	}
 	data, err := os.ReadFile(path)
@@ -84,15 +106,50 @@ func TestCopilotHookInstaller_InstallAndCheck(t *testing.T) {
 		require.Len(t, entries, 1, "event %s", event)
 		assert.Equal(t, "command", entries[0].Type, "event %s", event)
 		assert.Equal(t, command, entries[0].Command, "event %s", event)
+		// Copilot blocks the turn on each hook and defaults to a 30-SECOND
+		// timeout, so an explicit small bound is a correctness property of
+		// the install, not a nicety.
+		assert.Equal(t, 2, entries[0].TimeoutSec, "event %s", event)
 	}
 
-	// The events tclaude deliberately does NOT register. PermissionRequest in
-	// particular fires on every tool decision (even under --allow-all-tools)
-	// and emits an untranslated camelCase payload, so registering it would
-	// park every session in "awaiting permission".
-	for _, unwanted := range []string{"PermissionRequest", "UserPromptTransformed", "Notification", "PreCompact"} {
-		assert.NotContains(t, file.Hooks, unwanted)
+	// The events tclaude deliberately does NOT register, each for its own
+	// reason: PreToolUse because a non-zero callback exit DENIES the user's
+	// tool call; PermissionRequest because it fires on every tool decision
+	// (even under --allow-all-tools) and emits an untranslated camelCase
+	// payload; UserPromptTransformed because it double-counts a turn.
+	for _, unwanted := range []string{"PreToolUse", "PermissionRequest", "UserPromptTransformed", "Notification", "PreCompact"} {
+		assert.NotContains(t, file.Hooks, unwanted,
+			"registering %s would change Copilot's behavior for the operator", unwanted)
 	}
+}
+
+// TestCopilotHookInstaller_RepairsMissingTimeout covers the other upgrade
+// path: an entry written by a tclaude that predates the explicit timeout has
+// the right command but the wrong shape. It must be reported as repairable and
+// rewritten, not accepted as current — otherwise an upgraded tclaude would
+// leave the operator on Copilot's 30-second default forever.
+func TestCopilotHookInstaller_RepairsMissingTimeout(t *testing.T) {
+	home, command := seedCopilotHome(t)
+
+	seed := map[string]any{
+		"version": 1,
+		"hooks": map[string]any{
+			"Stop": []any{map[string]any{"type": "command", "command": command}},
+		},
+	}
+	writeCopilotHookSeed(t, filepath.Join(home, "hooks", "tclaude.json"), seed)
+
+	inst := copilotHookInstaller{}
+	installed, missing, needsRepair := inst.Check()
+	assert.False(t, installed)
+	assert.Contains(t, missing, "Stop", "a timeout-less entry is not the current entry")
+	assert.True(t, needsRepair)
+
+	require.NoError(t, inst.Install())
+
+	file := readCopilotHooksFileForTest(t, inst.ConfigTarget())
+	require.Len(t, file.Hooks["Stop"], 1, "the old entry is replaced, not duplicated")
+	assert.Equal(t, 2, file.Hooks["Stop"][0].TimeoutSec)
 }
 
 // TestCopilotHookInstaller_Idempotent installs twice and asserts the second
