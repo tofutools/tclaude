@@ -57,21 +57,76 @@ exist, start a new one, go look at one, take one offline, retire one that is
 done — and nothing else:
 
 ```
-enter  go to the selected agent's tmux session — or, on an offline agent,
+enter  go to the selected row's tmux session — or, on an offline agent,
        turn it back on
 n      start a new agent (group, spawn profile, name, directory, worktree,
        harness, startup brief)
 s      start a plain interactive shell session (directory, label) and go
        to it
-delete move the selected agent one step toward removal (it asks first):
-       online → offline, offline → retired
+delete move the selected row one step toward removal (it asks first):
+       an agent goes online → offline → retired; a session is ended
 f      filter the list down to the active agents (toggle)
 r      refresh now (the list also polls every 2s)
 ?      key help
 q      quit — this SHUTS DOWN the daemon (it asks first)
 ```
 
-**delete** moves the selected agent one step toward removal. On an online agent
+### Two kinds of row
+
+The list holds agents and, below them, this host's plain **sessions** — the
+ones **s** starts here, and any `tclaude session new` you ran from another
+terminal. A session is not an agent: no conversation the agent API describes,
+no group, no permissions. It is marked as such in the **GROUP** column, which
+reads `(session)` where an agent shows the groups it is in:
+
+```
+AGENT           GROUP      STATUS   HARNESS  DIRECTORY
+review-bot      tclaude    working  claude   ~/src/tclaude
+tui-work        tclaude    idle     claude   ~/src/tclaude
+shell-a1b2      (session)  running  shell    ~/src
+scratch         (session)  idle     claude   ~/tmp/scratch
+```
+
+The name is the tmux handle, so it is also what
+`tclaude session attach <handle>` takes. **enter** on one of these rows hands
+this terminal to its pane, exactly as it does on a live agent's row.
+
+Only **live** sessions are listed — the ones `tclaude session ls` shows without
+`-a`. An exited one has no pane to go to and no resume verb behind it (a
+session is not a conversation), so it would be a row whose only possible answer
+to **enter** is "there is nothing there".
+
+One pane is one row. A pane that belongs to any generation of an agent's
+conversation is the agent listing's, never re-listed here; so is an agent
+launch — a spawn, a reincarnate or a clone — whose conversation has not been
+linked yet, so a launch does not flash past as a session on its way into the
+roster. Where two rows claim one live tmux name, which happens when a
+directory-derived name is reused after its first session died, only the row
+that owns the pane is shown. And when you started `agentd serve --tui` from
+inside a tclaude session yourself, that session is left out: **enter** on it
+would go where you already are, and **delete** would take this terminal —
+and the daemon — down with it.
+
+The **f** filter is about agents that have gone offline and leaves session rows
+alone.
+
+Sessions are counted separately in the summary line
+(`2 agents (1 online) • 3 groups • 2 sessions`). They are the operator's own
+host state — their shells, their working directories — so the daemon shows them
+to an operator console on its own host only: an agent-class console (see the
+identity note below) and a standalone `tclaude agent tui-dashboard` both see
+agents alone. They are also the one thing in the console that does not travel
+over the daemon's `/v1` API, for the same reason attaching does not: a session
+has nothing for the agent API to describe.
+
+**delete** on a session row ends it. There is no ladder to walk — nothing to
+park offline, nothing to retire — so the single step is `tmux kill-session`:
+whatever is running in that pane stops, with no graceful exit asked for and no
+way to start it again afterwards. It asks first, like every other lifecycle
+key. The session row itself is left for the daemon's own reaper to mark
+`exited`, exactly as when you type `exit` in that shell yourself.
+
+**delete** on an agent row moves it one step toward removal. On an online agent
 it is the console's graceful `tclaude agent stop`: the session is asked to exit,
 leaving the agent offline and ready for **enter** to resume it. On an already
 offline agent it is `tclaude agent retire`: the agent leaves its groups and
@@ -169,8 +224,9 @@ below gets the field too.
 
 **s** opens the shell form: a plain interactive shell in its own tmux session,
 the console's `tclaude session new --shell`. It is a **session, not an agent** —
-no conversation, no group, no permissions — so it never appears in the listing
-behind the form; find it again with `tclaude session ls` and
+no conversation, no group, no permissions — so it lands in the listing behind
+the form as a `(session)` row rather than beside the agents (see "Two kinds of
+row" above); from outside the console, find it with `tclaude session ls` and
 `tclaude session attach <handle>`, or in `tclaude session watch`. **Directory**
 opens on the directory the console itself was started in, with the same **tab**
 contract as the spawn form (it completes a path you have typed into, and stays
@@ -223,14 +279,14 @@ palette as `session watch` — and the cursor row is inverse video. That is the
 whole visual system.
 Everything it shows or does about *agents* goes through the daemon's own API, so
 a spawn started here is the same spawn the CLI and the browser dashboard perform
-— same defaults, same validation, same audit entry. The two exceptions are the
+— same defaults, same validation, same audit entry. The exceptions are the
 host-local moves that have no HTTP shape: attaching this terminal to a pane, and
-starting a shell session. Both are gated on the console being the operator
-instead. The spawn form's worktree step is not one of them: it is an ordinary
-request the daemon serves, on a route mounted for the consoles only (never on
-the socket mux agents reach, exactly as the browser's own worktree picker is
-dashboard-only), and refused for a console the daemon does not classify as the
-human.
+everything to do with plain sessions — starting one, listing them, going to one,
+ending one. All of them are gated on the console being the operator instead.
+The spawn form's worktree step is not one of them: it is an ordinary request the
+daemon serves, on a route mounted for the consoles only (never on the socket mux
+agents reach, exactly as the browser's own worktree picker is dashboard-only),
+and refused for a console the daemon does not classify as the human.
 
 ### With or without the web dashboard
 

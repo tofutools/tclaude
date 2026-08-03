@@ -1357,6 +1357,17 @@ func ResetBrokerRefusalsForTest() func() {
 	return func() { brokerRefusals.resetForTest() }
 }
 
+// AgentLaunchClaimsForTest reports how many agent launches are currently
+// claimed as in flight — the in-memory set that keeps a materialising agent's
+// pane out of the terminal console's plain-session listing. A finished launch
+// must leave none: the claim's release is handed from cloneSpawnOnce to its
+// caller, so a caller that forgets it strands one here forever.
+func AgentLaunchClaimsForTest() int {
+	agentLaunchIdentities.Lock()
+	defer agentLaunchIdentities.Unlock()
+	return len(agentLaunchIdentities.ids)
+}
+
 // TUIConsole drives the `agentd serve --tui` terminal console from a flow
 // test: it holds the real model, wired to the real in-process API client, and
 // applies messages the way the bubbletea runtime would — including running the

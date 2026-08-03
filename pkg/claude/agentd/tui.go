@@ -11,16 +11,17 @@ package agentd
 // are the browser's business and never reach here. The only visual state is
 // an inverse-video cursor row.
 //
-// Everything it shows or does goes through the daemon's own /v1 HTTP API
-// (tuiAPI), not through the DB or the spawn internals, so the TUI cannot
-// drift from — or quietly skip — the validation, permission and audit paths
-// every other spawn surface runs. The exceptions are the two host-local moves
-// that have no HTTP shape: attachSelected, which hands this very terminal to an
-// agent's tmux session, and the shell form, which starts a plain interactive
-// shell session (a session, not an agent — no conversation, no group, no
-// permissions, and so nothing for the agent API to describe). Both read or
-// drive local session state directly and are gated on the console being the
-// operator instead.
+// Everything it shows or does about AGENTS goes through the daemon's own /v1
+// HTTP API (tuiAPI), not through the DB or the spawn internals, so the TUI
+// cannot drift from — or quietly skip — the validation, permission and audit
+// paths every other spawn surface runs. The exceptions are the host-local
+// moves that have no HTTP shape: attachSelected, which hands this very
+// terminal to a tmux session, and everything to do with plain sessions — the
+// shell form that starts one, and the listing, switching and killing of the
+// non-agent sessions in tui_sessions.go. A session is not an agent (no
+// conversation, no group, no permissions), so there is nothing for the agent
+// API to describe; those paths read or drive local session state directly and
+// are gated on the console being the operator instead.
 
 import (
 	"bytes"
@@ -151,7 +152,13 @@ type tuiCapabilities struct {
 	// console and the daemon to share a machine and a terminal: the launch
 	// creates a tmux session on the daemon's host and then hands this terminal
 	// to it, neither of which a remote console can do.
-	startLocalShell  bool
+	startLocalShell bool
+	// localSessions is the console's ability to see and act on the daemon
+	// host's plain (non-agent) tmux sessions. Like the two above it needs the
+	// console and the daemon to share a machine: the listing is read straight
+	// off the host's session store and tmux server, and switching to a row
+	// hands this terminal to a pane on that host.
+	localSessions    bool
 	completeLocalDir bool
 	shutdownOnQuit   bool
 }
@@ -261,6 +268,7 @@ func (a *inProcessTUIAPI) capabilities() tuiCapabilities {
 		attachAgent:      true,
 		attachLocalPane:  true,
 		startLocalShell:  true,
+		localSessions:    true,
 		completeLocalDir: true,
 		shutdownOnQuit:   true,
 	}
@@ -519,6 +527,7 @@ const (
 	tuiModeConfirmQuit
 	tuiModeConfirmStop
 	tuiModeConfirmRetire
+	tuiModeConfirmKillSession
 )
 
 // Spawn-form fields, in tab order. The profile sits directly under the group
@@ -572,6 +581,13 @@ type tuiModel struct {
 	agents   []tuiAgentRow
 	groups   []tuiGroupRow
 	profiles []tuiProfileRow
+	// sessions are the daemon host's live non-agent sessions, listed under the
+	// agents — empty on a console that does not read them (see
+	// listsLocalSessions). sessionsErr is that read's last failure, kept apart
+	// from refreshErr for the same reason profilesErr is: it costs one part of
+	// the listing, not the listing.
+	sessions    []tuiSessionRow
+	sessionsErr string
 
 	cursor         int
 	viewportOffset int
@@ -641,6 +657,7 @@ type tuiModel struct {
 	retiring          bool
 	resuming          bool
 	startingShell     bool
+	killingSession    bool
 	// spawnFormGen numbers the spawn forms this console has opened; see
 	// tuiSpawnForm.gen.
 	spawnFormGen uint64
@@ -674,11 +691,11 @@ type tuiModel struct {
 	usageUnsupported bool
 	usageFetching    bool
 	lastUsageAttempt time.Time
-	// lifecycleTarget is the agent the stop/retire confirmation is about,
+	// lifecycleTarget is the row the stop/retire/kill confirmation is about,
 	// captured when the prompt opens rather than re-read when it is answered:
 	// the listing re-sorts under the cursor every two seconds, so resolving the
-	// target on "y" could act on an agent the operator never saw named.
-	lifecycleTarget tuiAgentRow
+	// target on "y" could act on something the operator never saw named.
+	lifecycleTarget tuiListRow
 
 	filterActive bool
 
@@ -732,9 +749,9 @@ type tuiSpawnForm struct {
 
 // tuiShellForm is the "new shell session" prompt: a plain interactive shell in
 // its own tmux session, which is a session and not an agent — no conversation,
-// no group, no permissions, and no row in the listing this console renders. It
-// asks only what a shell session actually has: where to start, and what to call
-// the tmux handle.
+// no group, no permissions, and so a "(session)" row in the listing rather
+// than one of the agents. It asks only what a shell session actually has:
+// where to start, and what to call the tmux handle.
 type tuiShellForm struct {
 	field int
 
@@ -759,10 +776,16 @@ type (
 		agents            []tuiAgentRow
 		groups            []tuiGroupRow
 		profiles          []tuiProfileRow
+		sessions          []tuiSessionRow
 		err               error
 		// profilesErr is the profile listing's own failure, kept apart from
 		// err: it costs the spawn form one picker, not the whole console.
 		profilesErr error
+		// sessionsErr is the non-agent session listing's own failure, kept
+		// apart for the same reason: an agent listing that is live and correct
+		// must not go blank because the host's session store was unreadable
+		// for one poll.
+		sessionsErr error
 	}
 	// tuiUsageMsg carries one completed usage poll — the account's rolling
 	// limits and API spend, or the error that stopped the read.
@@ -792,6 +815,11 @@ type (
 	// tuiShellStartedMsg carries the outcome of one shell-session launch.
 	tuiShellStartedMsg struct {
 		created session.ShellSession
+		err     error
+	}
+	// tuiSessionKilledMsg carries the outcome of ending one non-agent session.
+	tuiSessionKilledMsg struct {
+		session string
 		err     error
 	}
 	// tuiAttachedMsg carries the outcome of putting the operator on an
@@ -836,6 +864,7 @@ func newTUIModel(api tuiAPI) tuiModel {
 			attachAgent:      true,
 			attachLocalPane:  true,
 			startLocalShell:  true,
+			localSessions:    true,
 			completeLocalDir: true,
 			shutdownOnQuit:   true,
 		},
@@ -966,6 +995,38 @@ func (m tuiModel) visibleAgents() []tuiAgentRow {
 	return out
 }
 
+// listsLocalSessions reports whether this console shows the daemon host's
+// non-agent sessions. Both gates matter, and for the same reasons the shell
+// form has them: the listing is read off the host's own session store and tmux
+// server (so a remote console cannot), and it is the operator's own working
+// directories (so an agent-class console may not — see completingDir).
+func (m tuiModel) listsLocalSessions() bool {
+	return m.operator && m.capabilities.localSessions
+}
+
+// visibleRows is the listing the cursor moves over: the agents the filter
+// leaves, then the live non-agent sessions.
+//
+// Sessions come last as a block rather than interleaved by name. They are a
+// different kind of thing with a different set of keys, and keeping them
+// together means the operator's mental "the agents are the top N rows" holds
+// between refreshes — where a name-interleaved order would slide a session
+// into the middle of the roster and back out again as agents come and go.
+//
+// The active filter does not apply to them: only live sessions are listed at
+// all, so every session row is already an active one.
+func (m tuiModel) visibleRows() []tuiListRow {
+	agents := m.visibleAgents()
+	rows := make([]tuiListRow, 0, len(agents)+len(m.sessions))
+	for _, a := range agents {
+		rows = append(rows, agentListRow(a))
+	}
+	for _, s := range m.sessions {
+		rows = append(rows, sessionListRow(s))
+	}
+	return rows
+}
+
 // tuiListChrome is what renderList spends on everything that is not a table
 // row: 3 lines of header, the table's own header + separator, a blank line
 // and the summary, and a blank line and the key line.
@@ -1033,6 +1094,7 @@ func tuiTickCmd() tea.Cmd {
 func (m tuiModel) refreshCmd() tea.Cmd {
 	api := m.api
 	generation := m.refreshGeneration
+	withSessions := m.listsLocalSessions()
 	return func() tea.Msg {
 		var agents []tuiAgentRow
 		if err := api.get("/v1/peers", &agents); err != nil {
@@ -1048,6 +1110,14 @@ func (m tuiModel) refreshCmd() tea.Cmd {
 		// because a profile read hit the DB at a bad moment.
 		var profiles []tuiProfileRow
 		profilesErr := api.get("/v1/spawn-profiles", &profiles)
+		// The host's own sessions, which have no /v1 shape — see
+		// tui_sessions.go. Their failure travels beside the listing for the
+		// same reason the profiles' does.
+		var sessions []tuiSessionRow
+		var sessionsErr error
+		if withSessions {
+			sessions, sessionsErr = tuiListLocalSessions()
+		}
 		sortTUIAgents(agents)
 		sort.Slice(groups, func(i, j int) bool { return groups[i].Name < groups[j].Name })
 		sort.Slice(profiles, func(i, j int) bool { return profiles[i].Name < profiles[j].Name })
@@ -1056,7 +1126,9 @@ func (m tuiModel) refreshCmd() tea.Cmd {
 			agents:            agents,
 			groups:            groups,
 			profiles:          profiles,
+			sessions:          sessions,
 			profilesErr:       profilesErr,
+			sessionsErr:       sessionsErr,
 		}
 	}
 }
@@ -1736,30 +1808,78 @@ func realTUIAttachToPane(agentName, tmuxSession string, inTmux bool) tea.Cmd {
 // insideTmux reports whether this process is itself a tmux client.
 func insideTmux() bool { return os.Getenv("TMUX") != "" }
 
-// selectedAgent is the row the cursor is on, and whether there is one — the
+// selectedRow is the row the cursor is on, and whether there is one — the
 // listing can be empty, and it re-sorts under the cursor every two seconds.
-func (m tuiModel) selectedAgent() (tuiAgentRow, bool) {
-	visible := m.visibleAgents()
-	if m.cursor < 0 || m.cursor >= len(visible) {
-		return tuiAgentRow{}, false
+func (m tuiModel) selectedRow() (tuiListRow, bool) {
+	rows := m.visibleRows()
+	if m.cursor < 0 || m.cursor >= len(rows) {
+		return tuiListRow{}, false
 	}
-	return visible[m.cursor], true
+	return rows[m.cursor], true
 }
 
-// enterSelected is what enter does on a row, which depends on whether the
-// agent is up: an offline one is turned back on, a live one gets this
+// selectedAgent is selectedRow narrowed to an agent: false on an empty
+// listing and false on a non-agent session row, so every agent-only move
+// (resume, stop, retire, attach-to-an-agent) is inert on a session rather
+// than acting on one under an agent's verbs.
+func (m tuiModel) selectedAgent() (tuiAgentRow, bool) {
+	row, ok := m.selectedRow()
+	if !ok || row.isSession() {
+		return tuiAgentRow{}, false
+	}
+	return row.agent, true
+}
+
+// enterSelected is what enter does on a row. On an agent it depends on
+// whether it is up: an offline one is turned back on, a live one gets this
 // terminal handed to its pane. Both are the move the operator wants next
 // after picking that row, and an offline agent has no pane to attach to
-// anyway — enter on it used to be a dead key that only said so.
+// anyway — enter on it used to be a dead key that only said so. On a
+// non-agent session there is only ever a live pane, so enter goes to it.
 func (m tuiModel) enterSelected() (tuiModel, tea.Cmd) {
-	row, ok := m.selectedAgent()
+	row, ok := m.selectedRow()
 	if !ok {
 		return m, nil
 	}
-	if !row.Online {
-		return m.resumeSelected(row)
+	if row.isSession() {
+		return m.attachSessionSelected(row.session)
+	}
+	if !row.agent.Online {
+		return m.resumeSelected(row.agent)
 	}
 	return m.attachSelected()
+}
+
+// attachSessionSelected hands this terminal to a non-agent session's pane —
+// the console's `tclaude session attach <handle>`, and the same handover enter
+// makes on a live agent's row.
+//
+// The gates are the shell form's, for the shell form's reasons: the pane is on
+// the daemon's host, outside any agent sandbox, and it is the operator's own
+// shell. A console the daemon does not classify as the human is refused, and
+// so is one that does not share the host. In practice neither refusal is
+// reachable from the listing — a console that fails either never sees a
+// session row at all (listsLocalSessions) — but the check lives with the
+// action rather than depending on the listing to have withheld it.
+func (m tuiModel) attachSessionSelected(row tuiSessionRow) (tuiModel, tea.Cmd) {
+	if !m.operator {
+		m.notice = "Only an operator console can go to a session's terminal."
+		return m, nil
+	}
+	if !m.capabilities.localSessions || !m.capabilities.attachLocalPane {
+		m.notice = "This console cannot go to a session — it does not share the daemon's host."
+		return m, nil
+	}
+	if row.TmuxSession == "" {
+		m.notice = row.name() + " has no tmux session to go to."
+		return m, nil
+	}
+	if insideTmux() {
+		m.notice = "Switching to " + row.TmuxSession + "…"
+	} else {
+		m.notice = "Attaching to " + row.name() + " — detach (ctrl-b d) to come back."
+	}
+	return m, tuiAttachToPane(row.name(), row.TmuxSession, insideTmux())
 }
 
 // resumeSelected starts the selected agent's session again through the
@@ -1872,16 +1992,32 @@ func (m tuiModel) attachSelected() (tuiModel, tea.Cmd) {
 	return m, m.attachCmd(row.name(), row.ConvID, "")
 }
 
-// confirmDeleteStepSelected moves the selected agent one step toward removal:
-// online agents are taken offline, while agents already offline are retired.
-// Both actions ask first, and the target is captured here so a background
-// refresh cannot move another row under the cursor before confirmation.
+// confirmDeleteStepSelected moves the selected row one step toward removal.
+// On an agent that is the lifecycle it already had: online agents are taken
+// offline, while agents already offline are retired. On a non-agent session
+// there is no such ladder — a session has no offline state to park in and
+// nothing to retire from — so the one step is ending it. Every action asks
+// first, and the target is captured here so a background refresh cannot move
+// another row under the cursor before confirmation.
 func (m tuiModel) confirmDeleteStepSelected() tuiModel {
-	row, ok := m.selectedAgent()
+	row, ok := m.selectedRow()
 	if !ok {
 		return m
 	}
-	if row.Online {
+	if row.isSession() {
+		if !m.operator || !m.capabilities.localSessions {
+			m.notice = "Only an operator console on the daemon's host can end a session."
+			return m
+		}
+		if m.killingSession {
+			m.notice = "A session is already being ended."
+			return m
+		}
+		m.lifecycleTarget = row
+		m.mode = tuiModeConfirmKillSession
+		return m
+	}
+	if row.agent.Online {
 		if m.stopping {
 			m.notice = "A stop is already in flight."
 			return m
@@ -1901,8 +2037,8 @@ func (m tuiModel) confirmDeleteStepSelected() tuiModel {
 
 // stopConfirmed fires the graceful stop the operator just confirmed.
 func (m tuiModel) stopConfirmed() (tuiModel, tea.Cmd) {
-	row := m.lifecycleTarget
-	m.lifecycleTarget = tuiAgentRow{}
+	row := m.lifecycleTarget.agent
+	m.lifecycleTarget = tuiListRow{}
 	m.mode = tuiModeList
 	if row.ConvID == "" {
 		return m, nil
@@ -1912,13 +2048,30 @@ func (m tuiModel) stopConfirmed() (tuiModel, tea.Cmd) {
 	return m, tuiStopCmd(m.api, row.ConvID, row.name())
 }
 
+// killSessionConfirmed ends the non-agent session the operator just confirmed.
+// Unlike the agent verbs beside it this goes nowhere near the daemon's API:
+// there is no permission to check on a session and no HTTP shape for it, so
+// the operator gate captured when the prompt opened is the whole gate — the
+// same arrangement attaching and the shell launch have.
+func (m tuiModel) killSessionConfirmed() (tuiModel, tea.Cmd) {
+	row := m.lifecycleTarget.session
+	m.lifecycleTarget = tuiListRow{}
+	m.mode = tuiModeList
+	if row.TmuxSession == "" {
+		return m, nil
+	}
+	m.killingSession = true
+	m.notice = "Ending session " + row.name() + "…"
+	return m, tuiKillSessionCmd(row)
+}
+
 // retireConfirmed fires the retire the operator just confirmed. Permission is
 // the daemon's call, not the console's: the endpoint gates every caller class
 // itself, so an agent-class console gets the same refusal here it would get
 // over the socket rather than a second, divergent rule.
 func (m tuiModel) retireConfirmed() (tuiModel, tea.Cmd) {
-	row := m.lifecycleTarget
-	m.lifecycleTarget = tuiAgentRow{}
+	row := m.lifecycleTarget.agent
+	m.lifecycleTarget = tuiListRow{}
 	m.mode = tuiModeList
 	if row.ConvID == "" {
 		return m, nil
@@ -2055,9 +2208,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.reconcilingMutation = false
 			m.reconciliationRefreshGen = 0
 		}
-		// Which agent the cursor is on is decided before the listing under it
+		// Which row the cursor is on is decided before the listing under it
 		// is replaced — see restoreCursor.
-		selected, hadSelection := m.selectedAgent()
+		selected, hadSelection := m.selectedRow()
 		m.agents = msg.agents
 		m.groups = msg.groups
 		// A failed profile read keeps the last list it managed to fetch: a
@@ -2068,11 +2221,20 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.profilesErr = ""
 			m.profiles = msg.profiles
 		}
+		// Same disposition for the host's own sessions: a failed read keeps
+		// the rows it last managed to list rather than dropping them out from
+		// under the cursor, and the summary line says the listing is stale.
+		if msg.sessionsErr != nil {
+			m.sessionsErr = msg.sessionsErr.Error()
+		} else {
+			m.sessionsErr = ""
+			m.sessions = msg.sessions
+		}
 		m.lastRefresh = time.Now()
 		if hadSelection {
-			m.restoreCursor(selected.ConvID)
+			m.restoreCursor(selected.key())
 		}
-		visible := m.visibleAgents()
+		visible := m.visibleRows()
 		if m.cursor >= len(visible) {
 			m.cursor = max(len(visible)-1, 0)
 		}
@@ -2196,10 +2358,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.notice = "Could not start a shell session: " + msg.err.Error()
 			return m, nil
 		}
-		// A shell session is not an agent, so it will never appear in the
-		// listing this console renders — naming its tmux handle is what lets the
-		// operator find it again (`tclaude session attach <handle>`) after they
-		// detach.
+		// A shell session is not an agent, so it lands in the listing as a
+		// (session) row rather than beside the agents — and naming its tmux
+		// handle is what also lets the operator find it from outside this
+		// console (`tclaude session attach <handle>`).
 		m.notice = "Started shell session " + msg.created.TmuxSession + " in " + msg.created.Cwd + "."
 		if insideTmux() {
 			m.notice += " Switching to it…"
@@ -2207,6 +2369,19 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.notice += " Attaching; detach (ctrl-b d) to come back."
 		}
 		return m, tuiAttachToPane(msg.created.SessionID, msg.created.TmuxSession, insideTmux())
+
+	case tuiSessionKilledMsg:
+		m.killingSession = false
+		if msg.err != nil {
+			m.notice = "Could not end session " + msg.session + ": " + msg.err.Error()
+			return m, nil
+		}
+		// The pane is gone, so the row is: the listing carries live sessions
+		// only. Refresh now rather than leaving a dead session on screen for
+		// up to a tick. The session row itself is left for the daemon's reaper
+		// to mark exited, exactly as when the shell exits on its own.
+		m.notice = "Ended session " + msg.session + "."
+		return m.beginRefresh()
 
 	case tuiAttachedMsg:
 		if msg.err != nil {
@@ -2340,7 +2515,7 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		// in flight. Once that request becomes ambiguous, cancel the stale
 		// modal as well as blocking list-mode mutation shortcuts.
 		m.mode = tuiModeList
-		m.lifecycleTarget = tuiAgentRow{}
+		m.lifecycleTarget = tuiListRow{}
 		m.notice = "Waiting for a successful refresh to reconcile the previous action before another mutation."
 		return m, nil
 	}
@@ -2369,7 +2544,19 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m.stopConfirmed()
 		default:
 			m.mode = tuiModeList
-			m.lifecycleTarget = tuiAgentRow{}
+			m.lifecycleTarget = tuiListRow{}
+		}
+		return m, nil
+
+	case tuiModeConfirmKillSession:
+		// Same contract as the retire prompt: only "y" goes through, and
+		// ctrl-c means "get me out of this" rather than a second yes.
+		switch msg.String() {
+		case "y", "Y":
+			return m.killSessionConfirmed()
+		default:
+			m.mode = tuiModeList
+			m.lifecycleTarget = tuiListRow{}
 		}
 		return m, nil
 
@@ -2383,7 +2570,7 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m.retireConfirmed()
 		default:
 			m.mode = tuiModeList
-			m.lifecycleTarget = tuiAgentRow{}
+			m.lifecycleTarget = tuiListRow{}
 		}
 		return m, nil
 
@@ -2395,7 +2582,7 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	// List mode.
-	visible := m.visibleAgents()
+	visible := m.visibleRows()
 	switch msg.String() {
 	case "q", "esc", "ctrl+c":
 		// The embedded console owns the daemon lifetime; a standalone remote
@@ -2413,21 +2600,16 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.ensureCursorVisible()
 		}
 	case "f":
-		var selectedID string
+		var selectedKey string
 		if m.cursor >= 0 && m.cursor < len(visible) {
-			selectedID = visible[m.cursor].ConvID
+			selectedKey = visible[m.cursor].key()
 		}
 		m.filterActive = !m.filterActive
-		visible = m.visibleAgents()
 		m.cursor = 0
-		if selectedID != "" {
-			for i, a := range visible {
-				if a.ConvID == selectedID {
-					m.cursor = i
-					break
-				}
-			}
-		}
+		// Same key match — and the same skip of the empty one — restoreCursor
+		// makes after a refresh: an identity-less placeholder row must not
+		// hand the cursor to a different placeholder.
+		m.restoreCursor(selectedKey)
 		m.ensureCursorVisible()
 		return m, nil
 	case "enter":
@@ -2461,6 +2643,8 @@ func tuiReconciliationBlocksMutation(mode tuiMode, key string) bool {
 	case tuiModeConfirmStop:
 		return strings.EqualFold(key, "y")
 	case tuiModeConfirmRetire:
+		return strings.EqualFold(key, "y")
+	case tuiModeConfirmKillSession:
 		return strings.EqualFold(key, "y")
 	default:
 		return false
@@ -2538,23 +2722,24 @@ func (m tuiModel) handleShellKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m.updateFocusedShellInput(msg)
 }
 
-// restoreCursor puts the cursor back on the agent it was on, by conv-id,
-// after a refresh has replaced the listing under it. An agent that is no
-// longer listed (retired, or filtered out) leaves the cursor where it was,
-// for the clamp above to bring back into range.
+// restoreCursor puts the cursor back on the row it was on, by row key, after
+// a refresh has replaced the listing under it. A row that is no longer listed
+// (an agent retired, a session ended, or either filtered out) leaves the
+// cursor where it was, for the clamp above to bring back into range.
 //
-// The listing re-sorts on every poll — online agents first, then by name — so
-// an index alone does not name an agent for longer than two seconds. That is
-// the same hazard the retire prompt captures its target for, and it bites
-// hardest right after enter starts an offline agent: that agent jumps from
-// the bottom of the listing to the top, and a cursor left at the old index
-// would put the next keystroke on whichever agent slid into its place.
-func (m *tuiModel) restoreCursor(convID string) {
-	if convID == "" {
+// The listing re-sorts on every poll — online agents first, then by name, then
+// the sessions — so an index alone does not name a row for longer than two
+// seconds. That is the same hazard the lifecycle prompts capture their target
+// for, and it bites hardest right after enter starts an offline agent: that
+// agent jumps from the bottom of the agents to the top, and a cursor left at
+// the old index would put the next keystroke on whichever row slid into its
+// place.
+func (m *tuiModel) restoreCursor(key string) {
+	if key == "" {
 		return
 	}
-	for i, a := range m.visibleAgents() {
-		if a.ConvID == convID {
+	for i, row := range m.visibleRows() {
+		if row.key() == key {
 			m.cursor = i
 			return
 		}
@@ -2651,12 +2836,12 @@ func (m tuiModel) renderList() string {
 		b.WriteString(m.renderWrapped(m.identityWarning) + "\n\n")
 	}
 
-	visible := m.visibleAgents()
+	visible := m.visibleRows()
 	if len(visible) == 0 {
 		if m.filterActive && len(m.agents) > 0 {
 			b.WriteString("  No active agents.\n")
 		} else {
-			b.WriteString("  No agents yet.\n")
+			b.WriteString("  " + m.emptyListingLine() + "\n")
 		}
 	} else {
 		tbl := table.New(m.columns()...)
@@ -2664,14 +2849,14 @@ func (m tuiModel) renderList() string {
 		tbl.SelectedIndex = m.cursor
 		tbl.ViewportOffset = m.viewportOffset
 		tbl.ViewportHeight = m.viewportHeight()
-		for _, a := range visible {
+		for _, row := range visible {
 			tbl.AddRow(table.Row{Cells: []string{
-				a.name(),
-				strings.Join(a.Groups, ","),
-				a.status(),
-				a.State.Harness,
-				a.dir(),
-				a.Branch,
+				row.name(),
+				row.groupCell(),
+				row.statusCell(),
+				row.harnessCell(),
+				row.dirCell(),
+				row.branchCell(),
 			}})
 		}
 		for line := range strings.SplitSeq(tbl.Render(), "\n") {
@@ -2698,8 +2883,19 @@ func (m tuiModel) renderList() string {
 	return b.String()
 }
 
+// emptyListingLine is what an empty listing says, which depends on what this
+// console was looking at: a console that lists the host's sessions has checked
+// for those too, and saying only "no agents" would leave the operator
+// wondering whether the shell they started is somewhere off screen.
+func (m tuiModel) emptyListingLine() string {
+	if m.listsLocalSessions() {
+		return "No agents or sessions yet."
+	}
+	return "No agents yet."
+}
+
 // confirmPrompt is the question the list view is waiting on, empty when it is
-// waiting on none. Both prompts are one line by contract — viewportHeight pays
+// waiting on none. Every prompt is one line by contract — viewportHeight pays
 // for exactly two (the blank line and the question), so a second line would
 // overflow the terminal.
 func (m tuiModel) confirmPrompt() string {
@@ -2734,6 +2930,17 @@ func (m tuiModel) confirmPrompt() string {
 			suffix
 	case tuiModeConfirmRetire:
 		const prefix = "Retire "
+		const suffix = "? [y / any other key = cancel]"
+		return prefix +
+			tuiTruncate(m.lifecycleTarget.name(), m.promptNameBudget(len(prefix)+len(suffix))) +
+			suffix
+	case tuiModeConfirmKillSession:
+		// "Kill" rather than the agents' softer wording on purpose: there is no
+		// graceful exit to ask a shell for and nothing to resume it from
+		// afterwards, so whatever is running in that pane stops now. The
+		// prompt is budgeted as one line like the others, so the consequence
+		// is spelled out in the help rather than here.
+		const prefix = "Kill session "
 		const suffix = "? [y / any other key = cancel]"
 		return prefix +
 			tuiTruncate(m.lifecycleTarget.name(), m.promptNameBudget(len(prefix)+len(suffix))) +
@@ -2798,11 +3005,20 @@ func (m tuiModel) enterHint() string {
 	if m.reconcilingMutation {
 		return ""
 	}
-	row, ok := m.selectedAgent()
-	switch {
-	case !ok:
+	row, ok := m.selectedRow()
+	if !ok {
 		return ""
-	case !row.Online:
+	}
+	if row.isSession() {
+		// A session row is only ever listed by a console that can go to it,
+		// and it is always live, so enter always means the handover.
+		if insideTmux() {
+			return "enter switch to"
+		}
+		return "enter attach"
+	}
+	switch {
+	case !row.agent.Online:
 		return "enter start"
 	case !m.operator || !m.capabilities.attachAgent:
 		return ""
@@ -2812,6 +3028,26 @@ func (m tuiModel) enterHint() string {
 		return "enter remote attach"
 	default:
 		return "enter attach"
+	}
+}
+
+// deleteHint names what delete does on the row the cursor is on, empty when
+// there is no row. The two kinds have different lifecycles behind that key —
+// an agent steps offline then retired, a session just ends — so the hint is
+// per-row rather than a fixed label for a non-empty list.
+func (m tuiModel) deleteHint() string {
+	row, ok := m.selectedRow()
+	switch {
+	case !ok:
+		return ""
+	case row.isSession():
+		return "del kill session"
+	default:
+		// Unlike attaching, agent lifecycle moves are not statically
+		// operator-only: an agent-class console can hold stop/retire
+		// permissions over its own group's members, so the daemon decides and
+		// the key stays advertised.
+		return "del offline / retire"
 	}
 }
 
@@ -2833,11 +3069,8 @@ func (m tuiModel) keyHintLine() string {
 		newHints += " • s new shell"
 	}
 	hints := newHints + " • " + filterLabel + " • r refresh • ↑/↓ move • ? help • " + quitHint
-	if len(m.visibleAgents()) > 0 {
-		// Unlike attaching, lifecycle moves are not statically operator-only:
-		// an agent-class console can hold stop/retire permissions over its own
-		// group's members, so the daemon decides and the key stays advertised.
-		hints = "del offline / retire • " + hints
+	if del := m.deleteHint(); del != "" {
+		hints = del + " • " + hints
 	}
 	if enter := m.enterHint(); enter != "" {
 		hints = enter + " • " + hints
@@ -2852,13 +3085,22 @@ func (m tuiModel) summaryLine() string {
 			online++
 		}
 	}
-	visible := m.visibleAgents()
-	shown := len(visible)
+	agentsShown := len(m.visibleAgents())
+	shown := len(m.visibleRows())
 	var line string
 	if m.filterActive {
-		line = fmt.Sprintf("%d active agents • %d groups", shown, len(m.groups))
+		line = fmt.Sprintf("%d active agents • %d groups", agentsShown, len(m.groups))
 	} else {
-		line = fmt.Sprintf("%d agents (%d online) • %d groups", shown, online, len(m.groups))
+		line = fmt.Sprintf("%d agents (%d online) • %d groups", agentsShown, online, len(m.groups))
+	}
+	// Sessions are counted separately from the agents they sit under: they are
+	// a different kind of thing, and folding them into "N agents" would make
+	// the roster read as bigger than it is.
+	if m.listsLocalSessions() {
+		line += fmt.Sprintf(" • %d sessions", len(m.sessions))
+		if m.sessionsErr != "" {
+			line += " (stale)"
+		}
 	}
 	if !m.lastRefresh.IsZero() {
 		line += " • updated " + tuiAgo(time.Since(m.lastRefresh))
@@ -2879,6 +3121,9 @@ func (m tuiModel) summaryLine() string {
 	}
 	if m.startingShell {
 		line += " • starting a shell…"
+	}
+	if m.killingSession {
+		line += " • ending a session…"
 	}
 	return line
 }
@@ -2955,8 +3200,8 @@ func (m tuiModel) renderShellForm() string {
 	var b strings.Builder
 	b.WriteString("\n  New shell session\n\n")
 	b.WriteString("  A plain interactive shell in its own tmux session — a session, not an\n")
-	b.WriteString("  agent: no conversation, no group, and no row in the list behind this\n")
-	b.WriteString("  form. Find it again with `tclaude session ls`.\n\n")
+	b.WriteString("  agent: no conversation and no group, so it joins the list behind this\n")
+	b.WriteString("  form as a \"" + tuiSessionGroupCell + "\" row. Also `tclaude session ls`.\n\n")
 
 	b.WriteString(m.shell.dir.View() + m.shellDirHint())
 	b.WriteString("\n")
@@ -3143,6 +3388,12 @@ func (m tuiModel) renderHelp() string {
 	var b strings.Builder
 	b.WriteString("\n  tclaude terminal dashboard — keys\n\n")
 	b.WriteString("  List\n")
+	if m.listsLocalSessions() {
+		b.WriteString("    Two kinds of row. Agents first; below them this host's plain tmux\n")
+		b.WriteString("    sessions — the ones s starts here and any `tclaude session new` —\n")
+		b.WriteString("    marked \"" + tuiSessionGroupCell + "\" in the GROUP column they have nothing to put in.\n")
+		b.WriteString("    Live ones only: `tclaude session ls -a` has the rest.\n")
+	}
 	b.WriteString("    ↑/k, ↓/j   Move the cursor\n")
 	b.WriteString("    enter      On an offline agent: start it again, in the directory and\n")
 	b.WriteString("               conversation it was last running.\n")
@@ -3160,6 +3411,10 @@ func (m tuiModel) renderHelp() string {
 		b.WriteString("               Going to a pane is operator consoles only;\n")
 		b.WriteString("               starting one is whatever the daemon grants this console.\n")
 	}
+	if m.listsLocalSessions() {
+		b.WriteString("               On a session: go to its pane the same way (it is always\n")
+		b.WriteString("               live, so enter never means anything else there).\n")
+	}
 	b.WriteString("    n          Start a new agent\n")
 	if m.capabilities.startLocalShell {
 		b.WriteString("    s          Start a plain interactive shell session and attach to it.\n")
@@ -3169,7 +3424,15 @@ func (m tuiModel) renderHelp() string {
 	b.WriteString("               a live agent is taken offline; an already-offline agent is\n")
 	b.WriteString("               retired, leaving its groups and losing its grants. Retiring\n")
 	b.WriteString("               keeps the conversation and any worktree.\n")
+	if m.listsLocalSessions() {
+		b.WriteString("               A session has no such ladder, so delete ends it: that is\n")
+		b.WriteString("               `tmux kill-session` — whatever runs in the pane stops, no\n")
+		b.WriteString("               graceful exit, no starting it again. It asks first too.\n")
+	}
 	b.WriteString("    f          Filter the list: only show active agents (toggle)\n")
+	if m.listsLocalSessions() {
+		b.WriteString("               Sessions are unaffected: every listed one is already live.\n")
+	}
 	b.WriteString("    r          Refresh now (the list also polls every 2s)\n")
 	b.WriteString("    ?/h        This help\n")
 	if m.capabilities.shutdownOnQuit {
@@ -3212,7 +3475,8 @@ func (m tuiModel) renderHelp() string {
 		b.WriteString("  New shell session\n")
 		b.WriteString("    A session, not an agent: a plain interactive shell in its own tmux\n")
 		b.WriteString("    session, with no conversation, no group and no permissions — so it\n")
-		b.WriteString("    never appears in the list above. Reach it later with\n")
+		b.WriteString("    joins the list above as a \"" + tuiSessionGroupCell + "\" row rather than beside the\n")
+		b.WriteString("    agents. Reach it from outside this console with\n")
 		b.WriteString("    `tclaude session ls` and `tclaude session attach <handle>`.\n")
 		b.WriteString("    tab/↑/↓    Next / previous field\n")
 		if m.capabilities.completeLocalDir {

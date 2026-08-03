@@ -489,7 +489,7 @@ func TestTUIAmbiguousMutationForcesReconciliation(t *testing.T) {
 	assert.False(t, got.spawning)
 
 	got.mode = tuiModeConfirmRetire
-	got.lifecycleTarget = tuiAgentRow{ConvID: "c1", Title: "offline"}
+	got.lifecycleTarget = agentListRow(tuiAgentRow{ConvID: "c1", Title: "offline"})
 	blocked, mutationCmd = got.handleKey(tea.KeyPressMsg{Code: 'y', Text: "y"})
 	got = blocked.(tuiModel)
 	assert.Nil(t, mutationCmd)
