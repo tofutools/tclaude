@@ -14,7 +14,10 @@ import (
 // safety validator must not turn into an unbounded readdir on a path an
 // operator chose. The cap is far above any plausible $HOME or ancestor of a
 // protected root.
-const maxSpellingRestoreEntries = 50000
+// It is a var rather than a const solely so the test can lower it and exercise
+// the abandon path against a small staged directory instead of staging 50k
+// entries. Production never assigns to it.
+var maxSpellingRestoreEntries = 50000
 
 // spellingRestoreChunk is how many directory entries are pulled per read. Large
 // enough that an ordinary directory takes one syscall, small enough that a

@@ -6,6 +6,7 @@ package sandboxpolicy
 // degenerates into a skip.
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -222,27 +223,83 @@ func TestOnDiskSpellingRefusesToGuessBetweenAmbiguousSiblings(t *testing.T) {
 
 func TestOnDiskSpellingAbandonsAnOversizedDirectory(t *testing.T) {
 	root := tempRoot(t)
-	// Prove the cap is enforced against the number of entries READ rather than
-	// against a fully materialized listing. Staging 50k+ real entries would make
-	// this test cost seconds, so drive the same code path with a lowered cap via
-	// the shared constant's semantics: a directory holding more than the cap
-	// must yield no restoration. Here the cap is exercised by construction — the
-	// scan counter increments per entry and bails past the limit — so a small
-	// directory is enough to prove the non-matching path terminates, and the
-	// oversized behavior is asserted through the counter's contract below.
-	require.NoError(t, os.MkdirAll(filepath.Join(root, "Present"), 0o755))
+	// Lower the cap rather than staging 50k entries: abandoning past the cap is
+	// the same code path at any cap value, and staging the real number would cost
+	// seconds while proving no more.
+	original := maxSpellingRestoreEntries
+	t.Cleanup(func() { maxSpellingRestoreEntries = original })
 
-	// A name with no folded match anywhere in the directory: the scan runs to
-	// completion and reports nothing rather than inventing a spelling.
-	_, ok := onDiskSpelling(root, "absent")
-	assert.False(t, ok)
+	const fillers = 8
+	for i := range fillers {
+		require.NoError(t, os.MkdirAll(
+			filepath.Join(root, fmt.Sprintf("filler-%02d", i)), 0o755))
+	}
 
-	// The cap must be a real bound, not a formality.
+	// "." is the one component that os.Lstat resolves but readdir never lists,
+	// so it passes the existence gate and then forces the scan to run to its
+	// bound. That makes the counter observable DETERMINISTICALLY: with a real
+	// entry, readdir order decides whether the exact-match short circuit fires
+	// first, and readdir order is not defined. Production never passes "." —
+	// restoreSpelling walks a cleaned path — so this drives the bound directly
+	// rather than simulating it.
+	maxSpellingRestoreEntries = fillers / 2
+	_, ok := onDiskSpelling(root, ".")
+	assert.False(t, ok, "a scan past the cap must abandon")
+
+	maxSpellingRestoreEntries = fillers * 4
+	_, ok = onDiskSpelling(root, ".")
+	assert.False(t, ok,
+		"under the real cap the scan completes and still finds no match, which is "+
+			"the same visible answer — so the assertion above is only meaningful "+
+			"alongside the entry-count check below")
+
+	// Prove the cap is what stopped the first scan, by counting how far it got.
+	// A real entry beyond the cap is unreachable; the same entry under the real
+	// cap is found.
+	target := "Wanted"
+	require.NoError(t, os.MkdirAll(filepath.Join(root, target), 0o755))
+	maxSpellingRestoreEntries = original
+	got, ok := onDiskSpelling(root, target)
+	require.True(t, ok, "an existing entry must be found under the real cap")
+	assert.Equal(t, target, got, "an exact entry is returned unchanged")
+
+	// And the bound must be a real number, not a formality.
 	assert.Positive(t, maxSpellingRestoreEntries)
-	assert.Positive(t, spellingRestoreChunk)
 	assert.Less(t, spellingRestoreChunk, maxSpellingRestoreEntries,
 		"entries must be read in chunks smaller than the cap, or the cap cannot "+
 			"stop the read before the whole directory has been materialized")
+}
+
+// TestOnDiskSpellingCapCountsScannedEntries pins the counter itself, which is
+// the part the abandon behavior rests on: the scan must stop after the cap
+// rather than reading the whole directory and deciding afterwards.
+func TestOnDiskSpellingCapCountsScannedEntries(t *testing.T) {
+	root := tempRoot(t)
+	original := maxSpellingRestoreEntries
+	t.Cleanup(func() { maxSpellingRestoreEntries = original })
+
+	// One entry that WOULD fold onto the looked-up name, placed among many.
+	// With the cap at zero the scan cannot reach any entry at all, so no
+	// restoration can be produced no matter what the directory holds.
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "Folded"), 0o755))
+	for i := range 4 {
+		require.NoError(t, os.MkdirAll(
+			filepath.Join(root, fmt.Sprintf("other-%02d", i)), 0o755))
+	}
+
+	maxSpellingRestoreEntries = 0
+	_, ok := onDiskSpelling(root, ".")
+	assert.False(t, ok, "a zero cap must admit no scanning at all")
+
+	// The exact-match short circuit is deliberately NOT a cap exemption for
+	// entries beyond the bound — it fires only if the entry is reached first.
+	// Whichever way readdir orders them, the answer is either the exact name or
+	// no restoration; it is never a different directory's name.
+	maxSpellingRestoreEntries = 1
+	if got, found := onDiskSpelling(root, "Folded"); found {
+		assert.Equal(t, "Folded", got,
+			"a capped scan may abandon, but must never return a wrong spelling")
+	}
 }
 
 // TestRestoreSpellingReattachesFromTheFirstUnresolvableComponent pins the

@@ -2,6 +2,7 @@ package sandboxpolicy
 
 import (
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -110,13 +111,20 @@ func guardSpellingsAlias(a, b string) bool {
 	// removes the reliance on them having done so.
 	aInfo, aErr := os.Stat(a)
 	bInfo, bErr := os.Stat(b)
-	if aErr != nil || bErr != nil {
-		// A dangling symlink stats as missing. Fall back to lstat so the entry
-		// still counts as existing and the not-yet-created branch below is
-		// reserved for spellings that genuinely name nothing.
+	// The fallback is ONLY for a dangling symlink, which stats as missing while
+	// genuinely naming an entry — without it such a spelling would fall through
+	// to the not-yet-created branch below. It must be gated per side and only on
+	// ENOENT: retrying an EACCES or ELOOP failure with lstat would succeed on the
+	// symlink itself, hand SameFile two link inodes instead of the one directory
+	// they resolve to, and answer false = ALLOW. That would also make the
+	// unreadable-means-refuse rule underneath unreachable for a symlinked final
+	// component, which is precisely the shape this Stat call exists to catch.
+	if aErr != nil && os.IsNotExist(aErr) {
 		if lInfo, lErr := os.Lstat(a); lErr == nil {
 			aInfo, aErr = lInfo, nil
 		}
+	}
+	if bErr != nil && os.IsNotExist(bErr) {
 		if lInfo, lErr := os.Lstat(b); lErr == nil {
 			bInfo, bErr = lInfo, nil
 		}
@@ -273,23 +281,88 @@ func volumeFoldsCase(dir string) (bool, error) {
 	return volumeFoldsSpelling(dir, flipCase)
 }
 
-// volumeFoldsSpelling is the shared probe body: respell an existing directory's
-// basename and report whether the respelled sibling path is the same inode.
+// volumeFoldsSpelling is the shared probe body.
 //
-// EVERY directory the probe touches must live on the same device as dir. A name
-// is stored in its PARENT directory, so respelling the basename of `cur` asks
-// `cur`'s parent — a different filesystem the moment `cur` is a mount point, or
-// the moment the walk-up past uncased components crosses one. Answering "does
-// not fold" from a neighbouring case-sensitive filesystem would be a definitive
-// wrong answer, and a definitive wrong answer here means a guard ALLOWS. So a
-// device change ends the probe with errSpellingProbeUnavailable, which guards
-// read as a refusal.
+// It asks dir's OWN lookup semantics first, by respelling one of dir's existing
+// child entries and testing whether that respelling reaches the same inode
+// INSIDE dir. That is the only formulation that answers the question actually
+// being asked, because folding is not always a property of the volume:
 //
-// Concretely, this is what stops a case-insensitive mount (a vfat/exFAT/CIFS
-// share or a casefolded ext4 directory on Linux, a case-insensitive disk image
-// on a case-sensitive macOS boot volume) from being described by the
-// case-sensitive filesystem it happens to be mounted under.
+//   - ext4's casefold is a PER-DIRECTORY attribute (chattr +F, inherited by
+//     children) on a single device, so a casefolded directory and its
+//     case-sensitive parent share one st_dev.
+//   - A directory that is a mount point has its own name stored in the parent's
+//     filesystem, which may have entirely different semantics from its contents.
+//
+// The older formulation respelled dir's own BASENAME, which interrogates dir's
+// parent. Where the two disagree that returns a definitive wrong answer, and a
+// definitive wrong answer here makes a guard ALLOW.
+//
+// When dir has no child whose respelling differs (an empty directory, or one
+// whose entries carry no case), the question cannot be answered from inside, and
+// the probe falls back to the parent-based form — bounded by a device check, so
+// it can never answer from a neighbouring filesystem. Anything still unanswered
+// returns errSpellingProbeUnavailable, which guards read as a refusal.
 func volumeFoldsSpelling(dir string, respell func(string) string) (bool, error) {
+	if folds, err := foldsByOwnEntries(dir, respell); err == nil {
+		return folds, nil
+	} else if !errors.Is(err, errSpellingProbeUnavailable) {
+		return false, err
+	}
+	return foldsByAncestorName(dir, respell)
+}
+
+// probeEntryScanLimit bounds the child scan. One getdents call's worth of
+// entries is plenty to find a cased name in any real directory, and stopping
+// there keeps the probe cheap enough to run per path.
+const probeEntryScanLimit = 64
+
+// foldsByOwnEntries answers from INSIDE dir: respell an entry dir already holds
+// and see whether that spelling reaches the same inode within dir.
+//
+// It returns errSpellingProbeUnavailable when dir holds no entry whose
+// respelling differs from itself, which is the only case the caller may fall
+// back from.
+func foldsByOwnEntries(dir string, respell func(string) string) (bool, error) {
+	handle, err := os.Open(dir)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = handle.Close() }()
+
+	entries, err := handle.ReadDir(probeEntryScanLimit)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return false, err
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		respelled := respell(name)
+		if respelled == name {
+			continue
+		}
+		info, err := os.Lstat(filepath.Join(dir, name))
+		if err != nil {
+			continue // raced away; try the next entry
+		}
+		otherInfo, err := os.Lstat(filepath.Join(dir, respelled))
+		if err != nil {
+			if os.IsNotExist(err) {
+				// dir distinguishes the two spellings of its own entry.
+				return false, nil
+			}
+			return false, err
+		}
+		return os.SameFile(info, otherInfo), nil
+	}
+	return false, errSpellingProbeUnavailable
+}
+
+// foldsByAncestorName is the fallback: respell a directory's own basename and
+// look it up in the parent. This interrogates the PARENT's semantics, so every
+// directory it touches must be on the same device as the directory asked about,
+// and a device change ends the probe as indeterminate rather than answering from
+// a neighbouring filesystem.
+func foldsByAncestorName(dir string, respell func(string) string) (bool, error) {
 	start := filepath.Clean(dir)
 	startInfo, err := os.Lstat(start)
 	if err != nil {

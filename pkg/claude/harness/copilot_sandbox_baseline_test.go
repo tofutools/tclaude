@@ -784,3 +784,53 @@ func TestCopilotSandboxBaselineRefusesCaseVariantBroadGrants(t *testing.T) {
 		})
 	}
 }
+
+// TestCopilotSandboxBaselineRefusesCaseVariantFirmlinkSystemRoot closes the last
+// spelling gap in the baseline gate.
+//
+// The system-root rule tests BOTH the operator's literal spelling and its
+// resolved form, and it depends on copilotNormalizeFirmlink collapsing macOS's
+// "/private/<x>" onto "/<x>". That prefix match used to be byte-exact, so on a
+// case-insensitive boot volume "/Private/etc" — which names /etc — stayed
+// un-collapsed, presented a Dir() of "/Private" instead of "/", and was
+// therefore not classified as a top-level system directory. COPILOT_HOME or
+// TMPDIR pointed there would have become an rw grant on /etc.
+//
+// This is asserted with GOOS "darwin" regardless of the host, because the rule
+// under test is a pure function of the platform argument and the spelling.
+func TestCopilotSandboxBaselineRefusesCaseVariantFirmlinkSystemRoot(t *testing.T) {
+	for _, spelling := range []string{
+		"/Private/etc",
+		"/PRIVATE/etc",
+		"/private/etc",
+	} {
+		t.Run(spelling, func(t *testing.T) {
+			assert.Equal(t, "/etc", copilotNormalizeFirmlink("darwin", spelling),
+				"every case spelling of the firmlink prefix must collapse alike")
+			assert.True(t, copilotSystemRootDir("darwin", spelling),
+				"%q names /etc and must be classified as a top-level system directory", spelling)
+		})
+	}
+
+	// Linux has no firmlink, and its filesystems are case-sensitive: the prefix
+	// must stay literal there so a real "/Private/etc" directory is not silently
+	// treated as "/etc".
+	assert.Equal(t, "/Private/etc", copilotNormalizeFirmlink("linux", "/Private/etc"))
+
+	// A path that merely starts with the same letters is not a firmlink.
+	assert.Equal(t, "/privateer/etc", copilotNormalizeFirmlink("darwin", "/privateer/etc"))
+	// The prefix alone has no remainder to promote.
+	assert.Equal(t, "/private", copilotNormalizeFirmlink("darwin", "/private"))
+	assert.Equal(t, "/Private", copilotNormalizeFirmlink("darwin", "/Private"))
+
+	// End to end through the gate: the variant spelling must be refused.
+	home := filepath.Join(t.TempDir(), "home")
+	_, err := CopilotSandboxBaseline(CopilotBaselineInput{
+		GOOS: "darwin", Home: home,
+		Getenv: envMap(map[string]string{CopilotHomeEnvVar: "/Private/etc"}),
+	})
+	require.Error(t, err)
+	var capErr *SandboxCapabilityError
+	require.ErrorAs(t, err, &capErr)
+	assert.Contains(t, capErr.Message, "top-level system directory")
+}

@@ -655,13 +655,23 @@ func copilotConventionalTempRoot(goos, literal, resolved string) bool {
 // copilotNormalizeFirmlink collapses macOS's /private/<x> firmlink spelling
 // onto /<x> so the literal and resolved forms of /etc, /tmp and /var compare
 // equal. It is a no-op everywhere else.
+//
+// The prefix match is case-insensitive on darwin because the boot volume
+// normally is: "/Private/etc" names /etc there. A byte-exact match would leave
+// that spelling un-collapsed, so copilotSystemRootDir would see a Dir() of
+// "/Private" rather than "/" and NOT classify it as a top-level system
+// directory — letting COPILOT_HOME=/Private/etc through the gate and into an rw
+// grant on /etc. The resolved form is separately spelling-canonicalized before
+// it reaches here, but the LITERAL operator-supplied spelling is not, and the
+// system-root rule deliberately tests both.
 func copilotNormalizeFirmlink(goos, p string) string {
 	p = filepath.Clean(p)
 	if goos != "darwin" {
 		return p
 	}
-	if rest, ok := strings.CutPrefix(p, "/private/"); ok && rest != "" {
-		return "/" + rest
+	const firmlink = "/private/"
+	if len(p) > len(firmlink) && strings.EqualFold(p[:len(firmlink)], firmlink) {
+		return "/" + p[len(firmlink):]
 	}
 	return p
 }

@@ -205,82 +205,162 @@ func TestGuardContainsOrEqualUnreadableAncestorFailsClosed(t *testing.T) {
 	assert.True(t, got, "an unreadable ancestor must fail closed (refuse), never fail open")
 }
 
-func TestVolumeFoldsCaseWalksPastUncasedComponentsWithinOneVolume(t *testing.T) {
+// TestVolumeFoldsCaseAnswersFromTheDirectoryItself pins the probe's central
+// property: it reports what THIS directory does, not what its parent does.
+//
+// Folding is not always a property of the volume. ext4's casefold is a
+// PER-DIRECTORY attribute (chattr +F, inherited by children) on a single
+// device, so a casefolded directory and its case-sensitive parent share one
+// st_dev and no device check can tell them apart. A directory that is a mount
+// point has the opposite problem: its own name is stored in the parent's
+// filesystem, which may have entirely different semantics from its contents.
+//
+// Both are answered by respelling an entry the directory already holds and
+// looking that respelling up INSIDE the directory, which is what the probe now
+// does. Asking about the directory's own basename would interrogate the parent,
+// and where the two disagree that is a definitive WRONG answer — which for a
+// guard means allow.
+// TestGuardContainsOrEqualUnresolvableSpellingFailsClosed asserts the
+// refuse-when-indeterminate rule on EVERY runner, including root.
+//
+// The permission-based test below cannot do that: root ignores mode bits, so on
+// a containerized CI runner its fail-closed branch never executes. A symlink
+// loop is denied to root exactly as it is to anyone else — ELOOP is not a
+// permission, it is an unresolvable path — so this pins the property
+// unconditionally.
+func TestGuardContainsOrEqualUnresolvableSpellingFailsClosed(t *testing.T) {
 	root := tempRoot(t)
-	// A component with no cased letters cannot answer the question, so the probe
-	// walks up to one that can. Generalizing an ancestor's answer to a
-	// descendant is only sound WITHIN one filesystem, which is why the probe
-	// refuses the moment it would cross a device boundary — see
-	// TestVolumeFoldsCaseRefusesToAnswerFromAnotherVolume.
-	numeric := filepath.Join(root, "123")
-	require.NoError(t, os.MkdirAll(numeric, 0o755))
-	requireSameVolume(t, root, numeric)
+	// A self-referential symlink: lstat sees a link, stat fails with ELOOP.
+	loop := filepath.Join(root, "loop")
+	require.NoError(t, os.Symlink("loop", loop))
+	_, statErr := os.Stat(loop)
+	require.Error(t, statErr)
+	require.False(t, os.IsNotExist(statErr),
+		"the probe needs a non-ENOENT failure to exercise the indeterminate branch")
 
-	folds, err := volumeFoldsCase(numeric)
+	// A case variant of the loop, so a folded relation is nominated and the
+	// comparison actually reaches identity resolution.
+	assert.True(t, GuardContainsOrEqual(loop, filepath.Join(root, "LOOP", "child")),
+		"a spelling that cannot be resolved must refuse, never allow")
+
+	// The same must hold whichever side is unresolvable.
+	assert.True(t, GuardPathsIntersect(filepath.Join(root, "LOOP"), loop))
+}
+
+func TestVolumeFoldsCaseAnswersFromTheDirectoryItself(t *testing.T) {
+	root := tempRoot(t)
+	dir := filepath.Join(root, "probe-subject")
+	child := filepath.Join(dir, "Entry")
+	require.NoError(t, os.MkdirAll(child, 0o755))
+
+	// Ground truth for THIS directory, measured directly.
+	childInfo, err := os.Lstat(child)
 	require.NoError(t, err)
-	assert.Equal(t, volumeSemantics(t, root), folds)
+	variantInfo, variantErr := os.Lstat(filepath.Join(dir, "eNTRY"))
+	want := variantErr == nil && os.SameFile(childInfo, variantInfo)
+
+	got, err := volumeFoldsCase(dir)
+	require.NoError(t, err)
+	assert.Equal(t, want, got,
+		"the probe must report what %q itself does with its own entries", dir)
+
+	// And it must be reached through the own-entries path, not the fallback.
+	got, err = foldsByOwnEntries(dir, flipCase)
+	require.NoError(t, err)
+	assert.Equal(t, want, got)
 }
 
-func TestVolumeFoldsCaseStopsAtTheFilesystemRoot(t *testing.T) {
-	// The filesystem root has no parent to probe against, so the question is
-	// unanswerable there and callers must treat that as indeterminate.
-	_, err := volumeFoldsCase(string(filepath.Separator))
-	assert.ErrorIs(t, err, errSpellingProbeUnavailable)
-}
+// TestVolumeFoldsCaseAnswersForAMountPoint is the concrete payoff: a mount point
+// used to be unanswerable (its basename lives on the parent volume), and is now
+// answered from its own contents.
+func TestVolumeFoldsCaseAnswersForAMountPoint(t *testing.T) {
+	answered := 0
+	for _, mount := range []string{"/proc", "/sys", "/dev"} {
+		if !isCrossDeviceMountPoint(mount) {
+			continue
+		}
+		answered++
+		_, err := volumeFoldsCase(mount)
+		assert.NoError(t, err,
+			"%q must be answerable from its own entries rather than from its parent volume", mount)
 
-// TestVolumeFoldsCaseRefusesToAnswerFromAnotherVolume pins the fix for the
-// probe's most dangerous failure mode.
-//
-// A name is stored in its PARENT directory, so respelling a directory's own
-// basename questions the parent's filesystem. When the directory is a mount
-// point — or when the walk past uncased components crosses one — that is a
-// DIFFERENT filesystem, whose case semantics say nothing about the one asked
-// about. Answering "does not fold" from a neighbouring case-sensitive volume
-// would be a definitive wrong answer, and a definitive wrong answer here makes
-// a guard ALLOW: a case-insensitive mount (vfat/exFAT/CIFS, a casefolded ext4
-// directory, a case-insensitive disk image on a case-sensitive macOS boot
-// volume) would have its protected roots reachable through a variant spelling.
-//
-// Crossing a device boundary must therefore end the probe as indeterminate.
-func TestVolumeFoldsCaseRefusesToAnswerFromAnotherVolume(t *testing.T) {
-	// /proc, /sys and /dev are separate filesystems from / on Linux; /dev is on
-	// macOS too. Find any real mount point rather than staging one, which would
-	// need privileges CI does not have.
-	crossings := []string{"/proc", "/sys", "/dev"}
-	probed := 0
-	for _, mount := range crossings {
-		info, err := os.Lstat(mount)
-		if err != nil || !info.IsDir() {
-			continue
-		}
-		parentInfo, err := os.Lstat(filepath.Dir(mount))
-		if err != nil {
-			continue
-		}
-		mountDev, mountOK := pathDevice(info)
-		parentDev, parentOK := pathDevice(parentInfo)
-		if !mountOK || !parentOK || mountDev == parentDev {
-			continue // not actually a mount point on this host
-		}
-		probed++
-		_, err = volumeFoldsCase(mount)
+		// The fallback, in isolation, must still refuse for it: that path reads
+		// the parent's filesystem, which is not the one being asked about.
+		_, err = foldsByAncestorName(mount, flipCase)
 		assert.ErrorIs(t, err, errSpellingProbeUnavailable,
-			"%q is a mount point, so its own name lives on the parent volume and "+
-				"the probe must refuse to answer for it", mount)
+			"the ancestor-name fallback must refuse to answer for %q from its parent volume", mount)
 	}
-	if probed == 0 {
-		// Do not skip: say plainly that the property went unexercised here, and
-		// still assert the mechanism it rests on.
-		t.Log("no cross-device mount point available on this host; " +
-			"asserting the device-identity mechanism directly instead")
+	if answered == 0 {
+		t.Log("no cross-device mount point on this host; the device-bounded fallback " +
+			"is still asserted by TestFoldsByAncestorNameRefusesAcrossADeviceBoundary")
 	}
-	// The mechanism itself, independent of any host's mount table: device
-	// identity must be obtainable, or the probe has nothing to compare and every
-	// answer would be an unjustified guess.
+	// Assert the mechanism regardless of this host's mount table.
 	info, err := os.Lstat(tempRoot(t))
 	require.NoError(t, err)
 	_, ok := pathDevice(info)
-	assert.True(t, ok, "device identity must be available for the probe to bound itself")
+	assert.True(t, ok, "device identity must be available for the fallback to bound itself")
+}
+
+// TestFoldsByOwnEntriesFallsBackWhenNothingInsideCanAnswer covers the one case
+// the inside-out probe cannot settle: a directory holding no entry whose
+// respelling differs from itself.
+func TestFoldsByOwnEntriesFallsBackWhenNothingInsideCanAnswer(t *testing.T) {
+	root := tempRoot(t)
+
+	empty := filepath.Join(root, "empty")
+	require.NoError(t, os.MkdirAll(empty, 0o755))
+	_, err := foldsByOwnEntries(empty, flipCase)
+	assert.ErrorIs(t, err, errSpellingProbeUnavailable,
+		"an empty directory holds nothing to respell")
+
+	// Entries with no cased runes cannot answer either.
+	uncased := filepath.Join(root, "uncased")
+	require.NoError(t, os.MkdirAll(filepath.Join(uncased, "123"), 0o755))
+	_, err = foldsByOwnEntries(uncased, flipCase)
+	assert.ErrorIs(t, err, errSpellingProbeUnavailable)
+
+	// volumeFoldsCase must nevertheless produce an answer for them, by falling
+	// back to the ancestor-name form within the same volume.
+	requireSameVolume(t, root, empty)
+	folds, err := volumeFoldsCase(empty)
+	require.NoError(t, err, "the fallback must answer when the inside-out probe cannot")
+	assert.Equal(t, volumeSemantics(t, root), folds)
+}
+
+// TestFoldsByAncestorNameRefusesAcrossADeviceBoundary pins the bound on the
+// fallback directly, without depending on this host's mount table.
+func TestFoldsByAncestorNameRefusesAcrossADeviceBoundary(t *testing.T) {
+	probed := 0
+	for _, mount := range []string{"/proc", "/sys", "/dev"} {
+		if !isCrossDeviceMountPoint(mount) {
+			continue
+		}
+		probed++
+		_, err := foldsByAncestorName(mount, flipCase)
+		assert.ErrorIs(t, err, errSpellingProbeUnavailable)
+	}
+	if probed == 0 {
+		t.Log("no cross-device mount point available on this host")
+	}
+	// The filesystem root has no parent, so the fallback has nothing to ask.
+	_, err := foldsByAncestorName(string(filepath.Separator), flipCase)
+	assert.ErrorIs(t, err, errSpellingProbeUnavailable)
+}
+
+// isCrossDeviceMountPoint reports whether path is a directory on a different
+// device from its parent — i.e. a real mount point on this host.
+func isCrossDeviceMountPoint(path string) bool {
+	info, err := os.Lstat(path)
+	if err != nil || !info.IsDir() {
+		return false
+	}
+	parentInfo, err := os.Lstat(filepath.Dir(path))
+	if err != nil {
+		return false
+	}
+	dev, ok := pathDevice(info)
+	parentDev, parentOK := pathDevice(parentInfo)
+	return ok && parentOK && dev != parentDev
 }
 
 // requireSameVolume fails the test when two paths are not on one filesystem, so
