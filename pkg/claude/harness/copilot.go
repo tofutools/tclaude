@@ -22,10 +22,11 @@ const CopilotName = "copilot"
 // So this descriptor claims exactly what the documented CLI surface proves:
 // launch, exact resume, model/effort selection, a pre-minted conversation id,
 // a launch-time name, an initial submitted prompt, and three in-pane control
-// commands — plus, since TCL-972, hooks, which the fixture lab promoted from
-// "undocumented" to "observed from the real binary". ConvStore, Sandbox,
-// Approval, ToolGovernance, ModelTransport, DirTrust and Ask are still left
-// nil for a later, fixture-backed wave (TCL-965 phases 2-5).
+// commands — plus, since TCL-972, hooks and, since TCL-976, a cold ConvStore,
+// both of which the fixture lab promoted from "undocumented" to "observed from
+// the real binary". Sandbox, Approval, ToolGovernance, ModelTransport, DirTrust
+// and Ask are still left nil for a later, fixture-backed wave (TCL-965 phases
+// 2-5).
 func init() {
 	Register(&Harness{
 		Name:        CopilotName,
@@ -33,6 +34,11 @@ func init() {
 		Spawn:       copilotSpawner{},
 		Models:      copilotModels{},
 		Life:        copilotLifecycle{},
+
+		// The cold conversation store reads only Copilot's own per-session
+		// files under <COPILOT_HOME>/session-state — see copilot_convstore.go
+		// for why that needs no SQLite access at all.
+		Convs: copilotConvStore{},
 
 		// Hooks are the first contract to graduate out of the
 		// documentation-only wave above, because they are the first one a
