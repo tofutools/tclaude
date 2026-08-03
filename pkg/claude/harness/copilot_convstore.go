@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -17,6 +18,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/convops"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
 // Copilot's cold conversation store.
@@ -104,6 +106,17 @@ type copilotWorkspace struct {
 // store as a whole being unreadable — is an error, since that is the case a
 // caller genuinely cannot distinguish from "no conversations".
 func (s copilotConvStore) ListConvs(cwd string) ([]convops.SessionEntry, error) {
+	return s.listConvs(cwd, true)
+}
+
+// listConvs is ListConvs with the event scan made optional.
+//
+// Only three SessionEntry fields come from events.jsonl — FirstPrompt,
+// MessageCount and Model — and a caller that needs none of them should not pay
+// to read every session's log. Resolve needs an id and a cwd; Title needs a
+// name. Those are workspace.yaml alone, and workspace.yaml is a few hundred
+// bytes next to an event log that carries a ~26 kB system prompt per turn.
+func (s copilotConvStore) listConvs(cwd string, withEvents bool) ([]convops.SessionEntry, error) {
 	stateDir, err := s.sessionStateDir()
 	if err != nil {
 		return nil, err
@@ -126,7 +139,9 @@ func (s copilotConvStore) ListConvs(cwd string) ([]convops.SessionEntry, error) 
 		if !dirEntry.IsDir() {
 			continue
 		}
-		entry, ok := s.readSession(stateDir, dirEntry.Name())
+		// A single unreadable session is skipped, not fatal: the warning is
+		// already logged, and one bad directory must not hide the rest.
+		entry, ok, _ := readCopilotSession(stateDir, dirEntry.Name(), withEvents)
 		if !ok {
 			continue
 		}
@@ -135,6 +150,7 @@ func (s copilotConvStore) ListConvs(cwd string) ([]convops.SessionEntry, error) 
 		}
 		entries = append(entries, entry)
 	}
+	applyCopilotArchivedState(entries)
 	// Newest first, with the id as a stable tiebreaker so a listing does not
 	// reorder itself between calls when two sessions share a timestamp.
 	sort.SliceStable(entries, func(i, j int) bool {
@@ -146,9 +162,20 @@ func (s copilotConvStore) ListConvs(cwd string) ([]convops.SessionEntry, error) 
 	return entries, nil
 }
 
-// readSession builds one entry, or reports false when the session is not
-// usable as a conversation.
-func (s copilotConvStore) readSession(stateDir, id string) (convops.SessionEntry, bool) {
+// readCopilotSession builds one entry, or reports false when the session is
+// not usable as a conversation. withEvents selects whether the event log is
+// scanned for the three fields workspace.yaml does not carry.
+//
+// "Usable as a conversation" is the SINGLE definition of existence in this
+// store — Exists calls this too, so the two can never disagree about a session
+// whose workspace.yaml is present but unusable.
+//
+// The returned error separates "this is not a conversation" (nil: absent,
+// unparsable, or cwd-less — all of which a listing skips) from "the store
+// could not be read here" (a permission or IO failure). ListConvs treats both
+// as skip; Exists must not, since a caller self-healing a stale mapping has to
+// tell a vanished conversation from an unreadable disk.
+func readCopilotSession(stateDir, id string, withEvents bool) (convops.SessionEntry, bool, error) {
 	dir := filepath.Join(stateDir, id)
 	workspacePath := filepath.Join(dir, copilotWorkspaceFileName)
 	raw, err := os.ReadFile(workspacePath)
@@ -156,16 +183,18 @@ func (s copilotConvStore) readSession(stateDir, id string) (convops.SessionEntry
 		if !errors.Is(err, fs.ErrNotExist) {
 			slog.Warn("copilot convstore: workspace unreadable; session skipped",
 				"conv", id, "path", workspacePath, "error", err)
+			return convops.SessionEntry{}, false,
+				fmt.Errorf("copilot: read %s: %w", workspacePath, err)
 		}
 		// A directory without workspace.yaml is not yet (or no longer) a
 		// conversation — Copilot creates the directory before the file.
-		return convops.SessionEntry{}, false
+		return convops.SessionEntry{}, false, nil
 	}
 	var workspace copilotWorkspace
 	if err := yaml.Unmarshal(raw, &workspace); err != nil {
 		slog.Warn("copilot convstore: workspace unparsable; session skipped",
 			"conv", id, "path", workspacePath, "error", err)
-		return convops.SessionEntry{}, false
+		return convops.SessionEntry{}, false, nil
 	}
 	// The directory name is the identity Copilot resumes by (`--resume=<id>`),
 	// so it wins over a workspace.yaml `id` that disagrees; the file is only
@@ -178,11 +207,14 @@ func (s copilotConvStore) readSession(stateDir, id string) (convops.SessionEntry
 		// Without a cwd the conversation cannot be resumed into a project, and
 		// every cwd-scoped caller would mis-file it under "".
 		slog.Warn("copilot convstore: workspace has no cwd; session skipped", "conv", id)
-		return convops.SessionEntry{}, false
+		return convops.SessionEntry{}, false, nil
 	}
 
 	eventsPath := filepath.Join(dir, copilotEventsFileName)
-	events := readCopilotEvents(id, eventsPath)
+	var events copilotEventSummary
+	if withEvents {
+		events = readCopilotEvents(id, eventsPath)
+	}
 
 	entry := convops.SessionEntry{
 		SessionID:    id,
@@ -206,7 +238,46 @@ func (s copilotConvStore) readSession(stateDir, id string) (convops.SessionEntry
 	} else {
 		entry.Summary = workspace.Name
 	}
-	return entry, true
+	return entry, true, nil
+}
+
+// applyCopilotArchivedState overlays tclaude's own archived flag onto the
+// listing.
+//
+// Archiving is a TCLAUDE concept: Copilot has no equivalent, so `tclaude conv
+// archive` records it in `conv_index.archived_at` and nowhere else. Without
+// this overlay `IsArchived()` is false for every Copilot conversation and an
+// archived one would never actually hide — the same reason the OpenCode store
+// reads the column back. Copilot's own files stay the source of truth for
+// everything else; only this one tclaude-owned field comes from the cache.
+//
+// An unreadable cache degrades to "nothing is archived" rather than failing
+// the listing, which is the safer direction: showing an archived conversation
+// beats hiding every conversation.
+func applyCopilotArchivedState(entries []convops.SessionEntry) {
+	if len(entries) == 0 {
+		return
+	}
+	rows, err := db.ListAllConvIndex()
+	if err != nil {
+		slog.Warn("copilot convstore: conv_index unreadable; archived state unavailable",
+			"error", err)
+		return
+	}
+	archived := make(map[string]time.Time, len(rows))
+	for _, row := range rows {
+		if row.Harness == CopilotName && !row.ArchivedAt.IsZero() {
+			archived[row.ConvID] = row.ArchivedAt
+		}
+	}
+	if len(archived) == 0 {
+		return
+	}
+	for i := range entries {
+		if at, ok := archived[entries[i].SessionID]; ok {
+			entries[i].ArchivedAt = at.UTC().Format(time.RFC3339)
+		}
+	}
 }
 
 // copilotTimestamp normalizes workspace.yaml's ISO-8601 stamps to the RFC3339
@@ -247,21 +318,31 @@ type copilotEvent struct {
 	} `json:"data"`
 }
 
-// copilotEventScanBuffer bounds one event line. Copilot writes its ~26 kB
-// system prompt as a single `system.message` line and tool results can be far
-// larger, so bufio's 64 kB default would abort a scan on an ordinary session.
-const copilotEventScanBuffer = 8 << 20
+// copilotEventLineLimit bounds how much of one event line is buffered.
+//
+// Copilot writes its ~26 kB system prompt as a single `system.message` line
+// and a tool result can be far larger, so no small bound is safe. A line past
+// this limit is DISCARDED and the scan continues with the next one — a
+// `bufio.Scanner` would instead stop for good on `ErrTooLong`, which in an
+// append-only log means one huge tool result permanently freezes a
+// conversation's turn count and model at whatever preceded it. Losing one line
+// is recoverable; losing every line after it is not.
+const copilotEventLineLimit = 8 << 20
 
 // copilotEventPrefilters are the only line types this scan cares about.
 //
 // The check is a substring test on the RAW line, and it exists because the
 // lines this scan must NOT pay for are the expensive ones: a session's
 // `system.message` events carry the full system prompt, and decoding one per
-// turn to discover it is not a user message would dominate a listing. None of
-// these needles contains a character JSON can escape, so a line whose `type`
-// is one of them always contains the literal bytes. A false positive — the
-// string appearing inside prompt text — costs one decode that then rejects it,
-// so the prefilter can only make the scan faster, never wrong.
+// turn to discover it is not a user message would dominate a listing. A false
+// positive — the string appearing inside prompt text — costs one decode that
+// the type switch then discards, so it is free of consequence.
+//
+// The one way a relevant line could lack its needle is a writer that escapes
+// plain ASCII (`"user.message"` is legal JSON for the same string).
+// Copilot's log is machine-written and does not, so the prefilter is exact in
+// practice; if that ever changed the symptom would be an undercounted turn,
+// not a corrupt one.
 var copilotEventPrefilters = [][]byte{
 	[]byte("user.message"),
 	[]byte("session.start"),
@@ -292,16 +373,28 @@ func readCopilotEvents(convID, path string) copilotEventSummary {
 		summary.size = info.Size()
 	}
 
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 0, 64<<10), copilotEventScanBuffer)
-	for scanner.Scan() {
-		line := scanner.Bytes()
+	reader := bufio.NewReaderSize(file, 64<<10)
+	for {
+		line, err := readCopilotEventLine(reader)
+		if len(line) == 0 && err != nil {
+			if !errors.Is(err, io.EOF) {
+				slog.Warn("copilot convstore: event log scan stopped early; listing what was read",
+					"conv", convID, "path", path, "error", err)
+			}
+			break
+		}
 		if !copilotEventLineOfInterest(line) {
+			if err != nil {
+				break
+			}
 			continue
 		}
 		var event copilotEvent
-		if err := json.Unmarshal(line, &event); err != nil {
+		if decodeErr := json.Unmarshal(line, &event); decodeErr != nil {
 			// A partially flushed final line is normal while a session runs.
+			if err != nil {
+				break
+			}
 			continue
 		}
 		switch event.Type {
@@ -320,12 +413,48 @@ func readCopilotEvents(convID, path string) copilotEventSummary {
 				summary.model = event.Data.NewModel
 			}
 		}
-	}
-	if err := scanner.Err(); err != nil {
-		slog.Warn("copilot convstore: event log scan stopped early; listing what was read",
-			"conv", convID, "path", path, "error", err)
+		if err != nil {
+			break
+		}
 	}
 	return summary
+}
+
+// readCopilotEventLine returns the next line without its terminator.
+//
+// It returns a non-nil error together with whatever bytes it had: io.EOF for a
+// final line with no newline (a live writer's partial flush), or a read error.
+// A line longer than copilotEventLineLimit is consumed to its end and reported
+// as EMPTY, so the caller drops that one line and keeps scanning — see the
+// limit's own comment for why aborting the whole scan is the wrong failure.
+func readCopilotEventLine(reader *bufio.Reader) ([]byte, error) {
+	var line []byte
+	overLimit := false
+	for {
+		chunk, err := reader.ReadSlice('\n')
+		if !overLimit {
+			if len(line)+len(chunk) > copilotEventLineLimit {
+				overLimit = true
+				line = nil
+			} else {
+				line = append(line, chunk...)
+			}
+		}
+		if errors.Is(err, bufio.ErrBufferFull) {
+			// The line is longer than the reader's buffer; keep consuming.
+			continue
+		}
+		if err != nil {
+			return bytes.TrimSuffix(line, []byte("\r")), err
+		}
+		if overLimit {
+			// Drop the oversized line and start the next one.
+			line, overLimit = nil, false
+			continue
+		}
+		line = bytes.TrimSuffix(line, []byte("\n"))
+		return bytes.TrimSuffix(line, []byte("\r")), nil
+	}
 }
 
 func copilotEventLineOfInterest(line []byte) bool {
@@ -348,7 +477,9 @@ func (s copilotConvStore) Resolve(idPrefix, cwd string, global bool) (*ConvRef, 
 	if global {
 		cwd = ""
 	}
-	entries, err := s.ListConvs(cwd)
+	// A ConvRef is an id, a cwd and a harness — all of them workspace.yaml
+	// fields — so resolution never needs the event logs.
+	entries, err := s.listConvs(cwd, false)
 	if err != nil {
 		return nil, fmt.Errorf("resolve Copilot conversation %q: %w", idPrefix, err)
 	}
@@ -395,19 +526,31 @@ func copilotConvRef(entry convops.SessionEntry) *ConvRef {
 // precedence, falling back to the first prompt for a session Copilot has not
 // summarized yet. An unknown conversation is ("", nil), not an error.
 func (s copilotConvStore) Title(convID string) (string, error) {
-	if convID == "" {
+	if convID == "" || !copilotSafeConvID(convID) {
 		return "", nil
 	}
-	entries, err := s.ListConvs("")
+	stateDir, err := s.sessionStateDir()
 	if err != nil {
 		return "", err
 	}
-	for i := range entries {
-		if entries[i].SessionID == convID {
-			return entries[i].DisplayTitle(), nil
-		}
+	// One session, and its event log only when workspace.yaml has no name to
+	// give — the FirstPrompt fallback is the sole reason a title read would
+	// ever need the log.
+	entry, ok, err := readCopilotSession(stateDir, convID, false)
+	if err != nil {
+		return "", err
 	}
-	return "", nil
+	if !ok {
+		return "", nil
+	}
+	if title := entry.DisplayTitle(); title != "" {
+		return title, nil
+	}
+	entry, ok, err = readCopilotSession(stateDir, convID, true)
+	if err != nil || !ok {
+		return "", err
+	}
+	return entry.DisplayTitle(), nil
 }
 
 // SetTitle is unsupported by design. Copilot renames through its `/rename`
@@ -435,15 +578,15 @@ func (s copilotConvStore) Exists(convID, _ string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	// A conversation is identified by its directory; the workspace file is
-	// what makes it readable. Checking the file keeps Exists consistent with
-	// ListConvs, which skips a directory that has none.
-	info, err := os.Stat(filepath.Join(stateDir, convID, copilotWorkspaceFileName))
+	// Deliberately the SAME readCopilotSession the listing uses, rather than a
+	// cheaper stat: a workspace.yaml that is present but unparsable, or that
+	// carries no cwd, is not a conversation ListConvs would return, and Exists
+	// answering "present" for one the rest of the store cannot see is exactly
+	// the inconsistency a self-healing caller would act on. The event scan is
+	// skipped — existence never depends on it.
+	_, ok, err := readCopilotSession(stateDir, convID, false)
 	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return false, nil
-		}
-		return false, fmt.Errorf("copilot: stat conversation %s: %w", convID, err)
+		return false, err
 	}
-	return info.Mode().IsRegular(), nil
+	return ok, nil
 }

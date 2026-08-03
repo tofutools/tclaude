@@ -5,9 +5,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/convops"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
 // The synthetic trees below are shaped from the REAL 1.0.77 files recorded by
@@ -447,4 +450,195 @@ func TestCopilotTimestampNormalization(t *testing.T) {
 	assert.Empty(t, copilotTimestamp("   "))
 	// Unparsable values pass through rather than vanishing.
 	assert.Equal(t, "not a timestamp", copilotTimestamp("not a timestamp"))
+}
+
+// A tool result larger than the line limit must cost ONE line, not the tail of
+// the log. events.jsonl is append-only, so a scan that gave up on the oversized
+// line would freeze this conversation's turn count and model permanently.
+func TestCopilotConvStoreRecoversFromAnOversizedEventLine(t *testing.T) {
+	home := t.TempDir()
+	cwd := t.TempDir()
+	oversized := `{"type":"tool.execution_complete","data":{"content":"` +
+		strings.Repeat("x", copilotEventLineLimit+1024) + `"}}`
+	copilotSession(t, home, copilotTestID,
+		workspaceYAML(copilotTestID, cwd, "big session", false,
+			"2026-08-03T19:08:12.442Z", "2026-08-03T19:08:13.219Z"),
+		copilotStartEvent(copilotTestID, cwd, "first-model"),
+		copilotUserEvent("before the big line"),
+		oversized,
+		copilotUserEvent("after the big line"),
+		`{"type":"session.model_change","id":"eX","parentId":"e2",`+
+			`"timestamp":"2026-08-03T19:08:13.221Z","data":{"newModel":"later-model"}}`,
+	)
+
+	entries, err := copilotConvStore{home: home}.ListConvs("")
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	assert.Equal(t, 2, entries[0].MessageCount,
+		"the turn after an oversized line must still be counted")
+	assert.Equal(t, "later-model", entries[0].Model,
+		"a model change after an oversized line must still be seen")
+	assert.Equal(t, "before the big line", entries[0].FirstPrompt)
+}
+
+// An oversized line that also happens to contain a prefilter needle must not
+// be decoded or counted — it is dropped whole.
+func TestCopilotConvStoreDropsAnOversizedLineWithoutCountingIt(t *testing.T) {
+	home := t.TempDir()
+	cwd := t.TempDir()
+	copilotSession(t, home, copilotTestID,
+		workspaceYAML(copilotTestID, cwd, "big session", false,
+			"2026-08-03T19:08:12.442Z", "2026-08-03T19:08:13.219Z"),
+		`{"type":"user.message","data":{"content":"`+
+			strings.Repeat("y", copilotEventLineLimit+1024)+`"}}`,
+		copilotUserEvent("the only countable turn"),
+	)
+
+	entries, err := copilotConvStore{home: home}.ListConvs("")
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	assert.Equal(t, 1, entries[0].MessageCount)
+	assert.Equal(t, "the only countable turn", entries[0].FirstPrompt)
+}
+
+// Exists and ListConvs must share one definition of "is a conversation".
+// A workspace.yaml that parses but carries no cwd is not one.
+func TestCopilotConvStoreExistsAgreesWithListOnUnusableWorkspace(t *testing.T) {
+	home := t.TempDir()
+	store := copilotConvStore{home: home}
+
+	copilotSession(t, home, copilotOtherID, "id: [unterminated\n\tbad: :\n")
+	copilotSession(t, home, copilotTestID2,
+		"id: "+copilotTestID2+"\nname: no cwd here\nuser_named: false\n")
+
+	entries, err := store.ListConvs("")
+	require.NoError(t, err)
+	require.Empty(t, entries)
+
+	for _, id := range []string{copilotOtherID, copilotTestID2} {
+		exists, err := store.Exists(id, "")
+		require.NoError(t, err)
+		assert.False(t, exists,
+			"a workspace ListConvs skips must not be reported as present: %s", id)
+	}
+}
+
+// Resolve and Title must not pay for the event logs they do not read. The
+// probe here is an events.jsonl that is a DIRECTORY: opening it fails, so a
+// code path that scanned it would log and degrade, while one that never
+// touches it is unaffected — and neither result changes what these two return.
+func TestCopilotConvStoreResolveAndTitleSkipTheEventLog(t *testing.T) {
+	home := t.TempDir()
+	cwd := t.TempDir()
+	copilotSession(t, home, copilotTestID,
+		workspaceYAML(copilotTestID, cwd, "named from workspace", false,
+			"2026-08-03T19:08:12.442Z", "2026-08-03T19:08:13.219Z"))
+	require.NoError(t, os.Mkdir(filepath.Join(home, copilotSessionStateDirName,
+		copilotTestID, copilotEventsFileName), 0o755))
+	store := copilotConvStore{home: home}
+
+	ref, err := store.Resolve(copilotTestID[:8], "", true)
+	require.NoError(t, err)
+	require.NotNil(t, ref)
+	assert.Equal(t, copilotTestID, ref.ConvID)
+
+	title, err := store.Title(copilotTestID)
+	require.NoError(t, err)
+	assert.Equal(t, "named from workspace", title)
+
+	exists, err := store.Exists(copilotTestID, "")
+	require.NoError(t, err)
+	assert.True(t, exists)
+}
+
+// Title still falls back to the event log's first prompt when workspace.yaml
+// has no name — the one case that genuinely needs the scan.
+func TestCopilotConvStoreTitleReadsEventLogOnlyForTheFallback(t *testing.T) {
+	home := t.TempDir()
+	cwd := t.TempDir()
+	copilotSession(t, home, copilotTestID,
+		workspaceYAML(copilotTestID, cwd, "", false,
+			"2026-08-03T19:08:12.442Z", "2026-08-03T19:08:13.219Z"),
+		copilotUserEvent("the fallback prompt"))
+
+	title, err := copilotConvStore{home: home}.Title(copilotTestID)
+	require.NoError(t, err)
+	assert.Equal(t, "the fallback prompt", title)
+}
+
+// Archiving is a tclaude concept Copilot has no equivalent for, so it lives in
+// conv_index alone. Without the overlay `IsArchived()` is false for every
+// Copilot conversation and `conv ls` would never actually hide one.
+func TestCopilotConvStoreOverlaysArchivedState(t *testing.T) {
+	withTestDB(t)
+	home := t.TempDir()
+	cwd := t.TempDir()
+	copilotSession(t, home, copilotTestID,
+		workspaceYAML(copilotTestID, cwd, "archived one", false,
+			"2026-08-03T19:00:00.000Z", "2026-08-03T19:00:01.000Z"))
+	copilotSession(t, home, copilotOtherID,
+		workspaceYAML(copilotOtherID, cwd, "active one", false,
+			"2026-08-03T19:10:00.000Z", "2026-08-03T19:10:01.000Z"))
+	store := copilotConvStore{home: home}
+
+	// Nothing archived yet.
+	entries, err := store.ListConvs("")
+	require.NoError(t, err)
+	require.Len(t, entries, 2)
+	for i := range entries {
+		assert.False(t, entries[i].IsArchived())
+	}
+
+	// A conv_index row is what `tclaude conv archive` stamps.
+	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
+		ConvID:     copilotTestID,
+		ProjectDir: cwd,
+		Harness:    CopilotName,
+		IndexedAt:  time.Now(),
+	}))
+	require.NoError(t, db.SetConvIndexArchived(copilotTestID, true))
+
+	entries, err = store.ListConvs("")
+	require.NoError(t, err)
+	require.Len(t, entries, 2, "an archived conv is still listed; callers filter it")
+	byID := map[string]*convops.SessionEntry{}
+	for i := range entries {
+		byID[entries[i].SessionID] = &entries[i]
+	}
+	assert.True(t, byID[copilotTestID].IsArchived(),
+		"conv ls hides a row via IsArchived(), which reads ArchivedAt")
+	assert.NotEmpty(t, byID[copilotTestID].ArchivedAt)
+	assert.False(t, byID[copilotOtherID].IsArchived())
+
+	// Unarchiving clears it again.
+	require.NoError(t, db.SetConvIndexArchived(copilotTestID, false))
+	entries, err = store.ListConvs("")
+	require.NoError(t, err)
+	for i := range entries {
+		assert.False(t, entries[i].IsArchived())
+	}
+}
+
+// An archived row belonging to ANOTHER harness must never bleed onto a Copilot
+// conversation that happens to share an id.
+func TestCopilotConvStoreIgnoresArchivedRowsOfOtherHarnesses(t *testing.T) {
+	withTestDB(t)
+	home := t.TempDir()
+	cwd := t.TempDir()
+	copilotSession(t, home, copilotTestID,
+		workspaceYAML(copilotTestID, cwd, "mine", false,
+			"2026-08-03T19:00:00.000Z", "2026-08-03T19:00:01.000Z"))
+
+	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
+		ConvID:     copilotTestID,
+		ProjectDir: cwd,
+		Harness:    CodexName,
+		IndexedAt:  time.Now(),
+	}))
+	require.NoError(t, db.SetConvIndexArchived(copilotTestID, true))
+
+	entries, err := copilotConvStore{home: home}.ListConvs("")
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	assert.False(t, entries[0].IsArchived())
 }
