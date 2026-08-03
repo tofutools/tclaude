@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 const darwinProxyLauncherHelperEnv = "TCLAUDE_DARWIN_PROXY_LAUNCHER_HELPER"
@@ -445,4 +446,43 @@ func TestDarwinSeatbeltRuntimeTempDirRefusesNonstandardCarveout(t *testing.T) {
 	got, err := darwinSeatbeltRuntimeTempDir()
 	require.NoError(t, err)
 	assert.Equal(t, "/private/var/folders/ab/runtime/T", got)
+}
+
+func TestDarwinClaudeRuntimeScratchRootIsAutomaticAndHarnessScoped(t *testing.T) {
+	base := t.TempDir()
+	oldBase := darwinClaudeRuntimeTempBase
+	darwinClaudeRuntimeTempBase = base
+	t.Cleanup(func() { darwinClaudeRuntimeTempBase = oldBase })
+
+	dirs, err := tclaudeLayerHarnessRuntimeWriteDirs(harness.DefaultName)
+	require.NoError(t, err)
+	require.Len(t, dirs, 1)
+	claudeRuntimeDir := dirs[0]
+	canonicalBase, err := filepath.EvalSymlinks(base)
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(canonicalBase, fmt.Sprintf("claude-%d", os.Geteuid())), claudeRuntimeDir)
+	info, err := os.Stat(claudeRuntimeDir)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o700), info.Mode().Perm())
+
+	dirs, err = tclaudeLayerHarnessRuntimeWriteDirs(harness.CodexName)
+	require.NoError(t, err)
+	assert.Empty(t, dirs, "non-Claude harnesses must not inherit Claude scratch authority")
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cwd := filepath.Join(home, "work")
+	require.NoError(t, os.Mkdir(cwd, 0o700))
+	spec, err := BuildTclaudeLayerLaunchSpec(TclaudeLayerLaunchInput{
+		HarnessName: harness.DefaultName,
+		Cwd:         cwd,
+	})
+	require.NoError(t, err)
+	assert.Contains(t, spec.Contract.WriteDirs, filepath.Join(canonicalBase, fmt.Sprintf("claude-%d", os.Geteuid())),
+		"the prepared root must survive into the persisted launch contract")
+
+	require.NoError(t, os.Remove(claudeRuntimeDir))
+	require.NoError(t, os.Symlink(t.TempDir(), claudeRuntimeDir))
+	_, err = tclaudeLayerHarnessRuntimeWriteDirs(harness.DefaultName)
+	require.ErrorContains(t, err, "must be a real directory owned by uid")
 }
