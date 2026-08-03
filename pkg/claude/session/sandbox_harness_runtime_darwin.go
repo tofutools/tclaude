@@ -22,8 +22,15 @@ func tclaudeLayerHarnessRuntimeWriteDirs(harnessName string) ([]string, error) {
 	if harnessName != harness.DefaultName {
 		return nil, nil
 	}
+	base, err := filepath.EvalSymlinks(filepath.Clean(darwinClaudeRuntimeTempBase))
+	if err != nil {
+		return nil, fmt.Errorf(
+			"canonicalize Claude runtime scratch base %q: %w",
+			darwinClaudeRuntimeTempBase, err,
+		)
+	}
 	path := filepath.Join(
-		darwinClaudeRuntimeTempBase,
+		base,
 		fmt.Sprintf("claude-%d", os.Geteuid()),
 	)
 	if err := os.Mkdir(path, 0o700); err != nil && !os.IsExist(err) {

@@ -457,7 +457,9 @@ func TestDarwinClaudeRuntimeScratchRootIsAutomaticAndHarnessScoped(t *testing.T)
 	dirs, err := tclaudeLayerHarnessRuntimeWriteDirs(harness.DefaultName)
 	require.NoError(t, err)
 	require.Len(t, dirs, 1)
-	assert.Equal(t, filepath.Join(base, fmt.Sprintf("claude-%d", os.Geteuid())), dirs[0])
+	canonicalBase, err := filepath.EvalSymlinks(base)
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(canonicalBase, fmt.Sprintf("claude-%d", os.Geteuid())), dirs[0])
 	info, err := os.Stat(dirs[0])
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o700), info.Mode().Perm())
@@ -475,7 +477,7 @@ func TestDarwinClaudeRuntimeScratchRootIsAutomaticAndHarnessScoped(t *testing.T)
 		Cwd:         cwd,
 	})
 	require.NoError(t, err)
-	assert.Contains(t, spec.Contract.WriteDirs, filepath.Join(base, fmt.Sprintf("claude-%d", os.Geteuid())),
+	assert.Contains(t, spec.Contract.WriteDirs, filepath.Join(canonicalBase, fmt.Sprintf("claude-%d", os.Geteuid())),
 		"the prepared root must survive into the persisted launch contract")
 
 	require.NoError(t, os.Remove(dirs[0]))
