@@ -59,8 +59,8 @@ done — and nothing else:
 ```
 enter  go to the selected agent's tmux session — or, on an offline agent,
        turn it back on
-n      start a new agent (group, spawn profile, name, directory, harness,
-       startup brief)
+n      start a new agent (group, spawn profile, name, directory, worktree,
+       harness, startup brief)
 s      start a plain interactive shell session (directory, label) and go
        to it
 delete move the selected agent one step toward removal (it asks first):
@@ -136,6 +136,34 @@ plain next-field navigation, so you can always tab through the form; without
 that a group directory with exactly one subdirectory would complete straight
 into it and quietly move the spawn.
 
+**Worktree** opens on `(none)` — the spawn lands in Directory, as it always
+did. Turning it to `create new worktree` adds a **Branch** field and starts the
+agent in a git worktree instead: the worktree is cut in the repo Directory is
+in, and the agent launches inside it, the same shape as
+`tclaude agent spawn --worktree <branch>`. Branch **follows the Name** as you
+type it, so naming the agent names its branch; typing in Branch yourself ends
+that and the Name picker leaves it alone from then on. A branch that already
+has a worktree is *reused* rather than refused — that is how this form picks an
+existing worktree, since it has no list to pick one from — and a branch that
+does not exist yet is cut from the repo's default branch. An unnamed agent
+leaves Branch blank, and enter asks for one rather than inventing a branch name
+you never saw.
+
+There is no base-branch choice here, unlike `--worktree-base` and the browser
+picker: cutting from somewhere other than the default branch is
+`tclaude worktree add <branch> --from-branch <base> --detached` first, and then
+naming that branch in the form — which reuses the worktree you just made.
+
+The form stays open while the worktree is made. Whatever goes wrong there — a
+directory that is not a repo, a branch name git will not take — comes back on
+the fields that produced it, with your brief still typed. If the *spawn* then fails, the worktree is **kept** and
+the message names it: the console cannot tell a rejected request from a lost
+answer, and removing a directory a session may be starting up in is the one
+mistake that costs work — `tclaude worktree rm` removes it once you have
+decided. Like directory completion this is operator consoles only: the worktree
+is created by the daemon process, on the daemon's host, outside any agent
+sandbox, so an agent-class console is shown the field as `(none)` and told why.
+
 **s** opens the shell form: a plain interactive shell in its own tmux session,
 the console's `tclaude session new --shell`. It is a **session, not an agent** —
 no conversation, no group, no permissions — so it never appears in the listing
@@ -195,7 +223,11 @@ a spawn started here is the same spawn the CLI and the browser dashboard perform
 — same defaults, same validation, same audit entry. The two exceptions are the
 host-local moves that have no HTTP shape: attaching this terminal to a pane, and
 starting a shell session. Both are gated on the console being the operator
-instead.
+instead. The spawn form's worktree step is not one of them: it is an ordinary
+request the daemon serves, on a route mounted for the consoles only (never on
+the socket mux agents reach, exactly as the browser's own worktree picker is
+dashboard-only), and refused for a console the daemon does not classify as the
+human.
 
 ### With or without the web dashboard
 
@@ -396,9 +428,11 @@ operator token (`agent.persist_operator_token` or
 `--persist-operator-token`) as well if reconnecting after an unclean stop must
 work, because an ungraceful exit cannot save the previous dashboard session.
 
-The server exposes only the eight versioned JSON operations and one terminal
+The server exposes only the nine versioned JSON operations and one terminal
 WebSocket this TUI uses under `/api/tui/`; it does not publish agentd's entire
-Unix-socket API on the dashboard listener.
+Unix-socket API on the dashboard listener. One of the nine — the spawn form's
+worktree step — goes the other way too: it exists on the console surfaces only
+and is not part of the Unix-socket API at all.
 
 ## Fixed loopback port
 

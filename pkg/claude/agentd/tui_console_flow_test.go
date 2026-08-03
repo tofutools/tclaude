@@ -16,6 +16,7 @@ import (
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/usageapi"
+	"github.com/tofutools/tclaude/pkg/claude/worktree"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -533,4 +534,73 @@ func TestTUIConsoleUsageIsRefusedForANonOperatorConsole(t *testing.T) {
 	view := c.View()
 	assert.NotContains(t, view, "42%")
 	assert.NotContains(t, view, "usage ")
+}
+
+// The spawn form's worktree picker, end to end: the console cuts a real git
+// worktree through the daemon and the agent launches inside it. The branch is
+// never typed — it follows the name, which is the point of the field.
+func TestTUIConsoleSpawnsIntoANewWorktree(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("dev")
+	repo, parent := initRepoOnMain(t)
+	stubTUIAttach(t)
+
+	c := newTUIConsole(t)
+	c.Refresh()
+
+	openTUISpawnForm(t, c, "reviewer", repo)
+	// Directory → Worktree, then turn the picker onto "create new worktree".
+	// Down rather than tab: on a directory the operator has typed, tab is
+	// path completion (see the Directory contract).
+	c.Press(t, "down", "right")
+	view := c.View()
+	require.Contains(t, view, "create new worktree")
+	require.Contains(t, view, "reviewer", "the branch arrives carrying the name")
+
+	c.Press(t, "enter")
+
+	// A real worktree, on the branch the name gave it.
+	wantPath := filepath.Join(parent, "repo-reviewer")
+	info, err := os.Stat(wantPath)
+	require.NoErrorf(t, err, "worktree should exist at %s; console said: %s", wantPath, c.View())
+	assert.True(t, info.IsDir())
+	wts, err := worktree.ListWorktreesIn(repo)
+	require.NoError(t, err)
+	var branches []string
+	for _, wt := range wts {
+		branches = append(branches, wt.Branch)
+	}
+	assert.Contains(t, branches, "reviewer")
+
+	// And the agent launched inside it, not in the repo it was cut from.
+	members := f.ListGroupMembers("dev")
+	require.Len(t, members, 1)
+	rows, err := db.FindSessionsByConvID(members[0].ConvID)
+	require.NoError(t, err)
+	require.NotEmpty(t, rows)
+	assert.Equal(t, wantPath, rows[0].Cwd)
+
+	assert.Contains(t, c.View(), "Spawned")
+	assert.Contains(t, c.View(), wantPath, "and the console says where it landed")
+}
+
+// A directory that is not a git repo cannot produce a worktree. The form stays
+// open on the fields that produced the failure, and nothing is spawned.
+func TestTUIConsoleWorktreeFailureKeepsTheFormOpen(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("dev")
+	cwd := f.TestCwd("tui-worktree-not-a-repo")
+	require.NoError(t, os.MkdirAll(cwd, 0o755))
+
+	c := newTUIConsole(t)
+	c.Refresh()
+
+	openTUISpawnForm(t, c, "reviewer", cwd)
+	c.Press(t, "down", "right", "enter")
+
+	view := c.View()
+	assert.Contains(t, view, "Worktree failed:")
+	assert.Contains(t, view, "needs a git repo")
+	assert.Contains(t, view, "New agent", "the form is still open")
+	assert.Empty(t, f.ListGroupMembers("dev"), "and nothing was spawned")
 }
