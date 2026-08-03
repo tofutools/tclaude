@@ -320,6 +320,32 @@ var permissionRegistry = []PermSlug{
 		Slug:        PermRoutesConsume,
 		Description: "Open/lease a published route and close the caller's own lease. Requires current membership in the explicitly selected target group; not globally default-granted.",
 	},
+	{
+		Slug: PermGitRead,
+		Description: "Read from a Git remote through the daemon — list remotes, ls-remote, fetch (tclaude agent git). " +
+			"agentd runs git on the host with ITS OWN credentials, so a sandboxed agent that cannot read ~/.ssh can still " +
+			"sync with the remote. Bounded by the operator's agent.git_proxy.allowed_remotes list and by the agent's own " +
+			"recorded launch repository. Not default-granted and not owner-implied: it spends the operator's credential.",
+	},
+	{
+		Slug: PermGitPush,
+		Description: "Push to a Git remote through the daemon (tclaude agent git push). Strictly more powerful than git.read — " +
+			"it writes to the forge as the operator. Refuses operator-protected branches (agent.git_proxy.protected_refs) " +
+			"outright, and force-with-lease only when agent.git_proxy.allow_force_push is on. Not default-granted and not " +
+			"owner-implied.",
+	},
+	{
+		Slug: PermGitHubRead,
+		Description: "Read GitHub pull requests and issues through the daemon's gh credentials (tclaude agent github pr ls/view/checks, " +
+			"issue ls/view). Restricted to the repository the agent's own remote resolves to, and only when that remote is on the " +
+			"operator's allow-list. Not default-granted: it reads private repository data as the operator.",
+	},
+	{
+		Slug: PermGitHubWrite,
+		Description: "Create and comment on GitHub pull requests and issues through the daemon's gh credentials " +
+			"(tclaude agent github pr create/comment/ready, issue comment). Everything it writes is attributed to the operator's " +
+			"GitHub account, so it is not default-granted and not owner-implied.",
+	},
 }
 
 // Permission slugs for the permissions-management endpoints themselves.

@@ -1809,6 +1809,134 @@ type AgentConfig struct {
 	// not a portable agent-sandbox boundary, so it is opt-in rather than the
 	// default. Existing values are never copied between the two stores.
 	PersistOperatorTokenKeychain bool `json:"persist_operator_token_keychain,omitempty"`
+
+	// GitProxy configures the daemon-mediated Git-remote / GitHub proxy —
+	// `tclaude agent git` and `tclaude agent github`. Absent (the default)
+	// means the proxy is OFF: it is an opt-in surface that lends agentd's
+	// credentials to a sandboxed agent, so it must never come up enabled on
+	// an operator who has not configured it. See GitProxyConfig.
+	GitProxy *GitProxyConfig `json:"git_proxy,omitempty"`
+}
+
+// GitProxyConfig is the operator's policy for the daemon-mediated Git-remote
+// and GitHub proxy. It answers one question: which remotes may agentd reach
+// with the operator's credentials, on behalf of an agent that cannot reach
+// them itself?
+//
+// It deliberately does NOT decide WHERE an operation may run. That is derived
+// from daemon-recorded launch state (the agent's own physical launch directory
+// and the write roots frozen in its sandbox snapshot) and is not
+// operator-tunable — see agentd.resolveProxyRepo. The proxy lends credentials,
+// never filesystem reach.
+type GitProxyConfig struct {
+	// AllowedRemotes is the allow-list of remotes the proxy may talk to,
+	// written as slash-separated `host/owner/repo` patterns matched
+	// case-insensitively against the remote's resolved URL:
+	//
+	//   "github.com"                  every repo on github.com
+	//   "github.com/tofutools"        every repo in that owner
+	//   "github.com/tofutools/*"      the same, spelled explicitly
+	//   "github.com/tofutools/myrepo" exactly one repo
+	//
+	// A `*` matches exactly one segment. A pattern with fewer segments than
+	// the target matches as a prefix, so "github.com" covers everything on
+	// that host.
+	//
+	// EMPTY OR ABSENT DISABLES THE PROXY ENTIRELY. That is deliberate and
+	// fail-closed: "no allow-list" must mean "nothing is allowed", never
+	// "everything is allowed".
+	AllowedRemotes []string `json:"allowed_remotes,omitempty"`
+
+	// ProtectedRefs are branch names the proxy refuses to push to at all,
+	// force or not. Absent uses DefaultGitProxyProtectedRefs ("main",
+	// "master"); an explicit empty list turns the protection off. Entries
+	// are branch-name patterns where `*` matches within one segment, so
+	// "release/*" protects a whole namespace.
+	//
+	// This is a blunt, deliberately non-negotiable guard: the point of the
+	// proxy is to let an agent do ordinary feature work, and an agent
+	// pushing straight onto the trunk is the failure mode with the worst
+	// blast radius.
+	ProtectedRefs *[]string `json:"protected_refs,omitempty"`
+
+	// AllowForcePush permits `--force-with-lease` on non-protected refs.
+	// Default off. Protected refs are never force-pushable regardless.
+	AllowForcePush bool `json:"allow_force_push,omitempty"`
+
+	// SSHKey optionally pins a single private key for the proxy's SSH
+	// transport (rendered as `ssh -i <key> -o IdentitiesOnly=yes`). Empty
+	// uses the daemon's ambient SSH setup — normally an ssh-agent, which is
+	// the preferred posture because no secret then enters the child process
+	// at all. The path is the KEY, not a passphrase; the proxy always runs
+	// ssh with BatchMode=yes, so a passphrase-protected key that is not
+	// already loaded into an agent fails fast instead of hanging the daemon
+	// on a prompt.
+	SSHKey string `json:"ssh_key,omitempty"`
+
+	// GitHubTokenFile optionally names a file whose contents are the GitHub
+	// token handed to `gh` as GH_TOKEN. Empty lets `gh` use the daemon's own
+	// authenticated configuration. The token is passed through the child's
+	// environment or this file — never through argv, which is world-readable
+	// for the process lifetime via /proc/<pid>/cmdline.
+	GitHubTokenFile string `json:"github_token_file,omitempty"`
+}
+
+// DefaultGitProxyProtectedRefs are the branches the Git proxy refuses to push
+// to when the operator has not said otherwise.
+var DefaultGitProxyProtectedRefs = []string{"main", "master"}
+
+// ResolvedGitProxy returns the effective Git-proxy policy: the configured
+// block with absent fields filled in, and every pattern trimmed and
+// lower-cased. It is nil-safe — a nil config, absent agent block, or absent
+// git_proxy block all yield a zero policy whose empty AllowedRemotes means
+// "proxy disabled".
+func (c *Config) ResolvedGitProxy() GitProxyConfig {
+	var out GitProxyConfig
+	if c != nil && c.Agent != nil && c.Agent.GitProxy != nil {
+		src := c.Agent.GitProxy
+		out.AllowedRemotes = normalizeGitProxyPatterns(src.AllowedRemotes)
+		out.AllowForcePush = src.AllowForcePush
+		out.SSHKey = strings.TrimSpace(src.SSHKey)
+		out.GitHubTokenFile = strings.TrimSpace(src.GitHubTokenFile)
+		if src.ProtectedRefs != nil {
+			// An explicit list — including an explicit empty one, which
+			// deliberately turns the protection off — wins over the default.
+			refs := normalizeGitProxyPatterns(*src.ProtectedRefs)
+			out.ProtectedRefs = &refs
+			return out
+		}
+	}
+	refs := append([]string(nil), DefaultGitProxyProtectedRefs...)
+	out.ProtectedRefs = &refs
+	return out
+}
+
+// GitProxyEnabled reports whether the operator has opted into the proxy at
+// all. Everything else about the feature is gated behind this, so a daemon
+// with no git_proxy block never runs `git` or `gh` on an agent's behalf.
+func (c *Config) GitProxyEnabled() bool {
+	return len(c.ResolvedGitProxy().AllowedRemotes) > 0
+}
+
+// normalizeGitProxyPatterns trims, lower-cases and de-blanks a pattern list,
+// preserving order and dropping duplicates. Lower-casing is safe here because
+// every pattern names a DNS host, a forge owner/repo, or a branch — and both
+// the remote matcher and the ref matcher compare lower-cased.
+func normalizeGitProxyPatterns(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(in))
+	seen := make(map[string]bool, len(in))
+	for _, raw := range in {
+		p := strings.ToLower(strings.Trim(strings.TrimSpace(raw), "/"))
+		if p == "" || seen[p] {
+			continue
+		}
+		seen[p] = true
+		out = append(out, p)
+	}
+	return out
 }
 
 // AccessRequestAutoOpenBrowser reports whether an agent-triggered

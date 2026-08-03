@@ -41,6 +41,8 @@ func Cmd() *cobra.Command {
 			replyCmd(),
 			notifyHumanCmd(),
 			clipboardCmd(),
+			gitCmd(),
+			githubCmd(),
 			exportCmd(),
 			groupsCmd(),
 			aliasCmd(),

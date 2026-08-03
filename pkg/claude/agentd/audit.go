@@ -265,6 +265,30 @@ var auditRoutes = []auditRoute{
 	// or all agents is a fleet-wide state change.
 	{method: http.MethodPost, segs: []string{"shutdown"}, verb: "power.shutdown", describe: describePower},
 	{method: http.MethodPost, segs: []string{"power-on"}, verb: "power.on", describe: describePower},
+
+	// Git-remote / GitHub proxy. Every one of these spends the OPERATOR'S
+	// credential against a remote host, so all of them are audited —
+	// including the reads, which is why they are POSTs (the middleware
+	// records mutating methods only). The handlers add the safe detail after
+	// the fact via setAuditDetail: remote, ref, and exit code. No describer
+	// reads the body, so a PR title or comment never enters the trail.
+	{method: http.MethodPost, segs: []string{"git", "{verb}"}, describe: describeGitProxy},
+	{method: http.MethodPost, segs: []string{"github", "{resource}", "{action}"}, describe: describeGitHubProxy},
+}
+
+// describeGitProxy names a git-proxy row "git.fetch", "git.push", … from the
+// path. It deliberately does NOT parse the body: the remote and ref reach the
+// row through setAuditDetail, after the handler has validated them, so a
+// refused or malformed request never gets its raw parameters recorded.
+func describeGitProxy(c *auditCtx) {
+	c.fields.Verb = "git." + c.vars["verb"]
+}
+
+// describeGitHubProxy names a github-proxy row "github.pr.create",
+// "github.issue.comment", … from the path. Same rule as above: path only,
+// never the body — a PR title or comment body must not land in the audit log.
+func describeGitHubProxy(c *auditCtx) {
+	c.fields.Verb = "github." + c.vars["resource"] + "." + c.vars["action"]
 }
 
 // auditRequests wraps a mux so every matched command writes an audit

@@ -1,0 +1,271 @@
+package agentd_test
+
+import (
+	"encoding/json"
+	"net/http"
+	"os"
+	"slices"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
+)
+
+// githubproxy_flow_test.go drives the GitHub proxy through the real daemon mux
+// with the same stubbed subprocess boundary the git-proxy tests use.
+//
+// The assertions concentrate on the three things that are specific to `gh` and
+// would fail silently: that the repository is DERIVED (never named by the
+// agent), that gh runs outside the agent's repository so .git/config cannot
+// re-aim it, and that free text travels by file rather than by argv.
+
+// ghCall returns the single gh invocation the recorder saw.
+func ghCall(t *testing.T, rec *gitProxyRecorder) agentd.ProxyCommand {
+	t.Helper()
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	var found []agentd.ProxyCommand
+	for _, c := range rec.calls {
+		if c.Tool == "gh" {
+			found = append(found, c)
+		}
+	}
+	require.Len(t, found, 1, "expected exactly one gh invocation")
+	return found[0]
+}
+
+func ghCallCount(rec *gitProxyRecorder) int {
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	n := 0
+	for _, c := range rec.calls {
+		if c.Tool == "gh" {
+			n++
+		}
+	}
+	return n
+}
+
+// TestGHProxy_WriteRequiresItsOwnSlug — reading PRs must not confer the ability
+// to publish under the operator's GitHub identity.
+func TestGHProxy_WriteRequiresItsOwnSlug(t *testing.T) {
+	t.Run("github.read does not confer github.write", func(t *testing.T) {
+		f, rec := gitProxyWorld(t, []string{"github.com/tofutools"})
+		require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubRead, "test"))
+
+		res := gitProxyPost(t, f, "/v1/github/pr/create",
+			map[string]any{"title": "Add a thing", "body": "why"})
+		assert.Equal(t, http.StatusForbidden, res.Code, "body=%s", res.Body.String())
+		assert.False(t, rec.sawAnySubprocess(), "a denied caller runs nothing at all")
+	})
+
+	t.Run("granted", func(t *testing.T) {
+		f, rec := gitProxyWorld(t, []string{"github.com/tofutools"})
+		rec.gh = agentd.ProxyResult{Stdout: `{"number":42,"url":"https://github.com/tofutools/tclaude/pull/42"}`}
+		require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubWrite, "test"))
+
+		res := gitProxyPost(t, f, "/v1/github/pr/create",
+			map[string]any{"title": "Add a thing", "body": "why"})
+		require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+		assert.Equal(t, 1, ghCallCount(rec))
+	})
+}
+
+// TestGHProxy_RepositoryIsDerivedNotNamed is the invariant that stops an agent
+// opening a pull request against somebody else's repository: there is no
+// --repo parameter, and the slug the daemon passes to gh comes from the
+// agent's own allow-listed remote.
+func TestGHProxy_RepositoryIsDerivedNotNamed(t *testing.T) {
+	f, rec := gitProxyWorld(t, []string{"github.com/tofutools"})
+	rec.gh = agentd.ProxyResult{Stdout: "[]"}
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubRead, "test"))
+
+	res := gitProxyPost(t, f, "/v1/github/pr/list", map[string]any{
+		"repo": "attacker/exfil", "owner": "attacker", "state": "open",
+	})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+
+	call := ghCall(t, rec)
+	i := slices.Index(call.Args, "--repo")
+	require.GreaterOrEqual(t, i, 0, "gh must always be given an explicit --repo")
+	assert.Equal(t, "tofutools/tclaude", call.Args[i+1],
+		"the repo comes from the agent's own remote, never from the request")
+	assert.NotContains(t, strings.Join(call.Args, " "), "attacker")
+}
+
+// TestGHProxy_RunsOutsideTheAgentRepository — gh discovers a repository by
+// reading .git/config, a file the agent can write. Running it in a neutral
+// directory is what makes the explicit --repo authoritative.
+func TestGHProxy_RunsOutsideTheAgentRepository(t *testing.T) {
+	f, rec := gitProxyWorld(t, []string{"github.com/tofutools"})
+	rec.gh = agentd.ProxyResult{Stdout: "[]"}
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubRead, "test"))
+
+	res := gitProxyPost(t, f, "/v1/github/issue/list", map[string]any{})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+
+	call := ghCall(t, rec)
+	assert.NotEqual(t, rec.repoRoot, call.Dir,
+		"gh must not run inside the agent's repository, where .git/config could re-aim it")
+	assert.Equal(t, "/usr/bin/gh", call.Path, "the binary is pinned to an absolute path")
+}
+
+// TestGHProxy_BodyTravelsByFileNotArgv — a PR body is prose that may contain
+// anything, and argv is world-readable through /proc for the life of the
+// process. So the body must never appear there.
+func TestGHProxy_BodyTravelsByFileNotArgv(t *testing.T) {
+	f, rec := gitProxyWorld(t, []string{"github.com/tofutools"})
+	rec.gh = agentd.ProxyResult{Stdout: "https://github.com/tofutools/tclaude/pull/7"}
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubWrite, "test"))
+
+	const secretish = "deploy key rotation notes, do not put me in /proc"
+	res := gitProxyPost(t, f, "/v1/github/pr/create", map[string]any{
+		"title": "Rotate the thing", "body": secretish,
+	})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+
+	call := ghCall(t, rec)
+	joined := strings.Join(call.Args, " ")
+	assert.NotContains(t, joined, secretish, "the body must not reach argv")
+	i := slices.Index(call.Args, "--body-file")
+	require.GreaterOrEqual(t, i, 0, "the body must be passed as a file")
+	// The staged file is removed once gh has run, so the handler leaves nothing
+	// behind on the daemon's disk.
+	_, err := os.Stat(call.Args[i+1])
+	assert.True(t, os.IsNotExist(err), "the staged body file must be cleaned up, got err=%v", err)
+}
+
+// TestGHProxy_TokenNeverReachesArgv — when the operator configures a token
+// file, the token goes into the child's environment, never its command line.
+func TestGHProxy_TokenNeverReachesArgv(t *testing.T) {
+	f, rec := gitProxyWorld(t, []string{"github.com/tofutools"})
+	rec.gh = agentd.ProxyResult{Stdout: "[]"}
+
+	tokenPath := t.TempDir() + "/token"
+	require.NoError(t, os.WriteFile(tokenPath, []byte("ghp_supersecret\n"), 0o600))
+	writeGitProxyConfig(t, []string{"github.com/tofutools"}, func(c *gitProxyConfigPatch) {
+		c.GitHubTokenFile = tokenPath
+	})
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubRead, "test"))
+
+	res := gitProxyPost(t, f, "/v1/github/pr/list", map[string]any{})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+
+	call := ghCall(t, rec)
+	assert.NotContains(t, strings.Join(call.Args, " "), "ghp_supersecret",
+		"/proc/<pid>/cmdline is readable by any same-uid process")
+	assert.Contains(t, call.Env, "GH_TOKEN=ghp_supersecret")
+}
+
+// TestGHProxy_RefusesNonGitHubRemote — the gh half only speaks to github.com,
+// and says so rather than issuing a call that would fail confusingly.
+func TestGHProxy_RefusesNonGitHubRemote(t *testing.T) {
+	f, rec := gitProxyWorld(t, []string{"gitlab.com/tofutools"})
+	rec.remotes["origin"] = "git@gitlab.com:tofutools/tclaude.git"
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubRead, "test"))
+
+	res := gitProxyPost(t, f, "/v1/github/pr/list", map[string]any{})
+	assert.Equal(t, http.StatusConflict, res.Code, "body=%s", res.Body.String())
+	assert.Contains(t, res.Body.String(), "not GitHub")
+	assert.Equal(t, 0, ghCallCount(rec))
+}
+
+// TestGHProxy_InheritsTheRemoteAllowList — holding github.read is not enough:
+// the underlying remote still has to be one the operator allow-listed.
+func TestGHProxy_InheritsTheRemoteAllowList(t *testing.T) {
+	f, rec := gitProxyWorld(t, []string{"github.com/someone-else"})
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubRead, "test"))
+
+	res := gitProxyPost(t, f, "/v1/github/pr/list", map[string]any{})
+	assert.Equal(t, http.StatusForbidden, res.Code, "body=%s", res.Body.String())
+	assert.Equal(t, 0, ghCallCount(rec))
+}
+
+// TestGHProxy_RefusesInjectionShapedParameters — every scalar that reaches gh's
+// argv is validated first.
+func TestGHProxy_RefusesInjectionShapedParameters(t *testing.T) {
+	f, rec := gitProxyWorld(t, []string{"github.com/tofutools"})
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubWrite, "test"))
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubRead, "test"))
+
+	cases := []struct {
+		name string
+		path string
+		body map[string]any
+	}{
+		{"title beginning with a dash", "/v1/github/pr/create",
+			map[string]any{"title": "--repo=attacker/exfil", "body": "x"}},
+		{"title carrying a control character", "/v1/github/pr/create",
+			map[string]any{"title": "hello\nworld", "body": "x"}},
+		{"base branch that is a flag", "/v1/github/pr/create",
+			map[string]any{"title": "ok", "body": "x", "base": "--exec=id"}},
+		{"non-positive number", "/v1/github/pr/view",
+			map[string]any{"number": 0}},
+		{"negative number", "/v1/github/issue/view",
+			map[string]any{"number": -1}},
+		{"unknown state", "/v1/github/pr/list",
+			map[string]any{"state": "; rm -rf /"}},
+		{"out-of-range limit", "/v1/github/pr/list",
+			map[string]any{"limit": 100000}},
+		{"empty comment", "/v1/github/pr/comment",
+			map[string]any{"number": 1, "body": "   "}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			res := gitProxyPost(t, f, tc.path, tc.body)
+			assert.Equal(t, http.StatusBadRequest, res.Code, "body=%s", res.Body.String())
+		})
+	}
+	assert.Equal(t, 0, ghCallCount(rec), "no invalid request may reach gh")
+}
+
+// TestGHProxy_PassesJSONThroughUnmodelled — the daemon deliberately does not
+// model gh's schemas, so a new GitHub field reaches the agent without a
+// release on either side.
+func TestGHProxy_PassesJSONThroughUnmodelled(t *testing.T) {
+	f, rec := gitProxyWorld(t, []string{"github.com/tofutools"})
+	rec.gh = agentd.ProxyResult{
+		Stdout: `[{"number":7,"title":"a pr","someFieldAddedLater":{"nested":true}}]`,
+	}
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubRead, "test"))
+
+	res := gitProxyPost(t, f, "/v1/github/pr/list", map[string]any{})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+
+	var out struct {
+		Repo     string          `json:"repo"`
+		ExitCode int             `json:"exit_code"`
+		JSON     json.RawMessage `json:"json"`
+	}
+	require.NoError(t, json.Unmarshal(res.Body.Bytes(), &out))
+	assert.Equal(t, "tofutools/tclaude", out.Repo)
+	assert.Equal(t, 0, out.ExitCode)
+	assert.JSONEq(t, `[{"number":7,"title":"a pr","someFieldAddedLater":{"nested":true}}]`, string(out.JSON))
+}
+
+// TestGHProxy_FailureIsAnAnswer mirrors the git side: HTTP 200 means the daemon
+// ran gh; gh's own message is what tells the agent what went wrong.
+func TestGHProxy_FailureIsAnAnswer(t *testing.T) {
+	f, rec := gitProxyWorld(t, []string{"github.com/tofutools"})
+	rec.gh = agentd.ProxyResult{
+		ExitCode: 1,
+		Stderr:   "pull request create failed: GraphQL: No commits between main and feat/thing",
+	}
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubWrite, "test"))
+
+	res := gitProxyPost(t, f, "/v1/github/pr/create",
+		map[string]any{"title": "ok", "body": "x"})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+
+	var out struct {
+		ExitCode int    `json:"exit_code"`
+		Stderr   string `json:"stderr"`
+	}
+	require.NoError(t, json.Unmarshal(res.Body.Bytes(), &out))
+	assert.Equal(t, 1, out.ExitCode)
+	assert.Contains(t, out.Stderr, "No commits between",
+		"gh's own diagnosis is the actionable part")
+}

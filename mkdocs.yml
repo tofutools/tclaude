@@ -52,6 +52,7 @@ nav:
       - Remote Dashboard Access: remote-access.md
       - Sandboxing: sandboxing.md
       - Sandbox Hardening: sandbox-hardening.md
+      - Git & GitHub Proxy: git-proxy.md
       - Linux Network Filtering (packet engine): linux-network-filtering.md
       - Proxy Network Filtering (proxy engine): proxy-network-filtering.md
       - Processes: processes.md
