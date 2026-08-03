@@ -133,10 +133,18 @@ type RunOptions struct {
 	Effort string
 
 	// ExtraArgs are appended after the runner's own flags and before the
-	// prompt. The sandbox characterization needs `--experimental`, which gates
-	// whether the CLI honours its own sandbox settings at all, and that gate is
-	// exactly the kind of thing a scenario must be able to toggle rather than
-	// have baked into the runner.
+	// prompt, so a scenario can vary the launch posture rather than have one
+	// baked into the runner.
+	//
+	// The sandbox characterization uses this for `--experimental`,
+	// `--allow-all-paths` and `--disallow-temp-dir`. On `--experimental`
+	// specifically: it does NOT gate whether the CLI honours its own sandbox
+	// settings — it gates only whether the interactive `/sandbox` command is
+	// registered. A settings-enabled sandbox applies with no experimental flag
+	// anywhere, which TestCopilotNativeSandboxNeedsNoExperimentalFlag measures
+	// on the real binary. Stated here because the opposite reading is the
+	// natural one from `copilot help sandbox`, and it is the reading that would
+	// let a caller conclude a sandbox is off because tclaude passed no flag.
 	ExtraArgs []string
 }
 
