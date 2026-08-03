@@ -259,38 +259,56 @@ func TestCopilotPermissionToolApprovalGate(t *testing.T) {
 	assertScenarioRowsMatchRegistry(t, permissionScenarios.ToolApproval, rows)
 }
 
-// TestCopilotPermissionURLGateIsSeparate proves URL access is its own prompt
-// surface, reachable through the shell tool, and that `--allow-all-tools` does
-// not close it.
+// TestCopilotPermissionURLGateUnderToolApproval measures URL access, and the
+// result corrects the TCL-973 plan in the plan's own favour — which is why it
+// is worth stating carefully rather than quietly.
 //
-// This is the measurement the TCL-973 plan most needed and least expected:
-// its proposed default paired `--allow-all-tools` with a URL deny, on the
-// assumption that tool approval and URL access are independent. They are —
-// which is exactly why a posture that handles only the first still deadlocks.
-func TestCopilotPermissionURLGateIsSeparate(t *testing.T) {
+// The plan assumed URL access is an axis independent of tool approval, and
+// built its proposed default around closing the two separately. Half of that
+// is right and half is not. With no permission flags, a shell command that
+// reaches a URL blocks on a dialog that is unmistakably about the URL
+// ("Copilot is attempting to access the following URL"), not about the
+// command — so it IS a distinct prompt with its own chrome and its own
+// decision. But `--allow-all-tools` closes it: the same launch with that one
+// flag runs the command through.
+//
+// So for the shell path there is no second deadlock to close, and the plan's
+// stated need for a URL deny alongside `--allow-all-tools` does not follow
+// from this measurement.
+//
+// SCOPE, and it is the load-bearing limitation: this measures the SHELL path
+// only. Copilot's web-fetch tool is the other URL consumer, and it is absent
+// from the catalog entirely under COPILOT_OFFLINE=true, which is what makes
+// this suite hermetic. Whether web_fetch is gated the same way is therefore
+// not something these scenarios can answer, and it is recorded as unmeasured
+// in permission_contract.json rather than generalized from the shell result.
+func TestCopilotPermissionURLGateUnderToolApproval(t *testing.T) {
 	requireSmoke(t)
 
 	var rows []string
 	for _, tc := range []struct {
 		name  string
 		allow bool
+		want  copilotfixture.PermissionOutcome
 	}{
-		{name: "no-flags"},
-		// The load-bearing row: full tool approval, still stopped by the URL
-		// gate. If this ever becomes "allowed", the two axes have merged and
-		// the default posture can be simplified.
-		{name: "allow-all-tools", allow: true},
+		// The URL prompt exists and is its own dialog.
+		{name: "no-flags", want: copilotfixture.PermissionBlocked},
+		// And tool approval covers it. This row is the correction: it was
+		// written expecting a block, and the real binary said otherwise.
+		{name: "allow-all-tools", allow: true, want: copilotfixture.PermissionAllowed},
 	} {
 		rows = append(rows, tc.name)
 		t.Run(tc.name, func(t *testing.T) {
 			verdict, mock, res := permissionRun(t, bashTurns(urlShellCommand), true,
 				copilotfixture.RunOptions{OmitAllowAllTools: !tc.allow})
-			assert.Equal(t, copilotfixture.PermissionBlocked, verdict.Outcome,
-				"URL access is a prompt surface of its own")
-			assert.True(t, res.Contains("attempting to access the following URL"),
-				"the blocking dialog must be the URL one, not tool approval")
-			// No egress happened: the CLI stopped to ask before dialling, which
-			// is what makes this measurable in a hermetic run at all.
+			assert.Equal(t, tc.want, verdict.Outcome)
+			if tc.want == copilotfixture.PermissionBlocked {
+				assert.True(t, res.Contains("attempting to access the following URL"),
+					"the blocking dialog must be the URL one, which is what makes this a "+
+						"distinct prompt rather than ordinary tool approval")
+			}
+			// No egress happened either way: the CLI asks before it dials, so
+			// the whole measurement runs with no network at all.
 			require.NotEmpty(t, mock.Requests())
 			assertCredentialFree(t, mock)
 		})

@@ -48,7 +48,7 @@ var permissionScenarios = struct {
 		"config-json-trustedFolders", "settings-json-trustedFolders"),
 	ToolApproval: registerRows("TestCopilotPermissionToolApprovalGate",
 		"unsafe-command/no-flags", "unsafe-command/allow-all-tools", "safe-command/no-flags"),
-	URLGate: registerRows("TestCopilotPermissionURLGateIsSeparate",
+	URLGate: registerRows("TestCopilotPermissionURLGateUnderToolApproval",
 		"no-flags", "allow-all-tools"),
 	AmbientAllowAll: registerRows("TestCopilotPermissionAmbientAllowAllPromotes",
 		"true", "TRUE", "one", "false", "empty"),
