@@ -266,6 +266,13 @@ type copilotSandboxFile struct {
 // file is (zero, false, nil) — absence is not ambiguity, and the CLI documents
 // the sandbox as off by default. Everything else that stops tclaude from
 // reading a determinate answer is a refusal.
+//
+// This is the sibling of ResolveCopilotMergedSettings, not a competitor to it:
+// both implement the same two-file precedence, and this one exists because the
+// sandbox gate must report WHICH file enabled the inner sandbox (and must treat
+// a `sandbox` block that omits `enabled` as a real replacement) rather than
+// only take a winning value. Keep the two in step — the precedence semantics
+// are one contract with two implementations.
 func readCopilotSandboxFile(path string) (copilotSandboxFile, bool, error) {
 	var out copilotSandboxFile
 	data, err := os.ReadFile(path)
@@ -452,15 +459,23 @@ type CopilotSettingsSource struct {
 // ResolveCopilotMergedSettings returns Copilot's effective top-level settings —
 // settings.json overlaid by the legacy config.json, whole key by whole key.
 //
-// This is the SHARED reader. Anything in tclaude that decides something from a
-// Copilot settings key must go through it rather than opening settings.json
-// directly, because every property that makes the naive read wrong lives here:
-// the second file, its precedence, the shallow whole-key replacement, and the
-// comment-led managed stub. A second parser that got any of those wrong would
-// not fail loudly — it would quietly answer a question about a file the launch
-// is not going to use. That is exactly how the model-transport route gate came
-// to admit a legacy `copilotUrl` override that then broke against the network
-// wall instead of being refused with a reason.
+// This is where the two-file precedence contract is written down, and the
+// model-transport route gate reads through it. Any NEW code deciding something
+// from a Copilot settings key belongs here too rather than opening
+// settings.json directly, because every property that makes the naive read
+// wrong lives in this function: the second file, its precedence, the shallow
+// whole-key replacement, and the comment-led managed stub. A reader that got
+// any of those wrong would not fail loudly — it would quietly answer a question
+// about a file the launch is not going to use. That is exactly how the
+// model-transport route gate came to admit a legacy `copilotUrl` override that
+// then broke against the network wall instead of being refused with a reason.
+//
+// It is NOT yet the only reader: ResolveCopilotInnerSandbox still walks the
+// same two files through readCopilotSandboxFile, because it needs to know which
+// file set a key rather than only that key's winning value. Those semantics
+// match this function's today and are pinned by the same precedence tests, but
+// they are two implementations of one contract — change one and check the
+// other.
 //
 // The returned map is keyed by the top-level settings key. A missing file
 // contributes nothing; an unreadable or unparsable one is an error, since a

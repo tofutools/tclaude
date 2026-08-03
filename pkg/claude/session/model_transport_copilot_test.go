@@ -315,6 +315,25 @@ func TestResolveCopilotModelTransportReadsTheLegacyConfigRoute(t *testing.T) {
 			config:   `{"banner":"never"}`,
 		},
 		{
+			// THE most common real shape, and the one the rest of this table
+			// missed: an operator proxyUrl in settings.json on a settled install,
+			// which by definition has a config.json stub beside it.
+			//
+			// Every other case here either puts the route key in the legacy file
+			// or has no route key in settings.json at all, so a merge that
+			// REPLACED the map per file instead of per key would discard the
+			// canonical route key whenever a config.json exists — admitting the
+			// live material key on essentially every real machine — and the
+			// whole suite would still pass. Found by the transport review, which
+			// mutated exactly that.
+			name:     "a canonical proxyUrl survives the migrated config stub",
+			settings: `{"proxyUrl":"http://proxy.corp.example:3128"}`,
+			config: "// User settings belong in settings.json.\n" +
+				"// This file is managed automatically.\n" +
+				"{\n  \"firstLaunchAt\": \"2026-03-11T00:00:00.000Z\"\n}\n",
+			wantRefuse: true, wantKey: "proxyUrl", wantFile: harness.CopilotSettingsFileName,
+		},
+		{
 			name:     "the managed post-migration stub is the ordinary posture",
 			settings: `{"theme":"dark"}`,
 			config: "// User settings belong in settings.json.\n" +
