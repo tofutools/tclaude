@@ -290,8 +290,18 @@ through `XDG_CACHE_HOME` then `HOME`. The runner redirects all four.
 
 Scenarios covered: streaming text, a tool-call round trip, deterministic
 provider failure, session enrollment plus exact resume, `--model` precedence,
-`--effort` pass-through, and a launch driven by the **production spawner's own
-command string** rather than a parallel flag table that could drift from it.
+`--effort` pass-through over a complete **OpenAI Responses**-wire turn, and a
+launch driven by the **production spawner's own command string** rather than a
+parallel flag table that could drift from it.
+
+Both provider wires are covered, and they are genuinely different contracts
+rather than a flag toggle: `completions` posts `messages[]` to
+`/chat/completions` and ends its SSE at `data: [DONE]`, while `responses` posts
+`input[]` plus a separate `instructions` string to `/responses` and ends at
+`response.completed` with no sentinel. Reasoning effort is observable **only**
+on the responses wire — the completions request body carries no effort key at
+all — so the effort scenario runs there or it would assert nothing while
+looking green.
 
 Fixtures record *shape*, never content: endpoint, body key set, message roles,
 tool-name set, the `x-initiator` discriminator, and event-type sequence. The

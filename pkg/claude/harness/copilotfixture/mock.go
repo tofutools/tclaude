@@ -146,19 +146,120 @@ func (m *MockProvider) handle(w http.ResponseWriter, r *http.Request) {
 	if model == "" {
 		model = MockModel
 	}
+	stream, _ := body["stream"].(bool)
+
+	// The two wires are distinguished by route and by body shape: completions
+	// posts messages[] to /chat/completions, responses posts input[] plus a
+	// separate instructions field to /responses. Their SSE framings are
+	// unrelated, so answering one with the other's shape reads to the CLI as a
+	// transient failure and triggers its retry schedule.
+	if isResponsesWire(r.URL.Path, body) {
+		m.writeResponsesStream(w, model, turn)
+		return
+	}
 	// The CLI sends stream:true by default and treats a plain JSON answer to a
-	// streaming request as a transient failure, which triggers the retry
-	// storm. Honour whichever mode it actually asked for.
-	if stream, _ := body["stream"].(bool); stream {
+	// streaming request as a transient failure. Honour whichever mode it asked for.
+	if stream {
 		m.writeStream(w, model, turn)
 		return
 	}
 	m.writeBlocking(w, model, turn)
 }
 
+func isResponsesWire(path string, body map[string]any) bool {
+	if strings.HasSuffix(path, "/responses") {
+		return true
+	}
+	_, hasInput := body["input"]
+	return hasInput
+}
+
+// writeResponsesStream emits the OpenAI Responses SSE sequence, which the CLI
+// accepts on COPILOT_PROVIDER_WIRE_API=responses.
+//
+// Two framing details differ from the completions wire and are load-bearing:
+// each event carries a named `event:` line matching its `type`, and the stream
+// ends at response.completed with NO `data: [DONE]` sentinel.
+func (m *MockProvider) writeResponsesStream(w http.ResponseWriter, model string, turn Turn) {
+	h := w.Header()
+	h.Set("Content-Type", "text/event-stream")
+	h.Set("Cache-Control", "no-cache")
+	w.WriteHeader(http.StatusOK)
+	flusher, _ := w.(http.Flusher)
+
+	seq := 0
+	send := func(eventType string, payload map[string]any) {
+		payload["type"] = eventType
+		payload["sequence_number"] = seq
+		seq++
+		enc, err := json.Marshal(payload)
+		if err != nil {
+			return
+		}
+		fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventType, enc)
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}
+	response := func(status string, output []any) map[string]any {
+		return map[string]any{
+			"id": responseID, "object": "response", "created_at": 0,
+			"status": status, "model": model, "output": output,
+		}
+	}
+
+	send("response.created", map[string]any{"response": response("in_progress", []any{})})
+	send("response.in_progress", map[string]any{"response": response("in_progress", []any{})})
+	send("response.output_item.added", map[string]any{
+		"output_index": 0,
+		"item": map[string]any{
+			"id": messageID, "type": "message", "status": "in_progress",
+			"role": "assistant", "content": []any{},
+		},
+	})
+	send("response.content_part.added", map[string]any{
+		"item_id": messageID, "output_index": 0, "content_index": 0,
+		"part": map[string]any{"type": "output_text", "text": "", "annotations": []any{}},
+	})
+	for _, piece := range splitForStreaming(turn.Text) {
+		send("response.output_text.delta", map[string]any{
+			"item_id": messageID, "output_index": 0, "content_index": 0, "delta": piece,
+		})
+	}
+	send("response.output_text.done", map[string]any{
+		"item_id": messageID, "output_index": 0, "content_index": 0, "text": turn.Text,
+	})
+	send("response.content_part.done", map[string]any{
+		"item_id": messageID, "output_index": 0, "content_index": 0,
+		"part": map[string]any{"type": "output_text", "text": turn.Text, "annotations": []any{}},
+	})
+
+	item := map[string]any{
+		"id": messageID, "type": "message", "status": "completed", "role": "assistant",
+		"content": []any{map[string]any{
+			"type": "output_text", "text": turn.Text, "annotations": []any{},
+		}},
+	}
+	send("response.output_item.done", map[string]any{"output_index": 0, "item": item})
+
+	completed := response("completed", []any{item})
+	completed["usage"] = map[string]any{
+		"input_tokens": 11, "output_tokens": 3, "total_tokens": 14,
+	}
+	send("response.completed", map[string]any{"response": completed})
+	// Deliberately no `data: [DONE]`: the Responses wire terminates at
+	// response.completed, unlike the completions wire.
+}
+
 // chunkID is fixed so a fixture can pin the CLI's apiCallId (the event stream
 // echoes the SSE chunk id straight through) without a normalization rule.
 const chunkID = "chatcmpl-copilotfixture"
+
+// Responses-wire ids, fixed for the same reason as chunkID.
+const (
+	responseID = "resp_copilotfixture"
+	messageID  = "msg_copilotfixture"
+)
 
 func (m *MockProvider) writeStream(w http.ResponseWriter, model string, turn Turn) {
 	h := w.Header()

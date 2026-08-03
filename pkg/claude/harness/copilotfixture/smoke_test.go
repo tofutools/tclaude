@@ -193,32 +193,47 @@ func TestCopilotSessionEnrollmentAndResume(t *testing.T) {
 	compareGolden(t, "session_resume", dirs, mock, resumed, sessionID)
 }
 
-// TestCopilotReasoningEffortOnResponsesWire pins effort pass-through.
+// TestCopilotReasoningEffortOnResponsesWire pins effort pass-through, on a
+// complete successful turn over the OpenAI Responses wire.
 //
-// It runs on the RESPONSES wire deliberately: on the default completions wire
-// the request body carries no effort key at all, so the same assertion built
-// there would be vacuously green. The turn is answered with a fast-failing 400
-// because only the REQUEST is under test here — the responses-wire response
-// framing is not yet characterized, and guessing at it would couple this test
-// to an unverified contract.
+// The RESPONSES wire is deliberate: on the default completions wire the
+// request body carries no effort key at all, so the same assertion built there
+// would be vacuously green while looking identical.
+//
+// The two wires are genuinely different contracts, not a flag toggle. The
+// request posts to /responses with input[] plus a separate instructions
+// string, and the response is a named-event SSE sequence that terminates at
+// response.completed with no [DONE] sentinel. Both halves are exercised here.
 func TestCopilotReasoningEffortOnResponsesWire(t *testing.T) {
 	requireSmoke(t)
 
 	mock := copilotfixture.NewMockProvider(t, []copilotfixture.Turn{
-		{FailStatus: 400},
+		{Text: "MOCK RESPONSES ANSWER"},
 	})
 	dirs := copilotfixture.NewSandboxDirs(t)
-	copilotfixture.Run(t, copilotfixture.RunOptions{
+	result := copilotfixture.Run(t, copilotfixture.RunOptions{
 		Root: dirs.Root, Home: dirs.Home, Cache: dirs.Cache, WorkDir: dirs.WorkDir,
 		BaseURL: mock.BaseURL(), Wire: copilotfixture.WireResponses,
 		Prompt: "Effort probe.", Effort: "xhigh",
 	})
 
+	require.Equal(t, 0, result.ExitCode,
+		"a responses-wire turn must complete\nstderr: %s", result.Stderr)
+
 	requests := mock.Requests()
-	require.NotEmpty(t, requests, "the responses wire must still reach the provider")
+	require.NotEmpty(t, requests, "the responses wire must reach the provider")
 	obs := newSanitizer(dirs).Request(requests[0])
+
 	assert.Equal(t, "xhigh", obs.ReasoningEffort,
 		"--effort must reach the provider verbatim, with no per-model remapping")
+	assert.Equal(t, "/v1/responses", obs.Path,
+		"the responses wire posts to its own route, not /chat/completions")
+
+	// The CLI accepted the framing, so the answer really came back through it.
+	assert.Contains(t, result.Stdout, "MOCK RESPONSES ANSWER")
+
+	assertCredentialFree(t, mock)
+	compareGolden(t, "responses_wire_effort", dirs, mock, result)
 }
 
 // TestCopilotModelSelection pins --model precedence over COPILOT_MODEL. Unlike

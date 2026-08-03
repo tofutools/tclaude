@@ -202,8 +202,31 @@ func (s *Sanitizer) Request(r RecordedRequest) RequestObservation {
 	}
 
 	var bulk strings.Builder
-	if messages, ok := r.Body["messages"].([]any); ok {
-		for _, raw := range messages {
+	appendBulk := func(role, content string) {
+		bulk.WriteString(role)
+		bulk.WriteByte('\x00')
+		// Normalized before digesting so the injected <current_datetime>, the
+		// host-probed environment block and any absolute path cannot make the
+		// digest differ between two otherwise identical runs.
+		bulk.WriteString(s.Text(content))
+		bulk.WriteByte('\x00')
+	}
+
+	// The two wires carry the conversation differently: completions sends
+	// messages[] with the system prompt as its first entry, responses sends
+	// input[] plus a separate top-level `instructions` string. Both are
+	// projected onto the same MessageRoles/PromptDigest pair so a fixture reads
+	// the same way regardless of wire.
+	if instructions, ok := r.Body["instructions"].(string); ok {
+		obs.MessageRoles = append(obs.MessageRoles, "instructions")
+		appendBulk("instructions", instructions)
+	}
+	for _, key := range []string{"messages", "input"} {
+		entries, ok := r.Body[key].([]any)
+		if !ok {
+			continue
+		}
+		for _, raw := range entries {
 			m, ok := raw.(map[string]any)
 			if !ok {
 				continue
@@ -211,13 +234,7 @@ func (s *Sanitizer) Request(r RecordedRequest) RequestObservation {
 			role, _ := m["role"].(string)
 			obs.MessageRoles = append(obs.MessageRoles, role)
 			if content, ok := m["content"].(string); ok {
-				bulk.WriteString(role)
-				bulk.WriteByte('\x00')
-				// Normalized before digesting so the injected
-				// <current_datetime> and any absolute path cannot make the
-				// digest differ between two otherwise identical runs.
-				bulk.WriteString(s.Text(content))
-				bulk.WriteByte('\x00')
+				appendBulk(role, content)
 			}
 		}
 	}
@@ -229,11 +246,15 @@ func (s *Sanitizer) Request(r RecordedRequest) RequestObservation {
 			if !ok {
 				continue
 			}
-			fn, ok := tool["function"].(map[string]any)
-			if !ok {
+			// Completions nests the name under `function`; responses puts it
+			// at the top level of the tool entry.
+			if fn, ok := tool["function"].(map[string]any); ok {
+				if name, ok := fn["name"].(string); ok {
+					obs.ToolNames = append(obs.ToolNames, name)
+				}
 				continue
 			}
-			if name, ok := fn["name"].(string); ok {
+			if name, ok := tool["name"].(string); ok {
 				obs.ToolNames = append(obs.ToolNames, name)
 			}
 		}
