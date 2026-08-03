@@ -533,14 +533,28 @@ sandbox, because that file wins at the next launch and rewrites `settings.json`
 to match. A check that reads only `config.json` misses the canonical file.
 
 None of this constrains Copilot under `tclaude-layer`, which is a separate wall
-that tclaude owns.
+that tclaude owns — and a separate ticket: the descriptor sets no
+`TclaudeLayerMode` yet, so that path refuses today too. The generic
+harness-builtin refusal still suggests it, which is advice an operator cannot
+act on until that lands.
 
 The evidence is
 `copilotfixture/sandbox_native_smoke_test.go`, which asserts each row above
 against the real binary. Its host-conditional scenario has **no skipping arm**:
-it probes whether the OS backend can start and then asserts enforcement where it
-can and fail-closed degradation where it cannot, so a machine that changes
-category changes which assertions run rather than whether any do.
+it classifies, from the run itself, whether the OS backend started, then asserts
+enforcement where it did and fail-closed degradation where it did not. CI runs
+**both** host categories on purpose — Linux runs the suite once with bubblewrap
+provisioned and once with unprivileged user namespaces denied — because the
+backend-down run is the only one that can establish where enforcement lives. The
+refusal text Copilot renders is the same whichever layer produced it, so it
+cannot be used as that discriminator.
+
+One caution for anyone extending these fixtures: a hermetic scenario builds
+every directory it owns underneath the system temp directory, which is part of
+the default granted surface. A target that reads as "outside the policy" is
+probably inside it, and an assertion built on that reading measures nothing. The
+measured surface per platform is recorded in
+`TestCopilotNativeSandboxShellBasePolicySurface`.
 
 ### Sandbox & approval defaults (Codex)
 

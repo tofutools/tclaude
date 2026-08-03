@@ -35,8 +35,10 @@ package harness
 // Three further properties would each need their own answer even if the file
 // half were closed, and are recorded so a later revisit starts from them:
 //
-//  1. There is no launch-time flag. The posture lives in `sandbox` in
-//     COPILOT_HOME/config.json, in the interactive `/sandbox` dialog, and in
+//  1. There is no launch-time flag. The posture lives in the `sandbox` key of
+//     COPILOT_HOME/settings.json — and of the legacy COPILOT_HOME/config.json,
+//     which the CLI migrates from at startup and which therefore WINS for the
+//     launch that consumes it — plus the interactive `/sandbox` dialog and
 //     organization policy. tclaude pins per-spawn postures through launch
 //     arguments; it cannot pin this one without owning the operator's own
 //     config file, and `clearPolicyOnExit` plus in-session `/sandbox disable`
@@ -45,8 +47,9 @@ package harness
 //     yet a contract to build a capability on.
 //  3. Availability is host-conditional (Linux needs bwrap AND permitted
 //     unprivileged user namespaces). The measured degradation is fail-closed —
-//     shell commands error rather than silently running unconfined, see
-//     TestCopilotNativeSandboxFailsClosedWithoutBackend — which is the right
+//     shell commands error rather than silently running unconfined, see the
+//     fail-closed arm of
+//     TestCopilotNativeSandboxShellEnforcementIsHostConditional — which is the right
 //     behavior, but it is a runtime property tclaude cannot verify at launch.
 //
 // None of this argues against Copilot under `tclaude-layer`, which is a

@@ -29,19 +29,37 @@ import (
 // TestCopilotNativeSandboxDisabledAppliesNoPolicy is the control that proves
 // the refusals are not simply the CLI's default behavior.
 
-// nativeSandboxBlockedMarker is the CLI's own in-process refusal text, emitted
-// as the tool RESULT rather than as an OS error. Matching on it is how a
-// scenario tells "the CLI's policy check refused this" apart from "the OS
-// refused this", which is the exact distinction TCL-977 turns on.
+// nativeSandboxBlockedMarker is the refusal text Copilot renders as the tool
+// RESULT when its sandbox stopped an action.
+//
+// It says only "the sandbox refused this", by SOME mechanism. It deliberately
+// does NOT distinguish an in-process policy check from an OS denial, and an
+// earlier version of this comment claimed it did. That was wrong: the shipped
+// runtime carries a denial-fingerprint classifier that maps errno-shaped
+// failures (EACCES, EPERM, "operation not permitted", …) onto this same
+// sentence, so an OS refusal while the sandbox is active reads identically.
+//
+// The only sound discriminator this suite has for "where does enforcement
+// live" is a host where the OS backend cannot start at all — see the
+// backend-down arm of TestCopilotNativeSandboxBuiltinEditsAreInProcessOnly,
+// which is why CI provisions that host category deliberately rather than
+// relying on this string.
 const nativeSandboxBlockedMarker = "sandbox is active and blocked"
 
 // nativeSandboxDirs builds a scenario's directory set: the granted workspace,
-// an explicitly denied directory inside HOME, and a directory outside HOME
-// entirely that the policy never mentions.
+// an explicitly denied directory inside HOME, and a directory under the system
+// temp root.
+//
+// SystemTemp is named for what it IS rather than for the role an earlier
+// version of this suite assigned it ("outside every granted path"). CI refuted
+// that on both platforms: `copilot help sandbox` documents the system temp
+// directory as part of the DEFAULT granted surface, and a hermetic fixture
+// necessarily builds everything under it. See
+// TestCopilotNativeSandboxShellBasePolicySurface.
 type nativeSandboxDirs struct {
 	copilotfixture.Dirs
-	Denied  string
-	Outside string
+	Denied     string
+	SystemTemp string
 }
 
 func newNativeSandboxDirs(t *testing.T) nativeSandboxDirs {
@@ -49,7 +67,21 @@ func newNativeSandboxDirs(t *testing.T) nativeSandboxDirs {
 	dirs := copilotfixture.NewSandboxDirs(t)
 	denied := filepath.Join(dirs.Root, "denied")
 	require.NoError(t, os.MkdirAll(denied, 0o755))
-	return nativeSandboxDirs{Dirs: dirs, Denied: denied, Outside: t.TempDir()}
+	return nativeSandboxDirs{Dirs: dirs, Denied: denied, SystemTemp: t.TempDir()}
+}
+
+// classifyBackend derives the backend verdict from the run under test and logs
+// it in the form CI greps. A run that cannot be classified fails the test
+// rather than silently choosing an arm.
+func classifyBackend(
+	t *testing.T, grantedWriteLanded bool, shellResult string,
+) copilotfixture.NativeSandboxBackendVerdict {
+	t.Helper()
+	verdict, err := copilotfixture.ClassifyNativeSandboxBackend(
+		grantedWriteLanded, shellResult)
+	require.NoError(t, err)
+	t.Logf("OS sandbox backend available: %v (%s)", verdict.Up, verdict.Evidence)
+	return verdict
 }
 
 // enableNativeSandbox writes the posture every scenario shares: the workspace
@@ -170,45 +202,53 @@ func TestCopilotNativeSandboxBuiltinEditsAreInProcessOnly(t *testing.T) {
 
 	dirs := newNativeSandboxDirs(t)
 	enableNativeSandbox(t, dirs, true)
-	backendUp, evidence := copilotfixture.NativeSandboxBackendAvailable(t)
-	t.Logf("OS sandbox backend available: %v (%s)", backendUp, evidence)
 
 	inWorkspace := filepath.Join(dirs.WorkDir, "in_workspace")
+	shellMarker := filepath.Join(dirs.WorkDir, "shell_marker")
 	results := runNativeSandboxScenario(t, dirs, []copilotfixture.Turn{
 		createTurn("edit_workspace", inWorkspace),
 		createTurn("edit_home", filepath.Join(dirs.Root, "in_home")),
 		createTurn("edit_denied", filepath.Join(dirs.Denied, "in_denied")),
-		createTurn("edit_outside", filepath.Join(dirs.Outside, "outside_home")),
-		bashTurn("shell_workspace", "touch "+filepath.Join(dirs.WorkDir, "shell_marker")),
+		createTurn("edit_system_temp", filepath.Join(dirs.SystemTemp, "in_system_temp")),
+		bashTurn("shell_workspace", "touch "+shellMarker),
 	})
+	backend := classifyBackend(t, exists(t, shellMarker), results["shell_workspace"])
 
 	assert.True(t, exists(t, inWorkspace),
 		"a built-in edit inside the granted workspace must succeed; without it the "+
 			"refusals below would only mean the policy blocks everything")
 	for id, path := range map[string]string{
-		"edit_home":    filepath.Join(dirs.Root, "in_home"),
-		"edit_denied":  filepath.Join(dirs.Denied, "in_denied"),
-		"edit_outside": filepath.Join(dirs.Outside, "outside_home"),
+		"edit_home":        filepath.Join(dirs.Root, "in_home"),
+		"edit_denied":      filepath.Join(dirs.Denied, "in_denied"),
+		"edit_system_temp": filepath.Join(dirs.SystemTemp, "in_system_temp"),
 	} {
 		assert.NotContains(t, results[id], "Created file",
 			"%s must be refused by the sandbox policy", id)
 		assert.Contains(t, results[id], nativeSandboxBlockedMarker,
-			"%s must be refused by the CLI's OWN policy check — an OS refusal would "+
-				"surface as an errno, not as this message", id)
+			"%s must be refused by the sandbox; note this marker says only THAT the "+
+				"sandbox refused, not by which mechanism — see the constant", id)
 		assert.False(t, exists(t, path), "%s must not have been written", id)
 	}
 
-	if !backendUp {
-		// The decisive arm. The OS sandbox could not be entered at all, so a
-		// shell command cannot run — and yet the built-in edit above wrote its
-		// file. The two halves of Copilot's boundary are therefore enforced by
-		// two different things, and only one of them is the OS.
-		assert.False(t, exists(t, filepath.Join(dirs.WorkDir, "shell_marker")),
-			"with no usable OS backend a shell command must not run at all")
-		assert.True(t, exists(t, inWorkspace),
-			"the built-in edit wrote its file on a host where the OS sandbox could "+
-				"not start; the edit path never enters the sandbox")
+	// Note what the edits above establish on their own: NOT where enforcement
+	// lives. The refusal text is the same whichever layer produced it. The
+	// mechanism question is answered only by the backend-down arm below, which
+	// is why CI provisions a host in that category on purpose instead of
+	// treating it as an accident of the runner.
+	if backend.Up {
+		t.Log("backend up: this run measures that the policy is enforced, but not " +
+			"WHERE. The in-process finding comes from the backend-down arm.")
+		return
 	}
+	// The decisive arm. The OS sandbox could not be entered at all, so no shell
+	// command ran — and yet the built-in edit above wrote its file into the
+	// workspace. The two halves of Copilot's boundary are therefore enforced by
+	// two different things, and only one of them is the OS.
+	assert.False(t, exists(t, shellMarker),
+		"with no usable OS backend a shell command must not run at all")
+	assert.True(t, exists(t, inWorkspace),
+		"the built-in edit wrote its file on a host where the OS sandbox could "+
+			"not start; the edit path never enters the sandbox")
 }
 
 // TestCopilotNativeSandboxBuiltinEditPolicyResolvesSymlinksAndTraversal is the
@@ -226,7 +266,7 @@ func TestCopilotNativeSandboxBuiltinEditPolicyResolvesSymlinksAndTraversal(t *te
 
 	dirs := newNativeSandboxDirs(t)
 	enableNativeSandbox(t, dirs, true)
-	require.NoError(t, os.Symlink(dirs.Outside, filepath.Join(dirs.WorkDir, "escape")))
+	require.NoError(t, os.Symlink(dirs.SystemTemp, filepath.Join(dirs.WorkDir, "escape")))
 	require.NoError(t, os.Symlink(dirs.Denied, filepath.Join(dirs.WorkDir, "escape_denied")))
 
 	results := runNativeSandboxScenario(t, dirs, []copilotfixture.Turn{
@@ -236,7 +276,7 @@ func TestCopilotNativeSandboxBuiltinEditPolicyResolvesSymlinksAndTraversal(t *te
 	})
 
 	for id, path := range map[string]string{
-		"symlink_outside": filepath.Join(dirs.Outside, "via_symlink"),
+		"symlink_outside": filepath.Join(dirs.SystemTemp, "via_symlink"),
 		"symlink_denied":  filepath.Join(dirs.Denied, "via_symlink"),
 		"traversal":       filepath.Join(dirs.Root, "via_traversal"),
 	} {
@@ -265,8 +305,6 @@ func TestCopilotNativeSandboxShellEnforcementIsHostConditional(t *testing.T) {
 
 	dirs := newNativeSandboxDirs(t)
 	enableNativeSandbox(t, dirs, true)
-	backendUp, evidence := copilotfixture.NativeSandboxBackendAvailable(t)
-	t.Logf("OS sandbox backend available: %v (%s)", backendUp, evidence)
 
 	workspaceMarker := filepath.Join(dirs.WorkDir, "shell_workspace")
 	deniedMarker := filepath.Join(dirs.Denied, "shell_denied")
@@ -274,6 +312,7 @@ func TestCopilotNativeSandboxShellEnforcementIsHostConditional(t *testing.T) {
 		bashTurn("shell_workspace", "touch "+workspaceMarker),
 		bashTurn("shell_denied", "touch "+deniedMarker),
 	})
+	backend := classifyBackend(t, exists(t, workspaceMarker), results["shell_workspace"])
 
 	// The denied path is the enforcement claim, and it is a strong one HERE
 	// because of where the fixture's directories live: everything a hermetic
@@ -289,21 +328,29 @@ func TestCopilotNativeSandboxShellEnforcementIsHostConditional(t *testing.T) {
 	assert.False(t, exists(t, deniedMarker),
 		"a shell write into an explicitly denied path must not land")
 
-	if backendUp {
-		assert.True(t, exists(t, workspaceMarker),
-			"with a working backend a shell write inside the granted workspace must "+
-				"succeed; if it does not, the refusal above proves nothing about the "+
-				"policy because the sandbox is refusing everything")
+	if backend.Up {
+		// The granted write landing IS what classified the backend as up, so
+		// there is nothing further to assert on this arm: the deny above is the
+		// enforcement claim, and it means something precisely because the
+		// sandbox is demonstrably not refusing everything.
 		return
 	}
 	// Fail-closed arm: the backend could not start, and the CLI's answer is to
 	// fail the command rather than run it unconfined. That is the right
 	// behavior, and pinning it here is what would make a future silent
 	// downgrade to an unsandboxed shell a test failure rather than a surprise.
+	//
+	// The assertion is on the FAILURE SIGNATURE, not merely on a non-empty
+	// result: a successful `touch` also returns a non-empty result (an exit-0
+	// line), so "reported something" would pass whether the command failed
+	// closed or ran unconfined.
 	assert.False(t, exists(t, workspaceMarker),
 		"with no usable backend the shell must fail closed, not run unconfined")
 	for _, id := range []string{"shell_workspace", "shell_denied"} {
-		assert.NotEmpty(t, results[id], "%s must still report a result", id)
+		_, err := copilotfixture.ClassifyNativeSandboxBackend(false, results[id])
+		assert.NoError(t, err,
+			"%s must report a backend-start failure rather than an ambiguous "+
+				"result; got %q", id, results[id])
 	}
 }
 
@@ -331,11 +378,30 @@ func TestCopilotNativeSandboxShellEnforcementIsHostConditional(t *testing.T) {
 // rather than to legislate it. The invariant that does hold everywhere is the
 // one that matters: an authored deny is honored no matter which flags are
 // passed and no matter that the denied directory sits inside a base grant.
+//
+// WHAT CI MEASURED, identically on Linux and macOS:
+//
+//	config                            workspace  home   temp   denied
+//	allow_all_paths                   yes        yes    yes    no
+//	no_allow_all_paths                yes        yes    yes    no
+//	allow_all_paths+disallow_temp     yes        yes    yes    no
+//	no_allow_all_paths+disallow_temp  yes        no     no     no
+//
+// Three readings, and the third is the one to be careful about:
+//
+//   - `--allow-all-paths` on its own changes NOTHING (rows 1 vs 2). The
+//     hypothesis that it widens the generated OS policy is not supported.
+//   - `--disallow-temp-dir` on its own changes NOTHING either (rows 1 vs 3).
+//     It only bites once the path-permission layer is left on, so
+//     `--allow-all-paths` suppresses it.
+//   - Row 4 is NOT evidence about the OS sandbox's base policy. Both the OS
+//     sandbox and the CLI's path-permission layer grant the temp directory, a
+//     hermetic fixture puts HOME inside it, and this matrix cannot separate
+//     which layer allowed a write that both permit. What it does establish is
+//     the thing the earlier assertion got wrong: these targets are inside a
+//     granted surface, so a write landing there is not an escape.
 func TestCopilotNativeSandboxShellBasePolicySurface(t *testing.T) {
 	requireSmoke(t)
-
-	backendUp, evidence := copilotfixture.NativeSandboxBackendAvailable(t)
-	t.Logf("OS sandbox backend available: %v (%s)", backendUp, evidence)
 
 	configurations := []struct {
 		name string
@@ -354,14 +420,17 @@ func TestCopilotNativeSandboxShellBasePolicySurface(t *testing.T) {
 			targets := map[string]string{
 				"workspace":   filepath.Join(dirs.WorkDir, "probe"),
 				"home":        filepath.Join(dirs.Root, "probe"),
-				"system_temp": filepath.Join(dirs.Outside, "probe"),
+				"system_temp": filepath.Join(dirs.SystemTemp, "probe"),
 				"denied":      filepath.Join(dirs.Denied, "probe"),
 			}
 			turns := make([]copilotfixture.Turn, 0, len(targets))
 			for _, name := range []string{"workspace", "home", "system_temp", "denied"} {
 				turns = append(turns, bashTurn("shell_"+name, "touch "+targets[name]))
 			}
-			runNativeSandboxScenarioWithArgs(t, dirs, turns, configuration.args...)
+			results := runNativeSandboxScenarioWithArgs(
+				t, dirs, turns, configuration.args...)
+			backend := classifyBackend(
+				t, exists(t, targets["workspace"]), results["shell_workspace"])
 
 			for _, name := range []string{"workspace", "home", "system_temp", "denied"} {
 				t.Logf("BASE SURFACE %-32s %-12s reachable=%v",
@@ -371,10 +440,12 @@ func TestCopilotNativeSandboxShellBasePolicySurface(t *testing.T) {
 				"an authored deniedPaths entry must be honored under %s, even though "+
 					"the denied directory lies inside the base temp grant",
 				configuration.name)
-			if backendUp {
-				assert.True(t, exists(t, targets["workspace"]),
-					"the granted workspace must stay writable under %s, or the deny "+
-						"above proves nothing", configuration.name)
+			if !backend.Up {
+				// The workspace write is what classifies the backend, so an
+				// unusable one is already reported by classifyBackend's log
+				// line; the deny assertion above still holds because nothing
+				// ran at all.
+				return
 			}
 		})
 	}
@@ -385,8 +456,10 @@ func TestCopilotNativeSandboxShellBasePolicySurface(t *testing.T) {
 //
 // `copilot help sandbox` says the feature is experimental and that the
 // `/sandbox` command is registered only when experimental features are on. That
-// gate is on the interactive COMMAND, not on the feature: a config.json that
-// enables sandboxing takes effect with no `--experimental` anywhere. It matters
+// gate is on the interactive COMMAND, not on the feature: settings that enable
+// sandboxing take effect with no `--experimental` anywhere. (This scenario
+// writes the CANONICAL settings.json; the legacy config.json is covered by
+// TestCopilotNativeSandboxSettingsSourcesAndPrecedence.) It matters
 // because it cuts both ways for tclaude — the posture cannot be turned on by a
 // launch argument, and it also cannot be assumed off just because tclaude
 // passed no experimental flag.
@@ -405,7 +478,7 @@ func TestCopilotNativeSandboxNeedsNoExperimentalFlag(t *testing.T) {
 				createTurn("edit_denied", filepath.Join(dirs.Denied, "in_denied")),
 			}, extra...)
 			assert.Contains(t, results["edit_denied"], nativeSandboxBlockedMarker,
-				"config.json enables the sandbox regardless of --experimental")
+				"the settings file enables the sandbox regardless of --experimental")
 			assert.False(t, exists(t, filepath.Join(dirs.Denied, "in_denied")))
 		})
 	}
@@ -430,7 +503,7 @@ func TestCopilotNativeSandboxDisabledAppliesNoPolicy(t *testing.T) {
 	paths := map[string]string{
 		"edit_home":    filepath.Join(dirs.Root, "in_home"),
 		"edit_denied":  filepath.Join(dirs.Denied, "in_denied"),
-		"edit_outside": filepath.Join(dirs.Outside, "outside_home"),
+		"edit_outside": filepath.Join(dirs.SystemTemp, "outside_home"),
 	}
 	results := runNativeSandboxScenario(t, dirs, []copilotfixture.Turn{
 		createTurn("edit_home", paths["edit_home"]),

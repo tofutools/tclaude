@@ -1077,6 +1077,46 @@ jobs:
             exit 1
           fi
 
+      # BOTH host categories, and the second one is not optional.
+      #
+      # The scenarios above ran with a usable backend. The single measurement
+      # that establishes TCL-977's conclusion — that Copilot's built-in file
+      # edits never enter the OS sandbox — can only be made on a host where the
+      # backend CANNOT start: it is the run where an edit lands while every
+      # shell command fails. Requiring a usable backend everywhere (the step
+      # after this one) would leave that arm dead in CI, so the decisive
+      # evidence for a security capability decision would have no automated
+      # coverage at all.
+      #
+      # Re-restricting the AppArmor knob is the same condition a hardened host
+      # or a nested container presents, which is the category the arm exists to
+      # describe.
+      - name: Copilot sandbox smoke with the backend denied
+        if: matrix.platform == 'linux'
+        shell: bash
+        env:
+          TCLAUDE_COPILOT_FIXTURE_SMOKE: "1"
+        run: |
+          set -o pipefail
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=1
+          go test ./pkg/claude/harness/copilotfixture/... \
+            -run 'TestCopilotNativeSandbox' -v -count=1 -timeout 900s 2>&1 \
+            | tee "$RUNNER_TEMP/copilot-fixtures-nobackend.log"
+
+      - name: Require the backend-denied arm to have run
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          log="$RUNNER_TEMP/copilot-fixtures-nobackend.log"
+          if ! grep -q 'OS sandbox backend available: false' "$log"; then
+            echo "::error::The backend-denied step still reported a usable sandbox backend, so the decisive in-process-edit arm did not run. Denying unprivileged user namespaces no longer works on this runner; find another way to deny the backend rather than dropping the arm."
+            exit 1
+          fi
+          grep -qE '^--- PASS: TestCopilotNativeSandboxBuiltinEditsAreInProcessOnly ' "$log" || {
+            echo "::error::The decisive scenario did not pass in the backend-denied arm."
+            exit 1
+          }
+
       # The sandbox scenarios assert real enforcement where Copilot's OS backend
       # can start and fail-closed degradation where it cannot, so they stay green
       # either way — which is exactly why the ARM has to be checked separately.
@@ -1095,7 +1135,7 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           if ! grep -q 'OS sandbox backend available: true' "$log"; then
-            echo "::error::Copilot's OS sandbox backend never started on this runner, so the native-sandbox scenarios only exercised their fail-closed arm. On Linux the provisioning step (bubblewrap + unprivileged user namespaces) has regressed; on macOS Seatbelt is expected to be present unconditionally."
+            echo "::error::Copilot's OS sandbox backend never started on this runner, so the native-sandbox scenarios only exercised their fail-closed arm. On Linux the provisioning step (bubblewrap + unprivileged user namespaces) has regressed; on macOS Seatbelt is expected to be present unconditionally. Note this checks the FIRST log only; the backend-denied arm has its own gate above."
             exit 1
           fi
 
