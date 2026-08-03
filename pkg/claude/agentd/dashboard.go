@@ -2211,6 +2211,10 @@ func stateForConvInSessionsBatched(
 	codexRefresh := refreshCodexContextSnapshotOnReadBatched(
 		pick, alive, contextBatch, recordCodexTelemetry,
 	)
+	// Copilot follows the same read-through principle with a much smaller
+	// projection: its durable log carries no per-call usage and no live
+	// context window, so there is no batching or cost history to fold in.
+	refreshCopilotContextSnapshotOnRead(pick, alive)
 	codexInterruptedSubagents := codexRefresh.interruptedSubagents
 	// Sub-agents run INSIDE the harness process, so a dead session has
 	// none by definition — a stale count on an exited row must not render

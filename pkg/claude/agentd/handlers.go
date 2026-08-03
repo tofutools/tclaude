@@ -2301,7 +2301,11 @@ func contextSnapshotForConvIn(convID string, aliveSet map[string]struct{}) (snap
 	if sess == nil {
 		return db.ContextSnapshot{}, "", false
 	}
-	refreshCodexContextSnapshotOnRead(sess, sessionRowAliveIn(sess, aliveSet))
+	alive := sessionRowAliveIn(sess, aliveSet)
+	refreshCodexContextSnapshotOnRead(sess, alive)
+	// Copilot's context/usage columns are refreshed by the same
+	// read-through principle: both are no-ops for the other harness.
+	refreshCopilotContextSnapshotOnRead(sess, alive)
 	if s, err := db.GetContextSnapshot(sess.ID); err == nil {
 		// OpenCode's resumed/offline conv can pick a fresh all-zero row; fall
 		// back to the conv's last-known populated snapshot so `agent

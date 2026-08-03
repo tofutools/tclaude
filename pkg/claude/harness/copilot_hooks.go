@@ -139,6 +139,11 @@ func copilotHome() string {
 	return filepath.Join(home, ".copilot")
 }
 
+// CopilotHome is copilotHome for callers outside this package — agentd's
+// read-through follower needs the same session-state root the conversation
+// store and the hook installer resolve, and must not re-derive it.
+func CopilotHome() string { return copilotHome() }
+
 // copilotHooksPath is the tclaude-owned drop-in file. The name is tclaude's
 // own: a user's hooks live in their own files in the same directory (or in
 // config.json) and are never read, written, or parsed by this installer.
