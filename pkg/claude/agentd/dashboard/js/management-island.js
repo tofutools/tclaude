@@ -505,6 +505,12 @@ export function SandboxPolicyResult({ target, context, contextIndex, contexts = 
       ${context.resource_limits.cpu != null && html`<div>CPU: ${context.resource_limits.cpu} cores → <code>cpu.max ${context.cpu_max}</code></div>`}
       <div>${refusal?.kind === 'unsupported_resource_limits' ? 'This target cannot enforce these limits.' : 'This Linux target can enforce the requested cgroup-v2 limits; live controller delegation is checked again before launch.'}</div>
     </div>`}
+    ${context.darwin_allow_mach_register && html`<div class="sbx-mach-register-evaluation">
+      <strong>Mach service registration — macOS only</strong>
+      <div>${target.target?.platform === 'darwin' && target.target?.implementation === 'tclaude-layer'
+    ? 'Allowed by the tclaude Seatbelt layer for this target.'
+    : 'Stored in this effective policy, but it does not apply to this target; only the macOS tclaude-layer sandbox consumes it.'}</div>
+    </div>`}
     <details class="sbx-target-details"><summary>Evaluation details</summary>
       ${target.target.sandbox ? html`<div>Sandbox mode: ${sandboxModeDetail(target.target.harness, target.target.sandbox)}</div>` : null}
       ${target.resolved_by

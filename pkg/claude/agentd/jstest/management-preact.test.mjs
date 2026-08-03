@@ -1822,6 +1822,7 @@ test('sandbox editor groups concrete rules by the selected assignment outcome', 
         }] }],
         contexts: [{
           context: { global: 'base', group: 'access', group_name: 'crew' },
+          darwin_allow_mach_register: true,
           filesystem: [{ path: '/home/operator', access: 'deny' }, { path: '/home/operator/work', access: 'write' }],
           environment: ['POLICY_OWNER'],
           agent_directories: ['GOCACHE'],
@@ -1882,6 +1883,9 @@ test('sandbox editor groups concrete rules by the selected assignment outcome', 
   assert.equal(host.querySelector('.sbx-network-ports').value, '443');
   assert.match(host.querySelector('.sbx-policy-target').textContent,
     /OpenCode on macOS · tclaude sandbox/);
+  assert.match(host.querySelector('.sbx-mach-register-evaluation').textContent,
+    /Mach service registration.*Allowed by the tclaude Seatbelt layer for this target/s,
+    'the preview discloses that the composed compatibility capability applies to this target');
   const applied = host.querySelector('.sbx-rule-bucket-applied');
   assert.equal(applied.hasAttribute('open'), false,
     'fully supported rules always start folded');
