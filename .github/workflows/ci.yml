@@ -1040,6 +1040,7 @@ jobs:
             TestCopilotNativeSandboxBuiltinEditsAreInProcessOnly
             TestCopilotNativeSandboxBuiltinEditPolicyResolvesSymlinksAndTraversal
             TestCopilotNativeSandboxShellEnforcementIsHostConditional
+            TestCopilotNativeSandboxShellBasePolicySurface
             TestCopilotNativeSandboxNeedsNoExperimentalFlag
             TestCopilotNativeSandboxDisabledAppliesNoPolicy
             TestCopilotNativeSandboxSettingsSourcesAndPrecedence

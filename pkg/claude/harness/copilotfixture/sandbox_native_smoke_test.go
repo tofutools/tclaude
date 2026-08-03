@@ -118,12 +118,24 @@ func toolResults(requests []copilotfixture.RecordedRequest) map[string]string {
 	return out
 }
 
+// runNativeSandboxScenario runs a scenario with the standard --allow-all-paths
+// posture; see the file comment for why that flag is on by default here.
 func runNativeSandboxScenario(
 	t *testing.T, dirs nativeSandboxDirs, turns []copilotfixture.Turn, extra ...string,
 ) map[string]string {
 	t.Helper()
+	return runNativeSandboxScenarioWithArgs(t, dirs, turns,
+		append([]string{"--allow-all-paths"}, extra...)...)
+}
+
+// runNativeSandboxScenarioWithArgs passes the launch arguments verbatim, so a
+// scenario can measure what --allow-all-paths itself changes rather than having
+// it baked in.
+func runNativeSandboxScenarioWithArgs(
+	t *testing.T, dirs nativeSandboxDirs, turns []copilotfixture.Turn, args ...string,
+) map[string]string {
+	t.Helper()
 	mock := copilotfixture.NewMockProvider(t, append(turns, copilotfixture.Turn{Text: "MOCK DONE"}))
-	args := append([]string{"--allow-all-paths"}, extra...)
 	result := copilotfixture.Run(t, copilotfixture.RunOptions{
 		Root: dirs.Root, Home: dirs.Home, Cache: dirs.Cache, XDGCache: dirs.XDGCache,
 		WorkDir: dirs.WorkDir, BaseURL: mock.BaseURL(),
@@ -258,23 +270,30 @@ func TestCopilotNativeSandboxShellEnforcementIsHostConditional(t *testing.T) {
 
 	workspaceMarker := filepath.Join(dirs.WorkDir, "shell_workspace")
 	deniedMarker := filepath.Join(dirs.Denied, "shell_denied")
-	outsideMarker := filepath.Join(dirs.Outside, "shell_outside")
 	results := runNativeSandboxScenario(t, dirs, []copilotfixture.Turn{
 		bashTurn("shell_workspace", "touch "+workspaceMarker),
 		bashTurn("shell_denied", "touch "+deniedMarker),
-		bashTurn("shell_outside", "touch "+outsideMarker),
 	})
 
+	// The denied path is the enforcement claim, and it is a strong one HERE
+	// because of where the fixture's directories live: everything a hermetic
+	// scenario can write to is under the system temp directory, which Copilot's
+	// base policy grants by default. So this target is inside a base grant and
+	// still refused — an authored deny beats the auto-discovered base rather
+	// than being merged into it.
+	//
+	// What this test deliberately does NOT assert is a write "outside every
+	// granted path". That phrasing was wrong by construction: see
+	// TestCopilotNativeSandboxShellBasePolicySurface, which measures the base
+	// surface instead of assuming it.
 	assert.False(t, exists(t, deniedMarker),
 		"a shell write into an explicitly denied path must not land")
-	assert.False(t, exists(t, outsideMarker),
-		"a shell write outside every granted path must not land")
 
 	if backendUp {
 		assert.True(t, exists(t, workspaceMarker),
 			"with a working backend a shell write inside the granted workspace must "+
-				"succeed; if it does not, the two refusals above prove nothing about "+
-				"the policy because the sandbox is refusing everything")
+				"succeed; if it does not, the refusal above proves nothing about the "+
+				"policy because the sandbox is refusing everything")
 		return
 	}
 	// Fail-closed arm: the backend could not start, and the CLI's answer is to
@@ -283,8 +302,81 @@ func TestCopilotNativeSandboxShellEnforcementIsHostConditional(t *testing.T) {
 	// downgrade to an unsandboxed shell a test failure rather than a surprise.
 	assert.False(t, exists(t, workspaceMarker),
 		"with no usable backend the shell must fail closed, not run unconfined")
-	for _, id := range []string{"shell_workspace", "shell_denied", "shell_outside"} {
+	for _, id := range []string{"shell_workspace", "shell_denied"} {
 		assert.NotEmpty(t, results[id], "%s must still report a result", id)
+	}
+}
+
+// TestCopilotNativeSandboxShellBasePolicySurface measures the base policy the
+// OS sandbox generates, rather than assuming it.
+//
+// This test exists because an earlier version of the scenario above asserted
+// that a shell write "outside every granted path" would not land, and CI
+// refuted it on Linux AND macOS. The assumption was wrong by construction:
+// `copilot help sandbox` documents the default surface as the working
+// directory, PATH directories, **the system temp directory**, and the user
+// profile — and a hermetic fixture necessarily builds all of its directories
+// inside the system temp directory. The "outside" target was inside a base
+// grant the whole time.
+//
+// Two candidate explanations had to be told apart, and neither could be assumed
+// from a host where the backend cannot start: the base temp grant, and
+// `--allow-all-paths` widening the generated OS policy rather than only
+// suppressing the CLI's own path-permission layer. The matrix below crosses
+// that flag with `--disallow-temp-dir`, Copilot's documented opt-out for the
+// temp grant, so the two are separable in one run.
+//
+// Only the invariants are asserted; the surface itself is logged, because the
+// point of this test is to RECORD what the base policy covers on each platform
+// rather than to legislate it. The invariant that does hold everywhere is the
+// one that matters: an authored deny is honored no matter which flags are
+// passed and no matter that the denied directory sits inside a base grant.
+func TestCopilotNativeSandboxShellBasePolicySurface(t *testing.T) {
+	requireSmoke(t)
+
+	backendUp, evidence := copilotfixture.NativeSandboxBackendAvailable(t)
+	t.Logf("OS sandbox backend available: %v (%s)", backendUp, evidence)
+
+	configurations := []struct {
+		name string
+		args []string
+	}{
+		{"allow_all_paths", []string{"--allow-all-paths"}},
+		{"no_allow_all_paths", nil},
+		{"allow_all_paths+disallow_temp", []string{"--allow-all-paths", "--disallow-temp-dir"}},
+		{"no_allow_all_paths+disallow_temp", []string{"--disallow-temp-dir"}},
+	}
+	for _, configuration := range configurations {
+		t.Run(configuration.name, func(t *testing.T) {
+			dirs := newNativeSandboxDirs(t)
+			enableNativeSandbox(t, dirs, true)
+
+			targets := map[string]string{
+				"workspace":   filepath.Join(dirs.WorkDir, "probe"),
+				"home":        filepath.Join(dirs.Root, "probe"),
+				"system_temp": filepath.Join(dirs.Outside, "probe"),
+				"denied":      filepath.Join(dirs.Denied, "probe"),
+			}
+			turns := make([]copilotfixture.Turn, 0, len(targets))
+			for _, name := range []string{"workspace", "home", "system_temp", "denied"} {
+				turns = append(turns, bashTurn("shell_"+name, "touch "+targets[name]))
+			}
+			runNativeSandboxScenarioWithArgs(t, dirs, turns, configuration.args...)
+
+			for _, name := range []string{"workspace", "home", "system_temp", "denied"} {
+				t.Logf("BASE SURFACE %-32s %-12s reachable=%v",
+					configuration.name, name, exists(t, targets[name]))
+			}
+			assert.False(t, exists(t, targets["denied"]),
+				"an authored deniedPaths entry must be honored under %s, even though "+
+					"the denied directory lies inside the base temp grant",
+				configuration.name)
+			if backendUp {
+				assert.True(t, exists(t, targets["workspace"]),
+					"the granted workspace must stay writable under %s, or the deny "+
+						"above proves nothing", configuration.name)
+			}
+		})
 	}
 }
 
