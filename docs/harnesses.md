@@ -293,6 +293,20 @@ launch you are about to start. Measured against 1.0.77: a `sandbox` key in
 either file engages the wall, and when both carry it, `config.json` decides.
 tclaude reads both.
 
+The replacement is **shallow, at the top level**. A `sandbox` object in
+`config.json` replaces `settings.json`'s whole `sandbox` object rather than
+merging into it, while unrelated top-level keys survive:
+
+```
+settings.json {"sandbox":{"enabled":true},"theme":"dark"}
+config.json   {"sandbox":{"addCurrentWorkingDirectory":true}}
+  -> merged   {"sandbox":{"addCurrentWorkingDirectory":true},"theme":"dark"}
+```
+
+That launch has *one* boundary — the `enabled: true` is gone — so tclaude
+allows it. Merging the two files per sub-key instead would refuse a launch that
+is exactly what the assert-off contract wants.
+
 That single fact shapes everything below. tclaude cannot switch Copilot's wall
 off for one launch, so running Copilot under `--sandbox-impl tclaude-layer`
 does not disable the inner sandbox — it **asserts** the inner sandbox is not
@@ -305,6 +319,8 @@ engaged, and refuses the launch when it cannot verify that:
 | `sandbox.enabled: false` in the file that wins | ✅ launches |
 | `sandbox.enabled: true` in either file | ❌ refused — two stacked policies would make the effective confinement their unreviewed intersection while the recorded posture named one |
 | `config.json` says `true` while `settings.json` says `false` | ❌ refused — `config.json` wins, so the plain-text `false` is about to be overwritten |
+| A `config.json` `sandbox` block that omits `enabled`, over a `settings.json` that sets it `true` | ✅ launches — the block replaces wholesale, so `enabled` is gone |
+| A relative `COPILOT_HOME` | ❌ refused — tclaude and Copilot would resolve it against different working directories and inspect different files |
 | Unreadable, unparsable, or oddly shaped settings in **either** file (`"sandbox": true`, `"enabled": "true"`) | ❌ refused — an unverifiable posture, not an absent one |
 | `experimental: true` | ❌ refused — it registers the in-pane `/sandbox` command, so the wall could be switched on mid-session |
 | A pass-through `--experimental` argument | ❌ refused, for the same reason |
@@ -337,10 +353,12 @@ and the two executables when they apply. Two details are easy to get wrong:
 - The package cache is **exec-bearing**. Copilot unpacks bundled binaries
   (ripgrep, tgrep, prebuilt native modules) there and runs them, so a `noexec`
   mount would break tool search rather than produce a permission error.
-- On macOS the package cache moves to `~/Library/Caches/copilot`, while the
-  device-id cache stays XDG-shaped at `~/.cache/Microsoft/DeveloperTools` —
-  the bundled runtime that writes it has no darwin branch. The two live in
-  different trees on macOS and the same one on Linux.
+- On macOS the two caches land in **two different Library trees, neither
+  XDG-shaped**: the package cache at `~/Library/Caches/copilot` (Copilot's own
+  resolver) and the device-id file at `~/Library/Application
+  Support/Microsoft/DeveloperTools` (the Microsoft device-id convention).
+  `XDG_CACHE_HOME` is set in the macOS fixture run and moves neither. On Linux
+  both are XDG-shaped and share a root.
 
 The catalog refuses rather than widens: a `COPILOT_HOME` pointing at `$HOME`, a
 `COPILOT_CACHE_HOME` landing on `~/.cache`, a grant covering the workspace, and
@@ -529,7 +547,7 @@ The catalog, and how each row was classified:
 |---|---|---|---|
 | `copilot-state-dir` | `COPILOT_HOME` ?? `$HOME/.copilot` | rw | **mandatory** — made read-only between two runs, the next launch exits 1 |
 | `copilot-package-cache` | `COPILOT_CACHE_HOME` ?? macOS `~/Library/Caches/copilot` ?? `${XDG_CACHE_HOME:-~/.cache}/copilot` | rw**x** | **mandatory** — the CLI unpacks and then *runs* its payload here |
-| `copilot-device-id-cache` | `${XDG_CACHE_HOME:-~/.cache}/Microsoft/DeveloperTools` | rw | best-effort — read-only still launches; only `deviceid` is denied |
+| `copilot-device-id-cache` | macOS `~/Library/Application Support/Microsoft/DeveloperTools` ?? `${XDG_CACHE_HOME:-~/.cache}/Microsoft/DeveloperTools` | rw | best-effort — read-only still launches; only `deviceid` is denied |
 | `copilot-executable` | caller-resolved `copilot` | rx | mandatory |
 | `system-temp-dir` | caller-supplied | rw | feature-conditional (shell tools; Copilot's own `--disallow-temp-dir` opts out) |
 | `tclaude-agentd-socket` | caller-supplied endpoints | rw | feature-conditional (hook callbacks, in-agent `tclaude agent`) |
@@ -538,10 +556,12 @@ The catalog, and how each row was classified:
 Four properties are worth calling out.
 
 **The macOS split is not symmetric.** The package cache moves to
-`~/Library/Caches/copilot`, but the device-id cache stays XDG-shaped at
-`~/.cache/Microsoft/DeveloperTools` — the bundled Rust runtime that writes it
-has no darwin branch at all. A macOS policy built by pattern-matching the Linux
-one gets this wrong.
+`~/Library/Caches/copilot` and the device-id file to `~/Library/Application
+Support/Microsoft/DeveloperTools` — two different Library trees, because the
+first follows Copilot's own cache resolver and the second follows the Microsoft
+device-id convention. Neither honours `XDG_CACHE_HOME` on darwin, which the
+macOS fixture run proves by setting it. A macOS policy built by pattern-matching
+the Linux one gets both rows wrong.
 
 **The package cache needs execute, not just write.** The unpacked payload holds
 the bundled ripgrep binary and prebuilt native modules; a `noexec` mount there

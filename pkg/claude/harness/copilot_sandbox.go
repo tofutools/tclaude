@@ -110,6 +110,18 @@ const CopilotSettingsFileName = "settings.json"
 // pending mutation of settings.json that applies to the very launch tclaude is
 // about to start.
 //
+// The migration is SHALLOW, at the top level. A `sandbox` object in config.json
+// REPLACES settings.json's whole `sandbox` object rather than merging into it,
+// while unrelated top-level keys survive. Measured:
+//
+//	settings.json {"sandbox":{"enabled":true},"theme":"dark"}
+//	config.json   {"sandbox":{"addCurrentWorkingDirectory":true}}
+//	  -> merged   {"sandbox":{"addCurrentWorkingDirectory":true},"theme":"dark"}
+//
+// The `enabled: true` is gone, so that launch has ONE boundary. Merging the two
+// files per sub-key instead would carry the canonical file's `true` forward and
+// refuse a launch that is in fact exactly what the assert-off contract wants.
+//
 // A gate reading only settings.json is therefore bypassable twice over: by
 // dropping a config.json before an otherwise clean launch, and by leaving
 // `sandbox.enabled: false` in settings.json where it reads as a determinate
@@ -185,6 +197,20 @@ func ResolveCopilotInnerSandbox(
 				"COPILOT_HOME from, got %q", home))
 	}
 	stateDir, _ := copilotStateDir(getenv, home)
+	// COPILOT_HOME supersedes the home directory validated above, and it is not
+	// validated by copilotStateDir. A RELATIVE value would make the settings
+	// paths relative too, so os.ReadFile would resolve them against tclaude's
+	// cwd — almost certainly missing, which this reader correctly reads as
+	// absence, which allows the launch. Copilot meanwhile resolves the same
+	// value against its OWN cwd and may be reading a file that raises the wall.
+	// That is the one shape here where a read failure means "asked the wrong
+	// question" rather than "the file is not there", so it refuses.
+	if !filepath.IsAbs(stateDir) {
+		return CopilotInnerSandboxState{}, copilotInnerSandboxError(fmt.Sprintf(
+			"%s is relative (%q), so tclaude and Copilot would resolve it against different "+
+				"working directories and inspect different settings files; set an absolute "+
+				"path to launch under tclaude's boundary", CopilotHomeEnvVar, stateDir))
+	}
 	state := CopilotInnerSandboxState{
 		SettingsPath: filepath.Join(stateDir, CopilotSettingsFileName),
 		ConfigPath:   filepath.Join(stateDir, CopilotConfigFileName),
@@ -201,7 +227,7 @@ func ResolveCopilotInnerSandbox(
 			continue
 		}
 		state.Present = true
-		if file.enabledSet {
+		if file.sandboxSet {
 			state.Enabled = file.enabled
 			state.EnabledSource = path
 		}
@@ -213,13 +239,26 @@ func ResolveCopilotInnerSandbox(
 	return state, nil
 }
 
-// copilotSandboxFile is one file's contribution to the effective posture. The
-// *Set flags are what make precedence expressible: "this file did not mention
-// the key" and "this file said false" are different inputs to a merge, and
-// collapsing them would let the weaker file's explicit false be silently
+// copilotSandboxFile is one file's contribution to the effective posture.
+//
+// The *Set flags are what make precedence expressible: "this file did not
+// mention the key" and "this file said false" are different inputs to a merge,
+// and collapsing them would let the weaker file's explicit false be silently
 // re-asserted over the stronger file's true.
+//
+// sandboxSet — not an `enabledSet` — because the migration is SHALLOW at the
+// TOP level: a `sandbox` object in the legacy file replaces the canonical
+// file's whole `sandbox` object rather than merging into it. Measured against
+// 1.0.77, `settings.json {"sandbox":{"enabled":true}}` plus
+// `config.json {"sandbox":{"addCurrentWorkingDirectory":true}}` leaves a
+// merged `sandbox` block with NO `enabled` key — the wall comes down. Keying
+// the merge on `enabled` alone would carry the canonical file's `true` forward
+// into a launch that does not have it, refusing a launch that is in fact
+// single-boundary. Unrelated top-level keys are untouched by the replacement.
 type copilotSandboxFile struct {
-	enabled, enabledSet           bool
+	// sandboxSet reports a top-level `sandbox` key, which is what REPLACES;
+	// enabled is that block's `sandbox.enabled`, false when the block omits it.
+	sandboxSet, enabled           bool
 	experimental, experimentalSet bool
 }
 
@@ -269,13 +308,16 @@ func readCopilotSandboxFile(path string) (copilotSandboxFile, bool, error) {
 			"Copilot settings %s has a `sandbox` value that is not an object; tclaude cannot "+
 				"determine whether Copilot's own command sandbox is engaged", path))
 	}
+	// The whole block counts as set, even when it omits `enabled` — that is the
+	// case a per-key merge gets wrong, because the block still REPLACES the
+	// other file's, taking its `enabled` with it.
+	out.sandboxSet = true
 	if raw, found := sandbox["enabled"]; found {
 		if err := json.Unmarshal(raw, &out.enabled); err != nil {
 			return out, false, copilotInnerSandboxError(fmt.Sprintf(
 				"Copilot settings %s has a non-boolean `sandbox.enabled` value; tclaude cannot "+
 					"determine whether Copilot's own command sandbox is engaged", path))
 		}
-		out.enabledSet = true
 	}
 	return out, true, nil
 }
@@ -290,6 +332,13 @@ func readCopilotSandboxFile(path string) (copilotSandboxFile, bool, error) {
 //
 // Only lines whose first non-space characters are `//` are removed, so a `//`
 // inside a string value — every https:// URL in the file — is untouched.
+//
+// This is deliberately NARROWER than whatever JSONC-ish parser the CLI itself
+// uses: a hand-edited file with a trailing comma or a /* */ block will parse
+// for Copilot and refuse here. That direction is chosen on purpose — the error
+// is an over-refusal an operator can see and fix, whereas a lenient parser that
+// guessed wrong about a file it half-understood would be asserting a single
+// boundary on a reading nobody verified.
 func stripCopilotLineComments(data []byte) []byte {
 	lines := strings.Split(string(data), "\n")
 	kept := make([]string, 0, len(lines))

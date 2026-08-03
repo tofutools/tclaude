@@ -519,6 +519,37 @@ func TestResolveCopilotInnerSandboxLegacyConfigPrecedence(t *testing.T) {
 			wantEnabled: true,
 			wantSource:  CopilotSettingsFileName,
 		},
+		{
+			// The over-refusal case, and the reason the merge is keyed on the
+			// `sandbox` BLOCK rather than on `sandbox.enabled`. The migration is
+			// shallow at the top level, so the legacy block replaces the
+			// canonical one wholesale and takes its `enabled: true` with it.
+			// Measured: the merged file ends up with only
+			// addCurrentWorkingDirectory, and the wall is down.
+			//
+			// A per-sub-key merge would carry the canonical `true` forward and
+			// refuse a launch that genuinely has one boundary — the assert-off
+			// contract failing in the direction that looks safe and is simply
+			// wrong.
+			name: "a legacy sandbox block replaces the canonical one wholesale",
+			files: map[string]string{
+				CopilotSettingsFileName: `{"sandbox":{"enabled":true},"theme":"dark"}`,
+				CopilotConfigFileName:   `{"sandbox":{"addCurrentWorkingDirectory":true}}`,
+			},
+			wantEnabled: false,
+			wantSource:  CopilotConfigFileName,
+		},
+		{
+			// Same replacement, the other way round: an empty legacy block still
+			// replaces, so it clears the canonical file's enabled.
+			name: "an empty legacy sandbox block still replaces",
+			files: map[string]string{
+				CopilotSettingsFileName: `{"sandbox":{"enabled":true}}`,
+				CopilotConfigFileName:   `{"sandbox":{}}`,
+			},
+			wantEnabled: false,
+			wantSource:  CopilotConfigFileName,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			home, getenv := writeCopilotFiles(t, tc.files)
@@ -622,6 +653,41 @@ func TestResolveCopilotInnerSandboxRefusesAmbiguousLegacyConfig(t *testing.T) {
 			}
 			if !strings.Contains(capErr.Message, CopilotConfigFileName) {
 				t.Errorf("refusal %q does not name %s", capErr.Message, CopilotConfigFileName)
+			}
+		})
+	}
+}
+
+// TestResolveCopilotInnerSandboxRefusesRelativeCopilotHome closes a fail-OPEN
+// shape: the gate validated the home directory it was handed but not the
+// environment override that supersedes it.
+//
+// A relative COPILOT_HOME makes the settings paths relative, so tclaude reads
+// them against ITS cwd — almost certainly finding nothing, which the reader
+// correctly treats as absence and the gate then allows. Copilot resolves the
+// same value against its own cwd and may be reading a file that raises the
+// wall. It is the one case where a missing file means "asked the wrong
+// question" rather than "there is no configuration".
+func TestResolveCopilotInnerSandboxRefusesRelativeCopilotHome(t *testing.T) {
+	for _, relative := range []string{".copilot", "./state", "../elsewhere"} {
+		t.Run(relative, func(t *testing.T) {
+			home := t.TempDir()
+			getenv := func(name string) string {
+				if name == CopilotHomeEnvVar {
+					return relative
+				}
+				return ""
+			}
+			_, err := ResolveCopilotInnerSandbox(getenv, home)
+			var capErr *SandboxCapabilityError
+			if !errors.As(err, &capErr) {
+				t.Fatalf("ResolveCopilotInnerSandbox = %v, want a *SandboxCapabilityError", err)
+			}
+			if capErr.Kind != SandboxCapabilityCopilotInnerSandbox {
+				t.Errorf("Kind = %q, want %q", capErr.Kind, SandboxCapabilityCopilotInnerSandbox)
+			}
+			if !strings.Contains(capErr.Message, CopilotHomeEnvVar) {
+				t.Errorf("refusal %q does not name %s", capErr.Message, CopilotHomeEnvVar)
 			}
 		})
 	}

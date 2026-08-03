@@ -362,3 +362,60 @@ func TestCopilotLegacyConfigMigratesIntoSettings(t *testing.T) {
 	assert.Equal(t, settingsPath, state.EnabledSource,
 		"after migration the canonical file is the one an operator must edit")
 }
+
+// TestCopilotLegacyConfigMergeIsShallow pins the half of the precedence rule
+// that decides whether the gate OVER-refuses.
+//
+// The migration replaces whole top-level keys; it does not merge sub-keys. A
+// `sandbox` object in the legacy file therefore takes the canonical file's
+// `sandbox` object away entirely — `enabled: true` included — while unrelated
+// top-level keys survive. So the pair below is a launch with ONE boundary, and
+// a gate that merged per sub-key would carry the canonical `true` forward and
+// refuse it: the assert-off contract failing in the direction that looks safe
+// and is simply wrong.
+func TestCopilotLegacyConfigMergeIsShallow(t *testing.T) {
+	requireSmoke(t)
+
+	mock := copilotfixture.NewMockProvider(t, []copilotfixture.Turn{
+		{Text: "MOCK SHALLOW-MERGE ANSWER"},
+	})
+	dirs := copilotfixture.NewSandboxDirs(t)
+
+	settingsPath := filepath.Join(dirs.Home, harness.CopilotSettingsFileName)
+	configPath := filepath.Join(dirs.Home, harness.CopilotConfigFileName)
+	require.NoError(t, os.WriteFile(settingsPath,
+		[]byte(`{"sandbox":{"enabled":true},"theme":"dark"}`), 0o600))
+	// A sandbox block that says nothing about `enabled` — which is exactly what
+	// makes this the interesting case.
+	require.NoError(t, os.WriteFile(configPath,
+		[]byte(`{"sandbox":{"addCurrentWorkingDirectory":true}}`), 0o600))
+
+	// tclaude's pre-launch answer.
+	runEnv := map[string]string{harness.CopilotHomeEnvVar: dirs.Home}
+	state, err := harness.ResolveCopilotInnerSandbox(
+		func(k string) string { return runEnv[k] }, dirs.Root)
+	require.NoError(t, err)
+	assert.False(t, state.Enabled,
+		"the legacy sandbox block replaces the canonical one wholesale, taking its "+
+			"`enabled: true` with it")
+	assert.Equal(t, configPath, state.EnabledSource)
+	assert.NoError(t, harness.ValidateCopilotTclaudeLayerInnerSandbox(state),
+		"this launch has one boundary and must not be refused")
+
+	result := copilotfixture.Run(t, copilotfixture.RunOptions{
+		Root: dirs.Root, Home: dirs.Home, Cache: dirs.Cache, XDGCache: dirs.XDGCache,
+		WorkDir: dirs.WorkDir,
+		BaseURL: mock.BaseURL(), Prompt: "Shallow-merge question.",
+	})
+	require.Equal(t, 0, result.ExitCode, "stderr: %s", result.Stderr)
+
+	// The CLI's own answer, which is what the assertion above has to match.
+	merged, err := os.ReadFile(settingsPath)
+	require.NoError(t, err)
+	assert.NotContains(t, string(merged), "enabled",
+		"the merged sandbox block must have LOST the canonical file's `enabled` key; "+
+			"if the CLI starts deep-merging, the gate's replacement model has to change")
+	assert.Contains(t, string(merged), "addCurrentWorkingDirectory")
+	assert.Contains(t, string(merged), `"theme"`,
+		"unrelated top-level keys survive the replacement; only `sandbox` is taken over")
+}
