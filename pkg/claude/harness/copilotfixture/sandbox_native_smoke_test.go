@@ -353,6 +353,103 @@ func TestCopilotNativeSandboxDisabledAppliesNoPolicy(t *testing.T) {
 	}
 }
 
+// TestCopilotNativeSandboxSettingsSourcesAndPrecedence pins WHERE the posture
+// comes from, which is a security question rather than a trivia one.
+//
+// COPILOT_HOME carries two settings files and both are live. `settings.json` is
+// the canonical one; `config.json` is a legacy source the CLI MIGRATES from at
+// startup — it wins for that launch and then overwrites settings.json with its
+// contents, leaving config.json as a managed stub. So anything that inspects a
+// Copilot sandbox posture and reads only one of the two names is wrong in a
+// direction that matters: reading only settings.json can be bypassed by
+// dropping a config.json that disables the sandbox, and reading only
+// config.json misses the canonical file entirely.
+//
+// Five arms, each a real launch: either file alone enables the sandbox, neither
+// file leaves it off, and when the two disagree config.json decides.
+func TestCopilotNativeSandboxSettingsSourcesAndPrecedence(t *testing.T) {
+	requireSmoke(t)
+
+	cases := []struct {
+		name string
+		// nil means "do not write this file at all".
+		legacy, canonical *bool
+		wantEnforced      bool
+	}{
+		{"canonical_only", nil, new(true), true},
+		{"legacy_only", new(true), nil, true},
+		{"neither", nil, nil, false},
+		{"legacy_on_beats_canonical_off", new(true), new(false), true},
+		{"legacy_off_beats_canonical_on", new(false), new(true), false},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			dirs := newNativeSandboxDirs(t)
+			settings := func(enabled bool) copilotfixture.NativeSandboxSettings {
+				return copilotfixture.NativeSandboxSettings{
+					Enabled: enabled, AddCurrentWorkingDirectory: true, AllowBypass: false,
+					UserPolicy: copilotfixture.NativeSandboxUserPolicy{
+						Filesystem: copilotfixture.NativeSandboxFilesystem{
+							DeniedPaths: []string{dirs.Denied},
+						},
+					},
+				}
+			}
+			if testCase.legacy != nil {
+				copilotfixture.WriteNativeSandboxSettingsTo(t, dirs.Dirs,
+					copilotfixture.NativeLegacySettingsFile, settings(*testCase.legacy))
+			}
+			if testCase.canonical != nil {
+				copilotfixture.WriteNativeSandboxSettingsTo(t, dirs.Dirs,
+					copilotfixture.NativeSettingsFile, settings(*testCase.canonical))
+			}
+
+			target := filepath.Join(dirs.Denied, "in_denied")
+			results := runNativeSandboxScenario(t, dirs, []copilotfixture.Turn{
+				createTurn("edit_denied", target),
+			})
+
+			if testCase.wantEnforced {
+				assert.Contains(t, results["edit_denied"], nativeSandboxBlockedMarker)
+				assert.False(t, exists(t, target),
+					"the posture these settings describe was not applied")
+				return
+			}
+			assert.NotContains(t, results["edit_denied"], nativeSandboxBlockedMarker)
+			assert.True(t, exists(t, target),
+				"a sandbox was applied that these settings did not ask for")
+		})
+	}
+
+	// The migration itself, pinned separately from the verdicts above: a gate
+	// that saw config.json as inert legacy would be reading a file the CLI is
+	// about to promote over the canonical one.
+	t.Run("legacy_is_migrated_into_canonical", func(t *testing.T) {
+		dirs := newNativeSandboxDirs(t)
+		copilotfixture.WriteNativeSandboxSettingsTo(t, dirs.Dirs,
+			copilotfixture.NativeLegacySettingsFile, copilotfixture.NativeSandboxSettings{
+				Enabled: true, AddCurrentWorkingDirectory: true,
+				UserPolicy: copilotfixture.NativeSandboxUserPolicy{
+					Filesystem: copilotfixture.NativeSandboxFilesystem{
+						DeniedPaths: []string{dirs.Denied},
+					},
+				},
+			})
+		runNativeSandboxScenario(t, dirs, []copilotfixture.Turn{
+			createTurn("edit_denied", filepath.Join(dirs.Denied, "in_denied")),
+		})
+
+		canonical, err := os.ReadFile(
+			filepath.Join(dirs.Home, copilotfixture.NativeSettingsFile))
+		require.NoError(t, err,
+			"the CLI must have written the canonical settings file")
+		assert.Contains(t, string(canonical), dirs.Denied,
+			"the legacy file's sandbox policy must have been migrated into the "+
+				"canonical one; a reader of settings.json alone would otherwise "+
+				"see a posture the next launch replaces")
+	})
+}
+
 // TestCopilotHarnessRefusesBuiltinOSSandbox ties the measurements above to the
 // descriptor they justify, in the same file, so the capability and its evidence
 // cannot drift apart. It needs no CLI, hence no smoke gate.

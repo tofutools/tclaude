@@ -426,9 +426,10 @@ auto-updating install cannot absorb a contract change silently.
 confined Copilot launch reach, in which mode, and how does each path resolve* —
 and stops there. It advertises no sandbox capability; the descriptor's `Sandbox`
 contract is still nil. It exists because two separate pieces of work need the
-same answer: Copilot's own built-in MXC sandbox (the `sandbox` key in
-`<COPILOT_HOME>/config.json`, see `copilot help sandbox` and
-[below](#copilots-own-command-sandboxing)) and tclaude's outer
+same answer: Copilot's own built-in MXC sandbox (the `sandbox` key in the
+settings under `COPILOT_HOME` — see `copilot help sandbox` and
+[below](#copilots-own-command-sandboxing), which records that both
+`settings.json` and `config.json` carry it) and tclaude's outer
 bubblewrap/Seatbelt boundary.
 
 The catalog, and how each row was classified:
@@ -501,7 +502,8 @@ What Copilot actually has, measured against the pinned 1.0.77 binary:
 | **Shell commands** | Genuinely OS-confined — Microsoft Execution Containers (bubblewrap on Linux, Seatbelt on macOS, ProcessContainer on Windows) |
 | **Built-in file edits** (`create`, `edit`, …) | **Not** OS-confined. GitHub says so outright, and the fixture measures it: on a host where the OS backend cannot start at all, a `create` into the granted workspace still wrote its file while every shell command failed |
 | **Path checking of those edits** | Sound as far as it goes — symlinks planted inside the workspace and `..` traversal are both resolved before the decision, so the objection is *where* enforcement lives, not a defect in it |
-| **How it is turned on** | `sandbox.enabled` in `<COPILOT_HOME>/config.json`, the interactive `/sandbox` dialog, or organization policy. There is **no launch flag**, and `--experimental` gates only the `/sandbox` *command* — a config-enabled sandbox applies without it |
+| **How it is turned on** | `sandbox.enabled` in the settings under `COPILOT_HOME`, the interactive `/sandbox` dialog, or organization policy. There is **no launch flag**, and `--experimental` gates only the `/sandbox` *command* — a settings-enabled sandbox applies without it |
+| **Which settings file** | **Both** `settings.json` and `config.json` are live, and `config.json` wins. `settings.json` is canonical; `config.json` is a legacy source the CLI migrates from at startup — it decides that launch, overwrites `settings.json` with its contents, and is left as a managed stub. Anything inspecting a Copilot sandbox posture must read both names |
 | **Availability** | Host-conditional on Linux: `bwrap` on PATH is not enough, the kernel must also permit an unprivileged user namespace |
 | **When the backend cannot start** | Fails closed — shell commands error out rather than silently running unconfined |
 | **Default** | Off. An operator who never enabled it has no containment at all |
@@ -523,6 +525,12 @@ closed: there is no launch-time flag to pin a per-spawn posture with (and
 running agent), the feature is experimental by its own vendor's description, and
 its availability is a runtime property of the host that tclaude cannot verify at
 launch.
+
+The two-file precedence in the table above is a security detail rather than a
+trivia one, and it is the reason the row exists: a check that reads only
+`settings.json` is bypassable by dropping a `config.json` that disables the
+sandbox, because that file wins at the next launch and rewrites `settings.json`
+to match. A check that reads only `config.json` misses the canonical file.
 
 None of this constrains Copilot under `tclaude-layer`, which is a separate wall
 that tclaude owns.

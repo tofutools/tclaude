@@ -49,20 +49,42 @@ type NativeSandboxNetwork struct {
 	AllowLocalNetwork bool `json:"allowLocalNetwork"`
 }
 
-// WriteNativeSandboxSettings writes COPILOT_HOME/config.json for a scenario.
+// Settings file names under COPILOT_HOME. BOTH are live inputs to the sandbox
+// posture and they are NOT interchangeable — see
+// TestCopilotNativeSandboxSettingsSourcesAndPrecedence, which measures that
+// config.json wins and is migrated into settings.json on startup. Anything that
+// inspects a Copilot sandbox posture has to know both names.
+const (
+	// NativeSettingsFile is the canonical live settings file.
+	NativeSettingsFile = "settings.json"
+	// NativeLegacySettingsFile is the legacy file the CLI migrates FROM. It
+	// takes precedence for the launch that consumes it and overwrites the
+	// canonical file, which makes it the bypass-relevant one.
+	NativeLegacySettingsFile = "config.json"
+)
+
+// WriteNativeSandboxSettings writes the scenario's posture into the canonical
+// settings file under COPILOT_HOME.
 //
-// config.json is the settings file the CLI reads out of COPILOT_HOME; the
-// baseline golden records it as the file a plain run creates there. Writing it
-// before the run is how a scenario chooses a sandbox posture at all: the
-// feature has NO launch flag, which is itself one of the findings this suite
-// exists to pin.
+// Writing a file before the run is how a scenario chooses a sandbox posture at
+// all: the feature has NO launch flag, which is itself one of the findings this
+// suite exists to pin.
 func WriteNativeSandboxSettings(t *testing.T, dirs Dirs, sandbox NativeSandboxSettings) {
+	t.Helper()
+	WriteNativeSandboxSettingsTo(t, dirs, NativeSettingsFile, sandbox)
+}
+
+// WriteNativeSandboxSettingsTo writes the posture into a named settings file
+// under COPILOT_HOME, so a scenario can exercise either source or both.
+func WriteNativeSandboxSettingsTo(
+	t *testing.T, dirs Dirs, fileName string, sandbox NativeSandboxSettings,
+) {
 	t.Helper()
 	encoded, err := json.MarshalIndent(map[string]any{"sandbox": sandbox}, "", "  ")
 	if err != nil {
 		t.Fatalf("copilotfixture: encoding sandbox settings: %v", err)
 	}
-	path := filepath.Join(dirs.Home, "config.json")
+	path := filepath.Join(dirs.Home, fileName)
 	if err := os.WriteFile(path, encoded, 0o600); err != nil {
 		t.Fatalf("copilotfixture: writing %s: %v", path, err)
 	}
