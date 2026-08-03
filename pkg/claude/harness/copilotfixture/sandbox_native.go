@@ -15,8 +15,9 @@ import (
 // touches so tclaude can confine it from the outside. The two are easy to
 // confuse and answer opposite questions.
 
-// NativeSandboxSettings is the `sandbox` object tclaude writes into
-// COPILOT_HOME/config.json for a scenario. It mirrors the CLI's own
+// NativeSandboxSettings is the `sandbox` object a scenario writes into the
+// settings under COPILOT_HOME — settings.json by default; see
+// WriteNativeSandboxSettingsTo for the legacy file. It mirrors the CLI's own
 // SandboxConfig schema (schemas/api.schema.json in the unpacked payload) rather
 // than inventing a shape, so a schema change shows up as a scenario that stops
 // behaving instead of one that silently writes an ignored key.

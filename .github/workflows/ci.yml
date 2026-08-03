@@ -968,9 +968,9 @@ jobs:
           - platform: macos
             runner: macos-latest
             # The Seatbelt half of the sandbox evidence, and nothing else. The
-            # descriptor test is named explicitly because it is the one that
-            # ties these measurements to the capability they justify.
-            run_filter: TestCopilotNativeSandbox|TestCopilotHarnessRefusesBuiltinOSSandbox
+            # descriptor test these measurements justify needs no CLI and lives
+            # in the harness package, so the ordinary `go test ./...` job owns it.
+            run_filter: TestCopilotNativeSandbox
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -1044,7 +1044,6 @@ jobs:
             TestCopilotNativeSandboxNeedsNoExperimentalFlag
             TestCopilotNativeSandboxDisabledAppliesNoPolicy
             TestCopilotNativeSandboxSettingsSourcesAndPrecedence
-            TestCopilotHarnessRefusesBuiltinOSSandbox
           )
           if [[ "${{ matrix.platform }}" == "linux" ]]; then
             # The compatibility fixtures run on Linux only; see the job comment.
@@ -1098,7 +1097,10 @@ jobs:
           TCLAUDE_COPILOT_FIXTURE_SMOKE: "1"
         run: |
           set -o pipefail
-          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=1
+          # Tolerated exactly like the provisioning step's write. On a runner
+          # without this knob the raw sysctl error would preempt the descriptive
+          # gate below, which was written for precisely that case.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=1 || true
           go test ./pkg/claude/harness/copilotfixture/... \
             -run 'TestCopilotNativeSandbox' -v -count=1 -timeout 900s 2>&1 \
             | tee "$RUNNER_TEMP/copilot-fixtures-nobackend.log"

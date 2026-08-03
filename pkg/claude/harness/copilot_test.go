@@ -7,6 +7,9 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestCopilotDescriptor pins the first Copilot wave's capability surface. The
@@ -337,4 +340,27 @@ func TestCopilotValidateEffort(t *testing.T) {
 	if _, err := m.ValidateEffort("ultra"); err == nil {
 		t.Fatal("ValidateEffort(\"ultra\") must be refused")
 	}
+}
+
+// TestCopilotHarnessRefusesBuiltinOSSandbox pins the TCL-977 capability answer:
+// Copilot's own command sandboxing does not satisfy SupportsBuiltinOSSandbox, so
+// an explicit harness-builtin implementation is refused — and the refusal names
+// the property Copilot is missing rather than denying it has anything.
+//
+// The measurements this rests on live in
+// copilotfixture/sandbox_native_smoke_test.go, against the real pinned binary;
+// the reasoning lives beside the descriptor in copilot_sandbox_native.go. This
+// test needs neither, which is why it sits here with the code it covers.
+func TestCopilotHarnessRefusesBuiltinOSSandbox(t *testing.T) {
+	copilot, ok := Get(CopilotName)
+	require.True(t, ok)
+	require.False(t, copilot.SupportsBuiltinOSSandbox())
+
+	err := ValidateHarnessBuiltinOSSandbox(copilot)
+	require.Error(t, err)
+	require.True(t, IsBuiltinOSSandboxInvalid(err))
+	assert.Contains(t, err.Error(), "built-in file edits are checked by an in-process policy",
+		"the refusal must name the property Copilot is missing; a flat "+
+			"\"no built-in OS sandbox\" reads as a gap in tclaude to an operator "+
+			"who can see the feature in their own CLI")
 }

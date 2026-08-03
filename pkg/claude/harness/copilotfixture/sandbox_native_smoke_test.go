@@ -9,7 +9,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/harness/copilotfixture"
 )
 
@@ -167,6 +166,23 @@ func runNativeSandboxScenarioWithArgs(
 	t *testing.T, dirs nativeSandboxDirs, turns []copilotfixture.Turn, args ...string,
 ) map[string]string {
 	t.Helper()
+	results, _ := runNativeSandboxScenarioWithRequests(t, dirs, turns, args...)
+	return results
+}
+
+// runNativeSandboxScenarioWithRequests additionally returns the raw provider
+// requests, for a scenario whose evidence is what the CLI RECEIVED rather than
+// only what it did — the traversal case, whose whole point is that an
+// un-normalized argument reached the binary.
+//
+// Launch arguments are passed VERBATIM — no default is substituted for an empty
+// list, because "no arguments" is a posture the base-surface scenario measures
+// deliberately and a helpful default would silently turn it into a different
+// measurement.
+func runNativeSandboxScenarioWithRequests(
+	t *testing.T, dirs nativeSandboxDirs, turns []copilotfixture.Turn, args ...string,
+) (map[string]string, []copilotfixture.RecordedRequest) {
+	t.Helper()
 	mock := copilotfixture.NewMockProvider(t, append(turns, copilotfixture.Turn{Text: "MOCK DONE"}))
 	result := copilotfixture.Run(t, copilotfixture.RunOptions{
 		Root: dirs.Root, Home: dirs.Home, Cache: dirs.Cache, XDGCache: dirs.XDGCache,
@@ -174,7 +190,8 @@ func runNativeSandboxScenarioWithArgs(
 		Prompt: "Run the tools the provider asks for.", ExtraArgs: args,
 	})
 	require.Equal(t, 0, result.ExitCode, "stderr: %s", result.Stderr)
-	return toolResults(mock.Requests())
+	requests := mock.Requests()
+	return toolResults(requests), requests
 }
 
 func exists(t *testing.T, path string) bool {
@@ -269,11 +286,31 @@ func TestCopilotNativeSandboxBuiltinEditPolicyResolvesSymlinksAndTraversal(t *te
 	require.NoError(t, os.Symlink(dirs.SystemTemp, filepath.Join(dirs.WorkDir, "escape")))
 	require.NoError(t, os.Symlink(dirs.Denied, filepath.Join(dirs.WorkDir, "escape_denied")))
 
-	results := runNativeSandboxScenario(t, dirs, []copilotfixture.Turn{
-		createTurn("symlink_outside", filepath.Join(dirs.WorkDir, "escape", "via_symlink")),
-		createTurn("symlink_denied", filepath.Join(dirs.WorkDir, "escape_denied", "via_symlink")),
-		createTurn("traversal", filepath.Join(dirs.WorkDir, "..", "via_traversal")),
-	})
+	// Concatenated, NOT filepath.Join'd. Join calls Clean, which resolves the
+	// `..` before the argument is ever serialized — so a Join-built "traversal"
+	// path arrives at the CLI already normalized and the scenario measures a
+	// plain out-of-policy write instead of a traversal. The literal segment has
+	// to survive into the tool argument for this test to mean anything, which is
+	// what the request assertion below verifies rather than assumes.
+	traversalArgument := dirs.WorkDir + "/../via_traversal"
+	require.Contains(t, traversalArgument, "/../",
+		"the traversal argument must carry a literal `..` segment")
+
+	results, requests := runNativeSandboxScenarioWithRequests(t, dirs,
+		[]copilotfixture.Turn{
+			createTurn("symlink_outside", filepath.Join(dirs.WorkDir, "escape", "via_symlink")),
+			createTurn("symlink_denied", filepath.Join(dirs.WorkDir, "escape_denied", "via_symlink")),
+			createTurn("traversal", traversalArgument),
+		}, "--allow-all-paths")
+
+	// Proof that the un-normalized path reached the CLI: the tool call is
+	// replayed verbatim in the follow-up request's message history, so the
+	// literal segment is observable on the wire.
+	recorded, err := json.Marshal(requests)
+	require.NoError(t, err)
+	assert.Contains(t, string(recorded), traversalArgument,
+		"the CLI must have received the literal `..` path; if this fails the "+
+			"traversal case is normalizing before the CLI sees it and proves nothing")
 
 	for id, path := range map[string]string{
 		"symlink_outside": filepath.Join(dirs.SystemTemp, "via_symlink"),
@@ -429,7 +466,10 @@ func TestCopilotNativeSandboxShellBasePolicySurface(t *testing.T) {
 			}
 			results := runNativeSandboxScenarioWithArgs(
 				t, dirs, turns, configuration.args...)
-			backend := classifyBackend(
+			// Called for its log line and for its refusal to classify an
+			// ambiguous run; this scenario asserts the same invariant on either
+			// arm, so the verdict itself is not branched on.
+			classifyBackend(
 				t, exists(t, targets["workspace"]), results["shell_workspace"])
 
 			for _, name := range []string{"workspace", "home", "system_temp", "denied"} {
@@ -440,13 +480,7 @@ func TestCopilotNativeSandboxShellBasePolicySurface(t *testing.T) {
 				"an authored deniedPaths entry must be honored under %s, even though "+
 					"the denied directory lies inside the base temp grant",
 				configuration.name)
-			if !backend.Up {
-				// The workspace write is what classifies the backend, so an
-				// unusable one is already reported by classifyBackend's log
-				// line; the deny assertion above still holds because nothing
-				// ran at all.
-				return
-			}
+
 		})
 	}
 }
@@ -656,19 +690,7 @@ func TestCopilotNativeSandboxSettingsSourcesAndPrecedence(t *testing.T) {
 	})
 }
 
-// TestCopilotHarnessRefusesBuiltinOSSandbox ties the measurements above to the
-// descriptor they justify, in the same file, so the capability and its evidence
-// cannot drift apart. It needs no CLI, hence no smoke gate.
-func TestCopilotHarnessRefusesBuiltinOSSandbox(t *testing.T) {
-	copilot, ok := harness.Get(harness.CopilotName)
-	require.True(t, ok)
-	require.False(t, copilot.SupportsBuiltinOSSandbox())
-
-	err := harness.ValidateHarnessBuiltinOSSandbox(copilot)
-	require.Error(t, err)
-	require.True(t, harness.IsBuiltinOSSandboxInvalid(err))
-	assert.Contains(t, err.Error(), "built-in file edits are checked by an in-process policy",
-		"the refusal must name the property Copilot is missing; a flat "+
-			"\"no built-in OS sandbox\" reads as a gap in tclaude to an operator "+
-			"who can see the feature in their own CLI")
-}
+// The descriptor refusal this suite justifies is asserted in
+// harness.TestCopilotHarnessRefusesBuiltinOSSandbox — beside the code it covers,
+// per the repository's testing guidance. It needs no CLI and no fixture, so it
+// runs in the ordinary `go test ./...` job rather than in the pinned-binary one.
