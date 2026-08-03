@@ -1471,6 +1471,39 @@ function mountSandboxEditor(harness, mountManagementIsland, state, overrides = {
   return { host, unmount: () => cleanups.reverse().forEach((fn) => fn()) };
 }
 
+test('sandbox editor offers Mach registration only on a macOS agentd', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  const saves = [];
+  state.openDialog({
+    kind: 'sandbox-editor', seed: { name: 'chrome', filesystem: [], environment: [] },
+    options: {}, sandboxImpl: { ...sandboxImpl, platform: 'darwin' },
+  });
+  const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state, {
+    async saveSandbox(value) { saves.push(value); },
+  });
+  await harness.act(() => Promise.resolve());
+  const checkbox = host.querySelector('#sandbox-profile-editor-allow-mach-register');
+  assert.ok(checkbox, 'macOS exposes the compatibility capability');
+  checkbox.checked = true;
+  await harness.act(() => harness.fireEvent(checkbox, 'change'));
+  await harness.act(() => harness.fireEvent(host.querySelector('#sandbox-profile-editor-submit'), 'click'));
+  assert.equal(saves[0].draft.darwin_allow_mach_register, true);
+
+  state.closeDialog();
+  await harness.act(() => Promise.resolve());
+  state.openDialog({
+    kind: 'sandbox-editor', seed: { name: 'linux', filesystem: [], environment: [] },
+    options: {}, sandboxImpl: { ...sandboxImpl, platform: 'linux' },
+  });
+  await harness.act(() => Promise.resolve());
+  assertAbsent(host.querySelector('#sandbox-profile-editor-compatibility-section'));
+  unmount();
+});
+
 test('sandbox editor sections start collapsed and keep disclosure help reachable', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
@@ -1789,6 +1822,7 @@ test('sandbox editor groups concrete rules by the selected assignment outcome', 
         }] }],
         contexts: [{
           context: { global: 'base', group: 'access', group_name: 'crew' },
+          darwin_allow_mach_register: true,
           filesystem: [{ path: '/home/operator', access: 'deny' }, { path: '/home/operator/work', access: 'write' }],
           environment: ['POLICY_OWNER'],
           agent_directories: ['GOCACHE'],
@@ -1849,6 +1883,9 @@ test('sandbox editor groups concrete rules by the selected assignment outcome', 
   assert.equal(host.querySelector('.sbx-network-ports').value, '443');
   assert.match(host.querySelector('.sbx-policy-target').textContent,
     /OpenCode on macOS · tclaude sandbox/);
+  assert.match(host.querySelector('.sbx-mach-register-evaluation').textContent,
+    /Mach service registration.*Allowed by the tclaude Seatbelt layer for this target/s,
+    'the preview discloses that the composed compatibility capability applies to this target');
   const applied = host.querySelector('.sbx-rule-bucket-applied');
   assert.equal(applied.hasAttribute('open'), false,
     'fully supported rules always start folded');

@@ -143,16 +143,17 @@ const (
 // the override semantics. Flatten expands Includes; Resolve refuses profiles
 // that still carry them.
 type Profile struct {
-	Name                string               `json:"name"`
-	Filesystem          []FilesystemGrant    `json:"filesystem,omitempty"`
-	FilesystemSpellings *FilesystemSpellings `json:"filesystem_spellings,omitempty"`
-	Environment         []EnvironmentEntry   `json:"environment,omitempty"`
-	AgentDirectories    []string             `json:"agent_directories,omitempty"`
-	NetworkAccess       NetworkAccess        `json:"network_access,omitempty"`
-	Network             *NetworkRules        `json:"network,omitempty"`
-	UnixSockets         *UnixSocketRules     `json:"unix_sockets,omitempty"`
-	ResourceLimits      ResourceLimits       `json:"resource_limits,omitempty"`
-	Includes            []string             `json:"includes,omitempty"`
+	Name                    string               `json:"name"`
+	Filesystem              []FilesystemGrant    `json:"filesystem,omitempty"`
+	FilesystemSpellings     *FilesystemSpellings `json:"filesystem_spellings,omitempty"`
+	Environment             []EnvironmentEntry   `json:"environment,omitempty"`
+	AgentDirectories        []string             `json:"agent_directories,omitempty"`
+	NetworkAccess           NetworkAccess        `json:"network_access,omitempty"`
+	Network                 *NetworkRules        `json:"network,omitempty"`
+	UnixSockets             *UnixSocketRules     `json:"unix_sockets,omitempty"`
+	ResourceLimits          ResourceLimits       `json:"resource_limits,omitempty"`
+	DarwinAllowMachRegister bool                 `json:"darwin_allow_mach_register,omitempty"`
+	Includes                []string             `json:"includes,omitempty"`
 }
 
 var environmentNameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
@@ -277,7 +278,8 @@ func normalize(in Profile, allowMissing, authoring bool) (Profile, []string, err
 	return Profile{
 		Name: name, Filesystem: filesystem, FilesystemSpellings: filesystemSpellings,
 		Environment: environment, AgentDirectories: agentDirectories, NetworkAccess: networkAccess,
-		Network: network, UnixSockets: unixSockets, ResourceLimits: resourceLimits, Includes: includes,
+		Network: network, UnixSockets: unixSockets, ResourceLimits: resourceLimits,
+		DarwinAllowMachRegister: in.DarwinAllowMachRegister, Includes: includes,
 	}, missing, nil
 }
 

@@ -993,6 +993,14 @@ every filesystem row to the profile and scope that introduced it.
 Agent-initiated spawns, resume, and reincarnation cannot drop an effective deny
 row, nor reopen a path beneath one that the parent did not reopen.
 
+When agentd runs on macOS, the editor also shows a collapsed **Compatibility —
+macOS only** section. **Allow Mach service registration** is off by default and
+authors `darwin_allow_mach_register: true`. The setting enables headless
+browser/XPC process startup by adding `(allow mach-register)` to tclaude's own
+Seatbelt profile. It does not alter Claude Code's or Codex's built-in sandbox,
+so launches that use only a harness-owned implementation do not gain the
+capability.
+
 **🤖 configure with agent** summons a fresh, independently named sandbox scribe
 for either a new profile or the draft currently open in the editor. Existing
 scribes keep working in parallel. The scribe can discuss paths, literal

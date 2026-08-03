@@ -62,15 +62,16 @@ type EffectiveProfile struct {
 	// still contain symlinks. Modern registry profiles retain those spellings
 	// in non-authoritative metadata; legacy profiles may have already lost
 	// them. Omitempty keeps snapshots with no observable aliases byte-compatible.
-	MountAliases     []MountAlias         `json:"mount_aliases,omitempty"`
-	Environment      []EnvironmentEntry   `json:"environment"`
-	AgentDirectories []string             `json:"agent_directories"`
-	NetworkAccess    NetworkAccess        `json:"network_access,omitempty"`
-	Network          *NetworkRules        `json:"network,omitempty"`
-	UnixSockets      *UnixSocketRules     `json:"unix_sockets,omitempty"`
-	ResourceLimits   ResourceLimits       `json:"resource_limits,omitempty"`
-	AccessNotices    []AccessNotice       `json:"access_notices,omitempty"`
-	Provenance       ResolutionProvenance `json:"provenance"`
+	MountAliases            []MountAlias         `json:"mount_aliases,omitempty"`
+	Environment             []EnvironmentEntry   `json:"environment"`
+	AgentDirectories        []string             `json:"agent_directories"`
+	NetworkAccess           NetworkAccess        `json:"network_access,omitempty"`
+	Network                 *NetworkRules        `json:"network,omitempty"`
+	UnixSockets             *UnixSocketRules     `json:"unix_sockets,omitempty"`
+	ResourceLimits          ResourceLimits       `json:"resource_limits,omitempty"`
+	DarwinAllowMachRegister bool                 `json:"darwin_allow_mach_register,omitempty"`
+	AccessNotices           []AccessNotice       `json:"access_notices,omitempty"`
+	Provenance              ResolutionProvenance `json:"provenance"`
 }
 
 // resolvedFilesystemGrant is one merged rule. The map it lives in is keyed on
@@ -238,6 +239,7 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 			resourceSource := source
 			result.Provenance.ResourceCPU = &resourceSource
 		}
+		result.DarwinAllowMachRegister = result.DarwinAllowMachRegister || normalized.DarwinAllowMachRegister
 		axes, err := DeriveAccessAxes(normalized)
 		if err != nil {
 			return EffectiveProfile{}, fmt.Errorf(

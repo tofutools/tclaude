@@ -180,18 +180,19 @@ type sandboxProfileDraftEnforcementTarget struct {
 }
 
 type sandboxProfileEffectiveContext struct {
-	Context          map[string]string               `json:"context"`
-	Filesystem       []sandboxpolicy.FilesystemGrant `json:"filesystem"`
-	Environment      []string                        `json:"environment"`
-	AgentDirectories []string                        `json:"agent_directories"`
-	Network          sandboxpolicy.NetworkRules      `json:"network"`
-	UnixSockets      sandboxpolicy.UnixSocketRules   `json:"unix_sockets"`
-	ResourceLimits   sandboxpolicy.ResourceLimits    `json:"resource_limits,omitempty"`
-	MemoryLimitBytes string                          `json:"memory_limit_bytes,omitempty"`
-	CPUQuota         string                          `json:"cpu_max,omitempty"`
-	AgentdSocket     string                          `json:"agentd_socket"`
-	Notices          []sandboxpolicy.AccessNotice    `json:"notices"`
-	policy           sandboxpolicy.Profile
+	Context                 map[string]string               `json:"context"`
+	Filesystem              []sandboxpolicy.FilesystemGrant `json:"filesystem"`
+	Environment             []string                        `json:"environment"`
+	AgentDirectories        []string                        `json:"agent_directories"`
+	Network                 sandboxpolicy.NetworkRules      `json:"network"`
+	UnixSockets             sandboxpolicy.UnixSocketRules   `json:"unix_sockets"`
+	ResourceLimits          sandboxpolicy.ResourceLimits    `json:"resource_limits,omitempty"`
+	DarwinAllowMachRegister bool                            `json:"darwin_allow_mach_register,omitempty"`
+	MemoryLimitBytes        string                          `json:"memory_limit_bytes,omitempty"`
+	CPUQuota                string                          `json:"cpu_max,omitempty"`
+	AgentdSocket            string                          `json:"agentd_socket"`
+	Notices                 []sandboxpolicy.AccessNotice    `json:"notices"`
+	policy                  sandboxpolicy.Profile
 }
 
 func sandboxResourceLimitRefusal(
@@ -858,10 +859,11 @@ func effectiveDraftSandboxProfileContexts(
 			}
 		}
 		effectivePolicy := sandboxpolicy.Profile{
-			NetworkAccess:  effective.NetworkAccess,
-			Network:        effective.Network,
-			UnixSockets:    effective.UnixSockets,
-			ResourceLimits: effective.ResourceLimits,
+			NetworkAccess:           effective.NetworkAccess,
+			Network:                 effective.Network,
+			UnixSockets:             effective.UnixSockets,
+			ResourceLimits:          effective.ResourceLimits,
+			DarwinAllowMachRegister: effective.DarwinAllowMachRegister,
 		}
 		axes, err := sandboxpolicy.DeriveAccessAxes(effectivePolicy)
 		if err != nil {
@@ -885,13 +887,14 @@ func effectiveDraftSandboxProfileContexts(
 			environment = append(environment, entry.Name)
 		}
 		policy := sandboxpolicy.Profile{
-			Filesystem:       append([]sandboxpolicy.FilesystemGrant(nil), effective.Filesystem...),
-			Environment:      append([]sandboxpolicy.EnvironmentEntry(nil), effective.Environment...),
-			AgentDirectories: append([]string(nil), effective.AgentDirectories...),
-			NetworkAccess:    effective.NetworkAccess,
-			Network:          effective.Network,
-			UnixSockets:      effective.UnixSockets,
-			ResourceLimits:   effective.ResourceLimits,
+			Filesystem:              append([]sandboxpolicy.FilesystemGrant(nil), effective.Filesystem...),
+			Environment:             append([]sandboxpolicy.EnvironmentEntry(nil), effective.Environment...),
+			AgentDirectories:        append([]string(nil), effective.AgentDirectories...),
+			NetworkAccess:           effective.NetworkAccess,
+			Network:                 effective.Network,
+			UnixSockets:             effective.UnixSockets,
+			ResourceLimits:          effective.ResourceLimits,
+			DarwinAllowMachRegister: effective.DarwinAllowMachRegister,
 		}
 		memoryBytes := ""
 		if policy.ResourceLimits.Memory != "" {
@@ -906,18 +909,19 @@ func effectiveDraftSandboxProfileContexts(
 			cpuMax = fmt.Sprintf("%d %d", quota, sandboxpolicy.CPUCgroupPeriodMicros)
 		}
 		out = append(out, sandboxProfileEffectiveContext{
-			Context:          context,
-			Filesystem:       policy.Filesystem,
-			Environment:      environment,
-			AgentDirectories: policy.AgentDirectories,
-			Network:          axes.Network,
-			UnixSockets:      axes.UnixSockets,
-			ResourceLimits:   policy.ResourceLimits,
-			MemoryLimitBytes: memoryBytes,
-			CPUQuota:         cpuMax,
-			AgentdSocket:     "always reachable",
-			Notices:          notices,
-			policy:           policy,
+			Context:                 context,
+			Filesystem:              policy.Filesystem,
+			Environment:             environment,
+			AgentDirectories:        policy.AgentDirectories,
+			Network:                 axes.Network,
+			UnixSockets:             axes.UnixSockets,
+			ResourceLimits:          policy.ResourceLimits,
+			DarwinAllowMachRegister: policy.DarwinAllowMachRegister,
+			MemoryLimitBytes:        memoryBytes,
+			CPUQuota:                cpuMax,
+			AgentdSocket:            "always reachable",
+			Notices:                 notices,
+			policy:                  policy,
 		})
 	}
 	return out, remaining, nil
@@ -1068,7 +1072,8 @@ func sandboxProfileDBToPolicy(profile *db.SandboxProfile) *sandboxpolicy.Profile
 		FilesystemSpellings: profile.FilesystemSpellings,
 		Environment:         profile.Environment, AgentDirectories: profile.AgentDirectories,
 		NetworkAccess: profile.NetworkAccess, Network: profile.Network,
-		UnixSockets: profile.UnixSockets, ResourceLimits: profile.ResourceLimits, Includes: profile.Includes,
+		UnixSockets: profile.UnixSockets, ResourceLimits: profile.ResourceLimits,
+		DarwinAllowMachRegister: profile.DarwinAllowMachRegister, Includes: profile.Includes,
 	}
 }
 

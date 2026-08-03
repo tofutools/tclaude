@@ -18,10 +18,11 @@ import (
 )
 
 type wireSandboxProfile struct {
-	Name             string   `json:"name"`
-	AgentDirectories []string `json:"agent_directories"`
-	NetworkAccess    string   `json:"network_access"`
-	Filesystem       []struct {
+	Name                    string   `json:"name"`
+	AgentDirectories        []string `json:"agent_directories"`
+	NetworkAccess           string   `json:"network_access"`
+	DarwinAllowMachRegister bool     `json:"darwin_allow_mach_register"`
+	Filesystem              []struct {
 		Path   string `json:"path"`
 		Access string `json:"access"`
 	} `json:"filesystem"`
@@ -366,10 +367,11 @@ func TestSandboxProfilesExportImportRoundTrip(t *testing.T) {
 	_, err = db.CreateAgentGroup("portable-group", "")
 	require.NoError(t, err)
 	require.Equal(t, http.StatusCreated, profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", map[string]any{
-		"name":           "portable",
-		"filesystem":     []map[string]any{{"path": cache, "access": "write"}},
-		"environment":    []map[string]any{{"name": "GOCACHE", "value": cache}},
-		"network_access": "none",
+		"name":                       "portable",
+		"filesystem":                 []map[string]any{{"path": cache, "access": "write"}},
+		"environment":                []map[string]any{{"name": "GOCACHE", "value": cache}},
+		"network_access":             "none",
+		"darwin_allow_mach_register": true,
 	}).Code)
 	require.Equal(t, http.StatusOK, profileReq(t, f, http.MethodPut,
 		"/v1/sandbox-profile-default", map[string]any{"name": "portable"}).Code)
@@ -384,11 +386,13 @@ func TestSandboxProfilesExportImportRoundTrip(t *testing.T) {
 	// v5 removed read_baseline/read_baseline_exclusions (TCL-623), v6
 	// removed break_glass_filesystem (TCL-791), v7 adds independent
 	// network and Unix-socket axes, v8 retains filesystem spellings, and v9
-	// adds authored network baselines plus stable pack references.
+	// adds authored network baselines plus stable pack references. v10 adds
+	// network denies, v11 adds resource limits, and v12 adds the opt-in Darwin
+	// mach-register capability.
 	// Exporting only the newest
 	// version keeps an older importer from silently dropping a
 	// security-significant field as an unknown key; older versions stay importable.
-	assert.Equal(t, float64(9), bundle["format_version"])
+	assert.Equal(t, float64(12), bundle["format_version"])
 
 	require.Equal(t, http.StatusNoContent,
 		profileReq(t, f, http.MethodDelete, "/v1/sandbox-profiles/portable", nil).Code)
@@ -402,6 +406,7 @@ func TestSandboxProfilesExportImportRoundTrip(t *testing.T) {
 	require.Len(t, got.Filesystem, 1)
 	assert.Equal(t, canonicalCache, got.Filesystem[0].Path)
 	assert.Equal(t, "none", got.NetworkAccess)
+	assert.True(t, got.DarwinAllowMachRegister)
 	for _, path := range []string{"/v1/sandbox-profile-default", "/v1/groups/portable-group/sandbox-profile"} {
 		rec = profileReq(t, f, http.MethodGet, path, nil)
 		var ref struct {
