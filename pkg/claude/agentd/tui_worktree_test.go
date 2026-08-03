@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -232,6 +233,35 @@ func TestTUISpawnWorktreeFailureKeepsTheFormOpen(t *testing.T) {
 	assert.Equal(t, "feat", got.form.branch.Value(), "what was typed is still there")
 }
 
+// A resolve whose answer was lost may still have created the worktree — the
+// retries replay a recorded response rather than re-cutting it — so the
+// console says so instead of reporting a bare failure over a directory nobody
+// has been told about.
+func TestTUISpawnAmbiguousWorktreeSaysItMayExist(t *testing.T) {
+	m := spawnFormOnWorktree(t, nil)
+	m.spawning = true
+
+	updated, _ := m.Update(tuiWorktreeResolvedMsg{
+		group: "dev",
+		err:   &tuiAmbiguousMutationError{err: io.ErrUnexpectedEOF, attempts: 2},
+	})
+	got := updated.(tuiModel)
+	assert.Equal(t, tuiModeSpawn, got.mode)
+	assert.False(t, got.spawning)
+	assert.Contains(t, got.notice, "Worktree failed")
+	assert.Contains(t, got.notice, "may have been created")
+}
+
+// The spawn-name charset allows a leading "-", which a branch name may not
+// have. Syncing one across would refuse a form on a field the operator never
+// typed in, so the name is trimmed into a usable branch — visibly.
+func TestTUISpawnWorktreeBranchTrimsALeadingDashFromTheName(t *testing.T) {
+	m := spawnFormOnWorktree(t, nil)
+	m = typeInto(m, tuiFieldName, "-worker")
+	assert.Equal(t, "worker", m.form.branch.Value())
+	require.NoError(t, validateTUIWorktreeBranch(m.form.branch.Value()))
+}
+
 // An unnamed agent gets an auto-generated label the console cannot know, so a
 // blank branch is asked for rather than invented.
 func TestTUISpawnRefusesABlankWorktreeBranch(t *testing.T) {
@@ -279,6 +309,34 @@ func TestTUISpawnFailureNamesTheWorktreeItKept(t *testing.T) {
 	m.spawnWorktree.Created = false
 	reused, _ := m.Update(tuiSpawnedMsg{group: "dev", err: errSpawnRefused})
 	assert.NotContains(t, reused.(tuiModel).notice, "has been kept")
+}
+
+// A worktree that lands after the operator has escaped and opened a fresh
+// form must not close that form: it is a different prompt with different
+// things typed into it, and openSpawnForm builds it from scratch, so
+// dismissing it would throw the lot away.
+func TestTUISpawnLateWorktreeLeavesAReopenedFormAlone(t *testing.T) {
+	m := spawnFormOnWorktree(t, nil)
+	m = typeInto(m, tuiFieldWorktreeBranch, "feat")
+	pending, _ := m.submitSpawn()
+	resolved := tuiWorktreeResolvedMsg{
+		group:   "dev",
+		formGen: pending.form.gen,
+		req:     agent.SpawnRequest{Name: "first"},
+		wt:      tuiWorktreeResponse{Path: "/repos/proj-feat", Branch: "feat", Created: true},
+	}
+
+	// The operator gives up on that form and starts another one.
+	escaped, _ := pending.handleSpawnKey(tea.KeyPressMsg{Code: tea.KeyEscape})
+	second := escaped.(tuiModel).openSpawnForm()
+	second = typeInto(second, tuiFieldBrief, "review the open PRs")
+	require.NotEqual(t, resolved.formGen, second.form.gen)
+
+	landed, cmd := second.Update(resolved)
+	got := landed.(tuiModel)
+	require.NotNil(t, cmd, "the spawn it was resolved for still goes out")
+	assert.Equal(t, tuiModeSpawn, got.mode, "the second form is still open")
+	assert.Equal(t, "review the open PRs", got.form.brief.Value(), "with what was typed into it")
 }
 
 // Escaping the form while its worktree is being cut gives up the typed fields
@@ -374,12 +432,27 @@ func TestTUIWorktreeEndpointCreatesThenReuses(t *testing.T) {
 	assert.Equal(t, created.Path, reused.Path)
 }
 
-// A directory that is not a git repo is a form error, not a 500.
+// A directory that is not a git repo is a form error, not a 500 — everything
+// the caller can fix by editing a field answers as one.
 func TestTUIWorktreeEndpointRejectsANonRepo(t *testing.T) {
 	w := postTUIWorktree(t,
 		tuiWorktreeRequest{Repo: t.TempDir(), Branch: "feat-x"}, operatorConsolePeer())
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	assert.Contains(t, w.Body.String(), "needs a git repo")
+
+	// A directory that is not there at all is the same kind of answer.
+	missing := postTUIWorktree(t,
+		tuiWorktreeRequest{Repo: filepath.Join(t.TempDir(), "gone"), Branch: "feat-x"},
+		operatorConsolePeer())
+	assert.Equal(t, http.StatusBadRequest, missing.Code)
+
+	// And a worktree path already occupied is a refusal, not a clobber.
+	repo, parent := initTUIWorktreeRepo(t)
+	require.NoError(t, os.MkdirAll(filepath.Join(parent, "proj-taken"), 0o755))
+	taken := postTUIWorktree(t,
+		tuiWorktreeRequest{Repo: repo, Branch: "taken"}, operatorConsolePeer())
+	assert.Equal(t, http.StatusBadRequest, taken.Code)
+	assert.Contains(t, taken.Body.String(), "already exists")
 }
 
 // Creating a directory outside any sandbox is a human move. A console started
@@ -396,18 +469,25 @@ func TestTUIWorktreeEndpointRefusesAnAgentConsole(t *testing.T) {
 	assert.True(t, os.IsNotExist(err), "and nothing was created")
 }
 
-// The route is the console's, not the agent API's: it must never appear on
-// the mux the Unix socket serves.
+// The route is the console's, not the agent API's: both consoles must have it
+// — the standalone one has no other way to reach the daemon's filesystem —
+// and it must never appear on the mux the Unix socket serves.
 func TestTUIWorktreeRouteIsConsoleOnly(t *testing.T) {
+	withOperatorToken(t, "tclo_worktree-route-test")
+	withDashboardSessionForTUITest(t, "dashboard-session")
 	call := func(h http.Handler) int {
 		r := httptest.NewRequest(http.MethodPost, tuiWorktreePath, strings.NewReader("{}"))
+		r.Header.Set(agent.HumanTokenHeader, "tclo_worktree-route-test")
 		r = r.WithContext(context.WithValue(r.Context(), peerKey{}, operatorConsolePeer()))
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, r)
 		return w.Code
 	}
-	// A blank branch is the handler's own 400 — proof it ran at all.
-	assert.Equal(t, http.StatusBadRequest, call(buildTUIConsoleMux()))
+	// A blank branch is the handler's own 400 — proof it ran at all. Without
+	// this the standalone console loses the feature silently, and reports the
+	// 404 as "this daemon is too old" (see tuiUnsupportedEndpointError).
+	assert.Equal(t, http.StatusBadRequest, call(buildTUIConsoleMux()), "the in-process console")
+	assert.Equal(t, http.StatusBadRequest, call(buildTUIHTTPHandler()), "the standalone console")
 	assert.Equal(t, http.StatusNotFound, call(buildMux()),
 		"agents reach worktrees through the `tclaude worktree` CLI, not this route")
 }

@@ -58,9 +58,15 @@ type tuiWorktreeResponse struct {
 // mux plus the console-only routes above it. ServeMux prefers the more
 // specific pattern, so the worktree route wins over the "/" catch-all that
 // carries everything else into buildMux.
+//
+// The route carries its own copy of the middleware buildMux applies inside
+// itself, since the catch-all is what would otherwise have supplied it. That
+// keeps this console's worktree calls logged, audited and idempotent exactly
+// as the standalone console's are (buildTUIHTTPHandler wraps the same chain).
 func buildTUIConsoleMux() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST "+tuiWorktreePath, handleTUIWorktree)
+	mux.Handle("POST "+tuiWorktreePath,
+		idempotencyRequests(logRequest(auditRequests(http.HandlerFunc(handleTUIWorktree)))))
 	mux.Handle("/", buildMux())
 	return mux
 }
@@ -88,9 +94,9 @@ func handleTUIWorktree(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 		return
 	}
-	path, created, err := resolveTUIWorktree(body.Repo, branch)
+	path, created, status, err := resolveTUIWorktree(body.Repo, branch)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "worktree", err.Error())
+		writeError(w, status, "worktree", err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, tuiWorktreeResponse{Path: path, Branch: branch, Created: created})
@@ -110,34 +116,40 @@ func handleTUIWorktree(w http.ResponseWriter, r *http.Request) {
 // repoDir is any path inside the target repo; blank falls back to the daemon's
 // own working directory, which is where a spawn with no directory of its own
 // would have landed.
-func resolveTUIWorktree(repoDir, branch string) (path string, created bool, err error) {
+//
+// status is the HTTP code the failure deserves, so the handler does not have
+// to guess: everything the caller can fix by editing a field is a 400, and a
+// git command that broke on the daemon's side is a 500 — the same split the
+// dashboard's own worktree endpoint makes.
+func resolveTUIWorktree(repoDir, branch string) (path string, created bool, status int, err error) {
 	dir, err := resolveSpawnCwd(repoDir)
 	if err != nil {
-		return "", false, err
+		return "", false, http.StatusBadRequest, err
 	}
 	if dir == "" {
 		if dir, err = os.Getwd(); err != nil {
-			return "", false, fmt.Errorf("read the daemon's working directory: %w", err)
+			return "", false, http.StatusInternalServerError,
+				fmt.Errorf("read the daemon's working directory: %w", err)
 		}
 	}
 	root, err := worktree.RepoRootForPath(dir)
 	if err != nil {
-		return "", false, fmt.Errorf("a new worktree needs a git repo: %w", err)
+		return "", false, http.StatusBadRequest, fmt.Errorf("a new worktree needs a git repo: %w", err)
 	}
 	wts, err := worktree.ListWorktreesIn(root)
 	if err != nil {
-		return "", false, fmt.Errorf("list worktrees in %s: %w", root, err)
+		return "", false, http.StatusInternalServerError, fmt.Errorf("list worktrees in %s: %w", root, err)
 	}
 	for _, wt := range wts {
 		if wt.Branch == branch {
-			return wt.Path, false, nil
+			return wt.Path, false, http.StatusOK, nil
 		}
 	}
 	made, err := worktree.AddWorktreeIn(root, branch, "", "")
 	if err != nil {
-		return "", false, fmt.Errorf("create worktree: %w", err)
+		return "", false, http.StatusBadRequest, fmt.Errorf("create worktree: %w", err)
 	}
-	return made, true, nil
+	return made, true, http.StatusOK, nil
 }
 
 // tuiMaxWorktreeBranchLen bounds a typed branch name. Long enough for the

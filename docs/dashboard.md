@@ -160,9 +160,12 @@ the fields that produced it, with your brief still typed. If the *spawn* then fa
 the message names it: the console cannot tell a rejected request from a lost
 answer, and removing a directory a session may be starting up in is the one
 mistake that costs work — `tclaude worktree rm` removes it once you have
-decided. Like directory completion this is operator consoles only: the worktree
-is created by the daemon process, on the daemon's host, outside any agent
-sandbox, so an agent-class console is shown the field as `(none)` and told why.
+decided. This is operator consoles only: the worktree is created by the daemon
+process, on the daemon's host, outside any agent sandbox, so an agent-class
+console is shown the field as `(none)` and told why. Unlike directory
+completion it does *not* also need the console to be on the daemon's own host —
+the daemon cuts the worktree either way — so the standalone terminal dashboard
+below gets the field too.
 
 **s** opens the shell form: a plain interactive shell in its own tmux session,
 the console's `tclaude session new --shell`. It is a **session, not an agent** —
