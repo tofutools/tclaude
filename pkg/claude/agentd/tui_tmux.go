@@ -339,6 +339,11 @@ func startTUITmuxServer(notify io.Writer) (stop func(), owned bool) {
 			slog.Warn("tui: could not shut down the tclaude tmux server",
 				"error", err, "output", strings.TrimSpace(string(out)), "module", "agentd")
 			fmt.Fprintf(notify, "tmux server could not be shut down: %v\n", err)
+			// A kill that failed still leaves us walking away from our own server,
+			// so it needs the same release as the branches above — and here it is
+			// more than hygiene. This server is EMPTY: handing exit-empty back to
+			// tmux lets it exit on its own, which is what the kill was for.
+			releaseTUITmuxExitEmpty(pid)
 			return
 		}
 		slog.Info("tui: shut down the tclaude tmux server", "server_pid", pid, "module", "agentd")

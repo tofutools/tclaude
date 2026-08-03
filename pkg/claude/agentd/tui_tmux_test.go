@@ -27,11 +27,13 @@ const (
 // fail. `panes` scripts the teardown's emptiness probe the way `list-panes -a`
 // answers it: probeNoServer, probeBroken, or the literal stdout tmux would
 // print (see tuiPanes). The zero value is a server with no panes at all.
+// failKill makes the teardown's kill-server fail.
 type tuiTmuxRec struct {
 	calls     [][]string
 	pids      []string
 	failStart bool
 	panes     string
+	failKill  bool
 }
 
 // tuiPanes builds the `list-panes -a -F "#{session_name}\t#{pane_dead}"` stdout
@@ -84,6 +86,9 @@ func (r *tuiTmuxRec) Command(args ...string) *exec.Cmd {
 		}
 	}
 	if r.failStart && slices.Contains(args, "start-server") {
+		return exec.Command("false")
+	}
+	if r.failKill && slices.Contains(args, "kill-server") {
 		return exec.Command("false")
 	}
 	return exec.Command("true")
@@ -314,6 +319,32 @@ func TestStartTUITmuxServer_KeepsAServerWhoseSessionsItCannotList(t *testing.T) 
 	}
 	if got := notice.String(); !strings.Contains(got, "left running") {
 		t.Fatalf("teardown notice = %q, want it to report the server was left running", got)
+	}
+}
+
+// TestStartTUITmuxServer_ReleasesExitEmptyWhenTheKillFails covers the last exit
+// that walks away from our own server. The kill is what normally undoes
+// exit-empty off, so a kill that failed would otherwise strand an EMPTY server
+// pinned up forever — and the next --tui run, finding it already running, will
+// not adopt it. Releasing the option is also the recovery here rather than mere
+// tidiness: with nothing on the server, tmux exits it on its own once the
+// option is back to its default.
+func TestStartTUITmuxServer_ReleasesExitEmptyWhenTheKillFails(t *testing.T) {
+	rec := installTUITmuxRec(t, "", probeNoServer, "4242", "4242")
+	rec.failKill = true
+
+	var notice bytes.Buffer
+	stop, _ := startTUITmuxServer(&notice)
+	stop()
+
+	if !rec.issued("kill-server") {
+		t.Fatalf("an empty owned server must still be killed, got tmux calls %v", rec.calls)
+	}
+	if !rec.releasedExitEmpty() {
+		t.Fatalf("a failed kill must still release exit-empty, got tmux calls %v", rec.calls)
+	}
+	if got := notice.String(); !strings.Contains(got, "could not be shut down") {
+		t.Fatalf("teardown notice = %q, want it to report the failed shutdown", got)
 	}
 }
 

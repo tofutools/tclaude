@@ -317,8 +317,10 @@ owned a server at all:
 tmux server shut down: it had no sessions left on it
 tmux server left running: 2 sessions still on it (it will exit when they do)
 tmux server left running: could not check whether it still has sessions
+tmux server left running: could not confirm it is the one this daemon started
 tmux server left running: it is not the one this daemon started
 tmux server was already gone; nothing to shut down
+tmux server could not be shut down: <error>
 ```
 
 Ownership is only ever claimed on a definite answer. If the check cannot tell
