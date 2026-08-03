@@ -355,11 +355,18 @@ func CopilotSandboxBaseline(in CopilotBaselineInput) ([]CopilotBaselineEntry, er
 		})
 	}
 
+	// Deduplicated by cleaned path, first occurrence winning. The endpoint list
+	// is canonical-plus-retained-legacy, so a caller assembling it from
+	// separate resolvers can legitimately produce the same path twice — and a
+	// duplicate row is not merely noise once a consumer emits one mount rule
+	// or policy key per row.
+	seenSockets := make(map[string]bool, len(in.AgentdSockets))
 	for _, socket := range in.AgentdSockets {
 		socket = filepath.Clean(strings.TrimSpace(socket))
-		if socket == "" || socket == "." {
+		if socket == "" || socket == "." || seenSockets[socket] {
 			continue
 		}
+		seenSockets[socket] = true
 		entries = append(entries, CopilotBaselineEntry{
 			ID:        CopilotBaselineAgentdSocket,
 			Path:      socket,

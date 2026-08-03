@@ -148,7 +148,7 @@ func TestCopilotSandboxBaselineFeatureRows(t *testing.T) {
 		Home:              filepath.Join(root, "home"),
 		Getenv:            envMap(nil),
 		TempDir:           filepath.Join(root, "tmp"),
-		AgentdSockets:     []string{socket, "", "  "},
+		AgentdSockets:     []string{socket, "", "  ", socket, socket + "/"},
 		TclaudeExecutable: filepath.Join(root, "bin", "tclaude"),
 		CopilotExecutable: filepath.Join(root, "bin", "copilot"),
 	})
@@ -166,7 +166,11 @@ func TestCopilotSandboxBaselineFeatureRows(t *testing.T) {
 	assert.Equal(t, CopilotGrantMandatory,
 		entryByID(t, entries, CopilotBaselineExecutable).Necessity)
 
-	// Blank socket entries are dropped, not turned into empty grants.
+	// Blank socket entries are dropped rather than turned into empty grants,
+	// and a repeated endpoint yields ONE row: the list is
+	// canonical-plus-retained-legacy, so a caller assembling it from separate
+	// resolvers can legitimately hand over the same path twice — including in
+	// a different spelling, which is why the dedup key is the cleaned path.
 	count := 0
 	for _, e := range entries {
 		if e.ID == CopilotBaselineAgentdSocket {

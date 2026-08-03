@@ -310,10 +310,16 @@ func (s *Sanitizer) Events(r RunResult) EventObservation {
 	return obs
 }
 
-// SessionLayout is the committable projection of COPILOT_HOME after a run —
-// the evidence TCL-972/TCL-975 need about what Copilot creates and where.
+// SessionLayout is the committable projection of ONE directory tree after a
+// run — the evidence TCL-972/TCL-975 need about what Copilot creates and
+// where.
+//
+// It was written for COPILOT_HOME and is now the per-root element of
+// BaselineLayout, which projects COPILOT_HOME, the package cache, the XDG
+// cache and the working directory alike. Nothing about the shape is
+// COPILOT_HOME-specific; the root is whatever the caller walked.
 type SessionLayout struct {
-	// Entries are COPILOT_HOME-relative paths with volatile segments
+	// Entries are paths relative to the walked root, with volatile segments
 	// normalized, sorted. Contents are never captured: session.db and
 	// events.jsonl hold conversation content.
 	Entries []string `json:"entries"`
