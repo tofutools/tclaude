@@ -79,6 +79,19 @@ be launched and resumed, but nothing else. Here is what each nil field costs:
 | `AskTimeout`     | No AskUserQuestion idle-timeout override; an explicit value is rejected and the dashboard hides the selector. |
 | `ToolGovernance` | No uniform built-in-tool allow/ask/deny axis (`SupportsToolGovernance` false). |
 
+**`copilot` (`copilot.go`, `copilot_spawner.go`, `copilot_models.go`) is the
+worked example of exactly that minimum**, and of why you might deliberately stop
+there. It was written from GitHub's published CLI documentation with no Copilot
+binary available to record fixtures, so it claims `Spawn`, `Models` and `Life`
+— contracts a documented flag list actually proves — and leaves every other
+optional capability contract unset. (It does set the `LaunchEnrollment`
+capability flag, because `copilot --session-id <uuid>` proves the conv-id is
+knowable before the pane starts; the flags are a separate axis from the
+contracts.) Resist the temptation to fill the rest in from plausible inference: a
+caller can detect an absent contract through the `Supports*` helpers and degrade,
+but it cannot detect one that is present and wrong. Ship the minimum bar, then
+add each further contract in its own fixture-backed slice.
+
 `Sandbox` and `BuiltinOSSandbox` answer different questions. A harness can
 offer meaningful sandbox-mode choices without owning an OS boundary: OpenCode
 uses its catalog for `access-control` / `tclaude-layer` / `off`, while
@@ -101,7 +114,8 @@ Implement as many as your harness needs; leave the rest `nil`. Claude Code
 (`claude.go`), Codex (`codex.go`, `codex_*.go`) and OpenCode (`opencode.go`,
 `opencode_*.go`) are the worked examples — read them alongside this list. Between
 them they cover every contract below at least once, so for each one there is a
-concrete implementation to copy.
+concrete implementation to copy. Copilot (`copilot*.go`) is the minimal
+counter-example: only `Spawner`, `ModelCatalog` and `Lifecycle`.
 
 ### `Spawner` — launch & resume *(required to spawn)*
 

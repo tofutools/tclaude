@@ -172,6 +172,12 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 		Error   string `json:"error,omitempty"`
 	}
 	results := make([]memberResult, 0, len(srcMembers))
+	var launchClaims []func()
+	defer func() {
+		for _, release := range launchClaims {
+			release()
+		}
+	}()
 
 	// "Without agents" mode skips the per-member clone loop — the new
 	// group keeps the source settings but gets no member agents. results
@@ -233,6 +239,12 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 			})
 			continue
 		}
+		// Each clone's launch claim is held until this handler returns, by
+		// which time every member has been enrolled — see
+		// cloneSpawnResult.ReleaseLaunchClaim. Released as a batch rather than
+		// per iteration: a `defer` inside the loop would do the same thing
+		// less obviously, and releasing early would reopen the window.
+		launchClaims = append(launchClaims, spawned.ReleaseLaunchClaim)
 		newConv, label := spawned.NewConv, spawned.Label
 		if spawned.Warn != "" {
 			slog.Warn("groups clone: spawn-warn", "src", m.ConvID, "new_conv", newConv, "warning", spawned.Warn)

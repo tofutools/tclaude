@@ -148,6 +148,11 @@ there's no hook to report anything finer-grained. It's also reachable from
 the watch-mode `n` ("new session") prompt: cycle the harness field
 (↑/↓/Tab) past the coding harnesses to `shell`.
 
+While it is alive it is also listed by the `agentd serve --tui` console,
+below the agents and marked `(session)` — see [Two kinds of
+row](dashboard.md#two-kinds-of-row). The same goes for any other non-agent
+session, including a plain `tclaude session new`.
+
 ### session ls
 
 List active sessions.

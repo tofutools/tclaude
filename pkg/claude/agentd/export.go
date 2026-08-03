@@ -283,6 +283,9 @@ func runExportClone(jobID int64, originalConv, cwd, effort, model string, sameGr
 		failExportJobAndReap(jobID, "", "could not clone the conversation to export it: "+spawnErr.Msg)
 		return
 	}
+	// Hold the launch claim until this clone is recorded as the job's worker
+	// and enrolled below — see cloneSpawnResult.ReleaseLaunchClaim.
+	defer spawned.ReleaseLaunchClaim()
 	newConv := spawned.NewConv
 	if warn := spawned.Warn; warn != "" {
 		// The conv-id + .jsonl exist but the clone's tmux session registered

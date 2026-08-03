@@ -936,6 +936,94 @@ jobs:
           shard: ${{ matrix.shard }}
           race: ${{ vars.RUN_RACE }}
 
+  # Credential-free GitHub Copilot CLI compatibility fixtures (TCL-970).
+  #
+  # This job runs the REAL pinned Copilot CLI against a deterministic localhost
+  # mock provider. It needs no GitHub credential and must never acquire one:
+  # COPILOT_PROVIDER_BASE_URL activates Copilot's BYOK mode, which the CLI
+  # documents as not requiring GitHub authentication, and the runner scrubs
+  # every token variable from the child environment so a regression back into
+  # an auth dependency fails here instead of passing on a logged-in machine.
+  #
+  # Linux only, deliberately. The evidence this produces (wire shape, session
+  # layout, exit codes, event stream) is not OS-specific, the job is a
+  # compatibility probe rather than a platform matrix, and adding macOS would
+  # double the cost for a duplicate answer. Revisit only if a Copilot contract
+  # is found to differ by platform.
+  copilot-fixtures:
+    name: Copilot CLI fixtures
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          # This job runs `npm install --global` and then a third-party CLI.
+          # Neither has any business seeing a persisted git credential, and the
+          # job only needs the source tree.
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Set up Node for the Copilot CLI
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Install pinned Copilot CLI
+        shell: bash
+        run: |
+          # The version is pinned in pkg/claude/harness/copilotfixture/version.go
+          # and re-asserted by the test itself, so an install drift cannot pass
+          # silently. Keep the two in sync when bumping.
+          npm install --global @github/copilot@1.0.77
+          copilot --version
+
+      - name: Copilot fixture smoke
+        shell: bash
+        env:
+          TCLAUDE_COPILOT_FIXTURE_SMOKE: "1"
+        run: |
+          set -o pipefail
+          go test ./pkg/claude/harness/copilotfixture/... \
+            -run 'TestCopilot' -v -count=1 -timeout 600s 2>&1 | tee "$RUNNER_TEMP/copilot-fixtures.log"
+
+      # A skipped test still exits 0. The gate is an env var, so a typo or a
+      # rename would turn this job into a silent no-op that reports success
+      # forever — assert that the real scenarios actually ran.
+      - name: Reject a silently skipped smoke
+        shell: bash
+        run: |
+          log="$RUNNER_TEMP/copilot-fixtures.log"
+          required=(
+            TestCopilotVersionPin
+            TestCopilotCredentialFreeTextTurn
+            TestCopilotToolCallRoundTrip
+            TestCopilotProviderFailure
+            TestCopilotSessionEnrollmentAndResume
+            TestCopilotReasoningEffortOnResponsesWire
+            TestCopilotModelSelection
+            TestCopilotProductionSpawnerLaunches
+          )
+          missing=()
+          for test_name in "${required[@]}"; do
+            grep -qE "^--- PASS: $test_name " "$log" || missing+=("$test_name")
+          done
+          if (( ${#missing[@]} > 0 )); then
+            {
+              echo "### Copilot fixture smoke did not run"
+              echo
+              echo "These scenarios did not report an explicit pass:"
+              printf -- '- `%s`\n' "${missing[@]}"
+              echo
+              echo "The job provisions pinned @github/copilot@1.0.77 and refuses a skipped or renamed test."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::Copilot fixture scenarios did not report an explicit pass: ${missing[*]}"
+            exit 1
+          fi
+
   # The filtered-network proxy smokes build real sandboxes against live
   # fixtures. Everything that decides what runs, what counts as evidence, which
   # harness versions are pinned and how fixtures are built lives in

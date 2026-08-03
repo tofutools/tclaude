@@ -535,9 +535,20 @@ func (r *sessionReaper) tick(now time.Time) (reaped int) {
 // recorded a reason first. A plain shell session has no hook at all —
 // a clean exit (Ctrl-D, `exit`) is the normal way to end it — so it
 // gets the same reasonless treatment; stamping "unexpected" would turn
-// every deliberate shell exit into a spurious "Exited" banner.
+// every deliberate shell exit into a spurious "Exited" banner. Copilot is
+// in the same position for a stronger reason: it installs no tclaude hooks
+// at all yet, so a human typing `/exit` — the graceful stop tclaude itself
+// wires up — would otherwise be reported as an abnormal death every time.
+//
+// The predicate this switch really encodes is "does the harness emit a
+// reliable session-END hook", which today is Claude Code alone; it is
+// deliberately NOT SupportsHooks (Codex installs hooks but has no trustworthy
+// end event). It stays a name-keyed switch until that becomes a descriptor
+// capability — an unknown/unrecorded harness keeps the historical Claude
+// treatment rather than silently going quiet.
 func reaperFallbackExitReason(h string) string {
-	if h == harness.CodexName || h == harness.OpenCodeName || h == session.ShellHarnessName {
+	if h == harness.CodexName || h == harness.OpenCodeName ||
+		h == harness.CopilotName || h == session.ShellHarnessName {
 		return ""
 	}
 	return unexpectedExitReason
