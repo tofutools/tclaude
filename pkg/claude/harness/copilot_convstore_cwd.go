@@ -19,7 +19,15 @@ import (
 // physical directory, which is not a cosmetic defect: a cwd-scoped `conv ls`
 // shows nothing, and `conv resume <prefix>` reports no such conversation, for a
 // session the operator is sitting inside. The contract this file implements is
-// that a cwd filter names a PHYSICAL directory, not a spelling of one.
+// that a cwd filter matches through SYMLINKS rather than by spelling.
+//
+// Symlinks are the whole of it, deliberately. Two spellings that differ only by
+// case on a case-insensitive volume, or two bind mounts of one directory, are
+// still two directories to this filter — EvalSymlinks preserves casing and
+// cannot see mount identity. Neither is a regression (the lexical comparison
+// missed both too), and neither is the reported defect; folding case here would
+// also need the whole case-restoration machinery the sandbox policy carries,
+// which conversation lookup has no business depending on.
 //
 // The comparison is deliberately staged so the cheap answers stay cheap:
 //

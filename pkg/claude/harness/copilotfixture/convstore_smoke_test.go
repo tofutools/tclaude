@@ -157,24 +157,30 @@ func TestCopilotConvStoreMatchesTheUnresolvedCwdSpelling(t *testing.T) {
 			"the unresolved-cwd case is macOS-shaped (/var vs /private/var)")
 	}
 
+	// The CLI is launched in the UNRESOLVED spelling — the one a shell would
+	// hand it — so that its own resolution is what puts the two sides out of
+	// step, exactly as in the field. Handing it the canonical path instead
+	// would make the premise assertions below unfalsifiable: a CLI that merely
+	// echoed its -C argument would satisfy them.
 	mock := copilotfixture.NewMockProvider(t, []copilotfixture.Turn{{Text: "MOCK ANSWER"}})
 	result := copilotfixture.Run(t, copilotfixture.RunOptions{
-		Root: dirs.Root, Home: dirs.Home, Cache: dirs.Cache, WorkDir: dirs.WorkDir,
+		Root: dirs.Root, Home: dirs.Home, Cache: dirs.Cache,
+		WorkDir: dirs.UnresolvedWorkDir,
 		BaseURL: mock.BaseURL(), Model: copilotfixture.MockModel,
-		Prompt: "hello from the resolved spelling",
+		Prompt: "hello from the unresolved spelling",
 	})
 	require.Equal(t, 0, result.ExitCode, "stderr: %s", result.Stderr)
 
 	store := convStore(t, dirs.Home)
 
-	// The premise: what the CLI wrote is NOT the spelling the caller below
-	// supplies. If a future CLI stopped resolving its cwd this assertion is the
-	// one that says so, rather than the scenario quietly testing nothing.
+	// The premise, and it is falsifiable now: given the /var spelling the CLI
+	// recorded the /private/var one. A future CLI that stopped resolving its
+	// cwd fails HERE rather than leaving the scenario quietly testing nothing.
 	all, err := store.ListConvs("")
 	require.NoError(t, err)
 	require.Len(t, all, 1)
 	require.Equal(t, dirs.WorkDir, all[0].ProjectPath,
-		"the CLI records its cwd resolved")
+		"the CLI resolves the cwd it is given before recording it")
 	require.NotEqual(t, dirs.UnresolvedWorkDir, all[0].ProjectPath)
 
 	scoped, err := store.ListConvs(dirs.UnresolvedWorkDir)

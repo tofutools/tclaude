@@ -18,11 +18,29 @@ import (
 
 // copilotSymlinkedProject stages `<tmp>/physical/work` plus an `<tmp>/alias`
 // symlink to `<tmp>/physical`, and returns the two spellings of the one
-// directory. Neither is canonicalized by the helper — resolving both up front
-// is precisely what would make these tests measure nothing.
+// directory.
+//
+// The two sides are treated ASYMMETRICALLY, mirroring production: `physical` is
+// resolved, because that is the side Copilot writes into workspace.yaml, while
+// `alias` is left exactly as constructed, because that is the side a caller
+// supplies. Resolving the caller's side too is what would make these tests
+// measure nothing.
+//
+// Resolving `physical` is not cosmetic, and it is what the tmp root's OWN
+// spelling makes necessary: on macOS t.TempDir hands back /var/folders/… for a
+// directory the kernel calls /private/var/folders/…, so a `physical` built by
+// Join alone would be an unresolved spelling of the record side and every
+// assertion about "what the store recorded" or "what resolution returns" would
+// be off by that prefix on macOS while passing on Linux.
 func copilotSymlinkedProject(t *testing.T) (physical, alias string) {
 	t.Helper()
-	root := t.TempDir()
+	// The ROOT is canonicalized once, before anything is derived from it, so
+	// `physical` is genuinely physical. Without this the helper returns two
+	// ALIASES on a host whose temp root is itself symlinked, and every
+	// assertion about what resolution returns is off by that prefix — which is
+	// how these tests passed on Linux and failed on macOS.
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
 	physical = filepath.Join(root, "physical", "work")
 	require.NoError(t, os.MkdirAll(physical, 0o755))
 	if err := os.Symlink(filepath.Join(root, "physical"), filepath.Join(root, "alias")); err != nil {

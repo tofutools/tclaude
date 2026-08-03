@@ -97,9 +97,10 @@ type copilotWorkspace struct {
 }
 
 // ListConvs assembles one SessionEntry per session-state directory. An empty
-// cwd is the documented "everything, everywhere" sentinel; a non-empty one
-// names a PHYSICAL directory rather than a spelling of one — see
-// copilotCwdFilter for why the two sides disagree on macOS.
+// cwd is the documented "everything, everywhere" sentinel; a non-empty one is
+// matched through symlinks rather than by spelling — see copilotCwdFilter for
+// why the two sides disagree on macOS, and for what that matching does not
+// cover.
 //
 // A session whose own files are unreadable or malformed is SKIPPED with a
 // warning rather than failing the listing: Copilot writes these files while
