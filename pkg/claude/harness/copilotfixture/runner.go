@@ -97,6 +97,16 @@ type RunOptions struct {
 	Home  string
 	Cache string
 
+	// XDGCache backs XDG_CACHE_HOME, and defaults to Cache when empty.
+	//
+	// The two are separable because the CLI reads them at different places:
+	// COPILOT_CACHE_HOME selects the package cache, while the bundled runtime
+	// resolves its Microsoft/DeveloperTools device-id file through
+	// XDG_CACHE_HOME (with no macOS branch). A scenario that needs to observe
+	// which variable owns which write sets this to its own directory; the
+	// wire scenarios, which care about neither, leave it empty.
+	XDGCache string
+
 	// Wire selects the provider wire API; empty means WireCompletions.
 	Wire WireAPI
 
@@ -171,10 +181,11 @@ func (r RunResult) EventTypes() []string {
 
 // Dirs is one run's disposable directory set.
 type Dirs struct {
-	Root    string
-	Home    string
-	Cache   string
-	WorkDir string
+	Root     string
+	Home     string
+	Cache    string
+	XDGCache string
+	WorkDir  string
 }
 
 // NewSandboxDirs creates the disposable directory set under t.TempDir. Each
@@ -184,12 +195,13 @@ func NewSandboxDirs(t *testing.T) Dirs {
 	t.Helper()
 	root := t.TempDir()
 	d := Dirs{
-		Root:    root,
-		Home:    filepath.Join(root, "copilot-home"),
-		Cache:   filepath.Join(root, "cache"),
-		WorkDir: filepath.Join(root, "work"),
+		Root:     root,
+		Home:     filepath.Join(root, "copilot-home"),
+		Cache:    filepath.Join(root, "cache"),
+		XDGCache: filepath.Join(root, "xdg-cache"),
+		WorkDir:  filepath.Join(root, "work"),
 	}
-	for _, dir := range []string{d.Home, d.Cache, d.WorkDir} {
+	for _, dir := range []string{d.Home, d.Cache, d.XDGCache, d.WorkDir} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatalf("copilotfixture: mkdir %s: %v", dir, err)
 		}
@@ -358,6 +370,10 @@ func buildEnv(opts RunOptions) []string {
 	if wire == "" {
 		wire = WireCompletions
 	}
+	xdgCache := opts.XDGCache
+	if xdgCache == "" {
+		xdgCache = opts.Cache
+	}
 	env = append(env,
 		// HOME and XDG_CACHE_HOME are redirected together with the two
 		// COPILOT_ variables. COPILOT_CACHE_HOME alone is not enough: it
@@ -366,7 +382,7 @@ func buildEnv(opts RunOptions) []string {
 		// XDG_CACHE_HOME then HOME, so a run missing these two writes outside
 		// its temp root.
 		"HOME="+opts.Root,
-		"XDG_CACHE_HOME="+opts.Cache,
+		"XDG_CACHE_HOME="+xdgCache,
 		"COPILOT_HOME="+opts.Home,
 		"COPILOT_CACHE_HOME="+opts.Cache,
 		"COPILOT_PROVIDER_BASE_URL="+opts.BaseURL,

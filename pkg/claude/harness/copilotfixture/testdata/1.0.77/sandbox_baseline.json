@@ -1,0 +1,41 @@
+{
+  "cliVersion": "1.0.77",
+  "layout": {
+    "copilotHome": {
+      "entries": [
+        "config.json",
+        "installed-plugins",
+        "session-state",
+        "session-state/\u003cuuid\u003e",
+        "session-state/\u003cuuid\u003e/checkpoints",
+        "session-state/\u003cuuid\u003e/checkpoints/index.md",
+        "session-state/\u003cuuid\u003e/events.jsonl",
+        "session-state/\u003cuuid\u003e/files",
+        "session-state/\u003cuuid\u003e/research",
+        "session-state/\u003cuuid\u003e/session.db",
+        "session-state/\u003cuuid\u003e/workspace.yaml",
+        "session-store.db",
+        "session-store.db-shm",
+        "session-store.db-wal"
+      ]
+    },
+    "cache": {
+      "entries": [
+        "pkg",
+        "pkg/\u003cplatform\u003e",
+        "pkg/\u003cplatform\u003e/1.0.77"
+      ]
+    },
+    "xdgCache": {
+      "entries": [
+        "Microsoft",
+        "Microsoft/DeveloperTools",
+        "Microsoft/DeveloperTools/deviceid"
+      ]
+    },
+    "workDir": {
+      "entries": []
+    },
+    "homeOutsideBaseline": []
+  }
+}

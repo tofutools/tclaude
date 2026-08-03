@@ -420,6 +420,71 @@ asserts `copilot --version` matches it, and re-recording is an explicit
 `-update` run whose diff **is** the compatibility evidence — so a floating or
 auto-updating install cannot absorb a contract change silently.
 
+#### Copilot sandbox baseline
+
+`harness.CopilotSandboxBaseline` answers one question — *which paths must a
+confined Copilot launch reach, in which mode, and how does each path resolve* —
+and stops there. It advertises no sandbox capability; the descriptor's `Sandbox`
+contract is still nil. It exists because two separate pieces of work need the
+same answer: Copilot's own built-in MXC sandbox (`settings.json` under the
+`sandbox` key, see `copilot help sandbox`) and tclaude's outer
+bubblewrap/Seatbelt boundary.
+
+The catalog, and how each row was classified:
+
+| Entry | Path | Mode | Necessity |
+|---|---|---|---|
+| `copilot-state-dir` | `COPILOT_HOME` ?? `$HOME/.copilot` | rw | **mandatory** — made read-only between two runs, the next launch exits 1 |
+| `copilot-package-cache` | `COPILOT_CACHE_HOME` ?? macOS `~/Library/Caches/copilot` ?? `${XDG_CACHE_HOME:-~/.cache}/copilot` | rw**x** | **mandatory** — the CLI unpacks and then *runs* its payload here |
+| `copilot-device-id-cache` | `${XDG_CACHE_HOME:-~/.cache}/Microsoft/DeveloperTools` | rw | best-effort — read-only still launches; only `deviceid` is denied |
+| `copilot-executable` | caller-resolved `copilot` | rx | mandatory |
+| `system-temp-dir` | caller-supplied | rw | feature-conditional (shell tools; Copilot's own `--disallow-temp-dir` opts out) |
+| `tclaude-agentd-socket` | caller-supplied endpoints | rw | feature-conditional (hook callbacks, in-agent `tclaude agent`) |
+| `tclaude-executable` | caller-resolved | rx | feature-conditional (same feature) |
+
+Four properties are worth calling out.
+
+**The macOS split is not symmetric.** The package cache moves to
+`~/Library/Caches/copilot`, but the device-id cache stays XDG-shaped at
+`~/.cache/Microsoft/DeveloperTools` — the bundled Rust runtime that writes it
+has no darwin branch at all. A macOS policy built by pattern-matching the Linux
+one gets this wrong.
+
+**The package cache needs execute, not just write.** The unpacked payload holds
+the bundled ripgrep binary and prebuilt native modules; a `noexec` mount there
+breaks tool search while every byte stays readable.
+
+**The catalog carries no workspace row.** The launch directory, the repository
+and its Git metadata are the caller's grant and are modelled elsewhere; the
+baseline's `Workspace` input exists only so it can *refuse* to return a row
+that would cover it. Generic OS prerequisites (loader, libc, `/proc/self`, the
+CA bundle, PATH directories) are likewise the sandbox implementation's base
+layer, not per-harness policy.
+
+**It fails closed.** An unresolved or non-absolute path, a grant covering
+`$HOME` or an ancestor of it, a grant covering a shared base such as `~/.cache`,
+`~/Library/Caches`, `~/.config` or `~/.local`, a grant on a top-level system
+directory (`/etc`, `/usr`, `/var`, … — with macOS firmlinks normalized so
+`/etc` and `/private/etc` reach the same verdict, and the temp row exempted
+*by path* so `/tmp` works while `TMPDIR=/etc` is still refused), a grant
+covering **or lying inside** tclaude's protected state (`~/.tclaude/data`,
+`~/.codex`, `~/.claude/sessions` — the same list the Codex guard uses, which is
+why the canonical agentd socket lives in `~/.tclaude/api/`), and a grant
+covering the workspace are all `*SandboxCapabilityError` refusals rather than
+rows. Each is reachable by
+typing — `COPILOT_HOME=$HOME` and `COPILOT_CACHE_HOME=~/.cache` are things a
+person writes — and each would quietly convert a confined launch into an open
+one.
+
+The write rows are pinned by a fixture-backed proof:
+`TestCopilotSandboxBaselineCoversObservedWrites` runs a real turn, walks
+everything the CLI created, and requires each created path to fall inside a
+baseline entry resolved from that run's own environment — with
+`homeOutsideBaseline` and the working directory both expected to stay empty.
+The normalized layout is committed as
+`copilotfixture/testdata/<version>/sandbox_baseline.json`, so a CLI that starts
+writing somewhere new fails a test instead of an operator's confined launch.
+
 ### Sandbox & approval defaults (Codex)
 
 Codex has a built-in OS-level sandbox and an approval policy, both selectable at

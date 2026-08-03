@@ -129,14 +129,24 @@ const CopilotHomeEnvVar = "COPILOT_HOME"
 // ~/.copilot. Empty means "cannot determine", which every caller treats as a
 // hard failure rather than guessing a path.
 func copilotHome() string {
-	if dir := os.Getenv(CopilotHomeEnvVar); dir != "" {
-		return dir
-	}
 	home, err := os.UserHomeDir()
 	if err != nil {
+		home = ""
+	}
+	// ONE resolver, including the COPILOT_HOME branch. Resolving the env var
+	// separately here is what would let the two drift: the baseline trims and
+	// cleans the value, so a COPILOT_HOME with a trailing slash or a ".."
+	// segment would install hooks under one spelling and pre-approve another —
+	// and a consumer comparing those strings (settings.json policy keys are
+	// strings) would see two different directories.
+	dir, _ := copilotStateDir(os.Getenv, home)
+	// Not absolute means either no COPILOT_HOME and no resolvable home, or a
+	// relative COPILOT_HOME. Both are "cannot determine": writing a hook file
+	// to a cwd-relative path is worse than failing.
+	if !filepath.IsAbs(dir) {
 		return ""
 	}
-	return filepath.Join(home, ".copilot")
+	return dir
 }
 
 // copilotHooksPath is the tclaude-owned drop-in file. The name is tclaude's
