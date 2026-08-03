@@ -136,6 +136,65 @@ func TestCopilotConvStoreReadsRealSessionState(t *testing.T) {
 		"the FIRST prompt stays first across a resume")
 }
 
+// TestCopilotConvStoreMatchesTheUnresolvedCwdSpelling is the macOS defect
+// (TCL-987) driven through the real binary.
+//
+// The CLI records its cwd RESOLVED — on macOS /private/var/folders/… — while
+// an operator's shell hands tclaude the /var/folders/… spelling of the same
+// physical directory. Every synthetic version of this test has to stage a
+// symlink and trust that it models the platform; this one takes both spellings
+// from the machine and lets Copilot write whichever one it writes.
+//
+// Nothing here canonicalizes the caller's side: the unresolved spelling goes
+// into ListConvs and Resolve exactly as the environment produced it. Resolving
+// it first is what would make the test pass against the old lexical comparison.
+func TestCopilotConvStoreMatchesTheUnresolvedCwdSpelling(t *testing.T) {
+	requireSmoke(t)
+
+	dirs := copilotfixture.NewSandboxDirs(t)
+	if dirs.UnresolvedWorkDir == dirs.WorkDir {
+		t.Skip("the fixture root has one spelling on this platform; " +
+			"the unresolved-cwd case is macOS-shaped (/var vs /private/var)")
+	}
+
+	mock := copilotfixture.NewMockProvider(t, []copilotfixture.Turn{{Text: "MOCK ANSWER"}})
+	result := copilotfixture.Run(t, copilotfixture.RunOptions{
+		Root: dirs.Root, Home: dirs.Home, Cache: dirs.Cache, WorkDir: dirs.WorkDir,
+		BaseURL: mock.BaseURL(), Model: copilotfixture.MockModel,
+		Prompt: "hello from the resolved spelling",
+	})
+	require.Equal(t, 0, result.ExitCode, "stderr: %s", result.Stderr)
+
+	store := convStore(t, dirs.Home)
+
+	// The premise: what the CLI wrote is NOT the spelling the caller below
+	// supplies. If a future CLI stopped resolving its cwd this assertion is the
+	// one that says so, rather than the scenario quietly testing nothing.
+	all, err := store.ListConvs("")
+	require.NoError(t, err)
+	require.Len(t, all, 1)
+	require.Equal(t, dirs.WorkDir, all[0].ProjectPath,
+		"the CLI records its cwd resolved")
+	require.NotEqual(t, dirs.UnresolvedWorkDir, all[0].ProjectPath)
+
+	scoped, err := store.ListConvs(dirs.UnresolvedWorkDir)
+	require.NoError(t, err)
+	require.Len(t, scoped, 1,
+		"the unresolved spelling names the same physical directory the CLI recorded")
+	assert.Equal(t, all[0].SessionID, scoped[0].SessionID)
+
+	ref, err := store.Resolve(all[0].SessionID[:8], dirs.UnresolvedWorkDir, false)
+	require.NoError(t, err)
+	require.NotNil(t, ref, "a cwd-scoped resolve must accept the same spelling")
+	assert.Equal(t, all[0].SessionID, ref.ConvID)
+
+	// A different directory under the SAME unresolved root still does not
+	// match, so the fix is path identity rather than a loosened prefix.
+	elsewhere, err := store.ListConvs(filepath.Join(dirs.UnresolvedRoot, "cache"))
+	require.NoError(t, err)
+	assert.Empty(t, elsewhere)
+}
+
 // TestCopilotConvStoreReadsUserNamedSession pins the title split. `--name` is
 // how tclaude carries a launch-time title, so a session started that way must
 // surface as an operator override rather than a generated summary.
