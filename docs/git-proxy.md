@@ -169,7 +169,7 @@ run. The proxy therefore treats repo-local configuration as hostile.
 | `http://` and `git://` remotes | Refused — no cleartext credentials, no unauthenticated transport. |
 | `url.<base>.insteadOf` rewrites | Cannot be reset by a `-c` override, so instead each validated URL must be a **fixed point** of git's own rewriting. A repository that would redirect it is refused. |
 | `remote.<name>.pushurl` | Validated separately from the fetch URL — otherwise push would be aimed somewhere unchecked. |
-| `remote.<name>.uploadpack` / `receivepack` | Pinned to the defaults. These name a command run **on the server** as the authenticated user. |
+| `remote.<name>.uploadpack` / `receivepack` / `vcs` / `proxy` | **Refused outright** — a repository that sets one of these is refused rather than "neutralized". These keys select a *program*, and `uploadpack`/`receivepack` are read first-wins across config scopes, so a `-c` override does **not** displace a repo-local value. The stock programs are additionally passed as `--upload-pack` / `--receive-pack` flags, which do override config. |
 | `core.sshCommand`, `core.alternateRefsCommand`, `core.fsmonitor`, `core.editor`, `core.pager`, `gpg.program`, `diff.external`, `http.proxy` | All pinned. |
 | A repo-local `credential.helper` (an arbitrary command) | The helper list is reset, then repopulated from **global/system** configuration only, so your real helper keeps working. |
 | Argument injection | Every parameter is charset-validated and refused if it begins with `-`. There is no passthrough flag and no `--` escape. |
@@ -226,6 +226,7 @@ tclaude agent github pr create # → audit verb "github.pr.create"
 | `force_push_disabled` | Set `allow_force_push: true` if you want it. |
 | `this repository rewrites its … URL (url.*.insteadOf)` | The repo has a rewrite rule that would redirect the validated URL. Remove it, or point the remote directly at the real URL. |
 | `refusing an 'ext::' remote URL` | The remote names a command, not a server. Something has rewritten `.git/config`; inspect it. |
+| `this repository sets remote.X.uploadpack …` | The repository configures a program-selecting key for that remote. Remove it with `git config --unset remote.X.uploadpack` (or `receivepack` / `vcs` / `proxy`). |
 | `tool_missing` | `git` or `gh` is not installed on the host running agentd. |
 | A push hangs then times out | Usually a passphrase-protected key that is not loaded into an ssh-agent. The proxy runs `ssh -o BatchMode=yes`, so it fails rather than prompting — load the key with `ssh-add`, or set `ssh_key`. |
 

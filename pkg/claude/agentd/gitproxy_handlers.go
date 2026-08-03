@@ -200,7 +200,7 @@ func handleGitProxyLsRemote(w http.ResponseWriter, r *http.Request) {
 		writeProxyFault(w, fault)
 		return
 	}
-	args := []string{"ls-remote"}
+	args := []string{"ls-remote", gitProxyUploadPack}
 	if body.Heads {
 		args = append(args, "--heads")
 	}
@@ -240,7 +240,7 @@ func handleGitProxyFetch(w http.ResponseWriter, r *http.Request) {
 		writeProxyFault(w, fault)
 		return
 	}
-	args := []string{"fetch"}
+	args := []string{"fetch", gitProxyUploadPack}
 	if body.Prune {
 		args = append(args, "--prune")
 	}
@@ -311,7 +311,7 @@ func handleGitProxyPush(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	args := []string{"push"}
+	args := []string{"push", gitProxyReceivePack}
 	if body.ForceWithLease {
 		if !s.policy.AllowForcePush {
 			writeError(w, http.StatusForbidden, "force_push_disabled",

@@ -56,8 +56,13 @@ import (
 //     command outright and `file:` escapes the allow-list, so the transport
 //     is pinned to https/ssh at the git level AND the parsed URL is
 //     independently required to be one of those two.
-//   - remote.<name>.uploadpack / receivepack name a command to run ON THE
-//     SERVER as the key's user. They are pinned back to the defaults.
+//   - remote.<name>.uploadpack / receivepack / vcs / proxy select a PROGRAM
+//     rather than a destination. A `-c` override does NOT displace the first
+//     two — git reads them first-wins across scopes, so a repo-local value
+//     beats the command line — so the proxy does two things instead: it
+//     refuses outright when a repository sets any of them
+//     (refuseDangerousRemoteConfig), and it passes the stock programs as
+//     --upload-pack / --receive-pack FLAGS, which do override config.
 //   - core.sshCommand, core.alternateRefsCommand, core.fsmonitor,
 //     core.editor, core.pager, gpg.program, diff.external and http.proxy are
 //     all pinned, because each is a command-execution or redirection vector.
@@ -329,7 +334,7 @@ func gitProxyHooksDir() (string, error) {
 //
 // Read this list as a catalogue of the ways repo-local config can make git run
 // a program or reach somewhere unintended.
-func gitProxyConfigPins(hooksDir, sshCommand, remoteName string, credentialHelpers []string) []string {
+func gitProxyConfigPins(hooksDir, sshCommand string, credentialHelpers []string) []string {
 	pins := []string{
 		// Command execution vectors.
 		"core.hooksPath=" + hooksDir, // pre-push, reference-transaction, ...
@@ -362,15 +367,6 @@ func gitProxyConfigPins(hooksDir, sshCommand, remoteName string, credentialHelpe
 	}
 	for _, helper := range credentialHelpers {
 		pins = append(pins, "credential.helper="+helper)
-	}
-	if remoteName != "" {
-		// uploadpack/receivepack name a command executed ON THE SERVER as the
-		// authenticated user. Pin them back to the defaults so a repo-local
-		// value cannot turn a push into remote code execution on the forge.
-		pins = append(pins,
-			"remote."+remoteName+".uploadpack=git-upload-pack",
-			"remote."+remoteName+".receivepack=git-receive-pack",
-		)
 	}
 	out := make([]string, 0, len(pins)*2+1)
 	for _, p := range pins {
@@ -494,9 +490,54 @@ func newGitProxySession(ctx context.Context, convID, remoteName string) (*gitPro
 	if fault != nil {
 		return nil, fault
 	}
-	pins := gitProxyConfigPins(hooksDir, gitProxySSHCommand(policy), remoteName,
+	pins := gitProxyConfigPins(hooksDir, gitProxySSHCommand(policy),
 		globalCredentialHelpers(ctx, gitPath))
 	return &gitProxySession{policy: policy, gitPath: gitPath, repoRoot: repoRoot, pins: pins}, nil
+}
+
+// gitProxyUploadPack / gitProxyReceivePack are the stock transport programs.
+//
+// They are passed as COMMAND-LINE FLAGS rather than `-c remote.<n>.uploadpack=`
+// overrides, and that distinction is load-bearing rather than stylistic: git
+// reads these two keys first-wins across scopes, so a repo-local value BEATS a
+// `-c` override ("more than one uploadpack given, using the first"). The flags
+// do override it. Verified against git 2.x; see TestGitProxy_*ArgvIsHardened.
+const (
+	gitProxyUploadPack  = "--upload-pack=git-upload-pack"
+	gitProxyReceivePack = "--receive-pack=git-receive-pack"
+)
+
+// dangerousRemoteKeys are the per-remote configuration keys that select a
+// PROGRAM rather than describe a destination. The proxy refuses outright when a
+// repository sets one, instead of trying to neutralize it.
+//
+// Refusal rather than override is deliberate. `uploadpack` and `receivepack`
+// are first-wins keys that a `-c` override cannot displace at all; `vcs`
+// selects a `git-remote-<value>` helper binary; `proxy` redirects the
+// connection. Some are overridable and some are not, and that asymmetry is a
+// property of git's config reader that could change. A repository that sets any
+// of them is doing something the proxy has no reason to support, so the honest
+// answer is to stop rather than to guess which neutralization still works.
+var dangerousRemoteKeys = []string{"uploadpack", "receivepack", "vcs", "proxy"}
+
+// refuseDangerousRemoteConfig fails closed when the agent's repository
+// configures a program-selecting key for the named remote.
+//
+// It reads the EFFECTIVE value (not `--local`), so a value arriving through an
+// include, or through the operator's own global config, is caught too. That is
+// the conservative direction: an operator who has genuinely set
+// remote.origin.uploadpack globally gets a clear refusal rather than a silently
+// different transport program.
+func refuseDangerousRemoteConfig(ctx context.Context, s *gitProxySession, remoteName string) *proxyFault {
+	for _, key := range dangerousRemoteKeys {
+		full := "remote." + remoteName + "." + key
+		if value := s.gitProbe(ctx, "config", "--get", "--", full); value != "" {
+			return faultf(http.StatusForbidden, "remote_config_refused",
+				"this repository sets %s, which selects a program rather than a destination; "+
+					"the proxy refuses to run against a remote configured that way", full)
+		}
+	}
+	return nil
 }
 
 // git runs a hardened git command in the agent's repository.
@@ -820,6 +861,9 @@ func resolveProxyRemote(ctx context.Context, s *gitProxySession, name string) (r
 	if fault := validateRemoteName(name); fault != nil {
 		return resolvedRemote{}, fault
 	}
+	if fault := refuseDangerousRemoteConfig(ctx, s, name); fault != nil {
+		return resolvedRemote{}, fault
+	}
 	fetchURL := s.gitProbe(ctx, "remote", "get-url", "--", name)
 	if fetchURL == "" {
 		return resolvedRemote{}, faultf(404, "unknown_remote",
@@ -861,8 +905,9 @@ func resolveProxyRemote(ctx context.Context, s *gitProxySession, name string) (r
 }
 
 // validateRemoteName bounds a remote name. Git's own rules are looser, but a
-// remote name reaches argv and reaches a `-c remote.<name>.…` key, so it is
-// held to a conservative charset and may never begin with "-".
+// remote name reaches argv and is interpolated into the `remote.<name>.…`
+// config keys refuseDangerousRemoteConfig probes, so it is held to a
+// conservative charset and may never begin with "-".
 func validateRemoteName(name string) *proxyFault {
 	if name == "" {
 		return faultf(400, "invalid_arg", "a remote name is required")

@@ -150,7 +150,7 @@ func TestValidateBranchName(t *testing.T) {
 }
 
 // TestValidateRemoteName keeps a remote name safe both as argv and as the
-// `-c remote.<name>.uploadpack=…` key it is interpolated into.
+// remote.<name>.* config keys it is interpolated into.
 func TestValidateRemoteName(t *testing.T) {
 	for _, bad := range []string{"", "-o", ".hidden", "has space", "sla/sh", "quo\"te", "semi;colon"} {
 		assert.NotNil(t, validateRemoteName(bad), "must refuse remote %q", bad)
@@ -188,7 +188,7 @@ func TestValidateRefPattern(t *testing.T) {
 // a repo-local hook or transport is used to run code as the operator. So the
 // exact set is asserted by key.
 func TestGitProxyConfigPins(t *testing.T) {
-	args := gitProxyConfigPins("/daemon/no-hooks", "ssh -o BatchMode=yes", "origin", nil)
+	args := gitProxyConfigPins("/daemon/no-hooks", "ssh -o BatchMode=yes", nil)
 
 	// Every pin must arrive as a separate `-c` flag, never folded into one.
 	pins := map[string]string{}
@@ -220,11 +220,20 @@ func TestGitProxyConfigPins(t *testing.T) {
 	assert.Equal(t, "never", pins["protocol.file.allow"])
 	assert.Equal(t, "never", pins["protocol.ext.allow"])
 
-	// Server-side command execution through the named remote.
-	assert.Equal(t, "git-upload-pack", pins["remote.origin.uploadpack"])
-	assert.Equal(t, "git-receive-pack", pins["remote.origin.receivepack"])
-
 	assert.True(t, slices.Contains(args, "--no-pager"), "git must not try to page into a daemon")
+
+	// remote.<n>.uploadpack / receivepack are deliberately NOT pinned here: git
+	// reads them first-wins across scopes, so a repo-local value beats a `-c`
+	// override outright ("more than one uploadpack given, using the first").
+	// They are handled by refuseDangerousRemoteConfig plus the --upload-pack /
+	// --receive-pack flags instead. A pin reappearing here would be a pin that
+	// looks protective and is not.
+	for _, a := range args {
+		assert.NotContains(t, a, "uploadpack",
+			"a `-c remote.*.uploadpack` pin does not work; use --upload-pack")
+		assert.NotContains(t, a, "receivepack",
+			"a `-c remote.*.receivepack` pin does not work; use --receive-pack")
+	}
 }
 
 // TestGitProxyConfigPins_CredentialHelperResetThenReadd pins the ordering that
@@ -232,7 +241,7 @@ func TestGitProxyConfigPins(t *testing.T) {
 // repo-local helper — an arbitrary command), then the operator's own global
 // helpers.
 func TestGitProxyConfigPins_CredentialHelperResetThenReadd(t *testing.T) {
-	args := gitProxyConfigPins("/h", "ssh", "", []string{"osxkeychain", "cache --timeout=300"})
+	args := gitProxyConfigPins("/h", "ssh", []string{"osxkeychain", "cache --timeout=300"})
 	var helpers []string
 	for i := 0; i+1 < len(args); i++ {
 		if args[i] == "-c" && strings.HasPrefix(args[i+1], "credential.helper=") {
@@ -243,13 +252,26 @@ func TestGitProxyConfigPins_CredentialHelperResetThenReadd(t *testing.T) {
 		"the reset must come first, or a repo-local helper survives")
 }
 
-// TestGitProxyConfigPins_NoRemoteOmitsRemoteKeys — a route that names no
-// remote must not emit a `remote..uploadpack` key.
-func TestGitProxyConfigPins_NoRemoteOmitsRemoteKeys(t *testing.T) {
-	args := gitProxyConfigPins("/h", "ssh", "", nil)
+// TestGitProxyConfigPins_EmitsNoRemoteScopedKeys — the pins are remote-agnostic
+// by design. Anything per-remote is handled by refusal
+// (refuseDangerousRemoteConfig) or by a command-line flag, because `-c` cannot
+// reliably displace a repo-local remote.<n>.* value.
+func TestGitProxyConfigPins_EmitsNoRemoteScopedKeys(t *testing.T) {
+	args := gitProxyConfigPins("/h", "ssh", nil)
 	for _, a := range args {
 		assert.False(t, strings.HasPrefix(a, "remote."),
-			"no remote named → no remote.* pin, got %q", a)
+			"per-remote keys must not be pinned via -c, got %q", a)
+	}
+}
+
+// TestDangerousRemoteKeys_CoversProgramSelectingConfig pins the refusal list.
+// Each entry names a git config key that selects a PROGRAM rather than a
+// destination, so adding a transport-helper key to git without adding it here
+// would leave a gap.
+func TestDangerousRemoteKeys_CoversProgramSelectingConfig(t *testing.T) {
+	for _, key := range []string{"uploadpack", "receivepack", "vcs", "proxy"} {
+		assert.True(t, slices.Contains(dangerousRemoteKeys, key),
+			"remote.<n>.%s selects a program and must be refused", key)
 	}
 }
 

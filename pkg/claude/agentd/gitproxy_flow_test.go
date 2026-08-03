@@ -44,6 +44,9 @@ type gitProxyRecorder struct {
 	// rewriteTo, when set for a URL, makes `ls-remote --get-url <url>` answer
 	// with something else — simulating a repo-local url.*.insteadOf rewrite.
 	rewriteTo map[string]string
+	// remoteConfig seeds `git config --get <key>` answers, so a test can model
+	// a repository that sets a program-selecting remote.<n>.* key.
+	remoteConfig map[string]string
 	// network is the canned result for the actual fetch/push/ls-remote call.
 	network agentd.ProxyResult
 	// gh is the canned result for a `gh` invocation.
@@ -52,10 +55,11 @@ type gitProxyRecorder struct {
 
 func newGitProxyRecorder(repoRoot string) *gitProxyRecorder {
 	return &gitProxyRecorder{
-		repoRoot:  repoRoot,
-		remotes:   map[string]string{"origin": gitProxyTestRemote},
-		branch:    "feat/thing",
-		rewriteTo: map[string]string{},
+		repoRoot:     repoRoot,
+		remotes:      map[string]string{"origin": gitProxyTestRemote},
+		branch:       "feat/thing",
+		rewriteTo:    map[string]string{},
+		remoteConfig: map[string]string{},
 	}
 }
 
@@ -98,7 +102,15 @@ func (r *gitProxyRecorder) exec(_ context.Context, cmd agentd.ProxyCommand) (age
 		}
 		return miss, nil
 	case "config":
-		// No operator credential helpers configured in the test world.
+		// `config --get remote.<n>.<key>` is the program-selecting-config
+		// probe; anything the test seeded into remoteConfig is reported as
+		// present. Everything else (the global/system credential-helper reads)
+		// answers "unset".
+		if len(sub) > 1 && sub[1] == "--get" {
+			if v, ok := r.remoteConfig[sub[len(sub)-1]]; ok {
+				return agentd.ProxyResult{Stdout: v + "\n"}, nil
+			}
+		}
 		return miss, nil
 	case "remote":
 		if len(sub) == 1 {
@@ -292,9 +304,16 @@ func TestGitProxy_PushArgvIsHardened(t *testing.T) {
 	assert.Contains(t, joined, "-c core.hooksPath=",
 		"hooks MUST be redirected — .git/hooks/pre-push is agent-writable")
 	assert.Contains(t, joined, "-c protocol.allow=never")
-	assert.Contains(t, joined, "-c remote.origin.receivepack=git-receive-pack",
-		"receivepack names a command run on the SERVER; it must be pinned")
 	assert.Contains(t, joined, "-c core.sshCommand=ssh -o BatchMode=yes")
+
+	// receivepack names a program git runs for the transfer. It must arrive as
+	// the FLAG, not as a `-c remote.origin.receivepack=` pin: git reads that
+	// key first-wins across scopes, so a repo-local value beats `-c` outright
+	// ("more than one receivepack given, using the first"). The flag does
+	// override it. This assertion is the regression guard for that asymmetry.
+	assert.Contains(t, push.Args, "--receive-pack=git-receive-pack")
+	assert.NotContains(t, joined, "-c remote.origin.receivepack=",
+		"a -c pin here would look protective and would not be")
 
 	// The refspec is fully qualified and constructed by the daemon, so
 	// push.default and any repo-local refspec configuration are irrelevant.
@@ -373,6 +392,48 @@ func TestGitProxy_RefusesInsteadOfRewrite(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, res.Code, "body=%s", res.Body.String())
 	assert.Contains(t, res.Body.String(), "insteadOf")
 	assert.Empty(t, rec.networkCalls(), "a rewritten URL must never be dialled")
+}
+
+// TestGitProxy_RefusesProgramSelectingRemoteConfig covers the remote.<n>.*
+// keys that name a PROGRAM rather than a destination.
+//
+// This one is easy to get wrong in the direction of looking safe: a
+// `-c remote.origin.uploadpack=git-upload-pack` override does NOT displace a
+// repo-local value — git reads those two keys first-wins across scopes, so the
+// repository's value is the one used. The proxy therefore refuses the whole
+// operation when it sees one, rather than pretending to have neutralized it.
+func TestGitProxy_RefusesProgramSelectingRemoteConfig(t *testing.T) {
+	for _, key := range []string{"uploadpack", "receivepack", "vcs", "proxy"} {
+		t.Run(key, func(t *testing.T) {
+			f, rec := gitProxyWorld(t, []string{"github.com/tofutools"})
+			rec.remoteConfig["remote.origin."+key] = "sh -c 'touch /tmp/pwned'"
+			require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitPush, "test"))
+
+			res := gitProxyPost(t, f, "/v1/git/push", map[string]any{"branch": "feat/thing"})
+			assert.Equal(t, http.StatusForbidden, res.Code, "body=%s", res.Body.String())
+			assert.Contains(t, res.Body.String(), "remote.origin."+key,
+				"the refusal must name the offending key")
+			assert.Empty(t, rec.networkCalls(), "nothing may reach the network")
+		})
+	}
+}
+
+// TestGitProxy_FetchPinsTheTransportProgram — the read verbs get the same
+// treatment as push, via --upload-pack.
+func TestGitProxy_FetchPinsTheTransportProgram(t *testing.T) {
+	f, rec := gitProxyWorld(t, []string{"github.com/tofutools"})
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitRead, "test"))
+
+	for _, path := range []string{"/v1/git/fetch", "/v1/git/ls-remote"} {
+		res := gitProxyPost(t, f, path, map[string]any{})
+		require.Equal(t, http.StatusOK, res.Code, "%s body=%s", path, res.Body.String())
+	}
+	calls := rec.networkCalls()
+	require.Len(t, calls, 2)
+	for _, c := range calls {
+		assert.Contains(t, c.Args, "--upload-pack=git-upload-pack",
+			"the transport program must be pinned by flag, not by -c")
+	}
 }
 
 // TestGitProxy_RefusesUnvalidatedPushURL covers remote.<name>.pushurl: a repo
@@ -501,7 +562,7 @@ func TestGitProxy_TakesNoRepoParameter(t *testing.T) {
 	for _, c := range rec.calls {
 		sub := subcommand(c.Args)
 		require.NotEmpty(t, sub)
-		if sub[0] == "config" {
+		if sub[0] == "config" && (slices.Contains(sub, "--global") || slices.Contains(sub, "--system")) {
 			// The operator's global/system credential-helper read is the one
 			// deliberate exception: it runs in a NEUTRAL directory precisely
 			// so no repository-local config is in scope for it.
