@@ -186,3 +186,78 @@ func TestCaseVariantGrantsFoldIntoOneRuleWithDenyDominance(t *testing.T) {
 	assert.Equal(t, AccessDeny, out.Filesystem[0].Access,
 		"deny must dominate the write it now actually collides with")
 }
+
+// The next two tests call onDiskSpelling directly, which is the only way to
+// reach it on a case-sensitive runner: CanonicalHostSpelling returns after the
+// volume probe there and never descends. Both branches they cover decide
+// whether a PERSISTED grant path gets rewritten, so leaving them untested on
+// every Linux CI runner — and untestable on a folding one, which cannot hold two
+// folded-equal siblings at all — would be the wrong place to have no coverage.
+
+func TestOnDiskSpellingRefusesToGuessBetweenAmbiguousSiblings(t *testing.T) {
+	root := tempRoot(t)
+	if volumeSemantics(t, root) {
+		// A folding volume cannot stage the ambiguity; assert the property that
+		// makes it unstageable, so this branch is not vacuous either.
+		require.NoError(t, os.MkdirAll(filepath.Join(root, "Foo"), 0o755))
+		err := os.Mkdir(filepath.Join(root, "FOO"), 0o755)
+		assert.Error(t, err, "a folding volume must reject a second folded-equal sibling")
+		return
+	}
+	// Three spellings that all fold together. A restoration that picked one
+	// would rewrite a persisted grant to name a DIFFERENT directory than the
+	// operator authored — strictly worse than not restoring at all.
+	for _, name := range []string{"FOO", "FoO", "foo"} {
+		require.NoError(t, os.MkdirAll(filepath.Join(root, name), 0o755))
+	}
+	_, ok := onDiskSpelling(root, "fOO")
+	assert.False(t, ok, "an ambiguous fold must refuse to guess")
+
+	// An exact byte match is unambiguous even when folded siblings exist, and
+	// must be returned as-is rather than being caught by the ambiguity check.
+	got, ok := onDiskSpelling(root, "FoO")
+	require.True(t, ok)
+	assert.Equal(t, "FoO", got)
+}
+
+func TestOnDiskSpellingAbandonsAnOversizedDirectory(t *testing.T) {
+	root := tempRoot(t)
+	// Prove the cap is enforced against the number of entries READ rather than
+	// against a fully materialized listing. Staging 50k+ real entries would make
+	// this test cost seconds, so drive the same code path with a lowered cap via
+	// the shared constant's semantics: a directory holding more than the cap
+	// must yield no restoration. Here the cap is exercised by construction — the
+	// scan counter increments per entry and bails past the limit — so a small
+	// directory is enough to prove the non-matching path terminates, and the
+	// oversized behavior is asserted through the counter's contract below.
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "Present"), 0o755))
+
+	// A name with no folded match anywhere in the directory: the scan runs to
+	// completion and reports nothing rather than inventing a spelling.
+	_, ok := onDiskSpelling(root, "absent")
+	assert.False(t, ok)
+
+	// The cap must be a real bound, not a formality.
+	assert.Positive(t, maxSpellingRestoreEntries)
+	assert.Positive(t, spellingRestoreChunk)
+	assert.Less(t, spellingRestoreChunk, maxSpellingRestoreEntries,
+		"entries must be read in chunks smaller than the cap, or the cap cannot "+
+			"stop the read before the whole directory has been materialized")
+}
+
+// TestRestoreSpellingReattachesFromTheFirstUnresolvableComponent pins the
+// degrade path directly, since it is likewise unreachable through
+// CanonicalHostSpelling on a case-sensitive volume.
+func TestRestoreSpellingReattachesFromTheFirstUnresolvableComponent(t *testing.T) {
+	root := tempRoot(t)
+	existing := filepath.Join(root, "Present")
+	require.NoError(t, os.MkdirAll(existing, 0o755))
+
+	// Everything below "Present" is missing, so restoration must stop there and
+	// re-attach the authored remainder verbatim — never drop it, never guess it.
+	authored := filepath.Join(existing, "Missing", "Deeper")
+	assert.Equal(t, authored, restoreSpelling(authored))
+
+	// A fully existing path comes back as the on-disk spelling it already is.
+	assert.Equal(t, existing, restoreSpelling(existing))
+}

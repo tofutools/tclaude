@@ -71,6 +71,16 @@ func guardContainsOrEqual(dir, target string) bool {
 	if pathContainsOrEqual(dir, target) {
 		return true
 	}
+	// Spelling equivalence is a question about real directories, and only an
+	// absolute path names one. A relative path would otherwise have an absolute
+	// candidate prefix fabricated for it below and get probed against the wrong
+	// tree entirely. Production always passes absolute paths (cleanDirectoryPath
+	// requires it), so this is a precondition guard, and answering it lexically
+	// is what keeps the documented "collapses to PathContainsOrEqual" property
+	// true for every caller rather than only the well-behaved ones.
+	if !filepath.IsAbs(dir) || !filepath.IsAbs(target) {
+		return false
+	}
 	// No folded relation at all is a definitive answer: no filesystem spelling
 	// rule can make these two paths name one tree, so no I/O is warranted.
 	if !pathContainsOrEqual(foldGuardPath(dir), foldGuardPath(target)) {
@@ -90,8 +100,27 @@ func guardContainsOrEqual(dir, target string) bool {
 // exist; otherwise the volume's own spelling semantics decide, and an
 // unestablished answer refuses.
 func guardSpellingsAlias(a, b string) bool {
-	aInfo, aErr := os.Lstat(a)
-	bInfo, bErr := os.Lstat(b)
+	// os.Stat, not os.Lstat: a final component that is a SYMLINK to the other
+	// spelling has its own inode, so lstat would report two objects where the
+	// filesystem resolves to one and the guard would fail open. Following the
+	// link is the fail-closed direction for a refusal test — the worst it can do
+	// is merge two spellings that reach one directory, which is exactly what we
+	// want to refuse. Callers normally resolve symlinks before reaching here
+	// (canonicalDirectory and resolveSymlinks both run EvalSymlinks first); this
+	// removes the reliance on them having done so.
+	aInfo, aErr := os.Stat(a)
+	bInfo, bErr := os.Stat(b)
+	if aErr != nil || bErr != nil {
+		// A dangling symlink stats as missing. Fall back to lstat so the entry
+		// still counts as existing and the not-yet-created branch below is
+		// reserved for spellings that genuinely name nothing.
+		if lInfo, lErr := os.Lstat(a); lErr == nil {
+			aInfo, aErr = lInfo, nil
+		}
+		if lInfo, lErr := os.Lstat(b); lErr == nil {
+			bInfo, bErr = lInfo, nil
+		}
+	}
 	if aErr == nil && bErr == nil {
 		// Authoritative on every platform, including a case-insensitive mount
 		// on Linux: one inode means one directory, two means two.
@@ -136,6 +165,17 @@ func guardSpellingsAlias(a, b string) bool {
 // foldGuardPath is the nomination key: case- and NFC-folded. It matches
 // session.seatbeltFoldedPath byte for byte (ToLower first, then NFC) so the
 // validator nominates exactly the spellings the Seatbelt emitter does.
+//
+// Known residual: strings.ToLower is Unicode simple lowercasing, not APFS/HFS+'s
+// own case-folding table. A rune where the two disagree (Greek final sigma ς/σ,
+// U+0130 İ) would fail to nominate a pair the volume does in fact merge, and the
+// zero-I/O rejection above would then answer false. Fixing that means moving to
+// full case folding (x/text/cases.Fold), which MUST happen in both layers at
+// once — a validator that nominated more spellings than the emitter merges, or
+// fewer, would put the two out of step, and that disagreement is precisely the
+// class of bug this work exists to remove. Tracked as a follow-up rather than
+// changed here unilaterally; TestFoldGuardPathMatchesTheSeatbeltEmitterRule
+// pins the two together so they cannot drift apart by accident.
 func foldGuardPath(path string) string {
 	return normalizeNFC(strings.ToLower(filepath.Clean(path)))
 }
@@ -235,8 +275,44 @@ func volumeFoldsCase(dir string) (bool, error) {
 
 // volumeFoldsSpelling is the shared probe body: respell an existing directory's
 // basename and report whether the respelled sibling path is the same inode.
+//
+// EVERY directory the probe touches must live on the same device as dir. A name
+// is stored in its PARENT directory, so respelling the basename of `cur` asks
+// `cur`'s parent — a different filesystem the moment `cur` is a mount point, or
+// the moment the walk-up past uncased components crosses one. Answering "does
+// not fold" from a neighbouring case-sensitive filesystem would be a definitive
+// wrong answer, and a definitive wrong answer here means a guard ALLOWS. So a
+// device change ends the probe with errSpellingProbeUnavailable, which guards
+// read as a refusal.
+//
+// Concretely, this is what stops a case-insensitive mount (a vfat/exFAT/CIFS
+// share or a casefolded ext4 directory on Linux, a case-insensitive disk image
+// on a case-sensitive macOS boot volume) from being described by the
+// case-sensitive filesystem it happens to be mounted under.
 func volumeFoldsSpelling(dir string, respell func(string) string) (bool, error) {
-	for cur := filepath.Clean(dir); ; {
+	start := filepath.Clean(dir)
+	startInfo, err := os.Lstat(start)
+	if err != nil {
+		return false, err
+	}
+	startDev, startDevOK := pathDevice(startInfo)
+
+	sameVolume := func(path string) (bool, error) {
+		info, err := os.Lstat(path)
+		if err != nil {
+			return false, err
+		}
+		dev, ok := pathDevice(info)
+		if !startDevOK || !ok {
+			// Without device identity the probe cannot prove it stayed on one
+			// filesystem, and an unprovable answer must not become a definitive
+			// "does not fold".
+			return false, nil
+		}
+		return dev == startDev, nil
+	}
+
+	for cur := start; ; {
 		base := filepath.Base(cur)
 		parent := filepath.Dir(cur)
 		if parent == cur {
@@ -247,6 +323,16 @@ func volumeFoldsSpelling(dir string, respell func(string) string) (bool, error) 
 			if err != nil {
 				return false, err
 			}
+			// The respelled name would be read out of `parent`, so `parent` is
+			// the filesystem actually being questioned. It has to be the one we
+			// were asked about.
+			onSameVolume, err := sameVolume(parent)
+			if err != nil {
+				return false, err
+			}
+			if !onSameVolume {
+				return false, errSpellingProbeUnavailable
+			}
 			otherInfo, err := os.Lstat(filepath.Join(parent, respelled))
 			if err != nil {
 				if os.IsNotExist(err) {
@@ -256,6 +342,16 @@ func volumeFoldsSpelling(dir string, respell func(string) string) (bool, error) 
 				return false, err
 			}
 			return os.SameFile(info, otherInfo), nil
+		}
+		// This component carries no case (or no normalization) to flip, so the
+		// probe has to look further up — but only while it stays on the volume
+		// the question was about.
+		onSameVolume, err := sameVolume(parent)
+		if err != nil {
+			return false, err
+		}
+		if !onSameVolume {
+			return false, errSpellingProbeUnavailable
 		}
 		cur = parent
 	}

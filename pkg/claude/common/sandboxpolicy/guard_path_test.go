@@ -168,9 +168,6 @@ func TestGuardContainsOrEqualSymlinkAliasIsSpellingOnly(t *testing.T) {
 }
 
 func TestGuardContainsOrEqualUnreadableAncestorFailsClosed(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Log("running as root: permission bits do not deny traversal, asserting the readable behavior instead")
-	}
 	root := tempRoot(t)
 	// The gate must be the PARENT of the compared spellings: denying traversal
 	// there is what makes lstat of the spellings themselves fail, so neither
@@ -183,28 +180,158 @@ func TestGuardContainsOrEqualUnreadableAncestorFailsClosed(t *testing.T) {
 
 	target := filepath.Join(gate, "locked", "inner", "leaf")
 	got := GuardContainsOrEqual(locked, target)
-	if os.Geteuid() == 0 {
-		return // root traverses regardless; nothing about fail-closed is provable
+
+	// Whether the mode bits actually deny traversal is a property of the RUNNER,
+	// not of the test: root ignores them, and containerized CI often runs as
+	// root. Ask the filesystem which world we are in rather than skipping — a
+	// skip here would silently drop the fail-closed property from CI entirely.
+	_, probeErr := os.Lstat(locked)
+	denied := os.IsPermission(probeErr)
+	t.Logf("traversal denied: %t (euid=%d, lstat err=%v)", denied, os.Geteuid(), probeErr)
+
+	if !denied {
+		// Traversal works, so identity is available and answers precisely: on a
+		// case-sensitive volume the two spellings are different directories.
+		lockedInfo, err := os.Lstat(locked)
+		require.NoError(t, err)
+		variantInfo, variantErr := os.Lstat(filepath.Join(gate, "locked"))
+		want := variantErr == nil && os.SameFile(lockedInfo, variantInfo)
+		assert.Equal(t, want, got,
+			"with traversal permitted the answer must follow file identity exactly")
+		return
 	}
 	// Traversal is denied, so neither identity nor the volume probe can settle
 	// the folded nomination. An unprovable non-relation must refuse.
 	assert.True(t, got, "an unreadable ancestor must fail closed (refuse), never fail open")
 }
 
-func TestVolumeFoldsCaseWalksPastUncasedComponentsAndStopsAtRoot(t *testing.T) {
+func TestVolumeFoldsCaseWalksPastUncasedComponentsWithinOneVolume(t *testing.T) {
 	root := tempRoot(t)
-	// A component with no cased letters cannot answer the question, so the
-	// probe walks up to one that can.
+	// A component with no cased letters cannot answer the question, so the probe
+	// walks up to one that can. Generalizing an ancestor's answer to a
+	// descendant is only sound WITHIN one filesystem, which is why the probe
+	// refuses the moment it would cross a device boundary — see
+	// TestVolumeFoldsCaseRefusesToAnswerFromAnotherVolume.
 	numeric := filepath.Join(root, "123")
 	require.NoError(t, os.MkdirAll(numeric, 0o755))
+	requireSameVolume(t, root, numeric)
+
 	folds, err := volumeFoldsCase(numeric)
 	require.NoError(t, err)
 	assert.Equal(t, volumeSemantics(t, root), folds)
+}
 
+func TestVolumeFoldsCaseStopsAtTheFilesystemRoot(t *testing.T) {
 	// The filesystem root has no parent to probe against, so the question is
 	// unanswerable there and callers must treat that as indeterminate.
-	_, err = volumeFoldsCase(string(filepath.Separator))
+	_, err := volumeFoldsCase(string(filepath.Separator))
 	assert.ErrorIs(t, err, errSpellingProbeUnavailable)
+}
+
+// TestVolumeFoldsCaseRefusesToAnswerFromAnotherVolume pins the fix for the
+// probe's most dangerous failure mode.
+//
+// A name is stored in its PARENT directory, so respelling a directory's own
+// basename questions the parent's filesystem. When the directory is a mount
+// point — or when the walk past uncased components crosses one — that is a
+// DIFFERENT filesystem, whose case semantics say nothing about the one asked
+// about. Answering "does not fold" from a neighbouring case-sensitive volume
+// would be a definitive wrong answer, and a definitive wrong answer here makes
+// a guard ALLOW: a case-insensitive mount (vfat/exFAT/CIFS, a casefolded ext4
+// directory, a case-insensitive disk image on a case-sensitive macOS boot
+// volume) would have its protected roots reachable through a variant spelling.
+//
+// Crossing a device boundary must therefore end the probe as indeterminate.
+func TestVolumeFoldsCaseRefusesToAnswerFromAnotherVolume(t *testing.T) {
+	// /proc, /sys and /dev are separate filesystems from / on Linux; /dev is on
+	// macOS too. Find any real mount point rather than staging one, which would
+	// need privileges CI does not have.
+	crossings := []string{"/proc", "/sys", "/dev"}
+	probed := 0
+	for _, mount := range crossings {
+		info, err := os.Lstat(mount)
+		if err != nil || !info.IsDir() {
+			continue
+		}
+		parentInfo, err := os.Lstat(filepath.Dir(mount))
+		if err != nil {
+			continue
+		}
+		mountDev, mountOK := pathDevice(info)
+		parentDev, parentOK := pathDevice(parentInfo)
+		if !mountOK || !parentOK || mountDev == parentDev {
+			continue // not actually a mount point on this host
+		}
+		probed++
+		_, err = volumeFoldsCase(mount)
+		assert.ErrorIs(t, err, errSpellingProbeUnavailable,
+			"%q is a mount point, so its own name lives on the parent volume and "+
+				"the probe must refuse to answer for it", mount)
+	}
+	if probed == 0 {
+		// Do not skip: say plainly that the property went unexercised here, and
+		// still assert the mechanism it rests on.
+		t.Log("no cross-device mount point available on this host; " +
+			"asserting the device-identity mechanism directly instead")
+	}
+	// The mechanism itself, independent of any host's mount table: device
+	// identity must be obtainable, or the probe has nothing to compare and every
+	// answer would be an unjustified guess.
+	info, err := os.Lstat(tempRoot(t))
+	require.NoError(t, err)
+	_, ok := pathDevice(info)
+	assert.True(t, ok, "device identity must be available for the probe to bound itself")
+}
+
+// requireSameVolume fails the test when two paths are not on one filesystem, so
+// a test that means to exercise the same-volume walk cannot silently turn into
+// a cross-device case on an unusual host.
+func requireSameVolume(t *testing.T, a, b string) {
+	t.Helper()
+	aInfo, err := os.Lstat(a)
+	require.NoError(t, err)
+	bInfo, err := os.Lstat(b)
+	require.NoError(t, err)
+	aDev, aOK := pathDevice(aInfo)
+	bDev, bOK := pathDevice(bInfo)
+	require.True(t, aOK && bOK, "device identity must be available")
+	require.Equal(t, aDev, bDev, "%q and %q must be on one filesystem for this test", a, b)
+}
+
+// TestGuardContainsOrEqualRelativePathsAnswerLexically pins the precondition:
+// only an absolute path names a real directory, so a relative one must get the
+// byte-exact answer rather than having an absolute candidate fabricated for it
+// and probed against an unrelated tree.
+func TestGuardContainsOrEqualRelativePathsAnswerLexically(t *testing.T) {
+	for _, tc := range []struct{ dir, target string }{
+		{"A/b", "a/b/c"},
+		{"a/b", "a/b/c"},
+		{"relative", "/absolute/child"},
+		{"/absolute", "relative/child"},
+	} {
+		assert.Equal(t, PathContainsOrEqual(tc.dir, tc.target),
+			GuardContainsOrEqual(tc.dir, tc.target),
+			"relative input %q/%q must not diverge from the lexical rule", tc.dir, tc.target)
+	}
+}
+
+// TestGuardContainsOrEqualFollowsSymlinkedFinalComponent covers the identity
+// step's one blind spot: a final component that is a SYMLINK to the other
+// spelling has its own inode, so an lstat-based comparison would report two
+// objects where the filesystem resolves to one — and a guard would fail open.
+func TestGuardContainsOrEqualFollowsSymlinkedFinalComponent(t *testing.T) {
+	root := tempRoot(t)
+	real := filepath.Join(root, "protected")
+	require.NoError(t, os.MkdirAll(filepath.Join(real, "child"), 0o755))
+	// A case-variant spelling that is a symlink to the real directory. Both
+	// spellings exist, so identity — not the volume probe — decides.
+	variant := filepath.Join(root, "PROTECTED")
+	if _, err := os.Lstat(variant); err != nil {
+		require.NoError(t, os.Symlink(real, variant))
+	}
+	assert.True(t, GuardContainsOrEqual(real, filepath.Join(variant, "child")),
+		"a symlinked case-variant spelling reaches the same tree and must be refused")
+	assert.True(t, GuardPathsIntersect(variant, real))
 }
 
 func TestNearestExistingDirSkipsMissingAndNonDirectoryAncestors(t *testing.T) {

@@ -1,6 +1,8 @@
 package sandboxpolicy
 
 import (
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +15,12 @@ import (
 // operator chose. The cap is far above any plausible $HOME or ancestor of a
 // protected root.
 const maxSpellingRestoreEntries = 50000
+
+// spellingRestoreChunk is how many directory entries are pulled per read. Large
+// enough that an ordinary directory takes one syscall, small enough that a
+// pathological one is abandoned after reading a few hundred entries rather than
+// all of them.
+const spellingRestoreChunk = 512
 
 // CanonicalHostSpelling returns path rewritten so every existing component
 // carries its real on-disk spelling.
@@ -82,39 +90,73 @@ func restoreSpelling(path string) string {
 
 // onDiskSpelling returns the real name of the entry in dir that folds to name.
 //
-// An exact byte match wins immediately and costs no scan, which is the common
-// case even on a folding volume. Only a name that is not already spelled the
-// way the filesystem stores it falls through to the directory scan.
+// Finding the stored spelling of a name inherently requires enumerating the
+// directory — there is no portable "what is this entry really called" call — so
+// this reads incrementally rather than slurping. That matters for two reasons:
+// an exact byte match (the common case even on a folding volume) stops the read
+// as soon as it is seen instead of after the whole directory, and the entry cap
+// bounds the WORK rather than merely the decision. os.ReadDir would defeat both:
+// it reads every entry and sorts them before the caller sees anything, so a
+// directory with millions of entries would be fully materialized just to be
+// rejected — not something a safety validator may do on an operator-chosen path.
 func onDiskSpelling(dir, name string) (string, bool) {
 	if _, err := os.Lstat(filepath.Join(dir, name)); err != nil {
 		// The component does not exist (or is unreachable): nothing to restore.
 		return "", false
 	}
-	entries, err := os.ReadDir(dir)
+	handle, err := os.Open(dir)
 	if err != nil {
 		return "", false
 	}
-	if len(entries) > maxSpellingRestoreEntries {
-		return "", false
-	}
+	defer func() { _ = handle.Close() }()
+
 	folded := foldSpellingComponent(name)
 	match := ""
-	for _, entry := range entries {
-		if entry.Name() == name {
-			return name, true // already the on-disk spelling
+	ambiguous := false
+	scanned := 0
+	for {
+		entries, readErr := handle.ReadDir(spellingRestoreChunk)
+		for _, entry := range entries {
+			if entry.Name() == name {
+				// The authored spelling IS an entry of this directory, so it is
+				// already the stored spelling and there is nothing to restore.
+				// This is decisive even when folded siblings were seen earlier
+				// in the scan — an exact entry is never ambiguous — and it ends
+				// the read immediately.
+				return name, true
+			}
+			scanned++
+			if scanned > maxSpellingRestoreEntries {
+				return "", false
+			}
+			if foldSpellingComponent(entry.Name()) != folded {
+				continue
+			}
+			if match != "" {
+				// Two entries fold together, so this directory does not in fact
+				// fold them — the volume probe answered for a different mount,
+				// or for a different directory on a mixed-semantics tree. Note
+				// it but keep scanning: an exact entry may still appear and
+				// settle the question decisively.
+				ambiguous = true
+				continue
+			}
+			match = entry.Name()
 		}
-		if foldSpellingComponent(entry.Name()) != folded {
-			continue
-		}
-		if match != "" {
-			// Two entries fold together, so this directory's volume does not
-			// actually fold them — the earlier probe answered for a different
-			// mount. Refuse to guess.
+		if readErr != nil {
+			if errors.Is(readErr, io.EOF) {
+				break
+			}
 			return "", false
 		}
-		match = entry.Name()
+		if len(entries) == 0 {
+			break
+		}
 	}
-	if match == "" {
+	if ambiguous || match == "" {
+		// Refuse to guess: a WRONG restoration would rewrite a persisted grant
+		// to name a different directory than the operator authored, which is far
+		// worse than leaving the spelling alone.
 		return "", false
 	}
 	return match, true
