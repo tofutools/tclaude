@@ -959,6 +959,7 @@ test('sandbox actions preserve dry-run, canonical commit, delete, and import bou
     name: 'safe', filesystem: [{ path: '/tmp', access: 'write' }], environment: [],
     includes: ['base'], agent_directories: ['GOCACHE'], network_access: 'internet',
     resource_limits: { memory: '8GB' },
+    darwin_allow_mach_register: true,
   };
   // The save body always carries the full-replace shape. The retired
   // read_baseline and break_glass_filesystem fields are gone from the wire
@@ -971,7 +972,7 @@ test('sandbox actions preserve dry-run, canonical commit, delete, and import bou
   }); state.cancelSandboxDiff(true);
   assert.equal(await create, true);
   assert.deepEqual(calls[0], ['preview', '', body]); assert.deepEqual(calls[1], ['save', '', body, 'r1']); assert.equal(refreshed, 1);
-  const replacement = { ...draft, name: 'renamed' }; const replacementBody = { ...body, name: 'renamed' }; const update = actions.saveSandbox({ draft: replacement, original: replacement, options: { targetName: 'safe' } }); await Promise.resolve(); state.cancelSandboxDiff(true); await update;
+  const replacement = { ...draft, name: 'renamed', darwin_allow_mach_register: false }; const replacementBody = { ...body, name: 'renamed', darwin_allow_mach_register: false }; const update = actions.saveSandbox({ draft: replacement, original: replacement, options: { targetName: 'safe' } }); await Promise.resolve(); state.cancelSandboxDiff(true); await update;
   assert.deepEqual(calls[2], ['preview', 'safe', replacementBody]); assert.deepEqual(calls[3], ['save', 'safe', replacementBody, 'r1']);
   const copied = { ...draft, name: 'safe-copy' }; const copiedBody = { ...body, name: 'safe-copy' }; const clone = actions.saveSandbox({ draft: copied, original: draft, options: { editExisting: false } }); await Promise.resolve(); state.cancelSandboxDiff(true); await clone;
   assert.deepEqual(calls[4], ['preview', '', copiedBody]); assert.deepEqual(calls[5], ['save', '', copiedBody, 'r1']);
@@ -1471,6 +1472,39 @@ function mountSandboxEditor(harness, mountManagementIsland, state, overrides = {
   return { host, unmount: () => cleanups.reverse().forEach((fn) => fn()) };
 }
 
+test('sandbox editor offers Mach registration only on a macOS agentd', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  const saves = [];
+  state.openDialog({
+    kind: 'sandbox-editor', seed: { name: 'chrome', filesystem: [], environment: [] },
+    options: {}, sandboxImpl: { ...sandboxImpl, platform: 'darwin' },
+  });
+  const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state, {
+    async saveSandbox(value) { saves.push(value); },
+  });
+  await harness.act(() => Promise.resolve());
+  const checkbox = host.querySelector('#sandbox-profile-editor-allow-mach-register');
+  assert.ok(checkbox, 'macOS exposes the compatibility capability');
+  checkbox.checked = true;
+  await harness.act(() => harness.fireEvent(checkbox, 'change'));
+  await harness.act(() => harness.fireEvent(host.querySelector('#sandbox-profile-editor-submit'), 'click'));
+  assert.equal(saves[0].draft.darwin_allow_mach_register, true);
+
+  state.closeDialog();
+  await harness.act(() => Promise.resolve());
+  state.openDialog({
+    kind: 'sandbox-editor', seed: { name: 'linux', filesystem: [], environment: [] },
+    options: {}, sandboxImpl: { ...sandboxImpl, platform: 'linux' },
+  });
+  await harness.act(() => Promise.resolve());
+  assertAbsent(host.querySelector('#sandbox-profile-editor-compatibility-section'));
+  unmount();
+});
+
 test('sandbox editor sections start collapsed and keep disclosure help reachable', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
@@ -1789,6 +1823,7 @@ test('sandbox editor groups concrete rules by the selected assignment outcome', 
         }] }],
         contexts: [{
           context: { global: 'base', group: 'access', group_name: 'crew' },
+          darwin_allow_mach_register: true,
           filesystem: [{ path: '/home/operator', access: 'deny' }, { path: '/home/operator/work', access: 'write' }],
           environment: ['POLICY_OWNER'],
           agent_directories: ['GOCACHE'],
@@ -1849,6 +1884,9 @@ test('sandbox editor groups concrete rules by the selected assignment outcome', 
   assert.equal(host.querySelector('.sbx-network-ports').value, '443');
   assert.match(host.querySelector('.sbx-policy-target').textContent,
     /OpenCode on macOS · tclaude sandbox/);
+  assert.match(host.querySelector('.sbx-mach-register-evaluation').textContent,
+    /Mach service registration.*Allowed by the tclaude Seatbelt layer for this target/s,
+    'the preview discloses that the composed compatibility capability applies to this target');
   const applied = host.querySelector('.sbx-rule-bucket-applied');
   assert.equal(applied.hasAttribute('open'), false,
     'fully supported rules always start folded');

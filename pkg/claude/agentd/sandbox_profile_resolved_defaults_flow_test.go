@@ -32,6 +32,7 @@ func TestSandboxProfilePreviewResolvesLaunchDefaultsAndNamesComposedLayers(t *te
 	for _, name := range []string{"house-rules", "crew-rules"} {
 		rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", map[string]any{
 			"name": name, "filesystem": []any{}, "environment": []any{},
+			"darwin_allow_mach_register": name == "house-rules",
 		})
 		require.Equalf(t, http.StatusCreated, rec.Code, "body=%s", rec.Body.String())
 	}
@@ -70,7 +71,8 @@ func TestSandboxProfilePreviewResolvesLaunchDefaultsAndNamesComposedLayers(t *te
 			ResolvedBy string `json:"resolved_by"`
 		} `json:"targets"`
 		Contexts []struct {
-			Context map[string]string `json:"context"`
+			Context                 map[string]string `json:"context"`
+			DarwinAllowMachRegister bool              `json:"darwin_allow_mach_register"`
 		} `json:"contexts"`
 	}
 	testharness.DecodeJSON(t, rec, &got)
@@ -91,4 +93,6 @@ func TestSandboxProfilePreviewResolvesLaunchDefaultsAndNamesComposedLayers(t *te
 		"explicit":   "scratch-draft",
 	}, got.Contexts[0].Context,
 		"every composed sandbox-profile layer must be identifiable by scope and name")
+	assert.True(t, got.Contexts[0].DarwinAllowMachRegister,
+		"the effective preview must preserve the composed macOS compatibility capability")
 }

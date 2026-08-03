@@ -89,12 +89,13 @@ func FlattenWithNotices(in Profile, lookup LookupProfile) (Profile, []AccessNoti
 			MaxNetworkAllowEntries)
 	}
 	out := Profile{
-		Name:             root.Name,
-		Filesystem:       make([]FilesystemGrant, 0, len(parts.filesystem)),
-		Environment:      make([]EnvironmentEntry, 0, len(parts.environment)),
-		AgentDirectories: make([]string, 0, len(parts.agentDirectories)),
-		NetworkAccess:    parts.networkAccess,
-		ResourceLimits:   parts.resourceLimits,
+		Name:                    root.Name,
+		Filesystem:              make([]FilesystemGrant, 0, len(parts.filesystem)),
+		Environment:             make([]EnvironmentEntry, 0, len(parts.environment)),
+		AgentDirectories:        make([]string, 0, len(parts.agentDirectories)),
+		NetworkAccess:           parts.networkAccess,
+		ResourceLimits:          parts.resourceLimits,
+		DarwinAllowMachRegister: parts.darwinAllowMachRegister,
 	}
 	if parts.hasFilesystemSpellings {
 		out.FilesystemSpellings = &FilesystemSpellings{
@@ -191,6 +192,7 @@ type flattenedParts struct {
 	hasNewNetwork           bool
 	hasNewUnixSockets       bool
 	resourceLimits          ResourceLimits
+	darwinAllowMachRegister bool
 	networkListContributors []string
 	socketListContributors  []string
 }
@@ -355,6 +357,7 @@ func (f *flattener) compose(p Profile) *flattenedParts {
 		value := *p.ResourceLimits.CPU
 		out.resourceLimits.CPU = &value
 	}
+	out.darwinAllowMachRegister = out.darwinAllowMachRegister || p.DarwinAllowMachRegister
 	own := composeProfileAccessAxes(p)
 	out.network = intersectNetworkRules(out.network, own.network)
 	out.unixSockets = intersectUnixSocketRules(out.unixSockets, own.unixSockets)

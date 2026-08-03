@@ -83,10 +83,10 @@ type tuiStartup struct {
 	// leaving operatorToken empty; it covers the dashboard sign-in link too.
 	suppressSecrets bool
 	// ownsTmuxServer is set when this daemon started the tclaude tmux server
-	// itself and will kill it on the way out (see startTUITmuxServer). It
-	// changes what quitting MEANS — every session on that server goes with it,
-	// rather than being left running for the next daemon — so the console has to
-	// say so before it acts on q.
+	// itself and will kill it on the way out if it is empty by then (see
+	// startTUITmuxServer). It changes what quitting MEANS — that server ends
+	// with the console instead of outliving it — so the console has to say so
+	// before it acts on q.
 	ownsTmuxServer bool
 }
 
@@ -208,7 +208,7 @@ func newInProcessTUIAPI() *inProcessTUIAPI {
 	pid := os.Getpid()
 	convID, hasAncestor := convIDForPID(pid)
 	return &inProcessTUIAPI{
-		handler:            buildMux(),
+		handler:            buildTUIConsoleMux(),
 		pid:                pid,
 		convID:             convID,
 		hasHarnessAncestor: hasAncestor,
@@ -523,12 +523,17 @@ const (
 
 // Spawn-form fields, in tab order. The profile sits directly under the group
 // because it is the field the others are read against: it decides what a
-// blank harness (or model, or approval posture) ends up being.
+// blank harness (or model, or approval posture) ends up being. The two
+// worktree fields sit under the directory for the same reason: the worktree is
+// cut from the repo that directory is in, and the branch field only exists
+// once the picker asks for a new one (see spawnFieldEnabled).
 const (
 	tuiFieldGroup = iota
 	tuiFieldProfile
 	tuiFieldName
 	tuiFieldDir
+	tuiFieldWorktree
+	tuiFieldWorktreeBranch
 	tuiFieldHarness
 	tuiFieldBrief
 	tuiSpawnFieldCount
@@ -549,6 +554,17 @@ const tuiHarnessDefault = "(default)"
 // profile is NOT "no profile at all", it hands the choice back to the
 // daemon's chain — the group's default profile, then the global one.
 const tuiProfileDefault = "(default)"
+
+// The worktree picker's two settings. "(none)" spawns in the directory the
+// form names, which is what every spawn did before this field existed;
+// tuiWorktreeNew resolves the branch below it into a worktree first and
+// launches the agent inside it.
+const (
+	tuiWorktreeNone = "(none)"
+	tuiWorktreeNew  = "create new worktree"
+)
+
+func tuiWorktreeOptions() []string { return []string{tuiWorktreeNone, tuiWorktreeNew} }
 
 type tuiModel struct {
 	api tuiAPI
@@ -601,7 +617,8 @@ type tuiModel struct {
 	// scraped or logged, so the console shows no credential of any kind.
 	suppressSecrets bool
 	// ownsTmuxServer means quitting kills the tmux server this daemon started,
-	// and every session on it (see startTUITmuxServer). Read by confirmPrompt.
+	// provided nothing is left on it (see startTUITmuxServer). Read by
+	// confirmPrompt.
 	ownsTmuxServer bool
 	// tokenLines is the operator-token block this console shows in place of
 	// the stdout banner, empty when stdout printed it. showTokenBanner is the
@@ -624,6 +641,15 @@ type tuiModel struct {
 	retiring          bool
 	resuming          bool
 	startingShell     bool
+	// spawnFormGen numbers the spawn forms this console has opened; see
+	// tuiSpawnForm.gen.
+	spawnFormGen uint64
+	// spawnWorktree is the worktree the in-flight spawn was given, empty when
+	// it was not given one. It outlives the form because it is only worth
+	// reporting once the spawn itself has answered: on success it says where
+	// the agent actually landed, and on failure it names a directory that was
+	// not there before — see tuiSpawnedMsg.
+	spawnWorktree tuiWorktreeResponse
 	// reconcilingMutation latches after a remote mutation's outcome becomes
 	// ambiguous. It survives failed polls and blocks every mutating key until
 	// a refresh started after that mutation establishes canonical daemon
@@ -674,9 +700,26 @@ type tuiSpawnForm struct {
 	harnessNames []string
 	harnessIdx   int
 
-	name  textinput.Model
-	dir   textinput.Model
-	brief textinput.Model
+	worktreeNames []string
+	worktreeIdx   int
+
+	name   textinput.Model
+	dir    textinput.Model
+	branch textinput.Model
+	brief  textinput.Model
+	// branchSynced is the worktree branch's "still following the name" state:
+	// while it holds, every keystroke in Name is copied into the branch field,
+	// so the common case (one agent, its own worktree, named after it) needs
+	// nothing typed twice. Typing in the branch field itself ends the sync —
+	// after that the branch is the operator's and the name picker leaves it
+	// alone, the same contract the directory prefill has with the group picker.
+	branchSynced bool
+	// gen identifies this form among the ones this console has opened, so a
+	// worktree resolution that lands after the operator has escaped and
+	// reopened the prompt can tell "the form that asked" from "the form on
+	// screen" — and leave the second one, with everything typed into it,
+	// alone. Assigned by openSpawnForm from the model's counter.
+	gen uint64
 	// dirPrefill is the value prefillDir last wrote into dir — the selected
 	// group's default directory. It is what tells an untouched field from one
 	// the operator has typed in, so changing the group can follow the first
@@ -726,6 +769,19 @@ type (
 	tuiUsageMsg struct {
 		usage tuiUsage
 		err   error
+	}
+	// tuiWorktreeResolvedMsg carries the outcome of the worktree step that
+	// runs before a spawn that asked for one. It carries the spawn it was
+	// resolved for, so the request that goes out is the one the form built
+	// rather than a re-read of fields the operator may have edited since —
+	// and formGen names the form that asked, so a late answer closes that
+	// form and never one the operator has opened since.
+	tuiWorktreeResolvedMsg struct {
+		group   string
+		formGen uint64
+		req     agent.SpawnRequest
+		wt      tuiWorktreeResponse
+		err     error
 	}
 	// tuiSpawnedMsg carries the outcome of one spawn request.
 	tuiSpawnedMsg struct {
@@ -1025,6 +1081,23 @@ func sortTUIAgents(agents []tuiAgentRow) {
 	})
 }
 
+// tuiResolveWorktreeCmd asks the daemon for the worktree the spawn form
+// picked, before the spawn itself goes out. It runs as its own command
+// because it is a git operation on the daemon's host — a fetchless one, but
+// still a subprocess — and because its failures are the operator's to fix in
+// the form (a branch that cannot be cut, a directory that is not a repo)
+// rather than something to report over a listing they have already been
+// returned to.
+func tuiResolveWorktreeCmd(
+	api tuiAPI, wtReq tuiWorktreeRequest, group string, formGen uint64, req agent.SpawnRequest,
+) tea.Cmd {
+	return func() tea.Msg {
+		var resp tuiWorktreeResponse
+		err := api.post(tuiWorktreePath, wtReq, &resp)
+		return tuiWorktreeResolvedMsg{group: group, formGen: formGen, req: req, wt: resp, err: err}
+	}
+}
+
 func tuiSpawnCmd(api tuiAPI, group string, req agent.SpawnRequest) tea.Cmd {
 	return func() tea.Msg {
 		var resp agent.SpawnResponse
@@ -1113,12 +1186,21 @@ func newTUITextInput(prompt string) textinput.Model {
 // profile tier, so a profile that selects Codex would have been overruled by a
 // field the operator never touched.
 func (m tuiModel) openSpawnForm() tuiModel {
+	m.spawnFormGen++
 	form := tuiSpawnForm{
-		harnessNames: tuiHarnessOptions(),
-		profileNames: tuiProfileOptions(m.profiles),
-		name:         newTUITextInput("  Name:      "),
-		dir:          newTUITextInput("  Directory: "),
-		brief:        newTUITextInput("  Brief:     "),
+		gen:           m.spawnFormGen,
+		harnessNames:  tuiHarnessOptions(),
+		profileNames:  tuiProfileOptions(m.profiles),
+		worktreeNames: tuiWorktreeOptions(),
+		name:          newTUITextInput("  Name:      "),
+		dir:           newTUITextInput("  Directory: "),
+		branch:        newTUITextInput("  Branch:    "),
+		brief:         newTUITextInput("  Brief:     "),
+		// The branch follows the name until the operator says otherwise, so
+		// picking "create new worktree" on a named agent needs nothing else
+		// typed. Nothing is created until they pick it: the form opens on
+		// "(none)", which is the spawn every earlier version of this form made.
+		branchSynced: true,
 	}
 	for _, g := range m.groups {
 		form.groupNames = append(form.groupNames, g.Name)
@@ -1200,19 +1282,80 @@ func (m tuiModel) selectedHarness() string {
 	return ""
 }
 
+// creatingWorktree reports whether the form's worktree picker is asking for a
+// new worktree rather than a plain launch directory.
+func (m tuiModel) creatingWorktree() bool {
+	return m.form.worktreeIdx >= 0 && m.form.worktreeIdx < len(m.form.worktreeNames) &&
+		m.form.worktreeNames[m.form.worktreeIdx] == tuiWorktreeNew
+}
+
+// canCreateWorktree gates the worktree fields on the console being the
+// operator: resolving a worktree runs git as the daemon process — the human's
+// own filesystem, outside any agent sandbox — and it CREATES a directory of
+// the caller's choosing. A console started from inside a harness pane is
+// agent-class and drivable by that agent through tmux send-keys, so it is
+// offered the field no more than the daemon would honour it (see
+// handleTUIWorktree, which refuses the same caller).
+//
+// Unlike directory completion and the shell form, that is the WHOLE gate:
+// those two also need the console to share the daemon's host and terminal
+// (completeLocalDir / startLocalShell), because they read or drive this
+// machine. A worktree is cut on the daemon's host in either case, so a remote
+// operator console gets the field too.
+func (m tuiModel) canCreateWorktree() bool { return m.operator }
+
+// spawnFieldEnabled reports whether a field takes part in this form at all.
+// The two disabled shapes are a console that may not create worktrees, and the
+// branch field of a form that is not creating one — a field with nothing to
+// say should not cost a tab stop.
+func (m tuiModel) spawnFieldEnabled(field int) bool {
+	switch field {
+	case tuiFieldWorktree:
+		return m.canCreateWorktree()
+	case tuiFieldWorktreeBranch:
+		return m.canCreateWorktree() && m.creatingWorktree()
+	default:
+		return true
+	}
+}
+
 // moveSpawnField shifts focus through the form, wrapping, and moves the
-// text-input focus with it — the group and harness fields have no input
-// model behind them, so all three blur for those.
+// text-input focus with it — the group, profile, worktree and harness fields
+// have no input model behind them, so all of the inputs blur for those.
+// Disabled fields are stepped over rather than landed on.
 func (m tuiModel) moveSpawnField(delta int) tuiModel {
-	m.form.field = ((m.form.field+delta)%tuiSpawnFieldCount + tuiSpawnFieldCount) % tuiSpawnFieldCount
+	step := 1
+	if delta < 0 {
+		step = -1
+	}
+	// Bounded by the field count: every field being disabled is impossible
+	// (the text inputs always are), but a loop over a form must not depend on
+	// that to terminate.
+	for range tuiSpawnFieldCount {
+		m.form.field = ((m.form.field+step)%tuiSpawnFieldCount + tuiSpawnFieldCount) % tuiSpawnFieldCount
+		if m.spawnFieldEnabled(m.form.field) {
+			break
+		}
+	}
+	return m.focusSpawnField(m.form.field)
+}
+
+// focusSpawnField puts the form on one field and moves the text-input focus
+// with it, without stepping over anything — used by moveSpawnField and by a
+// refused submit, which sends the operator back to the field to fix.
+func (m tuiModel) focusSpawnField(field int) tuiModel {
+	m.form.field = field
 	m.form.name.Blur()
 	m.form.dir.Blur()
+	m.form.branch.Blur()
 	m.form.brief.Blur()
-	switch m.form.field {
+	switch field {
 	case tuiFieldName:
 		m.form.name.Focus()
 	case tuiFieldDir:
 		m.form.dir.Focus()
+	case tuiFieldWorktreeBranch:
+		m.form.branch.Focus()
 	case tuiFieldBrief:
 		m.form.brief.Focus()
 	}
@@ -1237,7 +1380,35 @@ func (m tuiModel) cycleChoice(delta int) tuiModel {
 		if n := len(m.form.harnessNames); n > 0 {
 			m.form.harnessIdx = ((m.form.harnessIdx+delta)%n + n) % n
 		}
+	case tuiFieldWorktree:
+		if n := len(m.form.worktreeNames); n > 0 {
+			m.form.worktreeIdx = ((m.form.worktreeIdx+delta)%n + n) % n
+			// Turning the picker to "create new worktree" is what makes the
+			// branch field appear, so it arrives already carrying the name —
+			// the sync's whole point is that the operator names the agent once.
+			m = m.syncWorktreeBranch()
+		}
 	}
+	return m
+}
+
+// syncWorktreeBranch copies the agent's name into the branch field while the
+// branch is still following it. A blank name leaves a blank branch, which the
+// submit refuses by name rather than guessing one: an unnamed agent gets an
+// auto-generated label the console cannot know in advance, and cutting a
+// branch called something the operator never saw is worse than asking.
+//
+// The leading characters a branch may not start with are dropped on the way
+// across (see validateTUIWorktreeBranch): the spawn-name charset allows a
+// leading "-", so a perfectly good agent name would otherwise sync into a
+// branch the form then refuses — on a field the operator never typed in. The
+// trimmed value is on screen, so nothing is renamed behind their back.
+func (m tuiModel) syncWorktreeBranch() tuiModel {
+	if !m.form.branchSynced {
+		return m
+	}
+	m.form.branch.SetValue(strings.TrimLeft(strings.TrimSpace(m.form.name.Value()), "-./"))
+	m.form.branch.CursorEnd()
 	return m
 }
 
@@ -1245,7 +1416,7 @@ func (m tuiModel) cycleChoice(delta int) tuiModel {
 // is what makes ←/→ (and space) change a value rather than reach a text input.
 func tuiIsChoiceField(field int) bool {
 	switch field {
-	case tuiFieldGroup, tuiFieldProfile, tuiFieldHarness:
+	case tuiFieldGroup, tuiFieldProfile, tuiFieldHarness, tuiFieldWorktree:
 		return true
 	default:
 		return false
@@ -1300,8 +1471,20 @@ func (m tuiModel) updateFocusedInput(msg tea.Msg) (tuiModel, tea.Cmd) {
 	switch m.form.field {
 	case tuiFieldName:
 		m.form.name, cmd = m.form.name.Update(msg)
+		// The branch follows the name as it is typed, so the operator sees the
+		// branch they are about to get rather than discovering it at submit.
+		m = m.syncWorktreeBranch()
 	case tuiFieldDir:
 		m.form.dir, cmd = m.form.dir.Update(msg)
+	case tuiFieldWorktreeBranch:
+		before := m.form.branch.Value()
+		m.form.branch, cmd = m.form.branch.Update(msg)
+		// Any edit here ends the sync — including clearing the field, which is
+		// how an operator says "not this name" rather than "no opinion". Keys
+		// that change nothing (cursor moves) leave the sync alone.
+		if m.form.branch.Value() != before {
+			m.form.branchSynced = false
+		}
 	case tuiFieldBrief:
 		m.form.brief, cmd = m.form.brief.Update(msg)
 	}
@@ -1335,10 +1518,43 @@ func (m tuiModel) submitSpawn() (tuiModel, tea.Cmd) {
 		Harness:        m.selectedHarness(),
 		InitialMessage: strings.TrimSpace(m.form.brief.Value()),
 	}
+	m.spawnWorktree = tuiWorktreeResponse{}
+	if m.canCreateWorktree() && m.creatingWorktree() {
+		branch := strings.TrimSpace(m.form.branch.Value())
+		if err := validateTUIWorktreeBranch(branch); err != nil {
+			// The daemon refuses the same names for the same reasons; checking
+			// here keeps the form open on the field the operator has to fix,
+			// instead of closing it and reporting the refusal over the listing.
+			m.notice = "Cannot use that branch name: " + err.Error()
+			return m.focusSpawnField(tuiFieldWorktreeBranch), nil
+		}
+		// The form stays open until the worktree exists. Everything that can go
+		// wrong from here — not a git repo, a name git will not take, a
+		// directory already in the way — is answered by editing a field, and
+		// closing the form would throw away the brief along with it.
+		m.spawning = true
+		m.notice = "Creating worktree " + branch + "…"
+		return m, tuiResolveWorktreeCmd(m.api,
+			tuiWorktreeRequest{Repo: m.worktreeRepoDir(), Branch: branch}, group, m.form.gen, req)
+	}
 	m.mode = tuiModeList
 	m.spawning = true
 	m.notice = "Spawning in group " + group + "…"
 	return m, tuiSpawnCmd(m.api, group, req)
+}
+
+// worktreeRepoDir is the directory the new worktree's repo is looked up from:
+// the directory field, falling back to the group's default — which is where a
+// blank field spawns anyway — and then to nothing, which the daemon resolves
+// as its own working directory, the last step of that same fallback chain.
+//
+// The agent then launches inside the resolved worktree rather than in this
+// directory, which is what `tclaude agent spawn --worktree` does too.
+func (m tuiModel) worktreeRepoDir() string {
+	if dir := strings.TrimSpace(m.form.dir.Value()); dir != "" {
+		return dir
+	}
+	return strings.TrimSpace(m.groupDefaultDir(m.selectedGroup()))
 }
 
 // openShellForm builds a fresh "new shell session" prompt, with the directory
@@ -1863,12 +2079,44 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.ensureCursorVisible()
 		return m, nil
 
+	case tuiWorktreeResolvedMsg:
+		if msg.err != nil {
+			// The form is still open on the fields that produced this, so the
+			// operator fixes the branch or the directory and presses enter
+			// again. Nothing has been spawned.
+			m.spawning = false
+			m.notice = "Worktree failed: " + msg.err.Error()
+			if tuiMutationOutcomeUnknown(msg.err) {
+				// The request may well have landed: git creates the worktree
+				// before the answer is lost, and the retries replay a recorded
+				// response rather than re-cutting it. Saying only "failed"
+				// would leave a directory nobody has been told about. Pressing
+				// enter again converges either way — a worktree that exists on
+				// the branch is reused.
+				m.notice += " The worktree may have been created; asking for the same branch again reuses it."
+			}
+			return m, nil
+		}
+		m.spawnWorktree = msg.wt
+		req := msg.req
+		req.Cwd = msg.wt.Path
+		// The form that asked has done its job, so it closes. A form the
+		// operator has opened since is a different one, with different things
+		// typed into it, and is theirs to keep — as is anything else they
+		// opened instead.
+		if m.mode == tuiModeSpawn && m.form.gen == msg.formGen {
+			m.mode = tuiModeList
+		}
+		m.notice = tuiWorktreeReadyNotice(msg.wt) + " Spawning in group " + msg.group + "…"
+		return m, tuiSpawnCmd(m.api, msg.group, req)
+
 	case tuiSpawnedMsg:
 		m.spawning = false
 		if msg.err != nil {
-			m.notice = "Spawn failed: " + msg.err.Error()
+			m.notice = "Spawn failed: " + msg.err.Error() + m.worktreeKeptNote()
 			if tuiMutationOutcomeUnknown(msg.err) {
-				m.notice = "Spawn outcome unknown: the connection was lost after the request; refreshing before another action."
+				m.notice = "Spawn outcome unknown: the connection was lost after the request; " +
+					"refreshing before another action." + m.worktreeKeptNote()
 				m.reconcilingMutation = true
 				var refresh tea.Cmd
 				m, refresh = m.beginRefresh()
@@ -1877,7 +2125,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		m.notice = tuiSpawnSummary(msg)
+		m.notice = tuiSpawnSummary(msg) + m.worktreeLandedNote()
 		if focused, cmd := m.focusSpawned(msg); cmd != nil {
 			// Going to the pane ends in a tuiAttachedMsg, which refreshes.
 			return focused, cmd
@@ -2050,6 +2298,42 @@ func tuiSpawnSummary(msg tuiSpawnedMsg) string {
 	return out
 }
 
+// tuiWorktreeReadyNotice says which of the two things the resolve step did.
+// Reuse is not a corner case: naming the branch of a worktree that already
+// exists is how this form picks an existing worktree, since it has no list to
+// pick one from.
+func tuiWorktreeReadyNotice(wt tuiWorktreeResponse) string {
+	if wt.Created {
+		return "Created worktree " + wt.Path + " on " + wt.Branch + "."
+	}
+	return "Reusing the existing worktree " + wt.Path + " on " + wt.Branch + "."
+}
+
+// worktreeLandedNote names the worktree the new agent launched in, so the
+// listing's DIRECTORY column is not the first the operator hears of it.
+func (m tuiModel) worktreeLandedNote() string {
+	if m.spawnWorktree.Path == "" {
+		return ""
+	}
+	return " — in " + m.spawnWorktree.Path
+}
+
+// worktreeKeptNote is what a failed spawn owes an operator whose worktree was
+// created moments earlier: the directory is still there, and it is theirs to
+// keep or remove.
+//
+// The console deliberately does not remove it. A failed spawn here is often an
+// ambiguous one — the console latches reconcilingMutation precisely because it
+// cannot tell a rejected request from a lost answer — and force-removing a
+// directory a session may be starting up in is the one mistake that costs
+// work. `tclaude worktree rm` removes it when the operator has decided.
+func (m tuiModel) worktreeKeptNote() string {
+	if !m.spawnWorktree.Created || m.spawnWorktree.Path == "" {
+		return ""
+	}
+	return " The worktree " + m.spawnWorktree.Path + " was created and has been kept."
+}
+
 func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.reconcilingMutation && tuiReconciliationBlocksMutation(m.mode, msg.String()) {
 		// A second modal can have opened while the original request was still
@@ -2193,6 +2477,11 @@ func (m tuiModel) handleSpawnKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 	switch key {
 	case "esc", "ctrl+c":
+		// Closing the form while its worktree is being cut does not cancel the
+		// spawn behind it — no mutation this console starts is cancellable —
+		// it just gives up the typed fields. The outcome then lands on the
+		// listing like every other one, and a second spawn is still refused
+		// while the first is in flight.
 		m.mode = tuiModeList
 		return m, nil
 	case "enter":
@@ -2429,12 +2718,12 @@ func (m tuiModel) confirmPrompt() string {
 			return "Shell still starting — quit and shut down agentd? [y / any other key = cancel]"
 		}
 		if m.ownsTmuxServer {
-			// This daemon started the tmux server, so quitting kills it and takes
-			// every session on it — the agents this console spawned included. The
-			// plain wording below would be a lie here: it reads as "the daemon
-			// stops and the panes carry on", which is what happens only when the
-			// server was already running and belongs to somebody else.
-			return "Quit and shut down agentd + its tmux sessions? [y / any other key = cancel]"
+			// This daemon started the tmux server, so quitting ends it too — but
+			// only if nothing is left on it, so agent panes still outlive the quit
+			// (see startTUITmuxServer). Saying so is the difference between an
+			// operator who knows the empty server goes away with the console and
+			// one who finds a stray tmux process later and wonders whose it is.
+			return "Quit + shut down agentd (and tmux if empty)? [y / any other key = cancel]"
 		}
 		return "Quit and shut down agentd? [y / any other key = cancel]"
 	case tuiModeConfirmStop:
@@ -2628,6 +2917,7 @@ func (m tuiModel) renderSpawnForm() string {
 	// Always emit this line, blank or not, so a candidate list appearing and
 	// disappearing doesn't shift the fields below it up and down.
 	b.WriteString(m.dirSuggestionLine(m.form.dirSuggestions) + "\n")
+	b.WriteString(m.worktreeLines())
 	harnessChoice := tuiHarnessDefault
 	if m.form.harnessIdx >= 0 && m.form.harnessIdx < len(m.form.harnessNames) {
 		harnessChoice = m.form.harnessNames[m.form.harnessIdx]
@@ -2652,8 +2942,12 @@ func (m tuiModel) renderSpawnForm() string {
 	if m.operator && m.capabilities.attachAgent {
 		spawnHint = "enter spawn + go to its pane"
 	}
+	cycleHint := "←/→ change group/profile/harness"
+	if m.canCreateWorktree() {
+		cycleHint = "←/→ change group/profile/worktree/harness"
+	}
 	b.WriteString("\n  " + spawnHint + " • ↑/↓/tab next field • " + completeHint +
-		"←/→ change group/profile/harness • esc cancel\n")
+		cycleHint + " • esc cancel\n")
 	return b.String()
 }
 
@@ -2697,6 +2991,53 @@ func (m tuiModel) shellDirHint() string {
 		return "  (where this console was started — edit it to start elsewhere)"
 	default:
 		return ""
+	}
+}
+
+// worktreeLines renders the worktree picker and, when it is asking for a new
+// worktree, the branch field under it.
+//
+// A console that may not create worktrees still gets the line, saying so: the
+// field is one of the form's answers, and silently dropping it would leave an
+// operator wondering whether this console simply has an older form.
+func (m tuiModel) worktreeLines() string {
+	if !m.canCreateWorktree() {
+		// Rendered without the < > a picker has: there is nothing to cycle.
+		return "  Worktree:  " + tuiWorktreeNone +
+			"  (operator consoles only — the worktree is created on the daemon's host)\n"
+	}
+	choice := tuiWorktreeNone
+	if m.form.worktreeIdx >= 0 && m.form.worktreeIdx < len(m.form.worktreeNames) {
+		choice = m.form.worktreeNames[m.form.worktreeIdx]
+	}
+	out := tuiChoiceLine("  Worktree:  ", choice, m.worktreeChoiceHint(),
+		m.form.field == tuiFieldWorktree)
+	if !m.creatingWorktree() {
+		return out
+	}
+	return out + m.form.branch.View() + m.branchHint() + "\n"
+}
+
+// worktreeChoiceHint says what each setting of the picker does, in the terms
+// the operator is choosing between: where the agent ends up.
+func (m tuiModel) worktreeChoiceHint() string {
+	if !m.creatingWorktree() {
+		return "  (the agent starts in the directory above)"
+	}
+	return "  (cut from the repo the directory above is in; the agent starts inside it)"
+}
+
+// branchHint explains the branch field's state: whether it is still following
+// the name, that an existing branch is checked out rather than refused, and —
+// on a blank one — that the submit will ask for a name rather than invent one.
+func (m tuiModel) branchHint() string {
+	switch {
+	case strings.TrimSpace(m.form.branch.Value()) == "":
+		return "  (name the branch, or set Worktree to " + tuiWorktreeNone + ")"
+	case m.form.branchSynced:
+		return "  (following the name — type here to choose your own)"
+	default:
+		return "  (an existing branch is checked out; a new one is cut from the default branch)"
 	}
 }
 
@@ -2844,12 +3185,20 @@ func (m tuiModel) renderHelp() string {
 		b.WriteString("               the field. Operator consoles only. On the field as the\n")
 		b.WriteString("               form left it, tab still moves to the next field.\n")
 	}
-	b.WriteString("    ←/→        Change the group, spawn profile or harness\n")
+	b.WriteString("    ←/→        Change the group, spawn profile, worktree or harness\n")
 	b.WriteString("               A profile of \"(default)\" names none, which leaves the\n")
 	b.WriteString("               group's and the global default profile in force.\n")
 	b.WriteString("               Directory starts on the group's own default directory\n")
 	b.WriteString("               (add a subdirectory to start below it) and follows the\n")
 	b.WriteString("               group picker until you type a path of your own.\n")
+	b.WriteString("               Worktree \"create new worktree\" cuts a git worktree in the\n")
+	b.WriteString("               repo that directory is in and starts the agent inside it.\n")
+	b.WriteString("               Its Branch follows the Name until you type one of your\n")
+	b.WriteString("               own; naming a branch that already has a worktree reuses\n")
+	b.WriteString("               that worktree instead of making another. Operator\n")
+	b.WriteString("               consoles only — the worktree is created on the daemon's\n")
+	b.WriteString("               host, and a failed spawn leaves it for you to keep or\n")
+	b.WriteString("               remove.\n")
 	if m.capabilities.attachAgent {
 		b.WriteString("    enter      Spawn, then go straight to the new agent's pane —\n")
 		b.WriteString("               the same move enter makes on its row. Operator\n")

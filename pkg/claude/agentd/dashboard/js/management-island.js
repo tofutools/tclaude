@@ -505,6 +505,12 @@ export function SandboxPolicyResult({ target, context, contextIndex, contexts = 
       ${context.resource_limits.cpu != null && html`<div>CPU: ${context.resource_limits.cpu} cores → <code>cpu.max ${context.cpu_max}</code></div>`}
       <div>${refusal?.kind === 'unsupported_resource_limits' ? 'This target cannot enforce these limits.' : 'This Linux target can enforce the requested cgroup-v2 limits; live controller delegation is checked again before launch.'}</div>
     </div>`}
+    ${context.darwin_allow_mach_register && html`<div class="sbx-mach-register-evaluation">
+      <strong>Mach service registration — macOS only</strong>
+      <div>${target.target?.platform === 'darwin' && target.target?.implementation === 'tclaude-layer'
+    ? 'Allowed by the tclaude Seatbelt layer for this target.'
+    : 'Stored in this effective policy, but it does not apply to this target; only the macOS tclaude-layer sandbox consumes it.'}</div>
+    </div>`}
     <details class="sbx-target-details"><summary>Evaluation details</summary>
       ${target.target.sandbox ? html`<div>Sandbox mode: ${sandboxModeDetail(target.target.harness, target.target.sandbox)}</div>` : null}
       ${target.resolved_by
@@ -1297,7 +1303,7 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
     const axes = sandboxAccessAxes(seed || {});
     const network = sandboxNetworkAuthoring(seed || {});
     const filesystem_spellings = clone(seed?.filesystem_spellings ?? null);
-    return { id: seed?.id || 0, name: seed?.name || '', filesystem: sandboxFilesystemEditorRows(seed?.filesystem || [], filesystem_spellings), filesystem_spellings, environment: clone(seed?.environment || []), includes: clone(seed?.includes || []), agent_directories: clone(seed?.agent_directories || []), network_access: '', network, unix_sockets: axes.unix_sockets, resource_limits: { memory: seed?.resource_limits?.memory || '', cpu: seed?.resource_limits?.cpu == null ? '' : String(seed.resource_limits.cpu) } };
+    return { id: seed?.id || 0, name: seed?.name || '', filesystem: sandboxFilesystemEditorRows(seed?.filesystem || [], filesystem_spellings), filesystem_spellings, environment: clone(seed?.environment || []), includes: clone(seed?.includes || []), agent_directories: clone(seed?.agent_directories || []), network_access: '', network, unix_sockets: axes.unix_sockets, resource_limits: { memory: seed?.resource_limits?.memory || '', cpu: seed?.resource_limits?.cpu == null ? '' : String(seed.resource_limits.cpu) }, darwin_allow_mach_register: !!seed?.darwin_allow_mach_register };
   }, [descriptor]);
   const initialFilesystemWire = sandboxFilesystemWire(baseline, baseline);
   const [draft, setDraft] = useState(() => clone(baseline)); const [advanced, setAdvanced] = useState(false); const [rawFS, setRawFS] = useState(() => JSON.stringify(initialFilesystemWire.filesystem, null, 2)); const [rawSpellings, setRawSpellings] = useState(() => JSON.stringify(initialFilesystemWire.filesystem_spellings, null, 2)); const [rawEnv, setRawEnv] = useState(() => JSON.stringify(baseline.environment, null, 2)); const [rawIncludes, setRawIncludes] = useState(() => JSON.stringify(baseline.includes, null, 2)); const [rawAgentDirs, setRawAgentDirs] = useState(() => JSON.stringify(baseline.agent_directories, null, 2)); const [rawNetwork, setRawNetwork] = useState(() => JSON.stringify(baseline.network, null, 2)); const [rawSockets, setRawSockets] = useState(() => JSON.stringify(baseline.unix_sockets, null, 2)); const [rawResources, setRawResources] = useState(() => JSON.stringify(sandboxResourceLimitsForWire(baseline.resource_limits), null, 2));
@@ -1561,6 +1567,12 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
         <label>CPU cores <input id="sandbox-profile-editor-cpu-limit" value=${draft.resource_limits.cpu} placeholder="e.g. 0.5 or 2" inputmode="decimal" autocomplete="off" spellcheck="false" onInput=${(event) => setDraft((value) => ({ ...value, resource_limits: { ...value.resource_limits, cpu: event.currentTarget.value } }))}/></label>
       </div>
     </${SandboxSection}>
+    ${descriptor.sandboxImpl?.platform === 'darwin' && html`<${SandboxSection} id="sandbox-profile-editor-compatibility-section" label="Compatibility — macOS only"
+      help="Optional exceptions for software that cannot start under the default tclaude Seatbelt profile. These settings apply only to the tclaude-layer sandbox; Claude Code and Codex own their built-in Seatbelt profiles."
+      hidden=${advanced} entryCount=${Number(draft.darwin_allow_mach_register)}>
+      <label class="sbx-global-toggle"><input id="sandbox-profile-editor-allow-mach-register" type="checkbox" checked=${draft.darwin_allow_mach_register} onChange=${(event) => setDraft((value) => ({ ...value, darwin_allow_mach_register: event.currentTarget.checked }))}/> Allow Mach service registration</label>
+      <div class="sbx-resource-intro">Needed by multi-process browser rendering such as headless Chrome/Chromium and Playwright WebKit on macOS. This adds <code>(allow mach-register)</code> to tclaude's Seatbelt profile and broadens the processes' ability to register Mach services.</div>
+    </${SandboxSection}>`}
     <${SandboxSection} id="sandbox-profile-editor-environment-section" label="Environment"
       help=${ENVIRONMENT_HELP} hidden=${advanced} entryCount=${draft.environment.length}><div class="sbx-rows">${draft.environment.map((row, index) => html`<div key=${index} class="sbx-row sbx-environment-row"><input class="sbx-env-name" value=${row.name || ''} placeholder="NAME" onInput=${(event) => setEnv(index, { name: event.currentTarget.value })}/><input class="sbx-env-value" value=${row.value || ''} placeholder="value" onInput=${(event) => setEnv(index, { value: event.currentTarget.value })}/><button type="button" onClick=${() => setDraft((value) => ({ ...value, environment: value.environment.filter((_, i) => i !== index) }))}>×</button></div>`)}</div><button type="button" class="sbx-add-row" onClick=${() => setDraft((value) => ({ ...value, environment: [...value.environment, { name: '', value: '' }] }))}>＋ add variable</button></${SandboxSection}>
     <${SandboxSection} id="sandbox-profile-editor-includes-section" label="Includes"
@@ -1688,7 +1700,7 @@ function SandboxImport({ current, state, actions, confirmDiscard }) {
     setError(''); setBusy('inspect');
     try {
       const parsed = JSON.parse(raw);
-      if (parsed?.format !== 'tclaude-sandbox-profiles' || ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].includes(parsed?.format_version)) throw new Error('not a tclaude sandbox-profile export');
+      if (parsed?.format !== 'tclaude-sandbox-profiles' || ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].includes(parsed?.format_version)) throw new Error('not a tclaude sandbox-profile export');
       const found = await actions.inspectSandboxBundle(parsed);
       setEnvelope(parsed); setPreview(found);
     } catch (e) {

@@ -511,10 +511,11 @@ func TestTUIQuitAsksBeforeShuttingTheDaemonDown(t *testing.T) {
 	assert.IsType(t, tea.QuitMsg{}, cmd())
 }
 
-// When this daemon started the tmux server, quitting kills it and every session
-// on it (see startTUITmuxServer). The operator decides at the prompt, and the
-// slog line announcing ownership goes to output.log where they cannot see it,
-// so the prompt itself has to carry the consequence.
+// When this daemon started the tmux server, quitting ends that server too —
+// though only if it is empty by then, so agent panes survive the quit (see
+// startTUITmuxServer). The operator decides at the prompt, and the slog line
+// announcing ownership goes to output.log where they cannot see it, so the
+// prompt itself has to carry the consequence.
 func TestTUIQuitPromptWarnsWhenItOwnsTheTmuxServer(t *testing.T) {
 	m := newTUIModel(nil)
 	m.mode = tuiModeConfirmQuit
@@ -523,7 +524,8 @@ func TestTUIQuitPromptWarnsWhenItOwnsTheTmuxServer(t *testing.T) {
 
 	m.ownsTmuxServer = true
 	prompt := m.confirmPrompt()
-	assert.Contains(t, prompt, "its tmux sessions")
+	assert.Contains(t, prompt, "tmux if empty",
+		"the prompt must say the server goes away, and that a non-empty one does not")
 	assert.LessOrEqual(t, lipgloss.Width("  "+prompt), 80,
 		"confirmPrompt is budgeted as exactly one line")
 }
@@ -1073,7 +1075,7 @@ func TestTUISpawnDirTabOnAnEmptyFieldMovesOn(t *testing.T) {
 	m := spawnFormOnDir(t, "")
 	updated, _ := m.handleSpawnKey(tuiTabKey())
 	got := updated.(tuiModel)
-	assert.Equal(t, tuiFieldHarness, got.form.field)
+	assert.Equal(t, tuiFieldWorktree, got.form.field)
 	assert.Empty(t, got.form.dir.Value())
 }
 
@@ -1096,7 +1098,7 @@ func TestTUISpawnDirTabOnTheGroupsOwnDirectoryMovesOn(t *testing.T) {
 
 	updated, _ := m.handleSpawnKey(tuiTabKey())
 	got := updated.(tuiModel)
-	assert.Equal(t, tuiFieldHarness, got.form.field, "tab must still reach the next field")
+	assert.Equal(t, tuiFieldWorktree, got.form.field, "tab must still reach the next field")
 	assert.Equal(t, root+"/", got.form.dir.Value(), "and must not pick a subdirectory nobody chose")
 
 	// Once the operator starts typing a subdirectory, Tab completes it again.

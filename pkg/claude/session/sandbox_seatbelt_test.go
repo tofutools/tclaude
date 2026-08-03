@@ -169,6 +169,29 @@ func TestRenderSeatbeltProfileGolden(t *testing.T) {
 		"the host-open profile must remain byte-identical and gain no network denies")
 }
 
+func TestRenderSeatbeltProfileOptionallyAllowsMachRegister(t *testing.T) {
+	profile, _, err := renderSeatbeltProfile(
+		nil, nil,
+		sandboxpolicy.MountPlan{
+			NetworkPosture:          sandboxpolicy.NetworkHostOpen,
+			DarwinAllowMachRegister: true,
+		},
+		netip.AddrPort{}, nil, "/private/tmp/tmux-501",
+		"/private/var/folders/ab/runtime/T", nil, nil,
+	)
+	require.NoError(t, err)
+	assert.Contains(t, profile, "(allow mach-register)")
+
+	profile, _, err = renderSeatbeltProfile(
+		nil, nil,
+		sandboxpolicy.MountPlan{NetworkPosture: sandboxpolicy.NetworkHostOpen},
+		netip.AddrPort{}, nil, "/private/tmp/tmux-501",
+		"/private/var/folders/ab/runtime/T", nil, nil,
+	)
+	require.NoError(t, err)
+	assert.NotContains(t, profile, "mach-register")
+}
+
 func TestRenderSeatbeltIsolatedNetworkProfileParameterizesAllowedSockets(t *testing.T) {
 	const (
 		agentd = "/Users/dev/.tclaude/api/agentd.sock"

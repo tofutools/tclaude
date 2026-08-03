@@ -32,3 +32,10 @@ test('profile summary discloses configured resource limits', () => {
     /memory 4GiB .* CPU 2/,
   );
 });
+
+test('profile summary discloses Darwin Mach registration', () => {
+  assert.equal(
+    sandboxProfileSummary({ darwin_allow_mach_register: true }),
+    'Mach registration',
+  );
+});
