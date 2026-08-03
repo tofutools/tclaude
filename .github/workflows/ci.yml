@@ -981,7 +981,13 @@ jobs:
             # and assert-off scenarios. The descriptor test TCL-977's
             # measurements justify needs no CLI and lives in the harness
             # package, so the ordinary `go test ./...` job owns it.
-            run_filter: TestCopilotNativeSandbox|TestCopilotSandboxBaseline|TestCopilotDefaultCachePlacement|TestCopilotPackageCacheIsExecutable|TestCopilotInnerSandbox|TestCopilotLegacyConfig|TestCopilotStartupDialsOnlyContractedHosts
+            #
+            # TCL-987's cwd-spelling scenario is macOS-ONLY by nature: it needs a
+            # runner whose $TMPDIR is spelled /var/folders/… while the kernel's
+            # directory is /private/var/folders/…, which is the entire defect. On
+            # Linux it has no alternate spelling to supply and skips, so this arm
+            # is the only place it is real evidence.
+            run_filter: TestCopilotNativeSandbox|TestCopilotSandboxBaseline|TestCopilotDefaultCachePlacement|TestCopilotPackageCacheIsExecutable|TestCopilotInnerSandbox|TestCopilotLegacyConfig|TestCopilotStartupDialsOnlyContractedHosts|TestCopilotConvStoreMatchesTheUnresolvedCwdSpelling
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -1088,6 +1094,16 @@ jobs:
               TestCopilotModelSelection
               TestCopilotProductionSpawnerLaunches
               TestCopilotHooksFireFromTheInstalledFile
+            )
+          else
+            # TCL-987's acceptance proof: Copilot records a RESOLVED cwd while a
+            # macOS shell hands tclaude the /var/folders/… spelling of the same
+            # physical directory. The scenario skips itself where the two
+            # spellings are equal, which is exactly the silent no-op this gate
+            # exists to reject — on this arm it must report an explicit pass, or
+            # the only platform-real evidence for the fix never ran.
+            required+=(
+              TestCopilotConvStoreMatchesTheUnresolvedCwdSpelling
             )
           fi
           missing=()

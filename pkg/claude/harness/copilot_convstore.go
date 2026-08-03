@@ -97,7 +97,10 @@ type copilotWorkspace struct {
 }
 
 // ListConvs assembles one SessionEntry per session-state directory. An empty
-// cwd is the documented "everything, everywhere" sentinel.
+// cwd is the documented "everything, everywhere" sentinel; a non-empty one is
+// matched through symlinks rather than by spelling — see copilotCwdFilter for
+// why the two sides disagree on macOS, and for what that matching does not
+// cover.
 //
 // A session whose own files are unreadable or malformed is SKIPPED with a
 // warning rather than failing the listing: Copilot writes these files while
@@ -131,8 +134,12 @@ func (s copilotConvStore) listConvs(cwd string, withEvents bool) ([]convops.Sess
 		return nil, fmt.Errorf("copilot: read %s: %w", stateDir, err)
 	}
 
+	// Built before the scan so the caller's cwd is resolved once per listing
+	// rather than once per session. Nil for the "everything, everywhere"
+	// sentinel, which never compares a directory at all.
+	var cwdFilter *copilotCwdFilter
 	if cwd != "" {
-		cwd = filepath.Clean(cwd)
+		cwdFilter = newCopilotCwdFilter(cwd)
 	}
 	entries := make([]convops.SessionEntry, 0, len(dirEntries))
 	for _, dirEntry := range dirEntries {
@@ -161,10 +168,10 @@ func (s copilotConvStore) listConvs(cwd string, withEvents bool) ([]convops.Sess
 	} else {
 		applyCopilotArchivedState(entries)
 	}
-	if cwd != "" {
+	if cwdFilter != nil {
 		filtered := entries[:0]
 		for _, entry := range entries {
-			if filepath.Clean(entry.ProjectPath) == cwd {
+			if cwdFilter.matches(entry.ProjectPath) {
 				filtered = append(filtered, entry)
 			}
 		}

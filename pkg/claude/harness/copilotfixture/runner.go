@@ -232,6 +232,19 @@ type Dirs struct {
 	Cache    string
 	XDGCache string
 	WorkDir  string
+
+	// UnresolvedRoot and UnresolvedWorkDir are the same two directories as the
+	// process's own environment spells them, BEFORE symlink resolution. On
+	// macOS that is /var/folders/… where the resolved pair is
+	// /private/var/folders/…; on a Linux CI box the two spellings are equal.
+	//
+	// They exist so a scenario can hand the store the spelling an operator's
+	// shell would actually supply, which is the whole cwd-matching contract
+	// (TCL-987). A scenario that wants the unambiguous lab spelling keeps using
+	// Root/WorkDir; these are opt-in, and a test that finds them equal to their
+	// resolved twins has no alternate spelling to exercise on that platform.
+	UnresolvedRoot    string
+	UnresolvedWorkDir string
 }
 
 // NewSandboxDirs creates the disposable directory set under t.TempDir. Each
@@ -239,18 +252,20 @@ type Dirs struct {
 // sharing one between scenarios would couple them through that database.
 func NewSandboxDirs(t *testing.T) Dirs {
 	t.Helper()
-	root := t.TempDir()
+	unresolved := t.TempDir()
+	root := unresolved
 	// Canonicalized because the CLI records its cwd resolved: on macOS t.TempDir
 	// hands back /var/folders/… while Copilot writes /private/var/folders/… into
 	// workspace.yaml, and every scenario that compares a path it passed in
 	// against a path the CLI wrote back would be measuring that symlink instead
 	// of the behavior it names.
 	//
-	// This makes the fixture lab's own paths unambiguous. It does NOT address
-	// the production question of how tclaude should match an operator-supplied
-	// cwd against Copilot's resolved spelling — see the ConvStore cwd-spelling
-	// follow-up; that comparison lives in copilot_convstore.go and is not
-	// something a test directory layout can decide.
+	// This makes the fixture lab's own paths unambiguous. It does NOT decide the
+	// production question of how tclaude matches an operator-supplied cwd
+	// against Copilot's resolved spelling — that comparison lives in
+	// copilot_convstore.go. The unresolved spelling is kept alongside rather
+	// than discarded so the scenario that DOES test it (TCL-987) can hand the
+	// store the spelling a shell would supply.
 	if resolved, err := filepath.EvalSymlinks(root); err == nil {
 		root = resolved
 	}
@@ -260,6 +275,9 @@ func NewSandboxDirs(t *testing.T) Dirs {
 		Cache:    filepath.Join(root, "cache"),
 		XDGCache: filepath.Join(root, "xdg-cache"),
 		WorkDir:  filepath.Join(root, "work"),
+
+		UnresolvedRoot:    unresolved,
+		UnresolvedWorkDir: filepath.Join(unresolved, "work"),
 	}
 	for _, dir := range []string{d.Home, d.Cache, d.XDGCache, d.WorkDir} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
