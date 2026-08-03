@@ -1,0 +1,265 @@
+package copilotfixture
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"testing"
+)
+
+// This file is the measurement apparatus for TCL-973's Phase 0: what Copilot
+// 1.0.77 actually does to an UNATTENDED launch.
+//
+// The distinction that organizes everything here is between a launch that
+// finishes and a launch that sits forever waiting for a human. tclaude spawns
+// Copilot into a tmux pane with nobody watching it, so a prompt is not a
+// nuisance — it is a permanent deadlock, and an agent that deadlocks looks
+// exactly like an agent that is thinking.
+//
+// Two rules the scenarios in this package follow, both learned by getting them
+// wrong first:
+//
+//  1. Permission behavior is only measurable on a PTY. See pty.go — without a
+//     terminal the CLI cannot draw a prompt, so it does not, and a headless run
+//     reports "no prompt" for a launch that would deadlock a real pane.
+//  2. A bypass must not be a promotion. Several ways of getting past Copilot's
+//     first gate also change the permission posture, so using one to reach a
+//     later measurement silently confounds it. TrustFolder exists to clear the
+//     first gate WITHOUT touching tool, path or URL permissions.
+
+// TrustPromptMarker is the folder-trust dialog's title. It is the single most
+// important string in this package: a fresh COPILOT_HOME makes it the FIRST
+// thing an unattended pane hits, before the provider is contacted at all.
+const TrustPromptMarker = "Confirm folder trust"
+
+// TrustFolder pre-grants folder trust for dir by writing Copilot's config
+// before launch, and is the only trust bypass the permission scenarios use.
+//
+// It is deliberately not a flag, because no flag does this. Measured against
+// 1.0.77, every one of `--allow-all-tools`, `--allow-all`, `--allow-all-paths`
+// and `--add-dir <dir>` still leaves the trust dialog blocking the launch with
+// zero provider requests. Only a pre-seeded `trustedFolders` entry clears it.
+//
+// That is the whole reason this helper exists rather than a flag constant, and
+// it is a finding rather than an implementation detail: any detached Copilot
+// agent tclaude spawns needs a CONFIG-FILE write before launch, which no part
+// of the argv-rendering design in TCL-973's plan can express.
+//
+// The other reason it is a config write is the confounding rule above. The one
+// environment variable that also clears the dialog, COPILOT_ALLOW_ALL, clears
+// it by promoting the whole session to allow-all — so a scenario that used it
+// to reach the tool-approval question would be measuring a launch that had
+// already granted every tool. TrustFolder grants trust and nothing else.
+func TrustFolder(t *testing.T, home, dir string) {
+	t.Helper()
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		t.Fatalf("copilotfixture: mkdir %s: %v", home, err)
+	}
+	// config.json rather than settings.json: 1.0.77 reads the legacy file and
+	// migrates it, which TestCopilotLegacyConfigMigratesIntoSettings already
+	// pins. Writing the file the CLI demonstrably honours keeps this helper
+	// tied to a measured behavior instead of a guessed one.
+	path := filepath.Join(home, "config.json")
+	enc, err := json.Marshal(map[string]any{"trustedFolders": []string{dir}})
+	if err != nil {
+		t.Fatalf("copilotfixture: marshal trustedFolders: %v", err)
+	}
+	if err := os.WriteFile(path, enc, 0o600); err != nil {
+		t.Fatalf("copilotfixture: write %s: %v", path, err)
+	}
+}
+
+// PermissionOutcome is what a scenario could establish about a launch FROM THE
+// RUN IT JUST PERFORMED.
+type PermissionOutcome string
+
+const (
+	// PermissionAllowed: the tool ran and its result was posted back to the
+	// provider. A second provider request is the proof — it cannot happen
+	// unless the CLI executed the tool and had a result to send.
+	PermissionAllowed PermissionOutcome = "allowed"
+
+	// PermissionBlocked: no follow-up request, and the process is still alive
+	// with its output settled. This is the deadlock shape a detached agent
+	// would exhibit forever.
+	PermissionBlocked PermissionOutcome = "blocked"
+
+	// PermissionRefused: no follow-up request, and the CLI exited on its own.
+	// The launch was rejected rather than parked — a bad flag, a refused
+	// startup, a denial that terminates.
+	PermissionRefused PermissionOutcome = "refused"
+)
+
+// PermissionVerdict pairs an outcome with the observation behind it.
+type PermissionVerdict struct {
+	Outcome PermissionOutcome
+	// Evidence is what a human reads on failure and what CI greps for. CI
+	// asserting the VALUE, not merely that the test passed, is what stops a
+	// scenario from quietly starting to measure a different arm.
+	Evidence string
+}
+
+// ClassifyPermission decides what happened to a launch that was expected to
+// reach a tool call.
+//
+// followUpRequests is the number of provider requests BEYOND the first. The
+// first request only proves the CLI got past its startup gates; the second is
+// the one that proves a tool actually executed, because it carries the tool
+// result back.
+//
+// The error arm is the point of the function. "No follow-up request" has two
+// completely different causes — parked on a prompt, or dead — and they are the
+// difference between "tclaude must render a nonblocking posture" and "tclaude
+// passed an argument Copilot rejects". A classifier that collapsed them would
+// let a typo'd flag be recorded as proof of a permission gate. So the
+// undecidable case, where nothing at all was observed, is an error a scenario
+// must fail on rather than an arm it may pick.
+func ClassifyPermission(
+	totalRequests, followUpRequests int, stillAlive, quiesced bool, transcript string,
+) (PermissionVerdict, error) {
+	switch {
+	case followUpRequests > 0:
+		return PermissionVerdict{
+			Outcome:  PermissionAllowed,
+			Evidence: "the tool executed and its result was posted back to the provider",
+		}, nil
+
+	case totalRequests == 0 && stillAlive && strings.Contains(transcript, TrustPromptMarker):
+		// Named separately from the generic blocked arm because it is a
+		// different gate at a different time: this one blocks BEFORE the model
+		// is ever contacted, so no permission flag can be observed past it.
+		return PermissionVerdict{
+			Outcome: PermissionBlocked,
+			Evidence: "blocked at the folder-trust dialog before contacting the provider " +
+				"(0 provider requests)",
+		}, nil
+
+	case stillAlive && quiesced:
+		return PermissionVerdict{
+			Outcome: PermissionBlocked,
+			Evidence: fmt.Sprintf(
+				"no tool-result follow-up after %d provider request(s); the process is alive "+
+					"with settled output, i.e. parked on a prompt", totalRequests),
+		}, nil
+
+	case !stillAlive:
+		return PermissionVerdict{
+			Outcome: PermissionRefused,
+			Evidence: fmt.Sprintf(
+				"no tool-result follow-up after %d provider request(s), and the CLI exited "+
+					"on its own", totalRequests),
+		}, nil
+
+	default:
+		return PermissionVerdict{}, fmt.Errorf(
+			"cannot classify this launch: no tool-result follow-up after %d provider "+
+				"request(s), the process is still alive, but its output never settled. "+
+				"That is neither a prompt (which stops producing output) nor an exit, so it "+
+				"is most likely still working and the scenario's deadline was too short. "+
+				"Raising the deadline is the fix; recording it as 'blocked' would be a "+
+				"guess, and this measurement exists precisely because guesses about "+
+				"Copilot's blocking behavior are what TCL-973 cannot afford",
+			totalRequests)
+	}
+}
+
+// ContractStatus is how much a measurement established.
+type ContractStatus string
+
+const (
+	// StatusProven: measured against the real pinned binary, claim holds.
+	StatusProven ContractStatus = "proven"
+	// StatusDisproven: measured against the real pinned binary, claim fails.
+	StatusDisproven ContractStatus = "disproven"
+	// StatusUnverified: NOT established. The brief is explicit that a
+	// documented inability to measure something credential-free beats a guess,
+	// so this is a first-class outcome and not a to-do marker.
+	StatusUnverified ContractStatus = "unverified"
+)
+
+// ContractEntry is one measurement from the Phase 0 brief.
+type ContractEntry struct {
+	// ID is the stable identifier used by the contract file, the scenario
+	// registration and the CI gate alike.
+	ID string `json:"id"`
+	// Claim is the question the brief asked, in one sentence.
+	Claim string `json:"claim"`
+	// Status is what this suite established.
+	Status ContractStatus `json:"status"`
+	// Finding states the measured answer, including where it contradicts the
+	// documentation or the plan that preceded it.
+	Finding string `json:"finding"`
+	// Scenarios are the test names that back a proven/disproven status, as Go
+	// prints them (`TestX/subtest`). An unverified entry MUST name none — that
+	// is what makes "unverified" an assertion rather than a comment.
+	Scenarios []string `json:"scenarios,omitempty"`
+	// Blocker, on an unverified entry, states why it could not be measured.
+	Blocker string `json:"blocker,omitempty"`
+
+	// Corroborating holds claims about this measurement that came from
+	// somewhere OTHER than the scenarios above — typically an independent rig
+	// that is not committed here.
+	//
+	// It exists because of a real mistake caught in review: an entry whose
+	// status was correctly established by its scenarios had a Finding that also
+	// asserted several neighbouring behaviors NO committed scenario measured.
+	// The contract guard blessed the entry, and the entry blessed the extra
+	// claims by association. Splitting them out is what keeps a proven status
+	// from laundering unfixtured detail — a reader can see exactly where the
+	// evidence stops, and the guard can require that separation.
+	//
+	// A claim listed here is NOT proven by this suite. It is a lead worth
+	// fixturing, recorded so it is not lost and not mistaken for measurement.
+	Corroborating []string `json:"corroborating,omitempty"`
+}
+
+// PermissionContract is the committed contract table.
+type PermissionContract struct {
+	CLIVersion string          `json:"cliVersion"`
+	Entries    []ContractEntry `json:"entries"`
+}
+
+// registeredScenarios are the scenario names the test tables DECLARE, filled
+// at table-construction time rather than when a scenario runs.
+//
+// Declaration rather than execution, deliberately: `go test -run` is how
+// anyone iterates on one row, and a registry keyed on execution would make the
+// contract check fail for every partial run — which trains people to ignore
+// it. Keyed on declaration it answers the question that actually matters, "is
+// this contract entry backed by a scenario that still exists", while CI's
+// per-name PASS grep answers the other one, "did that scenario really run".
+var registeredScenarios = map[string]bool{}
+
+// RegisterScenario records that a scenario with this name exists. Call it from
+// the test table's construction.
+func RegisterScenario(name string) string {
+	registeredScenarios[name] = true
+	return name
+}
+
+// RegisteredScenarios returns the declared scenario names.
+func RegisteredScenarios() []string {
+	out := make([]string, 0, len(registeredScenarios))
+	for name := range registeredScenarios {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// LoadPermissionContract reads the committed contract table.
+func LoadPermissionContract(t *testing.T, path string) PermissionContract {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("copilotfixture: reading the permission contract: %v", err)
+	}
+	var contract PermissionContract
+	if err := json.Unmarshal(raw, &contract); err != nil {
+		t.Fatalf("copilotfixture: parsing the permission contract: %v", err)
+	}
+	return contract
+}

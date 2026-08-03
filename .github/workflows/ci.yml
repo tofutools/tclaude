@@ -1106,9 +1106,73 @@ jobs:
               TestCopilotConvStoreMatchesTheUnresolvedCwdSpelling
             )
           fi
+          # TCL-973 Phase 0's permission matrix. Required on Linux only for the
+          # same reason the compatibility fixtures are: these measure Copilot's
+          # own prompt behaviour, which is JavaScript in the CLI rather than
+          # anything the platform decides. The one place that could differ is
+          # path handling, and that measurement is not in this suite yet — when
+          # it lands it goes in the shared array above, not here.
+          #
+          # These names are SUBTESTS, and that changes the gate. Go indents
+          # subtest result lines, so the column-anchored pattern above matches
+          # only top-level tests — and a parent whose subtests every one skipped
+          # still prints "--- PASS: Parent". Gating a table-driven matrix on the
+          # parent alone would verify essentially nothing, so each row is
+          # required by name with a leading-space-tolerant pattern (same shape
+          # as the check at line 279).
+          required_subtests=()
+          if [[ "${{ matrix.platform }}" == "linux" ]]; then
+            required+=(
+              # The whole file's premise: permission behaviour is only visible
+              # on a PTY, and this is the scenario that proves a headless run
+              # measures the opposite.
+              TestCopilotPermissionHeadlessIsNotEvidence
+              # The first gate a detached pane hits, before the provider is
+              # even contacted.
+              TestCopilotPermissionFolderTrustBlocksFirst
+              TestCopilotPermissionNoAskUserRemovesTheTool
+              TestCopilotPermissionContractIsBackedByScenarios
+            )
+            required_subtests=(
+              # No launch flag clears folder trust; only a config write does.
+              # Every row matters: the four negative rows are what establish
+              # that an argv-only fix is impossible, and the two seed rows are
+              # what identify the file that actually works.
+              'TestCopilotPermissionTrustBypassSurface/allow-all-tools'
+              'TestCopilotPermissionTrustBypassSurface/allow-all'
+              'TestCopilotPermissionTrustBypassSurface/allow-all-paths'
+              'TestCopilotPermissionTrustBypassSurface/add-dir-workdir'
+              'TestCopilotPermissionTrustBypassSurface/config-json-trustedFolders'
+              'TestCopilotPermissionTrustBypassSurface/settings-json-trustedFolders'
+              # The blocked arm and its positive control are required together:
+              # a blocked verdict without the control is indistinguishable from
+              # a broken fixture.
+              'TestCopilotPermissionToolApprovalGate/unsafe-command/no-flags'
+              'TestCopilotPermissionToolApprovalGate/unsafe-command/allow-all-tools'
+              'TestCopilotPermissionToolApprovalGate/safe-command/no-flags'
+              # URL access is a separate prompt surface that --allow-all-tools
+              # does not close.
+              'TestCopilotPermissionURLGateIsSeparate/no-flags'
+              'TestCopilotPermissionURLGateIsSeparate/allow-all-tools'
+              # An operator env var that silently promotes a launch, plus the
+              # negative values that pin its parse as strict.
+              'TestCopilotPermissionAmbientAllowAllPromotes/true'
+              'TestCopilotPermissionAmbientAllowAllPromotes/false'
+              # The pattern the TCL-973 plan proposed as a default, which does
+              # not parse, next to spellings that do.
+              'TestCopilotPermissionDenyToolGrammar/url()'
+              'TestCopilotPermissionDenyToolGrammar/url'
+              'TestCopilotPermissionDenyToolGrammar/url(*)'
+            )
+          fi
           missing=()
           for test_name in "${required[@]}"; do
             grep -qE "^--- PASS: $test_name " "$log" || missing+=("$test_name")
+          done
+          for test_name in "${required_subtests[@]}"; do
+            # -F: these names contain regex metacharacters on purpose —
+            # `url(*)` is a Copilot deny-tool pattern, not a pattern of ours.
+            grep -qF -- "--- PASS: $test_name " "$log" || missing+=("$test_name")
           done
           if (( ${#missing[@]} > 0 )); then
             {

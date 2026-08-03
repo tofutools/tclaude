@@ -150,6 +150,66 @@ type RunOptions struct {
 	// Prompt runs non-interactively via -p and exits after completion.
 	Prompt string
 
+	// Interactive renders the prompt with `-i` instead of `-p`.
+	//
+	// This is the mode tclaude actually spawns, and it is a genuinely different
+	// permission surface rather than a cosmetic switch: `--allow-all-tools` is
+	// documented as REQUIRED for non-interactive use, so `-p` cannot observe
+	// what a launch without it does — the CLI refuses before any tool call.
+	// Only `-i` can reach the prompt that a detached agent would deadlock on.
+	//
+	// Callers get no event stream here: `-i` renders a human TUI transcript,
+	// not JSONL. The evidence is the provider traffic (did the tool result come
+	// back?) and the process's own exit, which is what PermissionOutcome reads.
+	Interactive bool
+
+	// OmitAllowAllTools drops the runner's default `--allow-all-tools`.
+	//
+	// Every pre-existing scenario wants that flag — it is what stops a mock
+	// tool call from blocking on a prompt and turning a fixture into a 90s
+	// hang. The permission matrix wants the opposite: the blocking posture IS
+	// the measurement, so it must be reachable without editing the runner's
+	// defaults for everyone else.
+	OmitAllowAllTools bool
+
+	// Stdin, when non-empty, is written to the child's stdin instead of
+	// /dev/null. It exists for the in-pane-command measurements: `/allow-all`
+	// is only reachable by typing it at a running interactive session, so a
+	// scenario that asks whether a slash command can widen a launch-time deny
+	// has no other way to ask.
+	Stdin string
+
+	// Timeout overrides RunTimeout for this run. A scenario that EXPECTS to
+	// block sets a short one: waiting the full 90s proves nothing the first few
+	// seconds did not, and multiplied across the matrix it is the difference
+	// between a job that runs and a job nobody runs.
+	Timeout time.Duration
+
+	// ExtraEnv are KEY=VALUE pairs appended last to the child environment.
+	//
+	// It exists for the ambient-promotion measurement and is deliberately
+	// narrow. buildEnv strips every inherited COPILOT_ variable so an
+	// operator's own configuration cannot steer a fixture; that strip is also
+	// what makes "does COPILOT_ALLOW_ALL silently promote a launch" untestable
+	// by any other means, since the scenario needs the variable present in a
+	// run that is otherwise pristine.
+	//
+	// Only set keys buildEnv does not already write. A duplicate key's
+	// precedence in exec.Cmd.Env is platform-dependent, so a collision here
+	// would make the scenario mean different things on Linux and macOS.
+	ExtraEnv []string
+
+	// AllowTimeout turns "the run did not finish" from a test failure into a
+	// recorded outcome.
+	//
+	// This is the load-bearing switch for the whole permission matrix. The
+	// claim under measurement — that a default-posture launch blocks on its
+	// first tool call and never completes — can ONLY be observed as a timeout.
+	// Without this the runner would report it as infrastructure failure and the
+	// scenario could never distinguish "Copilot deadlocked as predicted" from
+	// "the fixture broke".
+	AllowTimeout bool
+
 	// SessionID pins a fresh session's UUID (--session-id). ResumeID resumes an
 	// existing one (--resume=<id>, the `=` form: the option's value is optional,
 	// so a space-separated value would leave it bare and open the picker).
@@ -186,6 +246,14 @@ type RunResult struct {
 	Stderr   string
 	// Events are the parsed --output-format json lines, in order.
 	Events []Event
+
+	// TimedOut records that the run was killed at its deadline rather than
+	// exiting on its own. Only reachable when RunOptions.AllowTimeout is set;
+	// otherwise the runner fails the test instead of returning.
+	//
+	// ExitCode is meaningless when this is true — it is whatever the kill
+	// produced — so a scenario must branch on this field first.
+	TimedOut bool
 }
 
 // Event is one line of the CLI's JSONL event stream.
@@ -294,18 +362,23 @@ func NewSandboxDirs(t *testing.T) Dirs {
 func Run(t *testing.T, opts RunOptions) RunResult {
 	t.Helper()
 
-	args := []string{
-		"-C", opts.WorkDir,
+	args := []string{"-C", opts.WorkDir}
+	if !opts.OmitAllowAllTools {
 		// Required for non-interactive use: without it the CLI would block on
 		// a permission prompt the moment the mock asks for a tool.
-		"--allow-all-tools",
+		args = append(args, "--allow-all-tools")
+	}
+	if !opts.Interactive {
 		// JSONL is the machine-readable surface; the human text rendering is
-		// not a contract.
-		"--output-format", "json",
+		// not a contract. `-i` has no JSONL surface at all, so asking for one
+		// there would be asking for a format the mode does not produce.
+		args = append(args, "--output-format", "json")
+	}
+	args = append(args,
 		"--no-color",
 		// Keeps the CLI's own diagnostics out of the captured streams.
 		"--log-level", "none",
-	}
+	)
 	// The CLI documents --resume as incompatible with --session-id; sending
 	// both would silently pick one and make the scenario mean something other
 	// than it reads.
@@ -325,15 +398,33 @@ func Run(t *testing.T, opts RunOptions) RunResult {
 		args = append(args, "--effort="+opts.Effort)
 	}
 	args = append(args, opts.ExtraArgs...)
-	// -p last so no earlier option can swallow the prompt value.
-	args = append(args, "-p", opts.Prompt)
+	// The prompt flag goes last so no earlier option can swallow its value.
+	promptFlag := "-p"
+	if opts.Interactive {
+		promptFlag = "-i"
+	}
+	args = append(args, promptFlag, opts.Prompt)
 
-	ctx, cancel := context.WithTimeout(context.Background(), RunTimeout)
+	timeout := opts.Timeout
+	if timeout == 0 {
+		timeout = RunTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "copilot", args...)
 	cmd.Dir = opts.WorkDir
 	cmd.Env = buildEnv(opts)
+	if opts.Stdin != "" {
+		cmd.Stdin = strings.NewReader(opts.Stdin)
+	} else {
+		devNull, err := os.Open(os.DevNull)
+		if err != nil {
+			t.Fatalf("copilotfixture: opening %s: %v", os.DevNull, err)
+		}
+		t.Cleanup(func() { _ = devNull.Close() })
+		cmd.Stdin = devNull
+	}
 	// Copilot spawns helpers (shell tools, indexers). Without WaitDelay a
 	// descendant still holding the output pipe keeps Wait blocked long after
 	// the context killed the parent, so a scenario could hang past its own
@@ -345,11 +436,12 @@ func Run(t *testing.T, opts RunOptions) RunResult {
 	cmd.Stderr = &stderr
 
 	err := cmd.Run()
-	if ctx.Err() != nil {
-		t.Fatalf("copilotfixture: run exceeded %s (stderr: %s)", RunTimeout, stderr.String())
+	timedOut := ctx.Err() != nil
+	if timedOut && !opts.AllowTimeout {
+		t.Fatalf("copilotfixture: run exceeded %s (stderr: %s)", timeout, stderr.String())
 	}
 	exitCode := 0
-	if err != nil {
+	if err != nil && !timedOut {
 		var exitErr *exec.ExitError
 		if !errors.As(err, &exitErr) {
 			t.Fatalf("copilotfixture: launching copilot failed: %v (stderr: %s)", err, stderr.String())
@@ -362,6 +454,7 @@ func Run(t *testing.T, opts RunOptions) RunResult {
 		Stdout:   stdout.String(),
 		Stderr:   stderr.String(),
 		Events:   parseEvents(t, stdout.String()),
+		TimedOut: timedOut,
 	}
 }
 
@@ -417,7 +510,15 @@ func RunShell(t *testing.T, opts RunOptions, commandLine string) RunResult {
 	return RunResult{ExitCode: exitCode, Stdout: stdout.String(), Stderr: stderr.String()}
 }
 
+// buildEnv assembles the child environment. ExtraEnv is applied by the wrapper
+// below rather than inside, so it lands after BOTH of the function's exit
+// paths — the proxy-capture branch returns early, and a scenario's explicit
+// variable must survive that too.
 func buildEnv(opts RunOptions) []string {
+	return append(baseEnv(opts), opts.ExtraEnv...)
+}
+
+func baseEnv(opts RunOptions) []string {
 	drop := make(map[string]bool, len(scrubbedAuthVars)+2)
 	for _, k := range scrubbedAuthVars {
 		drop[k] = true
