@@ -78,6 +78,12 @@ func init() {
 		// and a per-spawn flag that silently rewrites the operator's config is
 		// not a per-spawn flag.
 		TmuxScrollback: false,
+
+		// BuiltinOSSandbox stays false, and TCL-977 is the evaluation that
+		// decided so rather than the absence of one. Copilot really does own an
+		// OS sandbox for shell commands, which is exactly why the refusal needs
+		// to say WHICH property is missing — see copilot_sandbox_native.go.
+		BuiltinOSSandboxAbsenceReason: CopilotBuiltinOSSandboxAbsenceReason,
 	})
 }
 

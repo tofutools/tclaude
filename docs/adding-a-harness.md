@@ -97,8 +97,18 @@ offer meaningful sandbox-mode choices without owning an OS boundary: OpenCode
 uses its catalog for `access-control` / `tclaude-layer` / `off`, while
 `BuiltinOSSandbox` remains false because `access-control` is a command filter,
 not confinement. Set `BuiltinOSSandbox: true` only when the harness itself
-launches under a real OS-enforced sandbox; otherwise an explicit
-`sandbox_implementation=harness-builtin` is rejected.
+launches under a real OS-enforced sandbox covering its **complete** action
+surface — its own file-editing tools included, not only the shell it spawns;
+otherwise an explicit `sandbox_implementation=harness-builtin` is rejected.
+
+When a harness ships something sandbox-shaped that nonetheless misses that bar,
+set `BuiltinOSSandboxAbsenceReason` to the sentence the refusal should state.
+An operator who can see the feature in their own CLI reads a flat "has no
+built-in OS sandbox" as a gap in tclaude; the reason names the property that is
+actually missing instead. OpenCode's says its access control is a command
+filter; Copilot's says its built-in file edits are checked in-process rather
+than by the OS (see [harnesses.md](harnesses.md#copilots-own-command-sandboxing)
+for the measurements). Leave it empty for a harness with nothing of the kind.
 
 `TclaudeLayerMode` is the separate opt-in for the single-wall
 `sandbox_implementation=tclaude-layer` topology. Set it to the reviewed

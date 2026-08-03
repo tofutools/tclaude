@@ -131,6 +131,13 @@ type RunOptions struct {
 	// request body carries no effort key at all.
 	Model  string
 	Effort string
+
+	// ExtraArgs are appended after the runner's own flags and before the
+	// prompt. The sandbox characterization needs `--experimental`, which gates
+	// whether the CLI honours its own sandbox settings at all, and that gate is
+	// exactly the kind of thing a scenario must be able to toggle rather than
+	// have baked into the runner.
+	ExtraArgs []string
 }
 
 // RunResult is one completed invocation.
@@ -246,6 +253,7 @@ func Run(t *testing.T, opts RunOptions) RunResult {
 	if opts.Effort != "" {
 		args = append(args, "--effort="+opts.Effort)
 	}
+	args = append(args, opts.ExtraArgs...)
 	// -p last so no earlier option can swallow the prompt value.
 	args = append(args, "-p", opts.Prompt)
 

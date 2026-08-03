@@ -242,7 +242,7 @@ covers **interactive human sessions**:
 | **Rename / compact / graceful stop** | ✅ in-pane `/rename`, `/compact`, `/exit`. `/exit` closes the *current* session: with other sessions open in the same CLI it foregrounds the newest remaining one instead of quitting, so tclaude keeps its hard-kill fallback for a pane that doesn't actually exit |
 | **Hooks / live status** | ✅ `<COPILOT_HOME>/hooks/tclaude.json` — a tclaude-**owned** drop-in file, merged by Copilot with the user's own hooks; no trust step, no `config.json` involvement. Registers `SessionStart`, `UserPromptSubmit`, `PostToolUse`, `Stop`, `SessionEnd`, so a pane reports working/idle per turn. See [below](#copilot-hooks) for what is deliberately left out |
 | **Conversation store** | ✅ cold list / resolve / cwd filter / title / existence, read from Copilot's own per-session `<COPILOT_HOME>/session-state/<id>/` files. No SQLite access at all — see [below](#copilot-conversation-store) |
-| **Everything else in the matrix** | ➖ not yet — no ad-hoc ask, sandbox, approval, tool governance, directory pre-trust, remote control, usage/cost, or status bar |
+| **Everything else in the matrix** | ➖ not yet — no ad-hoc ask, sandbox, approval, tool governance, directory pre-trust, remote control, usage/cost, or status bar. Copilot's *own* command sandboxing was evaluated and deliberately not advertised — see [below](#copilots-own-command-sandboxing) |
 
 Two consequences are worth stating plainly:
 
@@ -426,8 +426,9 @@ auto-updating install cannot absorb a contract change silently.
 confined Copilot launch reach, in which mode, and how does each path resolve* —
 and stops there. It advertises no sandbox capability; the descriptor's `Sandbox`
 contract is still nil. It exists because two separate pieces of work need the
-same answer: Copilot's own built-in MXC sandbox (`settings.json` under the
-`sandbox` key, see `copilot help sandbox`) and tclaude's outer
+same answer: Copilot's own built-in MXC sandbox (the `sandbox` key in
+`<COPILOT_HOME>/config.json`, see `copilot help sandbox` and
+[below](#copilots-own-command-sandboxing)) and tclaude's outer
 bubblewrap/Seatbelt boundary.
 
 The catalog, and how each row was classified:
@@ -484,6 +485,54 @@ baseline entry resolved from that run's own environment — with
 The normalized layout is committed as
 `copilotfixture/testdata/<version>/sandbox_baseline.json`, so a CLI that starts
 writing somewhere new fails a test instead of an operator's confined launch.
+
+#### Copilot's own command sandboxing
+
+Copilot CLI ships a sandbox of its own, and tclaude deliberately does **not**
+advertise it as a built-in OS sandbox: `SupportsBuiltinOSSandbox()` is false for
+`copilot`, so `sandbox_implementation=harness-builtin` is refused rather than
+honored. That is an evaluated answer, not a missing adapter, and the refusal
+says which property is absent instead of claiming Copilot has nothing.
+
+What Copilot actually has, measured against the pinned 1.0.77 binary:
+
+| Property | Measured behavior |
+|---|---|
+| **Shell commands** | Genuinely OS-confined — Microsoft Execution Containers (bubblewrap on Linux, Seatbelt on macOS, ProcessContainer on Windows) |
+| **Built-in file edits** (`create`, `edit`, …) | **Not** OS-confined. GitHub says so outright, and the fixture measures it: on a host where the OS backend cannot start at all, a `create` into the granted workspace still wrote its file while every shell command failed |
+| **Path checking of those edits** | Sound as far as it goes — symlinks planted inside the workspace and `..` traversal are both resolved before the decision, so the objection is *where* enforcement lives, not a defect in it |
+| **How it is turned on** | `sandbox.enabled` in `<COPILOT_HOME>/config.json`, the interactive `/sandbox` dialog, or organization policy. There is **no launch flag**, and `--experimental` gates only the `/sandbox` *command* — a config-enabled sandbox applies without it |
+| **Availability** | Host-conditional on Linux: `bwrap` on PATH is not enough, the kernel must also permit an unprivileged user namespace |
+| **When the backend cannot start** | Fails closed — shell commands error out rather than silently running unconfined |
+| **Default** | Off. An operator who never enabled it has no containment at all |
+
+The disqualifying property is the second row. tclaude's contract is about the
+*complete* effective boundary, because everything gated on
+`SupportsBuiltinOSSandbox` — the access-enforcement table, the spawn
+implementation selector, the effective-policy preview — goes on to describe an
+OS-enforced posture to the operator. Half of Copilot's boundary is instead an
+in-process check performed by the very program the sandbox exists to contain, so
+a bug in that check, a built-in tool it does not cover, or a tool added later
+without one is an unmediated write with the operator's full privileges. Claude
+Code's SRT and Codex's `--sandbox` confine their own edit tools through the OS;
+that difference *is* the contract.
+
+Three further properties would each need answering even if the file half were
+closed: there is no launch-time flag to pin a per-spawn posture with (and
+`clearPolicyOnExit` plus an in-session `/sandbox disable` can move it under a
+running agent), the feature is experimental by its own vendor's description, and
+its availability is a runtime property of the host that tclaude cannot verify at
+launch.
+
+None of this constrains Copilot under `tclaude-layer`, which is a separate wall
+that tclaude owns.
+
+The evidence is
+`copilotfixture/sandbox_native_smoke_test.go`, which asserts each row above
+against the real binary. Its host-conditional scenario has **no skipping arm**:
+it probes whether the OS backend can start and then asserts enforcement where it
+can and fail-closed degradation where it cannot, so a machine that changes
+category changes which assertions run rather than whether any do.
 
 ### Sandbox & approval defaults (Codex)
 

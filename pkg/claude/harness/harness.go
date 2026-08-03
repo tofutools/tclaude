@@ -31,6 +31,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 )
 
@@ -115,6 +116,18 @@ type Harness struct {
 	// mode catalog, but its built-in access control is only a command filter,
 	// not confinement. Claude Code (SRT) and Codex (native --sandbox) set this.
 	BuiltinOSSandbox bool
+	// BuiltinOSSandboxAbsenceReason is the harness-specific sentence a
+	// harness-builtin refusal states, for a harness that ships SOMETHING
+	// sandbox-shaped which nonetheless does not meet this contract. It exists
+	// because "no built-in OS sandbox" alone is misleading in exactly those
+	// cases: OpenCode's access control is a command filter, and Copilot CLI has
+	// a real OS sandbox that covers only part of the agent's action surface. An
+	// operator who can see the feature in their harness needs to read WHICH
+	// property is missing, not a flat denial they will assume is a bug.
+	//
+	// Empty for a harness with nothing of the kind (the refusal then states the
+	// plain absence) and ignored entirely when BuiltinOSSandbox is true.
+	BuiltinOSSandboxAbsenceReason string
 	// Approval names the launch-time approval policies this harness accepts
 	// (Codex's --ask-for-approval) and its non-escalating default. nil for
 	// harnesses whose approval handling is configured out of band (Claude
@@ -528,6 +541,10 @@ func (h *Harness) SupportsBuiltinOSSandbox() bool {
 // malformed sandbox-implementation enum (400).
 type BuiltinOSSandboxInvalidError struct {
 	Harness string
+	// Reason is the descriptor's BuiltinOSSandboxAbsenceReason, carried so the
+	// refusal names the property this harness is actually missing. Empty falls
+	// back to the plain absence sentence.
+	Reason string
 }
 
 func (e *BuiltinOSSandboxInvalidError) Error() string {
@@ -535,11 +552,14 @@ func (e *BuiltinOSSandboxInvalidError) Error() string {
 	if name == "" {
 		name = "the selected harness"
 	}
+	reason := strings.TrimSpace(e.Reason)
+	if reason == "" {
+		reason = name + " has no built-in OS sandbox"
+	}
 	return fmt.Sprintf(
-		"sandbox implementation %q is invalid for %s: %s has no built-in OS sandbox; "+
-			"its access-control mode is a command filter, not confinement; "+
+		"sandbox implementation %q is invalid for %s: %s; "+
 			"use tclaude-layer or spawn with the sandbox off",
-		"harness-builtin", name, name)
+		"harness-builtin", name, reason)
 }
 
 // ValidateHarnessBuiltinOSSandbox rejects a harness-builtin pin when the
@@ -550,13 +570,15 @@ func ValidateHarnessBuiltinOSSandbox(h *Harness) error {
 		return nil
 	}
 	name := ""
+	reason := ""
 	if h != nil {
 		name = h.DisplayName
 		if name == "" {
 			name = h.Name
 		}
+		reason = h.BuiltinOSSandboxAbsenceReason
 	}
-	return &BuiltinOSSandboxInvalidError{Harness: name}
+	return &BuiltinOSSandboxInvalidError{Harness: name, Reason: reason}
 }
 
 // IsBuiltinOSSandboxInvalid reports whether err is the semantic applicability
