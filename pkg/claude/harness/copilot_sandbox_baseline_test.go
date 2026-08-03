@@ -3,6 +3,7 @@ package harness
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -685,4 +686,101 @@ func TestCopilotHookInstallDirMatchesBaseline(t *testing.T) {
 func TestCopilotHomeRefusesRelativeOverride(t *testing.T) {
 	t.Setenv(CopilotHomeEnvVar, "relative/state")
 	assert.Empty(t, copilotHome())
+}
+
+// TestCopilotSandboxBaselineRefusesCaseVariantBroadGrants is the Copilot half
+// of TCL-981's shared containment fix.
+//
+// The baseline's refusals are containment tests against $HOME, the shared cache
+// bases, tclaude's protected state and the workspace. On a case-insensitive
+// volume a differently cased spelling of any of those names the SAME directory,
+// so a byte-exact comparison would wave through exactly the too-broad grant the
+// gate exists to refuse — COPILOT_HOME=$HOME/.TCLAUDE would hand a confined
+// Copilot launch the daemon's own database.
+//
+// Like the sandboxpolicy tests this adapts to the volume rather than skipping:
+// on a case-sensitive volume the variant spellings are genuinely different
+// directories and must NOT be refused, which is the "do not lowercase blindly"
+// half of the contract.
+func TestCopilotSandboxBaselineRefusesCaseVariantBroadGrants(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	home := filepath.Join(root, "Home")
+	require.NoError(t, os.MkdirAll(filepath.Join(home, ".tclaude", "data"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(home, ".cache"), 0o755))
+
+	// Ask the filesystem, not the OS: case folding is a volume property.
+	folds := false
+	if homeInfo, homeErr := os.Lstat(home); homeErr == nil {
+		if variantInfo, variantErr := os.Lstat(filepath.Join(root, "home")); variantErr == nil {
+			folds = os.SameFile(homeInfo, variantInfo)
+		}
+	}
+	t.Logf("volume folds case: %t (home=%q)", folds, home)
+
+	cases := []struct {
+		name      string
+		in        CopilotBaselineInput
+		wantInMsg string
+	}{
+		{
+			name: "COPILOT_HOME spelled as a case variant of the home directory",
+			in: CopilotBaselineInput{GOOS: runtime.GOOS, Home: home,
+				Getenv: envMap(map[string]string{CopilotHomeEnvVar: filepath.Join(root, "home")})},
+			wantInMsg: "covers the home directory",
+		},
+		{
+			name: "COPILOT_HOME spelled as a case variant of tclaude's protected state",
+			in: CopilotBaselineInput{GOOS: runtime.GOOS, Home: home,
+				Getenv: envMap(map[string]string{
+					CopilotHomeEnvVar: filepath.Join(home, ".TCLAUDE", "Data"),
+				})},
+			wantInMsg: "protected state",
+		},
+		{
+			name: "an agentd socket spelled as a case variant inside protected state",
+			in: CopilotBaselineInput{GOOS: runtime.GOOS, Home: home, Getenv: envMap(nil),
+				AgentdSockets: []string{filepath.Join(home, ".Tclaude", "Data", "agentd.sock")}},
+			wantInMsg: "protected state",
+		},
+		{
+			name: "COPILOT_CACHE_HOME spelled as a case variant of the shared cache base",
+			in: CopilotBaselineInput{GOOS: "linux", Home: home,
+				Getenv: envMap(map[string]string{
+					CopilotCacheHomeEnvVar: filepath.Join(home, ".CACHE"),
+				})},
+			wantInMsg: "XDG cache base",
+		},
+		{
+			name: "a grant spelled as a case variant covering the workspace",
+			in: CopilotBaselineInput{GOOS: runtime.GOOS, Home: home,
+				Getenv: envMap(map[string]string{
+					CopilotHomeEnvVar: filepath.Join(root, "REPO"),
+				}),
+				Workspace: filepath.Join(root, "repo", "worktree")},
+			wantInMsg: "covers the workspace",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			entries, err := CopilotSandboxBaseline(tc.in)
+			if !folds {
+				// Different directories on this volume, so the baseline must
+				// keep treating them as different. Refusing here would mean the
+				// fix had started folding case blindly.
+				require.NoError(t, err,
+					"a case-sensitive volume must not treat a distinct directory as the protected one")
+				assert.NotEmpty(t, entries)
+				return
+			}
+			require.Error(t, err, "must refuse rather than return %v", entries)
+			assert.Nil(t, entries, "a refused baseline must return no grants at all")
+			var capErr *SandboxCapabilityError
+			require.ErrorAs(t, err, &capErr)
+			assert.Equal(t, CopilotName, capErr.Harness)
+			assert.Equal(t, "copilot-sandbox-baseline-too-broad", capErr.Kind)
+			assert.Contains(t, capErr.Message, tc.wantInMsg)
+		})
+	}
 }

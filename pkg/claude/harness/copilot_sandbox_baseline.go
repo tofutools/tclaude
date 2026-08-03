@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
 // Copilot's minimum sandbox filesystem baseline (TCL-975).
@@ -506,7 +508,13 @@ func validateCopilotBaseline(
 				fmt.Sprintf("Copilot sandbox baseline entry %q is not a cleaned path: %q", e.ID, e.Path))
 		}
 		resolved := resolveSymlinks(e.Path)
-		if pathContainsOrEqual(resolved, resolvedHome) {
+		// Every containment test in this loop is a REFUSAL test, so they all
+		// use the guard-biased comparison: on a case-insensitive volume two
+		// spellings that differ only in case or Unicode normalization name one
+		// directory, and a byte-exact test would let the variant spelling of a
+		// too-broad path through. Where the relation cannot be established the
+		// guard refuses, which is the direction a baseline check must err in.
+		if sandboxpolicy.GuardContainsOrEqual(resolved, resolvedHome) {
 			return copilotBaselineError("too-broad",
 				fmt.Sprintf("Copilot sandbox baseline entry %q resolves to %q, which covers the home directory %q; "+
 					"a per-harness baseline must never grant HOME", e.ID, e.Path, home))
@@ -516,7 +524,7 @@ func validateCopilotBaseline(
 			// ~/.cache/me, a COPILOT_CACHE_HOME of ~/.cache is no longer equal
 			// to the base but still swallows it, and every other application's
 			// cache with it.
-			if pathContainsOrEqual(resolved, base) {
+			if sandboxpolicy.GuardContainsOrEqual(resolved, base) {
 				return copilotBaselineError("too-broad",
 					fmt.Sprintf("Copilot sandbox baseline entry %q resolves to %q, which covers the shared %s; "+
 						"grant the Copilot-specific subdirectory instead", e.ID, e.Path, label))
@@ -536,7 +544,7 @@ func validateCopilotBaseline(
 			// no better. A socket path under ~/.tclaude/data is the concrete
 			// case: it is caller-supplied and would otherwise reach through
 			// the very deny the api/ split exists to make possible.
-			if pathContainsOrEqual(resolved, sub) || pathContainsOrEqual(sub, resolved) {
+			if sandboxpolicy.GuardPathsIntersect(resolved, sub) {
 				return copilotBaselineError("too-broad",
 					fmt.Sprintf("Copilot sandbox baseline entry %q resolves to %q, which covers or lies inside "+
 						"tclaude's protected state %q; that tree is denied to every sandboxed harness",
@@ -562,7 +570,7 @@ func validateCopilotBaseline(
 				fmt.Sprintf("Copilot sandbox baseline entry %q resolves to %q, a top-level system directory; "+
 					"a per-harness baseline grants Copilot-specific subdirectories only", e.ID, e.Path))
 		}
-		if resolvedWorkspace != "" && pathContainsOrEqual(resolved, resolvedWorkspace) {
+		if resolvedWorkspace != "" && sandboxpolicy.GuardContainsOrEqual(resolved, resolvedWorkspace) {
 			return copilotBaselineError("too-broad",
 				fmt.Sprintf("Copilot sandbox baseline entry %q resolves to %q, which covers the workspace %q; "+
 					"the workspace grant is the caller's and is never part of this baseline",
