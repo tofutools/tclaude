@@ -118,7 +118,7 @@ func RequireContained(parent, child Snapshot) error {
 		return err
 	}
 	if child.Effective.DarwinAllowMachRegister && !parent.Effective.DarwinAllowMachRegister {
-		return fmt.Errorf("Darwin mach-register access is not present in the parent snapshot")
+		return fmt.Errorf("darwin mach-register access is not present in the parent snapshot")
 	}
 	if parent.Effective.Network == nil && child.Effective.Network == nil &&
 		!networkAccessContained(parent.Effective.NetworkAccess, child.Effective.NetworkAccess) {
