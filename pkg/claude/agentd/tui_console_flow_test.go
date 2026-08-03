@@ -16,6 +16,7 @@ import (
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/usageapi"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -84,7 +85,7 @@ func TestTUIConsoleSpawnsAnAgentIntoAGroup(t *testing.T) {
 
 	c := newTUIConsole(t)
 	c.Refresh()
-	require.Contains(t, c.View(), "No agents yet")
+	require.Contains(t, c.View(), "No agents or sessions yet")
 
 	openTUISpawnForm(t, c, "reviewer", cwd)
 	require.Contains(t, c.View(), "< dev >", "the group picker offers the daemon's groups")
@@ -119,7 +120,7 @@ func TestTUIConsoleReportsASpawnTheDaemonRefuses(t *testing.T) {
 
 	view := c.View()
 	assert.Contains(t, view, "Spawn failed:", "the daemon's refusal reaches the operator")
-	assert.Contains(t, view, "No agents yet", "and nothing was created")
+	assert.Contains(t, view, "No agents or sessions yet", "and nothing was created")
 }
 
 // An existing agent shows up in the console's listing with the details the
@@ -458,12 +459,129 @@ func TestTUIConsoleDeleteStepsAnAgentOfflineThenRetiresIt(t *testing.T) {
 	view = c.View()
 	assert.Contains(t, view, "Retired worker", "the console reports the outcome")
 	assert.Contains(t, view, "left dev", "including the groups the agent gave up")
-	assert.Contains(t, view, "No agents yet", "and the roster drops it right away")
+	assert.Contains(t, view, "No agents or sessions yet", "and the roster drops it right away")
 
 	state, err = db.AgentState(sp.ConvID)
 	require.NoError(t, err)
 	assert.Equal(t, db.AgentStateRetired, state)
 	assert.False(t, flowGroupHasMember(f, "dev", sp.ConvID), "a retired agent leaves its groups")
+}
+
+// haveLiveShellSession puts a plain, non-agent session on the host the way
+// `tclaude session new --shell` (and the console's own s key) leaves one: a
+// session row with no conversation, and a live tmux session to match.
+func haveLiveShellSession(t *testing.T, f *testharness.Flow, handle, cwd string) {
+	t.Helper()
+	require.NoError(t, os.MkdirAll(cwd, 0o755))
+	require.NoError(t, session.SaveSessionState(&session.SessionState{
+		ID:          handle,
+		TmuxSession: handle,
+		Cwd:         cwd,
+		Status:      session.StatusRunning,
+		Harness:     session.ShellHarnessName,
+		Created:     time.Now(),
+	}))
+	f.World.Tmux.MarkAlive(handle)
+}
+
+// Scenario: the operator has a shell session going beside their agents — one
+// they started with s, or from another terminal with `tclaude session new`.
+// The console lists it, marks it as not an agent, and enter goes to it.
+func TestTUIConsoleListsAndGoesToANonAgentSession(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("dev")
+	sp := f.Spawn("dev", "worker")
+	haveLiveShellSession(t, f, "scratch", f.TestCwd("tui-shell"))
+	attach := stubTUIAttach(t)
+
+	c := newTUIConsole(t)
+	c.Refresh()
+
+	view := c.View()
+	assert.Contains(t, view, "1 agents (1 online)")
+	assert.Contains(t, view, "1 sessions", "the shell session is counted apart from the agents")
+	assert.Contains(t, view, "scratch")
+	assert.Contains(t, view, "(session)", "and is marked as not being an agent")
+
+	// The agent's own session is not re-listed as a plain one: its pane
+	// belongs to a conversation the agent listing already owns.
+	assert.NotContains(t, view, sp.TmuxSession+" ")
+
+	// Down off the agent row and onto the session: enter hands this terminal
+	// to its pane, exactly as it does on a live agent's row.
+	c.Press(t, "down")
+	c.Press(t, "enter")
+	require.True(t, attach.called, "enter on a session goes to its pane")
+	assert.Equal(t, "scratch", attach.session)
+}
+
+// Delete on a session ends it: there is no offline step to take first and
+// nothing to retire, so the one move is killing the pane — after a
+// confirmation, like every other lifecycle key.
+func TestTUIConsoleDeleteEndsANonAgentSession(t *testing.T) {
+	f := newFlow(t)
+	haveLiveShellSession(t, f, "scratch", f.TestCwd("tui-shell-kill"))
+
+	c := newTUIConsole(t)
+	c.Refresh()
+	require.Contains(t, c.View(), "scratch")
+
+	// Anything but "y" leaves the session running.
+	c.Press(t, "delete")
+	require.Contains(t, c.View(), "Kill session scratch?")
+	c.Press(t, "n")
+	require.True(t, f.World.Tmux.IsAlive("scratch"), "a cancelled prompt changes nothing")
+
+	c.Press(t, "delete", "y")
+	view := c.View()
+	assert.Contains(t, view, "Ended session scratch")
+	assert.False(t, f.World.Tmux.IsAlive("scratch"), "the pane is gone")
+	assert.Contains(t, view, "0 sessions", "and the row leaves the listing with it")
+}
+
+// A `tclaude session new` is a coding harness with a real conversation, but it
+// is still not an agent: no group, no permissions, nothing the agent API
+// describes. It belongs in the listing as a session — and it stops being one
+// the moment it is enrolled, rather than being listed twice.
+func TestTUIConsoleListsAPlainCodingSessionUntilItBecomesAnAgent(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("dev")
+	conv := "5b6f2f0e-1111-4222-8333-444444444444"
+	f.HaveAliveSession(conv, "solo", "cc-solo", f.TestCwd("tui-solo"))
+
+	c := newTUIConsole(t)
+	c.Refresh()
+	view := c.View()
+	assert.Contains(t, view, "cc-solo")
+	assert.Contains(t, view, "(session)", "an unenrolled session is not an agent")
+	assert.Contains(t, view, "0 agents (0 online)")
+	assert.Contains(t, view, "1 sessions")
+
+	// Joining a group makes it an actor: the agent listing owns it now, and it
+	// must not also appear as a plain session.
+	f.HaveMember("dev", conv)
+	c.Refresh()
+	view = c.View()
+	assert.Contains(t, view, "1 agents (1 online)")
+	assert.Contains(t, view, "0 sessions", "one pane, one row")
+	assert.NotContains(t, view, "(session)")
+}
+
+// A session whose pane has gone is not listed: there is nothing to go to and
+// no resume verb behind it. `tclaude session ls -a` is where those live.
+func TestTUIConsoleListsLiveSessionsOnly(t *testing.T) {
+	f := newFlow(t)
+	haveLiveShellSession(t, f, "scratch", f.TestCwd("tui-shell-dead"))
+
+	c := newTUIConsole(t)
+	c.Refresh()
+	require.Contains(t, c.View(), "scratch")
+
+	f.World.Tmux.MarkOffline("scratch")
+	c.Refresh()
+	view := c.View()
+	assert.NotContains(t, view, "scratch")
+	assert.Contains(t, view, "No agents or sessions yet")
 }
 
 // Quitting is confirmed first, because it shuts the daemon down.
