@@ -100,9 +100,14 @@ func (copilotSpawner) BuildCommand(spec SpawnSpec) string {
 	// that exits after completion, so it must never appear here. Emitted last
 	// so no other option can swallow the value, and quoted as a single arg so
 	// the whole prompt stays one PROMPT rather than splitting into stray
-	// flags/words. Allowed on a resume too: the documented `--resume` behavior
-	// discusses `-i` as a resume-time mode, and dropping a caller's prompt
-	// silently would be worse than not offering it at all.
+	// flags/words.
+	//
+	// Emitted on a resume too, with one honest caveat: the docs establish that
+	// `-i` and `--resume` CAN co-occur (the `--resume` entry describes what
+	// happens "under a non-TTY `-i`"), but they do not state that the prompt is
+	// then submitted into the RESUMED conversation. That part is unverified
+	// pending a real binary. Forwarding it is still the better failure mode —
+	// a prompt the harness might ignore beats one tclaude silently swallowed.
 	if spec.InitialPrompt != "" {
 		cmd += " -i " + clcommon.ShellQuoteArg(spec.InitialPrompt)
 	}

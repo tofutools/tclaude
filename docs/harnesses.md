@@ -237,9 +237,9 @@ covers **interactive human sessions**:
 | Capability | `copilot` — GitHub Copilot CLI |
 |---|---|
 | **Spawn** | ✅ `copilot`, with a caller-preset conv-id (`--session-id <uuid>`), a launch-time name (`--name=`), and an optional first turn (`-i <prompt>`) |
-| **Resume** | ✅ `copilot --resume=<id>` (exact id only — never the picker, an id prefix, or a session name) |
-| **Model & effort at spawn** | ✅ `--model=` (including `auto`) and `--effort=` (`low`…`max`, the same levels as everywhere else in tclaude) |
-| **Rename / compact / graceful stop** | ✅ in-pane `/rename`, `/compact`, `/exit` |
+| **Resume** | ⚠️ `copilot --resume=<id>` (exact id only — never the picker, an id prefix, or a session name), but **only for a session you launched with an explicit `--session-id <uuid>`**: with no conversation store tclaude never discovers a Copilot conv-id on its own, so `--resume` has nothing to look up. Conversation discovery lands with the ConvStore wave |
+| **Model & effort at spawn** | ✅ `--model=` (including `auto`) and `--effort=` (`low`…`max`, the same levels as everywhere else in tclaude). Note `max`: the flag accepts the whole vocabulary, but the docs describe `max` as the highest-depth tier **for Anthropic models** — Copilot may reject it for a GPT model, so pair it with a model that has that tier |
+| **Rename / compact / graceful stop** | ✅ in-pane `/rename`, `/compact`, `/exit`. `/exit` closes the *current* session: with other sessions open in the same CLI it foregrounds the newest remaining one instead of quitting, so tclaude keeps its hard-kill fallback for a pane that doesn't actually exit |
 | **Everything else in the matrix** | ➖ not yet — no conversation store, hooks/live status, ad-hoc ask, sandbox, approval, tool governance, directory pre-trust, remote control, usage/cost, or status bar |
 
 Two consequences are worth stating plainly:

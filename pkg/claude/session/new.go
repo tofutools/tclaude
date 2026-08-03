@@ -249,13 +249,16 @@ type NewParams struct {
 	// at launch (Claude Code) and on a --resume. See codexSpawner.BuildCommand.
 	InitialPrompt string `long:"initial-prompt" optional:"true" help:"First-turn prompt the harness submits itself at launch (its positional [prompt]). Daemon spawns set it automatically (Claude Code: the agent welcome; Codex: a conv-id seed)"`
 
-	// SessionID pins the conversation id for a FRESH Claude Code launch
-	// (`claude --session-id <uuid>`), so the conv-id is known before the pane
-	// starts. The daemon's launch-enrollment spawn path sets it so the agent
-	// can be enrolled + named via launch args instead of post-connect tmux
-	// injection. A direct human launch may set it to choose a specific id.
-	// Mutually exclusive with --resume; Claude-Code-only; must be a valid UUID.
-	SessionID string `long:"session-id" optional:"true" help:"Use a specific conversation id (UUID) for a fresh Claude Code session (claude --session-id). Mutually exclusive with --resume"`
+	// SessionID pins the conversation id for a FRESH launch of a harness that
+	// accepts a preset id — Claude Code (`claude --session-id <uuid>`) and
+	// GitHub Copilot CLI (`copilot --session-id <uuid>`) — so the conv-id is
+	// known before the pane starts. The daemon's launch-enrollment spawn path
+	// sets it so the agent can be enrolled + named via launch args instead of
+	// post-connect tmux injection. A direct human launch may set it to choose a
+	// specific id. Mutually exclusive with --resume; both harnesses require a
+	// valid UUID. (OpenCode also accepts one, but only as an internal
+	// agentd-minted `ses_` id on a managed launch.)
+	SessionID string `long:"session-id" optional:"true" help:"Use a specific conversation id (UUID) for a fresh Claude Code or Copilot session (--session-id). Mutually exclusive with --resume"`
 
 	// RouteHelper* are an internal daemon-to-session handoff. The daemon mints
 	// the launch generation and opaque credential before the pane starts; callers
@@ -421,27 +424,22 @@ func runNew(params *NewParams) error {
 	}
 	params.Model = model
 
-	// --session-id pins a fresh conversation id for Claude Code
-	// (`claude --session-id`). It is mutually exclusive with --resume (a
-	// resume already has an id) and only the default harness accepts a preset
-	// conv-id — Codex generates its own at first turn. Validate the shape here
-	// so a malformed id fails cleanly rather than at `claude` launch.
+	// --session-id pins a fresh conversation id for a harness that accepts a
+	// preset one: Claude Code (`claude --session-id`) and GitHub Copilot CLI
+	// (`copilot --session-id`), both of which want a UUID — Copilot creates a
+	// session for an unmatched value ONLY when it is a valid UUID, so a name or
+	// an id prefix would silently leave the pane on a different conversation
+	// than the one tclaude enrolled. It is mutually exclusive with --resume (a
+	// resume already has an id); Codex generates its own at first turn.
+	// Validate the shape here so a malformed id fails cleanly rather than at
+	// harness launch.
 	params.SessionID = strings.TrimSpace(params.SessionID)
 	if params.SessionID != "" {
 		if params.Resume != "" {
 			return fmt.Errorf("--session-id cannot be combined with --resume")
 		}
 		switch h.Name {
-		case harness.DefaultName:
-			if !clcommon.IsValidUUID(params.SessionID) {
-				return fmt.Errorf("--session-id must be a valid UUID, got %q", params.SessionID)
-			}
-		case harness.CopilotName:
-			// `copilot --session-id <id>` resumes a matching session and
-			// CREATES one only when the value is a valid UUID — a name or an
-			// id prefix never creates a session. A pre-minted launch id must
-			// therefore be a UUID or the pane would silently not be the
-			// conversation tclaude enrolled.
+		case harness.DefaultName, harness.CopilotName:
 			if !clcommon.IsValidUUID(params.SessionID) {
 				return fmt.Errorf("--session-id must be a valid UUID, got %q", params.SessionID)
 			}

@@ -235,6 +235,22 @@ func TestCopilotBuildCommandQuotesHostileValues(t *testing.T) {
 	if _, err := os.Stat(pwned); !os.IsNotExist(err) {
 		t.Fatalf("an injected payload executed: %s exists (stat err %v)", pwned, err)
 	}
+
+	// The resume branch is mutually exclusive with the fresh one, so its id
+	// needs its own pass. `--resume=` is the one flag whose value is glued to
+	// the flag name, which is exactly where a quoting mistake would hide.
+	resume := SpawnSpec{ExecutablePath: fake, ResumeID: "id' && touch " + pwned + " #"}
+	out, err = exec.Command("sh", "-c", copilotSpawner{}.BuildCommand(resume)).Output()
+	if err != nil {
+		t.Fatalf("running the built resume command failed: %v", err)
+	}
+	got = strings.Split(strings.TrimSuffix(string(out), "\n"), "\n")
+	if want := []string{"--resume=" + resume.ResumeID}; !slices.Equal(got, want) {
+		t.Fatalf("resume argv:\n got: %q\nwant: %q", got, want)
+	}
+	if _, err := os.Stat(pwned); !os.IsNotExist(err) {
+		t.Fatalf("an injected resume payload executed: %s exists (stat err %v)", pwned, err)
+	}
 }
 
 func TestCopilotValidateModel(t *testing.T) {

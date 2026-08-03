@@ -84,7 +84,10 @@ worked example of exactly that minimum**, and of why you might deliberately stop
 there. It was written from GitHub's published CLI documentation with no Copilot
 binary available to record fixtures, so it claims `Spawn`, `Models` and `Life`
 — contracts a documented flag list actually proves — and leaves every other
-field nil. Resist the temptation to fill them in from plausible inference: a
+optional capability contract unset. (It does set the `LaunchEnrollment`
+capability flag, because `copilot --session-id <uuid>` proves the conv-id is
+knowable before the pane starts; the flags are a separate axis from the
+contracts.) Resist the temptation to fill the rest in from plausible inference: a
 caller can detect an absent contract through the `Supports*` helpers and degrade,
 but it cannot detect one that is present and wrong. Ship the minimum bar, then
 add each further contract in its own fixture-backed slice.
