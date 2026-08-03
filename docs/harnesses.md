@@ -281,9 +281,17 @@ completion — a TUI pane wants `-i`).
 Copilot ships a real OS sandbox — Microsoft Execution Containers (MXC), which
 uses bubblewrap on Linux and Seatbelt on macOS — but it is **experimental, off
 by default, and has no launch flag and no environment variable**. It is
-configured only by the `sandbox` key of `<COPILOT_HOME>/settings.json` and by
+configured only by the `sandbox` key of two files under `COPILOT_HOME` and by
 the in-pane `/sandbox enable|disable`, which is itself only registered when
 experimental features are on (`copilot help sandbox`, pinned 1.0.77).
+
+Both files matter, and the **legacy one wins**. At startup the CLI migrates
+user settings out of `config.json` into `settings.json`, overwriting what was
+there, and rewrites `config.json` to a managed stub. So `config.json` is not
+dead legacy — it is a pending mutation of `settings.json` that applies to the
+launch you are about to start. Measured against 1.0.77: a `sandbox` key in
+either file engages the wall, and when both carry it, `config.json` decides.
+tclaude reads both.
 
 That single fact shapes everything below. tclaude cannot switch Copilot's wall
 off for one launch, so running Copilot under `--sandbox-impl tclaude-layer`
@@ -292,10 +300,12 @@ engaged, and refuses the launch when it cannot verify that:
 
 | Copilot configuration | Result under `tclaude-layer` |
 |---|---|
-| No `settings.json`, or one that does not mention `sandbox` | ✅ launches — the CLI documents the sandbox as disabled by default |
-| `sandbox.enabled: false` | ✅ launches |
-| `sandbox.enabled: true` | ❌ refused — two stacked policies would make the effective confinement their unreviewed intersection while the recorded posture named one |
-| Unreadable, unparsable, or oddly shaped settings (`"sandbox": true`, `"enabled": "true"`) | ❌ refused — an unverifiable posture, not an absent one |
+| Neither file, or files that do not mention `sandbox` | ✅ launches — the CLI documents the sandbox as disabled by default |
+| A migrated `config.json` stub (the ordinary settled install; its leading `//` lines are tolerated) | ✅ launches |
+| `sandbox.enabled: false` in the file that wins | ✅ launches |
+| `sandbox.enabled: true` in either file | ❌ refused — two stacked policies would make the effective confinement their unreviewed intersection while the recorded posture named one |
+| `config.json` says `true` while `settings.json` says `false` | ❌ refused — `config.json` wins, so the plain-text `false` is about to be overwritten |
+| Unreadable, unparsable, or oddly shaped settings in **either** file (`"sandbox": true`, `"enabled": "true"`) | ❌ refused — an unverifiable posture, not an absent one |
 | `experimental: true` | ❌ refused — it registers the in-pane `/sandbox` command, so the wall could be switched on mid-session |
 | A pass-through `--experimental` argument | ❌ refused, for the same reason |
 
@@ -303,7 +313,14 @@ tclaude never edits your `settings.json` and never relocates `COPILOT_HOME`
 to work around this. Both would be silent changes to state you own — and
 relocating the home would split Copilot's session store from the conversation
 store and hooks. The remedy is always yours to apply, and every refusal names
-the file and the key.
+the key and the file that actually decides — which, when both files carry the
+key, is `config.json`, because editing `settings.json` there would change
+nothing.
+
+Note that `experimental` is not evidence in the other direction: it gates the
+`/sandbox` *command*, not the feature. A settings-enabled sandbox applies with
+no experimental flag anywhere, which is why the `sandbox.enabled` check above
+is the one that decides and `experimental` only adds a refusal on top.
 
 The check runs on **every** path that starts a Copilot pane — spawn, resume,
 clone, reincarnate, and template/wave deploys — rather than once at spawn.

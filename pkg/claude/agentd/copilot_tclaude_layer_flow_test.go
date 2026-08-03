@@ -243,3 +243,97 @@ func TestReincarnate_CopilotTclaudeLayerRechecksInnerSandbox(t *testing.T) {
 	failure := decodeFailure(t, resp.Raw)
 	assert.Equal(t, harness.SandboxCapabilityCopilotInnerSandbox, failure.Code)
 }
+
+// copilotLegacyConfig writes the LEGACY config.json into the flow's temp HOME.
+// Copilot migrates this file's user settings into settings.json at startup,
+// overwriting them, so it decides the posture of the launch tclaude is about to
+// start.
+func copilotLegacyConfig(t *testing.T, f *testharness.Flow, body string) {
+	t.Helper()
+	dir := filepath.Join(f.World.HomeDir, ".copilot")
+	require.NoError(t, os.MkdirAll(dir, 0o700))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(dir, harness.CopilotConfigFileName), []byte(body), 0o600))
+}
+
+// TestSpawn_CopilotTclaudeLayerRefusesLegacyConfigSandbox closes the bypass an
+// earlier version of this gate had.
+//
+// The gate used to read settings.json alone. Copilot's startup migration moves
+// user settings out of config.json INTO settings.json and overwrites what was
+// there, so both shapes below start a launch with Copilot's own wall raised
+// while settings.json — the file the gate inspected — said nothing, or said
+// `false` in plain text.
+func TestSpawn_CopilotTclaudeLayerRefusesLegacyConfigSandbox(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		settings string
+		config   string
+	}{
+		{
+			name:   "the sandbox is enabled only in the legacy config",
+			config: `{"sandbox":{"enabled":true}}`,
+		},
+		{
+			name: "the legacy config overrides a canonical file that reads as off",
+			// This is the dangerous one: settings.json plainly says false, and
+			// the launch would still come up with two walls.
+			settings: `{"sandbox":{"enabled":false}}`,
+			config:   `{"sandbox":{"enabled":true}}`,
+		},
+		{
+			name:   "an unreadable legacy config is as unverifiable as an unreadable canonical one",
+			config: `{"sandbox":`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFlow(t)
+			f.HaveGroup("crew")
+			if tc.settings != "" {
+				copilotSettings(t, f, tc.settings)
+			}
+			copilotLegacyConfig(t, f, tc.config)
+
+			resp := f.AsHuman().SpawnWith("crew", map[string]any{
+				"name":                   "copilot-legacy",
+				"harness":                harness.CopilotName,
+				"sandbox_implementation": "tclaude-layer",
+			})
+			require.Equalf(t, http.StatusUnprocessableEntity, resp.Code,
+				"the legacy config decides this launch's posture and must be gated; body=%s",
+				resp.Raw)
+			failure := decodeFailure(t, resp.Raw)
+			assert.Equal(t, harness.SandboxCapabilityCopilotInnerSandbox, failure.Code)
+			assert.Contains(t, failure.Error, harness.CopilotConfigFileName,
+				"the refusal must name the file that actually decides, since editing "+
+					"settings.json would not change the outcome")
+		})
+	}
+}
+
+// TestSpawn_CopilotTclaudeLayerAcceptsTheMigratedConfigStub keeps the two-file
+// gate from refusing every ordinary install.
+//
+// After the migration runs once, config.json is left as a managed stub that
+// opens with `//` comment lines — not valid JSON. Every settled Copilot home on
+// disk looks like this, so a gate that treated it as unparsable would refuse
+// the common case in the name of the rare one.
+func TestSpawn_CopilotTclaudeLayerAcceptsTheMigratedConfigStub(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	copilotSettings(t, f, `{"theme":"dark"}`)
+	copilotLegacyConfig(t, f, "// User settings belong in settings.json.\n"+
+		"// This file is managed automatically.\n"+
+		"{\n  \"firstLaunchAt\": \"2026-03-11T00:00:00.000Z\"\n}\n")
+
+	resp := f.AsHuman().SpawnWith("crew", map[string]any{
+		"name":                   "copilot-migrated",
+		"harness":                harness.CopilotName,
+		"sandbox_implementation": "tclaude-layer",
+	})
+	require.Equalf(t, http.StatusOK, resp.Code,
+		"the post-migration stub is the ordinary posture and must launch; body=%s", resp.Raw)
+	got, ok := f.World.SpawnSandboxImplementation(resp.ConvID)
+	require.True(t, ok)
+	assert.Equal(t, "tclaude-layer", got)
+}

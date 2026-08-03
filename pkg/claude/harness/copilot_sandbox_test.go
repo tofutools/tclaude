@@ -447,3 +447,182 @@ func TestCopilotTclaudeLayerGrantsPropagateBaselineRefusals(t *testing.T) {
 		})
 	}
 }
+
+// writeCopilotFiles writes an arbitrary set of files into the Copilot home, so
+// a case can describe the two-file world the gate actually faces.
+func writeCopilotFiles(t *testing.T, files map[string]string) (home string, getenv func(string) string) {
+	t.Helper()
+	home = t.TempDir()
+	stateDir := filepath.Join(home, ".copilot")
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		t.Fatalf("prepare Copilot home: %v", err)
+	}
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(stateDir, name), []byte(body), 0o600); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	return home, func(string) string { return "" }
+}
+
+// TestResolveCopilotInnerSandboxLegacyConfigPrecedence is the bypass regression.
+//
+// Copilot 1.0.77 migrates user settings OUT of config.json INTO settings.json
+// at startup, overwriting what settings.json held, and only then reads the
+// result. Measured against the pinned binary, that makes config.json the
+// stronger file for the launch tclaude is about to start:
+//
+//	config.json only                        -> engaged
+//	config.json true  + settings.json false -> engaged
+//	config.json false + settings.json true  -> not engaged
+//
+// A gate reading settings.json alone would pass the first two — and the second
+// is the dangerous one, because settings.json says `false` in plain text while
+// the launch comes up with the wall raised.
+func TestResolveCopilotInnerSandboxLegacyConfigPrecedence(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		files       map[string]string
+		wantEnabled bool
+		wantSource  string
+	}{
+		{
+			name:        "the sandbox key lives only in the legacy config",
+			files:       map[string]string{CopilotConfigFileName: `{"sandbox":{"enabled":true}}`},
+			wantEnabled: true,
+			wantSource:  CopilotConfigFileName,
+		},
+		{
+			name: "the legacy config overrides a disabled canonical setting",
+			files: map[string]string{
+				CopilotSettingsFileName: `{"sandbox":{"enabled":false}}`,
+				CopilotConfigFileName:   `{"sandbox":{"enabled":true}}`,
+			},
+			wantEnabled: true,
+			wantSource:  CopilotConfigFileName,
+		},
+		{
+			name: "the legacy config also wins when it DISABLES",
+			files: map[string]string{
+				CopilotSettingsFileName: `{"sandbox":{"enabled":true}}`,
+				CopilotConfigFileName:   `{"sandbox":{"enabled":false}}`,
+			},
+			wantEnabled: false,
+			wantSource:  CopilotConfigFileName,
+		},
+		{
+			name: "a legacy config that is silent leaves the canonical value alone",
+			files: map[string]string{
+				CopilotSettingsFileName: `{"sandbox":{"enabled":true}}`,
+				CopilotConfigFileName:   `{"theme":"dark"}`,
+			},
+			wantEnabled: true,
+			wantSource:  CopilotSettingsFileName,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home, getenv := writeCopilotFiles(t, tc.files)
+			state, err := ResolveCopilotInnerSandbox(getenv, home)
+			if err != nil {
+				t.Fatalf("ResolveCopilotInnerSandbox = %v, want a determinate state", err)
+			}
+			if state.Enabled != tc.wantEnabled {
+				t.Errorf("Enabled = %v, want %v", state.Enabled, tc.wantEnabled)
+			}
+			want := filepath.Join(home, ".copilot", tc.wantSource)
+			if state.EnabledSource != want {
+				t.Errorf("EnabledSource = %q, want %q", state.EnabledSource, want)
+			}
+
+			err = ValidateCopilotTclaudeLayerInnerSandbox(state)
+			if tc.wantEnabled {
+				if err == nil {
+					t.Fatal("ValidateCopilotTclaudeLayerInnerSandbox = nil, want a refusal")
+				}
+				// The remedy has to name the file that actually decides. Sending
+				// an operator to settings.json when config.json is about to
+				// overwrite it is advice that does not work.
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("refusal %q does not name the deciding file %q", err, want)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ValidateCopilotTclaudeLayerInnerSandbox = %v, want the launch accepted", err)
+			}
+		})
+	}
+}
+
+// TestResolveCopilotInnerSandboxAcceptsTheMigratedConfigStub keeps the gate
+// usable on the most common posture there is.
+//
+// After the startup migration the CLI rewrites config.json to a stub whose
+// first two lines are `//` comments. That is not valid JSON, so a strict parse
+// would refuse every settled install — turning a security gate into an outage.
+func TestResolveCopilotInnerSandboxAcceptsTheMigratedConfigStub(t *testing.T) {
+	const stub = "// User settings belong in settings.json.\n" +
+		"// This file is managed automatically.\n" +
+		"{\n  \"firstLaunchAt\": \"2026-03-11T00:00:00.000Z\"\n}\n"
+	home, getenv := writeCopilotFiles(t, map[string]string{
+		CopilotConfigFileName:   stub,
+		CopilotSettingsFileName: `{"theme":"dark"}`,
+	})
+	state, err := ResolveCopilotInnerSandbox(getenv, home)
+	if err != nil {
+		t.Fatalf("ResolveCopilotInnerSandbox = %v, want the managed stub accepted", err)
+	}
+	if state.Enabled {
+		t.Error("Enabled = true, want false: the stub carries no sandbox key")
+	}
+	if err := ValidateCopilotTclaudeLayerInnerSandbox(state); err != nil {
+		t.Fatalf("ValidateCopilotTclaudeLayerInnerSandbox = %v, want the launch accepted", err)
+	}
+
+	// Only WHOLE-LINE comments are dropped: a `//` inside a value is content.
+	home, getenv = writeCopilotFiles(t, map[string]string{
+		CopilotConfigFileName: `{"proxyUrl":"https://proxy.example.com","sandbox":{"enabled":true}}`,
+	})
+	state, err = ResolveCopilotInnerSandbox(getenv, home)
+	if err != nil {
+		t.Fatalf("ResolveCopilotInnerSandbox = %v, want a determinate state", err)
+	}
+	if !state.Enabled {
+		t.Error("Enabled = false: a `//` inside a string value must not eat the rest of the file")
+	}
+}
+
+// TestResolveCopilotInnerSandboxRefusesAmbiguousLegacyConfig: the legacy file
+// is held to the same standard as the canonical one. It decides the launch, so
+// an unreadable one leaves tclaude exactly as unable to assert a single
+// boundary.
+func TestResolveCopilotInnerSandboxRefusesAmbiguousLegacyConfig(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{name: "a legacy config that is not JSON", body: `{not json`},
+		{name: "a legacy sandbox key that is a bare boolean", body: `{"sandbox":true}`},
+		{name: "a stringly-typed legacy enabled value", body: `{"sandbox":{"enabled":"true"}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home, getenv := writeCopilotFiles(t, map[string]string{
+				// A clean canonical file, so the refusal can only come from the
+				// legacy one.
+				CopilotSettingsFileName: `{"sandbox":{"enabled":false}}`,
+				CopilotConfigFileName:   tc.body,
+			})
+			_, err := ResolveCopilotInnerSandbox(getenv, home)
+			var capErr *SandboxCapabilityError
+			if !errors.As(err, &capErr) {
+				t.Fatalf("ResolveCopilotInnerSandbox = %v, want a *SandboxCapabilityError", err)
+			}
+			if capErr.Kind != SandboxCapabilityCopilotInnerSandbox {
+				t.Errorf("Kind = %q, want %q", capErr.Kind, SandboxCapabilityCopilotInnerSandbox)
+			}
+			if !strings.Contains(capErr.Message, CopilotConfigFileName) {
+				t.Errorf("refusal %q does not name %s", capErr.Message, CopilotConfigFileName)
+			}
+		})
+	}
+}

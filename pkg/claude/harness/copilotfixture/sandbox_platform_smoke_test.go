@@ -287,3 +287,78 @@ func TestCopilotInnerSandboxEnabledIsDetectedBeforeLaunch(t *testing.T) {
 		"the CLI rejected the sandbox settings this gate refuses over, so the gate is "+
 			"guarding a configuration that cannot occur: stderr: %s", result.Stderr)
 }
+
+// TestCopilotLegacyConfigMigratesIntoSettings is the real-binary proof behind
+// the gate's two-file precedence, and it exists because the single-file version
+// of that gate was bypassable.
+//
+// The mechanism it pins: at startup the CLI MOVES user settings out of the
+// legacy config.json into settings.json, overwriting what settings.json held,
+// and rewrites config.json to a managed stub. So a config.json dropped beside a
+// settings.json that plainly reads `"enabled": false` raises the wall on the
+// very next launch, while the canonical file still says otherwise on disk.
+//
+// The assertion is on the FILES rather than on whether the sandbox engaged,
+// because the migration is the part tclaude's pre-launch gate has to model: it
+// runs before tclaude could observe any enforcement, and it is what makes the
+// legacy file the deciding one.
+func TestCopilotLegacyConfigMigratesIntoSettings(t *testing.T) {
+	requireSmoke(t)
+
+	mock := copilotfixture.NewMockProvider(t, []copilotfixture.Turn{
+		{Text: "MOCK LEGACY-CONFIG ANSWER"},
+	})
+	dirs := copilotfixture.NewSandboxDirs(t)
+
+	// The conflicting pair: the canonical file says off, the legacy file says on.
+	settingsPath := filepath.Join(dirs.Home, harness.CopilotSettingsFileName)
+	configPath := filepath.Join(dirs.Home, harness.CopilotConfigFileName)
+	require.NoError(t, os.WriteFile(settingsPath,
+		[]byte(`{"sandbox":{"enabled":false}}`), 0o600))
+	require.NoError(t, os.WriteFile(configPath,
+		[]byte(`{"sandbox":{"enabled":true},"theme":"dark"}`), 0o600))
+
+	// tclaude's gate must refuse BEFORE the launch, reading the same two files,
+	// and must name the legacy file as the one to edit.
+	runEnv := map[string]string{harness.CopilotHomeEnvVar: dirs.Home}
+	state, err := harness.ResolveCopilotInnerSandbox(
+		func(k string) string { return runEnv[k] }, dirs.Root)
+	require.NoError(t, err)
+	assert.True(t, state.Enabled,
+		"the legacy config decides the posture; reading settings.json alone would report off")
+	assert.Equal(t, configPath, state.EnabledSource)
+	gateErr := harness.ValidateCopilotTclaudeLayerInnerSandbox(state)
+	require.Error(t, gateErr)
+	assert.Contains(t, gateErr.Error(), configPath)
+
+	result := copilotfixture.Run(t, copilotfixture.RunOptions{
+		Root: dirs.Root, Home: dirs.Home, Cache: dirs.Cache, XDGCache: dirs.XDGCache,
+		WorkDir: dirs.WorkDir,
+		BaseURL: mock.BaseURL(), Prompt: "Legacy-config question.",
+	})
+	require.Equal(t, 0, result.ExitCode, "stderr: %s", result.Stderr)
+
+	// After the run: the legacy value won and now lives in the canonical file.
+	migrated, err := os.ReadFile(settingsPath)
+	require.NoError(t, err)
+	assert.Contains(t, string(migrated), `"enabled": true`,
+		"the legacy config's sandbox posture must have overwritten the canonical file; if "+
+			"this changed, the gate's precedence order has to change with it")
+
+	// And the legacy file is left as the managed stub, whose leading `//` lines
+	// are why the gate strips whole-line comments before parsing.
+	stub, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(strings.TrimSpace(string(stub)), "//"),
+		"the post-migration stub is expected to open with line comments; the gate parses "+
+			"this exact file on every subsequent launch")
+
+	// The gate must accept that settled posture rather than choking on the stub
+	// — except that here the migrated sandbox key is genuinely enabled, so what
+	// is asserted is WHERE the refusal now comes from: the canonical file.
+	state, err = harness.ResolveCopilotInnerSandbox(
+		func(k string) string { return runEnv[k] }, dirs.Root)
+	require.NoError(t, err, "the managed stub must parse, or every settled install is refused")
+	assert.Equal(t, settingsPath, state.EnabledSource,
+		"after migration the canonical file is the one an operator must edit")
+}
