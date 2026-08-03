@@ -58,8 +58,17 @@ const (
 	// NativeSettingsFile is the canonical live settings file.
 	NativeSettingsFile = "settings.json"
 	// NativeLegacySettingsFile is the legacy file the CLI migrates FROM. It
-	// takes precedence for the launch that consumes it and overwrites the
+	// takes precedence for the launch that consumes it and rewrites the
 	// canonical file, which makes it the bypass-relevant one.
+	//
+	// The migration is a SHALLOW merge, and the shallowness matters to anyone
+	// modelling the precedence: top-level keys the legacy file never mentions
+	// survive from the canonical file, but a top-level key it does mention has
+	// its whole VALUE replaced. So a legacy file carrying any `sandbox` object
+	// at all discards the canonical file's `sandbox` object entirely — a
+	// canonical `sandbox.enabled: true` does not survive a legacy `sandbox`
+	// block that only sets some other field. Merging the two objects key by key
+	// would model a posture the CLI does not produce.
 	NativeLegacySettingsFile = "config.json"
 )
 

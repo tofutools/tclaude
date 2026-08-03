@@ -448,6 +448,47 @@ func TestCopilotNativeSandboxSettingsSourcesAndPrecedence(t *testing.T) {
 				"canonical one; a reader of settings.json alone would otherwise "+
 				"see a posture the next launch replaces")
 	})
+
+	// The SHAPE of the merge, which is what anything modelling this precedence
+	// gets wrong first. The merge is shallow: a top-level key the legacy file
+	// never mentions survives, but one it does mention has its whole VALUE
+	// replaced. So a legacy `sandbox` block that sets some unrelated field
+	// discards the canonical file's `sandbox.enabled` rather than merging with
+	// it — a key-by-key model would compute a posture the CLI never produces.
+	t.Run("the_merge_is_shallow", func(t *testing.T) {
+		dirs := newNativeSandboxDirs(t)
+		// Canonical: sandbox ENABLED, plus an unrelated top-level key.
+		copilotfixture.WriteNativeSandboxSettingsTo(t, dirs.Dirs,
+			copilotfixture.NativeSettingsFile, copilotfixture.NativeSandboxSettings{
+				Enabled: true, AddCurrentWorkingDirectory: true,
+				UserPolicy: copilotfixture.NativeSandboxUserPolicy{
+					Filesystem: copilotfixture.NativeSandboxFilesystem{
+						DeniedPaths: []string{dirs.Denied},
+					},
+				},
+			})
+		// Legacy: a sandbox block that never mentions `enabled`.
+		require.NoError(t, os.WriteFile(
+			filepath.Join(dirs.Home, copilotfixture.NativeLegacySettingsFile),
+			[]byte(`{"sandbox":{"addCurrentWorkingDirectory":true}}`), 0o600))
+
+		target := filepath.Join(dirs.Denied, "in_denied")
+		results := runNativeSandboxScenario(t, dirs, []copilotfixture.Turn{
+			createTurn("edit_denied", target),
+		})
+
+		assert.NotContains(t, results["edit_denied"], nativeSandboxBlockedMarker,
+			"the legacy sandbox block replaced the canonical one WHOLESALE, so the "+
+				"canonical file's enabled:true did not survive and no sandbox applies")
+		assert.True(t, exists(t, target))
+
+		canonical, err := os.ReadFile(
+			filepath.Join(dirs.Home, copilotfixture.NativeSettingsFile))
+		require.NoError(t, err)
+		assert.NotContains(t, string(canonical), dirs.Denied,
+			"the canonical file's whole sandbox object must have been replaced, "+
+				"including the deniedPaths it carried")
+	})
 }
 
 // TestCopilotHarnessRefusesBuiltinOSSandbox ties the measurements above to the
