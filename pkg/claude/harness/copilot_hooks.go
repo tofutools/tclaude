@@ -136,7 +136,10 @@ func copilotHome() string {
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(home, ".copilot")
+	// Same resolver the sandbox baseline uses, so the directory tclaude
+	// installs hooks into and the directory it pre-approves can never drift.
+	dir, _ := copilotStateDir(os.Getenv, home)
+	return dir
 }
 
 // copilotHooksPath is the tclaude-owned drop-in file. The name is tclaude's
