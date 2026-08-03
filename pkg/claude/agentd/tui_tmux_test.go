@@ -1,8 +1,12 @@
 package agentd
 
 import (
+	"bytes"
+	"errors"
+	"io"
 	"os/exec"
 	"slices"
+	"strings"
 	"testing"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
@@ -20,11 +24,15 @@ const (
 // tuiTmuxRec records the tmux argv the --tui server lifecycle issues and
 // scripts the answers it depends on, without a real tmux server. `pids` is the
 // queue of probe results — a decimal pid, probeNoServer, or probeBroken —
-// consumed one per `display-message`; failStart makes the start invocation fail.
+// consumed one per `display-message`; failStart makes the start invocation
+// fail. `sessions` is what the teardown's emptiness check sees, and
+// listSessionsErr makes that check itself fail.
 type tuiTmuxRec struct {
-	calls     [][]string
-	pids      []string
-	failStart bool
+	calls           [][]string
+	pids            []string
+	failStart       bool
+	sessions        []string
+	listSessionsErr error
 }
 
 func (r *tuiTmuxRec) Command(args ...string) *exec.Cmd {
@@ -54,7 +62,15 @@ func (r *tuiTmuxRec) Command(args ...string) *exec.Cmd {
 }
 
 func (r *tuiTmuxRec) ListSessions() (map[string]struct{}, error) {
-	return map[string]struct{}{}, nil
+	r.calls = append(r.calls, []string{"list-sessions"})
+	if r.listSessionsErr != nil {
+		return nil, r.listSessionsErr
+	}
+	alive := map[string]struct{}{}
+	for _, name := range r.sessions {
+		alive[name] = struct{}{}
+	}
+	return alive, nil
 }
 
 func (r *tuiTmuxRec) issued(subcommand string) bool {
@@ -106,12 +122,13 @@ func TestTmuxServerOwnershipRequested(t *testing.T) {
 // tmux-server lifetime on a host with no server yet: the probe gets tmux's "no
 // server running", one invocation brings the server up and turns exit-empty off
 // in the same client connection (so the empty server does not exit the moment
-// that client leaves), and the teardown kills it outright rather than waiting
-// for the last session to go.
+// that client leaves), and the teardown — finding the server still empty —
+// kills it outright rather than leaving it to linger with exit-empty off.
 func TestStartTUITmuxServer_StartsEmptyThenKills(t *testing.T) {
 	rec := installTUITmuxRec(t, "", probeNoServer, "4242", "4242")
 
-	stop, owned := startTUITmuxServer()
+	var notice bytes.Buffer
+	stop, owned := startTUITmuxServer(&notice)
 	if !owned {
 		t.Fatal("starting a server on a host with none must claim ownership")
 	}
@@ -126,6 +143,94 @@ func TestStartTUITmuxServer_StartsEmptyThenKills(t *testing.T) {
 	if last := rec.calls[len(rec.calls)-1]; !slices.Equal(last, []string{"kill-server"}) {
 		t.Fatalf("teardown tmux calls = %v, want a trailing [kill-server]", rec.calls)
 	}
+	// The operator quit the console and the server went with it. Saying so is
+	// the whole point of the notice: the alternative outcome — a server left
+	// running — is silent otherwise, and the two are indistinguishable from the
+	// shell prompt they land back on.
+	if got := notice.String(); !strings.Contains(got, "shut down") {
+		t.Fatalf("teardown notice = %q, want it to report the server was shut down", got)
+	}
+}
+
+// TestStartTUITmuxServer_LeavesAServerWithSessionsOnIt is the emptiness
+// condition on the kill, on top of every ownership check: this daemon started
+// the server, but by the time the console quits the operator has agents running
+// on it. kill-server would take them out with no console left to ask, so the
+// server stays and the operator is told why.
+func TestStartTUITmuxServer_LeavesAServerWithSessionsOnIt(t *testing.T) {
+	rec := installTUITmuxRec(t, "", probeNoServer, "4242", "4242")
+	rec.sessions = []string{"worker-a", "worker-b"}
+
+	var notice bytes.Buffer
+	stop, owned := startTUITmuxServer(&notice)
+	stop()
+
+	if !owned {
+		t.Error("a server this run started is still owned; only the kill is conditional")
+	}
+	if rec.issued("kill-server") {
+		t.Fatalf("a server with sessions on it must survive teardown, got tmux calls %v", rec.calls)
+	}
+	got := notice.String()
+	if !strings.Contains(got, "left running") || !strings.Contains(got, "2 sessions") {
+		t.Fatalf("teardown notice = %q, want it to report 2 sessions keeping the server alive", got)
+	}
+}
+
+// TestStartTUITmuxServer_CountsOneSessionInSingular keeps the one line the
+// operator actually reads from reading like a bug in the thing that just
+// declined to kill their agent.
+func TestStartTUITmuxServer_CountsOneSessionInSingular(t *testing.T) {
+	rec := installTUITmuxRec(t, "", probeNoServer, "4242", "4242")
+	rec.sessions = []string{"worker-a"}
+
+	var notice bytes.Buffer
+	stop, _ := startTUITmuxServer(&notice)
+	stop()
+
+	if got := notice.String(); !strings.Contains(got, "1 session ") {
+		t.Fatalf("teardown notice = %q, want a singular session count", got)
+	}
+}
+
+// TestStartTUITmuxServer_KeepsAServerWhoseSessionsItCannotList applies the
+// probe's fail-safe rule to the new condition: a listing that errors says
+// nothing about whether the server is empty, and kill-server does not ask
+// twice. Leaving it costs an idle server; killing it could cost the sessions
+// the listing failed to name.
+func TestStartTUITmuxServer_KeepsAServerWhoseSessionsItCannotList(t *testing.T) {
+	rec := installTUITmuxRec(t, "", probeNoServer, "4242", "4242")
+	rec.listSessionsErr = errors.New("list-sessions: unreadable")
+
+	var notice bytes.Buffer
+	stop, _ := startTUITmuxServer(&notice)
+	stop()
+
+	if rec.issued("kill-server") {
+		t.Fatalf("an unlistable server must survive teardown, got tmux calls %v", rec.calls)
+	}
+	if got := notice.String(); !strings.Contains(got, "left running") {
+		t.Fatalf("teardown notice = %q, want it to report the server was left running", got)
+	}
+}
+
+// TestStartTUITmuxServer_ChecksEmptinessOnlyAfterOwnership pins the order the
+// conditions are evaluated in. A server that is not ours must not even be
+// listed: the emptiness check exists to protect sessions on a server we would
+// otherwise kill, and a server we will never kill has nothing to protect.
+func TestStartTUITmuxServer_ChecksEmptinessOnlyAfterOwnership(t *testing.T) {
+	rec := installTUITmuxRec(t, "", probeNoServer, "4242", "9999")
+
+	var notice bytes.Buffer
+	stop, _ := startTUITmuxServer(&notice)
+	stop()
+
+	if rec.issued("list-sessions") {
+		t.Fatalf("a replacement server must not be inspected at all, got tmux calls %v", rec.calls)
+	}
+	if got := notice.String(); got != "" {
+		t.Fatalf("teardown notice = %q, want silence on a server that was never ours", got)
+	}
 }
 
 // TestStartTUITmuxServer_LeavesAServerThatWasAlreadyRunning is the ownership
@@ -136,7 +241,7 @@ func TestStartTUITmuxServer_StartsEmptyThenKills(t *testing.T) {
 func TestStartTUITmuxServer_LeavesAServerThatWasAlreadyRunning(t *testing.T) {
 	rec := installTUITmuxRec(t, "", "1111")
 
-	stop, owned := startTUITmuxServer()
+	stop, owned := startTUITmuxServer(io.Discard)
 	stop()
 
 	if owned {
@@ -155,7 +260,7 @@ func TestStartTUITmuxServer_LeavesAServerThatWasAlreadyRunning(t *testing.T) {
 func TestStartTUITmuxServer_DeclinesOwnershipWhenTheProbeCannotTell(t *testing.T) {
 	rec := installTUITmuxRec(t, "", probeBroken)
 
-	stop, owned := startTUITmuxServer()
+	stop, owned := startTUITmuxServer(io.Discard)
 	stop()
 
 	if owned {
@@ -173,7 +278,7 @@ func TestStartTUITmuxServer_DeclinesOwnershipWhenTheProbeCannotTell(t *testing.T
 func TestStartTUITmuxServer_DoesNotTrustANonPIDProbe(t *testing.T) {
 	rec := installTUITmuxRec(t, "", "tmux: warning 4242")
 
-	stop, owned := startTUITmuxServer()
+	stop, owned := startTUITmuxServer(io.Discard)
 	stop()
 
 	if owned || rec.issued("start-server") || rec.issued("kill-server") {
@@ -189,7 +294,7 @@ func TestStartTUITmuxServer_DoesNotTrustANonPIDProbe(t *testing.T) {
 func TestStartTUITmuxServer_KeepsAServerItCanNoLongerVerify(t *testing.T) {
 	rec := installTUITmuxRec(t, "", probeNoServer, "4242", probeBroken)
 
-	stop, _ := startTUITmuxServer()
+	stop, _ := startTUITmuxServer(io.Discard)
 	stop()
 
 	if rec.issued("kill-server") {
@@ -205,7 +310,7 @@ func TestStartTUITmuxServer_KeepsAServerItCanNoLongerVerify(t *testing.T) {
 func TestStartTUITmuxServer_KillsEvenWhenItsOwnPIDWasUnreadable(t *testing.T) {
 	rec := installTUITmuxRec(t, "", probeNoServer, probeBroken, "4242")
 
-	stop, owned := startTUITmuxServer()
+	stop, owned := startTUITmuxServer(io.Discard)
 	stop()
 
 	if !owned || !rec.issued("kill-server") {
@@ -221,7 +326,7 @@ func TestStartTUITmuxServer_KillsEvenWhenItsOwnPIDWasUnreadable(t *testing.T) {
 func TestStartTUITmuxServer_LeavesAReplacementServerAlone(t *testing.T) {
 	rec := installTUITmuxRec(t, "", probeNoServer, "4242", "9999")
 
-	stop, _ := startTUITmuxServer()
+	stop, _ := startTUITmuxServer(io.Discard)
 	stop()
 
 	if rec.issued("kill-server") {
@@ -237,7 +342,7 @@ func TestStartTUITmuxServer_LeavesAReplacementServerAlone(t *testing.T) {
 func TestStartTUITmuxServer_LeavesAnExternalRuntimeAlone(t *testing.T) {
 	rec := installTUITmuxRec(t, "/sys/fs/cgroup/system.slice/tclaude-tmux.service")
 
-	stop, owned := startTUITmuxServer()
+	stop, owned := startTUITmuxServer(io.Discard)
 	stop()
 
 	if owned {
@@ -255,7 +360,7 @@ func TestStartTUITmuxServer_DoesNotKillAServerItCouldNotStart(t *testing.T) {
 	rec := installTUITmuxRec(t, "", probeNoServer, "4242", "4242")
 	rec.failStart = true
 
-	stop, owned := startTUITmuxServer()
+	stop, owned := startTUITmuxServer(io.Discard)
 	stop()
 
 	if owned {

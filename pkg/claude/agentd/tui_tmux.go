@@ -11,6 +11,12 @@ package agentd
 // and is left untouched in both directions. Everything below exists to keep
 // that line sharp.
 //
+// Ownership alone is not enough to kill, either: the teardown also requires the
+// server to be EMPTY. Every condition has to hold at once, so a server this
+// daemon started but that still carries sessions — agents the operator spawned
+// from the console and wants to keep, a shell they opened on the socket — is
+// left running, and the operator is told which of the two happened.
+//
 // This is the LOCAL console only. The remote terminal dashboard
 // (`tclaude agent tui-dashboard`) is an HTTP client of somebody else's daemon —
 // the tmux server it would touch is its own host's, not the one its agents live
@@ -18,6 +24,8 @@ package agentd
 
 import (
 	"errors"
+	"fmt"
+	"io"
 	"log/slog"
 	"os/exec"
 	"strings"
@@ -111,14 +119,21 @@ func tuiTmuxServerPID() (string, tuiTmuxProbe) {
 // so `serve --tui` never kills a server it did not put there.
 //
 // The ownership flag is not just bookkeeping: it decides whether quitting the
-// console is about to take live sessions with it, which is what the quit
-// confirmation has to tell the operator (see tuiStartup.ownsTmuxServer).
+// console is about to end the tmux server, which is what the quit confirmation
+// has to tell the operator (see tuiStartup.ownsTmuxServer).
+//
+// notify is where the teardown narrates its own outcome. It is a parameter and
+// not the startup writer because the two go to different places: startup lines
+// are discarded under --tui (the console owns the terminal — see serveStdout),
+// while the teardown runs after the console has given the terminal back, and
+// what it decided about the operator's sessions is exactly the kind of thing
+// that must not be buried in output.log.
 //
 // Failing to start one is a warning rather than a fatal: the daemon still
 // serves its API, and every tmux call that follows behaves exactly as it did
 // before this ownership existed (starting a server implicitly when it needs
 // one). What the operator loses is the empty-but-alive server, not the daemon.
-func startTUITmuxServer() (stop func(), owned bool) {
+func startTUITmuxServer(notify io.Writer) (stop func(), owned bool) {
 	noop := func() {}
 
 	// External resource delegation puts the tmux server in a separate,
@@ -195,11 +210,53 @@ func startTUITmuxServer() (stop func(), owned bool) {
 				"started_pid", ownerPID, "running_pid", pid, "module", "agentd")
 			return
 		}
+		// The last condition, on top of every ownership check above: kill only an
+		// EMPTY server. Ownership says the server is ours to end; it says nothing
+		// about what the operator put on it in the meantime, and by the time this
+		// runs the console is gone, so an agent still working in a pane would be
+		// killed with no chance to object. Leaving a non-empty server costs an idle
+		// tmux process the operator can end themselves (`tmux -L tclaude
+		// kill-server`); killing it costs whatever was running on it.
+		//
+		// ListSessions is the same "what is alive on the tclaude server" read the
+		// dashboard and peer listings use, so "empty" here means what it means
+		// everywhere else in tclaude: no session whose pane is still live. A
+		// session left behind as a retained-dead corpse does not hold the server
+		// up, which is the point — it is scrollback, not work in progress.
+		sessions, err := clcommon.Default.ListSessions()
+		if err != nil {
+			// Same fail-safe direction as the pid probe: an answer we could not
+			// read is not permission to kill.
+			slog.Warn("tui: could not list the tclaude tmux server's sessions; leaving it running",
+				"error", err, "server_pid", pid, "module", "agentd")
+			fmt.Fprintln(notify,
+				"tmux server left running: could not check whether it still has sessions")
+			return
+		}
+		if n := len(sessions); n > 0 {
+			slog.Info("tui: tclaude tmux server still has sessions; leaving it running",
+				"sessions", n, "server_pid", pid, "module", "agentd")
+			fmt.Fprintf(notify, "tmux server left running: %s still on it\n", tuiTmuxSessionCount(n))
+			return
+		}
 		if out, err := clcommon.Default.Command("kill-server").CombinedOutput(); err != nil {
 			slog.Warn("tui: could not shut down the tclaude tmux server",
 				"error", err, "output", strings.TrimSpace(string(out)), "module", "agentd")
+			fmt.Fprintf(notify, "tmux server could not be shut down: %v\n", err)
 			return
 		}
 		slog.Info("tui: shut down the tclaude tmux server", "server_pid", pid, "module", "agentd")
+		fmt.Fprintln(notify, "tmux server shut down: it had no sessions left on it")
 	}, true
+}
+
+// tuiTmuxSessionCount renders the session count for the operator-facing line
+// above. Worth the three lines: that line is the only place they learn why the
+// server outlived the console, and "1 sessions" reads as a bug in the thing
+// that just declined to kill their agents.
+func tuiTmuxSessionCount(n int) string {
+	if n == 1 {
+		return "1 session"
+	}
+	return fmt.Sprintf("%d sessions", n)
 }

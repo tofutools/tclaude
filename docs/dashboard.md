@@ -279,11 +279,13 @@ the console started itself. At startup the daemon looks for one:
 
 - **Nothing running.** It starts an empty server and turns `exit-empty` off, so
   the server stays up while there are no agents on it instead of appearing and
-  disappearing underneath the console. On exit the daemon runs `kill-server`,
-  which **takes every session started on it down too**. That is a stronger
-  teardown than a bare `agentd serve`, which leaves agent panes running for the
-  next daemon to pick up — and it matches what `--tui` already is: a foreground
-  process whose whole face is the console.
+  disappearing underneath the console. On exit the daemon runs `kill-server` —
+  but **only if the server is still empty**. `exit-empty off` outlives the
+  console, so an empty server would otherwise linger forever with nothing to
+  end it; a server that has picked up sessions is left running instead, because
+  by then the console is gone and the agents on it would be killed with no
+  chance to object. Either way the daemon prints which of the two it did on the
+  way out.
 - **A server is already up.** It belongs to whoever started it — an earlier
   daemon, a `tclaude session new` from a plain shell, your own tmux — so the
   console leaves it exactly as it found it. Its `exit-empty` is not changed, and
@@ -293,7 +295,19 @@ The flag needs the console: without `--tui` there is no daemon-lifetime to tie a
 server to, so it is ignored and startup says so.
 
 When the console owns the server, its quit confirmation says so
-(`Quit and shut down agentd + its tmux sessions?`) instead of the plain wording.
+(`Quit + shut down agentd (and tmux if empty)?`) instead of the plain wording.
+
+"Empty" here means what it means everywhere else in tclaude: no session whose
+pane is still live. A session left behind as a retained-dead corpse — scrollback
+from an agent that has already exited — does not hold the server up.
+
+The exit line naming the outcome goes to stdout, after the console has given the
+terminal back, so it is on the scrollback you land on:
+
+```
+tmux server shut down: it had no sessions left on it
+tmux server left running: 2 sessions still on it
+```
 
 Ownership is only ever claimed on a definite answer. If the check cannot tell
 whether a server is running — no tmux on `PATH`, a tmux too old for the `-N`
@@ -304,10 +318,12 @@ something needs one.
 Much the same holds on the way out. A server the console cannot re-verify at
 exit is left running rather than killed on a guess, and so is one whose pid no
 longer answers as the pid it started — that server died and something else took
-the socket. The one exception is a console that could not read a pid for its own
-server at startup: the check *before* the start had already said no server was
-running, so whatever answers at exit is what this run put there, and it is
-killed. All of these are logged to `output.log`.
+the socket, so it is not inspected or killed at all. A server whose session
+listing itself fails is left running for the same reason: an answer that could
+not be read is not permission to kill. The one exception is a console that could
+not read a pid for its own server at startup: the check *before* the start had
+already said no server was running, so whatever answers at exit is what this run
+put there, and it is killed if empty. All of these are logged to `output.log`.
 
 An [external tmux runtime](sandboxing.md) is refused the same way: when
 `--resource-delegation-dir` (or its config/environment equivalent) points the
@@ -322,8 +338,11 @@ comes and goes with it.
 One consequence worth knowing: `exit-empty off` outlives the process that set
 it. If an owning daemon is killed outright — `SIGKILL`, an OOM kill — its
 teardown never runs, and the empty server it started stays up indefinitely
-instead of exiting on its own. The next `--tui` run finds it and, by the rule
-above, treats it as somebody else's. Clear it with:
+instead of exiting on its own. Quitting with sessions still on the server has
+the same tail: the server survives by design, but `exit-empty off` survives with
+it, so it stays up after those last sessions end too. Either way the next
+`--tui` run finds it and, by the rule above, treats it as somebody else's. Clear
+it with:
 
 ```bash
 tmux -L tclaude kill-server   # only when you know nothing is running on it
