@@ -602,6 +602,50 @@ func TestGitProxy_GitFailureIsAnAnswerNotAnError(t *testing.T) {
 		"git's own diagnosis is what tells the agent what to do next")
 }
 
+// TestGitProxy_AuditsEveryCredentialedCall — the oversight half of the
+// feature. Every proxied call spends the operator's credential against a
+// remote host, so it must leave a row an operator can review afterwards,
+// carrying the remote and the ref but NOT the output or anything secret.
+//
+// This is also why the network READS are POSTs: the audit middleware records
+// mutating methods only, and "this agent read the private repo as me" is
+// exactly the kind of thing an operator wants in the trail.
+func TestGitProxy_AuditsEveryCredentialedCall(t *testing.T) {
+	f, rec := gitProxyWorld(t, []string{"github.com/tofutools"})
+	rec.network = agentd.ProxyResult{Stdout: "a-secret-looking-ref-listing"}
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitRead, "test"))
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitPush, "test"))
+
+	for path, verb := range map[string]string{
+		"/v1/git/fetch":     "git.fetch",
+		"/v1/git/push":      "git.push",
+		"/v1/git/ls-remote": "git.ls-remote",
+	} {
+		res := gitProxyPost(t, f, path, map[string]any{"branch": "feat/thing"})
+		require.Equal(t, http.StatusOK, res.Code, "%s body=%s", path, res.Body.String())
+
+		row := auditRowByVerb(t, verb)
+		assert.Contains(t, row.Detail, "github.com/tofutools/tclaude",
+			"%s must record which remote was reached", verb)
+		assert.Contains(t, row.Detail, "exit=0", "%s must record the outcome", verb)
+		assert.NotContains(t, row.Detail, "a-secret-looking-ref-listing",
+			"subprocess output must never enter the audit trail")
+	}
+}
+
+// TestGitProxy_AuditsRefusals — a denial is as interesting as a success:
+// the trail must answer "who TRIED to do what", not only what landed.
+func TestGitProxy_AuditsRefusals(t *testing.T) {
+	f, _ := gitProxyWorld(t, []string{"github.com/tofutools"})
+	// No grant at all.
+	res := gitProxyPost(t, f, "/v1/git/push", map[string]any{"branch": "feat/thing"})
+	require.Equal(t, http.StatusForbidden, res.Code)
+
+	row := auditRowByVerb(t, "git.push")
+	assert.Equal(t, http.StatusForbidden, row.Status,
+		"a refused attempt must still be recorded, with its status")
+}
+
 // TestGitProxy_RemotesReportsRefusalReasons — the discovery command must
 // explain a refusal, so an agent can tell its operator exactly what to add
 // instead of guessing from a later 403.

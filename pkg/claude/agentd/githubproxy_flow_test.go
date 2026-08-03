@@ -246,6 +246,27 @@ func TestGHProxy_PassesJSONThroughUnmodelled(t *testing.T) {
 	assert.JSONEq(t, `[{"number":7,"title":"a pr","someFieldAddedLater":{"nested":true}}]`, string(out.JSON))
 }
 
+// TestGHProxy_AuditsWithoutRecordingContent — the audit row must name the repo
+// and the operation, and must NOT carry the PR title or body. A PR body is
+// free text an agent authored; the audit log is not the place for it.
+func TestGHProxy_AuditsWithoutRecordingContent(t *testing.T) {
+	f, rec := gitProxyWorld(t, []string{"github.com/tofutools"})
+	rec.gh = agentd.ProxyResult{Stdout: "https://github.com/tofutools/tclaude/pull/9"}
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubWrite, "test"))
+
+	const title = "TITLE-SHOULD-NOT-BE-AUDITED"
+	const body = "BODY-SHOULD-NOT-BE-AUDITED"
+	res := gitProxyPost(t, f, "/v1/github/pr/create",
+		map[string]any{"title": title, "body": body})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+
+	row := auditRowByVerb(t, "github.pr.create")
+	assert.Contains(t, row.Detail, "tofutools/tclaude")
+	assert.Contains(t, row.Detail, "exit=0")
+	assert.NotContains(t, row.Detail, title)
+	assert.NotContains(t, row.Detail, body)
+}
+
 // TestGHProxy_FailureIsAnAnswer mirrors the git side: HTTP 200 means the daemon
 // ran gh; gh's own message is what tells the agent what went wrong.
 func TestGHProxy_FailureIsAnAnswer(t *testing.T) {
