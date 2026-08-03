@@ -200,7 +200,17 @@ var copilotHookCommandString = func() string {
 // hook response channel at all while this is here. That is the correct default
 // until a response contract is designed and verified — see the standing-order
 // note on CopilotHookEvents.
-const copilotHookStdoutSink = " >/dev/null"
+//
+// The `|| true` is the second half of the same idea, applied to the exit code.
+// A non-zero exit was measured to have no effect on any installed event
+// (UserPromptSubmit, PostToolUse, Stop with 1 and 2, SessionEnd all completed
+// the turn normally; only PreToolUse denies, which is why it is not
+// installed) — but SessionStart was never measured, and tclaude's callback
+// does exit non-zero when its receiver is unavailable. Making the whole set
+// exit-neutral costs one token and removes the class. It does NOT reopen
+// PreToolUse: relying on shell semantics to protect the operator's tool calls
+// is a thinner margin than simply not registering there.
+const copilotHookStdoutSink = " >/dev/null || true"
 
 func copilotHookCommandStr() string {
 	return copilotHookCommandString() + copilotHookStdoutSink
@@ -247,8 +257,22 @@ func (copilotHookInstaller) Check() (installed bool, missing []string, needsRepa
 	if file.Version != copilotHookFileVersion {
 		needsRepair = true
 	}
-	for _, entries := range file.Hooks {
+	installs := make(map[string]struct{}, len(CopilotHookEvents))
+	for _, event := range CopilotHookEvents {
+		installs[event] = struct{}{}
+	}
+	for event, entries := range file.Hooks {
 		if copilotHooksNeedCleanup(entries, want) {
+			needsRepair = true
+			break
+		}
+		// A tclaude entry under an event tclaude no longer installs is
+		// repair-worthy even when it looks current. The events are chosen for
+		// safety — a callback on PreToolUse can DENY the operator's tool calls
+		// — so leaving one behind is exactly the outcome the list prevents.
+		// Install already strips it; without this, Check would report "all
+		// installed, nothing to repair" and setup would never call Install.
+		if _, wanted := installs[event]; !wanted && copilotHooksIncludeOurs(entries) {
 			needsRepair = true
 			break
 		}
@@ -298,7 +322,13 @@ func withCopilotHooksInstallLock(fn func() error) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create Copilot hooks directory: %w", err)
 	}
-	fileLock := flock.New(path + ".tclaude.lock")
+	// The lock lives BESIDE the hooks directory, not inside it: that directory
+	// is scanned by Copilot for hook drop-ins, and tclaude should not leave
+	// files of its own in a third-party CLI's scan path. (1.0.77 ignores the
+	// non-.json name, but that is its choice to change, not tclaude's to rely
+	// on.) The atomic write's temp file has to share the target's directory to
+	// rename atomically; it is short-lived and carries a .tmp name.
+	fileLock := flock.New(filepath.Join(filepath.Dir(filepath.Dir(path)), ".tclaude-hooks.lock"))
 	lockCtx, cancelLock := context.WithTimeout(
 		context.Background(), installCopilotHooksLockTimeout)
 	defer cancelLock()
@@ -418,6 +448,17 @@ func copilotDesiredHookEntry() (json.RawMessage, error) {
 		Command:    copilotHookCommandStr(),
 		TimeoutSec: copilotHookTimeoutSec,
 	})
+}
+
+// copilotHooksIncludeOurs reports whether any entry belongs to tclaude,
+// whatever its shape.
+func copilotHooksIncludeOurs(entries []json.RawMessage) bool {
+	for _, raw := range entries {
+		if isTclaudeHookCommand(copilotHookCommandOf(raw)) {
+			return true
+		}
+	}
+	return false
 }
 
 // copilotHooksContain reports whether an event's entries already include the

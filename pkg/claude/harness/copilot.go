@@ -43,6 +43,12 @@ func init() {
 		// installer and nothing else. Everything still nil below stays nil.
 		Hooks: copilotHookInstaller{},
 
+		// Copilot's SessionEnd is not proof of an exit: observed only on clean
+		// runs, impossible on a SIGKILL, and at-least-once rather than
+		// exactly-once. Without this, every SessionEnd would declare a live
+		// pane dead — see the field's doc comment.
+		SessionEndBestEffort: true,
+
 		// Copilot announces the session AFTER the prompt: the recorded event
 		// order is UserPromptSubmit, UserPromptTransformed, SessionStart, …
 		// (copilotfixture/testdata/<version>/hooks). Every other harness does

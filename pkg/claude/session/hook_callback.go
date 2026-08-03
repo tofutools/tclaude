@@ -109,6 +109,22 @@ func HookCallbackCmd() *cobra.Command {
 // treated as an exit — better to over-report "exited" (the reaper /
 // next hook will correct a live session) than to leave a dead one as
 // "idle".
+func sessionEndIsExit(reason string) bool {
+	return reason != "clear" && reason != "resume"
+}
+
+// sessionEndProvesExit reports whether a SessionEnd from this harness may be
+// treated as evidence that the process ended. Unknown harness names keep the
+// historical behavior; only a descriptor that declares its SessionEnd
+// best-effort opts out.
+func sessionEndProvesExit(harnessName string) bool {
+	h, ok := harness.Get(harnessName)
+	if !ok {
+		return true
+	}
+	return h.SessionEndProvesExit()
+}
+
 // lateSessionStart reports whether this SessionStart arrived INSIDE a turn that
 // is already running, in which case clearing the session to idle would be a
 // lie.
@@ -124,20 +140,24 @@ func HookCallbackCmd() *cobra.Command {
 //
 // The rule is deliberately deterministic and narrow: only for a harness whose
 // descriptor declares the inverted order, and only when the session is
-// CURRENTLY working. An idle session still settles to idle, and every other
-// harness is untouched. No timing window is involved — a stale "working" row
-// left by a killed pane is the reaper's job (tmux/PID liveness already owns
-// exit detection), not something to guess at from hook arrival gaps.
+// CURRENTLY working. An idle session still settles to idle, every other
+// harness is untouched, and no timing window is involved.
+//
+// It does give something up, and the trade is deliberate. A SessionStart used
+// to be the one event that resynced a row stuck at "working" — after a Stop
+// callback the harness killed on its timeout, say, or a turn the user
+// interrupted. Suppressing it means such a row now waits for the next
+// completed turn to settle. The reaper does not cover that case: it acts when
+// the PANE dies, not when a live pane goes quiet. Accepted because the failure
+// it prevents is both worse and far more common — every first turn of every
+// session reporting a busy agent as free, versus an occasional stale row after
+// a dropped event.
 func lateSessionStart(state *SessionState) bool {
 	if state == nil || state.Status != StatusWorking {
 		return false
 	}
 	h, ok := harness.Get(state.Harness)
 	return ok && h.AnnouncesSessionAfterPrompt()
-}
-
-func sessionEndIsExit(reason string) bool {
-	return reason != "clear" && reason != "resume"
 }
 
 // isConvTransitionStart reports whether a hook is a SessionStart that
@@ -1180,11 +1200,35 @@ func applyHook(ctx context.Context, input HookCallbackInput, envSessionID string
 			state.SubagentCount = len(state.Subagents)
 			return SaveSessionState(state)
 		}
+		// The reason itself can say this is not an exit: a /clear or an
+		// interactive /resume ends the conversation but not the process.
 		if !sessionEndIsExit(input.Reason) {
 			if err := db.UpdateSessionLastHook(state.ID, state.LastHook); err != nil {
 				slog.Warn("failed to persist last_hook", "error", err, "module", "hooks")
 			}
 			return nil
+		}
+		// So can the HARNESS. A harness whose SessionEnd is best-effort has not
+		// proven the event means the process is going away, and acting as if it
+		// had would declare a live pane dead — settling its ledgers, writing an
+		// exit observation and raising an "Exited" notification on an agent
+		// sitting at a prompt. Exit detection for those harnesses stays where
+		// it is provable: the reaper's tmux/PID liveness.
+		//
+		// The session is still OVER as far as the harness will report, so the
+		// status settles to idle. That matters for a turn that ended without a
+		// turn-end event at all: a Copilot provider error emits SessionStart →
+		// ErrorOccurred → SessionEnd and no Stop, and ErrorOccurred is not in
+		// the installed baseline, so without this the agent would sit at
+		// "working" until its pane died. Status only — no exit observation, no
+		// notification, no ledger reset, since none of those are warranted by
+		// an event that has not proven a process ended.
+		if !sessionEndProvesExit(state.Harness) {
+			if state.Status == StatusWorking {
+				state.Status = StatusIdle
+				state.StatusDetail = ""
+			}
+			return SaveSessionState(state)
 		}
 		// The process is going away — sub-agents and monitors run inside
 		// it and background shells are its children, so none of the three

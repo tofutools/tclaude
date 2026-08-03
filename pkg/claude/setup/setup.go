@@ -200,6 +200,19 @@ func runSetup(params *Params) error {
 			}
 		}
 		if err := installHooksForHarness(hh, grantTrust); err != nil {
+			// The SELECTED harness's hooks are the mandatory core: failing to
+			// install them fails setup. A harness that was merely auto-added
+			// for being on PATH is different — its config could be anything
+			// (a Copilot hook file the operator hand-edited into invalid
+			// JSON, say, which the installer refuses to overwrite rather than
+			// clobber). Aborting there would cost the user every LATER stage
+			// of setup — the status bar, the skills, the agentd permission
+			// profile — over a harness they never asked about, with no flag
+			// to skip it. Report it and carry on.
+			if hh.Name != h.Name {
+				fmt.Printf("  ⚠ Skipped %s hooks: %v\n", hh.DisplayName, err)
+				continue
+			}
 			return err
 		}
 	}

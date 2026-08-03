@@ -33,14 +33,17 @@ func seedCopilotHome(t *testing.T) (home, command string) {
 	return home, copilotHookCommandStr()
 }
 
-// TestCopilotHookCommand_RedirectsStdout pins the safety property behind the
-// whole design: Copilot treats a hook's stdout as a CONTROL CHANNEL (a Stop
-// hook printing {"decision":"block"} makes the agent keep working), so every
-// installed command must discard it.
-func TestCopilotHookCommand_RedirectsStdout(t *testing.T) {
+// TestCopilotHookCommand_IsInertToCopilot pins the two safety properties every
+// installed command carries. Copilot treats a hook's stdout as a CONTROL
+// CHANNEL — a Stop hook printing {"decision":"block"} makes the agent keep
+// working — and reads its exit code on some events. tclaude's callback must be
+// able to fail without touching either.
+func TestCopilotHookCommand_IsInertToCopilot(t *testing.T) {
 	_, command := seedCopilotHome(t)
-	assert.True(t, strings.HasSuffix(command, " >/dev/null"),
+	assert.Contains(t, command, " >/dev/null",
 		"installed command must discard stdout, got %q", command)
+	assert.True(t, strings.HasSuffix(command, "|| true"),
+		"installed command must exit zero even when the callback fails, got %q", command)
 	assert.True(t, isTclaudeHookCommand(command),
 		"the redirect must not stop tclaude recognising its own hook for repair")
 
@@ -189,6 +192,68 @@ func TestCopilotHookInstaller_RemovesRetiredEvents(t *testing.T) {
 	file = readCopilotHooksFileForTest(t, copilotHookInstaller{}.ConfigTarget())
 	require.Len(t, file.Hooks["PreToolUse"], 1)
 	assert.Equal(t, "/usr/local/bin/audit-logger", file.Hooks["PreToolUse"][0].Command)
+}
+
+// TestCopilotHookInstaller_ChecksRetiredEvents is the other half of the
+// removal above, and the half that actually reaches an operator. `tclaude
+// setup` short-circuits on "installed and no repair needed" and never calls
+// Install — so if Check cannot SEE a tclaude entry under a retired event, the
+// entry survives every setup run while the output says everything is fine. On
+// PreToolUse that means a failing callback keeps the power to deny the
+// operator's tool calls.
+func TestCopilotHookInstaller_ChecksRetiredEvents(t *testing.T) {
+	home, command := seedCopilotHome(t)
+	inst := copilotHookInstaller{}
+
+	require.NoError(t, inst.Install())
+	installed, _, needsRepair := inst.Check()
+	require.True(t, installed)
+	require.False(t, needsRepair)
+
+	// Add a CURRENT-shape tclaude entry under a retired event, exactly as an
+	// older tclaude would have left it.
+	path := filepath.Join(home, "hooks", "tclaude.json")
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	var file map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(data, &file))
+	var hooks map[string][]json.RawMessage
+	require.NoError(t, json.Unmarshal(file["hooks"], &hooks))
+	entry, err := json.Marshal(map[string]any{
+		"type": "command", "command": command, "timeoutSec": copilotHookTimeoutSec})
+	require.NoError(t, err)
+	hooks["PreToolUse"] = []json.RawMessage{entry}
+	file["hooks"], err = json.Marshal(hooks)
+	require.NoError(t, err)
+	data, err = json.MarshalIndent(file, "", "  ")
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, data, 0o600))
+
+	_, _, needsRepair = inst.Check()
+	assert.True(t, needsRepair,
+		"a tclaude entry on a retired event must be reported, or setup never repairs it")
+
+	require.NoError(t, inst.Install())
+	after := readCopilotHooksFileForTest(t, path)
+	assert.NotContains(t, after.Hooks, "PreToolUse")
+	_, _, needsRepair = inst.Check()
+	assert.False(t, needsRepair)
+}
+
+// TestCopilotHookInstaller_LockStaysOutOfTheScannedDirectory keeps tclaude's
+// bookkeeping out of a third-party CLI's hook scan path.
+func TestCopilotHookInstaller_LockStaysOutOfTheScannedDirectory(t *testing.T) {
+	home, _ := seedCopilotHome(t)
+	require.NoError(t, copilotHookInstaller{}.Install())
+
+	entries, err := os.ReadDir(filepath.Join(home, "hooks"))
+	require.NoError(t, err)
+	var names []string
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	assert.Equal(t, []string{"tclaude.json"}, names,
+		"only tclaude's hook file belongs in the directory Copilot scans")
 }
 
 // TestCopilotHookInstaller_Idempotent installs twice and asserts the second

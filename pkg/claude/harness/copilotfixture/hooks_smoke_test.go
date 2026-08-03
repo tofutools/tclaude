@@ -147,7 +147,17 @@ func installHooksWithRecorder(t *testing.T, dirs copilotfixture.Dirs, captureDir
 		// back out of the payload: one recorded event (PermissionRequest)
 		// carries no event name at all, so a payload-derived label would be
 		// unreliable exactly where the evidence matters most.
-		entry["command"] = fmt.Sprintf("CAP_DIR=%s %s %s", captureDir, recorder, event)
+		// The SUFFIX the production command carries is kept verbatim — the
+		// stdout redirect and the exit guard are the two safety properties of
+		// that string, and rewriting the command wholesale would mean the real
+		// binary never executed them.
+		installed, _ := entry["command"].(string)
+		suffix := ""
+		if idx := strings.Index(installed, " >"); idx >= 0 {
+			suffix = installed[idx:]
+		}
+		require.NotEmptyf(t, suffix, "installed command %q carries no stdout redirect", installed)
+		entry["command"] = fmt.Sprintf("CAP_DIR=%s %s %s%s", captureDir, recorder, event, suffix)
 		rewritten, err := json.Marshal(entry)
 		require.NoError(t, err)
 		file.Hooks[event] = []json.RawMessage{rewritten}

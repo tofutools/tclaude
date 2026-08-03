@@ -170,14 +170,19 @@ func TestCopilotHooks_LateSessionStartGuardIsHarnessScoped(t *testing.T) {
 		"the guard preserves a running turn; it never invents one")
 }
 
-// Scenario: SessionEnd arrives more than once.
+// Scenario: SessionEnd, which for Copilot is NOT proof that the pane died.
 //
-// Copilot's SessionEnd is at-least-once, not once-per-session: a hook that
-// steers the agent into forced continuation makes Stop and SessionEnd repeat
-// for a single prompt. tclaude installs a stdout-discarding command precisely
-// so it can never cause that, but a user's own hook still can — so the
-// receiver has to be idempotent regardless of who triggered it.
-func TestCopilotHooks_RepeatedSessionEndIsIdempotent(t *testing.T) {
+// tclaude's receiver otherwise treats SessionEnd as an exit — it settles the
+// ledgers, writes an exit observation and raises an "Exited" notification.
+// Copilot's SessionEnd has only been seen on clean runs, cannot fire on a
+// SIGKILL, and is at-least-once (a hook that steers the agent into forced
+// continuation makes it repeat inside one prompt), so acting on it would
+// declare a LIVE agent dead — after which the dashboard, `agent ls` and every
+// coordination decision would route around a working agent.
+//
+// Expected: the session settles to idle and stays alive, no matter how many
+// times the event arrives.
+func TestCopilotHooks_SessionEndDoesNotKillALiveSession(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 	f := newFlow(t)
 	f.HaveGroup("squad")
@@ -186,25 +191,48 @@ func TestCopilotHooks_RepeatedSessionEndIsIdempotent(t *testing.T) {
 	f.HaveMember("squad", copilotFlowConv)
 
 	capture := copilotfixture.LoadHookCapture(t, copilotfixture.HookScenarioClaudeDialect)
+	status := func() string {
+		t.Helper()
+		m := findDashMember(fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest()), "squad", copilotFlowConv)
+		require.NotNil(t, m, "a session ended by hook must still be listed")
+		return m.State.Status
+	}
+
+	// A turn that ends WITHOUT a Stop — the shape a provider error produces
+	// (SessionStart → ErrorOccurred → SessionEnd, and ErrorOccurred is not in
+	// the installed baseline). SessionEnd has to settle it, or the agent sits
+	// at "working" until its pane dies.
+	require.NoError(t, session.ApplyHook(
+		copilotHook(t, capture, "UserPromptSubmit", 0, copilotFlowConv, cwd), copilotFlowLabel))
+	require.Equal(t, session.StatusWorking, status())
+
 	end := copilotHook(t, capture, "SessionEnd", 0, copilotFlowConv, cwd)
+	require.Equal(t, "complete", end.Reason,
+		"the recorded reason is not one tclaude treats as an in-process transition")
 
 	for i := range 3 {
 		require.NoErrorf(t, session.ApplyHook(end, copilotFlowLabel), "SessionEnd #%d", i+1)
+		assert.Equalf(t, session.StatusIdle, status(),
+			"SessionEnd #%d must settle the agent, never mark it exited", i+1)
 	}
 
 	row, err := db.LoadSession(copilotFlowLabel)
 	require.NoError(t, err)
 	require.NotNil(t, row)
-	assert.Equal(t, harness.CopilotName, row.Harness,
-		"repeated SessionEnd must not corrupt the row it lands on")
+	assert.NotEqual(t, session.StatusExited, row.Status,
+		"exit authority stays with the reaper's pane liveness")
 
-	// A repeat must also stay harmless for a turn that is genuinely underway:
-	// the prompt after the duplicates still reports the agent as working.
+	// The dashboard is the surface an operator actually reads, and it must
+	// still show a live agent rather than an exit banner.
+	member := findDashMember(fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest()), "squad", copilotFlowConv)
+	require.NotNil(t, member)
+	assert.Empty(t, member.State.ExitReason,
+		"a best-effort SessionEnd must not stamp an exit reason")
+
+	// And the pane really is alive: the next prompt reports working again.
 	require.NoError(t, session.ApplyHook(
 		copilotHook(t, capture, "UserPromptSubmit", 0, copilotFlowConv, cwd), copilotFlowLabel))
-	m := findDashMember(fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest()), "squad", copilotFlowConv)
-	require.NotNil(t, m)
-	assert.Equal(t, session.StatusWorking, m.State.Status)
+	assert.Equal(t, session.StatusWorking, status())
 }
 
 // Scenario: a RESUMED Copilot launch. `copilot --resume=<id>` keeps the
