@@ -150,19 +150,6 @@ type RunOptions struct {
 	// Prompt runs non-interactively via -p and exits after completion.
 	Prompt string
 
-	// Interactive renders the prompt with `-i` instead of `-p`.
-	//
-	// This is the mode tclaude actually spawns, and it is a genuinely different
-	// permission surface rather than a cosmetic switch: `--allow-all-tools` is
-	// documented as REQUIRED for non-interactive use, so `-p` cannot observe
-	// what a launch without it does — the CLI refuses before any tool call.
-	// Only `-i` can reach the prompt that a detached agent would deadlock on.
-	//
-	// Callers get no event stream here: `-i` renders a human TUI transcript,
-	// not JSONL. The evidence is the provider traffic (did the tool result come
-	// back?) and the process's own exit, which is what PermissionOutcome reads.
-	Interactive bool
-
 	// OmitAllowAllTools drops the runner's default `--allow-all-tools`.
 	//
 	// Every pre-existing scenario wants that flag — it is what stops a mock
@@ -171,13 +158,6 @@ type RunOptions struct {
 	// the measurement, so it must be reachable without editing the runner's
 	// defaults for everyone else.
 	OmitAllowAllTools bool
-
-	// Stdin, when non-empty, is written to the child's stdin instead of
-	// /dev/null. It exists for the in-pane-command measurements: `/allow-all`
-	// is only reachable by typing it at a running interactive session, so a
-	// scenario that asks whether a slash command can widen a launch-time deny
-	// has no other way to ask.
-	Stdin string
 
 	// Timeout overrides RunTimeout for this run. A scenario that EXPECTS to
 	// block sets a short one: waiting the full 90s proves nothing the first few
@@ -198,17 +178,6 @@ type RunOptions struct {
 	// precedence in exec.Cmd.Env is platform-dependent, so a collision here
 	// would make the scenario mean different things on Linux and macOS.
 	ExtraEnv []string
-
-	// AllowTimeout turns "the run did not finish" from a test failure into a
-	// recorded outcome.
-	//
-	// This is the load-bearing switch for the whole permission matrix. The
-	// claim under measurement — that a default-posture launch blocks on its
-	// first tool call and never completes — can ONLY be observed as a timeout.
-	// Without this the runner would report it as infrastructure failure and the
-	// scenario could never distinguish "Copilot deadlocked as predicted" from
-	// "the fixture broke".
-	AllowTimeout bool
 
 	// SessionID pins a fresh session's UUID (--session-id). ResumeID resumes an
 	// existing one (--resume=<id>, the `=` form: the option's value is optional,
@@ -246,14 +215,6 @@ type RunResult struct {
 	Stderr   string
 	// Events are the parsed --output-format json lines, in order.
 	Events []Event
-
-	// TimedOut records that the run was killed at its deadline rather than
-	// exiting on its own. Only reachable when RunOptions.AllowTimeout is set;
-	// otherwise the runner fails the test instead of returning.
-	//
-	// ExitCode is meaningless when this is true — it is whatever the kill
-	// produced — so a scenario must branch on this field first.
-	TimedOut bool
 }
 
 // Event is one line of the CLI's JSONL event stream.
@@ -368,12 +329,11 @@ func Run(t *testing.T, opts RunOptions) RunResult {
 		// a permission prompt the moment the mock asks for a tool.
 		args = append(args, "--allow-all-tools")
 	}
-	if !opts.Interactive {
-		// JSONL is the machine-readable surface; the human text rendering is
-		// not a contract. `-i` has no JSONL surface at all, so asking for one
-		// there would be asking for a format the mode does not produce.
-		args = append(args, "--output-format", "json")
-	}
+	// JSONL is the machine-readable surface; the human text rendering is not a
+	// contract. This runner is the non-interactive one throughout: the
+	// interactive form has no JSONL surface at all and lives in RunPTY, which
+	// builds its own argv for exactly that reason.
+	args = append(args, "--output-format", "json")
 	args = append(args,
 		"--no-color",
 		// Keeps the CLI's own diagnostics out of the captured streams.
@@ -398,12 +358,8 @@ func Run(t *testing.T, opts RunOptions) RunResult {
 		args = append(args, "--effort="+opts.Effort)
 	}
 	args = append(args, opts.ExtraArgs...)
-	// The prompt flag goes last so no earlier option can swallow its value.
-	promptFlag := "-p"
-	if opts.Interactive {
-		promptFlag = "-i"
-	}
-	args = append(args, promptFlag, opts.Prompt)
+	// -p last so no earlier option can swallow the prompt value.
+	args = append(args, "-p", opts.Prompt)
 
 	timeout := opts.Timeout
 	if timeout == 0 {
@@ -415,16 +371,17 @@ func Run(t *testing.T, opts RunOptions) RunResult {
 	cmd := exec.CommandContext(ctx, "copilot", args...)
 	cmd.Dir = opts.WorkDir
 	cmd.Env = buildEnv(opts)
-	if opts.Stdin != "" {
-		cmd.Stdin = strings.NewReader(opts.Stdin)
-	} else {
-		devNull, err := os.Open(os.DevNull)
-		if err != nil {
-			t.Fatalf("copilotfixture: opening %s: %v", os.DevNull, err)
-		}
-		t.Cleanup(func() { _ = devNull.Close() })
-		cmd.Stdin = devNull
+	// Explicit rather than inherited, so a run can never pick up the test
+	// binary's own stdin. Behaviourally identical to leaving it nil — exec
+	// already gives a nil Stdin /dev/null — but it states the intent at the one
+	// place it matters, for a CLI whose behaviour turns on whether it has a
+	// terminal.
+	devNull, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatalf("copilotfixture: opening %s: %v", os.DevNull, err)
 	}
+	t.Cleanup(func() { _ = devNull.Close() })
+	cmd.Stdin = devNull
 	// Copilot spawns helpers (shell tools, indexers). Without WaitDelay a
 	// descendant still holding the output pipe keeps Wait blocked long after
 	// the context killed the parent, so a scenario could hang past its own
@@ -435,16 +392,16 @@ func Run(t *testing.T, opts RunOptions) RunResult {
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	err := cmd.Run()
-	timedOut := ctx.Err() != nil
-	if timedOut && !opts.AllowTimeout {
+	runErr := cmd.Run()
+	if ctx.Err() != nil {
 		t.Fatalf("copilotfixture: run exceeded %s (stderr: %s)", timeout, stderr.String())
 	}
 	exitCode := 0
-	if err != nil && !timedOut {
+	if runErr != nil {
 		var exitErr *exec.ExitError
-		if !errors.As(err, &exitErr) {
-			t.Fatalf("copilotfixture: launching copilot failed: %v (stderr: %s)", err, stderr.String())
+		if !errors.As(runErr, &exitErr) {
+			t.Fatalf("copilotfixture: launching copilot failed: %v (stderr: %s)",
+				runErr, stderr.String())
 		}
 		exitCode = exitErr.ExitCode()
 	}
@@ -454,7 +411,6 @@ func Run(t *testing.T, opts RunOptions) RunResult {
 		Stdout:   stdout.String(),
 		Stderr:   stderr.String(),
 		Events:   parseEvents(t, stdout.String()),
-		TimedOut: timedOut,
 	}
 }
 

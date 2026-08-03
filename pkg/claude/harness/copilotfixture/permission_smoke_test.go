@@ -36,12 +36,18 @@ import (
 
 // permissionDeadline bounds one pty scenario.
 //
-// Sized off measured behavior, not guessed: a mock-backed turn reaches its
-// tool-result follow-up in ~2-4s, and an allowed arm ends as soon as that
-// arrives. Only genuinely blocked arms pay the full deadline, and 20s is many
-// times the slowest observed startup while keeping the whole matrix inside the
-// CI job's budget.
-const permissionDeadline = 20 * time.Second
+// Sized off measured behavior, not guessed. An allowed arm ends the moment its
+// follow-up request arrives (~2-4s) and never approaches this; only genuinely
+// blocked arms pay it in full, and there are a dozen of those, so the value is
+// most of the matrix's wall clock. The blocked shape is reached quickly — the
+// trust dialog renders in ~3-6s and PTYQuiescence adds 2 — so 12s leaves
+// several seconds of margin over the slowest observed startup.
+//
+// Being wrong in the tight direction is safe by construction: a deadline too
+// short to reach quiescence lands in ClassifyPermission's error arm, which
+// fails the scenario with a message naming the deadline as the likely cause.
+// It cannot silently downgrade a working launch into a "blocked" finding.
+const permissionDeadline = 12 * time.Second
 
 // safeShellCommand is a command Copilot classifies as trivially safe.
 //
@@ -158,8 +164,6 @@ func TestCopilotPermissionFolderTrustBlocksFirst(t *testing.T) {
 // analogue of codex_dir_trust.go — and not something an argv renderer can
 // express, which is what the TCL-973 plan had assumed.
 func TestCopilotPermissionTrustBypassSurface(t *testing.T) {
-	requireSmoke(t)
-
 	var rows []string
 	for _, tc := range []struct {
 		name   string
@@ -183,6 +187,7 @@ func TestCopilotPermissionTrustBypassSurface(t *testing.T) {
 	} {
 		rows = append(rows, tc.name)
 		t.Run(tc.name, func(t *testing.T) {
+			requireSmoke(t)
 			mock := copilotfixture.NewMockProvider(t, bashTurns(safeShellCommand))
 			dirs := copilotfixture.NewSandboxDirs(t)
 			args := tc.args
@@ -226,8 +231,6 @@ func TestCopilotPermissionTrustBypassSurface(t *testing.T) {
 // is the reason this test carries three rows instead of two. A matrix built on
 // a safe command alone would have reported the gate as absent.
 func TestCopilotPermissionToolApprovalGate(t *testing.T) {
-	requireSmoke(t)
-
 	var rows []string
 	for _, tc := range []struct {
 		name    string
@@ -248,9 +251,18 @@ func TestCopilotPermissionToolApprovalGate(t *testing.T) {
 	} {
 		rows = append(rows, tc.name)
 		t.Run(tc.name, func(t *testing.T) {
-			verdict, mock, _ := permissionRun(t, bashTurns(tc.command), true,
+			requireSmoke(t)
+			verdict, mock, res := permissionRun(t, bashTurns(tc.command), true,
 				copilotfixture.RunOptions{OmitAllowAllTools: !tc.allow})
 			assert.Equal(t, tc.want, verdict.Outcome)
+			if tc.want == copilotfixture.PermissionBlocked {
+				// Without this the row would read "blocked" for a release that
+				// silently dropped or errored the tool call instead of asking,
+				// which is a different finding entirely. The two sibling
+				// blocked scenarios pin their dialog the same way.
+				assert.True(t, res.Contains(tc.command),
+					"a blocked launch must show an approval dialog naming the command")
+			}
 			require.NotEmpty(t, mock.Requests(),
 				"trust was pre-granted, so the provider must have been reached")
 			assertCredentialFree(t, mock)
@@ -283,8 +295,6 @@ func TestCopilotPermissionToolApprovalGate(t *testing.T) {
 // not something these scenarios can answer, and it is recorded as unmeasured
 // in permission_contract.json rather than generalized from the shell result.
 func TestCopilotPermissionURLGateUnderToolApproval(t *testing.T) {
-	requireSmoke(t)
-
 	var rows []string
 	for _, tc := range []struct {
 		name  string
@@ -299,6 +309,7 @@ func TestCopilotPermissionURLGateUnderToolApproval(t *testing.T) {
 	} {
 		rows = append(rows, tc.name)
 		t.Run(tc.name, func(t *testing.T) {
+			requireSmoke(t)
 			verdict, mock, res := permissionRun(t, bashTurns(urlShellCommand), true,
 				copilotfixture.RunOptions{OmitAllowAllTools: !tc.allow})
 			assert.Equal(t, tc.want, verdict.Outcome)
@@ -326,8 +337,6 @@ func TestCopilotPermissionURLGateUnderToolApproval(t *testing.T) {
 // with no record anywhere, which is why the spawner must UNSET it rather than
 // set it falsy.
 func TestCopilotPermissionAmbientAllowAllPromotes(t *testing.T) {
-	requireSmoke(t)
-
 	var rows []string
 	for _, tc := range []struct {
 		name     string
@@ -345,6 +354,7 @@ func TestCopilotPermissionAmbientAllowAllPromotes(t *testing.T) {
 	} {
 		rows = append(rows, tc.name)
 		t.Run(tc.name, func(t *testing.T) {
+			requireSmoke(t)
 			mock := copilotfixture.NewMockProvider(t, bashTurns(unsafeShellCommand))
 			dirs := copilotfixture.NewSandboxDirs(t)
 			// NOT trusted: the trust gate is the detector here, because it is
@@ -399,8 +409,6 @@ func TestCopilotPermissionAmbientAllowAllPromotes(t *testing.T) {
 // carries all three columns (parses / enforced / verdict) precisely because
 // this gap is what would have shipped a broken default.
 func TestCopilotPermissionDenyToolGrammar(t *testing.T) {
-	requireSmoke(t)
-
 	var rows []string
 	for _, tc := range []struct {
 		pattern string
@@ -421,6 +429,7 @@ func TestCopilotPermissionDenyToolGrammar(t *testing.T) {
 	} {
 		rows = append(rows, tc.pattern)
 		t.Run(tc.pattern, func(t *testing.T) {
+			requireSmoke(t)
 			// The mock is what makes the two outcomes separable. An earlier
 			// version of this scenario ran with no provider at all, on the
 			// theory that argument validation happens before anything else --

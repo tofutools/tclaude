@@ -1041,7 +1041,7 @@ jobs:
         run: |
           set -o pipefail
           go test ./pkg/claude/harness/copilotfixture/... \
-            -run '${{ matrix.run_filter }}' -v -count=1 -timeout 900s 2>&1 | tee "$RUNNER_TEMP/copilot-fixtures.log"
+            -run '${{ matrix.run_filter }}' -v -count=1 -timeout 1500s 2>&1 | tee "$RUNNER_TEMP/copilot-fixtures.log"
 
       # A skipped test still exits 0. The gate is an env var, so a typo or a
       # rename would turn this job into a silent no-op that reports success
@@ -1106,63 +1106,59 @@ jobs:
               TestCopilotConvStoreMatchesTheUnresolvedCwdSpelling
             )
           fi
-          # TCL-973 Phase 0's permission matrix. Required on Linux only for the
-          # same reason the compatibility fixtures are: these measure Copilot's
-          # own prompt behaviour, which is JavaScript in the CLI rather than
-          # anything the platform decides. The one place that could differ is
-          # path handling, and that measurement is not in this suite yet — when
-          # it lands it goes in the shared array above, not here.
+          # TCL-973 Phase 0's permission matrix. Required on Linux only, for
+          # the same reason the compatibility fixtures are: these measure
+          # Copilot's own prompt behaviour, which is JavaScript in the CLI
+          # rather than anything the platform decides. The one place that could
+          # differ is path handling, and that measurement is not in this suite
+          # yet -- when it lands it goes in the shared array above, not here.
+          #
+          # This list is generated from permission_contract.json and must stay
+          # equal to the set of scenarios it cites. That equality is the point:
+          # the Go-side contract guard can only check that a cited scenario is
+          # DECLARED, so for any scenario missing from here "declared" would be
+          # the only thing standing behind a proven status. Requiring every
+          # cited name is what supplies the other half.
           #
           # These names are SUBTESTS, and that changes the gate. Go indents
           # subtest result lines, so the column-anchored pattern above matches
-          # only top-level tests — and a parent whose subtests every one skipped
-          # still prints "--- PASS: Parent". Gating a table-driven matrix on the
-          # parent alone would verify essentially nothing, so each row is
-          # required by name with a leading-space-tolerant pattern (same shape
-          # as the check at line 279).
+          # only top-level tests -- and a parent whose subtests every one
+          # skipped still prints "--- PASS: Parent". Gating a table-driven
+          # matrix on the parent alone would verify essentially nothing.
           required_subtests=()
           if [[ "${{ matrix.platform }}" == "linux" ]]; then
             required+=(
-              # The whole file's premise: permission behaviour is only visible
-              # on a PTY, and this is the scenario that proves a headless run
-              # measures the opposite.
-              TestCopilotPermissionHeadlessIsNotEvidence
-              # The first gate a detached pane hits, before the provider is
-              # even contacted.
-              TestCopilotPermissionFolderTrustBlocksFirst
-              TestCopilotPermissionNoAskUserRemovesTheTool
               TestCopilotPermissionContractIsBackedByScenarios
+              TestCopilotPermissionFolderTrustBlocksFirst
+              TestCopilotPermissionHeadlessIsNotEvidence
+              TestCopilotPermissionNoAskUserRemovesTheTool
             )
             required_subtests=(
-              # No launch flag clears folder trust; only a config write does.
-              # Every row matters: the four negative rows are what establish
-              # that an argv-only fix is impossible, and the two seed rows are
-              # what identify the file that actually works.
               'TestCopilotPermissionTrustBypassSurface/allow-all-tools'
               'TestCopilotPermissionTrustBypassSurface/allow-all'
               'TestCopilotPermissionTrustBypassSurface/allow-all-paths'
               'TestCopilotPermissionTrustBypassSurface/add-dir-workdir'
               'TestCopilotPermissionTrustBypassSurface/config-json-trustedFolders'
               'TestCopilotPermissionTrustBypassSurface/settings-json-trustedFolders'
-              # The blocked arm and its positive control are required together:
-              # a blocked verdict without the control is indistinguishable from
-              # a broken fixture.
               'TestCopilotPermissionToolApprovalGate/unsafe-command/no-flags'
               'TestCopilotPermissionToolApprovalGate/unsafe-command/allow-all-tools'
               'TestCopilotPermissionToolApprovalGate/safe-command/no-flags'
-              # URL access is a separate prompt surface that --allow-all-tools
-              # does not close.
-              'TestCopilotPermissionURLGateUnderToolApproval/no-flags'
-              'TestCopilotPermissionURLGateUnderToolApproval/allow-all-tools'
-              # An operator env var that silently promotes a launch, plus the
-              # negative values that pin its parse as strict.
-              'TestCopilotPermissionAmbientAllowAllPromotes/true'
-              'TestCopilotPermissionAmbientAllowAllPromotes/false'
-              # The pattern the TCL-973 plan proposed as a default, which does
-              # not parse, next to spellings that do.
               'TestCopilotPermissionDenyToolGrammar/url()'
+              'TestCopilotPermissionDenyToolGrammar/shell()'
+              'TestCopilotPermissionDenyToolGrammar/write()'
+              'TestCopilotPermissionDenyToolGrammar/*'
               'TestCopilotPermissionDenyToolGrammar/url'
               'TestCopilotPermissionDenyToolGrammar/url(*)'
+              'TestCopilotPermissionDenyToolGrammar/url(example.com)'
+              'TestCopilotPermissionDenyToolGrammar/shell(*)'
+              'TestCopilotPermissionDenyToolGrammar/write(/tmp)'
+              'TestCopilotPermissionURLGateUnderToolApproval/no-flags'
+              'TestCopilotPermissionURLGateUnderToolApproval/allow-all-tools'
+              'TestCopilotPermissionAmbientAllowAllPromotes/true'
+              'TestCopilotPermissionAmbientAllowAllPromotes/TRUE'
+              'TestCopilotPermissionAmbientAllowAllPromotes/one'
+              'TestCopilotPermissionAmbientAllowAllPromotes/false'
+              'TestCopilotPermissionAmbientAllowAllPromotes/empty'
             )
           fi
           missing=()

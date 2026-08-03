@@ -51,6 +51,11 @@ import (
 // the deadline, so the classification is not a close call in either direction.
 const PTYQuiescence = 2 * time.Second
 
+// readDrainGrace bounds how long the transcript reader may keep going after
+// the CLI is gone before the master is closed out from under it. See the
+// comment at the close site in RunPTY for why this cannot be left unbounded.
+const readDrainGrace = 2 * time.Second
+
 // PTYResult is one pseudo-terminal run.
 type PTYResult struct {
 	// Transcript is everything the CLI wrote to the terminal, with ANSI escape
@@ -134,7 +139,6 @@ func RunPTY(t *testing.T, opts PTYOptions) PTYResult {
 	t.Helper()
 
 	run := opts.RunOptions
-	run.Interactive = true
 
 	deadline := opts.Deadline
 	if deadline == 0 {
@@ -256,7 +260,30 @@ loop:
 		cancel()
 		<-waitDone
 	}
-	<-readDone
+
+	// Closing the master BEFORE waiting on the reader is what bounds this
+	// function, and it is not the same protection runner.go gets.
+	//
+	// The reader returns when f.Read fails, which on a pty master needs every
+	// holder of the slave side to have closed it — and Copilot spawns
+	// descendants (shell tools, indexers) that inherit it and outlive a kill of
+	// the parent. cmd.WaitDelay, which is exactly how Run bounds this case,
+	// does nothing here: with pty.StartWithSize the child's stdio ARE the
+	// slave file, so exec.Cmd creates no pipes of its own and WaitDelay has
+	// nothing to close. Waiting on the reader first would therefore hang until
+	// the package-wide test timeout, turning a scenario's verdict into a job
+	// that dies with a stack dump.
+	//
+	// The grace window exists so an ordinary exit still yields a complete
+	// transcript: the reader almost always finishes on its own the moment the
+	// process goes away, and only a surviving descendant needs the close.
+	_ = f.SetDeadline(time.Now().Add(readDrainGrace))
+	select {
+	case <-readDone:
+	case <-time.After(readDrainGrace):
+		_ = f.Close()
+		<-readDone
+	}
 
 	res := PTYResult{Quiesced: quiesced, Settled: settled}
 	mu.Lock()
