@@ -503,16 +503,42 @@ func validateCopilotBaseline(
 						"grant the Copilot-specific subdirectory instead", e.ID, e.Path, label))
 			}
 		}
+		// tclaude's own private state is protected from every harness the same
+		// way, so the list is shared with the Codex guard rather than
+		// restated. This matters most for the agentd rows: they are
+		// caller-supplied, they live under ~/.tclaude, and the whole reason
+		// the canonical socket sits in api/ rather than data/ is that data/
+		// can then be denied as one subtree. A grant covering data/ would hand
+		// a sandboxed agent the daemon's own database.
+		for _, sub := range copilotProtectedSubdirs(home) {
+			// BOTH directions, unlike the shared-base rule above. An entry
+			// that covers the protected tree grants it wholesale; an entry
+			// INSIDE it grants a piece of it, which for a daemon database is
+			// no better. A socket path under ~/.tclaude/data is the concrete
+			// case: it is caller-supplied and would otherwise reach through
+			// the very deny the api/ split exists to make possible.
+			if pathContainsOrEqual(resolved, sub) || pathContainsOrEqual(sub, resolved) {
+				return copilotBaselineError("too-broad",
+					fmt.Sprintf("Copilot sandbox baseline entry %q resolves to %q, which covers or lies inside "+
+						"tclaude's protected state %q; that tree is denied to every sandboxed harness",
+						e.ID, e.Path, sub))
+			}
+		}
 		// A top-level system directory (/etc, /usr, /var, /opt, …) is never a
 		// Copilot-specific path, and a read/write row here becomes an rw bind
-		// in TCL-978's mount plan. The temp row is the one legitimate
-		// exception: /tmp IS top-level, and Copilot grants it in its own
-		// default policy.
-		// Both spellings: the literal path an operator supplied AND its
-		// symlink-resolved form. Either alone has a hole — see
-		// copilotSystemRootDir.
-		if e.ID != CopilotBaselineTempDir &&
-			(copilotSystemRootDir(goos, e.Path) || copilotSystemRootDir(goos, resolved)) {
+		// in TCL-978's mount plan. Both spellings are tested — the literal
+		// path an operator supplied AND its symlink-resolved form — because
+		// either alone has a hole; see copilotSystemRootDir.
+		//
+		// The temp row's exemption is BY PATH, not by row id. /tmp is
+		// top-level and Copilot grants it in its own default policy, so the
+		// row has to be able to name it — but "this row may be top-level"
+		// would make TMPDIR=/etc a supported way to obtain an rw grant on
+		// /etc, which is exactly the hole this rule exists to close.
+		systemRoot := copilotSystemRootDir(goos, e.Path) || copilotSystemRootDir(goos, resolved)
+		exemptTempRoot := e.ID == CopilotBaselineTempDir &&
+			copilotConventionalTempRoot(goos, e.Path, resolved)
+		if systemRoot && !exemptTempRoot {
 			return copilotBaselineError("too-broad",
 				fmt.Sprintf("Copilot sandbox baseline entry %q resolves to %q, a top-level system directory; "+
 					"a per-harness baseline grants Copilot-specific subdirectories only", e.ID, e.Path))
@@ -542,6 +568,12 @@ func copilotBroadPaths(goos string, getenv func(string) string, home string) map
 	if goos == "darwin" {
 		broad[resolveSymlinks(filepath.Join(home, "Library"))] = "macOS Library base"
 		broad[resolveSymlinks(filepath.Join(home, "Library", "Caches"))] = "macOS caches base"
+		// The darwin peer of ~/.local/share. The ~/Library entry above does
+		// not cover it: the guard refuses an entry that is an ancestor-or-equal
+		// of a base, so a base's own CHILD still has to be listed to be
+		// refused.
+		broad[resolveSymlinks(filepath.Join(home, "Library", "Application Support"))] =
+			"macOS application support base"
 	}
 	return broad
 }
@@ -560,16 +592,51 @@ func copilotBroadPaths(goos string, getenv func(string) string, home string) map
 // resolved spelling, and this function normalizes the firmlink prefix so
 // either spelling reaches the same verdict.
 func copilotSystemRootDir(goos, p string) bool {
-	p = filepath.Clean(p)
-	if goos == "darwin" {
-		if rest, ok := strings.CutPrefix(p, "/private/"); ok && rest != "" {
-			p = "/" + rest
-		}
-	}
+	p = copilotNormalizeFirmlink(goos, p)
 	if p == string(filepath.Separator) {
 		return true
 	}
 	return filepath.Dir(p) == string(filepath.Separator)
+}
+
+// copilotProtectedSubdirs are the absolute trees no Copilot grant may cover.
+// It reuses codexProtectedSubdirs (~/.tclaude/data, ~/.codex,
+// ~/.claude/sessions) because the protection is tclaude's, not a harness's: a
+// list that drifted per harness would mean an operator's private daemon state
+// is safe from one agent and not from the next.
+func copilotProtectedSubdirs(home string) []string {
+	out := make([]string, 0, len(codexProtectedSubdirs))
+	for _, sub := range codexProtectedSubdirs {
+		out = append(out, resolveSymlinks(filepath.Join(home, sub)))
+	}
+	return out
+}
+
+// copilotConventionalTempRoot reports whether a temp-directory row names the
+// one top-level temp directory that is legitimate: /tmp, in either its literal
+// or its macOS firmlinked (/private/tmp) spelling.
+//
+// Every other conventional temp location is already deeper than one level —
+// Linux /var/tmp and /run/user/<uid>, macOS /var/folders/<…> — so they never
+// reach the system-root rule and need no exemption here.
+func copilotConventionalTempRoot(goos, literal, resolved string) bool {
+	const conventional = "/tmp"
+	return copilotNormalizeFirmlink(goos, literal) == conventional ||
+		copilotNormalizeFirmlink(goos, resolved) == conventional
+}
+
+// copilotNormalizeFirmlink collapses macOS's /private/<x> firmlink spelling
+// onto /<x> so the literal and resolved forms of /etc, /tmp and /var compare
+// equal. It is a no-op everywhere else.
+func copilotNormalizeFirmlink(goos, p string) string {
+	p = filepath.Clean(p)
+	if goos != "darwin" {
+		return p
+	}
+	if rest, ok := strings.CutPrefix(p, "/private/"); ok && rest != "" {
+		return "/" + rest
+	}
+	return p
 }
 
 func copilotBaselineError(kind, message string) *SandboxCapabilityError {

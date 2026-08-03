@@ -464,10 +464,14 @@ layer, not per-harness policy.
 **It fails closed.** An unresolved or non-absolute path, a grant covering
 `$HOME` or an ancestor of it, a grant covering a shared base such as `~/.cache`,
 `~/Library/Caches`, `~/.config` or `~/.local`, a grant on a top-level system
-directory (`/etc`, `/usr`, `/var`, … — the temp row is the one legitimate
-exception, and macOS firmlinks are normalized so `/etc` and `/private/etc`
-reach the same verdict), and a grant covering the workspace are all
-`*SandboxCapabilityError` refusals rather than rows. Each is reachable by
+directory (`/etc`, `/usr`, `/var`, … — with macOS firmlinks normalized so
+`/etc` and `/private/etc` reach the same verdict, and the temp row exempted
+*by path* so `/tmp` works while `TMPDIR=/etc` is still refused), a grant
+covering **or lying inside** tclaude's protected state (`~/.tclaude/data`,
+`~/.codex`, `~/.claude/sessions` — the same list the Codex guard uses, which is
+why the canonical agentd socket lives in `~/.tclaude/api/`), and a grant
+covering the workspace are all `*SandboxCapabilityError` refusals rather than
+rows. Each is reachable by
 typing — `COPILOT_HOME=$HOME` and `COPILOT_CACHE_HOME=~/.cache` are things a
 person writes — and each would quietly convert a confined launch into an open
 one.

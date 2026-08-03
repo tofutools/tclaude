@@ -295,6 +295,84 @@ func TestCopilotSandboxBaselineRefusesBroadGrants(t *testing.T) {
 			wantInMsg: "absolute path",
 		},
 		{
+			name: "a relative agentd socket",
+			in: CopilotBaselineInput{GOOS: "linux", Home: home, Getenv: envMap(nil),
+				AgentdSockets: []string{"relative/agentd.sock"}},
+			wantKind:  "copilot-sandbox-baseline-unresolved-path",
+			wantInMsg: "absolute path",
+		},
+		{
+			name: "a relative temp directory",
+			in: CopilotBaselineInput{GOOS: "linux", Home: home, Getenv: envMap(nil),
+				TempDir: "relative/tmp"},
+			wantKind:  "copilot-sandbox-baseline-unresolved-path",
+			wantInMsg: "absolute path",
+		},
+		{
+			name: "a relative tclaude executable",
+			in: CopilotBaselineInput{GOOS: "linux", Home: home, Getenv: envMap(nil),
+				TclaudeExecutable: "relative/tclaude"},
+			wantKind:  "copilot-sandbox-baseline-unresolved-path",
+			wantInMsg: "absolute path",
+		},
+		{
+			name: "COPILOT_HOME under the macOS application support base",
+			in: CopilotBaselineInput{GOOS: "darwin", Home: home,
+				Getenv: envMap(map[string]string{
+					CopilotHomeEnvVar: filepath.Join(home, "Library", "Application Support"),
+				})},
+			wantKind:  "copilot-sandbox-baseline-too-broad",
+			wantInMsg: "macOS application support base",
+		},
+		{
+			name: "an agentd socket inside tclaude's private state",
+			in: CopilotBaselineInput{GOOS: "linux", Home: home, Getenv: envMap(nil),
+				AgentdSockets: []string{filepath.Join(home, ".tclaude", "data", "agentd.sock")}},
+			wantKind:  "copilot-sandbox-baseline-too-broad",
+			wantInMsg: "protected state",
+		},
+		{
+			name: "COPILOT_HOME nested inside the Codex state directory",
+			in: CopilotBaselineInput{GOOS: "linux", Home: home,
+				Getenv: envMap(map[string]string{
+					CopilotHomeEnvVar: filepath.Join(home, ".codex", "copilot"),
+				})},
+			wantKind:  "copilot-sandbox-baseline-too-broad",
+			wantInMsg: "protected state",
+		},
+		{
+			name: "a grant covering tclaude's private state directory",
+			in: CopilotBaselineInput{GOOS: "linux", Home: home,
+				Getenv: envMap(map[string]string{
+					CopilotHomeEnvVar: filepath.Join(home, ".tclaude"),
+				})},
+			wantKind:  "copilot-sandbox-baseline-too-broad",
+			wantInMsg: "protected state",
+		},
+		{
+			name: "a grant covering the Codex state directory",
+			in: CopilotBaselineInput{GOOS: "linux", Home: home,
+				Getenv: envMap(map[string]string{
+					CopilotCacheHomeEnvVar: filepath.Join(home, ".codex"),
+				})},
+			wantKind:  "copilot-sandbox-baseline-too-broad",
+			wantInMsg: "protected state",
+		},
+		{
+			name: "a temp directory pointed at a system root",
+			in: CopilotBaselineInput{GOOS: "linux", Home: home, Getenv: envMap(nil),
+				TempDir: "/etc"},
+			wantKind:  "copilot-sandbox-baseline-too-broad",
+			wantInMsg: "top-level system directory",
+		},
+		{
+			name: "a temp directory pointed at /usr",
+			in: CopilotBaselineInput{GOOS: "darwin", Home: home, Getenv: envMap(nil),
+				TempDir: "/usr"},
+			wantKind:  "copilot-sandbox-baseline-too-broad",
+			wantInMsg: "top-level system directory",
+		},
+		{
 			name:      "an unresolved home directory",
 			in:        CopilotBaselineInput{GOOS: "linux", Home: "", Getenv: envMap(nil)},
 			wantKind:  "copilot-sandbox-baseline-unresolved-home",
@@ -371,6 +449,60 @@ func TestCopilotSandboxBaselineRefusesTempDirContainingHome(t *testing.T) {
 	require.ErrorAs(t, err, &capErr)
 	assert.Equal(t, "copilot-sandbox-baseline-too-broad", capErr.Kind)
 	assert.Contains(t, capErr.Message, "covers the home directory")
+}
+
+// TestCopilotSandboxBaselineAcceptsConventionalTempRoots is the other half of
+// the narrowed exemption: the legitimate temp forms must still resolve. Only
+// /tmp needs the exemption at all — every other conventional temp location is
+// already deeper than one level and never reaches the system-root rule.
+func TestCopilotSandboxBaselineAcceptsConventionalTempRoots(t *testing.T) {
+	cases := []struct{ name, goos, tempDir string }{
+		{"linux /tmp", "linux", "/tmp"},
+		{"darwin /tmp", "darwin", "/tmp"},
+		{"darwin firmlinked temp", "darwin", "/private/tmp"},
+		{"linux per-user runtime temp", "linux", "/run/user/1000"},
+		{"linux /var/tmp", "linux", "/var/tmp"},
+		{"darwin per-session temp", "darwin", "/var/folders/df/abc123/T"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			entries, err := CopilotSandboxBaseline(CopilotBaselineInput{
+				GOOS:    tc.goos,
+				Home:    "/home/copilot-baseline-test-user",
+				Getenv:  envMap(nil),
+				TempDir: tc.tempDir,
+			})
+			require.NoError(t, err)
+			assert.Equal(t, tc.tempDir, entryByID(t, entries, CopilotBaselineTempDir).Path)
+		})
+	}
+}
+
+// TestCopilotSandboxBaselineProtectsTclaudeStateExactly pins that the
+// protection is the private subtree, NOT the whole ~/.tclaude root: the
+// canonical agentd socket lives under ~/.tclaude/api precisely so it stays
+// grantable while ~/.tclaude/data stays denied. Refusing the api/ socket would
+// break agent coordination inside the sandbox.
+func TestCopilotSandboxBaselineProtectsTclaudeStateExactly(t *testing.T) {
+	home := "/home/copilot-baseline-test-user"
+	entries, err := CopilotSandboxBaseline(CopilotBaselineInput{
+		GOOS:   "linux",
+		Home:   home,
+		Getenv: envMap(nil),
+		AgentdSockets: []string{
+			filepath.Join(home, ".tclaude", "api", "agentd.sock"),
+			filepath.Join(home, ".tclaude-agentd.sock"),
+			filepath.Join(home, ".tclaude", "agentd.sock"),
+		},
+	})
+	require.NoError(t, err, "the canonical and legacy endpoints all sit outside ~/.tclaude/data")
+	count := 0
+	for _, e := range entries {
+		if e.ID == CopilotBaselineAgentdSocket {
+			count++
+		}
+	}
+	assert.Equal(t, 3, count)
 }
 
 // TestCopilotSandboxBaselineNodeKinds pins the node type on every row: a

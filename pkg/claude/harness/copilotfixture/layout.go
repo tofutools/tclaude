@@ -97,7 +97,15 @@ func ObserveBaselineLayout(dirs Dirs) (BaselineLayout, error) {
 			return nil
 		}
 		if slices.Contains(covered, path) {
-			return fs.SkipDir
+			// fs.SkipDir means "skip this subtree" only for a directory; for a
+			// file it skips the rest of the PARENT's entries. Every covered
+			// root is a directory today, but a future Dirs field naming a file
+			// would silently drop that file's siblings from
+			// HomeOutsideBaseline — the one row this walk exists to compute.
+			if d.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
 		}
 		rel, relErr := filepath.Rel(dirs.Root, path)
 		if relErr != nil {
