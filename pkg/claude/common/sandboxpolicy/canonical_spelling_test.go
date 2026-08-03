@@ -109,51 +109,67 @@ func TestCanonicalHostSpellingRestoresNormalizationOnFoldingVolumes(t *testing.T
 // rule that spells a protected root differently names the SAME directory, and
 // the protected-root invariant must refuse it exactly as it refuses the exact
 // spelling.
+//
+// The refusal is now unconditional — the same on every volume — and that is a
+// deliberate, operator-approved trade. Deciding it per volume would mean
+// answering "would this filesystem fold a spelling that does not exist yet",
+// which has no reliable answer (fold semantics are per-directory, not per-
+// volume) and which produced four separate fail-open defects while this change
+// was in review. So an unrefutable case/NFC collision with a protected root is
+// refused, full stop.
+//
+// The cost is precise and small: an operator who authors a path differing from
+// a protected root ONLY by case or Unicode normalization, on a case-sensitive
+// volume, where that path does not yet exist, now gets a refusal naming both
+// paths instead of a silent accept. Creating the directory first, or spelling
+// it the way it is spelled on disk, resolves it.
 func TestProtectedRootRefusesCaseVariantSpelling(t *testing.T) {
 	home, tclaudeData, _, _ := protectedHome(t)
-	folds := volumeSemantics(t, home)
 
 	variant := filepath.Join(home, ".TCLAUDE", "Data")
 	for _, access := range []Access{AccessRead, AccessWrite} {
 		in := Profile{Name: "p", Filesystem: []FilesystemGrant{{Path: variant, Access: access}}}
 		_, _, err := NormalizeForPersistence(in)
-		if folds {
-			require.Error(t, err,
-				"a case-variant spelling of %q names the same directory on this volume and must be refused",
-				tclaudeData)
-			assert.Contains(t, err.Error(), "protected directory")
-			continue
-		}
-		// On a case-sensitive volume the variant is a genuinely different
-		// directory that happens not to exist yet, and NormalizeForPersistence
-		// tolerates missing paths. Accepting it is the pre-existing Linux
-		// behavior, and preserving it byte-for-byte is the point: the fix must
-		// not lowercase blindly and start refusing distinct directories.
-		require.NoError(t, err,
-			"a case-sensitive volume must not treat a distinct directory as the protected root")
+		require.Error(t, err,
+			"a case-variant spelling of %q must be refused on every volume", tclaudeData)
+		assert.Contains(t, err.Error(), "protected directory")
 	}
 }
 
 // TestProtectedRootRefusesMissingCaseVariantDescendant covers the residue that
 // spelling restoration cannot reach: a path that does not exist yet has no
-// on-disk name to canonicalize, so only the guard-biased comparison stands
-// between it and the protected tree. NormalizeForPersistence deliberately
-// tolerates missing paths, which is exactly why this case matters.
+// on-disk name to canonicalize, so only the guard stands between it and the
+// protected tree. NormalizeForPersistence deliberately tolerates missing paths,
+// which is exactly why this case matters.
 func TestProtectedRootRefusesMissingCaseVariantDescendant(t *testing.T) {
 	home, _, _, _ := protectedHome(t)
-	folds := volumeSemantics(t, home)
 
 	missingVariant := filepath.Join(home, ".Tclaude", "Data", "not-created-yet")
 	in := Profile{Name: "p", Filesystem: []FilesystemGrant{{Path: missingVariant, Access: AccessWrite}}}
-	out, _, err := NormalizeForPersistence(in)
-	if folds {
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "protected directory")
-		return
+	_, _, err := NormalizeForPersistence(in)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "protected directory")
+}
+
+// TestOrdinaryMissingGrantsAreStillAccepted is the other half of that trade,
+// and the reason it is narrow: only a path that case/NFC-folds ONTO a protected
+// root is refused. An ordinary not-yet-created grant — including one that
+// merely shares a prefix, or differs by more than spelling — is accepted
+// exactly as before, with no filesystem interrogation at all.
+func TestOrdinaryMissingGrantsAreStillAccepted(t *testing.T) {
+	home, _, _, _ := protectedHome(t)
+
+	for _, path := range []string{
+		filepath.Join(home, "projects", "not-created-yet"),
+		filepath.Join(home, ".tclaude-notes"),           // shares a prefix, folds onto nothing
+		filepath.Join(home, ".tclaudedata"),             // no separator, so no containment
+		filepath.Join(home, "Projects", "Mixed", "Case"),
+	} {
+		in := Profile{Name: "p", Filesystem: []FilesystemGrant{{Path: path, Access: AccessWrite}}}
+		out, _, err := NormalizeForPersistence(in)
+		require.NoError(t, err, "ordinary missing grant %q must still be accepted", path)
+		require.Len(t, out.Filesystem, 1)
 	}
-	require.NoError(t, err,
-		"on a case-sensitive volume this is an ordinary not-yet-created directory")
-	require.Len(t, out.Filesystem, 1)
 }
 
 // TestCaseVariantGrantsFoldIntoOneRuleWithDenyDominance is the grant-lattice
@@ -221,7 +237,17 @@ func TestOnDiskSpellingRefusesToGuessBetweenAmbiguousSiblings(t *testing.T) {
 	assert.Equal(t, "FoO", got)
 }
 
-func TestOnDiskSpellingAbandonsAnOversizedDirectory(t *testing.T) {
+// TestScanForSpellingAbandonsAtTheEntryCap pins that the cap bounds the WORK,
+// not merely the decision. That distinction is the whole point of reading the
+// directory in chunks instead of calling os.ReadDir, and it is invisible from
+// onDiskSpelling's (name, ok) result: "abandoned at the cap" and "read
+// everything and found nothing" are both ("", false). An earlier version of
+// this test asserted only on that pair and stayed green with the cap
+// enforcement deleted, so it asserts on spellingScan's counters instead.
+//
+// Do NOT add t.Parallel() here or to any test that assigns to
+// maxSpellingRestoreEntries — the cap is package state.
+func TestScanForSpellingAbandonsAtTheEntryCap(t *testing.T) {
 	root := tempRoot(t)
 	// Lower the cap rather than staging 50k entries: abandoning past the cap is
 	// the same code path at any cap value, and staging the real number would cost
@@ -235,71 +261,74 @@ func TestOnDiskSpellingAbandonsAnOversizedDirectory(t *testing.T) {
 			filepath.Join(root, fmt.Sprintf("filler-%02d", i)), 0o755))
 	}
 
-	// "." is the one component that os.Lstat resolves but readdir never lists,
-	// so it passes the existence gate and then forces the scan to run to its
-	// bound. That makes the counter observable DETERMINISTICALLY: with a real
-	// entry, readdir order decides whether the exact-match short circuit fires
-	// first, and readdir order is not defined. Production never passes "." —
-	// restoreSpelling walks a cleaned path — so this drives the bound directly
-	// rather than simulating it.
-	maxSpellingRestoreEntries = fillers / 2
-	_, ok := onDiskSpelling(root, ".")
-	assert.False(t, ok, "a scan past the cap must abandon")
+	// "." is the one component os.Lstat resolves but readdir never lists, so it
+	// passes the existence gate and then forces the scan to run to its bound
+	// without any exact-match short circuit racing readdir order. Production
+	// never passes "." — restoreSpelling walks a cleaned path — so this drives
+	// the bound directly rather than simulating it.
+	const entryCap = fillers / 2
+	maxSpellingRestoreEntries = entryCap
+	capped := scanForSpelling(root, ".")
+	assert.False(t, capped.ok, "a scan past the cap must restore nothing")
+	assert.True(t, capped.abandoned, "the scan must report that the cap stopped it")
+	assert.Equal(t, entryCap+1, capped.scanned,
+		"the scan must stop at the entry that exceeds the cap, leaving the rest of "+
+			"the directory unread — a cap that merely filtered the RESULT would "+
+			"have scanned all %d entries", fillers)
 
+	// The same directory under a cap it fits inside is read to the end and
+	// reports the opposite: not abandoned, and every entry examined. Without this
+	// half, `abandoned` could be hardcoded true.
 	maxSpellingRestoreEntries = fillers * 4
-	_, ok = onDiskSpelling(root, ".")
-	assert.False(t, ok,
-		"under the real cap the scan completes and still finds no match, which is "+
-			"the same visible answer — so the assertion above is only meaningful "+
-			"alongside the entry-count check below")
+	complete := scanForSpelling(root, ".")
+	assert.False(t, complete.ok, "there is still no entry named \".\" to restore")
+	assert.False(t, complete.abandoned, "a directory inside the cap is not abandoned")
+	assert.Equal(t, fillers, complete.scanned, "every entry must have been examined")
 
-	// Prove the cap is what stopped the first scan, by counting how far it got.
-	// A real entry beyond the cap is unreachable; the same entry under the real
-	// cap is found.
-	target := "Wanted"
-	require.NoError(t, os.MkdirAll(filepath.Join(root, target), 0o755))
-	maxSpellingRestoreEntries = original
-	got, ok := onDiskSpelling(root, target)
-	require.True(t, ok, "an existing entry must be found under the real cap")
-	assert.Equal(t, target, got, "an exact entry is returned unchanged")
-
-	// And the bound must be a real number, not a formality.
-	assert.Positive(t, maxSpellingRestoreEntries)
-	assert.Less(t, spellingRestoreChunk, maxSpellingRestoreEntries,
+	// And the production bound must be a real number, not a formality: if the
+	// chunk size were >= the cap, the first read would already have materialized
+	// more entries than the cap allows and the bound would be decorative.
+	assert.Positive(t, original)
+	assert.Less(t, spellingRestoreChunk, original,
 		"entries must be read in chunks smaller than the cap, or the cap cannot "+
 			"stop the read before the whole directory has been materialized")
 }
 
-// TestOnDiskSpellingCapCountsScannedEntries pins the counter itself, which is
-// the part the abandon behavior rests on: the scan must stop after the cap
-// rather than reading the whole directory and deciding afterwards.
-func TestOnDiskSpellingCapCountsScannedEntries(t *testing.T) {
+// TestScanForSpellingNeverReturnsAWrongSpellingUnderTheCap is the safety half:
+// abandoning is allowed to lose a restoration, but must never invent one. The
+// exact-match short circuit is deliberately NOT a cap exemption, so whichever
+// way readdir orders the entries the answer is either the exact name or no
+// restoration — never a different directory's name.
+//
+// Do NOT add t.Parallel() here (see above).
+func TestScanForSpellingNeverReturnsAWrongSpellingUnderTheCap(t *testing.T) {
 	root := tempRoot(t)
 	original := maxSpellingRestoreEntries
 	t.Cleanup(func() { maxSpellingRestoreEntries = original })
 
-	// One entry that WOULD fold onto the looked-up name, placed among many.
-	// With the cap at zero the scan cannot reach any entry at all, so no
-	// restoration can be produced no matter what the directory holds.
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "Folded"), 0o755))
 	for i := range 4 {
 		require.NoError(t, os.MkdirAll(
 			filepath.Join(root, fmt.Sprintf("other-%02d", i)), 0o755))
 	}
 
-	maxSpellingRestoreEntries = 0
-	_, ok := onDiskSpelling(root, ".")
-	assert.False(t, ok, "a zero cap must admit no scanning at all")
-
-	// The exact-match short circuit is deliberately NOT a cap exemption for
-	// entries beyond the bound — it fires only if the entry is reached first.
-	// Whichever way readdir orders them, the answer is either the exact name or
-	// no restoration; it is never a different directory's name.
-	maxSpellingRestoreEntries = 1
-	if got, found := onDiskSpelling(root, "Folded"); found {
-		assert.Equal(t, "Folded", got,
-			"a capped scan may abandon, but must never return a wrong spelling")
+	for _, capValue := range []int{0, 1, 2, 3} {
+		maxSpellingRestoreEntries = capValue
+		result := scanForSpelling(root, "Folded")
+		if result.ok {
+			assert.Equal(t, "Folded", result.name,
+				"a capped scan may abandon, but must never return a wrong spelling")
+		}
+		assert.LessOrEqual(t, result.scanned, capValue+1,
+			"the scan must not examine entries beyond the cap")
 	}
+
+	// A zero cap admits no scanning at all, so nothing can be restored no matter
+	// what the directory holds.
+	maxSpellingRestoreEntries = 0
+	zero := scanForSpelling(root, ".")
+	assert.False(t, zero.ok, "a zero cap must admit no scanning at all")
+	assert.True(t, zero.abandoned)
 }
 
 // TestRestoreSpellingReattachesFromTheFirstUnresolvableComponent pins the

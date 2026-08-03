@@ -383,9 +383,14 @@ func TestCodexSpawner_PermissionProfileFlag(t *testing.T) {
 // no conflict — handing the agent a workspace-write root that contained
 // ~/.tclaude/data, ~/.codex and ~/.claude/sessions.
 //
-// Like the sandboxpolicy tests, this adapts to the volume rather than skipping:
-// a folding volume must report the conflict, a case-sensitive one must not,
-// because there the two spellings really are two directories.
+// This adapts to the volume rather than skipping, and it does so by ASKING the
+// filesystem a question it can answer: both spellings are staged on disk, so
+// os.SameFile settles whether they are one directory. A folding volume must
+// report the conflict; a case-sensitive one must not, because there the two
+// spellings really are two directories.
+//
+// A case variant that does NOT exist is a different question, and the guard
+// answers it uniformly — see the unresolvable-spelling case at the end.
 func TestCodexSandboxCwdConflict_CaseVariantSpelling(t *testing.T) {
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
@@ -396,16 +401,27 @@ func TestCodexSandboxCwdConflict_CaseVariantSpelling(t *testing.T) {
 		t.Fatalf("stage home: %v", err)
 	}
 
+	// Stage the variant spelling too. On a folding volume this is a no-op that
+	// resolves to the directory already there; on a case-sensitive volume it
+	// creates a genuinely separate directory. Either way the guard now has file
+	// identity available, which is the only evidence it accepts.
+	variant := filepath.Join(root, "home")
+	if err := os.MkdirAll(variant, 0o755); err != nil {
+		t.Fatalf("stage variant: %v", err)
+	}
+
 	// Whether the two spellings name one directory is a property of the volume,
 	// and the guard's answer has to track it. Ask the filesystem directly rather
 	// than assuming anything from GOOS.
-	variant := filepath.Join(root, "home")
-	folds := false
-	if homeInfo, homeErr := os.Lstat(home); homeErr == nil {
-		if variantInfo, variantErr := os.Lstat(variant); variantErr == nil {
-			folds = os.SameFile(homeInfo, variantInfo)
-		}
+	homeInfo, err := os.Lstat(home)
+	if err != nil {
+		t.Fatalf("lstat home: %v", err)
 	}
+	variantInfo, err := os.Lstat(variant)
+	if err != nil {
+		t.Fatalf("lstat variant: %v", err)
+	}
+	folds := os.SameFile(homeInfo, variantInfo)
 	t.Logf("volume folds case: %t (home=%q variant=%q)", folds, home, variant)
 
 	for _, mode := range []string{SandboxWorkspaceWrite, SandboxManagedProfile} {
@@ -432,6 +448,29 @@ func TestCodexSandboxCwdConflict_CaseVariantSpelling(t *testing.T) {
 	for _, spelling := range []string{project, filepath.Join(home, "projects", "app")} {
 		if CodexSandboxCwdConflict(SandboxWorkspaceWrite, spelling, home) {
 			t.Errorf("cwd %q is strictly inside home and must not conflict", spelling)
+		}
+	}
+
+	// A third spelling of $HOME that was never staged conflicts on EVERY volume,
+	// and deliberately so — note there is no skip and no volume branch here.
+	//
+	// On a folding volume it resolves to $HOME itself, so file identity confirms
+	// the collision. On a case-sensitive volume it resolves to nothing, so the
+	// collision cannot be refuted: the directory whose spelling rules would
+	// decide is not there to ask, and a wrong "no conflict" hands the agent a
+	// workspace-write root containing ~/.tclaude/data. Both roads lead to true,
+	// by different reasoning.
+	//
+	// The case-sensitive road is the deliberate cost of the design: an operator
+	// whose cwd differs from $HOME only by case and which does not exist gets a
+	// conflict instead of a launch. Creating it, or spelling it as it is spelled
+	// on disk, resolves it.
+	unstagedVariant := filepath.Join(root, "HOME")
+	for _, mode := range []string{SandboxWorkspaceWrite, SandboxManagedProfile} {
+		if !CodexSandboxCwdConflict(mode, unstagedVariant, home) {
+			t.Errorf("CodexSandboxCwdConflict(%q, %q, %q) = false, want true: a case "+
+				"variant of $HOME must conflict whether identity confirms it or "+
+				"nothing can refute it", mode, unstagedVariant, home)
 		}
 	}
 }

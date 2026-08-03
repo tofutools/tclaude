@@ -41,10 +41,23 @@ const spellingRestoreChunk = 512
 // are checked against — through this function makes those lexical comparisons
 // answer correctly again, because both sides arrive spelled the same way.
 //
-// It is conservative in every direction:
-//   - On a volume that does not fold spellings (every ordinary Linux
-//     filesystem, and case-sensitive APFS) it returns path unchanged after one
-//     cheap probe, so behavior there is byte-for-byte what it was.
+// It runs UNCONDITIONALLY — there is no filesystem-semantics probe in front of
+// it — because the restoration is self-verifying and is a provable no-op on a
+// case-sensitive volume:
+//
+//   - a component is only rewritten when the directory actually holds exactly
+//     one entry that folds onto it AND the authored spelling was never seen as
+//     a literal entry;
+//   - on a case-sensitive directory a spelling that resolves must also be
+//     listed, so the literal-entry case always wins and nothing is rewritten.
+//
+// An earlier version gated this on an empirical "does this volume fold?" probe.
+// That probe was a pure optimization, and it was the only part that could get
+// the answer WRONG: a mistaken "does not fold" silently skipped restoration, so
+// two case-variant grants stayed unfolded and deny-dominance never collapsed
+// them. Deleting it removes that failure mode along with the probe.
+//
+// It is conservative in every other direction:
 //   - It never creates, moves, or modifies anything.
 //   - Any component it cannot resolve — nonexistent, unreadable, ambiguous, or
 //     inside an implausibly large directory — ends the restoration, and the
@@ -55,29 +68,6 @@ func CanonicalHostSpelling(path string) string {
 	clean := filepath.Clean(path)
 	if !filepath.IsAbs(clean) {
 		return clean
-	}
-	anchor, err := nearestExistingDir(clean)
-	if err != nil {
-		return clean
-	}
-	// One probe decides whether any of this work is worth doing. On a
-	// case-sensitive volume this is where the function stops.
-	//
-	// This uses the LAX probe, which may fall back to asking the anchor's parent.
-	// That is safe here and only here, because both outcomes degrade safely: a
-	// wrong "folds" merely starts a restoration that re-verifies every component
-	// by reading the directory, and a wrong "does not fold" merely leaves the
-	// authored spelling for the guard layer to evaluate. The guard itself uses
-	// the strict probe, where a wrong answer would be a definitive allow.
-	folds, err := volumeFoldsSpellingForCanonicalization(anchor, flipCase)
-	if err != nil {
-		return clean
-	}
-	if !folds {
-		normFolds, normErr := volumeFoldsNormalizationForCanonicalization(anchor)
-		if normErr != nil || !normFolds {
-			return clean
-		}
 	}
 	return restoreSpelling(clean)
 }
@@ -111,13 +101,34 @@ func restoreSpelling(path string) string {
 // directory with millions of entries would be fully materialized just to be
 // rejected — not something a safety validator may do on an operator-chosen path.
 func onDiskSpelling(dir, name string) (string, bool) {
+	result := scanForSpelling(dir, name)
+	return result.name, result.ok
+}
+
+// spellingScan is onDiskSpelling's outcome, broken out so tests can assert on
+// WHY a scan produced no restoration. Without that distinction, "abandoned at
+// the entry cap" and "scanned everything and found nothing" are indistinguishable
+// from the outside — which made an earlier cap test pass with the cap
+// enforcement deleted.
+type spellingScan struct {
+	name string
+	ok   bool
+	// abandoned reports that the scan stopped at maxSpellingRestoreEntries with
+	// entries still unread.
+	abandoned bool
+	// scanned counts entries examined, excluding an exact match that
+	// short-circuits.
+	scanned int
+}
+
+func scanForSpelling(dir, name string) spellingScan {
 	if _, err := os.Lstat(filepath.Join(dir, name)); err != nil {
 		// The component does not exist (or is unreachable): nothing to restore.
-		return "", false
+		return spellingScan{}
 	}
 	handle, err := os.Open(dir)
 	if err != nil {
-		return "", false
+		return spellingScan{}
 	}
 	defer func() { _ = handle.Close() }()
 
@@ -134,11 +145,11 @@ func onDiskSpelling(dir, name string) (string, bool) {
 				// This is decisive even when folded siblings were seen earlier
 				// in the scan — an exact entry is never ambiguous — and it ends
 				// the read immediately.
-				return name, true
+				return spellingScan{name: name, ok: true, scanned: scanned}
 			}
 			scanned++
 			if scanned > maxSpellingRestoreEntries {
-				return "", false
+				return spellingScan{abandoned: true, scanned: scanned}
 			}
 			if foldSpellingComponent(entry.Name()) != folded {
 				continue
@@ -158,7 +169,7 @@ func onDiskSpelling(dir, name string) (string, bool) {
 			if errors.Is(readErr, io.EOF) {
 				break
 			}
-			return "", false
+			return spellingScan{scanned: scanned}
 		}
 		if len(entries) == 0 {
 			break
@@ -168,9 +179,9 @@ func onDiskSpelling(dir, name string) (string, bool) {
 		// Refuse to guess: a WRONG restoration would rewrite a persisted grant
 		// to name a different directory than the operator authored, which is far
 		// worse than leaving the spelling alone.
-		return "", false
+		return spellingScan{scanned: scanned}
 	}
-	return match, true
+	return spellingScan{name: match, ok: true, scanned: scanned}
 }
 
 // foldSpellingComponent is foldGuardPath for a single component. It deliberately

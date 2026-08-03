@@ -1585,9 +1585,23 @@ on such a volume leaves you with a single denied row, not two competing ones.
 On a case-*sensitive* volume — every ordinary Linux filesystem, and
 case-sensitive APFS — differently spelled paths really are different
 directories, and tclaude keeps treating them that way. Nothing is silently
-lowercased. Where tclaude cannot determine which kind of volume it is looking
-at (an unreadable directory, for instance), it refuses the rule rather than
-admitting it.
+lowercased: two directories that exist separately stay separate, because the
+filesystem says so.
+
+There is one deliberate exception, and it is worth knowing about because it can
+surprise you on Linux. When a rule's path differs from a protected root *only*
+by case or Unicode normalization **and that path does not exist yet**, tclaude
+refuses it on every volume. It does not try to predict whether the filesystem
+would have folded the two spellings had the directory been created — that
+question has no reliable answer (on Linux, case folding is a per-directory
+attribute, not a property of the volume), and guessing it wrong would mean
+admitting a write grant over tclaude's own state.
+
+In practice this costs you an error message in a narrow case: a not-yet-created
+path whose spelling collides with a protected root. Either create the directory
+first, or spell it the way it is spelled on disk, and the rule is admitted
+normally. An ordinary not-yet-created path that does not collide with a
+protected root is unaffected and involves no filesystem checks at all.
 
 ## Composition: which profile wins
 

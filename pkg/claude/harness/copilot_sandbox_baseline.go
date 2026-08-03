@@ -646,10 +646,30 @@ func copilotProtectedSubdirs(home string) []string {
 // Every other conventional temp location is already deeper than one level —
 // Linux /var/tmp and /run/user/<uid>, macOS /var/folders/<…> — so they never
 // reach the system-root rule and need no exemption here.
+// The comparison is case-insensitive on darwin for the same reason the firmlink
+// prefix is: on a case-insensitive volume TMPDIR=/TMP names /tmp. A byte-exact
+// test would fail to recognise it, and the row would be refused as a top-level
+// system directory — a spurious refusal rather than a hole, but a real one.
+//
+// Widening this widens an EXEMPTION rather than a refusal, so it deserves the
+// opposite scrutiny: on a case-SENSITIVE macOS volume a literal /TMP would now
+// be exempted from the top-level rule. Creating a second top-level temp
+// directory requires root, and the row still has to be the temp row to qualify,
+// so the reachable surface is nil — but the direction is stated here rather
+// than left implicit, because reasoning about only one direction of this change
+// is what previously let a case-variant firmlink spelling through.
 func copilotConventionalTempRoot(goos, literal, resolved string) bool {
 	const conventional = "/tmp"
-	return copilotNormalizeFirmlink(goos, literal) == conventional ||
-		copilotNormalizeFirmlink(goos, resolved) == conventional
+	return copilotTempRootMatch(goos, literal, conventional) ||
+		copilotTempRootMatch(goos, resolved, conventional)
+}
+
+func copilotTempRootMatch(goos, candidate, conventional string) bool {
+	normalized := copilotNormalizeFirmlink(goos, candidate)
+	if goos == "darwin" {
+		return strings.EqualFold(normalized, conventional)
+	}
+	return normalized == conventional
 }
 
 // copilotNormalizeFirmlink collapses macOS's /private/<x> firmlink spelling

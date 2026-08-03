@@ -698,25 +698,25 @@ func TestCopilotHomeRefusesRelativeOverride(t *testing.T) {
 // gate exists to refuse — COPILOT_HOME=$HOME/.TCLAUDE would hand a confined
 // Copilot launch the daemon's own database.
 //
-// Like the sandboxpolicy tests this adapts to the volume rather than skipping:
-// on a case-sensitive volume the variant spellings are genuinely different
-// directories and must NOT be refused, which is the "do not lowercase blindly"
-// half of the contract.
+// Every case below is refused on EVERY volume, and that uniformity is the
+// deliberate shape of the fix rather than blind lowercasing. Each variant
+// spelling case/NFC-folds onto a protected path AND does not exist, so no
+// filesystem identity can refute the collision. Rather than guess what this
+// volume would do with a name that is not there — a question whose answer is
+// per-directory, not per-volume, and which produced repeated fail-opens when
+// this change tried to answer it empirically — the guard refuses.
+//
+// The "do not lowercase blindly" half of the contract is enforced elsewhere and
+// stays intact: a case variant that EXISTS as a distinct directory is refuted by
+// os.SameFile and accepted (see TestCopilotSandboxBaselineAcceptsDistinctCaseVariants
+// below), and a path that folds onto nothing protected never reaches the guard's
+// I/O at all.
 func TestCopilotSandboxBaselineRefusesCaseVariantBroadGrants(t *testing.T) {
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
 	home := filepath.Join(root, "Home")
 	require.NoError(t, os.MkdirAll(filepath.Join(home, ".tclaude", "data"), 0o755))
 	require.NoError(t, os.MkdirAll(filepath.Join(home, ".cache"), 0o755))
-
-	// Ask the filesystem, not the OS: case folding is a volume property.
-	folds := false
-	if homeInfo, homeErr := os.Lstat(home); homeErr == nil {
-		if variantInfo, variantErr := os.Lstat(filepath.Join(root, "home")); variantErr == nil {
-			folds = os.SameFile(homeInfo, variantInfo)
-		}
-	}
-	t.Logf("volume folds case: %t (home=%q)", folds, home)
 
 	cases := []struct {
 		name      string
@@ -765,15 +765,6 @@ func TestCopilotSandboxBaselineRefusesCaseVariantBroadGrants(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			entries, err := CopilotSandboxBaseline(tc.in)
-			if !folds {
-				// Different directories on this volume, so the baseline must
-				// keep treating them as different. Refusing here would mean the
-				// fix had started folding case blindly.
-				require.NoError(t, err,
-					"a case-sensitive volume must not treat a distinct directory as the protected one")
-				assert.NotEmpty(t, entries)
-				return
-			}
 			require.Error(t, err, "must refuse rather than return %v", entries)
 			assert.Nil(t, entries, "a refused baseline must return no grants at all")
 			var capErr *SandboxCapabilityError
@@ -783,6 +774,48 @@ func TestCopilotSandboxBaselineRefusesCaseVariantBroadGrants(t *testing.T) {
 			assert.Contains(t, capErr.Message, tc.wantInMsg)
 		})
 	}
+}
+
+// TestCopilotSandboxBaselineAcceptsDistinctCaseVariants is the other half of the
+// contract above, and the reason the uniform refusal is not blind lowercasing.
+//
+// Here the case-variant directory EXISTS, so on a case-sensitive volume
+// os.SameFile refutes the folded nomination and the grant is accepted as the
+// ordinary distinct directory it is. On a case-insensitive volume the same
+// two spellings reach one inode, SameFile confirms it, and the grant is refused
+// — the correct answer on each. This is the one place volume adaptation still
+// belongs, because here the filesystem can actually be asked.
+func TestCopilotSandboxBaselineAcceptsDistinctCaseVariants(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	home := filepath.Join(root, "Home")
+	require.NoError(t, os.MkdirAll(filepath.Join(home, ".tclaude", "data"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(home, ".cache"), 0o755))
+
+	// Stage the variant spelling too, so the filesystem can settle the question
+	// by identity instead of the guard having to refuse an unresolvable name.
+	variant := filepath.Join(root, "home")
+	require.NoError(t, os.MkdirAll(variant, 0o755))
+
+	homeInfo, err := os.Lstat(home)
+	require.NoError(t, err)
+	variantInfo, err := os.Lstat(variant)
+	require.NoError(t, err)
+	folds := os.SameFile(homeInfo, variantInfo)
+	t.Logf("volume folds case: %t (home=%q)", folds, home)
+
+	in := CopilotBaselineInput{GOOS: runtime.GOOS, Home: home,
+		Getenv: envMap(map[string]string{CopilotHomeEnvVar: variant})}
+	entries, err := CopilotSandboxBaseline(in)
+	if folds {
+		require.Error(t, err,
+			"one inode means one directory, so this grant covers $HOME and must be refused")
+		return
+	}
+	require.NoError(t, err,
+		"two distinct inodes must stay two distinct directories — refusing here would "+
+			"mean the fix had started folding case blindly")
+	assert.NotEmpty(t, entries)
 }
 
 // TestCopilotSandboxBaselineRefusesCaseVariantFirmlinkSystemRoot closes the last
