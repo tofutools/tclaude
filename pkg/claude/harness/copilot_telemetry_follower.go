@@ -215,7 +215,7 @@ func (f *CopilotTelemetryFollower) Checkpoint() ([]byte, bool, error) {
 		return nil, false, fmt.Errorf("encode Copilot telemetry checkpoint: %w", err)
 	}
 	if len(data) > maxCopilotTelemetryCheckpointBytes {
-		return nil, false, fmt.Errorf("Copilot telemetry checkpoint exceeds %d bytes: %d",
+		return nil, false, fmt.Errorf("copilot telemetry checkpoint exceeds %d bytes: %d",
 			maxCopilotTelemetryCheckpointBytes, len(data))
 	}
 	return data, true, nil
