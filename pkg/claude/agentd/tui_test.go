@@ -1075,7 +1075,7 @@ func TestTUISpawnDirTabOnAnEmptyFieldMovesOn(t *testing.T) {
 	m := spawnFormOnDir(t, "")
 	updated, _ := m.handleSpawnKey(tuiTabKey())
 	got := updated.(tuiModel)
-	assert.Equal(t, tuiFieldHarness, got.form.field)
+	assert.Equal(t, tuiFieldWorktree, got.form.field)
 	assert.Empty(t, got.form.dir.Value())
 }
 
@@ -1098,7 +1098,7 @@ func TestTUISpawnDirTabOnTheGroupsOwnDirectoryMovesOn(t *testing.T) {
 
 	updated, _ := m.handleSpawnKey(tuiTabKey())
 	got := updated.(tuiModel)
-	assert.Equal(t, tuiFieldHarness, got.form.field, "tab must still reach the next field")
+	assert.Equal(t, tuiFieldWorktree, got.form.field, "tab must still reach the next field")
 	assert.Equal(t, root+"/", got.form.dir.Value(), "and must not pick a subdirectory nobody chose")
 
 	// Once the operator starts typing a subdirectory, Tab completes it again.

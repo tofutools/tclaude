@@ -22,6 +22,10 @@ func buildTUIHTTPHandler() http.Handler {
 	mux.HandleFunc("GET /v1/spawn-profiles", handleSpawnProfiles)
 	mux.HandleFunc("GET /v1/usage", handleUsage)
 	mux.HandleFunc("POST /v1/groups/{name}/spawn", v1GroupRoute(handleGroupSpawn))
+	// Console-only, and deliberately not on the Unix-socket mux — see
+	// tui_worktree.go. asDashboardHumanPeer below has already classified this
+	// request as the operator, which is who the route is for.
+	mux.HandleFunc("POST "+tuiWorktreePath, handleTUIWorktree)
 	mux.HandleFunc("POST /v1/agent/{selector}/stop", handleAgentByConv)
 	mux.HandleFunc("POST /v1/agent/{selector}/retire", handleAgentByConv)
 	mux.HandleFunc("POST /v1/agent/{selector}/resume", handleAgentByConv)
