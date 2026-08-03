@@ -374,9 +374,18 @@ func TestCopilotPermissionAmbientAllowAllPromotes(t *testing.T) {
 }
 
 // TestCopilotPermissionDenyToolGrammar pins which `--deny-tool` patterns 1.0.77
-// PARSES, and it is the cheapest scenario in the suite: argument validation
-// runs BEFORE the credential check, so the two outcomes are distinguishable
-// with no provider, no PTY and no network at all.
+// PARSES. It is the cheapest scenario in the suite -- no PTY, no network, ~1.5s
+// a row -- because a parse error is visible from the launch alone.
+//
+// It does need the mock, though, and the reason is a false green this test
+// produced before it had one. Run with no provider at all, on the theory that
+// argument validation must come first, EVERY row reported "accepted",
+// including `url()`: with COPILOT_OFFLINE=true and no base URL the CLI fails
+// on "Offline mode requires a local model provider" before it ever inspects
+// --deny-tool. The launch has to be otherwise viable for a parse error to be
+// the thing that stops it. Each row now asserts two independent signals, the
+// error text and whether the provider was reached, so a future failure that
+// preempts parsing again shows up as a contradiction rather than a pass.
 //
 // It exists because the TCL-973 plan's proposed daemon default contained
 // `--deny-tool 'url()'`, which this measures as a hard parse error. A spawner
@@ -412,23 +421,46 @@ func TestCopilotPermissionDenyToolGrammar(t *testing.T) {
 	} {
 		rows = append(rows, tc.pattern)
 		t.Run(tc.pattern, func(t *testing.T) {
+			// The mock is what makes the two outcomes separable. An earlier
+			// version of this scenario ran with no provider at all, on the
+			// theory that argument validation happens before anything else --
+			// and every row came back "accepted", because COPILOT_OFFLINE=true
+			// with no base URL fails on "Offline mode requires a local model
+			// provider" BEFORE the CLI ever looks at --deny-tool. The run has
+			// to be otherwise launchable for a parse error to be the thing
+			// that stops it.
+			mock := copilotfixture.NewMockProvider(t,
+				[]copilotfixture.Turn{{Text: "MOCK DENY GRAMMAR PROBE"}})
 			dirs := copilotfixture.NewSandboxDirs(t)
-			// No BaseURL: the run is expected to stop at the credential check,
-			// which is precisely the marker that says the arguments parsed.
+			copilotfixture.TrustFolder(t, dirs.Home, dirs.WorkDir)
 			result := copilotfixture.Run(t, copilotfixture.RunOptions{
 				Root: dirs.Root, Home: dirs.Home, Cache: dirs.Cache, WorkDir: dirs.WorkDir,
-				Prompt:    "This turn never runs.",
+				BaseURL:   mock.BaseURL(),
+				Prompt:    "Answer in one word.",
 				ExtraArgs: []string{"--deny-tool", tc.pattern},
 				Timeout:   permissionDeadline,
 			})
+
 			out := result.Stdout + result.Stderr
 			rejected := contains(out, "Invalid --deny-tool value")
-			reachedAuth := contains(out, "No authentication information found")
-			t.Logf("permission verdict: pattern %q accepted=%v", tc.pattern, !rejected)
+			// Reaching the provider is the positive signal, and it is a
+			// stronger one than any message: a pattern the CLI accepted cannot
+			// have stopped the launch.
+			reached := len(mock.Requests()) > 0
+
+			t.Logf("permission verdict: pattern %q parses=%v (provider reached: %v)",
+				tc.pattern, !rejected, reached)
 			assert.Equal(t, !tc.valid, rejected, "whether the pattern was rejected at parse")
+			assert.Equal(t, tc.valid, reached,
+				"an accepted pattern must let the launch proceed to the provider; "+
+					"a rejected one must stop before it")
 			if tc.valid {
-				assert.True(t, reachedAuth,
-					"an accepted pattern must let the launch proceed past argument parsing")
+				assert.Equal(t, 0, result.ExitCode, "stderr: %s", result.Stderr)
+				assertCredentialFree(t, mock)
+			} else {
+				assert.NotEqual(t, 0, result.ExitCode,
+					"a rejected pattern must fail the launch, which is what would have "+
+						"killed every pane had the proposed default shipped")
 			}
 		})
 	}
