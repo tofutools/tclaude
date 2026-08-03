@@ -36,9 +36,19 @@ var permissionScenarios = struct {
 	URLGate             map[string]string
 	AmbientAllowAll     map[string]string
 	DenyToolGrammar     map[string]string
+	PathGrants          map[string]string
+	Resume              string
+	InPaneAllowAll      string
 	NoAskUser           string
 	HeadlessNotEvidence string
 }{
+	PathGrants: registerRows("TestCopilotPermissionPathGrants",
+		"outside-all/no-path-flags", "outside-all/add-dir", "outside-all/allow-all-paths",
+		"in-temp/default", "in-temp/disallow-temp-dir"),
+	Resume: copilotfixture.RegisterScenario(
+		"TestCopilotPermissionResumeSubmitsPrompt"),
+	InPaneAllowAll: copilotfixture.RegisterScenario(
+		"TestCopilotPermissionInPaneAllowAllCannotOverrideDeny"),
 	NoAskUser: copilotfixture.RegisterScenario(
 		"TestCopilotPermissionNoAskUserRemovesTheTool"),
 	FolderTrustBlocks: copilotfixture.RegisterScenario(

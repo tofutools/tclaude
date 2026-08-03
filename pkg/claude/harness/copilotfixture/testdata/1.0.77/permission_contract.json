@@ -83,34 +83,42 @@
     {
       "id": "out-of-cwd-paths",
       "claim": "What is the out-of-cwd/temp access behavior, and what exactly do --add-dir and --disallow-temp-dir do?",
-      "status": "unverified",
-      "finding": "Not established by any committed scenario in this suite, so this suite proves NOTHING about Copilot's path posture. The default posture is documented as the cwd subtree plus the system temp dir, with anything else prompting, but documentation is what this ticket exists to replace. See corroborating for an independent report, which is a lead to fixture rather than a result to rely on.",
-      "blocker": "Needs a staging base outside BOTH the cwd subtree and the child's temp dir. copilotfixture.NewSandboxDirs roots everything in t.TempDir, which IS the automatically granted temp tree, so the obvious shape -- a sibling of WorkDir under Root -- measures an ALLOWED path and would report it as a denial. The scenario must stage outside the temp tree, pin the child's temp dir explicitly so the boundary is an experiment input rather than a host property, and assert non-containment so it fails loudly instead of silently degrading. It also has to run on macOS, where TMPDIR resolves through the /var -> /private/var symlink that NewSandboxDirs already had to canonicalize for. Deferred to the follow-up increment rather than guessed at.",
+      "status": "proven",
+      "finding": "Paths are a SEPARATE deadlock source with their own dialog, 'Allow directory access', distinct from both folder trust (which gates the whole launch) and tool approval (which gates the command). Measured on a PTY with trust pre-granted: a shell read of a path outside every granted root BLOCKS on that dialog, which names the offending path and offers to add it to the allowed list. --add-dir <dir> and --allow-all-paths each clear it. The system temp dir is granted automatically, and --disallow-temp-dir removes that grant, after which a read inside temp blocks the same way. Both flags therefore work as named. The scenario carries an exact internal control: the identical 'cat' command is ALLOWED inside the granted temp dir and BLOCKED outside it, so the block is demonstrably path-driven rather than command-risk-driven. CORRECTION TO A HEADLESS RESULT, and it is the third time in this ticket that a no-TTY measurement pointed the wrong way: measured headlessly, an out-of-grant path AUTO-DENIES -- the CLI answers the model 'Permission denied and could not request permission from user' and the turn continues. From there paths look like the one prompt surface a detached agent need not worry about, because it resolves itself. On a real terminal the same launch stops and waits forever. Note this is the OPPOSITE asymmetry from tool approval, whose no-TTY fallback auto-ALLOWS: two different fallbacks in the same binary, neither of which describes a pane. SAFETY: --allow-all-paths is measured here only to characterize the mechanism and must never be a default. Copilot's built-in edits are not OS-confined (TCL-977), so the path check is the only file-write boundary a launch outside tclaude-layer has.",
       "corroborating": [
-        "NOT measured here; reported by the copilot-permission-wire analyst on an independent rig. Outside both cwd and temp with --allow-all-tools only: DENIED, tool result 'Permission denied and could not request permission from user'. Adding --add-dir <dir>: ALLOWED. Adding --allow-all-paths: ALLOWED. Inside the system temp dir by default: ALLOWED. Adding --disallow-temp-dir: DENIED. So both flags the plan depends on are reported to work as named.",
-        "NOT measured here, and the more interesting half: a path violation is reported to AUTO-DENY headlessly ('could not request permission from user'), which is the OPPOSITE fallback from headless tool approval, which auto-ALLOWS. Two different no-TTY fallbacks in the same binary is exactly the kind of asymmetry a detached-agent design must not guess at."
+        "NOT measured here: whether the directory-access dialog's option 2 ('add these directories to the allowed list') persists the grant to disk the way the folder-trust dialog's option 2 does. If it does, that is a third persistence surface alongside trustedFolders and allowedUrls, and a spawner would need to reason about it."
+      ],
+      "scenarios": [
+        "TestCopilotPermissionPathGrants/outside-all/no-path-flags",
+        "TestCopilotPermissionPathGrants/outside-all/add-dir",
+        "TestCopilotPermissionPathGrants/outside-all/allow-all-paths",
+        "TestCopilotPermissionPathGrants/in-temp/default",
+        "TestCopilotPermissionPathGrants/in-temp/disallow-temp-dir"
       ]
     },
     {
       "id": "resume-submits-prompt",
       "claim": "Does -i combined with --resume=<full-id> submit the prompt into the resumed conversation?",
-      "status": "unverified",
-      "finding": "Not established by any committed scenario in this suite. The standing UNVERIFIED comment in copilot_spawner.go therefore still stands as far as this PR's evidence goes, and every relaunch briefing depends on the answer. See corroborating.",
-      "blocker": "Needs a two-phase committed scenario (seed a conversation with a pinned --session-id, then relaunch with --resume=<full-id> and assert on MessageRoles) plus its own golden. Deferred to the follow-up increment. Note the claim is scoped to the FULL-UUID form only: --resume also accepts id prefixes and session names, and whether those attach to the intended conversation is a separate and higher-risk question that nothing here measures.",
+      "status": "proven",
+      "finding": "It does. Two-phase, both against the real binary: phase one seeds a conversation under a pinned --session-id, phase two relaunches it on a PTY with --resume=<full-id> and a new -i prompt. The resumed request carried message roles [system, user, assistant, user] -- the earlier exchange followed by the new turn -- and the session-state directory stayed under the original UUID, so the conversation kept its identity rather than forking. A fresh conversation would have sent [system, user], which is what makes this instrument exact rather than suggestive. This retires the standing UNVERIFIED comment in copilot_spawner.go and means relaunch briefings do not vanish silently.",
       "corroborating": [
-        "NOT measured here; reported by the copilot-permission-wire analyst. On a PTY, '--resume=<full-uuid> -i <prompt>' produced a second provider request with message roles [system user assistant user] carrying both the original and the new prompt, and the session-state directory stayed under the original UUID. If confirmed, the prompt DOES land in the resumed conversation and relaunch briefings do not vanish silently.",
-        "NOT measured by anyone yet, and it is the higher risk: --resume also accepts id PREFIXES and session NAMES (exact, case-insensitive). A non-full id or a name collision would attach a relaunch to a different conversation entirely. Only the full-UUID form has been looked at, which is the argument for a UUID-shape guard at the spawn boundary rather than a reason to relax one."
+        "NOT measured, and it is where the real risk lives: --resume also accepts id PREFIXES and session NAMES (exact, case-insensitive). Only the full-UUID form is established here. A non-full id or a name collision would attach a relaunch to a different conversation entirely, which argues for a UUID-shape guard at the spawn boundary rather than for relaxing one."
+      ],
+      "scenarios": [
+        "TestCopilotPermissionResumeSubmitsPrompt"
       ]
     },
     {
       "id": "in-pane-allow-all-override",
       "claim": "Can in-pane /allow-all override a launch-time --deny-tool, i.e. are launch permission flags a durable boundary or only startup posture?",
-      "status": "unverified",
-      "finding": "Not established by any committed scenario in this suite. This is the measurement that decides whether tclaude may describe launch permission flags as a durable boundary or only as startup posture, so it is worth fixturing rather than inheriting. See corroborating.",
-      "blocker": "Needs the PTY input path plus a durable way to recognize the refusal that does not depend on scraping TUI chrome. PTYOptions.Input and its quiescence-gated write loop are WRITTEN in this PR but have never executed -- no scenario sets Input -- so they are untested code, not a working rig, and the increment should expect to debug them rather than assume they work. This wording is itself a review correction: an earlier draft claimed 'the rig exists in this PR', which would have handed the next person a false head start.",
+      "status": "disproven",
+      "finding": "DISPROVEN, and this is the favourable direction: in-pane /allow-all CANNOT override a launch-time deny. Measured on a PTY with a session launched under --deny-tool 'shell(echo)'. The pane accepted the widening command and confirmed 'All permissions are now enabled' -- asserted, so the scenario cannot pass by failing to deliver it -- and the tool requested afterwards was still refused, with 'Permission to run this tool was denied' posted back as the tool result. Denial precedence therefore holds at RUNTIME, not merely at launch. The command choice is load-bearing: 'echo' is auto-approved when no rule mentions it, so the refusal can only come from the deny rule and no risk-classification confound can explain it away. CONSEQUENCE: a launch-time --deny-tool is a real boundary rather than a starting posture, so TCL-973 plan risk 5 can be softened for denies specifically.",
       "corroborating": [
-        "NOT measured here; reported by the copilot-permission-wire analyst, and it is the GOOD outcome for denies specifically. A session launched with --deny-tool 'shell(echo)' accepted /allow-all and echoed 'All permissions are now enabled. Tool, path, and URL requests will be automatically approved', yet the subsequent tool call was still refused: 'Permission to run this tool was denied due to the following rules: shell(echo)'. If confirmed, denial precedence holds at RUNTIME and not merely at launch, and TCL-973 plan risk 5 can be softened for denies.",
-        "NOT measured by anyone: the other in-pane mutators (/add-dir, /reset-allowed-tools, /settings, /experimental) and whether the ALLOW posture can be widened in-pane. A durable deny says nothing about those, and the docs must not generalize from one to the other."
+        "NOT measured: the other in-pane mutators (/add-dir, /reset-allowed-tools, /settings, /experimental), and whether the ALLOW posture rather than a deny can be widened in-pane. A durable deny says nothing about those, and neither docs nor a spawner should generalize from one to the other.",
+        "NOT measured: whether a deny also survives the ambient COPILOT_ALLOW_ALL=true promotion, which clears gates no flag can. Denial precedence beating an in-pane command does not establish it beating the environment variable."
+      ],
+      "scenarios": [
+        "TestCopilotPermissionInPaneAllowAllCannotOverrideDeny"
       ]
     }
   ]

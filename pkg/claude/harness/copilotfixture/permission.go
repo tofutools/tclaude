@@ -72,6 +72,11 @@ func TrustFolder(t *testing.T, home, dir string) {
 	}
 }
 
+// PathPromptMarker titles the directory-access dialog, which is its own
+// permission surface: neither folder trust (which gates the whole launch) nor
+// tool approval (which gates the command).
+const PathPromptMarker = "Allow directory access"
+
 // PermissionOutcome is what a scenario could establish about a launch FROM THE
 // RUN IT JUST PERFORMED.
 type PermissionOutcome string
@@ -87,11 +92,97 @@ const (
 	// would exhibit forever.
 	PermissionBlocked PermissionOutcome = "blocked"
 
+	// PermissionDenied: the tool was refused WITHOUT asking, and the refusal
+	// itself was posted back to the provider as the tool's result.
+	//
+	// This is the outcome that makes the follow-up request an ambiguous signal
+	// on its own, and getting it wrong would have been the most damaging
+	// mistake in the suite. A denial produces exactly the same coarse
+	// observable as a success — a second provider request — because the CLI
+	// answers the model with "you may not do that" rather than with output. A
+	// classifier that stopped at "a follow-up arrived" would therefore report
+	// every silent denial as EXECUTION, which is the single worst direction to
+	// be wrong in for a ticket about what a detached agent is permitted to do.
+	//
+	// It is a distinct outcome rather than a flavour of blocked because the two
+	// have opposite consequences for a detached agent: a denial lets the turn
+	// continue (the model gets an answer and can adapt), while a block parks
+	// the pane forever.
+	PermissionDenied PermissionOutcome = "denied"
+
 	// PermissionRefused: no follow-up request, and the CLI exited on its own.
 	// The launch was rejected rather than parked — a bad flag, a refused
 	// startup, a denial that terminates.
 	PermissionRefused PermissionOutcome = "refused"
 )
+
+// permissionDenialMarkers are phrases Copilot posts back as a TOOL RESULT when
+// it refused the call outright instead of prompting.
+//
+// Matched on the tool result rather than on the terminal, deliberately: the
+// result is what the CLI told the model, which is the fact that decides whether
+// the tool ran. Screen text would be a rendering of it at best, and this suite
+// treats TUI chrome as corroboration rather than contract everywhere else.
+var permissionDenialMarkers = []string{
+	// A path outside every granted root, with no terminal to ask through. The
+	// wording is the CLI describing its own no-TTY fallback, and it is why this
+	// marker is here rather than in a scenario: on a PTY the same launch draws
+	// PathPromptMarker and waits instead, so this string is what a headless run
+	// sees and a real pane never does.
+	"Permission denied and could not request permission from user",
+	// An explicit --deny-tool rule matched. Denial rules never prompt.
+	"Permission to run this tool was denied",
+	// The URL permission layer refused before any network access.
+	"Permission to access this URL was denied",
+	// Generic form, kept last so a more specific marker wins the explanation.
+	"Permission denied",
+}
+
+// ToolResults extracts the tool-role message contents from one recorded
+// provider request, which is how a scenario reads what the CLI told the model
+// a tool did.
+//
+// Only the tool role is returned. Assistant and user content is model or
+// fixture text and says nothing about permissions, and this function's output
+// feeds a classifier rather than a golden, so it is never committed.
+func ToolResults(r RecordedRequest) []string {
+	var out []string
+	entries, ok := r.Body["messages"].([]any)
+	if !ok {
+		// The responses wire spells the conversation as input[]; both are read
+		// so a scenario is not silently wire-dependent.
+		entries, ok = r.Body["input"].([]any)
+		if !ok {
+			return nil
+		}
+	}
+	for _, raw := range entries {
+		m, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if role, _ := m["role"].(string); role != "tool" {
+			continue
+		}
+		if content, ok := m["content"].(string); ok {
+			out = append(out, content)
+		}
+	}
+	return out
+}
+
+// DenialMarker returns the denial phrase found in a tool result, or "" when the
+// result records an ordinary execution.
+func DenialMarker(toolResults []string) string {
+	for _, result := range toolResults {
+		for _, marker := range permissionDenialMarkers {
+			if strings.Contains(result, marker) {
+				return marker
+			}
+		}
+	}
+	return ""
+}
 
 // PermissionVerdict pairs an outcome with the observation behind it.
 type PermissionVerdict struct {
@@ -117,10 +208,23 @@ type PermissionVerdict struct {
 // let a typo'd flag be recorded as proof of a permission gate. So the
 // undecidable case, where nothing at all was observed, is an error a scenario
 // must fail on rather than an arm it may pick.
+// followUpToolResults are the tool-role message contents carried by the
+// follow-up request. They are what separates a tool that RAN from one that was
+// refused without asking, since both produce a follow-up.
 func ClassifyPermission(
-	totalRequests, followUpRequests int, stillAlive, quiesced bool, transcript string,
+	totalRequests, followUpRequests int, stillAlive, quiesced bool,
+	transcript string, followUpToolResults []string,
 ) (PermissionVerdict, error) {
 	switch {
+	case followUpRequests > 0 && DenialMarker(followUpToolResults) != "":
+		// Checked BEFORE the allowed arm, because a denial is a follow-up too.
+		return PermissionVerdict{
+			Outcome: PermissionDenied,
+			Evidence: fmt.Sprintf(
+				"the tool was refused without prompting and the refusal was posted back "+
+					"as its result (%q)", DenialMarker(followUpToolResults)),
+		}, nil
+
 	case followUpRequests > 0:
 		return PermissionVerdict{
 			Outcome:  PermissionAllowed,

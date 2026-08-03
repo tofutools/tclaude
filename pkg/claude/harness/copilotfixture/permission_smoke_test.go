@@ -1,6 +1,7 @@
 package copilotfixture_test
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -115,10 +116,18 @@ func permissionRun(
 		SettledWhen: func() bool { return len(mock.Requests()) >= 2 },
 	})
 
-	total := len(mock.Requests())
+	requests := mock.Requests()
+	total := len(requests)
 	followUps := max(total-1, 0)
+	// The tool results ride on the LAST request: that is the one carrying what
+	// the CLI told the model the tool did, which is the only thing that
+	// separates an execution from a silent refusal.
+	var toolResults []string
+	if total > 1 {
+		toolResults = copilotfixture.ToolResults(requests[total-1])
+	}
 	verdict, err := copilotfixture.ClassifyPermission(
-		total, followUps, !res.Exited, res.Quiesced, res.TranscriptText())
+		total, followUps, !res.Exited, res.Quiesced, res.TranscriptText(), toolResults)
 	require.NoError(t, err, "the launch could not be classified")
 
 	// The line CI greps. Asserting the VALUE rather than merely that the test
@@ -656,4 +665,312 @@ func TestCopilotPermissionContractIsBackedByScenarios(t *testing.T) {
 			}
 		})
 	}
+}
+
+// stageOutsideEveryGrantedRoot creates a directory that is outside BOTH of
+// Copilot's default path grants, and fails the test rather than degrading if
+// it cannot.
+//
+// This helper is the whole reason the path measurement was left unverified in
+// the first pass, and the trap is worth stating because the obvious shape has
+// it. Copilot's default posture grants the cwd subtree PLUS the system temp
+// dir. copilotfixture.NewSandboxDirs roots everything under t.TempDir, which
+// IS the system temp tree — so a sibling of WorkDir, the natural choice, is
+// outside the cwd grant and squarely inside the temp one. A scenario built
+// that way measures an ALLOWED path and reports it as a denial.
+//
+// Two defences, because either alone can be defeated. The child's temp dir is
+// PINNED to a directory this test chose, so "the system temp dir" is an
+// experiment input rather than a property of whatever host is running; and the
+// staged path is asserted to be outside every granted root, so a future change
+// in any of them fails loudly instead of quietly measuring the wrong thing.
+func stageOutsideEveryGrantedRoot(t *testing.T, dirs copilotfixture.Dirs, childTemp string) string {
+	t.Helper()
+	// Based beside the package rather than under any temp root: every temp
+	// candidate is exactly what has to be excluded here.
+	base, err := os.MkdirTemp(".", "copilotfixture-outside-")
+	if err != nil {
+		t.Fatalf("staging a directory outside every granted root: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(base) })
+	abs, err := filepath.Abs(base)
+	if err != nil {
+		t.Fatalf("resolving the staged directory: %v", err)
+	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		abs = resolved
+	}
+
+	// Checked against the UNRESOLVED spellings too: on macOS TMPDIR is
+	// /var/folders/… while the resolved form is /private/var/folders/…, and a
+	// containment check that saw only one of them would pass while the path sat
+	// inside the other.
+	for _, granted := range []struct{ name, path string }{
+		{"the working directory", dirs.WorkDir},
+		{"the unresolved working directory", dirs.UnresolvedWorkDir},
+		{"the pinned child temp dir", childTemp},
+		{"the fixture root", dirs.Root},
+		{"the unresolved fixture root", dirs.UnresolvedRoot},
+		{"the host temp dir", os.TempDir()},
+	} {
+		if granted.path == "" {
+			continue
+		}
+		if under(abs, granted.path) {
+			t.Fatalf(
+				"the staged path %s is inside %s (%s), so this scenario would measure an "+
+					"ALLOWED path and report it as a denial. Refusing to run rather than "+
+					"produce that result", abs, granted.name, granted.path)
+		}
+	}
+	return abs
+}
+
+// under reports whether path is at or beneath root, comparing whole segments so
+// a sibling like /tmp/foo-other is not read as inside /tmp/foo.
+func under(path, root string) bool {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// TestCopilotPermissionPathGrants measures Copilot's default path posture and
+// the two flags that move it.
+//
+// Paths are a genuinely SEPARATE deadlock source, with their own dialog
+// ("Allow directory access"), distinct from both tool approval and folder
+// trust. On a pane, a path outside every granted root blocks — it does not
+// auto-deny.
+//
+// That last point is a correction the PTY discipline earned, and it is the
+// third time in this ticket that a headless measurement pointed the wrong way.
+// Measured headlessly, an out-of-grant path AUTO-DENIES: the CLI answers the
+// model "Permission denied and could not request permission from user" and the
+// turn continues. Read from there, paths look like the one prompt surface a
+// detached agent need not worry about, since it resolves itself. On a real
+// terminal the same launch stops and asks, and waits forever. The auto-deny is
+// a no-TTY fallback, not the behaviour of the launches tclaude performs.
+//
+// Note this is the opposite asymmetry from tool approval, where the no-TTY
+// fallback auto-ALLOWS. Two different fallbacks in the same binary, neither of
+// which describes a real pane — which is precisely why nothing in this file
+// measures permissions without a terminal.
+//
+// The rows that DO allow are still classified through the tool result rather
+// than the request count, because a denial produces a follow-up request just
+// as an execution does. See ClassifyPermission.
+func TestCopilotPermissionPathGrants(t *testing.T) {
+	var rows []string
+	for _, tc := range []struct {
+		name string
+		args func(outside, childTemp string) []string
+		// inTemp targets the child's pinned temp dir instead of the staged
+		// outside-everything directory.
+		inTemp bool
+		want   copilotfixture.PermissionOutcome
+	}{
+		// The default posture: outside every grant, nothing added.
+		{name: "outside-all/no-path-flags", want: copilotfixture.PermissionBlocked},
+		// --add-dir is the flag TCL-973 intends to feed from the sandbox
+		// profile's granted dirs, so it needs to work precisely.
+		{name: "outside-all/add-dir", want: copilotfixture.PermissionAllowed,
+			args: func(outside, _ string) []string { return []string{"--add-dir", outside} }},
+		// Measured to characterize the mechanism, never proposed as a default:
+		// Copilot's built-in edits are not OS-confined, so the path check is
+		// the only file-write boundary a non-tclaude-layer launch has.
+		{name: "outside-all/allow-all-paths", want: copilotfixture.PermissionAllowed,
+			args: func(string, string) []string { return []string{"--allow-all-paths"} }},
+		// The automatic temp grant, and the flag that removes it.
+		{name: "in-temp/default", inTemp: true, want: copilotfixture.PermissionAllowed},
+		{name: "in-temp/disallow-temp-dir", inTemp: true, want: copilotfixture.PermissionBlocked,
+			args: func(string, string) []string { return []string{"--disallow-temp-dir"} }},
+	} {
+		rows = append(rows, tc.name)
+		t.Run(tc.name, func(t *testing.T) {
+			requireSmoke(t)
+			dirs := copilotfixture.NewSandboxDirs(t)
+			// Pinned, so "the system temp dir" is something this scenario
+			// chose rather than a property of the host running it.
+			childTemp := filepath.Join(dirs.Root, "child-temp")
+			require.NoError(t, os.MkdirAll(childTemp, 0o755))
+			outside := stageOutsideEveryGrantedRoot(t, dirs, childTemp)
+
+			targetDir := outside
+			if tc.inTemp {
+				targetDir = childTemp
+			}
+			target := filepath.Join(targetDir, "copilotfixture-path-probe.txt")
+			require.NoError(t, os.WriteFile(target, []byte("copilotfixture path probe\n"), 0o600))
+
+			var args []string
+			if tc.args != nil {
+				args = tc.args(outside, childTemp)
+			}
+			verdict, mock, res := permissionRun(t,
+				// `cat` of a staged file: the permission layer is what is under
+				// test, so the command itself must be as boring as possible.
+				bashTurns("cat "+target), true,
+				copilotfixture.RunOptions{
+					ExtraArgs: args,
+					// TMPDIR is what Node's os.tmpdir() reads, which is how the
+					// CLI resolves the temp grant.
+					ExtraEnv: []string{"TMPDIR=" + childTemp},
+				})
+			assert.Equal(t, tc.want, verdict.Outcome)
+			if tc.want == copilotfixture.PermissionBlocked {
+				// Its own dialog, distinct from tool approval and from folder
+				// trust. Pinned so a row cannot read "blocked" because the tool
+				// call failed for some unrelated reason.
+				assert.True(t, res.Contains(copilotfixture.PathPromptMarker),
+					"a path-blocked launch must show the directory-access dialog")
+				assert.True(t, res.Contains(target),
+					"the dialog must name the path it is asking about")
+			}
+			assertCredentialFree(t, mock)
+		})
+	}
+	assertScenarioRowsMatchRegistry(t, permissionScenarios.PathGrants, rows)
+}
+
+// TestCopilotPermissionResumeSubmitsPrompt closes the standing UNVERIFIED in
+// copilot_spawner.go: whether `-i` on a `--resume` launch submits into the
+// RESUMED conversation or silently starts somewhere else.
+//
+// Every relaunch briefing tclaude sends depends on the answer. If the prompt
+// did not land, a reincarnated or resumed agent would come back with no
+// instructions and no error — the failure would be invisible.
+//
+// The instrument is the message roles in the provider request, which is exact:
+// a fresh conversation sends [system user], while one that resumed and then
+// received a new prompt sends [system user assistant user] — the earlier
+// exchange followed by the new turn.
+func TestCopilotPermissionResumeSubmitsPrompt(t *testing.T) {
+	requireSmoke(t)
+
+	dirs := copilotfixture.NewSandboxDirs(t)
+	copilotfixture.TrustFolder(t, dirs.Home, dirs.WorkDir)
+	sessionID := "5f7c2a91-3d84-4e6b-9c15-8a2f0b7d4e63"
+
+	// Phase 1 seeds the conversation headlessly. The permission posture is not
+	// under test here, so the cheap non-PTY path is the right one; what matters
+	// is that a real conversation exists under the pinned id.
+	seed := copilotfixture.Run(t, copilotfixture.RunOptions{
+		Root: dirs.Root, Home: dirs.Home, Cache: dirs.Cache, WorkDir: dirs.WorkDir,
+		BaseURL:   mockFor(t, "MOCK FIRST ANSWER").BaseURL(),
+		Prompt:    "First question.",
+		SessionID: sessionID,
+		Timeout:   permissionDeadline,
+	})
+	require.Equal(t, 0, seed.ExitCode, "stderr: %s", seed.Stderr)
+	require.DirExists(t, filepath.Join(dirs.Home, "session-state", sessionID),
+		"the seed run must have created the conversation under the pinned id")
+
+	// Phase 2 resumes it interactively, which is the shape tclaude relaunches
+	// with. A PTY because that is the launch under discussion, not because the
+	// assertion needs one.
+	resumed := copilotfixture.NewMockProvider(t,
+		[]copilotfixture.Turn{{Text: "MOCK SECOND ANSWER"}})
+	copilotfixture.RunPTY(t, copilotfixture.PTYOptions{
+		RunOptions: copilotfixture.RunOptions{
+			Root: dirs.Root, Home: dirs.Home, Cache: dirs.Cache, WorkDir: dirs.WorkDir,
+			BaseURL:  resumed.BaseURL(),
+			Prompt:   "Second question.",
+			ResumeID: sessionID,
+		},
+		Deadline:    permissionDeadline,
+		SettledWhen: func() bool { return len(resumed.Requests()) >= 1 },
+	})
+
+	requests := resumed.Requests()
+	require.NotEmpty(t, requests, "the resumed launch must reach the provider")
+	roles := newSanitizer(dirs).Request(requests[0]).MessageRoles
+	assert.Equal(t, []string{"system", "user", "assistant", "user"}, roles,
+		"the resumed request must carry the earlier exchange AND the new prompt. "+
+			"[system user] would mean the prompt started a FRESH conversation and every "+
+			"relaunch briefing is silently lost")
+	t.Logf("permission verdict: resume submits the prompt into the resumed conversation "+
+		"(roles: %v)", roles)
+
+	// The conversation kept its identity rather than forking into a new one.
+	assert.DirExists(t, filepath.Join(dirs.Home, "session-state", sessionID))
+	assertCredentialFree(t, resumed)
+}
+
+// mockFor is a one-turn provider, for phases whose traffic is setup rather
+// than evidence.
+func mockFor(t *testing.T, text string) *copilotfixture.MockProvider {
+	t.Helper()
+	return copilotfixture.NewMockProvider(t, []copilotfixture.Turn{{Text: text}})
+}
+
+// TestCopilotPermissionInPaneAllowAllCannotOverrideDeny answers the question
+// that decides how tclaude is allowed to DESCRIBE its permission flags: is a
+// launch-time deny a durable boundary, or merely a starting posture that
+// anything typed into the pane can widen?
+//
+// Copilot has several in-pane mutators (/allow-all, /add-dir,
+// /reset-allowed-tools, /settings), and unlike the sandbox posture there is no
+// way to re-verify the permission posture from outside — it lives inside the
+// pane. So if /allow-all could lift a launch-time deny, tclaude could not
+// honestly advertise any permission boundary at all and only the OS wall would
+// remain.
+//
+// The measured answer is the good one: the deny survives.
+//
+// The chosen command matters. `echo` is auto-approved when no rule mentions
+// it, so a refusal here can ONLY come from the deny rule — there is no
+// risk-classification confound to explain it away.
+func TestCopilotPermissionInPaneAllowAllCannotOverrideDeny(t *testing.T) {
+	requireSmoke(t)
+
+	mock := copilotfixture.NewMockProvider(t, []copilotfixture.Turn{
+		// The launch prompt, answered with plain text so the session settles at
+		// its input prompt with no tool call yet.
+		{Text: "MOCK READY"},
+		// Answers the tool request typed after /allow-all.
+		{ToolCall: &copilotfixture.ToolCall{
+			ID:   "call_copilotfixture_inpane",
+			Name: "bash",
+			Args: `{"command":"` + safeShellCommand + `","description":"in-pane probe"}`,
+		}},
+		{Text: "MOCK DONE"},
+	})
+	dirs := copilotfixture.NewSandboxDirs(t)
+	copilotfixture.TrustFolder(t, dirs.Home, dirs.WorkDir)
+
+	res := copilotfixture.RunPTY(t, copilotfixture.PTYOptions{
+		RunOptions: copilotfixture.RunOptions{
+			Root: dirs.Root, Home: dirs.Home, Cache: dirs.Cache, WorkDir: dirs.WorkDir,
+			BaseURL: mock.BaseURL(),
+			Prompt:  "Say you are ready.",
+			// Paired deliberately: the deny must beat a blanket allow, not merely
+			// fill a gap the allow left open.
+			ExtraArgs: []string{"--deny-tool", "shell(echo)"},
+		},
+		// Typed into a settled screen, in order: widen the posture, then ask for
+		// the denied tool.
+		Input:       []string{"/allow-all", "Now use the bash tool."},
+		Deadline:    3 * permissionDeadline,
+		SettledWhen: func() bool { return len(mock.Requests()) >= 3 },
+	})
+
+	// The pane really did accept the widening command; without this the test
+	// could pass because /allow-all was never delivered.
+	assert.True(t, res.Contains("All permissions are now enabled"),
+		"the in-pane widening command must have been accepted, or this scenario "+
+			"proves nothing about whether it can override a deny")
+
+	requests := mock.Requests()
+	require.GreaterOrEqual(t, len(requests), 3,
+		"the typed prompt must have produced a tool call and its result")
+	marker := copilotfixture.DenialMarker(
+		copilotfixture.ToolResults(requests[len(requests)-1]))
+	assert.NotEmpty(t, marker,
+		"the launch-time deny must still refuse the tool AFTER /allow-all widened the "+
+			"posture; if this ever passes, launch permission flags are startup posture "+
+			"only and docs must stop describing them as a boundary")
+	t.Logf("permission verdict: launch-time deny survives in-pane /allow-all (%q)", marker)
+	assertCredentialFree(t, mock)
 }

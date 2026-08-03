@@ -1131,7 +1131,9 @@ jobs:
               TestCopilotPermissionContractIsBackedByScenarios
               TestCopilotPermissionFolderTrustBlocksFirst
               TestCopilotPermissionHeadlessIsNotEvidence
+              TestCopilotPermissionInPaneAllowAllCannotOverrideDeny
               TestCopilotPermissionNoAskUserRemovesTheTool
+              TestCopilotPermissionResumeSubmitsPrompt
             )
             required_subtests=(
               'TestCopilotPermissionTrustBypassSurface/allow-all-tools'
@@ -1159,6 +1161,11 @@ jobs:
               'TestCopilotPermissionAmbientAllowAllPromotes/one'
               'TestCopilotPermissionAmbientAllowAllPromotes/false'
               'TestCopilotPermissionAmbientAllowAllPromotes/empty'
+              'TestCopilotPermissionPathGrants/outside-all/no-path-flags'
+              'TestCopilotPermissionPathGrants/outside-all/add-dir'
+              'TestCopilotPermissionPathGrants/outside-all/allow-all-paths'
+              'TestCopilotPermissionPathGrants/in-temp/default'
+              'TestCopilotPermissionPathGrants/in-temp/disallow-temp-dir'
             )
           fi
           missing=()
