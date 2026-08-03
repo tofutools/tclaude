@@ -17,6 +17,15 @@ import (
 func copilotLaunchRoot(t *testing.T) (home, workspace string) {
 	t.Helper()
 	home = t.TempDir()
+	// Canonicalized because the launch spec resolves symlinks before emitting a
+	// grant — a mount rule has to name the directory the kernel will see, not a
+	// spelling of it. On macOS t.TempDir hands back /var/folders/… while the
+	// spec comes back with /private/var/folders/…, so an uncanonicalized
+	// expectation here would be asserting against the symlink rather than
+	// against the grant.
+	if resolved, err := filepath.EvalSymlinks(home); err == nil {
+		home = resolved
+	}
 	t.Setenv("HOME", home)
 	t.Setenv("TMUX_TMPDIR", filepath.Join(home, "tmux"))
 
