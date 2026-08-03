@@ -96,7 +96,7 @@ type NewParams struct {
 	// ephemeral interactive shell instead (no conversation, no hooks, no
 	// model/sandbox/approval), handled by runNewShell before any harness
 	// resolution happens. See shell.go.
-	Harness string `long:"harness" optional:"true" help:"Coding harness to launch: claude | codex | shell. Unset = global profile, then an installed harness (claude preferred)"`
+	Harness string `long:"harness" optional:"true" help:"Coding harness to launch: claude | codex | opencode | copilot | shell. Unset = global profile, then an installed harness (claude preferred)"`
 
 	// Shell is shorthand for --harness shell: it sets Harness to
 	// ShellHarnessName in runNew before any harness resolution happens.
@@ -433,6 +433,15 @@ func runNew(params *NewParams) error {
 		}
 		switch h.Name {
 		case harness.DefaultName:
+			if !clcommon.IsValidUUID(params.SessionID) {
+				return fmt.Errorf("--session-id must be a valid UUID, got %q", params.SessionID)
+			}
+		case harness.CopilotName:
+			// `copilot --session-id <id>` resumes a matching session and
+			// CREATES one only when the value is a valid UUID — a name or an
+			// id prefix never creates a session. A pre-minted launch id must
+			// therefore be a UUID or the pane would silently not be the
+			// conversation tclaude enrolled.
 			if !clcommon.IsValidUUID(params.SessionID) {
 				return fmt.Errorf("--session-id must be a valid UUID, got %q", params.SessionID)
 			}
