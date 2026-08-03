@@ -956,6 +956,11 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
+        with:
+          # This job runs `npm install --global` and then a third-party CLI.
+          # Neither has any business seeing a persisted git credential, and the
+          # job only needs the source tree.
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@v7

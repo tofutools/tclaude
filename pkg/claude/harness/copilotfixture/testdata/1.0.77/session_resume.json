@@ -40,7 +40,7 @@
         "view",
         "write_agent"
       ],
-      "promptDigest": "sha256:4de5e57d21c34ac5"
+      "promptDigest": "sha256:cb82d031460d7e1c"
     },
     {
       "path": "/v1/chat/completions",
@@ -83,7 +83,7 @@
         "view",
         "write_agent"
       ],
-      "promptDigest": "sha256:0d94602772a42512"
+      "promptDigest": "sha256:9495b7bf46e6c2ba"
     }
   ],
   "events": {
@@ -103,7 +103,7 @@
       "result"
     ],
     "resultExitCode": 0,
-    "resultSessionId": "\u003cuuid\u003e",
+    "resultSessionId": "\u003cpinned-session-id\u003e",
     "assistantText": "MOCK RESUMED TURN"
   }
 }

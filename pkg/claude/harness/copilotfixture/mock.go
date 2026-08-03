@@ -61,12 +61,18 @@ type MockProvider struct {
 }
 
 // RecordedRequest is one observed provider request, kept raw here; the
-// sanitizer converts it into the committable form.
+// sanitizer converts it into the committable form. Body is nil when the
+// request carried no decodable JSON, which is itself recorded rather than
+// dropped.
 type RecordedRequest struct {
+	Method string
 	Path   string
 	Header http.Header
 	Body   map[string]any
 }
+
+// overrunText answers a request past the end of a scenario's script.
+const overrunText = "MOCK SCENARIO OVERRUN"
 
 // NewMockProvider starts a mock on loopback that replays turns in order. The
 // server is closed via t.Cleanup.
@@ -93,24 +99,37 @@ func (m *MockProvider) Requests() []RecordedRequest {
 }
 
 func (m *MockProvider) handle(w http.ResponseWriter, r *http.Request) {
+	// Recorded BEFORE the body is decoded and before any routing decision, for
+	// every method and every path. Both halves matter: the route the CLI picks
+	// is itself part of the contract under observation (completions posts to
+	// /chat/completions, responses posts elsewhere), and a request the mock
+	// cannot parse — a GET capability probe, a health check, a future
+	// non-JSON body — is exactly the kind of new behavior a fixture must
+	// surface. Dropping it here would let the suite report "no change" while
+	// the CLI had started doing something new.
 	var body map[string]any
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	decodeErr := json.NewDecoder(r.Body).Decode(&body)
+
+	m.mu.Lock()
+	idx := len(m.requests)
+	m.requests = append(m.requests, RecordedRequest{
+		Method: r.Method, Path: r.URL.Path, Header: r.Header.Clone(), Body: body,
+	})
+	turn := m.turns[min(idx, len(m.turns)-1)]
+	m.mu.Unlock()
+
+	if decodeErr != nil {
 		http.Error(w, "bad request body", http.StatusBadRequest)
 		return
 	}
 
-	// Recorded BEFORE any routing decision, and for every path. The route the
-	// CLI chooses is itself part of the contract under observation — the
-	// completions wire posts to /chat/completions while the responses wire
-	// posts elsewhere — so a mock that 404'd an unexpected path before
-	// recording would hide exactly the evidence a wire fixture is after.
-	m.mu.Lock()
-	idx := len(m.requests)
-	m.requests = append(m.requests, RecordedRequest{
-		Path: r.URL.Path, Header: r.Header.Clone(), Body: body,
-	})
-	turn := m.turns[min(idx, len(m.turns)-1)]
-	m.mu.Unlock()
+	// Past the end of the script, never answer with a tool call: the CLI would
+	// execute it, ask again, and loop until RunTimeout. Degrading to a
+	// terminal text answer turns an over-called scenario into a fast, visible
+	// assertion failure on the recorded request count instead of a 90s hang.
+	if idx >= len(m.turns) {
+		turn = Turn{Text: overrunText}
+	}
 
 	if turn.FailStatus != 0 {
 		writeJSON(w, turn.FailStatus, map[string]any{

@@ -190,7 +190,7 @@ func TestCopilotSessionEnrollmentAndResume(t *testing.T) {
 	assert.Equal(t, []string{"system", "user", "assistant", "user"}, obs[1].MessageRoles,
 		"a resumed turn must carry the prior exchange as history")
 
-	compareGolden(t, "session_resume", dirs, mock, resumed)
+	compareGolden(t, "session_resume", dirs, mock, resumed, sessionID)
 }
 
 // TestCopilotReasoningEffortOnResponsesWire pins effort pass-through.
@@ -301,7 +301,11 @@ func TestCopilotProductionSpawnerLaunches(t *testing.T) {
 // which would invalidate the whole point of the suite.
 func assertCredentialFree(t *testing.T, mock *copilotfixture.MockProvider) {
 	t.Helper()
-	for i, obs := range newSanitizerForAuth().Requests(mock.Requests()) {
+	requests := mock.Requests()
+	// Zero requests would make the loop below vacuously green, which is the
+	// last assertion in this suite that may ever pass by accident.
+	require.NotEmpty(t, requests, "no provider request to check for credentials")
+	for i, obs := range newSanitizerForAuth().Requests(requests) {
 		assert.True(t, obs.AuthorizationEmpty,
 			"request %d carried a credential; the fixture path must stay credential-free", i)
 	}
@@ -330,9 +334,15 @@ func compareGolden(
 	dirs copilotfixture.Dirs,
 	mock *copilotfixture.MockProvider,
 	result copilotfixture.RunResult,
+	pinnedSessionIDs ...string,
 ) {
 	t.Helper()
 	sanitizer := newSanitizer(dirs)
+	// A scenario-chosen id gets its own placeholder, so the golden records
+	// that enrollment was honoured instead of flattening it to <uuid>.
+	for _, id := range pinnedSessionIDs {
+		sanitizer = sanitizer.WithPinnedSessionID(id)
+	}
 	got := scenarioFixture{
 		CLIVersion: copilotfixture.PinnedCLIVersion,
 		Requests:   sanitizer.Requests(mock.Requests()),
@@ -367,18 +377,23 @@ func compareGolden(
 func assertNoLeakedSecrets(t *testing.T, encoded []byte, dirs copilotfixture.Dirs) {
 	t.Helper()
 	body := string(encoded)
+	// require, not assert: this runs BEFORE the -update write, so a non-fatal
+	// check would flag the leak and still persist the contaminated golden to
+	// testdata, where a later `git add` could pick it up.
 	for _, forbidden := range []string{dirs.Root, dirs.Home, dirs.Cache, dirs.WorkDir} {
-		assert.NotContains(t, body, forbidden, "fixture leaked a private path")
+		require.NotContains(t, body, forbidden, "fixture leaked a private path")
 	}
 	if home, err := os.UserHomeDir(); err == nil && home != "" && home != "/" {
-		assert.NotContains(t, body, home, "fixture leaked the operator's home directory")
+		require.NotContains(t, body, home, "fixture leaked the operator's home directory")
 	}
 	// The fixture must remain small: the system prompt alone is ~26 kB, so a
 	// sudden size jump means bulk content stopped being reduced to a digest.
-	assert.Less(t, len(encoded), 16*1024,
+	require.Less(t, len(encoded), 16*1024,
 		"fixture grew past the size that indicates raw prompt/tool content crept in")
-	assert.False(t, strings.Contains(body, "<current_datetime>"),
+	require.False(t, strings.Contains(body, "<current_datetime>"),
 		"fixture captured injected prompt scaffolding")
+	require.False(t, strings.Contains(body, "<environment_context>"),
+		"fixture captured host-probed environment scaffolding")
 
 	var probe any
 	require.NoError(t, json.Unmarshal(encoded, &probe), "fixture must be valid JSON")

@@ -112,6 +112,58 @@ func TestPromptDigestIsStableButDriftSensitive(t *testing.T) {
 		"a real prompt change must change the digest")
 }
 
+// Copilot probes the host for its <environment_context> block (os.type() and a
+// live PATH lookup), so leaving it in the digest would make goldens fail on a
+// container without curl, or anywhere but Linux — reported as "contract drift"
+// when nothing about the CLI changed.
+func TestPromptDigestIgnoresHostProbedEnvironmentContext(t *testing.T) {
+	s := NewSanitizer("", "", "")
+	build := func(envBlock string) RecordedRequest {
+		return RecordedRequest{Body: map[string]any{
+			"messages": []any{map[string]any{
+				"role":    "system",
+				"content": "You are Copilot.\n" + envBlock + "\nFollow the rules.",
+			}},
+		}}
+	}
+
+	linux := s.Request(build("<environment_context>\n" +
+		"* Operating System: Linux\n* Available tools: git, curl\n</environment_context>"))
+	darwinSlim := s.Request(build("<environment_context>\n" +
+		"* Operating System: Darwin\n* Available tools: git\n</environment_context>"))
+
+	assert.Equal(t, linux.PromptDigest, darwinSlim.PromptDigest,
+		"host OS and PATH contents must not move the digest")
+
+	// The drift signal itself must survive: a change OUTSIDE the block still
+	// has to register.
+	changed := s.Request(RecordedRequest{Body: map[string]any{
+		"messages": []any{map[string]any{
+			"role":    "system",
+			"content": "You are Copilot v2.\n<environment_context>\n* Operating System: Linux\n</environment_context>\nFollow the rules.",
+		}},
+	}})
+	assert.NotEqual(t, linux.PromptDigest, changed.PromptDigest,
+		"a real prompt change outside the environment block must still be detected")
+}
+
+// A scenario-pinned session id must stay distinguishable from one Copilot
+// minted, otherwise the resume golden looks identical whether or not
+// --session-id was honoured.
+func TestPinnedSessionIDGetsItsOwnPlaceholder(t *testing.T) {
+	const pinned = "11111111-2222-4333-8444-555555555555"
+	const minted = "d8f5a82a-177e-41bc-aa40-854ae5e87219"
+
+	plain := NewSanitizer("", "", "")
+	assert.Equal(t, uuidPlaceholder, plain.Text(pinned),
+		"without a pin, every uuid normalizes the same way")
+
+	s := NewSanitizer("", "", "").WithPinnedSessionID(pinned)
+	assert.Equal(t, pinnedSessionIDToken, s.Text(pinned))
+	assert.Equal(t, uuidPlaceholder, s.Text(minted),
+		"a minted id must stay generic so it cannot masquerade as enrollment evidence")
+}
+
 // The credential-free signature: the SDK always sends Authorization, but with
 // an empty bearer. A real token must be detected as non-empty.
 func TestAuthorizationEmptinessDetection(t *testing.T) {

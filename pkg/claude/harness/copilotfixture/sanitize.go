@@ -32,20 +32,50 @@ var (
 	// RFC3339-ish, with or without fractional seconds and offset.
 	timestampRE = regexp.MustCompile(`\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})`)
 	loopbackRE  = regexp.MustCompile(`http://127\.0\.0\.1:\d+`)
+
+	// Copilot injects a host-probed block into its system prompt:
+	//
+	//	<environment_context>
+	//	* Current working directory: ...
+	//	* Git repository root: Not a git repository
+	//	* Operating System: Linux
+	//	* Available tools: git, curl
+	//	</environment_context>
+	//
+	// "Operating System" comes from os.type() and "Available tools" from a
+	// live PATH probe, so this block differs between hosts. Left in, it would
+	// poison PromptDigest: a container without curl, or any macOS developer,
+	// would see four goldens fail and read it as Copilot contract drift. Worse,
+	// re-recording with -update on macOS would bake Darwin digests in and break
+	// Linux CI.
+	//
+	// Removing the whole block keeps the digest sensitive to what it is meant
+	// to detect — a change in the CLI's actual prompting — while dropping
+	// host-derived noise it can never distinguish from that.
+	environmentContextRE = regexp.MustCompile(`(?s)<environment_context>.*?</environment_context>`)
 )
 
 // Placeholders written into goldens.
 const (
-	uuidPlaceholder      = "<uuid>"
-	timestampPlaceholder = "<timestamp>"
-	baseURLPlaceholder   = "http://127.0.0.1:<port>"
-	pathPlaceholder      = "<tmp>"
+	uuidPlaceholder       = "<uuid>"
+	timestampPlaceholder  = "<timestamp>"
+	baseURLPlaceholder    = "http://127.0.0.1:<port>"
+	pathPlaceholder       = "<tmp>"
+	envContextPlaceholder = "<environment_context/>"
+	pinnedSessionIDToken  = "<pinned-session-id>"
 )
 
 // Sanitizer normalizes one run's artifacts. Paths are supplied because they
 // are per-run temporary directories that must never reach a golden.
 type Sanitizer struct {
 	replacements []replacement
+
+	// pinnedSessionID is a session id the SCENARIO chose rather than one
+	// Copilot minted. It maps to its own placeholder so a golden can show that
+	// enrollment was honoured; without it the generic UUID rule would erase
+	// the distinction and the resume fixture would look identical whether or
+	// not --session-id worked.
+	pinnedSessionID string
 }
 
 type replacement struct{ from, to string }
@@ -65,14 +95,25 @@ func NewSanitizer(home, cache, workDir string) *Sanitizer {
 	return &Sanitizer{replacements: pairs}
 }
 
-// Text normalizes a free-text blob: run-specific paths first (they are the
-// most specific), then loopback ports, UUIDs and timestamps.
+// WithPinnedSessionID marks id as caller-chosen for this sanitizer.
+func (s *Sanitizer) WithPinnedSessionID(id string) *Sanitizer {
+	s.pinnedSessionID = id
+	return s
+}
+
+// Text normalizes a free-text blob: host-probed prompt scaffolding and
+// run-specific paths first (the most specific), then a pinned session id
+// before the generic UUID rule could swallow it, then loopback ports, the
+// remaining UUIDs and timestamps.
 func (s *Sanitizer) Text(in string) string {
-	out := in
+	out := environmentContextRE.ReplaceAllString(in, envContextPlaceholder)
 	for _, r := range s.replacements {
 		if r.from != "" {
 			out = strings.ReplaceAll(out, r.from, r.to)
 		}
+	}
+	if s.pinnedSessionID != "" {
+		out = strings.ReplaceAll(out, s.pinnedSessionID, pinnedSessionIDToken)
 	}
 	out = loopbackRE.ReplaceAllString(out, baseURLPlaceholder)
 	out = uuidRE.ReplaceAllString(out, uuidPlaceholder)
@@ -227,9 +268,9 @@ func (s *Sanitizer) Events(r RunResult) EventObservation {
 	obs := EventObservation{Types: r.EventTypes()}
 	if result, ok := r.Result(); ok {
 		obs.ResultExitCode = result.ExitCode
-		// The session id is a real UUID; keep only its normalized placeholder
-		// unless a scenario pinned it, in which case it is a constant the
-		// fixture chose and is meaningful to compare.
+		// A minted id normalizes to <uuid>; a scenario-pinned id normalizes to
+		// its own token, so the golden records that enrollment was honoured
+		// rather than erasing the difference.
 		obs.ResultSessionID = s.Text(result.SessionID)
 	}
 	var text strings.Builder

@@ -40,7 +40,7 @@
         "view",
         "write_agent"
       ],
-      "promptDigest": "sha256:790b123dad1b06d4"
+      "promptDigest": "sha256:55eab84af175b440"
     },
     {
       "path": "/v1/chat/completions",
@@ -82,7 +82,7 @@
         "view",
         "write_agent"
       ],
-      "promptDigest": "sha256:67e0f98dcff29f1a"
+      "promptDigest": "sha256:2d69d04c505fd575"
     }
   ],
   "events": {

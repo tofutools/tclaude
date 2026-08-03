@@ -31,6 +31,10 @@ const MockModel = "copilotfixture-mock-model"
 // that blows this budget is reporting a real behavior change.
 const RunTimeout = 90 * time.Second
 
+// waitDelay bounds how long Wait may block on descendants that inherited the
+// output pipes after the context already killed the process group.
+const waitDelay = 5 * time.Second
+
 // scrubbedAuthVars are removed from the child environment so a run cannot
 // silently acquire GitHub credentials from the developer or CI environment.
 //
@@ -212,6 +216,12 @@ func Run(t *testing.T, opts RunOptions) RunResult {
 		// Keeps the CLI's own diagnostics out of the captured streams.
 		"--log-level", "none",
 	}
+	// The CLI documents --resume as incompatible with --session-id; sending
+	// both would silently pick one and make the scenario mean something other
+	// than it reads.
+	if opts.ResumeID != "" && opts.SessionID != "" {
+		t.Fatal("copilotfixture: SessionID and ResumeID are mutually exclusive")
+	}
 	switch {
 	case opts.ResumeID != "":
 		args = append(args, "--resume="+opts.ResumeID)
@@ -233,6 +243,11 @@ func Run(t *testing.T, opts RunOptions) RunResult {
 	cmd := exec.CommandContext(ctx, "copilot", args...)
 	cmd.Dir = opts.WorkDir
 	cmd.Env = buildEnv(opts)
+	// Copilot spawns helpers (shell tools, indexers). Without WaitDelay a
+	// descendant still holding the output pipe keeps Wait blocked long after
+	// the context killed the parent, so a scenario could hang past its own
+	// timeout. This bounds that window.
+	cmd.WaitDelay = waitDelay
 
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout
@@ -280,6 +295,7 @@ func RunShell(t *testing.T, opts RunOptions, commandLine string) RunResult {
 	cmd := exec.CommandContext(ctx, "sh", "-c", commandLine)
 	cmd.Dir = opts.WorkDir
 	cmd.Env = buildEnv(opts)
+	cmd.WaitDelay = waitDelay
 
 	devNull, err := os.Open(os.DevNull)
 	if err != nil {
