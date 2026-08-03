@@ -3,6 +3,7 @@ package session
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -72,7 +73,14 @@ func TestBuildTclaudeLayerLaunchSpecComposesCopilotBaseline(t *testing.T) {
 	stateDir := filepath.Join(home, ".copilot")
 	assert.True(t, writable[stateDir],
 		"COPILOT_HOME must be writable: it is the one path whose denial fails a launch outright")
-	assert.True(t, writable[filepath.Join(home, ".cache", "copilot")],
+	// The package cache is the row that MOVES between platforms, so the
+	// expectation has to move with it — a hard-coded XDG path would assert the
+	// Linux catalog on a Mac and fail for the wrong reason.
+	packageCache := filepath.Join(home, ".cache", "copilot")
+	if runtime.GOOS == "darwin" {
+		packageCache = filepath.Join(home, "Library", "Caches", "copilot")
+	}
+	assert.True(t, writable[packageCache],
 		"the package cache must be writable: a cold cache is unpacked on first launch "+
 			"and after every version bump")
 	assert.True(t, writable[workspace],
