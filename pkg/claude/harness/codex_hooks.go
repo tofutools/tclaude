@@ -128,11 +128,7 @@ func codexHookCommandStr() string { return codexHookCommandString() }
 // that happens to share the name would be replaced on install (vanishingly
 // unlikely, and the same assumption CC's installer makes).
 func isOurCodexHook(command string) bool {
-	first := firstShellCommandWord(command)
-	if first == "" {
-		return false
-	}
-	return filepath.Base(first) == "tclaude"
+	return isTclaudeHookCommand(command)
 }
 
 // firstShellCommandWord decodes the quoting forms emitted by ShellQuoteArg so

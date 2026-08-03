@@ -34,16 +34,27 @@ func TestCopilotDescriptor(t *testing.T) {
 		t.Fatalf("SpawnBinaries() = %v, want copilot", SpawnBinaries())
 	}
 
+	// Hooks graduated in TCL-972: the fixture lab ran the real 1.0.77 binary
+	// and recorded both halves of the contract — where a tclaude-owned hook
+	// file has to live to fire, and which event names make Copilot emit
+	// Claude Code's payload. That is exactly the kind of evidence the rest of
+	// this test insists on before a contract may be advertised.
+	if h.Hooks == nil {
+		t.Fatalf("copilot must advertise the fixture-backed hook installer: %+v", h)
+	}
+
 	// Deferred contracts (TCL-965 phases 2-5): documented CLI flags are
 	// evidence, runtime formats and enforcement semantics are not.
-	if h.Convs != nil || h.Hooks != nil || h.Ask != nil || h.Sandbox != nil ||
+	if h.Convs != nil || h.Ask != nil || h.Sandbox != nil ||
 		h.Approval != nil || h.ToolGovernance != nil || h.ModelTransport != nil ||
 		h.NestedSandbox != nil || h.HostControlSandbox != nil || h.AskTimeout != nil {
 		t.Fatalf("copilot must not advertise unverified contracts: %+v", h)
 	}
+	if !h.SupportsHooks() {
+		t.Errorf("SupportsHooks() = false, want true now that hooks are fixture-backed")
+	}
 	for name, got := range map[string]bool{
 		"SupportsConvs":            h.SupportsConvs(),
-		"SupportsHooks":            h.SupportsHooks(),
 		"SupportsAsk":              h.SupportsAsk(),
 		"SupportsSandbox":          h.SupportsSandbox(),
 		"SupportsBuiltinOSSandbox": h.SupportsBuiltinOSSandbox(),

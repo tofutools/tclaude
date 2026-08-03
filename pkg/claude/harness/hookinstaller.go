@@ -1,5 +1,7 @@
 package harness
 
+import "path/filepath"
+
 // HookInstaller installs, checks, and repairs the tclaude callback hooks
 // in a harness's config target, and surfaces any remaining manual enable step.
 //
@@ -34,6 +36,21 @@ type HookInstaller interface {
 	// TrustNote returns any manual enable step the user must perform after
 	// install for the hooks to run, or "" when setup completed everything.
 	TrustNote() string
+}
+
+// isTclaudeHookCommand reports whether a hook command belongs to tclaude —
+// any command whose first shell word has the basename "tclaude". The basename
+// match is deliberate: it lets a stale absolute-path tclaude hook from an
+// earlier install be recognised and repaired. The trade-off is that ANY binary
+// named "tclaude" is treated as ours; a user hook pointing at an unrelated
+// tool that happens to share the name would be replaced on install
+// (vanishingly unlikely, and the assumption every tclaude installer makes).
+func isTclaudeHookCommand(command string) bool {
+	first := firstShellCommandWord(command)
+	if first == "" {
+		return false
+	}
+	return filepath.Base(first) == "tclaude"
 }
 
 // TrustedHookInstaller is the optional extension for harnesses whose command

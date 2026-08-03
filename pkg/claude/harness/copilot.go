@@ -22,9 +22,10 @@ const CopilotName = "copilot"
 // So this descriptor claims exactly what the documented CLI surface proves:
 // launch, exact resume, model/effort selection, a pre-minted conversation id,
 // a launch-time name, an initial submitted prompt, and three in-pane control
-// commands. ConvStore, Hooks, Sandbox, Approval, ToolGovernance,
-// ModelTransport, DirTrust and Ask are left nil for a later, fixture-backed
-// wave (TCL-965 phases 2-5).
+// commands — plus, since TCL-972, hooks, which the fixture lab promoted from
+// "undocumented" to "observed from the real binary". ConvStore, Sandbox,
+// Approval, ToolGovernance, ModelTransport, DirTrust and Ask are still left
+// nil for a later, fixture-backed wave (TCL-965 phases 2-5).
 func init() {
 	Register(&Harness{
 		Name:        CopilotName,
@@ -32,6 +33,15 @@ func init() {
 		Spawn:       copilotSpawner{},
 		Models:      copilotModels{},
 		Life:        copilotLifecycle{},
+
+		// Hooks are the first contract to graduate out of the
+		// documentation-only wave above, because they are the first one a
+		// real binary could be made to prove. copilot_hooks.go records what
+		// the pinned 1.0.77 CLI actually does: a tclaude-owned drop-in file
+		// under COPILOT_HOME fires, and registering Claude Code's event names
+		// makes Copilot emit Claude Code's payload — so live status needs an
+		// installer and nothing else. Everything still nil below stays nil.
+		Hooks: copilotHookInstaller{},
 
 		// Copilot's conv-id is knowable before the pane starts: `--session-id
 		// <uuid>` creates the session under a caller-chosen id, and `--name` /
