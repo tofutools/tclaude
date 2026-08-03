@@ -265,9 +265,17 @@ func persistCopilotContextSnapshot(
 		observedWindow := snap.Context.TokenLimit
 		if observedPct > 0 {
 			window, pct = observedWindow, observedPct
-		} else if observedWindow > 0 && observedWindow != window {
+		} else if observedWindow > 0 {
 			// A limit with no computable occupancy: record the limit and drop
-			// the percentage rather than keep one that no longer applies to it.
+			// the percentage rather than keep one that no longer applies.
+			//
+			// This deliberately does NOT require the limit to have CHANGED.
+			// session.truncation normally restates the same limit — the window
+			// only moves on a model change — so gating on a changed limit
+			// would leave the common case stale: a truncation that cut the
+			// conversation to 1000 tokens would keep rendering the 93% the
+			// preceding compaction measured. What makes the percentage invalid
+			// is the new observation, not a new denominator.
 			window, pct = observedWindow, 0
 		}
 	}

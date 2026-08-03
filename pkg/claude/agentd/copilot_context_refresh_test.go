@@ -318,6 +318,48 @@ func TestCopilotContextWindowAndPctMoveTogether(t *testing.T) {
 		"a limit with no disclosed occupancy must drop the percentage, never keep a stale one")
 }
 
+// TestCopilotTruncationAtTheSameWindowClearsPct is the common case, and the
+// one a "only clear when the limit CHANGED" rule silently missed.
+//
+// session.truncation normally restates the SAME limit — the window moves only
+// on a model change — so gating the clear on a changed denominator leaves the
+// ordinary truncation rendering the occupancy the previous compaction
+// measured, long after the conversation was cut out from under it.
+func TestCopilotTruncationAtTheSameWindowClearsPct(t *testing.T) {
+	setupTestDB(t)
+	resetCopilotContextRefreshStateForTest()
+	t.Cleanup(resetCopilotContextRefreshStateForTest)
+
+	home := copilotRefreshHome(t)
+	path := copilotRefreshLogPath(home)
+	appendCopilotRefreshEvents(t, path,
+		`{"type":"session.start","data":{"sessionId":"s","selectedModel":"gpt-5.4"}}`,
+		`{"type":"session.compaction_start","data":{"currentTokens":120000,"tokenLimit":128000,"trigger":"threshold"}}`)
+
+	sess := copilotRefreshSession(t, "copilot-same-window")
+	refreshCopilotContextSnapshotOnRead(sess, true)
+
+	snap, err := db.GetContextSnapshot(sess.ID)
+	require.NoError(t, err)
+	require.InDelta(t, 93.75, snap.ContextPct, 0.001)
+
+	// The truncation cuts the conversation to 1000 tokens under the SAME limit.
+	expireCopilotContextRefreshThrottle()
+	appendCopilotRefreshEvents(t, path,
+		`{"type":"session.truncation","data":{"tokenLimit":128000,"preTruncationTokensInMessages":119000,`+
+			`"preTruncationMessagesLength":40,"postTruncationTokensInMessages":1000,`+
+			`"postTruncationMessagesLength":2,"tokensRemovedDuringTruncation":118000,`+
+			`"messagesRemovedDuringTruncation":38,"performedBy":"BasicTruncator"}}`)
+	refreshCopilotContextSnapshotOnRead(sess, true)
+
+	snap, err = db.GetContextSnapshot(sess.ID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(128000), snap.ContextWindowSize, "the limit is unchanged and stays")
+	assert.Zero(t, snap.ContextPct,
+		"the truncation invalidated the occupancy; keeping 93.75% would render a window "+
+			"that was just emptied as nearly full")
+}
+
 // TestCopilotContextRefreshIsSerializedPerSession pins the in-flight guard.
 // The 2s throttle alone does not serialize anything: it measures from the
 // START of the previous refresh, so a full rebuild that outlives its own
