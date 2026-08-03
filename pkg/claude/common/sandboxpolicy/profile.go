@@ -443,7 +443,7 @@ func normalizeFilesystem(in []FilesystemGrant, allowMissing bool) ([]FilesystemG
 // common case for a guest path with no host counterpart.
 func canonicalGuestPathForComparison(path string) string {
 	if resolved, err := filepath.EvalSymlinks(path); err == nil {
-		return filepath.Clean(resolved)
+		return CanonicalHostSpelling(filepath.Clean(resolved))
 	}
 	if resolved, err := canonicalMissingDirectory(path); err == nil {
 		return resolved
@@ -514,7 +514,7 @@ func validateMountPaths(grants []FilesystemGrant, protected []string) error {
 		// spelling would let the other one walk straight through.
 		for _, candidate := range []string{guest, canonicalGuestPathForComparison(guest)} {
 			for _, denied := range protected {
-				if pathsIntersect(candidate, denied) {
+				if GuardPathsIntersect(candidate, denied) {
 					return fmt.Errorf(
 						"filesystem rule for %q: sandbox path %q intersects protected directory %q",
 						grant.Path, guest, denied,
@@ -522,8 +522,8 @@ func validateMountPaths(grants []FilesystemGrant, protected []string) error {
 				}
 			}
 			for _, socket := range sockets {
-				if pathContainsOrEqual(candidate, socket) ||
-					pathContainsOrEqual(candidate, canonicalGuestPathForComparison(socket)) {
+				if GuardContainsOrEqual(candidate, socket) ||
+					GuardContainsOrEqual(candidate, canonicalGuestPathForComparison(socket)) {
 					return fmt.Errorf(
 						"filesystem rule for %q: sandbox path %q would shadow the agentd control socket %q",
 						grant.Path, guest, socket,
@@ -570,7 +570,11 @@ func normalizeFilesystemGrant(
 	}
 	if grant.Access != AccessDeny {
 		for _, denied := range protected {
-			if pathsIntersect(resolved, denied) {
+			// Guard-biased on purpose: spelling restoration above already
+			// aligns the common case, but a not-yet-created grant path has no
+			// on-disk spelling to restore, so the residual folded collision has
+			// to be refused here rather than admitted.
+			if GuardPathsIntersect(resolved, denied) {
 				return "", "", "", false, fmt.Errorf(
 					"filesystem[%d].path %q intersects protected directory %q",
 					index, resolved, denied,
@@ -971,7 +975,12 @@ func canonicalDirectory(path string, allowMissing bool) (string, bool, error) {
 		}
 		return "", false, fmt.Errorf("resolve symlinks for %q: %w", original, err)
 	}
-	resolved = filepath.Clean(resolved)
+	// Restore the on-disk spelling so a case- or NFC-variant authoring of a
+	// path lands on the same string every other spelling of it does. Without
+	// this, EvalSymlinks preserves the caller's casing and the protected-root
+	// comparison below — plus grant dedup and deny-dominance — see two
+	// directories where a case-insensitive volume has one.
+	resolved = CanonicalHostSpelling(filepath.Clean(resolved))
 	info, err := os.Stat(resolved)
 	if err != nil {
 		return "", false, fmt.Errorf("stat %q: %w", resolved, err)
@@ -1035,6 +1044,10 @@ func canonicalMissingDirectory(path string) (string, error) {
 			if !info.IsDir() {
 				return "", fmt.Errorf("existing ancestor %q is not a directory", ancestor)
 			}
+			// Only the existing ancestor can be spelling-restored; the
+			// missing suffix has no on-disk name to read yet and is re-attached
+			// as authored. Guard comparisons cover that residue.
+			resolved = CanonicalHostSpelling(resolved)
 			for i := len(suffix) - 1; i >= 0; i-- {
 				resolved = filepath.Join(resolved, suffix[i])
 			}
@@ -1078,7 +1091,11 @@ func protectedPaths() ([]string, error) {
 				path = resolved
 			}
 		}
-		paths[i] = path
+		// The wall and the paths tested against it must be spelled the same
+		// way, or a case-insensitive volume lets a variant spelling walk
+		// through it. canonicalDirectory restores the grant side; this restores
+		// the protected side.
+		paths[i] = CanonicalHostSpelling(path)
 	}
 	return paths, nil
 }

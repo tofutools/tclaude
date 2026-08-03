@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
 // Copilot's minimum sandbox filesystem baseline (TCL-975).
@@ -506,7 +508,13 @@ func validateCopilotBaseline(
 				fmt.Sprintf("Copilot sandbox baseline entry %q is not a cleaned path: %q", e.ID, e.Path))
 		}
 		resolved := resolveSymlinks(e.Path)
-		if pathContainsOrEqual(resolved, resolvedHome) {
+		// Every containment test in this loop is a REFUSAL test, so they all
+		// use the guard-biased comparison: on a case-insensitive volume two
+		// spellings that differ only in case or Unicode normalization name one
+		// directory, and a byte-exact test would let the variant spelling of a
+		// too-broad path through. Where the relation cannot be established the
+		// guard refuses, which is the direction a baseline check must err in.
+		if sandboxpolicy.GuardContainsOrEqual(resolved, resolvedHome) {
 			return copilotBaselineError("too-broad",
 				fmt.Sprintf("Copilot sandbox baseline entry %q resolves to %q, which covers the home directory %q; "+
 					"a per-harness baseline must never grant HOME", e.ID, e.Path, home))
@@ -516,7 +524,7 @@ func validateCopilotBaseline(
 			// ~/.cache/me, a COPILOT_CACHE_HOME of ~/.cache is no longer equal
 			// to the base but still swallows it, and every other application's
 			// cache with it.
-			if pathContainsOrEqual(resolved, base) {
+			if sandboxpolicy.GuardContainsOrEqual(resolved, base) {
 				return copilotBaselineError("too-broad",
 					fmt.Sprintf("Copilot sandbox baseline entry %q resolves to %q, which covers the shared %s; "+
 						"grant the Copilot-specific subdirectory instead", e.ID, e.Path, label))
@@ -536,7 +544,7 @@ func validateCopilotBaseline(
 			// no better. A socket path under ~/.tclaude/data is the concrete
 			// case: it is caller-supplied and would otherwise reach through
 			// the very deny the api/ split exists to make possible.
-			if pathContainsOrEqual(resolved, sub) || pathContainsOrEqual(sub, resolved) {
+			if sandboxpolicy.GuardPathsIntersect(resolved, sub) {
 				return copilotBaselineError("too-broad",
 					fmt.Sprintf("Copilot sandbox baseline entry %q resolves to %q, which covers or lies inside "+
 						"tclaude's protected state %q; that tree is denied to every sandboxed harness",
@@ -562,7 +570,7 @@ func validateCopilotBaseline(
 				fmt.Sprintf("Copilot sandbox baseline entry %q resolves to %q, a top-level system directory; "+
 					"a per-harness baseline grants Copilot-specific subdirectories only", e.ID, e.Path))
 		}
-		if resolvedWorkspace != "" && pathContainsOrEqual(resolved, resolvedWorkspace) {
+		if resolvedWorkspace != "" && sandboxpolicy.GuardContainsOrEqual(resolved, resolvedWorkspace) {
 			return copilotBaselineError("too-broad",
 				fmt.Sprintf("Copilot sandbox baseline entry %q resolves to %q, which covers the workspace %q; "+
 					"the workspace grant is the caller's and is never part of this baseline",
@@ -638,22 +646,52 @@ func copilotProtectedSubdirs(home string) []string {
 // Every other conventional temp location is already deeper than one level —
 // Linux /var/tmp and /run/user/<uid>, macOS /var/folders/<…> — so they never
 // reach the system-root rule and need no exemption here.
+// The comparison is case-insensitive on darwin for the same reason the firmlink
+// prefix is: on a case-insensitive volume TMPDIR=/TMP names /tmp. A byte-exact
+// test would fail to recognise it, and the row would be refused as a top-level
+// system directory — a spurious refusal rather than a hole, but a real one.
+//
+// Widening this widens an EXEMPTION rather than a refusal, so it deserves the
+// opposite scrutiny: on a case-SENSITIVE macOS volume a literal /TMP would now
+// be exempted from the top-level rule. Creating a second top-level temp
+// directory requires root, and the row still has to be the temp row to qualify,
+// so the reachable surface is nil — but the direction is stated here rather
+// than left implicit, because reasoning about only one direction of this change
+// is what previously let a case-variant firmlink spelling through.
 func copilotConventionalTempRoot(goos, literal, resolved string) bool {
 	const conventional = "/tmp"
-	return copilotNormalizeFirmlink(goos, literal) == conventional ||
-		copilotNormalizeFirmlink(goos, resolved) == conventional
+	return copilotTempRootMatch(goos, literal, conventional) ||
+		copilotTempRootMatch(goos, resolved, conventional)
+}
+
+func copilotTempRootMatch(goos, candidate, conventional string) bool {
+	normalized := copilotNormalizeFirmlink(goos, candidate)
+	if goos == "darwin" {
+		return strings.EqualFold(normalized, conventional)
+	}
+	return normalized == conventional
 }
 
 // copilotNormalizeFirmlink collapses macOS's /private/<x> firmlink spelling
 // onto /<x> so the literal and resolved forms of /etc, /tmp and /var compare
 // equal. It is a no-op everywhere else.
+//
+// The prefix match is case-insensitive on darwin because the boot volume
+// normally is: "/Private/etc" names /etc there. A byte-exact match would leave
+// that spelling un-collapsed, so copilotSystemRootDir would see a Dir() of
+// "/Private" rather than "/" and NOT classify it as a top-level system
+// directory — letting COPILOT_HOME=/Private/etc through the gate and into an rw
+// grant on /etc. The resolved form is separately spelling-canonicalized before
+// it reaches here, but the LITERAL operator-supplied spelling is not, and the
+// system-root rule deliberately tests both.
 func copilotNormalizeFirmlink(goos, p string) string {
 	p = filepath.Clean(p)
 	if goos != "darwin" {
 		return p
 	}
-	if rest, ok := strings.CutPrefix(p, "/private/"); ok && rest != "" {
-		return "/" + rest
+	const firmlink = "/private/"
+	if len(p) > len(firmlink) && strings.EqualFold(p[:len(firmlink)], firmlink) {
+		return "/" + p[len(firmlink):]
 	}
 	return p
 }

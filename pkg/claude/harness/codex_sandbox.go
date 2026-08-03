@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
 // Codex sandbox modes — openai/codex `SandboxMode` (kebab-case), verified
@@ -111,7 +113,15 @@ func CodexSandboxCwdConflict(mode, cwd, home string) bool {
 	}
 	cwd, home = resolveSymlinks(cwd), resolveSymlinks(home)
 	for _, sub := range codexProtectedSubdirs {
-		if pathContainsOrEqual(cwd, filepath.Join(home, sub)) {
+		// Guard-biased containment rather than the byte-exact form: on a
+		// case-insensitive volume a cwd spelled "/Users/Dev" and a home spelled
+		// "/Users/dev" are one directory, and a byte comparison would report no
+		// conflict and hand Codex a workspace-write root containing $HOME.
+		// GuardContainsOrEqual only accepts such a folded relation once file
+		// identity (or the volume's own spelling semantics) confirms it, and
+		// refuses when it cannot be established — the same fail-closed posture
+		// resolveSymlinks already takes.
+		if sandboxpolicy.GuardContainsOrEqual(cwd, filepath.Join(home, sub)) {
 			return true
 		}
 	}
@@ -135,7 +145,10 @@ func resolveSymlinks(p string) string {
 	rest := ""
 	for cur := p; ; {
 		if r, err := filepath.EvalSymlinks(cur); err == nil {
-			return filepath.Join(r, rest)
+			// EvalSymlinks preserves the caller's casing, so restore the real
+			// on-disk spelling of the resolved prefix. That makes cwd and home
+			// agree on a case-insensitive volume before they are compared.
+			return filepath.Join(sandboxpolicy.CanonicalHostSpelling(r), rest)
 		}
 		parent := filepath.Dir(cur)
 		if parent == cur {
@@ -158,21 +171,4 @@ var codexProtectedSubdirs = []string{
 	filepath.Join(".tclaude", "data"),
 	".codex",
 	filepath.Join(".claude", "sessions"),
-}
-
-// pathContainsOrEqual reports whether dir is the same path as, or an
-// ancestor of, target. Both should be absolute + cleaned. It compares by
-// path segments via filepath.Rel, so it is not fooled by shared string
-// prefixes (e.g. /home/foo vs /home/foobar).
-func pathContainsOrEqual(dir, target string) bool {
-	rel, err := filepath.Rel(dir, target)
-	if err != nil {
-		return false
-	}
-	if rel == "." {
-		return true // same path
-	}
-	// target is under dir iff getting from dir to target never steps up
-	// ("..") — i.e. rel is neither ".." nor a "../…" path.
-	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }

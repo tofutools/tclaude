@@ -62,7 +62,11 @@ func CanonicalCommonRuleHome(home string) (string, error) {
 	if resolved, err := filepath.EvalSymlinks(home); err == nil {
 		home = filepath.Clean(resolved)
 	}
-	return home, nil
+	// Every catalog rule path is built by joining onto this home, so restoring
+	// its on-disk spelling here is what keeps those paths comparable with the
+	// grants and protected roots they are evaluated against on a
+	// case-insensitive volume.
+	return CanonicalHostSpelling(home), nil
 }
 
 // CommonRuleCatalog returns catalog v1 resolved for one platform/home.
