@@ -2,7 +2,6 @@ package agentd
 
 import (
 	"bytes"
-	"errors"
 	"io"
 	"os/exec"
 	"slices"
@@ -25,15 +24,36 @@ const (
 // scripts the answers it depends on, without a real tmux server. `pids` is the
 // queue of probe results — a decimal pid, probeNoServer, or probeBroken —
 // consumed one per `display-message`; failStart makes the start invocation
-// fail. `sessions` is what the teardown's emptiness check sees, and
-// listSessionsErr makes that check itself fail.
+// fail. `panes` scripts the teardown's emptiness probe the way `list-panes -a`
+// answers it: probeNoServer, probeBroken, or the literal stdout tmux would
+// print (see tuiPanes). The zero value is a server with no panes at all.
 type tuiTmuxRec struct {
-	calls           [][]string
-	pids            []string
-	failStart       bool
-	sessions        []string
-	listSessionsErr error
+	calls     [][]string
+	pids      []string
+	failStart bool
+	panes     string
 }
+
+// tuiPanes builds the `list-panes -a -F "#{session_name}\t#{pane_dead}"` stdout
+// for the given panes, so a test can describe what is on the server in the same
+// terms tmux reports it: one line per PANE, not per session.
+func tuiPanes(panes ...[2]string) string {
+	var b strings.Builder
+	for _, p := range panes {
+		b.WriteString(p[0] + "\t" + p[1] + "\n")
+	}
+	return b.String()
+}
+
+// tuiLivePane / tuiDeadPane name the two pane_dead values at the call site,
+// because "worker", "0" reads as a pane index rather than "not dead".
+func tuiLivePane(session string) [2]string { return [2]string{session, "0"} }
+func tuiDeadPane(session string) [2]string { return [2]string{session, "1"} }
+
+// noServerScript is tmux's own shape for "no server running": the message on
+// stderr, exit 1. The shell is here only because stderr redirection needs one;
+// the script is a compile-time constant with nothing interpolated into it.
+const noServerScript = "echo 'no server running on /tmp/tmux-1000/tclaude' >&2; exit 1"
 
 func (r *tuiTmuxRec) Command(args ...string) *exec.Cmd {
 	r.calls = append(r.calls, append([]string(nil), args...))
@@ -44,15 +64,23 @@ func (r *tuiTmuxRec) Command(args ...string) *exec.Cmd {
 		}
 		switch answer {
 		case probeNoServer:
-			// tmux's own shape for this: the message on stderr, exit 1. The shell
-			// is here only because stderr redirection needs one; the script is a
-			// compile-time constant with nothing interpolated into it.
-			return exec.Command("sh", "-c",
-				"echo 'no server running on /tmp/tmux-1000/tclaude' >&2; exit 1")
+			return exec.Command("sh", "-c", noServerScript)
 		case probeBroken:
 			return exec.Command("false")
 		default:
 			return exec.Command("echo", answer)
+		}
+	}
+	if slices.Contains(args, "list-panes") {
+		switch r.panes {
+		case probeNoServer:
+			return exec.Command("sh", "-c", noServerScript)
+		case probeBroken:
+			return exec.Command("false")
+		default:
+			// printf, not echo: the empty script must produce empty stdout, which
+			// is exactly what tmux prints for a server holding no panes.
+			return exec.Command("printf", "%s", r.panes)
 		}
 	}
 	if r.failStart && slices.Contains(args, "start-server") {
@@ -61,21 +89,27 @@ func (r *tuiTmuxRec) Command(args ...string) *exec.Cmd {
 	return exec.Command("true")
 }
 
+// ListSessions satisfies clcommon.Tmux. The --tui lifecycle deliberately does
+// not use it — see tuiTmuxLiveSessions for why — so a call here is a test
+// failure waiting to happen rather than a value worth scripting.
 func (r *tuiTmuxRec) ListSessions() (map[string]struct{}, error) {
-	r.calls = append(r.calls, []string{"list-sessions"})
-	if r.listSessionsErr != nil {
-		return nil, r.listSessionsErr
-	}
-	alive := map[string]struct{}{}
-	for _, name := range r.sessions {
-		alive[name] = struct{}{}
-	}
-	return alive, nil
+	r.calls = append(r.calls, []string{"ListSessions"})
+	return map[string]struct{}{}, nil
 }
 
 func (r *tuiTmuxRec) issued(subcommand string) bool {
 	return slices.ContainsFunc(r.calls, func(call []string) bool {
 		return slices.Contains(call, subcommand)
+	})
+}
+
+// releasedExitEmpty reports the exact argv that hands a surviving server back to
+// tmux's own lifetime rule. Matched whole rather than by substring: the STARTUP
+// call also mentions exit-empty (setting it off), so `issued("exit-empty")`
+// would pass on every run and pin nothing.
+func (r *tuiTmuxRec) releasedExitEmpty() bool {
+	return slices.ContainsFunc(r.calls, func(call []string) bool {
+		return slices.Equal(call, []string{"set-option", "-gu", "exit-empty"})
 	})
 }
 
@@ -159,7 +193,7 @@ func TestStartTUITmuxServer_StartsEmptyThenKills(t *testing.T) {
 // server stays and the operator is told why.
 func TestStartTUITmuxServer_LeavesAServerWithSessionsOnIt(t *testing.T) {
 	rec := installTUITmuxRec(t, "", probeNoServer, "4242", "4242")
-	rec.sessions = []string{"worker-a", "worker-b"}
+	rec.panes = tuiPanes(tuiLivePane("worker-a"), tuiLivePane("worker-b"))
 
 	var notice bytes.Buffer
 	stop, owned := startTUITmuxServer(&notice)
@@ -175,6 +209,12 @@ func TestStartTUITmuxServer_LeavesAServerWithSessionsOnIt(t *testing.T) {
 	if !strings.Contains(got, "left running") || !strings.Contains(got, "2 sessions") {
 		t.Fatalf("teardown notice = %q, want it to report 2 sessions keeping the server alive", got)
 	}
+	// exit-empty off outlives this process. A server we decline to kill must be
+	// handed back to tmux's own rule, or it never exits once those sessions end
+	// and the next --tui run — finding it already up — will not adopt it either.
+	if !rec.releasedExitEmpty() {
+		t.Fatalf("a surviving server must get exit-empty released, got tmux calls %v", rec.calls)
+	}
 }
 
 // TestStartTUITmuxServer_CountsOneSessionInSingular keeps the one line the
@@ -182,7 +222,7 @@ func TestStartTUITmuxServer_LeavesAServerWithSessionsOnIt(t *testing.T) {
 // declined to kill their agent.
 func TestStartTUITmuxServer_CountsOneSessionInSingular(t *testing.T) {
 	rec := installTUITmuxRec(t, "", probeNoServer, "4242", "4242")
-	rec.sessions = []string{"worker-a"}
+	rec.panes = tuiPanes(tuiLivePane("worker-a"))
 
 	var notice bytes.Buffer
 	stop, _ := startTUITmuxServer(&notice)
@@ -193,14 +233,77 @@ func TestStartTUITmuxServer_CountsOneSessionInSingular(t *testing.T) {
 	}
 }
 
+// TestStartTUITmuxServer_CountsASessionOnceForAllItsPanes is why the probe reads
+// panes and folds them into sessions rather than counting lines: a session with
+// several panes is one session, and the operator is told how many sessions are
+// keeping their server alive, not how many panes those sessions happen to hold.
+func TestStartTUITmuxServer_CountsASessionOnceForAllItsPanes(t *testing.T) {
+	rec := installTUITmuxRec(t, "", probeNoServer, "4242", "4242")
+	rec.panes = tuiPanes(tuiLivePane("worker-a"), tuiLivePane("worker-a"), tuiLivePane("worker-a"))
+
+	var notice bytes.Buffer
+	stop, _ := startTUITmuxServer(&notice)
+	stop()
+
+	if got := notice.String(); !strings.Contains(got, "1 session ") {
+		t.Fatalf("teardown notice = %q, want three panes of one session counted once", got)
+	}
+}
+
+// TestStartTUITmuxServer_KillsAServerHoldingOnlyDeadPanes keeps the ordinary
+// path working. An agent that has run and exited leaves its session behind as a
+// retained-dead pane holding scrollback — that is what remain-on-exit is for.
+// Counting those as work in progress would mean the server survived almost
+// every real session, which is the feature failing to fire rather than failing
+// safe.
+func TestStartTUITmuxServer_KillsAServerHoldingOnlyDeadPanes(t *testing.T) {
+	rec := installTUITmuxRec(t, "", probeNoServer, "4242", "4242")
+	rec.panes = tuiPanes(tuiDeadPane("worker-a"), tuiDeadPane("worker-b"))
+
+	var notice bytes.Buffer
+	stop, _ := startTUITmuxServer(&notice)
+	stop()
+
+	if !rec.issued("kill-server") {
+		t.Fatalf("a server holding only corpses must still be shut down, got tmux calls %v", rec.calls)
+	}
+	if got := notice.String(); !strings.Contains(got, "shut down") {
+		t.Fatalf("teardown notice = %q, want it to report the server was shut down", got)
+	}
+}
+
+// TestStartTUITmuxServer_KeepsASessionAliveForOneLivePane is the multi-pane
+// direction of the same read, and the reason the probe cannot use a
+// session-scoped #{pane_dead}: tmux resolves a pane variable on `list-sessions`
+// against the session's CURRENT window's active pane only. A session whose
+// harness pane has exited while a second window still runs something must count
+// as live, or the check kills the very work it exists to protect.
+func TestStartTUITmuxServer_KeepsASessionAliveForOneLivePane(t *testing.T) {
+	rec := installTUITmuxRec(t, "", probeNoServer, "4242", "4242")
+	rec.panes = tuiPanes(tuiDeadPane("worker-a"), tuiLivePane("worker-a"))
+
+	var notice bytes.Buffer
+	stop, _ := startTUITmuxServer(&notice)
+	stop()
+
+	if rec.issued("kill-server") {
+		t.Fatalf("one live pane must keep its session alive, got tmux calls %v", rec.calls)
+	}
+	if got := notice.String(); !strings.Contains(got, "1 session ") {
+		t.Fatalf("teardown notice = %q, want the part-dead session counted as live", got)
+	}
+}
+
 // TestStartTUITmuxServer_KeepsAServerWhoseSessionsItCannotList applies the
 // probe's fail-safe rule to the new condition: a listing that errors says
 // nothing about whether the server is empty, and kill-server does not ask
 // twice. Leaving it costs an idle server; killing it could cost the sessions
-// the listing failed to name.
+// the listing failed to name. This is also why the check does not go through
+// clcommon.ListSessions, which turns any non-zero tmux exit into the empty set
+// — a fine answer for a dashboard poll, a kill order here.
 func TestStartTUITmuxServer_KeepsAServerWhoseSessionsItCannotList(t *testing.T) {
 	rec := installTUITmuxRec(t, "", probeNoServer, "4242", "4242")
-	rec.listSessionsErr = errors.New("list-sessions: unreadable")
+	rec.panes = probeBroken
 
 	var notice bytes.Buffer
 	stop, _ := startTUITmuxServer(&notice)
@@ -214,10 +317,27 @@ func TestStartTUITmuxServer_KeepsAServerWhoseSessionsItCannotList(t *testing.T) 
 	}
 }
 
+// TestStartTUITmuxServer_DoesNotUseTheDashboardSessionRead pins the boundary
+// choice itself. clcommon.ListSessions is the snapshot read the dashboard and
+// peer listings use; its documented semantics collapse a failed listing into
+// "nothing is alive", which is the one answer this teardown must never act on.
+func TestStartTUITmuxServer_DoesNotUseTheDashboardSessionRead(t *testing.T) {
+	rec := installTUITmuxRec(t, "", probeNoServer, "4242", "4242")
+	rec.panes = tuiPanes(tuiLivePane("worker-a"))
+
+	stop, _ := startTUITmuxServer(io.Discard)
+	stop()
+
+	if rec.issued("ListSessions") {
+		t.Fatalf("the emptiness check must not route through ListSessions, got tmux calls %v", rec.calls)
+	}
+}
+
 // TestStartTUITmuxServer_ChecksEmptinessOnlyAfterOwnership pins the order the
 // conditions are evaluated in. A server that is not ours must not even be
-// listed: the emptiness check exists to protect sessions on a server we would
-// otherwise kill, and a server we will never kill has nothing to protect.
+// inspected: the emptiness check exists to protect sessions on a server we would
+// otherwise kill, and a server we will never kill has nothing to protect. Its
+// exit-empty is not ours to restore either.
 func TestStartTUITmuxServer_ChecksEmptinessOnlyAfterOwnership(t *testing.T) {
 	rec := installTUITmuxRec(t, "", probeNoServer, "4242", "9999")
 
@@ -225,11 +345,14 @@ func TestStartTUITmuxServer_ChecksEmptinessOnlyAfterOwnership(t *testing.T) {
 	stop, _ := startTUITmuxServer(&notice)
 	stop()
 
-	if rec.issued("list-sessions") {
-		t.Fatalf("a replacement server must not be inspected at all, got tmux calls %v", rec.calls)
+	if rec.issued("list-panes") || rec.releasedExitEmpty() {
+		t.Fatalf("a replacement server must not be inspected or reconfigured, got tmux calls %v", rec.calls)
 	}
-	if got := notice.String(); got != "" {
-		t.Fatalf("teardown notice = %q, want silence on a server that was never ours", got)
+	// Silence would be indistinguishable from "this daemon never owned a
+	// server", so even the outcomes that predate the emptiness check say what
+	// they did.
+	if got := notice.String(); !strings.Contains(got, "left running") {
+		t.Fatalf("teardown notice = %q, want it to report the server was left running", got)
 	}
 }
 

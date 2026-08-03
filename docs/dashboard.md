@@ -297,16 +297,28 @@ server to, so it is ignored and startup says so.
 When the console owns the server, its quit confirmation says so
 (`Quit + shut down agentd (and tmux if empty)?`) instead of the plain wording.
 
-"Empty" here means what it means everywhere else in tclaude: no session whose
-pane is still live. A session left behind as a retained-dead corpse — scrollback
-from an agent that has already exited — does not hold the server up.
+"Empty" means no session with anything still running in it. The check reads
+every pane on the server (`list-panes -a`) and counts a session as live when any
+of its panes is, so a session whose harness pane has exited while a second window
+still runs something keeps the server up. A session left behind as a
+retained-dead corpse — scrollback from an agent that has already exited, which is
+what `remain-on-exit` is for — does not, so the ordinary "agent ran, exited, you
+quit" path still ends in a shut-down server.
+
+A server that survives gets its `exit-empty` released back to tmux's default, so
+it exits on its own once those last sessions end rather than lingering pinned.
 
 The exit line naming the outcome goes to stdout, after the console has given the
-terminal back, so it is on the scrollback you land on:
+terminal back, so it is on the scrollback you land on. Every outcome says
+something — a silent exit would be indistinguishable from a daemon that never
+owned a server at all:
 
 ```
 tmux server shut down: it had no sessions left on it
-tmux server left running: 2 sessions still on it
+tmux server left running: 2 sessions still on it (it will exit when they do)
+tmux server left running: could not check whether it still has sessions
+tmux server left running: it is not the one this daemon started
+tmux server was already gone; nothing to shut down
 ```
 
 Ownership is only ever claimed on a definite answer. If the check cannot tell
@@ -318,9 +330,11 @@ something needs one.
 Much the same holds on the way out. A server the console cannot re-verify at
 exit is left running rather than killed on a guess, and so is one whose pid no
 longer answers as the pid it started — that server died and something else took
-the socket, so it is not inspected or killed at all. A server whose session
-listing itself fails is left running for the same reason: an answer that could
-not be read is not permission to kill. The one exception is a console that could
+the socket, so it is not inspected or killed at all. A server whose pane listing
+itself fails is left running for the same reason: an answer that could not be
+read is not permission to kill — which is why the check does not go through the
+dashboard's ordinary session read, whose documented semantics turn any failed
+listing into "nothing is alive". The one exception is a console that could
 not read a pid for its own server at startup: the check *before* the start had
 already said no server was running, so whatever answers at exit is what this run
 put there, and it is killed if empty. All of these are logged to `output.log`.
@@ -337,12 +351,10 @@ comes and goes with it.
 
 One consequence worth knowing: `exit-empty off` outlives the process that set
 it. If an owning daemon is killed outright — `SIGKILL`, an OOM kill — its
-teardown never runs, and the empty server it started stays up indefinitely
-instead of exiting on its own. Quitting with sessions still on the server has
-the same tail: the server survives by design, but `exit-empty off` survives with
-it, so it stays up after those last sessions end too. Either way the next
-`--tui` run finds it and, by the rule above, treats it as somebody else's. Clear
-it with:
+teardown never runs, so it never releases the option, and the empty server it
+started stays up indefinitely instead of exiting on its own. The next `--tui`
+run finds it and, by the rule above, treats it as somebody else's. Clear it
+with:
 
 ```bash
 tmux -L tclaude kill-server   # only when you know nothing is running on it

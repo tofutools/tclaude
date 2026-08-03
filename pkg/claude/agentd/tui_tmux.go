@@ -2,9 +2,9 @@ package agentd
 
 // tmux-server lifetime for `tclaude agentd serve --tui`. The console is the
 // daemon's whole face and quitting it stops the daemon, so under --tui the
-// daemon brings the `-L tclaude` tmux server up empty at startup and kills it
-// again on the way out, instead of leaving it to appear and disappear
-// underneath the console as agents come and go.
+// daemon brings the `-L tclaude` tmux server up empty at startup and, if it is
+// still empty on the way out, kills it again — instead of leaving it to appear
+// and disappear underneath the console as agents come and go.
 //
 // Ownership is strictly limited to a server this run actually created: a server
 // that was already up when the console started belongs to whoever started it,
@@ -78,6 +78,81 @@ const (
 // willing to interpret; anything else it does not recognise stays Unknown.
 const tmuxNoServerStderr = "no server running"
 
+// tuiTmuxLiveSessions counts the sessions on the tclaude tmux server that still
+// have something running in them, with the same three-state discipline as the
+// pid probe: an answer we could not read is Unknown, not zero.
+//
+// It asks tmux directly rather than going through clcommon.Default.ListSessions,
+// which is shaped for the dashboard's snapshot and is wrong here twice over.
+// First, ListSessions collapses ANY non-zero exit to the empty set — correct for
+// a poller that only wants "everything is offline", fatal for a check that turns
+// the empty set into kill-server, since a socket blip would read as "no sessions"
+// and take the operator's agents with it. Second, it formats `#{pane_dead}` on
+// `list-sessions`, where tmux resolves a pane-scoped variable against the
+// session's CURRENT window's active pane: a session whose window 0 holds a
+// retained-dead harness pane reads as offline even when another window of the
+// same session is running something. Killing on that would be exactly the loss
+// this check exists to prevent.
+//
+// `list-panes -a` avoids both: it enumerates every pane on the server with its
+// own session name, so a session counts as live when ANY of its panes is, and
+// the error handling below is this function's own. A session whose panes are all
+// retained-dead is a husk holding scrollback, not work — it does not keep the
+// server up, which is what makes the ordinary "agent ran, exited, operator quit"
+// path still end in a shut-down server.
+//
+// `-N` keeps the probe from starting the very server it is asking about, and
+// stdout is read on its own so a warning on stderr cannot be parsed as panes.
+func tuiTmuxLiveSessions() (int, tuiTmuxProbe) {
+	out, err := clcommon.Default.Command(
+		"-N", "list-panes", "-a", "-F", "#{session_name}\t#{pane_dead}").Output()
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) &&
+			strings.Contains(string(exitErr.Stderr), tmuxNoServerStderr) {
+			return 0, tuiTmuxProbeNone
+		}
+		return 0, tuiTmuxProbeUnknown
+	}
+	live := map[string]struct{}{}
+	for line := range strings.SplitSeq(string(out), "\n") {
+		name, dead, ok := strings.Cut(strings.TrimSpace(line), "\t")
+		// A line we cannot split is a format we do not recognise. Counting it as
+		// a live session errs toward leaving the server up, which is the safe
+		// direction everywhere else in this file too.
+		if name == "" {
+			continue
+		}
+		if ok && dead == "1" {
+			continue
+		}
+		live[name] = struct{}{}
+	}
+	return len(live), tuiTmuxProbeRunning
+}
+
+// releaseTUITmuxExitEmpty hands a server this daemon is walking away from back
+// to tmux's own lifetime rule.
+//
+// startTUITmuxServer pins `exit-empty off` so an empty server survives with no
+// agents on it, and the kill is otherwise the only thing that undoes that. A
+// server left running with `exit-empty off` still set would never exit on its
+// own once its last session ended — and by this file's own ownership rule the
+// next `--tui --own-tmux-server` run finds it already up, treats it as somebody
+// else's, and neither adopts nor kills it. The flag would quietly stop working
+// until the operator noticed a stray tmux process and killed it by hand.
+//
+// Restoring the option is safe in a way killing is not: it only ever lets an
+// EMPTY server exit, so it cannot cost a session. Failure is logged and ignored —
+// there is nothing better to do from a process that is on its way out.
+func releaseTUITmuxExitEmpty(pid string) {
+	if out, err := clcommon.Default.Command("set-option", "-gu", "exit-empty").CombinedOutput(); err != nil {
+		slog.Warn("tui: could not restore exit-empty on the tclaude tmux server",
+			"error", err, "output", strings.TrimSpace(string(out)),
+			"server_pid", pid, "module", "agentd")
+	}
+}
+
 // tuiTmuxServerPID reports the pid of an already-running tclaude tmux server.
 // `-N` is what makes this a probe rather than a launch: without it the client
 // would start the very server it is asking about.
@@ -112,11 +187,12 @@ func tuiTmuxServerPID() (string, tuiTmuxProbe) {
 }
 
 // startTUITmuxServer starts the console's tmux server, if there is not already
-// one, and returns the teardown that kills it again plus whether ownership was
-// taken at all. The teardown is a no-op unless this call is what created the
-// server — an external runtime, a server that predates the console, a probe
-// that could not tell, and a start that failed all leave nothing to tear down,
-// so `serve --tui` never kills a server it did not put there.
+// one, and returns the teardown that kills an empty one again plus whether
+// ownership was taken at all. The teardown is a no-op unless this call is what
+// created the server — an external runtime, a server that predates the console,
+// a probe that could not tell, and a start that failed all leave nothing to tear
+// down, so `serve --tui` never kills a server it did not put there, and even the
+// one it did put there survives if anything is still running on it.
 //
 // The ownership flag is not just bookkeeping: it decides whether quitting the
 // console is about to end the tmux server, which is what the quit confirmation
@@ -184,12 +260,18 @@ func startTUITmuxServer(notify io.Writer) (stop func(), owned bool) {
 	slog.Info("tui: started the tclaude tmux server with exit-empty off",
 		"server_pid", ownerPID, "module", "agentd")
 
+	// Every outcome below narrates itself to the operator. The console is gone
+	// by now and its slog lines land in output.log, so this is the only place
+	// they learn what happened to the server their agents were on — and "left
+	// running" has to be as loud as "shut down", or silence reads as "this
+	// daemon never owned a server at all".
 	return func() {
 		pid, state := tuiTmuxServerPID()
 		switch state {
 		case tuiTmuxProbeNone:
 			slog.Info("tui: tclaude tmux server is already gone; nothing to shut down",
 				"server_pid", ownerPID, "module", "agentd")
+			fmt.Fprintln(notify, "tmux server was already gone; nothing to shut down")
 			return
 		case tuiTmuxProbeUnknown:
 			// Same rule as at startup, for the same reason: without an answer there
@@ -198,6 +280,8 @@ func startTUITmuxServer(notify io.Writer) (stop func(), owned bool) {
 			// docs/dashboard.md); killing it could cost an operator's agents.
 			slog.Warn("tui: could not confirm the tclaude tmux server is still ours; leaving it running",
 				"server_pid", ownerPID, "module", "agentd")
+			fmt.Fprintln(notify,
+				"tmux server left running: could not confirm it is the one this daemon started")
 			return
 		}
 		// A pid we could not read at startup is not a reason to hold back here:
@@ -208,35 +292,47 @@ func startTUITmuxServer(notify io.Writer) (stop func(), owned bool) {
 		if ownerState == tuiTmuxProbeRunning && pid != ownerPID {
 			slog.Info("tui: tclaude tmux server was replaced by another; leaving it running",
 				"started_pid", ownerPID, "running_pid", pid, "module", "agentd")
+			fmt.Fprintln(notify, "tmux server left running: it is not the one this daemon started")
 			return
 		}
-		// The last condition, on top of every ownership check above: kill only an
-		// EMPTY server. Ownership says the server is ours to end; it says nothing
-		// about what the operator put on it in the meantime, and by the time this
-		// runs the console is gone, so an agent still working in a pane would be
-		// killed with no chance to object. Leaving a non-empty server costs an idle
-		// tmux process the operator can end themselves (`tmux -L tclaude
-		// kill-server`); killing it costs whatever was running on it.
+		// From here the server is ours to end. That settles WHETHER we may kill
+		// it; the last condition settles whether we should, and both have to hold.
 		//
-		// ListSessions is the same "what is alive on the tclaude server" read the
-		// dashboard and peer listings use, so "empty" here means what it means
-		// everywhere else in tclaude: no session whose pane is still live. A
-		// session left behind as a retained-dead corpse does not hold the server
-		// up, which is the point — it is scrollback, not work in progress.
-		sessions, err := clcommon.Default.ListSessions()
-		if err != nil {
-			// Same fail-safe direction as the pid probe: an answer we could not
-			// read is not permission to kill.
-			slog.Warn("tui: could not list the tclaude tmux server's sessions; leaving it running",
-				"error", err, "server_pid", pid, "module", "agentd")
+		// Ownership says nothing about what the operator put on the server in the
+		// meantime, and by the time this runs the console is gone — an agent still
+		// working in a pane would be killed with no chance to object. Leaving a
+		// non-empty server costs an idle tmux process the operator can end
+		// themselves; killing it costs whatever was running on it.
+		//
+		// The read and the kill are two calls, so a session created in between —
+		// a background sweep relaunching a pane (serve.go says outright that
+		// those are signalled but not awaited), a `tclaude session new` from
+		// another shell — still dies. Narrowing that window further would mean
+		// holding the server still, which nothing here can do; what it does mean
+		// is that this check is a guard against the sessions an operator has, not
+		// a lock against the ones they are creating as the daemon exits.
+		live, sessionState := tuiTmuxLiveSessions()
+		switch sessionState {
+		case tuiTmuxProbeNone:
+			// The server answered the pid probe and was gone moments later.
+			slog.Info("tui: tclaude tmux server disappeared before it could be shut down",
+				"server_pid", pid, "module", "agentd")
+			fmt.Fprintln(notify, "tmux server was already gone; nothing to shut down")
+			return
+		case tuiTmuxProbeUnknown:
+			slog.Warn("tui: could not list the tclaude tmux server's panes; leaving it running",
+				"server_pid", pid, "module", "agentd")
 			fmt.Fprintln(notify,
 				"tmux server left running: could not check whether it still has sessions")
+			releaseTUITmuxExitEmpty(pid)
 			return
 		}
-		if n := len(sessions); n > 0 {
-			slog.Info("tui: tclaude tmux server still has sessions; leaving it running",
-				"sessions", n, "server_pid", pid, "module", "agentd")
-			fmt.Fprintf(notify, "tmux server left running: %s still on it\n", tuiTmuxSessionCount(n))
+		if live > 0 {
+			slog.Info("tui: tclaude tmux server still has live sessions; leaving it running",
+				"sessions", live, "server_pid", pid, "module", "agentd")
+			fmt.Fprintf(notify, "tmux server left running: %s still on it (it will exit when they do)\n",
+				tuiTmuxSessionCount(live))
+			releaseTUITmuxExitEmpty(pid)
 			return
 		}
 		if out, err := clcommon.Default.Command("kill-server").CombinedOutput(); err != nil {
