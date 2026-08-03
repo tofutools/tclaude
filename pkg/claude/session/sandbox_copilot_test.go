@@ -19,6 +19,18 @@ func copilotLaunchRoot(t *testing.T) (home, workspace string) {
 	home = t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("TMUX_TMPDIR", filepath.Join(home, "tmux"))
+
+	// TMPDIR has to move with HOME. t.TempDir hands back a directory UNDER the
+	// system temp root, so a test HOME of /tmp/TestX/001 leaves the catalog's
+	// temp row resolving to /tmp — which covers that HOME, and the baseline
+	// then correctly refuses to hand back a grant covering the home directory.
+	// That refusal is the guard working, not a bug, but it is an artifact of a
+	// temp HOME that no real launch has: on a real host /tmp does not contain
+	// /home/you. Pointing TMPDIR inside HOME restores the real relationship.
+	tempDir := filepath.Join(home, "tmp")
+	require.NoError(t, os.MkdirAll(tempDir, 0o700))
+	t.Setenv("TMPDIR", tempDir)
+
 	workspace = filepath.Join(home, "workspace")
 	require.NoError(t, os.MkdirAll(workspace, 0o755))
 	return home, workspace
