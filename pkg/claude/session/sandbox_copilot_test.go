@@ -211,6 +211,27 @@ func TestValidateTclaudeLayerHarnessPostureReadsTheLaunchEnvironment(t *testing.
 	assert.Contains(t, err.Error(), profileHome)
 }
 
+// stubTmuxOnPath satisfies the tmux PRESENCE check without a host tmux.
+//
+// runNew calls CheckTmuxInstalled (an exec.LookPath) long before it reaches the
+// sandbox gate, so a production-path test on a runner without tmux fails at the
+// wrong place and proves nothing about the gate. swapTmux replaces the command
+// RUNNER, which is why this file needs both: nothing here ever executes the
+// stub, it only has to be found.
+//
+// Doing it this way keeps the assertion on the real runNew path rather than
+// carving out a pure helper to test instead — the whole point of these cases is
+// which call sites reach the gate, so testing anything short of runNew would
+// pass even with the bug restored. It also makes them hermetic on Linux, where
+// they had been quietly depending on the developer's tmux being installed.
+func stubTmuxOnPath(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	stub := filepath.Join(dir, "tmux")
+	require.NoError(t, os.WriteFile(stub, []byte("#!/bin/sh\nexit 0\n"), 0o755))
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
 // TestRunNewRefusesCopilotTclaudeLayerWithNoSandboxProfile is the F1
 // regression, and it is a direct-CLI test on purpose.
 //
@@ -238,6 +259,7 @@ func TestRunNewRefusesCopilotTclaudeLayerWithNoSandboxProfile(t *testing.T) {
 	prevCheck := ClaudeAncestorCheck
 	ClaudeAncestorCheck = func() bool { return false }
 	t.Cleanup(func() { ClaudeAncestorCheck = prevCheck })
+	stubTmuxOnPath(t)
 	swapTmux(t, &launchRecordingTmux{})
 
 	err := runNew(&NewParams{
@@ -266,6 +288,7 @@ func TestRunNewRefusesCopilotTclaudeLayerExtraExperimentalArg(t *testing.T) {
 	prevCheck := ClaudeAncestorCheck
 	ClaudeAncestorCheck = func() bool { return false }
 	t.Cleanup(func() { ClaudeAncestorCheck = prevCheck })
+	stubTmuxOnPath(t)
 	swapTmux(t, &launchRecordingTmux{})
 
 	// Pass-through arguments are taken from the real command line (everything
@@ -299,6 +322,7 @@ func TestRunNewAcceptsCopilotTclaudeLayerWithCleanPosture(t *testing.T) {
 	prevCheck := ClaudeAncestorCheck
 	ClaudeAncestorCheck = func() bool { return false }
 	t.Cleanup(func() { ClaudeAncestorCheck = prevCheck })
+	stubTmuxOnPath(t)
 	swapTmux(t, &launchRecordingTmux{})
 
 	err := runNew(&NewParams{
