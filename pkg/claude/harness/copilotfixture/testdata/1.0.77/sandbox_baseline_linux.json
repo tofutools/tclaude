@@ -33,6 +33,11 @@
         "Microsoft/DeveloperTools/deviceid"
       ]
     },
+    "deviceIdCache": {
+      "entries": [
+        "deviceid"
+      ]
+    },
     "workDir": {
       "entries": []
     },

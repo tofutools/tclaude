@@ -3,6 +3,7 @@ package copilotfixture_test
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -74,8 +75,16 @@ func TestCopilotSandboxBaselineCoversObservedWrites(t *testing.T) {
 	}
 	require.Contains(t, writable, dirs.Home, "COPILOT_HOME must be a writable baseline entry")
 	require.Contains(t, writable, dirs.Cache, "the package cache must be a writable baseline entry")
-	require.Contains(t, writable, filepath.Join(dirs.XDGCache, "Microsoft", "DeveloperTools"),
-		"the device-id cache resolves through XDG_CACHE_HOME, not COPILOT_CACHE_HOME")
+	// On Linux the device-id row resolves through XDG_CACHE_HOME (never
+	// COPILOT_CACHE_HOME); on macOS it ignores both and follows the Microsoft
+	// device-id convention into Library/Application Support.
+	wantDeviceID := filepath.Join(dirs.XDGCache, "Microsoft", "DeveloperTools")
+	if runtime.GOOS == "darwin" {
+		wantDeviceID = filepath.Join(
+			dirs.Root, "Library", "Application Support", "Microsoft", "DeveloperTools")
+	}
+	require.Contains(t, writable, wantDeviceID,
+		"the device-id cache must be a writable baseline entry at this platform's location")
 
 	layout, err := copilotfixture.ObserveBaselineLayout(dirs)
 	require.NoError(t, err)
@@ -95,15 +104,16 @@ func TestCopilotSandboxBaselineCoversObservedWrites(t *testing.T) {
 		filepath.Join("session-state", "<uuid>"),
 		"the enrolled session's state directory lives under COPILOT_HOME")
 	assert.NotEmpty(t, layout.Cache.Entries)
-	assert.Contains(t, layout.XDGCache.Entries,
-		filepath.Join("Microsoft", "DeveloperTools", "deviceid"),
-		"the best-effort device-id row is written through XDG_CACHE_HOME on Linux and macOS alike")
+	assert.Contains(t, layout.DeviceIDCache.Entries, "deviceid",
+		"the best-effort device-id row is written on Linux and macOS alike; only its "+
+			"directory moves between them")
 
 	// The XDG cache base is NOT granted whole — only its
 	// Microsoft/DeveloperTools subtree is — so a write elsewhere under it is an
 	// uncovered path in exactly the way a HOME write would be. The walk skips
 	// this root when computing HomeOutsideBaseline (it is a baseline root), so
-	// without this check nothing would notice.
+	// without this check nothing would notice. On macOS the expected content is
+	// none at all, which this same loop states.
 	for _, rel := range layout.XDGCache.Entries {
 		assert.True(t,
 			rel == "Microsoft" || strings.HasPrefix(rel, "Microsoft/DeveloperTools"),
@@ -111,7 +121,11 @@ func TestCopilotSandboxBaselineCoversObservedWrites(t *testing.T) {
 				"Microsoft/DeveloperTools; the baseline needs a new row (or the CLI regressed)", rel)
 	}
 
-	compareLayoutGolden(t, "sandbox_baseline", dirs, layout)
+	// The golden is per-platform because the tree genuinely differs: the package
+	// cache and the device-id file each move on macOS, and to different places.
+	// One merged golden could only be written by dropping whichever rows differ,
+	// which is precisely the evidence this recording exists to hold.
+	compareLayoutGolden(t, "sandbox_baseline_"+runtime.GOOS, dirs, layout)
 }
 
 // TestCopilotSandboxBaselineRefusesRunEnvironmentPointedAtHome pins the

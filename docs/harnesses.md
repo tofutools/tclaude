@@ -242,7 +242,10 @@ covers **interactive human sessions**:
 | **Rename / compact / graceful stop** | ✅ in-pane `/rename`, `/compact`, `/exit`. `/exit` closes the *current* session: with other sessions open in the same CLI it foregrounds the newest remaining one instead of quitting, so tclaude keeps its hard-kill fallback for a pane that doesn't actually exit |
 | **Hooks / live status** | ✅ `<COPILOT_HOME>/hooks/tclaude.json` — a tclaude-**owned** drop-in file, merged by Copilot with the user's own hooks; no trust step, no `config.json` involvement. Registers `SessionStart`, `UserPromptSubmit`, `PostToolUse`, `Stop`, `SessionEnd`, so a pane reports working/idle per turn. See [below](#copilot-hooks) for what is deliberately left out |
 | **Conversation store** | ✅ cold list / resolve / cwd filter / title / existence, read from Copilot's own per-session `<COPILOT_HOME>/session-state/<id>/` files. No SQLite access at all — see [below](#copilot-conversation-store) |
-| **Everything else in the matrix** | ➖ not yet — no ad-hoc ask, sandbox, approval, tool governance, directory pre-trust, remote control, usage/cost, or status bar. Copilot's *own* command sandboxing was evaluated and deliberately not advertised — see [below](#copilots-own-command-sandboxing) |
+| **Sandbox** | ⚠️ `inherit` (default) / `off` — an *assertion*, not a lever. Copilot's own command sandbox has no launch flag, so tclaude can neither enable nor disable it; `off` means "verified not engaged" and is what `--sandbox-impl tclaude-layer` resolves to. See [below](#copilot-and-tclaudes-outer-sandbox). Copilot's *own* command sandboxing was separately evaluated and deliberately not advertised as a harness-builtin implementation — see [below](#copilots-own-command-sandboxing) |
+| **tclaude-layer (outer OS sandbox)** | ✅ Linux bubblewrap / macOS Seatbelt, with Copilot's pre-approved directory catalog composed into the mount plan |
+| **Model transport under a filtered network** | ⚠️ the default first-party GitHub Copilot route only (`api.githubcopilot.com`, `api.github.com`); every route-moving input is refused rather than followed, read from both settings files with the same precedence as the sandbox key |
+| **Everything else in the matrix** | ➖ not yet — no ad-hoc ask, approval, tool governance, directory pre-trust, remote control, usage/cost, or status bar |
 
 Two consequences are worth stating plainly:
 
@@ -272,6 +275,115 @@ Two Copilot options tclaude deliberately never emits: `--mouse` / `--no-mouse`
 (an explicit value is **persisted** to the user's configuration, so it is not
 a per-spawn flag), and `-p/--prompt` (headless mode, which exits after
 completion — a TUI pane wants `-i`).
+
+#### Copilot and tclaude's outer sandbox
+
+Copilot ships a real OS sandbox — Microsoft Execution Containers (MXC), which
+uses bubblewrap on Linux and Seatbelt on macOS — but it is **experimental, off
+by default, and has no launch flag and no environment variable**. It is
+configured only by the `sandbox` key of two files under `COPILOT_HOME` and by
+the in-pane `/sandbox enable|disable`, which is itself only registered when
+experimental features are on (`copilot help sandbox`, pinned 1.0.77).
+
+Both files matter, and the **legacy one wins**. At startup the CLI migrates
+user settings out of `config.json` into `settings.json`, overwriting what was
+there, and rewrites `config.json` to a managed stub. So `config.json` is not
+dead legacy — it is a pending mutation of `settings.json` that applies to the
+launch you are about to start. Measured against 1.0.77: a `sandbox` key in
+either file engages the wall, and when both carry it, `config.json` decides.
+tclaude reads both.
+
+The replacement is **shallow, at the top level**. A `sandbox` object in
+`config.json` replaces `settings.json`'s whole `sandbox` object rather than
+merging into it, while unrelated top-level keys survive:
+
+```
+settings.json {"sandbox":{"enabled":true},"theme":"dark"}
+config.json   {"sandbox":{"addCurrentWorkingDirectory":true}}
+  -> merged   {"sandbox":{"addCurrentWorkingDirectory":true},"theme":"dark"}
+```
+
+That launch has *one* boundary — the `enabled: true` is gone — so tclaude
+allows it. Merging the two files per sub-key instead would refuse a launch that
+is exactly what the assert-off contract wants.
+
+That single fact shapes everything below. tclaude cannot switch Copilot's wall
+off for one launch, so running Copilot under `--sandbox-impl tclaude-layer`
+does not disable the inner sandbox — it **asserts** the inner sandbox is not
+engaged, and refuses the launch when it cannot verify that:
+
+| Copilot configuration | Result under `tclaude-layer` |
+|---|---|
+| Neither file, or files that do not mention `sandbox` | ✅ launches — the CLI documents the sandbox as disabled by default |
+| A migrated `config.json` stub (the ordinary settled install; its leading `//` lines are tolerated) | ✅ launches |
+| `sandbox.enabled: false` in the file that wins | ✅ launches |
+| `sandbox.enabled: true` in either file | ❌ refused — two stacked policies would make the effective confinement their unreviewed intersection while the recorded posture named one |
+| `config.json` says `true` while `settings.json` says `false` | ❌ refused — `config.json` wins, so the plain-text `false` is about to be overwritten |
+| A `config.json` `sandbox` block that omits `enabled`, over a `settings.json` that sets it `true` | ✅ launches — the block replaces wholesale, so `enabled` is gone |
+| A relative `COPILOT_HOME` | ❌ refused — tclaude and Copilot would resolve it against different working directories and inspect different files |
+| Unreadable, unparsable, or oddly shaped settings in **either** file (`"sandbox": true`, `"enabled": "true"`) | ❌ refused — an unverifiable posture, not an absent one |
+| `experimental: true` | ❌ refused — it registers the in-pane `/sandbox` command, so the wall could be switched on mid-session |
+| A pass-through `--experimental` argument | ❌ refused, for the same reason |
+
+tclaude never edits your `settings.json` and never relocates `COPILOT_HOME`
+to work around this. Both would be silent changes to state you own — and
+relocating the home would split Copilot's session store from the conversation
+store and hooks. The remedy is always yours to apply, and every refusal names
+the key and the file that actually decides — which, when both files carry the
+key, is `config.json`, because editing `settings.json` there would change
+nothing.
+
+Note that `experimental` is not evidence in the other direction: it gates the
+`/sandbox` *command*, not the feature. A settings-enabled sandbox applies with
+no experimental flag anywhere, which is why the `sandbox.enabled` check above
+is the one that decides and `experimental` only adds a refusal on top.
+
+The check runs on **every** path that starts a Copilot pane — a direct
+`session new`, spawn, resume, clone, reincarnate, and template/wave deploys —
+and on every such launch whether or not it carries a sandbox profile, because
+the single-boundary claim comes from the *implementation* choice rather than
+from any access rule. It is not run once at spawn.
+Copilot's sandbox setting lives in a file you can edit between two launches, so
+a posture verified at spawn time is not evidence about a resume.
+
+**Which directories a confined Copilot launch gets.** They come from one
+catalog, resolved per launch, shared with any future consumer of Copilot's own
+policy: `COPILOT_HOME` (read/write — the one hard requirement), the package
+cache (read/write/**execute**), and the Microsoft DeveloperTools device-id cache
+(read/write, best effort), plus the launch's temp directory, the agentd socket,
+and the two executables when they apply. Two details are easy to get wrong:
+
+- The package cache is **exec-bearing**. Copilot unpacks bundled binaries
+  (ripgrep, tgrep, prebuilt native modules) there and runs them, so a `noexec`
+  mount would break tool search rather than produce a permission error.
+- On macOS the two caches land in **two different Library trees, neither
+  XDG-shaped**: the package cache at `~/Library/Caches/copilot` (Copilot's own
+  resolver) and the device-id file at `~/Library/Application
+  Support/Microsoft/DeveloperTools` (the Microsoft device-id convention).
+  `XDG_CACHE_HOME` is set in the macOS fixture run and moves neither. On Linux
+  both are XDG-shaped and share a root.
+
+The catalog refuses rather than widens: a `COPILOT_HOME` pointing at `$HOME`, a
+`COPILOT_CACHE_HOME` landing on `~/.cache`, a grant covering the workspace, and
+an agentd socket path inside `~/.tclaude/data` are each a failed launch, not a
+mount rule.
+
+**Filtered networking.** A Copilot launch under a filtered network policy is
+admitted only on the default first-party GitHub Copilot route: model traffic to
+`api.githubcopilot.com` and the `/copilot_internal` control plane on
+`api.github.com` (the `net-github-copilot` pack covers both). Anything that
+moves that route is refused rather than followed — `COPILOT_API_URL`, `GH_HOST`
+/ `COPILOT_GH_HOST`, the `copilotUrl` and `proxyUrl` settings keys, and the
+whole `COPILOT_PROVIDER_*` BYOK family. A BYOK endpoint is refused even though
+it resolves concretely: being resolvable is not being approved.
+
+Two limits, stated rather than implied. The destinations above are what a
+credential-free startup can be observed to need; **post-authentication traffic
+has not been enumerated**, so a subscribed session may reach hosts the pack
+does not name — those are denied at the wall, visibly, rather than silently
+allowed. And the enterprise CAPI host is deliberately absent: how a launch
+selects it is not inspectable ahead of time, so that posture is refused instead
+of granted an extra destination.
 
 #### Copilot conversation store
 
@@ -438,7 +550,7 @@ The catalog, and how each row was classified:
 |---|---|---|---|
 | `copilot-state-dir` | `COPILOT_HOME` ?? `$HOME/.copilot` | rw | **mandatory** — made read-only between two runs, the next launch exits 1 |
 | `copilot-package-cache` | `COPILOT_CACHE_HOME` ?? macOS `~/Library/Caches/copilot` ?? `${XDG_CACHE_HOME:-~/.cache}/copilot` | rw**x** | **mandatory** — the CLI unpacks and then *runs* its payload here |
-| `copilot-device-id-cache` | `${XDG_CACHE_HOME:-~/.cache}/Microsoft/DeveloperTools` | rw | best-effort — read-only still launches; only `deviceid` is denied |
+| `copilot-device-id-cache` | macOS `~/Library/Application Support/Microsoft/DeveloperTools` ?? `${XDG_CACHE_HOME:-~/.cache}/Microsoft/DeveloperTools` | rw | best-effort — read-only still launches; only `deviceid` is denied |
 | `copilot-executable` | caller-resolved `copilot` | rx | mandatory |
 | `system-temp-dir` | caller-supplied | rw | feature-conditional (shell tools; Copilot's own `--disallow-temp-dir` opts out) |
 | `tclaude-agentd-socket` | caller-supplied endpoints | rw | feature-conditional (hook callbacks, in-agent `tclaude agent`) |
@@ -447,10 +559,12 @@ The catalog, and how each row was classified:
 Four properties are worth calling out.
 
 **The macOS split is not symmetric.** The package cache moves to
-`~/Library/Caches/copilot`, but the device-id cache stays XDG-shaped at
-`~/.cache/Microsoft/DeveloperTools` — the bundled Rust runtime that writes it
-has no darwin branch at all. A macOS policy built by pattern-matching the Linux
-one gets this wrong.
+`~/Library/Caches/copilot` and the device-id file to `~/Library/Application
+Support/Microsoft/DeveloperTools` — two different Library trees, because the
+first follows Copilot's own cache resolver and the second follows the Microsoft
+device-id convention. Neither honours `XDG_CACHE_HOME` on darwin, which the
+macOS fixture run proves by setting it. A macOS policy built by pattern-matching
+the Linux one gets both rows wrong.
 
 **The package cache needs execute, not just write.** The unpacked payload holds
 the bundled ripgrep binary and prebuilt native modules; a `noexec` mount there

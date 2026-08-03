@@ -107,14 +107,45 @@ type RunOptions struct {
 	// wire scenarios, which care about neither, leave it empty.
 	XDGCache string
 
+	// OmitCacheOverrides drops COPILOT_CACHE_HOME and XDG_CACHE_HOME from the
+	// child environment so the CLI resolves its caches from HOME the way an
+	// ordinary launch does.
+	//
+	// It exists for exactly one question, and it is a question no other
+	// scenario can ask: the sandbox baseline claims a PLATFORM-DEPENDENT
+	// default layout — the package cache moves to ~/Library/Caches/copilot on
+	// macOS while the device-id cache stays XDG-shaped at ~/.cache on every
+	// platform — and every other scenario overrides both variables, which is
+	// precisely what makes those scenarios portable and what makes them unable
+	// to observe the split.
+	//
+	// The run stays hermetic regardless: HOME is still the disposable root, so
+	// the defaults resolve INSIDE it. Dropping the overrides removes the
+	// redirection, not the containment.
+	OmitCacheOverrides bool
+
 	// Wire selects the provider wire API; empty means WireCompletions.
 	Wire WireAPI
 
 	// WorkDir is the CLI's working directory, passed via -C.
 	WorkDir string
 
-	// BaseURL activates BYOK and points at the mock.
+	// BaseURL activates BYOK and points at the mock. Empty leaves the CLI on
+	// its own first-party routing, which only the proxy-capture scenario wants
+	// — every other scenario needs the mock to answer.
 	BaseURL string
+
+	// ProxyEndpoint routes the run's outbound traffic through a capturing
+	// proxy (host:port) instead of the offline/BYOK setup.
+	//
+	// Setting it changes the run's whole character, which is why it is one
+	// switch rather than several: COPILOT_OFFLINE is dropped (an offline run
+	// makes no connections, so it would observe nothing), the BYOK provider
+	// variables are dropped (they would replace the first-party route this
+	// scenario exists to observe), and NO_PROXY is cleared so nothing is
+	// exempted from the capture. The run is still credential-free — every
+	// token variable is scrubbed exactly as it is for every other scenario.
+	ProxyEndpoint string
 
 	// Prompt runs non-interactively via -p and exits after completion.
 	Prompt string
@@ -209,6 +240,20 @@ type Dirs struct {
 func NewSandboxDirs(t *testing.T) Dirs {
 	t.Helper()
 	root := t.TempDir()
+	// Canonicalized because the CLI records its cwd resolved: on macOS t.TempDir
+	// hands back /var/folders/… while Copilot writes /private/var/folders/… into
+	// workspace.yaml, and every scenario that compares a path it passed in
+	// against a path the CLI wrote back would be measuring that symlink instead
+	// of the behavior it names.
+	//
+	// This makes the fixture lab's own paths unambiguous. It does NOT address
+	// the production question of how tclaude should match an operator-supplied
+	// cwd against Copilot's resolved spelling — see the ConvStore cwd-spelling
+	// follow-up; that comparison lives in copilot_convstore.go and is not
+	// something a test directory layout can decide.
+	if resolved, err := filepath.EvalSymlinks(root); err == nil {
+		root = resolved
+	}
 	d := Dirs{
 		Root:     root,
 		Home:     filepath.Join(root, "copilot-home"),
@@ -390,6 +435,12 @@ func buildEnv(opts RunOptions) []string {
 	if xdgCache == "" {
 		xdgCache = opts.Cache
 	}
+	if !opts.OmitCacheOverrides {
+		env = append(env,
+			"XDG_CACHE_HOME="+xdgCache,
+			"COPILOT_CACHE_HOME="+opts.Cache,
+		)
+	}
 	env = append(env,
 		// HOME and XDG_CACHE_HOME are redirected together with the two
 		// COPILOT_ variables. COPILOT_CACHE_HOME alone is not enough: it
@@ -397,10 +448,48 @@ func buildEnv(opts RunOptions) []string {
 		// Microsoft/DeveloperTools cache still resolves via
 		// XDG_CACHE_HOME then HOME, so a run missing these two writes outside
 		// its temp root.
+		//
+		// HOME is set unconditionally, which is what keeps an
+		// OmitCacheOverrides run hermetic: without the two cache overrides the
+		// CLI falls back to its platform defaults, and those defaults hang off
+		// HOME, so they land inside the disposable root either way.
 		"HOME="+opts.Root,
-		"XDG_CACHE_HOME="+xdgCache,
 		"COPILOT_HOME="+opts.Home,
-		"COPILOT_CACHE_HOME="+opts.Cache,
+		"COPILOT_AUTO_UPDATE=false",
+		"NO_COLOR=1",
+		"CI=1",
+	)
+	if opts.ProxyEndpoint != "" {
+		// The capture scenario. Every variable omitted here is omitted for a
+		// reason the scenario depends on: COPILOT_OFFLINE would make the run
+		// dial nothing, and the BYOK provider variables would replace the
+		// first-party route this run exists to observe. NO_PROXY is set EMPTY
+		// rather than left out, so no destination — including loopback — is
+		// exempted from the capture.
+		proxy := "http://" + opts.ProxyEndpoint
+		return append(env,
+			"HTTP_PROXY="+proxy, "http_proxy="+proxy,
+			"HTTPS_PROXY="+proxy, "https_proxy="+proxy,
+			// ALL_PROXY matters as much as the pair above: the CLI's native
+			// runtime prefers it, so a capture that set only HTTP(S)_PROXY
+			// would silently route around itself through an ambient proxy and
+			// observe nothing. Both casings, because the runtime accepts both.
+			"ALL_PROXY="+proxy, "all_proxy="+proxy,
+			// Emptied rather than dropped: an inherited exemption list would
+			// carve destinations back out of the capture, and an absent
+			// NO_PROXY lets the runtime apply its own default exemptions.
+			"NO_PROXY=", "no_proxy=",
+			// A syntactically well-formed but INVALID token. Without one the
+			// CLI refuses locally ("No authentication information found") and
+			// exits before opening a single connection, so the capture would
+			// observe nothing and the scenario would silently prove nothing.
+			// With it the CLI proceeds to its token exchange, which is exactly
+			// the traffic this scenario exists to enumerate. It is not a
+			// credential: it authenticates nothing and is rejected by design.
+			"GITHUB_TOKEN="+invalidCaptureToken,
+		)
+	}
+	return append(env,
 		"COPILOT_PROVIDER_BASE_URL="+opts.BaseURL,
 		"COPILOT_PROVIDER_TYPE=openai",
 		// Stated explicitly even for the default, so a future change of
@@ -411,15 +500,11 @@ func buildEnv(opts RunOptions) []string {
 		// GitHub MCP server and auto-update. This is what makes the run
 		// hermetic rather than merely unauthenticated.
 		"COPILOT_OFFLINE=true",
-		"COPILOT_AUTO_UPDATE=false",
-		"NO_COLOR=1",
-		"CI=1",
 		// Loopback must never traverse a proxy even if one is configured
 		// system-wide beyond the variables scrubbed above.
 		"NO_PROXY=127.0.0.1,localhost,::1",
 		"no_proxy=127.0.0.1,localhost,::1",
 	)
-	return env
 }
 
 func parseEvents(t *testing.T, stdout string) []Event {

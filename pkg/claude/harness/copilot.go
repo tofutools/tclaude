@@ -40,6 +40,37 @@ func init() {
 		// for why that needs no SQLite access at all.
 		Convs: copilotConvStore{},
 
+		// TCL-978 promotes the sandbox contracts out of the
+		// documentation-only wave, on the same terms as Hooks and Convs below:
+		// every claim is backed by the pinned binary or its shipped runtime,
+		// not by the published docs, which describe neither.
+		//
+		// Sandbox is an ASSERT-off catalog rather than a launch flag. Copilot
+		// 1.0.77 has no flag and no environment variable for its own
+		// (experimental, MXC) command sandbox — only settings.json and an
+		// in-pane slash command — so tclaude cannot force it either way. What
+		// the catalog buys is the ability to REFUSE a tclaude-layer launch that
+		// would otherwise stack two claimed boundaries; see copilot_sandbox.go.
+		Sandbox: copilotSandbox{},
+
+		// The posture tclaude-layer launches under: Copilot's own wall
+		// asserted off, so tclaude's outer layer is the single boundary.
+		TclaudeLayerMode: CopilotSandboxOff,
+
+		// BuiltinOSSandbox stays FALSE, and the distinction matters. Copilot
+		// does ship a real OS sandbox (MXC over bubblewrap/Seatbelt), but this
+		// flag means "the harness owns an OS-enforced sandbox BEHIND ITS
+		// Sandbox CATALOG", and this catalog's modes do not select it — they
+		// only assert it is off. Setting it true would advertise a boundary
+		// tclaude has no lever for. Enabling Copilot's own sandbox is TCL-977.
+		BuiltinOSSandbox: false,
+
+		// The filtered-network model route: the default first-party GitHub
+		// Copilot service only, with every route-moving input refused rather
+		// than followed. See copilot_model_transport.go for where the hosts
+		// come from.
+		ModelTransport: copilotModelTransport{},
+
 		// Hooks are the first contract to graduate out of the
 		// documentation-only wave above, because they are the first one a
 		// real binary could be made to prove. copilot_hooks.go records what

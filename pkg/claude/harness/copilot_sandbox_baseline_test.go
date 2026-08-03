@@ -74,21 +74,30 @@ func TestCopilotSandboxBaselineLinuxDefaults(t *testing.T) {
 }
 
 // TestCopilotSandboxBaselineDarwinSplit pins the platform difference that is
-// easiest to get wrong: on macOS the package cache moves to
-// ~/Library/Caches/copilot while the device-id cache stays XDG-shaped under
-// ~/.cache, because the runtime that writes it has no darwin branch.
+// easiest to get wrong: on macOS the two caches land in two DIFFERENT Library
+// trees and neither is XDG-shaped. The package cache follows Copilot's own
+// resolver to ~/Library/Caches/copilot; the device-id file follows the
+// Microsoft device-id convention to ~/Library/Application Support.
+//
+// The XDG_CACHE_HOME below is the point of the case rather than noise: the
+// real darwin fixture run sets it, and the runtime wrote to Application
+// Support anyway. A resolver that honored it here would grant a directory the
+// CLI never touches and leave the one it does touch denied.
 func TestCopilotSandboxBaselineDarwinSplit(t *testing.T) {
 	home := t.TempDir()
 	entries, err := CopilotSandboxBaseline(CopilotBaselineInput{
-		GOOS:   "darwin",
-		Home:   home,
-		Getenv: envMap(nil),
+		GOOS: "darwin",
+		Home: home,
+		Getenv: envMap(map[string]string{
+			"XDG_CACHE_HOME": filepath.Join(home, "xdg"),
+		}),
 	})
 	require.NoError(t, err)
 
 	assert.Equal(t, filepath.Join(home, "Library", "Caches", "copilot"),
 		entryByID(t, entries, CopilotBaselinePackageCache).Path)
-	assert.Equal(t, filepath.Join(home, ".cache", "Microsoft", "DeveloperTools"),
+	assert.Equal(t,
+		filepath.Join(home, "Library", "Application Support", "Microsoft", "DeveloperTools"),
 		entryByID(t, entries, CopilotBaselineDeviceIDCache).Path)
 	assert.Equal(t, filepath.Join(home, ".copilot"),
 		entryByID(t, entries, CopilotBaselineStateDir).Path)

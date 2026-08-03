@@ -54,12 +54,38 @@ func TestCopilotDescriptor(t *testing.T) {
 		t.Fatalf("copilot must advertise the fixture-backed conversation store: %+v", h)
 	}
 
-	// Deferred contracts (TCL-965 phases 2-5): documented CLI flags are
+	// The sandbox catalog and the model transport graduated in TCL-978 on the
+	// same evidence terms. Neither is read off the documentation, which
+	// describes neither: the sandbox catalog encodes what the pinned binary's
+	// own help topics establish (the command sandbox is experimental, off by
+	// default, and reachable ONLY through settings.json and an in-pane slash
+	// command — so tclaude can assert its state but never set it), and the
+	// transport's destinations are read out of the CLI's shipped runtime
+	// module. Both are ASSERT/REFUSE contracts rather than control contracts,
+	// which is precisely why they can be advertised without a lever.
+	if h.Sandbox == nil {
+		t.Fatalf("copilot must advertise the assert-off sandbox catalog: %+v", h)
+	}
+	if h.ModelTransport == nil {
+		t.Fatalf("copilot must advertise the first-party model transport: %+v", h)
+	}
+
+	// Still-deferred contracts (TCL-965 phases 2-5): documented CLI flags are
 	// evidence, runtime formats and enforcement semantics are not.
-	if h.Ask != nil || h.Sandbox != nil ||
-		h.Approval != nil || h.ToolGovernance != nil || h.ModelTransport != nil ||
+	if h.Ask != nil ||
+		h.Approval != nil || h.ToolGovernance != nil ||
 		h.NestedSandbox != nil || h.HostControlSandbox != nil || h.AskTimeout != nil {
 		t.Fatalf("copilot must not advertise unverified contracts: %+v", h)
+	}
+
+	// BuiltinOSSandbox stays false even though Copilot really does ship an OS
+	// sandbox: the flag means the harness owns an OS-enforced sandbox BEHIND
+	// its catalog, and this catalog only asserts that sandbox is off.
+	if h.BuiltinOSSandbox {
+		t.Errorf("copilot must not claim a built-in OS sandbox its catalog cannot select: %+v", h)
+	}
+	if h.TclaudeLayerMode != CopilotSandboxOff {
+		t.Errorf("TclaudeLayerMode = %q, want %q", h.TclaudeLayerMode, CopilotSandboxOff)
 	}
 	if !h.SupportsHooks() {
 		t.Errorf("SupportsHooks() = false, want true now that hooks are fixture-backed")
@@ -69,7 +95,6 @@ func TestCopilotDescriptor(t *testing.T) {
 	}
 	for name, got := range map[string]bool{
 		"SupportsAsk":              h.SupportsAsk(),
-		"SupportsSandbox":          h.SupportsSandbox(),
 		"SupportsBuiltinOSSandbox": h.SupportsBuiltinOSSandbox(),
 		"SupportsApproval":         h.SupportsApproval(),
 		"SupportsToolGovernance":   h.SupportsToolGovernance(),
@@ -86,8 +111,11 @@ func TestCopilotDescriptor(t *testing.T) {
 			t.Errorf("%s() = true, want false for the minimal Copilot wave", name)
 		}
 	}
-	if h.TclaudeLayerMode != "" {
-		t.Fatalf("TclaudeLayerMode = %q, want \"\" so tclaude-layer fails closed", h.TclaudeLayerMode)
+	// SupportsSandbox is checked separately from the deferred set above: the
+	// catalog exists, but what it selects is an ASSERTION about Copilot's own
+	// wall, never a lever that moves it.
+	if !h.SupportsSandbox() {
+		t.Error("SupportsSandbox() = false, want true now that the assert-off catalog exists")
 	}
 	// The conv-id is knowable before launch (`--session-id`), so the daemon may
 	// enroll the agent up front — and correspondingly Copilot needs no seeded

@@ -1249,6 +1249,33 @@ func runNew(params *NewParams) error {
 			}
 		}
 	}
+	// A harness whose own sandbox cannot be turned off by the launch has its
+	// posture verified for EVERY tclaude-layer launch, not only for one that
+	// authored a policy.
+	//
+	// This used to sit inside the access-axes block below, which runs only when
+	// a profile declares network or socket rules. A direct
+	// `session new --sandbox-impl tclaude-layer --harness copilot` with no
+	// profile — the simplest way to reach this code — therefore launched with
+	// neither the assert-off gate nor the pass-through-argument refusal ever
+	// running, while the recorded posture claimed a single boundary. The gate
+	// belongs to the IMPLEMENTATION choice, which is what makes that claim, not
+	// to the access axes.
+	//
+	// The environment is the launch's own when a profile supplied one, because
+	// a profile that relocates COPILOT_HOME moves which file governs the launch
+	// and a gate reading the ambient one would be inspecting a file the agent
+	// never opens. With no profile there is nothing to compose, and nil means
+	// the ambient environment — which is then also what the launch itself uses.
+	if outerLayer {
+		var launchEnvironment []sandboxpolicy.EnvironmentEntry
+		if launchSandbox != nil {
+			launchEnvironment = launchSandbox.Effective.Environment
+		}
+		if err := ValidateTclaudeLayerHarnessPosture(h, launchEnvironment, extraArgs); err != nil {
+			return err
+		}
+	}
 	if launchSandbox != nil &&
 		(launchSandbox.Effective.Network != nil || launchSandbox.Effective.UnixSockets != nil) {
 		axes, axesErr := sandboxpolicy.EffectiveAccessAxes(launchSandbox.Effective)

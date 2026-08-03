@@ -341,6 +341,42 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 			}
 		}
 	}
+	if input.HarnessName == harness.CopilotName {
+		// Copilot's launch-required paths are not guessed here: they are the
+		// TCL-975 pre-approved catalog, translated into grants. Resolving them
+		// at this seam rather than in a Copilot-specific helper keeps ONE
+		// answer to "which directories does a confined Copilot launch need" —
+		// the catalog's — shared with Copilot's own policy consumer (TCL-977).
+		//
+		// The catalog's refusals ride along unchanged. A COPILOT_HOME pointed
+		// at $HOME, a COPILOT_CACHE_HOME landing on ~/.cache, an agentd socket
+		// path inside ~/.tclaude/data: each fails the launch here rather than
+		// becoming a mount rule, which is the whole reason the resolution lives
+		// in one validated place.
+		grants, grantErr := copilotTclaudeLayerGrantSet(input, cwd)
+		if grantErr != nil {
+			return TclaudeLayerLaunchSpec{}, grantErr
+		}
+		for _, grant := range grants.Grants {
+			switch grant.Access {
+			case sandboxpolicy.AccessWrite:
+				stateDirs = append(stateDirs, grant.Path)
+				contractWriteDirs = append(contractWriteDirs, grant.Path)
+				launchWriteDirs = appendUniqueDir(launchWriteDirs, grant.Path)
+			case sandboxpolicy.AccessRead:
+				// The read-only rows are the two EXECUTABLES (the `copilot`
+				// launcher and the tclaude binary a hook callback runs). They
+				// are files, not directories, so they go to launchReadDirs
+				// only: naming a file as harness STATE would send it through
+				// the state-root preparation that mkdirs its targets.
+				launchReadDirs = append(launchReadDirs, grant.Path)
+			default:
+				return TclaudeLayerLaunchSpec{}, fmt.Errorf(
+					"copilot baseline grant %q resolved unsupported access %q",
+					grant.Path, grant.Access)
+			}
+		}
+	}
 	// GrantsFromDirs flattens the launch-composed policy back into bare paths,
 	// which can only express same-path rules. Remapped grants are therefore
 	// carried around it and re-attached: they occupy their own sandbox paths, so
@@ -2706,6 +2742,15 @@ func TclaudeLayerHarnessStateRoot(harnessName string) (string, error) {
 			return root, nil
 		}
 		return filepath.Join(home, ".codex"), nil
+	case harness.CopilotName:
+		// Mirrors Copilot's own resolver (COPILOT_HOME ?? $HOME/.copilot) —
+		// deliberately the same rule harness.CopilotSandboxBaseline applies, so
+		// the launch contract's state root and the pre-approved grant catalog
+		// can never name two different directories for one launch.
+		if root := strings.TrimSpace(os.Getenv(harness.CopilotHomeEnvVar)); root != "" {
+			return root, nil
+		}
+		return filepath.Join(home, ".copilot"), nil
 	case harness.OpenCodeName:
 		return filepath.Join(home, ".opencode"), nil
 	default:

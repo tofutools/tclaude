@@ -46,6 +46,16 @@ var networkPackRegistry = []NetworkPack{
 		Warning: "A workspace that overrides chatgpt_base_url routes model traffic elsewhere and needs that destination authored explicitly.",
 	},
 	{
+		ID: "net-github-copilot", Label: "GitHub Copilot (first-party)",
+		Group: "Cloud model APIs",
+		Entries: []NetworkAllowEntry{
+			{Domain: "api.githubcopilot.com", Ports: []int{443}},
+			{Domain: "api.github.com", Ports: []int{443}},
+		},
+		Note: "The supported filtered GitHub Copilot CLI route: model traffic on api.githubcopilot.com and the /copilot_internal control plane (token exchange, content exclusion, managed settings) on api.github.com, both read from the pinned CLI's own shipped runtime.",
+		Warning: "Covers the DEFAULT first-party route only. An Enterprise or data-residency host (GH_HOST / COPILOT_GH_HOST), a moved COPILOT_API_URL, and BYOK providers are refused by the Copilot launch resolver rather than covered here. Telemetry, MCP servers, web tools and `gh` are separate features needing their own destinations.",
+	},
+	{
 		ID: "net-github", Label: "GitHub essentials",
 		Entries: []NetworkAllowEntry{
 			{Domain: "github.com"},

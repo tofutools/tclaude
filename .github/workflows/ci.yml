@@ -950,10 +950,20 @@ jobs:
   # The compatibility evidence (wire shape, session layout, exit codes, event
   # stream) is not OS-specific, so running all of it twice would buy a duplicate
   # answer at double the cost — that was the original Linux-only rationale and it
-  # still holds. What IS OS-specific is Copilot's own sandbox (TCL-977): its
-  # backend is bubblewrap on Linux and Seatbelt on macOS, and a finding about a
-  # security boundary measured on one kernel is not a finding about the other.
-  # So macOS runs the native-sandbox scenarios only.
+  # still holds. What IS OS-specific is anything touching a security boundary or
+  # a platform path:
+  #
+  #   - Copilot's own sandbox (TCL-977): bubblewrap on Linux, Seatbelt on macOS,
+  #     and a finding about one kernel is not a finding about the other.
+  #   - tclaude's outer layer (TCL-978): the baseline's package cache moves to
+  #     ~/Library/Caches/copilot on macOS and the device-id file to
+  #     ~/Library/Application Support/Microsoft/DeveloperTools — two different
+  #     Library trees, neither XDG-shaped. That last one was DISCOVERED by this
+  #     macOS arm refuting the catalog's original claim, which is the whole
+  #     argument for the arm existing.
+  #
+  # So macOS runs the sandbox and platform scenarios from both tickets, and
+  # skips the wire ones.
   copilot-fixtures:
     name: Copilot CLI fixtures (${{ matrix.platform }})
     runs-on: ${{ matrix.runner }}
@@ -967,10 +977,11 @@ jobs:
             run_filter: TestCopilot
           - platform: macos
             runner: macos-latest
-            # The Seatbelt half of the sandbox evidence, and nothing else. The
-            # descriptor test these measurements justify needs no CLI and lives
-            # in the harness package, so the ordinary `go test ./...` job owns it.
-            run_filter: TestCopilotNativeSandbox
+            # The Seatbelt half of TCL-977's evidence, plus TCL-978's platform
+            # and assert-off scenarios. The descriptor test TCL-977's
+            # measurements justify needs no CLI and lives in the harness
+            # package, so the ordinary `go test ./...` job owns it.
+            run_filter: TestCopilotNativeSandbox|TestCopilotSandboxBaseline|TestCopilotDefaultCachePlacement|TestCopilotPackageCacheIsExecutable|TestCopilotInnerSandbox|TestCopilotLegacyConfig|TestCopilotStartupDialsOnlyContractedHosts
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -1044,6 +1055,26 @@ jobs:
             TestCopilotNativeSandboxNeedsNoExperimentalFlag
             TestCopilotNativeSandboxDisabledAppliesNoPolicy
             TestCopilotNativeSandboxSettingsSourcesAndPrecedence
+            # TCL-978's outer-layer evidence, required on both arms for the same
+            # reason: the macOS acceptance criteria are a real package cache
+            # under ~/Library/Caches/copilot, a device id under
+            # ~/Library/Application Support/Microsoft/DeveloperTools (NOT
+            # XDG-shaped — this arm refuted that), and executable access to the
+            # package cache. A silent skip would report the platform contract as
+            # proven when nothing ran.
+            TestCopilotSandboxBaselineCoversObservedWrites
+            TestCopilotDefaultCachePlacementMatchesBaseline
+            TestCopilotPackageCacheIsExecutable
+            TestCopilotInnerSandboxDefaultIsOff
+            TestCopilotInnerSandboxEnabledIsDetectedBeforeLaunch
+            # The assert-off gate reads TWO settings files and the legacy one
+            # wins, replacing whole top-level keys. These tie that precedence
+            # claim to the real binary; if the CLI ever stops migrating, the
+            # gate is inspecting the wrong file and this must fail rather than
+            # the gate silently going soft.
+            TestCopilotLegacyConfigMigratesIntoSettings
+            TestCopilotLegacyConfigMergeIsShallow
+            TestCopilotStartupDialsOnlyContractedHosts
           )
           if [[ "${{ matrix.platform }}" == "linux" ]]; then
             # The compatibility fixtures run on Linux only; see the job comment.

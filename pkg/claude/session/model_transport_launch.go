@@ -56,6 +56,8 @@ func ResolveTclaudeLayerModelTransport(
 		return resolveCodexModelTransport(h, context, environment)
 	case harness.OpenCodeName:
 		return resolveOpenCodeModelTransport(h, context, environment)
+	case harness.CopilotName:
+		return resolveCopilotModelTransport(h, context, environment)
 	default:
 		return harness.ResolvedModelTransport{
 			Model: context.Model,
@@ -292,6 +294,111 @@ func ValidateTclaudeLayerOpenCodeLocalModelTransport(
 	}
 	return modelTransportLaunchError(h,
 		"OpenCode's local presets name no explicit provider and OpenCode exposes no effective-config read of its own loader, so their launch endpoint cannot be resolved; use an explicit-provider OpenCode config, use Claude Code or Codex with a resolvable provider, or use network open")
+}
+
+// resolveCopilotModelTransport admits exactly one Copilot route: the default
+// first-party GitHub Copilot service. It resolves no endpoint of its own —
+// the destination set is the harness descriptor's, read from the pinned CLI's
+// shipped runtime (see harness/copilot_model_transport.go) — so everything
+// this function does is REFUSE the launches whose route it cannot vouch for.
+//
+// Two refusal sources, because Copilot has two ways to move its endpoint:
+//
+//   - The launch environment. COPILOT_API_URL, GH_HOST / COPILOT_GH_HOST and
+//     the COPILOT_PROVIDER_* BYOK family each select a different service. Their
+//     values are deliberately never inspected: following one would resolve a
+//     user-controlled endpoint, which is exactly what BYOK is refused for.
+//   - The settings file, whose `copilotUrl` key does the same thing from disk.
+//     It is read from the SAME COPILOT_HOME the sandbox baseline and the
+//     assert-off gate resolve, so all three agree on which file governs a
+//     launch.
+//
+// Proxy variables are NOT inspected here. ResolveTclaudeLayerModelTransport
+// already refuses a launch carrying an inherited proxy value before it reaches
+// any harness resolver, and tclaude's own proxy-engine injection happens after
+// that gate — so a managed launch is never refused for the proxy variables
+// tclaude itself sets.
+func resolveCopilotModelTransport(
+	h *harness.Harness,
+	context ModelTransportLaunchContext,
+	environment map[string]string,
+) (harness.ResolvedModelTransport, error) {
+	for _, variable := range harness.CopilotRouteMovingEnvVars() {
+		if strings.TrimSpace(environment[variable]) == "" {
+			continue
+		}
+		return harness.ResolvedModelTransport{}, modelTransportLaunchError(h,
+			fmt.Sprintf("Copilot launch variable %s selects a model route other than the default "+
+				"first-party GitHub Copilot service, and tclaude has no reviewed filtered-network "+
+				"resolver for it; remove the variable to use the first-party route, or use network open",
+				variable))
+	}
+	if variable, path, err := copilotSettingsRouteVariable(environment); err != nil {
+		return harness.ResolvedModelTransport{}, modelTransportLaunchError(h, err.Error())
+	} else if variable != "" {
+		return harness.ResolvedModelTransport{}, modelTransportLaunchError(h,
+			fmt.Sprintf("Copilot settings key %s in %s moves the model route away from the default "+
+				"first-party GitHub Copilot service; remove it to use the first-party route, or use network open",
+				variable, path))
+	}
+	return harness.ResolvedModelTransport{
+		Model: context.Model,
+		// The provider name is the harness's own: Copilot's first-party service
+		// is not one of the model vendors behind it, and naming a vendor here
+		// would suggest a route to that vendor's API that this launch never takes.
+		Provider:         harness.CopilotName,
+		ProviderResolved: true,
+	}, nil
+}
+
+// copilotSettingsRouteVariable reports the settings key that moves Copilot's
+// endpoint, or "" when the launch leaves the default route in place.
+//
+// It goes through the SHARED two-file reader rather than opening settings.json
+// itself, and that is the whole point of the function now. An earlier version
+// read settings.json alone, so a route key in the legacy config.json — which
+// wins, because the CLI migrates it over settings.json at startup — was
+// admitted as "default route".
+//
+// What that actually costs depends on the launch, and the honest version is
+// narrower than "a bypass":
+//
+//   - A filtered launch that DOES run tclaude's managed proxy engine is not
+//     exploitable through this: the launcher injects the proxy environment, and
+//     environment precedence beats the on-disk `proxyUrl`, so the disk value
+//     never takes effect.
+//   - A filtered launch WITHOUT the managed proxy engine is the residual. There
+//     the on-disk `proxyUrl` is live, and it can tunnel model traffic through
+//     loopback or through any host the allow list already permits — inside the
+//     wall, past the destination review the wall exists to enforce.
+//
+// Either way the pre-fix behavior was wrong in the direction that hides the
+// problem: the launch was admitted and then merely broke against the wall,
+// instead of being refused with a reason an operator can act on.
+//
+// The returned path is the file that actually set the key, so the remedy names
+// the file an operator must edit rather than the one being overwritten.
+func copilotSettingsRouteVariable(environment map[string]string) (variable, path string, err error) {
+	home := strings.TrimSpace(environment["HOME"])
+	getenv := func(name string) string { return strings.TrimSpace(environment[name]) }
+	if home == "" && getenv(harness.CopilotHomeEnvVar) == "" {
+		return "", "", fmt.Errorf(
+			"cannot locate the Copilot home because HOME and %s are unset, so the launch "+
+				"model route cannot be resolved; set %s or use network open",
+			harness.CopilotHomeEnvVar, harness.CopilotHomeEnvVar)
+	}
+	// A launch whose HOME is unset but whose COPILOT_HOME is absolute is still
+	// resolvable; the shared resolver needs a home only to build the default.
+	if home == "" {
+		home = filepath.Dir(getenv(harness.CopilotHomeEnvVar))
+	}
+	merged, mergedErr := harness.ResolveCopilotMergedSettings(getenv, home)
+	if mergedErr != nil {
+		return "", "", fmt.Errorf(
+			"%v; fix the file or use network open", mergedErr)
+	}
+	variable, path = harness.CopilotRouteMovingSettingsKey(merged)
+	return variable, path, nil
 }
 
 func resolveClaudeModelTransport(

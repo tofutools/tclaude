@@ -416,6 +416,15 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 	if relaunch.TemporarySandboxMode {
 		effectiveSandbox = temporarySandboxLaunchSnapshot(relaunch.Harness, stableEffectiveSandbox)
 	}
+	// The successor inherits the posture, so it must also inherit the
+	// obligation to verify it. Reincarnation is initiated by the agent itself,
+	// with no human at a spawn dialog, which is exactly why it must not be the
+	// path that skips a re-check of a harness sandbox tclaude cannot switch off.
+	if fail := sandboxImplementationPostureFailure(
+		relaunch.Harness, reincarnateSandboxImplementation); fail != nil {
+		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		return
+	}
 	if fail := sandboxProfileCapabilityFailure(
 		relaunch.Harness,
 		reincarnateSandbox,
