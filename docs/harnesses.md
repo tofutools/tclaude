@@ -3,15 +3,18 @@
 tclaude started life as a wrapper around [Claude Code](https://claude.ai/code).
 It is now **harness-agnostic**: the session, conversation, agent-coordination,
 and dashboard machinery can drive more than one coding *harness* (the underlying
-agentic CLI). **Claude Code, OpenAI Codex CLI, and OpenCode are registered
-harnesses.** OpenCode support covers the managed serve-and-attach launch path,
-its conversation store, ad-hoc ask, and per-session tool permissions; full
-status mapping remains intentionally capability-gated. Claude remains the
-default so existing commands and databases keep their historical behavior when
-no harness is recorded.
+agentic CLI). **Claude Code, OpenAI Codex CLI, OpenCode, and GitHub Copilot CLI
+are registered harnesses.** OpenCode support covers the managed serve-and-attach
+launch path, its conversation store, ad-hoc ask, and per-session tool
+permissions; full status mapping remains intentionally capability-gated. Copilot
+is a deliberately minimal first wave — launch, exact resume, model/effort, and
+the in-pane control commands, and nothing else yet (see [GitHub Copilot CLI
+(first wave)](#github-copilot-cli-first-wave)). Claude remains the default so
+existing commands and databases keep their historical behavior when no harness
+is recorded.
 
 A *harness* is whichever CLI actually runs the model in the tmux pane —
-`claude`, `codex`, or an `opencode attach` client. tclaude owns everything
+`claude`, `codex`, `copilot`, or an `opencode attach` client. tclaude owns everything
 around it: the tmux session, the status tracking, the conversation index, the
 agent group/messaging layer, and the dashboard. Each harness plugs into the
 same seam and contributes only the parts that are genuinely harness-specific
@@ -60,6 +63,10 @@ tclaude agent spawn --group mygroup --name worker --harness opencode
 
 # Keep OpenCode's path policy, but require approval for its built-in tool block
 tclaude agent spawn --group mygroup --name worker --harness opencode --tools ask
+
+# Start a GitHub Copilot CLI session (interactive human sessions; see the
+# first-wave caveats below before reaching for agent spawning)
+tclaude session new --harness copilot --model gpt-5.4
 ```
 
 The harness is **persisted per conversation** (a `harness` column on the
@@ -205,6 +212,9 @@ instead of slash-command injection).
 Legend: ✅ supported · ⚙️ available, opt-in / configured elsewhere · ⚠️ partial ·
 ❌ not available.
 
+`copilot` is deliberately absent from the matrix above: its first wave
+implements only the top four rows. See below.
+
 ### Group-route activation matrix
 
 Group routes are a tclaude platform capability shared by harnesses; the harness
@@ -216,6 +226,47 @@ selected for a session does not widen the route boundary. See
 | Linux | ✅ Full, with a route-capable launch | Authenticated namespace-local helper and opaque named TCP stream; the existing provider/host policy floor remains in force. |
 | macOS | ⚠️ Partial | Bounded exact Seatbelt TCP slots; same-port host-local reachability remains disclosed; provider and Internet policy floors remain in force. |
 | Other platforms | ❌ unavailable | Explicit unsupported error; no silent policy downgrade. |
+
+### GitHub Copilot CLI (first wave)
+
+`--harness copilot` drives the [GitHub Copilot
+CLI](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference)
+TUI directly — there is no managed side server, unlike OpenCode. This wave
+covers **interactive human sessions**:
+
+| Capability | `copilot` — GitHub Copilot CLI |
+|---|---|
+| **Spawn** | ✅ `copilot`, with a caller-preset conv-id (`--session-id <uuid>`), a launch-time name (`--name=`), and an optional first turn (`-i <prompt>`) |
+| **Resume** | ⚠️ `copilot --resume=<id>` (exact id only — never the picker, an id prefix, or a session name), but **only for a session you launched with an explicit `--session-id <uuid>`**: with no conversation store tclaude never discovers a Copilot conv-id on its own, so `--resume` has nothing to look up. Conversation discovery lands with the ConvStore wave |
+| **Model & effort at spawn** | ✅ `--model=` (including `auto`) and `--effort=` (`low`…`max`, the same levels as everywhere else in tclaude). Note `max`: the flag accepts the whole vocabulary, but the docs describe `max` as the highest-depth tier **for Anthropic models** — Copilot may reject it for a GPT model, so pair it with a model that has that tier |
+| **Rename / compact / graceful stop** | ✅ in-pane `/rename`, `/compact`, `/exit`. `/exit` closes the *current* session: with other sessions open in the same CLI it foregrounds the newest remaining one instead of quitting, so tclaude keeps its hard-kill fallback for a pane that doesn't actually exit |
+| **Everything else in the matrix** | ➖ not yet — no conversation store, hooks/live status, ad-hoc ask, sandbox, approval, tool governance, directory pre-trust, remote control, usage/cost, or status bar |
+
+Two consequences are worth stating plainly:
+
+- A Copilot conversation does **not** appear in `conv ls`, search, or the
+  dashboard's conversation views, and its pane shows no live status — those all
+  need the conversation store and hooks a later wave adds.
+- Copilot agents are not usable as detached agents in practice. Approval-lineage
+  classification fails closed for a harness with no approval catalog, so a
+  Copilot child is refused rather than spawned with an unproven posture.
+
+The restraint is deliberate rather than incidental. This adapter was written
+against the official GitHub documentation, without a Copilot binary available
+to record fixtures. Documented launch flags are a stable contract; a
+session-state layout, a hook payload, or a sandbox/approval guarantee is not —
+and a descriptor that advertises a contract tclaude cannot honor is worse than
+one that advertises none, because callers detect an absent contract and degrade
+but cannot detect a lying one. Copilot's model catalog is likewise treated as a
+suggestion list, not an allow-list: it brokers models from several vendors at
+once (`claude-*`, `gpt-*`, `gemini-*`, `mai-*`) and exposes no machine-readable
+catalog, so tclaude forwards any single bounded token verbatim — case included,
+for custom/BYOK ids — and lets Copilot do the authoritative validation.
+
+Two Copilot options tclaude deliberately never emits: `--mouse` / `--no-mouse`
+(an explicit value is **persisted** to the user's configuration, so it is not
+a per-spawn flag), and `-p/--prompt` (headless mode, which exits after
+completion — a TUI pane wants `-i`).
 
 ### Sandbox & approval defaults (Codex)
 

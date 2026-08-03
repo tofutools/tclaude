@@ -388,6 +388,79 @@ func TestSeatbeltRuntimeCarveoutsPierceOnlyBaselineWriteDeny(t *testing.T) {
 		seatbeltRuleContaining(profile, `(param "WRITE_DENY_1")`))
 }
 
+func TestSeatbeltDuplicateClaudeTempWriteGrantIsIdempotent(t *testing.T) {
+	const (
+		tempRoot  = "/private/tmp"
+		claudeDir = "/private/tmp/claude-501"
+	)
+	_, params, err := renderSeatbeltProfile(
+		[]string{tempRoot, claudeDir},
+		nil,
+		sandboxpolicy.MountPlan{
+			NetworkPosture: sandboxpolicy.NetworkHostOpen,
+			Entries: []sandboxpolicy.MountEntry{{
+				Path: tempRoot,
+				Mode: sandboxpolicy.MountRW,
+			}},
+		},
+		netip.AddrPort{},
+		[]string{"/Users/dev/.tclaude/data", "/Users/dev/.claude/sessions"},
+		"/private/tmp/tmux-501",
+		"/private/var/folders/ab/runtime/T",
+		nil,
+		nil,
+	)
+	require.NoError(t, err)
+
+	count := 0
+	for _, param := range params {
+		if param.path == tempRoot {
+			count++
+		}
+	}
+	assert.Equal(t, 1, count,
+		"an existing profile rw row for /tmp must merge with the automatic Claude grant")
+}
+
+func TestSeatbeltProfileReadOnlyTempStillNarrowsAutomaticClaudeGrant(t *testing.T) {
+	const (
+		tempRoot  = "/private/tmp"
+		claudeDir = "/private/tmp/claude-501"
+	)
+	_, params, err := renderSeatbeltProfile(
+		[]string{tempRoot, claudeDir},
+		nil,
+		sandboxpolicy.MountPlan{
+			NetworkPosture: sandboxpolicy.NetworkHostOpen,
+			Entries: []sandboxpolicy.MountEntry{{
+				Path: tempRoot,
+				Mode: sandboxpolicy.MountRO,
+			}},
+		},
+		netip.AddrPort{},
+		[]string{"/Users/dev/.tclaude/data", "/Users/dev/.claude/sessions"},
+		"/private/tmp/tmux-501",
+		"/private/var/folders/ab/runtime/T",
+		nil,
+		nil,
+	)
+	require.NoError(t, err)
+
+	var tempRootParams, claudeDirParams int
+	for _, param := range params {
+		switch param.path {
+		case tempRoot:
+			tempRootParams++
+		case claudeDir:
+			claudeDirParams++
+		}
+	}
+	assert.Zero(t, tempRootParams,
+		"an explicit profile read-only row must remove the broad automatic reopen")
+	assert.Equal(t, 1, claudeDirParams,
+		"the secured per-user harness directory remains a narrower launch requirement")
+}
+
 func TestSeatbeltRuntimePolicyUsesIdentityAwareCarveoutIntersection(t *testing.T) {
 	const policySpelling = "/DEV"
 	sameIdentity := func(path string) (seatbeltFileIdentity, bool) {
