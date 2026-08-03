@@ -117,6 +117,9 @@ func RequireContained(parent, child Snapshot) error {
 	if err := requireResourceLimitsContained(parent.Effective.ResourceLimits, child.Effective.ResourceLimits); err != nil {
 		return err
 	}
+	if child.Effective.DarwinAllowMachRegister && !parent.Effective.DarwinAllowMachRegister {
+		return fmt.Errorf("Darwin mach-register access is not present in the parent snapshot")
+	}
 	if parent.Effective.Network == nil && child.Effective.Network == nil &&
 		!networkAccessContained(parent.Effective.NetworkAccess, child.Effective.NetworkAccess) {
 		return fmt.Errorf("network access %q is not contained by parent access %q", child.Effective.NetworkAccess, parent.Effective.NetworkAccess)
@@ -375,9 +378,10 @@ func unixSocketRulesContained(parent, child UnixSocketRules) bool {
 }
 
 // HasCapabilities reports whether a resolved snapshot adds inherited host
-// filesystem, literal environment, or explicit Internet authority. Deny and
-// offline entries are restrictions, and agent-owned directories are fresh
-// private bindings rather than capabilities inherited from the parent.
+// filesystem, literal environment, explicit Internet authority, or Darwin
+// Mach service-registration authority. Deny and offline entries are
+// restrictions, and agent-owned directories are fresh private bindings rather
+// than capabilities inherited from the parent.
 func HasCapabilities(snapshot Snapshot) bool {
 	for _, grant := range snapshot.Effective.Filesystem {
 		if grant.Access != AccessDeny {
@@ -385,6 +389,7 @@ func HasCapabilities(snapshot Snapshot) bool {
 		}
 	}
 	return len(snapshot.Effective.Environment) > 0 ||
+		snapshot.Effective.DarwinAllowMachRegister ||
 		snapshot.Effective.NetworkAccess == NetworkAccessInternet ||
 		(snapshot.Effective.Network != nil &&
 			(snapshot.Effective.Network.Mode == AccessModeOpen ||
@@ -475,6 +480,7 @@ func UnconfinedLaunchSnapshot(in Snapshot) Snapshot {
 	effective.Network = nil
 	effective.UnixSockets = nil
 	effective.ResourceLimits = ResourceLimits{}
+	effective.DarwinAllowMachRegister = false
 	effective.AccessNotices = nil
 	effective.Provenance.Filesystem = nil
 	effective.Provenance.AgentDirectories = nil
@@ -508,17 +514,19 @@ func RevalidateSnapshot(in Snapshot) (Snapshot, error) {
 		in.Effective.Network != nil ||
 		in.Effective.UnixSockets != nil ||
 		in.Effective.ResourceLimits.Enabled() ||
+		in.Effective.DarwinAllowMachRegister ||
 		len(in.Effective.AccessNotices) > 0 ||
 		in.UnixSocketMaterialization != nil) {
 		return Snapshot{}, fmt.Errorf("omitted sandbox-profile snapshot contains profile values")
 	}
 	normalized, _, err := NormalizeForPersistence(Profile{
-		Name:           "effective-sandbox-snapshot",
-		Filesystem:     in.Effective.Filesystem,
-		Environment:    in.Effective.Environment,
-		NetworkAccess:  in.Effective.NetworkAccess,
-		UnixSockets:    in.Effective.UnixSockets,
-		ResourceLimits: in.Effective.ResourceLimits,
+		Name:                    "effective-sandbox-snapshot",
+		Filesystem:              in.Effective.Filesystem,
+		Environment:             in.Effective.Environment,
+		NetworkAccess:           in.Effective.NetworkAccess,
+		UnixSockets:             in.Effective.UnixSockets,
+		ResourceLimits:          in.Effective.ResourceLimits,
+		DarwinAllowMachRegister: in.Effective.DarwinAllowMachRegister,
 	})
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("revalidate effective sandbox snapshot: %w", err)
@@ -668,15 +676,16 @@ func FilesystemForLaunch(in EffectiveProfile) ([]FilesystemGrant, error) {
 
 func cloneEffectiveProfile(in EffectiveProfile) EffectiveProfile {
 	out := EffectiveProfile{
-		Filesystem:       append([]FilesystemGrant{}, in.Filesystem...),
-		MountAliases:     append([]MountAlias(nil), in.MountAliases...),
-		Environment:      append([]EnvironmentEntry{}, in.Environment...),
-		AgentDirectories: append([]string{}, in.AgentDirectories...),
-		NetworkAccess:    in.NetworkAccess,
-		Network:          cloneNetworkRulesPtr(in.Network),
-		UnixSockets:      cloneUnixSocketRulesPtr(in.UnixSockets),
-		ResourceLimits:   cloneResourceLimits(in.ResourceLimits),
-		AccessNotices:    cloneAccessNotices(in.AccessNotices),
+		Filesystem:              append([]FilesystemGrant{}, in.Filesystem...),
+		MountAliases:            append([]MountAlias(nil), in.MountAliases...),
+		Environment:             append([]EnvironmentEntry{}, in.Environment...),
+		AgentDirectories:        append([]string{}, in.AgentDirectories...),
+		NetworkAccess:           in.NetworkAccess,
+		Network:                 cloneNetworkRulesPtr(in.Network),
+		UnixSockets:             cloneUnixSocketRulesPtr(in.UnixSockets),
+		ResourceLimits:          cloneResourceLimits(in.ResourceLimits),
+		DarwinAllowMachRegister: in.DarwinAllowMachRegister,
+		AccessNotices:           cloneAccessNotices(in.AccessNotices),
 		Provenance: ResolutionProvenance{
 			Applied:          cloneProfileSources(in.Provenance.Applied),
 			Filesystem:       make(map[string][]ProfileSource, len(in.Provenance.Filesystem)),

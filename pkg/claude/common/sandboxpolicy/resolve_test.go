@@ -344,6 +344,19 @@ func TestResolveCarriesPersistedFilesystemSpellingsIntoMountPlan(t *testing.T) {
 	assert.Equal(t, effective.MountAliases, plan.Aliases)
 }
 
+func TestResolveComposesDarwinMachRegisterCapability(t *testing.T) {
+	effective, err := Resolve(Scopes{
+		Global: &Profile{Name: "global", DarwinAllowMachRegister: true},
+		Group:  &Profile{Name: "group"},
+	})
+	require.NoError(t, err)
+	assert.True(t, effective.DarwinAllowMachRegister)
+
+	plan, err := RenderMountPlan(effective)
+	require.NoError(t, err)
+	assert.True(t, plan.DarwinAllowMachRegister)
+}
+
 func TestAliasDiscoveryValidatesTheTargetCapturedByTheSameWalk(t *testing.T) {
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)

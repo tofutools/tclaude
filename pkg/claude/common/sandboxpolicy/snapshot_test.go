@@ -159,6 +159,14 @@ func TestRequireContainedUsesPathCoverageAccessAndExactEnvironment(t *testing.T)
 		denyOnly := makeSnapshot([]FilesystemGrant{{Path: childDir, Access: AccessDeny}}, nil)
 		assert.False(t, HasCapabilities(denyOnly))
 	})
+	t.Run("Darwin mach-register authority cannot widen", func(t *testing.T) {
+		allowed := makeSnapshot(nil, nil)
+		allowed.Effective.DarwinAllowMachRegister = true
+		restricted := makeSnapshot(nil, nil)
+		require.NoError(t, RequireContained(allowed, restricted))
+		require.ErrorContains(t, RequireContained(restricted, allowed), "mach-register")
+		assert.True(t, HasCapabilities(allowed))
+	})
 	t.Run("agent directories are fresh child-local bindings", func(t *testing.T) {
 		parent := makeAgentDirectorySnapshot("GOCACHE")
 		require.NoError(t, RequireContained(parent, makeAgentDirectorySnapshot("GOCACHE")))

@@ -24,17 +24,18 @@ import (
 // payload read on sandbox-profiles.manage to avoid disclosing accidental
 // credentials to ordinary agents.
 type sandboxProfileJSON struct {
-	Name                string                             `json:"name"`
-	Filesystem          []sandboxpolicy.FilesystemGrant    `json:"filesystem"`
-	FilesystemSpellings *sandboxpolicy.FilesystemSpellings `json:"filesystem_spellings"`
-	Environment         []sandboxpolicy.EnvironmentEntry   `json:"environment"`
-	AgentDirectories    []string                           `json:"agent_directories,omitempty"`
-	NetworkAccess       sandboxpolicy.NetworkAccess        `json:"network_access,omitempty"`
-	Network             *sandboxpolicy.NetworkRules        `json:"network,omitempty"`
-	UnixSockets         *sandboxpolicy.UnixSocketRules     `json:"unix_sockets,omitempty"`
-	Includes            []string                           `json:"includes,omitempty"`
-	CreatedAt           string                             `json:"created_at,omitempty"`
-	UpdatedAt           string                             `json:"updated_at,omitempty"`
+	Name                    string                             `json:"name"`
+	Filesystem              []sandboxpolicy.FilesystemGrant    `json:"filesystem"`
+	FilesystemSpellings     *sandboxpolicy.FilesystemSpellings `json:"filesystem_spellings"`
+	Environment             []sandboxpolicy.EnvironmentEntry   `json:"environment"`
+	AgentDirectories        []string                           `json:"agent_directories,omitempty"`
+	NetworkAccess           sandboxpolicy.NetworkAccess        `json:"network_access,omitempty"`
+	Network                 *sandboxpolicy.NetworkRules        `json:"network,omitempty"`
+	UnixSockets             *sandboxpolicy.UnixSocketRules     `json:"unix_sockets,omitempty"`
+	DarwinAllowMachRegister bool                               `json:"darwin_allow_mach_register,omitempty"`
+	Includes                []string                           `json:"includes,omitempty"`
+	CreatedAt               string                             `json:"created_at,omitempty"`
+	UpdatedAt               string                             `json:"updated_at,omitempty"`
 }
 
 type sandboxProfileAssignmentJSON struct {
@@ -401,6 +402,9 @@ func printSandboxProfileHuman(w io.Writer, profile sandboxProfileJSON) {
 	network, sockets := sandboxProfileAxisLabels(profile)
 	fmt.Fprintf(w, "  network: %s\n", network)
 	fmt.Fprintf(w, "  Unix sockets: %s\n", sockets)
+	if profile.DarwinAllowMachRegister {
+		fmt.Fprintln(w, "  Darwin Mach registration: allowed")
+	}
 	if profile.Network != nil && profile.Network.Mode == sandboxpolicy.AccessModeList {
 		printSandboxNetworkAllow(w, profile.Network.Allow)
 	}

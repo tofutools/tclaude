@@ -1471,6 +1471,39 @@ function mountSandboxEditor(harness, mountManagementIsland, state, overrides = {
   return { host, unmount: () => cleanups.reverse().forEach((fn) => fn()) };
 }
 
+test('sandbox editor offers Mach registration only on a macOS agentd', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  const saves = [];
+  state.openDialog({
+    kind: 'sandbox-editor', seed: { name: 'chrome', filesystem: [], environment: [] },
+    options: {}, sandboxImpl: { ...sandboxImpl, platform: 'darwin' },
+  });
+  const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state, {
+    async saveSandbox(value) { saves.push(value); },
+  });
+  await harness.act(() => Promise.resolve());
+  const checkbox = host.querySelector('#sandbox-profile-editor-allow-mach-register');
+  assert.ok(checkbox, 'macOS exposes the compatibility capability');
+  checkbox.checked = true;
+  await harness.act(() => harness.fireEvent(checkbox, 'change'));
+  await harness.act(() => harness.fireEvent(host.querySelector('#sandbox-profile-editor-submit'), 'click'));
+  assert.equal(saves[0].draft.darwin_allow_mach_register, true);
+
+  state.closeDialog();
+  await harness.act(() => Promise.resolve());
+  state.openDialog({
+    kind: 'sandbox-editor', seed: { name: 'linux', filesystem: [], environment: [] },
+    options: {}, sandboxImpl: { ...sandboxImpl, platform: 'linux' },
+  });
+  await harness.act(() => Promise.resolve());
+  assertAbsent(host.querySelector('#sandbox-profile-editor-compatibility-section'));
+  unmount();
+});
+
 test('sandbox editor sections start collapsed and keep disclosure help reachable', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
