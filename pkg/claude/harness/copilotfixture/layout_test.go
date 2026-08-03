@@ -9,12 +9,20 @@ import (
 // TestNormalizeLayoutPath pins every normalization rule the layout golden
 // depends on, without needing the Copilot binary.
 //
-// This exists because the committed golden cannot pin two of them. It was
-// recorded against a WARM cache, so it contains no `inuse.<pid>.lock` and no
-// `.extracting-…` staging directory — the rules for both are load-bearing but
-// unexercised. On a cold-cache run those paths appear for the first time, and a
-// regex that fails to match does not produce a clear failure: it produces a
-// golden diff full of real pids and timestamps that reads like CLI drift.
+// This exists because the committed golden cannot pin two of them, and the
+// reason is NOT that the run skips them — NewSandboxDirs hands every scenario a
+// fresh cache, so the payload really is extracted and the lock really is taken.
+// The golden simply cannot see either one:
+//
+//   - `inuse.<pid>.lock` sits at pkg/<platform>/<version>/inuse.<pid>.lock,
+//     one level below where collapsePackagePayload stops the walk.
+//   - the `.extracting-…` staging directory is RENAMED into place before the
+//     run ends, so it no longer exists when the post-run walk happens.
+//
+// Both rules are therefore load-bearing but unexercised by the golden, and a
+// regex that stopped matching would not produce a clear failure — it would
+// produce a golden diff full of real pids and timestamps that reads like CLI
+// drift.
 func TestNormalizeLayoutPath(t *testing.T) {
 	cases := []struct {
 		name string

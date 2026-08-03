@@ -355,18 +355,29 @@ func CopilotSandboxBaseline(in CopilotBaselineInput) ([]CopilotBaselineEntry, er
 		})
 	}
 
-	// Deduplicated by cleaned path, first occurrence winning. The endpoint list
-	// is canonical-plus-retained-legacy, so a caller assembling it from
-	// separate resolvers can legitimately produce the same path twice — and a
-	// duplicate row is not merely noise once a consumer emits one mount rule
+	// Deduplicated on the RESOLVED path, first occurrence winning. The endpoint
+	// list is canonical-plus-retained-legacy, so a caller assembling it from
+	// separate resolvers can legitimately produce the same endpoint twice — and
+	// a duplicate row is not merely noise once a consumer emits one mount rule
 	// or policy key per row.
+	//
+	// Resolved rather than merely cleaned, because the duplicates that actually
+	// occur are not textual: a legacy endpoint reached through a symlinked
+	// home, or two spellings of one migration-window path, clean differently
+	// and name the same socket. Two genuinely different endpoints resolve
+	// differently and both survive. The row keeps the caller's own spelling in
+	// Path; only the dedup key is resolved.
 	seenSockets := make(map[string]bool, len(in.AgentdSockets))
 	for _, socket := range in.AgentdSockets {
 		socket = filepath.Clean(strings.TrimSpace(socket))
-		if socket == "" || socket == "." || seenSockets[socket] {
+		if socket == "" || socket == "." {
 			continue
 		}
-		seenSockets[socket] = true
+		key := resolveSymlinks(socket)
+		if seenSockets[key] {
+			continue
+		}
+		seenSockets[key] = true
 		entries = append(entries, CopilotBaselineEntry{
 			ID:        CopilotBaselineAgentdSocket,
 			Path:      socket,
@@ -477,6 +488,7 @@ func validateCopilotBaseline(
 	home, workspace string,
 ) error {
 	broad := copilotBroadPaths(goos, getenv, home)
+	protected := copilotProtectedSubdirs(home)
 	resolvedHome := resolveSymlinks(home)
 	resolvedWorkspace := ""
 	if ws := strings.TrimSpace(workspace); ws != "" {
@@ -517,7 +529,7 @@ func validateCopilotBaseline(
 		// the canonical socket sits in api/ rather than data/ is that data/
 		// can then be denied as one subtree. A grant covering data/ would hand
 		// a sandboxed agent the daemon's own database.
-		for _, sub := range copilotProtectedSubdirs(home) {
+		for _, sub := range protected {
 			// BOTH directions, unlike the shared-base rule above. An entry
 			// that covers the protected tree grants it wholesale; an entry
 			// INSIDE it grants a piece of it, which for a daemon database is

@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -480,6 +481,67 @@ func TestCopilotSandboxBaselineAcceptsConventionalTempRoots(t *testing.T) {
 			assert.Equal(t, tc.tempDir, entryByID(t, entries, CopilotBaselineTempDir).Path)
 		})
 	}
+}
+
+// TestCopilotSandboxBaselineDedupesAgentdEndpointsByResolvedPath pins the
+// three properties the endpoint dedup has to hold at once.
+//
+// The key is the RESOLVED path because the duplicates that actually occur are
+// not textual: a legacy endpoint reached through a symlinked home cleans
+// differently and names the same socket. Deduping on the raw spelling would
+// emit two mount rules for one node; deduping too eagerly would drop a real
+// endpoint, and agent coordination would fail for whichever one lost.
+func TestCopilotSandboxBaselineDedupesAgentdEndpointsByResolvedPath(t *testing.T) {
+	root := t.TempDir()
+	realDir := filepath.Join(root, "real")
+	require.NoError(t, os.MkdirAll(realDir, 0o755))
+	link := filepath.Join(root, "link")
+	require.NoError(t, os.Symlink(realDir, link))
+
+	viaReal := filepath.Join(realDir, "agentd.sock")
+	viaLink := filepath.Join(link, "agentd.sock")
+	distinct := filepath.Join(realDir, "legacy-agentd.sock")
+
+	entries, err := CopilotSandboxBaseline(CopilotBaselineInput{
+		GOOS:          "linux",
+		Home:          filepath.Join(root, "home"),
+		Getenv:        envMap(nil),
+		AgentdSockets: []string{viaReal, viaLink, distinct, viaReal},
+	})
+	require.NoError(t, err)
+
+	var sockets []string
+	for _, e := range entries {
+		if e.ID == CopilotBaselineAgentdSocket {
+			sockets = append(sockets, e.Path)
+		}
+	}
+	// First occurrence wins and keeps the CALLER's spelling, order preserved;
+	// the symlinked alias collapses into it; the genuinely different endpoint
+	// survives.
+	assert.Equal(t, []string{viaReal, distinct}, sockets)
+}
+
+// TestCopilotSandboxBaselineRefusesBadEndpointAmongGoodOnes proves the dedup
+// cannot become a way to smuggle a bad endpoint past validation: every
+// surviving row is validated, and one refusal fails the whole catalog.
+func TestCopilotSandboxBaselineRefusesBadEndpointAmongGoodOnes(t *testing.T) {
+	home := "/home/copilot-baseline-test-user"
+	_, err := CopilotSandboxBaseline(CopilotBaselineInput{
+		GOOS:   "linux",
+		Home:   home,
+		Getenv: envMap(nil),
+		AgentdSockets: []string{
+			filepath.Join(home, ".tclaude", "api", "agentd.sock"),
+			filepath.Join(home, ".tclaude", "data", "agentd.sock"),
+			filepath.Join(home, ".tclaude-agentd.sock"),
+		},
+	})
+	require.Error(t, err, "a protected-state endpoint must refuse even alongside valid ones")
+	var capErr *SandboxCapabilityError
+	require.ErrorAs(t, err, &capErr)
+	assert.Equal(t, "copilot-sandbox-baseline-too-broad", capErr.Kind)
+	assert.Contains(t, capErr.Message, "protected state")
 }
 
 // TestCopilotSandboxBaselineProtectsTclaudeStateExactly pins that the
