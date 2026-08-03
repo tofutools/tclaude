@@ -298,9 +298,18 @@ func TestHookInstallTargets(t *testing.T) {
 		harnessTargetNames(hookInstallTargets(claude, onlyCodex)))
 
 	// Selecting codex: it leads, the present claude follows, and the
-	// selected harness is never duplicated by the auto-add pass.
-	assert.Equal(t, []string{"codex", "claude"},
+	// selected harness is never duplicated by the auto-add pass. Copilot
+	// joins the tail because its descriptor now carries a HookInstaller —
+	// discovery is capability-driven, so a harness gains (or loses) its
+	// place here purely by what it advertises.
+	assert.Equal(t, []string{"codex", "claude", "copilot"},
 		harnessTargetNames(hookInstallTargets(codex, all)))
+
+	// A present Copilot is auto-added without being selected, exactly like
+	// Codex — and, having no trust store, it needs no consent prompt.
+	onlyCopilot := func(h *harness.Harness) bool { return h.Name == harness.CopilotName }
+	assert.Equal(t, []string{"claude", "copilot"},
+		harnessTargetNames(hookInstallTargets(claude, onlyCopilot)))
 }
 
 func TestConsentToDetectedHookTrust(t *testing.T) {

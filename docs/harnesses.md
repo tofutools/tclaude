@@ -240,20 +240,24 @@ covers **interactive human sessions**:
 | **Resume** | ⚠️ `copilot --resume=<id>` (exact id only — never the picker, an id prefix, or a session name), but **only for a session you launched with an explicit `--session-id <uuid>`**: with no conversation store tclaude never discovers a Copilot conv-id on its own, so `--resume` has nothing to look up. Conversation discovery lands with the ConvStore wave |
 | **Model & effort at spawn** | ✅ `--model=` (including `auto`) and `--effort=` (`low`…`max`, the same levels as everywhere else in tclaude). Note `max`: the flag accepts the whole vocabulary, but the docs describe `max` as the highest-depth tier **for Anthropic models** — Copilot may reject it for a GPT model, so pair it with a model that has that tier |
 | **Rename / compact / graceful stop** | ✅ in-pane `/rename`, `/compact`, `/exit`. `/exit` closes the *current* session: with other sessions open in the same CLI it foregrounds the newest remaining one instead of quitting, so tclaude keeps its hard-kill fallback for a pane that doesn't actually exit |
-| **Everything else in the matrix** | ➖ not yet — no conversation store, hooks/live status, ad-hoc ask, sandbox, approval, tool governance, directory pre-trust, remote control, usage/cost, or status bar |
+| **Hooks / live status** | ✅ `<COPILOT_HOME>/hooks/tclaude.json` — a tclaude-**owned** drop-in file, merged by Copilot with the user's own hooks; no trust step, no `config.json` involvement. Registers `SessionStart`, `UserPromptSubmit`, `PostToolUse`, `Stop`, `SessionEnd`, so a pane reports working/idle per turn. See [below](#copilot-hooks) for what is deliberately left out |
+| **Everything else in the matrix** | ➖ not yet — no conversation store, ad-hoc ask, sandbox, approval, tool governance, directory pre-trust, remote control, usage/cost, or status bar |
 
 Two consequences are worth stating plainly:
 
 - A Copilot conversation does **not** appear in `conv ls`, search, or the
-  dashboard's conversation views, and its pane shows no live status — those all
-  need the conversation store and hooks a later wave adds.
+  dashboard's conversation views — those need the conversation store a later
+  wave adds. Live status *does* work, via the hooks below.
 - Copilot agents are not usable as detached agents in practice. Approval-lineage
   classification fails closed for a harness with no approval catalog, so a
   Copilot child is refused rather than spawned with an unproven posture.
 
-The restraint is deliberate rather than incidental. This adapter was written
-against the official GitHub documentation, without a Copilot binary available
-to record fixtures. Documented launch flags are a stable contract; a
+The restraint is deliberate rather than incidental. This adapter was FIRST
+written against the official GitHub documentation alone, with no Copilot binary
+available to record fixtures — which is why so much of the matrix is still
+empty. Each row leaves that state only when the fixture lab below can prove it
+against the real pinned binary; hooks are the first to have done so.
+Documented launch flags are a stable contract; a
 session-state layout, a hook payload, or a sandbox/approval guarantee is not —
 and a descriptor that advertises a contract tclaude cannot honor is worse than
 one that advertises none, because callers detect an absent contract and degrade
@@ -267,6 +271,59 @@ Two Copilot options tclaude deliberately never emits: `--mouse` / `--no-mouse`
 (an explicit value is **persisted** to the user's configuration, so it is not
 a per-spawn flag), and `-p/--prompt` (headless mode, which exits after
 completion — a TUI pane wants `-i`).
+
+#### Copilot hooks
+
+Copilot's hook support rests on two behaviors the fixture lab observed from the
+real 1.0.77 binary and GitHub documents neither of. Both are pinned by
+committed captures under
+`pkg/claude/harness/copilotfixture/testdata/<version>/hooks`, so a CLI that
+changes either one fails a test instead of silently breaking live status.
+
+1. **A tclaude-owned drop-in file fires.** `<COPILOT_HOME>/hooks/tclaude.json`
+   is loaded with no `config.json` present, no folder trust and no git repo,
+   and Copilot *merges* it with the user's own hooks. tclaude therefore never
+   edits the shared `config.json` — which it could not do safely anyway: the
+   CLI rewrites that file itself ("This file is managed automatically"),
+   migrates a `hooks` key out of it into `settings.json`, and prefixes it with
+   `//` banner lines that are not valid JSON.
+2. **Claude Code's event names select Claude Code's payload.** Registered under
+   their PascalCase names, Copilot's events arrive as `hook_event_name`,
+   `session_id`, ISO-8601 timestamps, `tool_input` as an object — even Claude's
+   tool *names* (`Bash`, not Copilot's `bash`). tclaude needs no translator:
+   the same `HookCallbackInput` decodes Copilot as it already does Codex.
+
+Four deliberate omissions, each for its own reason:
+
+- **`PreToolUse` is not installed.** A non-zero hook exit *denies the user's
+  tool call*, and tclaude's callback can legitimately fail when its receiver is
+  down. `PostToolUse` reports the same tool a moment later at no such risk.
+- **`PermissionRequest` is not installed.** It fires even under
+  `--allow-all-tools` (it runs the rules engine, not a prompt), and it is the
+  one event that ignores the dialect — it answers a PascalCase registration
+  with a camelCase payload carrying no `session_id`. Copilot's real
+  human-is-blocked signal appears to be `Notification(permission_prompt)`;
+  enrolling it is TCL-976 work.
+- **`UserPromptTransformed` is not installed** — same turn as
+  `UserPromptSubmit`, and its payload is the model-facing rendering of the
+  prompt.
+- **No standing-order selectors.** Copilot *does* read hook stdout as a control
+  channel, so tclaude's installed command ends in `>/dev/null`: a hook that
+  prints `{"decision":"block"}` makes the agent keep working (one probe turned
+  a single prompt into nine forced continuation cycles). Using that channel
+  needs a designed, verified response contract; discarding stdout until then is
+  the safe default.
+
+Two more properties an operator may notice. Every entry carries an explicit
+`timeoutSec` because hooks BLOCK the turn and Copilot's default timeout is 30
+seconds. And Copilot fires `SessionStart` *after* the turn's first prompt —
+the opposite of every other harness — which is why the descriptor carries
+`SessionStartAfterPrompt`: without it, the session announcement would report a
+just-started turn as idle.
+
+`SessionEnd` stays best-effort. It has only been observed on clean runs, it
+cannot fire on a SIGKILL, and it is at-least-once rather than exactly-once, so
+exit detection remains the reaper's tmux/PID liveness.
 
 #### Compatibility fixtures
 

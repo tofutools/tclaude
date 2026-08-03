@@ -1006,6 +1006,7 @@ jobs:
             TestCopilotReasoningEffortOnResponsesWire
             TestCopilotModelSelection
             TestCopilotProductionSpawnerLaunches
+            TestCopilotHooksFireFromTheInstalledFile
           )
           missing=()
           for test_name in "${required[@]}"; do

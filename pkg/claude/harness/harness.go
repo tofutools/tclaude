@@ -184,6 +184,36 @@ type Harness struct {
 	// exclusive in practice.
 	SeedsFirstTurn bool
 
+	// SessionStartAfterPrompt marks a harness that announces a session AFTER
+	// the first prompt of that session rather than before it.
+	//
+	// Every harness tclaude supported before GitHub Copilot CLI fires
+	// SessionStart first, which is why the status machine could treat it as
+	// "nothing is running yet" and settle the session to idle. Copilot's
+	// recorded event order is UserPromptSubmit, UserPromptTransformed,
+	// SessionStart, ..., so the same reset would blank a turn that had just
+	// started. The hook path consults this instead of switching on a harness
+	// name; see session.lateSessionStart.
+	SessionStartAfterPrompt bool
+
+	// SessionEndBestEffort marks a harness whose SessionEnd hook is NOT proof
+	// that the process is going away.
+	//
+	// tclaude's receiver otherwise treats SessionEnd as an exit: it settles the
+	// ledgers, writes an exit observation and raises an "Exited" notification.
+	// That is right for Claude Code, whose SessionEnd is process-scoped. GitHub
+	// Copilot CLI has only ever been observed firing it on a clean run, it
+	// cannot fire on a SIGKILL, and it is at-least-once rather than
+	// exactly-once — a hook that steers the agent into forced continuation
+	// makes it repeat within a single prompt. Declaring a live pane dead is a
+	// far worse failure than being slow to notice a real exit, so a harness in
+	// that position sets this and exit detection stays with the reaper's
+	// tmux/PID liveness.
+	//
+	// Deliberately phrased as an opt-OUT: every harness that predates it keeps
+	// its exact behavior, and an unknown or legacy harness row does too.
+	SessionEndBestEffort bool
+
 	// ServerAuthoritative marks a harness whose conversation lives in a
 	// daemon-owned side server rather than in the pane process. The pane is
 	// only an attach client. agentd must start/authenticate that server,
@@ -452,6 +482,20 @@ func (h *Harness) SupportsLaunchEnrollment() bool {
 // Harness.SeedsFirstTurn.
 func (h *Harness) NeedsSpawnSeed() bool {
 	return h != nil && h.SeedsFirstTurn && h.Spawn != nil
+}
+
+// SessionEndProvesExit reports whether a SessionEnd hook from this harness may
+// be treated as evidence that the process ended. Nil-safe, and true by default:
+// only a harness that explicitly declares its SessionEnd best-effort opts out.
+func (h *Harness) SessionEndProvesExit() bool {
+	return h == nil || !h.SessionEndBestEffort
+}
+
+// AnnouncesSessionAfterPrompt reports whether this harness fires SessionStart
+// after the turn's first prompt event. Nil-safe: an unknown or legacy harness
+// row keeps the historical prompt-after-session ordering.
+func (h *Harness) AnnouncesSessionAfterPrompt() bool {
+	return h != nil && h.SessionStartAfterPrompt
 }
 
 // UsesAuthoritativeServer reports whether agentd must own a side server for

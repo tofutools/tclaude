@@ -1,0 +1,57 @@
+[
+  {
+    "seq": 1,
+    "event": "UserPromptSubmit",
+    "file": "claude-dialect.01-UserPromptSubmit.json"
+  },
+  {
+    "seq": 2,
+    "event": "SessionStart",
+    "file": "claude-dialect.02-SessionStart.json"
+  },
+  {
+    "seq": 3,
+    "event": "PreToolUse",
+    "file": "claude-dialect.03-PreToolUse.json"
+  },
+  {
+    "seq": 4,
+    "event": "PermissionRequest",
+    "file": "claude-dialect.04-PermissionRequest.json"
+  },
+  {
+    "seq": 5,
+    "event": "PostToolUse",
+    "file": "claude-dialect.05-PostToolUse.json"
+  },
+  {
+    "seq": 6,
+    "event": "Stop",
+    "file": "claude-dialect.06-Stop.json"
+  },
+  {
+    "seq": 7,
+    "event": "SessionEnd",
+    "file": "claude-dialect.07-SessionEnd.json"
+  },
+  {
+    "seq": 8,
+    "event": "UserPromptSubmit",
+    "file": "claude-dialect.08-UserPromptSubmit.json"
+  },
+  {
+    "seq": 9,
+    "event": "SessionStart",
+    "file": "claude-dialect.09-SessionStart.json"
+  },
+  {
+    "seq": 10,
+    "event": "Stop",
+    "file": "claude-dialect.10-Stop.json"
+  },
+  {
+    "seq": 11,
+    "event": "SessionEnd",
+    "file": "claude-dialect.11-SessionEnd.json"
+  }
+]

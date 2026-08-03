@@ -535,10 +535,14 @@ func (r *sessionReaper) tick(now time.Time) (reaped int) {
 // recorded a reason first. A plain shell session has no hook at all —
 // a clean exit (Ctrl-D, `exit`) is the normal way to end it — so it
 // gets the same reasonless treatment; stamping "unexpected" would turn
-// every deliberate shell exit into a spurious "Exited" banner. Copilot is
-// in the same position for a stronger reason: it installs no tclaude hooks
-// at all yet, so a human typing `/exit` — the graceful stop tclaude itself
-// wires up — would otherwise be reported as an abnormal death every time.
+// every deliberate shell exit into a spurious "Exited" banner. Copilot stays
+// in the same position after TCL-972 wired up its hooks: it now installs a
+// SessionEnd hook, but only a CLEAN run has been observed firing it, and a
+// SIGKILL or a crashed pane provably cannot. Until every termination path is
+// fixture-backed, a human typing `/exit` — the graceful stop tclaude itself
+// wires up — must not be reported as an abnormal death, so exit authority
+// stays with the reaper's tmux/PID liveness and Copilot keeps the reasonless
+// treatment.
 //
 // The predicate this switch really encodes is "does the harness emit a
 // reliable session-END hook", which today is Claude Code alone; it is
