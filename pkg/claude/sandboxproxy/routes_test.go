@@ -172,7 +172,8 @@ func routeHTTPConnect(t *testing.T, proxyAddr, authority string) error {
 	if _, err := fmt.Fprintf(conn, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", authority, authority); err != nil {
 		return err
 	}
-	resp, err := http.ReadResponse(bufio.NewReader(conn), &http.Request{Method: http.MethodConnect})
+	reader := bufio.NewReader(conn)
+	resp, err := http.ReadResponse(reader, &http.Request{Method: http.MethodConnect})
 	if err != nil {
 		return err
 	}
@@ -180,6 +181,13 @@ func routeHTTPConnect(t *testing.T, proxyAddr, authority string) error {
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("HTTP CONNECT status %s body %q", resp.Status, body)
+	}
+	banner := make([]byte, len(originBanner))
+	if _, err := io.ReadFull(reader, banner); err != nil {
+		return fmt.Errorf("read HTTP route origin banner: %w", err)
+	}
+	if string(banner) != originBanner {
+		return fmt.Errorf("HTTP route origin banner = %q, want %q", banner, originBanner)
 	}
 	return nil
 }
