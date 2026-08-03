@@ -1094,10 +1094,7 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           if ! grep -q 'OS sandbox backend available: true' "$log"; then
-            echo "::error::Copilot's OS sandbox backend never started on this runner, so the "\
-"native-sandbox scenarios only exercised their fail-closed arm. On Linux the provisioning step "\
-"(bubblewrap + unprivileged user namespaces) has regressed; on macOS Seatbelt is expected to be "\
-"present unconditionally."
+            echo "::error::Copilot's OS sandbox backend never started on this runner, so the native-sandbox scenarios only exercised their fail-closed arm. On Linux the provisioning step (bubblewrap + unprivileged user namespaces) has regressed; on macOS Seatbelt is expected to be present unconditionally."
             exit 1
           fi
 
