@@ -987,7 +987,7 @@ jobs:
             # directory is /private/var/folders/…, which is the entire defect. On
             # Linux it has no alternate spelling to supply and skips, so this arm
             # is the only place it is real evidence.
-            run_filter: TestCopilotNativeSandbox|TestCopilotSandboxBaseline|TestCopilotDefaultCachePlacement|TestCopilotPackageCacheIsExecutable|TestCopilotInnerSandbox|TestCopilotLegacyConfig|TestCopilotStartupDialsOnlyContractedHosts|TestCopilotConvStoreMatchesTheUnresolvedCwdSpelling
+            run_filter: TestCopilotNativeSandbox|TestCopilotSandboxBaseline|TestCopilotDefaultCachePlacement|TestCopilotPackageCacheIsExecutable|TestCopilotInnerSandbox|TestCopilotLegacyConfig|TestCopilotStartupDialsOnlyContractedHosts|TestCopilotConvStoreMatchesTheUnresolvedCwdSpelling|TestCopilotPermissionPathGrants
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -1106,12 +1106,22 @@ jobs:
               TestCopilotConvStoreMatchesTheUnresolvedCwdSpelling
             )
           fi
-          # TCL-973 Phase 0's permission matrix. Required on Linux only, for
+          # TCL-973 Phase 0's permission matrix. Most of it is Linux-only for
           # the same reason the compatibility fixtures are: these measure
           # Copilot's own prompt behaviour, which is JavaScript in the CLI
-          # rather than anything the platform decides. The one place that could
-          # differ is path handling, and that measurement is not in this suite
-          # yet -- when it lands it goes in the shared array above, not here.
+          # rather than anything the platform decides.
+          #
+          # The PATH matrix is the documented exception, and it runs on BOTH
+          # arms. Its subject IS platform semantics -- the cwd-subtree and
+          # system-temp grants, and which spellings of them the CLI honours --
+          # on a platform where TMPDIR is /var/folders/… while the resolved
+          # form is /private/var/folders/…. A finding about Linux temp
+          # semantics is not a finding about macOS temp semantics, so gating it
+          # on Linux alone would leave the PR asserting a general
+          # supported-platform contract with evidence from one platform. Note
+          # that a macOS-required name must appear in BOTH the run_filter above
+          # and the required list below: required-only fails loudly, which is
+          # fine, but run_filter-only can skip in silence, which is not.
           #
           # This list is generated from permission_contract.json and must stay
           # equal to the set of scenarios it cites. That equality is the point:
@@ -1125,7 +1135,13 @@ jobs:
           # only top-level tests -- and a parent whose subtests every one
           # skipped still prints "--- PASS: Parent". Gating a table-driven
           # matrix on the parent alone would verify essentially nothing.
-          required_subtests=()
+          required_subtests=(
+            'TestCopilotPermissionPathGrants/outside-all/no-path-flags'
+            'TestCopilotPermissionPathGrants/outside-all/add-dir'
+            'TestCopilotPermissionPathGrants/outside-all/allow-all-paths'
+            'TestCopilotPermissionPathGrants/in-temp/default'
+            'TestCopilotPermissionPathGrants/in-temp/disallow-temp-dir'
+          )
           if [[ "${{ matrix.platform }}" == "linux" ]]; then
             required+=(
               TestCopilotPermissionContractIsBackedByScenarios
@@ -1161,11 +1177,6 @@ jobs:
               'TestCopilotPermissionAmbientAllowAllPromotes/one'
               'TestCopilotPermissionAmbientAllowAllPromotes/false'
               'TestCopilotPermissionAmbientAllowAllPromotes/empty'
-              'TestCopilotPermissionPathGrants/outside-all/no-path-flags'
-              'TestCopilotPermissionPathGrants/outside-all/add-dir'
-              'TestCopilotPermissionPathGrants/outside-all/allow-all-paths'
-              'TestCopilotPermissionPathGrants/in-temp/default'
-              'TestCopilotPermissionPathGrants/in-temp/disallow-temp-dir'
             )
           fi
           missing=()

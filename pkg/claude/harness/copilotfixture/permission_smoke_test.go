@@ -728,7 +728,20 @@ func stageOutsideEveryGrantedRoot(t *testing.T, dirs copilotfixture.Dirs, childT
 
 // under reports whether path is at or beneath root, comparing whole segments so
 // a sibling like /tmp/foo-other is not read as inside /tmp/foo.
+//
+// Both sides are symlink-resolved first, and on macOS that is the difference
+// between a working guard and a decorative one: os.TempDir() there reports
+// /var/folders/… while the same directory resolves to /private/var/folders/…,
+// so comparing a resolved path against an unresolved root would answer "not
+// contained" for a path sitting squarely inside it. The guard would then pass
+// on exactly the platform whose path spellings it exists to defend against.
 func under(path, root string) bool {
+	if resolved, err := filepath.EvalSymlinks(root); err == nil {
+		root = resolved
+	}
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	}
 	rel, err := filepath.Rel(root, path)
 	if err != nil {
 		return false
