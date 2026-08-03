@@ -152,6 +152,44 @@ func TestCopilotHookInstaller_RepairsMissingTimeout(t *testing.T) {
 	assert.Equal(t, 2, file.Hooks["Stop"][0].TimeoutSec)
 }
 
+// TestCopilotHookInstaller_RemovesRetiredEvents covers the safety-critical
+// downgrade path. An earlier tclaude registered PreToolUse before the fixture
+// lab established that a non-zero hook exit DENIES the user's tool call. An
+// upgraded tclaude must actively remove that entry: leaving it behind would
+// keep a failing callback able to block the operator's tools, and the entry is
+// on an event the current installer never visits.
+func TestCopilotHookInstaller_RemovesRetiredEvents(t *testing.T) {
+	home, command := seedCopilotHome(t)
+
+	seed := map[string]any{
+		"version": 1,
+		"hooks": map[string]any{
+			"PreToolUse": []any{map[string]any{"type": "command", "command": command}},
+			"Stop":       []any{map[string]any{"type": "command", "command": command}},
+		},
+	}
+	writeCopilotHookSeed(t, filepath.Join(home, "hooks", "tclaude.json"), seed)
+
+	require.NoError(t, copilotHookInstaller{}.Install())
+
+	file := readCopilotHooksFileForTest(t, copilotHookInstaller{}.ConfigTarget())
+	assert.NotContains(t, file.Hooks, "PreToolUse",
+		"a tclaude entry on a retired event must be removed, not left running")
+
+	// A retired event that still holds someone ELSE'S hook keeps that hook: the
+	// removal is scoped to tclaude's own entries, not to the event.
+	seed["hooks"].(map[string]any)["PreToolUse"] = []any{
+		map[string]any{"type": "command", "command": command},
+		map[string]any{"type": "command", "command": "/usr/local/bin/audit-logger"},
+	}
+	writeCopilotHookSeed(t, filepath.Join(home, "hooks", "tclaude.json"), seed)
+	require.NoError(t, copilotHookInstaller{}.Install())
+
+	file = readCopilotHooksFileForTest(t, copilotHookInstaller{}.ConfigTarget())
+	require.Len(t, file.Hooks["PreToolUse"], 1)
+	assert.Equal(t, "/usr/local/bin/audit-logger", file.Hooks["PreToolUse"][0].Command)
+}
+
 // TestCopilotHookInstaller_Idempotent installs twice and asserts the second
 // run neither duplicates an entry nor reports a repair.
 func TestCopilotHookInstaller_Idempotent(t *testing.T) {
