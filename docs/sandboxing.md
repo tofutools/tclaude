@@ -1568,6 +1568,27 @@ a denied Home, or managed Codex agents are stranded.
 The practical consequence of these last two: **a denied Home is materially
 easier to run under Codex than under Claude Code today.**
 
+### Spelling does not get you past a protected root
+
+On a case-insensitive volume — the APFS default on macOS — `~/.tclaude/data`
+and `~/.TCLAUDE/Data` are the *same directory*, and so are the NFC and NFD
+spellings of a name containing accented characters. Rules are compared against
+protected roots by filesystem identity, not by string, so every spelling of a
+protected directory is refused alike. You cannot slip a write grant past the
+wall by capitalising it differently.
+
+The same rule folds rules together: two rows naming one physical directory
+through different spellings persist as **one** row, with the more restrictive
+access winning. Authoring a `deny` on `~/Project` and a `write` on `~/project`
+on such a volume leaves you with a single denied row, not two competing ones.
+
+On a case-*sensitive* volume — every ordinary Linux filesystem, and
+case-sensitive APFS — differently spelled paths really are different
+directories, and tclaude keeps treating them that way. Nothing is silently
+lowercased. Where tclaude cannot determine which kind of volume it is looking
+at (an unreadable directory, for instance), it refuses the rule rather than
+admitting it.
+
 ## Composition: which profile wins
 
 Two independent layering steps.

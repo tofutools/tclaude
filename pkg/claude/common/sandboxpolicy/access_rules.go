@@ -585,7 +585,10 @@ func normalizeUnixSocketRules(in *UnixSocketRules, allowMissing bool) (*UnixSock
 			return nil, nil, err
 		}
 		for _, denied := range protected {
-			if pathsIntersect(checkPath, denied) {
+			// Guard-biased: an allow entry may name a socket that does not
+			// exist yet, so a folded collision with a protected root that
+			// cannot be refuted must refuse rather than admit.
+			if GuardPathsIntersect(checkPath, denied) {
 				written := normalized.Path
 				if written == "" {
 					written = normalized.PathGlob
@@ -926,7 +929,7 @@ func MaterializeUnixSocketList(rules UnixSocketRules) (UnixSocketMaterialization
 				continue
 			}
 			for _, denied := range protected {
-				if PathContainsOrEqual(denied, resolved) {
+				if GuardContainsOrEqual(denied, resolved) {
 					return UnixSocketMaterialization{}, fmt.Errorf(
 						"unix socket allow path %q resolves beneath protected directory %q",
 						candidate, denied)

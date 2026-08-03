@@ -373,3 +373,65 @@ func TestCodexSpawner_PermissionProfileFlag(t *testing.T) {
 		t.Fatalf("profile+sandbox: the profile must still be emitted, got %q", gotBoth)
 	}
 }
+
+// TestCodexSandboxCwdConflict_CaseVariantSpelling is the Codex half of TCL-981.
+//
+// Codex confines writes to the cwd subtree, so the guard has to decide whether
+// cwd sits at or above $HOME's protected dirs. On a case-insensitive volume a
+// cwd spelled "/Users/Dev" and a home spelled "/Users/dev" are ONE directory,
+// and the byte-exact filepath.Rel comparison this guard used to make reported
+// no conflict — handing the agent a workspace-write root that contained
+// ~/.tclaude/data, ~/.codex and ~/.claude/sessions.
+//
+// Like the sandboxpolicy tests, this adapts to the volume rather than skipping:
+// a folding volume must report the conflict, a case-sensitive one must not,
+// because there the two spellings really are two directories.
+func TestCodexSandboxCwdConflict_CaseVariantSpelling(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("resolve temp root: %v", err)
+	}
+	home := filepath.Join(root, "Home")
+	if err := os.MkdirAll(filepath.Join(home, ".tclaude", "data"), 0o755); err != nil {
+		t.Fatalf("stage home: %v", err)
+	}
+
+	// Whether the two spellings name one directory is a property of the volume,
+	// and the guard's answer has to track it. Ask the filesystem directly rather
+	// than assuming anything from GOOS.
+	variant := filepath.Join(root, "home")
+	folds := false
+	if homeInfo, homeErr := os.Lstat(home); homeErr == nil {
+		if variantInfo, variantErr := os.Lstat(variant); variantErr == nil {
+			folds = os.SameFile(homeInfo, variantInfo)
+		}
+	}
+	t.Logf("volume folds case: %t (home=%q variant=%q)", folds, home, variant)
+
+	for _, mode := range []string{SandboxWorkspaceWrite, SandboxManagedProfile} {
+		if got := CodexSandboxCwdConflict(mode, variant, home); got != folds {
+			t.Errorf("CodexSandboxCwdConflict(%q, %q, %q) = %v, want %v",
+				mode, variant, home, got, folds)
+		}
+	}
+
+	// The non-writable modes stay unconflicted no matter how cwd is spelled:
+	// read-only cannot write, and danger-full-access is the explicit opt-out.
+	for _, mode := range []string{SandboxReadOnly, SandboxDangerFull} {
+		if CodexSandboxCwdConflict(mode, variant, home) {
+			t.Errorf("mode %q must never report a cwd conflict", mode)
+		}
+	}
+
+	// A project directory strictly inside home never conflicts, and a
+	// case-variant spelling of it must not manufacture one.
+	project := filepath.Join(home, "Projects", "app")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatalf("stage project: %v", err)
+	}
+	for _, spelling := range []string{project, filepath.Join(home, "projects", "app")} {
+		if CodexSandboxCwdConflict(SandboxWorkspaceWrite, spelling, home) {
+			t.Errorf("cwd %q is strictly inside home and must not conflict", spelling)
+		}
+	}
+}
