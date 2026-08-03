@@ -945,14 +945,32 @@ jobs:
   # every token variable from the child environment so a regression back into
   # an auth dependency fails here instead of passing on a logged-in machine.
   #
-  # Linux only, deliberately. The evidence this produces (wire shape, session
-  # layout, exit codes, event stream) is not OS-specific, the job is a
-  # compatibility probe rather than a platform matrix, and adding macOS would
-  # double the cost for a duplicate answer. Revisit only if a Copilot contract
-  # is found to differ by platform.
+  # Two platforms, with DIFFERENT scopes, and the asymmetry is deliberate.
+  #
+  # The compatibility evidence (wire shape, session layout, exit codes, event
+  # stream) is not OS-specific, so running all of it twice would buy a duplicate
+  # answer at double the cost — that was the original Linux-only rationale and it
+  # still holds. What IS OS-specific is Copilot's own sandbox (TCL-977): its
+  # backend is bubblewrap on Linux and Seatbelt on macOS, and a finding about a
+  # security boundary measured on one kernel is not a finding about the other.
+  # So macOS runs the native-sandbox scenarios only.
   copilot-fixtures:
-    name: Copilot CLI fixtures
-    runs-on: ubuntu-latest
+    name: Copilot CLI fixtures (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            runner: ubuntu-latest
+            # Everything: the compatibility fixtures and the sandbox ones.
+            run_filter: TestCopilot
+          - platform: macos
+            runner: macos-latest
+            # The Seatbelt half of the sandbox evidence, and nothing else. The
+            # descriptor test these measurements justify needs no CLI and lives
+            # in the harness package, so the ordinary `go test ./...` job owns it.
+            run_filter: TestCopilotNativeSandbox
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -981,6 +999,24 @@ jobs:
           npm install --global @github/copilot@1.0.77
           copilot --version
 
+      # Copilot's Linux sandbox backend is bubblewrap, and the native-sandbox
+      # scenarios assert real enforcement wherever it can start. Provisioning it
+      # here is what keeps the ENFORCING arm running instead of the fail-closed
+      # one: `bwrap` on PATH is not sufficient, the kernel must also permit an
+      # unprivileged user namespace, which Ubuntu's AppArmor restricts by
+      # default. Relaxing it on an ephemeral runner is safe and is verified
+      # below rather than assumed.
+      - name: Provision the Linux sandbox backend
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          bwrap --ro-bind / / --proc /proc --dev /dev true \
+            && echo "bwrap can create a namespace" \
+            || echo "::warning::bwrap cannot create a namespace; the enforcing arm will not run"
+
       - name: Copilot fixture smoke
         shell: bash
         env:
@@ -988,7 +1024,7 @@ jobs:
         run: |
           set -o pipefail
           go test ./pkg/claude/harness/copilotfixture/... \
-            -run 'TestCopilot' -v -count=1 -timeout 600s 2>&1 | tee "$RUNNER_TEMP/copilot-fixtures.log"
+            -run '${{ matrix.run_filter }}' -v -count=1 -timeout 900s 2>&1 | tee "$RUNNER_TEMP/copilot-fixtures.log"
 
       # A skipped test still exits 0. The gate is an env var, so a typo or a
       # rename would turn this job into a silent no-op that reports success
@@ -997,17 +1033,32 @@ jobs:
         shell: bash
         run: |
           log="$RUNNER_TEMP/copilot-fixtures.log"
+          # TCL-977's sandbox scenarios are required on BOTH platforms: they are
+          # the evidence behind a security capability decision, and a boundary
+          # measured only on Linux says nothing about Seatbelt.
           required=(
-            TestCopilotVersionPin
-            TestCopilotCredentialFreeTextTurn
-            TestCopilotToolCallRoundTrip
-            TestCopilotProviderFailure
-            TestCopilotSessionEnrollmentAndResume
-            TestCopilotReasoningEffortOnResponsesWire
-            TestCopilotModelSelection
-            TestCopilotProductionSpawnerLaunches
-            TestCopilotHooksFireFromTheInstalledFile
+            TestCopilotNativeSandboxBuiltinEditsAreInProcessOnly
+            TestCopilotNativeSandboxBuiltinEditPolicyResolvesSymlinksAndTraversal
+            TestCopilotNativeSandboxShellEnforcementIsHostConditional
+            TestCopilotNativeSandboxShellBasePolicySurface
+            TestCopilotNativeSandboxNeedsNoExperimentalFlag
+            TestCopilotNativeSandboxDisabledAppliesNoPolicy
+            TestCopilotNativeSandboxSettingsSourcesAndPrecedence
           )
+          if [[ "${{ matrix.platform }}" == "linux" ]]; then
+            # The compatibility fixtures run on Linux only; see the job comment.
+            required+=(
+              TestCopilotVersionPin
+              TestCopilotCredentialFreeTextTurn
+              TestCopilotToolCallRoundTrip
+              TestCopilotProviderFailure
+              TestCopilotSessionEnrollmentAndResume
+              TestCopilotReasoningEffortOnResponsesWire
+              TestCopilotModelSelection
+              TestCopilotProductionSpawnerLaunches
+              TestCopilotHooksFireFromTheInstalledFile
+            )
+          fi
           missing=()
           for test_name in "${required[@]}"; do
             grep -qE "^--- PASS: $test_name " "$log" || missing+=("$test_name")
@@ -1022,6 +1073,71 @@ jobs:
               echo "The job provisions pinned @github/copilot@1.0.77 and refuses a skipped or renamed test."
             } >> "$GITHUB_STEP_SUMMARY"
             echo "::error::Copilot fixture scenarios did not report an explicit pass: ${missing[*]}"
+            exit 1
+          fi
+
+      # BOTH host categories, and the second one is not optional.
+      #
+      # The scenarios above ran with a usable backend. The single measurement
+      # that establishes TCL-977's conclusion — that Copilot's built-in file
+      # edits never enter the OS sandbox — can only be made on a host where the
+      # backend CANNOT start: it is the run where an edit lands while every
+      # shell command fails. Requiring a usable backend everywhere (the step
+      # after this one) would leave that arm dead in CI, so the decisive
+      # evidence for a security capability decision would have no automated
+      # coverage at all.
+      #
+      # Re-restricting the AppArmor knob is the same condition a hardened host
+      # or a nested container presents, which is the category the arm exists to
+      # describe.
+      - name: Copilot sandbox smoke with the backend denied
+        if: matrix.platform == 'linux'
+        shell: bash
+        env:
+          TCLAUDE_COPILOT_FIXTURE_SMOKE: "1"
+        run: |
+          set -o pipefail
+          # Tolerated exactly like the provisioning step's write. On a runner
+          # without this knob the raw sysctl error would preempt the descriptive
+          # gate below, which was written for precisely that case.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=1 || true
+          go test ./pkg/claude/harness/copilotfixture/... \
+            -run 'TestCopilotNativeSandbox' -v -count=1 -timeout 900s 2>&1 \
+            | tee "$RUNNER_TEMP/copilot-fixtures-nobackend.log"
+
+      - name: Require the backend-denied arm to have run
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          log="$RUNNER_TEMP/copilot-fixtures-nobackend.log"
+          if ! grep -q 'OS sandbox backend available: false' "$log"; then
+            echo "::error::The backend-denied step still reported a usable sandbox backend, so the decisive in-process-edit arm did not run. Denying unprivileged user namespaces no longer works on this runner; find another way to deny the backend rather than dropping the arm."
+            exit 1
+          fi
+          grep -qE '^--- PASS: TestCopilotNativeSandboxBuiltinEditsAreInProcessOnly ' "$log" || {
+            echo "::error::The decisive scenario did not pass in the backend-denied arm."
+            exit 1
+          }
+
+      # The sandbox scenarios assert real enforcement where Copilot's OS backend
+      # can start and fail-closed degradation where it cannot, so they stay green
+      # either way — which is exactly why the ARM has to be checked separately.
+      # A runner that silently lost its backend would keep this job green while
+      # quietly stopping to test the thing the job exists for.
+      - name: Require the enforcing sandbox arm
+        shell: bash
+        run: |
+          log="$RUNNER_TEMP/copilot-fixtures.log"
+          verdicts="$(grep -o 'OS sandbox backend available: [a-z]*' "$log" | sort -u || true)"
+          {
+            echo "### Copilot sandbox backend"
+            echo
+            echo '```'
+            echo "${verdicts:-(no verdict logged)}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if ! grep -q 'OS sandbox backend available: true' "$log"; then
+            echo "::error::Copilot's OS sandbox backend never started on this runner, so the native-sandbox scenarios only exercised their fail-closed arm. On Linux the provisioning step (bubblewrap + unprivileged user namespaces) has regressed; on macOS Seatbelt is expected to be present unconditionally. Note this checks the FIRST log only; the backend-denied arm has its own gate above."
             exit 1
           fi
 

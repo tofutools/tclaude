@@ -131,6 +131,21 @@ type RunOptions struct {
 	// request body carries no effort key at all.
 	Model  string
 	Effort string
+
+	// ExtraArgs are appended after the runner's own flags and before the
+	// prompt, so a scenario can vary the launch posture rather than have one
+	// baked into the runner.
+	//
+	// The sandbox characterization uses this for `--experimental`,
+	// `--allow-all-paths` and `--disallow-temp-dir`. On `--experimental`
+	// specifically: it does NOT gate whether the CLI honours its own sandbox
+	// settings — it gates only whether the interactive `/sandbox` command is
+	// registered. A settings-enabled sandbox applies with no experimental flag
+	// anywhere, which TestCopilotNativeSandboxNeedsNoExperimentalFlag measures
+	// on the real binary. Stated here because the opposite reading is the
+	// natural one from `copilot help sandbox`, and it is the reading that would
+	// let a caller conclude a sandbox is off because tclaude passed no flag.
+	ExtraArgs []string
 }
 
 // RunResult is one completed invocation.
@@ -246,6 +261,7 @@ func Run(t *testing.T, opts RunOptions) RunResult {
 	if opts.Effort != "" {
 		args = append(args, "--effort="+opts.Effort)
 	}
+	args = append(args, opts.ExtraArgs...)
 	// -p last so no earlier option can swallow the prompt value.
 	args = append(args, "-p", opts.Prompt)
 

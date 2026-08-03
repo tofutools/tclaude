@@ -21,6 +21,11 @@ func init() {
 		TmuxScrollback:      true,
 		LaunchEnrollment:    true,
 		ServerAuthoritative: true,
+
+		// Verbatim the sentence this refusal has always carried; it moved onto
+		// the descriptor when Copilot needed a different one.
+		BuiltinOSSandboxAbsenceReason: "OpenCode has no built-in OS sandbox; " +
+			"its access-control mode is a command filter, not confinement",
 	})
 }
 
