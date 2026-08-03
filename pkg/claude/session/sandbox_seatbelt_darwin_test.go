@@ -457,10 +457,11 @@ func TestDarwinClaudeRuntimeScratchRootIsAutomaticAndHarnessScoped(t *testing.T)
 	dirs, err := tclaudeLayerHarnessRuntimeWriteDirs(harness.DefaultName)
 	require.NoError(t, err)
 	require.Len(t, dirs, 1)
+	claudeRuntimeDir := dirs[0]
 	canonicalBase, err := filepath.EvalSymlinks(base)
 	require.NoError(t, err)
-	assert.Equal(t, filepath.Join(canonicalBase, fmt.Sprintf("claude-%d", os.Geteuid())), dirs[0])
-	info, err := os.Stat(dirs[0])
+	assert.Equal(t, filepath.Join(canonicalBase, fmt.Sprintf("claude-%d", os.Geteuid())), claudeRuntimeDir)
+	info, err := os.Stat(claudeRuntimeDir)
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o700), info.Mode().Perm())
 
@@ -480,8 +481,8 @@ func TestDarwinClaudeRuntimeScratchRootIsAutomaticAndHarnessScoped(t *testing.T)
 	assert.Contains(t, spec.Contract.WriteDirs, filepath.Join(canonicalBase, fmt.Sprintf("claude-%d", os.Geteuid())),
 		"the prepared root must survive into the persisted launch contract")
 
-	require.NoError(t, os.Remove(dirs[0]))
-	require.NoError(t, os.Symlink(t.TempDir(), dirs[0]))
+	require.NoError(t, os.Remove(claudeRuntimeDir))
+	require.NoError(t, os.Symlink(t.TempDir(), claudeRuntimeDir))
 	_, err = tclaudeLayerHarnessRuntimeWriteDirs(harness.DefaultName)
 	require.ErrorContains(t, err, "must be a real directory owned by uid")
 }
