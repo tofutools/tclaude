@@ -91,14 +91,24 @@ The name is the tmux handle, so it is also what
 `tclaude session attach <handle>` takes. **enter** on one of these rows hands
 this terminal to its pane, exactly as it does on a live agent's row.
 
-Only **live** sessions are listed: an exited one has no pane to go to and no
-resume verb behind it (a session is not a conversation), so it would be a row
-whose only possible answer to **enter** is "there is nothing there".
-`tclaude session ls -a` is where the exited ones are. A pane that belongs to an
-agent's conversation is never re-listed here — one pane, one row — and neither
-is an agent spawn whose conversation has not registered yet, so a launch does
-not flash past as a session on its way into the roster. The **f** filter is
-about agents that have gone offline and leaves session rows alone.
+Only **live** sessions are listed — the ones `tclaude session ls` shows without
+`-a`. An exited one has no pane to go to and no resume verb behind it (a
+session is not a conversation), so it would be a row whose only possible answer
+to **enter** is "there is nothing there".
+
+One pane is one row. A pane that belongs to any generation of an agent's
+conversation is the agent listing's, never re-listed here; so is an agent
+launch — a spawn, a reincarnate or a clone — whose conversation has not been
+linked yet, so a launch does not flash past as a session on its way into the
+roster. Where two rows claim one live tmux name, which happens when a
+directory-derived name is reused after its first session died, only the row
+that owns the pane is shown. And when you started `agentd serve --tui` from
+inside a tclaude session yourself, that session is left out: **enter** on it
+would go where you already are, and **delete** would take this terminal —
+and the daemon — down with it.
+
+The **f** filter is about agents that have gone offline and leaves session rows
+alone.
 
 Sessions are counted separately in the summary line
 (`2 agents (1 online) • 3 groups • 2 sessions`). They are the operator's own

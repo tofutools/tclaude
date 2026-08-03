@@ -16,8 +16,10 @@ package agentd
 
 import (
 	"fmt"
+	"os"
 	"sort"
 	"strings"
+	"sync"
 
 	tea "charm.land/bubbletea/v2"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
@@ -25,11 +27,76 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
+// agentLaunchLabels names the session labels this daemon has launched FOR AN
+// AGENT and is still waiting on. It exists because a launch creates its
+// session row — and its tmux pane — before the conversation is linked to an
+// actor, so for that window the row is indistinguishable from a plain session
+// by every durable signal there is: no agent conversation yet, and (on the
+// legacy path) not even a conv-id.
+//
+// Without it a relaunch would flash through the console as a "(session)" row
+// on its way into the roster, and — much worse — offer the operator a delete
+// that kills a materialising agent's pane behind the daemon's back.
+//
+// The /v1/spawn path is already covered by its durable pending_spawns row,
+// which outlives the daemon; this covers reincarnate and clone, which mint a
+// label without one. It is deliberately in-memory: an entry only has to
+// outlive the launch that holds it, and a daemon that dies mid-launch has
+// orphaned that launch anyway.
+var agentLaunchLabels = struct {
+	sync.Mutex
+	labels map[string]int
+}{labels: map[string]int{}}
+
+// claimAgentLaunchLabel marks label as an agent launch in flight and returns
+// its release. Callers defer the release at the scope that owns the launch, so
+// a panic or an early error return cannot strand the claim. It counts rather
+// than sets: a label is unique per launch, but counting makes a retried or
+// nested claim release correctly instead of the first release clearing both.
+func claimAgentLaunchLabel(label string) func() {
+	if label == "" {
+		return func() {}
+	}
+	agentLaunchLabels.Lock()
+	agentLaunchLabels.labels[label]++
+	agentLaunchLabels.Unlock()
+	released := false
+	return func() {
+		if released {
+			return
+		}
+		released = true
+		agentLaunchLabels.Lock()
+		defer agentLaunchLabels.Unlock()
+		if agentLaunchLabels.labels[label] <= 1 {
+			delete(agentLaunchLabels.labels, label)
+			return
+		}
+		agentLaunchLabels.labels[label]--
+	}
+}
+
+// agentLaunchInFlight reports whether label belongs to an agent launch this
+// daemon is still waiting on.
+func agentLaunchInFlight(label string) bool {
+	agentLaunchLabels.Lock()
+	defer agentLaunchLabels.Unlock()
+	_, claimed := agentLaunchLabels.labels[label]
+	return claimed
+}
+
 // tuiSessionGroupCell is what a non-agent session shows where an agent shows
 // its groups. It is the row's "this is not an agent" marker: a session has no
 // group by construction, so the column is free, and the operator reads the
 // distinction on the row itself rather than having to infer it from a blank.
 const tuiSessionGroupCell = "(session)"
+
+// tuiSessionIDEnv is the session id tclaude exports into every managed pane,
+// including a plain shell's. Read here to leave the console's OWN session out
+// of the listing when agentd was started inside one. It is caller-controlled
+// compatibility state and is used for nothing but that omission — the worst a
+// forged value can do is hide one row from the operator's own console.
+const tuiSessionIDEnv = "TCLAUDE_SESSION_ID"
 
 // tuiSessionRow is one live non-agent session on the daemon's host. Only the
 // fields the listing renders — and the tmux handle every action needs — are
@@ -46,8 +113,9 @@ type tuiSessionRow struct {
 }
 
 // name is the display label: the tmux handle, which is both what `tmux ls`
-// shows and what `tclaude session attach <handle>` takes. A row without one
-// falls back to its id, which findSession also resolves.
+// shows and what `tclaude session attach <handle>` takes. The id fallback is
+// for a row built outside the listing (a test, a future caller) — the listing
+// itself skips rows with no tmux name, since there would be nothing to go to.
 func (s tuiSessionRow) name() string {
 	if h := strings.TrimSpace(s.TmuxSession); h != "" {
 		return h
@@ -55,11 +123,11 @@ func (s tuiSessionRow) name() string {
 	return s.SessionID
 }
 
-// status is the session's recorded activity. Unlike an agent row there is no
-// offline case to override it — only live sessions are listed — but the value
-// is shown verbatim rather than assumed: a harness that has ended inside a
-// pane the operator has not closed yet really is "exited", and saying
-// "running" there would be a guess.
+// status is the session's recorded activity, shown verbatim rather than
+// assumed. Unlike an agent row there is no offline case to override it: only
+// live, non-exited sessions are listed. A shell session has no hooks, so it
+// reads "running" for its whole life; a coding session reports the same
+// statuses it does in `session ls`.
 func (s tuiSessionRow) status() string {
 	if st := strings.TrimSpace(s.Status); st != "" {
 		return st
@@ -92,11 +160,12 @@ func listLocalNonAgentSessions() ([]tuiSessionRow, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read agent conversations: %w", err)
 	}
-	// A spawn whose conv-id has not materialised yet has no agent conversation
-	// to match on, so without this it would flash through the listing as a
-	// plain session for the second or two before enrollment lands. Its pending
-	// row is keyed by the spawn label, which IS the session id. A failed read
-	// costs only that suppression, so it does not fail the listing.
+	// A launch whose conversation is not linked to an actor yet has no agent
+	// conversation to match on, so without this it would flash through the
+	// listing as a plain session — and offer a delete that kills a
+	// materialising agent's pane. A spawn's pending row is keyed by the spawn
+	// label, which IS the session id; a failed read costs only that
+	// suppression, so it does not fail the listing.
 	pending := map[string]struct{}{}
 	if rows, perr := db.ListPendingSpawns(); perr == nil {
 		for _, ps := range rows {
@@ -109,12 +178,28 @@ func listLocalNonAgentSessions() ([]tuiSessionRow, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list tmux sessions: %w", err)
 	}
-	var out []tuiSessionRow
+	// The console's own session, when agentd was started inside one. Killing it
+	// would take this terminal — and the daemon — down with it, and enter on it
+	// goes where the operator already is.
+	self := strings.TrimSpace(os.Getenv(tuiSessionIDEnv))
+	// Keyed by tmux name, not by row: an exited row keeps the tmux name it had
+	// (MarkSessionExitedIfUnchanged does not clear it) and dir-style names are
+	// reused, so a dead namesake can match a live session's name and be listed
+	// beside it as a second, indistinguishable row. The most recently updated
+	// row is the one that owns the pane.
+	byTmux := map[string]*session.SessionState{}
 	for _, st := range states {
-		if st.TmuxSession == "" {
+		if st.TmuxSession == "" || st.ID == self {
 			continue
 		}
 		if _, live := alive[st.TmuxSession]; !live {
+			continue
+		}
+		// Exited rows are excluded the way `session ls` excludes them without
+		// -a. A row that says exited while some pane of that name is alive is
+		// either a dead namesake (above) or a session whose harness has already
+		// gone; neither is something to offer the operator as live.
+		if st.Status == session.StatusExited {
 			continue
 		}
 		if st.ConvID != "" {
@@ -125,6 +210,15 @@ func listLocalNonAgentSessions() ([]tuiSessionRow, error) {
 		if _, isPending := pending[st.ID]; isPending {
 			continue
 		}
+		if agentLaunchInFlight(st.ID) {
+			continue
+		}
+		if prev, dup := byTmux[st.TmuxSession]; !dup || st.Updated.After(prev.Updated) {
+			byTmux[st.TmuxSession] = st
+		}
+	}
+	out := make([]tuiSessionRow, 0, len(byTmux))
+	for _, st := range byTmux {
 		out = append(out, tuiSessionRow{
 			SessionID:   st.ID,
 			TmuxSession: st.TmuxSession,
@@ -208,14 +302,24 @@ func (r tuiListRow) isSession() bool { return r.kind == tuiRowSession }
 // it was on rather than the row number it sat at (see restoreCursor). The two
 // kinds are namespaced apart: a session id and a conv-id are drawn from
 // different id spaces and must never be mistaken for one another.
+//
+// It is "" for a row with no identity at all — a group member that has never
+// had a conversation. Every caller that matches on a key must skip the empty
+// one, or two such placeholders would look like the same row.
 func (r tuiListRow) key() string {
 	if r.isSession() {
+		if r.session.SessionID == "" {
+			return ""
+		}
 		return "session:" + r.session.SessionID
 	}
 	if r.agent.ConvID != "" {
 		return "agent:" + r.agent.ConvID
 	}
-	return "agent:" + r.agent.AgentID
+	if r.agent.AgentID != "" {
+		return "agent:" + r.agent.AgentID
+	}
+	return ""
 }
 
 func (r tuiListRow) name() string {

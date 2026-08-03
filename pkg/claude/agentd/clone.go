@@ -385,6 +385,11 @@ func cloneSpawnOnce(p cloneSpawnParams) (cloneSpawnResult, *cloneSpawnError) {
 
 	if noCopyConv {
 		label = generateSpawnLabel()
+		// The clone's session row and pane exist before its conversation is
+		// linked to an actor, so for that window nothing durable says the row
+		// is an agent's — see agentLaunchLabels. The caller re-claims the
+		// returned label and holds it through EnsureAgentForConv.
+		defer claimAgentLaunchLabel(label)()
 		agentDirectoryCleanup := func() {}
 		if effectiveSandbox != nil {
 			materialized, cleanup, materializeErr := prepareCodexSSHWorkaroundForNewLaunch(
@@ -1264,6 +1269,10 @@ func runCloneOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 		return
 	}
 	newConv, newTmux, label, warn := spawned.NewConv, spawned.NewTmux, spawned.Label, spawned.Warn
+	// Carry the launch claim across the hand-back from cloneSpawnOnce, so the
+	// new row is never briefly indistinguishable from a plain session between
+	// the spawn returning and EnsureAgentForConv linking it below.
+	defer claimAgentLaunchLabel(label)()
 
 	// A clone is an agent in its own right. The identity copy below
 	// registers it via the group/grant DB hooks when the original had

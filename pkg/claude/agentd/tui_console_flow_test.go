@@ -504,8 +504,11 @@ func TestTUIConsoleListsAndGoesToANonAgentSession(t *testing.T) {
 	assert.Contains(t, view, "(session)", "and is marked as not being an agent")
 
 	// The agent's own session is not re-listed as a plain one: its pane
-	// belongs to a conversation the agent listing already owns.
-	assert.NotContains(t, view, sp.TmuxSession+" ")
+	// belongs to a conversation the agent listing already owns. One marker on
+	// screen means one session row, whatever the agent's own handle renders as.
+	assert.Equal(t, 1, strings.Count(view, "(session)"),
+		"exactly one row is marked a session: %s", view)
+	require.NotEmpty(t, sp.TmuxSession)
 
 	// Down off the agent row and onto the session: enter hands this terminal
 	// to its pane, exactly as it does on a live agent's row.

@@ -3,11 +3,16 @@ package agentd
 import (
 	"errors"
 	"net/http"
+	"os/exec"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 // stubLocalSessions swaps the host's non-agent session listing for a fixed
@@ -356,4 +361,220 @@ func TestTUIHelpExplainsSessionRowsOnlyWhereTheyAppear(t *testing.T) {
 	remote.operator = true
 	remote.capabilities = tuiCapabilities{attachAgent: true}
 	assert.NotContains(t, remote.renderHelp(), "session ls -a")
+}
+
+// ---- the listing predicate itself ------------------------------------------
+
+// aliveTmuxStub answers the liveness probe from a fixed set and refuses to run
+// any tmux command: the predicate under test must read the snapshot, never
+// fork per row.
+type aliveTmuxStub struct{ alive map[string]struct{} }
+
+func (s *aliveTmuxStub) Command(args ...string) *exec.Cmd {
+	return exec.Command("false", args...)
+}
+
+func (s *aliveTmuxStub) ListSessions() (map[string]struct{}, error) {
+	return s.alive, nil
+}
+
+// withAliveTmux points the daemon's liveness probe at a fixed set for the test,
+// with the coalescing cache made transparent so each call re-reads it.
+func withAliveTmux(t *testing.T, names ...string) {
+	t.Helper()
+	alive := map[string]struct{}{}
+	for _, n := range names {
+		alive[n] = struct{}{}
+	}
+	prevTmux := clcommon.Default
+	clcommon.Default = &aliveTmuxStub{alive: alive}
+	prevCache := liveTmuxCache
+	liveTmuxCache = newTmuxSessionCache(0, time.Now, session.LiveTmuxSessions)
+	t.Cleanup(func() {
+		clcommon.Default = prevTmux
+		liveTmuxCache = prevCache
+	})
+}
+
+func saveSessionRow(t *testing.T, st *session.SessionState) {
+	t.Helper()
+	if st.Created.IsZero() {
+		st.Created = time.Now()
+	}
+	require.NoError(t, session.SaveSessionState(st))
+}
+
+func listedSessionNames(t *testing.T) []string {
+	t.Helper()
+	rows, err := listLocalNonAgentSessions()
+	require.NoError(t, err)
+	var names []string
+	for _, r := range rows {
+		names = append(names, r.name())
+	}
+	return names
+}
+
+// A plain shell session is exactly what the listing is for.
+func TestListLocalNonAgentSessionsListsALiveShell(t *testing.T) {
+	setupTestDB(t)
+	withAliveTmux(t, "scratch")
+	saveSessionRow(t, &session.SessionState{
+		ID: "scratch", TmuxSession: "scratch", Cwd: "/home/op",
+		Status: session.StatusRunning, Harness: session.ShellHarnessName,
+	})
+
+	assert.Equal(t, []string{"scratch"}, listedSessionNames(t))
+}
+
+// An agent's own pane belongs to the agent listing. Every generation counts,
+// not just the current one: a predecessor conv left over from a reincarnate
+// must not resurface here as a plain session.
+func TestListLocalNonAgentSessionsExcludesEveryAgentGeneration(t *testing.T) {
+	setupTestDB(t)
+	withAliveTmux(t, "cc-worker", "cc-old")
+	const conv = "11111111-2222-4333-8444-555555555555"
+	const oldConv = "99999999-2222-4333-8444-555555555555"
+	agentID, _, err := db.EnsureAgentForConv(conv, "test")
+	require.NoError(t, err)
+	require.NoError(t, db.LinkConvToAgent(oldConv, agentID, "", "test"))
+	saveSessionRow(t, &session.SessionState{
+		ID: "cc-worker", TmuxSession: "cc-worker", ConvID: conv, Status: session.StatusRunning,
+	})
+	saveSessionRow(t, &session.SessionState{
+		ID: "cc-old", TmuxSession: "cc-old", ConvID: oldConv, Status: session.StatusRunning,
+	})
+
+	assert.Empty(t, listedSessionNames(t))
+}
+
+// A session whose pane is gone has nothing to go to.
+func TestListLocalNonAgentSessionsSkipsDeadPanes(t *testing.T) {
+	setupTestDB(t)
+	withAliveTmux(t) // nothing alive
+	saveSessionRow(t, &session.SessionState{
+		ID: "scratch", TmuxSession: "scratch", Status: session.StatusRunning,
+		Harness: session.ShellHarnessName,
+	})
+
+	assert.Empty(t, listedSessionNames(t))
+}
+
+// A row marked exited is not offered as live, matching `session ls` without
+// -a. It matters beyond tidiness: an exited row keeps the tmux name it had,
+// and dir-derived names are reused, so a dead namesake can match a LIVE
+// session's name — and would otherwise be listed beside it as a second,
+// indistinguishable row whose delete kills the live one's pane.
+func TestListLocalNonAgentSessionsSkipsExitedRowsIncludingDeadNamesakes(t *testing.T) {
+	setupTestDB(t)
+	withAliveTmux(t, "src")
+	saveSessionRow(t, &session.SessionState{
+		ID: "dead-namesake", TmuxSession: "src", Cwd: "/home/op/src",
+		Status: session.StatusExited, Harness: session.ShellHarnessName,
+	})
+	saveSessionRow(t, &session.SessionState{
+		ID: "live-one", TmuxSession: "src", Cwd: "/home/op/src",
+		Status: session.StatusRunning, Harness: session.ShellHarnessName,
+	})
+
+	rows, err := listLocalNonAgentSessions()
+	require.NoError(t, err)
+	require.Len(t, rows, 1, "one live pane is one row")
+	assert.Equal(t, "live-one", rows[0].SessionID)
+}
+
+// Two rows claiming one live tmux name, neither yet reaped: the row that last
+// wrote is the one that owns the pane.
+func TestListLocalNonAgentSessionsKeepsOneRowPerLivePane(t *testing.T) {
+	setupTestDB(t)
+	withAliveTmux(t, "src")
+	saveSessionRow(t, &session.SessionState{
+		ID: "stale", TmuxSession: "src", Status: session.StatusRunning,
+		Harness: session.ShellHarnessName,
+	})
+	time.Sleep(1100 * time.Millisecond) // the stored stamp has second resolution
+	saveSessionRow(t, &session.SessionState{
+		ID: "current", TmuxSession: "src", Status: session.StatusRunning,
+		Harness: session.ShellHarnessName,
+	})
+
+	rows, err := listLocalNonAgentSessions()
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, "current", rows[0].SessionID)
+}
+
+// A spawn writes its session row — and its pane — before the conversation is
+// linked to an actor. For that window nothing durable says the row is an
+// agent's, so the pending row is what keeps a launch from flashing past as a
+// session the operator could kill.
+func TestListLocalNonAgentSessionsSkipsAPendingSpawn(t *testing.T) {
+	setupTestDB(t)
+	withAliveTmux(t, "spwn-abc123")
+	groupID, err := db.CreateAgentGroup("dev", "")
+	require.NoError(t, err)
+	require.NoError(t, db.InsertPendingSpawn(&db.PendingSpawn{Label: "spwn-abc123", GroupID: groupID}))
+	saveSessionRow(t, &session.SessionState{
+		ID: "spwn-abc123", TmuxSession: "spwn-abc123", Status: session.StatusRunning,
+	})
+
+	require.Empty(t, listedSessionNames(t), "a launching agent is not a session")
+
+	// Once the spawn settles its pending row goes, and the conversation link
+	// is what keeps the row out of this listing from then on.
+	require.NoError(t, db.DeletePendingSpawn("spwn-abc123"))
+	assert.Equal(t, []string{"spwn-abc123"}, listedSessionNames(t),
+		"with neither marker left the row really is a plain session")
+}
+
+// Reincarnate and clone mint a label with no pending row, so they carry an
+// in-memory claim for the same window instead.
+func TestListLocalNonAgentSessionsSkipsAnInFlightRelaunch(t *testing.T) {
+	setupTestDB(t)
+	withAliveTmux(t, "spwn-def456")
+	saveSessionRow(t, &session.SessionState{
+		ID: "spwn-def456", TmuxSession: "spwn-def456", Status: session.StatusRunning,
+	})
+
+	release := claimAgentLaunchLabel("spwn-def456")
+	require.Empty(t, listedSessionNames(t), "a relaunching agent is not a session")
+
+	release()
+	assert.Equal(t, []string{"spwn-def456"}, listedSessionNames(t),
+		"and the claim is released with the launch that held it")
+}
+
+// The claim counts, so a nested or retried claim releases correctly instead of
+// the first release clearing both, and releasing twice is a no-op.
+func TestAgentLaunchLabelClaimsAreCounted(t *testing.T) {
+	first := claimAgentLaunchLabel("spwn-nested")
+	second := claimAgentLaunchLabel("spwn-nested")
+	require.True(t, agentLaunchInFlight("spwn-nested"))
+
+	first()
+	first()
+	assert.True(t, agentLaunchInFlight("spwn-nested"), "the outstanding claim still holds")
+
+	second()
+	assert.False(t, agentLaunchInFlight("spwn-nested"))
+	second()
+	assert.False(t, agentLaunchInFlight("spwn-nested"))
+}
+
+// agentd started inside a tclaude shell session must not offer the operator a
+// delete that kills the terminal the console is running in.
+func TestListLocalNonAgentSessionsExcludesTheConsolesOwnSession(t *testing.T) {
+	setupTestDB(t)
+	withAliveTmux(t, "host-shell", "other")
+	t.Setenv(tuiSessionIDEnv, "host-shell")
+	saveSessionRow(t, &session.SessionState{
+		ID: "host-shell", TmuxSession: "host-shell", Status: session.StatusRunning,
+		Harness: session.ShellHarnessName,
+	})
+	saveSessionRow(t, &session.SessionState{
+		ID: "other", TmuxSession: "other", Status: session.StatusRunning,
+		Harness: session.ShellHarnessName,
+	})
+
+	assert.Equal(t, []string{"other"}, listedSessionNames(t))
 }

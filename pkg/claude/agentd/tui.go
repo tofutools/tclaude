@@ -2322,16 +2322,11 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			selectedKey = visible[m.cursor].key()
 		}
 		m.filterActive = !m.filterActive
-		visible = m.visibleRows()
 		m.cursor = 0
-		if selectedKey != "" {
-			for i, row := range visible {
-				if row.key() == selectedKey {
-					m.cursor = i
-					break
-				}
-			}
-		}
+		// Same key match — and the same skip of the empty one — restoreCursor
+		// makes after a refresh: an identity-less placeholder row must not
+		// hand the cursor to a different placeholder.
+		m.restoreCursor(selectedKey)
 		m.ensureCursorVisible()
 		return m, nil
 	case "enter":
@@ -2452,7 +2447,7 @@ func (m tuiModel) handleShellKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // the old index would put the next keystroke on whichever row slid into its
 // place.
 func (m *tuiModel) restoreCursor(key string) {
-	if key == "" || key == "agent:" {
+	if key == "" {
 		return
 	}
 	for i, row := range m.visibleRows() {
