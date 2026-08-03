@@ -43,9 +43,17 @@ func TestCopilotDescriptor(t *testing.T) {
 		t.Fatalf("copilot must advertise the fixture-backed hook installer: %+v", h)
 	}
 
+	// The ConvStore graduated in TCL-976 on the same terms: the fixture lab
+	// ran the real binary and recorded the per-session workspace.yaml and
+	// events.jsonl the store reads, so the session-state layout is now
+	// observed rather than assumed.
+	if h.Convs == nil {
+		t.Fatalf("copilot must advertise the fixture-backed conversation store: %+v", h)
+	}
+
 	// Deferred contracts (TCL-965 phases 2-5): documented CLI flags are
 	// evidence, runtime formats and enforcement semantics are not.
-	if h.Convs != nil || h.Ask != nil || h.Sandbox != nil ||
+	if h.Ask != nil || h.Sandbox != nil ||
 		h.Approval != nil || h.ToolGovernance != nil || h.ModelTransport != nil ||
 		h.NestedSandbox != nil || h.HostControlSandbox != nil || h.AskTimeout != nil {
 		t.Fatalf("copilot must not advertise unverified contracts: %+v", h)
@@ -53,8 +61,10 @@ func TestCopilotDescriptor(t *testing.T) {
 	if !h.SupportsHooks() {
 		t.Errorf("SupportsHooks() = false, want true now that hooks are fixture-backed")
 	}
+	if !h.SupportsConvs() {
+		t.Errorf("SupportsConvs() = false, want true now that the store is fixture-backed")
+	}
 	for name, got := range map[string]bool{
-		"SupportsConvs":            h.SupportsConvs(),
 		"SupportsAsk":              h.SupportsAsk(),
 		"SupportsSandbox":          h.SupportsSandbox(),
 		"SupportsBuiltinOSSandbox": h.SupportsBuiltinOSSandbox(),

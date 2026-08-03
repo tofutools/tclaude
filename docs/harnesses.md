@@ -7,9 +7,9 @@ agentic CLI). **Claude Code, OpenAI Codex CLI, OpenCode, and GitHub Copilot CLI
 are registered harnesses.** OpenCode support covers the managed serve-and-attach
 launch path, its conversation store, ad-hoc ask, and per-session tool
 permissions; full status mapping remains intentionally capability-gated. Copilot
-is a deliberately minimal first wave — launch, exact resume, model/effort, and
-the in-pane control commands, and nothing else yet (see [GitHub Copilot CLI
-(first wave)](#github-copilot-cli-first-wave)). Claude remains the default so
+is a deliberately minimal first wave — launch, resume, model/effort, the
+in-pane control commands, hooks, and a cold conversation store, and nothing else
+yet (see [GitHub Copilot CLI (first wave)](#github-copilot-cli-first-wave)). Claude remains the default so
 existing commands and databases keep their historical behavior when no harness
 is recorded.
 
@@ -213,7 +213,7 @@ Legend: ✅ supported · ⚙️ available, opt-in / configured elsewhere · ⚠�
 ❌ not available.
 
 `copilot` is deliberately absent from the matrix above: its first wave
-implements only the top four rows. See below.
+implements only a few of these rows. See below.
 
 ### Group-route activation matrix
 
@@ -237,17 +237,18 @@ covers **interactive human sessions**:
 | Capability | `copilot` — GitHub Copilot CLI |
 |---|---|
 | **Spawn** | ✅ `copilot`, with a caller-preset conv-id (`--session-id <uuid>`), a launch-time name (`--name=`), and an optional first turn (`-i <prompt>`) |
-| **Resume** | ⚠️ `copilot --resume=<id>` (exact id only — never the picker, an id prefix, or a session name), but **only for a session you launched with an explicit `--session-id <uuid>`**: with no conversation store tclaude never discovers a Copilot conv-id on its own, so `--resume` has nothing to look up. Conversation discovery lands with the ConvStore wave |
+| **Resume** | ✅ `copilot --resume=<id>` (exact id only on the CLI — never the picker, an id prefix, or a session name; tclaude resolves *its* own id prefixes to a full id first, via the conversation store below) |
 | **Model & effort at spawn** | ✅ `--model=` (including `auto`) and `--effort=` (`low`…`max`, the same levels as everywhere else in tclaude). Note `max`: the flag accepts the whole vocabulary, but the docs describe `max` as the highest-depth tier **for Anthropic models** — Copilot may reject it for a GPT model, so pair it with a model that has that tier |
 | **Rename / compact / graceful stop** | ✅ in-pane `/rename`, `/compact`, `/exit`. `/exit` closes the *current* session: with other sessions open in the same CLI it foregrounds the newest remaining one instead of quitting, so tclaude keeps its hard-kill fallback for a pane that doesn't actually exit |
 | **Hooks / live status** | ✅ `<COPILOT_HOME>/hooks/tclaude.json` — a tclaude-**owned** drop-in file, merged by Copilot with the user's own hooks; no trust step, no `config.json` involvement. Registers `SessionStart`, `UserPromptSubmit`, `PostToolUse`, `Stop`, `SessionEnd`, so a pane reports working/idle per turn. See [below](#copilot-hooks) for what is deliberately left out |
-| **Everything else in the matrix** | ➖ not yet — no conversation store, ad-hoc ask, sandbox, approval, tool governance, directory pre-trust, remote control, usage/cost, or status bar |
+| **Conversation store** | ✅ cold list / resolve / cwd filter / title / existence, read from Copilot's own per-session `<COPILOT_HOME>/session-state/<id>/` files. No SQLite access at all — see [below](#copilot-conversation-store) |
+| **Everything else in the matrix** | ➖ not yet — no ad-hoc ask, sandbox, approval, tool governance, directory pre-trust, remote control, usage/cost, or status bar |
 
 Two consequences are worth stating plainly:
 
-- A Copilot conversation does **not** appear in `conv ls`, search, or the
-  dashboard's conversation views — those need the conversation store a later
-  wave adds. Live status *does* work, via the hooks below.
+- Copilot conversations **do** appear in `conv ls` and resolve for resume, but
+  per-turn usage, cost and context figures are still absent — those come from
+  the event log's usage records, which a later wave follows incrementally.
 - Copilot agents are not usable as detached agents in practice. Approval-lineage
   classification fails closed for a harness with no approval catalog, so a
   Copilot child is refused rather than spawned with an unproven posture.
@@ -271,6 +272,42 @@ Two Copilot options tclaude deliberately never emits: `--mouse` / `--no-mouse`
 (an explicit value is **persisted** to the user's configuration, so it is not
 a per-spawn flag), and `-p/--prompt` (headless mode, which exits after
 completion — a TUI pane wants `-i`).
+
+#### Copilot conversation store
+
+Copilot keeps one directory per session under
+`<COPILOT_HOME>/session-state/<session-id>/`. Two files in it are all tclaude
+reads, and both were observed from the pinned binary in the fixture lab —
+GitHub documents neither:
+
+- `workspace.yaml` — a small flat YAML file carrying the session id, `cwd`,
+  `git_root`, `repository`, `branch`, the display `name`, a `user_named` flag,
+  and created/updated timestamps.
+- `events.jsonl` — the append-only event log. A resume **appends to the same
+  file** rather than starting a new one, so one conversation stays one
+  conversation. tclaude reads it for the three things `workspace.yaml` does not
+  carry: the first user prompt, the user-turn count, and the model.
+
+Two design points follow from that layout.
+
+**No SQLite.** `<COPILOT_HOME>/session-store.db` mirrors the same identity, cwd,
+repository, branch and summary columns, but every one of them is already in
+`workspace.yaml` — a per-session file with no WAL, no lock and no schema
+version. tclaude never opens Copilot's database, so there is no window in which
+it reads a store the CLI is mid-write on.
+
+**`user_named` is the title split.** Copilot's `session.title_changed` event is
+declared `ephemeral: true` in the CLI's own shipped schema — never persisted to
+the event log — so the title only exists in `workspace.yaml`, as `name`. Its
+`user_named` flag distinguishes an operator title (`--name`, `/rename`) from
+Copilot's generated summary, which is exactly tclaude's `CustomTitle` vs
+`Summary` split. Renames still go through the in-pane `/rename` injection;
+tclaude never writes `workspace.yaml`.
+
+Everything degrades rather than fails. A session directory with no
+`workspace.yaml` yet, an unparsable one, or a log truncated mid-line by a live
+writer is skipped or partially read — never allowed to empty the listing — and
+a `COPILOT_HOME` the CLI has never run under lists nothing without erroring.
 
 #### Copilot hooks
 
