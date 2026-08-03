@@ -139,13 +139,16 @@ func guardSpellingsAlias(a, b string) bool {
 	}
 
 	// At least one spelling does not exist yet — a grant may legitimately name a
-	// directory the launch will create. Identity is unavailable, so ask the
-	// volume that would host it whether it folds the differences in play.
-	anchorSeed := a
-	if aErr != nil {
-		anchorSeed = b
-	}
-	anchor, err := nearestExistingDir(anchorSeed)
+	// directory the launch will create. Identity is unavailable, so ask whether
+	// the differing component would be folded where it lives.
+	//
+	// The directory to ask is the one that would CONTAIN that component, not
+	// either spelling itself: a name is stored in its parent, and the probe now
+	// answers per directory rather than per volume (ext4 casefold is a
+	// per-directory attribute). Anchoring on one of the spellings would ask an
+	// unrelated directory — and, when that spelling is an empty directory,
+	// would get no answer at all and refuse a grant that is perfectly fine.
+	anchor, err := nearestExistingDir(guardGoverningDir(a, b))
 	if err != nil {
 		return true
 	}
@@ -206,6 +209,26 @@ func guardNormalizationDiffers(a, b string) bool {
 	return lowerA != lowerB && norm.NFC.String(lowerA) == norm.NFC.String(lowerB)
 }
 
+// guardGoverningDir returns the directory that stores the first component in
+// which a and b differ — the one whose lookup semantics decide whether the two
+// spellings name one entry.
+//
+// a and b always have equal segment depth here (guardPathPrefix truncates the
+// target to dir's depth) and are never byte-equal (a byte-equal pair is settled
+// lexically before any of this). So a differing segment always exists.
+func guardGoverningDir(a, b string) string {
+	aParts := guardPathParts(a)
+	bParts := guardPathParts(b)
+	shared := []string{string(filepath.Separator)}
+	for i := 0; i < len(aParts) && i < len(bParts); i++ {
+		if aParts[i] != bParts[i] {
+			break
+		}
+		shared = append(shared, aParts[i])
+	}
+	return filepath.Join(shared...)
+}
+
 // guardPathParts splits a cleaned absolute path into its segments.
 func guardPathParts(path string) []string {
 	path = filepath.Clean(path)
@@ -264,46 +287,40 @@ func nearestExistingDir(path string) (string, error) {
 	}
 }
 
-// volumeFoldsCase reports whether the filesystem hosting dir treats
-// case-variant spellings of a name as one name.
+// volumeFoldsCase reports whether dir treats case-variant spellings of a name as
+// one name. It is the GUARD's probe, and it answers only from dir itself.
 //
 // The probe is empirical rather than a platform assumption, because the answer
-// is a property of the VOLUME, not of the OS: macOS ships case-insensitive APFS
-// by default but supports case-sensitive APFS, and Linux hosts case-insensitive
-// mounts (vfat, ciopfs, ext4 with the casefold feature). It flips the case of an
-// existing directory's own basename and asks whether that spelling reaches the
-// same inode. It creates nothing and modifies nothing.
+// is not a property of the OS and not even reliably a property of the volume:
+// macOS ships case-insensitive APFS by default but supports case-sensitive
+// APFS, Linux hosts case-insensitive mounts (vfat, exFAT, CIFS), and ext4's
+// casefold is a PER-DIRECTORY attribute. It creates nothing and modifies
+// nothing.
 //
-// A directory whose name has no cased letters cannot answer the question, so the
-// probe walks up until one can. Reaching the root without an answer returns
-// errSpellingProbeUnavailable, which guards read as a refusal.
+// Unanswerable — an empty directory, one whose entries carry no case, or one
+// too large to scan within the bound — returns errSpellingProbeUnavailable,
+// which guards read as a refusal. It deliberately does NOT fall back to asking
+// dir's parent; see volumeFoldsSpellingForCanonicalization for why that answer
+// is unsafe here.
 func volumeFoldsCase(dir string) (bool, error) {
-	return volumeFoldsSpelling(dir, flipCase)
+	return foldsByOwnEntries(dir, flipCase)
 }
 
-// volumeFoldsSpelling is the shared probe body.
+// volumeFoldsSpellingForCanonicalization is the laxer variant used ONLY by
+// CanonicalHostSpelling, which may fall back to the parent-name probe because
+// BOTH of its outcomes are safe: a wrong "folds" merely triggers a restoration
+// attempt that re-verifies every component by reading the directory, and a
+// wrong "does not fold" merely skips restoration and leaves the authored
+// spelling — which the guard layer then still evaluates.
 //
-// It asks dir's OWN lookup semantics first, by respelling one of dir's existing
-// child entries and testing whether that respelling reaches the same inode
-// INSIDE dir. That is the only formulation that answers the question actually
-// being asked, because folding is not always a property of the volume:
-//
-//   - ext4's casefold is a PER-DIRECTORY attribute (chattr +F, inherited by
-//     children) on a single device, so a casefolded directory and its
-//     case-sensitive parent share one st_dev.
-//   - A directory that is a mount point has its own name stored in the parent's
-//     filesystem, which may have entirely different semantics from its contents.
-//
-// The older formulation respelled dir's own BASENAME, which interrogates dir's
-// parent. Where the two disagree that returns a definitive wrong answer, and a
-// definitive wrong answer here makes a guard ALLOW.
-//
-// When dir has no child whose respelling differs (an empty directory, or one
-// whose entries carry no case), the question cannot be answered from inside, and
-// the probe falls back to the parent-based form — bounded by a device check, so
-// it can never answer from a neighbouring filesystem. Anything still unanswered
-// returns errSpellingProbeUnavailable, which guards read as a refusal.
-func volumeFoldsSpelling(dir string, respell func(string) string) (bool, error) {
+// The guard must not use this. There, a wrong "does not fold" is a definitive
+// ALLOW, and asking the parent is not the same question: respelling a
+// directory's own basename interrogates its PARENT's lookup semantics, which
+// differ from the directory's own whenever the directory is a mount point or
+// carries ext4's per-directory casefold attribute. That formulation is what the
+// second round of review found still fail-open, and it is why the two callers
+// now have different probes rather than one shared one.
+func volumeFoldsSpellingForCanonicalization(dir string, respell func(string) string) (bool, error) {
 	if folds, err := foldsByOwnEntries(dir, respell); err == nil {
 		return folds, nil
 	} else if !errors.Is(err, errSpellingProbeUnavailable) {
@@ -312,9 +329,10 @@ func volumeFoldsSpelling(dir string, respell func(string) string) (bool, error) 
 	return foldsByAncestorName(dir, respell)
 }
 
-// probeEntryScanLimit bounds the child scan. One getdents call's worth of
-// entries is plenty to find a cased name in any real directory, and stopping
-// there keeps the probe cheap enough to run per path.
+// probeEntryScanLimit bounds the child scan so the probe stays cheap enough to
+// run per path. Exhausting it WITHOUT an answer is reported as unavailable
+// rather than resolved some other way: a directory whose first entries all
+// happen to be uncased must not silently downgrade to a weaker probe.
 const probeEntryScanLimit = 64
 
 // foldsByOwnEntries answers from INSIDE dir: respell an entry dir already holds
@@ -330,30 +348,47 @@ func foldsByOwnEntries(dir string, respell func(string) string) (bool, error) {
 	}
 	defer func() { _ = handle.Close() }()
 
-	entries, err := handle.ReadDir(probeEntryScanLimit)
-	if err != nil && !errors.Is(err, io.EOF) {
-		return false, err
-	}
-	for _, entry := range entries {
-		name := entry.Name()
-		respelled := respell(name)
-		if respelled == name {
-			continue
-		}
-		info, err := os.Lstat(filepath.Join(dir, name))
-		if err != nil {
-			continue // raced away; try the next entry
-		}
-		otherInfo, err := os.Lstat(filepath.Join(dir, respelled))
-		if err != nil {
-			if os.IsNotExist(err) {
-				// dir distinguishes the two spellings of its own entry.
-				return false, nil
+	scanned := 0
+	for scanned < probeEntryScanLimit {
+		entries, readErr := handle.ReadDir(probeEntryScanLimit - scanned)
+		for _, entry := range entries {
+			scanned++
+			name := entry.Name()
+			respelled := respell(name)
+			if respelled == name {
+				continue // carries nothing to respell; try the next entry
 			}
-			return false, err
+			info, err := os.Lstat(filepath.Join(dir, name))
+			if err != nil {
+				continue // raced away between readdir and lstat; try the next
+			}
+			otherInfo, err := os.Lstat(filepath.Join(dir, respelled))
+			if err != nil {
+				if os.IsNotExist(err) {
+					// dir distinguishes the two spellings of its own entry.
+					return false, nil
+				}
+				return false, err
+			}
+			// Same inode means dir reached one entry through both spellings.
+			// A DIFFERENT inode means both spellings exist as separate entries,
+			// which only a non-folding directory can hold — so false is right in
+			// both readings.
+			return os.SameFile(info, otherInfo), nil
 		}
-		return os.SameFile(info, otherInfo), nil
+		if readErr != nil {
+			if errors.Is(readErr, io.EOF) {
+				// Directory genuinely exhausted with nothing to respell.
+				return false, errSpellingProbeUnavailable
+			}
+			return false, readErr
+		}
+		if len(entries) == 0 {
+			return false, errSpellingProbeUnavailable
+		}
 	}
+	// The bound was reached with no cased entry among the ones seen. There may
+	// be one further in, so this is unknown rather than answered.
 	return false, errSpellingProbeUnavailable
 }
 

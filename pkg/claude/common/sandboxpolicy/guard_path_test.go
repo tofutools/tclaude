@@ -15,6 +15,7 @@ package sandboxpolicy
 // exists and is exercised lives in pkg/claude/sandboxassumptions.
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -35,13 +36,25 @@ func tempRoot(t *testing.T) string {
 	return root
 }
 
-// volumeSemantics reports whether the test volume folds case, failing the test
-// if the question cannot be answered at all — an unanswerable volume would make
-// every assertion below meaningless.
+// volumeSemantics reports whether dir folds case, measured DIRECTLY rather than
+// by calling the production probe.
+//
+// Using volumeFoldsCase here would make the implementation its own oracle: a
+// probe that answered wrongly would also set the expectation wrongly, and every
+// assertion below would agree with the bug. So this stages a cased directory of
+// its own and asks the filesystem itself.
 func volumeSemantics(t *testing.T, dir string) bool {
 	t.Helper()
-	folds, err := volumeFoldsCase(dir)
-	require.NoError(t, err, "the test volume must be able to answer whether it folds case")
+	probe := filepath.Join(dir, "VolumeSemanticsProbe")
+	if err := os.MkdirAll(probe, 0o755); err != nil {
+		t.Fatalf("stage volume probe: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(probe) })
+
+	probeInfo, err := os.Lstat(probe)
+	require.NoError(t, err)
+	variantInfo, variantErr := os.Lstat(filepath.Join(dir, "volumesemanticsprobe"))
+	folds := variantErr == nil && os.SameFile(probeInfo, variantInfo)
 	t.Logf("volume at %q folds case: %t (GOOS=%s)", dir, folds, runtime.GOOS)
 	return folds
 }
@@ -301,30 +314,69 @@ func TestVolumeFoldsCaseAnswersForAMountPoint(t *testing.T) {
 	assert.True(t, ok, "device identity must be available for the fallback to bound itself")
 }
 
-// TestFoldsByOwnEntriesFallsBackWhenNothingInsideCanAnswer covers the one case
-// the inside-out probe cannot settle: a directory holding no entry whose
-// respelling differs from itself.
-func TestFoldsByOwnEntriesFallsBackWhenNothingInsideCanAnswer(t *testing.T) {
+// TestGuardProbeRefusesWhenTheDirectoryCannotAnswer covers the case the
+// inside-out probe cannot settle: a directory holding no entry whose respelling
+// differs from itself.
+//
+// The GUARD's probe must report that as unavailable rather than fall back to
+// asking the parent. The parent is a different directory and may have different
+// semantics — ext4 casefold is per-directory, and a mount point's name lives on
+// the parent's filesystem entirely — so the parent's "does not fold" would be a
+// definitive WRONG answer, and definitive-wrong here means allow.
+func TestGuardProbeRefusesWhenTheDirectoryCannotAnswer(t *testing.T) {
 	root := tempRoot(t)
 
 	empty := filepath.Join(root, "empty")
 	require.NoError(t, os.MkdirAll(empty, 0o755))
-	_, err := foldsByOwnEntries(empty, flipCase)
+	_, err := volumeFoldsCase(empty)
 	assert.ErrorIs(t, err, errSpellingProbeUnavailable,
-		"an empty directory holds nothing to respell")
+		"an empty directory holds nothing to respell, and the guard must not "+
+			"substitute its parent's answer")
 
 	// Entries with no cased runes cannot answer either.
 	uncased := filepath.Join(root, "uncased")
 	require.NoError(t, os.MkdirAll(filepath.Join(uncased, "123"), 0o755))
-	_, err = foldsByOwnEntries(uncased, flipCase)
+	_, err = volumeFoldsCase(uncased)
 	assert.ErrorIs(t, err, errSpellingProbeUnavailable)
 
-	// volumeFoldsCase must nevertheless produce an answer for them, by falling
-	// back to the ancestor-name form within the same volume.
+	// A directory whose first probeEntryScanLimit entries are all uncased must
+	// also report unavailable rather than downgrading: a cased entry could lie
+	// just beyond the bound, so the question is unknown, not answered.
+	crowded := filepath.Join(root, "crowded")
+	require.NoError(t, os.MkdirAll(crowded, 0o755))
+	for i := range probeEntryScanLimit + 8 {
+		require.NoError(t, os.MkdirAll(
+			filepath.Join(crowded, fmt.Sprintf("%03d", i)), 0o755))
+	}
+	_, err = volumeFoldsCase(crowded)
+	assert.ErrorIs(t, err, errSpellingProbeUnavailable,
+		"exhausting the scan bound without a cased entry is unknown, not resolved")
+
+	// And that refusal must reach the guard as a REFUSAL, not an allow.
+	assert.True(t, GuardContainsOrEqual(
+		filepath.Join(empty, "Child"), filepath.Join(empty, "child", "leaf")),
+		"an unanswerable directory must make the guard refuse")
+}
+
+// TestCanonicalizationProbeMayFallBackToTheParent pins the deliberate asymmetry:
+// CanonicalHostSpelling's probe MAY consult the parent, because both of its
+// outcomes degrade safely — a wrong "folds" starts a restoration that re-reads
+// every directory to verify, and a wrong "does not fold" just leaves the
+// authored spelling for the guard to judge.
+func TestCanonicalizationProbeMayFallBackToTheParent(t *testing.T) {
+	root := tempRoot(t)
+	empty := filepath.Join(root, "empty")
+	require.NoError(t, os.MkdirAll(empty, 0o755))
 	requireSameVolume(t, root, empty)
-	folds, err := volumeFoldsCase(empty)
-	require.NoError(t, err, "the fallback must answer when the inside-out probe cannot")
+
+	folds, err := volumeFoldsSpellingForCanonicalization(empty, flipCase)
+	require.NoError(t, err, "the lax probe must answer where the strict one refuses")
 	assert.Equal(t, volumeSemantics(t, root), folds)
+
+	// The strict probe refuses for the very same directory. That divergence is
+	// the point, not an accident.
+	_, err = volumeFoldsCase(empty)
+	assert.ErrorIs(t, err, errSpellingProbeUnavailable)
 }
 
 // TestFoldsByAncestorNameRefusesAcrossADeviceBoundary pins the bound on the
@@ -487,4 +539,46 @@ func TestFoldGuardPathMatchesTheSeatbeltEmitterRule(t *testing.T) {
 			norm.NFC.String(strings.ToLower(filepath.Clean(path))),
 			foldGuardPath(path))
 	}
+}
+
+// TestGuardGoverningDirPicksTheContainingDirectory pins which directory the
+// probe asks. A name is stored in its parent, and the probe answers per
+// directory (ext4 casefold is a per-directory attribute), so the directory that
+// decides is the one containing the first component in which the two spellings
+// differ — not either spelling itself.
+func TestGuardGoverningDirPicksTheContainingDirectory(t *testing.T) {
+	for _, tc := range []struct{ a, b, want string }{
+		{"/home/u/.tclaude/data", "/home/u/.Tclaude/Data", "/home/u"},
+		{"/home/u/x/Y", "/home/u/x/y", "/home/u/x"},
+		{"/Alpha", "/alpha", "/"},
+		{"/a/b/c", "/a/B/c", "/a"},
+	} {
+		assert.Equal(t, tc.want, guardGoverningDir(tc.a, tc.b),
+			"%q vs %q", tc.a, tc.b)
+	}
+}
+
+// TestGuardDoesNotRefuseWhenOnlyTheOtherSpellingIsAnEmptyDirectory is the
+// regression for anchoring on the wrong directory.
+//
+// Anchoring the probe on whichever spelling happened to EXIST meant that an
+// empty existing directory — which can answer nothing about its own folding —
+// made the guard refuse. That is a fail-closed bug, not a hole, but it would
+// have refused ordinary grants: a protected root is very often an empty
+// directory on a fresh install.
+func TestGuardDoesNotRefuseWhenOnlyTheOtherSpellingIsAnEmptyDirectory(t *testing.T) {
+	root := tempRoot(t)
+	folds := volumeSemantics(t, root)
+
+	// An EMPTY directory, and a case variant of it that does not exist.
+	existing := filepath.Join(root, "Protected")
+	require.NoError(t, os.MkdirAll(existing, 0o755))
+	entries, err := os.ReadDir(existing)
+	require.NoError(t, err)
+	require.Empty(t, entries, "the directory must be empty for this regression to bite")
+
+	// The governing directory is root, which holds cased entries and can answer.
+	assert.Equal(t, folds, GuardContainsOrEqual(existing, filepath.Join(root, "protected", "leaf")),
+		"an empty existing spelling must not make the guard refuse; the "+
+			"containing directory is what decides")
 }

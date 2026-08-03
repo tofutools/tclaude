@@ -18,7 +18,14 @@ import "golang.org/x/text/unicode/norm"
 // ASCII spelling is identical in NFC and NFD, so it can never produce a
 // normalization-only difference for a guard to resolve.
 func volumeFoldsNormalization(dir string) (bool, error) {
-	return volumeFoldsSpelling(dir, flipNormalization)
+	return foldsByOwnEntries(dir, flipNormalization)
+}
+
+// volumeFoldsNormalizationForCanonicalization is the laxer variant, safe only
+// where both outcomes degrade safely. See
+// volumeFoldsSpellingForCanonicalization.
+func volumeFoldsNormalizationForCanonicalization(dir string) (bool, error) {
+	return volumeFoldsSpellingForCanonicalization(dir, flipNormalization)
 }
 
 // flipNormalization returns the opposite normalization form of name, or name

@@ -62,12 +62,20 @@ func CanonicalHostSpelling(path string) string {
 	}
 	// One probe decides whether any of this work is worth doing. On a
 	// case-sensitive volume this is where the function stops.
-	folds, err := volumeFoldsCase(anchor)
+	//
+	// This uses the LAX probe, which may fall back to asking the anchor's parent.
+	// That is safe here and only here, because both outcomes degrade safely: a
+	// wrong "folds" merely starts a restoration that re-verifies every component
+	// by reading the directory, and a wrong "does not fold" merely leaves the
+	// authored spelling for the guard layer to evaluate. The guard itself uses
+	// the strict probe, where a wrong answer would be a definitive allow.
+	folds, err := volumeFoldsSpellingForCanonicalization(anchor, flipCase)
 	if err != nil {
 		return clean
 	}
 	if !folds {
-		if normFolds, normErr := volumeFoldsNormalization(anchor); normErr != nil || !normFolds {
+		normFolds, normErr := volumeFoldsNormalizationForCanonicalization(anchor)
+		if normErr != nil || !normFolds {
 			return clean
 		}
 	}

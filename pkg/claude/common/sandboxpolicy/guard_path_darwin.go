@@ -13,3 +13,7 @@ package sandboxpolicy
 // Answering true for a foreign volume mounted on macOS (exFAT, SMB) is the safe
 // direction for a guard: it can only produce a refusal, never a hole.
 func volumeFoldsNormalization(string) (bool, error) { return true, nil }
+
+// volumeFoldsNormalizationForCanonicalization matches its strict counterpart on
+// darwin: the answer is a platform fact, so there is no weaker fallback to make.
+func volumeFoldsNormalizationForCanonicalization(string) (bool, error) { return true, nil }
