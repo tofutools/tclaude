@@ -267,6 +267,20 @@ func TestCopilotSandboxBaselineRefusesBroadGrants(t *testing.T) {
 			wantInMsg: "top-level system directory",
 		},
 		{
+			name: "COPILOT_HOME set to a macOS firmlinked system directory",
+			in: CopilotBaselineInput{GOOS: "darwin", Home: home,
+				Getenv: envMap(map[string]string{CopilotHomeEnvVar: "/etc"})},
+			wantKind:  "copilot-sandbox-baseline-too-broad",
+			wantInMsg: "top-level system directory",
+		},
+		{
+			name: "COPILOT_HOME set to the resolved form of a firmlinked directory",
+			in: CopilotBaselineInput{GOOS: "darwin", Home: home,
+				Getenv: envMap(map[string]string{CopilotHomeEnvVar: "/private/etc"})},
+			wantKind:  "copilot-sandbox-baseline-too-broad",
+			wantInMsg: "top-level system directory",
+		},
+		{
 			name: "COPILOT_CACHE_HOME set to a top-level system directory",
 			in: CopilotBaselineInput{GOOS: "linux", Home: home,
 				Getenv: envMap(map[string]string{CopilotCacheHomeEnvVar: "/opt"})},
@@ -324,15 +338,39 @@ func TestCopilotSandboxBaselineRefusesBroadGrants(t *testing.T) {
 // TestCopilotSandboxBaselineAllowsTopLevelTempDir is the counterpart to the
 // system-root refusal: /tmp IS a top-level directory, Copilot grants it in its
 // own default policy, and refusing it would break every shell tool.
+//
+// The home directory here is a synthetic path rather than t.TempDir(). That is
+// the point of the next test: on a machine whose TMPDIR is /tmp — every CI
+// runner — t.TempDir() lives INSIDE the granted temp directory, so using it
+// would silently test the home-containment refusal instead of this rule.
 func TestCopilotSandboxBaselineAllowsTopLevelTempDir(t *testing.T) {
 	entries, err := CopilotSandboxBaseline(CopilotBaselineInput{
 		GOOS:    "linux",
-		Home:    t.TempDir(),
+		Home:    "/home/copilot-baseline-test-user",
 		Getenv:  envMap(nil),
 		TempDir: "/tmp",
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "/tmp", entryByID(t, entries, CopilotBaselineTempDir).Path)
+}
+
+// TestCopilotSandboxBaselineRefusesTempDirContainingHome records the
+// precedence between the two rules above, because they can genuinely collide:
+// a container or CI runner with HOME under /tmp makes a temp-dir grant a HOME
+// grant, and the HOME rule has to win. The temp row is exempt from the
+// system-root rule, not from home containment.
+func TestCopilotSandboxBaselineRefusesTempDirContainingHome(t *testing.T) {
+	_, err := CopilotSandboxBaseline(CopilotBaselineInput{
+		GOOS:    "linux",
+		Home:    "/tmp/build/home",
+		Getenv:  envMap(nil),
+		TempDir: "/tmp",
+	})
+	require.Error(t, err)
+	var capErr *SandboxCapabilityError
+	require.ErrorAs(t, err, &capErr)
+	assert.Equal(t, "copilot-sandbox-baseline-too-broad", capErr.Kind)
+	assert.Contains(t, capErr.Message, "covers the home directory")
 }
 
 // TestCopilotSandboxBaselineNodeKinds pins the node type on every row: a

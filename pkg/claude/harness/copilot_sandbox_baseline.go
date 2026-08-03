@@ -508,7 +508,11 @@ func validateCopilotBaseline(
 		// in TCL-978's mount plan. The temp row is the one legitimate
 		// exception: /tmp IS top-level, and Copilot grants it in its own
 		// default policy.
-		if e.ID != CopilotBaselineTempDir && copilotSystemRootDir(resolved) {
+		// Both spellings: the literal path an operator supplied AND its
+		// symlink-resolved form. Either alone has a hole — see
+		// copilotSystemRootDir.
+		if e.ID != CopilotBaselineTempDir &&
+			(copilotSystemRootDir(goos, e.Path) || copilotSystemRootDir(goos, resolved)) {
 			return copilotBaselineError("too-broad",
 				fmt.Sprintf("Copilot sandbox baseline entry %q resolves to %q, a top-level system directory; "+
 					"a per-harness baseline grants Copilot-specific subdirectories only", e.ID, e.Path))
@@ -547,8 +551,21 @@ func copilotBroadPaths(goos string, getenv func(string) string, home string) map
 // rather than a name list: a name list would have to guess at every distro's
 // and macOS's top-level layout, while "one level under /" is exactly the set
 // no Copilot-specific path can legitimately be.
-func copilotSystemRootDir(p string) bool {
+//
+// The darwin branch is not a nicety. macOS firmlinks /etc, /tmp and /var onto
+// /private/…, so the RESOLVED form of `/etc` is `/private/etc` — two levels
+// down, which a naive depth test waves through. That is how a refusal that
+// holds on Linux silently stops holding on macOS, which is the worst shape
+// this guard could fail in. Callers therefore test both the literal and the
+// resolved spelling, and this function normalizes the firmlink prefix so
+// either spelling reaches the same verdict.
+func copilotSystemRootDir(goos, p string) bool {
 	p = filepath.Clean(p)
+	if goos == "darwin" {
+		if rest, ok := strings.CutPrefix(p, "/private/"); ok && rest != "" {
+			p = "/" + rest
+		}
+	}
 	if p == string(filepath.Separator) {
 		return true
 	}

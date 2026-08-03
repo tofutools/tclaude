@@ -465,7 +465,8 @@ layer, not per-harness policy.
 `$HOME` or an ancestor of it, a grant covering a shared base such as `~/.cache`,
 `~/Library/Caches`, `~/.config` or `~/.local`, a grant on a top-level system
 directory (`/etc`, `/usr`, `/var`, … — the temp row is the one legitimate
-exception), and a grant covering the workspace are all
+exception, and macOS firmlinks are normalized so `/etc` and `/private/etc`
+reach the same verdict), and a grant covering the workspace are all
 `*SandboxCapabilityError` refusals rather than rows. Each is reachable by
 typing — `COPILOT_HOME=$HOME` and `COPILOT_CACHE_HOME=~/.cache` are things a
 person writes — and each would quietly convert a confined launch into an open
