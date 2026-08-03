@@ -250,6 +250,30 @@ func TestCopilotSandboxBaselineRefusesBroadGrants(t *testing.T) {
 			wantInMsg: "covers the workspace",
 		},
 		{
+			name: "COPILOT_CACHE_HOME set to an ancestor of a relocated XDG base",
+			in: CopilotBaselineInput{GOOS: "linux", Home: home,
+				Getenv: envMap(map[string]string{
+					"XDG_CACHE_HOME":       filepath.Join(root, "shared", "cache", "me"),
+					CopilotCacheHomeEnvVar: filepath.Join(root, "shared", "cache"),
+				})},
+			wantKind:  "copilot-sandbox-baseline-too-broad",
+			wantInMsg: "XDG cache base",
+		},
+		{
+			name: "COPILOT_HOME set to a top-level system directory",
+			in: CopilotBaselineInput{GOOS: "linux", Home: home,
+				Getenv: envMap(map[string]string{CopilotHomeEnvVar: "/etc"})},
+			wantKind:  "copilot-sandbox-baseline-too-broad",
+			wantInMsg: "top-level system directory",
+		},
+		{
+			name: "COPILOT_CACHE_HOME set to a top-level system directory",
+			in: CopilotBaselineInput{GOOS: "linux", Home: home,
+				Getenv: envMap(map[string]string{CopilotCacheHomeEnvVar: "/opt"})},
+			wantKind:  "copilot-sandbox-baseline-too-broad",
+			wantInMsg: "top-level system directory",
+		},
+		{
 			name: "a relative COPILOT_HOME",
 			in: CopilotBaselineInput{GOOS: "linux", Home: home,
 				Getenv: envMap(map[string]string{CopilotHomeEnvVar: "relative/state"})},
@@ -295,6 +319,50 @@ func TestCopilotSandboxBaselineRefusesBroadGrants(t *testing.T) {
 			assert.Contains(t, capErr.Message, tc.wantInMsg)
 		})
 	}
+}
+
+// TestCopilotSandboxBaselineAllowsTopLevelTempDir is the counterpart to the
+// system-root refusal: /tmp IS a top-level directory, Copilot grants it in its
+// own default policy, and refusing it would break every shell tool.
+func TestCopilotSandboxBaselineAllowsTopLevelTempDir(t *testing.T) {
+	entries, err := CopilotSandboxBaseline(CopilotBaselineInput{
+		GOOS:    "linux",
+		Home:    t.TempDir(),
+		Getenv:  envMap(nil),
+		TempDir: "/tmp",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "/tmp", entryByID(t, entries, CopilotBaselineTempDir).Path)
+}
+
+// TestCopilotSandboxBaselineNodeKinds pins the node type on every row: a
+// consumer cannot stat a cold cache directory that does not exist yet, and
+// binding a socket as a directory fails at launch.
+func TestCopilotSandboxBaselineNodeKinds(t *testing.T) {
+	root := t.TempDir()
+	entries, err := CopilotSandboxBaseline(CopilotBaselineInput{
+		GOOS:              "linux",
+		Home:              filepath.Join(root, "home"),
+		Getenv:            envMap(nil),
+		TempDir:           filepath.Join(root, "tmp"),
+		AgentdSockets:     []string{filepath.Join(root, "api", "agentd.sock")},
+		TclaudeExecutable: filepath.Join(root, "bin", "tclaude"),
+		CopilotExecutable: filepath.Join(root, "bin", "copilot"),
+	})
+	require.NoError(t, err)
+	want := map[string]CopilotNodeKind{
+		CopilotBaselineStateDir:      CopilotNodeDirectory,
+		CopilotBaselinePackageCache:  CopilotNodeDirectory,
+		CopilotBaselineDeviceIDCache: CopilotNodeDirectory,
+		CopilotBaselineTempDir:       CopilotNodeDirectory,
+		CopilotBaselineExecutable:    CopilotNodeFile,
+		CopilotBaselineTclaudeBinary: CopilotNodeFile,
+		CopilotBaselineAgentdSocket:  CopilotNodeSocket,
+	}
+	for _, e := range entries {
+		assert.Equal(t, want[e.ID], e.Kind, "entry %q", e.ID)
+	}
+	assert.Len(t, entries, len(want), "every row kind must be pinned above")
 }
 
 // TestCopilotSandboxBaselineNeverGrantsSharedBases is the regression guard for
@@ -357,13 +425,28 @@ func TestCopilotAccessString(t *testing.T) {
 func TestCopilotHookInstallDirMatchesBaseline(t *testing.T) {
 	root := t.TempDir()
 	home := filepath.Join(root, "home")
-	t.Setenv(CopilotHomeEnvVar, filepath.Join(root, "state"))
+
+	// A DIRTY value on purpose: a trailing slash and a "." segment are what an
+	// operator's shell export looks like, and they are exactly what would make
+	// the installed path and the pre-approved path two different strings.
+	dirty := filepath.Join(root, "state") + "/./"
+	t.Setenv(CopilotHomeEnvVar, dirty)
 
 	entries, err := CopilotSandboxBaseline(CopilotBaselineInput{
 		GOOS: "linux", Home: home, Getenv: envMap(map[string]string{
-			CopilotHomeEnvVar: filepath.Join(root, "state"),
+			CopilotHomeEnvVar: dirty,
 		}),
 	})
 	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(root, "state"),
+		entryByID(t, entries, CopilotBaselineStateDir).Path)
 	assert.Equal(t, copilotHome(), entryByID(t, entries, CopilotBaselineStateDir).Path)
+}
+
+// TestCopilotHomeRefusesRelativeOverride pins the fail-closed half of the same
+// resolver: a relative COPILOT_HOME yields "cannot determine" rather than a
+// cwd-relative hooks file.
+func TestCopilotHomeRefusesRelativeOverride(t *testing.T) {
+	t.Setenv(CopilotHomeEnvVar, "relative/state")
+	assert.Empty(t, copilotHome())
 }

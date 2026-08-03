@@ -99,17 +99,16 @@ func TestCopilotSandboxBaselineCoversObservedWrites(t *testing.T) {
 		filepath.Join("Microsoft", "DeveloperTools", "deviceid"),
 		"the best-effort device-id row is written through XDG_CACHE_HOME on Linux and macOS alike")
 
-	// Every write landed under a writable entry, checked against the real
-	// absolute paths rather than the normalized golden form.
-	for root, rel := range map[string][]string{
-		dirs.Home:  layout.CopilotHome.Entries,
-		dirs.Cache: layout.Cache.Entries,
-	} {
-		require.Contains(t, writable, root)
-		for _, r := range rel {
-			assert.True(t, strings.HasPrefix(filepath.Join(root, r), root+string(filepath.Separator)),
-				"observed path %q escaped its baseline root %q", r, root)
-		}
+	// The XDG cache base is NOT granted whole — only its
+	// Microsoft/DeveloperTools subtree is — so a write elsewhere under it is an
+	// uncovered path in exactly the way a HOME write would be. The walk skips
+	// this root when computing HomeOutsideBaseline (it is a baseline root), so
+	// without this check nothing would notice.
+	for _, rel := range layout.XDGCache.Entries {
+		assert.True(t,
+			rel == "Microsoft" || strings.HasPrefix(rel, "Microsoft/DeveloperTools"),
+			"Copilot wrote %q under XDG_CACHE_HOME, which the catalog covers only at "+
+				"Microsoft/DeveloperTools; the baseline needs a new row (or the CLI regressed)", rel)
 	}
 
 	compareLayoutGolden(t, "sandbox_baseline", dirs, layout)

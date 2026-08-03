@@ -124,6 +124,18 @@ const (
 	CopilotGrantFeatureConditional CopilotGrantNecessity = "feature-conditional"
 )
 
+// CopilotNodeKind is what the path IS. Both consumers need it and neither can
+// infer it reliably: a cold cache directory does not exist yet, so a stat is
+// not available, and bwrap binds a directory differently from a file or a
+// socket — as does Copilot's own `sandbox.userPolicy.filesystem`.
+type CopilotNodeKind string
+
+const (
+	CopilotNodeDirectory CopilotNodeKind = "directory"
+	CopilotNodeFile      CopilotNodeKind = "file"
+	CopilotNodeSocket    CopilotNodeKind = "socket"
+)
+
 // Copilot baseline entry ids. Stable vocabulary: a consumer selects rows by id
 // (TCL-977 maps them onto Copilot's own policy keys, TCL-978 onto mount rules),
 // so these strings are contract, not labels.
@@ -142,6 +154,12 @@ const (
 // CopilotBaselineEntry is one pre-approved path in the catalog.
 type CopilotBaselineEntry struct {
 	// ID is the stable selector (one of the CopilotBaseline* constants).
+	//
+	// It names a KIND of row, not a unique key: a launch with several agentd
+	// endpoints produces several rows all carrying
+	// CopilotBaselineAgentdSocket. Consumers must treat the catalog as a list
+	// and filter by ID — keying a map by ID would silently drop every endpoint
+	// but the last.
 	ID string
 
 	// Path is the resolved, absolute, cleaned path.
@@ -152,6 +170,9 @@ type CopilotBaselineEntry struct {
 	// an operator shows this, because "why is my home directory in here" is
 	// answered by the source, not by the path.
 	Source string
+
+	// Kind is the node type at Path.
+	Kind CopilotNodeKind
 
 	// Access is the required mode.
 	Access CopilotAccess
@@ -172,6 +193,13 @@ type CopilotBaselineEntry struct {
 }
 
 // CopilotBaselineInput is the resolution context for one launch.
+//
+// Every optional path below (temp dir, sockets, executables) is omitted when
+// blank, but a NON-BLANK value that is not absolute fails the whole catalog
+// rather than that one row. That is deliberate: a caller passing a junk
+// endpoint has a bug in how it resolved the launch, and returning a partial
+// catalog would hand a sandbox a grant set that silently lacks a row its
+// caller believed was in there.
 type CopilotBaselineInput struct {
 	// GOOS defaults to runtime.GOOS. Only linux and darwin are supported;
 	// anything else is refused rather than approximated.
@@ -253,6 +281,7 @@ func CopilotSandboxBaseline(in CopilotBaselineInput) ([]CopilotBaselineEntry, er
 			ID:        CopilotBaselineStateDir,
 			Path:      stateDir,
 			Source:    stateSource,
+			Kind:      CopilotNodeDirectory,
 			Access:    copilotReadWrite(),
 			Necessity: CopilotGrantMandatory,
 			Purpose: "Copilot's configuration and session state: config.json, settings.json, " +
@@ -266,6 +295,7 @@ func CopilotSandboxBaseline(in CopilotBaselineInput) ([]CopilotBaselineEntry, er
 			ID:     CopilotBaselinePackageCache,
 			Path:   packageCache,
 			Source: packageSource,
+			Kind:   CopilotNodeDirectory,
 			// Execute as well as read/write: the payload unpacked here contains
 			// the bundled ripgrep binary and prebuilt native modules the CLI
 			// loads and runs.
@@ -284,9 +314,12 @@ func CopilotSandboxBaseline(in CopilotBaselineInput) ([]CopilotBaselineEntry, er
 			ID:        CopilotBaselineDeviceIDCache,
 			Path:      deviceIDDir,
 			Source:    deviceIDSource,
+			Kind:      CopilotNodeDirectory,
 			Access:    copilotReadWrite(),
 			Necessity: CopilotGrantBestEffort,
-			Purpose:   "The Microsoft DeveloperTools `deviceid` file the bundled runtime writes.",
+			Purpose: "The Microsoft DeveloperTools `deviceid` file the bundled runtime writes. " +
+				"The grant implies its parent chain being creatable: the runtime makes " +
+				"Microsoft/ and DeveloperTools/ itself on a fresh cache.",
 			Evidence: "Written on every observed launch; with the directory read-only the launch " +
 				"still succeeds. Note this row is XDG-shaped on macOS too — the runtime that " +
 				"writes it has no darwin branch, unlike the package cache.",
@@ -298,6 +331,7 @@ func CopilotSandboxBaseline(in CopilotBaselineInput) ([]CopilotBaselineEntry, er
 			ID:        CopilotBaselineExecutable,
 			Path:      exe,
 			Source:    "caller-resolved `copilot` on the launch PATH",
+			Kind:      CopilotNodeFile,
 			Access:    copilotReadExec(),
 			Necessity: CopilotGrantMandatory,
 			Purpose:   "The launcher the pane executes; it locates or unpacks the package cache above.",
@@ -310,6 +344,7 @@ func CopilotSandboxBaseline(in CopilotBaselineInput) ([]CopilotBaselineEntry, er
 			ID:        CopilotBaselineTempDir,
 			Path:      tmp,
 			Source:    "caller-supplied system temp directory",
+			Kind:      CopilotNodeDirectory,
 			Access:    copilotReadWrite(),
 			Necessity: CopilotGrantFeatureConditional,
 			Feature:   copilotBaselineTempDirFeature,
@@ -329,6 +364,7 @@ func CopilotSandboxBaseline(in CopilotBaselineInput) ([]CopilotBaselineEntry, er
 			ID:        CopilotBaselineAgentdSocket,
 			Path:      socket,
 			Source:    "caller-supplied agentd endpoint",
+			Kind:      CopilotNodeSocket,
 			Access:    copilotReadWrite(),
 			Necessity: CopilotGrantFeatureConditional,
 			Feature:   copilotBaselineAgentdFeature,
@@ -347,6 +383,7 @@ func CopilotSandboxBaseline(in CopilotBaselineInput) ([]CopilotBaselineEntry, er
 			ID:        CopilotBaselineTclaudeBinary,
 			Path:      exe,
 			Source:    "caller-resolved tclaude binary",
+			Kind:      CopilotNodeFile,
 			Access:    copilotReadExec(),
 			Necessity: CopilotGrantFeatureConditional,
 			Feature:   copilotBaselineAgentdFeature,
@@ -362,6 +399,13 @@ func CopilotSandboxBaseline(in CopilotBaselineInput) ([]CopilotBaselineEntry, er
 }
 
 // copilotStateDir mirrors the CLI's `COPILOT_HOME ?? $HOME/.copilot`.
+//
+// One deliberate deviation: a set-but-BLANK (or whitespace-only) variable
+// falls through to the default here, where the CLI's `??` would take the empty
+// value and resolve it against the process cwd. The deviation errs in the safe
+// direction — the catalog names a directory the CLI might not use (a missing
+// grant, caught at launch) rather than granting a cwd-relative path — and the
+// alternative is pre-approving a path derived from a working directory.
 func copilotStateDir(getenv func(string) string, home string) (path, source string) {
 	if dir := strings.TrimSpace(getenv(CopilotHomeEnvVar)); dir != "" {
 		return filepath.Clean(dir), CopilotHomeEnvVar
@@ -448,10 +492,26 @@ func validateCopilotBaseline(
 				fmt.Sprintf("Copilot sandbox baseline entry %q resolves to %q, which covers the home directory %q; "+
 					"a per-harness baseline must never grant HOME", e.ID, e.Path, home))
 		}
-		if label, ok := broad[resolved]; ok {
+		for base, label := range broad {
+			// Ancestor-or-equal, not equality: with XDG_CACHE_HOME set to
+			// ~/.cache/me, a COPILOT_CACHE_HOME of ~/.cache is no longer equal
+			// to the base but still swallows it, and every other application's
+			// cache with it.
+			if pathContainsOrEqual(resolved, base) {
+				return copilotBaselineError("too-broad",
+					fmt.Sprintf("Copilot sandbox baseline entry %q resolves to %q, which covers the shared %s; "+
+						"grant the Copilot-specific subdirectory instead", e.ID, e.Path, label))
+			}
+		}
+		// A top-level system directory (/etc, /usr, /var, /opt, …) is never a
+		// Copilot-specific path, and a read/write row here becomes an rw bind
+		// in TCL-978's mount plan. The temp row is the one legitimate
+		// exception: /tmp IS top-level, and Copilot grants it in its own
+		// default policy.
+		if e.ID != CopilotBaselineTempDir && copilotSystemRootDir(resolved) {
 			return copilotBaselineError("too-broad",
-				fmt.Sprintf("Copilot sandbox baseline entry %q resolves to %q, which is the shared %s; "+
-					"grant the Copilot-specific subdirectory instead", e.ID, e.Path, label))
+				fmt.Sprintf("Copilot sandbox baseline entry %q resolves to %q, a top-level system directory; "+
+					"a per-harness baseline grants Copilot-specific subdirectories only", e.ID, e.Path))
 		}
 		if resolvedWorkspace != "" && pathContainsOrEqual(resolved, resolvedWorkspace) {
 			return copilotBaselineError("too-broad",
@@ -480,6 +540,19 @@ func copilotBroadPaths(goos string, getenv func(string) string, home string) map
 		broad[resolveSymlinks(filepath.Join(home, "Library", "Caches"))] = "macOS caches base"
 	}
 	return broad
+}
+
+// copilotSystemRootDir reports whether p is the filesystem root or one of its
+// immediate children ("/etc", "/usr", "/var", "/home"). Depth is the test
+// rather than a name list: a name list would have to guess at every distro's
+// and macOS's top-level layout, while "one level under /" is exactly the set
+// no Copilot-specific path can legitimately be.
+func copilotSystemRootDir(p string) bool {
+	p = filepath.Clean(p)
+	if p == string(filepath.Separator) {
+		return true
+	}
+	return filepath.Dir(p) == string(filepath.Separator)
 }
 
 func copilotBaselineError(kind, message string) *SandboxCapabilityError {

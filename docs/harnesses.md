@@ -462,8 +462,10 @@ CA bundle, PATH directories) are likewise the sandbox implementation's base
 layer, not per-harness policy.
 
 **It fails closed.** An unresolved or non-absolute path, a grant covering
-`$HOME` or an ancestor of it, a grant landing exactly on a shared base such as
-`~/.cache` or `~/Library/Caches`, and a grant covering the workspace are all
+`$HOME` or an ancestor of it, a grant covering a shared base such as `~/.cache`,
+`~/Library/Caches`, `~/.config` or `~/.local`, a grant on a top-level system
+directory (`/etc`, `/usr`, `/var`, … — the temp row is the one legitimate
+exception), and a grant covering the workspace are all
 `*SandboxCapabilityError` refusals rather than rows. Each is reachable by
 typing — `COPILOT_HOME=$HOME` and `COPILOT_CACHE_HOME=~/.cache` are things a
 person writes — and each would quietly convert a confined launch into an open
