@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/harness/copilotfixture"
 )
@@ -31,6 +32,12 @@ import (
 // convStore is the registered Copilot store, pointed at a fixture home.
 func convStore(t *testing.T, home string) harness.ConvStore {
 	t.Helper()
+	// A full listing refreshes tclaude's conv_index cache, and HOME decides
+	// where that SQLite lives. Redirect it so a fixture run cannot rewrite the
+	// operator's real conversation cache from a disposable Copilot home.
+	t.Setenv("HOME", t.TempDir())
+	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 	t.Setenv(harness.CopilotHomeEnvVar, home)
 	h := harness.MustGet(harness.CopilotName)
 	require.True(t, h.SupportsConvs(), "copilot descriptor must expose a ConvStore")

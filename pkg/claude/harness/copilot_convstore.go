@@ -145,12 +145,31 @@ func (s copilotConvStore) listConvs(cwd string, withEvents bool) ([]convops.Sess
 		if !ok {
 			continue
 		}
-		if cwd != "" && filepath.Clean(entry.ProjectPath) != cwd {
-			continue
-		}
 		entries = append(entries, entry)
 	}
-	applyCopilotArchivedState(entries)
+	// The cache is synchronized over the UNFILTERED listing and filtered
+	// afterwards. Syncing the cwd-scoped subset instead would make a
+	// project-scoped `conv ls` evict every conversation belonging to another
+	// project — the cache would then flip its contents depending on which
+	// directory the last command ran in.
+	if withEvents {
+		// Only the full read may write the cache. The events-free read exists
+		// precisely because it does not know FirstPrompt, MessageCount or
+		// Model, and upserting from it would blank those columns for every
+		// Copilot conversation on any `conv resolve`.
+		syncCopilotConvIndex(entries)
+	} else {
+		applyCopilotArchivedState(entries)
+	}
+	if cwd != "" {
+		filtered := entries[:0]
+		for _, entry := range entries {
+			if filepath.Clean(entry.ProjectPath) == cwd {
+				filtered = append(filtered, entry)
+			}
+		}
+		entries = filtered
+	}
 	// Newest first, with the id as a stable tiebreaker so a listing does not
 	// reorder itself between calls when two sessions share a timestamp.
 	sort.SliceStable(entries, func(i, j int) bool {
@@ -239,6 +258,92 @@ func readCopilotSession(stateDir, id string, withEvents bool) (convops.SessionEn
 		entry.Summary = workspace.Name
 	}
 	return entry, true, nil
+}
+
+// syncCopilotConvIndex mirrors the listing into tclaude's conv_index cache and
+// overlays the one tclaude-owned column back onto it.
+//
+// Copilot's own files stay the source of truth for everything here — this is a
+// cache, refreshed from them, never read back as authority. What it buys is
+// the ability for a tclaude-side verb to name a Copilot conversation at all.
+//
+// `tclaude conv archive <copilot-id>` is the concrete case. Archiving is a
+// tclaude concept with nowhere to live but `conv_index.archived_at`, and the
+// command resolves its argument through that table. Before this sync a Copilot
+// conversation had a row only if some OTHER operation had happened to create
+// one — a rename, a spawn — so archiving a conversation tclaude could plainly
+// list would fail with "no conversation matches". Writing the row as part of
+// the listing removes that ordering dependency: anything `conv ls` shows is
+// something `conv archive` can name. (`conv archive` also self-heals for a
+// conversation that has never been listed; see ensureIndexedConv in pkg/claude/conv.)
+//
+// The sync is UPSERT-ONLY. OpenCode additionally evicts rows its snapshot did
+// not mention, and doing the same here would be actively dangerous: Copilot's
+// listing is scoped to whatever COPILOT_HOME currently resolves to, so an
+// operator who repoints it — or a fixture run that does — would permanently
+// destroy the archived flags of every conversation under the real home.
+// Eviction also buys nothing, because Copilot's Resolve reads the session-state
+// tree rather than this cache, so a stale row cannot resurrect a deleted
+// conversation in any listing.
+//
+// Every cache failure degrades to "listing without the cache" rather than
+// failing the listing. Copilot's conversations exist whether or not tclaude
+// can write its own SQLite.
+func syncCopilotConvIndex(entries []convops.SessionEntry) {
+	if len(entries) == 0 {
+		return
+	}
+	cached := map[string]*db.ConvIndexRow{}
+	rows, err := db.ListAllConvIndex()
+	if err != nil {
+		// Without the current rows there is no archived state to overlay, but
+		// refreshing what Copilot just told us is still correct, so this falls
+		// through with an empty cache view rather than giving up.
+		slog.Warn("copilot convstore: conv_index unreadable; archived state unavailable",
+			"error", err)
+	} else {
+		for _, row := range rows {
+			if row.Harness == CopilotName {
+				cached[row.ConvID] = row
+			}
+		}
+	}
+
+	for i := range entries {
+		if row := cached[entries[i].SessionID]; row != nil && !row.ArchivedAt.IsZero() {
+			entries[i].ArchivedAt = row.ArchivedAt.UTC().Format(time.RFC3339)
+		}
+		if err := db.UpsertConvIndex(copilotEntryDBRow(entries[i])); err != nil {
+			slog.Warn("copilot convstore: conv_index upsert failed; continuing from Copilot",
+				"conv", entries[i].SessionID, "error", err)
+		}
+	}
+}
+
+// copilotEntryDBRow projects a listing entry onto the cache row.
+//
+// ArchivedAt is deliberately absent: it is the one column tclaude owns rather
+// than derives, `SetConvIndexArchived` is what writes it, and re-sending it
+// through a full upsert on every listing is how a cache overwrites the only
+// value it is not the source of.
+func copilotEntryDBRow(entry convops.SessionEntry) *db.ConvIndexRow {
+	return &db.ConvIndexRow{
+		ConvID:       entry.SessionID,
+		ProjectDir:   entry.ProjectPath,
+		FullPath:     entry.FullPath,
+		FileMtime:    entry.FileMtime,
+		FileSize:     entry.FileSize,
+		FirstPrompt:  entry.FirstPrompt,
+		Summary:      entry.Summary,
+		CustomTitle:  entry.CustomTitle,
+		MessageCount: entry.MessageCount,
+		Created:      entry.Created,
+		Modified:     entry.Modified,
+		ProjectPath:  entry.ProjectPath,
+		GitBranch:    entry.GitBranch,
+		IndexedAt:    time.Now(),
+		Harness:      CopilotName,
+	}
 }
 
 // applyCopilotArchivedState overlays tclaude's own archived flag onto the

@@ -19,6 +19,18 @@ import (
 // tests exist for the cases a live CLI cannot be asked to produce on demand:
 // a corrupt workspace file, a truncated event log, an ambiguous id prefix.
 
+// copilotTestHome is the isolation every test here needs now that a full
+// listing WRITES to conv_index. HOME decides where tclaude's SQLite lives, so
+// without this a `go test ./pkg/claude/harness/` run would refresh the
+// operator's real conversation cache from a synthetic fixture tree.
+func copilotTestHome(t *testing.T) string {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
+	return t.TempDir()
+}
+
 // copilotSession writes one session-state directory.
 func copilotSession(t *testing.T, home, id, workspace string, eventLines ...string) {
 	t.Helper()
@@ -82,7 +94,7 @@ func copilotSystemEvent() string {
 }
 
 func TestCopilotConvStoreListsSessions(t *testing.T) {
-	home := t.TempDir()
+	home := copilotTestHome(t)
 	cwd := t.TempDir()
 	copilotSession(t, home, copilotTestID,
 		workspaceYAML(copilotTestID, cwd, "first prompt about widgets", false,
@@ -119,7 +131,7 @@ func TestCopilotConvStoreListsSessions(t *testing.T) {
 // operator's own title. DisplayTitle's existing precedence then needs no
 // Copilot-specific rule.
 func TestCopilotConvStoreTitleSplitsGeneratedFromUserNamed(t *testing.T) {
-	home := t.TempDir()
+	home := copilotTestHome(t)
 	cwd := t.TempDir()
 	copilotSession(t, home, copilotTestID,
 		workspaceYAML(copilotTestID, cwd, "generated summary", false,
@@ -159,7 +171,7 @@ func TestCopilotConvStoreTitleSplitsGeneratedFromUserNamed(t *testing.T) {
 
 // A session with no name yet falls back to its first prompt.
 func TestCopilotConvStoreTitleFallsBackToFirstPrompt(t *testing.T) {
-	home := t.TempDir()
+	home := copilotTestHome(t)
 	cwd := t.TempDir()
 	copilotSession(t, home, copilotTestID,
 		workspaceYAML(copilotTestID, cwd, "", false,
@@ -172,7 +184,7 @@ func TestCopilotConvStoreTitleFallsBackToFirstPrompt(t *testing.T) {
 }
 
 func TestCopilotConvStoreFiltersByCwd(t *testing.T) {
-	home := t.TempDir()
+	home := copilotTestHome(t)
 	mine, other := t.TempDir(), t.TempDir()
 	copilotSession(t, home, copilotTestID,
 		workspaceYAML(copilotTestID, mine, "mine", false,
@@ -198,7 +210,7 @@ func TestCopilotConvStoreFiltersByCwd(t *testing.T) {
 }
 
 func TestCopilotConvStoreListsNewestFirst(t *testing.T) {
-	home := t.TempDir()
+	home := copilotTestHome(t)
 	cwd := t.TempDir()
 	copilotSession(t, home, copilotTestID,
 		workspaceYAML(copilotTestID, cwd, "older", false,
@@ -215,7 +227,7 @@ func TestCopilotConvStoreListsNewestFirst(t *testing.T) {
 }
 
 func TestCopilotConvStoreResolve(t *testing.T) {
-	home := t.TempDir()
+	home := copilotTestHome(t)
 	cwd, other := t.TempDir(), t.TempDir()
 	copilotSession(t, home, copilotTestID,
 		workspaceYAML(copilotTestID, cwd, "mine", false,
@@ -262,7 +274,7 @@ func TestCopilotConvStoreResolve(t *testing.T) {
 }
 
 func TestCopilotConvStoreExists(t *testing.T) {
-	home := t.TempDir()
+	home := copilotTestHome(t)
 	cwd := t.TempDir()
 	copilotSession(t, home, copilotTestID,
 		workspaceYAML(copilotTestID, cwd, "mine", false,
@@ -296,7 +308,7 @@ func TestCopilotConvStoreExists(t *testing.T) {
 // A session Copilot created but has not written workspace.yaml into yet is not
 // a conversation. It must be skipped, not reported as a nameless one.
 func TestCopilotConvStoreSkipsDirectoryWithoutWorkspace(t *testing.T) {
-	home := t.TempDir()
+	home := copilotTestHome(t)
 	cwd := t.TempDir()
 	copilotSession(t, home, copilotOtherID, "")
 	copilotSession(t, home, copilotTestID,
@@ -316,7 +328,7 @@ func TestCopilotConvStoreSkipsDirectoryWithoutWorkspace(t *testing.T) {
 
 // One corrupt session must not hide the healthy ones.
 func TestCopilotConvStoreSkipsCorruptSessionsWithoutFailingTheListing(t *testing.T) {
-	home := t.TempDir()
+	home := copilotTestHome(t)
 	cwd := t.TempDir()
 	copilotSession(t, home, copilotOtherID, "id: [unterminated\n\tbad: :\n")
 	copilotSession(t, home, copilotTestID2,
@@ -334,7 +346,7 @@ func TestCopilotConvStoreSkipsCorruptSessionsWithoutFailingTheListing(t *testing
 // A live session's last line is routinely half-written. The scan keeps the
 // events it did read and the workspace metadata stays intact.
 func TestCopilotConvStoreToleratesTruncatedEventLog(t *testing.T) {
-	home := t.TempDir()
+	home := copilotTestHome(t)
 	cwd := t.TempDir()
 	copilotSession(t, home, copilotTestID,
 		workspaceYAML(copilotTestID, cwd, "live session", false,
@@ -355,7 +367,7 @@ func TestCopilotConvStoreToleratesTruncatedEventLog(t *testing.T) {
 
 // A session with no event log at all still lists from workspace.yaml alone.
 func TestCopilotConvStoreListsWithoutAnEventLog(t *testing.T) {
-	home := t.TempDir()
+	home := copilotTestHome(t)
 	cwd := t.TempDir()
 	copilotSession(t, home, copilotTestID,
 		workspaceYAML(copilotTestID, cwd, "just created", false,
@@ -372,7 +384,7 @@ func TestCopilotConvStoreListsWithoutAnEventLog(t *testing.T) {
 
 // A resume restates the model in force; last one wins.
 func TestCopilotConvStoreTakesModelFromTheLatestSessionEvent(t *testing.T) {
-	home := t.TempDir()
+	home := copilotTestHome(t)
 	cwd := t.TempDir()
 	copilotSession(t, home, copilotTestID,
 		workspaceYAML(copilotTestID, cwd, "resumed", false,
@@ -456,7 +468,7 @@ func TestCopilotTimestampNormalization(t *testing.T) {
 // the log. events.jsonl is append-only, so a scan that gave up on the oversized
 // line would freeze this conversation's turn count and model permanently.
 func TestCopilotConvStoreRecoversFromAnOversizedEventLine(t *testing.T) {
-	home := t.TempDir()
+	home := copilotTestHome(t)
 	cwd := t.TempDir()
 	oversized := `{"type":"tool.execution_complete","data":{"content":"` +
 		strings.Repeat("x", copilotEventLineLimit+1024) + `"}}`
@@ -484,7 +496,7 @@ func TestCopilotConvStoreRecoversFromAnOversizedEventLine(t *testing.T) {
 // An oversized line that also happens to contain a prefilter needle must not
 // be decoded or counted — it is dropped whole.
 func TestCopilotConvStoreDropsAnOversizedLineWithoutCountingIt(t *testing.T) {
-	home := t.TempDir()
+	home := copilotTestHome(t)
 	cwd := t.TempDir()
 	copilotSession(t, home, copilotTestID,
 		workspaceYAML(copilotTestID, cwd, "big session", false,
@@ -504,7 +516,7 @@ func TestCopilotConvStoreDropsAnOversizedLineWithoutCountingIt(t *testing.T) {
 // Exists and ListConvs must share one definition of "is a conversation".
 // A workspace.yaml that parses but carries no cwd is not one.
 func TestCopilotConvStoreExistsAgreesWithListOnUnusableWorkspace(t *testing.T) {
-	home := t.TempDir()
+	home := copilotTestHome(t)
 	store := copilotConvStore{home: home}
 
 	copilotSession(t, home, copilotOtherID, "id: [unterminated\n\tbad: :\n")
@@ -528,7 +540,7 @@ func TestCopilotConvStoreExistsAgreesWithListOnUnusableWorkspace(t *testing.T) {
 // code path that scanned it would log and degrade, while one that never
 // touches it is unaffected — and neither result changes what these two return.
 func TestCopilotConvStoreResolveAndTitleSkipTheEventLog(t *testing.T) {
-	home := t.TempDir()
+	home := copilotTestHome(t)
 	cwd := t.TempDir()
 	copilotSession(t, home, copilotTestID,
 		workspaceYAML(copilotTestID, cwd, "named from workspace", false,
@@ -554,7 +566,7 @@ func TestCopilotConvStoreResolveAndTitleSkipTheEventLog(t *testing.T) {
 // Title still falls back to the event log's first prompt when workspace.yaml
 // has no name — the one case that genuinely needs the scan.
 func TestCopilotConvStoreTitleReadsEventLogOnlyForTheFallback(t *testing.T) {
-	home := t.TempDir()
+	home := copilotTestHome(t)
 	cwd := t.TempDir()
 	copilotSession(t, home, copilotTestID,
 		workspaceYAML(copilotTestID, cwd, "", false,
@@ -571,7 +583,7 @@ func TestCopilotConvStoreTitleReadsEventLogOnlyForTheFallback(t *testing.T) {
 // Copilot conversation and `conv ls` would never actually hide one.
 func TestCopilotConvStoreOverlaysArchivedState(t *testing.T) {
 	withTestDB(t)
-	home := t.TempDir()
+	home := copilotTestHome(t)
 	cwd := t.TempDir()
 	copilotSession(t, home, copilotTestID,
 		workspaceYAML(copilotTestID, cwd, "archived one", false,
@@ -623,7 +635,7 @@ func TestCopilotConvStoreOverlaysArchivedState(t *testing.T) {
 // conversation that happens to share an id.
 func TestCopilotConvStoreIgnoresArchivedRowsOfOtherHarnesses(t *testing.T) {
 	withTestDB(t)
-	home := t.TempDir()
+	home := copilotTestHome(t)
 	cwd := t.TempDir()
 	copilotSession(t, home, copilotTestID,
 		workspaceYAML(copilotTestID, cwd, "mine", false,
