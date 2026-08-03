@@ -357,7 +357,9 @@ func CopilotSandboxBaseline(in CopilotBaselineInput) ([]CopilotBaselineEntry, er
 			Purpose:   "Scratch space for shell tools the agent runs.",
 			Evidence: "The CLI resolves and stats the temp directory at startup and grants it in " +
 				"its own default sandbox policy; a launch that never runs a shell tool does not " +
-				"need it, which is why Copilot ships `--disallow-temp-dir`.",
+				"need it, which is why Copilot ships `--disallow-temp-dir`. That flag is named " +
+				"as the feature's opt-out, not as a lever this row depends on: measured on both " +
+				"platforms, it has no effect when `--allow-all-paths` is also passed.",
 		})
 	}
 

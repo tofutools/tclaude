@@ -542,6 +542,15 @@ func TestResolveCopilotInnerSandboxLegacyConfigPrecedence(t *testing.T) {
 		{
 			// Same replacement, the other way round: an empty legacy block still
 			// replaces, so it clears the canonical file's enabled.
+			//
+			// MEASURED, not inferred, and it is the arm where inference would
+			// have been dangerous: the gate reports Enabled=false here and
+			// ALLOWS the launch, so had an empty block NOT replaced, a canonical
+			// `enabled: true` would have survived and the launch would have
+			// started with two walls while the gate claimed one. Verified
+			// against 1.0.77 by TCL-977's probe — canonical settings enabling
+			// the sandbox with a deniedPaths policy, plus `{"sandbox":{}}` in
+			// the legacy file, and the write into the denied path LANDED.
 			name: "an empty legacy sandbox block still replaces",
 			files: map[string]string{
 				CopilotSettingsFileName: `{"sandbox":{"enabled":true}}`,
