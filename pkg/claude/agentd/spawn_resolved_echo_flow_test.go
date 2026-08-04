@@ -264,7 +264,13 @@ func TestSpawnResolution_ExplicitHarnessIgnoresForeignDefaultFields(t *testing.T
 			assert.Equal(t, tc.explicitHarness, resp.Resolved.Harness.Value)
 			assert.Empty(t, resp.Resolved.Model.Value)
 			assert.Contains(t, resp.Resolved.Model.Note, `global default profile "foreign" model ignored`)
-			assert.Equal(t, "high", resp.Resolved.Effort.Value, "generic compatible effort still applies")
+			// Effort is harness-pinned too: a default tier targeting another
+			// harness may not supply it, even though "high" would validate
+			// for both vendors. See TCL-999.
+			assert.Empty(t, resp.Resolved.Effort.Value)
+			assert.Contains(t, resp.Resolved.Effort.Note,
+				`global default profile "foreign" effort ignored (profile targets `+tc.profileHarness+
+					`, launch is `+tc.explicitHarness+`)`)
 			assert.Contains(t, out, "— "+resp.Resolved.Model.Note)
 		})
 	}

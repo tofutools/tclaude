@@ -1080,7 +1080,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 	}
 	var fail *spawnFailure
 	var notes []string
-	model, _, note, fail := resolveStringLaunchField("model", a.Model, h.Name, tiers,
+	model, _, note, fail := resolveStringLaunchField(modelField, a.Model, h.Name, tiers,
 		func(p *db.SpawnProfile) string { return p.Model }, h.Models.ValidateModel)
 	if fail != nil {
 		return templateAgentLaunch{}, fail
@@ -1088,7 +1088,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 	if note != "" {
 		notes = append(notes, note)
 	}
-	effort, _, note, fail := resolveStringLaunchField("effort", a.Effort, h.Name, tiers,
+	effort, _, note, fail := resolveStringLaunchField(effortField, a.Effort, h.Name, tiers,
 		func(p *db.SpawnProfile) string { return p.Effort }, h.Models.ValidateEffort)
 	if fail != nil {
 		return templateAgentLaunch{}, fail
