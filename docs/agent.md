@@ -1522,8 +1522,8 @@ tclaude agent git pull                          # daemon fetch + LOCAL --ff-only
 tclaude agent git push [-b B] [-u] [--force-with-lease]
 
 tclaude agent github pr create --title T --body-file F [--base B] [--draft]
-tclaude agent github pr ls|view|checks|comment|ready
-tclaude agent github issue ls|view|comment
+tclaude agent github pr ls        # also: view, checks, comment, ready
+tclaude agent github issue ls     # also: view, comment
 ```
 
 Two things bound every call, and neither is negotiable from the agent side:

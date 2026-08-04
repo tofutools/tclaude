@@ -419,17 +419,22 @@ func (s *gitProxySession) runAndRespond(
 		writeError(w, http.StatusBadGateway, "git_failed", err.Error())
 		return
 	}
+	// Report the destination that was actually dialled. A remote with a
+	// separate remote.<name>.pushurl reaches a different host on push than on
+	// fetch, and both the audit row and the agent's own outcome must name the
+	// one this command contacted.
+	contacted := remote.contacted(len(args) > 0 && args[0] == "push").Key()
 	// Audit detail is a short, privacy-bounded diagnostic (audit.go): the
 	// remote, the ref and the outcome — never output, never a credential.
-	detail := fmt.Sprintf("remote=%s ref=%s", remote.FetchRef.Key(), branch)
+	detail := fmt.Sprintf("remote=%s ref=%s", contacted, branch)
 	if branch == "" {
-		detail = "remote=" + remote.FetchRef.Key()
+		detail = "remote=" + contacted
 	}
 	setAuditDetail(r, fmt.Sprintf("%s exit=%d", detail, res.ExitCode))
 	writeJSON(w, http.StatusOK, gitProxyOutcome{
 		Repo:      filepath.Base(s.repoRoot),
 		Remote:    remote.Name,
-		RemoteRef: remote.FetchRef.Key(),
+		RemoteRef: contacted,
 		Branch:    branch,
 		ExitCode:  res.ExitCode,
 		Stdout:    res.Stdout,

@@ -249,8 +249,8 @@ func SetProxyExecForTest(fn func(ctx context.Context, cmd ProxyCommand) (ProxyRe
 }
 
 // runProxyCommand is the production seam implementation: bounded time, bounded
-// output, and a private process group that is killed after Wait so an ssh or
-// git-remote-https child cannot outlive the request.
+// output, and a private process group that is killed on cancellation so an ssh
+// or git-remote-https child cannot outlive the request.
 func runProxyCommand(ctx context.Context, spec ProxyCommand) (ProxyResult, error) {
 	cmd := exec.CommandContext(ctx, spec.Path, spec.Args...)
 	cmd.Dir = spec.Dir
@@ -261,12 +261,21 @@ func runProxyCommand(ctx context.Context, spec ProxyCommand) (ProxyResult, error
 	cmd.Stderr = stderr
 	configureProxyCommand(cmd)
 
+	// Run, not Start/kill/Wait, and deliberately NO group kill afterwards.
+	//
+	// Wait reaps the group leader, and a reaped pid is immediately available
+	// for reuse — so a kill(-pid) issued after Wait can land on an unrelated
+	// process group that happens to have been allocated that id. The group kill
+	// therefore lives only on the cancellation path, where os/exec invokes
+	// cmd.Cancel while the leader is still unreaped (configureProxyCommand).
+	//
+	// A descendant that outlives a leader which exited normally is bounded
+	// instead by WaitDelay: it holds the inherited stdout/stderr pipe, Wait
+	// blocks on the pipe copy, and os/exec force-closes it after proxyWaitDelay.
+	// Chasing it with a signal is not worth signalling a stranger's process
+	// group; a process that deliberately escapes still needs a real OS sandbox
+	// to contain, which is not this layer's job.
 	runErr := cmd.Run()
-	// Reap the private group unconditionally: an ordinary descendant that
-	// outlived its group leader would otherwise keep running. A process that
-	// deliberately escapes with setsid still needs a real sandbox to contain —
-	// that is not this layer's job.
-	_ = cleanupProxyCommand(cmd)
 
 	res := ProxyResult{
 		Stdout:    stdout.String(),
@@ -456,9 +465,17 @@ func gitProxyEnv() []string {
 // It deliberately runs in a neutral directory so no repository-local config is
 // in scope: the whole point is to keep the operator's real helper working
 // while dropping any helper an agent may have written into .git/config.
+// Both probes are bounded by gitProxyProbeTimeout, the same deadline
+// gitProbeStrict applies to every other local read. They run on the request
+// path, and a `git config` read can block on something outside the daemon's
+// control — a stalled network filesystem holding HOME, an unresponsive
+// include.path mount — which would otherwise pin the request goroutine here
+// until the client gave up.
 func globalCredentialHelpers(ctx context.Context, gitPath string) []string {
+	probeCtx, cancel := context.WithTimeout(ctx, gitProxyProbeTimeout)
+	defer cancel()
 	neutral := os.TempDir()
-	res, err := proxyExec(ctx, ProxyCommand{
+	res, err := proxyExec(probeCtx, ProxyCommand{
 		Tool: "git",
 		Path: gitPath,
 		// --global and --system are read separately by git; `git config
@@ -472,7 +489,7 @@ func globalCredentialHelpers(ctx context.Context, gitPath string) []string {
 	if err == nil && res.ExitCode == 0 {
 		helpers = append(helpers, splitNonEmptyLines(res.Stdout)...)
 	}
-	res, err = proxyExec(ctx, ProxyCommand{
+	res, err = proxyExec(probeCtx, ProxyCommand{
 		Tool: "git",
 		Path: gitPath,
 		Args: []string{"config", "--system", "--get-all", "credential.helper"},
@@ -621,6 +638,30 @@ func refuseHostileRepoConfig(ctx context.Context, s *gitProxySession, remoteName
 				"certificate verification — and in its URL-scoped form it outranks any override the "+
 				"proxy could set — so the proxy refuses to run against it", key)
 	}
+
+	// credential.* names a PROGRAM git runs during authentication, in both the
+	// generic `credential.helper` form and the URL-scoped
+	// `credential.<url>.helper` form. The pins do reset the whole helper list
+	// (verified on git 2.43: a `-c credential.helper=` read last clears
+	// URL-scoped entries too), but that is a precedence property of git's
+	// config reader — the same kind of assumption that turned out to be wrong
+	// for remote.<n>.uploadpack and for http.<url>.*. So the repo-controlled
+	// scopes are refused outright rather than relied upon to be overridden.
+	//
+	// Only local and worktree are refused. global and system are the
+	// OPERATOR's, and globalCredentialHelpers deliberately re-applies their
+	// helpers; command scope is the proxy's own pins.
+	credentialKeys, fault := s.configKeysInScopes(ctx, "^credential\\.", "local", "worktree")
+	if fault != nil {
+		return fault
+	}
+	if len(credentialKeys) > 0 {
+		return faultf(http.StatusForbidden, "credential_config_refused",
+			"this repository configures %s; credential.* selects the program git runs to obtain a "+
+				"credential, so the proxy refuses to run against a repository that sets it. "+
+				"Move the setting to your global or system git configuration if it is yours",
+			credentialKeys[0])
+	}
 	return nil
 }
 
@@ -643,6 +684,51 @@ func (s *gitProxySession) configKeys(ctx context.Context, pattern string) ([]str
 				"rather than assuming it is safe", pattern, exitCode)
 	}
 	return splitNonEmptyLines(out), nil
+}
+
+// configKeysInScopes lists the configured keys matching a git config regexp
+// that come from one of the named scopes ("local", "worktree", "global",
+// "system", "command").
+//
+// --show-scope rather than --local is what makes this trustworthy: `git config
+// --local --get-regexp` does NOT report a key that reached the local file
+// through include.path, while --show-scope reports it and attributes it to the
+// including scope. Filtering the effective listing is therefore strictly more
+// complete than reading one scope's file.
+func (s *gitProxySession) configKeysInScopes(ctx context.Context, pattern string, scopes ...string) ([]string, *proxyFault) {
+	out, exitCode, ran := s.gitProbeStrict(ctx,
+		"config", "--show-scope", "--name-only", "--get-regexp", "--", pattern)
+	if !ran {
+		return nil, faultf(http.StatusInternalServerError, "config_probe_failed",
+			"could not inspect this repository's configuration for %s; refusing rather than "+
+				"assuming it is safe", pattern)
+	}
+	if exitCode == 1 {
+		return nil, nil // git's "no matching key"
+	}
+	if exitCode != 0 {
+		return nil, faultf(http.StatusInternalServerError, "config_probe_failed",
+			"inspecting this repository's configuration for %s failed (git exit %d); refusing "+
+				"rather than assuming it is safe", pattern, exitCode)
+	}
+	wanted := make(map[string]bool, len(scopes))
+	for _, s := range scopes {
+		wanted[s] = true
+	}
+	var keys []string
+	for _, line := range splitNonEmptyLines(out) {
+		// "<scope>\t<key>". A key with no scope column is a git version that
+		// does not understand --show-scope, which the exit checks above have
+		// already ruled out; skip rather than guess.
+		scope, key, ok := strings.Cut(line, "\t")
+		if !ok {
+			continue
+		}
+		if wanted[strings.TrimSpace(scope)] {
+			keys = append(keys, strings.TrimSpace(key))
+		}
+	}
+	return keys, nil
 }
 
 // git runs a hardened git command in the agent's repository.
@@ -1022,6 +1108,17 @@ type resolvedRemote struct {
 	PushRef  remoteRef
 	FetchURL string
 	PushURL  string
+}
+
+// contacted names the host/owner/repo a verb actually dials. It is not always
+// FetchRef: remote.<name>.pushurl may point somewhere else entirely (both are
+// validated and allow-listed), and an audit row that recorded the fetch host
+// for a push would name a destination the push never touched.
+func (r resolvedRemote) contacted(push bool) remoteRef {
+	if push {
+		return r.PushRef
+	}
+	return r.FetchRef
 }
 
 // resolveProxyRemote validates a remote name end to end.

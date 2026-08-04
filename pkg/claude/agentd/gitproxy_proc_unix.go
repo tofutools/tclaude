@@ -30,20 +30,20 @@ var killProxyProcessGroup = func(pid int) error {
 // with nothing watching it.
 func configureProxyCommand(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error {
-		if cmd.Process == nil {
-			return nil
-		}
-		return ignoreProxyNoProcess(killProxyProcessGroup(cmd.Process.Pid))
-	}
+	cmd.Cancel = func() error { return killProxyGroup(cmd) }
 	cmd.WaitDelay = proxyWaitDelay
 }
 
-// cleanupProxyCommand reaps the private process group after Wait, so an
-// ordinary descendant cannot be left behind when its leader exits. A process
-// that deliberately escapes its group with setsid still needs a real OS
-// sandbox to contain — that is not this layer's job.
-func cleanupProxyCommand(cmd *exec.Cmd) error {
+// killProxyGroup is the group-kill primitive.
+//
+// IT MUST ONLY BE CALLED WHILE THE GROUP LEADER IS STILL UNREAPED. The signal
+// target is the negated leader pid, and once Wait has reaped the leader that
+// pid is free for the kernel to hand to an unrelated process — which could by
+// then be the leader of somebody else's group. os/exec guarantees the ordering
+// for the one caller that matters: cmd.Cancel runs from the watchdog goroutine
+// while Wait is still blocked. There is deliberately no post-Wait caller; see
+// runProxyCommand for what bounds a straggler instead.
+func killProxyGroup(cmd *exec.Cmd) error {
 	if cmd.Process == nil {
 		return nil
 	}

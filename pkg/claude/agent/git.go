@@ -383,9 +383,11 @@ func gitProxyCall(path string, body map[string]any, askHuman, what string, stdou
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	if ask > 0 {
-		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
-	}
+	// No "waiting for approval" banner here. --ask-human only arms a FALLBACK:
+	// the daemon raises an access request when the permission gate denies the
+	// call, and a caller that already holds git.read or git.push never waits at
+	// all. Announcing a wait that does not happen is what runResume was fixed
+	// not to do (stop_resume_test.go).
 	var resp gitProxyOutcome
 	if err := DaemonRequest(http.MethodPost, path, body, &resp,
 		DaemonOpts{AskHuman: ask, Timeout: gitProxyTimeout}); err != nil {

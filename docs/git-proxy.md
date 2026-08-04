@@ -186,9 +186,9 @@ the load-bearing measures do not depend on it.
 | Submodule recursion | pin + flag | `fetch`/`push.recurseSubmodules` and `submodule.recurse` pinned off, plus `--no-recurse-submodules`. A submodule's own config names hosts the allow-list never saw. |
 | A `.git` **gitfile** redirecting `GIT_DIR` elsewhere | refuse | The resolved git directory must live under the work-tree root, so a one-line `.git` file cannot aim the daemon at another repository's config, refs and remotes. |
 | A work tree at or above `$HOME` | refuse | Stops an agent launched outside a repository from having git walk up into the operator's home. |
-| A repo-local `credential.helper` (an arbitrary command) | pin | The helper list is reset, then repopulated from **global/system** configuration only, so your real helper keeps working. |
+| A repo-local `credential.*` key (the program git runs to obtain a credential) | refuse + pin | Any `credential.*` key in the **local** or **worktree** scope is refused. On top of that the helper list is reset and repopulated from **global/system** configuration only, so your real helper keeps working. |
 | Argument injection | validate | Every parameter is charset-validated and refused if it begins with `-`. No passthrough flag, no `--` escape. |
-| A hung transport | bound | Every call is time-bounded and runs in a private process group killed after `Wait`, so an `ssh` child cannot outlive the request. |
+| A hung transport | bound | Every call is time-bounded and runs in a private process group that is killed **on cancellation**, so an `ssh` child cannot outlive a timed-out request. (The kill is deliberately not issued after `Wait`: the leader's pid is reaped by then and could already belong to a stranger's process group.) |
 | Secrets in `/proc` | design | Tokens travel in the child's environment or a `0600` file, never in argv. PR bodies and comments go through `--body-file`. |
 
 Nothing here ever runs a shell. A configuration probe that cannot be *run* is
@@ -250,6 +250,7 @@ tclaude agent github pr create # → audit verb "github.pr.create"
 | `refusing an 'ext::' remote URL` | The remote names a command, not a server. Something has rewritten `.git/config`; inspect it. |
 | `this repository sets remote.X.uploadpack …` | The repository configures a program-selecting key for that remote. Remove it with `git config --unset remote.X.uploadpack` (or `receivepack` / `vcs` / `proxy`). |
 | `this repository configures http.…` | An `http.*` setting that can redirect the connection or weaken TLS. Remove it, or move it to your global config only if you genuinely need it — the proxy refuses it wherever it is set. |
+| `this repository configures credential.…` | A `credential.*` key is set in the repository (or its worktree config, or a file it `include.path`s). Remove it with `git config --unset`, or move it to your **global** config, which the proxy honours. |
 | `git directory … lives outside the work tree` | The checkout uses a `.git` gitfile pointing elsewhere — most often a **linked worktree**, which the proxy does not operate on. Run the proxy from the main checkout. |
 | `contains the operator's home directory` | Your launch directory is not inside a repository, so git walked up into `$HOME`. Work inside an actual project checkout. |
 | `could not inspect this repository's configuration` | A config probe failed to run. The proxy refuses rather than assuming the repository is safe; check that `git` works in that directory. |

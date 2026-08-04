@@ -353,3 +353,62 @@ func TestRealGit_RunProxyCommandBoundsOutputAndSurvivesFailure(t *testing.T) {
 	require.NoError(t, err, "a non-zero git exit is an answer, not a transport failure")
 	assert.NotEqual(t, 0, res.ExitCode)
 }
+
+// TestRealGit_ShowScopeAttributesIncludedKeysToTheIncludingScope locks the
+// assumption the credential-config gate rests on.
+//
+// The gate has to tell a key an AGENT wrote from one the OPERATOR set, and it
+// does that by filtering `config --show-scope` down to local and worktree. The
+// obvious alternative — `git config --local --get-regexp` — is not equivalent
+// and is not safe: it does NOT report a key that reached the repository through
+// `include.path`, so an agent could hide a credential helper behind an include
+// and the gate would see a clean repository. --show-scope does report it, and
+// attributes it to the scope of the file that pulled it in.
+func TestRealGit_ShowScopeAttributesIncludedKeysToTheIncludingScope(t *testing.T) {
+	gitPath := gitAvailable(t)
+	work, _ := realGitRepo(t, gitPath)
+	home := filepath.Dir(work)
+
+	included := filepath.Join(home, "sneaky.gitconfig")
+	require.NoError(t, os.WriteFile(included,
+		[]byte("[credential \"https://github.com\"]\n\thelper = \"!evil\"\n"), 0o600))
+
+	set := func(args ...string) {
+		t.Helper()
+		c := exec.Command(gitPath, args...)
+		c.Dir = work
+		c.Env = realGitEnv(home)
+		out, err := c.CombinedOutput()
+		require.NoErrorf(t, err, "git %s: %s", strings.Join(args, " "), out)
+	}
+	set("config", "include.path", included)
+
+	probe := func(scoped bool) string {
+		t.Helper()
+		args := []string{"config"}
+		if scoped {
+			args = append(args, "--show-scope")
+		}
+		args = append(args, "--name-only", "--get-regexp", "--", `^credential\.`)
+		// --local, the tempting shortcut, is what the second half asserts is
+		// insufficient; both probes read the same repository.
+		if !scoped {
+			args = append([]string{"config", "--local"}, args[1:]...)
+		}
+		c := exec.Command(gitPath, args...)
+		c.Dir = work
+		c.Env = realGitEnv(home)
+		out, _ := c.Output() // exit 1 = no matching key, which is an answer
+		return string(out)
+	}
+
+	// The shortcut MISSES it — this is the control that proves the gate's
+	// choice of probe is load-bearing rather than stylistic.
+	assert.NotContains(t, probe(false), "credential.https://github.com.helper",
+		"--local is expected to miss an included key; if this ever changes the "+
+			"comment in configKeysInScopes needs revisiting, not the gate")
+
+	// --show-scope sees it, and calls it local.
+	assert.Contains(t, probe(true), "local\tcredential.https://github.com.helper",
+		"the gate reads this exact shape: <scope>\\t<key>")
+}

@@ -17,5 +17,3 @@ const proxyWaitDelay = time.Second
 func configureProxyCommand(cmd *exec.Cmd) {
 	cmd.WaitDelay = proxyWaitDelay
 }
-
-func cleanupProxyCommand(*exec.Cmd) error { return nil }

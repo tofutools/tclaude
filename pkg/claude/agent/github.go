@@ -107,9 +107,10 @@ func ghProxyCall(path string, body map[string]any, askHuman, what string, stdout
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	if ask > 0 {
-		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
-	}
+	// Same as gitProxyCall: --ask-human arms a fallback for the denied case, it
+	// does not mean this call waits. It matters a little more here — these
+	// verbs render gh's JSON on stdout, and a banner ahead of it would break a
+	// caller that pipes the output into a parser.
 	var resp ghProxyOutcome
 	if err := DaemonRequest(http.MethodPost, path, body, &resp,
 		DaemonOpts{AskHuman: ask, Timeout: ghProxyTimeout}); err != nil {

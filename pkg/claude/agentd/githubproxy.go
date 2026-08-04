@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 )
@@ -241,7 +243,10 @@ func validateGHTitle(title string) *proxyFault {
 	if title == "" {
 		return faultf(http.StatusBadRequest, "invalid_arg", "a title is required")
 	}
-	if len(title) > maxGHProxyTitleLen {
+	// Runes, not bytes: maxGHProxyTitleLen and GitHub's own limit are both
+	// stated in characters, so a byte count would refuse a perfectly legal
+	// non-ASCII title at well under a third of the real limit.
+	if utf8.RuneCountInString(title) > maxGHProxyTitleLen {
 		return faultf(http.StatusBadRequest, "invalid_arg",
 			"title is longer than %d characters", maxGHProxyTitleLen)
 	}
@@ -253,6 +258,16 @@ func validateGHTitle(title string) *proxyFault {
 		if r < 0x20 || r == 0x7f {
 			return faultf(http.StatusBadRequest, "invalid_arg",
 				"the title contains a control character (did you mean to put this in the body?)")
+		}
+		// Unicode format characters — the bidirectional overrides U+202E and
+		// U+2066..U+2069 above all — reorder how the title RENDERS without
+		// changing what it contains. This title is published under the
+		// operator's own account, where a reader has no reason to suspect the
+		// displayed text is not the stored text.
+		if unicode.Is(unicode.Cf, r) {
+			return faultf(http.StatusBadRequest, "invalid_arg",
+				"the title contains a Unicode format character (U+%04X); those can reorder how the "+
+					"title renders without changing what it says", r)
 		}
 	}
 	return nil

@@ -212,6 +212,13 @@ func TestGHProxy_RefusesInjectionShapedParameters(t *testing.T) {
 			map[string]any{"limit": 100000}},
 		{"empty comment", "/v1/github/pr/comment",
 			map[string]any{"number": 1, "body": "   "}},
+		// A right-to-left override reorders how the title RENDERS on a PR
+		// published under the operator's account, without changing what it
+		// stores. A reader has no way to tell.
+		{"title carrying a bidi override", "/v1/github/pr/create",
+			map[string]any{"title": "Fix typo \u202egnp.exe", "body": "x"}},
+		{"title longer than the character limit", "/v1/github/pr/create",
+			map[string]any{"title": strings.Repeat("a", 257), "body": "x"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -220,6 +227,21 @@ func TestGHProxy_RefusesInjectionShapedParameters(t *testing.T) {
 		})
 	}
 	assert.Equal(t, 0, ghCallCount(rec), "no invalid request may reach gh")
+}
+
+// TestGHProxy_TitleLimitCountsCharactersNotBytes — the limit and the refusal
+// message are both stated in characters, and so is GitHub's own. Counting
+// bytes would refuse a perfectly ordinary non-ASCII title at roughly a third of
+// the advertised length.
+func TestGHProxy_TitleLimitCountsCharactersNotBytes(t *testing.T) {
+	f, rec := gitProxyWorld(t, []string{"github.com/tofutools"})
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubWrite, "test"))
+	rec.gh = agentd.ProxyResult{Stdout: "https://github.com/tofutools/tclaude/pull/1\n"}
+
+	// 200 CJK characters: 600 bytes, comfortably under the 256-character limit.
+	res := gitProxyPost(t, f, "/v1/github/pr/create",
+		map[string]any{"title": strings.Repeat("修", 200), "body": "x"})
+	assert.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
 }
 
 // TestGHProxy_PassesJSONThroughUnmodelled — the daemon deliberately does not

@@ -276,19 +276,55 @@ var auditRoutes = []auditRoute{
 	{method: http.MethodPost, segs: []string{"github", "{resource}", "{action}"}, describe: describeGitHubProxy},
 }
 
+// auditedGitProxyVerbs / auditedGitHubProxyVerbs gate the path captures to the
+// operations that actually have a handler (serve.go). The route patterns are
+// wildcards, so without this any POST under /v1/git/<seg> — including the 404s
+// — would write its own arbitrary string into the verb column, which is enough
+// to make later filtering by verb unreliable. Same approach as
+// describeWhoamiVerb; an unclassified row is dropped by recordAuditRow.
+var (
+	auditedGitProxyVerbs = map[string]bool{
+		"ls-remote": true,
+		"fetch":     true,
+		"push":      true,
+	}
+	auditedGitHubProxyVerbs = map[string]bool{
+		"pr.create":     true,
+		"pr.list":       true,
+		"pr.view":       true,
+		"pr.checks":     true,
+		"pr.comment":    true,
+		"pr.ready":      true,
+		"issue.list":    true,
+		"issue.view":    true,
+		"issue.comment": true,
+	}
+)
+
 // describeGitProxy names a git-proxy row "git.fetch", "git.push", … from the
 // path. It deliberately does NOT parse the body: the remote and ref reach the
 // row through setAuditDetail, after the handler has validated them, so a
 // refused or malformed request never gets its raw parameters recorded.
 func describeGitProxy(c *auditCtx) {
-	c.fields.Verb = "git." + c.vars["verb"]
+	// recordAuditRow has already defaulted fields.Verb to the raw {verb}
+	// capture, so an unknown one must be cleared rather than merely not
+	// rewritten.
+	if verb := c.vars["verb"]; auditedGitProxyVerbs[verb] {
+		c.fields.Verb = "git." + verb
+	} else {
+		c.fields.Verb = ""
+	}
 }
 
 // describeGitHubProxy names a github-proxy row "github.pr.create",
 // "github.issue.comment", … from the path. Same rule as above: path only,
 // never the body — a PR title or comment body must not land in the audit log.
 func describeGitHubProxy(c *auditCtx) {
-	c.fields.Verb = "github." + c.vars["resource"] + "." + c.vars["action"]
+	if verb := c.vars["resource"] + "." + c.vars["action"]; auditedGitHubProxyVerbs[verb] {
+		c.fields.Verb = "github." + verb
+	} else {
+		c.fields.Verb = ""
+	}
 }
 
 // auditRequests wraps a mux so every matched command writes an audit
