@@ -94,9 +94,14 @@ func TestSandboxLineageMatrixUnchangedAcrossNonSingleWallImplementations(t *test
 }
 
 // A tclaude-layer child records its harness's no-confinement mode because
-// tclaude's own wall is the one enforcing. The guard must classify it by the
-// confinement it actually has, which is exactly the decision it got before the
-// resolver started forcing that mode.
+// tclaude's own wall is the one enforcing. The guard classifies it by the
+// confinement it actually has.
+//
+// This does NOT leave every verdict where it was. Judging the launch instead of
+// the request moves 20 request-shape verdicts (see
+// TestSandboxLineageTclaudeLayerVerdictDelta, which enumerates them): 3 tighten
+// and 17 loosen. What it preserves is the set of LAUNCHES each parent can mint
+// — see TestSandboxLineageTclaudeLayerLooseningGrantsNoNewLaunch.
 func TestSandboxLineageMapsTclaudeLayerChildToItsConfinementClass(t *testing.T) {
 	layerClaude := spawnLineageSandbox{
 		Harness: harness.DefaultName, Mode: harness.ClaudeSandboxOff,
@@ -124,8 +129,8 @@ func TestSandboxLineageMapsTclaudeLayerChildToItsConfinementClass(t *testing.T) 
 			parent.Harness, parent.Mode)
 	}
 
-	// And a parent that could NOT mint the pre-forcing child still cannot: the
-	// mapping restores the old class, it does not widen it.
+	// And a parent whose own confinement is narrower than the mapped class
+	// still cannot mint it.
 	workspace := spawnLineageSandbox{Harness: harness.CodexName, Mode: harness.SandboxWorkspaceWrite}
 	require.False(t, spawnSandboxLineageAllowed(workspace, layerClaude))
 	require.False(t, spawnSandboxLineageAllowed(workspace, layerCodex))
