@@ -164,6 +164,42 @@ type agentWorktreeClaimSnapshot struct {
 // a discriminator: SessionEnd can mark the real owner exited just before its
 // tmux pane disappears. Exact timestamp ties retain every candidate and fail
 // conservatively across their roots.
+//
+// This check is NOT total: it sees only what these three reads have RECORDED,
+// so a live process in a directory whose claim has not landed in them is
+// invisible here. Every pane tclaude itself launches is already
+// claim-before-process — session/new.go writes the session row carrying cwd
+// (SaveSessionStateForLaunch) well before tmux creates the pane, so the claim
+// exists by the time the harness starts. Known windows where it does not
+// (TCL-1021 — the list is what was found, not a proof of completeness):
+//
+//   - Séance. liveRunSeanceHarness runs a harness subprocess with
+//     cmd.Dir = plan.Cwd for up to maxSeanceTimeout, and plan.Cwd is a
+//     PREDECESSOR generation's recorded cwd — precisely the offline superseded
+//     conversation the paragraph above deliberately stops counting as a
+//     claimant. It is a daemon-owned process, not a pane, and writes no session
+//     row, so nothing here protects its directory. This is the widest window by
+//     wall-clock, minutes rather than milliseconds. OPEN WORK, TCL-1026.
+//   - A harness the operator started themselves, auto-registered from its first
+//     hook rather than launched through tclaude. The process precedes its
+//     session row by the harness's startup-to-first-hook latency. tclaude is not
+//     in that launch at all, so no claim-before-launch mechanism reaches it.
+//   - An OpenCode launch: startOpenCodeRuntimeForSpawn boots the authoritative
+//     server with cwd set to the launch dir BEFORE the pane fork, so a real
+//     process holds the directory until the forked `session new` writes the row.
+//     Note this one IS recorded — UpsertOpenCodeRuntime persists the runtime's
+//     Cwd right after the process starts (ListOpenCodeRuntimes reads it back) —
+//     just not in a store this snapshot consults. Closing it is a fourth read,
+//     not a new mechanism, so it is not structurally closed and did not inherit
+//     the verdict below. OPEN WORK, TCL-1027.
+//   - Between the daemon's fork and that row write, on every harness. The forked
+//     `tclaude session new` deliberately does not inherit the launch dir (no
+//     cmd.Dir), so no process sits in the worktree during this one — a removal
+//     here fails the launch loudly instead of yanking a live agent's ground.
+//
+// The other two TCL-1021 documented rather than closed: triggering one requires an
+// operator retiring a DIFFERENT agent recorded at the same worktree, with
+// worktree deletion, inside the window. Assume the gap, do not assume totality.
 func captureAgentWorktreeClaims() agentWorktreeClaimSnapshot {
 	snap := agentWorktreeClaimSnapshot{
 		views:     map[string]agentWorktreeView{},
