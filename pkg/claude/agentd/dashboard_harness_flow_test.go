@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 // findDashHarness returns the catalog entry for a harness name, or nil.
@@ -143,6 +144,13 @@ func TestDashboardSnapshot_HarnessCatalog(t *testing.T) {
 	}
 	assert.False(t, opencode.CanAutoReview)
 	assert.False(t, opencode.CanRemoteControl)
+
+	copilot := findDashHarness(snap, harness.CopilotName)
+	require.NotNil(t, copilot, "catalog missing copilot; have %+v", snap.Harnesses)
+	assert.Equal(t, "GitHub Copilot CLI", copilot.DisplayName)
+	assert.Equal(t, harness.MustGet(harness.CopilotName).Models.Models(), copilot.Models,
+		"the dashboard must expose the complete Copilot model catalog")
+	assert.Len(t, copilot.Models, 26, "auto plus the 25 concrete Copilot 1.0.77 models")
 }
 
 // Scenario: a per-agent harness + sandbox badge needs the snapshot to

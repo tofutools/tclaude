@@ -61,6 +61,20 @@ func TestCopilotEffortVocabularyHelp(t *testing.T) {
 	require.NoError(t, copilotfixture.ValidateHelpEffortLevels(live, fixture))
 }
 
+// TestCopilotModelVocabularyHelp compares the actual pinned CLI config help
+// with the committed excerpt. The harness catalog test consumes that same
+// excerpt, so this is the evidence bridge from Copilot's documented concrete
+// model ids to the dropdown suggestions tclaude exposes.
+func TestCopilotModelVocabularyHelp(t *testing.T) {
+	requireSmoke(t)
+
+	live, err := exec.Command("copilot", "--no-auto-update", "--no-color", "help", "config").CombinedOutput()
+	require.NoError(t, err, "running `copilot help config`")
+	fixture, err := os.ReadFile(copilotfixture.PinnedModelHelpFixture)
+	require.NoError(t, err, "reading pinned Copilot help fixture")
+	require.NoError(t, copilotfixture.ValidateHelpModels(live, fixture))
+}
+
 // TestCopilotCredentialFreeTextTurn is the baseline: a complete streaming text
 // turn with no GitHub credential anywhere, proving BYOK activation alone is
 // enough to reach a green turn.
