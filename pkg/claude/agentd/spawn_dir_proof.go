@@ -46,9 +46,13 @@ import (
 // forbids the write gets a clear refusal instead of an escape.
 //
 // Humans are exempt (they are the trust root everywhere else in agentd), as
-// are parents whose recorded launch sandbox is fully open (Claude `off`,
-// Codex `danger-full-access` — they can already write anywhere), and spawns
-// whose CHILD gets no write access at its cwd (Codex `read-only`).
+// are parents whose launch is fully open (Claude `off`, Codex
+// `danger-full-access` — they can already write anywhere), and spawns whose
+// CHILD gets no write access at its cwd (Codex `read-only`). BOTH exemptions
+// are read from the harness-builtin mode AND the sandbox implementation: a
+// tclaude-layer launch records the same no-confinement mode while tclaude's own
+// wall confines it, and a tclaude-layer child takes cwd write whatever its
+// harness-native mode says.
 
 const (
 	// dirWriteProofCode is the error code of the 403 challenge response.
@@ -300,9 +304,9 @@ func resolveDirWriteProofDirs(rawDirs []string) ([]string, map[string]string, er
 }
 
 // dirWriteProofCallerExempt reports whether callerConvID is exempt from the
-// write-proof: humans (empty / the dashboard sentinel) always, and agents
-// whose own recorded launch sandbox is fully open — they can already write
-// everywhere the child could, so there is nothing to prove.
+// write-proof: humans (empty / the dashboard sentinel) always, and agents whose
+// own launch is fully open — they can already write everywhere the child could,
+// so there is nothing to prove.
 func dirWriteProofCallerExempt(callerConvID string) (bool, error) {
 	if callerConvID == "" || callerConvID == dashboardGranter {
 		return true, nil
@@ -311,20 +315,20 @@ func dirWriteProofCallerExempt(callerConvID string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	// parent.Implementation now travels with the mode (TCL-989), but the
-	// exemptions below deliberately still key off the mode ALONE, so every
-	// caller keeps exactly the exemption it has today. A tclaude-layer parent
-	// records its harness's no-confinement mode while tclaude's own wall
-	// confines it, so reading the pair here would flip real callers from exempt
-	// to proof-required — a behaviour change that belongs with the parent-side
-	// classification work (TCL-991), not with threading the field.
-	if parent.Harness == harness.DefaultName && parent.Mode == harness.ClaudeSandboxOff {
+	// The exemption is keyed off the confinement the parent's launch actually
+	// has, not off its recorded mode (TCL-991). A tclaude-layer parent records
+	// its harness's no-confinement mode while tclaude's own wall confines it, so
+	// reading the mode alone exempted callers that cannot in fact write
+	// everywhere the child could — which is the entire premise of the exemption.
+	// Those callers now have to prove the write like any other confined agent.
+	authority := lineageConfinementMode(parent)
+	if parent.Harness == harness.DefaultName && authority == harness.ClaudeSandboxOff {
 		return true, nil
 	}
-	if parent.Harness == harness.CodexName && parent.Mode == harness.SandboxDangerFull {
+	if parent.Harness == harness.CodexName && authority == harness.SandboxDangerFull {
 		return true, nil
 	}
-	if parent.Harness == harness.OpenCodeName && parent.Mode == harness.OpenCodeSandboxOff {
+	if parent.Harness == harness.OpenCodeName && authority == harness.OpenCodeSandboxOff {
 		return true, nil
 	}
 	return false, nil
@@ -336,7 +340,31 @@ func dirWriteProofCallerExempt(callerConvID string) (bool, error) {
 // other mode either writes its cwd subtree (Codex workspace-write / managed
 // profile, Claude on/inherit) or is fully open (gated by the lineage guard
 // to fully-open parents, which are proof-exempt anyway).
-func childSandboxGrantsDirWrite(harnessName, mode string) bool {
+//
+// The IMPLEMENTATION is an input for the same reason it is on
+// spawnUsesPinnedGitCommonDir below, and the omission here was a live
+// write-permission escape (TCL-991). The mode this receives is the
+// HARNESS-NATIVE one, which tclaude-layer does not force — so a child requested
+// as Codex `read-only` under tclaude's own wall arrived spelled `read-only` and
+// took the no-cwd-write exemption. That child is not read-only: a tclaude-layer
+// launch puts cwd in its write dirs unconditionally (see launchWriteDirs in
+// pkg/claude/session/sandbox_bwrap.go), plus the pinned Git dirs the very same
+// spawn block computes. The caller therefore got writes in a directory it never
+// proved it could write, by spelling the request `read-only`.
+//
+// Under tclaude's wall the harness-native mode says nothing about cwd write, so
+// it is not consulted at all: every such launch takes the grant.
+// An implementation that does not parse takes the grant too. The spawn path
+// validates the field long before this gate, so an unparseable value here is
+// not a live request shape — but the whole point of this function is that a
+// missing classification must never skip the proof.
+func childSandboxGrantsDirWrite(
+	harnessName, mode, rawImplementation string,
+) bool {
+	implementation, err := sandboxpolicy.NormalizeImplementation(rawImplementation)
+	if err != nil || implementation.UsesTclaudeLayer() {
+		return true
+	}
 	switch harnessOrDefault(harnessName) {
 	case harness.OpenCodeName:
 		switch strings.TrimSpace(mode) {

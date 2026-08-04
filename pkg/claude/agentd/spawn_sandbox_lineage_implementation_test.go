@@ -78,11 +78,11 @@ func TestSandboxLineageMatrixUnchangedAcrossNonSingleWallImplementations(t *test
 		for _, tc := range sandboxLineageMatrix() {
 			got := spawnSandboxLineageAllowed(
 				spawnLineageSandbox{
-					Harness: tc.parentHarness, Mode: tc.parentMode,
+					Harness: tc.parentHarness, HarnessBuiltinMode: tc.parentMode,
 					Implementation: implementation,
 				},
 				spawnLineageSandbox{
-					Harness: tc.childHarness, Mode: tc.childMode,
+					Harness: tc.childHarness, HarnessBuiltinMode: tc.childMode,
 					Implementation: implementation,
 				},
 			)
@@ -104,37 +104,37 @@ func TestSandboxLineageMatrixUnchangedAcrossNonSingleWallImplementations(t *test
 // — see TestSandboxLineageTclaudeLayerLooseningGrantsNoNewLaunch.
 func TestSandboxLineageMapsTclaudeLayerChildToItsConfinementClass(t *testing.T) {
 	layerClaude := spawnLineageSandbox{
-		Harness: harness.DefaultName, Mode: harness.ClaudeSandboxOff,
+		Harness: harness.DefaultName, HarnessBuiltinMode: harness.ClaudeSandboxOff,
 		Implementation: sandboxpolicy.ImplementationTclaudeLayer,
 	}
 	layerCodex := spawnLineageSandbox{
-		Harness: harness.CodexName, Mode: harness.SandboxDangerFull,
+		Harness: harness.CodexName, HarnessBuiltinMode: harness.SandboxDangerFull,
 		Implementation: sandboxpolicy.ImplementationTclaudeLayer,
 	}
 
 	// Every parent that could mint the pre-forcing child (Claude `on` /
 	// Codex managed-profile) can still mint the forced one.
 	for _, parent := range []spawnLineageSandbox{
-		{Harness: harness.DefaultName, Mode: harness.ClaudeSandboxInherit},
-		{Harness: harness.DefaultName, Mode: harness.ClaudeSandboxOn},
-		{Harness: harness.CodexName, Mode: harness.SandboxManagedProfile},
-		{Harness: harness.OpenCodeName, Mode: harness.OpenCodeSandboxTclaudeLayer},
-		{Harness: harness.OpenCodeName, Mode: harness.OpenCodeSandboxAccessControl},
+		{Harness: harness.DefaultName, HarnessBuiltinMode: harness.ClaudeSandboxInherit},
+		{Harness: harness.DefaultName, HarnessBuiltinMode: harness.ClaudeSandboxOn},
+		{Harness: harness.CodexName, HarnessBuiltinMode: harness.SandboxManagedProfile},
+		{Harness: harness.OpenCodeName, HarnessBuiltinMode: harness.OpenCodeSandboxTclaudeLayer},
+		{Harness: harness.OpenCodeName, HarnessBuiltinMode: harness.OpenCodeSandboxAccessControl},
 	} {
 		require.Truef(t, spawnSandboxLineageAllowed(parent, layerClaude),
 			"parent %s/%s must still admit a tclaude-layer Claude child",
-			parent.Harness, parent.Mode)
+			parent.Harness, parent.HarnessBuiltinMode)
 		require.Truef(t, spawnSandboxLineageAllowed(parent, layerCodex),
 			"parent %s/%s must still admit a tclaude-layer Codex child",
-			parent.Harness, parent.Mode)
+			parent.Harness, parent.HarnessBuiltinMode)
 	}
 
 	// And a parent whose own confinement is narrower than the mapped class
 	// still cannot mint it.
-	workspace := spawnLineageSandbox{Harness: harness.CodexName, Mode: harness.SandboxWorkspaceWrite}
+	workspace := spawnLineageSandbox{Harness: harness.CodexName, HarnessBuiltinMode: harness.SandboxWorkspaceWrite}
 	require.False(t, spawnSandboxLineageAllowed(workspace, layerClaude))
 	require.False(t, spawnSandboxLineageAllowed(workspace, layerCodex))
-	readOnly := spawnLineageSandbox{Harness: harness.CodexName, Mode: harness.SandboxReadOnly}
+	readOnly := spawnLineageSandbox{Harness: harness.CodexName, HarnessBuiltinMode: harness.SandboxReadOnly}
 	require.False(t, spawnSandboxLineageAllowed(readOnly, layerCodex))
 }
 
@@ -153,17 +153,17 @@ func TestSandboxLineageMapsTclaudeLayerChildToItsConfinementClass(t *testing.T) 
 // out in the PR description rather than claimed as decision-preserving.
 func TestSandboxLineageRefusesTclaudeLayerChildFromNarrowerCodexParent(t *testing.T) {
 	layerCodex := spawnLineageSandbox{
-		Harness: harness.CodexName, Mode: harness.SandboxDangerFull,
+		Harness: harness.CodexName, HarnessBuiltinMode: harness.SandboxDangerFull,
 		Implementation: sandboxpolicy.ImplementationTclaudeLayer,
 	}
 	for _, parentMode := range []string{harness.SandboxReadOnly, harness.SandboxWorkspaceWrite} {
-		parent := spawnLineageSandbox{Harness: harness.CodexName, Mode: parentMode}
+		parent := spawnLineageSandbox{Harness: harness.CodexName, HarnessBuiltinMode: parentMode}
 		require.Falsef(t, spawnSandboxLineageAllowed(parent, layerCodex),
 			"codex %s parent must not mint a tclaude-walled child", parentMode)
 		// The same parent minting the same mode WITHOUT the outer wall is
 		// untouched: only the tclaude-layer shape moves.
 		require.Truef(t, spawnSandboxLineageAllowed(parent,
-			spawnLineageSandbox{Harness: harness.CodexName, Mode: parentMode}),
+			spawnLineageSandbox{Harness: harness.CodexName, HarnessBuiltinMode: parentMode}),
 			"codex %s parent keeps minting its own class", parentMode)
 	}
 }
@@ -174,15 +174,15 @@ func TestSandboxLineageRefusesTclaudeLayerChildFromNarrowerCodexParent(t *testin
 // single-wall class.
 func TestSandboxLineageDoesNotMapStackedChildren(t *testing.T) {
 	stackedOff := spawnLineageSandbox{
-		Harness: harness.DefaultName, Mode: harness.ClaudeSandboxOff,
+		Harness: harness.DefaultName, HarnessBuiltinMode: harness.ClaudeSandboxOff,
 		Implementation: sandboxpolicy.ImplementationStacked,
 	}
-	inheritParent := spawnLineageSandbox{Harness: harness.DefaultName, Mode: harness.ClaudeSandboxInherit}
+	inheritParent := spawnLineageSandbox{Harness: harness.DefaultName, HarnessBuiltinMode: harness.ClaudeSandboxInherit}
 	require.False(t, spawnSandboxLineageAllowed(inheritParent, stackedOff),
 		"a stacked Claude off child must keep the fully-open classification")
 
 	stackedDanger := spawnLineageSandbox{
-		Harness: harness.CodexName, Mode: harness.SandboxDangerFull,
+		Harness: harness.CodexName, HarnessBuiltinMode: harness.SandboxDangerFull,
 		Implementation: sandboxpolicy.ImplementationStacked,
 	}
 	require.False(t, spawnSandboxLineageAllowed(inheritParent, stackedDanger))
@@ -206,10 +206,10 @@ func TestSandboxLineageRefusesEveryUnprovenCopilotChild(t *testing.T) {
 			proven := implementation == sandboxpolicy.ImplementationTclaudeLayer &&
 				mode == harness.CopilotSandboxOff
 			child := spawnLineageSandbox{
-				Harness: harness.CopilotName, Mode: mode, Implementation: implementation,
+				Harness: harness.CopilotName, HarnessBuiltinMode: mode, Implementation: implementation,
 			}
 			require.Equalf(t, proven, spawnSandboxLineageAllowed(
-				spawnLineageSandbox{Harness: harness.DefaultName, Mode: harness.ClaudeSandboxOff},
+				spawnLineageSandbox{Harness: harness.DefaultName, HarnessBuiltinMode: harness.ClaudeSandboxOff},
 				child,
 			), "copilot child impl=%q mode=%q", implementation, mode)
 		}

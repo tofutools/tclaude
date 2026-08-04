@@ -3367,7 +3367,8 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		writeError(w, http.StatusInternalServerError, "io", trustLayoutErr.Error())
 		return
 	}
-	if spawnerConvID != "" && childSandboxGrantsDirWrite(h.Name, sandboxMode) {
+	if spawnerConvID != "" && childSandboxGrantsDirWrite(
+		h.Name, sandboxMode, body.SandboxImplementation) {
 		dirs := []string{cwd}
 		dirs = appendUniqueDirs(dirs, worktreePath)
 		dirs = appendUniqueDirs(dirs, gitWorktreeWriteDirs...)

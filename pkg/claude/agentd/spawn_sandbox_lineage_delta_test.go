@@ -27,16 +27,16 @@ import (
 
 func lineageDeltaParents() []spawnLineageSandbox {
 	return []spawnLineageSandbox{
-		{Harness: harness.DefaultName, Mode: harness.ClaudeSandboxOff},
-		{Harness: harness.DefaultName, Mode: harness.ClaudeSandboxInherit},
-		{Harness: harness.DefaultName, Mode: harness.ClaudeSandboxOn},
-		{Harness: harness.CodexName, Mode: harness.SandboxDangerFull},
-		{Harness: harness.CodexName, Mode: harness.SandboxManagedProfile},
-		{Harness: harness.CodexName, Mode: harness.SandboxWorkspaceWrite},
-		{Harness: harness.CodexName, Mode: harness.SandboxReadOnly},
-		{Harness: harness.OpenCodeName, Mode: harness.OpenCodeSandboxOff},
-		{Harness: harness.OpenCodeName, Mode: harness.OpenCodeSandboxTclaudeLayer},
-		{Harness: harness.OpenCodeName, Mode: harness.OpenCodeSandboxAccessControl},
+		{Harness: harness.DefaultName, HarnessBuiltinMode: harness.ClaudeSandboxOff},
+		{Harness: harness.DefaultName, HarnessBuiltinMode: harness.ClaudeSandboxInherit},
+		{Harness: harness.DefaultName, HarnessBuiltinMode: harness.ClaudeSandboxOn},
+		{Harness: harness.CodexName, HarnessBuiltinMode: harness.SandboxDangerFull},
+		{Harness: harness.CodexName, HarnessBuiltinMode: harness.SandboxManagedProfile},
+		{Harness: harness.CodexName, HarnessBuiltinMode: harness.SandboxWorkspaceWrite},
+		{Harness: harness.CodexName, HarnessBuiltinMode: harness.SandboxReadOnly},
+		{Harness: harness.OpenCodeName, HarnessBuiltinMode: harness.OpenCodeSandboxOff},
+		{Harness: harness.OpenCodeName, HarnessBuiltinMode: harness.OpenCodeSandboxTclaudeLayer},
+		{Harness: harness.OpenCodeName, HarnessBuiltinMode: harness.OpenCodeSandboxAccessControl},
 	}
 }
 
@@ -86,7 +86,7 @@ func forcedTclaudeLayerChild(t *testing.T, harnessName, requested string) (spawn
 		return spawnLineageSandbox{}, false
 	}
 	return spawnLineageSandbox{
-		Harness: harnessName, Mode: forced,
+		Harness: harnessName, HarnessBuiltinMode: forced,
 		Implementation: sandboxpolicy.ImplementationTclaudeLayer,
 	}, true
 }
@@ -104,7 +104,7 @@ func preForcingTclaudeLayerChild(t *testing.T, harnessName, requested string) (s
 	if err != nil {
 		return spawnLineageSandbox{}, false
 	}
-	return spawnLineageSandbox{Harness: harnessName, Mode: native}, true
+	return spawnLineageSandbox{Harness: harnessName, HarnessBuiltinMode: native}, true
 }
 
 // resolveSpawnBoundaryMode applies the secure default the daemon spawn boundary
@@ -136,7 +136,7 @@ func TestSandboxLineageTclaudeLayerVerdictDelta(t *testing.T) {
 			if before == now {
 				continue
 			}
-			entry := fmt.Sprintf("%s/%s -> %s/%s", parent.Harness, parent.Mode, req.Harness, req.Mode)
+			entry := fmt.Sprintf("%s/%s -> %s/%s", parent.Harness, parent.HarnessBuiltinMode, req.Harness, req.Mode)
 			if now {
 				loosened = append(loosened, entry)
 			} else {
@@ -210,7 +210,7 @@ func TestSandboxLineageTclaudeLayerLooseningGrantsNoNewLaunch(t *testing.T) {
 					continue
 				}
 				altChild, altOK := forcedTclaudeLayerChild(t, alt.Harness, alt.Mode)
-				if !altOK || altChild.Mode != child.Mode {
+				if !altOK || altChild.HarnessBuiltinMode != child.HarnessBuiltinMode {
 					continue // would not produce the same launch
 				}
 				altBefore, altBeforeOK := preForcingTclaudeLayerChild(t, alt.Harness, alt.Mode)
@@ -222,7 +222,7 @@ func TestSandboxLineageTclaudeLayerLooseningGrantsNoNewLaunch(t *testing.T) {
 			require.Truef(t, equivalentFound,
 				"parent %s/%s newly admits %s/%q, but could NOT already mint the identical "+
 					"launch (%s/%q) by any other request — that would be a real capability widening",
-				parent.Harness, parent.Mode, req.Harness, req.Mode, child.Harness, child.Mode)
+				parent.Harness, parent.HarnessBuiltinMode, req.Harness, req.Mode, child.Harness, child.HarnessBuiltinMode)
 		}
 	}
 	require.NotZero(t, checked, "the property must actually have been exercised")
@@ -239,23 +239,23 @@ func TestSandboxLineageAdmitsExplicitlyUnsandboxedTclaudeLayerChild(t *testing.T
 	require.True(t, ok)
 
 	for _, parent := range []spawnLineageSandbox{
-		{Harness: harness.DefaultName, Mode: harness.ClaudeSandboxInherit},
-		{Harness: harness.DefaultName, Mode: harness.ClaudeSandboxOn},
-		{Harness: harness.CodexName, Mode: harness.SandboxManagedProfile},
-		{Harness: harness.OpenCodeName, Mode: harness.OpenCodeSandboxTclaudeLayer},
-		{Harness: harness.OpenCodeName, Mode: harness.OpenCodeSandboxAccessControl},
+		{Harness: harness.DefaultName, HarnessBuiltinMode: harness.ClaudeSandboxInherit},
+		{Harness: harness.DefaultName, HarnessBuiltinMode: harness.ClaudeSandboxOn},
+		{Harness: harness.CodexName, HarnessBuiltinMode: harness.SandboxManagedProfile},
+		{Harness: harness.OpenCodeName, HarnessBuiltinMode: harness.OpenCodeSandboxTclaudeLayer},
+		{Harness: harness.OpenCodeName, HarnessBuiltinMode: harness.OpenCodeSandboxAccessControl},
 	} {
 		require.Truef(t, spawnSandboxLineageAllowed(parent, claudeOff),
 			"parent %s/%s must admit an explicitly-unsandboxed Claude tclaude-layer child",
-			parent.Harness, parent.Mode)
+			parent.Harness, parent.HarnessBuiltinMode)
 		require.Truef(t, spawnSandboxLineageAllowed(parent, codexDanger),
 			"parent %s/%s must admit an explicitly-unsandboxed Codex tclaude-layer child",
-			parent.Harness, parent.Mode)
+			parent.Harness, parent.HarnessBuiltinMode)
 	}
 
 	// Still gated by the parent's own confinement: a Codex workspace-write
 	// parent cannot reach the managed-profile class either way.
-	narrow := spawnLineageSandbox{Harness: harness.CodexName, Mode: harness.SandboxWorkspaceWrite}
+	narrow := spawnLineageSandbox{Harness: harness.CodexName, HarnessBuiltinMode: harness.SandboxWorkspaceWrite}
 	require.False(t, spawnSandboxLineageAllowed(narrow, claudeOff))
 	require.False(t, spawnSandboxLineageAllowed(narrow, codexDanger))
 }
