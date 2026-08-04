@@ -1,6 +1,7 @@
 package copilotfixture_test
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -21,9 +22,11 @@ import (
 // This file asks it, by replacing the hermeticity mechanism rather than
 // dropping it. COPILOT_OFFLINE goes away — it has to, it is the thing hiding
 // the tool — and in its place the run keeps the BYOK provider on loopback via
-// NO_PROXY while pinning every other destination at a capturing proxy that
-// records a target and answers 502 without dialing it. See
-// RunOptions.WebEgressProxy.
+// NO_PROXY while routing proxy-aware non-loopback traffic to a capturing proxy
+// that records a target and answers 502 without dialing it. See
+// RunOptions.WebEgressProxy, and assertNoUnexpectedEgress for exactly how far
+// that containment claim reaches — it is a proxy-observed destination set, not
+// a kernel-enforced wall, and the difference is stated rather than glossed.
 //
 // Three disciplines carry over from permission_smoke_test.go, and a fourth is
 // specific to this file:
@@ -69,6 +72,37 @@ const webFetchProbeURL = "https://copilotfixture.invalid/probe"
 // webFetchProbeHost is the same host, for the rule-scoping rows.
 const webFetchProbeHost = "copilotfixture.invalid"
 
+// webFetchReachedNetwork is the prefix the tool itself emits once it has been
+// permitted to run and has failed at the transport layer.
+//
+// This is the marker that makes an ALLOWED verdict mean what it says, and it is
+// load-bearing rather than decorative. ClassifyPermission returns "allowed" for
+// any follow-up carrying a tool result with no denial marker in it — and "Tool
+// 'web_fetch' does not exist" is such a result. Without this assertion a
+// release that renamed the tool, or stopped advertising it for launches without
+// --allow-all-tools, would make every allow arm green while the permission gate
+// was never reached at all.
+//
+// Matched on the tool's own "Failed to fetch <url>" prefix rather than on the
+// specific transport error, deliberately: the error text below it is the
+// resolver's ("Temporary failure in name resolution" here, something else on a
+// runner with a different DNS setup), so asserting it would tie the suite to
+// the host's networking. The prefix proves what the scenario needs — the tool
+// existed, was permitted, ran, and got as far as the network.
+const webFetchReachedNetwork = "Failed to fetch " + webFetchProbeURL
+
+// webFetchRoutableProbeURL is the target of the egress-wall positive control.
+//
+// RFC 5737 TEST-NET-1: reserved for documentation, guaranteed never routed,
+// and an IP literal, so the fetch needs no name resolution and reaches the
+// proxy's CONNECT path instead of dying at DNS the way the .invalid host does.
+// That is the whole reason a second target exists — see
+// TestCopilotPermissionWebFetchEgressWallIsInForce.
+const webFetchRoutableProbeURL = "https://192.0.2.1/probe"
+
+// webFetchRoutableProbeHost is the same address, as the proxy records it.
+const webFetchRoutableProbeHost = "192.0.2.1"
+
 // webFetchToolName is the tool identifier as the CLI spells it in its catalog
 // and in --excluded-tools.
 //
@@ -105,7 +139,14 @@ func webFetchTurns() []copilotfixture.Turn {
 // COPILOT_OFFLINE and installs the egress wall — and factoring them together
 // would invite an edit that silently reintroduced the offline flag and turned
 // every scenario in this file into a measurement of a tool that is not there.
-func webFetchRun(t *testing.T, turns []copilotfixture.Turn, args []string) (
+//
+// probeHost is the ONE non-loopback destination this run is allowed to route a
+// connection to — the host of the URL its scripted tool call targets. It is a
+// parameter rather than a package-level allowlist so that each call site
+// declares what it intends: a row that targeted an unexpected host would
+// otherwise be silently blessed by an allowlist widened for some other
+// scenario. Pass "" for a run that must route nothing at all.
+func webFetchRun(t *testing.T, turns []copilotfixture.Turn, probeHost string, args []string) (
 	copilotfixture.PermissionVerdict, *copilotfixture.MockProvider,
 	*copilotfixture.ProxyCapture, copilotfixture.PTYResult,
 ) {
@@ -145,45 +186,97 @@ func webFetchRun(t *testing.T, turns []copilotfixture.Turn, args []string) (
 	require.NoError(t, err, "the launch could not be classified")
 
 	t.Logf("permission verdict: %s (%s)", verdict.Outcome, verdict.Evidence)
-	assertNoUnexpectedEgress(t, capture)
+	assertNoUnexpectedEgress(t, capture, probeHost)
 	return verdict, mock, capture, res
 }
 
-// assertNoUnexpectedEgress fails a run that tried to reach anything but the
-// probe host.
+// assertNoUnexpectedEgress fails a run that routed a connection to anything but
+// a probe host.
 //
-// This is the guard that keeps dropping COPILOT_OFFLINE honest. That variable
-// is documented as disabling GitHub auth, telemetry, the web tools, the GitHub
-// MCP server and auto-update all at once, so removing it to expose web_fetch
-// removes the suppression of the other four as well. The proxy is what
-// substitutes for it: every destination is recorded and refused, so a release
-// that started phoning home under this arm fails here loudly instead of
-// quietly making the fixture non-hermetic.
+// This is the guard that keeps dropping COPILOT_OFFLINE honest. That variable is
+// documented as disabling GitHub auth, telemetry, the web tools, the GitHub MCP
+// server and auto-update all at once, so removing it to expose web_fetch removes
+// the suppression of the other four as well. The proxy substitutes for it: a
+// proxy-aware connection is recorded and refused with a 502 rather than dialed,
+// so a release that started phoning home under this arm fails here loudly.
 //
 // Loopback is exempt because loopback is where the mock provider lives and is
-// the one destination NO_PROXY carves out; it never leaves the machine.
+// the one destination NO_PROXY carves out; it never leaves the machine. The
+// exemption cannot widen the blast radius: the only other entry in the
+// allowlist is a probe host, so any real destination fails this assertion.
 //
-// THE LIMIT, stated rather than papered over: this observes what the CLI routed
-// through its proxy configuration. A component that ignored the proxy variables
-// entirely would not appear here. The probe URL's reserved TLD is the
-// independent defence against that — no direct socket to it can reach anything
-// either — but the destination SET is proxy-observed, not kernel-observed.
-func assertNoUnexpectedEgress(t *testing.T, capture *copilotfixture.ProxyCapture) {
+// WHAT THIS DOES AND DOES NOT ESTABLISH, stated precisely because the natural
+// phrasing overstates it:
+//
+//   - It DOES establish that all PROXY-AWARE non-loopback traffic went to the
+//     refusing capture, and that no unexpected destination was observed.
+//     TestCopilotPermissionWebFetchEgressWallIsInForce is what stops that from
+//     being vacuous, by proving the proxy is genuinely on the path.
+//   - It does NOT establish a kernel-enforced no-egress boundary. This is a
+//     proxy-observed destination set, not a kernel-observed one, so a component
+//     that ignored the proxy variables entirely would not appear here and is
+//     not ruled out.
+//
+// Three independent properties are what make that residual gap acceptable
+// rather than merely acknowledged: the run carries no credentials (every token
+// variable is scrubbed, exactly as in every other arm), the only
+// model-directed destinations are reserved addresses that route nowhere, and
+// the behavioural finding does not depend on any external access succeeding —
+// every arm is classified from what the CLI told the model, not from a fetch.
+func assertNoUnexpectedEgress(
+	t *testing.T, capture *copilotfixture.ProxyCapture, probeHost string,
+) {
 	t.Helper()
 	var unexpected []string
 	for _, host := range capture.Hosts() {
 		switch host {
-		case webFetchProbeHost, "127.0.0.1", "localhost", "::1":
+		case "127.0.0.1", "localhost", "::1":
 			continue
+		case probeHost:
+			// Only the host this particular run's tool call targets, and only
+			// when the caller named it. Never a package-level allowlist.
+			if probeHost != "" {
+				continue
+			}
 		}
 		unexpected = append(unexpected, host)
 	}
 	assert.Empty(t, unexpected,
-		"an online-arm run tried to reach %v. Dropping COPILOT_OFFLINE is what makes "+
-			"web_fetch measurable, and it also un-suppresses auth, telemetry, the GitHub "+
-			"MCP server and auto-update. Every one of those was refused here rather than "+
-			"reached, but a NEW destination means this arm is no longer the narrow "+
-			"web-tools-only relaxation it is documented to be", unexpected)
+		"an online-arm run routed a connection to %v. Dropping COPILOT_OFFLINE is what "+
+			"makes web_fetch measurable, and it also un-suppresses auth, telemetry, the "+
+			"GitHub MCP server and auto-update. None of those was observed here, but a "+
+			"NEW destination means this arm is no longer the narrow web-tools-only "+
+			"relaxation it is documented to be", unexpected)
+}
+
+// assertReachedNetworkLayer fails an arm whose tool result does not show the
+// tool having actually run.
+//
+// This is what separates "the permission gate opened" from every other way a
+// launch can produce a follow-up request with no denial in it. The classifier
+// cannot make that distinction on its own — it reports "allowed" for any tool
+// result without a denial marker, and an absent tool's "Tool 'web_fetch' does
+// not exist" qualifies. So an allow arm asserts positively that the tool
+// existed, was permitted, ran, and failed at the transport layer, rather than
+// merely asserting the absence of a denial.
+func assertReachedNetworkLayer(t *testing.T, mock *copilotfixture.MockProvider) {
+	t.Helper()
+	requests := mock.Requests()
+	require.GreaterOrEqual(t, len(requests), 2, "no follow-up request to read a tool result from")
+	results := copilotfixture.ToolResults(requests[len(requests)-1])
+	require.NotEmpty(t, results, "the follow-up request carried no tool result")
+	joined := strings.Join(results, "\n")
+
+	assert.Empty(t, copilotfixture.DenialMarker(results),
+		"an allowed arm must carry no permission denial: %q", results)
+	assert.NotContains(t, joined, "does not exist",
+		"the tool was ABSENT rather than permitted, so this arm says nothing about the "+
+			"permission gate. A release that renamed or stopped advertising web_fetch "+
+			"would otherwise classify as 'allowed': %q", results)
+	assert.Contains(t, joined, webFetchReachedNetwork,
+		"an allowed arm must show the tool having run and reached the transport layer, "+
+			"which is what proves the permission gate opened rather than the call having "+
+			"been stopped by some earlier path: %q", results)
 }
 
 // webFetchCatalog returns the advertised tool names for one launch shape.
@@ -199,9 +292,14 @@ func webFetchCatalog(t *testing.T, online bool, args ...string) []string {
 	copilotfixture.TrustFolder(t, dirs.Home, dirs.WorkDir)
 	opts := copilotfixture.RunOptions{
 		Root: dirs.Root, Home: dirs.Home, Cache: dirs.Cache, WorkDir: dirs.WorkDir,
-		BaseURL:   mock.BaseURL(),
-		Prompt:    "Answer in one word.",
-		ExtraArgs: args,
+		BaseURL: mock.BaseURL(),
+		Prompt:  "Answer in one word.",
+		// The catalog is observed for the FLAG-FREE launch shape, so the
+		// precondition it establishes — that web_fetch is advertised at all —
+		// covers the no-flags row rather than only the allow-all ones. The turn
+		// carries no tool call, so nothing here can prompt.
+		OmitAllowAllTools: true,
+		ExtraArgs:         args,
 	}
 	var capture *copilotfixture.ProxyCapture
 	if online {
@@ -219,7 +317,9 @@ func webFetchCatalog(t *testing.T, online bool, args ...string) []string {
 	require.NotEmpty(t, requests, "the catalog probe must reach the provider")
 	assertCredentialFree(t, mock)
 	if capture != nil {
-		assertNoUnexpectedEgress(t, capture)
+		// A catalog probe's turn carries no tool call, so it must route nothing
+		// at all: there is no probe host to permit.
+		assertNoUnexpectedEgress(t, capture, "")
 	}
 	return newSanitizer(dirs).Request(requests[0]).ToolNames
 }
@@ -257,6 +357,60 @@ func TestCopilotPermissionWebFetchNeedsTheOnlineArm(t *testing.T) {
 	t.Logf("permission verdict: web_fetch requires the online arm "+
 		"(catalog %d -> %d tools, added exactly %q)",
 		len(offline), len(online), webFetchToolName)
+}
+
+// TestCopilotPermissionWebFetchEgressWallIsInForce is the positive control for
+// every "the proxy saw nothing" assertion in this file, and without it they are
+// all vacuous.
+//
+// The problem it solves: "the capture observed no unexpected destination" is
+// satisfied just as well by a capture that observed NOTHING — including because
+// the CLI stopped honouring the proxy variables and dialed directly. That is
+// precisely the regression the wall exists to catch, and it is the one shape in
+// which every other egress assertion in this file goes green while the arm is
+// no longer contained at all. The sibling scenario for the first-party route
+// (TestCopilotStartupDialsOnlyContractedHosts) guards the same hole with a
+// NotEmpty check; this is that guard for the online arm.
+//
+// It needs its own target, and that is the whole reason a second URL constant
+// exists. The .invalid host every other scenario uses dies at name resolution,
+// which happens before the proxy is ever consulted — so those runs legitimately
+// observe nothing and cannot serve as the control. A TEST-NET-1 IP literal needs
+// no resolution, so the fetch reaches the proxy's CONNECT path, is recorded, and
+// is refused with a 502 without a packet being sent to it. RFC 5737 guarantees
+// the address is never routed, so even a component that ignored the proxy
+// entirely could not reach anything through it.
+func TestCopilotPermissionWebFetchEgressWallIsInForce(t *testing.T) {
+	requireSmoke(t)
+
+	turns := []copilotfixture.Turn{
+		{ToolCall: &copilotfixture.ToolCall{
+			ID:   "call_copilotfixture_webfetch_egress",
+			Name: webFetchToolName,
+			Args: `{"url":"` + webFetchRoutableProbeURL + `"}`,
+		}},
+		{Text: "MOCK WEB FETCH EGRESS FOLLOW UP"},
+	}
+	// Permitted, so the call reaches the transport layer: a blocked or denied
+	// arm never gets far enough to exercise the proxy at all.
+	_, mock, capture, _ := webFetchRun(t, turns, webFetchRoutableProbeHost,
+		[]string{"--allow-all-tools", "--no-ask-user"})
+
+	assert.Contains(t, capture.Hosts(), webFetchRoutableProbeHost,
+		"web_fetch traffic must traverse the capture proxy. If it does not, the CLI is "+
+			"no longer honouring the proxy variables for this path, every "+
+			"'the proxy observed nothing' assertion in this file has become vacuous, "+
+			"and the online arm is not contained by the mechanism it claims. Observed: %v",
+		capture.Hosts())
+
+	results := copilotfixture.ToolResults(mock.Requests()[len(mock.Requests())-1])
+	require.NotEmpty(t, results)
+	assert.Contains(t, strings.Join(results, "\n"), "Failed to fetch "+webFetchRoutableProbeURL,
+		"the refusal must come back as a transport failure, i.e. the proxy answered "+
+			"instead of the destination: %q", results)
+	t.Logf("permission verdict: the online arm's egress wall is in force "+
+		"(web_fetch dialed %v through the refusing capture proxy)", capture.Hosts())
+	assertCredentialFree(t, mock)
 }
 
 // TestCopilotPermissionWebFetchGate is the measurement TCL-973 was missing: does
@@ -309,7 +463,7 @@ func TestCopilotPermissionWebFetchGate(t *testing.T) {
 		rows = append(rows, tc.name)
 		t.Run(tc.name, func(t *testing.T) {
 			requireSmoke(t)
-			verdict, mock, capture, res := webFetchRun(t, webFetchTurns(), tc.args)
+			verdict, mock, capture, res := webFetchRun(t, webFetchTurns(), webFetchProbeHost, tc.args)
 			assert.Equal(t, tc.want, verdict.Outcome)
 
 			switch tc.want {
@@ -335,13 +489,7 @@ func TestCopilotPermissionWebFetchGate(t *testing.T) {
 						"this file's layer-ordering reasoning is wrong")
 
 			case copilotfixture.PermissionAllowed:
-				// An allowed arm is allowed precisely because it reached the
-				// network layer and failed there. Pinned so the row cannot pass
-				// on some other execution path.
-				results := copilotfixture.ToolResults(
-					mock.Requests()[len(mock.Requests())-1])
-				assert.Empty(t, copilotfixture.DenialMarker(results),
-					"an allowed arm must carry no permission denial: %q", results)
+				assertReachedNetworkLayer(t, mock)
 				assert.False(t, res.Contains("attempting to access the following URL"),
 					"an allowed arm must not have drawn the URL dialog")
 			}
@@ -385,7 +533,7 @@ func TestCopilotPermissionWebFetchExclusionRemovesTheTool(t *testing.T) {
 
 	// The half that matters for a detached pane: an excluded tool the model
 	// calls anyway must not become a prompt.
-	verdict, mock, capture, res := webFetchRun(t, webFetchTurns(),
+	verdict, mock, capture, res := webFetchRun(t, webFetchTurns(), webFetchProbeHost,
 		[]string{"--excluded-tools", webFetchToolName})
 	require.GreaterOrEqual(t, len(mock.Requests()), 2,
 		"the CLI must answer the model rather than stopping to ask")
@@ -458,7 +606,7 @@ func TestCopilotPermissionWebFetchURLDenyEnforcement(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			requireSmoke(t)
 			args := append([]string{"--allow-all-tools", "--no-ask-user"}, tc.rule...)
-			verdict, mock, capture, res := webFetchRun(t, webFetchTurns(), args)
+			verdict, mock, capture, res := webFetchRun(t, webFetchTurns(), webFetchProbeHost, args)
 
 			want := copilotfixture.PermissionAllowed
 			if tc.enforced {
@@ -482,12 +630,12 @@ func TestCopilotPermissionWebFetchURLDenyEnforcement(t *testing.T) {
 				assert.Empty(t, capture.Hosts(),
 					"an enforced rule must stop the call before name resolution")
 			} else {
-				results := copilotfixture.ToolResults(
-					mock.Requests()[len(mock.Requests())-1])
-				assert.Empty(t, copilotfixture.DenialMarker(results),
-					"a rule that matches nothing must leave the call to the network "+
-						"layer; a permission denial here would mean it IS enforced "+
-						"and this row's finding is inverted: %q", results)
+				// Asserted positively rather than as the absence of a denial: a
+				// rule that "matches nothing" must be shown to have let the call
+				// through to the transport layer, not merely shown not to have
+				// denied it. Otherwise a row could report a wildcard as inert
+				// when the call was actually stopped somewhere else entirely.
+				assertReachedNetworkLayer(t, mock)
 			}
 			assertCredentialFree(t, mock)
 		})

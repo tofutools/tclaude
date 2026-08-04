@@ -156,13 +156,18 @@ type RunOptions struct {
 	// unaskable from an offline run. Dropping COPILOT_OFFLINE is therefore not
 	// an optional relaxation here; it is the measurement's precondition.
 	//
-	// Hermeticity is preserved by a different mechanism instead of by that
+	// Containment is preserved by a different mechanism instead of by that
 	// variable. The run keeps the BYOK provider pointed at the loopback mock and
 	// exempts loopback via NO_PROXY, while pinning HTTP(S)_PROXY and ALL_PROXY
 	// at the given host:port — a ProxyCapture that logs a destination and then
 	// answers 502 without dialing anything. So the mock still answers, and every
-	// other destination the CLI wants (auth, telemetry, MCP, the fetched URL
-	// itself) is recorded and refused rather than reached.
+	// PROXY-AWARE destination the CLI wants (auth, telemetry, MCP, the fetched
+	// URL itself) is recorded and refused rather than reached.
+	//
+	// That is a proxy-observed boundary, not a kernel-enforced one: a component
+	// ignoring the proxy variables would not be stopped by it. The scenarios
+	// using this option say what they rely on instead — no credentials, targets
+	// that route nowhere, and findings that never depend on a fetch succeeding.
 	//
 	// Credentials are scrubbed exactly as in every other arm, and no invalid
 	// stand-in token is injected: unlike the first-party capture scenario, this

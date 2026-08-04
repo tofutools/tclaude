@@ -1177,6 +1177,13 @@ jobs:
               # unmeasured deadlock source again.
               TestCopilotPermissionWebFetchNeedsTheOnlineArm
               TestCopilotPermissionWebFetchExclusionRemovesTheTool
+              # The positive control for the egress wall, and the one name here
+              # whose absence would be silent: every "the proxy observed
+              # nothing" assertion in that file is satisfied by a capture that
+              # observed nothing BECAUSE the CLI stopped routing through it. If
+              # this scenario is skipped, the online arm's containment claim is
+              # unbacked while the whole matrix still reports green.
+              TestCopilotPermissionWebFetchEgressWallIsInForce
             )
             # += and NOT =. A plain assignment here would REPLACE the shared
             # array above rather than extend it, silently dropping the five
