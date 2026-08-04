@@ -37,23 +37,24 @@ import (
 //   - Every blocked arm sits next to an allowed arm through the same rig.
 //   - A denial and an execution both produce a follow-up provider request, so
 //     the tool RESULT is what classifies a launch, never the request count.
-//   - NEW: a tool that failed to fetch is not evidence about the prompt. The
-//     network is walled off in every arm here, so "the fetch did not succeed"
-//     is the uninformative default rather than a finding. What separates the
-//     arms is WHICH layer stopped the call, and the three are distinguishable
-//     by the exact string the CLI posted back to the model:
+//   - NEW: a tool that failed to fetch is not evidence about the prompt. Every
+//     arm here routes proxy-aware traffic to the refusing capture, so "the
+//     fetch did not succeed" is the uninformative default rather than a
+//     finding. What separates the arms is WHICH layer stopped the call, and
+//     the three are distinguishable by the exact string the CLI posted back to
+//     the model — each ASSERTED, not merely eyeballed:
 //
 //     permission layer   "Permission to access this URL was denied."
 //     tool absent        "Tool 'web_fetch' does not exist."
-//     network layer      "WebFetchBlockedUrlError: ..." / "transport-level failure"
+//     network layer      "Failed to fetch <url>" (the tool's own prefix)
 //
-//     The layer ORDER is not assumed either; it is measured. See
-//     TestCopilotPermissionWebFetchGate/deny-tool-url, where a deny rule on a
-//     host that cannot resolve produces the permission-layer string with the
-//     capture proxy having seen nothing at all — which is what establishes that
-//     the permission layer runs BEFORE any name resolution, and therefore that
-//     an arm which reached the network layer is an arm the permission layer let
-//     through.
+//     The layer ORDER is not assumed either; it is measured — and it is the
+//     CONTRAST between rows that measures it, not any single observation. With
+//     an unresolvable host, TestCopilotPermissionWebFetchGate/deny-tool-url
+//     returns the permission-layer string while the allow arms return "Failed
+//     to fetch". One row's empty capture would be consistent with either order;
+//     the pair is not. So the permission layer runs BEFORE name resolution, and
+//     an arm which reached the network layer is an arm it let through.
 
 // webFetchProbeURL is the target every scenario here fetches.
 //
@@ -93,11 +94,16 @@ const webFetchReachedNetwork = "Failed to fetch " + webFetchProbeURL
 
 // webFetchRoutableProbeURL is the target of the egress-wall positive control.
 //
-// RFC 5737 TEST-NET-1: reserved for documentation, guaranteed never routed,
-// and an IP literal, so the fetch needs no name resolution and reaches the
-// proxy's CONNECT path instead of dying at DNS the way the .invalid host does.
-// That is the whole reason a second target exists — see
+// RFC 5737 TEST-NET-1: reserved for documentation and not intended to be
+// routed, and an IP literal, so the fetch needs no name resolution and reaches
+// the proxy's CONNECT path instead of dying at DNS the way the .invalid host
+// does. That is the whole reason a second target exists — see
 // TestCopilotPermissionWebFetchEgressWallIsInForce.
+//
+// Stated at RFC strength deliberately: 5737 says such addresses SHOULD NOT
+// appear on the public Internet, which is a convention rather than a
+// guarantee that a packet cannot leave. The containment this arm relies on is
+// the proxy plus the absence of credentials, not this address.
 const webFetchRoutableProbeURL = "https://192.0.2.1/probe"
 
 // webFetchRoutableProbeHost is the same address, as the proxy records it.
@@ -377,9 +383,10 @@ func TestCopilotPermissionWebFetchNeedsTheOnlineArm(t *testing.T) {
 // which happens before the proxy is ever consulted — so those runs legitimately
 // observe nothing and cannot serve as the control. A TEST-NET-1 IP literal needs
 // no resolution, so the fetch reaches the proxy's CONNECT path, is recorded, and
-// is refused with a 502 without a packet being sent to it. RFC 5737 guarantees
-// the address is never routed, so even a component that ignored the proxy
-// entirely could not reach anything through it.
+// is refused with a 502 without a packet being sent to it. RFC 5737 reserves
+// the address for documentation and it is not intended to be routed, so a
+// component that ignored the proxy entirely would have nothing to reach — a
+// convention this leans on, not a guarantee it asserts.
 func TestCopilotPermissionWebFetchEgressWallIsInForce(t *testing.T) {
 	requireSmoke(t)
 
