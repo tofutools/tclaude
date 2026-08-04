@@ -629,15 +629,19 @@ func TestCopilotPermissionContractIsBackedByScenarios(t *testing.T) {
 	assert.Equal(t, copilotfixture.PinnedCLIVersion, contract.CLIVersion,
 		"the contract describes one CLI release; bump it with the pin")
 
-	// The eight measurements the Phase 0 brief asked for, plus the web-fetch
-	// entry that closes the gap Phase 0 recorded as structurally unmeasurable.
-	// Pinned as a set so a measurement cannot be quietly dropped from the table.
+	// The Phase 0 measurements, plus the web-fetch entry that closes the gap
+	// Phase 0 recorded as structurally unmeasurable, and the three TCL-992
+	// assumption fixtures. Pinned as a set so a measurement cannot be quietly
+	// dropped from the table.
 	wantIDs := []string{
 		"default-interactive-blocking",
 		"no-ask-user",
 		"url-access",
 		"web-fetch-url-access",
 		"out-of-cwd-paths",
+		"path-dialog-under-allow-all-tools",
+		"add-dir-write-grant",
+		"flag-name-exactness",
 		"folder-trust",
 		"resume-submits-prompt",
 		"in-pane-allow-all-override",
@@ -833,6 +837,11 @@ func TestCopilotPermissionPathGrants(t *testing.T) {
 		// the only file-write boundary a non-tclaude-layer launch has.
 		{name: "outside-all/allow-all-paths", want: copilotfixture.PermissionAllowed,
 			args: func(string, string) []string { return []string{"--allow-all-paths"} }},
+		// The load-bearing checkpoint: the same out-of-grant path, now with
+		// --allow-all-tools explicitly supplied. The directory dialog is a
+		// separate permission source and remains blocking.
+		{name: "outside-all/allow-all-tools", want: copilotfixture.PermissionBlocked,
+			args: func(string, string) []string { return []string{"--allow-all-tools"} }},
 		// The automatic temp grant, and the flag that removes it.
 		{name: "in-temp/default", inTemp: true, want: copilotfixture.PermissionAllowed},
 		{name: "in-temp/disallow-temp-dir", inTemp: true, want: copilotfixture.PermissionBlocked,
@@ -865,6 +874,11 @@ func TestCopilotPermissionPathGrants(t *testing.T) {
 				bashTurns("cat "+target), true,
 				copilotfixture.RunOptions{
 					ExtraArgs: args,
+					// This table measures each path posture with only the
+					// path flags named by its row. The runner's normal
+					// --allow-all-tools default is deliberately omitted here;
+					// the dedicated row above supplies it explicitly.
+					OmitAllowAllTools: true,
 					// TMPDIR is what Node's os.tmpdir() reads, which is how the
 					// CLI resolves the temp grant.
 					ExtraEnv: []string{"TMPDIR=" + childTemp},
@@ -878,11 +892,114 @@ func TestCopilotPermissionPathGrants(t *testing.T) {
 					"a path-blocked launch must show the directory-access dialog")
 				assert.True(t, res.Contains(target),
 					"the dialog must name the path it is asking about")
+				require.Len(t, mock.Requests(), 1,
+					"a path prompt must have reached the provider once, but must not post a tool result")
+				assert.False(t, res.Exited, "a path prompt parks the interactive process")
+				assert.True(t, res.Quiesced, "a path prompt leaves settled output")
 			}
 			assertCredentialFree(t, mock)
 		})
 	}
 	assertScenarioRowsMatchRegistry(t, permissionScenarios.PathGrants, rows)
+}
+
+// TestCopilotPermissionAddDirWrites measures the read/write scope of Copilot's
+// single directory grant. The existing path matrix proved --add-dir against a
+// read; this uses a shell redirection against a fresh file so a passing row
+// proves the grant permits writes rather than merely allowing the directory to
+// be inspected.
+func TestCopilotPermissionAddDirWrites(t *testing.T) {
+	var rows []string
+	for _, tc := range []struct {
+		name string
+		args func(outside string) []string
+		want copilotfixture.PermissionOutcome
+	}{
+		{name: "outside-all/no-path-flags", want: copilotfixture.PermissionBlocked,
+			args: func(string) []string { return []string{"--allow-all-tools"} }},
+		{name: "outside-all/add-dir", want: copilotfixture.PermissionAllowed,
+			args: func(outside string) []string { return []string{"--allow-all-tools", "--add-dir", outside} }},
+	} {
+		rows = append(rows, tc.name)
+		t.Run(tc.name, func(t *testing.T) {
+			requireSmoke(t)
+			dirs := copilotfixture.NewSandboxDirs(t)
+			childTemp := filepath.Join(dirs.Root, "child-temp")
+			require.NoError(t, os.MkdirAll(childTemp, 0o755))
+			outside := stageOutsideEveryGrantedRoot(t, dirs, childTemp)
+			target := filepath.Join(outside, "copilotfixture-write-probe.txt")
+
+			verdict, mock, res := permissionRun(t,
+				bashTurns("echo copilotfixture-write-probe > "+target), true,
+				copilotfixture.RunOptions{
+					ExtraArgs:         tc.args(outside),
+					OmitAllowAllTools: true,
+					ExtraEnv:          []string{"TMPDIR=" + childTemp},
+				})
+			assert.Equal(t, tc.want, verdict.Outcome)
+			if tc.want == copilotfixture.PermissionBlocked {
+				assert.True(t, res.Contains(copilotfixture.PathPromptMarker),
+					"a write outside every grant must show the directory-access dialog")
+				assert.True(t, res.Contains(target),
+					"the write prompt must name the target path")
+				require.Len(t, mock.Requests(), 1,
+					"the blocked write must reach the provider once without a tool-result follow-up")
+				assert.NoFileExists(t, target,
+					"a blocked write must not create the target as a side effect")
+			} else {
+				data, err := os.ReadFile(target)
+				require.NoError(t, err,
+					"--add-dir must let the shell create and then read the write probe")
+				assert.Equal(t, "copilotfixture-write-probe\n", string(data),
+					"the allowed row must positively establish the written content")
+			}
+			assertCredentialFree(t, mock)
+		})
+	}
+	assertScenarioRowsMatchRegistry(t, permissionScenarios.AddDirWrites, rows)
+}
+
+// TestCopilotPermissionFlagNameExactness probes the pinned parser for the
+// spellings the pass-through audit deliberately does not normalize. Each row
+// is launched on a PTY so acceptance cannot be inferred from a noninteractive
+// fallback; a rejected spelling must exit with an unknown-option diagnostic
+// before it reaches the provider.
+func TestCopilotPermissionFlagNameExactness(t *testing.T) {
+	var rows []string
+	for _, tc := range []struct {
+		name string
+		arg  string
+	}{
+		{name: "prefix-abbreviation", arg: "--allow-all-tool"},
+		{name: "camel-case", arg: "--allowAllTools"},
+		{name: "no-negation", arg: "--no-allow-all-tools"},
+	} {
+		rows = append(rows, tc.name)
+		t.Run(tc.name, func(t *testing.T) {
+			requireSmoke(t)
+			mock := copilotfixture.NewMockProvider(t, []copilotfixture.Turn{{Text: "MOCK PARSER PROBE"}})
+			dirs := copilotfixture.NewSandboxDirs(t)
+			copilotfixture.TrustFolder(t, dirs.Home, dirs.WorkDir)
+			res := copilotfixture.RunPTY(t, copilotfixture.PTYOptions{
+				RunOptions: copilotfixture.RunOptions{
+					Root: dirs.Root, Home: dirs.Home, Cache: dirs.Cache, WorkDir: dirs.WorkDir,
+					BaseURL: mock.BaseURL(), Prompt: "Answer with the provider text.",
+					OmitAllowAllTools: true, ExtraArgs: []string{tc.arg},
+				},
+				Deadline:    permissionDeadline,
+				SettledWhen: func() bool { return len(mock.Requests()) >= 1 },
+			})
+			t.Logf("permission verdict: parser rejected %q (exited=%v exit_code=%d provider_requests=%d)",
+				tc.arg, res.Exited, res.ExitCode, len(mock.Requests()))
+			assert.True(t, res.Exited, "an unknown option must terminate the launch")
+			assert.NotEqual(t, 0, res.ExitCode, "an unknown option must fail the launch")
+			assert.True(t, res.Contains("unknown option"),
+				"the PTY diagnostic must positively identify the spelling as unknown")
+			assert.Empty(t, mock.Requests(),
+				"a parser rejection must occur before the provider is contacted")
+		})
+	}
+	assertScenarioRowsMatchRegistry(t, permissionScenarios.FlagNameExactness, rows)
 }
 
 // TestCopilotPermissionResumeSubmitsPrompt closes the standing UNVERIFIED in

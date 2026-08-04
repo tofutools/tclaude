@@ -37,6 +37,8 @@ var permissionScenarios = struct {
 	AmbientAllowAll     map[string]string
 	DenyToolGrammar     map[string]string
 	PathGrants          map[string]string
+	AddDirWrites        map[string]string
+	FlagNameExactness   map[string]string
 	Resume              string
 	InPaneAllowAll      string
 	NoAskUser           string
@@ -49,7 +51,11 @@ var permissionScenarios = struct {
 }{
 	PathGrants: registerRows("TestCopilotPermissionPathGrants",
 		"outside-all/no-path-flags", "outside-all/add-dir", "outside-all/allow-all-paths",
-		"in-temp/default", "in-temp/disallow-temp-dir"),
+		"outside-all/allow-all-tools", "in-temp/default", "in-temp/disallow-temp-dir"),
+	AddDirWrites: registerRows("TestCopilotPermissionAddDirWrites",
+		"outside-all/no-path-flags", "outside-all/add-dir"),
+	FlagNameExactness: registerRows("TestCopilotPermissionFlagNameExactness",
+		"prefix-abbreviation", "camel-case", "no-negation"),
 	Resume: copilotfixture.RegisterScenario(
 		"TestCopilotPermissionResumeSubmitsPrompt"),
 	InPaneAllowAll: copilotfixture.RegisterScenario(
