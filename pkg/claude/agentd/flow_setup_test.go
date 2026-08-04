@@ -1,8 +1,11 @@
 package agentd_test
 
 import (
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
@@ -135,4 +138,69 @@ func newFlow(t *testing.T) *testharness.Flow {
 		agentd.AsHumanPeer,
 		agentd.AsAgentPeer,
 	)
+}
+
+// holdRetiringPane wedges a retiring agent's /exit and hands the moment of its
+// death to the test, deterministically. The returned func ends the pane; call
+// it once the scenario's drift is in place, before draining the background.
+//
+// Scenarios that watch what happens BETWEEN a soft exit and the work it
+// unblocks need a pane that is still alive when the retire response is written
+// and that exits only after the test says so. Wedging /exit in the simulator
+// (TCL-760) is half of that: it stops the simulator from ending the pane on its
+// own. It stopped being the whole of it once the soft-exit escalation ladder
+// landed (TCL-1001, 40dc0c504) — a pane that ignores /exit is precisely the
+// pane that watchdog exists to kill, and flow tests shrink its deadline to 20ms
+// (SetSoftExitEscalationTimingForTest above). That kill ends the pane on a
+// timer, so a deferred retire cleanup's exit-wait could be satisfied — and its
+// live-claimant snapshot taken — before the test had installed the drift it
+// asserts about. That is TCL-1019, and TCL-760's identical failure text.
+//
+// So the ladder's probe loop blocks until the release. Pane death then has
+// exactly one cause here: the fixture asking for it, with no wall-clock budget
+// on either side. Tests that assert on the ladder itself must NOT use this —
+// they wedge /exit directly and let the watchdog run.
+func holdRetiringPane(t *testing.T, cc *testharness.CCSim) func() {
+	t.Helper()
+	require.NotNil(t, cc, "no CCSim to hold")
+	cc.OnInput("/exit", func(*testharness.CCSim, string) bool {
+		return true
+	})
+	release := holdSoftExitEscalation(t)
+	return func() {
+		cc.MarkDead()
+		release()
+	}
+}
+
+// holdRetiringCodexPane is holdRetiringPane for a Codex pane, whose exit
+// command is /quit.
+func holdRetiringCodexPane(t *testing.T, cx *testharness.CodexSim) func() {
+	t.Helper()
+	require.NotNil(t, cx, "no CodexSim to hold")
+	cx.OnInput("/quit", func(*testharness.CodexSim, string) bool {
+		return true
+	})
+	release := holdSoftExitEscalation(t)
+	return func() {
+		cx.MarkDead()
+		release()
+	}
+}
+
+// holdSoftExitEscalation parks the escalation watchdog on its first probe
+// until the returned func runs, so nothing but the caller can end a wedged
+// pane. Only the watchdog's own wait is gated; the ladder's behaviour once it
+// runs is untouched.
+func holdSoftExitEscalation(t *testing.T) func() {
+	t.Helper()
+	released := make(chan struct{})
+	var once sync.Once
+	release := func() { once.Do(func() { close(released) }) }
+	// t.Cleanup runs LIFO, so a test that never releases (an early require
+	// failure) unparks the watchdog first and restores the production hook
+	// after — no goroutine is left blocked on a finished test.
+	t.Cleanup(agentd.SetSoftExitEscalationPollForTest(func() { <-released }))
+	t.Cleanup(release)
+	return release
 }
