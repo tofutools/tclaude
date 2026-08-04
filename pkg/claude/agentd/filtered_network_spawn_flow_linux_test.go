@@ -81,6 +81,12 @@ func TestDefaultAllowDenySpawnSelectsFilteredNetworkPosture(t *testing.T) {
 			require.NoError(t, err)
 
 			resp := f.AsHuman().SpawnWith("crew", map[string]any{
+				// An empty cwd makes Claude provider inspection read the
+				// REPOSITORY's own .claude settings — host state this test
+				// does not author, and which an agent sandbox may deny
+				// reading outright. A temp dir keeps the launch judged on
+				// the authored profile alone.
+				"cwd":                    t.TempDir(),
 				"name":                   tc.name + "-worker",
 				"harness":                tc.harnessName,
 				"sandbox":                tc.sandboxMode,
@@ -236,6 +242,12 @@ func TestLocalAccessSpawnRefusesCloudModelWithoutExplicitEndpoint(t *testing.T) 
 			require.NoError(t, err)
 
 			resp := f.AsHuman().SpawnWith("crew", map[string]any{
+				// An empty cwd makes Claude provider inspection read the
+				// REPOSITORY's own .claude settings — host state this test
+				// does not author, and which an agent sandbox may deny
+				// reading outright. A temp dir keeps the launch judged on
+				// the authored profile alone.
+				"cwd":                    t.TempDir(),
 				"name":                   "worker",
 				"harness":                tc.harnessName,
 				"sandbox":                tc.sandboxMode,
@@ -292,6 +304,12 @@ func TestLocalAccessSpawnAllowsConcreteHostLoopbackProvider(t *testing.T) {
 	require.NoError(t, err)
 
 	resp := f.AsHuman().SpawnWith("crew", map[string]any{
+		// An empty cwd makes Claude provider inspection read the
+		// REPOSITORY's own .claude settings — host state this test
+		// does not author, and which an agent sandbox may deny
+		// reading outright. A temp dir keeps the launch judged on
+		// the authored profile alone.
+		"cwd":                    t.TempDir(),
 		"name":                   "local-worker",
 		"harness":                harness.DefaultName,
 		"sandbox":                harness.ClaudeSandboxOff,
@@ -339,6 +357,12 @@ func TestLocalModelAPIsSpawnAllowsFirstPartyCloudProvider(t *testing.T) {
 	require.NoError(t, err)
 
 	resp := f.AsHuman().SpawnWith("crew", map[string]any{
+		// An empty cwd makes Claude provider inspection read the
+		// REPOSITORY's own .claude settings — host state this test
+		// does not author, and which an agent sandbox may deny
+		// reading outright. A temp dir keeps the launch judged on
+		// the authored profile alone.
+		"cwd":                    t.TempDir(),
 		"name":                   "cloud-worker",
 		"harness":                harness.DefaultName,
 		"sandbox":                harness.ClaudeSandboxOff,
