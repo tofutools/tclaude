@@ -115,9 +115,9 @@ func TestSoftExit_NoRetryWhenFirstExitSucceeds(t *testing.T) {
 }
 
 // Scenario: a wedged pane that ignores /exit entirely. The retry must be
-// BOUNDED — it cannot type /exit at the pane forever; the force-kill
-// fallback (escalateShutdown, covered in power_flow_test) owns finishing a
-// genuinely hung pane.
+// BOUNDED — it cannot type /exit at the pane forever. What finishes the pane
+// is the escalation ladder (TCL-1001): the soft path no longer leaves a hung
+// pane running, it kills it once the bounded attempts have had their window.
 func TestSoftExit_BoundedRetriesForHungPane(t *testing.T) {
 	f := newFlow(t)
 
@@ -349,7 +349,12 @@ func TestLifecycleStop_PaneGenerationBinding(t *testing.T) {
 		wantSends                               int
 		wantKill                                bool
 	}{
-		{name: "degraded soft control", slug: "degraded-soft", wantAction: "soft_stopped", wantSends: 3},
+		// The only soft row whose pane stays the SAME live pane throughout, so
+		// it is also the only one the escalation ladder acts on: the bounded
+		// re-injections are exhausted and the wedged pane is killed. The rows
+		// below drift their pane identity after delivery, which stands the
+		// ladder down (a successor is never ours to kill).
+		{name: "degraded soft control", slug: "degraded-soft", wantAction: "soft_stopped", wantSends: 3, wantKill: true},
 		{name: "degraded generation appears after delivery", slug: "degraded-appears", afterGeneration: otherGeneration, wantAction: "soft_stopped", wantSends: 1},
 		{name: "bound generation disappears after delivery", slug: "bound-missing", bound: true, afterGeneration: "missing", wantAction: "soft_stopped", wantSends: 1},
 		{name: "bound generation mismatches after delivery", slug: "bound-mismatch", bound: true, afterGeneration: otherGeneration, wantAction: "soft_stopped", wantSends: 1},

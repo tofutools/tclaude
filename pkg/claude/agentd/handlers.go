@@ -1698,22 +1698,19 @@ func injectBracketedTextAndSubmit(tmuxTarget, text string) error {
 	return injectTextAndSubmitWithOptions(tmuxTarget, tmuxTarget, text, true)
 }
 
-// injectTextAndSubmitSerializedBy sends to tmuxTarget while serializing
-// under lockTarget's identity. Lifecycle types into the exact pane ID
-// (%N), but the same pane's message/nudge streams lock its session-shaped
-// target — the two spellings otherwise key different in-process mutexes
-// AND different cross-process advisory lock files, so the input sequences
-// would not single-file. Callers that know the pane's session pass it as
-// lockTarget; plain injectTextAndSubmit keeps target == lock identity.
-func injectTextAndSubmitSerializedBy(lockTarget, tmuxTarget, text string) error {
-	return injectTextAndSubmitWithOptions(lockTarget, tmuxTarget, text, false)
-}
-
-// injectSoftExitTextSerializedBy is injectTextAndSubmitSerializedBy plus the
-// harness's soft-exit prefix keys (harness.Lifecycle.SoftExitPrefixKeys). The
-// keys are part of the same locked sequence as the text and its Enters: a
-// cancel that another injector could slip a keystroke into would defeat the
-// state it exists to establish.
+// injectSoftExitTextSerializedBy sends the harness's soft-exit command to
+// tmuxTarget while serializing under lockTarget's identity, preceded by that
+// harness's prefix keys (harness.Lifecycle.SoftExitPrefixKeys).
+//
+// The two targets differ because lifecycle types into the exact pane ID (%N)
+// while the same pane's message/nudge streams lock its session-shaped target —
+// the two spellings otherwise key different in-process mutexes AND different
+// cross-process advisory lock files, so the input sequences would not
+// single-file. Callers that know the pane's session pass it as lockTarget.
+//
+// The prefix keys are part of the same locked sequence as the text and its
+// Enters: a cancel that another injector could slip a keystroke into would
+// defeat the state it exists to establish.
 func injectSoftExitTextSerializedBy(lockTarget, tmuxTarget, text string, prefixKeys []string) error {
 	return injectTextAndSubmitWithOptions(lockTarget, tmuxTarget, text, false, prefixKeys...)
 }

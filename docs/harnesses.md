@@ -190,6 +190,7 @@ instead of slash-command injection).
 | **Rename** | ✅ in-pane `/rename` (writes the conversation file) | ✅ out-of-band (writes Codex's title store) | ✅ authenticated server API; local title cache when cold |
 | **Compact** | ✅ in-pane `/compact` | ✅ in-pane `/compact` | ✅ managed TUI API (`session.compact`, no keystrokes) |
 | **Graceful stop** | ✅ `/exit` | ✅ `/quit` | ✅ managed TUI API (`app.exit`, no keystrokes) |
+| **Soft-exit prefix keys** (`Lifecycle.SoftExitPrefixKeys`) | ➖ none needed | ➖ none needed | ➖ none needed (no keystrokes at all) |
 | **Remote control** ([guide](remote-control.md)) | ✅ Claude's built-in Remote Access (claude.ai/code + mobile app); arm per-agent, at spawn, or by profile/group default | ❌ no built-in remote access | ❌ no hosted relay |
 | **Reincarnate / clone** | ✅ | ✅ (rename degrades to the title store) | ✅ managed resume + title store |
 | **Hooks / live status** | ✅ `~/.claude/settings.json` | ✅ `~/.codex/hooks.json` (+ setup-managed trust) | ⚠️ managed liveness; full SSE mapping pending |
@@ -240,7 +241,7 @@ covers **interactive human sessions**:
 | **Spawn** | ✅ `copilot`, with a caller-preset conv-id (`--session-id <uuid>`), a launch-time name (`--name=`), and an optional first turn (`-i <prompt>`) |
 | **Resume** | ✅ `copilot --resume=<id>` (exact id only on the CLI — never the picker, an id prefix, or a session name; tclaude resolves *its* own id prefixes to a full id first, via the conversation store below) |
 | **Model & effort at spawn** | ✅ `--model=` (including `auto`) and `--effort=` (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, as advertised by the pinned 1.0.77 CLI). Note `max`: the flag accepts the whole vocabulary, but the docs describe `max` as the highest-depth tier **for Anthropic models** — Copilot may reject it for a GPT model, so pair it with a model that has that tier |
-| **Rename / compact / graceful stop** | ✅ in-pane `/rename`, `/compact`, `/exit`. `/exit` closes the *current* session: with other sessions open in the same CLI it foregrounds the newest remaining one instead of quitting, so tclaude keeps its hard-kill fallback for a pane that doesn't actually exit |
+| **Rename / compact / graceful stop** | ✅ in-pane `/rename`, `/compact`, `/exit`. `/exit` closes the *current* session: with other sessions open in the same CLI it foregrounds the newest remaining one instead of quitting, so tclaude keeps its hard-kill fallback for a pane that doesn't actually exit. The exit is preceded by a **cancel keystroke** (`C-c`, `Lifecycle.SoftExitPrefixKeys`) — see below |
 | **Hooks / live status** | ✅ `<COPILOT_HOME>/hooks/tclaude.json` — a tclaude-**owned** drop-in file, merged by Copilot with the user's own hooks; no trust step, no `config.json` involvement. Registers `SessionStart`, `UserPromptSubmit`, `PostToolUse`, `Stop`, `SessionEnd`, so a pane reports working/idle per turn. See [below](#copilot-hooks) for what is deliberately left out |
 | **Conversation store** | ✅ cold list / resolve / cwd filter / title / existence, read from Copilot's own per-session `<COPILOT_HOME>/session-state/<id>/` files. No SQLite access at all — see [below](#copilot-conversation-store) |
 | **Sandbox** | ⚠️ `inherit` (default) / `off` — an *assertion*, not a lever. Copilot's own command sandbox has no launch flag, so tclaude can neither enable nor disable it; `off` means "verified not engaged" and is what `--sandbox-impl tclaude-layer` resolves to. See [below](#copilot-and-tclaudes-outer-sandbox). Copilot's *own* command sandboxing was separately evaluated and deliberately not advertised as a harness-builtin implementation — see [below](#copilots-own-command-sandboxing) |
@@ -692,6 +693,34 @@ Two limits follow, and neither is a bug to route around:
   the CLI auto-approves still run. `--deny-tool` is not used to harden this
   further: URL rules are known to parse and then match nothing at runtime, so a
   deny that denies nothing would be worse than no claim at all.
+
+#### Copilot soft exit
+
+Copilot's TUI accepts a slash command only while it is idle at its input
+prompt, so tclaude sends a cancel keystroke (`C-c`) immediately before `/exit`.
+Measured against the pinned 1.0.77 binary in a real tmux pane, and recorded by
+the `copilotfixture` soft-exit scenarios:
+
+- **Mid-turn, the bare command is silently discarded.** The typed `/exit` is
+  rendered, and the submitting Enter simply clears the input box — no exit, no
+  queued message (the footer offers `ctrl+enter` to enqueue one), nothing in
+  the transcript. A retired agent that was working therefore showed *no trace*
+  of ever having been asked to exit.
+- **With a permission dialog open it is worse than a no-op.** The dialog owns
+  the keyboard, so the submitting Enter accepts its **default entry** — which
+  approves the pending command instead of exiting.
+- **`C-c` fixes both, and costs nothing when unnecessary.** Mid-turn or during
+  a tool it cancels the work and returns to the prompt; on a dialog it aborts
+  the request (the command is refused, not approved); on an idle pane it is a
+  no-op; on a pane holding a half-typed line it clears the buffer. The exit
+  that follows is still graceful — Copilot writes its `session.shutdown` event.
+- **Escape is not usable here.** The CLI holds a lone `\x1b` waiting for the
+  rest of a possible escape sequence, so a trailing `Escape` is never
+  delivered at all.
+
+Panes that still refuse to close are ended by the harness-generic escalation
+ladder (`agent stop` in [agent.md](agent.md)), which follows a soft exit that
+has not landed with an identity-guarded tmux kill, then SIGTERM, then SIGKILL.
 
 #### Copilot hooks
 
