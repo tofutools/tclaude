@@ -516,6 +516,12 @@ func (a *Adapter) consumerStream(ctx context.Context, raw net.Conn, consumer Con
 	select {
 	case <-admitted:
 	case err := <-refused:
+		// These two lines look like a pair and are not: the close is
+		// deliberately OUTSIDE the observer. reportConsumerRefusal carries only
+		// the reason and does nothing when no observer is installed, so folding
+		// the close into it would make a nil observer silently proxy a stream
+		// the broker refused — the original bug restored behind a seam that
+		// makes it look handled. Disposal must not depend on anyone listening.
 		a.reportConsumerRefusal(consumer, err)
 		_ = adapterConn.Close()
 		return
