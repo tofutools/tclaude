@@ -431,29 +431,72 @@ func resolvePermissionForRequest(r *http.Request, convID, slug string) permResol
 }
 
 func resolvePermissionWithDefault(convID, slug string, defaultAllowed bool) (permResolution, int64) {
+	v := resolvePermissionVerdict(convID, slug, defaultAllowed)
+	return v.Resolution, v.SudoGrantID
+}
+
+// permSource names which of resolvePermissionVerdict's ordered sources
+// actually decided a (conv, slug) question. It exists so a caller that
+// must EXPLAIN a decision — the effective-permissions listing — can do so
+// without re-deriving the precedence itself and drifting from the gate.
+type permSource string
+
+const (
+	// permSourceNone: nothing spoke (permUndecided).
+	permSourceNone permSource = ""
+	// permSourceSudo: an active, time-bounded human elevation.
+	permSourceSudo permSource = "sudo"
+	// permSourceOverride: a per-conv grant or deny row.
+	permSourceOverride permSource = "override"
+	// permSourceGroup: an active group the agent belongs to grants it.
+	permSourceGroup permSource = "group"
+	// permSourceDefault: the config default-permissions list.
+	permSourceDefault permSource = "default"
+	// permSourceOwner: not decided by resolvePermissionVerdict at all —
+	// the structural group-owner bypass that call sites (and the listing)
+	// apply to fill the permUndecided gap.
+	permSourceOwner permSource = "owner"
+)
+
+// permVerdict is a resolution plus the provenance behind it.
+type permVerdict struct {
+	Resolution  permResolution
+	Source      permSource
+	SudoGrantID int64
+}
+
+// resolvePermissionVerdict is THE non-interactive permission resolver:
+// every gate reaches it through requirePermission/requirePermissionEx,
+// and the effective-permissions listing reaches it through
+// effectivePermsFor. Both therefore see one implementation of the
+// precedence documented on resolvePermission, and a new source added
+// here shows up in the listing for free rather than silently making the
+// listing wrong (an agent held human.notify via a group grant while
+// `permissions ls` reported it absent).
+func resolvePermissionVerdict(convID, slug string, defaultAllowed bool) permVerdict {
 	if convID == "" {
-		return permUndecided, 0
+		return permVerdict{Resolution: permUndecided, Source: permSourceNone}
 	}
 	state, err := db.AgentState(convID)
 	if err != nil || state == db.AgentStateRetired {
-		return permUndecided, 0
+		return permVerdict{Resolution: permUndecided, Source: permSourceNone}
 	}
 	if grantID, err := db.LookupActiveSudoGrantID(convID, slug); err == nil && grantID != 0 {
-		return permAllow, grantID
+		return permVerdict{Resolution: permAllow, Source: permSourceSudo, SudoGrantID: grantID}
 	}
 	if effect, ok, err := db.AgentPermissionOverride(convID, slug); err == nil && ok {
 		if effect == db.PermEffectDeny {
-			return permDeny, 0
+			return permVerdict{Resolution: permDeny, Source: permSourceOverride}
 		}
-		return permAllow, 0
+		return permVerdict{Resolution: permAllow, Source: permSourceOverride}
 	}
 	if ok, err := db.HasAgentGroupPermission(convID, slug); err == nil && ok {
-		return permAllow, 0
+		return permVerdict{Resolution: permAllow, Source: permSourceGroup}
 	}
 	if defaultAllowed {
-		return permAllow, 0
+		return permVerdict{Resolution: permAllow, Source: permSourceDefault}
 	}
-	return permUndecided, 0
+	return permVerdict{Resolution: permUndecided, Source: permSourceNone}
 }
 
 // requirePermission gates an endpoint behind a named agent permission.

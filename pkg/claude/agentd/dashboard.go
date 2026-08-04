@@ -3231,35 +3231,16 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		if rc.inactiveActor(a.ConvID) {
 			continue
 		}
-		// Effective = (defaults ∪ active-group grants ∪ grant-overrides)
-		// − deny-overrides.
-		// Defaults come from config; per-conv grant/deny overrides from
-		// agent_permissions. A deny override subtracts a slug the
-		// defaults would otherwise grant — mirroring resolvePermission.
-		denied := map[string]bool{}
-		for slug, effect := range out.Permissions.Overrides[a.ConvID] {
-			if effect == db.PermEffectDeny {
-				denied[slug] = true
-			}
-		}
-		seen := map[string]bool{}
-		merged := []string{}
-		addEffective := func(s string) {
-			if seen[s] || denied[s] {
-				return
-			}
-			seen[s] = true
-			merged = append(merged, s)
-		}
-		for _, s := range defaults {
-			addEffective(s)
-		}
-		for _, s := range groupGrantsByConv[a.ConvID] {
-			addEffective(s)
-		}
-		for _, s := range out.Permissions.Grants[a.ConvID] {
-			addEffective(s)
-		}
+		// Effective comes from the same routine the permission GATE uses
+		// (effectivePermsFor → resolvePermissionVerdict), so this column
+		// cannot drift from what the daemon will actually allow. It used
+		// to be a third hand-rolled union here, which omitted active sudo
+		// elevations and the structural owner bypass.
+		merged, _, _, _ := effectivePermsFor(permissionsState{
+			Defaults:  out.Permissions.Defaults,
+			Grants:    out.Permissions.Grants,
+			Overrides: out.Permissions.Overrides,
+		}, a.ConvID, ownerImpliedSlugsFor(a.ConvID))
 		sort.Strings(merged)
 		a.Effective = merged
 		sort.Strings(a.Groups)

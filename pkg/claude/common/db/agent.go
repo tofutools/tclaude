@@ -187,6 +187,44 @@ func HasAgentGroupPermission(convID, slug string) (bool, error) {
 	return n > 0, err
 }
 
+// ListAgentGroupPermissionSlugsForConv lists every distinct slug granted to
+// convID by the active groups it belongs to — the enumerating twin of
+// HasAgentGroupPermission, sharing its membership/liveness conditions. It
+// backs the effective-permissions listing, which must know WHICH slugs to
+// ask the resolver about; the allow/deny decision itself still goes through
+// the resolver, never through this list.
+func ListAgentGroupPermissionSlugsForConv(convID string) ([]string, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	agentID, err := AgentIDForConv(convID)
+	if err != nil || agentID == "" {
+		return nil, err
+	}
+	rows, err := d.Query(`
+		SELECT DISTINCT gp.slug
+		FROM agent_group_permissions gp
+		JOIN agent_groups g ON g.id = gp.group_id AND g.archived_at IS NULL
+		JOIN agent_group_members gm ON gm.group_id = gp.group_id
+		JOIN agents a ON a.agent_id = gm.agent_id AND a.retired_at IS NULL
+		WHERE gm.agent_id = ?
+		ORDER BY gp.slug`, agentID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []string
+	for rows.Next() {
+		var slug string
+		if err := rows.Scan(&slug); err != nil {
+			return nil, err
+		}
+		out = append(out, slug)
+	}
+	return out, rows.Err()
+}
+
 // HasAgentGroupPermissionForGroup reports whether convID is a current member
 // of groupID and that exact group grants slug. It intentionally does not use
 // the union-shaped HasAgentGroupPermission helper: route authorization must
