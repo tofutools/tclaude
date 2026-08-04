@@ -23,6 +23,35 @@ smoke::error() {
   printf 'ERROR: %s\n' "$*" >&2
 }
 
+# smoke::apt_source_is_microsoft_only FILE — classify an active deb822 source
+# file without changing it. Source files are world-readable on supported
+# Ubuntu images, so this deliberately stays plain awk: the shared self-test can
+# exercise the exact classifier without sudo or a live apt tree.
+smoke::apt_source_is_microsoft_only() {
+  local source_file="$1"
+  awk '
+    /^[[:space:]]*#/ { next }
+    /^[[:space:]]*URIs:[[:space:]]*/ {
+      found = 1
+      line = $0
+      sub(/^[^:]*:[[:space:]]*/, "", line)
+      count = split(line, uri, /[[:space:]]+/)
+      for (i = 1; i <= count; i++) {
+        if (uri[i] == "") {
+          continue
+        } else if (uri[i] ~ /^#/) {
+          break
+        } else if (tolower(uri[i]) ~ /packages[.]microsoft[.]com/) {
+          microsoft = 1
+        } else {
+          mixed = 1
+        }
+      }
+    }
+    END { exit !(found && microsoft && !mixed) }
+  ' "$source_file"
+}
+
 # smoke::apt_update — update Ubuntu's package indexes without letting an
 # unrelated third-party source take the host prerequisite down. GitHub-hosted
 # Ubuntu images may carry Microsoft sources for preinstalled tools; those
@@ -70,26 +99,9 @@ smoke::apt_update() {
     if [[ "$source_file" == *.sources ]]; then
       # A .sources file is a deb822 document: moving one that also contains an
       # Ubuntu/vendor URI would disable an unrelated source along with
-      # Microsoft. Only accept a file whose active URI tokens are all Microsoft.
-      if sudo awk '
-        /^[[:space:]]*#/ { next }
-        /^[[:space:]]*URIs:[[:space:]]*/ {
-          found = 1
-          line = $0
-          sub(/^[^:]*:[[:space:]]*/, "", line)
-          count = split(line, uri, /[[:space:]]+/)
-          for (i = 1; i <= count; i++) {
-            if (uri[i] ~ /^#/) {
-              break
-            } else if (tolower(uri[i]) ~ /packages[.]microsoft[.]com/) {
-              microsoft = 1
-            } else {
-              mixed = 1
-            }
-          }
-        }
-        END { exit !(found && microsoft && !mixed) }
-      ' "$source_file"; then
+      # Microsoft. Only move a file whose active URI tokens are all Microsoft;
+      # mixed files are warned about and left visible to apt.
+      if smoke::apt_source_is_microsoft_only "$source_file"; then
         :
       else
         awk_status=$?
