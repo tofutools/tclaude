@@ -1,0 +1,11 @@
+{
+  "cwd": "<WORKDIR>",
+  "hookName": "permissionRequest",
+  "permissionSuggestions": [],
+  "sessionId": "00000000-0000-4000-8000-000000000000",
+  "timestamp": 0,
+  "toolInput": {
+    "command": "echo hookprobe"
+  },
+  "toolName": "bash"
+}

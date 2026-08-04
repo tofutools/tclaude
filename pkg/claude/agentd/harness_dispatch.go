@@ -150,6 +150,19 @@ func sandboxForHarness(name string) string {
 	return ""
 }
 
+// sandboxImplementationForConv returns the sandbox implementation a conv's
+// durable relaunch config records, or "" (the legacy harness-builtin default)
+// when there is no readable config. It exists for the launch-adjacent callers
+// that already derive a harness and a sandbox mode for a conv and now need the
+// third axis to answer what wall the launch will actually build.
+func sandboxImplementationForConv(convID string) string {
+	config, err := durableRelaunchConfigForConv(convID)
+	if err != nil {
+		return ""
+	}
+	return config.activeSandboxImplementation()
+}
+
 // approvalForHarness returns the safe launch default used for legacy rows that
 // have no recorded posture. Current relaunches use approvalForRelaunch to
 // preserve the source generation exactly.
@@ -168,6 +181,16 @@ func approvalForHarness(name string) string {
 		// the remaining callers are error fallbacks, it would do so on a mere DB
 		// hiccup (widen-on-error).
 		return harness.ClaudePermissionInherit
+	}
+	if name == harness.CopilotName {
+		// Same reasoning as the Claude branch, and just as unambiguous: every
+		// Copilot launch tclaude made before TCL-973 emitted zero permission
+		// flags, so `inherit` IS the faithful reconstruction of a blank row.
+		// Returning the new `allow-tools` default would take a row that ran
+		// under Copilot's prompting posture and relaunch it with tools
+		// auto-approved and ask_user removed — a silent promotion performed by
+		// lifecycle repair, on rows the operator never chose it for.
+		return harness.CopilotApprovalInherit
 	}
 	if h, err := harness.Resolve(name); err == nil && h.SupportsApproval() {
 		// Codex's `never` default validates to itself.

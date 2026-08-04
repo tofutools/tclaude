@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -25,6 +26,18 @@ const smokeEnv = "TCLAUDE_COPILOT_FIXTURE_SMOKE"
 
 var update = flag.Bool("update", false, "re-record sanitized Copilot fixtures")
 
+// installedVersion runs `copilot --version` once per test binary.
+//
+// The pin is asserted before EVERY scenario, which is the right guarantee and
+// was the wrong implementation: the answer cannot change while a single test
+// binary runs — the binary on PATH is fixed for the process — so re-launching
+// Node once per test bought nothing and cost half a second each time, on a
+// suite with seventy of them.
+var installedVersion = sync.OnceValues(func() (string, error) {
+	out, err := exec.Command("copilot", "--version").CombinedOutput()
+	return string(out), err
+})
+
 func requireSmoke(t *testing.T) {
 	t.Helper()
 	if os.Getenv(smokeEnv) != "1" {
@@ -33,25 +46,89 @@ func requireSmoke(t *testing.T) {
 	}
 	// The pin is asserted before any scenario runs, so goldens can never be
 	// compared against — or re-recorded from — an unintended release.
-	out, err := exec.Command("copilot", "--version").CombinedOutput()
+	out, err := installedVersion()
 	require.NoError(t, err, "running `copilot --version`")
-	require.Contains(t, string(out), copilotfixture.VersionBanner,
+	require.Contains(t, out, copilotfixture.VersionBanner,
 		"pinned Copilot CLI version drift: fixtures describe %s only. "+
 			"Install the pin, or bump PinnedCLIVersion and re-record with -update "+
 			"so the contract diff gets reviewed.", copilotfixture.PinnedCLIVersion)
 }
 
+// requireSmokeParallel is requireSmoke for a scenario that may run alongside
+// the rest of the suite.
+//
+// Almost everything here is hermetic by construction and idle by nature: each
+// scenario launches its own CLI process against its own disposable
+// COPILOT_HOME, cache, working directory and localhost mock, and then spends
+// most of its wall clock WAITING — for a terminal to stop redrawing, for a
+// deadline to pass, for a prompt that will never be answered. Run one at a
+// time that is ten minutes of a CI runner doing nothing.
+//
+// Two kinds of scenario must NOT use this, and both say so at their own call
+// site:
+//
+//   - Process-global state. The conv-store and hooks scenarios drive tclaude's
+//     own production code through t.Setenv and the conv-index database's reset
+//     hook. `go test` enforces the t.Setenv half of that rule itself, by
+//     panicking rather than by racing.
+//   - Scenarios that are ABOUT timing. The soft-exit arms and the in-pane
+//     injection scenario type into a live TUI on a schedule, so they encode an
+//     assumption about how far the CLI has got — the one assumption contention
+//     breaks.
+//
+// Note what is NOT on that list any more: the golden-comparing scenarios. They
+// were sequential for a while because the event goldens pinned where a
+// background-task poller's ticks fell relative to a tool's own events, which is
+// a race rather than a contract. That is fixed in the projection now (see
+// selfPacedEventTypes), so they run concurrently like everything else.
+//
+// Ordering matters: requireSmoke may skip, and a skipped test never returns to
+// call t.Parallel.
+func requireSmokeParallel(t *testing.T) {
+	t.Helper()
+	requireSmoke(t)
+	t.Parallel()
+}
+
 // TestCopilotVersionPin is the cheapest drift signal: it fails the moment the
 // installed CLI stops being the version the goldens describe.
 func TestCopilotVersionPin(t *testing.T) {
-	requireSmoke(t)
+	requireSmokeParallel(t)
+}
+
+// TestCopilotEffortVocabularyHelp compares the actual pinned CLI help with
+// the committed excerpt. The harness catalog test consumes that same excerpt,
+// so this is the evidence bridge from Copilot's advertised surface to the
+// per-harness values tclaude accepts.
+func TestCopilotEffortVocabularyHelp(t *testing.T) {
+	requireSmokeParallel(t)
+
+	live, err := exec.Command("copilot", "--no-auto-update", "--no-color", "--help").CombinedOutput()
+	require.NoError(t, err, "running `copilot --help`")
+	fixture, err := os.ReadFile(copilotfixture.PinnedEffortHelpFixture)
+	require.NoError(t, err, "reading pinned Copilot help fixture")
+	require.NoError(t, copilotfixture.ValidateHelpEffortLevels(live, fixture))
+}
+
+// TestCopilotModelVocabularyHelp compares the actual pinned CLI config help
+// with the committed excerpt. The harness catalog test consumes that same
+// excerpt, so this is the evidence bridge from Copilot's documented concrete
+// model ids to the dropdown suggestions tclaude exposes.
+func TestCopilotModelVocabularyHelp(t *testing.T) {
+	requireSmokeParallel(t)
+
+	live, err := exec.Command("copilot", "--no-auto-update", "--no-color", "help", "config").CombinedOutput()
+	require.NoError(t, err, "running `copilot help config`")
+	fixture, err := os.ReadFile(copilotfixture.PinnedModelHelpFixture)
+	require.NoError(t, err, "reading pinned Copilot help fixture")
+	require.NoError(t, copilotfixture.ValidateHelpModels(live, fixture))
 }
 
 // TestCopilotCredentialFreeTextTurn is the baseline: a complete streaming text
 // turn with no GitHub credential anywhere, proving BYOK activation alone is
 // enough to reach a green turn.
 func TestCopilotCredentialFreeTextTurn(t *testing.T) {
-	requireSmoke(t)
+	requireSmokeParallel(t)
 
 	mock := copilotfixture.NewMockProvider(t, []copilotfixture.Turn{
 		{Text: "MOCK STREAMED ANSWER"},
@@ -74,7 +151,7 @@ func TestCopilotCredentialFreeTextTurn(t *testing.T) {
 // roles system/user/assistant/tool, and x-initiator flipping user→agent — is
 // the contract under test.
 func TestCopilotToolCallRoundTrip(t *testing.T) {
-	requireSmoke(t)
+	requireSmokeParallel(t)
 
 	mock := copilotfixture.NewMockProvider(t, []copilotfixture.Turn{
 		{ToolCall: &copilotfixture.ToolCall{
@@ -117,7 +194,7 @@ func TestCopilotToolCallRoundTrip(t *testing.T) {
 // 429 → 6 requests over ~100s. A fixture built on 500 or 429 would spend
 // essentially all its runtime in backoff for no extra evidence.
 func TestCopilotProviderFailure(t *testing.T) {
-	requireSmoke(t)
+	requireSmokeParallel(t)
 
 	mock := copilotfixture.NewMockProvider(t, []copilotfixture.Turn{
 		{FailStatus: 400},
@@ -147,7 +224,7 @@ func TestCopilotProviderFailure(t *testing.T) {
 // before the pane starts) and exact resume (--resume=<id> continues that same
 // conversation with its history intact).
 func TestCopilotSessionEnrollmentAndResume(t *testing.T) {
-	requireSmoke(t)
+	requireSmokeParallel(t)
 
 	// A fixed UUID: the whole point is that the CALLER chooses it.
 	const sessionID = "11111111-2222-4333-8444-555555555555"
@@ -205,7 +282,7 @@ func TestCopilotSessionEnrollmentAndResume(t *testing.T) {
 // string, and the response is a named-event SSE sequence that terminates at
 // response.completed with no [DONE] sentinel. Both halves are exercised here.
 func TestCopilotReasoningEffortOnResponsesWire(t *testing.T) {
-	requireSmoke(t)
+	requireSmokeParallel(t)
 
 	mock := copilotfixture.NewMockProvider(t, []copilotfixture.Turn{
 		{Text: "MOCK RESPONSES ANSWER"},
@@ -240,7 +317,7 @@ func TestCopilotReasoningEffortOnResponsesWire(t *testing.T) {
 // effort this is observable on the default wire, and it needs no subscription:
 // the wire model is simply whatever the CLI was told to ask for.
 func TestCopilotModelSelection(t *testing.T) {
-	requireSmoke(t)
+	requireSmokeParallel(t)
 
 	const override = "copilotfixture-override-model"
 	mock := copilotfixture.NewMockProvider(t, []copilotfixture.Turn{{Text: "MOCK OK"}})
@@ -268,7 +345,7 @@ func TestCopilotModelSelection(t *testing.T) {
 // the spawner's own output proves the launch tclaude actually performs still
 // reaches a provider and completes.
 func TestCopilotProductionSpawnerLaunches(t *testing.T) {
-	requireSmoke(t)
+	requireSmokeParallel(t)
 
 	const sessionID = "22222222-3333-4444-8555-666666666666"
 

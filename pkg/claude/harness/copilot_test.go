@@ -7,6 +7,9 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestCopilotDescriptor pins the first Copilot wave's capability surface. The
@@ -34,24 +37,113 @@ func TestCopilotDescriptor(t *testing.T) {
 		t.Fatalf("SpawnBinaries() = %v, want copilot", SpawnBinaries())
 	}
 
-	// Deferred contracts (TCL-965 phases 2-5): documented CLI flags are
+	// Hooks graduated in TCL-972: the fixture lab ran the real 1.0.77 binary
+	// and recorded both halves of the contract — where a tclaude-owned hook
+	// file has to live to fire, and which event names make Copilot emit
+	// Claude Code's payload. That is exactly the kind of evidence the rest of
+	// this test insists on before a contract may be advertised.
+	if h.Hooks == nil {
+		t.Fatalf("copilot must advertise the fixture-backed hook installer: %+v", h)
+	}
+
+	// The ConvStore graduated in TCL-976 on the same terms: the fixture lab
+	// ran the real binary and recorded the per-session workspace.yaml and
+	// events.jsonl the store reads, so the session-state layout is now
+	// observed rather than assumed.
+	if h.Convs == nil {
+		t.Fatalf("copilot must advertise the fixture-backed conversation store: %+v", h)
+	}
+
+	// The sandbox catalog and the model transport graduated in TCL-978 on the
+	// same evidence terms. Neither is read off the documentation, which
+	// describes neither: the sandbox catalog encodes what the pinned binary's
+	// own help topics establish (the command sandbox is experimental, off by
+	// default, and reachable ONLY through settings.json and an in-pane slash
+	// command — so tclaude can assert its state but never set it), and the
+	// transport's destinations are read out of the CLI's shipped runtime
+	// module. Both are ASSERT/REFUSE contracts rather than control contracts,
+	// which is precisely why they can be advertised without a lever.
+	if h.Sandbox == nil {
+		t.Fatalf("copilot must advertise the assert-off sandbox catalog: %+v", h)
+	}
+	if h.ModelTransport == nil {
+		t.Fatalf("copilot must advertise the first-party model transport: %+v", h)
+	}
+
+	// The approval catalog graduated in TCL-973 on the same terms again: every
+	// flag it renders was measured on a PTY against the pinned binary, and the
+	// default the preceding plan proposed is absent from it precisely because
+	// the measurement disproved that flag. See copilot_approval.go.
+	if h.Approval == nil {
+		t.Fatalf("copilot must advertise the measured approval catalog: %+v", h)
+	}
+
+	// The one-shot ask surface graduated in TCL-994, on the same evidence terms
+	// once more: the headless `-p` form's stream split, its exact-id resume and
+	// its ConvStore landing were all measured against the pinned binary rather
+	// than read off the option table. See copilot_asker.go.
+	if h.Ask == nil {
+		t.Fatalf("copilot must advertise the measured ask surface: %+v", h)
+	}
+
+	// Still-deferred contracts (TCL-965 phases 2-5): documented CLI flags are
 	// evidence, runtime formats and enforcement semantics are not.
-	if h.Convs != nil || h.Hooks != nil || h.Ask != nil || h.Sandbox != nil ||
-		h.Approval != nil || h.ToolGovernance != nil || h.ModelTransport != nil ||
+	//
+	// AskTimeout stays nil even though the approval catalog now emits
+	// `--no-ask-user`, and the two must not be conflated: AskTimeout contracts
+	// an idle timeout after which an unanswered question auto-continues with
+	// its default answer, while Copilot's flag removes the ask_user tool
+	// outright — there is no dialog left to time out, and no timeout to
+	// translate. ToolGovernance likewise stays nil: `--allow-tool`/`--deny-tool`
+	// are a pattern-compiler contract of their own, and the approval catalog
+	// emits neither.
+	if h.ToolGovernance != nil ||
 		h.NestedSandbox != nil || h.HostControlSandbox != nil || h.AskTimeout != nil {
 		t.Fatalf("copilot must not advertise unverified contracts: %+v", h)
 	}
+	if h.SupportsAutoReview() {
+		t.Errorf("copilot has no guardian subagent; auto-review must stay unavailable: %+v", h)
+	}
+
+	// BuiltinOSSandbox stays false even though Copilot really does ship an OS
+	// sandbox: the flag means the harness owns an OS-enforced sandbox BEHIND
+	// its catalog, and this catalog only asserts that sandbox is off.
+	if h.BuiltinOSSandbox {
+		t.Errorf("copilot must not claim a built-in OS sandbox its catalog cannot select: %+v", h)
+	}
+	if h.TclaudeLayerMode != CopilotSandboxOff {
+		t.Errorf("TclaudeLayerMode = %q, want %q", h.TclaudeLayerMode, CopilotSandboxOff)
+	}
+	if !h.SupportsHooks() {
+		t.Errorf("SupportsHooks() = false, want true now that hooks are fixture-backed")
+	}
+	if !h.SupportsConvs() {
+		t.Errorf("SupportsConvs() = false, want true now that the store is fixture-backed")
+	}
+	// TCL-973: the folder-trust modal was measured on a real pty (it blocks
+	// before the CLI contacts the provider at all) and the seeding contract
+	// that clears it is wired, so the flag is a claim tclaude can honour.
+	// DirTrustStore must name the file that editor writes — the dashboard's
+	// consent copy is derived from it.
+	if !h.SupportsDirTrust() {
+		t.Errorf("SupportsDirTrust() = false, want true now that trustedFolders seeding is wired")
+	}
+	if got := DirTrustStore(h); got != "$COPILOT_HOME/config.json" {
+		t.Errorf("DirTrustStore() = %q, want the COPILOT_HOME-relative config.json", got)
+	}
+	if !h.SupportsAsk() {
+		t.Errorf("SupportsAsk() = false, want true now that the ask surface is fixture-backed")
+	}
+	// Buffered only: Copilot's incremental JSONL surface is a separate contract
+	// this wave does not claim, so the ask flow must keep its buffered path.
+	if h.SupportsAskStream() {
+		t.Errorf("SupportsAskStream() = true, want false for the buffered ask wave")
+	}
 	for name, got := range map[string]bool{
-		"SupportsConvs":            h.SupportsConvs(),
-		"SupportsHooks":            h.SupportsHooks(),
-		"SupportsAsk":              h.SupportsAsk(),
-		"SupportsSandbox":          h.SupportsSandbox(),
 		"SupportsBuiltinOSSandbox": h.SupportsBuiltinOSSandbox(),
-		"SupportsApproval":         h.SupportsApproval(),
 		"SupportsToolGovernance":   h.SupportsToolGovernance(),
 		"SupportsAutoReview":       h.SupportsAutoReview(),
 		"SupportsAskTimeout":       h.SupportsAskTimeout(),
-		"SupportsDirTrust":         h.SupportsDirTrust(),
 		"SupportsBackgroundShells": h.SupportsBackgroundShells(),
 		"SupportsMonitors":         h.SupportsMonitors(),
 		"UsesAuthoritativeServer":  h.UsesAuthoritativeServer(),
@@ -62,8 +154,17 @@ func TestCopilotDescriptor(t *testing.T) {
 			t.Errorf("%s() = true, want false for the minimal Copilot wave", name)
 		}
 	}
-	if h.TclaudeLayerMode != "" {
-		t.Fatalf("TclaudeLayerMode = %q, want \"\" so tclaude-layer fails closed", h.TclaudeLayerMode)
+	// SupportsApproval and SupportsSandbox are checked separately from the
+	// deferred set above, for the same reason: both catalogs exist, and both
+	// were promoted only once the pinned binary proved what they claim.
+	if !h.SupportsApproval() {
+		t.Error("SupportsApproval() = false, want true now that the approval catalog is measured")
+	}
+	// SupportsSandbox is checked separately from the deferred set above: the
+	// catalog exists, but what it selects is an ASSERTION about Copilot's own
+	// wall, never a lever that moves it.
+	if !h.SupportsSandbox() {
+		t.Error("SupportsSandbox() = false, want true now that the assert-off catalog exists")
 	}
 	// The conv-id is knowable before launch (`--session-id`), so the daemon may
 	// enroll the agent up front — and correspondingly Copilot needs no seeded
@@ -87,6 +188,13 @@ func TestCopilotLifecycleContract(t *testing.T) {
 	}
 	if got := h.Life.SoftExitCommand(); got != "/exit" {
 		t.Fatalf("SoftExitCommand() = %q, want %q", got, "/exit")
+	}
+	// Copilot's TUI discards a slash command typed while it is busy and lets
+	// an Enter meant for it accept a permission dialog's default entry
+	// instead, so the soft exit is preceded by a cancel. Measured against
+	// 1.0.77; see copilotfixture's soft-exit scenario.
+	if got := h.Life.SoftExitPrefixKeys(); len(got) != 1 || got[0] != "C-c" {
+		t.Fatalf("SoftExitPrefixKeys() = %q, want [C-c]", got)
 	}
 	// `/remote [on|off]` is directional; the toggle contract cannot express it,
 	// so remote control stays unsupported rather than half-wired.
@@ -114,6 +222,12 @@ func TestCopilotLifecycleContract(t *testing.T) {
 func TestCopilotBuildCommand(t *testing.T) {
 	s := copilotSpawner{}
 	const uuid = "11111111-2222-3333-4444-555555555555"
+	// Every Copilot launch is prefixed with the ambient COPILOT_ALLOW_ALL
+	// scrub, so the table spells it once here rather than in twelve literals.
+	// TestCopilotBuildCommandScrubsAmbientAllowAll pins the prefix itself,
+	// including its position relative to EnvExports — this helper deliberately
+	// assumes nothing about it beyond concatenation.
+	cp := func(rest string) string { return copilotEnvScrub + rest }
 
 	tests := []struct {
 		name string
@@ -123,61 +237,97 @@ func TestCopilotBuildCommand(t *testing.T) {
 		{
 			name: "bare launch omits every unset flag",
 			spec: SpawnSpec{},
-			want: "copilot",
+			want: cp("copilot"),
 		},
 		{
-			name: "env exports are prepended verbatim",
+			name: "env exports are prepended verbatim, ahead of the scrub",
 			spec: SpawnSpec{EnvExports: "export A=1; "},
-			want: "export A=1; copilot",
+			want: "export A=1; unset COPILOT_ALLOW_ALL; copilot",
 		},
 		{
 			name: "a pinned executable path replaces the PATH lookup",
 			spec: SpawnSpec{ExecutablePath: "/opt/gh copilot/copilot"},
-			want: "'/opt/gh copilot/copilot'",
+			want: cp("'/opt/gh copilot/copilot'"),
 		},
 		{
 			name: "fresh launch carries the preset id, name and first turn",
 			spec: SpawnSpec{SessionID: uuid, Name: "review bot", InitialPrompt: "hello there"},
-			want: "copilot --session-id " + uuid + " --name='review bot' -i 'hello there'",
+			want: cp("copilot --session-id " + uuid + " --name='review bot' -i 'hello there'"),
 		},
 		{
 			name: "resume binds the exact id with the documented equals form",
 			spec: SpawnSpec{ResumeID: uuid},
-			want: "copilot --resume=" + uuid,
+			want: cp("copilot --resume=" + uuid),
 		},
 		{
 			name: "resume never emits --session-id or --name alongside it",
 			spec: SpawnSpec{ResumeID: uuid, SessionID: "other", Name: "renamed"},
-			want: "copilot --resume=" + uuid,
+			want: cp("copilot --resume=" + uuid),
 		},
 		{
 			name: "resume still submits an initial prompt",
 			spec: SpawnSpec{ResumeID: uuid, InitialPrompt: "carry on"},
-			want: "copilot --resume=" + uuid + " -i 'carry on'",
+			want: cp("copilot --resume=" + uuid + " -i 'carry on'"),
 		},
 		{
 			name: "model and effort use the documented equals form",
 			spec: SpawnSpec{Model: "claude-sonnet-4.6", Effort: "high"},
-			want: "copilot --model=claude-sonnet-4.6 --effort=high",
+			want: cp("copilot --model=claude-sonnet-4.6 --effort=high"),
 		},
 		{
 			name: "pass-through args are quoted individually with no -- separator",
 			spec: SpawnSpec{ExtraArgs: []string{"--log-level=debug", "a b"}},
-			want: "copilot --log-level=debug 'a b'",
+			want: cp("copilot --log-level=debug 'a b'"),
 		},
 		{
 			name: "the prompt is one quoted arg, emitted after pass-through args",
 			spec: SpawnSpec{ExtraArgs: []string{"--no-color"}, InitialPrompt: "fix $HOME; rm -rf /"},
-			want: "copilot --no-color -i 'fix $HOME; rm -rf /'",
+			want: cp("copilot --no-color -i 'fix $HOME; rm -rf /'"),
+		},
+		{
+			name: "the default policy renders the two measured nonblocking flags",
+			spec: SpawnSpec{ApprovalPolicy: CopilotApprovalAllowTools},
+			want: cp("copilot --allow-all-tools --no-ask-user"),
+		},
+		{
+			name: "inherit renders no permission flags",
+			spec: SpawnSpec{ApprovalPolicy: CopilotApprovalInherit},
+			want: cp("copilot"),
+		},
+		{
+			// Permission flags belong to tclaude, so they precede the operator's
+			// own pass-through args and Copilot's last-wins parsing lets those
+			// args still have the final word. `-i` stays last regardless.
+			name: "permission flags sit before pass-through args and the prompt",
+			spec: SpawnSpec{
+				ApprovalPolicy: CopilotApprovalAllowTools,
+				Model:          "claude-sonnet-4.6",
+				ExtraArgs:      []string{"--no-color"},
+				InitialPrompt:  "go",
+			},
+			want: cp("copilot --model=claude-sonnet-4.6 --allow-all-tools --no-ask-user --no-color -i go"),
+		},
+		{
+			name: "a resumed launch renders the same policy as a fresh one",
+			spec: SpawnSpec{ResumeID: uuid, ApprovalPolicy: CopilotApprovalAllowTools},
+			want: cp("copilot --resume=" + uuid + " --allow-all-tools --no-ask-user"),
+		},
+		{
+			// A Codex/Claude token can only reach here through a caller that
+			// skipped validation. Rendering the Copilot default for it would
+			// promote a posture nobody selected, so it renders nothing.
+			name: "an unrecognized approval token renders no permission flags",
+			spec: SpawnSpec{ApprovalPolicy: "never"},
+			want: cp("copilot"),
 		},
 		{
 			name: "contracts copilot does not implement are ignored, not approximated",
 			spec: SpawnSpec{
-				SandboxMode: "read-only", ApprovalPolicy: "never", AutoReview: true,
+				SandboxMode: "read-only", AutoReview: true,
 				RemoteControl: true, BypassHookTrust: true, PermissionProfile: "tclaude-agent",
 				AskUserQuestionTimeout: "5m", StrongNestedSandbox: true,
 			},
-			want: "copilot",
+			want: cp("copilot"),
 		},
 	}
 
@@ -304,16 +454,41 @@ func TestCopilotValidateEffort(t *testing.T) {
 	if got, err := m.ValidateEffort(""); got != "" || err != nil {
 		t.Fatalf("ValidateEffort(\"\") = (%q, %v), want (\"\", nil)", got, err)
 	}
-	// Copilot's documented levels are exactly tclaude's, forwarded verbatim.
-	for _, level := range []string{"low", "medium", "high", "xhigh", "max"} {
+	// Copilot's documented levels include two values outside the common
+	// Claude/Codex catalog; all are forwarded verbatim after normalization.
+	wantLevels := []string{"none", "minimal", "low", "medium", "high", "xhigh", "max"}
+	for _, level := range wantLevels {
 		if got, err := m.ValidateEffort(strings.ToUpper(level)); got != level || err != nil {
 			t.Fatalf("ValidateEffort(%q) = (%q, %v), want (%q, nil)", level, got, err, level)
 		}
 	}
-	if !slices.Equal(m.EffortLevels(), []string{"low", "medium", "high", "xhigh", "max"}) {
-		t.Fatalf("EffortLevels() = %v", m.EffortLevels())
+	if !slices.Equal(m.EffortLevels(), wantLevels) {
+		t.Fatalf("EffortLevels() = %v, want %v", m.EffortLevels(), wantLevels)
 	}
 	if _, err := m.ValidateEffort("ultra"); err == nil {
 		t.Fatal("ValidateEffort(\"ultra\") must be refused")
 	}
+}
+
+// TestCopilotHarnessRefusesBuiltinOSSandbox pins the TCL-977 capability answer:
+// Copilot's own command sandboxing does not satisfy SupportsBuiltinOSSandbox, so
+// an explicit harness-builtin implementation is refused — and the refusal names
+// the property Copilot is missing rather than denying it has anything.
+//
+// The measurements this rests on live in
+// copilotfixture/sandbox_native_smoke_test.go, against the real pinned binary;
+// the reasoning lives beside the descriptor in copilot_sandbox_native.go. This
+// test needs neither, which is why it sits here with the code it covers.
+func TestCopilotHarnessRefusesBuiltinOSSandbox(t *testing.T) {
+	copilot, ok := Get(CopilotName)
+	require.True(t, ok)
+	require.False(t, copilot.SupportsBuiltinOSSandbox())
+
+	err := ValidateHarnessBuiltinOSSandbox(copilot)
+	require.Error(t, err)
+	require.True(t, IsBuiltinOSSandboxInvalid(err))
+	assert.Contains(t, err.Error(), "built-in file edits are checked by an in-process policy",
+		"the refusal must name the property Copilot is missing; a flat "+
+			"\"no built-in OS sandbox\" reads as a gap in tclaude to an operator "+
+			"who can see the feature in their own CLI")
 }

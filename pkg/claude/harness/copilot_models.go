@@ -5,8 +5,6 @@ import (
 	"slices"
 	"strings"
 	"unicode"
-
-	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 )
 
 // copilotKnownModels is a SUGGESTION list, not an allow-list. It mirrors the
@@ -17,14 +15,31 @@ import (
 // `auto` leads because it is the choice that never goes stale.
 var copilotKnownModels = []string{
 	"auto",
+	"claude-sonnet-5",
 	"claude-sonnet-4.6",
+	"claude-sonnet-4.5",
 	"claude-haiku-4.5",
+	"claude-fable-5",
+	"claude-opus-5",
+	"claude-opus-4.8",
+	"claude-opus-4.8-fast",
+	"claude-opus-4.7",
+	"claude-opus-4.6",
+	"claude-opus-4.5",
+	"gpt-5.6-sol",
+	"gpt-5.6-terra",
+	"gpt-5.6-luna",
+	"gpt-5.5",
 	"gpt-5.4",
 	"gpt-5.3-codex",
+	"gpt-5.4-mini",
+	"gpt-5-mini",
+	"mai-code-1-flash-picker",
 	"gemini-3.1-pro-preview",
-	"gemini-3.5-flash",
 	"gemini-3.6-flash",
-	"mai-code-1-flash",
+	"gemini-3.5-flash",
+	"grok-4.5",
+	"kimi-k2.7-code",
 }
 
 // copilotMaxModelLen bounds a model token. Copilot's own ids are far shorter;
@@ -50,6 +65,20 @@ const copilotMaxModelLen = 128
 // does NOT curate an allowed character set — a custom/BYOK id tclaude has
 // never seen must still be forwardable.
 type copilotModels struct{}
+
+// copilotEffortLevels is the exact `--effort` vocabulary advertised by the
+// pinned Copilot CLI release (1.0.77). It intentionally lives beside the
+// Copilot catalog rather than widening common.ValidEffortLevels: Claude Code
+// and Codex have their own, separately pinned vocabularies.
+var copilotEffortLevels = []string{
+	"none",
+	"minimal",
+	"low",
+	"medium",
+	"high",
+	"xhigh",
+	"max",
+}
 
 // ValidateModel normalizes a model token for `copilot --model=<model>`.
 // Empty stays empty → the spawner omits the flag and Copilot uses its own
@@ -77,15 +106,21 @@ func (copilotModels) ValidateModel(s string) (string, error) {
 	return s, nil
 }
 
-// ValidateEffort accepts tclaude's effort levels. Copilot's documented
-// `--effort=LEVEL` values (low, medium, high, xhigh, max) are exactly
-// tclaude's set, so the validated token is forwarded verbatim — no per-model
-// remapping of the kind Codex's scale needs.
+// ValidateEffort accepts Copilot's documented `--effort=LEVEL` values and
+// forwards the normalized token verbatim. Empty remains empty so the spawner
+// omits the flag and Copilot performs its own automatic selection.
 func (copilotModels) ValidateEffort(s string) (string, error) {
-	return clcommon.ValidateEffort(s)
+	s = strings.ToLower(strings.TrimSpace(s))
+	if s == "" {
+		return "", nil
+	}
+	if !slices.Contains(copilotEffortLevels, s) {
+		return "", fmt.Errorf("invalid effort %q: must be one of %s", s, strings.Join(copilotEffortLevels, ", "))
+	}
+	return s, nil
 }
 
 // Models returns a copy of the curated suggestions. ValidateModel remains the
 // authority and accepts ids outside this list.
 func (copilotModels) Models() []string       { return slices.Clone(copilotKnownModels) }
-func (copilotModels) EffortLevels() []string { return slices.Clone(clcommon.ValidEffortLevels) }
+func (copilotModels) EffortLevels() []string { return slices.Clone(copilotEffortLevels) }

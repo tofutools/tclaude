@@ -15,9 +15,11 @@ import (
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/conv"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/resumeprovenance"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 // Flow wraps a World with a small Given/When/Then DSL so flow tests
@@ -168,12 +170,72 @@ func recordLaunchPosture(label string, args clcommon.SpawnArgs) error {
 // settings.json gets the same answer a real launch under that config would.
 // An unknown harness tag simply records nothing, which is what a harness with
 // no verdict does anyway.
-func resolveLaunchOSSandbox(harnessName, sandboxMode, chosenBy, cwd string) harness.LaunchOSSandbox {
+// It is implementation-aware for the same reason production is: an outer-layer
+// launch's verdict is about TCLAUDE's wall, not the harness's, and production
+// replaces the harness verdict wholesale for one (session/new.go). Deriving it
+// from the harness mode instead would record `off` for a tclaude-layer launch
+// — the harness's inner wall is deliberately stood down there — and hand the
+// dashboard badge the exact opposite of the truth.
+//
+// The modelled outer launch is the host-open, host-inherited-root one, which is
+// what a spawn resolves to when its profile declares no network or socket
+// rules. A constructed-root (isolated/filtered) launch's verdict is not
+// modelled; flow tests asserting those postures drive the real resolvers
+// directly. Host capability is likewise not re-probed here: SandboxLayerSim
+// already governs whether a launch reaches a spawner at all.
+func resolveLaunchOSSandbox(
+	harnessName, sandboxMode, chosenBy, cwd, implementation string,
+) harness.LaunchOSSandbox {
 	h, err := harness.Resolve(harnessName)
 	if err != nil {
 		return harness.LaunchOSSandbox{}
 	}
+	switch normalized, implErr := sandboxpolicy.NormalizeImplementation(implementation); {
+	case implErr != nil:
+	case normalized == sandboxpolicy.ImplementationStacked:
+		// Production records the placeholder verdict verbatim: the nested
+		// engine's live round-trip is not yet part of the launch.
+		return harness.LaunchOSSandbox{
+			State:  "off",
+			Source: "stacked requested; live nested engine round-trip pending",
+		}
+	case normalized == sandboxpolicy.ImplementationTclaudeLayer:
+		return session.TclaudeLayerLaunchOSSandboxForHarness(
+			h.Name,
+			sandboxpolicy.NetworkHostOpen,
+			sandboxpolicy.RootHostInherited,
+			sandboxpolicy.NetworkEngineUnset,
+		)
+	}
 	return harness.ResolveLaunchOSSandbox(h, sandboxMode, chosenBy, cwd)
+}
+
+// launchSandboxMode is what a simulated spawner PERSISTS as its session row's
+// sandbox mode, and it exists because `args.Sandbox` is the REQUESTED mode
+// while production records the mode the selected implementation launches
+// under. `tclaude session new` — the process these spawners stand in for —
+// runs the request through harness.ResolveSandboxImplementationMode before it
+// writes the row, so a simulator that persisted the request would leave flow
+// tests asserting a posture no production row ever holds (TCL-989).
+//
+// A harness or implementation the resolver rejects records the requested mode
+// unchanged: the launch boundaries refuse those combinations long before a row
+// is written, so there is no production value to mirror, and failing here would
+// turn a validation test into a simulator panic.
+func launchSandboxMode(harnessName, sandboxMode, implementation string) string {
+	h, err := harness.Resolve(harnessName)
+	if err != nil {
+		return sandboxMode
+	}
+	normalized, err := sandboxpolicy.NormalizeImplementation(implementation)
+	if err != nil {
+		return sandboxMode
+	}
+	resolved, err := harness.ResolveSandboxImplementationMode(h, sandboxMode, normalized)
+	if err != nil {
+		return sandboxMode
+	}
+	return resolved
 }
 
 // SpawnNew builds the harness-appropriate pane sim, writes the SessionRow
@@ -188,6 +250,9 @@ func (s *simSpawner) SpawnNew(args clcommon.SpawnArgs) error {
 	}
 	if args.Harness == codexHarnessName {
 		return s.spawnNewCodex(args)
+	}
+	if args.Harness == copilotHarnessName {
+		return s.spawnNewCopilot(args)
 	}
 	label := args.Label
 	// The launch-enrollment spawn path presets the conv-id (claude
@@ -265,7 +330,9 @@ func (s *simSpawner) SpawnNew(args clcommon.SpawnArgs) error {
 	// in time. The pane is still registered so it behaves like a real
 	// slow-to-record launch, not a dead one.
 	if !s.w.SkipSpawnRow {
-		launchOSSandbox := resolveLaunchOSSandbox(args.Harness, args.Sandbox, args.SandboxChosenBy, cc.Cwd)
+		sandboxMode := launchSandboxMode(args.Harness, args.Sandbox, args.SandboxImplementation)
+		launchOSSandbox := resolveLaunchOSSandbox(
+			args.Harness, sandboxMode, args.SandboxChosenBy, cc.Cwd, args.SandboxImplementation)
 		if err := saveSessionWithResumeProvenance(&db.SessionRow{
 			ID:                    label,
 			TmuxSession:           label,
@@ -273,7 +340,7 @@ func (s *simSpawner) SpawnNew(args clcommon.SpawnArgs) error {
 			Cwd:                   cc.Cwd,
 			Status:                "running",
 			Harness:               args.Harness,
-			SandboxMode:           args.Sandbox,
+			SandboxMode:           sandboxMode,
 			SandboxImplementation: args.SandboxImplementation,
 			SandboxModeSource:     args.SandboxChosenBy,
 			OSSandboxState:        launchOSSandbox.State,
@@ -316,6 +383,9 @@ func (s *simSpawner) SpawnResume(args clcommon.SpawnArgs) error {
 	}
 	if args.Harness == codexHarnessName {
 		return s.spawnResumeCodex(args)
+	}
+	if args.Harness == copilotHarnessName {
+		return s.spawnResumeCopilot(args)
 	}
 	convID := args.ConvID
 	cc := s.w.CCs.GetByConvID(convID)
@@ -375,7 +445,9 @@ func (s *simSpawner) SpawnResume(args clcommon.SpawnArgs) error {
 	label := generateResumeLabel()
 	// Resume mints a fresh session row / TCLAUDE_SESSION_ID; track it.
 	cc.SessionID = label
-	launchOSSandbox := resolveLaunchOSSandbox(args.Harness, args.Sandbox, args.SandboxChosenBy, cc.Cwd)
+	sandboxMode := launchSandboxMode(args.Harness, args.Sandbox, args.SandboxImplementation)
+	launchOSSandbox := resolveLaunchOSSandbox(
+		args.Harness, sandboxMode, args.SandboxChosenBy, cc.Cwd, args.SandboxImplementation)
 	if err := saveSessionWithResumeProvenance(&db.SessionRow{
 		ID:                    label,
 		TmuxSession:           label,
@@ -383,7 +455,7 @@ func (s *simSpawner) SpawnResume(args clcommon.SpawnArgs) error {
 		Cwd:                   cc.Cwd,
 		Status:                "running",
 		Harness:               args.Harness,
-		SandboxMode:           args.Sandbox,
+		SandboxMode:           sandboxMode,
 		SandboxImplementation: args.SandboxImplementation,
 		SandboxModeSource:     args.SandboxChosenBy,
 		OSSandboxState:        launchOSSandbox.State,
@@ -516,7 +588,12 @@ func (s *simSpawner) spawnNewCodex(args clcommon.SpawnArgs) error {
 		// The tag the whole soft-stop / resume / identity path keys on:
 		// harnessForConv resolves this to the Codex harness so a stop
 		// injects `/quit`, and resume relaunches `--harness codex`.
-		Harness:               codexHarnessName,
+		Harness: codexHarnessName,
+		// Recorded for the same reason the Claude branch records it: production's
+		// `session new` persists the mode the implementation launches under, and a
+		// Codex row that carried no mode at all left the sandbox-lineage guard
+		// reading "unknown" for a launch that always has one (TCL-989).
+		SandboxMode:           launchSandboxMode(codexHarnessName, args.Sandbox, args.SandboxImplementation),
 		SandboxImplementation: args.SandboxImplementation,
 	}); err != nil {
 		return err
@@ -567,7 +644,7 @@ func (s *simSpawner) spawnResumeCodex(args clcommon.SpawnArgs) error {
 		Status:                 "running",
 		AskUserQuestionTimeout: args.AskUserQuestionTimeout,
 		Harness:                codexHarnessName,
-		SandboxMode:            args.Sandbox,
+		SandboxMode:            launchSandboxMode(codexHarnessName, args.Sandbox, args.SandboxImplementation),
 		SandboxImplementation:  args.SandboxImplementation,
 		EffectiveSandbox:       args.EffectiveSandbox,
 		ApprovalPolicy:         args.Approval,
@@ -992,6 +1069,21 @@ func (f *Flow) Resume(convID string) ResumeResp {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		f.T.Fatalf("Resume decode: %v body=%s", err, rec.Body.String())
 	}
+	return resp
+}
+
+// ResumeTolerating drives POST /v1/agent/{conv}/resume and returns the outcome
+// WITHOUT fatal-on-error, so tests can exercise the refusal paths — a launch
+// posture that no longer verifies, an unavailable host capability — and inspect
+// the daemon's typed failure. Mirrors CloneWith / ReincarnateWith. Resume above
+// stays fatal-on-error, since most callers want a resume that worked.
+func (f *Flow) ResumeTolerating(convID string) ResumeResp {
+	f.T.Helper()
+	rec := f.do(http.MethodPost, "/v1/agent/"+convID+"/resume", nil)
+	var resp ResumeResp
+	resp.Code = rec.Code
+	resp.Raw = rec.Body.Bytes()
+	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
 	return resp
 }
 

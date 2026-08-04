@@ -124,14 +124,14 @@ func TestSandboxProfileReadExclusionCatalog(t *testing.T) {
 	require.NotEmpty(t, catalog.GlobalNetwork)
 	assert.Equal(t, "api.example.com", catalog.GlobalNetwork[0]["entry"].(map[string]any)["domain"])
 	require.NotEmpty(t, catalog.GlobalSockets)
-	require.Len(t, catalog.NetworkPacks, 7)
+	require.Len(t, catalog.NetworkPacks, 8)
 	packIDs := make([]string, 0, len(catalog.NetworkPacks))
 	for _, pack := range catalog.NetworkPacks {
 		packIDs = append(packIDs, pack.ID)
 	}
 	assert.Equal(t, []string{
 		"net-local", "net-anthropic", "net-openai-codex", "net-openai-chatgpt",
-		"net-github", "net-go-modules", "net-npm",
+		"net-github-copilot", "net-github", "net-go-modules", "net-npm",
 	}, packIDs)
 	assert.Equal(t, []sandboxpolicy.NetworkAllowEntry{{Loopback: true}},
 		catalog.NetworkPacks[0].Entries)

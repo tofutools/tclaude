@@ -69,13 +69,16 @@ type PaneSim interface {
 	Shutdown()
 }
 
-// Both harness simulators satisfy PaneSim, so TmuxSim routes to either.
-// Only CCSim renders a footer (paneRenderer) — Codex has no remote control,
-// so it is never captured for the /rc pill.
+// All three harness simulators satisfy PaneSim, so one TmuxSim routes to any
+// of them. Two implement paneRenderer: CCSim renders a footer carrying the
+// remote-control pill, and CopilotSim renders whichever permission dialog it is
+// parked on. Codex has neither, so it is never captured.
 var (
 	_ PaneSim      = (*CCSim)(nil)
 	_ PaneSim      = (*CodexSim)(nil)
+	_ PaneSim      = (*CopilotSim)(nil)
 	_ paneRenderer = (*CCSim)(nil)
+	_ paneRenderer = (*CopilotSim)(nil)
 )
 
 // TmuxSim is the test-time stand-in for clcommon.LiveTmux. It
@@ -141,6 +144,12 @@ type tmuxSession struct {
 	exitStatus     string
 	exitSignal     string
 	exitGeneration string
+	// killResistant models the pane real tmux cannot take down on its own:
+	// kill-pane/kill-session report success, the harness process keeps
+	// running, and only an OS signal ends it. It exists for the soft-exit
+	// escalation ladder, whose last two rungs are unreachable — and so
+	// untestable — against a simulator where a tmux kill always works.
+	killResistant bool
 }
 
 func newTmuxSim() *TmuxSim {
@@ -682,6 +691,11 @@ func (t *TmuxSim) killSession(target string) {
 		return
 	}
 	t.mu.Lock()
+	if s := t.sessions[name]; s != nil && s.killResistant {
+		// Reports success to the caller (as tmux does) and changes nothing.
+		t.mu.Unlock()
+		return
+	}
 	s, ok := t.sessions[name]
 	delete(t.sessions, name)
 	for tty, sessionName := range t.clients {
@@ -693,6 +707,30 @@ func (t *TmuxSim) killSession(target string) {
 	if ok && s.pane != nil {
 		s.pane.Shutdown()
 	}
+}
+
+// SetKillResistantForTest makes name's pane survive tmux kill-pane and
+// kill-session: both keep reporting success while the session stays alive.
+// KillBySignalForTest is then the only way to end it, which is how a scenario
+// drives the escalation ladder past its tmux rung onto the signal rungs.
+func (t *TmuxSim) SetKillResistantForTest(name string, resistant bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if s := t.sessions[name]; s != nil {
+		s.killResistant = resistant
+	}
+}
+
+// KillBySignalForTest ends a kill-resistant session the way a real SIGKILL
+// would: the pane process dies and takes the tmux session with it. A test
+// calls it from the stub standing in for the daemon's process signalling.
+func (t *TmuxSim) KillBySignalForTest(name string) {
+	t.mu.Lock()
+	if s := t.sessions[name]; s != nil {
+		s.killResistant = false
+	}
+	t.mu.Unlock()
+	t.killSession(name)
 }
 
 // AttachClient registers a simulated tmux client tty on sessionName.

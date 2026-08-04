@@ -51,6 +51,10 @@ func TestSeatbeltAssumptions(t *testing.T) {
 		"session.seatbeltSamePath, session.seatbeltPathContains, "+
 			"session.darwinSeatbeltLstatIdentity",
 		assumeCaseAndNFCIdentity)
+	runDarwinAssumption(t, "DefaultVolumeFoldsCaseAndNormalization",
+		"sandboxpolicy.GuardContainsOrEqual, sandboxpolicy.CanonicalHostSpelling, "+
+			"sandboxpolicy.volumeFoldsCase, harness.CodexSandboxCwdConflict",
+		assumeDefaultVolumeFolds)
 	runDarwinAssumption(t, "SymlinkPredicateChecksAliasAndTarget",
 		"session.expandSeatbeltAliasRegions and session.canonicalSeatbeltOwnedPath",
 		assumeSymlinkPredicateIdentity)
@@ -525,4 +529,83 @@ func contextWithCancel() (<-chan struct{}, func()) {
 
 func samePathBytes(a, b string) bool {
 	return filepath.Clean(a) == filepath.Clean(b)
+}
+
+// assumeDefaultVolumeFolds is the hard, non-skippable macOS evidence behind
+// TCL-981's case-insensitive containment work.
+//
+// The sandbox validator's spelling logic (sandboxpolicy.GuardContainsOrEqual and
+// CanonicalHostSpelling) is volume-adaptive by design: it must merge
+// case/normalization variants on a folding volume and keep them apart on a
+// case-sensitive one. Its unit tests are correspondingly volume-adaptive, which
+// means that on a case-sensitive runner they would quietly assert the
+// case-sensitive branch and pass without ever exercising the fix.
+//
+// This assumption is what makes that impossible. It asserts, against the real
+// CI filesystem, that the default macOS volume DOES fold — so the adaptive
+// tests running in the macOS test shards are genuinely taking their folding
+// branch. If a future runner image ships a case-sensitive boot volume, this
+// fails loudly here instead of hollowing out the sandbox coverage in silence.
+//
+// It also pins the two properties the validator's seams depend on: that a
+// case-flipped spelling of an existing directory reaches the same inode (which
+// is exactly how sandboxpolicy.volumeFoldsCase probes a volume), and that NFD
+// and NFC spellings do the same (which is the platform fact
+// sandboxpolicy.volumeFoldsNormalization asserts on darwin).
+func assumeDefaultVolumeFolds(t *testing.T) {
+	t.Helper()
+	root := canonicalTempDir(t)
+
+	dir := filepath.Join(root, "TclaudeCaseProbe")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("create case probe directory: %v", err)
+	}
+	dirInfo, err := os.Lstat(dir)
+	if err != nil {
+		t.Fatalf("lstat case probe directory: %v", err)
+	}
+
+	// This is the probe sandboxpolicy.volumeFoldsCase performs in production.
+	flipped := filepath.Join(root, "tCLAUDEcASEpROBE")
+	flippedInfo, err := os.Lstat(flipped)
+	if err != nil {
+		t.Fatalf("the default macOS volume at %q did not resolve the case-flipped "+
+			"spelling %q (%v).\n"+
+			"tclaude's sandbox spelling tests are volume-adaptive, so a case-sensitive "+
+			"volume here means the macOS test shards silently stop exercising the "+
+			"case-insensitive containment path (TCL-981). Fix the runner volume or "+
+			"stage this evidence on a case-insensitive image.",
+			root, flipped, err)
+	}
+	if !os.SameFile(dirInfo, flippedInfo) {
+		t.Fatalf("case-flipped spelling %q resolved to a different object than %q; "+
+			"the default macOS volume is case-sensitive", flipped, dir)
+	}
+
+	// Normalization insensitivity is a separate property, and darwin's
+	// volumeFoldsNormalization returns true as a platform fact. Pin that fact.
+	nfc := filepath.Join(root, norm.NFC.String("Café-probe"))
+	if err := os.MkdirAll(nfc, 0o755); err != nil {
+		t.Fatalf("create normalization probe directory: %v", err)
+	}
+	nfcInfo, err := os.Lstat(nfc)
+	if err != nil {
+		t.Fatalf("lstat normalization probe directory: %v", err)
+	}
+	nfd := filepath.Join(root, norm.NFD.String("Café-probe"))
+	if samePathBytes(nfc, nfd) {
+		t.Fatalf("the NFC and NFD spellings are byte-identical; the probe proves nothing")
+	}
+	nfdInfo, err := os.Lstat(nfd)
+	if err != nil {
+		t.Fatalf("the default macOS volume did not resolve the NFD spelling %q (%v); "+
+			"sandboxpolicy.volumeFoldsNormalization asserts APFS/HFS+ normalization "+
+			"insensitivity as a platform fact on darwin", nfd, err)
+	}
+	if !os.SameFile(nfcInfo, nfdInfo) {
+		t.Fatalf("NFD spelling %q resolved to a different object than NFC %q; "+
+			"the darwin normalization seam's platform assumption is wrong", nfd, nfc)
+	}
+
+	t.Logf("default macOS volume at %q folds both case and Unicode normalization", root)
 }

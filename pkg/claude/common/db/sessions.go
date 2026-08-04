@@ -1402,6 +1402,137 @@ func UpdateContextSnapshotTimed(
 		WHERE id = ?`, pct, tokensInput, tokensOutput, windowSize, sessionID)
 }
 
+// UpdateContextSnapshotForGeneration is UpdateContextSnapshot restricted to
+// one session GENERATION.
+//
+// A session id can be pruned and recreated while a caller still holds a
+// snapshot derived from the previous conversation — a read-through follower
+// that claimed the session, read a log, and only then came back to write. The
+// generation predicates make such a caller a no-op rather than letting it
+// stamp the old conversation's tokens and context window onto the new row.
+//
+// Reports whether the row was updated; false means the generation had already
+// moved on, which is a normal outcome and not an error. The relaunch
+// projection still runs, and is a no-op reprojection of whatever the row
+// currently holds.
+func UpdateContextSnapshotForGeneration(
+	sessionID, convID string,
+	createdAt time.Time,
+	pct float64,
+	tokensInput, tokensOutput, windowSize int64,
+) (bool, error) {
+	if pct == 0 && tokensInput == 0 && tokensOutput == 0 && windowSize == 0 {
+		return false, nil
+	}
+	// The guarded fast path already carries exactly these predicates, and
+	// additionally requires the stored window to equal the one being written.
+	// That covers the overwhelmingly common case (tokens advancing under an
+	// unchanged window) without touching relaunch profiles.
+	updated, err := UpdateContextSnapshotIfWindowUnchanged(
+		sessionID, convID, createdAt, pct, tokensInput, tokensOutput, windowSize)
+	if err != nil || updated {
+		return updated, err
+	}
+	// The window itself changed (or the row has none yet), so the full
+	// projecting write is needed — still generation-guarded.
+	//
+	// This does not go through execSessionUpdateAndProjectTimed: that helper
+	// discards the statement result, and inferring success by reading the row
+	// back afterwards would report a FALSE POSITIVE whenever a recreated
+	// generation happens to hold the same values. The returned bool is
+	// rows-affected semantics, so it is taken from the UPDATE itself, inside
+	// the same transaction as the projection.
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	result, err := tx.Exec(`UPDATE sessions
+		SET context_pct = ?, tokens_input = ?, tokens_output = ?, context_window_size = ?
+		WHERE id = ? AND conv_id = ? AND created_at = ?`,
+		pct, tokensInput, tokensOutput, windowSize,
+		sessionID, convID, dbTime(createdAt))
+	if err != nil {
+		return false, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if affected == 0 {
+		// The generation moved on. Nothing was written, so there is nothing to
+		// reproject and no transaction worth committing.
+		return false, nil
+	}
+	if err := projectSessionRelaunchProfilesTx(tx, sessionID, relaunchProjectionOptions{}); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// UpdateContextSnapshotAndModelEffortForGeneration persists a Copilot usage
+// projection and the model/effort observed on its newest call as one
+// generation-guarded update. The model and effort columns are rendered from
+// the same sessions row as the context meter, so keeping them in this
+// transaction prevents a stale sweep from partially updating a recreated
+// session.
+//
+// Unlike UpdateSessionEffort, an empty effort is meaningful here: Copilot
+// explicitly reports null for models without reasoning support, and that must
+// clear a value observed on the preceding call. An empty model remains a
+// no-op at the caller's fold layer, which retains the last non-empty model.
+func UpdateContextSnapshotAndModelEffortForGeneration(
+	sessionID, convID string,
+	createdAt time.Time,
+	pct float64,
+	tokensInput, tokensOutput, windowSize int64,
+	model, effort string,
+) (bool, error) {
+	if pct == 0 && tokensInput == 0 && tokensOutput == 0 && windowSize == 0 &&
+		model == "" && effort == "" {
+		return false, nil
+	}
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	result, err := tx.Exec(`UPDATE sessions
+		SET context_pct = ?, tokens_input = ?, tokens_output = ?, context_window_size = ?,
+			model = ?, effort_level = ?
+		WHERE id = ? AND conv_id = ? AND created_at = ?`,
+		pct, tokensInput, tokensOutput, windowSize, model, effort,
+		sessionID, convID, dbTime(createdAt))
+	if err != nil {
+		return false, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if affected == 0 {
+		return false, nil
+	}
+	if err := projectSessionRelaunchProfilesTx(tx, sessionID, relaunchProjectionOptions{}); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // UpdateContextSnapshotIfWindowUnchanged is the token-only fast path for a
 // caller that has already successfully projected this session generation and
 // context window. It intentionally does not touch durable relaunch profiles.

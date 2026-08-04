@@ -740,7 +740,11 @@ func defaultSandboxProfilePredictionTarget(groupName string) (sandboxProfileEnfo
 	if defaults.implementation == sandboxpolicy.ImplementationStacked {
 		sandboxMode = predictedBuiltinMode(defaults.harness.Name)
 	}
-	sandboxMode, err = harness.ResolveSandboxImplementationMode(
+	// The PREDICTION describes what the harness's own sandbox will be set to,
+	// which is what a capability evaluator can reason about; a tclaude-layer
+	// launch's forced single-wall mode would describe the stood-down inner wall
+	// instead (TCL-989).
+	sandboxMode, err = harness.ResolveHarnessNativeSandboxMode(
 		defaults.harness, sandboxMode, defaults.implementation)
 	if err != nil {
 		return sandboxProfileEnforcementTargetRequest{}, "", err
@@ -1164,6 +1168,6 @@ func resolveSandboxProfilePredictionMode(
 	if target.implementation == sandboxpolicy.ImplementationStacked {
 		mode = predictedBuiltinMode(target.harness.Name)
 	}
-	return harness.ResolveSandboxImplementationMode(
+	return harness.ResolveHarnessNativeSandboxMode(
 		target.harness, mode, target.implementation)
 }

@@ -247,6 +247,17 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 	// temporary debugging action would mint a permanently-unconfined sibling.
 	cloneSandbox, cloneSandboxSource := cloneSandboxPosture(relaunch)
 	cloneSSH := cloneSSHWorkaround(relaunch)
+	// A clone inherits the source's launch CHOICE, never its verification. For
+	// a harness whose own OS sandbox lives in mutable configuration, the
+	// source's recorded single-boundary posture says only what was true when
+	// the source launched — and a clone is precisely where a stale check would
+	// be invisible, because nobody restates the sandbox choice.
+	if fail := sandboxImplementationPostureFailure(
+		srcHarness, relaunch.SandboxImplementation); fail != nil {
+		return cloneSpawnResult{}, &cloneSpawnError{
+			Status: fail.Status, Code: fail.Kind, Msg: fail.Msg,
+		}
+	}
 	if _, fail := planSandboxProfileAccessForLaunch(
 		srcHarness, cloneSandbox, effectiveSandbox, relaunch.SandboxImplementation,
 		session.ModelTransportLaunchContext{Model: model, Cwd: cwd},
@@ -258,7 +269,8 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 			Msg:    fail.Msg,
 		}
 	}
-	codexGitCommonDirPinned := spawnUsesPinnedGitCommonDir(srcHarness, cloneSandbox)
+	codexGitCommonDirPinned := spawnUsesPinnedGitCommonDir(
+		srcHarness, cloneSandbox, relaunch.SandboxImplementation)
 	if codexGitCommonDirPinned && gitWriteDirs == nil {
 		if home, err := os.UserHomeDir(); err == nil {
 			gitWriteDirs = harness.GitWorktreeWriteDirs(cwd, codexGitCommonDir, home)
@@ -1085,13 +1097,15 @@ func runCloneOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 		}
 		cwd = resolved
 	}
-	codexGitCommonDir, gerr := spawnGitCommonDir(srcHarness, cloneSandbox, cwd)
+	codexGitCommonDir, gerr := spawnGitCommonDir(
+		srcHarness, cloneSandbox, relaunch.SandboxImplementation, cwd)
 	if gerr != nil {
 		writeError(w, http.StatusInternalServerError, "io", gerr.Error())
 		return
 	}
 	var gitWriteDirs []string
-	if spawnUsesPinnedGitCommonDir(srcHarness, cloneSandbox) {
+	if spawnUsesPinnedGitCommonDir(
+		srcHarness, cloneSandbox, relaunch.SandboxImplementation) {
 		if home, err := os.UserHomeDir(); err == nil {
 			gitWriteDirs = harness.GitWorktreeWriteDirs(cwd, codexGitCommonDir, home)
 		}

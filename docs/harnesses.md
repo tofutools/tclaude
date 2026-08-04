@@ -7,9 +7,10 @@ agentic CLI). **Claude Code, OpenAI Codex CLI, OpenCode, and GitHub Copilot CLI
 are registered harnesses.** OpenCode support covers the managed serve-and-attach
 launch path, its conversation store, ad-hoc ask, and per-session tool
 permissions; full status mapping remains intentionally capability-gated. Copilot
-is a deliberately minimal first wave — launch, exact resume, model/effort, and
-the in-pane control commands, and nothing else yet (see [GitHub Copilot CLI
-(first wave)](#github-copilot-cli-first-wave)). Claude remains the default so
+is a deliberately minimal first wave — launch, resume, model/effort, the
+in-pane control commands, hooks, a cold conversation store, the outer sandbox,
+event-log usage/context telemetry, and a measured approval posture, and nothing
+else yet (see [GitHub Copilot CLI (first wave)](#github-copilot-cli-first-wave)). Claude remains the default so
 existing commands and databases keep their historical behavior when no harness
 is recorded.
 
@@ -189,6 +190,7 @@ instead of slash-command injection).
 | **Rename** | ✅ in-pane `/rename` (writes the conversation file) | ✅ out-of-band (writes Codex's title store) | ✅ authenticated server API; local title cache when cold |
 | **Compact** | ✅ in-pane `/compact` | ✅ in-pane `/compact` | ✅ managed TUI API (`session.compact`, no keystrokes) |
 | **Graceful stop** | ✅ `/exit` | ✅ `/quit` | ✅ managed TUI API (`app.exit`, no keystrokes) |
+| **Soft-exit prefix keys** (`Lifecycle.SoftExitPrefixKeys`) | ➖ none needed | ➖ none needed | ➖ none needed (no keystrokes at all) |
 | **Remote control** ([guide](remote-control.md)) | ✅ Claude's built-in Remote Access (claude.ai/code + mobile app); arm per-agent, at spawn, or by profile/group default | ❌ no built-in remote access | ❌ no hosted relay |
 | **Reincarnate / clone** | ✅ | ✅ (rename degrades to the title store) | ✅ managed resume + title store |
 | **Hooks / live status** | ✅ `~/.claude/settings.json` | ✅ `~/.codex/hooks.json` (+ setup-managed trust) | ⚠️ managed liveness; full SSE mapping pending |
@@ -213,7 +215,7 @@ Legend: ✅ supported · ⚙️ available, opt-in / configured elsewhere · ⚠�
 ❌ not available.
 
 `copilot` is deliberately absent from the matrix above: its first wave
-implements only the top four rows. See below.
+implements only a few of these rows. See below.
 
 ### Group-route activation matrix
 
@@ -237,23 +239,71 @@ covers **interactive human sessions**:
 | Capability | `copilot` — GitHub Copilot CLI |
 |---|---|
 | **Spawn** | ✅ `copilot`, with a caller-preset conv-id (`--session-id <uuid>`), a launch-time name (`--name=`), and an optional first turn (`-i <prompt>`) |
-| **Resume** | ⚠️ `copilot --resume=<id>` (exact id only — never the picker, an id prefix, or a session name), but **only for a session you launched with an explicit `--session-id <uuid>`**: with no conversation store tclaude never discovers a Copilot conv-id on its own, so `--resume` has nothing to look up. Conversation discovery lands with the ConvStore wave |
-| **Model & effort at spawn** | ✅ `--model=` (including `auto`) and `--effort=` (`low`…`max`, the same levels as everywhere else in tclaude). Note `max`: the flag accepts the whole vocabulary, but the docs describe `max` as the highest-depth tier **for Anthropic models** — Copilot may reject it for a GPT model, so pair it with a model that has that tier |
-| **Rename / compact / graceful stop** | ✅ in-pane `/rename`, `/compact`, `/exit`. `/exit` closes the *current* session: with other sessions open in the same CLI it foregrounds the newest remaining one instead of quitting, so tclaude keeps its hard-kill fallback for a pane that doesn't actually exit |
-| **Everything else in the matrix** | ➖ not yet — no conversation store, hooks/live status, ad-hoc ask, sandbox, approval, tool governance, directory pre-trust, remote control, usage/cost, or status bar |
+| **Resume** | ✅ `copilot --resume=<id>` (exact id only on the CLI — never the picker, an id prefix, or a session name; tclaude resolves *its* own id prefixes to a full id first, via the conversation store below) |
+| **Model & effort at spawn** | ✅ `--model=` (including `auto`) and `--effort=` (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, as advertised by the pinned 1.0.77 CLI). Note `max`: the flag accepts the whole vocabulary, but the docs describe `max` as the highest-depth tier **for Anthropic models** — Copilot may reject it for a GPT model, so pair it with a model that has that tier |
+| **Rename / compact / graceful stop** | ✅ in-pane `/rename`, `/compact`, `/exit`. `/exit` closes the *current* session: with other sessions open in the same CLI it foregrounds the newest remaining one instead of quitting, so tclaude keeps its hard-kill fallback for a pane that doesn't actually exit. The exit is preceded by a **cancel keystroke** (`C-c`, `Lifecycle.SoftExitPrefixKeys`) — see below |
+| **Hooks / live status** | ✅ `<COPILOT_HOME>/hooks/tclaude.json` — a tclaude-**owned** drop-in file, merged by Copilot with the user's own hooks; no trust step, no `config.json` involvement. Registers `SessionStart`, `UserPromptSubmit`, `PostToolUse`, `Stop`, `SessionEnd`, so a pane reports working/idle per turn. See [below](#copilot-hooks) for what is deliberately left out |
+| **Conversation store** | ✅ cold list / resolve / cwd filter / title / existence, read from Copilot's own per-session `<COPILOT_HOME>/session-state/<id>/` files. No SQLite access at all — see [below](#copilot-conversation-store) |
+| **Sandbox** | ⚠️ `inherit` (default) / `off` — an *assertion*, not a lever. Copilot's own command sandbox has no launch flag, so tclaude can neither enable nor disable it; `off` means "verified not engaged" and is what `--sandbox-impl tclaude-layer` resolves to. See [below](#copilot-and-tclaudes-outer-sandbox). Copilot's *own* command sandboxing was separately evaluated and deliberately not advertised as a harness-builtin implementation — see [below](#copilots-own-command-sandboxing) |
+| **tclaude-layer (outer OS sandbox)** | ✅ Linux bubblewrap / macOS Seatbelt, with Copilot's pre-approved directory catalog composed into the mount plan |
+| **Model transport under a filtered network** | ⚠️ the default first-party GitHub Copilot route only (`api.githubcopilot.com`, `api.individual.githubcopilot.com`, `api.github.com`); the model host is assigned per account at token exchange, so only observed tiers are named and the rest stay denied. Every route-moving input is refused rather than followed, read from both settings files with the same precedence as the sandbox key |
+| **Directory pre-trust at spawn** ([below](#directory-trust-at-spawn)) | ✅ opt-in `trust_dir` appends the launch dir to `trustedFolders` in `<COPILOT_HOME>/config.json`. Copilot's modal blocks *before* any provider contact, so an unseeded detached pane never reaches its first turn |
+| **Approval / permissions** | ⚠️ `allow-tools` (default) / `inherit` / `yolo`. Three tokens, each rendering only flags measured against the pinned binary on a real terminal. None makes a Copilot pane unconditionally nonblocking — folder trust is unreachable from the argv even under `yolo` — and `yolo` without `--sandbox-impl tclaude-layer` leaves the agent with no file boundary at all, which tclaude warns about at spawn. See [below](#copilot-approvals-and-permissions) for exactly which prompt each one closes and which it leaves standing |
+| **Usage, cost & context** | ⚠️ followed incrementally from Copilot's durable event log, with a byte-offset checkpoint so a daemon restart resumes rather than rescans. Output tokens advance per turn (`assistant.message`); input tokens, context occupancy and window size advance only at an authoritative disclosure — a compaction, a truncation, or a shutdown — and nothing is written between them, so a real reading is never overwritten by a zero. Cost is carried in the **nano-AI units Copilot emits**; no USD figure is derived, because Copilot documents an AI credit as $0.01 in a different structure and nowhere states that one AIU is one credit |
+| **Ad-hoc ask** ([guide](ask.md)) | ✅ buffered `copilot -p` (capture) / `copilot -i` TUI (interactive), conv-id pre-minted (`--session-id`), resumed exactly (`--resume=<full uuid>`). See [below](#copilot-ask) |
+| **Live-streamed ask output** (print mode → a TTY) | ➖ buffered — the answer arrives whole at the end of the turn |
+| **Everything else in the matrix** | ➖ not yet — no tool governance, remote control, or status bar |
 
 Two consequences are worth stating plainly:
 
-- A Copilot conversation does **not** appear in `conv ls`, search, or the
-  dashboard's conversation views, and its pane shows no live status — those all
-  need the conversation store and hooks a later wave adds.
-- Copilot agents are not usable as detached agents in practice. Approval-lineage
-  classification fails closed for a harness with no approval catalog, so a
-  Copilot child is refused rather than spawned with an unproven posture.
+- Copilot conversations **do** appear in `conv ls` and resolve for resume, and
+  they now carry usage and context figures — but at the durable log's
+  resolution, not a live meter's. Truly per-call usage and context are emitted
+  on Copilot's stdout JSONL stream and never persisted, so reading them is a
+  transport integration rather than a file tracker, and remains out of scope.
+- Copilot agents are usable as detached agents in **one launch topology only**:
+  sandbox implementation `tclaude-layer` with mode `off` — tclaude's own OS wall
+  enforcing and Copilot's own (experimental, MXC) command sandbox asserted down,
+  so the launch has exactly one claimed boundary. Any other spelling is refused
+  as `sandbox_restricted` in both directions: a legacy row with no recorded
+  implementation, `harness-builtin` (which Copilot rejects outright — its modes
+  only *assert* its sandbox is off, so tclaude cannot advertise it as an OS
+  boundary), `stacked` (Copilot's own policy nested inside tclaude's, an
+  intersection nobody has reviewed), implementation `off`, and the `inherit`
+  mode, whose posture is decided by a settings file tclaude neither controls nor
+  is notified about.
 
-The restraint is deliberate rather than incidental. This adapter was written
-against the official GitHub documentation, without a Copilot binary available
-to record fixtures. Documented launch flags are a stable contract; a
+  The mode string alone cannot tell these apart — Copilot's single-wall mode and
+  its no-wall mode are both `off` — so the recorded **implementation** is what
+  separates a confined Copilot agent from an unconfined one, on the parent side
+  as well as the child side. A temporary dashboard sandbox unlock therefore
+  revokes a Copilot agent's spawn authority for as long as it is unlocked.
+
+  Which parents may mint that child: Claude `off`/`inherit`/`on`; Codex
+  `danger-full-access`/managed profile (not `workspace-write` or `read-only`);
+  OpenCode `off`/`access-control`/`tclaude-layer`; and another Copilot agent
+  already running the proven pair. A Copilot agent may itself spawn another
+  proven Copilot, a Claude `on` child, or a Codex `read-only`/`workspace-write`/
+  managed-profile child — no fully-open child, and no OpenCode child, since
+  tclaude's layer confines OpenCode through its authoritative server rather than
+  by wrapping the pane and no equivalence between the two has been proven.
+
+  Approval lineage remains a second, independent gate: an admitted sandbox pair
+  is still refused as `approval_restricted` if the child's posture cannot be
+  proven, which is what `inherit` means for this harness. Directory pre-trust is
+  not a gap — a detached child in tclaude's own verified default sibling
+  worktree is pre-trusted automatically, so it does not park on the modal, and
+  the write-proof that makes that exemption safe covers the repository write
+  paths the outer wall grants as well as the launch cwd. Elsewhere `trust_dir`
+  stays opt-in, so a spawn that does not ask for it still parks before the model
+  is contacted.
+
+The restraint is deliberate rather than incidental. This adapter was FIRST
+written against the official GitHub documentation alone, with no Copilot binary
+available to record fixtures — which is why so much of the matrix is still
+empty. Each row leaves that state only when the fixture lab below can prove it
+against the real pinned binary; hooks are the first to have done so.
+Documented launch flags are a stable contract; a
 session-state layout, a hook payload, or a sandbox/approval guarantee is not —
 and a descriptor that advertises a contract tclaude cannot honor is worse than
 one that advertises none, because callers detect an absent contract and degrade
@@ -267,6 +317,496 @@ Two Copilot options tclaude deliberately never emits: `--mouse` / `--no-mouse`
 (an explicit value is **persisted** to the user's configuration, so it is not
 a per-spawn flag), and `-p/--prompt` (headless mode, which exits after
 completion — a TUI pane wants `-i`).
+
+#### Copilot approvals and permissions
+
+Copilot's permission surface is not one gate. It is **five independent prompt
+sources**, and a posture is only honest about the ones it actually closes. Every
+statement below was measured against the pinned 1.0.77 binary on a real
+terminal, because permission behaviour is not observable without one — a
+headless run draws no dialog and so reports "no prompt" for a launch that would
+park a pane forever.
+
+| Prompt source | What closes it |
+|---|---|
+| Tool approval (per-command risk classification, not a tool allowlist) | `--allow-all-tools` |
+| The `ask_user` tool | `--no-ask-user` (removes the tool from the advertised catalog) |
+| URL access, from **either** consumer — the shell tool (`url-access`) and the `web_fetch` tool (`web-fetch-url-access`) | `--allow-all-tools` also closes this, measured separately for each consumer and measured *alone* for `web_fetch`, so the result is not creditable to `--no-ask-user` |
+| Directory access outside cwd + system temp | `--add-dir <dir>`, one per directory — or `--yolo`, which opens the axis wholesale |
+| Folder trust | **no launch flag at all** — a config-file write, opted into with `trust_dir` ([below](#directory-trust-at-spawn)) |
+
+tclaude exposes three tokens:
+
+- **`allow-tools`** (the default for a daemon-spawned, unattended pane) renders
+  `--allow-all-tools --no-ask-user`, plus one `--add-dir` per directory the
+  resolved sandbox profile grants.
+- **`inherit`** renders no permission flags at all: Copilot's own defaults plus
+  whatever your configuration persists. It is the faithful reconstruction of
+  every Copilot launch tclaude made before this catalog existed, and it is what
+  a pre-existing Copilot row relaunches as.
+- **`yolo`** renders `--yolo --no-ask-user` (plus the same `--add-dir` grants).
+  It is Copilot's widest posture and closes the directory axis the default
+  leaves open: a path outside every granted root no longer waits for a human.
+  Read the warning below before choosing it.
+
+Folder trust is the row in that table no approval token can reach — including
+`yolo` — and it is a separate contract rather than a gap: it is cleared by a
+pre-launch config write, which `trust_dir` performs when you opt in
+([below](#directory-trust-at-spawn)). A launch that does not opt in still parks
+on the modal whichever approval token it carries, because the modal fires before
+the CLI contacts the provider at all.
+
+Directory grants are rendered under **all three** tokens. They are the path axis
+rather than the approval axis: the grants come from the sandbox profile either
+way, and Copilot's own directory check would otherwise prompt for a directory
+tclaude's outer sandbox has already opened. Under `yolo` they are redundant to
+Copilot and are still rendered, so the recorded posture and the argv keep
+agreeing if the launch is later relaunched under a narrower token.
+
+**⚠ `yolo` without `--sandbox-impl tclaude-layer` leaves the agent unbounded.**
+Copilot's built-in file edits are not OS-confined, so for a launch with no outer
+wall the directory check *is* the file boundary — and `yolo` removes it. The
+sandbox profile's grants and denies then mean nothing to the agent, which can
+read and write anything the pane's user can. tclaude does not refuse that
+pairing (you asked for the token), but it warns about it wherever a spawn
+posture is resolved: `tclaude session new` on stderr, the daemon's spawn
+response, the dashboard spawn dialog's live warning region, and template/wave
+deploy notes — the same channel Claude Code's unsandboxed-autonomy warning uses.
+Under `tclaude-layer` the outer wall enforces the profile whatever Copilot's own
+checks believe, and no warning fires; that is the same reasoning by which a
+pass-through `--yolo` is *not* refused under `tclaude-layer`.
+
+What `--yolo` does and does not close is measured, not read off the help text
+(contract entry `yolo-permission-surface`): the unsafe command that blocks with
+no flags runs under `--yolo` alone, the out-of-grant path that blocks under
+`--allow-all-tools` is allowed under `--yolo`, and a fresh-`COPILOT_HOME` launch
+under `--yolo` still blocks on folder trust with zero provider requests. The
+`--allow-all` alias is the CLI's claim and is not what tclaude renders — this
+suite has already seen a documented alias (`COPILOT_ALLOW_ALL`) behave
+differently from the flag it documents.
+
+Approval lineage treats `yolo` as Copilot's `bypassPermissions`: an
+`allow-tools` agent cannot spawn a `yolo` child. That takes a human, or a parent
+that already holds unreviewed capability.
+
+**A deny nested inside a granted root refuses the launch** (without
+`--sandbox-impl tclaude-layer`). `--add-dir` has no negative counterpart —
+Copilot's path check takes grants only — so a profile that grants `~` and denies
+`~/.ssh` would collapse, on Copilot, to "grant `~`", and the denied subtree
+would stop prompting. Since Copilot's built-in edits are not OS-confined, that
+check is the only file boundary a launch without an outer wall has, so tclaude
+refuses rather than widening it silently. Under `tclaude-layer` the outer
+sandbox enforces the deny whatever Copilot's own check believes, and the launch
+is admitted.
+
+Two related behaviours are now measured in the permission contract:
+
+- Read and write roots are both handed to `--add-dir`, because
+  `add-dir-write-grant` proves on a PTY that the grant creates a fresh file and
+  reads back its exact content; the no-grant sibling remains blocked on the
+  directory dialog.
+- The directory dialog **survives `--allow-all-tools`**, as
+  `path-dialog-under-allow-all-tools` proves with a PTY row that asserts the
+  live, settled process, the single provider request, and the dialog naming the
+  out-of-grant target. This is the load-bearing evidence for the precise
+  `--add-dir` design and the deny-inside-a-grant refusal.
+
+Several things this deliberately does **not** do:
+
+- **No `--allow-all-paths`, `--allow-all` or `--yolo`.** The path flags work as
+  named, but Copilot's built-in file edits are not OS-confined, so outside a
+  `--sandbox-impl tclaude-layer` launch the path check is the *only* boundary on
+  what the agent can write. Grants stay precise.
+- **Not the `--deny-tool 'url()'` the plan proposed.** The plan this catalog
+  replaces put that spelling in the default. The real binary **rejects** it at
+  argument parse and exits 1 before contacting the provider, so it would have
+  killed every Copilot pane at launch. Empty parentheses are invalid for every
+  rule kind; the bare kind (`url`) and `kind(pattern)` forms parse.
+- **No URL deny at all, because none is needed.** `--allow-all-tools` closes the
+  URL prompt for *both* consumers: the shell path (contract `url-access`) and
+  the `web_fetch` tool (contract `web-fetch-url-access`, which closed the gap
+  the hermetic offline lab structurally could not reach). web_fetch really was a
+  third independent deadlock source, so the fail-closed posture held while it
+  was unmeasured was correct — it simply is not one the default has to spend a
+  deny rule on. A **working** blanket deny does exist if a launch wants one:
+  the bare kind `--deny-tool url` denies every URL at the permission layer and
+  beats a launch-time `--allow-all-tools`. That is **launch-time precedence
+  only** — whether it survives in-pane widening is not measured, so it is not a
+  durable boundary on this evidence, and the catalog renders it nowhere.
+- **No `AskTimeout` contract.** `--no-ask-user` removes the ask tool rather than
+  timing a dialog out, so there is no idle timeout to translate.
+- **No tool-governance contract.** `--allow-tool` / `--deny-tool` are a
+  pattern-compiler surface of their own; the approval catalog emits neither.
+
+**`COPILOT_ALLOW_ALL` is unset on every Copilot launch.** The variable is
+documented as the environment alias for `--allow-all-tools`, but it is measurably
+stronger: exported alone, with no flags at all, it also skipped the folder-trust
+dialog that no flag clears. Since tclaude forwards your environment into the
+pane, an operator who exports it would otherwise turn every tclaude-spawned
+Copilot pane into an allow-all session while tclaude recorded `inherit`. It is
+unset rather than pinned to a falsy value, so a future widening of the value
+parse cannot silently defeat it.
+
+**Pass-through args naming an option tclaude owns are refused.** Args you pass
+after `--` land on the same command line as the flags tclaude renders, so
+`tclaude session new --harness copilot -- --allow-all-paths` would run a pane
+broader than the posture tclaude wrote down — and approval lineage and relaunch
+both reason from that record. The same mismatch has two other shapes, so the
+audit covers all three:
+
+- **Permission and agent mode** — every Copilot permission, path, tool-catalog
+  or mode flag, plus `-p`/`--prompt` (headless mode, whose no-TTY permission
+  fallbacks are a separate and only partly measured set: tool approval
+  auto-*allows* headlessly while path access auto-*denies*, and neither
+  describes a pane).
+- **Identity** — the conversation (`--resume`/`-r`, `--session-id`,
+  `--continue`, `--connect`, a duplicate `-i`/`--interactive`), the working
+  directory (`-C`, `-w`/`--worktree`) and the Copilot home (`--config-dir`).
+  This is the sharpest group: tclaude pins the conversation id before the pane
+  starts and enrolls the agent against it, derives the folder-trust entry and
+  every path grant from the launch directory, and resolves `COPILOT_HOME` to
+  find the hook drop-in, the session-state tree, the trust store and the
+  settings its sandbox and model-transport gates read. A pass-through selector
+  moves the *pane* while all of that keeps describing where tclaude put it —
+  and `-C`/`--worktree` also widen paths, since Copilot grants its working
+  directory automatically.
+- **Runtime** — `--cloud`, `--server`, `--managed-server`, `--ui-server`,
+  `--headless`, `--acp` (and the `--stdio`/`--host`/`--port`/`--auth-token-env`
+  options that configure them). tclaude manages a local interactive TUI in a
+  tmux pane, and every contract it advertises for Copilot describes that pane.
+- **Metadata** — `--model`, `--effort`/`--reasoning-effort`, `--name`/`-n`.
+  These move no boundary, and
+  they are refused anyway: tclaude validates and records each one, so a
+  duplicate makes the dashboard, the usage accounting or the conversation title
+  describe a launch the pane is not running. Use tclaude's own options.
+
+Refusals apply in both the `--flag value` and `--flag=value` spellings (and the
+glued `-rID` short form), on resume as well as on a fresh launch, and each names
+the dedicated option that does the same job honestly. Ordinary args
+(`--log-level=debug`, `--no-color`, …) are unaffected. This is a refusal rather
+than a silent filter, and it does not rely on duplicate-flag ordering: nothing
+measured establishes what Copilot does with a contradictory or repeated option,
+so a launch that would depend on those semantics is refused instead of guessed
+at. The `flag-name-exactness` contract entry measures the audit's exact-name
+boundary against 1.0.77 for the sampled `--allow-all-tools` spellings: its
+prefix abbreviation, camelCase and `--no-` negation forms all exit as unknown
+options before provider contact. That probe does not enumerate every audited
+flag. The audit is not a universal firewall over Copilot's option surface — MCP, plugin and
+agent-selection options that tclaude neither renders nor records are outside it.
+
+**What tclaude records is the launch posture, not a durable boundary.** Copilot's
+in-pane commands (`/allow-all`, `/add-dir`, `/reset-allowed-tools`, `/settings`)
+mutate live permission state, and answers you tell Copilot to remember —
+`trustedFolders`, `allowedUrls` — persist to its configuration. One favourable
+exception was measured, and its **scope is the shell axis**: a launch-time
+`--deny-tool 'shell(…)'` rule **survives** an in-pane `/allow-all`, which confirms
+and reports "All permissions are now enabled" and then still refuses the denied
+tool. Denial precedence therefore holds at runtime, not merely at launch — for
+that axis. It says nothing about the other in-pane mutators, nothing about the
+URL axis (explicitly recorded as unmeasured for in-pane widening), and nothing
+about whether a deny also beats the ambient `COPILOT_ALLOW_ALL` promotion.
+tclaude does not generalize from it.
+
+#### Copilot and tclaude's outer sandbox
+
+Copilot ships a real OS sandbox — Microsoft Execution Containers (MXC), which
+uses bubblewrap on Linux and Seatbelt on macOS — but it is **experimental, off
+by default, and has no launch flag and no environment variable**. It is
+configured only by the `sandbox` key of two files under `COPILOT_HOME` and by
+the in-pane `/sandbox enable|disable`, which is itself only registered when
+experimental features are on (`copilot help sandbox`, pinned 1.0.77).
+
+Both files matter, and the **legacy one wins**. At startup the CLI migrates
+user settings out of `config.json` into `settings.json`, overwriting what was
+there, and rewrites `config.json` to a managed stub. So `config.json` is not
+dead legacy — it is a pending mutation of `settings.json` that applies to the
+launch you are about to start. Measured against 1.0.77: a `sandbox` key in
+either file engages the wall, and when both carry it, `config.json` decides.
+tclaude reads both.
+
+The replacement is **shallow, at the top level**. A `sandbox` object in
+`config.json` replaces `settings.json`'s whole `sandbox` object rather than
+merging into it, while unrelated top-level keys survive:
+
+```
+settings.json {"sandbox":{"enabled":true},"theme":"dark"}
+config.json   {"sandbox":{"addCurrentWorkingDirectory":true}}
+  -> merged   {"sandbox":{"addCurrentWorkingDirectory":true},"theme":"dark"}
+```
+
+That launch has *one* boundary — the `enabled: true` is gone — so tclaude
+allows it. Merging the two files per sub-key instead would refuse a launch that
+is exactly what the assert-off contract wants.
+
+That single fact shapes everything below. tclaude cannot switch Copilot's wall
+off for one launch, so running Copilot under `--sandbox-impl tclaude-layer`
+does not disable the inner sandbox — it **asserts** the inner sandbox is not
+engaged, and refuses the launch when it cannot verify that:
+
+| Copilot configuration | Result under `tclaude-layer` |
+|---|---|
+| Neither file, or files that do not mention `sandbox` | ✅ launches — the CLI documents the sandbox as disabled by default |
+| A migrated `config.json` stub (the ordinary settled install; its leading `//` lines are tolerated) | ✅ launches |
+| `sandbox.enabled: false` in the file that wins | ✅ launches |
+| `sandbox.enabled: true` in either file | ❌ refused — two stacked policies would make the effective confinement their unreviewed intersection while the recorded posture named one |
+| `config.json` says `true` while `settings.json` says `false` | ❌ refused — `config.json` wins, so the plain-text `false` is about to be overwritten |
+| A `config.json` `sandbox` block that omits `enabled`, over a `settings.json` that sets it `true` | ✅ launches — the block replaces wholesale, so `enabled` is gone |
+| A relative `COPILOT_HOME` | ❌ refused — tclaude and Copilot would resolve it against different working directories and inspect different files |
+| Unreadable, unparsable, or oddly shaped settings in **either** file (`"sandbox": true`, `"enabled": "true"`) | ❌ refused — an unverifiable posture, not an absent one |
+| `experimental: true` | ❌ refused — it registers the in-pane `/sandbox` command, so the wall could be switched on mid-session |
+| A pass-through `--experimental` argument | ❌ refused, for the same reason |
+
+tclaude never edits your `settings.json` and never relocates `COPILOT_HOME`
+to work around this. Both would be silent changes to state you own — and
+relocating the home would split Copilot's session store from the conversation
+store and hooks. The remedy is always yours to apply, and every refusal names
+the key and the file that actually decides — which, when both files carry the
+key, is `config.json`, because editing `settings.json` there would change
+nothing.
+
+Note that `experimental` is not evidence in the other direction: it gates the
+`/sandbox` *command*, not the feature. A settings-enabled sandbox applies with
+no experimental flag anywhere, which is why the `sandbox.enabled` check above
+is the one that decides and `experimental` only adds a refusal on top.
+
+The check runs on **every** path that starts a Copilot pane — a direct
+`session new`, spawn, resume, clone, reincarnate, and template/wave deploys —
+and on every such launch whether or not it carries a sandbox profile, because
+the single-boundary claim comes from the *implementation* choice rather than
+from any access rule. It is not run once at spawn.
+Copilot's sandbox setting lives in a file you can edit between two launches, so
+a posture verified at spawn time is not evidence about a resume.
+
+**Which directories a confined Copilot launch gets.** They come from one
+catalog, resolved per launch, shared with any future consumer of Copilot's own
+policy: `COPILOT_HOME` (read/write — the one hard requirement), the package
+cache (read/write/**execute**), and the Microsoft DeveloperTools device-id cache
+(read/write, best effort), plus the launch's temp directory, the agentd socket,
+and the two executables when they apply. Two details are easy to get wrong:
+
+- The package cache is **exec-bearing**. Copilot unpacks bundled binaries
+  (ripgrep, tgrep, prebuilt native modules) there and runs them, so a `noexec`
+  mount would break tool search rather than produce a permission error.
+- On macOS the two caches land in **two different Library trees, neither
+  XDG-shaped**: the package cache at `~/Library/Caches/copilot` (Copilot's own
+  resolver) and the device-id file at `~/Library/Application
+  Support/Microsoft/DeveloperTools` (the Microsoft device-id convention).
+  `XDG_CACHE_HOME` is set in the macOS fixture run and moves neither. On Linux
+  both are XDG-shaped and share a root.
+
+The catalog refuses rather than widens: a `COPILOT_HOME` pointing at `$HOME`, a
+`COPILOT_CACHE_HOME` landing on `~/.cache`, a grant covering the workspace, and
+an agentd socket path inside `~/.tclaude/data` are each a failed launch, not a
+mount rule.
+
+**Filtered networking.** A Copilot launch under a filtered network policy is
+admitted only on the default first-party GitHub Copilot route: the
+`/copilot_internal` control plane on `api.github.com`, plus model traffic to
+`api.githubcopilot.com` or `api.individual.githubcopilot.com` (the
+`net-github-copilot` pack covers all three). Anything that moves that route is
+refused rather than followed — `COPILOT_API_URL`, `GH_HOST` /
+`COPILOT_GH_HOST`, the `copilotUrl` and `proxyUrl` settings keys, and the whole
+`COPILOT_PROVIDER_*` BYOK family. A BYOK endpoint is refused even though it
+resolves concretely: being resolvable is not being approved.
+
+**The model host is assigned, not fixed.** The control plane hands a session
+its endpoints when it exchanges the token, and an individual-plan account is
+handed `api.individual.githubcopilot.com` — a host that appears nowhere in the
+CLI's shipped runtime, so no amount of reading the binary would have found it.
+An authenticated run through the capture seam observed it, and a further run
+with the pack itself as the wall completed a turn and a tool call with every
+other destination refused, which is what shows the pack is sufficient for that
+path rather than merely accurate about it. Telemetry
+(`telemetry.*.githubcopilot.com`) is contacted but deliberately left out: the
+wall run refused it and the session was unaffected.
+
+Two limits, stated rather than implied. Plan tiers nobody has observed —
+business, and the enterprise CAPI host the runtime does carry a string for —
+are **not** in the pack: an unobserved destination is denied at the wall,
+visibly, rather than authored on a guess, and the enterprise posture is refused
+outright because how a launch selects it is not inspectable ahead of time.
+Token refresh, managed settings and content exclusion were likewise not
+exercised, so nothing is claimed about destinations beyond the control-plane
+host they share. The recorded evidence and those gaps live in
+`pkg/claude/harness/copilotfixture/testdata/<version>/postauth_destinations.json`,
+which an offline contract test checks the pack against on every `go test`; the
+credentialed capture that produced it is a local, opt-in evidence step and
+never runs in CI.
+
+#### Copilot conversation store
+
+Copilot keeps one directory per session under
+`<COPILOT_HOME>/session-state/<session-id>/`. Two files in it are all tclaude
+reads, and both were observed from the pinned binary in the fixture lab —
+GitHub documents neither:
+
+- `workspace.yaml` — a small flat YAML file carrying the session id, `cwd`,
+  `git_root`, `repository`, `branch`, the display `name`, a `user_named` flag,
+  and created/updated timestamps.
+- `events.jsonl` — the append-only event log. A resume **appends to the same
+  file** rather than starting a new one, so one conversation stays one
+  conversation. tclaude reads it for the three things `workspace.yaml` does not
+  carry: the first user prompt, the user-turn count, and the model.
+
+Two design points follow from that layout.
+
+**No SQLite.** `<COPILOT_HOME>/session-store.db` mirrors the same identity, cwd,
+repository, branch and summary columns, but every one of them is already in
+`workspace.yaml` — a per-session file with no WAL, no lock and no schema
+version. tclaude never opens Copilot's database, so there is no window in which
+it reads a store the CLI is mid-write on.
+
+**`user_named` is the title split.** Copilot's `session.title_changed` event is
+declared `ephemeral: true` in the CLI's own shipped schema — never persisted to
+the event log — so the title only exists in `workspace.yaml`, as `name`. Its
+`user_named` flag distinguishes an operator title (`--name`, `/rename`) from
+Copilot's generated summary, which is exactly tclaude's `CustomTitle` vs
+`Summary` split. Renames still go through the in-pane `/rename` injection;
+tclaude never writes `workspace.yaml`.
+
+Everything degrades rather than fails. A session directory with no
+`workspace.yaml` yet, an unparsable one, or a log truncated mid-line by a live
+writer is skipped or partially read — never allowed to empty the listing — and
+a `COPILOT_HOME` the CLI has never run under lists nothing without erroring.
+
+#### Copilot ask
+
+`tclaude ask` on `--harness copilot` is **buffered only**. Capture runs the
+headless `copilot -p PROMPT` form and prints the answer; the interactive `-i`
+form (`tclaude ask -i`) drives the ordinary TUI. Copilot does have an
+incremental surface — the `--output-format json` JSONL stream — but rendering it
+as live text is a separate wire-format contract, so `SupportsAskStream` stays
+false and the answer arrives whole.
+
+Four properties were measured against the pinned binary in the fixture lab
+(`pkg/claude/harness/copilotfixture/ask_smoke_test.go`), each running the argv
+production builds rather than one the test assembles:
+
+- **The streams split cleanly.** stdout carries the answer and nothing else, so
+  `x=$(tclaude ask …)` captures just the answer. The run summary — changed
+  files, duration, token tally, and a `Resume     copilot --resume=<id>` line —
+  goes to stderr, which tclaude buffers by default and surfaces on `--verbose`
+  or when the run fails.
+- **Resume is exact, and ask conversations are ordinary conversations.** A fresh
+  ask pins its own id with `--session-id <uuid>` before the turn runs, so the
+  mapping is recorded up front; the next question resumes that full id (never a
+  prefix or a session name, both of which `--resume` also accepts and either of
+  which could attach the turn to a different conversation). The resumed turn was
+  measured on the provider wire carrying the earlier exchange, and the
+  conversation is listable through the store above.
+- **A piped payload stays data.** Copilot documents no `--` end-of-options
+  separator, so the prompt is passed as the value of `-p`; a payload beginning
+  with `---`, and a flag-shaped line inside it, were measured reaching the model
+  verbatim.
+- **A capture cannot write, and tclaude emits no permission flag to achieve
+  that.** Headless there is no terminal to draw a permission prompt on, and
+  Copilot neither blocks nor silently proceeds: the tool call returns
+  "Permission denied and could not request permission from user", the model gets
+  that as the tool result, and the turn completes. Measured for both the
+  built-in `create` file tool and an unsafe shell command, each against a
+  positive control in which the same call under `--allow-all-tools` *does*
+  write. So an unattended one-shot is read-only-ish **by construction** — and
+  `--allow-all-tools` is precisely what ask must never emit.
+- **`COPILOT_ALLOW_ALL` is unset for every ask.** The posture above is a
+  property of the launch, not of the argv: the variable is measured to be
+  stronger than the flag it documents, and exporting it makes the same
+  production ask argv write the workspace. So ask drops it from the child's
+  environment in both modes, exactly as the spawn path does — an operator's
+  exported variable does not get to decide what a one-shot question may do.
+
+Two limits follow, and neither is a bug to route around:
+
+- **Only the capture path sidesteps folder trust.** A headless `-p` run reaches
+  the provider with a `COPILOT_HOME` that trusts nothing, so `tclaude ask` works
+  in a directory Copilot has never seen. The interactive `-i` form is the
+  ordinary TUI and meets the trust modal like any other launch — which is fine
+  there, because a human is present to answer it.
+- **"Read-only-ish", not a sandbox.** The denial is Copilot's own headless
+  permission fallback, not an OS boundary tclaude enforces, and safe commands
+  the CLI auto-approves still run. `--deny-tool` is not used to harden this
+  further: URL rules are known to parse and then match nothing at runtime, so a
+  deny that denies nothing would be worse than no claim at all.
+
+#### Copilot soft exit
+
+Copilot's TUI accepts a slash command only while it is idle at its input
+prompt, so tclaude sends a cancel keystroke (`C-c`) immediately before `/exit`.
+Measured against the pinned 1.0.77 binary in a real tmux pane, and recorded by
+the `copilotfixture` soft-exit scenarios:
+
+- **Mid-turn, the bare command is silently discarded.** The typed `/exit` is
+  rendered, and the submitting Enter simply clears the input box — no exit, no
+  queued message (the footer offers `ctrl+enter` to enqueue one), nothing in
+  the transcript. A retired agent that was working therefore showed *no trace*
+  of ever having been asked to exit.
+- **With a permission dialog open it is worse than a no-op.** The dialog owns
+  the keyboard, so the submitting Enter accepts its **default entry** — which
+  approves the pending command instead of exiting.
+- **`C-c` fixes both, and costs nothing when unnecessary.** Mid-turn or during
+  a tool it cancels the work and returns to the prompt; on a dialog it aborts
+  the request (the command is refused, not approved); on an idle pane it is a
+  no-op; on a pane holding a half-typed line it clears the buffer. The exit
+  that follows is still graceful — Copilot writes its `session.shutdown` event.
+- **Escape is not usable here.** The CLI holds a lone `\x1b` waiting for the
+  rest of a possible escape sequence, so a trailing `Escape` is never
+  delivered at all.
+
+Panes that still refuse to close are ended by the harness-generic escalation
+ladder (`agent stop` in [agent.md](agent.md)), which follows a soft exit that
+has not landed with an identity-guarded tmux kill, then SIGTERM, then SIGKILL.
+
+#### Copilot hooks
+
+Copilot's hook support rests on two behaviors the fixture lab observed from the
+real 1.0.77 binary and GitHub documents neither of. Both are pinned by
+committed captures under
+`pkg/claude/harness/copilotfixture/testdata/<version>/hooks`, so a CLI that
+changes either one fails a test instead of silently breaking live status.
+
+1. **A tclaude-owned drop-in file fires.** `<COPILOT_HOME>/hooks/tclaude.json`
+   is loaded with no `config.json` present, no folder trust and no git repo,
+   and Copilot *merges* it with the user's own hooks. tclaude therefore never
+   edits the shared `config.json` — which it could not do safely anyway: the
+   CLI rewrites that file itself ("This file is managed automatically"),
+   migrates a `hooks` key out of it into `settings.json`, and prefixes it with
+   `//` banner lines that are not valid JSON.
+2. **Claude Code's event names select Claude Code's payload.** Registered under
+   their PascalCase names, Copilot's events arrive as `hook_event_name`,
+   `session_id`, ISO-8601 timestamps, `tool_input` as an object — even Claude's
+   tool *names* (`Bash`, not Copilot's `bash`). tclaude needs no translator:
+   the same `HookCallbackInput` decodes Copilot as it already does Codex.
+
+Four deliberate omissions, each for its own reason:
+
+- **`PreToolUse` is not installed.** A non-zero hook exit *denies the user's
+  tool call*, and tclaude's callback can legitimately fail when its receiver is
+  down. `PostToolUse` reports the same tool a moment later at no such risk.
+- **`PermissionRequest` is not installed.** It fires even under
+  `--allow-all-tools` (it runs the rules engine, not a prompt), and it is the
+  one event that ignores the dialect — it answers a PascalCase registration
+  with a camelCase payload carrying no `session_id`. Copilot's real
+  human-is-blocked signal appears to be `Notification(permission_prompt)`;
+  enrolling it is TCL-976 work.
+- **`UserPromptTransformed` is not installed** — same turn as
+  `UserPromptSubmit`, and its payload is the model-facing rendering of the
+  prompt.
+- **No standing-order selectors.** Copilot *does* read hook stdout as a control
+  channel, so tclaude's installed command ends in `>/dev/null`: a hook that
+  prints `{"decision":"block"}` makes the agent keep working (one probe turned
+  a single prompt into nine forced continuation cycles). Using that channel
+  needs a designed, verified response contract; discarding stdout until then is
+  the safe default.
+
+Two more properties an operator may notice. Every entry carries an explicit
+`timeoutSec` because hooks BLOCK the turn and Copilot's default timeout is 30
+seconds. And Copilot fires `SessionStart` *after* the turn's first prompt —
+the opposite of every other harness — which is why the descriptor carries
+`SessionStartAfterPrompt`: without it, the session announcement would report a
+just-started turn as idle.
+
+`SessionEnd` stays best-effort. It has only been observed on clean runs, it
+cannot fire on a SIGKILL, and it is at-least-once rather than exactly-once, so
+exit detection remains the reaper's tmux/PID liveness.
 
 #### Compatibility fixtures
 
@@ -325,6 +865,144 @@ Version drift is deliberately manual: the pin lives in `version.go`, the test
 asserts `copilot --version` matches it, and re-recording is an explicit
 `-update` run whose diff **is** the compatibility evidence — so a floating or
 auto-updating install cannot absorb a contract change silently.
+
+#### Copilot sandbox baseline
+
+`harness.CopilotSandboxBaseline` answers one question — *which paths must a
+confined Copilot launch reach, in which mode, and how does each path resolve* —
+and stops there. It advertises no sandbox capability; the descriptor's `Sandbox`
+contract is still nil. It exists because two separate pieces of work need the
+same answer: Copilot's own built-in MXC sandbox (the `sandbox` key in the
+settings under `COPILOT_HOME` — see `copilot help sandbox` and
+[below](#copilots-own-command-sandboxing), which records that both
+`settings.json` and `config.json` carry it) and tclaude's outer
+bubblewrap/Seatbelt boundary.
+
+The catalog, and how each row was classified:
+
+| Entry | Path | Mode | Necessity |
+|---|---|---|---|
+| `copilot-state-dir` | `COPILOT_HOME` ?? `$HOME/.copilot` | rw | **mandatory** — made read-only between two runs, the next launch exits 1 |
+| `copilot-package-cache` | `COPILOT_CACHE_HOME` ?? macOS `~/Library/Caches/copilot` ?? `${XDG_CACHE_HOME:-~/.cache}/copilot` | rw**x** | **mandatory** — the CLI unpacks and then *runs* its payload here |
+| `copilot-device-id-cache` | macOS `~/Library/Application Support/Microsoft/DeveloperTools` ?? `${XDG_CACHE_HOME:-~/.cache}/Microsoft/DeveloperTools` | rw | best-effort — read-only still launches; only `deviceid` is denied |
+| `copilot-executable` | caller-resolved `copilot` | rx | mandatory |
+| `system-temp-dir` | caller-supplied | rw | feature-conditional (shell tools; Copilot's own `--disallow-temp-dir` opts out) |
+| `tclaude-agentd-socket` | caller-supplied endpoints | rw | feature-conditional (hook callbacks, in-agent `tclaude agent`) |
+| `tclaude-executable` | caller-resolved | rx | feature-conditional (same feature) |
+
+Four properties are worth calling out.
+
+**The macOS split is not symmetric.** The package cache moves to
+`~/Library/Caches/copilot` and the device-id file to `~/Library/Application
+Support/Microsoft/DeveloperTools` — two different Library trees, because the
+first follows Copilot's own cache resolver and the second follows the Microsoft
+device-id convention. Neither honours `XDG_CACHE_HOME` on darwin, which the
+macOS fixture run proves by setting it. A macOS policy built by pattern-matching
+the Linux one gets both rows wrong.
+
+**The package cache needs execute, not just write.** The unpacked payload holds
+the bundled ripgrep binary and prebuilt native modules; a `noexec` mount there
+breaks tool search while every byte stays readable.
+
+**The catalog carries no workspace row.** The launch directory, the repository
+and its Git metadata are the caller's grant and are modelled elsewhere; the
+baseline's `Workspace` input exists only so it can *refuse* to return a row
+that would cover it. Generic OS prerequisites (loader, libc, `/proc/self`, the
+CA bundle, PATH directories) are likewise the sandbox implementation's base
+layer, not per-harness policy.
+
+**It fails closed.** An unresolved or non-absolute path, a grant covering
+`$HOME` or an ancestor of it, a grant covering a shared base such as `~/.cache`,
+`~/Library/Caches`, `~/.config` or `~/.local`, a grant on a top-level system
+directory (`/etc`, `/usr`, `/var`, … — with macOS firmlinks normalized so
+`/etc` and `/private/etc` reach the same verdict, and the temp row exempted
+*by path* so `/tmp` works while `TMPDIR=/etc` is still refused), a grant
+covering **or lying inside** tclaude's protected state (`~/.tclaude/data`,
+`~/.codex`, `~/.claude/sessions` — the same list the Codex guard uses, which is
+why the canonical agentd socket lives in `~/.tclaude/api/`), and a grant
+covering the workspace are all `*SandboxCapabilityError` refusals rather than
+rows. Each is reachable by
+typing — `COPILOT_HOME=$HOME` and `COPILOT_CACHE_HOME=~/.cache` are things a
+person writes — and each would quietly convert a confined launch into an open
+one.
+
+The write rows are pinned by a fixture-backed proof:
+`TestCopilotSandboxBaselineCoversObservedWrites` runs a real turn, walks
+everything the CLI created, and requires each created path to fall inside a
+baseline entry resolved from that run's own environment — with
+`homeOutsideBaseline` and the working directory both expected to stay empty.
+The normalized layout is committed as
+`copilotfixture/testdata/<version>/sandbox_baseline.json`, so a CLI that starts
+writing somewhere new fails a test instead of an operator's confined launch.
+
+#### Copilot's own command sandboxing
+
+Copilot CLI ships a sandbox of its own, and tclaude deliberately does **not**
+advertise it as a built-in OS sandbox: `SupportsBuiltinOSSandbox()` is false for
+`copilot`, so `sandbox_implementation=harness-builtin` is refused rather than
+honored. That is an evaluated answer, not a missing adapter, and the refusal
+says which property is absent instead of claiming Copilot has nothing.
+
+What Copilot actually has, measured against the pinned 1.0.77 binary:
+
+| Property | Measured behavior |
+|---|---|
+| **Shell commands** | Genuinely OS-confined — Microsoft Execution Containers (bubblewrap on Linux, Seatbelt on macOS, ProcessContainer on Windows) |
+| **Built-in file edits** (`create`, `edit`, …) | **Not** OS-confined. GitHub says so outright, and the fixture measures it: on a host where the OS backend cannot start at all, a `create` into the granted workspace still wrote its file while every shell command failed |
+| **Path checking of those edits** | Sound as far as it goes — symlinks planted inside the workspace and `..` traversal are both resolved before the decision, so the objection is *where* enforcement lives, not a defect in it |
+| **How it is turned on** | `sandbox.enabled` in the settings under `COPILOT_HOME`, the interactive `/sandbox` dialog, or organization policy. There is **no launch flag**, and `--experimental` gates only the `/sandbox` *command* — a settings-enabled sandbox applies without it |
+| **Which settings file** | **Both** `settings.json` and `config.json` are live, and `config.json` wins. `settings.json` is canonical; `config.json` is a legacy source the CLI migrates from at startup — it decides that launch, is merged into `settings.json`, and is left as a managed stub. The merge is **shallow**: a top-level key `config.json` never mentions survives, but one it does mention has its whole value replaced, so a `config.json` carrying any `sandbox` object discards `settings.json`'s `sandbox` object entirely. Anything inspecting a Copilot sandbox posture must read both names and model that replacement |
+| **Availability** | Host-conditional on Linux: `bwrap` on PATH is not enough, the kernel must also permit an unprivileged user namespace |
+| **When the backend cannot start** | Fails closed — shell commands error out rather than silently running unconfined |
+| **Default** | Off. An operator who never enabled it has no containment at all |
+
+The disqualifying property is the second row. tclaude's contract is about the
+*complete* effective boundary, because everything gated on
+`SupportsBuiltinOSSandbox` — the access-enforcement table, the spawn
+implementation selector, the effective-policy preview — goes on to describe an
+OS-enforced posture to the operator. Half of Copilot's boundary is instead an
+in-process check performed by the very program the sandbox exists to contain, so
+a bug in that check, a built-in tool it does not cover, or a tool added later
+without one is an unmediated write with the operator's full privileges. Claude
+Code's SRT and Codex's `--sandbox` confine their own edit tools through the OS;
+that difference *is* the contract.
+
+Three further properties would each need answering even if the file half were
+closed: there is no launch-time flag to pin a per-spawn posture with (and
+`clearPolicyOnExit` plus an in-session `/sandbox disable` can move it under a
+running agent), the feature is experimental by its own vendor's description, and
+its availability is a runtime property of the host that tclaude cannot verify at
+launch.
+
+The two-file precedence in the table above is a security detail rather than a
+trivia one, and it is the reason the row exists: a check that reads only
+`settings.json` is bypassable by dropping a `config.json` that disables the
+sandbox, because that file wins at the next launch and rewrites `settings.json`
+to match. A check that reads only `config.json` misses the canonical file.
+
+None of this constrains Copilot under `tclaude-layer`, which is a separate wall
+that tclaude owns — and a separate ticket: the descriptor sets no
+`TclaudeLayerMode` yet, so that path refuses today too. The generic
+harness-builtin refusal still suggests it, which is advice an operator cannot
+act on until that lands.
+
+The evidence is
+`copilotfixture/sandbox_native_smoke_test.go`, which asserts each row above
+against the real binary. Its host-conditional scenario has **no skipping arm**:
+it classifies, from the run itself, whether the OS backend started, then asserts
+enforcement where it did and fail-closed degradation where it did not. CI runs
+**both** host categories on purpose — Linux runs the suite once with bubblewrap
+provisioned and once with unprivileged user namespaces denied — because the
+backend-down run is the only one that can establish where enforcement lives. The
+refusal text Copilot renders is the same whichever layer produced it, so it
+cannot be used as that discriminator.
+
+One caution for anyone extending these fixtures: a hermetic scenario builds
+every directory it owns underneath the system temp directory, which is part of
+the default granted surface. A target that reads as "outside the policy" is
+probably inside it, and an assertion built on that reading measures nothing. The
+measured surface per platform is recorded in
+`TestCopilotNativeSandboxShellBasePolicySurface`.
 
 ### Sandbox & approval defaults (Codex)
 
@@ -490,10 +1168,13 @@ accepted policy set.
 
 ### Directory trust at spawn
 
-Claude Code and Codex both block a first launch in a directory they do not yet
-trust behind a *"do you trust this folder?"* dialog. A tclaude-spawned agent
-runs detached in a tmux pane with nobody at its TUI, so that dialog is a startup
-gate that can leave a freshly spawned agent frozen before it does anything.
+Claude Code, Codex and GitHub Copilot CLI all block a first launch in a
+directory they do not yet trust behind a *"do you trust this folder?"* dialog. A
+tclaude-spawned agent runs detached in a tmux pane with nobody at its TUI, so
+that dialog is a startup gate that can leave a freshly spawned agent frozen
+before it does anything. For Copilot it is strictly earlier than for the other
+two: the modal blocks *before* the CLI contacts the model provider at all, so an
+unseeded pane never reaches its first turn.
 
 tclaude can seed the trust record ahead of launch. Each harness keeps its own,
 in unrelated shapes:
@@ -502,6 +1183,7 @@ in unrelated shapes:
 | --- | --- | --- |
 | Claude Code | `~/.claude.json` | `projects.<dir>.hasTrustDialogAccepted = true` |
 | Codex CLI | `~/.codex/config.toml` | `[projects."<dir>"] trust_level = "trusted"` |
+| GitHub Copilot CLI | `<COPILOT_HOME>/config.json` | the launch dir appended to `trustedFolders` |
 | OpenCode | ➖ | no trust dialog, nothing to seed |
 
 Turn it on with the spawn dialog's **"Pre-trust this directory"** checkbox, a
@@ -516,7 +1198,8 @@ own, so it is deliberately narrow:
   a harness with no trust dialog is an error, not a silently dropped flag.
 - **Auto-trusted only for default sibling worktrees.** A worktree at the
   location tclaude itself picks (`../<repo>-<branch>`) is trusted automatically
-  for both harnesses, so a freshly cut worktree doesn't stall.
+  for every harness with a trust dialog, so a freshly cut worktree doesn't
+  stall.
 - **Agents cannot widen it.** An agent-initiated spawn may pre-trust *only*
   such a sibling worktree; any other path it names is a `trust_dir_restricted`
   refusal. Ask a human to spawn that child instead. Note the layout check is
@@ -533,6 +1216,46 @@ Note that `~/.claude.json` is a large file Claude Code rewrites constantly, so
 that seed is last-writer-wins against a concurrent Claude Code write. It is
 bounded — the idempotent no-op means a dir is written at most once, ever — and
 what it could revert is Claude-owned churn, never your trust setting.
+
+#### Copilot specifics
+
+Copilot's store is the one that moves: it lives under `COPILOT_HOME`, so a spawn
+profile that relocates that variable also relocates the file that must carry the
+entry, and tclaude seeds the launch's own home rather than the ambient one.
+Beyond that:
+
+- **`config.json`, not `settings.json`.** `trustedFolders` is a CLI-managed key.
+  Measured against the pinned CLI, it stays in `config.json` across the startup
+  migration that moves user settings into `settings.json` — and the same key
+  written into `settings.json` is *deleted* on the next launch and never trusted
+  anything. tclaude therefore reads and writes only `config.json`, and does not
+  merge an inert `settings.json` list into it (that would trust directories you
+  never trusted).
+- **The file is shared with the CLI.** The seed extends `trustedFolders` and
+  carries every other key across unchanged, including the CLI's own
+  (`firstLaunchAt`). The two `//` header comments the CLI writes into its managed
+  stub do not survive the edit; nothing semantic is lost, and the CLI rewrites
+  the file on its next migration.
+- **Concurrent spawns compose.** Unlike the other two harnesses' per-directory
+  entries, `trustedFolders` is one shared array, so the edit runs under an
+  advisory lock with a stale-read recheck — two spawns pre-trusting different
+  directories cannot drop each other's entry.
+- **No launch flag would do instead.** `--allow-all-tools`, `--allow-all`,
+  `--yolo`, `--allow-all-paths` and `--add-dir` were all measured and none clears
+  the modal. `COPILOT_ALLOW_ALL=true` does, but it also blanket-approves every
+  tool, path and URL request, so tclaude does not set it.
+- **Trust is not approval.** Seeding the folder answers the folder question
+  only. Copilot's per-command approval prompt is a separate gate, closed by a
+  separate axis — the approval catalog's default renders `--allow-all-tools`,
+  measured to clear it. The two are wired independently on purpose: trust
+  governs what a pane may *start*, approval what it may then *do*, and a launch
+  can have either without the other.
+
+Every claim above is measured against the pinned CLI on a real pseudo-terminal
+(the modal does not exist headlessly), and the seeding is exercised as the
+production call — on a fresh `COPILOT_HOME` and on an installed one whose
+`config.json` the CLI already owns. Both scenarios are CI-gated on Linux and
+macOS.
 
 ### OpenCode managed server
 

@@ -665,6 +665,16 @@ func runServe(p *serveParams) error {
 	// channel.
 	startCodexUsagePoller(cronStop)
 
+	// Copilot live-usage sweep. Copilot's durable event log cannot carry a
+	// per-call token meter (the events that would are `ephemeral` and never
+	// written), but the CLI keeps the same accounting in its own SQLite store,
+	// which this reads STRICTLY read-only on a 2s tick — one batched query per
+	// COPILOT_HOME covering every live pane under it, never a connection per
+	// conversation. A host that doesn't run Copilot opens nothing at all, and
+	// every failure degrades to the durable-log follower rather than the
+	// daemon. Shares the daemon-wide stop channel.
+	startCopilotUsagePoller(cronStop)
+
 	// Live conv_index monitor. One fsnotify watcher over
 	// ~/.claude/projects/ keeps the conv_index SQLite cache fresh as
 	// conversation .jsonl files change, so the dashboard (and any other
@@ -818,6 +828,8 @@ func runServe(p *serveParams) error {
 
 	// Graceful shutdown.
 	stopCodexContextRefreshes()
+	stopCopilotContextRefreshes()
+	stopCopilotUsagePoller()
 	if err := preserveDashboardSessionForRestart(); err != nil {
 		// The live daemon remains secure; the only loss is that browsers will
 		// need to sign in again after this restart.

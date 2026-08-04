@@ -1080,7 +1080,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 	}
 	var fail *spawnFailure
 	var notes []string
-	model, _, note, fail := resolveStringLaunchField("model", a.Model, h.Name, tiers,
+	model, _, note, fail := resolveStringLaunchField(modelField, a.Model, h.Name, tiers,
 		func(p *db.SpawnProfile) string { return p.Model }, h.Models.ValidateModel)
 	if fail != nil {
 		return templateAgentLaunch{}, fail
@@ -1088,7 +1088,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 	if note != "" {
 		notes = append(notes, note)
 	}
-	effort, _, note, fail := resolveStringLaunchField("effort", a.Effort, h.Name, tiers,
+	effort, _, note, fail := resolveStringLaunchField(effortField, a.Effort, h.Name, tiers,
 		func(p *db.SpawnProfile) string { return p.Effort }, h.Models.ValidateEffort)
 	if fail != nil {
 		return templateAgentLaunch{}, fail
@@ -1180,7 +1180,8 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 	// per-agent info/warnings channels, so both kinds ride Notes — which the
 	// deploy result and dashboard already surface per agent.
 	notes = append(notes, harness.SpawnSandboxInfo(h, sandbox)...)
-	notes = append(notes, harness.SpawnSandboxWarnings(h, approval, sandbox, cwd)...)
+	notes = append(notes, harness.SpawnSandboxWarnings(h, approval, sandbox, cwd,
+		spawnUsesTclaudeLayer(sandboxImplementation))...)
 	// Resolve the two *bool launch toggles against the chosen harness — the
 	// same gate handleGroupSpawn/applyDefaultProfile apply. nil (no profile
 	// spoke) collapses to false = off. ResolveTrustDir/ResolveAutoReview reject
@@ -2482,9 +2483,11 @@ func templatePerAgentWorktreeParent(perAgent *db.WavePerAgentWorktrees) string {
 
 func templateCodexGitCommonDir(cwd string, perAgent *db.WavePerAgentWorktrees) (string, error) {
 	if perAgent != nil && perAgent.WorktreeAsCwd {
-		return spawnGitCommonDir(harness.CodexName, harness.SandboxManagedProfile, perAgent.Repo)
+		return spawnGitCommonDir(
+			harness.CodexName, harness.SandboxManagedProfile, "", perAgent.Repo)
 	}
-	return spawnGitCommonDir(harness.CodexName, harness.SandboxManagedProfile, cwd)
+	return spawnGitCommonDir(
+		harness.CodexName, harness.SandboxManagedProfile, "", cwd)
 }
 
 func resolveTemplateWorktreeInputs(w http.ResponseWriter, rawSharedPath string, rawPerAgent *db.WavePerAgentWorktrees) (string, *db.WavePerAgentWorktrees, bool) {

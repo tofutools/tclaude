@@ -95,6 +95,18 @@ func runArchiveOrUnarchive(convSelector string, archive bool, stdout, stderr io.
 		}
 	}
 	if row == nil {
+		// A harness whose conversations live in ITS OWN store may have no
+		// conv_index row yet: the cache is written as a side effect of
+		// listing, and nothing requires a human to have run `conv ls` before
+		// `conv archive`. Falling back to the harness stores makes the two
+		// commands see the same set of conversations regardless of order.
+		row, err = ensureIndexedConv(convID)
+		if err != nil {
+			fmt.Fprintf(stderr, "Error: harness lookup: %v\n", err)
+			return 1
+		}
+	}
+	if row == nil {
 		fmt.Fprintf(stderr, "Error: no conversation matches %q (try `tclaude conv ls -g` to see all)\n", convID)
 		return 1
 	}

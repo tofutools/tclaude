@@ -28,8 +28,12 @@ go build ./...
 go test ./...
 go test ./pkg/claude/conv/...
 golangci-lint run ./...
-go install .
+go install . ./cmd/...
 ```
+
+The repo builds two binaries: a bare `go install .` gets you only `tclaude`,
+while `. ./cmd/...` adds the standalone `tclaude-agentd` daemon. See
+`CONTRIBUTING.md` for why not `./...`.
 
 CI runs `go test ./...` and `golangci-lint run ./...`. Do make sure your changes at 
 least build, and run focused local tests when they help your own iteration on the code 
@@ -41,7 +45,11 @@ features around native Windows behavior unless the operator explicitly asks.
 
 ## Where to look
 
-- Entry point: `main.go`, which calls `pkg/claude.Cmd()`.
+- Entry points: `main.go` (the `tclaude` CLI, via `pkg/claude.Cmd()`) and
+  `cmd/tclaude-agentd/main.go` (the standalone daemon, via
+  `agentd.RootCmd()`). Both go through `pkg/claude/cli`, which owns the
+  process-level entry sequence and the shared root-command wiring — put
+  anything both binaries need there rather than duplicating it.
 - Root command wiring: `pkg/claude/claude.go`.
 - Harness design and capability matrix: `docs/harnesses.md`.
 - Adding another harness: `docs/adding-a-harness.md`.

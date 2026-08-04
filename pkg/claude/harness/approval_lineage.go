@@ -53,6 +53,34 @@ func ApprovalLineageAllowed(parentHarness, parentPolicy string, parentAutoReview
 // earns a second 403 is worse than saying nothing.
 func ApprovalLineageDenialHint(parentHarness, parentPolicy string, parentAutoReview bool, childHarness, childPolicy string) string {
 	switch normalizeLineageHarness(childHarness) {
+	case CopilotName:
+		switch strings.TrimSpace(childPolicy) {
+		case CopilotApprovalInherit:
+		case CopilotApprovalYolo:
+			// The counterpart to Claude's bypassPermissions hint, and it names
+			// the specific loss rather than "removes guardrails": under
+			// `yolo` the directory dialog is gone, and outside tclaude-layer
+			// that dialog is the only file boundary a Copilot launch has.
+			return fmt.Sprintf(
+				"%q removes every Copilot permission prompt, including the directory-access "+
+					"dialog that is the only file boundary an un-sandboxed Copilot launch has, so "+
+					"it can only be minted by a parent that already holds it, or by a human; pass "+
+					"%q for a child whose directory access stays scoped to the sandbox profile",
+				CopilotApprovalYolo, CopilotApprovalAllowTools)
+		default:
+			// `allow-tools` is the narrowest token Copilot has, and a parent
+			// that cannot delegate it cannot delegate anything Copilot offers.
+			// There is no narrower Copilot posture to point at, so say nothing
+			// rather than invent advice — the guard's own message already
+			// states the two postures involved.
+			return ""
+		}
+		hint := fmt.Sprintf("the child requested %q, which emits no permission flags, so its posture is decided by the operator's Copilot configuration and by answers remembered in-pane; it cannot be proven at spawn time and is therefore treated as the broadest posture", CopilotApprovalInherit)
+		if ApprovalLineageAllowed(parentHarness, parentPolicy, parentAutoReview,
+			CopilotName, CopilotApprovalAllowTools, false) {
+			return hint + fmt.Sprintf("; pass %q to spawn a child whose posture tclaude renders and records itself", CopilotApprovalAllowTools)
+		}
+		return hint + "; this parent cannot delegate any provable Copilot posture, so a human must spawn this child"
 	case OpenCodeName:
 		if strings.TrimSpace(childPolicy) != OpenCodeApprovalAllowTools {
 			return ""
@@ -223,6 +251,75 @@ func classifyApprovalLineage(harnessName, policy string, autoReview bool, child 
 			}
 			return approvalLineagePosture{capability: capability, valid: true}
 		default:
+			return approvalLineagePosture{}
+		}
+	case CopilotName:
+		// Copilot has no guardian subagent; auto-review is a Codex-only axis.
+		if autoReview {
+			return approvalLineagePosture{}
+		}
+		switch policy {
+		case CopilotApprovalAllowTools:
+			// --allow-all-tools accepts every tool call automatically, and the
+			// measured gate is per-COMMAND risk classification rather than a
+			// tool allowlist, so this is arbitrary command execution with no
+			// human in the loop: approvalAutoInSandbox, the same shape as Codex
+			// `never` and Claude `auto`.
+			//
+			// "InSandbox" names the capability, not a guarantee about Copilot —
+			// whether anything actually confines those commands is the sandbox
+			// axis's business, and it has its own lineage guard. Reading this
+			// bit as a containment claim would be a mistake in every harness,
+			// but especially this one: Copilot's built-in edits are not
+			// OS-confined at all.
+			return approvalLineagePosture{capability: approvalAutoInSandbox, valid: true}
+		case CopilotApprovalInherit:
+			// The same dual bound Claude's `inherit` uses, for the same reason
+			// and then some. A Copilot launch with no permission flags is
+			// decided by settings.json/config.json plus whatever the operator
+			// answered in-pane and told Copilot to remember — the folder-trust
+			// dialog's option 2 is literally "remember this folder for future
+			// sessions", and allowedUrls persists the same way. Nothing bounds
+			// that state below allow-everything from outside the pane.
+			//
+			// So a PARENT is credited only the baseline it certainly has, and a
+			// CHILD is charged the broadest posture it could turn out to hold.
+			// The consequence is deliberate: an `allow-tools` Copilot agent
+			// cannot mint an `inherit` child, because it cannot prove that
+			// child would be no broader than itself. A human can, and the
+			// denial hint says so.
+			capability := approvalAutoBaseline
+			if child {
+				capability = approvalAutoInSandbox | approvalAutoReviewer | approvalAutoUnreviewed
+			}
+			return approvalLineagePosture{capability: capability, valid: true}
+		case CopilotApprovalYolo:
+			// The same shape as Claude's bypassPermissions, and for the same
+			// reason: every prompt is gone and no reviewer of any kind stands in
+			// a human's place. Carrying approvalAutoReviewer alongside
+			// approvalAutoUnreviewed is not a claim that Copilot HAS a reviewer
+			// — it is what makes the subset test honest in both directions. A
+			// posture that approves everything can obviously delegate a posture
+			// where a machine reviewer approves some things, so withholding the
+			// bit would let a `yolo` parent be refused a Codex auto-review child
+			// while its own agent needs no reviewer's permission for anything.
+			//
+			// The consequence that matters is the other direction, and it is
+			// deliberate: `allow-tools` holds approvalAutoInSandbox only, so an
+			// allow-tools agent CANNOT mint a yolo child. Removing the last file
+			// boundary an un-sandboxed Copilot launch has is an escalation, so
+			// it takes a human trust root or a parent already holding it.
+			return approvalLineagePosture{
+				capability: approvalAutoInSandbox | approvalAutoReviewer | approvalAutoUnreviewed,
+				valid:      true,
+			}
+		default:
+			// Blank is a pre-catalog Copilot row. It is NOT treated as a known
+			// `inherit` even though every such launch did emit zero permission
+			// flags: the spawn guard reports an unreconstructable posture with
+			// an actionable "relaunch it" message, and quietly minting lineage
+			// authority for a row that predates the recording is exactly the
+			// widen-on-uncertainty this file exists to prevent.
 			return approvalLineagePosture{}
 		}
 	case OpenCodeName:

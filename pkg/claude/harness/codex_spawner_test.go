@@ -176,6 +176,9 @@ func TestCodexModels(t *testing.T) {
 	if len(c.EffortLevels()) == 0 {
 		t.Fatalf("codex now exposes tclaude's effort levels")
 	}
+	if want := []string{"low", "medium", "high", "xhigh", "max"}; !slices.Equal(c.EffortLevels(), want) {
+		t.Fatalf("EffortLevels() = %v, want Codex catalog %v", c.EffortLevels(), want)
+	}
 	wantModels := []string{
 		"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5",
 		"gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex-spark",
@@ -254,6 +257,9 @@ func TestCodexHarness_Registered(t *testing.T) {
 	}
 	if got := h.Life.CompactCommand(); got != "/compact" {
 		t.Fatalf("codex compact command = %q, want /compact", got)
+	}
+	if got := h.Life.SoftExitPrefixKeys(); len(got) != 0 {
+		t.Fatalf("SoftExitPrefixKeys() = %q, want none", got)
 	}
 	if got := h.Life.SoftExitCommand(); got != "/quit" {
 		t.Fatalf("codex soft-exit command = %q, want /quit", got)

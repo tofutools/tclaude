@@ -1,0 +1,9 @@
+{
+  "cwd": "<WORKDIR>",
+  "hook_event_name": "Stop",
+  "session_id": "00000000-0000-4000-8000-000000000000",
+  "stop_hook_active": false,
+  "stop_reason": "end_turn",
+  "timestamp": "2026-01-01T00:00:00.000Z",
+  "transcript_path": "<COPILOT_HOME>/session-state/00000000-0000-4000-8000-000000000000/events.jsonl"
+}

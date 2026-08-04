@@ -21,6 +21,11 @@ func init() {
 		TmuxScrollback:      true,
 		LaunchEnrollment:    true,
 		ServerAuthoritative: true,
+
+		// Verbatim the sentence this refusal has always carried; it moved onto
+		// the descriptor when Copilot needed a different one.
+		BuiltinOSSandboxAbsenceReason: "OpenCode has no built-in OS sandbox; " +
+			"its access-control mode is a command filter, not confinement",
 	})
 }
 
@@ -34,3 +39,8 @@ func (openCodeLifecycle) RenameCommand() string        { return "" }
 func (openCodeLifecycle) CompactCommand() string       { return "/compact" }
 func (openCodeLifecycle) SoftExitCommand() string      { return "/exit" }
 func (openCodeLifecycle) RemoteControlCommand() string { return "" }
+
+// OpenCode never receives its soft exit as keystrokes — the daemon dispatches
+// app.exit through the managed TUI API — so a pane-input prefix has nothing to
+// prepare.
+func (openCodeLifecycle) SoftExitPrefixKeys() []string { return nil }

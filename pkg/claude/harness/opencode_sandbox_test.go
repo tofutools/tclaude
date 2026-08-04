@@ -90,17 +90,17 @@ func TestSpawnSandboxWarningsDispatch(t *testing.T) {
 		t.Fatalf("harness %q is not registered", CodexName)
 	}
 
-	if got := SpawnSandboxWarnings(nil, "", OpenCodeSandboxAccessControl, ""); got != nil {
+	if got := SpawnSandboxWarnings(nil, "", OpenCodeSandboxAccessControl, "", false); got != nil {
 		t.Fatalf("nil harness: got %v, want nil", got)
 	}
 
 	// OpenCode routes to the access-control warning regardless of the approval
 	// argument (which is a Claude-only input).
-	got := SpawnSandboxWarnings(opencode, "", OpenCodeSandboxAccessControl, "")
+	got := SpawnSandboxWarnings(opencode, "", OpenCodeSandboxAccessControl, "", false)
 	if len(got) == 0 || !strings.Contains(got[0], "OpenCode has no built-in OS sandbox") {
 		t.Fatalf("opencode access-control: got %v, want the OpenCode warning", got)
 	}
-	if got := SpawnSandboxWarnings(opencode, "", OpenCodeSandboxOff, ""); got != nil {
+	if got := SpawnSandboxWarnings(opencode, "", OpenCodeSandboxOff, "", false); got != nil {
 		t.Fatalf("opencode off: got %v, want nil", got)
 	}
 	info := SpawnSandboxInfo(opencode, OpenCodeSandboxTclaudeLayer)
@@ -114,7 +114,7 @@ func TestSpawnSandboxWarningsDispatch(t *testing.T) {
 	// Claude still reaches its own TCL-586 check (the auto + inherit default with
 	// no settings file that enables the sandbox is the canonical warning case).
 	home, _ := isolateClaudeSettings(t)
-	got = SpawnSandboxWarnings(claude, claudePermAuto, ClaudeSandboxInherit, home)
+	got = SpawnSandboxWarnings(claude, claudePermAuto, ClaudeSandboxInherit, home, false)
 	if len(got) == 0 || !strings.Contains(got[0], "OS sandbox") {
 		t.Fatalf("claude auto+inherit: got %v, want the TCL-586 warning", got)
 	}
@@ -124,8 +124,26 @@ func TestSpawnSandboxWarningsDispatch(t *testing.T) {
 	}
 
 	// Codex resolves autonomy and sandbox together, so no gap and no warning.
-	if got := SpawnSandboxWarnings(codex, ApprovalNever, SandboxManagedProfile, ""); got != nil {
+	if got := SpawnSandboxWarnings(codex, ApprovalNever, SandboxManagedProfile, "", false); got != nil {
 		t.Fatalf("codex: got %v, want nil", got)
+	}
+
+	// Copilot routes to its own check, and must NOT fall through to Claude's:
+	// UnsandboxedAutonomyWarnings would walk the operator's ~/.claude settings
+	// for an agent that never reads them.
+	copilot, ok := Get(CopilotName)
+	if !ok {
+		t.Fatalf("harness %q is not registered", CopilotName)
+	}
+	got = SpawnSandboxWarnings(copilot, CopilotApprovalYolo, CopilotSandboxInherit, home, false)
+	if len(got) != 1 || !strings.Contains(got[0], "tclaude-layer") {
+		t.Fatalf("copilot yolo without the outer layer: got %v, want the yolo warning", got)
+	}
+	if got := SpawnSandboxWarnings(copilot, CopilotApprovalYolo, CopilotSandboxOff, home, true); got != nil {
+		t.Fatalf("copilot yolo under the outer layer: got %v, want nil", got)
+	}
+	if got := SpawnSandboxWarnings(copilot, CopilotApprovalAllowTools, CopilotSandboxInherit, home, false); got != nil {
+		t.Fatalf("copilot allow-tools: got %v, want nil", got)
 	}
 }
 

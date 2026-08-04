@@ -272,10 +272,46 @@ func (s *Sanitizer) Requests(rs []RecordedRequest) []RequestObservation {
 	return out
 }
 
+// selfPacedEventTypes are emitted by a producer with its own clock, so their
+// POSITION in the stream is scheduling noise rather than contract.
+//
+// Only one member so far, and it earned its place by breaking a golden.
+// session.background_tasks_changed is a poller tick: it fires on a timer for as
+// long as a tool runs, interleaving with that tool's own events according to
+// which goroutine happened to be scheduled. Two runs of the identical scenario
+// produced identical event MULTISETS — 13 pings both times — differing only in
+// whether one of them landed before or after a pair of
+// tool.execution_partial_result events. Nothing about the CLI's behavior
+// differed; a busy host moved a tick across a boundary.
+//
+// A golden that pins that position is not pinning compatibility, it is pinning
+// a race, and it fails with a contract-drift message describing drift that did
+// not happen. Membership here is therefore a claim about the EMITTER — this
+// event is produced by an independent timer — and should be argued that way,
+// not granted to whatever type a flake happens to land on. Everything else
+// stays exactly where it is, in exact order: an event that reflects the CLI's
+// actual progress through a turn is ordered evidence and must stay ordered.
+var selfPacedEventTypes = map[string]bool{
+	"session.background_tasks_changed": true,
+}
+
 // EventObservation is the committable projection of the CLI's event stream.
 type EventObservation struct {
 	// Types is the ordered event-type sequence, the stable part of the stream.
+	//
+	// Self-paced types are excluded — see selfPacedEventTypes and SelfPaced
+	// below. What remains is causally ordered: every entry is the CLI reaching
+	// a point in the turn, so the sequence is reproducible and a change in it
+	// is a real change in behavior.
 	Types []string `json:"types"`
+	// SelfPaced is the sorted SET of self-paced event types the run emitted.
+	//
+	// A set, not a sequence and not a count: that the CLI notifies about
+	// background tasks while a tool runs is the contract, and it is pinned
+	// here. How many ticks fit inside one echo, and where they fell relative
+	// to the tool's own events, are properties of a timer racing a fast
+	// command — recording them as evidence is what made this stream flaky.
+	SelfPaced []string `json:"selfPacedEventTypes,omitempty"`
 	// ResultExitCode and ResultSessionID come from the terminal result line.
 	ResultExitCode  *int   `json:"resultExitCode,omitempty"`
 	ResultSessionID string `json:"resultSessionId,omitempty"`
@@ -284,9 +320,29 @@ type EventObservation struct {
 	AssistantText string `json:"assistantText,omitempty"`
 }
 
+// splitSelfPacedEvents partitions an event-type sequence into the causally
+// ordered part and the set of self-paced types that were removed from it.
+func splitSelfPacedEvents(types []string) (ordered []string, selfPaced []string) {
+	seen := map[string]bool{}
+	ordered = make([]string, 0, len(types))
+	for _, ty := range types {
+		if selfPacedEventTypes[ty] {
+			if !seen[ty] {
+				seen[ty] = true
+				selfPaced = append(selfPaced, ty)
+			}
+			continue
+		}
+		ordered = append(ordered, ty)
+	}
+	sort.Strings(selfPaced)
+	return ordered, selfPaced
+}
+
 // Events projects a run's event stream.
 func (s *Sanitizer) Events(r RunResult) EventObservation {
-	obs := EventObservation{Types: r.EventTypes()}
+	ordered, selfPaced := splitSelfPacedEvents(r.EventTypes())
+	obs := EventObservation{Types: ordered, SelfPaced: selfPaced}
 	if result, ok := r.Result(); ok {
 		obs.ResultExitCode = result.ExitCode
 		// A minted id normalizes to <uuid>; a scenario-pinned id normalizes to
@@ -310,10 +366,16 @@ func (s *Sanitizer) Events(r RunResult) EventObservation {
 	return obs
 }
 
-// SessionLayout is the committable projection of COPILOT_HOME after a run —
-// the evidence TCL-972/TCL-975 need about what Copilot creates and where.
+// SessionLayout is the committable projection of ONE directory tree after a
+// run — the evidence TCL-972/TCL-975 need about what Copilot creates and
+// where.
+//
+// It was written for COPILOT_HOME and is now the per-root element of
+// BaselineLayout, which projects COPILOT_HOME, the package cache, the XDG
+// cache and the working directory alike. Nothing about the shape is
+// COPILOT_HOME-specific; the root is whatever the caller walked.
 type SessionLayout struct {
-	// Entries are COPILOT_HOME-relative paths with volatile segments
+	// Entries are paths relative to the walked root, with volatile segments
 	// normalized, sorted. Contents are never captured: session.db and
 	// events.jsonl hold conversation content.
 	Entries []string `json:"entries"`

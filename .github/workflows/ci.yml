@@ -945,14 +945,49 @@ jobs:
   # every token variable from the child environment so a regression back into
   # an auth dependency fails here instead of passing on a logged-in machine.
   #
-  # Linux only, deliberately. The evidence this produces (wire shape, session
-  # layout, exit codes, event stream) is not OS-specific, the job is a
-  # compatibility probe rather than a platform matrix, and adding macOS would
-  # double the cost for a duplicate answer. Revisit only if a Copilot contract
-  # is found to differ by platform.
+  # Two platforms, with DIFFERENT scopes, and the asymmetry is deliberate.
+  #
+  # The compatibility evidence (wire shape, session layout, exit codes, event
+  # stream) is not OS-specific, so running all of it twice would buy a duplicate
+  # answer at double the cost — that was the original Linux-only rationale and it
+  # still holds. What IS OS-specific is anything touching a security boundary or
+  # a platform path:
+  #
+  #   - Copilot's own sandbox (TCL-977): bubblewrap on Linux, Seatbelt on macOS,
+  #     and a finding about one kernel is not a finding about the other.
+  #   - tclaude's outer layer (TCL-978): the baseline's package cache moves to
+  #     ~/Library/Caches/copilot on macOS and the device-id file to
+  #     ~/Library/Application Support/Microsoft/DeveloperTools — two different
+  #     Library trees, neither XDG-shaped. That last one was DISCOVERED by this
+  #     macOS arm refuting the catalog's original claim, which is the whole
+  #     argument for the arm existing.
+  #
+  # So macOS runs the sandbox and platform scenarios from both tickets, and
+  # skips the wire ones.
   copilot-fixtures:
-    name: Copilot CLI fixtures
-    runs-on: ubuntu-latest
+    name: Copilot CLI fixtures (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            runner: ubuntu-latest
+            # Everything: the compatibility fixtures and the sandbox ones.
+            run_filter: TestCopilot
+          - platform: macos
+            runner: macos-latest
+            # The Seatbelt half of TCL-977's evidence, plus TCL-978's platform
+            # and assert-off scenarios. The descriptor test TCL-977's
+            # measurements justify needs no CLI and lives in the harness
+            # package, so the ordinary `go test ./...` job owns it.
+            #
+            # TCL-987's cwd-spelling scenario is macOS-ONLY by nature: it needs a
+            # runner whose $TMPDIR is spelled /var/folders/… while the kernel's
+            # directory is /private/var/folders/…, which is the entire defect. On
+            # Linux it has no alternate spelling to supply and skips, so this arm
+            # is the only place it is real evidence.
+            run_filter: TestCopilotNativeSandbox|TestCopilotSandboxBaseline|TestCopilotDefaultCachePlacement|TestCopilotPackageCacheIsExecutable|TestCopilotInnerSandbox|TestCopilotLegacyConfig|TestCopilotStartupDialsOnlyContractedHosts|TestCopilotConvStoreMatchesTheUnresolvedCwdSpelling|TestCopilotPermissionPathGrants|TestCopilotDirTrust
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -981,6 +1016,46 @@ jobs:
           npm install --global @github/copilot@1.0.77
           copilot --version
 
+      # Copilot's Linux sandbox backend is bubblewrap, and the native-sandbox
+      # scenarios assert real enforcement wherever it can start. Provisioning it
+      # here is what keeps the ENFORCING arm running instead of the fail-closed
+      # one: `bwrap` on PATH is not sufficient, the kernel must also permit an
+      # unprivileged user namespace, which Ubuntu's AppArmor restricts by
+      # default. Relaxing it on an ephemeral runner is safe and is verified
+      # below rather than assumed.
+      - name: Provision the Linux sandbox backend
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          bwrap --ro-bind / / --proc /proc --dev /dev true \
+            && echo "bwrap can create a namespace" \
+            || echo "::warning::bwrap cannot create a namespace; the enforcing arm will not run"
+
+      # -parallel 8 deliberately oversubscribes the runner's 4 vCPUs, and is
+      # not a CPU bet. These scenarios are overwhelmingly IDLE: each launches a
+      # CLI on a pseudo-terminal and then waits — for the screen to stop
+      # redrawing, for a quiet window to close, for a prompt nobody will ever
+      # answer. Sized to cores, this job spent most of ten minutes with the
+      # runner parked.
+      #
+      # What makes the oversubscription safe is that no scenario classifies on
+      # absolute time: every verdict is relative to the CLI's own output — it
+      # settled when its evidence arrived, it is blocked when its transcript
+      # stood still — and the absolute deadlines are outer bounds set well
+      # above any observed run. Contention stretches a scenario; it does not
+      # change what the scenario concludes.
+      #
+      # 2x is what was VERIFIED, not assumed: the suite was run green under a
+      # deliberately harsher budget — pinned to two cores at -parallel 4, the
+      # same 2x ratio this line asks of a four-core runner — and the timing
+      # constants (blockedQuiet in particular) were sized from the output gaps
+      # that run produced. The scenarios that could not take it are sequential
+      # and say why: see requireSmokeParallel, requireSmokeGolden, and the
+      # PTY TIMING lines in this job's own log, which are what a future
+      # re-tuning should argue from.
       - name: Copilot fixture smoke
         shell: bash
         env:
@@ -988,7 +1063,7 @@ jobs:
         run: |
           set -o pipefail
           go test ./pkg/claude/harness/copilotfixture/... \
-            -run 'TestCopilot' -v -count=1 -timeout 600s 2>&1 | tee "$RUNNER_TEMP/copilot-fixtures.log"
+            -run '${{ matrix.run_filter }}' -v -count=1 -parallel 8 -timeout 1500s 2>&1 | tee "$RUNNER_TEMP/copilot-fixtures.log"
 
       # A skipped test still exits 0. The gate is an env var, so a typo or a
       # rename would turn this job into a silent no-op that reports success
@@ -997,19 +1072,241 @@ jobs:
         shell: bash
         run: |
           log="$RUNNER_TEMP/copilot-fixtures.log"
+          # TCL-977's sandbox scenarios are required on BOTH platforms: they are
+          # the evidence behind a security capability decision, and a boundary
+          # measured only on Linux says nothing about Seatbelt.
           required=(
-            TestCopilotVersionPin
-            TestCopilotCredentialFreeTextTurn
-            TestCopilotToolCallRoundTrip
-            TestCopilotProviderFailure
-            TestCopilotSessionEnrollmentAndResume
-            TestCopilotReasoningEffortOnResponsesWire
-            TestCopilotModelSelection
-            TestCopilotProductionSpawnerLaunches
+            TestCopilotNativeSandboxBuiltinEditsAreInProcessOnly
+            TestCopilotNativeSandboxBuiltinEditPolicyResolvesSymlinksAndTraversal
+            TestCopilotNativeSandboxShellEnforcementIsHostConditional
+            TestCopilotNativeSandboxShellBasePolicySurface
+            TestCopilotNativeSandboxNeedsNoExperimentalFlag
+            TestCopilotNativeSandboxDisabledAppliesNoPolicy
+            TestCopilotNativeSandboxSettingsSourcesAndPrecedence
+            # TCL-978's outer-layer evidence, required on both arms for the same
+            # reason: the macOS acceptance criteria are a real package cache
+            # under ~/Library/Caches/copilot, a device id under
+            # ~/Library/Application Support/Microsoft/DeveloperTools (NOT
+            # XDG-shaped — this arm refuted that), and executable access to the
+            # package cache. A silent skip would report the platform contract as
+            # proven when nothing ran.
+            TestCopilotSandboxBaselineCoversObservedWrites
+            TestCopilotDefaultCachePlacementMatchesBaseline
+            TestCopilotPackageCacheIsExecutable
+            TestCopilotInnerSandboxDefaultIsOff
+            TestCopilotInnerSandboxEnabledIsDetectedBeforeLaunch
+            # The assert-off gate reads TWO settings files and the legacy one
+            # wins, replacing whole top-level keys. These tie that precedence
+            # claim to the real binary; if the CLI ever stops migrating, the
+            # gate is inspecting the wrong file and this must fail rather than
+            # the gate silently going soft.
+            TestCopilotLegacyConfigMigratesIntoSettings
+            TestCopilotLegacyConfigMergeIsShallow
+            TestCopilotStartupDialsOnlyContractedHosts
+            # TCL-973's directory-trust acceptance, required on BOTH arms
+            # because it is what makes an unattended Copilot pane start at all:
+            # the modal blocks before the provider is contacted, so a
+            # regression here is every spawned agent frozen, on whichever
+            # platform it regressed. These run tclaude's OWN seeder against the
+            # real CLI — the Phase 0 scenarios that measured the gate itself
+            # used a hand-written config and cannot cover that. The second one
+            # additionally pins the migration behaviour the contract rests on
+            # (trustedFolders is CLI-managed and stays in config.json), which a
+            # CLI change could move out from under the seeder silently.
+            TestCopilotDirTrustProductionSeedingClearsTheModal
+            TestCopilotDirTrustSeedingPreservesAnInstalledTrustStore
           )
+          if [[ "${{ matrix.platform }}" == "linux" ]]; then
+            # The compatibility fixtures run on Linux only; see the job comment.
+            required+=(
+              TestCopilotVersionPin
+              TestCopilotCredentialFreeTextTurn
+              TestCopilotToolCallRoundTrip
+              TestCopilotProviderFailure
+              TestCopilotSessionEnrollmentAndResume
+              TestCopilotReasoningEffortOnResponsesWire
+              TestCopilotModelSelection
+              TestCopilotProductionSpawnerLaunches
+              TestCopilotHooksFireFromTheInstalledFile
+            )
+          else
+            # TCL-987's acceptance proof: Copilot records a RESOLVED cwd while a
+            # macOS shell hands tclaude the /var/folders/… spelling of the same
+            # physical directory. The scenario skips itself where the two
+            # spellings are equal, which is exactly the silent no-op this gate
+            # exists to reject — on this arm it must report an explicit pass, or
+            # the only platform-real evidence for the fix never ran.
+            required+=(
+              TestCopilotConvStoreMatchesTheUnresolvedCwdSpelling
+              # TCL-973's other macOS-shaped scenario, and required here for
+              # exactly the same reason: the seeder writes BOTH the spelling it
+              # is handed and that path's resolved form, which is only
+              # falsifiable where the two differ. It skips on Linux, so this
+              # arm is the only place it is evidence rather than a no-op.
+              TestCopilotDirTrustSeedingMatchesTheUnresolvedCwdSpelling
+            )
+          fi
+          # TCL-973 Phase 0's permission matrix. Most of it is Linux-only for
+          # the same reason the compatibility fixtures are: these measure
+          # Copilot's own prompt behaviour, which is JavaScript in the CLI
+          # rather than anything the platform decides.
+          #
+          # The PATH matrix is the documented exception, and it runs on BOTH
+          # arms. Its subject IS platform semantics -- the cwd-subtree and
+          # system-temp grants, and which spellings of them the CLI honours --
+          # on a platform where TMPDIR is /var/folders/… while the resolved
+          # form is /private/var/folders/…. A finding about Linux temp
+          # semantics is not a finding about macOS temp semantics, so gating it
+          # on Linux alone would leave the PR asserting a general
+          # supported-platform contract with evidence from one platform. Note
+          # that a macOS-required name must appear in BOTH the run_filter above
+          # and the required list below: required-only fails loudly, which is
+          # fine, but run_filter-only can skip in silence, which is not.
+          #
+          # This list is generated from permission_contract.json and must stay
+          # equal to the set of scenarios it cites. That equality is the point:
+          # the Go-side contract guard can only check that a cited scenario is
+          # DECLARED, so for any scenario missing from here "declared" would be
+          # the only thing standing behind a proven status. Requiring every
+          # cited name is what supplies the other half.
+          #
+          # These names are SUBTESTS, and that changes the gate. Go indents
+          # subtest result lines, so the column-anchored pattern above matches
+          # only top-level tests -- and a parent whose subtests every one
+          # skipped still prints "--- PASS: Parent". Gating a table-driven
+          # matrix on the parent alone would verify essentially nothing.
+          required_subtests=(
+            'TestCopilotPermissionPathGrants/outside-all/no-path-flags'
+            'TestCopilotPermissionPathGrants/outside-all/add-dir'
+            'TestCopilotPermissionPathGrants/outside-all/allow-all-paths'
+            'TestCopilotPermissionPathGrants/outside-all/allow-all-tools'
+            # TCL-1010. Cited by yolo-permission-surface, which is what the
+            # `yolo` approval token's mode help stands on, and required on BOTH
+            # arms for the same reason as its siblings: it is a path finding,
+            # and Linux temp/cwd semantics are not macOS temp/cwd semantics.
+            'TestCopilotPermissionPathGrants/outside-all/yolo'
+            'TestCopilotPermissionPathGrants/in-temp/default'
+            'TestCopilotPermissionPathGrants/in-temp/disallow-temp-dir'
+          )
+          if [[ "${{ matrix.platform }}" == "linux" ]]; then
+            required+=(
+              TestCopilotPermissionContractIsBackedByScenarios
+              TestCopilotPermissionFolderTrustBlocksFirst
+              TestCopilotPermissionHeadlessIsNotEvidence
+              TestCopilotPermissionInPaneAllowAllCannotOverrideDeny
+              TestCopilotPermissionNoAskUserRemovesTheTool
+              TestCopilotPermissionResumeSubmitsPrompt
+              # TCL-973's web-fetch increment. These are the only scenarios in
+              # the suite that run WITHOUT COPILOT_OFFLINE=true -- they have to,
+              # since that variable removes web_fetch from the catalog and is
+              # what made the question unaskable in Phase 0 -- so they carry the
+              # egress wall (a refusing capture proxy) in place of it. A silent
+              # skip here would leave the detached-spawn posture resting on an
+              # unmeasured deadlock source again.
+              TestCopilotPermissionWebFetchNeedsTheOnlineArm
+              TestCopilotPermissionWebFetchExclusionRemovesTheTool
+              # The positive control for the egress wall, and the one name here
+              # whose absence would be silent: every "the proxy observed
+              # nothing" assertion in that file is satisfied by a capture that
+              # observed nothing BECAUSE the CLI stopped routing through it. If
+              # this scenario is skipped, the online arm's containment claim is
+              # unbacked while the whole matrix still reports green.
+              TestCopilotPermissionWebFetchEgressWallIsInForce
+            )
+            # += and NOT =. A plain assignment here would REPLACE the shared
+            # array above rather than extend it, silently dropping the five
+            # both-platform path rows from the Linux gate -- which is exactly
+            # the regression this line shipped with once: the fix that added
+            # macOS path coverage took Linux path coverage away, and both arms
+            # stayed green because a gate that requires nothing passes.
+            required_subtests+=(
+              'TestCopilotPermissionTrustBypassSurface/allow-all-tools'
+              'TestCopilotPermissionTrustBypassSurface/allow-all'
+              # TCL-1010: the alias is measured under its own spelling, because
+              # `yolo`'s mode help promises folder trust still blocks and a
+              # documented alias has behaved differently here before
+              # (COPILOT_ALLOW_ALL).
+              'TestCopilotPermissionTrustBypassSurface/yolo'
+              'TestCopilotPermissionTrustBypassSurface/allow-all-paths'
+              'TestCopilotPermissionTrustBypassSurface/add-dir-workdir'
+              'TestCopilotPermissionTrustBypassSurface/config-json-trustedFolders'
+              'TestCopilotPermissionTrustBypassSurface/settings-json-trustedFolders'
+              'TestCopilotPermissionToolApprovalGate/unsafe-command/no-flags'
+              'TestCopilotPermissionToolApprovalGate/unsafe-command/allow-all-tools'
+              # TCL-1010: --yolo on the tool gate. The `yolo` token would be a
+              # posture strictly WORSE than the default it sits beside if this
+              # flag did not close this gate, so it is measured rather than
+              # inferred from the alias.
+              'TestCopilotPermissionToolApprovalGate/unsafe-command/yolo'
+              'TestCopilotPermissionToolApprovalGate/safe-command/no-flags'
+              'TestCopilotPermissionDenyToolGrammar/url()'
+              'TestCopilotPermissionDenyToolGrammar/shell()'
+              'TestCopilotPermissionDenyToolGrammar/write()'
+              'TestCopilotPermissionDenyToolGrammar/*'
+              'TestCopilotPermissionDenyToolGrammar/url'
+              'TestCopilotPermissionDenyToolGrammar/url(*)'
+              'TestCopilotPermissionDenyToolGrammar/url(example.com)'
+              'TestCopilotPermissionDenyToolGrammar/shell(*)'
+              'TestCopilotPermissionDenyToolGrammar/write(/tmp)'
+              'TestCopilotPermissionURLGateUnderToolApproval/no-flags'
+              'TestCopilotPermissionURLGateUnderToolApproval/allow-all-tools'
+              'TestCopilotPermissionAmbientAllowAllPromotes/true'
+              'TestCopilotPermissionAmbientAllowAllPromotes/TRUE'
+              'TestCopilotPermissionAmbientAllowAllPromotes/one'
+              'TestCopilotPermissionAmbientAllowAllPromotes/false'
+              'TestCopilotPermissionAmbientAllowAllPromotes/empty'
+              # The web-fetch matrix. no-flags is the deadlock claim and
+              # allow-all-tools/no-ask-user is the posture that closes it; a
+              # gate carrying one without the other would let a blocked arm
+              # stand with no positive control, or vice versa.
+              'TestCopilotPermissionWebFetchGate/no-flags'
+              'TestCopilotPermissionWebFetchGate/allow-all-tools'
+              'TestCopilotPermissionWebFetchGate/allow-all-tools/no-ask-user'
+              'TestCopilotPermissionWebFetchGate/allow-all-urls'
+              'TestCopilotPermissionWebFetchGate/deny-tool-url'
+              # Enforcement, per spelling. The wildcard rows are the ones that
+              # must not be lost: they are what stops "parses" from being read
+              # as "works" for a blanket URL deny.
+              'TestCopilotPermissionWebFetchURLDenyEnforcement/deny-tool/url'
+              'TestCopilotPermissionWebFetchURLDenyEnforcement/deny-tool/url(host)'
+              'TestCopilotPermissionWebFetchURLDenyEnforcement/deny-url/host'
+              'TestCopilotPermissionWebFetchURLDenyEnforcement/deny-tool/url(*)'
+              'TestCopilotPermissionWebFetchURLDenyEnforcement/deny-url/*'
+              'TestCopilotPermissionWebFetchURLDenyEnforcement/deny-url/https-star'
+            )
+          fi
+          # The gate's own integrity check. Everything below verifies that the
+          # TESTS ran; nothing yet verifies that the GATE still asks about
+          # them, and a required list that quietly lost entries passes exactly
+          # like one that is satisfied. These are the both-platform path
+          # contract, so their presence is asserted on BOTH arms before the
+          # list is used.
+          for path_row in \
+            'TestCopilotPermissionPathGrants/outside-all/no-path-flags' \
+            'TestCopilotPermissionPathGrants/outside-all/add-dir' \
+            'TestCopilotPermissionPathGrants/outside-all/allow-all-paths' \
+            'TestCopilotPermissionPathGrants/outside-all/allow-all-tools' \
+            'TestCopilotPermissionPathGrants/outside-all/yolo' \
+            'TestCopilotPermissionPathGrants/in-temp/default' \
+            'TestCopilotPermissionPathGrants/in-temp/disallow-temp-dir'
+          do
+            found=0
+            for entry in "${required_subtests[@]}"; do
+              [[ "$entry" == "$path_row" ]] && found=1 && break
+            done
+            if (( found == 0 )); then
+              echo "::error::The anti-skip list lost '$path_row' on ${{ matrix.platform }}. The path contract is required on BOTH platforms; a branch above almost certainly assigned required_subtests with = instead of +=."
+              exit 1
+            fi
+          done
           missing=()
           for test_name in "${required[@]}"; do
             grep -qE "^--- PASS: $test_name " "$log" || missing+=("$test_name")
+          done
+          for test_name in "${required_subtests[@]}"; do
+            # -F: these names contain regex metacharacters on purpose —
+            # `url(*)` is a Copilot deny-tool pattern, not a pattern of ours.
+            grep -qF -- "--- PASS: $test_name " "$log" || missing+=("$test_name")
           done
           if (( ${#missing[@]} > 0 )); then
             {
@@ -1021,6 +1318,71 @@ jobs:
               echo "The job provisions pinned @github/copilot@1.0.77 and refuses a skipped or renamed test."
             } >> "$GITHUB_STEP_SUMMARY"
             echo "::error::Copilot fixture scenarios did not report an explicit pass: ${missing[*]}"
+            exit 1
+          fi
+
+      # BOTH host categories, and the second one is not optional.
+      #
+      # The scenarios above ran with a usable backend. The single measurement
+      # that establishes TCL-977's conclusion — that Copilot's built-in file
+      # edits never enter the OS sandbox — can only be made on a host where the
+      # backend CANNOT start: it is the run where an edit lands while every
+      # shell command fails. Requiring a usable backend everywhere (the step
+      # after this one) would leave that arm dead in CI, so the decisive
+      # evidence for a security capability decision would have no automated
+      # coverage at all.
+      #
+      # Re-restricting the AppArmor knob is the same condition a hardened host
+      # or a nested container presents, which is the category the arm exists to
+      # describe.
+      - name: Copilot sandbox smoke with the backend denied
+        if: matrix.platform == 'linux'
+        shell: bash
+        env:
+          TCLAUDE_COPILOT_FIXTURE_SMOKE: "1"
+        run: |
+          set -o pipefail
+          # Tolerated exactly like the provisioning step's write. On a runner
+          # without this knob the raw sysctl error would preempt the descriptive
+          # gate below, which was written for precisely that case.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=1 || true
+          go test ./pkg/claude/harness/copilotfixture/... \
+            -run 'TestCopilotNativeSandbox' -v -count=1 -parallel 8 -timeout 900s 2>&1 \
+            | tee "$RUNNER_TEMP/copilot-fixtures-nobackend.log"
+
+      - name: Require the backend-denied arm to have run
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          log="$RUNNER_TEMP/copilot-fixtures-nobackend.log"
+          if ! grep -q 'OS sandbox backend available: false' "$log"; then
+            echo "::error::The backend-denied step still reported a usable sandbox backend, so the decisive in-process-edit arm did not run. Denying unprivileged user namespaces no longer works on this runner; find another way to deny the backend rather than dropping the arm."
+            exit 1
+          fi
+          grep -qE '^--- PASS: TestCopilotNativeSandboxBuiltinEditsAreInProcessOnly ' "$log" || {
+            echo "::error::The decisive scenario did not pass in the backend-denied arm."
+            exit 1
+          }
+
+      # The sandbox scenarios assert real enforcement where Copilot's OS backend
+      # can start and fail-closed degradation where it cannot, so they stay green
+      # either way — which is exactly why the ARM has to be checked separately.
+      # A runner that silently lost its backend would keep this job green while
+      # quietly stopping to test the thing the job exists for.
+      - name: Require the enforcing sandbox arm
+        shell: bash
+        run: |
+          log="$RUNNER_TEMP/copilot-fixtures.log"
+          verdicts="$(grep -o 'OS sandbox backend available: [a-z]*' "$log" | sort -u || true)"
+          {
+            echo "### Copilot sandbox backend"
+            echo
+            echo '```'
+            echo "${verdicts:-(no verdict logged)}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if ! grep -q 'OS sandbox backend available: true' "$log"; then
+            echo "::error::Copilot's OS sandbox backend never started on this runner, so the native-sandbox scenarios only exercised their fail-closed arm. On Linux the provisioning step (bubblewrap + unprivileged user namespaces) has regressed; on macOS Seatbelt is expected to be present unconditionally. Note this checks the FIRST log only; the backend-denied arm has its own gate above."
             exit 1
           fi
 

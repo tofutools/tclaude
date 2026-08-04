@@ -442,12 +442,19 @@ func AutoGrantableSlugs() []string {
 // without reading ~/.tclaude/data itself — a sandboxed agent is denied
 // that directory by design, so decoration has to arrive over the wire
 // (TCL-611). Absent for a conv with no index row; readers render blank.
+//
+// GroupGrants is the third standing source the resolver consults (group
+// name → slugs granted to every member). It used to be absent from this
+// view entirely, which made the roster read as the whole picture when it
+// was not: an agent could hold a slug through its group with nothing here
+// or in the effective listing saying so.
 type permissionsState struct {
-	Defaults  []string                     `json:"defaults"`
-	Grants    map[string][]string          `json:"grants"`
-	Overrides map[string]map[string]string `json:"overrides"`
-	AgentIDs  map[string]string            `json:"agent_ids"`
-	Titles    map[string]string            `json:"titles"`
+	Defaults    []string                     `json:"defaults"`
+	Grants      map[string][]string          `json:"grants"`
+	Overrides   map[string]map[string]string `json:"overrides"`
+	GroupGrants map[string][]string          `json:"group_grants"`
+	AgentIDs    map[string]string            `json:"agent_ids"`
+	Titles      map[string]string            `json:"titles"`
 }
 
 // permissionsEffectiveResp is the daemon-resolved answer to
@@ -472,13 +479,22 @@ type permissionsEffectiveResp struct {
 	AgentID string `json:"agent_id,omitempty"`
 	// Title is the resolved conv's display title, when known.
 	Title string `json:"title,omitempty"`
-	// Effective is ((defaults ∪ grants ∪ owner-implied) − denies), sorted.
+	// Effective is every slug the gate would currently allow, sorted —
+	// computed by asking the gate's own resolver per slug, so it covers
+	// sudo elevations and group-granted slugs as well as defaults,
+	// per-conv overrides and the owner bypass.
 	Effective []string `json:"effective"`
-	// Source names the matched inputs, e.g. "defaults+grants:<conv> +owner".
+	// Source names the matched inputs, e.g. "defaults+grants:<conv>+group".
 	Source string `json:"source"`
 	// OwnerImplied is the subset of Effective contributed SOLELY by group
 	// ownership, so the CLI can annotate those rows "(via ownership)".
 	OwnerImplied []string `json:"owner_implied"`
+	// Provenance maps each effective slug to the resolver source that
+	// granted it — "sudo", "override", "group", "default", or "owner"
+	// (the structural bypass). It comes straight from the gate's own
+	// verdict, so the listing explains a decision without a second model
+	// of the precedence.
+	Provenance map[string]string `json:"provenance,omitempty"`
 }
 
 // targetSentinelDefault is the magic target string that means "modify
@@ -521,10 +537,11 @@ func resolveTarget(target string) (*resolvedTarget, error) {
 func snapshotPermissions() (permissionsState, error) {
 	cfg, _ := config.Load()
 	out := permissionsState{
-		Grants:    map[string][]string{},
-		Overrides: map[string]map[string]string{},
-		AgentIDs:  map[string]string{},
-		Titles:    map[string]string{},
+		Grants:      map[string][]string{},
+		Overrides:   map[string]map[string]string{},
+		GroupGrants: map[string][]string{},
+		AgentIDs:    map[string]string{},
+		Titles:      map[string]string{},
 	}
 	if cfg != nil && cfg.Agent != nil {
 		out.Defaults = append(out.Defaults, cfg.Agent.DefaultPermissions...)
@@ -542,6 +559,33 @@ func snapshotPermissions() (permissionsState, error) {
 	}
 	if overrides != nil {
 		out.Overrides = overrides
+	}
+	// Group grants are a standing source in their own right — surface them
+	// so the roster shows every place a slug can come from. An unreadable
+	// group is skipped rather than failing the whole view.
+	groups, err := db.ListAgentGroups()
+	if err != nil {
+		// Degrade rather than 500 the whole view — the defaults and
+		// per-agent overrides below are still worth answering with, and
+		// the targeted effective view reads group grants itself.
+		slog.Warn("permissions: group listing failed; group grants omitted", "error", err)
+		groups = nil
+	}
+	for _, g := range groups {
+		// An archived group grants nothing — the resolver's join requires
+		// archived_at IS NULL — so listing its slugs would overstate.
+		if g == nil || g.IsArchived() {
+			continue
+		}
+		slugs, err := db.ListAgentGroupPermissions(g.ID)
+		if err != nil {
+			slog.Warn("permissions: group grant read failed", "group", g.Name, "error", err)
+			continue
+		}
+		if len(slugs) > 0 {
+			sort.Strings(slugs)
+			out.GroupGrants[g.Name] = slugs
+		}
 	}
 	// Project the stable agent_id behind every conv key so the CLI roster
 	// can lead with it (display-only — the maps stay conv-keyed). Resolve
@@ -732,17 +776,21 @@ func writeEffectivePermissions(w http.ResponseWriter, r *http.Request, state per
 	if res.Row != nil {
 		resp.Title = agent.DisplayTitle(res.Row)
 	}
-	effective, ownerAdded, source := effectivePermsFor(state, res.ConvID, ownerImpliedSlugsFor(res.ConvID))
+	effective, ownerAdded, provenance, source := effectivePermsFor(state, res.ConvID, ownerImpliedSlugsFor(res.ConvID))
 	sort.Strings(effective)
 	sort.Strings(ownerAdded)
 	resp.Effective = effective
 	resp.OwnerImplied = ownerAdded
+	resp.Provenance = provenance
 	resp.Source = source
 	if resp.Effective == nil {
 		resp.Effective = []string{}
 	}
 	if resp.OwnerImplied == nil {
 		resp.OwnerImplied = []string{}
+	}
+	if resp.Provenance == nil {
+		resp.Provenance = map[string]string{}
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -778,88 +826,126 @@ func ownsAnyGroup(convID string) bool {
 	return len(owned) > 0
 }
 
-// effectivePermsFor returns the slug list the daemon would consult for
-// this agent. Per-conv overrides live in SQLite keyed by full conv-id:
-// a grant override ADDS a slug on top of the global defaults, a deny
-// override SUBTRACTS one. Group ownership ADDS the owner-conferred slugs
-// (ownerImplied, empty for a non-owner) — the structural owner-bypass,
-// which a deny still suppresses. So the effective set is
-// ((defaults ∪ grants ∪ owner-implied) − denies).
+// effectivePermsFor answers "what would the gate decide for this agent",
+// slug by slug, by asking the gate's own resolver
+// (resolvePermissionVerdict) about every candidate slug and applying the
+// structural group-owner bypass exactly where requirePermissionEx applies
+// it: at the permUndecided gap, never over an explicit deny.
 //
-// ownerAdded reports the subset contributed SOLELY by ownership (not
-// already held via defaults/grants and not denied), so the caller can
-// annotate those rows "(via ownership)".
+// It deliberately does NOT re-derive the precedence from `state`. The
+// listing used to union (defaults ∪ per-conv grants ∪ owner-implied) and
+// subtract denies, which silently omitted the resolver's other two
+// sources — group-granted slugs and active sudo elevations — so an agent
+// could hold human.notify through its group while `permissions ls`
+// reported it absent. Routing both readers through one resolver means a
+// source added there cannot drift out of the listing.
+//
+// `state` now contributes only the defaults list (the resolver takes the
+// default as a parameter, as the request path does) and the candidate
+// enumeration; ownerImplied is empty for a non-owner.
+//
+// ownerAdded reports the subset held SOLELY via the owner bypass, so the
+// caller can annotate those rows "(via ownership)". provenance maps every
+// effective slug to the source that granted it ("sudo", "override",
+// "group", "default", "owner").
 //
 // The returned label names the matched sources ("defaults",
-// "defaults+grants:<conv>", "+owner", with " −denies" appended when any
-// deny override applies).
-func effectivePermsFor(state permissionsState, convID string, ownerImplied []string) (effective, ownerAdded []string, source string) {
-	effective = append([]string{}, state.Defaults...)
-	source = "defaults"
-	if grants, ok := state.Grants[convID]; ok && len(grants) > 0 {
-		effective = mergeUniqueSlugs(effective, grants)
-		source = "defaults+grants:" + convID
+// "defaults+grants:<conv>", "+group", "+sudo", "+owner", with " −denies"
+// appended when any deny override applies).
+func effectivePermsFor(state permissionsState, convID string, ownerImplied []string) (effective, ownerAdded []string, provenance map[string]string, source string) {
+	defaults := map[string]bool{}
+	for _, s := range state.Defaults {
+		defaults[s] = true
 	}
-	if len(ownerImplied) > 0 {
-		held := map[string]bool{}
-		for _, s := range effective {
-			held[s] = true
-		}
-		for _, s := range ownerImplied {
-			if !held[s] {
-				ownerAdded = append(ownerAdded, s)
+	ownerSet := map[string]bool{}
+	for _, s := range ownerImplied {
+		ownerSet[s] = true
+	}
+	provenance = map[string]string{}
+	matched := map[permSource]bool{}
+	anyDeny := false
+	// One read of the agent's standing sources, then the SAME precedence
+	// the gate applies, per candidate slug. Loading once is what keeps the
+	// dashboard roster (this runs per agent, per snapshot poll) from
+	// issuing a query per slug per agent.
+	src := loadPermSources(convID)
+	for _, slug := range candidatePermissionSlugs(state, convID, ownerImplied, src) {
+		v := resolvePermissionVerdictFrom(src, slug, defaults[slug])
+		switch v.Resolution {
+		case permAllow:
+			effective = append(effective, slug)
+			provenance[slug] = string(v.Source)
+			matched[v.Source] = true
+		case permUndecided:
+			// The owner bypass fills exactly this gap — see
+			// requirePermissionEx, where it is consulted only for
+			// permUndecided so an explicit deny stays authoritative.
+			if ownerSet[slug] {
+				effective = append(effective, slug)
+				ownerAdded = append(ownerAdded, slug)
+				provenance[slug] = string(permSourceOwner)
+				matched[permSourceOwner] = true
 			}
-		}
-		if len(ownerAdded) > 0 {
-			effective = mergeUniqueSlugs(effective, ownerImplied)
-			source += "+owner"
+		case permDeny:
+			anyDeny = true
 		}
 	}
-	denied := map[string]bool{}
-	for slug, effect := range state.Overrides[convID] {
-		if effect == db.PermEffectDeny {
-			denied[slug] = true
-		}
+	source = "defaults"
+	if matched[permSourceOverride] {
+		source += "+grants:" + convID
 	}
-	if len(denied) > 0 {
-		effective = dropDeniedSlugs(effective, denied)
-		ownerAdded = dropDeniedSlugs(ownerAdded, denied)
+	if matched[permSourceGroup] {
+		source += "+group"
+	}
+	if matched[permSourceSudo] {
+		source += "+sudo"
+	}
+	if matched[permSourceOwner] {
+		source += "+owner"
+	}
+	if anyDeny {
 		source += " −denies"
 	}
-	return effective, ownerAdded, source
+	return effective, ownerAdded, provenance, source
 }
 
-// dropDeniedSlugs returns slugs with every denied entry removed,
-// preserving order. Shared by the effective set and its owner-conferred
-// projection so a deny override suppresses a slug in both — deny is
-// authoritative over the owner-bypass, mirroring resolvePermission.
-func dropDeniedSlugs(slugs []string, denied map[string]bool) []string {
-	kept := make([]string, 0, len(slugs))
-	for _, s := range slugs {
-		if !denied[s] {
-			kept = append(kept, s)
-		}
-	}
-	return kept
-}
-
-// mergeUniqueSlugs appends b to a, skipping duplicates and preserving
-// first-seen order.
-func mergeUniqueSlugs(a, b []string) []string {
+// candidatePermissionSlugs enumerates every slug worth asking the
+// resolver about for this agent: the known registry, plus any slug some
+// source mentions. The extra sources matter because the daemon stores
+// forward-compat slugs a given build's registry may not know yet, and a
+// slug that is genuinely in force must be listed even then.
+func candidatePermissionSlugs(state permissionsState, convID string, ownerImplied []string, src permSources) []string {
 	seen := map[string]bool{}
-	out := []string{}
-	for _, v := range a {
-		if !seen[v] {
-			seen[v] = true
-			out = append(out, v)
+	var out []string
+	add := func(slugs ...string) {
+		for _, s := range slugs {
+			if s != "" && !seen[s] {
+				seen[s] = true
+				out = append(out, s)
+			}
 		}
 	}
-	for _, v := range b {
-		if !seen[v] {
-			seen[v] = true
-			out = append(out, v)
-		}
+	for _, s := range permissionRegistry {
+		add(s.Slug)
 	}
+	add(state.Defaults...)
+	add(state.Grants[convID]...)
+	for slug := range state.Overrides[convID] {
+		add(slug)
+	}
+	add(ownerImplied...)
+	// The agent's own sources, already read — these are what carry a slug
+	// this build's registry may not know.
+	for slug := range src.group {
+		add(slug)
+	}
+	for slug := range src.sudo {
+		add(slug)
+	}
+	for slug := range src.override {
+		add(slug)
+	}
+	sort.Strings(out)
 	return out
 }
 

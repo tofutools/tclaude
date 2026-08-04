@@ -78,7 +78,7 @@ func TestLegacySoftExitRetry_SendFailurePreservesDeliveredIntentThroughWindow(t 
 	ref, err := db.SetSessionExitIntent(sessionID, db.AgentExitActionReincarnate, "", time.Now())
 	require.NoError(t, err)
 
-	scheduleSoftExitRetry(conv, tmuxSes, 4242, "/exit", "test-legacy-retry", &ref)
+	scheduleSoftExitRetry(conv, tmuxSes, 4242, "/exit", nil, "test-legacy-retry", &ref)
 
 	readIntent := func() string {
 		t.Helper()
@@ -135,7 +135,7 @@ func TestLegacySoftExitRetry_FinalAttemptAlivePaneRetainsIntentThroughWindow(t *
 	ref, err := db.SetSessionExitIntent(sessionID, db.AgentExitActionReincarnate, "", time.Now())
 	require.NoError(t, err)
 
-	scheduleSoftExitRetry(conv, tmuxSes, 4242, "/exit", "test-legacy-final", &ref)
+	scheduleSoftExitRetry(conv, tmuxSes, 4242, "/exit", nil, "test-legacy-final", &ref)
 
 	readIntent := func() string {
 		t.Helper()

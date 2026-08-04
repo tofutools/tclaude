@@ -77,7 +77,7 @@ type NewParams struct {
 	// fills an omitted value from the global default spawn profile; if that is
 	// also blank the harness receives no override. A non-empty value is
 	// normalized and validated by the harness catalog in runNew.
-	Effort string `long:"effort" optional:"true" help:"Reasoning effort: low|medium|high|xhigh|max. Unset = global profile, then the harness default"`
+	Effort string `long:"effort" optional:"true" help:"Reasoning effort (per-harness; Copilot also accepts none|minimal). Unset = global profile, then the harness default"`
 
 	// Model picks the model for the chosen harness. A fresh human launch fills
 	// an omitted value from the global default spawn profile; if that is also
@@ -172,19 +172,20 @@ type NewParams struct {
 
 	// TrustDir opts into pre-trusting the launch cwd, so a detached pane
 	// doesn't freeze on the harness's "do you trust this folder?" dialog
-	// (JOH-205 for Codex, JOH-369 for Claude Code). Each harness records trust
-	// in its own config file, written BEFORE launch since neither exposes a
-	// per-invocation trust flag:
+	// (JOH-205 for Codex, JOH-369 for Claude Code, TCL-973 for Copilot). Each
+	// harness records trust in its own config file, written BEFORE launch since
+	// none of them exposes a per-invocation trust flag:
 	//
-	//   codex  → [projects."<cwd>"] trust_level = "trusted" in ~/.codex/config.toml
-	//   claude → projects.<cwd>.hasTrustDialogAccepted = true in ~/.claude.json
+	//   codex   → [projects."<cwd>"] trust_level = "trusted" in ~/.codex/config.toml
+	//   claude  → projects.<cwd>.hasTrustDialogAccepted = true in ~/.claude.json
+	//   copilot → <cwd> appended to trustedFolders in $COPILOT_HOME/config.json
 	//
 	// OFF by default and NEVER auto-defaulted on this path: editing a config
 	// tclaude does not own is a side effect the user must explicitly request
 	// (dashboard checkbox / this flag). Rejected for a harness with no
 	// dir-trust dialog. The write is atomic + idempotent
 	// (harness.EnsureDirTrusted).
-	TrustDir bool `long:"trust-dir" help:"Pre-trust the launch directory so a detached pane doesn't freeze on the harness's trust-folder dialog: codex gets [projects.\"<cwd>\"] trust_level=\"trusted\" in ~/.codex/config.toml, claude gets projects.<cwd>.hasTrustDialogAccepted=true in ~/.claude.json. Off by default; edits that harness's config, so opt-in only"`
+	TrustDir bool `long:"trust-dir" help:"Pre-trust the launch directory so a detached pane doesn't freeze on the harness's trust-folder dialog: codex gets [projects.\"<cwd>\"] trust_level=\"trusted\" in ~/.codex/config.toml, claude gets projects.<cwd>.hasTrustDialogAccepted=true in ~/.claude.json, copilot gets the directory appended to trustedFolders in $COPILOT_HOME/config.json. Off by default; edits that harness's config, so opt-in only"`
 
 	// RemoteControl arms Claude Code's built-in Remote Access at launch
 	// (`claude --remote-control`), so the session is reachable from
@@ -344,6 +345,56 @@ func sandboxDescr(sandboxMode, permissionProfile string) string {
 		return permissionProfile
 	}
 	return sandboxMode
+}
+
+// validateReplacedPermissionProfile applies the --permission-profile rules to a
+// launch whose profile the single-wall tclaude-layer implementation is about to
+// discard.
+//
+// It exists because those rules used to run LATER than the discard and
+// therefore judged the operator's flag by accident. Now that the discard
+// happens up front — so the Codex managed-profile normalization and the
+// mutual-exclusion check never see a profile this launch does not use — the
+// judgement has to be made deliberately, or `--sandbox-impl tclaude-layer
+// --permission-profile <typo>` would launch silently where every other
+// implementation refuses it.
+//
+// requestedSandboxMode is the mode the operator asked for, BEFORE the
+// implementation forced its own: the rules are about what they typed, and
+// judging the forced mode would report a conflict they could not have caused.
+// The checks and their order mirror the ones further down runNew, which remain
+// the only ones a non-tclaude-layer launch runs.
+func validateReplacedPermissionProfile(
+	h *harness.Harness, requestedSandboxMode, permissionProfile string,
+) error {
+	requestedSandboxMode = strings.TrimSpace(requestedSandboxMode)
+	// The managed-profile pseudo-mode selects the tclaude-agent profile, so a
+	// DIFFERENT explicit profile beside it is a conflict the operator must fix
+	// rather than have silently resolved.
+	if h.Name == harness.CodexName && requestedSandboxMode == harness.SandboxManagedProfile {
+		if up := strings.TrimSpace(permissionProfile); up != "" && up != harness.CodexAgentProfile {
+			return fmt.Errorf("--sandbox %s selects the managed %s profile and conflicts with --permission-profile %s",
+				harness.SandboxManagedProfile, harness.CodexAgentProfile, up)
+		}
+		// It resolves TO the managed profile, and the mode is consumed doing so
+		// — which is why the pair below is not a mutual-exclusion violation.
+		return nil
+	}
+	profile, err := harness.ValidateCodexProfileName(permissionProfile)
+	if err != nil {
+		return err
+	}
+	if profile == "" {
+		return nil
+	}
+	if requestedSandboxMode != "" {
+		return fmt.Errorf("--permission-profile and --sandbox are mutually exclusive: " +
+			"Codex ignores a permission profile when --sandbox is set")
+	}
+	if h.Name != harness.CodexName {
+		return fmt.Errorf("--permission-profile is a Codex launch option; harness %q has no permission profiles", h.Name)
+	}
+	return nil
 }
 
 // JoinGroupHandler implements `--join-group`. Set by the agent package's
@@ -520,12 +571,33 @@ func runNew(params *NewParams) error {
 		}
 		params.Sandbox = sandboxMode
 	}
+	requestedSandboxMode := sandboxMode
 	sandboxMode, err = harness.ResolveSandboxImplementationMode(
 		h, sandboxMode, sandboxImplementation)
 	if err != nil {
 		return err
 	}
 	params.Sandbox = sandboxMode
+	if tclaudeLayerOnly {
+		// The single-wall implementation replaces the harness's own permission
+		// profile with tclaude's outer wall; ResolveSandboxImplementationMode
+		// above has already forced the matching harness-native mode. Clearing
+		// the profile HERE — rather than after the Codex managed-profile
+		// normalization below, where this used to live — keeps that
+		// normalization and the --permission-profile/--sandbox mutual-exclusion
+		// check from judging a profile this launch does not use.
+		//
+		// Clearing it is not the same as ignoring it: a profile flag the outer
+		// wall discards is still a flag the operator typed, and a combination
+		// that was a loud error before must stay one. Validate what they asked
+		// for against the mode they asked for, THEN discard it.
+		if err := validateReplacedPermissionProfile(
+			h, requestedSandboxMode, params.PermissionProfile,
+		); err != nil {
+			return err
+		}
+		params.PermissionProfile = ""
+	}
 	if outerLayer {
 		if err := ValidateTclaudeLayerHarness(h.Name); err != nil {
 			return err
@@ -647,18 +719,6 @@ func runNew(params *NewParams) error {
 		}
 	}
 
-	// The single-wall tclaude-layer implementation selects the harness-native
-	// posture declared for that outer-wall contract. Stacked has already forced
-	// the reviewed nested contract on above and must not pass through here.
-	if tclaudeLayerOnly {
-		params.PermissionProfile = ""
-		sandboxMode, err = harness.TclaudeLayerSandboxMode(h)
-		if err != nil {
-			return err
-		}
-		params.Sandbox = sandboxMode
-	}
-
 	// Validate --ask-for-approval up front WITHOUT defaulting it, for the same
 	// trust-root reason as --sandbox above: a FRESH `tclaude session new` is
 	// the human's own session and they can attach to answer prompts, so tclaude
@@ -680,6 +740,15 @@ func runNew(params *NewParams) error {
 		// even though command emission still omits it, so approval-lineage checks
 		// can distinguish a known inherit launch from a legacy unknown row.
 		recordedApprovalPolicy = harness.ClaudePermissionInherit
+	}
+	if h.Name == harness.CopilotName && recordedApprovalPolicy == "" {
+		// Identical reasoning for Copilot: emitting no permission flags IS the
+		// `inherit` token, so persisting the sentinel is a faithful record
+		// rather than an inference. Without it, every human-started Copilot
+		// session would look like a legacy unreconstructable row to the spawn
+		// approval guard, and a human's own session could not spawn even the
+		// baseline children its posture provably permits.
+		recordedApprovalPolicy = harness.CopilotApprovalInherit
 	}
 	params.Approval = approvalPolicy
 
@@ -780,6 +849,10 @@ func runNew(params *NewParams) error {
 
 	// Pass-through mode: --help, --version etc. — run the harness binary
 	// directly, no tmux.
+	//
+	// The posture audit below deliberately does NOT gate this branch: running
+	// `copilot --help` through tclaude starts no recorded session, so there is
+	// no recorded posture for a pass-through arg to contradict.
 	if clcommon.ShouldRunClaudeDirect(extraArgs) {
 		binary := h.Spawn.Binary()
 		if h.Name == harness.OpenCodeName {
@@ -792,6 +865,17 @@ func runNew(params *NewParams) error {
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		return cmd.Run()
+	}
+
+	// A pass-through arg lands on the same command line as the harness's
+	// rendered permission flags, so one that moves the posture would make the
+	// running pane broader than the row that records it — and approval lineage
+	// and relaunch both reason from that row. Refuse rather than filter, so an
+	// operator never believes a flag took effect that tclaude silently dropped.
+	// Placed after the pass-through branch above, which starts no session and
+	// therefore has no recorded posture to contradict.
+	if err := harness.ValidateLaunchExtraArgs(h, extraArgs); err != nil {
+		return err
 	}
 
 	// Self-guard: a Claude Code instance must not directly launch
@@ -1192,7 +1276,7 @@ func runNew(params *NewParams) error {
 		for _, info := range harness.SpawnSandboxInfo(h, sandboxMode) {
 			fmt.Fprintf(os.Stderr, "ℹ %s\n", info)
 		}
-		for _, warning := range harness.SpawnSandboxWarnings(h, approvalPolicy, sandboxMode, cwd) {
+		for _, warning := range harness.SpawnSandboxWarnings(h, approvalPolicy, sandboxMode, cwd, outerLayer) {
 			fmt.Fprintf(os.Stderr, "%s\n", warning)
 		}
 	}
@@ -1247,6 +1331,33 @@ func runNew(params *NewParams) error {
 				State:  "off",
 				Source: "stacked requested; live nested engine round-trip pending",
 			}
+		}
+	}
+	// A harness whose own sandbox cannot be turned off by the launch has its
+	// posture verified for EVERY tclaude-layer launch, not only for one that
+	// authored a policy.
+	//
+	// This used to sit inside the access-axes block below, which runs only when
+	// a profile declares network or socket rules. A direct
+	// `session new --sandbox-impl tclaude-layer --harness copilot` with no
+	// profile — the simplest way to reach this code — therefore launched with
+	// neither the assert-off gate nor the pass-through-argument refusal ever
+	// running, while the recorded posture claimed a single boundary. The gate
+	// belongs to the IMPLEMENTATION choice, which is what makes that claim, not
+	// to the access axes.
+	//
+	// The environment is the launch's own when a profile supplied one, because
+	// a profile that relocates COPILOT_HOME moves which file governs the launch
+	// and a gate reading the ambient one would be inspecting a file the agent
+	// never opens. With no profile there is nothing to compose, and nil means
+	// the ambient environment — which is then also what the launch itself uses.
+	if outerLayer {
+		var launchEnvironment []sandboxpolicy.EnvironmentEntry
+		if launchSandbox != nil {
+			launchEnvironment = launchSandbox.Effective.Environment
+		}
+		if err := ValidateTclaudeLayerHarnessPosture(h, launchEnvironment, extraArgs); err != nil {
+			return err
 		}
 	}
 	if launchSandbox != nil &&
@@ -1436,9 +1547,18 @@ func runNew(params *NewParams) error {
 	// Pre-trust the launch dir when the operator opted in (--trust-dir), BEFORE
 	// the pane starts: each harness reads its trust store at startup, so the
 	// entry must already be there or the agent freezes on the trust-folder
-	// dialog (JOH-205 for Codex, JOH-369 for Claude Code). Opt-in only (the
-	// early gate guarantees the harness has a trust store); EnsureDirTrusted
-	// dispatches to the right editor and is atomic + idempotent.
+	// dialog (JOH-205 for Codex, JOH-369 for Claude Code, TCL-973 for Copilot,
+	// whose modal blocks before the CLI contacts the provider at all). Opt-in
+	// only (the early gate guarantees the harness has a trust store);
+	// EnsureDirTrustedForLaunch dispatches to the right editor and is atomic +
+	// idempotent.
+	//
+	// The LAUNCH's environment is handed over rather than the ambient one for
+	// the same reason the Copilot sandbox gate above reads it: Copilot's trust
+	// store lives under COPILOT_HOME, so a profile that relocates it moves the
+	// file that has to carry the entry, and seeding tclaude's own home would
+	// leave the pane parked on the modal. The two harnesses whose stores sit at
+	// a fixed path under the operator's home ignore it.
 	//
 	// Best-effort: pre-trust is an optimisation over the focus-button fallback
 	// — if it fails (an FS error, or a config shape the editor refuses to touch
@@ -1446,7 +1566,15 @@ func runNew(params *NewParams) error {
 	// the trust dialog on the pending pane via the dashboard focus button
 	// (Part A). So warn and continue rather than fail the spawn.
 	if params.TrustDir {
-		if err := harness.EnsureDirTrusted(h, cwd); err != nil {
+		var launchEnvironment []sandboxpolicy.EnvironmentEntry
+		if launchSandbox != nil {
+			launchEnvironment = launchSandbox.Effective.Environment
+		}
+		trustEnv := launchModelEnvironment(launchEnvironment)
+		if err := harness.EnsureDirTrustedForLaunch(h, cwd,
+			func(name string) string { return trustEnv[name] },
+			strings.TrimSpace(trustEnv["HOME"]),
+		); err != nil {
 			slog.Warn("could not pre-trust the launch dir; the trust-folder dialog may appear — clear it via the dashboard focus button",
 				"harness", h.Name, "cwd", cwd, "err", err)
 		}
@@ -1610,6 +1738,26 @@ func runNew(params *NewParams) error {
 			sandboxpolicy.GrantsFromDirs(launchReadDirs, launchWriteDirs, launchDenyDirs)); err != nil {
 			return err
 		}
+	}
+	// The mirror-image shape, for the one harness whose path grants have no
+	// negative form: a deny nested INSIDE a granted root would be opened rather
+	// than merely unrepresented. The grant set includes Copilot's automatic cwd
+	// and system-temp grants, which no flag expresses and which are where this
+	// shape usually appears. Only without an outer wall to enforce the deny.
+	// The temp directory is resolved from the COMPOSED launch environment, not
+	// from tclaude's own: a profile that sets TMPDIR moves the directory
+	// Copilot grants, and a gate reading tclaude's ambient temp root would
+	// inspect one directory while the pane was handed another. Same resolver
+	// the Copilot sandbox baseline uses, for the same reason.
+	var copilotGateEnvironment []sandboxpolicy.EnvironmentEntry
+	if launchSandbox != nil {
+		copilotGateEnvironment = launchSandbox.Effective.Environment
+	}
+	if err := harness.ValidateCopilotAddDirGrants(
+		h.Name, cwd,
+		CopilotLaunchTempDir(launchModelEnvironment(copilotGateEnvironment)),
+		launchReadDirs, launchWriteDirs, launchDenyDirs, outerLayer); err != nil {
+		return err
 	}
 	spawnSpec := harness.SpawnSpec{
 		ExecutablePath:              executablePath,

@@ -133,7 +133,33 @@ func sandboxImplementationValidationStatus(err error) int {
 	return http.StatusBadRequest
 }
 
+// resolveSandboxImplementationMode is the daemon's HARNESS-NATIVE resolution.
+// The spawn path's mode-keyed gates all ask what the harness's own sandbox is
+// set to, so they keep judging this value; resolveLaunchSandboxMode below is
+// the separate question of what the launch records.
 func resolveSandboxImplementationMode(
+	h *harness.Harness,
+	mode, rawImplementation string,
+) (string, *spawnFailure) {
+	return resolveSandboxModeFor(
+		harness.ResolveHarnessNativeSandboxMode, h, mode, rawImplementation)
+}
+
+// resolveLaunchSandboxMode is the mode the child will LAUNCH and PERSIST under
+// — for a tclaude-layer child, the reviewed single-wall posture rather than the
+// requested harness-native one. The sandbox-lineage guard reads this so it
+// judges the same posture the session row will carry, instead of a requested
+// value the launch is about to replace (TCL-989).
+func resolveLaunchSandboxMode(
+	h *harness.Harness,
+	mode, rawImplementation string,
+) (string, *spawnFailure) {
+	return resolveSandboxModeFor(
+		harness.ResolveSandboxImplementationMode, h, mode, rawImplementation)
+}
+
+func resolveSandboxModeFor(
+	resolve func(*harness.Harness, string, sandboxpolicy.Implementation) (string, error),
 	h *harness.Harness,
 	mode, rawImplementation string,
 ) (string, *spawnFailure) {
@@ -141,11 +167,68 @@ func resolveSandboxImplementationMode(
 	if err != nil {
 		return "", &spawnFailure{http.StatusBadRequest, "invalid_sandbox_implementation", err.Error()}
 	}
-	mode, err = harness.ResolveSandboxImplementationMode(h, mode, implementation)
+	mode, err = resolve(h, mode, implementation)
 	if err != nil {
 		return "", &spawnFailure{http.StatusBadRequest, "invalid_sandbox", err.Error()}
 	}
 	return mode, nil
+}
+
+// sandboxImplementationPostureFailure is the post-resolution HARNESS-POSTURE
+// gate, and it sits beside the host gate below for the same structural reason
+// that one exists: it must run on the value the precedence chain settled on,
+// on every launch path, and it must refuse rather than degrade.
+//
+// It is a THIRD kind of unusability, distinct from the two the file header
+// names. Host availability is a property of the machine and harness
+// applicability a property of the descriptor; this is a property of the
+// harness's own MUTABLE CONFIGURATION, which no tier of tclaude's resolution
+// can see and which an operator can change between any two launches. Copilot is
+// the case that forced it: its command sandbox lives in settings.json with no
+// launch flag, so "tclaude's layer is the only wall" is a claim that has to be
+// re-checked at every launch rather than resolved once and recorded.
+//
+// Checking it here rather than only in planSandboxProfileAccessForLaunch is
+// deliberate: that function returns early for a launch with no sandbox profile
+// at all, and a Copilot spawn that pins tclaude-layer without authoring a
+// policy is exactly the launch whose single-boundary claim needs verifying.
+//
+// The environment is the daemon's own, because a daemon spawn has no
+// pass-through arguments and its profile environment is applied downstream —
+// where the profile-aware call in planSandboxProfileAccessForLaunch re-checks
+// it against the composed launch environment.
+func sandboxImplementationPostureFailure(
+	harnessName, implementation string,
+) *spawnFailure {
+	normalized, err := sandboxpolicy.NormalizeImplementation(implementation)
+	if err != nil || !normalized.UsesTclaudeLayer() {
+		return nil
+	}
+	h, err := harness.Resolve(harnessOrDefault(harnessName))
+	if err != nil {
+		return &spawnFailure{http.StatusUnprocessableEntity,
+			"unsupported_sandbox_profile_access", err.Error()}
+	}
+	if err := session.ValidateTclaudeLayerHarnessPosture(h, nil, nil); err != nil {
+		return sandboxCapabilitySpawnFailure(
+			err, harness.SandboxCapabilityCopilotInnerSandbox)
+	}
+	return nil
+}
+
+// spawnUsesTclaudeLayer reports whether a resolved sandbox-implementation value
+// puts tclaude's own OS wall around the launch. It answers the question
+// harness.SpawnSandboxWarnings asks, from the string form the spawn boundaries
+// carry.
+//
+// An unparsable value is NOT an outer layer. Every caller has already run the
+// value through validateSandboxImplementationForHarness and refused a bad one,
+// so this arm is unreachable in practice — and if it ever became reachable,
+// reading garbage as "confined" would silence exactly the warnings that exist
+// for an unconfined launch.
+func spawnUsesTclaudeLayer(implementation string) bool {
+	normalized, err := sandboxpolicy.NormalizeImplementation(implementation)
+	return err == nil && normalized.UsesTclaudeLayer()
 }
 
 // sandboxImplementationHostFailure is the post-resolution host gate. It runs on

@@ -1,5 +1,10 @@
 package harness
 
+import (
+	"path/filepath"
+	"strings"
+)
+
 // HookInstaller installs, checks, and repairs the tclaude callback hooks
 // in a harness's config target, and surfaces any remaining manual enable step.
 //
@@ -34,6 +39,60 @@ type HookInstaller interface {
 	// TrustNote returns any manual enable step the user must perform after
 	// install for the hooks to run, or "" when setup completed everything.
 	TrustNote() string
+}
+
+// isTclaudeHookCommand reports whether a hook command belongs to tclaude —
+// any command whose first shell word has the basename "tclaude". The basename
+// match is deliberate: it lets a stale absolute-path tclaude hook from an
+// earlier install be recognised and repaired. The trade-off is that ANY binary
+// named "tclaude" is treated as ours; a user hook pointing at an unrelated
+// tool that happens to share the name would be replaced on install
+// (vanishingly unlikely, and the assumption every tclaude installer makes).
+func isTclaudeHookCommand(command string) bool {
+	first := firstShellCommandWord(command)
+	if first == "" {
+		return false
+	}
+	return filepath.Base(first) == "tclaude"
+}
+
+// firstShellCommandWord decodes the quoting forms emitted by ShellQuoteArg so
+// an absolute tclaude path containing spaces/apostrophes is still recognized
+// and repaired on upgrade. It intentionally parses only the first shell word.
+func firstShellCommandWord(command string) string {
+	command = strings.TrimSpace(command)
+	var out strings.Builder
+	var quote byte
+	for i := 0; i < len(command); i++ {
+		c := command[i]
+		if quote == 0 {
+			switch c {
+			case ' ', '\t', '\r', '\n':
+				return out.String()
+			case '\'', '"':
+				quote = c
+			case '\\':
+				if i+1 < len(command) {
+					i++
+					out.WriteByte(command[i])
+				}
+			default:
+				out.WriteByte(c)
+			}
+			continue
+		}
+		if c == quote {
+			quote = 0
+			continue
+		}
+		if quote == '"' && c == '\\' && i+1 < len(command) {
+			i++
+			out.WriteByte(command[i])
+			continue
+		}
+		out.WriteByte(c)
+	}
+	return out.String()
 }
 
 // TrustedHookInstaller is the optional extension for harnesses whose command

@@ -388,8 +388,19 @@ func TestSandboxRestart_RestoresExactDurableImplementation(t *testing.T) {
 				"restore must replay the exact durable implementation combination")
 			mode, ok := f.World.SpawnSandbox(source.ConvID)
 			require.True(t, ok, "restore restart must record the sandbox mode")
-			assert.Equal(t, harness.ClaudeSandboxOn, mode,
-				"restore must replay the normal harness sandbox mode")
+			// A restore replays the mode the ORIGINAL launch recorded, and for
+			// the single-wall tclaude-layer implementation that is the forced
+			// no-inner-wall posture, not the `on` the spawn request asked for
+			// (TCL-989). Replaying `off` reproduces the source launch exactly:
+			// the launch boundary would force `on` back down to `off` anyway.
+			// Stacked keeps its requested mode — its nested contract is chosen
+			// separately and this resolver deliberately leaves it alone.
+			wantMode := harness.ClaudeSandboxOn
+			if implementation == sandboxpolicy.ImplementationTclaudeLayer {
+				wantMode = harness.ClaudeSandboxOff
+			}
+			assert.Equal(t, wantMode, mode,
+				"restore must replay the mode the durable launch recorded")
 		})
 	}
 }

@@ -224,7 +224,8 @@ type SpawnRequest struct {
 	// Effort sets the spawned agent's Claude reasoning effort. It is
 	// forwarded to the new agent's `tclaude session new --effort <level>`
 	// (and on to `claude`). Empty omits the flag so claude uses its own
-	// default; a non-empty value must be one of clcommon.ValidEffortLevels.
+	// default; a non-empty value must be accepted by the selected harness's
+	// ModelCatalog (Copilot has two additional documented levels).
 	// Every spawn surface — `tclaude agent spawn`, `tclaude --join-group`,
 	// and the dashboard's spawn modal — sets this same field, so the wire
 	// contract stays single-sourced.
@@ -590,7 +591,7 @@ type SpawnParams struct {
 	// (which assigns the first free letter in field order) cannot steal
 	// a short from any existing field. No explicit shorts — `--effort`
 	// and `--model` only.
-	Effort string `long:"effort" optional:"true" help:"Reasoning effort for the new agent: low|medium|high|xhigh|max. Unset = filled by the default-profile chain, then the harness's own default. See 'Default resolution' in the command help"`
+	Effort string `long:"effort" optional:"true" help:"Reasoning effort for the new agent (per-harness; Copilot also accepts none|minimal). Unset = filled by the default-profile chain, then the harness's own default. See 'Default resolution' in the command help"`
 	Model  string `long:"model" optional:"true" help:"Model for the new agent. Claude: fable|fable[1m]|opus|opus[1m]|sonnet|sonnet[1m]|haiku|opusplan or a full model ID. Codex: a codex model name. Unset = filled by the default-profile chain, then the harness's own default. See 'Default resolution' in the command help"`
 
 	// Harness picks the coding harness the new agent runs. Declared last
@@ -658,7 +659,7 @@ type SpawnParams struct {
 	// force. Blank defers to the profile chain and then to the harness's
 	// historical behavior, so an unpassed flag launches exactly as it did
 	// before this flag existed.
-	SandboxImpl string `long:"sandbox-impl" optional:"true" help:"EXPERIMENTAL OS containment: off | harness-builtin (only for a harness with a real built-in OS sandbox) | tclaude-layer (tclaude outer wall, inner OS sandbox off) | stacked (Linux Claude/Codex only; live model-free real-engine probe, both walls). Experimental implementations refuse naming the missing capability and never fall back. Unset = profile chain, then historical harness behavior; for OpenCode that is a command filter, not confinement"`
+	SandboxImpl string `long:"sandbox-impl" optional:"true" help:"EXPERIMENTAL OS containment: off | harness-builtin (only for a harness with a real built-in OS sandbox) | tclaude-layer (tclaude outer wall, inner OS sandbox off) | stacked (Linux Claude/Codex only; live model-free real-engine probe, both walls). Copilot children spawned by an agent are admitted in exactly one topology: tclaude-layer. Experimental implementations refuse naming the missing capability and never fall back. Unset = profile chain, then historical harness behavior; for OpenCode that is a command filter, not confinement"`
 }
 
 // spawnCmd starts a fresh CC session and registers it in an existing

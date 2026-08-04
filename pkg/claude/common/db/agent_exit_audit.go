@@ -1077,7 +1077,11 @@ func validExitAction(v string) bool {
 func validExitReason(v string) bool {
 	switch v {
 	case "logout", "prompt_input_exit", "bypass_permissions_disabled", "other",
-		"soft_exit", "unexpected", "resource_limit_oom":
+		// daemon_kill: the daemon killed the pane itself because a soft exit
+		// never closed it (the TCL-1001 escalation ladder). It is a distinct
+		// word from soft_exit — which claims the harness exited on request —
+		// and from unexpected, which would report a deliberate kill as a crash.
+		"soft_exit", "daemon_kill", "unexpected", "resource_limit_oom":
 		return true
 	default:
 		return false

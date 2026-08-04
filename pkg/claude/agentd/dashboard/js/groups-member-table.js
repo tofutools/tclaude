@@ -61,6 +61,7 @@ const HARNESS_LABELS = {
   claude: { short: 'CC', long: 'Claude Code' },
   codex: { short: 'Codex', long: 'Codex CLI' },
   opencode: { short: 'OC', long: 'OpenCode' },
+  copilot: { short: 'COP', long: 'GitHub Copilot CLI' },
 };
 
 function harnessLabels(name) {

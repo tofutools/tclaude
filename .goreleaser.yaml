@@ -31,6 +31,29 @@ builds:
       - darwin
     goarch:
       - arm64
+  # The standalone agent-coordination daemon: `tclaude-agentd serve` is the
+  # same code as `tclaude agentd serve`, shipped as its own binary so a host
+  # can run the daemon without the rest of the CLI. It links the same systray
+  # backend as tclaude, so the cgo split above applies unchanged.
+  - id: tclaude-agentd-no-cgo
+    main: ./cmd/tclaude-agentd
+    binary: tclaude-agentd
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+  - id: tclaude-agentd-darwin
+    main: ./cmd/tclaude-agentd
+    binary: tclaude-agentd
+    env:
+      - CGO_ENABLED=1
+    goos:
+      - darwin
+    goarch:
+      - arm64
 
 archives:
   - format: tar.gz

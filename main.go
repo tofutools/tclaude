@@ -1,36 +1,20 @@
+// Command tclaude is the full tclaude CLI. The repository also builds a
+// standalone daemon binary in cmd/tclaude-agentd; both share the entry
+// sequence in pkg/claude/cli.
 package main
 
 import (
-	"log/slog"
-	"os"
-
-	"github.com/GiGurra/boa/pkg/boa"
+	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/claude"
-	"github.com/tofutools/tclaude/pkg/claude/common/db"
-	"github.com/tofutools/tclaude/pkg/claude/probehelper"
-	"github.com/tofutools/tclaude/pkg/common"
-	"github.com/tofutools/tclaude/pkg/common/buildversion"
+	"github.com/tofutools/tclaude/pkg/claude/cli"
 )
 
 func main() {
-	if handled, code := probehelper.Dispatch(os.Args); handled {
-		os.Exit(code)
-	}
-	common.SetupLogging(slog.LevelInfo)
-	exitCode := run()
-	db.Close()
-	os.Exit(exitCode)
-}
-
-func run() int {
-	buildversion.SetStampedVersion(version)
-	cmd := claude.Cmd()
-	cmd.Use = "tclaude"
-	cmd.Version = buildversion.AppVersion()
-	if err := boa.Execute(cmd); err != nil {
-		return 1
-	}
-	return 0
+	cli.Main(version, func() *cobra.Command {
+		cmd := claude.Cmd()
+		cmd.Use = "tclaude"
+		return cmd
+	})
 }
 
 // version, when non-empty, is the version stamped at build time via

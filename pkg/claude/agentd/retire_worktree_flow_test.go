@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 
@@ -486,14 +487,17 @@ func TestRetire_DeleteWorktreeDeferredFailurePostsNotice(t *testing.T) {
 		"the notice should carry the failure reason; body=%q", msgs[0].Body)
 }
 
-// Scenario: a DEFERRED delete where the agent never honours /exit within
-// the grace window keeps the worktree and posts an actionable notice —
-// the human asked for a delete that couldn't happen.
-func TestRetire_DeleteWorktreeAgentWontExitPostsKeptNotice(t *testing.T) {
+// Scenario: a DEFERRED delete whose agent ignores /exit. Before TCL-1001 this
+// was the leak the operator reported: nothing stronger followed the soft exit,
+// so the grace expired with the pane still running and the delete was skipped.
+// The escalation ladder now finishes the pane inside the grace, so the human's
+// delete actually happens and no "kept" notice is needed.
+func TestRetire_DeleteWorktreeEscalatesPastAgentThatIgnoresExit(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
-	// Shrink the grace so the timeout branch fires fast instead of after
-	// the production 60s.
-	t.Cleanup(agentd.SetRetireWorktreeGraceForTest(150 * time.Millisecond))
+	// Shrink the grace so the deferred waiter resolves fast instead of after
+	// the production 60s. It still comfortably outlasts the (also shrunken)
+	// escalation deadline, which is the production relationship being pinned.
+	t.Cleanup(agentd.SetRetireWorktreeGraceForTest(2 * time.Second))
 	f := newFlow(t)
 
 	const conv = "rwhe-1111-2222-3333-4444"
@@ -505,13 +509,62 @@ func TestRetire_DeleteWorktreeAgentWontExitPostsKeptNotice(t *testing.T) {
 		cwd: {Root: cwd, Branch: "feat", Kind: "linked"},
 	})
 
-	// Hung agent: it ignores /exit and never goes offline, so the
-	// deferred waiter times out on the (shrunken) grace.
+	// Hung agent: it consumes /exit and never goes offline on its own.
 	cc := f.World.CCs.GetByConvID(conv)
 	require.NotNil(t, cc, "no CCSim registered for %s", conv)
 	cc.OnInput("/exit", func(c *testharness.CCSim, line string) bool {
 		_ = c.WriteUserTurn("[hung agent: /exit ignored]")
 		return true // consume — never MarkDead
+	})
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	code, resp := postRetireWt(t, mux, conv, "shutdown=1&delete_worktree=1")
+	require.Equal(t, http.StatusOK, code)
+	require.NotNil(t, resp.Worktree)
+	assert.Equal(t, "scheduled", resp.Worktree.Action)
+
+	agentd.WaitForBackgroundForTest()
+
+	assert.False(t, f.World.Tmux.IsAlive("tmux-rwhe"),
+		"retire must converge: an agent that ignores /exit gets escalated, not waited out")
+	assert.True(t, fw.wasRemoved(cwd),
+		"the promised worktree delete must happen once escalation ends the pane")
+	msgs, err := db.ListHumanMessages()
+	require.NoError(t, err)
+	assert.Empty(t, msgs,
+		"a delete that was kept as promised stays silent; got %+v", msgs)
+}
+
+// Scenario: the residual failure the "kept" notice still exists for — a pane
+// that survives EVERY rung of the ladder (tmux kill reports success and
+// changes nothing; the signals reach nothing). The human must still be told
+// the promised delete did not happen.
+func TestRetire_DeleteWorktreeUnkillableAgentPostsKeptNotice(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	t.Cleanup(agentd.SetRetireWorktreeGraceForTest(300 * time.Millisecond))
+	// Nothing the daemon does can end this process: the signals are delivered
+	// to a stub that keeps reporting the pid alive.
+	t.Cleanup(agentd.SetSoftExitEscalationProcessForTest(
+		func(int) bool { return true },
+		func(int, syscall.Signal) error { return nil },
+	))
+	f := newFlow(t)
+
+	const conv = "rwhu-1111-2222-3333-4444"
+	cwd := f.TestCwd("rw-unkillable")
+	f.HaveConvWithTitle(conv, "unkillable-worker")
+	f.HaveAliveSession(conv, "spwn-rwhu", "tmux-rwhu", cwd)
+	f.HaveEnrolledAgent(conv)
+	fw := installFakeWorktrees(t, map[string]worktree.WorktreeStatus{
+		cwd: {Root: cwd, Branch: "feat", Kind: "linked"},
+	})
+	f.World.Tmux.SetKillResistantForTest("tmux-rwhu", true)
+
+	cc := f.World.CCs.GetByConvID(conv)
+	require.NotNil(t, cc, "no CCSim registered for %s", conv)
+	cc.OnInput("/exit", func(c *testharness.CCSim, line string) bool {
+		_ = c.WriteUserTurn("[hung agent: /exit ignored]")
+		return true
 	})
 
 	mux := agentd.BuildDashboardHandlerForTest()

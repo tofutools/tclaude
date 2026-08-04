@@ -729,6 +729,9 @@ func (claudeLifecycle) CompactCommand() string       { return "/compact" }
 func (claudeLifecycle) SoftExitCommand() string      { return "/exit" }
 func (claudeLifecycle) RemoteControlCommand() string { return "/remote-control" }
 
+// Claude Code accepts /exit from its prompt without a preparatory key.
+func (claudeLifecycle) SoftExitPrefixKeys() []string { return nil }
+
 // claudeConvStore assembles conversations from Claude Code's storage
 // model — one cwd-indexed `.jsonl` per conv under ~/.claude/projects — by
 // delegating to the existing convops read paths. It's the reference impl

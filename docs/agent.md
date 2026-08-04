@@ -87,6 +87,17 @@ only once.
   file, the CLI reads that file automatically instead
   (see [Identity](#identity)).
 
+  The daemon also ships as its own binary, `tclaude-agentd`, released
+  alongside `tclaude`. `tclaude-agentd serve` is the same code and the same
+  flags as `tclaude agentd serve` — a host that only runs the daemon can
+  install just that binary. It is a separate package path, so a Go install
+  needs its own command
+  (`go install github.com/tofutools/tclaude/cmd/tclaude-agentd@latest`, or
+  `go install . ./cmd/...` from a checkout to get both binaries at once). Keep
+  `tclaude` on `PATH` next to it anyway: the daemon forks `tclaude session new`
+  to spawn agents, and builds `tclaude session attach` command lines for the
+  dashboard's terminal links.
+
 The daemon binds one canonical socket plus two temporary compatibility sockets:
 
 - `~/.tclaude/api/agentd.sock` — canonical, state-free Unix socket for all
@@ -1434,6 +1445,18 @@ tclaude agent dir --start                     # the launch directory instead
 tclaude agent dir --open                      # open a terminal there (via the daemon)
 tclaude agent dir --repair                    # recreate own deleted launch directory
 ```
+
+A soft stop is not a request the pane may decline. When the injected exit
+command has not closed the pane within about ten seconds — long enough for the
+bounded re-injections to work — the daemon escalates: it kills the pane it
+froze at the start of the stop, then, if that process is still there, sends
+SIGTERM and finally SIGKILL to its process group. Each step re-checks the pane
+identity first, so a resume that reused the tmux name is never the one killed,
+and the graceful layers keep their turn so a harness can still write its own
+end-of-session state. An escalated kill is recorded as daemon-owned, so it is
+reported as a deliberate stop rather than a crash. This is what lets retire's
+worktree and agent-directory cleanup actually run: it converges well inside
+the grace those wait on.
 
 `stop` / `resume` are idempotent — already-offline / already-online
 agents come back as `skipped:...`. They are the single-conv variants

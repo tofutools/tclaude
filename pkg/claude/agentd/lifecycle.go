@@ -205,7 +205,7 @@ func stopOneConvWithIntentUnderLaunchLock(convID string, force bool, lifecycleAc
 		if h.Name == harness.OpenCodeName {
 			delivered = injectOpenCodeSoftExitTarget(target, "soft-exit", intentSet)
 		} else {
-			delivered = injectSoftExitTarget(target, exitCmd, "soft-exit", intentSet)
+			delivered = injectSoftExitTarget(target, exitCmd, h.Life.SoftExitPrefixKeys(), "soft-exit", intentSet)
 		}
 		if delivered {
 			if h.Name == harness.CodexName {
@@ -225,6 +225,14 @@ func stopOneConvWithIntentUnderLaunchLock(convID string, force bool, lifecycleAc
 			} else {
 				res.Detail = "send-keys " + exitCmd + " failed"
 			}
+		}
+		// Whether the exit was delivered or the injection itself failed, the
+		// pane must end: this is a stop. Nothing stronger used to follow a soft
+		// exit that never took, which is how a retired agent's pane outlived
+		// its own directory-cleanup grace (TCL-1001). The ladder converges well
+		// inside that grace.
+		if stopIntendsPaneClosure(lifecycleAction) {
+			scheduleSoftExitEscalation(target, lifecycleAction, relatedEventID, "soft-exit")
 		}
 		return res
 	}
@@ -492,7 +500,7 @@ func clearFailedExitIntent(intentRef *db.SessionExitIntentRef) {
 	}
 }
 
-func injectSoftExitTarget(target *lifecycleTarget, exitCmd, reason string, intentRef *db.SessionExitIntentRef) bool {
+func injectSoftExitTarget(target *lifecycleTarget, exitCmd string, prefixKeys []string, reason string, intentRef *db.SessionExitIntentRef) bool {
 	if target == nil {
 		return false
 	}
@@ -504,7 +512,7 @@ func injectSoftExitTarget(target *lifecycleTarget, exitCmd, reason string, inten
 		clearFailedExitIntentTarget(intentRef, target.tmuxSession)
 		return false
 	}
-	if err := injectTextAndSubmitSerializedBy(target.tmuxSession+":0.0", target.paneID, exitCmd); err != nil {
+	if err := injectSoftExitTextSerializedBy(target.tmuxSession+":0.0", target.paneID, exitCmd, prefixKeys); err != nil {
 		logLifecycleStopFailure("send", target.paneID, target.sessionID, err)
 		return false
 	}
@@ -528,7 +536,7 @@ func injectSoftExitTarget(target *lifecycleTarget, exitCmd, reason string, inten
 		// attribution and never retry against a successor.
 		return true
 	}
-	scheduleSoftExitRetryTarget(target, exitCmd, reason, intentRef)
+	scheduleSoftExitRetryTarget(target, exitCmd, prefixKeys, reason, intentRef)
 	return true
 }
 
@@ -584,7 +592,7 @@ func clearFailedExitIntentTarget(ref *db.SessionExitIntentRef, tmuxSession strin
 	}
 }
 
-func scheduleSoftExitRetryTarget(target *lifecycleTarget, exitCmd, reason string, intentRef *db.SessionExitIntentRef) {
+func scheduleSoftExitRetryTarget(target *lifecycleTarget, exitCmd string, prefixKeys []string, reason string, intentRef *db.SessionExitIntentRef) {
 	goBackground(func() {
 		for attempt := 2; attempt <= softExitMaxAttempts; attempt++ {
 			time.Sleep(softExitRetryDelay)
@@ -617,7 +625,7 @@ func scheduleSoftExitRetryTarget(target *lifecycleTarget, exitCmd, reason string
 				// successor (mirrors injectSoftExitTarget).
 				return
 			}
-			if err := injectTextAndSubmitSerializedBy(target.tmuxSession+":0.0", target.paneID, exitCmd); err != nil {
+			if err := injectSoftExitTextSerializedBy(target.tmuxSession+":0.0", target.paneID, exitCmd, prefixKeys); err != nil {
 				logLifecycleStopFailure("send", target.paneID, target.sessionID, err)
 				// The first /exit was already delivered; a failed RE-send must
 				// not erase that delivery's attribution. Mirror the unknown
@@ -703,15 +711,25 @@ func injectSoftExit(convID, exitCmd, reason string, intentRef *db.SessionExitInt
 	// Enter, but that successful exit still owns the lifecycle intent and must
 	// remain correlatable by callback/reaper.
 	panePID := livePanePID(sess.TmuxSession)
-	if !injectSlashCommand(convID, exitCmd, "", reason) {
+	// Same harness contract as the selected-target path: a soft exit typed at
+	// a busy TUI can be silently discarded, so the prefix keys go in front of
+	// it here too (nil for every harness that needs none).
+	prefixKeys := harnessForConv(convID).Life.SoftExitPrefixKeys()
+	softExitTarget := sess.TmuxSession + ":0.0"
+	if err := injectSoftExitTextSerializedBy(softExitTarget, softExitTarget, exitCmd, prefixKeys); err != nil {
+		slog.Warn("soft-exit inject failed", "error", err,
+			"tmux_session", sess.TmuxSession, "conv_id", convID, "reason", reason)
 		return false
 	}
+	slog.Info("soft-exit injected via send-keys",
+		"conv_id", convID, "line", exitCmd, "reason", reason,
+		"tmux_session", sess.TmuxSession)
 	// Capture the pane's live OS pid so the retry can tell THIS process apart
 	// from a later one that reused the same tmux name (a resume re-derives the
 	// name from the conv-id — see scheduleSoftExitRetry). 0 = couldn't read
 	// it; skip the retry rather than risk re-injecting blind.
 	if panePID > 0 {
-		scheduleSoftExitRetry(convID, sess.TmuxSession, panePID, exitCmd, reason, intentRef)
+		scheduleSoftExitRetry(convID, sess.TmuxSession, panePID, exitCmd, prefixKeys, reason, intentRef)
 	} else if alive, known := lifecycleSessionAlive(sess.TmuxSession); known && !alive {
 		// Confirmed session disappearance: the delivered /exit is landing and
 		// the reaper owns attribution.
@@ -763,7 +781,7 @@ const softExitMaxAttempts = 3
 //
 // Runs through goBackground so it outlives the HTTP handler that asked for
 // the stop and flow tests can drain it with WaitForBackgroundForTest.
-func scheduleSoftExitRetry(convID, tmuxSession string, panePID int, exitCmd, reason string, intentRef *db.SessionExitIntentRef) {
+func scheduleSoftExitRetry(convID, tmuxSession string, panePID int, exitCmd string, prefixKeys []string, reason string, intentRef *db.SessionExitIntentRef) {
 	target := tmuxSession + ":0.0"
 	goBackground(func() {
 		for attempt := 2; attempt <= softExitMaxAttempts; attempt++ {
@@ -778,7 +796,7 @@ func scheduleSoftExitRetry(convID, tmuxSession string, panePID int, exitCmd, rea
 				"attempt", attempt,
 				"max_attempts", softExitMaxAttempts,
 				"reason", reason)
-			if err := injectTextAndSubmit(target, exitCmd); err != nil {
+			if err := injectSoftExitTextSerializedBy(target, target, exitCmd, prefixKeys); err != nil {
 				slog.Warn("soft-exit retry inject failed",
 					"error", err, "tmux_session", tmuxSession, "reason", reason)
 				// The first /exit was already delivered; mirror the
@@ -1243,6 +1261,19 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 	if launchConfig.TemporarySandboxMode {
 		effectiveSandbox = temporarySandboxLaunchSnapshot(harnessName, stableEffectiveSandbox)
 	}
+	// The harness's own sandbox configuration is re-verified on every relaunch,
+	// never replayed from the recorded posture. For a harness tclaude can
+	// switch off at launch the recorded mode IS the posture; for one configured
+	// out of band it is only a record of what was true at spawn time, and an
+	// operator can have enabled the harness's own wall since. Replaying the
+	// record would resume an agent under two stacked boundaries while still
+	// claiming one.
+	if fail := sandboxImplementationPostureFailure(
+		harnessName, relaunchSandboxImplementation); fail != nil {
+		res.Action = "error"
+		res.Detail = "sandbox_posture_changed: " + fail.Msg
+		return res
+	}
 	if fail := sandboxProfileCapabilityFailure(
 		harnessName,
 		relaunchSandbox,
@@ -1273,7 +1304,8 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 	// Derive repository grants only from the verified durable identity. Calling
 	// git rev-parse here would follow a mutable .git file a second time and could
 	// turn a post-verification retarget into new write authority.
-	codexGitCommonDirPinned := spawnUsesPinnedGitCommonDir(harnessName, relaunchSandbox)
+	codexGitCommonDirPinned := spawnUsesPinnedGitCommonDir(
+		harnessName, relaunchSandbox, relaunchSandboxImplementation)
 	codexGitCommonDir := ""
 	gitDir := ""
 	var gitWriteDirs []string
@@ -2862,8 +2894,10 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	}
 	profileTiers := []launchProfileTier{
 		{profile: namedProfile, source: namedProfileSource},
-		{profile: groupProfile, source: profileSource(groupProfile, agent.ProvGroupProfileSource)},
-		{profile: globalProfile, source: profileSource(globalProfile, agent.ProvGlobalProfileSource)},
+		{profile: groupProfile, source: profileSource(groupProfile, agent.ProvGroupProfileSource),
+			defaultTier: true},
+		{profile: globalProfile, source: profileSource(globalProfile, agent.ProvGlobalProfileSource),
+			defaultTier: true},
 	}
 	harnessSource := agent.ProvExplicit
 	if strings.TrimSpace(body.Harness) == "" {
@@ -2938,13 +2972,13 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	var fieldFail *spawnFailure
 	var modelSource, modelNote, effortSource, effortNote string
 	body.Model, modelSource, modelNote, fieldFail = resolveStringLaunchField(
-		"model", body.Model, h.Name, profileTiers, func(p *db.SpawnProfile) string { return p.Model }, validateModel)
+		modelField, body.Model, h.Name, profileTiers, func(p *db.SpawnProfile) string { return p.Model }, validateModel)
 	if fieldFail != nil {
 		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
 		return
 	}
 	body.Effort, effortSource, effortNote, fieldFail = resolveStringLaunchField(
-		"effort", body.Effort, h.Name, profileTiers, func(p *db.SpawnProfile) string { return p.Effort }, h.Models.ValidateEffort)
+		effortField, body.Effort, h.Name, profileTiers, func(p *db.SpawnProfile) string { return p.Effort }, h.Models.ValidateEffort)
 	if fieldFail != nil {
 		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
 		return
@@ -3019,6 +3053,14 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// falls through; refuses naming the missing capability. Probed live, so an
 	// operator who just installed bwrap is not refused by a stale answer.
 	if fail := sandboxImplementationHostFailure(h.Name, body.SandboxImplementation); fail != nil {
+		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		return
+	}
+	// Posture gate, beside the host gate and on the same terms: a harness whose
+	// own OS sandbox tclaude cannot switch off has to have its configuration
+	// verified at every launch, or the recorded single-boundary claim outlives
+	// the configuration it was made about.
+	if fail := sandboxImplementationPostureFailure(h.Name, body.SandboxImplementation); fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
@@ -3172,7 +3214,8 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// on the one axis tclaude deliberately leaves to them (TCL-586). The same
 	// call also surfaces OpenCode's toothless access-control "sandbox".
 	resolvedLaunch.Warnings = append(resolvedLaunch.Warnings,
-		harness.SpawnSandboxWarnings(h, approvalPolicy, sandboxMode, cwd)...)
+		harness.SpawnSandboxWarnings(h, approvalPolicy, sandboxMode, cwd,
+			spawnUsesTclaudeLayer(body.SandboxImplementation))...)
 	resolvedLaunch.Info = append(resolvedLaunch.Info,
 		harness.SpawnSandboxInfo(h, sandboxMode)...)
 	autoReview, arErr := harness.ResolveAutoReview(h, body.AutoReview)
@@ -3195,7 +3238,19 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// caller no rate slot. executeSpawn re-runs the same (idempotent) check
 	// for the other spawn callers (templates/waves/process adapters) that
 	// don't pass through this HTTP boundary.
-	if fail := spawnSandboxLineageFailure(spawnerConvID, h.Name, sandboxMode); fail != nil {
+	//
+	// It judges the LAUNCH mode, not the harness-native one every gate above
+	// judges: a tclaude-layer child records the single-wall posture, and the
+	// guard has to reason about the posture that will actually be persisted and
+	// later read back when this child spawns children of its own (TCL-989).
+	childLaunchSandbox, fieldFail := resolveLaunchSandboxMode(
+		h, sandboxMode, body.SandboxImplementation)
+	if fieldFail != nil {
+		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
+		return
+	}
+	if fail := spawnSandboxLineageFailure(
+		spawnerConvID, h.Name, childLaunchSandbox, body.SandboxImplementation); fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
@@ -3290,11 +3345,13 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	var proofDirs []string
 	var proofToken string
 	var codexGitCommonDir string
-	codexGitCommonDirPinned := spawnUsesPinnedGitCommonDir(h.Name, sandboxMode)
+	codexGitCommonDirPinned := spawnUsesPinnedGitCommonDir(
+		h.Name, sandboxMode, body.SandboxImplementation)
 	var gitWorktreeWriteDirs []string
 	if codexGitCommonDirPinned {
 		var gerr error
-		codexGitCommonDir, gerr = spawnGitCommonDir(h.Name, sandboxMode, cwd)
+		codexGitCommonDir, gerr = spawnGitCommonDir(
+			h.Name, sandboxMode, body.SandboxImplementation, cwd)
 		if gerr != nil {
 			writeError(w, http.StatusInternalServerError, "io", gerr.Error())
 			return
@@ -4096,6 +4153,12 @@ func harnessOrDefault(name string) string {
 type launchProfileTier struct {
 	profile *db.SpawnProfile
 	source  string
+	// defaultTier marks a tier nobody typed at this launch: the group's default
+	// spawn profile and the global default profile. Those are ambient
+	// configuration, so the harness-pinned fields (see harnessPinnedLaunchField)
+	// may only be filled from them when the profile targets the harness this
+	// launch actually resolved to.
+	defaultTier bool
 }
 
 func profileSource(prof *db.SpawnProfile, format func(string) string) string {
@@ -4133,12 +4196,45 @@ func resolveProfileStartupContext(harnessName string, tiers []launchProfileTier)
 	return "", strings.Join(notes, "; ")
 }
 
+const (
+	modelField  = "model"
+	effortField = "effort"
+)
+
+// harnessPinnedLaunchField reports whether a launch field names something that
+// belongs to ONE vendor's catalog rather than being a generic launch posture.
+// Sandbox/approval/tools/timeouts describe how an agent is contained and are
+// deliberately allowed to participate across vendors; a model slug and its
+// effort level are not portable, they merely happen to pass a permissive
+// validator. Copilot's ValidateModel accepts any bounded single token by design
+// (it brokers multi-vendor models with no machine-readable catalog), so a
+// Claude-targeted default profile's "opus[1m]" validated cleanly and reached the
+// Copilot CLI. The gate is keyed on the FIELD, inside the resolver, so no
+// current or future resolution path can forget to apply it.
+func harnessPinnedLaunchField(field string) bool {
+	return field == modelField || field == effortField
+}
+
+// harnessMismatchSkipNote discloses a default tier skipped because the profile
+// targets another harness — not because its value failed validation.
+func harnessMismatchSkipNote(source, field, profileHarness, harnessName string) string {
+	return fmt.Sprintf("%s %s ignored (profile targets %s, launch is %s)",
+		source, field, harnessOrDefault(profileHarness), harnessOrDefault(harnessName))
+}
+
 // resolveStringLaunchField applies explicit > named > group > global for one
 // launch field. Explicit values are direct intent and fail loudly. A profile
 // value invalid for a foreign resolved harness is ambient configuration: skip
 // it, disclose the skip, and continue to the next tier. A profile claiming the
 // resolved harness but carrying an invalid value is self-inconsistent and
 // remains a loud error.
+//
+// Harness-pinned fields (model, effort) additionally refuse to take a value
+// from a DEFAULT tier whose profile targets another harness, whether or not the
+// value would validate. Default tiers are ambient — nobody typed them at this
+// launch — so a harness mismatch there means the value was authored for a
+// different vendor and must fall through to the next tier / harness default. An
+// explicitly named -p profile is direct intent and keeps participating.
 func resolveStringLaunchField(
 	field, explicitValue, harnessName string,
 	tiers []launchProfileTier,
@@ -4163,6 +4259,12 @@ func resolveStringLaunchField(
 		}
 		raw := strings.TrimSpace(profileValue(tier.profile))
 		if raw == "" {
+			continue
+		}
+		if harnessPinnedLaunchField(field) && tier.defaultTier &&
+			!profileMatchesHarness(tier.profile, harnessName) {
+			notes = append(notes, harnessMismatchSkipNote(
+				tier.source, field, tier.profile.Harness, harnessName))
 			continue
 		}
 		value, err := validate(raw)
@@ -4298,14 +4400,26 @@ func resolveContextFeaturesLaunchField(
 // resolved here — so on that path the fills are no-ops and secure-default
 // resolution is idempotent.
 func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
-	profiles := []*db.SpawnProfile{groupDefaultProfile(g), globalDefaultProfile()}
+	// Both tiers here are default tiers — this path never sees a -p profile —
+	// so each is marked as such and carries the same provenance wording
+	// handleGroupSpawn uses, keeping any skip note readable if it is ever
+	// surfaced on this path (today it is discarded, as for every other field).
+	profiles := []struct {
+		profile *db.SpawnProfile
+		source  func(string) string
+	}{
+		{groupDefaultProfile(g), agent.ProvGroupProfileSource},
+		{globalDefaultProfile(), agent.ProvGlobalProfileSource},
+	}
 	tiers := make([]launchProfileTier, 0, len(profiles))
-	for _, prof := range profiles {
+	for _, tier := range profiles {
+		prof := tier.profile
 		if prof != nil {
 			if fail := profileSpawnFailure(prof, p.SpawnedByConv); fail != nil {
 				return fail
 			}
-			tiers = append(tiers, launchProfileTier{profile: prof})
+			tiers = append(tiers, launchProfileTier{
+				profile: prof, source: profileSource(prof, tier.source), defaultTier: true})
 			if strings.TrimSpace(p.Harness) == "" {
 				p.Harness = harnessOrDefault(prof.Harness)
 			}
@@ -4323,12 +4437,12 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 		return &spawnFailure{http.StatusBadRequest, "invalid_harness", err.Error()}
 	}
 	var fail *spawnFailure
-	p.Model, _, _, fail = resolveStringLaunchField("model", p.Model, h.Name, tiers,
+	p.Model, _, _, fail = resolveStringLaunchField(modelField, p.Model, h.Name, tiers,
 		func(prof *db.SpawnProfile) string { return prof.Model }, h.Models.ValidateModel)
 	if fail != nil {
 		return fail
 	}
-	p.Effort, _, _, fail = resolveStringLaunchField("effort", p.Effort, h.Name, tiers,
+	p.Effort, _, _, fail = resolveStringLaunchField(effortField, p.Effort, h.Name, tiers,
 		func(prof *db.SpawnProfile) string { return prof.Effort }, h.Models.ValidateEffort)
 	if fail != nil {
 		return fail
@@ -4380,6 +4494,9 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 	// a host that cannot run it without ever meeting a refusal. Same predicate,
 	// second call site: an unbypassable gate, not a second opinion.
 	if fail := sandboxImplementationHostFailure(h.Name, p.SandboxImplementation); fail != nil {
+		return fail
+	}
+	if fail := sandboxImplementationPostureFailure(h.Name, p.SandboxImplementation); fail != nil {
 		return fail
 	}
 	p.AutoReview, p.AutoReviewSet, _, fail = resolveBoolLaunchField("auto_review", p.AutoReview,
@@ -4523,8 +4640,10 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		omitted := sandboxpolicy.OmittedProfilesSnapshot()
 		p.EffectiveSandbox = &omitted
 	}
-	if spawnUsesPinnedGitCommonDir(p.Harness, p.SandboxMode) && !p.CodexGitCommonDirPinned {
-		gitCommonDir, err := spawnGitCommonDir(p.Harness, p.SandboxMode, p.Cwd)
+	if spawnUsesPinnedGitCommonDir(
+		p.Harness, p.SandboxMode, p.SandboxImplementation) && !p.CodexGitCommonDirPinned {
+		gitCommonDir, err := spawnGitCommonDir(
+			p.Harness, p.SandboxMode, p.SandboxImplementation, p.Cwd)
 		if err != nil {
 			return nil, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
 		}
@@ -4583,7 +4702,20 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		return nil, &spawnFailure{http.StatusForbidden, "trust_dir_restricted",
 			"agent-initiated spawns may pre-trust only tclaude's verified default sibling worktrees; leave trust_dir off or ask the human to spawn this child"}
 	}
-	if fail := spawnSandboxLineageFailure(p.SpawnedByConv, p.Harness, p.SandboxMode); fail != nil {
+	// Judges the LAUNCH mode for the same reason handleGroupSpawn does: the
+	// guard must reason about the posture the child's row will carry, which for
+	// a tclaude-layer child is the forced single-wall mode (TCL-989).
+	childHarness, hErr := harness.ResolveSpawnable(harnessOrDefault(p.Harness))
+	if hErr != nil {
+		return nil, &spawnFailure{http.StatusUnprocessableEntity, "invalid_harness", hErr.Error()}
+	}
+	childLaunchSandbox, fail := resolveLaunchSandboxMode(
+		childHarness, p.SandboxMode, p.SandboxImplementation)
+	if fail != nil {
+		return nil, fail
+	}
+	if fail := spawnSandboxLineageFailure(
+		p.SpawnedByConv, p.Harness, childLaunchSandbox, p.SandboxImplementation); fail != nil {
 		return nil, fail
 	}
 	if fail := spawnApprovalLineageFailure(p.SpawnedByConv, p.Harness, p.ApprovalPolicy, p.AutoReview); fail != nil {

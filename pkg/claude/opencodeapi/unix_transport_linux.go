@@ -13,6 +13,7 @@ import (
 	"strings"
 	"syscall"
 
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"golang.org/x/sys/unix"
 )
@@ -102,10 +103,15 @@ func ExecUnixRelayLaunch(path string, command []string) error {
 		return fail(fmt.Errorf("duplicate OpenCode Unix launch listener: %w", err))
 	}
 	defer listenerFile.Close()
-	selfPath, err := os.Executable()
-	if err != nil {
-		return fail(fmt.Errorf("resolve OpenCode Unix launcher executable: %w", err))
-	}
+	// Not os.Executable(): bubblewrap runs this descriptor as
+	// `/proc/self/fd/4 session tclaude-layer-winch-relay …` (see
+	// tclaudeLayerUnixRelayServerCommandArgs), and this process is whichever
+	// binary agentd re-exec'd into probe-helper mode — under the standalone
+	// tclaude-agentd daemon that binary has no `session` subcommand. fd 4 must
+	// therefore carry a real tclaude, which is exactly what SelfTclaudePath
+	// resolves. The launch authority written below records the control
+	// SOCKET's device/inode, not this file's, so it is unaffected.
+	selfPath := clcommon.SelfTclaudePath()
 	selfFile, err := os.Open(selfPath)
 	if err != nil {
 		return fail(fmt.Errorf("open OpenCode Unix launcher executable: %w", err))

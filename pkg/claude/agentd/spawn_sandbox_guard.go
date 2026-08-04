@@ -38,7 +38,9 @@ var probeFilteredNetworkPrerequisite = session.ProbeFilteredNetworkPrerequisite
 // spawnSandboxLineageFailure prevents an agent that can spawn peers from
 // minting a child with a looser launch sandbox than the caller currently has.
 // Humans bypass this check: they are the trust root everywhere else in agentd.
-func spawnSandboxLineageFailure(parentConvID, childHarness, childSandbox string) *spawnFailure {
+func spawnSandboxLineageFailure(
+	parentConvID, childHarness, childSandbox, childImplementation string,
+) *spawnFailure {
 	if parentConvID == "" {
 		return nil
 	}
@@ -48,15 +50,56 @@ func spawnSandboxLineageFailure(parentConvID, childHarness, childSandbox string)
 			"spawn sandbox guard: " + err.Error()}
 	}
 	child := spawnLineageSandbox{
-		Harness: harnessOrDefault(childHarness),
-		Mode:    strings.TrimSpace(childSandbox),
+		Harness:        harnessOrDefault(childHarness),
+		Mode:           strings.TrimSpace(childSandbox),
+		Implementation: normalizeLineageImplementation(childImplementation),
 	}
 	if !spawnSandboxLineageAllowed(parent, child) {
-		return &spawnFailure{http.StatusForbidden, "sandbox_restricted",
-			fmt.Sprintf("agent %s was launched as %s sandbox %q and may not spawn a %s child with sandbox %q",
-				short8(parentConvID), parent.Harness, parent.Mode, child.Harness, child.Mode)}
+		// Both postures name their IMPLEMENTATION as well as their mode.
+		// Without it the message can restate the same pair on both sides —
+		// `copilot sandbox "off"` may not spawn a `copilot` child with sandbox
+		// `"off"` — which reads as a bug rather than as the two different
+		// postures that string spells for this harness.
+		message := fmt.Sprintf(
+			"agent %s was launched as %s sandbox %q (%s) and may not spawn a %s child with sandbox %q (%s)",
+			short8(parentConvID), parent.Harness, parent.Mode, parent.Implementation,
+			child.Harness, child.Mode, child.Implementation)
+		if remedy := copilotLineageRemedy(parent, child); remedy != "" {
+			message += "; " + remedy
+		}
+		return &spawnFailure{http.StatusForbidden, "sandbox_restricted", message}
 	}
 	return nil
+}
+
+// copilotLineageRemedy names the way out of a Copilot refusal the caller can
+// act on, because the posture pair alone does not say which value to change.
+// Copilot enters the matrix in exactly one launch pair while the spawn defaults
+// land elsewhere, so a refused Copilot child is usually a defaulted request
+// rather than a request for something the matrix will never grant.
+//
+// It is withheld whenever THIS parent would refuse the admitted pair too —
+// a Codex workspace-write parent, an unproven Copilot parent, a row that does
+// not normalize — because there the refusal is about the caller's own posture
+// and no child-side flag moves it. That is asked of the matrix rather than
+// enumerated, so the advice is true by construction and cannot drift out of
+// sync with the arms; it also subsumes the child that already spells the pair.
+func copilotLineageRemedy(parent, child spawnLineageSandbox) string {
+	if child.Harness != harness.CopilotName {
+		return ""
+	}
+	admitted := spawnLineageSandbox{
+		Harness:        harness.CopilotName,
+		Mode:           harness.CopilotSandboxOff,
+		Implementation: sandboxpolicy.ImplementationTclaudeLayer,
+	}
+	if !spawnSandboxLineageAllowed(parent, admitted) {
+		return ""
+	}
+	return fmt.Sprintf(
+		"%s agents are admitted in exactly one launch topology — pass sandbox_implementation=%s (`--sandbox-impl %s`; mode resolves to %q)",
+		harness.CopilotName, sandboxpolicy.ImplementationTclaudeLayer,
+		sandboxpolicy.ImplementationTclaudeLayer, harness.CopilotSandboxOff)
 }
 
 func sandboxProfileCapabilityFailure(
@@ -76,7 +119,7 @@ func sandboxProfileCapabilityFailure(
 	if err != nil {
 		return &spawnFailure{http.StatusUnprocessableEntity, "invalid_harness", err.Error()}
 	}
-	if _, err := harness.ResolveSandboxImplementationMode(
+	if _, err := harness.ResolveHarnessNativeSandboxMode(
 		h, sandboxMode, implementation); err != nil {
 		return &spawnFailure{http.StatusUnprocessableEntity, "invalid_sandbox", err.Error()}
 	}
@@ -345,6 +388,18 @@ func planSandboxProfileAccessForLaunch(
 				verdict.FilteredNetwork,
 		))
 	}
+	if implementation.UsesTclaudeLayer() {
+		// Runs for EVERY tclaude-layer spawn, not only the filtered ones below:
+		// a harness whose own sandbox tclaude cannot switch off has to have its
+		// posture verified whatever the network policy is, or a host-open
+		// tclaude-layer spawn would silently stack two filesystem boundaries.
+		if err := session.ValidateTclaudeLayerHarnessPosture(
+			h, snapshot.Effective.Environment, modelContext.ExtraArgs,
+		); err != nil {
+			return nil, sandboxCapabilitySpawnFailure(
+				err, harness.SandboxCapabilityCopilotInnerSandbox)
+		}
+	}
 	if implementation.UsesTclaudeLayer() &&
 		renderedNetworkPosture == sandboxpolicy.NetworkFiltered {
 		plannedEffective := snapshot.Effective
@@ -445,6 +500,27 @@ func sandboxCapabilitySpawnFailure(err error, fallbackKind string) *spawnFailure
 type spawnLineageSandbox struct {
 	Harness string
 	Mode    string
+	// Implementation is WHO owns the OS wall for this launch. It is carried
+	// because the harness-native mode alone stopped being a complete posture
+	// once tclaude-layer started forcing one: a Claude child launched under
+	// tclaude's own wall records mode `off`, which names the harness's inner
+	// wall being deliberately stood down, not an unconfined agent.
+	Implementation sandboxpolicy.Implementation
+}
+
+// normalizeLineageImplementation maps a persisted or requested implementation
+// onto the lineage vocabulary. A blank value is the legacy/default record —
+// every row written before the axis existed, and every launch that never chose
+// — and means the harness owns its own sandbox, which is exactly
+// harness-builtin. An unparseable value degrades the same way rather than
+// failing the guard open: the launch boundaries validate this field, so a value
+// that reaches here unrecognized is a stale row, not a live escalation.
+func normalizeLineageImplementation(raw string) sandboxpolicy.Implementation {
+	implementation, err := sandboxpolicy.NormalizeImplementation(raw)
+	if err != nil {
+		return sandboxpolicy.ImplementationHarnessBuiltin
+	}
+	return implementation
 }
 
 func spawnLineageParentSandbox(convID string) (spawnLineageSandbox, error) {
@@ -456,7 +532,11 @@ func spawnLineageParentSandbox(convID string) (spawnLineageSandbox, error) {
 		// A real daemon caller should have a live session row. Tests and very old
 		// rows can lack one, so degrade to the default Claude/inherit posture
 		// instead of treating "unknown" as full access.
-		return spawnLineageSandbox{Harness: harness.DefaultName, Mode: harness.ClaudeSandboxInherit}, nil
+		return spawnLineageSandbox{
+			Harness:        harness.DefaultName,
+			Mode:           harness.ClaudeSandboxInherit,
+			Implementation: sandboxpolicy.ImplementationHarnessBuiltin,
+		}, nil
 	}
 	h := harnessOrDefault(row.Harness)
 	mode := strings.TrimSpace(row.SandboxMode)
@@ -465,7 +545,11 @@ func spawnLineageParentSandbox(convID string) (spawnLineageSandbox, error) {
 		// decides"; in the lineage matrix that is Claude's inherit sentinel.
 		mode = harness.ClaudeSandboxInherit
 	}
-	return spawnLineageSandbox{Harness: h, Mode: mode}, nil
+	return spawnLineageSandbox{
+		Harness:        h,
+		Mode:           mode,
+		Implementation: normalizeLineageImplementation(row.SandboxImplementation),
+	}, nil
 }
 
 func spawnSandboxLineageAllowed(parent, child spawnLineageSandbox) bool {
@@ -474,6 +558,7 @@ func spawnSandboxLineageAllowed(parent, child spawnLineageSandbox) bool {
 	if !parentOK || !childOK {
 		return false
 	}
+	child.Mode = childLineageConfinementMode(child)
 
 	if parent.Harness == harness.DefaultName {
 		switch parent.Mode {
@@ -481,10 +566,12 @@ func spawnSandboxLineageAllowed(parent, child spawnLineageSandbox) bool {
 			return true
 		case harness.ClaudeSandboxInherit:
 			return childIsClaude(child, harness.ClaudeSandboxInherit, harness.ClaudeSandboxOn) ||
-				childIsCodex(child, harness.SandboxReadOnly, harness.SandboxWorkspaceWrite, harness.SandboxManagedProfile)
+				childIsCodex(child, harness.SandboxReadOnly, harness.SandboxWorkspaceWrite, harness.SandboxManagedProfile) ||
+				copilotProvenLineageLaunch(child)
 		case harness.ClaudeSandboxOn:
 			return childIsClaude(child, harness.ClaudeSandboxOn) ||
-				childIsCodex(child, harness.SandboxReadOnly, harness.SandboxWorkspaceWrite, harness.SandboxManagedProfile)
+				childIsCodex(child, harness.SandboxReadOnly, harness.SandboxWorkspaceWrite, harness.SandboxManagedProfile) ||
+				copilotProvenLineageLaunch(child)
 		}
 	}
 
@@ -494,7 +581,8 @@ func spawnSandboxLineageAllowed(parent, child spawnLineageSandbox) bool {
 			return true
 		case harness.SandboxManagedProfile:
 			return childIsCodex(child, harness.SandboxReadOnly, harness.SandboxWorkspaceWrite, harness.SandboxManagedProfile) ||
-				childIsClaude(child, harness.ClaudeSandboxInherit, harness.ClaudeSandboxOn)
+				childIsClaude(child, harness.ClaudeSandboxInherit, harness.ClaudeSandboxOn) ||
+				copilotProvenLineageLaunch(child)
 		case harness.SandboxWorkspaceWrite:
 			return childIsCodex(child, harness.SandboxReadOnly, harness.SandboxWorkspaceWrite)
 		case harness.SandboxReadOnly:
@@ -508,15 +596,111 @@ func spawnSandboxLineageAllowed(parent, child spawnLineageSandbox) bool {
 		case harness.OpenCodeSandboxTclaudeLayer:
 			return child.Harness == harness.OpenCodeName && child.Mode == harness.OpenCodeSandboxTclaudeLayer ||
 				childIsClaude(child, harness.ClaudeSandboxOn) ||
-				childIsCodex(child, harness.SandboxReadOnly, harness.SandboxWorkspaceWrite, harness.SandboxManagedProfile)
+				childIsCodex(child, harness.SandboxReadOnly, harness.SandboxWorkspaceWrite, harness.SandboxManagedProfile) ||
+				copilotProvenLineageLaunch(child)
 		case harness.OpenCodeSandboxAccessControl:
 			return child.Harness == harness.OpenCodeName &&
 				modeIn(child.Mode, harness.OpenCodeSandboxAccessControl, harness.OpenCodeSandboxTclaudeLayer) ||
 				childIsClaude(child, harness.ClaudeSandboxOn) ||
-				childIsCodex(child, harness.SandboxReadOnly, harness.SandboxWorkspaceWrite, harness.SandboxManagedProfile)
+				childIsCodex(child, harness.SandboxReadOnly, harness.SandboxWorkspaceWrite, harness.SandboxManagedProfile) ||
+				copilotProvenLineageLaunch(child)
 		}
 	}
+
+	// A Copilot PARENT is classified by its persisted pair, not by its mode
+	// alone — the one place parent-side implementation is read, and deliberately
+	// the only one. Claude/Codex/OpenCode parents keep PR #1941's mode-only
+	// classification until TCL-991 revisits it as its own behaviour change.
+	//
+	// It has to be read here because Copilot's `off` mode is ambiguous on its
+	// own: as a harness-builtin row it means "Copilot's own experimental wall is
+	// asserted down and NOTHING replaced it", which is an unconfined agent; as a
+	// tclaude-layer row it means the outer wall is enforcing. Only the second may
+	// delegate anything, so an unproven Copilot row falls through to the closing
+	// refusal below.
+	//
+	// The outbound set is the confined children whose containment the outer wall
+	// already covers. It excludes every fully-open child (Claude `off`/`inherit`,
+	// Codex danger-full-access) and every OpenCode child: OpenCode is the one
+	// harness tclaude's layer confines through a server boundary rather than by
+	// wrapping the pane, and no equivalence between that topology and this one
+	// has been proven. Inventing one here would be a containment claim backed by
+	// nothing.
+	if copilotProvenLineageLaunch(parent) {
+		return copilotProvenLineageLaunch(child) ||
+			childIsClaude(child, harness.ClaudeSandboxOn) ||
+			childIsCodex(child, harness.SandboxReadOnly, harness.SandboxWorkspaceWrite, harness.SandboxManagedProfile)
+	}
 	return false
+}
+
+// copilotProvenLineageLaunch reports the single Copilot launch pair this
+// project has reviewed for detached agent-to-agent spawning: tclaude's own OS
+// wall (`tclaude-layer`) with Copilot's command sandbox asserted off.
+//
+// The implementation comparison is EXACT rather than UsesTclaudeLayer(), which
+// would also accept `stacked`. Stacked runs Copilot's own experimental MXC
+// policy nested inside tclaude's, so the effective confinement is the
+// unreviewed intersection of two policies while the row names one — the very
+// shape the launch boundary refuses for this harness.
+func copilotProvenLineageLaunch(s spawnLineageSandbox) bool {
+	return s.Harness == harness.CopilotName &&
+		s.Mode == harness.CopilotSandboxOff &&
+		s.Implementation == sandboxpolicy.ImplementationTclaudeLayer
+}
+
+// childLineageConfinementMode maps a CHILD's launch onto the confinement class
+// the lineage matrix below reasons in.
+//
+// It exists because ResolveSandboxImplementationMode now forces the
+// harness-native mode for a `tclaude-layer` launch, and that forced mode is the
+// harness's own no-confinement spelling — Claude `off`, Codex
+// `danger-full-access`. Read as a bare mode, those name the loosest posture in
+// the matrix. Read with the implementation beside them, they name the opposite:
+// the harness's inner wall is deliberately stood down BECAUSE tclaude's own
+// wall is the one enforcing, so the child is confined at least as tightly as
+// the harness-builtin sandboxed class it maps to.
+//
+// Claude tclaude-layer therefore classifies as Claude `on`, and Codex
+// tclaude-layer as the Codex managed profile. OpenCode needs no arm — its
+// native `tclaude-layer` mode is already the matrix's own name for this
+// topology.
+//
+// This does NOT leave every verdict where it was, and the difference is
+// measured rather than asserted: 19 request shapes move, 3 tightened and 16
+// loosened, enumerated as an exact list by
+// TestSandboxLineageTclaudeLayerVerdictDelta. The tightened three refuse a
+// Codex read-only / workspace-write parent a tclaude-walled child, because that
+// child launches danger-full-access inside a wall that writes its cwd subtree.
+// The loosened sixteen accept request shapes whose inner mode is inert under
+// that wall, so they mint a session row the parent could already mint by
+// spelling the request differently — a property asserted over every one of them
+// by TestSandboxLineageTclaudeLayerLooseningGrantsNoNewLaunch.
+//
+// The asymmetry with the PARENT side is deliberate, not an oversight. A parent
+// is still classified by its persisted mode alone, so a tclaude-layer parent
+// keeps being read as the fully-open class it reads as today. Tightening the
+// parent side changes what existing agents are permitted to spawn, which is a
+// separate, behaviour-changing decision (TCL-991).
+//
+// Only the exact `tclaude-layer` implementation enters here. `stacked` runs the
+// harness's own sandbox nested inside tclaude's, so its mode still means what
+// the matrix thinks it means and must not be reinterpreted.
+func childLineageConfinementMode(child spawnLineageSandbox) string {
+	if child.Implementation != sandboxpolicy.ImplementationTclaudeLayer {
+		return child.Mode
+	}
+	switch child.Harness {
+	case harness.DefaultName:
+		if child.Mode == harness.ClaudeSandboxOff {
+			return harness.ClaudeSandboxOn
+		}
+	case harness.CodexName:
+		if child.Mode == harness.SandboxDangerFull {
+			return harness.SandboxManagedProfile
+		}
+	}
+	return child.Mode
 }
 
 func normalizeSpawnLineageSandbox(s spawnLineageSandbox) (spawnLineageSandbox, bool) {
@@ -539,6 +723,37 @@ func normalizeSpawnLineageSandbox(s spawnLineageSandbox) (spawnLineageSandbox, b
 	case harness.OpenCodeName:
 		switch s.Mode {
 		case harness.OpenCodeSandboxAccessControl, harness.OpenCodeSandboxTclaudeLayer, harness.OpenCodeSandboxOff:
+			return s, true
+		}
+	case harness.CopilotName:
+		// Copilot enters the matrix in exactly ONE launch pair, and the rule
+		// lives HERE rather than in a child arm for a structural reason: three
+		// parent arms below return true for every child, so a rule expressed as
+		// an arm could never constrain them. Normalization runs ahead of all of
+		// them and is the only place that governs the parent and child sides
+		// with one statement — which is what this policy is, since the pair a
+		// Copilot agent may BE spawned as and the pair it may spawn ANOTHER
+		// Copilot as are the same cell.
+		//
+		// The mode alone can never carry it. Copilot's tclaude-layer mode and
+		// its no-wall mode are the same string, `off`: as a `tclaude-layer` row
+		// it means tclaude's own wall is enforcing, and as a harness-builtin or
+		// `off`-implementation row it means Copilot's experimental MXC sandbox
+		// is asserted down and NOTHING replaced it. Claude and Codex have the
+		// same collision but resolve it by remapping onto a second confinement
+		// class they already have (`on`, the managed profile);
+		// childLineageConfinementMode is that remap, and Copilot has no second
+		// class to remap onto. Only the implementation separates the two.
+		//
+		// Everything else fails closed: a blank/legacy row (which predates this
+		// harness carrying a posture at all and asserts nothing), an explicit
+		// harness-builtin, `stacked` (Copilot's own policy nested inside
+		// tclaude's, an intersection nobody reviewed), implementation `off`, and
+		// the `inherit` mode, whose posture is decided by a settings file
+		// tclaude neither controls nor is notified about. The launch boundary
+		// re-verifies the assert-off claim separately on every path that starts
+		// a pane (TCL-989).
+		if copilotProvenLineageLaunch(s) {
 			return s, true
 		}
 	}

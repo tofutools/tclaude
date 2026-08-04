@@ -31,6 +31,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 )
 
@@ -115,6 +116,18 @@ type Harness struct {
 	// mode catalog, but its built-in access control is only a command filter,
 	// not confinement. Claude Code (SRT) and Codex (native --sandbox) set this.
 	BuiltinOSSandbox bool
+	// BuiltinOSSandboxAbsenceReason is the harness-specific sentence a
+	// harness-builtin refusal states, for a harness that ships SOMETHING
+	// sandbox-shaped which nonetheless does not meet this contract. It exists
+	// because "no built-in OS sandbox" alone is misleading in exactly those
+	// cases: OpenCode's access control is a command filter, and Copilot CLI has
+	// a real OS sandbox that covers only part of the agent's action surface. An
+	// operator who can see the feature in their harness needs to read WHICH
+	// property is missing, not a flat denial they will assume is a bug.
+	//
+	// Empty for a harness with nothing of the kind (the refusal then states the
+	// plain absence) and ignored entirely when BuiltinOSSandbox is true.
+	BuiltinOSSandboxAbsenceReason string
 	// Approval names the launch-time approval policies this harness accepts
 	// (Codex's --ask-for-approval) and its non-escalating default. nil for
 	// harnesses whose approval handling is configured out of band (Claude
@@ -184,6 +197,36 @@ type Harness struct {
 	// exclusive in practice.
 	SeedsFirstTurn bool
 
+	// SessionStartAfterPrompt marks a harness that announces a session AFTER
+	// the first prompt of that session rather than before it.
+	//
+	// Every harness tclaude supported before GitHub Copilot CLI fires
+	// SessionStart first, which is why the status machine could treat it as
+	// "nothing is running yet" and settle the session to idle. Copilot's
+	// recorded event order is UserPromptSubmit, UserPromptTransformed,
+	// SessionStart, ..., so the same reset would blank a turn that had just
+	// started. The hook path consults this instead of switching on a harness
+	// name; see session.lateSessionStart.
+	SessionStartAfterPrompt bool
+
+	// SessionEndBestEffort marks a harness whose SessionEnd hook is NOT proof
+	// that the process is going away.
+	//
+	// tclaude's receiver otherwise treats SessionEnd as an exit: it settles the
+	// ledgers, writes an exit observation and raises an "Exited" notification.
+	// That is right for Claude Code, whose SessionEnd is process-scoped. GitHub
+	// Copilot CLI has only ever been observed firing it on a clean run, it
+	// cannot fire on a SIGKILL, and it is at-least-once rather than
+	// exactly-once — a hook that steers the agent into forced continuation
+	// makes it repeat within a single prompt. Declaring a live pane dead is a
+	// far worse failure than being slow to notice a real exit, so a harness in
+	// that position sets this and exit detection stays with the reaper's
+	// tmux/PID liveness.
+	//
+	// Deliberately phrased as an opt-OUT: every harness that predates it keeps
+	// its exact behavior, and an unknown or legacy harness row does too.
+	SessionEndBestEffort bool
+
 	// ServerAuthoritative marks a harness whose conversation lives in a
 	// daemon-owned side server rather than in the pane process. The pane is
 	// only an attach client. agentd must start/authenticate that server,
@@ -249,13 +292,20 @@ type Harness struct {
 	// matter: the dialog is what freezes an unattended pane, and the writable
 	// record is what lets the trust-dir opt-in do anything about it.
 	//
-	// Codex sets it (a [projects."<dir>"] trust_level table in
-	// ~/.codex/config.toml — codex_dir_trust.go) and so does Claude Code (a
-	// projects[<dir>].hasTrustDialogAccepted flag in ~/.claude.json —
-	// claude_dir_trust.go). The two stores are unrelated in shape, so
-	// EnsureDirTrusted dispatches; this flag is only the "is there anything to
-	// dispatch to" gate that ResolveTrustDir, the spawn dialog and the profile
-	// editor read.
+	// Three harnesses set it, and their stores are unrelated in shape:
+	//
+	//   - Codex: a [projects."<dir>"] trust_level table in ~/.codex/config.toml
+	//     (codex_dir_trust.go).
+	//   - Claude Code: a projects[<dir>].hasTrustDialogAccepted flag in
+	//     ~/.claude.json (claude_dir_trust.go).
+	//   - Copilot: the dir appended to trustedFolders in COPILOT_HOME's
+	//     config.json (copilot_dir_trust.go). Its dialog is the earliest of the
+	//     three — it blocks before the CLI contacts the model provider at all —
+	//     and its store is the only one that MOVES with the launch environment.
+	//
+	// EnsureDirTrusted dispatches on that shape; this flag is only the "is there
+	// anything to dispatch to" gate that ResolveTrustDir, the spawn dialog and
+	// the profile editor read.
 	//
 	// OpenCode leaves it false: no trust dialog, hence no record to seed.
 	DirTrust bool
@@ -403,6 +453,21 @@ func (h *Harness) SupportsAskStream() bool {
 	return ok
 }
 
+// AskEnvScrub returns the environment variable names `tclaude ask` must drop
+// from the harness child's environment (see AskEnvScrubber). Nil-safe, and nil
+// for a harness with no Asker or one that names no ambient promoter — in which
+// case the ask inherits the caller's environment unchanged.
+func (h *Harness) AskEnvScrub() []string {
+	if h == nil || h.Ask == nil {
+		return nil
+	}
+	scrubber, ok := h.Ask.(AskEnvScrubber)
+	if !ok {
+		return nil
+	}
+	return scrubber.AskEnvScrub()
+}
+
 // SupportsConvs reports whether the harness exposes a ConvStore. Callers
 // that fall back to ConvStore (e.g. a rename for a harness without an
 // in-pane rename command) must check this first — a descriptor may leave
@@ -454,6 +519,20 @@ func (h *Harness) NeedsSpawnSeed() bool {
 	return h != nil && h.SeedsFirstTurn && h.Spawn != nil
 }
 
+// SessionEndProvesExit reports whether a SessionEnd hook from this harness may
+// be treated as evidence that the process ended. Nil-safe, and true by default:
+// only a harness that explicitly declares its SessionEnd best-effort opts out.
+func (h *Harness) SessionEndProvesExit() bool {
+	return h == nil || !h.SessionEndBestEffort
+}
+
+// AnnouncesSessionAfterPrompt reports whether this harness fires SessionStart
+// after the turn's first prompt event. Nil-safe: an unknown or legacy harness
+// row keeps the historical prompt-after-session ordering.
+func (h *Harness) AnnouncesSessionAfterPrompt() bool {
+	return h != nil && h.SessionStartAfterPrompt
+}
+
 // UsesAuthoritativeServer reports whether agentd must own a side server for
 // this harness. Nil-safe so unknown/legacy harness rows retain pane liveness.
 func (h *Harness) UsesAuthoritativeServer() bool {
@@ -484,6 +563,10 @@ func (h *Harness) SupportsBuiltinOSSandbox() bool {
 // malformed sandbox-implementation enum (400).
 type BuiltinOSSandboxInvalidError struct {
 	Harness string
+	// Reason is the descriptor's BuiltinOSSandboxAbsenceReason, carried so the
+	// refusal names the property this harness is actually missing. Empty falls
+	// back to the plain absence sentence.
+	Reason string
 }
 
 func (e *BuiltinOSSandboxInvalidError) Error() string {
@@ -491,11 +574,14 @@ func (e *BuiltinOSSandboxInvalidError) Error() string {
 	if name == "" {
 		name = "the selected harness"
 	}
+	reason := strings.TrimSpace(e.Reason)
+	if reason == "" {
+		reason = name + " has no built-in OS sandbox"
+	}
 	return fmt.Sprintf(
-		"sandbox implementation %q is invalid for %s: %s has no built-in OS sandbox; "+
-			"its access-control mode is a command filter, not confinement; "+
+		"sandbox implementation %q is invalid for %s: %s; "+
 			"use tclaude-layer or spawn with the sandbox off",
-		"harness-builtin", name, name)
+		"harness-builtin", name, reason)
 }
 
 // ValidateHarnessBuiltinOSSandbox rejects a harness-builtin pin when the
@@ -506,13 +592,15 @@ func ValidateHarnessBuiltinOSSandbox(h *Harness) error {
 		return nil
 	}
 	name := ""
+	reason := ""
 	if h != nil {
 		name = h.DisplayName
 		if name == "" {
 			name = h.Name
 		}
+		reason = h.BuiltinOSSandboxAbsenceReason
 	}
-	return &BuiltinOSSandboxInvalidError{Harness: name}
+	return &BuiltinOSSandboxInvalidError{Harness: name, Reason: reason}
 }
 
 // IsBuiltinOSSandboxInvalid reports whether err is the semantic applicability

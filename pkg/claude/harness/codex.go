@@ -91,6 +91,9 @@ func (codexLifecycle) CompactCommand() string       { return "/compact" }
 func (codexLifecycle) SoftExitCommand() string      { return "/quit" }
 func (codexLifecycle) RemoteControlCommand() string { return "" }
 
+// Codex accepts /quit from its prompt without a preparatory key.
+func (codexLifecycle) SoftExitPrefixKeys() []string { return nil }
+
 // codexConvStore assembles conversations from Codex's split storage model.
 // The methods are thin wrappers that resolve HOME and delegate to the
 // interface-free helpers in codex_convstore.go (which take an explicit

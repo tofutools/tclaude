@@ -156,6 +156,16 @@ func TestSeedScribeDirTrust_SeedsThePerHarnessStore(t *testing.T) {
 	require.NoError(t, err, "the codex trust store was written")
 	assert.Contains(t, string(codexData), `[projects."`+scribeDir+`"]`)
 	assert.Contains(t, string(codexData), `trust_level = "trusted"`)
+
+	// Copilot branch → <COPILOT_HOME>/config.json gains the trustedFolders
+	// entry. Its modal blocks before the CLI contacts the provider at all, so a
+	// scribe pane that hit it would never take its first turn.
+	t.Setenv(harness.CopilotHomeEnvVar, "")
+	seedScribeDirTrust(harness.CopilotName, scribeDir)
+	copilotData, err := os.ReadFile(filepath.Join(home, ".copilot", "config.json"))
+	require.NoError(t, err, "the copilot trust store was written")
+	assert.Contains(t, string(copilotData), `"trustedFolders"`)
+	assert.Contains(t, string(copilotData), scribeDir)
 }
 
 // An unrecognized harness (or one added later without a seeding path) must
@@ -173,4 +183,6 @@ func TestSeedScribeDirTrust_UnknownHarnessSeedsNothing(t *testing.T) {
 	assert.True(t, os.IsNotExist(err), "unknown harness must not create the claude trust store")
 	_, err = os.Stat(filepath.Join(home, ".codex", "config.toml"))
 	assert.True(t, os.IsNotExist(err), "unknown harness must not create the codex trust store")
+	_, err = os.Stat(filepath.Join(home, ".copilot", "config.json"))
+	assert.True(t, os.IsNotExist(err), "unknown harness must not create the copilot trust store")
 }

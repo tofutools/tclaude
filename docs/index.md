@@ -52,7 +52,9 @@ local protocol/statusline integration is not part of the binary itself.
     brew install tofutools/tap/tclaude
     ```
 
-    The formula installs tmux and fetches the Go toolchain needed to build.
+    The formula installs tmux and fetches the Go toolchain needed to build. It
+    builds only the `tclaude` binary; if you also want the standalone
+    `tclaude-agentd` daemon, add it through the Go or prebuilt path.
 
 === "Go"
 
@@ -62,11 +64,26 @@ local protocol/statusline integration is not part of the binary itself.
     go install github.com/tofutools/tclaude@latest
     ```
 
+    The daemon is built into that binary as `tclaude agentd serve`. It also
+    ships as a standalone `tclaude-agentd` binary, which is a separate package
+    path and therefore a separate install:
+
+    ```bash
+    go install github.com/tofutools/tclaude/cmd/tclaude-agentd@latest
+    ```
+
+    From a source checkout, `go install . ./cmd/...` installs both at once.
+
 === "Prebuilt release"
 
     Download a Linux amd64/arm64 or macOS arm64 archive from the
     [Releases page](https://github.com/tofutools/tclaude/releases), extract it,
-    and move `tclaude` onto your `PATH`.
+    and move `tclaude` onto your `PATH`. Each binary and platform gets its own
+    archive, named after the build that produced it: take a
+    `tclaude-no-cgo_linux_*` or `tclaude-darwin_*` archive for the CLI, and the
+    matching `tclaude-agentd-*` one if you also want the standalone daemon. The
+    two are never packed together, so put both binaries on your `PATH` — that
+    is how the daemon finds `tclaude`.
 
 ### 2. Run setup
 
@@ -163,6 +180,9 @@ Keep the daemon running in a non-sandboxed terminal:
 
 ```bash
 tclaude agentd serve
+
+# Or, from the standalone daemon binary released alongside tclaude:
+tclaude-agentd serve
 ```
 
 Then open the dashboard:

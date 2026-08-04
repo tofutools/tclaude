@@ -1719,7 +1719,11 @@ type dashboardAgent struct {
 	State       agentState           `json:"state"`
 	Groups      []string             `json:"groups"`
 	OwnedGroups []string             `json:"owned_groups"`          // subset of Groups the agent owns; UI tags these distinctly
-	Effective   []string             `json:"effective"`             // perms = (defaults ∪ active-group grants ∪ per-conv grants) − per-conv denies
+	// Effective is what the permission GATE would allow for this agent —
+	// computed by the gate's own resolver, so it covers sudo elevations
+	// and the structural owner bypass as well as defaults, group grants
+	// and per-conv overrides.
+	Effective []string `json:"effective"`
 	ActiveSudo  []dashboardSudoEntry `json:"active_sudo,omitempty"` // current sudo grants (slug + id + remaining); empty when none
 	// Notify is the per-agent override ("on"/"off", "" = inherit);
 	// NotifyEffective folds the agent + group levels together (the
@@ -2211,6 +2215,10 @@ func stateForConvInSessionsBatched(
 	codexRefresh := refreshCodexContextSnapshotOnReadBatched(
 		pick, alive, contextBatch, recordCodexTelemetry,
 	)
+	// Copilot follows the same read-through principle with a much smaller
+	// projection: its durable log carries no per-call usage and no live
+	// context window, so there is no batching or cost history to fold in.
+	refreshCopilotContextSnapshotOnRead(pick, alive)
 	codexInterruptedSubagents := codexRefresh.interruptedSubagents
 	// Sub-agents run INSIDE the harness process, so a dead session has
 	// none by definition — a stale count on an exited row must not render
@@ -2989,7 +2997,6 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	// so a parent_id with no live group simply doesn't resolve (child stays
 	// top-level) — the FK's ON DELETE SET NULL should already prevent that.
 	groupNameByID := make(map[int64]string, len(groups))
-	groupGrantsByConv := map[string][]string{}
 	for _, g := range groups {
 		groupNameByID[g.ID] = g.Name
 	}
@@ -3024,11 +3031,6 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			}
 		})
 		members := membersByGroup[g.ID]
-		if !g.IsArchived() {
-			for _, m := range members {
-				groupGrantsByConv[m.ConvID] = append(groupGrantsByConv[m.ConvID], groupPermissions...)
-			}
-		}
 		// Pre-load the owner set so we can tag members who are also
 		// owners. Mirrors handleGroupMembersList in handlers.go.
 		ownerSet := map[string]bool{}
@@ -3227,35 +3229,16 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		if rc.inactiveActor(a.ConvID) {
 			continue
 		}
-		// Effective = (defaults ∪ active-group grants ∪ grant-overrides)
-		// − deny-overrides.
-		// Defaults come from config; per-conv grant/deny overrides from
-		// agent_permissions. A deny override subtracts a slug the
-		// defaults would otherwise grant — mirroring resolvePermission.
-		denied := map[string]bool{}
-		for slug, effect := range out.Permissions.Overrides[a.ConvID] {
-			if effect == db.PermEffectDeny {
-				denied[slug] = true
-			}
-		}
-		seen := map[string]bool{}
-		merged := []string{}
-		addEffective := func(s string) {
-			if seen[s] || denied[s] {
-				return
-			}
-			seen[s] = true
-			merged = append(merged, s)
-		}
-		for _, s := range defaults {
-			addEffective(s)
-		}
-		for _, s := range groupGrantsByConv[a.ConvID] {
-			addEffective(s)
-		}
-		for _, s := range out.Permissions.Grants[a.ConvID] {
-			addEffective(s)
-		}
+		// Effective comes from the same routine the permission GATE uses
+		// (effectivePermsFor → resolvePermissionVerdict), so this column
+		// cannot drift from what the daemon will actually allow. It used
+		// to be a third hand-rolled union here, which omitted active sudo
+		// elevations and the structural owner bypass.
+		merged, _, _, _ := effectivePermsFor(permissionsState{
+			Defaults:  out.Permissions.Defaults,
+			Grants:    out.Permissions.Grants,
+			Overrides: out.Permissions.Overrides,
+		}, a.ConvID, ownerImpliedSlugsFor(a.ConvID))
 		sort.Strings(merged)
 		a.Effective = merged
 		sort.Strings(a.Groups)

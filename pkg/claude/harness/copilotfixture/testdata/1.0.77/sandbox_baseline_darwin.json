@@ -1,0 +1,42 @@
+{
+  "cliVersion": "1.0.77",
+  "layout": {
+    "copilotHome": {
+      "entries": [
+        "config.json",
+        "installed-plugins",
+        "session-state",
+        "session-state/<uuid>",
+        "session-state/<uuid>/checkpoints",
+        "session-state/<uuid>/checkpoints/index.md",
+        "session-state/<uuid>/events.jsonl",
+        "session-state/<uuid>/files",
+        "session-state/<uuid>/research",
+        "session-state/<uuid>/session.db",
+        "session-state/<uuid>/workspace.yaml",
+        "session-store.db",
+        "session-store.db-shm",
+        "session-store.db-wal"
+      ]
+    },
+    "cache": {
+      "entries": [
+        "pkg",
+        "pkg/<platform>",
+        "pkg/<platform>/1.0.77"
+      ]
+    },
+    "xdgCache": {
+      "entries": []
+    },
+    "deviceIdCache": {
+      "entries": [
+        "deviceid"
+      ]
+    },
+    "workDir": {
+      "entries": []
+    },
+    "homeOutsideBaseline": []
+  }
+}
