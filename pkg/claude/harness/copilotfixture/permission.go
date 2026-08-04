@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -201,6 +202,36 @@ func DenialMarker(toolResults []string) string {
 	return ""
 }
 
+// dialogMarkersPresent names the permission dialogs visible in a transcript,
+// or "none" when it shows no dialog this package knows how to name.
+//
+// It exists for the INCONCLUSIVE arm. A run that cannot be classified is the
+// one case where the screen is the only remaining evidence, and it was also
+// the one case that discarded it: the error named the request counts and the
+// settle state and said nothing about what was actually drawn. So a failure
+// that could have been resolved by looking — is the CLI parked on a dialog, or
+// still working toward one? — instead required guessing, and a whole class of
+// macOS failures (TCL-1029) stayed undiagnosable across several sightings for
+// exactly that reason.
+//
+// Reported rather than classified ON, deliberately. A marker says a dialog was
+// drawn at some point in the run, not that the CLI is parked on it now, and
+// promoting screen text to a verdict is the step this package holds to a higher
+// bar than a diagnostic (see permissionDenialMarkers on why the tool result,
+// not the terminal, decides whether a tool ran).
+func dialogMarkersPresent(transcript string) string {
+	var found []string
+	for _, marker := range []string{TrustPromptMarker, PathPromptMarker} {
+		if strings.Contains(transcript, marker) {
+			found = append(found, strconv.Quote(marker))
+		}
+	}
+	if len(found) == 0 {
+		return "none"
+	}
+	return strings.Join(found, ", ")
+}
+
 // PermissionVerdict pairs an outcome with the observation behind it.
 type PermissionVerdict struct {
 	Outcome PermissionOutcome
@@ -296,10 +327,13 @@ func ClassifyPermission(
 				"request(s), the process is still alive, but its output never settled. "+
 				"That is neither a prompt (which stops producing output) nor an exit, so it "+
 				"is most likely still working and the scenario's deadline was too short. "+
-				"Raising the deadline is the fix; recording it as 'blocked' would be a "+
-				"guess, and this measurement exists precisely because guesses about "+
-				"Copilot's blocking behavior are what TCL-973 cannot afford",
-			totalRequests)
+				"Recording it as 'blocked' would be a guess, and this measurement exists "+
+				"precisely because guesses about Copilot's blocking behavior are what "+
+				"TCL-973 cannot afford. Permission dialogs drawn during the run: %s "+
+				"(a dialog here means the CLI reached a prompt and the run was cut "+
+				"before that could be established; none means it never got that far, "+
+				"which is a bound or a hang rather than a permission gate)",
+			totalRequests, dialogMarkersPresent(transcript))
 	}
 }
 
