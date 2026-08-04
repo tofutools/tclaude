@@ -51,9 +51,14 @@ func configuredDarwinRouteAdapter() (*routeadapter.Adapter, bool, error) {
 // TCP connection, so the agent would otherwise see only a connection that
 // closed, and could not tell a revoked lease from its peer hanging up.
 func recordDarwinConsumerRefusal(adapter *routeadapter.Adapter, consumer routeadapter.Consumer, err error) {
-	// Capacity is per-connection back-pressure, not a verdict on the lease:
-	// the listener stays usable as soon as a slot frees, so this must not move
-	// the endpoint to its terminal refused state or close the lease.
+	// Capacity is deliberately NOT terminal here, and that asymmetry with the
+	// Linux channel handler is a lease-cardinality difference rather than an
+	// inconsistency to be tidied away. On Linux one attach IS the lease, so any
+	// refusal of it is a verdict on the lease. A Darwin lease is one listener
+	// serving many streams, so a consumer-limit refusal is per-connection
+	// back-pressure: the listener is usable again the moment a slot frees.
+	// Closing the lease or moving the endpoint to its terminal refused state
+	// would turn transient back-pressure into a permanent verdict.
 	if errors.Is(err, routebroker.ErrConsumerLimit) {
 		slog.Warn("route adapter: consumer stream refused for capacity",
 			"lease_id", consumer.LeaseID, "route_id", consumer.RouteID, "agent_id", consumer.AgentID)

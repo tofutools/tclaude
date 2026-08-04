@@ -173,12 +173,18 @@ func (a *Adapter) release(key string) {
 }
 
 // SetConsumerRefusalObserver registers the seam that receives the reason a
-// consumer stream was never admitted. Consumer streams have no caller waiting
-// on them — each one is an accepted local TCP connection, which can carry no
-// structured reason back — so without this seam a broker refusal is
+// consumer stream was never admitted.
+//
+// This is a seam rather than a returned error because there is no caller to
+// return one to, and there cannot be one: a consumer stream is an accepted raw
+// local TCP connection that can carry no structured reason back, and Open
+// returned long before it was dialed. Without this seam a broker refusal is
 // indistinguishable from an ordinary peer disconnect. The daemon uses it to
 // move the refusal onto the durable, agent-visible lease state, the same place
 // the Linux channel handler records its own refusals.
+//
+// Refusing the stream itself does not depend on an observer being installed:
+// an unobserved refusal is still closed rather than proxied.
 //
 // The observer runs on the refused stream's goroutine with no adapter lock
 // held, so it may call back into CloseLease.

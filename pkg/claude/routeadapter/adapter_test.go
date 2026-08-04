@@ -296,6 +296,62 @@ func TestAdapterReportsRefusedConsumerAttach(t *testing.T) {
 	require.Error(t, err)
 }
 
+// Refusing the stream must not depend on anyone listening. If an adapter with
+// no observer degraded to proxying a refused stream, the seam would only be
+// hiding the original bug rather than fixing it.
+func TestAdapterRefusedConsumerStreamIsClosedWithoutAnObserver(t *testing.T) {
+	targetPort, consumerPort := freePort(t), freePort(t)
+	target, err := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(targetPort)))
+	require.NoError(t, err)
+	defer target.Close()
+	reached := make(chan struct{}, 1)
+	go func() {
+		for {
+			conn, acceptErr := target.Accept()
+			if acceptErr != nil {
+				return
+			}
+			reached <- struct{}{}
+			_ = conn.Close()
+		}
+	}()
+	broker, err := routebroker.New(routebroker.Config{Authorizer: refuseConsumer{}})
+	require.NoError(t, err)
+	defer broker.Close()
+	adapter, err := New(broker, []int{targetPort, consumerPort})
+	require.NoError(t, err)
+	defer adapter.Close()
+	// No SetConsumerRefusalObserver call: this is the default adapter.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	// A live route, so "was it proxied?" is a real question: only the consumer
+	// side is refused.
+	_, err = adapter.Publish(ctx, Publisher{
+		RouteID: "route-unobserved", AgentID: "publisher", ConvID: "publisher-conv",
+		LaunchGeneration: "publisher-launch", GroupGeneration: 1,
+		Target: "tcp://127.0.0.1:" + strconv.Itoa(targetPort),
+	})
+	require.NoError(t, err)
+	endpoint, err := adapter.Open(ctx, Consumer{
+		LeaseID: "lease-unobserved", RouteID: "route-unobserved", AgentID: "consumer",
+		ConvID: "consumer-conv", LaunchGeneration: "consumer-launch", GroupGeneration: 1,
+	})
+	require.NoError(t, err)
+	conn, err := net.DialTimeout("tcp4", endpoint, time.Second)
+	require.NoError(t, err)
+	defer conn.Close()
+	_, err = conn.Write([]byte("payload"))
+	require.NoError(t, err)
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(5*time.Second)))
+	_, err = conn.Read(make([]byte, 1))
+	require.Error(t, err, "refused stream stayed open without an observer")
+	select {
+	case <-reached:
+		t.Fatal("refused stream was proxied to the publisher target")
+	default:
+	}
+}
+
 // Capacity is the other refusal the adapter used to discard, and it must reach
 // the same seam so the daemon can tell it apart from an authority verdict.
 func TestAdapterReportsConsumerCapacityRefusal(t *testing.T) {

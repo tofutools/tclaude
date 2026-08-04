@@ -150,6 +150,12 @@ func handleRouteChannel(w http.ResponseWriter, r *http.Request) {
 			}
 			return nil
 		})
+		// Every refusal is terminal for the lease here, capacity included,
+		// because this attach IS the lease: one hijacked channel, one lease,
+		// and nothing survives it to retry on. The Darwin adapter deliberately
+		// treats a consumer-limit refusal as non-terminal instead — a lease
+		// there is a listener serving many streams. See
+		// recordDarwinConsumerRefusal; the two are not inconsistent.
 		if err != nil {
 			_ = db.CloseAgentRouteLease(leaseID, consumerAuth.AgentID, consumerAuth.ConvID)
 			setRouteConsumerEndpointRefused(leaseID, routeEndpointRefusalDetail(err))
