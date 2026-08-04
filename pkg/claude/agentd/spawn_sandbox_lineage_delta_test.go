@@ -16,9 +16,14 @@ import (
 // the change is a recorded decision instead of a claim, and pins the property
 // that makes the loosened ones safe.
 //
-// The "before" side is reproduced honestly: a lineage sandbox carrying no
-// implementation gets no mapping, which is precisely how the guard behaved
-// before the implementation axis reached it.
+// The "before" side is reproduced honestly, which means reproducing the whole
+// pre-PR path and not just the guard: handleGroupSpawn already ran
+// ResolveSandboxMode and then the resolver whose old body is today's
+// ResolveHarnessNativeSandboxMode BEFORE calling the guard. That resolver is
+// the identity for Claude and Codex, but NOT for OpenCode — an OpenCode child
+// requesting `access-control` under tclaude-layer reached the old guard already
+// spelled `tclaude-layer`. Judging the raw request string here would invent a
+// verdict change that never happened in production.
 
 func lineageDeltaParents() []spawnLineageSandbox {
 	return []spawnLineageSandbox{
@@ -61,7 +66,8 @@ func forcedTclaudeLayerChild(t *testing.T, harnessName, requested string) (spawn
 	h, err := harness.Resolve(harnessName)
 	require.NoError(t, err)
 	forced, err := harness.ResolveSandboxImplementationMode(
-		h, requested, sandboxpolicy.ImplementationTclaudeLayer)
+		h, resolveSpawnBoundaryMode(t, h, requested),
+		sandboxpolicy.ImplementationTclaudeLayer)
 	if err != nil {
 		return spawnLineageSandbox{}, false
 	}
@@ -69,6 +75,32 @@ func forcedTclaudeLayerChild(t *testing.T, harnessName, requested string) (spawn
 		Harness: harnessName, Mode: forced,
 		Implementation: sandboxpolicy.ImplementationTclaudeLayer,
 	}, true
+}
+
+// preForcingTclaudeLayerChild returns the child the PRE-PR guard judged: the
+// request after the spawn boundary's own defaulting and harness-native
+// resolution, with no implementation and therefore no mapping.
+func preForcingTclaudeLayerChild(t *testing.T, harnessName, requested string) (spawnLineageSandbox, bool) {
+	t.Helper()
+	h, err := harness.Resolve(harnessName)
+	require.NoError(t, err)
+	native, err := harness.ResolveHarnessNativeSandboxMode(
+		h, resolveSpawnBoundaryMode(t, h, requested),
+		sandboxpolicy.ImplementationTclaudeLayer)
+	if err != nil {
+		return spawnLineageSandbox{}, false
+	}
+	return spawnLineageSandbox{Harness: harnessName, Mode: native}, true
+}
+
+// resolveSpawnBoundaryMode applies the secure default the daemon spawn boundary
+// applies to a requested mode, so a blank request is judged as the mode it
+// actually becomes rather than as "nothing chosen".
+func resolveSpawnBoundaryMode(t *testing.T, h *harness.Harness, requested string) string {
+	t.Helper()
+	resolved, err := harness.ResolveSandboxMode(h, requested)
+	require.NoError(t, err)
+	return resolved
 }
 
 // The measured delta, pinned as an exact list. A change to the mapping that
@@ -81,8 +113,11 @@ func TestSandboxLineageTclaudeLayerVerdictDelta(t *testing.T) {
 			if !ok {
 				continue
 			}
-			before := spawnSandboxLineageAllowed(parent,
-				spawnLineageSandbox{Harness: req.Harness, Mode: req.Mode})
+			beforeChild, beforeOK := preForcingTclaudeLayerChild(t, req.Harness, req.Mode)
+			if !beforeOK {
+				continue
+			}
+			before := spawnSandboxLineageAllowed(parent, beforeChild)
 			now := spawnSandboxLineageAllowed(parent, child)
 			if before == now {
 				continue
@@ -121,8 +156,7 @@ func TestSandboxLineageTclaudeLayerVerdictDelta(t *testing.T) {
 		"opencode/tclaude-layer -> claude/inherit",
 		"opencode/tclaude-layer -> claude/off",
 		"opencode/tclaude-layer -> codex/danger-full-access",
-		"opencode/tclaude-layer -> opencode/access-control",
-	}, loosened, "the loosened set must stay exactly these seventeen")
+	}, loosened, "the loosened set must stay exactly these sixteen")
 }
 
 // The property that makes the loosened verdicts safe: none of them lets a
@@ -144,9 +178,12 @@ func TestSandboxLineageTclaudeLayerLooseningGrantsNoNewLaunch(t *testing.T) {
 			if !ok {
 				continue
 			}
-			before := spawnSandboxLineageAllowed(parent,
-				spawnLineageSandbox{Harness: req.Harness, Mode: req.Mode})
-			if before || !spawnSandboxLineageAllowed(parent, child) {
+			beforeChild, beforeOK := preForcingTclaudeLayerChild(t, req.Harness, req.Mode)
+			if !beforeOK {
+				continue
+			}
+			if spawnSandboxLineageAllowed(parent, beforeChild) ||
+				!spawnSandboxLineageAllowed(parent, child) {
 				continue // not a newly-admitted pair
 			}
 			checked++
@@ -162,8 +199,8 @@ func TestSandboxLineageTclaudeLayerLooseningGrantsNoNewLaunch(t *testing.T) {
 				if !altOK || altChild.Mode != child.Mode {
 					continue // would not produce the same launch
 				}
-				if spawnSandboxLineageAllowed(parent,
-					spawnLineageSandbox{Harness: alt.Harness, Mode: alt.Mode}) {
+				altBefore, altBeforeOK := preForcingTclaudeLayerChild(t, alt.Harness, alt.Mode)
+				if altBeforeOK && spawnSandboxLineageAllowed(parent, altBefore) {
 					equivalentFound = true
 					break
 				}

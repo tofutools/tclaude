@@ -98,9 +98,9 @@ func TestSandboxLineageMatrixUnchangedAcrossNonSingleWallImplementations(t *test
 // confinement it actually has.
 //
 // This does NOT leave every verdict where it was. Judging the launch instead of
-// the request moves 20 request-shape verdicts (see
+// the request moves 19 request-shape verdicts (see
 // TestSandboxLineageTclaudeLayerVerdictDelta, which enumerates them): 3 tighten
-// and 17 loosen. What it preserves is the set of LAUNCHES each parent can mint
+// and 16 loosen. What it preserves is the set of LAUNCHES each parent can mint
 // — see TestSandboxLineageTclaudeLayerLooseningGrantsNoNewLaunch.
 func TestSandboxLineageMapsTclaudeLayerChildToItsConfinementClass(t *testing.T) {
 	layerClaude := spawnLineageSandbox{

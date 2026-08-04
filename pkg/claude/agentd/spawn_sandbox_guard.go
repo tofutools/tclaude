@@ -576,18 +576,27 @@ func spawnSandboxLineageAllowed(parent, child spawnLineageSandbox) bool {
 // wall is the one enforcing, so the child is confined at least as tightly as
 // the harness-builtin sandboxed class it maps to.
 //
-// The mapping deliberately preserves the exact admission decisions these
-// launches already got, when the guard saw their pre-forcing requested mode:
-// Claude tclaude-layer classifies as Claude `on`, and Codex tclaude-layer as
-// the Codex managed profile. OpenCode needs no arm — its native `tclaude-layer`
-// mode is already the matrix's own name for this topology.
+// Claude tclaude-layer therefore classifies as Claude `on`, and Codex
+// tclaude-layer as the Codex managed profile. OpenCode needs no arm — its
+// native `tclaude-layer` mode is already the matrix's own name for this
+// topology.
+//
+// This does NOT leave every verdict where it was, and the difference is
+// measured rather than asserted: 19 request shapes move, 3 tightened and 16
+// loosened, enumerated as an exact list by
+// TestSandboxLineageTclaudeLayerVerdictDelta. The tightened three refuse a
+// Codex read-only / workspace-write parent a tclaude-walled child, because that
+// child launches danger-full-access inside a wall that writes its cwd subtree.
+// The loosened sixteen accept request shapes whose inner mode is inert under
+// that wall, so they mint a session row the parent could already mint by
+// spelling the request differently — a property asserted over every one of them
+// by TestSandboxLineageTclaudeLayerLooseningGrantsNoNewLaunch.
 //
 // The asymmetry with the PARENT side is deliberate, not an oversight. A parent
 // is still classified by its persisted mode alone, so a tclaude-layer parent
 // keeps being read as the fully-open class it reads as today. Tightening the
 // parent side changes what existing agents are permitted to spawn, which is a
-// separate, behaviour-changing decision (TCL-991); this function only keeps the
-// child side from being *loosened* by the forcing above.
+// separate, behaviour-changing decision (TCL-991).
 //
 // Only the exact `tclaude-layer` implementation enters here. `stacked` runs the
 // harness's own sandbox nested inside tclaude's, so its mode still means what
