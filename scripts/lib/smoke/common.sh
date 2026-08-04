@@ -32,16 +32,26 @@ smoke::error() {
 # This is deliberately source-specific, not an apt error workaround. Active
 # Microsoft `deb` lines are commented in place, while Microsoft-only deb822
 # `.sources` files are moved out of apt's source-parts directory. A deb822 file
-# mixing Microsoft and another vendor is refused rather than disabling the
-# other vendor too. The original files are copied/moved into RUNNER_TEMP for
-# diagnostics; the runner is ephemeral and no restore is needed.
+# mixing Microsoft and another vendor is left unchanged with a warning rather
+# than disabling the other vendor too. The original files are copied/moved into
+# RUNNER_TEMP for diagnostics; isolation is limited to GitHub Actions because
+# that runner is ephemeral and no restore is needed.
 smoke::apt_update() {
   local source_file source_name backup_file awk_status grep_status
-  local disabled_count=0
+  local disabled_count=0 mixed_count=0
   local backup_dir="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/tclaude-disabled-apt-sources"
   local microsoft_list_re='^[[:space:]]*deb(-src)?[[:space:]].*packages[.]microsoft[.]com([/:[:space:]]|$)'
   local microsoft_uri_re='^[[:space:]]*URIs:[[:space:]].*packages[.]microsoft[.]com([/:[:space:]]|$)'
   local -a source_files=()
+
+  if [[ -z "${GITHUB_ACTIONS:-}" ]]; then
+    smoke::log "Not running under GitHub Actions; skipping Microsoft apt-source isolation"
+    if ! sudo apt-get update --quiet; then
+      smoke::error "apt-get update failed outside GitHub Actions"
+      return 1
+    fi
+    return 0
+  fi
 
   if [[ -f /etc/apt/sources.list ]]; then
     source_files+=(/etc/apt/sources.list)
@@ -69,9 +79,11 @@ smoke::apt_update() {
           sub(/^[^:]*:[[:space:]]*/, "", line)
           count = split(line, uri, /[[:space:]]+/)
           for (i = 1; i <= count; i++) {
-            if (uri[i] ~ /^https?:\/\// && uri[i] ~ /packages[.]microsoft[.]com/) {
+            if (uri[i] ~ /^#/) {
+              break
+            } else if (tolower(uri[i]) ~ /packages[.]microsoft[.]com/) {
               microsoft = 1
-            } else if (uri[i] ~ /^https?:\/\//) {
+            } else {
               mixed = 1
             }
           }
@@ -86,8 +98,10 @@ smoke::apt_update() {
           return 1
         fi
         if sudo grep -Eiq "$microsoft_uri_re" "$source_file"; then
-          smoke::error "refusing to disable mixed apt source file: $source_file (contains Microsoft and non-Microsoft URIs)"
-          return 1
+          printf '::warning title=Mixed Microsoft apt source::leaving mixed source file unchanged: %s (contains Microsoft and non-Microsoft URIs)\n' \
+            "$source_file"
+          smoke::log "Leaving mixed Microsoft apt source unchanged: $source_file; apt-get update remains fatal if it cannot use this source"
+          mixed_count=$((mixed_count + 1))
         else
           grep_status=$?
           if (( grep_status > 1 )); then
@@ -135,7 +149,7 @@ smoke::apt_update() {
         return 1
       fi
       if ! sudo sed -E -i \
-        '/^[[:space:]]*deb(-src)?[[:space:]].*packages[.]microsoft[.]com([\/:[:space:]]|$)/ s|^|# tclaude disabled unrelated Microsoft source: |' \
+        '/^[[:space:]]*deb(-src)?[[:space:]].*packages[.]microsoft[.]com([\/:[:space:]]|$)/I s|^|# tclaude disabled unrelated Microsoft source: |' \
         "$source_file"; then
         smoke::error "could not disable Microsoft apt source entries in: $source_file"
         return 1
@@ -144,8 +158,10 @@ smoke::apt_update() {
     disabled_count=$((disabled_count + 1))
   done
 
-  if (( disabled_count == 0 )); then
+  if (( disabled_count == 0 && mixed_count == 0 )); then
     smoke::log "No packages.microsoft.com apt sources detected; configured sources remain unchanged"
+  elif (( disabled_count == 0 )); then
+    smoke::log "No Microsoft apt sources were disabled; $mixed_count mixed source file(s) remain visible to apt"
   else
     smoke::log "Disabled $disabled_count unrelated Microsoft apt source file(s); Ubuntu source and package failures remain fatal"
   fi
