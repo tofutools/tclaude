@@ -62,6 +62,8 @@ const permissionDeadline = 30 * time.Second
 // share permissionDeadline's sizing trade-off, where a tighter bound keeps
 // every genuinely blocked PTY row cheap. Sixty seconds gives ample margin over
 // the observed loaded startup without adding cost to those blocked scenarios.
+// Only use this for a headless row with no legitimate blocking arm: a
+// non-completion must be a startup or hang failure, never the measurement.
 const headlessPermissionDeadline = 60 * time.Second
 
 // blockedQuiet is how long a pty scenario's transcript must stand still, with
