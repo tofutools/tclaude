@@ -46,9 +46,24 @@ import (
 // A permission prompt is indistinguishable from slow work by any single
 // observation: both are "no exit yet". What separates them is that a prompt is
 // terminal — the CLI has drawn its question and will wait forever — while work
-// keeps producing output. Two seconds is far longer than the gaps a local
-// mock-backed turn produces (the whole turn takes ~2s) and far shorter than
-// the deadline, so the classification is not a close call in either direction.
+// keeps producing output.
+//
+// This constant used to claim that two seconds is "far longer than the gaps a
+// local mock-backed turn produces (the whole turn takes ~2s)". That margin does
+// not exist, and the measurement in permission_smoke_test.go's blockedQuiet
+// comment is what disproves it: across 1746 pty runs, a working turn's widest
+// output gap is 2.2s on Linux and 5.8s on macOS. Both exceed this window, so
+// Quiesced=true on a live process is NOT by itself evidence that the CLI has
+// stopped for good — it is routinely true of a turn that is still working.
+//
+// What that means for callers: treat Quiesced as a cheap, noisy hint, never as
+// the sole basis for a blocked verdict. ClassifyPermission's ordering already
+// reflects this — a tool-result follow-up and a rendered dialog marker each
+// decide before the quiescence arm is consulted, and the arm itself only
+// applies to a process that is still alive. Sizing this constant to
+// separate the two populations is not possible on macOS (see the overlap table
+// in that comment), which is why the fix was to add positive evidence rather
+// than to retune the window.
 const PTYQuiescence = 2 * time.Second
 
 // readDrainGrace bounds how long the transcript reader may keep going after

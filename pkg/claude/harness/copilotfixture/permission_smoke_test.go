@@ -51,7 +51,46 @@ import (
 // likely cause; it cannot silently downgrade a working launch into a "blocked"
 // finding. What this bound buys is that a starved runner reaches that arm
 // because the CLI misbehaved, not because the runner was busy.
-const permissionDeadline = 30 * time.Second
+//
+// 30s did not buy that on macOS. Measured over 1746 pty runs harvested from 30
+// CI jobs (every run logs PTY TIMING, so passing runs are recoverable too), the
+// ALLOWED arms at the path-grants site completed in:
+//
+//	macos  n=49   p50 25.2s  p90 28.4s  p95 29.4s
+//	linux  n=108  p50 25.3s  p90 26.7s  max 27.2s
+//
+// Same median on both platforms; the whole difference is tail. About one macOS
+// allowed arm in ten was finishing within 1.6s of the bound, and TCL-1029 is
+// what that looks like when a job is a little slower than usual.
+//
+// Sixty rather than a percentile off that table, and the reason matters: the
+// table CANNOT yield one. A run recorded as settled at 30.0s settled on the
+// final tick, and anything slower did not settle at all — it failed and left no
+// settled row. The distribution is right-censored exactly where the interesting
+// tail is, so any p99 read off it would be an artifact of the old bound. What
+// is defensible is that the observed spread needs materially more headroom than
+// 1.6s, and that 60s is already this file's reviewed value for a bound with no
+// legitimate blocking arm (headlessPermissionDeadline). Same number, same
+// reason: generous enough that reaching it is a finding.
+//
+// COST, stated rather than waved at: a blocked arm still pays this in full. The
+// dialog-based verdict in ClassifyPermission fixes which answer a cut run gets;
+// it does not stop the run. The bill is macOS-scoped, because that is the only
+// arm where blockedQuiet fails to cut a blocked row short (~4 in 5 reach the
+// deadline there — see below), and because ci.yml's macOS run_filter selects
+// only TestCopilotPermissionPathGrants and TestCopilotDirTrust. Within those,
+// three path-grant rows block. They run concurrently under -parallel 8, so the
+// added wall clock on that shard is about +30s in total, not per row. On Linux
+// blockedQuiet still fires on 86% of blocked arms, so raising the bound costs
+// that arm almost nothing. The way to get the rest back is an evidence-based early
+// exit — end a blocked arm when its dialog appears, the way SettledWhen ends an
+// allowed arm when its follow-up arrives — which needs a transcript-aware
+// predicate in RunPTY and a decision about whether evidence or blocking wins on
+// the same tick. That is a change to the shared runner's ordering semantics
+// every scenario in this package depends on, and getting that precedence wrong
+// records allowed arms as blocked, so it is TCL-1033 rather than something
+// smuggled into a bound.
+const permissionDeadline = 60 * time.Second
 
 // headlessPermissionDeadline bounds the non-PTY permission probes in this file.
 //
@@ -100,6 +139,44 @@ const headlessPermissionDeadline = 60 * time.Second
 // The timing log stays in the merged code so the next tightening, or the next
 // pinned-binary bump, argues from a real job's numbers rather than from this
 // comment.
+//
+// EVERYTHING ABOVE IS TRUE ON LINUX AND ONLY ON LINUX. It was measured, it was
+// measured correctly, and it has held for 108 Linux runs — working turns there
+// still top out at 2.2s exactly as claimed. It was never re-checked on macOS,
+// where the same measurement gives different numbers (1746 runs, 30 CI jobs):
+//
+//	                     allowed arms        blocked arms
+//	linux   widest gap   2.2s max            >=10s      -> 86% caught here
+//	macos   widest gap   5.8s max            4.1s min   -> 19% caught here
+//
+// Read the macOS row against itself. An allowed arm — one that executed the
+// tool and posted the result — goes quiet for as long as 5.8s. A blocked arm
+// can have a widest gap of only 4.1s. THE POPULATIONS OVERLAP, so no value of
+// this constant separates them there. Below 5.8s it cuts working turns short
+// and records them as blocked, which is the lopsided error the paragraphs above
+// exist to avoid. Above it, blocked arms sail past and pay the full deadline.
+// There is no correct value; on macOS silence is not evidence of blocking.
+//
+// It works on Linux only because the two populations are cleanly separated
+// there, with nothing between 2.2s and 10s. That separation is the load-bearing
+// property, not the 10s, and it is a property of the platform's render cadence
+// rather than of Copilot's blocking behaviour.
+//
+// So the DIRECTORY-ACCESS verdict no longer rests on this constant:
+// ClassifyPermission identifies a launch parked on the folder-trust or
+// directory-access dialog by the dialog on its screen, and for those rows this
+// window is now only an early exit that saves wall clock where it happens to
+// fire. That is deliberately narrower than "the blocked verdict". The
+// tool-approval row, the URL-gate row and the web-fetch blocked arm still reach
+// PermissionBlocked through silence alone, with no marker of their own, so on
+// macOS they remain exposed to the overlap in the table above. They have not
+// flaked only because ci.yml's macOS run_filter does not select them; Linux,
+// where it does, is the platform where silence still separates the two
+// populations. Giving those rows their own dialog markers is the same shape of
+// fix as this one and is not done here. Anyone
+// inventing another silence-based detector should read the table first — the
+// mistake this comment made was not guessing, it was measuring one platform and
+// writing the result as if it were the behaviour.
 const blockedQuiet = 10 * time.Second
 
 // safeShellCommand is a command Copilot classifies as trivially safe.
@@ -995,7 +1072,19 @@ func TestCopilotPermissionPathGrants(t *testing.T) {
 				require.Len(t, mock.Requests(), 1,
 					"a path prompt must have reached the provider once, but must not post a tool result")
 				assert.False(t, res.Exited, "a path prompt parks the interactive process")
-				assert.True(t, res.Quiesced, "a path prompt leaves settled output")
+				// res.Quiesced is deliberately NOT asserted here, and leaving
+				// it in would have kept TCL-1029's bug alive one line below
+				// where it was fixed.
+				//
+				// It is sampled once, on the tick the run ends on, so on a run
+				// the deadline cuts mid-redraw it is false for a launch that is
+				// unambiguously parked — the phase check the classifier arm
+				// above stopped depending on. Asserting it here would move that
+				// coin flip from the classifier to this row rather than remove
+				// it, and the row already carries strictly better evidence: the
+				// dialog is on screen, it names the path, exactly one provider
+				// request reached the mock, and the process is still alive.
+				// "Settled output" adds no fact those four do not already give.
 			}
 			assertCredentialFree(t, mock)
 		})
