@@ -60,12 +60,33 @@ func spawnSandboxLineageFailure(
 		// `copilot sandbox "off"` may not spawn a `copilot` child with sandbox
 		// `"off"` — which reads as a bug rather than as the two different
 		// postures that string spells for this harness.
-		return &spawnFailure{http.StatusForbidden, "sandbox_restricted",
-			fmt.Sprintf("agent %s was launched as %s sandbox %q (%s) and may not spawn a %s child with sandbox %q (%s)",
-				short8(parentConvID), parent.Harness, parent.Mode, parent.Implementation,
-				child.Harness, child.Mode, child.Implementation)}
+		message := fmt.Sprintf(
+			"agent %s was launched as %s sandbox %q (%s) and may not spawn a %s child with sandbox %q (%s)",
+			short8(parentConvID), parent.Harness, parent.Mode, parent.Implementation,
+			child.Harness, child.Mode, child.Implementation)
+		if remedy := copilotLineageRemedy(child); remedy != "" {
+			message += "; " + remedy
+		}
+		return &spawnFailure{http.StatusForbidden, "sandbox_restricted", message}
 	}
 	return nil
+}
+
+// copilotLineageRemedy names the way out of a Copilot refusal the caller can
+// act on, because the posture pair alone does not say which value to change.
+// Copilot enters the matrix in exactly one launch pair while the spawn defaults
+// land elsewhere, so a refused Copilot child is usually a defaulted request
+// rather than a request for something the matrix will never grant.
+//
+// A child that ALREADY spells the admitted pair gets no remedy: that refusal
+// came from the parent's own posture, and no child-side flag moves it.
+func copilotLineageRemedy(child spawnLineageSandbox) string {
+	if child.Harness != harness.CopilotName || copilotProvenLineageLaunch(child) {
+		return ""
+	}
+	return fmt.Sprintf(
+		"%s agents are admitted in exactly one launch topology — pass sandbox_implementation=%s (mode resolves to %q)",
+		harness.CopilotName, sandboxpolicy.ImplementationTclaudeLayer, harness.CopilotSandboxOff)
 }
 
 func sandboxProfileCapabilityFailure(
