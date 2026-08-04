@@ -282,20 +282,30 @@ func TestCopilotSpawn_DefaultSiblingWorktreeIsAutoTrusted(t *testing.T) {
 // TestCopilotSpawn_RenderedPostureDecidesWhetherTheAgentDeadlocks is the
 // regression test the approval work has to pass.
 //
-// It runs the SAME scripted turn twice through the production status path: once
-// under the posture the daemon renders today, and once under a launch that
-// resolves to the measured nonblocking posture. The difference is not cosmetic
+// It runs the SAME scripted turn twice through the production status path,
+// under the two postures the catalog can render. The difference is not cosmetic
 // — one agent returns to idle and the other is reported "working" forever,
 // which is the state every coordination decision in tclaude is built on.
+//
+// Both halves now spawn through the daemon and drive the pane the SPAWNER
+// built. Neither substitutes a relaunched pane to obtain its posture: the
+// approval catalog has landed, so the posture under test is the one production
+// actually renders, and a test that appended its own flags would prove only
+// that the simulator honours flags.
 func TestCopilotSpawn_RenderedPostureDecidesWhetherTheAgentDeadlocks(t *testing.T) {
-	t.Run("today's rendered posture blocks on the first tool call", func(t *testing.T) {
+	t.Run("the prompting posture blocks on the first tool call", func(t *testing.T) {
 		f := newCopilotFlow(t)
 		f.HaveGroup("crew")
 
+		// `inherit` is Copilot's own prompting posture, and reaching this
+		// deadlock now REQUIRES asking for it by name. That is the whole point
+		// of the default: this state is no longer somewhere a spawn can land by
+		// saying nothing.
 		resp, sim := spawnCopilot(t, f, "crew", map[string]any{
 			"trust_dir":       true,
 			"name":            "copilot-worker",
 			"initial_message": "clean up the build",
+			"approval":        harness.CopilotApprovalInherit,
 		})
 
 		// The launch-arg prompt started a turn: hooks fired in Copilot's own
@@ -303,15 +313,9 @@ func TestCopilotSpawn_RenderedPostureDecidesWhetherTheAgentDeadlocks(t *testing.
 		assert.Equal(t, session.StatusWorking, copilotMember(t, f, "crew", resp.ConvID).State.Status)
 
 		launch := copilotLaunchOf(t, f, resp.ConvID)
-		// The characterization half. Today the Copilot descriptor leaves
-		// Approval nil, so ResolveApprovalPolicy yields "" and the spawner
-		// emits no permission flags at all. When the approval catalog lands,
-		// this assertion is the one to flip — and the rest of this subtest
-		// stops being reachable from a daemon spawn, which is the point.
 		require.False(t, launch.ToolsAutoApproved(),
-			"UPDATE ME when the Copilot ApprovalCatalog lands: the daemon default "+
-				"must render a posture that auto-approves tools, at which point this "+
-				"subtest's deadlock becomes unreachable from a spawn")
+			"`inherit` must render no auto-approval, or this subtest would be "+
+				"measuring the default under another name")
 
 		got := sim.RequestTool(testharness.CopilotToolCall{
 			Kind: testharness.CopilotToolShell, Command: "rm -rf ./build"})
@@ -327,27 +331,28 @@ func TestCopilotSpawn_RenderedPostureDecidesWhetherTheAgentDeadlocks(t *testing.
 		assert.True(t, sim.IsAlive())
 	})
 
-	t.Run("the measured nonblocking posture completes the turn", func(t *testing.T) {
+	t.Run("the production default completes the turn", func(t *testing.T) {
 		f := newCopilotFlow(t)
 		f.HaveGroup("crew")
 
-		resp, _ := spawnCopilot(t, f, "crew", map[string]any{
+		// No approval field: this is the daemon default, resolved by
+		// ResolveApprovalPolicy from the catalog and rendered by the production
+		// spawner.
+		resp, sim := spawnCopilot(t, f, "crew", map[string]any{
 			"trust_dir":       true,
 			"name":            "copilot-worker",
 			"initial_message": "clean up the build",
 		})
-		// Relaunch the same conversation under the posture the contract
-		// measured as nonblocking. Substituting the pane rather than the
-		// spawner keeps this PR free of the approval production change while
-		// still proving, through the daemon's own status path, what that change
-		// has to achieve.
-		sim := copilotRelaunchWithPosture(t, f, resp, "--allow-all-tools --no-ask-user")
 
-		// No "is it working" assertion before the tool call: the original
-		// pane's launch prompt already put this agent in `working`, so it would
-		// hold whether or not the relaunch did anything. The Stop-driven return
-		// to idle below is the assertion that can only pass if the turn really
-		// completed.
+		launch := copilotLaunchOf(t, f, resp.ConvID)
+		require.True(t, launch.ToolsAutoApproved(),
+			"an unchosen Copilot spawn must land on the measured nonblocking "+
+				"posture (contract: default-interactive-blocking, no-ask-user)")
+
+		// The launch prompt already opened a turn; finish it so the assertions
+		// below are about a turn this subtest drove end to end.
+		sim.FinishTurn()
+
 		sim.StartTurn("clean up the build")
 		assert.Equal(t, testharness.CopilotToolAllowed, sim.RequestTool(testharness.CopilotToolCall{
 			Kind: testharness.CopilotToolShell, Command: "rm -rf ./build"}))
@@ -413,38 +418,6 @@ func TestCopilotSpawn_ResumeKeepsConversationIdentity(t *testing.T) {
 		}
 	}
 	assert.Equal(t, 1, seen, "the relaunch must not create a second conversation")
-}
-
-// copilotRelaunchWithPosture replaces the registered pane with one launched
-// under an explicit permission posture, keeping the conversation's identity and
-// the daemon's session row.
-//
-// It exists so this PR can prove what the approval work must achieve without
-// containing any of that work's production logic. The launch string is still
-// rendered by the production spawner; only the extra flags are appended here.
-func copilotRelaunchWithPosture(t *testing.T, f *testharness.Flow,
-	resp testharness.SpawnResp, flags string,
-) *testharness.CopilotSim {
-	t.Helper()
-	cmd, ok := f.World.CopilotLaunchCommand(resp.ConvID)
-	require.True(t, ok)
-	// Append before the trailing `-i <prompt>`, which must stay last.
-	idx := strings.LastIndex(cmd, " -i ")
-	require.Positive(t, idx, "the launch should carry an -i prompt: %s", cmd)
-	posture := cmd[:idx] + " " + flags + cmd[idx:]
-
-	home := testharness.CopilotHomeFor(f.World.HomeDir)
-	row, err := db.LoadSession(resp.Label)
-	require.NoError(t, err)
-	require.NotNil(t, row)
-	sim, err := testharness.NewCopilotSim(t, home, row.Cwd, posture)
-	require.NoError(t, err)
-	sim.SetSessionID(resp.Label)
-	testharness.TrustCopilotFolder(t, home, row.Cwd)
-	require.NoError(t, sim.Start())
-	f.World.Tmux.Register(resp.Label, row.Cwd, sim)
-	f.World.Copilots.Set(resp.Label, sim)
-	return sim
 }
 
 // copilotMember reads one agent's dashboard row — the surface an operator and

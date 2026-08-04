@@ -8,8 +8,9 @@ are registered harnesses.** OpenCode support covers the managed serve-and-attach
 launch path, its conversation store, ad-hoc ask, and per-session tool
 permissions; full status mapping remains intentionally capability-gated. Copilot
 is a deliberately minimal first wave — launch, resume, model/effort, the
-in-pane control commands, hooks, and a cold conversation store, and nothing else
-yet (see [GitHub Copilot CLI (first wave)](#github-copilot-cli-first-wave)). Claude remains the default so
+in-pane control commands, hooks, a cold conversation store, the outer sandbox,
+event-log usage/context telemetry, and a measured approval posture, and nothing
+else yet (see [GitHub Copilot CLI (first wave)](#github-copilot-cli-first-wave)). Claude remains the default so
 existing commands and databases keep their historical behavior when no harness
 is recorded.
 
@@ -246,16 +247,30 @@ covers **interactive human sessions**:
 | **tclaude-layer (outer OS sandbox)** | ✅ Linux bubblewrap / macOS Seatbelt, with Copilot's pre-approved directory catalog composed into the mount plan |
 | **Model transport under a filtered network** | ⚠️ the default first-party GitHub Copilot route only (`api.githubcopilot.com`, `api.github.com`); every route-moving input is refused rather than followed, read from both settings files with the same precedence as the sandbox key |
 | **Directory pre-trust at spawn** ([below](#directory-trust-at-spawn)) | ✅ opt-in `trust_dir` appends the launch dir to `trustedFolders` in `<COPILOT_HOME>/config.json`. Copilot's modal blocks *before* any provider contact, so an unseeded detached pane never reaches its first turn |
-| **Everything else in the matrix** | ➖ not yet — no ad-hoc ask, approval, tool governance, remote control, usage/cost, or status bar |
+| **Approval / permissions** | ⚠️ `allow-tools` (default) / `inherit`. Two tokens, each rendering only flags measured against the pinned binary on a real terminal. Neither makes a Copilot pane unconditionally nonblocking — see [below](#copilot-approvals-and-permissions) for exactly which prompt each one closes and which it leaves standing |
+| **Usage, cost & context** | ⚠️ followed incrementally from Copilot's durable event log, with a byte-offset checkpoint so a daemon restart resumes rather than rescans. Output tokens advance per turn (`assistant.message`); input tokens, context occupancy and window size advance only at an authoritative disclosure — a compaction, a truncation, or a shutdown — and nothing is written between them, so a real reading is never overwritten by a zero. Cost is carried in the **nano-AI units Copilot emits**; no USD figure is derived, because Copilot documents an AI credit as $0.01 in a different structure and nowhere states that one AIU is one credit |
+| **Everything else in the matrix** | ➖ not yet — no ad-hoc ask, tool governance, remote control, or status bar |
 
 Two consequences are worth stating plainly:
 
-- Copilot conversations **do** appear in `conv ls` and resolve for resume, but
-  per-turn usage, cost and context figures are still absent — those come from
-  the event log's usage records, which a later wave follows incrementally.
-- Copilot agents are not usable as detached agents in practice. Approval-lineage
-  classification fails closed for a harness with no approval catalog, so a
-  Copilot child is refused rather than spawned with an unproven posture.
+- Copilot conversations **do** appear in `conv ls` and resolve for resume, and
+  they now carry usage and context figures — but at the durable log's
+  resolution, not a live meter's. Truly per-call usage and context are emitted
+  on Copilot's stdout JSONL stream and never persisted, so reading them is a
+  transport integration rather than a file tracker, and remains out of scope.
+- Copilot agents are still not usable as detached agents. The approval axis is
+  now classifiable in both directions, but **sandbox**-lineage classification has
+  no Copilot arm, and it is consulted first — so an agent-to-agent Copilot spawn
+  is refused as `sandbox_restricted` in both directions, and a Copilot agent can
+  spawn nothing. Directory pre-trust is no longer one of the gaps — `trust_dir`
+  seeds `trustedFolders` — but it is opt-in, so a spawn that does not ask for it
+  still parks on the modal before the model is contacted. The other two former
+  gates have closed: a Copilot pane simulator now drives the nonblocking default
+  end to end through the daemon's own status path, and `web_fetch` — which was
+  measured to be a third independent deadlock source — is closed by the same
+  `--allow-all-tools` the default already renders. What remains is the sandbox
+  arm, and it is deliberately the *last* thing to land rather than the leftover:
+  it is the axis that decides whether an OS boundary actually exists.
 
 The restraint is deliberate rather than incidental. This adapter was FIRST
 written against the official GitHub documentation alone, with no Copilot binary
@@ -276,6 +291,165 @@ Two Copilot options tclaude deliberately never emits: `--mouse` / `--no-mouse`
 (an explicit value is **persisted** to the user's configuration, so it is not
 a per-spawn flag), and `-p/--prompt` (headless mode, which exits after
 completion — a TUI pane wants `-i`).
+
+#### Copilot approvals and permissions
+
+Copilot's permission surface is not one gate. It is **five independent prompt
+sources**, and a posture is only honest about the ones it actually closes. Every
+statement below was measured against the pinned 1.0.77 binary on a real
+terminal, because permission behaviour is not observable without one — a
+headless run draws no dialog and so reports "no prompt" for a launch that would
+park a pane forever.
+
+| Prompt source | What closes it |
+|---|---|
+| Tool approval (per-command risk classification, not a tool allowlist) | `--allow-all-tools` |
+| The `ask_user` tool | `--no-ask-user` (removes the tool from the advertised catalog) |
+| URL access, from **either** consumer — the shell tool (`url-access`) and the `web_fetch` tool (`web-fetch-url-access`) | `--allow-all-tools` also closes this, measured separately for each consumer and measured *alone* for `web_fetch`, so the result is not creditable to `--no-ask-user` |
+| Directory access outside cwd + system temp | `--add-dir <dir>`, one per directory |
+| Folder trust | **no launch flag at all** — a config-file write, opted into with `trust_dir` ([below](#directory-trust-at-spawn)) |
+
+tclaude exposes two tokens:
+
+- **`allow-tools`** (the default for a daemon-spawned, unattended pane) renders
+  `--allow-all-tools --no-ask-user`, plus one `--add-dir` per directory the
+  resolved sandbox profile grants.
+- **`inherit`** renders no permission flags at all: Copilot's own defaults plus
+  whatever your configuration persists. It is the faithful reconstruction of
+  every Copilot launch tclaude made before this catalog existed, and it is what
+  a pre-existing Copilot row relaunches as.
+
+Folder trust is the row in that table no approval token can reach, and it is a
+separate contract rather than a gap: it is cleared by a pre-launch config write,
+which `trust_dir` performs when you opt in ([below](#directory-trust-at-spawn)).
+A launch that does not opt in still parks on the modal whichever approval token
+it carries, because the modal fires before the CLI contacts the provider at all.
+
+Directory grants are rendered under **both** tokens. They are the path axis
+rather than the approval axis: the grants come from the sandbox profile either
+way, and Copilot's own directory check would otherwise prompt for a directory
+tclaude's outer sandbox has already opened.
+
+**A deny nested inside a granted root refuses the launch** (without
+`--sandbox-impl tclaude-layer`). `--add-dir` has no negative counterpart —
+Copilot's path check takes grants only — so a profile that grants `~` and denies
+`~/.ssh` would collapse, on Copilot, to "grant `~`", and the denied subtree
+would stop prompting. Since Copilot's built-in edits are not OS-confined, that
+check is the only file boundary a launch without an outer wall has, so tclaude
+refuses rather than widening it silently. Under `tclaude-layer` the outer
+sandbox enforces the deny whatever Copilot's own check believes, and the launch
+is admitted.
+
+Two related **assumptions**, stated because they are not measured:
+
+- Read and write roots are both handed to `--add-dir`, since the dialog Copilot
+  draws has no read/write split — but the fixture lab only ever exercised
+  `--add-dir` against a read, so whether the grant also permits writes is
+  unestablished.
+- The directory dialog **survives `--allow-all-tools`**. Every `out-of-cwd-paths`
+  arm ran with no permission flags, and `url-access` shows that flag can close a
+  dialog on a neighbouring axis, so the contract does not settle it. This one is
+  load-bearing for the whole `--add-dir` design, which is why it is named rather
+  than assumed quietly. It is safe to build on in both directions: the behaviour
+  it produces — precise grants instead of `--allow-all-paths` — is the right
+  launch either way, and the caveats are worded as a *possible* prompt, so a
+  wrong assumption costs a reader a warning that never fires rather than
+  promising a prompt cannot happen.
+
+Several things this deliberately does **not** do:
+
+- **No `--allow-all-paths`, `--allow-all` or `--yolo`.** The path flags work as
+  named, but Copilot's built-in file edits are not OS-confined, so outside a
+  `--sandbox-impl tclaude-layer` launch the path check is the *only* boundary on
+  what the agent can write. Grants stay precise.
+- **Not the `--deny-tool 'url()'` the plan proposed.** The plan this catalog
+  replaces put that spelling in the default. The real binary **rejects** it at
+  argument parse and exits 1 before contacting the provider, so it would have
+  killed every Copilot pane at launch. Empty parentheses are invalid for every
+  rule kind; the bare kind (`url`) and `kind(pattern)` forms parse.
+- **No URL deny at all, because none is needed.** `--allow-all-tools` closes the
+  URL prompt for *both* consumers: the shell path (contract `url-access`) and
+  the `web_fetch` tool (contract `web-fetch-url-access`, which closed the gap
+  the hermetic offline lab structurally could not reach). web_fetch really was a
+  third independent deadlock source, so the fail-closed posture held while it
+  was unmeasured was correct — it simply is not one the default has to spend a
+  deny rule on. A **working** blanket deny does exist if a launch wants one:
+  the bare kind `--deny-tool url` denies every URL at the permission layer and
+  beats a launch-time `--allow-all-tools`. That is **launch-time precedence
+  only** — whether it survives in-pane widening is not measured, so it is not a
+  durable boundary on this evidence, and the catalog renders it nowhere.
+- **No `AskTimeout` contract.** `--no-ask-user` removes the ask tool rather than
+  timing a dialog out, so there is no idle timeout to translate.
+- **No tool-governance contract.** `--allow-tool` / `--deny-tool` are a
+  pattern-compiler surface of their own; the approval catalog emits neither.
+
+**`COPILOT_ALLOW_ALL` is unset on every Copilot launch.** The variable is
+documented as the environment alias for `--allow-all-tools`, but it is measurably
+stronger: exported alone, with no flags at all, it also skipped the folder-trust
+dialog that no flag clears. Since tclaude forwards your environment into the
+pane, an operator who exports it would otherwise turn every tclaude-spawned
+Copilot pane into an allow-all session while tclaude recorded `inherit`. It is
+unset rather than pinned to a falsy value, so a future widening of the value
+parse cannot silently defeat it.
+
+**Pass-through args naming an option tclaude owns are refused.** Args you pass
+after `--` land on the same command line as the flags tclaude renders, so
+`tclaude session new --harness copilot -- --allow-all-paths` would run a pane
+broader than the posture tclaude wrote down — and approval lineage and relaunch
+both reason from that record. The same mismatch has two other shapes, so the
+audit covers all three:
+
+- **Permission and agent mode** — every Copilot permission, path, tool-catalog
+  or mode flag, plus `-p`/`--prompt` (headless mode, whose no-TTY permission
+  fallbacks are a separate and only partly measured set: tool approval
+  auto-*allows* headlessly while path access auto-*denies*, and neither
+  describes a pane).
+- **Identity** — the conversation (`--resume`/`-r`, `--session-id`,
+  `--continue`, `--connect`, a duplicate `-i`/`--interactive`), the working
+  directory (`-C`, `-w`/`--worktree`) and the Copilot home (`--config-dir`).
+  This is the sharpest group: tclaude pins the conversation id before the pane
+  starts and enrolls the agent against it, derives the folder-trust entry and
+  every path grant from the launch directory, and resolves `COPILOT_HOME` to
+  find the hook drop-in, the session-state tree, the trust store and the
+  settings its sandbox and model-transport gates read. A pass-through selector
+  moves the *pane* while all of that keeps describing where tclaude put it —
+  and `-C`/`--worktree` also widen paths, since Copilot grants its working
+  directory automatically.
+- **Runtime** — `--cloud`, `--server`, `--managed-server`, `--ui-server`,
+  `--headless`, `--acp` (and the `--stdio`/`--host`/`--port`/`--auth-token-env`
+  options that configure them). tclaude manages a local interactive TUI in a
+  tmux pane, and every contract it advertises for Copilot describes that pane.
+- **Metadata** — `--model`, `--effort`/`--reasoning-effort`, `--name`/`-n`.
+  These move no boundary, and
+  they are refused anyway: tclaude validates and records each one, so a
+  duplicate makes the dashboard, the usage accounting or the conversation title
+  describe a launch the pane is not running. Use tclaude's own options.
+
+Refusals apply in both the `--flag value` and `--flag=value` spellings (and the
+glued `-rID` short form), on resume as well as on a fresh launch, and each names
+the dedicated option that does the same job honestly. Ordinary args
+(`--log-level=debug`, `--no-color`, …) are unaffected. This is a refusal rather
+than a silent filter, and it does not rely on duplicate-flag ordering: nothing
+measured establishes what Copilot does with a contradictory or repeated option,
+so a launch that would depend on those semantics is refused instead of guessed
+at. Two boundaries worth stating: the audit matches flag names exactly, which
+assumes 1.0.77's parser accepts no abbreviations beyond the documented aliases
+(plausible from its option table and a parser probe, but not yet fixtured); and
+it is not a universal firewall over Copilot's option surface — MCP, plugin and
+agent-selection options that tclaude neither renders nor records are outside it.
+
+**What tclaude records is the launch posture, not a durable boundary.** Copilot's
+in-pane commands (`/allow-all`, `/add-dir`, `/reset-allowed-tools`, `/settings`)
+mutate live permission state, and answers you tell Copilot to remember —
+`trustedFolders`, `allowedUrls` — persist to its configuration. One favourable
+exception was measured, and its **scope is the shell axis**: a launch-time
+`--deny-tool 'shell(…)'` rule **survives** an in-pane `/allow-all`, which confirms
+and reports "All permissions are now enabled" and then still refuses the denied
+tool. Denial precedence therefore holds at runtime, not merely at launch — for
+that axis. It says nothing about the other in-pane mutators, nothing about the
+URL axis (explicitly recorded as unmeasured for in-pane widening), and nothing
+about whether a deny also beats the ambient `COPILOT_ALLOW_ALL` promotion.
+tclaude does not generalize from it.
 
 #### Copilot and tclaude's outer sandbox
 
@@ -912,9 +1086,11 @@ Beyond that:
   the modal. `COPILOT_ALLOW_ALL=true` does, but it also blanket-approves every
   tool, path and URL request, so tclaude does not set it.
 - **Trust is not approval.** Seeding the folder answers the folder question
-  only. Copilot's per-command approval prompt is a separate, still-enforced gate,
-  and this wave wires no approval contract at all — so an unattended Copilot pane
-  can still stop on a risky command's prompt.
+  only. Copilot's per-command approval prompt is a separate gate, closed by a
+  separate axis — the approval catalog's default renders `--allow-all-tools`,
+  measured to clear it. The two are wired independently on purpose: trust
+  governs what a pane may *start*, approval what it may then *do*, and a launch
+  can have either without the other.
 
 Every claim above is measured against the pinned CLI on a real pseudo-terminal
 (the modal does not exist headlessly), and the seeding is exercised as the

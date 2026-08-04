@@ -31,22 +31,55 @@ type copilotSpawner struct{}
 
 func (copilotSpawner) Binary() string { return "copilot" }
 
-// BuildCommand assembles the Copilot invocation: env exports + the binary,
-// then either an exact `--resume=<id>` or a fresh launch's `--session-id` /
-// `--name`, an optional `--model` / `--effort`, any pass-through args, and
+// copilotEnvScrub is emitted after the caller's EnvExports on EVERY Copilot
+// launch, whatever the approval policy.
+//
+// COPILOT_ALLOW_ALL is measured (contract entry ambient-allow-all-env) as
+// STRICTLY STRONGER than the --allow-all-tools flag it documents: exported
+// alone, with no flags at all, it skipped the folder-trust dialog that no flag
+// clears, reached the provider and executed an unsafe tool call. tclaude's
+// EnvExports forwards the operator's whole environment, so an operator with it
+// exported would silently promote every tclaude-spawned Copilot pane to
+// allow-all — including one tclaude recorded as `inherit`, and with no trace
+// anywhere that the recorded posture was not the one that ran.
+//
+// UNSET rather than pinned to a falsy value, deliberately. The parse today is
+// strict case-sensitive equality against "true", so `COPILOT_ALLOW_ALL=false`
+// would work — but only for as long as that stays true, and a future widening
+// of the value parse would defeat a pinned falsy value silently. An unset
+// variable cannot be reinterpreted.
+//
+// It is a scrub rather than a policy renderer because it protects the `inherit`
+// token too: `inherit` means "Copilot's own posture", not "the posture an
+// ambient variable happens to impose".
+const copilotEnvScrub = "unset " + copilotAllowAllEnv + "; "
+
+// BuildCommand assembles the Copilot invocation: env exports + the ambient
+// allow-all scrub + the binary, then either an exact `--resume=<id>` or a
+// fresh launch's `--session-id` / `--name`, an optional `--model` /
+// `--effort`, the resolved permission flags, any pass-through args, and
 // finally the optional `-i <prompt>` first turn.
 //
-// Fields with no documented Copilot flag (sandbox mode, approval policy,
-// auto-review, permission profile, remote control, hook-trust bypass, the
-// per-session settings payload) are IGNORED here rather than approximated.
-// The descriptor leaves those contracts nil, so the resolvers reject an
-// explicit value long before a spec reaches this function.
+// The permission flags sit BEFORE ExtraArgs and after every tclaude-owned
+// option, so the ordering is stable across fresh and resumed launches alike.
+// Nothing here relies on what Copilot does with a DUPLICATE flag: duplicate
+// handling is unmeasured, and ValidateLaunchExtraArgs refuses pass-through args
+// that name anything this renders precisely so the question never arises. The
+// order is fixed for reproducibility — the same profile must always produce the
+// same recorded command — not because a later occurrence would win. `-i` stays
+// last regardless.
+//
+// Fields with no documented Copilot flag (sandbox mode, auto-review,
+// permission profile, remote control, hook-trust bypass, the per-session
+// settings payload) are IGNORED here rather than approximated. The descriptor
+// leaves those contracts nil, so the resolvers reject an explicit value long
+// before a spec reaches this function.
 func (copilotSpawner) BuildCommand(spec SpawnSpec) string {
 	binary := "copilot"
 	if spec.ExecutablePath != "" {
 		binary = clcommon.ShellQuoteArg(spec.ExecutablePath)
 	}
-	cmd := spec.EnvExports + binary
+	cmd := spec.EnvExports + copilotEnvScrub + binary
 	if spec.ResumeID != "" {
 		// `--resume=<id>` resumes EXACTLY this conversation. tclaude always
 		// knows the full id it wants, so it never uses the option's fuzzier
@@ -86,6 +119,24 @@ func (copilotSpawner) BuildCommand(spec SpawnSpec) string {
 		// through with no per-model remapping of the kind Codex needs.
 		cmd += " --effort=" + clcommon.ShellQuoteArg(spec.Effort)
 	}
+	// The resolved approval policy, expanded into Copilot's several permission
+	// flags plus one `--add-dir` per profile-granted directory. A single
+	// catalog token rendering into several flags is legal — ApprovalCatalog
+	// contracts a token in and a validated token out, not a one-to-one flag
+	// mapping — and it is necessary here because Copilot's prompt sources are
+	// independent surfaces with a flag each. See copilot_approval.go.
+	//
+	// The directories are rendered under `inherit` too: they are the path axis,
+	// not the approval axis, and dropping them would violate SandboxReadDirs'
+	// stated contract that an adapter either renders the roots or refuses the
+	// launch.
+	if perms := copilotPermissionArgs(spec.ApprovalPolicy, copilotSpawnAddDirs(spec)); len(perms) > 0 {
+		quoted := make([]string, len(perms))
+		for i, arg := range perms {
+			quoted[i] = clcommon.ShellQuoteArg(arg)
+		}
+		cmd += " " + strings.Join(quoted, " ")
+	}
 	if len(spec.ExtraArgs) > 0 {
 		// Appended as plain args, each quoted individually. Copilot documents
 		// no `--` pass-through separator, so tclaude does not invent one.
@@ -102,12 +153,14 @@ func (copilotSpawner) BuildCommand(spec SpawnSpec) string {
 	// the whole prompt stays one PROMPT rather than splitting into stray
 	// flags/words.
 	//
-	// Emitted on a resume too, with one honest caveat: the docs establish that
-	// `-i` and `--resume` CAN co-occur (the `--resume` entry describes what
-	// happens "under a non-TTY `-i`"), but they do not state that the prompt is
-	// then submitted into the RESUMED conversation. That part is unverified
-	// pending a real binary. Forwarding it is still the better failure mode —
-	// a prompt the harness might ignore beats one tclaude silently swallowed.
+	// Emitted on a resume too, and that is now MEASURED rather than hoped for.
+	// The permission matrix's resume-submits-prompt entry ran the real binary
+	// twice — seeding a conversation under a pinned --session-id, then
+	// relaunching it on a PTY with --resume=<full-id> and a new -i prompt — and
+	// the resumed request carried message roles [system, user, assistant, user]
+	// while the session-state directory kept its original UUID. A fresh
+	// conversation would have sent [system, user]. So a relaunch briefing lands
+	// in the conversation it was written for and does not vanish silently.
 	if spec.InitialPrompt != "" {
 		cmd += " -i " + clcommon.ShellQuoteArg(spec.InitialPrompt)
 	}

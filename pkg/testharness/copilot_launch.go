@@ -168,6 +168,27 @@ func ParseCopilotLaunch(cmd string) (CopilotLaunch, error) {
 			launch.Env[key] = value
 			continue
 		}
+		if stmt[0] == "unset" {
+			// A launch may SCRUB an inherited variable, and the model has to
+			// follow that or it would report an ambient promotion the pane
+			// never sees. The spawner unsets COPILOT_ALLOW_ALL for exactly this
+			// reason: the operator's own environment must not be able to
+			// silently widen a recorded posture.
+			//
+			// Applied in statement order, so a later export legitimately wins.
+			// The names are dropped rather than recorded as empty — an empty
+			// COPILOT_ALLOW_ALL and an absent one are the same thing to the
+			// CLI, and AmbientAllowAll compares against the exact measured
+			// value either way.
+			if len(stmt) < 2 {
+				return CopilotLaunch{}, fmt.Errorf(
+					"copilot launch: malformed unset %q", strings.Join(stmt, " "))
+			}
+			for _, name := range stmt[1:] {
+				delete(launch.Env, name)
+			}
+			continue
+		}
 		if i != len(statements)-1 {
 			return CopilotLaunch{}, fmt.Errorf(
 				"copilot launch: unexpected statement before the harness command: %q",

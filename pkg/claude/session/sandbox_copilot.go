@@ -104,7 +104,7 @@ func copilotTclaudeLayerGrantSet(
 	baseline := harness.CopilotBaselineInput{
 		Home:              home,
 		Getenv:            getenv,
-		TempDir:           copilotLaunchTempDir(environment),
+		TempDir:           CopilotLaunchTempDir(environment),
 		AgentdSockets:     sockets,
 		CopilotExecutable: copilotLaunchExecutable(environment),
 		TclaudeExecutable: copilotTclaudeExecutable(),
@@ -113,7 +113,7 @@ func copilotTclaudeLayerGrantSet(
 	return harness.CopilotTclaudeLayerGrants(baseline)
 }
 
-// copilotLaunchTempDir resolves the temp directory the LAUNCH will see, which
+// CopilotLaunchTempDir resolves the temp directory the LAUNCH will see, which
 // is not necessarily tclaude's own: a profile that sets TMPDIR moves it, and
 // granting tclaude's temp directory instead would hand the agent a path it
 // never uses while withholding the one it does.
@@ -121,7 +121,16 @@ func copilotTclaudeLayerGrantSet(
 // An empty result omits the feature-conditional temp row entirely, which the
 // catalog supports and which is the correct outcome for a launch whose
 // environment names no temp directory.
-func copilotLaunchTempDir(environment map[string]string) string {
+//
+// Exported because a SECOND consumer needs the identical answer for the
+// identical reason. Copilot grants its temp directory automatically, with no
+// flag, so harness.ValidateCopilotAddDirGrants has to know which directory that
+// is before it can tell whether a profile's deny sits inside it. Resolving that
+// independently — say, from tclaude's own os.TempDir() — would make the gate
+// inspect one directory while the pane was granted another, and a deny nested
+// under a profile-relocated TMPDIR would sail through it. One resolver, one
+// answer, for the same reason COPILOT_HOME has one.
+func CopilotLaunchTempDir(environment map[string]string) string {
 	if dir := strings.TrimSpace(environment["TMPDIR"]); dir != "" {
 		return filepath.Clean(dir)
 	}

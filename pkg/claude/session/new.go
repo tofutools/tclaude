@@ -682,6 +682,15 @@ func runNew(params *NewParams) error {
 		// can distinguish a known inherit launch from a legacy unknown row.
 		recordedApprovalPolicy = harness.ClaudePermissionInherit
 	}
+	if h.Name == harness.CopilotName && recordedApprovalPolicy == "" {
+		// Identical reasoning for Copilot: emitting no permission flags IS the
+		// `inherit` token, so persisting the sentinel is a faithful record
+		// rather than an inference. Without it, every human-started Copilot
+		// session would look like a legacy unreconstructable row to the spawn
+		// approval guard, and a human's own session could not spawn even the
+		// baseline children its posture provably permits.
+		recordedApprovalPolicy = harness.CopilotApprovalInherit
+	}
 	params.Approval = approvalPolicy
 
 	toolGovernance, err := harness.ValidateToolGovernance(h, params.ToolGovernance)
@@ -781,6 +790,10 @@ func runNew(params *NewParams) error {
 
 	// Pass-through mode: --help, --version etc. — run the harness binary
 	// directly, no tmux.
+	//
+	// The posture audit below deliberately does NOT gate this branch: running
+	// `copilot --help` through tclaude starts no recorded session, so there is
+	// no recorded posture for a pass-through arg to contradict.
 	if clcommon.ShouldRunClaudeDirect(extraArgs) {
 		binary := h.Spawn.Binary()
 		if h.Name == harness.OpenCodeName {
@@ -793,6 +806,17 @@ func runNew(params *NewParams) error {
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		return cmd.Run()
+	}
+
+	// A pass-through arg lands on the same command line as the harness's
+	// rendered permission flags, so one that moves the posture would make the
+	// running pane broader than the row that records it — and approval lineage
+	// and relaunch both reason from that row. Refuse rather than filter, so an
+	// operator never believes a flag took effect that tclaude silently dropped.
+	// Placed after the pass-through branch above, which starts no session and
+	// therefore has no recorded posture to contradict.
+	if err := harness.ValidateLaunchExtraArgs(h, extraArgs); err != nil {
+		return err
 	}
 
 	// Self-guard: a Claude Code instance must not directly launch
@@ -1655,6 +1679,26 @@ func runNew(params *NewParams) error {
 			sandboxpolicy.GrantsFromDirs(launchReadDirs, launchWriteDirs, launchDenyDirs)); err != nil {
 			return err
 		}
+	}
+	// The mirror-image shape, for the one harness whose path grants have no
+	// negative form: a deny nested INSIDE a granted root would be opened rather
+	// than merely unrepresented. The grant set includes Copilot's automatic cwd
+	// and system-temp grants, which no flag expresses and which are where this
+	// shape usually appears. Only without an outer wall to enforce the deny.
+	// The temp directory is resolved from the COMPOSED launch environment, not
+	// from tclaude's own: a profile that sets TMPDIR moves the directory
+	// Copilot grants, and a gate reading tclaude's ambient temp root would
+	// inspect one directory while the pane was handed another. Same resolver
+	// the Copilot sandbox baseline uses, for the same reason.
+	var copilotGateEnvironment []sandboxpolicy.EnvironmentEntry
+	if launchSandbox != nil {
+		copilotGateEnvironment = launchSandbox.Effective.Environment
+	}
+	if err := harness.ValidateCopilotAddDirGrants(
+		h.Name, cwd,
+		CopilotLaunchTempDir(launchModelEnvironment(copilotGateEnvironment)),
+		launchReadDirs, launchWriteDirs, launchDenyDirs, outerLayer); err != nil {
+		return err
 	}
 	spawnSpec := harness.SpawnSpec{
 		ExecutablePath:              executablePath,

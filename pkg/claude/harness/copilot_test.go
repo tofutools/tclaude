@@ -70,12 +70,32 @@ func TestCopilotDescriptor(t *testing.T) {
 		t.Fatalf("copilot must advertise the first-party model transport: %+v", h)
 	}
 
+	// The approval catalog graduated in TCL-973 on the same terms again: every
+	// flag it renders was measured on a PTY against the pinned binary, and the
+	// default the preceding plan proposed is absent from it precisely because
+	// the measurement disproved that flag. See copilot_approval.go.
+	if h.Approval == nil {
+		t.Fatalf("copilot must advertise the measured approval catalog: %+v", h)
+	}
+
 	// Still-deferred contracts (TCL-965 phases 2-5): documented CLI flags are
 	// evidence, runtime formats and enforcement semantics are not.
+	//
+	// AskTimeout stays nil even though the approval catalog now emits
+	// `--no-ask-user`, and the two must not be conflated: AskTimeout contracts
+	// an idle timeout after which an unanswered question auto-continues with
+	// its default answer, while Copilot's flag removes the ask_user tool
+	// outright — there is no dialog left to time out, and no timeout to
+	// translate. ToolGovernance likewise stays nil: `--allow-tool`/`--deny-tool`
+	// are a pattern-compiler contract of their own, and the approval catalog
+	// emits neither.
 	if h.Ask != nil ||
-		h.Approval != nil || h.ToolGovernance != nil ||
+		h.ToolGovernance != nil ||
 		h.NestedSandbox != nil || h.HostControlSandbox != nil || h.AskTimeout != nil {
 		t.Fatalf("copilot must not advertise unverified contracts: %+v", h)
+	}
+	if h.SupportsAutoReview() {
+		t.Errorf("copilot has no guardian subagent; auto-review must stay unavailable: %+v", h)
 	}
 
 	// BuiltinOSSandbox stays false even though Copilot really does ship an OS
@@ -107,7 +127,6 @@ func TestCopilotDescriptor(t *testing.T) {
 	for name, got := range map[string]bool{
 		"SupportsAsk":              h.SupportsAsk(),
 		"SupportsBuiltinOSSandbox": h.SupportsBuiltinOSSandbox(),
-		"SupportsApproval":         h.SupportsApproval(),
 		"SupportsToolGovernance":   h.SupportsToolGovernance(),
 		"SupportsAutoReview":       h.SupportsAutoReview(),
 		"SupportsAskTimeout":       h.SupportsAskTimeout(),
@@ -120,6 +139,12 @@ func TestCopilotDescriptor(t *testing.T) {
 		if got {
 			t.Errorf("%s() = true, want false for the minimal Copilot wave", name)
 		}
+	}
+	// SupportsApproval and SupportsSandbox are checked separately from the
+	// deferred set above, for the same reason: both catalogs exist, and both
+	// were promoted only once the pinned binary proved what they claim.
+	if !h.SupportsApproval() {
+		t.Error("SupportsApproval() = false, want true now that the approval catalog is measured")
 	}
 	// SupportsSandbox is checked separately from the deferred set above: the
 	// catalog exists, but what it selects is an ASSERTION about Copilot's own
@@ -176,6 +201,12 @@ func TestCopilotLifecycleContract(t *testing.T) {
 func TestCopilotBuildCommand(t *testing.T) {
 	s := copilotSpawner{}
 	const uuid = "11111111-2222-3333-4444-555555555555"
+	// Every Copilot launch is prefixed with the ambient COPILOT_ALLOW_ALL
+	// scrub, so the table spells it once here rather than in twelve literals.
+	// TestCopilotBuildCommandScrubsAmbientAllowAll pins the prefix itself,
+	// including its position relative to EnvExports — this helper deliberately
+	// assumes nothing about it beyond concatenation.
+	cp := func(rest string) string { return copilotEnvScrub + rest }
 
 	tests := []struct {
 		name string
@@ -185,61 +216,97 @@ func TestCopilotBuildCommand(t *testing.T) {
 		{
 			name: "bare launch omits every unset flag",
 			spec: SpawnSpec{},
-			want: "copilot",
+			want: cp("copilot"),
 		},
 		{
-			name: "env exports are prepended verbatim",
+			name: "env exports are prepended verbatim, ahead of the scrub",
 			spec: SpawnSpec{EnvExports: "export A=1; "},
-			want: "export A=1; copilot",
+			want: "export A=1; unset COPILOT_ALLOW_ALL; copilot",
 		},
 		{
 			name: "a pinned executable path replaces the PATH lookup",
 			spec: SpawnSpec{ExecutablePath: "/opt/gh copilot/copilot"},
-			want: "'/opt/gh copilot/copilot'",
+			want: cp("'/opt/gh copilot/copilot'"),
 		},
 		{
 			name: "fresh launch carries the preset id, name and first turn",
 			spec: SpawnSpec{SessionID: uuid, Name: "review bot", InitialPrompt: "hello there"},
-			want: "copilot --session-id " + uuid + " --name='review bot' -i 'hello there'",
+			want: cp("copilot --session-id " + uuid + " --name='review bot' -i 'hello there'"),
 		},
 		{
 			name: "resume binds the exact id with the documented equals form",
 			spec: SpawnSpec{ResumeID: uuid},
-			want: "copilot --resume=" + uuid,
+			want: cp("copilot --resume=" + uuid),
 		},
 		{
 			name: "resume never emits --session-id or --name alongside it",
 			spec: SpawnSpec{ResumeID: uuid, SessionID: "other", Name: "renamed"},
-			want: "copilot --resume=" + uuid,
+			want: cp("copilot --resume=" + uuid),
 		},
 		{
 			name: "resume still submits an initial prompt",
 			spec: SpawnSpec{ResumeID: uuid, InitialPrompt: "carry on"},
-			want: "copilot --resume=" + uuid + " -i 'carry on'",
+			want: cp("copilot --resume=" + uuid + " -i 'carry on'"),
 		},
 		{
 			name: "model and effort use the documented equals form",
 			spec: SpawnSpec{Model: "claude-sonnet-4.6", Effort: "high"},
-			want: "copilot --model=claude-sonnet-4.6 --effort=high",
+			want: cp("copilot --model=claude-sonnet-4.6 --effort=high"),
 		},
 		{
 			name: "pass-through args are quoted individually with no -- separator",
 			spec: SpawnSpec{ExtraArgs: []string{"--log-level=debug", "a b"}},
-			want: "copilot --log-level=debug 'a b'",
+			want: cp("copilot --log-level=debug 'a b'"),
 		},
 		{
 			name: "the prompt is one quoted arg, emitted after pass-through args",
 			spec: SpawnSpec{ExtraArgs: []string{"--no-color"}, InitialPrompt: "fix $HOME; rm -rf /"},
-			want: "copilot --no-color -i 'fix $HOME; rm -rf /'",
+			want: cp("copilot --no-color -i 'fix $HOME; rm -rf /'"),
+		},
+		{
+			name: "the default policy renders the two measured nonblocking flags",
+			spec: SpawnSpec{ApprovalPolicy: CopilotApprovalAllowTools},
+			want: cp("copilot --allow-all-tools --no-ask-user"),
+		},
+		{
+			name: "inherit renders no permission flags",
+			spec: SpawnSpec{ApprovalPolicy: CopilotApprovalInherit},
+			want: cp("copilot"),
+		},
+		{
+			// Permission flags belong to tclaude, so they precede the operator's
+			// own pass-through args and Copilot's last-wins parsing lets those
+			// args still have the final word. `-i` stays last regardless.
+			name: "permission flags sit before pass-through args and the prompt",
+			spec: SpawnSpec{
+				ApprovalPolicy: CopilotApprovalAllowTools,
+				Model:          "claude-sonnet-4.6",
+				ExtraArgs:      []string{"--no-color"},
+				InitialPrompt:  "go",
+			},
+			want: cp("copilot --model=claude-sonnet-4.6 --allow-all-tools --no-ask-user --no-color -i go"),
+		},
+		{
+			name: "a resumed launch renders the same policy as a fresh one",
+			spec: SpawnSpec{ResumeID: uuid, ApprovalPolicy: CopilotApprovalAllowTools},
+			want: cp("copilot --resume=" + uuid + " --allow-all-tools --no-ask-user"),
+		},
+		{
+			// A Codex/Claude token can only reach here through a caller that
+			// skipped validation. Rendering the Copilot default for it would
+			// promote a posture nobody selected, so it renders nothing.
+			name: "an unrecognized approval token renders no permission flags",
+			spec: SpawnSpec{ApprovalPolicy: "never"},
+			want: cp("copilot"),
 		},
 		{
 			name: "contracts copilot does not implement are ignored, not approximated",
 			spec: SpawnSpec{
-				SandboxMode: "read-only", ApprovalPolicy: "never", AutoReview: true,
+				SandboxMode: "read-only", AutoReview: true,
 				RemoteControl: true, BypassHookTrust: true, PermissionProfile: "tclaude-agent",
 				AskUserQuestionTimeout: "5m", StrongNestedSandbox: true,
 			},
-			want: "copilot",
+			want: cp("copilot"),
 		},
 	}
 

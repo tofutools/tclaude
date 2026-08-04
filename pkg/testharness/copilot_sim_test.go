@@ -169,6 +169,43 @@ func TestParseCopilotLaunchAmbientAllowAll(t *testing.T) {
 	}
 }
 
+// The scrub the Copilot spawner emits, modelled end to end.
+//
+// EnvExports is built from the operator's own environment, so an ambient
+// COPILOT_ALLOW_ALL=true would otherwise be re-exported into the launch and
+// silently promote a pane past every gate the recorded posture kept. The
+// spawner unsets it; this pins that the model FOLLOWS the unset rather than
+// reporting a promotion the pane never sees. Without it, a launch could assert
+// its recorded posture while running under a wider one.
+func TestParseCopilotLaunchUnsetScrubsAnAmbientPromotion(t *testing.T) {
+	// The real shape: the ambient value is exported, then scrubbed.
+	launch, err := ParseCopilotLaunch(
+		"export " + CopilotAllowAllEnvVar + "=true; unset " + CopilotAllowAllEnvVar + "; copilot")
+	require.NoError(t, err)
+	assert.False(t, launch.AmbientAllowAll(),
+		"the scrub must beat an ambient promotion, or the spawner's unset is decorative")
+	assert.NotContains(t, launch.Env, CopilotAllowAllEnvVar,
+		"the name is dropped, not blanked: absent and empty are the same to the CLI")
+
+	// Statement ORDER decides, so an export after the unset legitimately wins.
+	// A model that special-cased the name instead would hide a spawner that
+	// re-exported it.
+	launch, err = ParseCopilotLaunch(
+		"unset " + CopilotAllowAllEnvVar + "; export " + CopilotAllowAllEnvVar + "=true; copilot")
+	require.NoError(t, err)
+	assert.True(t, launch.AmbientAllowAll(), "a later export must still take effect")
+
+	// Unrelated names are untouched, and one unset may carry several.
+	launch, err = ParseCopilotLaunch(
+		"export A=1; export B=2; unset A B; export C=3; copilot")
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"C": "3"}, launch.Env)
+
+	// A bare `unset` names nothing and is a malformed launch, not a no-op.
+	_, err = ParseCopilotLaunch("unset; copilot")
+	require.Error(t, err)
+}
+
 // Contract entry `folder-trust`, the finding that reshapes TCL-973: with a
 // fresh COPILOT_HOME the trust dialog is the FIRST gate, no launch flag clears
 // it, and the pane parks alive and silent. A detached agent therefore cannot
