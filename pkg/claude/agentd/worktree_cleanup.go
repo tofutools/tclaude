@@ -376,6 +376,18 @@ func captureAgentWorktreeClaims() agentWorktreeClaimSnapshot {
 // with openCodeRuntimeSharedNote until the server actually stops (the reaper
 // takes it within a tick), and the operator can retry. Keeping a directory a
 // live process is in is the recoverable failure; removing it is not.
+//
+// Before reaching for a conv-scoped claim here, note that the two destructive
+// boundaries do not agree on exclusion, so one such claim produces OPPOSITE
+// failures from the same state. applyWorktreeCleanup's boundary re-read honours
+// no exclusion set and keeps on any claim — a conv-scoped runtime claim made
+// deleting a just-offline OpenCode agent keep its worktree and blame "shared
+// with another agent", a peer that does not exist, with no hint a retry would
+// work. retireWorktreeDrift skips claimant == convID — the same claim was
+// excluded there and removal ran with the agent's own live server in the
+// directory. The rationale ("its own retirement should exclude its own server")
+// held only on the path where it was unsafe. A claim that must hold regardless
+// of who is asking has to be un-excludable, not conv-scoped.
 const openCodeRuntimeClaimant = "opencode-runtime:live"
 
 // openCodeRuntimeSharedNote phrases that outcome. The generic "shared with
