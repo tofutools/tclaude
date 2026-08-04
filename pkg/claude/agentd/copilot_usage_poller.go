@@ -105,6 +105,7 @@ var copilotUsageState struct {
 	// number every 2 seconds. liveCountKnown keeps "nothing logged yet" apart
 	// from "logged a zero".
 	liveCount      int
+	liveHomes      int
 	liveCountKnown bool
 }
 
@@ -177,8 +178,8 @@ func sweepCopilotUsage(ctx context.Context) {
 		// nothing. Skip the tick instead and keep what we have.
 		return
 	}
-	noteCopilotUsageLiveCount(len(sessions))
 	if len(sessions) == 0 {
+		noteCopilotUsageLiveCount(0, 0)
 		pruneCopilotUsageState(nil)
 		return
 	}
@@ -193,6 +194,11 @@ func sweepCopilotUsage(ctx context.Context) {
 		}
 		byHome[home] = append(byHome[home], sess)
 	}
+	// Reported AFTER the home filter as well as before it, because the two
+	// numbers fail differently: sessions=0 is a liveness/harness/conv-id
+	// question, while sessions=3 homes=0 says every live pane resolved to no
+	// COPILOT_HOME at all — a distinct diagnosis that a single count hides.
+	noteCopilotUsageLiveCount(len(sessions), len(byHome))
 	pruneCopilotUsageState(sessions)
 	for home, rows := range byHome {
 		sweepCopilotUsageHome(ctx, home, rows)
@@ -200,24 +206,29 @@ func sweepCopilotUsage(ctx context.Context) {
 }
 
 // noteCopilotUsageLiveCount reports how many live Copilot panes matched the
-// sweep's filter, on CHANGE rather than per tick.
+// sweep's filter, and how many distinct COPILOT_HOMEs they resolved to, on
+// CHANGE rather than per tick.
 //
-// The filter this counts is a real diagnostic: a session is skipped for a dead
-// pane, a non-Copilot harness, a missing tmux session or conv id, or a conv id
-// that cannot be a Copilot session uuid. When the meter is blank, "matched 0
-// sessions" and "matched 3 sessions" send an operator to completely different
-// places, and neither was previously observable at any log level.
-func noteCopilotUsageLiveCount(count int) {
+// Both numbers are real diagnostics. A session is dropped from the first for a
+// dead pane, a non-Copilot harness, a missing tmux session or conv id, or a
+// conv id that cannot be a Copilot session uuid; it is dropped from the second
+// when its launch environment names no usable COPILOT_HOME. When the meter is
+// blank, "matched 0 sessions", "3 sessions, 0 homes" and "3 sessions, 1 home"
+// send an operator to three completely different places, and none of them was
+// previously observable at any log level.
+func noteCopilotUsageLiveCount(sessions, homes int) {
 	copilotUsageState.Lock()
-	quiet := copilotUsageState.liveCountKnown && copilotUsageState.liveCount == count
-	copilotUsageState.liveCount = count
+	quiet := copilotUsageState.liveCountKnown &&
+		copilotUsageState.liveCount == sessions && copilotUsageState.liveHomes == homes
+	copilotUsageState.liveCount = sessions
+	copilotUsageState.liveHomes = homes
 	copilotUsageState.liveCountKnown = true
 	copilotUsageState.Unlock()
 	if quiet {
 		return
 	}
 	slog.Debug("copilot-usage: live Copilot sessions matched",
-		"sessions", count, "module", "agentd")
+		"sessions", sessions, "homes", homes, "module", "agentd")
 }
 
 // liveCopilotSessions returns the Copilot session rows whose tmux pane is

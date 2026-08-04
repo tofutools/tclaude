@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"errors"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -776,6 +778,21 @@ func TestCopilotUsageReadFailureLogsErrorOnce(t *testing.T) {
 	prev := slog.Default()
 	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo})))
 	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	// Driven through the real open path first, on a home whose session-store.db
+	// EXISTS but is not a database: that is the production classification this
+	// policy turns on — present and unreadable, not absent.
+	presentButUnreadable := t.TempDir()
+	require.NoError(t, os.WriteFile(
+		filepath.Join(presentButUnreadable, "session-store.db"),
+		[]byte("this is not a sqlite database"), 0o600))
+	for range 5 {
+		markCopilotUsageHomeDown(presentButUnreadable,
+			errors.New("copilot usage store: read schema_version: file is not a database"))
+	}
+	assert.Equal(t, 1, strings.Count(logs.String(), "session store unusable"),
+		"a store that exists and cannot be read reports once, not every tick")
+	assert.Contains(t, logs.String(), "level=ERROR")
 
 	home := "/nonexistent/copilot-home"
 	failure := errors.New("scan call: converting driver.Value type float64 to a int64")

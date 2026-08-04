@@ -417,6 +417,13 @@ type copilotUsageNumber struct {
 // down by up to a millisecond for no reason. Values outside int64 are clamped
 // rather than wrapped — a nonsense number should read as a big number, never as
 // a negative one.
+//
+// The float64 hop is lossless for everything this reader actually carries:
+// integers below 2^53 round-trip exactly, and token counts, event ids and
+// millisecond latencies are all orders of magnitude short of that. Above 2^53
+// the precision was already gone before this function saw the value — the
+// driver handed over a float64 — so the clamp is about the int64 BOUNDARY, not
+// about recovering exactness that no longer exists.
 func (n copilotUsageNumber) int64() int64 {
 	if !n.ok {
 		return 0
