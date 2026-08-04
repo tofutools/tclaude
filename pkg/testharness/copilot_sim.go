@@ -123,8 +123,9 @@ type CopilotSim struct {
 	launched bool
 	alive    bool
 
-	// blocked/blockedBy record the parked state. Once set they are never
-	// cleared: nothing but a human at the keyboard clears a Copilot dialog,
+	// blocked/blockedBy record the parked state. NOTHING clears it on its
+	// own: a Copilot dialog is dismissed only by a human at the keyboard or
+	// by the measured C-c abort (see cancel, which excepts the trust prompt),
 	// and reproducing that faithfully is the whole point — a simulator that
 	// timed out of a block would let a deadlocking posture pass its test.
 	blocked   bool

@@ -37,11 +37,16 @@ import (
 // watchdog that killed on name alone would execute a brand new agent.
 
 // softExitEscalationDeadline is how long the pane has to close on its own
-// after the first soft-exit delivery before the ladder starts. It must sit
-// beyond the last bounded re-injection (softExitRetryDelay ×
-// softExitMaxAttempts ≈ 8 s) so a pane that honours attempt 3 is never killed
-// for being slow, and far below retireWorktreeExitGrace (60 s) so retire's
-// cleanup still runs.
+// after the first soft-exit delivery before the ladder starts.
+//
+// It sits beyond the last bounded re-injection (softExitRetryDelay ×
+// softExitMaxAttempts ≈ 8 s) so a pane that honours the third attempt gets a
+// chance to act on it before anything is killed — though only about two
+// seconds of one, so a harness whose exit takes longer than that from its
+// final prompt will be escalated rather than waited for. That is the intended
+// trade: the deadline also has to stay far below retireWorktreeExitGrace
+// (60 s), which is what makes retire cleanup run at all, and a stop is a
+// request to end the session rather than to negotiate about it.
 var softExitEscalationDeadline = 10 * time.Second
 
 // softExitEscalationSignalGrace is how long each signal step waits for the
