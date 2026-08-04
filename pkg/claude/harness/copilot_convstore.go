@@ -626,6 +626,16 @@ func copilotSafeConvID(convID string) bool {
 		!strings.ContainsRune(convID, 0)
 }
 
+// CopilotSafeConvID is copilotSafeConvID for callers outside this package.
+//
+// agentd's usage sweep uses it on a conv id it is about to send as a SQL
+// PARAMETER rather than join onto a path, where the id cannot escape a
+// directory in any case. The check still earns its place there: an id that
+// could not name a session-state directory cannot be a real row's session_id
+// either, so querying for it only widens the sweep's predicate with a term
+// that can never match.
+func CopilotSafeConvID(convID string) bool { return copilotSafeConvID(convID) }
+
 func copilotConvRef(entry convops.SessionEntry) *ConvRef {
 	return &ConvRef{
 		ConvID:      entry.SessionID,

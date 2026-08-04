@@ -1206,3 +1206,33 @@ CREATE TABLE darwin_route_slot_claims (
 CREATE INDEX idx_darwin_route_slot_claims_identity
 			ON darwin_route_slot_claims(agent_id, conv_id, launch_generation, state);
 
+CREATE TABLE copilot_usage_snapshots (
+			session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+			conv_id TEXT NOT NULL,
+			last_event_id INTEGER NOT NULL CHECK (last_event_id >= 0),
+			last_turn_index INTEGER NOT NULL DEFAULT 0,
+			model TEXT NOT NULL DEFAULT '',
+			reasoning_effort TEXT NOT NULL DEFAULT '',
+			finish_reason TEXT NOT NULL DEFAULT '',
+			requests INTEGER NOT NULL DEFAULT 0,
+			input_tokens INTEGER NOT NULL DEFAULT 0,
+			output_tokens INTEGER NOT NULL DEFAULT 0,
+			cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+			cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+			reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+			total_nano_aiu INTEGER,
+			request_multiplier REAL,
+			last_call_input_tokens INTEGER NOT NULL DEFAULT 0,
+			last_call_output_tokens INTEGER NOT NULL DEFAULT 0,
+			last_call_cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+			last_call_cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+			last_duration_ms INTEGER NOT NULL DEFAULT 0,
+			last_time_to_first_token_ms INTEGER NOT NULL DEFAULT 0,
+			last_inter_token_latency_ms INTEGER NOT NULL DEFAULT 0,
+			last_call_stamp_text TEXT NOT NULL DEFAULT '',
+			observed_at INTEGER NOT NULL
+		) STRICT;
+
+CREATE INDEX idx_copilot_usage_snapshots_conv
+			ON copilot_usage_snapshots(conv_id);
+
