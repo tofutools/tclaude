@@ -1,6 +1,10 @@
 package agentd
 
 import (
+	"bytes"
+	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -24,6 +28,8 @@ func resetCopilotUsageStateForTest() {
 	copilotUsageState.sessions = nil
 	copilotUsageState.homes = nil
 	copilotUsageState.stopping = false
+	copilotUsageState.liveCount = 0
+	copilotUsageState.liveCountKnown = false
 }
 
 func copilotUsageSession(t *testing.T, sessionID, convID string) *db.SessionRow {
@@ -636,4 +642,176 @@ func TestApplyCopilotUsageCallsNestedOnlyBatchKeepsPriorNumerator(t *testing.T) 
 		"an all-nested sweep leaves the occupancy where it was")
 	assert.Equal(t, int64(2), snapshot.LastEventID, "but still advances the cursor")
 	assert.Equal(t, int64(2), snapshot.Requests)
+}
+
+// TestCopilotUsageBackfillsStoredModelOnRestart is the restart case the sweep
+// used to leave dark.
+//
+// sessions.model and sessions.effort_level are owned by this sweep once a usage
+// row exists, and the sweep only wrote them when it folded NEW rows. A daemon
+// restart in front of an idle pane therefore left both columns blank until the
+// conversation happened to take another turn — while the answer sat in
+// copilot_usage_snapshots the whole time.
+//
+// The home here deliberately has no store at all: the backfill must ride the
+// sweep tick BEFORE the store is opened, so a stored reading is restored even
+// on a host where the store has become unreadable.
+func TestCopilotUsageBackfillsStoredModelOnRestart(t *testing.T) {
+	setupTestDB(t)
+	resetCopilotUsageStateForTest()
+	t.Cleanup(resetCopilotUsageStateForTest)
+
+	sess := copilotUsageSession(t, "s-copilot", "conv-1")
+	// Exactly the state a daemon restart leaves behind: the durable snapshot
+	// survives, the sessions row's own columns are whatever they were, and no
+	// sweep memory exists at all. Written directly rather than through
+	// applyCopilotUsageCalls so the session columns start genuinely blank.
+	saved, err := db.SaveCopilotUsageSnapshot(db.CopilotUsageSnapshot{
+		SessionID: sess.ID, ConvID: sess.ConvID, LastEventID: 7, Requests: 3,
+		Model: "gpt-5", ReasoningEffort: "medium",
+		LastCallInputTokens: 25114, OutputTokens: 300,
+	}, sess.CreatedAt)
+	require.NoError(t, err)
+	require.True(t, saved)
+
+	before, err := db.GetContextSnapshot(sess.ID)
+	require.NoError(t, err)
+	require.Empty(t, before.Model, "the restart case starts with a blank dashboard cell")
+
+	// The home has no store at all, deliberately: the backfill must ride the
+	// sweep tick BEFORE the store is opened, so a stored reading is restored
+	// even where the store has become unreadable.
+	sweepCopilotUsageHome(t.Context(), t.TempDir(), []*db.SessionRow{sess})
+
+	snap, err := db.GetContextSnapshot(sess.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "gpt-5", snap.Model, "the stored model must return without a new row")
+	assert.Equal(t, "medium", snap.EffortLevel)
+	assert.Equal(t, int64(25114), snap.TokensInput)
+	assert.Equal(t, int64(300), snap.TokensOutput)
+
+	// Once per session per daemon lifetime: later ticks must not write again.
+	// Proven by making the row disagree and showing the sweep leaves it alone —
+	// a second backfill would overwrite this.
+	updated, err := db.UpdateContextSnapshotAndModelEffortForGeneration(
+		sess.ID, sess.ConvID, sess.CreatedAt, 0, 25114, 300, 0, "set-by-someone-else", "")
+	require.NoError(t, err)
+	require.True(t, updated)
+
+	sweepCopilotUsageHome(t.Context(), t.TempDir(), []*db.SessionRow{sess})
+	sweepCopilotUsageHome(t.Context(), t.TempDir(), []*db.SessionRow{sess})
+
+	snap, err = db.GetContextSnapshot(sess.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "set-by-someone-else", snap.Model,
+		"the restart backfill runs once, not on every tick")
+}
+
+// TestCopilotUsageBackfillRespectsGenerationGuard keeps the restart path inside
+// the same discipline as the live fold: a snapshot belonging to a PREVIOUS
+// generation of this session id must not be restored onto the new
+// conversation's row.
+func TestCopilotUsageBackfillRespectsGenerationGuard(t *testing.T) {
+	setupTestDB(t)
+	resetCopilotUsageStateForTest()
+	t.Cleanup(resetCopilotUsageStateForTest)
+
+	sess := copilotUsageSession(t, "s-copilot", "conv-1")
+	saved, err := db.SaveCopilotUsageSnapshot(db.CopilotUsageSnapshot{
+		SessionID: sess.ID, ConvID: sess.ConvID, LastEventID: 7,
+		Model: "gpt-5", ReasoningEffort: "medium", LastCallInputTokens: 25114,
+	}, sess.CreatedAt)
+	require.NoError(t, err)
+	require.True(t, saved)
+
+	// The pane was recreated: same session id, a NEW conversation, so the
+	// stored snapshot describes a dead one.
+	recreated := *sess
+	recreated.ConvID = "conv-2"
+	require.NoError(t, db.SaveSession(&recreated))
+
+	sweepCopilotUsageHome(t.Context(), t.TempDir(), []*db.SessionRow{&recreated})
+
+	snap, err := db.GetContextSnapshot(recreated.ID)
+	require.NoError(t, err)
+	assert.Empty(t, snap.Model, "a previous conversation's model must not be restored")
+	assert.Zero(t, snap.TokensInput)
+}
+
+// TestCopilotUsageBackfillIgnoresEmptySnapshot: a session whose snapshot row
+// exists but has folded nothing has no reading to restore, and must not write.
+func TestCopilotUsageBackfillIgnoresEmptySnapshot(t *testing.T) {
+	setupTestDB(t)
+	resetCopilotUsageStateForTest()
+	t.Cleanup(resetCopilotUsageStateForTest)
+
+	sess := copilotUsageSession(t, "s-copilot", "conv-1")
+	saved, err := db.SaveCopilotUsageSnapshot(
+		db.CopilotUsageSnapshot{SessionID: sess.ID, ConvID: sess.ConvID}, sess.CreatedAt)
+	require.NoError(t, err)
+	require.True(t, saved)
+
+	sweepCopilotUsageHome(t.Context(), t.TempDir(), []*db.SessionRow{sess})
+
+	snap, err := db.GetContextSnapshot(sess.ID)
+	require.NoError(t, err)
+	assert.Empty(t, snap.Model)
+	assert.Zero(t, snap.TokensInput)
+}
+
+// TestCopilotUsageReadFailureLogsErrorOnce pins the log level this bug hid
+// behind.
+//
+// A sweep read that fails is not a curiosity: it means live usage is not being
+// recorded at all, which is exactly what happened on every real host while the
+// only trace of it was a Debug line. It must reach an operator at Error — and,
+// because the sweep ticks every 2 seconds against a condition that does not
+// change, exactly once per (home, reason) per interval.
+func TestCopilotUsageReadFailureLogsErrorOnce(t *testing.T) {
+	setupTestDB(t)
+	resetCopilotUsageStateForTest()
+	t.Cleanup(resetCopilotUsageStateForTest)
+
+	var logs bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	home := "/nonexistent/copilot-home"
+	failure := errors.New("scan call: converting driver.Value type float64 to a int64")
+	for range 5 {
+		logCopilotUsageHomeFailure(home, "read",
+			"copilot-usage: sweep read failed; live usage is not being recorded", failure)
+	}
+	assert.Equal(t, 1, strings.Count(logs.String(), "sweep read failed"),
+		"a permanent failure reports once, not every tick")
+	assert.Contains(t, logs.String(), "level=ERROR")
+
+	// A DIFFERENT failure mode must still be audible while the first is
+	// suppressed — that is what keying the limiter by reason buys.
+	logCopilotUsageHomeFailure(home, "open",
+		"copilot-usage: session store unusable; live usage degrades to the durable event log", failure)
+	assert.Contains(t, logs.String(), "session store unusable")
+}
+
+// TestCopilotUsageAbsentStoreStaysQuiet is the other half of the operator's
+// rule: a host that simply does not run Copilot must not produce error lines.
+// The distinguishing test is the presence of the file, not the kind of failure.
+func TestCopilotUsageAbsentStoreStaysQuiet(t *testing.T) {
+	setupTestDB(t)
+	resetCopilotUsageStateForTest()
+	t.Cleanup(resetCopilotUsageStateForTest)
+
+	var logs bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	// A real, empty home: no session-store.db, which is what every host without
+	// Copilot looks like.
+	store, ok := copilotUsageStoreFor(t.TempDir())
+	require.False(t, ok)
+	require.Nil(t, store)
+	assert.NotContains(t, logs.String(), "level=ERROR")
+	assert.NotContains(t, logs.String(), "level=WARN")
 }

@@ -62,9 +62,9 @@ const (
 	// minute without the daemon having spun in between.
 	copilotUsageHomeBackoff = time.Minute
 
-	// copilotUsageWarnInterval suppresses repeat warnings per home and reason.
-	// At a 2s cadence an unsuppressed warning is 1800 log lines an hour saying
-	// the same unchanging thing.
+	// copilotUsageWarnInterval suppresses repeat log lines per home and reason.
+	// At a 2s cadence an unsuppressed line is 1800 entries an hour saying the
+	// same unchanging thing.
 	copilotUsageWarnInterval = 5 * time.Minute
 )
 
@@ -100,6 +100,12 @@ var copilotUsageState struct {
 	sessions map[string]*copilotUsageLiveEntry
 	homes    map[string]*copilotUsageHome
 	stopping bool
+	// liveCount is the last matched-session count that was logged, so the
+	// observability line below reports CHANGES rather than repeating the same
+	// number every 2 seconds. liveCountKnown keeps "nothing logged yet" apart
+	// from "logged a zero".
+	liveCount      int
+	liveCountKnown bool
 }
 
 // copilotUsageHome is one COPILOT_HOME's cached read-only connection plus its
@@ -118,6 +124,13 @@ type copilotUsageHome struct {
 // its caller: a harness whose telemetry is unavailable degrades the meter, it
 // does not degrade the daemon.
 func startCopilotUsagePoller(stop <-chan struct{}) {
+	// One Info line, once, at startup. The sweep is otherwise entirely silent
+	// in the healthy case, which left an operator debugging a blank meter with
+	// no way to tell "the poller is running and finding nothing" apart from
+	// "the poller never started". This is the cheapest possible answer to that
+	// question and it costs one line per daemon lifetime.
+	slog.Info("copilot-usage: poller started",
+		"interval", copilotUsagePollInterval, "module", "agentd")
 	go func() {
 		ticker := time.NewTicker(copilotUsagePollInterval)
 		defer ticker.Stop()
@@ -145,6 +158,7 @@ func stopCopilotUsagePoller() {
 	}
 	copilotUsageState.homes = nil
 	copilotUsageState.sessions = nil
+	copilotUsageState.liveCountKnown = false
 }
 
 // sweepCopilotUsage is one tick: find the live Copilot panes, read everything
@@ -163,6 +177,7 @@ func sweepCopilotUsage(ctx context.Context) {
 		// nothing. Skip the tick instead and keep what we have.
 		return
 	}
+	noteCopilotUsageLiveCount(len(sessions))
 	if len(sessions) == 0 {
 		pruneCopilotUsageState(nil)
 		return
@@ -182,6 +197,27 @@ func sweepCopilotUsage(ctx context.Context) {
 	for home, rows := range byHome {
 		sweepCopilotUsageHome(ctx, home, rows)
 	}
+}
+
+// noteCopilotUsageLiveCount reports how many live Copilot panes matched the
+// sweep's filter, on CHANGE rather than per tick.
+//
+// The filter this counts is a real diagnostic: a session is skipped for a dead
+// pane, a non-Copilot harness, a missing tmux session or conv id, or a conv id
+// that cannot be a Copilot session uuid. When the meter is blank, "matched 0
+// sessions" and "matched 3 sessions" send an operator to completely different
+// places, and neither was previously observable at any log level.
+func noteCopilotUsageLiveCount(count int) {
+	copilotUsageState.Lock()
+	quiet := copilotUsageState.liveCountKnown && copilotUsageState.liveCount == count
+	copilotUsageState.liveCount = count
+	copilotUsageState.liveCountKnown = true
+	copilotUsageState.Unlock()
+	if quiet {
+		return
+	}
+	slog.Debug("copilot-usage: live Copilot sessions matched",
+		"sessions", count, "module", "agentd")
 }
 
 // liveCopilotSessions returns the Copilot session rows whose tmux pane is
@@ -286,14 +322,17 @@ func pruneCopilotUsageState(live []*db.SessionRow) {
 
 // sweepCopilotUsageHome reads one home's store for every session under it.
 func sweepCopilotUsageHome(ctx context.Context, home string, sessions []*db.SessionRow) {
-	store, ok := copilotUsageStoreFor(home)
-	if !ok {
-		return
-	}
 	cursors := make([]harness.CopilotUsageCursor, 0, len(sessions))
 	byConv := make(map[string][]*db.SessionRow, len(sessions))
 	for _, sess := range sessions {
-		entry := copilotUsageEntryFor(sess)
+		// Loaded BEFORE the store is opened, deliberately: the durable cursor
+		// is where the restart backfill comes from, and a session whose
+		// model/effort are already known must be restored to the dashboard even
+		// on a host where the store has since become unreadable.
+		entry, restored := copilotUsageEntryFor(sess)
+		if restored != nil {
+			backfillCopilotUsageContext(sess, *restored)
+		}
 		cursors = append(cursors, harness.CopilotUsageCursor{
 			SessionID: sess.ConvID, AfterEventID: entry.LastEventID,
 		})
@@ -303,19 +342,27 @@ func sweepCopilotUsageHome(ctx context.Context, home string, sessions []*db.Sess
 		// happened to be found first.
 		byConv[sess.ConvID] = append(byConv[sess.ConvID], sess)
 	}
+	store, ok := copilotUsageStoreFor(home)
+	if !ok {
+		return
+	}
 	calls, err := store.Calls(ctx, cursors, copilotUsageSweepRowLimit)
 	if err != nil {
-		// SQLITE_BUSY lands here too, and is deliberately NOT a reason to close
-		// the store or back the home off: Copilot's writer holding the database
-		// for a moment is the normal case, and the next tick is 2 seconds away.
-		// The cursor means nothing was lost by skipping this one.
+		// SQLITE_BUSY lands here too, and is still NOT a reason to close the
+		// store or back the home off: Copilot's writer holding the database for
+		// a moment is the normal case, and the next tick is 2 seconds away. The
+		// cursor means nothing was lost by skipping this one.
 		//
-		// Debug rather than Warn for exactly that reason — a log level that
-		// contradicts the comment next to it teaches an operator to distrust
-		// one of the two. A read failure that is NOT transient shows up as the
-		// meter standing still, and the open/probe paths above do warn.
-		slog.Debug("copilot-usage: sweep read failed; retrying next tick",
-			"home", home, "error", err, "module", "agentd")
+		// It IS a reason to log at Error, rate-limited. This used to be Debug on
+		// the theory that the failure is transient — and then a real,
+		// permanent failure (Copilot writing REAL into an INTEGER latency
+		// column, which the reader scanned as int64) failed this read on every
+		// tick of every real host and said so nowhere an operator would look.
+		// The rate limiter is what makes the two cases sit together: a genuinely
+		// transient busy-timeout logs once and is then quiet, and a permanent
+		// one logs once every copilotUsageWarnInterval instead of hiding.
+		logCopilotUsageHomeFailure(home, "read",
+			"copilot-usage: sweep read failed; live usage is not being recorded", err)
 		return
 	}
 	if len(calls) == 0 {
@@ -410,17 +457,30 @@ func copilotUsageStoreFor(home string) (*harness.CopilotUsageStore, bool) {
 
 // markCopilotUsageHomeDown backs a home off after an open or probe failure.
 //
-// harness.ErrCopilotUsageStoreAbsent is the ordinary state on any host that
-// does not run Copilot, so it backs off silently; everything else — a schema
-// drift, a permissions problem, the WAL-without-shm case where a read-only
-// open of an idle database legitimately fails — warns at most once per
-// copilotUsageWarnInterval.
+// The log level follows the operator's rule, and the distinguishing test is
+// simply whether the database FILE IS THERE:
+//
+//   - Absent — Copilot is not installed, or has never run under this home. The
+//     ordinary state of most hosts, so it must never produce an error line; it
+//     backs off with a rate-limited Debug naming the path it looked for, which
+//     is what an operator needs when the meter is blank and they want to know
+//     WHICH path was consulted.
+//   - Present but unusable — schema drift, a permissions problem, the
+//     WAL-without-shm case where a read-only open of an idle database
+//     legitimately fails. tclaude is supposed to be reading this file and
+//     cannot: that is operator-visible by definition, so it logs at ERROR,
+//     rate-limited per (home, reason) so a permanent condition reports once
+//     rather than every 2 seconds.
 func markCopilotUsageHomeDown(home string, err error) {
 	if isCopilotUsageStoreAbsent(err) {
+		if copilotUsageLogAllowed(home, "absent") {
+			slog.Debug("copilot-usage: no Copilot session store for this home; live usage unavailable",
+				"home", home, "path", harness.CopilotUsageStorePath(home), "module", "agentd")
+		}
 		setCopilotUsageHomeBackoff(home)
 		return
 	}
-	warnCopilotUsageHome(home, "open",
+	logCopilotUsageHomeFailure(home, "open",
 		"copilot-usage: session store unusable; live usage degrades to the durable event log", err)
 	setCopilotUsageHomeBackoff(home)
 }
@@ -439,36 +499,61 @@ func setCopilotUsageHomeBackoff(home string) {
 	entry.downUntil = time.Now().Add(copilotUsageHomeBackoff)
 }
 
-// warnCopilotUsageHome logs at most one warning per (home, reason) per
-// interval.
-func warnCopilotUsageHome(home, reason, message string, err error) {
+// logCopilotUsageHomeFailure reports a home whose store EXISTS but could not be
+// read, at most once per (home, reason) per copilotUsageWarnInterval.
+//
+// Error, not Debug. The previous level is the reason this bug lived: the sweep
+// read failed on every single tick of every real host for as long as the
+// feature had shipped, and said so only at Debug, so the only visible symptom
+// was blank dashboard cells with no explanation anywhere an operator looks. A
+// file tclaude is supposed to be reading and cannot is an error; keying the
+// suppression by reason keeps a NEW failure mode audible while an old one is
+// being held down.
+func logCopilotUsageHomeFailure(home, reason, message string, err error) {
+	if !copilotUsageLogAllowed(home, reason) {
+		return
+	}
+	slog.Error(message, "home", home, "reason", reason,
+		"path", harness.CopilotUsageStorePath(home), "error", err, "module", "agentd")
+}
+
+// copilotUsageLogAllowed is the shared per-(home, reason) rate limiter. It
+// reports whether the caller may log now, and records the decision.
+func copilotUsageLogAllowed(home, reason string) bool {
 	copilotUsageState.Lock()
+	defer copilotUsageState.Unlock()
+	if copilotUsageState.homes == nil {
+		// Created rather than skipped: without somewhere to record the decision
+		// the limiter forgets it immediately and a permanent condition logs on
+		// every 2s tick, which is the failure mode this whole function exists
+		// to prevent.
+		copilotUsageState.homes = map[string]*copilotUsageHome{}
+	}
 	entry := copilotUsageState.homes[home]
 	if entry == nil {
 		entry = &copilotUsageHome{warnedAt: map[string]time.Time{}}
-		if copilotUsageState.homes != nil {
-			copilotUsageState.homes[home] = entry
-		}
+		copilotUsageState.homes[home] = entry
 	}
 	if entry.warnedAt == nil {
 		entry.warnedAt = map[string]time.Time{}
 	}
 	now := time.Now()
-	last, seen := entry.warnedAt[reason]
-	quiet := seen && now.Sub(last) < copilotUsageWarnInterval
-	if !quiet {
-		entry.warnedAt[reason] = now
+	if last, seen := entry.warnedAt[reason]; seen && now.Sub(last) < copilotUsageWarnInterval {
+		return false
 	}
-	copilotUsageState.Unlock()
-	if quiet {
-		return
-	}
-	slog.Warn(message, "home", home, "error", err, "module", "agentd")
+	entry.warnedAt[reason] = now
+	return true
 }
 
 // copilotUsageEntryFor returns the session's live state, loading its durable
 // cursor once per daemon lifetime.
-func copilotUsageEntryFor(sess *db.SessionRow) copilotUsageLiveEntry {
+//
+// The second return is the STORED snapshot, non-nil only on the load that
+// actually read it — the caller's cue to run the restart backfill. It is
+// returned rather than acted on here so that this function keeps its single
+// job, and so "once per session per daemon lifetime" is a consequence of the
+// cache rather than a second flag to keep in step with it.
+func copilotUsageEntryFor(sess *db.SessionRow) (copilotUsageLiveEntry, *db.CopilotUsageSnapshot) {
 	copilotUsageState.Lock()
 	if copilotUsageState.sessions == nil {
 		copilotUsageState.sessions = map[string]*copilotUsageLiveEntry{}
@@ -478,7 +563,7 @@ func copilotUsageEntryFor(sess *db.SessionRow) copilotUsageLiveEntry {
 		entry.CreatedAt.Equal(sess.CreatedAt) && entry.loaded {
 		snapshot := *entry
 		copilotUsageState.Unlock()
-		return snapshot
+		return snapshot, nil
 	}
 	copilotUsageState.Unlock()
 
@@ -487,6 +572,7 @@ func copilotUsageEntryFor(sess *db.SessionRow) copilotUsageLiveEntry {
 	fresh := &copilotUsageLiveEntry{
 		ConvID: sess.ConvID, CreatedAt: sess.CreatedAt, loaded: true,
 	}
+	var restored *db.CopilotUsageSnapshot
 	stored, err := db.LoadCopilotUsageSnapshot(sess.ID)
 	if err != nil {
 		slog.Warn("copilot-usage: failed to load snapshot cursor; restarting from the beginning",
@@ -499,6 +585,7 @@ func copilotUsageEntryFor(sess *db.SessionRow) copilotUsageLiveEntry {
 		fresh.LastEventID = stored.LastEventID
 		fresh.ContextTokens = stored.LastCallInputTokens
 		fresh.OutputTokens = stored.OutputTokens
+		restored = stored
 	}
 
 	copilotUsageState.Lock()
@@ -507,7 +594,35 @@ func copilotUsageEntryFor(sess *db.SessionRow) copilotUsageLiveEntry {
 		copilotUsageState.sessions = map[string]*copilotUsageLiveEntry{}
 	}
 	copilotUsageState.sessions[sess.ID] = fresh
-	return *fresh
+	return *fresh, restored
+}
+
+// backfillCopilotUsageContext republishes an ALREADY-KNOWN reading to the
+// dashboard columns, the first time a daemon sees a live session that has one.
+//
+// Without it, a daemon restart leaves an idle Copilot pane blank until it takes
+// another turn: sessions.model and sessions.effort_level are owned by this
+// sweep once a usage row exists, and the sweep only wrote them when new rows
+// arrived. A conversation that is mid-thought — the common state of a pane an
+// operator is reading — produces no new rows at all, so the columns stayed
+// empty while the answer sat in copilot_usage_snapshots the whole time.
+//
+// It writes through persistCopilotUsageContext rather than around it, so the
+// restored values are subject to exactly the same discipline as a live fold:
+// the generation guard, the one-owner rule, and max() on tokens_output. And
+// because that function skips the write when the row already agrees, a session
+// whose columns are already correct costs one read and nothing else.
+func backfillCopilotUsageContext(sess *db.SessionRow, stored db.CopilotUsageSnapshot) {
+	if stored.LastEventID <= 0 {
+		// Nothing has ever been folded for this session, so there is nothing to
+		// restore — only the empty row a first sweep would have created.
+		return
+	}
+	slog.Debug("copilot-usage: restoring stored usage for a live session",
+		"session_id", sess.ID, "model", stored.Model,
+		"effort", stored.ReasoningEffort, "last_event_id", stored.LastEventID,
+		"module", "agentd")
+	persistCopilotUsageContext(sess, stored)
 }
 
 // applyCopilotUsageCalls folds one session's new rows and persists the result.
