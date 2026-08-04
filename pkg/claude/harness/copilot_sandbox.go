@@ -14,17 +14,29 @@ import (
 // Copilot is unlike every harness tclaude already models, and the difference
 // decides the whole shape of this file. Claude Code takes a per-session
 // `--settings` override; Codex takes a `--sandbox` flag; OpenCode's server is
-// tclaude-launched. Copilot CLI 1.0.77 takes NONE of those: its command
-// sandbox (Microsoft Execution Containers — Seatbelt on macOS, bubblewrap on
-// Linux) is configured only by the `sandbox` key of TWO files under
+// tclaude-launched. Copilot CLI 1.0.77 takes none of those on terms tclaude can
+// use: its command sandbox (Microsoft Execution Containers — Seatbelt on macOS,
+// bubblewrap on Linux) is configured by the `sandbox` key of TWO files under
 // COPILOT_HOME — `settings.json` and the legacy `config.json`, the latter
 // winning (see CopilotConfigFileName) — and by the in-pane
 // `/sandbox enable|disable` command, which is itself only registered when
-// experimental features are on. There is no launch flag and no environment
-// variable that turns it on or off (`copilot --help`, `copilot help sandbox`,
-// `copilot help environment`, pinned 1.0.77).
+// experimental features are on.
 //
-// So tclaude cannot FORCE Copilot's inner wall off for one launch. What it can
+// There ARE hidden per-launch flags, and the earlier form of this comment was
+// wrong to say otherwise: `--sandbox` and `--no-sandbox` were added in 1.0.70
+// and are absent from `copilot --help`. They do not change the conclusion,
+// because of the gate measured in TCL-1011 (see
+// copilotfixture/sandbox_native_flags_smoke_test.go): without `--experimental`
+// both flags are parsed and then IGNORED, in both directions, and WITH it they
+// override the settings file for one launch without persisting. Since
+// `--experimental` is also what registers `/sandbox enable|disable`, the only
+// argv that selects a posture is the same argv that lets the pane revoke it —
+// which is precisely what CopilotTclaudeLayerExtraArgRefusal below refuses. No
+// environment variable turns the sandbox on or off (`copilot help environment`,
+// `copilot help sandbox`, pinned 1.0.77).
+//
+// So tclaude cannot force Copilot's inner wall off for one launch without also
+// handing the pane a lever to raise it again. What it can
 // do — and what these modes mean — is ASSERT that the wall is off and refuse
 // the launch when it cannot prove that:
 //
@@ -81,7 +93,7 @@ func (copilotSandbox) ValidateMode(mode string) (string, error) {
 }
 
 var copilotSandboxModeHelp = map[string]string{
-	CopilotSandboxInherit: "Use your Copilot `sandbox` posture as-is. Copilot's own command sandbox is experimental and off by default, and tclaude makes no containment claim for this mode. Copilot exposes no launch flag for it, so tclaude can neither enable nor disable it per session.",
+	CopilotSandboxInherit: "Use your Copilot `sandbox` posture as-is. Copilot's own command sandbox is experimental and off by default, and tclaude makes no containment claim for this mode. Its only per-launch flags require `--experimental`, which also lets the pane change the posture mid-session, so tclaude does not enable or disable it per session.",
 	CopilotSandboxOff:     "Copilot's own (experimental, MXC) command sandbox is asserted NOT engaged, so tclaude's built-in OS sandbox is the single enforcement boundary. The launch is REFUSED — not silently downgraded — when Copilot's settings.json or its legacy config.json (which wins) enables that sandbox, is unreadable or ambiguous, or leaves experimental features on (which registers the in-pane `/sandbox enable` command).",
 }
 

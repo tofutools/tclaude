@@ -30,7 +30,9 @@ import (
 // It is the seam where "tclaude's outer layer is the enforcement boundary"
 // stops being an assumption. Most harnesses have nothing to check here — their
 // TclaudeLayerMode is a real launch flag that turns their own sandbox off, so
-// the launch itself establishes the posture. Copilot has no such flag, so the
+// the launch itself establishes the posture. Copilot has no such flag it can
+// use — `--no-sandbox` exists but is inert without `--experimental`, which
+// tclaude-layer refuses because it hands the pane the opposite lever — so the
 // posture has to be VERIFIED against its configuration instead, and a launch
 // that cannot verify it is refused rather than started on an unchecked claim.
 //

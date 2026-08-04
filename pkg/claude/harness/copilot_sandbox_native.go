@@ -35,14 +35,21 @@ package harness
 // Three further properties would each need their own answer even if the file
 // half were closed, and are recorded so a later revisit starts from them:
 //
-//  1. There is no launch-time flag. The posture lives in the `sandbox` key of
+//  1. The launch-time flags are unusable, which is not the same as absent —
+//     TCL-1011 corrected an earlier "there is no launch flag" reading here.
+//     `--sandbox` and `--no-sandbox` exist on 1.0.77 (added in 1.0.70, hidden
+//     from `copilot --help`) and override the settings file for one launch
+//     without persisting, but ONLY under `--experimental`; without it they are
+//     parsed and ignored in both directions. `--experimental` is also what
+//     registers the in-pane `/sandbox enable|disable`, so the only argv that
+//     selects a posture is the same argv that lets the pane revoke it under a
+//     running agent. Otherwise the posture lives in the `sandbox` key of
 //     COPILOT_HOME/settings.json — and of the legacy COPILOT_HOME/config.json,
 //     which the CLI migrates from at startup and which therefore WINS for the
 //     launch that consumes it — plus the interactive `/sandbox` dialog and
 //     organization policy. tclaude pins per-spawn postures through launch
-//     arguments; it cannot pin this one without owning the operator's own
-//     config file, and `clearPolicyOnExit` plus in-session `/sandbox disable`
-//     can move it underneath a running agent.
+//     arguments; it cannot pin this one without either owning the operator's
+//     own config file or handing the pane that lever.
 //  2. It is documented as experimental by its own vendor, so its shape is not
 //     yet a contract to build a capability on.
 //  3. Availability is host-conditional (Linux needs bwrap AND permitted
@@ -56,6 +63,7 @@ package harness
 // separate wall tclaude owns and a separate ticket.
 const CopilotBuiltinOSSandboxAbsenceReason = "GitHub Copilot CLI's command sandboxing " +
 	"OS-confines shell commands only: its built-in file edits are checked by an in-process " +
-	"policy rather than by the OS, the posture is an experimental out-of-band setting with no " +
-	"launch flag, and its availability is host-conditional, so the effective boundary is not a " +
-	"complete OS sandbox tclaude can advertise"
+	"policy rather than by the OS, the posture is an experimental setting whose only per-launch " +
+	"flags require --experimental (which also lets the pane change it mid-session), and its " +
+	"availability is host-conditional, so the effective boundary is not a complete OS sandbox " +
+	"tclaude can advertise"

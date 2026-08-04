@@ -187,6 +187,67 @@
         "TestCopilotPermissionPathGrants/outside-all/yolo",
         "TestCopilotPermissionTrustBypassSurface/yolo"
       ]
+    },
+    {
+      "id": "native-sandbox-session-flags",
+      "claim": "Does Copilot 1.0.77 expose a per-launch flag that selects its own command-sandbox posture, as tclaude's contract says it does not?",
+      "status": "proven",
+      "finding": "IT DOES, and the standing 'there is no launch flag' premise in harness/copilot_sandbox.go and docs/harnesses.md is wrong for 1.0.77 -- but the flag is unusable for the posture tclaude would want, for a reason the flag's existence alone does not reveal. `--sandbox` and `--no-sandbox` were added in 1.0.70 ('turn the OS-level shell sandbox on or off for the current session only, without changing your saved sandbox setting'), are ABSENT from `copilot --help` on 1.0.77 (asserted, not merely observed -- anchored on the option-row spelling, since the help text also lists `sandbox` as a help TOPIC), and are accepted by the parser -- proven against an impossible neighbour spelling that is rejected with 'unknown option', so acceptance is not a parser that swallows anything. THE GATE: without `--experimental` both flags are parsed and then IGNORED, in both directions -- a `--no-sandbox` launch against `sandbox.enabled: true` is still enforced, and a `--sandbox` launch against `enabled: false` is still unconfined. WITH `--experimental` both are honoured and override the settings file in both directions. `--experimental` ALONE changes nothing, which is the control that stops the honoured rows being credited to it. CONSEQUENCE, and it is the whole answer for a copilot-native posture: the only argv that selects the sandbox is the same argv that registers the in-pane `/sandbox enable|disable` command, which CopilotTclaudeLayerExtraArgRefusal refuses and ValidateCopilotTclaudeLayerInnerSandbox refuses over precisely because a pane can then revoke the posture mid-session. A per-launch override available only together with an in-pane override of itself is not a recorded, durable posture. SECOND PROPERTY, measured because it would be the dangerous one: neither flag PERSISTS. After a `--sandbox --experimental` run against `enabled: false`, ResolveCopilotInnerSandbox still reports false, and likewise for `--no-sandbox` over `enabled: true` -- so the flags do not silently edit the operator's configuration. The instrument throughout is a built-in `create` into a deniedPaths entry rather than a shell command, which is what makes every row valid on a host whose OS backend cannot start.",
+      "scenarios": [
+        "TestCopilotNativeSandboxSessionFlagsAreAccepted/hidden-from-help",
+        "TestCopilotNativeSandboxSessionFlagsAreAccepted/sandbox",
+        "TestCopilotNativeSandboxSessionFlagsAreAccepted/no-sandbox",
+        "TestCopilotNativeSandboxSessionFlagsAreAccepted/unknown-control",
+        "TestCopilotNativeSandboxSessionFlagsNeedExperimental/enabled_no_flag",
+        "TestCopilotNativeSandboxSessionFlagsNeedExperimental/disabled_no_flag",
+        "TestCopilotNativeSandboxSessionFlagsNeedExperimental/enabled_experimental_only",
+        "TestCopilotNativeSandboxSessionFlagsNeedExperimental/disabled_experimental_only",
+        "TestCopilotNativeSandboxSessionFlagsNeedExperimental/enabled_no_sandbox_flag",
+        "TestCopilotNativeSandboxSessionFlagsNeedExperimental/disabled_sandbox_flag",
+        "TestCopilotNativeSandboxSessionFlagsNeedExperimental/enabled_no_sandbox_flag_experimental",
+        "TestCopilotNativeSandboxSessionFlagsNeedExperimental/disabled_sandbox_flag_experimental",
+        "TestCopilotNativeSandboxSessionFlagsDoNotPersist/no_sandbox_over_enabled",
+        "TestCopilotNativeSandboxSessionFlagsDoNotPersist/sandbox_over_disabled"
+      ],
+      "corroborating": [
+        "NOT measured: whether an in-pane `/sandbox disable` under `--sandbox --experimental` really does revoke the launch-selected posture mid-session. The refusal contract assumes it can, and the command's registration is documented; the runtime effect on an already-running turn needs a PTY scenario. Nothing here should be read as having proven the revocation, only the registration.",
+        "NOT measured: whether `/settings set` can write the `sandbox` key from inside a pane WITHOUT experimental features, which would be a second in-pane mutation path the experimental gate does not cover. `copilot help config` does not list `sandbox` among its keys at all, so the key's status in the settings UI is unestablished.",
+        "NOT measured, and taken from the bundled changelog.json rather than from behaviour: that the flags were ADDED in 1.0.70. Only their presence and gating on 1.0.77 are measured here; the version they arrived in is provenance, not a finding."
+      ]
+    },
+    {
+      "id": "native-sandbox-generated-linux-policy",
+      "claim": "What does the OS policy Copilot's MXC backend generates on Linux actually contain?",
+      "status": "proven",
+      "finding": "CAPTURED, by shimming `bwrap` first on PATH and recording the argument vector; on Linux that argv IS the policy, since bubblewrap has no configuration file. The measurement works on BOTH host categories the suite distinguishes, because the policy is generated before the namespace is attempted -- so it is the one sandbox scenario that needs no usable backend. SHAPE (1.0.77): `--unshare-user --unshare-pid --unshare-ipc --unshare-uts`, then `--ro-bind-try` of the system trees (/bin /sbin /lib* /usr/{bin,sbin,lib*,libexec,share} /etc) and of the resolver runtime dirs, `--symlink /run /var/run`, `--dev /dev`, `--proc /proc`, `--tmpfs /tmp` plus a `--bind` of TMPDIR, a `--ro-bind` for EVERY directory on the launching process's PATH, a read-write `--bind` of the workspace, `--chdir` into it, `--clearenv`, one `--setenv` per inherited variable, and finally `-- sh -c \"/bin/bash --norc --noprofile -c '<command>'\"`. The argument COUNT is deliberately not recorded: it is a property of the measuring machine's PATH and environment size, not of the release. FOUR FINDINGS THE OUTSIDE-IN SCENARIOS CANNOT SEE. (1) NETWORK IS THE ONE DIMENSION THAT IS KERNEL-ENFORCED END TO END: `--unshare-net` is present exactly when `network.allowOutbound` is false and absent when it is true, measured in both directions. An unshared network namespace with no interfaces cannot be talked around, unlike the filesystem half whose built-in-edit path never enters the sandbox at all. (2) A deniedPaths ENTRY IS NOT A DENY RULE -- it is `--tmpfs <path>`, an empty filesystem mounted over the target. That is MASKING rather than denial, and the two are indistinguishable from outside: every existing scenario asserts only that the host file is absent, which both satisfy equally, so nothing before this entry could tell them apart. What a masked write looks like to the MODEL is a separate question no scenario here answers; see corroborating. (3) `--clearenv` READS LIKE A SCRUB AND IS NOT ONE, and the ASYMMETRY is the finding rather than the inheritance. A planted GITHUB_TOKEN arrives inside the sandbox verbatim while a planted OPENAI_API_KEY is DROPPED -- so the fixed blocklist `copilot help sandbox` mentions is real and is doing work, and it does not cover the credential most likely to be live in a shell that launches Copilot. Both rows are asserted, and the dropped one is the control: without it, the inherited row would be consistent with no filtering at all. Copilot's sandbox is a filesystem and network boundary, not a credential one. (4) THE READ-ONLY BIND SET FOLLOWS THE LAUNCHING PROCESS'S PATH, which matters to tclaude specifically: whatever PATH it hands a Copilot pane decides part of the sandbox's executable surface. Asserted rather than observed -- the scenario puts its own shim directory on PATH and the generated policy `--ro-bind`s it.",
+      "scenarios": [
+        "TestCopilotNativeSandboxGeneratedLinuxPolicy/outbound_denied",
+        "TestCopilotNativeSandboxGeneratedLinuxPolicy/outbound_allowed"
+      ],
+      "corroborating": [
+        "NOT measured, and deliberately so: the macOS Seatbelt profile. The darwin backend goes through `sandbox-exec` with a generated profile rather than a bubblewrap argv, so capturing it needs a different shim and a different reader; writing that reader on a machine that cannot run it would put an unmeasured assertion into CI. Every policy-content claim in this entry is Linux-only, and the scenario skips on other platforms rather than pretending otherwise.",
+        "NOT measured: what a write into a masked (deniedPaths) directory looks like from INSIDE a live namespace, and therefore what the model is told. `--tmpfs` semantics imply the write succeeds into a throwaway filesystem rather than failing, which would mean the model can be told a denied write succeeded -- but that is a reading of bubblewrap, not an observation, and this scenario never starts a namespace. It is measurable on a host whose backend runs, by asserting on the shell tool RESULT for a denied path rather than only on host-file absence, and that is the natural next scenario.",
+        "NOT measured: whether `--unshare-net` is the whole network story. `network.allowLocalNetwork` was true in both arms, and 1.0.60's changelog mentions allowedHosts/blockedHosts handling, so a host-list posture may generate more than the namespace switch this matrix crosses.",
+        "NOT measured as an assertion, only observed in the recorded argv: no `--die-with-parent`, no `--new-session`, and no seccomp filter appear in the generated policy. Recorded because their absence is a real property of the boundary, but nothing pins it, since a future release adding any of them would be a tightening rather than a regression."
+      ]
+    },
+    {
+      "id": "native-sandbox-allow-bypass-demotes-enforcement",
+      "claim": "What does `sandbox.allowBypass` do, and does autopilot disable the sandbox as the 1.0.77 changelog says?",
+      "status": "proven",
+      "finding": "`allowBypass` CHANGES THE KIND OF BOUNDARY. With the key true, a policy violation stops being a refusal and becomes a PERMISSION REQUEST -- the tool result changes from the sandbox's own 'sandbox is active and blocked ...' to the CLI's ordinary 'Permission denied and could not request permission from user', which is what an unanswerable prompt produces. So a Copilot sandbox with allowBypass on is not a boundary but a question, and the answer decides the boundary. Every arm still failed closed -- the file never reached the host -- which is exactly why this is a finding about MECHANISM that no landed-or-not assertion could have produced. WHAT THE MATRIX ESTABLISHES ABOUT AUTOPILOT IS NARROW, and is stated narrowly because the investigation reached this key from a 1.0.77 changelog entry -- 'Unconditional autopilot approval now disables sandbox for the current session when bypass is allowed' -- that it does NOT refute. Crossed with `--autopilot` and `--yolo`, neither flag changes the outcome at launch in either direction: `allowBypass` alone decides it. That is a fact about LAUNCH FLAGS, not about the changelog's subject, which is an in-pane approval decision this headless matrix never reaches. The two results are consistent; nothing here contradicts the vendor. NOTE ON THE SCHEMA: `allowBypass` is documented by `copilot help sandbox` and named in the shipped runtime, but is NOT a property of SandboxConfig in schemas/api.schema.json, which declares additionalProperties:false. The matrix measures what the key does rather than trusting either source.",
+      "scenarios": [
+        "TestCopilotNativeSandboxAllowBypassDemotesEnforcementToAPrompt/bypass_off",
+        "TestCopilotNativeSandboxAllowBypassDemotesEnforcementToAPrompt/bypass_on",
+        "TestCopilotNativeSandboxAllowBypassDemotesEnforcementToAPrompt/bypass_off_autopilot",
+        "TestCopilotNativeSandboxAllowBypassDemotesEnforcementToAPrompt/bypass_on_autopilot",
+        "TestCopilotNativeSandboxAllowBypassDemotesEnforcementToAPrompt/bypass_on_yolo"
+      ],
+      "corroborating": [
+        "NOT measured, and it is the half that decides how bad this is: whether the bypass prompt AUTO-APPROVES on a real terminal. These runs carry the runner's default --allow-all-tools and it did not approve the bypass, but the permission matrix's out-of-cwd-paths entry establishes that a no-TTY launch takes DIFFERENT fallbacks from a pane (auto-deny for paths, auto-allow for tools), so a headless denial says nothing about a pane.",
+        "NOT measured: the changelog's actual claim -- that an unconditional autopilot APPROVAL disables the sandbox for the rest of the session. That path runs through an in-pane approval decision, so it needs a PTY scenario; the launch-flag rows here cannot reach it and must not be read as having tested it.",
+        "NOT measured: whether the bypass prompt, once approved, drops the sandbox for the single command or for the rest of the session."
+      ]
     }
   ]
 }
