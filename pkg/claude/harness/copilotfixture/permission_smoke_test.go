@@ -53,15 +53,16 @@ import (
 // because the CLI misbehaved, not because the runner was busy.
 const permissionDeadline = 30 * time.Second
 
-// denyToolGrammarDeadline bounds the headless deny-tool grammar probe.
+// headlessPermissionDeadline bounds the non-PTY permission probes in this file.
 //
-// This scenario uses Run rather than RunPTY and has no blocked arm: its verdict
-// comes from the launch parse error and whether the provider was reached. It
-// therefore does not share permissionDeadline's sizing trade-off, where a
-// tighter bound keeps every genuinely blocked PTY row cheap. Keep this bound
-// generous so CPU contention during CLI startup cannot fail a valid grammar
-// row, without adding cost to the blocked permission scenarios.
-const denyToolGrammarDeadline = 60 * time.Second
+// A headless Run either exits or fails; it has no PTY permission prompt whose
+// blocked arm pays the deadline. In particular, the grammar probe's verdict
+// comes from the launch parse error and whether the provider was reached. The
+// other headless probes use the same non-blocking shape. They therefore do not
+// share permissionDeadline's sizing trade-off, where a tighter bound keeps
+// every genuinely blocked PTY row cheap. Sixty seconds gives ample margin over
+// the observed loaded startup without adding cost to those blocked scenarios.
+const headlessPermissionDeadline = 60 * time.Second
 
 // blockedQuiet is how long a pty scenario's transcript must stand still, with
 // no follow-up request, before the run is called blocked and stopped.
@@ -543,7 +544,7 @@ func TestCopilotPermissionDenyToolGrammar(t *testing.T) {
 				BaseURL:   mock.BaseURL(),
 				Prompt:    "Answer in one word.",
 				ExtraArgs: []string{"--deny-tool", tc.pattern},
-				Timeout:   denyToolGrammarDeadline,
+				Timeout:   headlessPermissionDeadline,
 			})
 
 			out := result.Stdout + result.Stderr
@@ -652,7 +653,7 @@ func TestCopilotPermissionHeadlessIsNotEvidence(t *testing.T) {
 		// The identical posture that blocks on a pty in
 		// TestCopilotPermissionToolApprovalGate.
 		OmitAllowAllTools: true,
-		Timeout:           permissionDeadline,
+		Timeout:           headlessPermissionDeadline,
 	})
 
 	t.Logf("permission verdict: headless-auto-allows=%v (provider requests: %d)",
@@ -1083,7 +1084,7 @@ func TestCopilotPermissionResumeSubmitsPrompt(t *testing.T) {
 		BaseURL:   mockFor(t, "MOCK FIRST ANSWER").BaseURL(),
 		Prompt:    "First question.",
 		SessionID: sessionID,
-		Timeout:   permissionDeadline,
+		Timeout:   headlessPermissionDeadline,
 	})
 	require.Equal(t, 0, seed.ExitCode, "stderr: %s", seed.Stderr)
 	require.DirExists(t, filepath.Join(dirs.Home, "session-state", sessionID),
