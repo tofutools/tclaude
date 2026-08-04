@@ -90,7 +90,7 @@ func softExitKeys(prefix string) []copilotfixture.Keystroke {
 // The negative claim is only worth as much as its control, which is the next
 // scenario: the same rig, the same bytes, one cancel keystroke in front.
 func TestCopilotSoftExitBareExitIsDiscardedMidTurn(t *testing.T) {
-	requireSmoke(t)
+	requireSmokeParallel(t)
 
 	res := softExitRun(t, softExitKeys(""))
 
@@ -108,7 +108,7 @@ func TestCopilotSoftExitBareExitIsDiscardedMidTurn(t *testing.T) {
 // TestCopilotSoftExitCancelFirstExitsMidTurn is the fix, measured: one cancel
 // keystroke ahead of the identical sequence and the busy pane exits cleanly.
 func TestCopilotSoftExitCancelFirstExitsMidTurn(t *testing.T) {
-	requireSmoke(t)
+	requireSmokeParallel(t)
 
 	// "\x03" is the byte tmux send-keys C-c delivers.
 	res := softExitRun(t, softExitKeys("\x03"))

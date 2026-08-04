@@ -79,6 +79,25 @@ type PTYResult struct {
 	// false: "ended early with the follow-up request in hand" and "sat at the
 	// deadline having produced nothing" are the allowed and blocked arms.
 	Settled bool
+
+	// Elapsed is the wall clock the run cost, from launch to the moment the
+	// observation loop ended.
+	Elapsed time.Duration
+
+	// MaxOutputGap is the longest the transcript stopped growing at any point
+	// during the run, sampled at the loop's tick resolution.
+	//
+	// This is the measurement that sizes BlockedAfter. A quiet window only
+	// separates "blocked on a prompt" from "still working" if it is longer
+	// than any gap working actually produces, and that is an empirical
+	// quantity — every pty scenario logs it (see logPTYTiming) so the margin
+	// stays visible rather than remembered.
+	MaxOutputGap time.Duration
+
+	// Blocked reports that the run ended early on BlockedAfter: alive, and
+	// silent for longer than any working turn goes silent. It is the same
+	// state a deadline-reaching run lands in, observed sooner.
+	Blocked bool
 }
 
 // TranscriptText strips ANSI control sequences so a scenario can match on
@@ -141,6 +160,23 @@ type PTYOptions struct {
 	// tool-result follow-up request arrived". Returning true on something
 	// weaker would cut the run short of the observation it exists to make.
 	SettledWhen func() bool
+
+	// BlockedAfter, when non-zero, ends a run whose transcript has stopped
+	// growing for this long without its evidence having arrived.
+	//
+	// SettledWhen is the allowed arm's early exit; this is the blocked arm's.
+	// Without it a blocked run pays its whole Deadline, and blocked arms are
+	// most of the permission matrix's wall clock — the deadline has to be
+	// generous enough to cover the slowest startup, so every blocked arm was
+	// paying for the worst case of a phase it had already finished.
+	//
+	// The verdict is unchanged: alive, and quiet by a wider margin than
+	// Quiesced requires. What changes is when the run stops waiting for a
+	// prompt that is already on screen. Size it off MaxOutputGap — the widest
+	// gap a WORKING turn produces — not off intuition, and leave Deadline as
+	// the outer bound so a run that never gets anywhere still lands in the
+	// classifier's error arm rather than being called blocked.
+	BlockedAfter time.Duration
 }
 
 // Keystroke is one scheduled raw write onto the terminal.
@@ -195,10 +231,12 @@ func RunPTY(t *testing.T, opts PTYOptions) PTYResult {
 	}
 	defer func() { _ = f.Close() }()
 
+	start := time.Now()
 	var (
 		mu         sync.Mutex
 		transcript strings.Builder
-		lastWrite  = time.Now()
+		lastWrite  = start
+		maxGap     time.Duration
 	)
 	readDone := make(chan struct{})
 	go func() {
@@ -232,10 +270,24 @@ func RunPTY(t *testing.T, opts PTYOptions) PTYResult {
 		waitDone <- err
 	}()
 
-	quiet := func() bool {
+	// idle is how long the transcript has been still, and it records the widest
+	// such window the run ever showed. Sampling here rather than in the reader
+	// is deliberate: the widest gap is a property of when the observer looked,
+	// which is exactly the resolution a decision made from it is taken at.
+	idle := func() time.Duration {
 		mu.Lock()
 		defer mu.Unlock()
-		return time.Since(lastWrite) >= PTYQuiescence
+		gap := time.Since(lastWrite)
+		if gap > maxGap {
+			maxGap = gap
+		}
+		return gap
+	}
+	quiet := func() bool { return idle() >= PTYQuiescence }
+	sawOutput := func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return transcript.Len() > 0
 	}
 
 	// Scheduled keystrokes run on their own clock, since the states they are
@@ -260,8 +312,17 @@ func RunPTY(t *testing.T, opts PTYOptions) PTYResult {
 
 	// Input is delivered only once the CLI has stopped producing output, so a
 	// scenario types into a settled screen rather than into a startup race.
+	//
+	// "Stopped producing output" has to mean it STARTED first. A blank screen
+	// is quiet by the same test a finished prompt is, and on a loaded host Node
+	// can take longer than PTYQuiescence to write its first byte — so the
+	// unguarded version typed into a terminal whose TUI did not exist yet. The
+	// bytes went nowhere, the scenario waited out its deadline, and the run
+	// looked like the CLI ignoring a command rather than a race. Observed
+	// exactly that way, on a two-core box, with a 109-second silence in the
+	// timing log.
 	for _, line := range opts.Input {
-		if !awaitQuiescence(ctx, exitedCh, quiet) {
+		if !awaitQuiescence(ctx, exitedCh, func() bool { return sawOutput() && quiet() }) {
 			break
 		}
 		mu.Lock()
@@ -276,6 +337,7 @@ func RunPTY(t *testing.T, opts PTYOptions) PTYResult {
 	var waitErr error
 	gotExit := false
 	settled := false
+	blocked := false
 loop:
 	for {
 		select {
@@ -289,11 +351,24 @@ loop:
 			quiesced = quiet()
 			break loop
 		case <-time.After(200 * time.Millisecond):
-			quiesced = quiet()
+			gap := idle()
+			quiesced = gap >= PTYQuiescence
 			// The evidence check is gated on quiescence so a run ends on a
 			// finished observation rather than mid-render.
 			if quiesced && opts.SettledWhen != nil && opts.SettledWhen() {
 				settled = true
+				break loop
+			}
+			// No evidence, and silent for longer than a working turn ever goes
+			// silent: the same state the deadline would have found, reached
+			// without waiting for it.
+			//
+			// Nothing on screen yet is NOT that state. A launch that has not
+			// written its first byte is still in Node's startup, which is
+			// silent by nature and stretches under load — calling that
+			// "parked on a prompt" would turn a busy runner into a finding.
+			if opts.BlockedAfter > 0 && sawOutput() && gap >= opts.BlockedAfter {
+				blocked = true
 				break loop
 			}
 		}
@@ -330,26 +405,56 @@ loop:
 		<-readDone
 	}
 
-	res := PTYResult{Quiesced: quiesced, Settled: settled}
+	res := PTYResult{
+		Quiesced: quiesced,
+		Settled:  settled,
+		Blocked:  blocked,
+		Elapsed:  time.Since(start),
+	}
 	mu.Lock()
 	res.Transcript = transcript.String()
+	res.MaxOutputGap = maxGap
 	mu.Unlock()
 
-	if !gotExit {
-		// Alive when the run ended, whether that was the deadline or the
-		// evidence arriving early. Either way the CLI did not choose to exit,
-		// which is the fact a scenario reasons about.
-		return res
-	}
-	res.Exited = true
-	if waitErr != nil {
-		var exitErr *exec.ExitError
-		if !errors.As(waitErr, &exitErr) {
-			t.Fatalf("copilotfixture: pty run failed: %v", waitErr)
+	if gotExit {
+		res.Exited = true
+		if waitErr != nil {
+			var exitErr *exec.ExitError
+			if !errors.As(waitErr, &exitErr) {
+				t.Fatalf("copilotfixture: pty run failed: %v", waitErr)
+			}
+			res.ExitCode = exitErr.ExitCode()
 		}
-		res.ExitCode = exitErr.ExitCode()
 	}
+	// Alive when the run ended — whether that was the deadline, the evidence
+	// arriving, or the quiet window closing — is the fact a scenario reasons
+	// about, so it is reported either way.
+	logPTYTiming(t, res)
 	return res
+}
+
+// logPTYTiming records what a run cost and why it ended.
+//
+// It is not debug output. The suite's early exits — SettledWhen for an allowed
+// arm, BlockedAfter for a blocked one — are only as sound as the margin
+// between the quiet window they trust and the widest gap a working turn
+// actually produces, and that margin drifts as the CLI changes. Printing it on
+// every run means a future tightening is argued from the log of a real job
+// rather than from the last person's recollection.
+func logPTYTiming(t *testing.T, res PTYResult) {
+	t.Helper()
+	end := "deadline"
+	switch {
+	case res.Exited:
+		end = "exited"
+	case res.Settled:
+		end = "settled"
+	case res.Blocked:
+		end = "blocked-early"
+	}
+	t.Logf("PTY TIMING elapsed=%s ended=%s max-output-gap=%s",
+		res.Elapsed.Round(100*time.Millisecond), end,
+		res.MaxOutputGap.Round(100*time.Millisecond))
 }
 
 // awaitQuiescence blocks until output settles, the process exits, or the

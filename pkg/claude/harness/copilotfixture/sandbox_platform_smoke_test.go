@@ -38,7 +38,7 @@ import (
 // TestCopilotDefaultCachePlacementMatchesBaseline is the credential-free proof
 // behind the baseline's platform split.
 func TestCopilotDefaultCachePlacementMatchesBaseline(t *testing.T) {
-	requireSmoke(t)
+	requireSmokeParallel(t)
 
 	mock := copilotfixture.NewMockProvider(t, []copilotfixture.Turn{
 		{Text: "MOCK PLATFORM ANSWER"},
@@ -132,7 +132,7 @@ func TestCopilotDefaultCachePlacementMatchesBaseline(t *testing.T) {
 // This asserts the property at its source: the binary the CLI unpacked is
 // really executable, and really executes.
 func TestCopilotPackageCacheIsExecutable(t *testing.T) {
-	requireSmoke(t)
+	requireSmokeParallel(t)
 
 	mock := copilotfixture.NewMockProvider(t, []copilotfixture.Turn{
 		{Text: "MOCK EXEC ANSWER"},
@@ -220,7 +220,7 @@ func TestCopilotPackageCacheIsExecutable(t *testing.T) {
 // If this ever fails, the tclaude-layer posture is no longer "one wall" and the
 // contract in harness/copilot_sandbox.go has to change rather than be trusted.
 func TestCopilotInnerSandboxDefaultIsOff(t *testing.T) {
-	requireSmoke(t)
+	requireSmokeParallel(t)
 
 	mock := copilotfixture.NewMockProvider(t, []copilotfixture.Turn{
 		{Text: "MOCK SANDBOX ANSWER"},
@@ -256,7 +256,7 @@ func TestCopilotInnerSandboxDefaultIsOff(t *testing.T) {
 // still completes a turn (so the file is valid input, not something the CLI
 // rejects), and the gate independently refuses that same directory.
 func TestCopilotInnerSandboxEnabledIsDetectedBeforeLaunch(t *testing.T) {
-	requireSmoke(t)
+	requireSmokeParallel(t)
 
 	mock := copilotfixture.NewMockProvider(t, []copilotfixture.Turn{
 		{Text: "MOCK ENABLED-SANDBOX ANSWER"},
@@ -303,7 +303,7 @@ func TestCopilotInnerSandboxEnabledIsDetectedBeforeLaunch(t *testing.T) {
 // runs before tclaude could observe any enforcement, and it is what makes the
 // legacy file the deciding one.
 func TestCopilotLegacyConfigMigratesIntoSettings(t *testing.T) {
-	requireSmoke(t)
+	requireSmokeParallel(t)
 
 	mock := copilotfixture.NewMockProvider(t, []copilotfixture.Turn{
 		{Text: "MOCK LEGACY-CONFIG ANSWER"},
@@ -374,7 +374,7 @@ func TestCopilotLegacyConfigMigratesIntoSettings(t *testing.T) {
 // refuse it: the assert-off contract failing in the direction that looks safe
 // and is simply wrong.
 func TestCopilotLegacyConfigMergeIsShallow(t *testing.T) {
-	requireSmoke(t)
+	requireSmokeParallel(t)
 
 	mock := copilotfixture.NewMockProvider(t, []copilotfixture.Turn{
 		{Text: "MOCK SHALLOW-MERGE ANSWER"},

@@ -1034,6 +1034,28 @@ jobs:
             && echo "bwrap can create a namespace" \
             || echo "::warning::bwrap cannot create a namespace; the enforcing arm will not run"
 
+      # -parallel 8 deliberately oversubscribes the runner's 4 vCPUs, and is
+      # not a CPU bet. These scenarios are overwhelmingly IDLE: each launches a
+      # CLI on a pseudo-terminal and then waits — for the screen to stop
+      # redrawing, for a quiet window to close, for a prompt nobody will ever
+      # answer. Sized to cores, this job spent most of ten minutes with the
+      # runner parked.
+      #
+      # What makes the oversubscription safe is that no scenario classifies on
+      # absolute time: every verdict is relative to the CLI's own output — it
+      # settled when its evidence arrived, it is blocked when its transcript
+      # stood still — and the absolute deadlines are outer bounds set well
+      # above any observed run. Contention stretches a scenario; it does not
+      # change what the scenario concludes.
+      #
+      # 2x is what was VERIFIED, not assumed: the suite was run green under a
+      # deliberately harsher budget — pinned to two cores at -parallel 4, the
+      # same 2x ratio this line asks of a four-core runner — and the timing
+      # constants (blockedQuiet in particular) were sized from the output gaps
+      # that run produced. The scenarios that could not take it are sequential
+      # and say why: see requireSmokeParallel, requireSmokeGolden, and the
+      # PTY TIMING lines in this job's own log, which are what a future
+      # re-tuning should argue from.
       - name: Copilot fixture smoke
         shell: bash
         env:
@@ -1041,7 +1063,7 @@ jobs:
         run: |
           set -o pipefail
           go test ./pkg/claude/harness/copilotfixture/... \
-            -run '${{ matrix.run_filter }}' -v -count=1 -timeout 1500s 2>&1 | tee "$RUNNER_TEMP/copilot-fixtures.log"
+            -run '${{ matrix.run_filter }}' -v -count=1 -parallel 8 -timeout 1500s 2>&1 | tee "$RUNNER_TEMP/copilot-fixtures.log"
 
       # A skipped test still exits 0. The gate is an env var, so a typo or a
       # rename would turn this job into a silent no-op that reports success
@@ -1307,7 +1329,7 @@ jobs:
           # gate below, which was written for precisely that case.
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=1 || true
           go test ./pkg/claude/harness/copilotfixture/... \
-            -run 'TestCopilotNativeSandbox' -v -count=1 -timeout 900s 2>&1 \
+            -run 'TestCopilotNativeSandbox' -v -count=1 -parallel 8 -timeout 900s 2>&1 \
             | tee "$RUNNER_TEMP/copilot-fixtures-nobackend.log"
 
       - name: Require the backend-denied arm to have run
