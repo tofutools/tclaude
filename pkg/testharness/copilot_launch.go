@@ -95,6 +95,7 @@ type CopilotLaunch struct {
 	// is then ignored is precisely the regression this seam exists to catch.
 	AllowAllTools   bool
 	AllowAllPaths   bool
+	AllowAllURLs    bool
 	NoAskUser       bool
 	DisallowTempDir bool
 	AddDirs         []string
@@ -322,15 +323,33 @@ func (l *CopilotLaunch) parseArgs() error {
 		case arg == "--allow-tool", strings.HasPrefix(arg, "--allow-tool="):
 			return copilotUnmodelledFlag("--allow-tool",
 				"no scenario measured whether an allow rule closes the approval prompt")
-		case arg == "--allow-url", arg == "--deny-url":
-			return copilotUnmodelledFlag(arg,
-				"URL rule enforcement was measured only as PARSE acceptance, and the "+
-					"contract records parsing and enforcement demonstrably coming apart "+
-					"for the wildcard spellings")
 		case arg == "--allow-all-urls":
-			return copilotUnmodelledFlag("--allow-all-urls",
-				"no scenario measured it; the URL gate's only measured closer is "+
-					"--allow-all-tools, on the shell path")
+			// Measured to close the web-fetch URL prompt on its own, which is
+			// what proves that prompt is a URL decision rather than ordinary
+			// tool approval (entry web-fetch-url-access, result 2).
+			l.AllowAllURLs = true
+		case arg == "--allow-url":
+			return copilotUnmodelledFlag(arg,
+				"no scenario measured a URL ALLOW rule; only the deny side was")
+		case arg == "--deny-url":
+			value, valErr := copilotFlagValue(args, &i, arg)
+			if valErr != nil {
+				return valErr
+			}
+			return copilotUnimplementedFlag(arg+" "+value,
+				"host-scoped --deny-url is MEASURED as enforced and the wildcard forms "+
+					"as inert (entry web-fetch-url-access), but this simulator implements "+
+					"URL denies only through --deny-tool's bare kind")
+		case arg == "--excluded-tools":
+			value, valErr := copilotFlagValue(args, &i, arg)
+			if valErr != nil {
+				return valErr
+			}
+			return copilotUnimplementedFlag(arg+" "+value,
+				"tool REMOVAL is measured — `--excluded-tools web_fetch` drops the tool "+
+					"from the catalog and a call to it answers \"Tool 'web_fetch' does not "+
+					"exist\" without deadlocking — but this simulator models a fixed tool "+
+					"catalog and cannot express a removed tool")
 		case arg == "--mode", arg == "--plan", arg == "--autopilot":
 			return copilotUnmodelledFlag(arg,
 				"the agent-mode axis is a separate autonomy contract with its own "+
@@ -381,22 +400,62 @@ func (l *CopilotLaunch) addDenyTool(flag, value string) error {
 	if err := copilotCheckRulePattern(flag, value); err != nil {
 		return err
 	}
-	kind, _, _ := strings.Cut(value, "(")
-	switch kind {
-	case "url":
-		return copilotUnmodelledFlag(flag+" "+value,
-			"URL rule ENFORCEMENT is unfixtured: the contract measured parse "+
-				"acceptance only, records the wildcard spellings matching nothing at "+
-				"runtime, and reports the domain-scoped ones being enforced from a rig "+
-				"whose scenarios are not committed")
-	case "write":
-		return copilotUnmodelledFlag(flag+" "+value,
-			"this simulator models no write tool, so a write rule could never match "+
-				"a call it produces — keeping it would be a rule that silently does "+
-				"nothing")
+	kind, pattern, scoped := strings.Cut(strings.TrimSuffix(value, ")"), "(")
+	switch {
+	case kind == "url" && !scoped:
+		// The BARE KIND is a working blanket URL deny, measured per spelling by
+		// entry `web-fetch-url-access` result 4: it denies every URL at the
+		// permission layer, with no prompt and before name resolution, while
+		// paired with --allow-all-tools — so a launch-time deny beats a
+		// launch-time blanket allow on the URL axis. Modelled, because it is
+		// the one URL rule tclaude could actually render as a default.
+	case kind == "url" && copilotWildcardURLPattern(pattern):
+		// Measured INERT, by the same entry: `url(*)` parses and then matches
+		// nothing, falling through to the network layer. Kept and modelled as
+		// matching nothing, which is the faithful behaviour and the useful one
+		// — a tclaude default that believed this was a deny should show the URL
+		// going through, not a simulator that quietly makes it work.
+	case kind == "url":
+		// Host-scoped rules ARE enforced (measured), so ignoring one would
+		// model a real deny as an allow. This simulator does not implement
+		// host matching, so it refuses rather than pretending either way.
+		return copilotUnimplementedFlag(flag+" "+value,
+			"host-scoped URL denies are MEASURED as enforced at the permission layer "+
+				"(entry web-fetch-url-access), but this simulator implements only the "+
+				"bare-kind blanket deny — it does not match hosts")
+	case kind == "write":
+		return copilotUnimplementedFlag(flag+" "+value,
+			"this simulator models no write tool, so a write rule could never match a "+
+				"call it produces")
 	}
 	l.DenyTools = append(l.DenyTools, value)
 	return nil
+}
+
+// copilotWildcardURLPattern reports whether a URL rule pattern is one of the
+// spellings measured to match nothing at runtime.
+func copilotWildcardURLPattern(pattern string) bool {
+	switch pattern {
+	case "*", "https://*", "http://*", "*.*":
+		return true
+	}
+	return false
+}
+
+// copilotUnimplementedFlag is the refusal for behaviour the fixtures DO
+// establish but this simulator does not reproduce.
+//
+// It is a different sentence from copilotUnmodelledFlag on purpose, and the
+// distinction is the whole reason both exist: "nobody has measured this" tells
+// the reader to go and measure, while "this is measured and we chose not to
+// implement it" tells them the evidence is already committed and the work is
+// here. Collapsing the two would leave a stale to-do pointing at a fixture that
+// already exists.
+func copilotUnimplementedFlag(flag, why string) error {
+	return fmt.Errorf(
+		"copilot launch: %s is MEASURED BUT NOT IMPLEMENTED by this simulator — %s. "+
+			"Refused rather than accepted-and-ignored, since ignoring a rule the real "+
+			"CLI enforces models a deny as an allow", flag, why)
 }
 
 // copilotUnmodelledFlag is the refusal for a flag the CLI accepts but this

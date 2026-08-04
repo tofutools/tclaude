@@ -139,11 +139,15 @@ func TestParseCopilotLaunchGrammar(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, []string{"shell(echo)"}, launch.DenyTools)
 	})
-	for _, pattern := range []string{"url(github.com)", "url(*)", "write(/tmp)"} {
-		t.Run("refuses the unenforceable "+pattern, func(t *testing.T) {
+	// A rule whose enforcement is MEASURED but not implemented here is refused
+	// with a message that says so, rather than the "nobody measured it" one:
+	// the evidence is committed, so the reader's next step is code, not a
+	// fixture.
+	for _, pattern := range []string{"url(github.com)", "write(/tmp)"} {
+		t.Run("refuses the measured-but-unimplemented "+pattern, func(t *testing.T) {
 			_, err := ParseCopilotLaunch("copilot --deny-tool '" + pattern + "'")
 			require.Error(t, err)
-			assert.Contains(t, err.Error(), "UNMODELLED")
+			assert.Contains(t, err.Error(), "MEASURED BUT NOT IMPLEMENTED")
 		})
 	}
 }
@@ -384,19 +388,77 @@ func TestCopilotSimLaunchDenySurvivesInPaneAllowAll(t *testing.T) {
 		"a denial is not a deadlock: the model gets an answer and the turn continues")
 }
 
-// A URL deny never reaches the gate model at all: the launch parser refuses it.
-//
-// The earlier revision of this simulator kept such rules and skipped them when
-// matching, which modelled `--deny-tool 'url(github.com)'` as ALLOWED — and the
-// contract's corroborating evidence reports domain-scoped URL rules being
-// enforced with no prompt, so that was wrong in the one direction a permission
-// simulator must never be wrong in. Refusing at parse is what makes the gap
-// impossible to reach silently.
-func TestParseCopilotLaunchRefusesURLDenyRules(t *testing.T) {
-	_, err := ParseCopilotLaunch(
-		"copilot --allow-all-tools --deny-tool 'url(github.com)'")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "ENFORCEMENT is unfixtured")
+// The URL deny rules, per SPELLING, as entry `web-fetch-url-access` measured
+// them. This is the one place the contract's own warning — parse acceptance is
+// not enforcement — has teeth, because the two spellings below parse
+// identically and behave oppositely.
+func TestCopilotSimURLDenyRulesPerSpelling(t *testing.T) {
+	// The BARE KIND is a working blanket deny at the permission layer, and it
+	// beats a launch-time --allow-all-tools. A denial is not a deadlock: the
+	// model is told, and the turn continues.
+	t.Run("bare url denies even under --allow-all-tools", func(t *testing.T) {
+		sim, _ := newTrustedCopilotSim(t,
+			"copilot --session-id "+copilotSimUUID+" --allow-all-tools --deny-tool url")
+		sim.StartTurn("fetch it")
+		assert.Equal(t, CopilotToolDenied, sim.RequestTool(CopilotToolCall{
+			Kind: CopilotToolWebFetch, URL: "https://probe.invalid/x"}))
+		blocked, _ := sim.Blocked()
+		assert.False(t, blocked, "a denial lets the turn continue")
+	})
+
+	// The wildcard form parses and then matches NOTHING, falling through to the
+	// network layer. Modelling it as a working deny would let a tclaude default
+	// that does nothing in production look effective in every test — so the
+	// simulator must show the URL going through.
+	t.Run("url(*) is inert", func(t *testing.T) {
+		sim, _ := newTrustedCopilotSim(t,
+			"copilot --session-id "+copilotSimUUID+" --allow-all-tools --deny-tool 'url(*)'")
+		sim.StartTurn("fetch it")
+		assert.Equal(t, CopilotToolAllowed, sim.RequestTool(CopilotToolCall{
+			Kind: CopilotToolWebFetch, URL: "https://probe.invalid/x"}))
+	})
+}
+
+// web_fetch is the THIRD independent deadlock source, and the last one to be
+// measured. Entry `web-fetch-url-access` had to drop COPILOT_OFFLINE — which
+// removes the tool from the catalog entirely — and replace that hermeticity
+// with an egress wall in order to ask the question at all.
+func TestCopilotSimWebFetchGate(t *testing.T) {
+	call := CopilotToolCall{Kind: CopilotToolWebFetch, URL: "https://probe.invalid/x"}
+
+	t.Run("blocks with no flags", func(t *testing.T) {
+		sim, _ := newTrustedCopilotSim(t, "copilot --session-id "+copilotSimUUID)
+		sim.StartTurn("fetch it")
+		assert.Equal(t, CopilotToolBlocked, sim.RequestTool(call))
+		_, reason := sim.Blocked()
+		assert.Contains(t, reason, "attempting to access the following URL")
+		sim.FinishTurn()
+		assert.True(t, sim.IsAlive(), "a parked pane never ends its turn")
+	})
+
+	// Both closers were measured independently. --allow-all-urls closing it on
+	// its own is what proves the prompt is a URL decision rather than ordinary
+	// tool approval.
+	for _, flags := range []string{"--allow-all-tools", "--allow-all-tools --no-ask-user", "--allow-all-urls"} {
+		t.Run("closed by "+flags, func(t *testing.T) {
+			sim, _ := newTrustedCopilotSim(t,
+				"copilot --session-id "+copilotSimUUID+" "+flags)
+			sim.StartTurn("fetch it")
+			assert.Equal(t, CopilotToolAllowed, sim.RequestTool(call))
+		})
+	}
+
+	// But --allow-all-urls was measured against web_fetch ONLY. The shell path
+	// is a different URL consumer, and the two agreeing about --allow-all-tools
+	// does not license generalising the other flag across them.
+	t.Run("does not license the shell path", func(t *testing.T) {
+		launch, err := ParseCopilotLaunch(
+			"copilot --session-id " + copilotSimUUID + " --allow-all-urls")
+		require.NoError(t, err)
+		assert.True(t, launch.AllowAllURLs)
+		assert.False(t, launch.AllowAllTools,
+			"--allow-all-urls is not tool approval")
+	})
 }
 
 // The session-state files production reads: workspace.yaml carries the launch
@@ -515,13 +577,24 @@ func TestParseCopilotLaunchBlanketAllowIsNotToolApproval(t *testing.T) {
 // accepted and ignored one would model "allowed" exactly where reality denies.
 func TestParseCopilotLaunchRefusesUnmodelledPermissionFlags(t *testing.T) {
 	for _, arg := range []string{
-		"--allow-tool 'shell(rm)'", "--allow-url github.com", "--deny-url github.com",
-		"--allow-all-urls", "--mode plan", "--plan", "--autopilot",
+		"--allow-tool 'shell(rm)'", "--allow-url github.com",
+		"--mode plan", "--plan", "--autopilot",
 	} {
 		t.Run(arg, func(t *testing.T) {
 			_, err := ParseCopilotLaunch("copilot " + arg)
 			require.Error(t, err, "an unmodelled permission flag must not parse silently")
 			assert.Contains(t, err.Error(), "UNMODELLED")
+		})
+	}
+
+	// And the flags whose behaviour IS measured but which this simulator does
+	// not implement are refused with the other message, so a reader is sent to
+	// the code rather than to a fixture that already exists.
+	for _, arg := range []string{"--deny-url github.com", "--excluded-tools web_fetch"} {
+		t.Run(arg, func(t *testing.T) {
+			_, err := ParseCopilotLaunch("copilot " + arg)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "MEASURED BUT NOT IMPLEMENTED")
 		})
 	}
 }

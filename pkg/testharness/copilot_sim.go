@@ -40,17 +40,39 @@ import (
 // two disagreed with the binary, the binary won, and in one case (the plan's
 // proposed `--deny-tool 'url()'` default) it won by killing the launch.
 //
-// # What is deliberately NOT modelled
+// # Two kinds of gap, kept apart on purpose
 //
-//   - web_fetch. The contract records the shell path's URL behaviour and
-//     records, at length, that COPILOT_OFFLINE=true removes web_fetch from the
-//     catalog so the suite structurally could not ask about it. A tool call
-//     naming it therefore fails the test loudly rather than being answered by
-//     a guess (see RequestTool).
-//   - Whether a rule pattern is ENFORCED as opposed to parsed. The contract
-//     records that the two come apart for URL rules — `url(*)` parses and
-//     matches nothing — so the gate model reads only tool-kind deny rules as
-//     working denies and treats a URL deny as unmodelled.
+// "Nobody measured this" and "this is measured and we chose not to implement
+// it" are different sentences, and collapsing them leaves a stale to-do
+// pointing at a fixture that already exists. Every refusal below says which one
+// it is: copilotUnmodelledFlag for the first, copilotUnimplementedFlag for the
+// second.
+//
+// MEASURED BUT NOT IMPLEMENTED HERE — the evidence is committed; this
+// simulator's model is narrower than the binary:
+//
+//   - Host-scoped URL denies (`--deny-tool 'url(host)'`, `--deny-url host`).
+//     Entry `web-fetch-url-access` measured them enforced at the permission
+//     layer, before name resolution. This models only the bare-kind blanket
+//     deny, so a host-scoped rule is refused at parse — ignoring one would
+//     model a real deny as an allow.
+//   - Tool removal (`--excluded-tools web_fetch`). Measured to drop the tool
+//     from the catalog, with a call to it answering "Tool 'web_fetch' does not
+//     exist" and the turn continuing — the fail-closed option a detached
+//     posture wants. This simulator has a fixed catalog and cannot express a
+//     removed tool.
+//
+// UNMEASURED — no committed scenario answers it, so a launch whose gate
+// decision would depend on one fails the test rather than being guessed:
+//
+//   - Whether `--allow-all` / `--yolo`, in-pane `/allow-all`, or ambient
+//     COPILOT_ALLOW_ALL open a gate they were never measured against. See
+//     requireNoUnmeasuredWidening.
+//   - Whether a launch-time URL deny survives post-launch widening from inside
+//     the pane. The shell axis has that measurement; the URL axis explicitly
+//     does not. See requireLaunchDenyIsMeasured.
+//   - Whether `--allow-all-urls` closes the SHELL path's URL prompt. It was
+//     measured against web_fetch only.
 //   - The safe-command allowlist. A committed scenario measured `echo`
 //     auto-approving and `rm -f ./victim` blocking; four further commands are
 //     reported blocking by an independent rig whose scenarios are NOT
@@ -61,7 +83,7 @@ import (
 //     this simulator invents.
 //   - The relative precedence of the trust / path / URL / tool dialogs beyond
 //     trust coming first. Trust is measured as the first gate (zero provider
-//     requests); the other three were each measured in isolation. blockReason
+//     requests); the others were each measured in isolation. blockReason
 //     reports them in a fixed order and says so.
 type CopilotSim struct {
 	// ConvID is the session id — the session-state directory name, the value
@@ -132,6 +154,15 @@ const (
 	// CopilotToolAskUser is the ask_user tool: the second deadlock source,
 	// removable only by --no-ask-user.
 	CopilotToolAskUser CopilotToolKind = "ask_user"
+	// CopilotToolWebFetch is Copilot's built-in web fetch — the THIRD
+	// independent deadlock source, and the last one to be measured. Entry
+	// `web-fetch-url-access`: with trust granted and no permission flags a
+	// web_fetch call blocks on the URL dialog and the turn never ends. It is
+	// its own kind rather than a shell call with a URL because the two are
+	// different tools reaching the same gate, and the measurement that closed
+	// this gap had to drop COPILOT_OFFLINE (which removes web_fetch from the
+	// catalog entirely) to ask the question at all.
+	CopilotToolWebFetch CopilotToolKind = "web_fetch"
 )
 
 // CopilotToolCall is one tool call a scripted turn makes.
@@ -461,17 +492,6 @@ func (c *CopilotSim) RequestTool(call CopilotToolCall) CopilotToolOutcome {
 	if name == "" {
 		name = string(call.Kind)
 	}
-	if name == "web_fetch" {
-		// Guardrail, and the contract is explicit about why: COPILOT_OFFLINE
-		// removes web_fetch from the catalog, so no committed scenario has ever
-		// observed whether it is gated with tool approval or independently of
-		// it. Answering here would manufacture evidence.
-		c.t.Fatalf("copilot sim: web_fetch's permission behaviour is UNMEASURED " +
-			"(permission_contract.json entry url-access records that " +
-			"COPILOT_OFFLINE removes it from the catalog). Model it only once a " +
-			"fixture establishes it.")
-	}
-
 	outcome, seq := c.decideTool(call, name)
 	if outcome == CopilotToolAllowed {
 		// Outside the lock: see applyHook.
@@ -498,7 +518,7 @@ func (c *CopilotSim) decideTool(call CopilotToolCall, name string) (CopilotToolO
 	//    now enabled", and the tool was still refused. Denial precedence holds
 	//    at RUNTIME, not merely at launch — which is why c.inPaneAllowAll is
 	//    read after this arm and not before it.
-	if rule, ok := c.denyRuleFor(name, call.Command); ok {
+	if rule, ok := c.denyRuleFor(name, call.Command, call.URL); ok {
 		_ = c.appendEventLocked(map[string]any{
 			"type": "tool.result",
 			"data": map[string]any{
@@ -557,17 +577,30 @@ func (c *CopilotSim) blockReasonLocked(call CopilotToolCall) string {
 		return copilotfixture.PathPromptMarker + ": " + call.Path
 	}
 
+	// The web-fetch tool. Contract entry `web-fetch-url-access`: it blocks on
+	// the URL dialog with no permission flags, and BOTH --allow-all-tools and
+	// --allow-all-urls close it independently — the latter is what proves the
+	// prompt is a URL decision rather than ordinary tool approval.
+	if call.Kind == CopilotToolWebFetch {
+		if c.launch.AllowAllTools || c.launch.AllowAllURLs {
+			return ""
+		}
+		c.requireNoUnmeasuredWidening("the web-fetch URL gate", "web-fetch-url-access")
+		return "Copilot is attempting to access the following URL: " + call.URL
+	}
+
 	// URLs reached by the SHELL tool. Contract entry `url-access`, which
 	// corrected the TCL-973 plan in the plan's own favour: the URL dialog is
 	// real and distinct, AND --allow-all-tools closes it, so for the shell path
 	// there is no second deadlock to close and no URL deny is needed.
 	//
-	// ONLY the flag. The ambient variable and the in-pane widening were each
-	// measured against a TOOL call, never against a URL, so neither may close
-	// this gate here — requireNoUnmeasuredWidening turns a launch that would
-	// depend on one into a test failure instead of a silent allow.
+	// --allow-all-urls is deliberately NOT read as closing this one. It was
+	// measured against web_fetch, and the shell path is a different consumer
+	// whose scenarios never included it; the two paths agreeing about
+	// --allow-all-tools does not license generalising the other flag across
+	// them.
 	if call.URL != "" && !c.launch.AllowAllTools {
-		c.requireNoUnmeasuredWidening("the URL gate", "url-access")
+		c.requireNoUnmeasuredWidening("the shell URL gate", "url-access")
 		return "Copilot is attempting to access the following URL: " + call.URL
 	}
 
@@ -617,6 +650,10 @@ func (c *CopilotSim) requireNoUnmeasuredWidening(gate, entry string) {
 			"effect on %s is UNMEASURED — entry `in-pane-allow-all-override` "+
 			"measured only that a launch-time DENY survives it, and says so "+
 			"explicitly in its corroborating notes.", gate)
+	case c.launch.AllowAllURLs && gate == "the shell URL gate":
+		c.t.Fatalf("copilot sim: this launch carries --allow-all-urls, which entry " +
+			"`web-fetch-url-access` measured against the WEB-FETCH gate only. Whether " +
+			"it also closes the shell path's URL prompt is unmeasured.")
 	case c.launch.AmbientAllowAll() && gate != "the tool-approval gate":
 		c.t.Fatalf("copilot sim: this launch carries COPILOT_ALLOW_ALL=true, whose "+
 			"effect on %s is UNMEASURED — entry `ambient-allow-all-env` measured it "+
@@ -667,9 +704,20 @@ func underDir(path, dir string) bool {
 // is what keeps this loop honest — an earlier revision skipped URL rules
 // silently here, which modelled a domain-scoped deny as ALLOWED, the one
 // direction the contract's own evidence says is wrong.
-func (c *CopilotSim) denyRuleFor(name, command string) (string, bool) {
+func (c *CopilotSim) denyRuleFor(name, command, url string) (string, bool) {
 	for _, rule := range c.launch.DenyTools {
 		kind, pattern, hasPattern := strings.Cut(strings.TrimSuffix(rule, ")"), "(")
+		if kind == "url" {
+			// Only two URL spellings reach here; the parser refuses the rest.
+			// The bare kind is a working blanket deny at the permission layer,
+			// measured to beat a launch-time --allow-all-tools; the wildcard
+			// forms are measured INERT and must keep matching nothing.
+			if hasPattern || url == "" {
+				continue
+			}
+			c.requireLaunchDenyIsMeasured()
+			return rule, true
+		}
 		// The rule's kind names the tool: `shell(...)` matches the shell tool,
 		// `<mcp>(...)` an MCP server's tool. A shell call's default Name is
 		// already "shell" (CopilotToolShell), so one comparison covers both.
@@ -684,6 +732,26 @@ func (c *CopilotSim) denyRuleFor(name, command string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// requireLaunchDenyIsMeasured guards the one thing entry
+// `web-fetch-url-access` states at a deliberately narrow width: it establishes
+// that a launch-time URL deny beats a launch-time blanket ALLOW, and says
+// explicitly that whether the deny also survives POST-LAUNCH widening from
+// inside the pane is not measured.
+//
+// The shell axis has that second half (entry `in-pane-allow-all-override`
+// measured a launch deny surviving in-pane /allow-all); the URL axis does not,
+// and a blanket deny a pane can widen away is a different product from one it
+// cannot.
+func (c *CopilotSim) requireLaunchDenyIsMeasured() {
+	c.t.Helper()
+	if c.inPaneAllowAll {
+		c.t.Fatalf("copilot sim: this pane ran in-pane /allow-all after a launch-time " +
+			"URL deny. Entry `web-fetch-url-access` establishes launch-time precedence " +
+			"only and says explicitly that surviving post-launch widening is NOT " +
+			"measured for the URL axis.")
+	}
 }
 
 // FinishTurn ends the turn with Stop — unless the pane is blocked, in which
