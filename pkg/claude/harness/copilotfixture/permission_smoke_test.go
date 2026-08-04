@@ -414,6 +414,14 @@ func TestCopilotPermissionAmbientAllowAllPromotes(t *testing.T) {
 			assert.Equal(t, tc.promotes, promoted,
 				"whether COPILOT_ALLOW_ALL=%q silently granted trust AND tool approval", tc.value)
 			assert.Equal(t, !tc.promotes, res.Contains(copilotfixture.TrustPromptMarker))
+			if promoted {
+				// The row that reaches the provider is also the only row in the
+				// matrix that injects an extra environment variable, so it is
+				// where a credential arriving through the environment would be
+				// least expected and least noticed. Every other scenario that
+				// reaches the provider checks this.
+				assertCredentialFree(t, mock)
+			}
 		})
 	}
 	assertScenarioRowsMatchRegistry(t, permissionScenarios.AmbientAllowAll, rows)

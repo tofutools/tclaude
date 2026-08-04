@@ -1151,7 +1151,13 @@ jobs:
               TestCopilotPermissionNoAskUserRemovesTheTool
               TestCopilotPermissionResumeSubmitsPrompt
             )
-            required_subtests=(
+            # += and NOT =. A plain assignment here would REPLACE the shared
+            # array above rather than extend it, silently dropping the five
+            # both-platform path rows from the Linux gate -- which is exactly
+            # the regression this line shipped with once: the fix that added
+            # macOS path coverage took Linux path coverage away, and both arms
+            # stayed green because a gate that requires nothing passes.
+            required_subtests+=(
               'TestCopilotPermissionTrustBypassSurface/allow-all-tools'
               'TestCopilotPermissionTrustBypassSurface/allow-all'
               'TestCopilotPermissionTrustBypassSurface/allow-all-paths'
@@ -1179,6 +1185,28 @@ jobs:
               'TestCopilotPermissionAmbientAllowAllPromotes/empty'
             )
           fi
+          # The gate's own integrity check. Everything below verifies that the
+          # TESTS ran; nothing yet verifies that the GATE still asks about
+          # them, and a required list that quietly lost entries passes exactly
+          # like one that is satisfied. These five are the both-platform path
+          # contract, so their presence is asserted on BOTH arms before the
+          # list is used.
+          for path_row in \
+            'TestCopilotPermissionPathGrants/outside-all/no-path-flags' \
+            'TestCopilotPermissionPathGrants/outside-all/add-dir' \
+            'TestCopilotPermissionPathGrants/outside-all/allow-all-paths' \
+            'TestCopilotPermissionPathGrants/in-temp/default' \
+            'TestCopilotPermissionPathGrants/in-temp/disallow-temp-dir'
+          do
+            found=0
+            for entry in "${required_subtests[@]}"; do
+              [[ "$entry" == "$path_row" ]] && found=1 && break
+            done
+            if (( found == 0 )); then
+              echo "::error::The anti-skip list lost '$path_row' on ${{ matrix.platform }}. The path contract is required on BOTH platforms; a branch above almost certainly assigned required_subtests with = instead of +=."
+              exit 1
+            fi
+          done
           missing=()
           for test_name in "${required[@]}"; do
             grep -qE "^--- PASS: $test_name " "$log" || missing+=("$test_name")

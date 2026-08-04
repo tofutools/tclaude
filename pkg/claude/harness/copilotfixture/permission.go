@@ -138,6 +138,18 @@ var permissionDenialMarkers = []string{
 	"Permission denied",
 }
 
+// PermissionDenialMarkers returns the denial phrases, so a test can assert a
+// property of the WHOLE set rather than of a hand-copied sample of it.
+//
+// The accessor exists because the alternative silently rots. A test that lists
+// the markers itself keeps passing when a marker is added to the real set, and
+// its stated guarantee -- that denial beats execution for every marker -- then
+// covers only the spellings someone happened to copy. Returning a copy keeps
+// the set itself immutable from outside.
+func PermissionDenialMarkers() []string {
+	return append([]string(nil), permissionDenialMarkers...)
+}
+
 // ToolResults extracts the tool-role message contents from one recorded
 // provider request on the COMPLETIONS wire, which is how a scenario reads what
 // the CLI told the model a tool did.

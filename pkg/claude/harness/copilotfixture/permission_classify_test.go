@@ -128,15 +128,16 @@ func TestClassifyPermissionArms(t *testing.T) {
 }
 
 // TestClassifyPermissionDenialWinsForEveryMarker pins the ordering property
-// against the whole marker set rather than the three spellings sampled above,
-// so adding a marker cannot quietly leave a denial classifiable as execution.
+// against the whole marker set rather than the spellings sampled above, so
+// adding a marker cannot quietly leave a denial classifiable as execution.
 func TestClassifyPermissionDenialWinsForEveryMarker(t *testing.T) {
-	for _, marker := range []string{
-		"Permission denied and could not request permission from user",
-		"Permission to run this tool was denied",
-		"Permission to access this URL was denied",
-		"Permission denied",
-	} {
+	markers := copilotfixture.PermissionDenialMarkers()
+	// Derived from the package rather than copied, so adding a marker extends
+	// this test automatically. A hand-written list would keep passing while
+	// covering only the spellings someone remembered, which is exactly the
+	// silent gap this test exists to prevent elsewhere.
+	require.NotEmpty(t, markers)
+	for _, marker := range markers {
 		t.Run(marker, func(t *testing.T) {
 			require.NotEmpty(t, copilotfixture.DenialMarker([]string{"prefix " + marker + " suffix"}),
 				"the marker must be recognized when embedded in a larger tool result")
