@@ -106,7 +106,16 @@ type CopilotSim struct {
 	Model      string
 	CliVersion string
 
-	t *testing.T
+	// t is the reporting surface, held as an interface rather than *testing.T
+	// so the simulator's own loud-failure guards can be tested.
+	//
+	// That is not a convenience: requireNoUnmeasuredWidening and
+	// requireLaunchDenyIsMeasured are the mechanism that stops this simulator
+	// from answering questions the fixtures never asked, and a guard nobody can
+	// exercise is a guard nobody knows still fires. A real *testing.T aborts
+	// the goroutine on Fatalf, so a test asserting "the guard fired" needs a
+	// recorder in its place.
+	t copilotSimT
 
 	mu sync.Mutex
 
@@ -140,6 +149,14 @@ var (
 	_ PaneSim      = (*CopilotSim)(nil)
 	_ paneRenderer = (*CopilotSim)(nil)
 )
+
+// copilotSimT is the subset of *testing.T the simulator uses.
+type copilotSimT interface {
+	Helper()
+	Errorf(format string, args ...any)
+	Fatalf(format string, args ...any)
+	Cleanup(func())
+}
 
 // CopilotToolKind names the permission surface a tool call touches. It exists
 // because Copilot's gates are independent axes rather than one policy: the
@@ -209,6 +226,17 @@ const (
 // so the parse failure is reported and the sim is left dead.
 func NewCopilotSim(t *testing.T, home, cwd, launchCmd string) (*CopilotSim, error) {
 	t.Helper()
+	return newCopilotSim(t, copilotfixture.LoadHookCapture(t, copilotfixture.HookScenarioClaudeDialect),
+		home, cwd, launchCmd)
+}
+
+// newCopilotSim is NewCopilotSim over the narrowed reporting interface, so the
+// package's own tests can drive it with a recorder. The hook capture is passed
+// in because loading it needs a real *testing.T.
+func newCopilotSim(t copilotSimT, capture copilotfixture.HookCapture,
+	home, cwd, launchCmd string,
+) (*CopilotSim, error) {
+	t.Helper()
 	launch, err := ParseCopilotLaunch(launchCmd)
 	if err != nil {
 		return nil, err
@@ -242,7 +270,7 @@ func NewCopilotSim(t *testing.T, home, cwd, launchCmd string) (*CopilotSim, erro
 		CliVersion: copilotfixture.PinnedCLIVersion,
 		t:          t,
 		launch:     launch,
-		capture:    copilotfixture.LoadHookCapture(t, copilotfixture.HookScenarioClaudeDialect),
+		capture:    capture,
 		createdAt:  time.Now().UTC(),
 	}
 	if c.Model == "" {

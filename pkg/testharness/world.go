@@ -73,7 +73,7 @@ type World struct {
 
 	// CopilotLaunches records, keyed by conv-id, the launch command string the
 	// PRODUCTION Copilot spawner produced for each simulated spawn. A flow
-	// test asserts on the parsed form (World.CopilotLaunch); the raw string is
+	// test asserts on the parsed form (World.CopilotLaunchCommand); the raw string is
 	// kept so a failure can print the argv that caused it.
 	copilotLaunchCmds map[string]string
 

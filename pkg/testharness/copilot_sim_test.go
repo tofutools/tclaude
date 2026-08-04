@@ -1,6 +1,7 @@
 package testharness
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/harness/copilotfixture"
 )
 
 // Tests for the Copilot simulator seam itself.
@@ -450,15 +452,109 @@ func TestCopilotSimWebFetchGate(t *testing.T) {
 
 	// But --allow-all-urls was measured against web_fetch ONLY. The shell path
 	// is a different URL consumer, and the two agreeing about --allow-all-tools
-	// does not license generalising the other flag across them.
+	// does not license generalising the other flag across them — so a shell
+	// call reaching a URL under that flag must FAIL the test rather than be
+	// answered either way.
+	//
+	// Driven as a real call, not asserted on parsed fields. A field-only
+	// version of this subtest passed while the shell gate was mutated to honour
+	// --allow-all-urls, which is the definition of a hollow test: it named the
+	// right property and could not observe it.
 	t.Run("does not license the shell path", func(t *testing.T) {
-		launch, err := ParseCopilotLaunch(
-			"copilot --session-id " + copilotSimUUID + " --allow-all-urls")
-		require.NoError(t, err)
-		assert.True(t, launch.AllowAllURLs)
-		assert.False(t, launch.AllowAllTools,
-			"--allow-all-urls is not tool approval")
+		sim, rec := newRecordingCopilotSim(t,
+			"copilot --session-id "+copilotSimUUID+" --allow-all-urls")
+		sim.StartTurn("fetch it")
+		sim.RequestTool(CopilotToolCall{
+			Kind: CopilotToolShell, Command: "curl -s https://github.com",
+			URL: "https://github.com", AutoApproved: true})
+
+		require.NotEmpty(t, rec.fatals,
+			"a shell URL call under --allow-all-urls must fail loudly: the flag was "+
+				"measured against web_fetch, and nothing establishes it reaches this gate")
+		assert.Contains(t, rec.fatals[0], "--allow-all-urls")
+		assert.Contains(t, rec.fatals[0], "WEB-FETCH gate only")
 	})
+}
+
+// The blanket-allow widenings the contract never measured against a given
+// gate. Each must fail the test rather than silently opening or closing it —
+// this is the mechanism that stops the simulator from answering a question the
+// fixtures never asked, so it needs coverage of its own.
+func TestCopilotSimUnmeasuredWideningFailsLoudly(t *testing.T) {
+	risky := CopilotToolCall{Kind: CopilotToolShell, Command: "rm -f ./victim"}
+	for _, tc := range []struct {
+		name, flags, wants string
+		call               CopilotToolCall
+	}{
+		{name: "--allow-all on the tool gate", flags: "--allow-all",
+			wants: "--allow-all/--yolo", call: risky},
+		{name: "--yolo on the tool gate", flags: "--yolo",
+			wants: "--allow-all/--yolo", call: risky},
+		{name: "ambient promotion on the path gate",
+			flags: "--allow-all-tools --disallow-temp-dir", wants: "COPILOT_ALLOW_ALL",
+			call: CopilotToolCall{Kind: CopilotToolShell, Command: "cat x",
+				Path: filepath.Join(os.TempDir(), "outside-every-grant")}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := "copilot --session-id " + copilotSimUUID + " " + tc.flags
+			if tc.wants == "COPILOT_ALLOW_ALL" {
+				cmd = "export " + CopilotAllowAllEnvVar + "=true; " + cmd
+			}
+			sim, rec := newRecordingCopilotSim(t, cmd)
+			sim.StartTurn("do it")
+			sim.RequestTool(tc.call)
+			require.NotEmptyf(t, rec.fatals, "the widening guard must fire for %s", tc.flags)
+			assert.Contains(t, rec.fatals[0], tc.wants)
+		})
+	}
+}
+
+// In-pane /allow-all after a launch-time URL deny: entry
+// `web-fetch-url-access` establishes launch-time precedence only and says
+// explicitly that surviving post-launch widening is NOT measured on the URL
+// axis. A blanket deny a pane can widen away is a different product from one it
+// cannot, so the simulator refuses to say which this is.
+func TestCopilotSimURLDenyUnderInPaneWideningFailsLoudly(t *testing.T) {
+	sim, rec := newRecordingCopilotSim(t,
+		"copilot --session-id "+copilotSimUUID+" --allow-all-tools --deny-tool url")
+	sim.Receive("/allow-all")
+	sim.Receive("Enter")
+	sim.StartTurn("fetch it")
+	sim.RequestTool(CopilotToolCall{Kind: CopilotToolWebFetch, URL: "https://probe.invalid/x"})
+
+	require.NotEmpty(t, rec.fatals)
+	assert.Contains(t, rec.fatals[0], "NOT measured")
+}
+
+// recordingT stands in for *testing.T so a guard's Fatalf can be OBSERVED
+// rather than aborting the test that is checking it fires.
+type recordingT struct {
+	*testing.T
+	fatals []string
+}
+
+func (r *recordingT) Fatalf(format string, args ...any) {
+	r.fatals = append(r.fatals, fmt.Sprintf(format, args...))
+}
+
+func (r *recordingT) Errorf(format string, args ...any) {
+	r.fatals = append(r.fatals, fmt.Sprintf(format, args...))
+}
+
+// newRecordingCopilotSim builds a started, trusted pane whose failures are
+// captured instead of fatal.
+func newRecordingCopilotSim(t *testing.T, cmd string) (*CopilotSim, *recordingT) {
+	t.Helper()
+	home, cwd := copilotSimHome(t)
+	rec := &recordingT{T: t}
+	sim, err := newCopilotSim(rec,
+		copilotfixture.LoadHookCapture(t, copilotfixture.HookScenarioClaudeDialect),
+		home, cwd, cmd)
+	require.NoError(t, err)
+	TrustCopilotFolder(t, home, cwd)
+	require.NoError(t, sim.Start())
+	require.Empty(t, rec.fatals, "the launch itself must not have failed")
+	return sim, rec
 }
 
 // The session-state files production reads: workspace.yaml carries the launch

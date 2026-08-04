@@ -433,10 +433,17 @@ func (l *CopilotLaunch) addDenyTool(flag, value string) error {
 }
 
 // copilotWildcardURLPattern reports whether a URL rule pattern is one of the
-// spellings measured to match nothing at runtime.
+// spellings MEASURED to match nothing at runtime.
+//
+// Exactly the measured set, no near-misses. An earlier revision also listed
+// `http://*` by analogy with `https://*`, which no scenario covers — and that
+// inference lands on the permissive side, since modelling a rule as inert when
+// it might be enforced turns a real deny into an allow. A spelling nobody
+// measured therefore falls through to the host-scoped arm and is refused,
+// which is the same doctrine every other unmeasured case here follows.
 func copilotWildcardURLPattern(pattern string) bool {
 	switch pattern {
-	case "*", "https://*", "http://*", "*.*":
+	case "*", "https://*", "*.*":
 		return true
 	}
 	return false
