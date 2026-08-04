@@ -1,7 +1,12 @@
 package copilotfixture
 
 import (
+	"encoding/json"
+	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -241,4 +246,120 @@ func TestSelfPacedPartitionKeepsOrderedDuplicates(t *testing.T) {
 	ordered, selfPaced := splitSelfPacedEvents(in)
 	assert.Equal(t, in, ordered, "an ordered type's repeats are evidence, not noise")
 	assert.Empty(t, selfPaced)
+}
+
+// goldenEventTypes reads the committed tool_call scenario's projected event
+// stream. The tests below are deliberately driven by the REAL fixture rather
+// than a hand-written sequence: the claim under test is about what the shipped
+// golden can and cannot detect, and a sequence invented here could drift away
+// from it without either side noticing.
+func goldenEventTypes(t *testing.T) []string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("testdata", PinnedCLIVersion, "tool_call.json"))
+	require.NoError(t, err)
+	var fixture struct {
+		Events EventObservation `json:"events"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &fixture))
+	require.NotEmpty(t, fixture.Events.Types)
+	require.Equal(t, []string{"session.background_tasks_changed"}, fixture.Events.SelfPaced,
+		"this test is about the scenario that carries the self-paced poller ticks")
+	return fixture.Events.Types
+}
+
+// TestSelfPacedPingIsPositionIndependentInTheRealGolden is the positive half of
+// the boundary, proven against the shipped fixture instead of a sample: a poller
+// tick may land ANYWHERE in the turn and the committed projection is unchanged.
+//
+// The CI flake this addresses was one tick moving across two
+// tool.execution_partial_result events. That single observed interleaving is a
+// point on this curve; asserting the whole curve is what makes a differently
+// loaded runner uninteresting rather than lucky.
+func TestSelfPacedPingIsPositionIndependentInTheRealGolden(t *testing.T) {
+	const ping = "session.background_tasks_changed"
+	want := goldenEventTypes(t)
+
+	for at := 0; at <= len(want); at++ {
+		t.Run(fmt.Sprintf("ping_at_%02d", at), func(t *testing.T) {
+			ordered, selfPaced := splitSelfPacedEvents(slices.Insert(slices.Clone(want), at, ping))
+			assert.Equal(t, want, ordered,
+				"a poller tick at index %d must not move the ordered projection", at)
+			assert.Equal(t, []string{ping}, selfPaced)
+		})
+	}
+}
+
+// TestOrderedEventsStillDetectReordering is the negative half, and the reason
+// the relaxation is a partial order rather than a shuffle.
+//
+// A projection that tolerated arbitrary reordering would have fixed the flake
+// and destroyed the fixture's purpose: nothing would remain to notice the CLI
+// running a tool before requesting it, or streaming a message after the turn
+// ended. So every adjacent transposition of two DISTINCT events in the real
+// golden is swept, and each one must change the projection — i.e. each one would
+// fail compareGolden with a genuine contract-drift diff.
+//
+// Adjacent transpositions are the sweep because they are the WEAKEST possible
+// reordering: a permutation that survived every one of them could still be
+// caught by nothing. Catching all of them implies catching every coarser
+// rearrangement of distinct events.
+func TestOrderedEventsStillDetectReordering(t *testing.T) {
+	want := goldenEventTypes(t)
+
+	// The comparison below is projection-against-projection, not
+	// projection-against-input. That distinction is what keeps this test honest:
+	// compared against the raw golden it would stay green even for a projection
+	// that mangled every input identically — sorting the stream, say — which is
+	// precisely the shuffle-tolerant projection it exists to reject.
+	baseline, _ := splitSelfPacedEvents(want)
+	require.Equal(t, want, baseline,
+		"the golden's own types must project to themselves; nothing in it is self-paced")
+
+	swaps := 0
+	for i := 0; i+1 < len(want); i++ {
+		if want[i] == want[i+1] {
+			// Swapping equal neighbours is a no-op on the type projection —
+			// the goldens record types, not identities.
+			continue
+		}
+		swaps++
+		t.Run(fmt.Sprintf("swap_%02d_%s_%s", i, want[i], want[i+1]), func(t *testing.T) {
+			shuffled := slices.Clone(want)
+			shuffled[i], shuffled[i+1] = shuffled[i+1], shuffled[i]
+			ordered, _ := splitSelfPacedEvents(shuffled)
+			assert.NotEqual(t, baseline, ordered,
+				"swapping %s and %s is real protocol drift and must still fail the golden",
+				want[i], want[i+1])
+		})
+	}
+	require.Greater(t, swaps, 10,
+		"sanity: the sweep must actually exercise the causal spine of the turn")
+}
+
+// TestSelfPacedSetStillDetectsAppearanceAndDisappearance closes the last gap the
+// set projection could plausibly leave: it records presence, so presence is what
+// it must defend.
+//
+// If the CLI stopped notifying about background tasks, or started emitting a NEW
+// event type, the golden must say so. The second half is the load-bearing one:
+// membership of selfPacedEventTypes is an argued claim about a specific emitter,
+// never a bucket a future type falls into by resembling one.
+func TestSelfPacedSetStillDetectsAppearanceAndDisappearance(t *testing.T) {
+	const ping = "session.background_tasks_changed"
+	want := goldenEventTypes(t)
+
+	t.Run("ping_disappears", func(t *testing.T) {
+		_, selfPaced := splitSelfPacedEvents(want)
+		assert.Empty(t, selfPaced,
+			"a run that stopped emitting the ping must not project the same set as one that did")
+	})
+
+	t.Run("new_type_appears", func(t *testing.T) {
+		const novel = "session.some_future_notification"
+		ordered, selfPaced := splitSelfPacedEvents(
+			slices.Insert(slices.Clone(want), 1, ping, novel))
+		assert.Contains(t, ordered, novel,
+			"an unrecognized type must land in the ORDERED stream, where the golden reports it")
+		assert.Equal(t, []string{ping}, selfPaced)
+	})
 }
