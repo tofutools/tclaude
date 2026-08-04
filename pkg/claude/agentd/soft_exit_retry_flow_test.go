@@ -115,9 +115,9 @@ func TestSoftExit_NoRetryWhenFirstExitSucceeds(t *testing.T) {
 }
 
 // Scenario: a wedged pane that ignores /exit entirely. The retry must be
-// BOUNDED — it cannot type /exit at the pane forever; the force-kill
-// fallback (escalateShutdown, covered in power_flow_test) owns finishing a
-// genuinely hung pane.
+// BOUNDED — it cannot type /exit at the pane forever. What finishes the pane
+// is the escalation ladder (TCL-1001): the soft path no longer leaves a hung
+// pane running, it kills it once the bounded attempts have had their window.
 func TestSoftExit_BoundedRetriesForHungPane(t *testing.T) {
 	f := newFlow(t)
 
@@ -139,19 +139,36 @@ func TestSoftExit_BoundedRetriesForHungPane(t *testing.T) {
 	f.AssertSoftStopped(stop)
 	agentd.WaitForBackgroundForTest()
 
-	assert.True(t, f.World.Tmux.IsAlive(tmuxSes),
-		"a pane that ignores /exit stays alive — the soft path can't force it")
 	// Bounded: 1 initial attempt + 2 retries (softExitMaxAttempts = 3) = 3
 	// total. Guards against an unbounded re-injection loop into a wedged pane.
 	assert.Equal(t, 3, countExitSends(f, target, "/exit"),
 		"soft-exit attempts must be capped (initial + retries), not infinite")
+	assert.False(t, f.World.Tmux.IsAlive(tmuxSes),
+		"a pane that ignored every bounded /exit must be escalated to a kill, not left running")
 	d, err := db.Open()
 	require.NoError(t, err)
-	var intent, eventID string
-	require.NoError(t, d.QueryRow(`SELECT exit_intent, exit_intent_event_id FROM sessions WHERE id = ?`,
-		"spwn-sxjc").Scan(&intent, &eventID))
-	assert.Empty(t, intent, "a successful send that never exits cannot leave reusable intent")
-	assert.Empty(t, eventID)
+	var exitReason string
+	require.NoError(t, d.QueryRow(
+		"SELECT COALESCE(exit_reason, '') FROM sessions WHERE id = ?",
+		"spwn-sxjc").Scan(&exitReason))
+	// An escalated kill is the daemon's own doing, so it must not reach the
+	// reaper as an unexplained close. The exit REASON is what carries that,
+	// and it is the durable half: nothing else writes it for this session.
+	//
+	// The exit INTENT is deliberately not asserted here, and the reason is
+	// worth stating. The escalation re-arms it, but the superseded retry
+	// engine has a bounded-window cleanup in flight whose CAS matches the
+	// re-armed row exactly (same session, generation, action and event id),
+	// so whichever lands last wins. In production that cleanup fires ~65s
+	// after the last re-injection — a minute after the kill, and long after
+	// the reaper has observed the pane and read the intent — so the ordering
+	// is not observable there. Under the flow harness both delays are
+	// milliseconds, which makes it a coin flip. Asserting the coin flip would
+	// buy a flake; the guarantee this test is for lives in exit_reason.
+	// TestSoftExitEscalation_KillsPaneWhoseInjectionFailed covers the re-arm
+	// itself, on the path where no cleanup is ever scheduled to race it.
+	assert.Equal(t, "daemon_kill", exitReason,
+		"an escalated kill must be recorded as daemon-owned, not left to the crash fallback")
 }
 
 // Scenario: the regression the live-PID guard exists to prevent. After a
@@ -342,7 +359,12 @@ func TestLifecycleStop_PaneGenerationBinding(t *testing.T) {
 		wantSends                               int
 		wantKill                                bool
 	}{
-		{name: "degraded soft control", slug: "degraded-soft", wantAction: "soft_stopped", wantSends: 3},
+		// The only soft row whose pane stays the SAME live pane throughout, so
+		// it is also the only one the escalation ladder acts on: the bounded
+		// re-injections are exhausted and the wedged pane is killed. The rows
+		// below drift their pane identity after delivery, which stands the
+		// ladder down (a successor is never ours to kill).
+		{name: "degraded soft control", slug: "degraded-soft", wantAction: "soft_stopped", wantSends: 3, wantKill: true},
 		{name: "degraded generation appears after delivery", slug: "degraded-appears", afterGeneration: otherGeneration, wantAction: "soft_stopped", wantSends: 1},
 		{name: "bound generation disappears after delivery", slug: "bound-missing", bound: true, afterGeneration: "missing", wantAction: "soft_stopped", wantSends: 1},
 		{name: "bound generation mismatches after delivery", slug: "bound-mismatch", bound: true, afterGeneration: otherGeneration, wantAction: "soft_stopped", wantSends: 1},

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // Turn scripts the mock's answer to one provider request. A scenario supplies
@@ -34,6 +35,16 @@ type Turn struct {
 	// and 429 retries 5x for ~100s. A negative-path fixture on 500 or 429
 	// would spend its entire runtime in backoff.
 	FailStatus int
+
+	// ChunkDelay paces the content deltas of a streamed Text turn.
+	//
+	// It exists so a scenario can hold the CLI in the state it wants to
+	// observe. A TUI that has finished its turn is back at its input prompt,
+	// where everything works; the interesting question — which keystrokes a
+	// BUSY Copilot accepts — is only askable while the answer is still
+	// arriving, and a mock that streams as fast as the socket allows leaves no
+	// window in which to ask it.
+	ChunkDelay time.Duration
 }
 
 // ToolCall is the function call a Turn emits.
@@ -308,6 +319,9 @@ func (m *MockProvider) writeStream(w http.ResponseWriter, model string, turn Tur
 	} else {
 		send(chunk(choice(map[string]any{"role": "assistant", "content": ""}, nil)))
 		for _, piece := range splitForStreaming(turn.Text) {
+			if turn.ChunkDelay > 0 {
+				time.Sleep(turn.ChunkDelay)
+			}
 			send(chunk(choice(map[string]any{"content": piece}, nil)))
 		}
 		send(chunk(choice(map[string]any{}, "stop")))

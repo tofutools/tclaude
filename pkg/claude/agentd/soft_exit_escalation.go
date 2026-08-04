@@ -1,0 +1,233 @@
+package agentd
+
+import (
+	"log/slog"
+	"time"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
+)
+
+// The soft-exit escalation ladder.
+//
+// A soft stop types the harness's exit command into the pane and hopes. Until
+// TCL-1001 that hope was the whole plan: the bounded re-injection retry was
+// the last thing that ever happened to a pane which would not go, and the
+// callers that DEPEND on the pane actually closing — retire's agent-directory
+// and worktree cleanup — simply waited out their 60 s grace and then skipped
+// the cleanup, leaving both the pane and the directories behind. That is the
+// operator-reported failure: two Copilot agents retired, panes still running,
+// "agent-owned directories kept because agent did not exit within grace".
+//
+// So a delivered-or-failed soft exit now starts a watchdog. It gives the
+// injection (and its two retries) a real window to work, and when the pane is
+// still the same live pane at the end of it, escalates:
+//
+//	1. tmux kill-pane on the exact pane id (what force-stop already does)
+//	2. SIGTERM to the pane process group
+//	3. SIGKILL to the pane process group
+//
+// Ordering is deliberate and not merely tidy. The graceful layers are what let
+// a harness write its own end-of-session state — Copilot's durable
+// session.shutdown event, which session-lifetime usage totals are computed
+// from — so -9 is reached only after the two politer layers have each been
+// given their turn and failed.
+//
+// Every step re-checks the frozen pane identity first. A stop can be followed
+// within seconds by a resume that re-derives the same tmux session name, and a
+// watchdog that killed on name alone would execute a brand new agent.
+
+// softExitEscalationDeadline is how long the pane has to close on its own
+// after the first soft-exit delivery before the ladder starts.
+//
+// It sits beyond the last bounded re-injection (softExitRetryDelay ×
+// softExitMaxAttempts ≈ 8 s) so a pane that honours the third attempt gets a
+// chance to act on it before anything is killed — though only about two
+// seconds of one, so a harness whose exit takes longer than that from its
+// final prompt will be escalated rather than waited for. That is the intended
+// trade: the deadline also has to stay far below retireWorktreeExitGrace
+// (60 s), which is what makes retire cleanup run at all, and a stop is a
+// request to end the session rather than to negotiate about it.
+var softExitEscalationDeadline = 10 * time.Second
+
+// softExitEscalationSignalGrace is how long each signal step waits for the
+// process to disappear before the next, harsher one.
+var softExitEscalationSignalGrace = 2 * time.Second
+
+// softExitEscalationPollInterval is how often the watchdog re-probes the pane
+// while waiting.
+var softExitEscalationPollInterval = 250 * time.Millisecond
+
+// daemonEscalatedKillReason marks a session the daemon killed because its
+// soft exit never took. Without it an escalated kill of a Claude Code pane
+// would reach the reaper with no recorded reason and be classified
+// "unexpected" — i.e. reported to the operator as a crash, when in fact
+// tclaude did it on purpose.
+const daemonEscalatedKillReason = "daemon_kill"
+
+// scheduleSoftExitEscalation backgrounds the ladder for one stopped target.
+// lifecycleAction/relatedEventID are the same attribution the caller armed
+// before injecting, re-armed at the kill so an escalation stays daemon-owned
+// even when the injection failed and its intent was cleared.
+func scheduleSoftExitEscalation(target *lifecycleTarget, lifecycleAction, relatedEventID, reason string) {
+	if target == nil {
+		return
+	}
+	goBackground(func() {
+		if waitForLifecycleTargetGone(target, softExitEscalationDeadline) {
+			return
+		}
+		escalateStuckSoftExit(target, lifecycleAction, relatedEventID, reason)
+	})
+}
+
+// waitForLifecycleTargetGone polls until the frozen target is no longer a live
+// pane, or the window closes. It reports true when there is nothing left to
+// escalate against — the pane died, its session vanished, or the identity
+// changed (a successor owns the name now, and it is not ours to kill).
+func waitForLifecycleTargetGone(target *lifecycleTarget, window time.Duration) bool {
+	deadline := time.Now().Add(window)
+	for {
+		if softExitEscalationPollForTest != nil {
+			softExitEscalationPollForTest()
+		}
+		probe, err := probeLifecyclePane(target.tmuxSession)
+		switch {
+		case err != nil || probe.state == paneProbeUnknown:
+			// A probe that cannot be read is not evidence of a live pane. Only
+			// a confirmed still-listed session keeps the ladder armed.
+			if alive, known := lifecycleSessionAlive(target.tmuxSession); known && !alive {
+				return true
+			}
+		case probe.state == paneProbeDead:
+			return true
+		case !lifecycleProbeMatchesTarget(probe, target):
+			return true
+		}
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return false
+		}
+		sleep := softExitEscalationPollInterval
+		if sleep > remaining {
+			sleep = remaining
+		}
+		time.Sleep(sleep)
+	}
+}
+
+// escalateStuckSoftExit runs the ladder under the conversation launch lock, so
+// a concurrent resume cannot relaunch the conv into the pane identity being
+// killed halfway through.
+func escalateStuckSoftExit(target *lifecycleTarget, lifecycleAction, relatedEventID, reason string) {
+	launchLock := resumeLaunchLock(target.convID)
+	launchLock.Lock()
+	defer launchLock.Unlock()
+
+	probe, err := target.revalidate()
+	if err != nil {
+		// Died, or a successor now owns the name — either way the ladder has
+		// nothing of ours to act on.
+		slog.Info("soft-exit escalation stood down; target pane is gone or replaced",
+			"conv", short8(target.convID), "tmux_session", target.tmuxSession,
+			"pane_id", target.paneID, "reason", reason)
+		return
+	}
+
+	// Attribution BEFORE the kill: whatever the ladder does from here, the
+	// reaper must read it as daemon-owned rather than an unexplained close.
+	// The intent is (re-)armed because a failed injection clears it, and the
+	// reason is recorded because the reaper's per-harness fallback is either
+	// silence (Copilot, Codex) or "unexpected" (Claude Code) — neither of
+	// which describes a deliberate daemon kill.
+	setExitIntentTargetBestEffort(target, lifecycleAction, relatedEventID)
+	if err := db.SetSessionExitReason(target.sessionID, daemonEscalatedKillReason); err != nil {
+		slog.Warn("soft-exit escalation: recording daemon-owned exit reason failed",
+			"session", target.sessionID, "conv", short8(target.convID), "error", err)
+	}
+
+	slog.Warn("soft exit did not close the pane; escalating to kill",
+		"conv", short8(target.convID), "session", target.sessionID,
+		"tmux_session", target.tmuxSession, "pane_id", target.paneID,
+		"pane_pid", probe.panePID, "deadline", softExitEscalationDeadline,
+		"reason", reason)
+
+	// Step 1: the identity-guarded tmux kill force-stop already uses.
+	if err := killLifecycleTarget(target); err != nil {
+		slog.Warn("soft-exit escalation: tmux kill failed; continuing to signals",
+			"conv", short8(target.convID), "pane_id", target.paneID, "error", err)
+	}
+
+	// Steps 2 and 3. The pane pid is the harness process tmux started; killing
+	// its GROUP is what reaches a harness that spawned children and is being
+	// held open by one of them.
+	pid := probe.panePID
+	if pid <= 0 {
+		pid = target.panePID
+	}
+	if pid <= 0 {
+		return
+	}
+	for _, step := range softExitSignalLadder {
+		if waitForPaneProcessGone(target, pid, softExitEscalationSignalGrace) {
+			return
+		}
+		slog.Warn("soft-exit escalation: pane process survived; signalling process group",
+			"conv", short8(target.convID), "tmux_session", target.tmuxSession,
+			"pane_pid", pid, "signal", step.name, "reason", reason)
+		if err := signalLifecycleProcessGroup(pid, step.signal); err != nil {
+			slog.Warn("soft-exit escalation: signalling process group failed",
+				"conv", short8(target.convID), "pane_pid", pid,
+				"signal", step.name, "error", err)
+		}
+	}
+	if waitForPaneProcessGone(target, pid, softExitEscalationSignalGrace) {
+		return
+	}
+	slog.Error("soft-exit escalation exhausted; pane process still alive",
+		"conv", short8(target.convID), "tmux_session", target.tmuxSession,
+		"pane_pid", pid, "reason", reason)
+}
+
+// waitForPaneProcessGone polls the pane process until it is gone or the grace
+// closes. The tmux session disappearing counts: a pane whose session tmux no
+// longer lists took its process with it, and a pid that has already been
+// reaped can be recycled onto an unrelated process.
+func waitForPaneProcessGone(target *lifecycleTarget, pid int, grace time.Duration) bool {
+	deadline := time.Now().Add(grace)
+	for {
+		if alive, known := lifecycleSessionAlive(target.tmuxSession); known && !alive {
+			return true
+		}
+		if !lifecycleProcessAlive(pid) {
+			return true
+		}
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return false
+		}
+		sleep := softExitEscalationPollInterval
+		if sleep > remaining {
+			sleep = remaining
+		}
+		time.Sleep(sleep)
+	}
+}
+
+// softExitEscalationPollForTest lets a flow test observe (and act between) the
+// watchdog's probes.
+var softExitEscalationPollForTest func()
+
+// stopIntendsPaneClosure reports whether a lifecycle stop of this shape means
+// "this pane must end", which is what entitles the daemon to escalate. Every
+// action the soft-stop path records qualifies; an unattributed call (empty
+// action) does not arm the ladder, so no caller acquires a kill it did not ask
+// for merely by soft-stopping.
+func stopIntendsPaneClosure(lifecycleAction string) bool {
+	switch lifecycleAction {
+	case db.AgentExitActionStop, db.AgentExitActionForceStop,
+		db.AgentExitActionRetire, db.AgentExitActionReincarnate:
+		return true
+	default:
+		return false
+	}
+}

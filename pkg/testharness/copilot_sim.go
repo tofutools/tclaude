@@ -123,12 +123,15 @@ type CopilotSim struct {
 	launched bool
 	alive    bool
 
-	// blocked/blockedBy record the parked state. Once set they are never
-	// cleared: nothing but a human at the keyboard clears a Copilot dialog,
+	// blocked/blockedBy record the parked state. NOTHING clears it on its
+	// own: a Copilot dialog is dismissed only by a human at the keyboard or
+	// by the measured C-c abort (see cancel, which excepts the trust prompt),
 	// and reproducing that faithfully is the whole point — a simulator that
 	// timed out of a block would let a deadlocking posture pass its test.
 	blocked   bool
 	blockedBy string
+	// cancels counts C-c keystrokes the pane received.
+	cancels int
 
 	// inPaneAllowAll records that /allow-all was accepted in the pane. It
 	// widens nothing that a launch-time deny covers; see RequestTool.
@@ -816,6 +819,10 @@ func (c *CopilotSim) Blocked() (bool, string) {
 // Receive is the tmux send-keys entry point. Text accumulates; "Enter"
 // submits.
 func (c *CopilotSim) Receive(text string) {
+	if text == copilotCancelKey {
+		c.cancel()
+		return
+	}
 	if text == "Enter" {
 		c.mu.Lock()
 		line := strings.TrimSpace(c.buf.String())
@@ -829,6 +836,37 @@ func (c *CopilotSim) Receive(text string) {
 	c.mu.Lock()
 	c.buf.WriteString(text)
 	c.mu.Unlock()
+}
+
+// copilotCancelKey is the tmux key name for the cancel keystroke tclaude sends
+// ahead of Copilot's soft exit (harness.copilotLifecycle.SoftExitPrefixKeys).
+const copilotCancelKey = "C-c"
+
+// cancel models what 1.0.77 was measured to do with C-c: the pending input
+// line is dropped, a running turn is cancelled ("Operation cancelled by user"),
+// and a permission dialog is ABORTED — the request is refused, the pane
+// returns to its input prompt, and the command it was asking about never runs.
+//
+// The trust prompt is deliberately NOT cleared. It gates the whole launch
+// rather than one request, and no measurement claims C-c dismisses it; a
+// simulator that unblocked it here would let a launch posture that really does
+// deadlock the pane pass its test.
+func (c *CopilotSim) cancel() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.buf.Reset()
+	c.cancels++
+	if c.blocked && c.blockedBy != copilotfixture.TrustPromptMarker {
+		c.blocked = false
+		c.blockedBy = ""
+	}
+}
+
+// Cancels reports how many cancel keystrokes the pane has received.
+func (c *CopilotSim) Cancels() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.cancels
 }
 
 // submit dispatches one submitted line: the in-pane commands tclaude's

@@ -193,3 +193,18 @@ func (copilotLifecycle) SoftExitCommand() string { return "/exit" }
 // query and then report a state change that never happened, so remote control
 // stays unsupported until the lifecycle contract itself grows a direction.
 func (copilotLifecycle) RemoteControlCommand() string { return "" }
+
+// Copilot's TUI only accepts a slash command when it is not mid-turn, so the
+// soft exit is preceded by a cancel. Measured against 1.0.77 in a real tmux
+// pane (see copilotfixture): mid-turn or while a tool runs, C-c reports
+// "Operation cancelled by user" and returns the TUI to its input prompt, from
+// which /exit exits 0; with a permission dialog open C-c ABORTS the request
+// (the pending command never runs) rather than accepting its default entry;
+// on an idle pane it is a no-op, and on a pane holding a half-typed line it
+// clears the buffer — which incidentally removes the "<junk>/exit submitted as
+// one prompt" failure the soft-exit retry exists to recover from.
+//
+// Escape is deliberately NOT used: the CLI holds a lone ESC byte waiting for
+// the rest of a possible escape sequence, so a trailing Escape is never
+// delivered at all.
+func (copilotLifecycle) SoftExitPrefixKeys() []string { return []string{"C-c"} }

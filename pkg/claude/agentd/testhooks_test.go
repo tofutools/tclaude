@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"slices"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -400,6 +401,53 @@ func SetSoftExitRetryDelayForTest(d time.Duration) func() {
 	prev := softExitRetryDelay
 	softExitRetryDelay = d
 	return func() { softExitRetryDelay = prev }
+}
+
+// SetSoftExitEscalationTimingForTest shrinks the escalation ladder's waits.
+// Production gives a pane 10s to honour its soft exit and 2s per signal step;
+// under the synchronous simulator both are pure dead wait that every
+// stop/retire flow (and the WaitForBackgroundForTest drain) would pay.
+func SetSoftExitEscalationTimingForTest(deadline, signalGrace, poll time.Duration) func() {
+	prevDeadline := softExitEscalationDeadline
+	prevGrace := softExitEscalationSignalGrace
+	prevPoll := softExitEscalationPollInterval
+	softExitEscalationDeadline = deadline
+	softExitEscalationSignalGrace = signalGrace
+	softExitEscalationPollInterval = poll
+	return func() {
+		softExitEscalationDeadline = prevDeadline
+		softExitEscalationSignalGrace = prevGrace
+		softExitEscalationPollInterval = prevPoll
+	}
+}
+
+// SetSoftExitEscalationProcessForTest swaps the ladder's two OS-process
+// boundaries: whether the pane process still exists, and how it is signalled.
+// A flow test drives a pane that survives tmux kill through them without the
+// suite ever signalling a real process.
+func SetSoftExitEscalationProcessForTest(
+	alive func(pid int) bool,
+	signal func(pid int, sig syscall.Signal) error,
+) func() {
+	prevAlive := lifecycleProcessAlive
+	prevSignal := signalLifecycleProcessGroup
+	if alive != nil {
+		lifecycleProcessAlive = alive
+	}
+	if signal != nil {
+		signalLifecycleProcessGroup = signal
+	}
+	return func() {
+		lifecycleProcessAlive = prevAlive
+		signalLifecycleProcessGroup = prevSignal
+	}
+}
+
+// SetSoftExitEscalationPollForTest observes each watchdog probe.
+func SetSoftExitEscalationPollForTest(fn func()) func() {
+	prev := softExitEscalationPollForTest
+	softExitEscalationPollForTest = fn
+	return func() { softExitEscalationPollForTest = prev }
 }
 
 func SetBeforeOpenCodeTUICommandStatusCheckForTest(fn func()) func() {

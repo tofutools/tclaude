@@ -797,6 +797,12 @@ func TestClaudeLifecycle_Tokens(t *testing.T) {
 	if h.Life.CompactCommand() != "/compact" {
 		t.Fatalf("compact token = %q, want /compact", h.Life.CompactCommand())
 	}
+	// No preparatory keystroke: Claude Code accepts /exit from its prompt as
+	// typed. Only a harness measured to refuse the command in some state
+	// contributes prefix keys (today: Copilot).
+	if got := h.Life.SoftExitPrefixKeys(); len(got) != 0 {
+		t.Fatalf("SoftExitPrefixKeys() = %q, want none", got)
+	}
 	if h.Life.SoftExitCommand() != "/exit" {
 		t.Fatalf("soft-exit token = %q, want /exit", h.Life.SoftExitCommand())
 	}

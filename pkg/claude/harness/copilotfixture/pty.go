@@ -113,6 +113,22 @@ type PTYOptions struct {
 	// Deadline bounds the whole run; RunOptions.Timeout is used when zero.
 	Deadline time.Duration
 
+	// Keystrokes are raw byte writes delivered on a wall-clock schedule from
+	// the moment the CLI is launched, instead of lines typed at a settled
+	// prompt.
+	//
+	// Input (above) waits for quiescence, which is right for "type a prompt
+	// and see what happens" and useless for the opposite question: what a BUSY
+	// TUI does with a keystroke. Quiescence is precisely the state that no
+	// longer exists mid-turn, so a scenario that needs to type into a running
+	// turn has to schedule its bytes rather than wait for a prompt.
+	//
+	// The bytes are written verbatim — no newline is appended — so a scenario
+	// spells out exactly what a terminal would deliver: "\x03" for the cancel
+	// key, "\r" for Enter. tmux send-keys delivers the same bytes, which is
+	// what makes a measurement here evidence about tclaude's pane injection.
+	Keystrokes []Keystroke
+
 	// SettledWhen, when non-nil, ends the run as soon as it returns true.
 	//
 	// Interactive mode never exits on its own — after a turn completes the CLI
@@ -125,6 +141,15 @@ type PTYOptions struct {
 	// tool-result follow-up request arrived". Returning true on something
 	// weaker would cut the run short of the observation it exists to make.
 	SettledWhen func() bool
+}
+
+// Keystroke is one scheduled raw write onto the terminal.
+type Keystroke struct {
+	// After is the delay from the PREVIOUS keystroke (from launch, for the
+	// first one).
+	After time.Duration
+	// Bytes is written to the terminal verbatim.
+	Bytes string
 }
 
 // RunPTY launches the CLI on a pseudo-terminal in interactive mode.
@@ -211,6 +236,26 @@ func RunPTY(t *testing.T, opts PTYOptions) PTYResult {
 		mu.Lock()
 		defer mu.Unlock()
 		return time.Since(lastWrite) >= PTYQuiescence
+	}
+
+	// Scheduled keystrokes run on their own clock, since the states they are
+	// written to observe (a turn in flight, a dialog on screen) are exactly
+	// the ones quiescence never arrives in.
+	if len(opts.Keystrokes) > 0 {
+		go func() {
+			for _, k := range opts.Keystrokes {
+				select {
+				case <-ctx.Done():
+					return
+				case <-exitedCh:
+					return
+				case <-time.After(k.After):
+				}
+				if _, err := io.WriteString(f, k.Bytes); err != nil {
+					return
+				}
+			}
+		}()
 	}
 
 	// Input is delivered only once the CLI has stopped producing output, so a

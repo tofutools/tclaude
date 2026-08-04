@@ -43,6 +43,14 @@ type Options struct {
 	// event. This is useful when the foreground application must distinguish
 	// programmatic injection from ordinary key presses.
 	ForceBracketedPaste bool
+	// PrefixKeys are tmux key names sent, in order, before the text — each
+	// as its own send-keys, with one settle gap after the last. They exist
+	// for a foreground application that must be moved into a state where it
+	// accepts the text at all (Copilot's soft exit sends C-c first, because
+	// its TUI silently discards a slash command typed mid-turn). Empty for
+	// every ordinary injection.
+	PrefixKeys []string
+
 	// LockID overrides the serialization identity the advisory file lock is
 	// keyed on (the send target still routes the tmux commands). A caller
 	// that types into an exact pane ID but knows the pane's session must pass
@@ -138,6 +146,17 @@ func ExactInputTarget(tmuxTarget string) string {
 func InjectTextAndSubmit(tmuxTarget, text string, opts Options) error {
 	opts = opts.resolved()
 	return WithLock(tmuxTarget, opts, func(run Runner, target string) error {
+		if len(opts.PrefixKeys) > 0 {
+			for _, key := range opts.PrefixKeys {
+				if err := run("send-keys", "-t", target, key); err != nil {
+					return fmt.Errorf("send-keys prefix %q: %w", key, err)
+				}
+			}
+			// The same settle the text/Enter split uses: the application has
+			// to process the cancel and redraw before the text arrives, or
+			// the text lands in the state the prefix was there to leave.
+			time.Sleep(opts.SettleDelay)
+		}
 		if opts.ForceBracketedPaste || strings.ContainsAny(text, "\n\t") {
 			buffer := fmt.Sprintf("tclaude-inject-%d-%d", os.Getpid(), pasteBufferSequence.Add(1))
 			if err := run("set-buffer", "-b", buffer, text); err != nil {
