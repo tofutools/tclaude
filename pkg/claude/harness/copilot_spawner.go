@@ -61,10 +61,13 @@ const copilotEnvScrub = "unset " + copilotAllowAllEnv + "; "
 // finally the optional `-i <prompt>` first turn.
 //
 // The permission flags sit BEFORE ExtraArgs and after every tclaude-owned
-// option, so the ordering is stable across fresh and resumed launches alike
-// and an operator's own pass-through args stay the last word (Copilot's own
-// last-wins parsing then applies, exactly as it would if they had typed the
-// command). `-i` stays last regardless.
+// option, so the ordering is stable across fresh and resumed launches alike.
+// Nothing here relies on what Copilot does with a DUPLICATE flag: duplicate
+// handling is unmeasured, and ValidateLaunchExtraArgs refuses pass-through args
+// that name anything this renders precisely so the question never arises. The
+// order is fixed for reproducibility — the same profile must always produce the
+// same recorded command — not because a later occurrence would win. `-i` stays
+// last regardless.
 //
 // Fields with no documented Copilot flag (sandbox mode, auto-review,
 // permission profile, remote control, hook-trust bypass, the per-session

@@ -98,10 +98,22 @@ func (copilotApproval) ValidatePolicy(policy string) (string, error) {
 // help behind a [?] but keeps everything from the ⚠ onward visible, so a mode
 // that can strand a detached agent says so without the operator opening
 // anything. Exactly one ⚠ per string, and it runs to the end.
+//
+// One ASSUMPTION underlies the allow-tools string, and it is named here because
+// it is load-bearing for the whole --add-dir design: that the directory dialog
+// survives --allow-all-tools. Every out-of-cwd-paths arm was measured with NO
+// permission flags, so the contract does not settle it, and url-access shows
+// this flag CAN close a dialog on a neighbouring axis. Two things make the
+// assumption safe to build on rather than merely convenient. The behaviour it
+// produces is precise grants instead of --allow-all-paths, which is the correct
+// launch either way. And the copy states the risk as a POSSIBLE prompt: if the
+// assumption is wrong, a caveat warned about a dialog that never appears, which
+// costs a reader nothing — the dangerous direction would be promising that no
+// prompt can occur, and no string here does that.
 var copilotApprovalModeHelp = map[string]string{
 	CopilotApprovalAllowTools: "Run tools without confirmation and remove the ask_user tool. " +
 		"Directory access is granted precisely, from the resolved sandbox profile, " +
-		"and Copilot's own path check stays on. " +
+		"rather than with a blanket path flag. " +
 		"⚠ Copilot has other prompt sources this does not close: a path outside every " +
 		"granted directory still waits for a human, and a first launch in a folder " +
 		"Copilot has not been told to trust blocks before the model is ever contacted.",
@@ -143,17 +155,32 @@ const (
 // Copilot's own directory check would otherwise prompt for a directory
 // tclaude's outer sandbox already opened.
 //
-// An unrecognized policy renders nothing rather than guessing. Callers
-// validate first (ResolveApprovalPolicy / ValidateApprovalPolicy), so this is
-// a belt-and-braces arm, and rendering the default for an unknown token would
-// silently promote a posture nobody selected.
+// A BLANK policy is not an unknown one, and conflating the two dropped the
+// grants on the most ordinary launch there is. `tclaude session new --harness
+// copilot` with no --ask-for-approval leaves the spec's policy empty on
+// purpose: a human at a terminal is the trust root, so ValidateApprovalPolicy
+// does not force a posture on them. What the SESSION ROW records for that same
+// launch is `inherit`, and every reconstruction path — the daemon's
+// approvalForHarness, resumeApprovalState, the relaunch profile — maps blank to
+// `inherit` too. So blank already MEANS inherit everywhere else in tclaude, and
+// rendering it as anything else here made one conversation's fresh launch and
+// its own resume disagree: the resume rendered the profile's directories and
+// the launch that created it did not. It also made ValidateCopilotAddDirGrants
+// refuse a launch while naming an `--add-dir` root that launch never emitted.
+// Blank therefore renders the INHERIT-shaped arm — the directory grants and
+// nothing else. It must not render --allow-all-tools: not forcing a posture on
+// a human is the entire reason the policy is blank.
+//
+// An unrecognized policy still renders nothing rather than guessing. Callers
+// validate first, so that arm is belt-and-braces, and rendering the default for
+// an unknown token would silently promote a posture nobody selected.
 func copilotPermissionArgs(policy string, addDirs []string) []string {
 	var args []string
 	switch strings.TrimSpace(policy) {
 	case CopilotApprovalAllowTools:
 		args = append(args, copilotFlagAllowAllTools, copilotFlagNoAskUser)
 		args = append(args, copilotAddDirArgs(addDirs)...)
-	case CopilotApprovalInherit:
+	case CopilotApprovalInherit, "":
 		args = append(args, copilotAddDirArgs(addDirs)...)
 	}
 	return args
@@ -267,8 +294,15 @@ const SandboxCopilotDenyInsideAddDir = "copilot-deny-inside-add-dir"
 // TCL-985 tracks converting the remaining sites to GuardContainsOrEqual, and
 // this is one of them; the normalization here fixes an ordinary disagreement
 // between two tclaude-side producers rather than doing that conversion early.
-// It cannot mask a deny: resolving both sides only ever makes containment match
-// where it truly holds, so the gate refuses strictly more than it did.
+// This is a change of ANSWER, not only of coverage, and the direction is not
+// uniformly "refuses more". Resolving the deny side can also move a deny OUT of
+// a root that lexically contained its authored spelling — a deny authored under
+// a symlinked path whose target lies elsewhere. That is the correct answer:
+// containment by real path identity is what decides whether the agent can reach
+// the file, and the authored spelling was never the thing being granted. But it
+// means the gate is not a strict superset of its previous self, and claiming
+// otherwise would be exactly the kind of comfortable overstatement this catalog
+// exists to avoid.
 func ValidateCopilotAddDirGrants(
 	harnessName, cwd, tempDir string,
 	readDirs, writeDirs, denyDirs []string,

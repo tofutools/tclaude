@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -181,7 +182,28 @@ func TestCopilotPermissionArgs(t *testing.T) {
 			want:    []string{"--allow-all-tools", "--no-ask-user", "--add-dir", "/srv/a"},
 		},
 		{
-			name:    "an unrecognized policy renders nothing, not the default",
+			// A blank policy is what a human `tclaude session new` leaves in
+			// the spec — no posture is forced on the trust root. It is NOT an
+			// unknown token: every reconstruction path in tclaude maps blank to
+			// `inherit`, so it renders inherit's shape. Dropping the grants here
+			// made a fresh launch and its own resume disagree.
+			name:    "a blank policy renders the grants, like the inherit it reconstructs as",
+			policy:  "",
+			addDirs: []string{"/srv/a"},
+			want:    []string{"--add-dir", "/srv/a"},
+		},
+		{
+			// ...and blank must NOT pick up the default's auto-approval, which
+			// is the whole reason the human path leaves it blank.
+			name:    "a blank policy never auto-approves",
+			policy:  "   ",
+			addDirs: nil,
+		},
+		{
+			// Kept as its own row so blank and unknown cannot silently merge:
+			// an unknown token renders nothing AT ALL, grants included, because
+			// tclaude cannot say what posture the launch would run under.
+			name:    "an unrecognized policy renders nothing, not the default and not the grants",
 			policy:  "allow-all",
 			addDirs: []string{"/srv/a"},
 		},
@@ -726,5 +748,67 @@ func TestCopilotAddDirGrantsSeeThroughTheMacOSTempSymlink(t *testing.T) {
 	if err := ValidateCopilotAddDirGrants(CopilotName, workspace,
 		launchTemp, nil, nil, []string{outside}, false); err != nil {
 		t.Fatalf("a deny outside every grant must still pass: %v", err)
+	}
+}
+
+// TestCopilotFreshHumanLaunchRendersTheSameGrantsAsItsOwnResume is the
+// regression for a defect two independent cold reviews found on the same head.
+//
+// `tclaude session new --harness copilot` leaves the spec's ApprovalPolicy
+// BLANK on purpose — a human at a terminal is the trust root, so no posture is
+// forced on them — while the session row it writes records `inherit`. Resume
+// then reads that row. So one conversation had two different argvs: the resume
+// rendered the sandbox profile's directory grants and the launch that created
+// the conversation did not, leaving the pane to prompt on a directory the
+// operator had granted. It also let ValidateCopilotAddDirGrants refuse a launch
+// while naming an --add-dir root that launch would never emit.
+//
+// The invariant is stated as an EQUALITY rather than as an expected string, so
+// it cannot rot into asserting whatever the blank arm happens to render.
+func TestCopilotFreshHumanLaunchRendersTheSameGrantsAsItsOwnResume(t *testing.T) {
+	dirs := []string{"/srv/data", "/srv/work"}
+
+	fresh := copilotPermissionArgs("", dirs)          // what the human launch renders
+	resumed := copilotPermissionArgs(CopilotApprovalInherit, dirs) // what its row resumes as
+	if strings.Join(fresh, " ") != strings.Join(resumed, " ") {
+		t.Fatalf("one conversation must not have two argvs:\n fresh: %v\nresume: %v", fresh, resumed)
+	}
+	if !slices.Contains(fresh, copilotFlagAddDir) {
+		t.Fatalf("the profile's directory grants must reach a human launch: %v", fresh)
+	}
+
+	// Blank renders inherit's SHAPE, not the daemon default's: not forcing a
+	// posture on the trust root is the entire reason the policy is blank, so
+	// picking up auto-approval here would be the opposite of the intent.
+	for _, forbidden := range []string{copilotFlagAllowAllTools, copilotFlagNoAskUser} {
+		if slices.Contains(fresh, forbidden) {
+			t.Fatalf("a blank policy must not auto-approve anything: %v contains %s", fresh, forbidden)
+		}
+	}
+
+	// End to end through the production spawner, which is where the argv the
+	// pane actually receives is built.
+	cmd := copilotSpawner{}.BuildCommand(SpawnSpec{SandboxWriteDirs: dirs})
+	for _, dir := range dirs {
+		if !strings.Contains(cmd, copilotFlagAddDir+" "+dir) {
+			t.Fatalf("a blank-policy launch dropped grant %s: %s", dir, cmd)
+		}
+	}
+	if strings.Contains(cmd, copilotFlagAllowAllTools) {
+		t.Fatalf("a blank-policy launch must not auto-approve tools: %s", cmd)
+	}
+
+	// The add-dir gate and the renderer must still agree on this arm, or the
+	// gate would refuse a launch citing a root the launch never emitted.
+	if err := ValidateCopilotAddDirGrants(CopilotName, "/srv/cwd", "/srv/tmp",
+		nil, dirs, []string{"/srv/data/secret"}, false); err == nil {
+		t.Fatal("a deny inside a rendered grant must still refuse")
+	}
+
+	// An UNKNOWN token is a different case and must stay fail-closed: nothing
+	// at all, grants included, because tclaude cannot say what posture the
+	// launch would run under.
+	if got := copilotPermissionArgs("allow-all", dirs); len(got) != 0 {
+		t.Fatalf("an unknown token must render nothing, got %v", got)
 	}
 }

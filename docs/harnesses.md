@@ -338,10 +338,23 @@ would stop prompting. Since Copilot's built-in edits are not OS-confined, that
 check is the only file boundary a launch without an outer wall has, so tclaude
 refuses rather than widening it silently. Under `tclaude-layer` the outer
 sandbox enforces the deny whatever Copilot's own check believes, and the launch
-is admitted. One related **assumption**, stated because it is not measured: read
-and write roots are both handed to `--add-dir`, since the dialog Copilot draws
-has no read/write split — but the fixture lab only ever exercised `--add-dir`
-against a read, so whether the grant also permits writes is unestablished.
+is admitted.
+
+Two related **assumptions**, stated because they are not measured:
+
+- Read and write roots are both handed to `--add-dir`, since the dialog Copilot
+  draws has no read/write split — but the fixture lab only ever exercised
+  `--add-dir` against a read, so whether the grant also permits writes is
+  unestablished.
+- The directory dialog **survives `--allow-all-tools`**. Every `out-of-cwd-paths`
+  arm ran with no permission flags, and `url-access` shows that flag can close a
+  dialog on a neighbouring axis, so the contract does not settle it. This one is
+  load-bearing for the whole `--add-dir` design, which is why it is named rather
+  than assumed quietly. It is safe to build on in both directions: the behaviour
+  it produces — precise grants instead of `--allow-all-paths` — is the right
+  launch either way, and the caveats are worded as a *possible* prompt, so a
+  wrong assumption costs a reader a warning that never fires rather than
+  promising a prompt cannot happen.
 
 Several things this deliberately does **not** do:
 
