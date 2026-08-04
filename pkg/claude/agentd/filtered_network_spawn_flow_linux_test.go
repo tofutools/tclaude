@@ -17,9 +17,11 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
+	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
 func TestDefaultAllowDenySpawnSelectsFilteredNetworkPosture(t *testing.T) {
+	testharness.ClearModelTransportProxyEnv(t)
 	for _, tc := range []struct {
 		name        string
 		harnessName string
@@ -123,6 +125,7 @@ func TestDefaultAllowDenySpawnSelectsFilteredNetworkPosture(t *testing.T) {
 // launch alive, so a profile OpenCode cannot filter is refused rather than
 // started with the deny silently omitted.
 func TestOpenCodeDefaultAllowDenyRefusesWithoutExplicitProvider(t *testing.T) {
+	testharness.ClearModelTransportProxyEnv(t)
 	f := newFlow(t)
 	f.HaveGroup("crew")
 	t.Cleanup(agentd.SetFilteredNetworkPrerequisiteForTest(
@@ -172,6 +175,7 @@ func TestOpenCodeDefaultAllowDenyRefusesWithoutExplicitProvider(t *testing.T) {
 }
 
 func TestLocalAccessSpawnRefusesCloudModelWithoutExplicitEndpoint(t *testing.T) {
+	testharness.ClearModelTransportProxyEnv(t)
 	for _, tc := range []struct {
 		name        string
 		harnessName string
@@ -251,6 +255,7 @@ func TestLocalAccessSpawnRefusesCloudModelWithoutExplicitEndpoint(t *testing.T) 
 }
 
 func TestLocalAccessSpawnAllowsConcreteHostLoopbackProvider(t *testing.T) {
+	testharness.ClearModelTransportProxyEnv(t)
 	f := newFlow(t)
 	f.HaveGroup("crew")
 	t.Cleanup(agentd.SetFilteredNetworkPrerequisiteForTest(
@@ -298,6 +303,7 @@ func TestLocalAccessSpawnAllowsConcreteHostLoopbackProvider(t *testing.T) {
 }
 
 func TestLocalModelAPIsSpawnAllowsFirstPartyCloudProvider(t *testing.T) {
+	testharness.ClearModelTransportProxyEnv(t)
 	f := newFlow(t)
 	f.HaveGroup("crew")
 	t.Cleanup(agentd.SetFilteredNetworkPrerequisiteForTest(
@@ -458,6 +464,7 @@ func TestLocalPresetsOpenCodeProxyEngineRefusesForTheProviderNotThePreset(t *tes
 // would let a dashboard-spawned agent persist a launch-gate claim naming pasta
 // and nft while the /enforcement preview for the same profile says the opposite.
 func TestProxyEngineSpawnOmitsThePacketPrerequisiteNotice(t *testing.T) {
+	testharness.ClearModelTransportProxyEnv(t)
 	f := newFlow(t)
 	f.HaveGroup("crew")
 	t.Cleanup(agentd.SetFilteredNetworkPrerequisiteForTest(
@@ -550,6 +557,7 @@ func TestProxyEngineSpawnOmitsThePacketPrerequisiteNotice(t *testing.T) {
 // the posture-exact verdict, which is asserted here by recording the posture
 // the guard actually asked the resolver to verify.
 func TestProxyEngineSpawnDoesNotGateOnThePacketPrerequisite(t *testing.T) {
+	testharness.ClearModelTransportProxyEnv(t)
 	f := newFlow(t)
 	f.HaveGroup("crew")
 	t.Cleanup(agentd.SetFilteredNetworkPrerequisiteForTest(
@@ -819,13 +827,9 @@ func TestProxyEngineSpawnDisclosesTheNoProxyOverride(t *testing.T) {
 	// The ROUTING variables refuse a filtered launch outright (§7.3), so a
 	// runner that exports them would fail this test for an unrelated reason.
 	// Clearing them is what leaves NO_PROXY as the only proxy variable under
-	// test; it is deliberately NOT cleared, because it is the input.
-	for _, name := range []string{
-		"HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy",
-		"ALL_PROXY", "all_proxy",
-	} {
-		t.Setenv(name, "")
-	}
+	// test; it is deliberately NOT cleared, because it is the input — and the
+	// shared helper does not touch it.
+	testharness.ClearModelTransportProxyEnv(t)
 	t.Cleanup(agentd.SetFilteredNetworkPrerequisiteForTest(
 		func() session.FilteredNetworkPrerequisite {
 			return session.FilteredNetworkPrerequisite{
