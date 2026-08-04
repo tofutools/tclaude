@@ -29,6 +29,6 @@ prereqs::install() {
     return 0
   fi
   smoke::log "Installing host prerequisites: ${PREREQ_PACKAGES[*]}"
-  sudo apt-get update --quiet
+  smoke::apt_update
   sudo apt-get install --yes --no-install-recommends "${PREREQ_PACKAGES[@]}"
 }

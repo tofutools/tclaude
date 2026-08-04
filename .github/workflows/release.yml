@@ -81,8 +81,10 @@ jobs:
           node-version: 24
 
       - name: Install Linux sandbox prerequisites
+        shell: bash
         run: |
-          sudo apt-get update
+          source "$GITHUB_WORKSPACE/scripts/lib/smoke/common.sh"
+          smoke::apt_update
           # Claude's embedded SRT discovers rg and socat at runtime; keep them
           # explicit so a runner-image change cannot turn the real nested smoke
           # into an accidental dependency check.

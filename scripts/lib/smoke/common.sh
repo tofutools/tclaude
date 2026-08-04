@@ -23,6 +23,139 @@ smoke::error() {
   printf 'ERROR: %s\n' "$*" >&2
 }
 
+# smoke::apt_update — update Ubuntu's package indexes without letting an
+# unrelated third-party source take the host prerequisite down. GitHub-hosted
+# Ubuntu images may carry Microsoft sources for preinstalled tools; those
+# sources are not needed by any smoke here and have returned 403/unsigned
+# failures independently of the Ubuntu archive.
+#
+# This is deliberately source-specific, not an apt error workaround. Active
+# Microsoft `deb` lines are commented in place, while Microsoft-only deb822
+# `.sources` files are moved out of apt's source-parts directory. A deb822 file
+# mixing Microsoft and another vendor is refused rather than disabling the
+# other vendor too. The original files are copied/moved into RUNNER_TEMP for
+# diagnostics; the runner is ephemeral and no restore is needed.
+smoke::apt_update() {
+  local source_file source_name backup_file awk_status grep_status
+  local disabled_count=0
+  local backup_dir="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/tclaude-disabled-apt-sources"
+  local microsoft_list_re='^[[:space:]]*deb(-src)?[[:space:]].*packages[.]microsoft[.]com([/:[:space:]]|$)'
+  local microsoft_uri_re='^[[:space:]]*URIs:[[:space:]].*packages[.]microsoft[.]com([/:[:space:]]|$)'
+  local -a source_files=()
+
+  if [[ -f /etc/apt/sources.list ]]; then
+    source_files+=(/etc/apt/sources.list)
+  fi
+  if [[ -d /etc/apt/sources.list.d ]]; then
+    while IFS= read -r -d '' source_file; do
+      source_files+=("$source_file")
+    done < <(
+      find /etc/apt/sources.list.d -maxdepth 1 \
+        \( -type f -o -type l \) \
+        \( -name '*.list' -o -name '*.sources' \) -print0
+    )
+  fi
+
+  for source_file in "${source_files[@]}"; do
+    if [[ "$source_file" == *.sources ]]; then
+      # A .sources file is a deb822 document: moving one that also contains an
+      # Ubuntu/vendor URI would disable an unrelated source along with
+      # Microsoft. Only accept a file whose active URI tokens are all Microsoft.
+      if sudo awk '
+        /^[[:space:]]*#/ { next }
+        /^[[:space:]]*URIs:[[:space:]]*/ {
+          found = 1
+          line = $0
+          sub(/^[^:]*:[[:space:]]*/, "", line)
+          count = split(line, uri, /[[:space:]]+/)
+          for (i = 1; i <= count; i++) {
+            if (uri[i] ~ /^https?:\/\// && uri[i] ~ /packages[.]microsoft[.]com/) {
+              microsoft = 1
+            } else if (uri[i] ~ /^https?:\/\//) {
+              mixed = 1
+            }
+          }
+        }
+        END { exit !(found && microsoft && !mixed) }
+      ' "$source_file"; then
+        :
+      else
+        awk_status=$?
+        if (( awk_status > 1 )); then
+          smoke::error "could not inspect apt source file: $source_file"
+          return 1
+        fi
+        if sudo grep -Eiq "$microsoft_uri_re" "$source_file"; then
+          smoke::error "refusing to disable mixed apt source file: $source_file (contains Microsoft and non-Microsoft URIs)"
+          return 1
+        else
+          grep_status=$?
+          if (( grep_status > 1 )); then
+            smoke::error "could not inspect apt source file: $source_file"
+            return 1
+          fi
+        fi
+        continue
+      fi
+    else
+      if sudo grep -Eiq "$microsoft_list_re" "$source_file"; then
+        :
+      else
+        grep_status=$?
+        if (( grep_status > 1 )); then
+          smoke::error "could not inspect apt source file: $source_file"
+          return 1
+        fi
+        continue
+      fi
+    fi
+
+    if [[ ! -d "$backup_dir" ]] && ! mkdir -p "$backup_dir"; then
+      smoke::error "could not create apt-source diagnostics directory: $backup_dir"
+      return 1
+    fi
+    source_name="$(basename "$source_file")"
+    backup_file="$backup_dir/${disabled_count}-${source_name}"
+    if [[ -e "$backup_file" ]]; then
+      smoke::error "apt-source diagnostics path already exists: $backup_file"
+      return 1
+    fi
+
+    smoke::log "Disabling unrelated Microsoft apt source: $source_file"
+    if [[ "$source_file" == *.sources ]]; then
+      sudo grep -Ein "$microsoft_uri_re" "$source_file" || true
+      if ! sudo mv -- "$source_file" "$backup_file"; then
+        smoke::error "could not disable Microsoft apt source: $source_file"
+        return 1
+      fi
+    else
+      sudo grep -Ein "$microsoft_list_re" "$source_file" || true
+      if ! sudo cp -- "$source_file" "$backup_file"; then
+        smoke::error "could not save apt source before editing: $source_file"
+        return 1
+      fi
+      if ! sudo sed -E -i \
+        '/^[[:space:]]*deb(-src)?[[:space:]].*packages[.]microsoft[.]com([\/:[:space:]]|$)/ s|^|# tclaude disabled unrelated Microsoft source: |' \
+        "$source_file"; then
+        smoke::error "could not disable Microsoft apt source entries in: $source_file"
+        return 1
+      fi
+    fi
+    disabled_count=$((disabled_count + 1))
+  done
+
+  if (( disabled_count == 0 )); then
+    smoke::log "No packages.microsoft.com apt sources detected; configured sources remain unchanged"
+  else
+    smoke::log "Disabled $disabled_count unrelated Microsoft apt source file(s); Ubuntu source and package failures remain fatal"
+  fi
+  smoke::log "Updating apt indexes for host prerequisites"
+  if ! sudo apt-get update --quiet; then
+    smoke::error "apt-get update failed after Microsoft-source isolation; inspect the apt output above for the failing configured source"
+    return 1
+  fi
+}
+
 # smoke::require_command fails early and by name. A smoke that dies because a
 # tool is absent must not be mistakable for a boundary that refused something.
 smoke::require_command() {

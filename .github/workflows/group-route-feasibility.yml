@@ -45,8 +45,10 @@ jobs:
           go-version-file: go.mod
 
       - name: Install Bubblewrap
+        shell: bash
         run: |
-          sudo apt-get update
+          source "$GITHUB_WORKSPACE/scripts/lib/smoke/common.sh"
+          smoke::apt_update
           sudo apt-get install --yes bubblewrap
 
       - name: Unlock and verify user namespaces
