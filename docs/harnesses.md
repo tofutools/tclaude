@@ -365,21 +365,17 @@ refuses rather than widening it silently. Under `tclaude-layer` the outer
 sandbox enforces the deny whatever Copilot's own check believes, and the launch
 is admitted.
 
-Two related **assumptions**, stated because they are not measured:
+Two related behaviours are now measured in the permission contract:
 
-- Read and write roots are both handed to `--add-dir`, since the dialog Copilot
-  draws has no read/write split — but the fixture lab only ever exercised
-  `--add-dir` against a read, so whether the grant also permits writes is
-  unestablished.
-- The directory dialog **survives `--allow-all-tools`**. Every `out-of-cwd-paths`
-  arm ran with no permission flags, and `url-access` shows that flag can close a
-  dialog on a neighbouring axis, so the contract does not settle it. This one is
-  load-bearing for the whole `--add-dir` design, which is why it is named rather
-  than assumed quietly. It is safe to build on in both directions: the behaviour
-  it produces — precise grants instead of `--allow-all-paths` — is the right
-  launch either way, and the caveats are worded as a *possible* prompt, so a
-  wrong assumption costs a reader a warning that never fires rather than
-  promising a prompt cannot happen.
+- Read and write roots are both handed to `--add-dir`, because
+  `add-dir-write-grant` proves on a PTY that the grant creates a fresh file and
+  reads back its exact content; the no-grant sibling remains blocked on the
+  directory dialog.
+- The directory dialog **survives `--allow-all-tools`**, as
+  `path-dialog-under-allow-all-tools` proves with a PTY row that asserts the
+  live, settled process, the single provider request, and the dialog naming the
+  out-of-grant target. This is the load-bearing evidence for the precise
+  `--add-dir` design and the deny-inside-a-grant refusal.
 
 Several things this deliberately does **not** do:
 
@@ -457,10 +453,11 @@ the dedicated option that does the same job honestly. Ordinary args
 than a silent filter, and it does not rely on duplicate-flag ordering: nothing
 measured establishes what Copilot does with a contradictory or repeated option,
 so a launch that would depend on those semantics is refused instead of guessed
-at. Two boundaries worth stating: the audit matches flag names exactly, which
-assumes 1.0.77's parser accepts no abbreviations beyond the documented aliases
-(plausible from its option table and a parser probe, but not yet fixtured); and
-it is not a universal firewall over Copilot's option surface — MCP, plugin and
+at. The `flag-name-exactness` contract entry measures the audit's exact-name
+boundary against 1.0.77 for the sampled `--allow-all-tools` spellings: its
+prefix abbreviation, camelCase and `--no-` negation forms all exit as unknown
+options before provider contact. That probe does not enumerate every audited
+flag. The audit is not a universal firewall over Copilot's option surface — MCP, plugin and
 agent-selection options that tclaude neither renders nor records are outside it.
 
 **What tclaude records is the launch posture, not a durable boundary.** Copilot's

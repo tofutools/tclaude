@@ -99,17 +99,11 @@ func (copilotApproval) ValidatePolicy(policy string) (string, error) {
 // that can strand a detached agent says so without the operator opening
 // anything. Exactly one ⚠ per string, and it runs to the end.
 //
-// One ASSUMPTION underlies the allow-tools string, and it is named here because
-// it is load-bearing for the whole --add-dir design: that the directory dialog
-// survives --allow-all-tools. Every out-of-cwd-paths arm was measured with NO
-// permission flags, so the contract does not settle it, and url-access shows
-// this flag CAN close a dialog on a neighbouring axis. Two things make the
-// assumption safe to build on rather than merely convenient. The behaviour it
-// produces is precise grants instead of --allow-all-paths, which is the correct
-// launch either way. And the copy states the risk as a POSSIBLE prompt: if the
-// assumption is wrong, a caveat warned about a dialog that never appears, which
-// costs a reader nothing — the dangerous direction would be promising that no
-// prompt can occur, and no string here does that.
+// The load-bearing path caveat below is measured rather than assumed: the
+// contract entry `path-dialog-under-allow-all-tools` records a real-PTY launch
+// where an out-of-grant path stayed blocked, with the directory dialog naming
+// its target, even while --allow-all-tools was present. Precise --add-dir grants
+// therefore remain necessary under the unattended token.
 var copilotApprovalModeHelp = map[string]string{
 	CopilotApprovalAllowTools: "Run tools without confirmation and remove the ask_user tool. " +
 		"Directory access is granted precisely, from the resolved sandbox profile, " +
@@ -210,22 +204,17 @@ func copilotAddDirArgs(dirs []string) []string {
 // to reach, from the same effective sandbox profile the outer sandbox is built
 // from.
 //
-// Read and write roots are merged, and the merge rests on an ASSUMPTION that
-// this file should not be read as claiming is measured. The out-of-cwd-paths
-// scenario exercised --add-dir against a READ (a `cat` outside every granted
-// root); nothing establishes whether the grant also permits writes, and the
-// only support for merging is that the dialog Copilot draws is a single "Allow
-// directory access" with no read/write split in its wording.
+// Read and write roots are merged, and the contract entry `add-dir-write-grant`
+// measures why: a real-PTY --add-dir launch wrote a fresh file and the fixture
+// read back its exact content, while the no-grant sibling remained blocked on
+// the directory dialog.
 //
-// The merge is still the right default, because the alternative is worse in the
-// direction that matters: modelling a read/write distinction the CLI may not
-// have would mean withholding a write root the profile granted, and Copilot
-// would then park the pane on a directory prompt for a path tclaude had already
-// decided the agent may write. If the grant turns out to be read-only, the
-// consequence is a prompt, not an escalation. If it turns out to imply write,
-// every granted READ root is also writable to Copilot — which is exactly why
-// ValidateCopilotAddDirGrants refuses a deny nested inside any rendered root
-// rather than reasoning about which access it carries. Worth a fixture.
+// The measured result makes the merge the right default: withholding a write
+// root the profile granted would park the pane on a directory prompt for a
+// path tclaude had already decided the agent may write. Every granted READ root
+// is also writable to Copilot — which is exactly why ValidateCopilotAddDirGrants
+// refuses a deny nested inside any rendered root rather than reasoning about
+// which access it carries.
 //
 // SandboxDenyDirs are NOT rendered: --add-dir has no negative form, and
 // silently turning a deny into an omission would be indistinguishable from

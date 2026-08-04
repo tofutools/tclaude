@@ -122,6 +122,36 @@
       ]
     },
     {
+      "id": "path-dialog-under-allow-all-tools",
+      "claim": "Does the directory-access dialog survive --allow-all-tools?",
+      "status": "proven",
+      "finding": "It does. With folder trust pre-granted on a real PTY, the out-of-grant shell read in TestCopilotPermissionPathGrants/outside-all/allow-all-tools was launched with --allow-all-tools as its only permission flag and still produced PermissionBlocked: exactly one provider request, no tool-result follow-up, a live process with settled output, and the positive 'Allow directory access' dialog naming the target path. Before TCL-992, the five existing TestCopilotPermissionPathGrants rows inherited RunPTY's default --allow-all-tools, so out-of-cwd-paths already measured this posture without naming it. TCL-992 sets OmitAllowAllTools for the full six-row matrix, making those five rows the newly isolated no-flag/path postures while this explicit row preserves the historical allow-all-tools measurement; the complete six-row matrix was rerun green against pinned 1.0.77. CONSEQUENCE: the load-bearing --add-dir design and the refusal of a deny nested inside a grant remain valid outside tclaude-layer; tool approval does not erase Copilot's own directory boundary.",
+      "scenarios": [
+        "TestCopilotPermissionPathGrants/outside-all/allow-all-tools"
+      ]
+    },
+    {
+      "id": "add-dir-write-grant",
+      "claim": "Does --add-dir grant writes as well as reads?",
+      "status": "proven",
+      "finding": "It does. With folder trust pre-granted and tool approval closed explicitly by --allow-all-tools, the positive PTY row ran 'echo ... > <outside>/copilotfixture-write-probe.txt' under --add-dir <outside>, returned PermissionAllowed, and read back the exact committed probe content. The sibling with the same write command, trust, and tool flag but no --add-dir was PermissionBlocked on the positive 'Allow directory access' dialog, naming the target, with exactly one provider request and no created file. This isolates the write grant from tool approval and proves that Copilot's single directory-access grant covers both read and write operations.",
+      "scenarios": [
+        "TestCopilotPermissionAddDirWrites/outside-all/no-path-flags",
+        "TestCopilotPermissionAddDirWrites/outside-all/add-dir"
+      ]
+    },
+    {
+      "id": "flag-name-exactness",
+      "claim": "Does Copilot 1.0.77 accept an abbreviated, camelCase, or --no- spelling of an audited option?",
+      "status": "proven",
+      "finding": "It does not. Each spelling was launched on a real PTY with folder trust pre-granted and a credential-free mock provider: --allow-all-tool (prefix abbreviation), --allowAllTools (camelCase), and --no-allow-all-tools (negation) all exited 1 with an 'unknown option' diagnostic and zero provider requests. The parser probe therefore establishes that ValidateLaunchExtraArgs' exact flag-name matching is sound for these bypass shapes; the audit still separately handles the documented =value and glued single-dash forms.",
+      "scenarios": [
+        "TestCopilotPermissionFlagNameExactness/prefix-abbreviation",
+        "TestCopilotPermissionFlagNameExactness/camel-case",
+        "TestCopilotPermissionFlagNameExactness/no-negation"
+      ]
+    },
+    {
       "id": "resume-submits-prompt",
       "claim": "Does -i combined with --resume=<full-id> submit the prompt into the resumed conversation?",
       "status": "proven",

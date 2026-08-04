@@ -44,14 +44,12 @@ import (
 // option that does the same job honestly, so the fix is a rewrite rather than a
 // dead end.
 //
-// KNOWN LIMIT, stated rather than papered over: this matches flag NAMES exactly
-// (plus the `=value` and glued-short-value spellings). It therefore assumes
-// 1.0.77's parser accepts no other way of writing them — no prefix
-// abbreviation, no camelCase expansion, no `--no-` negation. Copilot's own
-// option table (`-r, --resume[=VALUE]`) is the shape of a parser that does none
-// of those, and no scenario has produced a counterexample, but no scenario has
-// looked either. It is cheap to fixture with the existing rig and worth doing
-// before this audit is relied on as a boundary rather than a guardrail.
+// The exact-name boundary is measured in contract entry `flag-name-exactness`:
+// on a PTY against 1.0.77, a prefix abbreviation, camelCase spelling and
+// `--no-` negation of --allow-all-tools all exited with an unknown-option
+// diagnostic before contacting the provider. The audit therefore keeps exact
+// names, plus the `=value` and glued-short-value spellings, rather than relying
+// on parser behavior that has not been measured.
 //
 // Harnesses other than Copilot are unaffected — they have their own launch
 // plumbing and their own gates, and widening this to them is not in TCL-973's
