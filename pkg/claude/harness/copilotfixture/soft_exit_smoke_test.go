@@ -35,7 +35,12 @@ import (
 // so a run that reaches the deadline is a run whose exit never landed — the
 // blocked arm's whole claim — while an arm that exits ends the moment the
 // process does.
-const softExitDeadline = 25 * time.Second
+//
+// 18s, down from 25s, and the margins are the argument rather than the number:
+// the turn streams for ~28s, so the deadline still lands with it comfortably in
+// flight, and the keystroke sequence finishes by ~9.5s, so an exit that was
+// going to land has ~8.5s to do it. The control arm takes about one second.
+const softExitDeadline = 18 * time.Second
 
 // softExitBusyTurn holds the TUI mid-turn for the whole scenario: ~40 deltas
 // at 700ms is far longer than the deadline, so the turn is still in flight
@@ -90,7 +95,20 @@ func softExitKeys(prefix string) []copilotfixture.Keystroke {
 // The negative claim is only worth as much as its control, which is the next
 // scenario: the same rig, the same bytes, one cancel keystroke in front.
 func TestCopilotSoftExitBareExitIsDiscardedMidTurn(t *testing.T) {
-	requireSmokeParallel(t)
+	// Sequential, and for the same reason as the pane-injection scenario in
+	// permission_smoke_test.go: this one is ABOUT timing. Its keystrokes are
+	// scheduled on a wall clock from launch, and the 8s lead exists to put them
+	// inside a turn that is still running — an assumption about how far the CLI
+	// has got by then, which is exactly the assumption CPU contention breaks.
+	//
+	// It broke, on CI, and the way it broke is worth recording: the run still
+	// reported "did not exit", so the headline assertion passed, and only the
+	// positive control caught it. The transcript showed a COMPLETED turn with
+	// no "/exit" on screen anywhere — the keystrokes had been typed during a
+	// startup that had not finished yet and were discarded, so the scenario was
+	// one assertion away from reporting the bug it exists to reproduce on
+	// evidence that had nothing to do with the bug.
+	requireSmoke(t)
 
 	res := softExitRun(t, softExitKeys(""))
 
@@ -108,7 +126,11 @@ func TestCopilotSoftExitBareExitIsDiscardedMidTurn(t *testing.T) {
 // TestCopilotSoftExitCancelFirstExitsMidTurn is the fix, measured: one cancel
 // keystroke ahead of the identical sequence and the busy pane exits cleanly.
 func TestCopilotSoftExitCancelFirstExitsMidTurn(t *testing.T) {
-	requireSmokeParallel(t)
+	// Sequential, for the reason spelled out on the scenario above: the same
+	// wall-clock keystroke schedule, so the same assumption about how far the
+	// CLI has got by 8s. A control that raced for CPU while the arm it controls
+	// did not would not be a control.
+	requireSmoke(t)
 
 	// "\x03" is the byte tmux send-keys C-c delivers.
 	res := softExitRun(t, softExitKeys("\x03"))

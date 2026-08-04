@@ -56,33 +56,38 @@ const permissionDeadline = 30 * time.Second
 // blockedQuiet is how long a pty scenario's transcript must stand still, with
 // no follow-up request, before the run is called blocked and stopped.
 //
-// MEASURED, and sized off the LOADED case rather than the comfortable one.
-// Every pty run logs "PTY TIMING … max-output-gap=…", and the two arms
-// separate — but by how much depends entirely on how busy the machine is:
+// MEASURED, off the LOADED case rather than the comfortable one. Every pty run
+// logs "PTY TIMING … first-output=… max-output-gap=…", and the two arms
+// separate cleanly:
 //
-//	                              widest gap a WORKING turn produced
-//	sequential, 16 cores                        2.2s
-//	-parallel 8, 16 cores                       3.8s
-//	-parallel 8, pinned to 2 cores              8.4s
+//   - A working turn's widest gap is 2.2s — and stays 2.2s under load. That is
+//     PTYQuiescence closing on a turn that had already finished, so genuine
+//     mid-turn gaps are smaller still.
+//   - A blocked arm stops emitting at 3.9-5.5s, when the dialog finishes
+//     rendering, and then never emits again however loaded the host is.
 //
-// A blocked arm, by contrast, stops emitting at 3.9-5.5s when the dialog
-// finishes rendering and then never emits again, however loaded the host is —
-// so the blocked side does not move, and all of the risk lives in the working
-// side stretching under contention.
+// The "stays 2.2s" is the part worth reading twice, because the first version
+// of this constant was sized against numbers that said otherwise: gaps
+// appearing to stretch to 8.4s under a two-core budget. They were not gaps.
+// MaxOutputGap counted from launch, so a slow Node startup was being billed as
+// a silence in a turn that had not begun — the measurement conflating exactly
+// what the blocked verdict must not conflate. Once startup moved to its own
+// field, the contention effect on working turns vanished: what actually
+// stretches under load is time-to-first-byte (to 5.8s on two cores), and that
+// is not a state any quiet window should be classifying.
 //
-// CI runs on two-core runners, so the two-core row is the one that governs:
-// 15s is ~1.8x the widest gap observed there. An earlier 8s — comfortable
-// against the sequential numbers, and nearly 4x the gap seen on an idle
-// machine — is BELOW that row and would have cut working turns short.
+// So 10s is ~4.5x the widest working gap measured on a deliberately starved
+// box, and roughly double the point at which a blocked arm has gone silent for
+// good. Being wrong in the tight direction is the failure mode to care about —
+// an allowed arm cut short is recorded as blocked, a false finding in a suite
+// whose whole subject is what a detached agent may do — so the margin is
+// deliberately lopsided. Being wrong loose costs seconds, on arms that run
+// concurrently with everything else anyway.
 //
-// Being wrong in the tight direction is the failure mode to care about: an
-// allowed arm cut short is recorded as blocked, which is a false finding in a
-// suite whose whole subject is what a detached agent is permitted to do.
-// Being wrong in the loose direction only costs seconds, and only on arms that
-// run concurrently with everything else anyway. Hence the lopsided margin —
-// and hence the timing log staying in the merged code, so the next tightening
-// (or the next pinned-binary bump) argues from a real job's numbers.
-const blockedQuiet = 15 * time.Second
+// The timing log stays in the merged code so the next tightening, or the next
+// pinned-binary bump, argues from a real job's numbers rather than from this
+// comment.
+const blockedQuiet = 10 * time.Second
 
 // safeShellCommand is a command Copilot classifies as trivially safe.
 //
