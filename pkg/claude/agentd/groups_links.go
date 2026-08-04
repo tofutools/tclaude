@@ -413,41 +413,42 @@ func handleGroupLinksRemove(w http.ResponseWriter, r *http.Request, g *db.AgentG
 // requireScopedLinkAuthority for the PATCH/DELETE path that has to
 // look at the actual link direction.
 //
-// We probe ownership first (no side effects) so that an owner caller
-// never triggers the slug-denied error path. If neither human nor
-// owner, fall through to requirePermission which handles the slug /
-// popup / 403-with-helpful-message branches uniformly.
+// The bypass runs through requirePermissionEx, so it obeys the same
+// precedence as every other owner-implied slug: it fills only the
+// permUndecided gap and an explicit per-conv deny override suppresses
+// it. Ownership is still consulted before any error path is taken — an
+// owner caller never triggers the slug-denied branch — because
+// requirePermissionEx evaluates the bypass ahead of the popup /
+// 403-with-helpful-message handling.
 func requireGroupLinkAuthority(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, perm string) (string, bool) {
 	// The owner-of-g structural bypass applies only to a confirmed agent
 	// (it needs a conv-id). The human, and every fail-closed class, are
-	// handled uniformly by requirePermission below.
-	p := peerFromContext(r.Context())
-	if classify(p) == classAgent {
-		isOwner, err := db.IsAgentGroupOwner(g.ID, p.ConvID)
-		if err == nil && isOwner {
-			return p.ConvID, true
-		}
-	}
-	return requirePermission(w, r, perm)
+	// handled uniformly by requirePermissionEx.
+	return requirePermissionEx(w, r, perm, func(convID string) bool {
+		owns, err := db.IsAgentGroupOwner(g.ID, convID)
+		return err == nil && owns
+	})
 }
 
 // requireScopedLinkAuthority is the PATCH/DELETE variant: the link is
 // already fetched, so we know whether g is the FROM or TO side. The
 // owner-of-g bypass ONLY applies when g is the FROM side of the
 // supplied link. Owners of the TO side must hold the slug — they can't
-// unilaterally manage links that point INTO their group.
+// unilaterally manage links that point INTO their group. Like the
+// create path, the bypass goes through requirePermissionEx and so fills
+// only the permUndecided gap — an explicit deny override on the slug is
+// authoritative even for an owner of the FROM side.
 func requireScopedLinkAuthority(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, link *db.AgentGroupLink, perm string) (string, bool) {
 	// Owner-of-g bypass: confirmed agent only, and only when g is the
 	// FROM side of the link. The human and every fail-closed class are
-	// handled uniformly by requirePermission below.
-	p := peerFromContext(r.Context())
-	if classify(p) == classAgent && link != nil && link.FromGroupID == g.ID {
-		isOwner, err := db.IsAgentGroupOwner(g.ID, p.ConvID)
-		if err == nil && isOwner {
-			return p.ConvID, true
+	// handled uniformly by requirePermissionEx.
+	return requirePermissionEx(w, r, perm, func(convID string) bool {
+		if link == nil || link.FromGroupID != g.ID {
+			return false
 		}
-	}
-	return requirePermission(w, r, perm)
+		owns, err := db.IsAgentGroupOwner(g.ID, convID)
+		return err == nil && owns
+	})
 }
 
 // resolveGroupSelector resolves `s` to an AgentGroup. Accepts a group

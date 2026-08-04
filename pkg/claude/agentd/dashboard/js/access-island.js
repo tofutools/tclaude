@@ -49,7 +49,7 @@ function SlugsView({ current }) {
   }
   if (!current.slugs?.length) return html`<div class="empty">No slugs registered.</div>`;
   return html`<${Fragment}>
-    <div class="muted" style="font-size:11px;margin-bottom:6px">👑 = group ownership confers this slug without an explicit grant. <b>group</b> = over the groups you own; <b>member</b> = over their members; <b>any</b> = unscoped, owning any group is enough. A per-agent deny suppresses the bypass, except groups.link.add/rm, where ownership is checked first.</div>
+    <div class="muted" style="font-size:11px;margin-bottom:6px">👑 = group ownership confers this slug without an explicit grant. <b>group</b> = over the groups you own; <b>member</b> = over their members; <b>any</b> = unscoped, owning any group is enough. A per-agent deny suppresses the bypass.</div>
     <table><thead><tr><th>Slug</th><th>Owner</th><th>Description</th></tr></thead><tbody>
       ${current.slugs.map((slug) => html`<tr key=${slug.slug} data-key=${slug.slug}>
         <td><span class="slug">${slug.slug}</span></td>
