@@ -43,7 +43,14 @@ func gitAvailable(t *testing.T) string {
 // it, and returns (workTree, bareRemote).
 func realGitRepo(t *testing.T, gitPath string) (string, string) {
 	t.Helper()
-	root := t.TempDir()
+	// EvalSymlinks the temp root, because git canonicalises the paths it
+	// reports and these tests compare against them. On macOS t.TempDir() hands
+	// back /var/folders/… while /var is a symlink to /private/var, so a raw
+	// fixture path and git's answer differ on that platform and agree on Linux
+	// — which is a test that passes at home and fails in CI, not a real
+	// difference. resolveProxyRepo resolves the same way in production.
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
 	work := filepath.Join(root, "work")
 	bare := filepath.Join(root, "origin.git")
 	require.NoError(t, os.MkdirAll(work, 0o755))
@@ -500,7 +507,13 @@ func TestRealGit_LinkedWorktreeIsAcceptedOnlyWithAMatchingBackPointer(t *testing
 		[]byte("gitdir: "+linkedGitDir+"\n"), 0o644))
 
 	// CONTROL: git accepts it completely — this is the attack, armed.
-	assert.Equal(t, forged, revParse(forged, "--show-toplevel"),
+	//
+	// Compared canonically, not literally. git reports the path it gets from
+	// getcwd(), which is always symlink-resolved, so a fixture path that still
+	// contains a symlinked component would differ from git's answer as a matter
+	// of spelling rather than of location — that is what broke this on macOS,
+	// where TMPDIR lives under /var → /private/var.
+	assert.Equal(t, canonicalProxyPath(forged), canonicalProxyPath(revParse(forged, "--show-toplevel")),
 		"git reports the attacker's own directory as the work tree")
 	assert.Equal(t, revParse(main, "--git-common-dir"), revParse(forged, "--git-common-dir"),
 		"...while the common dir, and therefore the config and remotes, is the victim's")
@@ -624,7 +637,13 @@ func TestRealGit_RemoteGetURLAppliesInsteadOf(t *testing.T) {
 // it pins the gate's tolerance of a non-canonical answer, not a git behaviour.
 // Both paths on disk are real, so the resolution being asserted is real too.
 func TestLinkedWorktreeToleratesANonCanonicalCommonDir(t *testing.T) {
-	realRoot := t.TempDir()
+	// Canonical, because resolveProxyRepo hands acceptLinkedWorktree an
+	// EvalSymlinks-resolved gitDir in production. The ONLY non-canonical path
+	// here must be the stubbed probe answer below — that is the thing under
+	// test. (Without this, macOS supplies a second, accidental symlink via
+	// /var → /private/var and the test stops testing what it names.)
+	realRoot, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
 	commonDir := filepath.Join(realRoot, "main", ".git")
 	gitDir := filepath.Join(commonDir, "worktrees", "side")
 	require.NoError(t, os.MkdirAll(gitDir, 0o700))
