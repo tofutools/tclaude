@@ -55,6 +55,11 @@ type permissionsState struct {
 	// Overrides is the full tri-state per-conv view — conv-id → slug →
 	// "grant" | "deny". Grants is its grant-only projection.
 	Overrides map[string]map[string]string `json:"overrides"`
+	// GroupGrants is group name → slugs that group grants to every member
+	// — a standing source the daemon's resolver consults directly, so it
+	// belongs in the roster next to the defaults. Empty against a daemon
+	// that predates the field.
+	GroupGrants map[string][]string `json:"group_grants"`
 	// AgentIDs projects the stable agent_id behind each conv key (conv-id
 	// → agent_id), so the roster can lead with the rotation-immune id while
 	// the maps above stay conv-keyed (JOH-325). Absent for a conv with no
@@ -83,6 +88,11 @@ type permissionsEffectiveResp struct {
 	Effective    []string `json:"effective"`
 	Source       string   `json:"source"`
 	OwnerImplied []string `json:"owner_implied"`
+	// Provenance maps each effective slug to the daemon resolver's source
+	// for it — "sudo", "override", "group", "default" or "owner". Absent
+	// from an older daemon's reply, in which case rows render unannotated
+	// apart from the OwnerImplied projection.
+	Provenance map[string]string `json:"provenance,omitempty"`
 }
 
 // ambiguousCandidate is one entry of the daemon's typed `ambiguous`
@@ -175,6 +185,7 @@ func renderPermissionsState(state permissionsState, stdout io.Writer) int {
 			fmt.Fprintf(stdout, "  %s\n", s)
 		}
 	}
+	renderGroupGrants(state, stdout)
 	if len(state.Overrides) == 0 {
 		fmt.Fprintln(stdout, "PER-AGENT OVERRIDES: (none)")
 		return rcOK
@@ -218,6 +229,29 @@ func renderPermissionsState(state permissionsState, stdout io.Writer) int {
 	}
 	fmt.Fprintln(stdout, tbl.Render())
 	return rcOK
+}
+
+// renderGroupGrants prints the group-granted slugs — the standing source
+// that every member of a group inherits. It is listed alongside the
+// defaults because the daemon's resolver consults it directly: a slug
+// here is in force for the group's members even with nothing in DEFAULTS
+// or PER-AGENT OVERRIDES. Silent when no group grants anything, so the
+// common case stays terse.
+func renderGroupGrants(state permissionsState, stdout io.Writer) {
+	if len(state.GroupGrants) == 0 {
+		return
+	}
+	names := make([]string, 0, len(state.GroupGrants))
+	for name := range state.GroupGrants {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	fmt.Fprintln(stdout, "GROUP GRANTS (held by every member):")
+	for _, name := range names {
+		slugs := append([]string{}, state.GroupGrants[name]...)
+		sort.Strings(slugs)
+		fmt.Fprintf(stdout, "  %s: %s\n", name, strings.Join(slugs, ", "))
+	}
 }
 
 // renderEffectivePerms asks the daemon for the resolved effective view of
@@ -270,13 +304,38 @@ func renderEffectivePerms(p *permissionsLsParams, stdout, stderr io.Writer) int 
 		ownerSet[s] = true
 	}
 	for _, s := range resp.Effective {
-		if ownerSet[s] {
-			fmt.Fprintf(stdout, "  %s  (via ownership)\n", s)
+		if note := permSourceNote(resp.Provenance[s], ownerSet[s]); note != "" {
+			fmt.Fprintf(stdout, "  %s  %s\n", s, note)
 		} else {
 			fmt.Fprintf(stdout, "  %s\n", s)
 		}
 	}
 	return rcOK
+}
+
+// permSourceNote renders the daemon's per-slug provenance as the short
+// parenthetical the listing appends. A slug held by the plain config
+// default gets no note — that is the unremarkable case, and annotating
+// every row would bury the ones that matter. ownerImplied keeps the
+// historical "(via ownership)" wording working against a daemon that
+// predates the provenance map.
+func permSourceNote(source string, ownerImplied bool) string {
+	switch source {
+	case "sudo":
+		return "(via sudo elevation)"
+	case "override":
+		return "(via agent grant)"
+	case "group":
+		return "(via group)"
+	case "owner":
+		return "(via ownership)"
+	case "default":
+		return ""
+	}
+	if ownerImplied {
+		return "(via ownership)"
+	}
+	return ""
 }
 
 // printDaemonAmbiguous renders the daemon's typed ambiguity envelope.

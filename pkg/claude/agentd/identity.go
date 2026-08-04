@@ -431,29 +431,138 @@ func resolvePermissionForRequest(r *http.Request, convID, slug string) permResol
 }
 
 func resolvePermissionWithDefault(convID, slug string, defaultAllowed bool) (permResolution, int64) {
+	v := resolvePermissionVerdict(convID, slug, defaultAllowed)
+	return v.Resolution, v.SudoGrantID
+}
+
+// permSource names which of resolvePermissionVerdict's ordered sources
+// actually decided a (conv, slug) question. It exists so a caller that
+// must EXPLAIN a decision — the effective-permissions listing — can do so
+// without re-deriving the precedence itself and drifting from the gate.
+type permSource string
+
+const (
+	// permSourceNone: nothing spoke (permUndecided).
+	permSourceNone permSource = ""
+	// permSourceSudo: an active, time-bounded human elevation.
+	permSourceSudo permSource = "sudo"
+	// permSourceOverride: a per-conv grant or deny row.
+	permSourceOverride permSource = "override"
+	// permSourceGroup: an active group the agent belongs to grants it.
+	permSourceGroup permSource = "group"
+	// permSourceDefault: the config default-permissions list.
+	permSourceDefault permSource = "default"
+	// permSourceOwner: not decided by resolvePermissionVerdict at all —
+	// the structural group-owner bypass that call sites (and the listing)
+	// apply to fill the permUndecided gap.
+	permSourceOwner permSource = "owner"
+)
+
+// permVerdict is a resolution plus the provenance behind it.
+type permVerdict struct {
+	Resolution  permResolution
+	Source      permSource
+	SudoGrantID int64
+}
+
+// permSources is one agent's standing permission state — every source
+// resolvePermissionVerdictFrom consults, read once. Gates need a single
+// slug and listings need dozens, and both must reach the same precedence,
+// so the sources are gathered here and the precedence is applied over
+// them separately. Reading all of an agent's rows costs the same round
+// trips as probing one slug, which is what lets the roster evaluate the
+// whole registry per agent without a query per slug.
+//
+// A zero permSources (resolvable=false) answers permUndecided for every
+// slug — the fail-closed shape for an empty conv-id, an unknown or
+// retired agent, or an unreadable DB.
+type permSources struct {
+	resolvable bool
+	// sudo maps slug → active grant id (soonest-expiring wins, matching
+	// db.LookupActiveSudoGrantID's ORDER BY).
+	sudo map[string]int64
+	// override maps slug → "grant" | "deny" (the per-conv override rows).
+	override map[string]string
+	// group holds the slugs granted by the agent's active groups.
+	group map[string]bool
+}
+
+// loadPermSources reads every standing source for convID. Read errors
+// degrade to "this source said nothing", exactly as the per-slug queries
+// did — except an unresolvable agent, which stays fail-closed.
+func loadPermSources(convID string) permSources {
 	if convID == "" {
-		return permUndecided, 0
+		return permSources{}
 	}
 	state, err := db.AgentState(convID)
 	if err != nil || state == db.AgentStateRetired {
-		return permUndecided, 0
+		return permSources{}
 	}
-	if grantID, err := db.LookupActiveSudoGrantID(convID, slug); err == nil && grantID != 0 {
-		return permAllow, grantID
+	out := permSources{
+		resolvable: true,
+		sudo:       map[string]int64{},
+		override:   map[string]string{},
+		group:      map[string]bool{},
 	}
-	if effect, ok, err := db.AgentPermissionOverride(convID, slug); err == nil && ok {
-		if effect == db.PermEffectDeny {
-			return permDeny, 0
+	// ListActiveSudoGrants orders by expires_at ascending, so the first
+	// row for a slug is the one LookupActiveSudoGrantID would have picked.
+	if grants, err := db.ListActiveSudoGrants(convID); err == nil {
+		for _, g := range grants {
+			if g == nil {
+				continue
+			}
+			if _, seen := out.sudo[g.Slug]; !seen {
+				out.sudo[g.Slug] = g.ID
+			}
 		}
-		return permAllow, 0
 	}
-	if ok, err := db.HasAgentGroupPermission(convID, slug); err == nil && ok {
-		return permAllow, 0
+	if overrides, err := db.ListAgentPermissionOverridesForConv(convID); err == nil {
+		out.override = overrides
+	}
+	if slugs, err := db.ListAgentGroupPermissionSlugsForConv(convID); err == nil {
+		for _, s := range slugs {
+			out.group[s] = true
+		}
+	}
+	return out
+}
+
+// resolvePermissionVerdict is THE non-interactive permission resolver:
+// every gate reaches it through requirePermission/requirePermissionEx,
+// and the effective-permissions listing reaches it through
+// effectivePermsFor. Both therefore see one implementation of the
+// precedence documented on resolvePermission, and a new source added
+// here shows up in the listing for free rather than silently making the
+// listing wrong (an agent held human.notify via a group grant while
+// `permissions ls` reported it absent).
+func resolvePermissionVerdict(convID, slug string, defaultAllowed bool) permVerdict {
+	return resolvePermissionVerdictFrom(loadPermSources(convID), slug, defaultAllowed)
+}
+
+// resolvePermissionVerdictFrom applies the precedence to already-read
+// sources. This is the one place the ordering lives; a caller resolving
+// many slugs for one agent loads the sources once and calls this per
+// slug, paying no more queries than a single gate check.
+func resolvePermissionVerdictFrom(src permSources, slug string, defaultAllowed bool) permVerdict {
+	if !src.resolvable {
+		return permVerdict{Resolution: permUndecided, Source: permSourceNone}
+	}
+	if grantID, ok := src.sudo[slug]; ok && grantID != 0 {
+		return permVerdict{Resolution: permAllow, Source: permSourceSudo, SudoGrantID: grantID}
+	}
+	if effect, ok := src.override[slug]; ok {
+		if effect == db.PermEffectDeny {
+			return permVerdict{Resolution: permDeny, Source: permSourceOverride}
+		}
+		return permVerdict{Resolution: permAllow, Source: permSourceOverride}
+	}
+	if src.group[slug] {
+		return permVerdict{Resolution: permAllow, Source: permSourceGroup}
 	}
 	if defaultAllowed {
-		return permAllow, 0
+		return permVerdict{Resolution: permAllow, Source: permSourceDefault}
 	}
-	return permUndecided, 0
+	return permVerdict{Resolution: permUndecided, Source: permSourceNone}
 }
 
 // requirePermission gates an endpoint behind a named agent permission.
