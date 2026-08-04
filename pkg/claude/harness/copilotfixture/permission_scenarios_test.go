@@ -43,6 +43,7 @@ var permissionScenarios = struct {
 	HeadlessNotEvidence string
 	WebFetchOnlineArm   string
 	WebFetchEgressWall  string
+	WebFetchInPaneDeny  string
 	WebFetchGate        map[string]string
 	WebFetchExclusion   string
 	WebFetchURLDeny     map[string]string
@@ -76,6 +77,8 @@ var permissionScenarios = struct {
 		"TestCopilotPermissionWebFetchNeedsTheOnlineArm"),
 	WebFetchEgressWall: copilotfixture.RegisterScenario(
 		"TestCopilotPermissionWebFetchEgressWallIsInForce"),
+	WebFetchInPaneDeny: copilotfixture.RegisterScenario(
+		"TestCopilotPermissionWebFetchDenyURLSurvivesInPaneAllowAll"),
 	WebFetchGate: registerRows("TestCopilotPermissionWebFetchGate",
 		"no-flags", "allow-all-tools", "allow-all-tools/no-ask-user", "allow-all-urls",
 		"deny-tool-url"),
