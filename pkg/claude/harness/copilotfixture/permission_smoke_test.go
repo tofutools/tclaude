@@ -51,7 +51,42 @@ import (
 // likely cause; it cannot silently downgrade a working launch into a "blocked"
 // finding. What this bound buys is that a starved runner reaches that arm
 // because the CLI misbehaved, not because the runner was busy.
-const permissionDeadline = 30 * time.Second
+//
+// 30s did not buy that on macOS. Measured over 1746 pty runs harvested from 30
+// CI jobs (every run logs PTY TIMING, so passing runs are recoverable too), the
+// ALLOWED arms at the path-grants site completed in:
+//
+//	macos  n=49   p50 25.2s  p90 28.4s  p95 29.4s
+//	linux  n=108  p50 25.3s  p90 26.7s  max 27.2s
+//
+// Same median on both platforms; the whole difference is tail. About one macOS
+// allowed arm in ten was finishing within 1.6s of the bound, and TCL-1029 is
+// what that looks like when a job is a little slower than usual.
+//
+// Sixty rather than a percentile off that table, and the reason matters: the
+// table CANNOT yield one. A run recorded as settled at 30.0s settled on the
+// final tick, and anything slower did not settle at all — it failed and left no
+// settled row. The distribution is right-censored exactly where the interesting
+// tail is, so any p99 read off it would be an artifact of the old bound. What
+// is defensible is that the observed spread needs materially more headroom than
+// 1.6s, and that 60s is already this file's reviewed value for a bound with no
+// legitimate blocking arm (headlessPermissionDeadline). Same number, same
+// reason: generous enough that reaching it is a finding.
+//
+// COST, stated rather than waved at: a blocked arm still pays this in full. The
+// dialog-based verdict in ClassifyPermission fixes which answer a cut run gets;
+// it does not stop the run. On macOS ~4 in 5 blocked arms reach the deadline
+// (blockedQuiet almost never fires there — see below), so this roughly doubles
+// their wall clock: ~68 runs per job at +30s, which -parallel 8 turns into a
+// few minutes on that shard. The way to get it back is an evidence-based early
+// exit — end a blocked arm when its dialog appears, the way SettledWhen ends an
+// allowed arm when its follow-up arrives — which needs a transcript-aware
+// predicate in RunPTY and a decision about whether evidence or blocking wins on
+// the same tick. That is a change to the shared runner's ordering semantics
+// every scenario in this package depends on, and getting that precedence wrong
+// records allowed arms as blocked, so it is TCL-1033 rather than something
+// smuggled into a bound.
+const permissionDeadline = 60 * time.Second
 
 // headlessPermissionDeadline bounds the non-PTY permission probes in this file.
 //
