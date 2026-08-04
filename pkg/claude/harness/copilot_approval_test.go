@@ -2,6 +2,8 @@ package harness
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -665,5 +667,64 @@ func TestCopilotAddDirGrantsUseTheSuppliedTempDir(t *testing.T) {
 	if err := ValidateCopilotAddDirGrants(CopilotName, "/srv/repo", "",
 		nil, nil, []string{"/launch-temp/secret"}, false); err != nil {
 		t.Fatalf("an unnamed temp directory grants nothing: %v", err)
+	}
+}
+
+// TestCopilotAddDirGrantsSeeThroughTheMacOSTempSymlink stages the macOS layout
+// on whatever platform the test runs on, so the regression is caught on Linux
+// CI too rather than only where /var really is a symlink.
+//
+// The two sides genuinely arrive spelled differently in production: a deny is
+// recorded by sandboxpolicy.Resolve, which walks symlinks, while the temp root
+// comes straight from the launch's TMPDIR. On macOS TMPDIR sits under /var,
+// which links to /private/var, so before this gate resolved both sides the
+// implicit temp grant — one of only two grants Copilot makes with no flag —
+// could never match a deny inside it.
+func TestCopilotAddDirGrantsSeeThroughTheMacOSTempSymlink(t *testing.T) {
+	base := t.TempDir()
+	realTemp := filepath.Join(base, "private", "var", "folders", "T")
+	if err := os.MkdirAll(realTemp, 0o755); err != nil {
+		t.Fatalf("stage the resolved temp tree: %v", err)
+	}
+	if err := os.Symlink(filepath.Join(base, "private", "var"),
+		filepath.Join(base, "var")); err != nil {
+		t.Skipf("this platform cannot stage the symlink the case needs: %v", err)
+	}
+	// What TMPDIR would say: the LINK spelling.
+	launchTemp := filepath.Join(base, "var", "folders", "T")
+	// What a resolved profile records: the TARGET spelling.
+	denied := filepath.Join(realTemp, "secret")
+	if err := os.MkdirAll(denied, 0o755); err != nil {
+		t.Fatalf("stage the denied directory: %v", err)
+	}
+
+	// The cwd deliberately sits OUTSIDE the staged tree, so the refusal can only
+	// come from the temp root — the grant this case is about.
+	workspace := filepath.Join(base, "workspace")
+	err := ValidateCopilotAddDirGrants(CopilotName, workspace, launchTemp,
+		nil, nil, []string{denied}, false)
+	if err == nil {
+		t.Fatal("the deny sits inside the implicit temp grant by real path identity; " +
+			"only the spelling differs, and the gate must not be fooled by it")
+	}
+	if !strings.Contains(err.Error(), denied) {
+		t.Fatalf("the refusal must quote the deny as the profile spells it: %v", err)
+	}
+	if !strings.Contains(err.Error(), "automatically, with no flag") {
+		t.Fatalf("the refusal must say the temp root carries no flag: %v", err)
+	}
+	// The authored temp spelling is what the operator's environment holds, so
+	// that is the one the message has to name — not the resolved form, which
+	// appears in neither their profile nor their environment.
+	if !strings.Contains(err.Error(), launchTemp) {
+		t.Fatalf("the refusal must quote the temp root as TMPDIR spells it: %v", err)
+	}
+
+	// The symmetric non-match still passes: a sibling of the granted tree is
+	// not contained by it under any spelling.
+	outside := filepath.Join(base, "private", "elsewhere", "secret")
+	if err := ValidateCopilotAddDirGrants(CopilotName, workspace,
+		launchTemp, nil, nil, []string{outside}, false); err != nil {
+		t.Fatalf("a deny outside every grant must still pass: %v", err)
 	}
 }

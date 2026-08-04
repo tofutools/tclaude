@@ -9,7 +9,8 @@ launch path, its conversation store, ad-hoc ask, and per-session tool
 permissions; full status mapping remains intentionally capability-gated. Copilot
 is a deliberately minimal first wave — launch, resume, model/effort, the
 in-pane control commands, hooks, a cold conversation store, the outer sandbox,
-and a measured approval posture, and nothing else yet (see [GitHub Copilot CLI (first wave)](#github-copilot-cli-first-wave)). Claude remains the default so
+event-log usage/context telemetry, and a measured approval posture, and nothing
+else yet (see [GitHub Copilot CLI (first wave)](#github-copilot-cli-first-wave)). Claude remains the default so
 existing commands and databases keep their historical behavior when no harness
 is recorded.
 
@@ -247,13 +248,16 @@ covers **interactive human sessions**:
 | **Model transport under a filtered network** | ⚠️ the default first-party GitHub Copilot route only (`api.githubcopilot.com`, `api.github.com`); every route-moving input is refused rather than followed, read from both settings files with the same precedence as the sandbox key |
 | **Directory pre-trust at spawn** ([below](#directory-trust-at-spawn)) | ✅ opt-in `trust_dir` appends the launch dir to `trustedFolders` in `<COPILOT_HOME>/config.json`. Copilot's modal blocks *before* any provider contact, so an unseeded detached pane never reaches its first turn |
 | **Approval / permissions** | ⚠️ `allow-tools` (default) / `inherit`. Two tokens, each rendering only flags measured against the pinned binary on a real terminal. Neither makes a Copilot pane unconditionally nonblocking — see [below](#copilot-approvals-and-permissions) for exactly which prompt each one closes and which it leaves standing |
-| **Everything else in the matrix** | ➖ not yet — no ad-hoc ask, tool governance, remote control, usage/cost, or status bar |
+| **Usage, cost & context** | ⚠️ followed incrementally from Copilot's durable event log, with a byte-offset checkpoint so a daemon restart resumes rather than rescans. Output tokens advance per turn (`assistant.message`); input tokens, context occupancy and window size advance only at an authoritative disclosure — a compaction, a truncation, or a shutdown — and nothing is written between them, so a real reading is never overwritten by a zero. Cost is carried in the **nano-AI units Copilot emits**; no USD figure is derived, because Copilot documents an AI credit as $0.01 in a different structure and nowhere states that one AIU is one credit |
+| **Everything else in the matrix** | ➖ not yet — no ad-hoc ask, tool governance, remote control, or status bar |
 
 Two consequences are worth stating plainly:
 
-- Copilot conversations **do** appear in `conv ls` and resolve for resume, but
-  per-turn usage, cost and context figures are still absent — those come from
-  the event log's usage records, which a later wave follows incrementally.
+- Copilot conversations **do** appear in `conv ls` and resolve for resume, and
+  they now carry usage and context figures — but at the durable log's
+  resolution, not a live meter's. Truly per-call usage and context are emitted
+  on Copilot's stdout JSONL stream and never persisted, so reading them is a
+  transport integration rather than a file tracker, and remains out of scope.
 - Copilot agents are still not usable as detached agents. The approval axis is
   now classifiable in both directions, but **sandbox**-lineage classification has
   no Copilot arm, and it is consulted first — so an agent-to-agent Copilot spawn
@@ -1059,9 +1063,11 @@ Beyond that:
   the modal. `COPILOT_ALLOW_ALL=true` does, but it also blanket-approves every
   tool, path and URL request, so tclaude does not set it.
 - **Trust is not approval.** Seeding the folder answers the folder question
-  only. Copilot's per-command approval prompt is a separate, still-enforced gate,
-  and this wave wires no approval contract at all — so an unattended Copilot pane
-  can still stop on a risky command's prompt.
+  only. Copilot's per-command approval prompt is a separate gate, closed by a
+  separate axis — the approval catalog's default renders `--allow-all-tools`,
+  measured to clear it. The two are wired independently on purpose: trust
+  governs what a pane may *start*, approval what it may then *do*, and a launch
+  can have either without the other.
 
 Every claim above is measured against the pinned CLI on a real pseudo-terminal
 (the modal does not exist headlessly), and the seeding is exercised as the

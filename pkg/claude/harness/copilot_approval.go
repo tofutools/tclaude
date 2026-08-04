@@ -248,14 +248,26 @@ const SandboxCopilotDenyInsideAddDir = "copilot-deny-inside-add-dir"
 // silently return the pane to prompting on a directory the operator granted,
 // and the implicit roots cannot be dropped at all.
 //
-// KNOWN LIMIT: containment is byte-exact and lexical, so a differently-cased
-// deny spelling on a case-insensitive volume, or a symlinked one (macOS TMPDIR
-// through /var -> /private/var reaches this gate, since the temp root is one of
-// the implicit grants), escapes it. That is the identity-only, guard-biased
-// containment rule TCL-981 established and TCL-985 tracks converting the
-// remaining sites to; this is one of them, and it is deliberately left to that
-// pass rather than converted alone — pathContains is also used by a call site
-// that is NOT a refusal guard, so the change belongs per-call-site.
+// The two sides of the containment test arrive spelled DIFFERENTLY, and that
+// is why every path here goes through resolveSymlinks first. The denies come
+// from a resolved sandbox profile, and sandboxpolicy.Resolve already walks each
+// grant's symlinks — so a deny records its real target path. The implicit roots
+// come raw from the launch: cwd as the operator's shell spells it, and tempDir
+// straight out of TMPDIR. On macOS those two are never the same string, because
+// /var is a symlink to /private/var and the system TMPDIR sits under it: the
+// deny records /private/var/folders/…/secret while the temp root reads back as
+// /var/folders/…, so a byte-exact comparison finds no containment and the gate
+// passes a launch it exists to refuse. That is not a rare spelling — it is the
+// macOS default, and the temp root is one of the two grants Copilot makes with
+// no flag, so it would have been the most common way to reach this gate at all.
+//
+// KNOWN LIMIT: what remains is still a lexical containment rule over normalized
+// spellings, not the identity-only, guard-biased rule TCL-981 established.
+// TCL-985 tracks converting the remaining sites to GuardContainsOrEqual, and
+// this is one of them; the normalization here fixes an ordinary disagreement
+// between two tclaude-side producers rather than doing that conversion early.
+// It cannot mask a deny: resolving both sides only ever makes containment match
+// where it truly holds, so the gate refuses strictly more than it did.
 func ValidateCopilotAddDirGrants(
 	harnessName, cwd, tempDir string,
 	readDirs, writeDirs, denyDirs []string,
@@ -269,20 +281,24 @@ func ValidateCopilotAddDirGrants(
 		return nil
 	}
 	rendered := copilotAddDirRoots(append(append([]string(nil), readDirs...), writeDirs...))
-	implicit := normalizedSandboxWriteDirs([]string{cwd, tempDir})
-	for _, grant := range append(append([]string(nil), rendered...), implicit...) {
+	for _, grant := range copilotGrantRoots(rendered, cwd, tempDir) {
 		for _, deny := range denies {
-			if !pathContains(grant, deny) {
+			if !pathContains(grant.resolved, resolveSymlinks(deny)) {
 				continue
 			}
-			how := "granting the enclosing directory " + grant
-			if slices.Contains(implicit, grant) && !slices.Contains(rendered, grant) {
+			// The message names the AUTHORED spellings throughout. An operator
+			// reading a refusal needs to find these paths in their own profile
+			// and their own environment, not in a resolved form neither one
+			// contains.
+			how := "granting the enclosing directory " + grant.authored
+			if grant.implicit {
 				// Naming the mechanism matters here: nothing in the launch
 				// command mentions this root, so an operator reading the argv
 				// would have no idea where the grant came from.
 				how = fmt.Sprintf(
 					"Copilot grants the enclosing directory %s automatically, with no flag "+
-						"(its launch directory and the system temp directory are always readable)", grant)
+						"(its launch directory and the system temp directory are always readable)",
+					grant.authored)
 			}
 			return &SandboxCapabilityError{
 				Harness: CopilotName,
@@ -300,6 +316,35 @@ func ValidateCopilotAddDirGrants(
 		}
 	}
 	return nil
+}
+
+// copilotGrantRoot pairs a root's authored spelling, which the refusal message
+// quotes, with the resolved spelling the containment test uses.
+type copilotGrantRoot struct {
+	authored string
+	resolved string
+	implicit bool
+}
+
+// copilotGrantRoots returns every directory the launch opens: the roots
+// `--add-dir` names explicitly, then the cwd and temp roots Copilot opens with
+// no flag. A root that is both keeps its rendered identity, so the refusal
+// points at the flag an operator can actually see and change.
+func copilotGrantRoots(rendered []string, cwd, tempDir string) []copilotGrantRoot {
+	implicit := normalizedSandboxWriteDirs([]string{cwd, tempDir})
+	roots := make([]copilotGrantRoot, 0, len(rendered)+len(implicit))
+	for _, dir := range rendered {
+		roots = append(roots, copilotGrantRoot{authored: dir, resolved: resolveSymlinks(dir)})
+	}
+	for _, dir := range implicit {
+		if slices.Contains(rendered, dir) {
+			continue
+		}
+		roots = append(roots, copilotGrantRoot{
+			authored: dir, resolved: resolveSymlinks(dir), implicit: true,
+		})
+	}
+	return roots
 }
 
 // copilotAddDirRoots returns the directories copilotAddDirArgs would render,

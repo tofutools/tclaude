@@ -230,7 +230,19 @@ func TestResumeLaunchCmd_CopilotDenyUnderTheImplicitTempGrant(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			setupTestDB(t)
-			launchTemp := t.TempDir()
+			// Canonicalized before anything else uses it. The resolved profile
+			// records a deny at its symlink-resolved path, so on macOS — where
+			// the system temp root lives under /var, a symlink to /private/var —
+			// the raw t.TempDir() spelling would appear in TMPDIR while the
+			// recorded deny read /private/var/…, and the assertions below would
+			// be comparing two spellings of one directory. The gate itself
+			// resolves both sides; the DIVERGENCE is covered platform-
+			// independently by TestCopilotAddDirGrantsSeeThroughTheMacOSTempSymlink,
+			// which stages the layout instead of needing the host to have it.
+			// What this test is for is the production wiring, so it works in a
+			// single spelling.
+			launchTemp, err := filepath.EvalSymlinks(t.TempDir())
+			require.NoError(t, err)
 			t.Setenv("TMPDIR", launchTemp)
 			denied := filepath.Join(launchTemp, "secret")
 			require.NoError(t, os.MkdirAll(denied, 0o755))
