@@ -1044,6 +1044,22 @@ jobs:
           path: dist
           merge-multiple: true
 
+      # The build jobs assert the same thing before upload; this re-checks it
+      # on the far side of the artifact round-trip, so a binary lost between
+      # upload and repack fails here instead of shipping a short release.
+      - name: Verify both binaries survived the artifact round-trip
+        shell: bash
+        run: |
+          set -euo pipefail
+          for binary in tclaude tclaude-agentd; do
+            count=$(find dist -type f -name "$binary" | wc -l)
+            if [ "$count" -eq 0 ]; then
+              echo "::error::no $binary binary in the downloaded artifacts"
+              exit 1
+            fi
+            echo "$binary: $count binary(s)"
+          done
+
       - name: Create archives
         run: |
           cd dist

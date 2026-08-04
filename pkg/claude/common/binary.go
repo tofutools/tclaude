@@ -29,10 +29,13 @@ func MarkSelfNotTclaude() {
 // SelfTclaudePath returns an absolute path to the tclaude binary to use when
 // building a command line that runs a tclaude subcommand. In the tclaude
 // binary that is simply the running executable, which keeps a session pinned
-// to the exact build that started it. In a sibling binary it is a tclaude
-// installed next to that binary if there is one — release archives and
-// `go install` both put them in the same directory — otherwise the first
-// tclaude on PATH, and finally the bare name as a last resort.
+// to the exact build that started it. In a sibling binary it is an executable
+// tclaude installed next to that binary if there is one — `go install` puts
+// them in the same directory, as does any hand-assembled install prefix —
+// otherwise the first tclaude on PATH, and finally the bare name as a last
+// resort. Note that the release archives do NOT co-locate them: goreleaser
+// tars each build id separately, so a downloaded release lands the two
+// binaries in two archives and it is PATH that resolves them.
 func SelfTclaudePath() string {
 	self, err := os.Executable()
 	if err != nil {
@@ -50,8 +53,11 @@ func resolveTclaudePath(self string, isTclaude bool) string {
 		if isTclaude {
 			return self
 		}
-		sibling := filepath.Join(filepath.Dir(self), "tclaude")
-		if info, err := os.Stat(sibling); err == nil && !info.IsDir() {
+		// LookPath rather than Stat: the name contains a separator, so it is
+		// tried directly, and it rejects a directory or a non-executable file
+		// named tclaude — either of which would otherwise beat a working
+		// tclaude on PATH.
+		if sibling, err := exec.LookPath(filepath.Join(filepath.Dir(self), "tclaude")); err == nil {
 			return sibling
 		}
 	}

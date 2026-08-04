@@ -2,8 +2,13 @@
 // exposes exactly what `tclaude agentd` does, one level higher up: run
 // `tclaude-agentd serve` instead of `tclaude agentd serve`. Both entry points
 // call the same code in pkg/claude/agentd, so the daemon behaves identically
-// whichever binary starts it — operators who only need the daemon can deploy
-// this one without the rest of the tclaude CLI.
+// whichever binary starts it.
+//
+// This binary is not a replacement for installing tclaude. The daemon still
+// runs tclaude subcommands out of process — it forks `tclaude session new` to
+// spawn agents, `tclaude setup` from the tray, and builds `tclaude session
+// attach` command lines for the dashboard's terminal links — so keep tclaude
+// on PATH beside it.
 package main
 
 import (

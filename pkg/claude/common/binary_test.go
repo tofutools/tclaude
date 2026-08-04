@@ -58,6 +58,23 @@ func TestResolveTclaudePath(t *testing.T) {
 		}
 	})
 
+	t.Run("a non-executable sibling loses to a working PATH tclaude", func(t *testing.T) {
+		selfDir := t.TempDir()
+		pathDir := t.TempDir()
+		self := filepath.Join(selfDir, "tclaude-agentd")
+		writeExecutable(t, self)
+		onPath := filepath.Join(pathDir, "tclaude")
+		writeExecutable(t, onPath)
+		notExecutable := filepath.Join(selfDir, "tclaude")
+		if err := os.WriteFile(notExecutable, []byte("not a program\n"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", notExecutable, err)
+		}
+		t.Setenv("PATH", pathDir)
+		if got := resolveTclaudePath(self, false); got != onPath {
+			t.Errorf("resolveTclaudePath(%q, false) = %q, want %q", self, got, onPath)
+		}
+	})
+
 	t.Run("sibling binary falls back to PATH", func(t *testing.T) {
 		selfDir := t.TempDir()
 		pathDir := t.TempDir()
