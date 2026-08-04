@@ -2,6 +2,7 @@ package agentd_test
 
 import (
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -66,9 +67,18 @@ func TestSoftExit_RetryRecoversJunkScrambledExit(t *testing.T) {
 	require.NotNil(t, cc, "CCSim for the live agent")
 	cc.Receive("half-typed leftover ")
 
+	// This scenario needs the ladder to REACH attempt 2 — that is the whole
+	// recovery it measures — so it races the escalation watchdog exactly as
+	// the wedged-pane scenarios below do. See the header comment before
+	// TestSoftExit_BoundedRetriesForHungPane.
+	releaseEscalation := holdSoftExitEscalation(t)
+
 	stop := f.AsHuman().Stop(conv, false)
 	f.AssertSoftStopped(stop)
 
+	awaitLadderThenRelease(t, releaseEscalation, func() bool {
+		return countExitSends(f, target, "/exit") >= 2
+	}, "the ladder never re-injected, so this scenario is not measuring the retry recovery")
 	// Drain the background retry goroutine, then assert the recovery landed.
 	agentd.WaitForBackgroundForTest()
 
@@ -190,15 +200,17 @@ type retryProbeFaults struct {
 func (r *retryProbeFaults) hook(sim *testharness.TmuxSim) func(int) {
 	return func(attempt int) {
 		r.mu.Lock()
+		defer r.mu.Unlock()
 		r.seen = append(r.seen, attempt)
-		queue := attempt == r.faultAt
-		if queue {
-			r.injected = true
+		if attempt != r.faultAt {
+			return
 		}
-		r.mu.Unlock()
-		if queue {
-			sim.FailNextCommand("display-message")
-		}
+		// Queue FIRST, publish SECOND, both under the lock. Publishing the
+		// flag before queueing leaves a window where `taken` sees injected
+		// AND an empty fault queue — releasing the watchdog before the fault
+		// it is being held away from even exists.
+		sim.FailNextCommand("display-message")
+		r.injected = true
 	}
 }
 
@@ -345,11 +357,17 @@ func TestSoftExit_RetryDoesNotExitResumedPaneReusingTmuxName(t *testing.T) {
 		staged    bool
 		stageErr  error
 	)
+	// Closed once the hook has run, success or failure, so the test goroutine
+	// can wait for the staging WITHOUT reading `staged` across goroutines —
+	// that variable is written on the ladder's goroutine and is only safe to
+	// read after the join below.
+	swapAttempted := make(chan struct{})
 	restoreProbe := agentd.SetBeforeSoftExitTargetRetryProbeForTest(func(attempt int) {
 		if attempt != 2 {
 			return
 		}
 		stageOnce.Do(func() {
+			defer close(swapAttempted)
 			cc.MarkDead()
 			resumed := testharness.NewCCSimWithID(t, f.World.HomeDir, conv, cwd)
 			if err := resumed.Start(); err != nil {
@@ -362,9 +380,26 @@ func TestSoftExit_RetryDoesNotExitResumedPaneReusingTmuxName(t *testing.T) {
 	})
 	cleanupAfterBackgroundDrain(t, restoreProbe)
 
+	// This scenario also needs the ladder to REACH attempt 2 — that is where
+	// the swap is staged — so it is exposed to the same watchdog race as its
+	// siblings. Its require.True(staged) guard means a watchdog that outran
+	// the ladder would fail loudly rather than pass vacuously, which is why
+	// the cold review rated it low risk. Converted anyway: a loud flake is
+	// still a flake, and "loud" is a property of the guard, not a reason to
+	// leave the ordering to chance.
+	releaseEscalation := holdSoftExitEscalation(t)
+
 	stop := f.AsHuman().Stop(conv, false)
 	f.AssertSoftStopped(stop)
 
+	awaitLadderThenRelease(t, releaseEscalation, func() bool {
+		select {
+		case <-swapAttempted:
+			return true
+		default:
+			return false
+		}
+	}, "the ladder never reached attempt 2, so no pane swap was staged")
 	agentd.WaitForBackgroundForTest()
 
 	require.NoError(t, stageErr, "the resumed pane must have started for this test to mean anything")
@@ -414,6 +449,16 @@ func TestSoftExit_SelectedPaneSwapSendsZeroBytesToSuccessor(t *testing.T) {
 }
 
 func TestSoftExit_InitialProbeUnknownPreservesDeliveryWithoutRetry(t *testing.T) {
+	// The escalation ladder's LAST TWO RUNGS SIGNAL A REAL PROCESS GROUP, and
+	// newFlow does not neutralize them. The simulator reports pane_pid=1, so a
+	// scenario that lets the ladder past tmux kill-pane sends SIGTERM to
+	// process group 1 — killing the test binary and everything else the run
+	// owns. Parking the watchdog makes this reachable here, so the seam that
+	// exists for it goes in FIRST, before newFlow, per its own doc.
+	t.Cleanup(agentd.SetSoftExitEscalationProcessForTest(
+		func(int) bool { return false },
+		func(int, syscall.Signal) error { return nil },
+	))
 	f := newFlow(t)
 	t.Cleanup(agentd.SetSoftExitRetryDelayForTest(10 * time.Millisecond))
 	const conv = "sxjf-1111-2222-3333-4444"
@@ -423,23 +468,67 @@ func TestSoftExit_InitialProbeUnknownPreservesDeliveryWithoutRetry(t *testing.T)
 	cc := f.World.CCs.GetByConvID(conv)
 	require.NotNil(t, cc)
 	cc.OnInput("/exit", func(c *testharness.CCSim, _ string) bool { return true })
-	cleanup := agentd.SetAfterSoftExitTargetSendForTest(func() { f.World.Tmux.FailNextCommand("display-message") })
-	t.Cleanup(cleanup)
+	// This fault is aimed at the SYNCHRONOUS post-send probe, and it reaches
+	// it for a structural reason rather than a lucky one: the hook runs inside
+	// injectSoftExitTarget, and scheduleSoftExitEscalation is not called until
+	// that returns (lifecycle.go), so no watchdog goroutine exists yet to take
+	// the fault first. Moving the arming earlier — or adding any other
+	// concurrent issuer of display-message on this path — gives this scenario
+	// TCL-1028's bug verbatim, silently and on loaded runners only. The
+	// witness below is what makes that change fail here instead.
+	witness := &escalationWitness{}
+	// Hook cleanup registered BEFORE the park, so LIFO runs the park's
+	// release-then-drain first; the reverse order drains into a parked
+	// watchdog and hangs.
+	cleanupAfterBackgroundDrain(t, agentd.SetAfterSoftExitTargetSendForTest(func() {
+		witness.sample()
+		f.World.Tmux.FailNextCommand("display-message")
+	}))
+	releaseEscalation := holdSoftExitEscalationInto(t, witness)
 	stop := f.AsHuman().Stop(conv, false)
 	f.AssertSoftStopped(stop)
+	releaseEscalation()
 	agentd.WaitForBackgroundForTest()
+	assert.False(t, witness.probedWhenSampled(),
+		"the escalation watchdog was already probing when this fault was queued; "+
+			"it is no longer aimed at the synchronous probe")
 	assert.Equal(t, 1, countExitSends(f, tmuxSes+":0.0", "/exit"), "unknown probe must never trigger retry reinjection")
 }
 
 func TestSoftExit_PreSendUnknownSendsZeroAndErrors(t *testing.T) {
+	// The escalation ladder's LAST TWO RUNGS SIGNAL A REAL PROCESS GROUP, and
+	// newFlow does not neutralize them. The simulator reports pane_pid=1, so a
+	// scenario that lets the ladder past tmux kill-pane sends SIGTERM to
+	// process group 1 — killing the test binary and everything else the run
+	// owns. Parking the watchdog makes this reachable here, so the seam that
+	// exists for it goes in FIRST, before newFlow, per its own doc.
+	t.Cleanup(agentd.SetSoftExitEscalationProcessForTest(
+		func(int) bool { return false },
+		func(int, syscall.Signal) error { return nil },
+	))
 	f := newFlow(t)
 	const conv = "sxjg-1111-2222-3333-4444"
 	const tmuxSes = "tmux-sxjg"
 	f.HaveConvWithTitle(conv, "pre-unknown")
 	f.HaveAliveSession(conv, "spwn-sxjg", tmuxSes, f.TestCwd("sxjg"))
-	cleanup := agentd.SetBeforeSoftExitTargetRevalidateForTest(func() { f.World.Tmux.FailNextCommand("display-message") })
-	t.Cleanup(cleanup)
+	// Same structural claim as the scenario above, one step earlier in the
+	// synchronous injection — and pinned the same way.
+	witness := &escalationWitness{}
+	cleanupAfterBackgroundDrain(t, agentd.SetBeforeSoftExitTargetRevalidateForTest(func() {
+		witness.sample()
+		f.World.Tmux.FailNextCommand("display-message")
+	}))
+	// Released at the END of the body, and both halves of that matter. Not
+	// earlier: a failed pre-send injection still arms the watchdog, so an
+	// early release would race its kill against the "pane is still alive"
+	// assertion below, which is a claim about the STOP path and nothing else.
+	// Not left to cleanup either: newFlow registers its background drain LAST,
+	// so LIFO runs it FIRST, and a drain into a parked watchdog never returns.
+	releaseEscalation := holdSoftExitEscalationInto(t, witness)
 	assert.Equal(t, "error", agentd.StopOneConvWithIntentForTest(conv, db.AgentExitActionStop))
+	assert.False(t, witness.probedWhenSampled(),
+		"the escalation watchdog was already probing when this fault was queued; "+
+			"it is no longer aimed at the pre-send revalidate probe")
 	d, err := db.Open()
 	require.NoError(t, err)
 	var intent string
@@ -447,6 +536,7 @@ func TestSoftExit_PreSendUnknownSendsZeroAndErrors(t *testing.T) {
 	assert.Empty(t, intent)
 	assert.True(t, f.World.Tmux.IsAlive(tmuxSes))
 	assert.Equal(t, 0, countExitSends(f, tmuxSes+":0.0", "/exit"))
+	releaseEscalation()
 }
 
 // Scenario: the retry probe cannot read the pane. An unknown result must end
@@ -613,8 +703,12 @@ func TestLifecycleStop_PaneGenerationBinding(t *testing.T) {
 				awaitLadderThenRelease(t, releaseEscalation, func() bool {
 					return countExitSends(f, tmuxSession+":0.0", "/exit") == tc.wantSends
 				}, "the ladder never reached its full attempt count")
-				agentd.WaitForBackgroundForTest()
 			}
+			// Drained on EVERY row, not just the ladder rows. The rows that
+			// stand the watchdog down assert that nothing was killed, and an
+			// undrained assertion there cannot fail: it would be asserting
+			// that a kill has not happened YET.
+			agentd.WaitForBackgroundForTest()
 			assert.Equal(t, tc.wantSends, countExitSends(f, tmuxSession+":0.0", "/exit"))
 			if tc.wantKill {
 				assert.NotEmpty(t, f.World.Tmux.MutationTargets("kill-pane"))
@@ -737,15 +831,37 @@ func TestSoftExit_RetryIdentityDriftPreservesDeliveredIntent(t *testing.T) {
 	cc := f.World.CCs.GetByConvID(conv)
 	require.NotNil(t, cc)
 	cc.OnInput("/exit", func(*testharness.CCSim, string) bool { return true })
+	drifted := make(chan struct{})
+	var driftOnce sync.Once
 	cleanupAfterBackgroundDrain(t, agentd.SetBeforeSoftExitTargetRetryProbeForTest(func(attempt int) {
 		if attempt == 2 {
 			f.World.Tmux.SetPaneExitGeneration(tmuxSes, otherGeneration)
+			driftOnce.Do(func() { close(drifted) })
 		}
 	}))
 
+	// Without this the watchdog can kill the pane before attempt 2's probe,
+	// which sends the ladder down its GONE branch instead of the identity-drift
+	// branch this scenario exists to measure — and every assertion below still
+	// passes, because the escalation re-arms the same action/event/generation.
+	// A vacuous pass is the failure mode here, not a red test.
+	releaseEscalation := holdSoftExitEscalation(t)
+
 	assert.Equal(t, "soft_stopped",
 		agentd.StopOneConvWithIntentForTest(conv, db.AgentExitActionStop, eventID))
+	// Releasing once the drift is applied is safe: a watchdog that probes
+	// after it sees the same mismatch and stands down rather than killing.
+	awaitLadderThenRelease(t, releaseEscalation, func() bool {
+		select {
+		case <-drifted:
+			return true
+		default:
+			return false
+		}
+	}, "the ladder never reached attempt 2, so no identity drift was applied")
 	agentd.WaitForBackgroundForTest()
+	assert.Empty(t, f.World.Tmux.MutationTargets("kill-pane"),
+		"the drifted pane belongs to a successor and must never be killed")
 
 	assert.Equal(t, 1, countExitSends(f, tmuxSes+":0.0", "/exit"),
 		"no retry may be typed once the pane identity drifted")
@@ -777,17 +893,35 @@ func TestSoftExit_RetryUnknownAfterSessionGonePreservesReaperAttribution(t *test
 	cc := f.World.CCs.GetByConvID(conv)
 	require.NotNil(t, cc)
 	cc.OnInput("/exit", func(*testharness.CCSim, string) bool { return true })
+	sessionGone := make(chan struct{})
+	var goneOnce sync.Once
 	cleanupAfterBackgroundDrain(t, agentd.SetBeforeSoftExitTargetRetryProbeForTest(func(attempt int) {
 		if attempt == 2 {
 			// The delivered /exit has taken effect between retries: the
 			// session is gone, so the probe errors.
 			_ = f.World.Tmux.Command("kill-session", "-t", "="+tmuxSes).Run()
+			goneOnce.Do(func() { close(sessionGone) })
 		}
 	}))
 
+	// Same vacuity hazard as the drift scenario: a watchdog kill before
+	// attempt 2 reaches the same intent state by a different route, so the
+	// assertions below would pass without the branch under test ever running.
+	releaseEscalation := holdSoftExitEscalation(t)
+
 	assert.Equal(t, "soft_stopped",
 		agentd.StopOneConvWithIntentForTest(conv, db.AgentExitActionStop, eventID))
+	awaitLadderThenRelease(t, releaseEscalation, func() bool {
+		select {
+		case <-sessionGone:
+			return true
+		default:
+			return false
+		}
+	}, "the ladder never reached attempt 2, so the session was never made to disappear")
 	agentd.WaitForBackgroundForTest()
+	assert.Empty(t, f.World.Tmux.MutationTargets("kill-pane"),
+		"a session that already vanished leaves the escalation nothing to kill")
 
 	assert.Equal(t, 1, countExitSends(f, tmuxSes+":0.0", "/exit"))
 	d, err := db.Open()
@@ -827,6 +961,12 @@ func TestSoftExit_RetrySendFailurePreservesDeliveredIntentThroughWindow(t *testi
 		}
 	}))
 
+	// A watchdog kill before attempt 2's probe leaves the ladder on its
+	// pane-is-gone branch, so the re-send never happens, the queued send-keys
+	// fault is never consumed, and the final clear this scenario asserts is
+	// never scheduled — it fails outright rather than passing vacuously.
+	releaseEscalation := holdSoftExitEscalation(t)
+
 	assert.Equal(t, "soft_stopped",
 		agentd.StopOneConvWithIntentForTest(conv, db.AgentExitActionStop, eventID))
 	select {
@@ -834,6 +974,13 @@ func TestSoftExit_RetrySendFailurePreservesDeliveredIntentThroughWindow(t *testi
 	case <-time.After(10 * time.Second):
 		t.Fatal("retry attempt 2 never ran")
 	}
+	// Reaching the hook is not enough: what this scenario measures is a
+	// FAILED re-send, which has not happened until the queued fault has been
+	// taken. With the watchdog parked, the ladder's own send is the only
+	// thing that can take it.
+	awaitLadderThenRelease(t, releaseEscalation, func() bool {
+		return f.World.Tmux.PendingCommandFaults("send-keys") == 0
+	}, "the re-send never consumed its queued fault, so no failed re-send was measured")
 
 	d, err := db.Open()
 	require.NoError(t, err)
