@@ -309,6 +309,13 @@ func dirWriteProofCallerExempt(callerConvID string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	// parent.Implementation now travels with the mode (TCL-989), but the
+	// exemptions below deliberately still key off the mode ALONE, so every
+	// caller keeps exactly the exemption it has today. A tclaude-layer parent
+	// records its harness's no-confinement mode while tclaude's own wall
+	// confines it, so reading the pair here would flip real callers from exempt
+	// to proof-required — a behaviour change that belongs with the parent-side
+	// classification work (TCL-991), not with threading the field.
 	if parent.Harness == harness.DefaultName && parent.Mode == harness.ClaudeSandboxOff {
 		return true, nil
 	}
