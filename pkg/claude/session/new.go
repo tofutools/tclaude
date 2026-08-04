@@ -1685,8 +1685,18 @@ func runNew(params *NewParams) error {
 	// than merely unrepresented. The grant set includes Copilot's automatic cwd
 	// and system-temp grants, which no flag expresses and which are where this
 	// shape usually appears. Only without an outer wall to enforce the deny.
+	// The temp directory is resolved from the COMPOSED launch environment, not
+	// from tclaude's own: a profile that sets TMPDIR moves the directory
+	// Copilot grants, and a gate reading tclaude's ambient temp root would
+	// inspect one directory while the pane was handed another. Same resolver
+	// the Copilot sandbox baseline uses, for the same reason.
+	var copilotGateEnvironment []sandboxpolicy.EnvironmentEntry
+	if launchSandbox != nil {
+		copilotGateEnvironment = launchSandbox.Effective.Environment
+	}
 	if err := harness.ValidateCopilotAddDirGrants(
-		h.Name, cwd, os.TempDir(),
+		h.Name, cwd,
+		CopilotLaunchTempDir(launchModelEnvironment(copilotGateEnvironment)),
 		launchReadDirs, launchWriteDirs, launchDenyDirs, outerLayer); err != nil {
 		return err
 	}

@@ -2599,8 +2599,12 @@ func resumeLaunchCmdWithStackedProof(
 	}
 	// The mirror-image shape for Copilot's negative-form-less path grants.
 	// Mirrors the spawn path.
+	// Resolved from the revalidated effective profile's environment — the same
+	// entries that build resumeEnv and shellEnvironment, so the directory the
+	// gate inspects is the one the resumed pane is actually granted. A profile
+	// that relocates TMPDIR moves it.
 	if err := harness.ValidateCopilotAddDirGrants(
-		h.Name, resumeCwd, os.TempDir(),
+		h.Name, resumeCwd, session.CopilotLaunchTempDir(resumeEnv),
 		readDirs, writeDirs, denyDirs, outerLayer); err != nil {
 		return "", "", nil, err
 	}

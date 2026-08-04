@@ -639,3 +639,31 @@ func TestCopilotAddDirGateAndRendererAgreeOnTheRoots(t *testing.T) {
 		t.Fatalf("gate roots %v disagree with rendered roots %v", roots, rendered)
 	}
 }
+
+// The gate must use the temp directory it is GIVEN, never resolve one itself.
+//
+// Copilot grants its temp directory with no flag, so the gate's answer is only
+// right if the directory it inspects is the one the LAUNCH will see. The caller
+// resolves that from the composed launch environment (session.CopilotLaunchTempDir,
+// the same resolver the Copilot sandbox baseline uses), and this pins that the
+// gate honours it rather than reaching for tclaude's own ambient temp root.
+func TestCopilotAddDirGrantsUseTheSuppliedTempDir(t *testing.T) {
+	// A deny under the supplied temp root refuses...
+	err := ValidateCopilotAddDirGrants(CopilotName, "/srv/repo", "/launch-temp",
+		nil, nil, []string{"/launch-temp/secret"}, false)
+	if err == nil {
+		t.Fatal("a deny under the launch's temp root must refuse: Copilot grants that root with no flag")
+	}
+	// ...while the same deny under a DIFFERENT temp root does not, which is
+	// what would happen if the caller passed the wrong directory.
+	if err := ValidateCopilotAddDirGrants(CopilotName, "/srv/repo", "/other-temp",
+		nil, nil, []string{"/launch-temp/secret"}, false); err != nil {
+		t.Fatalf("only the supplied temp root is treated as granted: %v", err)
+	}
+	// An empty temp directory grants nothing — the catalog omits the row for a
+	// launch whose environment names no temp directory, and so does this gate.
+	if err := ValidateCopilotAddDirGrants(CopilotName, "/srv/repo", "",
+		nil, nil, []string{"/launch-temp/secret"}, false); err != nil {
+		t.Fatalf("an unnamed temp directory grants nothing: %v", err)
+	}
+}

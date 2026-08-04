@@ -1,12 +1,16 @@
 package conv
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 const resumeConvCopilot = "5b2f7c10-1111-4222-8333-444455556666"
@@ -168,4 +172,112 @@ func TestResumeApprovalState_BlankRowFallbackUnchangedForOtherHarnesses(t *testi
 	require.NoError(t, err)
 	assert.Equal(t, harness.ApprovalUntrusted, policy,
 		"the Codex legacy path keeps its own conservative reconstruction")
+}
+
+// TCL-973 — what actually protects the implicit temp grant.
+//
+// Copilot grants its temp directory automatically, with no flag, so
+// ValidateCopilotAddDirGrants has to know which directory that is. The obvious
+// worry is a sandbox profile relocating TMPDIR: the gate would then inspect
+// tclaude's ambient temp root while the pane was granted another, and a deny
+// nested under the relocated root would sail through.
+//
+// It cannot happen, and this test pins WHY rather than asserting a refusal that
+// could never fire. TMPDIR is a reserved profile environment name — along with
+// HOME, PATH and the temp aliases — so a profile that tries to set it is
+// refused at resolution time, long before any launch. The gate is nevertheless
+// fed from the composed launch environment through the same resolver the
+// Copilot sandbox baseline uses (session.CopilotLaunchTempDir), so if that
+// reservation is ever relaxed the gate follows the pane instead of tclaude.
+func TestResumeLaunchCmd_CopilotImplicitTempGrantCannotBeRelocatedByAProfile(t *testing.T) {
+	_, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{Global: &sandboxpolicy.Profile{
+		Name:        "copilot-relocated-temp",
+		Environment: []sandboxpolicy.EnvironmentEntry{{Name: "TMPDIR", Value: t.TempDir()}},
+	}})
+	require.Error(t, err,
+		"a profile that could relocate TMPDIR would move the directory Copilot grants implicitly")
+	assert.Contains(t, err.Error(), "reserved for launch or sandbox control")
+
+	// The gate still reads the LAUNCH environment rather than tclaude's own, so
+	// the seam is correct by construction and not by relying on that reservation.
+	ambient := t.TempDir()
+	relocated := t.TempDir()
+	t.Setenv("TMPDIR", ambient)
+	assert.Equal(t, relocated,
+		session.CopilotLaunchTempDir(map[string]string{"TMPDIR": relocated}),
+		"the launch environment wins over tclaude's ambient temp root")
+	assert.Equal(t, filepath.Clean(ambient),
+		session.CopilotLaunchTempDir(map[string]string{}),
+		"a launch environment that names no temp directory falls back to the inherited one")
+}
+
+// A deny under the temp directory the launch actually uses must refuse the
+// launch outside tclaude-layer, and be admitted under it — the implicit grant
+// is not visible in the argv, so this is the only place it can be caught.
+func TestResumeLaunchCmd_CopilotDenyUnderTheImplicitTempGrant(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		outerLayer  bool
+		wantRefused bool
+	}{
+		{name: "outside the outer layer the launch is refused", wantRefused: true},
+		{
+			// Under tclaude-layer the outer sandbox enforces the deny whatever
+			// Copilot's own path check believes.
+			name:       "under tclaude-layer the launch is admitted",
+			outerLayer: true, wantRefused: false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setupTestDB(t)
+			launchTemp := t.TempDir()
+			t.Setenv("TMPDIR", launchTemp)
+			denied := filepath.Join(launchTemp, "secret")
+			require.NoError(t, os.MkdirAll(denied, 0o755))
+
+			effective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{Global: &sandboxpolicy.Profile{
+				Name: "copilot-temp-deny",
+				Filesystem: []sandboxpolicy.FilesystemGrant{
+					{Path: denied, Access: sandboxpolicy.AccessDeny},
+				},
+			}})
+			require.NoError(t, err)
+			snapshot := sandboxpolicy.NewSnapshot(effective, nil)
+			agentID, _, err := db.EnsureAgentForConv(resumeConvCopilot, "test")
+			require.NoError(t, err)
+			require.NoError(t, db.SetAgentEffectiveSandboxConfig(agentID, &snapshot))
+
+			implementation := "off"
+			if tc.outerLayer {
+				implementation = string(sandboxpolicy.ImplementationTclaudeLayer)
+			}
+			require.NoError(t, db.SaveSession(&db.SessionRow{
+				ID: "resume-copilot-temp", ConvID: resumeConvCopilot,
+				Harness: harness.CopilotName, SandboxMode: harness.CopilotSandboxOff,
+				SandboxImplementation: implementation,
+				ApprovalPolicy:        harness.CopilotApprovalAllowTools,
+			}))
+
+			_, _, _, err = resumeLaunchCmd(harness.CopilotName,
+				resumeConvCopilot[:8], resumeConvCopilot, nil)
+			if !tc.wantRefused {
+				// Asserted as "not THIS refusal" rather than "no error":
+				// building a real tclaude-layer launch needs working
+				// unprivileged user namespaces, which a CI container or an
+				// agent sandbox may not have, and a test that demanded them
+				// would fail for a reason that has nothing to do with the gate.
+				if err != nil {
+					assert.NotContains(t, err.Error(), denied,
+						"the outer sandbox enforces the deny, so this gate must not refuse")
+					assert.NotContains(t, err.Error(), "automatically, with no flag")
+				}
+				return
+			}
+			require.Error(t, err,
+				"the deny sits under the temp root Copilot grants with no flag")
+			assert.Contains(t, err.Error(), denied)
+			assert.Contains(t, err.Error(), "automatically, with no flag",
+				"the refusal must say where the grant came from — nothing in the argv names it")
+		})
+	}
 }
