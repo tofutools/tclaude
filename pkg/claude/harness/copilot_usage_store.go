@@ -421,9 +421,9 @@ type copilotUsageNumber struct {
 // The float64 hop is lossless for everything this reader actually carries:
 // integers below 2^53 round-trip exactly, and token counts, event ids and
 // millisecond latencies are all orders of magnitude short of that. Above 2^53
-// the precision was already gone before this function saw the value — the
-// driver handed over a float64 — so the clamp is about the int64 BOUNDARY, not
-// about recovering exactness that no longer exists.
+// the loss happens in copilotUsageNumberOf's int64→float64 conversion, which
+// this reader accepts by design — so the clamp is about the int64 BOUNDARY,
+// not about recovering exactness the hop already spent.
 func (n copilotUsageNumber) int64() int64 {
 	if !n.ok {
 		return 0

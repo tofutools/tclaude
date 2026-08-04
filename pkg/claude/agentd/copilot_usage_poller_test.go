@@ -780,15 +780,18 @@ func TestCopilotUsageReadFailureLogsErrorOnce(t *testing.T) {
 	t.Cleanup(func() { slog.SetDefault(prev) })
 
 	// Driven through the real open path first, on a home whose session-store.db
-	// EXISTS but is not a database: that is the production classification this
-	// policy turns on — present and unreadable, not absent.
+	// EXISTS but is not a database: copilotUsageStoreFor really opens the file,
+	// the schema probe fails, and markCopilotUsageHomeDown classifies it as
+	// present-and-unreadable — the production classification this policy turns
+	// on. Repeated calls prove the backoff: only the first attempt opens (and
+	// logs); the rest return early on downUntil.
 	presentButUnreadable := t.TempDir()
 	require.NoError(t, os.WriteFile(
 		filepath.Join(presentButUnreadable, "session-store.db"),
 		[]byte("this is not a sqlite database"), 0o600))
 	for range 5 {
-		markCopilotUsageHomeDown(presentButUnreadable,
-			errors.New("copilot usage store: read schema_version: file is not a database"))
+		_, ok := copilotUsageStoreFor(presentButUnreadable)
+		assert.False(t, ok)
 	}
 	assert.Equal(t, 1, strings.Count(logs.String(), "session store unusable"),
 		"a store that exists and cannot be read reports once, not every tick")
@@ -808,7 +811,8 @@ func TestCopilotUsageReadFailureLogsErrorOnce(t *testing.T) {
 	// suppressed — that is what keying the limiter by reason buys.
 	logCopilotUsageHomeFailure(home, "open",
 		"copilot-usage: session store unusable; live usage degrades to the durable event log", failure)
-	assert.Contains(t, logs.String(), "session store unusable")
+	assert.Equal(t, 2, strings.Count(logs.String(), "session store unusable"),
+		"a different reason on a suppressed home must still be audible")
 }
 
 // TestCopilotUsageAbsentStoreStaysQuiet is the other half of the operator's
