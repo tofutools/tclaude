@@ -275,30 +275,60 @@ func TestRealGit_UploadPackPinIsIneffectiveButTheFlagWorks(t *testing.T) {
 // TestRealGit_ProtocolPinsRefuseCommandTransports proves that even if a hostile
 // URL somehow got past parseRemoteURL, git itself would refuse to speak the
 // command-executing transports.
+//
+// Each URL is run twice — once WITHOUT the pins — because the two cases are not
+// equally load-bearing and the test should say which is which:
+//
+//   - file:// is genuinely held by `protocol.file.allow=never`. Unpinned, git
+//     happily lists refs from a local path, which is how an agent would reach a
+//     repository the allow-list never saw.
+//   - ext:: is already refused by git's own default (verified on 2.43, where
+//     protocol.ext is not allowed for a config-supplied remote). The pin is
+//     defence-in-depth against a git that defaults differently, so its control
+//     is EXPECTED to fail too — asserting otherwise would be asserting git's
+//     default rather than this code.
 func TestRealGit_ProtocolPinsRefuseCommandTransports(t *testing.T) {
 	gitPath := gitAvailable(t)
-	work, _ := realGitRepo(t, gitPath)
+	work, bare := realGitRepo(t, gitPath)
 	home := filepath.Dir(work)
 	hooksDir := filepath.Join(home, "no-hooks")
 	require.NoError(t, os.MkdirAll(hooksDir, 0o700))
 
 	evidence := filepath.Join(home, "ext-evidence")
 	pins := gitProxyConfigPins(hooksDir, "ssh -o BatchMode=yes", nil)
-	for _, url := range []string{
-		"ext::sh -c 'echo RAN >> " + evidence + "'",
-		"file://" + work,
-	} {
-		args := append(append([]string{}, pins...), "ls-remote", "--", url)
+
+	lsRemote := func(url string, withPins bool) (string, error) {
+		var args []string
+		if withPins {
+			args = append(args, pins...)
+		}
+		args = append(args, "ls-remote", "--", url)
 		c := exec.Command(gitPath, args...)
 		c.Dir = work
 		c.Env = realGitEnv(home)
 		out, err := c.CombinedOutput()
-		assert.Errorf(t, err, "git must refuse %q; output=%s", url, out)
-		assert.Contains(t, strings.ToLower(string(out)), "not allowed",
-			"the refusal should come from the protocol policy for %q", url)
+		return string(out), err
 	}
-	_, err := os.Stat(evidence)
-	assert.True(t, os.IsNotExist(err), "no ext:: command may have run")
+
+	// file:// — the pin is the only thing stopping this.
+	fileURL := "file://" + bare
+	out, err := lsRemote(fileURL, false)
+	require.NoErrorf(t, err, "CONTROL: unpinned file:// must succeed, or the pin "+
+		"below is not being tested; output=%s", out)
+
+	out, err = lsRemote(fileURL, true)
+	assert.Errorf(t, err, "git must refuse %q; output=%s", fileURL, out)
+	assert.Contains(t, strings.ToLower(out), "not allowed",
+		"the refusal should come from the protocol policy")
+
+	// ext:: — refused with the pins; git's own default refuses it too.
+	extURL := "ext::sh -c 'echo RAN >> " + evidence + "'"
+	out, err = lsRemote(extURL, true)
+	assert.Errorf(t, err, "git must refuse %q; output=%s", extURL, out)
+	assert.Contains(t, strings.ToLower(out), "not allowed")
+
+	_, statErr := os.Stat(evidence)
+	assert.True(t, os.IsNotExist(statErr), "no ext:: command may have run")
 }
 
 // TestRealGit_ProxyEnvExcludesInheritedGitVariables checks the constructed
