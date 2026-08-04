@@ -1477,6 +1477,62 @@ func UpdateContextSnapshotForGeneration(
 	return true, nil
 }
 
+// UpdateContextSnapshotAndModelEffortForGeneration persists a Copilot usage
+// projection and the model/effort observed on its newest call as one
+// generation-guarded update. The model and effort columns are rendered from
+// the same sessions row as the context meter, so keeping them in this
+// transaction prevents a stale sweep from partially updating a recreated
+// session.
+//
+// Unlike UpdateSessionEffort, an empty effort is meaningful here: Copilot
+// explicitly reports null for models without reasoning support, and that must
+// clear a value observed on the preceding call. An empty model remains a
+// no-op at the caller's fold layer, which retains the last non-empty model.
+func UpdateContextSnapshotAndModelEffortForGeneration(
+	sessionID, convID string,
+	createdAt time.Time,
+	pct float64,
+	tokensInput, tokensOutput, windowSize int64,
+	model, effort string,
+) (bool, error) {
+	if pct == 0 && tokensInput == 0 && tokensOutput == 0 && windowSize == 0 &&
+		model == "" && effort == "" {
+		return false, nil
+	}
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	result, err := tx.Exec(`UPDATE sessions
+		SET context_pct = ?, tokens_input = ?, tokens_output = ?, context_window_size = ?,
+			model = ?, effort_level = ?
+		WHERE id = ? AND conv_id = ? AND created_at = ?`,
+		pct, tokensInput, tokensOutput, windowSize, model, effort,
+		sessionID, convID, dbTime(createdAt))
+	if err != nil {
+		return false, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if affected == 0 {
+		return false, nil
+	}
+	if err := projectSessionRelaunchProfilesTx(tx, sessionID, relaunchProjectionOptions{}); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // UpdateContextSnapshotIfWindowUnchanged is the token-only fast path for a
 // caller that has already successfully projected this session generation and
 // context window. It intentionally does not touch durable relaunch profiles.

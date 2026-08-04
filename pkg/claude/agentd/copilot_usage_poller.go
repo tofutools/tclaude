@@ -652,7 +652,10 @@ func lookupCopilotLiveUsage(sessionID, convID string, createdAt time.Time) (copi
 }
 
 // persistCopilotUsageContext writes the shared context columns the dashboard
-// already renders.
+// already renders, plus the observed model and effort. The durable Copilot
+// context follower also reads model-change events, but deliberately does not
+// write sessions.model or sessions.effort_level; once a usage row exists, this
+// sweep is the sole owner of those two dashboard columns, so they cannot flap.
 //
 // The window (the DENOMINATOR) is taken from the row rather than computed:
 // Copilot's store does not carry a token limit at all, and — verified against
@@ -696,12 +699,15 @@ func persistCopilotUsageContext(sess *db.SessionRow, snapshot db.CopilotUsageSna
 
 	if pct == stored.ContextPct &&
 		snapshot.LastCallInputTokens == stored.TokensInput &&
-		output == stored.TokensOutput {
+		output == stored.TokensOutput &&
+		snapshot.Model == stored.Model &&
+		snapshot.ReasoningEffort == stored.EffortLevel {
 		return
 	}
-	if _, err := db.UpdateContextSnapshotForGeneration(
+	if _, err := db.UpdateContextSnapshotAndModelEffortForGeneration(
 		sess.ID, sess.ConvID, sess.CreatedAt,
 		pct, snapshot.LastCallInputTokens, output, window,
+		snapshot.Model, snapshot.ReasoningEffort,
 	); err != nil {
 		slog.Warn("copilot-usage: failed to persist context snapshot",
 			"session_id", sess.ID, "error", err, "module", "agentd")
