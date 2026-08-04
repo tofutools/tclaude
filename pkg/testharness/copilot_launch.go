@@ -89,10 +89,6 @@ type CopilotLaunch struct {
 	// InitialPrompt is the `-i <prompt>` first turn.
 	InitialPrompt string
 
-	// Mode is --mode's value, or "" when unset. `--plan` / `--autopilot` are
-	// folded into it.
-	Mode string
-
 	// Permission posture. Only the flags the 1.0.77 contract measured the
 	// EFFECT of are represented; the rest are rejected at parse (see the
 	// unmodelled arms in parseArgs), because a permission flag that parses and
@@ -304,17 +300,15 @@ func (l *CopilotLaunch) parseArgs() error {
 			if err != nil {
 				return err
 			}
-			if err := copilotCheckRulePattern(arg, value); err != nil {
+			if err := l.addDenyTool(arg, value); err != nil {
 				return err
 			}
-			l.DenyTools = append(l.DenyTools, value)
 
 		case strings.HasPrefix(arg, "--deny-tool="):
 			flag, value, _ := strings.Cut(arg, "=")
-			if err := copilotCheckRulePattern(flag, value); err != nil {
+			if err := l.addDenyTool(flag, value); err != nil {
 				return err
 			}
-			l.DenyTools = append(l.DenyTools, value)
 
 		// The permission flags whose EFFECT no committed scenario measured.
 		// They are named individually rather than left to the catch-all so the
@@ -365,6 +359,43 @@ func (l *CopilotLaunch) parseArgs() error {
 			"copilot launch: --name on a --resume is unverified; a resumed " +
 				"conversation is renamed in-pane instead")
 	}
+	return nil
+}
+
+// addDenyTool validates a deny rule and keeps it, or refuses a rule whose
+// ENFORCEMENT this simulator cannot reproduce.
+//
+// The split matters because parse acceptance and runtime enforcement are two
+// different questions, and the contract records them coming apart. A rule that
+// parses is not a rule that does anything, and — the direction that actually
+// hurts — a rule that parses and IS enforced would otherwise be carried here
+// and then silently ignored by the gate model, which reads as "allowed" where
+// reality denies.
+//
+// Only tool-kind rules the gate model can evaluate are kept. `url(...)` and
+// `write(...)` are refused on the same reasoning that already refuses
+// `--deny-url`: the URL layer's enforcement is reported by an independent rig
+// but no committed scenario establishes it, and this simulator models no write
+// tool at all, so a write rule could never match anything it produces.
+func (l *CopilotLaunch) addDenyTool(flag, value string) error {
+	if err := copilotCheckRulePattern(flag, value); err != nil {
+		return err
+	}
+	kind, _, _ := strings.Cut(value, "(")
+	switch kind {
+	case "url":
+		return copilotUnmodelledFlag(flag+" "+value,
+			"URL rule ENFORCEMENT is unfixtured: the contract measured parse "+
+				"acceptance only, records the wildcard spellings matching nothing at "+
+				"runtime, and reports the domain-scoped ones being enforced from a rig "+
+				"whose scenarios are not committed")
+	case "write":
+		return copilotUnmodelledFlag(flag+" "+value,
+			"this simulator models no write tool, so a write rule could never match "+
+				"a call it produces — keeping it would be a rule that silently does "+
+				"nothing")
+	}
+	l.DenyTools = append(l.DenyTools, value)
 	return nil
 }
 

@@ -51,12 +51,14 @@ import (
 //     records that the two come apart for URL rules — `url(*)` parses and
 //     matches nothing — so the gate model reads only tool-kind deny rules as
 //     working denies and treats a URL deny as unmodelled.
-//   - The safe-command allowlist. `echo` was measured auto-approving and four
-//     other commands blocking, and the contract states plainly that the list is
-//     not enumerated and that "ANY command may block unless a permission flag
-//     says otherwise". CopilotToolCall.AutoApproved is therefore a fact the
-//     CALLER asserts about its own scripted command, defaulting to "blocks",
-//     rather than a table this simulator invents.
+//   - The safe-command allowlist. A committed scenario measured `echo`
+//     auto-approving and `rm -f ./victim` blocking; four further commands are
+//     reported blocking by an independent rig whose scenarios are NOT
+//     committed. The contract states plainly that the list is not enumerated
+//     and that "ANY command may block unless a permission flag says otherwise".
+//     CopilotToolCall.AutoApproved is therefore a fact the CALLER asserts about
+//     its own scripted command, defaulting to "blocks", rather than a table
+//     this simulator invents.
 //   - The relative precedence of the trust / path / URL / tool dialogs beyond
 //     trust coming first. Trust is measured as the first gate (zero provider
 //     requests); the other three were each measured in isolation. blockReason
@@ -194,8 +196,12 @@ func NewCopilotSim(t *testing.T, home, cwd, launchCmd string) (*CopilotSim, erro
 		// `home` — would put the workspace inside COPILOT_HOME, which is
 		// Copilot's state directory and never a working directory, and would
 		// then quietly make the cwd path grant overlap the trust store.
-		t.Fatalf("copilot sim: a pane needs an explicit cwd; COPILOT_HOME is " +
+		// Errorf + a usable fallback rather than Fatalf: NewCopilotSim is
+		// reached from the daemon's spawn handler goroutine in a flow test,
+		// where FailNow hangs the request instead of failing the test.
+		t.Errorf("copilot sim: a pane needs an explicit cwd; COPILOT_HOME is " +
 			"Copilot's state directory, not a workspace")
+		cwd = filepath.Join(home, "unspecified-cwd")
 	}
 	c := &CopilotSim{
 		ConvID:     convID,
@@ -257,13 +263,18 @@ func TrustCopilotFolder(t *testing.T, home, dir string) {
 	if err != nil {
 		t.Fatalf("copilot sim: resolving the Copilot harness: %v", err)
 	}
+	// The launch's environment, spelled the way production spells it: an
+	// explicit COPILOT_HOME plus the user's HOME as the fallback the two
+	// fixed-path harnesses use. Passing COPILOT_HOME as the `home` argument
+	// would work only because the getenv short-circuits it, and would stop
+	// working the day this seeds a launch that does not relocate its home.
 	if err := harness.EnsureDirTrustedForLaunch(h, dir,
 		func(name string) string {
 			if name == harness.CopilotHomeEnvVar {
 				return home
 			}
-			return ""
-		}, home); err != nil {
+			return os.Getenv(name)
+		}, os.Getenv("HOME")); err != nil {
 		t.Fatalf("copilot sim: pre-trusting %s under %s: %v", dir, home, err)
 	}
 }
@@ -522,6 +533,11 @@ func (c *CopilotSim) blockReasonLocked(call CopilotToolCall) string {
 	// default and --no-ask-user removes it (measured on the advertised tool
 	// catalog in the provider request, not on screen text). Present, it is a
 	// question nobody is there to answer.
+	// No requireNoUnmeasuredWidening here, and the asymmetry is deliberate:
+	// --no-ask-user works by REMOVING the tool from the advertised catalog, and
+	// no blanket approval flag can approve a call to a tool that is not offered.
+	// So unlike the other three gates, there is no plausible reading under which
+	// a blanket allow would open this one, and failing loudly would be noise.
 	if call.Kind == CopilotToolAskUser {
 		if c.launch.NoAskUser {
 			c.t.Fatalf("copilot sim: this launch passed --no-ask-user, so ask_user " +
@@ -645,18 +661,15 @@ func underDir(path, dir string) bool {
 
 // denyRuleFor matches a launch-time --deny-tool rule against a call.
 //
-// Only TOOL-KIND rules are honoured. The contract records that URL rule
-// spellings parse and then match nothing at runtime for the wildcard forms,
-// i.e. parse acceptance and enforcement come apart, and that no committed
-// scenario establishes a working blanket deny. Reading `url(*)` as a working
-// deny here would let a tclaude default that does nothing in production look
-// effective in every test.
+// Every rule reaching here is one the gate model can evaluate: the launch
+// parser refuses `url(...)` and `write(...)` outright rather than letting them
+// sit in this list doing nothing (see CopilotLaunch.addDenyTool). That refusal
+// is what keeps this loop honest — an earlier revision skipped URL rules
+// silently here, which modelled a domain-scoped deny as ALLOWED, the one
+// direction the contract's own evidence says is wrong.
 func (c *CopilotSim) denyRuleFor(name, command string) (string, bool) {
 	for _, rule := range c.launch.DenyTools {
 		kind, pattern, hasPattern := strings.Cut(strings.TrimSuffix(rule, ")"), "(")
-		if kind == "url" {
-			continue
-		}
 		// The rule's kind names the tool: `shell(...)` matches the shell tool,
 		// `<mcp>(...)` an MCP server's tool. A shell call's default Name is
 		// already "shell" (CopilotToolShell), so one comparison covers both.
@@ -853,8 +866,13 @@ func (c *CopilotSim) RenderPane() string {
 func (c *CopilotSim) applyHook(event string, index int) {
 	payloads := c.capture.FindAll(event)
 	if len(payloads) == 0 {
-		c.t.Fatalf("copilot sim: no recorded %s payload in scenario %s",
+		// Errorf, not Fatalf: this runs on whatever goroutine drove the turn,
+		// which for a daemon-spawned pane is the HTTP handler's. FailNow there
+		// would Goexit the handler and hang the request rather than fail the
+		// test. Same reasoning as the Errorf in NewCopilotSim.
+		c.t.Errorf("copilot sim: no recorded %s payload in scenario %s",
 			event, c.capture.Scenario)
+		return
 	}
 	if index < 0 || index >= len(payloads) {
 		// Fall back to the last recorded one: the capture holds a fresh and a
@@ -868,7 +886,8 @@ func (c *CopilotSim) applyHook(event string, index int) {
 	var in session.HookCallbackInput
 	raw := copilotfixture.HookPayloadFor(payloads[index], convID, cwd)
 	if err := json.Unmarshal(raw, &in); err != nil {
-		c.t.Fatalf("copilot sim: decoding the recorded %s payload: %v", event, err)
+		c.t.Errorf("copilot sim: decoding the recorded %s payload: %v", event, err)
+		return
 	}
 	_ = session.ApplyHook(in, sessionID)
 }

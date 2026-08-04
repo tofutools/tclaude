@@ -65,6 +65,7 @@ func TestParseCopilotLaunchGrammar(t *testing.T) {
 		require.NoError(t, err)
 		launch, err := ParseCopilotLaunch(cmd)
 		require.NoError(t, err, "cmd=%s", cmd)
+		assert.Equal(t, "copilot", launch.Binary)
 		assert.Equal(t, copilotSimUUID, launch.SessionID)
 		assert.Equal(t, "worker", launch.Name)
 		assert.Equal(t, "claude-sonnet-4.5", launch.Model)
@@ -116,13 +117,33 @@ func TestParseCopilotLaunchGrammar(t *testing.T) {
 	}
 
 	// The spellings the same contract entry measured as ACCEPTED. They are
-	// asserted alongside the rejections because a parser that refused
+	// asserted alongside the rejections because a checker that refused
 	// everything would pass the rejection table on its own.
+	//
+	// Asserted on the pattern checker rather than through the launch parser,
+	// because the two answer different questions: 1.0.77 ACCEPTS all five, and
+	// the launch parser separately refuses the two whose ENFORCEMENT this
+	// simulator cannot reproduce (see the deny-rule subtests below).
 	for _, pattern := range []string{"url", "url(*)", "url(example.com)", "shell(*)", "write(/tmp)"} {
-		t.Run("accepts "+pattern, func(t *testing.T) {
-			launch, err := ParseCopilotLaunch("copilot --deny-tool '" + pattern + "'")
-			require.NoError(t, err)
-			assert.Equal(t, []string{pattern}, launch.DenyTools)
+		t.Run("1.0.77 accepts "+pattern, func(t *testing.T) {
+			assert.NoError(t, copilotCheckRulePattern("--deny-tool", pattern))
+		})
+	}
+
+	// And the launch parser keeps only the rules the gate model can enforce.
+	// A rule it cannot evaluate must be refused, not carried and ignored: an
+	// ignored deny models as ALLOWED, and for the domain-scoped URL forms the
+	// contract's own evidence says the opposite.
+	t.Run("keeps an enforceable shell deny", func(t *testing.T) {
+		launch, err := ParseCopilotLaunch("copilot --deny-tool 'shell(echo)'")
+		require.NoError(t, err)
+		assert.Equal(t, []string{"shell(echo)"}, launch.DenyTools)
+	})
+	for _, pattern := range []string{"url(github.com)", "url(*)", "write(/tmp)"} {
+		t.Run("refuses the unenforceable "+pattern, func(t *testing.T) {
+			_, err := ParseCopilotLaunch("copilot --deny-tool '" + pattern + "'")
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "UNMODELLED")
 		})
 	}
 }
@@ -363,19 +384,19 @@ func TestCopilotSimLaunchDenySurvivesInPaneAllowAll(t *testing.T) {
 		"a denial is not a deadlock: the model gets an answer and the turn continues")
 }
 
-// A URL deny is NOT read as a working deny, because the contract records that
-// parse acceptance and runtime enforcement come apart for exactly those
-// spellings. Modelling `url(*)` as effective would let a tclaude default that
-// does nothing in production pass every test.
-func TestCopilotSimWildcardURLDenyIsNotModelledAsEffective(t *testing.T) {
-	sim, _ := newTrustedCopilotSim(t,
-		"copilot --session-id "+copilotSimUUID+" --allow-all-tools --deny-tool 'url(*)'")
-	sim.StartTurn("fetch it")
-	assert.Equal(t, CopilotToolAllowed, sim.RequestTool(CopilotToolCall{
-		Kind: CopilotToolShell, Command: "curl -s https://github.com",
-		URL: "https://github.com"}),
-		"url(*) parses and matches nothing at runtime; the simulator must not "+
-			"pretend otherwise")
+// A URL deny never reaches the gate model at all: the launch parser refuses it.
+//
+// The earlier revision of this simulator kept such rules and skipped them when
+// matching, which modelled `--deny-tool 'url(github.com)'` as ALLOWED — and the
+// contract's corroborating evidence reports domain-scoped URL rules being
+// enforced with no prompt, so that was wrong in the one direction a permission
+// simulator must never be wrong in. Refusing at parse is what makes the gap
+// impossible to reach silently.
+func TestParseCopilotLaunchRefusesURLDenyRules(t *testing.T) {
+	_, err := ParseCopilotLaunch(
+		"copilot --allow-all-tools --deny-tool 'url(github.com)'")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "ENFORCEMENT is unfixtured")
 }
 
 // The session-state files production reads: workspace.yaml carries the launch

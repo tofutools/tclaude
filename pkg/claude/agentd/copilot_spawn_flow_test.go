@@ -188,11 +188,19 @@ func TestCopilotSpawn_UntrustedFolderParksThePaneSilently(t *testing.T) {
 //
 // The seeding runs through PRODUCTION's editor (harness.EnsureDirTrustedForLaunch
 // → EnsureCopilotDirTrustedForLaunch), so this asserts the real write, not a
-// test-side imitation of it. That matters more here than for the other two
-// harnesses: Copilot's store lives under COPILOT_HOME rather than at a fixed
-// path in the operator's home, so seeding the wrong home writes a file the
-// agent never opens and leaves the pane parked on the modal it was supposed to
-// clear.
+// test-side imitation of it.
+//
+// What it does NOT assert, since the flow world's COPILOT_HOME is the ambient
+// $HOME/.copilot and the launch-aware and ambient spellings therefore coincide:
+// that seeding follows a RELOCATED COPILOT_HOME. That property — the one that
+// makes Copilot's store different from the other two harnesses', whose stores
+// sit at a fixed path in the operator's home — is covered at unit level in
+// pkg/testharness, where the simulator's home deliberately is not the default.
+//
+// Nor does it cover production's CALL SITE. The simulated spawner stands in for
+// `tclaude session new` wholesale, so deleting the seeding block in
+// session/new.go would leave these tests green; what is exercised here is the
+// editor and the daemon's TrustDir resolution.
 func TestCopilotSpawn_TrustDirSeedsTheStoreSoThePaneRuns(t *testing.T) {
 	f := newCopilotFlow(t)
 	f.HaveGroup("crew")
@@ -335,8 +343,12 @@ func TestCopilotSpawn_RenderedPostureDecidesWhetherTheAgentDeadlocks(t *testing.
 		// has to achieve.
 		sim := copilotRelaunchWithPosture(t, f, resp, "--allow-all-tools --no-ask-user")
 
+		// No "is it working" assertion before the tool call: the original
+		// pane's launch prompt already put this agent in `working`, so it would
+		// hold whether or not the relaunch did anything. The Stop-driven return
+		// to idle below is the assertion that can only pass if the turn really
+		// completed.
 		sim.StartTurn("clean up the build")
-		assert.Equal(t, session.StatusWorking, copilotMember(t, f, "crew", resp.ConvID).State.Status)
 		assert.Equal(t, testharness.CopilotToolAllowed, sim.RequestTool(testharness.CopilotToolCall{
 			Kind: testharness.CopilotToolShell, Command: "rm -rf ./build"}))
 		sim.FinishTurn()
@@ -427,7 +439,7 @@ func copilotRelaunchWithPosture(t *testing.T, f *testharness.Flow,
 	require.NotNil(t, row)
 	sim, err := testharness.NewCopilotSim(t, home, row.Cwd, posture)
 	require.NoError(t, err)
-	sim.SessionID = resp.Label
+	sim.SetSessionID(resp.Label)
 	testharness.TrustCopilotFolder(t, home, row.Cwd)
 	require.NoError(t, sim.Start())
 	f.World.Tmux.Register(resp.Label, row.Cwd, sim)
