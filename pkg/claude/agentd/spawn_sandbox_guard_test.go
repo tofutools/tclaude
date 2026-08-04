@@ -513,31 +513,31 @@ func TestOpenCodePolicyRepresentabilityUsesAccessControlAndFailsClosedOtherwise(
 }
 
 func TestOpenCodeSandboxLineageClassifiesLayerAccessControlOffAndUnknown(t *testing.T) {
-	openCodeOff := spawnLineageSandbox{Harness: harness.OpenCodeName, Mode: harness.OpenCodeSandboxOff}
+	openCodeOff := spawnLineageSandbox{Harness: harness.OpenCodeName, HarnessBuiltinMode: harness.OpenCodeSandboxOff}
 	require.True(t, spawnSandboxLineageAllowed(openCodeOff, openCodeOff))
 	require.False(t, spawnSandboxLineageAllowed(
-		spawnLineageSandbox{Harness: harness.DefaultName, Mode: harness.ClaudeSandboxOn},
+		spawnLineageSandbox{Harness: harness.DefaultName, HarnessBuiltinMode: harness.ClaudeSandboxOn},
 		openCodeOff,
 	))
 
-	access := spawnLineageSandbox{Harness: harness.OpenCodeName, Mode: harness.OpenCodeSandboxAccessControl}
-	layer := spawnLineageSandbox{Harness: harness.OpenCodeName, Mode: harness.OpenCodeSandboxTclaudeLayer}
+	access := spawnLineageSandbox{Harness: harness.OpenCodeName, HarnessBuiltinMode: harness.OpenCodeSandboxAccessControl}
+	layer := spawnLineageSandbox{Harness: harness.OpenCodeName, HarnessBuiltinMode: harness.OpenCodeSandboxTclaudeLayer}
 	require.True(t, spawnSandboxLineageAllowed(access, access))
 	require.True(t, spawnSandboxLineageAllowed(access, layer))
 	require.True(t, spawnSandboxLineageAllowed(layer, layer))
 	require.False(t, spawnSandboxLineageAllowed(layer, access))
 	require.True(t, spawnSandboxLineageAllowed(access,
-		spawnLineageSandbox{Harness: harness.DefaultName, Mode: harness.ClaudeSandboxOn}))
+		spawnLineageSandbox{Harness: harness.DefaultName, HarnessBuiltinMode: harness.ClaudeSandboxOn}))
 	require.True(t, spawnSandboxLineageAllowed(access,
-		spawnLineageSandbox{Harness: harness.CodexName, Mode: harness.SandboxManagedProfile}))
+		spawnLineageSandbox{Harness: harness.CodexName, HarnessBuiltinMode: harness.SandboxManagedProfile}))
 	require.False(t, spawnSandboxLineageAllowed(access, openCodeOff))
 	require.False(t, spawnSandboxLineageAllowed(
-		spawnLineageSandbox{Harness: harness.OpenCodeName, Mode: ""},
+		spawnLineageSandbox{Harness: harness.OpenCodeName, HarnessBuiltinMode: ""},
 		access,
 	))
 	require.False(t, spawnSandboxLineageAllowed(
 		access,
-		spawnLineageSandbox{Harness: harness.OpenCodeName, Mode: "unknown"},
+		spawnLineageSandbox{Harness: harness.OpenCodeName, HarnessBuiltinMode: "unknown"},
 	))
 }
 

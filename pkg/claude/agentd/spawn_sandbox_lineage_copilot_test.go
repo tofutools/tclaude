@@ -31,28 +31,28 @@ import (
 // implementation rather than the mode alone.
 func copilotLineageParents() []spawnLineageSandbox {
 	return []spawnLineageSandbox{
-		{Harness: harness.DefaultName, Mode: harness.ClaudeSandboxOff},
-		{Harness: harness.DefaultName, Mode: harness.ClaudeSandboxInherit},
-		{Harness: harness.DefaultName, Mode: harness.ClaudeSandboxOn},
-		{Harness: harness.CodexName, Mode: harness.SandboxDangerFull},
-		{Harness: harness.CodexName, Mode: harness.SandboxManagedProfile},
-		{Harness: harness.CodexName, Mode: harness.SandboxWorkspaceWrite},
-		{Harness: harness.CodexName, Mode: harness.SandboxReadOnly},
-		{Harness: harness.OpenCodeName, Mode: harness.OpenCodeSandboxOff},
-		{Harness: harness.OpenCodeName, Mode: harness.OpenCodeSandboxTclaudeLayer},
-		{Harness: harness.OpenCodeName, Mode: harness.OpenCodeSandboxAccessControl},
+		{Harness: harness.DefaultName, HarnessBuiltinMode: harness.ClaudeSandboxOff},
+		{Harness: harness.DefaultName, HarnessBuiltinMode: harness.ClaudeSandboxInherit},
+		{Harness: harness.DefaultName, HarnessBuiltinMode: harness.ClaudeSandboxOn},
+		{Harness: harness.CodexName, HarnessBuiltinMode: harness.SandboxDangerFull},
+		{Harness: harness.CodexName, HarnessBuiltinMode: harness.SandboxManagedProfile},
+		{Harness: harness.CodexName, HarnessBuiltinMode: harness.SandboxWorkspaceWrite},
+		{Harness: harness.CodexName, HarnessBuiltinMode: harness.SandboxReadOnly},
+		{Harness: harness.OpenCodeName, HarnessBuiltinMode: harness.OpenCodeSandboxOff},
+		{Harness: harness.OpenCodeName, HarnessBuiltinMode: harness.OpenCodeSandboxTclaudeLayer},
+		{Harness: harness.OpenCodeName, HarnessBuiltinMode: harness.OpenCodeSandboxAccessControl},
 		// The proven Copilot parent, and the two legacy rows that look like it
 		// but assert nothing about who owns the wall.
 		{
-			Harness: harness.CopilotName, Mode: harness.CopilotSandboxOff,
+			Harness: harness.CopilotName, HarnessBuiltinMode: harness.CopilotSandboxOff,
 			Implementation: sandboxpolicy.ImplementationTclaudeLayer,
 		},
 		{
-			Harness: harness.CopilotName, Mode: harness.CopilotSandboxOff,
+			Harness: harness.CopilotName, HarnessBuiltinMode: harness.CopilotSandboxOff,
 			Implementation: sandboxpolicy.ImplementationHarnessBuiltin,
 		},
 		{
-			Harness: harness.CopilotName, Mode: harness.CopilotSandboxInherit,
+			Harness: harness.CopilotName, HarnessBuiltinMode: harness.CopilotSandboxInherit,
 			Implementation: sandboxpolicy.ImplementationTclaudeLayer,
 		},
 	}
@@ -60,9 +60,9 @@ func copilotLineageParents() []spawnLineageSandbox {
 
 func lineageKey(s spawnLineageSandbox) string {
 	if s.Harness == harness.CopilotName {
-		return fmt.Sprintf("%s/%s[%s]", s.Harness, s.Mode, s.Implementation)
+		return fmt.Sprintf("%s/%s[%s]", s.Harness, s.HarnessBuiltinMode, s.Implementation)
 	}
-	return fmt.Sprintf("%s/%s", s.Harness, s.Mode)
+	return fmt.Sprintf("%s/%s", s.Harness, s.HarnessBuiltinMode)
 }
 
 // TestSandboxLineageCopilotMatrix pins WHO may mint the proven Copilot child.
@@ -76,7 +76,7 @@ func lineageKey(s spawnLineageSandbox) string {
 // whose cwd subtree the outer wall writes.
 func TestSandboxLineageCopilotMatrix(t *testing.T) {
 	provenChild := spawnLineageSandbox{
-		Harness: harness.CopilotName, Mode: harness.CopilotSandboxOff,
+		Harness: harness.CopilotName, HarnessBuiltinMode: harness.CopilotSandboxOff,
 		Implementation: sandboxpolicy.ImplementationTclaudeLayer,
 	}
 	var admitted []string
@@ -110,29 +110,29 @@ func TestSandboxLineageCopilotMatrix(t *testing.T) {
 func TestSandboxLineageCopilotParentOutboundMatrix(t *testing.T) {
 	children := []spawnLineageSandbox{
 		{
-			Harness: harness.CopilotName, Mode: harness.CopilotSandboxOff,
+			Harness: harness.CopilotName, HarnessBuiltinMode: harness.CopilotSandboxOff,
 			Implementation: sandboxpolicy.ImplementationTclaudeLayer,
 		},
 		{
-			Harness: harness.CopilotName, Mode: harness.CopilotSandboxOff,
+			Harness: harness.CopilotName, HarnessBuiltinMode: harness.CopilotSandboxOff,
 			Implementation: sandboxpolicy.ImplementationHarnessBuiltin,
 		},
-		{Harness: harness.CopilotName, Mode: harness.CopilotSandboxInherit},
-		{Harness: harness.DefaultName, Mode: harness.ClaudeSandboxOn},
-		{Harness: harness.DefaultName, Mode: harness.ClaudeSandboxInherit},
-		{Harness: harness.DefaultName, Mode: harness.ClaudeSandboxOff},
-		{Harness: harness.CodexName, Mode: harness.SandboxReadOnly},
-		{Harness: harness.CodexName, Mode: harness.SandboxWorkspaceWrite},
-		{Harness: harness.CodexName, Mode: harness.SandboxManagedProfile},
-		{Harness: harness.CodexName, Mode: harness.SandboxDangerFull},
-		{Harness: harness.OpenCodeName, Mode: harness.OpenCodeSandboxAccessControl},
-		{Harness: harness.OpenCodeName, Mode: harness.OpenCodeSandboxTclaudeLayer},
-		{Harness: harness.OpenCodeName, Mode: harness.OpenCodeSandboxOff},
+		{Harness: harness.CopilotName, HarnessBuiltinMode: harness.CopilotSandboxInherit},
+		{Harness: harness.DefaultName, HarnessBuiltinMode: harness.ClaudeSandboxOn},
+		{Harness: harness.DefaultName, HarnessBuiltinMode: harness.ClaudeSandboxInherit},
+		{Harness: harness.DefaultName, HarnessBuiltinMode: harness.ClaudeSandboxOff},
+		{Harness: harness.CodexName, HarnessBuiltinMode: harness.SandboxReadOnly},
+		{Harness: harness.CodexName, HarnessBuiltinMode: harness.SandboxWorkspaceWrite},
+		{Harness: harness.CodexName, HarnessBuiltinMode: harness.SandboxManagedProfile},
+		{Harness: harness.CodexName, HarnessBuiltinMode: harness.SandboxDangerFull},
+		{Harness: harness.OpenCodeName, HarnessBuiltinMode: harness.OpenCodeSandboxAccessControl},
+		{Harness: harness.OpenCodeName, HarnessBuiltinMode: harness.OpenCodeSandboxTclaudeLayer},
+		{Harness: harness.OpenCodeName, HarnessBuiltinMode: harness.OpenCodeSandboxOff},
 	}
 
 	t.Run("proven parent", func(t *testing.T) {
 		parent := spawnLineageSandbox{
-			Harness: harness.CopilotName, Mode: harness.CopilotSandboxOff,
+			Harness: harness.CopilotName, HarnessBuiltinMode: harness.CopilotSandboxOff,
 			Implementation: sandboxpolicy.ImplementationTclaudeLayer,
 		}
 		var admitted []string
@@ -157,18 +157,18 @@ func TestSandboxLineageCopilotParentOutboundMatrix(t *testing.T) {
 
 	for _, parent := range []spawnLineageSandbox{
 		{
-			Harness: harness.CopilotName, Mode: harness.CopilotSandboxOff,
+			Harness: harness.CopilotName, HarnessBuiltinMode: harness.CopilotSandboxOff,
 			Implementation: sandboxpolicy.ImplementationHarnessBuiltin,
 		},
 		{
-			Harness: harness.CopilotName, Mode: harness.CopilotSandboxOff,
+			Harness: harness.CopilotName, HarnessBuiltinMode: harness.CopilotSandboxOff,
 			Implementation: sandboxpolicy.ImplementationStacked,
 		},
 		{
-			Harness: harness.CopilotName, Mode: harness.CopilotSandboxInherit,
+			Harness: harness.CopilotName, HarnessBuiltinMode: harness.CopilotSandboxInherit,
 			Implementation: sandboxpolicy.ImplementationTclaudeLayer,
 		},
-		{Harness: harness.CopilotName, Mode: ""},
+		{Harness: harness.CopilotName, HarnessBuiltinMode: ""},
 	} {
 		t.Run("unproven parent "+lineageKey(parent), func(t *testing.T) {
 			for _, child := range children {
@@ -185,11 +185,11 @@ func TestSandboxLineageCopilotParentOutboundMatrix(t *testing.T) {
 // the row names one.
 func TestSandboxLineageCopilotRejectsStackedOnBothSides(t *testing.T) {
 	stacked := spawnLineageSandbox{
-		Harness: harness.CopilotName, Mode: harness.CopilotSandboxOff,
+		Harness: harness.CopilotName, HarnessBuiltinMode: harness.CopilotSandboxOff,
 		Implementation: sandboxpolicy.ImplementationStacked,
 	}
 	require.False(t, spawnSandboxLineageAllowed(
-		spawnLineageSandbox{Harness: harness.DefaultName, Mode: harness.ClaudeSandboxOff},
+		spawnLineageSandbox{Harness: harness.DefaultName, HarnessBuiltinMode: harness.ClaudeSandboxOff},
 		stacked), "a stacked Copilot child is not the reviewed topology")
 	require.False(t, copilotProvenLineageLaunch(stacked))
 }
@@ -199,16 +199,16 @@ func TestSandboxLineageCopilotRejectsStackedOnBothSides(t *testing.T) {
 // including for the parents that gained a Copilot child.
 func TestSandboxLineageCopilotAdmissionMovesNoOtherVerdict(t *testing.T) {
 	nonCopilot := []spawnLineageSandbox{
-		{Harness: harness.DefaultName, Mode: harness.ClaudeSandboxInherit},
-		{Harness: harness.DefaultName, Mode: harness.ClaudeSandboxOn},
-		{Harness: harness.DefaultName, Mode: harness.ClaudeSandboxOff},
-		{Harness: harness.CodexName, Mode: harness.SandboxReadOnly},
-		{Harness: harness.CodexName, Mode: harness.SandboxWorkspaceWrite},
-		{Harness: harness.CodexName, Mode: harness.SandboxManagedProfile},
-		{Harness: harness.CodexName, Mode: harness.SandboxDangerFull},
-		{Harness: harness.OpenCodeName, Mode: harness.OpenCodeSandboxAccessControl},
-		{Harness: harness.OpenCodeName, Mode: harness.OpenCodeSandboxTclaudeLayer},
-		{Harness: harness.OpenCodeName, Mode: harness.OpenCodeSandboxOff},
+		{Harness: harness.DefaultName, HarnessBuiltinMode: harness.ClaudeSandboxInherit},
+		{Harness: harness.DefaultName, HarnessBuiltinMode: harness.ClaudeSandboxOn},
+		{Harness: harness.DefaultName, HarnessBuiltinMode: harness.ClaudeSandboxOff},
+		{Harness: harness.CodexName, HarnessBuiltinMode: harness.SandboxReadOnly},
+		{Harness: harness.CodexName, HarnessBuiltinMode: harness.SandboxWorkspaceWrite},
+		{Harness: harness.CodexName, HarnessBuiltinMode: harness.SandboxManagedProfile},
+		{Harness: harness.CodexName, HarnessBuiltinMode: harness.SandboxDangerFull},
+		{Harness: harness.OpenCodeName, HarnessBuiltinMode: harness.OpenCodeSandboxAccessControl},
+		{Harness: harness.OpenCodeName, HarnessBuiltinMode: harness.OpenCodeSandboxTclaudeLayer},
+		{Harness: harness.OpenCodeName, HarnessBuiltinMode: harness.OpenCodeSandboxOff},
 	}
 	var admitted []string
 	for _, parent := range lineageDeltaParents() {
@@ -219,7 +219,7 @@ func TestSandboxLineageCopilotAdmissionMovesNoOtherVerdict(t *testing.T) {
 			} {
 				c := child
 				c.Implementation = implementation
-				c.Mode = lineageConfinementMode(c)
+				c.HarnessBuiltinMode = lineageConfinementMode(c)
 				if spawnSandboxLineageAllowed(parent, c) {
 					admitted = append(admitted,
 						fmt.Sprintf("%s -> %s[%s]", lineageKey(parent), lineageKey(child), implementation))

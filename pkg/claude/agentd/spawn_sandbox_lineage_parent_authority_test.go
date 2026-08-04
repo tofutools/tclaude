@@ -32,7 +32,7 @@ type recordableLineageLaunch struct {
 
 func (l recordableLineageLaunch) sandbox() spawnLineageSandbox {
 	return spawnLineageSandbox{
-		Harness: l.harnessName, Mode: l.recorded, Implementation: l.impl,
+		Harness: l.harnessName, HarnessBuiltinMode: l.recorded, Implementation: l.impl,
 	}
 }
 
@@ -198,22 +198,22 @@ func TestSandboxLineageParentAuthorityMovesOnlyTclaudeLayerParents(t *testing.T)
 func TestSandboxLineageParentAuthorityLeavesDefaultSpawnProfilesAlone(t *testing.T) {
 	launches := recordableLineageLaunches(t)
 	for _, parent := range []spawnLineageSandbox{
-		{Harness: harness.DefaultName, Mode: harness.ClaudeSandboxInherit},
-		{Harness: harness.DefaultName, Mode: harness.ClaudeSandboxInherit,
+		{Harness: harness.DefaultName, HarnessBuiltinMode: harness.ClaudeSandboxInherit},
+		{Harness: harness.DefaultName, HarnessBuiltinMode: harness.ClaudeSandboxInherit,
 			Implementation: sandboxpolicy.ImplementationHarnessBuiltin},
-		{Harness: harness.CodexName, Mode: harness.SandboxManagedProfile},
-		{Harness: harness.CodexName, Mode: harness.SandboxManagedProfile,
+		{Harness: harness.CodexName, HarnessBuiltinMode: harness.SandboxManagedProfile},
+		{Harness: harness.CodexName, HarnessBuiltinMode: harness.SandboxManagedProfile,
 			Implementation: sandboxpolicy.ImplementationHarnessBuiltin},
 	} {
 		for _, child := range launches {
 			require.Equalf(t,
 				spawnSandboxLineageAllowed(
-					spawnLineageSandbox{Harness: parent.Harness, Mode: parent.Mode,
+					spawnLineageSandbox{Harness: parent.Harness, HarnessBuiltinMode: parent.HarnessBuiltinMode,
 						Implementation: sandboxpolicy.ImplementationHarnessBuiltin},
 					child.sandbox()),
 				spawnSandboxLineageAllowed(parent, child.sandbox()),
 				"parent %s/%s[%s] must keep its verdict for child %s",
-				parent.Harness, parent.Mode, parent.Implementation, child)
+				parent.Harness, parent.HarnessBuiltinMode, parent.Implementation, child)
 		}
 	}
 }
@@ -222,17 +222,17 @@ func TestSandboxLineageParentAuthorityLeavesDefaultSpawnProfilesAlone(t *testing
 // its wall confines it to, so it keeps every child that class could always mint.
 func TestSandboxLineageTclaudeLayerParentDelegatesAsItsConfinementClass(t *testing.T) {
 	layerClaude := spawnLineageSandbox{
-		Harness: harness.DefaultName, Mode: harness.ClaudeSandboxOff,
+		Harness: harness.DefaultName, HarnessBuiltinMode: harness.ClaudeSandboxOff,
 		Implementation: sandboxpolicy.ImplementationTclaudeLayer,
 	}
 	layerCodex := spawnLineageSandbox{
-		Harness: harness.CodexName, Mode: harness.SandboxDangerFull,
+		Harness: harness.CodexName, HarnessBuiltinMode: harness.SandboxDangerFull,
 		Implementation: sandboxpolicy.ImplementationTclaudeLayer,
 	}
 	launches := recordableLineageLaunches(t)
 
-	claudeOn := spawnLineageSandbox{Harness: harness.DefaultName, Mode: harness.ClaudeSandboxOn}
-	codexManaged := spawnLineageSandbox{Harness: harness.CodexName, Mode: harness.SandboxManagedProfile}
+	claudeOn := spawnLineageSandbox{Harness: harness.DefaultName, HarnessBuiltinMode: harness.ClaudeSandboxOn}
+	codexManaged := spawnLineageSandbox{Harness: harness.CodexName, HarnessBuiltinMode: harness.SandboxManagedProfile}
 	for _, child := range launches {
 		require.Equalf(t,
 			spawnSandboxLineageAllowed(claudeOn, child.sandbox()),

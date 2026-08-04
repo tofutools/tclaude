@@ -46,9 +46,12 @@ import (
 // forbids the write gets a clear refusal instead of an escape.
 //
 // Humans are exempt (they are the trust root everywhere else in agentd), as
-// are parents whose recorded launch sandbox is fully open (Claude `off`,
-// Codex `danger-full-access` — they can already write anywhere), and spawns
-// whose CHILD gets no write access at its cwd (Codex `read-only`).
+// are parents whose launch is fully open (Claude `off`, Codex
+// `danger-full-access` — they can already write anywhere), and spawns whose
+// CHILD gets no write access at its cwd (Codex `read-only`). "Fully open" is
+// read from the harness-builtin mode AND the sandbox implementation, because a
+// tclaude-layer launch records the same no-confinement mode while tclaude's own
+// wall confines it.
 
 const (
 	// dirWriteProofCode is the error code of the 403 challenge response.
@@ -300,9 +303,9 @@ func resolveDirWriteProofDirs(rawDirs []string) ([]string, map[string]string, er
 }
 
 // dirWriteProofCallerExempt reports whether callerConvID is exempt from the
-// write-proof: humans (empty / the dashboard sentinel) always, and agents
-// whose own recorded launch sandbox is fully open — they can already write
-// everywhere the child could, so there is nothing to prove.
+// write-proof: humans (empty / the dashboard sentinel) always, and agents whose
+// own launch is fully open — they can already write everywhere the child could,
+// so there is nothing to prove.
 func dirWriteProofCallerExempt(callerConvID string) (bool, error) {
 	if callerConvID == "" || callerConvID == dashboardGranter {
 		return true, nil
@@ -317,14 +320,14 @@ func dirWriteProofCallerExempt(callerConvID string) (bool, error) {
 	// reading the mode alone exempted callers that cannot in fact write
 	// everywhere the child could — which is the entire premise of the exemption.
 	// Those callers now have to prove the write like any other confined agent.
-	mode := lineageConfinementMode(parent)
-	if parent.Harness == harness.DefaultName && mode == harness.ClaudeSandboxOff {
+	authority := lineageConfinementMode(parent)
+	if parent.Harness == harness.DefaultName && authority == harness.ClaudeSandboxOff {
 		return true, nil
 	}
-	if parent.Harness == harness.CodexName && mode == harness.SandboxDangerFull {
+	if parent.Harness == harness.CodexName && authority == harness.SandboxDangerFull {
 		return true, nil
 	}
-	if parent.Harness == harness.OpenCodeName && mode == harness.OpenCodeSandboxOff {
+	if parent.Harness == harness.OpenCodeName && authority == harness.OpenCodeSandboxOff {
 		return true, nil
 	}
 	return false, nil

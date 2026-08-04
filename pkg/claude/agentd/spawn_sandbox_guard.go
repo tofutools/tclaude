@@ -39,7 +39,7 @@ var probeFilteredNetworkPrerequisite = session.ProbeFilteredNetworkPrerequisite
 // minting a child with a looser launch sandbox than the caller currently has.
 // Humans bypass this check: they are the trust root everywhere else in agentd.
 func spawnSandboxLineageFailure(
-	parentConvID, childHarness, childSandbox, childImplementation string,
+	parentConvID, childHarness, childHarnessBuiltinMode, childImplementation string,
 ) *spawnFailure {
 	if parentConvID == "" {
 		return nil
@@ -50,9 +50,9 @@ func spawnSandboxLineageFailure(
 			"spawn sandbox guard: " + err.Error()}
 	}
 	child := spawnLineageSandbox{
-		Harness:        harnessOrDefault(childHarness),
-		Mode:           strings.TrimSpace(childSandbox),
-		Implementation: normalizeLineageImplementation(childImplementation),
+		Harness:            harnessOrDefault(childHarness),
+		HarnessBuiltinMode: strings.TrimSpace(childHarnessBuiltinMode),
+		Implementation:     normalizeLineageImplementation(childImplementation),
 	}
 	if !spawnSandboxLineageAllowed(parent, child) {
 		// Both postures name their IMPLEMENTATION as well as their mode.
@@ -62,8 +62,8 @@ func spawnSandboxLineageFailure(
 		// postures that string spells for this harness.
 		message := fmt.Sprintf(
 			"agent %s was launched as %s sandbox %q (%s) and may not spawn a %s child with sandbox %q (%s)",
-			short8(parentConvID), parent.Harness, parent.Mode, parent.Implementation,
-			child.Harness, child.Mode, child.Implementation)
+			short8(parentConvID), parent.Harness, parent.HarnessBuiltinMode, parent.Implementation,
+			child.Harness, child.HarnessBuiltinMode, child.Implementation)
 		if note := lineageParentAuthorityNote(parent); note != "" {
 			message += "; " + note
 		}
@@ -92,12 +92,12 @@ func lineageParentAuthorityNote(parent spawnLineageSandbox) string {
 		return ""
 	}
 	authority := lineageConfinementMode(normalized)
-	if authority == normalized.Mode {
+	if authority == normalized.HarnessBuiltinMode {
 		return ""
 	}
 	return fmt.Sprintf(
 		"the parent's authority is derived from its sandbox implementation, not its recorded mode: under %s the harness's own sandbox is stood down because tclaude's wall confines the agent, so it delegates as %s sandbox %q rather than as %q",
-		normalized.Implementation, normalized.Harness, authority, normalized.Mode)
+		normalized.Implementation, normalized.Harness, authority, normalized.HarnessBuiltinMode)
 }
 
 // copilotLineageRemedy names the way out of a Copilot refusal the caller can
@@ -117,9 +117,9 @@ func copilotLineageRemedy(parent, child spawnLineageSandbox) string {
 		return ""
 	}
 	admitted := spawnLineageSandbox{
-		Harness:        harness.CopilotName,
-		Mode:           harness.CopilotSandboxOff,
-		Implementation: sandboxpolicy.ImplementationTclaudeLayer,
+		Harness:            harness.CopilotName,
+		HarnessBuiltinMode: harness.CopilotSandboxOff,
+		Implementation:     sandboxpolicy.ImplementationTclaudeLayer,
 	}
 	if !spawnSandboxLineageAllowed(parent, admitted) {
 		return ""
@@ -527,9 +527,15 @@ func sandboxCapabilitySpawnFailure(err error, fallbackKind string) *spawnFailure
 
 type spawnLineageSandbox struct {
 	Harness string
-	Mode    string
+	// HarnessBuiltinMode is what the HARNESS ITSELF does about sandboxing —
+	// the value behind the `--sandbox` flag and the `sandbox_mode` column.
+	// It is deliberately not called `Mode`: `off` reads as "no sandbox" to any
+	// reasonable reader, when all it ever meant is "the harness's own wall is
+	// down". Reading it as the former is exactly the misclassification TCL-991
+	// fixed. Nothing here is a complete posture without Implementation.
+	HarnessBuiltinMode string
 	// Implementation is WHO owns the OS wall for this launch. It is carried
-	// because the harness-native mode alone stopped being a complete posture
+	// because the harness-builtin mode alone stopped being a complete posture
 	// once tclaude-layer started forcing one: a Claude child launched under
 	// tclaude's own wall records mode `off`, which names the harness's inner
 	// wall being deliberately stood down, not an unconfined agent.
@@ -561,22 +567,25 @@ func spawnLineageParentSandbox(convID string) (spawnLineageSandbox, error) {
 		// rows can lack one, so degrade to the default Claude/inherit posture
 		// instead of treating "unknown" as full access.
 		return spawnLineageSandbox{
-			Harness:        harness.DefaultName,
-			Mode:           harness.ClaudeSandboxInherit,
-			Implementation: sandboxpolicy.ImplementationHarnessBuiltin,
+			Harness:            harness.DefaultName,
+			HarnessBuiltinMode: harness.ClaudeSandboxInherit,
+			Implementation:     sandboxpolicy.ImplementationHarnessBuiltin,
 		}, nil
 	}
 	h := harnessOrDefault(row.Harness)
-	mode := strings.TrimSpace(row.SandboxMode)
-	if h == harness.DefaultName && mode == "" {
+	// The persisted column is still spelled `sandbox_mode`; the rename to
+	// harness-builtin vocabulary stops at this boundary (TCL-1023 tracks the
+	// column itself).
+	builtinMode := strings.TrimSpace(row.SandboxMode)
+	if h == harness.DefaultName && builtinMode == "" {
 		// Old Claude rows and the test simulator used "" for "settings.json
 		// decides"; in the lineage matrix that is Claude's inherit sentinel.
-		mode = harness.ClaudeSandboxInherit
+		builtinMode = harness.ClaudeSandboxInherit
 	}
 	return spawnLineageSandbox{
-		Harness:        h,
-		Mode:           mode,
-		Implementation: normalizeLineageImplementation(row.SandboxImplementation),
+		Harness:            h,
+		HarnessBuiltinMode: builtinMode,
+		Implementation:     normalizeLineageImplementation(row.SandboxImplementation),
 	}, nil
 }
 
@@ -590,11 +599,11 @@ func spawnSandboxLineageAllowed(parent, child spawnLineageSandbox) bool {
 	// The parent side is the authority question — how much may this agent
 	// delegate — and reading its mode alone credited a tclaude-walled parent
 	// with the authority of a genuinely unconfined one (TCL-991).
-	parent.Mode = lineageConfinementMode(parent)
-	child.Mode = lineageConfinementMode(child)
+	parent.HarnessBuiltinMode = lineageConfinementMode(parent)
+	child.HarnessBuiltinMode = lineageConfinementMode(child)
 
 	if parent.Harness == harness.DefaultName {
-		switch parent.Mode {
+		switch parent.HarnessBuiltinMode {
 		case harness.ClaudeSandboxOff:
 			return true
 		case harness.ClaudeSandboxInherit:
@@ -609,7 +618,7 @@ func spawnSandboxLineageAllowed(parent, child spawnLineageSandbox) bool {
 	}
 
 	if parent.Harness == harness.CodexName {
-		switch parent.Mode {
+		switch parent.HarnessBuiltinMode {
 		case harness.SandboxDangerFull:
 			return true
 		case harness.SandboxManagedProfile:
@@ -623,17 +632,17 @@ func spawnSandboxLineageAllowed(parent, child spawnLineageSandbox) bool {
 		}
 	}
 	if parent.Harness == harness.OpenCodeName {
-		switch parent.Mode {
+		switch parent.HarnessBuiltinMode {
 		case harness.OpenCodeSandboxOff:
 			return true
 		case harness.OpenCodeSandboxTclaudeLayer:
-			return child.Harness == harness.OpenCodeName && child.Mode == harness.OpenCodeSandboxTclaudeLayer ||
+			return child.Harness == harness.OpenCodeName && child.HarnessBuiltinMode == harness.OpenCodeSandboxTclaudeLayer ||
 				childIsClaude(child, harness.ClaudeSandboxOn) ||
 				childIsCodex(child, harness.SandboxReadOnly, harness.SandboxWorkspaceWrite, harness.SandboxManagedProfile) ||
 				copilotProvenLineageLaunch(child)
 		case harness.OpenCodeSandboxAccessControl:
 			return child.Harness == harness.OpenCodeName &&
-				modeIn(child.Mode, harness.OpenCodeSandboxAccessControl, harness.OpenCodeSandboxTclaudeLayer) ||
+				harnessBuiltinModeIn(child.HarnessBuiltinMode, harness.OpenCodeSandboxAccessControl, harness.OpenCodeSandboxTclaudeLayer) ||
 				childIsClaude(child, harness.ClaudeSandboxOn) ||
 				childIsCodex(child, harness.SandboxReadOnly, harness.SandboxWorkspaceWrite, harness.SandboxManagedProfile) ||
 				copilotProvenLineageLaunch(child)
@@ -680,7 +689,7 @@ func spawnSandboxLineageAllowed(parent, child spawnLineageSandbox) bool {
 // shape the launch boundary refuses for this harness.
 func copilotProvenLineageLaunch(s spawnLineageSandbox) bool {
 	return s.Harness == harness.CopilotName &&
-		s.Mode == harness.CopilotSandboxOff &&
+		s.HarnessBuiltinMode == harness.CopilotSandboxOff &&
 		s.Implementation == sandboxpolicy.ImplementationTclaudeLayer
 }
 
@@ -729,40 +738,40 @@ func copilotProvenLineageLaunch(s spawnLineageSandbox) bool {
 // enforcing, and the mode must keep its face value.
 func lineageConfinementMode(s spawnLineageSandbox) string {
 	if s.Implementation != sandboxpolicy.ImplementationTclaudeLayer {
-		return s.Mode
+		return s.HarnessBuiltinMode
 	}
 	switch s.Harness {
 	case harness.DefaultName:
-		if s.Mode == harness.ClaudeSandboxOff {
+		if s.HarnessBuiltinMode == harness.ClaudeSandboxOff {
 			return harness.ClaudeSandboxOn
 		}
 	case harness.CodexName:
-		if s.Mode == harness.SandboxDangerFull {
+		if s.HarnessBuiltinMode == harness.SandboxDangerFull {
 			return harness.SandboxManagedProfile
 		}
 	}
-	return s.Mode
+	return s.HarnessBuiltinMode
 }
 
 func normalizeSpawnLineageSandbox(s spawnLineageSandbox) (spawnLineageSandbox, bool) {
 	s.Harness = harnessOrDefault(s.Harness)
-	s.Mode = strings.TrimSpace(s.Mode)
+	s.HarnessBuiltinMode = strings.TrimSpace(s.HarnessBuiltinMode)
 	switch s.Harness {
 	case harness.DefaultName:
-		if s.Mode == "" {
-			s.Mode = harness.ClaudeSandboxInherit
+		if s.HarnessBuiltinMode == "" {
+			s.HarnessBuiltinMode = harness.ClaudeSandboxInherit
 		}
-		switch s.Mode {
+		switch s.HarnessBuiltinMode {
 		case harness.ClaudeSandboxInherit, harness.ClaudeSandboxOn, harness.ClaudeSandboxOff:
 			return s, true
 		}
 	case harness.CodexName:
-		switch s.Mode {
+		switch s.HarnessBuiltinMode {
 		case harness.SandboxManagedProfile, harness.SandboxReadOnly, harness.SandboxWorkspaceWrite, harness.SandboxDangerFull:
 			return s, true
 		}
 	case harness.OpenCodeName:
-		switch s.Mode {
+		switch s.HarnessBuiltinMode {
 		case harness.OpenCodeSandboxAccessControl, harness.OpenCodeSandboxTclaudeLayer, harness.OpenCodeSandboxOff:
 			return s, true
 		}
@@ -802,16 +811,18 @@ func normalizeSpawnLineageSandbox(s spawnLineageSandbox) (spawnLineageSandbox, b
 }
 
 func childIsClaude(child spawnLineageSandbox, modes ...string) bool {
-	return child.Harness == harness.DefaultName && modeIn(child.Mode, modes...)
+	return child.Harness == harness.DefaultName &&
+		harnessBuiltinModeIn(child.HarnessBuiltinMode, modes...)
 }
 
 func childIsCodex(child spawnLineageSandbox, modes ...string) bool {
-	return child.Harness == harness.CodexName && modeIn(child.Mode, modes...)
+	return child.Harness == harness.CodexName &&
+		harnessBuiltinModeIn(child.HarnessBuiltinMode, modes...)
 }
 
-func modeIn(mode string, allowed ...string) bool {
+func harnessBuiltinModeIn(builtinMode string, allowed ...string) bool {
 	for _, a := range allowed {
-		if mode == a {
+		if builtinMode == a {
 			return true
 		}
 	}
