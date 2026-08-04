@@ -299,7 +299,13 @@ func codexAgentProfileContentForRules(profileName, socketPath, privateStateDir s
 	// protected root is a deny and strictly narrowing.
 	for _, root := range append(append([]string{}, protectedRoots...), privateStateDir) {
 		for dir, access := range grants {
-			if access != "none" && dir != root && sandboxpolicy.PathContainsOrEqual(root, dir) {
+			// Guard-biased containment: dropping a read/write grant is the
+			// narrowing direction, so a case/NFC-folded spelling this process
+			// cannot settle by filesystem identity is dropped rather than
+			// rendered next to the root's own "none". On a case-insensitive
+			// mount hosting a protected root, "~/.TCLAUDE/data" is the same
+			// directory as the deny above it.
+			if access != "none" && dir != root && sandboxpolicy.GuardContainsOrEqual(root, dir) {
 				delete(grants, dir)
 			}
 		}

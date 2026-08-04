@@ -5,6 +5,8 @@ import (
 	"slices"
 	"sort"
 	"strings"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
 // Copilot's approval catalog. Every flag rendered from a token here is one the
@@ -382,11 +384,15 @@ const SandboxCopilotDenyInsideAddDir = "copilot-deny-inside-add-dir"
 // macOS default, and the temp root is one of the two grants Copilot makes with
 // no flag, so it would have been the most common way to reach this gate at all.
 //
-// KNOWN LIMIT: what remains is still a lexical containment rule over normalized
-// spellings, not the identity-only, guard-biased rule TCL-981 established.
-// TCL-985 tracks converting the remaining sites to GuardContainsOrEqual, and
-// this is one of them; the normalization here fixes an ordinary disagreement
-// between two tclaude-side producers rather than doing that conversion early.
+// TCL-985 completed the conversion this comment used to defer: the containment
+// test below is now GuardContainsOrEqual, so a case/NFC-folded spelling that
+// filesystem identity cannot refute refuses the launch rather than passing it.
+// A true answer here returns a SandboxCapabilityError, so the guard bias is the
+// correct one — the deny sits inside a granted root and the launch must not
+// proceed. The normalization described above remains what fixes the ordinary
+// /var-vs-/private/var disagreement between two tclaude-side producers.
+//
+// The caveat below survives that conversion and still applies.
 // This is a change of ANSWER, not only of coverage, and the direction is not
 // uniformly "refuses more". Resolving the deny side can also move a deny OUT of
 // a root that lexically contained its authored spelling — a deny authored under
@@ -411,7 +417,7 @@ func ValidateCopilotAddDirGrants(
 	rendered := copilotAddDirRoots(append(append([]string(nil), readDirs...), writeDirs...))
 	for _, grant := range copilotGrantRoots(rendered, cwd, tempDir) {
 		for _, deny := range denies {
-			if !pathContains(grant.resolved, resolveSymlinks(deny)) {
+			if !sandboxpolicy.GuardContainsOrEqual(grant.resolved, resolveSymlinks(deny)) {
 				continue
 			}
 			// The message names the AUTHORED spellings throughout. An operator
