@@ -179,6 +179,48 @@ func TestAdapterPublishReportsRefusedAuthority(t *testing.T) {
 	require.Empty(t, adapter.RouteIDs())
 }
 
+// The attach goroutine cancels the channel context the moment the broker
+// refuses a publisher, so both barrier signals can be live at once and the
+// end-to-end test above only catches a wrong choice when the scheduler happens
+// to order it that way. Drive the barrier directly with both signals armed so
+// the preference is asserted every run rather than under load.
+func TestAwaitAttachPrefersTheAttachReasonOverCancellation(t *testing.T) {
+	refused := fmt.Errorf("%w: publisher", routebroker.ErrUnauthorized)
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	fired := func() chan time.Time {
+		c := make(chan time.Time, 1)
+		c <- time.Time{}
+		return c
+	}
+	t.Run("cancellation does not mask the refusal", func(t *testing.T) {
+		ready := make(chan error, 1)
+		ready <- refused
+		require.ErrorIs(t, awaitAttach(canceled, ready, nil), routebroker.ErrUnauthorized)
+	})
+	t.Run("timeout does not mask the refusal", func(t *testing.T) {
+		ready := make(chan error, 1)
+		ready <- refused
+		require.ErrorIs(t, awaitAttach(context.Background(), ready, fired()), routebroker.ErrUnauthorized)
+	})
+	t.Run("a real cancellation is still reported", func(t *testing.T) {
+		require.ErrorIs(t, awaitAttach(canceled, make(chan error, 1), nil), context.Canceled)
+	})
+	t.Run("a stalled authority is still reported", func(t *testing.T) {
+		require.ErrorIs(t, awaitAttach(context.Background(), make(chan error, 1), fired()), context.DeadlineExceeded)
+	})
+	t.Run("a plain attach failure is returned unwrapped", func(t *testing.T) {
+		ready := make(chan error, 1)
+		ready <- refused
+		require.ErrorIs(t, awaitAttach(context.Background(), ready, nil), routebroker.ErrUnauthorized)
+	})
+	t.Run("a successful attach returns nil", func(t *testing.T) {
+		ready := make(chan error, 1)
+		ready <- nil
+		require.NoError(t, awaitAttach(context.Background(), ready, nil))
+	})
+}
+
 func TestAdapterRejectsUnreservedPublisherTarget(t *testing.T) {
 	broker, err := routebroker.New(routebroker.Config{Authorizer: allowAll{}})
 	if err != nil {

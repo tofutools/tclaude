@@ -232,20 +232,46 @@ func (a *Adapter) publish(ctx context.Context, publisher Publisher, pool []int) 
 	// stalled authority must fail this call rather than hold it open.
 	timer := time.NewTimer(attachBarrierTimeout)
 	defer timer.Stop()
+	if err := awaitAttach(channelCtx, ready, timer.C); err != nil {
+		a.CloseRoute(publisher.RouteID)
+		return 0, fmt.Errorf("attach publisher route %q: %w", publisher.RouteID, err)
+	}
+	return port, nil
+}
+
+// awaitAttach resolves the publish barrier, returning nil once the broker owns
+// the route. The attach goroutine cancels the channel context itself as soon
+// as AttachPublisherReady returns, so a failed attach and the cancellation it
+// triggers become observable at the same instant and a plain select would pick
+// between them at random. The ready send happens before that cancel, so a
+// result already queued when the context fires is the real reason and wins
+// over the bare context error: a caller told "context canceled" cannot tell an
+// authority refusal apart from an ordinary cancellation, and those two warrant
+// opposite handling — retrying a cancelled attach is reasonable, retrying a
+// refused one is not.
+func awaitAttach(ctx context.Context, ready <-chan error, timeout <-chan time.Time) error {
+	select {
+	case err := <-ready:
+		return err
+	case <-ctx.Done():
+		return attachReason(ready, ctx.Err())
+	case <-timeout:
+		return attachReason(ready, context.DeadlineExceeded)
+	}
+}
+
+// attachReason prefers a queued attach failure over fallback. A queued nil
+// leaves fallback in place: reaching here means the route is already being torn
+// down, so the publish fails whether or not the attach itself succeeded.
+func attachReason(ready <-chan error, fallback error) error {
 	select {
 	case err := <-ready:
 		if err != nil {
-			a.CloseRoute(publisher.RouteID)
-			return 0, fmt.Errorf("attach publisher route %q: %w", publisher.RouteID, err)
+			return err
 		}
-	case <-channelCtx.Done():
-		a.CloseRoute(publisher.RouteID)
-		return 0, fmt.Errorf("attach publisher route %q: %w", publisher.RouteID, channelCtx.Err())
-	case <-timer.C:
-		a.CloseRoute(publisher.RouteID)
-		return 0, fmt.Errorf("attach publisher route %q: %w", publisher.RouteID, context.DeadlineExceeded)
+	default:
 	}
-	return port, nil
+	return fallback
 }
 
 // Open creates the broker-held consumer listener and returns its exact local
