@@ -254,24 +254,34 @@ func awaitAttach(ctx context.Context, ready <-chan error, timeout <-chan time.Ti
 	case err := <-ready:
 		return err
 	case <-ctx.Done():
-		return attachReason(ready, ctx.Err())
+		// A queued success leaves the context error in place: the route is
+		// already being torn down, so the publish fails either way.
+		if err := queuedAttachFailure(ready); err != nil {
+			return err
+		}
+		return ctx.Err()
 	case <-timeout:
-		return attachReason(ready, context.DeadlineExceeded)
+		// A fired timer tears nothing down, so a queued result is the whole
+		// truth here — including a queued nil, which means the broker owns a
+		// live route and reporting a stalled authority would be a lie.
+		select {
+		case err := <-ready:
+			return err
+		default:
+			return context.DeadlineExceeded
+		}
 	}
 }
 
-// attachReason prefers a queued attach failure over fallback. A queued nil
-// leaves fallback in place: reaching here means the route is already being torn
-// down, so the publish fails whether or not the attach itself succeeded.
-func attachReason(ready <-chan error, fallback error) error {
+// queuedAttachFailure reports a failure the attach goroutine has already
+// delivered, and nil when it has delivered nothing or delivered success.
+func queuedAttachFailure(ready <-chan error) error {
 	select {
 	case err := <-ready:
-		if err != nil {
-			return err
-		}
+		return err
 	default:
+		return nil
 	}
-	return fallback
 }
 
 // Open creates the broker-held consumer listener and returns its exact local

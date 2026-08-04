@@ -209,6 +209,20 @@ func TestAwaitAttachPrefersTheAttachReasonOverCancellation(t *testing.T) {
 	t.Run("a stalled authority is still reported", func(t *testing.T) {
 		require.ErrorIs(t, awaitAttach(context.Background(), make(chan error, 1), fired()), context.DeadlineExceeded)
 	})
+	t.Run("a cancelled route keeps the context error when the attach succeeded", func(t *testing.T) {
+		// Asserted on the drain rather than through awaitAttach: with a queued
+		// nil and a cancelled context both arms are live, so the barrier may
+		// legitimately answer from either one.
+		ready := make(chan error, 1)
+		ready <- nil
+		require.NoError(t, queuedAttachFailure(ready))
+		require.NoError(t, queuedAttachFailure(make(chan error, 1)))
+	})
+	t.Run("a timeout yields to an attach that already succeeded", func(t *testing.T) {
+		ready := make(chan error, 1)
+		ready <- nil
+		require.NoError(t, awaitAttach(context.Background(), ready, fired()))
+	})
 	t.Run("a plain attach failure is returned unwrapped", func(t *testing.T) {
 		ready := make(chan error, 1)
 		ready <- refused
