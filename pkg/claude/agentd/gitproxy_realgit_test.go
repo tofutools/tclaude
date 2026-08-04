@@ -412,3 +412,82 @@ func TestRealGit_ShowScopeAttributesIncludedKeysToTheIncludingScope(t *testing.T
 	assert.Contains(t, probe(true), "local\tcredential.https://github.com.helper",
 		"the gate reads this exact shape: <scope>\\t<key>")
 }
+
+// TestRealGit_LinkedWorktreeIsAcceptedOnlyWithAMatchingBackPointer is the test
+// that had to be written against real git, because the thing it pins is
+// something git itself does NOT check.
+//
+// `tclaude worktree` creates linked worktrees, so that is the layout a tclaude
+// agent normally runs in, and the proxy has to work there. But a linked
+// worktree and a hostile `.git` gitfile are the same shape: point a hand-written
+// gitfile at another repository's existing .git/worktrees/<name> entry and git
+// reports YOUR directory as the toplevel while handing over THEIR remotes,
+// objects and config. Nothing in git objects.
+//
+// Both halves run here — the legitimate worktree must be admitted, and the
+// forgery aimed at it must be refused — because a test that only showed one
+// could pass for the wrong reason.
+func TestRealGit_LinkedWorktreeIsAcceptedOnlyWithAMatchingBackPointer(t *testing.T) {
+	gitPath := gitAvailable(t)
+	main, _ := realGitRepo(t, gitPath)
+	home := filepath.Dir(main)
+
+	run := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command(gitPath, args...)
+		cmd.Dir = dir
+		cmd.Env = realGitEnv(home)
+		out, err := cmd.CombinedOutput()
+		require.NoErrorf(t, err, "git %s: %s", strings.Join(args, " "), out)
+	}
+	revParse := func(dir, flag string) string {
+		t.Helper()
+		cmd := exec.Command(gitPath, "rev-parse", "--path-format=absolute", flag)
+		cmd.Dir = dir
+		cmd.Env = realGitEnv(home)
+		out, err := cmd.Output()
+		require.NoError(t, err)
+		return strings.TrimSpace(string(out))
+	}
+
+	// A genuine linked worktree of `main`.
+	linked := filepath.Join(home, "linked")
+	run(main, "worktree", "add", "-q", linked, "-b", "side")
+
+	linkedRoot := revParse(linked, "--show-toplevel")
+	linkedGitDir := revParse(linked, "--absolute-git-dir")
+	require.NotEqual(t, linkedRoot, filepath.Dir(linkedGitDir),
+		"the fixture is only meaningful if the git dir really is outside the work tree")
+
+	fault := acceptLinkedWorktree(context.Background(), gitPath, linked, linkedRoot, linkedGitDir)
+	assert.Nil(t, fault, "a real linked worktree must be proxyable; got %+v", fault)
+
+	// The forgery: an ordinary directory whose .git file points at the linked
+	// worktree's registration inside main's admin directory.
+	forged := filepath.Join(home, "forged")
+	require.NoError(t, os.MkdirAll(forged, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(forged, ".git"),
+		[]byte("gitdir: "+linkedGitDir+"\n"), 0o644))
+
+	// CONTROL: git accepts it completely — this is the attack, armed.
+	assert.Equal(t, forged, revParse(forged, "--show-toplevel"),
+		"git reports the attacker's own directory as the work tree")
+	assert.Equal(t, revParse(main, "--git-common-dir"), revParse(forged, "--git-common-dir"),
+		"...while the common dir, and therefore the config and remotes, is the victim's")
+
+	fault = acceptLinkedWorktree(context.Background(), gitPath,
+		forged, revParse(forged, "--show-toplevel"), revParse(forged, "--absolute-git-dir"))
+	require.NotNil(t, fault, "a forged worktree link must be refused")
+	assert.Contains(t, fault.Msg, "different work tree",
+		"the refusal should say which check failed")
+
+	// And the plain redirect — a gitfile naming a whole repository rather than a
+	// worktree entry — stays refused by the structural check.
+	plain := filepath.Join(home, "plain")
+	require.NoError(t, os.MkdirAll(plain, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(plain, ".git"),
+		[]byte("gitdir: "+filepath.Join(main, ".git")+"\n"), 0o644))
+	fault = acceptLinkedWorktree(context.Background(), gitPath,
+		plain, revParse(plain, "--show-toplevel"), revParse(plain, "--absolute-git-dir"))
+	assert.NotNil(t, fault, "a gitfile pointing at another repository must stay refused")
+}

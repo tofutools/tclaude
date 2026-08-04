@@ -42,8 +42,11 @@ type gitProxyRecorder struct {
 	repoRoot string
 	// gitDir overrides the reported --absolute-git-dir, to model a `.git`
 	// GITFILE that points the daemon at another repository's metadata.
-	gitDir  string
-	remotes map[string]string // remote name -> URL (",".joined for several)
+	gitDir string
+	// gitCommonDir answers --git-common-dir. Set only by linked-worktree
+	// fixtures; an ordinary repository never gets asked.
+	gitCommonDir string
+	remotes      map[string]string // remote name -> URL (",".joined for several)
 	// pushRemotes seeds remote.<name>.pushurl. A remote absent from this map
 	// has none, and push goes wherever fetch goes.
 	pushRemotes map[string]string
@@ -120,6 +123,14 @@ func (r *gitProxyRecorder) exec(_ context.Context, cmd agentd.ProxyCommand) (age
 				return agentd.ProxyResult{Stdout: r.gitDir + "\n"}, nil
 			}
 			return agentd.ProxyResult{Stdout: filepath.Join(r.repoRoot, ".git") + "\n"}, nil
+		}
+		if slices.Contains(sub, "--git-common-dir") {
+			// Only a linked-worktree fixture sets this. Leaving it unanswered
+			// models an ordinary repository, where the daemon never asks.
+			if r.gitCommonDir != "" {
+				return agentd.ProxyResult{Stdout: r.gitCommonDir + "\n"}, nil
+			}
+			return miss, nil
 		}
 		if slices.Contains(sub, "--abbrev-ref") {
 			return agentd.ProxyResult{Stdout: r.branch + "\n"}, nil
@@ -597,6 +608,72 @@ func TestGitProxy_RefusesRedirectedGitDir(t *testing.T) {
 	res := gitProxyPost(t, f, "/v1/git/ls-remote", map[string]any{})
 	assert.Equal(t, http.StatusConflict, res.Code, "body=%s", res.Body.String())
 	assert.Contains(t, res.Body.String(), "outside the work tree")
+	assert.Empty(t, rec.networkCalls())
+}
+
+// TestGitProxy_ProxiesFromALinkedWorktree — `tclaude worktree` creates linked
+// worktrees, so this is the layout a tclaude agent normally runs in. The whole
+// feature is unusable for its main audience if the repo gate refuses it.
+//
+// The gitfile shape is identical to the redirect attack the test below covers;
+// what separates them is the BACK-POINTER, so the fixture writes a real one.
+// TestRealGit_LinkedWorktreeIsAcceptedOnlyWithAMatchingBackPointer proves the
+// discriminator against actual git.
+func TestGitProxy_ProxiesFromALinkedWorktree(t *testing.T) {
+	f, rec := gitProxyWorld(t, []string{"github.com/tofutools"})
+
+	// A main repository beside the agent's work tree, with this work tree
+	// registered in it — which is exactly what `git worktree add` writes.
+	mainRepo := t.TempDir()
+	commonDir := filepath.Join(mainRepo, ".git")
+	gitDir := filepath.Join(commonDir, "worktrees", filepath.Base(rec.repoRoot))
+	require.NoError(t, os.MkdirAll(gitDir, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(gitDir, "gitdir"),
+		[]byte(filepath.Join(rec.repoRoot, ".git")+"\n"), 0o600))
+	rec.gitDir, rec.gitCommonDir = gitDir, commonDir
+
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitPush, "test"))
+	res := gitProxyPost(t, f, "/v1/git/push", map[string]any{"branch": "feat/thing"})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+	assert.Len(t, rec.networkCalls(), 1, "the push must actually reach the wire")
+}
+
+// TestGitProxy_RefusesAForgedWorktreeRegistration — the same shape as the test
+// above, but the main repository has this git dir registered against SOMEBODY
+// ELSE's work tree. That is the forgery: an agent pointing its own `.git` file
+// at a victim repository's existing worktree entry, which git itself accepts.
+func TestGitProxy_RefusesAForgedWorktreeRegistration(t *testing.T) {
+	f, rec := gitProxyWorld(t, []string{"github.com/tofutools"})
+
+	victim := t.TempDir()
+	commonDir := filepath.Join(victim, ".git")
+	gitDir := filepath.Join(commonDir, "worktrees", "someone-elses-worktree")
+	require.NoError(t, os.MkdirAll(gitDir, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(gitDir, "gitdir"),
+		[]byte(filepath.Join(victim, "someone-elses-worktree", ".git")+"\n"), 0o600))
+	rec.gitDir, rec.gitCommonDir = gitDir, commonDir
+
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitPush, "test"))
+	res := gitProxyPost(t, f, "/v1/git/push", map[string]any{"branch": "feat/thing"})
+	assert.Equal(t, http.StatusConflict, res.Code, "body=%s", res.Body.String())
+	assert.Contains(t, res.Body.String(), "different work tree")
+	assert.Empty(t, rec.networkCalls(), "the victim's repository must not be dialled")
+}
+
+// TestGitProxy_RefusesAnUnregisteredWorktreeGitDir — the worktrees/<name> shape
+// with no registration at all. Shape alone must never be enough.
+func TestGitProxy_RefusesAnUnregisteredWorktreeGitDir(t *testing.T) {
+	f, rec := gitProxyWorld(t, []string{"github.com/tofutools"})
+
+	victim := t.TempDir()
+	commonDir := filepath.Join(victim, ".git")
+	rec.gitCommonDir = commonDir
+	rec.gitDir = filepath.Join(commonDir, "worktrees", "invented")
+
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitPush, "test"))
+	res := gitProxyPost(t, f, "/v1/git/push", map[string]any{"branch": "feat/thing"})
+	assert.Equal(t, http.StatusConflict, res.Code, "body=%s", res.Body.String())
+	assert.Contains(t, res.Body.String(), "not registered as a linked worktree")
 	assert.Empty(t, rec.networkCalls())
 }
 

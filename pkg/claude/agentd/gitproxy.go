@@ -851,12 +851,11 @@ func resolveProxyRepo(ctx context.Context, gitPath, convID string) (string, *pro
 	// one-line .git file naming another repository's admin dir and have the
 	// daemon list, fetch into, and push from a repo that is not its own.
 	//
-	// Linked worktrees legitimately use a gitfile too, but theirs points at
-	// <common>/worktrees/<name>, which is not under the work tree either — so
-	// the check is deliberately "the git dir must be under the work-tree root",
-	// which admits the ordinary .git directory and refuses redirection. A
-	// linked worktree therefore cannot be proxied from; that is a narrower
-	// capability than being able to aim at an arbitrary repository.
+	// Linked worktrees legitimately use a gitfile too, and theirs points at
+	// <common>/worktrees/<name>, which is not under the work tree either. They
+	// are admitted by acceptLinkedWorktree below, which proves the link is real
+	// rather than assuming it — see there for why the shape alone is not
+	// enough.
 	gitDirRes, err := proxyExec(probeCtx, ProxyCommand{
 		Tool: "git",
 		Path: gitPath,
@@ -875,11 +874,11 @@ func resolveProxyRepo(ctx context.Context, gitPath, convID string) (string, *pro
 	if resolvedGitDir, err := filepath.EvalSymlinks(gitDir); err == nil {
 		gitDir = resolvedGitDir
 	}
-	if !sandboxpolicy.PathContainsOrEqual(root, filepath.Clean(gitDir)) {
-		return "", faultf(409, "git_dir_redirected",
-			"this work tree's git directory (%s) lives outside the work tree (%s); "+
-				"the proxy only operates on a repository whose own metadata it can attribute to you",
-			gitDir, root)
+	gitDir = filepath.Clean(gitDir)
+	if !sandboxpolicy.PathContainsOrEqual(root, gitDir) {
+		if fault := acceptLinkedWorktree(ctx, gitPath, resolved, root, gitDir); fault != nil {
+			return "", fault
+		}
 	}
 
 	// An agent launched somewhere that is not itself a repository makes git
@@ -898,6 +897,88 @@ func resolveProxyRepo(ctx context.Context, gitPath, convID string) (string, *pro
 		}
 	}
 	return root, nil
+}
+
+// gitDirRedirected is the refusal for a git directory the proxy will not
+// attribute to the caller. Shared so the plain-redirect and failed-worktree
+// paths read identically to an agent: both mean "this is not your repository's
+// own metadata".
+func gitDirRedirected(gitDir, root, because string) *proxyFault {
+	return faultf(409, "git_dir_redirected",
+		"this work tree's git directory (%s) lives outside the work tree (%s)%s; "+
+			"the proxy only operates on a repository whose own metadata it can attribute to you",
+		gitDir, root, because)
+}
+
+// acceptLinkedWorktree decides whether a git directory sitting OUTSIDE the work
+// tree is a genuine linked worktree of its own main repository, rather than a
+// hand-written `.git` gitfile aimed at somebody else's.
+//
+// This case has to be admitted: `tclaude worktree` creates linked worktrees,
+// and that is the layout a tclaude agent normally runs in. Refusing it made the
+// proxy unusable for its main audience.
+//
+// It must not be admitted on SHAPE alone, though. Git does not validate the
+// link, and the two are indistinguishable from the work tree's side: writing
+//
+//	gitdir: /victim/.git/worktrees/wt1
+//
+// into a `.git` file yields a work tree whose toplevel is the attacker's own
+// directory and whose remotes, objects and config are the victim's. Verified
+// against git 2.43 — every rev-parse answer comes back looking legitimate, and
+// `git remote get-url origin` returns the victim's remote.
+//
+// What an attacker cannot forge is the BACK-POINTER. A real linked worktree is
+// registered in its main repository: `<common>/worktrees/<name>/gitdir` holds
+// the path of that work tree's own `.git` file. A forged link necessarily
+// points at an entry whose back-pointer names a DIFFERENT work tree, so
+// requiring the two to agree is what separates the cases. Writing a matching
+// back-pointer needs write access to the main repository's admin directory, and
+// an agent with that can already rewrite the repository's config — so honouring
+// the link grants no reach it did not already have. That is the invariant this
+// whole feature rests on: credentials, never reach.
+func acceptLinkedWorktree(ctx context.Context, gitPath, dir, root, gitDir string) *proxyFault {
+	commonRes, err := proxyExec(ctx, ProxyCommand{
+		Tool: "git",
+		Path: gitPath,
+		Args: []string{"-C", dir, "rev-parse", "--path-format=absolute", "--git-common-dir"},
+		Dir:  dir,
+		Env:  gitProxyEnv(),
+	})
+	if err != nil || commonRes.ExitCode != 0 {
+		return gitDirRedirected(gitDir, root, "")
+	}
+	commonDir := filepath.Clean(strings.TrimSpace(commonRes.Stdout))
+	if !filepath.IsAbs(commonDir) || commonDir == gitDir {
+		return gitDirRedirected(gitDir, root, "")
+	}
+	// Structure: a linked worktree's git dir is always <common>/worktrees/<name>.
+	if filepath.Join(commonDir, "worktrees", filepath.Base(gitDir)) != gitDir {
+		return gitDirRedirected(gitDir, root, "")
+	}
+	// The back-pointer, which is the part that actually proves anything.
+	registered, err := os.ReadFile(filepath.Join(gitDir, "gitdir"))
+	if err != nil {
+		return gitDirRedirected(gitDir, root,
+			" and is not registered as a linked worktree of that repository")
+	}
+	if canonicalProxyPath(strings.TrimSpace(string(registered))) !=
+		canonicalProxyPath(filepath.Join(root, ".git")) {
+		return gitDirRedirected(gitDir, root,
+			" and that repository has it registered against a different work tree")
+	}
+	return nil
+}
+
+// canonicalProxyPath resolves a path as far as the filesystem allows, so two
+// spellings of the same location compare equal. A path that cannot be resolved
+// (it may not exist) is merely cleaned — the caller is comparing for equality,
+// not deciding reachability.
+func canonicalProxyPath(p string) string {
+	if resolved, err := filepath.EvalSymlinks(p); err == nil {
+		return filepath.Clean(resolved)
+	}
+	return filepath.Clean(p)
 }
 
 // recordedLaunchDir returns the immutable physical launch directory recorded
