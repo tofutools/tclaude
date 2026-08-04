@@ -1,6 +1,7 @@
 package copilotfixture
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -94,7 +95,22 @@ func NewMockProvider(t *testing.T, turns []Turn) *MockProvider {
 	}
 	m := &MockProvider{turns: turns}
 	m.server = httptest.NewServer(http.HandlerFunc(m.handle))
-	t.Cleanup(m.server.Close)
+	t.Cleanup(func() {
+		// Client connections are dropped BEFORE Close, because Close waits for
+		// outstanding ones and several scenarios end with one deliberately
+		// outstanding: they kill a CLI mid-stream, and a killed process does
+		// not tidy up its sockets. httptest then blocks, logging "blocked in
+		// Close after 5 seconds" once per interval until the kernel gets round
+		// to reaping the peer.
+		//
+		// Measured at 14s and 23s of pure teardown on the two soft-exit
+		// scenarios in one CI run — more wall clock than either scenario spent
+		// measuring anything. Dropping the connections first cannot lose
+		// evidence: every request the mock recorded is already in m.requests,
+		// and a scenario that is tearing down has finished asking.
+		m.server.CloseClientConnections()
+		m.server.Close()
+	})
 	return m
 }
 
@@ -171,7 +187,7 @@ func (m *MockProvider) handle(w http.ResponseWriter, r *http.Request) {
 	// The CLI sends stream:true by default and treats a plain JSON answer to a
 	// streaming request as a transient failure. Honour whichever mode it asked for.
 	if stream {
-		m.writeStream(w, model, turn)
+		m.writeStream(r.Context(), w, model, turn)
 		return
 	}
 	m.writeBlocking(w, model, turn)
@@ -272,7 +288,9 @@ const (
 	messageID  = "msg_copilotfixture"
 )
 
-func (m *MockProvider) writeStream(w http.ResponseWriter, model string, turn Turn) {
+func (m *MockProvider) writeStream(
+	ctx context.Context, w http.ResponseWriter, model string, turn Turn,
+) {
 	h := w.Header()
 	h.Set("Content-Type", "text/event-stream")
 	h.Set("Cache-Control", "no-cache")
@@ -320,7 +338,20 @@ func (m *MockProvider) writeStream(w http.ResponseWriter, model string, turn Tur
 		send(chunk(choice(map[string]any{"role": "assistant", "content": ""}, nil)))
 		for _, piece := range splitForStreaming(turn.Text) {
 			if turn.ChunkDelay > 0 {
-				time.Sleep(turn.ChunkDelay)
+				// Interruptible, because a paced turn deliberately outlives the
+				// scenario streaming it: the soft-exit arms script ~28s of
+				// deltas so the TUI is still busy when their keystrokes land,
+				// then end at their deadline with the CLI killed. A plain sleep
+				// keeps this handler in flight afterwards, and
+				// httptest.Server.Close waits for in-flight handlers — so the
+				// scenario paid out the REST of a turn nobody was reading, as
+				// teardown, after it had finished measuring. Fourteen and
+				// twenty-three seconds of it, in one CI run.
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(turn.ChunkDelay):
+				}
 			}
 			send(chunk(choice(map[string]any{"content": piece}, nil)))
 		}

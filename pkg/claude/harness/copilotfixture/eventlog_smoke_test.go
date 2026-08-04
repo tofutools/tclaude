@@ -41,7 +41,7 @@ func eventLogFixturePath() string {
 // TestCopilotSessionEventLogFixture records and pins the durable event log of
 // a fresh turn, a tool-calling turn and a resume against the same session.
 func TestCopilotSessionEventLogFixture(t *testing.T) {
-	requireSmoke(t)
+	requireSmokeParallel(t)
 
 	const sessionID = "9a1c2d3e-4f50-4617-8829-0b1c2d3e4f50"
 

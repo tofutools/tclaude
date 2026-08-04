@@ -119,7 +119,7 @@ func readTrustedFolders(t *testing.T, path string) []string {
 // TestCopilotPermissionFolderTrustBlocksFirst leaves parked forever into one
 // that completes its first turn.
 func TestCopilotDirTrustProductionSeedingClearsTheModal(t *testing.T) {
-	requireSmoke(t)
+	requireSmokeParallel(t)
 
 	mock := copilotfixture.NewMockProvider(t, []copilotfixture.Turn{
 		{Text: "MOCK STREAMED ANSWER"},
@@ -153,7 +153,7 @@ func TestCopilotDirTrustProductionSeedingClearsTheModal(t *testing.T) {
 // settings out. A future CLI that relocated the key would leave every seeded
 // pane blocked, and must fail here rather than silently.
 func TestCopilotDirTrustSeedingPreservesAnInstalledTrustStore(t *testing.T) {
-	requireSmoke(t)
+	requireSmokeParallel(t)
 
 	dirs := copilotfixture.NewSandboxDirs(t)
 	existing := filepath.Join(dirs.Root, "already-trusted")
@@ -223,7 +223,7 @@ func TestCopilotDirTrustSeedingPreservesAnInstalledTrustStore(t *testing.T) {
 // the platform has no second spelling to offer — which is why CI requires it on
 // the macOS arm specifically.
 func TestCopilotDirTrustSeedingMatchesTheUnresolvedCwdSpelling(t *testing.T) {
-	requireSmoke(t)
+	requireSmokeParallel(t)
 
 	dirs := copilotfixture.NewSandboxDirs(t)
 	if dirs.UnresolvedWorkDir == dirs.WorkDir {

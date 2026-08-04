@@ -31,7 +31,7 @@ import (
 //     is the caller's, and the catalog deliberately does not carry it, so a
 //     turn that quietly wrote there would mean the split is wrong.
 func TestCopilotSandboxBaselineCoversObservedWrites(t *testing.T) {
-	requireSmoke(t)
+	requireSmokeParallel(t)
 
 	// A caller-chosen id so the session-state directory in the golden is
 	// recognisably the enrolled one rather than an anonymous uuid.

@@ -35,20 +35,59 @@ import (
 // its input prompt — so each scenario ends on its own evidence via
 // SettledWhen, not on process exit.
 
-// permissionDeadline bounds one pty scenario.
+// permissionDeadline is the OUTER bound on one pty scenario. Neither arm is
+// meant to reach it.
 //
-// Sized off measured behavior, not guessed. An allowed arm ends the moment its
-// follow-up request arrives (~2-4s) and never approaches this; only genuinely
-// blocked arms pay it in full, and there are a dozen of those, so the value is
-// most of the matrix's wall clock. The blocked shape is reached quickly — the
-// trust dialog renders in ~3-6s and PTYQuiescence adds 2 — so 12s leaves
-// several seconds of margin over the slowest observed startup.
+// It used to be the blocked arm's stopwatch as well, at 12s, and that made it
+// two things at once: the margin over the slowest startup, AND the price every
+// blocked arm paid. Those pull in opposite directions, and the tension got
+// sharper the moment the suite started running scenarios concurrently — CPU
+// contention stretches startup, which wants a bigger number, while a dozen
+// blocked arms each paying it wants a smaller one.
 //
-// Being wrong in the tight direction is safe by construction: a deadline too
-// short to reach quiescence lands in ClassifyPermission's error arm, which
-// fails the scenario with a message naming the deadline as the likely cause.
-// It cannot silently downgrade a working launch into a "blocked" finding.
-const permissionDeadline = 12 * time.Second
+// blockedQuiet below split the roles, so this value is now free to be generous.
+// A run that genuinely never settles still lands in ClassifyPermission's error
+// arm, which fails the scenario with a message naming the deadline as the
+// likely cause; it cannot silently downgrade a working launch into a "blocked"
+// finding. What this bound buys is that a starved runner reaches that arm
+// because the CLI misbehaved, not because the runner was busy.
+const permissionDeadline = 30 * time.Second
+
+// blockedQuiet is how long a pty scenario's transcript must stand still, with
+// no follow-up request, before the run is called blocked and stopped.
+//
+// MEASURED, off the LOADED case rather than the comfortable one. Every pty run
+// logs "PTY TIMING … first-output=… max-output-gap=…", and the two arms
+// separate cleanly:
+//
+//   - A working turn's widest gap is 2.2s — and stays 2.2s under load. That is
+//     PTYQuiescence closing on a turn that had already finished, so genuine
+//     mid-turn gaps are smaller still.
+//   - A blocked arm stops emitting at 3.9-5.5s, when the dialog finishes
+//     rendering, and then never emits again however loaded the host is.
+//
+// The "stays 2.2s" is the part worth reading twice, because the first version
+// of this constant was sized against numbers that said otherwise: gaps
+// appearing to stretch to 8.4s under a two-core budget. They were not gaps.
+// MaxOutputGap counted from launch, so a slow Node startup was being billed as
+// a silence in a turn that had not begun — the measurement conflating exactly
+// what the blocked verdict must not conflate. Once startup moved to its own
+// field, the contention effect on working turns vanished: what actually
+// stretches under load is time-to-first-byte (to 5.8s on two cores), and that
+// is not a state any quiet window should be classifying.
+//
+// So 10s is ~4.5x the widest working gap measured on a deliberately starved
+// box, and roughly double the point at which a blocked arm has gone silent for
+// good. Being wrong in the tight direction is the failure mode to care about —
+// an allowed arm cut short is recorded as blocked, a false finding in a suite
+// whose whole subject is what a detached agent may do — so the margin is
+// deliberately lopsided. Being wrong loose costs seconds, on arms that run
+// concurrently with everything else anyway.
+//
+// The timing log stays in the merged code so the next tightening, or the next
+// pinned-binary bump, argues from a real job's numbers rather than from this
+// comment.
+const blockedQuiet = 10 * time.Second
 
 // safeShellCommand is a command Copilot classifies as trivially safe.
 //
@@ -110,8 +149,9 @@ func permissionRun(
 	}
 
 	res := copilotfixture.RunPTY(t, copilotfixture.PTYOptions{
-		RunOptions: opts,
-		Deadline:   permissionDeadline,
+		RunOptions:   opts,
+		Deadline:     permissionDeadline,
+		BlockedAfter: blockedQuiet,
 		// The follow-up request is conclusive: it can only exist if the tool
 		// executed and produced a result to post back.
 		SettledWhen: func() bool { return len(mock.Requests()) >= 2 },
@@ -173,7 +213,7 @@ func requireCompletionsWire(t *testing.T, opts copilotfixture.RunOptions) {
 // all — zero provider requests. A detached pane dies here, before any flag in
 // the proposed approval catalog has a chance to matter.
 func TestCopilotPermissionFolderTrustBlocksFirst(t *testing.T) {
-	requireSmoke(t)
+	requireSmokeParallel(t)
 
 	verdict, mock, res := permissionRun(t, bashTurns(safeShellCommand), false,
 		copilotfixture.RunOptions{})
@@ -223,7 +263,7 @@ func TestCopilotPermissionTrustBypassSurface(t *testing.T) {
 	} {
 		rows = append(rows, tc.name)
 		t.Run(tc.name, func(t *testing.T) {
-			requireSmoke(t)
+			requireSmokeParallel(t)
 			mock := copilotfixture.NewMockProvider(t, bashTurns(safeShellCommand))
 			dirs := copilotfixture.NewSandboxDirs(t)
 			args := tc.args
@@ -243,8 +283,9 @@ func TestCopilotPermissionTrustBypassSurface(t *testing.T) {
 					OmitAllowAllTools: true,
 					ExtraArgs:         args,
 				},
-				Deadline:    permissionDeadline,
-				SettledWhen: func() bool { return len(mock.Requests()) >= 2 },
+				Deadline:     permissionDeadline,
+				BlockedAfter: blockedQuiet,
+				SettledWhen:  func() bool { return len(mock.Requests()) >= 2 },
 			})
 
 			reached := len(mock.Requests()) > 0
@@ -287,7 +328,7 @@ func TestCopilotPermissionToolApprovalGate(t *testing.T) {
 	} {
 		rows = append(rows, tc.name)
 		t.Run(tc.name, func(t *testing.T) {
-			requireSmoke(t)
+			requireSmokeParallel(t)
 			verdict, mock, res := permissionRun(t, bashTurns(tc.command), true,
 				copilotfixture.RunOptions{OmitAllowAllTools: !tc.allow})
 			assert.Equal(t, tc.want, verdict.Outcome)
@@ -345,7 +386,7 @@ func TestCopilotPermissionURLGateUnderToolApproval(t *testing.T) {
 	} {
 		rows = append(rows, tc.name)
 		t.Run(tc.name, func(t *testing.T) {
-			requireSmoke(t)
+			requireSmokeParallel(t)
 			verdict, mock, res := permissionRun(t, bashTurns(urlShellCommand), true,
 				copilotfixture.RunOptions{OmitAllowAllTools: !tc.allow})
 			assert.Equal(t, tc.want, verdict.Outcome)
@@ -390,7 +431,7 @@ func TestCopilotPermissionAmbientAllowAllPromotes(t *testing.T) {
 	} {
 		rows = append(rows, tc.name)
 		t.Run(tc.name, func(t *testing.T) {
-			requireSmoke(t)
+			requireSmokeParallel(t)
 			mock := copilotfixture.NewMockProvider(t, bashTurns(unsafeShellCommand))
 			dirs := copilotfixture.NewSandboxDirs(t)
 			// NOT trusted: the trust gate is the detector here, because it is
@@ -404,8 +445,9 @@ func TestCopilotPermissionAmbientAllowAllPromotes(t *testing.T) {
 					OmitAllowAllTools: true,
 					ExtraEnv:          []string{"COPILOT_ALLOW_ALL=" + tc.value},
 				},
-				Deadline:    permissionDeadline,
-				SettledWhen: func() bool { return len(mock.Requests()) >= 2 },
+				Deadline:     permissionDeadline,
+				BlockedAfter: blockedQuiet,
+				SettledWhen:  func() bool { return len(mock.Requests()) >= 2 },
 			})
 
 			promoted := len(mock.Requests()) >= 2
@@ -473,7 +515,7 @@ func TestCopilotPermissionDenyToolGrammar(t *testing.T) {
 	} {
 		rows = append(rows, tc.pattern)
 		t.Run(tc.pattern, func(t *testing.T) {
-			requireSmoke(t)
+			requireSmokeParallel(t)
 			// The mock is what makes the two outcomes separable. An earlier
 			// version of this scenario ran with no provider at all, on the
 			// theory that argument validation happens before anything else --
@@ -533,7 +575,7 @@ func TestCopilotPermissionDenyToolGrammar(t *testing.T) {
 // it, so `--no-ask-user` is a no-op there and a headless scenario would report
 // the flag as working while measuring nothing.
 func TestCopilotPermissionNoAskUserRemovesTheTool(t *testing.T) {
-	requireSmoke(t)
+	requireSmokeParallel(t)
 
 	catalog := func(t *testing.T, args ...string) []string {
 		t.Helper()
@@ -548,7 +590,8 @@ func TestCopilotPermissionNoAskUserRemovesTheTool(t *testing.T) {
 				Prompt:    "Answer in one word.",
 				ExtraArgs: args,
 			},
-			Deadline: permissionDeadline,
+			Deadline:     permissionDeadline,
+			BlockedAfter: blockedQuiet,
 			// One request is all this needs: the catalog is advertised on the
 			// very first call, so there is nothing to gain by waiting for a
 			// turn that has no tool call in it.
@@ -587,7 +630,7 @@ func TestCopilotPermissionNoAskUserRemovesTheTool(t *testing.T) {
 // starts refusing headlessly instead of auto-allowing, the PTY discipline this
 // file is built on has changed and somebody must re-read the reasoning.
 func TestCopilotPermissionHeadlessIsNotEvidence(t *testing.T) {
-	requireSmoke(t)
+	requireSmokeParallel(t)
 
 	mock := copilotfixture.NewMockProvider(t, bashTurns(unsafeShellCommand))
 	dirs := copilotfixture.NewSandboxDirs(t)
@@ -849,7 +892,7 @@ func TestCopilotPermissionPathGrants(t *testing.T) {
 	} {
 		rows = append(rows, tc.name)
 		t.Run(tc.name, func(t *testing.T) {
-			requireSmoke(t)
+			requireSmokeParallel(t)
 			dirs := copilotfixture.NewSandboxDirs(t)
 			// Pinned, so "the system temp dir" is something this scenario
 			// chose rather than a property of the host running it.
@@ -922,7 +965,7 @@ func TestCopilotPermissionAddDirWrites(t *testing.T) {
 	} {
 		rows = append(rows, tc.name)
 		t.Run(tc.name, func(t *testing.T) {
-			requireSmoke(t)
+			requireSmokeParallel(t)
 			dirs := copilotfixture.NewSandboxDirs(t)
 			childTemp := filepath.Join(dirs.Root, "child-temp")
 			require.NoError(t, os.MkdirAll(childTemp, 0o755))
@@ -976,7 +1019,7 @@ func TestCopilotPermissionFlagNameExactness(t *testing.T) {
 	} {
 		rows = append(rows, tc.name)
 		t.Run(tc.name, func(t *testing.T) {
-			requireSmoke(t)
+			requireSmokeParallel(t)
 			mock := copilotfixture.NewMockProvider(t, []copilotfixture.Turn{{Text: "MOCK PARSER PROBE"}})
 			dirs := copilotfixture.NewSandboxDirs(t)
 			copilotfixture.TrustFolder(t, dirs.Home, dirs.WorkDir)
@@ -986,8 +1029,9 @@ func TestCopilotPermissionFlagNameExactness(t *testing.T) {
 					BaseURL: mock.BaseURL(), Prompt: "Answer with the provider text.",
 					OmitAllowAllTools: true, ExtraArgs: []string{tc.arg},
 				},
-				Deadline:    permissionDeadline,
-				SettledWhen: func() bool { return len(mock.Requests()) >= 1 },
+				Deadline:     permissionDeadline,
+				BlockedAfter: blockedQuiet,
+				SettledWhen:  func() bool { return len(mock.Requests()) >= 1 },
 			})
 			t.Logf("permission verdict: parser rejected %q (exited=%v exit_code=%d provider_requests=%d)",
 				tc.arg, res.Exited, res.ExitCode, len(mock.Requests()))
@@ -1015,7 +1059,7 @@ func TestCopilotPermissionFlagNameExactness(t *testing.T) {
 // received a new prompt sends [system user assistant user] — the earlier
 // exchange followed by the new turn.
 func TestCopilotPermissionResumeSubmitsPrompt(t *testing.T) {
-	requireSmoke(t)
+	requireSmokeParallel(t)
 
 	dirs := copilotfixture.NewSandboxDirs(t)
 	copilotfixture.TrustFolder(t, dirs.Home, dirs.WorkDir)
@@ -1047,8 +1091,9 @@ func TestCopilotPermissionResumeSubmitsPrompt(t *testing.T) {
 			Prompt:   "Second question.",
 			ResumeID: sessionID,
 		},
-		Deadline:    permissionDeadline,
-		SettledWhen: func() bool { return len(resumed.Requests()) >= 1 },
+		Deadline:     permissionDeadline,
+		BlockedAfter: blockedQuiet,
+		SettledWhen:  func() bool { return len(resumed.Requests()) >= 1 },
 	})
 
 	requests := resumed.Requests()
@@ -1091,6 +1136,14 @@ func mockFor(t *testing.T, text string) *copilotfixture.MockProvider {
 // it, so a refusal here can ONLY come from the deny rule — there is no
 // risk-classification confound to explain it away.
 func TestCopilotPermissionInPaneAllowAllCannotOverrideDeny(t *testing.T) {
+	// Sequential. The only scenario in the suite that TYPES into a live TUI at
+	// a settled prompt and then types again, so it is the only one whose
+	// procedure depends on the CLI keeping up rather than on what the CLI
+	// eventually decides. RunPTY now refuses to type into a screen that has
+	// drawn nothing, which fixed the way this failed under contention, but a
+	// three-phase conversation with a real terminal has no business racing
+	// three other CLIs for two cores when the whole scenario costs twelve
+	// seconds to run alone.
 	requireSmoke(t)
 
 	mock := copilotfixture.NewMockProvider(t, []copilotfixture.Turn{
@@ -1124,8 +1177,21 @@ func TestCopilotPermissionInPaneAllowAllCannotOverrideDeny(t *testing.T) {
 		RunOptions: inPaneOpts,
 		// Typed into a settled screen, in order: widen the posture, then ask for
 		// the denied tool.
-		Input:       []string{"/allow-all", "Now use the bash tool."},
-		Deadline:    3 * permissionDeadline,
+		Input: []string{"/allow-all", "Now use the bash tool."},
+		// Three turns and two waits for a settled screen, so an absolute value
+		// rather than a multiple of permissionDeadline.
+		//
+		// The most generous bound in the file, and measured rather than picked:
+		// this scenario waits for quiescence TWICE before it has even asked its
+		// question, so it accumulates the concurrency tax three times over
+		// where a single-turn scenario pays it once. At 45s it failed on a
+		// two-core box under load — not blocked, just starved — which is the
+		// error arm doing its job and the reason the number moved.
+		//
+		// No BlockedAfter either. This is the one scenario that WANTS the
+		// screen to go quiet: it types into each settled prompt in turn, so
+		// silence is a step in the procedure rather than a verdict.
+		Deadline:    2 * time.Minute,
 		SettledWhen: func() bool { return len(mock.Requests()) >= 3 },
 	})
 

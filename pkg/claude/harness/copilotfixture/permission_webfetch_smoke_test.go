@@ -118,13 +118,13 @@ const webFetchRoutableProbeHost = "192.0.2.1"
 // would silently exclude nothing and leave the tool live.
 const webFetchToolName = "web_fetch"
 
-// webFetchDeadline bounds one web-fetch scenario.
+// webFetchDeadline is the outer bound on one web-fetch scenario.
 //
 // Longer than permissionDeadline because the allowed arms run a real DNS
 // lookup, which on a host with an unreachable or slow resolver costs seconds
-// that the shell-only scenarios never pay. Blocked arms still settle at
-// quiescence, so the extra headroom costs nothing when it is not needed.
-const webFetchDeadline = 20 * time.Second
+// that the shell-only scenarios never pay. Blocked arms end on blockedQuiet
+// rather than here, so the extra headroom costs nothing when it is not needed.
+const webFetchDeadline = 40 * time.Second
 
 // webFetchTurns scripts a single web_fetch call at the probe URL.
 func webFetchTurns() []copilotfixture.Turn {
@@ -177,8 +177,9 @@ func webFetchRun(t *testing.T, turns []copilotfixture.Turn, probeHost string, ar
 			OmitAllowAllTools: true,
 			ExtraArgs:         args,
 		},
-		Deadline:    webFetchDeadline,
-		SettledWhen: func() bool { return len(mock.Requests()) >= 2 },
+		Deadline:     webFetchDeadline,
+		BlockedAfter: blockedQuiet,
+		SettledWhen:  func() bool { return len(mock.Requests()) >= 2 },
 	})
 
 	requests := mock.Requests()
@@ -313,8 +314,9 @@ func webFetchCatalog(t *testing.T, online bool, args ...string) []string {
 		opts.WebEgressProxy = capture.Endpoint()
 	}
 	copilotfixture.RunPTY(t, copilotfixture.PTYOptions{
-		RunOptions: opts,
-		Deadline:   webFetchDeadline,
+		RunOptions:   opts,
+		Deadline:     webFetchDeadline,
+		BlockedAfter: blockedQuiet,
 		// The catalog rides on the first request, so there is nothing to gain
 		// by waiting for a turn that has no tool call in it.
 		SettledWhen: func() bool { return len(mock.Requests()) >= 1 },
@@ -344,7 +346,7 @@ func webFetchCatalog(t *testing.T, online bool, args ...string) []string {
 // tool under study — an MCP toolset appearing, say — this arm would not be the
 // narrow probe it is described as.
 func TestCopilotPermissionWebFetchNeedsTheOnlineArm(t *testing.T) {
-	requireSmoke(t)
+	requireSmokeParallel(t)
 
 	offline := webFetchCatalog(t, false)
 	assert.NotContains(t, offline, webFetchToolName,
@@ -388,7 +390,7 @@ func TestCopilotPermissionWebFetchNeedsTheOnlineArm(t *testing.T) {
 // component that ignored the proxy entirely would have nothing to reach — a
 // convention this leans on, not a guarantee it asserts.
 func TestCopilotPermissionWebFetchEgressWallIsInForce(t *testing.T) {
-	requireSmoke(t)
+	requireSmokeParallel(t)
 
 	turns := []copilotfixture.Turn{
 		{ToolCall: &copilotfixture.ToolCall{
@@ -469,7 +471,7 @@ func TestCopilotPermissionWebFetchGate(t *testing.T) {
 	} {
 		rows = append(rows, tc.name)
 		t.Run(tc.name, func(t *testing.T) {
-			requireSmoke(t)
+			requireSmokeParallel(t)
 			verdict, mock, capture, res := webFetchRun(t, webFetchTurns(), webFetchProbeHost, tc.args)
 			assert.Equal(t, tc.want, verdict.Outcome)
 
@@ -524,7 +526,7 @@ func TestCopilotPermissionWebFetchGate(t *testing.T) {
 // that do, and the turn continues — no prompt, with NO permission flags granted
 // anywhere in the launch.
 func TestCopilotPermissionWebFetchExclusionRemovesTheTool(t *testing.T) {
-	requireSmoke(t)
+	requireSmokeParallel(t)
 
 	base := webFetchCatalog(t, true)
 	require.Contains(t, base, webFetchToolName,
@@ -611,7 +613,7 @@ func TestCopilotPermissionWebFetchURLDenyEnforcement(t *testing.T) {
 	} {
 		rows = append(rows, tc.name)
 		t.Run(tc.name, func(t *testing.T) {
-			requireSmoke(t)
+			requireSmokeParallel(t)
 			args := append([]string{"--allow-all-tools", "--no-ask-user"}, tc.rule...)
 			verdict, mock, capture, res := webFetchRun(t, webFetchTurns(), webFetchProbeHost, args)
 

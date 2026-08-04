@@ -63,7 +63,7 @@ func askRunOptions(dirs copilotfixture.Dirs, mock *copilotfixture.MockProvider) 
 // COPILOT_HOME that trusts nothing, so `tclaude ask` works in a directory
 // Copilot has never seen. TrustFolder is deliberately not called here.
 func TestCopilotAskCaptureIsCleanOnStdout(t *testing.T) {
-	requireSmoke(t)
+	requireSmokeParallel(t)
 
 	const answer = "MOCK ASK ANSWER"
 	mock := copilotfixture.NewMockProvider(t, []copilotfixture.Turn{{Text: answer}})
@@ -96,6 +96,10 @@ func TestCopilotAskCaptureIsCleanOnStdout(t *testing.T) {
 // through the session-state directory this test could stat itself — a conv the
 // store cannot see is one `tclaude conv` and the next ask cannot see either.
 func TestCopilotAskResumesExactly(t *testing.T) {
+	// Sequential, unlike the rest of this file: the listing half goes through
+	// convStore, which redirects HOME and COPILOT_HOME with t.Setenv. That is
+	// process-global, so it and t.Parallel are mutually exclusive — and Go
+	// says so by panicking rather than by racing, which is how this was found.
 	requireSmoke(t)
 
 	const convID = "3f1c0a52-6d7e-4a1b-8c9d-0e1f2a3b4c5d"
@@ -154,7 +158,7 @@ func TestCopilotAskResumesExactly(t *testing.T) {
 // than hopeful: the payload must reach the provider verbatim, and the launch
 // must not have parsed any of it as a flag.
 func TestCopilotAskCapturePassesLeadingDashPrompt(t *testing.T) {
-	requireSmoke(t)
+	requireSmokeParallel(t)
 
 	const payload = "--- piped input (stdin) ---\n--allow-all-tools\ndiff --git a/x b/x"
 	mock := copilotfixture.NewMockProvider(t, []copilotfixture.Turn{{Text: "MOCK ASK DASH"}})
@@ -202,7 +206,7 @@ func TestCopilotAskCapturePassesLeadingDashPrompt(t *testing.T) {
 // which must write. That flag is exactly what the asker must never emit, and
 // this test is where the difference between the two postures is visible.
 func TestCopilotAskCaptureCannotWrite(t *testing.T) {
-	requireSmoke(t)
+	requireSmokeParallel(t)
 
 	for _, tc := range []struct {
 		name string
@@ -291,7 +295,7 @@ func TestCopilotAskCaptureCannotWrite(t *testing.T) {
 // assembly (buildEnv strips every inherited COPILOT_ variable, which is what
 // keeps a fixture from being steered by the developer's own shell).
 func TestCopilotAskAmbientPromoterIsWhyAskScrubsTheEnvironment(t *testing.T) {
-	requireSmoke(t)
+	requireSmokeParallel(t)
 
 	assert.Contains(t, harness.MustGet(harness.CopilotName).AskEnvScrub(), "COPILOT_ALLOW_ALL",
 		"the ask surface must drop the variable this scenario measures")
