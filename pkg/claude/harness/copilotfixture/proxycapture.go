@@ -3,6 +3,7 @@ package copilotfixture
 import (
 	"bufio"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -118,12 +119,22 @@ type ProxyObservation struct {
 	Phase string
 	Host  string
 	Port  int
-	// Tunnels counts CONNECT attempts; Dialed and Refused split them by
-	// outcome. A refusal is as much evidence as a success — it is what a
-	// filtered wall does to an unauthored destination.
+	// Tunnels counts proxy requests for this destination: CONNECT attempts,
+	// plus any non-CONNECT request, which is refused unread and recorded with
+	// whatever port its authority carried (often none, hence Port 0).
 	Tunnels int
+	// Dialed, Refused and Failed split those by outcome, and the split matters
+	// more than a single counter would suggest. Refused is a DECISION — the
+	// wall this capture models declined an unauthored destination, which is
+	// evidence about the pack. Failed is an ACCIDENT — the dial itself did not
+	// complete, because the destination was unreachable or an upstream proxy
+	// rejected the tunnel, which is evidence about the machine. Folding the two
+	// together would let a local network problem read as "the CLI's own route
+	// was denied", which is exactly the misreading this evidence exists to
+	// prevent.
 	Dialed  int
 	Refused int
+	Failed  int
 }
 
 // ProxyCapture is a local HTTP proxy that records connection targets.
@@ -135,7 +146,14 @@ type ProxyCapture struct {
 	phase    string
 	observed map[string]*ProxyObservation
 	order    []string
-	wg       sync.WaitGroup
+	failures []string
+	// live tracks accepted connections so shutdown can close them. Without it,
+	// a tunnel still open when the test ends blocks cleanup forever: the splice
+	// has no deadline of its own, so the package would hang to the `go test`
+	// timeout instead of failing.
+	live    map[net.Conn]struct{}
+	closing bool
+	wg      sync.WaitGroup
 }
 
 // NewProxyCapture starts a refusing capture proxy bound to loopback and stops
@@ -156,14 +174,62 @@ func NewProxyCaptureWithOptions(t *testing.T, opts ProxyCaptureOptions) *ProxyCa
 		opts:     opts,
 		hosts:    map[string]int{},
 		observed: map[string]*ProxyObservation{},
+		live:     map[net.Conn]struct{}{},
 	}
 	capture.wg.Add(1)
 	go capture.serve()
 	t.Cleanup(func() {
 		_ = listener.Close()
+		capture.shutdown()
 		capture.wg.Wait()
+		for _, failure := range capture.DialFailures() {
+			t.Logf("capture: %s", failure)
+		}
 	})
 	return capture
+}
+
+// shutdown closes every connection the capture is still holding, so a tunnel
+// the CLI left open cannot outlive the test that opened it.
+func (c *ProxyCapture) shutdown() {
+	c.mu.Lock()
+	c.closing = true
+	conns := make([]net.Conn, 0, len(c.live))
+	for conn := range c.live {
+		conns = append(conns, conn)
+	}
+	c.mu.Unlock()
+	for _, conn := range conns {
+		_ = conn.Close()
+	}
+}
+
+func (c *ProxyCapture) track(conn net.Conn) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closing {
+		return false
+	}
+	c.live[conn] = struct{}{}
+	return true
+}
+
+func (c *ProxyCapture) untrack(conn net.Conn) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.live, conn)
+}
+
+// DialFailures returns the dial errors this capture hit, with any upstream
+// proxy credential structurally absent rather than scrubbed after the fact.
+//
+// They are collected instead of logged as they happen because a capture
+// outlives nothing: a t.Logf from a connection goroutine can land after the
+// test that owns t has finished, which panics. The cleanup hook prints them.
+func (c *ProxyCapture) DialFailures() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.failures...)
 }
 
 // SetPhase labels the destinations observed from now on.
@@ -208,10 +274,17 @@ func (c *ProxyCapture) serve() {
 		if err != nil {
 			return
 		}
+		if !c.track(conn) {
+			_ = conn.Close()
+			return
+		}
 		c.wg.Add(1)
 		go func() {
 			defer c.wg.Done()
-			defer func() { _ = conn.Close() }()
+			defer func() {
+				c.untrack(conn)
+				_ = conn.Close()
+			}()
 			c.handle(conn)
 		}()
 	}
@@ -241,7 +314,7 @@ func (c *ProxyCapture) handle(conn net.Conn) {
 	// refused in BOTH shapes, which is what keeps a request line, a header set
 	// and a body out of this process entirely rather than merely unlogged.
 	if !c.opts.PassThrough || request.Method != http.MethodConnect {
-		c.record(target, false)
+		c.record(target, outcomeRefused)
 		// Refused rather than tunnelled: the point is to observe the intent, and
 		// a proxy that actually connected would make this test depend on — and
 		// send traffic to — the live GitHub services.
@@ -254,7 +327,7 @@ func (c *ProxyCapture) handle(conn net.Conn) {
 	// authority is not host:port is refused rather than guessed at.
 	authority := target
 	if _, _, err := net.SplitHostPort(authority); err != nil {
-		c.record(target, false)
+		c.record(target, outcomeRefused)
 		_, _ = fmt.Fprint(conn,
 			"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
 		return
@@ -262,20 +335,23 @@ func (c *ProxyCapture) handle(conn net.Conn) {
 	if !c.permits(authority) {
 		// The wall's own answer: refused without dialing, and recorded as such,
 		// so a phase run this way reads as "what a filtered launch would do".
-		c.record(target, false)
+		c.record(target, outcomeRefused)
 		_, _ = fmt.Fprint(conn,
 			"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
 		return
 	}
 	upstream, err := c.dial(authority)
 	if err != nil {
-		c.record(target, false)
+		// A dial that did not complete is the machine's problem, not the
+		// contract's: recorded as Failed and reported with its reason, so it
+		// cannot be read later as "the wall denied this destination".
+		c.recordFailure(target, err)
 		_, _ = fmt.Fprint(conn,
 			"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
 		return
 	}
 	defer func() { _ = upstream.Close() }()
-	c.record(target, true)
+	c.record(target, outcomeDialed)
 	if _, err := fmt.Fprint(conn, "HTTP/1.1 200 Connection Established\r\n\r\n"); err != nil {
 		return
 	}
@@ -319,13 +395,19 @@ func (c *ProxyCapture) dial(authority string) (net.Conn, error) {
 	}
 	parsed, err := url.Parse(via)
 	if err != nil {
-		return nil, fmt.Errorf("parsing the upstream proxy: %w", err)
+		// Deliberately NOT wrapped: a *url.Error stringifies the URL it failed
+		// on, and this URL routinely carries proxy credentials in its userinfo.
+		// Wrapping it would put a password into any diagnostic that printed the
+		// error, which is the one way this file could leak a secret.
+		return nil, errors.New("the upstream proxy is not a parseable URL")
 	}
 	if parsed.Host == "" {
-		return nil, fmt.Errorf("the upstream proxy names no host")
+		return nil, errors.New("the upstream proxy names no host")
 	}
 	// Credentials live in this header and nowhere else: they are not stored on
-	// the capture, not attributed to an observation and not printed on failure.
+	// the capture, not attributed to an observation, and — because every error
+	// on this path is constructed from the proxy's HOST and status rather than
+	// from the URL — cannot reach a failure message either.
 	authorization := ""
 	if parsed.User != nil {
 		password, _ := parsed.User.Password()
@@ -341,8 +423,8 @@ func (c *ProxyCapture) dial(authority string) (net.Conn, error) {
 		_ = conn.Close()
 		return nil, err
 	}
-	response, err := http.ReadResponse(bufio.NewReader(conn),
-		&http.Request{Method: http.MethodConnect})
+	reader := bufio.NewReader(conn)
+	response, err := http.ReadResponse(reader, &http.Request{Method: http.MethodConnect})
 	if err != nil {
 		_ = conn.Close()
 		return nil, err
@@ -354,11 +436,47 @@ func (c *ProxyCapture) dial(authority string) (net.Conn, error) {
 		// the two together would read as a Copilot finding.
 		return nil, fmt.Errorf("upstream proxy refused with status %d", response.StatusCode)
 	}
+	if buffered := reader.Buffered(); buffered > 0 {
+		// The reader may have consumed tunnel bytes that arrived alongside the
+		// response. Splicing the bare conn would silently drop them; they are
+		// put back in front instead. Unlikely with a client that speaks first,
+		// but "unlikely" is how a corrupted tunnel gets debugged for a day.
+		return &prefixedConn{Conn: conn, reader: io.MultiReader(
+			io.LimitReader(reader, int64(buffered)), conn)}, nil
+	}
 	return conn, nil
 }
 
+// prefixedConn replays bytes an upstream sent ahead of the tunnel.
+type prefixedConn struct {
+	net.Conn
+	reader io.Reader
+}
+
+func (p *prefixedConn) Read(b []byte) (int, error) { return p.reader.Read(b) }
+
+// captureOutcome distinguishes a decision from an accident. See
+// ProxyObservation for why the difference is load-bearing.
+type captureOutcome int
+
+const (
+	outcomeDialed captureOutcome = iota
+	outcomeRefused
+	outcomeFailed
+)
+
+// recordFailure accounts a dial that did not complete, keeping its reason for
+// the cleanup hook to print.
+func (c *ProxyCapture) recordFailure(target string, err error) {
+	c.record(target, outcomeFailed)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.failures = append(c.failures,
+		fmt.Sprintf("dial to %s did not complete: %v", target, err))
+}
+
 // record accounts one destination under the current phase.
-func (c *ProxyCapture) record(target string, dialed bool) {
+func (c *ProxyCapture) record(target string, outcome captureOutcome) {
 	if target == "" {
 		return
 	}
@@ -380,11 +498,14 @@ func (c *ProxyCapture) record(target string, dialed bool) {
 		c.order = append(c.order, key)
 	}
 	observation.Tunnels++
-	if dialed {
+	switch outcome {
+	case outcomeDialed:
 		observation.Dialed++
-		return
+	case outcomeFailed:
+		observation.Failed++
+	case outcomeRefused:
+		observation.Refused++
 	}
-	observation.Refused++
 }
 
 func closeWrite(conn net.Conn) {

@@ -2,6 +2,7 @@ package copilotfixture_test
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -91,6 +92,14 @@ func stageAuthStores(t *testing.T, root string, stores []string) {
 		if err != nil || strings.HasPrefix(relative, "..") {
 			relative = filepath.Base(source)
 		}
+		// COPILOT_HOME is redirected away from ~/.copilot by the runner, so a
+		// store staged there lands where nothing reads it. Caught here rather
+		// than left to surface as the generic "did not complete a turn", which
+		// is the same symptom as having staged nothing at all.
+		require.NotEqualf(t, ".copilot", relative,
+			"staging %q has no effect: the runner points COPILOT_HOME at its own "+
+				"disposable directory, so the CLI never reads <root>/.copilot. Name the "+
+				"store the CLI actually authenticates from, e.g. $HOME/.config/gh", source)
 		destination := filepath.Join(root, relative)
 		require.NoError(t, os.MkdirAll(filepath.Dir(destination), 0o700))
 		out, err := exec.Command("cp", "-a", source, destination).CombinedOutput()
@@ -136,7 +145,7 @@ func TestCopilotAuthenticatedCaptureMatchesContractedDestinations(t *testing.T) 
 	firstRun := copilotfixture.Run(t, first)
 	require.Equalf(t, 0, firstRun.ExitCode,
 		"the authenticated capture did not complete a turn, so its destination set is "+
-			"the CLI's failure path rather than its route (stderr: %s)", firstRun.Stderr)
+			"the CLI's failure path rather than its route (stderr: %s)", briefStderr(firstRun.Stderr))
 
 	// Phase two is the resume-by-exact-id path, which relaunches the CLI and so
 	// repeats the token exchange; whether it also repeats the model host is the
@@ -147,7 +156,7 @@ func TestCopilotAuthenticatedCaptureMatchesContractedDestinations(t *testing.T) 
 	second.Prompt = "Reply with just the word ok."
 	secondRun := copilotfixture.Run(t, second)
 	require.Equalf(t, 0, secondRun.ExitCode,
-		"the authenticated resume did not complete (stderr: %s)", secondRun.Stderr)
+		"the authenticated resume did not complete (stderr: %s)", briefStderr(secondRun.Stderr))
 
 	observations := capture.Observations()
 	require.NotEmpty(t, observations, "the authenticated capture observed no destinations at all")
@@ -156,18 +165,20 @@ func TestCopilotAuthenticatedCaptureMatchesContractedDestinations(t *testing.T) 
 	packed, err := sandboxpolicy.ExpandNetworkPackEntries(harness.CopilotFirstPartyNetworkPack)
 	require.NoError(t, err)
 
-	// Only the hosts a turn actually DEPENDS on are required to be contracted.
-	// A destination the capture saw but a completed phase did not need — the
-	// telemetry host is the observed example — is reported rather than asserted
-	// on, because widening the pack to whatever a session happens to touch is
-	// how a fail-closed wall stops meaning anything.
+	// EVERY dialed destination is checked, not just the ones on domains this
+	// change already knows about. Restricting the check to githubcopilot.com
+	// and the control-plane host would rebuild the assumption this whole
+	// exercise disproved: the endpoints are ASSIGNED, so the next surprise host
+	// is exactly the one nobody predicted the shape of. Two skips, both
+	// deliberate — loopback never crosses the wall, and telemetry is the
+	// observed destination the pack knowingly omits (the wall phase proves a
+	// session survives without it).
 	var uncontracted []string
 	for _, observation := range observations {
 		if observation.Dialed == 0 {
 			continue
 		}
-		if !strings.Contains(observation.Host, "githubcopilot.com") &&
-			observation.Host != harness.CopilotControlPlaneHost {
+		if isLoopbackHost(observation.Host) {
 			continue
 		}
 		if strings.HasPrefix(observation.Host, "telemetry.") {
@@ -176,7 +187,8 @@ func TestCopilotAuthenticatedCaptureMatchesContractedDestinations(t *testing.T) 
 			continue
 		}
 		if !packCovers(packed, observation.Host, observation.Port) {
-			uncontracted = append(uncontracted, observation.Host)
+			uncontracted = append(uncontracted,
+				fmt.Sprintf("%s:%d", observation.Host, observation.Port))
 		}
 	}
 	assert.Empty(t, uncontracted,
@@ -241,25 +253,65 @@ func TestCopilotAuthenticatedSessionSurvivesThePackOnlyWall(t *testing.T) {
 	require.Equalf(t, 0, run.ExitCode,
 		"an authenticated session could not complete a turn when only the pack's own "+
 			"destinations were reachable, so the pack is INSUFFICIENT for the covered "+
-			"path — something it does not name is load-bearing (stderr: %s)", run.Stderr)
+			"path — something it does not name is load-bearing (stderr: %s)", briefStderr(run.Stderr))
 
-	// The wall has to have actually bitten, or this proves only that the run
-	// happened to touch nothing extra today.
-	refused := slices.ContainsFunc(observations, func(observation copilotfixture.ProxyObservation) bool {
-		return observation.Refused > 0
+	// The wall has to have bitten SOMETHING OUTSIDE THE PACK, or this proves
+	// only that the run happened to touch nothing extra today. A bare
+	// "something was refused" would also be satisfied by a refused non-CONNECT
+	// request, or by a refusal of a host the pack does name, neither of which
+	// is the wall doing its job.
+	walled := slices.ContainsFunc(observations, func(observation copilotfixture.ProxyObservation) bool {
+		return observation.Refused > 0 &&
+			!packCovers(packed, observation.Host, observation.Port)
 	})
-	assert.True(t, refused,
-		"no destination was refused, so the pack-only wall was never exercised; the "+
-			"session may simply not have tried anything outside the pack on this run")
+	assert.True(t, walled,
+		"no destination OUTSIDE the pack was refused, so the pack-only wall was never "+
+			"exercised; the session may simply not have tried anything outside the pack "+
+			"on this run, and the sufficiency claim would rest on that accident")
+
+	// A dial that never completed is the machine's problem, and it must not be
+	// read as the wall's decision — the two are the same 502 to the CLI.
+	for _, observation := range observations {
+		assert.Zerof(t, observation.Failed,
+			"%s:%d could not be dialed %d time(s); this run's destination set reflects a "+
+				"local network failure rather than the pack's boundary, so it is not "+
+				"evidence either way",
+			observation.Host, observation.Port, observation.Failed)
+	}
 }
 
 func logObservations(t *testing.T, observations []copilotfixture.ProxyObservation) {
 	t.Helper()
 	for _, observation := range observations {
-		t.Logf("phase %s reached %s:%d (tunnels=%d dialed=%d refused=%d)",
+		t.Logf("phase %s reached %s:%d (tunnels=%d dialed=%d refused=%d failed=%d)",
 			observation.Phase, observation.Host, observation.Port,
-			observation.Tunnels, observation.Dialed, observation.Refused)
+			observation.Tunnels, observation.Dialed, observation.Refused, observation.Failed)
 	}
+}
+
+// briefStderr bounds what a failure message carries out of a credentialed run.
+//
+// The CLI's stderr is diagnostics, not model output, and a failing capture is
+// unreadable without it — but it is the one place in this scenario where bytes
+// from an authenticated session reach a transcript an operator may paste into a
+// ticket, so it is capped rather than passed through whole.
+func briefStderr(stderr string) string {
+	const limit = 400
+	stderr = strings.TrimSpace(stderr)
+	if len(stderr) <= limit {
+		return stderr
+	}
+	return stderr[:limit] + "… (truncated)"
+}
+
+// isLoopbackHost reports the CLI's own local servers (ACP, voice, the
+// webview), which never traverse the wall the pack describes.
+func isLoopbackHost(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	address := net.ParseIP(host)
+	return address != nil && address.IsLoopback()
 }
 
 // packCovers answers whether the released pack authorizes this host and port.
