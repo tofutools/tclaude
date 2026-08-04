@@ -240,6 +240,31 @@ func persistCopilotContextSnapshot(
 	window := state.persistedWindow
 	pct := state.persistedPct
 
+	// PRECEDENCE, when the read-only sweep of Copilot's own SQLite store
+	// (copilot_usage_poller.go) has rows for this session.
+	//
+	// Those rows are the fine-grained live source: they carry per-call tokens
+	// that the durable event log cannot, because the events that would report
+	// them are `ephemeral` and never written to disk. The durable log stays
+	// authoritative for the two things the store genuinely cannot supply — the
+	// context DENOMINATOR (the store has no token limit, and neither does any
+	// other file: the CLI reads it from an in-memory model catalog) and the
+	// compaction/truncation/shutdown disclosures that produce it.
+	//
+	// So the numerator is taken from the sweep UNCONDITIONALLY once it has seen
+	// a row, and the durable log's occupancy figures are not consulted for it.
+	// That needs no clock comparison between the two sources and cannot go
+	// stale across a compaction: a compaction RESETS the window, and the very
+	// next model call's input_tokens already reflects the post-compaction
+	// window, so the store is self-correcting and strictly fresher. Before the
+	// sweep's first row, everything below behaves exactly as it did.
+	//
+	// Both writers reaching the same values matters as much as which wins. They
+	// share copilotContextPct and read the same window column, so the sweep and
+	// this refresh converge rather than flapping the row between two answers on
+	// alternating polls.
+	live, hasLive := lookupCopilotLiveUsage(sess.ID, sess.ConvID, sess.CreatedAt)
+
 	if snap.Usage != nil {
 		if snap.Usage.InputTokens > 0 {
 			input = snap.Usage.InputTokens
@@ -278,6 +303,23 @@ func persistCopilotContextSnapshot(
 			// is the new observation, not a new denominator.
 			window, pct = observedWindow, 0
 		}
+	}
+
+	if hasLive {
+		// The sweep owns the numerator. `window` above has already absorbed
+		// whatever denominator the durable log most recently disclosed, so the
+		// percentage is recomputed here from the LIVE occupancy against that
+		// window rather than left at the compaction-time reading. With no
+		// disclosed window this yields 0 — unknown — and the token count is
+		// still written, which is the honest report of an occupancy whose
+		// denominator Copilot has not told anyone.
+		input = live.ContextTokens
+		// max() for the same reason the shutdown total uses it: the two sources
+		// count different things (the sweep counts calls it has consumed, the
+		// durable log's shutdown total is restored across a resume), and
+		// whichever is ahead is the one that has seen more of the session.
+		output = max(output, live.OutputTokens)
+		pct = copilotContextPct(input, window)
 	}
 
 	if output == state.persistedOutput && input == state.persistedInput &&
