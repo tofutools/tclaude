@@ -275,25 +275,26 @@ func goldenEventTypes(t *testing.T) (types []string, ping string) {
 }
 
 // TestSelfPacedPingIsPositionIndependentInTheRealGolden is the positive half of
-// the boundary, proven against the shipped fixture instead of a sample: a poller
-// tick may land at any point INSIDE the turn and the committed projection is
-// unchanged.
+// the boundary, proven against the shipped fixture instead of a sample: a
+// session notification may land at any output position before the terminal
+// result and the committed projection is unchanged.
 //
 // The CI flake this addresses was one tick moving across two
 // tool.execution_partial_result events. That single observed interleaving is a
 // point on this curve; asserting the whole curve is what makes a differently
 // loaded runner uninteresting rather than lucky.
 //
-// The sweep deliberately stops short of the two ENDS. The projection would
-// tolerate a tick there too — it drops the type wherever it falls — but a ping
-// arriving before the session opened or after the terminal result event is a
-// timer outliving its session, which is a behavior change rather than
-// scheduling noise. Tolerating it is not the same as claiming it, and a sweep
-// that ran to the endpoints would pin the claim.
+// The pinned run proves that the session notification can occur after
+// tool.execution_complete, so the sweep must cover that post-tool/pre-result
+// region. It deliberately stops at the terminal result: the JSONL writer
+// removes its event listener immediately after writing result, so a ping after
+// result is stream drift and must remain visible.
 func TestSelfPacedPingIsPositionIndependentInTheRealGolden(t *testing.T) {
 	want, ping := goldenEventTypes(t)
+	resultAt := slices.Index(want, "result")
+	require.GreaterOrEqual(t, resultAt, 1, "golden must carry a terminal result after its opening event")
 
-	for at := 1; at < len(want); at++ {
+	for at := 1; at <= resultAt; at++ {
 		t.Run(fmt.Sprintf("ping_at_%02d", at), func(t *testing.T) {
 			ordered, selfPaced := splitSelfPacedEvents(slices.Insert(slices.Clone(want), at, ping))
 			assert.Equal(t, want, ordered,
@@ -301,6 +302,15 @@ func TestSelfPacedPingIsPositionIndependentInTheRealGolden(t *testing.T) {
 			assert.Equal(t, []string{ping}, selfPaced)
 		})
 	}
+
+	t.Run("ping_after_result_is_ordered", func(t *testing.T) {
+		withPing := slices.Insert(slices.Clone(want), len(want), ping)
+		ordered, selfPaced := splitSelfPacedEvents(withPing)
+		assert.Equal(t, withPing, ordered,
+			"a ping after the terminal result is outside the JSONL event-listener lifetime")
+		assert.Empty(t, selfPaced,
+			"a post-result ping must not be silently absorbed as session noise")
+	})
 }
 
 // TestOrderedEventsStillDetectReordering is the negative half, and the reason
