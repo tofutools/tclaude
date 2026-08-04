@@ -347,6 +347,56 @@ func sandboxDescr(sandboxMode, permissionProfile string) string {
 	return sandboxMode
 }
 
+// validateReplacedPermissionProfile applies the --permission-profile rules to a
+// launch whose profile the single-wall tclaude-layer implementation is about to
+// discard.
+//
+// It exists because those rules used to run LATER than the discard and
+// therefore judged the operator's flag by accident. Now that the discard
+// happens up front — so the Codex managed-profile normalization and the
+// mutual-exclusion check never see a profile this launch does not use — the
+// judgement has to be made deliberately, or `--sandbox-impl tclaude-layer
+// --permission-profile <typo>` would launch silently where every other
+// implementation refuses it.
+//
+// requestedSandboxMode is the mode the operator asked for, BEFORE the
+// implementation forced its own: the rules are about what they typed, and
+// judging the forced mode would report a conflict they could not have caused.
+// The checks and their order mirror the ones further down runNew, which remain
+// the only ones a non-tclaude-layer launch runs.
+func validateReplacedPermissionProfile(
+	h *harness.Harness, requestedSandboxMode, permissionProfile string,
+) error {
+	requestedSandboxMode = strings.TrimSpace(requestedSandboxMode)
+	// The managed-profile pseudo-mode selects the tclaude-agent profile, so a
+	// DIFFERENT explicit profile beside it is a conflict the operator must fix
+	// rather than have silently resolved.
+	if h.Name == harness.CodexName && requestedSandboxMode == harness.SandboxManagedProfile {
+		if up := strings.TrimSpace(permissionProfile); up != "" && up != harness.CodexAgentProfile {
+			return fmt.Errorf("--sandbox %s selects the managed %s profile and conflicts with --permission-profile %s",
+				harness.SandboxManagedProfile, harness.CodexAgentProfile, up)
+		}
+		// It resolves TO the managed profile, and the mode is consumed doing so
+		// — which is why the pair below is not a mutual-exclusion violation.
+		return nil
+	}
+	profile, err := harness.ValidateCodexProfileName(permissionProfile)
+	if err != nil {
+		return err
+	}
+	if profile == "" {
+		return nil
+	}
+	if requestedSandboxMode != "" {
+		return fmt.Errorf("--permission-profile and --sandbox are mutually exclusive: " +
+			"Codex ignores a permission profile when --sandbox is set")
+	}
+	if h.Name != harness.CodexName {
+		return fmt.Errorf("--permission-profile is a Codex launch option; harness %q has no permission profiles", h.Name)
+	}
+	return nil
+}
+
 // JoinGroupHandler implements `--join-group`. Set by the agent package's
 // init() to avoid a session→agent import cycle (agent already depends on
 // session for AttachToSession). When nil, --join-group falls back to a
@@ -521,6 +571,7 @@ func runNew(params *NewParams) error {
 		}
 		params.Sandbox = sandboxMode
 	}
+	requestedSandboxMode := sandboxMode
 	sandboxMode, err = harness.ResolveSandboxImplementationMode(
 		h, sandboxMode, sandboxImplementation)
 	if err != nil {
@@ -535,6 +586,16 @@ func runNew(params *NewParams) error {
 		// normalization below, where this used to live — keeps that
 		// normalization and the --permission-profile/--sandbox mutual-exclusion
 		// check from judging a profile this launch does not use.
+		//
+		// Clearing it is not the same as ignoring it: a profile flag the outer
+		// wall discards is still a flag the operator typed, and a combination
+		// that was a loud error before must stay one. Validate what they asked
+		// for against the mode they asked for, THEN discard it.
+		if err := validateReplacedPermissionProfile(
+			h, requestedSandboxMode, params.PermissionProfile,
+		); err != nil {
+			return err
+		}
 		params.PermissionProfile = ""
 	}
 	if outerLayer {

@@ -133,6 +133,36 @@ func TestSandboxLineageMapsTclaudeLayerChildToItsConfinementClass(t *testing.T) 
 	require.False(t, spawnSandboxLineageAllowed(readOnly, layerCodex))
 }
 
+// The one place the mapping does NOT reproduce main's verdict, pinned here so
+// it is a decision rather than an accident.
+//
+// A Codex `read-only` (or `workspace-write`) parent could previously mint a
+// child that REQUESTED the same mode with tclaude-layer, because the guard
+// judged the request. That child does not run read-only: the launch forces
+// `danger-full-access` inside tclaude's wall, whose default host-open posture
+// writes its cwd subtree. Judging the mode the child actually launches under
+// closes that escalation, and the confinement class it maps to — the Codex
+// managed profile — is correctly out of reach for these parents.
+//
+// This is a user-visible refusal on a spawn that used to succeed, and is called
+// out in the PR description rather than claimed as decision-preserving.
+func TestSandboxLineageRefusesTclaudeLayerChildFromNarrowerCodexParent(t *testing.T) {
+	layerCodex := spawnLineageSandbox{
+		Harness: harness.CodexName, Mode: harness.SandboxDangerFull,
+		Implementation: sandboxpolicy.ImplementationTclaudeLayer,
+	}
+	for _, parentMode := range []string{harness.SandboxReadOnly, harness.SandboxWorkspaceWrite} {
+		parent := spawnLineageSandbox{Harness: harness.CodexName, Mode: parentMode}
+		require.Falsef(t, spawnSandboxLineageAllowed(parent, layerCodex),
+			"codex %s parent must not mint a tclaude-walled child", parentMode)
+		// The same parent minting the same mode WITHOUT the outer wall is
+		// untouched: only the tclaude-layer shape moves.
+		require.Truef(t, spawnSandboxLineageAllowed(parent,
+			spawnLineageSandbox{Harness: harness.CodexName, Mode: parentMode}),
+			"codex %s parent keeps minting its own class", parentMode)
+	}
+}
+
 // The mapping keys on the EXACT tclaude-layer constant. `stacked` runs the
 // harness's own sandbox nested inside tclaude's, so its Claude `off` really is
 // a stood-down harness wall inside another one and must not borrow the
