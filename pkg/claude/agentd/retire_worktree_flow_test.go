@@ -399,7 +399,7 @@ func TestRetire_NoDeleteWorktreeLeavesWorktreeUntouched(t *testing.T) {
 }
 
 // Scenario: the DEFERRED path — the agent is still alive when retire
-// runs (its /exit takes a moment), so the response reports "scheduled"
+// runs (the fixture holds its pane open), so the response reports "scheduled"
 // and the worktree is removed by a background waiter once the pane
 // exits. The deferred outcome is also surfaced in the dashboard
 // Messages tab, since the optimistic toast already fired.
@@ -416,15 +416,13 @@ func TestRetire_DeleteWorktreeDeferredUntilAgentExits(t *testing.T) {
 		cwd: {Root: cwd, Branch: "feat", Kind: "linked"},
 	})
 
-	// Make /exit take a moment so the agent is still alive when the
-	// retire handler decides what to do — forcing the deferred path
-	// rather than the inline (already-offline) one. With the flow
-	// harness shrinking injectTextAndSubmit's settle gap to ~nothing,
-	// stopOneConv returns in milliseconds, so a short delay is plenty of
-	// margin for the handler's liveness check.
+	// Hold the pane open so the agent is still alive when the retire handler
+	// decides what to do — forcing the deferred path rather than the inline
+	// (already-offline) one. The hold, not a wall-clock delay, is what makes
+	// the handler's liveness check see a live pane every time.
 	cc := f.World.CCs.GetByConvID(conv)
 	require.NotNil(t, cc, "no CCSim registered for %s", conv)
-	cc.SetCommandDelay("/exit", 200*time.Millisecond)
+	exitPane := holdRetiringPane(t, cc)
 
 	mux := agentd.BuildDashboardHandlerForTest()
 	code, resp := postRetireWt(t, mux, conv, "shutdown=1&delete_worktree=1")
@@ -436,8 +434,9 @@ func TestRetire_DeleteWorktreeDeferredUntilAgentExits(t *testing.T) {
 	// is still exiting.
 	assert.False(t, fw.wasRemoved(cwd), "removal must wait until the agent exits")
 
-	// Drain the background waiter; it polls until the pane goes offline,
-	// then removes the worktree.
+	// Now let the pane go, then drain the background waiter; it polls until
+	// the pane goes offline, then removes the worktree.
+	exitPane()
 	agentd.WaitForBackgroundForTest()
 
 	assert.True(t, fw.wasRemoved(cwd), "the worktree must be removed after the agent exits")
@@ -469,7 +468,7 @@ func TestRetire_DeleteWorktreeDeferredFailurePostsNotice(t *testing.T) {
 
 	cc := f.World.CCs.GetByConvID(conv)
 	require.NotNil(t, cc, "no CCSim registered for %s", conv)
-	cc.SetCommandDelay("/exit", 200*time.Millisecond)
+	exitPane := holdRetiringPane(t, cc)
 
 	mux := agentd.BuildDashboardHandlerForTest()
 	code, resp := postRetireWt(t, mux, conv, "shutdown=1&delete_worktree=1")
@@ -477,6 +476,7 @@ func TestRetire_DeleteWorktreeDeferredFailurePostsNotice(t *testing.T) {
 	require.NotNil(t, resp.Worktree)
 	assert.Equal(t, "scheduled", resp.Worktree.Action)
 
+	exitPane()
 	agentd.WaitForBackgroundForTest()
 
 	msgs, err := db.ListHumanMessages()
