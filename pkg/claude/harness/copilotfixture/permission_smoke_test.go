@@ -53,6 +53,16 @@ import (
 // because the CLI misbehaved, not because the runner was busy.
 const permissionDeadline = 30 * time.Second
 
+// denyToolGrammarDeadline bounds the headless deny-tool grammar probe.
+//
+// This scenario uses Run rather than RunPTY and has no blocked arm: its verdict
+// comes from the launch parse error and whether the provider was reached. It
+// therefore does not share permissionDeadline's sizing trade-off, where a
+// tighter bound keeps every genuinely blocked PTY row cheap. Keep this bound
+// generous so CPU contention during CLI startup cannot fail a valid grammar
+// row, without adding cost to the blocked permission scenarios.
+const denyToolGrammarDeadline = 60 * time.Second
+
 // blockedQuiet is how long a pty scenario's transcript must stand still, with
 // no follow-up request, before the run is called blocked and stopped.
 //
@@ -533,7 +543,7 @@ func TestCopilotPermissionDenyToolGrammar(t *testing.T) {
 				BaseURL:   mock.BaseURL(),
 				Prompt:    "Answer in one word.",
 				ExtraArgs: []string{"--deny-tool", tc.pattern},
-				Timeout:   permissionDeadline,
+				Timeout:   denyToolGrammarDeadline,
 			})
 
 			out := result.Stdout + result.Stderr
