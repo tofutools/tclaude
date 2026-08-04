@@ -1549,3 +1549,12 @@ func SetTUIAttachForTest(fn func(agentName, tmuxSession string, inTmux bool) tea
 	tuiAttachToPane = fn
 	return func() { tuiAttachToPane = prev }
 }
+
+// HoldSeanceWorktreeForTest and HeldSeanceWorktreesForTest expose the séance
+// worktree claim registry so a flow test can assert the hold is released with
+// the séance, and drive concurrent hold/read overlap under -race. Production
+// registration happens in handleWhoamiSeanceRun, above the RunSeanceHarness
+// seam, so the HTTP path exercises the real thing without these.
+func HoldSeanceWorktreeForTest(dir string) func() { return holdSeanceWorktree(dir) }
+
+func HeldSeanceWorktreesForTest() []string { return heldSeanceWorktrees() }

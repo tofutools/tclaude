@@ -60,6 +60,11 @@ type agentWorktreeView struct {
 	Branch string `json:"branch,omitempty"` // branch checked out there
 	Kind   string `json:"kind"`             // "none" | "main" | "linked"
 	Shared bool   `json:"shared"`           // a surviving agent also works here
+	// SharedNote names the holder when it is not a peer agent — today only a
+	// live séance. Empty means the ordinary "another agent" case. Kept out of
+	// the JSON surface: the dashboard gates on Shared, and this only phrases
+	// the operator-facing note.
+	SharedNote string `json:"-"`
 	// RepoRoot is the surviving main checkout that supplied a Git
 	// registration for Path. It is set when Path itself could not be
 	// inspected (normally because its directory is already gone).
@@ -165,21 +170,21 @@ type agentWorktreeClaimSnapshot struct {
 // tmux pane disappears. Exact timestamp ties retain every candidate and fail
 // conservatively across their roots.
 //
-// This check is NOT total: it sees only what these three reads have RECORDED,
-// so a live process in a directory whose claim has not landed in them is
-// invisible here. Every pane tclaude itself launches is already
-// claim-before-process — session/new.go writes the session row carrying cwd
+// A live séance is the exception to the paragraph above: its subprocess runs in
+// a predecessor generation's cwd, which is exactly the offline superseded
+// conversation that no longer claims anything, so it is claimed separately via
+// heldSeanceWorktrees under a synthetic claimant (TCL-1026, seance_worktree_
+// claim.go). That claim is in-memory and does not survive a killed daemon —
+// holdSeanceWorktree states the residual.
+//
+// This check is NOT total: it sees only what these reads have RECORDED, so a
+// live process in a directory whose claim has not landed in them is invisible
+// here. Every pane tclaude itself launches is already claim-before-process —
+// session/new.go writes the session row carrying cwd
 // (SaveSessionStateForLaunch) well before tmux creates the pane, so the claim
 // exists by the time the harness starts. Known windows where it does not
 // (TCL-1021 — the list is what was found, not a proof of completeness):
 //
-//   - Séance. liveRunSeanceHarness runs a harness subprocess with
-//     cmd.Dir = plan.Cwd for up to maxSeanceTimeout, and plan.Cwd is a
-//     PREDECESSOR generation's recorded cwd — precisely the offline superseded
-//     conversation the paragraph above deliberately stops counting as a
-//     claimant. It is a daemon-owned process, not a pane, and writes no session
-//     row, so nothing here protects its directory. This is the widest window by
-//     wall-clock, minutes rather than milliseconds. OPEN WORK, TCL-1026.
 //   - A harness the operator started themselves, auto-registered from its first
 //     hook rather than launched through tclaude. The process precedes its
 //     session row by the harness's startup-to-first-hook latency. tclaude is not
@@ -197,9 +202,9 @@ type agentWorktreeClaimSnapshot struct {
 //     cmd.Dir), so no process sits in the worktree during this one — a removal
 //     here fails the launch loudly instead of yanking a live agent's ground.
 //
-// The other two TCL-1021 documented rather than closed: triggering one requires an
-// operator retiring a DIFFERENT agent recorded at the same worktree, with
-// worktree deletion, inside the window. Assume the gap, do not assume totality.
+// The first and third TCL-1021 documented rather than closed: triggering one
+// requires an operator retiring a DIFFERENT agent recorded at the same worktree,
+// with worktree deletion, inside the window. Assume the gap, not totality.
 func captureAgentWorktreeClaims() agentWorktreeClaimSnapshot {
 	snap := agentWorktreeClaimSnapshot{
 		views:     map[string]agentWorktreeView{},
@@ -314,8 +319,27 @@ func captureAgentWorktreeClaims() agentWorktreeClaimSnapshot {
 			snap.dirClaims[claimDir][convID] = true
 		}
 	}
+	// Live séances last, under a synthetic claimant no retirement can exclude.
+	// This is an in-process read, so it cannot fail and never clears complete.
+	for _, dir := range heldSeanceWorktrees() {
+		if snap.dirClaims[dir] == nil {
+			snap.dirClaims[dir] = map[string]bool{}
+		}
+		snap.dirClaims[dir][seanceClaimant] = true
+	}
 	snap.complete = true
 	return snap
+}
+
+// sharedKeptNote phrases every "kept because someone else holds it" outcome.
+// note names a non-agent holder (see agentWorktreeView.SharedNote); empty falls
+// back to the peer-agent wording. One helper so the surfaces cannot drift into
+// telling the operator different stories about the same claim.
+func sharedKeptNote(note string) string {
+	if note == "" {
+		note = "shared with another agent"
+	}
+	return "worktree kept (" + note + ")"
 }
 
 // resolve returns convID's worktree view and marks it shared when a claimant
@@ -340,6 +364,9 @@ func (s agentWorktreeClaimSnapshot) resolve(convID string, excluding map[string]
 		for claimant := range claimants {
 			if !excluding[claimant] {
 				wt.Shared = true
+				if claimant == seanceClaimant {
+					wt.SharedNote = seanceSharedNote
+				}
 				return wt
 			}
 		}
@@ -436,7 +463,7 @@ func applyWorktreeCleanup(wt agentWorktreeView, requested bool) string {
 	case wt.Kind == "main":
 		return "worktree kept (main repo)"
 	case wt.Shared:
-		return "worktree kept (shared with another agent)"
+		return sharedKeptNote(wt.SharedNote)
 	}
 	// Agent deletion deliberately opens a gap between its request-time claim
 	// snapshot and filesystem removal. Re-read ownership at the destructive
@@ -446,10 +473,15 @@ func applyWorktreeCleanup(wt agentWorktreeView, requested bool) string {
 	if !snap.complete {
 		return "worktree kept — could not confirm current worktree ownership"
 	}
-	for claimDir := range snap.dirClaims {
-		if dirContains(wt.Path, claimDir) {
-			return "worktree kept (shared with another agent)"
+	for claimDir, claimants := range snap.dirClaims {
+		if !dirContains(wt.Path, claimDir) {
+			continue
 		}
+		note := ""
+		if claimants[seanceClaimant] {
+			note = seanceSharedNote
+		}
+		return sharedKeptNote(note)
 	}
 	var removed bool
 	var err error
@@ -585,8 +617,12 @@ func retireWorktreeDrift(convID string, wt agentWorktreeView) string {
 			continue
 		}
 		for claimant := range claimants {
+			if claimant == seanceClaimant {
+				// Never equal to convID, so it always lands here.
+				return sharedKeptNote(seanceSharedNote)
+			}
 			if claimant != convID {
-				return "worktree kept (shared with another agent)"
+				return sharedKeptNote("")
 			}
 		}
 	}
@@ -640,7 +676,7 @@ func scheduleRetireWorktreeCleanup(convID string, wt agentWorktreeView, shutdown
 	case wt.Kind == "main":
 		return retireWorktreePlan{Action: "kept", Detail: "worktree kept (main repo)"}
 	case wt.Shared:
-		return retireWorktreePlan{Action: "kept", Detail: "worktree kept (shared with another agent)"}
+		return retireWorktreePlan{Action: "kept", Detail: sharedKeptNote(wt.SharedNote)}
 	}
 
 	// Already offline → safe to remove right now, inline. The outcome

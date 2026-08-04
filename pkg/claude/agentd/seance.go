@@ -304,6 +304,14 @@ func handleWhoamiSeanceRun(w http.ResponseWriter, r *http.Request) {
 	setAuditDetail(r, fmt.Sprintf("predecessor %s; harness %s", short8(resolved.Predecessor), h.Name))
 	runCtx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
+	// Claim the directory before the subprocess starts, above the swappable
+	// exec seam so the production path always registers. The séance runs in a
+	// PREDECESSOR generation's cwd — an offline superseded conversation that
+	// captureAgentWorktreeClaims deliberately stops counting as a claimant — so
+	// without this a live harness sits for minutes in a directory the cleanup
+	// snapshot affirmatively reports as unclaimed (TCL-1026).
+	releaseSeanceWorktree := holdSeanceWorktree(resolved.Cwd)
+	defer releaseSeanceWorktree()
 	result := RunSeanceHarness(runCtx, SeanceExecPlan{
 		Argv:        argv,
 		Cwd:         resolved.Cwd,
