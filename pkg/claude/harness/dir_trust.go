@@ -1,6 +1,10 @@
 package harness
 
-import "fmt"
+import (
+	"fmt"
+	"os"
+	"strings"
+)
 
 // Harness-agnostic directory trust (JOH-205 inc4 Part B for Codex, JOH-369 for
 // Claude Code).
@@ -13,8 +17,10 @@ import "fmt"
 //
 //   - Codex       ~/.codex/config.toml   [projects."<dir>"] trust_level = "trusted"
 //   - Claude Code ~/.claude.json         projects.<dir>.hasTrustDialogAccepted = true
+//   - Copilot     $COPILOT_HOME/config.json   trustedFolders: ["<dir>", …]
 //
-// The per-harness editors live in codex_dir_trust.go / claude_dir_trust.go and
+// The per-harness editors live in codex_dir_trust.go / claude_dir_trust.go /
+// copilot_dir_trust.go and
 // share the same conservative contract (atomic, idempotent, fail-safe, refusing
 // a shape they cannot edit rather than corrupting it). This file holds the two
 // harness-agnostic entry points every caller should use: ResolveTrustDir to
@@ -44,7 +50,7 @@ func ResolveTrustDir(h *Harness, requested bool) (bool, error) {
 			name = h.Name
 		}
 		return false, fmt.Errorf("--trust-dir applies only to a harness with a directory-trust dialog "+
-			"(claude, codex); %s has no directory-trust prompt", name)
+			"(claude, codex, copilot); %s has no directory-trust prompt", name)
 	}
 	return true, nil
 }
@@ -64,6 +70,12 @@ func DirTrustStore(h *Harness) string {
 		return "~/.codex/config.toml"
 	case DefaultName:
 		return "~/.claude.json"
+	case CopilotName:
+		// Named relative to COPILOT_HOME rather than as ~/.copilot/config.json,
+		// because a launch that relocates COPILOT_HOME really does move the
+		// file this edits, and consent copy that named the default would be
+		// wrong for exactly the operator who moved it.
+		return "$COPILOT_HOME/config.json"
 	default:
 		return ""
 	}
@@ -84,6 +96,25 @@ func DirTrustStore(h *Harness) string {
 // dialog on the pending pane), so a refusal degrades to one manual click
 // instead of failing the spawn.
 func EnsureDirTrusted(h *Harness, projectDir string) error {
+	return EnsureDirTrustedForLaunch(h, projectDir, nil, "")
+}
+
+// EnsureDirTrustedForLaunch is EnsureDirTrusted with the LAUNCH's environment
+// supplied, for the one harness whose trust store moves with it.
+//
+// Codex and Claude Code key their trust records on a fixed path under the
+// operator's home, so their editors ignore both arguments. Copilot's store
+// lives under COPILOT_HOME, which a spawn profile can relocate — and seeding
+// the ambient location for a launch that reads another one writes a file the
+// agent never opens, leaving the pane parked on the modal it was supposed to
+// clear. getenv nil (and home "") means "the ambient environment", which is
+// what every caller outside the profile-aware launch path wants.
+func EnsureDirTrustedForLaunch(
+	h *Harness,
+	projectDir string,
+	getenv func(string) string,
+	home string,
+) error {
 	if !h.SupportsDirTrust() {
 		return nil
 	}
@@ -92,6 +123,18 @@ func EnsureDirTrusted(h *Harness, projectDir string) error {
 		return EnsureCodexDirTrusted(projectDir)
 	case DefaultName:
 		return EnsureClaudeDirTrusted(projectDir)
+	case CopilotName:
+		if getenv == nil && strings.TrimSpace(home) == "" {
+			return EnsureCopilotDirTrusted(projectDir)
+		}
+		if strings.TrimSpace(home) == "" {
+			resolved, err := os.UserHomeDir()
+			if err != nil {
+				return fmt.Errorf("copilot dir-trust: cannot determine home dir: %w", err)
+			}
+			home = resolved
+		}
+		return EnsureCopilotDirTrustedForLaunch(getenv, home, projectDir)
 	default:
 		// A harness declared DirTrust but has no editor wired here. Refuse
 		// rather than silently pretend it was trusted, so the gap surfaces at

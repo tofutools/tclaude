@@ -172,19 +172,20 @@ type NewParams struct {
 
 	// TrustDir opts into pre-trusting the launch cwd, so a detached pane
 	// doesn't freeze on the harness's "do you trust this folder?" dialog
-	// (JOH-205 for Codex, JOH-369 for Claude Code). Each harness records trust
-	// in its own config file, written BEFORE launch since neither exposes a
-	// per-invocation trust flag:
+	// (JOH-205 for Codex, JOH-369 for Claude Code, TCL-973 for Copilot). Each
+	// harness records trust in its own config file, written BEFORE launch since
+	// none of them exposes a per-invocation trust flag:
 	//
-	//   codex  → [projects."<cwd>"] trust_level = "trusted" in ~/.codex/config.toml
-	//   claude → projects.<cwd>.hasTrustDialogAccepted = true in ~/.claude.json
+	//   codex   → [projects."<cwd>"] trust_level = "trusted" in ~/.codex/config.toml
+	//   claude  → projects.<cwd>.hasTrustDialogAccepted = true in ~/.claude.json
+	//   copilot → <cwd> appended to trustedFolders in $COPILOT_HOME/config.json
 	//
 	// OFF by default and NEVER auto-defaulted on this path: editing a config
 	// tclaude does not own is a side effect the user must explicitly request
 	// (dashboard checkbox / this flag). Rejected for a harness with no
 	// dir-trust dialog. The write is atomic + idempotent
 	// (harness.EnsureDirTrusted).
-	TrustDir bool `long:"trust-dir" help:"Pre-trust the launch directory so a detached pane doesn't freeze on the harness's trust-folder dialog: codex gets [projects.\"<cwd>\"] trust_level=\"trusted\" in ~/.codex/config.toml, claude gets projects.<cwd>.hasTrustDialogAccepted=true in ~/.claude.json. Off by default; edits that harness's config, so opt-in only"`
+	TrustDir bool `long:"trust-dir" help:"Pre-trust the launch directory so a detached pane doesn't freeze on the harness's trust-folder dialog: codex gets [projects.\"<cwd>\"] trust_level=\"trusted\" in ~/.codex/config.toml, claude gets projects.<cwd>.hasTrustDialogAccepted=true in ~/.claude.json, copilot gets the directory appended to trustedFolders in $COPILOT_HOME/config.json. Off by default; edits that harness's config, so opt-in only"`
 
 	// RemoteControl arms Claude Code's built-in Remote Access at launch
 	// (`claude --remote-control`), so the session is reachable from
@@ -1463,9 +1464,18 @@ func runNew(params *NewParams) error {
 	// Pre-trust the launch dir when the operator opted in (--trust-dir), BEFORE
 	// the pane starts: each harness reads its trust store at startup, so the
 	// entry must already be there or the agent freezes on the trust-folder
-	// dialog (JOH-205 for Codex, JOH-369 for Claude Code). Opt-in only (the
-	// early gate guarantees the harness has a trust store); EnsureDirTrusted
-	// dispatches to the right editor and is atomic + idempotent.
+	// dialog (JOH-205 for Codex, JOH-369 for Claude Code, TCL-973 for Copilot,
+	// whose modal blocks before the CLI contacts the provider at all). Opt-in
+	// only (the early gate guarantees the harness has a trust store);
+	// EnsureDirTrustedForLaunch dispatches to the right editor and is atomic +
+	// idempotent.
+	//
+	// The LAUNCH's environment is handed over rather than the ambient one for
+	// the same reason the Copilot sandbox gate above reads it: Copilot's trust
+	// store lives under COPILOT_HOME, so a profile that relocates it moves the
+	// file that has to carry the entry, and seeding tclaude's own home would
+	// leave the pane parked on the modal. The two harnesses whose stores sit at
+	// a fixed path under the operator's home ignore it.
 	//
 	// Best-effort: pre-trust is an optimisation over the focus-button fallback
 	// — if it fails (an FS error, or a config shape the editor refuses to touch
@@ -1473,7 +1483,15 @@ func runNew(params *NewParams) error {
 	// the trust dialog on the pending pane via the dashboard focus button
 	// (Part A). So warn and continue rather than fail the spawn.
 	if params.TrustDir {
-		if err := harness.EnsureDirTrusted(h, cwd); err != nil {
+		var launchEnvironment []sandboxpolicy.EnvironmentEntry
+		if launchSandbox != nil {
+			launchEnvironment = launchSandbox.Effective.Environment
+		}
+		trustEnv := launchModelEnvironment(launchEnvironment)
+		if err := harness.EnsureDirTrustedForLaunch(h, cwd,
+			func(name string) string { return trustEnv[name] },
+			strings.TrimSpace(trustEnv["HOME"]),
+		); err != nil {
 			slog.Warn("could not pre-trust the launch dir; the trust-folder dialog may appear — clear it via the dashboard focus button",
 				"harness", h.Name, "cwd", cwd, "err", err)
 		}

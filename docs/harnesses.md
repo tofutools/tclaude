@@ -245,7 +245,8 @@ covers **interactive human sessions**:
 | **Sandbox** | ⚠️ `inherit` (default) / `off` — an *assertion*, not a lever. Copilot's own command sandbox has no launch flag, so tclaude can neither enable nor disable it; `off` means "verified not engaged" and is what `--sandbox-impl tclaude-layer` resolves to. See [below](#copilot-and-tclaudes-outer-sandbox). Copilot's *own* command sandboxing was separately evaluated and deliberately not advertised as a harness-builtin implementation — see [below](#copilots-own-command-sandboxing) |
 | **tclaude-layer (outer OS sandbox)** | ✅ Linux bubblewrap / macOS Seatbelt, with Copilot's pre-approved directory catalog composed into the mount plan |
 | **Model transport under a filtered network** | ⚠️ the default first-party GitHub Copilot route only (`api.githubcopilot.com`, `api.github.com`); every route-moving input is refused rather than followed, read from both settings files with the same precedence as the sandbox key |
-| **Everything else in the matrix** | ➖ not yet — no ad-hoc ask, approval, tool governance, directory pre-trust, remote control, usage/cost, or status bar |
+| **Directory pre-trust at spawn** ([below](#directory-trust-at-spawn)) | ✅ opt-in `trust_dir` appends the launch dir to `trustedFolders` in `<COPILOT_HOME>/config.json`. Copilot's modal blocks *before* any provider contact, so an unseeded detached pane never reaches its first turn |
+| **Everything else in the matrix** | ➖ not yet — no ad-hoc ask, approval, tool governance, remote control, usage/cost, or status bar |
 
 Two consequences are worth stating plainly:
 
@@ -834,10 +835,13 @@ accepted policy set.
 
 ### Directory trust at spawn
 
-Claude Code and Codex both block a first launch in a directory they do not yet
-trust behind a *"do you trust this folder?"* dialog. A tclaude-spawned agent
-runs detached in a tmux pane with nobody at its TUI, so that dialog is a startup
-gate that can leave a freshly spawned agent frozen before it does anything.
+Claude Code, Codex and GitHub Copilot CLI all block a first launch in a
+directory they do not yet trust behind a *"do you trust this folder?"* dialog. A
+tclaude-spawned agent runs detached in a tmux pane with nobody at its TUI, so
+that dialog is a startup gate that can leave a freshly spawned agent frozen
+before it does anything. For Copilot it is strictly earlier than for the other
+two: the modal blocks *before* the CLI contacts the model provider at all, so an
+unseeded pane never reaches its first turn.
 
 tclaude can seed the trust record ahead of launch. Each harness keeps its own,
 in unrelated shapes:
@@ -846,6 +850,7 @@ in unrelated shapes:
 | --- | --- | --- |
 | Claude Code | `~/.claude.json` | `projects.<dir>.hasTrustDialogAccepted = true` |
 | Codex CLI | `~/.codex/config.toml` | `[projects."<dir>"] trust_level = "trusted"` |
+| GitHub Copilot CLI | `<COPILOT_HOME>/config.json` | the launch dir appended to `trustedFolders` |
 | OpenCode | ➖ | no trust dialog, nothing to seed |
 
 Turn it on with the spawn dialog's **"Pre-trust this directory"** checkbox, a
@@ -860,7 +865,8 @@ own, so it is deliberately narrow:
   a harness with no trust dialog is an error, not a silently dropped flag.
 - **Auto-trusted only for default sibling worktrees.** A worktree at the
   location tclaude itself picks (`../<repo>-<branch>`) is trusted automatically
-  for both harnesses, so a freshly cut worktree doesn't stall.
+  for every harness with a trust dialog, so a freshly cut worktree doesn't
+  stall.
 - **Agents cannot widen it.** An agent-initiated spawn may pre-trust *only*
   such a sibling worktree; any other path it names is a `trust_dir_restricted`
   refusal. Ask a human to spawn that child instead. Note the layout check is
@@ -877,6 +883,44 @@ Note that `~/.claude.json` is a large file Claude Code rewrites constantly, so
 that seed is last-writer-wins against a concurrent Claude Code write. It is
 bounded — the idempotent no-op means a dir is written at most once, ever — and
 what it could revert is Claude-owned churn, never your trust setting.
+
+#### Copilot specifics
+
+Copilot's store is the one that moves: it lives under `COPILOT_HOME`, so a spawn
+profile that relocates that variable also relocates the file that must carry the
+entry, and tclaude seeds the launch's own home rather than the ambient one.
+Beyond that:
+
+- **`config.json`, not `settings.json`.** `trustedFolders` is a CLI-managed key.
+  Measured against the pinned CLI, it stays in `config.json` across the startup
+  migration that moves user settings into `settings.json` — and the same key
+  written into `settings.json` is *deleted* on the next launch and never trusted
+  anything. tclaude therefore reads and writes only `config.json`, and does not
+  merge an inert `settings.json` list into it (that would trust directories you
+  never trusted).
+- **The file is shared with the CLI.** The seed extends `trustedFolders` and
+  carries every other key across unchanged, including the CLI's own
+  (`firstLaunchAt`). The two `//` header comments the CLI writes into its managed
+  stub do not survive the edit; nothing semantic is lost, and the CLI rewrites
+  the file on its next migration.
+- **Concurrent spawns compose.** Unlike the other two harnesses' per-directory
+  entries, `trustedFolders` is one shared array, so the edit runs under an
+  advisory lock with a stale-read recheck — two spawns pre-trusting different
+  directories cannot drop each other's entry.
+- **No launch flag would do instead.** `--allow-all-tools`, `--allow-all`,
+  `--yolo`, `--allow-all-paths` and `--add-dir` were all measured and none clears
+  the modal. `COPILOT_ALLOW_ALL=true` does, but it also blanket-approves every
+  tool, path and URL request, so tclaude does not set it.
+- **Trust is not approval.** Seeding the folder answers the folder question
+  only. Copilot's per-command approval prompt is a separate, still-enforced gate,
+  and this wave wires no approval contract at all — so an unattended Copilot pane
+  can still stop on a risky command's prompt.
+
+Every claim above is measured against the pinned CLI on a real pseudo-terminal
+(the modal does not exist headlessly), and the seeding is exercised as the
+production call — on a fresh `COPILOT_HOME` and on an installed one whose
+`config.json` the CLI already owns. Both scenarios are CI-gated on Linux and
+macOS.
 
 ### OpenCode managed server
 
