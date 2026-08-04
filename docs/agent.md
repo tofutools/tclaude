@@ -85,6 +85,13 @@ only once.
   file, the CLI reads that file automatically instead
   (see [Identity](#identity)).
 
+  The daemon also ships as its own binary, `tclaude-agentd`, released
+  alongside `tclaude`. `tclaude-agentd serve` is the same code and the same
+  flags as `tclaude agentd serve` — a host that only runs the daemon can
+  install just that binary. Keep `tclaude` on `PATH` next to it anyway: the
+  daemon forks `tclaude session new` to spawn agents, and builds
+  `tclaude session attach` command lines for the dashboard's terminal links.
+
 The daemon binds one canonical socket plus two temporary compatibility sockets:
 
 - `~/.tclaude/api/agentd.sock` — canonical, state-free Unix socket for all

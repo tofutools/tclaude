@@ -989,6 +989,23 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # The repo ships two binaries: the tclaude CLI and the standalone
+      # tclaude-agentd daemon. Both must come out of every platform build.
+      # Without this assertion, dropping or mis-targeting a .goreleaser.yaml
+      # build id would silently publish a release missing one of them.
+      - name: Verify both binaries were built
+        shell: bash
+        run: |
+          set -euo pipefail
+          for binary in tclaude tclaude-agentd; do
+            count=$(find dist -type f -name "$binary" -perm -u+x | wc -l)
+            if [ "$count" -eq 0 ]; then
+              echo "::error::goreleaser produced no $binary binary in dist/"
+              exit 1
+            fi
+            echo "$binary: $count binary(s)"
+          done
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:

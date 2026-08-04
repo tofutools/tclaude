@@ -108,6 +108,9 @@ To operate multiple agents, keep the daemon running in a non-sandboxed terminal:
 
 ```bash
 tclaude agentd serve
+
+# Or, from the standalone daemon binary released alongside tclaude:
+tclaude-agentd serve
 ```
 
 Then open `tclaude agent dashboard` or use `tclaude agent` from another shell.

@@ -169,12 +169,7 @@ func (g *exitLaunchGuard) armPaneHook() {
 			"session_id", g.sessionID, "tmux_session", g.tmuxSession, "pane_id", paneID)
 		return
 	}
-	hook, err := g.hookCommand()
-	if err != nil {
-		slog.Warn("tmux exit audit unavailable; callback command unresolved",
-			"session_id", g.sessionID, "tmux_session", g.tmuxSession, "error", err)
-		return
-	}
+	hook := g.hookCommand()
 	target := clcommon.ExactTarget(g.tmuxSession) + ":0.0"
 	if err := clcommon.TmuxCommand("set-option", "-p", "-t", target,
 		paneExitGenerationOption, g.generation).Run(); err != nil {
@@ -212,11 +207,11 @@ func nativePaneDiedHookAvailable() bool {
 	return false
 }
 
-func (g *exitLaunchGuard) hookCommand() (string, error) {
-	exe, err := os.Executable()
-	if err != nil {
-		return "", err
-	}
+func (g *exitLaunchGuard) hookCommand() string {
+	// Not os.Executable(): the daemon arms this hook in-process for its own
+	// shell sessions, and under the standalone tclaude-agentd binary the
+	// running executable has no `session exit-callback` subcommand.
+	exe := clcommon.SelfTclaudePath()
 	args := []string{
 		clcommon.ShellQuoteArg(exe), "session", "exit-callback",
 		"--session-id", clcommon.ShellQuoteArg(g.sessionID),
@@ -247,7 +242,7 @@ func (g *exitLaunchGuard) hookCommand() (string, error) {
 	watchdog := "run-shell -b " + clcommon.ShellQuoteArg(watchdogShell)
 	// The hook value is a tmux command list. The bounded watchdog is armed
 	// first, then the authenticated callback records before removing the pane.
-	return watchdog + "; " + callback, nil
+	return watchdog + "; " + callback
 }
 
 func (g *exitLaunchGuard) bind() {

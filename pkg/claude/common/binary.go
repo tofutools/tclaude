@@ -3,12 +3,63 @@ package common
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
 // absolutePaths controls whether DetectArgs returns absolute paths.
 // When false (default), prefers bare "tclaude" if it's found on PATH.
 var absolutePaths bool
+
+// selfIsTclaude records whether the running executable is the tclaude CLI
+// itself. It stays true for the tclaude binary, which is why the resolvers
+// below can trust os.Executable(). Sibling binaries that link this code but
+// answer to a different name — today, the standalone tclaude-agentd daemon —
+// call MarkSelfNotTclaude at startup so that a "run tclaude with these
+// subcommands" path never resolves to a re-invocation of themselves.
+var selfIsTclaude = true
+
+// MarkSelfNotTclaude declares that this process is not the tclaude CLI, so
+// SelfTclaudePath must look for a real tclaude rather than returning the
+// running executable. Call it once, before any command runs.
+func MarkSelfNotTclaude() {
+	selfIsTclaude = false
+}
+
+// SelfTclaudePath returns an absolute path to the tclaude binary to use when
+// building a command line that runs a tclaude subcommand. In the tclaude
+// binary that is simply the running executable, which keeps a session pinned
+// to the exact build that started it. In a sibling binary it is a tclaude
+// installed next to that binary if there is one — release archives and
+// `go install` both put them in the same directory — otherwise the first
+// tclaude on PATH, and finally the bare name as a last resort.
+func SelfTclaudePath() string {
+	self, err := os.Executable()
+	if err != nil {
+		self = ""
+	}
+	return resolveTclaudePath(self, selfIsTclaude)
+}
+
+// resolveTclaudePath is SelfTclaudePath's decision logic with the running
+// executable path passed in, so the sibling and PATH fallbacks are testable
+// without re-execing the test binary. self is "" when it could not be
+// determined.
+func resolveTclaudePath(self string, isTclaude bool) string {
+	if self != "" {
+		if isTclaude {
+			return self
+		}
+		sibling := filepath.Join(filepath.Dir(self), "tclaude")
+		if info, err := os.Stat(sibling); err == nil && !info.IsDir() {
+			return sibling
+		}
+	}
+	if p, err := exec.LookPath("tclaude"); err == nil {
+		return p
+	}
+	return "tclaude"
+}
 
 // SetAbsolutePaths controls whether DetectArgs returns absolute paths to tclaude.
 // When false (default), bare "tclaude" is used if it's on PATH.
@@ -33,13 +84,7 @@ func DetectArgs() []string {
 // environment (e.g. terminal-notifier -execute, protocol handlers) where
 // PATH may be minimal.
 func DetectAbsoluteArgs() []string {
-	if path, err := os.Executable(); err == nil {
-		return []string{path}
-	}
-	if p, err := exec.LookPath("tclaude"); err == nil {
-		return []string{p}
-	}
-	return []string{"tclaude"}
+	return []string{SelfTclaudePath()}
 }
 
 // DetectCmd returns the full shell command string for invoking a tclaude subcommand.
