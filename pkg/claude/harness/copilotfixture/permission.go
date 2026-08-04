@@ -139,22 +139,27 @@ var permissionDenialMarkers = []string{
 }
 
 // ToolResults extracts the tool-role message contents from one recorded
-// provider request, which is how a scenario reads what the CLI told the model
-// a tool did.
+// provider request on the COMPLETIONS wire, which is how a scenario reads what
+// the CLI told the model a tool did.
 //
 // Only the tool role is returned. Assistant and user content is model or
 // fixture text and says nothing about permissions, and this function's output
 // feeds a classifier rather than a golden, so it is never committed.
+//
+// Completions only, deliberately. An earlier version also read the Responses
+// wire's input[] looking for role=="tool", which would have made this function
+// APPEAR wire-agnostic on the strength of a guess — nothing in this suite has
+// ever observed how that wire spells a tool result, and every permission
+// scenario runs on completions. A fallback nobody has measured is worse than
+// no fallback: it returns empty for an unrecognized shape, which now reads as
+// "no tool result" and lands in ClassifyPermission's undecidable arm, exactly
+// where an unmeasured case belongs. Add the Responses arm when a fixture
+// establishes its shape, not before.
 func ToolResults(r RecordedRequest) []string {
 	var out []string
 	entries, ok := r.Body["messages"].([]any)
 	if !ok {
-		// The responses wire spells the conversation as input[]; both are read
-		// so a scenario is not silently wire-dependent.
-		entries, ok = r.Body["input"].([]any)
-		if !ok {
-			return nil
-		}
+		return nil
 	}
 	for _, raw := range entries {
 		m, ok := raw.(map[string]any)
@@ -225,11 +230,27 @@ func ClassifyPermission(
 					"as its result (%q)", DenialMarker(followUpToolResults)),
 		}, nil
 
-	case followUpRequests > 0:
+	case followUpRequests > 0 && len(followUpToolResults) > 0:
 		return PermissionVerdict{
 			Outcome:  PermissionAllowed,
 			Evidence: "the tool executed and its result was posted back to the provider",
 		}, nil
+
+	case followUpRequests > 0:
+		// A follow-up request with NO tool result in it. The count alone was
+		// once treated as proof of execution, and it is not: the CLI can issue
+		// a further request for reasons that have nothing to do with a tool
+		// having run — an internal retry, an auxiliary call, a turn that
+		// continued on text. Calling that "allowed" would manufacture evidence
+		// of execution out of a request that carries none, in a ticket whose
+		// entire subject is what a detached agent is permitted to do.
+		return PermissionVerdict{}, fmt.Errorf(
+			"cannot classify this launch: %d follow-up provider request(s) arrived but "+
+				"none carried a tool result, so nothing establishes that the tool ran. "+
+				"This is an auxiliary or retry request, a wire whose tool-result shape "+
+				"ToolResults does not read, or a genuinely new behavior — all of which "+
+				"need looking at rather than being recorded as execution",
+			followUpRequests)
 
 	case totalRequests == 0 && stillAlive && strings.Contains(transcript, TrustPromptMarker):
 		// Named separately from the generic blocked arm because it is a

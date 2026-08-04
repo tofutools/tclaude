@@ -97,6 +97,7 @@ func permissionRun(
 	t *testing.T, turns []copilotfixture.Turn, trusted bool, opts copilotfixture.RunOptions,
 ) (copilotfixture.PermissionVerdict, *copilotfixture.MockProvider, copilotfixture.PTYResult) {
 	t.Helper()
+	requireCompletionsWire(t, opts)
 	mock := copilotfixture.NewMockProvider(t, turns)
 	dirs := copilotfixture.NewSandboxDirs(t)
 	if trusted {
@@ -135,6 +136,32 @@ func permissionRun(
 	// different arm than the one it is named for.
 	t.Logf("permission verdict: %s (%s)", verdict.Outcome, verdict.Evidence)
 	return verdict, mock, res
+}
+
+// requireCompletionsWire fails a scenario that would classify permissions on a
+// wire whose tool-result shape this suite has never measured.
+//
+// It exists because of how the two pieces fail together. ToolResults reads the
+// COMPLETIONS wire only, and returns nil for anything else — which is the right
+// conservative behavior, since an unmeasured shape must not be guessed at. But
+// nil tool results are also what ClassifyPermission sees when a follow-up
+// carries none, so a scenario silently switched to the Responses wire would
+// stop being a permission measurement and start being an undecidable error,
+// with nothing pointing at the wire as the cause.
+//
+// Failing here instead names the actual problem at the actual call site. The
+// empty value means WireCompletions (see RunOptions.Wire), so the default path
+// passes without a scenario having to say anything.
+func requireCompletionsWire(t *testing.T, opts copilotfixture.RunOptions) {
+	t.Helper()
+	if opts.Wire != "" && opts.Wire != copilotfixture.WireCompletions {
+		t.Fatalf(
+			"this scenario classifies permissions from tool results, and ToolResults reads "+
+				"the completions wire only, so a %q run would return no tool results and "+
+				"misreport the launch as unclassifiable. Measure the Responses wire's "+
+				"tool-result shape and teach ToolResults about it before using it here",
+			opts.Wire)
+	}
 }
 
 // TestCopilotPermissionFolderTrustBlocksFirst is the headline measurement, and
@@ -953,15 +980,20 @@ func TestCopilotPermissionInPaneAllowAllCannotOverrideDeny(t *testing.T) {
 	dirs := copilotfixture.NewSandboxDirs(t)
 	copilotfixture.TrustFolder(t, dirs.Home, dirs.WorkDir)
 
+	inPaneOpts := copilotfixture.RunOptions{
+		Root: dirs.Root, Home: dirs.Home, Cache: dirs.Cache, WorkDir: dirs.WorkDir,
+		BaseURL: mock.BaseURL(),
+		Prompt:  "Say you are ready.",
+		// Paired deliberately: the deny must beat a blanket allow, not merely
+		// fill a gap the allow left open.
+		ExtraArgs: []string{"--deny-tool", "shell(echo)"},
+	}
+	// This scenario reads tool results directly rather than through
+	// permissionRun, so it needs the same wire guard.
+	requireCompletionsWire(t, inPaneOpts)
+
 	res := copilotfixture.RunPTY(t, copilotfixture.PTYOptions{
-		RunOptions: copilotfixture.RunOptions{
-			Root: dirs.Root, Home: dirs.Home, Cache: dirs.Cache, WorkDir: dirs.WorkDir,
-			BaseURL: mock.BaseURL(),
-			Prompt:  "Say you are ready.",
-			// Paired deliberately: the deny must beat a blanket allow, not merely
-			// fill a gap the allow left open.
-			ExtraArgs: []string{"--deny-tool", "shell(echo)"},
-		},
+		RunOptions: inPaneOpts,
 		// Typed into a settled screen, in order: widen the posture, then ask for
 		// the denied tool.
 		Input:       []string{"/allow-all", "Now use the bash tool."},

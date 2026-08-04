@@ -1,0 +1,12 @@
+# TestCopilotPermissionPathGrants stages its target directory HERE, beside the
+# package, because it has to be outside both of Copilot's default path grants:
+# the cwd subtree and the system temp dir. Everything under a temp root is
+# inside the grant the scenario exists to measure the boundary of, so the
+# staging cannot live there.
+#
+# The test removes it via t.Cleanup, so this only matters for a run that was
+# interrupted — which has already happened once during development, leaving a
+# dirty tree. Narrow on purpose: it names the exact prefix the helper uses and
+# nothing else, so a real stray file in this package still shows up in
+# `git status` the way it should.
+copilotfixture-outside-*/
