@@ -150,28 +150,45 @@ func (r *gitProxyRecorder) exec(_ context.Context, cmd agentd.ProxyCommand) (age
 			if err != nil {
 				return miss, nil
 			}
+			// A LIST of rows, not a map keyed by name: git reports the same key
+			// once per scope that sets it, and collapsing those loses exactly
+			// the case that matters — a repository setting http.proxy while the
+			// proxy also pins it must still be seen.
 			var matched []string
+			add := func(scope, key string) {
+				if slices.Contains(sub, "--show-scope") {
+					key = scope + "\t" + key // --show-scope prefixes "<scope>\t"
+				}
+				matched = append(matched, key)
+			}
 			for key := range r.repoConfig {
 				if re.MatchString(key) {
-					matched = append(matched, key)
+					scope := r.repoConfigScopes[key]
+					if scope == "" {
+						scope = "local"
+					}
+					add(scope, key)
+				}
+			}
+			// Git reports the command line's own `-c key=value` overrides too,
+			// in the "command" scope — and the daemon prepends a long list of
+			// them to EVERY invocation. Reproducing that is what makes this stub
+			// a model of git rather than of the fixture: without it, a gate that
+			// mistakes the proxy's own pin for hostile repository config looks
+			// perfectly healthy here while refusing every real request.
+			for i := 0; i+1 < len(cmd.Args); i++ {
+				if cmd.Args[i] != "-c" {
+					continue
+				}
+				key, _, _ := strings.Cut(cmd.Args[i+1], "=")
+				if key = strings.ToLower(key); re.MatchString(key) {
+					add("command", key)
 				}
 			}
 			if len(matched) == 0 {
 				return miss, nil // git's exit 1 = no matching key
 			}
 			slices.Sort(matched)
-			// --show-scope prefixes each line with "<scope>\t". The daemon uses
-			// it to tell an agent-written key from the operator's own global
-			// one, so the stub has to reproduce the column, not just the key.
-			if slices.Contains(sub, "--show-scope") {
-				for i, key := range matched {
-					scope := r.repoConfigScopes[key]
-					if scope == "" {
-						scope = "local"
-					}
-					matched[i] = scope + "\t" + key
-				}
-			}
 			return agentd.ProxyResult{Stdout: strings.Join(matched, "\n") + "\n"}, nil
 		}
 		return miss, nil

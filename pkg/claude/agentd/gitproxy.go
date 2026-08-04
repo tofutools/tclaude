@@ -665,37 +665,75 @@ func refuseHostileRepoConfig(ctx context.Context, s *gitProxySession, remoteName
 	return nil
 }
 
-// configKeys lists the configured keys matching a git config regexp. It returns
-// no error for "no matches" (git's exit 1) and a refusal for anything else,
-// including a probe that never ran.
+// gitProxyCommandScope is git's name for a value that arrived as a `-c`
+// override — which, for any command this proxy runs, means the proxy put it
+// there. The agent has no way to add one.
+const gitProxyCommandScope = "command"
+
+// configKeys lists the configured keys matching a git config regexp, EXCLUDING
+// the proxy's own `-c` overrides.
+//
+// That exclusion is load-bearing, not tidiness. gitProxyConfigPins passes
+// `-c http.proxy=` on every single invocation, and `git config --get-regexp`
+// reports command-scope values exactly like any other — so the http gate below
+// read the proxy's OWN pin, named it as hostile repository configuration, and
+// refused. Every request, for every repository. That is what happened the first
+// time this feature was pointed at a real repo, and no stub-backed test could
+// have caught it: the stub answers from a fixture map and never sees the pins
+// the daemon actually passes.
+//
+// Excluding by deny-list rather than allow-listing the four real scopes is
+// deliberate. An unrecognised scope must keep counting as "configured
+// somewhere", so a git that grows a new one fails CLOSED.
 func (s *gitProxySession) configKeys(ctx context.Context, pattern string) ([]string, *proxyFault) {
-	out, exitCode, ran := s.gitProbeStrict(ctx, "config", "--name-only", "--get-regexp", "--", pattern)
-	if !ran {
-		return nil, faultf(http.StatusInternalServerError, "config_probe_failed",
-			"could not inspect this repository's configuration for %s; refusing rather than "+
-				"assuming it is safe", pattern)
+	scoped, fault := s.configKeysScoped(ctx, pattern)
+	if fault != nil {
+		return nil, fault
 	}
-	if exitCode == 1 {
-		return nil, nil // git's "no matching key"
+	var keys []string
+	for _, entry := range scoped {
+		if entry.scope != gitProxyCommandScope {
+			keys = append(keys, entry.key)
+		}
 	}
-	if exitCode != 0 {
-		return nil, faultf(http.StatusInternalServerError, "config_probe_failed",
-			"inspecting this repository's configuration for %s failed (git exit %d); refusing "+
-				"rather than assuming it is safe", pattern, exitCode)
-	}
-	return splitNonEmptyLines(out), nil
+	return keys, nil
 }
 
 // configKeysInScopes lists the configured keys matching a git config regexp
 // that come from one of the named scopes ("local", "worktree", "global",
 // "system", "command").
+func (s *gitProxySession) configKeysInScopes(ctx context.Context, pattern string, scopes ...string) ([]string, *proxyFault) {
+	scoped, fault := s.configKeysScoped(ctx, pattern)
+	if fault != nil {
+		return nil, fault
+	}
+	wanted := make(map[string]bool, len(scopes))
+	for _, s := range scopes {
+		wanted[s] = true
+	}
+	var keys []string
+	for _, entry := range scoped {
+		if wanted[entry.scope] {
+			keys = append(keys, entry.key)
+		}
+	}
+	return keys, nil
+}
+
+// scopedConfigKey is one `--show-scope` row.
+type scopedConfigKey struct{ scope, key string }
+
+// configKeysScoped runs the one probe both callers above filter.
 //
 // --show-scope rather than --local is what makes this trustworthy: `git config
 // --local --get-regexp` does NOT report a key that reached the local file
 // through include.path, while --show-scope reports it and attributes it to the
 // including scope. Filtering the effective listing is therefore strictly more
 // complete than reading one scope's file.
-func (s *gitProxySession) configKeysInScopes(ctx context.Context, pattern string, scopes ...string) ([]string, *proxyFault) {
+//
+// It returns no error for "no matches" (git's exit 1) and a refusal for
+// anything else, including a probe that never ran.
+func (s *gitProxySession) configKeysScoped(ctx context.Context, pattern string) ([]scopedConfigKey, *proxyFault) {
 	out, exitCode, ran := s.gitProbeStrict(ctx,
 		"config", "--show-scope", "--name-only", "--get-regexp", "--", pattern)
 	if !ran {
@@ -711,24 +749,24 @@ func (s *gitProxySession) configKeysInScopes(ctx context.Context, pattern string
 			"inspecting this repository's configuration for %s failed (git exit %d); refusing "+
 				"rather than assuming it is safe", pattern, exitCode)
 	}
-	wanted := make(map[string]bool, len(scopes))
-	for _, s := range scopes {
-		wanted[s] = true
-	}
-	var keys []string
+	var scoped []scopedConfigKey
 	for _, line := range splitNonEmptyLines(out) {
-		// "<scope>\t<key>". A key with no scope column is a git version that
-		// does not understand --show-scope, which the exit checks above have
-		// already ruled out; skip rather than guess.
+		// "<scope>\t<key>". A key with no scope column would be a git that does
+		// not understand --show-scope; the exit checks above have already ruled
+		// that out, so treat the whole line as the key with an unknown scope
+		// rather than dropping it — an unclassified key must still count as
+		// configured.
 		scope, key, ok := strings.Cut(line, "\t")
 		if !ok {
+			scoped = append(scoped, scopedConfigKey{scope: "", key: strings.TrimSpace(line)})
 			continue
 		}
-		if wanted[strings.TrimSpace(scope)] {
-			keys = append(keys, strings.TrimSpace(key))
-		}
+		scoped = append(scoped, scopedConfigKey{
+			scope: strings.TrimSpace(scope),
+			key:   strings.TrimSpace(key),
+		})
 	}
-	return keys, nil
+	return scoped, nil
 }
 
 // git runs a hardened git command in the agent's repository.

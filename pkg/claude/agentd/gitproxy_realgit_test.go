@@ -491,3 +491,52 @@ func TestRealGit_LinkedWorktreeIsAcceptedOnlyWithAMatchingBackPointer(t *testing
 		plain, revParse(plain, "--show-toplevel"), revParse(plain, "--absolute-git-dir"))
 	assert.NotNil(t, fault, "a gitfile pointing at another repository must stay refused")
 }
+
+// TestRealGit_ProxyOwnPinsDoNotTripItsOwnConfigGates is the regression for a
+// bug that made the feature refuse EVERY request in production while every
+// stub-backed test passed.
+//
+// refuseHostileRepoConfig asks `git config --get-regexp ^http\.` through the
+// same hardened invocation as everything else — which carries `-c http.proxy=`
+// from gitProxyConfigPins. Git reports command-scope values like any other, so
+// the gate found `http.proxy`, correctly identified it as a key that can
+// redirect the connection, and refused. Its own pin. For every repository.
+//
+// No stub could catch this: the fake answers config probes from a fixture map
+// and never sees the argv the daemon really builds. Only real git does.
+func TestRealGit_ProxyOwnPinsDoNotTripItsOwnConfigGates(t *testing.T) {
+	gitPath := gitAvailable(t)
+	work, _ := realGitRepo(t, gitPath)
+	home := filepath.Dir(work)
+	hooksDir := filepath.Join(home, "no-hooks")
+	require.NoError(t, os.MkdirAll(hooksDir, 0o700))
+
+	// gitProxyEnv forwards HOME, so point it at the throwaway root; the
+	// developer's own ~/.gitconfig must not decide this test.
+	t.Setenv("HOME", home)
+
+	s := &gitProxySession{
+		gitPath:  gitPath,
+		repoRoot: work,
+		pins:     gitProxyConfigPins(hooksDir, "ssh -o BatchMode=yes", nil),
+	}
+	require.Contains(t, s.pins, "http.proxy=",
+		"the fixture is only meaningful while the proxy still pins this key")
+
+	fault := refuseHostileRepoConfig(context.Background(), s, "origin")
+	assert.Nil(t, fault,
+		"a clean repository must pass the gates; the proxy's own -c pins are not "+
+			"repository configuration and must never be read as hostile: %+v", fault)
+
+	// CONTROL: the gate is armed. A key the REPOSITORY sets is still refused,
+	// so the assertion above cannot be passing because the check does nothing.
+	set := exec.Command(gitPath, "config", "http.sslVerify", "false")
+	set.Dir = work
+	set.Env = realGitEnv(home)
+	out, err := set.CombinedOutput()
+	require.NoErrorf(t, err, "arming the control: %s", out)
+
+	fault = refuseHostileRepoConfig(context.Background(), s, "origin")
+	require.NotNil(t, fault, "a repo-set http.sslVerify must still be refused")
+	assert.Contains(t, fault.Msg, "http.sslverify")
+}
