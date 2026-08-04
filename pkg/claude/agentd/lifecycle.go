@@ -3216,7 +3216,19 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// caller no rate slot. executeSpawn re-runs the same (idempotent) check
 	// for the other spawn callers (templates/waves/process adapters) that
 	// don't pass through this HTTP boundary.
-	if fail := spawnSandboxLineageFailure(spawnerConvID, h.Name, sandboxMode); fail != nil {
+	//
+	// It judges the LAUNCH mode, not the harness-native one every gate above
+	// judges: a tclaude-layer child records the single-wall posture, and the
+	// guard has to reason about the posture that will actually be persisted and
+	// later read back when this child spawns children of its own (TCL-989).
+	childLaunchSandbox, fieldFail := resolveLaunchSandboxMode(
+		h, sandboxMode, body.SandboxImplementation)
+	if fieldFail != nil {
+		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
+		return
+	}
+	if fail := spawnSandboxLineageFailure(
+		spawnerConvID, h.Name, childLaunchSandbox, body.SandboxImplementation); fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
@@ -4607,7 +4619,20 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		return nil, &spawnFailure{http.StatusForbidden, "trust_dir_restricted",
 			"agent-initiated spawns may pre-trust only tclaude's verified default sibling worktrees; leave trust_dir off or ask the human to spawn this child"}
 	}
-	if fail := spawnSandboxLineageFailure(p.SpawnedByConv, p.Harness, p.SandboxMode); fail != nil {
+	// Judges the LAUNCH mode for the same reason handleGroupSpawn does: the
+	// guard must reason about the posture the child's row will carry, which for
+	// a tclaude-layer child is the forced single-wall mode (TCL-989).
+	childHarness, hErr := harness.ResolveSpawnable(harnessOrDefault(p.Harness))
+	if hErr != nil {
+		return nil, &spawnFailure{http.StatusUnprocessableEntity, "invalid_harness", hErr.Error()}
+	}
+	childLaunchSandbox, fail := resolveLaunchSandboxMode(
+		childHarness, p.SandboxMode, p.SandboxImplementation)
+	if fail != nil {
+		return nil, fail
+	}
+	if fail := spawnSandboxLineageFailure(
+		p.SpawnedByConv, p.Harness, childLaunchSandbox, p.SandboxImplementation); fail != nil {
 		return nil, fail
 	}
 	if fail := spawnApprovalLineageFailure(p.SpawnedByConv, p.Harness, p.ApprovalPolicy, p.AutoReview); fail != nil {

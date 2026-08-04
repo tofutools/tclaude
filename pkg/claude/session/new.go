@@ -527,6 +527,16 @@ func runNew(params *NewParams) error {
 		return err
 	}
 	params.Sandbox = sandboxMode
+	if tclaudeLayerOnly {
+		// The single-wall implementation replaces the harness's own permission
+		// profile with tclaude's outer wall; ResolveSandboxImplementationMode
+		// above has already forced the matching harness-native mode. Clearing
+		// the profile HERE — rather than after the Codex managed-profile
+		// normalization below, where this used to live — keeps that
+		// normalization and the --permission-profile/--sandbox mutual-exclusion
+		// check from judging a profile this launch does not use.
+		params.PermissionProfile = ""
+	}
 	if outerLayer {
 		if err := ValidateTclaudeLayerHarness(h.Name); err != nil {
 			return err
@@ -646,18 +656,6 @@ func runNew(params *NewParams) error {
 		if h.Name != harness.CodexName {
 			return fmt.Errorf("--permission-profile is a Codex launch option; harness %q has no permission profiles", h.Name)
 		}
-	}
-
-	// The single-wall tclaude-layer implementation selects the harness-native
-	// posture declared for that outer-wall contract. Stacked has already forced
-	// the reviewed nested contract on above and must not pass through here.
-	if tclaudeLayerOnly {
-		params.PermissionProfile = ""
-		sandboxMode, err = harness.TclaudeLayerSandboxMode(h)
-		if err != nil {
-			return err
-		}
-		params.Sandbox = sandboxMode
 	}
 
 	// Validate --ask-for-approval up front WITHOUT defaulting it, for the same

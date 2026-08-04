@@ -121,14 +121,22 @@ func SandboxOffMode(h *Harness) (string, error) {
 	return ValidateSandboxMode(h, mode)
 }
 
-// ResolveSandboxImplementationMode applies the launch posture implied by the
-// selected sandbox implementation. Most implementations leave a harness's
-// native mode alone; OpenCode additionally keeps its persisted mode truthful
-// about the tclaude-owned server boundary. Off is intentionally shared across
-// harnesses: it resolves to each harness's native no-confinement mode so an
-// explicit implementation choice cannot be undone by an independently
+// ResolveHarnessNativeSandboxMode answers what the HARNESS'S OWN confinement is
+// set to under the selected implementation. Most implementations leave a
+// harness's native mode alone; OpenCode additionally keeps its persisted mode
+// truthful about the tclaude-owned server boundary. Off is intentionally shared
+// across harnesses: it resolves to each harness's native no-confinement mode so
+// an explicit implementation choice cannot be undone by an independently
 // inherited sandbox-mode value.
-func ResolveSandboxImplementationMode(
+//
+// This is the value every gate that asks "what can the harness's own sandbox
+// represent or enforce" must judge — filesystem/network profile capability,
+// Codex's cwd conflict, whether a launch receives pinned Git common-dir write
+// paths. Those questions are about the harness's wall, and a tclaude-layer
+// launch stands that wall down precisely BECAUSE tclaude's own wall is
+// enforcing, so feeding them the forced single-wall mode below would read a
+// deliberately-disabled inner wall as an unconfined agent.
+func ResolveHarnessNativeSandboxMode(
 	h *Harness, mode string,
 	implementation sandboxpolicy.Implementation,
 ) (string, error) {
@@ -139,6 +147,42 @@ func ResolveSandboxImplementationMode(
 		return "", fmt.Errorf("sandbox implementation requires a resolved harness")
 	}
 	return ResolveOpenCodeSandboxImplementationMode(h.Name, mode, implementation)
+}
+
+// ResolveSandboxImplementationMode is the LAUNCH mode: the harness-native
+// sandbox value this implementation actually starts the harness with, and the
+// value tclaude persists on the session row.
+//
+// It differs from ResolveHarnessNativeSandboxMode only for the single-wall
+// `tclaude-layer` implementation, which launches the harness under the reviewed
+// no-inner-wall posture its descriptor declares. That forcing lives here rather
+// than at each launch boundary because it decides what gets RECORDED:
+// `tclaude session new` used to apply TclaudeLayerSandboxMode itself, late in
+// its own resolution, so every other reader — the daemon's sandbox-lineage
+// guard, the flow-test spawners standing in for session new — reasoned about
+// the requested mode while the launch and the row carried the forced one
+// (TCL-989). One function now answers "what mode does this launch run under",
+// and every caller gets the same answer.
+//
+// OpenCode's rules still run first and unchanged: its native `tclaude-layer`
+// mode names the same topology from the mode axis, so pairing it with another
+// implementation, or pairing an explicit `off` with tclaude-layer, stays an
+// error rather than being silently forced into agreement. Only the exact
+// `tclaude-layer` implementation forces a mode; `stacked` deliberately does
+// not, because its nested contract is chosen by stackedSandboxLaunchMode and is
+// not the single-wall posture.
+func ResolveSandboxImplementationMode(
+	h *Harness, mode string,
+	implementation sandboxpolicy.Implementation,
+) (string, error) {
+	mode, err := ResolveHarnessNativeSandboxMode(h, mode, implementation)
+	if err != nil {
+		return "", err
+	}
+	if implementation == sandboxpolicy.ImplementationTclaudeLayer {
+		return TclaudeLayerSandboxMode(h)
+	}
+	return mode, nil
 }
 
 // TclaudeLayerSandboxMode returns the reviewed harness-native posture used
