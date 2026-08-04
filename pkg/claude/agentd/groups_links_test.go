@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
@@ -78,4 +79,59 @@ func TestRequireScopedLinkAuthority_GrantedSlugAllowsRegardlessOfSide(t *testing
 	caller, ok := requireScopedLinkAuthority(w, r, groupB, link, PermGroupsLinkRm)
 	require.True(t, ok, "slug holder should pass even on TO side; body=%s", w.Body.String())
 	assert.Equal(t, "manager", caller, "caller")
+}
+
+// TestRequireGroupLinkAuthority_OwnerBypassesWhenUndecided: with no
+// grant and no deny, owning the FROM group is enough to create a link.
+func TestRequireGroupLinkAuthority_OwnerBypassesWhenUndecided(t *testing.T) {
+	setupTestDB(t)
+	a, _ := db.CreateAgentGroup("a", "")
+	groupA, _ := db.GetAgentGroupByID(a)
+	require.NoError(t, db.AddAgentGroupOwner(a, "manager", "<test>"))
+
+	w := httptest.NewRecorder()
+	r := requestWithPeer(&peer{PID: 999, HasClaudeAncestor: true, ConvID: "manager"})
+	caller, ok := requireGroupLinkAuthority(w, r, groupA, PermGroupsLinkAdd)
+	require.True(t, ok, "undecided owner should bypass slug; body=%s", w.Body.String())
+	assert.Equal(t, "manager", caller, "caller")
+}
+
+// TestRequireGroupLinkAuthority_DenyBeatsOwnerBypass: an explicit
+// per-agent deny on groups.link.add is authoritative and suppresses the
+// owner-of-FROM bypass, matching every other owner-implied slug
+// (TCL-1018).
+func TestRequireGroupLinkAuthority_DenyBeatsOwnerBypass(t *testing.T) {
+	setupTestDB(t)
+	a, _ := db.CreateAgentGroup("a", "")
+	groupA, _ := db.GetAgentGroupByID(a)
+	require.NoError(t, db.AddAgentGroupOwner(a, "manager", "<test>"))
+	require.NoError(t, db.SetAgentPermissionOverride("manager", PermGroupsLinkAdd, db.PermEffectDeny, "<test>"))
+
+	w := httptest.NewRecorder()
+	r := requestWithPeer(&peer{PID: 999, HasClaudeAncestor: true, ConvID: "manager"})
+	_, ok := requireGroupLinkAuthority(w, r, groupA, PermGroupsLinkAdd)
+	require.False(t, ok, "denied owner should be refused link-create")
+	assert.Equal(t, http.StatusForbidden, w.Code, "status")
+	assert.Contains(t, w.Body.String(), PermGroupsLinkAdd, "403 should name the slug")
+}
+
+// TestRequireScopedLinkAuthority_DenyBeatsOwnerBypass: same for the
+// PATCH/DELETE path — owning the FROM side no longer overrides a deny
+// on groups.link.rm (TCL-1018).
+func TestRequireScopedLinkAuthority_DenyBeatsOwnerBypass(t *testing.T) {
+	setupTestDB(t)
+	a, _ := db.CreateAgentGroup("a", "")
+	b, _ := db.CreateAgentGroup("b", "")
+	id, _ := db.InsertAgentGroupLink(a, b, db.LinkModeMembersToMembers, "")
+	link, _ := db.GetAgentGroupLinkByID(id)
+	groupA, _ := db.GetAgentGroupByID(a)
+	require.NoError(t, db.AddAgentGroupOwner(a, "manager", "<test>"))
+	require.NoError(t, db.SetAgentPermissionOverride("manager", PermGroupsLinkRm, db.PermEffectDeny, "<test>"))
+
+	w := httptest.NewRecorder()
+	r := requestWithPeer(&peer{PID: 999, HasClaudeAncestor: true, ConvID: "manager"})
+	_, ok := requireScopedLinkAuthority(w, r, groupA, link, PermGroupsLinkRm)
+	require.False(t, ok, "denied owner should be refused link-rm on the FROM side")
+	assert.Equal(t, http.StatusForbidden, w.Code, "status")
+	assert.Contains(t, w.Body.String(), PermGroupsLinkRm, "403 should name the slug")
 }

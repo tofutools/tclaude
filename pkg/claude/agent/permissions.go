@@ -590,6 +590,6 @@ func runPermissionsSlugs(p *permissionsSlugsParams, stdout, stderr io.Writer) in
 	fmt.Fprintln(stdout, "  ✔ group   — over the groups you own")
 	fmt.Fprintln(stdout, "  ✔ member  — over members of the groups you own")
 	fmt.Fprintln(stdout, "  ✔ any     — unscoped; owning any group at all is enough")
-	fmt.Fprintln(stdout, "A per-agent deny suppresses the bypass, except groups.link.add/rm, where ownership is checked first.")
+	fmt.Fprintln(stdout, "A per-agent deny suppresses the bypass.")
 	return rcOK
 }
