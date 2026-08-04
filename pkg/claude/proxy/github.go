@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -69,11 +70,18 @@ type ghProxyOutcome struct {
 
 func (o *ghProxyOutcome) render(stdout, stderr io.Writer, what string) int {
 	if len(o.JSON) > 0 {
-		var pretty any
-		if json.Unmarshal(o.JSON, &pretty) == nil {
-			if rc := writeJSONIndent(stdout, pretty); rc != rcOK {
-				fmt.Fprintln(stderr, "Error: could not re-encode the GitHub response")
-				return rc
+		// json.Indent, NOT unmarshal-into-any-then-re-marshal. Decoding gh's
+		// response into `any` would turn every JSON number into a float64, so a
+		// value past 2^53 comes back out changed — and it would also re-order
+		// object keys alphabetically, because that is what Marshal does with a
+		// map. Indent rewrites only the whitespace: same numbers, same field
+		// order, same string escaping GitHub sent.
+		var pretty bytes.Buffer
+		if json.Indent(&pretty, o.JSON, "", "  ") == nil {
+			pretty.WriteByte('\n')
+			if _, err := stdout.Write(pretty.Bytes()); err != nil {
+				fmt.Fprintln(stderr, "Error: could not write the GitHub response")
+				return rcIOFailure
 			}
 		} else {
 			fmt.Fprintln(stdout, string(o.JSON))

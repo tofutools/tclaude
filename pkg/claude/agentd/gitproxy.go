@@ -1158,6 +1158,11 @@ func resolveProxyRemote(ctx context.Context, s *gitProxySession, name string) (r
 		return resolvedRemote{}, fault
 	}
 	if len(pushURLs) == 0 {
+		// Defensive only. `git remote get-url --push --all` reports the FETCH
+		// urls when no remote.<name>.pushurl is configured (verified on git
+		// 2.43), so this is not the "no pushurl" path — that answer already
+		// arrived above. It covers a git that answers with nothing at all,
+		// where treating push as going wherever fetch goes is the honest read.
 		pushURLs = fetchURLs
 	}
 
@@ -1213,8 +1218,10 @@ func (s *gitProxySession) remoteURLs(ctx context.Context, name string, push bool
 			"could not read the URLs configured for remote %q; refusing rather than guessing", name)
 	}
 	if exitCode != 0 {
-		// git exits non-zero for both "no such remote" and "no pushurl set".
-		// Both are legitimately "nothing here" for the caller to interpret.
+		// "No such remote" — git exits 2. Reported as "nothing here" so the
+		// caller can phrase its own 404; note that a remote with no
+		// remote.<name>.pushurl does NOT land here, because `--push` falls back
+		// to the fetch URLs and exits 0.
 		return nil, nil
 	}
 	return splitNonEmptyLines(out), nil

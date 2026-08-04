@@ -176,14 +176,13 @@ func (r *gitProxyRecorder) exec(_ context.Context, cmd agentd.ProxyCommand) (age
 		if sub[1] == "get-url" {
 			name := sub[len(sub)-1]
 			source := r.remotes
-			if slices.Contains(sub, "--push") {
-				// git exits non-zero when a remote has no pushurl at all, and
-				// resolveProxyRemote reads that as "push goes where fetch goes".
-				if _, ok := r.pushRemotes[name]; !ok {
-					return miss, nil
-				}
+			if _, ok := r.pushRemotes[name]; ok && slices.Contains(sub, "--push") {
 				source = r.pushRemotes
 			}
+			// No branch for "--push with no pushurl": `git remote get-url
+			// --push` FALLS BACK to remote.<name>.url and exits 0 (verified on
+			// git 2.43). Only an unknown remote is an error, which the lookup
+			// below reports.
 			url, ok := source[name]
 			if !ok {
 				return miss, nil
