@@ -244,7 +244,7 @@ func TestSoftExit_RetryDoesNotExitResumedPaneReusingTmuxName(t *testing.T) {
 			staged = true
 		})
 	})
-	t.Cleanup(func() { restoreAfterBackgroundDrain(restoreProbe) })
+	cleanupAfterBackgroundDrain(t, restoreProbe)
 
 	stop := f.AsHuman().Stop(conv, false)
 	f.AssertSoftStopped(stop)
@@ -259,6 +259,11 @@ func TestSoftExit_RetryDoesNotExitResumedPaneReusingTmuxName(t *testing.T) {
 	// vacuously, against a race that was never staged.
 	require.True(t, staged,
 		"the retry never reached its pre-probe hook: this scenario is no longer driving the selected-target engine")
+	// Corroborating, not load-bearing: re-injection goes to the frozen pane id,
+	// and the simulator resolves a vanished %N to nothing, so the successor
+	// survives even with the guard disabled. That is production-faithful — real
+	// tmux does not reuse pane ids — but it means this assertion cannot fail on
+	// its own. The send count below is what proves the guard ran.
 	assert.True(t, f.World.Tmux.IsAlive(tmuxSes),
 		"the resumed pane must survive — the retry must not /exit a new process that reused the tmux name")
 	// The only /exit to this name was the original (scrambled) attempt; the
@@ -343,7 +348,7 @@ func TestSoftExit_RetryUnknownCleansWithoutSend(t *testing.T) {
 			f.World.Tmux.FailNextCommand("display-message")
 		}
 	})
-	t.Cleanup(cleanup)
+	cleanupAfterBackgroundDrain(t, cleanup)
 	stop := f.AsHuman().Stop(conv, false)
 	f.AssertSoftStopped(stop)
 	agentd.WaitForBackgroundForTest()
@@ -365,7 +370,7 @@ func TestSoftExit_FinalUnknownCleansBounded(t *testing.T) {
 			f.World.Tmux.FailNextCommand("display-message")
 		}
 	})
-	t.Cleanup(cleanup)
+	cleanupAfterBackgroundDrain(t, cleanup)
 	stop := f.AsHuman().Stop(conv, false)
 	f.AssertSoftStopped(stop)
 	agentd.WaitForBackgroundForTest()
@@ -565,7 +570,7 @@ func TestSoftExit_RetryIdentityDriftPreservesDeliveredIntent(t *testing.T) {
 	cc := f.World.CCs.GetByConvID(conv)
 	require.NotNil(t, cc)
 	cc.OnInput("/exit", func(*testharness.CCSim, string) bool { return true })
-	t.Cleanup(agentd.SetBeforeSoftExitTargetRetryProbeForTest(func(attempt int) {
+	cleanupAfterBackgroundDrain(t, agentd.SetBeforeSoftExitTargetRetryProbeForTest(func(attempt int) {
 		if attempt == 2 {
 			f.World.Tmux.SetPaneExitGeneration(tmuxSes, otherGeneration)
 		}
@@ -605,7 +610,7 @@ func TestSoftExit_RetryUnknownAfterSessionGonePreservesReaperAttribution(t *test
 	cc := f.World.CCs.GetByConvID(conv)
 	require.NotNil(t, cc)
 	cc.OnInput("/exit", func(*testharness.CCSim, string) bool { return true })
-	t.Cleanup(agentd.SetBeforeSoftExitTargetRetryProbeForTest(func(attempt int) {
+	cleanupAfterBackgroundDrain(t, agentd.SetBeforeSoftExitTargetRetryProbeForTest(func(attempt int) {
 		if attempt == 2 {
 			// The delivered /exit has taken effect between retries: the
 			// session is gone, so the probe errors.
@@ -648,7 +653,7 @@ func TestSoftExit_RetrySendFailurePreservesDeliveredIntentThroughWindow(t *testi
 	cc.OnInput("/exit", func(*testharness.CCSim, string) bool { return true })
 	retryReached := make(chan struct{})
 	var once sync.Once
-	t.Cleanup(agentd.SetBeforeSoftExitTargetRetryProbeForTest(func(attempt int) {
+	cleanupAfterBackgroundDrain(t, agentd.SetBeforeSoftExitTargetRetryProbeForTest(func(attempt int) {
 		if attempt == 2 {
 			f.World.Tmux.FailNextCommand("send-keys")
 			once.Do(func() { close(retryReached) })

@@ -161,7 +161,7 @@ func TestSoftExitEscalation_SignalsProcessGroupWhenTmuxKillIsInsufficient(t *tes
 			return nil
 		},
 	)
-	t.Cleanup(func() { restoreAfterBackgroundDrain(restoreProcess) })
+	cleanupAfterBackgroundDrain(t, restoreProcess)
 
 	cc := f.World.CCs.GetByConvID(conv)
 	require.NotNil(t, cc)
@@ -210,7 +210,7 @@ func TestSoftExitEscalation_StandsDownForASuccessorPane(t *testing.T) {
 			f.World.Tmux.SetPaneIdentityForTest(tmuxSes, "%94", 9494)
 		})
 	})
-	t.Cleanup(func() { restoreAfterBackgroundDrain(restorePoll) })
+	cleanupAfterBackgroundDrain(t, restorePoll)
 
 	f.AssertSoftStopped(f.AsHuman().Stop(conv, false))
 	agentd.WaitForBackgroundForTest()

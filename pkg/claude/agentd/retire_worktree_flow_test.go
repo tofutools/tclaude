@@ -544,6 +544,11 @@ func TestRetire_DeleteWorktreeUnkillableAgentPostsKeptNotice(t *testing.T) {
 	t.Cleanup(agentd.SetRetireWorktreeGraceForTest(300 * time.Millisecond))
 	// Nothing the daemon does can end this process: the signals are delivered
 	// to a stub that keeps reporting the pid alive.
+	//
+	// Installed BEFORE newFlow deliberately. Cleanups run LIFO, so this restore
+	// runs after newFlow's background drain — which is what keeps it from
+	// racing the ladder goroutine that reads these hooks. A site installing
+	// them after newFlow needs cleanupAfterBackgroundDrain instead.
 	t.Cleanup(agentd.SetSoftExitEscalationProcessForTest(
 		func(int) bool { return true },
 		func(int, syscall.Signal) error { return nil },

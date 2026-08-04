@@ -237,3 +237,20 @@ func restoreAfterBackgroundDrain(restore func()) {
 	agentd.WaitForBackgroundForTest()
 	restore()
 }
+
+// cleanupAfterBackgroundDrain registers restoreAfterBackgroundDrain, and is
+// what a test installing a hook should reach for. It exists so the correct
+// ordering is the SHAPE a new site copies: the broken version and the correct
+// one differ only by which function the restore is handed to, and a plain
+// t.Cleanup(restore) looks entirely reasonable right up until a require fails.
+//
+// Registration order matters and is why this takes t rather than being folded
+// into the setter. Cleanups run LIFO, so a hook installed AFTER newFlow gets
+// its restore run BEFORE newFlow's own drain — which is exactly the window
+// this closes. A hook installed BEFORE newFlow is already safe for the
+// opposite reason, and that is load-bearing rather than obvious: see
+// TestRetire_DeleteWorktreeUnkillableAgentPostsKeptNotice.
+func cleanupAfterBackgroundDrain(t *testing.T, restore func()) {
+	t.Helper()
+	t.Cleanup(func() { restoreAfterBackgroundDrain(restore) })
+}
