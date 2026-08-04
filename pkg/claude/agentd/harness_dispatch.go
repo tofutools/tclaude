@@ -186,10 +186,17 @@ func reconstructApproval(harnessName, recorded string) (string, error) {
 }
 
 // approvalForHarness returns what an UNRECORDED approval input resolves to
-// under current config for this harness. It is the reconstruction rule's
-// absent-posture arm, reused by the error fallbacks below: a lookup that failed
-// has no recorded input to reproduce, so it lands in the same place a genuinely
-// blank row does rather than in some stricter historical value.
+// under current config for this harness — the reconstruction rule's
+// absent-posture arm.
+//
+// approvalForRelaunch also uses it for its ERROR arms (unreadable row, pruned
+// row, unknown harness, unvalidatable recorded value). Those are not the same
+// thing as an absent input: an input may have been recorded and simply not
+// readable. They land here anyway because the caller — clone's standalone
+// export/conv branch, the only path that reaches those arms — needs a value,
+// and the alternative is the historical pin this rule exists to remove. The
+// managed relaunch path does not fail this way: durableRelaunchConfigForConv
+// returns an error instead of a posture.
 func approvalForHarness(name string) string {
 	policy, err := reconstructApproval(name, "")
 	if err != nil {

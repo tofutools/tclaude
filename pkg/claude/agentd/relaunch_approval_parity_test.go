@@ -42,6 +42,10 @@ func TestDaemonRelaunchApprovalMatchesTheCanonicalReconstruction(t *testing.T) {
 			assert.Equal(t, tc.Want, relaunch.Approval,
 				"durable relaunch profile (reincarnate/restart/dashboard)")
 
+			seance, err := recordedSeanceLaunchForConv(convID)
+			require.NoError(t, err)
+			assert.Equal(t, tc.Want, seance.approval, "seance recorded launch")
+
 			shared, err := reconstructApproval(tc.Harness, tc.Recorded)
 			require.NoError(t, err)
 			assert.Equal(t, tc.Want, shared, "the shared daemon entry point")
