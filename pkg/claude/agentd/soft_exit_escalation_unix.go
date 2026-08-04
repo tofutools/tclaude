@@ -2,7 +2,10 @@
 
 package agentd
 
-import "syscall"
+import (
+	"fmt"
+	"syscall"
+)
 
 // softExitSignalLadder is the signal half of the escalation, politest first.
 //
@@ -28,6 +31,13 @@ var signalLifecycleProcessGroup = func(pid int, sig syscall.Signal) error {
 	pgid, err := syscall.Getpgid(pid)
 	if err != nil {
 		return err
+	}
+	// A pane process that somehow resolved to the daemon's OWN group would
+	// make the last rung of this ladder SIGKILL agentd. tmux gives every pane
+	// its own session and group, so this should be unreachable — which is
+	// exactly why it is worth failing closed on rather than trusting.
+	if pgid == syscall.Getpgrp() {
+		return fmt.Errorf("refusing to signal the daemon's own process group (pgid %d)", pgid)
 	}
 	return syscall.Kill(-pgid, sig)
 }
