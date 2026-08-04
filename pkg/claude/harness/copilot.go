@@ -27,8 +27,9 @@ const CopilotName = "copilot"
 // the real binary" — plus, since TCL-978, Sandbox and ModelTransport, and,
 // since TCL-973, directory trust and the approval catalog, both promoted on the
 // same terms from real-pty measurements: the startup trust modal and the
-// permission matrix. ToolGovernance and Ask are still left nil for a later,
-// fixture-backed wave (TCL-965 phases 2-5).
+// permission matrix — plus, since TCL-994, the one-shot Ask surface, promoted on
+// the same evidence terms from the headless `-p` form. ToolGovernance is still
+// left nil for a later, fixture-backed wave (TCL-965 phases 2-5).
 func init() {
 	Register(&Harness{
 		Name:        CopilotName,
@@ -36,6 +37,19 @@ func init() {
 		Spawn:       copilotSpawner{},
 		Models:      copilotModels{},
 		Life:        copilotLifecycle{},
+
+		// TCL-994: the one-shot `tclaude ask` surface, buffered only. The
+		// headless `-p` form was measured to put the answer ALONE on stdout, to
+		// continue an exact conversation under `--resume=<uuid>`, and to land a
+		// fresh `--session-id` conversation in the ConvStore above — so ask
+		// threads are listable and resumable like any other conversation.
+		//
+		// StreamAsker is deliberately NOT implemented, so SupportsAskStream stays
+		// false and `tclaude ask` keeps its buffered path. Copilot does have an
+		// incremental surface (`--output-format json` JSONL), but rendering it as
+		// live text is a second contract — an event-stream wire format tclaude
+		// would have to parse — and this wave contracts only what it measured.
+		Ask: copilotAsker{},
 
 		// The cold conversation store reads only Copilot's own per-session
 		// files under <COPILOT_HOME>/session-state — see copilot_convstore.go
@@ -94,8 +108,10 @@ func init() {
 		// short of COPILOT_ALLOW_ALL=true (a blanket tool/path/URL promotion
 		// tclaude will not make on an operator's behalf). No launch flag
 		// clears it. What this flag governs is what a spawn can START; what it
-		// is then allowed to DO is the separate approval axis below, and Ask
-		// remains unwired either way.
+		// is then allowed to DO is the separate approval axis below. Neither
+		// axis reaches Ask: a headless `-p` capture answers questions rather
+		// than starting a pane, and it neither meets the trust modal nor emits a
+		// permission flag — see copilot_asker.go.
 		DirTrust: true,
 
 		// TCL-973's other half, and the other side of that START/DO split.

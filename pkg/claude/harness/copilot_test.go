@@ -78,6 +78,14 @@ func TestCopilotDescriptor(t *testing.T) {
 		t.Fatalf("copilot must advertise the measured approval catalog: %+v", h)
 	}
 
+	// The one-shot ask surface graduated in TCL-994, on the same evidence terms
+	// once more: the headless `-p` form's stream split, its exact-id resume and
+	// its ConvStore landing were all measured against the pinned binary rather
+	// than read off the option table. See copilot_asker.go.
+	if h.Ask == nil {
+		t.Fatalf("copilot must advertise the measured ask surface: %+v", h)
+	}
+
 	// Still-deferred contracts (TCL-965 phases 2-5): documented CLI flags are
 	// evidence, runtime formats and enforcement semantics are not.
 	//
@@ -89,8 +97,7 @@ func TestCopilotDescriptor(t *testing.T) {
 	// translate. ToolGovernance likewise stays nil: `--allow-tool`/`--deny-tool`
 	// are a pattern-compiler contract of their own, and the approval catalog
 	// emits neither.
-	if h.Ask != nil ||
-		h.ToolGovernance != nil ||
+	if h.ToolGovernance != nil ||
 		h.NestedSandbox != nil || h.HostControlSandbox != nil || h.AskTimeout != nil {
 		t.Fatalf("copilot must not advertise unverified contracts: %+v", h)
 	}
@@ -124,8 +131,15 @@ func TestCopilotDescriptor(t *testing.T) {
 	if got := DirTrustStore(h); got != "$COPILOT_HOME/config.json" {
 		t.Errorf("DirTrustStore() = %q, want the COPILOT_HOME-relative config.json", got)
 	}
+	if !h.SupportsAsk() {
+		t.Errorf("SupportsAsk() = false, want true now that the ask surface is fixture-backed")
+	}
+	// Buffered only: Copilot's incremental JSONL surface is a separate contract
+	// this wave does not claim, so the ask flow must keep its buffered path.
+	if h.SupportsAskStream() {
+		t.Errorf("SupportsAskStream() = true, want false for the buffered ask wave")
+	}
 	for name, got := range map[string]bool{
-		"SupportsAsk":              h.SupportsAsk(),
 		"SupportsBuiltinOSSandbox": h.SupportsBuiltinOSSandbox(),
 		"SupportsToolGovernance":   h.SupportsToolGovernance(),
 		"SupportsAutoReview":       h.SupportsAutoReview(),

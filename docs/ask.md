@@ -5,7 +5,7 @@ session or taking over your terminal. It prints the answer, exits with the
 harness's status, and keeps a resumable thread for the next question from the
 same terminal and working directory.
 
-Both Claude Code and OpenAI Codex CLI are supported.
+Claude Code, OpenAI Codex CLI, OpenCode, and GitHub Copilot CLI are supported.
 
 ## Everyday use
 
@@ -67,6 +67,16 @@ Claude Code print mode uses its non-interactive `-p` path. Interactive mode
 opens the normal Claude Code TUI. Neither mode creates a tclaude tmux session;
 use [Session management](sessions.md) when you want detach/reattach behavior.
 
+Copilot print mode runs the headless `copilot -p` form, which is buffered: the
+answer arrives whole rather than streaming. tclaude passes it no permission
+flags, and it does not need to — headless, Copilot has no terminal to ask for
+permission through, so a tool call that would need approval is denied and the
+turn finishes without it. A capture can therefore read enough to answer but not
+write your workspace. That is Copilot's own headless fallback rather than an OS
+sandbox, and commands Copilot auto-approves as safe still run; see
+[Harnesses](harnesses.md#copilot-ask). Interactive mode opens the ordinary
+Copilot TUI, which asks you to trust the folder on a first launch there.
+
 ## Choose a harness, model, and effort
 
 A fresh ask uses Claude Code with the built-in `sonnet` / `medium` defaults
@@ -116,16 +126,20 @@ tclaude omits the corresponding flags and lets Codex use its own configuration.
 ## Piped input and output
 
 Piped stdin is appended to the typed question as context. The question and
-payload are passed as one process argument behind the harness's end-of-options
-guard, so diff lines or content beginning with `-` are not parsed as CLI flags.
+payload are passed as one process argument — behind the harness's
+end-of-options guard where it has one, and as the value of the prompt flag
+where it does not (Copilot) — so diff lines or content beginning with `-` are
+not parsed as CLI flags.
 
 ```bash
 rg -n "TODO|FIXME" . | tclaude ask "which of these should be fixed first?"
 git show HEAD | tclaude ask "write a concise review"
 ```
 
-Codex writes a verbose execution transcript to stderr in print mode. tclaude
-hides it by default while preserving the clean answer on stdout. Use `--verbose`
+Codex writes a verbose execution transcript to stderr in print mode, and
+Copilot writes a run summary there (changed files, duration, token tally, and a
+resume hint naming the conversation id). tclaude hides both by default while
+preserving the clean answer on stdout. Use `--verbose`
 to see the transcript; failures always reveal it so authentication or model
 errors are not swallowed.
 
