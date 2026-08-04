@@ -399,7 +399,7 @@ func TestRetire_NoDeleteWorktreeLeavesWorktreeUntouched(t *testing.T) {
 }
 
 // Scenario: the DEFERRED path — the agent is still alive when retire
-// runs (its /exit takes a moment), so the response reports "scheduled"
+// runs (the fixture holds its pane open), so the response reports "scheduled"
 // and the worktree is removed by a background waiter once the pane
 // exits. The deferred outcome is also surfaced in the dashboard
 // Messages tab, since the optimistic toast already fired.

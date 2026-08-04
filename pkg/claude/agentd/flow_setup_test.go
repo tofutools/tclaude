@@ -142,7 +142,9 @@ func newFlow(t *testing.T) *testharness.Flow {
 
 // holdRetiringPane wedges a retiring agent's /exit and hands the moment of its
 // death to the test, deterministically. The returned func ends the pane; call
-// it once the scenario's drift is in place, before draining the background.
+// it once the scenario's drift is in place, and ALWAYS before draining the
+// background — the parked watchdog holds a background slot, so a drain that
+// precedes the release blocks until the go test timeout.
 //
 // Scenarios that watch what happens BETWEEN a soft exit and the work it
 // unblocks need a pane that is still alive when the retire response is written
@@ -197,10 +199,17 @@ func holdSoftExitEscalation(t *testing.T) func() {
 	released := make(chan struct{})
 	var once sync.Once
 	release := func() { once.Do(func() { close(released) }) }
-	// t.Cleanup runs LIFO, so a test that never releases (an early require
-	// failure) unparks the watchdog first and restores the production hook
-	// after — no goroutine is left blocked on a finished test.
-	t.Cleanup(agentd.SetSoftExitEscalationPollForTest(func() { <-released }))
-	t.Cleanup(release)
+	restore := agentd.SetSoftExitEscalationPollForTest(func() { <-released })
+	// One cleanup, in this order, because all three steps matter on the path
+	// where a require fails before the test releases: unpark the watchdog so
+	// nothing is left blocked on a finished test, JOIN it, and only then
+	// restore the hook — restoring while the loop is still reading it is a
+	// data race that would fail the package under -race and bury the real
+	// assertion failure.
+	t.Cleanup(func() {
+		release()
+		agentd.WaitForBackgroundForTest()
+		restore()
+	})
 	return release
 }
