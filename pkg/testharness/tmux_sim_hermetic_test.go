@@ -66,3 +66,46 @@ func TestTmuxSim_HasSessionSurvivesEmptyEnv(t *testing.T) {
 	assert.Error(t, dead.Run(),
 		"a dead session's has-session must exit non-zero even with an empty environment")
 }
+
+func TestTmuxSim_ParsesClientOptionsBeforeCommand(t *testing.T) {
+	tm := newTmuxSim()
+
+	// -N is the currently-used external-runtime client option. Keep a
+	// documented value-taking option and an unknown valueless option in front
+	// of it too: the simulator should dispatch the real command positionally.
+	cmd := tm.Command("-L", "future-socket", "-x", "-N", "new-session", "-d", "-s", "bridge", "sh", "-c", "sleep 1")
+	require.NoError(t, cmd.Run())
+	assert.True(t, tm.IsAlive("bridge"))
+	assert.Equal(t, 1, tm.CommandCount("new-session"))
+}
+
+func TestTmuxSim_RejectsAmbiguousUnknownClientOption(t *testing.T) {
+	tm := newTmuxSim()
+
+	// An unknown option followed by a value may be a future value-taking
+	// client option. Failing closed is safer than treating that value as the
+	// command and accidentally interpreting a later payload as new-session.
+	cmd := tm.Command("-future", "option-value", "new-session", "-d", "-s", "payload")
+	err := cmd.Run()
+	assert.EqualError(t, err, "tmux simulator: cannot determine whether unknown client option \"-future\" takes a value; add it to tmuxClientOptions or tmuxClientOptionsWithValue")
+	assert.False(t, tm.IsAlive("payload"))
+	assert.Equal(t, 0, tm.CommandCount("new-session"))
+}
+
+func TestTmuxSim_DoesNotParsePayloadAsCommand(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{name: "run-shell", args: []string{"run-shell", "new-session", "-d", "-s", "payload"}},
+		{name: "send-keys", args: []string{"send-keys", "-t", "payload", "new-session"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tm := newTmuxSim()
+			cmd := tm.Command(tc.args...)
+			require.NoError(t, cmd.Run())
+			assert.False(t, tm.IsAlive("payload"))
+			assert.Equal(t, 0, tm.CommandCount("new-session"))
+		})
+	}
+}

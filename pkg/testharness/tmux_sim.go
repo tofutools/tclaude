@@ -1,6 +1,7 @@
 package testharness
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -169,6 +170,17 @@ func newTmuxSim() *TmuxSim {
 // appropriate status; for verbs that mutate state (send-keys,
 // kill-session), the mutation happens here before the cmd is returned.
 func (t *TmuxSim) Command(args ...string) *exec.Cmd {
+	// Client-level options precede the command word. The real tmux client
+	// consumes them before dispatching (external mode currently adds -N), so
+	// consume those options positionally instead of searching argv for a known
+	// verb. That keeps payload text from becoming a second command.
+	var parseErr error
+	args, parseErr = tmuxCommandArgs(args)
+	if parseErr != nil {
+		cmd := exec.Command(falseBin)
+		cmd.Err = parseErr
+		return cmd
+	}
 	if len(args) > 0 {
 		t.mu.Lock()
 		t.commandCounts[args[0]]++
@@ -346,6 +358,56 @@ func (t *TmuxSim) Command(args ...string) *exec.Cmd {
 		return t.listPanes(args[2])
 	}
 	return exec.Command(trueBin)
+}
+
+// tmuxCommandArgs drops client-level options and returns the command plus its
+// arguments. Options with values come from tmux's documented client
+// invocation grammar (`tmux -h`); keeping that small table here means the
+// first non-option token is always the command boundary, even when a payload
+// contains a word such as "new-session". If an unknown option is followed by
+// a non-option token, fail closed: it may be a value for a newly-added option,
+// and guessing the verb would be silently wrong. If tmux adds another
+// documented option with a value, add it to tmuxClientOptionsWithValue.
+func tmuxCommandArgs(args []string) ([]string, error) {
+	for len(args) > 0 && strings.HasPrefix(args[0], "-") {
+		option := args[0]
+		args = args[1:]
+		if _, takesValue := tmuxClientOptionsWithValue[option]; takesValue {
+			if len(args) == 0 {
+				return nil, fmt.Errorf("tmux simulator: client option %q requires a value", option)
+			}
+			args = args[1:]
+			continue
+		}
+		if _, knownFlag := tmuxClientOptions[option]; !knownFlag && len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+			return nil, fmt.Errorf("tmux simulator: cannot determine whether unknown client option %q takes a value; add it to tmuxClientOptions or tmuxClientOptionsWithValue", option)
+		}
+	}
+	return args, nil
+}
+
+// These are the documented valueless client options from `tmux -h`. The
+// strict unknown-option failure above is intentional: a newly added option
+// with a value must be listed here (or in tmuxClientOptionsWithValue) instead
+// of silently shifting the simulated command boundary.
+var tmuxClientOptions = map[string]struct{}{
+	"-2": {},
+	"-C": {},
+	"-D": {},
+	"-h": {},
+	"-l": {},
+	"-N": {},
+	"-u": {},
+	"-V": {},
+	"-v": {},
+}
+
+var tmuxClientOptionsWithValue = map[string]struct{}{
+	"-c": {},
+	"-f": {},
+	"-L": {},
+	"-S": {},
+	"-T": {},
 }
 
 func tmuxArgValue(args []string, flag string) string {

@@ -8,6 +8,8 @@ import (
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/session"
+	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
 // tmux always parses OSC 8 out of pane output and keeps the target URL in its
@@ -78,6 +80,17 @@ func assertHyperlinkFlagsPrecedeCommand(t *testing.T, command, tmuxCommandWord s
 // in the flow harness: see dashboard_term_hyperlinks_flow_test.go.
 func TestGroupTermWSRequestsHyperlinks(t *testing.T) {
 	setupTestDB(t)
+	// This test stops after the PTY command is built; it does not exercise a
+	// live tmux server. Use the same private simulator as the flow tests so
+	// the external-runtime guard cannot turn command construction into an
+	// environment-dependent 503. The hyperlink assertion remains the exact
+	// production command assertion below.
+	w := testharness.New(t)
+	previousTmux := clcommon.Default
+	clcommon.Default = w.Tmux
+	t.Cleanup(func() { clcommon.Default = previousTmux })
+	t.Setenv("TMUX", "")
+	t.Setenv(session.ResourceDelegationDirEnv, "")
 	withDashboardAuth(t)
 	if _, err := db.CreateAgentGroup("squad", ""); err != nil {
 		t.Fatalf("CreateAgentGroup: %v", err)
