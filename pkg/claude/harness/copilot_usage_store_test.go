@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -74,7 +75,9 @@ type copilotUsageFixtureCall struct {
 	reasoning    int64
 	nanoAIU      any
 	multiplier   float64
-	durationMs   int64
+	durationMs   float64
+	firstTokenMs float64
+	interTokenMs float64
 	effort       string
 	finishReason string
 	tokenDetails string
@@ -109,9 +112,41 @@ func openCopilotUsageFixtureWriter(t *testing.T, home string, wal bool) *sql.DB 
 	return writer
 }
 
+// copilotUsageFixtureDefaultFirstTokenMs and
+// copilotUsageFixtureDefaultInterTokenMs are what the REAL CLI writes into the
+// two latency columns its own DDL declares INTEGER: fractional REAL values
+// (2832.3695000000002, 3577.11825 and friends were read straight off an
+// operator's macOS store).
+//
+// They are the DEFAULT for every seeded row, not an opt-in of one test, and
+// that is the point. This reader used to scan those columns as int64, which
+// made every read on every real host fail with
+//
+//	Scan error on column index 12, name "time_to_first_token_ms":
+//	converting driver.Value type float64 ("2832.3695000000002") to a int64
+//
+// blanking the whole meter — while the fixtures, which seeded integers, stayed
+// green. Seeding fractional values everywhere means the entire suite now
+// exercises the shape the CLI actually writes, so the regression cannot return
+// through a test that merely forgot to think about it.
+//
+// The values must stay fractional: SQLite's INTEGER affinity silently converts
+// a lossless REAL (0.0, 900.0) back to an integer on insert, so a whole number
+// here would not reproduce the condition at all.
+const (
+	copilotUsageFixtureDefaultFirstTokenMs = 2832.3695000000002
+	copilotUsageFixtureDefaultInterTokenMs = 3577.11825
+)
+
 func seedCopilotUsageFixture(t *testing.T, writer *sql.DB, calls ...copilotUsageFixtureCall) {
 	t.Helper()
 	for _, call := range calls {
+		if call.firstTokenMs == 0 {
+			call.firstTokenMs = copilotUsageFixtureDefaultFirstTokenMs
+		}
+		if call.interTokenMs == 0 {
+			call.interTokenMs = copilotUsageFixtureDefaultInterTokenMs
+		}
 		_, err := writer.Exec(
 			`INSERT OR IGNORE INTO sessions (id) VALUES (?)`, call.sessionID)
 		require.NoError(t, err, "seed session")
@@ -119,11 +154,13 @@ func seedCopilotUsageFixture(t *testing.T, writer *sql.DB, calls ...copilotUsage
 			(session_id, turn_index, model, input_tokens, output_tokens,
 			 cache_read_tokens, cache_write_tokens, reasoning_tokens,
 			 total_nano_aiu, request_multiplier, duration_ms,
+			 time_to_first_token_ms, inter_token_latency_ms,
 			 reasoning_effort, finish_reason, token_details_json, created_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			call.sessionID, call.turnIndex, call.model, call.input, call.output,
 			call.cacheRead, call.cacheWrite, call.reasoning, call.nanoAIU,
-			call.multiplier, call.durationMs, call.effort, call.finishReason,
+			call.multiplier, call.durationMs, call.firstTokenMs, call.interTokenMs,
+			call.effort, call.finishReason,
 			call.tokenDetails, "2026-08-04T12:00:00Z")
 		require.NoError(t, err, "seed usage row")
 	}
@@ -171,6 +208,96 @@ func TestCopilotUsageStoreReadsFreshRowsAcrossSessions(t *testing.T) {
 	// reported zero — the same distinction the durable follower draws.
 	assert.False(t, calls[2].HasNanoAIU)
 	assert.Zero(t, calls[2].TotalNanoAIU)
+}
+
+// TestCopilotUsageStoreReadsRealLatencyColumns is the regression test for the
+// bug that blanked the meter on every real host.
+//
+// Copilot declares time_to_first_token_ms, inter_token_latency_ms and
+// duration_ms INTEGER and then writes REAL into them. SQLite's affinity is
+// advisory, so the values arrive at the driver as float64; a sql.NullInt64
+// destination failed the scan, the sweep returned an error, and — because one
+// cell failed the whole read — copilot_usage_snapshots stayed empty and every
+// model/effort/token cell on the dashboard was blank.
+func TestCopilotUsageStoreReadsRealLatencyColumns(t *testing.T) {
+	home := newCopilotUsageFixture(t, true,
+		copilotUsageFixtureCall{sessionID: "sess-a", model: "gpt-5", input: 100,
+			// Straight off a real macOS store, plus a duration chosen to sit
+			// above the .5 boundary so truncation and rounding disagree.
+			durationMs: 900.6, firstTokenMs: 2832.3695000000002, interTokenMs: 3577.11825,
+			nanoAIU: int64(1200), multiplier: 1.25},
+	)
+	store, err := OpenCopilotUsageStore(home)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = store.Close() })
+
+	// The store must genuinely hold REAL here, or this test proves nothing:
+	// INTEGER affinity converts a lossless REAL back to an integer on insert.
+	reader, err := sql.Open("sqlite", "file:"+filepath.Join(home, copilotUsageStoreFileName))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = reader.Close() })
+	var storedType string
+	require.NoError(t, reader.QueryRow(
+		`SELECT typeof(time_to_first_token_ms) FROM assistant_usage_events LIMIT 1`).
+		Scan(&storedType))
+	require.Equal(t, "real", storedType,
+		"the fixture must reproduce the REAL-in-an-INTEGER-column shape")
+
+	calls, err := store.Calls(context.Background(),
+		[]CopilotUsageCursor{{SessionID: "sess-a"}}, 10)
+	require.NoError(t, err, "a REAL latency must not fail the read")
+	require.Len(t, calls, 1, "the batch must not be blanked by one float column")
+
+	// Rounded, not truncated: the snapshot's fields are whole milliseconds and
+	// truncation would bias every reading down.
+	assert.Equal(t, int64(2832), calls[0].TimeToFirstTokenMs)
+	assert.Equal(t, int64(3577), calls[0].InterTokenLatencyMs)
+	assert.Equal(t, int64(901), calls[0].DurationMs)
+
+	// The rest of the row is unaffected — this is the payload that was dark.
+	assert.Equal(t, int64(100), calls[0].InputTokens)
+	assert.Equal(t, "gpt-5", calls[0].Model)
+	assert.Equal(t, int64(1200), calls[0].TotalNanoAIU)
+	assert.True(t, calls[0].HasNanoAIU)
+	assert.InDelta(t, 1.25, calls[0].RequestMultiplier, 1e-9)
+}
+
+// TestCopilotUsageNumberCoercion covers the cell coercion directly, including
+// the shapes SQLite's dynamic typing permits but Copilot has not written yet.
+// The reader must degrade a nonsense cell to "not reported" rather than fail a
+// row, which is the general form of the latency bug.
+func TestCopilotUsageNumberCoercion(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		value    any
+		wantOK   bool
+		wantInt  int64
+		wantNote string
+	}{
+		{name: "integer", value: int64(42), wantOK: true, wantInt: 42},
+		{name: "real rounds up", value: 2832.7, wantOK: true, wantInt: 2833},
+		{name: "real rounds down", value: 2832.3695000000002, wantOK: true, wantInt: 2832},
+		{name: "negative real rounds away from zero", value: -1.5, wantOK: true, wantInt: -2},
+		{name: "numeric text", value: "3577.11825", wantOK: true, wantInt: 3577},
+		{name: "numeric bytes", value: []byte("18"), wantOK: true, wantInt: 18},
+		{name: "bool true", value: true, wantOK: true, wantInt: 1},
+		{name: "null is not reported", value: nil},
+		{name: "garbage text is not reported", value: "n/a"},
+		{name: "NaN is not reported", value: math.NaN()},
+		{name: "infinity is not reported", value: math.Inf(1)},
+		{name: "unknown type is not reported", value: struct{}{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := copilotUsageNumberOf(tc.value)
+			assert.Equal(t, tc.wantOK, got.ok)
+			assert.Equal(t, tc.wantInt, got.int64())
+		})
+	}
+
+	// Clamped, never wrapped: a nonsense magnitude must not become a negative
+	// millisecond count.
+	assert.Equal(t, int64(math.MaxInt64), copilotUsageNumberOf(1e30).int64())
+	assert.Equal(t, int64(math.MinInt64), copilotUsageNumberOf(-1e30).int64())
 }
 
 // TestCopilotUsageContextNumeratorIsInputTokensAlone pins the one decision the

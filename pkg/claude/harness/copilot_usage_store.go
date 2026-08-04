@@ -6,10 +6,15 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
+	"math"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	_ "modernc.org/sqlite" // read-only access to Copilot's own session store
 )
@@ -206,6 +211,12 @@ type CopilotUsageStore struct {
 	// hasParentColumn records whether the optional nested-call discriminator
 	// exists in this store. False makes every call read as top-level.
 	hasParentColumn bool
+
+	// mu guards skippedAt alone. Reads are issued from the daemon's sweep
+	// goroutine today, but a store handle is shared state and its rate limiter
+	// must not be the thing that makes a second reader unsafe.
+	mu        sync.Mutex
+	skippedAt time.Time
 }
 
 // CopilotUsageStorePath is the store's path under a resolved COPILOT_HOME.
@@ -378,6 +389,130 @@ func copilotUsageNestedExpr(hasParentColumn bool) string {
 	return "(" + copilotUsageParentColumn + " IS NOT NULL)"
 }
 
+// copilotUsageScanWidth is how many cells one projected row has:
+// copilotUsageSelectColumns' seventeen, plus the nested predicate.
+const copilotUsageScanWidth = 18
+
+// copilotUsageSkipWarnInterval rate-limits the "skipped an unreadable row"
+// notice. This runs on a 2s sweep, and a row that cannot be read stays
+// unreadable, so an unsuppressed line would repeat forever.
+const copilotUsageSkipWarnInterval = 5 * time.Minute
+
+// copilotUsageNumber is one scanned numeric cell, after coercion.
+//
+// It carries a float64 REGARDLESS of the column's declared type, because
+// SQLite's declared types are advisory and Copilot demonstrably writes REAL
+// into columns it declared INTEGER. Whether the value was reported at all is
+// tracked separately from its magnitude, so "Copilot billed zero" stays
+// distinguishable from "Copilot said nothing".
+type copilotUsageNumber struct {
+	value float64
+	ok    bool
+}
+
+// int64 is the value as whole units, ROUNDED rather than truncated.
+//
+// Rounding is the point: Copilot's latencies arrive as 2832.3695 and the
+// snapshot stores integer milliseconds, so truncating would bias every reading
+// down by up to a millisecond for no reason. Values outside int64 are clamped
+// rather than wrapped — a nonsense number should read as a big number, never as
+// a negative one.
+func (n copilotUsageNumber) int64() int64 {
+	if !n.ok {
+		return 0
+	}
+	rounded := math.Round(n.value)
+	switch {
+	case rounded >= math.MaxInt64:
+		return math.MaxInt64
+	case rounded <= math.MinInt64:
+		return math.MinInt64
+	default:
+		return int64(rounded)
+	}
+}
+
+// copilotUsageNumberOf coerces one driver value to a number.
+//
+// It accepts every shape SQLite's dynamic typing can hand back for a column
+// Copilot declared numeric — INTEGER, REAL, and TEXT that parses — and reports
+// everything else as "not reported" rather than failing the row. NaN and the
+// infinities are refused for the same reason: they have no honest integer
+// millisecond to round to.
+func copilotUsageNumberOf(value any) copilotUsageNumber {
+	switch typed := value.(type) {
+	case nil:
+		return copilotUsageNumber{}
+	case int64:
+		return copilotUsageNumber{value: float64(typed), ok: true}
+	case float64:
+		if math.IsNaN(typed) || math.IsInf(typed, 0) {
+			return copilotUsageNumber{}
+		}
+		return copilotUsageNumber{value: typed, ok: true}
+	case bool:
+		if typed {
+			return copilotUsageNumber{value: 1, ok: true}
+		}
+		return copilotUsageNumber{value: 0, ok: true}
+	case []byte:
+		return copilotUsageParsedNumber(string(typed))
+	case string:
+		return copilotUsageParsedNumber(typed)
+	default:
+		return copilotUsageNumber{}
+	}
+}
+
+func copilotUsageParsedNumber(text string) copilotUsageNumber {
+	parsed, err := strconv.ParseFloat(strings.TrimSpace(text), 64)
+	if err != nil || math.IsNaN(parsed) || math.IsInf(parsed, 0) {
+		return copilotUsageNumber{}
+	}
+	return copilotUsageNumber{value: parsed, ok: true}
+}
+
+// copilotUsageText coerces one driver value to trimmed text, tolerating a
+// numeric cell in a column declared TEXT for the same reason the reverse is
+// tolerated above.
+func copilotUsageText(value any) string {
+	switch typed := value.(type) {
+	case nil:
+		return ""
+	case string:
+		return strings.TrimSpace(typed)
+	case []byte:
+		return strings.TrimSpace(string(typed))
+	case int64:
+		return strconv.FormatInt(typed, 10)
+	case float64:
+		return strconv.FormatFloat(typed, 'f', -1, 64)
+	default:
+		return ""
+	}
+}
+
+// noteSkippedRows reports rows this read could not make sense of, at most once
+// per copilotUsageSkipWarnInterval per store.
+//
+// Debug, not Warn: a skipped row is a degraded reading of one call, and the
+// sweep's own failure logging (which IS operator-visible) covers the case where
+// the store cannot be read at all.
+func (s *CopilotUsageStore) noteSkippedRows(count int) {
+	s.mu.Lock()
+	now := time.Now()
+	quiet := !s.skippedAt.IsZero() && now.Sub(s.skippedAt) < copilotUsageSkipWarnInterval
+	if !quiet {
+		s.skippedAt = now
+	}
+	s.mu.Unlock()
+	if quiet {
+		return
+	}
+	slog.Debug("copilot usage store: skipped unreadable rows",
+		"path", s.path, "rows", count, "module", "harness")
+}
+
 // Calls returns every row newer than each cursor's checkpoint, oldest first
 // within a session, across at most limit rows in total.
 //
@@ -440,52 +575,86 @@ func (s *CopilotUsageStore) callsChunk(
 	}
 	defer func() { _ = rows.Close() }()
 
+	// The projection is fixed, so a width that is not copilotUsageScanWidth
+	// means this file and its SELECT have drifted apart. Checked ONCE, here,
+	// because the per-row path below tolerates a failed scan by skipping the
+	// row — and a systematic width mismatch would otherwise skip every row and
+	// report an empty, entirely believable, batch.
+	columns, err := rows.Columns()
+	if err != nil {
+		return nil, fmt.Errorf("copilot usage store %s: read calls: %w", s.path, err)
+	}
+	if len(columns) != copilotUsageScanWidth {
+		return nil, fmt.Errorf("copilot usage store %s: read calls: projected %d columns, scan expects %d",
+			s.path, len(columns), copilotUsageScanWidth)
+	}
+
 	var calls []CopilotUsageCall
+	var skipped int
 	for rows.Next() {
-		// Every numeric column but `id` is nullable in Copilot's DDL, so each
-		// one is scanned through a Null* and a NULL reads as "not reported"
-		// rather than aborting the sweep.
-		var (
-			call                                                    CopilotUsageCall
-			turnIndex, nanoAIU                                      sql.NullInt64
-			inputTokens, outputTokens, cacheRead, cacheWrite        sql.NullInt64
-			reasoningTokens, durationMs, firstTokenMs, interTokenMs sql.NullInt64
-			multiplier                                              sql.NullFloat64
-			model, effort, finishReason, createdAt                  sql.NullString
-			nested                                                  sql.NullBool
-		)
-		if err := rows.Scan(
-			&call.SessionID, &call.EventID, &turnIndex, &model,
-			&inputTokens, &outputTokens, &cacheRead, &cacheWrite,
-			&reasoningTokens, &nanoAIU, &multiplier,
-			&durationMs, &firstTokenMs, &interTokenMs,
-			&effort, &finishReason, &createdAt, &nested,
-		); err != nil {
-			return nil, fmt.Errorf("copilot usage store %s: scan call: %w", s.path, err)
+		// Every cell is scanned through `any` and coerced, rather than through
+		// a typed Null*. SQLite's declared types are ADVISORY — an INTEGER
+		// column holds whatever the writer put in it — and Copilot's writer
+		// does exactly that: `time_to_first_token_ms` and
+		// `inter_token_latency_ms` are declared INTEGER and written as REAL
+		// (2832.3695, 3577.11825). A `sql.NullInt64` destination turns that
+		// into a scan error, and because one bad cell failed the whole read,
+		// EVERY sweep tick failed and the meter stayed blank on every real
+		// host while the integer-seeded fixtures passed. Coercing per cell is
+		// the fix that cannot come back for the next column Copilot decides to
+		// write as a float.
+		var cells [copilotUsageScanWidth]any
+		dest := make([]any, len(cells))
+		for i := range cells {
+			dest[i] = &cells[i]
 		}
-		call.TurnIndex = turnIndex.Int64
-		call.Model = strings.TrimSpace(model.String)
-		call.InputTokens = max(inputTokens.Int64, 0)
-		call.OutputTokens = max(outputTokens.Int64, 0)
-		call.CacheReadTokens = max(cacheRead.Int64, 0)
-		call.CacheWriteTokens = max(cacheWrite.Int64, 0)
-		call.ReasoningTokens = max(reasoningTokens.Int64, 0)
+		if err := rows.Scan(dest...); err != nil {
+			// One unreadable row is not a reason to blank the batch: the rows
+			// that did read are real accounting, and failing here would put the
+			// meter back exactly where this bug had it.
+			skipped++
+			continue
+		}
+		sessionID := copilotUsageText(cells[0])
+		eventID := copilotUsageNumberOf(cells[1])
+		if sessionID == "" || !eventID.ok {
+			// Structural, not merely unreported: without both, the row can
+			// neither be attributed to a session nor checkpointed.
+			skipped++
+			continue
+		}
+		call := CopilotUsageCall{SessionID: sessionID, EventID: eventID.int64()}
+		call.TurnIndex = copilotUsageNumberOf(cells[2]).int64()
+		call.Model = copilotUsageText(cells[3])
+		call.InputTokens = max(copilotUsageNumberOf(cells[4]).int64(), 0)
+		call.OutputTokens = max(copilotUsageNumberOf(cells[5]).int64(), 0)
+		call.CacheReadTokens = max(copilotUsageNumberOf(cells[6]).int64(), 0)
+		call.CacheWriteTokens = max(copilotUsageNumberOf(cells[7]).int64(), 0)
+		call.ReasoningTokens = max(copilotUsageNumberOf(cells[8]).int64(), 0)
 		// HasNanoAIU keeps "Copilot reported zero" distinguishable from
 		// "Copilot said nothing", exactly as the durable follower does: a BYOK
 		// or mock provider legitimately bills zero.
-		if nanoAIU.Valid && nanoAIU.Int64 >= 0 {
-			call.TotalNanoAIU = nanoAIU.Int64
+		if nanoAIU := copilotUsageNumberOf(cells[9]); nanoAIU.ok && nanoAIU.value >= 0 {
+			call.TotalNanoAIU = nanoAIU.int64()
 			call.HasNanoAIU = true
 		}
-		call.RequestMultiplier = multiplier.Float64
-		call.DurationMs = max(durationMs.Int64, 0)
-		call.TimeToFirstTokenMs = max(firstTokenMs.Int64, 0)
-		call.InterTokenLatencyMs = max(interTokenMs.Int64, 0)
-		call.ReasoningEffort = strings.TrimSpace(effort.String)
-		call.FinishReason = strings.TrimSpace(finishReason.String)
-		call.CreatedAt = strings.TrimSpace(createdAt.String)
-		call.Nested = nested.Valid && nested.Bool
+		call.RequestMultiplier = copilotUsageNumberOf(cells[10]).value
+		// The three latency columns are the ones Copilot writes as REAL. They
+		// are ROUNDED to whole milliseconds rather than truncated: the
+		// snapshot's fields are integer ms, and truncation would quietly bias
+		// every reading down.
+		call.DurationMs = max(copilotUsageNumberOf(cells[11]).int64(), 0)
+		call.TimeToFirstTokenMs = max(copilotUsageNumberOf(cells[12]).int64(), 0)
+		call.InterTokenLatencyMs = max(copilotUsageNumberOf(cells[13]).int64(), 0)
+		call.ReasoningEffort = copilotUsageText(cells[14])
+		call.FinishReason = copilotUsageText(cells[15])
+		call.CreatedAt = copilotUsageText(cells[16])
+		nested := copilotUsageNumberOf(cells[17])
+		call.Nested = nested.ok && nested.value != 0
 		calls = append(calls, call)
+	}
+	if skipped > 0 {
+		s.noteSkippedRows(skipped)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("copilot usage store %s: read calls: %w", s.path, err)
