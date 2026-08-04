@@ -208,8 +208,32 @@ func holdSoftExitEscalation(t *testing.T) func() {
 	// assertion failure.
 	t.Cleanup(func() {
 		release()
-		agentd.WaitForBackgroundForTest()
-		restore()
+		restoreAfterBackgroundDrain(restore)
 	})
 	return release
+}
+
+// restoreAfterBackgroundDrain joins the background before putting a test hook
+// back, and is the whole of what a NON-PARKING hook needs at cleanup.
+//
+// The hooks in this package are plain package-level func vars: a background
+// goroutine reads one while the test's cleanup writes it, with no
+// synchronization on either side. On the happy path the test has already
+// called WaitForBackgroundForTest, so there is no overlap and no race. The
+// exposure is the failure path — a require failing before that join aborts the
+// test, cleanup restores immediately, and the goroutine may still be reading.
+// Under -race that reports as a data race for the whole package and BURIES the
+// real assertion failure, so a genuine test failure arrives as noise in
+// unrelated output.
+//
+// Two steps, not the three in holdSoftExitEscalation above. That one needs a
+// release first because its hook PARKS on a channel, so joining before
+// releasing would block until the go test timeout. A hook that returns on its
+// own has nothing to release, and adding a release with no hold behind it
+// would copy the shape of a sibling fix instead of fixing the site — and would
+// teach the next reader that three steps is the pattern here. It is not; the
+// release is a consequence of parking.
+func restoreAfterBackgroundDrain(restore func()) {
+	agentd.WaitForBackgroundForTest()
+	restore()
 }

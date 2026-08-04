@@ -139,7 +139,7 @@ func TestSoftExitEscalation_SignalsProcessGroupWhenTmuxKillIsInsufficient(t *tes
 	// The process survives everything up to and including SIGTERM; SIGKILL
 	// ends it, and takes the tmux session with it exactly as a real pane
 	// process's death does.
-	t.Cleanup(agentd.SetSoftExitEscalationProcessForTest(
+	restoreProcess := agentd.SetSoftExitEscalationProcessForTest(
 		func(pid int) bool {
 			mu.Lock()
 			defer mu.Unlock()
@@ -160,7 +160,8 @@ func TestSoftExitEscalation_SignalsProcessGroupWhenTmuxKillIsInsufficient(t *tes
 			}
 			return nil
 		},
-	))
+	)
+	t.Cleanup(func() { restoreAfterBackgroundDrain(restoreProcess) })
 
 	cc := f.World.CCs.GetByConvID(conv)
 	require.NotNil(t, cc)
@@ -204,11 +205,12 @@ func TestSoftExitEscalation_StandsDownForASuccessorPane(t *testing.T) {
 	// what a resume reusing the conv-id-derived tmux name looks like from the
 	// watchdog's side.
 	var once sync.Once
-	t.Cleanup(agentd.SetSoftExitEscalationPollForTest(func() {
+	restorePoll := agentd.SetSoftExitEscalationPollForTest(func() {
 		once.Do(func() {
 			f.World.Tmux.SetPaneIdentityForTest(tmuxSes, "%94", 9494)
 		})
-	}))
+	})
+	t.Cleanup(func() { restoreAfterBackgroundDrain(restorePoll) })
 
 	f.AssertSoftStopped(f.AsHuman().Stop(conv, false))
 	agentd.WaitForBackgroundForTest()

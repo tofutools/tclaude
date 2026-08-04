@@ -180,11 +180,14 @@ func TestSoftExit_BoundedRetriesForHungPane(t *testing.T) {
 // and drop its input). The guard keys on the tmux pane's live OS pid, which
 // is fresh for the new process, so the retry recognises "not my pane" and
 // aborts.
+//
+// This drives the SELECTED-TARGET retry engine (scheduleSoftExitRetryTarget),
+// not the pid-keyed scheduleSoftExitRetry whose own doc comment describes this
+// same resume-reuses-the-name scenario. Both guard it; they are separate
+// engines and only this one carries the staging hook used below. Anyone who
+// reads "live-PID guard" and greps for livePanePID lands in the other one.
 func TestSoftExit_RetryDoesNotExitResumedPaneReusingTmuxName(t *testing.T) {
 	f := newFlow(t)
-	// Give the retry a real (if short) window so the test can stage the
-	// resume-reuses-the-name race deterministically before the retry fires.
-	t.Cleanup(agentd.SetSoftExitRetryDelayForTest(150 * time.Millisecond))
 
 	const conv = "sxjd-1111-2222-3333-4444"
 	const tmuxSes = "tmux-sxjd"
@@ -199,19 +202,63 @@ func TestSoftExit_RetryDoesNotExitResumedPaneReusingTmuxName(t *testing.T) {
 	require.NotNil(t, cc)
 	cc.Receive("half-typed leftover ")
 
+	// Stage the resume INSIDE the retry's own pre-probe hook: the original pane
+	// exits and a fresh CCSim (a new process → new pane pid) re-registers under
+	// the SAME tmux name, modelling `session new -r`'s conv-id-derived name
+	// collision. The hook fires immediately before the retry reads the pane, so
+	// the swap is ORDERED ahead of the guard rather than raced against a delay.
+	//
+	// This used to widen the retry delay to 150ms — over newFlow's shared 1ms —
+	// purely to buy wall-clock in which to stage the swap from the test
+	// goroutine. Deleting that override is the fix: the moment is now the
+	// instant the guard actually runs, which is a stronger test than any
+	// window, and the test sits on the same footing as its siblings below.
+	//
+	// Gated on attempt 2, matching those siblings. Ungated, a guard that stopped
+	// working would keep looping and keep re-staging a fresh pane, and the
+	// assertions below could still be satisfied — green for the wrong reason,
+	// which is the failure mode this whole fixture exists to catch.
+	//
+	// No require/assert in here: this runs on the retry's background goroutine,
+	// where FailNow is not supported and would surface as a hang or a
+	// wrong-goroutine panic instead of a clean failure. The error is captured
+	// and asserted after the join, for the same reason the hook restores after
+	// the join — a failure has to stay legible.
+	var (
+		stageOnce sync.Once
+		staged    bool
+		stageErr  error
+	)
+	restoreProbe := agentd.SetBeforeSoftExitTargetRetryProbeForTest(func(attempt int) {
+		if attempt != 2 {
+			return
+		}
+		stageOnce.Do(func() {
+			cc.MarkDead()
+			resumed := testharness.NewCCSimWithID(t, f.World.HomeDir, conv, cwd)
+			if err := resumed.Start(); err != nil {
+				stageErr = err
+				return
+			}
+			f.World.Tmux.Register(tmuxSes, cwd, resumed)
+			staged = true
+		})
+	})
+	t.Cleanup(func() { restoreAfterBackgroundDrain(restoreProbe) })
+
 	stop := f.AsHuman().Stop(conv, false)
 	f.AssertSoftStopped(stop)
 
-	// Stage the resume: the original pane exits and a fresh CCSim (a new
-	// process → new pane pid) re-registers under the SAME tmux name, modelling
-	// `session new -r`'s conv-id-derived name collision.
-	cc.MarkDead()
-	resumed := testharness.NewCCSimWithID(t, f.World.HomeDir, conv, cwd)
-	require.NoError(t, resumed.Start())
-	f.World.Tmux.Register(tmuxSes, cwd, resumed)
-
 	agentd.WaitForBackgroundForTest()
 
+	require.NoError(t, stageErr, "the resumed pane must have started for this test to mean anything")
+	// Pins WHICH engine ran. The staging hook exists only on the selected-target
+	// retry; if a change to the stop path ever routed this scenario onto the
+	// pid-keyed scheduleSoftExitRetry instead, the hook would never fire, no
+	// pane swap would happen, and both assertions below would pass anyway —
+	// vacuously, against a race that was never staged.
+	require.True(t, staged,
+		"the retry never reached its pre-probe hook: this scenario is no longer driving the selected-target engine")
 	assert.True(t, f.World.Tmux.IsAlive(tmuxSes),
 		"the resumed pane must survive — the retry must not /exit a new process that reused the tmux name")
 	// The only /exit to this name was the original (scrambled) attempt; the
