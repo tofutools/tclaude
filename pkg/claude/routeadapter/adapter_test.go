@@ -235,6 +235,112 @@ func TestAwaitAttachPrefersTheAttachReasonOverCancellation(t *testing.T) {
 	})
 }
 
+type refuseConsumer struct{ allowAll }
+
+func (refuseConsumer) AuthorizeConsumer(context.Context, routebroker.ConsumerAuth) error {
+	return errors.New("lease revoked")
+}
+
+// A consumer stream has no caller waiting on it: the accepted local connection
+// can carry no reason and simply dies. Without the refusal seam the adapter
+// therefore reports a broker refusal exactly as it reports a peer hanging up.
+func TestAdapterReportsRefusedConsumerAttach(t *testing.T) {
+	port := freePort(t)
+	broker, err := routebroker.New(routebroker.Config{Authorizer: refuseConsumer{}})
+	require.NoError(t, err)
+	defer broker.Close()
+	adapter, err := New(broker, []int{port})
+	require.NoError(t, err)
+	defer adapter.Close()
+	refusals := make(chan error, 4)
+	leases := make(chan string, 4)
+	adapter.SetConsumerRefusalObserver(func(consumer Consumer, refusal error) {
+		leases <- consumer.LeaseID
+		refusals <- refusal
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	endpoint, err := adapter.Open(ctx, Consumer{
+		LeaseID: "lease-refused", RouteID: "route-refused", AgentID: "consumer",
+		ConvID: "consumer-conv", LaunchGeneration: "consumer-launch", GroupGeneration: 1,
+	})
+	require.NoError(t, err)
+	conn, err := net.DialTimeout("tcp4", endpoint, time.Second)
+	require.NoError(t, err)
+	defer conn.Close()
+	select {
+	case refusal := <-refusals:
+		require.ErrorIs(t, refusal, routebroker.ErrUnauthorized)
+		require.Equal(t, "lease-refused", <-leases)
+	case <-time.After(5 * time.Second):
+		t.Fatal("refused consumer attach was never reported")
+	}
+	// The refused stream is not proxied: the local connection ends rather than
+	// waiting on a route the broker never admitted.
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(5*time.Second)))
+	_, err = conn.Read(make([]byte, 1))
+	require.Error(t, err)
+}
+
+// Capacity is the other refusal the adapter used to discard, and it must reach
+// the same seam so the daemon can tell it apart from an authority verdict.
+func TestAdapterReportsConsumerCapacityRefusal(t *testing.T) {
+	targetPort, consumerPort := freePort(t), freePort(t)
+	target, err := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(targetPort)))
+	require.NoError(t, err)
+	defer target.Close()
+	go func() {
+		for {
+			conn, acceptErr := target.Accept()
+			if acceptErr != nil {
+				return
+			}
+			go func() { _, _ = io.Copy(conn, conn) }()
+		}
+	}()
+	broker, err := routebroker.New(routebroker.Config{Authorizer: allowAll{}, MaxConsumersPerRoute: 1})
+	require.NoError(t, err)
+	defer broker.Close()
+	adapter, err := New(broker, []int{targetPort, consumerPort})
+	require.NoError(t, err)
+	defer adapter.Close()
+	refusals := make(chan error, 4)
+	adapter.SetConsumerRefusalObserver(func(_ Consumer, refusal error) { refusals <- refusal })
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err = adapter.Publish(ctx, Publisher{
+		RouteID: "route-capacity", AgentID: "publisher", ConvID: "publisher-conv",
+		LaunchGeneration: "publisher-launch", GroupGeneration: 1,
+		Target: "tcp://127.0.0.1:" + strconv.Itoa(targetPort),
+	})
+	require.NoError(t, err)
+	endpoint, err := adapter.Open(ctx, Consumer{
+		LeaseID: "lease-capacity", RouteID: "route-capacity", AgentID: "consumer",
+		ConvID: "consumer-conv", LaunchGeneration: "consumer-launch", GroupGeneration: 1,
+	})
+	require.NoError(t, err)
+	first, err := net.DialTimeout("tcp4", endpoint, time.Second)
+	require.NoError(t, err)
+	defer first.Close()
+	// Round-trip the admitted stream so the second dial cannot win the race for
+	// the single consumer slot.
+	_, err = first.Write([]byte("ping"))
+	require.NoError(t, err)
+	echoed := make([]byte, 4)
+	require.NoError(t, first.SetReadDeadline(time.Now().Add(5*time.Second)))
+	_, err = io.ReadFull(first, echoed)
+	require.NoError(t, err)
+	second, err := net.DialTimeout("tcp4", endpoint, time.Second)
+	require.NoError(t, err)
+	defer second.Close()
+	select {
+	case refusal := <-refusals:
+		require.ErrorIs(t, refusal, routebroker.ErrConsumerLimit)
+	case <-time.After(5 * time.Second):
+		t.Fatal("consumer capacity refusal was never reported")
+	}
+}
+
 func TestAdapterRejectsUnreservedPublisherTarget(t *testing.T) {
 	broker, err := routebroker.New(routebroker.Config{Authorizer: allowAll{}})
 	if err != nil {

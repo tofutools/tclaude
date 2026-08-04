@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -34,11 +35,37 @@ func configuredDarwinRouteAdapter() (*routeadapter.Adapter, bool, error) {
 	if err != nil {
 		return nil, true, err
 	}
+	adapter.SetConsumerRefusalObserver(func(consumer routeadapter.Consumer, err error) {
+		recordDarwinConsumerRefusal(adapter, consumer, err)
+	})
 	ctx, cancel := context.WithCancel(context.Background())
 	darwinRouteAdapterState.adapter = adapter
 	darwinRouteAdapterState.cancel = cancel
 	go reconcileDarwinRouteAdapter(ctx, adapter)
 	return adapter, true, nil
+}
+
+// recordDarwinConsumerRefusal moves a broker refusal of one consumer stream
+// onto the durable lease state the consuming agent can read. The adapter has
+// no caller to return the error to: each refused stream is an accepted local
+// TCP connection, so the agent would otherwise see only a connection that
+// closed, and could not tell a revoked lease from its peer hanging up.
+func recordDarwinConsumerRefusal(adapter *routeadapter.Adapter, consumer routeadapter.Consumer, err error) {
+	// Capacity is per-connection back-pressure, not a verdict on the lease:
+	// the listener stays usable as soon as a slot frees, so this must not move
+	// the endpoint to its terminal refused state or close the lease.
+	if errors.Is(err, routebroker.ErrConsumerLimit) {
+		slog.Warn("route adapter: consumer stream refused for capacity",
+			"lease_id", consumer.LeaseID, "route_id", consumer.RouteID, "agent_id", consumer.AgentID)
+		return
+	}
+	slog.Warn("route adapter: consumer attach refused",
+		"lease_id", consumer.LeaseID, "route_id", consumer.RouteID, "agent_id", consumer.AgentID, "err", err)
+	// Same treatment the Linux channel handler gives its own refusals: close
+	// the durable lease, then mark the endpoint refused with the shared detail.
+	_ = db.CloseAgentRouteLease(consumer.LeaseID, consumer.AgentID, consumer.ConvID)
+	setRouteConsumerEndpointRefused(consumer.LeaseID, routeEndpointRefusalDetail(err))
+	adapter.CloseLease(consumer.LeaseID)
 }
 
 func darwinRouteLaunch(agentID, convID, generation string) (*db.DarwinRouteLaunch, bool, error) {

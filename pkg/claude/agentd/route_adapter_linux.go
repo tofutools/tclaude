@@ -191,14 +191,3 @@ func routeAdapterCloseRoute(string)             {}
 func routeAdapterCloseLease(string)             {}
 func routeAdapterCloseAll()                     {}
 func routeAdapterBrokerEvent(routebroker.Event) {}
-
-func routeEndpointRefusalDetail(err error) string {
-	switch {
-	case errors.Is(err, routebroker.ErrConsumerLimit):
-		return "route adapter capacity exhausted"
-	case errors.Is(err, routebroker.ErrUnauthorized):
-		return "route adapter authorization refused"
-	default:
-		return "route adapter attachment refused"
-	}
-}

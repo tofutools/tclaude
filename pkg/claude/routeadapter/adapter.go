@@ -45,13 +45,14 @@ type Consumer struct {
 }
 
 type Adapter struct {
-	broker *routebroker.Broker
-	mu     sync.Mutex
-	ports  []int
-	used   map[string]int
-	routes map[string]*publisherState
-	leases map[string]*consumerState
-	closed bool
+	broker          *routebroker.Broker
+	mu              sync.Mutex
+	ports           []int
+	used            map[string]int
+	routes          map[string]*publisherState
+	leases          map[string]*consumerState
+	consumerRefused func(Consumer, error)
+	closed          bool
 }
 
 type publisherState struct {
@@ -169,6 +170,34 @@ func (a *Adapter) release(key string) {
 	a.mu.Lock()
 	delete(a.used, key)
 	a.mu.Unlock()
+}
+
+// SetConsumerRefusalObserver registers the seam that receives the reason a
+// consumer stream was never admitted. Consumer streams have no caller waiting
+// on them — each one is an accepted local TCP connection, which can carry no
+// structured reason back — so without this seam a broker refusal is
+// indistinguishable from an ordinary peer disconnect. The daemon uses it to
+// move the refusal onto the durable, agent-visible lease state, the same place
+// the Linux channel handler records its own refusals.
+//
+// The observer runs on the refused stream's goroutine with no adapter lock
+// held, so it may call back into CloseLease.
+func (a *Adapter) SetConsumerRefusalObserver(observe func(Consumer, error)) {
+	a.mu.Lock()
+	a.consumerRefused = observe
+	a.mu.Unlock()
+}
+
+func (a *Adapter) reportConsumerRefusal(consumer Consumer, err error) {
+	if err == nil {
+		return
+	}
+	a.mu.Lock()
+	observe := a.consumerRefused
+	a.mu.Unlock()
+	if observe != nil {
+		observe(consumer, err)
+	}
 }
 
 // Publish attaches a daemon-owned publisher channel. The target application
@@ -444,13 +473,50 @@ func (a *Adapter) consumerStream(ctx context.Context, raw net.Conn, consumer Con
 	brokerConn, adapterConn := net.Pipe()
 	streamCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	admitted := make(chan struct{})
+	refused := make(chan error, 1)
 	go func() {
-		_ = a.broker.AttachConsumer(streamCtx, routebroker.ConsumerAuth{
+		accepted := false
+		err := a.broker.AttachConsumerWithReady(streamCtx, routebroker.ConsumerAuth{
 			LeaseID: consumer.LeaseID, RouteID: consumer.RouteID, AgentID: consumer.AgentID,
 			ConvID: consumer.ConvID, LaunchGeneration: consumer.LaunchGeneration,
 			GroupGeneration: consumer.GroupGeneration,
-		}, brokerConn)
+		}, brokerConn, func() error {
+			accepted = true
+			close(admitted)
+			return nil
+		})
+		// Only a failure before the ready callback is a refusal: it means the
+		// broker never reserved a consumer slot for this stream. Anything after
+		// admission is an ordinary stream ending, which the copy loops below
+		// already observe. accepted is written and read on this goroutine only.
+		if !accepted {
+			refused <- err
+		}
 	}()
+	// The stream must not be proxied before the broker owns it. A refused
+	// attach closes the broker end of the pipe, so the old unconditional open
+	// frame died of a closed pipe and reported nothing; waiting here keeps the
+	// reason instead of the symptom.
+	select {
+	case <-admitted:
+	case err := <-refused:
+		a.reportConsumerRefusal(consumer, err)
+		_ = adapterConn.Close()
+		return
+	case <-streamCtx.Done():
+		// Teardown is external here — unlike the publish barrier, nothing on
+		// the attach goroutine cancels this context — so a queued refusal is
+		// not ordered against it and this drain is only best effort: it reports
+		// a reason that already arrived rather than waiting for one.
+		select {
+		case err := <-refused:
+			a.reportConsumerRefusal(consumer, err)
+		default:
+		}
+		_ = adapterConn.Close()
+		return
+	}
 	if err := routebroker.WriteFrame(adapterConn, routebroker.Frame{Kind: routebroker.KindOpen, Stream: 1}, maxPayload); err != nil {
 		_ = adapterConn.Close()
 		return
