@@ -53,6 +53,19 @@ import (
 // because the CLI misbehaved, not because the runner was busy.
 const permissionDeadline = 30 * time.Second
 
+// headlessPermissionDeadline bounds the non-PTY permission probes in this file.
+//
+// A headless Run either exits or fails; it has no PTY permission prompt whose
+// blocked arm pays the deadline. In particular, the grammar probe's verdict
+// comes from the launch parse error and whether the provider was reached. The
+// other headless probes use the same non-blocking shape. They therefore do not
+// share permissionDeadline's sizing trade-off, where a tighter bound keeps
+// every genuinely blocked PTY row cheap. Sixty seconds gives ample margin over
+// the observed loaded startup without adding cost to those blocked scenarios.
+// Only use this for a headless row with no legitimate blocking arm: a
+// non-completion must be a startup or hang failure, never the measurement.
+const headlessPermissionDeadline = 60 * time.Second
+
 // blockedQuiet is how long a pty scenario's transcript must stand still, with
 // no follow-up request, before the run is called blocked and stopped.
 //
@@ -559,7 +572,7 @@ func TestCopilotPermissionDenyToolGrammar(t *testing.T) {
 				BaseURL:   mock.BaseURL(),
 				Prompt:    "Answer in one word.",
 				ExtraArgs: []string{"--deny-tool", tc.pattern},
-				Timeout:   permissionDeadline,
+				Timeout:   headlessPermissionDeadline,
 			})
 
 			out := result.Stdout + result.Stderr
@@ -668,7 +681,7 @@ func TestCopilotPermissionHeadlessIsNotEvidence(t *testing.T) {
 		// The identical posture that blocks on a pty in
 		// TestCopilotPermissionToolApprovalGate.
 		OmitAllowAllTools: true,
-		Timeout:           permissionDeadline,
+		Timeout:           headlessPermissionDeadline,
 	})
 
 	t.Logf("permission verdict: headless-auto-allows=%v (provider requests: %d)",
@@ -1117,7 +1130,7 @@ func TestCopilotPermissionResumeSubmitsPrompt(t *testing.T) {
 		BaseURL:   mockFor(t, "MOCK FIRST ANSWER").BaseURL(),
 		Prompt:    "First question.",
 		SessionID: sessionID,
-		Timeout:   permissionDeadline,
+		Timeout:   headlessPermissionDeadline,
 	})
 	require.Equal(t, 0, seed.ExitCode, "stderr: %s", seed.Stderr)
 	require.DirExists(t, filepath.Join(dirs.Home, "session-state", sessionID),
