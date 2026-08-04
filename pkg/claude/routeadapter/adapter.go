@@ -498,22 +498,19 @@ func (a *Adapter) consumerStream(ctx context.Context, raw net.Conn, consumer Con
 	// attach closes the broker end of the pipe, so the old unconditional open
 	// frame died of a closed pipe and reported nothing; waiting here keeps the
 	// reason instead of the symptom.
+	//
+	// These two arms are exhaustive, and deliberately have no context arm.
+	// Cancellation is not a third outcome: it makes the attach return, and that
+	// return lands on refused. Racing a context arm against it would lose the
+	// reason precisely when it matters most — an authority refusal is emitted
+	// synchronously as a consumer-rejected event, and the daemon's handler for
+	// that event closes the lease, so this very stream's context is cancelled
+	// from the attach goroutine before it reports. The refusal that fires the
+	// cancel would then routinely lose to the cancel it fired.
 	select {
 	case <-admitted:
 	case err := <-refused:
 		a.reportConsumerRefusal(consumer, err)
-		_ = adapterConn.Close()
-		return
-	case <-streamCtx.Done():
-		// Teardown is external here — unlike the publish barrier, nothing on
-		// the attach goroutine cancels this context — so a queued refusal is
-		// not ordered against it and this drain is only best effort: it reports
-		// a reason that already arrived rather than waiting for one.
-		select {
-		case err := <-refused:
-			a.reportConsumerRefusal(consumer, err)
-		default:
-		}
 		_ = adapterConn.Close()
 		return
 	}

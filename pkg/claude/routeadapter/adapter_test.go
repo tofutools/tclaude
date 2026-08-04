@@ -246,10 +246,24 @@ func (refuseConsumer) AuthorizeConsumer(context.Context, routebroker.ConsumerAut
 // therefore reports a broker refusal exactly as it reports a peer hanging up.
 func TestAdapterReportsRefusedConsumerAttach(t *testing.T) {
 	port := freePort(t)
-	broker, err := routebroker.New(routebroker.Config{Authorizer: refuseConsumer{}})
+	// The broker emits consumer-rejected synchronously from the attach call,
+	// and the daemon's handler for that event closes the lease — which cancels
+	// this very stream's context from the attach goroutine, before it can
+	// report. Wire that same teardown here: without it the test would only
+	// exercise a broker nobody is listening to, and would pass over a refusal
+	// the production adapter loses to the cancel the refusal itself triggered.
+	var adapter *Adapter
+	broker, err := routebroker.New(routebroker.Config{
+		Authorizer: refuseConsumer{},
+		OnEvent: func(event routebroker.Event) {
+			if event.Kind == "consumer-rejected" && event.LeaseID != "" {
+				adapter.CloseLease(event.LeaseID)
+			}
+		},
+	})
 	require.NoError(t, err)
 	defer broker.Close()
-	adapter, err := New(broker, []int{port})
+	adapter, err = New(broker, []int{port})
 	require.NoError(t, err)
 	defer adapter.Close()
 	refusals := make(chan error, 4)
