@@ -452,9 +452,10 @@ than a silent filter, and it does not rely on duplicate-flag ordering: nothing
 measured establishes what Copilot does with a contradictory or repeated option,
 so a launch that would depend on those semantics is refused instead of guessed
 at. The `flag-name-exactness` contract entry measures the audit's exact-name
-boundary against 1.0.77: prefix abbreviation, camelCase and `--no-` negation
-spellings all exit as unknown options before provider contact. The audit is not
-a universal firewall over Copilot's option surface — MCP, plugin and
+boundary against 1.0.77 for the sampled `--allow-all-tools` spellings: its
+prefix abbreviation, camelCase and `--no-` negation forms all exit as unknown
+options before provider contact. That probe does not enumerate every audited
+flag. The audit is not a universal firewall over Copilot's option surface — MCP, plugin and
 agent-selection options that tclaude neither renders nor records are outside it.
 
 **What tclaude records is the launch posture, not a durable boundary.** Copilot's
