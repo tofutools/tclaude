@@ -37,8 +37,11 @@ import (
 //     `--allow-all-paths` and `--add-dir` were all measured and all still park
 //     on the modal. `COPILOT_ALLOW_ALL=true` does clear it, but it is a blanket
 //     promotion of every tool, path and URL approval as well, so it is exactly
-//     the kind of silent widening this seeding exists to avoid — tclaude must
-//     not set it, and copilot_sandbox.go's launch posture keeps it unset.
+//     the kind of silent widening this seeding exists to avoid, and tclaude
+//     never sets it. Note what that does and does NOT claim: nothing here
+//     strips the variable from a launch that inherited it from the operator's
+//     own environment. Refusing or clearing it belongs to the approval wave
+//     that owns Copilot's env posture, not to this editor.
 //
 // What DOES clear it, and the only thing that does, is a pre-launch
 // `trustedFolders` array in COPILOT_HOME's config.json containing the launch
@@ -150,6 +153,11 @@ func ensureCopilotDirTrustedInHome(stateDir, projectDir string) error {
 // costs a frozen pane, so both spellings go in. The extra entry is inert when
 // the two are equal (the common Linux case), and it is still a directory the
 // operator opted in to trusting — the same physical one, named the other way.
+// A dir that does not exist yet resolves to nothing, so only the given
+// spelling is seeded. That is a silent degradation rather than an error
+// because the launch cwd normally exists by the time this runs, and a refusal
+// would fail a seed that is correct on every platform where the two spellings
+// are equal.
 func copilotTrustSpellings(projectDir string) []string {
 	dirs := []string{filepath.Clean(projectDir)}
 	if resolved, err := filepath.EvalSymlinks(dirs[0]); err == nil {

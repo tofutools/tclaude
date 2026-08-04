@@ -1116,6 +1116,12 @@ jobs:
             # the only platform-real evidence for the fix never ran.
             required+=(
               TestCopilotConvStoreMatchesTheUnresolvedCwdSpelling
+              # TCL-973's other macOS-shaped scenario, and required here for
+              # exactly the same reason: the seeder writes BOTH the spelling it
+              # is handed and that path's resolved form, which is only
+              # falsifiable where the two differ. It skips on Linux, so this
+              # arm is the only place it is evidence rather than a no-op.
+              TestCopilotDirTrustSeedingMatchesTheUnresolvedCwdSpelling
             )
           fi
           # TCL-973 Phase 0's permission matrix. Most of it is Linux-only for

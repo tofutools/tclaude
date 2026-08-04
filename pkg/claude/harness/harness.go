@@ -292,13 +292,20 @@ type Harness struct {
 	// matter: the dialog is what freezes an unattended pane, and the writable
 	// record is what lets the trust-dir opt-in do anything about it.
 	//
-	// Codex sets it (a [projects."<dir>"] trust_level table in
-	// ~/.codex/config.toml — codex_dir_trust.go) and so does Claude Code (a
-	// projects[<dir>].hasTrustDialogAccepted flag in ~/.claude.json —
-	// claude_dir_trust.go). The two stores are unrelated in shape, so
-	// EnsureDirTrusted dispatches; this flag is only the "is there anything to
-	// dispatch to" gate that ResolveTrustDir, the spawn dialog and the profile
-	// editor read.
+	// Three harnesses set it, and their stores are unrelated in shape:
+	//
+	//   - Codex: a [projects."<dir>"] trust_level table in ~/.codex/config.toml
+	//     (codex_dir_trust.go).
+	//   - Claude Code: a projects[<dir>].hasTrustDialogAccepted flag in
+	//     ~/.claude.json (claude_dir_trust.go).
+	//   - Copilot: the dir appended to trustedFolders in COPILOT_HOME's
+	//     config.json (copilot_dir_trust.go). Its dialog is the earliest of the
+	//     three — it blocks before the CLI contacts the model provider at all —
+	//     and its store is the only one that MOVES with the launch environment.
+	//
+	// EnsureDirTrusted dispatches on that shape; this flag is only the "is there
+	// anything to dispatch to" gate that ResolveTrustDir, the spawn dialog and
+	// the profile editor read.
 	//
 	// OpenCode leaves it false: no trust dialog, hence no record to seed.
 	DirTrust bool

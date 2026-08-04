@@ -172,19 +172,20 @@ type NewParams struct {
 
 	// TrustDir opts into pre-trusting the launch cwd, so a detached pane
 	// doesn't freeze on the harness's "do you trust this folder?" dialog
-	// (JOH-205 for Codex, JOH-369 for Claude Code). Each harness records trust
-	// in its own config file, written BEFORE launch since neither exposes a
-	// per-invocation trust flag:
+	// (JOH-205 for Codex, JOH-369 for Claude Code, TCL-973 for Copilot). Each
+	// harness records trust in its own config file, written BEFORE launch since
+	// none of them exposes a per-invocation trust flag:
 	//
-	//   codex  → [projects."<cwd>"] trust_level = "trusted" in ~/.codex/config.toml
-	//   claude → projects.<cwd>.hasTrustDialogAccepted = true in ~/.claude.json
+	//   codex   → [projects."<cwd>"] trust_level = "trusted" in ~/.codex/config.toml
+	//   claude  → projects.<cwd>.hasTrustDialogAccepted = true in ~/.claude.json
+	//   copilot → <cwd> appended to trustedFolders in $COPILOT_HOME/config.json
 	//
 	// OFF by default and NEVER auto-defaulted on this path: editing a config
 	// tclaude does not own is a side effect the user must explicitly request
 	// (dashboard checkbox / this flag). Rejected for a harness with no
 	// dir-trust dialog. The write is atomic + idempotent
 	// (harness.EnsureDirTrusted).
-	TrustDir bool `long:"trust-dir" help:"Pre-trust the launch directory so a detached pane doesn't freeze on the harness's trust-folder dialog: codex gets [projects.\"<cwd>\"] trust_level=\"trusted\" in ~/.codex/config.toml, claude gets projects.<cwd>.hasTrustDialogAccepted=true in ~/.claude.json. Off by default; edits that harness's config, so opt-in only"`
+	TrustDir bool `long:"trust-dir" help:"Pre-trust the launch directory so a detached pane doesn't freeze on the harness's trust-folder dialog: codex gets [projects.\"<cwd>\"] trust_level=\"trusted\" in ~/.codex/config.toml, claude gets projects.<cwd>.hasTrustDialogAccepted=true in ~/.claude.json, copilot gets the directory appended to trustedFolders in $COPILOT_HOME/config.json. Off by default; edits that harness's config, so opt-in only"`
 
 	// RemoteControl arms Claude Code's built-in Remote Access at launch
 	// (`claude --remote-control`), so the session is reachable from

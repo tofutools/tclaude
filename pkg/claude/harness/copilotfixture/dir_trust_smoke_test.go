@@ -44,7 +44,12 @@ const dirTrustDeadline = 60 * time.Second
 // seedTrustLikeProduction calls the production seeder with the launch's own
 // environment — the same call session.New makes for a --trust-dir spawn, whose
 // profile may have relocated COPILOT_HOME.
-func seedTrustLikeProduction(t *testing.T, dirs copilotfixture.Dirs) {
+//
+// projectDir is the cwd as the CALLER spells it, because that is the one thing
+// a scenario here gets to vary: production is handed whatever spelling the
+// operator's shell produced, and the seeder's two-spelling behaviour only means
+// anything when those differ.
+func seedTrustLikeProduction(t *testing.T, dirs copilotfixture.Dirs, projectDir string) {
 	t.Helper()
 	require.NoError(t, harness.EnsureCopilotDirTrustedForLaunch(
 		func(name string) string {
@@ -54,7 +59,7 @@ func seedTrustLikeProduction(t *testing.T, dirs copilotfixture.Dirs) {
 			return ""
 		},
 		dirs.Root,
-		dirs.WorkDir,
+		projectDir,
 	))
 }
 
@@ -65,11 +70,12 @@ func dirTrustRun(
 	t *testing.T,
 	dirs copilotfixture.Dirs,
 	mock *copilotfixture.MockProvider,
+	workDir string,
 ) copilotfixture.PTYResult {
 	t.Helper()
 	return copilotfixture.RunPTY(t, copilotfixture.PTYOptions{
 		RunOptions: copilotfixture.RunOptions{
-			Root: dirs.Root, Home: dirs.Home, Cache: dirs.Cache, WorkDir: dirs.WorkDir,
+			Root: dirs.Root, Home: dirs.Home, Cache: dirs.Cache, WorkDir: workDir,
 			BaseURL: mock.BaseURL(),
 			Prompt:  "Reply with the text the provider gives you.",
 		},
@@ -119,9 +125,9 @@ func TestCopilotDirTrustProductionSeedingClearsTheModal(t *testing.T) {
 		{Text: "MOCK STREAMED ANSWER"},
 	})
 	dirs := copilotfixture.NewSandboxDirs(t)
-	seedTrustLikeProduction(t, dirs)
+	seedTrustLikeProduction(t, dirs, dirs.WorkDir)
 
-	res := dirTrustRun(t, dirs, mock)
+	res := dirTrustRun(t, dirs, mock, dirs.WorkDir)
 	require.True(t, res.Settled,
 		"a seeded launch must reach the provider; transcript:\n%s", res.TranscriptText())
 	assert.NotEmpty(t, mock.Requests())
@@ -179,7 +185,7 @@ func TestCopilotDirTrustSeedingPreservesAnInstalledTrustStore(t *testing.T) {
 		"settings.json must not be the trust store")
 
 	// Now seed the launch dir the way production does.
-	seedTrustLikeProduction(t, dirs)
+	seedTrustLikeProduction(t, dirs, dirs.WorkDir)
 	assert.ElementsMatch(t, []string{existing, dirs.WorkDir},
 		readTrustedFolders(t, configPath),
 		"seeding must EXTEND the installed list, not replace it")
@@ -189,7 +195,7 @@ func TestCopilotDirTrustSeedingPreservesAnInstalledTrustStore(t *testing.T) {
 	mock := copilotfixture.NewMockProvider(t, []copilotfixture.Turn{
 		{Text: "MOCK STREAMED ANSWER"},
 	})
-	res := dirTrustRun(t, dirs, mock)
+	res := dirTrustRun(t, dirs, mock, dirs.WorkDir)
 	require.True(t, res.Settled,
 		"the seeded launch must clear the modal on an installed home too; transcript:\n%s",
 		res.TranscriptText())
@@ -199,4 +205,48 @@ func TestCopilotDirTrustSeedingPreservesAnInstalledTrustStore(t *testing.T) {
 	// accepted the rewritten file rather than resetting it.
 	assert.Contains(t, readTrustedFolders(t, configPath), existing,
 		"the operator's previously trusted folder must survive tclaude's seed")
+}
+
+// TestCopilotDirTrustSeedingMatchesTheUnresolvedCwdSpelling makes the seeder's
+// two-spelling behaviour measured rather than hedged.
+//
+// EnsureCopilotDirTrusted seeds both the spelling it is handed and that path's
+// symlink-resolved form, because the two ends of the comparison are spelled by
+// different parties: tclaude receives the cwd as the operator's shell produced
+// it, while Copilot resolves its own. Which side the trust check reads was not
+// established, and a wrong guess costs a frozen pane — so both go in.
+//
+// That hedge is only exercised where the two spellings actually differ, which
+// is macOS ($TMPDIR is /var/folders/… for a kernel directory at
+// /private/var/folders/…). The scenario therefore hands BOTH the seeder and the
+// launch the unresolved spelling, the way a shell would, and skips itself where
+// the platform has no second spelling to offer — which is why CI requires it on
+// the macOS arm specifically.
+func TestCopilotDirTrustSeedingMatchesTheUnresolvedCwdSpelling(t *testing.T) {
+	requireSmoke(t)
+
+	dirs := copilotfixture.NewSandboxDirs(t)
+	if dirs.UnresolvedWorkDir == dirs.WorkDir {
+		t.Skip("the fixture root has one spelling on this platform; " +
+			"the unresolved-cwd case is macOS-shaped (/var vs /private/var)")
+	}
+
+	mock := copilotfixture.NewMockProvider(t, []copilotfixture.Turn{
+		{Text: "MOCK STREAMED ANSWER"},
+	})
+	seedTrustLikeProduction(t, dirs, dirs.UnresolvedWorkDir)
+
+	// The premise, and it is falsifiable: given only the /var spelling the
+	// seeder must have written the /private/var one too. A change that dropped
+	// the resolved form fails HERE, with a clear reason, rather than as an
+	// unexplained blocked pane below.
+	seeded := readTrustedFolders(t, filepath.Join(dirs.Home, "config.json"))
+	assert.ElementsMatch(t, []string{dirs.UnresolvedWorkDir, dirs.WorkDir}, seeded,
+		"seeding an unresolved spelling must also seed the resolved one")
+
+	res := dirTrustRun(t, dirs, mock, dirs.UnresolvedWorkDir)
+	require.True(t, res.Settled,
+		"a launch in the unresolved spelling must clear the modal; transcript:\n%s",
+		res.TranscriptText())
+	assert.False(t, res.Contains(copilotfixture.TrustPromptMarker))
 }
