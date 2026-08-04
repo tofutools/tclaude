@@ -69,13 +69,16 @@ type PaneSim interface {
 	Shutdown()
 }
 
-// Both harness simulators satisfy PaneSim, so TmuxSim routes to either.
-// Only CCSim renders a footer (paneRenderer) — Codex has no remote control,
-// so it is never captured for the /rc pill.
+// All three harness simulators satisfy PaneSim, so one TmuxSim routes to any
+// of them. Two implement paneRenderer: CCSim renders a footer carrying the
+// remote-control pill, and CopilotSim renders whichever permission dialog it is
+// parked on. Codex has neither, so it is never captured.
 var (
 	_ PaneSim      = (*CCSim)(nil)
 	_ PaneSim      = (*CodexSim)(nil)
+	_ PaneSim      = (*CopilotSim)(nil)
 	_ paneRenderer = (*CCSim)(nil)
+	_ paneRenderer = (*CopilotSim)(nil)
 )
 
 // TmuxSim is the test-time stand-in for clcommon.LiveTmux. It

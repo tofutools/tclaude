@@ -189,6 +189,9 @@ func (s *simSpawner) SpawnNew(args clcommon.SpawnArgs) error {
 	if args.Harness == codexHarnessName {
 		return s.spawnNewCodex(args)
 	}
+	if args.Harness == copilotHarnessName {
+		return s.spawnNewCopilot(args)
+	}
 	label := args.Label
 	// The launch-enrollment spawn path presets the conv-id (claude
 	// --session-id); honor it so the sim's .jsonl + SessionRow use the id the
@@ -316,6 +319,9 @@ func (s *simSpawner) SpawnResume(args clcommon.SpawnArgs) error {
 	}
 	if args.Harness == codexHarnessName {
 		return s.spawnResumeCodex(args)
+	}
+	if args.Harness == copilotHarnessName {
+		return s.spawnResumeCopilot(args)
 	}
 	convID := args.ConvID
 	cc := s.w.CCs.GetByConvID(convID)

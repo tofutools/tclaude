@@ -64,6 +64,19 @@ type World struct {
 	// right one without a cast.
 	Codexes *CodexRegistry
 
+	// Copilots is the Copilot analog of Codexes. It is a third typed registry
+	// for the same reason the second one was: CopilotSim's surface is
+	// harness-specific in a way no shared type could express — it is the only
+	// pane sim that can be BLOCKED, and the tests that matter reach for exactly
+	// that.
+	Copilots *CopilotRegistry
+
+	// CopilotLaunches records, keyed by conv-id, the launch command string the
+	// PRODUCTION Copilot spawner produced for each simulated spawn. A flow
+	// test asserts on the parsed form (World.CopilotLaunchCommand); the raw string is
+	// kept so a failure can print the argv that caused it.
+	copilotLaunchCmds map[string]string
+
 	// spawnEfforts / spawnModels record the effort and model strings
 	// each simSpawner.SpawnNew received, keyed by the new conv-id, so a
 	// flow test can assert what the spawn path threaded end-to-end. The
@@ -137,6 +150,8 @@ func New(t *testing.T) *World {
 		CCs:                 newCCRegistry(),
 		SandboxLayer:        &SandboxLayerSim{},
 		Codexes:             newCodexRegistry(),
+		Copilots:            newCopilotRegistry(),
+		copilotLaunchCmds:   map[string]string{},
 		spawnEfforts:        map[string]string{},
 		spawnModels:         map[string]string{},
 		spawnSandboxes:      map[string]string{},
@@ -665,4 +680,61 @@ func (r *CodexRegistry) GetByLabel(label string) *CodexSim {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.byLabel[label]
+}
+
+// CopilotRegistry is the Copilot analog of CodexRegistry: conv-id → CopilotSim
+// plus a label index, so a flow test can reach the pane the daemon spawned on
+// its behalf and drive turns, tool calls and lifecycle through it.
+type CopilotRegistry struct {
+	mu       sync.Mutex
+	byConvID map[string]*CopilotSim
+	byLabel  map[string]*CopilotSim
+}
+
+func newCopilotRegistry() *CopilotRegistry {
+	return &CopilotRegistry{
+		byConvID: map[string]*CopilotSim{},
+		byLabel:  map[string]*CopilotSim{},
+	}
+}
+
+// Set records a CopilotSim under both label and conv-id.
+func (r *CopilotRegistry) Set(label string, c *CopilotSim) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if label != "" {
+		r.byLabel[label] = c
+	}
+	r.byConvID[c.ConvID] = c
+}
+
+// GetByConvID returns the registered sim for convID, or nil.
+func (r *CopilotRegistry) GetByConvID(convID string) *CopilotSim {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.byConvID[convID]
+}
+
+// GetByLabel returns the registered sim for label, or nil.
+func (r *CopilotRegistry) GetByLabel(label string) *CopilotSim {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.byLabel[label]
+}
+
+// RecordCopilotLaunchCommand captures the production-rendered launch string
+// for a simulated Copilot spawn, keyed by conv-id.
+func (w *World) RecordCopilotLaunchCommand(convID, cmd string) {
+	w.spawnMu.Lock()
+	defer w.spawnMu.Unlock()
+	w.copilotLaunchCmds[convID] = cmd
+}
+
+// CopilotLaunchCommand returns the launch string recorded for a conv-id and
+// whether a Copilot spawn for it was observed.
+func (w *World) CopilotLaunchCommand(convID string) (string, bool) {
+	w.spawnMu.Lock()
+	defer w.spawnMu.Unlock()
+	cmd, ok := w.copilotLaunchCmds[convID]
+	return cmd, ok
 }
