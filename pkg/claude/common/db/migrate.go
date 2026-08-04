@@ -1026,7 +1026,7 @@ func migrateV58toV59(db *sql.DB) error {
 }
 
 // migrateV57toV58 adds the `sandbox_mode` column to `sessions` — the
-// launch-time OS-sandbox mode a session was spawned under (Codex's
+// launch-time harness-builtin sandbox mode a session was spawned under (Codex's
 // `--sandbox`: read-only / workspace-write / danger-full-access). Default
 // "" so every existing row, and every reader that doesn't yet select the
 // column, keeps working untouched; "" is also the genuine value for a

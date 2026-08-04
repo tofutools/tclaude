@@ -387,12 +387,12 @@ type ConvAgent struct {
 	AgentID       string
 	CurrentConvID string
 	PendingName   string
-	// TemporarySandboxMode is the active reversible relaunch override. Empty
+	// TemporaryHarnessBuiltinMode is the active reversible relaunch override. Empty
 	// means normal posture. It rides this existing dashboard batch so the
 	// two-second snapshot poll does not add a per-agent JSON query.
-	TemporarySandboxMode string
-	Retired              bool
-	Superseded           bool
+	TemporaryHarnessBuiltinMode string
+	Retired                     bool
+	Superseded                  bool
 	// CreatedAt is the actor's immutable birth timestamp (agents.created_at),
 	// stamped at spawn/enrollment BEFORE the harness writes its first .jsonl
 	// event. It is the dashboard member Age source: available the instant the
@@ -581,8 +581,8 @@ func AgentsByConv(convIDs []string) (map[string]ConvAgent, error) {
 				return nil, err
 			}
 			if profile, decodeErr := decodeAgentRelaunchProfile(relaunchRaw); decodeErr == nil &&
-				profile != nil && profile.TemporarySandboxMode != nil {
-				ca.TemporarySandboxMode = strings.TrimSpace(*profile.TemporarySandboxMode)
+				profile != nil && profile.TemporaryHarnessBuiltinMode != nil {
+				ca.TemporaryHarnessBuiltinMode = strings.TrimSpace(*profile.TemporaryHarnessBuiltinMode)
 			}
 			ca.Retired = retiredAt.valid
 			// Canonicalise to UTC RFC3339Nano (keeping full sub-second precision)

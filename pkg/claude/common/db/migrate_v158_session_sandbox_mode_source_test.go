@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestMigrateV157toV158AddsSandboxModeSourceColumn(t *testing.T) {
+func TestMigrateV157toV158AddsHarnessBuiltinModeSourceColumn(t *testing.T) {
 	setupTestDB(t)
 	d, err := Open()
 	require.NoError(t, err)
@@ -38,24 +38,24 @@ func TestMigrateV157toV158AddsSandboxModeSourceColumn(t *testing.T) {
 // on a blank save — a relaunch that re-chose the mode with nothing to attribute
 // must erase the old attribution rather than let it survive onto a mode whose
 // tier never chose it.
-func TestSessionSandboxModeSourceRoundTrips(t *testing.T) {
+func TestSessionHarnessBuiltinModeSourceRoundTrips(t *testing.T) {
 	setupTestDB(t)
 
 	require.NoError(t, SaveSession(&SessionRow{
 		ID: "s1", ConvID: "c1", Status: "running", Harness: DefaultHarness,
-		SandboxMode: "on", SandboxModeSource: `global default profile "agents"`,
+		HarnessBuiltinMode: "on", HarnessBuiltinModeSource: `global default profile "agents"`,
 	}))
 
 	got, err := LoadSession("s1")
 	require.NoError(t, err)
-	assert.Equal(t, `global default profile "agents"`, got.SandboxModeSource)
+	assert.Equal(t, `global default profile "agents"`, got.HarnessBuiltinModeSource)
 
 	require.NoError(t, SaveSession(&SessionRow{
 		ID: "s1", ConvID: "c1", Status: "running", Harness: DefaultHarness,
-		SandboxMode: "on",
+		HarnessBuiltinMode: "on",
 	}))
 	cleared, err := LoadSession("s1")
 	require.NoError(t, err)
-	assert.Empty(t, cleared.SandboxModeSource,
+	assert.Empty(t, cleared.HarnessBuiltinModeSource,
 		"a launch with nothing to attribute must not inherit the previous launch's chooser")
 }

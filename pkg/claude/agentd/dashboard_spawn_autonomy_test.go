@@ -90,8 +90,8 @@ func TestDashboardSpawnEffectiveSandboxOpenCodeAccessControl(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("got status %d, want 200", status)
 	}
-	if payload.SandboxMode != "access-control" {
-		t.Fatalf("got sandbox_mode %q, want the resolved access-control default", payload.SandboxMode)
+	if payload.HarnessBuiltinMode != "access-control" {
+		t.Fatalf("got sandbox_mode %q, want the resolved access-control default", payload.HarnessBuiltinMode)
 	}
 	if len(payload.Warnings) == 0 || !strings.Contains(payload.Warnings[0], "no built-in OS sandbox") {
 		t.Fatalf("got warnings %v, want the OpenCode sandbox warning", payload.Warnings)
@@ -128,9 +128,9 @@ func TestDashboardSpawnEffectiveSandboxOpenCodeTclaudeLayerDoesNotWarnThatItIsUn
 	if status != http.StatusOK {
 		t.Fatalf("got status %d, want 200", status)
 	}
-	if payload.SandboxMode != "tclaude-layer" {
+	if payload.HarnessBuiltinMode != "tclaude-layer" {
 		t.Fatalf("got sandbox_mode %q, want the implementation-resolved tclaude-layer mode",
-			payload.SandboxMode)
+			payload.HarnessBuiltinMode)
 	}
 	warnings := strings.Join(payload.Warnings, "\n")
 	if strings.Contains(warnings, "OpenCode has no built-in OS sandbox") ||

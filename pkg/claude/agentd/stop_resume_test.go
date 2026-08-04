@@ -533,7 +533,7 @@ func TestResumeOneConv_TemporaryOffDisablesTclaudeOuterLayer(t *testing.T) {
 	normalMode := harness.ClaudeSandboxOn
 	normalImplementation := string(sandboxpolicy.ImplementationTclaudeLayer)
 	approval := "default"
-	row.SandboxMode = normalMode
+	row.HarnessBuiltinMode = normalMode
 	row.SandboxImplementation = normalImplementation
 	row.ApprovalPolicy = approval
 	require.NoError(t, db.SaveSession(row))
@@ -541,11 +541,11 @@ func TestResumeOneConv_TemporaryOffDisablesTclaudeOuterLayer(t *testing.T) {
 	agentID, _, err := db.EnsureAgentForConv(convID, "test")
 	require.NoError(t, err)
 	require.NoError(t, db.SetAgentRelaunchProfile(agentID, db.AgentRelaunchProfile{
-		Version: db.RelaunchProfileVersion, SandboxMode: &normalMode,
+		Version: db.RelaunchProfileVersion, HarnessBuiltinMode: &normalMode,
 		SandboxImplementation: &normalImplementation, ApprovalPolicy: &approval,
 	}))
 	override := harness.ClaudeSandboxOff
-	require.NoError(t, db.SetTemporarySandboxMode(
+	require.NoError(t, db.SetTemporaryHarnessBuiltinMode(
 		agentID, normalMode, normalImplementation, "", &override,
 	))
 
@@ -600,7 +600,7 @@ func TestResumeOneConv_UsesDurableProfilesAfterAllSessionsArePruned(t *testing.T
 			row := saveResumeSession(t, convID, cwd, tc.harnessName)
 			originalSessionID := row.ID
 			row.ID = sessionID
-			row.SandboxMode = tc.sandbox
+			row.HarnessBuiltinMode = tc.sandbox
 			row.ApprovalPolicy = tc.approval
 			row.AskUserQuestionTimeout = tc.askTimeout
 			require.NoError(t, db.SaveSession(row))
@@ -635,7 +635,7 @@ func TestResumeOneConv_RestoresPreviousSandboxSnapshotWhenLaunchFails(t *testing
 	rec.spawnErr = errors.New("launch reservation lost")
 	const convID = "failed-resume-sandbox-conv-12345678"
 	row := saveResumeSession(t, convID, t.TempDir(), harness.DefaultName)
-	row.SandboxMode = harness.ClaudeSandboxOn
+	row.HarnessBuiltinMode = harness.ClaudeSandboxOn
 	require.NoError(t, db.SaveSession(row))
 
 	oldDeny, err := filepath.EvalSymlinks(t.TempDir())

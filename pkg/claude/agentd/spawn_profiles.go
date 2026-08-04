@@ -208,7 +208,7 @@ func collectProfilesSnapshot() []spawnProfileJSON {
 // value the harness cannot take (e.g. a Codex sandbox on a Claude profile).
 // Each field is optional — a blank text field / absent toggle stays unset, and
 // the validators that would otherwise apply a launch-time default
-// (ValidateSandboxMode / ValidateApprovalPolicy) keep blank as blank.
+// (ValidateHarnessBuiltinMode / ValidateApprovalPolicy) keep blank as blank.
 func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailure) {
 	name := strings.TrimSpace(body.Name)
 	if err := validateGroupName(name); err != nil {
@@ -264,7 +264,7 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 	}
 	// Validate (don't default) the sandbox/approval: a blank profile field
 	// stays blank so the launch boundary applies its own default at spawn time.
-	sandbox, err := harness.ValidateSandboxMode(h, body.Sandbox)
+	sandbox, err := harness.ValidateHarnessBuiltinMode(h, body.Sandbox)
 	if err != nil {
 		return nil, &spawnFailure{http.StatusBadRequest, "invalid_sandbox", err.Error()}
 	}
@@ -337,7 +337,7 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 		}
 		sshWorkaround = &resolved
 	}
-	resolvedSandbox, err := harness.ResolveSandboxMode(h, sandbox)
+	resolvedSandbox, err := harness.ResolveHarnessBuiltinMode(h, sandbox)
 	if err != nil {
 		return nil, &spawnFailure{http.StatusBadRequest, "invalid_sandbox", err.Error()}
 	}

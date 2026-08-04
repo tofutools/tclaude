@@ -87,7 +87,7 @@ func TestEnrollSpawnedConv_PersistsResolvedRelaunchProfile(t *testing.T) {
 
 	_, actorCreated, fail := enrollSpawnedConv(nil, spawnParams{
 		Harness:                "claude",
-		SandboxMode:            "danger-full-access",
+		HarnessBuiltinMode:     "danger-full-access",
 		ApprovalPolicy:         "auto",
 		AutoReview:             true,
 		Model:                  "opus[1m]",
@@ -102,8 +102,8 @@ func TestEnrollSpawnedConv_PersistsResolvedRelaunchProfile(t *testing.T) {
 	profile, err := db.AgentRelaunchProfileForConv("durable-spawn-conv")
 	require.NoError(t, err)
 	require.NotNil(t, profile)
-	require.NotNil(t, profile.SandboxMode)
-	assert.Equal(t, "danger-full-access", *profile.SandboxMode)
+	require.NotNil(t, profile.HarnessBuiltinMode)
+	assert.Equal(t, "danger-full-access", *profile.HarnessBuiltinMode)
 	require.NotNil(t, profile.ApprovalPolicy)
 	assert.Equal(t, "auto", *profile.ApprovalPolicy)
 	require.NotNil(t, profile.ApprovalAutoReview)
@@ -127,7 +127,7 @@ func TestEnrollSpawnedConv_PromotesConversationFallbackForPendingSpawn(t *testin
 
 	model := "gpt-5.4"
 	effort := "xhigh"
-	sandboxMode := "workspace-write"
+	harnessBuiltinMode := "workspace-write"
 	approvalPolicy := "never"
 	autoReview := false
 	contextWindowSize := int64(200_000)
@@ -136,7 +136,7 @@ func TestEnrollSpawnedConv_PromotesConversationFallbackForPendingSpawn(t *testin
 	autoMemory := false
 	fallback := db.AgentRelaunchProfile{
 		Version:                db.RelaunchProfileVersion,
-		SandboxMode:            &sandboxMode,
+		HarnessBuiltinMode:     &harnessBuiltinMode,
 		ApprovalPolicy:         &approvalPolicy,
 		ApprovalAutoReview:     &autoReview,
 		ModelID:                &model,
@@ -162,8 +162,8 @@ func TestEnrollSpawnedConv_PromotesConversationFallbackForPendingSpawn(t *testin
 	assert.Equal(t, model, *profile.ModelID)
 	require.NotNil(t, profile.Effort)
 	assert.Equal(t, effort, *profile.Effort)
-	require.NotNil(t, profile.SandboxMode)
-	assert.Equal(t, sandboxMode, *profile.SandboxMode)
+	require.NotNil(t, profile.HarnessBuiltinMode)
+	assert.Equal(t, harnessBuiltinMode, *profile.HarnessBuiltinMode)
 	require.NotNil(t, profile.ApprovalPolicy)
 	assert.Equal(t, approvalPolicy, *profile.ApprovalPolicy)
 }
@@ -177,7 +177,7 @@ func TestComposeAgentRelaunchProfile_AgentOverridesFallbackFieldByField(t *testi
 	agentEffort := "high"
 	agentTools := "deny"
 	fallback := &db.AgentRelaunchProfile{
-		Version: db.RelaunchProfileVersion, SandboxMode: &fallbackSandbox,
+		Version: db.RelaunchProfileVersion, HarnessBuiltinMode: &fallbackSandbox,
 		ApprovalPolicy: &fallbackApproval, ToolGovernance: &fallbackTools, ModelID: &fallbackModel,
 	}
 	agent := &db.AgentRelaunchProfile{
@@ -186,8 +186,8 @@ func TestComposeAgentRelaunchProfile_AgentOverridesFallbackFieldByField(t *testi
 
 	merged := composeAgentRelaunchProfile(fallback, agent)
 	require.NotNil(t, merged)
-	require.NotNil(t, merged.SandboxMode)
-	assert.Equal(t, fallbackSandbox, *merged.SandboxMode)
+	require.NotNil(t, merged.HarnessBuiltinMode)
+	assert.Equal(t, fallbackSandbox, *merged.HarnessBuiltinMode)
 	require.NotNil(t, merged.ApprovalPolicy)
 	assert.Equal(t, fallbackApproval, *merged.ApprovalPolicy)
 	require.NotNil(t, merged.ToolGovernance)

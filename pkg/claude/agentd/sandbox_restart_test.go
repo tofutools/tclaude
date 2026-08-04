@@ -168,27 +168,27 @@ func TestDurableRelaunchAppliesTemporaryAgentOverrideButKeepsNormalPosture(t *te
 	normalSource := `group default profile "confined"`
 	approval := "default"
 	require.NoError(t, db.SetAgentRelaunchProfile(agentID, db.AgentRelaunchProfile{
-		Version: db.RelaunchProfileVersion, SandboxMode: &normalMode,
-		SandboxImplementation: &implementation,
-		SandboxModeSource:     &normalSource, ApprovalPolicy: &approval,
+		Version: db.RelaunchProfileVersion, HarnessBuiltinMode: &normalMode,
+		SandboxImplementation:    &implementation,
+		HarnessBuiltinModeSource: &normalSource, ApprovalPolicy: &approval,
 	}))
 	require.NoError(t, db.SaveSession(&db.SessionRow{
 		ID: "temporary-relaunch-session", ConvID: convID, Cwd: t.TempDir(),
 		Harness: harness.DefaultName, Status: session.StatusIdle,
-		SandboxMode: normalMode, SandboxImplementation: implementation,
-		SandboxModeSource: normalSource,
-		ApprovalPolicy:    approval, ResumeProvenance: "test-proof",
+		HarnessBuiltinMode: normalMode, SandboxImplementation: implementation,
+		HarnessBuiltinModeSource: normalSource,
+		ApprovalPolicy:           approval, ResumeProvenance: "test-proof",
 	}))
 	override := harness.ClaudeSandboxOff
-	require.NoError(t, db.SetTemporarySandboxModeForConv(
+	require.NoError(t, db.SetTemporaryHarnessBuiltinModeForConv(
 		convID, normalMode, implementation, normalSource, &override,
 	))
 
 	got, err := durableRelaunchConfigForConv(convID)
 	require.NoError(t, err)
-	assert.True(t, got.TemporarySandboxMode)
+	assert.True(t, got.TemporaryHarnessBuiltinMode)
 	assert.Equal(t, harness.ClaudeSandboxOff, got.Sandbox)
-	assert.Equal(t, "temporary dashboard unlock", got.SandboxModeSource)
+	assert.Equal(t, "temporary dashboard unlock", got.HarnessBuiltinModeSource)
 	assert.Equal(t, harness.ClaudeSandboxOn, got.NormalSandbox)
 	assert.Equal(t, normalSource, got.NormalSandboxSource)
 	assert.Equal(t, implementation, got.SandboxImplementation)
@@ -206,16 +206,16 @@ func TestDurableRelaunchKeepsNormalCodexSSHPostureDuringUnlock(t *testing.T) {
 	approval := harness.ApprovalNever
 	ssh := true
 	require.NoError(t, db.SetAgentRelaunchProfile(agentID, db.AgentRelaunchProfile{
-		Version: db.RelaunchProfileVersion, SandboxMode: &normalMode,
+		Version: db.RelaunchProfileVersion, HarnessBuiltinMode: &normalMode,
 		ApprovalPolicy: &approval, SSHWorkaround: &ssh,
 	}))
 	require.NoError(t, db.SaveSession(&db.SessionRow{
 		ID: "temporary-codex-session", ConvID: convID, Cwd: t.TempDir(),
 		Harness: harness.CodexName, Status: session.StatusIdle,
-		SandboxMode: normalMode, ApprovalPolicy: approval, ResumeProvenance: "test-proof",
+		HarnessBuiltinMode: normalMode, ApprovalPolicy: approval, ResumeProvenance: "test-proof",
 	}))
 	override := harness.SandboxDangerFull
-	require.NoError(t, db.SetTemporarySandboxModeForConv(
+	require.NoError(t, db.SetTemporaryHarnessBuiltinModeForConv(
 		convID, normalMode, string(sandboxpolicy.ImplementationHarnessBuiltin), "", &override,
 	))
 
@@ -242,32 +242,32 @@ func TestDurableRelaunchRecoversImplementationLostByTemporaryUnlock(t *testing.T
 	require.NoError(t, db.SaveSession(&db.SessionRow{
 		ID: "before-temporary-unlock", ConvID: convID, Cwd: t.TempDir(),
 		Harness: harness.DefaultName, Status: session.StatusExited,
-		SandboxMode: normalMode, SandboxImplementation: implementation,
+		HarnessBuiltinMode: normalMode, SandboxImplementation: implementation,
 		ApprovalPolicy: approval, CreatedAt: time.Now().Add(-time.Minute),
 	}))
 	require.NoError(t, db.SaveSession(&db.SessionRow{
 		ID: "temporary-unlocked", ConvID: convID, Cwd: t.TempDir(),
 		Harness: harness.DefaultName, Status: session.StatusIdle,
-		SandboxMode: override, SandboxImplementation: overwritten,
-		SandboxModeSource: db.TemporarySandboxModeSource,
-		ApprovalPolicy:    approval, CreatedAt: time.Now(),
+		HarnessBuiltinMode: override, SandboxImplementation: overwritten,
+		HarnessBuiltinModeSource: db.TemporaryHarnessBuiltinModeSource,
+		ApprovalPolicy:           approval, CreatedAt: time.Now(),
 	}))
 	// Reproduce the durable shape written by the deployed faulty version.
 	require.NoError(t, db.SetAgentRelaunchProfile(agentID, db.AgentRelaunchProfile{
-		Version: db.RelaunchProfileVersion, SandboxMode: &normalMode,
-		SandboxImplementation: &overwritten, TemporarySandboxMode: &override,
+		Version: db.RelaunchProfileVersion, HarnessBuiltinMode: &normalMode,
+		SandboxImplementation: &overwritten, TemporaryHarnessBuiltinMode: &override,
 		ApprovalPolicy: &approval,
 	}))
 
 	got, err := durableRelaunchConfigForConv(convID)
 	require.NoError(t, err)
-	assert.True(t, got.TemporarySandboxMode)
+	assert.True(t, got.TemporaryHarnessBuiltinMode)
 	assert.Equal(t, implementation, got.SandboxImplementation,
 		"the pre-unlock session must recover the lost exact normal implementation")
 	assert.Equal(t, overwritten, got.activeSandboxImplementation(),
 		"the still-temporary process remains fully off")
 
-	require.NoError(t, db.SetTemporarySandboxMode(
+	require.NoError(t, db.SetTemporaryHarnessBuiltinMode(
 		agentID, got.NormalSandbox, got.SandboxImplementation,
 		got.NormalSandboxSource, nil,
 	))
@@ -292,40 +292,40 @@ func TestDurableRelaunchRecoversImplementationAfterFailedRestore(t *testing.T) {
 	require.NoError(t, db.SaveSession(&db.SessionRow{
 		ID: "before-failed-restore", ConvID: convID, Cwd: t.TempDir(),
 		Harness: harness.DefaultName, Status: session.StatusExited,
-		SandboxMode: normalMode, SandboxImplementation: implementation,
+		HarnessBuiltinMode: normalMode, SandboxImplementation: implementation,
 		ApprovalPolicy: approval, CreatedAt: time.Now().Add(-time.Minute),
 	}))
 	require.NoError(t, db.SaveSession(&db.SessionRow{
 		ID: "temporary-unlock-evidence", ConvID: convID, Cwd: t.TempDir(),
 		Harness: harness.DefaultName, Status: session.StatusExited,
-		SandboxMode: normalMode, SandboxImplementation: overwritten,
-		SandboxModeSource: db.TemporarySandboxModeSource,
-		ApprovalPolicy:    approval,
-		CreatedAt:         time.Now().Add(-30 * time.Second),
+		HarnessBuiltinMode: normalMode, SandboxImplementation: overwritten,
+		HarnessBuiltinModeSource: db.TemporaryHarnessBuiltinModeSource,
+		ApprovalPolicy:           approval,
+		CreatedAt:                time.Now().Add(-30 * time.Second),
 	}))
 	require.NoError(t, db.SaveSession(&db.SessionRow{
 		ID: "after-failed-restore", ConvID: convID, Cwd: t.TempDir(),
 		Harness: harness.DefaultName, Status: session.StatusIdle,
-		SandboxMode: normalMode, SandboxImplementation: overwritten,
+		HarnessBuiltinMode: normalMode, SandboxImplementation: overwritten,
 		ApprovalPolicy: approval, CreatedAt: time.Now(),
 	}))
 	require.NoError(t, db.SaveSession(&db.SessionRow{
 		ID: "after-plain-off-resume", ConvID: convID, Cwd: t.TempDir(),
 		Harness: harness.DefaultName, Status: session.StatusIdle,
-		SandboxMode: normalMode, SandboxImplementation: overwritten,
+		HarnessBuiltinMode: normalMode, SandboxImplementation: overwritten,
 		ApprovalPolicy: approval, CreatedAt: time.Now().Add(time.Second),
 	}))
-	// The faulty restore has already cleared TemporarySandboxMode, leaving a
+	// The faulty restore has already cleared TemporaryHarnessBuiltinMode, leaving a
 	// plain-OFF durable record even though the earlier session proves the
 	// agent's exact normal implementation was the TClaude outer layer.
 	require.NoError(t, db.SetAgentRelaunchProfile(agentID, db.AgentRelaunchProfile{
-		Version: db.RelaunchProfileVersion, SandboxMode: &normalMode,
+		Version: db.RelaunchProfileVersion, HarnessBuiltinMode: &normalMode,
 		SandboxImplementation: &overwritten, ApprovalPolicy: &approval,
 	}))
 
 	got, err := durableRelaunchConfigForConv(convID)
 	require.NoError(t, err)
-	assert.False(t, got.TemporarySandboxMode)
+	assert.False(t, got.TemporaryHarnessBuiltinMode)
 	assert.Equal(t, implementation, got.SandboxImplementation)
 	assert.Equal(t, implementation, got.activeSandboxImplementation(),
 		"the next ordinary restart must recover the exact pre-bug combination")
@@ -344,30 +344,30 @@ func TestDurableRelaunchDoesNotUndoExplicitHarnessBuiltinChange(t *testing.T) {
 	require.NoError(t, db.SaveSession(&db.SessionRow{
 		ID: "older-layered", ConvID: convID, Cwd: t.TempDir(),
 		Harness: harness.DefaultName, Status: session.StatusExited,
-		SandboxMode: mode, SandboxImplementation: layered,
+		HarnessBuiltinMode: mode, SandboxImplementation: layered,
 		ApprovalPolicy: approval,
 	}))
 	require.NoError(t, db.SaveSession(&db.SessionRow{
 		ID: "historical-temporary-unlock", ConvID: convID, Cwd: t.TempDir(),
 		Harness: harness.DefaultName, Status: session.StatusExited,
-		SandboxMode: harness.ClaudeSandboxOff, SandboxImplementation: builtin,
-		SandboxModeSource: db.TemporarySandboxModeSource,
-		ApprovalPolicy:    approval,
+		HarnessBuiltinMode: harness.ClaudeSandboxOff, SandboxImplementation: builtin,
+		HarnessBuiltinModeSource: db.TemporaryHarnessBuiltinModeSource,
+		ApprovalPolicy:           approval,
 	}))
 	require.NoError(t, db.SaveSession(&db.SessionRow{
 		ID: "successfully-restored-layered", ConvID: convID, Cwd: t.TempDir(),
 		Harness: harness.DefaultName, Status: session.StatusExited,
-		SandboxMode: mode, SandboxImplementation: layered,
+		HarnessBuiltinMode: mode, SandboxImplementation: layered,
 		ApprovalPolicy: approval,
 	}))
 	require.NoError(t, db.SaveSession(&db.SessionRow{
 		ID: "intentional-builtin", ConvID: convID, Cwd: t.TempDir(),
 		Harness: harness.DefaultName, Status: session.StatusIdle,
-		SandboxMode: mode, SandboxImplementation: builtin,
-		SandboxModeSource: "explicit request", ApprovalPolicy: approval,
+		HarnessBuiltinMode: mode, SandboxImplementation: builtin,
+		HarnessBuiltinModeSource: "explicit request", ApprovalPolicy: approval,
 	}))
 	require.NoError(t, db.SetAgentRelaunchProfile(agentID, db.AgentRelaunchProfile{
-		Version: db.RelaunchProfileVersion, SandboxMode: &mode,
+		Version: db.RelaunchProfileVersion, HarnessBuiltinMode: &mode,
 		SandboxImplementation: &builtin, ApprovalPolicy: &approval,
 	}))
 
@@ -391,25 +391,25 @@ func TestDurableRelaunchTemporaryBuiltinDoesNotRecoverOlderLayer(t *testing.T) {
 	require.NoError(t, db.SaveSession(&db.SessionRow{
 		ID: "old-layered-before-change", ConvID: convID, Cwd: t.TempDir(),
 		Harness: harness.DefaultName, Status: session.StatusExited,
-		SandboxMode: normalMode, SandboxImplementation: layered,
+		HarnessBuiltinMode: normalMode, SandboxImplementation: layered,
 		ApprovalPolicy: approval,
 	}))
 	require.NoError(t, db.SaveSession(&db.SessionRow{
 		ID: "normal-intentional-builtin", ConvID: convID, Cwd: t.TempDir(),
 		Harness: harness.DefaultName, Status: session.StatusExited,
-		SandboxMode: normalMode, SandboxImplementation: builtin,
-		SandboxModeSource: "explicit request", ApprovalPolicy: approval,
+		HarnessBuiltinMode: normalMode, SandboxImplementation: builtin,
+		HarnessBuiltinModeSource: "explicit request", ApprovalPolicy: approval,
 	}))
 	require.NoError(t, db.SaveSession(&db.SessionRow{
 		ID: "temporary-builtin-unlock", ConvID: convID, Cwd: t.TempDir(),
 		Harness: harness.DefaultName, Status: session.StatusIdle,
-		SandboxMode: temporaryMode, SandboxImplementation: builtin,
-		SandboxModeSource: db.TemporarySandboxModeSource,
-		ApprovalPolicy:    approval,
+		HarnessBuiltinMode: temporaryMode, SandboxImplementation: builtin,
+		HarnessBuiltinModeSource: db.TemporaryHarnessBuiltinModeSource,
+		ApprovalPolicy:           approval,
 	}))
 	require.NoError(t, db.SetAgentRelaunchProfile(agentID, db.AgentRelaunchProfile{
-		Version: db.RelaunchProfileVersion, SandboxMode: &normalMode,
-		SandboxImplementation: &builtin, TemporarySandboxMode: &temporaryMode,
+		Version: db.RelaunchProfileVersion, HarnessBuiltinMode: &normalMode,
+		SandboxImplementation: &builtin, TemporaryHarnessBuiltinMode: &temporaryMode,
 		ApprovalPolicy: &approval,
 	}))
 

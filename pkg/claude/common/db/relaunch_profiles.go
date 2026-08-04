@@ -12,30 +12,45 @@ import (
 
 const RelaunchProfileVersion = 1
 
-// TemporarySandboxModeSource is the attribution paired with the reversible
+// TemporaryHarnessBuiltinModeSource is the attribution paired with the reversible
 // operator override on every relaunch surface.
-const TemporarySandboxModeSource = "temporary dashboard unlock"
+const TemporaryHarnessBuiltinModeSource = "temporary dashboard unlock"
 
 // AgentRelaunchProfile is mutable launch intent owned by the stable agent.
+//
+// The Go identifiers on its sandbox-mode fields say harness-builtin; the
+// persisted spellings do not (TCL-1023). The column is still `sandbox_mode`,
+// its attribution `sandbox_mode_source`, and the durable override key
+// `temporary_sandbox_mode`, because renaming a persisted name buys nothing a
+// reader of this code gains from the field name and costs a migration plus a
+// rewrite of every AgentRelaunchProfile JSON blob already on disk. The same
+// holds for the dashboard payload keys and the session-state file's
+// `sandboxMode`: those are wire and on-disk compatibility surfaces and keep
+// their spelling deliberately.
+//
+// What the rename does guarantee is narrower and is the property to preserve:
+// no Go IDENTIFIER anywhere in the tree calls this axis a bare `sandbox mode`
+// any more. A new field or local that does is reintroducing the ambiguity this
+// rename removed — the persisted keys are the exception, not the precedent.
 // Pointer fields distinguish an observed/selected zero value from unknown
 // legacy state. Unknown authority-bearing values are resolved fail-closed by
 // the lifecycle layer rather than silently replaced with today's defaults.
 type AgentRelaunchProfile struct {
-	Version     int     `json:"version"`
-	SandboxMode *string `json:"sandbox_mode,omitempty"`
+	Version            int     `json:"version"`
+	HarnessBuiltinMode *string `json:"sandbox_mode,omitempty"`
 	// SandboxImplementation is the durable owner of OS-level confinement.
 	// nil is legacy/unknown; harness-builtin is the explicit compatibility
 	// default for every new launch.
 	SandboxImplementation *string `json:"sandbox_implementation,omitempty"`
-	// SandboxModeSource names the resolution tier that CHOSE SandboxMode — an
+	// HarnessBuiltinModeSource names the resolution tier that CHOSE HarnessBuiltinMode — an
 	// explicit flag, or the named/group-default/global-default spawn profile
 	// that carried it. It is durable because the badge attributes the launch's
 	// containment to it, and an agent that has been relaunched a few times must
 	// not lose that attribution and fall back to an anonymous "this launch".
 	// nil = unknown (legacy record, or a launch that recorded none).
-	SandboxModeSource *string `json:"sandbox_mode_source,omitempty"`
-	// TemporarySandboxMode is a reversible operator override applied only to
-	// relaunches of this stable agent. SandboxMode above remains the agent's
+	HarnessBuiltinModeSource *string `json:"sandbox_mode_source,omitempty"`
+	// TemporaryHarnessBuiltinMode is a reversible operator override applied only to
+	// relaunches of this stable agent. HarnessBuiltinMode above remains the agent's
 	// normal posture so clearing this field restores the exact recorded mode
 	// instead of trying to reconstruct it from the currently-running session.
 	//
@@ -43,16 +58,16 @@ type AgentRelaunchProfile struct {
 	// session row because it must survive the stop→resume gap and daemon
 	// restarts. Session projection deliberately never copies it from process
 	// telemetry; only the explicit operator action sets or clears it.
-	TemporarySandboxMode   *string `json:"temporary_sandbox_mode,omitempty"`
-	ApprovalPolicy         *string `json:"approval_policy,omitempty"`
-	ToolGovernance         *string `json:"tools,omitempty"`
-	ApprovalAutoReview     *bool   `json:"approval_auto_review,omitempty"`
-	ModelID                *string `json:"model_id,omitempty"`
-	Effort                 *string `json:"effort,omitempty"`
-	ContextWindowSize      *int64  `json:"context_window_size,omitempty"`
-	AskUserQuestionTimeout *string `json:"ask_user_question_timeout,omitempty"`
-	RemoteControl          *bool   `json:"remote_control,omitempty"`
-	AutoMemory             *bool   `json:"auto_memory,omitempty"`
+	TemporaryHarnessBuiltinMode *string `json:"temporary_sandbox_mode,omitempty"`
+	ApprovalPolicy              *string `json:"approval_policy,omitempty"`
+	ToolGovernance              *string `json:"tools,omitempty"`
+	ApprovalAutoReview          *bool   `json:"approval_auto_review,omitempty"`
+	ModelID                     *string `json:"model_id,omitempty"`
+	Effort                      *string `json:"effort,omitempty"`
+	ContextWindowSize           *int64  `json:"context_window_size,omitempty"`
+	AskUserQuestionTimeout      *string `json:"ask_user_question_timeout,omitempty"`
+	RemoteControl               *bool   `json:"remote_control,omitempty"`
+	AutoMemory                  *bool   `json:"auto_memory,omitempty"`
 	// SSHWorkaround is the durable Codex Git-over-SSH compatibility posture.
 	// nil means unknown/legacy; false is an explicit opt-out.
 	SSHWorkaround *bool `json:"ssh_workaround,omitempty"`
@@ -205,7 +220,7 @@ func SetAgentRelaunchProfile(agentID string, profile AgentRelaunchProfile) error
 	return nil
 }
 
-// SetTemporarySandboxMode atomically sets or clears a stable agent's temporary
+// SetTemporaryHarnessBuiltinMode atomically sets or clears a stable agent's temporary
 // sandbox override. When enabling it, normalMode/normalImplementation/
 // normalSource freeze the already-resolved normal launch posture if the
 // agent's durable fields are still unknown (legacy agents); this prevents the
@@ -214,7 +229,7 @@ func SetAgentRelaunchProfile(agentID string, profile AgentRelaunchProfile) error
 //
 // A nil override clears the temporary state. A non-nil override is stored
 // verbatim after lifecycle-layer validation.
-func SetTemporarySandboxMode(
+func SetTemporaryHarnessBuiltinMode(
 	agentID string,
 	normalMode string,
 	normalImplementation string,
@@ -223,7 +238,7 @@ func SetTemporarySandboxMode(
 ) error {
 	agentID = strings.TrimSpace(agentID)
 	if agentID == "" {
-		return errors.New("SetTemporarySandboxMode: agent_id required")
+		return errors.New("SetTemporaryHarnessBuiltinMode: agent_id required")
 	}
 	d, err := Open()
 	if err != nil {
@@ -239,7 +254,7 @@ func SetTemporarySandboxMode(
 	err = tx.QueryRow(`SELECT relaunch_profile FROM agents WHERE agent_id = ?`,
 		agentID).Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("SetTemporarySandboxMode: unknown agent %s", agentID)
+		return fmt.Errorf("SetTemporaryHarnessBuiltinMode: unknown agent %s", agentID)
 	}
 	if err != nil {
 		return err
@@ -254,30 +269,30 @@ func SetTemporarySandboxMode(
 	if override != nil {
 		mode := strings.TrimSpace(*override)
 		if mode == "" {
-			return errors.New("SetTemporarySandboxMode: override mode required")
+			return errors.New("SetTemporaryHarnessBuiltinMode: override mode required")
 		}
-		if profile.SandboxMode == nil {
-			profile.SandboxMode = stringPtr(strings.TrimSpace(normalMode))
+		if profile.HarnessBuiltinMode == nil {
+			profile.HarnessBuiltinMode = stringPtr(strings.TrimSpace(normalMode))
 		}
 		if profile.SandboxImplementation == nil {
 			profile.SandboxImplementation = stringPtr(strings.TrimSpace(normalImplementation))
 		}
-		if profile.SandboxModeSource == nil {
-			profile.SandboxModeSource = stringPtr(strings.TrimSpace(normalSource))
+		if profile.HarnessBuiltinModeSource == nil {
+			profile.HarnessBuiltinModeSource = stringPtr(strings.TrimSpace(normalSource))
 		}
-		profile.TemporarySandboxMode = &mode
+		profile.TemporaryHarnessBuiltinMode = &mode
 	} else {
 		// The restore caller passes the already-resolved normal implementation.
 		// Besides keeping a normal clear idempotent, this repairs temporary
 		// overrides created by versions that projected harness-builtin over the
 		// durable tclaude-layer/stacked value; lifecycle recovered that value
 		// from the pre-override session history before reaching this write.
-		if profile.TemporarySandboxMode != nil &&
+		if profile.TemporaryHarnessBuiltinMode != nil &&
 			strings.TrimSpace(normalImplementation) != "" {
 			profile.SandboxImplementation =
 				stringPtr(strings.TrimSpace(normalImplementation))
 		}
-		profile.TemporarySandboxMode = nil
+		profile.TemporaryHarnessBuiltinMode = nil
 	}
 	encoded, err := encodeRelaunchProfile(*profile)
 	if err != nil {
@@ -290,9 +305,9 @@ func SetTemporarySandboxMode(
 	return tx.Commit()
 }
 
-// SetTemporarySandboxModeForConv is a routing adapter for callers that only
+// SetTemporaryHarnessBuiltinModeForConv is a routing adapter for callers that only
 // have a conversation generation. The state itself is always keyed by agent.
-func SetTemporarySandboxModeForConv(
+func SetTemporaryHarnessBuiltinModeForConv(
 	convID string,
 	normalMode string,
 	normalImplementation string,
@@ -304,27 +319,27 @@ func SetTemporarySandboxModeForConv(
 		return err
 	}
 	if agentID == "" {
-		return fmt.Errorf("SetTemporarySandboxModeForConv: conversation %s is not an agent", convID)
+		return fmt.Errorf("SetTemporaryHarnessBuiltinModeForConv: conversation %s is not an agent", convID)
 	}
-	return SetTemporarySandboxMode(
+	return SetTemporaryHarnessBuiltinMode(
 		agentID, normalMode, normalImplementation, normalSource, override,
 	)
 }
 
-// TemporarySandboxModeForConv reports the active reversible sandbox override
+// TemporaryHarnessBuiltinModeForConv reports the active reversible sandbox override
 // on a stable agent. ok=false means normal relaunch behavior.
-func TemporarySandboxModeForConv(convID string) (mode string, ok bool, err error) {
+func TemporaryHarnessBuiltinModeForConv(convID string) (mode string, ok bool, err error) {
 	agentID, err := AgentIDForConv(convID)
 	if err != nil || agentID == "" {
 		return "", false, err
 	}
-	return TemporarySandboxModeForAgent(agentID)
+	return TemporaryHarnessBuiltinModeForAgent(agentID)
 }
 
-// TemporarySandboxModeForAgent reads the override by its actual durable key.
+// TemporaryHarnessBuiltinModeForAgent reads the override by its actual durable key.
 // Conversation-based callers are only routing adapters; rotations must not
 // move or duplicate this state.
-func TemporarySandboxModeForAgent(agentID string) (mode string, ok bool, err error) {
+func TemporaryHarnessBuiltinModeForAgent(agentID string) (mode string, ok bool, err error) {
 	d, err := Open()
 	if err != nil {
 		return "", false, err
@@ -339,10 +354,10 @@ func TemporarySandboxModeForAgent(agentID string) (mode string, ok bool, err err
 		return "", false, err
 	}
 	profile, err := decodeAgentRelaunchProfile(raw)
-	if err != nil || profile == nil || profile.TemporarySandboxMode == nil {
+	if err != nil || profile == nil || profile.TemporaryHarnessBuiltinMode == nil {
 		return "", false, err
 	}
-	return strings.TrimSpace(*profile.TemporarySandboxMode), true, nil
+	return strings.TrimSpace(*profile.TemporaryHarnessBuiltinMode), true, nil
 }
 
 func SetConversationResumeProfile(convID string, profile ConversationResumeProfile) error {
@@ -420,7 +435,7 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 		return nil
 	}
 	var rowID int64
-	var convID, cwd, harnessName, sandboxMode, sandboxImplementation, approvalPolicy, modelID, effort, askTimeout, provenance string
+	var convID, cwd, harnessName, harnessBuiltinMode, sandboxImplementation, approvalPolicy, modelID, effort, askTimeout, provenance string
 	var createdAtStamp migrationBridgeTimestamp
 	var approvalAutoReview, remoteControl, autoMemory int
 	var contextWindowSize int64
@@ -449,13 +464,13 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 	}
 	// v158. Guarded like the columns above so a projection running against a
 	// not-yet-migrated database reads "unknown" rather than failing the write.
-	haveSandboxModeSource, err := sessionsHaveColumn(q, "sandbox_mode_source")
+	haveHarnessBuiltinModeSource, err := sessionsHaveColumn(q, "sandbox_mode_source")
 	if err != nil {
 		return err
 	}
-	sandboxModeSourceColumn := "''"
-	if haveSandboxModeSource {
-		sandboxModeSourceColumn = "sandbox_mode_source"
+	harnessBuiltinModeSourceColumn := "''"
+	if haveHarnessBuiltinModeSource {
+		harnessBuiltinModeSourceColumn = "sandbox_mode_source"
 	}
 	haveSandboxImplementation, err := sessionsHaveColumn(q, "sandbox_implementation")
 	if err != nil {
@@ -465,13 +480,13 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 	if haveSandboxImplementation {
 		sandboxImplementationColumn = "sandbox_implementation"
 	}
-	var sandboxModeSource string
-	err = q.QueryRow(`SELECT rowid, conv_id, cwd, harness, sandbox_mode, `+sandboxImplementationColumn+`, `+sandboxModeSourceColumn+`,
+	var harnessBuiltinModeSource string
+	err = q.QueryRow(`SELECT rowid, conv_id, cwd, harness, sandbox_mode, `+sandboxImplementationColumn+`, `+harnessBuiltinModeSourceColumn+`,
 		approval_policy, approval_auto_review, model_id, effort_level,
 		context_window_size, ask_user_question_timeout, remote_control,
 		auto_memory, `+contextFeaturesColumn+`, `+autoCompactWindowColumn+`, resume_provenance, created_at
 		FROM sessions WHERE id = ?`, sessionID).Scan(
-		&rowID, &convID, &cwd, &harnessName, &sandboxMode, &sandboxImplementation, &sandboxModeSource,
+		&rowID, &convID, &cwd, &harnessName, &harnessBuiltinMode, &sandboxImplementation, &harnessBuiltinModeSource,
 		&approvalPolicy, &approvalAutoReview, &modelID, &effort,
 		&contextWindowSize, &askTimeout, &remoteControl,
 		&autoMemory, &contextFeaturesRaw, &autoCompactWindow, &provenance, &createdAtStamp)
@@ -529,7 +544,7 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 	}
 	agent := AgentRelaunchProfile{
 		Version:                RelaunchProfileVersion,
-		SandboxMode:            stringPtr(sandboxMode),
+		HarnessBuiltinMode:     stringPtr(harnessBuiltinMode),
 		ApprovalPolicy:         stringPtr(approvalPolicy),
 		ApprovalAutoReview:     boolPtr(approvalAutoReview != 0),
 		AskUserQuestionTimeout: stringPtr(askTimeout),
@@ -538,8 +553,8 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 	// that re-chose the mode with nothing to attribute must ERASE the previous
 	// attribution rather than let it survive onto a mode its tier never chose.
 	// Absent column = pre-v158 database = genuinely unknown, so nil.
-	if haveSandboxModeSource {
-		agent.SandboxModeSource = stringPtr(sandboxModeSource)
+	if haveHarnessBuiltinModeSource {
+		agent.HarnessBuiltinModeSource = stringPtr(harnessBuiltinModeSource)
 	}
 	if haveSandboxImplementation {
 		agent.SandboxImplementation = stringPtr(sandboxImplementation)
@@ -666,12 +681,12 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 		// normal intent. Keep the normal mode/source frozen while it is active;
 		// clearing the override then restores those exact fields. Every other
 		// projection remains unchanged.
-		if existingAgent.TemporarySandboxMode == nil {
-			merged.SandboxMode = agent.SandboxMode
+		if existingAgent.TemporaryHarnessBuiltinMode == nil {
+			merged.HarnessBuiltinMode = agent.HarnessBuiltinMode
 			// The attribution travels with the mode it explains. Letting it
 			// survive a projection that replaced the mode would credit the new
 			// mode to whatever chose the old one.
-			merged.SandboxModeSource = agent.SandboxModeSource
+			merged.HarnessBuiltinModeSource = agent.HarnessBuiltinModeSource
 			merged.SandboxImplementation = agent.SandboxImplementation
 		}
 		merged.ApprovalPolicy = agent.ApprovalPolicy
@@ -905,7 +920,7 @@ func execSessionUpdateAndProjectTimed(
 // nil (unknown) rather than being upgraded into authority by today's defaults.
 func seedAgentRelaunchProfileFromSpawnConfigTx(q dbExecQuerier, agentID, raw string) error {
 	var spawn struct {
-		SandboxMode            *string            `json:"sandbox"`
+		HarnessBuiltinMode     *string            `json:"sandbox"`
 		SandboxImplementation  *string            `json:"sandbox_implementation"`
 		ApprovalPolicy         *string            `json:"approval"`
 		ToolGovernance         *string            `json:"tools"`
@@ -923,7 +938,7 @@ func seedAgentRelaunchProfileFromSpawnConfigTx(q dbExecQuerier, agentID, raw str
 	}
 	p := AgentRelaunchProfile{
 		Version:                RelaunchProfileVersion,
-		SandboxMode:            spawn.SandboxMode,
+		HarnessBuiltinMode:     spawn.HarnessBuiltinMode,
 		SandboxImplementation:  spawn.SandboxImplementation,
 		ApprovalPolicy:         spawn.ApprovalPolicy,
 		ToolGovernance:         spawn.ToolGovernance,

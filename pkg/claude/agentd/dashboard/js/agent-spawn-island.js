@@ -39,9 +39,9 @@ import {
   syncSpawnWorktree,
   validateSpawnDraft,
   autoCompactWindowHintFor,
-  sandboxModeHelpForImplementation,
-  sandboxModeControlLabel,
-  sandboxModeOptionsForImplementation,
+  harnessBuiltinModeHelpForImplementation,
+  harnessBuiltinModeControlLabel,
+  harnessBuiltinModeOptionsForImplementation,
   sandboxImplHintFor,
   sandboxImplCaveatFor,
   sandboxImplClearedNoticeFor,
@@ -54,7 +54,7 @@ import { HelpDisclosure, HelpField } from './help-field.js';
 import { SandboxImplHint } from './sandbox-impl-hint.js';
 import {
   RESOLVED_DEFAULTS_CHAIN, SANDBOX_PROFILE_COMPOSITION,
-  resolvedDefaultOption, sandboxModeOptionLabel,
+  resolvedDefaultOption, harnessBuiltinModeOptionLabel,
 } from './resolved-defaults.js';
 
 const html = htm.bind(h);
@@ -709,7 +709,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
   };
 
   const selectedModel = modelSelectValue(draft, context);
-  const sandboxHelp = sandboxModeHelpForImplementation(
+  const sandboxHelp = harnessBuiltinModeHelpForImplementation(
     view.sandbox.help[draft.sandbox],
     draft.sandboxImpl
       || launchDefaults?.implementation
@@ -953,18 +953,18 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
         </div>
       </div>`}
     <${HelpField} id="agent-spawn-sandbox"
-      label=${sandboxModeControlLabel(view.harness)}
+      label=${harnessBuiltinModeControlLabel(view.harness)}
       title="Harness-native sandbox mode. Available when Sandbox explicitly or by resolved default uses the harness's built-in sandbox."
       value=${draft.sandbox} options=${SettingOptions({
-    setting: sandboxModeOptionsForImplementation(view.sandbox, draft.harness, draft.sandbox),
-    optionLabel: (mode, recommended) => sandboxModeOptionLabel(draft.harness, mode, recommended),
+    setting: harnessBuiltinModeOptionsForImplementation(view.sandbox, draft.harness, draft.sandbox),
+    optionLabel: (mode, recommended) => harnessBuiltinModeOptionLabel(draft.harness, mode, recommended),
   })}
       onChange=${(event) => {
         const value = event.currentTarget.value;
         touched.current.add('sandbox');
         setDraft((before) => ({ ...before, sandbox: value }));
       }} help=${sandboxHelp} open=${helpOpen === 'agent-spawn-sandbox'} setOpen=${setHelpOpen}
-      disabled=${!view.showSandboxMode} busy=${busy} />
+      disabled=${!view.showHarnessBuiltinMode} busy=${busy} />
     ${sandboxImplCleared && html`
       <div class="cron-create-row" id="agent-spawn-sandbox-impl-cleared-row" role="alert">
         <span class="cron-create-label"></span>

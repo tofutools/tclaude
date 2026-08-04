@@ -49,7 +49,7 @@ func TestSessionOSSandboxVerdictRoundTrips(t *testing.T) {
 
 	require.NoError(t, SaveSession(&SessionRow{
 		ID: "s1", ConvID: "c1", Status: "running", Harness: DefaultHarness,
-		SandboxMode: "", OSSandboxState: "on", OSSandboxSource: "~/.claude/settings.json",
+		HarnessBuiltinMode: "", OSSandboxState: "on", OSSandboxSource: "~/.claude/settings.json",
 		OSSandboxUnverified: true,
 	}))
 

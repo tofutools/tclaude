@@ -318,13 +318,13 @@ func haveSpawnCapableSandboxParent(t *testing.T, f *testharness.Flow, group, con
 		approval = harness.OpenCodeApprovalDeny
 	}
 	require.NoError(t, db.SaveSession(&db.SessionRow{
-		ID:             "sess-" + convID,
-		TmuxSession:    "tmux-" + convID,
-		ConvID:         convID,
-		Cwd:            f.World.HomeDir,
-		Status:         "running",
-		Harness:        h,
-		SandboxMode:    sandbox,
-		ApprovalPolicy: approval,
+		ID:                 "sess-" + convID,
+		TmuxSession:        "tmux-" + convID,
+		ConvID:             convID,
+		Cwd:                f.World.HomeDir,
+		Status:             "running",
+		Harness:            h,
+		HarnessBuiltinMode: sandbox,
+		ApprovalPolicy:     approval,
 	}))
 }

@@ -16,7 +16,7 @@ import {
   templatePayload,
   templateWaveCount,
 } from './template-management-model.js';
-import { sandboxModeLabel } from './resolved-defaults.js';
+import { harnessBuiltinModeLabel } from './resolved-defaults.js';
 
 const html = htm.bind(h);
 const clone = (value) => JSON.parse(JSON.stringify(value));
@@ -2147,7 +2147,7 @@ function AgentRow({
     agent.harness && `harness ${agent.harness}`,
     agent.model && `model ${agent.model}`,
     agent.effort && `effort ${agent.effort}`,
-    agent.sandbox && `sandbox ${sandboxModeLabel(agent.harness || 'claude', agent.sandbox)}`,
+    agent.sandbox && `sandbox ${harnessBuiltinModeLabel(agent.harness || 'claude', agent.sandbox)}`,
     agent.approval && `approval ${agent.approval}`,
     agent.permissions?.length &&
       `${agent.permissions.length} inline perm${agent.permissions.length === 1 ? '' : 's'}`,

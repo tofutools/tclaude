@@ -16,13 +16,13 @@ import (
 // So the browser asks, rather than guessing from the mode token and getting the
 // common case exactly backwards.
 type spawnEffectiveSandboxJSON struct {
-	// Harness / SandboxMode / Approval echo the values the check actually ran
+	// Harness / HarnessBuiltinMode / Approval echo the values the check actually ran
 	// on, AFTER the harness defaults were applied. The dialog can leave either
 	// select on its blank "default" option, and the echo is how the operator
 	// sees which posture that resolved to.
-	Harness     string `json:"harness"`
-	SandboxMode string `json:"sandbox_mode"`
-	Approval    string `json:"approval"`
+	Harness            string `json:"harness"`
+	HarnessBuiltinMode string `json:"sandbox_mode"`
+	Approval           string `json:"approval"`
 	// SandboxState is "on", "off", or "unconfigured" — see
 	// harness.ClaudeSandboxState. SandboxSource names whatever decided it (the
 	// launch itself, or the settings file that won the precedence chain), and is
@@ -71,7 +71,7 @@ func handleDashboardSpawnEffectiveSandbox(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "invalid_harness", err.Error())
 		return
 	}
-	sandboxMode, err := harness.ResolveSandboxMode(h, query.Get("sandbox"))
+	harnessBuiltinMode, err := harness.ResolveHarnessBuiltinMode(h, query.Get("sandbox"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_sandbox", err.Error())
 		return
@@ -83,8 +83,8 @@ func handleDashboardSpawnEffectiveSandbox(w http.ResponseWriter, r *http.Request
 			"invalid_"+sandboxImplementationField, err.Error())
 		return
 	}
-	sandboxMode, fail := resolveSandboxImplementationMode(
-		h, sandboxMode, sandboxImplementation)
+	harnessBuiltinMode, fail := resolveSandboxImplementationMode(
+		h, harnessBuiltinMode, sandboxImplementation)
 	if fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
@@ -107,25 +107,25 @@ func handleDashboardSpawnEffectiveSandbox(w http.ResponseWriter, r *http.Request
 	// canonical harness id, so the direct compare is exact.
 	var resolution harness.ClaudeSandboxResolution
 	if h.Name == harness.DefaultName {
-		resolution = harness.ResolveClaudeSandboxEnabled(sandboxMode, cwd)
+		resolution = harness.ResolveClaudeSandboxEnabled(harnessBuiltinMode, cwd)
 	}
 	warnings := harness.SpawnSandboxWarnings(
-		h, approval, sandboxMode, cwd, spawnUsesTclaudeLayer(sandboxImplementation))
+		h, approval, harnessBuiltinMode, cwd, spawnUsesTclaudeLayer(sandboxImplementation))
 	if warnings == nil {
 		// A JSON null here would make every consumer guard the array.
 		warnings = []string{}
 	}
-	info := harness.SpawnSandboxInfo(h, sandboxMode)
+	info := harness.SpawnSandboxInfo(h, harnessBuiltinMode)
 	if info == nil {
 		info = []string{}
 	}
 	writeJSON(w, http.StatusOK, spawnEffectiveSandboxJSON{
-		Harness:       h.Name,
-		SandboxMode:   sandboxMode,
-		Approval:      approval,
-		SandboxState:  resolution.State.String(),
-		SandboxSource: resolution.Source,
-		Warnings:      warnings,
-		Info:          info,
+		Harness:            h.Name,
+		HarnessBuiltinMode: harnessBuiltinMode,
+		Approval:           approval,
+		SandboxState:       resolution.State.String(),
+		SandboxSource:      resolution.Source,
+		Warnings:           warnings,
+		Info:               info,
 	})
 }

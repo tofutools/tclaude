@@ -52,29 +52,40 @@ type SessionRow struct {
 	// "codex", …). Empty is coalesced to DefaultHarness ("claude") on
 	// write (schema v56).
 	Harness string
-	// SandboxMode is the launch-time OS-sandbox mode the session was
-	// spawned under (Codex's --sandbox: read-only / workspace-write /
+	// HarnessBuiltinMode is what the HARNESS ITSELF was launched to do about
+	// sandboxing (Codex's --sandbox: read-only / workspace-write /
 	// danger-full-access), or "" for a harness with no launch sandbox flag
 	// (Claude Code). Set once at spawn by `session new`; the dashboard
 	// renders it as a per-agent badge (schema v58, JOH-162). Unlike
-	// Harness, "" is a genuine value (no sandbox), so it is stored verbatim
-	// — never coalesced.
-	SandboxMode string
+	// Harness, "" is a genuine value, so it is stored verbatim — never
+	// coalesced.
+	//
+	// It is NOT a statement that the process is confined, and must never be
+	// read as one (TCL-991, TCL-1023). SandboxImplementation below says who
+	// owns the OS wall; under `tclaude-layer` tclaude's own wall enforces and
+	// the harness's inner sandbox is deliberately stood down, so such a row
+	// records Claude `off` / Codex `danger-full-access` — an instruction to
+	// the harness, not an unconfined agent.
+	//
+	// Persisted as the column `sandbox_mode`, which keeps its original
+	// spelling: see the package comment on the naming split in
+	// relaunch_profiles.go.
+	HarnessBuiltinMode string
 	// SandboxImplementation selects whether the harness's built-in sandbox or
 	// tclaude's outer OS layer owns confinement for this launch (schema v160).
 	SandboxImplementation string
-	// SandboxModeSource names the resolution tier that CHOSE SandboxMode — an
+	// HarnessBuiltinModeSource names the resolution tier that CHOSE HarnessBuiltinMode — an
 	// explicit flag, or the named / group-default / global-default spawn profile
 	// that carried it (schema v158). The mode alone cannot say: an operator who
 	// never typed `--sandbox on` still gets one from a default profile, and the
 	// badge credited that to "this launch" as though they had chosen it. "" is
 	// "nothing recorded" — a pre-column row, or a direct `session new` with
 	// nothing to attribute — and renders exactly as it did before.
-	SandboxModeSource string
+	HarnessBuiltinModeSource string
 	// OSSandboxState and OSSandboxSource are the launch-time verdict on whether
 	// the harness's OS sandbox was ACTUALLY active, and what decided that —
 	// "on"/"off"/"unconfigured" plus the launch flag or the settings file that
-	// won the precedence chain (schema v157, TCL-729). SandboxMode above records
+	// won the precedence chain (schema v157, TCL-729). HarnessBuiltinMode above records
 	// the launch REQUEST, which for Claude Code's `inherit` default answers
 	// nothing; these record the outcome, resolved once at launch by
 	// harness.ResolveLaunchOSSandbox because it is a property of the settings
@@ -109,7 +120,7 @@ type SessionRow struct {
 	// recorded once at spawn by `session new` so a relaunch (resume / clone /
 	// reincarnate) can PRESERVE it. Approval is preserved on relaunch as well;
 	// sandbox follows its own resume rules. "" for a pre-column row or a harness
-	// with no AskUserQuestion dialog; stored verbatim like SandboxMode.
+	// with no AskUserQuestion dialog; stored verbatim like HarnessBuiltinMode.
 	AskUserQuestionTimeout string
 	// RemoteControl is tclaude's best-known state of whether the harness's
 	// built-in remote access (Claude Code's /remote-control) is ON for this
@@ -312,7 +323,7 @@ func SaveSession(s *SessionRow) error {
 			exit_launch_gate_state = CASE WHEN excluded.exit_callback_generation <> '' THEN excluded.exit_launch_gate_state ELSE sessions.exit_launch_gate_state END`,
 		s.ID, s.TmuxSession, s.PID, s.Cwd, s.ConvID,
 		s.Status, s.StatusDetail, s.SubagentCount, s.SubagentsJSON, s.BgShellsJSON, s.MonitorsJSON, boolToInt(s.AutoRegistered),
-		dbTime(s.CreatedAt), dbTime(s.UpdatedAt), nullableDBTime(s.LastHook), harness, s.SandboxMode, sandboxImplementation, s.SandboxModeSource, s.OSSandboxState, s.OSSandboxSource, boolToInt(s.OSSandboxUnverified), s.AskUserQuestionTimeout, effectiveSandbox, s.ApprovalPolicy, boolToInt(s.ApprovalAutoReview), s.ResumeProvenance, s.ConvID,
+		dbTime(s.CreatedAt), dbTime(s.UpdatedAt), nullableDBTime(s.LastHook), harness, s.HarnessBuiltinMode, sandboxImplementation, s.HarnessBuiltinModeSource, s.OSSandboxState, s.OSSandboxSource, boolToInt(s.OSSandboxUnverified), s.AskUserQuestionTimeout, effectiveSandbox, s.ApprovalPolicy, boolToInt(s.ApprovalAutoReview), s.ResumeProvenance, s.ConvID,
 		s.ExitLaunchGeneration, s.ExitLaunchGateState)
 	if err != nil {
 		return err
@@ -516,25 +527,25 @@ func FindSessionByPID(pid int) (*SessionRow, error) {
 // ModelID is the resume-safe full model ID (sessions.model_id, e.g.
 // "claude-fable-5"), NOT the display alias (sessions.model, "Opus 4.8") —
 // only the ID passes ValidateModel and is what reincarnate/clone forward.
-// Harness / SandboxMode are spawn-recorded; Effort is statusline-reported.
+// Harness / HarnessBuiltinMode are spawn-recorded; Effort is statusline-reported.
 // Any field can be "" ("not observed" — e.g. a session that hasn't ticked
 // the statusline has no model/effort yet, or a harness with no sandbox flag).
 type SessionLaunchProfile struct {
-	Harness     string
-	ModelID     string
-	Effort      string
-	SandboxMode string
+	Harness            string
+	ModelID            string
+	Effort             string
+	HarnessBuiltinMode string
 	// SandboxImplementation records who owns OS-level confinement. Empty is
 	// legacy evidence and normalizes to harness-builtin at a launch boundary.
 	SandboxImplementation string
-	// SandboxModeSource is the recorded attribution for SandboxMode — which
+	// HarnessBuiltinModeSource is the recorded attribution for HarnessBuiltinMode — which
 	// resolution tier chose it. A relaunch replays it alongside the mode so the
 	// badge keeps naming the spawn profile that forced the sandbox rather than
 	// degrading to an anonymous "this launch" after the first resume. "" =
 	// nothing recorded (legacy row, or a launch that had nothing to attribute).
-	SandboxModeSource  string
-	ApprovalPolicy     string
-	ApprovalAutoReview bool
+	HarnessBuiltinModeSource string
+	ApprovalPolicy           string
+	ApprovalAutoReview       bool
 }
 
 // SessionLaunchProfileForConv reads durable agent intent, or the conversation
@@ -566,8 +577,8 @@ func SessionLaunchProfileForConv(convID string) (SessionLaunchProfile, error) {
 		if durable.Effort != nil {
 			p.Effort = *durable.Effort
 		}
-		if durable.SandboxMode != nil {
-			p.SandboxMode = *durable.SandboxMode
+		if durable.HarnessBuiltinMode != nil {
+			p.HarnessBuiltinMode = *durable.HarnessBuiltinMode
 		}
 		if durable.SandboxImplementation != nil {
 			implementation, implementationErr :=
@@ -575,17 +586,17 @@ func SessionLaunchProfileForConv(convID string) (SessionLaunchProfile, error) {
 			if implementationErr != nil {
 				return SessionLaunchProfile{}, implementationErr
 			}
-			if durable.TemporarySandboxMode != nil {
+			if durable.TemporaryHarnessBuiltinMode != nil {
 				implementation = sandboxpolicy.ImplementationHarnessBuiltin
 			}
 			p.SandboxImplementation = string(implementation)
 		}
-		if durable.SandboxModeSource != nil {
-			p.SandboxModeSource = *durable.SandboxModeSource
+		if durable.HarnessBuiltinModeSource != nil {
+			p.HarnessBuiltinModeSource = *durable.HarnessBuiltinModeSource
 		}
-		if durable.TemporarySandboxMode != nil {
-			p.SandboxMode = *durable.TemporarySandboxMode
-			p.SandboxModeSource = TemporarySandboxModeSource
+		if durable.TemporaryHarnessBuiltinMode != nil {
+			p.HarnessBuiltinMode = *durable.TemporaryHarnessBuiltinMode
+			p.HarnessBuiltinModeSource = TemporaryHarnessBuiltinModeSource
 		}
 		if durable.ApprovalPolicy != nil {
 			p.ApprovalPolicy = *durable.ApprovalPolicy
@@ -603,7 +614,7 @@ func SessionLaunchProfileForConv(convID string) (SessionLaunchProfile, error) {
 	err = d.QueryRow(
 		`SELECT harness, model_id, effort_level, sandbox_mode, sandbox_implementation, approval_policy, approval_auto_review FROM sessions
 		 WHERE conv_id = ? ORDER BY updated_at DESC LIMIT 1`, convID).
-		Scan(&p.Harness, &p.ModelID, &p.Effort, &p.SandboxMode, &p.SandboxImplementation, &p.ApprovalPolicy, &p.ApprovalAutoReview)
+		Scan(&p.Harness, &p.ModelID, &p.Effort, &p.HarnessBuiltinMode, &p.SandboxImplementation, &p.ApprovalPolicy, &p.ApprovalAutoReview)
 	if errors.Is(err, sql.ErrNoRows) {
 		return SessionLaunchProfile{}, nil
 	}
@@ -685,7 +696,7 @@ func PreTemporaryUnlockSandboxImplementationForConv(convID string) (string, erro
 	if latest.implementation != string(sandboxpolicy.ImplementationHarnessBuiltin) {
 		return "", nil
 	}
-	temporaryTail := latest.source == TemporarySandboxModeSource
+	temporaryTail := latest.source == TemporaryHarnessBuiltinModeSource
 	for {
 		item, itemOK, itemErr := next()
 		if itemErr != nil || !itemOK {
@@ -694,7 +705,7 @@ func PreTemporaryUnlockSandboxImplementationForConv(convID string) (string, erro
 		switch item.implementation {
 		case string(sandboxpolicy.ImplementationHarnessBuiltin):
 			switch {
-			case item.source == TemporarySandboxModeSource:
+			case item.source == TemporaryHarnessBuiltinModeSource:
 				temporaryTail = true
 			case temporaryTail:
 				// Once the scan reaches the temporary launch, an earlier
@@ -795,7 +806,7 @@ func scanSessionRow(s rowScanner) (*SessionRow, error) {
 	var createdAt, updatedAt, lastHook dbTimestamp
 	var effectiveSandbox, contextFeatures string
 	if err := s.Scan(&row.ID, &row.TmuxSession, &row.PID, &row.Cwd, &row.ConvID,
-		&row.Status, &row.StatusDetail, &row.SubagentCount, &row.SubagentsJSON, &row.BgShellsJSON, &row.MonitorsJSON, &autoReg, &createdAt, &updatedAt, &lastHook, &row.Harness, &row.SandboxMode, &row.SandboxImplementation, &row.SandboxModeSource, &row.OSSandboxState, &row.OSSandboxSource, &osSandboxUnverified, &row.AskUserQuestionTimeout, &effectiveSandbox, &remoteCtl, &autoMemory, &contextFeatures, &row.AutoCompactWindow, &row.ApprovalPolicy, &approvalAutoReview, &row.ResumeProvenance); err != nil {
+		&row.Status, &row.StatusDetail, &row.SubagentCount, &row.SubagentsJSON, &row.BgShellsJSON, &row.MonitorsJSON, &autoReg, &createdAt, &updatedAt, &lastHook, &row.Harness, &row.HarnessBuiltinMode, &row.SandboxImplementation, &row.HarnessBuiltinModeSource, &row.OSSandboxState, &row.OSSandboxSource, &osSandboxUnverified, &row.AskUserQuestionTimeout, &effectiveSandbox, &remoteCtl, &autoMemory, &contextFeatures, &row.AutoCompactWindow, &row.ApprovalPolicy, &approvalAutoReview, &row.ResumeProvenance); err != nil {
 		return nil, err
 	}
 	row.AutoRegistered = autoReg != 0

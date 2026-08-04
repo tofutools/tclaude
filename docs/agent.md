@@ -879,8 +879,9 @@ reincarnation re-resolve ordinary rules from the current registry, but every
 deny row in the launch snapshot must still be present, with no reopen beneath
 it that the snapshot did not already have. There is no human in the loop on a
 relaunch, so widening is never granted implicitly. A relaunch also preserves
-the sandbox mode the agent was launched under rather than re-deriving the
-harness default, so an enforced `sandbox on` posture is not silently dropped.
+the harness-builtin mode the agent was launched under rather than re-deriving
+the harness default, so an enforced `sandbox on` posture is not silently
+dropped.
 
 `agent_directories` is a JSON array of environment-variable names, for example
 `["GOCACHE", "GOLANGCI_LINT_CACHE"]`. At spawn, agentd creates a fresh private
@@ -1154,7 +1155,8 @@ inherit multiple group memberships or ownerships must be allowed by every
 destination group's effective edge.
 
 The sandbox lineage guard compares the spawning agent's recorded harness /
-sandbox mode with the fully resolved child launch shape, after any group
+harness-builtin mode (the `--sandbox` axis — what the harness itself does about
+sandboxing) with the fully resolved child launch shape, after any group
 default spawn profile has filled blank fields.
 
 Both sides are read together with their sandbox *implementation*, because the

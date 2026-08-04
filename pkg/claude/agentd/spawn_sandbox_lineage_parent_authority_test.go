@@ -16,7 +16,7 @@ import (
 // than by the mode alone. This file measures the blast radius of that, and it
 // does so over every (harness, mode, implementation) triple a session row can
 // hold — derived from the recording path itself
-// (ResolveSandboxMode -> ResolveSandboxImplementationMode), which is what
+// (ResolveHarnessBuiltinMode -> ResolveSandboxImplementationMode), which is what
 // decides what ends up in the row. That is a stronger statement than sampling
 // the rows that happen to exist today: a shape absent from one operator's
 // database is still reachable by anyone passing the flags.
@@ -79,7 +79,7 @@ func recordableLineageLaunches(t *testing.T) []recordableLineageLaunch {
 			modes = append(modes, h.Sandbox.Modes()...)
 		}
 		for _, mode := range modes {
-			resolved, err := harness.ResolveSandboxMode(h, mode)
+			resolved, err := harness.ResolveHarnessBuiltinMode(h, mode)
 			if err != nil {
 				continue
 			}
@@ -316,7 +316,7 @@ func requireSaveLineageParent(
 	t.Helper()
 	require.NoError(t, db.SaveSession(&db.SessionRow{
 		ID: "sess-" + convID, ConvID: convID, Cwd: t.TempDir(),
-		Harness: harnessName, SandboxMode: mode,
+		Harness: harnessName, HarnessBuiltinMode: mode,
 		SandboxImplementation: string(implementation),
 	}))
 }

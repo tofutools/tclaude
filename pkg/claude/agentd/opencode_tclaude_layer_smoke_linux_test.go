@@ -329,7 +329,7 @@ func runOpenCodeTclaudeLayerExecutorSmoke(t *testing.T, filtered bool) {
 		ID:                    openCodeLayerSmokeSessionID,
 		ConvID:                launch.ConvID,
 		Harness:               harness.OpenCodeName,
-		SandboxMode:           harness.OpenCodeSandboxTclaudeLayer,
+		HarnessBuiltinMode:    harness.OpenCodeSandboxTclaudeLayer,
 		SandboxImplementation: string(sandboxpolicy.ImplementationTclaudeLayer),
 		Cwd:                   cwd,
 		Status:                session.StatusWorking,

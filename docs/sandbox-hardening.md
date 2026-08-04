@@ -225,9 +225,12 @@ panes. That host path is resolved at launch rather than installed in this
 portable user-level block. On Linux, Claude's bubblewrap runtime masks that
 socket with `/dev/null` when its sandbox is enabled. That prevents
 `capture-pane`, `send-keys`, and tmux session mutation against tclaude while
-leaving the tmux binary and agent-owned private sockets usable. Sandbox mode
-`off` is the explicit escape hatch; under `inherit`, the mask follows the
-operator's enabled/disabled sandbox posture.
+leaving the tmux binary and agent-owned private sockets usable. Harness-builtin mode
+`off` is the explicit escape hatch for a `harness-builtin` launch; under
+`inherit`, the mask follows the operator's enabled/disabled sandbox posture.
+(Under `--sandbox-impl tclaude-layer` the same `off` is not an escape hatch at
+all — tclaude forces it because its own wall, which carries its own tmux
+host-control rule, is the one enforcing.)
 
 On macOS, filesystem denial alone does not block a Unix-socket connection and
 Claude's supported settings expose no exact socket deny. With the default

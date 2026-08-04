@@ -181,16 +181,16 @@ func runSeance(p *seanceParams, stdin io.Reader, stdout, stderr io.Writer) int {
 		return rcInvalidArg
 	}
 	posture := harness.SpawnSpec{
-		SandboxMode:     resolved.Sandbox,
-		SandboxDenyDirs: append([]string(nil), resolved.SandboxDenyDirs...),
-		ApprovalPolicy:  resolved.Approval,
-		AutoReview:      resolved.AutoReview,
+		HarnessBuiltinMode: resolved.Sandbox,
+		SandboxDenyDirs:    append([]string(nil), resolved.SandboxDenyDirs...),
+		ApprovalPolicy:     resolved.Approval,
+		AutoReview:         resolved.AutoReview,
 	}
-	if h.Name == harness.CodexName && posture.SandboxMode == harness.SandboxManagedProfile {
+	if h.Name == harness.CodexName && posture.HarnessBuiltinMode == harness.SandboxManagedProfile {
 		// The daemon creates a launch-unique profile at execution time. Keep a
 		// visibly symbolic name in --print-cmd rather than pretending the
 		// generic read-only ask posture is what will run.
-		posture.SandboxMode = ""
+		posture.HarnessBuiltinMode = ""
 		posture.PermissionProfile = harness.CodexAgentProfile + "-<launch-id>"
 	}
 	spec := harness.AskSpec{

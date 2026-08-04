@@ -2458,7 +2458,7 @@ func resumeLaunchCmdWithStackedProof(
 		return "", "", nil, fmt.Errorf("load auto-compaction window for conversation %s: %w", convID, err)
 	}
 	session.ApplyAutoCompactWindowEnv(h, autoCompactWindow, resumeEnv)
-	sandboxMode, resumeCwd := resumeSandboxState(convID)
+	harnessBuiltinMode, resumeCwd := resumeSandboxState(convID)
 	if effectiveSandbox != nil && !outerLayer &&
 		(effectiveProfile.Network != nil || effectiveProfile.UnixSockets != nil) {
 		// Standalone conversation/watch resume does not pass through agentd's
@@ -2471,9 +2471,9 @@ func resumeLaunchCmdWithStackedProof(
 			return "", "", nil, fmt.Errorf("sandbox_profile_changed: %w", axesErr)
 		}
 		launchOSSandbox := harness.ResolveLaunchOSSandbox(
-			h, sandboxMode, resumeSandboxChosenBy(convID), resumeCwd)
+			h, harnessBuiltinMode, resumeSandboxChosenBy(convID), resumeCwd)
 		caps, capsErr := harness.ResolveAccessEnforcement(
-			h, implementation, axes, launchOSSandbox, sandboxMode)
+			h, implementation, axes, launchOSSandbox, harnessBuiltinMode)
 		if capsErr != nil {
 			return "", "", nil, fmt.Errorf("sandbox_profile_changed: %w", capsErr)
 		}
@@ -2528,17 +2528,17 @@ func resumeLaunchCmdWithStackedProof(
 	}
 	approvalPolicy, autoReview := approvalState.Policy, approvalState.AutoReview
 	if !outerLayer {
-		if err := harness.ValidateSandboxReopenUnderDeny(h.Name, sandboxMode, launchGrants); err != nil {
+		if err := harness.ValidateSandboxReopenUnderDeny(h.Name, harnessBuiltinMode, launchGrants); err != nil {
 			return "", "", nil, err
 		}
 	}
-	if !outerLayer && h.Name == harness.DefaultName && len(denyDirs) > 0 && sandboxMode != harness.ClaudeSandboxOn {
+	if !outerLayer && h.Name == harness.DefaultName && len(denyDirs) > 0 && harnessBuiltinMode != harness.ClaudeSandboxOn {
 		return "", "", nil, fmt.Errorf("unsupported_sandbox_profile_filesystem: Claude filesystem deny rules require sandbox %s", harness.ClaudeSandboxOn)
 	}
 	if !outerLayer && networkAccess != sandboxpolicy.NetworkAccessInherit && h.Name != harness.CodexName {
 		return "", "", nil, fmt.Errorf("unsupported_sandbox_profile_network: network policies are currently supported only by the Codex managed sandbox")
 	}
-	if !outerLayer && networkAccess != sandboxpolicy.NetworkAccessInherit && sandboxMode != harness.SandboxManagedProfile {
+	if !outerLayer && networkAccess != sandboxpolicy.NetworkAccessInherit && harnessBuiltinMode != harness.SandboxManagedProfile {
 		return "", "", nil, fmt.Errorf("unsupported_sandbox_profile_network: codex network rules require sandbox %s", harness.SandboxManagedProfile)
 	}
 	if !outerLayer && networkAccess != sandboxpolicy.NetworkAccessInherit {
@@ -2546,8 +2546,8 @@ func resumeLaunchCmdWithStackedProof(
 			return "", "", nil, fmt.Errorf("unsupported_sandbox_profile_network: %w", err)
 		}
 	}
-	sandboxMode, err = resumeSandboxModeForImplementation(
-		h, sandboxMode, implementation, stacked,
+	harnessBuiltinMode, err = resumeHarnessBuiltinModeForImplementation(
+		h, harnessBuiltinMode, implementation, stacked,
 	)
 	if err != nil {
 		return "", "", nil, err
@@ -2558,8 +2558,8 @@ func resumeLaunchCmdWithStackedProof(
 	workspaceDenied := resumeDenyCoversPath(launchGrants, resumeCwd)
 	var tclaudeLayerContractWriteDirs []string
 	if outerLayer ||
-		(h.Name == harness.CodexName && sandboxMode == harness.SandboxManagedProfile) ||
-		(h.Name == harness.DefaultName && sandboxMode != harness.ClaudeSandboxOff) {
+		(h.Name == harness.CodexName && harnessBuiltinMode == harness.SandboxManagedProfile) ||
+		(h.Name == harness.DefaultName && harnessBuiltinMode != harness.ClaudeSandboxOff) {
 		gitWriteDirs, err := resumeGitWorktreeWriteDirs(resumeCwd, workspaceDenied)
 		if err != nil {
 			return "", "", nil, fmt.Errorf("resolve sandboxed resume Git grants: %w", err)
@@ -2594,7 +2594,7 @@ func resumeLaunchCmdWithStackedProof(
 	// not contain. Mirrors the spawn path.
 	renderedGrants := sandboxpolicy.GrantsFromDirs(readDirs, writeDirs, denyDirs)
 	if !outerLayer {
-		if err := harness.ValidateSandboxReopenUnderDeny(h.Name, sandboxMode, renderedGrants); err != nil {
+		if err := harness.ValidateSandboxReopenUnderDeny(h.Name, harnessBuiltinMode, renderedGrants); err != nil {
 			return "", "", nil, err
 		}
 	}
@@ -2618,16 +2618,16 @@ func resumeLaunchCmdWithStackedProof(
 		return "", "", nil, err
 	}
 	spec := harness.SpawnSpec{
-		EnvExports:       clcommon.BuildEnvExports(resumeEnv),
-		ShellEnvironment: shellEnvironment,
-		ResumeID:         convID,
-		ExtraArgs:        extraArgs,
-		SandboxMode:      sandboxMode,
-		SandboxReadDirs:  readDirs,
-		SandboxWriteDirs: writeDirs,
-		SandboxDenyDirs:  denyDirs,
-		ApprovalPolicy:   approvalPolicy,
-		AutoReview:       autoReview,
+		EnvExports:         clcommon.BuildEnvExports(resumeEnv),
+		ShellEnvironment:   shellEnvironment,
+		ResumeID:           convID,
+		ExtraArgs:          extraArgs,
+		HarnessBuiltinMode: harnessBuiltinMode,
+		SandboxReadDirs:    readDirs,
+		SandboxWriteDirs:   writeDirs,
+		SandboxDenyDirs:    denyDirs,
+		ApprovalPolicy:     approvalPolicy,
+		AutoReview:         autoReview,
 		// The recorded AskUserQuestion timeout rides the same `--settings` payload
 		// as the sandbox block, so it has to reach the spec too — an omitted one
 		// silently returns a resumed agent to blocking on every question.
@@ -2646,7 +2646,7 @@ func resumeLaunchCmdWithStackedProof(
 	}
 	cleanupPath := ""
 	var splitCapability *harness.CodexSplitPolicyCapability
-	if (!outerLayer || stacked) && h.Name == harness.CodexName && sandboxMode == harness.SandboxManagedProfile {
+	if (!outerLayer || stacked) && h.Name == harness.CodexName && harnessBuiltinMode == harness.SandboxManagedProfile {
 		resumeWriteDirs := writeDirs
 		requireSplitPolicy := sandboxpolicy.HasReopenUnderDeny(renderedGrants)
 		if requireSplitPolicy {
@@ -2671,7 +2671,7 @@ func resumeLaunchCmdWithStackedProof(
 		if err != nil {
 			return "", "", nil, fmt.Errorf("prepare managed Codex resume profile: %w", err)
 		}
-		spec.SandboxMode = ""
+		spec.HarnessBuiltinMode = ""
 		spec.PermissionProfile = profileName
 		if splitCapability != nil {
 			spec.ExecutablePath = splitCapability.ExecutablePath
@@ -2779,14 +2779,14 @@ func resumeLaunchCmdWithStackedProof(
 	return cmd, cleanupPath, h, nil
 }
 
-func resumeSandboxModeForImplementation(
+func resumeHarnessBuiltinModeForImplementation(
 	h *harness.Harness,
 	recordedMode string,
 	implementation sandboxpolicy.Implementation,
 	stacked bool,
 ) (string, error) {
 	if implementation == sandboxpolicy.ImplementationTclaudeLayer {
-		return harness.TclaudeLayerSandboxMode(h)
+		return harness.TclaudeLayerHarnessBuiltinMode(h)
 	}
 	if stacked {
 		switch h.Name {
@@ -2887,7 +2887,7 @@ func appendUniqueResumeDir(dirs []string, dir string) []string {
 func resumeSandboxState(convID string) (mode, cwd string) {
 	launch, launchErr := db.SessionLaunchProfileForConv(convID)
 	if launchErr == nil {
-		mode = strings.TrimSpace(launch.SandboxMode)
+		mode = strings.TrimSpace(launch.HarnessBuiltinMode)
 	}
 	if profile, err := db.ConversationResumeProfileForConv(convID); err == nil && profile != nil {
 		cwd = strings.TrimSpace(profile.Cwd)
@@ -2903,12 +2903,12 @@ func resumeSandboxState(convID string) (mode, cwd string) {
 		return mode, ""
 	}
 	if launchErr != nil {
-		mode = strings.TrimSpace(row.SandboxMode)
+		mode = strings.TrimSpace(row.HarnessBuiltinMode)
 	}
 	return mode, strings.TrimSpace(row.Cwd)
 }
 
-func resumeSandboxMode(convID string) string {
+func resumeHarnessBuiltinMode(convID string) string {
 	mode, _ := resumeSandboxState(convID)
 	return mode
 }
@@ -2932,7 +2932,7 @@ func resumeSandboxImplementation(convID string) (sandboxpolicy.Implementation, e
 }
 
 // resumeSandboxChosenBy replays the recorded attribution for the mode
-// resumeSandboxMode replays. A resume re-resolves the VERDICT against today's
+// resumeHarnessBuiltinMode replays. A resume re-resolves the VERDICT against today's
 // settings files, but the mode itself is a replay — so who chose it is a replay
 // too, and dropping it would let an agent's containment become anonymous after
 // its first restart. "" when nothing was recorded (a pre-v158 row, or a launch
@@ -2942,7 +2942,7 @@ func resumeSandboxChosenBy(convID string) string {
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(launch.SandboxModeSource)
+	return strings.TrimSpace(launch.HarnessBuiltinModeSource)
 }
 
 // resumeContextPosture reads the three launch postures SaveSession's UPSERT
@@ -3255,7 +3255,7 @@ func createSessionForConv(conv *SessionEntry) error {
 	// A resume is a fresh launch: re-resolve whether the OS sandbox actually
 	// confines it rather than carrying the predecessor's verdict, because the
 	// operator may have changed settings.json since (TCL-729).
-	resumeMode := resumeSandboxMode(conv.SessionID)
+	resumeMode := resumeHarnessBuiltinMode(conv.SessionID)
 	resumeChosenBy := resumeSandboxChosenBy(conv.SessionID)
 	resumeImplementation, err := resumeSandboxImplementation(conv.SessionID)
 	if err != nil {
@@ -3271,25 +3271,25 @@ func createSessionForConv(conv *SessionEntry) error {
 		)
 	}
 	state := &session.SessionState{
-		ID:                     sessionID,
-		TmuxSession:            tmuxSession,
-		PID:                    pid,
-		Cwd:                    cwd,
-		ConvID:                 conv.SessionID,
-		Status:                 session.StatusIdle,
-		Harness:                h.Name,
-		SandboxMode:            resumeMode,
-		SandboxImplementation:  string(resumeImplementation),
-		SandboxModeSource:      resumeChosenBy,
-		OSSandboxState:         launchOSSandbox.State,
-		OSSandboxSource:        launchOSSandbox.Source,
-		OSSandboxUnverified:    launchOSSandbox.Unverified,
-		EffectiveSandbox:       launchEffectiveSandbox,
-		ApprovalPolicy:         approvalPolicy,
-		ApprovalAutoReview:     autoReview,
-		AskUserQuestionTimeout: askTimeout,
-		Created:                time.Now(),
-		Updated:                time.Now(),
+		ID:                       sessionID,
+		TmuxSession:              tmuxSession,
+		PID:                      pid,
+		Cwd:                      cwd,
+		ConvID:                   conv.SessionID,
+		Status:                   session.StatusIdle,
+		Harness:                  h.Name,
+		HarnessBuiltinMode:       resumeMode,
+		SandboxImplementation:    string(resumeImplementation),
+		HarnessBuiltinModeSource: resumeChosenBy,
+		OSSandboxState:           launchOSSandbox.State,
+		OSSandboxSource:          launchOSSandbox.Source,
+		OSSandboxUnverified:      launchOSSandbox.Unverified,
+		EffectiveSandbox:         launchEffectiveSandbox,
+		ApprovalPolicy:           approvalPolicy,
+		ApprovalAutoReview:       autoReview,
+		AskUserQuestionTimeout:   askTimeout,
+		Created:                  time.Now(),
+		Updated:                  time.Now(),
 	}
 
 	if err := session.SaveSessionState(state); err != nil {

@@ -246,7 +246,7 @@ type SpawnRequest struct {
 	// (so a Codex spawn is checked against Codex's rules, not Claude's).
 	Harness string `json:"harness,omitempty"`
 
-	// SandboxMode picks the launch containment for a harness that takes one
+	// HarnessBuiltinMode picks the launch containment for a harness that takes one
 	// (Codex). Empty resolves to the harness's secure default — for Codex the
 	// managed tclaude-agent profile (workspace-write containment PLUS the
 	// agentd-socket allowlist, so the agent can still run `tclaude agent …`),
@@ -256,10 +256,10 @@ type SpawnRequest struct {
 	// danger-full-access opts out of the sandbox entirely. Not applicable to
 	// Claude Code (settings.json-driven), which rejects a non-empty value. See
 	// JOH-192 / JOH-207.
-	SandboxMode string `json:"sandbox,omitempty"`
+	HarnessBuiltinMode string `json:"sandbox,omitempty"`
 
 	// SandboxImplementation picks WHO OWNS OS-level containment for the new
-	// agent, independently of the per-harness SandboxMode above: "harness-builtin"
+	// agent, independently of the per-harness HarnessBuiltinMode above: "harness-builtin"
 	// (the current behavior — the harness's own sandbox) or the EXPERIMENTAL
 	// "tclaude-layer", which runs the whole harness process inside a
 	// tclaude-owned bubblewrap mount namespace and disables the harness's own
@@ -316,7 +316,7 @@ type SpawnRequest struct {
 	// projects.<cwd>.hasTrustDialogAccepted in ~/.claude.json), so a detached
 	// pane doesn't freeze on the "do you trust this folder?" dialog (JOH-205,
 	// JOH-369). false (the default) leaves the dialog in place — to be cleared
-	// by focusing the pending pane. Unlike SandboxMode/ApprovalPolicy this
+	// by focusing the pending pane. Unlike HarnessBuiltinMode/ApprovalPolicy this
 	// edits a config tclaude does not own, so it is strictly opt-in (dashboard
 	// checkbox / `--trust-dir`) and NEVER defaulted. Requesting it for a
 	// harness with no trust dialog is a 400. Forwarded to `tclaude session new
@@ -599,12 +599,12 @@ type SpawnParams struct {
 	// short-flag enricher must not steal a letter from an existing field.
 	Harness string `long:"harness" optional:"true" help:"Coding harness for the new agent: claude | codex. Other launch flags never infer or pin it. Unset resolves from --profile, the group default profile, the global default profile, then claude. See 'Default resolution' in the command help"`
 
-	// Sandbox is the launch-time OS-sandbox mode for the new agent. Codex takes
+	// Sandbox is the launch-time harness-builtin sandbox mode for the new agent. Codex takes
 	// a native --sandbox enum; Claude Code has no launch flag, so its
 	// inherit/on/off modes are delivered as a `--settings` override (see
 	// harness.claudeSandbox). Declared last (no explicit short) for the same
 	// reason as the fields above.
-	Sandbox string `long:"sandbox" optional:"true" help:"Launch containment for the new agent (per-harness modes). Codex: tclaude-agent (managed profile, keeps agentd reachable) | workspace-write | read-only | danger-full-access. Claude Code: inherit (use settings.json as-is) | on (force the OS sandbox on via --settings, agentd reachable) | off. Unset = filled by the default-profile chain, then the harness default (Codex: tclaude-agent; Claude: inherit). See 'Default resolution' in the command help"`
+	Sandbox string `long:"sandbox" optional:"true" help:"The new agent's HARNESS-BUILTIN sandbox mode: what its harness does about sandboxing, not who enforces containment (that is --sandbox-impl). Codex: tclaude-agent (managed profile, keeps agentd reachable) | workspace-write | read-only | danger-full-access. Claude Code: inherit (use settings.json as-is) | on (force the OS sandbox on via --settings, agentd reachable) | off. Unset = filled by the default-profile chain, then the harness default (Codex: tclaude-agent; Claude: inherit). See 'Default resolution' in the command help"`
 
 	// AskUserQuestionTimeout is the Claude Code AskUserQuestion idle-timeout
 	// override for the new agent, delivered via `--settings`. Declared last (no
@@ -1092,7 +1092,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	// full chain before validating them against the selected catalog.
 	effort := strings.TrimSpace(p.Effort)
 	model := strings.TrimSpace(p.Model)
-	sandboxMode := strings.TrimSpace(p.Sandbox)
+	harnessBuiltinMode := strings.TrimSpace(p.Sandbox)
 	approvalPolicy := strings.TrimSpace(p.Approval)
 	toolGovernance := strings.TrimSpace(p.ToolGovernance)
 	askTimeout := strings.TrimSpace(p.AskUserQuestionTimeout)
@@ -1158,14 +1158,14 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		// Validate --sandbox (an explicit value / an inherited profile value) but do
 		// NOT apply the harness default here: a blank stays blank so the daemon's
 		// group-default-profile overlay can still fill it before the daemon applies
-		// the secure default (harness.ResolveSandboxMode) + the cwd-safety guard
+		// the secure default (harness.ResolveHarnessBuiltinMode) + the cwd-safety guard
 		// server-side. Applying the default client-side would resolve an omitted
 		// --sandbox to a concrete mode and pre-empt that overlay, so an agent spawned
 		// into a group whose default profile sets a sandbox would silently ignore it.
 		// An explicit `inherit` is carried through verbatim (a first-class sentinel)
 		// so the daemon won't let a profile override it. A mode for a harness with no
 		// launch sandbox flag is still rejected fast here.
-		if _, err = harness.ValidateSandboxMode(h, validationFields.Sandbox); err != nil {
+		if _, err = harness.ValidateHarnessBuiltinMode(h, validationFields.Sandbox); err != nil {
 			fmt.Fprintf(stderr, "Error: %v\n", err)
 			return nil, rcInvalidArg
 		}
@@ -1276,7 +1276,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		Effort:                 effort,
 		Model:                  model,
 		Harness:                clientHarness,
-		SandboxMode:            sandboxMode,
+		HarnessBuiltinMode:     harnessBuiltinMode,
 		SandboxImplementation:  sandboxImpl,
 		AskUserQuestionTimeout: askTimeout,
 		AutoCompactWindow:      autoCompactWindow,

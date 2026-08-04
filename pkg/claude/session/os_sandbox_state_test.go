@@ -18,7 +18,7 @@ func TestOSSandboxVerdictSurvivesRowConversion(t *testing.T) {
 		ID:                  "s1",
 		ConvID:              "c1",
 		Harness:             "claude",
-		SandboxMode:         "inherit",
+		HarnessBuiltinMode:  "inherit",
 		OSSandboxState:      "on",
 		OSSandboxSource:     "~/.claude/settings.json",
 		OSSandboxUnverified: true,
@@ -39,12 +39,12 @@ func TestOSSandboxVerdictSurvivesRowConversion(t *testing.T) {
 // than as a positive claim — the value the UPSERT's preserve-on-empty rule and
 // the badge's fallback both key on.
 func TestAbsentOSSandboxVerdictRoundTripsEmpty(t *testing.T) {
-	row := toRow(&SessionState{ID: "s1", ConvID: "c1", Harness: "codex", SandboxMode: "workspace-write"})
+	row := toRow(&SessionState{ID: "s1", ConvID: "c1", Harness: "codex", HarnessBuiltinMode: "workspace-write"})
 	assert.Empty(t, row.OSSandboxState)
 	assert.Empty(t, row.OSSandboxSource)
 	assert.False(t, row.OSSandboxUnverified)
 
-	back := fromRow(&db.SessionRow{ID: "s1", ConvID: "c1", Harness: "codex", SandboxMode: "workspace-write"})
+	back := fromRow(&db.SessionRow{ID: "s1", ConvID: "c1", Harness: "codex", HarnessBuiltinMode: "workspace-write"})
 	assert.Empty(t, back.OSSandboxState)
 	assert.Empty(t, back.OSSandboxSource)
 	assert.False(t, back.OSSandboxUnverified)

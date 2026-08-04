@@ -21,9 +21,9 @@ func TestNestedSandboxContractsPrepareRealInnerEngines(t *testing.T) {
 	claude := MustGet(DefaultName)
 	require.True(t, claude.SupportsNestedSandbox())
 	claudeSpec := claude.NestedSandbox.PrepareLaunch(SpawnSpec{
-		SandboxMode: ClaudeSandboxOff,
+		HarnessBuiltinMode: ClaudeSandboxOff,
 	})
-	assert.Equal(t, ClaudeSandboxOn, claudeSpec.SandboxMode)
+	assert.Equal(t, ClaudeSandboxOn, claudeSpec.HarnessBuiltinMode)
 	assert.True(t, claudeSpec.StrongNestedSandbox)
 	var settings map[string]any
 	require.NoError(t, json.Unmarshal([]byte(claudeSettingsJSON(claudeSpec)), &settings))
@@ -35,9 +35,9 @@ func TestNestedSandboxContractsPrepareRealInnerEngines(t *testing.T) {
 	codex := MustGet(CodexName)
 	require.True(t, codex.SupportsNestedSandbox())
 	codexSpec := codex.NestedSandbox.PrepareLaunch(SpawnSpec{
-		SandboxMode: SandboxDangerFull,
+		HarnessBuiltinMode: SandboxDangerFull,
 	})
-	assert.Empty(t, codexSpec.SandboxMode)
+	assert.Empty(t, codexSpec.HarnessBuiltinMode)
 	assert.Equal(t, CodexAgentProfile, codexSpec.PermissionProfile)
 	assert.True(t, codexSpec.StrongNestedSandbox)
 	command := codex.Spawn.BuildCommand(codexSpec)

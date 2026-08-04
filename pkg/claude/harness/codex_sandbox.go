@@ -8,7 +8,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
-// Codex sandbox modes — openai/codex `SandboxMode` (kebab-case), verified
+// Codex sandbox modes — openai/codex `HarnessBuiltinMode` (kebab-case), verified
 // firsthand against rust-v0.139.0. workspace-write writes only cwd + /tmp +
 // $TMPDIR ($HOME read-only)
 // with network denied: the secure default for a tclaude-spawned agent.
@@ -56,12 +56,12 @@ func (codexSandbox) Modes() []string {
 	return []string{SandboxManagedProfile, SandboxWorkspaceWrite, SandboxReadOnly, SandboxDangerFull}
 }
 
-// codexSandboxModeHelp is the one-line description the spawn UI shows for each
+// codexHarnessBuiltinModeHelp is the one-line description the spawn UI shows for each
 // selectable mode, calling out agentd-socket reachability — the property that
 // surprised operators (the raw `--sandbox` modes make Codex ignore permission
 // profiles, blocking the socket, so the agent can't run `tclaude agent …`). The
 // leading "⚠" marks the modes the dialog should flag. Keyed by mode value.
-var codexSandboxModeHelp = map[string]string{
+var codexHarnessBuiltinModeHelp = map[string]string{
 	SandboxManagedProfile: "Recommended. Workspace-write containment (only the working directory is writable; ~/.tclaude is inaccessible) PLUS access to agentd's state-free socket — the agent CAN run `tclaude agent` (coordinate, reincarnate, notify-human).",
 	SandboxWorkspaceWrite: "Raw Codex sandbox — only the working directory is writable ($HOME read-only). ⚠ No agentd access: the agent CANNOT run `tclaude agent`.",
 	SandboxReadOnly:       "Raw Codex sandbox — no filesystem writes at all. ⚠ No agentd access: the agent CANNOT run `tclaude agent`.",
@@ -71,7 +71,7 @@ var codexSandboxModeHelp = map[string]string{
 // ModeHelp returns a one-line description of a sandbox mode for spawn UIs, or
 // "" for an unrecognized mode.
 func (codexSandbox) ModeHelp(mode string) string {
-	return codexSandboxModeHelp[strings.TrimSpace(mode)]
+	return codexHarnessBuiltinModeHelp[strings.TrimSpace(mode)]
 }
 
 func (codexSandbox) ValidateMode(mode string) (string, error) {

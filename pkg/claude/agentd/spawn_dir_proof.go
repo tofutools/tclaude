@@ -572,8 +572,8 @@ func appendUniqueDirs(dirs []string, candidates ...string) []string {
 	return dirs
 }
 
-func spawnGitCommonDir(harnessName, sandboxMode, sandboxImplementation, cwd string) (string, error) {
-	if !spawnUsesPinnedGitCommonDir(harnessName, sandboxMode, sandboxImplementation) {
+func spawnGitCommonDir(harnessName, harnessBuiltinMode, sandboxImplementation, cwd string) (string, error) {
+	if !spawnUsesPinnedGitCommonDir(harnessName, harnessBuiltinMode, sandboxImplementation) {
 		return "", nil
 	}
 	return harness.GitCommonDir(cwd)
@@ -601,7 +601,7 @@ func spawnGitCommonDir(harnessName, sandboxMode, sandboxImplementation, cwd stri
 // OpenCode is excluded on the same terms it is excluded from the mode arms:
 // tclaude's layer confines its authoritative server rather than wrapping the
 // pane, so it does not take this grant set (TclaudeLayerUsesServerBoundary).
-func spawnUsesPinnedGitCommonDir(harnessName, sandboxMode, sandboxImplementation string) bool {
+func spawnUsesPinnedGitCommonDir(harnessName, harnessBuiltinMode, sandboxImplementation string) bool {
 	name := harnessOrDefault(harnessName)
 	if implementation, err := sandboxpolicy.NormalizeImplementation(
 		sandboxImplementation,
@@ -611,9 +611,9 @@ func spawnUsesPinnedGitCommonDir(harnessName, sandboxMode, sandboxImplementation
 	}
 	switch name {
 	case harness.CodexName:
-		return strings.TrimSpace(sandboxMode) == harness.SandboxManagedProfile
+		return strings.TrimSpace(harnessBuiltinMode) == harness.SandboxManagedProfile
 	case harness.DefaultName:
-		return strings.TrimSpace(sandboxMode) != harness.ClaudeSandboxOff
+		return strings.TrimSpace(harnessBuiltinMode) != harness.ClaudeSandboxOff
 	case harness.OpenCodeName:
 		return false
 	default:

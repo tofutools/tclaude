@@ -36,7 +36,7 @@ func ClaudeTmuxSocketDenyPath() (string, error) {
 // host path can fail and those pure renderer interfaces deliberately do not
 // return errors.
 func PrepareClaudeSandboxLaunch(spec SpawnSpec) (SpawnSpec, error) {
-	if strings.TrimSpace(spec.SandboxMode) == ClaudeSandboxOff {
+	if strings.TrimSpace(spec.HarnessBuiltinMode) == ClaudeSandboxOff {
 		return spec, nil
 	}
 	path, err := ClaudeTmuxSocketDenyPath()

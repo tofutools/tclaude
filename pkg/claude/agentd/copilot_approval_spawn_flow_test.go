@@ -157,7 +157,7 @@ func TestCopilotSpawn_DetachedSpawningStaysRefused(t *testing.T) {
 			row, err := db.FindSessionByConvID(parent)
 			require.NoError(t, err)
 			require.NotNil(t, row)
-			row.SandboxMode = tc.parentSandbox
+			row.HarnessBuiltinMode = tc.parentSandbox
 			require.NoError(t, db.SaveSession(row))
 
 			resp := f.AsAgent(parent).SpawnWith("alpha", map[string]any{

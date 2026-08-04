@@ -76,14 +76,14 @@ type SpawnSpec struct {
 	// enforced); it is a deliberate supply-chain trade-off (repo-local
 	// `./.codex` hooks become trusted), so callers opt in explicitly.
 	BypassHookTrust bool
-	// SandboxMode names the launch-time OS-sandbox mode for harnesses that
+	// HarnessBuiltinMode names the launch-time harness-builtin sandbox mode for harnesses that
 	// take one (Codex's `--sandbox {read-only|workspace-write|
 	// danger-full-access}`). "" omits the flag entirely; the Spawner emits
 	// `--sandbox <mode>` per-spawn so the user's config.toml/profiles stay
 	// untouched. Harnesses without a launch sandbox flag (Claude Code —
 	// settings.json-driven) ignore it. Validate via Harness.Sandbox /
-	// ResolveSandboxMode before building the spec. See JOH-192.
-	SandboxMode string
+	// ResolveHarnessBuiltinMode before building the spec. See JOH-192.
+	HarnessBuiltinMode string
 	// SandboxWriteDirs are daemon-resolved, proof-pinned repository paths that
 	// Claude Code's per-session sandbox should add through
 	// sandbox.filesystem.allowWrite. They let a sandboxed agent create default
@@ -111,7 +111,7 @@ type SpawnSpec struct {
 	SandboxReadBaseline string
 	// AskUserQuestionTimeout is the per-session Claude Code AskUserQuestion
 	// idle-timeout override (`never|60s|5m|10m`), delivered as part of the SAME
-	// `--settings` payload as SandboxMode (both are settings.json overrides, and
+	// `--settings` payload as HarnessBuiltinMode (both are settings.json overrides, and
 	// the spawner emits `--settings` at most once — see claudeSettingsJSON). ""
 	// omits it, so the agent uses the operator's own settings.json value (Claude
 	// Code's default when the key is absent is "never" — wait for a human). The
@@ -129,7 +129,7 @@ type SpawnSpec struct {
 	// that way: env-backed entries ride the launch environment
 	// (ApplyContextFeaturesEnv, so tclaude never edits the operator's
 	// settings.json), and the handful with no env twin join the SAME `--settings`
-	// payload as SandboxMode and AskUserQuestionTimeout. nil / empty injects
+	// payload as HarnessBuiltinMode and AskUserQuestionTimeout. nil / empty injects
 	// nothing. Harnesses with no steerable startup-context surface (Codex,
 	// OpenCode) ignore it.
 	ContextFeatures map[string]string
@@ -138,7 +138,7 @@ type SpawnSpec struct {
 	// default_permissions activates the profile for this spawn only). It is the
 	// path the daemon uses to keep a sandboxed Codex agent able to reach the
 	// agentd socket (JOH-207): unlike `--sandbox`, a permission profile can
-	// allowlist that one Unix socket. It is MUTUALLY EXCLUSIVE with SandboxMode
+	// allowlist that one Unix socket. It is MUTUALLY EXCLUSIVE with HarnessBuiltinMode
 	// — Codex ignores permission profiles whenever a `--sandbox`/sandbox_mode is
 	// present — so the spec builder sets one or the other; the Spawner emits
 	// `-p` and omits `--sandbox` when this is set. "" omits it. Harnesses with

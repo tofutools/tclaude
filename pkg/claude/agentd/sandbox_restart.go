@@ -57,7 +57,7 @@ func dashboardSandboxRestartAgent(w http.ResponseWriter, r *http.Request, convSe
 		return
 	}
 
-	_, active, err := db.TemporarySandboxModeForConv(convID)
+	_, active, err := db.TemporaryHarnessBuiltinModeForConv(convID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", "read temporary sandbox mode: "+err.Error())
 		return
@@ -118,7 +118,7 @@ func dashboardSandboxRestartAgent(w http.ResponseWriter, r *http.Request, convSe
 			"agent generation changed while stopping; sandbox posture was not changed: "+err.Error())
 		return
 	}
-	if err := db.SetTemporarySandboxMode(
+	if err := db.SetTemporaryHarnessBuiltinMode(
 		agentID, normal.NormalSandbox, normal.SandboxImplementation,
 		normal.NormalSandboxSource, override,
 	); err != nil {
@@ -142,7 +142,7 @@ func dashboardSandboxRestartAgent(w http.ResponseWriter, r *http.Request, convSe
 				"; use the normal wake action to retry")
 		return
 	}
-	mode, active, _ := db.TemporarySandboxModeForConv(convID)
+	mode, active, _ := db.TemporaryHarnessBuiltinModeForConv(convID)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"agent_id":               agentID,
 		"conv_id":                convID,

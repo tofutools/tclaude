@@ -24,17 +24,17 @@ func ComposeAgentRelaunchProfile(base, overlay *AgentRelaunchProfile) *AgentRela
 	}
 	merged := *base
 	merged.Version = overlay.Version
-	if overlay.SandboxMode != nil {
-		merged.SandboxMode = overlay.SandboxMode
+	if overlay.HarnessBuiltinMode != nil {
+		merged.HarnessBuiltinMode = overlay.HarnessBuiltinMode
 	}
 	if overlay.SandboxImplementation != nil {
 		merged.SandboxImplementation = overlay.SandboxImplementation
 	}
-	if overlay.SandboxModeSource != nil {
-		merged.SandboxModeSource = overlay.SandboxModeSource
+	if overlay.HarnessBuiltinModeSource != nil {
+		merged.HarnessBuiltinModeSource = overlay.HarnessBuiltinModeSource
 	}
-	if overlay.TemporarySandboxMode != nil {
-		merged.TemporarySandboxMode = overlay.TemporarySandboxMode
+	if overlay.TemporaryHarnessBuiltinMode != nil {
+		merged.TemporaryHarnessBuiltinMode = overlay.TemporaryHarnessBuiltinMode
 	}
 	if overlay.ApprovalPolicy != nil {
 		merged.ApprovalPolicy = overlay.ApprovalPolicy
@@ -175,14 +175,14 @@ func activeRecordedLaunchPostureForConv(
 		return nil, nil
 	}
 	// Preserve the tri-state contract for a genuinely unknown legacy field.
-	if posture.SandboxImplementation == nil && posture.TemporarySandboxMode == nil {
+	if posture.SandboxImplementation == nil && posture.TemporaryHarnessBuiltinMode == nil {
 		return posture, nil
 	}
 	implementation, err := NormalSandboxImplementationForConv(convID, posture)
 	if err != nil {
 		return nil, err
 	}
-	if posture.TemporarySandboxMode != nil {
+	if posture.TemporaryHarnessBuiltinMode != nil {
 		implementation = sandboxpolicy.ImplementationHarnessBuiltin
 	}
 	effective := *posture
@@ -194,7 +194,7 @@ func activeRecordedLaunchPostureForConv(
 // recordedPostureIsComplete reports whether every field the legacy session tier
 // could contribute is already known, so that tier can be skipped.
 func recordedPostureIsComplete(p *AgentRelaunchProfile) bool {
-	return p.SandboxMode != nil && p.SandboxImplementation != nil &&
+	return p.HarnessBuiltinMode != nil && p.SandboxImplementation != nil &&
 		p.ApprovalPolicy != nil && p.ApprovalAutoReview != nil &&
 		p.AskUserQuestionTimeout != nil && p.RemoteControl != nil && p.AutoMemory != nil &&
 		p.ContextFeatures != nil && p.AutoCompactWindow != nil
@@ -209,8 +209,8 @@ func legacySessionLaunchPosture(convID string) (*AgentRelaunchProfile, error) {
 		return nil, err
 	}
 	p := &AgentRelaunchProfile{Version: RelaunchProfileVersion}
-	if mode := strings.TrimSpace(s.SandboxMode); mode != "" {
-		p.SandboxMode = stringPtr(mode)
+	if mode := strings.TrimSpace(s.HarnessBuiltinMode); mode != "" {
+		p.HarnessBuiltinMode = stringPtr(mode)
 	}
 	if implementation := strings.TrimSpace(s.SandboxImplementation); implementation != "" {
 		p.SandboxImplementation = stringPtr(implementation)

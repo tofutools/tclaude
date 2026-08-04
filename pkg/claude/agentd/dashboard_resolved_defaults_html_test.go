@@ -58,14 +58,14 @@ func TestDashboardHTML_ResolvedDefaultsVocabulary(t *testing.T) {
 		`sandboxProfileLayersInline(`:                        "the flat preview line brackets its layer list so it cannot run into the next section",
 
 		// `inherit` never stands alone as if it explained itself.
-		`export const CLAUDE_INHERIT_SANDBOX_LABEL = 'Claude settings decide (inherit)';`: "Claude's sandbox mode reads as plain language, token retained as detail",
-		`sandboxModeOptionLabel(draft.harness, mode, recommended)`:                        "the spawn dialog's sandbox modes go through the labeller",
-		`label: sandboxModeOptionLabel(draft.harness, value, hEntry.default_sandbox)`:     "the profile editor's sandbox modes go through the same labeller",
-		`sandboxModeDetail(target.target.harness, target.target.sandbox)`:                 "a reported resolved mode is explained, not echoed",
-		`' (enabled only if Claude settings enable it)'`:                                  "naming the implementation owner never asserts the sandbox is on",
-		"`sandbox ${sandboxModeLabel(rl.harness || 'claude', rl.sandbox)}`":               "role summaries explain the mode they print",
-		"`sandbox ${sandboxModeLabel(agent.harness || 'claude', agent.sandbox)}`":         "template roster summaries explain the mode they print",
-		`text('sandbox', sandboxModeLabel(p.harness || 'claude', p.sandbox))`:             "spawn-profile detail chips explain the mode they print",
+		`export const CLAUDE_INHERIT_SANDBOX_LABEL = 'Claude settings decide (inherit)';`:    "Claude's sandbox mode reads as plain language, token retained as detail",
+		`harnessBuiltinModeOptionLabel(draft.harness, mode, recommended)`:                    "the spawn dialog's sandbox modes go through the labeller",
+		`label: harnessBuiltinModeOptionLabel(draft.harness, value, hEntry.default_sandbox)`: "the profile editor's sandbox modes go through the same labeller",
+		`harnessBuiltinModeDetail(target.target.harness, target.target.sandbox)`:             "a reported resolved mode is explained, not echoed",
+		`' (enabled only if Claude settings enable it)'`:                                     "naming the implementation owner never asserts the sandbox is on",
+		"`sandbox ${harnessBuiltinModeLabel(rl.harness || 'claude', rl.sandbox)}`":           "role summaries explain the mode they print",
+		"`sandbox ${harnessBuiltinModeLabel(agent.harness || 'claude', agent.sandbox)}`":     "template roster summaries explain the mode they print",
+		`text('sandbox', harnessBuiltinModeLabel(p.harness || 'claude', p.sandbox))`:         "spawn-profile detail chips explain the mode they print",
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard missing %q (%s)", needle, why)

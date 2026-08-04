@@ -50,14 +50,14 @@ func TestDashboardSnapshot_HarnessCatalog(t *testing.T) {
 	// `--settings`, so the dialog DOES show a sandbox selector for claude.
 	assert.True(t, claude.CanSandbox, "claude exposes a per-session sandbox override")
 	assert.True(t, claude.CanBuiltinOSSandbox, "Claude owns a real built-in OS sandbox")
-	assert.Equal(t, []string{"inherit", "on", "off"}, claude.SandboxModes)
+	assert.Equal(t, []string{"inherit", "on", "off"}, claude.HarnessBuiltinModes)
 	assert.Equal(t, "inherit", claude.DefaultSandbox, "inherit (= no override) is pre-selected")
-	require.NotNil(t, claude.SandboxModeHelp, "claude exposes per-mode sandbox help")
-	for _, m := range claude.SandboxModes {
-		assert.NotEmpty(t, claude.SandboxModeHelp[m], "help text for mode %q", m)
+	require.NotNil(t, claude.HarnessBuiltinModeHelp, "claude exposes per-mode sandbox help")
+	for _, m := range claude.HarnessBuiltinModes {
+		assert.NotEmpty(t, claude.HarnessBuiltinModeHelp[m], "help text for mode %q", m)
 	}
-	assert.NotContains(t, claude.SandboxModeHelp["inherit"], "⚠", "the inherit default carries no caveat marker")
-	assert.Contains(t, claude.SandboxModeHelp["off"], "⚠", "off flags its sandbox-disabled caveat")
+	assert.NotContains(t, claude.HarnessBuiltinModeHelp["inherit"], "⚠", "the inherit default carries no caveat marker")
+	assert.Contains(t, claude.HarnessBuiltinModeHelp["off"], "⚠", "off flags its sandbox-disabled caveat")
 	// Claude Code surfaces its --permission-mode values as the dialog's
 	// "Permission mode" dropdown (the approval axis). The list is still
 	// inherit-first (presentation), but `auto` is what the dialog pre-selects
@@ -89,17 +89,17 @@ func TestDashboardSnapshot_HarnessCatalog(t *testing.T) {
 	assert.True(t, codex.CanSandbox, "codex takes a launch sandbox flag")
 	assert.True(t, codex.CanBuiltinOSSandbox, "Codex owns a real built-in OS sandbox")
 	assert.False(t, codex.CanRemoteControl, "codex has no built-in Remote Access — the toggle must be gated off")
-	assert.Equal(t, []string{"tclaude-agent", "workspace-write", "read-only", "danger-full-access"}, codex.SandboxModes)
+	assert.Equal(t, []string{"tclaude-agent", "workspace-write", "read-only", "danger-full-access"}, codex.HarnessBuiltinModes)
 	assert.Equal(t, "tclaude-agent", codex.DefaultSandbox, "managed-profile default pre-selected")
 	// Every selectable mode carries a one-line help string the dialog renders
 	// as a live hint; the recommended profile has no caveat marker, the raw
 	// modes flag their agentd-reachability / sandbox-off caveat with "⚠".
-	require.NotNil(t, codex.SandboxModeHelp, "codex exposes per-mode sandbox help")
-	for _, m := range codex.SandboxModes {
-		assert.NotEmpty(t, codex.SandboxModeHelp[m], "help text for mode %q", m)
+	require.NotNil(t, codex.HarnessBuiltinModeHelp, "codex exposes per-mode sandbox help")
+	for _, m := range codex.HarnessBuiltinModes {
+		assert.NotEmpty(t, codex.HarnessBuiltinModeHelp[m], "help text for mode %q", m)
 	}
-	assert.NotContains(t, codex.SandboxModeHelp["tclaude-agent"], "⚠", "recommended profile carries no caveat marker")
-	assert.Contains(t, codex.SandboxModeHelp["read-only"], "⚠", "read-only flags its no-agentd caveat")
+	assert.NotContains(t, codex.HarnessBuiltinModeHelp["tclaude-agent"], "⚠", "recommended profile carries no caveat marker")
+	assert.Contains(t, codex.HarnessBuiltinModeHelp["read-only"], "⚠", "read-only flags its no-agentd caveat")
 	assert.True(t, codex.CanApproval, "codex supports approval (daemon default + CLI)")
 	assert.False(t, codex.CanTools, "OpenCode tool governance must stay hidden for Codex")
 	assert.True(t, codex.CanAutoReview, "codex exposes its separate approvals reviewer")
@@ -121,11 +121,11 @@ func TestDashboardSnapshot_HarnessCatalog(t *testing.T) {
 		"OpenCode tclaude-layer capability is available on Linux and macOS")
 	assert.True(t, opencode.TclaudeLayerServerBoundary,
 		"OpenCode availability must use the relay-free executor-server probe")
-	assert.Equal(t, []string{"access-control", "tclaude-layer", "off"}, opencode.SandboxModes)
+	assert.Equal(t, []string{"access-control", "tclaude-layer", "off"}, opencode.HarnessBuiltinModes)
 	assert.Equal(t, "access-control", opencode.DefaultSandbox)
-	assert.Contains(t, opencode.SandboxModeHelp["access-control"], "not an OS sandbox")
-	assert.Contains(t, opencode.SandboxModeHelp["tclaude-layer"], "tool-executing")
-	assert.Contains(t, opencode.SandboxModeHelp["off"], "No directory scoping or OS containment")
+	assert.Contains(t, opencode.HarnessBuiltinModeHelp["access-control"], "not an OS sandbox")
+	assert.Contains(t, opencode.HarnessBuiltinModeHelp["tclaude-layer"], "tool-executing")
+	assert.Contains(t, opencode.HarnessBuiltinModeHelp["off"], "No directory scoping or OS containment")
 	assert.True(t, opencode.CanApproval)
 	assert.Equal(t, []string{"deny", "ask", "allow-tools"}, opencode.ApprovalModes)
 	assert.Equal(t, "deny", opencode.DefaultApproval)
@@ -174,13 +174,13 @@ func TestDashboardSnapshot_PerAgentHarnessAndSandbox(t *testing.T) {
 	// to also stamp the launch sandbox the daemon spawn would have recorded.
 	f.HaveAliveCodexSession(codexConv, codexLabel, "tmux-cdx1", f.TestCwd("cdx1"))
 	require.NoError(t, db.SaveSession(&db.SessionRow{
-		ID:          codexLabel,
-		TmuxSession: "tmux-cdx1",
-		ConvID:      codexConv,
-		Cwd:         f.TestCwd("cdx1"),
-		Status:      "running",
-		Harness:     "codex",
-		SandboxMode: "workspace-write",
+		ID:                 codexLabel,
+		TmuxSession:        "tmux-cdx1",
+		ConvID:             codexConv,
+		Cwd:                f.TestCwd("cdx1"),
+		Status:             "running",
+		Harness:            "codex",
+		HarnessBuiltinMode: "workspace-write",
 	}), "stamp codex sandbox mode")
 	f.HaveMember("mixed", codexConv)
 
@@ -194,18 +194,18 @@ func TestDashboardSnapshot_PerAgentHarnessAndSandbox(t *testing.T) {
 	codexAgent := findDashAgent(snap, codexConv)
 	require.NotNil(t, codexAgent, "codex agent missing from Agents[]")
 	assert.Equal(t, "codex", codexAgent.State.Harness, "Agents[] codex harness")
-	assert.Equal(t, "workspace-write", codexAgent.State.SandboxMode, "Agents[] codex sandbox")
+	assert.Equal(t, "workspace-write", codexAgent.State.HarnessBuiltinMode, "Agents[] codex sandbox")
 
 	codexMember := findDashMember(snap, "mixed", codexConv)
 	require.NotNil(t, codexMember, "codex agent missing from group members")
 	assert.Equal(t, "codex", codexMember.State.Harness, "Members[] codex harness")
-	assert.Equal(t, "workspace-write", codexMember.State.SandboxMode, "Members[] codex sandbox")
+	assert.Equal(t, "workspace-write", codexMember.State.HarnessBuiltinMode, "Members[] codex sandbox")
 
 	// Claude Code agent: harness=claude (the row default), no sandbox.
 	ccAgent := findDashAgent(snap, ccConv)
 	require.NotNil(t, ccAgent, "claude agent missing from Agents[]")
 	assert.Equal(t, "claude", ccAgent.State.Harness, "Agents[] claude harness")
-	assert.Equal(t, "", ccAgent.State.SandboxMode, "claude agent has no sandbox badge")
+	assert.Equal(t, "", ccAgent.State.HarnessBuiltinMode, "claude agent has no sandbox badge")
 }
 
 // Scenario: the spawn dialog forwards the chosen harness + sandbox in the

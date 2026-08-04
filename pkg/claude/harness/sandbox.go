@@ -26,7 +26,7 @@ type SandboxCatalog interface {
 	DefaultMode() string
 	// ValidateMode normalizes and validates a requested mode. The empty
 	// string is returned unchanged (callers substitute DefaultMode where a
-	// default is wanted, via ResolveSandboxMode); any other value is either
+	// default is wanted, via ResolveHarnessBuiltinMode); any other value is either
 	// a recognized mode (returned trimmed) or an error naming the valid set.
 	ValidateMode(mode string) (string, error)
 	// Modes lists the selectable sandbox modes for spawn UIs, in ascending
@@ -44,10 +44,10 @@ type SandboxCatalog interface {
 	ModeHelp(mode string) string
 }
 
-// ResolveSandboxMode is the entry point the *daemon* spawn boundaries
+// ResolveHarnessBuiltinMode is the entry point the *daemon* spawn boundaries
 // (agentd spawn/resume/clone/reincarnate, `tclaude agent spawn`) use to turn
 // a requested sandbox mode into the value to thread into
-// SpawnSpec.SandboxMode. It applies the secure default, because an
+// SpawnSpec.HarnessBuiltinMode. It applies the secure default, because an
 // agentd-spawned agent is the untrusted party that must be sandboxed:
 //
 //   - Harness with no sandbox catalog: an explicit mode is an error; an empty
@@ -64,23 +64,23 @@ type SandboxCatalog interface {
 //
 // requested is trimmed first, so surrounding whitespace never leaks into
 // the flag.
-func ResolveSandboxMode(h *Harness, requested string) (string, error) {
+func ResolveHarnessBuiltinMode(h *Harness, requested string) (string, error) {
 	requested = strings.TrimSpace(requested)
 	if requested == "" && h.SupportsSandbox() {
 		requested = h.Sandbox.DefaultMode()
 	}
-	return ValidateSandboxMode(h, requested)
+	return ValidateHarnessBuiltinMode(h, requested)
 }
 
-// ValidateSandboxMode validates a requested mode WITHOUT applying the
+// ValidateHarnessBuiltinMode validates a requested mode WITHOUT applying the
 // harness default — empty stays empty (omit the flag). It is the direct
 // `tclaude session new` path's entry point: the human running session new is
 // the trust root, so tclaude must not silently override their own config
 // (Codex's config.toml sandbox_mode, Claude Code's settings.json) — it emits a
 // sandbox value only when they pass one explicitly (the daemon spawn path uses
-// ResolveSandboxMode for the secure default instead). An explicit mode for a
+// ResolveHarnessBuiltinMode for the secure default instead). An explicit mode for a
 // harness with no sandbox catalog is still an error.
-func ValidateSandboxMode(h *Harness, requested string) (string, error) {
+func ValidateHarnessBuiltinMode(h *Harness, requested string) (string, error) {
 	requested = strings.TrimSpace(requested)
 	if requested == "" {
 		return "", nil
@@ -118,10 +118,10 @@ func SandboxOffMode(h *Harness) (string, error) {
 	default:
 		return "", fmt.Errorf("harness %q has no sandbox-off mode", h.Name)
 	}
-	return ValidateSandboxMode(h, mode)
+	return ValidateHarnessBuiltinMode(h, mode)
 }
 
-// ResolveHarnessNativeSandboxMode answers what the HARNESS'S OWN confinement is
+// ResolveNativeHarnessBuiltinMode answers what the HARNESS'S OWN confinement is
 // set to under the selected implementation. Most implementations leave a
 // harness's native mode alone; OpenCode additionally keeps its persisted mode
 // truthful about the tclaude-owned server boundary. Off is intentionally shared
@@ -136,7 +136,7 @@ func SandboxOffMode(h *Harness) (string, error) {
 // launch stands that wall down precisely BECAUSE tclaude's own wall is
 // enforcing, so feeding them the forced single-wall mode below would read a
 // deliberately-disabled inner wall as an unconfined agent.
-func ResolveHarnessNativeSandboxMode(
+func ResolveNativeHarnessBuiltinMode(
 	h *Harness, mode string,
 	implementation sandboxpolicy.Implementation,
 ) (string, error) {
@@ -153,11 +153,11 @@ func ResolveHarnessNativeSandboxMode(
 // sandbox value this implementation actually starts the harness with, and the
 // value tclaude persists on the session row.
 //
-// It differs from ResolveHarnessNativeSandboxMode only for the single-wall
+// It differs from ResolveNativeHarnessBuiltinMode only for the single-wall
 // `tclaude-layer` implementation, which launches the harness under the reviewed
 // no-inner-wall posture its descriptor declares. That forcing lives here rather
 // than at each launch boundary because it decides what gets RECORDED:
-// `tclaude session new` used to apply TclaudeLayerSandboxMode itself, late in
+// `tclaude session new` used to apply TclaudeLayerHarnessBuiltinMode itself, late in
 // its own resolution, so every other reader — the daemon's sandbox-lineage
 // guard, the flow-test spawners standing in for session new — reasoned about
 // the requested mode while the launch and the row carried the forced one
@@ -175,21 +175,21 @@ func ResolveSandboxImplementationMode(
 	h *Harness, mode string,
 	implementation sandboxpolicy.Implementation,
 ) (string, error) {
-	mode, err := ResolveHarnessNativeSandboxMode(h, mode, implementation)
+	mode, err := ResolveNativeHarnessBuiltinMode(h, mode, implementation)
 	if err != nil {
 		return "", err
 	}
 	if implementation == sandboxpolicy.ImplementationTclaudeLayer {
-		return TclaudeLayerSandboxMode(h)
+		return TclaudeLayerHarnessBuiltinMode(h)
 	}
 	return mode, nil
 }
 
-// TclaudeLayerSandboxMode returns the reviewed harness-native posture used
+// TclaudeLayerHarnessBuiltinMode returns the reviewed harness-native posture used
 // when tclaude-layer is the single OS wall. The descriptor capability keeps
 // spawn and resume on one mapping and lets a newly registered harness fail
 // closed until it declares how that topology must be launched.
-func TclaudeLayerSandboxMode(h *Harness) (string, error) {
+func TclaudeLayerHarnessBuiltinMode(h *Harness) (string, error) {
 	if h == nil {
 		return "", fmt.Errorf("tclaude-layer requires a harness with a single-wall launch-mode capability; got nil harness")
 	}
@@ -201,7 +201,7 @@ func TclaudeLayerSandboxMode(h *Harness) (string, error) {
 			h.Name,
 		)
 	}
-	return ValidateSandboxMode(h, mode)
+	return ValidateHarnessBuiltinMode(h, mode)
 }
 
 // SpawnSandboxWarnings is the single harness-neutral entry point every spawn
@@ -225,42 +225,42 @@ func TclaudeLayerSandboxMode(h *Harness) (string, error) {
 //     built-in edits are not OS-confined) — see copilotUnsandboxedYoloWarnings.
 //
 // Codex resolves autonomy and sandbox together against its managed profile, so
-// it has no such gap and returns nil. approvalPolicy and sandboxMode must be
+// it has no such gap and returns nil. approvalPolicy and harnessBuiltinMode must be
 // the FINAL resolved values (after profile overlay and ResolveApprovalPolicy /
-// ResolveSandboxMode), so a blank select is judged for the posture it resolves
+// ResolveHarnessBuiltinMode), so a blank select is judged for the posture it resolves
 // to, not for "nothing chosen".
 //
 // outerLayer reports whether tclaude's own OS wall owns enforcement for this
 // launch (sandboxpolicy.Implementation.UsesTclaudeLayer). It is a separate
-// parameter rather than something inferred from sandboxMode because for Copilot
+// parameter rather than something inferred from harnessBuiltinMode because for Copilot
 // the two genuinely come apart: a tclaude-layer launch is forced to the
 // harness-native mode `off`, and an operator can also select that same `off`
 // under harness-builtin — one has an outer wall and the other has none, and
 // judging them alike would either silence the warning that matters or invent
 // one for a confined launch.
-func SpawnSandboxWarnings(h *Harness, approvalPolicy, sandboxMode, cwd string, outerLayer bool) []string {
+func SpawnSandboxWarnings(h *Harness, approvalPolicy, harnessBuiltinMode, cwd string, outerLayer bool) []string {
 	if h == nil {
 		return nil
 	}
 	switch normalizeLineageHarness(h.Name) {
 	case OpenCodeName:
-		return openCodeSandboxWarnings(sandboxMode)
+		return openCodeSandboxWarnings(harnessBuiltinMode)
 	case CopilotName:
 		return copilotUnsandboxedYoloWarnings(approvalPolicy, outerLayer)
 	default:
-		return UnsandboxedAutonomyWarnings(h, approvalPolicy, sandboxMode, cwd)
+		return UnsandboxedAutonomyWarnings(h, approvalPolicy, harnessBuiltinMode, cwd)
 	}
 }
 
 // SpawnSandboxInfo returns non-warning disclosures about the effective sandbox
 // boundary. These messages describe a launch that is confined but whose
 // boundary is useful to understand; callers must not render them as warnings.
-func SpawnSandboxInfo(h *Harness, sandboxMode string) []string {
+func SpawnSandboxInfo(h *Harness, harnessBuiltinMode string) []string {
 	if h == nil {
 		return nil
 	}
 	if normalizeLineageHarness(h.Name) == OpenCodeName {
-		return openCodeSandboxInfo(sandboxMode)
+		return openCodeSandboxInfo(harnessBuiltinMode)
 	}
 	return nil
 }
@@ -320,7 +320,7 @@ type LaunchOSSandbox struct {
 // zero value) and its badge behaves exactly as before:
 //
 //   - Codex spawns under an explicit `--sandbox` mode or the managed permission
-//     profile, so the mode IS the verdict. (For a DAEMON spawn — ResolveSandboxMode
+//     profile, so the mode IS the verdict. (For a DAEMON spawn — ResolveHarnessBuiltinMode
 //     applies that default. A bare `tclaude session new --harness codex` records no
 //     mode and its real posture lives in ~/.codex/config.toml, which tclaude does
 //     not read; that gap is the Codex analogue of the one this fixes for Claude,
@@ -329,22 +329,22 @@ type LaunchOSSandbox struct {
 //     sandbox; claiming a verdict for it would dress it up as containment (the
 //     distinction openCodeSandboxWarnings exists to make).
 //
-// sandboxMode must be the FINAL resolved mode and cwd the launch directory —
+// harnessBuiltinMode must be the FINAL resolved mode and cwd the launch directory —
 // the same inputs SpawnSandboxWarnings takes, so the recorded verdict and the
 // warning the operator saw at spawn can never disagree.
 //
-// chosenBy names the resolution tier that supplied sandboxMode (an explicit
+// chosenBy names the resolution tier that supplied harnessBuiltinMode (an explicit
 // flag, a spawn profile, a replay of the recorded posture) and is folded into
 // the recorded Source when the LAUNCH is what decided the state. It answers a
 // question the verdict alone cannot: an operator who never typed `--sandbox on`
 // still gets one when a group or global default spawn profile carries it, and
 // "forced ON for this launch" attributed that to them. Empty (a direct
 // `session new`, or a caller with nothing to say) keeps the previous wording.
-func ResolveLaunchOSSandbox(h *Harness, sandboxMode, chosenBy, cwd string) LaunchOSSandbox {
+func ResolveLaunchOSSandbox(h *Harness, harnessBuiltinMode, chosenBy, cwd string) LaunchOSSandbox {
 	if h == nil || normalizeLineageHarness(h.Name) != DefaultName {
 		return LaunchOSSandbox{}
 	}
-	resolution := ResolveClaudeSandboxEnabled(sandboxMode, cwd)
+	resolution := ResolveClaudeSandboxEnabled(harnessBuiltinMode, cwd)
 	return LaunchOSSandbox{
 		State:  resolution.State.String(),
 		Source: attributeLaunchSandboxSource(resolution.Source, chosenBy),

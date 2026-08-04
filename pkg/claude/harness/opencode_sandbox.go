@@ -97,8 +97,8 @@ func ResolveOpenCodeSandboxImplementationMode(
 
 // openCodeSandboxInfo returns the informational boundary disclosure for an
 // OpenCode launch using tclaude's built-in OS sandbox.
-func openCodeSandboxInfo(sandboxMode string) []string {
-	if strings.TrimSpace(sandboxMode) != OpenCodeSandboxTclaudeLayer {
+func openCodeSandboxInfo(harnessBuiltinMode string) []string {
+	if strings.TrimSpace(harnessBuiltinMode) != OpenCodeSandboxTclaudeLayer {
 		return nil
 	}
 	return []string{
@@ -122,8 +122,8 @@ func openCodeSandboxInfo(sandboxMode string) []string {
 // subprocess binaries reaching disk outside the allowed paths — match the
 // OpenCode shell implementation, which only inspects path arguments of a fixed
 // built-in command set and omits redirection targets.
-func openCodeSandboxWarnings(sandboxMode string) []string {
-	switch strings.TrimSpace(sandboxMode) {
+func openCodeSandboxWarnings(harnessBuiltinMode string) []string {
+	switch strings.TrimSpace(harnessBuiltinMode) {
 	case OpenCodeSandboxTclaudeLayer:
 		if runtime.GOOS == "darwin" {
 			return []string{

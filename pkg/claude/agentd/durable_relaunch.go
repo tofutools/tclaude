@@ -21,27 +21,27 @@ type durableRelaunchConfig struct {
 	// it decides whether the durable launch is harness-owned or wrapped by
 	// tclaude's outer layer.
 	SandboxImplementation string
-	// SandboxModeSource is the recorded attribution for Sandbox — which
+	// HarnessBuiltinModeSource is the recorded attribution for Sandbox — which
 	// resolution tier chose it at the ORIGINAL launch. Every relaunch replays it
 	// alongside the mode; dropping it would let a crash recovery or a
 	// reincarnation silently re-credit a group default's containment to "this
 	// launch", and the durable projection would then assert that erasure.
-	SandboxModeSource      string
-	TemporarySandboxMode   bool
-	NormalSandbox          string
-	NormalSandboxSource    string
-	NormalSSHWorkaround    bool
-	Approval               string
-	ToolGovernance         string
-	AutoReview             bool
-	Model                  string
-	Effort                 string
-	AskUserQuestionTimeout string
-	RemoteControl          bool
-	AutoMemory             bool
-	SSHWorkaround          bool
-	ContextFeatures        map[string]string
-	AutoCompactWindow      string
+	HarnessBuiltinModeSource    string
+	TemporaryHarnessBuiltinMode bool
+	NormalSandbox               string
+	NormalSandboxSource         string
+	NormalSSHWorkaround         bool
+	Approval                    string
+	ToolGovernance              string
+	AutoReview                  bool
+	Model                       string
+	Effort                      string
+	AskUserQuestionTimeout      string
+	RemoteControl               bool
+	AutoMemory                  bool
+	SSHWorkaround               bool
+	ContextFeatures             map[string]string
+	AutoCompactWindow           string
 }
 
 // activeSandboxImplementation returns the implementation for this process
@@ -51,7 +51,7 @@ type durableRelaunchConfig struct {
 // unchanged on the config so restore and clone continue to use the preserved
 // normal posture.
 func (c *durableRelaunchConfig) activeSandboxImplementation() string {
-	if c != nil && c.TemporarySandboxMode {
+	if c != nil && c.TemporaryHarnessBuiltinMode {
 		return string(sandboxpolicy.ImplementationHarnessBuiltin)
 	}
 	if c == nil {
@@ -90,12 +90,12 @@ func relaunchProfileForSpawn(p spawnParams) db.AgentRelaunchProfile {
 			contextWindowSize = oneMillionContextWindow
 		}
 	}
-	sandboxMode := p.SandboxMode
+	harnessBuiltinMode := p.HarnessBuiltinMode
 	sandboxImplementation := strings.TrimSpace(p.SandboxImplementation)
 	if sandboxImplementation == "" {
 		sandboxImplementation = string(sandboxpolicy.ImplementationHarnessBuiltin)
 	}
-	sandboxModeSource := p.SandboxModeSource
+	harnessBuiltinModeSource := p.HarnessBuiltinModeSource
 	approvalPolicy := p.ApprovalPolicy
 	toolGovernance := p.ToolGovernance
 	autoReview := p.AutoReview
@@ -117,24 +117,24 @@ func relaunchProfileForSpawn(p spawnParams) db.AgentRelaunchProfile {
 	autoCompactWindow := p.AutoCompactWindow
 	return db.AgentRelaunchProfile{
 		Version:               db.RelaunchProfileVersion,
-		SandboxMode:           &sandboxMode,
+		HarnessBuiltinMode:    &harnessBuiltinMode,
 		SandboxImplementation: &sandboxImplementation,
 		// Frozen alongside the mode it explains: a relaunch replays both, so an
 		// agent keeps naming the profile that chose its containment instead of
 		// degrading to an anonymous "this launch" on its first restart.
-		SandboxModeSource:      &sandboxModeSource,
-		ApprovalPolicy:         &approvalPolicy,
-		ToolGovernance:         &toolGovernance,
-		ApprovalAutoReview:     &autoReview,
-		ModelID:                &model,
-		Effort:                 &effort,
-		ContextWindowSize:      &contextWindowSize,
-		AskUserQuestionTimeout: &askTimeout,
-		RemoteControl:          &remoteControl,
-		AutoMemory:             &autoMemory,
-		SSHWorkaround:          &sshWorkaround,
-		ContextFeatures:        &contextFeatures,
-		AutoCompactWindow:      &autoCompactWindow,
+		HarnessBuiltinModeSource: &harnessBuiltinModeSource,
+		ApprovalPolicy:           &approvalPolicy,
+		ToolGovernance:           &toolGovernance,
+		ApprovalAutoReview:       &autoReview,
+		ModelID:                  &model,
+		Effort:                   &effort,
+		ContextWindowSize:        &contextWindowSize,
+		AskUserQuestionTimeout:   &askTimeout,
+		RemoteControl:            &remoteControl,
+		AutoMemory:               &autoMemory,
+		SSHWorkaround:            &sshWorkaround,
+		ContextFeatures:          &contextFeatures,
+		AutoCompactWindow:        &autoCompactWindow,
 	}
 }
 
@@ -185,9 +185,9 @@ func durableRelaunchConfigForConv(convID string) (*durableRelaunchConfig, error)
 			return nil, fmt.Errorf("reload durable agent relaunch profile: %w", err)
 		}
 	}
-	var temporarySandboxMode *string
+	var temporaryHarnessBuiltinMode *string
 	if agentProfile != nil {
-		temporarySandboxMode = agentProfile.TemporarySandboxMode
+		temporaryHarnessBuiltinMode = agentProfile.TemporaryHarnessBuiltinMode
 	}
 	// A plain tclaude conversation has no stable agent row by design. Its
 	// conversation-owned fallback keeps ordinary conv/session resume working
@@ -199,7 +199,7 @@ func durableRelaunchConfigForConv(convID string) (*durableRelaunchConfig, error)
 		return nil, fmt.Errorf("durable relaunch fallback is missing")
 	}
 
-	sandboxMode, err := relaunchSandboxForProfile(agentProfile, h.Name)
+	harnessBuiltinMode, err := relaunchSandboxForProfile(agentProfile, h.Name)
 	if err != nil {
 		return nil, err
 	}
@@ -209,24 +209,24 @@ func durableRelaunchConfigForConv(convID string) (*durableRelaunchConfig, error)
 		return nil, fmt.Errorf("resolve normal sandbox implementation: %w", err)
 	}
 	// Attribution follows the mode it explains, and only while that mode is the
-	// one that was recorded: a profile whose SandboxMode is blank falls through
+	// one that was recorded: a profile whose HarnessBuiltinMode is blank falls through
 	// to the harness default above, and crediting a tier with a mode it did not
 	// supply is the same false attribution in the other direction.
-	sandboxModeSource := ""
-	if agentProfile.SandboxModeSource != nil && strings.TrimSpace(*agentProfile.SandboxMode) != "" {
-		sandboxModeSource = harness.SanitizeSandboxChosenBy(*agentProfile.SandboxModeSource)
+	harnessBuiltinModeSource := ""
+	if agentProfile.HarnessBuiltinModeSource != nil && strings.TrimSpace(*agentProfile.HarnessBuiltinMode) != "" {
+		harnessBuiltinModeSource = harness.SanitizeSandboxChosenBy(*agentProfile.HarnessBuiltinModeSource)
 	}
-	normalSandboxMode := sandboxMode
-	normalSandboxModeSource := sandboxModeSource
-	if temporarySandboxMode != nil {
-		if strings.TrimSpace(*temporarySandboxMode) == "" {
+	normalHarnessBuiltinMode := harnessBuiltinMode
+	normalHarnessBuiltinModeSource := harnessBuiltinModeSource
+	if temporaryHarnessBuiltinMode != nil {
+		if strings.TrimSpace(*temporaryHarnessBuiltinMode) == "" {
 			return nil, fmt.Errorf("invalid temporary sandbox override: mode is empty")
 		}
-		sandboxMode, err = harness.ValidateSandboxMode(h, *temporarySandboxMode)
+		harnessBuiltinMode, err = harness.ValidateHarnessBuiltinMode(h, *temporaryHarnessBuiltinMode)
 		if err != nil {
 			return nil, fmt.Errorf("invalid temporary sandbox override: %w", err)
 		}
-		sandboxModeSource = db.TemporarySandboxModeSource
+		harnessBuiltinModeSource = db.TemporaryHarnessBuiltinModeSource
 	}
 
 	if agentProfile.ApprovalPolicy == nil {
@@ -330,32 +330,32 @@ func durableRelaunchConfigForConv(convID string) (*durableRelaunchConfig, error)
 	if err != nil {
 		return nil, fmt.Errorf("invalid durable SSH workaround posture: %w", err)
 	}
-	normalSSHWorkaround := sshWorkaround && normalSandboxMode == harness.SandboxManagedProfile
-	if sandboxMode != harness.SandboxManagedProfile {
+	normalSSHWorkaround := sshWorkaround && normalHarnessBuiltinMode == harness.SandboxManagedProfile
+	if harnessBuiltinMode != harness.SandboxManagedProfile {
 		sshWorkaround = false
 	}
 
 	return &durableRelaunchConfig{
-		Harness:                h.Name,
-		Cwd:                    strings.TrimSpace(conversation.Cwd),
-		ResumeProvenance:       conversation.ResumeProvenance,
-		Sandbox:                sandboxMode,
-		SandboxImplementation:  string(sandboxImplementation),
-		SandboxModeSource:      sandboxModeSource,
-		TemporarySandboxMode:   temporarySandboxMode != nil,
-		NormalSandbox:          normalSandboxMode,
-		NormalSandboxSource:    normalSandboxModeSource,
-		NormalSSHWorkaround:    normalSSHWorkaround,
-		Approval:               approval,
-		ToolGovernance:         toolGovernance,
-		AutoReview:             autoReview,
-		Model:                  model,
-		Effort:                 effort,
-		AskUserQuestionTimeout: askTimeout,
-		RemoteControl:          remoteControl,
-		AutoMemory:             autoMemory,
-		SSHWorkaround:          sshWorkaround,
-		ContextFeatures:        contextFeatures,
-		AutoCompactWindow:      autoCompactWindow,
+		Harness:                     h.Name,
+		Cwd:                         strings.TrimSpace(conversation.Cwd),
+		ResumeProvenance:            conversation.ResumeProvenance,
+		Sandbox:                     harnessBuiltinMode,
+		SandboxImplementation:       string(sandboxImplementation),
+		HarnessBuiltinModeSource:    harnessBuiltinModeSource,
+		TemporaryHarnessBuiltinMode: temporaryHarnessBuiltinMode != nil,
+		NormalSandbox:               normalHarnessBuiltinMode,
+		NormalSandboxSource:         normalHarnessBuiltinModeSource,
+		NormalSSHWorkaround:         normalSSHWorkaround,
+		Approval:                    approval,
+		ToolGovernance:              toolGovernance,
+		AutoReview:                  autoReview,
+		Model:                       model,
+		Effort:                      effort,
+		AskUserQuestionTimeout:      askTimeout,
+		RemoteControl:               remoteControl,
+		AutoMemory:                  autoMemory,
+		SSHWorkaround:               sshWorkaround,
+		ContextFeatures:             contextFeatures,
+		AutoCompactWindow:           autoCompactWindow,
 	}, nil
 }

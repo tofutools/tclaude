@@ -736,16 +736,16 @@ func defaultSandboxProfilePredictionTarget(groupName string) (sandboxProfileEnfo
 	if err != nil {
 		return sandboxProfileEnforcementTargetRequest{}, "", err
 	}
-	sandboxMode := defaults.sandbox
+	harnessBuiltinMode := defaults.sandbox
 	if defaults.implementation == sandboxpolicy.ImplementationStacked {
-		sandboxMode = predictedBuiltinMode(defaults.harness.Name)
+		harnessBuiltinMode = predictedBuiltinMode(defaults.harness.Name)
 	}
 	// The PREDICTION describes what the harness's own sandbox will be set to,
 	// which is what a capability evaluator can reason about; a tclaude-layer
 	// launch's forced single-wall mode would describe the stood-down inner wall
 	// instead (TCL-989).
-	sandboxMode, err = harness.ResolveHarnessNativeSandboxMode(
-		defaults.harness, sandboxMode, defaults.implementation)
+	harnessBuiltinMode, err = harness.ResolveNativeHarnessBuiltinMode(
+		defaults.harness, harnessBuiltinMode, defaults.implementation)
 	if err != nil {
 		return sandboxProfileEnforcementTargetRequest{}, "", err
 	}
@@ -753,7 +753,7 @@ func defaultSandboxProfilePredictionTarget(groupName string) (sandboxProfileEnfo
 		Implementation: string(defaults.implementation),
 		Harness:        defaults.harness.Name,
 		Platform:       runtime.GOOS,
-		Sandbox:        sandboxMode,
+		Sandbox:        harnessBuiltinMode,
 	}, defaults.resolvedBy, nil
 }
 
@@ -1160,7 +1160,7 @@ func resolveSandboxProfilePredictionMode(
 	mode := predictedBuiltinMode(target.harness.Name)
 	if strings.TrimSpace(requested) != "" {
 		var err error
-		mode, err = harness.ResolveSandboxMode(target.harness, requested)
+		mode, err = harness.ResolveHarnessBuiltinMode(target.harness, requested)
 		if err != nil {
 			return "", err
 		}
@@ -1168,6 +1168,6 @@ func resolveSandboxProfilePredictionMode(
 	if target.implementation == sandboxpolicy.ImplementationStacked {
 		mode = predictedBuiltinMode(target.harness.Name)
 	}
-	return harness.ResolveHarnessNativeSandboxMode(
+	return harness.ResolveNativeHarnessBuiltinMode(
 		target.harness, mode, target.implementation)
 }

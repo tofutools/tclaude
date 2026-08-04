@@ -171,7 +171,7 @@ func TestOpenCodeTclaudeLayerDarwinExecutorSmoke(t *testing.T) {
 		ID:                    openCodeDarwinLayerSmokeSessionID,
 		ConvID:                launch.ConvID,
 		Harness:               harness.OpenCodeName,
-		SandboxMode:           harness.OpenCodeSandboxTclaudeLayer,
+		HarnessBuiltinMode:    harness.OpenCodeSandboxTclaudeLayer,
 		SandboxImplementation: string(sandboxpolicy.ImplementationTclaudeLayer),
 		Cwd:                   cwd,
 		Status:                session.StatusWorking,

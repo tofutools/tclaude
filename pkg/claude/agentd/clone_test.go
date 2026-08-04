@@ -66,12 +66,12 @@ func TestCloneSupportsArgvEnrollmentIsClaudeCodeSpecific(t *testing.T) {
 
 func TestCloneSandboxPostureDoesNotInheritTemporaryUnlock(t *testing.T) {
 	unlocked := &durableRelaunchConfig{
-		Sandbox:              harness.SandboxDangerFull,
-		SandboxModeSource:    "temporary dashboard unlock",
-		TemporarySandboxMode: true,
-		NormalSandbox:        harness.SandboxManagedProfile,
-		NormalSandboxSource:  `group default profile "confined"`,
-		NormalSSHWorkaround:  true,
+		Sandbox:                     harness.SandboxDangerFull,
+		HarnessBuiltinModeSource:    "temporary dashboard unlock",
+		TemporaryHarnessBuiltinMode: true,
+		NormalSandbox:               harness.SandboxManagedProfile,
+		NormalSandboxSource:         `group default profile "confined"`,
+		NormalSSHWorkaround:         true,
 	}
 	mode, source := cloneSandboxPosture(unlocked)
 	assert.Equal(t, harness.SandboxManagedProfile, mode)
@@ -79,7 +79,7 @@ func TestCloneSandboxPostureDoesNotInheritTemporaryUnlock(t *testing.T) {
 	assert.True(t, cloneSSHWorkaround(unlocked))
 
 	normal := &durableRelaunchConfig{
-		Sandbox: harness.SandboxWorkspaceWrite, SandboxModeSource: "explicit",
+		Sandbox: harness.SandboxWorkspaceWrite, HarnessBuiltinModeSource: "explicit",
 	}
 	mode, source = cloneSandboxPosture(normal)
 	assert.Equal(t, harness.SandboxWorkspaceWrite, mode)

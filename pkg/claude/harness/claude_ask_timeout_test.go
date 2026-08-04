@@ -142,7 +142,7 @@ func TestClaudeSpawner_AskTimeout(t *testing.T) {
 // together when both are set — and BuildCommand must carry exactly one
 // --settings flag.
 func TestClaudeSettingsJSON_Merge(t *testing.T) {
-	spec := SpawnSpec{SandboxMode: "on", AskUserQuestionTimeout: "5m"}
+	spec := SpawnSpec{HarnessBuiltinMode: "on", AskUserQuestionTimeout: "5m"}
 
 	s := claudeSettingsJSON(spec)
 	var wrap map[string]any

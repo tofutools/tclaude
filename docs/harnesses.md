@@ -1020,6 +1020,34 @@ probably inside it, and an assertion built on that reading measures nothing. The
 measured surface per platform is recorded in
 `TestCopilotNativeSandboxShellBasePolicySurface`.
 
+### The two sandbox axes
+
+Every launch records **two independent sandbox values**, and reading either one
+alone gets the agent's posture wrong.
+
+| Axis | Flag | What it says | Values |
+| --- | --- | --- | --- |
+| **Harness-builtin mode** | `--sandbox` | What the **harness itself** does about sandboxing | Claude `inherit`/`on`/`off`; Codex `tclaude-agent`/`workspace-write`/`read-only`/`danger-full-access`; OpenCode `access-control`/`tclaude-layer`/`off`; Copilot `inherit`/`off` |
+| **Implementation** | `--sandbox-impl` | **Who enforces** OS containment | `off`, `harness-builtin`, `tclaude-layer`, `stacked` |
+
+The trap is the first axis's permissive-looking values. Under
+`--sandbox-impl tclaude-layer` tclaude wraps the process in its own wall
+(bubblewrap / Seatbelt) and **deliberately stands the harness's inner sandbox
+down**, because two nested sandboxes fight. Such a launch therefore records
+Claude `off` or Codex `danger-full-access` — an *instruction to the harness*,
+not a statement that the agent is unconfined. It is in fact confined, by
+tclaude.
+
+That is why the code calls this axis the **harness-builtin mode**
+(`HarnessBuiltinMode`), not `mode`: a field called `mode` holding `off` reads as
+"no sandbox" to any reasonable reader, and code that read it that way produced a
+real write-confinement escape (TCL-991). Anything judging what an agent may do —
+the spawn lineage guard, the directory write-proof, the dashboard's posture
+badge — must read the pair.
+
+For back-compat the CLI flag stays `--sandbox` and the persisted column stays
+`sandbox_mode`; only the code and this documentation use the clearer name.
+
 ### Sandbox & approval defaults (Codex)
 
 Codex has a built-in OS-level sandbox and an approval policy, both selectable at
@@ -1105,9 +1133,15 @@ are left untouched. The research behind the defaults lives in the
 
 ### Sandbox at spawn (Claude Code)
 
-> The modes below decide *whether* containment is enforced. What it then does to
-> a running agent — deny + reopen, the capability gate, and the failure modes —
-> is in [Sandboxing](sandboxing.md).
+> The modes below set **the harness's own sandbox** — internally the
+> *harness-builtin mode* axis. They decide what Claude Code does about
+> confinement, which is only the same thing as "is this agent confined" when
+> the harness is also the one enforcing. Under `--sandbox-impl tclaude-layer`
+> tclaude's own wall enforces and the harness's inner sandbox is deliberately
+> stood down, so such a launch records `off` while being confined — see
+> [the two axes](#the-two-sandbox-axes). What containment then does to a running
+> agent — deny + reopen, the capability gate, and the failure modes — is in
+> [Sandboxing](sandboxing.md).
 
 Claude Code's OS sandbox lives in `settings.json` (a `sandbox` block), not a
 launch flag — there is no `claude --sandbox`. tclaude still offers a **per-session
@@ -1142,8 +1176,13 @@ outrank it). Three modes:
   are hidden (read + write), so the sandboxed agent can't snoop on or tamper with
   shared daemon state. The same proof-pinned repository write paths described
   above are included.
-- **`off`** — forces the sandbox **off** for this session even if `settings.json`
-  enables it (the agent's Bash runs unconfined).
+- **`off`** — forces **Claude Code's own** sandbox off for this session even if
+  `settings.json` enables it. Whether the agent is then unconfined depends on
+  the other axis: under `--sandbox-impl harness-builtin` or `off` nothing else
+  is enforcing, so its Bash runs unconfined; under `tclaude-layer` this is the
+  mode tclaude *itself* forces precisely because its own wall is enforcing, and
+  the agent is confined. `off` is a statement about the harness, never a verdict
+  on the process.
 
 On Linux the tmux rule is socket-specific: agents may still run the `tmux`
 binary against a private socket they own, but cannot connect to the existing
