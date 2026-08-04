@@ -987,7 +987,7 @@ jobs:
             # directory is /private/var/folders/…, which is the entire defect. On
             # Linux it has no alternate spelling to supply and skips, so this arm
             # is the only place it is real evidence.
-            run_filter: TestCopilotNativeSandbox|TestCopilotSandboxBaseline|TestCopilotDefaultCachePlacement|TestCopilotPackageCacheIsExecutable|TestCopilotInnerSandbox|TestCopilotLegacyConfig|TestCopilotStartupDialsOnlyContractedHosts|TestCopilotConvStoreMatchesTheUnresolvedCwdSpelling
+            run_filter: TestCopilotNativeSandbox|TestCopilotSandboxBaseline|TestCopilotDefaultCachePlacement|TestCopilotPackageCacheIsExecutable|TestCopilotInnerSandbox|TestCopilotLegacyConfig|TestCopilotStartupDialsOnlyContractedHosts|TestCopilotConvStoreMatchesTheUnresolvedCwdSpelling|TestCopilotPermissionPathGrants
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -1041,7 +1041,7 @@ jobs:
         run: |
           set -o pipefail
           go test ./pkg/claude/harness/copilotfixture/... \
-            -run '${{ matrix.run_filter }}' -v -count=1 -timeout 900s 2>&1 | tee "$RUNNER_TEMP/copilot-fixtures.log"
+            -run '${{ matrix.run_filter }}' -v -count=1 -timeout 1500s 2>&1 | tee "$RUNNER_TEMP/copilot-fixtures.log"
 
       # A skipped test still exits 0. The gate is an env var, so a typo or a
       # rename would turn this job into a silent no-op that reports success
@@ -1106,9 +1106,115 @@ jobs:
               TestCopilotConvStoreMatchesTheUnresolvedCwdSpelling
             )
           fi
+          # TCL-973 Phase 0's permission matrix. Most of it is Linux-only for
+          # the same reason the compatibility fixtures are: these measure
+          # Copilot's own prompt behaviour, which is JavaScript in the CLI
+          # rather than anything the platform decides.
+          #
+          # The PATH matrix is the documented exception, and it runs on BOTH
+          # arms. Its subject IS platform semantics -- the cwd-subtree and
+          # system-temp grants, and which spellings of them the CLI honours --
+          # on a platform where TMPDIR is /var/folders/… while the resolved
+          # form is /private/var/folders/…. A finding about Linux temp
+          # semantics is not a finding about macOS temp semantics, so gating it
+          # on Linux alone would leave the PR asserting a general
+          # supported-platform contract with evidence from one platform. Note
+          # that a macOS-required name must appear in BOTH the run_filter above
+          # and the required list below: required-only fails loudly, which is
+          # fine, but run_filter-only can skip in silence, which is not.
+          #
+          # This list is generated from permission_contract.json and must stay
+          # equal to the set of scenarios it cites. That equality is the point:
+          # the Go-side contract guard can only check that a cited scenario is
+          # DECLARED, so for any scenario missing from here "declared" would be
+          # the only thing standing behind a proven status. Requiring every
+          # cited name is what supplies the other half.
+          #
+          # These names are SUBTESTS, and that changes the gate. Go indents
+          # subtest result lines, so the column-anchored pattern above matches
+          # only top-level tests -- and a parent whose subtests every one
+          # skipped still prints "--- PASS: Parent". Gating a table-driven
+          # matrix on the parent alone would verify essentially nothing.
+          required_subtests=(
+            'TestCopilotPermissionPathGrants/outside-all/no-path-flags'
+            'TestCopilotPermissionPathGrants/outside-all/add-dir'
+            'TestCopilotPermissionPathGrants/outside-all/allow-all-paths'
+            'TestCopilotPermissionPathGrants/in-temp/default'
+            'TestCopilotPermissionPathGrants/in-temp/disallow-temp-dir'
+          )
+          if [[ "${{ matrix.platform }}" == "linux" ]]; then
+            required+=(
+              TestCopilotPermissionContractIsBackedByScenarios
+              TestCopilotPermissionFolderTrustBlocksFirst
+              TestCopilotPermissionHeadlessIsNotEvidence
+              TestCopilotPermissionInPaneAllowAllCannotOverrideDeny
+              TestCopilotPermissionNoAskUserRemovesTheTool
+              TestCopilotPermissionResumeSubmitsPrompt
+            )
+            # += and NOT =. A plain assignment here would REPLACE the shared
+            # array above rather than extend it, silently dropping the five
+            # both-platform path rows from the Linux gate -- which is exactly
+            # the regression this line shipped with once: the fix that added
+            # macOS path coverage took Linux path coverage away, and both arms
+            # stayed green because a gate that requires nothing passes.
+            required_subtests+=(
+              'TestCopilotPermissionTrustBypassSurface/allow-all-tools'
+              'TestCopilotPermissionTrustBypassSurface/allow-all'
+              'TestCopilotPermissionTrustBypassSurface/allow-all-paths'
+              'TestCopilotPermissionTrustBypassSurface/add-dir-workdir'
+              'TestCopilotPermissionTrustBypassSurface/config-json-trustedFolders'
+              'TestCopilotPermissionTrustBypassSurface/settings-json-trustedFolders'
+              'TestCopilotPermissionToolApprovalGate/unsafe-command/no-flags'
+              'TestCopilotPermissionToolApprovalGate/unsafe-command/allow-all-tools'
+              'TestCopilotPermissionToolApprovalGate/safe-command/no-flags'
+              'TestCopilotPermissionDenyToolGrammar/url()'
+              'TestCopilotPermissionDenyToolGrammar/shell()'
+              'TestCopilotPermissionDenyToolGrammar/write()'
+              'TestCopilotPermissionDenyToolGrammar/*'
+              'TestCopilotPermissionDenyToolGrammar/url'
+              'TestCopilotPermissionDenyToolGrammar/url(*)'
+              'TestCopilotPermissionDenyToolGrammar/url(example.com)'
+              'TestCopilotPermissionDenyToolGrammar/shell(*)'
+              'TestCopilotPermissionDenyToolGrammar/write(/tmp)'
+              'TestCopilotPermissionURLGateUnderToolApproval/no-flags'
+              'TestCopilotPermissionURLGateUnderToolApproval/allow-all-tools'
+              'TestCopilotPermissionAmbientAllowAllPromotes/true'
+              'TestCopilotPermissionAmbientAllowAllPromotes/TRUE'
+              'TestCopilotPermissionAmbientAllowAllPromotes/one'
+              'TestCopilotPermissionAmbientAllowAllPromotes/false'
+              'TestCopilotPermissionAmbientAllowAllPromotes/empty'
+            )
+          fi
+          # The gate's own integrity check. Everything below verifies that the
+          # TESTS ran; nothing yet verifies that the GATE still asks about
+          # them, and a required list that quietly lost entries passes exactly
+          # like one that is satisfied. These five are the both-platform path
+          # contract, so their presence is asserted on BOTH arms before the
+          # list is used.
+          for path_row in \
+            'TestCopilotPermissionPathGrants/outside-all/no-path-flags' \
+            'TestCopilotPermissionPathGrants/outside-all/add-dir' \
+            'TestCopilotPermissionPathGrants/outside-all/allow-all-paths' \
+            'TestCopilotPermissionPathGrants/in-temp/default' \
+            'TestCopilotPermissionPathGrants/in-temp/disallow-temp-dir'
+          do
+            found=0
+            for entry in "${required_subtests[@]}"; do
+              [[ "$entry" == "$path_row" ]] && found=1 && break
+            done
+            if (( found == 0 )); then
+              echo "::error::The anti-skip list lost '$path_row' on ${{ matrix.platform }}. The path contract is required on BOTH platforms; a branch above almost certainly assigned required_subtests with = instead of +=."
+              exit 1
+            fi
+          done
           missing=()
           for test_name in "${required[@]}"; do
             grep -qE "^--- PASS: $test_name " "$log" || missing+=("$test_name")
+          done
+          for test_name in "${required_subtests[@]}"; do
+            # -F: these names contain regex metacharacters on purpose —
+            # `url(*)` is a Copilot deny-tool pattern, not a pattern of ours.
+            grep -qF -- "--- PASS: $test_name " "$log" || missing+=("$test_name")
           done
           if (( ${#missing[@]} > 0 )); then
             {

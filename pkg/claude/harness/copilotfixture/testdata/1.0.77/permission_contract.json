@@ -1,0 +1,125 @@
+{
+  "cliVersion": "1.0.77",
+  "entries": [
+    {
+      "id": "folder-trust",
+      "claim": "With a fresh COPILOT_HOME, does trustedFolders create a blocking first-launch directory-trust gate?",
+      "status": "proven",
+      "finding": "It does, and it is the FIRST gate rather than a secondary one. On a real PTY with a fresh COPILOT_HOME the CLI blocks at launch on a 'Confirm folder trust' dialog with ZERO provider requests, so it precedes the model connection and every tool-approval question. The process stays alive indefinitely: this is the deadlock a detached pane hits. No launch flag clears it -- --allow-all-tools, --allow-all, --allow-all-paths and --add-dir <workdir> were each measured still blocking with 0 provider requests. The only measured argv-free bypass is a pre-launch write of {\"trustedFolders\":[\"<cwd>\"]} into COPILOT_HOME/config.json. A flat trustedFolders key in settings.json was NOT honoured, even though the CLI migrates config.json into settings.json on startup; the nested settings.json spelling, if one exists, is not established here. CONSEQUENCE: Copilot DirTrust is a config-FILE contract, not an argv one, so no ApprovalCatalog argv renderer can produce a launchable detached agent on its own. docs/harnesses.md recording DirTrust=false for Copilot is wrong for interactive launches. Two things for security review rather than silent adoption: the dialog's option 2 is 'Yes, and remember this folder for future sessions', so tclaude writing this key pre-answers a human trust decision; and config.json is JSONC that self-describes as automatically managed, so a naive encoding/json read of an existing file will fail on its comment lines.",
+      "scenarios": [
+        "TestCopilotPermissionFolderTrustBlocksFirst",
+        "TestCopilotPermissionTrustBypassSurface/allow-all-tools",
+        "TestCopilotPermissionTrustBypassSurface/allow-all",
+        "TestCopilotPermissionTrustBypassSurface/allow-all-paths",
+        "TestCopilotPermissionTrustBypassSurface/add-dir-workdir",
+        "TestCopilotPermissionTrustBypassSurface/config-json-trustedFolders",
+        "TestCopilotPermissionTrustBypassSurface/settings-json-trustedFolders"
+      ]
+    },
+    {
+      "id": "default-interactive-blocking",
+      "claim": "Does the default interactive posture block on the first tool call, and does it emit no normal Stop?",
+      "status": "proven",
+      "finding": "It blocks, with one scope limit that must be carried forward. With folder trust already granted and no permission flags, an unsafe shell command ('rm -f ./victim') blocks: the tool result is never posted back, the CLI stays alive with settled output, and the pane shows an approval dialog naming the command. The same command with --allow-all-tools completes -- that positive control is what makes the blocked arm mean something. THE LIMIT: Copilot auto-approves commands it classifies as trivially safe. 'echo ...' executed with no flags at all. So 'blocks on the first tool call' is false as literally stated and true as it matters: it blocks on the first tool call a coding agent would actually make. A matrix built on a safe command alone would have reported the gate as absent. On 'no normal Stop': interactive mode has no JSONL event stream at all (--output-format json is a -p-only surface), and the CLI never exits after a turn -- it sits at its input prompt. So 'process alive with quiet output' does NOT by itself distinguish a blocked launch from a completed idle one, and the tool-result follow-up request is used as the discriminator throughout this suite instead.",
+      "scenarios": [
+        "TestCopilotPermissionToolApprovalGate/unsafe-command/no-flags",
+        "TestCopilotPermissionToolApprovalGate/unsafe-command/allow-all-tools",
+        "TestCopilotPermissionToolApprovalGate/safe-command/no-flags",
+        "TestCopilotPermissionHeadlessIsNotEvidence"
+      ],
+      "corroborating": [
+        "NOT measured here beyond the two commands this suite samples (echo, rm); reported by the copilot-permission-wire analyst on an independent PTY rig with trust granted and no allow flags: 'echo probe-tool-ran' EXECUTED with no prompt, while 'rm -f victim.txt', 'curl -s https://github.com', 'git push origin main' and 'echo pwned > file.txt' all BLOCKED. Shell redirection counting as a write is the notable one. If it holds, the gate is per-COMMAND risk classification rather than per-tool, which is a materially different thing for a spawner to reason about than a tool allowlist.",
+        "NOT measured by anyone, and worth stating so nobody assumes otherwise: the safe-command allowlist is NOT enumerated. Five commands have been sampled across two rigs. A detached-agent default must not be built on a guess about which commands auto-approve; the only safe reading is that ANY command may block unless a permission flag says otherwise.",
+        "NOT measured: approval behaviour for the built-in write tools (create/edit). An attempt was made on the peer rig but passed the wrong argument name and returned a schema error, so those rows measure a malformed call rather than an approval outcome. Recorded here specifically so the inconclusive result is not later mistaken for a negative one."
+      ]
+    },
+    {
+      "id": "url-access",
+      "claim": "How do URLs behave under --allow-all-tools, and is --deny-tool 'url()' accepted, nonprompting and provider-safe?",
+      "status": "disproven",
+      "finding": "DISPROVEN on the flag the TCL-973 plan proposed, and the failure is total: --deny-tool 'url()' is REJECTED at argument parse ('Invalid --deny-tool value. Error: Invalid rule format: url()'), exit 1, provider never contacted. A spawner emitting that default would have killed every Copilot pane at launch. Empty parens are invalid for every kind (shell(), write() likewise) and a bare '*' is invalid, while the bare kind ('url') and kind(pattern) ('url(*)', 'url(example.com)', 'shell(*)', 'write(/tmp)') all parse. Each grammar row asserts two independent signals -- the error text and whether the launch reached the provider -- because an earlier single-signal version of that scenario reported every pattern as accepted, including url(): with COPILOT_OFFLINE=true and no base URL the CLI fails on 'Offline mode requires a local model provider' before it inspects --deny-tool at all. WHAT THIS SUITE MEASURES ABOUT THOSE SPELLINGS IS PARSE ACCEPTANCE ONLY -- whether a pattern is ENFORCED at runtime is a different question no scenario here answers, and for URL rules the two demonstrably come apart (see corroborating). Do not read 'parses' as 'works'. ON THE PROMPT ITSELF, THE MEASUREMENT CORRECTS THE PLAN IN THE PLAN'S OWN FAVOUR, and this row was written expecting the opposite before the real binary said otherwise. With no permission flags, a shell command reaching a URL blocks on a dialog that is unmistakably about the URL ('Copilot is attempting to access the following URL') rather than about the command -- so it IS a distinct prompt with its own chrome and its own decision. But --allow-all-tools CLOSES it: the identical launch with that one flag runs the command through. For the shell path there is therefore no second deadlock to close, and the plan's stated need to pair a URL deny with --allow-all-tools does not follow from this measurement. SCOPE LIMIT, load-bearing: this covers the SHELL path only. Copilot's web-fetch tool is the other URL consumer and is absent from the catalog entirely under COPILOT_OFFLINE=true, which is exactly what makes this suite hermetic -- so whether web_fetch is gated the same way is not something these scenarios can answer, and it is recorded as unmeasured rather than generalized from the shell result. Provider safety is PROVEN CLEAN in the sense this suite can establish, stated precisely because the obvious phrasing overstates it: every URL arm still REACHED the BYOK provider, and the --allow-all-tools arm went on to complete its turn. The no-flags arm did NOT complete -- it blocked at the URL dialog, which is the finding, so it cannot also be cited as evidence of a completed turn. What the pair establishes is that the URL permission layer does not disturb the model connection: the provider is reached either way, and the only thing that stops the turn is the prompt. The whole measurement is hermetic: the gate fires BEFORE any network access is attempted, so nothing is ever dialled.",
+      "corroborating": [
+        "NOT measured by any scenario here; reported by the copilot-permission-wire analyst on an independent rig. Parsing and enforcement come apart for URL rules: 'url(*)', 'url(https://*)', 'url(*.*)', '--deny-url *' and '--deny-url https://*' all parse and then match NOTHING at runtime, falling through to the network layer, whereas domain- and URL-scoped patterns ('url(github.com)', 'url(https://github.com)', 'url(https://*.github.com)', 'url(https://github.com/robots.txt)', '--deny-url github.com') are enforced at the permission layer with no prompt. The two layers are distinguishable by message: 'Permission to access this URL was denied.' versus 'WebFetchBlockedUrlError: ...'.",
+        "NOT measured here, and it is the gap the shell result must not be stretched to cover: whether --allow-all-tools also closes the URL prompt for the WEB-FETCH tool. COPILOT_OFFLINE=true removes web_fetch from the catalog, so this suite structurally cannot ask. If web_fetch turns out to be gated independently of tool approval, the plan's separate-URL-axis reasoning is right after all for that path and wrong only for the shell one. Fixturing it needs a non-offline arm behind a rejecting proxy, with the mock provider kept in NO_PROXY, and must not reopen auth/telemetry/MCP egress.",
+        "NOT measured here: if the above holds, there is NO working blanket URL deny in 1.0.77 by any spelling, which would leave the TCL-973 plan's reasoning -- that 'the only nonblocking option that is not an escalation is a blanket deny' -- with no implementation to stand on. This is the single most consequential unfixtured claim in the table and should be the first thing the follow-up increment commits.",
+        "NOT measured here: '--excluded-tools web_fetch' is reported to remove web_fetch from the advertised catalog entirely, so it cannot prompt because the tool is absent. If confirmed it is a candidate replacement for the blanket deny, with the caveat that it does not cover URL access performed by the shell tool (curl/wget in bash) -- which is exactly the path this suite's own URL scenario uses."
+      ],
+      "scenarios": [
+        "TestCopilotPermissionDenyToolGrammar/url()",
+        "TestCopilotPermissionDenyToolGrammar/shell()",
+        "TestCopilotPermissionDenyToolGrammar/write()",
+        "TestCopilotPermissionDenyToolGrammar/*",
+        "TestCopilotPermissionDenyToolGrammar/url",
+        "TestCopilotPermissionDenyToolGrammar/url(*)",
+        "TestCopilotPermissionDenyToolGrammar/url(example.com)",
+        "TestCopilotPermissionDenyToolGrammar/shell(*)",
+        "TestCopilotPermissionDenyToolGrammar/write(/tmp)",
+        "TestCopilotPermissionURLGateUnderToolApproval/no-flags",
+        "TestCopilotPermissionURLGateUnderToolApproval/allow-all-tools"
+      ]
+    },
+    {
+      "id": "ambient-allow-all-env",
+      "claim": "How does an ambient COPILOT_ALLOW_ALL promote a launch, so a spawner can scrub or override it?",
+      "status": "proven",
+      "finding": "It promotes silently and it is STRICTLY STRONGER THAN THE FLAG IT DOCUMENTS. --help presents COPILOT_ALLOW_ALL as the env alias for --allow-all-tools, but the flag does not clear the folder-trust gate and the variable does: with no flags whatsoever and only COPILOT_ALLOW_ALL=true in the environment, a fresh-COPILOT_HOME launch skipped the trust dialog, reached the provider and executed an unsafe tool call. Parsing is strict, case-sensitive equality against the literal string 'true' -- 'TRUE', '1', 'false' and '' all behave exactly as unset. CONSEQUENCE: an operator with this exported turns every tclaude-spawned Copilot pane into an allow-all session with no record anywhere, so EnvExports must UNSET it rather than pin it to a falsy value. Unsetting is the only treatment that cannot be defeated by a future widening of the value parse.",
+      "scenarios": [
+        "TestCopilotPermissionAmbientAllowAllPromotes/true",
+        "TestCopilotPermissionAmbientAllowAllPromotes/TRUE",
+        "TestCopilotPermissionAmbientAllowAllPromotes/one",
+        "TestCopilotPermissionAmbientAllowAllPromotes/false",
+        "TestCopilotPermissionAmbientAllowAllPromotes/empty"
+      ]
+    },
+    {
+      "id": "no-ask-user",
+      "claim": "Does --no-ask-user remove the ask_user tool?",
+      "status": "proven",
+      "finding": "It does. Measured on the advertised tool catalog in the provider request body, which is the strongest instrument in this matrix because it is a pure wire read that depends on neither TUI scraping nor the model choosing to call anything. On a PTY with trust granted the default catalog offers ask_user; adding --no-ask-user removes it and nothing else. This closes the second independent deadlock source, since ask_user is how the model stops to ask a question nobody is present to answer. It requires a PTY to measure: ask_user is only advertised when there is a terminal to ask through, so headless the flag is a no-op and a headless scenario would report it working while measuring nothing.",
+      "scenarios": [
+        "TestCopilotPermissionNoAskUserRemovesTheTool"
+      ]
+    },
+    {
+      "id": "out-of-cwd-paths",
+      "claim": "What is the out-of-cwd/temp access behavior, and what exactly do --add-dir and --disallow-temp-dir do?",
+      "status": "proven",
+      "finding": "PLATFORM SCOPE: this is the one measurement in the matrix required on BOTH supported platforms, because its subject IS platform semantics -- the cwd-subtree and system-temp grants and which spellings of them the CLI honours. Everything else here measures prompt behaviour that lives in the CLI's own JavaScript. A finding about Linux temp semantics is not a finding about macOS temp semantics, and macOS resolves TMPDIR through a /var -> /private/var symlink that Linux does not have. Paths are a SEPARATE deadlock source with their own dialog, 'Allow directory access', distinct from both folder trust (which gates the whole launch) and tool approval (which gates the command). Measured on a PTY with trust pre-granted: a shell read of a path outside every granted root BLOCKS on that dialog, which names the offending path and offers to add it to the allowed list. --add-dir <dir> and --allow-all-paths each clear it. The system temp dir is granted automatically, and --disallow-temp-dir removes that grant, after which a read inside temp blocks the same way. Both flags therefore work as named. The scenario carries an exact internal control: the identical 'cat' command is ALLOWED inside the granted temp dir and BLOCKED outside it, so the block is demonstrably path-driven rather than command-risk-driven. CORRECTION TO A HEADLESS RESULT, and it is the third time in this ticket that a no-TTY measurement pointed the wrong way: measured headlessly, an out-of-grant path AUTO-DENIES -- the CLI answers the model 'Permission denied and could not request permission from user' and the turn continues. From there paths look like the one prompt surface a detached agent need not worry about, because it resolves itself. On a real terminal the same launch stops and waits forever. Note this is the OPPOSITE asymmetry from tool approval, whose no-TTY fallback auto-ALLOWS: two different fallbacks in the same binary, neither of which describes a pane. SAFETY: --allow-all-paths is measured here only to characterize the mechanism and must never be a default. Copilot's built-in edits are not OS-confined (TCL-977), so the path check is the only file-write boundary a launch outside tclaude-layer has.",
+      "corroborating": [
+        "NOT measured here: whether the directory-access dialog's option 2 ('add these directories to the allowed list') persists the grant to disk the way the folder-trust dialog's option 2 does. If it does, that is a third persistence surface alongside trustedFolders and allowedUrls, and a spawner would need to reason about it."
+      ],
+      "scenarios": [
+        "TestCopilotPermissionPathGrants/outside-all/no-path-flags",
+        "TestCopilotPermissionPathGrants/outside-all/add-dir",
+        "TestCopilotPermissionPathGrants/outside-all/allow-all-paths",
+        "TestCopilotPermissionPathGrants/in-temp/default",
+        "TestCopilotPermissionPathGrants/in-temp/disallow-temp-dir"
+      ]
+    },
+    {
+      "id": "resume-submits-prompt",
+      "claim": "Does -i combined with --resume=<full-id> submit the prompt into the resumed conversation?",
+      "status": "proven",
+      "finding": "It does. Two-phase, both against the real binary: phase one seeds a conversation under a pinned --session-id, phase two relaunches it on a PTY with --resume=<full-id> and a new -i prompt. The resumed request carried message roles [system, user, assistant, user] -- the earlier exchange followed by the new turn -- and the session-state directory stayed under the original UUID, so the conversation kept its identity rather than forking. A fresh conversation would have sent [system, user], which is what makes this instrument exact rather than suggestive. This retires the standing UNVERIFIED comment in copilot_spawner.go and means relaunch briefings do not vanish silently.",
+      "corroborating": [
+        "NOT measured, and it is where the real risk lives: --resume also accepts id PREFIXES and session NAMES (exact, case-insensitive). Only the full-UUID form is established here. A non-full id or a name collision would attach a relaunch to a different conversation entirely, which argues for a UUID-shape guard at the spawn boundary rather than for relaxing one."
+      ],
+      "scenarios": [
+        "TestCopilotPermissionResumeSubmitsPrompt"
+      ]
+    },
+    {
+      "id": "in-pane-allow-all-override",
+      "claim": "Can in-pane /allow-all override a launch-time --deny-tool, i.e. are launch permission flags a durable boundary or only startup posture?",
+      "status": "disproven",
+      "finding": "DISPROVEN, and this is the favourable direction: in-pane /allow-all CANNOT override a launch-time deny. Measured on a PTY with a session launched under --deny-tool 'shell(echo)'. The pane accepted the widening command and confirmed 'All permissions are now enabled' -- asserted, so the scenario cannot pass by failing to deliver it -- and the tool requested afterwards was still refused, with 'Permission to run this tool was denied' posted back as the tool result. Denial precedence therefore holds at RUNTIME, not merely at launch. The command choice is load-bearing: 'echo' is auto-approved when no rule mentions it, so the refusal can only come from the deny rule and no risk-classification confound can explain it away. CONSEQUENCE: a launch-time --deny-tool is a real boundary rather than a starting posture, so TCL-973 plan risk 5 can be softened for denies specifically.",
+      "corroborating": [
+        "NOT measured: the other in-pane mutators (/add-dir, /reset-allowed-tools, /settings, /experimental), and whether the ALLOW posture rather than a deny can be widened in-pane. A durable deny says nothing about those, and neither docs nor a spawner should generalize from one to the other.",
+        "NOT measured: whether a deny also survives the ambient COPILOT_ALLOW_ALL=true promotion, which clears gates no flag can. Denial precedence beating an in-pane command does not establish it beating the environment variable."
+      ],
+      "scenarios": [
+        "TestCopilotPermissionInPaneAllowAllCannotOverrideDeny"
+      ]
+    }
+  ]
+}
