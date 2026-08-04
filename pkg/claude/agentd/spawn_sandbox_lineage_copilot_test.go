@@ -99,9 +99,10 @@ func TestSandboxLineageCopilotMatrix(t *testing.T) {
 	}, admitted, "exactly these parents may mint the proven Copilot child")
 }
 
-// A Copilot PARENT is classified by its persisted PAIR, not its mode. This is
-// the one place parent-side implementation is read; Claude, Codex and OpenCode
-// parents keep PR1's mode-only classification until TCL-991.
+// A Copilot PARENT is classified by its persisted PAIR, not its mode. Every
+// parent arm reads the pair now (TCL-991); Copilot's rule stays in
+// normalization rather than joining lineageConfinementMode's remap because it
+// has no second confinement class to map onto.
 //
 // The distinction is load-bearing rather than pedantic. Copilot `off` under
 // `harness-builtin` asserts only that Copilot's own experimental wall is not

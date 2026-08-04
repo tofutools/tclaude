@@ -1155,7 +1155,19 @@ destination group's effective edge.
 
 The sandbox lineage guard compares the spawning agent's recorded harness /
 sandbox mode with the fully resolved child launch shape, after any group
-default spawn profile has filled blank fields. In short:
+default spawn profile has filled blank fields.
+
+Both sides are read together with their sandbox *implementation*, because the
+mode alone is not a posture. Under `--sandbox-impl tclaude-layer` tclaude's own
+wall enforces and the harness's inner sandbox is deliberately stood down, so
+the launch records Claude `off` / Codex `danger-full-access` — an instruction to
+the harness, not an unconfined agent. Such a launch is classified as the
+confinement class it actually has (Claude `on` / the Codex managed profile) on
+both the parent and the child side. Rows recorded with the implementation unset,
+`harness-builtin`, `stacked`, or `off` are read at face value by the mode rules
+below.
+
+In short, for a parent read at face value:
 
 - Claude `off` or Codex `danger-full-access` parents can spawn any sandbox.
 - Claude `inherit`/`on` parents can spawn sandboxed Codex children
@@ -1326,8 +1338,9 @@ retargeting and real-directory swaps between HTTP validation and launch.
 own sandbox, which is exactly the capability being proven — so a permitted
 spawn just works, and a forbidden one fails with a clear "cannot prove write
 access" error. Humans, fully-open parents (Claude `off` / Codex
-`danger-full-access`), and Codex `read-only` children (no cwd write to prove)
-are exempt. The same handshake guards a clone's `cwd` override and the
+`danger-full-access` — judged with the implementation, so a tclaude-layer
+parent recording those modes is *not* exempt), and Codex `read-only` children
+(no cwd write to prove) are exempt. The same handshake guards a clone's `cwd` override and the
 template spawn surfaces (`instantiate` / `deploy` / `reinforce` — the whole
 cast shares one proven launch cwd, plus any shared worktree and the
 per-agent-worktree repo); the matching `tclaude agent templates …` /
