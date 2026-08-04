@@ -48,10 +48,11 @@ import (
 // Humans are exempt (they are the trust root everywhere else in agentd), as
 // are parents whose launch is fully open (Claude `off`, Codex
 // `danger-full-access` — they can already write anywhere), and spawns whose
-// CHILD gets no write access at its cwd (Codex `read-only`). "Fully open" is
-// read from the harness-builtin mode AND the sandbox implementation, because a
+// CHILD gets no write access at its cwd (Codex `read-only`). BOTH exemptions
+// are read from the harness-builtin mode AND the sandbox implementation: a
 // tclaude-layer launch records the same no-confinement mode while tclaude's own
-// wall confines it.
+// wall confines it, and a tclaude-layer child takes cwd write whatever its
+// harness-native mode says.
 
 const (
 	// dirWriteProofCode is the error code of the 403 challenge response.
@@ -339,7 +340,31 @@ func dirWriteProofCallerExempt(callerConvID string) (bool, error) {
 // other mode either writes its cwd subtree (Codex workspace-write / managed
 // profile, Claude on/inherit) or is fully open (gated by the lineage guard
 // to fully-open parents, which are proof-exempt anyway).
-func childSandboxGrantsDirWrite(harnessName, mode string) bool {
+//
+// The IMPLEMENTATION is an input for the same reason it is on
+// spawnUsesPinnedGitCommonDir below, and the omission here was a live
+// write-permission escape (TCL-991). The mode this receives is the
+// HARNESS-NATIVE one, which tclaude-layer does not force — so a child requested
+// as Codex `read-only` under tclaude's own wall arrived spelled `read-only` and
+// took the no-cwd-write exemption. That child is not read-only: a tclaude-layer
+// launch puts cwd in its write dirs unconditionally (see launchWriteDirs in
+// pkg/claude/session/sandbox_bwrap.go), plus the pinned Git dirs the very same
+// spawn block computes. The caller therefore got writes in a directory it never
+// proved it could write, by spelling the request `read-only`.
+//
+// Under tclaude's wall the harness-native mode says nothing about cwd write, so
+// it is not consulted at all: every such launch takes the grant.
+// An implementation that does not parse takes the grant too. The spawn path
+// validates the field long before this gate, so an unparseable value here is
+// not a live request shape — but the whole point of this function is that a
+// missing classification must never skip the proof.
+func childSandboxGrantsDirWrite(
+	harnessName, mode, rawImplementation string,
+) bool {
+	implementation, err := sandboxpolicy.NormalizeImplementation(rawImplementation)
+	if err != nil || implementation.UsesTclaudeLayer() {
+		return true
+	}
 	switch harnessOrDefault(harnessName) {
 	case harness.OpenCodeName:
 		switch strings.TrimSpace(mode) {

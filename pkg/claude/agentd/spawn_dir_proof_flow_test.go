@@ -1059,3 +1059,40 @@ func TestSpawnDirProof_InheritedLifecycleAuthorityNeedsNoProof(t *testing.T) {
 		assertNoDirWriteProofMarkers(t, writeRoot)
 	})
 }
+
+// Regression (TCL-991): the read-only exemption above must NOT extend to a
+// Codex `read-only` child launched under tclaude's own wall.
+//
+// That child is not read-only. tclaude-layer does not force the harness-native
+// mode, so the request arrives at the gate still spelled `read-only`, while the
+// launch puts cwd in the child's write dirs unconditionally. Reading the mode
+// alone therefore handed a sandboxed caller writes in a directory it never
+// proved it could write, by spelling the request `read-only`.
+//
+// The parent is Claude `inherit` — the ordinary spawn-capable posture, not a
+// contrived one — so this is the shape a real caller could have used.
+func TestSpawnDirProof_ReadOnlyCodexChildUnderTclaudeLayerStillChallenged(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	const parent = "parent-wrp8-aaaa-bbbb-cccc-111111111111"
+	haveSpawnCapableSandboxParent(t, f, "alpha", parent, harness.DefaultName, harness.ClaudeSandboxInherit)
+
+	dir := t.TempDir()
+	body := map[string]any{"name": "worker", "cwd": dir,
+		"harness": harness.CodexName, "sandbox": harness.SandboxReadOnly,
+		"sandbox_implementation": string(sandboxpolicy.ImplementationTclaudeLayer)}
+
+	rec := agentReq(t, f, parent, http.MethodPost, "/v1/groups/alpha/spawn", body)
+	ch := decodeWriteProofChallenge(t, rec)
+	resolvedDir, err := filepath.EvalSymlinks(dir)
+	require.NoError(t, err)
+	require.Contains(t, ch.WriteProof.Dirs, resolvedDir,
+		"the challenge must cover the launch dir the tclaude-layer child will write")
+
+	// And the proof still lets the spawn through, so this closes an escape
+	// rather than making the shape unreachable.
+	answerChallenge(t, ch)
+	body["write_proof_token"] = ch.WriteProof.Token
+	rec = agentReq(t, f, parent, http.MethodPost, "/v1/groups/alpha/spawn", body)
+	require.Equalf(t, http.StatusOK, rec.Code, "proved retry must spawn; body=%s", rec.Body.String())
+}

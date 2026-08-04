@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
@@ -120,16 +121,34 @@ func TestReassertDirWriteProof(t *testing.T) {
 }
 
 func TestChildSandboxGrantsDirWrite(t *testing.T) {
-	assert.False(t, childSandboxGrantsDirWrite(harness.CodexName, harness.SandboxReadOnly))
-	assert.True(t, childSandboxGrantsDirWrite(harness.CodexName, harness.SandboxWorkspaceWrite))
-	assert.True(t, childSandboxGrantsDirWrite(harness.CodexName, harness.SandboxManagedProfile))
-	assert.True(t, childSandboxGrantsDirWrite(harness.DefaultName, harness.ClaudeSandboxInherit))
-	assert.True(t, childSandboxGrantsDirWrite(harness.DefaultName, harness.ClaudeSandboxOn))
-	assert.True(t, childSandboxGrantsDirWrite(harness.OpenCodeName, harness.OpenCodeSandboxAccessControl))
-	assert.True(t, childSandboxGrantsDirWrite(harness.OpenCodeName, harness.OpenCodeSandboxOff))
-	assert.True(t, childSandboxGrantsDirWrite(harness.OpenCodeName, "unknown"),
+	assert.False(t, childSandboxGrantsDirWrite(harness.CodexName, harness.SandboxReadOnly, ""))
+	assert.True(t, childSandboxGrantsDirWrite(harness.CodexName, harness.SandboxWorkspaceWrite, ""))
+	assert.True(t, childSandboxGrantsDirWrite(harness.CodexName, harness.SandboxManagedProfile, ""))
+	assert.True(t, childSandboxGrantsDirWrite(harness.DefaultName, harness.ClaudeSandboxInherit, ""))
+	assert.True(t, childSandboxGrantsDirWrite(harness.DefaultName, harness.ClaudeSandboxOn, ""))
+	assert.True(t, childSandboxGrantsDirWrite(harness.OpenCodeName, harness.OpenCodeSandboxAccessControl, ""))
+	assert.True(t, childSandboxGrantsDirWrite(harness.OpenCodeName, harness.OpenCodeSandboxOff, ""))
+	assert.True(t, childSandboxGrantsDirWrite(harness.OpenCodeName, "unknown", ""),
 		"an unclassified OpenCode mode must not bypass directory proof before the later fail-closed mode guard")
-	assert.True(t, childSandboxGrantsDirWrite("", ""))
+	assert.True(t, childSandboxGrantsDirWrite("", "", ""))
+
+	// TCL-991: under tclaude's own wall the harness-native mode says nothing
+	// about cwd write — the launch grants it regardless — so no mode may take
+	// the no-cwd-write exemption there.
+	for _, implementation := range []string{
+		string(sandboxpolicy.ImplementationTclaudeLayer),
+		string(sandboxpolicy.ImplementationStacked),
+		"not-an-implementation",
+	} {
+		assert.Truef(t, childSandboxGrantsDirWrite(
+			harness.CodexName, harness.SandboxReadOnly, implementation),
+			"codex read-only under %q must still prove its launch dir", implementation)
+	}
+	// The exemption survives where it is still true.
+	assert.False(t, childSandboxGrantsDirWrite(harness.CodexName, harness.SandboxReadOnly,
+		string(sandboxpolicy.ImplementationHarnessBuiltin)))
+	assert.False(t, childSandboxGrantsDirWrite(harness.CodexName, harness.SandboxReadOnly,
+		string(sandboxpolicy.ImplementationOff)))
 }
 
 func TestOpenCodeOffParentIsDirWriteProofExempt(t *testing.T) {
