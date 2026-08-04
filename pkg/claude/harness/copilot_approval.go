@@ -25,14 +25,15 @@ import (
 //   - the ask_user tool — closed by --no-ask-user (contract: no-ask-user).
 //   - URL access from the SHELL tool — also closed by --allow-all-tools
 //     (contract: url-access, which corrected the plan's assumption that this
-//     needed its own deny rule). The committed contract could not reach
-//     Copilot's OTHER URL consumer, the web_fetch tool, because the hermetic
-//     lab runs under COPILOT_OFFLINE=true and that removes web_fetch from the
-//     catalog entirely; a follow-up measurement against the same pinned binary,
-//     with hermeticity kept by a rejecting capture proxy instead, establishes
-//     that --allow-all-tools closes its URL dialog as well. So the token that
-//     renders it is nonblocking for both URL consumers, and neither needs a
-//     deny rule to keep a pane moving.
+//     needed its own deny rule).
+//   - URL access from the WEB_FETCH tool — the other URL consumer, and closed
+//     by the same flag (contract: web-fetch-url-access). Worth stating in full
+//     because the conservative posture that preceded it was right: web_fetch
+//     was measured to be a THIRD independent deadlock source, alongside folder
+//     trust and shell tool approval, so a detached pane really would have
+//     parked there. --allow-all-tools was measured to close it ALONE, so the
+//     result cannot be credited to --no-ask-user riding along beside it.
+//     Neither URL consumer needs a deny rule to keep a pane moving.
 //   - directory access — its own "Allow directory access" dialog, closed for a
 //     named directory by --add-dir (contract: out-of-cwd-paths).
 //   - folder trust — the FIRST gate, before the provider is contacted at all,

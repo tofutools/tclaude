@@ -264,10 +264,13 @@ Two consequences are worth stating plainly:
   is refused as `sandbox_restricted` in both directions, and a Copilot agent can
   spawn nothing. Directory pre-trust is no longer one of the gaps — `trust_dir`
   seeds `trustedFolders` — but it is opt-in, so a spawn that does not ask for it
-  still parks on the modal before the model is contacted. The other outstanding
-  gate is that there is no Copilot pane simulator, so the nonblocking posture
-  has no end-to-end regression test. Detached Copilot spawning opens when those
-  land, not before.
+  still parks on the modal before the model is contacted. The other two former
+  gates have closed: a Copilot pane simulator now drives the nonblocking default
+  end to end through the daemon's own status path, and `web_fetch` — which was
+  measured to be a third independent deadlock source — is closed by the same
+  `--allow-all-tools` the default already renders. What remains is the sandbox
+  arm, and it is deliberately the *last* thing to land rather than the leftover:
+  it is the axis that decides whether an OS boundary actually exists.
 
 The restraint is deliberate rather than incidental. This adapter was FIRST
 written against the official GitHub documentation alone, with no Copilot binary
@@ -302,7 +305,7 @@ park a pane forever.
 |---|---|
 | Tool approval (per-command risk classification, not a tool allowlist) | `--allow-all-tools` |
 | The `ask_user` tool | `--no-ask-user` (removes the tool from the advertised catalog) |
-| URL access **from the shell tool** | `--allow-all-tools` also closes this |
+| URL access, from **either** consumer — the shell tool (`url-access`) and the `web_fetch` tool (`web-fetch-url-access`) | `--allow-all-tools` also closes this, measured separately for each consumer and measured *alone* for `web_fetch`, so the result is not creditable to `--no-ask-user` |
 | Directory access outside cwd + system temp | `--add-dir <dir>`, one per directory |
 | Folder trust | **no launch flag at all** — a config-file write, opted into with `trust_dir` ([below](#directory-trust-at-spawn)) |
 
@@ -346,18 +349,22 @@ Several things this deliberately does **not** do:
   named, but Copilot's built-in file edits are not OS-confined, so outside a
   `--sandbox-impl tclaude-layer` launch the path check is the *only* boundary on
   what the agent can write. Grants stay precise.
-- **No blanket URL deny.** The plan this catalog replaces proposed
-  `--deny-tool 'url()'` as part of the default. The real binary **rejects** that
-  spelling at argument parse and exits 1 before contacting the provider, so it
-  would have killed every Copilot pane at launch. Empty parentheses are invalid
-  for every rule kind; the bare kind (`url`) and `kind(pattern)` forms parse.
-- **No blanket URL deny in the catalog.** `--allow-all-tools` closes the URL
-  prompt for the shell path, so no deny rule is needed to keep a pane moving.
-  Copilot's `web_fetch` tool is the other URL consumer; the committed contract
-  could not reach it (the hermetic lab removes it from the catalog entirely),
-  and a follow-up measurement against the same pinned binary establishes that
-  `--allow-all-tools` closes its URL dialog too. Either way the default renders
-  no deny rule.
+- **Not the `--deny-tool 'url()'` the plan proposed.** The plan this catalog
+  replaces put that spelling in the default. The real binary **rejects** it at
+  argument parse and exits 1 before contacting the provider, so it would have
+  killed every Copilot pane at launch. Empty parentheses are invalid for every
+  rule kind; the bare kind (`url`) and `kind(pattern)` forms parse.
+- **No URL deny at all, because none is needed.** `--allow-all-tools` closes the
+  URL prompt for *both* consumers: the shell path (contract `url-access`) and
+  the `web_fetch` tool (contract `web-fetch-url-access`, which closed the gap
+  the hermetic offline lab structurally could not reach). web_fetch really was a
+  third independent deadlock source, so the fail-closed posture held while it
+  was unmeasured was correct — it simply is not one the default has to spend a
+  deny rule on. A **working** blanket deny does exist if a launch wants one:
+  the bare kind `--deny-tool url` denies every URL at the permission layer and
+  beats a launch-time `--allow-all-tools`. That is **launch-time precedence
+  only** — whether it survives in-pane widening is not measured, so it is not a
+  durable boundary on this evidence, and the catalog renders it nowhere.
 - **No `AskTimeout` contract.** `--no-ask-user` removes the ask tool rather than
   timing a dialog out, so there is no idle timeout to translate.
 - **No tool-governance contract.** `--allow-tool` / `--deny-tool` are a
@@ -422,10 +429,13 @@ agent-selection options that tclaude neither renders nor records are outside it.
 in-pane commands (`/allow-all`, `/add-dir`, `/reset-allowed-tools`, `/settings`)
 mutate live permission state, and answers you tell Copilot to remember —
 `trustedFolders`, `allowedUrls` — persist to its configuration. One favourable
-exception was measured: a launch-time `--deny-tool` rule **survives** an in-pane
-`/allow-all`, which confirms and reports "All permissions are now enabled" and
-then still refuses the denied tool. Denial precedence therefore holds at runtime,
-not merely at launch. That says nothing about the other in-pane mutators, and
+exception was measured, and its **scope is the shell axis**: a launch-time
+`--deny-tool 'shell(…)'` rule **survives** an in-pane `/allow-all`, which confirms
+and reports "All permissions are now enabled" and then still refuses the denied
+tool. Denial precedence therefore holds at runtime, not merely at launch — for
+that axis. It says nothing about the other in-pane mutators, nothing about the
+URL axis (explicitly recorded as unmeasured for in-pane widening), and nothing
+about whether a deny also beats the ambient `COPILOT_ALLOW_ALL` promotion.
 tclaude does not generalize from it.
 
 #### Copilot and tclaude's outer sandbox
