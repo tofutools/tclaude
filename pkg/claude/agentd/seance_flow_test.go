@@ -853,9 +853,12 @@ func TestSeanceRun_HoldsItsWorktreeAgainstConcurrentRetirement(t *testing.T) {
 	shared, err := worktree.AddWorktreeIn(repo, "seance-held", "main", "")
 	require.NoError(t, err)
 
-	// The séance target: superseded by newConv, so it claims nothing itself.
+	// The séance target: superseded by newConv AND offline, so it claims
+	// nothing itself. Both are required — a live pane would claim the root on
+	// its own and the séance hold would not be what keeps the worktree.
 	f.HaveConvWithTitle(oldConv, "old-runner")
 	haveSeanceSession(f, oldConv, "old-runner-label", "old-runner-tmux", shared)
+	f.MarkOffline("old-runner-tmux")
 	f.HaveConvWithTitle(newConv, "new-runner")
 	haveSeanceSession(f, newConv, "new-runner-label", "new-runner-tmux", f.TestCwd("seance-held-new"))
 	_, err = db.RotateAgentConv(oldConv, newConv, "reincarnate")

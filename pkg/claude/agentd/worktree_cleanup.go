@@ -170,15 +170,22 @@ type agentWorktreeClaimSnapshot struct {
 // tmux pane disappears. Exact timestamp ties retain every candidate and fail
 // conservatively across their roots.
 //
-// A live séance is the exception to the paragraph above: its subprocess runs in
-// a predecessor generation's cwd, which is exactly the offline superseded
-// conversation that no longer claims anything, so it is claimed separately via
-// heldSeanceWorktrees under a synthetic claimant (TCL-1026, seance_worktree_
-// claim.go). That claim is in-memory and does not survive a killed daemon —
-// holdSeanceWorktree states the residual.
+// Two claimants sit outside those rules because they are daemon-owned processes
+// with no pane and no session row of their own, and both would otherwise land in
+// a directory this snapshot calls unclaimed:
 //
-// This check is NOT total: it sees only what these reads have RECORDED, so a
-// live process in a directory whose claim has not landed in them is invisible
+//   - A live séance, via heldSeanceWorktrees (TCL-1026). Its subprocess runs in
+//     a PREDECESSOR generation's cwd — precisely the offline superseded
+//     conversation the paragraph above stops counting. In-memory, so it does not
+//     survive a killed daemon; holdSeanceWorktree states that residual.
+//   - A live managed OpenCode server, via ListOpenCodeRuntimes (TCL-1027).
+//     Started with cwd set to the launch dir before the pane fork, so it holds
+//     the directory until the forked `session new` writes the row. Durable, so
+//     liveness is the runtime manager's own PID check — a row alone would pin
+//     the worktree forever after a crash.
+//
+// This check is still NOT total: it sees only what these reads have RECORDED, so
+// a live process in a directory whose claim has not landed in them is invisible
 // here. Every pane tclaude itself launches is already claim-before-process —
 // session/new.go writes the session row carrying cwd
 // (SaveSessionStateForLaunch) well before tmux creates the pane, so the claim
@@ -189,20 +196,16 @@ type agentWorktreeClaimSnapshot struct {
 //     hook rather than launched through tclaude. The process precedes its
 //     session row by the harness's startup-to-first-hook latency. tclaude is not
 //     in that launch at all, so no claim-before-launch mechanism reaches it.
-//   - An OpenCode launch: startOpenCodeRuntimeForSpawn boots the authoritative
-//     server with cwd set to the launch dir BEFORE the pane fork, so a real
-//     process holds the directory until the forked `session new` writes the row.
-//     Note this one IS recorded — UpsertOpenCodeRuntime persists the runtime's
-//     Cwd right after the process starts (ListOpenCodeRuntimes reads it back) —
-//     just not in a store this snapshot consults. Closing it is a fourth read,
-//     not a new mechanism, so it is not structurally closed and did not inherit
-//     the verdict below. OPEN WORK, TCL-1027.
 //   - Between the daemon's fork and that row write, on every harness. The forked
 //     `tclaude session new` deliberately does not inherit the launch dir (no
 //     cmd.Dir), so no process sits in the worktree during this one — a removal
 //     here fails the launch loudly instead of yanking a live agent's ground.
+//   - The gap between each daemon-owned process starting and its claim landing:
+//     cmd.Start to UpsertOpenCodeRuntime above, and for a séance the window is
+//     closed the other way (the claim precedes the exec) but does not survive
+//     the daemon being killed.
 //
-// The first and third TCL-1021 documented rather than closed: triggering one
+// Both remaining windows TCL-1021 documented rather than closed: triggering one
 // requires an operator retiring a DIFFERENT agent recorded at the same worktree,
 // with worktree deletion, inside the window. Assume the gap, not totality.
 func captureAgentWorktreeClaims() agentWorktreeClaimSnapshot {
@@ -319,6 +322,37 @@ func captureAgentWorktreeClaims() agentWorktreeClaimSnapshot {
 			snap.dirClaims[claimDir][convID] = true
 		}
 	}
+	// Managed OpenCode servers. startOpenCodeRuntimeForSpawn launches these with
+	// cmd.Dir set to the launch dir BEFORE the pane fork, so between that start
+	// and the forked `session new` writing its session row a real process holds
+	// the directory with nothing above to claim it. The row is already durable —
+	// UpsertOpenCodeRuntime stamps Cwd right after the process starts — so this
+	// is a read, not a mechanism (TCL-1027).
+	//
+	// Liveness is the PID check the runtime manager itself uses. A row alone is
+	// not proof: rows outlive a crashed daemon, and an unconditional claim would
+	// pin the worktree forever. Claim under the runtime's own conv-id so an
+	// agent retiring itself still excludes its own server; a row with no conv-id
+	// falls back to a synthetic claimant and therefore fails closed.
+	runtimes, err := db.ListOpenCodeRuntimes()
+	if err != nil {
+		return snap
+	}
+	for _, runtime := range runtimes {
+		dir := cleanClaimDir(runtime.Cwd)
+		if dir == "" || !session.IsProcessAlive(runtime.PID) {
+			continue
+		}
+		claimant := runtime.ConvID
+		if claimant == "" {
+			claimant = openCodeRuntimeClaimant
+		}
+		if snap.dirClaims[dir] == nil {
+			snap.dirClaims[dir] = map[string]bool{}
+		}
+		snap.dirClaims[dir][claimant] = true
+	}
+
 	// Live séances last, under a synthetic claimant no retirement can exclude.
 	// This is an in-process read, so it cannot fail and never clears complete.
 	for _, dir := range heldSeanceWorktrees() {
@@ -330,6 +364,12 @@ func captureAgentWorktreeClaims() agentWorktreeClaimSnapshot {
 	snap.complete = true
 	return snap
 }
+
+// openCodeRuntimeClaimant is the fallback claimant for a live managed OpenCode
+// server whose row carries no conv-id. Like seanceClaimant it is not a conv-id,
+// so no retirement can exclude it: an unattributable live process holding the
+// directory must still block removal.
+const openCodeRuntimeClaimant = "opencode-runtime:live"
 
 // sharedKeptNote phrases every "kept because someone else holds it" outcome.
 // note names a non-agent holder (see agentWorktreeView.SharedNote); empty falls
