@@ -179,7 +179,7 @@ type agentWorktreeClaimSnapshot struct {
 //     conversation the paragraph above deliberately stops counting as a
 //     claimant. It is a daemon-owned process, not a pane, and writes no session
 //     row, so nothing here protects its directory. This is the widest window by
-//     wall-clock, minutes rather than milliseconds.
+//     wall-clock, minutes rather than milliseconds. OPEN WORK, TCL-1026.
 //   - A harness the operator started themselves, auto-registered from its first
 //     hook rather than launched through tclaude. The process precedes its
 //     session row by the harness's startup-to-first-hook latency. tclaude is not
@@ -188,14 +188,16 @@ type agentWorktreeClaimSnapshot struct {
 //     server with cwd set to the launch dir BEFORE the pane fork, so a real
 //     process holds the directory until the forked `session new` writes the row.
 //     Note this one IS recorded — UpsertOpenCodeRuntime persists the runtime's
-//     Cwd right after the process starts — just not in a store this snapshot
-//     reads. TCL-1021 declined to add the read, it is not structurally closed.
+//     Cwd right after the process starts (ListOpenCodeRuntimes reads it back) —
+//     just not in a store this snapshot consults. Closing it is a fourth read,
+//     not a new mechanism, so it is not structurally closed and did not inherit
+//     the verdict below. OPEN WORK, TCL-1027.
 //   - Between the daemon's fork and that row write, on every harness. The forked
 //     `tclaude session new` deliberately does not inherit the launch dir (no
 //     cmd.Dir), so no process sits in the worktree during this one — a removal
 //     here fails the launch loudly instead of yanking a live agent's ground.
 //
-// TCL-1021 documented rather than closed these: triggering one requires an
+// The other two TCL-1021 documented rather than closed: triggering one requires an
 // operator retiring a DIFFERENT agent recorded at the same worktree, with
 // worktree deletion, inside the window. Assume the gap, do not assume totality.
 func captureAgentWorktreeClaims() agentWorktreeClaimSnapshot {
