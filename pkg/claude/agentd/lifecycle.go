@@ -1286,7 +1286,8 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 	// Derive repository grants only from the verified durable identity. Calling
 	// git rev-parse here would follow a mutable .git file a second time and could
 	// turn a post-verification retarget into new write authority.
-	codexGitCommonDirPinned := spawnUsesPinnedGitCommonDir(harnessName, relaunchSandbox)
+	codexGitCommonDirPinned := spawnUsesPinnedGitCommonDir(
+		harnessName, relaunchSandbox, relaunchSandboxImplementation)
 	codexGitCommonDir := ""
 	gitDir := ""
 	var gitWriteDirs []string
@@ -3323,11 +3324,13 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	var proofDirs []string
 	var proofToken string
 	var codexGitCommonDir string
-	codexGitCommonDirPinned := spawnUsesPinnedGitCommonDir(h.Name, sandboxMode)
+	codexGitCommonDirPinned := spawnUsesPinnedGitCommonDir(
+		h.Name, sandboxMode, body.SandboxImplementation)
 	var gitWorktreeWriteDirs []string
 	if codexGitCommonDirPinned {
 		var gerr error
-		codexGitCommonDir, gerr = spawnGitCommonDir(h.Name, sandboxMode, cwd)
+		codexGitCommonDir, gerr = spawnGitCommonDir(
+			h.Name, sandboxMode, body.SandboxImplementation, cwd)
 		if gerr != nil {
 			writeError(w, http.StatusInternalServerError, "io", gerr.Error())
 			return
@@ -4559,8 +4562,10 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		omitted := sandboxpolicy.OmittedProfilesSnapshot()
 		p.EffectiveSandbox = &omitted
 	}
-	if spawnUsesPinnedGitCommonDir(p.Harness, p.SandboxMode) && !p.CodexGitCommonDirPinned {
-		gitCommonDir, err := spawnGitCommonDir(p.Harness, p.SandboxMode, p.Cwd)
+	if spawnUsesPinnedGitCommonDir(
+		p.Harness, p.SandboxMode, p.SandboxImplementation) && !p.CodexGitCommonDirPinned {
+		gitCommonDir, err := spawnGitCommonDir(
+			p.Harness, p.SandboxMode, p.SandboxImplementation, p.Cwd)
 		if err != nil {
 			return nil, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
 		}

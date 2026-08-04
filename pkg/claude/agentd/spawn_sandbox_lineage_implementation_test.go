@@ -188,10 +188,11 @@ func TestSandboxLineageDoesNotMapStackedChildren(t *testing.T) {
 	require.False(t, spawnSandboxLineageAllowed(inheritParent, stackedDanger))
 }
 
-// PR1 admits no Copilot lineage: a Copilot child stays refused whatever the
-// implementation, including the single-wall one its detached spawning will
-// eventually need (TCL-989 leaves that to a later step).
-func TestSandboxLineageStillRefusesEveryCopilotChild(t *testing.T) {
+// PR2 admits Copilot in exactly ONE pair. Every other spelling stays refused
+// even from the most permissive parent there is — which is the case that would
+// break first, because Claude `off` returns true for every other child in the
+// matrix (TCL-989).
+func TestSandboxLineageRefusesEveryUnprovenCopilotChild(t *testing.T) {
 	for _, implementation := range []sandboxpolicy.Implementation{
 		"",
 		sandboxpolicy.ImplementationHarnessBuiltin,
@@ -202,13 +203,15 @@ func TestSandboxLineageStillRefusesEveryCopilotChild(t *testing.T) {
 		for _, mode := range []string{
 			harness.CopilotSandboxInherit, harness.CopilotSandboxOff, "",
 		} {
+			proven := implementation == sandboxpolicy.ImplementationTclaudeLayer &&
+				mode == harness.CopilotSandboxOff
 			child := spawnLineageSandbox{
 				Harness: harness.CopilotName, Mode: mode, Implementation: implementation,
 			}
-			require.Falsef(t, spawnSandboxLineageAllowed(
+			require.Equalf(t, proven, spawnSandboxLineageAllowed(
 				spawnLineageSandbox{Harness: harness.DefaultName, Mode: harness.ClaudeSandboxOff},
 				child,
-			), "copilot child impl=%q mode=%q must stay refused", implementation, mode)
+			), "copilot child impl=%q mode=%q", implementation, mode)
 		}
 	}
 }

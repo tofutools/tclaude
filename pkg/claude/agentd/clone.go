@@ -269,7 +269,8 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 			Msg:    fail.Msg,
 		}
 	}
-	codexGitCommonDirPinned := spawnUsesPinnedGitCommonDir(srcHarness, cloneSandbox)
+	codexGitCommonDirPinned := spawnUsesPinnedGitCommonDir(
+		srcHarness, cloneSandbox, relaunch.SandboxImplementation)
 	if codexGitCommonDirPinned && gitWriteDirs == nil {
 		if home, err := os.UserHomeDir(); err == nil {
 			gitWriteDirs = harness.GitWorktreeWriteDirs(cwd, codexGitCommonDir, home)
@@ -1096,13 +1097,15 @@ func runCloneOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 		}
 		cwd = resolved
 	}
-	codexGitCommonDir, gerr := spawnGitCommonDir(srcHarness, cloneSandbox, cwd)
+	codexGitCommonDir, gerr := spawnGitCommonDir(
+		srcHarness, cloneSandbox, relaunch.SandboxImplementation, cwd)
 	if gerr != nil {
 		writeError(w, http.StatusInternalServerError, "io", gerr.Error())
 		return
 	}
 	var gitWriteDirs []string
-	if spawnUsesPinnedGitCommonDir(srcHarness, cloneSandbox) {
+	if spawnUsesPinnedGitCommonDir(
+		srcHarness, cloneSandbox, relaunch.SandboxImplementation) {
 		if home, err := os.UserHomeDir(); err == nil {
 			gitWriteDirs = harness.GitWorktreeWriteDirs(cwd, codexGitCommonDir, home)
 		}
