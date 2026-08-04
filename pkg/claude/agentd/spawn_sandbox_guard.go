@@ -64,7 +64,7 @@ func spawnSandboxLineageFailure(
 			"agent %s was launched as %s sandbox %q (%s) and may not spawn a %s child with sandbox %q (%s)",
 			short8(parentConvID), parent.Harness, parent.Mode, parent.Implementation,
 			child.Harness, child.Mode, child.Implementation)
-		if remedy := copilotLineageRemedy(child); remedy != "" {
+		if remedy := copilotLineageRemedy(parent, child); remedy != "" {
 			message += "; " + remedy
 		}
 		return &spawnFailure{http.StatusForbidden, "sandbox_restricted", message}
@@ -78,15 +78,28 @@ func spawnSandboxLineageFailure(
 // land elsewhere, so a refused Copilot child is usually a defaulted request
 // rather than a request for something the matrix will never grant.
 //
-// A child that ALREADY spells the admitted pair gets no remedy: that refusal
-// came from the parent's own posture, and no child-side flag moves it.
-func copilotLineageRemedy(child spawnLineageSandbox) string {
-	if child.Harness != harness.CopilotName || copilotProvenLineageLaunch(child) {
+// It is withheld whenever THIS parent would refuse the admitted pair too —
+// a Codex workspace-write parent, an unproven Copilot parent, a row that does
+// not normalize — because there the refusal is about the caller's own posture
+// and no child-side flag moves it. That is asked of the matrix rather than
+// enumerated, so the advice is true by construction and cannot drift out of
+// sync with the arms; it also subsumes the child that already spells the pair.
+func copilotLineageRemedy(parent, child spawnLineageSandbox) string {
+	if child.Harness != harness.CopilotName {
+		return ""
+	}
+	admitted := spawnLineageSandbox{
+		Harness:        harness.CopilotName,
+		Mode:           harness.CopilotSandboxOff,
+		Implementation: sandboxpolicy.ImplementationTclaudeLayer,
+	}
+	if !spawnSandboxLineageAllowed(parent, admitted) {
 		return ""
 	}
 	return fmt.Sprintf(
-		"%s agents are admitted in exactly one launch topology — pass sandbox_implementation=%s (mode resolves to %q)",
-		harness.CopilotName, sandboxpolicy.ImplementationTclaudeLayer, harness.CopilotSandboxOff)
+		"%s agents are admitted in exactly one launch topology — pass sandbox_implementation=%s (`--sandbox-impl %s`; mode resolves to %q)",
+		harness.CopilotName, sandboxpolicy.ImplementationTclaudeLayer,
+		sandboxpolicy.ImplementationTclaudeLayer, harness.CopilotSandboxOff)
 }
 
 func sandboxProfileCapabilityFailure(

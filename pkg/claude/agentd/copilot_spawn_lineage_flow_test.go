@@ -37,7 +37,8 @@ const provenCopilotImplementation = string(sandboxpolicy.ImplementationTclaudeLa
 // constants the production message uses, so a rename that quietly changes the
 // sentence a caller reads fails here instead of agreeing with itself.
 const copilotLineageRemedyText = "copilot agents are admitted in exactly one " +
-	`launch topology — pass sandbox_implementation=tclaude-layer (mode resolves to "off")`
+	"launch topology — pass sandbox_implementation=tclaude-layer " +
+	"(`--sandbox-impl tclaude-layer`; mode resolves to \"off\")"
 
 // haveLineageParent writes a spawn-capable parent row carrying an explicit
 // sandbox implementation and approval posture.
@@ -335,6 +336,30 @@ func TestCopilotLineage_RefusalTable(t *testing.T) {
 				"approval":               harness.CopilotApprovalAllowTools,
 			},
 			wantCode: "sandbox_restricted",
+		},
+		{
+			// The remedy must not be dangled here: this parent cannot mint the
+			// admitted pair either, so a caller who followed it would be
+			// refused a second time by the row directly above.
+			name:   "a codex workspace-write parent gets no remedy for a defaulted copilot child",
+			parent: parentSpec{harness.CodexName, harness.SandboxWorkspaceWrite, "", harness.ApprovalNever},
+			child: map[string]any{
+				"harness":  harness.CopilotName,
+				"approval": harness.CopilotApprovalAllowTools,
+			},
+			wantCode:   "sandbox_restricted",
+			wantRemedy: false,
+		},
+		{
+			name: "nor does a legacy copilot parent, which cannot mint the admitted pair either",
+			parent: parentSpec{harness.CopilotName, harness.CopilotSandboxOff,
+				string(sandboxpolicy.ImplementationHarnessBuiltin), harness.CopilotApprovalAllowTools},
+			child: map[string]any{
+				"harness":  harness.CopilotName,
+				"approval": harness.CopilotApprovalAllowTools,
+			},
+			wantCode:   "sandbox_restricted",
+			wantRemedy: false,
 		},
 		{
 			name: "a legacy copilot parent row asserts nothing about who owns its wall",
