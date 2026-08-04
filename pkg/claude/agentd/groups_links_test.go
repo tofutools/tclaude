@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
@@ -109,7 +110,9 @@ func TestRequireGroupLinkAuthority_DenyBeatsOwnerBypass(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := requestWithPeer(&peer{PID: 999, HasClaudeAncestor: true, ConvID: "manager"})
 	_, ok := requireGroupLinkAuthority(w, r, groupA, PermGroupsLinkAdd)
-	assert.False(t, ok, "denied owner should be refused link-create")
+	require.False(t, ok, "denied owner should be refused link-create")
+	assert.Equal(t, http.StatusForbidden, w.Code, "status")
+	assert.Contains(t, w.Body.String(), PermGroupsLinkAdd, "403 should name the slug")
 }
 
 // TestRequireScopedLinkAuthority_DenyBeatsOwnerBypass: same for the
@@ -128,5 +131,7 @@ func TestRequireScopedLinkAuthority_DenyBeatsOwnerBypass(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := requestWithPeer(&peer{PID: 999, HasClaudeAncestor: true, ConvID: "manager"})
 	_, ok := requireScopedLinkAuthority(w, r, groupA, link, PermGroupsLinkRm)
-	assert.False(t, ok, "denied owner should be refused link-rm on the FROM side")
+	require.False(t, ok, "denied owner should be refused link-rm on the FROM side")
+	assert.Equal(t, http.StatusForbidden, w.Code, "status")
+	assert.Contains(t, w.Body.String(), PermGroupsLinkRm, "403 should name the slug")
 }

@@ -416,10 +416,11 @@ func handleGroupLinksRemove(w http.ResponseWriter, r *http.Request, g *db.AgentG
 // The bypass runs through requirePermissionEx, so it obeys the same
 // precedence as every other owner-implied slug: it fills only the
 // permUndecided gap and an explicit per-conv deny override suppresses
-// it. Ownership is still consulted before any error path is taken — an
-// owner caller never triggers the slug-denied branch — because
+// it. An owner caller still never reaches the slug-denied branch:
 // requirePermissionEx evaluates the bypass ahead of the popup /
-// 403-with-helpful-message handling.
+// 403-with-helpful-message handling. The caller-class and retired-agent
+// checks do run first, so a retired owner is refused — the same order
+// every other group-scoped gate already uses.
 func requireGroupLinkAuthority(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, perm string) (string, bool) {
 	// The owner-of-g structural bypass applies only to a confirmed agent
 	// (it needs a conv-id). The human, and every fail-closed class, are
