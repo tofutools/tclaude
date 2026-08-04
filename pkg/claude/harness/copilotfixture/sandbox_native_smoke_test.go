@@ -494,9 +494,10 @@ func TestCopilotNativeSandboxShellBasePolicySurface(t *testing.T) {
 // sandboxing take effect with no `--experimental` anywhere. (This scenario
 // writes the CANONICAL settings.json; the legacy config.json is covered by
 // TestCopilotNativeSandboxSettingsSourcesAndPrecedence.) It matters
-// because it cuts both ways for tclaude — the posture cannot be turned on by a
-// launch argument, and it also cannot be assumed off just because tclaude
-// passed no experimental flag.
+// because it cuts both ways for tclaude — the posture cannot be assumed off
+// just because tclaude passed no experimental flag, and (per TCL-1011) the
+// launch arguments that WOULD turn it on need that flag, which is the one
+// tclaude-layer refuses.
 func TestCopilotNativeSandboxNeedsNoExperimentalFlag(t *testing.T) {
 	requireSmokeParallel(t)
 

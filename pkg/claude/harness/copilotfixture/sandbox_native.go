@@ -74,9 +74,12 @@ const (
 // WriteNativeSandboxSettings writes the scenario's posture into the canonical
 // settings file under COPILOT_HOME.
 //
-// Writing a file before the run is how a scenario chooses a sandbox posture at
-// all: the feature has NO launch flag, which is itself one of the findings this
-// suite exists to pin.
+// Writing a file before the run is how a scenario chooses a sandbox posture
+// without engaging experimental features. The hidden `--sandbox` /
+// `--no-sandbox` flags can select one too, but only under `--experimental`, so
+// they would change a second thing about every scenario that used them; see
+// sandbox_native_flags_smoke_test.go, which measures that gate rather than
+// relying on it.
 func WriteNativeSandboxSettings(t *testing.T, dirs Dirs, sandbox NativeSandboxSettings) {
 	t.Helper()
 	WriteNativeSandboxSettingsTo(t, dirs, NativeSettingsFile, sandbox)

@@ -94,6 +94,28 @@ var permissionScenarios = struct {
 		"deny-tool/url(*)", "deny-url/*", "deny-url/https-star"),
 }
 
+// The TCL-1011 native-sandbox scenarios register here too, so registration
+// stays in one place, but they are registered for their names alone: unlike the
+// permission matrix above, their tables are literal in their own files and no
+// test needs to look a row name up. `var _` says that plainly rather than
+// parking the maps in a struct nobody reads.
+var (
+	_ = registerRows("TestCopilotNativeSandboxSessionFlagsAreAccepted",
+		"hidden-from-help", "sandbox", "no-sandbox", "unknown-control")
+	_ = registerRows("TestCopilotNativeSandboxSessionFlagsNeedExperimental",
+		"enabled_no_flag", "disabled_no_flag",
+		"enabled_experimental_only", "disabled_experimental_only",
+		"enabled_no_sandbox_flag", "disabled_sandbox_flag",
+		"enabled_no_sandbox_flag_experimental", "disabled_sandbox_flag_experimental")
+	_ = registerRows("TestCopilotNativeSandboxSessionFlagsDoNotPersist",
+		"no_sandbox_over_enabled", "sandbox_over_disabled")
+	_ = registerRows("TestCopilotNativeSandboxAllowBypassDemotesEnforcementToAPrompt",
+		"bypass_off", "bypass_on", "bypass_off_autopilot", "bypass_on_autopilot",
+		"bypass_on_yolo")
+	_ = registerRows("TestCopilotNativeSandboxGeneratedLinuxPolicy",
+		"outbound_denied", "outbound_allowed")
+)
+
 // registerRows registers one scenario per table row and returns the row->name
 // map, so a test's table and the registry cannot drift apart.
 func registerRows(test string, rows ...string) map[string]string {

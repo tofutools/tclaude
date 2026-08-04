@@ -184,9 +184,11 @@ func resolveSandboxModeFor(
 // applicability a property of the descriptor; this is a property of the
 // harness's own MUTABLE CONFIGURATION, which no tier of tclaude's resolution
 // can see and which an operator can change between any two launches. Copilot is
-// the case that forced it: its command sandbox lives in settings.json with no
-// launch flag, so "tclaude's layer is the only wall" is a claim that has to be
-// re-checked at every launch rather than resolved once and recorded.
+// the case that forced it: its command sandbox lives in settings.json, with no
+// per-launch flag tclaude can use (the hidden `--sandbox`/`--no-sandbox` pair
+// needs `--experimental`, which tclaude-layer refuses), so "tclaude's layer is
+// the only wall" is a claim that has to be re-checked at every launch rather
+// than resolved once and recorded.
 //
 // Checking it here rather than only in planSandboxProfileAccessForLaunch is
 // deliberate: that function returns early for a launch with no sandbox profile

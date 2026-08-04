@@ -62,9 +62,11 @@ func init() {
 		// not by the published docs, which describe neither.
 		//
 		// Sandbox is an ASSERT-off catalog rather than a launch flag. Copilot
-		// 1.0.77 has no flag and no environment variable for its own
-		// (experimental, MXC) command sandbox — only settings.json and an
-		// in-pane slash command — so tclaude cannot force it either way. What
+		// 1.0.77 has no environment variable for its own (experimental, MXC)
+		// command sandbox, and its hidden `--sandbox`/`--no-sandbox` flags are
+		// honoured only under `--experimental` — the same switch that lets the
+		// pane revoke the posture — so tclaude cannot force it either way
+		// without handing the pane that lever. What
 		// the catalog buys is the ability to REFUSE a tclaude-layer launch that
 		// would otherwise stack two claimed boundaries; see copilot_sandbox.go.
 		Sandbox: copilotSandbox{},

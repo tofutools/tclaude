@@ -716,6 +716,13 @@ func TestCopilotPermissionContractIsBackedByScenarios(t *testing.T) {
 		"in-pane-allow-all-override",
 		"ambient-allow-all-env",
 		"yolo-permission-surface",
+		// TCL-1011's native-sandbox measurements. They share this table
+		// because they share its discipline — a status is a claim about
+		// scenarios that exist — even though their subject is Copilot's own
+		// sandbox rather than its permission prompts.
+		"native-sandbox-session-flags",
+		"native-sandbox-generated-linux-policy",
+		"native-sandbox-allow-bypass-demotes-enforcement",
 	}
 	var gotIDs []string
 	for _, e := range contract.Entries {
