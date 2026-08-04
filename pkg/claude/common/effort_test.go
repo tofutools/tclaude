@@ -1,6 +1,16 @@
 package common
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
+
+func TestValidEffortLevelsStayClaudeCatalog(t *testing.T) {
+	want := []string{"low", "medium", "high", "xhigh", "max"}
+	if !slices.Equal(ValidEffortLevels, want) {
+		t.Fatalf("ValidEffortLevels = %v, want Claude catalog %v", ValidEffortLevels, want)
+	}
+}
 
 func TestValidateEffort(t *testing.T) {
 	cases := []struct {

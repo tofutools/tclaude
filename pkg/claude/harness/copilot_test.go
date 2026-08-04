@@ -433,14 +433,16 @@ func TestCopilotValidateEffort(t *testing.T) {
 	if got, err := m.ValidateEffort(""); got != "" || err != nil {
 		t.Fatalf("ValidateEffort(\"\") = (%q, %v), want (\"\", nil)", got, err)
 	}
-	// Copilot's documented levels are exactly tclaude's, forwarded verbatim.
-	for _, level := range []string{"low", "medium", "high", "xhigh", "max"} {
+	// Copilot's documented levels include two values outside the common
+	// Claude/Codex catalog; all are forwarded verbatim after normalization.
+	wantLevels := []string{"none", "minimal", "low", "medium", "high", "xhigh", "max"}
+	for _, level := range wantLevels {
 		if got, err := m.ValidateEffort(strings.ToUpper(level)); got != level || err != nil {
 			t.Fatalf("ValidateEffort(%q) = (%q, %v), want (%q, nil)", level, got, err, level)
 		}
 	}
-	if !slices.Equal(m.EffortLevels(), []string{"low", "medium", "high", "xhigh", "max"}) {
-		t.Fatalf("EffortLevels() = %v", m.EffortLevels())
+	if !slices.Equal(m.EffortLevels(), wantLevels) {
+		t.Fatalf("EffortLevels() = %v, want %v", m.EffortLevels(), wantLevels)
 	}
 	if _, err := m.ValidateEffort("ultra"); err == nil {
 		t.Fatal("ValidateEffort(\"ultra\") must be refused")

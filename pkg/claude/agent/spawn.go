@@ -224,7 +224,8 @@ type SpawnRequest struct {
 	// Effort sets the spawned agent's Claude reasoning effort. It is
 	// forwarded to the new agent's `tclaude session new --effort <level>`
 	// (and on to `claude`). Empty omits the flag so claude uses its own
-	// default; a non-empty value must be one of clcommon.ValidEffortLevels.
+	// default; a non-empty value must be accepted by the selected harness's
+	// ModelCatalog (Copilot has two additional documented levels).
 	// Every spawn surface — `tclaude agent spawn`, `tclaude --join-group`,
 	// and the dashboard's spawn modal — sets this same field, so the wire
 	// contract stays single-sourced.
@@ -590,7 +591,7 @@ type SpawnParams struct {
 	// (which assigns the first free letter in field order) cannot steal
 	// a short from any existing field. No explicit shorts — `--effort`
 	// and `--model` only.
-	Effort string `long:"effort" optional:"true" help:"Reasoning effort for the new agent: low|medium|high|xhigh|max. Unset = filled by the default-profile chain, then the harness's own default. See 'Default resolution' in the command help"`
+	Effort string `long:"effort" optional:"true" help:"Reasoning effort for the new agent (per-harness; Copilot also accepts none|minimal). Unset = filled by the default-profile chain, then the harness's own default. See 'Default resolution' in the command help"`
 	Model  string `long:"model" optional:"true" help:"Model for the new agent. Claude: fable|fable[1m]|opus|opus[1m]|sonnet|sonnet[1m]|haiku|opusplan or a full model ID. Codex: a codex model name. Unset = filled by the default-profile chain, then the harness's own default. See 'Default resolution' in the command help"`
 
 	// Harness picks the coding harness the new agent runs. Declared last
