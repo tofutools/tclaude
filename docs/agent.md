@@ -60,8 +60,10 @@ only once.
 ## Prerequisites
 
 - **`tclaude setup`** — registers hooks and the agentd socket path.
-- **`tclaude setup --install-agent-skills`** — materialises the
-  bundled `agent-*` skills under `~/.claude/skills/` for Claude Code
+- **`tclaude setup --install-agent-skills`** — materialises every
+  bundled skill (`agent-*`, `human-*`, `proxy-git`, `reincarnate`,
+  `present-pr-to-operator`, `process-templates`) under
+  `~/.claude/skills/` for Claude Code
   and both `~/.agents/skills/` and `$CODEX_HOME/skills` (default
   `~/.codex/skills`) for Codex CLI. Without these skills installed,
   agents won't know to use these commands.
