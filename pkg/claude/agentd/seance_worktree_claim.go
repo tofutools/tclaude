@@ -54,9 +54,18 @@ var seanceWorktreeClaims = struct {
 // recovers it, the request context cancels, and both the group kill and this
 // release run normally.
 //
-// The exposure is bounded: it needs the daemon killed, then restarted, then an
-// operator retiring the predecessor WITH worktree deletion, all inside the
-// orphan's remaining timeout (maxSeanceTimeout, 10 minutes). The orphaned child
+// Do NOT assume maxSeanceTimeout still bounds an orphan. That deadline is
+// enforced by (*executil.Cmd).watch, the same goroutine the daemon takes with
+// it, so the orphan is precisely the case where the timeout stops applying.
+// What actually limits it is stdio: cmd.Stdout is a plain io.Writer, so os/exec
+// wires it through a pipe whose read end closes with the daemon, and the child
+// dies of EPIPE/SIGPIPE on its next write. That is prompt for a harness that is
+// producing output and NOT a bound at all for one blocked before its first
+// write — a stalled API call has nothing to stop it.
+//
+// So the exposure needs the daemon killed, then restarted, then an operator
+// retiring the predecessor WITH worktree deletion, while that orphan is still
+// alive — usually seconds, unbounded in the stalled case. The orphaned child
 // itself is a pre-existing leak that TCL-1026 does not own.
 func holdSeanceWorktree(dir string) func() {
 	dir = cleanClaimDir(dir)
