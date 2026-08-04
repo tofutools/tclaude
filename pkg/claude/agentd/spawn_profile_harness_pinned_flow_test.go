@@ -144,8 +144,13 @@ func TestSpawnHarnessPinned_ForeignDefaultStillSuppliesGenericFields(t *testing.
 		Group: "alpha", Name: "worker", Harness: "codex",
 	})
 	assert.Empty(t, resp.Resolved.Model.Value, "the pinned field is skipped")
+	// The resolved echo carries the SOURCE, so this pins which tier answered —
+	// the foreign global default, i.e. the participation that stays.
+	assert.Equal(t, agent.ResolvedField{
+		Value: "harness-builtin", Source: `global default profile "claude-default"`,
+	}, resp.Resolved.SandboxImpl,
+		"a containment choice valid for both vendors still crosses tiers")
 	impl, ok := f.World.SpawnSandboxImplementation(resp.ConvID)
 	require.True(t, ok)
-	assert.Equal(t, "harness-builtin", impl,
-		"a containment choice valid for both vendors still crosses tiers")
+	assert.Equal(t, "harness-builtin", impl, "and reaches the launch, not just the echo")
 }
