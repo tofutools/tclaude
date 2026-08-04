@@ -91,10 +91,10 @@ only once.
   install just that binary. It is a separate package path, so a Go install
   needs its own command
   (`go install github.com/tofutools/tclaude/cmd/tclaude-agentd@latest`, or
-  `go install . ./cmd/...` from a checkout to get both binaries at once).
-  Keep `tclaude` on `PATH` next to it anyway: the
-  daemon forks `tclaude session new` to spawn agents, and builds
-  `tclaude session attach` command lines for the dashboard's terminal links.
+  `go install . ./cmd/...` from a checkout to get both binaries at once). Keep
+  `tclaude` on `PATH` next to it anyway: the daemon forks `tclaude session new`
+  to spawn agents, and builds `tclaude session attach` command lines for the
+  dashboard's terminal links.
 
 The daemon binds one canonical socket plus two temporary compatibility sockets:
 

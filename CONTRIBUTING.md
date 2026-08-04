@@ -8,13 +8,15 @@ cd tclaude
 go install . ./cmd/...
 ```
 
-The repo builds two binaries: the `tclaude` CLI and the standalone
-`tclaude-agentd` daemon under `cmd/`. `go install .` installs only `tclaude`,
-so pass both package paths to get the pair. Do not use `go install ./...` — it
-would also install the unrelated probe under `scripts/`.
+The repo builds two binaries: the `tclaude` CLI at the module root and the
+standalone `tclaude-agentd` daemon under `cmd/`. A bare `go install .` builds
+only the root package, so name both — the `./cmd/...` pattern matches the
+daemon. Do not widen it to `go install ./...`: that would also drop the
+non-production probe under `scripts/` into your `GOBIN`.
 
-The daemon is built into the CLI as `tclaude agentd serve`, so `tclaude-agentd`
-is optional unless you are working on it or running a daemon-only host.
+The daemon is built into the CLI as `tclaude agentd serve`, so the second
+binary matters mainly when you are working on it or running a daemon-only host.
+Installing the pair keeps them from drifting apart across rebuilds.
 
 ## Running tests
 

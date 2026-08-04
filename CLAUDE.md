@@ -31,10 +31,9 @@ golangci-lint run ./...
 go install . ./cmd/...
 ```
 
-The repo builds two binaries, so a source install needs both package paths:
-`go install .` installs only `tclaude`, and `go install . ./cmd/...` adds the
-standalone `tclaude-agentd` daemon. Do not use `go install ./...` — it would
-also install the unrelated probe under `scripts/`.
+The repo builds two binaries: a bare `go install .` gets you only `tclaude`,
+while `. ./cmd/...` adds the standalone `tclaude-agentd` daemon. See
+`CONTRIBUTING.md` for why not `./...`.
 
 CI runs `go test ./...` and `golangci-lint run ./...`. Do make sure your changes at 
 least build, and run focused local tests when they help your own iteration on the code 
