@@ -22,7 +22,12 @@ func TestCopilotModelTransportResolvesFirstPartyRoute(t *testing.T) {
 	if requirement.Template != CopilotFirstPartyNetworkPack {
 		t.Fatalf("Template = %q, want %q", requirement.Template, CopilotFirstPartyNetworkPack)
 	}
-	wantHosts := []string{CopilotDefaultCAPIHost, CopilotControlPlaneHost}
+	// The individual CAPI host is here because the token exchange ASSIGNS the
+	// model host per account: an authenticated 1.0.77 run reached it and never
+	// touched the built-in default (TCL-984), so a route naming only the default
+	// denies that account outright. Both are named; no tier that no run has
+	// observed is.
+	wantHosts := []string{CopilotDefaultCAPIHost, CopilotIndividualCAPIHost, CopilotControlPlaneHost}
 	var gotHosts []string
 	for _, destination := range requirement.Destinations {
 		gotHosts = append(gotHosts, destination.Domain)

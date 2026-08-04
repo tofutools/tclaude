@@ -36,8 +36,15 @@ import (
 // THE LIMIT, stated because it is a real acceptance gap rather than an
 // oversight: this observes PRE-authentication traffic only. A launch that gets
 // past the token exchange may reach further hosts, and no credential-free run
-// can see them. Proving the post-auth destination set needs a credentialed
-// run, which is out of scope here and tracked separately.
+// can see them.
+//
+// That gap has since been closed from the other side, and it mattered: a
+// credentialed run showed the model host is assigned BY the token exchange, so
+// the account under test was routed to a host the pack did not name. See
+// postauth_destinations_test.go for the recorded evidence and the offline
+// contract check, and postauth_capture_smoke_test.go for the local capture that
+// produced it. This scenario stays as it is — credential-free, refusing every
+// tunnel — because it is the one that can run anywhere.
 func TestCopilotStartupDialsOnlyContractedHosts(t *testing.T) {
 	requireSmoke(t)
 

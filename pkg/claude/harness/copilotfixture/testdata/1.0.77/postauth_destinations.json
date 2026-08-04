@@ -1,0 +1,117 @@
+{
+  "cliVersion": "1.0.77",
+  "platform": "linux",
+  "capture": "pass-through CONNECT observation; destination host, port, tunnel count and coarse outcome only",
+  "modelSelection": "automatic (no --model, no --effort)",
+  "phases": [
+    {
+      "phase": "startup-token-exchange-turn-tool",
+      "description": "Authenticated launch: token exchange, one automatically-selected model turn, and one read-only shell tool call, on a fixed --session-id.",
+      "exitCode": 0,
+      "destinations": [
+        {
+          "host": "api.github.com",
+          "port": 443,
+          "tunnels": 2,
+          "dialed": 2,
+          "refused": 0,
+          "required": true,
+          "role": "control plane (/copilot_internal token exchange)"
+        },
+        {
+          "host": "api.individual.githubcopilot.com",
+          "port": 443,
+          "tunnels": 3,
+          "dialed": 3,
+          "refused": 0,
+          "required": true,
+          "role": "model traffic (CAPI host assigned to this account by the token exchange)"
+        },
+        {
+          "host": "telemetry.individual.githubcopilot.com",
+          "port": 443,
+          "tunnels": 1,
+          "dialed": 1,
+          "refused": 0,
+          "required": false,
+          "role": "telemetry; contacted here, and shown by the pack-only-wall phase to be losable without failing a session"
+        }
+      ]
+    },
+    {
+      "phase": "exact-id-resume",
+      "description": "Resume of the same session by exact id, with one further automatically-selected model turn.",
+      "exitCode": 0,
+      "destinations": [
+        {
+          "host": "api.github.com",
+          "port": 443,
+          "tunnels": 2,
+          "dialed": 2,
+          "refused": 0,
+          "required": true,
+          "role": "control plane (/copilot_internal token exchange, repeated per launch)"
+        },
+        {
+          "host": "api.individual.githubcopilot.com",
+          "port": 443,
+          "tunnels": 3,
+          "dialed": 3,
+          "refused": 0,
+          "required": true,
+          "role": "model traffic"
+        },
+        {
+          "host": "telemetry.individual.githubcopilot.com",
+          "port": 443,
+          "tunnels": 1,
+          "dialed": 1,
+          "refused": 0,
+          "required": false,
+          "role": "telemetry"
+        }
+      ]
+    },
+    {
+      "phase": "pack-only-wall",
+      "description": "The sufficiency phase: only destinations the released net-github-copilot pack names were dialable, everything else refused exactly as a filtered launch would refuse it. A full turn plus a read-only shell tool call still completed, with telemetry refused.",
+      "exitCode": 0,
+      "destinations": [
+        {
+          "host": "api.github.com",
+          "port": 443,
+          "tunnels": 2,
+          "dialed": 2,
+          "refused": 0,
+          "required": true,
+          "role": "control plane"
+        },
+        {
+          "host": "api.individual.githubcopilot.com",
+          "port": 443,
+          "tunnels": 2,
+          "dialed": 2,
+          "refused": 0,
+          "required": true,
+          "role": "model traffic"
+        },
+        {
+          "host": "telemetry.individual.githubcopilot.com",
+          "port": 443,
+          "tunnels": 1,
+          "dialed": 0,
+          "refused": 1,
+          "required": false,
+          "role": "telemetry, refused by the pack-only wall; the session completed anyway, which is what makes leaving it out of the pack an observation rather than an assumption"
+        }
+      ]
+    }
+  ],
+  "evidenceGaps": [
+    "Token refresh was not observed: every session was far shorter than a token lifetime, and forcing a refresh would have meant manipulating the account.",
+    "Managed settings and content exclusion were not exercised, so no destination is claimed for them beyond the control-plane host they share with the token exchange.",
+    "Business and enterprise plan tiers were not observed. The CAPI host is assigned per account at token exchange, so other tiers are expected to use other hosts; none is authored here, and such a launch stays denied.",
+    "Linux only. No macOS run was captured, so a platform-specific route difference would not have been seen.",
+    "MCP servers, web tools and `gh` were not exercised; they are separate features with their own destinations."
+  ]
+}

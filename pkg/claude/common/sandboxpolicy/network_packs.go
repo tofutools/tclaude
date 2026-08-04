@@ -50,10 +50,11 @@ var networkPackRegistry = []NetworkPack{
 		Group: "Cloud model APIs",
 		Entries: []NetworkAllowEntry{
 			{Domain: "api.githubcopilot.com", Ports: []int{443}},
+			{Domain: "api.individual.githubcopilot.com", Ports: []int{443}},
 			{Domain: "api.github.com", Ports: []int{443}},
 		},
-		Note: "The supported filtered GitHub Copilot CLI route: model traffic on api.githubcopilot.com and the /copilot_internal control plane (token exchange, content exclusion, managed settings) on api.github.com, both read from the pinned CLI's own shipped runtime.",
-		Warning: "Covers the DEFAULT first-party route only. An Enterprise or data-residency host (GH_HOST / COPILOT_GH_HOST), a moved COPILOT_API_URL, and BYOK providers are refused by the Copilot launch resolver rather than covered here. Telemetry, MCP servers, web tools and `gh` are separate features needing their own destinations.",
+		Note: "The supported filtered GitHub Copilot CLI route: the /copilot_internal control plane (token exchange, content exclusion, managed settings) on api.github.com, plus model traffic on api.githubcopilot.com (the pinned CLI's built-in endpoint) and api.individual.githubcopilot.com (what the token exchange assigns an individual-plan account, observed on an authenticated 1.0.77 run). The model host is assigned per account at token exchange rather than fixed, so both are named.",
+		Warning: "Covers the DEFAULT first-party route only, and only the plan tiers an authenticated run has actually reached. A business or enterprise-tier CAPI host is NOT included — no run here observed one, and an unobserved destination is authored nowhere rather than guessed at, so such a launch is denied and needs its host authored explicitly. An Enterprise or data-residency host (GH_HOST / COPILOT_GH_HOST), a moved COPILOT_API_URL, and BYOK providers are refused by the Copilot launch resolver rather than covered here. Telemetry (telemetry.*.githubcopilot.com, which an observed session contacted only intermittently and completed without), MCP servers, web tools and `gh` are separate features needing their own destinations.",
 	},
 	{
 		ID: "net-github", Label: "GitHub essentials",
