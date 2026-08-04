@@ -193,14 +193,39 @@ func FoldGuardPath(path string) string { return foldGuardPath(path) }
 // TestFoldGuardPathOnlyEverMergesMore enforces this exhaustively over every code
 // point rather than by example, because one overlooked rune is the whole bug.
 //
-// NFC stays last, unchanged from TCL-981: it is normalization, not case, and it
-// must see whatever the case passes produced.
+// NFC runs on BOTH SIDES of the case passes, and the leading one is not
+// belt-and-braces — TCL-981's trailing-NFC-only shape is unsafe the moment full
+// folding enters, and cold review of TCL-985 caught it there.
+//
+// TCL-981's key was NFC(ToLower(x)). ToLower is per-rune, so it preserves
+// combining classes, and the trailing NFC therefore made that key closed under
+// canonical equivalence: any two spellings of one name produced one key. Full
+// folding breaks that closure, because it can turn a combining mark into a
+// STARTER. U+0345 COMBINING GREEK YPOGEGRAMMENI (ccc=240) folds to U+03B9 ι
+// (ccc=0), and once it is a starter the trailing NFC can no longer canonically
+// reorder it past a lower-class mark that followed it.
+//
+// Concretely, "ῳ̖" spelled U+1FF3 U+0316 and "ῳ̖" spelled U+03C9 U+0316 U+0345
+// are canonically equivalent — one directory on any volume that normalizes, and
+// TCL-981's key merged them — but folding before normalizing yields "ωι̖" and
+// "ω̖ι". Two keys, no folded containment, step 2 answers false with NO I/O, and
+// a folding volume merges behind the guard's back. That is the exact fail-open
+// this file exists to prevent, reintroduced by a reordering.
+//
+// Normalizing FIRST removes the hazard by construction rather than by patching
+// the one rune: canonically equivalent inputs become the same string before any
+// case pass runs, so no case rule can ever separate them again.
 func foldGuardPath(path string) string {
 	// cases.Fold returns a stateful Caser that must not be shared across
 	// goroutines, so it is constructed per call rather than cached in a package
-	// variable. This runs only on the folded-nomination path and in emitter sort
-	// keys, never in a hot loop.
-	return normalizeNFC(cases.Fold().String(strings.ToLower(filepath.Clean(path))))
+	// variable. That makes this key materially more expensive than TCL-981's,
+	// and session.seatbeltFoldedPath calls it from four sort comparators — so it
+	// is O(n log n) per profile render, not the once-per-comparison this reads
+	// like. Region counts are small (tens), so the cost is real but bounded; a
+	// caller sorting a large set should hoist the key rather than cache a Caser
+	// here, which would not be safe.
+	return normalizeNFC(cases.Fold().String(strings.ToLower(
+		normalizeNFC(filepath.Clean(path)))))
 }
 
 // normalizeNFC is the single NFC entry point for this package, so the validator

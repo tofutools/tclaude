@@ -644,6 +644,15 @@ func expandSeatbeltAliasRegions(
 					continue
 				}
 				target := filepath.Clean(alias.Target)
+				// Byte-exact, deliberately. Alias expansion has no single safety
+				// direction to bias toward: an extra spelling widens a hide region
+				// but also widens an RW one, so a guard bias here would reopen
+				// paths as readily as it closed them. Aliases are also a
+				// structural fact about the host namespace that the plan already
+				// canonicalized, not an operator-authored spelling this layer is
+				// defending against. The protected re-hides downstream are where
+				// the refusal bias belongs, and they see every spelling this
+				// expansion produces.
 				if !sandboxpolicy.PathContainsOrEqual(target, candidate.path) {
 					continue
 				}

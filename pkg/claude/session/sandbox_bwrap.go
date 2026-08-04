@@ -2675,6 +2675,14 @@ func appendTclaudeLayerContractRepairs(
 	return args
 }
 
+// validateTclaudeLayerHarnessStateRules is guard-biased like the protected-root
+// checks around it, but the trade it makes is a different one and worth naming.
+// Its refusal is FUNCTIONAL rather than a containment deny: it refuses a launch
+// that could not persist harness state. So an over-refusal here costs a failed
+// launch with a clear error, not a spuriously hidden path. The direction is
+// still the safe one — a grant that reaches the state root only through a case
+// variant would silently defeat the rule — but do not read the surrounding
+// protected-root rationale onto it.
 func validateTclaudeLayerHarnessStateRules(
 	stateRoot string,
 	profileFilesystem []sandboxpolicy.FilesystemGrant,

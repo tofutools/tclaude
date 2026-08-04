@@ -230,12 +230,15 @@ func TestGuardPathPrefixMatchesDirDepth(t *testing.T) {
 // session.TestSeatbeltFoldedPathIsTheValidatorNominationKey, which is the only
 // place that can observe both. What remains here is the formula itself.
 func TestFoldGuardPathMatchesTheSeatbeltEmitterRule(t *testing.T) {
-	// Lowercase, then FULL case fold, then NFC. Composed, not substituted: see
-	// foldGuardPath on why replacing ToLower with Fold would have opened a new
-	// fail-open at U+0130.
+	// NFC, then lowercase, then FULL case fold, then NFC. Composed rather than
+	// substituted (see foldGuardPath on the U+0130 fail-open that replacing
+	// ToLower would open), and normalized on BOTH sides of the case passes (see
+	// the same comment on the U+0345 fail-open that folding-before-normalizing
+	// opens).
 	for _, path := range []string{"/A/B/", "/a/./b", "/" + norm.NFD.String("Café")} {
 		assert.Equal(t,
-			norm.NFC.String(cases.Fold().String(strings.ToLower(filepath.Clean(path)))),
+			norm.NFC.String(cases.Fold().String(strings.ToLower(
+				norm.NFC.String(filepath.Clean(path))))),
 			foldGuardPath(path))
 	}
 	assert.Equal(t, foldGuardPath("/A/B"), FoldGuardPath("/a/b/"),
@@ -325,6 +328,62 @@ func TestFoldGuardPathOnlyEverMergesMore(t *testing.T) {
 	// Guard against the sweep going vacuous if the grouping above ever breaks.
 	assert.Greater(t, merged, 1000,
 		"the sweep must actually find case-equivalent runes to compare")
+}
+
+// TestFoldGuardPathIsClosedUnderCanonicalEquivalence is the second half of the
+// merges-more invariant, and it exists because the FIRST half could not see the
+// bug it catches.
+//
+// TestFoldGuardPathOnlyEverMergesMore sweeps one code point per group, so it can
+// only observe case mapping. The hazard full folding actually introduced needs
+// TWO combining marks in a segment: folding can turn a mark into a STARTER
+// (U+0345, ccc=240, folds to U+03B9, ccc=0), and once it is a starter a trailing
+// NFC can no longer reorder it past a lower-class mark. Two canonically
+// equivalent spellings of one name then produce two keys, step 2 answers false
+// with no I/O, and a normalizing volume merges behind the guard's back.
+//
+// So this sweeps every code point as the FIRST of two marks and requires the
+// composed and decomposed spellings to agree. A key that is closed under
+// canonical equivalence cannot have this class of gap at all, which is why
+// foldGuardPath normalizes before folding rather than special-casing U+0345.
+func TestFoldGuardPathIsClosedUnderCanonicalEquivalence(t *testing.T) {
+	compared := 0
+	for r := rune(0); r <= 0x10FFFF; r++ {
+		if r >= 0xD800 && r <= 0xDFFF {
+			continue
+		}
+		// U+0316 (ccc=220) is the second mark, so any first mark with a higher
+		// combining class must canonically reorder — the case that breaks when a
+		// fold turns the first mark into a starter.
+		name := "/ω" + string(r) + "̖"
+		composed := norm.NFC.String(name)
+		decomposed := norm.NFD.String(name)
+		if composed == decomposed {
+			continue
+		}
+		compared++
+		// Compared directly rather than through require, which would pay
+		// reflection on every one of a million iterations.
+		if foldGuardPath(composed) != foldGuardPath(decomposed) {
+			t.Fatalf(
+				"canonically equivalent spellings with U+%04X produce different "+
+					"nomination keys (%q vs %q); the guard stops nominating a pair "+
+					"any normalizing volume merges",
+				r, foldGuardPath(composed), foldGuardPath(decomposed))
+		}
+	}
+	assert.Greater(t, compared, 100,
+		"the sweep must actually find reorderable sequences to compare")
+
+	// The specific pair cold review found, spelled out so the regression is
+	// legible without rerunning the sweep.
+	assert.Equal(t,
+		foldGuardPath("/Users/dev/ῳ̖"),
+		foldGuardPath("/Users/dev/ῳ̖"))
+	assert.True(t, GuardContainsOrEqual(
+		"/Users/dev/ῳ̖", "/Users/dev/ῳ̖/child"),
+		"one directory under two canonical spellings must reach the guard's "+
+			"identity step rather than being dismissed lexically")
 }
 
 // TestGuardNominatesFoldedVariantsAcrossTheWholeGuard proves the widened key
