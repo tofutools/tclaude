@@ -176,6 +176,9 @@ func TestCodexModels(t *testing.T) {
 	if len(c.EffortLevels()) == 0 {
 		t.Fatalf("codex now exposes tclaude's effort levels")
 	}
+	if want := []string{"low", "medium", "high", "xhigh", "max"}; !slices.Equal(c.EffortLevels(), want) {
+		t.Fatalf("EffortLevels() = %v, want Codex catalog %v", c.EffortLevels(), want)
+	}
 	wantModels := []string{
 		"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5",
 		"gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex-spark",

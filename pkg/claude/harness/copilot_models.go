@@ -5,8 +5,6 @@ import (
 	"slices"
 	"strings"
 	"unicode"
-
-	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 )
 
 // copilotKnownModels is a SUGGESTION list, not an allow-list. It mirrors the
@@ -51,6 +49,20 @@ const copilotMaxModelLen = 128
 // never seen must still be forwardable.
 type copilotModels struct{}
 
+// copilotEffortLevels is the exact `--effort` vocabulary advertised by the
+// pinned Copilot CLI release (1.0.77). It intentionally lives beside the
+// Copilot catalog rather than widening common.ValidEffortLevels: Claude Code
+// and Codex have their own, separately pinned vocabularies.
+var copilotEffortLevels = []string{
+	"none",
+	"minimal",
+	"low",
+	"medium",
+	"high",
+	"xhigh",
+	"max",
+}
+
 // ValidateModel normalizes a model token for `copilot --model=<model>`.
 // Empty stays empty → the spawner omits the flag and Copilot uses its own
 // configured default. A non-empty value is trimmed and then gated.
@@ -77,15 +89,21 @@ func (copilotModels) ValidateModel(s string) (string, error) {
 	return s, nil
 }
 
-// ValidateEffort accepts tclaude's effort levels. Copilot's documented
-// `--effort=LEVEL` values (low, medium, high, xhigh, max) are exactly
-// tclaude's set, so the validated token is forwarded verbatim — no per-model
-// remapping of the kind Codex's scale needs.
+// ValidateEffort accepts Copilot's documented `--effort=LEVEL` values and
+// forwards the normalized token verbatim. Empty remains empty so the spawner
+// omits the flag and Copilot performs its own automatic selection.
 func (copilotModels) ValidateEffort(s string) (string, error) {
-	return clcommon.ValidateEffort(s)
+	s = strings.ToLower(strings.TrimSpace(s))
+	if s == "" {
+		return "", nil
+	}
+	if !slices.Contains(copilotEffortLevels, s) {
+		return "", fmt.Errorf("invalid effort %q: must be one of %s", s, strings.Join(copilotEffortLevels, ", "))
+	}
+	return s, nil
 }
 
 // Models returns a copy of the curated suggestions. ValidateModel remains the
 // authority and accepts ids outside this list.
 func (copilotModels) Models() []string       { return slices.Clone(copilotKnownModels) }
-func (copilotModels) EffortLevels() []string { return slices.Clone(clcommon.ValidEffortLevels) }
+func (copilotModels) EffortLevels() []string { return slices.Clone(copilotEffortLevels) }

@@ -114,9 +114,9 @@ func (copilotSpawner) BuildCommand(spec SpawnSpec) string {
 		cmd += " --model=" + clcommon.ShellQuoteArg(spec.Model)
 	}
 	if spec.Effort != "" {
-		// `--effort=<level>`. Copilot's documented levels are exactly tclaude's
-		// (low/medium/high/xhigh/max), so the validated token passes straight
-		// through with no per-model remapping of the kind Codex needs.
+		// `--effort=<level>`. Copilot's validated vocabulary (none/minimal plus
+		// the shared low/medium/high/xhigh/max levels) passes straight through
+		// with no per-model remapping of the kind Codex needs.
 		cmd += " --effort=" + clcommon.ShellQuoteArg(spec.Effort)
 	}
 	// The resolved approval policy, expanded into Copilot's several permission

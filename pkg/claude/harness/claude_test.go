@@ -718,6 +718,9 @@ func TestClaudeModels_Delegation(t *testing.T) {
 	if len(c.EffortLevels()) == 0 {
 		t.Fatalf("EffortLevels() returned empty list")
 	}
+	if want := []string{"low", "medium", "high", "xhigh", "max"}; !slices.Equal(c.EffortLevels(), want) {
+		t.Fatalf("EffortLevels() = %v, want Claude catalog %v", c.EffortLevels(), want)
+	}
 	// The getter must hand back a copy — mutating it must not corrupt the
 	// shared source list.
 	models := c.Models()

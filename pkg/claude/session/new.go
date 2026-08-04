@@ -77,7 +77,7 @@ type NewParams struct {
 	// fills an omitted value from the global default spawn profile; if that is
 	// also blank the harness receives no override. A non-empty value is
 	// normalized and validated by the harness catalog in runNew.
-	Effort string `long:"effort" optional:"true" help:"Reasoning effort: low|medium|high|xhigh|max. Unset = global profile, then the harness default"`
+	Effort string `long:"effort" optional:"true" help:"Reasoning effort (per-harness; Copilot also accepts none|minimal). Unset = global profile, then the harness default"`
 
 	// Model picks the model for the chosen harness. A fresh human launch fills
 	// an omitted value from the global default spawn profile; if that is also
