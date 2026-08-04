@@ -52,6 +52,42 @@ func TestUpdateContextSnapshotForGenerationWritesTheMatchingGeneration(t *testin
 	assert.Equal(t, int64(240), snap.TokensOutput)
 }
 
+func TestUpdateContextSnapshotAndModelEffortForGeneration(t *testing.T) {
+	setupTestDB(t)
+	created := time.Now().Truncate(time.Second)
+	sess := contextGenerationSession(t, "gen-model", "conv-a", created)
+
+	updated, err := UpdateContextSnapshotAndModelEffortForGeneration(
+		sess.ID, sess.ConvID, created, 50, 100, 200, 128000, "gpt-5.4", "high")
+	require.NoError(t, err)
+	assert.True(t, updated)
+
+	snap, err := GetContextSnapshot(sess.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "gpt-5.4", snap.Model)
+	assert.Equal(t, "high", snap.EffortLevel)
+
+	// An observed null effort is a real value and must clear the previous one.
+	updated, err = UpdateContextSnapshotAndModelEffortForGeneration(
+		sess.ID, sess.ConvID, created, 60, 120, 240, 128000, "gpt-5.5", "")
+	require.NoError(t, err)
+	assert.True(t, updated)
+	snap, err = GetContextSnapshot(sess.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "gpt-5.5", snap.Model)
+	assert.Empty(t, snap.EffortLevel)
+
+	// A stale sweep must not update either dashboard field.
+	updated, err = UpdateContextSnapshotAndModelEffortForGeneration(
+		sess.ID, "conv-old", created.Add(-time.Hour), 90, 999, 999, 64000, "stale", "max")
+	require.NoError(t, err)
+	assert.False(t, updated)
+	snap, err = GetContextSnapshot(sess.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "gpt-5.5", snap.Model)
+	assert.Empty(t, snap.EffortLevel)
+}
+
 // TestUpdateContextSnapshotForGenerationRefusesAStaleGeneration covers both
 // halves of the guard: the fast path (window unchanged) and the projecting
 // path (window changed) must each refuse a caller whose generation moved on,

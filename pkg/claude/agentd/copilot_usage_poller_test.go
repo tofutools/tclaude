@@ -74,7 +74,70 @@ func TestApplyCopilotUsageCallsFoldsCumulativeAndPerCall(t *testing.T) {
 	assert.Equal(t, int64(28725), snapshot.LastCallInputTokens,
 		"occupancy is the newest call's prompt, never the running sum")
 	assert.Equal(t, "gpt-5", snapshot.Model)
+	assert.Equal(t, "medium", snapshot.ReasoningEffort)
 	assert.Equal(t, "stop", snapshot.FinishReason)
+}
+
+// TestCopilotUsagePersistsObservedModelAndEffort covers the dashboard-facing
+// projection. The side-table fold is the source of truth for the newest
+// top-level call; a repeated row must not flap the displayed values, while a
+// later call may change both model and effort. An explicit empty effort is the
+// observed value for a model without reasoning support and must clear the
+// preceding effort rather than fabricate one.
+func TestCopilotUsagePersistsObservedModelAndEffort(t *testing.T) {
+	setupTestDB(t)
+	resetCopilotUsageStateForTest()
+	t.Cleanup(resetCopilotUsageStateForTest)
+
+	sess := copilotUsageSession(t, "s-copilot", "conv-1")
+	first := copilotUsageCall(1, 25114, 300)
+	first.Model = "gpt-5.4"
+	first.ReasoningEffort = "high"
+	applyCopilotUsageCalls(sess, []harness.CopilotUsageCall{first})
+
+	snap, err := db.GetContextSnapshot(sess.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "gpt-5.4", snap.Model)
+	assert.Equal(t, "high", snap.EffortLevel)
+
+	// A re-delivered row is ignored by the fold and must leave the dashboard
+	// values unchanged.
+	applyCopilotUsageCalls(sess, []harness.CopilotUsageCall{first})
+	snap, err = db.GetContextSnapshot(sess.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "gpt-5.4", snap.Model)
+	assert.Equal(t, "high", snap.EffortLevel)
+
+	// The observed model can change even when the context projection does not:
+	// an aborted call may report no output, the same prompt, and no known
+	// window. This specifically proves model/effort participate in the
+	// persist helper's no-change short-circuit.
+	sameProjection := copilotUsageCall(2, 25114, 0)
+	sameProjection.Model = "gpt-5.4-rerouted"
+	sameProjection.ReasoningEffort = "medium"
+	applyCopilotUsageCalls(sess, []harness.CopilotUsageCall{sameProjection})
+	snap, err = db.GetContextSnapshot(sess.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "gpt-5.4-rerouted", snap.Model)
+	assert.Equal(t, "medium", snap.EffortLevel)
+
+	second := copilotUsageCall(3, 28725, 700)
+	second.Model = "gpt-5.5"
+	second.ReasoningEffort = ""
+	applyCopilotUsageCalls(sess, []harness.CopilotUsageCall{second})
+
+	snap, err = db.GetContextSnapshot(sess.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "gpt-5.5", snap.Model)
+	assert.Empty(t, snap.EffortLevel,
+		"an explicit null/empty effort must render blank for a non-reasoning model")
+
+	// Polling again after the model switch is stable too.
+	applyCopilotUsageCalls(sess, []harness.CopilotUsageCall{second})
+	snap, err = db.GetContextSnapshot(sess.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "gpt-5.5", snap.Model)
+	assert.Empty(t, snap.EffortLevel)
 }
 
 // TestApplyCopilotUsageCallsReplacesRunningCost covers the one field that is
