@@ -41,6 +41,11 @@ var permissionScenarios = struct {
 	InPaneAllowAll      string
 	NoAskUser           string
 	HeadlessNotEvidence string
+	WebFetchOnlineArm   string
+	WebFetchEgressWall  string
+	WebFetchGate        map[string]string
+	WebFetchExclusion   string
+	WebFetchURLDeny     map[string]string
 }{
 	PathGrants: registerRows("TestCopilotPermissionPathGrants",
 		"outside-all/no-path-flags", "outside-all/add-dir", "outside-all/allow-all-paths",
@@ -67,6 +72,18 @@ var permissionScenarios = struct {
 		"shell(*)", "write(/tmp)"),
 	HeadlessNotEvidence: copilotfixture.RegisterScenario(
 		"TestCopilotPermissionHeadlessIsNotEvidence"),
+	WebFetchOnlineArm: copilotfixture.RegisterScenario(
+		"TestCopilotPermissionWebFetchNeedsTheOnlineArm"),
+	WebFetchEgressWall: copilotfixture.RegisterScenario(
+		"TestCopilotPermissionWebFetchEgressWallIsInForce"),
+	WebFetchGate: registerRows("TestCopilotPermissionWebFetchGate",
+		"no-flags", "allow-all-tools", "allow-all-tools/no-ask-user", "allow-all-urls",
+		"deny-tool-url"),
+	WebFetchExclusion: copilotfixture.RegisterScenario(
+		"TestCopilotPermissionWebFetchExclusionRemovesTheTool"),
+	WebFetchURLDeny: registerRows("TestCopilotPermissionWebFetchURLDenyEnforcement",
+		"deny-tool/url", "deny-tool/url(host)", "deny-url/host",
+		"deny-tool/url(*)", "deny-url/*", "deny-url/https-star"),
 }
 
 // registerRows registers one scenario per table row and returns the row->name
