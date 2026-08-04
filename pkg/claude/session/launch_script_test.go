@@ -111,6 +111,52 @@ func (r *launchRecordingTmux) newSessions() [][]string {
 	return out
 }
 
+// recordedNewSession is a parsed tmux new-session argv: the tmux options and
+// the pane command words that follow them.
+type recordedNewSession struct {
+	noStart bool              // leading client-level -N
+	opts    map[string]string // -d/-s/-c, valueless flags mapped to ""
+	pane    []string          // the pane command: `sh <script> [markers]`
+}
+
+// parseNewSession locates the pane command STRUCTURALLY rather than at a fixed
+// argv offset. The offset is environment-dependent: in external-delegation mode
+// or when tclaude itself runs inside the tclaude tmux server (which is exactly
+// what an agent sandbox does), ExternalTmuxNoStartArgs prepends "-N" and every
+// later position shifts by one. Parsing also keeps the option layout itself
+// pinned — a dropped or renamed -d/-s/-c fails here instead of silently sliding
+// the pane command to a different index.
+func parseNewSession(t *testing.T, argv []string) recordedNewSession {
+	t.Helper()
+	parsed := recordedNewSession{opts: map[string]string{}}
+	if len(argv) > 0 && argv[0] == "-N" {
+		parsed.noStart = true
+		argv = argv[1:]
+	}
+	require.NotEmpty(t, argv, "empty tmux argv")
+	require.Equal(t, "new-session", argv[0], "not a new-session argv")
+	rest := argv[1:]
+	for len(rest) > 0 && strings.HasPrefix(rest[0], "-") {
+		flag := rest[0]
+		switch flag {
+		case "-d":
+			parsed.opts[flag] = ""
+			rest = rest[1:]
+		case "-s", "-c":
+			require.GreaterOrEqual(t, len(rest), 2, "new-session %s is missing its value", flag)
+			parsed.opts[flag] = rest[1]
+			rest = rest[2:]
+		default:
+			t.Fatalf("unrecognized new-session option %q — teach parseNewSession about it", flag)
+		}
+	}
+	for _, flag := range []string{"-d", "-s", "-c"} {
+		require.Contains(t, parsed.opts, flag, "new-session must pass %s", flag)
+	}
+	parsed.pane = rest
+	return parsed
+}
+
 func swapTmux(t *testing.T, fake clcommon.Tmux) {
 	t.Helper()
 	prev := clcommon.Default
@@ -138,11 +184,14 @@ func TestLaunchArgvIsConstantSizeThroughProductionPath(t *testing.T) {
 	smallArgv, hugeArgv := launches[0], launches[1]
 
 	// The command must ride in a script file, never inline: `sh <script>`.
-	require.GreaterOrEqual(t, len(hugeArgv), 8)
-	assert.Equal(t, "sh", hugeArgv[6], "pane command must be sh <script>")
-	scriptPath := hugeArgv[7]
+	small, huge := parseNewSession(t, smallArgv), parseNewSession(t, hugeArgv)
+	assert.Equal(t, cwd, huge.opts["-c"], "launch dir rides as -c, not in the pane command")
+	require.Len(t, huge.pane, 3, "pane argv must be exactly `sh <script> <marker>`")
+	require.Len(t, small.pane, 2, "a marker-free launch adds no pane words beyond `sh <script>`")
+	assert.Equal(t, "sh", huge.pane[0], "pane command must be sh <script>")
+	scriptPath := huge.pane[1]
 	assert.Contains(t, scriptPath, "launch-scripts", "script must live in the private launch-scripts dir")
-	assert.Equal(t, profileMarker, hugeArgv[len(hugeArgv)-1],
+	assert.Equal(t, profileMarker, huge.pane[len(huge.pane)-1],
 		"the codex profile marker rides as the trailing argv word")
 
 	// O(1): a 1.2MB bootstrap must not move the tmux argv size (temp-name
@@ -190,7 +239,10 @@ func TestOpenCodeCredentialReachesPaneOnlyThroughPrivateBootstrap(t *testing.T) 
 	assert.NotContains(t, argv, "private-password")
 	assert.NotContains(t, argv, "43210")
 
-	scriptPath := launches[0][7]
+	pane := parseNewSession(t, launches[0]).pane
+	require.Len(t, pane, 2, "pane argv must be exactly `sh <script>`")
+	require.Equal(t, "sh", pane[0], "pane command must be sh <script>")
+	scriptPath := pane[1]
 	raw, err := os.ReadFile(scriptPath)
 	require.NoError(t, err)
 	content := string(raw)
@@ -200,6 +252,32 @@ func TestOpenCodeCredentialReachesPaneOnlyThroughPrivateBootstrap(t *testing.T) 
 	info, err := os.Stat(scriptPath)
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+}
+
+// A launch from inside the tclaude tmux server (every agent-sandbox run, and
+// agentd's own spawns) carries tmux's client-level -N, which shifts every later
+// argv position by one. The pane command must still be found, and the launch
+// must otherwise be identical — this is the case that made the fixtures above
+// fail in an agent sandbox while ordinary CI stayed green (TCL-963).
+func TestLaunchArgvCarriesNoStartFlagInsideTclaudeTmuxServer(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv(ResourceDelegationDirEnv, "")
+	t.Setenv("TMUX", filepath.Join("/tmp", "tmux-1000", clcommon.TmuxSocketName)+",1,0")
+	rec := &launchRecordingTmux{}
+	swapTmux(t, rec)
+	cwd := t.TempDir()
+
+	require.NoError(t, launchDetachedTmuxSession("spwn-nostrt", cwd, "exec claude"))
+	launches := rec.newSessions()
+	require.Len(t, launches, 1)
+
+	parsed := parseNewSession(t, launches[0])
+	require.True(t, parsed.noStart, "a launch inside the tclaude server must pass -N")
+	assert.Equal(t, "spwn-nostrt", parsed.opts["-s"])
+	assert.Equal(t, cwd, parsed.opts["-c"])
+	require.Len(t, parsed.pane, 2, "pane argv must be exactly `sh <script>`")
+	assert.Equal(t, "sh", parsed.pane[0], "pane command must be sh <script>")
+	assert.Contains(t, parsed.pane[1], "launch-scripts", "script must live in the private launch-scripts dir")
 }
 
 func TestLaunchPreflightRejectsOversizedArgvBeforeTmux(t *testing.T) {
