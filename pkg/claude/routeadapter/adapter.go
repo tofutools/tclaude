@@ -232,20 +232,62 @@ func (a *Adapter) publish(ctx context.Context, publisher Publisher, pool []int) 
 	// stalled authority must fail this call rather than hold it open.
 	timer := time.NewTimer(attachBarrierTimeout)
 	defer timer.Stop()
-	select {
-	case err := <-ready:
-		if err != nil {
-			a.CloseRoute(publisher.RouteID)
-			return 0, fmt.Errorf("attach publisher route %q: %w", publisher.RouteID, err)
-		}
-	case <-channelCtx.Done():
+	if err := awaitAttach(channelCtx, ready, timer.C); err != nil {
 		a.CloseRoute(publisher.RouteID)
-		return 0, fmt.Errorf("attach publisher route %q: %w", publisher.RouteID, channelCtx.Err())
-	case <-timer.C:
-		a.CloseRoute(publisher.RouteID)
-		return 0, fmt.Errorf("attach publisher route %q: %w", publisher.RouteID, context.DeadlineExceeded)
+		return 0, fmt.Errorf("attach publisher route %q: %w", publisher.RouteID, err)
 	}
 	return port, nil
+}
+
+// awaitAttach resolves the publish barrier, returning nil once the broker owns
+// the route. The attach goroutine cancels the channel context itself as soon
+// as AttachPublisherReady returns, so a failed attach and the cancellation it
+// triggers become observable at the same instant and a plain select would pick
+// between them at random. The ready send happens before that cancel, so a
+// result already queued when the context fires is the real reason and wins
+// over the bare context error: a caller told "context canceled" cannot tell an
+// authority refusal apart from an ordinary cancellation, and those two warrant
+// opposite handling — retrying a cancelled attach is reasonable, retrying a
+// refused one is not.
+//
+// The two fallback arms deliberately disagree about a queued success and must
+// not be merged back into one drain: a cancelled context means the route is
+// already being torn down, while a fired timer tears nothing down and can find
+// a perfectly healthy route on the other side of it.
+func awaitAttach(ctx context.Context, ready <-chan error, timeout <-chan time.Time) error {
+	select {
+	case err := <-ready:
+		return err
+	case <-ctx.Done():
+		// Only a queued failure beats the context error here. A queued success
+		// does not rescue the route: it is going away regardless, so the
+		// publish fails either way.
+		if err := queuedAttachFailure(ready); err != nil {
+			return err
+		}
+		return ctx.Err()
+	case <-timeout:
+		// Any queued result is the whole truth here — including a success,
+		// which means the broker owns a live route and reporting a stalled
+		// authority would both lie and withdraw a working route.
+		select {
+		case err := <-ready:
+			return err
+		default:
+			return context.DeadlineExceeded
+		}
+	}
+}
+
+// queuedAttachFailure reports a failure the attach goroutine has already
+// delivered, and nil when it has delivered nothing or delivered success.
+func queuedAttachFailure(ready <-chan error) error {
+	select {
+	case err := <-ready:
+		return err
+	default:
+		return nil
+	}
 }
 
 // Open creates the broker-held consumer listener and returns its exact local
