@@ -300,7 +300,7 @@ park a pane forever.
 | The `ask_user` tool | `--no-ask-user` (removes the tool from the advertised catalog) |
 | URL access **from the shell tool** | `--allow-all-tools` also closes this |
 | Directory access outside cwd + system temp | `--add-dir <dir>`, one per directory |
-| Folder trust | **nothing tclaude passes** — no launch flag clears it |
+| Folder trust | **no launch flag at all** — a config-file write, opted into with `trust_dir` ([below](#directory-trust-at-spawn)) |
 
 tclaude exposes two tokens:
 
@@ -311,6 +311,12 @@ tclaude exposes two tokens:
   whatever your configuration persists. It is the faithful reconstruction of
   every Copilot launch tclaude made before this catalog existed, and it is what
   a pre-existing Copilot row relaunches as.
+
+Folder trust is the row in that table no approval token can reach, and it is a
+separate contract rather than a gap: it is cleared by a pre-launch config write,
+which `trust_dir` performs when you opt in ([below](#directory-trust-at-spawn)).
+A launch that does not opt in still parks on the modal whichever approval token
+it carries, because the modal fires before the CLI contacts the provider at all.
 
 Directory grants are rendered under **both** tokens. They are the path axis
 rather than the approval axis: the grants come from the sandbox profile either
@@ -345,6 +351,19 @@ pane, an operator who exports it would otherwise turn every tclaude-spawned
 Copilot pane into an allow-all session while tclaude recorded `inherit`. It is
 unset rather than pinned to a falsy value, so a future widening of the value
 parse cannot silently defeat it.
+
+**Posture-moving pass-through args are refused.** Args you pass after `--` land
+on the same command line as the rendered permission flags, so
+`tclaude session new --harness copilot -- --allow-all-paths` would run a pane
+broader than the posture tclaude wrote down — and approval lineage and relaunch
+both reason from that record. Any Copilot permission or agent-mode flag in
+pass-through position fails the launch closed, in both the `--flag value` and
+`--flag=value` spellings, and on resume as well as on a fresh launch. The
+refusal names the flag. Ordinary args (`--log-level=debug`, `--no-color`, …)
+are unaffected. This is a refusal rather than a silent filter, and it does not
+rely on duplicate-flag ordering: nothing measured establishes what Copilot does
+with a contradictory permission flag, so a launch that would depend on those
+semantics is refused instead of guessed at.
 
 **What tclaude records is the launch posture, not a durable boundary.** Copilot's
 in-pane commands (`/allow-all`, `/add-dir`, `/reset-allowed-tools`, `/settings`)

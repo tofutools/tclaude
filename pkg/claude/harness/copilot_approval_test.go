@@ -328,3 +328,100 @@ func TestCopilotSpawnAddDirsMergesReadAndWriteButNotDenies(t *testing.T) {
 		t.Fatalf("both grant kinds must be rendered: %s", cmd)
 	}
 }
+
+// TestCopilotLaunchExtraArgsAudit closes the gap between the posture tclaude
+// RENDERS and the posture the pane RUNS.
+//
+// Pass-through args land on the same command line as the catalog's flags, so
+// one that moves a permission axis would produce a pane broader than the row
+// recording it — and approval lineage and relaunch both reason from that row.
+// Ordering is not the defence: nothing in the permission matrix establishes what
+// 1.0.77 does with a duplicated or contradictory permission flag, so a launch
+// that would depend on those semantics is refused instead of reasoned about.
+func TestCopilotLaunchExtraArgsAudit(t *testing.T) {
+	h, err := Resolve(CopilotName)
+	if err != nil {
+		t.Fatalf("Resolve(copilot): %v", err)
+	}
+
+	// Every audited flag must be caught in BOTH spellings Copilot's own option
+	// table uses, since an audit that knew only one would be bypassed by
+	// writing the other. Driven off the audited set itself, so a flag added to
+	// it later cannot be added without spelling coverage.
+	for flag := range copilotPostureMovingFlags {
+		for _, spelling := range []string{flag, flag + "=x", flag + "=url(https://x?a=b)"} {
+			if err := ValidateLaunchExtraArgs(h, []string{"--log-level=debug", spelling}); err == nil {
+				t.Errorf("pass-through %q was accepted; it moves a recorded Copilot posture", spelling)
+			}
+		}
+		// The value-in-the-next-arg spelling, which is how the CLI documents
+		// --add-dir and the rule flags.
+		if err := ValidateLaunchExtraArgs(h, []string{flag, "/srv/elsewhere"}); err == nil {
+			t.Errorf("pass-through %q <value> was accepted; it moves a recorded Copilot posture", flag)
+		}
+	}
+
+	// The audit must name the flag and stay actionable: a bare "refused" leaves
+	// the operator guessing which of their args was the problem.
+	err = ValidateLaunchExtraArgs(h, []string{"--allow-all-paths"})
+	if err == nil {
+		t.Fatal("--allow-all-paths must be refused")
+	}
+	for _, want := range []string{"--allow-all-paths", "directory access", "approval policy"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal must contain %q: %v", want, err)
+		}
+	}
+
+	// Ordinary args keep working — this is a posture audit, not an allowlist.
+	for _, args := range [][]string{
+		nil,
+		{"--log-level=debug"},
+		{"--banner", "--no-color"},
+		{"--model=claude-sonnet-4.6"},
+		// Near-misses that are NOT the audited flags. A prefix match would
+		// wrongly reject these, and a `--add-dir`-shaped value is not the flag.
+		{"--allow-all-tools-please"},
+		{"--add-dirs"},
+		{"/srv/add-dir"},
+	} {
+		if err := ValidateLaunchExtraArgs(h, args); err != nil {
+			t.Errorf("ordinary pass-through args %v must keep working: %v", args, err)
+		}
+	}
+
+	// Other harnesses are untouched: they have their own posture plumbing, and
+	// widening this audit to them is not TCL-973's business.
+	for _, name := range []string{DefaultName, CodexName, OpenCodeName} {
+		other, err := Resolve(name)
+		if err != nil {
+			t.Fatalf("Resolve(%s): %v", name, err)
+		}
+		if err := ValidateLaunchExtraArgs(other, []string{"--allow-all-paths", "--yolo"}); err != nil {
+			t.Errorf("%s must not be gated by the Copilot posture audit: %v", name, err)
+		}
+	}
+	if err := ValidateLaunchExtraArgs(nil, []string{"--yolo"}); err != nil {
+		t.Errorf("a nil harness must not panic or refuse: %v", err)
+	}
+}
+
+// The audit must cover every flag the CATALOG itself can render. If the catalog
+// grows a flag the audit does not know, an operator could pass that same flag
+// through and the two would disagree about which one produced the posture.
+func TestCopilotLaunchExtraArgsAuditCoversEveryRenderedFlag(t *testing.T) {
+	h, err := Resolve(CopilotName)
+	if err != nil {
+		t.Fatalf("Resolve(copilot): %v", err)
+	}
+	for _, mode := range h.Approval.Modes() {
+		for _, arg := range copilotPermissionArgs(mode, []string{"/srv/a"}) {
+			if !strings.HasPrefix(arg, "-") {
+				continue // an --add-dir value, not a flag
+			}
+			if _, audited := copilotPostureMovingFlags[arg]; !audited {
+				t.Errorf("the catalog renders %s but the pass-through audit does not know it, so an operator could pass the same flag unnoticed", arg)
+			}
+		}
+	}
+}

@@ -2295,6 +2295,12 @@ func resumeLaunchCmdWithStackedProof(
 	if err != nil {
 		return "", "", nil, fmt.Errorf("cannot resume conversation %s: %w", convID, err)
 	}
+	// The same audit the spawn path performs: a resume renders the RECORDED
+	// approval posture, so a pass-through arg that moves it would relaunch the
+	// conversation broader than the posture its row preserves.
+	if err := harness.ValidateLaunchExtraArgs(h, extraArgs); err != nil {
+		return "", "", nil, err
+	}
 	implementation, err := resumeSandboxImplementation(convID)
 	if err != nil {
 		return "", "", nil, err

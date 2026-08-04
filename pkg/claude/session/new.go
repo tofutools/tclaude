@@ -790,6 +790,10 @@ func runNew(params *NewParams) error {
 
 	// Pass-through mode: --help, --version etc. — run the harness binary
 	// directly, no tmux.
+	//
+	// The posture audit below deliberately does NOT gate this branch: running
+	// `copilot --help` through tclaude starts no recorded session, so there is
+	// no recorded posture for a pass-through arg to contradict.
 	if clcommon.ShouldRunClaudeDirect(extraArgs) {
 		binary := h.Spawn.Binary()
 		if h.Name == harness.OpenCodeName {
@@ -802,6 +806,17 @@ func runNew(params *NewParams) error {
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		return cmd.Run()
+	}
+
+	// A pass-through arg lands on the same command line as the harness's
+	// rendered permission flags, so one that moves the posture would make the
+	// running pane broader than the row that records it — and approval lineage
+	// and relaunch both reason from that row. Refuse rather than filter, so an
+	// operator never believes a flag took effect that tclaude silently dropped.
+	// Placed after the pass-through branch above, which starts no session and
+	// therefore has no recorded posture to contradict.
+	if err := harness.ValidateLaunchExtraArgs(h, extraArgs); err != nil {
+		return err
 	}
 
 	// Self-guard: a Claude Code instance must not directly launch
