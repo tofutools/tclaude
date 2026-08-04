@@ -33,6 +33,13 @@ import (
 
 const provenCopilotImplementation = string(sandboxpolicy.ImplementationTclaudeLayer)
 
+// copilotLineageRemedyText is spelled out rather than built from the harness
+// constants the production message uses, so a rename that quietly changes the
+// sentence a caller reads fails here instead of agreeing with itself.
+const copilotLineageRemedyText = "copilot agents are admitted in exactly one " +
+	"launch topology — pass sandbox_implementation=tclaude-layer " +
+	"(`--sandbox-impl tclaude-layer`; mode resolves to \"off\")"
+
 // haveLineageParent writes a spawn-capable parent row carrying an explicit
 // sandbox implementation and approval posture.
 //
@@ -244,6 +251,12 @@ func TestCopilotLineage_ProvenParentOutboundMatrix(t *testing.T) {
 // sandbox_restricted and approval_restricted are two independent gates with
 // two different remedies, and a change that collapsed one into the other would
 // still leave every "must be refused" assertion green.
+//
+// wantRemedy is the other half of that: for a Copilot child the KIND alone
+// leaves the caller nowhere to go, because the admitted topology is a single
+// cell the spawn defaults miss. The refusal must name the value to change on
+// exactly the cases a caller can fix, and must NOT dangle it in front of a
+// caller whose parent posture is what refused (TCL-993).
 func TestCopilotLineage_RefusalTable(t *testing.T) {
 	type parentSpec struct {
 		harnessName    string
@@ -256,19 +269,24 @@ func TestCopilotLineage_RefusalTable(t *testing.T) {
 		provenCopilotImplementation, harness.CopilotApprovalAllowTools}
 
 	for _, tc := range []struct {
-		name     string
-		parent   parentSpec
-		child    map[string]any
-		wantCode string
+		name       string
+		parent     parentSpec
+		child      map[string]any
+		wantCode   string
+		wantRemedy bool
 	}{
 		{
+			// The defaulted request: `tclaude agent spawn --harness copilot`
+			// with nothing else spelled out. It is the shape a caller hits
+			// first, and the one the remedy exists for.
 			name:   "copilot child with no implementation is the legacy harness-builtin row",
 			parent: claudeInherit,
 			child: map[string]any{
 				"harness":  harness.CopilotName,
 				"approval": harness.CopilotApprovalAllowTools,
 			},
-			wantCode: "sandbox_restricted",
+			wantCode:   "sandbox_restricted",
+			wantRemedy: true,
 		},
 		{
 			// Refused one gate EARLIER than the lineage matrix, and the kind
@@ -295,6 +313,9 @@ func TestCopilotLineage_RefusalTable(t *testing.T) {
 				"approval": harness.CopilotApprovalAllowTools,
 			},
 			wantCode: "sandbox_restricted",
+			// Also fixable child-side: naming the implementation forces the
+			// launch mode off, so the settings file stops deciding.
+			wantRemedy: true,
 		},
 		{
 			name:   "a codex workspace-write parent may not mint a tclaude-walled child",
@@ -315,6 +336,30 @@ func TestCopilotLineage_RefusalTable(t *testing.T) {
 				"approval":               harness.CopilotApprovalAllowTools,
 			},
 			wantCode: "sandbox_restricted",
+		},
+		{
+			// The remedy must not be dangled here: this parent cannot mint the
+			// admitted pair either, so a caller who followed it would be
+			// refused a second time by the row directly above.
+			name:   "a codex workspace-write parent gets no remedy for a defaulted copilot child",
+			parent: parentSpec{harness.CodexName, harness.SandboxWorkspaceWrite, "", harness.ApprovalNever},
+			child: map[string]any{
+				"harness":  harness.CopilotName,
+				"approval": harness.CopilotApprovalAllowTools,
+			},
+			wantCode:   "sandbox_restricted",
+			wantRemedy: false,
+		},
+		{
+			name: "nor does a legacy copilot parent, which cannot mint the admitted pair either",
+			parent: parentSpec{harness.CopilotName, harness.CopilotSandboxOff,
+				string(sandboxpolicy.ImplementationHarnessBuiltin), harness.CopilotApprovalAllowTools},
+			child: map[string]any{
+				"harness":  harness.CopilotName,
+				"approval": harness.CopilotApprovalAllowTools,
+			},
+			wantCode:   "sandbox_restricted",
+			wantRemedy: false,
 		},
 		{
 			name: "a legacy copilot parent row asserts nothing about who owns its wall",
@@ -398,6 +443,13 @@ func TestCopilotLineage_RefusalTable(t *testing.T) {
 			failure := decodeFailure(t, resp.Raw)
 			assert.Equalf(t, tc.wantCode, failure.Code,
 				"the refusal must name the gate that actually refused; body=%s", resp.Raw)
+			if tc.wantRemedy {
+				assert.Containsf(t, failure.Error, copilotLineageRemedyText,
+					"a copilot refusal the caller can fix must name the value to change; body=%s", resp.Raw)
+			} else {
+				assert.NotContainsf(t, failure.Error, copilotLineageRemedyText,
+					"this refusal is not fixable by naming a child-side implementation; body=%s", resp.Raw)
+			}
 		})
 	}
 }
