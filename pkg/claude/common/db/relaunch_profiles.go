@@ -16,17 +16,22 @@ const RelaunchProfileVersion = 1
 // operator override on every relaunch surface.
 const TemporaryHarnessBuiltinModeSource = "temporary dashboard unlock"
 
-// The Go identifiers on this package's sandbox-mode fields say
-// harness-builtin; the persisted spellings do not (TCL-1023). The column is
-// still `sandbox_mode`, its attribution `sandbox_mode_source`, and the durable
-// override key `temporary_sandbox_mode`, because renaming a persisted name buys
-// nothing a reader of this code gains from the field name and costs a migration
-// plus a rewrite of every AgentRelaunchProfile JSON blob already on disk. The
-// mapping is confined to this package: outside it, nothing spells the axis
-// `sandbox mode` any more. Keep it that way — a new caller that reaches for the
-// raw column name is reintroducing the ambiguity this rename removed.
-
 // AgentRelaunchProfile is mutable launch intent owned by the stable agent.
+//
+// The Go identifiers on its sandbox-mode fields say harness-builtin; the
+// persisted spellings do not (TCL-1023). The column is still `sandbox_mode`,
+// its attribution `sandbox_mode_source`, and the durable override key
+// `temporary_sandbox_mode`, because renaming a persisted name buys nothing a
+// reader of this code gains from the field name and costs a migration plus a
+// rewrite of every AgentRelaunchProfile JSON blob already on disk. The same
+// holds for the dashboard payload keys and the session-state file's
+// `sandboxMode`: those are wire and on-disk compatibility surfaces and keep
+// their spelling deliberately.
+//
+// What the rename does guarantee is narrower and is the property to preserve:
+// no Go IDENTIFIER anywhere in the tree calls this axis a bare `sandbox mode`
+// any more. A new field or local that does is reintroducing the ambiguity this
+// rename removed — the persisted keys are the exception, not the precedent.
 // Pointer fields distinguish an observed/selected zero value from unknown
 // legacy state. Unknown authority-bearing values are resolved fail-closed by
 // the lifecycle layer rather than silently replaced with today's defaults.

@@ -1038,10 +1038,10 @@ Claude `off` or Codex `danger-full-access` — an *instruction to the harness*,
 not a statement that the agent is unconfined. It is in fact confined, by
 tclaude.
 
-That is why the internal name for this axis is **`harness_builtin_mode`**, not
-`mode`: a field called `mode` holding `off` reads as "no sandbox" to any
-reasonable reader, and code that read it that way produced a real
-write-confinement escape (TCL-991). Anything judging what an agent may do —
+That is why the code calls this axis the **harness-builtin mode**
+(`HarnessBuiltinMode`), not `mode`: a field called `mode` holding `off` reads as
+"no sandbox" to any reasonable reader, and code that read it that way produced a
+real write-confinement escape (TCL-991). Anything judging what an agent may do —
 the spawn lineage guard, the directory write-proof, the dashboard's posture
 badge — must read the pair.
 
