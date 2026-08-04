@@ -249,21 +249,27 @@ func (a *Adapter) publish(ctx context.Context, publisher Publisher, pool []int) 
 // authority refusal apart from an ordinary cancellation, and those two warrant
 // opposite handling — retrying a cancelled attach is reasonable, retrying a
 // refused one is not.
+//
+// The two fallback arms deliberately disagree about a queued success and must
+// not be merged back into one drain: a cancelled context means the route is
+// already being torn down, while a fired timer tears nothing down and can find
+// a perfectly healthy route on the other side of it.
 func awaitAttach(ctx context.Context, ready <-chan error, timeout <-chan time.Time) error {
 	select {
 	case err := <-ready:
 		return err
 	case <-ctx.Done():
-		// A queued success leaves the context error in place: the route is
-		// already being torn down, so the publish fails either way.
+		// Only a queued failure beats the context error here. A queued success
+		// does not rescue the route: it is going away regardless, so the
+		// publish fails either way.
 		if err := queuedAttachFailure(ready); err != nil {
 			return err
 		}
 		return ctx.Err()
 	case <-timeout:
-		// A fired timer tears nothing down, so a queued result is the whole
-		// truth here — including a queued nil, which means the broker owns a
-		// live route and reporting a stalled authority would be a lie.
+		// Any queued result is the whole truth here — including a success,
+		// which means the broker owns a live route and reporting a stalled
+		// authority would both lie and withdraw a working route.
 		select {
 		case err := <-ready:
 			return err
