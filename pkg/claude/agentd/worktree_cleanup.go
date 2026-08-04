@@ -60,6 +60,11 @@ type agentWorktreeView struct {
 	Branch string `json:"branch,omitempty"` // branch checked out there
 	Kind   string `json:"kind"`             // "none" | "main" | "linked"
 	Shared bool   `json:"shared"`           // a surviving agent also works here
+	// SharedNote names the holder when it is not a peer agent — today only a
+	// live séance. Empty means the ordinary "another agent" case. Kept out of
+	// the JSON surface: the dashboard gates on Shared, and this only phrases
+	// the operator-facing note.
+	SharedNote string `json:"-"`
 	// RepoRoot is the surviving main checkout that supplied a Git
 	// registration for Path. It is set when Path itself could not be
 	// inspected (normally because its directory is already gone).
@@ -165,41 +170,44 @@ type agentWorktreeClaimSnapshot struct {
 // tmux pane disappears. Exact timestamp ties retain every candidate and fail
 // conservatively across their roots.
 //
-// This check is NOT total: it sees only what these three reads have RECORDED,
-// so a live process in a directory whose claim has not landed in them is
-// invisible here. Every pane tclaude itself launches is already
-// claim-before-process — session/new.go writes the session row carrying cwd
+// Two claimants sit outside those rules because they are daemon-owned processes
+// with no pane and no session row of their own, and both would otherwise land in
+// a directory this snapshot calls unclaimed:
+//
+//   - A live séance, via heldSeanceWorktrees (TCL-1026). Its subprocess runs in
+//     a PREDECESSOR generation's cwd — precisely the offline superseded
+//     conversation the paragraph above stops counting. In-memory, so it does not
+//     survive a killed daemon; holdSeanceWorktree states that residual.
+//   - A live managed OpenCode server, via ListOpenCodeRuntimes (TCL-1027).
+//     Started with cwd set to the launch dir before the pane fork, so it holds
+//     the directory until the forked `session new` writes the row. Durable, so
+//     liveness is the runtime manager's own PID check — a row alone would pin
+//     the worktree forever after a crash.
+//
+// This check is still NOT total: it sees only what these reads have RECORDED, so
+// a live process in a directory whose claim has not landed in them is invisible
+// here. Every pane tclaude itself launches is already claim-before-process —
+// session/new.go writes the session row carrying cwd
 // (SaveSessionStateForLaunch) well before tmux creates the pane, so the claim
 // exists by the time the harness starts. Known windows where it does not
 // (TCL-1021 — the list is what was found, not a proof of completeness):
 //
-//   - Séance. liveRunSeanceHarness runs a harness subprocess with
-//     cmd.Dir = plan.Cwd for up to maxSeanceTimeout, and plan.Cwd is a
-//     PREDECESSOR generation's recorded cwd — precisely the offline superseded
-//     conversation the paragraph above deliberately stops counting as a
-//     claimant. It is a daemon-owned process, not a pane, and writes no session
-//     row, so nothing here protects its directory. This is the widest window by
-//     wall-clock, minutes rather than milliseconds. OPEN WORK, TCL-1026.
 //   - A harness the operator started themselves, auto-registered from its first
 //     hook rather than launched through tclaude. The process precedes its
 //     session row by the harness's startup-to-first-hook latency. tclaude is not
 //     in that launch at all, so no claim-before-launch mechanism reaches it.
-//   - An OpenCode launch: startOpenCodeRuntimeForSpawn boots the authoritative
-//     server with cwd set to the launch dir BEFORE the pane fork, so a real
-//     process holds the directory until the forked `session new` writes the row.
-//     Note this one IS recorded — UpsertOpenCodeRuntime persists the runtime's
-//     Cwd right after the process starts (ListOpenCodeRuntimes reads it back) —
-//     just not in a store this snapshot consults. Closing it is a fourth read,
-//     not a new mechanism, so it is not structurally closed and did not inherit
-//     the verdict below. OPEN WORK, TCL-1027.
 //   - Between the daemon's fork and that row write, on every harness. The forked
 //     `tclaude session new` deliberately does not inherit the launch dir (no
 //     cmd.Dir), so no process sits in the worktree during this one — a removal
 //     here fails the launch loudly instead of yanking a live agent's ground.
+//   - The gap between each daemon-owned process starting and its claim landing:
+//     cmd.Start to UpsertOpenCodeRuntime above, and for a séance the window is
+//     closed the other way (the claim precedes the exec) but does not survive
+//     the daemon being killed.
 //
-// The other two TCL-1021 documented rather than closed: triggering one requires an
-// operator retiring a DIFFERENT agent recorded at the same worktree, with
-// worktree deletion, inside the window. Assume the gap, do not assume totality.
+// Both remaining windows TCL-1021 documented rather than closed: triggering one
+// requires an operator retiring a DIFFERENT agent recorded at the same worktree,
+// with worktree deletion, inside the window. Assume the gap, not totality.
 func captureAgentWorktreeClaims() agentWorktreeClaimSnapshot {
 	snap := agentWorktreeClaimSnapshot{
 		views:     map[string]agentWorktreeView{},
@@ -314,8 +322,106 @@ func captureAgentWorktreeClaims() agentWorktreeClaimSnapshot {
 			snap.dirClaims[claimDir][convID] = true
 		}
 	}
+	// Managed OpenCode servers. startOpenCodeRuntimeForSpawn launches these with
+	// cmd.Dir set to the launch dir BEFORE the pane fork, so between that start
+	// and the forked `session new` writing its session row a real process holds
+	// the directory with nothing above to claim it. The row is already durable —
+	// UpsertOpenCodeRuntime stamps Cwd right after the process starts — so this
+	// is a read, not a mechanism (TCL-1027).
+	//
+	// Liveness is the PID check the runtime manager itself uses. A row alone is
+	// not proof: rows outlive a crashed daemon, and an unconditional claim would
+	// pin the worktree forever. Claim under the runtime's own conv-id so an
+	// agent retiring itself still excludes its own server; a row with no conv-id
+	// falls back to a synthetic claimant and therefore fails closed.
+	runtimes, err := db.ListOpenCodeRuntimes()
+	if err != nil {
+		return snap
+	}
+	for _, runtime := range runtimes {
+		dir := cleanClaimDir(runtime.Cwd)
+		if dir == "" || !session.IsProcessAlive(runtime.PID) {
+			continue
+		}
+		if snap.dirClaims[dir] == nil {
+			snap.dirClaims[dir] = map[string]bool{}
+		}
+		snap.dirClaims[dir][openCodeRuntimeClaimant] = true
+	}
+
+	// Live séances last, under a synthetic claimant no retirement can exclude.
+	// This is an in-process read, so it cannot fail and never clears complete.
+	for _, dir := range heldSeanceWorktrees() {
+		if snap.dirClaims[dir] == nil {
+			snap.dirClaims[dir] = map[string]bool{}
+		}
+		snap.dirClaims[dir][seanceClaimant] = true
+	}
 	snap.complete = true
 	return snap
+}
+
+// openCodeRuntimeClaimant is the claimant for a live managed OpenCode server.
+//
+// Deliberately NOT the runtime's conv-id, even though the row carries one. The
+// server is a daemon-owned process, not the agent's pane, so the rule that makes
+// self-exclusion safe elsewhere — "the target is stopped by the time we remove"
+// — does not hold for it: retiring the agent stops its pane and leaves the
+// server running. Claiming under the conv-id would let that agent's own
+// retirement exclude the claim and remove the directory its live server sits in,
+// which is the exact hazard this claim exists to stop. A non-conv id blocks
+// regardless of whose retirement is asking.
+//
+// The cost is a removal deferred, not denied: cleanup reports the worktree kept
+// with openCodeRuntimeSharedNote until the server actually stops (the reaper
+// takes it within a tick), and the operator can retry. Keeping a directory a
+// live process is in is the recoverable failure; removing it is not.
+//
+// Before reaching for a conv-scoped claim here, note that the two destructive
+// boundaries do not agree on exclusion, so one such claim produces OPPOSITE
+// failures from the same state. applyWorktreeCleanup's boundary re-read honours
+// no exclusion set and keeps on any claim — a conv-scoped runtime claim made
+// deleting a just-offline OpenCode agent keep its worktree and blame "shared
+// with another agent", a peer that does not exist, with no hint a retry would
+// work. retireWorktreeDrift skips claimant == convID — the same claim was
+// excluded there and removal ran with the agent's own live server in the
+// directory. The rationale ("its own retirement should exclude its own server")
+// held only on the path where it was unsafe. A claim that must hold regardless
+// of who is asking has to be un-excludable, not conv-scoped.
+const openCodeRuntimeClaimant = "opencode-runtime:live"
+
+// openCodeRuntimeSharedNote phrases that outcome. The generic "shared with
+// another agent" would send the operator hunting for a peer that does not exist
+// and give them no reason to expect a retry to succeed.
+const openCodeRuntimeSharedNote = "a managed OpenCode server is still running in it"
+
+// strongerSharedNote ranks the reason a root is held so every surface reports
+// the same one. A daemon-owned holder outranks a peer agent: it is the one the
+// operator cannot see in the dashboard and would otherwise go looking for.
+// current is the note chosen so far; claimant is another holder of the root.
+func strongerSharedNote(current, claimant string) string {
+	switch claimant {
+	case seanceClaimant:
+		return seanceSharedNote
+	case openCodeRuntimeClaimant:
+		if current == seanceSharedNote {
+			return current
+		}
+		return openCodeRuntimeSharedNote
+	default:
+		return current
+	}
+}
+
+// sharedKeptNote phrases every "kept because someone else holds it" outcome.
+// note names a non-agent holder (see agentWorktreeView.SharedNote); empty falls
+// back to the peer-agent wording. One helper so the surfaces cannot drift into
+// telling the operator different stories about the same claim.
+func sharedKeptNote(note string) string {
+	if note == "" {
+		note = "shared with another agent"
+	}
+	return "worktree kept (" + note + ")"
 }
 
 // resolve returns convID's worktree view and marks it shared when a claimant
@@ -333,16 +439,24 @@ func (s agentWorktreeClaimSnapshot) resolve(convID string, excluding map[string]
 		wt.Shared = true
 		return wt
 	}
+	// Scan every matching dir before deciding, and rank the note rather than
+	// taking whichever claimant Go's map iteration yields first — a root held by
+	// both a peer agent and a daemon-owned process must not report a different
+	// reason run to run.
 	for claimDir, claimants := range s.dirClaims {
 		if !dirContains(wt.Path, claimDir) {
 			continue
 		}
 		for claimant := range claimants {
-			if !excluding[claimant] {
-				wt.Shared = true
-				return wt
+			if excluding[claimant] {
+				continue
 			}
+			wt.Shared = true
+			wt.SharedNote = strongerSharedNote(wt.SharedNote, claimant)
 		}
+	}
+	if wt.Shared {
+		return wt
 	}
 	return wt
 }
@@ -436,7 +550,7 @@ func applyWorktreeCleanup(wt agentWorktreeView, requested bool) string {
 	case wt.Kind == "main":
 		return "worktree kept (main repo)"
 	case wt.Shared:
-		return "worktree kept (shared with another agent)"
+		return sharedKeptNote(wt.SharedNote)
 	}
 	// Agent deletion deliberately opens a gap between its request-time claim
 	// snapshot and filesystem removal. Re-read ownership at the destructive
@@ -446,10 +560,15 @@ func applyWorktreeCleanup(wt agentWorktreeView, requested bool) string {
 	if !snap.complete {
 		return "worktree kept — could not confirm current worktree ownership"
 	}
-	for claimDir := range snap.dirClaims {
-		if dirContains(wt.Path, claimDir) {
-			return "worktree kept (shared with another agent)"
+	for claimDir, claimants := range snap.dirClaims {
+		if !dirContains(wt.Path, claimDir) {
+			continue
 		}
+		note := ""
+		for claimant := range claimants {
+			note = strongerSharedNote(note, claimant)
+		}
+		return sharedKeptNote(note)
 	}
 	var removed bool
 	var err error
@@ -498,7 +617,7 @@ func applyRetireWorktreeCleanup(wt agentWorktreeView, requested bool) (note stri
 	case wt.Kind == "main":
 		return "worktree kept (main repo)", true
 	case wt.Shared:
-		return "worktree kept (shared with another agent)", true
+		return sharedKeptNote(wt.SharedNote), true
 	}
 	var removed, branchDeleted bool
 	var err error
@@ -580,15 +699,22 @@ func retireWorktreeDrift(convID string, wt agentWorktreeView) string {
 	if !snap.complete {
 		return "worktree kept — could not confirm current worktree ownership"
 	}
+	blocked := false
+	note := ""
 	for claimDir, claimants := range snap.dirClaims {
 		if !dirContains(wt.Path, claimDir) {
 			continue
 		}
 		for claimant := range claimants {
-			if claimant != convID {
-				return "worktree kept (shared with another agent)"
+			if claimant == convID {
+				continue
 			}
+			blocked = true
+			note = strongerSharedNote(note, claimant)
 		}
+	}
+	if blocked {
+		return sharedKeptNote(note)
 	}
 	return ""
 }
@@ -640,7 +766,7 @@ func scheduleRetireWorktreeCleanup(convID string, wt agentWorktreeView, shutdown
 	case wt.Kind == "main":
 		return retireWorktreePlan{Action: "kept", Detail: "worktree kept (main repo)"}
 	case wt.Shared:
-		return retireWorktreePlan{Action: "kept", Detail: "worktree kept (shared with another agent)"}
+		return retireWorktreePlan{Action: "kept", Detail: sharedKeptNote(wt.SharedNote)}
 	}
 
 	// Already offline → safe to remove right now, inline. The outcome
