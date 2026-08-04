@@ -208,10 +208,14 @@ func runResumeWithSession(rc *resolvedConv, attach bool, stdout, stderr *os.File
 	if stackedProof != nil {
 		defer stackedProof.Cleanup()
 	}
-	approvalPolicy, autoReview, err := resumeApprovalState(h, rc.ConvID)
+	approvalState, err := resumeApprovalState(h, rc.ConvID)
 	if err != nil {
 		fmt.Fprintf(stderr, "%v\n", err)
 		return 1
+	}
+	approvalPolicy, autoReview := approvalState.Policy, approvalState.AutoReview
+	if notice := describeResumedApproval(h, approvalState); notice != "" {
+		fmt.Fprintln(stdout, notice)
 	}
 	// Read the auto-memory posture BEFORE this resume writes its own session
 	// row: AutoMemoryForConv resolves the conv's most-recently-updated row, so

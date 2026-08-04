@@ -11,13 +11,21 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
-func TestApprovalForRelaunchRepairsLegacyCodexWithoutBroadeningAmbiguousRows(t *testing.T) {
+// A legacy Codex row with a blank approval column recorded no approval INPUT,
+// so it re-resolves under current config — to `never`, the Codex default —
+// regardless of whether its provenance happens to be reconstructable. TCL-990
+// reversed the old ambiguous-row pin to `untrusted`: that value is strictly
+// less capable than what an unrecorded input resolves to today, it prompts on a
+// detached pane (the JOH-167 deadlock), and approval lineage denies it the
+// in-sandbox bit the agent needs to spawn children. Reconstruction must not be
+// the thing that makes a conversation unusable.
+func TestApprovalForRelaunchReResolvesBlankCodexRowsUnderCurrentConfig(t *testing.T) {
 	setupTestDB(t)
 	for _, tc := range []struct {
 		name, config, want string
 	}{
 		{"proven daemon default", `{"harness":"codex"}`, harness.ApprovalNever},
-		{"ambiguous explicit birth or later resume", `{"harness":"codex","approval":"on-request"}`, harness.ApprovalUntrusted},
+		{"ambiguous explicit birth or later resume", `{"harness":"codex","approval":"on-request"}`, harness.ApprovalNever},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			conv := "conv-" + strings.ReplaceAll(tc.name, " ", "-")

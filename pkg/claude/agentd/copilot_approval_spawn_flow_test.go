@@ -145,12 +145,14 @@ func TestCopilotSpawn_DetachedSpawningStaysRefused(t *testing.T) {
 	}
 }
 
-// A Copilot row that predates this catalog carries a blank approval posture.
-// Lifecycle repair must reconstruct it as `inherit` — what those launches
-// actually did, since the spawner emitted no permission flags — and never as
-// the new `allow-tools` default, which would silently promote an agent the
-// operator never chose it for.
-func TestCopilotRelaunch_LegacyRowReconstructsInheritNotTheNewDefault(t *testing.T) {
+// A Copilot row that predates this catalog carries a blank approval posture,
+// which records no approval INPUT at all. Lifecycle repair therefore re-resolves
+// it under current config (TCL-990) instead of pinning it to `inherit`, the
+// value those launches historically resolved to. Pinning reproduced a
+// resolution rather than an input, and left the relaunched agent at a posture
+// approval lineage will not credit with in-sandbox authority — so it could not
+// delegate.
+func TestCopilotRelaunch_LegacyBlankRowReResolvesUnderCurrentConfig(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("copilot-crew")
 
@@ -179,6 +181,7 @@ func TestCopilotRelaunch_LegacyRowReconstructsInheritNotTheNewDefault(t *testing
 
 	got, ok := f.World.SpawnApproval(clone.NewConv)
 	require.True(t, ok, "the clone should have been observed by the sim spawner")
-	assert.Equal(t, harness.CopilotApprovalInherit, got,
-		"a relaunch reconstructs an existing agent and must tighten, never loosen")
+	assert.Equal(t, harness.CopilotApprovalAllowTools, got,
+		"a row that recorded no approval input re-resolves under current config (TCL-990), "+
+			"rather than being pinned to the value it would historically have resolved to")
 }

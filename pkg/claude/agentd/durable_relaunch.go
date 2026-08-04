@@ -232,14 +232,9 @@ func durableRelaunchConfigForConv(convID string) (*durableRelaunchConfig, error)
 	if agentProfile.ApprovalPolicy == nil {
 		return nil, fmt.Errorf("durable agent relaunch profile has unknown approval policy")
 	}
-	approval := strings.TrimSpace(*agentProfile.ApprovalPolicy)
-	if approval == "" {
-		approval = approvalForHarness(h.Name)
-	} else {
-		approval, err = harness.ValidateApprovalPolicy(h, approval)
-		if err != nil {
-			return nil, fmt.Errorf("invalid durable approval policy: %w", err)
-		}
+	approval, err := reconstructApproval(h.Name, *agentProfile.ApprovalPolicy)
+	if err != nil {
+		return nil, fmt.Errorf("invalid durable approval policy: %w", err)
 	}
 	autoReview := false
 	if agentProfile.ApprovalAutoReview != nil {

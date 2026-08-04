@@ -103,6 +103,46 @@ func ValidateApprovalPolicy(h *Harness, requested string) (string, error) {
 	return h.Approval.ValidatePolicy(requested)
 }
 
+// ReconstructApprovalPolicy is the ONE rule every resume/relaunch surface uses
+// to turn a conversation's RECORDED approval input into the posture its next
+// generation launches with (TCL-990). CLI resume, daemon relaunch, clone,
+// seance and the durable relaunch profile all go through it, so no two surfaces
+// can disagree about what a given row reconstructs to.
+//
+// The rule: reconstruction reuses the recorded INPUT and accepts whatever that
+// input resolves to under CURRENT config — it does not reproduce the VALUE the
+// input happened to resolve to when the conversation was launched.
+//
+//   - An explicitly recorded posture is reproduced exactly, and re-validated.
+//   - An absent posture (blank) stays absent and re-resolves through
+//     ResolveApprovalPolicy, i.e. to the harness default under current config.
+//
+// It follows that reconstruction never yields a posture strictly less capable
+// than what current config resolves an unspecified input to. That is the point,
+// not a side effect: pinning a blank row to a historical value is what made
+// resumed conversations unusable. A Claude row pinned to `inherit` is charged
+// the broadest non-bypass capability as a CHILD by approval lineage (see
+// claudeApproval), so it cannot mint capable children — every delegation hits
+// the spawn approval guard. A Codex row pinned to `untrusted` is denied the
+// approvalAutoInSandbox bit for the same reason AND asks before every
+// non-trusted command, which is the JOH-167 deadlock on a detached pane that
+// this whole catalog's "non-escalating default" contract exists to prevent.
+//
+// The accepted trade-off is that an operator who broadens their default
+// retroactively broadens old conversations on next resume. That is their own
+// current config; UnsandboxedAutonomyWarnings plus surfacing the resolved
+// posture at resume are the mitigation. reresolved reports whether the posture
+// came from current config rather than from the record, so callers can say so
+// instead of re-resolving silently.
+func ReconstructApprovalPolicy(h *Harness, recorded string) (policy string, reresolved bool, err error) {
+	if strings.TrimSpace(recorded) == "" {
+		policy, err = ResolveApprovalPolicy(h, "")
+		return policy, true, err
+	}
+	policy, err = ValidateApprovalPolicy(h, recorded)
+	return policy, false, err
+}
+
 // ResolveAutoReview gates the experimental auto-review (guardian) opt-in for a
 // spawn: it returns the requested bool to thread into SpawnSpec.AutoReview, or
 // an error if auto-review was requested for a harness that has no approvals

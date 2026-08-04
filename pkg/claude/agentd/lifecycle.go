@@ -1523,12 +1523,14 @@ func recoverMissingConversationResumeProfile(convID string, recreateMissingDir b
 		return nil, fmt.Errorf("human recovery could not encode current resume provenance: %w", err)
 	}
 	empty := ""
+	// Recovery has no recorded approval input to reproduce, so it records none:
+	// a blank posture re-resolves under current config at every relaunch (see
+	// harness.ReconstructApprovalPolicy). Writing a value here would be
+	// reconstruction inventing an input — and the value it used to write for
+	// Codex (`untrusted`) is exactly the one the rule forbids, since it both
+	// prompts on a detached pane and is denied the in-sandbox lineage bit the
+	// agent needs to delegate. TCL-990.
 	approval := ""
-	if harnessName == harness.CodexName {
-		// Match the pre-v145 missing-row compatibility rule: ambiguous legacy
-		// Codex authority resumes at its least automatic posture.
-		approval = harness.ApprovalUntrusted
-	}
 	no := false
 	sshWorkaround := harnessName == harness.CodexName
 	zero := int64(0)
