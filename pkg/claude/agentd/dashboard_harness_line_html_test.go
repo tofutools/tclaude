@@ -75,6 +75,7 @@ func TestDashboardHTML_HarnessLineWired(t *testing.T) {
 	must("claude: { short: 'CC', long: 'Claude Code' }", "claude keeps its CC label")
 	must("codex: { short: 'Codex', long: 'Codex CLI' }", "codex has its own label")
 	must("opencode: { short: 'OC', long: 'OpenCode' }", "OpenCode uses the compact OC label")
+	must("copilot: { short: 'COP', long: 'GitHub Copilot CLI' }", "Copilot uses the compact COP label")
 	must("if (harness === 'opencode')", "OpenCode model display removes its provider prefix")
 	must("state.harness", "HarnessLine reads the harness tag off the agent's state")
 }
