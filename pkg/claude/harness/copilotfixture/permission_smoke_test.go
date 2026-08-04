@@ -75,10 +75,14 @@ import (
 //
 // COST, stated rather than waved at: a blocked arm still pays this in full. The
 // dialog-based verdict in ClassifyPermission fixes which answer a cut run gets;
-// it does not stop the run. On macOS ~4 in 5 blocked arms reach the deadline
-// (blockedQuiet almost never fires there — see below), so this roughly doubles
-// their wall clock: ~68 runs per job at +30s, which -parallel 8 turns into a
-// few minutes on that shard. The way to get it back is an evidence-based early
+// it does not stop the run. The bill is macOS-scoped, because that is the only
+// arm where blockedQuiet fails to cut a blocked row short (~4 in 5 reach the
+// deadline there — see below), and because ci.yml's macOS run_filter selects
+// only TestCopilotPermissionPathGrants and TestCopilotDirTrust. Within those,
+// three path-grant rows block. They run concurrently under -parallel 8, so the
+// added wall clock on that shard is about +30s in total, not per row. On Linux
+// blockedQuiet still fires on 86% of blocked arms, so raising the bound costs
+// that arm almost nothing. The way to get the rest back is an evidence-based early
 // exit — end a blocked arm when its dialog appears, the way SettledWhen ends an
 // allowed arm when its follow-up arrives — which needs a transcript-aware
 // predicate in RunPTY and a decision about whether evidence or blocking wins on
@@ -158,9 +162,18 @@ const headlessPermissionDeadline = 60 * time.Second
 // property, not the 10s, and it is a property of the platform's render cadence
 // rather than of Copilot's blocking behaviour.
 //
-// So the blocked verdict no longer rests on this constant: ClassifyPermission
-// identifies a parked launch by the dialog on its screen, and this window is
-// now only an early exit that saves wall clock where it happens to fire. Anyone
+// So the DIRECTORY-ACCESS verdict no longer rests on this constant:
+// ClassifyPermission identifies a launch parked on the folder-trust or
+// directory-access dialog by the dialog on its screen, and for those rows this
+// window is now only an early exit that saves wall clock where it happens to
+// fire. That is deliberately narrower than "the blocked verdict". The
+// tool-approval row, the URL-gate row and the web-fetch blocked arm still reach
+// PermissionBlocked through silence alone, with no marker of their own, so on
+// macOS they remain exposed to the overlap in the table above. They have not
+// flaked only because ci.yml's macOS run_filter does not select them; Linux,
+// where it does, is the platform where silence still separates the two
+// populations. Giving those rows their own dialog markers is the same shape of
+// fix as this one and is not done here. Anyone
 // inventing another silence-based detector should read the table first — the
 // mistake this comment made was not guessing, it was measuring one platform and
 // writing the result as if it were the behaviour.
@@ -1059,7 +1072,19 @@ func TestCopilotPermissionPathGrants(t *testing.T) {
 				require.Len(t, mock.Requests(), 1,
 					"a path prompt must have reached the provider once, but must not post a tool result")
 				assert.False(t, res.Exited, "a path prompt parks the interactive process")
-				assert.True(t, res.Quiesced, "a path prompt leaves settled output")
+				// res.Quiesced is deliberately NOT asserted here, and leaving
+				// it in would have kept TCL-1029's bug alive one line below
+				// where it was fixed.
+				//
+				// It is sampled once, on the tick the run ends on, so on a run
+				// the deadline cuts mid-redraw it is false for a launch that is
+				// unambiguously parked — the phase check the classifier arm
+				// above stopped depending on. Asserting it here would move that
+				// coin flip from the classifier to this row rather than remove
+				// it, and the row already carries strictly better evidence: the
+				// dialog is on screen, it names the path, exactly one provider
+				// request reached the mock, and the process is still alive.
+				// "Settled output" adds no fact those four do not already give.
 			}
 			assertCredentialFree(t, mock)
 		})
