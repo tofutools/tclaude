@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -52,6 +53,22 @@ func openTUISpawnForm(t *testing.T, c *agentd.TUIConsole, name, dir string) {
 	c.Type(t, name)
 	c.Press(t, "tab")
 	c.Type(t, dir)
+}
+
+// consoleCSIRe matches the SGR/CSI styling the console renders with, so an
+// assertion can read the text an operator sees rather than the escape codes
+// around it.
+var consoleCSIRe = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
+
+// flatConsoleText renders the console view as one unbroken run of non-blank
+// characters: styling dropped, every space and newline removed. A long value
+// the console wraps across two terminal rows — a temp-dir path under a deeply
+// nested working directory, say — reads as one string again, so a Contains on
+// it does not depend on where the terminal width happened to break the line.
+// Only sound for needles that carry no whitespace of their own; a filesystem
+// path is exactly that.
+func flatConsoleText(view string) string {
+	return strings.Join(strings.Fields(consoleCSIRe.ReplaceAllString(view, "")), "")
 }
 
 // tuiAttachLog records where the console asked to send this terminal.
@@ -728,7 +745,8 @@ func TestTUIConsoleSpawnsIntoANewWorktree(t *testing.T) {
 	assert.Equal(t, wantPath, rows[0].Cwd)
 
 	assert.Contains(t, c.View(), "Spawned")
-	assert.Contains(t, c.View(), wantPath, "and the console says where it landed")
+	assert.Contains(t, flatConsoleText(c.View()), wantPath,
+		"and the console says where it landed")
 }
 
 // A directory that is not a git repo cannot produce a worktree. The form stays
