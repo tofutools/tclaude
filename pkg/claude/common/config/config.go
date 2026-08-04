@@ -1823,11 +1823,10 @@ type AgentConfig struct {
 // with the operator's credentials, on behalf of an agent that cannot reach
 // them itself?
 //
-// It deliberately does NOT decide WHERE an operation may run. That is derived
-// from daemon-recorded launch state (the agent's own physical launch directory
-// and the write roots frozen in its sandbox snapshot) and is not
-// operator-tunable — see agentd.resolveProxyRepo. The proxy lends credentials,
-// never filesystem reach.
+// It deliberately does NOT decide WHERE an operation may run. That is the git
+// work tree containing the agent's own daemon-recorded physical launch
+// directory, and it is not operator-tunable — see agentd.resolveProxyRepo for
+// exactly what is checked. The proxy lends credentials, never filesystem reach.
 type GitProxyConfig struct {
 	// AllowedRemotes is the allow-list of remotes the proxy may talk to,
 	// written as slash-separated `host/owner/repo` patterns matched

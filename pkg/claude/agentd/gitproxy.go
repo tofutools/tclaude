@@ -425,8 +425,13 @@ func gitProxySSHCommand(policy config.GitProxyConfig) string {
 	parts := []string{"ssh", "-o", "BatchMode=yes"}
 	// expandTilde for the same reason github_token_file gets it: "~/.ssh/id_ed25519"
 	// is how an operator writes this, and ssh -i does not expand it either.
+	//
+	// Then SINGLE-QUOTE it. core.sshCommand is not an argv — git hands it to a
+	// shell when it contains metacharacters, so an operator key path with a
+	// space ("~/my keys/id_ed25519") would otherwise split into two arguments
+	// and fail with a message pointing nowhere near the cause.
 	if key := expandTilde(strings.TrimSpace(policy.SSHKey)); key != "" {
-		parts = append(parts, "-i", key, "-o", "IdentitiesOnly=yes")
+		parts = append(parts, "-i", shellSingleQuote(key), "-o", "IdentitiesOnly=yes")
 	}
 	return strings.Join(parts, " ")
 }
@@ -1261,12 +1266,18 @@ func (r resolvedRemote) contacted(push bool) remoteRef {
 // differ from remote.<name>.url, so validating only the latter would leave
 // push aimed somewhere unchecked.
 //
-// Each URL is then required to be a FIXED POINT of git's own URL rewriting
-// (`git ls-remote --get-url <url>` returns the same string). That is how
-// url.<base>.insteadOf is defeated: it is the one dangerous key that a `-c`
-// override cannot reset, so instead of trying to disable it we require that it
-// does not apply. A repository configured to rewrite the URL we validated is
-// refused rather than followed somewhere we never checked.
+// What defeats url.<base>.insteadOf — the one dangerous key a `-c` override
+// cannot reset — is the ALLOW-LIST, not the fixed-point check below. `git
+// remote get-url` already returns the REWRITTEN url (verified on git 2.43), so
+// every URL reaching parseRemoteURL and remoteAllowed here is the destination
+// git would really dial. A repository that rewrites github.com to
+// attacker.example is refused because attacker.example is not allow-listed.
+//
+// The fixed-point check (`ls-remote --get-url <url>` returns the same string)
+// is kept as defence-in-depth against a git that stops applying rewrites in
+// `remote get-url`, which would silently move the real destination out from
+// under the allow-list. On current git it never fires; that is expected, and it
+// is why the allow-list is what the tests pin.
 func resolveProxyRemote(ctx context.Context, s *gitProxySession, name string) (resolvedRemote, *proxyFault) {
 	if fault := validateRemoteName(name); fault != nil {
 		return resolvedRemote{}, fault

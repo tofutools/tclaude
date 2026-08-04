@@ -354,3 +354,69 @@ func TestGHProxy_TokenFileExplainsAnUnexpandedShellVariable(t *testing.T) {
 		"the operator must be told why a path that looks right did not resolve")
 	assert.Equal(t, 0, ghCallCount(rec))
 }
+
+// TestGHProxy_PRCreateAlwaysPassesAHeadBranch is the regression for the
+// headline verb being broken.
+//
+// gh derives the head branch from the LOCAL repository, and this proxy runs gh
+// in a neutral directory on purpose — so `pr create` without an explicit --head
+// fails with "could not determine the current branch: ... not a git repository"
+// (gh 2.97). The documented invocation passes only --title and --body-file, so
+// the feature's headline operation could not succeed at all.
+//
+// The old test asserted a 200 and stopped there; the recorder returns canned
+// success for any argv, so it passed while nothing worked. Asserting the ARGV
+// is what makes this real.
+func TestGHProxy_PRCreateAlwaysPassesAHeadBranch(t *testing.T) {
+	f, rec := gitProxyWorld(t, []string{"github.com/tofutools"})
+	rec.gh = agentd.ProxyResult{Stdout: "https://github.com/tofutools/tclaude/pull/7"}
+	rec.branch = "feat/the-thing"
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubWrite, "test"))
+
+	res := gitProxyPost(t, f, "/v1/github/pr/create",
+		map[string]any{"title": "Add the thing", "body": "why"})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+
+	call := ghCall(t, rec)
+	i := slices.Index(call.Args, "--head")
+	require.GreaterOrEqual(t, i, 0,
+		"gh cannot determine a head branch in a neutral directory, so the daemon must supply one")
+	assert.Equal(t, "feat/the-thing", call.Args[i+1])
+}
+
+// TestGHProxy_PRCreateRefusesDetachedHead — with no branch there is nothing to
+// open a pull request from, and guessing would be worse than saying so.
+func TestGHProxy_PRCreateRefusesDetachedHead(t *testing.T) {
+	f, rec := gitProxyWorld(t, []string{"github.com/tofutools"})
+	rec.branch = "HEAD" // what rev-parse --abbrev-ref reports when detached
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubWrite, "test"))
+
+	res := gitProxyPost(t, f, "/v1/github/pr/create",
+		map[string]any{"title": "Add the thing", "body": "why"})
+	assert.Equal(t, http.StatusConflict, res.Code, "body=%s", res.Body.String())
+	assert.Contains(t, res.Body.String(), "detached HEAD")
+	assert.Equal(t, 0, ghCallCount(rec))
+}
+
+// TestGHProxy_RefusesToDeriveARepoFromADeeperPath closes an allow-list escape.
+//
+// matchRemotePattern lets a pattern shorter than the target match as a prefix,
+// which is deliberate for nested GitLab groups. OwnerRepo() is first+last. Put
+// those together and an allow-list naming exactly one repository also admits
+// any sibling repository in the same owner:
+//
+//	allow-list  github.com/tofutools/tclaude
+//	remote      github.com/tofutools/tclaude/private-secrets  → tofutools/private-secrets
+//
+// The git half never noticed because GitHub 404s a four-segment path. The gh
+// half re-derives the slug, which is where the two rules disagree.
+func TestGHProxy_RefusesToDeriveARepoFromADeeperPath(t *testing.T) {
+	f, rec := gitProxyWorld(t, []string{"github.com/tofutools/tclaude"})
+	rec.remotes["origin"] = "https://github.com/tofutools/tclaude/private-secrets"
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubRead, "test"))
+
+	res := gitProxyPost(t, f, "/v1/github/pr/list", map[string]any{})
+	assert.Equal(t, http.StatusConflict, res.Code, "body=%s", res.Body.String())
+	assert.Contains(t, res.Body.String(), "not a plain github owner/repo path")
+	assert.Equal(t, 0, ghCallCount(rec), "no repository may be derived from it")
+}

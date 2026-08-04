@@ -65,6 +65,11 @@ type ghProxySession struct {
 	ownerRepo string
 	env       []string
 	neutral   string
+	// branch is the agent's current branch, resolved daemon-side while the git
+	// session is still open. `pr create` needs it: gh derives the head branch
+	// from the local repository, and this proxy deliberately runs gh in a
+	// neutral directory where there is none.
+	branch string
 }
 
 // newGHProxySession runs every gate and resolves the GitHub repository from
@@ -84,6 +89,25 @@ func newGHProxySession(ctx context.Context, convID, requestedRemote string) (*gh
 			"remote %q points at %s, which is not GitHub; the github proxy only speaks to github.com",
 			resolved.Name, resolved.FetchRef.Host)
 	}
+	// EXACTLY two path segments. A GitHub repository is always owner/repo, and
+	// accepting more re-derives the slug from a path the allow-list matched
+	// under different rules — which is an allow-list escape, not a nicety:
+	//
+	//   allow-list  github.com/acme/widgets        (the "one repo" form)
+	//   remote      github.com/acme/widgets/secret
+	//
+	// matchRemotePattern admits the remote, because a pattern shorter than the
+	// target matches as a PREFIX (deliberate, for nested GitLab groups). But
+	// OwnerRepo() is first+last, so the slug becomes acme/secret — a repository
+	// the operator never allow-listed, reachable with their credential. The git
+	// half is unaffected (GitHub 404s a four-segment path); it is only here,
+	// where the slug is re-derived, that the two rules disagree.
+	if len(resolved.FetchRef.Path) != 2 {
+		return nil, faultf(http.StatusConflict, "not_github",
+			"remote %q resolves to %s, which is not a plain github owner/repo path; "+
+				"the github proxy will not derive a repository from it",
+			resolved.Name, resolved.FetchRef.Key())
+	}
 	ownerRepo := resolved.FetchRef.OwnerRepo()
 	owner, repo, _ := strings.Cut(ownerRepo, "/")
 	if !isGitHubOwnerSlug(owner) || !isGitHubRepoSlug(repo) {
@@ -102,6 +126,9 @@ func newGHProxySession(ctx context.Context, convID, requestedRemote string) (*gh
 		ghPath:    ghPath,
 		ownerRepo: ownerRepo,
 		env:       env,
+		// Read while the git session is still open — the gh half has no
+		// repository of its own to ask.
+		branch: s.currentBranch(ctx),
 		// A neutral working directory is a security control, not tidiness:
 		// running gh inside the agent's repository would let .git/config
 		// re-aim it despite the explicit --repo.

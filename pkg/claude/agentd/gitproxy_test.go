@@ -302,15 +302,22 @@ func TestGitProxyEnv_ConstructsRatherThanFilters(t *testing.T) {
 // passphrase" into a fast failure instead of a hung daemon goroutine.
 func TestGitProxySSHCommand(t *testing.T) {
 	assert.Equal(t, "ssh -o BatchMode=yes", gitProxySSHCommand(config.GitProxyConfig{}))
-	assert.Equal(t, "ssh -o BatchMode=yes -i /keys/id_ed25519 -o IdentitiesOnly=yes",
+	assert.Equal(t, "ssh -o BatchMode=yes -i '/keys/id_ed25519' -o IdentitiesOnly=yes",
 		gitProxySSHCommand(config.GitProxyConfig{SSHKey: "/keys/id_ed25519"}))
 
 	// "~/.ssh/id_ed25519" is how an operator writes a key path in a JSON config
 	// file. `ssh -i` does not expand it, so the daemon must — otherwise the key
 	// is silently not used and the push fails on authentication instead.
 	t.Setenv("HOME", "/home/operator")
-	assert.Equal(t, "ssh -o BatchMode=yes -i /home/operator/.ssh/id_ed25519 -o IdentitiesOnly=yes",
+	assert.Equal(t, "ssh -o BatchMode=yes -i '/home/operator/.ssh/id_ed25519' -o IdentitiesOnly=yes",
 		gitProxySSHCommand(config.GitProxyConfig{SSHKey: "~/.ssh/id_ed25519"}))
+
+	// core.sshCommand is shell-parsed, so a path with a space must survive as
+	// ONE argument rather than splitting into two.
+	assert.Equal(t, "ssh -o BatchMode=yes -i '/home/operator/my keys/id' -o IdentitiesOnly=yes",
+		gitProxySSHCommand(config.GitProxyConfig{SSHKey: "~/my keys/id"}))
+	assert.Equal(t, `ssh -o BatchMode=yes -i '/keys/it'\''s' -o IdentitiesOnly=yes`,
+		gitProxySSHCommand(config.GitProxyConfig{SSHKey: "/keys/it's"}))
 }
 
 // TestResolvedGitProxy_Defaults pins the two fail-closed defaults an operator

@@ -131,7 +131,7 @@ type gitRemoteView struct {
 }
 
 type gitRemotesResponse struct {
-	Repo           string          `json:"repo"`
+	RepoPath       string          `json:"repo_path"`
 	Branch         string          `json:"branch"`
 	Remotes        []gitRemoteView `json:"remotes"`
 	AllowedRemotes []string        `json:"allowed_remotes"`
@@ -155,7 +155,7 @@ func runGitRemotes(p *gitRemotesParams, stdout, stderr io.Writer) int {
 		}
 		return rcOK
 	}
-	fmt.Fprintf(stdout, "Repository: %s\n", resp.Repo)
+	fmt.Fprintf(stdout, "Repository: %s\n", resp.RepoPath)
 	if resp.Branch != "" {
 		fmt.Fprintf(stdout, "Branch:     %s\n", resp.Branch)
 	}

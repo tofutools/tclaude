@@ -200,6 +200,36 @@ Nothing here ever runs a shell. A configuration probe that cannot be *run* is
 treated as a refusal, not as "nothing configured" — a gate that reads a failed
 check as clean is worse than no gate.
 
+### The "refuse" rows are checked, not enforced
+
+**Know this before you widen an allow-list.** The **pin** rows above ride on the
+same command line as the operation, so they cannot be defeated. The **refuse**
+rows cannot make that claim: each one reads the repository in its own short-lived
+`git` process, a moment before the credentialed command runs in another. Nothing
+locks `.git/config` in between, and it is a file the agent can write — that is
+the premise of the whole feature.
+
+So an agent that rewrites its own `.git/config` in a loop while repeatedly
+calling the proxy can, in principle, have a hostile value land in the window
+between the check and the use. What that buys it is bounded by what a pin cannot
+already cover: chiefly `url.*.insteadOf` (redirecting the push to a host the
+allow-list never saw) and the URL-scoped `http.<url>.*` family (routing an HTTPS
+connection through a proxy it chooses, with certificate checking off). Both spend
+the operator's credential against a destination the audit row will not name.
+
+This is a real limitation, not a theoretical one, and closing it properly means
+not letting the credentialed command read agent-writable configuration at all —
+running the transfer from a daemon-owned `GIT_DIR` that reaches the agent's
+objects through `objects/info/alternates`. That is a larger change than this
+feature, and until it lands the honest summary is:
+
+> the proxy reliably stops a *careless* repository and reliably bounds *which
+> operations* an agent may ask for; it does not reliably stop a repository that
+> is actively racing it.
+
+The permission slugs are what gate the ability to try at all, which is why none
+of them is granted by default.
+
 These are not paper claims: `pkg/claude/agentd/gitproxy_realgit_test.go` runs
 real `git` against a throwaway repository and asserts each pin has its claimed
 effect, **paired with a control run** proving the hostile configuration would

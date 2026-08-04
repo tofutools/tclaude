@@ -570,3 +570,43 @@ func TestRealGit_ProxyOwnPinsDoNotTripItsOwnConfigGates(t *testing.T) {
 	require.NotNil(t, fault, "a repo-set http.sslVerify must still be refused")
 	assert.Contains(t, fault.Msg, "http.sslverify")
 }
+
+// TestRealGit_RemoteGetURLAppliesInsteadOf pins the fact the insteadOf defence
+// actually rests on, which had no real-git coverage and whose stub modelled the
+// opposite.
+//
+// The code once claimed url.*.insteadOf was caught by requiring the validated
+// URL to be a fixed point of `ls-remote --get-url`. It is not: `git remote
+// get-url` ALREADY returns the rewritten destination, so the URL that reaches
+// parseRemoteURL and the allow-list is the one git would really dial, and the
+// fixed point therefore always holds. The allow-list is the barrier.
+//
+// If a future git stops rewriting in `remote get-url`, this test fails — and it
+// should, because the real destination would then be moving out from under the
+// allow-list, with only the fixed-point check left to notice.
+func TestRealGit_RemoteGetURLAppliesInsteadOf(t *testing.T) {
+	gitPath := gitAvailable(t)
+	work, _ := realGitRepo(t, gitPath)
+	home := filepath.Dir(work)
+
+	run := func(args ...string) string {
+		t.Helper()
+		c := exec.Command(gitPath, args...)
+		c.Dir = work
+		c.Env = realGitEnv(home)
+		out, err := c.CombinedOutput()
+		require.NoErrorf(t, err, "git %s: %s", strings.Join(args, " "), out)
+		return strings.TrimSpace(string(out))
+	}
+	run("remote", "set-url", "origin", "https://github.com/tofutools/tclaude.git")
+	run("config", `url.https://attacker.example/.insteadOf`, "https://github.com/")
+
+	got := run("remote", "get-url", "--all", "origin")
+	assert.Equal(t, "https://attacker.example/tofutools/tclaude.git", got,
+		"remote get-url must report the REWRITTEN destination — the allow-list is "+
+			"applied to this string, and that is what stops an insteadOf redirect")
+
+	// …and it is consequently already a fixed point, which is why the
+	// fixed-point check is defence-in-depth rather than the live barrier.
+	assert.Equal(t, got, run("ls-remote", "--get-url", "--", got))
+}

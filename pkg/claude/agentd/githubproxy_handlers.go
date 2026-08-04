@@ -92,6 +92,23 @@ func handleGHProxyPRCreate(w http.ResponseWriter, r *http.Request) {
 		writeProxyFault(w, fault)
 		return
 	}
+	// --head is NOT optional here, whatever gh's own default says. gh derives
+	// the head branch from the local repository, and this proxy runs gh in a
+	// neutral directory on purpose — so without an explicit value gh fails with
+	// "could not determine the current branch: ... not a git repository"
+	// (verified on gh 2.97). The daemon supplies the agent's real branch, read
+	// from the git session, which is the branch the caller means anyway.
+	head := strings.TrimSpace(body.Head)
+	if head == "" {
+		head = g.branch
+	}
+	if head == "" {
+		writeError(w, http.StatusConflict, "detached_head",
+			"this work tree is not on a branch (detached HEAD), so there is no head branch to "+
+				"open a pull request from; check out a branch or pass --head explicitly")
+		return
+	}
+
 	args := []string{"pr", "create", "--repo", g.ownerRepo, "--title", strings.TrimSpace(body.Title)}
 	if body.Draft {
 		args = append(args, "--draft")
@@ -99,7 +116,7 @@ func handleGHProxyPRCreate(w http.ResponseWriter, r *http.Request) {
 	for _, ref := range []struct {
 		flag  string
 		value string
-	}{{"--base", body.Base}, {"--head", body.Head}} {
+	}{{"--base", body.Base}, {"--head", head}} {
 		branch := strings.TrimSpace(ref.value)
 		if branch == "" {
 			continue

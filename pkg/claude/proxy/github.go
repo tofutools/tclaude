@@ -154,7 +154,7 @@ type githubPRCreateParams struct {
 	Body     string `long:"body" optional:"true" help:"Pull-request body. Prefer --body-file for anything multi-line."`
 	BodyFile string `long:"body-file" short:"F" optional:"true" help:"Read the body from this file ('-' reads stdin). Sidesteps shell quoting and keeps the text out of /proc's cmdline."`
 	Base     string `long:"base" optional:"true" help:"Branch to merge into (default: the repository's default branch)."`
-	Head     string `long:"head" optional:"true" help:"Branch to merge from (default: your current branch, as GitHub sees it)."`
+	Head     string `long:"head" optional:"true" help:"Branch to merge from. Defaults to the branch your work tree is on, which the daemon reads for you."`
 	Draft    bool   `long:"draft" optional:"true" help:"Open as a draft."`
 	Remote   string `long:"remote" optional:"true" help:"Remote naming the repository to act on (default: origin)."`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '60s'). Capped at 300s. Timeout = deny."`
@@ -243,6 +243,10 @@ func githubPRViewCmd() *cobra.Command {
 		Use:         "view",
 		Short:       "Show one pull request",
 		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *githubNumberParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(agent.CompleteAskHumanDurations)
+			return nil
+		},
 		RunFunc: func(p *githubNumberParams, _ *cobra.Command, _ []string) {
 			os.Exit(ghProxyCall("/v1/github/pr/view", numberBody(p), p.AskHuman, "pr view", os.Stdout, os.Stderr))
 		},
@@ -256,6 +260,10 @@ func githubPRChecksCmd() *cobra.Command {
 		Long: "Reports the status-check rollup for a pull request. Pending checks are an answer, not a " +
 			"failure — the command succeeds and the state is in the output.",
 		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *githubNumberParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(agent.CompleteAskHumanDurations)
+			return nil
+		},
 		RunFunc: func(p *githubNumberParams, _ *cobra.Command, _ []string) {
 			os.Exit(ghProxyCall("/v1/github/pr/checks", numberBody(p), p.AskHuman, "pr checks", os.Stdout, os.Stderr))
 		},
@@ -267,6 +275,10 @@ func githubPRReadyCmd() *cobra.Command {
 		Use:         "ready",
 		Short:       "Mark a draft pull request ready for review",
 		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *githubNumberParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(agent.CompleteAskHumanDurations)
+			return nil
+		},
 		RunFunc: func(p *githubNumberParams, _ *cobra.Command, _ []string) {
 			os.Exit(ghProxyCall("/v1/github/pr/ready", numberBody(p), p.AskHuman, "pr ready", os.Stdout, os.Stderr))
 		},
@@ -286,6 +298,10 @@ func githubPRCommentCmd() *cobra.Command {
 		Use:         "comment",
 		Short:       "Comment on a pull request",
 		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *githubCommentParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(agent.CompleteAskHumanDurations)
+			return nil
+		},
 		RunFunc: func(p *githubCommentParams, _ *cobra.Command, _ []string) {
 			os.Exit(runGitHubComment("/v1/github/pr/comment", p, "pr comment", os.Stdin, os.Stdout, os.Stderr))
 		},
@@ -342,6 +358,10 @@ func githubIssueViewCmd() *cobra.Command {
 		Use:         "view",
 		Short:       "Show one issue",
 		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *githubNumberParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(agent.CompleteAskHumanDurations)
+			return nil
+		},
 		RunFunc: func(p *githubNumberParams, _ *cobra.Command, _ []string) {
 			os.Exit(ghProxyCall("/v1/github/issue/view", numberBody(p), p.AskHuman, "issue view", os.Stdout, os.Stderr))
 		},
@@ -353,6 +373,10 @@ func githubIssueCommentCmd() *cobra.Command {
 		Use:         "comment",
 		Short:       "Comment on an issue",
 		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *githubCommentParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(agent.CompleteAskHumanDurations)
+			return nil
+		},
 		RunFunc: func(p *githubCommentParams, _ *cobra.Command, _ []string) {
 			os.Exit(runGitHubComment("/v1/github/issue/comment", p, "issue comment", os.Stdin, os.Stdout, os.Stderr))
 		},

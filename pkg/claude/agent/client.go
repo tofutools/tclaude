@@ -747,17 +747,17 @@ func decodeDaemonError(status int, raw []byte) error {
 	return &DaemonError{Status: status, Code: e.Code, Msg: e.Error, Raw: raw}
 }
 
-// The exit codes MapDaemonErrorToRC returns, exported for sibling command
-// packages that speak to the same daemon (pkg/claude/proxy). They are aliases
-// of the unexported names in lookup.go rather than repeated literals, so the
-// two spellings cannot drift apart.
+// The exit codes sibling command packages that speak to the same daemon
+// (pkg/claude/proxy) need. Aliases of the unexported names in lookup.go rather
+// than repeated literals, so the two spellings cannot drift apart.
+//
+// Only the three that have a consumer are exported; MapDaemonErrorToRC returns
+// the others too, and they can be added here when something outside this
+// package actually needs to name one.
 const (
 	RCOK         = rcOK
-	RCNotFound   = rcNotFound
-	RCAmbiguous  = rcAmbiguous
 	RCInvalidArg = rcInvalidArg
 	RCIOFailure  = rcIOFailure
-	RCAuth       = rcAuth
 )
 
 // MapDaemonErrorToRC converts a DaemonError's code into the CLI's rc*

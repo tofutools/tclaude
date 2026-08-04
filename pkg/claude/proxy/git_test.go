@@ -252,7 +252,7 @@ func TestRunGitLsRemote_ValidatesAskHumanBeforeReachingTheDaemon(t *testing.T) {
 func TestRunGitRemotes_RendersRefusalReasons(t *testing.T) {
 	var calls []capturedReq
 	stubDaemon(t, &calls, ok(`{
-		"repo":"/home/me/repo","branch":"feat/thing",
+		"repo_path":"/home/me/repo","branch":"feat/thing",
 		"allowed_remotes":["github.com/tofutools"],
 		"protected_refs":["main","master"],
 		"allow_force_push":false,
@@ -267,6 +267,8 @@ func TestRunGitRemotes_RendersRefusalReasons(t *testing.T) {
 	require.Equal(t, rcOK, rc, "stderr=%s", stderr.String())
 	out := stdout.String()
 	assert.Equal(t, "GET", calls[0].method)
+	assert.Contains(t, out, "/home/me/repo",
+		"discovery must name the exact checkout the daemon resolved")
 	assert.Contains(t, out, "✓ origin")
 	assert.Contains(t, out, "✗ fork")
 	assert.Contains(t, out, "not on the operator's allow-list")

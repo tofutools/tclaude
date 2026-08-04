@@ -222,6 +222,16 @@ func (r *gitProxyRecorder) exec(_ context.Context, cmd agentd.ProxyCommand) (age
 			if !slices.Contains(sub, "--all") {
 				urls = urls[:1]
 			}
+			// `remote get-url` APPLIES url.*.insteadOf — it reports the
+			// destination git would really dial, not the configured spelling
+			// (git 2.43). Modelling it any other way invents a git in which the
+			// fixed-point check catches rewrites; in the real one the
+			// allow-list does, because it sees the rewritten host.
+			for i, u := range urls {
+				if rewritten, ok := r.rewriteTo[u]; ok {
+					urls[i] = rewritten
+				}
+			}
 			return agentd.ProxyResult{Stdout: strings.Join(urls, "\n") + "\n"}, nil
 		}
 		return miss, nil
@@ -475,9 +485,14 @@ func TestGitProxy_RefusesCommandExecutingRemote(t *testing.T) {
 }
 
 // TestGitProxy_RefusesInsteadOfRewrite covers the one dangerous git key a `-c`
-// override cannot reset. The daemon does not try to disable url.*.insteadOf —
-// it requires that the validated URL is a fixed point, and refuses when a
-// repository would rewrite it somewhere unchecked.
+// override cannot reset.
+//
+// It pins the mechanism that ACTUALLY catches it. `git remote get-url` already
+// applies url.*.insteadOf, so the daemon validates the rewritten destination
+// and the ALLOW-LIST refuses it — the fixed-point check never fires on current
+// git. Asserting the fixed-point refusal here would only have proved that the
+// stub modelled a git where `remote get-url` skips rewrites, which is not the
+// one anybody runs.
 func TestGitProxy_RefusesInsteadOfRewrite(t *testing.T) {
 	f, rec := gitProxyWorld(t, []string{"github.com/tofutools"})
 	rec.rewriteTo[gitProxyTestRemote] = "git@evil.example:tofutools/tclaude.git"
@@ -485,7 +500,8 @@ func TestGitProxy_RefusesInsteadOfRewrite(t *testing.T) {
 
 	res := gitProxyPost(t, f, "/v1/git/push", map[string]any{"branch": "feat/thing"})
 	assert.Equal(t, http.StatusForbidden, res.Code, "body=%s", res.Body.String())
-	assert.Contains(t, res.Body.String(), "insteadOf")
+	assert.Contains(t, res.Body.String(), "evil.example",
+		"the refusal must name the destination git would really have dialled")
 	assert.Empty(t, rec.networkCalls(), "a rewritten URL must never be dialled")
 }
 

@@ -68,7 +68,12 @@ type gitProxyRemoteView struct {
 }
 
 type gitProxyRemotesResponse struct {
-	Repo           string               `json:"repo"`
+	// RepoPath is the FULL work-tree path, deliberately unlike gitProxyOutcome's
+	// `repo` (a basename) and ghProxyOutcome's `repo` (an owner/repo slug).
+	// Discovery is the one place the agent needs to see exactly which checkout
+	// the daemon resolved, so it gets a distinct name rather than a third
+	// meaning for the same one.
+	RepoPath       string               `json:"repo_path"`
 	Branch         string               `json:"branch,omitempty"`
 	Remotes        []gitProxyRemoteView `json:"remotes"`
 	AllowedRemotes []string             `json:"allowed_remotes"`
@@ -145,7 +150,7 @@ func handleGitProxyRemotes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp := gitProxyRemotesResponse{
-		Repo:           s.repoRoot,
+		RepoPath:       s.repoRoot,
 		Branch:         s.currentBranch(ctx),
 		Remotes:        []gitProxyRemoteView{},
 		AllowedRemotes: s.policy.AllowedRemotes,
