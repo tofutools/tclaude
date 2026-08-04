@@ -163,12 +163,10 @@ func copilotPermissionArgs(policy string, addDirs []string) []string {
 // renderer) drops relative and empty entries — an --add-dir Copilot would
 // resolve against a working directory tclaude only assumes.
 func copilotAddDirArgs(dirs []string) []string {
-	normalized := normalizedSandboxWriteDirs(dirs)
-	if len(normalized) == 0 {
+	sorted := copilotAddDirRoots(dirs)
+	if len(sorted) == 0 {
 		return nil
 	}
-	sorted := append([]string(nil), normalized...)
-	sort.Strings(sorted)
 	args := make([]string, 0, len(sorted)*2)
 	for _, dir := range sorted {
 		args = append(args, copilotFlagAddDir, dir)
@@ -180,15 +178,100 @@ func copilotAddDirArgs(dirs []string) []string {
 // to reach, from the same effective sandbox profile the outer sandbox is built
 // from.
 //
-// Read and write roots are merged deliberately: Copilot's directory check is
-// not read/write split — its dialog is a single "Allow directory access" — so
-// modelling a distinction the CLI does not have would only invent one.
+// Read and write roots are merged, and the merge rests on an ASSUMPTION that
+// this file should not be read as claiming is measured. The out-of-cwd-paths
+// scenario exercised --add-dir against a READ (a `cat` outside every granted
+// root); nothing establishes whether the grant also permits writes, and the
+// only support for merging is that the dialog Copilot draws is a single "Allow
+// directory access" with no read/write split in its wording.
+//
+// The merge is still the right default, because the alternative is worse in the
+// direction that matters: modelling a read/write distinction the CLI may not
+// have would mean withholding a write root the profile granted, and Copilot
+// would then park the pane on a directory prompt for a path tclaude had already
+// decided the agent may write. If the grant turns out to be read-only, the
+// consequence is a prompt, not an escalation. If it turns out to imply write,
+// every granted READ root is also writable to Copilot — which is exactly why
+// ValidateCopilotAddDirGrants refuses a deny nested inside any rendered root
+// rather than reasoning about which access it carries. Worth a fixture.
+//
 // SandboxDenyDirs are NOT rendered: --add-dir has no negative form, and
 // silently turning a deny into an omission would be indistinguishable from
-// never having had the rule.
+// never having had the rule. When a deny sits INSIDE a rendered root, omission
+// is not even available — see ValidateCopilotAddDirGrants.
 func copilotSpawnAddDirs(spec SpawnSpec) []string {
 	dirs := make([]string, 0, len(spec.SandboxReadDirs)+len(spec.SandboxWriteDirs))
 	dirs = append(dirs, spec.SandboxReadDirs...)
 	dirs = append(dirs, spec.SandboxWriteDirs...)
 	return dirs
+}
+
+// SandboxCopilotDenyInsideAddDir is the wire vocabulary for the refusal below.
+const SandboxCopilotDenyInsideAddDir = "copilot-deny-inside-add-dir"
+
+// ValidateCopilotAddDirGrants refuses a launch whose rendered `--add-dir` roots
+// would pre-answer Copilot's directory dialog for a path the sandbox profile
+// DENIES.
+//
+// The shape is the mirror image of ValidateSandboxReopenUnderDeny's: that one
+// guards a grant nested under a deny, this one a deny nested under a grant. It
+// needs its own gate because `--add-dir` has no negative form. Claude renders
+// denyRead/denyWrite alongside its allows and lets the more specific rule win;
+// Copilot's path check takes grants only, so a profile that reads `$HOME` and
+// denies `$HOME/.ssh` collapses, on Copilot, to "read `$HOME`" — and the denied
+// subtree stops prompting.
+//
+// That is a real boundary loss rather than a theoretical one, and only outside
+// tclaude-layer. The permission matrix records that Copilot's built-in file
+// edits are not OS-confined, so for a launch with no outer wall the directory
+// check IS the file boundary; silently widening it is exactly the escalation
+// the catalog refuses to make with `--allow-all-paths`. Under tclaude-layer the
+// outer wall enforces the deny whatever Copilot's own check believes, so the
+// launch is admitted — the same reasoning the reopen-under-deny gate applies to
+// the harnesses that can enforce it.
+//
+// It refuses rather than dropping the grant: SandboxReadDirs contracts that an
+// adapter either renders its roots or rejects the launch, and a dropped root
+// would silently return the pane to prompting on a directory the operator
+// granted, which is a deadlock rather than a safety win.
+func ValidateCopilotAddDirGrants(harnessName string, readDirs, writeDirs, denyDirs []string, outerLayer bool) error {
+	if strings.TrimSpace(harnessName) != CopilotName || outerLayer {
+		return nil
+	}
+	denies := normalizedSandboxWriteDirs(denyDirs)
+	if len(denies) == 0 {
+		return nil
+	}
+	grants := copilotAddDirRoots(append(append([]string(nil), readDirs...), writeDirs...))
+	for _, grant := range grants {
+		for _, deny := range denies {
+			if !pathContains(grant, deny) {
+				continue
+			}
+			return &SandboxCapabilityError{
+				Harness: CopilotName,
+				Kind:    SandboxCopilotDenyInsideAddDir,
+				Message: fmt.Sprintf(
+					"this profile denies %s while granting the enclosing directory %s, and Copilot's "+
+						"directory check takes grants only — there is no --add-dir counterpart to a deny, "+
+						"so the launch would open the denied path to the agent. Copilot's built-in file "+
+						"edits are not OS-confined, so outside --sandbox-impl tclaude-layer that check is "+
+						"the only file boundary the launch has. Run this profile under "+
+						"--sandbox-impl tclaude-layer, where the outer sandbox enforces the deny, or "+
+						"narrow the grant so it does not enclose the denied path",
+					deny, grant),
+			}
+		}
+	}
+	return nil
+}
+
+// copilotAddDirRoots returns the directories copilotAddDirArgs would render,
+// without the flag tokens — so the gate above and the renderer cannot disagree
+// about which roots a launch actually opens.
+func copilotAddDirRoots(dirs []string) []string {
+	normalized := normalizedSandboxWriteDirs(dirs)
+	sorted := append([]string(nil), normalized...)
+	sort.Strings(sorted)
+	return sorted
 }

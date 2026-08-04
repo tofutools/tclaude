@@ -63,10 +63,13 @@ func TestResumeLaunchCmd_CopilotPreservesRecordedApprovalPosture(t *testing.T) {
 	}
 }
 
-// A pass-through arg that moves the permission posture must fail the resume
-// closed, because the pane would then run broader than the row that records it.
-// Ordinary pass-through args must keep working.
-func TestResumeLaunchCmd_CopilotRefusesPostureMovingPassThroughArgs(t *testing.T) {
+// A pass-through arg naming an option tclaude renders and records must fail the
+// resume closed. On a resume the IDENTITY arms matter most: the command already
+// carries `--resume=<recorded-id>`, so a second one would attach the pane to a
+// different conversation than the one being resumed, while every downstream
+// consumer of the record — hooks, status, the conversation index — kept
+// describing the original. Ordinary pass-through args must keep working.
+func TestResumeLaunchCmd_CopilotRefusesTclaudeOwnedPassThroughArgs(t *testing.T) {
 	for _, args := range [][]string{
 		{"--allow-all-paths"},
 		{"--yolo"},
@@ -75,6 +78,19 @@ func TestResumeLaunchCmd_CopilotRefusesPostureMovingPassThroughArgs(t *testing.T
 		{"--deny-tool=url(github.com)"},
 		{"--add-dir", "/srv/elsewhere"},
 		{"--disallow-temp-dir"},
+		// Identity: a second conversation selector on a resume.
+		{"--resume=99999999-9999-4999-8999-999999999999"},
+		{"-r", "99999999-9999-4999-8999-999999999999"},
+		{"--session-id", "99999999-9999-4999-8999-999999999999"},
+		{"--continue"},
+		{"--connect"},
+		{"-i", "a second first turn"},
+		// Metadata tclaude has dedicated, recorded options for.
+		{"--model=gpt-5.4"},
+		{"--effort=high"},
+		{"--name=renamed"},
+		// Headless mode, whose no-TTY permission fallbacks are unmeasured.
+		{"-p", "go"},
 	} {
 		t.Run(args[0], func(t *testing.T) {
 			setupTestDB(t)
@@ -86,7 +102,7 @@ func TestResumeLaunchCmd_CopilotRefusesPostureMovingPassThroughArgs(t *testing.T
 			_, _, _, err := resumeLaunchCmd(harness.CopilotName,
 				resumeConvCopilot[:8], resumeConvCopilot, args)
 			require.Errorf(t, err, "pass-through %v must fail the resume closed", args)
-			assert.Contains(t, err.Error(), "moves the Copilot permission posture that tclaude records",
+			assert.Contains(t, err.Error(), "which tclaude renders and records for this launch",
 				"the refusal must explain WHY, not merely reject")
 		})
 	}
@@ -103,4 +119,53 @@ func TestResumeLaunchCmd_CopilotKeepsOrdinaryPassThroughArgs(t *testing.T) {
 	require.NoError(t, err, "the audit is a posture gate, not an allowlist")
 	assert.Contains(t, cmd, "--log-level=debug")
 	assert.Contains(t, cmd, "--no-color")
+}
+
+// A Copilot row that predates the approval catalog carries a blank posture. The
+// interactive resume path must reconstruct it as `inherit` — what those launches
+// actually did — and never as the new `allow-tools` default.
+//
+// The promotion this guards against would be durable, not momentary: the
+// resumed generation's posture is written back into the new session row, so one
+// resume would permanently hand the conversation in-sandbox lineage authority
+// that the lineage classifier refuses to credit a blank Copilot row with.
+func TestResumeLaunchCmd_CopilotBlankRowDoesNotGainTheNewDefault(t *testing.T) {
+	setupTestDB(t)
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "resume-copilot-legacy", ConvID: resumeConvCopilot,
+		Harness: harness.CopilotName,
+		// ApprovalPolicy deliberately blank: the pre-catalog row shape.
+	}))
+
+	h, err := harness.Resolve(harness.CopilotName)
+	require.NoError(t, err)
+	policy, autoReview, err := resumeApprovalState(h, resumeConvCopilot)
+	require.NoError(t, err)
+	assert.Equal(t, harness.CopilotApprovalInherit, policy,
+		"a blank Copilot row must reconstruct as inherit, not be promoted to the daemon default")
+	assert.False(t, autoReview)
+
+	cmd, _, _, err := resumeLaunchCmd(harness.CopilotName,
+		resumeConvCopilot[:8], resumeConvCopilot, nil)
+	require.NoError(t, err)
+	assert.NotContains(t, cmd, "--allow-all-tools",
+		"resuming a pre-catalog row must not silently auto-approve every tool")
+	assert.NotContains(t, cmd, "--no-ask-user")
+}
+
+// The correction is Copilot-specific: another harness's blank-row fallback must
+// be untouched. A blank Codex row still reconstructs as `untrusted` (the launch
+// profile's own conservative legacy inference), not as Codex's `never` default
+// and not as anything this branch introduced.
+func TestResumeApprovalState_BlankRowFallbackUnchangedForOtherHarnesses(t *testing.T) {
+	setupTestDB(t)
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "resume-codex-legacy", ConvID: resumeConvCodex, Harness: harness.CodexName,
+	}))
+	h, err := harness.Resolve(harness.CodexName)
+	require.NoError(t, err)
+	policy, _, err := resumeApprovalState(h, resumeConvCodex)
+	require.NoError(t, err)
+	assert.Equal(t, harness.ApprovalUntrusted, policy,
+		"the Codex legacy path keeps its own conservative reconstruction")
 }

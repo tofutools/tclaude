@@ -2597,6 +2597,12 @@ func resumeLaunchCmdWithStackedProof(
 			return "", "", nil, err
 		}
 	}
+	// The mirror-image shape for Copilot's negative-form-less path grants.
+	// Mirrors the spawn path.
+	if err := harness.ValidateCopilotAddDirGrants(
+		h.Name, readDirs, writeDirs, denyDirs, outerLayer); err != nil {
+		return "", "", nil, err
+	}
 	askTimeout, err := resumeAskTimeout(h, convID)
 	if err != nil {
 		return "", "", nil, err
@@ -3018,7 +3024,22 @@ func resumeApprovalState(h *harness.Harness, convID string) (string, bool, error
 	}
 	policy := strings.TrimSpace(launch.ApprovalPolicy)
 	autoReview := launch.ApprovalAutoReview
-	if policy == "" {
+	if policy == "" && h != nil && h.Name == harness.CopilotName {
+		// NOT the harness default, for the reason agentd.approvalForHarness
+		// gives on the daemon side: every Copilot launch tclaude made before
+		// the approval catalog existed emitted zero permission flags, so
+		// `inherit` IS the faithful reconstruction of a blank row and
+		// `allow-tools` would be a promotion.
+		//
+		// The promotion would also be durable rather than momentary. The
+		// resumed generation's posture is written back into the new session
+		// row below, so a single interactive resume would hand a conversation
+		// the approvalAutoInSandbox lineage authority that
+		// classifyApprovalLineage deliberately refuses to credit a blank
+		// Copilot row with — and it would do so on a path the operator reaches
+		// by picking the conversation out of a list.
+		policy, err = harness.ValidateApprovalPolicy(h, harness.CopilotApprovalInherit)
+	} else if policy == "" {
 		policy, err = harness.ResolveApprovalPolicy(h, "")
 	} else {
 		policy, err = harness.ValidateApprovalPolicy(h, policy)

@@ -150,12 +150,14 @@ func (copilotSpawner) BuildCommand(spec SpawnSpec) string {
 	// the whole prompt stays one PROMPT rather than splitting into stray
 	// flags/words.
 	//
-	// Emitted on a resume too, with one honest caveat: the docs establish that
-	// `-i` and `--resume` CAN co-occur (the `--resume` entry describes what
-	// happens "under a non-TTY `-i`"), but they do not state that the prompt is
-	// then submitted into the RESUMED conversation. That part is unverified
-	// pending a real binary. Forwarding it is still the better failure mode —
-	// a prompt the harness might ignore beats one tclaude silently swallowed.
+	// Emitted on a resume too, and that is now MEASURED rather than hoped for.
+	// The permission matrix's resume-submits-prompt entry ran the real binary
+	// twice — seeding a conversation under a pinned --session-id, then
+	// relaunching it on a PTY with --resume=<full-id> and a new -i prompt — and
+	// the resumed request carried message roles [system, user, assistant, user]
+	// while the session-state directory kept its original UUID. A fresh
+	// conversation would have sent [system, user]. So a relaunch briefing lands
+	// in the conversation it was written for and does not vanish silently.
 	if spec.InitialPrompt != "" {
 		cmd += " -i " + clcommon.ShellQuoteArg(spec.InitialPrompt)
 	}

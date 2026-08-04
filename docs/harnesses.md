@@ -323,6 +323,19 @@ rather than the approval axis: the grants come from the sandbox profile either
 way, and Copilot's own directory check would otherwise prompt for a directory
 tclaude's outer sandbox has already opened.
 
+**A deny nested inside a granted root refuses the launch** (without
+`--sandbox-impl tclaude-layer`). `--add-dir` has no negative counterpart —
+Copilot's path check takes grants only — so a profile that grants `~` and denies
+`~/.ssh` would collapse, on Copilot, to "grant `~`", and the denied subtree
+would stop prompting. Since Copilot's built-in edits are not OS-confined, that
+check is the only file boundary a launch without an outer wall has, so tclaude
+refuses rather than widening it silently. Under `tclaude-layer` the outer
+sandbox enforces the deny whatever Copilot's own check believes, and the launch
+is admitted. One related **assumption**, stated because it is not measured: read
+and write roots are both handed to `--add-dir`, since the dialog Copilot draws
+has no read/write split — but the fixture lab only ever exercised `--add-dir`
+against a read, so whether the grant also permits writes is unestablished.
+
 Several things this deliberately does **not** do:
 
 - **No `--allow-all-paths`, `--allow-all` or `--yolo`.** The path flags work as
@@ -352,18 +365,40 @@ Copilot pane into an allow-all session while tclaude recorded `inherit`. It is
 unset rather than pinned to a falsy value, so a future widening of the value
 parse cannot silently defeat it.
 
-**Posture-moving pass-through args are refused.** Args you pass after `--` land
-on the same command line as the rendered permission flags, so
+**Pass-through args naming an option tclaude owns are refused.** Args you pass
+after `--` land on the same command line as the flags tclaude renders, so
 `tclaude session new --harness copilot -- --allow-all-paths` would run a pane
 broader than the posture tclaude wrote down — and approval lineage and relaunch
-both reason from that record. Any Copilot permission or agent-mode flag in
-pass-through position fails the launch closed, in both the `--flag value` and
-`--flag=value` spellings, and on resume as well as on a fresh launch. The
-refusal names the flag. Ordinary args (`--log-level=debug`, `--no-color`, …)
-are unaffected. This is a refusal rather than a silent filter, and it does not
-rely on duplicate-flag ordering: nothing measured establishes what Copilot does
-with a contradictory permission flag, so a launch that would depend on those
-semantics is refused instead of guessed at.
+both reason from that record. The same mismatch has two other shapes, so the
+audit covers all three:
+
+- **Permission and agent mode** — every Copilot permission, path, tool-catalog
+  or mode flag, plus `-p`/`--prompt` (headless mode, whose no-TTY permission
+  fallbacks are a separate and only partly measured set: tool approval
+  auto-*allows* headlessly while path access auto-*denies*, and neither
+  describes a pane).
+- **Identity** — `--resume`/`-r`, `--session-id`, `--continue`, `--connect` and
+  a duplicate `-i`/`--interactive`. This is the sharpest one: tclaude pins the
+  conversation id before the pane starts and enrolls the agent against it, so a
+  pass-through conversation selector attaches the pane to a *different*
+  conversation while hooks, status, the conversation index and the agent record
+  all keep describing the enrolled one. Use `tclaude conv resume <id>` to attach
+  to another conversation.
+- **Metadata** — `--model`, `--effort`, `--name`. These move no boundary, and
+  they are refused anyway: tclaude validates and records each one, so a
+  duplicate makes the dashboard, the usage accounting or the conversation title
+  describe a launch the pane is not running. Use tclaude's own options.
+
+Refusals apply in both the `--flag value` and `--flag=value` spellings (and the
+glued `-rID` short form), on resume as well as on a fresh launch, and each names
+the dedicated option that does the same job honestly. Ordinary args
+(`--log-level=debug`, `--no-color`, …) are unaffected. This is a refusal rather
+than a silent filter, and it does not rely on duplicate-flag ordering: nothing
+measured establishes what Copilot does with a contradictory or repeated option,
+so a launch that would depend on those semantics is refused instead of guessed
+at. The audit matches flag names exactly, which assumes 1.0.77's parser accepts
+no abbreviations or aliases — plausible from its option table, but not yet
+fixtured.
 
 **What tclaude records is the launch posture, not a durable boundary.** Copilot's
 in-pane commands (`/allow-all`, `/add-dir`, `/reset-allowed-tools`, `/settings`)

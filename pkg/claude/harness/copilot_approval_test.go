@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -348,7 +349,7 @@ func TestCopilotLaunchExtraArgsAudit(t *testing.T) {
 	// table uses, since an audit that knew only one would be bypassed by
 	// writing the other. Driven off the audited set itself, so a flag added to
 	// it later cannot be added without spelling coverage.
-	for flag := range copilotPostureMovingFlags {
+	for flag := range copilotOwnedFlags {
 		for _, spelling := range []string{flag, flag + "=x", flag + "=url(https://x?a=b)"} {
 			if err := ValidateLaunchExtraArgs(h, []string{"--log-level=debug", spelling}); err == nil {
 				t.Errorf("pass-through %q was accepted; it moves a recorded Copilot posture", spelling)
@@ -361,29 +362,79 @@ func TestCopilotLaunchExtraArgsAudit(t *testing.T) {
 		}
 	}
 
+	// Headless mode is audited too: the no-TTY tool-approval fallback
+	// auto-ALLOWS, and whether `-p` in a tmux pane counts as no-TTY is not
+	// measured. The glued-short-value spelling must be caught as well, since the
+	// `=` split alone does not reach it.
+	for _, spelling := range []string{"-p", "-p=go", "-pgo", "--prompt", "--prompt=go"} {
+		if err := ValidateLaunchExtraArgs(h, []string{spelling}); err == nil {
+			t.Errorf("pass-through %q was accepted; headless mode has its own unmeasured permission fallbacks", spelling)
+		}
+	}
+
 	// The audit must name the flag and stay actionable: a bare "refused" leaves
 	// the operator guessing which of their args was the problem.
 	err = ValidateLaunchExtraArgs(h, []string{"--allow-all-paths"})
 	if err == nil {
 		t.Fatal("--allow-all-paths must be refused")
 	}
-	for _, want := range []string{"--allow-all-paths", "directory access", "approval policy"} {
+	for _, want := range []string{"--allow-all-paths", "directory access", "sandbox profile"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal must contain %q: %v", want, err)
 		}
 	}
 
-	// Ordinary args keep working — this is a posture audit, not an allowlist.
+	// tclaude owns the identity, first-turn and metadata options too, not only
+	// the permission ones: a pass-through copy of any of them makes the pane
+	// disagree with the launch that was recorded. Identity is the sharpest —
+	// --resume attaches the pane to a DIFFERENT conversation than the one the
+	// daemon enrolled — but a duplicate --model misreports the dashboard and the
+	// usage accounting under the same unmeasured duplicate-flag semantics.
+	for _, spelling := range []string{
+		"--resume", "--resume=other-id", "-r", "-rother-id",
+		"--session-id", "--session-id=00000000-0000-0000-0000-000000000000",
+		"--continue", "--connect",
+		"-i", "-igo", "--interactive",
+		"--model", "--model=gpt-5.4", "--effort=high", "--name=other",
+	} {
+		if err := ValidateLaunchExtraArgs(h, []string{spelling}); err == nil {
+			t.Errorf("pass-through %q was accepted; tclaude renders and records that option itself", spelling)
+		}
+	}
+	// Each refusal must name the dedicated option that does the job honestly —
+	// a refusal with no way out trains operators to work around it.
+	for _, tc := range []struct{ arg, want string }{
+		{"--resume=other", "tclaude conv resume"},
+		{"--model=gpt-5.4", "--model"},
+		{"--name=other", "--name"},
+		{"-i", "initial message"},
+		{"--allow-all-tools", "approval policy"},
+		{"--add-dir", "sandbox profile"},
+	} {
+		err := ValidateLaunchExtraArgs(h, []string{tc.arg})
+		if err == nil {
+			t.Errorf("%s must be refused", tc.arg)
+			continue
+		}
+		if !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("the refusal for %s must name the honest alternative %q: %v", tc.arg, tc.want, err)
+		}
+	}
+
+	// Ordinary args keep working — this audits what tclaude owns, and is not a
+	// general allowlist.
 	for _, args := range [][]string{
 		nil,
 		{"--log-level=debug"},
 		{"--banner", "--no-color"},
-		{"--model=claude-sonnet-4.6"},
 		// Near-misses that are NOT the audited flags. A prefix match would
 		// wrongly reject these, and a `--add-dir`-shaped value is not the flag.
 		{"--allow-all-tools-please"},
 		{"--add-dirs"},
 		{"/srv/add-dir"},
+		// The glued-short-value form is checked only for single-dash flags, so
+		// a long flag that merely starts with an audited name stays accepted.
+		{"--plans-only"},
 	} {
 		if err := ValidateLaunchExtraArgs(h, args); err != nil {
 			t.Errorf("ordinary pass-through args %v must keep working: %v", args, err)
@@ -419,9 +470,114 @@ func TestCopilotLaunchExtraArgsAuditCoversEveryRenderedFlag(t *testing.T) {
 			if !strings.HasPrefix(arg, "-") {
 				continue // an --add-dir value, not a flag
 			}
-			if _, audited := copilotPostureMovingFlags[arg]; !audited {
+			if _, audited := copilotOwnedFlags[arg]; !audited {
 				t.Errorf("the catalog renders %s but the pass-through audit does not know it, so an operator could pass the same flag unnoticed", arg)
 			}
 		}
+	}
+}
+
+// TestCopilotAddDirGrantsRefuseADenyInsideAGrant covers the mirror image of the
+// reopen-under-deny shape, which Copilot cannot represent at all.
+//
+// Claude renders denyRead/denyWrite alongside its allows and lets the more
+// specific rule win. Copilot's directory check takes grants only, so a profile
+// that grants $HOME and denies $HOME/.ssh collapses on Copilot to "read $HOME"
+// — and the denied subtree stops prompting. Without an outer wall that is the
+// only file boundary the launch has (the built-in edits are not OS-confined),
+// so the launch is refused rather than quietly widened.
+func TestCopilotAddDirGrantsRefuseADenyInsideAGrant(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		read, write, den []string
+		outerLayer       bool
+		wantRefused      bool
+	}{
+		{
+			name: "a denied subtree inside a granted read root",
+			read: []string{"/home/op"}, den: []string{"/home/op/.ssh"},
+			wantRefused: true,
+		},
+		{
+			name:  "a denied subtree inside a granted write root",
+			write: []string{"/srv/repo"}, den: []string{"/srv/repo/secrets"},
+			wantRefused: true,
+		},
+		{
+			name: "the granted root and the deny are the same path",
+			read: []string{"/srv/repo"}, den: []string{"/srv/repo"},
+			wantRefused: true,
+		},
+		{
+			// Under tclaude-layer the outer sandbox enforces the deny whatever
+			// Copilot's own check believes, so the launch is admitted — the same
+			// reasoning the reopen-under-deny gate applies to harnesses that can
+			// enforce it.
+			name: "the same profile under the outer layer",
+			read: []string{"/home/op"}, den: []string{"/home/op/.ssh"},
+			outerLayer: true, wantRefused: false,
+		},
+		{
+			name: "a disjoint deny is representable by omission",
+			read: []string{"/srv/repo"}, den: []string{"/home/op/.ssh"},
+			wantRefused: false,
+		},
+		{
+			// A sibling whose name merely shares a prefix is not contained.
+			name: "a sibling directory with a shared name prefix",
+			read: []string{"/srv/repo"}, den: []string{"/srv/repo-secrets"},
+			wantRefused: false,
+		},
+		{
+			name:        "no denies at all",
+			read:        []string{"/srv/repo"},
+			wantRefused: false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateCopilotAddDirGrants(CopilotName, tc.read, tc.write, tc.den, tc.outerLayer)
+			if tc.wantRefused {
+				if err == nil {
+					t.Fatal("the launch must be refused: the denied path would be opened by an --add-dir root")
+				}
+				var capErr *SandboxCapabilityError
+				if !errors.As(err, &capErr) || capErr.Kind != SandboxCopilotDenyInsideAddDir {
+					t.Fatalf("want a typed %s capability refusal, got %v", SandboxCopilotDenyInsideAddDir, err)
+				}
+				if !strings.Contains(err.Error(), "tclaude-layer") {
+					t.Errorf("the refusal must name the posture that works: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("this profile is representable and must launch: %v", err)
+			}
+		})
+	}
+
+	// Other harnesses render their own deny rules and are not gated here.
+	for _, name := range []string{DefaultName, CodexName, OpenCodeName} {
+		if err := ValidateCopilotAddDirGrants(name,
+			[]string{"/home/op"}, nil, []string{"/home/op/.ssh"}, false); err != nil {
+			t.Errorf("%s must not be gated by the Copilot add-dir shape: %v", name, err)
+		}
+	}
+}
+
+// The gate and the renderer must agree about which roots a launch opens, or the
+// gate would be checking a set the command line does not contain.
+func TestCopilotAddDirGateAndRendererAgreeOnTheRoots(t *testing.T) {
+	dirs := []string{"/srv/b", "/srv/a", "/srv/a/", "relative", "", "."}
+	roots := copilotAddDirRoots(dirs)
+	args := copilotAddDirArgs(dirs)
+	var rendered []string
+	for i := 0; i < len(args); i += 2 {
+		if args[i] != copilotFlagAddDir {
+			t.Fatalf("unexpected argv shape: %v", args)
+		}
+		rendered = append(rendered, args[i+1])
+	}
+	if strings.Join(roots, " ") != strings.Join(rendered, " ") {
+		t.Fatalf("gate roots %v disagree with rendered roots %v", roots, rendered)
 	}
 }
