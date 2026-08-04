@@ -163,6 +163,9 @@ Keep the daemon running in a non-sandboxed terminal:
 
 ```bash
 tclaude agentd serve
+
+# Or, from the standalone daemon binary released alongside tclaude:
+tclaude-agentd serve
 ```
 
 Then open the dashboard:

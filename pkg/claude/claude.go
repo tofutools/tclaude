@@ -9,8 +9,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/ask"
-	"github.com/tofutools/tclaude/pkg/claude/common/config"
-	"github.com/tofutools/tclaude/pkg/claude/common/terminal"
+	"github.com/tofutools/tclaude/pkg/claude/cli"
 	"github.com/tofutools/tclaude/pkg/claude/conv"
 	"github.com/tofutools/tclaude/pkg/claude/dbcmd"
 	"github.com/tofutools/tclaude/pkg/claude/memoryfiles"
@@ -29,7 +28,6 @@ import (
 
 // Cmd returns the claude subcommand for use in other binaries.
 func Cmd() *cobra.Command {
-	var logLevel string
 	agentCmd := agent.Cmd()
 	// The terminal dashboard implementation lives with agentd's TUI model,
 	// but its operator-facing command belongs beside `agent dashboard`.
@@ -65,28 +63,8 @@ func Cmd() *cobra.Command {
 		},
 	}.ToCobra()
 	_ = cmd.Flags().MarkHidden("managed-launch")
-	cmd.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
-		if err := config.RelocateLegacyState(); err != nil {
-			return fmt.Errorf("relocate legacy tclaude state: %w", err)
-		}
-		cfg, cfgErr := config.Load()
-		finalLogLevel := logLevel
-		if !cmd.Flags().Changed("log-level") && cfgErr == nil && cfg.LogLevel != "" {
-			finalLogLevel = cfg.LogLevel
-		}
-		common.SetupLogging(common.ParseLogLevel(finalLogLevel))
-		// Terminal preference, tier 2: the config file's `terminal`
-		// field. The agentd serve --terminal flag (tier 1) overrides
-		// this later, in runServe. Applies process-wide so every
-		// command that opens a terminal — agentd, `session new` —
-		// honours it.
-		if cfgErr == nil && cfg.Terminal != "" {
-			terminal.SetPreferred(cfg.Terminal)
-		}
-		return nil
-	}
+	cli.ConfigureRoot(cmd)
 	cmd.Args = cobra.ArbitraryArgs
-	cmd.PersistentFlags().StringVar(&logLevel, "log-level", "info", "Log level (debug, info, warn, error)")
 	session.RegisterJoinGroupCompletion(cmd)
 	return cmd
 }

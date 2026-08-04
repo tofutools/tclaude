@@ -41,7 +41,11 @@ features around native Windows behavior unless the operator explicitly asks.
 
 ## Where to look
 
-- Entry point: `main.go`, which calls `pkg/claude.Cmd()`.
+- Entry points: `main.go` (the `tclaude` CLI, via `pkg/claude.Cmd()`) and
+  `cmd/tclaude-agentd/main.go` (the standalone daemon, via
+  `agentd.RootCmd()`). Both go through `pkg/claude/cli`, which owns the
+  process-level entry sequence and the shared root-command wiring — put
+  anything both binaries need there rather than duplicating it.
 - Root command wiring: `pkg/claude/claude.go`.
 - Harness design and capability matrix: `docs/harnesses.md`.
 - Adding another harness: `docs/adding-a-harness.md`.
