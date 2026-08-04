@@ -2482,9 +2482,11 @@ func templatePerAgentWorktreeParent(perAgent *db.WavePerAgentWorktrees) string {
 
 func templateCodexGitCommonDir(cwd string, perAgent *db.WavePerAgentWorktrees) (string, error) {
 	if perAgent != nil && perAgent.WorktreeAsCwd {
-		return spawnGitCommonDir(harness.CodexName, harness.SandboxManagedProfile, perAgent.Repo)
+		return spawnGitCommonDir(
+			harness.CodexName, harness.SandboxManagedProfile, "", perAgent.Repo)
 	}
-	return spawnGitCommonDir(harness.CodexName, harness.SandboxManagedProfile, cwd)
+	return spawnGitCommonDir(
+		harness.CodexName, harness.SandboxManagedProfile, "", cwd)
 }
 
 func resolveTemplateWorktreeInputs(w http.ResponseWriter, rawSharedPath string, rawPerAgent *db.WavePerAgentWorktrees) (string, *db.WavePerAgentWorktrees, bool) {

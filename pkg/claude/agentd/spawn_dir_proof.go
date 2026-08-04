@@ -21,7 +21,9 @@ import (
 	"golang.org/x/sys/unix"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 // Spawn-dir write-proof — the launch-DIRECTORY half of the spawn sandbox
@@ -542,8 +544,8 @@ func appendUniqueDirs(dirs []string, candidates ...string) []string {
 	return dirs
 }
 
-func spawnGitCommonDir(harnessName, sandboxMode, cwd string) (string, error) {
-	if !spawnUsesPinnedGitCommonDir(harnessName, sandboxMode) {
+func spawnGitCommonDir(harnessName, sandboxMode, sandboxImplementation, cwd string) (string, error) {
+	if !spawnUsesPinnedGitCommonDir(harnessName, sandboxMode, sandboxImplementation) {
 		return "", nil
 	}
 	return harness.GitCommonDir(cwd)
@@ -553,8 +555,33 @@ func spawnGitCommonDir(harnessName, sandboxMode, cwd string) (string, error) {
 // repository write paths derived from its Git common dir. Codex's managed
 // profile consumes them through its generated permission profile; Claude Code
 // consumes them through a per-session sandbox.filesystem.allowWrite overlay.
-func spawnUsesPinnedGitCommonDir(harnessName, sandboxMode string) bool {
-	switch harnessOrDefault(harnessName) {
+//
+// It must answer for the wall that will ACTUALLY be built, which is why the
+// implementation is an input rather than a decoration. When tclaude's own layer
+// wraps the pane, session new derives the repository grants from the Claude
+// `on` shape regardless of the harness-native mode (see gitWorktreeWriteDirs in
+// pkg/claude/session/new.go) — so every such launch receives Git common/admin
+// write paths whatever its harness. Reading the harness-native mode alone gets
+// all three wrapped harnesses wrong, because tclaude-layer FORCES that mode to
+// the harness's own no-inner-wall spelling: Claude `off`, Codex
+// danger-full-access, Copilot `off`. Each of those falls outside the
+// mode-keyed arms below, so a tclaude-layer child would take the grants without
+// the daemon pinning them — and an unpinned grant is one the agent caller never
+// proved it could write, which is exactly the write-permission escape the
+// pairing described on defaultSiblingWorktreeTrust leans on.
+//
+// OpenCode is excluded on the same terms it is excluded from the mode arms:
+// tclaude's layer confines its authoritative server rather than wrapping the
+// pane, so it does not take this grant set (TclaudeLayerUsesServerBoundary).
+func spawnUsesPinnedGitCommonDir(harnessName, sandboxMode, sandboxImplementation string) bool {
+	name := harnessOrDefault(harnessName)
+	if implementation, err := sandboxpolicy.NormalizeImplementation(
+		sandboxImplementation,
+	); err == nil && implementation.UsesTclaudeLayer() &&
+		!session.TclaudeLayerUsesServerBoundary(name) {
+		return true
+	}
+	switch name {
 	case harness.CodexName:
 		return strings.TrimSpace(sandboxMode) == harness.SandboxManagedProfile
 	case harness.DefaultName:

@@ -42,6 +42,22 @@ func lineageDeltaParents() []spawnLineageSandbox {
 
 // Every child request shape a spawn boundary can present, including the blank
 // mode a caller who chose nothing sends.
+//
+// Copilot is deliberately absent, and its absence is the point. This file
+// measures ONE decision: what moved when a tclaude-layer child started being
+// judged by the mode it launches under (TCL-989 PR1). For Claude, Codex and
+// OpenCode that mapping is the whole story, and the two assertions below hold
+// because a newly-admitted request only re-spells a launch the parent could
+// already mint.
+//
+// Copilot's admission is a different decision made later, in PR2: the harness
+// was not in the matrix at all, and adding it grants parents a launch they
+// genuinely could not mint before. Folding it in here would both inflate this
+// PR1 measurement and falsify the no-new-launch property the next test pins.
+// The Copilot matrix is measured on its own terms by
+// TestSandboxLineageCopilotMatrix in spawn_sandbox_lineage_copilot_test.go;
+// what THIS file guarantees for PR2 is that every non-Copilot verdict is
+// unchanged.
 func lineageDeltaChildRequests() []struct{ Harness, Mode string } {
 	return []struct{ Harness, Mode string }{
 		{harness.DefaultName, ""},
@@ -54,8 +70,6 @@ func lineageDeltaChildRequests() []struct{ Harness, Mode string } {
 		{harness.CodexName, harness.SandboxDangerFull},
 		{harness.OpenCodeName, harness.OpenCodeSandboxAccessControl},
 		{harness.OpenCodeName, harness.OpenCodeSandboxTclaudeLayer},
-		{harness.CopilotName, harness.CopilotSandboxInherit},
-		{harness.CopilotName, harness.CopilotSandboxOff},
 	}
 }
 

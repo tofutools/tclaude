@@ -150,6 +150,19 @@ func sandboxForHarness(name string) string {
 	return ""
 }
 
+// sandboxImplementationForConv returns the sandbox implementation a conv's
+// durable relaunch config records, or "" (the legacy harness-builtin default)
+// when there is no readable config. It exists for the launch-adjacent callers
+// that already derive a harness and a sandbox mode for a conv and now need the
+// third axis to answer what wall the launch will actually build.
+func sandboxImplementationForConv(convID string) string {
+	config, err := durableRelaunchConfigForConv(convID)
+	if err != nil {
+		return ""
+	}
+	return config.activeSandboxImplementation()
+}
+
 // approvalForHarness returns the safe launch default used for legacy rows that
 // have no recorded posture. Current relaunches use approvalForRelaunch to
 // preserve the source generation exactly.

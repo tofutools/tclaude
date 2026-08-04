@@ -258,19 +258,42 @@ Two consequences are worth stating plainly:
   resolution, not a live meter's. Truly per-call usage and context are emitted
   on Copilot's stdout JSONL stream and never persisted, so reading them is a
   transport integration rather than a file tracker, and remains out of scope.
-- Copilot agents are still not usable as detached agents. The approval axis is
-  now classifiable in both directions, but **sandbox**-lineage classification has
-  no Copilot arm, and it is consulted first — so an agent-to-agent Copilot spawn
-  is refused as `sandbox_restricted` in both directions, and a Copilot agent can
-  spawn nothing. Directory pre-trust is no longer one of the gaps — `trust_dir`
-  seeds `trustedFolders` — but it is opt-in, so a spawn that does not ask for it
-  still parks on the modal before the model is contacted. The other two former
-  gates have closed: a Copilot pane simulator now drives the nonblocking default
-  end to end through the daemon's own status path, and `web_fetch` — which was
-  measured to be a third independent deadlock source — is closed by the same
-  `--allow-all-tools` the default already renders. What remains is the sandbox
-  arm, and it is deliberately the *last* thing to land rather than the leftover:
-  it is the axis that decides whether an OS boundary actually exists.
+- Copilot agents are usable as detached agents in **one launch topology only**:
+  sandbox implementation `tclaude-layer` with mode `off` — tclaude's own OS wall
+  enforcing and Copilot's own (experimental, MXC) command sandbox asserted down,
+  so the launch has exactly one claimed boundary. Any other spelling is refused
+  as `sandbox_restricted` in both directions: a legacy row with no recorded
+  implementation, `harness-builtin` (which Copilot rejects outright — its modes
+  only *assert* its sandbox is off, so tclaude cannot advertise it as an OS
+  boundary), `stacked` (Copilot's own policy nested inside tclaude's, an
+  intersection nobody has reviewed), implementation `off`, and the `inherit`
+  mode, whose posture is decided by a settings file tclaude neither controls nor
+  is notified about.
+
+  The mode string alone cannot tell these apart — Copilot's single-wall mode and
+  its no-wall mode are both `off` — so the recorded **implementation** is what
+  separates a confined Copilot agent from an unconfined one, on the parent side
+  as well as the child side. A temporary dashboard sandbox unlock therefore
+  revokes a Copilot agent's spawn authority for as long as it is unlocked.
+
+  Which parents may mint that child: Claude `off`/`inherit`/`on`; Codex
+  `danger-full-access`/managed profile (not `workspace-write` or `read-only`);
+  OpenCode `off`/`access-control`/`tclaude-layer`; and another Copilot agent
+  already running the proven pair. A Copilot agent may itself spawn another
+  proven Copilot, a Claude `on` child, or a Codex `read-only`/`workspace-write`/
+  managed-profile child — no fully-open child, and no OpenCode child, since
+  tclaude's layer confines OpenCode through its authoritative server rather than
+  by wrapping the pane and no equivalence between the two has been proven.
+
+  Approval lineage remains a second, independent gate: an admitted sandbox pair
+  is still refused as `approval_restricted` if the child's posture cannot be
+  proven, which is what `inherit` means for this harness. Directory pre-trust is
+  not a gap — a detached child in tclaude's own verified default sibling
+  worktree is pre-trusted automatically, so it does not park on the modal, and
+  the write-proof that makes that exemption safe covers the repository write
+  paths the outer wall grants as well as the launch cwd. Elsewhere `trust_dir`
+  stays opt-in, so a spawn that does not ask for it still parks before the model
+  is contacted.
 
 The restraint is deliberate rather than incidental. This adapter was FIRST
 written against the official GitHub documentation alone, with no Copilot binary
