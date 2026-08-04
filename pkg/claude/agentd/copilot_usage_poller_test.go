@@ -108,7 +108,20 @@ func TestCopilotUsagePersistsObservedModelAndEffort(t *testing.T) {
 	assert.Equal(t, "gpt-5.4", snap.Model)
 	assert.Equal(t, "high", snap.EffortLevel)
 
-	second := copilotUsageCall(2, 28725, 700)
+	// The observed model can change even when the context projection does not:
+	// an aborted call may report no output, the same prompt, and no known
+	// window. This specifically proves model/effort participate in the
+	// persist helper's no-change short-circuit.
+	sameProjection := copilotUsageCall(2, 25114, 0)
+	sameProjection.Model = "gpt-5.4-rerouted"
+	sameProjection.ReasoningEffort = "medium"
+	applyCopilotUsageCalls(sess, []harness.CopilotUsageCall{sameProjection})
+	snap, err = db.GetContextSnapshot(sess.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "gpt-5.4-rerouted", snap.Model)
+	assert.Equal(t, "medium", snap.EffortLevel)
+
+	second := copilotUsageCall(3, 28725, 700)
 	second.Model = "gpt-5.5"
 	second.ReasoningEffort = ""
 	applyCopilotUsageCalls(sess, []harness.CopilotUsageCall{second})
