@@ -114,6 +114,111 @@ func TestSoftExit_NoRetryWhenFirstExitSucceeds(t *testing.T) {
 		"successful lifecycle send must target the exact pane id, not session name")
 }
 
+// THE LADDER AND THE WATCHDOG ARE TWO CONCURRENT ACTORS, AND NOTHING ORDERS
+// THEM. Every scenario below has to reckon with that.
+//
+// A soft stop starts the bounded re-injection ladder AND, since TCL-1001, an
+// escalation watchdog. In production the two are separated by seconds: the
+// ladder's attempts land at softExitRetryDelay × softExitMaxAttempts ≈ 8 s,
+// the watchdog's deadline is 10 s. The flow fixture shrinks both — 1 ms
+// retries against a 20 ms deadline — which keeps the RATIO but throws away
+// the absolute headroom. Scheduler jitter is absolute: a goroutine that loses
+// its P for 20 ms on a loaded runner reorders these two in a way it can never
+// reorder 8 s and 10 s. That is why TCL-1028 is intermittent and why it was
+// seen on macOS runners, and it bites in both directions:
+//
+//   - The watchdog OUTRUNS the ladder. Its deadline expires mid-ladder, it
+//     kills the pane, and the ladder's next probe reads dead and returns
+//     early. A scenario expecting all 3 attempts gets 2
+//     (TestLifecycleStop_PaneGenerationBinding/degraded_soft_control).
+//   - The watchdog STEALS the ladder's fault. It re-probes with
+//     display-message on a 1 ms interval, and TmuxSim's queued faults belong
+//     to the verb rather than to a caller, so a fault a scenario queued for
+//     one specific retry probe is taken by whichever probe runs next. The
+//     targeted probe then succeeds, the abort it was supposed to trigger
+//     never happens, and the ladder runs to its full 3 attempts (TCL-1028's
+//     own symptom: expected 1, got 3).
+//
+// Both were reproduced by shifting the relative timing a few milliseconds —
+// which is all a descheduled goroutine does — and both are fixed the same
+// way, by ORDERING the two actors instead of hoping. The scenarios that care
+// park the watchdog on its first probe (holdSoftExitEscalation), wait for the
+// ladder to reach the state under test, and only then let the watchdog run.
+// Nothing about the ladder or the watchdog is disabled: the escalation still
+// happens, still kills, and is still asserted — it just no longer happens at
+// an arbitrary point inside the thing being measured.
+//
+// Do NOT "fix" a recurrence here by changing an expected attempt count or
+// widening a bound. Both directions are reachable, which makes the count an
+// effect; tuning it hides whichever direction is currently quiet.
+
+// awaitLadderThenRelease is the ordering the two actors need.
+//
+// It waits for `reached` — the ladder state the scenario is about — and only
+// then lets the parked watchdog run, so the escalation happens after the
+// measurement rather than through it. It deliberately does NOT drain: a
+// scenario that reads state inside the bounded observer window has to release
+// the watchdog without also waiting for that window to close. Callers drain
+// where they always did.
+//
+// `what` is reported when the ladder never gets there, which means the
+// scenario has stopped driving the engine it was written for and is no longer
+// proving anything.
+func awaitLadderThenRelease(t *testing.T, release func(), reached func() bool, what string) {
+	t.Helper()
+	// Generous, because it costs nothing on the normal path (Eventually
+	// returns as soon as the condition holds) and a loaded CI runner is
+	// exactly the environment this ordering exists for.
+	require.Eventually(t, reached, 10*time.Second, time.Millisecond, what)
+	release()
+}
+
+// retryProbeFaults records which retry attempts the ladder actually reached
+// and queues a single display-message fault at a chosen one.
+//
+// The attempt log is the point. A scenario that only counts /exit sends
+// infers where the ladder stopped; this states it. When the abort under test
+// regresses, "the ladder reached attempt 3" fails with the reason rather than
+// with an arithmetic mismatch a reader has to decode.
+type retryProbeFaults struct {
+	mu       sync.Mutex
+	seen     []int
+	faultAt  int
+	injected bool
+}
+
+func (r *retryProbeFaults) hook(sim *testharness.TmuxSim) func(int) {
+	return func(attempt int) {
+		r.mu.Lock()
+		r.seen = append(r.seen, attempt)
+		queue := attempt == r.faultAt
+		if queue {
+			r.injected = true
+		}
+		r.mu.Unlock()
+		if queue {
+			sim.FailNextCommand("display-message")
+		}
+	}
+}
+
+func (r *retryProbeFaults) attempts() []int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]int(nil), r.seen...)
+}
+
+// taken reports that the fault was queued AND consumed. With the watchdog
+// parked, the ladder's own probe is the only thing that can consume it, so
+// this is a causal statement that the probe under test saw its fault — the
+// thing TCL-1028 showed a scenario cannot simply assume.
+func (r *retryProbeFaults) taken(sim *testharness.TmuxSim) bool {
+	r.mu.Lock()
+	injected := r.injected
+	r.mu.Unlock()
+	return injected && sim.PendingCommandFaults("display-message") == 0
+}
+
 // Scenario: a wedged pane that ignores /exit entirely. The retry must be
 // BOUNDED — it cannot type /exit at the pane forever. What finishes the pane
 // is the escalation ladder (TCL-1001): the soft path no longer leaves a hung
@@ -135,12 +240,23 @@ func TestSoftExit_BoundedRetriesForHungPane(t *testing.T) {
 		return true // consume; never MarkDead
 	})
 
+	// The watchdog waits until the ladder has spent its attempts. That is the
+	// production ordering (10 s deadline against ~8 s of retries); at fixture
+	// scale it has to be stated, or the watchdog's kill lands mid-ladder and
+	// this scenario measures 2 attempts instead of the bound it exists to pin.
+	releaseEscalation := holdSoftExitEscalation(t)
+
 	stop := f.AsHuman().Stop(conv, false)
 	f.AssertSoftStopped(stop)
+	awaitLadderThenRelease(t, releaseEscalation, func() bool {
+		return countExitSends(f, target, "/exit") == 3
+	}, "the bounded ladder never reached its third attempt")
 	agentd.WaitForBackgroundForTest()
 
 	// Bounded: 1 initial attempt + 2 retries (softExitMaxAttempts = 3) = 3
 	// total. Guards against an unbounded re-injection loop into a wedged pane.
+	// Re-asserted after the drain: the wait above proves it REACHED 3, this
+	// proves nothing pushed it past 3 afterwards.
 	assert.Equal(t, 3, countExitSends(f, target, "/exit"),
 		"soft-exit attempts must be capped (initial + retries), not infinite")
 	assert.False(t, f.World.Tmux.IsAlive(tmuxSes),
@@ -333,6 +449,18 @@ func TestSoftExit_PreSendUnknownSendsZeroAndErrors(t *testing.T) {
 	assert.Equal(t, 0, countExitSends(f, tmuxSes+":0.0", "/exit"))
 }
 
+// Scenario: the retry probe cannot read the pane. An unknown result must end
+// the ladder and hand cleanup to the observer window — never re-inject on a
+// guess about a pane whose state is unreadable.
+//
+// This is TCL-1028's test. The queued display-message fault is aimed at
+// attempt 2's probe, and until now nothing made it land there: the escalation
+// watchdog polls the same verb every millisecond, so on a runner that
+// descheduled this goroutine between the hook and its probe, the watchdog took
+// the fault, attempt 2 read a healthy pane, and the ladder ran on to its full
+// 3 attempts. Parking the watchdog leaves the ladder's own probe as the only
+// possible consumer, and `taken` then CONFIRMS the consumption instead of
+// assuming it.
 func TestSoftExit_RetryUnknownCleansWithoutSend(t *testing.T) {
 	f := newFlow(t)
 	t.Cleanup(agentd.SetSoftExitRetryDelayForTest(5 * time.Millisecond))
@@ -343,18 +471,26 @@ func TestSoftExit_RetryUnknownCleansWithoutSend(t *testing.T) {
 	cc := f.World.CCs.GetByConvID(conv)
 	require.NotNil(t, cc)
 	cc.OnInput("/exit", func(c *testharness.CCSim, _ string) bool { return true })
-	cleanup := agentd.SetBeforeSoftExitTargetRetryProbeForTest(func(attempt int) {
-		if attempt == 2 {
-			f.World.Tmux.FailNextCommand("display-message")
-		}
-	})
+	faults := &retryProbeFaults{faultAt: 2}
+	cleanup := agentd.SetBeforeSoftExitTargetRetryProbeForTest(faults.hook(f.World.Tmux))
 	cleanupAfterBackgroundDrain(t, cleanup)
+	releaseEscalation := holdSoftExitEscalation(t)
 	stop := f.AsHuman().Stop(conv, false)
 	f.AssertSoftStopped(stop)
+	awaitLadderThenRelease(t, releaseEscalation, func() bool {
+		return faults.taken(f.World.Tmux)
+	}, "attempt 2's probe never took the fault queued for it, so this scenario "+
+		"is not measuring an unknown probe result")
 	agentd.WaitForBackgroundForTest()
 	assert.Equal(t, 1, countExitSends(f, tmuxSes+":0.0", "/exit"))
+	assert.Equal(t, []int{2}, faults.attempts(),
+		"an unknown probe must END the ladder; reaching attempt 3 means the abort did not hold")
 }
 
+// Scenario: the same unknown probe, but on the LAST attempt — the ladder is
+// already at its bound, so the abort has nothing left to prevent and what is
+// pinned is that the final attempt still cleans up rather than re-injecting a
+// fourth time.
 func TestSoftExit_FinalUnknownCleansBounded(t *testing.T) {
 	f := newFlow(t)
 	t.Cleanup(agentd.SetSoftExitRetryDelayForTest(5 * time.Millisecond))
@@ -365,16 +501,20 @@ func TestSoftExit_FinalUnknownCleansBounded(t *testing.T) {
 	cc := f.World.CCs.GetByConvID(conv)
 	require.NotNil(t, cc)
 	cc.OnInput("/exit", func(c *testharness.CCSim, _ string) bool { return true })
-	cleanup := agentd.SetBeforeSoftExitTargetRetryProbeForTest(func(attempt int) {
-		if attempt == 3 {
-			f.World.Tmux.FailNextCommand("display-message")
-		}
-	})
+	faults := &retryProbeFaults{faultAt: 3}
+	cleanup := agentd.SetBeforeSoftExitTargetRetryProbeForTest(faults.hook(f.World.Tmux))
 	cleanupAfterBackgroundDrain(t, cleanup)
+	releaseEscalation := holdSoftExitEscalation(t)
 	stop := f.AsHuman().Stop(conv, false)
 	f.AssertSoftStopped(stop)
+	awaitLadderThenRelease(t, releaseEscalation, func() bool {
+		return faults.taken(f.World.Tmux)
+	}, "attempt 3's probe never took the fault queued for it, so this scenario "+
+		"is not measuring an unknown probe result")
 	agentd.WaitForBackgroundForTest()
 	assert.Equal(t, 2, countExitSends(f, tmuxSes+":0.0", "/exit"))
+	assert.Equal(t, []int{2, 3}, faults.attempts(),
+		"the ladder must reach its bound here; a shorter run means something aborted it early")
 }
 
 func TestForceStop_SelectedPaneSwapDoesNotKillSuccessor(t *testing.T) {
@@ -456,9 +596,23 @@ func TestLifecycleStop_PaneGenerationBinding(t *testing.T) {
 				}
 			}
 
+			// Only the row whose pane stays the same live pane throughout runs
+			// a full ladder against a live watchdog, and it is the row that
+			// was seen failing the other way — expected 3, got 2 — when the
+			// watchdog's kill arrived before the ladder's last attempt. The
+			// drifting rows stand both actors down after one send, so there
+			// is nothing to order.
+			var releaseEscalation func()
+			if tc.wantSends > 1 {
+				releaseEscalation = holdSoftExitEscalation(t)
+			}
+
 			stop := f.AsHuman().Stop(conv, tc.force)
 			assert.Equal(t, tc.wantAction, stop.Action)
-			if tc.wantSends > 1 {
+			if releaseEscalation != nil {
+				awaitLadderThenRelease(t, releaseEscalation, func() bool {
+					return countExitSends(f, tmuxSession+":0.0", "/exit") == tc.wantSends
+				}, "the ladder never reached its full attempt count")
 				agentd.WaitForBackgroundForTest()
 			}
 			assert.Equal(t, tc.wantSends, countExitSends(f, tmuxSession+":0.0", "/exit"))
@@ -499,21 +653,34 @@ func TestSoftExit_DeliveredIntentObserverWindow(t *testing.T) {
 			require.NotNil(t, cc)
 			cc.OnInput("/exit", func(*testharness.CCSim, string) bool { return true })
 			if tc.dualFault {
+				// These two faults need no watchdog parking, and the reason is
+				// structural rather than lucky: this hook runs inside the
+				// SYNCHRONOUS injection, and the escalation watchdog is not
+				// armed until that returns. There is no second issuer of
+				// either verb yet, so the faults can only reach the probe they
+				// are aimed at.
 				t.Cleanup(agentd.SetAfterSoftExitTargetSendForTest(func() {
 					f.World.Tmux.FailNextCommand("display-message")
 					f.World.Tmux.FailNextCommand("list-sessions")
 				}))
 			}
 
+			// The full-ladder row measures the observer window across all
+			// three attempts, so the watchdog's kill must not land inside it.
+			var releaseEscalation func()
+			if tc.wantSends > 1 {
+				releaseEscalation = holdSoftExitEscalation(t)
+			}
+
 			action := agentd.StopOneConvWithIntentForTest(conv, db.AgentExitActionStop, eventID)
 			assert.Equal(t, "soft_stopped", action)
-			if tc.wantSends > 1 {
-				// Eventually returns as soon as the bounded retries land, so a generous
-				// deadline costs nothing on the normal path while tolerating a long CI
-				// scheduler pause.
-				require.Eventually(t, func() bool {
+			if releaseEscalation != nil {
+				// No drain here: the intent assertions below read state
+				// INSIDE the bounded observer window, which the drain would
+				// wait out.
+				awaitLadderThenRelease(t, releaseEscalation, func() bool {
 					return countExitSends(f, tmuxSession+":0.0", "/exit") == tc.wantSends
-				}, 10*time.Second, time.Millisecond)
+				}, "the ladder never reached its full attempt count")
 			} else {
 				assert.Equal(t, tc.wantSends, countExitSends(f, tmuxSession+":0.0", "/exit"))
 			}
