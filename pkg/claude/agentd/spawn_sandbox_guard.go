@@ -64,12 +64,40 @@ func spawnSandboxLineageFailure(
 			"agent %s was launched as %s sandbox %q (%s) and may not spawn a %s child with sandbox %q (%s)",
 			short8(parentConvID), parent.Harness, parent.Mode, parent.Implementation,
 			child.Harness, child.Mode, child.Implementation)
+		if note := lineageParentAuthorityNote(parent); note != "" {
+			message += "; " + note
+		}
 		if remedy := copilotLineageRemedy(parent, child); remedy != "" {
 			message += "; " + remedy
 		}
 		return &spawnFailure{http.StatusForbidden, "sandbox_restricted", message}
 	}
 	return nil
+}
+
+// lineageParentAuthorityNote names implementation-derived parent authority in a
+// refusal, so whoever hits it can tell this apart from an ordinary
+// child-too-loose refusal.
+//
+// Without it the sentence reads `agent X was launched as claude sandbox "off"
+// (tclaude-layer) and may not spawn ...`, and `off` is the loosest mode the
+// matrix has — nothing in the pair explains why anything was refused, so it
+// reads as a guard bug. The reason is that the parent's authority comes from its
+// implementation: under tclaude's own wall the harness's inner sandbox is
+// deliberately stood down, and the recorded mode names that stand-down rather
+// than an unconfined agent.
+func lineageParentAuthorityNote(parent spawnLineageSandbox) string {
+	normalized, ok := normalizeSpawnLineageSandbox(parent)
+	if !ok {
+		return ""
+	}
+	authority := lineageConfinementMode(normalized)
+	if authority == normalized.Mode {
+		return ""
+	}
+	return fmt.Sprintf(
+		"the parent's authority is derived from its sandbox implementation, not its recorded mode: under %s the harness's own sandbox is stood down because tclaude's wall confines the agent, so it delegates as %s sandbox %q rather than as %q",
+		normalized.Implementation, normalized.Harness, authority, normalized.Mode)
 }
 
 // copilotLineageRemedy names the way out of a Copilot refusal the caller can
@@ -558,7 +586,12 @@ func spawnSandboxLineageAllowed(parent, child spawnLineageSandbox) bool {
 	if !parentOK || !childOK {
 		return false
 	}
-	child.Mode = childLineageConfinementMode(child)
+	// Both sides are classified by the confinement their launch actually has.
+	// The parent side is the authority question — how much may this agent
+	// delegate — and reading its mode alone credited a tclaude-walled parent
+	// with the authority of a genuinely unconfined one (TCL-991).
+	parent.Mode = lineageConfinementMode(parent)
+	child.Mode = lineageConfinementMode(child)
 
 	if parent.Harness == harness.DefaultName {
 		switch parent.Mode {
@@ -608,9 +641,11 @@ func spawnSandboxLineageAllowed(parent, child spawnLineageSandbox) bool {
 	}
 
 	// A Copilot PARENT is classified by its persisted pair, not by its mode
-	// alone — the one place parent-side implementation is read, and deliberately
-	// the only one. Claude/Codex/OpenCode parents keep PR #1941's mode-only
-	// classification until TCL-991 revisits it as its own behaviour change.
+	// alone. Every parent arm now is — lineageConfinementMode runs over the
+	// parent as well (TCL-991) — but Copilot's rule stays HERE rather than
+	// joining that remap, for the structural reason spelled out in the
+	// normalization arm below: Copilot has no second confinement class to map
+	// onto, so its pair has to gate admission to the matrix outright.
 	//
 	// It has to be read here because Copilot's `off` mode is ambiguous on its
 	// own: as a harness-builtin row it means "Copilot's own experimental wall is
@@ -649,8 +684,8 @@ func copilotProvenLineageLaunch(s spawnLineageSandbox) bool {
 		s.Implementation == sandboxpolicy.ImplementationTclaudeLayer
 }
 
-// childLineageConfinementMode maps a CHILD's launch onto the confinement class
-// the lineage matrix below reasons in.
+// lineageConfinementMode maps a launch — either side of the relation — onto the
+// confinement class the lineage matrix below reasons in.
 //
 // It exists because ResolveSandboxImplementationMode now forces the
 // harness-native mode for a `tclaude-layer` launch, and that forced mode is the
@@ -658,7 +693,7 @@ func copilotProvenLineageLaunch(s spawnLineageSandbox) bool {
 // `danger-full-access`. Read as a bare mode, those name the loosest posture in
 // the matrix. Read with the implementation beside them, they name the opposite:
 // the harness's inner wall is deliberately stood down BECAUSE tclaude's own
-// wall is the one enforcing, so the child is confined at least as tightly as
+// wall is the one enforcing, so the launch is confined at least as tightly as
 // the harness-builtin sandboxed class it maps to.
 //
 // Claude tclaude-layer therefore classifies as Claude `on`, and Codex
@@ -666,9 +701,9 @@ func copilotProvenLineageLaunch(s spawnLineageSandbox) bool {
 // native `tclaude-layer` mode is already the matrix's own name for this
 // topology.
 //
-// This does NOT leave every verdict where it was, and the difference is
-// measured rather than asserted: 19 request shapes move, 3 tightened and 16
-// loosened, enumerated as an exact list by
+// On the CHILD side this does NOT leave every verdict where it was, and the
+// difference is measured rather than asserted: 19 request shapes move, 3
+// tightened and 16 loosened, enumerated as an exact list by
 // TestSandboxLineageTclaudeLayerVerdictDelta. The tightened three refuse a
 // Codex read-only / workspace-write parent a tclaude-walled child, because that
 // child launches danger-full-access inside a wall that writes its cwd subtree.
@@ -677,30 +712,36 @@ func copilotProvenLineageLaunch(s spawnLineageSandbox) bool {
 // spelling the request differently — a property asserted over every one of them
 // by TestSandboxLineageTclaudeLayerLooseningGrantsNoNewLaunch.
 //
-// The asymmetry with the PARENT side is deliberate, not an oversight. A parent
-// is still classified by its persisted mode alone, so a tclaude-layer parent
-// keeps being read as the fully-open class it reads as today. Tightening the
-// parent side changes what existing agents are permitted to spawn, which is a
-// separate, behaviour-changing decision (TCL-991).
+// It applies to the PARENT side too, and there it only ever TIGHTENS: a
+// tclaude-layer parent used to be read as the fully-open class its forced mode
+// spells, which credited a confined agent with the authority to mint children
+// it has no containment claim over (TCL-991). The moved verdicts are enumerated
+// exactly by TestSandboxLineageParentAuthorityVerdictDelta, over every
+// (harness, mode, implementation) triple a session row can actually hold.
 //
 // Only the exact `tclaude-layer` implementation enters here. `stacked` runs the
 // harness's own sandbox nested inside tclaude's, so its mode still means what
-// the matrix thinks it means and must not be reinterpreted.
-func childLineageConfinementMode(child spawnLineageSandbox) string {
-	if child.Implementation != sandboxpolicy.ImplementationTclaudeLayer {
-		return child.Mode
+// the matrix thinks it means and must not be reinterpreted — and in practice a
+// stacked launch already records the confined mode (stackedSandboxLaunchMode
+// forces Claude `on` / the Codex managed profile), so there is nothing here to
+// remap for it. An implementation of `off` records the same no-confinement mode
+// a tclaude-layer launch does, and there it is the literal truth: nothing is
+// enforcing, and the mode must keep its face value.
+func lineageConfinementMode(s spawnLineageSandbox) string {
+	if s.Implementation != sandboxpolicy.ImplementationTclaudeLayer {
+		return s.Mode
 	}
-	switch child.Harness {
+	switch s.Harness {
 	case harness.DefaultName:
-		if child.Mode == harness.ClaudeSandboxOff {
+		if s.Mode == harness.ClaudeSandboxOff {
 			return harness.ClaudeSandboxOn
 		}
 	case harness.CodexName:
-		if child.Mode == harness.SandboxDangerFull {
+		if s.Mode == harness.SandboxDangerFull {
 			return harness.SandboxManagedProfile
 		}
 	}
-	return child.Mode
+	return s.Mode
 }
 
 func normalizeSpawnLineageSandbox(s spawnLineageSandbox) (spawnLineageSandbox, bool) {
@@ -742,7 +783,7 @@ func normalizeSpawnLineageSandbox(s spawnLineageSandbox) (spawnLineageSandbox, b
 		// is asserted down and NOTHING replaced it. Claude and Codex have the
 		// same collision but resolve it by remapping onto a second confinement
 		// class they already have (`on`, the managed profile);
-		// childLineageConfinementMode is that remap, and Copilot has no second
+		// lineageConfinementMode is that remap, and Copilot has no second
 		// class to remap onto. Only the implementation separates the two.
 		//
 		// Everything else fails closed: a blank/legacy row (which predates this

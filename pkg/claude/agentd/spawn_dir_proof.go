@@ -311,20 +311,20 @@ func dirWriteProofCallerExempt(callerConvID string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	// parent.Implementation now travels with the mode (TCL-989), but the
-	// exemptions below deliberately still key off the mode ALONE, so every
-	// caller keeps exactly the exemption it has today. A tclaude-layer parent
-	// records its harness's no-confinement mode while tclaude's own wall
-	// confines it, so reading the pair here would flip real callers from exempt
-	// to proof-required — a behaviour change that belongs with the parent-side
-	// classification work (TCL-991), not with threading the field.
-	if parent.Harness == harness.DefaultName && parent.Mode == harness.ClaudeSandboxOff {
+	// The exemption is keyed off the confinement the parent's launch actually
+	// has, not off its recorded mode (TCL-991). A tclaude-layer parent records
+	// its harness's no-confinement mode while tclaude's own wall confines it, so
+	// reading the mode alone exempted callers that cannot in fact write
+	// everywhere the child could — which is the entire premise of the exemption.
+	// Those callers now have to prove the write like any other confined agent.
+	mode := lineageConfinementMode(parent)
+	if parent.Harness == harness.DefaultName && mode == harness.ClaudeSandboxOff {
 		return true, nil
 	}
-	if parent.Harness == harness.CodexName && parent.Mode == harness.SandboxDangerFull {
+	if parent.Harness == harness.CodexName && mode == harness.SandboxDangerFull {
 		return true, nil
 	}
-	if parent.Harness == harness.OpenCodeName && parent.Mode == harness.OpenCodeSandboxOff {
+	if parent.Harness == harness.OpenCodeName && mode == harness.OpenCodeSandboxOff {
 		return true, nil
 	}
 	return false, nil

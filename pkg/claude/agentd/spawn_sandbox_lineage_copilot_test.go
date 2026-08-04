@@ -219,7 +219,7 @@ func TestSandboxLineageCopilotAdmissionMovesNoOtherVerdict(t *testing.T) {
 			} {
 				c := child
 				c.Implementation = implementation
-				c.Mode = childLineageConfinementMode(c)
+				c.Mode = lineageConfinementMode(c)
 				if spawnSandboxLineageAllowed(parent, c) {
 					admitted = append(admitted,
 						fmt.Sprintf("%s -> %s[%s]", lineageKey(parent), lineageKey(child), implementation))
