@@ -247,6 +247,15 @@ const SandboxCopilotDenyInsideAddDir = "copilot-deny-inside-add-dir"
 // adapter either renders its roots or rejects the launch, a dropped root would
 // silently return the pane to prompting on a directory the operator granted,
 // and the implicit roots cannot be dropped at all.
+//
+// KNOWN LIMIT: containment is byte-exact and lexical, so a differently-cased
+// deny spelling on a case-insensitive volume, or a symlinked one (macOS TMPDIR
+// through /var -> /private/var reaches this gate, since the temp root is one of
+// the implicit grants), escapes it. That is the identity-only, guard-biased
+// containment rule TCL-981 established and TCL-985 tracks converting the
+// remaining sites to; this is one of them, and it is deliberately left to that
+// pass rather than converted alone — pathContains is also used by a call site
+// that is NOT a refusal guard, so the change belongs per-call-site.
 func ValidateCopilotAddDirGrants(
 	harnessName, cwd, tempDir string,
 	readDirs, writeDirs, denyDirs []string,
