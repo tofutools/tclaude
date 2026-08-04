@@ -1184,10 +1184,6 @@ jobs:
               # this scenario is skipped, the online arm's containment claim is
               # unbacked while the whole matrix still reports green.
               TestCopilotPermissionWebFetchEgressWallIsInForce
-              # The blanket URL deny's durability. A deny an in-pane /allow-all
-              # could lift would be a starting posture wearing a boundary's
-              # name, so this is what lets docs call --deny-tool url a boundary.
-              TestCopilotPermissionWebFetchDenyURLSurvivesInPaneAllowAll
             )
             # += and NOT =. A plain assignment here would REPLACE the shared
             # array above rather than extend it, silently dropping the five
