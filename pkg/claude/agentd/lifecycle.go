@@ -2876,8 +2876,10 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	}
 	profileTiers := []launchProfileTier{
 		{profile: namedProfile, source: namedProfileSource},
-		{profile: groupProfile, source: profileSource(groupProfile, agent.ProvGroupProfileSource)},
-		{profile: globalProfile, source: profileSource(globalProfile, agent.ProvGlobalProfileSource)},
+		{profile: groupProfile, source: profileSource(groupProfile, agent.ProvGroupProfileSource),
+			defaultTier: true},
+		{profile: globalProfile, source: profileSource(globalProfile, agent.ProvGlobalProfileSource),
+			defaultTier: true},
 	}
 	harnessSource := agent.ProvExplicit
 	if strings.TrimSpace(body.Harness) == "" {
@@ -2952,13 +2954,13 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	var fieldFail *spawnFailure
 	var modelSource, modelNote, effortSource, effortNote string
 	body.Model, modelSource, modelNote, fieldFail = resolveStringLaunchField(
-		"model", body.Model, h.Name, profileTiers, func(p *db.SpawnProfile) string { return p.Model }, validateModel)
+		modelField, body.Model, h.Name, profileTiers, func(p *db.SpawnProfile) string { return p.Model }, validateModel)
 	if fieldFail != nil {
 		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
 		return
 	}
 	body.Effort, effortSource, effortNote, fieldFail = resolveStringLaunchField(
-		"effort", body.Effort, h.Name, profileTiers, func(p *db.SpawnProfile) string { return p.Effort }, h.Models.ValidateEffort)
+		effortField, body.Effort, h.Name, profileTiers, func(p *db.SpawnProfile) string { return p.Effort }, h.Models.ValidateEffort)
 	if fieldFail != nil {
 		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
 		return
@@ -4132,6 +4134,12 @@ func harnessOrDefault(name string) string {
 type launchProfileTier struct {
 	profile *db.SpawnProfile
 	source  string
+	// defaultTier marks a tier nobody typed at this launch: the group's default
+	// spawn profile and the global default profile. Those are ambient
+	// configuration, so the harness-pinned fields (see harnessPinnedLaunchField)
+	// may only be filled from them when the profile targets the harness this
+	// launch actually resolved to.
+	defaultTier bool
 }
 
 func profileSource(prof *db.SpawnProfile, format func(string) string) string {
@@ -4169,12 +4177,45 @@ func resolveProfileStartupContext(harnessName string, tiers []launchProfileTier)
 	return "", strings.Join(notes, "; ")
 }
 
+const (
+	modelField  = "model"
+	effortField = "effort"
+)
+
+// harnessPinnedLaunchField reports whether a launch field names something that
+// belongs to ONE vendor's catalog rather than being a generic launch posture.
+// Sandbox/approval/tools/timeouts describe how an agent is contained and are
+// deliberately allowed to participate across vendors; a model slug and its
+// effort level are not portable, they merely happen to pass a permissive
+// validator. Copilot's ValidateModel accepts any bounded single token by design
+// (it brokers multi-vendor models with no machine-readable catalog), so a
+// Claude-targeted default profile's "opus[1m]" validated cleanly and reached the
+// Copilot CLI. The gate is keyed on the FIELD, inside the resolver, so no
+// current or future resolution path can forget to apply it.
+func harnessPinnedLaunchField(field string) bool {
+	return field == modelField || field == effortField
+}
+
+// harnessMismatchSkipNote discloses a default tier skipped because the profile
+// targets another harness — not because its value failed validation.
+func harnessMismatchSkipNote(source, field, profileHarness, harnessName string) string {
+	return fmt.Sprintf("%s %s ignored (profile targets %s, launch is %s)",
+		source, field, harnessOrDefault(profileHarness), harnessOrDefault(harnessName))
+}
+
 // resolveStringLaunchField applies explicit > named > group > global for one
 // launch field. Explicit values are direct intent and fail loudly. A profile
 // value invalid for a foreign resolved harness is ambient configuration: skip
 // it, disclose the skip, and continue to the next tier. A profile claiming the
 // resolved harness but carrying an invalid value is self-inconsistent and
 // remains a loud error.
+//
+// Harness-pinned fields (model, effort) additionally refuse to take a value
+// from a DEFAULT tier whose profile targets another harness, whether or not the
+// value would validate. Default tiers are ambient — nobody typed them at this
+// launch — so a harness mismatch there means the value was authored for a
+// different vendor and must fall through to the next tier / harness default. An
+// explicitly named -p profile is direct intent and keeps participating.
 func resolveStringLaunchField(
 	field, explicitValue, harnessName string,
 	tiers []launchProfileTier,
@@ -4199,6 +4240,12 @@ func resolveStringLaunchField(
 		}
 		raw := strings.TrimSpace(profileValue(tier.profile))
 		if raw == "" {
+			continue
+		}
+		if harnessPinnedLaunchField(field) && tier.defaultTier &&
+			!profileMatchesHarness(tier.profile, harnessName) {
+			notes = append(notes, harnessMismatchSkipNote(
+				tier.source, field, tier.profile.Harness, harnessName))
 			continue
 		}
 		value, err := validate(raw)
@@ -4334,14 +4381,26 @@ func resolveContextFeaturesLaunchField(
 // resolved here — so on that path the fills are no-ops and secure-default
 // resolution is idempotent.
 func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
-	profiles := []*db.SpawnProfile{groupDefaultProfile(g), globalDefaultProfile()}
+	// Both tiers here are default tiers — this path never sees a -p profile —
+	// so each is marked as such and carries the same provenance wording
+	// handleGroupSpawn uses, keeping any skip note readable if it is ever
+	// surfaced on this path (today it is discarded, as for every other field).
+	profiles := []struct {
+		profile *db.SpawnProfile
+		source  func(string) string
+	}{
+		{groupDefaultProfile(g), agent.ProvGroupProfileSource},
+		{globalDefaultProfile(), agent.ProvGlobalProfileSource},
+	}
 	tiers := make([]launchProfileTier, 0, len(profiles))
-	for _, prof := range profiles {
+	for _, tier := range profiles {
+		prof := tier.profile
 		if prof != nil {
 			if fail := profileSpawnFailure(prof, p.SpawnedByConv); fail != nil {
 				return fail
 			}
-			tiers = append(tiers, launchProfileTier{profile: prof})
+			tiers = append(tiers, launchProfileTier{
+				profile: prof, source: profileSource(prof, tier.source), defaultTier: true})
 			if strings.TrimSpace(p.Harness) == "" {
 				p.Harness = harnessOrDefault(prof.Harness)
 			}
@@ -4359,12 +4418,12 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 		return &spawnFailure{http.StatusBadRequest, "invalid_harness", err.Error()}
 	}
 	var fail *spawnFailure
-	p.Model, _, _, fail = resolveStringLaunchField("model", p.Model, h.Name, tiers,
+	p.Model, _, _, fail = resolveStringLaunchField(modelField, p.Model, h.Name, tiers,
 		func(prof *db.SpawnProfile) string { return prof.Model }, h.Models.ValidateModel)
 	if fail != nil {
 		return fail
 	}
-	p.Effort, _, _, fail = resolveStringLaunchField("effort", p.Effort, h.Name, tiers,
+	p.Effort, _, _, fail = resolveStringLaunchField(effortField, p.Effort, h.Name, tiers,
 		func(prof *db.SpawnProfile) string { return prof.Effort }, h.Models.ValidateEffort)
 	if fail != nil {
 		return fail
