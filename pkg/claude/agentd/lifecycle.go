@@ -3214,7 +3214,8 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// on the one axis tclaude deliberately leaves to them (TCL-586). The same
 	// call also surfaces OpenCode's toothless access-control "sandbox".
 	resolvedLaunch.Warnings = append(resolvedLaunch.Warnings,
-		harness.SpawnSandboxWarnings(h, approvalPolicy, sandboxMode, cwd)...)
+		harness.SpawnSandboxWarnings(h, approvalPolicy, sandboxMode, cwd,
+			spawnUsesTclaudeLayer(body.SandboxImplementation))...)
 	resolvedLaunch.Info = append(resolvedLaunch.Info,
 		harness.SpawnSandboxInfo(h, sandboxMode)...)
 	autoReview, arErr := harness.ResolveAutoReview(h, body.AutoReview)

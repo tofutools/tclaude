@@ -51,7 +51,8 @@ var permissionScenarios = struct {
 }{
 	PathGrants: registerRows("TestCopilotPermissionPathGrants",
 		"outside-all/no-path-flags", "outside-all/add-dir", "outside-all/allow-all-paths",
-		"outside-all/allow-all-tools", "in-temp/default", "in-temp/disallow-temp-dir"),
+		"outside-all/allow-all-tools", "outside-all/yolo",
+		"in-temp/default", "in-temp/disallow-temp-dir"),
 	AddDirWrites: registerRows("TestCopilotPermissionAddDirWrites",
 		"outside-all/no-path-flags", "outside-all/add-dir"),
 	FlagNameExactness: registerRows("TestCopilotPermissionFlagNameExactness",
@@ -65,10 +66,11 @@ var permissionScenarios = struct {
 	FolderTrustBlocks: copilotfixture.RegisterScenario(
 		"TestCopilotPermissionFolderTrustBlocksFirst"),
 	TrustBypass: registerRows("TestCopilotPermissionTrustBypassSurface",
-		"allow-all-tools", "allow-all", "allow-all-paths", "add-dir-workdir",
+		"allow-all-tools", "allow-all", "yolo", "allow-all-paths", "add-dir-workdir",
 		"config-json-trustedFolders", "settings-json-trustedFolders"),
 	ToolApproval: registerRows("TestCopilotPermissionToolApprovalGate",
-		"unsafe-command/no-flags", "unsafe-command/allow-all-tools", "safe-command/no-flags"),
+		"unsafe-command/no-flags", "unsafe-command/allow-all-tools", "unsafe-command/yolo",
+		"safe-command/no-flags"),
 	URLGate: registerRows("TestCopilotPermissionURLGateUnderToolApproval",
 		"no-flags", "allow-all-tools"),
 	AmbientAllowAll: registerRows("TestCopilotPermissionAmbientAllowAllPromotes",

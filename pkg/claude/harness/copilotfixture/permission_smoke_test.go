@@ -250,6 +250,14 @@ func TestCopilotPermissionTrustBypassSurface(t *testing.T) {
 		// Every flag a reader would reasonably expect to work. None do.
 		{name: "allow-all-tools", args: []string{"--allow-all-tools"}},
 		{name: "allow-all", args: []string{"--allow-all"}},
+		// `--yolo` is documented as an ALIAS of --allow-all, and this suite does
+		// not accept documentation as measurement — the row above it is why:
+		// COPILOT_ALLOW_ALL is documented as the env alias for
+		// --allow-all-tools and was measured strictly stronger, clearing this
+		// very gate. So the alias is measured rather than inferred, because
+		// tclaude's `yolo` approval token renders THIS spelling and its mode
+		// help tells the operator folder trust still blocks.
+		{name: "yolo", args: []string{"--yolo"}},
 		{name: "allow-all-paths", args: []string{"--allow-all-paths"}},
 		{name: "add-dir-workdir", args: []string{"--add-dir"}},
 		// The only thing that does.
@@ -313,7 +321,11 @@ func TestCopilotPermissionToolApprovalGate(t *testing.T) {
 		name    string
 		command string
 		allow   bool
-		want    copilotfixture.PermissionOutcome
+		// args supplies the row's own permission flags, with the runner's
+		// --allow-all-tools default still omitted — the shape a row needs when
+		// the flag under test is NOT the default one.
+		args []string
+		want copilotfixture.PermissionOutcome
 	}{
 		// The deadlock claim itself: an unsafe command, no permission flags.
 		{name: "unsafe-command/no-flags", command: unsafeShellCommand,
@@ -322,6 +334,17 @@ func TestCopilotPermissionToolApprovalGate(t *testing.T) {
 		// blocked verdict above cannot be a broken fixture.
 		{name: "unsafe-command/allow-all-tools", command: unsafeShellCommand, allow: true,
 			want: copilotfixture.PermissionAllowed},
+		// TCL-1010: the same unsafe command under the flag tclaude's `yolo`
+		// approval token renders. It is measured rather than assumed from the
+		// help text's alias claim, because the token's mode help tells an
+		// operator yolo closes tool approval — and a `yolo` that rendered a
+		// flag which did NOT close this gate would be a posture strictly worse
+		// than the unattended default it sits beside in the dropdown. The
+		// command choice carries the row: `safe-command/no-flags` below records
+		// that Copilot auto-approves what it considers trivially safe, so only
+		// an unsafe command can distinguish a closed gate from an absent one.
+		{name: "unsafe-command/yolo", command: unsafeShellCommand,
+			args: []string{"--yolo"}, want: copilotfixture.PermissionAllowed},
 		// The scope limit, recorded so nobody re-derives it as a surprise.
 		{name: "safe-command/no-flags", command: safeShellCommand,
 			want: copilotfixture.PermissionAllowed},
@@ -330,7 +353,10 @@ func TestCopilotPermissionToolApprovalGate(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			requireSmokeParallel(t)
 			verdict, mock, res := permissionRun(t, bashTurns(tc.command), true,
-				copilotfixture.RunOptions{OmitAllowAllTools: !tc.allow})
+				copilotfixture.RunOptions{
+					OmitAllowAllTools: !tc.allow,
+					ExtraArgs:         tc.args,
+				})
 			assert.Equal(t, tc.want, verdict.Outcome)
 			if tc.want == copilotfixture.PermissionBlocked {
 				// Without this the row would read "blocked" for a release that
@@ -673,9 +699,9 @@ func TestCopilotPermissionContractIsBackedByScenarios(t *testing.T) {
 		"the contract describes one CLI release; bump it with the pin")
 
 	// The Phase 0 measurements, plus the web-fetch entry that closes the gap
-	// Phase 0 recorded as structurally unmeasurable, and the three TCL-992
-	// assumption fixtures. Pinned as a set so a measurement cannot be quietly
-	// dropped from the table.
+	// Phase 0 recorded as structurally unmeasurable, the three TCL-992
+	// assumption fixtures, and TCL-1010's yolo surface. Pinned as a set so a
+	// measurement cannot be quietly dropped from the table.
 	wantIDs := []string{
 		"default-interactive-blocking",
 		"no-ask-user",
@@ -689,6 +715,7 @@ func TestCopilotPermissionContractIsBackedByScenarios(t *testing.T) {
 		"resume-submits-prompt",
 		"in-pane-allow-all-override",
 		"ambient-allow-all-env",
+		"yolo-permission-surface",
 	}
 	var gotIDs []string
 	for _, e := range contract.Entries {
@@ -885,6 +912,16 @@ func TestCopilotPermissionPathGrants(t *testing.T) {
 		// separate permission source and remains blocking.
 		{name: "outside-all/allow-all-tools", want: copilotfixture.PermissionBlocked,
 			args: func(string, string) []string { return []string{"--allow-all-tools"} }},
+		// TCL-1010's evidence: the flag tclaude's `yolo` approval token
+		// renders, measured on the axis that token exists to close. The row
+		// above is its control — the SAME out-of-grant read, blocked, with the
+		// unattended default's flag instead — so "yolo closes the directory
+		// dialog" is a contrast between two launches rather than a claim about
+		// one. Measured under its own spelling rather than inherited from the
+		// --allow-all-paths row, since a token that renders --yolo may not
+		// legitimately cite a measurement of a different flag.
+		{name: "outside-all/yolo", want: copilotfixture.PermissionAllowed,
+			args: func(string, string) []string { return []string{"--yolo"} }},
 		// The automatic temp grant, and the flag that removes it.
 		{name: "in-temp/default", inTemp: true, want: copilotfixture.PermissionAllowed},
 		{name: "in-temp/disallow-temp-dir", inTemp: true, want: copilotfixture.PermissionBlocked,

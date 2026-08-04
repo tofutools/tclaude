@@ -122,6 +122,24 @@ func TestApprovalLineageAllowedMatrix(t *testing.T) {
 		{"claude bypass can mint copilot inherit", DefaultName, claudePermBypass, false, CopilotName, CopilotApprovalInherit, false, true},
 		{"claude bypass can mint copilot allow-tools", DefaultName, claudePermBypass, false, CopilotName, CopilotApprovalAllowTools, false, true},
 
+		// `yolo` (TCL-1010) is Copilot's bypassPermissions: every prompt gone,
+		// no reviewer of any kind, and — outside tclaude-layer — no file
+		// boundary left, since Copilot's directory check was the only one and
+		// its built-in edits are not OS-confined. It therefore sits at the same
+		// height as claude bypass and an inherit CHILD, and is minted only by a
+		// parent already at that height, or by a human.
+		{"copilot allow-tools cannot mint copilot yolo", CopilotName, CopilotApprovalAllowTools, false, CopilotName, CopilotApprovalYolo, false, false},
+		{"codex never cannot mint copilot yolo", CodexName, ApprovalNever, false, CopilotName, CopilotApprovalYolo, false, false},
+		{"claude auto cannot mint copilot yolo", DefaultName, claudePermAuto, false, CopilotName, CopilotApprovalYolo, false, false},
+		{"claude bypass can mint copilot yolo", DefaultName, claudePermBypass, false, CopilotName, CopilotApprovalYolo, false, true},
+		{"copilot yolo to same", CopilotName, CopilotApprovalYolo, false, CopilotName, CopilotApprovalYolo, false, true},
+		// A yolo parent holds everything, so it can delegate every narrower
+		// posture — including the ones an allow-tools parent cannot prove.
+		{"copilot yolo can mint copilot allow-tools", CopilotName, CopilotApprovalYolo, false, CopilotName, CopilotApprovalAllowTools, false, true},
+		{"copilot yolo can mint copilot inherit", CopilotName, CopilotApprovalYolo, false, CopilotName, CopilotApprovalInherit, false, true},
+		{"copilot yolo can mint claude bypass", CopilotName, CopilotApprovalYolo, false, DefaultName, claudePermBypass, false, true},
+		{"copilot yolo auto-review parent is malformed", CopilotName, CopilotApprovalYolo, true, CopilotName, CopilotApprovalYolo, false, false},
+
 		// --- Malformed / unclassifiable postures fail closed ---
 		{"legacy blank copilot parent fails closed", CopilotName, "", false, CopilotName, CopilotApprovalAllowTools, false, false},
 		{"legacy blank copilot child fails closed", DefaultName, claudePermBypass, false, CopilotName, "", false, false},
@@ -255,11 +273,24 @@ func TestCopilotApprovalLineageDenialHint(t *testing.T) {
 	if !strings.Contains(fromNarrow, "human") {
 		t.Fatalf("hint must say a human is needed, got %q", fromNarrow)
 	}
-	// allow-tools is the only other token; a parent that cannot delegate it has
+	// allow-tools is the narrowest token; a parent that cannot delegate it has
 	// no narrower Copilot posture to be pointed at, so the hint stays silent
 	// rather than inventing advice.
 	if got := ApprovalLineageDenialHint(DefaultName, claudePermPlan, false,
 		CopilotName, CopilotApprovalAllowTools); got != "" {
 		t.Fatalf("no Copilot posture is narrower than allow-tools; hint should be empty, got %q", got)
+	}
+
+	// A denied `yolo` child gets its own hint, the counterpart to Claude's
+	// bypassPermissions one: it names the specific loss rather than "removes
+	// guardrails", and it points at the token that keeps directory access
+	// scoped. Without this the widest new token would be the only Copilot
+	// posture whose refusal came with no way forward.
+	yolo := ApprovalLineageDenialHint(CopilotName, CopilotApprovalAllowTools, false,
+		CopilotName, CopilotApprovalYolo)
+	for _, want := range []string{CopilotApprovalYolo, CopilotApprovalAllowTools, "human", "directory"} {
+		if !strings.Contains(yolo, want) {
+			t.Fatalf("the yolo hint must contain %q, got %q", want, yolo)
+		}
 	}
 }

@@ -32,8 +32,9 @@ func TestCopilotApprovalCatalog(t *testing.T) {
 		t.Fatalf("ValidatePolicy(DefaultPolicy()) = %q, %v; want the default to validate to itself", got, err)
 	}
 	modes := h.Approval.Modes()
-	if len(modes) != 2 || modes[0] != CopilotApprovalAllowTools || modes[1] != CopilotApprovalInherit {
-		t.Fatalf("Modes() = %v, want the default first, then inherit", modes)
+	if len(modes) != 3 || modes[0] != CopilotApprovalAllowTools ||
+		modes[1] != CopilotApprovalInherit || modes[2] != CopilotApprovalYolo {
+		t.Fatalf("Modes() = %v, want the default first, then inherit, then yolo", modes)
 	}
 	// Mutating the returned slice must not reach the validation source.
 	modes[0] = "tampered"
@@ -50,11 +51,12 @@ func TestCopilotApprovalCatalog(t *testing.T) {
 	}
 }
 
-// Both mode-help strings must warn, because NEITHER token makes a Copilot pane
-// unconditionally nonblocking: `inherit` is Copilot's prompting posture, and
-// even `allow-tools` leaves the out-of-grant path dialog and the folder-trust
-// gate standing (contract: out-of-cwd-paths, folder-trust). A reassuring
-// default would be the exact overstatement this ticket is about.
+// Every mode-help string must warn, because NO token makes a Copilot pane
+// unconditionally nonblocking: `inherit` is Copilot's prompting posture,
+// `allow-tools` leaves the out-of-grant path dialog and the folder-trust gate
+// standing, and even `yolo` cannot clear folder trust (contract:
+// out-of-cwd-paths, folder-trust). A reassuring default would be the exact
+// overstatement this ticket is about.
 func TestCopilotApprovalModeHelpWarnsAboutEveryRemainingPromptSource(t *testing.T) {
 	h, err := Resolve(CopilotName)
 	if err != nil {
@@ -65,12 +67,76 @@ func TestCopilotApprovalModeHelpWarnsAboutEveryRemainingPromptSource(t *testing.
 		if !strings.Contains(help, "⚠") {
 			t.Errorf("ModeHelp(%q) carries no caveat: %q", mode, help)
 		}
+		// The house style the spawn UI depends on: it collapses the help behind
+		// a [?] but keeps everything from the ⚠ onward visible, so a second ⚠
+		// would leave the first one's text hidden while reading as if shown.
+		if strings.Count(help, "⚠") != 1 {
+			t.Errorf("ModeHelp(%q) must carry exactly one ⚠, running to the end: %q", mode, help)
+		}
 	}
 	allowTools := h.Approval.ModeHelp(CopilotApprovalAllowTools)
 	for _, want := range []string{"granted directory", "trust"} {
 		if !strings.Contains(allowTools, want) {
 			t.Errorf("ModeHelp(%q) must name the prompt sources it does NOT close (missing %q): %q",
 				CopilotApprovalAllowTools, want, allowTools)
+		}
+	}
+	// `yolo`'s help carries the two claims the measurement constrains it to.
+	// Folder trust is the honesty limit — NO flag clears it (contract:
+	// folder-trust, row `yolo`) — and the un-sandboxed pairing is the whole
+	// reason the token needed warning UX before it could exist.
+	yolo := h.Approval.ModeHelp(CopilotApprovalYolo)
+	for _, want := range []string{"trust", "tclaude-layer", "not OS-confined"} {
+		if !strings.Contains(yolo, want) {
+			t.Errorf("ModeHelp(%q) must state %q: %q", CopilotApprovalYolo, want, yolo)
+		}
+	}
+	// ...and must not claim the one thing no flag does.
+	if strings.Contains(yolo, "clears folder trust") {
+		t.Errorf("ModeHelp(%q) must not claim yolo clears folder trust: %q", CopilotApprovalYolo, yolo)
+	}
+}
+
+// The mode help is attached to the DROPDOWN and says the same thing whichever
+// sandbox implementation a launch resolves to. The pairing TCL-1010 is about is
+// a property of the resolved LAUNCH, so it gets the loud channel Claude's
+// unsandboxed-autonomy warning uses — the CLI's stderr, the daemon spawn
+// response, the dashboard's live warning region, template-deploy notes.
+func TestCopilotYoloWarnsLoudlyOnlyWithoutTheOuterLayer(t *testing.T) {
+	h, err := Resolve(CopilotName)
+	if err != nil {
+		t.Fatalf("Resolve(copilot): %v", err)
+	}
+	got := SpawnSandboxWarnings(h, CopilotApprovalYolo, CopilotSandboxInherit, "/srv/repo", false)
+	if len(got) != 1 {
+		t.Fatalf("yolo without an outer wall must warn exactly once, got %v", got)
+	}
+	// A warning an operator cannot act on is noise they learn to skip, so it
+	// names the posture that fixes it AND the narrower token — the same shape
+	// claudeUnsandboxedAutonomyMessage uses.
+	for _, want := range []string{
+		"⚠", CopilotApprovalYolo, "--sandbox-impl tclaude-layer",
+		CopilotApprovalAllowTools, "not OS-confined",
+	} {
+		if !strings.Contains(got[0], want) {
+			t.Errorf("the yolo warning must contain %q: %q", want, got[0])
+		}
+	}
+
+	// Under tclaude-layer the outer wall enforces the profile whatever
+	// Copilot's own checks believe, which is the same reasoning
+	// CopilotTclaudeLayerExtraArgRefusal uses to NOT refuse a pass-through
+	// --yolo. Warning there would train operators to ignore the warning.
+	if got := SpawnSandboxWarnings(h, CopilotApprovalYolo, CopilotSandboxOff, "/srv/repo", true); got != nil {
+		t.Fatalf("yolo under the outer layer must not warn, got %v", got)
+	}
+	// The narrower tokens keep Copilot's directory check, so they are not this
+	// warning's subject however the launch is sandboxed.
+	for _, policy := range []string{CopilotApprovalAllowTools, CopilotApprovalInherit, ""} {
+		for _, outer := range []bool{false, true} {
+			if got := SpawnSandboxWarnings(h, policy, CopilotSandboxInherit, "/srv/repo", outer); got != nil {
+				t.Errorf("policy %q (outerLayer=%v) must not warn, got %v", policy, outer, got)
+			}
 		}
 	}
 }
@@ -88,15 +154,20 @@ func TestCopilotApprovalValidatePolicy(t *testing.T) {
 		{in: "", want: ""},
 		{in: CopilotApprovalAllowTools, want: CopilotApprovalAllowTools},
 		{in: "  " + CopilotApprovalInherit + "  ", want: CopilotApprovalInherit},
+		{in: "  " + CopilotApprovalYolo + "  ", want: CopilotApprovalYolo},
 		// Other harnesses' tokens are not Copilot's, and a validator that let
 		// them through would render nothing while recording an authority the
 		// launch never had.
 		{in: "never", wantErr: true},
 		{in: "auto", wantErr: true},
+		// The FLAG spelling of the yolo token's alias family is still not a
+		// token: `yolo` is the one tclaude accepts, and admitting `allow-all`
+		// as a silent synonym would put two spellings of one posture into the
+		// session rows and the profile API.
 		{in: "allow-all", wantErr: true},
-		{in: "yolo", wantErr: true},
 		{in: "plan", wantErr: true},
 		{in: "ALLOW-TOOLS", wantErr: true},
+		{in: "YOLO", wantErr: true},
 	} {
 		got, err := h.Approval.ValidatePolicy(tc.in)
 		if tc.wantErr {
@@ -154,6 +225,26 @@ func TestCopilotPermissionArgs(t *testing.T) {
 		{
 			name:   "inherit renders nothing at all",
 			policy: CopilotApprovalInherit,
+		},
+		{
+			// contract: yolo-permission-surface — --yolo ALONE closes both the
+			// tool gate and the directory dialog, so nothing else is rendered
+			// for those axes; --no-ask-user is a separate axis with its own
+			// measurement (contract: no-ask-user) and no scenario measured
+			// --yolo against it.
+			name:   "yolo renders the measured flag plus the ask_user removal",
+			policy: CopilotApprovalYolo,
+			want:   []string{"--yolo", "--no-ask-user"},
+		},
+		{
+			// The grants stay rendered under yolo. Copilot does not need them
+			// there, but the recorded posture and the argv must keep agreeing —
+			// the same invariant the blank/inherit rows below protect.
+			name:    "yolo still renders the profile's directory grants",
+			policy:  CopilotApprovalYolo,
+			addDirs: []string{"/srv/b", "/srv/a"},
+			want: []string{"--yolo", "--no-ask-user",
+				"--add-dir", "/srv/a", "--add-dir", "/srv/b"},
 		},
 		{
 			// contract: out-of-cwd-paths — --add-dir <dir> clears the directory
@@ -223,13 +314,21 @@ func TestCopilotPermissionArgs(t *testing.T) {
 // `--deny-tool 'url()'` was the TCL-973 plan's proposed default and is REJECTED
 // at argument parse with exit 1 and no provider contact (contract: url-access) —
 // it would have killed every Copilot pane at launch. `--allow-all-paths` and
-// `--allow-all`/`--yolo` are real and measured, but Copilot's built-in edits are
-// not OS-confined, so outside a tclaude-layer sandbox the path check is the only
+// `--allow-all` are real and measured, but Copilot's built-in edits are not
+// OS-confined, so outside a tclaude-layer sandbox the path check is the only
 // boundary on what the agent writes and no token here removes it.
 //
 // Written as a sweep over every mode plus a few non-modes, rather than as
-// assertions on the two tokens that exist today, so a third token cannot be
-// added without this guard seeing it.
+// assertions on the tokens that exist today, so a further token cannot be added
+// without this guard seeing it.
+//
+// TCL-1010 is that guard doing its job. `--yolo` moved out of the blanket
+// forbidden set and into an EXEMPTION keyed on one token, rather than out of the
+// list: `yolo` may render it, and every other policy — including the default,
+// including blank, including an unknown one — still may not. Widening the list
+// instead would have been the failure this sweep exists to catch, since the flag
+// removes the only file boundary an un-sandboxed Copilot launch has and the
+// tokens that do not warn about that must not emit it.
 func TestCopilotPermissionArgsNeverEmitDisprovenOrEscalatingFlags(t *testing.T) {
 	h, err := Resolve(CopilotName)
 	if err != nil {
@@ -241,14 +340,25 @@ func TestCopilotPermissionArgsNeverEmitDisprovenOrEscalatingFlags(t *testing.T) 
 		"--allow-all-urls", "--allow-url", "--deny-url",
 		"--disallow-temp-dir", "--mode", "--plan", "--autopilot",
 	}
+	// The single exemption, keyed by policy AND flag so it cannot quietly grow
+	// into "yolo may render anything". `--allow-all` is deliberately NOT here:
+	// it is the documented alias, the scenarios launched with `--yolo`, and a
+	// catalog that renders the unmeasured spelling would be citing a
+	// measurement of a different flag.
+	permitted := map[string]map[string]bool{
+		CopilotApprovalYolo: {"--yolo": true},
+	}
 	policies := append(h.Approval.Modes(), "", "bogus")
 	for _, policy := range policies {
 		args := copilotPermissionArgs(policy, []string{"/srv/a", "/srv/b"})
 		joined := strings.Join(args, " ")
 		for _, flag := range forbidden {
+			if permitted[policy][flag] {
+				continue
+			}
 			for _, arg := range args {
 				if arg == flag {
-					t.Errorf("policy %q renders %s, which no measurement in the permission contract supports as a default: %s",
+					t.Errorf("policy %q renders %s, which no measurement in the permission contract supports for that token: %s",
 						policy, flag, joined)
 				}
 			}
@@ -258,6 +368,20 @@ func TestCopilotPermissionArgsNeverEmitDisprovenOrEscalatingFlags(t *testing.T) 
 		for _, spelling := range []string{"url()", "shell()", "write()"} {
 			if strings.Contains(joined, spelling) {
 				t.Errorf("policy %q renders the disproven %s pattern, which exits 1 at argument parse: %s", policy, spelling, joined)
+			}
+		}
+	}
+
+	// The exemption must stay LIVE. A `yolo` that stopped rendering --yolo would
+	// leave this sweep green while the token quietly became something else, and
+	// an exemption for a flag nobody emits is indistinguishable from a
+	// permanently widened forbidden list.
+	for policy, flags := range permitted {
+		args := copilotPermissionArgs(policy, nil)
+		for flag := range flags {
+			if !slices.Contains(args, flag) {
+				t.Errorf("policy %q is exempted for %s but does not render it (%v); "+
+					"either the exemption is stale or the token changed", policy, flag, args)
 			}
 		}
 	}
@@ -280,6 +404,11 @@ func TestCopilotBuildCommandScrubsAmbientAllowAll(t *testing.T) {
 		{name: "bare launch", spec: SpawnSpec{}},
 		{name: "inherit", spec: SpawnSpec{ApprovalPolicy: CopilotApprovalInherit}},
 		{name: "allow-tools", spec: SpawnSpec{ApprovalPolicy: CopilotApprovalAllowTools}},
+		// The widest token is scrubbed too. The variable is measured STRICTLY
+		// STRONGER than any flag — it clears folder trust, which `--yolo` does
+		// not — so even here it would promote the launch past what tclaude
+		// recorded.
+		{name: "yolo", spec: SpawnSpec{ApprovalPolicy: CopilotApprovalYolo}},
 		{name: "resume", spec: SpawnSpec{ResumeID: "11111111-2222-3333-4444-555555555555"}},
 		{
 			name: "an operator who exported it",

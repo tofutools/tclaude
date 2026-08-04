@@ -220,19 +220,33 @@ func TclaudeLayerSandboxMode(h *Harness) (string, error) {
 //   - OpenCode: `access-control` only does soft lexical path matching — see
 //     openCodeSandboxWarnings. The confined `tclaude-layer` topology is
 //     disclosed separately by SpawnSandboxInfo.
+//   - Copilot: the `yolo` approval token removes Copilot's directory dialog,
+//     which is the only file boundary a launch without an outer wall has (its
+//     built-in edits are not OS-confined) — see copilotUnsandboxedYoloWarnings.
 //
 // Codex resolves autonomy and sandbox together against its managed profile, so
 // it has no such gap and returns nil. approvalPolicy and sandboxMode must be
 // the FINAL resolved values (after profile overlay and ResolveApprovalPolicy /
 // ResolveSandboxMode), so a blank select is judged for the posture it resolves
 // to, not for "nothing chosen".
-func SpawnSandboxWarnings(h *Harness, approvalPolicy, sandboxMode, cwd string) []string {
+//
+// outerLayer reports whether tclaude's own OS wall owns enforcement for this
+// launch (sandboxpolicy.Implementation.UsesTclaudeLayer). It is a separate
+// parameter rather than something inferred from sandboxMode because for Copilot
+// the two genuinely come apart: a tclaude-layer launch is forced to the
+// harness-native mode `off`, and an operator can also select that same `off`
+// under harness-builtin — one has an outer wall and the other has none, and
+// judging them alike would either silence the warning that matters or invent
+// one for a confined launch.
+func SpawnSandboxWarnings(h *Harness, approvalPolicy, sandboxMode, cwd string, outerLayer bool) []string {
 	if h == nil {
 		return nil
 	}
 	switch normalizeLineageHarness(h.Name) {
 	case OpenCodeName:
 		return openCodeSandboxWarnings(sandboxMode)
+	case CopilotName:
+		return copilotUnsandboxedYoloWarnings(approvalPolicy, outerLayer)
 	default:
 		return UnsandboxedAutonomyWarnings(h, approvalPolicy, sandboxMode, cwd)
 	}
