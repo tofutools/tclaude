@@ -13,6 +13,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
+	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
 func TestPlanSandboxProfileAccessDisclosesUnmaterializedSocketEntries(t *testing.T) {
@@ -183,6 +184,7 @@ func TestPlanSandboxProfileAccessPersistsDetectedProbeWhenVerdictCannotFlip(t *t
 }
 
 func TestPlanSandboxProfileAccessActivatesReadyOpenCodeWithExplicitProvider(t *testing.T) {
+	testharness.ClearModelTransportProxyEnv(t)
 	oldProbe := probeFilteredNetworkPrerequisite
 	oldVerdict := resolveTclaudeLayerAccessVerdict
 	t.Cleanup(func() {
@@ -257,6 +259,7 @@ func TestPlanSandboxProfileAccessEnforcesOpenCodeLinuxDenyRows(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("filtered gateway capability is Linux-only")
 	}
+	testharness.ClearModelTransportProxyEnv(t)
 	oldProbe := probeFilteredNetworkPrerequisite
 	oldVerdict := resolveTclaudeLayerAccessVerdict
 	t.Cleanup(func() {
@@ -319,6 +322,7 @@ func TestPlanSandboxProfileAccessMintsModelTransportFromLaunchContext(t *testing
 	if runtime.GOOS != "linux" {
 		t.Skip("filtered gateway capability is Linux-only")
 	}
+	testharness.ClearModelTransportProxyEnv(t)
 	oldProbe := probeFilteredNetworkPrerequisite
 	oldVerdict := resolveTclaudeLayerAccessVerdict
 	t.Cleanup(func() {

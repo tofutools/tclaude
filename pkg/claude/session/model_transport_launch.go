@@ -780,12 +780,27 @@ func launchModelEnvironment(
 	return environment
 }
 
-func modelTransportProxyVariable(environment map[string]string) string {
-	for _, variable := range []string{
+// ModelTransportProxyVariables names the routing variables whose presence in
+// the inspected launch environment refuses a filtered launch. It is exported
+// because the inspected environment includes the HOST environment, which makes
+// it an input a test binary inherits rather than authors: a fixture that wants
+// a launch judged on its authored policy has to neutralize exactly this set,
+// and a fixture carrying its own copy of the list would silently stop covering
+// a variable added here.
+//
+// NO_PROXY/no_proxy are deliberately absent: they are exempted and overridden
+// rather than refused over (docs/sandboxing.md, "the proxy environment is
+// tclaude's").
+func ModelTransportProxyVariables() []string {
+	return []string{
 		"HTTPS_PROXY", "https_proxy",
 		"HTTP_PROXY", "http_proxy",
 		"ALL_PROXY", "all_proxy",
-	} {
+	}
+}
+
+func modelTransportProxyVariable(environment map[string]string) string {
+	for _, variable := range ModelTransportProxyVariables() {
 		if strings.TrimSpace(environment[variable]) != "" {
 			return variable
 		}
