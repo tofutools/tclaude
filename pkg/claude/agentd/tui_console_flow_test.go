@@ -745,7 +745,10 @@ func TestTUIConsoleSpawnsIntoANewWorktree(t *testing.T) {
 	assert.Equal(t, wantPath, rows[0].Cwd)
 
 	assert.Contains(t, c.View(), "Spawned")
-	assert.Contains(t, flatConsoleText(c.View()), wantPath,
+	// Anchored on the spawn line's own "— in" lead-in, so the listing's
+	// DIRECTORY column — which holds the same path, untruncated whenever the
+	// path is short enough — cannot satisfy this on the status line's behalf.
+	assert.Contains(t, flatConsoleText(c.View()), "—in"+wantPath,
 		"and the console says where it landed")
 }
 
