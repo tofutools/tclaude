@@ -1168,6 +1168,15 @@ jobs:
               TestCopilotPermissionInPaneAllowAllCannotOverrideDeny
               TestCopilotPermissionNoAskUserRemovesTheTool
               TestCopilotPermissionResumeSubmitsPrompt
+              # TCL-973's web-fetch increment. These are the only scenarios in
+              # the suite that run WITHOUT COPILOT_OFFLINE=true -- they have to,
+              # since that variable removes web_fetch from the catalog and is
+              # what made the question unaskable in Phase 0 -- so they carry the
+              # egress wall (a refusing capture proxy) in place of it. A silent
+              # skip here would leave the detached-spawn posture resting on an
+              # unmeasured deadlock source again.
+              TestCopilotPermissionWebFetchNeedsTheOnlineArm
+              TestCopilotPermissionWebFetchExclusionRemovesTheTool
             )
             # += and NOT =. A plain assignment here would REPLACE the shared
             # array above rather than extend it, silently dropping the five
@@ -1201,6 +1210,24 @@ jobs:
               'TestCopilotPermissionAmbientAllowAllPromotes/one'
               'TestCopilotPermissionAmbientAllowAllPromotes/false'
               'TestCopilotPermissionAmbientAllowAllPromotes/empty'
+              # The web-fetch matrix. no-flags is the deadlock claim and
+              # allow-all-tools/no-ask-user is the posture that closes it; a
+              # gate carrying one without the other would let a blocked arm
+              # stand with no positive control, or vice versa.
+              'TestCopilotPermissionWebFetchGate/no-flags'
+              'TestCopilotPermissionWebFetchGate/allow-all-tools'
+              'TestCopilotPermissionWebFetchGate/allow-all-tools/no-ask-user'
+              'TestCopilotPermissionWebFetchGate/allow-all-urls'
+              'TestCopilotPermissionWebFetchGate/deny-tool-url'
+              # Enforcement, per spelling. The wildcard rows are the ones that
+              # must not be lost: they are what stops "parses" from being read
+              # as "works" for a blanket URL deny.
+              'TestCopilotPermissionWebFetchURLDenyEnforcement/deny-tool/url'
+              'TestCopilotPermissionWebFetchURLDenyEnforcement/deny-tool/url(host)'
+              'TestCopilotPermissionWebFetchURLDenyEnforcement/deny-url/host'
+              'TestCopilotPermissionWebFetchURLDenyEnforcement/deny-tool/url(*)'
+              'TestCopilotPermissionWebFetchURLDenyEnforcement/deny-url/*'
+              'TestCopilotPermissionWebFetchURLDenyEnforcement/deny-url/https-star'
             )
           fi
           # The gate's own integrity check. Everything below verifies that the

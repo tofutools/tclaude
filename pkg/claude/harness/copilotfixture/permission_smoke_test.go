@@ -629,12 +629,14 @@ func TestCopilotPermissionContractIsBackedByScenarios(t *testing.T) {
 	assert.Equal(t, copilotfixture.PinnedCLIVersion, contract.CLIVersion,
 		"the contract describes one CLI release; bump it with the pin")
 
-	// The eight measurements the Phase 0 brief asked for. Pinned as a set so a
-	// measurement cannot be quietly dropped from the table.
+	// The eight measurements the Phase 0 brief asked for, plus the web-fetch
+	// entry that closes the gap Phase 0 recorded as structurally unmeasurable.
+	// Pinned as a set so a measurement cannot be quietly dropped from the table.
 	wantIDs := []string{
 		"default-interactive-blocking",
 		"no-ask-user",
 		"url-access",
+		"web-fetch-url-access",
 		"out-of-cwd-paths",
 		"folder-trust",
 		"resume-submits-prompt",
@@ -646,7 +648,8 @@ func TestCopilotPermissionContractIsBackedByScenarios(t *testing.T) {
 		gotIDs = append(gotIDs, e.ID)
 	}
 	assert.ElementsMatch(t, wantIDs, gotIDs,
-		"the contract must cover exactly the eight Phase 0 measurements")
+		"the contract must cover exactly the Phase 0 measurements plus the web-fetch "+
+			"follow-up")
 
 	declared := map[string]bool{}
 	for _, name := range copilotfixture.RegisteredScenarios() {

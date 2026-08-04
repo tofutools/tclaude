@@ -147,6 +147,28 @@ type RunOptions struct {
 	// token variable is scrubbed exactly as it is for every other scenario.
 	ProxyEndpoint string
 
+	// WebEgressProxy is the online arm, and it is the only launch shape in
+	// which Copilot advertises its web-fetch tool at all.
+	//
+	// Every other scenario sets COPILOT_OFFLINE=true, which is what makes this
+	// suite hermetic — and which also strips web_fetch from the tool catalog
+	// entirely, so the whole web-fetch permission question is structurally
+	// unaskable from an offline run. Dropping COPILOT_OFFLINE is therefore not
+	// an optional relaxation here; it is the measurement's precondition.
+	//
+	// Hermeticity is preserved by a different mechanism instead of by that
+	// variable. The run keeps the BYOK provider pointed at the loopback mock and
+	// exempts loopback via NO_PROXY, while pinning HTTP(S)_PROXY and ALL_PROXY
+	// at the given host:port — a ProxyCapture that logs a destination and then
+	// answers 502 without dialing anything. So the mock still answers, and every
+	// other destination the CLI wants (auth, telemetry, MCP, the fetched URL
+	// itself) is recorded and refused rather than reached.
+	//
+	// Credentials are scrubbed exactly as in every other arm, and no invalid
+	// stand-in token is injected: unlike the first-party capture scenario, this
+	// one does not need the CLI to attempt a token exchange.
+	WebEgressProxy string
+
 	// Prompt runs non-interactively via -p and exits after completion.
 	Prompt string
 
@@ -562,6 +584,29 @@ func baseEnv(opts RunOptions) []string {
 			// the traffic this scenario exists to enumerate. It is not a
 			// credential: it authenticates nothing and is rejected by design.
 			"GITHUB_TOKEN="+invalidCaptureToken,
+		)
+	}
+	if opts.WebEgressProxy != "" {
+		// The online arm. Identical to the offline BYOK block below except that
+		// COPILOT_OFFLINE is absent — which is the whole point, since that
+		// variable removes web_fetch from the catalog — and that every
+		// non-loopback destination is pinned at a refusing proxy instead.
+		proxy := "http://" + opts.WebEgressProxy
+		return append(env,
+			"COPILOT_PROVIDER_BASE_URL="+opts.BaseURL,
+			"COPILOT_PROVIDER_TYPE=openai",
+			"COPILOT_PROVIDER_WIRE_API="+string(wire),
+			"COPILOT_MODEL="+MockModel,
+			"HTTP_PROXY="+proxy, "http_proxy="+proxy,
+			"HTTPS_PROXY="+proxy, "https_proxy="+proxy,
+			// The CLI's native runtime prefers ALL_PROXY, so omitting it would
+			// let a connection route around the wall this arm depends on.
+			"ALL_PROXY="+proxy, "all_proxy="+proxy,
+			// The one carve-out, and it is what keeps the mock reachable: the
+			// provider lives on loopback, and a proxied loopback request would
+			// be refused along with everything else.
+			"NO_PROXY=127.0.0.1,localhost,::1",
+			"no_proxy=127.0.0.1,localhost,::1",
 		)
 	}
 	return append(env,
