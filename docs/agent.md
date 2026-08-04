@@ -88,7 +88,11 @@ only once.
   The daemon also ships as its own binary, `tclaude-agentd`, released
   alongside `tclaude`. `tclaude-agentd serve` is the same code and the same
   flags as `tclaude agentd serve` — a host that only runs the daemon can
-  install just that binary. Keep `tclaude` on `PATH` next to it anyway: the
+  install just that binary. It is a separate package path, so a Go install
+  needs its own command
+  (`go install github.com/tofutools/tclaude/cmd/tclaude-agentd@latest`, or
+  `go install . ./cmd/...` from a checkout to get both binaries at once).
+  Keep `tclaude` on `PATH` next to it anyway: the
   daemon forks `tclaude session new` to spawn agents, and builds
   `tclaude session attach` command lines for the dashboard's terminal links.
 

@@ -5,8 +5,16 @@
 ```bash
 git clone https://github.com/tofutools/tclaude
 cd tclaude
-go install .
+go install . ./cmd/...
 ```
+
+The repo builds two binaries: the `tclaude` CLI and the standalone
+`tclaude-agentd` daemon under `cmd/`. `go install .` installs only `tclaude`,
+so pass both package paths to get the pair. Do not use `go install ./...` — it
+would also install the unrelated probe under `scripts/`.
+
+The daemon is built into the CLI as `tclaude agentd serve`, so `tclaude-agentd`
+is optional unless you are working on it or running a daemon-only host.
 
 ## Running tests
 
@@ -73,7 +81,7 @@ conversions should keep total suite time flat or make it faster.
 
 The dashboard uses browser-native ES modules. Preact islands use HTM for
 component templates, so editing or running the dashboard requires no Node
-install, compiler, or frontend build step: the normal `go install .` workflow
+install, compiler, or frontend build step: the normal `go install` workflow
 embeds everything it needs. Runtime modules are pinned and committed under
 `pkg/claude/agentd/dashboard/vendor/preact/`; the dashboard never loads them
 from a CDN.

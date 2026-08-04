@@ -58,9 +58,20 @@ The formula installs tmux and builds tclaude from source.
 go install github.com/tofutools/tclaude@latest
 ```
 
+The daemon is built into that binary as `tclaude agentd serve`. It also ships
+as a standalone `tclaude-agentd` binary, which is a separate package path and
+therefore a separate install:
+
+```bash
+go install github.com/tofutools/tclaude/cmd/tclaude-agentd@latest
+```
+
+From a source checkout, `go install . ./cmd/...` installs both at once.
+
 **Prebuilt release** — download a Linux amd64/arm64 or macOS arm64 archive from
 the [Releases page](https://github.com/tofutools/tclaude/releases), extract it,
-and put `tclaude` on your `PATH`.
+and put `tclaude` on your `PATH`. The standalone daemon is published in its own
+`tclaude-agentd` archives; grab those too if you want that binary.
 
 ### Run setup
 
