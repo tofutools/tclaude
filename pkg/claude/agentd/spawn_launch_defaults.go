@@ -89,10 +89,17 @@ func resolveLaunchDefaults(
 		namedProfileSource = fmt.Sprintf(`profile %q via alias %q`,
 			namedProfile.Name, strings.TrimSpace(profileHandle))
 	}
+	// The two default tiers are marked as such even though this path resolves
+	// only non-pinned fields today: the preview's whole promise is that it walks
+	// the tiers a real spawn walks, so an unmarked tier here would silently
+	// diverge from the launch the moment a harness-pinned field (model, effort)
+	// joins the preview.
 	tiers := []launchProfileTier{
 		{profile: namedProfile, source: namedProfileSource},
-		{profile: groupProfile, source: profileSource(groupProfile, agent.ProvGroupProfileSource)},
-		{profile: globalProfile, source: profileSource(globalProfile, agent.ProvGlobalProfileSource)},
+		{profile: groupProfile, source: profileSource(groupProfile, agent.ProvGroupProfileSource),
+			defaultTier: true},
+		{profile: globalProfile, source: profileSource(globalProfile, agent.ProvGlobalProfileSource),
+			defaultTier: true},
 	}
 
 	harnessName := harness.DefaultName
