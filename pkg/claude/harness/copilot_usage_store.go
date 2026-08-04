@@ -99,6 +99,16 @@ var copilotUsageRequiredColumns = []string{
 	"reasoning_effort", "finish_reason", "created_at",
 }
 
+// copilotUsageParentColumn marks a call Copilot made from inside a tool call.
+//
+// It is OPTIONAL rather than required, deliberately. It refines the occupancy
+// numerator (see CopilotUsageCall.Nested); it is not needed to report tokens,
+// cost or model. Gating the whole reader on it would mean a Copilot release
+// that dropped it blanked the entire meter to protect one edge case, which is
+// a worse trade than degrading to "every call is top-level" — the behaviour
+// the meter had before the column was consulted at all.
+const copilotUsageParentColumn = "parent_tool_call_id"
+
 // CopilotUsageCall is one model call as Copilot accounted for it.
 //
 // Every field here is one tclaude already contracts elsewhere (tokens, cost
@@ -143,6 +153,23 @@ type CopilotUsageCall struct {
 	// parsed: it is used as evidence of freshness, never as a clock tclaude
 	// computes with.
 	CreatedAt string
+
+	// Nested reports that Copilot made this call from INSIDE a tool call —
+	// `parent_tool_call_id IS NOT NULL` — rather than as a turn of the main
+	// conversation.
+	//
+	// It matters because such a call is recorded under the same `session_id`,
+	// so a last-row-wins occupancy would take a nested call's small prompt as
+	// the conversation's context and visibly dip the meter. Its tokens are
+	// still real spend, so it counts toward the totals; it just does not
+	// describe the main conversation's window. See the fold in agentd.
+	//
+	// The parent id ITSELF is deliberately never read — the query selects the
+	// predicate, not the value — so no tool-call identifier enters tclaude at
+	// all. The column is optional (see copilotUsageOptionalColumns): a release
+	// without it reports every call as top-level, which is exactly the
+	// behaviour that predates this field.
+	Nested bool
 }
 
 // ContextTokens is the call's context-window occupancy — the numerator of the
@@ -176,6 +203,9 @@ type CopilotUsageStore struct {
 	// version number tells you a release changed and not whether the fields
 	// this reader needs survived it.
 	schemaVersion int64
+	// hasParentColumn records whether the optional nested-call discriminator
+	// exists in this store. False makes every call read as top-level.
+	hasParentColumn bool
 }
 
 // CopilotUsageStorePath is the store's path under a resolved COPILOT_HOME.
@@ -289,6 +319,7 @@ func (s *CopilotUsageStore) verifySchema() error {
 		return fmt.Errorf("copilot usage store %s: %s is missing %s (schema_version %d)",
 			s.path, copilotUsageEventsTable, strings.Join(missing, ", "), version)
 	}
+	_, s.hasParentColumn = present[copilotUsageParentColumn]
 	return nil
 }
 
@@ -332,6 +363,20 @@ const copilotUsageSelectColumns = `session_id, id, turn_index, model,
 	reasoning_tokens, total_nano_aiu, request_multiplier,
 	duration_ms, time_to_first_token_ms, inter_token_latency_ms,
 	reasoning_effort, finish_reason, created_at`
+
+// copilotUsageNestedExpr is the final projected column: whether the call was
+// made from inside a tool call.
+//
+// It selects the PREDICATE rather than parent_tool_call_id itself, so the
+// identifier never crosses into tclaude — the reader learns "nested: yes/no"
+// and nothing more. When the column is absent the constant 0 keeps the row
+// shape identical, so one scan path serves both stores.
+func copilotUsageNestedExpr(hasParentColumn bool) string {
+	if !hasParentColumn {
+		return "0"
+	}
+	return "(" + copilotUsageParentColumn + " IS NOT NULL)"
+}
 
 // Calls returns every row newer than each cursor's checkpoint, oldest first
 // within a session, across at most limit rows in total.
@@ -384,6 +429,7 @@ func (s *CopilotUsageStore) callsChunk(
 	}
 	args = append(args, limit)
 	query := `SELECT ` + copilotUsageSelectColumns +
+		`, ` + copilotUsageNestedExpr(s.hasParentColumn) +
 		` FROM ` + copilotUsageEventsTable +
 		` WHERE ` + strings.Join(predicates, " OR ") +
 		` ORDER BY session_id, id LIMIT ?`
@@ -406,13 +452,14 @@ func (s *CopilotUsageStore) callsChunk(
 			reasoningTokens, durationMs, firstTokenMs, interTokenMs sql.NullInt64
 			multiplier                                              sql.NullFloat64
 			model, effort, finishReason, createdAt                  sql.NullString
+			nested                                                  sql.NullBool
 		)
 		if err := rows.Scan(
 			&call.SessionID, &call.EventID, &turnIndex, &model,
 			&inputTokens, &outputTokens, &cacheRead, &cacheWrite,
 			&reasoningTokens, &nanoAIU, &multiplier,
 			&durationMs, &firstTokenMs, &interTokenMs,
-			&effort, &finishReason, &createdAt,
+			&effort, &finishReason, &createdAt, &nested,
 		); err != nil {
 			return nil, fmt.Errorf("copilot usage store %s: scan call: %w", s.path, err)
 		}
@@ -437,6 +484,7 @@ func (s *CopilotUsageStore) callsChunk(
 		call.ReasoningEffort = strings.TrimSpace(effort.String)
 		call.FinishReason = strings.TrimSpace(finishReason.String)
 		call.CreatedAt = strings.TrimSpace(createdAt.String)
+		call.Nested = nested.Valid && nested.Bool
 		calls = append(calls, call)
 	}
 	if err := rows.Err(); err != nil {

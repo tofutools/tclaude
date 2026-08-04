@@ -11,7 +11,6 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
-	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 // The daemon-owned sweep of Copilot's own SQLite session store.
@@ -155,7 +154,15 @@ func stopCopilotUsagePoller() {
 // that does not run Copilot, and it costs no file I/O at all — nothing is
 // opened, and any store cached by an earlier sweep is closed.
 func sweepCopilotUsage(ctx context.Context) {
-	sessions := liveCopilotSessions()
+	sessions, ok := liveCopilotSessions()
+	if !ok {
+		// Liveness or the session list was UNAVAILABLE, which is not the same
+		// as "no Copilot panes are running". Pruning on it would close every
+		// cached store and drop every cursor over a transient tmux hiccup,
+		// making the next successful sweep re-open and re-probe each home for
+		// nothing. Skip the tick instead and keep what we have.
+		return
+	}
 	if len(sessions) == 0 {
 		pruneCopilotUsageState(nil)
 		return
@@ -180,18 +187,26 @@ func sweepCopilotUsage(ctx context.Context) {
 // liveCopilotSessions returns the Copilot session rows whose tmux pane is
 // actually alive. A dead pane's store rows cannot grow, and its row already
 // holds the final reading.
-func liveCopilotSessions() []*db.SessionRow {
-	alive, err := session.LiveTmuxSessions()
+//
+// The bool reports whether the answer is TRUSTWORTHY, which the caller needs
+// kept apart from the empty slice: "no Copilot panes are running" is a real
+// observation that should retire cached state, while "tmux did not answer" is
+// the absence of an observation and must change nothing.
+func liveCopilotSessions() ([]*db.SessionRow, bool) {
+	// Through the daemon-wide coalescing cache, not a direct probe: this sweep
+	// ticks at the same 2s cadence as the dashboard's poll handlers, so it
+	// almost always rides their `tmux ls` instead of forking its own.
+	alive, err := cachedLiveTmuxSessions()
 	if err != nil {
 		slog.Debug("copilot-usage: tmux liveness unavailable; skipping sweep",
 			"error", err, "module", "agentd")
-		return nil
+		return nil, false
 	}
 	rows, err := db.ListSessions()
 	if err != nil {
 		slog.Debug("copilot-usage: session list unavailable; skipping sweep",
 			"error", err, "module", "agentd")
-		return nil
+		return nil, false
 	}
 	var live []*db.SessionRow
 	for _, row := range rows {
@@ -211,7 +226,7 @@ func liveCopilotSessions() []*db.SessionRow {
 		}
 		live = append(live, row)
 	}
-	return live
+	return live, true
 }
 
 // copilotHomeForSession resolves the COPILOT_HOME this session's pane actually
@@ -294,7 +309,13 @@ func sweepCopilotUsageHome(ctx context.Context, home string, sessions []*db.Sess
 		// the store or back the home off: Copilot's writer holding the database
 		// for a moment is the normal case, and the next tick is 2 seconds away.
 		// The cursor means nothing was lost by skipping this one.
-		warnCopilotUsageHome(home, "read", "copilot-usage: sweep read failed; retrying next tick", err)
+		//
+		// Debug rather than Warn for exactly that reason — a log level that
+		// contradicts the comment next to it teaches an operator to distrust
+		// one of the two. A read failure that is NOT transient shows up as the
+		// meter standing still, and the open/probe paths above do warn.
+		slog.Debug("copilot-usage: sweep read failed; retrying next tick",
+			"home", home, "error", err, "module", "agentd")
 		return
 	}
 	if len(calls) == 0 {
@@ -520,26 +541,44 @@ func applyCopilotUsageCalls(sess *db.SessionRow, calls []harness.CopilotUsageCal
 			// duplicate would corrupt rather than merely repeat.
 			continue
 		}
+		// EVERY row advances the cursor and the totals, nested or not: a call
+		// made from inside a tool call is real spend and must be accounted for,
+		// and skipping its id would re-read it forever.
 		next.LastEventID = call.EventID
-		next.LastTurnIndex = call.TurnIndex
 		next.Requests++
 		next.InputTokens += call.InputTokens
 		next.OutputTokens += call.OutputTokens
 		next.CacheReadTokens += call.CacheReadTokens
 		next.CacheWriteTokens += call.CacheWriteTokens
 		next.ReasoningTokens += call.ReasoningTokens
+		// total_nano_aiu is Copilot's own running total for the SESSION, not a
+		// per-call delta, so the newest row replaces rather than adds. Summing
+		// it would inflate the cost by roughly the number of calls. Nested
+		// calls carry the same running total, so they update it too.
+		if call.HasNanoAIU {
+			nanoAIU = call.TotalNanoAIU
+			sawNanoAIU = true
+		}
+
+		// Only a TOP-LEVEL call describes the main conversation, so only it may
+		// move the occupancy numerator and the fields rendered beside it.
+		//
+		// Copilot records a call made from inside a tool call under the same
+		// session_id (the row carries parent_tool_call_id for exactly that
+		// reason). Such a call has its own, typically much smaller, prompt —
+		// so last-row-wins would take it as the conversation's context and dip
+		// the meter every time a tool ran, then restore it on the next real
+		// turn. The totals above still count it; it just does not get to say
+		// how full the conversation's window is.
+		if call.Nested {
+			continue
+		}
+		next.LastTurnIndex = call.TurnIndex
 		if call.Model != "" {
 			next.Model = call.Model
 		}
 		next.ReasoningEffort = call.ReasoningEffort
 		next.FinishReason = call.FinishReason
-		// total_nano_aiu is Copilot's own running total for the SESSION, not a
-		// per-call delta, so the newest row replaces rather than adds. Summing
-		// it would inflate the cost by roughly the number of calls.
-		if call.HasNanoAIU {
-			nanoAIU = call.TotalNanoAIU
-			sawNanoAIU = true
-		}
 		if call.RequestMultiplier > 0 {
 			multiplier := call.RequestMultiplier
 			next.RequestMultiplier = &multiplier
@@ -640,14 +679,29 @@ func persistCopilotUsageContext(sess *db.SessionRow, snapshot db.CopilotUsageSna
 	}
 	window := stored.ContextWindowSize
 	pct := copilotContextPct(snapshot.LastCallInputTokens, window)
+
+	// tokens_output may only ever ADVANCE, hence max() rather than the sweep's
+	// own figure. The two sources count different things and either may be
+	// ahead: the durable log's shutdown total is session-lifetime and is
+	// restored across a resume, while the sweep counts only the rows it has
+	// consumed — which is legitimately behind mid-drain of a large backlog, and
+	// starts from zero for a session first seen after a resume.
+	//
+	// Writing the lower figure would not merely blink: it would STICK. The
+	// read-through follower skips its write when its projection matches its own
+	// persisted mirror, and that mirror still holds the higher value, so it
+	// never issues the corrective write. The regression is only observable in
+	// the row, which is exactly where it would be seen.
+	output := max(snapshot.OutputTokens, stored.TokensOutput)
+
 	if pct == stored.ContextPct &&
 		snapshot.LastCallInputTokens == stored.TokensInput &&
-		snapshot.OutputTokens == stored.TokensOutput {
+		output == stored.TokensOutput {
 		return
 	}
 	if _, err := db.UpdateContextSnapshotForGeneration(
 		sess.ID, sess.ConvID, sess.CreatedAt,
-		pct, snapshot.LastCallInputTokens, snapshot.OutputTokens, window,
+		pct, snapshot.LastCallInputTokens, output, window,
 	); err != nil {
 		slog.Warn("copilot-usage: failed to persist context snapshot",
 			"session_id", sess.ID, "error", err, "module", "agentd")

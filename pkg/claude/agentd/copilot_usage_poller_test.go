@@ -396,3 +396,181 @@ func TestCopilotDurableFollowerYieldsNumeratorToSweep(t *testing.T) {
 		assert.Equal(t, snap.ContextWindowSize, again.ContextWindowSize)
 	}
 }
+
+// TestCopilotUsageNeverRegressesOutputTokens is the review's blocking case.
+//
+// The two sources count different things and EITHER may be ahead: the durable
+// log's shutdown total is session-lifetime and restored across a resume, while
+// the sweep counts only the rows it has consumed — legitimately behind
+// mid-drain of a large backlog, and starting from zero for a session first seen
+// after a resume.
+//
+// Writing the lower figure would not merely blink, it would STICK: the
+// read-through follower skips its write when its projection matches its own
+// persisted mirror, and that mirror still holds the higher value, so no
+// corrective write ever follows.
+func TestCopilotUsageNeverRegressesOutputTokens(t *testing.T) {
+	setupTestDB(t)
+	resetCopilotUsageStateForTest()
+	t.Cleanup(resetCopilotUsageStateForTest)
+
+	sess := copilotUsageSession(t, "s-copilot", "conv-1")
+	// The durable follower is far ahead — a resumed session's shutdown total.
+	updated, err := db.UpdateContextSnapshotForGeneration(
+		sess.ID, sess.ConvID, sess.CreatedAt, 0, 0, 50000, 0)
+	require.NoError(t, err)
+	require.True(t, updated)
+
+	// The sweep folds a handful of rows and is nowhere near that figure.
+	applyCopilotUsageCalls(sess, []harness.CopilotUsageCall{copilotUsageCall(1, 25114, 300)})
+
+	snap, err := db.GetContextSnapshot(sess.ID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(50000), snap.TokensOutput,
+		"the sweep must not drag tokens_output backwards")
+	assert.Equal(t, int64(25114), snap.TokensInput,
+		"the numerator still comes from the sweep")
+
+	// And it must still ADVANCE once the sweep genuinely overtakes the durable
+	// figure — a max() that never moves would be its own bug.
+	applyCopilotUsageCalls(sess, []harness.CopilotUsageCall{copilotUsageCall(2, 26000, 60000)})
+	snap, err = db.GetContextSnapshot(sess.ID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(60300), snap.TokensOutput,
+		"once ahead, the sweep's cumulative total takes over")
+}
+
+// TestCopilotUsageOutputRegressionWouldStick is the reason the fix belongs in
+// the sweep rather than being left for the follower to repair: the follower
+// dedupes against its OWN mirror, so a regressed row is never corrected.
+func TestCopilotUsageOutputRegressionWouldStick(t *testing.T) {
+	setupTestDB(t)
+	resetCopilotUsageStateForTest()
+	resetCopilotContextRefreshStateForTest()
+	t.Cleanup(resetCopilotUsageStateForTest)
+	t.Cleanup(resetCopilotContextRefreshStateForTest)
+
+	home := copilotRefreshHome(t)
+	appendCopilotRefreshEvents(t, copilotRefreshLogPath(home),
+		`{"type":"session.start","data":{"sessionId":"s","copilotVersion":"1.0.77","selectedModel":"gpt-5.4"}}`,
+		`{"type":"assistant.message","data":{"model":"gpt-5.4","outputTokens":50000}}`)
+
+	sess := copilotUsageSession(t, "s-copilot", copilotRefreshConvID)
+	refreshCopilotContextSnapshotOnRead(sess, true)
+	snap, err := db.GetContextSnapshot(sess.ID)
+	require.NoError(t, err)
+	require.Equal(t, int64(50000), snap.TokensOutput)
+
+	// The sweep now reports a much smaller cumulative output.
+	call := copilotUsageCall(1, 20000, 300)
+	call.SessionID = copilotRefreshConvID
+	applyCopilotUsageCalls(sess, []harness.CopilotUsageCall{call})
+
+	// Polling the follower again must not be needed to repair anything, and
+	// must not itself regress the row either.
+	for range 3 {
+		resetCopilotContextRefreshStateForTest()
+		refreshCopilotContextSnapshotOnRead(sess, true)
+		again, err := db.GetContextSnapshot(sess.ID)
+		require.NoError(t, err)
+		assert.Equal(t, int64(50000), again.TokensOutput,
+			"neither writer may regress tokens_output on any poll")
+		assert.Equal(t, int64(20000), again.TokensInput)
+	}
+}
+
+// TestSweepCopilotUsagePreservesStateWhenLivenessUnavailable covers the
+// should-fix: a transient tmux hiccup is the ABSENCE of an observation, not an
+// observation that no panes are running, and must not close cached stores or
+// drop cursors.
+func TestSweepCopilotUsagePreservesStateWhenLivenessUnavailable(t *testing.T) {
+	setupTestDB(t)
+	resetCopilotUsageStateForTest()
+	t.Cleanup(resetCopilotUsageStateForTest)
+
+	sess := copilotUsageSession(t, "s-copilot", "conv-1")
+	applyCopilotUsageCalls(sess, []harness.CopilotUsageCall{copilotUsageCall(1, 25114, 300)})
+	_, ok := lookupCopilotLiveUsage(sess.ID, sess.ConvID, sess.CreatedAt)
+	require.True(t, ok, "state to preserve")
+
+	restore := liveTmuxCache
+	t.Cleanup(func() { liveTmuxCache = restore })
+	liveTmuxCache = newTmuxSessionCache(0, time.Now, func() (map[string]struct{}, error) {
+		return nil, assert.AnError
+	})
+
+	sweepCopilotUsage(t.Context())
+
+	_, ok = lookupCopilotLiveUsage(sess.ID, sess.ConvID, sess.CreatedAt)
+	assert.True(t, ok, "an unavailable liveness probe must not drop poller state")
+
+	// A SUCCESSFUL probe reporting no live panes is a real observation, and
+	// that one does retire the state.
+	liveTmuxCache = newTmuxSessionCache(0, time.Now, func() (map[string]struct{}, error) {
+		return map[string]struct{}{}, nil
+	})
+	sweepCopilotUsage(t.Context())
+
+	_, ok = lookupCopilotLiveUsage(sess.ID, sess.ConvID, sess.CreatedAt)
+	assert.False(t, ok, "a genuinely empty live set does retire the state")
+}
+
+// TestApplyCopilotUsageCallsExcludesNestedCallsFromNumerator covers the
+// reviewer's subagent question. Copilot records a call made from inside a tool
+// call under the SAME session_id, and its prompt is its own — much smaller than
+// the conversation's. Letting it win the numerator would dip the meter every
+// time a tool ran, then restore it on the next real turn.
+func TestApplyCopilotUsageCallsExcludesNestedCallsFromNumerator(t *testing.T) {
+	setupTestDB(t)
+	resetCopilotUsageStateForTest()
+	t.Cleanup(resetCopilotUsageStateForTest)
+
+	sess := copilotUsageSession(t, "s-copilot", "conv-1")
+
+	topLevel := copilotUsageCall(1, 120000, 300)
+	nested := copilotUsageCall(2, 800, 50)
+	nested.Nested = true
+	nested.Model = "gpt-5-mini"
+
+	applyCopilotUsageCalls(sess, []harness.CopilotUsageCall{topLevel, nested})
+
+	snapshot, err := db.LoadCopilotUsageSnapshot(sess.ID)
+	require.NoError(t, err)
+	require.NotNil(t, snapshot)
+
+	assert.Equal(t, int64(120000), snapshot.LastCallInputTokens,
+		"a nested call must not become the conversation's occupancy")
+	assert.Equal(t, "gpt-5", snapshot.Model,
+		"nor rename the model shown beside it")
+
+	// Its spend is still fully accounted for, and its id still advances the
+	// cursor — skipping that would re-read it forever.
+	assert.Equal(t, int64(2), snapshot.Requests)
+	assert.Equal(t, int64(120800), snapshot.InputTokens)
+	assert.Equal(t, int64(350), snapshot.OutputTokens)
+	assert.Equal(t, int64(2), snapshot.LastEventID)
+}
+
+// TestApplyCopilotUsageCallsNestedOnlyBatchKeepsPriorNumerator is the boundary:
+// a sweep that sees ONLY nested calls has learned nothing about the
+// conversation's window, so the previous reading must stand rather than reset.
+func TestApplyCopilotUsageCallsNestedOnlyBatchKeepsPriorNumerator(t *testing.T) {
+	setupTestDB(t)
+	resetCopilotUsageStateForTest()
+	t.Cleanup(resetCopilotUsageStateForTest)
+
+	sess := copilotUsageSession(t, "s-copilot", "conv-1")
+	applyCopilotUsageCalls(sess, []harness.CopilotUsageCall{copilotUsageCall(1, 120000, 300)})
+
+	nested := copilotUsageCall(2, 800, 50)
+	nested.Nested = true
+	applyCopilotUsageCalls(sess, []harness.CopilotUsageCall{nested})
+
+	snapshot, err := db.LoadCopilotUsageSnapshot(sess.ID)
+	require.NoError(t, err)
+	require.NotNil(t, snapshot)
+	assert.Equal(t, int64(120000), snapshot.LastCallInputTokens,
+		"an all-nested sweep leaves the occupancy where it was")
+	assert.Equal(t, int64(2), snapshot.LastEventID, "but still advances the cursor")
+	assert.Equal(t, int64(2), snapshot.Requests)
+}

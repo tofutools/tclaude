@@ -628,3 +628,79 @@ func TestCopilotUsageStoreRefusesNonRegularFile(t *testing.T) {
 	assert.Contains(t, err.Error(), "not a regular file")
 	assert.False(t, errors.Is(err, ErrCopilotUsageStoreAbsent))
 }
+
+// TestCopilotUsageStoreReportsNestedCalls covers the discriminator that keeps a
+// call made from inside a tool call from being taken as the conversation's
+// context. The parent id itself must never arrive — only the predicate.
+func TestCopilotUsageStoreReportsNestedCalls(t *testing.T) {
+	home := newCopilotUsageFixture(t, true,
+		copilotUsageFixtureCall{sessionID: "sess-a", model: "m", input: 120000})
+	writer := openCopilotUsageFixtureWriterExisting(t, home)
+	_, err := writer.Exec(`INSERT INTO assistant_usage_events
+		(session_id, model, input_tokens, parent_tool_call_id)
+		VALUES ('sess-a', 'm', 800, 'toolu_abc123')`)
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+
+	store, err := OpenCopilotUsageStore(home)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = store.Close() })
+
+	calls, err := store.Calls(context.Background(),
+		[]CopilotUsageCursor{{SessionID: "sess-a"}}, 10)
+	require.NoError(t, err)
+	require.Len(t, calls, 2)
+
+	assert.False(t, calls[0].Nested, "a NULL parent_tool_call_id is a top-level call")
+	assert.True(t, calls[1].Nested, "a set parent_tool_call_id marks a nested call")
+	assert.Equal(t, int64(800), calls[1].InputTokens,
+		"a nested call's tokens are still read — they are real spend")
+}
+
+// TestCopilotUsageStoreWithoutParentColumnDegradesToTopLevel pins the optional
+// probe: the discriminator only refines the numerator, so a release that drops
+// the column must fall back to "every call is top-level" rather than blank the
+// whole meter the way a missing REQUIRED column does.
+func TestCopilotUsageStoreWithoutParentColumnDegradesToTopLevel(t *testing.T) {
+	home := t.TempDir()
+	writer, err := sql.Open("sqlite",
+		"file:"+filepath.Join(home, copilotUsageStoreFileName))
+	require.NoError(t, err)
+	_, err = writer.Exec(`
+		CREATE TABLE schema_version (version INTEGER NOT NULL);
+		CREATE TABLE assistant_usage_events (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			session_id TEXT NOT NULL,
+			turn_index INTEGER,
+			model TEXT NOT NULL,
+			input_tokens INTEGER,
+			output_tokens INTEGER,
+			cache_read_tokens INTEGER,
+			cache_write_tokens INTEGER,
+			reasoning_tokens INTEGER,
+			total_nano_aiu INTEGER,
+			request_multiplier REAL,
+			duration_ms INTEGER,
+			time_to_first_token_ms INTEGER,
+			inter_token_latency_ms INTEGER,
+			reasoning_effort TEXT,
+			finish_reason TEXT,
+			created_at TEXT);
+		INSERT INTO schema_version (version) VALUES (7);
+		INSERT INTO assistant_usage_events (session_id, model, input_tokens)
+			VALUES ('sess-a', 'm', 4242);`)
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+
+	store, err := OpenCopilotUsageStore(home)
+	require.NoError(t, err, "an optional column's absence must not refuse the store")
+	t.Cleanup(func() { _ = store.Close() })
+
+	calls, err := store.Calls(context.Background(),
+		[]CopilotUsageCursor{{SessionID: "sess-a"}}, 10)
+	require.NoError(t, err)
+	require.Len(t, calls, 1)
+	assert.Equal(t, int64(4242), calls[0].InputTokens)
+	assert.False(t, calls[0].Nested,
+		"with no discriminator every call reads as top-level, as it did before")
+}
