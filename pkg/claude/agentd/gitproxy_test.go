@@ -304,6 +304,13 @@ func TestGitProxySSHCommand(t *testing.T) {
 	assert.Equal(t, "ssh -o BatchMode=yes", gitProxySSHCommand(config.GitProxyConfig{}))
 	assert.Equal(t, "ssh -o BatchMode=yes -i /keys/id_ed25519 -o IdentitiesOnly=yes",
 		gitProxySSHCommand(config.GitProxyConfig{SSHKey: "/keys/id_ed25519"}))
+
+	// "~/.ssh/id_ed25519" is how an operator writes a key path in a JSON config
+	// file. `ssh -i` does not expand it, so the daemon must — otherwise the key
+	// is silently not used and the push fails on authentication instead.
+	t.Setenv("HOME", "/home/operator")
+	assert.Equal(t, "ssh -o BatchMode=yes -i /home/operator/.ssh/id_ed25519 -o IdentitiesOnly=yes",
+		gitProxySSHCommand(config.GitProxyConfig{SSHKey: "~/.ssh/id_ed25519"}))
 }
 
 // TestResolvedGitProxy_Defaults pins the two fail-closed defaults an operator

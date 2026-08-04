@@ -423,10 +423,25 @@ func gitProxyConfigPins(hooksDir, sshCommand string, credentialHelpers []string)
 // until the request timeout rather than failing with a usable message.
 func gitProxySSHCommand(policy config.GitProxyConfig) string {
 	parts := []string{"ssh", "-o", "BatchMode=yes"}
-	if key := strings.TrimSpace(policy.SSHKey); key != "" {
+	// expandTilde for the same reason github_token_file gets it: "~/.ssh/id_ed25519"
+	// is how an operator writes this, and ssh -i does not expand it either.
+	if key := expandTilde(strings.TrimSpace(policy.SSHKey)); key != "" {
 		parts = append(parts, "-i", key, "-o", "IdentitiesOnly=yes")
 	}
 	return strings.Join(parts, " ")
+}
+
+// shellVarHint explains the one path form the daemon deliberately does NOT
+// expand. A config file is not a shell, so "${HOME}/token.txt" arrives
+// literally — and the resulting "no such file or directory" names a path that
+// looks correct, which is a confusing place to be left. "~" IS expanded, so it
+// never needs the hint.
+func shellVarHint(configured string) string {
+	if !strings.Contains(configured, "$") {
+		return ""
+	}
+	return " — note that shell variables like ${HOME} are not expanded in the " +
+		"config file; use an absolute path, or \"~/\""
 }
 
 // gitProxyEnv builds the child environment from scratch rather than filtering

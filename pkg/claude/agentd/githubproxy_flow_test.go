@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -311,4 +312,45 @@ func TestGHProxy_FailureIsAnAnswer(t *testing.T) {
 	assert.Equal(t, 1, out.ExitCode)
 	assert.Contains(t, out.Stderr, "No commits between",
 		"gh's own diagnosis is the actionable part")
+}
+
+// TestGHProxy_TokenFileAcceptsATildePath — "~/github-token.txt" is how an
+// operator writes a path in a JSON config file, and every other human-typed
+// path in the daemon goes through expandTilde. Without it the operator gets
+// `open ~/github-token.txt: no such file or directory`, which names a path that
+// looks perfectly correct.
+func TestGHProxy_TokenFileAcceptsATildePath(t *testing.T) {
+	f, rec := gitProxyWorld(t, []string{"github.com/tofutools"})
+	rec.gh = agentd.ProxyResult{Stdout: "[]"}
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	require.NoError(t, os.WriteFile(filepath.Join(home, "github-token.txt"),
+		[]byte("ghp_from_a_tilde_path\n"), 0o600))
+	writeGitProxyConfig(t, []string{"github.com/tofutools"}, func(c *gitProxyConfigPatch) {
+		c.GitHubTokenFile = "~/github-token.txt"
+	})
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubRead, "test"))
+
+	res := gitProxyPost(t, f, "/v1/github/pr/list", map[string]any{})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+	assert.Contains(t, ghCall(t, rec).Env, "GH_TOKEN=ghp_from_a_tilde_path")
+}
+
+// TestGHProxy_TokenFileExplainsAnUnexpandedShellVariable — a config file is not
+// a shell, so "${HOME}/token.txt" arrives literally. That is the one path form
+// the daemon deliberately does not expand, so the refusal has to say so rather
+// than reporting a missing file whose path reads as correct.
+func TestGHProxy_TokenFileExplainsAnUnexpandedShellVariable(t *testing.T) {
+	f, rec := gitProxyWorld(t, []string{"github.com/tofutools"})
+	writeGitProxyConfig(t, []string{"github.com/tofutools"}, func(c *gitProxyConfigPatch) {
+		c.GitHubTokenFile = "${HOME}/github-token.txt"
+	})
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubRead, "test"))
+
+	res := gitProxyPost(t, f, "/v1/github/pr/list", map[string]any{})
+	require.Equal(t, http.StatusServiceUnavailable, res.Code, "body=%s", res.Body.String())
+	assert.Contains(t, res.Body.String(), "not expanded",
+		"the operator must be told why a path that looks right did not resolve")
+	assert.Equal(t, 0, ghCallCount(rec))
 }

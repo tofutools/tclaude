@@ -129,14 +129,19 @@ func ghProxyEnv(policy config.GitProxyConfig) ([]string, *proxyFault) {
 			env = append(env, name+"="+v)
 		}
 	}
-	tokenFile := strings.TrimSpace(policy.GitHubTokenFile)
-	if tokenFile == "" {
+	configured := strings.TrimSpace(policy.GitHubTokenFile)
+	if configured == "" {
 		return env, nil
 	}
+	// "~/github-token.txt" is how an operator naturally writes this in a JSON
+	// config file, and the same expandTilde every other human-typed path in the
+	// daemon goes through applies here.
+	tokenFile := expandTilde(configured)
 	raw, err := os.ReadFile(tokenFile)
 	if err != nil {
 		return nil, faultf(http.StatusServiceUnavailable, "token_unreadable",
-			"the configured agent.git_proxy.github_token_file could not be read: %v", err)
+			"the configured agent.git_proxy.github_token_file could not be read: %v%s",
+			err, shellVarHint(configured))
 	}
 	token := strings.TrimSpace(string(raw))
 	if token == "" {

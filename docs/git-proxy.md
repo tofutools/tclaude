@@ -72,7 +72,11 @@ Add an `agent.git_proxy` block to `~/.tclaude/data/config.json`:
 | `protected_refs` | Branches the proxy refuses to push to at all. Absent → `["main", "master"]`; an explicit `[]` turns the protection off. |
 | `allow_force_push` | Permits `--force-with-lease` on non-protected refs. Default off. Plain `--force` is never available. |
 | `ssh_key` | Pins one private key (`ssh -i … -o IdentitiesOnly=yes`). Empty uses the daemon's ambient SSH setup — normally an ssh-agent, which is the better posture. |
-| `github_token_file` | A file whose contents become `GH_TOKEN`. Empty lets `gh` use the daemon's own authenticated configuration. |
+| `github_token_file` | A file whose contents become `GH_TOKEN` for `gh`. Empty lets `gh` use the daemon's own authenticated configuration. Note this feeds the **GitHub** half only; `git` itself authenticates over SSH or through the operator's own credential helper. |
+
+Both path fields accept `~/…`, which expands to the account agentd runs as.
+Shell variables are **not** expanded — a config file is not a shell, so
+`"${HOME}/token.txt"` is taken literally. Use `~/` or an absolute path.
 
 ### Allow-list patterns
 
