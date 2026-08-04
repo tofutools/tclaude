@@ -355,14 +355,21 @@ func permSourceNote(source string, ownerImplied bool, ownedGroups []string) stri
 // groups to name (an older daemon, or a lookup that failed) it falls back
 // to the unscoped wording rather than claiming a scope it cannot show.
 func ownerScopeNote(scope string, ownedGroups []string) string {
-	if scope == "any" || len(ownedGroups) == 0 {
+	if len(ownedGroups) == 0 {
 		return "(via ownership)"
 	}
 	where := strings.Join(ownedGroups, ", ")
-	if scope == "member" {
+	switch scope {
+	case "group":
+		return fmt.Sprintf("(via ownership of: %s)", where)
+	case "member":
 		return fmt.Sprintf("(via ownership of: %s — their members only)", where)
 	}
-	return fmt.Sprintf("(via ownership of: %s)", where)
+	// "any", and any scope a NEWER daemon invented that this build does
+	// not know: fall back to the unscoped wording. Guessing the narrower
+	// group phrasing would misreport an unknown scope, which is the
+	// failure this whole change exists to prevent.
+	return "(via ownership)"
 }
 
 // printDaemonAmbiguous renders the daemon's typed ambiguity envelope.
@@ -579,9 +586,10 @@ func runPermissionsSlugs(p *permissionsSlugsParams, stdout, stderr io.Writer) in
 		tbl.AddRow(table.Row{Cells: []string{s.Slug, ownerScopeCell(s), s.Description}})
 	}
 	fmt.Fprintln(stdout, tbl.Render())
-	fmt.Fprintln(stdout, "\nOWNER = group ownership confers this slug without an explicit grant (a per-agent deny still suppresses it).")
+	fmt.Fprintln(stdout, "\nOWNER = group ownership confers this slug without an explicit grant.")
 	fmt.Fprintln(stdout, "  ✔ group   — over the groups you own")
 	fmt.Fprintln(stdout, "  ✔ member  — over members of the groups you own")
 	fmt.Fprintln(stdout, "  ✔ any     — unscoped; owning any group at all is enough")
+	fmt.Fprintln(stdout, "A per-agent deny suppresses the bypass, except groups.link.add/rm, where ownership is checked first.")
 	return rcOK
 }

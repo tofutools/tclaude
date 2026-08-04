@@ -105,6 +105,15 @@ func TestPermSourceNote_OwnerScope(t *testing.T) {
 			want:   "(via ownership)",
 		},
 		{
+			// A NEWER daemon could invent a fourth scope. Guessing the
+			// narrower group phrasing would misreport it — exactly the
+			// failure this change exists to prevent.
+			name:   "an unknown scope falls back to the unscoped wording",
+			source: "owner:fleet",
+			owned:  owned,
+			want:   "(via ownership)",
+		},
+		{
 			name:   "a plain default stays unannotated",
 			source: "default",
 			owned:  owned,

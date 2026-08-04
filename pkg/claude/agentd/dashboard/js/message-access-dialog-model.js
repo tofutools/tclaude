@@ -102,9 +102,13 @@ function membershipGroups(snapshot, descriptor) {
 // limit that is not there. A daemon that predates owner_scope sends no
 // scope, and keeps the historical group-naming wording.
 export function ownerSource(scope, ownedGroups) {
-  if (scope === 'any') return 'owner: any group owned';
+  if (scope === 'group') return `owner: ${ownedGroups.join(', ')}`;
   if (scope === 'member') return `owner: members of ${ownedGroups.join(', ')}`;
-  return `owner: ${ownedGroups.join(', ')}`;
+  if (scope === 'any') return 'owner: any group owned';
+  // Legacy daemons send no scope at all — keep the historical wording.
+  // A scope this build does not recognise is deliberately NOT guessed
+  // into the narrower group phrasing.
+  return scope ? 'owner: conferred by group ownership' : `owner: ${ownedGroups.join(', ')}`;
 }
 
 export function permissionRows(snapshot, descriptor, selection) {

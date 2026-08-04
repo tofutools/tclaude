@@ -18,11 +18,11 @@ import (
 //   - requireNotifyHumanPermission → human.notify
 //   - requireProcessRunReadPermission → process.runs.read
 //
-// Known gap: templates.instantiate ALSO gets a group-owner bypass, but
-// only at the rebrief endpoint (rebrief.go) — its other call site creates
-// a new group, which ownership cannot scope. Marking the slug wholesale
-// would overstate there, so it stays unmarked and an owner's rebrief
-// right goes unlisted. Fixing that needs per-(slug, endpoint) scope.
+// Known limit of this test: it mirrors the registry by hand, so it
+// catches a slug whose SCOPE drifts from its call site, but not a slug
+// that has an owner bypass and was never registered at all. agent.
+// remote-control and agent.inbox-watch were exactly that until TCL-1013.
+// When adding a gated endpoint, register its slug.
 //
 // If you add/remove an owner-bypass call site, update both the registry
 // scope AND this map — a drift here means the UI lies about what an owner
@@ -37,20 +37,22 @@ func TestPermissionRegistry_OwnerImpliedSet(t *testing.T) {
 	wantScope := map[string]ownerScope{
 		// requireCrossAgentPermission / requireGroupContextAccess —
 		// members of owned groups.
-		PermAgentReincarnate: ownerScopeMember,
-		PermAgentCompact:     ownerScopeMember,
-		PermAgentRename:      ownerScopeMember,
-		PermAgentClone:       ownerScopeMember,
-		PermAgentContextInfo: ownerScopeMember,
-		PermAgentTask:        ownerScopeMember,
-		PermAgentPR:          ownerScopeMember,
-		PermAgentTags:        ownerScopeMember,
-		PermAgentSchedule:    ownerScopeMember,
-		PermAgentStop:        ownerScopeMember,
-		PermAgentResume:      ownerScopeMember,
-		PermAgentDelete:      ownerScopeMember,
-		PermAgentPromote:     ownerScopeMember,
-		PermAgentRetire:      ownerScopeMember,
+		PermAgentReincarnate:   ownerScopeMember,
+		PermAgentCompact:       ownerScopeMember,
+		PermAgentRename:        ownerScopeMember,
+		PermAgentClone:         ownerScopeMember,
+		PermAgentContextInfo:   ownerScopeMember,
+		PermAgentTask:          ownerScopeMember,
+		PermAgentPR:            ownerScopeMember,
+		PermAgentTags:          ownerScopeMember,
+		PermAgentSchedule:      ownerScopeMember,
+		PermAgentStop:          ownerScopeMember,
+		PermAgentResume:        ownerScopeMember,
+		PermAgentDelete:        ownerScopeMember,
+		PermAgentPromote:       ownerScopeMember,
+		PermAgentRetire:        ownerScopeMember,
+		PermAgentRemoteControl: ownerScopeMember,
+		PermAgentInboxWatch:    ownerScopeMember,
 		// requireGroupPermission and the other group-scoped endpoints —
 		// the owned group itself.
 		PermGroupsStop:       ownerScopeGroup,
@@ -62,6 +64,13 @@ func TestPermissionRegistry_OwnerImpliedSet(t *testing.T) {
 		PermGroupsLinkRm:     ownerScopeGroup,
 		PermGroupsNest:       ownerScopeGroup,
 		PermProcessAdvance:   ownerScopeGroup,
+		// Both of templates.instantiate's owner-bypass sites are
+		// requireGroupPermission over an EXISTING group (rebrief and
+		// reinforce). Its other two sites take plain requirePermission,
+		// so the group scope is what keeps the display honest: an owner
+		// may rebrief/reinforce a group it owns, never instantiate a new
+		// one without the slug.
+		PermTemplatesUse: ownerScopeGroup,
 		// ownsAnyGroup — unscoped, because there is no per-group surface
 		// to scope them to.
 		PermProcessRunsRead: ownerScopeAny,

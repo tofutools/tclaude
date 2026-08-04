@@ -16,6 +16,9 @@ test('Owner-conferred permission sources carry their scope', async (t) => {
   assert.equal(model.ownerSource('any', ['dev', 'qa']), 'owner: any group owned');
   // A daemon that predates owner_scope sends none; keep the old wording.
   assert.equal(model.ownerSource(undefined, ['dev']), 'owner: dev');
+  // A scope a NEWER daemon invented must not be guessed into the
+  // narrower group phrasing — that would misreport the reach.
+  assert.equal(model.ownerSource('fleet', ['dev']), 'owner: conferred by group ownership');
 
   // And the row builder uses it, so the phrasing is not merely available.
   const snapshot = {

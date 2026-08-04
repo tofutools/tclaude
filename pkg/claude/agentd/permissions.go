@@ -287,6 +287,18 @@ var permissionRegistry = []PermSlug{
 		Description: "Retire (soft-delete) an agent: revokes its group memberships and permission grants so it stops being an agent, while leaving its conversation intact and reinstatable (tclaude agent retire). Group owners can retire members of groups they own without this slug.",
 	},
 	{
+		Slug:       PermAgentRemoteControl,
+		OwnerScope: ownerScopeMember,
+		Description: "Toggle ANOTHER agent's built-in remote access (tclaude agent remote-control --target). " +
+			"Group owners can toggle members of groups they own without this slug.",
+	},
+	{
+		Slug:       PermAgentInboxWatch,
+		OwnerScope: ownerScopeMember,
+		Description: "Watch ANOTHER agent's inbox — a live read of messages addressed to it. " +
+			"Group owners can watch members of groups they own without this slug.",
+	},
+	{
 		Slug:        PermMessageDirect,
 		Description: "Send a 1:1 message to ANY agent regardless of shared-group membership — the off-group escape hatch (tclaude agent message). Intra-group messaging, owner-of-group, and via-link reach need no slug; this covers everything else. Not default-granted.",
 	},
@@ -303,8 +315,10 @@ var permissionRegistry = []PermSlug{
 		Description: "Create, edit, delete group templates and snapshot a live group into a template (dashboard Templates tab). A template is a reusable blueprint, not a conversation snapshot. Not default-granted (effectively human-only).",
 	},
 	{
-		Slug:        PermTemplatesUse,
-		Description: "Instantiate a working group from a template — creates the group and spawns its whole agent team in one shot. Strictly more powerful than groups.spawn (a whole team at once), so not default-granted (effectively human-only).",
+		Slug:       PermTemplatesUse,
+		OwnerScope: ownerScopeGroup,
+		Description: "Instantiate a working group from a template — creates the group and spawns its whole agent team in one shot. Strictly more powerful than groups.spawn (a whole team at once), so not default-granted (effectively human-only). " +
+			"Group owners can /rebrief and /reinforce a group they own without this slug; instantiating a NEW group always needs it.",
 	},
 	{
 		Slug:        PermProfilesManage,
