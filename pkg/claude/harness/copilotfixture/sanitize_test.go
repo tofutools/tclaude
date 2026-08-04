@@ -190,3 +190,55 @@ func TestAuthorizationEmptinessDetection(t *testing.T) {
 	obs := s.Request(RecordedRequest{Header: http.Header{}, Body: map[string]any{}})
 	assert.False(t, obs.AuthorizationPresent)
 }
+
+// TestSelfPacedEventsLeaveTheCausalOrderIntact pins the partition that made the
+// event goldens reproducible.
+//
+// The sequences below are the real ones, lifted from the CI failure that
+// prompted the change: identical multisets — thirteen poller ticks in both —
+// differing only in whether one tick landed before or after a pair of
+// tool.execution_partial_result events. Two runs of the same scenario, the same
+// CLI, the same everything; a busy host moved a tick across a boundary and the
+// golden reported contract drift.
+func TestSelfPacedEventsLeaveTheCausalOrderIntact(t *testing.T) {
+	const ping = "session.background_tasks_changed"
+	const partial = "tool.execution_partial_result"
+
+	fast := []string{"tool.execution_start", ping, ping, ping, ping, ping, ping,
+		partial, partial, ping, ping, ping, ping, ping, "tool.execution_complete"}
+	slow := []string{"tool.execution_start", ping, ping, ping, ping, ping,
+		partial, partial, ping, ping, ping, ping, ping, ping, "tool.execution_complete"}
+
+	fastOrdered, fastSelf := splitSelfPacedEvents(fast)
+	slowOrdered, slowSelf := splitSelfPacedEvents(slow)
+
+	assert.Equal(t, fastOrdered, slowOrdered,
+		"the same scenario must project to the same ordered stream on a fast host "+
+			"and a slow one; this inequality IS the flake")
+	assert.Equal(t, []string{
+		"tool.execution_start", partial, partial, "tool.execution_complete",
+	}, fastOrdered,
+		"every event that marks real progress through the turn stays, in order")
+	assert.Equal(t, []string{ping}, fastSelf,
+		"that the CLI emits the ping is still recorded — as a set, so neither how "+
+			"many nor where can make it flaky again")
+	assert.Equal(t, fastSelf, slowSelf)
+}
+
+// TestSelfPacedPartitionKeepsOrderedDuplicates guards the obvious overcorrection.
+//
+// Collapsing repeats wholesale would have fixed the flake too, and would have
+// thrown away evidence: four assistant.message_delta events are how the fixtures
+// show the CLI decoding a streamed answer incrementally rather than as one
+// whole message. Those repeats are the measurement.
+func TestSelfPacedPartitionKeepsOrderedDuplicates(t *testing.T) {
+	in := []string{
+		"assistant.message_start",
+		"assistant.message_delta", "assistant.message_delta",
+		"assistant.message_delta", "assistant.message_delta",
+		"assistant.message",
+	}
+	ordered, selfPaced := splitSelfPacedEvents(in)
+	assert.Equal(t, in, ordered, "an ordered type's repeats are evidence, not noise")
+	assert.Empty(t, selfPaced)
+}

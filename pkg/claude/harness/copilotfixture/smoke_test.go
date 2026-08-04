@@ -64,11 +64,23 @@ func requireSmoke(t *testing.T) {
 // deadline to pass, for a prompt that will never be answered. Run one at a
 // time that is ten minutes of a CI runner doing nothing.
 //
-// The scenarios that must NOT use this are the ones driving tclaude's own
-// production code through process-global state — t.Setenv for COPILOT_HOME or
-// HOME, and the conv-index database's reset hook. Those are the conv-store and
-// hooks files, and they stay sequential; `go test` enforces the t.Setenv half
-// of that rule itself.
+// Two kinds of scenario must NOT use this, and both say so at their own call
+// site:
+//
+//   - Process-global state. The conv-store and hooks scenarios drive tclaude's
+//     own production code through t.Setenv and the conv-index database's reset
+//     hook. `go test` enforces the t.Setenv half of that rule itself, by
+//     panicking rather than by racing.
+//   - Scenarios that are ABOUT timing. The soft-exit arms and the in-pane
+//     injection scenario type into a live TUI on a schedule, so they encode an
+//     assumption about how far the CLI has got — the one assumption contention
+//     breaks.
+//
+// Note what is NOT on that list any more: the golden-comparing scenarios. They
+// were sequential for a while because the event goldens pinned where a
+// background-task poller's ticks fell relative to a tool's own events, which is
+// a race rather than a contract. That is fixed in the projection now (see
+// selfPacedEventTypes), so they run concurrently like everything else.
 //
 // Ordering matters: requireSmoke may skip, and a skipped test never returns to
 // call t.Parallel.
@@ -76,29 +88,6 @@ func requireSmokeParallel(t *testing.T) {
 	t.Helper()
 	requireSmoke(t)
 	t.Parallel()
-}
-
-// requireSmokeGolden is requireSmoke for a scenario compared against a
-// committed golden. It stays SEQUENTIAL, and the reason is a property of the
-// goldens rather than of concurrency.
-//
-// A golden pins the CLI's event stream as an exact sequence, and that sequence
-// contains session.background_tasks_changed — a housekeeping ping the CLI
-// emits while a turn is in flight. How MANY of them land is a function of how
-// long the turn took, so a slow enough host produces a different golden for
-// identical behavior. That is a latent flake in the fixtures as committed, not
-// something concurrency introduced; running these alongside three other CLIs
-// merely makes "slow enough" easy to reach, which is how it was found (on two
-// cores, in the tool_call golden, on a repeat count and nothing else).
-//
-// Serializing them removes the amplification without touching a byte of the
-// recorded evidence. The underlying fragility — a golden that pins a
-// duration-dependent repeat count as if it were compatibility evidence — wants
-// a sanitizer that collapses those runs, and that is a change to committed
-// contract data, so it is filed (TCL-1007) rather than smuggled in here.
-func requireSmokeGolden(t *testing.T) {
-	t.Helper()
-	requireSmoke(t)
 }
 
 // TestCopilotVersionPin is the cheapest drift signal: it fails the moment the
@@ -139,7 +128,7 @@ func TestCopilotModelVocabularyHelp(t *testing.T) {
 // turn with no GitHub credential anywhere, proving BYOK activation alone is
 // enough to reach a green turn.
 func TestCopilotCredentialFreeTextTurn(t *testing.T) {
-	requireSmokeGolden(t)
+	requireSmokeParallel(t)
 
 	mock := copilotfixture.NewMockProvider(t, []copilotfixture.Turn{
 		{Text: "MOCK STREAMED ANSWER"},
@@ -162,7 +151,7 @@ func TestCopilotCredentialFreeTextTurn(t *testing.T) {
 // roles system/user/assistant/tool, and x-initiator flipping user→agent — is
 // the contract under test.
 func TestCopilotToolCallRoundTrip(t *testing.T) {
-	requireSmokeGolden(t)
+	requireSmokeParallel(t)
 
 	mock := copilotfixture.NewMockProvider(t, []copilotfixture.Turn{
 		{ToolCall: &copilotfixture.ToolCall{
@@ -205,7 +194,7 @@ func TestCopilotToolCallRoundTrip(t *testing.T) {
 // 429 → 6 requests over ~100s. A fixture built on 500 or 429 would spend
 // essentially all its runtime in backoff for no extra evidence.
 func TestCopilotProviderFailure(t *testing.T) {
-	requireSmokeGolden(t)
+	requireSmokeParallel(t)
 
 	mock := copilotfixture.NewMockProvider(t, []copilotfixture.Turn{
 		{FailStatus: 400},
@@ -235,7 +224,7 @@ func TestCopilotProviderFailure(t *testing.T) {
 // before the pane starts) and exact resume (--resume=<id> continues that same
 // conversation with its history intact).
 func TestCopilotSessionEnrollmentAndResume(t *testing.T) {
-	requireSmokeGolden(t)
+	requireSmokeParallel(t)
 
 	// A fixed UUID: the whole point is that the CALLER chooses it.
 	const sessionID = "11111111-2222-4333-8444-555555555555"
@@ -293,7 +282,7 @@ func TestCopilotSessionEnrollmentAndResume(t *testing.T) {
 // string, and the response is a named-event SSE sequence that terminates at
 // response.completed with no [DONE] sentinel. Both halves are exercised here.
 func TestCopilotReasoningEffortOnResponsesWire(t *testing.T) {
-	requireSmokeGolden(t)
+	requireSmokeParallel(t)
 
 	mock := copilotfixture.NewMockProvider(t, []copilotfixture.Turn{
 		{Text: "MOCK RESPONSES ANSWER"},
