@@ -105,3 +105,15 @@ test('Access navigation updates history from the announced subtab before its DOM
   assert.equal(pushed[0].url, '/access/slugs');
   assert.deepEqual(pushed[0].state.navStack.at(-1), { tab: 'access', subtab: 'slugs' });
 });
+
+// TCL-1013: the Owner column must say how far the bypass reaches; a bare
+// crown for all three scopes reads as fleet-wide authority the gate refuses.
+test('Slug table owner badge spells out the ownership scope', async (t) => {
+  const harness = await createPreactHarness(t);
+  const island = await harness.importDashboardModule('js/access-island.js');
+  assert.match(island.ownerScopeTitle('group'), /groups you own/);
+  assert.match(island.ownerScopeTitle('member'), /members of the groups you own/);
+  assert.match(island.ownerScopeTitle('any'), /unscoped/);
+  // Legacy daemon sends no scope at all.
+  assert.equal(island.ownerScopeTitle(undefined), 'Conferred by group ownership');
+});

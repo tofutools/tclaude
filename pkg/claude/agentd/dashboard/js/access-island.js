@@ -32,6 +32,16 @@ function PermissionsView({ current }) {
   </${Fragment}>`;
 }
 
+// ownerScopeTitle spells out how far a slug's owner bypass reaches. The
+// badge used to be a bare 👑 for all three scopes, which read as
+// fleet-wide authority the gate does not grant (TCL-1013).
+export function ownerScopeTitle(scope) {
+  if (scope === 'group') return 'Conferred by ownership — over the groups you own';
+  if (scope === 'member') return 'Conferred by ownership — over members of the groups you own';
+  if (scope === 'any') return 'Conferred by ownership — unscoped; owning any group is enough';
+  return 'Conferred by group ownership';
+}
+
 function SlugsView({ current }) {
   if (!current.snapshotLoaded) return html`<div class="empty">Loading slug registry…</div>`;
   if (current.snapshotLoaded && !current.slugs) {
@@ -39,11 +49,13 @@ function SlugsView({ current }) {
   }
   if (!current.slugs?.length) return html`<div class="empty">No slugs registered.</div>`;
   return html`<${Fragment}>
-    <div class="muted" style="font-size:11px;margin-bottom:6px">👑 = group ownership confers this slug for owned groups / their members, without an explicit grant (a per-agent deny still suppresses it).</div>
+    <div class="muted" style="font-size:11px;margin-bottom:6px">👑 = group ownership confers this slug without an explicit grant. <b>group</b> = over the groups you own; <b>member</b> = over their members; <b>any</b> = unscoped, owning any group is enough. A per-agent deny suppresses the bypass, except groups.link.add/rm, where ownership is checked first.</div>
     <table><thead><tr><th>Slug</th><th>Owner</th><th>Description</th></tr></thead><tbody>
       ${current.slugs.map((slug) => html`<tr key=${slug.slug} data-key=${slug.slug}>
         <td><span class="slug">${slug.slug}</span></td>
-        <td>${slug.owner_implied ? html`<span class="owner-badge" title="Conferred by group ownership">👑</span>` : html`<span class="muted">—</span>`}</td>
+        <td>${slug.owner_implied
+          ? html`<span class="owner-badge" title=${ownerScopeTitle(slug.owner_scope)}>👑${slug.owner_scope ? ` ${slug.owner_scope}` : ''}</span>`
+          : html`<span class="muted">—</span>`}</td>
         <td>${slug.description || ''}</td>
       </tr>`)}
     </tbody></table>

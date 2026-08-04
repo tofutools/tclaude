@@ -297,8 +297,11 @@ func TestPermissionsLsCLI_RendersFromDaemonResponse(t *testing.T) {
 		out := stdout.String()
 		assert.Contains(t, out, "squad-lead", "renders the resolved title")
 		assert.Contains(t, out, "self.rename", "renders the effective slugs")
-		assert.Contains(t, out, agentd.PermGroupsSpawn+"  (via ownership)",
-			"annotates owner-conferred slugs; got:\n%s", out)
+		// The annotation names WHERE the bypass reaches (TCL-1013):
+		// groups.spawn is group-scoped, so it must name the owned group
+		// rather than implying fleet-wide authority.
+		assert.Contains(t, out, agentd.PermGroupsSpawn+"  (via ownership of: squad)",
+			"annotates owner-conferred slugs with their scope; got:\n%s", out)
 		assert.Empty(t, stderr.String(), "clean run writes nothing to stderr")
 	})
 

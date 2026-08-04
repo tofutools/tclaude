@@ -21,20 +21,30 @@ import (
 // under agent.default_permissions. Per-conv grants live in SQLite (table
 // agent_permissions) and are written through the grant/revoke endpoints.
 //
-// OwnerImplied marks a slug that group ownership confers structurally:
-// when an agent owns a group, the daemon's owner-bypass (the permUndecided
+// OwnerScope marks a slug that group ownership confers structurally: when
+// an agent owns a group, the daemon's owner-bypass (the permUndecided
 // gap-filler in requireGroupPermission / requireCrossAgentPermission /
 // requireNotifyHumanPermission / requireProcessRunReadPermission) lets it
 // exercise the capability WITHOUT the slug being granted — unless an
-// explicit per-conv deny override suppresses it. Most of these bypasses are
-// scoped to the owned group or its members; human.notify and
-// process.runs.read are owner-wide (owning any group is enough), because
-// there is no per-group surface to scope them to.
-// These structural grants
-// are otherwise invisible in the permission editor, so the dashboard reads
-// this flag to show owner-conferred slugs as effectively held for owners.
-// The set is kept in lockstep with the bypassing call sites by
-// TestPermissionRegistry_OwnerImpliedSet.
+// explicit per-conv deny override suppresses it.
+//
+// The scope says WHERE that bypass reaches, because the three call-site
+// families differ and a reader who is told only "you have this" will
+// overestimate what they can do:
+//
+//   - ownerScopeGroup: the owned group itself (requireGroupPermission,
+//     the group-link/nest endpoints, process.advance).
+//   - ownerScopeMember: members of owned groups
+//     (requireCrossAgentPermission / requireGroupContextAccess).
+//   - ownerScopeAny: unscoped — owning anything at all is enough
+//     (ownsAnyGroup: human.notify, process.runs.read), because there is
+//     no per-group surface to scope them to.
+//
+// OwnerImplied is derived from OwnerScope at init, never written by hand,
+// so the boolean the dashboard reads cannot drift from the scope. These
+// structural grants are otherwise invisible in the permission editor.
+// The set AND each slug's scope are kept in lockstep with the bypassing
+// call sites by TestPermissionRegistry_OwnerImpliedSet.
 // AutoGrantable marks a slug the approval popup may persist from its
 // "Always allow for this agent" button — a one-click write of an allow
 // override alongside approving the pending request, so future calls skip
@@ -48,11 +58,48 @@ import (
 // so a scraped popup URL can't self-grant an ineligible slug. Kept in
 // lockstep with the popup by TestPermissionRegistry_AutoGrantableSet.
 type PermSlug struct {
-	Slug          string `json:"slug"`
-	Description   string `json:"description"`
-	OwnerImplied  bool   `json:"owner_implied,omitempty"`
-	AutoGrantable bool   `json:"auto_grantable,omitempty"`
+	Slug        string `json:"slug"`
+	Description string `json:"description"`
+	// OwnerImplied is derived from OwnerScope by initPermissionRegistry —
+	// do not set it in a registry literal.
+	OwnerImplied  bool       `json:"owner_implied,omitempty"`
+	OwnerScope    ownerScope `json:"owner_scope,omitempty"`
+	AutoGrantable bool       `json:"auto_grantable,omitempty"`
 }
+
+// ownerScope names how far a slug's group-owner bypass reaches. See the
+// PermSlug doc comment for the mapping to call sites.
+type ownerScope string
+
+const (
+	// ownerScopeNone: no owner bypass; the slug needs a real grant.
+	ownerScopeNone ownerScope = ""
+	// ownerScopeGroup: confers the capability over the owned GROUP.
+	ownerScopeGroup ownerScope = "group"
+	// ownerScopeMember: confers it over MEMBERS of owned groups.
+	ownerScopeMember ownerScope = "member"
+	// ownerScopeAny: unscoped — owning any group at all is enough.
+	ownerScopeAny ownerScope = "any"
+)
+
+// initPermissionRegistry derives OwnerImplied from OwnerScope so the two
+// can never disagree, and refuses an unknown scope at startup rather than
+// letting it read as "not owner-implied" in the UI.
+func initPermissionRegistry() {
+	for i := range permissionRegistry {
+		switch permissionRegistry[i].OwnerScope {
+		case ownerScopeNone:
+			permissionRegistry[i].OwnerImplied = false
+		case ownerScopeGroup, ownerScopeMember, ownerScopeAny:
+			permissionRegistry[i].OwnerImplied = true
+		default:
+			panic(fmt.Sprintf("permission registry: slug %q has unknown owner scope %q",
+				permissionRegistry[i].Slug, permissionRegistry[i].OwnerScope))
+		}
+	}
+}
+
+func init() { initPermissionRegistry() }
 
 // permissionRegistry is the single source of truth for known slugs. It's
 // what `permissions slugs` returns and what the validators consult when
@@ -90,44 +137,44 @@ var permissionRegistry = []PermSlug{
 		Description: "Recreate own recorded startup directory when it has been deleted (tclaude agent dir --repair). The path is daemon-selected and cannot be overridden. Default-granted.",
 	},
 	{
-		Slug:         PermAgentReincarnate,
-		OwnerImplied: true,
-		Description:  "Reincarnate ANOTHER agent (tclaude agent reincarnate --target). Group owners can reincarnate members of groups they own without this slug.",
+		Slug:        PermAgentReincarnate,
+		OwnerScope:  ownerScopeMember,
+		Description: "Reincarnate ANOTHER agent (tclaude agent reincarnate --target). Group owners can reincarnate members of groups they own without this slug.",
 	},
 	{
-		Slug:         PermAgentCompact,
-		OwnerImplied: true,
-		Description:  "Compact ANOTHER agent's context window (tclaude agent compact --target). Group owners can compact members of groups they own without this slug.",
+		Slug:        PermAgentCompact,
+		OwnerScope:  ownerScopeMember,
+		Description: "Compact ANOTHER agent's context window (tclaude agent compact --target). Group owners can compact members of groups they own without this slug.",
 	},
 	{
-		Slug:         PermAgentRename,
-		OwnerImplied: true,
-		Description:  "Rename ANOTHER agent (tclaude agent rename --target). Group owners can rename members of groups they own without this slug.",
+		Slug:        PermAgentRename,
+		OwnerScope:  ownerScopeMember,
+		Description: "Rename ANOTHER agent (tclaude agent rename --target). Group owners can rename members of groups they own without this slug.",
 	},
 	{
-		Slug:         PermAgentClone,
-		OwnerImplied: true,
-		Description:  "Clone ANOTHER agent into a sibling that inherits its identity (tclaude agent clone --target). Group owners can clone members of groups they own without this slug.",
+		Slug:        PermAgentClone,
+		OwnerScope:  ownerScopeMember,
+		Description: "Clone ANOTHER agent into a sibling that inherits its identity (tclaude agent clone --target). Group owners can clone members of groups they own without this slug.",
 	},
 	{
-		Slug:         PermAgentContextInfo,
-		OwnerImplied: true,
-		Description:  "Read ANOTHER agent's context-window state (tclaude agent context-info --target / --group). Read-only. Group owners can read context for members of groups they own without this slug.",
+		Slug:        PermAgentContextInfo,
+		OwnerScope:  ownerScopeMember,
+		Description: "Read ANOTHER agent's context-window state (tclaude agent context-info --target / --group). Read-only. Group owners can read context for members of groups they own without this slug.",
 	},
 	{
-		Slug:         PermAgentTask,
-		OwnerImplied: true,
-		Description:  "Set/clear ANOTHER agent's task-reference link (tclaude agent task set/clear --target). Group owners can set the task link on members of groups they own without this slug.",
+		Slug:        PermAgentTask,
+		OwnerScope:  ownerScopeMember,
+		Description: "Set/clear ANOTHER agent's task-reference link (tclaude agent task set/clear --target). Group owners can set the task link on members of groups they own without this slug.",
 	},
 	{
-		Slug:         PermAgentPR,
-		OwnerImplied: true,
-		Description:  "Present or handle ANOTHER agent's pull request (tclaude agent present-pr --target). Group owners can present PRs for members of groups they own without this slug.",
+		Slug:        PermAgentPR,
+		OwnerScope:  ownerScopeMember,
+		Description: "Present or handle ANOTHER agent's pull request (tclaude agent present-pr --target). Group owners can present PRs for members of groups they own without this slug.",
 	},
 	{
-		Slug:         PermAgentTags,
-		OwnerImplied: true,
-		Description:  "Set ANOTHER agent's tags — the Description-column chip labels (tclaude agent tags set/add/rm --target). Group owners can set tags on members of groups they own without this slug.",
+		Slug:        PermAgentTags,
+		OwnerScope:  ownerScopeMember,
+		Description: "Set ANOTHER agent's tags — the Description-column chip labels (tclaude agent tags set/add/rm --target). Group owners can set tags on members of groups they own without this slug.",
 	},
 	{
 		Slug:        PermGroupsCreate,
@@ -138,24 +185,24 @@ var permissionRegistry = []PermSlug{
 		Description: "Delete agent groups (tclaude agent groups rm)",
 	},
 	{
-		Slug:         PermGroupsStop,
-		OwnerImplied: true,
-		Description:  "Stop a group's running members (tclaude agent groups stop). Group owners can stop members of groups they own without this slug.",
+		Slug:        PermGroupsStop,
+		OwnerScope:  ownerScopeGroup,
+		Description: "Stop a group's running members (tclaude agent groups stop). Group owners can stop members of groups they own without this slug.",
 	},
 	{
-		Slug:         PermGroupsResume,
-		OwnerImplied: true,
-		Description:  "Resume a group's offline members (tclaude agent groups resume). Group owners can resume members of groups they own without this slug.",
+		Slug:        PermGroupsResume,
+		OwnerScope:  ownerScopeGroup,
+		Description: "Resume a group's offline members (tclaude agent groups resume). Group owners can resume members of groups they own without this slug.",
 	},
 	{
-		Slug:         PermGroupsRetire,
-		OwnerImplied: true,
-		Description:  "Retire (soft-delete) every other member of a group in one shot — the bulk parallel of agent.retire (tclaude agent groups retire). Demotes each member to a plain conversation: drops its group memberships and revokes its permission/sudo grants, leaving the conversation intact and reinstatable. The caller's own conv is always skipped. Group owners can retire members of groups they own without this slug; it is not in the global defaults otherwise (retiring agents an owner doesn't manage is a sensitive cleanup the human drives).",
+		Slug:        PermGroupsRetire,
+		OwnerScope:  ownerScopeGroup,
+		Description: "Retire (soft-delete) every other member of a group in one shot — the bulk parallel of agent.retire (tclaude agent groups retire). Demotes each member to a plain conversation: drops its group memberships and revokes its permission/sudo grants, leaving the conversation intact and reinstatable. The caller's own conv is always skipped. Group owners can retire members of groups they own without this slug; it is not in the global defaults otherwise (retiring agents an owner doesn't manage is a sensitive cleanup the human drives).",
 	},
 	{
-		Slug:         PermGroupsSpawn,
-		OwnerImplied: true,
-		Description:  "Spawn a fresh CC session and add it to a group (tclaude agent spawn). Group owners can spawn into groups they own without this slug (the spawn guardrails — member cap, rate limit — still apply).",
+		Slug:        PermGroupsSpawn,
+		OwnerScope:  ownerScopeGroup,
+		Description: "Spawn a fresh CC session and add it to a group (tclaude agent spawn). Group owners can spawn into groups they own without this slug (the spawn guardrails — member cap, rate limit — still apply).",
 	},
 	{
 		Slug:        PermGroupsOwn,
@@ -186,58 +233,70 @@ var permissionRegistry = []PermSlug{
 		Description: "Manage own scheduled cron jobs — list / add / remove (tclaude agent cron). Default-granted, mirroring the self-lifecycle slugs.",
 	},
 	{
-		Slug:         PermAgentSchedule,
-		OwnerImplied: true,
-		Description:  "Manage ANOTHER agent's scheduled cron jobs (tclaude agent cron --target). Group owners can manage cron jobs on members of groups they own without this slug.",
+		Slug:        PermAgentSchedule,
+		OwnerScope:  ownerScopeMember,
+		Description: "Manage ANOTHER agent's scheduled cron jobs (tclaude agent cron --target). Group owners can manage cron jobs on members of groups they own without this slug.",
 	},
 	{
-		Slug:         PermAgentStop,
-		OwnerImplied: true,
-		Description:  "Stop ANOTHER agent's tmux session (tclaude agent stop). Single-conv variant of groups.stop. Group owners can stop members of groups they own without this slug.",
+		Slug:        PermAgentStop,
+		OwnerScope:  ownerScopeMember,
+		Description: "Stop ANOTHER agent's tmux session (tclaude agent stop). Single-conv variant of groups.stop. Group owners can stop members of groups they own without this slug.",
 	},
 	{
-		Slug:         PermAgentResume,
-		OwnerImplied: true,
-		Description:  "Resume ANOTHER agent into a fresh tmux session (tclaude agent resume). Single-conv variant of groups.resume. Group owners can resume members of groups they own without this slug.",
+		Slug:        PermAgentResume,
+		OwnerScope:  ownerScopeMember,
+		Description: "Resume ANOTHER agent into a fresh tmux session (tclaude agent resume). Single-conv variant of groups.resume. Group owners can resume members of groups they own without this slug.",
 	},
 	{
 		Slug:        PermGroupsArchive,
 		Description: "Archive (soft-delete) a group: freezes membership + ownership and hides the group from default listings, while preserving message history (tclaude agent groups archive / unarchive)",
 	},
 	{
-		Slug:         PermGroupsNest,
-		OwnerImplied: true,
-		Description:  "Nest a group under another as a subgroup, or clear its parent (tclaude agent groups nest <child> --under <parent> | --none). Board-organisation only — it shapes the dashboard tree, not messaging or permissions. Group owners can re-parent groups they own without this slug.",
+		Slug:        PermGroupsNest,
+		OwnerScope:  ownerScopeGroup,
+		Description: "Nest a group under another as a subgroup, or clear its parent (tclaude agent groups nest <child> --under <parent> | --none). Board-organisation only — it shapes the dashboard tree, not messaging or permissions. Group owners can re-parent groups they own without this slug.",
 	},
 	{
-		Slug:         PermGroupsAttachment,
-		OwnerImplied: true,
-		Description:  "Set or clear a group's persistent external reference link (tclaude agent groups attachment set/clear). Group owners can manage the attachment on groups they own without this slug.",
+		Slug:        PermGroupsAttachment,
+		OwnerScope:  ownerScopeGroup,
+		Description: "Set or clear a group's persistent external reference link (tclaude agent groups attachment set/clear). Group owners can manage the attachment on groups they own without this slug.",
 	},
 	{
-		Slug:         PermAgentDelete,
-		OwnerImplied: true,
-		Description:  "Permanently delete ANOTHER agent (tclaude agent delete): purges its rows in every agent / conv / session table and deletes its .jsonl. NOT default-granted; this is destructive and not undoable. Group owners can delete members of groups they own without this slug.",
+		Slug:        PermAgentDelete,
+		OwnerScope:  ownerScopeMember,
+		Description: "Permanently delete ANOTHER agent (tclaude agent delete): purges its rows in every agent / conv / session table and deletes its .jsonl. NOT default-granted; this is destructive and not undoable. Group owners can delete members of groups they own without this slug.",
 	},
 	{
-		Slug:         PermGroupsLinkAdd,
-		OwnerImplied: true,
-		Description:  "Create an inter-group link enabling messages from one group to another (tclaude agent groups link add). Group owners can add outbound links FROM groups they own without this slug.",
+		Slug:        PermGroupsLinkAdd,
+		OwnerScope:  ownerScopeGroup,
+		Description: "Create an inter-group link enabling messages from one group to another (tclaude agent groups link add). Group owners can add outbound links FROM groups they own without this slug.",
 	},
 	{
-		Slug:         PermGroupsLinkRm,
-		OwnerImplied: true,
-		Description:  "Remove an inter-group link (tclaude agent groups link rm). Group owners can remove outbound links FROM groups they own without this slug.",
+		Slug:        PermGroupsLinkRm,
+		OwnerScope:  ownerScopeGroup,
+		Description: "Remove an inter-group link (tclaude agent groups link rm). Group owners can remove outbound links FROM groups they own without this slug.",
 	},
 	{
-		Slug:         PermAgentPromote,
-		OwnerImplied: true,
-		Description:  "Promote a plain conversation into an agent, or reinstate a retired one (tclaude agent promote / reinstate). Group owners can act on members of groups they own without this slug.",
+		Slug:        PermAgentPromote,
+		OwnerScope:  ownerScopeMember,
+		Description: "Promote a plain conversation into an agent, or reinstate a retired one (tclaude agent promote / reinstate). Group owners can act on members of groups they own without this slug.",
 	},
 	{
-		Slug:         PermAgentRetire,
-		OwnerImplied: true,
-		Description:  "Retire (soft-delete) an agent: revokes its group memberships and permission grants so it stops being an agent, while leaving its conversation intact and reinstatable (tclaude agent retire). Group owners can retire members of groups they own without this slug.",
+		Slug:        PermAgentRetire,
+		OwnerScope:  ownerScopeMember,
+		Description: "Retire (soft-delete) an agent: revokes its group memberships and permission grants so it stops being an agent, while leaving its conversation intact and reinstatable (tclaude agent retire). Group owners can retire members of groups they own without this slug.",
+	},
+	{
+		Slug:       PermAgentRemoteControl,
+		OwnerScope: ownerScopeMember,
+		Description: "Toggle ANOTHER agent's built-in remote access (tclaude agent remote-control --target). " +
+			"Group owners can toggle members of groups they own without this slug.",
+	},
+	{
+		Slug:       PermAgentInboxWatch,
+		OwnerScope: ownerScopeMember,
+		Description: "Watch ANOTHER agent's inbox — a live read of messages addressed to it. " +
+			"Group owners can watch members of groups they own without this slug.",
 	},
 	{
 		Slug:        PermMessageDirect,
@@ -256,8 +315,10 @@ var permissionRegistry = []PermSlug{
 		Description: "Create, edit, delete group templates and snapshot a live group into a template (dashboard Templates tab). A template is a reusable blueprint, not a conversation snapshot. Not default-granted (effectively human-only).",
 	},
 	{
-		Slug:        PermTemplatesUse,
-		Description: "Instantiate a working group from a template — creates the group and spawns its whole agent team in one shot. Strictly more powerful than groups.spawn (a whole team at once), so not default-granted (effectively human-only).",
+		Slug:       PermTemplatesUse,
+		OwnerScope: ownerScopeGroup,
+		Description: "Instantiate a working group from a template — creates the group and spawns its whole agent team in one shot. Strictly more powerful than groups.spawn (a whole team at once), so not default-granted (effectively human-only). " +
+			"Group owners can /rebrief and /reinforce a group they own without this slug; instantiating a NEW group always needs it.",
 	},
 	{
 		Slug:        PermProfilesManage,
@@ -276,9 +337,9 @@ var permissionRegistry = []PermSlug{
 		Description: "Create, edit and delete roles in the role library — named, reusable bundles of a canonical role-brief, a default launch shape and a default permission set that a template roster agent references and inherits from (JOH-240). Reads are open; writes rewrite shared role defaults, so not default-granted (effectively human-only).",
 	},
 	{
-		Slug:         PermProcessAdvance,
-		OwnerImplied: true,
-		Description:  "Advance a group's advisory process to the next (or a named) phase — records the transition and nudges the entering roles (JOH-242). The process is advisory (nothing is enforced). Group owners can advance their own group's process without this slug; other agents need it. Reads (the current phase) are open.",
+		Slug:        PermProcessAdvance,
+		OwnerScope:  ownerScopeGroup,
+		Description: "Advance a group's advisory process to the next (or a named) phase — records the transition and nudges the entering roles (JOH-242). The process is advisory (nothing is enforced). Group owners can advance their own group's process without this slug; other agents need it. Reads (the current phase) are open.",
 	},
 	{
 		Slug:        PermProcessTemplatesRead,
@@ -289,9 +350,9 @@ var permissionRegistry = []PermSlug{
 		Description: "Create and edit process templates through tclaude agent process-templates save. Does not execute or instantiate a process. Not default-granted; requires an explicit grant or one-shot human approval.",
 	},
 	{
-		Slug:         PermProcessRunsRead,
-		OwnerImplied: true,
-		Description:  "List and inspect daemon-owned process runs and reconciliation state. Group owners get this by default (a coordinating role driving process validation needs run status and evidence without a popup per read), suppressible by a deny override; otherwise not in the global defaults, because runtime state can contain bound command details and parameters. Read-only — it confers no run mutation authority.",
+		Slug:        PermProcessRunsRead,
+		OwnerScope:  ownerScopeAny,
+		Description: "List and inspect daemon-owned process runs and reconciliation state. Group owners get this by default (a coordinating role driving process validation needs run status and evidence without a popup per read), suppressible by a deny override; otherwise not in the global defaults, because runtime state can contain bound command details and parameters. Read-only — it confers no run mutation authority.",
 	},
 	{
 		Slug:        PermProcessRunsManage,
@@ -299,7 +360,7 @@ var permissionRegistry = []PermSlug{
 	},
 	{
 		Slug:          PermHumanNotify,
-		OwnerImplied:  true,
+		OwnerScope:    ownerScopeAny,
 		AutoGrantable: true,
 		Description:   "Send the human a notification via `tclaude agent notify-human` — it lands in the dashboard Messages tab. Lets a coordinating agent (the PO) reach the human outside the terminal. Group owners get this by default (a trusted coordinating role), suppressible by a deny override; otherwise not in the global defaults, so plain workers cannot spam the channel without an explicit grant.",
 	},
@@ -352,6 +413,17 @@ func IsOwnerImpliedSlug(slug string) bool {
 		}
 	}
 	return false
+}
+
+// OwnerScopeForSlug returns how far slug's owner bypass reaches
+// ("group", "member", "any"), or "" when ownership confers nothing.
+func OwnerScopeForSlug(slug string) string {
+	for _, p := range permissionRegistry {
+		if p.Slug == slug {
+			return string(p.OwnerScope)
+		}
+	}
+	return ""
 }
 
 // OwnerImpliedSlugs returns the sorted set of slugs group ownership
@@ -469,6 +541,13 @@ type permissionsEffectiveResp struct {
 	// verdict, so the listing explains a decision without a second model
 	// of the precedence.
 	Provenance map[string]string `json:"provenance,omitempty"`
+	// OwnedGroups names the ACTIVE groups this target owns, so a client
+	// can say WHERE an owner-conferred slug applies. Empty for a
+	// non-owner. Pair it with the slug's owner_scope from
+	// /v1/permissions/slugs: a "group"/"member"-scoped slug reaches only
+	// these groups (or their members), while an "any"-scoped one is
+	// genuinely unscoped.
+	OwnedGroups []string `json:"owned_groups,omitempty"`
 }
 
 // targetSentinelDefault is the magic target string that means "modify
@@ -766,6 +845,7 @@ func writeEffectivePermissions(w http.ResponseWriter, r *http.Request, state per
 	if resp.Provenance == nil {
 		resp.Provenance = map[string]string{}
 	}
+	resp.OwnedGroups = ownedGroupNamesFor(res.ConvID)
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -784,6 +864,30 @@ func ownerImpliedSlugsFor(convID string) []string {
 		return nil
 	}
 	return OwnerImpliedSlugs()
+}
+
+// ownedGroupNamesFor returns the names of the ACTIVE groups convID owns,
+// sorted. It is what lets a client say WHERE an owner-conferred slug
+// applies ("via ownership of: dev, qa") instead of the bare "via
+// ownership", which reads as fleet-wide authority the gate never grants.
+// An archived group is skipped: its endpoints reject mutation, so naming
+// it would promise reach the owner does not have.
+func ownedGroupNamesFor(convID string) []string {
+	owned, err := db.ListGroupsOwnedBy(convID)
+	if err != nil {
+		slog.Warn("permissions: owned-group lookup failed", "conv", convID, "error", err)
+		return nil
+	}
+	var names []string
+	for _, id := range owned {
+		g, err := db.GetAgentGroupByID(id)
+		if err != nil || g == nil || g.IsArchived() {
+			continue
+		}
+		names = append(names, g.Name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // ownsAnyGroup reports whether convID owns at least one group. It backs the
@@ -857,7 +961,11 @@ func effectivePermsFor(state permissionsState, convID string, ownerImplied []str
 			if ownerSet[slug] {
 				effective = append(effective, slug)
 				ownerAdded = append(ownerAdded, slug)
-				provenance[slug] = string(permSourceOwner)
+				// Carry the SCOPE, not just "owner": a reader told only
+				// that ownership confers the slug will assume it reaches
+				// the whole fleet, when the gate confines most of these
+				// to owned groups or their members.
+				provenance[slug] = ownerProvenance(slug)
 				matched[permSourceOwner] = true
 			}
 		case permDeny:
@@ -881,6 +989,18 @@ func effectivePermsFor(state permissionsState, convID string, ownerImplied []str
 		source += " −denies"
 	}
 	return effective, ownerAdded, provenance, source
+}
+
+// ownerProvenance renders the provenance value for a slug held via the
+// owner bypass: "owner:<scope>", so a client can phrase the reach
+// ("of: dev, qa" vs "members only" vs unscoped) without its own copy of
+// the registry. A slug with no registered scope degrades to plain
+// "owner", which older clients already render as "(via ownership)".
+func ownerProvenance(slug string) string {
+	if scope := OwnerScopeForSlug(slug); scope != "" {
+		return string(permSourceOwner) + ":" + scope
+	}
+	return string(permSourceOwner)
 }
 
 // candidatePermissionSlugs enumerates every slug worth asking the
