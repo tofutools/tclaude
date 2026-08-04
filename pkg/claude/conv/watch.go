@@ -2522,10 +2522,11 @@ func resumeLaunchCmdWithStackedProof(
 					plannedAxes.Network, err)
 		}
 	}
-	approvalPolicy, autoReview, err := resumeApprovalState(h, convID)
+	approvalState, err := resumeApprovalState(h, convID)
 	if err != nil {
 		return "", "", nil, err
 	}
+	approvalPolicy, autoReview := approvalState.Policy, approvalState.AutoReview
 	if !outerLayer {
 		if err := harness.ValidateSandboxReopenUnderDeny(h.Name, sandboxMode, launchGrants); err != nil {
 			return "", "", nil, err
@@ -3019,44 +3020,56 @@ func resumeAskTimeout(h *harness.Harness, convID string) (string, error) {
 	return timeout, nil
 }
 
-// resumeApprovalState carries the most recently recorded posture onto the
-// next session generation. Legacy rows have no posture; pin those to the
-// harness's daemon-safe default instead of creating another unknown row.
-func resumeApprovalState(h *harness.Harness, convID string) (string, bool, error) {
+// resumedApproval is the approval posture a resume reconstructs, plus whether
+// it came from current config rather than from the record — so the resume can
+// say which, instead of re-resolving silently.
+type resumedApproval struct {
+	Policy     string
+	AutoReview bool
+	Reresolved bool
+}
+
+// resumeApprovalState reconstructs the approval INPUT the conversation recorded
+// and carries it onto the next session generation. It is the CLI's entry point
+// into the one reconstruction rule the daemon relaunch paths use too
+// (harness.ReconstructApprovalPolicy): a recorded posture is reproduced and
+// re-validated, and a blank row — which recorded no input at all — stays absent
+// and re-resolves under current config rather than being pinned to whatever it
+// would historically have resolved to. See TCL-990 and the agentd counterpart,
+// reconstructApproval.
+func resumeApprovalState(h *harness.Harness, convID string) (resumedApproval, error) {
 	launch, err := db.SessionLaunchProfileForConv(convID)
 	if err != nil {
-		return "", false, fmt.Errorf("load approval posture for conversation %s: %w", convID, err)
+		return resumedApproval{}, fmt.Errorf("load approval posture for conversation %s: %w", convID, err)
 	}
-	policy := strings.TrimSpace(launch.ApprovalPolicy)
-	autoReview := launch.ApprovalAutoReview
-	if policy == "" && h != nil && h.Name == harness.CopilotName {
-		// NOT the harness default, for the reason agentd.approvalForHarness
-		// gives on the daemon side: every Copilot launch tclaude made before
-		// the approval catalog existed emitted zero permission flags, so
-		// `inherit` IS the faithful reconstruction of a blank row and
-		// `allow-tools` would be a promotion.
-		//
-		// The promotion would also be durable rather than momentary. The
-		// resumed generation's posture is written back into the new session
-		// row below, so a single interactive resume would hand a conversation
-		// the approvalAutoInSandbox lineage authority that
-		// classifyApprovalLineage deliberately refuses to credit a blank
-		// Copilot row with — and it would do so on a path the operator reaches
-		// by picking the conversation out of a list.
-		policy, err = harness.ValidateApprovalPolicy(h, harness.CopilotApprovalInherit)
-	} else if policy == "" {
-		policy, err = harness.ResolveApprovalPolicy(h, "")
-	} else {
-		policy, err = harness.ValidateApprovalPolicy(h, policy)
-	}
+	policy, reresolved, err := harness.ReconstructApprovalPolicy(h, launch.ApprovalPolicy)
 	if err != nil {
-		return "", false, fmt.Errorf("invalid recorded approval posture for conversation %s: %w", convID, err)
+		return resumedApproval{}, fmt.Errorf("invalid recorded approval posture for conversation %s: %w", convID, err)
 	}
-	autoReview, err = harness.ResolveAutoReview(h, autoReview)
+	autoReview, err := harness.ResolveAutoReview(h, launch.ApprovalAutoReview)
 	if err != nil {
-		return "", false, fmt.Errorf("invalid recorded auto-review posture for conversation %s: %w", convID, err)
+		return resumedApproval{}, fmt.Errorf("invalid recorded auto-review posture for conversation %s: %w", convID, err)
 	}
-	return policy, autoReview, nil
+	return resumedApproval{Policy: policy, AutoReview: autoReview, Reresolved: reresolved}, nil
+}
+
+// describeResumedApproval is the one-line notice a resume prints so the posture
+// it actually launches under is visible — in particular when it was re-resolved
+// from an unrecorded input, which is the case that can differ from the previous
+// generation. Returns "" for a harness with no launch-time approval posture.
+func describeResumedApproval(h *harness.Harness, state resumedApproval) string {
+	if state.Policy == "" {
+		return ""
+	}
+	name := harness.DefaultName
+	if h != nil {
+		name = h.Name
+	}
+	if state.Reresolved {
+		return fmt.Sprintf("Approval: %s %s (no approval posture was recorded; resolved from current config)",
+			name, state.Policy)
+	}
+	return fmt.Sprintf("Approval: %s %s (recorded)", name, state.Policy)
 }
 
 func resumeGitWorktreeWriteDirs(cwd string, strictHome bool) ([]string, error) {
@@ -3183,9 +3196,13 @@ func createSessionForConv(conv *SessionEntry) error {
 	if stackedProof != nil {
 		defer stackedProof.Cleanup()
 	}
-	approvalPolicy, autoReview, err := resumeApprovalState(h, conv.SessionID)
+	approvalState, err := resumeApprovalState(h, conv.SessionID)
 	if err != nil {
 		return err
+	}
+	approvalPolicy, autoReview := approvalState.Policy, approvalState.AutoReview
+	if notice := describeResumedApproval(h, approvalState); notice != "" {
+		fmt.Println(notice)
 	}
 	// Read the postures this resume must reproduce BEFORE it creates any row of
 	// its own — including the row the resumed pane's own SessionStart hook may

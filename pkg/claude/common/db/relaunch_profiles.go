@@ -754,14 +754,23 @@ func sessionProjectionIsOlder(existing *ConversationResumeProfile, createdAt str
 
 // conservativeCodexApprovalProjection repairs legacy rows whose harness tag
 // changed to Codex while retaining a Claude permission-mode token. The mapping
-// is deliberately narrow: known foreign/blank values become Codex's least
+// is deliberately narrow: a known FOREIGN value — an input that was recorded
+// but cannot be interpreted under this harness — becomes Codex's least
 // automatic posture; arbitrary corrupt values remain untouched so lifecycle
 // validation rejects them instead of inventing authority.
+//
+// A BLANK policy is left blank. Blank is not a foreign input, it is the ABSENCE
+// of one, and projecting it to `untrusted` turned "nothing was recorded" into a
+// durably recorded posture strictly less capable than what current config
+// resolves an unrecorded input to (`never`) — which then prompts on a detached
+// pane and is denied the in-sandbox lineage bit the agent needs to delegate.
+// Reconstruction re-resolves it instead; see harness.ReconstructApprovalPolicy
+// and TCL-990.
 func conservativeCodexApprovalProjection(policy string) (string, bool) {
 	switch strings.TrimSpace(policy) {
-	case "never", "untrusted", "on-failure", "on-request":
+	case "", "never", "untrusted", "on-failure", "on-request":
 		return policy, true
-	case "", "inherit", "auto", "default", "acceptEdits", "bypassPermissions", "plan", "delegate", "dontAsk":
+	case "inherit", "auto", "default", "acceptEdits", "bypassPermissions", "plan", "delegate", "dontAsk":
 		return "untrusted", true
 	default:
 		return policy, false

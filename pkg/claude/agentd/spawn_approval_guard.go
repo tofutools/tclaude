@@ -20,10 +20,12 @@ import (
 // credited only approvalAutoBaseline (its real posture is unknowable), so
 // defaulting its children to `auto` would turn every bare delegation into a
 // 403 — including from the operator's own `tclaude session new` session and
-// from every agent spawned before `auto` became the default, since
-// approvalForRelaunch faithfully preserves their recorded `inherit`. Falling
-// back to the caller's own posture reproduces the pre-`auto` behaviour for
-// exactly those callers and nothing else.
+// from every agent that EXPLICITLY chose `inherit`, since reconstruction
+// reproduces a recorded posture exactly. (An agent from before `auto` became
+// the default recorded no posture at all, so it re-resolves to `auto` on
+// relaunch and never reaches this path — see harness.ReconstructApprovalPolicy
+// and TCL-990.) Falling back to the caller's own posture reproduces the
+// pre-`auto` behaviour for exactly those callers and nothing else.
 //
 // This only ever NARROWS: the fallback branch is reached only when the default
 // was refused (i.e. it exceeds the caller), and the caller's own posture is by
@@ -100,7 +102,7 @@ func spawnApprovalLineageFailure(parentConvID, childHarness, childPolicy string,
 	childPolicy = strings.TrimSpace(childPolicy)
 	if parentPolicy == "" {
 		return &spawnFailure{http.StatusForbidden, "approval_restricted",
-			fmt.Sprintf("agent %s has a legacy %s launch whose approval posture cannot be reconstructed; relaunch it with current tclaude to record the conservative untrusted posture before spawning a matching child",
+			fmt.Sprintf("agent %s has a legacy %s launch whose approval posture cannot be reconstructed; relaunch it with current tclaude to record its approval posture before spawning a matching child",
 				short8(parentConvID), parentHarness)}
 	}
 	if !harness.ApprovalLineageAllowed(parentHarness, parentPolicy, parentAutoReview,

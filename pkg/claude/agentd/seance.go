@@ -424,14 +424,9 @@ func recordedSeanceLaunchForConv(convID string) (seanceRecordedLaunch, error) {
 		recordedApproval = row.ApprovalPolicy
 		autoReview = row.ApprovalAutoReview
 	}
-	recordedApproval = strings.TrimSpace(recordedApproval)
-	if recordedApproval == "" {
-		out.approval = approvalForHarness(h.Name)
-	} else {
-		out.approval, err = harness.ValidateApprovalPolicy(h, recordedApproval)
-		if err != nil {
-			return seanceRecordedLaunch{}, fmt.Errorf("invalid recorded approval policy: %w", err)
-		}
+	out.approval, err = reconstructApproval(h.Name, recordedApproval)
+	if err != nil {
+		return seanceRecordedLaunch{}, fmt.Errorf("invalid recorded approval policy: %w", err)
 	}
 	out.autoReview, err = harness.ResolveAutoReview(h, autoReview)
 	if err != nil {

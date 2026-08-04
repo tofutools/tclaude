@@ -190,16 +190,22 @@ const (
 // copilot` with no --ask-for-approval leaves the spec's policy empty on
 // purpose: a human at a terminal is the trust root, so ValidateApprovalPolicy
 // does not force a posture on them. What the SESSION ROW records for that same
-// launch is `inherit`, and every reconstruction path — the daemon's
-// approvalForHarness, resumeApprovalState, the relaunch profile — maps blank to
-// `inherit` too. So blank already MEANS inherit everywhere else in tclaude, and
-// rendering it as anything else here made one conversation's fresh launch and
-// its own resume disagree: the resume rendered the profile's directories and
-// the launch that created it did not. It also made ValidateCopilotAddDirGrants
-// refuse a launch while naming an `--add-dir` root that launch never emitted.
-// Blank therefore renders the INHERIT-shaped arm — the directory grants and
-// nothing else. It must not render --allow-all-tools: not forcing a posture on
-// a human is the entire reason the policy is blank.
+// launch is `inherit`, and rendering blank as anything else here made one
+// conversation's fresh launch and its own resume disagree: the resume rendered
+// the profile's directories and the launch that created it did not. It also
+// made ValidateCopilotAddDirGrants refuse a launch while naming an `--add-dir`
+// root that launch never emitted. Blank therefore renders the INHERIT-shaped
+// arm — the directory grants and nothing else. It must not render
+// --allow-all-tools: not forcing a posture on a human is the entire reason the
+// policy is blank.
+//
+// This is the EMISSION layer, and it is the only place blank still behaves like
+// inherit. Reconstruction no longer pins a blank row to `inherit`: a row that
+// recorded no approval input re-resolves under current config, which for
+// Copilot is `allow-tools` (ReconstructApprovalPolicy, TCL-990). The two are
+// consistent — a launch that emits no flags records no posture, and a
+// reconstruction of that record asks current config what an unspecified input
+// means today.
 //
 // An unrecognized policy still renders nothing rather than guessing. Callers
 // validate first, so that arm is belt-and-braces, and rendering the default for

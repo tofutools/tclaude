@@ -1285,10 +1285,24 @@ A legacy Codex session whose durable spawn provenance proves it used the old
 daemon default is reconstructed as `never` by the database migration and the
 runtime compatibility guard. This is faithful launch-history reconstruction,
 not an assumption that `never` is less capable than prompt-oriented policies.
-Ambiguous direct/imported/template histories stay fail-closed; relaunching them
-under the current version records the conservative `untrusted` posture. The
-human spawn path bypasses approval lineage, as it does the sandbox-lineage
-guard.
+Ambiguous direct/imported/template histories stay fail-closed for the *lineage*
+guard — an agent whose own posture cannot be reconstructed may not spawn
+children until it is relaunched.
+
+Relaunching such a session does not invent a posture for it. Resume and
+relaunch reuse the approval **input** a conversation recorded, not the value
+that input happened to resolve to at the time: an explicitly recorded posture is
+reproduced exactly and re-validated, while an absent one stays absent and
+re-resolves under current config (Claude `auto`, Codex `never`, Copilot
+`allow-tools`, OpenCode `deny`). Reconstruction therefore never lands on a
+posture strictly less capable than what current config resolves an unspecified
+input to — pinning a blank row to a historical value is what used to leave a
+resumed agent prompting on a detached pane, or unable to delegate because
+approval lineage would not credit the pinned posture. An operator who broadens
+their default does retroactively broaden old conversations on their next
+resume; that is their own current config, and a resume prints the posture it
+resolved so the change is visible. The human spawn path bypasses approval
+lineage, as it does the sandbox-lineage guard.
 
 The **dir write-proof** closes the lineage guard's remaining gap: sandboxes
 grant write access rooted at the launch cwd, so an agent that picks the
