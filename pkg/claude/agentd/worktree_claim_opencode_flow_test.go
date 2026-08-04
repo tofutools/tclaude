@@ -57,9 +57,48 @@ func TestCleanup_Agents_KeepsWorktreeHeldByLiveOpenCodeRuntime(t *testing.T) {
 
 	require.Len(t, resp.Outcomes, 1)
 	assert.Equal(t, 1, resp.Deleted, "the agent itself is still retired")
-	assert.Contains(t, resp.Outcomes[0].Detail, "shared")
+	assert.Contains(t, resp.Outcomes[0].Detail, "OpenCode server",
+		"the note must name the real holder, not a peer agent that does not exist")
 	assert.DirExists(t, shared,
 		"a live managed OpenCode server's cwd must never be removed")
+}
+
+// The server is daemon-owned, not the agent's pane, so retiring or deleting the
+// agent that OWNS it does not stop it. Its own retirement must therefore not be
+// able to exclude the claim — otherwise the removal runs while the server is
+// still sitting in the directory.
+func TestCleanup_Agents_KeepsWorktreeHeldByItsOwnLiveOpenCodeRuntime(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+
+	const owner = "0c1e5e1f-1111-2222-3333-444444444444"
+	repo, _ := initRepoOnMain(t)
+	own, err := worktree.AddWorktreeIn(repo, "opencode-self", "main", "")
+	require.NoError(t, err)
+
+	f.HaveConvWithTitle(owner, "owns-its-server")
+	f.HaveAliveSession(owner, "spwn-ocself", "tmux-ocself", own)
+	f.HaveEnrolledAgent(owner)
+	f.MarkOffline("tmux-ocself")
+
+	// The retiring agent's OWN server, still alive.
+	require.NoError(t, db.UpsertOpenCodeRuntime(db.OpenCodeRuntime{
+		SessionID: "spwn-opencode-self",
+		ConvID:    owner,
+		ServerURL: "http://127.0.0.1:43213",
+		Password:  "private",
+		PID:       os.Getpid(),
+		Cwd:       own,
+	}))
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	resp := postCleanup(t, mux, "/api/cleanup/agents",
+		`{"agents":["`+owner+`"],"delete":true,"delete_worktrees":true}`)
+
+	require.Len(t, resp.Outcomes, 1)
+	assert.Contains(t, resp.Outcomes[0].Detail, "OpenCode server")
+	assert.DirExists(t, own,
+		"an agent's own live server must still block removal of the dir it is in")
 }
 
 // A runtime row outlives a crashed daemon. Presence alone must not pin the

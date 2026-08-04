@@ -343,14 +343,10 @@ func captureAgentWorktreeClaims() agentWorktreeClaimSnapshot {
 		if dir == "" || !session.IsProcessAlive(runtime.PID) {
 			continue
 		}
-		claimant := runtime.ConvID
-		if claimant == "" {
-			claimant = openCodeRuntimeClaimant
-		}
 		if snap.dirClaims[dir] == nil {
 			snap.dirClaims[dir] = map[string]bool{}
 		}
-		snap.dirClaims[dir][claimant] = true
+		snap.dirClaims[dir][openCodeRuntimeClaimant] = true
 	}
 
 	// Live séances last, under a synthetic claimant no retirement can exclude.
@@ -365,11 +361,45 @@ func captureAgentWorktreeClaims() agentWorktreeClaimSnapshot {
 	return snap
 }
 
-// openCodeRuntimeClaimant is the fallback claimant for a live managed OpenCode
-// server whose row carries no conv-id. Like seanceClaimant it is not a conv-id,
-// so no retirement can exclude it: an unattributable live process holding the
-// directory must still block removal.
+// openCodeRuntimeClaimant is the claimant for a live managed OpenCode server.
+//
+// Deliberately NOT the runtime's conv-id, even though the row carries one. The
+// server is a daemon-owned process, not the agent's pane, so the rule that makes
+// self-exclusion safe elsewhere — "the target is stopped by the time we remove"
+// — does not hold for it: retiring the agent stops its pane and leaves the
+// server running. Claiming under the conv-id would let that agent's own
+// retirement exclude the claim and remove the directory its live server sits in,
+// which is the exact hazard this claim exists to stop. A non-conv id blocks
+// regardless of whose retirement is asking.
+//
+// The cost is a removal deferred, not denied: cleanup reports the worktree kept
+// with openCodeRuntimeSharedNote until the server actually stops (the reaper
+// takes it within a tick), and the operator can retry. Keeping a directory a
+// live process is in is the recoverable failure; removing it is not.
 const openCodeRuntimeClaimant = "opencode-runtime:live"
+
+// openCodeRuntimeSharedNote phrases that outcome. The generic "shared with
+// another agent" would send the operator hunting for a peer that does not exist
+// and give them no reason to expect a retry to succeed.
+const openCodeRuntimeSharedNote = "a managed OpenCode server is still running in it"
+
+// strongerSharedNote ranks the reason a root is held so every surface reports
+// the same one. A daemon-owned holder outranks a peer agent: it is the one the
+// operator cannot see in the dashboard and would otherwise go looking for.
+// current is the note chosen so far; claimant is another holder of the root.
+func strongerSharedNote(current, claimant string) string {
+	switch claimant {
+	case seanceClaimant:
+		return seanceSharedNote
+	case openCodeRuntimeClaimant:
+		if current == seanceSharedNote {
+			return current
+		}
+		return openCodeRuntimeSharedNote
+	default:
+		return current
+	}
+}
 
 // sharedKeptNote phrases every "kept because someone else holds it" outcome.
 // note names a non-agent holder (see agentWorktreeView.SharedNote); empty falls
@@ -397,19 +427,24 @@ func (s agentWorktreeClaimSnapshot) resolve(convID string, excluding map[string]
 		wt.Shared = true
 		return wt
 	}
+	// Scan every matching dir before deciding, and rank the note rather than
+	// taking whichever claimant Go's map iteration yields first — a root held by
+	// both a peer agent and a daemon-owned process must not report a different
+	// reason run to run.
 	for claimDir, claimants := range s.dirClaims {
 		if !dirContains(wt.Path, claimDir) {
 			continue
 		}
 		for claimant := range claimants {
-			if !excluding[claimant] {
-				wt.Shared = true
-				if claimant == seanceClaimant {
-					wt.SharedNote = seanceSharedNote
-				}
-				return wt
+			if excluding[claimant] {
+				continue
 			}
+			wt.Shared = true
+			wt.SharedNote = strongerSharedNote(wt.SharedNote, claimant)
 		}
+	}
+	if wt.Shared {
+		return wt
 	}
 	return wt
 }
@@ -518,8 +553,8 @@ func applyWorktreeCleanup(wt agentWorktreeView, requested bool) string {
 			continue
 		}
 		note := ""
-		if claimants[seanceClaimant] {
-			note = seanceSharedNote
+		for claimant := range claimants {
+			note = strongerSharedNote(note, claimant)
 		}
 		return sharedKeptNote(note)
 	}
@@ -570,7 +605,7 @@ func applyRetireWorktreeCleanup(wt agentWorktreeView, requested bool) (note stri
 	case wt.Kind == "main":
 		return "worktree kept (main repo)", true
 	case wt.Shared:
-		return "worktree kept (shared with another agent)", true
+		return sharedKeptNote(wt.SharedNote), true
 	}
 	var removed, branchDeleted bool
 	var err error
@@ -652,19 +687,22 @@ func retireWorktreeDrift(convID string, wt agentWorktreeView) string {
 	if !snap.complete {
 		return "worktree kept — could not confirm current worktree ownership"
 	}
+	blocked := false
+	note := ""
 	for claimDir, claimants := range snap.dirClaims {
 		if !dirContains(wt.Path, claimDir) {
 			continue
 		}
 		for claimant := range claimants {
-			if claimant == seanceClaimant {
-				// Never equal to convID, so it always lands here.
-				return sharedKeptNote(seanceSharedNote)
+			if claimant == convID {
+				continue
 			}
-			if claimant != convID {
-				return sharedKeptNote("")
-			}
+			blocked = true
+			note = strongerSharedNote(note, claimant)
 		}
+	}
+	if blocked {
+		return sharedKeptNote(note)
 	}
 	return ""
 }
