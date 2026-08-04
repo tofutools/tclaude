@@ -294,6 +294,7 @@ var (
 		"pr.view":       true,
 		"pr.checks":     true,
 		"pr.comment":    true,
+		"pr.edit":       true,
 		"pr.ready":      true,
 		"issue.list":    true,
 		"issue.view":    true,

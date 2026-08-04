@@ -339,6 +339,86 @@ func (b *proxyTail) Truncated() bool { return b.truncated }
 // The hardened git invocation
 // ---------------------------------------------------------------------------
 
+// gitProxyXfer is a throwaway, DAEMON-OWNED git directory that a credentialed
+// transfer runs from, so the agent's repository configuration is not in scope
+// for the one command that carries the operator's credential.
+//
+// This is what closes the check/use race. Every refusal gate reads the agent's
+// `.git/config` in its own short-lived process; the credentialed command used
+// to read it again, moments later, and the agent can rewrite that file in
+// between. Pins ride on the argv and are immune, but the keys that matter most
+// here cannot be pinned: `url.*.insteadOf` has no reset form, and a URL-scoped
+// `http.<url>.*` outranks a generic override. Verified on git 2.43 — pushing
+// from the agent's repo with a hostile insteadOf redirects to the attacker's
+// host, and pushing the same objects from a directory like this one does not.
+//
+// The agent's objects are reached through `objects/info/alternates` rather than
+// copied, so this costs a directory and no data movement. Nothing in it is
+// agent-writable: it lives under the private data tree.
+type gitProxyXfer struct{ dir string }
+
+// newGitProxyXfer builds the transfer directory and points it at the agent's
+// object store.
+func newGitProxyXfer(ctx context.Context, s *gitProxySession) (*gitProxyXfer, *proxyFault) {
+	base := tclcommon.TclaudeDataDir()
+	if base == "" {
+		return nil, faultf(500, "io", "could not determine tclaude private data directory")
+	}
+	root := filepath.Join(base, "gitproxy", "xfer")
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		return nil, faultf(500, "io", "create transfer directory: %v", err)
+	}
+	dir, err := os.MkdirTemp(root, "x")
+	if err != nil {
+		return nil, faultf(500, "io", "create transfer directory: %v", err)
+	}
+	x := &gitProxyXfer{dir: dir}
+
+	// The agent's object store. Asked of the agent's repo, which is the only
+	// thing we still need from it — objects, never configuration.
+	objects, exit, ran := s.gitProbeStrict(ctx, "rev-parse", "--path-format=absolute", "--git-path", "objects")
+	if !ran || exit != 0 || objects == "" {
+		x.cleanup()
+		return nil, faultf(500, "repo_unresolved",
+			"could not locate this repository's object store; refusing to run a credentialed "+
+				"transfer without one")
+	}
+	res, err := proxyExec(ctx, ProxyCommand{
+		Tool: "git", Path: s.gitPath,
+		Args: []string{"init", "--bare", "-q", dir},
+		Dir:  root, Env: gitProxyEnv(),
+	})
+	if err != nil || res.ExitCode != 0 {
+		x.cleanup()
+		return nil, faultf(500, "io", "could not prepare the transfer directory (git init: %v)", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "objects", "info", "alternates"),
+		[]byte(objects+"\n"), 0o600); err != nil {
+		x.cleanup()
+		return nil, faultf(500, "io", "could not borrow the repository's objects: %v", err)
+	}
+	return x, nil
+}
+
+func (x *gitProxyXfer) cleanup() {
+	if x != nil && x.dir != "" {
+		_ = os.RemoveAll(x.dir)
+	}
+}
+
+// git runs a hardened git command FROM the transfer directory. The agent's
+// repository is never the working directory and never supplies --git-dir, so
+// none of its configuration is read.
+func (x *gitProxyXfer) git(ctx context.Context, s *gitProxySession, args ...string) (ProxyResult, error) {
+	full := append(append([]string(nil), s.pins...), "--git-dir", x.dir)
+	return proxyExec(ctx, ProxyCommand{
+		Tool: "git", Path: s.gitPath,
+		Args: append(full, args...),
+		Dir:  x.dir,
+		Env:  gitProxyEnv(),
+	})
+}
+
 // gitProxyHooksDir returns a daemon-owned, permanently empty directory to point
 // core.hooksPath at. It lives under the private data tree, which sandboxed
 // agents cannot write, so an agent cannot plant a hook in it.

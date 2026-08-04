@@ -257,7 +257,9 @@ func handleGitProxyLsRemote(w http.ResponseWriter, r *http.Request) {
 	if body.Tags {
 		args = append(args, "--tags")
 	}
-	args = append(args, "--", resolved.Name)
+	// The validated URL, not the remote name — same reason as push: resolving a
+	// name means reading the agent's config with the credential in hand.
+	args = append(args, "--", resolved.FetchURL)
 	if pattern := strings.TrimSpace(body.Pattern); pattern != "" {
 		if fault := validateRefPattern(pattern); fault != nil {
 			writeProxyFault(w, fault)
@@ -265,7 +267,7 @@ func handleGitProxyLsRemote(w http.ResponseWriter, r *http.Request) {
 		}
 		args = append(args, pattern)
 	}
-	s.runAndRespond(ctx, w, r, resolved, "", args)
+	s.runIsolatedAndRespond(ctx, w, r, resolved, "", args, false)
 }
 
 // handleGitProxyFetch serves POST /v1/git/fetch. Fetch never updates the
@@ -361,6 +363,17 @@ func handleGitProxyPush(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The credentialed push runs from a DAEMON-OWNED git directory, not the
+	// agent's repository — see gitProxyXfer. Everything below therefore has to
+	// be resolved from the agent's repo FIRST, and then named explicitly, since
+	// the pushing command can no longer look anything up for itself.
+	sha, exit, ran := s.gitProbeStrict(ctx, "rev-parse", "--verify", "refs/heads/"+branch)
+	if !ran || exit != 0 || sha == "" {
+		writeError(w, http.StatusConflict, "unknown_branch",
+			fmt.Sprintf("branch %q does not exist in this repository", branch))
+		return
+	}
+
 	args := []string{"push", gitProxyReceivePack, "--no-recurse-submodules"}
 	if body.ForceWithLease {
 		if !s.policy.AllowForcePush {
@@ -369,21 +382,30 @@ func handleGitProxyPush(w http.ResponseWriter, r *http.Request) {
 					"agent.git_proxy.allow_force_push")
 			return
 		}
-		// Always --force-with-lease, never --force: a lease refuses to
-		// overwrite work the local repo has not seen, which is the difference
-		// between "rewrite my own branch" and "destroy someone else's".
-		args = append(args, "--force-with-lease")
+		// A bare --force-with-lease compares against the remote-tracking ref of
+		// the repository it runs in, and the transfer directory has none — it
+		// would degrade to no protection at all. So the expected value is read
+		// from the agent's own remote-tracking ref and stated explicitly, which
+		// is both safe here and more precise than the bare form.
+		lease, exit, ran := s.gitProbeStrict(ctx, "rev-parse", "--verify",
+			"refs/remotes/"+resolved.Name+"/"+branch)
+		if !ran || exit != 0 || lease == "" {
+			writeError(w, http.StatusConflict, "no_lease_base",
+				fmt.Sprintf("cannot force-with-lease: this repository has no "+
+					"refs/remotes/%s/%s to lease against. Fetch first, so there is a known "+
+					"remote state to refuse to overwrite.", resolved.Name, branch))
+			return
+		}
+		args = append(args, "--force-with-lease=refs/heads/"+branch+":"+lease)
 	}
-	if body.SetUpstream {
-		args = append(args, "--set-upstream")
-	}
-	// Push by REMOTE NAME with a fully-qualified refspec. The name is safe
-	// because resolveProxyRemote proved it resolves to the validated URL and is
-	// a fixed point of git's rewriting; using the name (rather than the URL)
-	// keeps remote-tracking refs and --set-upstream working.
-	args = append(args, "--", resolved.Name,
-		fmt.Sprintf("refs/heads/%s:refs/heads/%s", branch, branch))
-	s.runAndRespond(ctx, w, r, resolved, branch, args)
+
+	// The validated URL, spelled out. Not the remote NAME: a name means the
+	// pushing command has to read remote.<name>.url from somewhere, and the
+	// only place holding it is the file this design exists to stop consulting.
+	args = append(args, "--", resolved.PushURL,
+		fmt.Sprintf("%s:refs/heads/%s", sha, branch))
+
+	s.runIsolatedAndRespond(ctx, w, r, resolved, branch, args, body.SetUpstream)
 }
 
 // openProxyRemote runs gates 2, 3 and 5 for the routes that name a remote.
@@ -447,6 +469,61 @@ func (s *gitProxySession) runAndRespond(
 		Truncated: res.Truncated,
 		TimedOut:  res.TimedOut,
 	})
+}
+
+// runIsolatedAndRespond executes a CREDENTIALED command from a daemon-owned
+// transfer directory, so the agent's repository configuration is out of scope
+// for the one command that carries the operator's credential. See gitProxyXfer.
+func (s *gitProxySession) runIsolatedAndRespond(
+	ctx context.Context, w http.ResponseWriter, r *http.Request,
+	remote resolvedRemote, branch string, args []string, setUpstream bool,
+) {
+	xfer, fault := newGitProxyXfer(ctx, s)
+	if fault != nil {
+		writeProxyFault(w, fault)
+		return
+	}
+	defer xfer.cleanup()
+
+	runCtx, cancel := context.WithTimeout(ctx, gitProxyNetworkTimeout)
+	defer cancel()
+	res, err := xfer.git(runCtx, s, args...)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "git_failed", err.Error())
+		return
+	}
+	// --set-upstream cannot come from the pushing command any more: it writes
+	// branch.<name>.* into the repository it ran in, and that is deliberately
+	// not the agent's. Do it afterwards, locally, on success — it needs no
+	// credential, so it is not part of what the isolation protects.
+	if res.ExitCode == 0 && setUpstream {
+		s.setUpstream(ctx, remote.Name, branch)
+	}
+	contacted := remote.contacted(true).Key()
+	setAuditDetail(r, fmt.Sprintf("remote=%s ref=%s exit=%d", contacted, branch, res.ExitCode))
+	writeJSON(w, http.StatusOK, gitProxyOutcome{
+		Repo:      filepath.Base(s.repoRoot),
+		Remote:    remote.Name,
+		RemoteRef: contacted,
+		Branch:    branch,
+		ExitCode:  res.ExitCode,
+		Stdout:    res.Stdout,
+		Stderr:    res.Stderr,
+		Truncated: res.Truncated,
+		TimedOut:  res.TimedOut,
+	})
+}
+
+// setUpstream reproduces `git push -u` in the agent's own repository. Failure
+// is not fatal: the push has already landed, and an unset upstream is a
+// convenience the agent can fix itself.
+func (s *gitProxySession) setUpstream(ctx context.Context, remote, branch string) {
+	for _, kv := range [][2]string{
+		{"branch." + branch + ".remote", remote},
+		{"branch." + branch + ".merge", "refs/heads/" + branch},
+	} {
+		_, _, _ = s.gitProbeStrict(ctx, "config", "--", kv[0], kv[1])
+	}
 }
 
 // validateRefPattern bounds the optional ls-remote ref pattern. It reaches

@@ -144,6 +144,7 @@ func githubPRCmd() *cobra.Command {
 			githubPRViewCmd(),
 			githubPRChecksCmd(),
 			githubPRCommentCmd(),
+			githubPREditCmd(),
 			githubPRReadyCmd(),
 		},
 	}.ToCobra()
@@ -306,6 +307,52 @@ func githubPRCommentCmd() *cobra.Command {
 			os.Exit(runGitHubComment("/v1/github/pr/comment", p, "pr comment", os.Stdin, os.Stdout, os.Stderr))
 		},
 	}.ToCobra()
+}
+
+type githubPREditParams struct {
+	Number   int    `pos:"true" help:"Pull-request number."`
+	Title    string `long:"title" short:"t" optional:"true" help:"New title. Omit to leave it unchanged."`
+	Body     string `long:"body" optional:"true" help:"New description. Prefer --body-file for anything multi-line."`
+	BodyFile string `long:"body-file" short:"F" optional:"true" help:"Read the new description from this file ('-' reads stdin)."`
+	Remote   string `long:"remote" optional:"true" help:"Remote naming the repository to act on (default: origin)."`
+	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout. Capped at 300s. Timeout = deny."`
+}
+
+func githubPREditCmd() *cobra.Command {
+	return boa.CmdT[githubPREditParams]{
+		Use:   "edit",
+		Short: "Edit a pull request's title or description",
+		Long: "Replaces the title and/or the description of an existing pull request. Whichever you omit " +
+			"is left alone.\n\n" +
+			"The edit is attributed to the OPERATOR's GitHub account, like everything else this command " +
+			"writes. Only the title and body can be changed — base branch, reviewers and labels are " +
+			"outside what the proxy will do on your behalf.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *githubPREditParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(agent.CompleteAskHumanDurations)
+			return nil
+		},
+		RunFunc: func(p *githubPREditParams, _ *cobra.Command, _ []string) {
+			os.Exit(runGitHubPREdit(p, os.Stdin, os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
+func runGitHubPREdit(p *githubPREditParams, stdin io.Reader, stdout, stderr io.Writer) int {
+	body, rc := agent.ResolveBodyInput(p.Body, p.BodyFile, "--body", stdin, stderr)
+	if rc != rcOK {
+		return rc
+	}
+	if strings.TrimSpace(p.Title) == "" && strings.TrimSpace(body) == "" {
+		fmt.Fprintln(stderr, "Error: nothing to edit — pass --title, --body/--body-file, or both")
+		return rcInvalidArg
+	}
+	return ghProxyCall("/v1/github/pr/edit", map[string]any{
+		"remote": strings.TrimSpace(p.Remote),
+		"number": p.Number,
+		"title":  strings.TrimSpace(p.Title),
+		"body":   body,
+	}, p.AskHuman, "pr edit", stdout, stderr)
 }
 
 func runGitHubComment(path string, p *githubCommentParams, what string, stdin io.Reader, stdout, stderr io.Writer) int {

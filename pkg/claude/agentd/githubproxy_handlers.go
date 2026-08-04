@@ -198,6 +198,67 @@ func handleGHProxyPRChecks(w http.ResponseWriter, r *http.Request) {
 	g.respond(w, r, "pr.checks", res, err)
 }
 
+// ghProxyPREditRequest edits an existing pull request's title and/or body.
+type ghProxyPREditRequest struct {
+	Number int    `json:"number"`
+	Title  string `json:"title,omitempty"`
+	Body   string `json:"body,omitempty"`
+	Remote string `json:"remote,omitempty"`
+}
+
+// handleGHProxyPREdit serves POST /v1/github/pr/edit.
+//
+// Editing a description is a WRITE under the operator's GitHub identity, so it
+// sits behind github.write beside `pr create` rather than beside the reads. It
+// is deliberately narrow: title and body only. `gh pr edit` can also move the
+// base branch, add reviewers and change labels, and none of that is something
+// the proxy's semantic contract covers — an agent that wants it should ask a
+// human, not get it as a side effect of fixing a typo.
+func handleGHProxyPREdit(w http.ResponseWriter, r *http.Request) {
+	var body ghProxyPREditRequest
+	g, ok := openGHProxy(w, r, PermGitHubWrite, &body, func() string { return body.Remote })
+	if !ok {
+		return
+	}
+	number, fault := validateGHNumber(body.Number)
+	if fault != nil {
+		writeProxyFault(w, fault)
+		return
+	}
+	title := strings.TrimSpace(body.Title)
+	hasBody := strings.TrimSpace(body.Body) != ""
+	if title == "" && !hasBody {
+		writeError(w, http.StatusBadRequest, "invalid_arg",
+			"nothing to edit: pass a title, a body, or both")
+		return
+	}
+	args := []string{"pr", "edit", number, "--repo", g.ownerRepo}
+	if title != "" {
+		if fault := validateGHTitle(title); fault != nil {
+			writeProxyFault(w, fault)
+			return
+		}
+		args = append(args, "--title", title)
+	}
+	if hasBody {
+		if fault := validateGHBody(body.Body, true); fault != nil {
+			writeProxyFault(w, fault)
+			return
+		}
+		// By file, like every other free text: a PR body is prose that may
+		// contain anything, and argv is world-readable through /proc.
+		path, cleanup, fault := g.bodyFile(body.Body)
+		if fault != nil {
+			writeProxyFault(w, fault)
+			return
+		}
+		defer cleanup()
+		args = append(args, "--body-file", path)
+	}
+	res, err := g.gh(r.Context(), args...)
+	g.respond(w, r, "pr.edit", res, err)
+}
+
 // handleGHProxyPRComment serves POST /v1/github/pr/comment.
 func handleGHProxyPRComment(w http.ResponseWriter, r *http.Request) {
 	var body ghProxyCommentRequest

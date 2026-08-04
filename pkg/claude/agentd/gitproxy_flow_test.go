@@ -51,6 +51,9 @@ type gitProxyRecorder struct {
 	// has none, and push goes wherever fetch goes.
 	pushRemotes map[string]string
 	branch      string
+	// refs seeds `rev-parse --verify <ref>`: the branch tip the push sends and
+	// the remote-tracking ref a --force-with-lease leases against.
+	refs map[string]string
 	// rewriteTo, when set for a URL, makes `ls-remote --get-url <url>` answer
 	// with something else — simulating a repo-local url.*.insteadOf rewrite.
 	rewriteTo map[string]string
@@ -72,10 +75,14 @@ type gitProxyRecorder struct {
 
 func newGitProxyRecorder(repoRoot string) *gitProxyRecorder {
 	return &gitProxyRecorder{
-		repoRoot:         repoRoot,
-		remotes:          map[string]string{"origin": gitProxyTestRemote},
-		pushRemotes:      map[string]string{},
-		branch:           "feat/thing",
+		repoRoot:    repoRoot,
+		remotes:     map[string]string{"origin": gitProxyTestRemote},
+		pushRemotes: map[string]string{},
+		branch:      "feat/thing",
+		refs: map[string]string{
+			"refs/heads/feat/thing":          "1111111111111111111111111111111111111111",
+			"refs/remotes/origin/feat/thing": "2222222222222222222222222222222222222222",
+		},
 		rewriteTo:        map[string]string{},
 		repoConfig:       map[string]string{},
 		repoConfigScopes: map[string]string{},
@@ -87,8 +94,8 @@ func newGitProxyRecorder(repoRoot string) *gitProxyRecorder {
 func subcommand(args []string) []string {
 	for i := 0; i < len(args); i++ {
 		switch {
-		case args[i] == "-c" || args[i] == "-C":
-			i++
+		case args[i] == "-c" || args[i] == "-C" || args[i] == "--git-dir":
+			i++ // these take a separate value argument
 		case args[i] == "--no-pager":
 		case strings.HasPrefix(args[i], "-"):
 		default:
@@ -112,6 +119,16 @@ func (r *gitProxyRecorder) exec(_ context.Context, cmd agentd.ProxyCommand) (age
 	}
 	miss := agentd.ProxyResult{ExitCode: 1, Stderr: "stub: no answer"}
 	switch sub[0] {
+	case "init":
+		// Model `git init --bare <dir>` for real: the daemon writes
+		// objects/info/alternates into the result, so a stub that only says
+		// "ok" would leave it writing into a directory that does not exist.
+		if dir := sub[len(sub)-1]; dir != "init" {
+			if err := os.MkdirAll(filepath.Join(dir, "objects", "info"), 0o700); err != nil {
+				return agentd.ProxyResult{ExitCode: 1, Stderr: err.Error()}, nil
+			}
+		}
+		return agentd.ProxyResult{}, nil
 	case "rev-parse":
 		if slices.Contains(sub, "--show-toplevel") {
 			return agentd.ProxyResult{Stdout: r.repoRoot + "\n"}, nil
@@ -134,6 +151,20 @@ func (r *gitProxyRecorder) exec(_ context.Context, cmd agentd.ProxyCommand) (age
 		}
 		if slices.Contains(sub, "--abbrev-ref") {
 			return agentd.ProxyResult{Stdout: r.branch + "\n"}, nil
+		}
+		if slices.Contains(sub, "--git-path") {
+			// The object store the transfer directory borrows through
+			// objects/info/alternates.
+			return agentd.ProxyResult{Stdout: filepath.Join(r.repoRoot, ".git", "objects") + "\n"}, nil
+		}
+		if slices.Contains(sub, "--verify") {
+			// Ref resolution. refs the fixture does not know are "missing",
+			// which is how a caller asking for a nonexistent branch is modelled.
+			ref := sub[len(sub)-1]
+			if sha, ok := r.refs[ref]; ok {
+				return agentd.ProxyResult{Stdout: sha + "\n"}, nil
+			}
+			return miss, nil
 		}
 		return miss, nil
 	case "config":
@@ -403,7 +434,13 @@ func TestGitProxy_PushArgvIsHardened(t *testing.T) {
 	push := calls[0]
 
 	assert.Equal(t, "/usr/bin/git", push.Path, "the binary is pinned to an absolute path")
-	assert.Equal(t, rec.repoRoot, push.Dir, "git runs in the agent's own repository root")
+	// NOT the agent's repository. The credentialed command runs from a
+	// daemon-owned transfer directory so `.git/config` is out of scope for it —
+	// that is what closes the check/use race, since insteadOf and URL-scoped
+	// http.* cannot be pinned away.
+	assert.NotEqual(t, rec.repoRoot, push.Dir,
+		"the credentialed command must not run in the agent's repository")
+	assert.Contains(t, push.Args, "--git-dir", "it is aimed at the transfer directory explicitly")
 
 	joined := strings.Join(push.Args, " ")
 	assert.Contains(t, joined, "-c core.hooksPath=",
@@ -422,8 +459,15 @@ func TestGitProxy_PushArgvIsHardened(t *testing.T) {
 
 	// The refspec is fully qualified and constructed by the daemon, so
 	// push.default and any repo-local refspec configuration are irrelevant.
-	assert.Contains(t, push.Args, "refs/heads/feat/thing:refs/heads/feat/thing")
-	assert.Contains(t, push.Args, "--set-upstream")
+	// A resolved SHA and the VALIDATED URL. Not a remote name and not a branch
+	// name: resolving either would mean reading the agent's config with the
+	// credential already in hand.
+	assert.Contains(t, push.Args, "1111111111111111111111111111111111111111:refs/heads/feat/thing")
+	assert.Contains(t, push.Args, gitProxyTestRemote, "the destination is spelled out")
+	assert.NotContains(t, push.Args, "origin", "a remote NAME would have to be resolved from config")
+	// --set-upstream writes branch.<name>.* into the repository it runs in, so
+	// it cannot ride on this command any more; it happens locally afterwards.
+	assert.NotContains(t, push.Args, "--set-upstream")
 	assert.NotContains(t, push.Args, "--force")
 	assert.NotContains(t, push.Args, "--force-with-lease")
 
@@ -825,7 +869,13 @@ func TestGitProxy_ForcePushIsOptIn(t *testing.T) {
 		require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
 		calls := rec.networkCalls()
 		require.Len(t, calls, 1)
-		assert.Contains(t, calls[0].Args, "--force-with-lease")
+		// The lease carries an EXPLICIT expected value. A bare --force-with-lease
+		// compares against the remote-tracking ref of the repository it runs in,
+		// and the transfer directory has none — it would silently degrade to no
+		// protection at all. The expected sha is read from the agent's own
+		// refs/remotes/<remote>/<branch> instead.
+		assert.Contains(t, calls[0].Args,
+			"--force-with-lease=refs/heads/feat/thing:2222222222222222222222222222222222222222")
 		assert.NotContains(t, calls[0].Args, "--force",
 			"plain --force must not exist here: a lease is what makes this recoverable")
 	})

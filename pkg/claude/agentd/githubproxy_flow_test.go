@@ -420,3 +420,46 @@ func TestGHProxy_RefusesToDeriveARepoFromADeeperPath(t *testing.T) {
 	assert.Contains(t, res.Body.String(), "not a plain github owner/repo path")
 	assert.Equal(t, 0, ghCallCount(rec), "no repository may be derived from it")
 }
+
+// TestGHProxy_PREditSendsTitleAndBodyByFile — editing a description is a write
+// under the operator's identity, so it sits behind github.write, and the new
+// text travels by file like every other free-form string.
+func TestGHProxy_PREditSendsTitleAndBodyByFile(t *testing.T) {
+	f, rec := gitProxyWorld(t, []string{"github.com/tofutools"})
+	rec.gh = agentd.ProxyResult{Stdout: "https://github.com/tofutools/tclaude/pull/1925\n"}
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubWrite, "test"))
+
+	const prose = "a rewritten description with `backticks` and\nnewlines"
+	res := gitProxyPost(t, f, "/v1/github/pr/edit",
+		map[string]any{"number": 1925, "title": "New title", "body": prose})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+
+	call := ghCall(t, rec)
+	assert.Equal(t, []string{"pr", "edit", "1925"}, call.Args[:3])
+	i := slices.Index(call.Args, "--repo")
+	require.GreaterOrEqual(t, i, 0)
+	assert.Equal(t, "tofutools/tclaude", call.Args[i+1], "the repo is derived, never named")
+	assert.Contains(t, call.Args, "--title")
+	assert.NotContains(t, strings.Join(call.Args, " "), prose, "the body must not reach argv")
+	assert.Contains(t, call.Args, "--body-file")
+}
+
+// TestGHProxy_PREditRequiresWriteAndSomethingToChange.
+func TestGHProxy_PREditRequiresWriteAndSomethingToChange(t *testing.T) {
+	t.Run("github.read does not confer it", func(t *testing.T) {
+		f, rec := gitProxyWorld(t, []string{"github.com/tofutools"})
+		require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubRead, "test"))
+		res := gitProxyPost(t, f, "/v1/github/pr/edit", map[string]any{"number": 1, "body": "x"})
+		assert.Equal(t, http.StatusForbidden, res.Code, "body=%s", res.Body.String())
+		assert.False(t, rec.sawAnySubprocess())
+	})
+
+	t.Run("an empty edit is refused rather than sent", func(t *testing.T) {
+		f, rec := gitProxyWorld(t, []string{"github.com/tofutools"})
+		require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubWrite, "test"))
+		res := gitProxyPost(t, f, "/v1/github/pr/edit", map[string]any{"number": 1})
+		assert.Equal(t, http.StatusBadRequest, res.Code, "body=%s", res.Body.String())
+		assert.Contains(t, res.Body.String(), "nothing to edit")
+		assert.Equal(t, 0, ghCallCount(rec))
+	})
+}

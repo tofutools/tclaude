@@ -105,7 +105,7 @@ Four slugs, none granted by default and none conferred by group ownership:
 | `git.read` | `git remotes`, `git ls-remote`, `git fetch` |
 | `git.push` | `git push` |
 | `github.read` | `github pr ls/view/checks`, `github issue ls/view` |
-| `github.write` | `github pr create/comment/ready`, `github issue comment` |
+| `github.write` | `github pr create/edit/comment/ready`, `github issue comment` |
 
 ```bash
 tclaude agent permissions grant <agent> git.read
@@ -136,6 +136,7 @@ tclaude proxy github pr ls --state open
 tclaude proxy github pr view 42
 tclaude proxy github pr checks 42
 tclaude proxy github pr comment 42 --body-file reply.md
+tclaude proxy github pr edit 42 --body-file new-description.md
 tclaude proxy github pr ready 42
 tclaude proxy github issue ls
 tclaude proxy github issue view 7
@@ -201,45 +202,30 @@ Nothing here ever runs a shell. A configuration probe that cannot be *run* is
 treated as a refusal, not as "nothing configured" — a gate that reads a failed
 check as clean is worse than no gate.
 
-### The "refuse" rows are checked, not enforced
+### What runs where, and what is still checked rather than enforced
 
-**Know this before you widen an allow-list.** The **pin** rows above ride on the
-same command line as the operation, so they cannot be defeated. The **refuse**
-rows cannot make that claim: each one reads the repository in its own short-lived
-`git` process, a moment before the credentialed command runs in another. Nothing
-locks `.git/config` in between, and it is a file the agent can write — that is
-the premise of the whole feature.
+The **credentialed** commands — `push` and `ls-remote` — run from a
+**daemon-owned transfer directory**, not from the agent's repository. It is a
+bare git dir under the private data tree that borrows the agent's objects
+through `objects/info/alternates`, so nothing is copied and the agent's
+`.git/config` is not in scope for the one command that carries the operator's
+credential. The destination is the validated URL, spelled out, and push sends a
+resolved SHA — no remote name and no branch name for git to look up.
 
-So an agent that rewrites its own `.git/config` in a loop while repeatedly
-calling the proxy can, in principle, have a hostile value land in the window
-between the check and the use. What that buys it is bounded by what a pin cannot
-already cover: chiefly `url.*.insteadOf` (redirecting the push to a host the
-allow-list never saw) and the URL-scoped `http.<url>.*` family (routing an HTTPS
-connection through a proxy it chooses, with certificate checking off). Both spend
-the operator's credential against a destination the audit row will not name.
+That is what closes the check/use race for those two verbs. Every refusal gate
+reads the agent's `.git/config` in its own short-lived process; the credentialed
+command used to read it again moments later, and the agent can rewrite the file
+in between. Pins ride on the argv and were always immune, but the keys that
+matter most here cannot be pinned: `url.*.insteadOf` has no reset form, and a
+URL-scoped `http.<url>.*` outranks a generic override.
 
-This is a real limitation, not a theoretical one, and closing it properly means
-not letting the credentialed command read agent-writable configuration at all —
-running the transfer from a daemon-owned `GIT_DIR` that reaches the agent's
-objects through `objects/info/alternates`. That is a larger change than this
-feature, and until it lands the honest summary is:
-
-> the proxy reliably stops a *careless* repository and reliably bounds *which
-> operations* an agent may ask for; it does not reliably stop a repository that
-> is actively racing it.
-
-The permission slugs are what gate the ability to try at all, which is why none
-of them is granted by default.
-
-These are not paper claims: `pkg/claude/agentd/gitproxy_realgit_test.go` runs
-real `git` against a throwaway repository and asserts each pin has its claimed
-effect, **paired with a control run** proving the hostile configuration would
-otherwise have worked.
-
-For GitHub specifically, `gh` runs in a **neutral directory** — never the
-agent's repository — and always with an explicit `--repo <owner>/<repo>` derived
-from the validated remote. Otherwise `gh` would discover the repository by
-reading `.git/config`, which would defeat the allow-list.
+**`fetch` is not yet converted.** It still runs in the agent's repository,
+because the objects have to land *there* and alternates only point the other
+way — closing it means fetching into the transfer directory and then moving the
+new pack across, which is a larger change than this one. Until then a fetch
+remains racy in the same way push used to be: an agent rewriting `.git/config`
+in the window can redirect it, and the credential is offered to whatever host it
+lands on. `git.read` gates the ability to try.
 
 ## What this is not
 

