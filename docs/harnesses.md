@@ -653,7 +653,7 @@ production builds rather than one the test assembles:
 
 - **The streams split cleanly.** stdout carries the answer and nothing else, so
   `x=$(tclaude ask …)` captures just the answer. The run summary — changed
-  files, duration, token tally, and a `Resume  copilot --resume=<id>` line —
+  files, duration, token tally, and a `Resume     copilot --resume=<id>` line —
   goes to stderr, which tclaude buffers by default and surfaces on `--verbose`
   or when the run fails.
 - **Resume is exact, and ask conversations are ordinary conversations.** A fresh
@@ -676,6 +676,12 @@ production builds rather than one the test assembles:
   positive control in which the same call under `--allow-all-tools` *does*
   write. So an unattended one-shot is read-only-ish **by construction** — and
   `--allow-all-tools` is precisely what ask must never emit.
+- **`COPILOT_ALLOW_ALL` is unset for every ask.** The posture above is a
+  property of the launch, not of the argv: the variable is measured to be
+  stronger than the flag it documents, and exporting it makes the same
+  production ask argv write the workspace. So ask drops it from the child's
+  environment in both modes, exactly as the spawn path does — an operator's
+  exported variable does not get to decide what a one-shot question may do.
 
 Two limits follow, and neither is a bug to route around:
 

@@ -414,10 +414,15 @@ func runAsk(in askInput, aio askIO) error {
 	}
 
 	plan := runPlan{
-		Argv:   h.Ask.BuildAskArgv(spec),
-		Cwd:    in.Cwd,
-		Stdout: aio.Stdout,
-		Stderr: aio.Stderr,
+		Argv: h.Ask.BuildAskArgv(spec),
+		Cwd:  in.Cwd,
+		// An argv is not the whole launch: a harness whose containment can be
+		// promoted by an AMBIENT variable an operator exported names it here,
+		// and the runner drops it from the child's environment. Empty for every
+		// harness that names none. See harness.AskEnvScrubber.
+		ScrubEnv: h.AskEnvScrub(),
+		Stdout:   aio.Stdout,
+		Stderr:   aio.Stderr,
 	}
 	if !printMode {
 		plan.Stdin = aio.Stdin
@@ -612,6 +617,45 @@ type runPlan struct {
 	Stdin  io.Reader
 	Stdout io.Writer
 	Stderr io.Writer
+
+	// ScrubEnv are environment variable NAMES to drop from the child's
+	// environment (harness.AskEnvScrubber). Empty leaves the caller's
+	// environment untouched, which is the default for every harness that names
+	// no ambient promoter.
+	ScrubEnv []string
+}
+
+// scrubEnv returns environ without any entry naming one of names, and whether
+// anything was removed.
+//
+// Names are matched on the KEY alone, so a variable is dropped whatever its
+// value: the point is to make the harness see it unset, not to argue with a
+// particular spelling of "true". An empty names list is the common case and
+// returns immediately, leaving the caller on the inherit path.
+func scrubEnv(environ, names []string) ([]string, bool) {
+	if len(names) == 0 {
+		return environ, false
+	}
+	drop := make(map[string]bool, len(names))
+	for _, name := range names {
+		if name != "" {
+			drop[name] = true
+		}
+	}
+	if len(drop) == 0 {
+		return environ, false
+	}
+	kept := make([]string, 0, len(environ))
+	scrubbed := false
+	for _, entry := range environ {
+		key, _, found := strings.Cut(entry, "=")
+		if found && drop[key] {
+			scrubbed = true
+			continue
+		}
+		kept = append(kept, entry)
+	}
+	return kept, scrubbed
 }
 
 // runner executes a runPlan. Swapped in tests; see liveRunner for the
@@ -630,6 +674,13 @@ func liveRunner(p runPlan) (started bool, err error) {
 	}
 	cmd := exec.Command(bin, p.Argv[1:]...)
 	cmd.Dir = p.Cwd
+	if env, scrubbed := scrubEnv(os.Environ(), p.ScrubEnv); scrubbed {
+		// Only set Env when something was actually removed: an explicit Env
+		// otherwise reproduces the inherited one, and leaving it nil keeps the
+		// ordinary "child inherits the caller's environment" path for every
+		// harness that names no ambient promoter.
+		cmd.Env = env
+	}
 	cmd.Stdin = p.Stdin
 	cmd.Stdout = p.Stdout
 	cmd.Stderr = p.Stderr

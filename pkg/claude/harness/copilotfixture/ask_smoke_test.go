@@ -26,7 +26,9 @@ import (
 // a conversation it can resume EXACTLY and list (TestCopilotAskResumesExactly),
 // a prompt that survives whatever a pipe put in it
 // (TestCopilotAskCapturePassesLeadingDashPrompt), and a posture safe enough for
-// an unattended one-shot (TestCopilotAskCaptureCannotWrite).
+// an unattended one-shot (TestCopilotAskCaptureCannotWrite) — plus the one input
+// that defeats that posture from outside the argv, which is why the ask surface
+// scrubs it (TestCopilotAskAmbientPromoterIsWhyAskScrubsTheEnvironment).
 
 // askDeadline bounds one ask scenario. A healthy headless turn against the mock
 // takes ~2s; the tool-posture arms add one provider round trip.
@@ -52,7 +54,7 @@ func askRunOptions(dirs copilotfixture.Dirs, mock *copilotfixture.MockProvider) 
 // summary on stderr.
 //
 // That summary is what NoisyCaptureStderr reports, and it is not merely
-// cosmetic noise — it ends in a `Resume  copilot --resume=<id>` line, so a
+// cosmetic noise — it ends in a `Resume     copilot --resume=<id>` line, so a
 // caller that folded stderr into the captured value would be pasting a
 // conversation id into whatever consumed the answer.
 //
@@ -268,4 +270,55 @@ func TestCopilotAskCaptureCannotWrite(t *testing.T) {
 					"so the arm above measures the posture rather than a broken probe")
 		})
 	}
+}
+
+// TestCopilotAskAmbientPromoterIsWhyAskScrubsTheEnvironment measures the limit
+// of the posture above: it is a property of the LAUNCH, not of the argv alone.
+//
+// COPILOT_ALLOW_ALL reaches the child from the caller's environment, and it is
+// measured (contract entry ambient-allow-all-env) as stronger than the flag it
+// documents. This runs the unmodified production ask argv with nothing else
+// changed but that variable exported — and the tool call writes. So an operator
+// who exported it once would decide, invisibly and with no trace in the argv,
+// whether a one-shot question may touch the workspace.
+//
+// That is why the descriptor names the variable for `tclaude ask` to drop
+// (harness.AskEnvScrubber), asserted here beside the measurement so the two
+// cannot drift: this scenario is the reason the scrub list is not empty.
+//
+// The scrub itself is exercised in the ask flow's own tests, because it lives
+// there — this suite deliberately never reproduces production's environment
+// assembly (buildEnv strips every inherited COPILOT_ variable, which is what
+// keeps a fixture from being steered by the developer's own shell).
+func TestCopilotAskAmbientPromoterIsWhyAskScrubsTheEnvironment(t *testing.T) {
+	requireSmoke(t)
+
+	assert.Contains(t, harness.MustGet(harness.CopilotName).AskEnvScrub(), "COPILOT_ALLOW_ALL",
+		"the ask surface must drop the variable this scenario measures")
+
+	dirs := copilotfixture.NewSandboxDirs(t)
+	// No TrustFolder: the variable clears the trust gate too, which is part of
+	// what makes it stronger than --allow-all-tools.
+	target := filepath.Join(dirs.WorkDir, "ask-ambient-probe.txt")
+	call := copilotfixture.ToolCall{
+		ID:   "call_copilotfixture_ask_ambient",
+		Name: "create",
+		Args: `{"path":"` + target + `","file_text":"written under the ambient promoter"}`,
+	}
+	mock := copilotfixture.NewMockProvider(t, []copilotfixture.Turn{
+		{ToolCall: &call},
+		{Text: "MOCK ASK AMBIENT FOLLOW UP"},
+	})
+
+	opts := askRunOptions(dirs, mock)
+	opts.ExtraEnv = []string{"COPILOT_ALLOW_ALL=true"}
+	result := copilotfixture.RunArgv(t, opts,
+		askArgv(t, harness.AskSpec{Print: true, Prompt: "Use the tool as instructed."}))
+
+	require.Equal(t, 0, result.ExitCode, "stderr: %s", result.Stderr)
+	assert.FileExists(t, target,
+		"the ambient promoter must be shown to defeat the capture posture — if this "+
+			"ever stops being true, the scrub's justification has changed")
+
+	assertCredentialFree(t, mock)
 }

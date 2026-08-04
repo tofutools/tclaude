@@ -108,6 +108,34 @@ type Asker interface {
 	NoisyCaptureStderr() bool
 }
 
+// AskEnvScrubber is an optional Asker capability: a harness whose containment
+// can be silently PROMOTED by an ambient environment variable names that
+// variable here, and `tclaude ask` removes it from the child's environment.
+//
+// It exists because an argv is not the whole launch. `tclaude ask` execs its
+// harness with the caller's own environment, so a variable an operator exported
+// once — in a shell profile, a CI job, a wrapper script — reaches every ask
+// turn, with no trace in the argv the flow built and nothing tclaude decided.
+// Copilot's COPILOT_ALLOW_ALL is the concrete case: it is measured to be
+// strictly stronger than the `--allow-all-tools` flag it documents, and the
+// spawn path already unsets it on every launch for exactly this reason (see
+// copilotEnvScrub). Without the same treatment here, a capture that tclaude
+// describes as unable to touch the workspace could quietly do so.
+//
+// The contract is deliberately narrow: names to REMOVE, never values to set.
+// Removing is the safe direction — an absent variable cannot be reinterpreted
+// by a future widening of a value parse — and it keeps `tclaude ask` from
+// inventing a launch posture the harness never contracted. A harness with no
+// such variable leaves the interface unimplemented and its ask inherits the
+// caller's environment unchanged.
+type AskEnvScrubber interface {
+	Asker
+
+	// AskEnvScrub returns the environment variable NAMES to drop from the ask
+	// child's environment, in both capture and interactive mode.
+	AskEnvScrub() []string
+}
+
 // StreamAsker is an optional Asker capability: a harness that can emit a
 // machine-readable EVENT STREAM in print mode (rather than one buffered answer)
 // implements it so `tclaude ask` can render the answer incrementally to a TTY.

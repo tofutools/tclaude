@@ -117,7 +117,6 @@ func TestCopilotAskerNeverPromotesPermissions(t *testing.T) {
 	}
 	forbidden := []string{
 		copilotFlagAllowAllTools,
-		copilotAllowAllEnv,
 		"--allow-all",
 		"--allow-all-paths",
 		"--deny-tool",
@@ -130,6 +129,36 @@ func TestCopilotAskerNeverPromotesPermissions(t *testing.T) {
 			if strings.Contains(joined, flag) {
 				t.Errorf("BuildAskArgv(%+v) emitted %q: %q", spec, flag, argv)
 			}
+		}
+	}
+}
+
+// TestCopilotAskerScrubsTheAmbientPromoter covers the half of the launch an
+// argv assertion cannot reach. COPILOT_ALLOW_ALL arrives from the CALLER's
+// environment, is measured to be stronger than the flag it documents, and would
+// otherwise make an operator's exported variable — not tclaude — decide whether
+// a one-shot question can write the workspace. The spawn path unsets it on every
+// launch; ask must do the same through the descriptor.
+func TestCopilotAskerScrubsTheAmbientPromoter(t *testing.T) {
+	if got := (copilotAsker{}).AskEnvScrub(); !slices.Contains(got, copilotAllowAllEnv) {
+		t.Errorf("AskEnvScrub() = %q, want it to drop %s", got, copilotAllowAllEnv)
+	}
+	h, ok := Get(CopilotName)
+	if !ok {
+		t.Fatal("the copilot harness must be registered")
+	}
+	// Reached through the descriptor, because that is how `tclaude ask` reads it.
+	if got := h.AskEnvScrub(); !slices.Contains(got, copilotAllowAllEnv) {
+		t.Errorf("Harness.AskEnvScrub() = %q, want it to drop %s", got, copilotAllowAllEnv)
+	}
+	// A harness that names no ambient promoter must keep the inherit path.
+	for _, name := range []string{DefaultName, CodexName} {
+		other, ok := Get(name)
+		if !ok {
+			continue
+		}
+		if got := other.AskEnvScrub(); len(got) != 0 {
+			t.Errorf("%s AskEnvScrub() = %q, want none", name, got)
 		}
 	}
 }
@@ -158,8 +187,11 @@ func TestCopilotAskerCaptureAndInteractiveDoNotMix(t *testing.T) {
 // TestCopilotAskerIgnoresUnmeasuredSpecFields pins the "absent, not
 // approximated" guardrail: AskSpec carries fields Copilot has no measured flag
 // for, and inventing a spelling for them is exactly what this adapter refuses to
-// do. A brokered LaunchPosture cannot reach this asker at all (the descriptor
-// leaves OneShotReplay nil), and Ephemeral has no Copilot equivalent.
+// do. A brokered séance resume cannot EXECUTE against Copilot (the descriptor
+// leaves OneShotReplay nil, and the daemon gates on that), but the client's
+// `--print-cmd` path renders an argv for any harness with an Asker — so this
+// pins that a posture reaching here changes nothing rather than being partially
+// honored. Ephemeral has no Copilot equivalent either.
 func TestCopilotAskerIgnoresUnmeasuredSpecFields(t *testing.T) {
 	plain := copilotAsker{}.BuildAskArgv(AskSpec{Print: true, Prompt: "q"})
 	loaded := copilotAsker{}.BuildAskArgv(AskSpec{

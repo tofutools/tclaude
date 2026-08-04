@@ -12,7 +12,7 @@ package harness
 //
 //   - CAPTURE (spec.Print) is the headless `-p PROMPT` form, which runs the
 //     turn and exits. Its stdout is the ANSWER ALONE; the run summary
-//     (changes/duration/tokens and a `Resume  copilot --resume=<id>` line) goes
+//     (changes/duration/tokens and a `Resume     copilot --resume=<id>` line) goes
 //     to stderr, which is what NoisyCaptureStderr below reports.
 //   - INTERACTIVE is the `-i PROMPT` form the spawner already drives in a tmux
 //     pane: the full TUI, attached to the caller's terminal, with the question
@@ -37,6 +37,10 @@ package harness
 // unattended one-shot must not do. `--no-ask-user` is likewise unnecessary:
 // `ask_user` is only advertised when there IS a terminal to ask through.
 //
+// An argv alone would not be enough to hold that, which is why AskEnvScrub below
+// exists: COPILOT_ALLOW_ALL reaches the child from the caller's environment and
+// promotes the launch with nothing in the argv to show for it.
+//
 // Nothing here is a claim about the INTERACTIVE arm's containment. A human is at
 // the terminal there, drives Copilot's own dialogs, and gets the posture their
 // own configuration persists — the same deal the other harnesses' interactive
@@ -44,15 +48,47 @@ package harness
 //
 // AskSpec fields Copilot has no measured flag for are IGNORED rather than
 // approximated, exactly as copilotSpawner ignores the spawn fields with no
-// documented flag. That covers LaunchPosture (the descriptor leaves
-// OneShotReplay nil, so no brokered resume reaches this asker) and Ephemeral
-// (Copilot has no measured equivalent of `codex exec --ephemeral`; a turn it
-// runs is appended to the conversation). Stream is ignored because this asker
-// deliberately does not implement StreamAsker — see NoisyCaptureStderr's
-// neighbours below.
+// documented flag. That covers LaunchPosture and Ephemeral (Copilot has no
+// measured equivalent of `codex exec --ephemeral`; a turn it runs is appended to
+// the conversation). Stream is ignored because this asker deliberately does not
+// implement StreamAsker — see NoisyCaptureStderr's neighbours below.
+//
+// A brokered séance resume therefore cannot RUN against Copilot: the daemon's
+// executing boundary gates on CanReplayOneShotLaunchPosture, and the descriptor
+// leaves OneShotReplay nil. What that gate does not cover is the client's
+// `--print-cmd` path, which renders an argv for any harness with an Asker — so a
+// printed Copilot séance command is an ordinary resumed ask, without the
+// predecessor's recorded posture and without ephemerality. That is a property of
+// the print path (OpenCode shares it), not something this asker can fix by
+// inventing flags; it is named here so the reader is not left believing the
+// posture fields are honored.
 type copilotAsker struct{}
 
-var _ Asker = copilotAsker{}
+var (
+	_ Asker          = copilotAsker{}
+	_ AskEnvScrubber = copilotAsker{}
+)
+
+// AskEnvScrub drops COPILOT_ALLOW_ALL from the ask child's environment, and it
+// is what makes the capture posture above a property of the launch rather than
+// of the operator's shell.
+//
+// The variable is measured (contract entry ambient-allow-all-env) as STRICTLY
+// STRONGER than the `--allow-all-tools` flag it documents: exported alone, with
+// no flags at all, it promoted tool execution AND cleared the folder-trust gate
+// that no flag clears. An operator who exported it once would otherwise turn
+// every `tclaude ask` capture into an allow-all turn — able to write the
+// workspace, with nothing in the argv tclaude built to show for it.
+//
+// Unset rather than pinned to a falsy value, for the same reason copilotEnvScrub
+// gives on the spawn path: today's parse is strict equality against "true", so a
+// pinned `false` would work only until that widened, while an absent variable
+// cannot be reinterpreted.
+//
+// Both ask modes, not just capture. The interactive arm has a human at the
+// terminal who can answer Copilot's dialogs — an ambient promoter is precisely
+// what would stop those dialogs from ever being shown to them.
+func (copilotAsker) AskEnvScrub() []string { return []string{copilotAllowAllEnv} }
 
 func (copilotAsker) BuildAskArgv(spec AskSpec) []string {
 	argv := []string{"copilot"}
@@ -124,7 +160,7 @@ func (copilotAsker) PreMintsConvID() bool { return true }
 // NoisyCaptureStderr is true. A headless `-p` run splits its output cleanly:
 // stdout carries the answer and nothing else, while stderr carries a human run
 // summary — a changed-files count, a duration, a token tally, and a
-// `Resume  copilot --resume=<id>` line. That footer is noise in a captured
+// `Resume     copilot --resume=<id>` line. That footer is noise in a captured
 // answer (and the resume line would put a conversation id in front of anyone
 // who redirected stderr into a log), so `tclaude ask` buffers it by default and
 // surfaces it on `--verbose` or when the run fails.

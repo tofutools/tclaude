@@ -521,9 +521,17 @@ func RunShell(t *testing.T, opts RunOptions, commandLine string) RunResult {
 // stdin is /dev/null for the same reason it is in Run: the ask capture form is
 // headless, and a run must never pick up the test binary's own stdin.
 //
-// Events are parsed from stdout on a best-effort basis, exactly as in Run, so a
-// caller that asked for `--output-format json` gets the event stream and one
-// that took the default text rendering simply gets an empty Events slice.
+// Events are parsed only when the argv actually asks for the JSONL surface. The
+// gate is not an optimization: parseEvents FAILS the test on a stdout line that
+// starts with `{` but is not an Event, and a text-mode run's stdout is model
+// output — a scenario whose answer happened to begin with a brace would die on
+// "unparsable event line" instead of on its own assertion.
+//
+// Unlike Run, this helper shapes NO argv of its own: RunOptions fields that
+// exist to build one (Prompt, SessionID, ResumeID, Model, Effort, ExtraArgs,
+// OmitAllowAllTools) are ignored here, because the argv under test is the
+// caller's. The environment and directory fields apply exactly as they do
+// everywhere else.
 func RunArgv(t *testing.T, opts RunOptions, argv []string) RunResult {
 	t.Helper()
 	if len(argv) == 0 {
@@ -566,12 +574,15 @@ func RunArgv(t *testing.T, opts RunOptions, argv []string) RunResult {
 		exitCode = exitErr.ExitCode()
 	}
 
-	return RunResult{
+	result := RunResult{
 		ExitCode: exitCode,
 		Stdout:   stdout.String(),
 		Stderr:   stderr.String(),
-		Events:   parseEvents(t, stdout.String()),
 	}
+	if slices.Contains(argv, "--output-format") && slices.Contains(argv, "json") {
+		result.Events = parseEvents(t, stdout.String())
+	}
+	return result
 }
 
 // buildEnv assembles the child environment. ExtraEnv is applied by the wrapper
