@@ -44,7 +44,7 @@ type AskTimeoutCatalog interface {
 // direct `session new`) uses to turn a requested AskUserQuestion timeout into
 // the value to thread into SpawnSpec.AskUserQuestionTimeout.
 //
-// Unlike ResolveSandboxMode there is no *secure* default to impose — a blank
+// Unlike ResolveHarnessBuiltinMode there is no *secure* default to impose — a blank
 // request resolves to the harness's DefaultMode (Claude Code: inherit), which
 // ValidateMode normalizes back to "" (omit). So an un-chosen spawn adds no
 // `--settings` override and keeps the operator's settings.json value: enabling

@@ -323,7 +323,7 @@ func TestCopilotBuildCommand(t *testing.T) {
 		{
 			name: "contracts copilot does not implement are ignored, not approximated",
 			spec: SpawnSpec{
-				SandboxMode: "read-only", AutoReview: true,
+				HarnessBuiltinMode: "read-only", AutoReview: true,
 				RemoteControl: true, BypassHookTrust: true, PermissionProfile: "tclaude-agent",
 				AskUserQuestionTimeout: "5m", StrongNestedSandbox: true,
 			},

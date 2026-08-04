@@ -141,7 +141,7 @@ export const SANDBOX_IMPL_TCLAUDE_LAYER = 'tclaude-layer';
 export const SANDBOX_IMPL_STACKED = 'stacked';
 export const SANDBOX_IMPL_OFF = 'off';
 
-export function sandboxModeIsOff(harnessName, mode) {
+export function harnessBuiltinModeIsOff(harnessName, mode) {
   const offModes = {
     claude: 'off',
     codex: 'danger-full-access',
@@ -171,7 +171,7 @@ export const SANDBOX_APPARMOR_DOC = {
 // Blank is not harness-builtin: it leaves the group/global profile chain in
 // charge, and the browser does not have the fully resolved launch. Stay
 // neutral rather than guessing a branch whose copy may say the opposite.
-export function sandboxModeHelpForImplementation(help, implementation, harness) {
+export function harnessBuiltinModeHelpForImplementation(help, implementation, harness) {
   const harnessName = text(harness);
   if (harnessName === 'opencode') return text(help);
   if (!text(implementation)) {
@@ -379,7 +379,7 @@ export function sandboxImplCaveatFor(draft, view, resolvedImplementation = '') {
 export function sandboxImplHintFor(draft, view, resolvedImplementation = '') {
   if (!view.showSandboxImpl) return null;
   const explicit = text(draft.sandboxImpl);
-  if (!explicit && sandboxModeIsOff(draft.harness, draft.sandbox)) {
+  if (!explicit && harnessBuiltinModeIsOff(draft.harness, draft.sandbox)) {
     const harnessLabel = view.sandboxImplHarness || 'Harness';
     return {
       warn: true,
@@ -390,7 +390,7 @@ export function sandboxImplHintFor(draft, view, resolvedImplementation = '') {
   }
   if (explicit === SANDBOX_IMPL_DEFAULT
     && view.sandboxImplCanBuiltin
-    && sandboxModeIsOff(draft.harness, draft.sandbox)) {
+    && harnessBuiltinModeIsOff(draft.harness, draft.sandbox)) {
     const harnessLabel = view.sandboxImplHarness || 'Harness';
     return {
       warn: true,
@@ -525,7 +525,7 @@ export function spawnCapabilityView(draft, context, resolvedSandboxImpl = '') {
     showContextFeatures: harness ? !!harness.can_context_features : draft.harness === 'claude',
     showAutoCompactWindow: harness ? !!harness.can_auto_compact_window : draft.harness === 'claude',
     ...sandboxImplView(harness, context),
-    showSandboxMode: !!(sandbox.visible && harness?.can_builtin_os_sandbox !== false
+    showHarnessBuiltinMode: !!(sandbox.visible && harness?.can_builtin_os_sandbox !== false
       && (selectedSandboxImpl === SANDBOX_IMPL_DEFAULT || resolvedBuiltinSandbox)),
     autoCompactWindowMin: Number(harness?.auto_compact_window_min) || 0,
     autoCompactWindowMax: Number(harness?.auto_compact_window_max) || 0,
@@ -534,11 +534,11 @@ export function spawnCapabilityView(draft, context, resolvedSandboxImpl = '') {
   };
 }
 
-// sandboxModeControlLabel names the nested control after the harness that owns
+// harnessBuiltinModeControlLabel names the nested control after the harness that owns
 // it. It is shown when an explicit or resolved-default selection uses the
 // harness-builtin implementation; the primary Sandbox selector above it
 // chooses the implementation (or Off).
-export function sandboxModeControlLabel(harness) {
+export function harnessBuiltinModeControlLabel(harness) {
   const name = text(harness?.name);
   const label = name === 'codex'
     ? 'Codex'
@@ -546,15 +546,15 @@ export function sandboxModeControlLabel(harness) {
   return `${label} sandbox mode`;
 }
 
-// sandboxModeOptionsForImplementation removes the native off spelling from
+// harnessBuiltinModeOptionsForImplementation removes the native off spelling from
 // new nested-mode choices. A legacy built-in + native-off pair keeps its
 // current value visible until the operator changes it; hiding a still-submitted
 // controlled-select value would misrepresent an existing profile.
-export function sandboxModeOptionsForImplementation(setting, harnessName, currentMode = '') {
+export function harnessBuiltinModeOptionsForImplementation(setting, harnessName, currentMode = '') {
   return {
     ...setting,
     modes: (setting?.modes || []).filter((mode) => (
-      !sandboxModeIsOff(harnessName, mode) || text(mode) === text(currentMode)
+      !harnessBuiltinModeIsOff(harnessName, mode) || text(mode) === text(currentMode)
     )),
   };
 }

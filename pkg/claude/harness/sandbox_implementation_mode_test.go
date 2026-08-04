@@ -41,7 +41,7 @@ func TestResolveSandboxImplementationModeForcesTclaudeLayerModeForEveryHarness(t
 
 func mustTclaudeLayerMode(t *testing.T, h *Harness) string {
 	t.Helper()
-	mode, err := TclaudeLayerSandboxMode(h)
+	mode, err := TclaudeLayerHarnessBuiltinMode(h)
 	require.NoError(t, err)
 	return mode
 }
@@ -103,7 +103,7 @@ func TestResolveSandboxImplementationModeLeavesNonTclaudeLayerAlone(t *testing.T
 // The native resolver is what the daemon's mode-keyed gates judge. It must NOT
 // pick up the single-wall forcing, or a tclaude-layer launch would read as an
 // unconfined agent to every capability, cwd-conflict and Git-write-path gate.
-func TestResolveHarnessNativeSandboxModeNeverForcesTheSingleWallMode(t *testing.T) {
+func TestResolveNativeHarnessBuiltinModeNeverForcesTheSingleWallMode(t *testing.T) {
 	for _, tc := range []struct{ harness, mode string }{
 		{DefaultName, ClaudeSandboxInherit},
 		{DefaultName, ClaudeSandboxOn},
@@ -112,7 +112,7 @@ func TestResolveHarnessNativeSandboxModeNeverForcesTheSingleWallMode(t *testing.
 	} {
 		h, err := Resolve(tc.harness)
 		require.NoError(t, err)
-		got, err := ResolveHarnessNativeSandboxMode(
+		got, err := ResolveNativeHarnessBuiltinMode(
 			h, tc.mode, sandboxpolicy.ImplementationTclaudeLayer)
 		require.NoErrorf(t, err, "%s/%s", tc.harness, tc.mode)
 		require.Equalf(t, tc.mode, got, "%s/%s", tc.harness, tc.mode)
@@ -122,7 +122,7 @@ func TestResolveHarnessNativeSandboxModeNeverForcesTheSingleWallMode(t *testing.
 	// names the topology, and the daemon gates have always seen that spelling.
 	h, err := Resolve(OpenCodeName)
 	require.NoError(t, err)
-	got, err := ResolveHarnessNativeSandboxMode(
+	got, err := ResolveNativeHarnessBuiltinMode(
 		h, OpenCodeSandboxAccessControl, sandboxpolicy.ImplementationTclaudeLayer)
 	require.NoError(t, err)
 	require.Equal(t, OpenCodeSandboxTclaudeLayer, got)
@@ -143,7 +143,7 @@ func TestSandboxImplementationOffResolvesTheHarnessOffMode(t *testing.T) {
 			h, "", sandboxpolicy.ImplementationOff)
 		require.NoErrorf(t, err, "harness %s", tc.harness)
 		require.Equalf(t, tc.want, got, "harness %s", tc.harness)
-		native, err := ResolveHarnessNativeSandboxMode(
+		native, err := ResolveNativeHarnessBuiltinMode(
 			h, "", sandboxpolicy.ImplementationOff)
 		require.NoErrorf(t, err, "harness %s", tc.harness)
 		require.Equalf(t, tc.want, native, "harness %s", tc.harness)

@@ -1241,24 +1241,24 @@ type dashboardHarness struct {
 	// EffortLevels is the reasoning-effort scale for the Effort menu, in
 	// ascending order. Both harnesses share tclaude's levels today.
 	EffortLevels []string `json:"effort_levels"`
-	// SandboxModes lists the launch-time OS-sandbox modes this harness
+	// HarnessBuiltinModes lists the launch-time harness-builtin sandbox modes this harness
 	// accepts for the spawn dialog's Sandbox selector (Codex: tclaude-agent /
 	// workspace-write / read-only / danger-full-access; Claude Code:
 	// inherit / on / off). Empty only for a harness with no sandbox catalog.
-	SandboxModes []string `json:"sandbox_modes"`
+	HarnessBuiltinModes []string `json:"sandbox_modes"`
 	// DefaultSandbox is the recommended default mode the spawn dialog
 	// pre-selects (Codex: the managed tclaude-agent profile; Claude Code:
-	// inherit). "" when SandboxModes is empty.
+	// inherit). "" when HarnessBuiltinModes is empty.
 	DefaultSandbox string `json:"default_sandbox"`
-	// SandboxModeHelp maps each sandbox mode value to a one-line description
+	// HarnessBuiltinModeHelp maps each sandbox mode value to a one-line description
 	// the dialog shows as a live hint for the selected option (notably its
 	// agentd-socket reachability). {} (not null) when the harness has no
 	// launch sandbox, so the JS lookup is always safe.
-	SandboxModeHelp map[string]string `json:"sandbox_mode_help"`
+	HarnessBuiltinModeHelp map[string]string `json:"sandbox_mode_help"`
 	// ApprovalModes lists the launch-time approval/permission modes this
 	// harness surfaces as a dropdown (Claude Code: inherit + its
 	// --permission-mode values; Codex: its --ask-for-approval policies).
-	// The ApprovalCatalog parallels SandboxModes.
+	// The ApprovalCatalog parallels HarnessBuiltinModes.
 	ApprovalModes []string `json:"approval_modes"`
 	// DefaultApproval is the recommended approval mode the dialog pre-selects
 	// (Claude Code: auto). "" when ApprovalModes is empty.
@@ -1285,7 +1285,7 @@ type dashboardHarness struct {
 	// AskTimeoutModes lists the Claude Code AskUserQuestion idle-timeout values
 	// this harness surfaces as a dropdown (inherit / never / 60s / 5m / 10m).
 	// Empty for a harness with no AskUserQuestion dialog (Codex), so the dialog
-	// hides the selector. The AskTimeoutCatalog parallel to SandboxModes.
+	// hides the selector. The AskTimeoutCatalog parallel to HarnessBuiltinModes.
 	AskTimeoutModes []string `json:"ask_timeout_modes"`
 	// DefaultAskTimeout is the recommended value the dialog pre-selects (Claude
 	// Code: inherit). "" when AskTimeoutModes is empty.
@@ -1300,7 +1300,7 @@ type dashboardHarness struct {
 	CanRename  bool `json:"can_rename"`
 	CanCompact bool `json:"can_compact"`
 	// CanSandbox reports whether the harness takes a launch sandbox flag —
-	// the same condition as a non-empty SandboxModes, surfaced explicitly
+	// the same condition as a non-empty HarnessBuiltinModes, surfaced explicitly
 	// so the dialog has a single boolean to gate the sandbox row on.
 	CanSandbox bool `json:"can_sandbox"`
 	// CanBuiltinOSSandbox is the narrower descriptor capability behind the
@@ -1451,15 +1451,15 @@ func buildHarnessCatalog() []dashboardHarness {
 		if dh.Models == nil {
 			dh.Models = []string{} // JSON [] not null, so JS .map() is safe
 		}
-		dh.SandboxModeHelp = map[string]string{}
+		dh.HarnessBuiltinModeHelp = map[string]string{}
 		if h.SupportsSandbox() {
-			dh.SandboxModes = h.Sandbox.Modes()
+			dh.HarnessBuiltinModes = h.Sandbox.Modes()
 			dh.DefaultSandbox = h.Sandbox.DefaultMode()
-			for _, m := range dh.SandboxModes {
-				dh.SandboxModeHelp[m] = h.Sandbox.ModeHelp(m)
+			for _, m := range dh.HarnessBuiltinModes {
+				dh.HarnessBuiltinModeHelp[m] = h.Sandbox.ModeHelp(m)
 			}
 		} else {
-			dh.SandboxModes = []string{}
+			dh.HarnessBuiltinModes = []string{}
 		}
 		// Approval modes mirror the sandbox block. The dialog gates its row on a
 		// non-empty ApprovalModes as well as CanApproval.
@@ -1715,16 +1715,16 @@ type dashboardAgent struct {
 	// tagsView carries the per-agent tag set (chips in the Description
 	// column) — see tags.go.
 	tagsView
-	Online      bool                 `json:"online"`
-	State       agentState           `json:"state"`
-	Groups      []string             `json:"groups"`
-	OwnedGroups []string             `json:"owned_groups"`          // subset of Groups the agent owns; UI tags these distinctly
+	Online      bool       `json:"online"`
+	State       agentState `json:"state"`
+	Groups      []string   `json:"groups"`
+	OwnedGroups []string   `json:"owned_groups"` // subset of Groups the agent owns; UI tags these distinctly
 	// Effective is what the permission GATE would allow for this agent —
 	// computed by the gate's own resolver, so it covers sudo elevations
 	// and the structural owner bypass as well as defaults, group grants
 	// and per-conv overrides.
-	Effective []string `json:"effective"`
-	ActiveSudo  []dashboardSudoEntry `json:"active_sudo,omitempty"` // current sudo grants (slug + id + remaining); empty when none
+	Effective  []string             `json:"effective"`
+	ActiveSudo []dashboardSudoEntry `json:"active_sudo,omitempty"` // current sudo grants (slug + id + remaining); empty when none
 	// Notify is the per-agent override ("on"/"off", "" = inherit);
 	// NotifyEffective folds the agent + group levels together (the
 	// global switch is separate — snapshot.notifications_enabled).
@@ -1901,11 +1901,11 @@ type agentState struct {
 	Status        string `json:"status,omitempty"`
 	StatusDetail  string `json:"status_detail,omitempty"`
 	SubagentCount int    `json:"subagent_count,omitempty"`
-	// TemporarySandboxMode is the reversible operator override currently
+	// TemporaryHarnessBuiltinMode is the reversible operator override currently
 	// applied to this stable agent. It remains visible while the session is
 	// between stop and resume so the dashboard never mistakes an unlocked
 	// agent for one using its normal posture.
-	TemporarySandboxMode string `json:"temporary_sandbox_mode,omitempty"`
+	TemporaryHarnessBuiltinMode string `json:"temporary_sandbox_mode,omitempty"`
 	// BgShellCount is how many background shell commands (Claude Code
 	// `Bash` with run_in_background) the agent still has running — the
 	// dashboard's "⚙+N" badge. Like SubagentCount it is only ever
@@ -2000,12 +2000,12 @@ type agentState struct {
 	// the rename control on the matching harness's can_rename (JOH-162).
 	// Surfaced regardless of liveness — a dead Codex agent is still Codex.
 	Harness string `json:"harness,omitempty"`
-	// SandboxMode is the launch-time OS-sandbox mode the agent was spawned
+	// HarnessBuiltinMode is the launch-time harness-builtin sandbox mode the agent was spawned
 	// under (Codex: read-only / workspace-write / danger-full-access; Claude
 	// Code: on / off — its `inherit` default normalizes to "" and records
 	// nothing). "" renders no sandbox badge. Surfaced regardless of liveness.
-	SandboxMode string `json:"sandbox_mode,omitempty"`
-	// SandboxModeSource names the resolution tier that CHOSE SandboxMode — an
+	HarnessBuiltinMode string `json:"sandbox_mode,omitempty"`
+	// HarnessBuiltinModeSource names the resolution tier that CHOSE HarnessBuiltinMode — an
 	// explicit flag, a named spawn profile, the group default, or the global
 	// default. "" is "nothing recorded" (a pre-v158 row, or a launch with no
 	// attribution to make), never "the operator chose it".
@@ -2015,7 +2015,7 @@ type agentState struct {
 	// what a harness whose MODE is its posture (Codex) has instead. The compact
 	// dashboard badge no longer renders this provenance, but it remains useful
 	// launch metadata for API consumers and diagnostics.
-	SandboxModeSource string `json:"sandbox_mode_source,omitempty"`
+	HarnessBuiltinModeSource string `json:"sandbox_mode_source,omitempty"`
 	// SandboxImplementation names who owned OS-level confinement for this
 	// launch. The dashboard needs the resolved implementation, not a source
 	// string heuristic: tclaude-layer renders profile filesystem rules into its
@@ -2026,13 +2026,13 @@ type agentState struct {
 	// the OS sandbox ACTUALLY confined this agent ("on" / "off" /
 	// "unconfigured") and what decided it — the settings file that won the
 	// precedence chain, or the launch itself (TCL-729). They answer what
-	// SandboxMode cannot: Claude Code's default mode is `inherit`, which means
+	// HarnessBuiltinMode cannot: Claude Code's default mode is `inherit`, which means
 	// "whatever the operator's settings.json says", so a badge driven off the
 	// mode alone stayed blank for a confined agent and an unconfined one alike.
 	// "" is "no verdict recorded" — a pre-column row, or a harness whose mode
 	// already states its posture (Codex) — and the dashboard falls back to
 	// rendering the mode exactly as before. Surfaced regardless of liveness,
-	// like SandboxMode: what a dead agent ran under is still informative.
+	// like HarnessBuiltinMode: what a dead agent ran under is still informative.
 	OSSandboxState  string `json:"os_sandbox_state,omitempty"`
 	OSSandboxSource string `json:"os_sandbox_source,omitempty"`
 	// OSSandboxUnverified marks a verdict that a settings file OUTRANKING the
@@ -2183,13 +2183,13 @@ func stateForConvInSessionsBatched(
 		// Harness + sandbox are launch properties of the row, surfaced
 		// regardless of liveness (a dead Codex agent is still Codex). The
 		// exited override below only touches Status/StatusDetail.
-		Harness:               pick.Harness,
-		SandboxMode:           pick.SandboxMode,
-		SandboxImplementation: pick.SandboxImplementation,
-		SandboxModeSource:     pick.SandboxModeSource,
-		OSSandboxState:        pick.OSSandboxState,
-		OSSandboxSource:       pick.OSSandboxSource,
-		OSSandboxUnverified:   pick.OSSandboxUnverified,
+		Harness:                  pick.Harness,
+		HarnessBuiltinMode:       pick.HarnessBuiltinMode,
+		SandboxImplementation:    pick.SandboxImplementation,
+		HarnessBuiltinModeSource: pick.HarnessBuiltinModeSource,
+		OSSandboxState:           pick.OSSandboxState,
+		OSSandboxSource:          pick.OSSandboxSource,
+		OSSandboxUnverified:      pick.OSSandboxUnverified,
 		// The sandbox profiles ride the same session row the verdict does — the
 		// row cache already bulk-loads it, so naming them costs no extra query
 		// on the poll.

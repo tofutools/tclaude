@@ -184,7 +184,7 @@ func recordLaunchPosture(label string, args clcommon.SpawnArgs) error {
 // directly. Host capability is likewise not re-probed here: SandboxLayerSim
 // already governs whether a launch reaches a spawner at all.
 func resolveLaunchOSSandbox(
-	harnessName, sandboxMode, chosenBy, cwd, implementation string,
+	harnessName, harnessBuiltinMode, chosenBy, cwd, implementation string,
 ) harness.LaunchOSSandbox {
 	h, err := harness.Resolve(harnessName)
 	if err != nil {
@@ -207,10 +207,10 @@ func resolveLaunchOSSandbox(
 			sandboxpolicy.NetworkEngineUnset,
 		)
 	}
-	return harness.ResolveLaunchOSSandbox(h, sandboxMode, chosenBy, cwd)
+	return harness.ResolveLaunchOSSandbox(h, harnessBuiltinMode, chosenBy, cwd)
 }
 
-// launchSandboxMode is what a simulated spawner PERSISTS as its session row's
+// launchHarnessBuiltinMode is what a simulated spawner PERSISTS as its session row's
 // sandbox mode, and it exists because `args.Sandbox` is the REQUESTED mode
 // while production records the mode the selected implementation launches
 // under. `tclaude session new` — the process these spawners stand in for —
@@ -222,18 +222,18 @@ func resolveLaunchOSSandbox(
 // unchanged: the launch boundaries refuse those combinations long before a row
 // is written, so there is no production value to mirror, and failing here would
 // turn a validation test into a simulator panic.
-func launchSandboxMode(harnessName, sandboxMode, implementation string) string {
+func launchHarnessBuiltinMode(harnessName, harnessBuiltinMode, implementation string) string {
 	h, err := harness.Resolve(harnessName)
 	if err != nil {
-		return sandboxMode
+		return harnessBuiltinMode
 	}
 	normalized, err := sandboxpolicy.NormalizeImplementation(implementation)
 	if err != nil {
-		return sandboxMode
+		return harnessBuiltinMode
 	}
-	resolved, err := harness.ResolveSandboxImplementationMode(h, sandboxMode, normalized)
+	resolved, err := harness.ResolveSandboxImplementationMode(h, harnessBuiltinMode, normalized)
 	if err != nil {
-		return sandboxMode
+		return harnessBuiltinMode
 	}
 	return resolved
 }
@@ -330,25 +330,25 @@ func (s *simSpawner) SpawnNew(args clcommon.SpawnArgs) error {
 	// in time. The pane is still registered so it behaves like a real
 	// slow-to-record launch, not a dead one.
 	if !s.w.SkipSpawnRow {
-		sandboxMode := launchSandboxMode(args.Harness, args.Sandbox, args.SandboxImplementation)
+		harnessBuiltinMode := launchHarnessBuiltinMode(args.Harness, args.Sandbox, args.SandboxImplementation)
 		launchOSSandbox := resolveLaunchOSSandbox(
-			args.Harness, sandboxMode, args.SandboxChosenBy, cc.Cwd, args.SandboxImplementation)
+			args.Harness, harnessBuiltinMode, args.SandboxChosenBy, cc.Cwd, args.SandboxImplementation)
 		if err := saveSessionWithResumeProvenance(&db.SessionRow{
-			ID:                    label,
-			TmuxSession:           label,
-			ConvID:                cc.ConvID,
-			Cwd:                   cc.Cwd,
-			Status:                "running",
-			Harness:               args.Harness,
-			SandboxMode:           sandboxMode,
-			SandboxImplementation: args.SandboxImplementation,
-			SandboxModeSource:     args.SandboxChosenBy,
-			OSSandboxState:        launchOSSandbox.State,
-			OSSandboxSource:       launchOSSandbox.Source,
-			OSSandboxUnverified:   launchOSSandbox.Unverified,
-			EffectiveSandbox:      args.EffectiveSandbox,
-			ApprovalPolicy:        args.Approval,
-			ApprovalAutoReview:    args.AutoReview,
+			ID:                       label,
+			TmuxSession:              label,
+			ConvID:                   cc.ConvID,
+			Cwd:                      cc.Cwd,
+			Status:                   "running",
+			Harness:                  args.Harness,
+			HarnessBuiltinMode:       harnessBuiltinMode,
+			SandboxImplementation:    args.SandboxImplementation,
+			HarnessBuiltinModeSource: args.SandboxChosenBy,
+			OSSandboxState:           launchOSSandbox.State,
+			OSSandboxSource:          launchOSSandbox.Source,
+			OSSandboxUnverified:      launchOSSandbox.Unverified,
+			EffectiveSandbox:         args.EffectiveSandbox,
+			ApprovalPolicy:           args.Approval,
+			ApprovalAutoReview:       args.AutoReview,
 			// Mirror production's session/new.go, which records the resolved
 			// ask-timeout on the row so a relaunch (resume/clone/reincarnate) can
 			// preserve it (schema v97). "" for a Codex/omitted spawn.
@@ -445,25 +445,25 @@ func (s *simSpawner) SpawnResume(args clcommon.SpawnArgs) error {
 	label := generateResumeLabel()
 	// Resume mints a fresh session row / TCLAUDE_SESSION_ID; track it.
 	cc.SessionID = label
-	sandboxMode := launchSandboxMode(args.Harness, args.Sandbox, args.SandboxImplementation)
+	harnessBuiltinMode := launchHarnessBuiltinMode(args.Harness, args.Sandbox, args.SandboxImplementation)
 	launchOSSandbox := resolveLaunchOSSandbox(
-		args.Harness, sandboxMode, args.SandboxChosenBy, cc.Cwd, args.SandboxImplementation)
+		args.Harness, harnessBuiltinMode, args.SandboxChosenBy, cc.Cwd, args.SandboxImplementation)
 	if err := saveSessionWithResumeProvenance(&db.SessionRow{
-		ID:                    label,
-		TmuxSession:           label,
-		ConvID:                convID,
-		Cwd:                   cc.Cwd,
-		Status:                "running",
-		Harness:               args.Harness,
-		SandboxMode:           sandboxMode,
-		SandboxImplementation: args.SandboxImplementation,
-		SandboxModeSource:     args.SandboxChosenBy,
-		OSSandboxState:        launchOSSandbox.State,
-		OSSandboxSource:       launchOSSandbox.Source,
-		OSSandboxUnverified:   launchOSSandbox.Unverified,
-		EffectiveSandbox:      args.EffectiveSandbox,
-		ApprovalPolicy:        args.Approval,
-		ApprovalAutoReview:    args.AutoReview,
+		ID:                       label,
+		TmuxSession:              label,
+		ConvID:                   convID,
+		Cwd:                      cc.Cwd,
+		Status:                   "running",
+		Harness:                  args.Harness,
+		HarnessBuiltinMode:       harnessBuiltinMode,
+		SandboxImplementation:    args.SandboxImplementation,
+		HarnessBuiltinModeSource: args.SandboxChosenBy,
+		OSSandboxState:           launchOSSandbox.State,
+		OSSandboxSource:          launchOSSandbox.Source,
+		OSSandboxUnverified:      launchOSSandbox.Unverified,
+		EffectiveSandbox:         args.EffectiveSandbox,
+		ApprovalPolicy:           args.Approval,
+		ApprovalAutoReview:       args.AutoReview,
 		// The resume mints a fresh row; carry the preserved ask-timeout onto it so
 		// a subsequent relaunch keeps it too (production session/new.go does this).
 		AskUserQuestionTimeout: args.AskUserQuestionTimeout,
@@ -593,7 +593,7 @@ func (s *simSpawner) spawnNewCodex(args clcommon.SpawnArgs) error {
 		// `session new` persists the mode the implementation launches under, and a
 		// Codex row that carried no mode at all left the sandbox-lineage guard
 		// reading "unknown" for a launch that always has one (TCL-989).
-		SandboxMode:           launchSandboxMode(codexHarnessName, args.Sandbox, args.SandboxImplementation),
+		HarnessBuiltinMode:    launchHarnessBuiltinMode(codexHarnessName, args.Sandbox, args.SandboxImplementation),
 		SandboxImplementation: args.SandboxImplementation,
 	}); err != nil {
 		return err
@@ -644,7 +644,7 @@ func (s *simSpawner) spawnResumeCodex(args clcommon.SpawnArgs) error {
 		Status:                 "running",
 		AskUserQuestionTimeout: args.AskUserQuestionTimeout,
 		Harness:                codexHarnessName,
-		SandboxMode:            launchSandboxMode(codexHarnessName, args.Sandbox, args.SandboxImplementation),
+		HarnessBuiltinMode:     launchHarnessBuiltinMode(codexHarnessName, args.Sandbox, args.SandboxImplementation),
 		SandboxImplementation:  args.SandboxImplementation,
 		EffectiveSandbox:       args.EffectiveSandbox,
 		ApprovalPolicy:         args.Approval,
@@ -694,7 +694,7 @@ func (f *Flow) ensureAgentSpawnLaunchFixture() {
 	if err := saveSessionWithResumeProvenance(&db.SessionRow{
 		ID: "spawn-fixture-" + f.currAgentConv, ConvID: f.currAgentConv,
 		Cwd: f.World.HomeDir, Status: "running", Harness: harness.DefaultName,
-		SandboxMode: harness.ClaudeSandboxOff, ApprovalPolicy: "bypassPermissions",
+		HarnessBuiltinMode: harness.ClaudeSandboxOff, ApprovalPolicy: "bypassPermissions",
 	}); err != nil {
 		f.T.Fatalf("agent spawn launch fixture: %v", err)
 	}

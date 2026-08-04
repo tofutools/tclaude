@@ -487,7 +487,7 @@ func haveSpawnCapableApprovalParent(t *testing.T, f *testharness.Flow, group, co
 	require.NoError(t, db.SaveSession(&db.SessionRow{
 		ID: "sess-" + convID, TmuxSession: "tmux-" + convID,
 		ConvID: convID, Cwd: f.World.HomeDir, Status: "running",
-		Harness: h, SandboxMode: sandbox,
+		Harness: h, HarnessBuiltinMode: sandbox,
 		ApprovalPolicy: approval, ApprovalAutoReview: autoReview,
 	}))
 }

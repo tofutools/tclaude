@@ -854,7 +854,7 @@ func validateTemplateAgentLaunch(agentName string, a templateAgentJSON, inline *
 		return templateAgentLaunch{}, &spawnFailure{http.StatusBadRequest, "invalid_effort",
 			fmt.Sprintf("agent %q: %s", agentName, err.Error())}
 	}
-	sandbox, err := harness.ValidateSandboxMode(h, a.Sandbox)
+	sandbox, err := harness.ValidateHarnessBuiltinMode(h, a.Sandbox)
 	if err != nil {
 		return templateAgentLaunch{}, &spawnFailure{http.StatusBadRequest, "invalid_sandbox",
 			fmt.Sprintf("agent %q: %s", agentName, err.Error())}
@@ -912,7 +912,7 @@ func validateInlineProfileForHarness(agentName string, h *harness.Harness, p *db
 	if _, err := h.Models.ValidateEffort(p.Effort); err != nil {
 		return wrap(http.StatusBadRequest, "invalid_effort", err.Error())
 	}
-	if _, err := harness.ValidateSandboxMode(h, p.Sandbox); err != nil {
+	if _, err := harness.ValidateHarnessBuiltinMode(h, p.Sandbox); err != nil {
 		return wrap(http.StatusBadRequest, "invalid_sandbox", err.Error())
 	}
 	if _, err := validateSandboxImplementationForHarness(h, p.SandboxImplementation); err != nil {
@@ -1097,7 +1097,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 		notes = append(notes, note)
 	}
 	sandbox, sandboxSource, note, fail := resolveStringLaunchField("sandbox", a.Sandbox, h.Name, tiers,
-		func(p *db.SpawnProfile) string { return p.Sandbox }, func(raw string) (string, error) { return harness.ValidateSandboxMode(h, raw) })
+		func(p *db.SpawnProfile) string { return p.Sandbox }, func(raw string) (string, error) { return harness.ValidateHarnessBuiltinMode(h, raw) })
 	if fail != nil {
 		return templateAgentLaunch{}, fail
 	}
@@ -1152,7 +1152,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 		notes = append(notes, note)
 	}
 
-	if sandbox, err = harness.ResolveSandboxMode(h, sandbox); err != nil {
+	if sandbox, err = harness.ResolveHarnessBuiltinMode(h, sandbox); err != nil {
 		return templateAgentLaunch{}, &spawnFailure{http.StatusBadRequest, "invalid_sandbox", err.Error()}
 	}
 	if approval, err = harness.ResolveApprovalPolicy(h, approval); err != nil {
@@ -1343,7 +1343,7 @@ func traceMemberLaunch(convID string) templateAgentLaunch {
 	if e, err := h.Models.ValidateEffort(prof.Effort); err == nil {
 		out.Effort = e
 	}
-	if s, err := harness.ValidateSandboxMode(h, prof.SandboxMode); err == nil {
+	if s, err := harness.ValidateHarnessBuiltinMode(h, prof.HarnessBuiltinMode); err == nil {
 		out.Sandbox = s
 	}
 	if a, err := harness.ValidateApprovalPolicy(h, prof.ApprovalPolicy); err == nil && a != "" {
@@ -2636,18 +2636,18 @@ func templateRosterExplicitlyDisablesSandboxProfiles(agents []db.GroupTemplateAg
 	}
 	for _, a := range agents {
 		harnessName := strings.TrimSpace(a.Harness)
-		sandboxMode := strings.TrimSpace(a.Sandbox)
+		harnessBuiltinMode := strings.TrimSpace(a.Sandbox)
 		sandboxImplementation := ""
 		if a.ProfileInline != nil {
 			if harnessName == "" {
 				harnessName = strings.TrimSpace(a.ProfileInline.Harness)
 			}
-			if sandboxMode == "" {
-				sandboxMode = strings.TrimSpace(a.ProfileInline.Sandbox)
+			if harnessBuiltinMode == "" {
+				harnessBuiltinMode = strings.TrimSpace(a.ProfileInline.Sandbox)
 			}
 			sandboxImplementation = strings.TrimSpace(a.ProfileInline.SandboxImplementation)
 		}
-		if !sandboxProfilesDisabled(harnessName, sandboxMode, sandboxImplementation) {
+		if !sandboxProfilesDisabled(harnessName, harnessBuiltinMode, sandboxImplementation) {
 			return false
 		}
 	}

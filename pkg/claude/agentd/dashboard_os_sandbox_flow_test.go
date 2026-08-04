@@ -51,15 +51,15 @@ func TestDashboardSnapshot_InheritedOSSandboxVerdictSurfaces(t *testing.T) {
 	// settings.json does: no explicit mode, but a resolved "on" naming the file
 	// that decided it. Same row id → UPSERT, tmux unchanged so it stays alive.
 	require.NoError(t, db.SaveSession(&db.SessionRow{
-		ID:              label,
-		TmuxSession:     "tmux-sbx1",
-		ConvID:          convID,
-		Cwd:             f.TestCwd("sbx1"),
-		Status:          "running",
-		Harness:         "claude",
-		SandboxMode:     "",
-		OSSandboxState:  "on",
-		OSSandboxSource: "~/.claude/settings.json",
+		ID:                 label,
+		TmuxSession:        "tmux-sbx1",
+		ConvID:             convID,
+		Cwd:                f.TestCwd("sbx1"),
+		Status:             "running",
+		Harness:            "claude",
+		HarnessBuiltinMode: "",
+		OSSandboxState:     "on",
+		OSSandboxSource:    "~/.claude/settings.json",
 	}), "stamp the inherited sandbox verdict")
 	f.HaveMember("confined", convID)
 
@@ -67,7 +67,7 @@ func TestDashboardSnapshot_InheritedOSSandboxVerdictSurfaces(t *testing.T) {
 
 	agent := findDashAgent(snap, convID)
 	require.NotNil(t, agent, "agent missing from Agents[]")
-	assert.Empty(t, agent.State.SandboxMode,
+	assert.Empty(t, agent.State.HarnessBuiltinMode,
 		"the launch requested no explicit mode — which is exactly why the mode cannot answer the question")
 	assert.Equal(t, "on", agent.State.OSSandboxState, "Agents[] carries the resolved verdict")
 	assert.Equal(t, "~/.claude/settings.json", agent.State.OSSandboxSource,
@@ -128,13 +128,13 @@ func TestDashboardSnapshot_CodexRecordsNoOSSandboxVerdict(t *testing.T) {
 	f.HaveGroup("codexish")
 	f.HaveAliveCodexSession(convID, label, "tmux-sbx3", f.TestCwd("sbx3"))
 	require.NoError(t, db.SaveSession(&db.SessionRow{
-		ID:          label,
-		TmuxSession: "tmux-sbx3",
-		ConvID:      convID,
-		Cwd:         f.TestCwd("sbx3"),
-		Status:      "running",
-		Harness:     "codex",
-		SandboxMode: "workspace-write",
+		ID:                 label,
+		TmuxSession:        "tmux-sbx3",
+		ConvID:             convID,
+		Cwd:                f.TestCwd("sbx3"),
+		Status:             "running",
+		Harness:            "codex",
+		HarnessBuiltinMode: "workspace-write",
 	}), "stamp the codex launch sandbox")
 	f.HaveMember("codexish", convID)
 
@@ -142,7 +142,7 @@ func TestDashboardSnapshot_CodexRecordsNoOSSandboxVerdict(t *testing.T) {
 
 	agent := findDashAgent(snap, convID)
 	require.NotNil(t, agent, "agent missing from Agents[]")
-	assert.Equal(t, "workspace-write", agent.State.SandboxMode, "the mode still drives the codex badge")
+	assert.Equal(t, "workspace-write", agent.State.HarnessBuiltinMode, "the mode still drives the codex badge")
 	assert.Empty(t, agent.State.OSSandboxState, "codex records no separate verdict")
 	assert.Empty(t, agent.State.OSSandboxSource)
 }
@@ -169,7 +169,7 @@ func TestDashboardSnapshot_UnverifiedOSSandboxVerdictSurfaces(t *testing.T) {
 		Cwd:                 f.TestCwd("sbx4"),
 		Status:              "running",
 		Harness:             "claude",
-		SandboxMode:         "on",
+		HarnessBuiltinMode:  "on",
 		OSSandboxState:      "on",
 		OSSandboxSource:     "this launch (sandbox `on`)",
 		OSSandboxUnverified: true,
@@ -320,7 +320,7 @@ func TestDashboardSnapshot_NoSandboxProfilesDistinguishesEmptyFromUnrecorded(t *
 // used to discard it. This pins the recorded end of the path: the attribution
 // reaches both snapshot surfaces, and an explicit choice is NOT dressed up as a
 // profile's doing.
-func TestDashboardSnapshot_SandboxModeAttributionSurfaces(t *testing.T) {
+func TestDashboardSnapshot_HarnessBuiltinModeAttributionSurfaces(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 
 	f := newFlow(t)
@@ -331,7 +331,7 @@ func TestDashboardSnapshot_SandboxModeAttributionSurfaces(t *testing.T) {
 	require.NoError(t, db.SaveSession(&db.SessionRow{
 		ID: "spwn-sbx9", TmuxSession: "tmux-sbx9", ConvID: profileConv, Cwd: f.TestCwd("sbx9"),
 		Status: "running", Harness: "claude",
-		SandboxMode: "on", SandboxModeSource: `global default profile "agents"`,
+		HarnessBuiltinMode: "on", HarnessBuiltinModeSource: `global default profile "agents"`,
 		OSSandboxState: "on", OSSandboxSource: "global default profile \"agents\" (sandbox `on`)",
 	}), "stamp a launch whose sandbox a default profile chose")
 	f.HaveMember("attributed", profileConv)
@@ -341,7 +341,7 @@ func TestDashboardSnapshot_SandboxModeAttributionSurfaces(t *testing.T) {
 	require.NoError(t, db.SaveSession(&db.SessionRow{
 		ID: "spwn-sbxa", TmuxSession: "tmux-sbxa", ConvID: explicitConv, Cwd: f.TestCwd("sbxa"),
 		Status: "running", Harness: "claude",
-		SandboxMode: "on", SandboxModeSource: "explicit",
+		HarnessBuiltinMode: "on", HarnessBuiltinModeSource: "explicit",
 		OSSandboxState: "on", OSSandboxSource: "this launch (sandbox `on`)",
 	}), "stamp a launch whose sandbox the caller chose")
 	f.HaveMember("attributed", explicitConv)
@@ -365,7 +365,7 @@ func TestDashboardSnapshot_SandboxModeAttributionSurfaces(t *testing.T) {
 // it. Without this, an agent that has restarted once reports an anonymous "this
 // launch" for containment a profile imposed — the same misattribution, arrived
 // at by a slower route.
-func TestSandboxModeAttributionSurvivesTheDurableProjection(t *testing.T) {
+func TestHarnessBuiltinModeAttributionSurvivesTheDurableProjection(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 
 	f := newFlow(t)
@@ -374,13 +374,13 @@ func TestSandboxModeAttributionSurvivesTheDurableProjection(t *testing.T) {
 	require.NoError(t, db.SaveSession(&db.SessionRow{
 		ID: "spwn-sbxb", TmuxSession: "tmux-sbxb", ConvID: convID, Cwd: f.TestCwd("sbxb"),
 		Status: "running", Harness: "claude",
-		SandboxMode: "on", SandboxModeSource: `group default profile "squad"`,
+		HarnessBuiltinMode: "on", HarnessBuiltinModeSource: `group default profile "squad"`,
 	}), "stamp an attributed launch")
 
 	launch, err := db.SessionLaunchProfileForConv(convID)
 	require.NoError(t, err)
-	assert.Equal(t, "on", launch.SandboxMode, "the mode is replayed")
-	assert.Equal(t, `group default profile "squad"`, launch.SandboxModeSource,
+	assert.Equal(t, "on", launch.HarnessBuiltinMode, "the mode is replayed")
+	assert.Equal(t, `group default profile "squad"`, launch.HarnessBuiltinModeSource,
 		"and so is who chose it — a resume that dropped this would go anonymous")
 }
 
@@ -392,7 +392,7 @@ func TestSandboxModeAttributionSurvivesTheDurableProjection(t *testing.T) {
 // intent, permanently erasing who chose the containment. The badge would be
 // back to crediting "this launch" — the exact misattribution this surface
 // exists to remove, now arrived at by way of a restart.
-func TestSandboxModeAttributionSurvivesADaemonRelaunch(t *testing.T) {
+func TestHarnessBuiltinModeAttributionSurvivesADaemonRelaunch(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 
 	f := newFlow(t)
@@ -402,7 +402,7 @@ func TestSandboxModeAttributionSurvivesADaemonRelaunch(t *testing.T) {
 	require.NoError(t, db.SaveSession(&db.SessionRow{
 		ID: "spwn-sbxd", TmuxSession: "tmux-sbxd", ConvID: convID, Cwd: f.TestCwd("sbxd"),
 		Status: "running", Harness: "claude",
-		SandboxMode: "on", SandboxModeSource: `group default profile "squad"`,
+		HarnessBuiltinMode: "on", HarnessBuiltinModeSource: `group default profile "squad"`,
 	}), "stamp an attributed launch")
 	f.HaveMember("relaunch", convID)
 
@@ -410,8 +410,8 @@ func TestSandboxModeAttributionSurvivesADaemonRelaunch(t *testing.T) {
 	f.AssertResumeSpawned(f.Resume(convID))
 
 	state := requireDashMemberState(t, fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest()), "relaunch", convID)
-	assert.Equal(t, "on", state.SandboxMode, "the relaunch preserved the mode")
-	assert.Equal(t, `group default profile "squad"`, state.SandboxModeSource,
+	assert.Equal(t, "on", state.HarnessBuiltinMode, "the relaunch preserved the mode")
+	assert.Equal(t, `group default profile "squad"`, state.HarnessBuiltinModeSource,
 		"and the tier that chose it — a relaunch that dropped this re-credits the operator")
 	assert.Contains(t, state.OSSandboxSource, `group default profile "squad"`,
 		"the replayed attribution reaches the verdict the badge actually renders")
@@ -433,7 +433,7 @@ func TestDashboardSnapshot_SuppressedSandboxProfilesAreDistinguishable(t *testin
 	omitted := sandboxpolicy.OmittedProfilesSnapshot()
 	require.NoError(t, db.SaveSession(&db.SessionRow{
 		ID: "spwn-sbxc", TmuxSession: "tmux-sbxc", ConvID: convID, Cwd: f.TestCwd("sbxc"),
-		Status: "running", Harness: "codex", SandboxMode: "danger-full-access",
+		Status: "running", Harness: "codex", HarnessBuiltinMode: "danger-full-access",
 		EffectiveSandbox: &omitted,
 	}), "stamp a launch whose mode suppresses the profile tiers")
 	f.HaveMember("omitted", convID)

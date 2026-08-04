@@ -18,7 +18,7 @@ func TestDurableRelaunchProfilesSurviveSessionDeletion(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, SaveSession(&SessionRow{
 		ID: sessionID, ConvID: convID, Cwd: "/tmp/durable-managed",
-		Harness: DefaultHarness, Status: "exited", SandboxMode: "on",
+		Harness: DefaultHarness, Status: "exited", HarnessBuiltinMode: "on",
 		ApprovalPolicy: "bypassPermissions", AskUserQuestionTimeout: "5m",
 		ResumeProvenance: `{"version":1,"proof":"test"}`,
 	}))
@@ -48,7 +48,7 @@ func TestDurableRelaunchProfilesSurviveSessionDeletion(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "claude-sonnet-4-6", launch.ModelID)
 	assert.Equal(t, "high", launch.Effort)
-	assert.Equal(t, "on", launch.SandboxMode)
+	assert.Equal(t, "on", launch.HarnessBuiltinMode)
 	assert.Equal(t, "bypassPermissions", launch.ApprovalPolicy)
 	assert.Equal(t, "5m", mustAskTimeoutForConv(t, convID))
 	assert.True(t, mustRemoteControlForConv(t, convID))
@@ -281,7 +281,7 @@ func TestConversationFallbackPreservesUnmanagedLaunchShapeAfterPrune(t *testing.
 	)
 	require.NoError(t, SaveSession(&SessionRow{
 		ID: sessionID, ConvID: convID, Cwd: "/tmp/plain", Status: "exited",
-		Harness: DefaultHarness, SandboxMode: "on", ApprovalPolicy: "default",
+		Harness: DefaultHarness, HarnessBuiltinMode: "on", ApprovalPolicy: "default",
 		AskUserQuestionTimeout: "10m", ResumeProvenance: "plain-proof",
 	}))
 	require.NoError(t, UpdateSessionModelID(sessionID, "claude-haiku-4-5"))
@@ -349,7 +349,7 @@ func TestSupersededSessionCannotOverwriteCurrentAgentRelaunchIntent(t *testing.T
 	assert.Equal(t, "never", *oldProfile.FallbackRelaunch.AskUserQuestionTimeout)
 }
 
-func TestTemporarySandboxModeIsAgentKeyedAcrossRotationAndProjection(t *testing.T) {
+func TestTemporaryHarnessBuiltinModeIsAgentKeyedAcrossRotationAndProjection(t *testing.T) {
 	setupTestDB(t)
 	const (
 		oldConv = "sandbox-override-old"
@@ -360,15 +360,15 @@ func TestTemporarySandboxModeIsAgentKeyedAcrossRotationAndProjection(t *testing.
 	normalMode, normalSource := "on", "group default profile \"confined\""
 	normalImplementation := "tclaude-layer"
 	require.NoError(t, SetAgentRelaunchProfile(agentID, AgentRelaunchProfile{
-		Version: RelaunchProfileVersion, SandboxMode: &normalMode,
-		SandboxModeSource: &normalSource,
+		Version: RelaunchProfileVersion, HarnessBuiltinMode: &normalMode,
+		HarnessBuiltinModeSource: &normalSource,
 	}))
 
 	override := "off"
-	require.NoError(t, SetTemporarySandboxModeForConv(
+	require.NoError(t, SetTemporaryHarnessBuiltinModeForConv(
 		oldConv, normalMode, normalImplementation, normalSource, &override,
 	))
-	mode, active, err := TemporarySandboxModeForAgent(agentID)
+	mode, active, err := TemporaryHarnessBuiltinModeForAgent(agentID)
 	require.NoError(t, err)
 	assert.True(t, active)
 	assert.Equal(t, override, mode)
@@ -377,45 +377,45 @@ func TestTemporarySandboxModeIsAgentKeyedAcrossRotationAndProjection(t *testing.
 	// stable normal posture.
 	require.NoError(t, SaveSession(&SessionRow{
 		ID: "sandbox-override-session", ConvID: oldConv, Cwd: "/tmp/unlocked",
-		Harness: DefaultHarness, Status: "idle", SandboxMode: override,
+		Harness: DefaultHarness, Status: "idle", HarnessBuiltinMode: override,
 		SandboxImplementation: "harness-builtin",
 	}))
 	profile, err := AgentRelaunchProfileForConv(oldConv)
 	require.NoError(t, err)
 	require.NotNil(t, profile)
-	require.NotNil(t, profile.SandboxMode)
-	assert.Equal(t, normalMode, *profile.SandboxMode)
+	require.NotNil(t, profile.HarnessBuiltinMode)
+	assert.Equal(t, normalMode, *profile.HarnessBuiltinMode)
 	require.NotNil(t, profile.SandboxImplementation)
 	assert.Equal(t, normalImplementation, *profile.SandboxImplementation,
 		"process-only implementation must not replace the exact normal implementation")
 	launch, err := SessionLaunchProfileForConv(oldConv)
 	require.NoError(t, err)
-	assert.Equal(t, override, launch.SandboxMode)
+	assert.Equal(t, override, launch.HarnessBuiltinMode)
 	assert.Equal(t, "harness-builtin", launch.SandboxImplementation,
 		"non-daemon relaunches must not re-enable the durable outer layer while temporarily off")
-	assert.Equal(t, TemporarySandboxModeSource, launch.SandboxModeSource)
+	assert.Equal(t, TemporaryHarnessBuiltinModeSource, launch.HarnessBuiltinModeSource)
 
 	_, err = RotateAgentConv(oldConv, newConv, "clear")
 	require.NoError(t, err)
-	mode, active, err = TemporarySandboxModeForConv(newConv)
+	mode, active, err = TemporaryHarnessBuiltinModeForConv(newConv)
 	require.NoError(t, err)
 	assert.True(t, active, "the override follows the stable agent, not a conversation generation")
 	assert.Equal(t, override, mode)
 
-	require.NoError(t, SetTemporarySandboxModeForConv(newConv, "", "", "", nil))
-	_, active, err = TemporarySandboxModeForAgent(agentID)
+	require.NoError(t, SetTemporaryHarnessBuiltinModeForConv(newConv, "", "", "", nil))
+	_, active, err = TemporaryHarnessBuiltinModeForAgent(agentID)
 	require.NoError(t, err)
 	assert.False(t, active)
 	profile, err = AgentRelaunchProfileForConv(newConv)
 	require.NoError(t, err)
 	require.NotNil(t, profile)
-	assert.Equal(t, normalMode, *profile.SandboxMode)
-	assert.Equal(t, normalSource, *profile.SandboxModeSource)
+	assert.Equal(t, normalMode, *profile.HarnessBuiltinMode)
+	assert.Equal(t, normalSource, *profile.HarnessBuiltinModeSource)
 	assert.Equal(t, normalImplementation, *profile.SandboxImplementation)
 	launch, err = SessionLaunchProfileForConv(newConv)
 	require.NoError(t, err)
-	assert.Equal(t, normalMode, launch.SandboxMode)
-	assert.Equal(t, normalSource, launch.SandboxModeSource)
+	assert.Equal(t, normalMode, launch.HarnessBuiltinMode)
+	assert.Equal(t, normalSource, launch.HarnessBuiltinModeSource)
 	assert.Equal(t, normalImplementation, launch.SandboxImplementation)
 }
 
@@ -428,12 +428,12 @@ func TestOlderSameConversationSessionCannotRollBackDurableIntent(t *testing.T) {
 	newCreated := time.Now()
 	require.NoError(t, SaveSession(&SessionRow{
 		ID: "same-conv-old", ConvID: convID, Cwd: "/tmp/same-old",
-		Harness: "codex", Status: "exited", SandboxMode: "read-only",
+		Harness: "codex", Status: "exited", HarnessBuiltinMode: "read-only",
 		ApprovalPolicy: "untrusted", CreatedAt: oldCreated,
 	}))
 	require.NoError(t, SaveSession(&SessionRow{
 		ID: "same-conv-new", ConvID: convID, Cwd: "/tmp/same-new",
-		Harness: "codex", Status: "running", SandboxMode: "workspace-write",
+		Harness: "codex", Status: "running", HarnessBuiltinMode: "workspace-write",
 		ApprovalPolicy: "never", CreatedAt: newCreated,
 	}))
 	require.NoError(t, SetSessionRemoteControl("same-conv-old", true))
@@ -462,7 +462,7 @@ func TestNonCodexSessionProjectionDoesNotInventCodexApproval(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, SaveSession(&SessionRow{
 		ID: "server-authoritative-session", ConvID: convID, Cwd: "/tmp/server-authoritative",
-		Harness: "opencode", Status: "idle", SandboxMode: "off", AskUserQuestionTimeout: "5m",
+		Harness: "opencode", Status: "idle", HarnessBuiltinMode: "off", AskUserQuestionTimeout: "5m",
 		RemoteControl: true, AutoMemory: true,
 	}))
 	require.NoError(t, SetSessionRemoteControl("server-authoritative-session", true))
@@ -472,16 +472,16 @@ func TestNonCodexSessionProjectionDoesNotInventCodexApproval(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, conversation)
 	require.NotNil(t, conversation.FallbackRelaunch)
-	require.NotNil(t, conversation.FallbackRelaunch.SandboxMode)
-	assert.Equal(t, "off", *conversation.FallbackRelaunch.SandboxMode)
+	require.NotNil(t, conversation.FallbackRelaunch.HarnessBuiltinMode)
+	assert.Equal(t, "off", *conversation.FallbackRelaunch.HarnessBuiltinMode)
 	require.NotNil(t, conversation.FallbackRelaunch.ApprovalPolicy)
 	assert.Empty(t, *conversation.FallbackRelaunch.ApprovalPolicy)
 
 	agent, err := AgentRelaunchProfileForConv(convID)
 	require.NoError(t, err)
 	require.NotNil(t, agent)
-	require.NotNil(t, agent.SandboxMode)
-	assert.Equal(t, "off", *agent.SandboxMode)
+	require.NotNil(t, agent.HarnessBuiltinMode)
+	assert.Equal(t, "off", *agent.HarnessBuiltinMode)
 	require.NotNil(t, agent.ApprovalPolicy)
 	assert.Empty(t, *agent.ApprovalPolicy)
 	require.NotNil(t, agent.AskUserQuestionTimeout)
@@ -508,7 +508,7 @@ func TestBlankInitialSessionProjectionPreservesExactAgentBirthIntent(t *testing.
 	}))
 	require.NoError(t, SaveSession(&SessionRow{
 		ID: "birth-profile-session", ConvID: convID, Cwd: "/tmp/birth-profile",
-		Harness: DefaultHarness, Status: "idle", SandboxMode: "on", ApprovalPolicy: "auto",
+		Harness: DefaultHarness, Status: "idle", HarnessBuiltinMode: "on", ApprovalPolicy: "auto",
 	}))
 
 	profile, err := AgentRelaunchProfileForConv(convID)
@@ -524,8 +524,8 @@ func TestBlankInitialSessionProjectionPreservesExactAgentBirthIntent(t *testing.
 	assert.True(t, *profile.RemoteControl)
 	require.NotNil(t, profile.AutoMemory)
 	assert.True(t, *profile.AutoMemory)
-	require.NotNil(t, profile.SandboxMode)
-	assert.Equal(t, "on", *profile.SandboxMode)
+	require.NotNil(t, profile.HarnessBuiltinMode)
+	assert.Equal(t, "on", *profile.HarnessBuiltinMode)
 }
 
 func TestNewUnmanagedGenerationDoesNotInheritPreviousToggles(t *testing.T) {

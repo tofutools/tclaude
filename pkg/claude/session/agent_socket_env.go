@@ -15,12 +15,12 @@ import (
 // which is the only denied subtree; this guard is about a daemon that has not
 // yet restarted onto the api/ canonical path.)
 func ApplyAgentSocketEnv(
-	harnessName, sandboxMode, permissionProfile string,
+	harnessName, harnessBuiltinMode, permissionProfile string,
 	tclaudeLayerIsolated bool,
 	env map[string]string,
 ) error {
 	requiresCanonical := (harnessName == harness.CodexName && permissionProfile == harness.CodexAgentProfile) ||
-		(harnessName == harness.DefaultName && sandboxMode == harness.ClaudeSandboxOn) ||
+		(harnessName == harness.DefaultName && harnessBuiltinMode == harness.ClaudeSandboxOn) ||
 		tclaudeLayerIsolated
 	if !requiresCanonical {
 		return nil

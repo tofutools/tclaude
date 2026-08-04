@@ -29,14 +29,14 @@ import { approvalPolicyLabel, approvalReviewerHelp, approvalReviewerOptions } fr
 import { HelpDisclosure, HelpField } from './help-field.js';
 import { SandboxImplHint } from './sandbox-impl-hint.js';
 import {
-  approvalControlsVisibleFor, autoCompactWindowHintFor, sandboxModeHelpForImplementation,
+  approvalControlsVisibleFor, autoCompactWindowHintFor, harnessBuiltinModeHelpForImplementation,
   sandboxImplHintFor, sandboxImplCaveatFor, sandboxImplClearedNoticeFor, sandboxImplOptionsFor,
-  sandboxModeControlLabel, sandboxModeOptionsForImplementation,
+  harnessBuiltinModeControlLabel, harnessBuiltinModeOptionsForImplementation,
 } from './agent-spawn-model.js';
 import {
   RESOLVED_DEFAULTS_CHAIN, RESOLVED_DEFAULTS_CHAIN_PREVIEW, RESOLVED_DEFAULTS_LABEL,
   SANDBOX_PROFILE_COMPOSITION, SANDBOX_PROFILE_LAYERS_LABEL,
-  sandboxModeDetail, sandboxModeOptionLabel, sandboxProfileLayersText,
+  harnessBuiltinModeDetail, harnessBuiltinModeOptionLabel, sandboxProfileLayersText,
 } from './resolved-defaults.js';
 
 // Mirrors the spawn dialog's copy: which layer owns the wall, the experimental
@@ -512,7 +512,7 @@ export function SandboxPolicyResult({ target, context, contextIndex, contexts = 
     : 'Stored in this effective policy, but it does not apply to this target; only the macOS tclaude-layer sandbox consumes it.'}</div>
     </div>`}
     <details class="sbx-target-details"><summary>Evaluation details</summary>
-      ${target.target.sandbox ? html`<div>Sandbox mode: ${sandboxModeDetail(target.target.harness, target.target.sandbox)}</div>` : null}
+      ${target.target.sandbox ? html`<div>Sandbox mode: ${harnessBuiltinModeDetail(target.target.harness, target.target.sandbox)}</div>` : null}
       ${target.resolved_by
     ? html`<div>${RESOLVED_DEFAULTS_LABEL} came from: ${target.resolved_by}</div>`
     : html`<div>Launch target overridden here; ${RESOLVED_DEFAULTS_LABEL.toLowerCase()} were not used.</div>`}
@@ -1012,7 +1012,7 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
     ? hEntry?.profile_recommended_approval || hEntry?.default_approval
     : hEntry?.default_approval;
   const approvalHelp = hEntry?.approval_mode_help?.[draft.approval] || '';
-  const sandboxHelp = sandboxModeHelpForImplementation(
+  const sandboxHelp = harnessBuiltinModeHelpForImplementation(
     hEntry?.sandbox_mode_help?.[draft.sandbox],
     draft.sandbox_implementation || '',
     draft.harness,
@@ -1030,7 +1030,7 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
   const sandboxImplOptions = sandboxImplOptionsFor(
     sandboxImpl?.options, harnessLabel, hEntry?.can_builtin_os_sandbox !== false,
   );
-  const showSandboxMode = !profile
+  const showHarnessBuiltinMode = !profile
     || (hEntry?.can_sandbox && draft.sandbox_implementation === 'harness-builtin');
   const sandboxImplCleared = sandboxImplClearedNoticeFor(
     { sandboxImplCleared: draft.sandbox_implementation_cleared },
@@ -1122,19 +1122,19 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
       </div>
     </div>`}
     <${HelpField} id=${sandboxID}
-      label=${profile ? sandboxModeControlLabel(hEntry) : 'Sandbox'}
+      label=${profile ? harnessBuiltinModeControlLabel(hEntry) : 'Sandbox'}
       title=${profile
         ? "Harness-native sandbox mode. Available only when the harness's built-in sandbox is selected above."
         : 'Launch containment for the agent. The modes are per-harness.'}
       value=${draft.sandbox}
-      options=${(profile ? sandboxModeOptionsForImplementation({
+      options=${(profile ? harnessBuiltinModeOptionsForImplementation({
     modes: hEntry?.sandbox_modes || [],
   }, draft.harness, draft.sandbox).modes : (hEntry?.sandbox_modes || [])).map((value) => ({
-    value, label: sandboxModeOptionLabel(draft.harness, value, hEntry.default_sandbox),
+    value, label: harnessBuiltinModeOptionLabel(draft.harness, value, hEntry.default_sandbox),
   }))}
       onChange=${(event) => change(setDraft, 'sandbox', event.currentTarget.value)}
       help=${sandboxHelp} open=${helpOpen === sandboxID} setOpen=${setHelpOpen}
-      disabled=${!showSandboxMode} />
+      disabled=${!showHarnessBuiltinMode} />
     <${HelpField} id=${approvalID} label=${approvalLabel} title="Controls when the harness requests approval; it does not change the sandbox."
       value=${draft.approval}
       options=${(hEntry?.approval_modes || []).map((value) => ({ value, label: approvalPolicyLabel(draft.harness, value, recommendedApproval) }))}

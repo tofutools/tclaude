@@ -200,7 +200,7 @@ func TestCopilotAskerIgnoresUnmeasuredSpecFields(t *testing.T) {
 		Ephemeral: true,
 		Stream:    true,
 		LaunchPosture: &SpawnSpec{
-			SandboxMode: SandboxReadOnly, ApprovalPolicy: CopilotApprovalAllowTools,
+			HarnessBuiltinMode: SandboxReadOnly, ApprovalPolicy: CopilotApprovalAllowTools,
 		},
 	})
 	if !slices.Equal(plain, loaded) {

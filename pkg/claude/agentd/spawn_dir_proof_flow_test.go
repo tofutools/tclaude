@@ -194,14 +194,14 @@ func TestSpawnDirProof_AskHumanApprovalContinuesAcrossProvedRetry(t *testing.T) 
 	const parent = "parent-askh-aaaa-bbbb-cccc-111111111111"
 	f.HaveMember("alpha", parent)
 	require.NoError(t, db.SaveSession(&db.SessionRow{
-		ID:             "sess-parent-askh",
-		TmuxSession:    "tmux-parent-askh",
-		ConvID:         parent,
-		Cwd:            f.World.HomeDir,
-		Status:         "running",
-		Harness:        harness.DefaultName,
-		SandboxMode:    harness.ClaudeSandboxInherit,
-		ApprovalPolicy: "bypassPermissions",
+		ID:                 "sess-parent-askh",
+		TmuxSession:        "tmux-parent-askh",
+		ConvID:             parent,
+		Cwd:                f.World.HomeDir,
+		Status:             "running",
+		Harness:            harness.DefaultName,
+		HarnessBuiltinMode: harness.ClaudeSandboxInherit,
+		ApprovalPolicy:     "bypassPermissions",
 	}))
 
 	dir := t.TempDir()
@@ -234,14 +234,14 @@ func TestSpawnDirProof_AskHumanContinuationRejectsChangedOperation(t *testing.T)
 	const parent = "parent-askh-change-bbbb-cccc-111111111111"
 	f.HaveMember("alpha", parent)
 	require.NoError(t, db.SaveSession(&db.SessionRow{
-		ID:             "sess-parent-askh-change",
-		TmuxSession:    "tmux-parent-askh-change",
-		ConvID:         parent,
-		Cwd:            f.World.HomeDir,
-		Status:         "running",
-		Harness:        harness.DefaultName,
-		SandboxMode:    harness.ClaudeSandboxInherit,
-		ApprovalPolicy: "bypassPermissions",
+		ID:                 "sess-parent-askh-change",
+		TmuxSession:        "tmux-parent-askh-change",
+		ConvID:             parent,
+		Cwd:                f.World.HomeDir,
+		Status:             "running",
+		Harness:            harness.DefaultName,
+		HarnessBuiltinMode: harness.ClaudeSandboxInherit,
+		ApprovalPolicy:     "bypassPermissions",
 	}))
 
 	dir := t.TempDir()

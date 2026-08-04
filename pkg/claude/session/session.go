@@ -61,28 +61,34 @@ type SessionState struct {
 	// blanking it (which db.SaveSession would coalesce back to "claude").
 	// Empty on a fresh state → coalesced to "claude" at the DB layer.
 	Harness string `json:"harness,omitempty"`
-	// SandboxMode is the launch-time OS-sandbox mode the session was
+	// HarnessBuiltinMode is the launch-time harness-builtin sandbox mode the session was
 	// spawned under (Codex's --sandbox: read-only / workspace-write /
 	// danger-full-access), or "" for a harness with no launch sandbox flag
 	// (Claude Code). Set once at spawn by `session new`; carried through
 	// toRow/fromRow so the hook callback's load→mutate→save round-trip
-	// preserves it. Unlike Harness, "" is a genuine value (no sandbox) and
-	// is stored verbatim. The dashboard renders it as a per-agent badge.
-	SandboxMode string `json:"sandboxMode,omitempty"`
+	// preserves it. Unlike Harness, "" is a genuine value (the harness took no
+	// launch sandbox flag) and is stored verbatim. The dashboard renders it as
+	// a per-agent badge.
+	//
+	// It says what the HARNESS does about sandboxing, never whether the process
+	// is confined: SandboxImplementation below owns that question (TCL-1023).
+	// The JSON key stays `sandboxMode` — this struct is a compatibility surface
+	// for session state files already on disk.
+	HarnessBuiltinMode string `json:"sandboxMode,omitempty"`
 	// SandboxImplementation names the outer sandbox owner selected at launch.
 	SandboxImplementation string `json:"sandboxImplementation,omitempty"`
-	// SandboxModeSource names the resolution tier that CHOSE SandboxMode (an
+	// HarnessBuiltinModeSource names the resolution tier that CHOSE HarnessBuiltinMode (an
 	// explicit flag, or the spawn profile that carried it). Carried through
-	// toRow/fromRow like SandboxMode so a hook callback's load→mutate→save
+	// toRow/fromRow like HarnessBuiltinMode so a hook callback's load→mutate→save
 	// cycle cannot blank it.
-	SandboxModeSource string `json:"sandboxModeSource,omitempty"`
+	HarnessBuiltinModeSource string `json:"sandboxModeSource,omitempty"`
 	// OSSandboxState and OSSandboxSource record whether the OS sandbox was
 	// ACTUALLY active for this launch ("on"/"off"/"unconfigured") and what
 	// decided that, resolved once at spawn by harness.ResolveLaunchOSSandbox.
-	// SandboxMode above is the launch REQUEST, which for Claude Code's `inherit`
+	// HarnessBuiltinMode above is the launch REQUEST, which for Claude Code's `inherit`
 	// default answers nothing — these answer it, so the dashboard can badge an
 	// agent confined by the operator's own settings.json. Carried through
-	// toRow/fromRow like SandboxMode so a hook callback's load→mutate→save
+	// toRow/fromRow like HarnessBuiltinMode so a hook callback's load→mutate→save
 	// round-trip preserves them. "" for a harness whose mode already states its
 	// posture (Codex) or a pre-column row.
 	OSSandboxState  string `json:"osSandboxState,omitempty"`
@@ -210,64 +216,64 @@ func Cmd() *cobra.Command {
 // toRow converts a SessionState to a db.SessionRow.
 func toRow(s *SessionState) *db.SessionRow {
 	return &db.SessionRow{
-		ID:                     s.ID,
-		TmuxSession:            s.TmuxSession,
-		PID:                    s.PID,
-		Cwd:                    s.Cwd,
-		ConvID:                 s.ConvID,
-		Status:                 s.Status,
-		StatusDetail:           s.StatusDetail,
-		SubagentCount:          s.SubagentCount,
-		SubagentsJSON:          s.Subagents.Encode(),
-		BgShellsJSON:           s.BgShells.Encode(),
-		MonitorsJSON:           s.Monitors.Encode(),
-		CreatedAt:              s.Created,
-		UpdatedAt:              s.Updated,
-		LastHook:               s.LastHook,
-		Harness:                s.Harness,
-		SandboxMode:            s.SandboxMode,
-		SandboxImplementation:  s.SandboxImplementation,
-		OSSandboxState:         s.OSSandboxState,
-		SandboxModeSource:      s.SandboxModeSource,
-		OSSandboxSource:        s.OSSandboxSource,
-		OSSandboxUnverified:    s.OSSandboxUnverified,
-		EffectiveSandbox:       s.EffectiveSandbox,
-		ResumeProvenance:       s.ResumeProvenance,
-		ApprovalPolicy:         s.ApprovalPolicy,
-		ApprovalAutoReview:     s.ApprovalAutoReview,
-		AskUserQuestionTimeout: s.AskUserQuestionTimeout,
+		ID:                       s.ID,
+		TmuxSession:              s.TmuxSession,
+		PID:                      s.PID,
+		Cwd:                      s.Cwd,
+		ConvID:                   s.ConvID,
+		Status:                   s.Status,
+		StatusDetail:             s.StatusDetail,
+		SubagentCount:            s.SubagentCount,
+		SubagentsJSON:            s.Subagents.Encode(),
+		BgShellsJSON:             s.BgShells.Encode(),
+		MonitorsJSON:             s.Monitors.Encode(),
+		CreatedAt:                s.Created,
+		UpdatedAt:                s.Updated,
+		LastHook:                 s.LastHook,
+		Harness:                  s.Harness,
+		HarnessBuiltinMode:       s.HarnessBuiltinMode,
+		SandboxImplementation:    s.SandboxImplementation,
+		OSSandboxState:           s.OSSandboxState,
+		HarnessBuiltinModeSource: s.HarnessBuiltinModeSource,
+		OSSandboxSource:          s.OSSandboxSource,
+		OSSandboxUnverified:      s.OSSandboxUnverified,
+		EffectiveSandbox:         s.EffectiveSandbox,
+		ResumeProvenance:         s.ResumeProvenance,
+		ApprovalPolicy:           s.ApprovalPolicy,
+		ApprovalAutoReview:       s.ApprovalAutoReview,
+		AskUserQuestionTimeout:   s.AskUserQuestionTimeout,
 	}
 }
 
 // fromRow converts a db.SessionRow to a SessionState.
 func fromRow(r *db.SessionRow) *SessionState {
 	return &SessionState{
-		ID:                     r.ID,
-		TmuxSession:            r.TmuxSession,
-		PID:                    r.PID,
-		Cwd:                    r.Cwd,
-		ConvID:                 r.ConvID,
-		Status:                 r.Status,
-		StatusDetail:           r.StatusDetail,
-		SubagentCount:          r.SubagentCount,
-		Subagents:              db.ParseSubagentSet(r.SubagentsJSON),
-		BgShells:               db.ParseBgShellSet(r.BgShellsJSON),
-		Monitors:               db.ParseMonitorSet(r.MonitorsJSON),
-		Created:                r.CreatedAt,
-		Updated:                r.UpdatedAt,
-		LastHook:               r.LastHook,
-		Harness:                r.Harness,
-		SandboxMode:            r.SandboxMode,
-		SandboxImplementation:  r.SandboxImplementation,
-		OSSandboxState:         r.OSSandboxState,
-		SandboxModeSource:      r.SandboxModeSource,
-		OSSandboxSource:        r.OSSandboxSource,
-		OSSandboxUnverified:    r.OSSandboxUnverified,
-		EffectiveSandbox:       r.EffectiveSandbox,
-		ResumeProvenance:       r.ResumeProvenance,
-		ApprovalPolicy:         r.ApprovalPolicy,
-		ApprovalAutoReview:     r.ApprovalAutoReview,
-		AskUserQuestionTimeout: r.AskUserQuestionTimeout,
+		ID:                       r.ID,
+		TmuxSession:              r.TmuxSession,
+		PID:                      r.PID,
+		Cwd:                      r.Cwd,
+		ConvID:                   r.ConvID,
+		Status:                   r.Status,
+		StatusDetail:             r.StatusDetail,
+		SubagentCount:            r.SubagentCount,
+		Subagents:                db.ParseSubagentSet(r.SubagentsJSON),
+		BgShells:                 db.ParseBgShellSet(r.BgShellsJSON),
+		Monitors:                 db.ParseMonitorSet(r.MonitorsJSON),
+		Created:                  r.CreatedAt,
+		Updated:                  r.UpdatedAt,
+		LastHook:                 r.LastHook,
+		Harness:                  r.Harness,
+		HarnessBuiltinMode:       r.HarnessBuiltinMode,
+		SandboxImplementation:    r.SandboxImplementation,
+		OSSandboxState:           r.OSSandboxState,
+		HarnessBuiltinModeSource: r.HarnessBuiltinModeSource,
+		OSSandboxSource:          r.OSSandboxSource,
+		OSSandboxUnverified:      r.OSSandboxUnverified,
+		EffectiveSandbox:         r.EffectiveSandbox,
+		ResumeProvenance:         r.ResumeProvenance,
+		ApprovalPolicy:           r.ApprovalPolicy,
+		ApprovalAutoReview:       r.ApprovalAutoReview,
+		AskUserQuestionTimeout:   r.AskUserQuestionTimeout,
 	}
 }
 

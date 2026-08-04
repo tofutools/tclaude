@@ -294,7 +294,7 @@ func TestSeancePlan_OpenCodeExactGenerationDoesNotRedirect(t *testing.T) {
 		require.NoError(t, err)
 		require.NotEmpty(t, sessions)
 		for _, session := range sessions {
-			session.SandboxMode = harness.OpenCodeSandboxAccessControl
+			session.HarnessBuiltinMode = harness.OpenCodeSandboxAccessControl
 			session.ApprovalPolicy = harness.OpenCodeApprovalDeny
 			require.NoError(t, db.SaveSession(session))
 		}
@@ -471,7 +471,7 @@ func TestSeanceRun_ReplaysExactPredecessorCodexSandbox(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, oldRows)
 	for _, row := range oldRows {
-		row.SandboxMode = harness.SandboxManagedProfile
+		row.HarnessBuiltinMode = harness.SandboxManagedProfile
 		row.ApprovalPolicy = harness.ApprovalNever
 		row.EffectiveSandbox = &predecessorSnapshot
 		require.NoError(t, db.SaveSession(row))
@@ -488,7 +488,7 @@ func TestSeanceRun_ReplaysExactPredecessorCodexSandbox(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, newRows)
 	for _, row := range newRows {
-		row.SandboxMode = harness.SandboxManagedProfile
+		row.HarnessBuiltinMode = harness.SandboxManagedProfile
 		row.ApprovalPolicy = harness.ApprovalNever
 		row.EffectiveSandbox = &successorSnapshot
 		require.NoError(t, db.SaveSession(row))
@@ -555,7 +555,7 @@ func TestSeanceRun_CodexManagedSandboxRejectsHarnessHomeAsWorkspace(t *testing.T
 	require.NoError(t, err)
 	require.NotEmpty(t, oldRows)
 	for _, row := range oldRows {
-		row.SandboxMode = harness.SandboxManagedProfile
+		row.HarnessBuiltinMode = harness.SandboxManagedProfile
 		row.ApprovalPolicy = harness.ApprovalNever
 		require.NoError(t, db.SaveSession(row))
 	}
@@ -607,7 +607,7 @@ func TestSeanceRun_CodexRawWorkspaceRejectsHarnessHome(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, oldRows)
 	for _, row := range oldRows {
-		row.SandboxMode = harness.SandboxWorkspaceWrite
+		row.HarnessBuiltinMode = harness.SandboxWorkspaceWrite
 		row.ApprovalPolicy = harness.ApprovalNever
 		require.NoError(t, db.SaveSession(row))
 	}

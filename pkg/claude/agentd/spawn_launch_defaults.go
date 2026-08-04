@@ -131,7 +131,7 @@ func resolveLaunchDefaults(
 	requestedSandbox, sandboxSource, _, fail := resolveStringLaunchField(
 		"sandbox", "", resolvedHarness.Name, tiers,
 		func(profile *db.SpawnProfile) string { return profile.Sandbox },
-		func(raw string) (string, error) { return harness.ValidateSandboxMode(resolvedHarness, raw) },
+		func(raw string) (string, error) { return harness.ValidateHarnessBuiltinMode(resolvedHarness, raw) },
 	)
 	if fail != nil {
 		return launchDefaults{}, fail, nil
@@ -150,13 +150,13 @@ func resolveLaunchDefaults(
 	if err != nil {
 		return launchDefaults{}, nil, err
 	}
-	sandboxMode, err := harness.ResolveSandboxMode(resolvedHarness, requestedSandbox)
+	harnessBuiltinMode, err := harness.ResolveHarnessBuiltinMode(resolvedHarness, requestedSandbox)
 	if err != nil {
 		return launchDefaults{}, nil, err
 	}
 	return launchDefaults{
 		harness:        resolvedHarness,
-		sandbox:        sandboxMode,
+		sandbox:        harnessBuiltinMode,
 		implementation: implementation,
 		resolvedBy:     joinProvenanceSources(harnessSource, sandboxSource, implementationSource),
 	}, nil, nil

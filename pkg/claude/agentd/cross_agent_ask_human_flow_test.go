@@ -392,7 +392,7 @@ func TestCrossAgentAskHuman_NoHeaderStillRefuses(t *testing.T) {
 	callerSession, err := db.LoadSession("caller-open")
 	require.NoError(t, err)
 	callerSession.Harness = harness.DefaultName
-	callerSession.SandboxMode = harness.ClaudeSandboxOff
+	callerSession.HarnessBuiltinMode = harness.ClaudeSandboxOff
 	require.NoError(t, db.SaveSession(callerSession))
 	r := testharness.JSONRequest(t, http.MethodPost,
 		"/v1/agent/"+targetConv+"/reincarnate", map[string]any{})

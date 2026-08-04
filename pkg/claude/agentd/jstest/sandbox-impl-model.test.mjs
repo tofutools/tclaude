@@ -55,39 +55,39 @@ test('sandbox mode help tells the truth for the selected implementation', async 
   const model = await harness.importDashboardModule('js/agent-spawn-model.js');
   const off = modeHelp['claude/sandbox/off'];
 
-  const inherited = model.sandboxModeHelpForImplementation(off, '', 'claude');
+  const inherited = model.harnessBuiltinModeHelpForImplementation(off, '', 'claude');
   assert.match(inherited, /comes from the resolved defaults at launch/);
   assert.match(inherited, /effect is not known yet/);
   assert.doesNotMatch(inherited, /runs unconfined|rules as OS mounts/);
   assert.equal(
-    model.sandboxModeHelpForImplementation(off, 'harness-builtin', 'claude'),
+    model.harnessBuiltinModeHelpForImplementation(off, 'harness-builtin', 'claude'),
     off,
     'the harness-builtin branch keeps the real mode-help fixture, including its unconfined warning',
   );
   assert.match(
-    model.sandboxModeHelpForImplementation(off, 'tclaude-layer', 'claude'),
+    model.harnessBuiltinModeHelpForImplementation(off, 'tclaude-layer', 'claude'),
     /filesystem rules as OS mounts/,
   );
   assert.match(
-    model.sandboxModeHelpForImplementation(off, 'tclaude-layer', 'codex'),
+    model.harnessBuiltinModeHelpForImplementation(off, 'tclaude-layer', 'codex'),
     /harness's own sandbox is off by design/,
   );
   assert.equal(
-    model.sandboxModeHelpForImplementation(
+    model.harnessBuiltinModeHelpForImplementation(
       modeHelp['opencode/sandbox/tclaude-layer'], 'tclaude-layer', 'opencode',
     ),
     modeHelp['opencode/sandbox/tclaude-layer'],
     'OpenCode keeps its dedicated mode-help branch because its soft rules stay on',
   );
   assert.equal(
-    model.sandboxModeHelpForImplementation(
+    model.harnessBuiltinModeHelpForImplementation(
       modeHelp['opencode/sandbox/tclaude-layer'], '', 'opencode',
     ),
     modeHelp['opencode/sandbox/tclaude-layer'],
     'an inherited OpenCode implementation never shadows its dedicated mode help',
   );
   assert.match(
-    model.sandboxModeHelpForImplementation(off, 'stacked', 'claude'),
+    model.harnessBuiltinModeHelpForImplementation(off, 'stacked', 'claude'),
     /outer mounts and the harness's real nested OS sandbox both enforce/,
   );
 });
@@ -99,12 +99,12 @@ test('sandbox-implementation view gates on the harness, discloses on the host', 
   // The HARNESS half decides whether there is a choice to render at all.
   const claude = model.spawnCapabilityView({ harness: 'claude' }, { harnesses, sandboxImpl });
   assert.equal(claude.showSandboxImpl, true);
-  assert.equal(claude.showSandboxMode, false,
+  assert.equal(claude.showHarnessBuiltinMode, false,
     'an unresolved default does not expose an independently misleading native mode');
   assert.equal(
     model.spawnCapabilityView(
       { harness: 'claude' }, { harnesses, sandboxImpl }, 'harness-builtin',
-    ).showSandboxMode,
+    ).showHarnessBuiltinMode,
     true,
     'a daemon-resolved Claude built-in default exposes the native mode',
   );
@@ -138,12 +138,12 @@ test('sandbox-implementation view gates on the harness, discloses on the host', 
   );
   assert.match(opencodeDefaultHint.text, /No built-in OS sandbox/);
   assert.match(opencodeDefaultHint.text, /command filter, not confinement/);
-  assert.equal(opencode.showSandboxMode, false,
+  assert.equal(opencode.showHarnessBuiltinMode, false,
     'OpenCode owns no built-in OS sandbox mode to reveal');
   assert.equal(
     model.spawnCapabilityView(
       { harness: 'opencode' }, { harnesses, sandboxImpl }, 'harness-builtin',
-    ).showSandboxMode,
+    ).showHarnessBuiltinMode,
     false,
     'an invalid resolved answer never gives OpenCode a built-in mode control',
   );
@@ -151,7 +151,7 @@ test('sandbox-implementation view gates on the harness, discloses on the host', 
     model.spawnCapabilityView(
       { harness: 'opencode', sandboxImpl: 'harness-builtin' },
       { harnesses, sandboxImpl },
-    ).showSandboxMode,
+    ).showHarnessBuiltinMode,
     false,
     'a preserved invalid explicit selection never gives OpenCode a built-in mode control',
   );
@@ -159,11 +159,11 @@ test('sandbox-implementation view gates on the harness, discloses on the host', 
   const builtin = model.spawnCapabilityView(
     { harness: 'codex', sandboxImpl: 'harness-builtin' }, { harnesses, sandboxImpl },
   );
-  assert.equal(builtin.showSandboxMode, true);
+  assert.equal(builtin.showHarnessBuiltinMode, true);
   assert.equal(
     model.spawnCapabilityView(
       { harness: 'codex' }, { harnesses, sandboxImpl }, 'harness-builtin',
-    ).showSandboxMode,
+    ).showHarnessBuiltinMode,
     true,
     'a daemon-resolved Codex built-in default exposes the native mode',
   );
@@ -172,22 +172,22 @@ test('sandbox-implementation view gates on the harness, discloses on the host', 
       { harness: 'codex', sandboxImpl: 'off' },
       { harnesses, sandboxImpl },
       'harness-builtin',
-    ).showSandboxMode,
+    ).showHarnessBuiltinMode,
     false,
     'an explicit implementation overrides an older or inherited resolved answer',
   );
   assert.equal(
-    model.sandboxModeControlLabel(builtin.harness),
+    model.harnessBuiltinModeControlLabel(builtin.harness),
     'Codex sandbox mode',
   );
   assert.deepEqual(
-    model.sandboxModeOptionsForImplementation({
+    model.harnessBuiltinModeOptionsForImplementation({
       modes: ['tclaude-agent', 'workspace-write', 'read-only', 'danger-full-access'],
     }, 'codex').modes,
     ['tclaude-agent', 'workspace-write', 'read-only'],
   );
   assert.deepEqual(
-    model.sandboxModeOptionsForImplementation({
+    model.harnessBuiltinModeOptionsForImplementation({
       modes: ['tclaude-agent', 'workspace-write', 'read-only', 'danger-full-access'],
     }, 'codex', 'danger-full-access').modes,
     ['tclaude-agent', 'workspace-write', 'read-only', 'danger-full-access'],

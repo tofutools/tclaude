@@ -24,14 +24,14 @@ import (
 // json.Marshal sorts map keys, so the output is deterministic (testable).
 func claudeSettingsJSON(spec SpawnSpec) string {
 	settings := map[string]any{}
-	if block := claudeSandboxBlock(spec.SandboxMode); block != nil {
+	if block := claudeSandboxBlock(spec.HarnessBuiltinMode); block != nil {
 		if spec.StrongNestedSandbox {
 			block["enableWeakerNestedSandbox"] = false
 		}
 		settings["sandbox"] = block
 	}
 	if dirs := normalizedSandboxWriteDirs(spec.SandboxWriteDirs); len(dirs) > 0 &&
-		strings.TrimSpace(spec.SandboxMode) != ClaudeSandboxOff {
+		strings.TrimSpace(spec.HarnessBuiltinMode) != ClaudeSandboxOff {
 		block, _ := settings["sandbox"].(map[string]any)
 		if block == nil {
 			// An inherit/unset launch intentionally omits enabled: the filesystem
@@ -48,7 +48,7 @@ func claudeSettingsJSON(spec SpawnSpec) string {
 		appendSandboxFilesystemDirs(filesystem, "allowWrite", dirs)
 	}
 	if dirs := normalizedSandboxWriteDirs(spec.SandboxReadDirs); len(dirs) > 0 &&
-		strings.TrimSpace(spec.SandboxMode) != ClaudeSandboxOff {
+		strings.TrimSpace(spec.HarnessBuiltinMode) != ClaudeSandboxOff {
 		block, _ := settings["sandbox"].(map[string]any)
 		if block == nil {
 			block = map[string]any{}
@@ -62,7 +62,7 @@ func claudeSettingsJSON(spec SpawnSpec) string {
 		appendSandboxFilesystemDirs(filesystem, "allowRead", dirs)
 	}
 	if dirs := normalizedSandboxWriteDirs(spec.SandboxDenyDirs); len(dirs) > 0 &&
-		strings.TrimSpace(spec.SandboxMode) != ClaudeSandboxOff {
+		strings.TrimSpace(spec.HarnessBuiltinMode) != ClaudeSandboxOff {
 		block, _ := settings["sandbox"].(map[string]any)
 		if block == nil {
 			block = map[string]any{}

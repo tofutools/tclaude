@@ -413,7 +413,7 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 	// harness default — reincarnation must not weaken the sandbox.
 	reincarnateSandbox := relaunch.Sandbox
 	reincarnateSandboxImplementation := relaunch.activeSandboxImplementation()
-	if relaunch.TemporarySandboxMode {
+	if relaunch.TemporaryHarnessBuiltinMode {
 		effectiveSandbox = temporarySandboxLaunchSnapshot(relaunch.Harness, stableEffectiveSandbox)
 	}
 	// The successor inherits the posture, so it must also inherit the
@@ -453,7 +453,7 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 	// rotation restores the predecessor's previous policy and removes any newly
 	// materialized private directories.
 	persistedAgentID := ""
-	if effectiveSandbox != nil && !relaunch.TemporarySandboxMode {
+	if effectiveSandbox != nil && !relaunch.TemporaryHarnessBuiltinMode {
 		agentID, err := db.AgentIDForConv(target)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "io", "resolve target agent identity: "+err.Error())
@@ -477,7 +477,7 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 				slog.Warn("reincarnate: restore previous sandbox snapshot failed", "agent", persistedAgentID, "error", err)
 			}
 		}
-		if !relaunch.TemporarySandboxMode && removeUnusedDirs && relaunchPolicy != nil && relaunchPolicy.Previous != nil && effectiveSandbox != nil {
+		if !relaunch.TemporaryHarnessBuiltinMode && removeUnusedDirs && relaunchPolicy != nil && relaunchPolicy.Previous != nil && effectiveSandbox != nil {
 			if _, err := removeSupersededMaterializedAgentDirectories(*effectiveSandbox, *relaunchPolicy.Previous); err != nil {
 				slog.Warn("reincarnate: remove unused refreshed agent directories failed", "error", err)
 			}
@@ -493,7 +493,7 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 		Harness:                relaunch.Harness,
 		Sandbox:                reincarnateSandbox,
 		SandboxImplementation:  reincarnateSandboxImplementation,
-		SandboxChosenBy:        relaunch.SandboxModeSource,
+		SandboxChosenBy:        relaunch.HarnessBuiltinModeSource,
 		Approval:               approval,
 		ToolGovernance:         relaunch.ToolGovernance,
 		AutoReview:             autoReview,
@@ -902,7 +902,7 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 			clearFailedExitIntent(intentSet)
 		}
 	}
-	if !relaunch.TemporarySandboxMode && relaunchPolicy != nil && relaunchPolicy.Previous != nil && effectiveSandbox != nil {
+	if !relaunch.TemporaryHarnessBuiltinMode && relaunchPolicy != nil && relaunchPolicy.Previous != nil && effectiveSandbox != nil {
 		scheduleReincarnationDirectoryCleanup(target, newConv, *relaunchPolicy.Previous)
 	}
 

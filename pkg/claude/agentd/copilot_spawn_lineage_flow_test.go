@@ -60,7 +60,7 @@ func haveLineageParent(
 		Cwd:                   f.World.HomeDir,
 		Status:                "running",
 		Harness:               h,
-		SandboxMode:           sandbox,
+		HarnessBuiltinMode:    sandbox,
 		SandboxImplementation: implementation,
 		ApprovalPolicy:        approval,
 	}))
@@ -125,7 +125,7 @@ func TestCopilotLineage_AgentSpawnsProvenChildIntoVerifiedWorktree(t *testing.T)
 	row, err := db.FindSessionByConvID(resp.ConvID)
 	require.NoError(t, err)
 	require.NotNil(t, row)
-	assert.Equal(t, harness.CopilotSandboxOff, row.SandboxMode)
+	assert.Equal(t, harness.CopilotSandboxOff, row.HarnessBuiltinMode)
 	assert.Equal(t, provenCopilotImplementation, row.SandboxImplementation)
 
 	// The launch really went through tclaude's own wall, wrapping the pane
@@ -240,7 +240,7 @@ func TestCopilotLineage_ProvenParentOutboundMatrix(t *testing.T) {
 			row, err := db.FindSessionByConvID(resp.ConvID)
 			require.NoError(t, err)
 			require.NotNil(t, row)
-			assert.Equal(t, tc.wantMode, row.SandboxMode)
+			assert.Equal(t, tc.wantMode, row.HarnessBuiltinMode)
 		})
 	}
 }
@@ -517,7 +517,7 @@ func TestCopilotLineage_TemplatePathCarriesTheImplementation(t *testing.T) {
 	row, err := db.FindSessionByConvID(res.Agents[0].ConvID)
 	require.NoError(t, err)
 	require.NotNil(t, row)
-	assert.Equal(t, harness.CopilotSandboxOff, row.SandboxMode,
+	assert.Equal(t, harness.CopilotSandboxOff, row.HarnessBuiltinMode,
 		"the template path must persist the forced single-wall mode too")
 	assert.Equal(t, provenCopilotImplementation, row.SandboxImplementation)
 }

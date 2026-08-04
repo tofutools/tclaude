@@ -18,8 +18,8 @@ import (
 //
 // The "before" side is reproduced honestly, which means reproducing the whole
 // pre-PR path and not just the guard: handleGroupSpawn already ran
-// ResolveSandboxMode and then the resolver whose old body is today's
-// ResolveHarnessNativeSandboxMode BEFORE calling the guard. That resolver is
+// ResolveHarnessBuiltinMode and then the resolver whose old body is today's
+// ResolveNativeHarnessBuiltinMode BEFORE calling the guard. That resolver is
 // the identity for Claude and Codex, but NOT for OpenCode — an OpenCode child
 // requesting `access-control` under tclaude-layer reached the old guard already
 // spelled `tclaude-layer`. Judging the raw request string here would invent a
@@ -98,7 +98,7 @@ func preForcingTclaudeLayerChild(t *testing.T, harnessName, requested string) (s
 	t.Helper()
 	h, err := harness.Resolve(harnessName)
 	require.NoError(t, err)
-	native, err := harness.ResolveHarnessNativeSandboxMode(
+	native, err := harness.ResolveNativeHarnessBuiltinMode(
 		h, resolveSpawnBoundaryMode(t, h, requested),
 		sandboxpolicy.ImplementationTclaudeLayer)
 	if err != nil {
@@ -112,7 +112,7 @@ func preForcingTclaudeLayerChild(t *testing.T, harnessName, requested string) (s
 // actually becomes rather than as "nothing chosen".
 func resolveSpawnBoundaryMode(t *testing.T, h *harness.Harness, requested string) string {
 	t.Helper()
-	resolved, err := harness.ResolveSandboxMode(h, requested)
+	resolved, err := harness.ResolveHarnessBuiltinMode(h, requested)
 	require.NoError(t, err)
 	return resolved
 }

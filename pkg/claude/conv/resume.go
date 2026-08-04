@@ -294,7 +294,7 @@ func runResumeWithSession(rc *resolvedConv, attach bool, stdout, stderr *os.File
 	// A resume is a fresh launch: re-resolve whether the OS sandbox actually
 	// confines it rather than carrying the predecessor's verdict, because the
 	// operator may have changed settings.json since (TCL-729).
-	resumeMode := resumeSandboxMode(rc.ConvID)
+	resumeMode := resumeHarnessBuiltinMode(rc.ConvID)
 	resumeChosenBy := resumeSandboxChosenBy(rc.ConvID)
 	resumeImplementation, err := resumeSandboxImplementation(rc.ConvID)
 	if err != nil {
@@ -311,25 +311,25 @@ func runResumeWithSession(rc *resolvedConv, attach bool, stdout, stderr *os.File
 		)
 	}
 	state := &session.SessionState{
-		ID:                     sessionID,
-		TmuxSession:            tmuxSession,
-		PID:                    pid,
-		Cwd:                    rc.ProjectPath,
-		ConvID:                 rc.ConvID,
-		Status:                 session.StatusIdle,
-		Harness:                h.Name,
-		SandboxMode:            resumeMode,
-		SandboxImplementation:  string(resumeImplementation),
-		SandboxModeSource:      resumeChosenBy,
-		OSSandboxState:         launchOSSandbox.State,
-		OSSandboxSource:        launchOSSandbox.Source,
-		OSSandboxUnverified:    launchOSSandbox.Unverified,
-		EffectiveSandbox:       launchEffectiveSandbox,
-		ApprovalPolicy:         approvalPolicy,
-		ApprovalAutoReview:     autoReview,
-		AskUserQuestionTimeout: askTimeout,
-		Created:                time.Now(),
-		Updated:                time.Now(),
+		ID:                       sessionID,
+		TmuxSession:              tmuxSession,
+		PID:                      pid,
+		Cwd:                      rc.ProjectPath,
+		ConvID:                   rc.ConvID,
+		Status:                   session.StatusIdle,
+		Harness:                  h.Name,
+		HarnessBuiltinMode:       resumeMode,
+		SandboxImplementation:    string(resumeImplementation),
+		HarnessBuiltinModeSource: resumeChosenBy,
+		OSSandboxState:           launchOSSandbox.State,
+		OSSandboxSource:          launchOSSandbox.Source,
+		OSSandboxUnverified:      launchOSSandbox.Unverified,
+		EffectiveSandbox:         launchEffectiveSandbox,
+		ApprovalPolicy:           approvalPolicy,
+		ApprovalAutoReview:       autoReview,
+		AskUserQuestionTimeout:   askTimeout,
+		Created:                  time.Now(),
+		Updated:                  time.Now(),
 	}
 
 	if err := session.SaveSessionState(state); err != nil {

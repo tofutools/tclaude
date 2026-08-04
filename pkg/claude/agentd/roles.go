@@ -125,7 +125,7 @@ func buildRoleFromJSON(body roleJSON) (*db.Role, *spawnFailure) {
 	if err != nil {
 		return nil, &spawnFailure{http.StatusBadRequest, "invalid_effort", err.Error()}
 	}
-	sandbox, err := harness.ValidateSandboxMode(h, body.Sandbox)
+	sandbox, err := harness.ValidateHarnessBuiltinMode(h, body.Sandbox)
 	if err != nil {
 		return nil, &spawnFailure{http.StatusBadRequest, "invalid_sandbox", err.Error()}
 	}

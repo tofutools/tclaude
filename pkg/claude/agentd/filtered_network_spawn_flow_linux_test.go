@@ -23,19 +23,19 @@ import (
 func TestDefaultAllowDenySpawnSelectsFilteredNetworkPosture(t *testing.T) {
 	testharness.ClearModelTransportProxyEnv(t)
 	for _, tc := range []struct {
-		name        string
-		harnessName string
-		sandboxMode string
+		name               string
+		harnessName        string
+		harnessBuiltinMode string
 	}{
 		{
-			name:        "claude",
-			harnessName: harness.DefaultName,
-			sandboxMode: harness.ClaudeSandboxOff,
+			name:               "claude",
+			harnessName:        harness.DefaultName,
+			harnessBuiltinMode: harness.ClaudeSandboxOff,
 		},
 		{
-			name:        "codex",
-			harnessName: harness.CodexName,
-			sandboxMode: harness.SandboxReadOnly,
+			name:               "codex",
+			harnessName:        harness.CodexName,
+			harnessBuiltinMode: harness.SandboxReadOnly,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -89,7 +89,7 @@ func TestDefaultAllowDenySpawnSelectsFilteredNetworkPosture(t *testing.T) {
 				"cwd":                    t.TempDir(),
 				"name":                   tc.name + "-worker",
 				"harness":                tc.harnessName,
-				"sandbox":                tc.sandboxMode,
+				"sandbox":                tc.harnessBuiltinMode,
 				"sandbox_implementation": string(sandboxpolicy.ImplementationTclaudeLayer),
 				"sandbox_profile":        "default-allow-deny",
 			})
@@ -183,20 +183,20 @@ func TestOpenCodeDefaultAllowDenyRefusesWithoutExplicitProvider(t *testing.T) {
 func TestLocalAccessSpawnRefusesCloudModelWithoutExplicitEndpoint(t *testing.T) {
 	testharness.ClearModelTransportProxyEnv(t)
 	for _, tc := range []struct {
-		name        string
-		harnessName string
-		sandboxMode string
-		endpoint    string
+		name               string
+		harnessName        string
+		harnessBuiltinMode string
+		endpoint           string
 	}{
 		{
 			name: "claude", harnessName: harness.DefaultName,
-			sandboxMode: harness.ClaudeSandboxOff,
-			endpoint:    "api.anthropic.com:443",
+			harnessBuiltinMode: harness.ClaudeSandboxOff,
+			endpoint:           "api.anthropic.com:443",
 		},
 		{
 			name: "codex", harnessName: harness.CodexName,
-			sandboxMode: harness.SandboxReadOnly,
-			endpoint:    "api.openai.com:443",
+			harnessBuiltinMode: harness.SandboxReadOnly,
+			endpoint:           "api.openai.com:443",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -250,7 +250,7 @@ func TestLocalAccessSpawnRefusesCloudModelWithoutExplicitEndpoint(t *testing.T) 
 				"cwd":                    t.TempDir(),
 				"name":                   "worker",
 				"harness":                tc.harnessName,
-				"sandbox":                tc.sandboxMode,
+				"sandbox":                tc.harnessBuiltinMode,
 				"sandbox_implementation": string(sandboxpolicy.ImplementationTclaudeLayer),
 				"sandbox_profile":        "local-access",
 			})

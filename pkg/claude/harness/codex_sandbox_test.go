@@ -57,7 +57,7 @@ func TestOffSandboxImplementationOverridesInheritedHarnessMode(t *testing.T) {
 	}
 }
 
-func TestTclaudeLayerSandboxModeUsesHarnessCapability(t *testing.T) {
+func TestTclaudeLayerHarnessBuiltinModeUsesHarnessCapability(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		want string
@@ -71,17 +71,17 @@ func TestTclaudeLayerSandboxModeUsesHarnessCapability(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			got, err := TclaudeLayerSandboxMode(h)
+			got, err := TclaudeLayerHarnessBuiltinMode(h)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if got != tc.want {
-				t.Fatalf("TclaudeLayerSandboxMode(%s) = %q, want %q", tc.name, got, tc.want)
+				t.Fatalf("TclaudeLayerHarnessBuiltinMode(%s) = %q, want %q", tc.name, got, tc.want)
 			}
 		})
 	}
 
-	_, err := TclaudeLayerSandboxMode(&Harness{Name: "future"})
+	_, err := TclaudeLayerHarnessBuiltinMode(&Harness{Name: "future"})
 	if err == nil ||
 		!strings.Contains(err.Error(), "single-wall launch-mode capability") ||
 		!strings.Contains(err.Error(), "--sandbox-impl harness-builtin") {
@@ -155,11 +155,11 @@ func TestCodexSandbox_ValidateMode(t *testing.T) {
 	}
 }
 
-// TestResolveSandboxMode covers the single spawn-boundary entry point:
+// TestResolveHarnessBuiltinMode covers the single spawn-boundary entry point:
 // Codex defaults an empty request to the managed tclaude-agent profile and
 // validates an explicit one; a harness without a launch sandbox flag (Claude
 // Code) resolves empty to "" and rejects any explicit mode.
-func TestResolveSandboxMode(t *testing.T) {
+func TestResolveHarnessBuiltinMode(t *testing.T) {
 	codex, err := Resolve(CodexName)
 	if err != nil {
 		t.Fatalf("Resolve(codex): %v", err)
@@ -167,35 +167,35 @@ func TestResolveSandboxMode(t *testing.T) {
 	claude := Default()
 
 	// Codex: unset → secure default (the managed profile).
-	if got, err := ResolveSandboxMode(codex, ""); err != nil || got != SandboxManagedProfile {
-		t.Fatalf("ResolveSandboxMode(codex, \"\") = %q,%v; want %q,nil", got, err, SandboxManagedProfile)
+	if got, err := ResolveHarnessBuiltinMode(codex, ""); err != nil || got != SandboxManagedProfile {
+		t.Fatalf("ResolveHarnessBuiltinMode(codex, \"\") = %q,%v; want %q,nil", got, err, SandboxManagedProfile)
 	}
 	// Codex: explicit (incl. the opt-out) validated + passed through.
-	if got, err := ResolveSandboxMode(codex, SandboxDangerFull); err != nil || got != SandboxDangerFull {
-		t.Fatalf("ResolveSandboxMode(codex, danger) = %q,%v; want %q,nil", got, err, SandboxDangerFull)
+	if got, err := ResolveHarnessBuiltinMode(codex, SandboxDangerFull); err != nil || got != SandboxDangerFull {
+		t.Fatalf("ResolveHarnessBuiltinMode(codex, danger) = %q,%v; want %q,nil", got, err, SandboxDangerFull)
 	}
 	// Codex: junk → error.
-	if _, err := ResolveSandboxMode(codex, "nope"); err == nil {
-		t.Fatalf("ResolveSandboxMode(codex, nope) must error")
+	if _, err := ResolveHarnessBuiltinMode(codex, "nope"); err == nil {
+		t.Fatalf("ResolveHarnessBuiltinMode(codex, nope) must error")
 	}
 	// Claude: unset → the inherit default, carried as the first-class "inherit"
 	// (it emits no override; its sandbox is settings.json-driven).
-	if got, err := ResolveSandboxMode(claude, ""); err != nil || got != "inherit" {
-		t.Fatalf("ResolveSandboxMode(claude, \"\") = %q,%v; want \"inherit\",nil", got, err)
+	if got, err := ResolveHarnessBuiltinMode(claude, ""); err != nil || got != "inherit" {
+		t.Fatalf("ResolveHarnessBuiltinMode(claude, \"\") = %q,%v; want \"inherit\",nil", got, err)
 	}
 	// Claude: a Codex mode → error (workspace-write is not one of Claude's
 	// inherit/on/off values).
-	if _, err := ResolveSandboxMode(claude, SandboxWorkspaceWrite); err == nil {
-		t.Fatalf("ResolveSandboxMode(claude, workspace-write) must error — not a Claude sandbox mode")
+	if _, err := ResolveHarnessBuiltinMode(claude, SandboxWorkspaceWrite); err == nil {
+		t.Fatalf("ResolveHarnessBuiltinMode(claude, workspace-write) must error — not a Claude sandbox mode")
 	}
 }
 
-// TestValidateSandboxMode is the no-default variant the direct `session new`
+// TestValidateHarnessBuiltinMode is the no-default variant the direct `session new`
 // path uses: it must NOT inject the harness default (the human's own
 // session keeps their config.toml sandbox_mode unless they pass --sandbox),
 // but still validate an explicit value and reject a mode for a flagless
 // harness.
-func TestValidateSandboxMode(t *testing.T) {
+func TestValidateHarnessBuiltinMode(t *testing.T) {
 	codex, err := Resolve(CodexName)
 	if err != nil {
 		t.Fatalf("Resolve(codex): %v", err)
@@ -203,28 +203,28 @@ func TestValidateSandboxMode(t *testing.T) {
 	claude := Default()
 
 	// Codex: unset stays "" (NO default — the key difference from Resolve).
-	if got, err := ValidateSandboxMode(codex, ""); err != nil || got != "" {
-		t.Fatalf("ValidateSandboxMode(codex, \"\") = %q,%v; want \"\",nil (must not default)", got, err)
+	if got, err := ValidateHarnessBuiltinMode(codex, ""); err != nil || got != "" {
+		t.Fatalf("ValidateHarnessBuiltinMode(codex, \"\") = %q,%v; want \"\",nil (must not default)", got, err)
 	}
 	// Codex: explicit validated + passed through.
-	if got, err := ValidateSandboxMode(codex, SandboxReadOnly); err != nil || got != SandboxReadOnly {
-		t.Fatalf("ValidateSandboxMode(codex, read-only) = %q,%v; want %q,nil", got, err, SandboxReadOnly)
+	if got, err := ValidateHarnessBuiltinMode(codex, SandboxReadOnly); err != nil || got != SandboxReadOnly {
+		t.Fatalf("ValidateHarnessBuiltinMode(codex, read-only) = %q,%v; want %q,nil", got, err, SandboxReadOnly)
 	}
 	// Codex: the managed-profile pseudo-mode validates + passes through (the
 	// direct CLI later normalizes it to --permission-profile).
-	if got, err := ValidateSandboxMode(codex, SandboxManagedProfile); err != nil || got != SandboxManagedProfile {
-		t.Fatalf("ValidateSandboxMode(codex, %s) = %q,%v; want %q,nil", SandboxManagedProfile, got, err, SandboxManagedProfile)
+	if got, err := ValidateHarnessBuiltinMode(codex, SandboxManagedProfile); err != nil || got != SandboxManagedProfile {
+		t.Fatalf("ValidateHarnessBuiltinMode(codex, %s) = %q,%v; want %q,nil", SandboxManagedProfile, got, err, SandboxManagedProfile)
 	}
 	// Codex: junk → error.
-	if _, err := ValidateSandboxMode(codex, "nope"); err == nil {
-		t.Fatalf("ValidateSandboxMode(codex, nope) must error")
+	if _, err := ValidateHarnessBuiltinMode(codex, "nope"); err == nil {
+		t.Fatalf("ValidateHarnessBuiltinMode(codex, nope) must error")
 	}
 	// Claude: unset → ""; explicit → error.
-	if got, err := ValidateSandboxMode(claude, ""); err != nil || got != "" {
-		t.Fatalf("ValidateSandboxMode(claude, \"\") = %q,%v; want \"\",nil", got, err)
+	if got, err := ValidateHarnessBuiltinMode(claude, ""); err != nil || got != "" {
+		t.Fatalf("ValidateHarnessBuiltinMode(claude, \"\") = %q,%v; want \"\",nil", got, err)
 	}
-	if _, err := ValidateSandboxMode(claude, SandboxWorkspaceWrite); err == nil {
-		t.Fatalf("ValidateSandboxMode(claude, workspace-write) must error")
+	if _, err := ValidateHarnessBuiltinMode(claude, SandboxWorkspaceWrite); err == nil {
+		t.Fatalf("ValidateHarnessBuiltinMode(claude, workspace-write) must error")
 	}
 }
 
@@ -330,12 +330,12 @@ func TestCodexSpawner_SandboxFlag(t *testing.T) {
 		t.Fatalf("unset sandbox must omit --sandbox, got %q", got)
 	}
 	// Fresh spawn with a mode.
-	got := (codexSpawner{}).BuildCommand(SpawnSpec{SandboxMode: SandboxWorkspaceWrite})
+	got := (codexSpawner{}).BuildCommand(SpawnSpec{HarnessBuiltinMode: SandboxWorkspaceWrite})
 	if !strings.Contains(got, "--sandbox workspace-write") {
 		t.Fatalf("fresh spawn must emit `--sandbox workspace-write`, got %q", got)
 	}
 	// Resume with a mode (shared global flag).
-	gotR := (codexSpawner{}).BuildCommand(SpawnSpec{ResumeID: "abc-123", SandboxMode: SandboxDangerFull})
+	gotR := (codexSpawner{}).BuildCommand(SpawnSpec{ResumeID: "abc-123", HarnessBuiltinMode: SandboxDangerFull})
 	if !strings.Contains(gotR, "resume abc-123") || !strings.Contains(gotR, "--sandbox danger-full-access") {
 		t.Fatalf("resume must carry the resume subcommand + `--sandbox danger-full-access`, got %q", gotR)
 	}
@@ -343,7 +343,7 @@ func TestCodexSpawner_SandboxFlag(t *testing.T) {
 
 // TestCodexSpawner_PermissionProfileFlag verifies the JOH-207 launch surface:
 // a PermissionProfile is emitted as `-p <name>` (on fresh + resume), is
-// mutually exclusive with --sandbox (the profile wins so a stray SandboxMode
+// mutually exclusive with --sandbox (the profile wins so a stray HarnessBuiltinMode
 // can't silently void it — Codex ignores a profile when --sandbox is present),
 // and is omitted when unset.
 func TestCodexSpawner_PermissionProfileFlag(t *testing.T) {
@@ -365,7 +365,7 @@ func TestCodexSpawner_PermissionProfileFlag(t *testing.T) {
 		t.Fatalf("resume must carry the resume subcommand + `-p %s`, got %q", CodexAgentProfile, gotR)
 	}
 	// Mutual exclusion: profile wins, --sandbox is dropped even if both set.
-	gotBoth := (codexSpawner{}).BuildCommand(SpawnSpec{PermissionProfile: CodexAgentProfile, SandboxMode: SandboxWorkspaceWrite})
+	gotBoth := (codexSpawner{}).BuildCommand(SpawnSpec{PermissionProfile: CodexAgentProfile, HarnessBuiltinMode: SandboxWorkspaceWrite})
 	if strings.Contains(gotBoth, "--sandbox") {
 		t.Fatalf("profile+sandbox: --sandbox must be dropped (Codex would void the profile), got %q", gotBoth)
 	}

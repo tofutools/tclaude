@@ -135,30 +135,30 @@ func sandboxImplementationValidationStatus(err error) int {
 
 // resolveSandboxImplementationMode is the daemon's HARNESS-NATIVE resolution.
 // The spawn path's mode-keyed gates all ask what the harness's own sandbox is
-// set to, so they keep judging this value; resolveLaunchSandboxMode below is
+// set to, so they keep judging this value; resolveLaunchHarnessBuiltinMode below is
 // the separate question of what the launch records.
 func resolveSandboxImplementationMode(
 	h *harness.Harness,
 	mode, rawImplementation string,
 ) (string, *spawnFailure) {
-	return resolveSandboxModeFor(
-		harness.ResolveHarnessNativeSandboxMode, h, mode, rawImplementation)
+	return resolveHarnessBuiltinModeFor(
+		harness.ResolveNativeHarnessBuiltinMode, h, mode, rawImplementation)
 }
 
-// resolveLaunchSandboxMode is the mode the child will LAUNCH and PERSIST under
+// resolveLaunchHarnessBuiltinMode is the mode the child will LAUNCH and PERSIST under
 // — for a tclaude-layer child, the reviewed single-wall posture rather than the
 // requested harness-native one. The sandbox-lineage guard reads this so it
 // judges the same posture the session row will carry, instead of a requested
 // value the launch is about to replace (TCL-989).
-func resolveLaunchSandboxMode(
+func resolveLaunchHarnessBuiltinMode(
 	h *harness.Harness,
 	mode, rawImplementation string,
 ) (string, *spawnFailure) {
-	return resolveSandboxModeFor(
+	return resolveHarnessBuiltinModeFor(
 		harness.ResolveSandboxImplementationMode, h, mode, rawImplementation)
 }
 
-func resolveSandboxModeFor(
+func resolveHarnessBuiltinModeFor(
 	resolve func(*harness.Harness, string, sandboxpolicy.Implementation) (string, error),
 	h *harness.Harness,
 	mode, rawImplementation string,

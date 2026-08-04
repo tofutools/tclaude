@@ -119,13 +119,13 @@ func TestOpenCodeSandboxCatalog(t *testing.T) {
 	if help := h.Sandbox.ModeHelp(OpenCodeSandboxOff); !strings.Contains(help, "No directory scoping or OS containment") {
 		t.Fatalf("ModeHelp(%q) = %q, want explicit no-containment warning", OpenCodeSandboxOff, help)
 	}
-	if got, err := ResolveSandboxMode(h, ""); err != nil || got != OpenCodeSandboxAccessControl {
-		t.Fatalf("ResolveSandboxMode(opencode, blank) = %q, %v; want %q, nil", got, err, OpenCodeSandboxAccessControl)
+	if got, err := ResolveHarnessBuiltinMode(h, ""); err != nil || got != OpenCodeSandboxAccessControl {
+		t.Fatalf("ResolveHarnessBuiltinMode(opencode, blank) = %q, %v; want %q, nil", got, err, OpenCodeSandboxAccessControl)
 	}
-	if got, err := ValidateSandboxMode(h, OpenCodeSandboxOff); err != nil || got != OpenCodeSandboxOff {
-		t.Fatalf("ValidateSandboxMode(opencode, off) = %q, %v; want %q, nil", got, err, OpenCodeSandboxOff)
+	if got, err := ValidateHarnessBuiltinMode(h, OpenCodeSandboxOff); err != nil || got != OpenCodeSandboxOff {
+		t.Fatalf("ValidateHarnessBuiltinMode(opencode, off) = %q, %v; want %q, nil", got, err, OpenCodeSandboxOff)
 	}
-	if _, err := ValidateSandboxMode(h, SandboxWorkspaceWrite); err == nil {
+	if _, err := ValidateHarnessBuiltinMode(h, SandboxWorkspaceWrite); err == nil {
 		t.Fatal("OpenCode must reject sandbox modes it cannot enforce")
 	}
 	if got, err := ResolveApprovalPolicy(h, ""); err != nil || got != OpenCodeApprovalDeny {

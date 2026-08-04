@@ -105,36 +105,36 @@ func TestMigrateV57toV58_FreshSchemaRoundTrips(t *testing.T) {
 	require.NoError(t, SaveSession(&SessionRow{ID: "sess-1", TmuxSession: "t1", Status: "running"}))
 	got, err := LoadSession("sess-1")
 	require.NoError(t, err, "LoadSession")
-	assert.Equal(t, "", got.SandboxMode, "no-sandbox session round-trips as empty")
+	assert.Equal(t, "", got.HarnessBuiltinMode, "no-sandbox session round-trips as empty")
 
 	// An explicit sandbox mode round-trips verbatim — the path the daemon /
 	// `session new` Codex spawn uses.
-	require.NoError(t, SaveSession(&SessionRow{ID: "sess-2", TmuxSession: "t2", Status: "running", Harness: "codex", SandboxMode: "workspace-write"}))
+	require.NoError(t, SaveSession(&SessionRow{ID: "sess-2", TmuxSession: "t2", Status: "running", Harness: "codex", HarnessBuiltinMode: "workspace-write"}))
 	got2, err := LoadSession("sess-2")
 	require.NoError(t, err, "LoadSession codex")
-	assert.Equal(t, "workspace-write", got2.SandboxMode, "explicit sandbox mode round-trips")
+	assert.Equal(t, "workspace-write", got2.HarnessBuiltinMode, "explicit sandbox mode round-trips")
 	assert.Equal(t, "codex", got2.Harness, "harness still round-trips alongside")
 }
 
-// TestSaveSession_SandboxModeSurvivesLoadMutateSave is the durability guard
+// TestSaveSession_HarnessBuiltinModeSurvivesLoadMutateSave is the durability guard
 // for the sessions side: the sandbox mode set at spawn must survive the
 // load→mutate→save cycle the hook callback runs on every status tick (the
 // hook supplies no sandbox of its own, so the value rides through on the
 // loaded row — the same pattern harness relies on).
-func TestSaveSession_SandboxModeSurvivesLoadMutateSave(t *testing.T) {
+func TestSaveSession_HarnessBuiltinModeSurvivesLoadMutateSave(t *testing.T) {
 	setupTestDB(t)
 
-	require.NoError(t, SaveSession(&SessionRow{ID: "s1", ConvID: "c1", Status: "running", Harness: "codex", SandboxMode: "danger-full-access"}))
+	require.NoError(t, SaveSession(&SessionRow{ID: "s1", ConvID: "c1", Status: "running", Harness: "codex", HarnessBuiltinMode: "danger-full-access"}))
 
 	// Load → mutate → save, the hook-tick pattern.
 	got, err := LoadSession("s1")
 	require.NoError(t, err)
-	assert.Equal(t, "danger-full-access", got.SandboxMode, "load reads the sandbox mode back")
+	assert.Equal(t, "danger-full-access", got.HarnessBuiltinMode, "load reads the sandbox mode back")
 	got.Status = "idle"
 	require.NoError(t, SaveSession(got))
 
 	again, err := LoadSession("s1")
 	require.NoError(t, err)
-	assert.Equal(t, "danger-full-access", again.SandboxMode, "sandbox mode survives a load→mutate→save cycle")
+	assert.Equal(t, "danger-full-access", again.HarnessBuiltinMode, "sandbox mode survives a load→mutate→save cycle")
 	assert.Equal(t, "idle", again.Status)
 }

@@ -133,7 +133,7 @@ func TestCodexSpawner_ApprovalFlag(t *testing.T) {
 		t.Fatalf("fresh spawn must emit `--ask-for-approval never`, got %q", got)
 	}
 	// Resume with a policy (shared global flag), coexisting with --sandbox.
-	gotR := (codexSpawner{}).BuildCommand(SpawnSpec{ResumeID: "abc-123", SandboxMode: SandboxWorkspaceWrite, ApprovalPolicy: ApprovalNever})
+	gotR := (codexSpawner{}).BuildCommand(SpawnSpec{ResumeID: "abc-123", HarnessBuiltinMode: SandboxWorkspaceWrite, ApprovalPolicy: ApprovalNever})
 	if !strings.Contains(gotR, "resume abc-123") || !strings.Contains(gotR, "--ask-for-approval never") || !strings.Contains(gotR, "--sandbox workspace-write") {
 		t.Fatalf("resume must carry the resume subcommand + `--ask-for-approval never` + `--sandbox workspace-write`, got %q", gotR)
 	}

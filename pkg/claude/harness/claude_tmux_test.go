@@ -20,8 +20,8 @@ func TestPrepareClaudeSandboxLaunchDeniesOnlyTclaudeTmuxSocket(t *testing.T) {
 	claude := MustGet(DefaultName)
 	require.True(t, claude.SupportsHostControlSandbox())
 	spec, err := claude.PrepareHostControlSandboxLaunch(SpawnSpec{
-		SandboxMode:     ClaudeSandboxInherit,
-		SandboxDenyDirs: originalDenies,
+		HarnessBuiltinMode: ClaudeSandboxInherit,
+		SandboxDenyDirs:    originalDenies,
 	})
 	require.NoError(t, err)
 
@@ -53,7 +53,7 @@ func TestPrepareClaudeSandboxLaunchDeniesOnlyTclaudeTmuxSocket(t *testing.T) {
 
 func TestPrepareClaudeSandboxLaunchOffKeepsPrivateTmuxUsable(t *testing.T) {
 	t.Setenv("TMUX_TMPDIR", "relative-would-fail-resolution")
-	spec := SpawnSpec{SandboxMode: ClaudeSandboxOff, SandboxDenyDirs: []string{"/opt/secret"}}
+	spec := SpawnSpec{HarnessBuiltinMode: ClaudeSandboxOff, SandboxDenyDirs: []string{"/opt/secret"}}
 	got, err := PrepareClaudeSandboxLaunch(spec)
 	require.NoError(t, err)
 	assert.Equal(t, spec, got)
@@ -62,7 +62,7 @@ func TestPrepareClaudeSandboxLaunchOffKeepsPrivateTmuxUsable(t *testing.T) {
 
 func TestPrepareClaudeSandboxLaunchFailsClosedWhenSocketCannotResolve(t *testing.T) {
 	t.Setenv("TMUX_TMPDIR", "relative")
-	_, err := PrepareClaudeSandboxLaunch(SpawnSpec{SandboxMode: ClaudeSandboxOn})
+	_, err := PrepareClaudeSandboxLaunch(SpawnSpec{HarnessBuiltinMode: ClaudeSandboxOn})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "tmux socket deny path")
 }
@@ -73,7 +73,7 @@ func TestPrepareClaudeSandboxLaunchDoesNotDuplicateSocketDeny(t *testing.T) {
 	socketPath, err := ClaudeTmuxSocketDenyPath()
 	require.NoError(t, err)
 	spec, err := PrepareClaudeSandboxLaunch(SpawnSpec{
-		SandboxMode: ClaudeSandboxOn, SandboxDenyDirs: []string{socketPath},
+		HarnessBuiltinMode: ClaudeSandboxOn, SandboxDenyDirs: []string{socketPath},
 	})
 	require.NoError(t, err)
 	assert.Equal(t, []string{socketPath}, spec.SandboxDenyDirs)

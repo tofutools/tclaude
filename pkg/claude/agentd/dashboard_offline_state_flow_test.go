@@ -41,14 +41,14 @@ func TestDashboardSnapshot_OfflineAgentReportsExitedNotIdle(t *testing.T) {
 	// a cleanly-finished agent leaves behind — then kill its tmux
 	// session. Without the fix the snapshot would echo "idle".
 	require.NoError(t, db.SaveSession(&db.SessionRow{
-		ID:          "spwn-offl",
-		TmuxSession: "tmux-offl",
-		ConvID:      offlineConv,
-		Cwd:         f.TestCwd("offl"),
-		Status:      "idle",
-		LastHook:    time.Now(),
-		Harness:     "codex",
-		SandboxMode: "workspace-write",
+		ID:                 "spwn-offl",
+		TmuxSession:        "tmux-offl",
+		ConvID:             offlineConv,
+		Cwd:                f.TestCwd("offl"),
+		Status:             "idle",
+		LastHook:           time.Now(),
+		Harness:            "codex",
+		HarnessBuiltinMode: "workspace-write",
 	}), "freeze offline session status at idle")
 	require.NoError(t, db.UpdateSessionModel("spwn-offl", "gpt-5.6-sol"),
 		"record last-used model")
@@ -95,7 +95,7 @@ func TestDashboardSnapshot_OfflineAgentReportsExitedNotIdle(t *testing.T) {
 		"offline member keeps its last-used model")
 	assert.Equal(t, "high", off.State.EffortLevel,
 		"offline member keeps its last-used reasoning effort")
-	assert.Equal(t, "workspace-write", off.State.SandboxMode,
+	assert.Equal(t, "workspace-write", off.State.HarnessBuiltinMode,
 		"offline member keeps its last-used sandbox mode")
 	assert.Equal(t, 1.23, off.State.CostUSD,
 		"offline member keeps its last-used API cost")
@@ -110,7 +110,7 @@ func TestDashboardSnapshot_OfflineAgentReportsExitedNotIdle(t *testing.T) {
 	assert.Equal(t, "codex", offA.State.Harness, "Agents row keeps last-used harness")
 	assert.Equal(t, "gpt-5.6-sol", offA.State.Model, "Agents row keeps last-used model")
 	assert.Equal(t, "high", offA.State.EffortLevel, "Agents row keeps last-used effort")
-	assert.Equal(t, "workspace-write", offA.State.SandboxMode, "Agents row keeps last-used sandbox")
+	assert.Equal(t, "workspace-write", offA.State.HarnessBuiltinMode, "Agents row keeps last-used sandbox")
 	assert.Equal(t, 1.23, offA.State.CostUSD, "Agents row keeps last-used API cost")
 	assert.Equal(t, 0.45, offA.State.VirtualCostUSD, "Agents row keeps last-used what-if cost")
 

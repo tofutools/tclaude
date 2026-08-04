@@ -80,7 +80,7 @@ func TestHarnessForConv_DefaultsToClaude(t *testing.T) {
 
 func TestRelaunchSandboxUsesAuthoritativeSelectedSession(t *testing.T) {
 	mode, err := relaunchSandboxForSession(&db.SessionRow{
-		Harness: harness.DefaultName, SandboxMode: harness.ClaudeSandboxOn,
+		Harness: harness.DefaultName, HarnessBuiltinMode: harness.ClaudeSandboxOn,
 	})
 	require.NoError(t, err)
 	assert.Equal(t, harness.ClaudeSandboxOn, mode)
@@ -88,7 +88,7 @@ func TestRelaunchSandboxUsesAuthoritativeSelectedSession(t *testing.T) {
 	_, err = relaunchSandboxForSession(nil)
 	require.ErrorContains(t, err, "source session is missing")
 	_, err = relaunchSandboxForSession(&db.SessionRow{
-		Harness: harness.DefaultName, SandboxMode: "not-a-mode",
+		Harness: harness.DefaultName, HarnessBuiltinMode: "not-a-mode",
 	})
 	require.ErrorContains(t, err, "invalid recorded sandbox mode")
 

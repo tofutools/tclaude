@@ -479,7 +479,7 @@ func TestSandboxProfilesDisabledForExplicitNoContainmentModes(t *testing.T) {
 	require.False(t, sandboxProfilesDisabled(harness.OpenCodeName, ""))
 }
 
-func TestOpenCodeSandboxModeAndImplementationMustAgree(t *testing.T) {
+func TestOpenCodeHarnessBuiltinModeAndImplementationMustAgree(t *testing.T) {
 	require.Nil(t, sandboxProfileCapabilityFailure(
 		harness.OpenCodeName,
 		harness.OpenCodeSandboxTclaudeLayer,

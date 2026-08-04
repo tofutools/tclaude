@@ -49,11 +49,11 @@ func relaunchSandboxForProfile(profile *db.AgentRelaunchProfile, harnessName str
 	if profile == nil {
 		return "", fmt.Errorf("durable agent relaunch profile is missing")
 	}
-	if profile.SandboxMode == nil {
+	if profile.HarnessBuiltinMode == nil {
 		return "", fmt.Errorf("durable agent relaunch profile has unknown sandbox mode")
 	}
 	return relaunchSandboxForSession(&db.SessionRow{
-		Harness: harnessName, SandboxMode: *profile.SandboxMode,
+		Harness: harnessName, HarnessBuiltinMode: *profile.HarnessBuiltinMode,
 	})
 }
 
@@ -112,7 +112,7 @@ func relaunchSandboxForSession(row *db.SessionRow) (string, error) {
 		return "", fmt.Errorf("relaunch source session is missing")
 	}
 	harnessName := strings.TrimSpace(row.Harness)
-	recorded := strings.TrimSpace(row.SandboxMode)
+	recorded := strings.TrimSpace(row.HarnessBuiltinMode)
 	if recorded == "" {
 		// Legacy rows did not persist the field. Preserve the established Codex
 		// managed-profile/default behavior only for that explicit legacy case.

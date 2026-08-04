@@ -156,7 +156,7 @@ func TestOpenCodeOffParentIsDirWriteProofExempt(t *testing.T) {
 	const convID = "opencode-off-parent"
 	require.NoError(t, db.SaveSession(&db.SessionRow{
 		ID: "sess-opencode-off-parent", ConvID: convID, Cwd: t.TempDir(),
-		Harness: harness.OpenCodeName, SandboxMode: harness.OpenCodeSandboxOff,
+		Harness: harness.OpenCodeName, HarnessBuiltinMode: harness.OpenCodeSandboxOff,
 	}))
 	exempt, err := dirWriteProofCallerExempt(convID)
 	require.NoError(t, err)

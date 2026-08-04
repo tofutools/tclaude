@@ -266,7 +266,7 @@ func TestResumeLaunchCmd_CopilotDenyUnderTheImplicitTempGrant(t *testing.T) {
 			}
 			require.NoError(t, db.SaveSession(&db.SessionRow{
 				ID: "resume-copilot-temp", ConvID: resumeConvCopilot,
-				Harness: harness.CopilotName, SandboxMode: harness.CopilotSandboxOff,
+				Harness: harness.CopilotName, HarnessBuiltinMode: harness.CopilotSandboxOff,
 				SandboxImplementation: implementation,
 				ApprovalPolicy:        harness.CopilotApprovalAllowTools,
 			}))

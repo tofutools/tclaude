@@ -437,8 +437,8 @@ func claudeApprovalRunsCommandsUnattended(policy string) bool {
 // effective-posture probe — so all of them say the same sentence for the same
 // inputs.
 //
-// approvalPolicy and sandboxMode must be the FINAL resolved values — after
-// profile overlay and after ResolveApprovalPolicy / ResolveSandboxMode have
+// approvalPolicy and harnessBuiltinMode must be the FINAL resolved values — after
+// profile overlay and after ResolveApprovalPolicy / ResolveHarnessBuiltinMode have
 // applied harness defaults. Warning on a pre-default value would either miss
 // the default `auto` spawn (the case TCL-586 is about) or invent a warning for
 // a mode the operator never gets. cwd is the launch directory, used to find
@@ -447,20 +447,20 @@ func claudeApprovalRunsCommandsUnattended(policy string) bool {
 //
 // Only Claude Code can reach this state: Codex's spawn default is the managed
 // permission profile, so its autonomy and its sandbox are resolved together.
-func UnsandboxedAutonomyWarnings(h *Harness, approvalPolicy, sandboxMode, cwd string) []string {
+func UnsandboxedAutonomyWarnings(h *Harness, approvalPolicy, harnessBuiltinMode, cwd string) []string {
 	if h == nil || normalizeLineageHarness(h.Name) != DefaultName {
 		return nil
 	}
 	if !claudeApprovalRunsCommandsUnattended(approvalPolicy) {
 		return nil
 	}
-	resolution := ResolveClaudeSandboxEnabled(sandboxMode, cwd)
+	resolution := ResolveClaudeSandboxEnabled(harnessBuiltinMode, cwd)
 	if resolution.State.Active() {
 		// Still surface diagnostics: a higher-precedence file tclaude could not
 		// read is exactly the case where "you are sandboxed" may be wrong.
 		return resolution.Diagnostics
 	}
-	return append([]string{claudeUnsandboxedAutonomyMessage(approvalPolicy, sandboxMode, resolution)},
+	return append([]string{claudeUnsandboxedAutonomyMessage(approvalPolicy, harnessBuiltinMode, resolution)},
 		resolution.Diagnostics...)
 }
 

@@ -34,10 +34,10 @@ func TestBuildOpenCodePermissionRulesAccessControl(t *testing.T) {
 	protectedChild := filepath.Join(protected[0], "debug")
 
 	rules, err := BuildOpenCodePermissionRules(OpenCodePermissionSpec{
-		Cwd:            "/repo/service",
-		Worktree:       "/repo",
-		SandboxMode:    OpenCodeSandboxAccessControl,
-		ApprovalPolicy: OpenCodeApprovalAllowTools,
+		Cwd:                "/repo/service",
+		Worktree:           "/repo",
+		HarnessBuiltinMode: OpenCodeSandboxAccessControl,
+		ApprovalPolicy:     OpenCodeApprovalAllowTools,
 		// protectedChild is passed as both a read and a write grant on purpose:
 		// the assertions below claim the renderer SUPPRESSES a reopen beneath a
 		// protected root, and that claim is empty unless something asks for one.
@@ -116,11 +116,11 @@ func TestBuildOpenCodePermissionRulesApprovalAndNetworkMatrix(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			rules, err := BuildOpenCodePermissionRules(OpenCodePermissionSpec{
-				Cwd:            "/repo",
-				Worktree:       "/repo",
-				SandboxMode:    OpenCodeSandboxAccessControl,
-				ApprovalPolicy: tt.approval,
-				NetworkAccess:  tt.network,
+				Cwd:                "/repo",
+				Worktree:           "/repo",
+				HarnessBuiltinMode: OpenCodeSandboxAccessControl,
+				ApprovalPolicy:     tt.approval,
+				NetworkAccess:      tt.network,
 			})
 			require.NoError(t, err)
 			assert.Contains(t, rules, OpenCodePermissionRule{Permission: "edit", Pattern: "*", Action: tt.wantEdit})
@@ -135,11 +135,11 @@ func TestBuildOpenCodePermissionRulesToolGovernanceMatrix(t *testing.T) {
 	for _, action := range []string{OpenCodeToolsAllow, OpenCodeToolsAsk, OpenCodeToolsDeny} {
 		t.Run(action, func(t *testing.T) {
 			rules, err := BuildOpenCodePermissionRules(OpenCodePermissionSpec{
-				Cwd:            "/repo",
-				Worktree:       "/repo",
-				SandboxMode:    OpenCodeSandboxAccessControl,
-				ApprovalPolicy: OpenCodeApprovalDeny,
-				ToolGovernance: action,
+				Cwd:                "/repo",
+				Worktree:           "/repo",
+				HarnessBuiltinMode: OpenCodeSandboxAccessControl,
+				ApprovalPolicy:     OpenCodeApprovalDeny,
+				ToolGovernance:     action,
 			})
 			require.NoError(t, err)
 			for _, permission := range []string{"bash", "glob", "grep", "lsp", "task", "skill"} {
@@ -152,7 +152,7 @@ func TestBuildOpenCodePermissionRulesToolGovernanceMatrix(t *testing.T) {
 
 	rules, err := BuildOpenCodePermissionRules(OpenCodePermissionSpec{
 		Cwd: "/repo", Worktree: "/repo",
-		SandboxMode: OpenCodeSandboxAccessControl, ApprovalPolicy: OpenCodeApprovalDeny,
+		HarnessBuiltinMode: OpenCodeSandboxAccessControl, ApprovalPolicy: OpenCodeApprovalDeny,
 	})
 	require.NoError(t, err)
 	assert.Equal(t, OpenCodeToolsAllow, lastExactOpenCodeAction(rules, "bash", "*"),
@@ -181,11 +181,11 @@ func TestBuildOpenCodePermissionRulesToolDenyDoesNotChangeProtectedDisk(t *testi
 	} {
 		t.Run(approval, func(t *testing.T) {
 			rules, err := BuildOpenCodePermissionRules(OpenCodePermissionSpec{
-				Cwd:            "/repo",
-				Worktree:       "/repo",
-				SandboxMode:    OpenCodeSandboxAccessControl,
-				ApprovalPolicy: approval,
-				ToolGovernance: OpenCodeToolsDeny,
+				Cwd:                "/repo",
+				Worktree:           "/repo",
+				HarnessBuiltinMode: OpenCodeSandboxAccessControl,
+				ApprovalPolicy:     approval,
+				ToolGovernance:     OpenCodeToolsDeny,
 			})
 			require.NoError(t, err)
 
@@ -225,11 +225,11 @@ func TestBuildOpenCodePermissionRulesAllowsSkillRootsReadOnly(t *testing.T) {
 	} {
 		t.Run(approval, func(t *testing.T) {
 			rules, err := BuildOpenCodePermissionRules(OpenCodePermissionSpec{
-				Cwd:            worktree,
-				Worktree:       worktree,
-				SandboxMode:    OpenCodeSandboxAccessControl,
-				ApprovalPolicy: approval,
-				ToolGovernance: OpenCodeToolsAsk,
+				Cwd:                worktree,
+				Worktree:           worktree,
+				HarnessBuiltinMode: OpenCodeSandboxAccessControl,
+				ApprovalPolicy:     approval,
+				ToolGovernance:     OpenCodeToolsAsk,
 			})
 			require.NoError(t, err)
 
@@ -267,15 +267,15 @@ func TestBuildOpenCodePermissionRulesAllowsSkillRootsReadOnly(t *testing.T) {
 
 func TestBuildOpenCodePermissionRulesTclaudeLayerIsPermissiveInsideWall(t *testing.T) {
 	rules, err := BuildOpenCodePermissionRules(OpenCodePermissionSpec{
-		Cwd:            "/repo/service",
-		Worktree:       "/repo",
-		SandboxMode:    OpenCodeSandboxTclaudeLayer,
-		ApprovalPolicy: OpenCodeApprovalAllowTools,
-		ToolGovernance: OpenCodeToolsAsk,
-		ReadDirs:       []string{"/outside/read"},
-		WriteDirs:      []string{"/outside/write"},
-		DenyDirs:       []string{"/repo/service/secret"},
-		NetworkAccess:  sandboxpolicy.NetworkAccessInternet,
+		Cwd:                "/repo/service",
+		Worktree:           "/repo",
+		HarnessBuiltinMode: OpenCodeSandboxTclaudeLayer,
+		ApprovalPolicy:     OpenCodeApprovalAllowTools,
+		ToolGovernance:     OpenCodeToolsAsk,
+		ReadDirs:           []string{"/outside/read"},
+		WriteDirs:          []string{"/outside/write"},
+		DenyDirs:           []string{"/repo/service/secret"},
+		NetworkAccess:      sandboxpolicy.NetworkAccessInternet,
 	})
 	require.NoError(t, err)
 
@@ -298,11 +298,11 @@ func TestBuildOpenCodePermissionRulesTclaudeLayerIsPermissiveInsideWall(t *testi
 
 func TestBuildOpenCodePermissionRulesTclaudeLayerHonorsApproval(t *testing.T) {
 	rules, err := BuildOpenCodePermissionRules(OpenCodePermissionSpec{
-		Cwd:            "/repo",
-		Worktree:       "/repo",
-		SandboxMode:    OpenCodeSandboxTclaudeLayer,
-		ApprovalPolicy: OpenCodeApprovalAsk,
-		NetworkAccess:  sandboxpolicy.NetworkAccessInternet,
+		Cwd:                "/repo",
+		Worktree:           "/repo",
+		HarnessBuiltinMode: OpenCodeSandboxTclaudeLayer,
+		ApprovalPolicy:     OpenCodeApprovalAsk,
+		NetworkAccess:      sandboxpolicy.NetworkAccessInternet,
 	})
 	require.NoError(t, err)
 
@@ -322,12 +322,12 @@ func TestBuildOpenCodePermissionRulesOffStillAppliesApprovalAndToolGovernance(t 
 	} {
 		t.Run(governance, func(t *testing.T) {
 			rules, err := BuildOpenCodePermissionRules(OpenCodePermissionSpec{
-				Cwd:            "/repo",
-				Worktree:       "/repo",
-				SandboxMode:    OpenCodeSandboxOff,
-				ApprovalPolicy: OpenCodeApprovalAllowTools,
-				ToolGovernance: governance,
-				NetworkAccess:  sandboxpolicy.NetworkAccessInternet,
+				Cwd:                "/repo",
+				Worktree:           "/repo",
+				HarnessBuiltinMode: OpenCodeSandboxOff,
+				ApprovalPolicy:     OpenCodeApprovalAllowTools,
+				ToolGovernance:     governance,
+				NetworkAccess:      sandboxpolicy.NetworkAccessInternet,
 			})
 			require.NoError(t, err)
 
@@ -343,10 +343,10 @@ func TestBuildOpenCodePermissionRulesOffStillAppliesApprovalAndToolGovernance(t 
 
 func TestBuildOpenCodePermissionRulesUsesRootForNonGitWorktree(t *testing.T) {
 	rules, err := BuildOpenCodePermissionRules(OpenCodePermissionSpec{
-		Cwd:            "/home/operator/project",
-		Worktree:       "/",
-		SandboxMode:    OpenCodeSandboxAccessControl,
-		ApprovalPolicy: OpenCodeApprovalDeny,
+		Cwd:                "/home/operator/project",
+		Worktree:           "/",
+		HarnessBuiltinMode: OpenCodeSandboxAccessControl,
+		ApprovalPolicy:     OpenCodeApprovalDeny,
 	})
 	require.NoError(t, err)
 	assert.Contains(t, rules, OpenCodePermissionRule{
@@ -356,37 +356,37 @@ func TestBuildOpenCodePermissionRulesUsesRootForNonGitWorktree(t *testing.T) {
 
 func TestBuildOpenCodePermissionRulesRejectsUnrepresentableInputs(t *testing.T) {
 	_, err := BuildOpenCodePermissionRules(OpenCodePermissionSpec{
-		Cwd:            "/repo",
-		Worktree:       "/repo",
-		SandboxMode:    OpenCodeSandboxAccessControl,
-		ApprovalPolicy: OpenCodeApprovalDeny,
-		ReadBaseline:   "minimal",
+		Cwd:                "/repo",
+		Worktree:           "/repo",
+		HarnessBuiltinMode: OpenCodeSandboxAccessControl,
+		ApprovalPolicy:     OpenCodeApprovalDeny,
+		ReadBaseline:       "minimal",
 	})
 	require.ErrorContains(t, err, "legacy read baseline")
 
 	_, err = BuildOpenCodePermissionRules(OpenCodePermissionSpec{
-		Cwd:            "/repo",
-		Worktree:       "/repo",
-		SandboxMode:    OpenCodeSandboxAccessControl,
-		ApprovalPolicy: OpenCodeApprovalDeny,
-		ReadDirs:       []string{"/tmp/project*"},
+		Cwd:                "/repo",
+		Worktree:           "/repo",
+		HarnessBuiltinMode: OpenCodeSandboxAccessControl,
+		ApprovalPolicy:     OpenCodeApprovalDeny,
+		ReadDirs:           []string{"/tmp/project*"},
 	})
 	require.ErrorContains(t, err, "unrepresentable wildcard")
 
 	_, err = BuildOpenCodePermissionRules(OpenCodePermissionSpec{
-		Cwd:            "/repo",
-		Worktree:       "/repo",
-		SandboxMode:    OpenCodeSandboxAccessControl,
-		ApprovalPolicy: "",
+		Cwd:                "/repo",
+		Worktree:           "/repo",
+		HarnessBuiltinMode: OpenCodeSandboxAccessControl,
+		ApprovalPolicy:     "",
 	})
 	require.ErrorContains(t, err, "approval policy is required")
 
 	_, err = BuildOpenCodePermissionRules(OpenCodePermissionSpec{
-		Cwd:            "/repo",
-		Worktree:       "/repo",
-		SandboxMode:    OpenCodeSandboxAccessControl,
-		ApprovalPolicy: OpenCodeApprovalDeny,
-		ToolGovernance: "sometimes",
+		Cwd:                "/repo",
+		Worktree:           "/repo",
+		HarnessBuiltinMode: OpenCodeSandboxAccessControl,
+		ApprovalPolicy:     OpenCodeApprovalDeny,
+		ToolGovernance:     "sometimes",
 	})
 	require.ErrorContains(t, err, "tool-governance")
 }
@@ -395,11 +395,11 @@ func TestBuildOpenCodePermissionRulesRejectsWildcardMetacharactersInRoots(t *tes
 	for _, metachar := range []string{"*", "?", "[", "]", "{", "}", "!", `\`} {
 		t.Run(metachar, func(t *testing.T) {
 			_, err := BuildOpenCodePermissionRules(OpenCodePermissionSpec{
-				Cwd:            "/repo",
-				Worktree:       "/repo",
-				SandboxMode:    OpenCodeSandboxAccessControl,
-				ApprovalPolicy: OpenCodeApprovalDeny,
-				DenyDirs:       []string{"/repo/private" + metachar + "cache"},
+				Cwd:                "/repo",
+				Worktree:           "/repo",
+				HarnessBuiltinMode: OpenCodeSandboxAccessControl,
+				ApprovalPolicy:     OpenCodeApprovalDeny,
+				DenyDirs:           []string{"/repo/private" + metachar + "cache"},
 			})
 			require.ErrorContains(t, err, "unrepresentable wildcard metacharacter")
 		})
@@ -408,12 +408,12 @@ func TestBuildOpenCodePermissionRulesRejectsWildcardMetacharactersInRoots(t *tes
 
 func TestBuildOpenCodePermissionRulesReopensOrdinaryDenyBySpecificity(t *testing.T) {
 	rules, err := BuildOpenCodePermissionRules(OpenCodePermissionSpec{
-		Cwd:            "/project",
-		Worktree:       "/project",
-		SandboxMode:    OpenCodeSandboxAccessControl,
-		ApprovalPolicy: OpenCodeApprovalAsk,
-		ReadDirs:       []string{"/project/secret/public"},
-		DenyDirs:       []string{"/project/secret"},
+		Cwd:                "/project",
+		Worktree:           "/project",
+		HarnessBuiltinMode: OpenCodeSandboxAccessControl,
+		ApprovalPolicy:     OpenCodeApprovalAsk,
+		ReadDirs:           []string{"/project/secret/public"},
+		DenyDirs:           []string{"/project/secret"},
 	})
 	require.NoError(t, err)
 

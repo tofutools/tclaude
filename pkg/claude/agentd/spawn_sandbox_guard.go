@@ -131,7 +131,7 @@ func copilotLineageRemedy(parent, child spawnLineageSandbox) string {
 }
 
 func sandboxProfileCapabilityFailure(
-	harnessName, sandboxMode string,
+	harnessName, harnessBuiltinMode string,
 	snapshot *sandboxpolicy.Snapshot,
 	sandboxImplementation ...string,
 ) *spawnFailure {
@@ -147,8 +147,8 @@ func sandboxProfileCapabilityFailure(
 	if err != nil {
 		return &spawnFailure{http.StatusUnprocessableEntity, "invalid_harness", err.Error()}
 	}
-	if _, err := harness.ResolveHarnessNativeSandboxMode(
-		h, sandboxMode, implementation); err != nil {
+	if _, err := harness.ResolveNativeHarnessBuiltinMode(
+		h, harnessBuiltinMode, implementation); err != nil {
 		return &spawnFailure{http.StatusUnprocessableEntity, "invalid_sandbox", err.Error()}
 	}
 	if snapshot == nil {
@@ -183,7 +183,7 @@ func sandboxProfileCapabilityFailure(
 	// The shape is read from the LAUNCH filesystem rather than the raw effective
 	// set, so a deny/reopen pair that is inactive this launch (missing path) is
 	// judged exactly as it will be rendered.
-	if err := harness.ValidateSandboxReopenUnderDeny(harnessOrDefault(harnessName), sandboxMode, filesystem); err != nil {
+	if err := harness.ValidateSandboxReopenUnderDeny(harnessOrDefault(harnessName), harnessBuiltinMode, filesystem); err != nil {
 		return sandboxCapabilitySpawnFailure(err, harness.SandboxCapabilityReopenUnderDeny)
 	}
 	hasNetworkPolicy := snapshot.Effective.Network == nil &&
@@ -198,13 +198,13 @@ func sandboxProfileCapabilityFailure(
 			return &spawnFailure{http.StatusUnprocessableEntity, "unsupported_sandbox_profile_network",
 				"Claude launches cannot represent sandbox profile network access; use the Codex managed sandbox"}
 		}
-		if strings.TrimSpace(sandboxMode) != harness.ClaudeSandboxOn && filesystemHasDeny(filesystem) {
+		if strings.TrimSpace(harnessBuiltinMode) != harness.ClaudeSandboxOn && filesystemHasDeny(filesystem) {
 			return &spawnFailure{http.StatusUnprocessableEntity, "unsupported_sandbox_profile_filesystem",
-				fmt.Sprintf("Claude filesystem deny rules require sandbox %q; sandbox %q cannot guarantee enforcement", harness.ClaudeSandboxOn, sandboxMode)}
+				fmt.Sprintf("Claude filesystem deny rules require sandbox %q; sandbox %q cannot guarantee enforcement", harness.ClaudeSandboxOn, harnessBuiltinMode)}
 		}
 		return nil
 	case harness.CodexName:
-		if strings.TrimSpace(sandboxMode) == harness.SandboxManagedProfile {
+		if strings.TrimSpace(harnessBuiltinMode) == harness.SandboxManagedProfile {
 			if hasNetworkPolicy {
 				if err := harness.ValidateCodexAgentNetworkAccess(snapshot.Effective.NetworkAccess); err != nil {
 					return &spawnFailure{http.StatusUnprocessableEntity, "unsupported_sandbox_profile_network", err.Error()}
@@ -214,12 +214,12 @@ func sandboxProfileCapabilityFailure(
 		}
 		if hasNetworkPolicy {
 			return &spawnFailure{http.StatusUnprocessableEntity, "unsupported_sandbox_profile_network",
-				fmt.Sprintf("Codex network rules require sandbox %q; sandbox %q cannot represent them", harness.SandboxManagedProfile, sandboxMode)}
+				fmt.Sprintf("Codex network rules require sandbox %q; sandbox %q cannot represent them", harness.SandboxManagedProfile, harnessBuiltinMode)}
 		}
 		return &spawnFailure{http.StatusUnprocessableEntity, "unsupported_sandbox_profile_filesystem",
-			fmt.Sprintf("Codex filesystem rules require sandbox %q; sandbox %q cannot represent them", harness.SandboxManagedProfile, sandboxMode)}
+			fmt.Sprintf("Codex filesystem rules require sandbox %q; sandbox %q cannot represent them", harness.SandboxManagedProfile, harnessBuiltinMode)}
 	case harness.OpenCodeName:
-		if strings.TrimSpace(sandboxMode) == harness.OpenCodeSandboxAccessControl {
+		if strings.TrimSpace(harnessBuiltinMode) == harness.OpenCodeSandboxAccessControl {
 			// OpenCode represents these as ordered, per-session tool rules.
 			// NetworkAccess gates webfetch/websearch only; it is intentionally
 			// not described as process-level network isolation.
@@ -233,7 +233,7 @@ func sandboxProfileCapabilityFailure(
 		}
 		return &spawnFailure{http.StatusUnprocessableEntity, kind,
 			fmt.Sprintf("OpenCode sandbox %q cannot represent sandbox profile %s rules; use %q",
-				sandboxMode, detail, harness.OpenCodeSandboxAccessControl)}
+				harnessBuiltinMode, detail, harness.OpenCodeSandboxAccessControl)}
 	default:
 		return &spawnFailure{http.StatusUnprocessableEntity, "unsupported_sandbox_profile_filesystem",
 			fmt.Sprintf("harness %q cannot represent sandbox filesystem rules", harnessName)}
@@ -241,7 +241,7 @@ func sandboxProfileCapabilityFailure(
 }
 
 func planSandboxProfileAccessForLaunch(
-	harnessName, sandboxMode string,
+	harnessName, harnessBuiltinMode string,
 	snapshot *sandboxpolicy.Snapshot,
 	rawImplementation string,
 	modelContext session.ModelTransportLaunchContext,
@@ -313,7 +313,7 @@ func planSandboxProfileAccessForLaunch(
 		// "unconfigured" and blocks spawn/resume before the real launch can pick
 		// up an operator's settings change.
 		verdict = harness.ResolveLaunchOSSandbox(
-			h, sandboxMode, "", modelContext.Cwd)
+			h, harnessBuiltinMode, "", modelContext.Cwd)
 	}
 	if implementation.UsesTclaudeLayer() {
 		posture := sandboxpolicy.NetworkHostOpen
@@ -379,7 +379,7 @@ func planSandboxProfileAccessForLaunch(
 		}
 	}
 	caps, err := harness.ResolveAccessEnforcement(
-		h, implementation, axes, verdict, sandboxMode,
+		h, implementation, axes, verdict, harnessBuiltinMode,
 	)
 	if err != nil {
 		return nil, &spawnFailure{http.StatusUnprocessableEntity,
@@ -488,7 +488,7 @@ func planSandboxProfileAccessForLaunch(
 // harness-neutral opt-out and therefore omits every sandbox-profile tier,
 // including for OpenCode.
 func sandboxProfilesDisabled(
-	harnessName, sandboxMode string,
+	harnessName, harnessBuiltinMode string,
 	sandboxImplementation ...string,
 ) bool {
 	if len(sandboxImplementation) > 0 {
@@ -499,7 +499,7 @@ func sandboxProfilesDisabled(
 	}
 	switch harnessOrDefault(harnessName) {
 	case harness.CodexName:
-		return strings.TrimSpace(sandboxMode) == harness.SandboxDangerFull
+		return strings.TrimSpace(harnessBuiltinMode) == harness.SandboxDangerFull
 	default:
 		return false
 	}
@@ -573,10 +573,10 @@ func spawnLineageParentSandbox(convID string) (spawnLineageSandbox, error) {
 		}, nil
 	}
 	h := harnessOrDefault(row.Harness)
-	// The persisted column is still spelled `sandbox_mode`; the rename to
-	// harness-builtin vocabulary stops at this boundary (TCL-1023 tracks the
-	// column itself).
-	builtinMode := strings.TrimSpace(row.SandboxMode)
+	// row.HarnessBuiltinMode already carries the harness-builtin vocabulary; the
+	// column behind it is still spelled `sandbox_mode`, and that mapping is
+	// confined to pkg/claude/common/db (TCL-1023).
+	builtinMode := strings.TrimSpace(row.HarnessBuiltinMode)
 	if h == harness.DefaultName && builtinMode == "" {
 		// Old Claude rows and the test simulator used "" for "settings.json
 		// decides"; in the lineage matrix that is Claude's inherit sentinel.

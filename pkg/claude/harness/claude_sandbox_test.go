@@ -70,8 +70,8 @@ func TestClaudeSandbox_Catalog(t *testing.T) {
 // treat Claude's sandbox: SupportsSandbox is true, an explicit on/off
 // validates, blank resolves to the inherit default (now the first-class
 // "inherit", which emits no override), an explicit inherit is preserved, and an
-// invalid mode errors — the same entry points the daemon (ResolveSandboxMode)
-// and the direct CLI (ValidateSandboxMode) use.
+// invalid mode errors — the same entry points the daemon (ResolveHarnessBuiltinMode)
+// and the direct CLI (ValidateHarnessBuiltinMode) use.
 func TestClaudeSandbox_HarnessResolution(t *testing.T) {
 	h, err := Resolve(DefaultName)
 	if err != nil {
@@ -83,24 +83,24 @@ func TestClaudeSandbox_HarnessResolution(t *testing.T) {
 
 	// Daemon path: blank resolves to the inherit default, carried as the
 	// first-class "inherit" (it emits no sandbox override — see the spawner test).
-	if got, err := ResolveSandboxMode(h, ""); err != nil || got != "inherit" {
-		t.Fatalf("ResolveSandboxMode(claude, \"\") = (%q, %v), want (inherit, nil)", got, err)
+	if got, err := ResolveHarnessBuiltinMode(h, ""); err != nil || got != "inherit" {
+		t.Fatalf("ResolveHarnessBuiltinMode(claude, \"\") = (%q, %v), want (inherit, nil)", got, err)
 	}
 	// An explicit inherit is preserved verbatim (not overwritten by an overlay).
-	if got, err := ResolveSandboxMode(h, "inherit"); err != nil || got != "inherit" {
-		t.Fatalf("ResolveSandboxMode(claude, inherit) = (%q, %v), want (inherit, nil)", got, err)
+	if got, err := ResolveHarnessBuiltinMode(h, "inherit"); err != nil || got != "inherit" {
+		t.Fatalf("ResolveHarnessBuiltinMode(claude, inherit) = (%q, %v), want (inherit, nil)", got, err)
 	}
-	if got, err := ResolveSandboxMode(h, "on"); err != nil || got != "on" {
-		t.Fatalf("ResolveSandboxMode(claude, on) = (%q, %v), want (on, nil)", got, err)
+	if got, err := ResolveHarnessBuiltinMode(h, "on"); err != nil || got != "on" {
+		t.Fatalf("ResolveHarnessBuiltinMode(claude, on) = (%q, %v), want (on, nil)", got, err)
 	}
 	// Direct CLI path: same validation, no defaulting — blank stays "" (omitted).
-	if got, err := ValidateSandboxMode(h, ""); err != nil || got != "" {
-		t.Fatalf("ValidateSandboxMode(claude, \"\") = (%q, %v), want (\"\", nil)", got, err)
+	if got, err := ValidateHarnessBuiltinMode(h, ""); err != nil || got != "" {
+		t.Fatalf("ValidateHarnessBuiltinMode(claude, \"\") = (%q, %v), want (\"\", nil)", got, err)
 	}
-	if got, err := ValidateSandboxMode(h, "off"); err != nil || got != "off" {
-		t.Fatalf("ValidateSandboxMode(claude, off) = (%q, %v), want (off, nil)", got, err)
+	if got, err := ValidateHarnessBuiltinMode(h, "off"); err != nil || got != "off" {
+		t.Fatalf("ValidateHarnessBuiltinMode(claude, off) = (%q, %v), want (off, nil)", got, err)
 	}
-	if _, err := ValidateSandboxMode(h, "danger-full-access"); err == nil {
+	if _, err := ValidateHarnessBuiltinMode(h, "danger-full-access"); err == nil {
 		t.Fatal("a Codex sandbox mode must be rejected for claude")
 	}
 }
@@ -111,7 +111,7 @@ func TestClaudeSandbox_HarnessResolution(t *testing.T) {
 // operator's own settings.json.
 func TestClaudeSpawner_Sandbox(t *testing.T) {
 	spawn := func(mode string) string {
-		return claudeSpawner{}.BuildCommand(SpawnSpec{SandboxMode: mode})
+		return claudeSpawner{}.BuildCommand(SpawnSpec{HarnessBuiltinMode: mode})
 	}
 
 	// inherit / unset → no --settings anywhere.
@@ -204,7 +204,7 @@ func TestClaudeSandboxOnBlock_MatchesHardening(t *testing.T) {
 func TestClaudeSettingsGitWorktreeWriteDirs(t *testing.T) {
 	dirs := []string{"/home/dev/git", "/home/dev/git/project", "/home/dev/git/project/.git"}
 	for _, mode := range []string{ClaudeSandboxInherit, ClaudeSandboxOn} {
-		payload := claudeSettingsJSON(SpawnSpec{SandboxMode: mode, SandboxWriteDirs: dirs})
+		payload := claudeSettingsJSON(SpawnSpec{HarnessBuiltinMode: mode, SandboxWriteDirs: dirs})
 		var settings map[string]any
 		if err := json.Unmarshal([]byte(payload), &settings); err != nil {
 			t.Fatalf("mode %s payload is invalid JSON: %v", mode, err)
@@ -227,17 +227,17 @@ func TestClaudeSettingsGitWorktreeWriteDirs(t *testing.T) {
 		}
 	}
 
-	if got := claudeSettingsJSON(SpawnSpec{SandboxMode: ClaudeSandboxOff, SandboxWriteDirs: dirs}); got != `{"sandbox":{"enabled":false}}` {
+	if got := claudeSettingsJSON(SpawnSpec{HarnessBuiltinMode: ClaudeSandboxOff, SandboxWriteDirs: dirs}); got != `{"sandbox":{"enabled":false}}` {
 		t.Fatalf("off must not carry irrelevant write grants, got %s", got)
 	}
 }
 
 func TestClaudeSettingsSandboxProfileFilesystemRules(t *testing.T) {
 	payload := claudeSettingsJSON(SpawnSpec{
-		SandboxMode:      ClaudeSandboxOn,
-		SandboxReadDirs:  []string{"/opt/read"},
-		SandboxWriteDirs: []string{"/opt/write"},
-		SandboxDenyDirs:  []string{"/opt/secret"},
+		HarnessBuiltinMode: ClaudeSandboxOn,
+		SandboxReadDirs:    []string{"/opt/read"},
+		SandboxWriteDirs:   []string{"/opt/write"},
+		SandboxDenyDirs:    []string{"/opt/secret"},
 	})
 	var settings map[string]any
 	if err := json.Unmarshal([]byte(payload), &settings); err != nil {
@@ -261,7 +261,7 @@ func TestClaudeSettingsSandboxProfileFilesystemRules(t *testing.T) {
 func TestClaudeSettingsKeepsMissingSandboxProfilePath(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "future", "cache")
 	payload := claudeSettingsJSON(SpawnSpec{
-		SandboxMode: ClaudeSandboxOn, SandboxWriteDirs: []string{missing},
+		HarnessBuiltinMode: ClaudeSandboxOn, SandboxWriteDirs: []string{missing},
 	})
 	if !strings.Contains(payload, missing) {
 		t.Fatalf("Claude settings dropped missing sandbox path %q: %s", missing, payload)

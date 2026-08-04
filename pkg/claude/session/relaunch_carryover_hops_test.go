@@ -39,7 +39,7 @@ func resumeHop(t *testing.T, convID, cwd string, hop int) *NewParams {
 	require.NoError(t, err)
 	askTimeout, err := harness.ResolveAskTimeoutMode(h, params.AskUserQuestionTimeout)
 	require.NoError(t, err)
-	sandboxMode, err := harness.ValidateSandboxMode(h, params.Sandbox)
+	harnessBuiltinMode, err := harness.ValidateHarnessBuiltinMode(h, params.Sandbox)
 	require.NoError(t, err)
 	remoteControl, err := harness.ResolveRemoteControl(h, params.RemoteControl)
 	require.NoError(t, err)
@@ -47,7 +47,7 @@ func resumeHop(t *testing.T, convID, cwd string, hop int) *NewParams {
 	created := time.Now().Add(time.Duration(hop) * time.Minute)
 	require.NoError(t, db.SaveSession(&db.SessionRow{
 		ID: convID, ConvID: convID, Cwd: cwd, Status: "idle", Harness: h.Name,
-		SandboxMode: sandboxMode, SandboxImplementation: params.SandboxImpl,
+		HarnessBuiltinMode: harnessBuiltinMode, SandboxImplementation: params.SandboxImpl,
 		AskUserQuestionTimeout: askTimeout,
 		ApprovalPolicy:         harness.ClaudePermissionInherit,
 		CreatedAt:              created, UpdatedAt: created,

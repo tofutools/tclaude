@@ -65,7 +65,7 @@ func TestSpawnSandboxLineage_TclaudeLayerChildKeepsItsConfinementClass(t *testin
 			row, err := db.FindSessionByConvID(resp.ConvID)
 			require.NoError(t, err)
 			require.NotNil(t, row, "the spawn must have written a session row")
-			assert.Equal(t, tc.wantMode, row.SandboxMode,
+			assert.Equal(t, tc.wantMode, row.HarnessBuiltinMode,
 				"the simulator must persist the mode the implementation launches under")
 			assert.Equal(t, string(sandboxpolicy.ImplementationTclaudeLayer),
 				row.SandboxImplementation,
@@ -135,7 +135,7 @@ func TestSpawnSandboxLineage_TemplateCarriesTclaudeLayerImplementation(t *testin
 	row, err := db.FindSessionByConvID(res.Agents[0].ConvID)
 	require.NoError(t, err)
 	require.NotNil(t, row)
-	assert.Equal(t, harness.ClaudeSandboxOff, row.SandboxMode,
+	assert.Equal(t, harness.ClaudeSandboxOff, row.HarnessBuiltinMode,
 		"the template path must persist the forced single-wall mode too")
 	assert.Equal(t, string(sandboxpolicy.ImplementationTclaudeLayer), row.SandboxImplementation)
 }
