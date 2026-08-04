@@ -1,6 +1,7 @@
 package agentd_test
 
 import (
+	"os"
 	"sync"
 	"syscall"
 	"testing"
@@ -11,6 +12,29 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
+
+// The fixture must never let a scenario signal a real process group.
+//
+// The ladder's last two rungs are kill(-pgid, SIGTERM) then SIGKILL against
+// the pane process. Only tmux kill-pane is simulated; the signals were the
+// real syscalls in any scenario that did not opt out, and the simulator handed
+// its first session pane pid 1 — whose group spelling, kill(-1, …), is the
+// kernel's wildcard for every process the caller may signal. A scenario that
+// reached that rung killed the test binary, its `go test` parent, and on a
+// developer's or agent's machine the shell and harness around them. It left no
+// failure and no stack, so it read as infrastructure trouble rather than as a
+// test doing it (TCL-1035).
+//
+// newFlow now installs a neutral pair, and this pins that it still does: with
+// the production predicate the assertion below reads TRUE for this very
+// process, so deleting the default fails here instead of somewhere silent.
+func TestFlowFixture_NeutralizesEscalationProcessRungs(t *testing.T) {
+	newFlow(t)
+	assert.False(t, agentd.LifecycleProcessAliveForTest(os.Getpid()),
+		"newFlow must neutralize the escalation ladder's process rungs: this pid is "+
+			"certainly alive, so a true here means the production predicate is installed "+
+			"and some scenario can reach kill(-pgid, ...) for real")
+}
 
 // Flow coverage for the soft-exit escalation ladder (TCL-1001).
 //

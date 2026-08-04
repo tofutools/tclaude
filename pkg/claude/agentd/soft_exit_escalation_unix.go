@@ -39,6 +39,27 @@ var signalLifecycleProcessGroup = func(pid int, sig syscall.Signal) error {
 	if pgid == syscall.Getpgrp() {
 		return fmt.Errorf("refusing to signal the daemon's own process group (pgid %d)", pgid)
 	}
+	// The second instance of the same guard, for a case that is worse.
+	//
+	// kill(2) reads a negative pid as a group, and two spellings are not group
+	// sends at all: -1 means EVERY process the caller may signal, and -0 means
+	// the caller's own group. So a pane process whose group resolved to 1 would
+	// make this ladder SIGKILL the user's whole session, and one that resolved
+	// to 0 would make it kill the daemon's group by another route.
+	//
+	// I cannot demonstrate either happening in production, and this is not a
+	// claim that they do — tmux gives every pane its own session and group,
+	// which should keep both unreachable. It is guarded for the same reason the
+	// line above it is: the cost of the guard is a logged refusal, no
+	// legitimate call is ever spelled this way, and the cost of being wrong is
+	// every process the user owns.
+	//
+	// Tests can no longer produce it — the flow fixture neutralizes these rungs
+	// by default (TCL-1035) — which removes the only party that was ever
+	// observed doing it, not the exposure itself.
+	if pgid <= 1 {
+		return fmt.Errorf("refusing to signal process group %d: not a pane's group", pgid)
+	}
 	return syscall.Kill(-pgid, sig)
 }
 

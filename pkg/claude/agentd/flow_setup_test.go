@@ -2,6 +2,7 @@ package agentd_test
 
 import (
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -90,6 +91,30 @@ func newFlow(t *testing.T) *testharness.Flow {
 	// the scenarios that DO wedge a pane from paying production seconds.
 	t.Cleanup(agentd.SetSoftExitEscalationTimingForTest(
 		20*time.Millisecond, 10*time.Millisecond, time.Millisecond))
+	// NEUTRALIZE THE ESCALATION LADDER'S TWO OS-PROCESS RUNGS. This one is a
+	// safety default, not a speed shrink.
+	//
+	// The ladder is tmux kill-pane, then SIGTERM to the pane process GROUP,
+	// then SIGKILL. Only the first is simulated; the other two were the real
+	// syscalls in every scenario that did not opt out. The simulator hands its
+	// first session pane pid 1, so a scenario that let the ladder past
+	// kill-pane resolved pgid 1 and called kill(-1, …) — and -1 is not "an
+	// unlikely pid", it is the kernel's wildcard for every process the caller
+	// may signal. That kills the test binary, the `go test` parent, and on a
+	// developer's or agent's machine their shell and harness (TCL-1035).
+	//
+	// Worse than the blast radius: a SIGTERMed process writes no failure and
+	// no stack, so the whole event reads as infrastructure trouble rather than
+	// as a test doing it.
+	//
+	// alive=false stands the ladder down after kill-pane, so a scenario that
+	// does not opt in cannot reach the signal rungs at all. The scenarios that
+	// DO exercise them install their own pair after this one and assert on it;
+	// their cleanup restores this neutral pair, then ours restores production.
+	t.Cleanup(agentd.SetSoftExitEscalationProcessForTest(
+		func(int) bool { return false },
+		func(int, syscall.Signal) error { return nil },
+	))
 	// Neutralize the post-focus auto-tiling pass by default: a bulk focus
 	// now runs a tiling gate, and no flow test should read the developer's
 	// real config.json or move a real OS window as a side effect of one.

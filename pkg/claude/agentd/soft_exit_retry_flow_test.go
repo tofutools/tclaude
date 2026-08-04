@@ -2,7 +2,6 @@ package agentd_test
 
 import (
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 
@@ -449,16 +448,6 @@ func TestSoftExit_SelectedPaneSwapSendsZeroBytesToSuccessor(t *testing.T) {
 }
 
 func TestSoftExit_InitialProbeUnknownPreservesDeliveryWithoutRetry(t *testing.T) {
-	// The escalation ladder's LAST TWO RUNGS SIGNAL A REAL PROCESS GROUP, and
-	// newFlow does not neutralize them. The simulator reports pane_pid=1, so a
-	// scenario that lets the ladder past tmux kill-pane sends SIGTERM to
-	// process group 1 — killing the test binary and everything else the run
-	// owns. Parking the watchdog makes this reachable here, so the seam that
-	// exists for it goes in FIRST, before newFlow, per its own doc.
-	t.Cleanup(agentd.SetSoftExitEscalationProcessForTest(
-		func(int) bool { return false },
-		func(int, syscall.Signal) error { return nil },
-	))
 	f := newFlow(t)
 	t.Cleanup(agentd.SetSoftExitRetryDelayForTest(10 * time.Millisecond))
 	const conv = "sxjf-1111-2222-3333-4444"
@@ -496,16 +485,6 @@ func TestSoftExit_InitialProbeUnknownPreservesDeliveryWithoutRetry(t *testing.T)
 }
 
 func TestSoftExit_PreSendUnknownSendsZeroAndErrors(t *testing.T) {
-	// The escalation ladder's LAST TWO RUNGS SIGNAL A REAL PROCESS GROUP, and
-	// newFlow does not neutralize them. The simulator reports pane_pid=1, so a
-	// scenario that lets the ladder past tmux kill-pane sends SIGTERM to
-	// process group 1 — killing the test binary and everything else the run
-	// owns. Parking the watchdog makes this reachable here, so the seam that
-	// exists for it goes in FIRST, before newFlow, per its own doc.
-	t.Cleanup(agentd.SetSoftExitEscalationProcessForTest(
-		func(int) bool { return false },
-		func(int, syscall.Signal) error { return nil },
-	))
 	f := newFlow(t)
 	const conv = "sxjg-1111-2222-3333-4444"
 	const tmuxSes = "tmux-sxjg"

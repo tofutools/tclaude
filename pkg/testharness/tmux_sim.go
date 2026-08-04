@@ -118,6 +118,10 @@ type TmuxSim struct {
 	// pid). Re-registering the same name — the test stand-in for a resume
 	// reusing a conv-id-derived tmux name — therefore yields a DIFFERENT pid,
 	// which is exactly what the soft-exit retry's livePanePID guard keys on.
+	//
+	// It is a sequence number: the pane ID is "%<n>" and the pane PID is
+	// fakePaneBasePID + n, so pane-id spellings stay small and readable while
+	// no session is ever handed pid 1. See fakePaneBasePID.
 	nextPID int
 	// clients maps simulated client ttys to their attached sessions. Most
 	// flows have none; lifecycle handoff tests opt in through AttachClient.
@@ -152,6 +156,23 @@ type tmuxSession struct {
 	// untestable — against a simulator where a tmux kill always works.
 	killResistant bool
 }
+
+// fakePaneBasePID keeps the sim's fake pane pids away from real, meaningful
+// ones — and away from 1 in particular.
+//
+// Production's escalation ladder signals the pane process's GROUP:
+// kill(-pgid, sig). A pane pid of 1 resolves to pgid 1, and kill(-1, …) is not
+// "an unlikely target", it is the kernel's wildcard for every process the
+// caller may signal. The sim used to number from 1, so the first session in
+// every scenario carried the one pid whose group spelling is catastrophic
+// (TCL-1035). The flow fixture now neutralizes the signal rungs by default,
+// which is the actual fix; this is defence in depth for the same failure, and
+// it costs nothing because no assertion reads these values — scenarios that
+// care set their own via SetPaneIdentityForTest.
+//
+// Pane IDs are deliberately NOT rebased: they stay %1, %2, … so nothing that
+// reads a pane-id spelling changes.
+const fakePaneBasePID = 100000
 
 func newTmuxSim() *TmuxSim {
 	return &TmuxSim{
@@ -856,7 +877,7 @@ func (t *TmuxSim) Register(name, cwd string, pane PaneSim) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.nextPID++
-	t.sessions[name] = &tmuxSession{name: name, cwd: cwd, pane: pane, paneID: "%" + strconv.Itoa(t.nextPID), panePID: t.nextPID}
+	t.sessions[name] = &tmuxSession{name: name, cwd: cwd, pane: pane, paneID: "%" + strconv.Itoa(t.nextPID), panePID: fakePaneBasePID + t.nextPID}
 }
 
 // MarkAlive registers a session without an attached pane sim. Used for
@@ -868,7 +889,7 @@ func (t *TmuxSim) MarkAlive(name string) {
 	defer t.mu.Unlock()
 	if _, ok := t.sessions[name]; !ok {
 		t.nextPID++
-		t.sessions[name] = &tmuxSession{name: name, paneID: "%" + strconv.Itoa(t.nextPID), panePID: t.nextPID}
+		t.sessions[name] = &tmuxSession{name: name, paneID: "%" + strconv.Itoa(t.nextPID), panePID: fakePaneBasePID + t.nextPID}
 	}
 }
 

@@ -542,18 +542,19 @@ func TestRetire_DeleteWorktreeEscalatesPastAgentThatIgnoresExit(t *testing.T) {
 func TestRetire_DeleteWorktreeUnkillableAgentPostsKeptNotice(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 	t.Cleanup(agentd.SetRetireWorktreeGraceForTest(300 * time.Millisecond))
+	f := newFlow(t)
 	// Nothing the daemon does can end this process: the signals are delivered
 	// to a stub that keeps reporting the pid alive.
 	//
-	// Installed BEFORE newFlow deliberately. Cleanups run LIFO, so this restore
-	// runs after newFlow's background drain — which is what keeps it from
-	// racing the ladder goroutine that reads these hooks. A site installing
-	// them after newFlow needs cleanupAfterBackgroundDrain instead.
-	t.Cleanup(agentd.SetSoftExitEscalationProcessForTest(
+	// Installed AFTER newFlow, which now installs a neutral pair by default
+	// (TCL-1035) — installing before it would be silently overwritten and this
+	// scenario would stop reaching the signal rungs it exists for.
+	// cleanupAfterBackgroundDrain is what keeps the restore from racing the
+	// ladder goroutine that reads these hooks.
+	cleanupAfterBackgroundDrain(t, agentd.SetSoftExitEscalationProcessForTest(
 		func(int) bool { return true },
 		func(int, syscall.Signal) error { return nil },
 	))
-	f := newFlow(t)
 
 	const conv = "rwhu-1111-2222-3333-4444"
 	cwd := f.TestCwd("rw-unkillable")
