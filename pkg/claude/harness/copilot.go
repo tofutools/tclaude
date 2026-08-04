@@ -24,10 +24,11 @@ const CopilotName = "copilot"
 // a launch-time name, an initial submitted prompt, and three in-pane control
 // commands — plus, since TCL-972, hooks and, since TCL-976, a cold ConvStore,
 // both of which the fixture lab promoted from "undocumented" to "observed from
-// the real binary", and — since TCL-973 — directory trust, promoted on the same
-// terms from a real-pty measurement of the startup modal. Approval,
-// ToolGovernance and Ask are still left nil for a later, fixture-backed wave
-// (TCL-965 phases 2-5).
+// the real binary" — plus, since TCL-978, Sandbox and ModelTransport, and,
+// since TCL-973, directory trust and the approval catalog, both promoted on the
+// same terms from real-pty measurements: the startup trust modal and the
+// permission matrix. ToolGovernance and Ask are still left nil for a later,
+// fixture-backed wave (TCL-965 phases 2-5).
 func init() {
 	Register(&Harness{
 		Name:        CopilotName,
@@ -92,10 +93,28 @@ func init() {
 		// config.json, which is the ONLY input measured to clear the modal
 		// short of COPILOT_ALLOW_ALL=true (a blanket tool/path/URL promotion
 		// tclaude will not make on an operator's behalf). No launch flag
-		// clears it. Everything still nil below stays nil: ApprovalCatalog
-		// and Ask remain unwired, so this changes what a spawn can START, not
-		// what it is allowed to DO once running.
+		// clears it. What this flag governs is what a spawn can START; what it
+		// is then allowed to DO is the separate approval axis below, and Ask
+		// remains unwired either way.
 		DirTrust: true,
+
+		// TCL-973's other half, and the other side of that START/DO split.
+		// Promoted on the same evidence terms: every flag the catalog
+		// renders was measured against the pinned 1.0.77 binary, and
+		// the plan's proposed default is not in it — `--deny-tool 'url()'` was
+		// DISPROVEN (rejected at parse, exit 1). Two tokens only, `inherit` and
+		// `allow-tools`; see copilot_approval.go for what each one closes and,
+		// more importantly, what it does not.
+		//
+		// Ask, AskTimeout, ToolGovernance and ApprovalsReviewer stay nil, and
+		// `--no-ask-user` belonging to this catalog is not an argument for
+		// changing that. AskTimeout contracts an idle TIMEOUT after which an
+		// unanswered question auto-continues with its default answer; Copilot
+		// has no such setting — the flag removes the ask_user tool outright, so
+		// there is no dialog left to time out. Advertising AskTimeout would
+		// require inventing a translation, which is the one thing this adapter
+		// has consistently refused to do.
+		Approval: copilotApproval{},
 
 		// Copilot's SessionEnd is not proof of an exit: observed only on clean
 		// runs, impossible on a SIGKILL, and at-least-once rather than

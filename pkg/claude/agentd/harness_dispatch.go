@@ -169,6 +169,16 @@ func approvalForHarness(name string) string {
 		// hiccup (widen-on-error).
 		return harness.ClaudePermissionInherit
 	}
+	if name == harness.CopilotName {
+		// Same reasoning as the Claude branch, and just as unambiguous: every
+		// Copilot launch tclaude made before TCL-973 emitted zero permission
+		// flags, so `inherit` IS the faithful reconstruction of a blank row.
+		// Returning the new `allow-tools` default would take a row that ran
+		// under Copilot's prompting posture and relaunch it with tools
+		// auto-approved and ask_user removed — a silent promotion performed by
+		// lifecycle repair, on rows the operator never chose it for.
+		return harness.CopilotApprovalInherit
+	}
 	if h, err := harness.Resolve(name); err == nil && h.SupportsApproval() {
 		// Codex's `never` default validates to itself.
 		if pol, verr := h.Approval.ValidatePolicy(h.Approval.DefaultPolicy()); verr == nil {

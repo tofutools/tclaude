@@ -53,6 +53,21 @@ func ApprovalLineageAllowed(parentHarness, parentPolicy string, parentAutoReview
 // earns a second 403 is worse than saying nothing.
 func ApprovalLineageDenialHint(parentHarness, parentPolicy string, parentAutoReview bool, childHarness, childPolicy string) string {
 	switch normalizeLineageHarness(childHarness) {
+	case CopilotName:
+		if strings.TrimSpace(childPolicy) != CopilotApprovalInherit {
+			// `allow-tools` is the only other token, and a parent that cannot
+			// delegate it cannot delegate anything Copilot offers. There is no
+			// narrower Copilot posture to point at, so say nothing rather than
+			// invent advice — the guard's own message already states the two
+			// postures involved.
+			return ""
+		}
+		hint := fmt.Sprintf("the child requested %q, which emits no permission flags, so its posture is decided by the operator's Copilot configuration and by answers remembered in-pane; it cannot be proven at spawn time and is therefore treated as the broadest posture", CopilotApprovalInherit)
+		if ApprovalLineageAllowed(parentHarness, parentPolicy, parentAutoReview,
+			CopilotName, CopilotApprovalAllowTools, false) {
+			return hint + fmt.Sprintf("; pass %q to spawn a child whose posture tclaude renders and records itself", CopilotApprovalAllowTools)
+		}
+		return hint + "; this parent cannot delegate any provable Copilot posture, so a human must spawn this child"
 	case OpenCodeName:
 		if strings.TrimSpace(childPolicy) != OpenCodeApprovalAllowTools {
 			return ""
@@ -223,6 +238,55 @@ func classifyApprovalLineage(harnessName, policy string, autoReview bool, child 
 			}
 			return approvalLineagePosture{capability: capability, valid: true}
 		default:
+			return approvalLineagePosture{}
+		}
+	case CopilotName:
+		// Copilot has no guardian subagent; auto-review is a Codex-only axis.
+		if autoReview {
+			return approvalLineagePosture{}
+		}
+		switch policy {
+		case CopilotApprovalAllowTools:
+			// --allow-all-tools accepts every tool call automatically, and the
+			// measured gate is per-COMMAND risk classification rather than a
+			// tool allowlist, so this is arbitrary command execution with no
+			// human in the loop: approvalAutoInSandbox, the same shape as Codex
+			// `never` and Claude `auto`.
+			//
+			// "InSandbox" names the capability, not a guarantee about Copilot —
+			// whether anything actually confines those commands is the sandbox
+			// axis's business, and it has its own lineage guard. Reading this
+			// bit as a containment claim would be a mistake in every harness,
+			// but especially this one: Copilot's built-in edits are not
+			// OS-confined at all.
+			return approvalLineagePosture{capability: approvalAutoInSandbox, valid: true}
+		case CopilotApprovalInherit:
+			// The same dual bound Claude's `inherit` uses, for the same reason
+			// and then some. A Copilot launch with no permission flags is
+			// decided by settings.json/config.json plus whatever the operator
+			// answered in-pane and told Copilot to remember — the folder-trust
+			// dialog's option 2 is literally "remember this folder for future
+			// sessions", and allowedUrls persists the same way. Nothing bounds
+			// that state below allow-everything from outside the pane.
+			//
+			// So a PARENT is credited only the baseline it certainly has, and a
+			// CHILD is charged the broadest posture it could turn out to hold.
+			// The consequence is deliberate: an `allow-tools` Copilot agent
+			// cannot mint an `inherit` child, because it cannot prove that
+			// child would be no broader than itself. A human can, and the
+			// denial hint says so.
+			capability := approvalAutoBaseline
+			if child {
+				capability = approvalAutoInSandbox | approvalAutoReviewer | approvalAutoUnreviewed
+			}
+			return approvalLineagePosture{capability: capability, valid: true}
+		default:
+			// Blank is a pre-catalog Copilot row. It is NOT treated as a known
+			// `inherit` even though every such launch did emit zero permission
+			// flags: the spawn guard reports an unreconstructable posture with
+			// an actionable "relaunch it" message, and quietly minting lineage
+			// authority for a row that predates the recording is exactly the
+			// widen-on-uncertainty this file exists to prevent.
 			return approvalLineagePosture{}
 		}
 	case OpenCodeName:

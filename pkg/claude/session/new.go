@@ -682,6 +682,15 @@ func runNew(params *NewParams) error {
 		// can distinguish a known inherit launch from a legacy unknown row.
 		recordedApprovalPolicy = harness.ClaudePermissionInherit
 	}
+	if h.Name == harness.CopilotName && recordedApprovalPolicy == "" {
+		// Identical reasoning for Copilot: emitting no permission flags IS the
+		// `inherit` token, so persisting the sentinel is a faithful record
+		// rather than an inference. Without it, every human-started Copilot
+		// session would look like a legacy unreconstructable row to the spawn
+		// approval guard, and a human's own session could not spawn even the
+		// baseline children its posture provably permits.
+		recordedApprovalPolicy = harness.CopilotApprovalInherit
+	}
 	params.Approval = approvalPolicy
 
 	toolGovernance, err := harness.ValidateToolGovernance(h, params.ToolGovernance)

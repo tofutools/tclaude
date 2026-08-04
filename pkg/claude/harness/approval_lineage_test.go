@@ -86,7 +86,49 @@ func TestApprovalLineageAllowedMatrix(t *testing.T) {
 		{"claude accept edits can mint opencode allow tools", DefaultName, claudePermAccept, false, OpenCodeName, OpenCodeApprovalAllowTools, false, true},
 		{"codex never can mint opencode allow tools", CodexName, ApprovalNever, false, OpenCodeName, OpenCodeApprovalAllowTools, false, true},
 
+		// --- Copilot postures are projected onto the same axes (TCL-973) ---
+		// `allow-tools` runs arbitrary commands with no human in the loop
+		// (Copilot's gate is per-command risk classification, not a tool
+		// allowlist), so it is approvalAutoInSandbox — the Codex `never` /
+		// Claude `auto` shape, and interchangeable with them in both directions.
+		{"copilot allow-tools to same", CopilotName, CopilotApprovalAllowTools, false, CopilotName, CopilotApprovalAllowTools, false, true},
+		{"copilot allow-tools to codex never", CopilotName, CopilotApprovalAllowTools, false, CodexName, ApprovalNever, false, true},
+		{"copilot allow-tools to claude auto", CopilotName, CopilotApprovalAllowTools, false, DefaultName, claudePermAuto, false, true},
+		{"copilot allow-tools to opencode allow tools", CopilotName, CopilotApprovalAllowTools, false, OpenCodeName, OpenCodeApprovalAllowTools, false, true},
+		{"codex never to copilot allow-tools", CodexName, ApprovalNever, false, CopilotName, CopilotApprovalAllowTools, false, true},
+		{"claude auto to copilot allow-tools", DefaultName, claudePermAuto, false, CopilotName, CopilotApprovalAllowTools, false, true},
+		// ...and it must not be mintable by a parent that has to ask a human
+		// before every non-edit command.
+		{"claude accept edits cannot mint copilot allow-tools", DefaultName, claudePermAccept, false, CopilotName, CopilotApprovalAllowTools, false, false},
+		{"opencode allow tools cannot mint copilot allow-tools", OpenCodeName, OpenCodeApprovalAllowTools, false, CopilotName, CopilotApprovalAllowTools, false, false},
+		{"codex untrusted cannot mint copilot allow-tools", CodexName, ApprovalUntrusted, false, CopilotName, CopilotApprovalAllowTools, false, false},
+		// `inherit` is the dual bound: a parent gets only the baseline it can
+		// prove, a child is charged the broadest posture a Copilot config could
+		// turn out to hold. So an inherit parent delegates almost nothing, and
+		// an inherit CHILD needs a human — including from an allow-tools parent.
+		{"copilot inherit cannot mint copilot allow-tools", CopilotName, CopilotApprovalInherit, false, CopilotName, CopilotApprovalAllowTools, false, false},
+		{"copilot inherit cannot mint claude auto", CopilotName, CopilotApprovalInherit, false, DefaultName, claudePermAuto, false, false},
+		{"copilot inherit to claude plan", CopilotName, CopilotApprovalInherit, false, DefaultName, claudePermPlan, false, true},
+		{"copilot inherit to codex untrusted", CopilotName, CopilotApprovalInherit, false, CodexName, ApprovalUntrusted, false, true},
+		{"copilot allow-tools cannot mint copilot inherit", CopilotName, CopilotApprovalAllowTools, false, CopilotName, CopilotApprovalInherit, false, false},
+		{"codex never cannot mint copilot inherit", CodexName, ApprovalNever, false, CopilotName, CopilotApprovalInherit, false, false},
+		// Unlike Claude, there is NO inherit→inherit continuation exception.
+		// That exception exists to keep the ordinary recursive Claude workflow
+		// usable; Copilot has no such established workflow, and adding one would
+		// mean crediting an unprovable posture on a harness whose in-pane
+		// commands and remembered answers can widen it further.
+		{"copilot inherit does not continue to copilot inherit", CopilotName, CopilotApprovalInherit, false, CopilotName, CopilotApprovalInherit, false, false},
+		// Only a posture that already holds unreviewed capability can mint one.
+		{"claude bypass can mint copilot inherit", DefaultName, claudePermBypass, false, CopilotName, CopilotApprovalInherit, false, true},
+		{"claude bypass can mint copilot allow-tools", DefaultName, claudePermBypass, false, CopilotName, CopilotApprovalAllowTools, false, true},
+
 		// --- Malformed / unclassifiable postures fail closed ---
+		{"legacy blank copilot parent fails closed", CopilotName, "", false, CopilotName, CopilotApprovalAllowTools, false, false},
+		{"legacy blank copilot child fails closed", DefaultName, claudePermBypass, false, CopilotName, "", false, false},
+		{"unknown copilot policy fails closed", CopilotName, "allow-all", false, CopilotName, CopilotApprovalAllowTools, false, false},
+		{"copilot auto-review parent is malformed", CopilotName, CopilotApprovalAllowTools, true, CopilotName, CopilotApprovalAllowTools, false, false},
+		{"copilot auto-review child is malformed", DefaultName, claudePermBypass, false, CopilotName, CopilotApprovalAllowTools, true, false},
+
 		{"legacy blank codex parent fails closed", CodexName, "", false, CodexName, ApprovalNever, false, false},
 		{"legacy blank claude parent fails closed", DefaultName, "", false, DefaultName, claudePermAuto, false, false},
 		{"legacy blank claude child fails closed", DefaultName, claudePermBypass, false, DefaultName, "", false, false},
@@ -178,5 +220,46 @@ func TestApprovalLineageDenialHint(t *testing.T) {
 	if got := ApprovalLineageDenialHint(OpenCodeName, OpenCodeApprovalDeny, false,
 		OpenCodeName, OpenCodeApprovalDeny); got != "" {
 		t.Fatalf("a provable OpenCode mode needs no hint, got %q", got)
+	}
+}
+
+// The Copilot hint has the same job as the Claude `inherit` one: name a way out
+// that actually works, and say nothing when there isn't one. The refused case is
+// always an `inherit` CHILD, because that is the only Copilot posture whose
+// effective breadth cannot be proven at spawn time.
+func TestCopilotApprovalLineageDenialHint(t *testing.T) {
+	// A parent holding full in-sandbox execution can delegate allow-tools, so
+	// the hint names it — and the gate must really allow what it names.
+	fromCapable := ApprovalLineageDenialHint(CodexName, ApprovalNever, false,
+		CopilotName, CopilotApprovalInherit)
+	if !strings.Contains(fromCapable, CopilotApprovalAllowTools) {
+		t.Fatalf("hint must point at %q, got %q", CopilotApprovalAllowTools, fromCapable)
+	}
+	if !ApprovalLineageAllowed(CodexName, ApprovalNever, false, CopilotName, CopilotApprovalAllowTools, false) {
+		t.Fatal("the hint named a posture the gate denies")
+	}
+	// An allow-tools Copilot parent is in the same position: it cannot prove an
+	// inherit child is no broader than itself, but it CAN mint allow-tools.
+	fromCopilot := ApprovalLineageDenialHint(CopilotName, CopilotApprovalAllowTools, false,
+		CopilotName, CopilotApprovalInherit)
+	if !strings.Contains(fromCopilot, CopilotApprovalAllowTools) {
+		t.Fatalf("an allow-tools parent must be told it can mint %q, got %q", CopilotApprovalAllowTools, fromCopilot)
+	}
+	// A parent that can delegate nothing Copilot offers must be told a human is
+	// needed rather than pointed at a mode that earns a second 403.
+	fromNarrow := ApprovalLineageDenialHint(DefaultName, claudePermPlan, false,
+		CopilotName, CopilotApprovalInherit)
+	if strings.Contains(fromNarrow, CopilotApprovalAllowTools) {
+		t.Fatalf("must not suggest %q to a parent that cannot delegate it: %q", CopilotApprovalAllowTools, fromNarrow)
+	}
+	if !strings.Contains(fromNarrow, "human") {
+		t.Fatalf("hint must say a human is needed, got %q", fromNarrow)
+	}
+	// allow-tools is the only other token; a parent that cannot delegate it has
+	// no narrower Copilot posture to be pointed at, so the hint stays silent
+	// rather than inventing advice.
+	if got := ApprovalLineageDenialHint(DefaultName, claudePermPlan, false,
+		CopilotName, CopilotApprovalAllowTools); got != "" {
+		t.Fatalf("no Copilot posture is narrower than allow-tools; hint should be empty, got %q", got)
 	}
 }
