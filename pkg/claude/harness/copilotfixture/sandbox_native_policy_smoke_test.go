@@ -44,6 +44,10 @@ import (
 // run it — would put an unmeasured assertion into CI. The darwin profile's
 // contents are therefore an open question rather than a covered one.
 
+// nativeSandboxInvocationMarker separates recorded invocations in the shim's
+// log. It is a field like any other, so it is written and matched in one place.
+const nativeSandboxInvocationMarker = "=== INVOCATION ==="
+
 // nativeSandboxPolicyCapture is one recorded backend invocation.
 type nativeSandboxPolicyCapture struct {
 	// Argv is the whole vector, as the backend spelled it.
@@ -108,7 +112,8 @@ func captureNativeSandboxPolicy(
 	// command routinely does — cannot be read back as two arguments.
 	shim := "#!/bin/sh\n" +
 		"if [ \"$1\" = --version ]; then echo 'bubblewrap 0.11.0'; exit 0; fi\n" +
-		"{ printf '=== INVOCATION ===\\0'; for a in \"$@\"; do printf '%s\\0' \"$a\"; done; } >> '" +
+		"{ printf '" + nativeSandboxInvocationMarker +
+		"\\0'; for a in \"$@\"; do printf '%s\\0' \"$a\"; done; } >> '" +
 		log + "'\n" +
 		"exit 1\n"
 	require.NoError(t, os.WriteFile(filepath.Join(shimDir, "bwrap"), []byte(shim), 0o755))
@@ -135,12 +140,25 @@ func captureNativeSandboxPolicy(
 		"the sandbox backend was never invoked, so no policy was generated; either the "+
 			"settings did not engage the sandbox or the backend is no longer `bwrap` on PATH")
 
-	for _, field := range strings.Split(string(data), "\x00") {
-		if field == "=== INVOCATION ===" {
+	// An EMPTY field is a real argument, not padding, and dropping empties is a
+	// bug that hides itself: the policy carries `--setenv GIT_ASKPASS ""`, so
+	// skipping the empty value shifts every following operand by one and
+	// silently re-pairs the whole environment onto the wrong names. With an even
+	// number of empty values the pairs realign and the parse looks correct,
+	// which is exactly how this survived a local run and failed in CI.
+	//
+	// Only the trailing element is dropped, and only because the shim writes a
+	// NUL after every field, so a well-formed log always ends with one.
+	fields := strings.Split(string(data), "\x00")
+	if len(fields) > 0 && fields[len(fields)-1] == "" {
+		fields = fields[:len(fields)-1]
+	}
+	for _, field := range fields {
+		if field == nativeSandboxInvocationMarker {
 			captures = append(captures, nativeSandboxPolicyCapture{Env: map[string]string{}})
 			continue
 		}
-		if field == "" || len(captures) == 0 {
+		if len(captures) == 0 {
 			continue
 		}
 		current := &captures[len(captures)-1]
@@ -149,6 +167,16 @@ func captureNativeSandboxPolicy(
 	require.NotEmpty(t, captures, "no backend invocation was recorded")
 	for i := range captures {
 		for _, pair := range captures[i].operands("--setenv", 2) {
+			// The alignment guard. A shifted parse does not look broken — it
+			// looks like a complete environment attached to the wrong names,
+			// and every assertion built on it becomes a confident false
+			// statement about what the sandbox inherits. An environment
+			// variable NAME cannot contain a slash or a space, so a key that
+			// does is proof the operands moved.
+			require.Regexp(t, `^[A-Za-z_][A-Za-z0-9_]*$`, pair[0],
+				"parsed %q as an environment variable NAME, which it cannot be; the "+
+					"--setenv operands are misaligned and every environment claim from "+
+					"this capture would be attached to the wrong variable", pair[0])
 			captures[i].Env[pair[0]] = pair[1]
 		}
 	}
