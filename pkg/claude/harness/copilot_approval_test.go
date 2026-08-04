@@ -395,7 +395,23 @@ func TestCopilotLaunchExtraArgsAudit(t *testing.T) {
 		"--session-id", "--session-id=00000000-0000-0000-0000-000000000000",
 		"--continue", "--connect",
 		"-i", "-igo", "--interactive",
-		"--model", "--model=gpt-5.4", "--effort=high", "--name=other",
+		"--model", "--model=gpt-5.4", "--effort=high", "--reasoning-effort=high",
+		"--name=other", "-n", "-nother",
+		// The working directory: tclaude never emits -C, which is exactly why
+		// a coverage guard driven off the rendered flags cannot catch it. It
+		// moves the recorded cwd AND, since Copilot grants its cwd subtree
+		// automatically, opens a directory tree the profile never granted.
+		"-C", "-C/srv/other", "-C=/srv/other",
+		"-w", "-wfeature", "--worktree", "--worktree=feature",
+		// The Copilot home: every tclaude contract that reads COPILOT_HOME —
+		// hooks, the conversation store, the trust store, the sandbox and
+		// model-transport gates, the telemetry follower — would inspect a
+		// different tree than the pane uses.
+		"--config-dir", "--config-dir=/srv/other-home",
+		// Runtime/protocol selectors: tclaude models a local interactive TUI,
+		// and every contract it advertises describes that pane.
+		"--cloud", "--server", "--managed-server", "--ui-server", "--headless",
+		"--acp", "--stdio", "--host=127.0.0.1", "--port=8080", "--auth-token-env=TOK",
 	} {
 		if err := ValidateLaunchExtraArgs(h, []string{spelling}); err == nil {
 			t.Errorf("pass-through %q was accepted; tclaude renders and records that option itself", spelling)
@@ -410,6 +426,17 @@ func TestCopilotLaunchExtraArgsAudit(t *testing.T) {
 		{"-i", "initial message"},
 		{"--allow-all-tools", "approval policy"},
 		{"--add-dir", "sandbox profile"},
+		{"-C", "launch directory"},
+		{"--config-dir=/other", "COPILOT_HOME"},
+		{"--worktree=feature", "worktree option"},
+		{"--server", "interactive Copilot TUI"},
+		// The NARROWING flags must not be pointed at a mechanism that cannot
+		// do what they do: tclaude renders no deny rules and cannot revoke
+		// Copilot's automatic temp grant, so saying so plainly is the remedy.
+		{"--deny-tool=shell(rm)", "tool-governance contract"},
+		{"--excluded-tools=web_fetch", "tool-governance contract"},
+		{"--deny-url=github.com", "tool-governance contract"},
+		{"--disallow-temp-dir", "tclaude-layer"},
 	} {
 		err := ValidateLaunchExtraArgs(h, []string{tc.arg})
 		if err == nil {
@@ -489,10 +516,33 @@ func TestCopilotLaunchExtraArgsAuditCoversEveryRenderedFlag(t *testing.T) {
 func TestCopilotAddDirGrantsRefuseADenyInsideAGrant(t *testing.T) {
 	for _, tc := range []struct {
 		name             string
+		cwd, tempDir     string
 		read, write, den []string
 		outerLayer       bool
 		wantRefused      bool
 	}{
+		{
+			// The common case, and the one a rendered-roots-only gate misses
+			// entirely: Copilot grants its cwd subtree with NO flag, so a
+			// profile denying a file under cwd renders no --add-dir at all and
+			// the denied file is still reachable.
+			name: "a denied file under the launch directory, which Copilot grants implicitly",
+			cwd:  "/srv/repo", den: []string{"/srv/repo/.env"},
+			wantRefused: true,
+		},
+		{
+			name:    "a denied path under the system temp directory, also granted implicitly",
+			cwd:     "/srv/repo",
+			tempDir: "/tmp", den: []string{"/tmp/secrets"},
+			wantRefused: true,
+		},
+		{
+			// A deny outside both implicit roots and outside every rendered
+			// root is representable by omission and must still launch.
+			name: "a deny outside the launch directory and temp",
+			cwd:  "/srv/repo", tempDir: "/tmp", den: []string{"/home/op/.ssh"},
+			wantRefused: false,
+		},
 		{
 			name: "a denied subtree inside a granted read root",
 			read: []string{"/home/op"}, den: []string{"/home/op/.ssh"},
@@ -535,7 +585,8 @@ func TestCopilotAddDirGrantsRefuseADenyInsideAGrant(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			err := ValidateCopilotAddDirGrants(CopilotName, tc.read, tc.write, tc.den, tc.outerLayer)
+			err := ValidateCopilotAddDirGrants(CopilotName, tc.cwd, tc.tempDir,
+				tc.read, tc.write, tc.den, tc.outerLayer)
 			if tc.wantRefused {
 				if err == nil {
 					t.Fatal("the launch must be refused: the denied path would be opened by an --add-dir root")
@@ -547,6 +598,13 @@ func TestCopilotAddDirGrantsRefuseADenyInsideAGrant(t *testing.T) {
 				if !strings.Contains(err.Error(), "tclaude-layer") {
 					t.Errorf("the refusal must name the posture that works: %v", err)
 				}
+				// An implicit grant appears nowhere in the launch command, so
+				// the refusal has to say where it came from or the operator is
+				// left staring at an argv that does not mention the directory.
+				if tc.read == nil && tc.write == nil &&
+					!strings.Contains(err.Error(), "automatically, with no flag") {
+					t.Errorf("a refusal caused by an implicit grant must say so: %v", err)
+				}
 				return
 			}
 			if err != nil {
@@ -557,7 +615,7 @@ func TestCopilotAddDirGrantsRefuseADenyInsideAGrant(t *testing.T) {
 
 	// Other harnesses render their own deny rules and are not gated here.
 	for _, name := range []string{DefaultName, CodexName, OpenCodeName} {
-		if err := ValidateCopilotAddDirGrants(name,
+		if err := ValidateCopilotAddDirGrants(name, "/srv/repo", "/tmp",
 			[]string{"/home/op"}, nil, []string{"/home/op/.ssh"}, false); err != nil {
 			t.Errorf("%s must not be gated by the Copilot add-dir shape: %v", name, err)
 		}

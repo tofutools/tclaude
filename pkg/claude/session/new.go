@@ -1681,11 +1681,13 @@ func runNew(params *NewParams) error {
 		}
 	}
 	// The mirror-image shape, for the one harness whose path grants have no
-	// negative form: a deny nested INSIDE a root Copilot will be handed via
-	// --add-dir would be opened rather than merely unrepresented. Gated on the
-	// same rendered rules, and only without an outer wall to enforce the deny.
+	// negative form: a deny nested INSIDE a granted root would be opened rather
+	// than merely unrepresented. The grant set includes Copilot's automatic cwd
+	// and system-temp grants, which no flag expresses and which are where this
+	// shape usually appears. Only without an outer wall to enforce the deny.
 	if err := harness.ValidateCopilotAddDirGrants(
-		h.Name, launchReadDirs, launchWriteDirs, launchDenyDirs, outerLayer); err != nil {
+		h.Name, cwd, os.TempDir(),
+		launchReadDirs, launchWriteDirs, launchDenyDirs, outerLayer); err != nil {
 		return err
 	}
 	spawnSpec := harness.SpawnSpec{

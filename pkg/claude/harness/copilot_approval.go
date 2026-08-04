@@ -25,10 +25,14 @@ import (
 //   - the ask_user tool — closed by --no-ask-user (contract: no-ask-user).
 //   - URL access from the SHELL tool — also closed by --allow-all-tools
 //     (contract: url-access, which corrected the plan's assumption that this
-//     needed its own deny rule). URL access from Copilot's web_fetch tool is
-//     NOT measured: the hermetic lab runs under COPILOT_OFFLINE=true, which
-//     removes web_fetch from the catalog entirely, so no token here claims
-//     anything about it in either direction.
+//     needed its own deny rule). The committed contract could not reach
+//     Copilot's OTHER URL consumer, the web_fetch tool, because the hermetic
+//     lab runs under COPILOT_OFFLINE=true and that removes web_fetch from the
+//     catalog entirely; a follow-up measurement against the same pinned binary,
+//     with hermeticity kept by a rejecting capture proxy instead, establishes
+//     that --allow-all-tools closes its URL dialog as well. So the token that
+//     renders it is nonblocking for both URL consumers, and neither needs a
+//     deny rule to keep a pane moving.
 //   - directory access — its own "Allow directory access" dialog, closed for a
 //     named directory by --add-dir (contract: out-of-cwd-paths).
 //   - folder trust — the FIRST gate, before the provider is contacted at all,
@@ -209,7 +213,7 @@ func copilotSpawnAddDirs(spec SpawnSpec) []string {
 // SandboxCopilotDenyInsideAddDir is the wire vocabulary for the refusal below.
 const SandboxCopilotDenyInsideAddDir = "copilot-deny-inside-add-dir"
 
-// ValidateCopilotAddDirGrants refuses a launch whose rendered `--add-dir` roots
+// ValidateCopilotAddDirGrants refuses a launch whose granted directory roots
 // would pre-answer Copilot's directory dialog for a path the sandbox profile
 // DENIES.
 //
@@ -221,6 +225,15 @@ const SandboxCopilotDenyInsideAddDir = "copilot-deny-inside-add-dir"
 // denies `$HOME/.ssh` collapses, on Copilot, to "read `$HOME`" — and the denied
 // subtree stops prompting.
 //
+// The grant set is NOT just the flags tclaude renders. Copilot grants the
+// cwd subtree and the system temp directory AUTOMATICALLY, with no flag
+// (contract: out-of-cwd-paths), and those two are the common case by a wide
+// margin: a profile that denies `<cwd>/.env` renders no `--add-dir` at all, so
+// a gate that looked only at rendered roots would pass the launch and let the
+// agent read and write the denied file through the implicit cwd grant. They are
+// passed in rather than resolved here so the caller's own launch cwd and temp
+// resolution stay the single source of truth.
+//
 // That is a real boundary loss rather than a theoretical one, and only outside
 // tclaude-layer. The permission matrix records that Copilot's built-in file
 // edits are not OS-confined, so for a launch with no outer wall the directory
@@ -231,10 +244,14 @@ const SandboxCopilotDenyInsideAddDir = "copilot-deny-inside-add-dir"
 // the harnesses that can enforce it.
 //
 // It refuses rather than dropping the grant: SandboxReadDirs contracts that an
-// adapter either renders its roots or rejects the launch, and a dropped root
-// would silently return the pane to prompting on a directory the operator
-// granted, which is a deadlock rather than a safety win.
-func ValidateCopilotAddDirGrants(harnessName string, readDirs, writeDirs, denyDirs []string, outerLayer bool) error {
+// adapter either renders its roots or rejects the launch, a dropped root would
+// silently return the pane to prompting on a directory the operator granted,
+// and the implicit roots cannot be dropped at all.
+func ValidateCopilotAddDirGrants(
+	harnessName, cwd, tempDir string,
+	readDirs, writeDirs, denyDirs []string,
+	outerLayer bool,
+) error {
 	if strings.TrimSpace(harnessName) != CopilotName || outerLayer {
 		return nil
 	}
@@ -242,24 +259,34 @@ func ValidateCopilotAddDirGrants(harnessName string, readDirs, writeDirs, denyDi
 	if len(denies) == 0 {
 		return nil
 	}
-	grants := copilotAddDirRoots(append(append([]string(nil), readDirs...), writeDirs...))
-	for _, grant := range grants {
+	rendered := copilotAddDirRoots(append(append([]string(nil), readDirs...), writeDirs...))
+	implicit := normalizedSandboxWriteDirs([]string{cwd, tempDir})
+	for _, grant := range append(append([]string(nil), rendered...), implicit...) {
 		for _, deny := range denies {
 			if !pathContains(grant, deny) {
 				continue
+			}
+			how := "granting the enclosing directory " + grant
+			if slices.Contains(implicit, grant) && !slices.Contains(rendered, grant) {
+				// Naming the mechanism matters here: nothing in the launch
+				// command mentions this root, so an operator reading the argv
+				// would have no idea where the grant came from.
+				how = fmt.Sprintf(
+					"Copilot grants the enclosing directory %s automatically, with no flag "+
+						"(its launch directory and the system temp directory are always readable)", grant)
 			}
 			return &SandboxCapabilityError{
 				Harness: CopilotName,
 				Kind:    SandboxCopilotDenyInsideAddDir,
 				Message: fmt.Sprintf(
-					"this profile denies %s while granting the enclosing directory %s, and Copilot's "+
-						"directory check takes grants only — there is no --add-dir counterpart to a deny, "+
-						"so the launch would open the denied path to the agent. Copilot's built-in file "+
-						"edits are not OS-confined, so outside --sandbox-impl tclaude-layer that check is "+
-						"the only file boundary the launch has. Run this profile under "+
-						"--sandbox-impl tclaude-layer, where the outer sandbox enforces the deny, or "+
-						"narrow the grant so it does not enclose the denied path",
-					deny, grant),
+					"this profile denies %s while %s, and Copilot's directory check takes grants "+
+						"only — there is no counterpart to a deny, so the launch would open the "+
+						"denied path to the agent. Copilot's built-in file edits are not "+
+						"OS-confined, so outside --sandbox-impl tclaude-layer that check is the "+
+						"only file boundary the launch has. Run this profile under "+
+						"--sandbox-impl tclaude-layer, where the outer sandbox enforces the deny, "+
+						"or move the denied path out of the granted directory",
+					deny, how),
 			}
 		}
 	}
@@ -268,7 +295,7 @@ func ValidateCopilotAddDirGrants(harnessName string, readDirs, writeDirs, denyDi
 
 // copilotAddDirRoots returns the directories copilotAddDirArgs would render,
 // without the flag tokens — so the gate above and the renderer cannot disagree
-// about which roots a launch actually opens.
+// about which roots a launch explicitly opens.
 func copilotAddDirRoots(dirs []string) []string {
 	normalized := normalizedSandboxWriteDirs(dirs)
 	sorted := append([]string(nil), normalized...)

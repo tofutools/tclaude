@@ -2600,7 +2600,8 @@ func resumeLaunchCmdWithStackedProof(
 	// The mirror-image shape for Copilot's negative-form-less path grants.
 	// Mirrors the spawn path.
 	if err := harness.ValidateCopilotAddDirGrants(
-		h.Name, readDirs, writeDirs, denyDirs, outerLayer); err != nil {
+		h.Name, resumeCwd, os.TempDir(),
+		readDirs, writeDirs, denyDirs, outerLayer); err != nil {
 		return "", "", nil, err
 	}
 	askTimeout, err := resumeAskTimeout(h, convID)

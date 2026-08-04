@@ -347,10 +347,13 @@ Several things this deliberately does **not** do:
   spelling at argument parse and exits 1 before contacting the provider, so it
   would have killed every Copilot pane at launch. Empty parentheses are invalid
   for every rule kind; the bare kind (`url`) and `kind(pattern)` forms parse.
-- **No claim about `web_fetch`.** `--allow-all-tools` was measured to close the
-  URL prompt for the *shell* path. Copilot's `web_fetch` tool is the other URL
-  consumer, and the hermetic fixture lab removes it from the catalog entirely, so
-  whether it is gated the same way is **unmeasured** — not "probably fine".
+- **No blanket URL deny in the catalog.** `--allow-all-tools` closes the URL
+  prompt for the shell path, so no deny rule is needed to keep a pane moving.
+  Copilot's `web_fetch` tool is the other URL consumer; the committed contract
+  could not reach it (the hermetic lab removes it from the catalog entirely),
+  and a follow-up measurement against the same pinned binary establishes that
+  `--allow-all-tools` closes its URL dialog too. Either way the default renders
+  no deny rule.
 - **No `AskTimeout` contract.** `--no-ask-user` removes the ask tool rather than
   timing a dialog out, so there is no idle timeout to translate.
 - **No tool-governance contract.** `--allow-tool` / `--deny-tool` are a
@@ -377,14 +380,23 @@ audit covers all three:
   fallbacks are a separate and only partly measured set: tool approval
   auto-*allows* headlessly while path access auto-*denies*, and neither
   describes a pane).
-- **Identity** — `--resume`/`-r`, `--session-id`, `--continue`, `--connect` and
-  a duplicate `-i`/`--interactive`. This is the sharpest one: tclaude pins the
-  conversation id before the pane starts and enrolls the agent against it, so a
-  pass-through conversation selector attaches the pane to a *different*
-  conversation while hooks, status, the conversation index and the agent record
-  all keep describing the enrolled one. Use `tclaude conv resume <id>` to attach
-  to another conversation.
-- **Metadata** — `--model`, `--effort`, `--name`. These move no boundary, and
+- **Identity** — the conversation (`--resume`/`-r`, `--session-id`,
+  `--continue`, `--connect`, a duplicate `-i`/`--interactive`), the working
+  directory (`-C`, `-w`/`--worktree`) and the Copilot home (`--config-dir`).
+  This is the sharpest group: tclaude pins the conversation id before the pane
+  starts and enrolls the agent against it, derives the folder-trust entry and
+  every path grant from the launch directory, and resolves `COPILOT_HOME` to
+  find the hook drop-in, the session-state tree, the trust store and the
+  settings its sandbox and model-transport gates read. A pass-through selector
+  moves the *pane* while all of that keeps describing where tclaude put it —
+  and `-C`/`--worktree` also widen paths, since Copilot grants its working
+  directory automatically.
+- **Runtime** — `--cloud`, `--server`, `--managed-server`, `--ui-server`,
+  `--headless`, `--acp` (and the `--stdio`/`--host`/`--port`/`--auth-token-env`
+  options that configure them). tclaude manages a local interactive TUI in a
+  tmux pane, and every contract it advertises for Copilot describes that pane.
+- **Metadata** — `--model`, `--effort`/`--reasoning-effort`, `--name`/`-n`.
+  These move no boundary, and
   they are refused anyway: tclaude validates and records each one, so a
   duplicate makes the dashboard, the usage accounting or the conversation title
   describe a launch the pane is not running. Use tclaude's own options.
@@ -396,9 +408,11 @@ the dedicated option that does the same job honestly. Ordinary args
 than a silent filter, and it does not rely on duplicate-flag ordering: nothing
 measured establishes what Copilot does with a contradictory or repeated option,
 so a launch that would depend on those semantics is refused instead of guessed
-at. The audit matches flag names exactly, which assumes 1.0.77's parser accepts
-no abbreviations or aliases — plausible from its option table, but not yet
-fixtured.
+at. Two boundaries worth stating: the audit matches flag names exactly, which
+assumes 1.0.77's parser accepts no abbreviations beyond the documented aliases
+(plausible from its option table and a parser probe, but not yet fixtured); and
+it is not a universal firewall over Copilot's option surface — MCP, plugin and
+agent-selection options that tclaude neither renders nor records are outside it.
 
 **What tclaude records is the launch posture, not a durable boundary.** Copilot's
 in-pane commands (`/allow-all`, `/add-dir`, `/reset-allowed-tools`, `/settings`)
