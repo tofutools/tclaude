@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-// githubproxy_handlers.go is the HTTP surface of `tclaude agent github`.
+// githubproxy_handlers.go is the HTTP surface of `tclaude proxy github`.
 //
 // Every route is a POST, including the reads. That is deliberate: a GitHub
 // read SPENDS THE OPERATOR'S CREDENTIAL against a private repository, and the

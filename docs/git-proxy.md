@@ -25,8 +25,8 @@ never sees a key, a token, or a command line.
 
 ```bash
 # Inside a sandboxed agent that cannot read ~/.ssh:
-tclaude agent git push -u
-tclaude agent github pr create --title "Add the thing" --body-file pr.md
+tclaude proxy git push -u
+tclaude proxy github pr create --title "Add the thing" --body-file pr.md
 ```
 
 ## The one invariant
@@ -114,27 +114,27 @@ which raises the ordinary [approval popup](agent.md#ad-hoc-human-approval-ask-hu
 
 ```bash
 # Discovery — no network, no credential. Run this first.
-tclaude agent git remotes
+tclaude proxy git remotes
 
 # Reads (git.read)
-tclaude agent git ls-remote --heads
-tclaude agent git fetch --prune
-tclaude agent git pull                 # daemon fetch + LOCAL fast-forward
+tclaude proxy git ls-remote --heads
+tclaude proxy git fetch --prune
+tclaude proxy git pull                 # daemon fetch + LOCAL fast-forward
 
 # Writes (git.push)
-tclaude agent git push -u
-tclaude agent git push --force-with-lease   # only if you enabled it
+tclaude proxy git push -u
+tclaude proxy git push --force-with-lease   # only if you enabled it
 
 # GitHub (github.read / github.write)
-tclaude agent github pr create --title "…" --body-file pr.md
-tclaude agent github pr ls --state open
-tclaude agent github pr view 42
-tclaude agent github pr checks 42
-tclaude agent github pr comment 42 --body-file reply.md
-tclaude agent github pr ready 42
-tclaude agent github issue ls
-tclaude agent github issue view 7
-tclaude agent github issue comment 7 --body-file note.md
+tclaude proxy github pr create --title "…" --body-file pr.md
+tclaude proxy github pr ls --state open
+tclaude proxy github pr view 42
+tclaude proxy github pr checks 42
+tclaude proxy github pr comment 42 --body-file reply.md
+tclaude proxy github pr ready 42
+tclaude proxy github issue ls
+tclaude proxy github issue view 7
+tclaude proxy github issue comment 7 --body-file note.md
 ```
 
 `git remotes` is the command to point an agent at when something is refused: it
@@ -148,7 +148,7 @@ tell you exactly what to add instead of guessing from a 403.
 agent's own repository. Running that in the daemon would put the agent's own
 configuration in charge of what the daemon executes.
 
-So `tclaude agent git pull` is split: the daemon fetches (the half that needs a
+So `tclaude proxy git pull` is split: the daemon fetches (the half that needs a
 credential), and the fast-forward runs as an ordinary local `git merge --ff-only`
 in the agent's own process, under its own sandbox, where it always was. A merge
 that is not a fast-forward is reported and left for the agent to resolve; the
@@ -233,8 +233,8 @@ and ref, and with what exit code. Bodies, titles, tokens and subprocess output
 are deliberately never recorded.
 
 ```bash
-tclaude agent git push        # → audit verb "git.push"
-tclaude agent github pr create # → audit verb "github.pr.create"
+tclaude proxy git push        # → audit verb "git.push"
+tclaude proxy github pr create # → audit verb "github.pr.create"
 ```
 
 ## Troubleshooting
@@ -243,7 +243,7 @@ tclaude agent github pr create # → audit verb "github.pr.create"
 |---|---|
 | `503 git_proxy_disabled` | No `allowed_remotes` configured. Add the block above. |
 | `403` naming a slug | The agent lacks `git.read` / `git.push` / `github.read` / `github.write`. Grant it, or the agent can retry with `--ask-human`. |
-| `remote … is not on the operator's allow-list` | Run `tclaude agent git remotes` to see the resolved `host/owner/repo`, then add a matching pattern. |
+| `remote … is not on the operator's allow-list` | Run `tclaude proxy git remotes` to see the resolved `host/owner/repo`, then add a matching pattern. |
 | `protected_ref` | The branch is in `protected_refs`. Push a feature branch and open a PR. |
 | `force_push_disabled` | Set `allow_force_push: true` if you want it. |
 | `this repository rewrites its … URL (url.*.insteadOf)` | The repo has a rewrite rule that would redirect the validated URL. Remove it, or point the remote directly at the real URL. |

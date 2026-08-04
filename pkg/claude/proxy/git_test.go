@@ -1,14 +1,51 @@
-package agent
+package proxy
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/agent"
 )
+
+// capturedReq / stubDaemon / ok mirror the helpers in pkg/claude/agent's own
+// tests. They are duplicated rather than shared because they touch only the
+// EXPORTED daemon-client seam (DaemonAvailableImpl, DaemonRequestImpl), so a
+// copy costs thirty lines and avoids exporting test scaffolding across a
+// package boundary.
+type capturedReq struct {
+	method string
+	path   string
+	body   any
+	opts   agent.DaemonOpts
+}
+
+func stubDaemon(t *testing.T, calls *[]capturedReq, respond func(method, path string) (int, string, string)) {
+	t.Helper()
+	prevAvail, prevReq := agent.DaemonAvailableImpl, agent.DaemonRequestImpl
+	t.Cleanup(func() { agent.DaemonAvailableImpl, agent.DaemonRequestImpl = prevAvail, prevReq })
+	agent.DaemonAvailableImpl = func() bool { return true }
+	agent.DaemonRequestImpl = func(method, path string, in, out any, opts agent.DaemonOpts) error {
+		*calls = append(*calls, capturedReq{method: method, path: path, body: in, opts: opts})
+		status, code, respJSON := respond(method, path)
+		if status >= 400 {
+			return &agent.DaemonError{Status: status, Code: code, Msg: "stub error"}
+		}
+		if out != nil && respJSON != "" {
+			return json.Unmarshal([]byte(respJSON), out)
+		}
+		return nil
+	}
+}
+
+// ok is the common respond closure for a 200 with a fixed body.
+func ok(body string) func(string, string) (int, string, string) {
+	return func(string, string) (int, string, string) { return 200, "", body }
+}
 
 // git_test.go covers the CLI half of the Git proxy. The interesting behaviour
 // on this side is `pull`, which is deliberately SPLIT across the trust

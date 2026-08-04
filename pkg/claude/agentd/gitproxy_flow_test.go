@@ -291,7 +291,7 @@ func writeGitProxyConfig(t *testing.T, allowed []string, tweak ...func(*gitProxy
 }
 
 // serveAsProxyAgent issues a request against the real daemon mux as the test
-// agent — the same identity path a `tclaude agent git …` call takes over the
+// agent — the same identity path a `tclaude proxy git …` call takes over the
 // Unix socket.
 func serveAsProxyAgent(t *testing.T, f *testharness.Flow, method, path string, body any) *httptest.ResponseRecorder {
 	t.Helper()

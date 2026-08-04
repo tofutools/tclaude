@@ -1,8 +1,8 @@
 ---
-name: agent-git
+name: proxy-git
 description: >-
-  Fetch, push, and open GitHub pull requests through `tclaude agent git` and
-  `tclaude agent github` when your own sandbox has no credentials — the
+  Fetch, push, and open GitHub pull requests through `tclaude proxy git` and
+  `tclaude proxy github` when your own sandbox has no credentials — the
   `tclaude agentd` daemon runs git and gh on the host with ITS SSH key and
   GitHub token, so you never hold them. Use when a plain `git push`, `git
   fetch`, or `gh pr create` fails with a permission, authentication, or network
@@ -18,8 +18,8 @@ plain `git push` and `gh pr create` cannot work — and that is deliberate. Rout
 them through the daemon instead:
 
 ```bash
-tclaude agent git push -u
-tclaude agent github pr create --title "Add the thing" --body-file pr.md
+tclaude proxy git push -u
+tclaude proxy github pr create --title "Add the thing" --body-file pr.md
 ```
 
 `tclaude agentd` runs on the host, where the credentials live. You describe the
@@ -31,7 +31,7 @@ no way to pass it a command line of your own.
 Before anything else, run:
 
 ```bash
-tclaude agent git remotes
+tclaude proxy git remotes
 ```
 
 It needs no network and no credential, and it tells you three things you would
@@ -46,28 +46,28 @@ exactly what they need to add to `agent.git_proxy.allowed_remotes`.
 
 ```bash
 # Reads — need `git.read`
-tclaude agent git remotes                       # allow-list verdict per remote
-tclaude agent git ls-remote --heads             # does my branch exist remotely?
-tclaude agent git fetch --prune
-tclaude agent git pull                          # fetch, then fast-forward locally
+tclaude proxy git remotes                       # allow-list verdict per remote
+tclaude proxy git ls-remote --heads             # does my branch exist remotely?
+tclaude proxy git fetch --prune
+tclaude proxy git pull                          # fetch, then fast-forward locally
 
 # Writes — need `git.push`
-tclaude agent git push -u                       # push the current branch
-tclaude agent git push -b feat/thing
-tclaude agent git push --force-with-lease       # only if the operator enabled it
+tclaude proxy git push -u                       # push the current branch
+tclaude proxy git push -b feat/thing
+tclaude proxy git push --force-with-lease       # only if the operator enabled it
 
 # GitHub reads — need `github.read`
-tclaude agent github pr ls --state open
-tclaude agent github pr view 42
-tclaude agent github pr checks 42               # CI state; pending is an answer
-tclaude agent github issue ls
-tclaude agent github issue view 7
+tclaude proxy github pr ls --state open
+tclaude proxy github pr view 42
+tclaude proxy github pr checks 42               # CI state; pending is an answer
+tclaude proxy github issue ls
+tclaude proxy github issue view 7
 
 # GitHub writes — need `github.write`
-tclaude agent github pr create --title "…" --body-file pr.md [--draft] [--base main]
-tclaude agent github pr comment 42 --body-file reply.md
-tclaude agent github pr ready 42
-tclaude agent github issue comment 7 --body-file note.md
+tclaude proxy github pr create --title "…" --body-file pr.md [--draft] [--base main]
+tclaude proxy github pr comment 42 --body-file reply.md
+tclaude proxy github pr ready 42
+tclaude proxy github issue comment 7 --body-file note.md
 ```
 
 Use `--body-file` (or `--body-file -` for stdin) for anything multi-line. It
@@ -111,7 +111,7 @@ tclaude agent permissions grant <you> git.push
 Or, for a single operation, request one-off approval:
 
 ```bash
-tclaude agent git push --ask-human 60s
+tclaude proxy git push --ask-human 60s
 ```
 
 That raises an approval popup for the human. Timeout counts as denial — if you

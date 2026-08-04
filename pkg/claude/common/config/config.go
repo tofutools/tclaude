@@ -1811,7 +1811,7 @@ type AgentConfig struct {
 	PersistOperatorTokenKeychain bool `json:"persist_operator_token_keychain,omitempty"`
 
 	// GitProxy configures the daemon-mediated Git-remote / GitHub proxy —
-	// `tclaude agent git` and `tclaude agent github`. Absent (the default)
+	// `tclaude proxy git` and `tclaude proxy github`. Absent (the default)
 	// means the proxy is OFF: it is an opt-in surface that lends agentd's
 	// credentials to a sandboxed agent, so it must never come up enabled on
 	// an operator who has not configured it. See GitProxyConfig.

@@ -11,7 +11,7 @@ import (
 	"strings"
 )
 
-// gitproxy_handlers.go holds the HTTP surface of `tclaude agent git`. The
+// gitproxy_handlers.go holds the HTTP surface of `tclaude proxy git`. The
 // hardening lives in gitproxy.go; this file is the request/response shape and
 // the order of the gates.
 //

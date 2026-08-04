@@ -1,4 +1,4 @@
-package agent
+package proxy
 
 import (
 	"encoding/json"
@@ -11,10 +11,11 @@ import (
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
+	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
-// github.go is `tclaude agent github {pr,issue} …` — GitHub pull-request and
+// github.go is `tclaude proxy github {pr,issue} …` — GitHub pull-request and
 // issue operations performed by `tclaude agentd` with ITS `gh` credentials, so
 // a sandboxed agent that cannot read ~/.config/gh can still open a PR and
 // answer review comments.
@@ -39,7 +40,7 @@ func githubCmd() *cobra.Command {
 			"attributed to the operator's GitHub account, so treat it as writing under their name.\n\n" +
 			"The repository is not something you choose: the daemon derives it from your own repository's " +
 			"remote, and only after that remote passes the operator's allow-list " +
-			"(agent.git_proxy.allowed_remotes). Run `tclaude agent git remotes` to see it.\n\n" +
+			"(agent.git_proxy.allowed_remotes). Run `tclaude proxy git remotes` to see it.\n\n" +
 			"Reads need `github.read`; creating and commenting needs `github.write`. Neither is granted " +
 			"by default.",
 		ParamEnrich: common.DefaultParamEnricher(),
@@ -70,7 +71,7 @@ func (o *ghProxyOutcome) render(stdout, stderr io.Writer, what string) int {
 	if len(o.JSON) > 0 {
 		var pretty any
 		if json.Unmarshal(o.JSON, &pretty) == nil {
-			if rc := writeJSONIndentAlias(stdout, pretty); rc != rcOK {
+			if rc := writeJSONIndent(stdout, pretty); rc != rcOK {
 				fmt.Fprintln(stderr, "Error: could not re-encode the GitHub response")
 				return rc
 			}
@@ -99,12 +100,12 @@ func (o *ghProxyOutcome) render(stdout, stderr io.Writer, what string) int {
 
 // ghProxyCall is the shared tail of every github verb.
 func ghProxyCall(path string, body map[string]any, askHuman, what string, stdout, stderr io.Writer) int {
-	ask, err := ParseAskHuman(askHuman)
+	ask, err := agent.ParseAskHuman(askHuman)
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return rcInvalidArg
 	}
-	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+	if rc := agent.RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
 	// Same as gitProxyCall: --ask-human arms a fallback for the denied case, it
@@ -112,10 +113,10 @@ func ghProxyCall(path string, body map[string]any, askHuman, what string, stdout
 	// verbs render gh's JSON on stdout, and a banner ahead of it would break a
 	// caller that pipes the output into a parser.
 	var resp ghProxyOutcome
-	if err := DaemonRequest(http.MethodPost, path, body, &resp,
-		DaemonOpts{AskHuman: ask, Timeout: ghProxyTimeout}); err != nil {
+	if err := agent.DaemonRequest(http.MethodPost, path, body, &resp,
+		agent.DaemonOpts{AskHuman: ask, Timeout: ghProxyTimeout}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return MapDaemonErrorToRC(err)
+		return agent.MapDaemonErrorToRC(err)
 	}
 	return resp.render(stdout, stderr, what)
 }
@@ -156,11 +157,11 @@ func githubPRCreateCmd() *cobra.Command {
 		Use:   "create",
 		Short: "Open a pull request",
 		Long: "Opens a pull request on the repository your remote points at. Push the branch first " +
-			"(`tclaude agent git push -u`), or GitHub has nothing to compare.\n\n" +
+			"(`tclaude proxy git push -u`), or GitHub has nothing to compare.\n\n" +
 			"The PR is authored by the OPERATOR's GitHub account — the daemon holds the credential, not you.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *githubPRCreateParams, _ *cobra.Command) error {
-			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(agent.CompleteAskHumanDurations)
 			return nil
 		},
 		RunFunc: func(p *githubPRCreateParams, _ *cobra.Command, _ []string) {
@@ -170,7 +171,7 @@ func githubPRCreateCmd() *cobra.Command {
 }
 
 func runGitHubPRCreate(p *githubPRCreateParams, stdin io.Reader, stdout, stderr io.Writer) int {
-	body, rc := resolveBodyInput(p.Body, p.BodyFile, "--body", stdin, stderr)
+	body, rc := agent.ResolveBodyInput(p.Body, p.BodyFile, "--body", stdin, stderr)
 	if rc != rcOK {
 		return rc
 	}
@@ -202,7 +203,7 @@ func githubPRListCmd() *cobra.Command {
 		Short:       "List pull requests (open|closed|merged|all)",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *githubListParams, _ *cobra.Command) error {
-			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(agent.CompleteAskHumanDurations)
 			return nil
 		},
 		RunFunc: func(p *githubListParams, _ *cobra.Command, _ []string) {
@@ -284,7 +285,7 @@ func githubPRCommentCmd() *cobra.Command {
 }
 
 func runGitHubComment(path string, p *githubCommentParams, what string, stdin io.Reader, stdout, stderr io.Writer) int {
-	body, rc := resolveBodyInput(p.Body, p.BodyFile, "--body", stdin, stderr)
+	body, rc := agent.ResolveBodyInput(p.Body, p.BodyFile, "--body", stdin, stderr)
 	if rc != rcOK {
 		return rc
 	}

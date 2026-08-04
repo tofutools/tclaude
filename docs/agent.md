@@ -1507,42 +1507,26 @@ the policy per member: online members still receive a tick when other members
 are offline. `cron logs` records `skipped_offline` when all eligible recipients
 were offline and `partial_offline` for a mixed group delivery.
 
-### git / github
+### Git and GitHub — see `tclaude proxy`
 
 Git-remote and GitHub operations performed by the **daemon**, with the daemon's
-own SSH key and GitHub token, on behalf of an agent that has been sandboxed away
-from them. The agent issues a semantic request — "push my branch", "open a PR" —
-and never holds a credential or supplies a command line.
+own SSH key and GitHub token, on behalf of an agent sandboxed away from them,
+live under a sibling top-level command:
 
 ```bash
-tclaude agent git remotes                      # remotes + allow-list verdict (no network)
-tclaude agent git ls-remote [--heads] [--tags]
-tclaude agent git fetch [--branch B] [--prune]
-tclaude agent git pull                          # daemon fetch + LOCAL --ff-only
-tclaude agent git push [-b B] [-u] [--force-with-lease]
-
-tclaude agent github pr create --title T --body-file F [--base B] [--draft]
-tclaude agent github pr ls        # also: view, checks, comment, ready
-tclaude agent github issue ls     # also: view, comment
+tclaude proxy git remotes      # also: ls-remote, fetch, pull, push
+tclaude proxy github pr ls     # also: create, view, checks, comment, ready
+tclaude proxy github issue ls  # also: view, comment
 ```
 
-Two things bound every call, and neither is negotiable from the agent side:
+They are not `tclaude agent` subcommands because they are not coordination:
+`agent` is about who else exists and how to reach them, `proxy` is about
+performing an operation with a credential the agent deliberately does not hold.
+The permission slugs (`git.read`, `git.push`, `github.read`, `github.write`) are
+still ordinary agent permissions, granted and audited like any other.
 
-- **The repository is the agent's own.** It is the git work tree containing the
-  agent's daemon-recorded physical launch directory. There is no `--repo` flag
-  and no path parameter — the proxy lends *credentials*, never *reach*.
-- **The remote must be operator-allow-listed** (`agent.git_proxy.allowed_remotes`
-  in `~/.tclaude/data/config.json`). An absent or empty list disables the proxy
-  entirely; there is no "allow everything".
-
-Gated on `git.read` / `git.push` / `github.read` / `github.write` — none
-default-granted, none owner-implied, none auto-grantable, because each spends
-the operator's identity on a remote host. Pushes to `protected_refs` (default
-`main`, `master`) are refused outright, and force-with-lease needs
-`allow_force_push`. Every call is audited.
-
-See **[Git & GitHub proxy](git-proxy.md)** for the operator guide: the
-allow-list grammar, the full hardening table, and why `pull` is split across the
+See **[Git & GitHub proxy](git-proxy.md)** for the whole picture: the allow-list
+grammar, the slugs, the full hardening table, and why `pull` is split across the
 boundary.
 
 ### permissions / sudo
@@ -2103,8 +2087,8 @@ for Claude Code, plus both `~/.agents/skills/` and `$CODEX_HOME/skills`
   `tclaude agent clipboard`; the daemon runs the platform copy tool on
   the host. Gated on `human.clipboard` (explicit grant or `--ask-human`
   popup; not owner-implied).
-- **`agent-git`** — fetch, push, and open GitHub pull requests through
-  `tclaude agent git` / `tclaude agent github` when the agent's own sandbox
+- **`proxy-git`** — fetch, push, and open GitHub pull requests through
+  `tclaude proxy git` / `tclaude proxy github` when the agent's own sandbox
   holds no credentials. See [Git & GitHub proxy](git-proxy.md).
 
 Re-run `tclaude setup --install-agent-skills` after `go install

@@ -21,7 +21,7 @@ import (
 	tclcommon "github.com/tofutools/tclaude/pkg/common"
 )
 
-// gitproxy.go is the daemon half of `tclaude agent git` — a *semantic* proxy
+// gitproxy.go is the daemon half of `tclaude proxy git` — a *semantic* proxy
 // that lets a sandboxed agent reach a Git remote without ever holding the
 // credential.
 //
@@ -51,7 +51,7 @@ import (
 //     BOTH fetch and push.
 //   - Only network-half operations run here — fetch, push, ls-remote. None of
 //     them updates the working tree, so .gitattributes smudge/clean filters
-//     never execute. `tclaude agent git pull` is deliberately split: the
+//     never execute. `tclaude proxy git pull` is deliberately split: the
 //     daemon fetches, and the fast-forward runs in the agent's own process
 //     where it needs no credential. See the CLI side.
 //   - The remote URL is validated rather than trusted. `ext::` URLs execute a

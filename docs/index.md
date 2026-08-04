@@ -228,8 +228,9 @@ focus on workflows and the behavior that is easy to miss from help text.
   filtering proxy that decides on the name the client asks for.
 - [Sandbox hardening](sandbox-hardening.md) — protect agentd state while keeping
   the coordination socket available.
-- [Git & GitHub proxy](git-proxy.md) — let a credential-less agent fetch, push,
-  and open pull requests through the daemon, bounded by an operator allow-list.
+- [Git & GitHub proxy](git-proxy.md) — `tclaude proxy git` / `tclaude proxy
+  github`: let a credential-less agent fetch, push, and open pull requests
+  through the daemon, bounded by an operator allow-list.
 - [Processes](processes.md) — opt-in process templates, runs, evidence, and
   performers.
 

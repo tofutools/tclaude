@@ -1,4 +1,4 @@
-package agent
+package proxy
 
 import (
 	"fmt"
@@ -11,10 +11,11 @@ import (
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
+	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
-// git.go is `tclaude agent git {remotes,ls-remote,fetch,pull,push}` — Git
+// git.go is `tclaude proxy git {remotes,ls-remote,fetch,pull,push}` — Git
 // remote operations performed by `tclaude agentd` on the host with ITS
 // credentials, so a sandboxed agent that cannot read ~/.ssh can still sync
 // with, and publish to, its remote.
@@ -45,7 +46,7 @@ func gitCmd() *cobra.Command {
 			"  * the repository is always YOUR OWN — the git work tree containing the directory you were " +
 			"launched in. There is no --repo flag.\n" +
 			"  * the remote must be on the operator's allow-list (agent.git_proxy.allowed_remotes). " +
-			"Run `tclaude agent git remotes` to see the verdict for each of your remotes.\n\n" +
+			"Run `tclaude proxy git remotes` to see the verdict for each of your remotes.\n\n" +
 			"Reads (remotes, ls-remote, fetch) need the `git.read` permission; push needs `git.push`. " +
 			"Neither is granted by default — ask the operator, or pass --ask-human for a one-off approval.",
 		ParamEnrich: common.DefaultParamEnricher(),
@@ -139,16 +140,16 @@ type gitRemotesResponse struct {
 }
 
 func runGitRemotes(p *gitRemotesParams, stdout, stderr io.Writer) int {
-	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+	if rc := agent.RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
 	var resp gitRemotesResponse
-	if err := DaemonRequest(http.MethodGet, "/v1/git/remotes", nil, &resp, DaemonOpts{}); err != nil {
+	if err := agent.DaemonRequest(http.MethodGet, "/v1/git/remotes", nil, &resp, agent.DaemonOpts{}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return MapDaemonErrorToRC(err)
+		return agent.MapDaemonErrorToRC(err)
 	}
 	if p.JSON {
-		if rc := writeJSONIndentAlias(stdout, resp); rc != rcOK {
+		if rc := writeJSONIndent(stdout, resp); rc != rcOK {
 			fmt.Fprintln(stderr, "Error: could not encode the response as JSON")
 			return rc
 		}
@@ -202,7 +203,7 @@ func gitLsRemoteCmd() *cobra.Command {
 		Short:       "List refs on the remote (cheapest way to check whether a branch exists there)",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *gitLsRemoteParams, _ *cobra.Command) error {
-			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(agent.CompleteAskHumanDurations)
 			return nil
 		},
 		RunFunc: func(p *gitLsRemoteParams, _ *cobra.Command, _ []string) {
@@ -236,11 +237,11 @@ func gitFetchCmd() *cobra.Command {
 		Use:   "fetch",
 		Short: "Fetch from the remote through the daemon",
 		Long: "Updates your remote-tracking refs. It never touches your working tree, so nothing is " +
-			"merged or checked out — use `tclaude agent git pull` for that, or merge yourself once " +
+			"merged or checked out — use `tclaude proxy git pull` for that, or merge yourself once " +
 			"this has run.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *gitFetchParams, _ *cobra.Command) error {
-			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(agent.CompleteAskHumanDurations)
 			return nil
 		},
 		RunFunc: func(p *gitFetchParams, _ *cobra.Command, _ []string) {
@@ -279,7 +280,7 @@ func gitPullCmd() *cobra.Command {
 			"a fast-forward is left for you to resolve.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *gitPullParams, _ *cobra.Command) error {
-			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(agent.CompleteAskHumanDurations)
 			return nil
 		},
 		RunFunc: func(p *gitPullParams, _ *cobra.Command, _ []string) {
@@ -353,7 +354,7 @@ func gitPushCmd() *cobra.Command {
 			"only `--force-with-lease`, which refuses to discard commits you have not seen.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *gitPushParams, _ *cobra.Command) error {
-			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(agent.CompleteAskHumanDurations)
 			return nil
 		},
 		RunFunc: func(p *gitPushParams, _ *cobra.Command, _ []string) {
@@ -375,12 +376,12 @@ func runGitPush(p *gitPushParams, stdout, stderr io.Writer) int {
 // gitProxyCall is the shared tail of every network verb: parse --ask-human,
 // require the daemon, POST, then render git's own verdict.
 func gitProxyCall(path string, body map[string]any, askHuman, what string, stdout, stderr io.Writer) int {
-	ask, err := ParseAskHuman(askHuman)
+	ask, err := agent.ParseAskHuman(askHuman)
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return rcInvalidArg
 	}
-	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+	if rc := agent.RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
 	// No "waiting for approval" banner here. --ask-human only arms a FALLBACK:
@@ -389,10 +390,10 @@ func gitProxyCall(path string, body map[string]any, askHuman, what string, stdou
 	// all. Announcing a wait that does not happen is what runResume was fixed
 	// not to do (stop_resume_test.go).
 	var resp gitProxyOutcome
-	if err := DaemonRequest(http.MethodPost, path, body, &resp,
-		DaemonOpts{AskHuman: ask, Timeout: gitProxyTimeout}); err != nil {
+	if err := agent.DaemonRequest(http.MethodPost, path, body, &resp,
+		agent.DaemonOpts{AskHuman: ask, Timeout: gitProxyTimeout}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return MapDaemonErrorToRC(err)
+		return agent.MapDaemonErrorToRC(err)
 	}
 	return resp.render(stdout, stderr, what)
 }

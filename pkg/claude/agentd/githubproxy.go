@@ -15,7 +15,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 )
 
-// githubproxy.go is the daemon half of `tclaude agent github` — pull-request
+// githubproxy.go is the daemon half of `tclaude proxy github` — pull-request
 // and issue operations performed with agentd's own `gh` credentials on behalf
 // of an agent that has been sandboxed away from ~/.config/gh.
 //
