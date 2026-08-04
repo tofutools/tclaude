@@ -23,18 +23,18 @@ var (
 func EffortLevelsFromHelp(help []byte) ([]string, error) {
 	match := effortChoicesRE.FindSubmatch(help)
 	if len(match) != 2 {
-		return nil, fmt.Errorf("Copilot help does not contain an --effort choices list")
+		return nil, fmt.Errorf("copilot help does not contain an --effort choices list")
 	}
 
 	quoted := quotedValueRE.FindAllSubmatch(match[1], -1)
 	if len(quoted) == 0 {
-		return nil, fmt.Errorf("Copilot --effort choices list is empty")
+		return nil, fmt.Errorf("copilot --effort choices list is empty")
 	}
 	levels := make([]string, 0, len(quoted))
 	for _, value := range quoted {
 		level := string(value[1])
 		if slices.Contains(levels, level) {
-			return nil, fmt.Errorf("Copilot --effort choices list repeats %q", level)
+			return nil, fmt.Errorf("copilot --effort choices list repeats %q", level)
 		}
 		levels = append(levels, level)
 	}
@@ -54,7 +54,7 @@ func ValidateHelpEffortLevels(live, fixture []byte) error {
 		return fmt.Errorf("parse pinned Copilot help fixture: %w", err)
 	}
 	if !slices.Equal(liveLevels, fixtureLevels) {
-		return fmt.Errorf("Copilot --effort choices drifted: live %s, fixture %s",
+		return fmt.Errorf("copilot --effort choices drifted: live %s, fixture %s",
 			strings.Join(liveLevels, ", "), strings.Join(fixtureLevels, ", "))
 	}
 	return nil
