@@ -81,6 +81,12 @@ func newFlow(t *testing.T) *testharness.Flow {
 	// production-scale reaper window. Keep that policy testable without making
 	// background drains wait for the production duration.
 	t.Cleanup(agentd.SetUnknownIntentCleanupDelayForTest(5 * time.Millisecond))
+	// And the escalation ladder's waits (10s deadline / 2s per signal step in
+	// prod). A simulator pane honours its soft exit immediately, so the
+	// watchdog's first probe already finds it gone; the shrink is what keeps
+	// the scenarios that DO wedge a pane from paying production seconds.
+	t.Cleanup(agentd.SetSoftExitEscalationTimingForTest(
+		20*time.Millisecond, 10*time.Millisecond, time.Millisecond))
 	// Neutralize the post-focus auto-tiling pass by default: a bulk focus
 	// now runs a tiling gate, and no flow test should read the developer's
 	// real config.json or move a real OS window as a side effect of one.

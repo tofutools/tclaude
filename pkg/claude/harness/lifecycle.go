@@ -33,4 +33,19 @@ type Lifecycle interface {
 	// drive it must track the intended direction themselves (the harness
 	// exposes no programmatic readback of the current state). See JOH-254.
 	RemoteControlCommand() string
+	// SoftExitPrefixKeys are tmux key names sent into the pane, in order,
+	// immediately BEFORE the soft-exit command text (with the usual settle
+	// gap after them). nil = send the command text alone, which is what
+	// every harness whose TUI accepts a slash command in any state wants.
+	//
+	// It exists because a soft exit is the one injection that must land
+	// whatever the pane is doing, and a TUI is free to refuse commands while
+	// it is busy. Copilot 1.0.77 does exactly that: mid-turn it renders the
+	// typed "/exit", then silently DISCARDS it on Enter — no exit, no queued
+	// message, no transcript line — and with a permission dialog open the
+	// same Enter accepts the dialog's default entry, which APPROVES the
+	// pending command instead of exiting. A cancel key first puts the TUI
+	// back into the state where the command is accepted. See
+	// copilotfixture's soft-exit scenario for the measurement.
+	SoftExitPrefixKeys() []string
 }

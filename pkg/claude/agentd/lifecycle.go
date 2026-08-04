@@ -205,7 +205,7 @@ func stopOneConvWithIntentUnderLaunchLock(convID string, force bool, lifecycleAc
 		if h.Name == harness.OpenCodeName {
 			delivered = injectOpenCodeSoftExitTarget(target, "soft-exit", intentSet)
 		} else {
-			delivered = injectSoftExitTarget(target, exitCmd, "soft-exit", intentSet)
+			delivered = injectSoftExitTarget(target, exitCmd, h.Life.SoftExitPrefixKeys(), "soft-exit", intentSet)
 		}
 		if delivered {
 			if h.Name == harness.CodexName {
@@ -225,6 +225,14 @@ func stopOneConvWithIntentUnderLaunchLock(convID string, force bool, lifecycleAc
 			} else {
 				res.Detail = "send-keys " + exitCmd + " failed"
 			}
+		}
+		// Whether the exit was delivered or the injection itself failed, the
+		// pane must end: this is a stop. Nothing stronger used to follow a soft
+		// exit that never took, which is how a retired agent's pane outlived
+		// its own directory-cleanup grace (TCL-1001). The ladder converges well
+		// inside that grace.
+		if stopIntendsPaneClosure(lifecycleAction) {
+			scheduleSoftExitEscalation(target, lifecycleAction, relatedEventID, "soft-exit")
 		}
 		return res
 	}
@@ -492,7 +500,7 @@ func clearFailedExitIntent(intentRef *db.SessionExitIntentRef) {
 	}
 }
 
-func injectSoftExitTarget(target *lifecycleTarget, exitCmd, reason string, intentRef *db.SessionExitIntentRef) bool {
+func injectSoftExitTarget(target *lifecycleTarget, exitCmd string, prefixKeys []string, reason string, intentRef *db.SessionExitIntentRef) bool {
 	if target == nil {
 		return false
 	}
@@ -504,7 +512,7 @@ func injectSoftExitTarget(target *lifecycleTarget, exitCmd, reason string, inten
 		clearFailedExitIntentTarget(intentRef, target.tmuxSession)
 		return false
 	}
-	if err := injectTextAndSubmitSerializedBy(target.tmuxSession+":0.0", target.paneID, exitCmd); err != nil {
+	if err := injectSoftExitTextSerializedBy(target.tmuxSession+":0.0", target.paneID, exitCmd, prefixKeys); err != nil {
 		logLifecycleStopFailure("send", target.paneID, target.sessionID, err)
 		return false
 	}
@@ -528,7 +536,7 @@ func injectSoftExitTarget(target *lifecycleTarget, exitCmd, reason string, inten
 		// attribution and never retry against a successor.
 		return true
 	}
-	scheduleSoftExitRetryTarget(target, exitCmd, reason, intentRef)
+	scheduleSoftExitRetryTarget(target, exitCmd, prefixKeys, reason, intentRef)
 	return true
 }
 
@@ -584,7 +592,7 @@ func clearFailedExitIntentTarget(ref *db.SessionExitIntentRef, tmuxSession strin
 	}
 }
 
-func scheduleSoftExitRetryTarget(target *lifecycleTarget, exitCmd, reason string, intentRef *db.SessionExitIntentRef) {
+func scheduleSoftExitRetryTarget(target *lifecycleTarget, exitCmd string, prefixKeys []string, reason string, intentRef *db.SessionExitIntentRef) {
 	goBackground(func() {
 		for attempt := 2; attempt <= softExitMaxAttempts; attempt++ {
 			time.Sleep(softExitRetryDelay)
@@ -617,7 +625,7 @@ func scheduleSoftExitRetryTarget(target *lifecycleTarget, exitCmd, reason string
 				// successor (mirrors injectSoftExitTarget).
 				return
 			}
-			if err := injectTextAndSubmitSerializedBy(target.tmuxSession+":0.0", target.paneID, exitCmd); err != nil {
+			if err := injectSoftExitTextSerializedBy(target.tmuxSession+":0.0", target.paneID, exitCmd, prefixKeys); err != nil {
 				logLifecycleStopFailure("send", target.paneID, target.sessionID, err)
 				// The first /exit was already delivered; a failed RE-send must
 				// not erase that delivery's attribution. Mirror the unknown
@@ -703,15 +711,25 @@ func injectSoftExit(convID, exitCmd, reason string, intentRef *db.SessionExitInt
 	// Enter, but that successful exit still owns the lifecycle intent and must
 	// remain correlatable by callback/reaper.
 	panePID := livePanePID(sess.TmuxSession)
-	if !injectSlashCommand(convID, exitCmd, "", reason) {
+	// Same harness contract as the selected-target path: a soft exit typed at
+	// a busy TUI can be silently discarded, so the prefix keys go in front of
+	// it here too (nil for every harness that needs none).
+	prefixKeys := harnessForConv(convID).Life.SoftExitPrefixKeys()
+	softExitTarget := sess.TmuxSession + ":0.0"
+	if err := injectSoftExitTextSerializedBy(softExitTarget, softExitTarget, exitCmd, prefixKeys); err != nil {
+		slog.Warn("soft-exit inject failed", "error", err,
+			"tmux_session", sess.TmuxSession, "conv_id", convID, "reason", reason)
 		return false
 	}
+	slog.Info("soft-exit injected via send-keys",
+		"conv_id", convID, "line", exitCmd, "reason", reason,
+		"tmux_session", sess.TmuxSession)
 	// Capture the pane's live OS pid so the retry can tell THIS process apart
 	// from a later one that reused the same tmux name (a resume re-derives the
 	// name from the conv-id — see scheduleSoftExitRetry). 0 = couldn't read
 	// it; skip the retry rather than risk re-injecting blind.
 	if panePID > 0 {
-		scheduleSoftExitRetry(convID, sess.TmuxSession, panePID, exitCmd, reason, intentRef)
+		scheduleSoftExitRetry(convID, sess.TmuxSession, panePID, exitCmd, prefixKeys, reason, intentRef)
 	} else if alive, known := lifecycleSessionAlive(sess.TmuxSession); known && !alive {
 		// Confirmed session disappearance: the delivered /exit is landing and
 		// the reaper owns attribution.
@@ -763,7 +781,7 @@ const softExitMaxAttempts = 3
 //
 // Runs through goBackground so it outlives the HTTP handler that asked for
 // the stop and flow tests can drain it with WaitForBackgroundForTest.
-func scheduleSoftExitRetry(convID, tmuxSession string, panePID int, exitCmd, reason string, intentRef *db.SessionExitIntentRef) {
+func scheduleSoftExitRetry(convID, tmuxSession string, panePID int, exitCmd string, prefixKeys []string, reason string, intentRef *db.SessionExitIntentRef) {
 	target := tmuxSession + ":0.0"
 	goBackground(func() {
 		for attempt := 2; attempt <= softExitMaxAttempts; attempt++ {
@@ -778,7 +796,7 @@ func scheduleSoftExitRetry(convID, tmuxSession string, panePID int, exitCmd, rea
 				"attempt", attempt,
 				"max_attempts", softExitMaxAttempts,
 				"reason", reason)
-			if err := injectTextAndSubmit(target, exitCmd); err != nil {
+			if err := injectSoftExitTextSerializedBy(target, target, exitCmd, prefixKeys); err != nil {
 				slog.Warn("soft-exit retry inject failed",
 					"error", err, "tmux_session", tmuxSession, "reason", reason)
 				// The first /exit was already delivered; mirror the

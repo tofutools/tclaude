@@ -139,19 +139,26 @@ func TestSoftExit_BoundedRetriesForHungPane(t *testing.T) {
 	f.AssertSoftStopped(stop)
 	agentd.WaitForBackgroundForTest()
 
-	assert.True(t, f.World.Tmux.IsAlive(tmuxSes),
-		"a pane that ignores /exit stays alive — the soft path can't force it")
 	// Bounded: 1 initial attempt + 2 retries (softExitMaxAttempts = 3) = 3
 	// total. Guards against an unbounded re-injection loop into a wedged pane.
 	assert.Equal(t, 3, countExitSends(f, target, "/exit"),
 		"soft-exit attempts must be capped (initial + retries), not infinite")
+	assert.False(t, f.World.Tmux.IsAlive(tmuxSes),
+		"a pane that ignored every bounded /exit must be escalated to a kill, not left running")
 	d, err := db.Open()
 	require.NoError(t, err)
-	var intent, eventID string
-	require.NoError(t, d.QueryRow(`SELECT exit_intent, exit_intent_event_id FROM sessions WHERE id = ?`,
-		"spwn-sxjc").Scan(&intent, &eventID))
-	assert.Empty(t, intent, "a successful send that never exits cannot leave reusable intent")
-	assert.Empty(t, eventID)
+	var intent, eventID, exitReason string
+	require.NoError(t, d.QueryRow(
+		"SELECT exit_intent, exit_intent_event_id, COALESCE(exit_reason, '') FROM sessions WHERE id = ?",
+		"spwn-sxjc").Scan(&intent, &eventID, &exitReason))
+	// An escalated kill is the daemon's own doing, so it must carry the
+	// daemon's attribution rather than reach the reaper as an unexplained
+	// close.
+	assert.Equal(t, db.AgentExitActionStop, intent,
+		"an escalated kill stays attributed to the lifecycle action that asked for it")
+	assert.NotEmpty(t, eventID)
+	assert.Equal(t, "daemon_kill", exitReason,
+		"an escalated kill must be recorded as daemon-owned, not left to the crash fallback")
 }
 
 // Scenario: the regression the live-PID guard exists to prevent. After a

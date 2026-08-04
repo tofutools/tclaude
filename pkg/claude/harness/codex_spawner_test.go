@@ -258,6 +258,9 @@ func TestCodexHarness_Registered(t *testing.T) {
 	if got := h.Life.CompactCommand(); got != "/compact" {
 		t.Fatalf("codex compact command = %q, want /compact", got)
 	}
+	if got := h.Life.SoftExitPrefixKeys(); len(got) != 0 {
+		t.Fatalf("SoftExitPrefixKeys() = %q, want none", got)
+	}
 	if got := h.Life.SoftExitCommand(); got != "/quit" {
 		t.Fatalf("codex soft-exit command = %q, want /quit", got)
 	}

@@ -1709,7 +1709,16 @@ func injectTextAndSubmitSerializedBy(lockTarget, tmuxTarget, text string) error 
 	return injectTextAndSubmitWithOptions(lockTarget, tmuxTarget, text, false)
 }
 
-func injectTextAndSubmitWithOptions(lockTarget, tmuxTarget, text string, forceBracketedPaste bool) error {
+// injectSoftExitTextSerializedBy is injectTextAndSubmitSerializedBy plus the
+// harness's soft-exit prefix keys (harness.Lifecycle.SoftExitPrefixKeys). The
+// keys are part of the same locked sequence as the text and its Enters: a
+// cancel that another injector could slip a keystroke into would defeat the
+// state it exists to establish.
+func injectSoftExitTextSerializedBy(lockTarget, tmuxTarget, text string, prefixKeys []string) error {
+	return injectTextAndSubmitWithOptions(lockTarget, tmuxTarget, text, false, prefixKeys...)
+}
+
+func injectTextAndSubmitWithOptions(lockTarget, tmuxTarget, text string, forceBracketedPaste bool, prefixKeys ...string) error {
 	mu := paneInjectLock(injectLockKey(lockTarget))
 	if err := acquirePaneInjectLock(mu); err != nil {
 		return err
@@ -1722,6 +1731,7 @@ func injectTextAndSubmitWithOptions(lockTarget, tmuxTarget, text string, forceBr
 		LockTimeout:         paneInjectLockTimeout,
 		LockID:              lockTarget,
 		ForceBracketedPaste: forceBracketedPaste,
+		PrefixKeys:          prefixKeys,
 	})
 }
 
