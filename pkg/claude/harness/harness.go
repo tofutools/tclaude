@@ -453,6 +453,21 @@ func (h *Harness) SupportsAskStream() bool {
 	return ok
 }
 
+// AskEnvScrub returns the environment variable names `tclaude ask` must drop
+// from the harness child's environment (see AskEnvScrubber). Nil-safe, and nil
+// for a harness with no Asker or one that names no ambient promoter — in which
+// case the ask inherits the caller's environment unchanged.
+func (h *Harness) AskEnvScrub() []string {
+	if h == nil || h.Ask == nil {
+		return nil
+	}
+	scrubber, ok := h.Ask.(AskEnvScrubber)
+	if !ok {
+		return nil
+	}
+	return scrubber.AskEnvScrub()
+}
+
 // SupportsConvs reports whether the harness exposes a ConvStore. Callers
 // that fall back to ConvStore (e.g. a rename for a harness without an
 // in-pane rename command) must check this first — a descriptor may leave

@@ -249,7 +249,9 @@ covers **interactive human sessions**:
 | **Directory pre-trust at spawn** ([below](#directory-trust-at-spawn)) | ✅ opt-in `trust_dir` appends the launch dir to `trustedFolders` in `<COPILOT_HOME>/config.json`. Copilot's modal blocks *before* any provider contact, so an unseeded detached pane never reaches its first turn |
 | **Approval / permissions** | ⚠️ `allow-tools` (default) / `inherit`. Two tokens, each rendering only flags measured against the pinned binary on a real terminal. Neither makes a Copilot pane unconditionally nonblocking — see [below](#copilot-approvals-and-permissions) for exactly which prompt each one closes and which it leaves standing |
 | **Usage, cost & context** | ⚠️ followed incrementally from Copilot's durable event log, with a byte-offset checkpoint so a daemon restart resumes rather than rescans. Output tokens advance per turn (`assistant.message`); input tokens, context occupancy and window size advance only at an authoritative disclosure — a compaction, a truncation, or a shutdown — and nothing is written between them, so a real reading is never overwritten by a zero. Cost is carried in the **nano-AI units Copilot emits**; no USD figure is derived, because Copilot documents an AI credit as $0.01 in a different structure and nowhere states that one AIU is one credit |
-| **Everything else in the matrix** | ➖ not yet — no ad-hoc ask, tool governance, remote control, or status bar |
+| **Ad-hoc ask** ([guide](ask.md)) | ✅ buffered `copilot -p` (capture) / `copilot -i` TUI (interactive), conv-id pre-minted (`--session-id`), resumed exactly (`--resume=<full uuid>`). See [below](#copilot-ask) |
+| **Live-streamed ask output** (print mode → a TTY) | ➖ buffered — the answer arrives whole at the end of the turn |
+| **Everything else in the matrix** | ➖ not yet — no tool governance, remote control, or status bar |
 
 Two consequences are worth stating plainly:
 
@@ -635,6 +637,64 @@ Everything degrades rather than fails. A session directory with no
 `workspace.yaml` yet, an unparsable one, or a log truncated mid-line by a live
 writer is skipped or partially read — never allowed to empty the listing — and
 a `COPILOT_HOME` the CLI has never run under lists nothing without erroring.
+
+#### Copilot ask
+
+`tclaude ask` on `--harness copilot` is **buffered only**. Capture runs the
+headless `copilot -p PROMPT` form and prints the answer; the interactive `-i`
+form (`tclaude ask -i`) drives the ordinary TUI. Copilot does have an
+incremental surface — the `--output-format json` JSONL stream — but rendering it
+as live text is a separate wire-format contract, so `SupportsAskStream` stays
+false and the answer arrives whole.
+
+Four properties were measured against the pinned binary in the fixture lab
+(`pkg/claude/harness/copilotfixture/ask_smoke_test.go`), each running the argv
+production builds rather than one the test assembles:
+
+- **The streams split cleanly.** stdout carries the answer and nothing else, so
+  `x=$(tclaude ask …)` captures just the answer. The run summary — changed
+  files, duration, token tally, and a `Resume     copilot --resume=<id>` line —
+  goes to stderr, which tclaude buffers by default and surfaces on `--verbose`
+  or when the run fails.
+- **Resume is exact, and ask conversations are ordinary conversations.** A fresh
+  ask pins its own id with `--session-id <uuid>` before the turn runs, so the
+  mapping is recorded up front; the next question resumes that full id (never a
+  prefix or a session name, both of which `--resume` also accepts and either of
+  which could attach the turn to a different conversation). The resumed turn was
+  measured on the provider wire carrying the earlier exchange, and the
+  conversation is listable through the store above.
+- **A piped payload stays data.** Copilot documents no `--` end-of-options
+  separator, so the prompt is passed as the value of `-p`; a payload beginning
+  with `---`, and a flag-shaped line inside it, were measured reaching the model
+  verbatim.
+- **A capture cannot write, and tclaude emits no permission flag to achieve
+  that.** Headless there is no terminal to draw a permission prompt on, and
+  Copilot neither blocks nor silently proceeds: the tool call returns
+  "Permission denied and could not request permission from user", the model gets
+  that as the tool result, and the turn completes. Measured for both the
+  built-in `create` file tool and an unsafe shell command, each against a
+  positive control in which the same call under `--allow-all-tools` *does*
+  write. So an unattended one-shot is read-only-ish **by construction** — and
+  `--allow-all-tools` is precisely what ask must never emit.
+- **`COPILOT_ALLOW_ALL` is unset for every ask.** The posture above is a
+  property of the launch, not of the argv: the variable is measured to be
+  stronger than the flag it documents, and exporting it makes the same
+  production ask argv write the workspace. So ask drops it from the child's
+  environment in both modes, exactly as the spawn path does — an operator's
+  exported variable does not get to decide what a one-shot question may do.
+
+Two limits follow, and neither is a bug to route around:
+
+- **Only the capture path sidesteps folder trust.** A headless `-p` run reaches
+  the provider with a `COPILOT_HOME` that trusts nothing, so `tclaude ask` works
+  in a directory Copilot has never seen. The interactive `-i` form is the
+  ordinary TUI and meets the trust modal like any other launch — which is fine
+  there, because a human is present to answer it.
+- **"Read-only-ish", not a sandbox.** The denial is Copilot's own headless
+  permission fallback, not an OS boundary tclaude enforces, and safe commands
+  the CLI auto-approves still run. `--deny-tool` is not used to harden this
+  further: URL rules are known to parse and then match nothing at runtime, so a
+  deny that denies nothing would be worse than no claim at all.
 
 #### Copilot hooks
 

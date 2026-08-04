@@ -507,6 +507,84 @@ func RunShell(t *testing.T, opts RunOptions, commandLine string) RunResult {
 	return RunResult{ExitCode: exitCode, Stdout: stdout.String(), Stderr: stderr.String()}
 }
 
+// RunArgv executes an explicit argv — argv[0] is the binary — under the same
+// credential-free, hermetic environment Run and RunShell use.
+//
+// It is RunShell's no-shell twin, and the distinction is the point rather than
+// a convenience. `tclaude ask` EXECS its harness argv directly, so the
+// production Asker returns a []string in which the untrusted question is one
+// element that no shell ever sees. Handing that argv to RunShell would mean
+// re-joining and quoting it in the test, which is exactly the step the argv
+// contract exists to remove — and a quoting bug in the test would then be
+// indistinguishable from a flag-parsing finding about the CLI.
+//
+// stdin is /dev/null for the same reason it is in Run: the ask capture form is
+// headless, and a run must never pick up the test binary's own stdin.
+//
+// Events are parsed only when the argv actually asks for the JSONL surface. The
+// gate is not an optimization: parseEvents FAILS the test on a stdout line that
+// starts with `{` but is not an Event, and a text-mode run's stdout is model
+// output — a scenario whose answer happened to begin with a brace would die on
+// "unparsable event line" instead of on its own assertion.
+//
+// Unlike Run, this helper shapes NO argv of its own: RunOptions fields that
+// exist to build one (Prompt, SessionID, ResumeID, Model, Effort, ExtraArgs,
+// OmitAllowAllTools) are ignored here, because the argv under test is the
+// caller's. The environment and directory fields apply exactly as they do
+// everywhere else.
+func RunArgv(t *testing.T, opts RunOptions, argv []string) RunResult {
+	t.Helper()
+	if len(argv) == 0 {
+		t.Fatal("copilotfixture: RunArgv needs a non-empty argv")
+	}
+
+	timeout := opts.Timeout
+	if timeout == 0 {
+		timeout = RunTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	cmd.Dir = opts.WorkDir
+	cmd.Env = buildEnv(opts)
+	cmd.WaitDelay = waitDelay
+
+	devNull, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatalf("copilotfixture: opening %s: %v", os.DevNull, err)
+	}
+	defer func() { _ = devNull.Close() }()
+	cmd.Stdin = devNull
+
+	var stdout, stderr strings.Builder
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	runErr := cmd.Run()
+	if ctx.Err() != nil {
+		t.Fatalf("copilotfixture: argv run exceeded %s (stderr: %s)", timeout, stderr.String())
+	}
+	exitCode := 0
+	if runErr != nil {
+		var exitErr *exec.ExitError
+		if !errors.As(runErr, &exitErr) {
+			t.Fatalf("copilotfixture: launching %s failed: %v", argv[0], runErr)
+		}
+		exitCode = exitErr.ExitCode()
+	}
+
+	result := RunResult{
+		ExitCode: exitCode,
+		Stdout:   stdout.String(),
+		Stderr:   stderr.String(),
+	}
+	if slices.Contains(argv, "--output-format") && slices.Contains(argv, "json") {
+		result.Events = parseEvents(t, stdout.String())
+	}
+	return result
+}
+
 // buildEnv assembles the child environment. ExtraEnv is applied by the wrapper
 // below rather than inside, so it lands after BOTH of the function's exit
 // paths — the proxy-capture branch returns early, and a scenario's explicit

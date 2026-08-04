@@ -889,3 +889,58 @@ func TestAssemblePrompt(t *testing.T) {
 	assert.Contains(t, got, "data")
 	assert.Equal(t, "", assemblePrompt("", ""))
 }
+
+// TestAsk_ScrubsHarnessNamedAmbientEnv covers the half of an ask launch the
+// argv cannot carry.
+//
+// Copilot's COPILOT_ALLOW_ALL is measured to be STRONGER than the
+// `--allow-all-tools` flag it documents — exported alone it promotes tool
+// execution and clears the folder-trust gate — so an operator who exported it
+// once would otherwise decide, invisibly, whether a one-shot question may write
+// the workspace. The descriptor names it (harness.AskEnvScrubber) and the flow
+// must carry that into the plan the runner executes.
+func TestAsk_ScrubsHarnessNamedAmbientEnv(t *testing.T) {
+	setupAskTestDB(t)
+	forceConvExists(t, true)
+	f := &fakeRun{answer: "ok\n", started: true}
+	f.install(t)
+
+	in := ttyInput("term-scrub", "/repo/x", "who goes there?")
+	in.Harness = harness.CopilotName
+	require.NoError(t, runAsk(in, askIO{Stdout: io.Discard, Stderr: io.Discard}))
+
+	assert.Contains(t, f.last().ScrubEnv, "COPILOT_ALLOW_ALL",
+		"a Copilot ask must drop the ambient promoter from the child environment")
+
+	// A harness that names none keeps the plain inherit path, so no other ask
+	// silently gains an environment tclaude assembled.
+	in2 := ttyInput("term-inherit", "/repo/x", "and here?")
+	in2.Harness = harness.DefaultName
+	require.NoError(t, runAsk(in2, askIO{Stdout: io.Discard, Stderr: io.Discard}))
+	assert.Empty(t, f.last().ScrubEnv)
+}
+
+func TestScrubEnv(t *testing.T) {
+	environ := []string{"PATH=/bin", "COPILOT_ALLOW_ALL=true", "HOME=/home/x", "COPILOT_ALLOW_ALLX=1"}
+
+	kept, scrubbed := scrubEnv(environ, []string{"COPILOT_ALLOW_ALL"})
+	assert.True(t, scrubbed)
+	assert.Equal(t, []string{"PATH=/bin", "HOME=/home/x", "COPILOT_ALLOW_ALLX=1"}, kept,
+		"only the exact key is dropped; a variable whose name merely starts with it stays")
+
+	// Whatever the value: the point is that the harness sees it unset, not that
+	// tclaude argues with a particular spelling of "true".
+	kept, scrubbed = scrubEnv([]string{"COPILOT_ALLOW_ALL=whatever"}, []string{"COPILOT_ALLOW_ALL"})
+	assert.True(t, scrubbed)
+	assert.Empty(t, kept)
+
+	// Nothing to scrub leaves the caller on the inherit path, signalled by the
+	// false second return rather than by an identical copy.
+	kept, scrubbed = scrubEnv(environ, nil)
+	assert.False(t, scrubbed)
+	assert.Equal(t, environ, kept)
+
+	kept, scrubbed = scrubEnv(environ, []string{"NOT_SET_ANYWHERE"})
+	assert.False(t, scrubbed)
+	assert.Equal(t, environ, kept)
+}
