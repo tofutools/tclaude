@@ -261,6 +261,8 @@ tclaude proxy github pr create # → audit verb "github.pr.create"
 | `could not inspect this repository's configuration` | A config probe failed to run. The proxy refuses rather than assuming the repository is safe; check that `git` works in that directory. |
 | `tool_missing` | `git` or `gh` is not installed on the host running agentd. |
 | A push hangs then times out | Usually a passphrase-protected key that is not loaded into an ssh-agent. The proxy runs `ssh -o BatchMode=yes`, so it fails rather than prompting — load the key with `ssh-add`, or set `ssh_key`. |
+| `Host key verification failed` | The account agentd runs as has no `known_hosts` entry for the forge, and `BatchMode=yes` cannot prompt to accept one. Run `ssh -T git@github.com` once as that account, or add the host key with `ssh-keyscan`. |
+| `Permission denied (publickey)` | The key agentd offered is not one the forge accepts. **Setting `ssh_key` narrows this**: it adds `-o IdentitiesOnly=yes`, so ssh offers *only* that key — an agent key or a default `~/.ssh/id_*` that would otherwise have worked is not tried. Reproduce exactly what the daemon does with `ssh -v -o BatchMode=yes -o IdentitiesOnly=yes -i <key> -T git@github.com`; a passphrase-protected key with no agent fails this way too. Clearing `ssh_key` falls back to the ambient SSH setup, which is the better posture unless you specifically want one identity. |
 
 ## See also
 
