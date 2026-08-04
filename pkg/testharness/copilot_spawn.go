@@ -58,11 +58,9 @@ func (s *simSpawner) spawnNewCopilot(args clcommon.SpawnArgs) error {
 	if err != nil {
 		return fmt.Errorf("copilot launch would not start: %w", err)
 	}
-	sim.SessionID = label
+	sim.SetSessionID(label)
 	s.w.RecordCopilotLaunchCommand(sim.ConvID, cmd)
-	if s.w.SpawnCopilotFolderTrust {
-		TrustCopilotFolder(s.t, home, sim.Cwd)
-	}
+	s.seedCopilotDirTrust(args, cwd)
 	if err := sim.Start(); err != nil {
 		return err
 	}
@@ -140,15 +138,13 @@ func (s *simSpawner) spawnResumeCopilot(args clcommon.SpawnArgs) error {
 		sim.mu.Unlock()
 	}
 	s.w.RecordCopilotLaunchCommand(convID, cmd)
-	if s.w.SpawnCopilotFolderTrust {
-		TrustCopilotFolder(s.t, home, sim.Cwd)
-	}
+	s.seedCopilotDirTrust(args, sim.Cwd)
 	if err := sim.Start(); err != nil {
 		return err
 	}
 	s.recordCopilotSpawnObservability(convID, args)
 	label := generateResumeLabel()
-	sim.SessionID = label
+	sim.SetSessionID(label)
 	if err := saveSessionWithResumeProvenance(&db.SessionRow{
 		ID:                     label,
 		TmuxSession:            label,
@@ -195,4 +191,27 @@ func (s *simSpawner) recordCopilotSpawnObservability(convID string, args clcommo
 	s.w.RecordSpawnGitWorktreeWriteDirs(convID, args.GitWorktreeWriteDirs)
 	s.w.RecordSpawnName(convID, args.Name)
 	s.w.RecordSpawnInitialPrompt(convID, args.InitialPrompt)
+}
+
+// seedCopilotDirTrust reproduces what production's `tclaude session new` does
+// immediately before it starts the pane: when the launch opted into
+// pre-trusting its cwd, seed the harness's trust store so the agent does not
+// freeze on the folder-trust modal.
+//
+// It calls the PRODUCTION editor rather than writing the file, for the same
+// reason the pane boots from the production spawner's argv: this simulator is
+// what will validate tclaude's seeding, so an imitation of the write would let
+// a broken editor pass. Both ways a spawn can reach it are covered without a
+// second code path — an explicit `--trust-dir` / profile / dashboard opt-in,
+// and the daemon's own defaultSiblingWorktreeTrust auto-enable — because both
+// arrive here as the same resolved SpawnArgs.TrustDir.
+//
+// Best-effort, exactly as production is: a seeding failure warns and the launch
+// continues, leaving the operator the dashboard focus button. Here that shows
+// up as a pane that parks, which is the honest outcome.
+func (s *simSpawner) seedCopilotDirTrust(args clcommon.SpawnArgs, cwd string) {
+	if !args.TrustDir {
+		return
+	}
+	TrustCopilotFolder(s.t, CopilotHomeFor(s.w.HomeDir), cwd)
 }

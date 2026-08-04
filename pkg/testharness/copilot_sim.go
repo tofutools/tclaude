@@ -72,7 +72,9 @@ type CopilotSim struct {
 	// live.
 	Home string
 	// SessionID is tclaude's own session label (TCLAUDE_SESSION_ID), the key
-	// production hook application is scoped to.
+	// production hook application is scoped to. Set through SetSessionID: the
+	// hook path reads it under the mutex, so writing it bare would be a race
+	// the day anything sets it after registration.
 	SessionID string
 
 	// Model and CliVersion stamp the event log's session.start line, which is
@@ -105,8 +107,6 @@ type CopilotSim struct {
 	// hookLaunchSeq counts launches so the replayed capture uses the FRESH
 	// SessionStart payload for a first launch and the RESUMED one afterwards.
 	hookLaunchSeq int
-	userMessages  int
-	outputTokens  int64
 	buf           strings.Builder
 	capture       copilotfixture.HookCapture
 	createdAt     time.Time
@@ -190,8 +190,12 @@ func NewCopilotSim(t *testing.T, home, cwd, launchCmd string) (*CopilotSim, erro
 		convID = generateConvID()
 	}
 	if cwd == "" {
-		cwd = filepath.Join(home, "copilot-sim-cwd")
-		_ = os.MkdirAll(cwd, 0o755)
+		// Refused rather than defaulted. The obvious default — somewhere under
+		// `home` — would put the workspace inside COPILOT_HOME, which is
+		// Copilot's state directory and never a working directory, and would
+		// then quietly make the cwd path grant overlap the trust store.
+		t.Fatalf("copilot sim: a pane needs an explicit cwd; COPILOT_HOME is " +
+			"Copilot's state directory, not a workspace")
 	}
 	c := &CopilotSim{
 		ConvID:     convID,
@@ -215,6 +219,13 @@ func NewCopilotSim(t *testing.T, home, cwd, launchCmd string) (*CopilotSim, erro
 	return c, nil
 }
 
+// SetSessionID records tclaude's session label for the pane.
+func (c *CopilotSim) SetSessionID(label string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.SessionID = label
+}
+
 // Launch exposes the parsed launch so a test can assert on the argv the
 // production spawner actually produced.
 func (c *CopilotSim) Launch() CopilotLaunch {
@@ -223,34 +234,37 @@ func (c *CopilotSim) Launch() CopilotLaunch {
 	return c.launch
 }
 
-// TrustCopilotFolder pre-grants folder trust for dir by writing Copilot's
-// config.json under home, and must be called BEFORE Start.
+// TrustCopilotFolder pre-grants folder trust for dir by calling PRODUCTION's
+// Copilot trust editor, and must be called BEFORE Start.
 //
-// This helper is the single most consequential thing PR #1936 measured, so it
-// is reproduced here rather than approximated. Contract entry `folder-trust`:
-// with a fresh COPILOT_HOME the trust dialog is the FIRST gate, before the
-// provider is contacted at all, and NO launch flag clears it —
-// --allow-all-tools, --allow-all, --allow-all-paths and --add-dir <workdir>
-// were each measured still blocking with zero provider requests. The only
-// argv-free bypass is this config write.
+// It delegates rather than writing the file itself, and that is the whole
+// point: this simulator is what will validate tclaude's seeding, so a test-side
+// imitation of the write would let a production editor with a different idea of
+// the file's shape pass every test here and park a real pane. Delegating also
+// inherits the editor's read-modify-write, so two agents seeding different
+// directories compose instead of the second silently un-trusting the first.
 //
-// The consequence for tclaude, which this simulator makes testable: a Copilot
-// agent cannot be spawned detached by rendering argv alone. Something has to
-// write this file first, and that is a config-FILE contract with its own
-// review surface (it pre-answers a human trust decision), not an approval
-// token.
+// Why any of this is needed at all is the most consequential thing PR #1936
+// measured. Contract entry `folder-trust`: with a fresh COPILOT_HOME the trust
+// dialog is the FIRST gate, before the provider is contacted at all, and NO
+// launch flag clears it — --allow-all-tools, --allow-all, --allow-all-paths and
+// --add-dir <workdir> were each measured still blocking with zero provider
+// requests. A detached Copilot agent cannot be produced by rendering argv
+// alone; something has to write this file first.
 func TrustCopilotFolder(t *testing.T, home, dir string) {
 	t.Helper()
-	if err := os.MkdirAll(home, 0o755); err != nil {
-		t.Fatalf("copilot sim: mkdir %s: %v", home, err)
-	}
-	path := filepath.Join(home, "config.json")
-	enc, err := json.Marshal(map[string]any{"trustedFolders": []string{dir}})
+	h, err := harness.Resolve(copilotHarnessName)
 	if err != nil {
-		t.Fatalf("copilot sim: marshal trustedFolders: %v", err)
+		t.Fatalf("copilot sim: resolving the Copilot harness: %v", err)
 	}
-	if err := os.WriteFile(path, enc, 0o600); err != nil {
-		t.Fatalf("copilot sim: write %s: %v", path, err)
+	if err := harness.EnsureDirTrustedForLaunch(h, dir,
+		func(name string) string {
+			if name == harness.CopilotHomeEnvVar {
+				return home
+			}
+			return ""
+		}, home); err != nil {
+		t.Fatalf("copilot sim: pre-trusting %s under %s: %v", dir, home, err)
 	}
 }
 
@@ -266,17 +280,49 @@ func (c *CopilotSim) folderTrusted() bool {
 	if c.launch.AmbientAllowAll() {
 		return true
 	}
-	raw, err := os.ReadFile(filepath.Join(c.Home, "config.json"))
+	raw, err := os.ReadFile(filepath.Join(c.Home, harness.CopilotConfigFileName))
 	if err != nil {
 		return false
 	}
 	var cfg struct {
 		TrustedFolders []string `json:"trustedFolders"`
 	}
-	if err := json.Unmarshal(raw, &cfg); err != nil {
+	// JSONC, not JSON. The contract's `folder-trust` entry closes with the
+	// warning that config.json "is JSONC that self-describes as automatically
+	// managed, so a naive encoding/json read of an existing file will fail on
+	// its comment lines" — and the CLI writes exactly such a header into the
+	// file it manages. A simulator that could not read a real operator's
+	// config would report a correctly-seeded launch as parked.
+	if err := json.Unmarshal(stripCopilotConfigComments(raw), &cfg); err != nil {
 		return false
 	}
-	return slices.Contains(cfg.TrustedFolders, c.Cwd)
+	// Compare on the same spellings production seeds: the cleaned path and, on
+	// a platform whose temp or home is a symlink (macOS resolves TMPDIR through
+	// /var -> /private/var), its resolved form.
+	wanted := []string{filepath.Clean(c.Cwd)}
+	if resolved, err := filepath.EvalSymlinks(wanted[0]); err == nil {
+		wanted = append(wanted, filepath.Clean(resolved))
+	}
+	for _, folder := range cfg.TrustedFolders {
+		if slices.Contains(wanted, filepath.Clean(strings.TrimSpace(folder))) {
+			return true
+		}
+	}
+	return false
+}
+
+// stripCopilotConfigComments drops whole-line `//` comments, mirroring what
+// production's own reader does to the same file.
+func stripCopilotConfigComments(data []byte) []byte {
+	lines := strings.Split(string(data), "\n")
+	kept := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "//") {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return []byte(strings.Join(kept, "\n"))
 }
 
 // Start boots the pane: it materialises the session-state files and evaluates
@@ -294,11 +340,23 @@ func (c *CopilotSim) Start() error {
 	if c.alive {
 		return nil
 	}
+	// A RELAUNCH is a new process, so it re-evaluates every gate from scratch.
+	// The parked state is per-process even though nothing but a human clears a
+	// dialog within one: carrying `blocked` across a relaunch would report a
+	// conversation as deadlocked forever once its trust had been seeded, which
+	// is exactly the transition the DirTrust work exists to make.
+	c.blocked = false
+	c.blockedBy = ""
+	c.turnOpen = false
 	if !c.folderTrusted() {
 		c.alive = true
-		c.launched = true
 		c.blocked = true
 		c.blockedBy = copilotfixture.TrustPromptMarker
+		// `launched` deliberately stays false: this process never reached the
+		// provider, so it wrote no session.start, and the NEXT launch is still
+		// this conversation's first real one. Marking it launched here would
+		// make that later relaunch append a session.resume to a log with no
+		// session.start in it.
 		return nil
 	}
 	if err := c.writeWorkspaceLocked(); err != nil {
@@ -338,7 +396,6 @@ func (c *CopilotSim) StartTurn(prompt string) {
 		c.mu.Unlock()
 		return
 	}
-	c.userMessages++
 	seq := c.hookLaunchSeq
 	_ = c.appendEventLocked(map[string]any{
 		"type": "user.message",
@@ -360,8 +417,10 @@ func (c *CopilotSim) StartTurn(prompt string) {
 // `--resume=<full-id>` submits into the RESUMED conversation (the request
 // carried [system, user, assistant, user], where a fork would have sent
 // [system, user]) and the session-state directory kept its original UUID. That
-// retired the standing "unverified" comment in copilot_spawner.go, and it is
-// why a relaunch briefing does not vanish silently.
+// settles the question copilot_spawner.go still flags as unverified in its own
+// comment, and it is why a relaunch briefing does not vanish silently. (This
+// PR touches no production file, so that stale comment is left for the change
+// that owns it.)
 //
 // The caller invokes it AFTER the session row exists and the pane is
 // registered, mirroring production's ordering — the row is written before the
@@ -402,13 +461,24 @@ func (c *CopilotSim) RequestTool(call CopilotToolCall) CopilotToolOutcome {
 			"fixture establishes it.")
 	}
 
+	outcome, seq := c.decideTool(call, name)
+	if outcome == CopilotToolAllowed {
+		// Outside the lock: see applyHook.
+		c.applyHook("PostToolUse", seq)
+	}
+	return outcome
+}
+
+// decideTool is RequestTool's locked half. It is split out so the PostToolUse
+// hook fires with the mutex released.
+func (c *CopilotSim) decideTool(call CopilotToolCall, name string) (CopilotToolOutcome, int) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.alive {
 		c.t.Fatalf("copilot sim: tool call on a dead pane")
 	}
 	if c.blocked {
-		return CopilotToolBlocked
+		return CopilotToolBlocked, 0
 	}
 
 	// 1) Deny rules first, and they are absolute. Contract entry
@@ -425,22 +495,20 @@ func (c *CopilotSim) RequestTool(call CopilotToolCall) CopilotToolOutcome {
 				"content": "Permission to run this tool was denied (" + rule + ")",
 			},
 		})
-		return CopilotToolDenied
+		return CopilotToolDenied, 0
 	}
 
 	if reason := c.blockReasonLocked(call); reason != "" {
 		c.blocked = true
 		c.blockedBy = reason
-		return CopilotToolBlocked
+		return CopilotToolBlocked, 0
 	}
 
-	c.outputTokens += 20
 	_ = c.appendEventLocked(map[string]any{
 		"type": "assistant.message",
 		"data": map[string]any{"model": c.Model, "outputTokens": int64(20)},
 	})
-	c.applyHookLocked("PostToolUse", c.hookLaunchSeq-1)
-	return CopilotToolAllowed
+	return CopilotToolAllowed, c.hookLaunchSeq - 1
 }
 
 // blockReasonLocked returns the dialog this call parks on, or "".
@@ -469,6 +537,7 @@ func (c *CopilotSim) blockReasonLocked(call CopilotToolCall) string {
 	// there — the same `cat` allowed inside temp and blocked outside it — is
 	// what proves the block is path-driven rather than command-risk-driven.
 	if call.Path != "" && !c.pathGranted(call.Path) {
+		c.requireNoUnmeasuredWidening("the path gate", "out-of-cwd-paths")
 		return copilotfixture.PathPromptMarker + ": " + call.Path
 	}
 
@@ -476,22 +545,77 @@ func (c *CopilotSim) blockReasonLocked(call CopilotToolCall) string {
 	// corrected the TCL-973 plan in the plan's own favour: the URL dialog is
 	// real and distinct, AND --allow-all-tools closes it, so for the shell path
 	// there is no second deadlock to close and no URL deny is needed.
-	if call.URL != "" && !c.launch.ToolsAutoApproved() && !c.inPaneAllowAll {
+	//
+	// ONLY the flag. The ambient variable and the in-pane widening were each
+	// measured against a TOOL call, never against a URL, so neither may close
+	// this gate here — requireNoUnmeasuredWidening turns a launch that would
+	// depend on one into a test failure instead of a silent allow.
+	if call.URL != "" && !c.launch.AllowAllTools {
+		c.requireNoUnmeasuredWidening("the URL gate", "url-access")
 		return "Copilot is attempting to access the following URL: " + call.URL
 	}
 
 	// Tool approval. Contract entry `default-interactive-blocking`: an unsafe
-	// command blocks with no flags and completes with --allow-all-tools.
-	if !call.AutoApproved && !c.launch.ToolsAutoApproved() && !c.inPaneAllowAll {
+	// command blocks with no flags and completes with --allow-all-tools; entry
+	// `ambient-allow-all-env` measured COPILOT_ALLOW_ALL executing an unsafe
+	// tool call with no flags at all. Both are inputs to ToolsAutoApproved.
+	if !call.AutoApproved && !c.launch.ToolsAutoApproved() {
+		c.requireNoUnmeasuredWidening("the tool-approval gate", "default-interactive-blocking")
 		return "Allow command? " + call.Command
 	}
 	return ""
 }
 
+// requireNoUnmeasuredWidening fails the test when a gate is about to block a
+// launch that carries something which MIGHT have opened it, but which no
+// committed scenario measured against this gate.
+//
+// The two cases, both caught by the cold review of this simulator's first
+// revision, and both in the permissive direction that matters:
+//
+//   - `--allow-all` / `--yolo`. Measured only against the folder-trust gate,
+//     where they do nothing. Their effect on tool approval, paths and URLs was
+//     never measured, so reading them as a blanket approval — which the flag
+//     names invite — would have the simulator assert an auto-approval nobody
+//     observed.
+//   - in-pane `/allow-all`. The `in-pane-allow-all-override` entry measured
+//     only that a launch-time DENY survives it, and its own corroborating note
+//     says plainly: "NOT measured: … whether the ALLOW posture rather than a
+//     deny can be widened in-pane".
+//
+// Blocking anyway would be the safe direction for a production guard and the
+// WRONG one for a simulator: a test asserting "this posture deadlocks" would
+// pass on evidence that does not exist. Failing loudly is the only answer that
+// cannot be mistaken for a measurement.
+func (c *CopilotSim) requireNoUnmeasuredWidening(gate, entry string) {
+	c.t.Helper()
+	switch {
+	case c.launch.BlanketAllow:
+		c.t.Fatalf("copilot sim: this launch carries --allow-all/--yolo, whose effect "+
+			"on %s is UNMEASURED — permission_contract.json entry %q measured only "+
+			"--allow-all-tools, and the folder-trust entry measured --allow-all only "+
+			"against the trust modal. Commit a scenario before a test depends on it.",
+			gate, entry)
+	case c.inPaneAllowAll:
+		c.t.Fatalf("copilot sim: this pane ran in-pane /allow-all, whose widening "+
+			"effect on %s is UNMEASURED — entry `in-pane-allow-all-override` "+
+			"measured only that a launch-time DENY survives it, and says so "+
+			"explicitly in its corroborating notes.", gate)
+	case c.launch.AmbientAllowAll() && gate != "the tool-approval gate":
+		c.t.Fatalf("copilot sim: this launch carries COPILOT_ALLOW_ALL=true, whose "+
+			"effect on %s is UNMEASURED — entry `ambient-allow-all-env` measured it "+
+			"against the folder-trust modal and an unsafe TOOL call, nothing else.",
+			gate)
+	}
+}
+
 // pathGranted models the default cwd-subtree + system-temp grant and the two
 // flags that move it.
 func (c *CopilotSim) pathGranted(path string) bool {
-	if c.launch.AllowAllPaths || c.launch.AmbientAllowAll() {
+	// --allow-all-paths only. The ambient variable's reach beyond the trust
+	// modal and a tool call is unmeasured, so it is handled by
+	// requireNoUnmeasuredWidening rather than granted here.
+	if c.launch.AllowAllPaths {
 		return true
 	}
 	if underDir(path, c.Cwd) {
@@ -569,7 +693,6 @@ func (c *CopilotSim) FinishTurn() {
 		"type": "assistant.message",
 		"data": map[string]any{"model": c.Model, "outputTokens": int64(30)},
 	})
-	c.outputTokens += 30
 	c.mu.Unlock()
 	c.applyHook("Stop", seq-1)
 }
@@ -601,7 +724,23 @@ func (c *CopilotSim) Receive(text string) {
 
 // submit dispatches one submitted line: the in-pane commands tclaude's
 // lifecycle types into the pane, then everything else as a prompt.
+//
+// A pane that is parked on a dialog — or already dead — SWALLOWS the line and
+// does nothing. That guard is not a detail: a Copilot modal owns the keyboard,
+// so `/rename`, `/compact` and `/exit` typed into a parked pane all land in the
+// dialog's own input and are discarded. Without it the simulator would let a
+// deadlocked pane rename its conversation (materialising the very
+// session-state file the trust gate proves is never written), append to an
+// event log that has no session.start, and — worst — answer tclaude's soft-stop
+// with a clean SessionEnd, so a future "detect and recover a deadlocked pane"
+// guard would test as working while doing nothing at all.
 func (c *CopilotSim) submit(line string) {
+	c.mu.Lock()
+	swallowed := !c.alive || c.blocked
+	c.mu.Unlock()
+	if swallowed {
+		return
+	}
 	switch {
 	case strings.HasPrefix(line, "/rename"):
 		name := strings.TrimSpace(strings.TrimPrefix(line, "/rename"))
@@ -703,13 +842,15 @@ func (c *CopilotSim) RenderPane() string {
 // discipline copilot_hooks_flow_test.go already follows: if Copilot renames a
 // field, a simulator built on struct literals keeps passing while production
 // stops working.
+// The lock is NEVER held across the call. session.ApplyHook can reach
+// paneinput.InjectTextAndSubmit (the clear-migration rename, the context
+// nudge), which in a flow test routes straight back through the registered
+// tmux simulator into this pane's Receive — and a Receive that had to take a
+// lock the hook path was still holding would deadlock the test rather than
+// fail it. CCSim releases before calling ApplyHook for the same reason; this
+// follows that convention rather than relying on those paths staying disabled
+// for Copilot.
 func (c *CopilotSim) applyHook(event string, index int) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.applyHookLocked(event, index)
-}
-
-func (c *CopilotSim) applyHookLocked(event string, index int) {
 	payloads := c.capture.FindAll(event)
 	if len(payloads) == 0 {
 		c.t.Fatalf("copilot sim: no recorded %s payload in scenario %s",
@@ -720,12 +861,16 @@ func (c *CopilotSim) applyHookLocked(event string, index int) {
 		// resumed firing, and a third launch reuses the resumed shape.
 		index = len(payloads) - 1
 	}
+	c.mu.Lock()
+	convID, cwd, sessionID := c.ConvID, c.Cwd, c.SessionID
+	c.mu.Unlock()
+
 	var in session.HookCallbackInput
-	raw := copilotfixture.HookPayloadFor(payloads[index], c.ConvID, c.Cwd)
+	raw := copilotfixture.HookPayloadFor(payloads[index], convID, cwd)
 	if err := json.Unmarshal(raw, &in); err != nil {
 		c.t.Fatalf("copilot sim: decoding the recorded %s payload: %v", event, err)
 	}
-	_ = session.ApplyHook(in, c.SessionID)
+	_ = session.ApplyHook(in, sessionID)
 }
 
 // writeWorkspaceLocked materialises workspace.yaml — the file tclaude's

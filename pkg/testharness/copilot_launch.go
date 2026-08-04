@@ -93,17 +93,25 @@ type CopilotLaunch struct {
 	// folded into it.
 	Mode string
 
-	// Permission posture.
+	// Permission posture. Only the flags the 1.0.77 contract measured the
+	// EFFECT of are represented; the rest are rejected at parse (see the
+	// unmodelled arms in parseArgs), because a permission flag that parses and
+	// is then ignored is precisely the regression this seam exists to catch.
 	AllowAllTools   bool
 	AllowAllPaths   bool
-	AllowAllURLs    bool
 	NoAskUser       bool
 	DisallowTempDir bool
 	AddDirs         []string
-	AllowTools      []string
 	DenyTools       []string
-	AllowURLs       []string
-	DenyURLs        []string
+
+	// BlanketAllow records `--allow-all` / `--yolo`. It is kept SEPARATE from
+	// AllowAllTools on purpose: the contract measured these two flags only
+	// against the folder-trust gate (where they do nothing), and no committed
+	// scenario measured their effect on tool approval, paths or URLs. Folding
+	// them into AllowAllTools would have the simulator assert an
+	// auto-approval nobody observed — so instead the gate model fails the test
+	// when a decision would depend on them. See CopilotSim.blockReasonLocked.
+	BlanketAllow bool
 
 	// Argv is everything after the binary, in order, so a test can assert on
 	// the raw spelling (flag order, the `=` forms) without re-tokenizing.
@@ -117,9 +125,19 @@ func (l CopilotLaunch) AmbientAllowAll() bool {
 	return l.Env[CopilotAllowAllEnvVar] == copilotAllowAllEnvValue
 }
 
-// ToolsAutoApproved reports whether tool calls run without a confirmation
-// prompt. `--allow-all-tools` is the documented flag; the ambient variable is
-// strictly stronger and reaches the same place.
+// ToolsAutoApproved reports whether TOOL CALLS run without a confirmation
+// prompt.
+//
+// Exactly two inputs, and both were measured against a tool call rather than
+// inferred from a flag's name: `--allow-all-tools` completed an unsafe command
+// that blocked without it (contract entry `default-interactive-blocking`), and
+// COPILOT_ALLOW_ALL=true executed an unsafe tool call with no flags at all
+// (entry `ambient-allow-all-env`).
+//
+// `--allow-all` / `--yolo` are deliberately absent — see BlanketAllow. This
+// method answers only the tool axis; the path and URL axes are separate gates
+// with separate evidence, and reusing this for them was a real bug the cold
+// review of the first revision caught.
 func (l CopilotLaunch) ToolsAutoApproved() bool {
 	return l.AllowAllTools || l.AmbientAllowAll()
 }
@@ -267,10 +285,8 @@ func (l *CopilotLaunch) parseArgs() error {
 			l.AllowAllTools = true
 		case arg == "--allow-all-paths":
 			l.AllowAllPaths = true
-		case arg == "--allow-all-urls":
-			l.AllowAllURLs = true
 		case arg == "--allow-all" || arg == "--yolo":
-			l.AllowAllTools, l.AllowAllPaths, l.AllowAllURLs = true, true, true
+			l.BlanketAllow = true
 		case arg == "--no-ask-user":
 			l.NoAskUser = true
 		case arg == "--disallow-temp-dir":
@@ -283,7 +299,7 @@ func (l *CopilotLaunch) parseArgs() error {
 			}
 			l.AddDirs = append(l.AddDirs, value)
 
-		case arg == "--allow-tool", arg == "--deny-tool":
+		case arg == "--deny-tool":
 			value, err := copilotFlagValue(args, &i, arg)
 			if err != nil {
 				return err
@@ -291,38 +307,40 @@ func (l *CopilotLaunch) parseArgs() error {
 			if err := copilotCheckRulePattern(arg, value); err != nil {
 				return err
 			}
-			l.appendRule(arg, value)
+			l.DenyTools = append(l.DenyTools, value)
 
-		case strings.HasPrefix(arg, "--allow-tool="), strings.HasPrefix(arg, "--deny-tool="):
+		case strings.HasPrefix(arg, "--deny-tool="):
 			flag, value, _ := strings.Cut(arg, "=")
 			if err := copilotCheckRulePattern(flag, value); err != nil {
 				return err
 			}
-			l.appendRule(flag, value)
+			l.DenyTools = append(l.DenyTools, value)
 
+		// The permission flags whose EFFECT no committed scenario measured.
+		// They are named individually rather than left to the catch-all so the
+		// refusal can say what is missing, because each needs a different
+		// fixture before it can be modelled — and because parsing one and then
+		// ignoring it is worse than refusing it. `--deny-url` is the sharpest:
+		// the contract's corroborating notes report domain-scoped denies as
+		// ENFORCED with no prompt, so a launch carrying one and a simulator
+		// that ignored it would model as "allowed" exactly where reality
+		// denies.
+		case arg == "--allow-tool", strings.HasPrefix(arg, "--allow-tool="):
+			return copilotUnmodelledFlag("--allow-tool",
+				"no scenario measured whether an allow rule closes the approval prompt")
 		case arg == "--allow-url", arg == "--deny-url":
-			value, err := copilotFlagValue(args, &i, arg)
-			if err != nil {
-				return err
-			}
-			l.appendURL(arg, value)
-
-		case arg == "--mode":
-			value, err := copilotFlagValue(args, &i, arg)
-			if err != nil {
-				return err
-			}
-			switch value {
-			case "interactive", "plan", "autopilot":
-				l.Mode = value
-			default:
-				return fmt.Errorf("copilot launch: --mode %q is not one of "+
-					"interactive|plan|autopilot", value)
-			}
-		case arg == "--plan":
-			l.Mode = "plan"
-		case arg == "--autopilot":
-			l.Mode = "autopilot"
+			return copilotUnmodelledFlag(arg,
+				"URL rule enforcement was measured only as PARSE acceptance, and the "+
+					"contract records parsing and enforcement demonstrably coming apart "+
+					"for the wildcard spellings")
+		case arg == "--allow-all-urls":
+			return copilotUnmodelledFlag("--allow-all-urls",
+				"no scenario measured it; the URL gate's only measured closer is "+
+					"--allow-all-tools, on the shell path")
+		case arg == "--mode", arg == "--plan", arg == "--autopilot":
+			return copilotUnmodelledFlag(arg,
+				"the agent-mode axis is a separate autonomy contract with its own "+
+					"forced-continuation semantics and no committed measurement")
 
 		default:
 			return fmt.Errorf(
@@ -350,20 +368,14 @@ func (l *CopilotLaunch) parseArgs() error {
 	return nil
 }
 
-func (l *CopilotLaunch) appendRule(flag, value string) {
-	if flag == "--allow-tool" {
-		l.AllowTools = append(l.AllowTools, value)
-		return
-	}
-	l.DenyTools = append(l.DenyTools, value)
-}
-
-func (l *CopilotLaunch) appendURL(flag, value string) {
-	if flag == "--allow-url" {
-		l.AllowURLs = append(l.AllowURLs, value)
-		return
-	}
-	l.DenyURLs = append(l.DenyURLs, value)
+// copilotUnmodelledFlag is the refusal for a flag the CLI accepts but this
+// simulator has no measurement for. It names the flag and what is missing, so
+// the reader's next step is "commit a fixture", not "guess".
+func copilotUnmodelledFlag(flag, why string) error {
+	return fmt.Errorf(
+		"copilot launch: %s is UNMODELLED — %s. The simulator refuses it rather "+
+			"than parsing it and silently ignoring it, because an ignored "+
+			"permission flag is the regression this seam exists to catch", flag, why)
 }
 
 // copilotRulePatternRE is the accepted spelling of a tool rule: a bare kind,

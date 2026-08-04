@@ -71,18 +71,6 @@ type World struct {
 	// that.
 	Copilots *CopilotRegistry
 
-	// SpawnCopilotFolderTrust, when true, makes the simulated Copilot spawn
-	// pre-grant folder trust for the launch cwd before starting the pane.
-	//
-	// It defaults to FALSE because false is what production does today, and
-	// the resulting pane — alive, silent, parked on "Confirm folder trust"
-	// forever — is a state a flow test must be able to observe rather than one
-	// the harness should quietly paper over. PR #1936 measured that no launch
-	// flag clears this gate, so the fix is a pre-launch config write that lives
-	// in the separate DirTrust change; this knob is the seam that change gets
-	// to flip, and the assertion that it is still needed until it lands.
-	SpawnCopilotFolderTrust bool
-
 	// CopilotLaunches records, keyed by conv-id, the launch command string the
 	// PRODUCTION Copilot spawner produced for each simulated spawn. A flow
 	// test asserts on the parsed form (World.CopilotLaunch); the raw string is

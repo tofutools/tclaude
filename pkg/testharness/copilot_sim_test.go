@@ -414,3 +414,130 @@ func readFileString(t *testing.T, path string) string {
 	require.NoError(t, err)
 	return string(raw)
 }
+
+// A pane parked on a dialog SWALLOWS everything tclaude types at it. The modal
+// owns the keyboard, so none of the lifecycle commands reach the session — and
+// a simulator that let them through would let a deadlocked pane rename its
+// conversation, append to an event log that has no session.start, and answer a
+// soft-stop with a clean SessionEnd. The last one is the dangerous one: a
+// future "detect and recover a deadlocked pane" guard would test as working
+// while doing nothing at all.
+func TestCopilotSimParkedPaneSwallowsInPaneCommands(t *testing.T) {
+	home, cwd := copilotSimHome(t)
+	sim, err := NewCopilotSim(t, home, cwd, "copilot --session-id "+copilotSimUUID)
+	require.NoError(t, err)
+	require.NoError(t, sim.Start())
+	blocked, _ := sim.Blocked()
+	require.True(t, blocked, "a fresh COPILOT_HOME parks the pane")
+
+	for _, line := range []string{"/rename renamed-while-parked", "/compact", "/exit"} {
+		sim.Receive(line)
+		sim.Receive("Enter")
+	}
+
+	assert.True(t, sim.IsAlive(), "/exit typed into a modal does not exit the CLI")
+	stateDir := filepath.Join(home, "session-state", copilotSimUUID)
+	assert.NoFileExists(t, filepath.Join(stateDir, "workspace.yaml"),
+		"/rename must not materialise the session state the trust gate prevents")
+	assert.NoFileExists(t, filepath.Join(stateDir, "events.jsonl"),
+		"/compact must not append to a log the pane never opened")
+}
+
+// A relaunch is a NEW PROCESS, so it re-evaluates the gates. Without this, a
+// conversation that parked once would report deadlocked forever after its trust
+// was seeded — which is precisely the transition directory trust exists to
+// make, so a simulator that could not express it would make the fix untestable.
+func TestCopilotSimRelaunchAfterSeedingClearsTheBlock(t *testing.T) {
+	home, cwd := copilotSimHome(t)
+	cmd := "copilot --session-id " + copilotSimUUID
+	sim, err := NewCopilotSim(t, home, cwd, cmd)
+	require.NoError(t, err)
+	require.NoError(t, sim.Start())
+	blocked, _ := sim.Blocked()
+	require.True(t, blocked)
+
+	// Seed trust and relaunch the same pane, as the resume branch does.
+	TrustCopilotFolder(t, home, cwd)
+	sim.Shutdown()
+	require.NoError(t, sim.Start())
+
+	blocked, reason := sim.Blocked()
+	assert.Falsef(t, blocked, "the relaunch must re-evaluate the gate: %s", reason)
+
+	// And the log it writes is a FIRST launch, not a resume: the parked process
+	// never reached the provider, so it never wrote a session.start for a
+	// session.resume to follow.
+	events := readFileString(t, filepath.Join(home, "session-state", copilotSimUUID, "events.jsonl"))
+	assert.Contains(t, events, `"type":"session.start"`)
+	assert.NotContains(t, events, `"type":"session.resume"`)
+}
+
+// `--allow-all` / `--yolo` must NOT be read as tool auto-approval. The contract
+// measured them only against the folder-trust modal, where they do nothing;
+// their effect on tool approval, paths and URLs was never measured, and the
+// flag names are exactly the kind of thing that invites an assumption.
+func TestParseCopilotLaunchBlanketAllowIsNotToolApproval(t *testing.T) {
+	for _, flag := range []string{"--allow-all", "--yolo"} {
+		launch, err := ParseCopilotLaunch("copilot " + flag)
+		require.NoError(t, err)
+		assert.True(t, launch.BlanketAllow, "%s should be recorded", flag)
+		assert.False(t, launch.AllowAllTools,
+			"%s was never measured against a tool call", flag)
+		assert.False(t, launch.ToolsAutoApproved(),
+			"%s must not be mistaken for --allow-all-tools", flag)
+	}
+}
+
+// Permission flags whose EFFECT nothing measured are refused at parse rather
+// than parsed and then ignored. `--deny-url` is the sharpest: the contract
+// reports domain-scoped denies as ENFORCED with no prompt, so a simulator that
+// accepted and ignored one would model "allowed" exactly where reality denies.
+func TestParseCopilotLaunchRefusesUnmodelledPermissionFlags(t *testing.T) {
+	for _, arg := range []string{
+		"--allow-tool 'shell(rm)'", "--allow-url github.com", "--deny-url github.com",
+		"--allow-all-urls", "--mode plan", "--plan", "--autopilot",
+	} {
+		t.Run(arg, func(t *testing.T) {
+			_, err := ParseCopilotLaunch("copilot " + arg)
+			require.Error(t, err, "an unmodelled permission flag must not parse silently")
+			assert.Contains(t, err.Error(), "UNMODELLED")
+		})
+	}
+}
+
+// The trust store is JSONC and the CLI writes a managed-file header into it.
+// A reader that could not cope would report a correctly-seeded launch as
+// parked; the contract's folder-trust entry flags this explicitly.
+func TestCopilotSimReadsAJSONCTrustStore(t *testing.T) {
+	home, cwd := copilotSimHome(t)
+	require.NoError(t, os.MkdirAll(home, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(home, "config.json"), []byte(
+		"// This file is automatically managed.\n"+
+			"// Do not edit it by hand.\n"+
+			`{"trustedFolders":["`+cwd+`"],"firstLaunchAt":"2026-01-01T00:00:00Z"}`+"\n"), 0o600))
+
+	sim, err := NewCopilotSim(t, home, cwd, "copilot --session-id "+copilotSimUUID)
+	require.NoError(t, err)
+	require.NoError(t, sim.Start())
+	blocked, reason := sim.Blocked()
+	assert.Falsef(t, blocked, "a JSONC trust store must still be readable: %s", reason)
+}
+
+// Seeding a second directory must not un-trust the first. TrustCopilotFolder
+// delegates to production's read-modify-write editor precisely so two agents
+// spawned into different directories compose instead of racing.
+func TestCopilotSimTrustSeedingComposes(t *testing.T) {
+	home, first := copilotSimHome(t)
+	second := t.TempDir()
+	TrustCopilotFolder(t, home, first)
+	TrustCopilotFolder(t, home, second)
+
+	for _, dir := range []string{first, second} {
+		sim, err := NewCopilotSim(t, home, dir, "copilot --session-id "+copilotSimUUID)
+		require.NoError(t, err)
+		require.NoError(t, sim.Start())
+		blocked, _ := sim.Blocked()
+		assert.Falsef(t, blocked, "%s should still be trusted after the other seeding", dir)
+		sim.Shutdown()
+	}
+}

@@ -13,6 +13,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
+	"github.com/tofutools/tclaude/pkg/claude/worktree"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -79,11 +80,11 @@ func copilotLaunchOf(t *testing.T, f *testharness.Flow, convID string) testharne
 // and has its prompt swallowed by a neighbouring option.
 func TestCopilotSpawn_LaunchEnrollmentIdentity(t *testing.T) {
 	f := newCopilotFlow(t)
-	f.World.SpawnCopilotFolderTrust = true
 	f.HaveGroup("crew")
 
 	const brief = "Investigate the flaky deploy job and report back"
 	resp, sim := spawnCopilot(t, f, "crew", map[string]any{
+		"trust_dir":       true,
 		"name":            "copilot-worker",
 		"initial_message": brief,
 		"model":           "claude-sonnet-4.5",
@@ -124,27 +125,25 @@ func TestCopilotSpawn_LaunchEnrollmentIdentity(t *testing.T) {
 		"a launch-enrolled Copilot spawn must not send-keys")
 }
 
-// TestCopilotSpawn_UntrustedFolderParksThePaneSilently is the state a Copilot
-// spawn reaches on main TODAY, and the reason this PR's simulator defaults to
-// NOT pre-granting folder trust.
+// TestCopilotSpawn_UntrustedFolderParksThePaneSilently is the negative half of
+// the directory-trust contract, and it stays a LIVE assertion rather than a
+// leftover now that seeding exists.
+//
+// `--trust-dir` is opt-in and is never auto-defaulted — editing a config file
+// tclaude does not own is a side effect the operator has to ask for — with one
+// exception the daemon verifies itself (the sibling-worktree case below). So a
+// spawn that does not opt in still reaches this state, and an operator who
+// leaves it off needs to see it plainly.
 //
 // Contract entry `folder-trust`: with a fresh COPILOT_HOME the trust dialog is
 // the FIRST gate, before the provider is contacted at all, and no launch flag
 // clears it — --allow-all-tools, --allow-all, --allow-all-paths and --add-dir
-// were each measured still blocking with zero provider requests. So a daemon
-// that renders argv and nothing else produces a pane that is alive, enrolled,
-// group-visible and permanently inert.
-//
-// FOLLOW-UP HOOK: the fix is a pre-launch write of trustedFolders into
-// COPILOT_HOME/config.json, which is a config-FILE contract with its own review
-// surface (it pre-answers a human trust decision) and lives in the separate
-// Copilot DirTrust change. When that lands, it flips
-// World.SpawnCopilotFolderTrust to true at the spawner and this scenario
-// becomes an assertion that the write happened.
+// were each measured still blocking with zero provider requests. The result is
+// a pane that is alive, enrolled, group-visible and permanently inert.
 func TestCopilotSpawn_UntrustedFolderParksThePaneSilently(t *testing.T) {
 	f := newCopilotFlow(t)
-	// Deliberately NOT setting SpawnCopilotFolderTrust: this is production's
-	// current behaviour, not a fault injected by the test.
+	// No trust_dir: this is what an un-opted-in spawn really does, not a fault
+	// injected by the test.
 	f.HaveGroup("crew")
 
 	resp, sim := spawnCopilot(t, f, "crew", map[string]any{
@@ -164,11 +163,112 @@ func TestCopilotSpawn_UntrustedFolderParksThePaneSilently(t *testing.T) {
 	assert.Equal(t, "running", member.State.Status,
 		"the agent shows only its process status: no live status will ever arrive")
 
-	// And nothing was written under COPILOT_HOME for the conversation, so even
-	// the cold read path has nothing to report.
+	// Nothing was written under COPILOT_HOME for the conversation, so even the
+	// cold read path has nothing to report.
 	assert.NoFileExists(t, filepath.Join(
 		testharness.CopilotHomeFor(f.World.HomeDir), "session-state", resp.ConvID,
 		"workspace.yaml"))
+
+	// And the pane genuinely swallows what tclaude types at it. A modal owns
+	// the keyboard, so the daemon's own rename delivery reaches nothing — which
+	// is the property that makes a parked pane indistinguishable from a busy
+	// one, and the reason a future blocked-state detector cannot be built on
+	// "did the injection succeed".
+	f.AsHuman().Rename(resp.ConvID, "renamed-while-parked")
+	copilotHarness, err := harness.Resolve(harness.CopilotName)
+	require.NoError(t, err)
+	title, err := copilotHarness.Convs.Title(resp.ConvID)
+	require.NoError(t, err)
+	assert.Empty(t, title,
+		"a rename typed into a trust modal must not reach the conversation")
+}
+
+// TestCopilotSpawn_TrustDirSeedsTheStoreSoThePaneRuns is the positive half:
+// the same spawn, opted into pre-trust, starts clean.
+//
+// The seeding runs through PRODUCTION's editor (harness.EnsureDirTrustedForLaunch
+// → EnsureCopilotDirTrustedForLaunch), so this asserts the real write, not a
+// test-side imitation of it. That matters more here than for the other two
+// harnesses: Copilot's store lives under COPILOT_HOME rather than at a fixed
+// path in the operator's home, so seeding the wrong home writes a file the
+// agent never opens and leaves the pane parked on the modal it was supposed to
+// clear.
+func TestCopilotSpawn_TrustDirSeedsTheStoreSoThePaneRuns(t *testing.T) {
+	f := newCopilotFlow(t)
+	f.HaveGroup("crew")
+
+	resp, sim := spawnCopilot(t, f, "crew", map[string]any{
+		"trust_dir":       true,
+		"name":            "copilot-worker",
+		"initial_message": "get started",
+	})
+
+	blocked, reason := sim.Blocked()
+	require.Falsef(t, blocked, "a pre-trusted launch must not park: %s", reason)
+
+	// The file production wrote really names this launch's cwd, under the home
+	// this launch reads.
+	row, err := db.LoadSession(resp.Label)
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	config, err := os.ReadFile(filepath.Join(
+		testharness.CopilotHomeFor(f.World.HomeDir), harness.CopilotConfigFileName))
+	require.NoError(t, err, "the trust store must exist after an opted-in launch")
+	assert.Contains(t, string(config), row.Cwd,
+		"trustedFolders must carry the launch cwd")
+
+	// And the pane got past the gate: the launch-arg prompt started a turn, so
+	// hooks are flowing and the agent reports a live status.
+	assert.Equal(t, session.StatusWorking,
+		copilotMember(t, f, "crew", resp.ConvID).State.Status)
+	assert.FileExists(t, filepath.Join(
+		testharness.CopilotHomeFor(f.World.HomeDir), "session-state", resp.ConvID,
+		"workspace.yaml"))
+}
+
+// TestCopilotSpawn_DefaultSiblingWorktreeIsAutoTrusted covers the one path that
+// pre-trusts WITHOUT anyone opting in, through the real resolver
+// (defaultSiblingWorktreeTrust → harness.IsDefaultSiblingWorktree) rather than
+// a stand-in.
+//
+// The exemption exists because a worktree child is the unattended case: tclaude
+// created the checkout itself and can verify its shape (../<repo>-<branch>), so
+// requiring a human to also tick a trust box would mean every worktree child
+// stops on the modal and its parent waits forever for an agent that never
+// started.
+//
+// NOTE on the caller: this spawns as the HUMAN. The agent-caller variant — the
+// one the Codex and Claude Code suites cover — cannot be written for Copilot
+// yet, because Copilot has no arm in normalizeSpawnLineageSandbox
+// (spawn_sandbox_guard.go) or in classifyApprovalLineage, so ANY agent-parent →
+// Copilot-child spawn is refused with sandbox_restricted before it reaches the
+// trust logic at all. That lineage gap belongs to the approval/lineage change,
+// not here; when it lands, this test should gain the agentReqProof variant.
+func TestCopilotSpawn_DefaultSiblingWorktreeIsAutoTrusted(t *testing.T) {
+	f := newCopilotFlow(t)
+	f.HaveGroup("crew")
+
+	repo, _ := initRepoOnMain(t)
+	worktreeDir, err := worktree.AddWorktreeIn(repo, "agent-child", "main", "")
+	require.NoError(t, err)
+
+	// No trust_dir field anywhere in this request.
+	resp, sim := spawnCopilot(t, f, "crew", map[string]any{
+		"name": "copilot-sibling",
+		"cwd":  worktreeDir,
+	})
+
+	trusted, ok := f.World.SpawnTrustDir(resp.ConvID)
+	require.True(t, ok)
+	assert.True(t, trusted,
+		"a verified default sibling worktree must be pre-trusted with no opt-in")
+
+	// The consequence, which is the part worth asserting for Copilot: the pane
+	// actually started instead of parking on the modal.
+	blocked, reason := sim.Blocked()
+	assert.Falsef(t, blocked, "an auto-trusted worktree child must not park: %s", reason)
+	assert.Equal(t, session.StatusWorking,
+		copilotMember(t, f, "crew", resp.ConvID).State.Status)
 }
 
 // TestCopilotSpawn_RenderedPostureDecidesWhetherTheAgentDeadlocks is the
@@ -182,10 +282,10 @@ func TestCopilotSpawn_UntrustedFolderParksThePaneSilently(t *testing.T) {
 func TestCopilotSpawn_RenderedPostureDecidesWhetherTheAgentDeadlocks(t *testing.T) {
 	t.Run("today's rendered posture blocks on the first tool call", func(t *testing.T) {
 		f := newCopilotFlow(t)
-		f.World.SpawnCopilotFolderTrust = true
 		f.HaveGroup("crew")
 
 		resp, sim := spawnCopilot(t, f, "crew", map[string]any{
+			"trust_dir":       true,
 			"name":            "copilot-worker",
 			"initial_message": "clean up the build",
 		})
@@ -221,10 +321,10 @@ func TestCopilotSpawn_RenderedPostureDecidesWhetherTheAgentDeadlocks(t *testing.
 
 	t.Run("the measured nonblocking posture completes the turn", func(t *testing.T) {
 		f := newCopilotFlow(t)
-		f.World.SpawnCopilotFolderTrust = true
 		f.HaveGroup("crew")
 
 		resp, _ := spawnCopilot(t, f, "crew", map[string]any{
+			"trust_dir":       true,
 			"name":            "copilot-worker",
 			"initial_message": "clean up the build",
 		})
@@ -257,10 +357,10 @@ func TestCopilotSpawn_RenderedPostureDecidesWhetherTheAgentDeadlocks(t *testing.
 // conversation.
 func TestCopilotSpawn_ResumeKeepsConversationIdentity(t *testing.T) {
 	f := newCopilotFlow(t)
-	f.World.SpawnCopilotFolderTrust = true
 	f.HaveGroup("crew")
 
 	resp, sim := spawnCopilot(t, f, "crew", map[string]any{
+		"trust_dir":       true,
 		"name":            "copilot-worker",
 		"initial_message": "start work",
 	})
