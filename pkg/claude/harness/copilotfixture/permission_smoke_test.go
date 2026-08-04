@@ -100,6 +100,35 @@ const headlessPermissionDeadline = 60 * time.Second
 // The timing log stays in the merged code so the next tightening, or the next
 // pinned-binary bump, argues from a real job's numbers rather than from this
 // comment.
+//
+// EVERYTHING ABOVE IS TRUE ON LINUX AND ONLY ON LINUX. It was measured, it was
+// measured correctly, and it has held for 108 Linux runs — working turns there
+// still top out at 2.2s exactly as claimed. It was never re-checked on macOS,
+// where the same measurement gives different numbers (1746 runs, 30 CI jobs):
+//
+//	                     allowed arms        blocked arms
+//	linux   widest gap   2.2s max            >=10s      -> 86% caught here
+//	macos   widest gap   5.8s max            4.1s min   -> 19% caught here
+//
+// Read the macOS row against itself. An allowed arm — one that executed the
+// tool and posted the result — goes quiet for as long as 5.8s. A blocked arm
+// can have a widest gap of only 4.1s. THE POPULATIONS OVERLAP, so no value of
+// this constant separates them there. Below 5.8s it cuts working turns short
+// and records them as blocked, which is the lopsided error the paragraphs above
+// exist to avoid. Above it, blocked arms sail past and pay the full deadline.
+// There is no correct value; on macOS silence is not evidence of blocking.
+//
+// It works on Linux only because the two populations are cleanly separated
+// there, with nothing between 2.2s and 10s. That separation is the load-bearing
+// property, not the 10s, and it is a property of the platform's render cadence
+// rather than of Copilot's blocking behaviour.
+//
+// So the blocked verdict no longer rests on this constant: ClassifyPermission
+// identifies a parked launch by the dialog on its screen, and this window is
+// now only an early exit that saves wall clock where it happens to fire. Anyone
+// inventing another silence-based detector should read the table first — the
+// mistake this comment made was not guessing, it was measuring one platform and
+// writing the result as if it were the behaviour.
 const blockedQuiet = 10 * time.Second
 
 // safeShellCommand is a command Copilot classifies as trivially safe.

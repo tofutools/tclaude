@@ -305,6 +305,39 @@ func ClassifyPermission(
 				"(0 provider requests)",
 		}, nil
 
+	case stillAlive && strings.Contains(transcript, PathPromptMarker):
+		// The directory-access dialog, named for the same reason the trust
+		// dialog above is: it identifies WHICH gate stopped the launch.
+		//
+		// It is also checked BEFORE the quiescence arm, and that ordering is
+		// the fix for TCL-1029's B. Quiescence is sampled once, on the tick the
+		// run ends on, so an arm cut by the deadline is called blocked or
+		// undecidable according to whether that instant fell more or less than
+		// PTYQuiescence after the last write — a phase check against the CLI's
+		// render cadence, not an observation about the launch. On Linux the
+		// silence window catches these arms long before the deadline and the
+		// sample is never consulted; on macOS the render cadence keeps output
+		// gaps in a band that rarely reaches it (measured: allowed arms go
+		// quiet up to 5.8s, blocked arms as little as 4.1s, against a 10s
+		// window), so ~4 in 5 blocked arms reached the deadline and had their
+		// verdict decided by that coin flip.
+		//
+		// The dialog is the durable fact the sample was standing in for. The
+		// transcript accumulates, so once the CLI has drawn this prompt the
+		// marker is there whatever the output is doing when the clock runs out
+		// — which is exactly why the coin flip was never necessary. Verified
+		// by construction rather than observed: forcing a Linux blocked arm
+		// down the deadline path (permissionDeadline shortened below the
+		// silence window) reproduces the macOS failure, and the marker is
+		// present in every reproduction.
+		return PermissionVerdict{
+			Outcome: PermissionBlocked,
+			Evidence: fmt.Sprintf(
+				"no tool-result follow-up after %d provider request(s); the process is alive "+
+					"showing the directory-access dialog, i.e. parked on a prompt",
+				totalRequests),
+		}, nil
+
 	case stillAlive && quiesced:
 		return PermissionVerdict{
 			Outcome: PermissionBlocked,
