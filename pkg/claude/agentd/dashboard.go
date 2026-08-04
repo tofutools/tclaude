@@ -1719,7 +1719,11 @@ type dashboardAgent struct {
 	State       agentState           `json:"state"`
 	Groups      []string             `json:"groups"`
 	OwnedGroups []string             `json:"owned_groups"`          // subset of Groups the agent owns; UI tags these distinctly
-	Effective   []string             `json:"effective"`             // perms = (defaults ∪ active-group grants ∪ per-conv grants) − per-conv denies
+	// Effective is what the permission GATE would allow for this agent —
+	// computed by the gate's own resolver, so it covers sudo elevations
+	// and the structural owner bypass as well as defaults, group grants
+	// and per-conv overrides.
+	Effective []string `json:"effective"`
 	ActiveSudo  []dashboardSudoEntry `json:"active_sudo,omitempty"` // current sudo grants (slug + id + remaining); empty when none
 	// Notify is the per-agent override ("on"/"off", "" = inherit);
 	// NotifyEffective folds the agent + group levels together (the
@@ -2993,7 +2997,6 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	// so a parent_id with no live group simply doesn't resolve (child stays
 	// top-level) — the FK's ON DELETE SET NULL should already prevent that.
 	groupNameByID := make(map[int64]string, len(groups))
-	groupGrantsByConv := map[string][]string{}
 	for _, g := range groups {
 		groupNameByID[g.ID] = g.Name
 	}
@@ -3028,11 +3031,6 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			}
 		})
 		members := membersByGroup[g.ID]
-		if !g.IsArchived() {
-			for _, m := range members {
-				groupGrantsByConv[m.ConvID] = append(groupGrantsByConv[m.ConvID], groupPermissions...)
-			}
-		}
 		// Pre-load the owner set so we can tag members who are also
 		// owners. Mirrors handleGroupMembersList in handlers.go.
 		ownerSet := map[string]bool{}

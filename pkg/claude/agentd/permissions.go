@@ -539,7 +539,11 @@ func snapshotPermissions() (permissionsState, error) {
 	// group is skipped rather than failing the whole view.
 	groups, err := db.ListAgentGroups()
 	if err != nil {
-		return out, err
+		// Degrade rather than 500 the whole view — the defaults and
+		// per-agent overrides below are still worth answering with, and
+		// the targeted effective view reads group grants itself.
+		slog.Warn("permissions: group listing failed; group grants omitted", "error", err)
+		groups = nil
 	}
 	for _, g := range groups {
 		// An archived group grants nothing — the resolver's join requires
@@ -834,8 +838,13 @@ func effectivePermsFor(state permissionsState, convID string, ownerImplied []str
 	provenance = map[string]string{}
 	matched := map[permSource]bool{}
 	anyDeny := false
-	for _, slug := range candidatePermissionSlugs(state, convID, ownerImplied) {
-		v := resolvePermissionVerdict(convID, slug, defaults[slug])
+	// One read of the agent's standing sources, then the SAME precedence
+	// the gate applies, per candidate slug. Loading once is what keeps the
+	// dashboard roster (this runs per agent, per snapshot poll) from
+	// issuing a query per slug per agent.
+	src := loadPermSources(convID)
+	for _, slug := range candidatePermissionSlugs(state, convID, ownerImplied, src) {
+		v := resolvePermissionVerdictFrom(src, slug, defaults[slug])
 		switch v.Resolution {
 		case permAllow:
 			effective = append(effective, slug)
@@ -879,7 +888,7 @@ func effectivePermsFor(state permissionsState, convID string, ownerImplied []str
 // source mentions. The extra sources matter because the daemon stores
 // forward-compat slugs a given build's registry may not know yet, and a
 // slug that is genuinely in force must be listed even then.
-func candidatePermissionSlugs(state permissionsState, convID string, ownerImplied []string) []string {
+func candidatePermissionSlugs(state permissionsState, convID string, ownerImplied []string, src permSources) []string {
 	seen := map[string]bool{}
 	var out []string
 	add := func(slugs ...string) {
@@ -899,22 +908,16 @@ func candidatePermissionSlugs(state permissionsState, convID string, ownerImplie
 		add(slug)
 	}
 	add(ownerImplied...)
-	if groupSlugs, err := db.ListAgentGroupPermissionSlugsForConv(convID); err != nil {
-		// Degrade to the other sources rather than failing the listing —
-		// but say so, because a silent miss here is exactly the drift this
-		// function exists to prevent.
-		slog.Warn("permissions: group-granted slug enumeration failed", "conv", convID, "error", err)
-	} else {
-		add(groupSlugs...)
+	// The agent's own sources, already read — these are what carry a slug
+	// this build's registry may not know.
+	for slug := range src.group {
+		add(slug)
 	}
-	if grants, err := db.ListActiveSudoGrants(convID); err != nil {
-		slog.Warn("permissions: sudo-grant enumeration failed", "conv", convID, "error", err)
-	} else {
-		for _, g := range grants {
-			if g != nil {
-				add(g.Slug)
-			}
-		}
+	for slug := range src.sudo {
+		add(slug)
+	}
+	for slug := range src.override {
+		add(slug)
 	}
 	sort.Strings(out)
 	return out

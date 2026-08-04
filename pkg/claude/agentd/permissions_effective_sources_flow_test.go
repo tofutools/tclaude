@@ -166,6 +166,36 @@ func TestEffectivePerms_DefaultAndPerAgentGrantProvenance(t *testing.T) {
 	assert.Contains(t, grantView.Source, "+grants:", "source label must name the grant input")
 }
 
+// Scenario: the dashboard roster's Effective column is the surface whose
+// semantics changed most — it used to be its own union that omitted sudo
+// elevations. Pin it to the gate too, or it can drift back.
+func TestDashboardEffectiveColumn_MatchesGate(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+
+	f := newFlow(t)
+
+	const elevated = "dsef-aaaa-bbbb-cccc-0001"
+	f.HaveConvWithTitle(elevated, "snapshot-agent")
+	f.HaveEnrolledAgent(elevated)
+
+	now := time.Now()
+	_, err := db.InsertSudoGrant(&db.SudoGrant{
+		ConvID:    elevated,
+		Slug:      agentd.PermGroupsCreate,
+		GrantedAt: now,
+		ExpiresAt: now.Add(10 * time.Minute),
+		GrantedBy: "human:test",
+	})
+	require.NoError(t, err, "insert sudo grant")
+
+	require.Equal(t, http.StatusCreated, agentCreatesGroup(t, f, elevated, "made-under-sudo"),
+		"precondition: the gate honours the elevation")
+
+	snap := fetchPermSnapshot(t, agentd.BuildDashboardHandlerForTest())
+	assert.Contains(t, effectiveFor(snap, elevated), agentd.PermGroupsCreate,
+		"the roster's Effective column must show a slug the gate currently allows")
+}
+
 // Scenario: the untargeted roster must disclose group grants. Without
 // them the operator reads DEFAULTS + PER-AGENT OVERRIDES as the whole
 // permission picture while a group quietly confers more.
