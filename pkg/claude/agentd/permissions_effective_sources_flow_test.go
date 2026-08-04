@@ -43,6 +43,7 @@ type effectiveViewWithProvenance struct {
 	Effective    []string          `json:"effective"`
 	Source       string            `json:"source"`
 	OwnerImplied []string          `json:"owner_implied"`
+	OwnedGroups  []string          `json:"owned_groups"`
 	Provenance   map[string]string `json:"provenance"`
 }
 
@@ -216,4 +217,55 @@ func TestPermissionsRoster_DisclosesGroupGrants(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &state), "decode roster")
 	assert.Equal(t, []string{agentd.PermHumanNotify}, state.GroupGrants["roster-grant-group"],
 		"the roster must name the slugs a group confers on its members")
+}
+
+// Scenario: an owner-conferred slug must say WHERE it applies. The gate
+// scopes the owner bypass to owned groups (or their members) for most
+// slugs, and not at all for the ownsAnyGroup pair — so a listing that
+// says only "via ownership" claims authority the gate refuses.
+func TestEffectivePerms_OwnerConferredSlugsCarryTheirScope(t *testing.T) {
+	f := newFlow(t)
+
+	const owner = "epos-aaaa-bbbb-cccc-0001"
+	f.HaveConvWithTitle(owner, "squad-lead")
+	f.HaveEnrolledAgent(owner)
+	for _, name := range []string{"squad-b", "squad-a"} {
+		g := f.HaveGroup(name)
+		require.NoError(t, db.AddAgentGroupOwner(g.ID, owner, "test"), "seed owner of "+name)
+	}
+
+	view := effectiveViewFor(t, f, owner)
+
+	assert.Equal(t, []string{"squad-a", "squad-b"}, view.OwnedGroups,
+		"the response names the owned groups, sorted, so a client need not read the DB")
+
+	// groups.spawn reaches the owned groups themselves...
+	assert.Equal(t, "owner:group", view.Provenance[agentd.PermGroupsSpawn],
+		"a requireGroupPermission slug is group-scoped")
+	// ...agent.rename reaches their members...
+	assert.Equal(t, "owner:member", view.Provenance[agentd.PermAgentRename],
+		"a requireCrossAgentPermission slug is member-scoped")
+	// ...and human.notify is genuinely unscoped (ownsAnyGroup).
+	assert.Equal(t, "owner:any", view.Provenance[agentd.PermHumanNotify],
+		"an ownsAnyGroup slug must not claim a per-group scope")
+}
+
+// Scenario: an archived group confers nothing — its endpoints reject
+// mutation — so naming it as the scope would promise reach the owner
+// does not have.
+func TestEffectivePerms_OwnedGroupsExcludeArchived(t *testing.T) {
+	f := newFlow(t)
+
+	const owner = "epoa-aaaa-bbbb-cccc-0001"
+	f.HaveConvWithTitle(owner, "archive-lead")
+	f.HaveEnrolledAgent(owner)
+	live := f.HaveGroup("still-live")
+	gone := f.HaveGroup("archived-squad")
+	require.NoError(t, db.AddAgentGroupOwner(live.ID, owner, "test"))
+	require.NoError(t, db.AddAgentGroupOwner(gone.ID, owner, "test"))
+	require.NoError(t, db.ArchiveAgentGroup(gone.Name), "archive the group")
+
+	view := effectiveViewFor(t, f, owner)
+	assert.Equal(t, []string{"still-live"}, view.OwnedGroups,
+		"an archived group must not be named as an owner scope")
 }
