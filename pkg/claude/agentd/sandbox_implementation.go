@@ -216,6 +216,21 @@ func sandboxImplementationPostureFailure(
 	return nil
 }
 
+// spawnUsesTclaudeLayer reports whether a resolved sandbox-implementation value
+// puts tclaude's own OS wall around the launch. It answers the question
+// harness.SpawnSandboxWarnings asks, from the string form the spawn boundaries
+// carry.
+//
+// An unparsable value is NOT an outer layer. Every caller has already run the
+// value through validateSandboxImplementationForHarness and refused a bad one,
+// so this arm is unreachable in practice — and if it ever became reachable,
+// reading garbage as "confined" would silence exactly the warnings that exist
+// for an unconfined launch.
+func spawnUsesTclaudeLayer(implementation string) bool {
+	normalized, err := sandboxpolicy.NormalizeImplementation(implementation)
+	return err == nil && normalized.UsesTclaudeLayer()
+}
+
 // sandboxImplementationHostFailure is the post-resolution host gate. It runs on
 // the value the precedence chain settled on, whichever tier supplied it, and
 // refuses the launch outright rather than degrading to harness-builtin.

@@ -1179,6 +1179,12 @@ jobs:
             'TestCopilotPermissionPathGrants/outside-all/no-path-flags'
             'TestCopilotPermissionPathGrants/outside-all/add-dir'
             'TestCopilotPermissionPathGrants/outside-all/allow-all-paths'
+            'TestCopilotPermissionPathGrants/outside-all/allow-all-tools'
+            # TCL-1010. Cited by yolo-permission-surface, which is what the
+            # `yolo` approval token's mode help stands on, and required on BOTH
+            # arms for the same reason as its siblings: it is a path finding,
+            # and Linux temp/cwd semantics are not macOS temp/cwd semantics.
+            'TestCopilotPermissionPathGrants/outside-all/yolo'
             'TestCopilotPermissionPathGrants/in-temp/default'
             'TestCopilotPermissionPathGrants/in-temp/disallow-temp-dir'
           )
@@ -1216,12 +1222,22 @@ jobs:
             required_subtests+=(
               'TestCopilotPermissionTrustBypassSurface/allow-all-tools'
               'TestCopilotPermissionTrustBypassSurface/allow-all'
+              # TCL-1010: the alias is measured under its own spelling, because
+              # `yolo`'s mode help promises folder trust still blocks and a
+              # documented alias has behaved differently here before
+              # (COPILOT_ALLOW_ALL).
+              'TestCopilotPermissionTrustBypassSurface/yolo'
               'TestCopilotPermissionTrustBypassSurface/allow-all-paths'
               'TestCopilotPermissionTrustBypassSurface/add-dir-workdir'
               'TestCopilotPermissionTrustBypassSurface/config-json-trustedFolders'
               'TestCopilotPermissionTrustBypassSurface/settings-json-trustedFolders'
               'TestCopilotPermissionToolApprovalGate/unsafe-command/no-flags'
               'TestCopilotPermissionToolApprovalGate/unsafe-command/allow-all-tools'
+              # TCL-1010: --yolo on the tool gate. The `yolo` token would be a
+              # posture strictly WORSE than the default it sits beside if this
+              # flag did not close this gate, so it is measured rather than
+              # inferred from the alias.
+              'TestCopilotPermissionToolApprovalGate/unsafe-command/yolo'
               'TestCopilotPermissionToolApprovalGate/safe-command/no-flags'
               'TestCopilotPermissionDenyToolGrammar/url()'
               'TestCopilotPermissionDenyToolGrammar/shell()'
@@ -1262,13 +1278,15 @@ jobs:
           # The gate's own integrity check. Everything below verifies that the
           # TESTS ran; nothing yet verifies that the GATE still asks about
           # them, and a required list that quietly lost entries passes exactly
-          # like one that is satisfied. These five are the both-platform path
+          # like one that is satisfied. These are the both-platform path
           # contract, so their presence is asserted on BOTH arms before the
           # list is used.
           for path_row in \
             'TestCopilotPermissionPathGrants/outside-all/no-path-flags' \
             'TestCopilotPermissionPathGrants/outside-all/add-dir' \
             'TestCopilotPermissionPathGrants/outside-all/allow-all-paths' \
+            'TestCopilotPermissionPathGrants/outside-all/allow-all-tools' \
+            'TestCopilotPermissionPathGrants/outside-all/yolo' \
             'TestCopilotPermissionPathGrants/in-temp/default' \
             'TestCopilotPermissionPathGrants/in-temp/disallow-temp-dir'
           do

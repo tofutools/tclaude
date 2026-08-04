@@ -41,19 +41,28 @@ import (
 //     contract, so no approval token can make a fresh-COPILOT_HOME Copilot
 //     launch complete on its own. See docs/harnesses.md.
 //
-// Two things this catalog deliberately does NOT offer, both because the
-// smallest honest catalog is the point:
+// One thing this catalog deliberately does NOT offer, because the smallest
+// honest catalog is the point: a `plan` token. `--mode plan` exists in
+// Copilot's help output, but no scenario measured its prompt behaviour, and an
+// unmeasured "safe for detached agents" claim is exactly what this ticket
+// cannot afford.
 //
-//   - a `plan` token. `--mode plan` exists in Copilot's help output, but no
-//     scenario measured its prompt behaviour, and an unmeasured "safe for
-//     detached agents" claim is exactly what this ticket cannot afford.
-//   - an --allow-all-paths / --allow-all / --yolo escalation. The path flags
-//     WERE measured (out-of-cwd-paths), so such a token could have been
-//     rendered honestly, but it is not needed for a nonblocking detached pane
-//     and Copilot's built-in file edits are not OS-confined — outside a
-//     tclaude-layer sandbox the path check is the only boundary on what the
-//     agent writes. Adding it later needs a concrete user need and warning UX,
-//     not merely the evidence that it works.
+// A `--yolo` escalation used to be on that list too, on the terms it names:
+// "it is not needed for a nonblocking detached pane and Copilot's built-in file
+// edits are not OS-confined … Adding it later needs a concrete user need and
+// warning UX, not merely the evidence that it works." TCL-1010 supplies both.
+// The user need is the directory axis `allow-tools` leaves open — an unattended
+// pane that touches a path outside every granted root still parks on a human
+// dialog. The warning UX is two-layered and deliberately not only the mode-help
+// blurb a spawn dialog collapses: copilotUnsandboxedYoloWarnings puts the
+// un-sandboxed pairing in the same loud channel Claude's unsandboxed-autonomy
+// warning uses (the CLI's stderr, the spawn response, the dashboard's live
+// warning region, template-deploy notes).
+//
+// What that entry got RIGHT is unchanged and is why the token is the third one
+// rather than the default: outside `--sandbox-impl tclaude-layer` the directory
+// check is the only boundary on what a Copilot agent writes, and `yolo` removes
+// it. The evidence that it works is still not the argument for it.
 const (
 	// CopilotApprovalInherit emits NO permission flags: the launch runs under
 	// Copilot's own defaults plus whatever the operator's settings/config
@@ -67,13 +76,22 @@ const (
 	// stays precise — granted per directory from the resolved sandbox profile,
 	// never wholesale.
 	CopilotApprovalAllowTools = "allow-tools"
+
+	// CopilotApprovalYolo is the widest posture Copilot has: `--yolo` plus
+	// `--no-ask-user`. It closes the directory axis `allow-tools` leaves open,
+	// and it is the one token here whose honest description is mostly about
+	// what it takes away. It does NOT clear folder trust — nothing in the argv
+	// does (contract: folder-trust, whose `yolo` row measures this spelling
+	// rather than inheriting the `allow-all` row's result).
+	CopilotApprovalYolo = "yolo"
 )
 
 // copilotApprovalModes is the canonical ordered set shared by validation, the
 // CLI/profile API and the dashboard selector. The default comes first so an
-// empty legacy profile renders an explicit effective choice.
+// empty legacy profile renders an explicit effective choice; `yolo` comes last,
+// where the widest posture goes in every other harness's mode list.
 var copilotApprovalModes = []string{
-	CopilotApprovalAllowTools, CopilotApprovalInherit,
+	CopilotApprovalAllowTools, CopilotApprovalInherit, CopilotApprovalYolo,
 }
 
 type copilotApproval struct{}
@@ -116,6 +134,15 @@ var copilotApprovalModeHelp = map[string]string{
 		"⚠ This is Copilot's prompting posture: a detached agent can block forever on tool " +
 		"approval, on the ask_user tool, on URL access, or on directory access, and tclaude " +
 		"cannot tell which from outside the pane.",
+	CopilotApprovalYolo: "Copilot's widest posture (--yolo): tools run without confirmation, the " +
+		"ask_user tool is removed, and directory access is opened wholesale, so a path outside " +
+		"every granted directory no longer waits for a human. The sandbox profile's --add-dir " +
+		"grants are still rendered. " +
+		"⚠ Folder trust is NOT cleared — no launch flag clears it, so a first launch in a folder " +
+		"Copilot has not been told to trust still blocks before the model is contacted. And " +
+		"Copilot's built-in file edits are not OS-confined: WITHOUT --sandbox-impl tclaude-layer " +
+		"the directory check this mode removes was the launch's only file boundary, so the agent " +
+		"can read and write anything the pane's user can. Pair this mode with tclaude-layer.",
 }
 
 func (copilotApproval) ModeHelp(policy string) string {
@@ -129,6 +156,15 @@ const (
 	copilotFlagAllowAllTools = "--allow-all-tools"
 	copilotFlagNoAskUser     = "--no-ask-user"
 	copilotFlagAddDir        = "--add-dir"
+
+	// copilotFlagYolo is the `yolo` token's whole permission surface. Copilot's
+	// option table documents `--allow-all` as its alias, and this spelling is
+	// the one the scenarios launched with — so the flag tclaude renders is the
+	// flag that was measured, rather than one credited with a sibling's result.
+	// That distinction is not pedantry here: `COPILOT_ALLOW_ALL` is documented
+	// as an alias too, and was measured STRICTLY STRONGER than the flag it
+	// documents (contract: ambient-allow-all-env).
+	copilotFlagYolo = "--yolo"
 
 	// copilotAllowAllEnv is the ambient promoter. --help presents it as the env
 	// alias for --allow-all-tools, but it is measured STRICTLY STRONGER: with
@@ -174,10 +210,72 @@ func copilotPermissionArgs(policy string, addDirs []string) []string {
 	case CopilotApprovalAllowTools:
 		args = append(args, copilotFlagAllowAllTools, copilotFlagNoAskUser)
 		args = append(args, copilotAddDirArgs(addDirs)...)
+	case CopilotApprovalYolo:
+		// --yolo ALONE was measured to close both the tool gate and the
+		// directory dialog (contract: yolo-permission-surface), so
+		// --allow-all-tools and --allow-all-paths are deliberately NOT also
+		// rendered: nothing in the permission matrix establishes what 1.0.77
+		// does with duplicated or overlapping permission flags, and this file
+		// refuses launches whose outcome would depend on that.
+		//
+		// --no-ask-user IS rendered, because it is a different axis: the
+		// ask_user tool is removed from the advertised catalog rather than
+		// approved (contract: no-ask-user), and no scenario measured --yolo
+		// against it. Rendering it keeps the axis closed by the flag that was
+		// measured to close it.
+		//
+		// The --add-dir grants ride along for the same reason they ride along
+		// under `inherit`: they are the path axis, they come from the resolved
+		// sandbox profile either way, and keeping them makes the recorded posture
+		// and the argv agree if this launch is later relaunched under a narrower
+		// token. They are redundant to Copilot under yolo, not contradictory.
+		args = append(args, copilotFlagYolo, copilotFlagNoAskUser)
+		args = append(args, copilotAddDirArgs(addDirs)...)
 	case CopilotApprovalInherit, "":
 		args = append(args, copilotAddDirArgs(addDirs)...)
 	}
 	return args
+}
+
+// copilotUnsandboxedYoloWarnings is the loud half of the `yolo` token's warning
+// UX, and it exists because the quiet half is not enough.
+//
+// Mode help is collapsed behind a [?] in the spawn dialog (everything from the
+// ⚠ onward stays visible, which is why the copy is written that way), it is
+// attached to the DROPDOWN rather than to the launch, and it says the same
+// thing whether or not an outer wall is present. The pairing this ticket is
+// about is a property of the resolved launch, not of the token: `yolo` under
+// `--sandbox-impl tclaude-layer` is an autonomy choice the outer wall contains
+// — CopilotTclaudeLayerExtraArgRefusal already declines to refuse `--yolo` for
+// exactly that reason — while the same token without it removes the only file
+// boundary the launch has.
+//
+// So this rides SpawnSandboxWarnings, the channel Claude's unsandboxed-autonomy
+// warning uses: the CLI's stderr, the daemon spawn response, the dashboard
+// spawn dialog's live warning region, and template/wave deploy notes. Same
+// sentence on every surface, and only when the pairing is real.
+//
+// It is a WARNING, not a refusal, and that is the settled shape rather than an
+// oversight. The operator asked for this token; refusing the launch that
+// selects it would make it undeliverable. The refusal that DOES exist is
+// narrower and stays where it was: ValidateCopilotAddDirGrants still rejects a
+// profile whose deny sits inside a granted root outside tclaude-layer, under
+// every token including this one.
+func copilotUnsandboxedYoloWarnings(policy string, outerLayer bool) []string {
+	if outerLayer || strings.TrimSpace(policy) != CopilotApprovalYolo {
+		return nil
+	}
+	return []string{fmt.Sprintf(
+		"⚠ approval mode %q removes every Copilot permission prompt this launch has, including "+
+			"the directory-access dialog, and nothing else confines it: Copilot's built-in file "+
+			"edits are not OS-confined, so without --sandbox-impl tclaude-layer that dialog WAS "+
+			"the only boundary on what this agent reads and writes — it can reach anything the "+
+			"pane's user can, and the sandbox profile's directory grants and denies stop meaning "+
+			"anything to it. Spawn with --sandbox-impl tclaude-layer, where the outer wall "+
+			"enforces the profile whatever Copilot's own checks believe, or choose approval mode "+
+			"%q, which keeps directory access precise. (Folder trust is unaffected either way: no "+
+			"launch flag clears it.)",
+		CopilotApprovalYolo, CopilotApprovalAllowTools)}
 }
 
 // copilotAddDirArgs renders one `--add-dir <dir>` per granted directory.

@@ -1276,7 +1276,7 @@ func runNew(params *NewParams) error {
 		for _, info := range harness.SpawnSandboxInfo(h, sandboxMode) {
 			fmt.Fprintf(os.Stderr, "ℹ %s\n", info)
 		}
-		for _, warning := range harness.SpawnSandboxWarnings(h, approvalPolicy, sandboxMode, cwd) {
+		for _, warning := range harness.SpawnSandboxWarnings(h, approvalPolicy, sandboxMode, cwd, outerLayer) {
 			fmt.Fprintf(os.Stderr, "%s\n", warning)
 		}
 	}

@@ -248,7 +248,7 @@ covers **interactive human sessions**:
 | **tclaude-layer (outer OS sandbox)** | ✅ Linux bubblewrap / macOS Seatbelt, with Copilot's pre-approved directory catalog composed into the mount plan |
 | **Model transport under a filtered network** | ⚠️ the default first-party GitHub Copilot route only (`api.githubcopilot.com`, `api.individual.githubcopilot.com`, `api.github.com`); the model host is assigned per account at token exchange, so only observed tiers are named and the rest stay denied. Every route-moving input is refused rather than followed, read from both settings files with the same precedence as the sandbox key |
 | **Directory pre-trust at spawn** ([below](#directory-trust-at-spawn)) | ✅ opt-in `trust_dir` appends the launch dir to `trustedFolders` in `<COPILOT_HOME>/config.json`. Copilot's modal blocks *before* any provider contact, so an unseeded detached pane never reaches its first turn |
-| **Approval / permissions** | ⚠️ `allow-tools` (default) / `inherit`. Two tokens, each rendering only flags measured against the pinned binary on a real terminal. Neither makes a Copilot pane unconditionally nonblocking — see [below](#copilot-approvals-and-permissions) for exactly which prompt each one closes and which it leaves standing |
+| **Approval / permissions** | ⚠️ `allow-tools` (default) / `inherit` / `yolo`. Three tokens, each rendering only flags measured against the pinned binary on a real terminal. None makes a Copilot pane unconditionally nonblocking — folder trust is unreachable from the argv even under `yolo` — and `yolo` without `--sandbox-impl tclaude-layer` leaves the agent with no file boundary at all, which tclaude warns about at spawn. See [below](#copilot-approvals-and-permissions) for exactly which prompt each one closes and which it leaves standing |
 | **Usage, cost & context** | ⚠️ followed incrementally from Copilot's durable event log, with a byte-offset checkpoint so a daemon restart resumes rather than rescans. Output tokens advance per turn (`assistant.message`); input tokens, context occupancy and window size advance only at an authoritative disclosure — a compaction, a truncation, or a shutdown — and nothing is written between them, so a real reading is never overwritten by a zero. Cost is carried in the **nano-AI units Copilot emits**; no USD figure is derived, because Copilot documents an AI credit as $0.01 in a different structure and nowhere states that one AIU is one credit |
 | **Ad-hoc ask** ([guide](ask.md)) | ✅ buffered `copilot -p` (capture) / `copilot -i` TUI (interactive), conv-id pre-minted (`--session-id`), resumed exactly (`--resume=<full uuid>`). See [below](#copilot-ask) |
 | **Live-streamed ask output** (print mode → a TTY) | ➖ buffered — the answer arrives whole at the end of the turn |
@@ -332,10 +332,10 @@ park a pane forever.
 | Tool approval (per-command risk classification, not a tool allowlist) | `--allow-all-tools` |
 | The `ask_user` tool | `--no-ask-user` (removes the tool from the advertised catalog) |
 | URL access, from **either** consumer — the shell tool (`url-access`) and the `web_fetch` tool (`web-fetch-url-access`) | `--allow-all-tools` also closes this, measured separately for each consumer and measured *alone* for `web_fetch`, so the result is not creditable to `--no-ask-user` |
-| Directory access outside cwd + system temp | `--add-dir <dir>`, one per directory |
+| Directory access outside cwd + system temp | `--add-dir <dir>`, one per directory — or `--yolo`, which opens the axis wholesale |
 | Folder trust | **no launch flag at all** — a config-file write, opted into with `trust_dir` ([below](#directory-trust-at-spawn)) |
 
-tclaude exposes two tokens:
+tclaude exposes three tokens:
 
 - **`allow-tools`** (the default for a daemon-spawned, unattended pane) renders
   `--allow-all-tools --no-ask-user`, plus one `--add-dir` per directory the
@@ -344,17 +344,50 @@ tclaude exposes two tokens:
   whatever your configuration persists. It is the faithful reconstruction of
   every Copilot launch tclaude made before this catalog existed, and it is what
   a pre-existing Copilot row relaunches as.
+- **`yolo`** renders `--yolo --no-ask-user` (plus the same `--add-dir` grants).
+  It is Copilot's widest posture and closes the directory axis the default
+  leaves open: a path outside every granted root no longer waits for a human.
+  Read the warning below before choosing it.
 
-Folder trust is the row in that table no approval token can reach, and it is a
-separate contract rather than a gap: it is cleared by a pre-launch config write,
-which `trust_dir` performs when you opt in ([below](#directory-trust-at-spawn)).
-A launch that does not opt in still parks on the modal whichever approval token
-it carries, because the modal fires before the CLI contacts the provider at all.
+Folder trust is the row in that table no approval token can reach — including
+`yolo` — and it is a separate contract rather than a gap: it is cleared by a
+pre-launch config write, which `trust_dir` performs when you opt in
+([below](#directory-trust-at-spawn)). A launch that does not opt in still parks
+on the modal whichever approval token it carries, because the modal fires before
+the CLI contacts the provider at all.
 
-Directory grants are rendered under **both** tokens. They are the path axis
+Directory grants are rendered under **all three** tokens. They are the path axis
 rather than the approval axis: the grants come from the sandbox profile either
 way, and Copilot's own directory check would otherwise prompt for a directory
-tclaude's outer sandbox has already opened.
+tclaude's outer sandbox has already opened. Under `yolo` they are redundant to
+Copilot and are still rendered, so the recorded posture and the argv keep
+agreeing if the launch is later relaunched under a narrower token.
+
+**⚠ `yolo` without `--sandbox-impl tclaude-layer` leaves the agent unbounded.**
+Copilot's built-in file edits are not OS-confined, so for a launch with no outer
+wall the directory check *is* the file boundary — and `yolo` removes it. The
+sandbox profile's grants and denies then mean nothing to the agent, which can
+read and write anything the pane's user can. tclaude does not refuse that
+pairing (you asked for the token), but it warns about it wherever a spawn
+posture is resolved: `tclaude session new` on stderr, the daemon's spawn
+response, the dashboard spawn dialog's live warning region, and template/wave
+deploy notes — the same channel Claude Code's unsandboxed-autonomy warning uses.
+Under `tclaude-layer` the outer wall enforces the profile whatever Copilot's own
+checks believe, and no warning fires; that is the same reasoning by which a
+pass-through `--yolo` is *not* refused under `tclaude-layer`.
+
+What `--yolo` does and does not close is measured, not read off the help text
+(contract entry `yolo-permission-surface`): the unsafe command that blocks with
+no flags runs under `--yolo` alone, the out-of-grant path that blocks under
+`--allow-all-tools` is allowed under `--yolo`, and a fresh-`COPILOT_HOME` launch
+under `--yolo` still blocks on folder trust with zero provider requests. The
+`--allow-all` alias is the CLI's claim and is not what tclaude renders — this
+suite has already seen a documented alias (`COPILOT_ALLOW_ALL`) behave
+differently from the flag it documents.
+
+Approval lineage treats `yolo` as Copilot's `bypassPermissions`: an
+`allow-tools` agent cannot spawn a `yolo` child. That takes a human, or a parent
+that already holds unreviewed capability.
 
 **A deny nested inside a granted root refuses the launch** (without
 `--sandbox-impl tclaude-layer`). `--add-dir` has no negative counterpart —

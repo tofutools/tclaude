@@ -51,10 +51,42 @@ func TestCopilotSpawn_InheritThreadsThroughUnchanged(t *testing.T) {
 	assert.Equal(t, harness.CopilotApprovalInherit, got)
 }
 
+// The `yolo` token (TCL-1010) reaches the spawn boundary as a real posture, and
+// the un-sandboxed pairing it creates is disclosed on the spawn RESPONSE rather
+// than only in the dropdown's collapsed mode help. That channel is the point:
+// `tclaude agent spawn` and a scripted POST both see the warning, and neither
+// opens the dashboard's help affordance.
+func TestCopilotSpawn_YoloIsAcceptedAndWarnsWithoutTheOuterLayer(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("copilot-crew")
+
+	resp := f.AsHuman().SpawnWith("copilot-crew", map[string]any{
+		"name":     "unbounded",
+		"harness":  harness.CopilotName,
+		"approval": harness.CopilotApprovalYolo,
+	})
+	require.Equalf(t, http.StatusOK, resp.Code,
+		"yolo is a valid Copilot approval policy; body=%s", resp.Raw)
+
+	got, ok := f.World.SpawnApproval(resp.ConvID)
+	require.True(t, ok, "the copilot spawn should have been observed by the sim spawner")
+	assert.Equal(t, harness.CopilotApprovalYolo, got)
+
+	// The warning must name the posture that fixes it. A spawn response that
+	// only said "this is dangerous" would leave the caller with nowhere to go.
+	body := string(resp.Raw)
+	assert.Contains(t, body, "--sandbox-impl tclaude-layer")
+	assert.Contains(t, body, "not OS-confined")
+	assert.Contains(t, body, "⚠")
+}
+
 // Another harness's token is a 400 at the boundary, not a launch that renders
 // no permission flags while the row records an authority it never had.
 func TestCopilotSpawn_ForeignApprovalTokensRejected(t *testing.T) {
-	for _, policy := range []string{"never", "auto", "allow-all", "yolo"} {
+	// `allow-all` stays foreign on purpose even though Copilot's own help calls
+	// it the alias of the flag `yolo` renders: tclaude accepts one spelling per
+	// posture, so a session row and the profile API cannot end up carrying two.
+	for _, policy := range []string{"never", "auto", "allow-all", "plan"} {
 		t.Run(policy, func(t *testing.T) {
 			f := newFlow(t)
 			f.HaveGroup("copilot-crew")

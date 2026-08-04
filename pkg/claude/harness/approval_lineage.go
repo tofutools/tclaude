@@ -54,12 +54,25 @@ func ApprovalLineageAllowed(parentHarness, parentPolicy string, parentAutoReview
 func ApprovalLineageDenialHint(parentHarness, parentPolicy string, parentAutoReview bool, childHarness, childPolicy string) string {
 	switch normalizeLineageHarness(childHarness) {
 	case CopilotName:
-		if strings.TrimSpace(childPolicy) != CopilotApprovalInherit {
-			// `allow-tools` is the only other token, and a parent that cannot
-			// delegate it cannot delegate anything Copilot offers. There is no
-			// narrower Copilot posture to point at, so say nothing rather than
-			// invent advice — the guard's own message already states the two
-			// postures involved.
+		switch strings.TrimSpace(childPolicy) {
+		case CopilotApprovalInherit:
+		case CopilotApprovalYolo:
+			// The counterpart to Claude's bypassPermissions hint, and it names
+			// the specific loss rather than "removes guardrails": under
+			// `yolo` the directory dialog is gone, and outside tclaude-layer
+			// that dialog is the only file boundary a Copilot launch has.
+			return fmt.Sprintf(
+				"%q removes every Copilot permission prompt, including the directory-access "+
+					"dialog that is the only file boundary an un-sandboxed Copilot launch has, so "+
+					"it can only be minted by a parent that already holds it, or by a human; pass "+
+					"%q for a child whose directory access stays scoped to the sandbox profile",
+				CopilotApprovalYolo, CopilotApprovalAllowTools)
+		default:
+			// `allow-tools` is the narrowest token Copilot has, and a parent
+			// that cannot delegate it cannot delegate anything Copilot offers.
+			// There is no narrower Copilot posture to point at, so say nothing
+			// rather than invent advice — the guard's own message already
+			// states the two postures involved.
 			return ""
 		}
 		hint := fmt.Sprintf("the child requested %q, which emits no permission flags, so its posture is decided by the operator's Copilot configuration and by answers remembered in-pane; it cannot be proven at spawn time and is therefore treated as the broadest posture", CopilotApprovalInherit)
@@ -280,6 +293,26 @@ func classifyApprovalLineage(harnessName, policy string, autoReview bool, child 
 				capability = approvalAutoInSandbox | approvalAutoReviewer | approvalAutoUnreviewed
 			}
 			return approvalLineagePosture{capability: capability, valid: true}
+		case CopilotApprovalYolo:
+			// The same shape as Claude's bypassPermissions, and for the same
+			// reason: every prompt is gone and no reviewer of any kind stands in
+			// a human's place. Carrying approvalAutoReviewer alongside
+			// approvalAutoUnreviewed is not a claim that Copilot HAS a reviewer
+			// — it is what makes the subset test honest in both directions. A
+			// posture that approves everything can obviously delegate a posture
+			// where a machine reviewer approves some things, so withholding the
+			// bit would let a `yolo` parent be refused a Codex auto-review child
+			// while its own agent needs no reviewer's permission for anything.
+			//
+			// The consequence that matters is the other direction, and it is
+			// deliberate: `allow-tools` holds approvalAutoInSandbox only, so an
+			// allow-tools agent CANNOT mint a yolo child. Removing the last file
+			// boundary an un-sandboxed Copilot launch has is an escalation, so
+			// it takes a human trust root or a parent already holding it.
+			return approvalLineagePosture{
+				capability: approvalAutoInSandbox | approvalAutoReviewer | approvalAutoUnreviewed,
+				valid:      true,
+			}
 		default:
 			// Blank is a pre-catalog Copilot row. It is NOT treated as a known
 			// `inherit` even though every such launch did emit zero permission

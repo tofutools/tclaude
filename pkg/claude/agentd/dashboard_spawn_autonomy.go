@@ -109,7 +109,8 @@ func handleDashboardSpawnEffectiveSandbox(w http.ResponseWriter, r *http.Request
 	if h.Name == harness.DefaultName {
 		resolution = harness.ResolveClaudeSandboxEnabled(sandboxMode, cwd)
 	}
-	warnings := harness.SpawnSandboxWarnings(h, approval, sandboxMode, cwd)
+	warnings := harness.SpawnSandboxWarnings(
+		h, approval, sandboxMode, cwd, spawnUsesTclaudeLayer(sandboxImplementation))
 	if warnings == nil {
 		// A JSON null here would make every consumer guard the array.
 		warnings = []string{}

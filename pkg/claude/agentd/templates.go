@@ -1180,7 +1180,8 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 	// per-agent info/warnings channels, so both kinds ride Notes — which the
 	// deploy result and dashboard already surface per agent.
 	notes = append(notes, harness.SpawnSandboxInfo(h, sandbox)...)
-	notes = append(notes, harness.SpawnSandboxWarnings(h, approval, sandbox, cwd)...)
+	notes = append(notes, harness.SpawnSandboxWarnings(h, approval, sandbox, cwd,
+		spawnUsesTclaudeLayer(sandboxImplementation))...)
 	// Resolve the two *bool launch toggles against the chosen harness — the
 	// same gate handleGroupSpawn/applyDefaultProfile apply. nil (no profile
 	// spoke) collapses to false = off. ResolveTrustDir/ResolveAutoReview reject
