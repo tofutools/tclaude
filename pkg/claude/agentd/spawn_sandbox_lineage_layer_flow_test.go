@@ -140,38 +140,38 @@ func TestSpawnSandboxLineage_TemplateCarriesTclaudeLayerImplementation(t *testin
 	assert.Equal(t, string(sandboxpolicy.ImplementationTclaudeLayer), row.SandboxImplementation)
 }
 
-// PR1 admits no Copilot lineage. A Copilot child is refused by the guard
-// whatever its mode, and that stays true now that the implementation travels
-// with the request.
-func TestSpawnSandboxLineage_CopilotChildStillRestricted(t *testing.T) {
+// PR2 admits Copilot in one pair only, so the UNPROVEN Copilot child stays
+// refused — including from the most permissive parent there is, which is where
+// a rule expressed as a child arm would have failed, since that parent's arm
+// returns true for every child before any arm could run.
+//
+// The admitted pair's own flows live in copilot_spawn_lineage_flow_test.go.
+func TestSpawnSandboxLineage_UnprovenCopilotChildStillRestricted(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("alpha")
 	const parent = "parent-lyr4-aaaa-bbbb-cccc-111111111111"
-	// The most permissive parent there is: the refusal is about Copilot not
-	// being admitted to the lineage matrix, not about the caller's posture.
 	haveSpawnCapableSandboxParent(t, f, "alpha", parent,
 		harness.DefaultName, harness.ClaudeSandboxOff)
 
+	// No implementation: the legacy/harness-builtin row, where Copilot's own
+	// experimental wall is the only one named and tclaude has no lever for it.
 	resp := f.AsAgent(parent).SpawnWith("alpha", map[string]any{
 		"name":     "worker",
 		"harness":  harness.CopilotName,
 		"sandbox":  harness.CopilotSandboxInherit,
-		"approval": harness.CopilotApprovalInherit,
+		"approval": harness.CopilotApprovalAllowTools,
 	})
 	require.Equalf(t, http.StatusForbidden, resp.Code, "spawn body=%s", resp.Raw)
 	assert.Contains(t, string(resp.Raw), "sandbox_restricted")
 
-	// The single-wall shape is the one detached Copilot spawning will
-	// eventually need, and it is the one that proves the HTTP path carries the
-	// implementation: it resolves to Copilot's assert-off mode and is STILL
-	// refused here. Admitting it is a later step, not this one.
-	layered := f.AsAgent(parent).SpawnWith("alpha", map[string]any{
-		"name":                   "layered-worker",
+	// `stacked` reaches the guard as a tclaude-layer variant and must NOT
+	// borrow the proven pair's admission: it runs Copilot's own policy nested
+	// inside tclaude's, an intersection nobody reviewed.
+	stacked := f.AsAgent(parent).SpawnWith("alpha", map[string]any{
+		"name":                   "stacked-worker",
 		"harness":                harness.CopilotName,
-		"sandbox":                harness.CopilotSandboxInherit,
-		"sandbox_implementation": string(sandboxpolicy.ImplementationTclaudeLayer),
-		"approval":               harness.CopilotApprovalInherit,
+		"sandbox_implementation": string(sandboxpolicy.ImplementationStacked),
+		"approval":               harness.CopilotApprovalAllowTools,
 	})
-	require.Equalf(t, http.StatusForbidden, layered.Code, "spawn body=%s", layered.Raw)
-	assert.Contains(t, string(layered.Raw), "sandbox_restricted")
+	require.NotEqualf(t, http.StatusOK, stacked.Code, "spawn body=%s", stacked.Raw)
 }

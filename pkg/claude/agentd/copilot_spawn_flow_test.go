@@ -245,13 +245,12 @@ func TestCopilotSpawn_TrustDirSeedsTheStoreSoThePaneRuns(t *testing.T) {
 // stops on the modal and its parent waits forever for an agent that never
 // started.
 //
-// NOTE on the caller: this spawns as the HUMAN. The agent-caller variant — the
-// one the Codex and Claude Code suites cover — cannot be written for Copilot
-// yet, because Copilot has no arm in normalizeSpawnLineageSandbox
-// (spawn_sandbox_guard.go) or in classifyApprovalLineage, so ANY agent-parent →
-// Copilot-child spawn is refused with sandbox_restricted before it reaches the
-// trust logic at all. That lineage gap belongs to the approval/lineage change,
-// not here; when it lands, this test should gain the agentReqProof variant.
+// NOTE on the caller: this spawns as the HUMAN, which keeps it about the trust
+// resolver alone — humans bypass both lineage gates. The agent-caller variant
+// landed with TCL-989 PR2 and lives in copilot_spawn_lineage_flow_test.go
+// (TestCopilotLineage_AgentSpawnsProvenChildIntoVerifiedWorktree), where the
+// same auto-trust is asserted alongside the write-proof that makes the
+// exemption safe for an agent.
 func TestCopilotSpawn_DefaultSiblingWorktreeIsAutoTrusted(t *testing.T) {
 	f := newCopilotFlow(t)
 	f.HaveGroup("crew")
