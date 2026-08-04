@@ -610,3 +610,41 @@ func TestRealGit_RemoteGetURLAppliesInsteadOf(t *testing.T) {
 	// fixed-point check is defence-in-depth rather than the live barrier.
 	assert.Equal(t, got, run("ls-remote", "--get-url", "--", got))
 }
+
+// TestLinkedWorktreeToleratesANonCanonicalCommonDir.
+//
+// The gate compares <common>/worktrees/<name> against a gitDir that
+// resolveProxyRepo has already run through EvalSymlinks. If the two sides are
+// spelled differently — one resolved, one not — a perfectly ordinary worktree
+// is refused as redirected.
+//
+// Git 2.43 canonicalises `rev-parse --path-format=absolute --git-common-dir`,
+// so this cannot currently be provoked through git; the probe is stubbed to
+// return the symlinked spelling instead. That is the honest scope of this test:
+// it pins the gate's tolerance of a non-canonical answer, not a git behaviour.
+// Both paths on disk are real, so the resolution being asserted is real too.
+func TestLinkedWorktreeToleratesANonCanonicalCommonDir(t *testing.T) {
+	realRoot := t.TempDir()
+	commonDir := filepath.Join(realRoot, "main", ".git")
+	gitDir := filepath.Join(commonDir, "worktrees", "side")
+	require.NoError(t, os.MkdirAll(gitDir, 0o700))
+
+	root := filepath.Join(realRoot, "side")
+	require.NoError(t, os.MkdirAll(root, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(gitDir, "gitdir"),
+		[]byte(filepath.Join(root, ".git")+"\n"), 0o600))
+
+	// A second, symlinked spelling of the same common dir.
+	alias := filepath.Join(t.TempDir(), "alias")
+	require.NoError(t, os.Symlink(realRoot, alias))
+	aliasCommon := filepath.Join(alias, "main", ".git")
+
+	restore := SetProxyExecForTest(func(_ context.Context, _ ProxyCommand) (ProxyResult, error) {
+		return ProxyResult{Stdout: aliasCommon + "\n"}, nil
+	})
+	defer restore()
+
+	fault := acceptLinkedWorktree(context.Background(), "/usr/bin/git", root, root, gitDir)
+	assert.Nil(t, fault,
+		"the same directory under two spellings must be recognised as one; got %+v", fault)
+}

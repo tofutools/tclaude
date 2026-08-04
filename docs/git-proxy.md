@@ -74,7 +74,8 @@ Add an `agent.git_proxy` block to `~/.tclaude/data/config.json`:
 | `ssh_key` | Pins one private key (`ssh -i … -o IdentitiesOnly=yes`). Empty uses the daemon's ambient SSH setup — normally an ssh-agent, which is the better posture. |
 | `github_token_file` | A file whose contents become `GH_TOKEN` for `gh`. Empty lets `gh` use the daemon's own authenticated configuration. Note this feeds the **GitHub** half only; `git` itself authenticates over SSH or through the operator's own credential helper. |
 
-Both path fields accept `~/…`, which expands to the account agentd runs as.
+Both path fields accept `~/…`, which expands to the home directory of the user
+account under which `agentd` runs — that account must be able to read the file.
 Shell variables are **not** expanded — a config file is not a shell, so
 `"${HOME}/token.txt"` is taken literally. Use `~/` or an absolute path.
 

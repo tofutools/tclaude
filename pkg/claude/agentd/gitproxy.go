@@ -996,7 +996,12 @@ func gitDirRedirected(gitDir, root, because string) *proxyFault {
 // the link grants no reach it did not already have. That is the invariant this
 // whole feature rests on: credentials, never reach.
 func acceptLinkedWorktree(ctx context.Context, gitPath, dir, root, gitDir string) *proxyFault {
-	commonRes, err := proxyExec(ctx, ProxyCommand{
+	// Bounded like every other local probe. This one runs on the request path,
+	// and a work tree on a stalled filesystem would otherwise pin the request
+	// goroutine here with no deadline of its own.
+	probeCtx, cancel := context.WithTimeout(ctx, gitProxyProbeTimeout)
+	defer cancel()
+	commonRes, err := proxyExec(probeCtx, ProxyCommand{
 		Tool: "git",
 		Path: gitPath,
 		Args: []string{"-C", dir, "rev-parse", "--path-format=absolute", "--git-common-dir"},
@@ -1006,12 +1011,17 @@ func acceptLinkedWorktree(ctx context.Context, gitPath, dir, root, gitDir string
 	if err != nil || commonRes.ExitCode != 0 {
 		return gitDirRedirected(gitDir, root, "")
 	}
-	commonDir := filepath.Clean(strings.TrimSpace(commonRes.Stdout))
+	// Canonicalise, do not merely Clean. The caller resolved gitDir through
+	// EvalSymlinks, so comparing it against a commonDir that still contains a
+	// symlinked component compares two different spellings of the same place —
+	// and a work tree reached through, say, a symlinked /home would be refused
+	// as redirected. Both sides go through the same resolution.
+	commonDir := canonicalProxyPath(strings.TrimSpace(commonRes.Stdout))
 	if !filepath.IsAbs(commonDir) || commonDir == gitDir {
 		return gitDirRedirected(gitDir, root, "")
 	}
 	// Structure: a linked worktree's git dir is always <common>/worktrees/<name>.
-	if filepath.Join(commonDir, "worktrees", filepath.Base(gitDir)) != gitDir {
+	if canonicalProxyPath(filepath.Join(commonDir, "worktrees", filepath.Base(gitDir))) != gitDir {
 		return gitDirRedirected(gitDir, root, "")
 	}
 	// The back-pointer, which is the part that actually proves anything.
