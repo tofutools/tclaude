@@ -279,6 +279,54 @@ func TestFoldGuardPathNominatesTheFullCaseFoldTable(t *testing.T) {
 	assert.NotEqual(t, foldGuardPath("/Users/alpha"), foldGuardPath("/Users/beta"))
 }
 
+// TestFoldGuardPathOnlyEverMergesMore is the load-bearing safety property of the
+// TCL-985 folding change, and it is checked EXHAUSTIVELY rather than by example
+// because the failure mode is a silent fail-open at one rune nobody thought of.
+//
+// A guard's nomination key may widen freely: every extra merge is an
+// over-refusal, which os.SameFile refutes when both spellings exist. NARROWING
+// is the dangerous direction — a pair the key stops merging is a pair that never
+// reaches steps 3-4 at all, so the guard answers false with no I/O and a folding
+// volume merges behind its back.
+//
+// That is a real risk here rather than a theoretical one, because full case
+// folding is NOT a superset of simple lowercasing: U+0130 folds to "i" + U+0307
+// while ToLower maps it to "i". This sweeps every code point, groups them by
+// TCL-981's key, and requires that every pair that key merged is still merged.
+// It is what justifies composing the two rules instead of substituting one.
+func TestFoldGuardPathOnlyEverMergesMore(t *testing.T) {
+	tcl981Key := func(s string) string { return normalizeNFC(strings.ToLower(s)) }
+
+	groups := map[string][]rune{}
+	for r := rune(0); r <= 0x10FFFF; r++ {
+		if r >= 0xD800 && r <= 0xDFFF {
+			// Surrogate halves are not characters; string(r) yields U+FFFD for
+			// each, so they would form one meaningless group.
+			continue
+		}
+		key := tcl981Key(string(r))
+		groups[key] = append(groups[key], r)
+	}
+
+	merged := 0
+	for _, runes := range groups {
+		if len(runes) < 2 {
+			continue
+		}
+		want := foldGuardPath("/" + string(runes[0]))
+		for _, r := range runes[1:] {
+			merged++
+			require.Equal(t, want, foldGuardPath("/"+string(r)),
+				"U+%04X and U+%04X share TCL-981's nomination key; the current key "+
+					"must not split them, or the guard silently stops nominating a "+
+					"pair a folding volume merges", runes[0], r)
+		}
+	}
+	// Guard against the sweep going vacuous if the grouping above ever breaks.
+	assert.Greater(t, merged, 1000,
+		"the sweep must actually find case-equivalent runes to compare")
+}
+
 // TestGuardNominatesFoldedVariantsAcrossTheWholeGuard proves the widened key
 // reaches GuardContainsOrEqual's answer rather than stopping at foldGuardPath.
 // Neither spelling exists, so the nomination cannot be settled by identity and

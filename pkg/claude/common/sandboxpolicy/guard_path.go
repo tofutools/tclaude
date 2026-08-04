@@ -176,13 +176,22 @@ func FoldGuardPath(path string) string { return foldGuardPath(path) }
 // volume does in fact merge, and step 2 then answered false with no I/O — a
 // fail-open. cases.Fold is the full-folding table that closes those.
 //
-// But full folding is NOT a superset of simple lowercasing, so REPLACING ToLower
-// would have opened a new hole of the same shape. U+0130 İ is the counterexample:
-// unicode.ToLower maps it to "i", while full folding maps it to "i" + U+0307
-// COMBINING DOT ABOVE, which no longer folds together with a plain "i". Composing
-// the two — lowercase first, then fold — nominates the union of what either rule
-// nominates, and a guard key may only ever merge MORE, never less. Every extra
-// merge is an over-REFUSAL that os.SameFile refutes when both spellings exist.
+// DO NOT "SIMPLIFY" THIS TO cases.Fold ALONE. That reads like an obvious
+// cleanup — one case rule instead of two — and it is a fail-open, because full
+// folding is NOT a superset of simple lowercasing. U+0130 İ is the
+// counterexample: unicode.ToLower maps it to "i", while full folding maps it to
+// "i" + U+0307 COMBINING DOT ABOVE, which no longer folds together with a plain
+// "i". Dropping ToLower would close the sigma and sharp-s holes while opening a
+// new one of exactly the same shape.
+//
+// Composing the two — lowercase first, then fold — nominates the union of what
+// either rule nominates. That is the invariant to preserve across any future
+// change here: A GUARD KEY MAY ONLY EVER MERGE MORE, NEVER LESS. Every extra
+// merge is an over-REFUSAL that os.SameFile refutes when both spellings exist,
+// while every lost merge is a pair that never reaches steps 3-4 at all — the
+// guard answers false with no I/O and a folding volume merges behind its back.
+// TestFoldGuardPathOnlyEverMergesMore enforces this exhaustively over every code
+// point rather than by example, because one overlooked rune is the whole bug.
 //
 // NFC stays last, unchanged from TCL-981: it is normalization, not case, and it
 // must see whatever the case passes produced.
