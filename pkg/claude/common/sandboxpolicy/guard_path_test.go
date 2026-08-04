@@ -23,6 +23,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/text/cases"
 	"golang.org/x/text/unicode/norm"
 )
 
@@ -222,15 +223,76 @@ func TestGuardPathPrefixMatchesDirDepth(t *testing.T) {
 	assert.False(t, ok)
 }
 
+// TestFoldGuardPathMatchesTheSeatbeltEmitterRule is the pin TCL-985 was required
+// to update deliberately rather than route around. session.seatbeltFoldedPath no
+// longer restates the formula at all — it CALLS FoldGuardPath — so the pin that
+// the two layers cannot drift now lives in
+// session.TestSeatbeltFoldedPathIsTheValidatorNominationKey, which is the only
+// place that can observe both. What remains here is the formula itself.
 func TestFoldGuardPathMatchesTheSeatbeltEmitterRule(t *testing.T) {
-	// session.seatbeltFoldedPath is norm.NFC(strings.ToLower(filepath.Clean)).
-	// The validator has to nominate exactly the spellings the emitter merges,
-	// or the two layers disagree about what one directory is.
+	// Lowercase, then FULL case fold, then NFC. Composed, not substituted: see
+	// foldGuardPath on why replacing ToLower with Fold would have opened a new
+	// fail-open at U+0130.
 	for _, path := range []string{"/A/B/", "/a/./b", "/" + norm.NFD.String("Café")} {
 		assert.Equal(t,
-			norm.NFC.String(strings.ToLower(filepath.Clean(path))),
+			norm.NFC.String(cases.Fold().String(strings.ToLower(filepath.Clean(path)))),
 			foldGuardPath(path))
 	}
+	assert.Equal(t, foldGuardPath("/A/B"), FoldGuardPath("/a/b/"),
+		"the exported entry point is the same function")
+}
+
+// TestFoldGuardPathNominatesTheFullCaseFoldTable covers the runes TCL-981's
+// simple-lowercase key missed, and the one rune that full folding alone would
+// have missed in exchange. Each pair must produce ONE nomination key, or the
+// validator answers "no folded relation" with no I/O and the guard fails open on
+// a volume that merges the pair.
+//
+// This is pure-function evidence about the nomination key. It asserts the same
+// thing on every platform and volume and needs no filesystem, which is why it
+// carries no adaptive branch and no skip.
+func TestFoldGuardPathNominatesTheFullCaseFoldTable(t *testing.T) {
+	for _, tc := range []struct{ name, a, b string }{
+		// Greek final sigma. Simple lowercasing maps Σ to σ and leaves ς alone,
+		// so TCL-981's key kept these apart. Full folding merges them.
+		{"final sigma", "/Users/ΟΔΟΣ", "/Users/οδος"},
+		{"final vs medial sigma", "/Users/οδος", "/Users/οδοσ"},
+		// Capital sharp S. Simple lowercasing gives ß; full folding gives "ss",
+		// which is what reaches "STRASSE".
+		{"capital sharp s", "/Users/STRAẞE", "/Users/strasse"},
+		// U+0130 is the counterexample that keeps ToLower in the composition.
+		// Full folding alone maps it to "i" + U+0307, which no longer meets a
+		// plain "i"; lowercasing first maps it to "i" and the pair merges.
+		{"dotted capital I", "/Users/İstanbul", "/Users/istanbul"},
+		// The plain ASCII and NFC cases TCL-981 already handled must not regress.
+		{"ascii case", "/Users/Dev/.TCLAUDE", "/users/dev/.tclaude"},
+		{"nfc vs nfd", "/Users/" + norm.NFC.String("Café"), "/users/" + norm.NFD.String("café")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, foldGuardPath(tc.a), foldGuardPath(tc.b))
+		})
+	}
+
+	// The key must still discriminate. A wider fold that collapsed unrelated
+	// names would turn every guard into a blanket refusal.
+	assert.NotEqual(t, foldGuardPath("/Users/dev"), foldGuardPath("/Users/dev2"))
+	assert.NotEqual(t, foldGuardPath("/Users/alpha"), foldGuardPath("/Users/beta"))
+}
+
+// TestGuardNominatesFoldedVariantsAcrossTheWholeGuard proves the widened key
+// reaches GuardContainsOrEqual's answer rather than stopping at foldGuardPath.
+// Neither spelling exists, so the nomination cannot be settled by identity and
+// the documented step-4 refusal applies — on every platform and volume.
+func TestGuardNominatesFoldedVariantsAcrossTheWholeGuard(t *testing.T) {
+	root := tempRoot(t)
+	assert.True(t, GuardContainsOrEqual(
+		filepath.Join(root, "ΟΔΟΣ"), filepath.Join(root, "οδος", "child")),
+		"a full-case-fold variant must nominate, then refuse for want of identity")
+	assert.True(t, GuardPathsIntersect(
+		filepath.Join(root, "İstanbul"), filepath.Join(root, "istanbul", "child")))
+	assert.False(t, GuardContainsOrEqual(
+		filepath.Join(root, "alpha"), filepath.Join(root, "beta", "child")),
+		"an unrelated pair must stay a free lexical no")
 }
 
 // TestGuardRefusesEveryUnresolvableFoldedNomination is the core of the

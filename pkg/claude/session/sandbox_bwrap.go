@@ -1472,7 +1472,7 @@ func tclaudeLayerSpecRenderInput(
 	for _, bind := range readOnlyBinds {
 		for _, path := range []string{bind.Source, bind.Target} {
 			for _, protected := range protectedRoots {
-				if sandboxpolicy.PathContainsOrEqual(protected, path) {
+				if sandboxpolicy.GuardContainsOrEqual(protected, path) {
 					return nil, nil, nil, nil, nil, sandboxpolicy.MountPlan{},
 						fmt.Errorf(
 							"daemon-final read-only bind path %q is at or below protected root %q",
@@ -1588,7 +1588,7 @@ func validateTclaudeLayerOpenCodeControl(spec TclaudeLayerLaunchSpec) error {
 		return fmt.Errorf("resolve protected paths for OpenCode control authority: %w", err)
 	}
 	for _, protected := range protectedRoots {
-		if sandboxpolicy.PathContainsOrEqual(protected, path) {
+		if sandboxpolicy.GuardContainsOrEqual(protected, path) {
 			return fmt.Errorf(
 				"tclaude-layer v4 OpenCode control path %q is at or below protected root %q",
 				path, protected)
@@ -1635,7 +1635,7 @@ func PrepareTclaudeLayerHarnessState(spec TclaudeLayerLaunchSpec) error {
 			return err
 		}
 		for _, protected := range protectedRoots {
-			if sandboxpolicy.PathContainsOrEqual(protected, path) {
+			if sandboxpolicy.GuardContainsOrEqual(protected, path) {
 				return fmt.Errorf(
 					"tclaude-layer harness state path %q is at or below protected root %q",
 					path, protected)
@@ -1690,7 +1690,7 @@ func PrepareTclaudeLayerHarnessState(spec TclaudeLayerLaunchSpec) error {
 			return err
 		}
 		for _, protected := range protectedRoots {
-			if sandboxpolicy.PathContainsOrEqual(protected, path) {
+			if sandboxpolicy.GuardContainsOrEqual(protected, path) {
 				return fmt.Errorf(
 					"tclaude-layer read-only harness state path %q is at or below protected root %q",
 					path, protected)
@@ -1953,7 +1953,7 @@ func bwrapArgsWithDaemonFinal(
 	}
 	for _, writeDir := range phase0WriteDirs {
 		for _, protected := range protectedRoots {
-			if sandboxpolicy.PathContainsOrEqual(protected, writeDir) {
+			if sandboxpolicy.GuardContainsOrEqual(protected, writeDir) {
 				return nil, fmt.Errorf(
 					"tclaude-layer launch-contract path %q is at or below protected root %q",
 					writeDir,
@@ -2376,6 +2376,12 @@ func validateModelTransportLoopbackForPlatform(
 // A protected re-hide emitted after the replacement will reactivate its exact
 // path; a child left covered only by the new ancestor is not itself a visible
 // mountpoint and must not receive --remount-ro at flush time.
+//
+// Both of this type's comparisons stay byte-exact. They are bookkeeping over
+// paths bwrap will match literally, and their under-detection direction is
+// already the conservative one: an unrecognized ancestor leaves a child hide
+// ACTIVE rather than dropping it. Guard bias here would delete remounts, which
+// is the widening direction.
 func (r *tclaudeLayerHideRemounts) noteAncestorReplacement(path string) {
 	for candidate, active := range r.active {
 		if active && candidate != path && sandboxpolicy.PathContainsOrEqual(path, candidate) {
@@ -2609,6 +2615,15 @@ func appendTclaudeLayerSocketRepairs(
 	return args
 }
 
+// appendTclaudeLayerProtectedRehides is the Linux twin of the Seatbelt emitter's
+// appendSeatbeltProtectedRehides, and carries the same bias for the same reason.
+// A true answer EMITS A HIDE, so an unsettled case/NFC-folded nomination re-hides
+// the protected root instead of leaving it exposed.
+//
+// Ordinary Linux filesystems are case-sensitive and the validator rejects
+// ambiguous variant spellings upstream, so this is defense in depth rather than
+// a currently open hole. The residual exposure it closes is a case-insensitive
+// mount — vfat, exFAT, CIFS, ext4 casefold — hosting a protected root or grant.
 func appendTclaudeLayerProtectedRehides(
 	args []string,
 	mountedPath string,
@@ -2616,8 +2631,7 @@ func appendTclaudeLayerProtectedRehides(
 	hideRemounts *tclaudeLayerHideRemounts,
 ) []string {
 	for _, protected := range protectedRoots {
-		if sandboxpolicy.PathContainsOrEqual(mountedPath, protected) ||
-			sandboxpolicy.PathContainsOrEqual(protected, mountedPath) {
+		if sandboxpolicy.GuardPathsIntersect(mountedPath, protected) {
 			args = hideRemounts.appendHide(args, protected)
 		}
 	}
@@ -2635,6 +2649,11 @@ func appendTclaudeLayerContractRepairs(
 		// An exact or narrower policy row wins. The launch seam refuses an
 		// ordinary profile row at/below the harness state root separately;
 		// workspace and agent-directory rows retain normal plan precedence.
+		//
+		// This comparison — like the alias and socket repairs above it — REOPENS
+		// a path beneath a hide, so it keeps byte-exact containment. Only the
+		// protected re-hides below it are refusal guards, and only they carry the
+		// guard bias.
 		if hide != writeDir && sandboxpolicy.PathContainsOrEqual(hide, writeDir) {
 			hideRemounts.noteReplacement(writeDir)
 			args = append(args, "--bind", writeDir, writeDir)
@@ -2647,8 +2666,7 @@ func appendTclaudeLayerContractRepairs(
 	// are final: no later plan entry can reopen a protected path.
 	for _, protected := range protectedRoots {
 		for _, writeDir := range repaired {
-			if sandboxpolicy.PathContainsOrEqual(writeDir, protected) ||
-				sandboxpolicy.PathContainsOrEqual(protected, writeDir) {
+			if sandboxpolicy.GuardPathsIntersect(writeDir, protected) {
 				args = hideRemounts.appendHide(args, protected)
 				break
 			}
@@ -2662,7 +2680,7 @@ func validateTclaudeLayerHarnessStateRules(
 	profileFilesystem []sandboxpolicy.FilesystemGrant,
 ) error {
 	for _, grant := range profileFilesystem {
-		if sandboxpolicy.PathContainsOrEqual(stateRoot, grant.Path) {
+		if sandboxpolicy.GuardContainsOrEqual(stateRoot, grant.Path) {
 			return fmt.Errorf(
 				"tclaude-layer profile filesystem rule %q (%s) is at or below harness state root %q; refusing a launch that cannot persist harness state",
 				grant.Path,
@@ -2869,7 +2887,7 @@ func validateRemappedGuestPathsAgainstContract(
 			if dir == "" {
 				continue
 			}
-			if sandboxpolicy.PathContainsOrEqual(guest, dir) {
+			if sandboxpolicy.GuardContainsOrEqual(guest, dir) {
 				return fmt.Errorf(
 					"unsupported_sandbox_profile_mount_path: mounting %q at sandbox path %q would shadow the launch-required directory %q",
 					grant.Path, guest, dir)
@@ -2879,6 +2897,11 @@ func validateRemappedGuestPathsAgainstContract(
 	return nil
 }
 
+// sandboxDenyCoversEffectivePath stays on the byte-exact lexical comparison, and
+// the audit that converted this file's protected-root guards deliberately left it
+// alone. A true answer here does not refuse anything: it adds the path to the
+// launch-contract READ dirs, reopening it despite the deny. Guard bias at a site
+// where true grants access is a fail-open, not a hardening.
 func sandboxDenyCoversEffectivePath(
 	effective sandboxpolicy.EffectiveProfile,
 	path string,

@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
-	"golang.org/x/text/unicode/norm"
 )
 
 // seatbeltFileIdentity is the Darwin lstat identity used to decide whether
@@ -234,6 +233,11 @@ func renderSeatbeltProfileWithLoopbackBindAndRouteSlots(
 		case sandboxpolicy.MountRO, sandboxpolicy.MountRW:
 			ordered = appendSeatbeltProtectedRehides(ordered, path, protected, identity)
 		case sandboxpolicy.MountHide:
+			// Both replays below REOPEN a path beneath a policy hide, so they keep
+			// the allow-biased containment deliberately: an unsettled folded
+			// nomination must not widen the profile. The protected re-hides that
+			// follow each replay are the refusal guards, and they carry the
+			// opposite bias inside appendSeatbeltProtectedRehides.
 			for _, writeDir := range contract {
 				if !seatbeltSamePath(path, writeDir, identity) &&
 					seatbeltPathContains(path, writeDir, identity) {
@@ -445,6 +449,34 @@ func cleanSeatbeltPath(label, path string) (string, error) {
 	return path, nil
 }
 
+// appendSeatbeltProtectedRehides re-hides every protected root a mounted region
+// overlaps. A true answer here EMITS A DENY, so this is a refusal guard and it
+// uses the guard-biased containment: a folded nomination the emitter cannot
+// settle by filesystem identity re-hides the protected root rather than leaving
+// it exposed.
+//
+// TCL-981 left this on the allow-biased rule, where an unresolvable nomination
+// answered "no overlap" and therefore "do not re-hide" — the OPPOSITE bias from
+// the validator, which refuses the same ambiguity. That was not a live bypass,
+// because the validator rejects the ambiguous profile upstream. It was still
+// wrong: an emitter must carry its own safety bias rather than inherit one from
+// whoever is expected to have validated first.
+//
+// The cost of the bias is an extra hide region for a protected root that a
+// case-sensitive volume keeps distinct from the mounted path. Since TCL-791 a
+// protected hide is final, so the failure mode is a path the operator did not
+// need hidden, not a launch that cannot proceed.
+//
+// HOW MUCH THIS CHANGES THE EMITTED PROFILE TODAY: nothing, and that is worth
+// stating rather than leaving for the next reader to rediscover. renderSeatbelt-
+// Profile already seeds every protected root as a class-3 hide before any plan
+// entry is replayed, and the region list is a set keyed by path, so re-hiding a
+// path that is already hidden is idempotent. This function's answer only becomes
+// load-bearing if a later region turns the protected node positive — which is
+// what it exists to undo, and what makes the bias the correct one to hold here
+// even while it is unobservable. TestSeatbeltProtectedRehideFailsClosedOn-
+// UnresolvedIdentity therefore asserts on the regions this function returns; a
+// profile-level assertion would pass under either bias and prove nothing.
 func appendSeatbeltProtectedRehides(
 	regions []seatbeltRegion,
 	mountedPath string,
@@ -452,8 +484,8 @@ func appendSeatbeltProtectedRehides(
 	identity seatbeltIdentityLookup,
 ) []seatbeltRegion {
 	for _, protected := range protectedRoots {
-		if seatbeltPathContains(mountedPath, protected, identity) ||
-			seatbeltPathContains(protected, mountedPath, identity) {
+		if seatbeltGuardPathContains(mountedPath, protected, identity) ||
+			seatbeltGuardPathContains(protected, mountedPath, identity) {
 			regions = append(regions, seatbeltRegion{
 				path: protected,
 				mode: sandboxpolicy.MountHide,
@@ -463,8 +495,12 @@ func appendSeatbeltProtectedRehides(
 	return regions
 }
 
+// seatbeltFoldedPath is the emitter's nomination key. It is sandboxpolicy's
+// validator key, called rather than reimplemented: a validator that nominated a
+// different set of spellings than the emitter merges would put the two out of
+// step, which is the class of bug this work exists to remove.
 func seatbeltFoldedPath(path string) string {
-	return norm.NFC.String(strings.ToLower(filepath.Clean(path)))
+	return sandboxpolicy.FoldGuardPath(path)
 }
 
 func seatbeltSamePath(a, b string, identity seatbeltIdentityLookup) bool {
@@ -489,9 +525,43 @@ func seatbeltSamePath(a, b string, identity seatbeltIdentityLookup) bool {
 // the corresponding prefix of target must have the same lstat dev+ino before
 // the relation affects policy. Distinct or unknowable identities stay as
 // separate regions for case-sensitive APFS.
+//
+// This is the ALLOW-BIASED spelling, for the call sites where a true answer
+// REOPENS something: replaying a launch-contract write directory or a required
+// socket beneath a policy hide, and choosing a region's parent in the lattice.
+// An unsettled nomination there must not widen the profile. Use
+// seatbeltGuardPathContains wherever true means "emit a deny" instead.
 func seatbeltPathContains(
 	dir, target string,
 	identity seatbeltIdentityLookup,
+) bool {
+	return seatbeltContains(dir, target, identity, false)
+}
+
+// seatbeltGuardPathContains is seatbeltPathContains with the validator's
+// refusal bias: a folded nomination that filesystem identity cannot settle
+// answers TRUE. It belongs at the call sites where true means "emit a deny",
+// and nowhere else — at an allow-biased site it would reopen paths.
+//
+// The zero-I/O fast path is identical to the allow-biased rule's. Byte-exact
+// containment answers true and no-folded-containment answers false, both
+// lexically, so an ordinary pair of unrelated spellings never reaches the
+// identity lookup. Only a real case/NFC collision pays for one.
+func seatbeltGuardPathContains(
+	dir, target string,
+	identity seatbeltIdentityLookup,
+) bool {
+	return seatbeltContains(dir, target, identity, true)
+}
+
+// seatbeltContains carries both rules. unsettled is the answer returned when a
+// folded nomination holds but filesystem identity cannot confirm or refute it;
+// everything before that point is shared, so the two biases can never disagree
+// about which pairs are nominated in the first place.
+func seatbeltContains(
+	dir, target string,
+	identity seatbeltIdentityLookup,
+	unsettled bool,
 ) bool {
 	dir = filepath.Clean(dir)
 	target = filepath.Clean(target)
@@ -504,13 +574,17 @@ func seatbeltPathContains(
 		return false
 	}
 	if identity == nil {
-		return false
+		return unsettled
 	}
 
 	dirParts := seatbeltPathParts(dir)
 	targetParts := seatbeltPathParts(target)
 	if len(dirParts) > len(targetParts) {
-		return false
+		// Folding preserves segment count, so a nominated pair cannot land here.
+		// It is a safety net rather than a live branch, and it takes the caller's
+		// unsettled answer for the same reason sandboxpolicy.guardPathPrefix's
+		// !ok branch refuses.
+		return unsettled
 	}
 	prefix := string(filepath.Separator)
 	if len(dirParts) > 0 {
@@ -518,7 +592,10 @@ func seatbeltPathContains(
 	}
 	dirID, dirOK := identity(dir)
 	prefixID, prefixOK := identity(prefix)
-	return dirOK && prefixOK && dirID == prefixID
+	if !dirOK || !prefixOK {
+		return unsettled
+	}
+	return dirID == prefixID
 }
 
 func seatbeltPathParts(path string) []string {
@@ -648,6 +725,12 @@ func buildSeatbeltRegionTree(
 	for i, region := range regions {
 		nodes[i] = seatbeltRegionNode{seatbeltRegion: region, parent: -1}
 	}
+	// Parenting is the lexical lattice operation and stays allow-biased. Its
+	// under-detection direction is already the safe one: a node whose ancestor
+	// went unrecognized emits its own deny start instead of being subsumed, and
+	// it is not collected as a carveout inside that ancestor's deny predicate.
+	// Fewer parents therefore means more denies and fewer exceptions, never the
+	// reverse. Refusal bias belongs at the protected-root guards, not here.
 	for i := range nodes {
 		best := -1
 		bestDepth := -1
@@ -1134,13 +1217,19 @@ func seatbeltRuntimePolicyDenies(
 	return out
 }
 
+// seatbeltRuntimeCarveoutIntersects is the second refusal guard in this file. A
+// true answer adds the strict, carveout-free deny that makes an operator RO/hide
+// region outrank the baseline /dev and TMPDIR write carveouts, so an unsettled
+// folded nomination must answer true: the alternative leaves a runtime carveout
+// writable inside a region the operator closed, which is the same fail-open
+// shape as a missing protected re-hide.
 func seatbeltRuntimeCarveoutIntersects(
 	path, runtimeTempDir string,
 	identity seatbeltIdentityLookup,
 ) bool {
 	for _, carveout := range []string{"/dev", runtimeTempDir} {
-		if seatbeltPathContains(path, carveout, identity) ||
-			seatbeltPathContains(carveout, path, identity) {
+		if seatbeltGuardPathContains(path, carveout, identity) ||
+			seatbeltGuardPathContains(carveout, path, identity) {
 			return true
 		}
 	}
