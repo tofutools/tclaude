@@ -164,6 +164,31 @@ type agentWorktreeClaimSnapshot struct {
 // a discriminator: SessionEnd can mark the real owner exited just before its
 // tmux pane disappears. Exact timestamp ties retain every candidate and fail
 // conservatively across their roots.
+//
+// This check is NOT total, and no widening of these reads can make it so: it
+// sees only what has been RECORDED, so a process already running in a directory
+// whose durable claim has not landed yet is invisible here. Every pane tclaude
+// itself launches is already claim-before-process — session/new.go writes the
+// session row carrying cwd (SaveSessionStateForLaunch) well before tmux creates
+// the pane, so the claim exists by the time the harness starts. Three windows
+// remain, in descending order of exposure (TCL-1021):
+//
+//   - A harness the operator started themselves, auto-registered from its first
+//     hook rather than launched through tclaude. The process precedes its
+//     session row by the harness's startup-to-first-hook latency. tclaude is not
+//     in that launch at all, so no claim-before-launch mechanism reaches it.
+//   - An OpenCode launch: startOpenCodeRuntimeForSpawn boots the authoritative
+//     server with cwd set to the launch dir BEFORE the pane fork, so a real
+//     process holds the directory until the forked `session new` writes the row.
+//   - Between the daemon's fork and that row write, on every harness. The forked
+//     `tclaude session new` deliberately does not inherit the launch dir (no
+//     cmd.Dir), so no process sits in the worktree during this one — a removal
+//     here fails the launch loudly instead of yanking a live agent's ground.
+//
+// Closing the remainder needs a lease/claim record this snapshot does not have,
+// and TCL-1021 declined to build one: triggering it requires an operator
+// retiring a DIFFERENT agent recorded at the same worktree, with worktree
+// deletion, inside one of those windows. Assume the gap, do not assume totality.
 func captureAgentWorktreeClaims() agentWorktreeClaimSnapshot {
 	snap := agentWorktreeClaimSnapshot{
 		views:     map[string]agentWorktreeView{},
