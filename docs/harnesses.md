@@ -245,7 +245,7 @@ covers **interactive human sessions**:
 | **Conversation store** | ✅ cold list / resolve / cwd filter / title / existence, read from Copilot's own per-session `<COPILOT_HOME>/session-state/<id>/` files. No SQLite access at all — see [below](#copilot-conversation-store) |
 | **Sandbox** | ⚠️ `inherit` (default) / `off` — an *assertion*, not a lever. Copilot's own command sandbox has no launch flag, so tclaude can neither enable nor disable it; `off` means "verified not engaged" and is what `--sandbox-impl tclaude-layer` resolves to. See [below](#copilot-and-tclaudes-outer-sandbox). Copilot's *own* command sandboxing was separately evaluated and deliberately not advertised as a harness-builtin implementation — see [below](#copilots-own-command-sandboxing) |
 | **tclaude-layer (outer OS sandbox)** | ✅ Linux bubblewrap / macOS Seatbelt, with Copilot's pre-approved directory catalog composed into the mount plan |
-| **Model transport under a filtered network** | ⚠️ the default first-party GitHub Copilot route only (`api.githubcopilot.com`, `api.github.com`); every route-moving input is refused rather than followed, read from both settings files with the same precedence as the sandbox key |
+| **Model transport under a filtered network** | ⚠️ the default first-party GitHub Copilot route only (`api.githubcopilot.com`, `api.individual.githubcopilot.com`, `api.github.com`); the model host is assigned per account at token exchange, so only observed tiers are named and the rest stay denied. Every route-moving input is refused rather than followed, read from both settings files with the same precedence as the sandbox key |
 | **Directory pre-trust at spawn** ([below](#directory-trust-at-spawn)) | ✅ opt-in `trust_dir` appends the launch dir to `trustedFolders` in `<COPILOT_HOME>/config.json`. Copilot's modal blocks *before* any provider contact, so an unseeded detached pane never reaches its first turn |
 | **Approval / permissions** | ⚠️ `allow-tools` (default) / `inherit`. Two tokens, each rendering only flags measured against the pinned binary on a real terminal. Neither makes a Copilot pane unconditionally nonblocking — see [below](#copilot-approvals-and-permissions) for exactly which prompt each one closes and which it leaves standing |
 | **Usage, cost & context** | ⚠️ followed incrementally from Copilot's durable event log, with a byte-offset checkpoint so a daemon restart resumes rather than rescans. Output tokens advance per turn (`assistant.message`); input tokens, context occupancy and window size advance only at an authoritative disclosure — a compaction, a truncation, or a shutdown — and nothing is written between them, so a real reading is never overwritten by a zero. Cost is carried in the **nano-AI units Copilot emits**; no USD figure is derived, because Copilot documents an AI credit as $0.01 in a different structure and nowhere states that one AIU is one credit |
@@ -567,21 +567,38 @@ an agentd socket path inside `~/.tclaude/data` are each a failed launch, not a
 mount rule.
 
 **Filtered networking.** A Copilot launch under a filtered network policy is
-admitted only on the default first-party GitHub Copilot route: model traffic to
-`api.githubcopilot.com` and the `/copilot_internal` control plane on
-`api.github.com` (the `net-github-copilot` pack covers both). Anything that
-moves that route is refused rather than followed — `COPILOT_API_URL`, `GH_HOST`
-/ `COPILOT_GH_HOST`, the `copilotUrl` and `proxyUrl` settings keys, and the
-whole `COPILOT_PROVIDER_*` BYOK family. A BYOK endpoint is refused even though
-it resolves concretely: being resolvable is not being approved.
+admitted only on the default first-party GitHub Copilot route: the
+`/copilot_internal` control plane on `api.github.com`, plus model traffic to
+`api.githubcopilot.com` or `api.individual.githubcopilot.com` (the
+`net-github-copilot` pack covers all three). Anything that moves that route is
+refused rather than followed — `COPILOT_API_URL`, `GH_HOST` /
+`COPILOT_GH_HOST`, the `copilotUrl` and `proxyUrl` settings keys, and the whole
+`COPILOT_PROVIDER_*` BYOK family. A BYOK endpoint is refused even though it
+resolves concretely: being resolvable is not being approved.
 
-Two limits, stated rather than implied. The destinations above are what a
-credential-free startup can be observed to need; **post-authentication traffic
-has not been enumerated**, so a subscribed session may reach hosts the pack
-does not name — those are denied at the wall, visibly, rather than silently
-allowed. And the enterprise CAPI host is deliberately absent: how a launch
-selects it is not inspectable ahead of time, so that posture is refused instead
-of granted an extra destination.
+**The model host is assigned, not fixed.** The control plane hands a session
+its endpoints when it exchanges the token, and an individual-plan account is
+handed `api.individual.githubcopilot.com` — a host that appears nowhere in the
+CLI's shipped runtime, so no amount of reading the binary would have found it.
+An authenticated run through the capture seam observed it, and a further run
+with the pack itself as the wall completed a turn and a tool call with every
+other destination refused, which is what shows the pack is sufficient for that
+path rather than merely accurate about it. Telemetry
+(`telemetry.*.githubcopilot.com`) is contacted but deliberately left out: the
+wall run refused it and the session was unaffected.
+
+Two limits, stated rather than implied. Plan tiers nobody has observed —
+business, and the enterprise CAPI host the runtime does carry a string for —
+are **not** in the pack: an unobserved destination is denied at the wall,
+visibly, rather than authored on a guess, and the enterprise posture is refused
+outright because how a launch selects it is not inspectable ahead of time.
+Token refresh, managed settings and content exclusion were likewise not
+exercised, so nothing is claimed about destinations beyond the control-plane
+host they share. The recorded evidence and those gaps live in
+`pkg/claude/harness/copilotfixture/testdata/<version>/postauth_destinations.json`,
+which an offline contract test checks the pack against on every `go test`; the
+credentialed capture that produced it is a local, opt-in evidence step and
+never runs in CI.
 
 #### Copilot conversation store
 

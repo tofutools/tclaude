@@ -147,6 +147,20 @@ type RunOptions struct {
 	// token variable is scrubbed exactly as it is for every other scenario.
 	ProxyEndpoint string
 
+	// AuthenticatedCapture drops the invalid capture token from a
+	// ProxyEndpoint run so the CLI authenticates with whatever credential the
+	// operator staged inside the disposable root.
+	//
+	// It exists for one local, one-off evidence step (TCL-984): the model host
+	// is assigned BY the token exchange, so no credential-free run can observe
+	// it, and the invalid token that makes the ordinary capture possible is
+	// precisely what stops the exchange from completing. Nothing in CI sets
+	// this — a credentialed run must never be a CI step — and it stages no
+	// credential itself: the caller decides what to place in Root, and this
+	// switch only stops the runner from overriding it with a token that
+	// authenticates nothing.
+	AuthenticatedCapture bool
+
 	// WebEgressProxy is the online arm, and it is the only launch shape in
 	// which Copilot advertises its web-fetch tool at all.
 	//
@@ -569,7 +583,7 @@ func baseEnv(opts RunOptions) []string {
 		// rather than left out, so no destination — including loopback — is
 		// exempted from the capture.
 		proxy := "http://" + opts.ProxyEndpoint
-		return append(env,
+		env = append(env,
 			"HTTP_PROXY="+proxy, "http_proxy="+proxy,
 			"HTTPS_PROXY="+proxy, "https_proxy="+proxy,
 			// ALL_PROXY matters as much as the pair above: the CLI's native
@@ -581,6 +595,14 @@ func baseEnv(opts RunOptions) []string {
 			// carve destinations back out of the capture, and an absent
 			// NO_PROXY lets the runtime apply its own default exemptions.
 			"NO_PROXY=", "no_proxy=",
+		)
+		if opts.AuthenticatedCapture {
+			// The credentialed evidence run supplies its own authentication
+			// through the disposable root, so the invalid token below would
+			// only override it and put the run back on the failure path.
+			return env
+		}
+		return append(env,
 			// A syntactically well-formed but INVALID token. Without one the
 			// CLI refuses locally ("No authentication information found") and
 			// exits before opening a single connection, so the capture would

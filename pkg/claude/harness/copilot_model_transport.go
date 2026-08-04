@@ -30,6 +30,15 @@ import (
 //     a session: the /copilot_internal/* routes (token exchange, content
 //     exclusion, managed settings, subscription state) are all on it.
 //
+// And, since TCL-984, from OBSERVATION as well: an authenticated 1.0.77 run
+// through a pass-through CONNECT-observing proxy showed the CAPI host is
+// assigned by the token exchange rather than fixed, and that an individual-plan
+// account is routed to api.individual.githubcopilot.com. Derivation could not
+// have found that host — it is not in the binary — which is why the observed
+// one is named alongside the built-in default instead of replacing it. Only
+// hosts an authenticated run actually reached are named; the tiers nobody has
+// observed stay refused.
+//
 // WHAT MOVES THE ROUTE, and is therefore refused rather than followed:
 // COPILOT_API_URL (real but undocumented — it appears in the runtime's own
 // environment list, not in `copilot help environment`), the `copilotUrl`
@@ -60,6 +69,23 @@ const (
 	// CopilotControlPlaneHost serves the /copilot_internal/* control plane a
 	// session needs to obtain and refresh its Copilot token.
 	CopilotControlPlaneHost = "api.github.com"
+	// CopilotIndividualCAPIHost serves model traffic for an account the token
+	// exchange routes to the individual tier.
+	//
+	// It is here because the CAPI host is NOT purely a built-in default: the
+	// control plane hands the session its endpoints when it exchanges the
+	// token, and an individual-plan account is handed this one. An
+	// authenticated 1.0.77 run (TCL-984) reached it for every model request and
+	// never touched CopilotDefaultCAPIHost, so a pack naming only the built-in
+	// default denies that account's model traffic outright.
+	//
+	// That also marks the limit of the derivation TCL-978 used: this host
+	// appears NOWHERE in the pinned runtime — the runtime carries only
+	// api.githubcopilot.com and api.enterprise.githubcopilot.com — so reading
+	// the binary can enumerate what the CLI ships with, never what the service
+	// assigns. Other tiers are therefore expected to exist and are deliberately
+	// NOT guessed at: an unobserved host stays refused rather than authored.
+	CopilotIndividualCAPIHost = "api.individual.githubcopilot.com"
 )
 
 // copilotRouteMovingEnvVars are launch environment variables that change which
@@ -142,6 +168,7 @@ func (copilotModelTransport) ResolveModelTransport(
 func CopilotFirstPartyDestinations() []sandboxpolicy.NetworkAllowEntry {
 	return []sandboxpolicy.NetworkAllowEntry{
 		{Domain: CopilotDefaultCAPIHost, Ports: []int{443}},
+		{Domain: CopilotIndividualCAPIHost, Ports: []int{443}},
 		{Domain: CopilotControlPlaneHost, Ports: []int{443}},
 	}
 }
