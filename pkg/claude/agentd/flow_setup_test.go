@@ -190,16 +190,72 @@ func holdRetiringCodexPane(t *testing.T, cx *testharness.CodexSim) func() {
 	}
 }
 
+// escalationWitness observes whether the soft-exit escalation watchdog has
+// reached its first probe, and lets a scenario SAMPLE that at one chosen
+// instant.
+//
+// The park hook fires at the top of waitForLifecycleTargetGone's loop, one
+// statement before probeLifecyclePane, so "probed" is exactly "a second issuer
+// of the pane-probe verbs now exists". A scenario whose fault is queued inside
+// the SYNCHRONOUS injection depends on there being no such issuer yet —
+// scheduleSoftExitEscalation is not called until injectSoftExitTarget returns
+// — and that is a property of call ORDER, which is the kind of property
+// TCL-1028 showed can hold by luck and stop holding silently. Sampling it
+// where the fault is queued, and asserting it false, makes a future
+// re-ordering fail the test instead of recreating the bug.
+type escalationWitness struct {
+	mu      sync.Mutex
+	probed  bool
+	sampled bool
+}
+
+func (w *escalationWitness) markProbed() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.probed = true
+}
+
+// sample is called from a production-goroutine hook; probedWhenSampled from
+// the test goroutine. Hence the mutex — this package runs under -race.
+func (w *escalationWitness) sample() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.sampled = w.probed
+}
+
+func (w *escalationWitness) probedWhenSampled() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.sampled
+}
+
 // holdSoftExitEscalation parks the escalation watchdog on its first probe
 // until the returned func runs, so nothing but the caller can end a wedged
 // pane. Only the watchdog's own wait is gated; the ladder's behaviour once it
 // runs is untouched.
 func holdSoftExitEscalation(t *testing.T) func() {
 	t.Helper()
+	return holdSoftExitEscalationInto(t, nil)
+}
+
+// holdSoftExitEscalationInto is holdSoftExitEscalation, additionally recording
+// each probe against w.
+//
+// REGISTER ANY OTHER HOOK CLEANUP BEFORE CALLING THIS. Cleanup is LIFO, so
+// this helper's cleanup — which releases the parked watchdog and only then
+// drains — has to run FIRST. A cleanupAfterBackgroundDrain registered after it
+// would try to drain while the watchdog is still parked, and block forever.
+func holdSoftExitEscalationInto(t *testing.T, w *escalationWitness) func() {
+	t.Helper()
 	released := make(chan struct{})
 	var once sync.Once
 	release := func() { once.Do(func() { close(released) }) }
-	restore := agentd.SetSoftExitEscalationPollForTest(func() { <-released })
+	restore := agentd.SetSoftExitEscalationPollForTest(func() {
+		if w != nil {
+			w.markProbed()
+		}
+		<-released
+	})
 	// One cleanup, in this order, because all three steps matter on the path
 	// where a require fails before the test releases: unpark the watchdog so
 	// nothing is left blocked on a finished test, JOIN it, and only then

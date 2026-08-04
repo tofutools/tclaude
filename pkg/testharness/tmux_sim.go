@@ -434,10 +434,32 @@ func (t *TmuxSim) MutationTargets(verb string) []string {
 // FailNextCommand makes the next invocation of verb return exit status 1
 // without applying its ordinary simulated behavior. Faults queue FIFO so a
 // flow can describe a short sequence of failures deterministically.
+//
+// A queued fault belongs to the VERB, not to a caller. It is taken by
+// whichever goroutine issues that verb first, so a flow which means "this
+// probe fails" gets that only while the probe it is aiming at is the sole
+// issuer of the verb. When a second production actor polls the same verb
+// concurrently — the soft-exit escalation watchdog re-probing panes with
+// display-message while the retry ladder probes the same pane — the fault
+// lands on whichever one the scheduler happens to run next, and the intended
+// probe silently succeeds (TCL-1028). Serialize such a flow (park the other
+// actor) and confirm delivery with PendingCommandFaults rather than assuming
+// the aim held.
 func (t *TmuxSim) FailNextCommand(verb string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.commandFaults[verb] = append(t.commandFaults[verb], tmuxCommandFault{fail: true})
+}
+
+// PendingCommandFaults reports how many queued faults for verb have not been
+// taken yet. A flow that queues a fault for one specific call uses this to
+// wait for that call to CONSUME it, which — with every other issuer of the
+// verb parked — is a causal statement that the intended caller saw the fault,
+// rather than a timing assumption that it got there first.
+func (t *TmuxSim) PendingCommandFaults(verb string) int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return len(t.commandFaults[verb])
 }
 
 // HangNextCommand makes the next invocation of verb remain in Run for d
