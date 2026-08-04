@@ -27,3 +27,23 @@ func TestCopilotEffortCatalogMatchesPinnedHelpFixture(t *testing.T) {
 		t.Fatalf("Copilot EffortLevels() = %v, want pinned help choices %v", got, advertised)
 	}
 }
+
+// TestCopilotModelCatalogMatchesPinnedHelpFixture keeps the production model
+// suggestions tied to the sanitized evidence. `auto` is tclaude's stable
+// convenience choice and therefore intentionally precedes the concrete ids
+// documented by Copilot.
+func TestCopilotModelCatalogMatchesPinnedHelpFixture(t *testing.T) {
+	help, err := os.ReadFile(copilotfixture.PinnedModelHelpFixture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	advertised, err := copilotfixture.ModelsFromHelp(help)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := append([]string{"auto"}, advertised...)
+	h := harness.MustGet(harness.CopilotName)
+	if got := h.Models.Models(); !slices.Equal(got, want) {
+		t.Fatalf("Copilot Models() = %v, want pinned help choices plus auto %v", got, want)
+	}
+}
