@@ -916,6 +916,12 @@ Beyond that:
   and this wave wires no approval contract at all — so an unattended Copilot pane
   can still stop on a risky command's prompt.
 
+Every claim above is measured against the pinned CLI on a real pseudo-terminal
+(the modal does not exist headlessly), and the seeding is exercised as the
+production call — on a fresh `COPILOT_HOME` and on an installed one whose
+`config.json` the CLI already owns. Both scenarios are CI-gated on Linux and
+macOS.
+
 ### OpenCode managed server
 
 Each daemon-spawned OpenCode session has one agentd-owned
