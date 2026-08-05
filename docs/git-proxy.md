@@ -1,0 +1,289 @@
+# Git & GitHub proxy 🔐
+
+**Audience:** operators who sandbox their agents and want them to keep doing
+ordinary feature work — fetch, push, open a pull request — without handing them
+an SSH key or a GitHub token.
+
+## The problem this solves
+
+A tclaude [sandbox profile](agent.md#sandbox-profiles) can deny `~/.ssh` and
+`~/.config/gh` — both ship in the dashboard's common-rule catalog — and can deny
+or filter the network. That is the posture you want for an agent you do not
+fully trust.
+
+It is also the posture that stops the agent doing its job. Most agents are
+spawned to write code and open a pull request, and both halves of that need a
+credential.
+
+The usual escape is to widen the sandbox: reopen the credential directories,
+open the network. That works, and it gives the agent the credentials.
+
+`tclaude agentd` already runs unsandboxed on the host and already holds those
+credentials. So it performs the network half on the agent's behalf. The agent
+issues a *semantic* request — "push my branch", "open a pull request" — and
+never sees a key, a token, or a command line.
+
+```bash
+# Inside a sandboxed agent that cannot read ~/.ssh:
+tclaude proxy git push -u
+tclaude proxy github pr create --title "Add the thing" --body-file pr.md
+```
+
+## The one invariant
+
+**The proxy lends credentials, not filesystem reach.**
+
+Every operation it performs is one the agent could already have performed on
+files it can already write. The only thing it lacked was the secret. Concretely:
+the repository is always the git work tree containing the agent's own
+daemon-recorded launch directory. There is no `--repo` flag, no path parameter,
+and nothing in the request an agent could use to aim the daemon's credentials at
+a different checkout.
+
+That directory comes from `sessions.resume_provenance` — the immutable physical
+path captured at launch. It deliberately does **not** come from the
+`agent_workdir` table, which the agent's own PostToolUse hook writes, and which
+would therefore be agent-influenced.
+
+## Enabling it
+
+The proxy is **off** until you allow-list at least one remote. There is no
+"allow everything" setting and no default that turns it on.
+
+Add an `agent.git_proxy` block to `~/.tclaude/data/config.json`:
+
+```json
+{
+  "agent": {
+    "git_proxy": {
+      "allowed_remotes": ["github.com/your-org"],
+      "protected_refs": ["main", "master", "release/*"],
+      "allow_force_push": false,
+      "ssh_key": "",
+      "github_token_file": ""
+    }
+  }
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `allowed_remotes` | Remotes the proxy may talk to, as `host/owner/repo` patterns. **Empty or absent disables the proxy entirely.** |
+| `protected_refs` | Branches the proxy refuses to push to at all. Absent → `["main", "master"]`; an explicit `[]` turns the protection off. |
+| `allow_force_push` | Permits `--force-with-lease` on non-protected refs. Default off. Plain `--force` is never available. |
+| `ssh_key` | Pins one private key (`ssh -i … -o IdentitiesOnly=yes`). Empty uses the daemon's ambient SSH setup — normally an ssh-agent, which is the better posture. |
+| `github_token_file` | A file whose contents become `GH_TOKEN` for `gh`. Empty lets `gh` use the daemon's own authenticated configuration. Note this feeds the **GitHub** half only; `git` itself authenticates over SSH or through the operator's own credential helper. |
+
+Both path fields accept `~/…`, which expands to the home directory of the user
+account under which `agentd` runs — that account must be able to read the file.
+Shell variables are **not** expanded — a config file is not a shell, so
+`"${HOME}/token.txt"` is taken literally. Use `~/` or an absolute path.
+
+### Allow-list patterns
+
+Patterns are slash-separated and matched case-insensitively against the
+remote's resolved `host/owner/repo`. `*` matches exactly one segment, and a
+pattern with fewer segments matches as a prefix:
+
+| Pattern | Matches |
+|---|---|
+| `github.com` | every repository on that host |
+| `github.com/your-org` | every repository in that owner |
+| `github.com/your-org/*` | the same, spelled explicitly |
+| `github.com/your-org/one-repo` | exactly that repository |
+
+Matching is **segment-wise**, so `github.com/tofu` does not authorize
+`github.com/tofutools-evil`, and `github.com` does not authorize
+`github.com.attacker.net`.
+
+### Granting the permissions
+
+Four slugs, none granted by default and none conferred by group ownership:
+
+| Slug | Allows |
+|---|---|
+| `git.read` | `git remotes`, `git ls-remote`, `git fetch` |
+| `git.push` | `git push` |
+| `github.read` | `github pr ls/view/checks`, `github issue ls/view` |
+| `github.write` | `github pr create/edit/comment/ready`, `github issue comment` |
+
+```bash
+tclaude agent permissions grant <agent> git.read
+tclaude agent permissions grant <agent> git.push
+```
+
+An agent without a grant can still ask for a one-off with `--ask-human 60s`,
+which raises the ordinary [approval popup](agent.md#ad-hoc-human-approval-ask-human).
+
+## What an agent can do
+
+```bash
+# Discovery — no network, no credential. Run this first.
+tclaude proxy git remotes
+
+# Reads (git.read)
+tclaude proxy git ls-remote --heads
+tclaude proxy git fetch --prune
+tclaude proxy git pull                 # daemon fetch + LOCAL fast-forward
+
+# Writes (git.push)
+tclaude proxy git push -u
+tclaude proxy git push --force-with-lease   # only if you enabled it
+
+# GitHub (github.read / github.write)
+tclaude proxy github pr create --title "…" --body-file pr.md
+tclaude proxy github pr ls --state open
+tclaude proxy github pr view 42
+tclaude proxy github pr checks 42
+tclaude proxy github pr comment 42 --body-file reply.md
+tclaude proxy github pr edit 42 --body-file new-description.md
+tclaude proxy github pr ready 42
+tclaude proxy github issue ls
+tclaude proxy github issue view 7
+tclaude proxy github issue comment 7 --body-file note.md
+```
+
+`git remotes` is the command to point an agent at when something is refused: it
+lists every remote with the allow-list verdict and the reason, so the agent can
+tell you exactly what to add instead of guessing from a 403.
+
+### Why there is no daemon-side `pull`
+
+`git pull` updates the working tree, and updating the working tree runs
+`.gitattributes` smudge filters — arbitrary programs named by a file inside the
+agent's own repository. Running that in the daemon would put the agent's own
+configuration in charge of what the daemon executes.
+
+So `tclaude proxy git pull` is split: the daemon fetches (the half that needs a
+credential), and the fast-forward runs as an ordinary local `git merge --ff-only`
+in the agent's own process, under its own sandbox, where it always was. A merge
+that is not a fast-forward is reported and left for the agent to resolve; the
+daemon does not merge.
+
+## How it is hardened
+
+The repository's own `.git/config`, `.git/hooks/*` and `.gitattributes` are all
+files the agent can write, and every one of them can name a program for git to
+run. The proxy therefore treats repo-local configuration as hostile.
+
+There are two mechanisms, and it matters which one is doing the work.
+**Pinning** (`git -c key=value`) is used where it is known to be effective.
+**Refusal** — rejecting the whole operation — is used everywhere else, because
+pinning turns out not to be uniformly reliable: `remote.<n>.uploadpack` is read
+first-wins across config scopes so a `-c` override never displaces a repo-local
+value, a URL-scoped `http.<url>.proxy` outranks a generic `-c http.proxy=`, and
+`url.*.insteadOf` has no reset form at all. Which keys `-c` wins is a property
+of git's config reader that varies per key and can change between versions, so
+the load-bearing measures do not depend on it.
+
+| Vector | Mechanism | What the proxy does |
+|---|---|---|
+| `.git/hooks/pre-push`, `reference-transaction`, … | pin | `core.hooksPath` → a daemon-owned empty directory. |
+| `core.askPass` — a program run to obtain a credential | pin | Pinned empty. Git consults askpass **before** the terminal, so `GIT_TERMINAL_PROMPT=0` does not close this and clearing `GIT_ASKPASS` only removes the env-var route. |
+| `core.sshCommand`, `core.alternateRefsCommand`, `core.fsmonitor`, `core.gitProxy`, `core.editor`, `core.pager`, `gpg.program`, `diff.external` | pin | All pinned. |
+| `.gitattributes` filter programs | design | Only `fetch` / `push` / `ls-remote` run in the daemon; none updates the working tree. |
+| `ext::<command>` remote URLs | refuse + pin | Refused by the URL parser **and** by `protocol.ext.allow=never`. |
+| `file://`, local paths, `http://`, `git://` | refuse | No host to allow-list, cleartext credentials, or unauthenticated transport. |
+| `url.<base>.insteadOf` rewrites | refuse | Each validated URL must be a **fixed point** of git's own rewriting; a repository that would redirect it is refused. |
+| **Several `remote.<n>.url` values** | refuse | `git remote get-url` reports only the first, but `git push` contacts **every** one. All are read with `--all` and each must pass the allow-list. |
+| `remote.<name>.pushurl` | refuse | Validated separately from the fetch URL. |
+| `remote.<n>.uploadpack` / `receivepack` / `vcs` / `proxy` | refuse (+ flag) | A repository that sets one is refused. The stock programs additionally ride as `--upload-pack` / `--receive-pack` **flags**, which do override config where `-c` does not. |
+| `http.*` — `proxy`, `sslVerify`, `sslCAInfo`, `curloptResolve`, `extraHeader`, … | refuse | Any `http.*` key outside a tiny performance-only safe set is refused. In its URL-scoped form this family outranks any override the proxy could set, and it is the route by which a credential would be handed to an attacker-chosen endpoint. |
+| Submodule recursion | pin + flag | `fetch`/`push.recurseSubmodules` and `submodule.recurse` pinned off, plus `--no-recurse-submodules`. A submodule's own config names hosts the allow-list never saw. |
+| A `.git` **gitfile** redirecting `GIT_DIR` elsewhere | refuse | The resolved git directory must live under the work-tree root, so a one-line `.git` file cannot aim the daemon at another repository's config, refs and remotes. The one exception is a genuine linked worktree — see below. |
+| A **forged linked-worktree** link | verify | Linked worktrees are supported (`tclaude worktree` makes them), and their git dir legitimately sits outside the work tree. Git does *not* validate the link: point a hand-written `.git` file at another repository's `.git/worktrees/<name>` and git reports **your** directory as the work tree while handing over **their** remotes and objects. So the proxy checks the back-pointer — `<common>/worktrees/<name>/gitdir` must name this work tree's own `.git`. Writing that needs write access to the main repository's admin directory, which already implies being able to rewrite its config. |
+| A work tree at or above `$HOME` | refuse | Stops an agent launched outside a repository from having git walk up into the operator's home. |
+| A repo-local `credential.*` key (the program git runs to obtain a credential) | refuse + pin | Any `credential.*` key in the **local** or **worktree** scope is refused. On top of that the helper list is reset and repopulated from **global/system** configuration only, so your real helper keeps working. |
+| Argument injection | validate | Every parameter is charset-validated and refused if it begins with `-`. No passthrough flag, no `--` escape. |
+| A hung transport | bound | Every call is time-bounded and runs in a private process group that is killed **on cancellation**, so an `ssh` child cannot outlive a timed-out request. (The kill is deliberately not issued after `Wait`: the leader's pid is reaped by then and could already belong to a stranger's process group.) |
+| Secrets in `/proc` | design | Tokens travel in the child's environment or a `0600` file, never in argv. PR bodies and comments go through `--body-file`. |
+
+Nothing here ever runs a shell. A configuration probe that cannot be *run* is
+treated as a refusal, not as "nothing configured" — a gate that reads a failed
+check as clean is worse than no gate.
+
+### What runs where, and what is still checked rather than enforced
+
+The **credentialed** commands — `push` and `ls-remote` — run from a
+**daemon-owned transfer directory**, not from the agent's repository. It is a
+bare git dir under the private data tree that borrows the agent's objects
+through `objects/info/alternates`, so nothing is copied and the agent's
+`.git/config` is not in scope for the one command that carries the operator's
+credential. The destination is the validated URL, spelled out, and push sends a
+resolved SHA — no remote name and no branch name for git to look up.
+
+That is what closes the check/use race for those two verbs. Every refusal gate
+reads the agent's `.git/config` in its own short-lived process; the credentialed
+command used to read it again moments later, and the agent can rewrite the file
+in between. Pins ride on the argv and were always immune, but the keys that
+matter most here cannot be pinned: `url.*.insteadOf` has no reset form, and a
+URL-scoped `http.<url>.*` outranks a generic override.
+
+**`fetch` is not yet converted.** It still runs in the agent's repository,
+because the objects have to land *there* and alternates only point the other
+way — closing it means fetching into the transfer directory and then moving the
+new pack across, which is a larger change than this one. Until then a fetch
+remains racy in the same way push used to be: an agent rewriting `.git/config`
+in the window can redirect it, and the credential is offered to whatever host it
+lands on. `git.read` gates the ability to try.
+
+## What this is not
+
+`agentd`'s permission layer is a coordination guardrail, not a security
+boundary — see [Sandbox hardening](sandbox-hardening.md). **This feature does
+not change that.** A same-uid agent that is not actually confined by the OS
+sandbox can read `~/.ssh` directly and has no need of the proxy at all.
+
+The proxy is what makes *denying* those paths survivable. It is not what
+enforces the denial. If you have not set up the OS sandbox, adding this changes
+nothing about what a hostile agent can reach.
+
+Two consequences worth stating plainly:
+
+- **Prefer SSH remotes.** With an ssh-agent, no secret enters the proxied child
+  process at all. An HTTPS remote with a token puts that token in the child's
+  environment, readable through `/proc/<pid>/environ` by any same-uid process
+  for the life of the call.
+- **Everything the GitHub half writes is attributed to your GitHub account.** A
+  PR the agent opens is a PR you opened.
+
+## Auditing
+
+Every proxied call — including the reads, which is why they are POSTs — writes
+an `audit_log` row visible in the dashboard: who ran what, against which remote
+and ref, and with what exit code. Bodies, titles, tokens and subprocess output
+are deliberately never recorded.
+
+```bash
+tclaude proxy git push        # → audit verb "git.push"
+tclaude proxy github pr create # → audit verb "github.pr.create"
+```
+
+## Troubleshooting
+
+| Symptom | Cause / fix |
+|---|---|
+| `503 git_proxy_disabled` | No `allowed_remotes` configured. Add the block above. |
+| `403` naming a slug | The agent lacks `git.read` / `git.push` / `github.read` / `github.write`. Grant it, or the agent can retry with `--ask-human`. |
+| `remote … is not on the operator's allow-list` | Run `tclaude proxy git remotes` to see the resolved `host/owner/repo`, then add a matching pattern. |
+| `protected_ref` | The branch is in `protected_refs`. Push a feature branch and open a PR. |
+| `force_push_disabled` | Set `allow_force_push: true` if you want it. |
+| `this repository rewrites its … URL (url.*.insteadOf)` | The repo has a rewrite rule that would redirect the validated URL. Remove it, or point the remote directly at the real URL. |
+| `refusing an 'ext::' remote URL` | The remote names a command, not a server. Something has rewritten `.git/config`; inspect it. |
+| `this repository sets remote.X.uploadpack …` | The repository configures a program-selecting key for that remote. Remove it with `git config --unset remote.X.uploadpack` (or `receivepack` / `vcs` / `proxy`). |
+| `this repository configures http.…` | An `http.*` setting that can redirect the connection or weaken TLS. Remove it, or move it to your global config only if you genuinely need it — the proxy refuses it wherever it is set. |
+| `this repository configures credential.…` | A `credential.*` key is set in the repository (or its worktree config, or a file it `include.path`s). Remove it with `git config --unset`, or move it to your **global** config, which the proxy honours. |
+| `git directory … lives outside the work tree` | A `.git` gitfile points at another repository. Ordinary linked worktrees are fine; this means the target is not one, or is not registered against this work tree. Check `git worktree list` from the main checkout, and `git worktree repair` if the registration is stale. |
+| `contains the operator's home directory` | Your launch directory is not inside a repository, so git walked up into `$HOME`. Work inside an actual project checkout. |
+| `could not inspect this repository's configuration` | A config probe failed to run. The proxy refuses rather than assuming the repository is safe; check that `git` works in that directory. |
+| `tool_missing` | `git` or `gh` is not installed on the host running agentd. |
+| A push hangs then times out | Usually a passphrase-protected key that is not loaded into an ssh-agent. The proxy runs `ssh -o BatchMode=yes`, so it fails rather than prompting — load the key with `ssh-add`, or set `ssh_key`. |
+| `Host key verification failed` | The account agentd runs as has no `known_hosts` entry for the forge, and `BatchMode=yes` cannot prompt to accept one. Run `ssh -T git@github.com` once as that account, or add the host key with `ssh-keyscan`. |
+| `Permission denied (publickey)` | The key agentd offered is not one the forge accepts. **Setting `ssh_key` narrows this**: it adds `-o IdentitiesOnly=yes`, so ssh offers *only* that key — an agent key or a default `~/.ssh/id_*` that would otherwise have worked is not tried. Reproduce exactly what the daemon does with `ssh -v -o BatchMode=yes -o IdentitiesOnly=yes -i <key> -T git@github.com`; a passphrase-protected key with no agent fails this way too. Clearing `ssh_key` falls back to the ambient SSH setup, which is the better posture unless you specifically want one identity. |
+
+## See also
+
+- [Agent coordination](agent.md) — the permission model and the CLI surface.
+- [Sandbox hardening](sandbox-hardening.md) — the OS sandbox this feature
+  assumes you have set up.
+- [How sandboxing works](sandboxing.md) — the operator mental model.

@@ -14,6 +14,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/dbcmd"
 	"github.com/tofutools/tclaude/pkg/claude/memoryfiles"
 	"github.com/tofutools/tclaude/pkg/claude/processcmd"
+	"github.com/tofutools/tclaude/pkg/claude/proxy"
 	"github.com/tofutools/tclaude/pkg/claude/remoteaccess"
 	"github.com/tofutools/tclaude/pkg/claude/selftest"
 	"github.com/tofutools/tclaude/pkg/claude/session"
@@ -48,6 +49,7 @@ func Cmd() *cobra.Command {
 			selftest.Cmd(),
 			task.Cmd(),
 			agentCmd,
+			proxy.Cmd(),
 			agentd.Cmd(),
 			memoryfiles.Cmd(),
 			processcmd.Cmd(),

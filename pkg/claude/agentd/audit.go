@@ -265,6 +265,67 @@ var auditRoutes = []auditRoute{
 	// or all agents is a fleet-wide state change.
 	{method: http.MethodPost, segs: []string{"shutdown"}, verb: "power.shutdown", describe: describePower},
 	{method: http.MethodPost, segs: []string{"power-on"}, verb: "power.on", describe: describePower},
+
+	// Git-remote / GitHub proxy. Every one of these spends the OPERATOR'S
+	// credential against a remote host, so all of them are audited —
+	// including the reads, which is why they are POSTs (the middleware
+	// records mutating methods only). The handlers add the safe detail after
+	// the fact via setAuditDetail: remote, ref, and exit code. No describer
+	// reads the body, so a PR title or comment never enters the trail.
+	{method: http.MethodPost, segs: []string{"git", "{verb}"}, describe: describeGitProxy},
+	{method: http.MethodPost, segs: []string{"github", "{resource}", "{action}"}, describe: describeGitHubProxy},
+}
+
+// auditedGitProxyVerbs / auditedGitHubProxyVerbs gate the path captures to the
+// operations that actually have a handler (serve.go). The route patterns are
+// wildcards, so without this any POST under /v1/git/<seg> — including the 404s
+// — would write its own arbitrary string into the verb column, which is enough
+// to make later filtering by verb unreliable. Same approach as
+// describeWhoamiVerb; an unclassified row is dropped by recordAuditRow.
+var (
+	auditedGitProxyVerbs = map[string]bool{
+		"ls-remote": true,
+		"fetch":     true,
+		"push":      true,
+	}
+	auditedGitHubProxyVerbs = map[string]bool{
+		"pr.create":     true,
+		"pr.list":       true,
+		"pr.view":       true,
+		"pr.checks":     true,
+		"pr.comment":    true,
+		"pr.edit":       true,
+		"pr.ready":      true,
+		"issue.list":    true,
+		"issue.view":    true,
+		"issue.comment": true,
+	}
+)
+
+// describeGitProxy names a git-proxy row "git.fetch", "git.push", … from the
+// path. It deliberately does NOT parse the body: the remote and ref reach the
+// row through setAuditDetail, after the handler has validated them, so a
+// refused or malformed request never gets its raw parameters recorded.
+func describeGitProxy(c *auditCtx) {
+	// recordAuditRow has already defaulted fields.Verb to the raw {verb}
+	// capture, so an unknown one must be cleared rather than merely not
+	// rewritten.
+	if verb := c.vars["verb"]; auditedGitProxyVerbs[verb] {
+		c.fields.Verb = "git." + verb
+	} else {
+		c.fields.Verb = ""
+	}
+}
+
+// describeGitHubProxy names a github-proxy row "github.pr.create",
+// "github.issue.comment", … from the path. Same rule as above: path only,
+// never the body — a PR title or comment body must not land in the audit log.
+func describeGitHubProxy(c *auditCtx) {
+	if verb := c.vars["resource"] + "." + c.vars["action"]; auditedGitHubProxyVerbs[verb] {
+		c.fields.Verb = "github." + verb
+	} else {
+		c.fields.Verb = ""
+	}
 }
 
 // auditRequests wraps a mux so every matched command writes an audit

@@ -30,6 +30,15 @@ import (
 //
 // On error the message is already written to stderr; the returned int is
 // the process exit code (rcOK on success).
+//
+// ResolveBodyInput is the same thing under an exported name, for sibling
+// command packages (pkg/claude/proxy). A wrapper rather than a rename: the
+// unexported spelling has ~20 call sites across this package, and CLAUDE.md
+// asks for renames only at a contained rewrite point.
+func ResolveBodyInput(inline, file, inlineName string, stdin io.Reader, stderr io.Writer) (string, int) {
+	return resolveBodyInput(inline, file, inlineName, stdin, stderr)
+}
+
 func resolveBodyInput(inline, file, inlineName string, stdin io.Reader, stderr io.Writer) (string, int) {
 	if file == "" {
 		return inline, rcOK

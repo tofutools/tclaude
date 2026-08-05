@@ -318,6 +318,10 @@ func completePermissionSlugs(_ *cobra.Command, _ []string, toComplete string) []
 			{"member.redesignate", "Edit role/descr on group members"},
 			{"permissions.grant", "Grant agent permissions"},
 			{"permissions.revoke", "Revoke agent permissions"},
+			{"git.read", "Read from a Git remote through the daemon's credentials"},
+			{"git.push", "Push to a Git remote through the daemon's credentials"},
+			{"github.read", "Read GitHub PRs/issues through the daemon's gh credentials"},
+			{"github.write", "Create/comment on GitHub PRs/issues as the operator"},
 		}
 	}
 	out := []string{}
@@ -391,6 +395,13 @@ func completeInboxMessageIDs(_ *cobra.Command, _ []string, toComplete string) []
 // --ask-human flag. The flag accepts any duration string, so this
 // is just a convenience hint — boa won't validate against this list
 // since we never call SetStrictAlts.
+// CompleteAskHumanDurations is completeAskHumanDurations under an exported
+// name, so sibling command packages (pkg/claude/proxy) offer the same
+// --ask-human suggestions. Wrapper rather than rename: ~50 call sites here.
+func CompleteAskHumanDurations(cmd *cobra.Command, args []string, toComplete string) []string {
+	return completeAskHumanDurations(cmd, args, toComplete)
+}
+
 func completeAskHumanDurations(_ *cobra.Command, _ []string, toComplete string) []string {
 	suggestions := []string{"15s", "30s", "60s", "2m", "5m"}
 	out := []string{}

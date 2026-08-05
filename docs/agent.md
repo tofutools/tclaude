@@ -60,8 +60,10 @@ only once.
 ## Prerequisites
 
 - **`tclaude setup`** — registers hooks and the agentd socket path.
-- **`tclaude setup --install-agent-skills`** — materialises the
-  bundled `agent-*` skills under `~/.claude/skills/` for Claude Code
+- **`tclaude setup --install-agent-skills`** — materialises every
+  bundled skill (`agent-*`, `human-*`, `proxy-git`, `reincarnate`,
+  `present-pr-to-operator`, `process-templates`) under
+  `~/.claude/skills/` for Claude Code
   and both `~/.agents/skills/` and `$CODEX_HOME/skills` (default
   `~/.codex/skills`) for Codex CLI. Without these skills installed,
   agents won't know to use these commands.
@@ -1559,6 +1561,28 @@ the policy per member: online members still receive a tick when other members
 are offline. `cron logs` records `skipped_offline` when all eligible recipients
 were offline and `partial_offline` for a mixed group delivery.
 
+### Git and GitHub — see `tclaude proxy`
+
+Git-remote and GitHub operations performed by the **daemon**, with the daemon's
+own SSH key and GitHub token, on behalf of an agent sandboxed away from them,
+live under a sibling top-level command:
+
+```bash
+tclaude proxy git remotes      # also: ls-remote, fetch, pull, push
+tclaude proxy github pr ls     # also: create, view, checks, comment, ready
+tclaude proxy github issue ls  # also: view, comment
+```
+
+They are not `tclaude agent` subcommands because they are not coordination:
+`agent` is about who else exists and how to reach them, `proxy` is about
+performing an operation with a credential the agent deliberately does not hold.
+The permission slugs (`git.read`, `git.push`, `github.read`, `github.write`) are
+still ordinary agent permissions, granted and audited like any other.
+
+See **[Git & GitHub proxy](git-proxy.md)** for the whole picture: the allow-list
+grammar, the slugs, the full hardening table, and why `pull` is split across the
+boundary.
+
 ### permissions / sudo
 
 ```bash
@@ -2005,6 +2029,8 @@ gate group, messaging, template, and permission administration.
 | `process.templates.*` | `process.templates.read`, `process.templates.manage` |
 | `process.runs.*` | `process.runs.read`, `process.runs.manage` |
 | `human.*`     | `human.notify`, `human.clipboard` |
+| `git.*`       | `git.read`, `git.push` |
+| `github.*`    | `github.read`, `github.write` |
 
 Run `tclaude agent permissions slugs` for the live registry with
 descriptions — it is the source of truth; this table can drift.
@@ -2115,6 +2141,9 @@ for Claude Code, plus both `~/.agents/skills/` and `$CODEX_HOME/skills`
   `tclaude agent clipboard`; the daemon runs the platform copy tool on
   the host. Gated on `human.clipboard` (explicit grant or `--ask-human`
   popup; not owner-implied).
+- **`proxy-git`** — fetch, push, and open GitHub pull requests through
+  `tclaude proxy git` / `tclaude proxy github` when the agent's own sandbox
+  holds no credentials. See [Git & GitHub proxy](git-proxy.md).
 
 Re-run `tclaude setup --install-agent-skills` after `go install
 …@latest` to refresh the on-disk copies with whatever the new binary

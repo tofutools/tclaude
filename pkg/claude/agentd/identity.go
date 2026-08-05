@@ -372,6 +372,20 @@ const (
 	// Neither slug is a global default and neither substitutes for membership.
 	PermRoutesPublish = "routes.publish"
 	PermRoutesConsume = "routes.consume"
+	// The Git-remote / GitHub proxy lends agentd's OWN credentials — an SSH
+	// key, a GitHub token — to an agent that has been deliberately sandboxed
+	// away from them. That makes these four unlike every other slug here:
+	// holding one does not merely authorize a coordination action, it spends
+	// the operator's identity on a remote host.
+	//
+	// So they are split read/write per family (a fetch and a push are not the
+	// same authority), none is default-granted, none is owner-implied (owning
+	// a group must not structurally confer push access to a forge), and none
+	// is auto-grantable from the approval popup's "always allow" button.
+	PermGitRead     = "git.read"
+	PermGitPush     = "git.push"
+	PermGitHubRead  = "github.read"
+	PermGitHubWrite = "github.write"
 )
 
 // permResolution is the verdict of the non-interactive permission

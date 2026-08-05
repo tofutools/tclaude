@@ -1252,6 +1252,27 @@ func buildMux() http.Handler {
 	mux.HandleFunc("/v1/notify-human", handleNotifyHuman)
 	mux.HandleFunc("/v1/notify-human/attachment", handleNotifyHumanAttachment)
 	mux.HandleFunc("/v1/clipboard", handleClipboard)
+	// Git-remote / GitHub proxy. agentd runs git and gh on the host with its
+	// own credentials so a sandboxed agent never holds them. Gated on the
+	// git.*/github.* slugs (none default-granted) AND on the operator's
+	// agent.git_proxy allow-list; the repository is derived from the caller's
+	// own recorded launch directory, never from a request parameter. The
+	// network reads are POSTs so the audit middleware records them — a
+	// credentialed outbound call is exactly what an operator reviews later.
+	mux.HandleFunc("GET /v1/git/remotes", handleGitProxyRemotes)
+	mux.HandleFunc("POST /v1/git/ls-remote", handleGitProxyLsRemote)
+	mux.HandleFunc("POST /v1/git/fetch", handleGitProxyFetch)
+	mux.HandleFunc("POST /v1/git/push", handleGitProxyPush)
+	mux.HandleFunc("POST /v1/github/pr/create", handleGHProxyPRCreate)
+	mux.HandleFunc("POST /v1/github/pr/list", handleGHProxyPRList)
+	mux.HandleFunc("POST /v1/github/pr/view", handleGHProxyPRView)
+	mux.HandleFunc("POST /v1/github/pr/checks", handleGHProxyPRChecks)
+	mux.HandleFunc("POST /v1/github/pr/comment", handleGHProxyPRComment)
+	mux.HandleFunc("POST /v1/github/pr/edit", handleGHProxyPREdit)
+	mux.HandleFunc("POST /v1/github/pr/ready", handleGHProxyPRReady)
+	mux.HandleFunc("POST /v1/github/issue/list", handleGHProxyIssueList)
+	mux.HandleFunc("POST /v1/github/issue/view", handleGHProxyIssueView)
+	mux.HandleFunc("POST /v1/github/issue/comment", handleGHProxyIssueComment)
 	// Experimental template-authoring surfaces remain registered so off means a
 	// stable 404 rather than a different mux shape. processRoute reloads the
 	// feature flag per request.

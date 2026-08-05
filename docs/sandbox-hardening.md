@@ -60,6 +60,21 @@ guardrail is advisory only.
 > same-UID process is the OS sandbox's job by design. tclaude's part is to
 > tell you, the operator, exactly what to deny. That is this document.
 
+> **Denying credentials no longer means a useless agent.** The same reasoning
+> applies to `~/.ssh` and `~/.config/gh`, which the sandbox common-rule catalog
+> denies by default — but denying them used to stop an agent fetching, pushing,
+> or opening a pull request, which is most of what agents are spawned to do.
+> The [Git & GitHub proxy](git-proxy.md) closes that gap: agentd performs those
+> operations on the host with its own credentials, so the deny is survivable —
+> *provided you turn the proxy on*. It is off until
+> `agent.git_proxy.allowed_remotes` is non-empty (otherwise every call is
+> `503 git_proxy_disabled`), and each family still needs its permission slug
+> granted (otherwise `403`). Deny the credentials without doing both and the
+> agent is exactly as stuck as before.
+> Note the direction of the dependency — the proxy is what makes denying those
+> paths *practical*, not what makes the denial *hold*. That is still this
+> document's job.
+
 ## What to lock down
 
 Deny tclaude agents direct access to these two trees:
