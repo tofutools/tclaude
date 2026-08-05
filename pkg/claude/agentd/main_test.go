@@ -15,6 +15,8 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
+const agentdTestTmuxBaseEnv = "TCLAUDE_AGENTD_TEST_TMUX_BASE"
+
 var agentdTestTmuxBase string
 
 // TestMain installs a binary-wide default for the terminal-spawning
@@ -38,16 +40,29 @@ func TestMain(m *testing.M) {
 	// internal package agentd tests share this binary but cannot call the
 	// external-package fixture. Tests that need a specific TMUX_TMPDIR override
 	// it after this point; t.Setenv cleanup restores this isolated default.
-	// Use the short system temp root explicitly. macOS's ambient TMPDIR lives
-	// below /var/folders/...; adding tmux's own tmux-UID/socket suffix there can
-	// exceed the platform's Unix-socket path limit before a server can start.
-	tmuxBase, err := os.MkdirTemp("/tmp", "tclaude-agentd-")
-	if err != nil {
-		panic(fmt.Sprintf("create isolated agentd test tmux base: %v", err))
-	}
-	tmuxBase, err = filepath.EvalSymlinks(tmuxBase)
-	if err != nil {
-		panic(fmt.Sprintf("canonicalize isolated agentd test tmux base: %v", err))
+	// A few sandbox smokes copy this test binary and execute it as an in-sandbox
+	// helper. Reuse the parent's base there: creating a fresh /tmp directory is
+	// correctly denied by those profiles, while the inherited isolated socket
+	// target remains safely disjoint from the operator's server. Only the
+	// process that created the directory owns its cleanup.
+	tmuxBase := os.Getenv(agentdTestTmuxBaseEnv)
+	ownsTmuxBase := tmuxBase == ""
+	if ownsTmuxBase {
+		// Use the short system temp root explicitly. macOS's ambient TMPDIR lives
+		// below /var/folders/...; adding tmux's own tmux-UID/socket suffix there can
+		// exceed the platform's Unix-socket path limit before a server can start.
+		var err error
+		tmuxBase, err = os.MkdirTemp("/tmp", "tclaude-agentd-")
+		if err != nil {
+			panic(fmt.Sprintf("create isolated agentd test tmux base: %v", err))
+		}
+		tmuxBase, err = filepath.EvalSymlinks(tmuxBase)
+		if err != nil {
+			panic(fmt.Sprintf("canonicalize isolated agentd test tmux base: %v", err))
+		}
+		if err := os.Setenv(agentdTestTmuxBaseEnv, tmuxBase); err != nil {
+			panic(fmt.Sprintf("mark isolated agentd test tmux base: %v", err))
+		}
 	}
 	if err := os.Setenv("TMUX_TMPDIR", tmuxBase); err != nil {
 		panic(fmt.Sprintf("set isolated agentd test TMUX_TMPDIR: %v", err))
@@ -98,7 +113,9 @@ func TestMain(m *testing.M) {
 	code := m.Run()
 	restoreCodexProbe()
 	restoreEscalationProcess()
-	_ = os.RemoveAll(tmuxBase)
+	if ownsTmuxBase {
+		_ = os.RemoveAll(tmuxBase)
+	}
 	os.Exit(code)
 }
 
@@ -108,6 +125,9 @@ func TestMainIsolatesTmuxServer(t *testing.T) {
 	}
 	if got := os.Getenv("TMUX_TMPDIR"); got != agentdTestTmuxBase {
 		t.Fatalf("TMUX_TMPDIR = %q, want TestMain's throwaway base %q; agentd tests can reach another tmux server", got, agentdTestTmuxBase)
+	}
+	if got := os.Getenv(agentdTestTmuxBaseEnv); got != agentdTestTmuxBase {
+		t.Fatalf("%s = %q, want inherited throwaway base %q", agentdTestTmuxBaseEnv, got, agentdTestTmuxBase)
 	}
 
 	got, err := clcommon.TclaudeTmuxSocketDir()
