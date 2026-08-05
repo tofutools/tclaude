@@ -95,6 +95,36 @@ func TestBuildTclaudeLayerLaunchSpecComposesCopilotBaseline(t *testing.T) {
 		"the state directory must be part of the launch contract, not only of the profile")
 }
 
+// TestBuildTclaudeLayerLaunchSpecAllowsProfileWriteToCopilotPackageCache is the
+// operator-reported composition: a general development profile grants the
+// Copilot package cache writable, and Copilot's mandatory launch baseline adds
+// the same authority independently. The duplicate is compatible and must not
+// turn a valid launch into a harness-state conflict.
+func TestBuildTclaudeLayerLaunchSpecAllowsProfileWriteToCopilotPackageCache(t *testing.T) {
+	home, workspace := copilotLaunchRoot(t)
+	packageCache := filepath.Join(home, ".cache", "copilot")
+	if runtime.GOOS == "darwin" {
+		packageCache = filepath.Join(home, "Library", "Caches", "copilot")
+	}
+	require.NoError(t, os.MkdirAll(packageCache, 0o700))
+
+	profileGrant := sandboxpolicy.FilesystemGrant{
+		Path: packageCache, Access: sandboxpolicy.AccessWrite,
+	}
+	spec, err := BuildTclaudeLayerLaunchSpec(TclaudeLayerLaunchInput{
+		HarnessName: harness.CopilotName,
+		Cwd:         workspace,
+		Snapshot: &sandboxpolicy.Snapshot{Effective: sandboxpolicy.EffectiveProfile{
+			Filesystem: []sandboxpolicy.FilesystemGrant{profileGrant},
+		}},
+	})
+	require.NoError(t, err)
+	require.Contains(t, spec.Contract.StateDirs, packageCache)
+	require.Contains(t, spec.Contract.ProfileFilesystem, profileGrant)
+	require.NoError(t, ValidateTclaudeLayerLaunchSpec(spec),
+		"the profile write and Copilot's generated package-cache write are semantically identical")
+}
+
 // TestBuildTclaudeLayerLaunchSpecHonorsCopilotHome pins the relocation case,
 // which is the one where a second resolver would silently drift: the contract's
 // state root and the catalog's grant both have to follow COPILOT_HOME.

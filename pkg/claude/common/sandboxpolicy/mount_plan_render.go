@@ -57,8 +57,10 @@ import (
 //     administration and agent directories writable. They survive an ordinary
 //     plan deny on an ancestor (an applier may repair the narrower bind after
 //     applying that deny), but lose to protected-root hides. An ordinary rule
-//     at or below the harness state root must be refused rather than silently
-//     launching a harness that cannot persist.
+//     at or below harness state is admitted only when it repeats the contract's
+//     required access; a read/deny beneath writable state, or a write/deny
+//     beneath read-only state, must be refused rather than silently changing
+//     the launch contract.
 //  2. Plan entries replay exactly in order. Most-specific-wins remains the
 //     policy rule.
 //  3. ProtectedPaths() hides beat launch-contract repairs and every ordinary

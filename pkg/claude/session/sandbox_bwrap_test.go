@@ -514,7 +514,77 @@ func TestWrapTclaudeLayerRefusesProfileRuleWithinHarnessState(t *testing.T) {
 		ProfileFilesystem: []sandboxpolicy.FilesystemGrant{offending},
 	}, "agent")
 	require.ErrorContains(t, err, stateRoot)
-	require.ErrorContains(t, err, "cannot persist harness state")
+	require.ErrorContains(t, err, "requires write access")
+	require.ErrorContains(t, err, "conflicting harness-state authority")
+}
+
+func TestValidateTclaudeLayerHarnessStateRulesAllowsEquivalentAccess(t *testing.T) {
+	stateRoot := "/var/lib/harness"
+	writableRule := []tclaudeLayerHarnessStateRule{{
+		Path: stateRoot, Access: sandboxpolicy.AccessWrite,
+	}}
+
+	for _, grant := range []sandboxpolicy.FilesystemGrant{
+		{Path: stateRoot, Access: sandboxpolicy.AccessWrite},
+		{Path: filepath.Join(stateRoot, "cache"), Access: sandboxpolicy.AccessWrite},
+	} {
+		require.NoError(t, validateTclaudeLayerHarnessStateRules(
+			writableRule,
+			[]sandboxpolicy.FilesystemGrant{grant}),
+			"a write rule inside a writable contract root is redundant, not conflicting")
+	}
+
+	for _, access := range []sandboxpolicy.Access{
+		sandboxpolicy.AccessRead,
+		sandboxpolicy.AccessDeny,
+	} {
+		err := validateTclaudeLayerHarnessStateRules(
+			writableRule,
+			[]sandboxpolicy.FilesystemGrant{{Path: stateRoot, Access: access}})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "requires write access")
+	}
+
+	require.NoError(t, validateTclaudeLayerHarnessStateRules(
+		[]tclaudeLayerHarnessStateRule{{Path: stateRoot, Access: sandboxpolicy.AccessRead}},
+		[]sandboxpolicy.FilesystemGrant{{Path: stateRoot, Access: sandboxpolicy.AccessRead}}),
+		"a read rule inside a read-only contract root is likewise redundant")
+	require.Error(t, validateTclaudeLayerHarnessStateRules(
+		[]tclaudeLayerHarnessStateRule{{Path: stateRoot, Access: sandboxpolicy.AccessRead}},
+		[]sandboxpolicy.FilesystemGrant{{Path: stateRoot, Access: sandboxpolicy.AccessWrite}}),
+		"a write rule must not broaden a read-only harness-state contract")
+}
+
+func TestValidateTclaudeLayerLaunchSpecAllowsEquivalentNestedReadOnlyAccess(t *testing.T) {
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	t.Setenv("HOME", home)
+	stateRoot := filepath.Join(home, ".opencode")
+	readOnlyBin := filepath.Join(stateRoot, "bin")
+	workspace := filepath.Join(home, "work")
+	for _, path := range []string{stateRoot, readOnlyBin, workspace} {
+		require.NoError(t, os.MkdirAll(path, 0o700))
+	}
+	for _, name := range []string{
+		"XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME",
+	} {
+		t.Setenv(name, "")
+	}
+
+	grant := sandboxpolicy.FilesystemGrant{
+		Path: readOnlyBin, Access: sandboxpolicy.AccessRead,
+	}
+	spec, err := BuildTclaudeLayerLaunchSpec(TclaudeLayerLaunchInput{
+		HarnessName: harness.OpenCodeName,
+		Cwd:         workspace,
+		Snapshot: &sandboxpolicy.Snapshot{Effective: sandboxpolicy.EffectiveProfile{
+			Filesystem: []sandboxpolicy.FilesystemGrant{grant},
+		}},
+	})
+	require.NoError(t, err)
+	require.Contains(t, spec.Contract.ReadOnlyStateDirs, readOnlyBin)
+	require.NoError(t, ValidateTclaudeLayerLaunchSpec(spec),
+		"the read-only child is more specific than its writable state ancestor")
 }
 
 func TestBuildTclaudeLayerLaunchSpecMaterializesSharedContract(t *testing.T) {
