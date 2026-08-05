@@ -97,7 +97,15 @@ jobs:
         shell: bash
         run: |
           source "$GITHUB_WORKSPACE/scripts/lib/smoke/common.sh"
-          smoke::apt_update
+          if declare -F smoke::apt_update >/dev/null 2>&1; then
+            smoke::apt_update
+          else
+            echo "::warning title=Missing smoke helper::smoke::apt_update was not found after sourcing common.sh. This checkout may predate the helper; rebase onto main is the likely fix. Falling back to plain apt-get update without Microsoft-source isolation."
+            if ! sudo apt-get update; then
+              echo "::error::apt-get update failed while using the stale-PR fallback; inspect the apt output above"
+              exit 1
+            fi
+          fi
           # Claude's embedded SRT discovers rg and socat at runtime; keep them
           # explicit so a runner-image change cannot turn the real nested smoke
           # into an accidental dependency check.
@@ -1030,7 +1038,15 @@ jobs:
         shell: bash
         run: |
           source "$GITHUB_WORKSPACE/scripts/lib/smoke/common.sh"
-          smoke::apt_update
+          if declare -F smoke::apt_update >/dev/null 2>&1; then
+            smoke::apt_update
+          else
+            echo "::warning title=Missing smoke helper::smoke::apt_update was not found after sourcing common.sh. This checkout may predate the helper; rebase onto main is the likely fix. Falling back to plain apt-get update without Microsoft-source isolation."
+            if ! sudo apt-get update; then
+              echo "::error::apt-get update failed while using the stale-PR fallback; inspect the apt output above"
+              exit 1
+            fi
+          fi
           sudo apt-get install -y bubblewrap
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
           bwrap --ro-bind / / --proc /proc --dev /dev true \
