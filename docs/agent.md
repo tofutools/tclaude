@@ -1353,13 +1353,15 @@ that create per-agent worktrees during the request fail closed when those new
 checkout admin dirs were not part of the caller's proof; a human can launch
 that topology without the agent-to-agent authority constraint. Separately,
 agent-originated spawns may pre-trust only a verified default sibling worktree
-or a directory the calling agent already works in (its start dir, its current
-dir, or a subdirectory of either — the shape a multi-repo workspace root needs,
-since such a root is not a repo and so cannot be a sibling worktree of
-anything). Those worktrees are always trusted automatically — for Claude Code
-and Codex alike — so a detached child cannot stop at the harness's trust-folder
-dialog; the caller-owned form is permitted but never forced. Other
-agent-selected paths remain forbidden. All extra
+or the calling agent's own launch directory and anything beneath it — the shape
+a multi-repo workspace root needs, since such a root is not a repo and so cannot
+be a sibling worktree of anything. Those worktrees are always trusted
+automatically — for Claude Code and Codex alike — so a detached child cannot
+stop at the harness's trust-folder dialog; the caller-owned form is permitted
+but never forced, is measured against the daemon's own session record rather
+than the agent-reported current dir, and demands the write-proof above even for
+a child whose sandbox would not otherwise have needed it. Other agent-selected
+paths remain forbidden. All extra
 repository write grants are resolved, proved, and pinned before launch rather
 than recomputed from a mutable cwd; Codex consumes them through its managed
 profile and Claude Code through merged `sandbox.filesystem.allowWrite` paths.

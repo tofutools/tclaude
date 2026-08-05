@@ -128,3 +128,80 @@ func TestClaudeSpawn_TrustDirRejectedForAgentCallerSiblingDir(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, rec.Code, "body=%s", rec.Body.String())
 	assert.Contains(t, rec.Body.String(), "trust_dir_restricted")
 }
+
+// Scenario: the recorded EDIT dir is NOT a trust root, even though tclaude
+// tracks it and reports it as the agent's "current dir".
+//
+// agent_workdir is written from a tool-use payload by the PostToolUse hook —
+// including its FAILURE arm — so an agent can nominate any path simply by
+// attempting an edit its own sandbox denies. Were it a root, that attempt would
+// buy the caller a pre-trust for a directory it cannot touch. The exemption is
+// confined to the daemon-recorded launch dir for exactly this reason.
+func TestClaudeSpawn_TrustDirRejectedForAgentCallerRecordedEditDir(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("squad")
+	const parent = "parent-trst-editdir-dddd-1111111111"
+
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	launch := filepath.Join(root, "launch")
+	elsewhere := filepath.Join(root, "elsewhere")
+	require.NoError(t, os.MkdirAll(launch, 0o755))
+	require.NoError(t, os.MkdirAll(elsewhere, 0o755))
+	haveAgentCallerInDir(t, f, "squad", parent, launch)
+	// What a denied edit at `elsewhere` would leave behind.
+	require.NoError(t, db.UpsertAgentWorkdir(parent, elsewhere, "", ""))
+
+	rec := agentReqProof(t, f, parent, http.MethodPost, "/v1/groups/squad/spawn", map[string]any{
+		"name":      "cc-edit-dir",
+		"cwd":       elsewhere,
+		"trust_dir": true,
+	})
+	require.Equal(t, http.StatusForbidden, rec.Code, "body=%s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "trust_dir_restricted")
+}
+
+// Scenario: a child whose own sandbox grants no cwd write (Codex `read-only`)
+// normally skips the dir write-proof — there is no write access to anchor. But
+// the caller-owned exemption justifies itself with a WRITE capability, so it
+// must not ride on that skip: a read-only caller can by construction write
+// nothing, and would otherwise seed the human's trust store off an unproven
+// claim. Asking for pre-trust must therefore pull the proof in.
+func TestCodexSpawn_TrustDirInCallerOwnDirDemandsProofEvenForReadOnlyChild(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("squad")
+	const parent = "parent-trst-readonly-eeee-1111111111"
+
+	workspace, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	haveSpawnCapableSandboxParent(t, f, "squad", parent, harness.CodexName, harness.SandboxManagedProfile)
+	sess, err := db.FindSessionByConvID(parent)
+	require.NoError(t, err)
+	sess.Cwd = workspace
+	require.NoError(t, db.SaveSession(sess))
+
+	body := map[string]any{
+		"name":      "cdx-readonly-trusted",
+		"cwd":       workspace,
+		"harness":   "codex",
+		"sandbox":   harness.SandboxReadOnly,
+		"trust_dir": true,
+	}
+
+	// Unanswered: the request is challenged rather than waved through.
+	rec := agentReq(t, f, parent, http.MethodPost, "/v1/groups/squad/spawn", body)
+	require.Equal(t, http.StatusForbidden, rec.Code, "body=%s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "write_proof_required",
+		"pre-trust must demand the write-proof even for a read-only child")
+
+	// Answered: the same request succeeds, so the proof is a gate, not a wall.
+	rec = agentReqProof(t, f, parent, http.MethodPost, "/v1/groups/squad/spawn", body)
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var resp struct {
+		ConvID string `json:"conv_id"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	got, ok := f.World.SpawnTrustDir(resp.ConvID)
+	require.True(t, ok)
+	assert.True(t, got, "a proved caller-owned dir must still thread `--trust-dir`")
+}

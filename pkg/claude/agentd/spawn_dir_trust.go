@@ -2,9 +2,9 @@ package agentd
 
 import (
 	"path/filepath"
+	"slices"
 	"strings"
 
-	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
@@ -22,16 +22,25 @@ import (
 // spawned by the human, indefinitely.
 //
 // The predicate here is containment instead of layout: a child may be
-// pre-trusted into a directory the CALLING agent is already working in — its
-// recorded startup dir, the dir its edits are landing in, or any subdirectory
-// of either. That crosses no privilege boundary. Pre-trusting a dir means the
-// child will run the harness config that dir carries without a trust dialog;
-// inside the caller's own tree the caller can already write that config (the
-// dir write-proof makes it prove exactly that for the child's cwd), so the
-// trust grants the child nothing the caller does not already hold. Containment
-// also cannot be used to WIDEN the caller's reach: every root comes from
-// tclaude's own record of where the caller is, and a subdirectory is strictly
+// pre-trusted into the CALLING agent's own launch directory, or any
+// subdirectory of it. That crosses no privilege boundary. Pre-trusting a dir
+// means the child will run the harness config that dir carries without a trust
+// dialog; inside the caller's own tree the caller can already write that config
+// — the dir write-proof makes it prove exactly that for the child's cwd, and
+// this exemption FORCES that proof even for a child whose own sandbox would not
+// have required one (see the proof trigger in handleGroupSpawn) — so the trust
+// grants the child nothing the caller does not already hold. Containment also
+// cannot be used to WIDEN the caller's reach: a subdirectory is strictly
 // narrower than its root.
+//
+// The root set is deliberately confined to state the CALLER DOES NOT AUTHOR.
+// The launch dir is recorded by the daemon at spawn time (and pinned physically
+// by resume provenance); the caller never writes it. The edit dir tclaude also
+// tracks — `agent_workdir`, the "current dir" of `tclaude agent dir` — is
+// excluded for exactly that reason: it is recorded from a tool-use payload by
+// the PostToolUse hook, including on the FAILURE arm, so an agent could nominate
+// any path by attempting an edit its own sandbox denies. That is display state,
+// not an authorization root, and promoting it would hand the caller the pen.
 //
 // Unlike the sibling-worktree exemption this only PERMITS trust_dir; it never
 // forces it on. A fresh default sibling worktree must be trusted or the
@@ -47,14 +56,13 @@ import (
 // predicate is the DEFAULT PATH tclaude itself would have picked — sending
 // operators to inspect an ordinary sibling worktree that was never going to
 // qualify.
-const trustDirRestrictedMessage = "agent-initiated spawns may pre-trust only a directory the calling agent " +
-	"already works in (its start dir, its current dir, or a subdirectory of either), or a worktree at the " +
-	"default <repo>-<branch> sibling path tclaude itself would create; leave trust_dir off or ask the human " +
-	"to spawn this child"
+const trustDirRestrictedMessage = "agent-initiated spawns may pre-trust only the calling agent's own launch " +
+	"directory or a subdirectory of it, or a worktree at the default <repo>-<branch> sibling path tclaude " +
+	"itself would create; leave trust_dir off or ask the human to spawn this child"
 
-// callerOwnedDirTrust reports whether cwd lies within a directory the spawning
-// agent identified by spawnerConvID is already working in, and may therefore be
-// pre-trusted on that agent's behalf.
+// callerOwnedDirTrust reports whether cwd is the launch directory of the
+// spawning agent identified by spawnerConvID, or lies beneath it, and may
+// therefore be pre-trusted on that agent's behalf.
 //
 // A true answer GRANTS, so the comparison is deliberately allow-biased in the
 // safe direction: both sides are fully symlink-resolved and compared byte-exact
@@ -78,23 +86,56 @@ func callerOwnedDirTrust(spawnerConvID, cwd string) bool {
 	return false
 }
 
-// callerOwnedTrustRoots returns the symlink-resolved directories the caller is
-// known to be working in: its startup dir (both the lexically recorded cwd and,
-// when resume provenance pinned one, the immutable physical path) and the
-// most-recent dir its edits landed in.
+// callerOwnedDirTrustProved is callerOwnedDirTrust plus the write-proof pairing
+// the exemption's justification rests on, asserted at the gate rather than
+// assumed of the caller: the launch dir must be one the caller demonstrably
+// could have written itself.
 //
-// The git working-tree ROOT tclaude also tracks is deliberately NOT a root
-// here. It is derived by walking UP from the edit dir, so for an agent editing
-// deep inside a repo it names a tree wider than the one the agent is working
-// in — the one place this set could grow rather than narrow.
+// A caller the proof exempts entirely (a human, or a parent whose own sandbox
+// is fully open) passes on the same terms it passes everywhere else — it can
+// already write anywhere, so there is nothing to demonstrate. Everyone else must
+// arrive with a token whose verified dir set covers this exact resolved cwd,
+// which handleGroupSpawn's proof block and requireTemplateDirWriteProof both
+// produce. A path that entered the proof and a path that entered this check must
+// resolve identically for the pairing to hold, so both go through
+// resolveTrustRootPath.
+func callerOwnedDirTrustProved(spawnerConvID, cwd, proofToken string, proofDirs []string) (bool, error) {
+	if !callerOwnedDirTrust(spawnerConvID, cwd) {
+		return false, nil
+	}
+	exempt, err := dirWriteProofCallerExempt(spawnerConvID)
+	if err != nil {
+		return false, err
+	}
+	if exempt {
+		return true, nil
+	}
+	if strings.TrimSpace(proofToken) == "" {
+		return false, nil
+	}
+	resolved := resolveTrustRootPath(cwd)
+	return resolved != "" && slices.Contains(proofDirs, resolved), nil
+}
+
+// callerOwnedTrustRoots returns the symlink-resolved launch directories of the
+// caller: the lexically recorded cwd and, when resume provenance pinned one,
+// the immutable physical path behind it (which differ when the recorded cwd
+// went through a symlink that was later removed or retargeted).
+//
+// Both come from the daemon's own session record, and nothing else does. The
+// tracked edit dir is excluded for the reason given in the file comment; so is
+// agent.ResolveLocation's conv_index fallback, which reads the cwd recorded in
+// the harness's own transcript — a file that lives inside the agent's project
+// tree and is therefore, unlike the session row, something the agent can write.
+// A caller with no session row has no known launch dir, and gets no exemption.
 func callerOwnedTrustRoots(convID string) []string {
-	loc := agent.ResolveLocation(convID)
-	raw := []string{loc.StartupDir, loc.EditDir}
-	if sess, err := db.FindSessionByConvID(convID); err == nil && sess != nil {
-		raw = append(raw, sess.Cwd)
-		if physical, perr := recordedStartupDir(sess); perr == nil {
-			raw = append(raw, physical)
-		}
+	sess, err := db.FindSessionByConvID(convID)
+	if err != nil || sess == nil {
+		return nil
+	}
+	raw := []string{sess.Cwd}
+	if physical, perr := recordedStartupDir(sess); perr == nil {
+		raw = append(raw, physical)
 	}
 	var roots []string
 	for _, dir := range raw {
