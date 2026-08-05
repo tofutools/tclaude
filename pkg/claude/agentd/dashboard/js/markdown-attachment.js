@@ -42,7 +42,11 @@ function LoadState({ state }) {
   return null;
 }
 
-export function MarkdownAttachment({ messageID, attachment, surface = 'attachment' }) {
+// `siblings` is every file published with the same notification, so a document
+// can show `![map](map.png)` as the image attached beside it. The document's
+// own entry is in the list and harmless: only files the daemon confirmed are
+// raster images can be referenced as one.
+export function MarkdownAttachment({ messageID, attachment, siblings, surface = 'attachment' }) {
   const [loadState, setLoadState] = useState('idle');
   const [source, setSource] = useState('');
   const [sourceOpen, setSourceOpen] = useState(false);
@@ -98,7 +102,7 @@ export function MarkdownAttachment({ messageID, attachment, surface = 'attachmen
     </button>
     <div class="markdown-attachment-document">
       <${LoadState} state=${loadState} />
-      ${loadState === 'ready' && html`<${MarkdownDocument} source=${source} />`}
+      ${loadState === 'ready' && html`<${MarkdownDocument} source=${source} attachments=${siblings} />`}
     </div>
     ${sourceOpen && html`<div ref=${overlayRef} class="modal-overlay show markdown-preview-overlay"
       onMouseDown=${(event) => {

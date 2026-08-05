@@ -167,20 +167,112 @@ test('dangerous link and image targets are dropped, safe ones kept', async (t) =
 // An <img> is the only thing a document fetches with no click, and the author
 // may be an agent confined by this project's own egress boundary. A remote src
 // would borrow the operator's unfiltered browser to make the request the agent
-// could not, so images are inline-only and a remote one degrades to alt text.
-test('a document cannot make the browser fetch a remote image', async (t) => {
-  const { markdownToTree, parser } = await loadModel(t);
+// could not, so a remote image becomes a node the operator has to act on and
+// never an element the browser will fetch on its own.
+test('a document cannot make the browser fetch a remote image on its own', async (t) => {
+  const { markdownToTree, parser, REMOTE_IMAGE } = await loadModel(t);
   for (const source of [
     '![beacon](https://example.invalid/a.png)',
     '![beacon](http://example.invalid/a.png)',
-    '![beacon](//example.invalid/a.png)',
-    '![beacon](./local.png)',
-    '![beacon](/api/human-messages/1/attachment)',
   ]) {
     const tree = markdownToTree(parser, source);
     assert.equal(findAll(tree, 'img').length, 0, `${source} builds no image element`);
+    const held = find(tree, REMOTE_IMAGE);
+    assert.ok(held, `${source} is held back for the operator to decide on`);
+    assert.equal(held.attrs.alt, 'beacon', 'the placeholder can describe what it stands for');
+    assert.match(held.attrs.src, /example\.invalid/, 'the operator can see where it would go');
+  }
+});
+
+// A target that is neither inline, nor remote, nor a file published with the
+// document resolves against nothing the author meant, so it keeps its words
+// and loses the image — the same answer the anchor rules give.
+test('a target that resolves against nothing degrades to alt text', async (t) => {
+  const { markdownToTree, parser, REMOTE_IMAGE } = await loadModel(t);
+  for (const source of [
+    '![beacon](//example.invalid/a.png)',
+    '![beacon](./local.png)',
+    '![beacon](missing.png)',
+    '![beacon](/api/human-messages/1/attachment)',
+  ]) {
+    const tree = markdownToTree(parser, source, { attachments: [] });
+    assert.equal(findAll(tree, 'img').length, 0, `${source} builds no image element`);
+    assert.equal(findAll(tree, REMOTE_IMAGE).length, 0, `${source} offers nothing to load`);
     assert.match(tree.map(text).join(''), /beacon/, `${source} keeps its alt text`);
   }
+});
+
+// A report that arrives with its own illustrations is the case this exists for:
+// `tclaude agent notify-human --attach report.md --attach chart.png`, where the
+// document says `![chart](chart.png)`. Those bytes are already on the
+// operator's daemon, so the reference resolves to its authenticated route and
+// the image renders with no click.
+test('an image published with the document renders from its own route', async (t) => {
+  const { markdownToTree, parser } = await loadModel(t);
+  const attachments = [
+    { id: 1, filename: 'report.md', url: '/api/human-messages/9/attachments/1', markdown: true },
+    { id: 2, filename: 'chart.png', url: '/api/human-messages/9/attachments/2', previewable: true },
+    { id: 3, filename: 'Photo Two.jpeg', url: '/api/human-messages/9/attachments/3', previewable: true },
+  ];
+  for (const [source, want] of [
+    ['![chart](chart.png)', '/api/human-messages/9/attachments/2'],
+    ['![chart](./chart.png)', '/api/human-messages/9/attachments/2'],
+    // The attachment card shows "chart.png"; a document may spell the name in
+    // any case, the way a filesystem-insensitive author would.
+    ['![chart](Chart.PNG)', '/api/human-messages/9/attachments/2'],
+    // A name with a space reaches the model percent-encoded, whichever of the
+    // two CommonMark spellings the author used, so the comparison has to
+    // decode before it can match the filename the operator sees on the card.
+    ['![photo](<Photo Two.jpeg>)', '/api/human-messages/9/attachments/3'],
+    ['![photo](Photo%20Two.jpeg)', '/api/human-messages/9/attachments/3'],
+  ]) {
+    const node = find(markdownToTree(parser, source, { attachments }), 'img');
+    assert.ok(node, `${source} resolves to the published file`);
+    assert.equal(node.attrs.src, want);
+    assert.equal(node.attrs.loading, 'lazy');
+  }
+
+  const titled = find(markdownToTree(parser, '![c](chart.png "The chart")', { attachments }), 'img');
+  assert.equal(titled.attrs.title, 'The chart');
+  assert.equal(titled.attrs.alt, 'c');
+});
+
+// `previewable` is the daemon's own content-sniffed verdict that a file really
+// is a raster image. Referencing anything else — the document itself, an SVG,
+// a payload whose bytes do not match its declared type — must not build an
+// <img>, because the reference is the only claim that it is one.
+test('only a daemon-confirmed raster attachment can be shown as an image', async (t) => {
+  const { markdownToTree, parser, REMOTE_IMAGE } = await loadModel(t);
+  const attachments = [
+    { id: 1, filename: 'notes.md', url: '/api/human-messages/9/attachments/1', markdown: true },
+    { id: 2, filename: 'logo.svg', url: '/api/human-messages/9/attachments/2' },
+    { id: 3, filename: 'claim.png', url: '/api/human-messages/9/attachments/3', previewable: false },
+    // A published file the daemon gave no route to is not addressable either.
+    { id: 4, filename: 'orphan.png', url: '', previewable: true },
+  ];
+  for (const source of [
+    '![doc](notes.md)', '![logo](logo.svg)', '![claim](claim.png)', '![orphan](orphan.png)',
+  ]) {
+    const tree = markdownToTree(parser, source, { attachments });
+    assert.equal(findAll(tree, 'img').length, 0, `${source} builds no image`);
+    assert.equal(findAll(tree, REMOTE_IMAGE).length, 0, `${source} offers nothing to load`);
+    assert.match(tree.map(text).join(''), /doc|logo|claim|orphan/, `${source} keeps its alt text`);
+  }
+});
+
+// The viewer counts what it is holding back so it can say so once, rather than
+// leaving the operator to find every placeholder in a long report.
+test('the remote images a document holds back are listed once each, in order', async (t) => {
+  const { markdownToTree, remoteImageSources, parser } = await loadModel(t);
+  const tree = markdownToTree(parser, [
+    '![one](https://a.invalid/1.png)',
+    '> ![two](https://b.invalid/2.png)',
+    '- ![one again](https://a.invalid/1.png)',
+    '![inline](data:image/png;base64,iVBORw0KGgo=)',
+  ].join('\n\n'));
+  assert.deepEqual(remoteImageSources(tree),
+    ['https://a.invalid/1.png', 'https://b.invalid/2.png']);
+  assert.deepEqual(remoteImageSources([]), []);
 });
 
 test('only the attributes each element is allowed to carry survive', async (t) => {
@@ -228,6 +320,10 @@ test('no document can produce a tag or attribute outside the allowlists', async 
     'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'hr', 'br',
     'ul', 'ol', 'li', 'pre', 'code', 'em', 'strong', 's', 'a', 'img',
     'table', 'thead', 'tbody', 'tr', 'th', 'td',
+    // Not an element: the placeholder node a remote image becomes, which
+    // markdown-document.js renders as a component. Listed here so the corpus
+    // still fails on any OTHER tag the walk might learn to emit.
+    'remote-image',
   ]);
   const ALLOWED_ATTRS = new Set(['title', 'href', 'target', 'rel', 'src', 'loading',
     'start', 'style', 'class', 'alt']);

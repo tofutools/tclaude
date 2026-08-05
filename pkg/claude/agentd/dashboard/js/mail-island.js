@@ -374,7 +374,8 @@ function HumanAttachment({ message }) {
       <a href=${attachmentHref(message, attachment)}
         download=${attachment.filename || ''} title="Download this agent-published file">⤓ ${attachment.filename || 'attachment'}</a>
       <span class="mail-attachment-size">${attachmentSize(attachment.size_bytes)}</span>
-      <${MarkdownAttachment} messageID=${message.id} attachment=${attachment} surface="messages" />
+      <${MarkdownAttachment} messageID=${message.id} attachment=${attachment}
+        siblings=${attachments} surface="messages" />
     </div>`)}</${Fragment}>`;
 }
 

