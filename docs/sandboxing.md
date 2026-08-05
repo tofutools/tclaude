@@ -128,7 +128,9 @@ Sandbox profiles can optionally constrain the aggregate workload process tree
 with cgroup v2. `resource_limits.memory` renders to `memory.max`, while
 `resource_limits.cpu` renders to `cpu.max` with a fixed 100 ms period. These
 limits are orthogonal to bubblewrap: they work with any non-`off` sandbox
-implementation on Linux. They do not make the guest report a smaller machine;
+implementation on Linux, including `resource-only`, which exists to apply them
+with no confinement at all (see below). They do not make the guest report a
+smaller machine;
 interfaces such as `/proc/meminfo` may still describe host memory.
 
 Leaving both fields blank preserves the previous launch path exactly: tclaude
@@ -137,6 +139,39 @@ are Linux-only in this MVP. A macOS launch, an `off` implementation, or a Linux
 host without usable delegated cgroup v2 controllers refuses by default. The
 dashboard's existing **allow launch without enforcement** checkbox is the
 operator-controlled escape hatch and records a visible degradation notice.
+
+### Limits without confinement: the `resource-only` implementation
+
+`resource-only` is the sandbox implementation for operators who want a per-agent
+CPU/memory budget and no access confinement at all. It creates and joins the
+same cgroup every other implementation uses, and it uses no bubblewrap, no
+namespaces, and no harness-native sandbox: the harness launches under its own
+no-confinement mode, exactly as under `off`.
+
+Reach for it when the goal is blast-radius control rather than confinement — a
+runaway browser or build under one agent should not be able to exhaust host
+memory and take the other agents, and `tclaude-agentd`, down with it. Note that
+this is not the only way to get that: **limits are orthogonal to the confinement
+layer**, so `harness-builtin` with the same `resource_limits` gives you the
+budget *and* the harness's own wall. Prefer that pairing unless you specifically
+want no wall; `resource-only` trades confinement away, it does not add anything
+`harness-builtin` lacks.
+
+The two unconfined implementations differ on exactly one axis:
+
+| | access confinement | `resource_limits` |
+|---|---|---|
+| `off` | none | refused |
+| `resource-only` | none | enforced in a per-launch cgroup |
+
+`off` keeps meaning "tclaude enforces nothing here", which is why it refuses
+limits rather than quietly applying them.
+
+A `resource-only` launch still resolves the sandbox-profile chain, because that
+chain is what carries `resource_limits`. Any filesystem, network, or socket
+rules in the resolved profile are therefore authored but **not enforced**, and
+the access-enforcement preview says so: every access axis reports `None`, and
+the disclosed mechanism reads `sandbox off; cgroup resource limits only`.
 
 When agentd is run as a systemd service, its unit must delegate the required
 controllers to an otherwise empty parent. With systemd 254 or newer, configure

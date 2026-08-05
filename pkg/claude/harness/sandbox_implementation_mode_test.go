@@ -149,3 +149,32 @@ func TestSandboxImplementationOffResolvesTheHarnessOffMode(t *testing.T) {
 		require.Equalf(t, tc.want, native, "harness %s", tc.harness)
 	}
 }
+
+// resource-only stands the harness's own wall down exactly as off does. If the
+// harness sandbox stayed up underneath, the launch would be a confinement tier
+// wearing the limits-only name, and every mode-keyed gate would judge it as
+// confined — the opposite of what the operator selected.
+func TestResourceOnlyResolvesTheHarnessOffMode(t *testing.T) {
+	for _, tc := range []struct{ harness, want string }{
+		{DefaultName, ClaudeSandboxOff},
+		{CodexName, SandboxDangerFull},
+		{OpenCodeName, OpenCodeSandboxOff},
+		{CopilotName, CopilotSandboxOff},
+	} {
+		h, err := Resolve(tc.harness)
+		require.NoError(t, err)
+		// An inherited non-empty mode must not survive: the whole point of the
+		// resolver is that an independently configured sandbox value cannot
+		// quietly re-confine an explicitly unconfined implementation.
+		for _, inherited := range []string{"", tc.want} {
+			got, err := ResolveSandboxImplementationMode(
+				h, inherited, sandboxpolicy.ImplementationResourceOnly)
+			require.NoErrorf(t, err, "harness %s mode %q", tc.harness, inherited)
+			require.Equalf(t, tc.want, got, "harness %s mode %q", tc.harness, inherited)
+			native, err := ResolveNativeHarnessBuiltinMode(
+				h, inherited, sandboxpolicy.ImplementationResourceOnly)
+			require.NoErrorf(t, err, "harness %s mode %q", tc.harness, inherited)
+			require.Equalf(t, tc.want, native, "harness %s mode %q", tc.harness, inherited)
+		}
+	}
+}

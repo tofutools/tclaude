@@ -338,7 +338,8 @@ func openCodeSandboxRecord(
 	}
 	if spec == nil {
 		switch implementation {
-		case sandboxpolicy.ImplementationHarnessBuiltin, sandboxpolicy.ImplementationOff:
+		case sandboxpolicy.ImplementationHarnessBuiltin, sandboxpolicy.ImplementationOff,
+			sandboxpolicy.ImplementationResourceOnly:
 			return string(implementation), "", nil
 		default:
 			return "", "", fmt.Errorf(
@@ -375,7 +376,8 @@ func openCodeRuntimeSandboxSpec(
 		return nil, fmt.Errorf("OpenCode runtime sandbox implementation: %w", err)
 	}
 	switch implementation {
-	case sandboxpolicy.ImplementationHarnessBuiltin, sandboxpolicy.ImplementationOff:
+	case sandboxpolicy.ImplementationHarnessBuiltin, sandboxpolicy.ImplementationOff,
+		sandboxpolicy.ImplementationResourceOnly:
 		if strings.TrimSpace(runtime.SandboxLaunchSpecJSON) != "" {
 			return nil, fmt.Errorf(
 				"OpenCode %s runtime unexpectedly carries a tclaude-layer launch spec",

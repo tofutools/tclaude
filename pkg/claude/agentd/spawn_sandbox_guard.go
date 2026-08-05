@@ -493,6 +493,16 @@ func sandboxProfilesDisabled(
 ) bool {
 	if len(sandboxImplementation) > 0 {
 		implementation, err := sandboxpolicy.NormalizeImplementation(sandboxImplementation[0])
+		if err == nil && implementation == sandboxpolicy.ImplementationResourceOnly {
+			// resource-only resolves the harness's no-confinement mode, which
+			// for Codex is danger-full-access — the very mode the switch below
+			// treats as a profile opt-out. Omitting the tiers here would
+			// discard the resolved resource_limits along with them and leave
+			// the implementation enforcing nothing at all, so it must answer
+			// before the mode is consulted. Its access rules are still not
+			// enforced; the access-enforcement table discloses that as None.
+			return false
+		}
 		if err == nil && implementation == sandboxpolicy.ImplementationOff {
 			return true
 		}

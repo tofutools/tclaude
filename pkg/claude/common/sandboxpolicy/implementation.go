@@ -13,12 +13,29 @@ const (
 	ImplementationHarnessBuiltin Implementation = "harness-builtin"
 	ImplementationTclaudeLayer   Implementation = "tclaude-layer"
 	ImplementationStacked        Implementation = "stacked"
+	ImplementationResourceOnly   Implementation = "resource-only"
 	ImplementationOff            Implementation = "off"
 )
 
 // UsesTclaudeLayer reports whether tclaude owns an outer OS boundary.
 func (implementation Implementation) UsesTclaudeLayer() bool {
 	return implementation == ImplementationTclaudeLayer || implementation == ImplementationStacked
+}
+
+// OmitsOSConfinement reports whether an implementation deliberately stands down
+// every OS-level ACCESS boundary — both tclaude's own layer and the harness's
+// native sandbox.
+//
+// `resource-only` belongs here with `off` because a cgroup bounds how much CPU
+// and memory a workload may consume, never what it may read, write, or reach.
+// Every gate asking "is some access boundary enforcing" must answer the same
+// for both, or a limits-only launch would be credited with confinement it does
+// not have. The single axis on which they differ is resource limits, which
+// `off` refuses and `resource-only` exists to apply; ValidateResourceLimitTarget
+// owns that distinction and is deliberately the only place that draws it.
+func (implementation Implementation) OmitsOSConfinement() bool {
+	return implementation == ImplementationOff ||
+		implementation == ImplementationResourceOnly
 }
 
 // UsesNestedHarnessSandbox reports whether the harness's native OS sandbox is
@@ -77,11 +94,12 @@ func NormalizeImplementation(value string) (Implementation, error) {
 		return ImplementationHarnessBuiltin, nil
 	}
 	switch implementation {
-	case ImplementationHarnessBuiltin, ImplementationTclaudeLayer, ImplementationStacked, ImplementationOff:
+	case ImplementationHarnessBuiltin, ImplementationTclaudeLayer, ImplementationStacked,
+		ImplementationResourceOnly, ImplementationOff:
 		return implementation, nil
 	default:
-		return "", fmt.Errorf("invalid sandbox implementation %q (want %s, %s, %s, or %s)",
+		return "", fmt.Errorf("invalid sandbox implementation %q (want %s, %s, %s, %s, or %s)",
 			value, ImplementationHarnessBuiltin, ImplementationTclaudeLayer, ImplementationStacked,
-			ImplementationOff)
+			ImplementationResourceOnly, ImplementationOff)
 	}
 }

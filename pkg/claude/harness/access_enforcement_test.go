@@ -1421,3 +1421,43 @@ func TestAppendPredictionSentencePreservesFinalCharacter(t *testing.T) {
 			"first clause", "second clause without a stop",
 		}), "second clause without a stop"))
 }
+
+// A cgroup enforces nothing on any access axis, so a resource-only prediction
+// must credit exactly as little as off does. The mechanism string is the one
+// place the two differ, and it has to differ: the disclosure names what is
+// actually running for this launch, and a CPU/memory cgroup is running.
+func TestResourceOnlyPredictionCreditsNoAccessEnforcement(t *testing.T) {
+	axes := sandboxpolicy.ResolvedAxes{
+		Network: sandboxpolicy.NetworkRules{Mode: sandboxpolicy.AccessModeClosed},
+		UnixSockets: sandboxpolicy.UnixSocketRules{
+			Mode: sandboxpolicy.AccessModeClosed,
+		},
+	}
+	for _, harnessName := range []string{DefaultName, CodexName, OpenCodeName} {
+		t.Run(harnessName, func(t *testing.T) {
+			resourceOnly, err := PredictAccessEnforcement(
+				MustGet(harnessName), sandboxpolicy.ImplementationResourceOnly,
+				axes, "", "linux",
+			)
+			require.NoError(t, err)
+			off, err := PredictAccessEnforcement(
+				MustGet(harnessName), sandboxpolicy.ImplementationOff,
+				axes, "", "linux",
+			)
+			require.NoError(t, err)
+
+			assert.Equal(t, EnforceNone, resourceOnly.NetworkClosed)
+			assert.Equal(t, EnforceNone, resourceOnly.NetworkList)
+			assert.Equal(t, EnforceNone, resourceOnly.SocketClosed)
+			assert.Equal(t, EnforceNone, resourceOnly.SocketList)
+			assert.Equal(t, off.NetworkClosed, resourceOnly.NetworkClosed)
+			assert.Equal(t, off.SocketClosed, resourceOnly.SocketClosed)
+
+			assert.Equal(t, "sandbox off; cgroup resource limits only",
+				resourceOnly.Mechanism,
+				"the mechanism must say both halves: no confinement, and a real cgroup")
+			assert.NotEqual(t, off.Mechanism, resourceOnly.Mechanism,
+				"a limits-only launch must not be disclosed as a plain sandbox-off launch")
+		})
+	}
+}

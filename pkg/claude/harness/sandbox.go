@@ -124,10 +124,13 @@ func SandboxOffMode(h *Harness) (string, error) {
 // ResolveNativeHarnessBuiltinMode answers what the HARNESS'S OWN confinement is
 // set to under the selected implementation. Most implementations leave a
 // harness's native mode alone; OpenCode additionally keeps its persisted mode
-// truthful about the tclaude-owned server boundary. Off is intentionally shared
-// across harnesses: it resolves to each harness's native no-confinement mode so
-// an explicit implementation choice cannot be undone by an independently
-// inherited sandbox-mode value.
+// truthful about the tclaude-owned server boundary. The no-confinement
+// implementations are intentionally shared across harnesses: they resolve to
+// each harness's native no-confinement mode so an explicit implementation
+// choice cannot be undone by an independently inherited sandbox-mode value.
+// `resource-only` resolves here identically to `off` — its cgroup bounds
+// consumption, and leaving the harness's own wall standing underneath would
+// make the launch something other than the limits-only posture it names.
 //
 // This is the value every gate that asks "what can the harness's own sandbox
 // represent or enforce" must judge — filesystem/network profile capability,
@@ -140,7 +143,7 @@ func ResolveNativeHarnessBuiltinMode(
 	h *Harness, mode string,
 	implementation sandboxpolicy.Implementation,
 ) (string, error) {
-	if implementation == sandboxpolicy.ImplementationOff {
+	if implementation.OmitsOSConfinement() {
 		return SandboxOffMode(h)
 	}
 	if h == nil {

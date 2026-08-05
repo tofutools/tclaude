@@ -326,7 +326,15 @@ func accessEnforcementTable(
 	validatedBuiltinMode, goos string,
 	filteredNetworkReady bool,
 ) (accessEnforcementTableRow, error) {
-	if implementation == sandboxpolicy.ImplementationOff {
+	if implementation.OmitsOSConfinement() {
+		// `resource-only` enforces nothing on any access axis, so it shares
+		// every verdict below. Only the mechanism string differs, and it must:
+		// the disclosure names what is actually running, and a cgroup that
+		// caps CPU and memory is running.
+		mechanism := "sandbox off"
+		if implementation == sandboxpolicy.ImplementationResourceOnly {
+			mechanism = "sandbox off; cgroup resource limits only"
+		}
 		return accessEnforcementTableRow{
 			NetworkClosed: EnforceNone,
 			NetworkList:   EnforceNone,
@@ -334,7 +342,7 @@ func accessEnforcementTable(
 			SocketClosed:  EnforceNone,
 			SocketList:    EnforceNone,
 			Scope:         "process",
-			Mechanism:     "sandbox off",
+			Mechanism:     mechanism,
 		}, nil
 	}
 	if implementation.UsesTclaudeLayer() {

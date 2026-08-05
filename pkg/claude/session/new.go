@@ -122,7 +122,7 @@ type NewParams struct {
 	// is the harness's historical behavior; tclaude-layer is an experimental
 	// whole-process wrapper (bubblewrap on Linux, Seatbelt on macOS). OpenCode's
 	// historical behavior is a command filter, not confinement.
-	SandboxImpl string `long:"sandbox-impl" optional:"true" help:"Sandbox implementation: harness-builtin (only for a harness with a real built-in OS sandbox) | tclaude-layer (tclaude outer wall, harness OS sandbox off) | stacked (Linux Claude/Codex only; experimental live real-engine probe, both walls; refuses without fallback) | off (no OS sandbox). Unset keeps historical harness behavior; for OpenCode that is a command filter, not confinement"`
+	SandboxImpl string `long:"sandbox-impl" optional:"true" help:"Sandbox implementation: harness-builtin (only for a harness with a real built-in OS sandbox) | tclaude-layer (tclaude outer wall, harness OS sandbox off) | stacked (Linux Claude/Codex only; experimental live real-engine probe, both walls; refuses without fallback) | resource-only (Linux only; no access confinement, but the profile's CPU/memory limits are enforced in a per-launch cgroup; no bwrap or namespaces) | off (no OS sandbox). Unset keeps historical harness behavior; for OpenCode that is a command filter, not confinement"`
 	// sandboxImplExplicit preserves the decision/replay boundary after
 	// applyRecordedLaunchPosture fills an omitted --sandbox-impl on resume.
 	// It is internal state, not a CLI parameter.

@@ -88,6 +88,13 @@ func NormalizeResourceLimits(in ResourceLimits) (ResourceLimits, error) {
 // ValidateResourceLimitTarget checks the MVP's product compatibility boundary.
 // Host controller/delegation probes are deliberately separate and run only at
 // the Linux launch seam.
+//
+// Only `off` is refused. Limits are orthogonal to the confinement layer — the
+// cgroup is created and joined by the pane wrapper, not by bubblewrap — so
+// every other implementation may carry them, including `resource-only`, which
+// exists precisely to pair a cgroup with no access boundary at all. `off`
+// stays refused so that the spelling meaning "tclaude enforces nothing here"
+// keeps meaning exactly that.
 func ValidateResourceLimitTarget(limits ResourceLimits, implementation Implementation, platform string) error {
 	if !limits.Enabled() {
 		return nil
@@ -96,7 +103,8 @@ func ValidateResourceLimitTarget(limits ResourceLimits, implementation Implement
 		return fmt.Errorf("resource limits are Linux only; %s launches cannot enforce this profile", platform)
 	}
 	if implementation == ImplementationOff {
-		return fmt.Errorf("resource limits require a sandbox implementation in this MVP; sandbox implementation off is unsupported")
+		return fmt.Errorf("sandbox implementation %s cannot carry resource limits; use %s to enforce them with no access confinement, or %s to keep the harness's own sandbox as well",
+			ImplementationOff, ImplementationResourceOnly, ImplementationHarnessBuiltin)
 	}
 	return nil
 }
