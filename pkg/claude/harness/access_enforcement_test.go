@@ -1464,3 +1464,46 @@ func TestResourceOnlyPredictionCreditsNoAccessEnforcement(t *testing.T) {
 		})
 	}
 }
+
+// The regression a re-review caught. ResolveAccessEnforcement bails when the
+// OS-sandbox verdict is not "on" — correct for a launch that expected a wall
+// and did not get one, wrong for an implementation whose DECLARED posture is
+// that there is no wall. Because the session seam reaches this function long
+// after the spawn API has answered 200, refusing here turned every
+// resource-only launch whose chain carries a modern network or unix_sockets
+// block into a dead pane rather than a clean refusal.
+func TestResolveAccessEnforcementAdmitsUnconfinedImplementations(t *testing.T) {
+	axes := sandboxpolicy.ResolvedAxes{
+		Network: sandboxpolicy.NetworkRules{Mode: sandboxpolicy.AccessModeClosed},
+		UnixSockets: sandboxpolicy.UnixSocketRules{
+			Mode: sandboxpolicy.AccessModeClosed,
+		},
+	}
+	// The verdict every unconfined launch actually carries: the harness's own
+	// sandbox resolved to its no-confinement mode, so State is never "on".
+	off := LaunchOSSandbox{State: "off", Source: ""}
+
+	for _, harnessName := range []string{DefaultName, CodexName, OpenCodeName} {
+		t.Run(harnessName, func(t *testing.T) {
+			resolved, err := ResolveAccessEnforcement(
+				MustGet(harnessName), sandboxpolicy.ImplementationResourceOnly,
+				axes, off, "",
+			)
+			require.NoError(t, err,
+				"an off verdict is this implementation's declared posture, not a "+
+					"missing prerequisite; refusing here kills the pane after a 200")
+			assert.Equal(t, EnforceNone, resolved.networkClosed)
+			assert.Equal(t, EnforceNone, resolved.socketClosed)
+			assert.Equal(t, "sandbox off", resolved.mechanism)
+		})
+	}
+
+	// The bail must still hold for an implementation that DID expect a wall.
+	_, err := ResolveAccessEnforcement(
+		MustGet(DefaultName), sandboxpolicy.ImplementationTclaudeLayer,
+		axes, off, "",
+	)
+	require.Error(t, err,
+		"a layer launch with no functioning boundary must still refuse")
+	assert.Contains(t, err.Error(), "requires a functioning OS sandbox")
+}

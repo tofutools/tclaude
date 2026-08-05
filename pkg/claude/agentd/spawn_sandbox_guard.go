@@ -263,40 +263,6 @@ func sandboxProfileCapabilityFailure(
 	}
 }
 
-// unconfinedAccessRulesNotice reports the disclosure owed when an
-// implementation that confines nothing resolves a chain that authored access
-// rules anyway. It is silent when the chain carries none, so a limits-only
-// profile does not acquire a warning about rules it never had.
-func unconfinedAccessRulesNotice(
-	implementation sandboxpolicy.Implementation,
-	snapshot *sandboxpolicy.Snapshot,
-) (sandboxpolicy.AccessNotice, bool) {
-	if !implementation.OmitsOSConfinement() || snapshot == nil {
-		return sandboxpolicy.AccessNotice{}, false
-	}
-	filesystem, err := sandboxpolicy.FilesystemForLaunch(snapshot.Effective)
-	if err != nil {
-		filesystem = nil
-	}
-	authored := len(filesystem) > 0 ||
-		len(snapshot.Effective.AgentDirectories) > 0 ||
-		snapshot.Effective.Network != nil ||
-		snapshot.Effective.UnixSockets != nil ||
-		snapshot.Effective.NetworkAccess != sandboxpolicy.NetworkAccessInherit
-	if !authored {
-		return sandboxpolicy.AccessNotice{}, false
-	}
-	return sandboxpolicy.AccessNotice{
-		Class:  sandboxpolicy.AccessNoticeClassDegradation,
-		Axis:   "access_rules",
-		Reason: sandboxpolicy.AccessNoticeReasonUnconfinedImplementation,
-		Effect: sandboxpolicy.AccessNoticeEffectNotEnforced,
-		Detail: fmt.Sprintf(
-			"sandbox implementation %q enforces no access confinement; the resolved profile chain's filesystem, network and socket rules are recorded but NOT enforced for this launch. Only its CPU/memory limits are.",
-			implementation),
-	}, true
-}
-
 func planSandboxProfileAccessForLaunch(
 	harnessName, harnessBuiltinMode string,
 	snapshot *sandboxpolicy.Snapshot,
@@ -330,7 +296,9 @@ func planSandboxProfileAccessForLaunch(
 		snapshot.Effective.AccessNotices = sandboxpolicy.ReplaceAccessDegradationNotices(
 			snapshot.Effective.AccessNotices, resourceNotices...)
 	}
-	if notice, ok := unconfinedAccessRulesNotice(implementation, snapshot); ok {
+	if notice, ok := sandboxpolicy.UnconfinedAccessRulesNotice(
+		implementation, snapshot.Effective,
+	); ok {
 		resourceNotices = append(resourceNotices, notice)
 		snapshot.Effective.AccessNotices = sandboxpolicy.ReplaceAccessDegradationNotices(
 			snapshot.Effective.AccessNotices, resourceNotices...)

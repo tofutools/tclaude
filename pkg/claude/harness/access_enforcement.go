@@ -253,6 +253,27 @@ func ResolveAccessEnforcement(
 			return AccessEnforcement{}, err
 		}
 	}
+	if implementation.OmitsOSConfinement() {
+		// An off verdict is this implementation's DECLARED posture, not a
+		// failed prerequisite. The bail below exists for a launch that expected
+		// a wall and did not get one; refusing here instead turns every
+		// `resource-only` launch whose chain carries a modern network or
+		// unix_sockets block into a dead pane, because the seam that plans
+		// access is reached long after the spawn API has answered 200.
+		//
+		// Answering before the bail — rather than only inside
+		// accessEnforcementTable — is what keeps the daemon's preview and the
+		// session launch agreeing by construction: both reach this function,
+		// and only one of them used to survive it.
+		row, err := accessEnforcementTable(
+			h, implementation, axes, validatedBuiltinMode, runtime.GOOS,
+			osSandbox.FilteredNetwork,
+		)
+		if err != nil {
+			return AccessEnforcement{}, err
+		}
+		return accessEnforcementFromTable(row), nil
+	}
 	if osSandbox.State != "on" {
 		return AccessEnforcement{}, fmt.Errorf(
 			"access enforcement requires a functioning OS sandbox; verdict is %q from %q",

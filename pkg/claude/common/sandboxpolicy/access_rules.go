@@ -1403,3 +1403,47 @@ func slicesEqualStrings(a, b []string) bool {
 	}
 	return true
 }
+
+// UnconfinedAccessRulesNotice reports the disclosure owed when an
+// implementation that confines nothing resolves a chain that authored access
+// rules anyway.
+//
+// It lives here, not at either launch seam, because BOTH seams owe the same
+// disclosure and they resolve their snapshots by different routes: the daemon
+// spawn path plans access before forking, while a direct `tclaude session new`
+// reaches the launch with the chain already resolved. One of them having a
+// quieter idea of what is inert than the other is exactly the drift this
+// function exists to prevent.
+//
+// It is silent when the chain authored nothing, so a limits-only profile does
+// not acquire a warning about rules it never had — a notice that fires on
+// every such launch teaches the operator to ignore it.
+func UnconfinedAccessRulesNotice(
+	implementation Implementation,
+	effective EffectiveProfile,
+) (AccessNotice, bool) {
+	if !implementation.OmitsOSConfinement() {
+		return AccessNotice{}, false
+	}
+	filesystem, err := FilesystemForLaunch(effective)
+	if err != nil {
+		filesystem = nil
+	}
+	authored := len(filesystem) > 0 ||
+		len(effective.AgentDirectories) > 0 ||
+		effective.Network != nil ||
+		effective.UnixSockets != nil ||
+		effective.NetworkAccess != NetworkAccessInherit
+	if !authored {
+		return AccessNotice{}, false
+	}
+	return AccessNotice{
+		Class:  AccessNoticeClassDegradation,
+		Axis:   "access_rules",
+		Reason: AccessNoticeReasonUnconfinedImplementation,
+		Effect: AccessNoticeEffectNotEnforced,
+		Detail: fmt.Sprintf(
+			"sandbox implementation %q enforces no access confinement; the resolved profile chain's filesystem, network and socket rules are recorded but NOT enforced for this launch. Only its CPU/memory limits are.",
+			implementation),
+	}, true
+}

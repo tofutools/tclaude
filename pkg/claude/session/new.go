@@ -1369,7 +1369,31 @@ func runNew(params *NewParams) error {
 			return err
 		}
 	}
-	if launchSandbox != nil &&
+	if unconfined && launchSandbox != nil {
+		// Everything the block below does — resolve capabilities, render the
+		// planned rules, probe the filtered-network prerequisite, materialize a
+		// unix socket set — describes enforcement. This implementation has
+		// none, so there is nothing to render and, in particular, nothing to
+		// materialize: a socket set prepared for a launch that enforces no
+		// socket policy is state created for no reader.
+		//
+		// The rules still have to be DISCLOSED, and by the same words the
+		// daemon uses, which is why the notice is built in sandboxpolicy rather
+		// than at either seam.
+		if notice, ok := sandboxpolicy.UnconfinedAccessRulesNotice(
+			sandboxImplementation, launchSandbox.Effective,
+		); ok {
+			launchSandbox.Effective.AccessNotices = replaceAccessDegradationNotices(
+				launchSandbox.Effective.AccessNotices, notice,
+			)
+			if effectiveSandbox != nil {
+				effectiveSandbox.Effective.AccessNotices = replaceAccessDegradationNotices(
+					effectiveSandbox.Effective.AccessNotices, notice,
+				)
+			}
+		}
+	}
+	if !unconfined && launchSandbox != nil &&
 		(launchSandbox.Effective.Network != nil || launchSandbox.Effective.UnixSockets != nil) {
 		axes, axesErr := sandboxpolicy.EffectiveAccessAxes(launchSandbox.Effective)
 		if axesErr != nil {
