@@ -122,7 +122,7 @@ type NewParams struct {
 	// is the harness's historical behavior; tclaude-layer is an experimental
 	// whole-process wrapper (bubblewrap on Linux, Seatbelt on macOS). OpenCode's
 	// historical behavior is a command filter, not confinement.
-	SandboxImpl string `long:"sandbox-impl" optional:"true" help:"Sandbox implementation: harness-builtin (only for a harness with a real built-in OS sandbox) | tclaude-layer (tclaude outer wall, harness OS sandbox off) | stacked (Linux Claude/Codex only; experimental live real-engine probe, both walls; refuses without fallback) | resource-only (Linux only; no access confinement, but the profile's CPU/memory limits are enforced in a per-launch cgroup; no bwrap or namespaces) | off (no OS sandbox). Unset keeps historical harness behavior; for OpenCode that is a command filter, not confinement"`
+	SandboxImpl string `long:"sandbox-impl" optional:"true" help:"Sandbox implementation: harness-builtin (only for a harness with a real built-in OS sandbox) | tclaude-layer (tclaude outer wall, harness OS sandbox off) | stacked (Linux Claude/Codex only; experimental live real-engine probe, both walls; refuses without fallback) | resource-only (Linux only; no access confinement, but the launch gets a per-launch cgroup: the profile's CPU/memory limits if it authored any, otherwise accounting and OOM attribution only; no bwrap or namespaces) | off (no OS sandbox). Unset keeps historical harness behavior; for OpenCode that is a command filter, not confinement"`
 	// sandboxImplExplicit preserves the decision/replay boundary after
 	// applyRecordedLaunchPosture fills an omitted --sandbox-impl on resume.
 	// It is internal state, not a CLI parameter.
@@ -1914,20 +1914,33 @@ func runNew(params *NewParams) error {
 			resourceCgroupCleanup()
 		}
 	}()
-	if launchSandbox != nil && sandboxpolicy.ResourceCgroupRequested(
-		launchSandbox.Effective.ResourceLimits, sandboxImplementation) &&
-		!resourceLimitsAlreadyOverridden(launchSandbox.Effective.AccessNotices) {
+	// resource-only requests the cgroup through the implementation alone, so this
+	// seam must not require a launch snapshot to find the request: a direct
+	// `tclaude session new --sandbox-impl resource-only` and a CLI resume both
+	// arrive with no snapshot at all.
+	var launchResourceLimits sandboxpolicy.ResourceLimits
+	var launchResourceNotices []sandboxpolicy.AccessNotice
+	if launchSandbox != nil {
+		launchResourceLimits = launchSandbox.Effective.ResourceLimits
+		launchResourceNotices = launchSandbox.Effective.AccessNotices
+	}
+	recordResourceNotice := func(notice sandboxpolicy.AccessNotice) {
+		if launchSandbox != nil {
+			launchSandbox.Effective.AccessNotices = append(launchSandbox.Effective.AccessNotices, notice)
+		}
+		if effectiveSandbox != nil {
+			effectiveSandbox.Effective.AccessNotices = append(effectiveSandbox.Effective.AccessNotices, notice)
+		}
+	}
+	if sandboxpolicy.ResourceCgroupRequested(launchResourceLimits, sandboxImplementation) &&
+		!resourceLimitsAlreadyOverridden(launchResourceNotices) {
 		if err := sandboxpolicy.ValidateResourceLimitTarget(
-			launchSandbox.Effective.ResourceLimits, sandboxImplementation, runtime.GOOS,
+			launchResourceLimits, sandboxImplementation, runtime.GOOS,
 		); err != nil {
 			if !params.AllowUnenforcedSandbox {
 				return fmt.Errorf("unsupported_sandbox_profile_resource_limits: %w", err)
 			}
-			notice := resourceLimitOverrideNotice(err)
-			launchSandbox.Effective.AccessNotices = append(launchSandbox.Effective.AccessNotices, notice)
-			if effectiveSandbox != nil {
-				effectiveSandbox.Effective.AccessNotices = append(effectiveSandbox.Effective.AccessNotices, notice)
-			}
+			recordResourceNotice(resourceLimitOverrideNotice(err))
 		} else {
 			var wrapped string
 			var cleanup func()
@@ -1938,22 +1951,25 @@ func runNew(params *NewParams) error {
 				cleanup = func() {}
 			} else {
 				wrapped, cleanup, resourceErr = wrapResourceLimitedCommand(
-					sessionID, launchSandbox.Effective.ResourceLimits, harnessCmd,
+					sessionID, launchResourceLimits, harnessCmd,
 					params.AllowUnenforcedSandbox,
 				)
 			}
-			if resourceErr != nil {
-				if !params.AllowUnenforcedSandbox {
-					return resourceErr
-				}
-				notice := resourceLimitOverrideNotice(resourceErr)
-				launchSandbox.Effective.AccessNotices = append(launchSandbox.Effective.AccessNotices, notice)
-				if effectiveSandbox != nil {
-					effectiveSandbox.Effective.AccessNotices = append(effectiveSandbox.Effective.AccessNotices, notice)
-				}
-			} else {
+			switch {
+			case resourceErr == nil:
 				resourceCgroupCleanup = cleanup
 				harnessCmd = wrapped
+			case !launchResourceLimits.Enabled():
+				// Nothing authored is being widened, and the dashboard's launch
+				// override does not exist on a resume, so refusing here would leave
+				// an already-recorded resource-only agent unlaunchable over counters.
+				slog.Warn("resource cgroup unavailable; launching without per-agent accounting",
+					"session_id", sessionID, "error", resourceErr)
+				recordResourceNotice(resourceCgroupUnavailableNotice(resourceErr))
+			case !params.AllowUnenforcedSandbox:
+				return resourceErr
+			default:
+				recordResourceNotice(resourceLimitOverrideNotice(resourceErr))
 			}
 		}
 	}

@@ -176,27 +176,36 @@ limits rather than quietly applying them.
 no-op — that spelling exists for the cgroup itself, so the launch gets the
 boundary without a ceiling. What that buys:
 
-- per-agent accounting: `memory.current`, `memory.peak`, `cpu.stat`,
-  `pids.current` for the whole workload tree, under a cgroup named for the
-  session;
+- per-agent accounting: `memory.current`, `memory.peak` and `cpu.stat` for the
+  whole workload tree, under a cgroup named for the session (`pids.current` too,
+  but only where the delegation carries the `pids` controller — the
+  `Delegate=cpu memory` prescribed below does not);
 - OOM attribution: `memory.events`' `oom_kill` counter includes kills by the
   *host* OOM killer, so tclaude's `resource_limit_oom` exit reason fires for an
   agent the host killed under memory pressure, not only for one that hit its own
   `memory.max`;
 - a kill handle for every process the agent started, however it daemonized.
 
-Both the `cpu` and `memory` controllers are enabled in the delegated parent so
-those counters exist. Unlike a ceiling, a controller the delegation does not
+The `memory`, `cpu` and `pids` controllers are enabled in the delegated parent
+so those counters exist. Unlike a ceiling, a controller the delegation does not
 carry is *not* a refusal here: it costs visibility, not enforcement, so the
-launch proceeds and logs which counters are unavailable. The cgroup itself is
-still required — if it cannot be created, a `resource-only` launch has no
-boundary at all and is refused, with **allow launch without enforcement** as the
-operator's escape hatch, exactly as for a ceiling.
+launch proceeds and logs which counters are unavailable. Note that enabling a
+controller in the shared delegated parent turns it on for every workload cgroup
+under it, so sibling launches gain the same counters (and their own untouched
+`memory.max`/`cpu.max` files) whether or not they asked.
+
+Nothing here is refused. A ceiling fails closed when the host cannot enforce it,
+but a boundary with no ceiling is observability: on a host with no delegated
+cgroup the launch proceeds without one and records a `resource_cgroup_unavailable`
+degradation notice naming what is missing. Refusing instead would make an agent
+already recorded as `resource-only` unresumable — the **allow launch without
+enforcement** override is a fresh-spawn control and does not exist on a resume.
 
 This changed behavior: before, `resource-only` with no limits silently created
 nothing and was indistinguishable from `off`. A conversation recorded that way
-now creates its cgroup on the next launch, and fails if the host has no
-delegation for it.
+now creates its cgroup on the next launch where the host allows it, and
+discloses the gap where it does not. Off Linux the implementation is still
+refused outright, as it always was.
 
 A `resource-only` launch still resolves the sandbox-profile chain, because that
 chain is what carries `resource_limits`. The chain is the whole stack — global,

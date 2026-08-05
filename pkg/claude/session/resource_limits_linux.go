@@ -116,8 +116,9 @@ func configuredResourceDelegationDir() string {
 }
 
 // enableDelegatedControllers turns on the controllers a workload cgroup needs in
-// its parent. An empty request writes nothing: cgroup.subtree_control is not
-// idempotent to rewrite, and an already-enabled controller must stay untouched.
+// its parent. An empty request writes nothing at all rather than writing an
+// empty string, which keeps a launch working on a delegated node whose
+// cgroup.subtree_control is not writable but already carries the controllers.
 func enableDelegatedControllers(delegation string, toEnable []string) error {
 	if len(toEnable) == 0 {
 		return nil
@@ -182,7 +183,7 @@ func PrepareResourceCgroup(sessionID string, limits sandboxpolicy.ResourceLimits
 	}
 	controllersRaw, err := os.ReadFile(filepath.Join(delegation, "cgroup.controllers"))
 	if err != nil {
-		return "", func() {}, fmt.Errorf("resource limits require a delegated cgroup v2 service subtree (set --resource-delegation-dir to an external delegated root, or configure tclaude-agentd.service with Delegate=cpu memory and DelegateSubgroup=%s): %w", resourceSupervisorCgroup, err)
+		return "", func() {}, fmt.Errorf("a per-agent cgroup requires a delegated cgroup v2 service subtree (set --resource-delegation-dir to an external delegated root, or configure tclaude-agentd.service with Delegate=cpu memory and DelegateSubgroup=%s): %w", resourceSupervisorCgroup, err)
 	}
 	available := strings.Fields(string(controllersRaw))
 	needed := []string{}
@@ -194,15 +195,17 @@ func PrepareResourceCgroup(sessionID string, limits sandboxpolicy.ResourceLimits
 	}
 	for _, controller := range needed {
 		if !containsString(available, controller) {
-			return "", func() {}, fmt.Errorf("resource limits require delegated cgroup v2 %s controller; configure the external --resource-delegation-dir runtime with Delegate=cpu memory, or configure tclaude-agentd.service with Delegate=cpu memory and DelegateSubgroup=%s", controller, resourceSupervisorCgroup)
+			return "", func() {}, fmt.Errorf("the configured resource limit requires the delegated cgroup v2 %s controller; configure the external --resource-delegation-dir runtime with Delegate=cpu memory, or configure tclaude-agentd.service with Delegate=cpu memory and DelegateSubgroup=%s", controller, resourceSupervisorCgroup)
 		}
 	}
 	wanted := append([]string{}, needed...)
 	if !limits.Enabled() {
-		// An accounting-only boundary wants both axes' counters, but neither is a
-		// ceiling: a controller this delegation does not carry costs the operator
-		// visibility rather than enforcement, so it degrades instead of refusing.
-		for _, controller := range []string{"memory", "cpu"} {
+		// An accounting-only boundary wants every counter the delegation carries,
+		// but none of them is a ceiling: a controller this subtree lacks costs the
+		// operator visibility rather than enforcement, so it degrades rather than
+		// refusing. pids is included opportunistically — the documented
+		// `Delegate=cpu memory` does not carry it.
+		for _, controller := range []string{"memory", "cpu", "pids"} {
 			if containsString(available, controller) {
 				wanted = append(wanted, controller)
 				continue

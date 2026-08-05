@@ -58,10 +58,11 @@ func TestSpawn_ResourceOnlyCarriesLimitsToLaunch(t *testing.T) {
 			"it must survive into the launch snapshot")
 }
 
-// resource-only with nothing authored used to be a silent no-op: no ceiling
-// meant no cgroup, which made the implementation indistinguishable from `off`.
-// It now means the accounting boundary, so the spawn must succeed and stay
-// recorded as resource-only rather than being resolved away.
+// A guard on the new gate rather than on the boundary itself: flow tests swap
+// the session launcher, so no cgroup is created here. What this pins is that
+// widening the gate from "a ceiling was authored" to "the implementation asked"
+// did not start refusing or rewriting a spawn that authored nothing — the
+// cgroup-creation half is covered at the launch seam in pkg/claude/session.
 func TestSpawn_ResourceOnlyWithoutLimitsStillLaunches(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("crew")
@@ -81,7 +82,7 @@ func TestSpawn_ResourceOnlyWithoutLimitsStillLaunches(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, row)
 	assert.Equal(t, string(sandboxpolicy.ImplementationResourceOnly), row.SandboxImplementation,
-		"a flagless resume must reach the same accounting boundary")
+		"the recorded implementation is what a flagless resume replays")
 }
 
 // The regression the cold review caught. The resolved chain is global + group +
