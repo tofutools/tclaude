@@ -3,7 +3,9 @@
 package session
 
 import (
+	"bytes"
 	"errors"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -28,6 +30,17 @@ func fakeCurrentResourceCgroup(t *testing.T, controllers, enabled string) string
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "cgroup.controllers"), []byte(controllers), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "cgroup.subtree_control"), []byte(enabled), 0o644))
 	return dir
+}
+
+// captureWarnings redirects slog for one test. An accounting degradation has no
+// on-disk trace, so the log line is the assertable disclosure.
+func captureWarnings(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	buf := &bytes.Buffer{}
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	return buf
 }
 
 func TestPrepareResourceCgroupUsesExplicitExternalDelegationDir(t *testing.T) {
@@ -211,6 +224,54 @@ func TestWrapResourceLimitedCommandRequiresOnlyConfiguredController(t *testing.T
 	assert.Equal(t, "memory", string(enabled), "already-enabled controller is not rewritten")
 }
 
+func TestPrepareResourceCgroupCreatesAccountingBoundaryWithoutLimits(t *testing.T) {
+	current := fakeCurrentResourceCgroup(t, "cpu memory io", "")
+
+	dir, cleanup, err := PrepareResourceCgroup("accounting-only", sandboxpolicy.ResourceLimits{})
+	require.NoError(t, err)
+	t.Cleanup(cleanup)
+	assert.Equal(t, current, filepath.Dir(dir))
+	assert.NoFileExists(t, filepath.Join(dir, "memory.max"), "no ceiling was authored")
+	assert.NoFileExists(t, filepath.Join(dir, "cpu.max"))
+	enabled, err := os.ReadFile(filepath.Join(current, "cgroup.subtree_control"))
+	require.NoError(t, err)
+	// The counters and the memory.events OOM attribution are the whole point, and
+	// both need their controller enabled in the parent.
+	assert.Equal(t, "+memory +cpu", string(enabled))
+	require.NoError(t, ValidatePreparedResourceCgroup(dir, sandboxpolicy.ResourceLimits{}),
+		"a limitless boundary must still validate for a managed-server relaunch")
+}
+
+func TestPrepareResourceCgroupAccountingDegradesWhenControllerIsMissing(t *testing.T) {
+	current := fakeCurrentResourceCgroup(t, "memory io", "")
+
+	logged := captureWarnings(t)
+
+	dir, cleanup, err := PrepareResourceCgroup("accounting-partial", sandboxpolicy.ResourceLimits{})
+	require.NoError(t, err, "a missing controller costs counters, not enforcement, so it must not refuse")
+	t.Cleanup(cleanup)
+	assert.DirExists(t, dir)
+	enabled, err := os.ReadFile(filepath.Join(current, "cgroup.subtree_control"))
+	require.NoError(t, err)
+	assert.Equal(t, "+memory", string(enabled), "only the delegated controller is enabled")
+	assert.Contains(t, logged.String(), "controller=cpu",
+		"an unavailable counter is invisible unless the launch says which one")
+}
+
+func TestPrepareResourceCgroupAccountingSurvivesUnwritableSubtreeControl(t *testing.T) {
+	current := fakeCurrentResourceCgroup(t, "cpu memory", "")
+	readOnlyCgroupNode(t, filepath.Join(current, "cgroup.subtree_control"))
+	logged := captureWarnings(t)
+
+	dir, cleanup, err := PrepareResourceCgroup("accounting-no-controllers", sandboxpolicy.ResourceLimits{})
+	require.NoError(t, err, "the boundary is still worth creating for its process tracking")
+	t.Cleanup(cleanup)
+	assert.DirExists(t, dir)
+	// The refused write is the only proof the accounting branch ran: with no
+	// ceiling there is nothing else to observe in the cgroup afterwards.
+	assert.Contains(t, logged.String(), "cannot enable delegated controllers for accounting")
+}
+
 func TestWrapResourceLimitedCommandFailsWhenControllerIsNotDelegated(t *testing.T) {
 	fakeCurrentResourceCgroup(t, "memory", "")
 	cpu := 1.0
@@ -220,15 +281,15 @@ func TestWrapResourceLimitedCommandFailsWhenControllerIsNotDelegated(t *testing.
 	assert.ErrorContains(t, err, "Delegate=cpu memory")
 }
 
-// readOnlyCgroupNode makes a prepared cgroup directory reject creation the way
-// an undelegated node does for an unprivileged launch.
-func readOnlyCgroupNode(t *testing.T, dir string) {
+// readOnlyCgroupNode makes a prepared cgroup directory or interface file reject
+// writes the way an undelegated node does for an unprivileged launch.
+func readOnlyCgroupNode(t *testing.T, path string) {
 	t.Helper()
 	if os.Geteuid() == 0 {
 		t.Skip("root may write an undelegated cgroup node, so the denial cannot be simulated")
 	}
-	require.NoError(t, os.Chmod(dir, 0o555))
-	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+	require.NoError(t, os.Chmod(path, 0o555))
+	t.Cleanup(func() { _ = os.Chmod(path, 0o755) })
 }
 
 // fakeDerivedResourceCgroup pins the unified path this process appears to be in,
@@ -410,4 +471,92 @@ func TestResourceLimitChildExitCodeUsesShellSignalConvention(t *testing.T) {
 	err = cmd.Run()
 	require.ErrorAs(t, err, &exitErr)
 	assert.Equal(t, 23, resourceLimitChildExitCode(exitErr))
+}
+
+// paneScriptCapturingTmux snapshots the launch script at new-session time. The
+// script and the cgroup are both cleaned up when a launch fails, so a test that
+// wants to see what the pane was told has to look while tmux is being called.
+type paneScriptCapturingTmux struct {
+	*launchRecordingTmux
+	script string
+}
+
+func (c *paneScriptCapturingTmux) Command(args ...string) *exec.Cmd {
+	if recordedTmuxCommand(args) == "new-session" {
+		for i, arg := range args {
+			if arg == "sh" && i+1 < len(args) {
+				if body, err := os.ReadFile(args[i+1]); err == nil {
+					c.script = string(body)
+				}
+				break
+			}
+		}
+	}
+	return c.launchRecordingTmux.Command(args...)
+}
+
+// A host with no delegated cgroup must not make an already-recorded
+// resource-only agent unlaunchable: the dashboard override is a fresh-spawn
+// control, so refusing here would strand the agent on every resume.
+func TestRunNewResourceOnlyDegradesWhenTheHostHasNoDelegation(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	// A cgroup root with no controllers file at all is what an undelegated host
+	// looks like to the derivation.
+	oldRoot := resourceCgroupRoot
+	resourceCgroupRoot = t.TempDir()
+	t.Cleanup(func() { resourceCgroupRoot = oldRoot })
+	t.Setenv(ResourceDelegationDirEnv, "")
+	t.Setenv("TMUX", "")
+	prevCheck := ClaudeAncestorCheck
+	ClaudeAncestorCheck = func() bool { return false }
+	t.Cleanup(func() { ClaudeAncestorCheck = prevCheck })
+	stubTmuxOnPath(t)
+	logged := captureWarnings(t)
+	rec := &paneScriptCapturingTmux{launchRecordingTmux: &launchRecordingTmux{failNewSession: true}}
+	swapTmux(t, rec)
+
+	err := runNew(&NewParams{
+		Label:       "spwn-nodeleg",
+		Dir:         t.TempDir(),
+		Detached:    true,
+		SandboxImpl: string(sandboxpolicy.ImplementationResourceOnly),
+	})
+	require.Error(t, err, "the fake tmux refuses new-session")
+	assert.NotContains(t, err.Error(), "delegated cgroup v2",
+		"a missing boundary with no ceiling authored must not refuse the launch")
+	require.NotEmpty(t, rec.script, "the launch must still reach tmux")
+	assert.NotContains(t, rec.script, "resource-limit-exec",
+		"there is no cgroup to join")
+	assert.Contains(t, logged.String(), "resource cgroup unavailable")
+}
+
+// The pane seam is where most launches get their cgroup, and resource-only
+// expresses the request through the implementation alone — with no sandbox
+// snapshot on a direct CLI launch or a CLI resume. A gate that reads only a
+// snapshot silently skips the boundary here.
+func TestRunNewResourceOnlyWithoutLimitsWrapsPaneInAccountingCgroup(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	current := fakeCurrentResourceCgroup(t, "cpu memory", "")
+	prevCheck := ClaudeAncestorCheck
+	ClaudeAncestorCheck = func() bool { return false }
+	t.Cleanup(func() { ClaudeAncestorCheck = prevCheck })
+	stubTmuxOnPath(t)
+	// The launch is refused at tmux, which is the cheapest way to observe the
+	// fully assembled pane command without waiting on a pane that never answers.
+	rec := &paneScriptCapturingTmux{launchRecordingTmux: &launchRecordingTmux{failNewSession: true}}
+	swapTmux(t, rec)
+
+	err := runNew(&NewParams{
+		Label:       "spwn-acctcg",
+		Dir:         t.TempDir(),
+		Detached:    true,
+		SandboxImpl: string(sandboxpolicy.ImplementationResourceOnly),
+	})
+	require.Error(t, err, "the fake tmux refuses new-session")
+
+	require.NotEmpty(t, rec.script, "the launch never reached tmux with a pane script")
+	assert.Contains(t, rec.script, "resource-limit-exec",
+		"the pane must join the boundary its implementation names, snapshot or not")
+	assert.Contains(t, rec.script, filepath.Join(current, "tclaude-"),
+		"the wrapper must point at a cgroup under the delegated parent")
 }

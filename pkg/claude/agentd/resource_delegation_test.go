@@ -271,6 +271,73 @@ func mustFileMode(t *testing.T, path string) os.FileMode {
 	return info.Mode().Perm()
 }
 
+func TestManagedServerPreparesAccountingCgroupForLimitlessResourceOnly(t *testing.T) {
+	setupTestDB(t)
+	t.Setenv("TMUX", "")
+	accounting := "/sys/fs/cgroup/system.slice/tclaude-agentd.service/tclaude-accounting"
+	previousPrepare := prepareResourceCgroup
+	prepareResourceCgroup = func(sessionID string, limits sandboxpolicy.ResourceLimits) (string, func(), error) {
+		assert.False(t, limits.Enabled(), "no ceiling was authored; the cgroup itself is the request")
+		return accounting, func() {}, nil
+	}
+	t.Cleanup(func() { prepareResourceCgroup = previousPrepare })
+	snapshot := &sandboxpolicy.Snapshot{}
+
+	dir, _, err := prepareManagedServerResourceCgroup("managed-accounting", snapshot,
+		string(sandboxpolicy.ImplementationResourceOnly), false)
+	require.NoError(t, err)
+	assert.Equal(t, accounting, dir,
+		"a managed server under resource-only must join the boundary its implementation names")
+
+	dir, _, err = prepareManagedServerResourceCgroup("managed-unbounded", snapshot,
+		string(sandboxpolicy.ImplementationHarnessBuiltin), false)
+	require.NoError(t, err)
+	assert.Empty(t, dir,
+		"an unauthored profile under any other implementation keeps the previous launch path")
+}
+
+func TestManagedServerAccountingDegradesWhenHostHasNoDelegation(t *testing.T) {
+	setupTestDB(t)
+	t.Setenv("TMUX", "")
+	previousPrepare := prepareResourceCgroup
+	prepareResourceCgroup = func(string, sandboxpolicy.ResourceLimits) (string, func(), error) {
+		return "", func() {}, errors.New("a per-agent cgroup requires a delegated cgroup v2 service subtree")
+	}
+	t.Cleanup(func() { prepareResourceCgroup = previousPrepare })
+	snapshot := &sandboxpolicy.Snapshot{}
+
+	dir, _, err := prepareManagedServerResourceCgroup("managed-nodeleg", snapshot,
+		string(sandboxpolicy.ImplementationResourceOnly), false)
+	require.NoError(t, err,
+		"an unstartable server is too high a price for counters, and a resume has no override")
+	assert.Empty(t, dir)
+	var disclosed bool
+	for _, notice := range snapshot.Effective.AccessNotices {
+		if notice.Reason == sandboxpolicy.AccessNoticeReasonResourceCgroupUnavailable {
+			disclosed = true
+			assert.Equal(t, sandboxpolicy.AccessNoticeEffectNotEnforced, notice.Effect)
+		}
+	}
+	assert.True(t, disclosed, "a boundary the operator asked for and did not get must be disclosed")
+}
+
+func TestManagedServerStillRefusesUnenforceableCeiling(t *testing.T) {
+	setupTestDB(t)
+	t.Setenv("TMUX", "")
+	previousPrepare := prepareResourceCgroup
+	prepareResourceCgroup = func(string, sandboxpolicy.ResourceLimits) (string, func(), error) {
+		return "", func() {}, errors.New("no delegated subtree")
+	}
+	t.Cleanup(func() { prepareResourceCgroup = previousPrepare })
+	snapshot := &sandboxpolicy.Snapshot{Effective: sandboxpolicy.EffectiveProfile{
+		ResourceLimits: sandboxpolicy.ResourceLimits{Memory: "512MB"},
+	}}
+
+	_, _, err := prepareManagedServerResourceCgroup("managed-capped", snapshot,
+		string(sandboxpolicy.ImplementationResourceOnly), false)
+	assert.Error(t, err, "an authored ceiling must still fail closed")
+}
+
 func TestManagedServerDropsStoredCgroupFromPreviousDelegationBeforeReprepare(t *testing.T) {
 	setupTestDB(t)
 	t.Setenv("TMUX", "")
@@ -293,7 +360,7 @@ func TestManagedServerDropsStoredCgroupFromPreviousDelegationBeforeReprepare(t *
 	}}
 
 	dir, _, err := prepareManagedServerResourceCgroup(
-		"managed-old-cgroup", snapshot, false)
+		"managed-old-cgroup", snapshot, string(sandboxpolicy.ImplementationHarnessBuiltin), false)
 	require.NoError(t, err)
 	assert.Equal(t, "/sys/fs/cgroup/system.slice/tclaude-tmux.service/tclaude-new", dir)
 	stored, lookupErr := db.GetOpenCodeRuntime("managed-old-cgroup")

@@ -20,6 +20,24 @@ func resourceLimitOverrideNotice(err error) sandboxpolicy.AccessNotice {
 	}
 }
 
+// resourceCgroupUnavailableNotice discloses a limitless resource-only launch
+// that could not get its accounting boundary. No ceiling was authored, so
+// nothing the operator asked to enforce is being widened — but the counters,
+// the OOM attribution and the kill handle they selected the implementation for
+// are absent, and only a notice can say so.
+func resourceCgroupUnavailableNotice(err error) sandboxpolicy.AccessNotice {
+	return sandboxpolicy.AccessNotice{
+		Class:  sandboxpolicy.AccessNoticeClassDegradation,
+		Axis:   "resource_limits",
+		Reason: sandboxpolicy.AccessNoticeReasonResourceCgroupUnavailable,
+		Effect: sandboxpolicy.AccessNoticeEffectNotEnforced,
+		Detail: fmt.Sprintf(
+			"no ceiling was authored and this host has no delegated cgroup for the per-agent boundary, so accounting, OOM attribution and the workload kill handle are unavailable: %v",
+			err,
+		),
+	}
+}
+
 func recordResourceLimitRuntimeOverride(sessionID string, cause error) error {
 	return db.AppendSessionSandboxAccessNotice(sessionID, resourceLimitOverrideNotice(cause))
 }
