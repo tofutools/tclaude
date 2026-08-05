@@ -320,10 +320,12 @@ func TestSpawnCLI_WorktreeModifiersRequireWorktree(t *testing.T) {
 
 // Scenario: a `tclaude agent spawn --worktree` whose spawn request is
 // then rejected by the daemon (here: the target group is already at
-// its member cap) must NOT leak the git worktree the CLI created up
-// front. RunSpawn tears the freshly-created worktree back down — but
-// keeps the branch, so a retry reuses it rather than tripping over a
-// half-cleaned state. This pins the failure-path cleanup in RunSpawn.
+// its member cap) must NOT leak the git worktree prepared for it.
+// RunSpawn hands the freshly-created worktree back to the daemon, which
+// removes the directory AND the branch it cut for it — so a retry cuts
+// the branch again from --worktree-base instead of silently reusing one
+// left over from a failed attempt (which is how a worker ended up on a
+// stale base). This pins the failure-path cleanup in RunSpawn.
 func TestSpawnCLI_WorktreeTornDownWhenSpawnRejected(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("alpha")
@@ -365,8 +367,10 @@ func TestSpawnCLI_WorktreeTornDownWhenSpawnRejected(t *testing.T) {
 			"repo should no longer have a worktree on feat-x; got %+v", wts)
 	}
 
-	// ...but the branch survives, so a retry reuses it rather than
-	// erroring on a half-cleaned state.
-	assert.Containsf(t, worktree.BranchesIn(repo), "feat-x",
-		"the feat-x branch must be kept; branches=%v", worktree.BranchesIn(repo))
+	// ...and so is the branch cut for it: a retry starts from the
+	// requested base rather than inheriting whatever the failed attempt
+	// happened to cut from.
+	assert.NotContainsf(t, worktree.BranchesIn(repo), "feat-x",
+		"the feat-x branch was cut for this worktree and must go with it; branches=%v",
+		worktree.BranchesIn(repo))
 }

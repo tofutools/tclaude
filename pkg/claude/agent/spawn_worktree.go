@@ -2,65 +2,163 @@ package agent
 
 import (
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
-
-	"github.com/tofutools/tclaude/pkg/claude/worktree"
+	"time"
 )
 
-// spawn_worktree.go is the CLI-side worktree resolution behind
-// `tclaude agent spawn --worktree`. The dashboard's spawn modal resolves
-// a worktree directory through its picker (the agentd /api/worktrees
-// endpoint) before POSTing the spawn; the CLI has no picker, so it does
-// the same git operation in-process here and then sends the identical
-// cwd / worktree_path / worktree_branch wire shape. The actual git
-// commands live in the worktree package — the single source of truth
-// for worktree creation, shared with `tclaude worktree` and agentd.
-
-// resolveSpawnWorktree turns a `--worktree <branch>` request into a
-// concrete worktree directory, mirroring what the dashboard's worktree
-// picker does: reuse an existing worktree already checked out on that
-// branch, otherwise create a fresh one (a new branch cut from `base`,
-// or a checkout of an existing branch).
+// spawn_worktree.go is the CLI half of `tclaude agent spawn --worktree`
+// (and `tclaude agent task-force deploy --worktree`): it asks agentd to
+// resolve the branch into a worktree directory and, when a spawn that
+// got a fresh worktree then fails, to take that worktree back down.
 //
-// repoDir is any path inside the target git repo; it is resolved up to
-// the repo root. createdNew reports whether a worktree was created (vs
-// an existing one reused) so the caller can tear it back down if the
-// subsequent spawn fails.
-func resolveSpawnWorktree(repoDir, branch, base string) (path string, createdNew bool, err error) {
-	branch = strings.TrimSpace(branch)
-	if branch == "" {
-		return "", false, fmt.Errorf("worktree branch name is required")
-	}
-	root, err := worktree.RepoRootForPath(repoDir)
-	if err != nil {
-		return "", false, fmt.Errorf("--worktree needs a git repo: %w", err)
-	}
-	// Reuse an existing worktree already checked out on this branch —
-	// the CLI equivalent of picking it from the dashboard's list.
-	wts, err := worktree.ListWorktreesIn(root)
-	if err != nil {
-		return "", false, fmt.Errorf("list worktrees in %s: %w", root, err)
-	}
-	for _, wt := range wts {
-		if wt.Branch == branch {
-			return wt.Path, false, nil
-		}
-	}
-	// None yet — create one. AddWorktreeIn checks out an existing branch
-	// or cuts a new one off `base` (the repo's default branch when base
-	// is empty), and picks the default `../<repo>-<branch>` location.
-	created, err := worktree.AddWorktreeIn(root, branch, strings.TrimSpace(base), "")
-	if err != nil {
-		return "", false, fmt.Errorf("create worktree: %w", err)
-	}
-	return created, true, nil
+// The git commands run in the DAEMON, not here. A sandboxed agent's own
+// filesystem restrictions have nothing to do with a checkout it neither
+// reads nor writes, and a repo tracking a single file under a
+// write-denied path (say .claude/commands/) would otherwise fail the
+// checkout mid-way and abort the spawn. Creating the worktree is
+// privileged host-level setup done on the new agent's behalf, exactly
+// like the session launch that follows it, so it belongs on the same
+// side of the socket. The daemon still refuses to create one where the
+// caller could not have created it itself: an agent caller must answer
+// the dir write-proof challenge for the repo and the directory the
+// worktree lands in (see pkg/claude/agentd/spawn_worktree.go).
+//
+// The dashboard reaches the same resolution through its worktree picker
+// before POSTing a spawn; the CLI has no picker, so it calls the
+// endpoint directly and then sends the identical cwd / worktree_path /
+// worktree_branch wire shape.
+
+// WorktreePrepareRequest asks agentd for the worktree on Branch in the
+// repo containing Repo, creating it when no worktree is checked out on
+// that branch yet. Base names the branch a NEW branch is cut from
+// (blank = the repo's default branch); it is ignored when the branch
+// already exists. Repo may be any path inside the target repo; blank
+// falls back to the daemon's own working directory.
+//
+// WriteProofToken carries the answer to a dir write-proof challenge —
+// filled in transparently by DaemonRequestWithWriteProof, never by hand.
+type WorktreePrepareRequest struct {
+	Repo            string `json:"repo,omitempty"`
+	Branch          string `json:"branch"`
+	Base            string `json:"base,omitempty"`
+	WriteProofToken string `json:"write_proof_token,omitempty"`
 }
 
-// removeSpawnWorktree tears down a worktree resolveSpawnWorktree
-// created, used when the spawn it was created for then fails. Only the
-// working directory is removed — the branch and its commits stay, so a
-// retry reuses the branch. Idempotent: an already-gone worktree is a
-// no-op.
-func removeSpawnWorktree(path string) (bool, error) {
-	return worktree.RemoveLinkedWorktree(path, true)
+// WorktreePrepareResponse is the resolved worktree. Created distinguishes
+// a freshly cut worktree from one that already existed on the branch, and
+// DiscardToken (set only for a fresh one) names it for a later discard
+// call, so a caller whose spawn then fails can undo exactly what this
+// request did — and nothing else.
+type WorktreePrepareResponse struct {
+	Path         string `json:"path"`
+	Branch       string `json:"branch"`
+	Created      bool   `json:"created"`
+	DiscardToken string `json:"discard_token,omitempty"`
+}
+
+// WorktreeDiscardRequest takes back a worktree prepared earlier in this
+// daemon's lifetime, addressed by the token that created it.
+type WorktreeDiscardRequest struct {
+	Token string `json:"token"`
+}
+
+// WorktreeDiscardResponse reports what the teardown actually removed.
+// BranchDeleted is true only when the daemon cut the branch itself for
+// this worktree — a branch that already existed outlives the discard.
+type WorktreeDiscardResponse struct {
+	Removed       bool `json:"removed"`
+	BranchDeleted bool `json:"branch_deleted"`
+}
+
+// worktreeDaemonTimeout bounds the prepare call. Cutting a worktree in a
+// large repo is a full checkout, which can run well past the default
+// request budget — the same reason the task-force deploy call takes a
+// minutes-scale timeout.
+const worktreeDaemonTimeout = 5 * time.Minute
+
+// spawnWorktree is a resolved worktree as the spawn paths use it.
+// DiscardToken is non-empty only when the daemon created the worktree
+// for this request, which is exactly when a failed spawn should hand it
+// back.
+type spawnWorktree struct {
+	Path         string
+	Created      bool
+	DiscardToken string
+}
+
+// resolveSpawnWorktree turns a `--worktree <branch>` request into a
+// concrete worktree directory by asking agentd to reuse the worktree
+// already checked out on that branch, or cut a new one (a new branch
+// from base, or a checkout of an existing branch).
+//
+// repoDir is any path inside the target git repo; the daemon resolves it
+// up to the repo root. ask carries the caller's --ask-human budget, so a
+// spawn that leans on a human popup for its authority gets the same
+// treatment on the worktree half rather than failing before the popup.
+func resolveSpawnWorktree(repoDir, branch, base string, ask time.Duration) (spawnWorktree, error) {
+	branch = strings.TrimSpace(branch)
+	if branch == "" {
+		return spawnWorktree{}, fmt.Errorf("worktree branch name is required")
+	}
+	mkBody := func(writeProofToken string) any {
+		return WorktreePrepareRequest{
+			Repo:            strings.TrimSpace(repoDir),
+			Branch:          branch,
+			Base:            strings.TrimSpace(base),
+			WriteProofToken: writeProofToken,
+		}
+	}
+	var resp WorktreePrepareResponse
+	// DaemonRequestWithWriteProof answers the daemon's dir write-proof
+	// challenge from inside this process — i.e. inside the calling
+	// agent's own sandbox, which is the capability being proven. The
+	// proof files land in the repo root and the directory the worktree
+	// will be created in, both of which the caller must be able to write
+	// for the daemon to create a worktree there on its behalf.
+	if err := DaemonRequestWithWriteProof(http.MethodPost, "/v1/worktrees/prepare", mkBody, &resp,
+		DaemonOpts{Timeout: worktreeDaemonTimeout, AskHuman: ask}); err != nil {
+		return spawnWorktree{}, err
+	}
+	if strings.TrimSpace(resp.Path) == "" {
+		return spawnWorktree{}, fmt.Errorf("daemon returned no worktree path for branch %s", branch)
+	}
+	return spawnWorktree{Path: resp.Path, Created: resp.Created, DiscardToken: resp.DiscardToken}, nil
+}
+
+// discardSpawnWorktree tears down a worktree resolveSpawnWorktree just
+// created, used when the spawn it was created for then fails. The daemon
+// removes the working directory and — only when it cut the branch for
+// this worktree — the branch too, so a retry starts from the requested
+// base instead of silently reusing a branch left over from a failed
+// attempt.
+func discardSpawnWorktree(token string, ask time.Duration) (WorktreeDiscardResponse, error) {
+	var resp WorktreeDiscardResponse
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return resp, fmt.Errorf("no discard token for this worktree")
+	}
+	err := DaemonRequest(http.MethodPost, "/v1/worktrees/discard", WorktreeDiscardRequest{Token: token}, &resp,
+		DaemonOpts{Timeout: worktreeDaemonTimeout, AskHuman: ask})
+	return resp, err
+}
+
+// undoSpawnWorktree hands a freshly created worktree back to the daemon
+// after the spawn or deploy it was made for failed, and reports on
+// stderr what actually happened — including whether the branch went with
+// it, which decides what a retry will cut from. what names the failed
+// operation ("spawn" / "deploy") for the message.
+func undoSpawnWorktree(stderr io.Writer, path, token, what string, ask time.Duration) {
+	resp, err := discardSpawnWorktree(token, ask)
+	switch {
+	case err != nil:
+		fmt.Fprintf(stderr, "Note: could not remove the worktree created for this %s (%s): %v\n",
+			what, path, err)
+	case resp.BranchDeleted:
+		fmt.Fprintf(stderr, "Note: removed the worktree and branch created for this %s (%s)\n",
+			what, path)
+	default:
+		fmt.Fprintf(stderr, "Note: removed the worktree created for this %s (%s)\n", what, path)
+	}
 }

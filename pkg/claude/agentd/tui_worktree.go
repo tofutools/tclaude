@@ -27,10 +27,11 @@ import (
 //
 // The route is mounted on the console surfaces only — buildTUIHTTPHandler for
 // the standalone client and buildTUIConsoleMux for the in-process one — and
-// never on buildMux, the Unix-socket mux agents reach. Creating directories
-// outside any sandbox is a human move: agents get worktrees through the
-// `tclaude worktree` CLI, exactly as they do for the dashboard's own
-// /api/worktrees endpoint.
+// never on buildMux, the Unix-socket mux agents reach: it creates a directory
+// of the caller's choosing with no proof that the caller could have created it
+// itself, which is a human move. The agent-reachable equivalent is
+// POST /v1/worktrees/prepare (spawn_worktree.go), which gates creation behind
+// the dir write-proof over the repo and the worktree's parent.
 
 // tuiWorktreePath is the console-only worktree route, shared by the model, the
 // in-process mux and the standalone client's mux so the three cannot drift.

@@ -451,6 +451,40 @@ func branchExistsIn(dir, branch string) bool {
 	return err == nil
 }
 
+// BranchExistsIn reports whether branch resolves in the repo containing
+// dir. The exported form of branchExistsIn, for callers that must tell a
+// branch they cut apart from one that was already there — agentd's
+// worktree preparation checks it before and after a failed
+// `git worktree add` to know whether the half-finished attempt left a
+// new branch behind.
+func BranchExistsIn(dir, branch string) bool {
+	return branchExistsIn(dir, strings.TrimSpace(branch))
+}
+
+// DeleteBranchIn force-deletes branch from the repo containing dir and
+// reports whether it was there to delete. Used to roll back the branch
+// `git worktree add -b` cuts before it populates the checkout: when the
+// checkout then fails, the branch survives the failure and a retry would
+// silently reuse it instead of cutting a fresh one from the requested
+// base.
+//
+// The repo trunk is never deleted (isProtectedBranch), and an
+// already-absent branch is a no-op rather than an error, so the rollback
+// is safe to call blind.
+func DeleteBranchIn(dir, branch string) (bool, error) {
+	branch = strings.TrimSpace(branch)
+	if branch == "" || branch == "HEAD" || isProtectedBranch(branch) {
+		return false, nil
+	}
+	if _, err := gitIn(dir, "branch", "-D", branch); err != nil {
+		if isNoSuchBranchErr(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("delete branch %s: %w", branch, err)
+	}
+	return true, nil
+}
+
 // HasCommitsIn reports whether the repo containing dir has at least one
 // commit. A freshly `git init`-ed repo has an unborn HEAD — a current
 // branch ref (e.g. main) that points at no commit yet. Such a repo has

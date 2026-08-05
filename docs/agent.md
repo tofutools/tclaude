@@ -998,9 +998,19 @@ is cut in the repo containing `--cwd`; `--worktree-base` picks the
 branch it forks from (default: the repo's default branch). For a
 monorepo launch dir whose code work belongs in a nested sub-repo, point
 `--worktree-repo` at the sub-repo: the agent then launches in `--cwd`
-and the worktree path/branch ride into its welcome message. If the
-spawn is rejected outright, a freshly-created worktree is removed again
-(the branch is kept).
+and the worktree path/branch ride into its welcome message.
+
+The checkout runs in **agentd**, not in the calling process: it is
+host-level setup performed on the new agent's behalf, like the session
+launch that follows it, so a sandboxed caller's own filesystem
+restrictions do not apply to a tree it never reads or writes. An agent
+caller instead answers the dir write-proof (below) for the repo and the
+directory the worktree lands in, which keeps the guarantee that mattered
+— no agent can put a checkout, or a child rooted in one, somewhere it
+could not have put one itself. If the spawn is then rejected outright,
+the worktree is handed back to the daemon and removed, taking with it a
+branch the daemon cut for it (so a retry forks from `--worktree-base`
+again); a branch that already existed survives.
 
 **Other parity flags.** `--auto-focus` opens a terminal window attached
 to the new agent once it lands (off by default for the CLI — spawns are
@@ -1344,7 +1354,10 @@ spawn just works, and a forbidden one fails with a clear "cannot prove write
 access" error. Humans, fully-open parents (Claude `off` / Codex
 `danger-full-access` — judged with the implementation, so a tclaude-layer
 parent recording those modes is *not* exempt), and Codex `read-only` children
-(no cwd write to prove) are exempt. The same handshake guards a clone's `cwd` override and the
+(no cwd write to prove) are exempt. The same handshake guards the daemon-side
+worktree creation behind `spawn --worktree` / `task-force deploy --worktree`
+(proved against the repo and the directory the new worktree lands in, before
+anything is created there), a clone's `cwd` override, and the
 template spawn surfaces (`instantiate` / `deploy` / `reinforce` — the whole
 cast shares one proven launch cwd, plus any shared worktree and the
 per-agent-worktree repo); the matching `tclaude agent templates …` /
@@ -1848,7 +1861,9 @@ rhythms as group cron jobs, seeds the process, and delivers the work pattern
 once the roster is whole. With no `--group` the group name is derived from the
 mission (a bare-URL mission falls back to the template name). `--worktree` lands
 the whole force on its own branch in a git worktree, which becomes its working
-directory.
+directory; as with `spawn --worktree`, the daemon cuts that worktree (proved
+against the repo and its parent for an agent caller) and takes it back down if
+the deploy then fails.
 
 ### task-force ls
 

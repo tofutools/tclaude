@@ -54,7 +54,7 @@ type taskForceDeployParams struct {
 	Group        string `long:"group" optional:"true" help:"Name for the new group (also the prefix for every spawned agent). Defaults to a name derived from the mission."`
 	Cwd          string `long:"cwd" optional:"true" help:"Working directory the force spawns in (~ expands). Must exist. Empty inherits the daemon's cwd. Ignored when --worktree is set (the worktree becomes the cwd)."`
 	Descr        string `long:"descr" optional:"true" help:"One-line description for the new group. Defaults to 'Task force deployed from template <name>'."`
-	Worktree     string `long:"worktree" short:"w" optional:"true" help:"Create (or reuse) a git worktree on this branch and land the WHOLE force in it. The worktree is resolved in-process in the repo containing --cwd (or, when --cwd is empty, the current directory)."`
+	Worktree     string `long:"worktree" short:"w" optional:"true" help:"Create (or reuse) a git worktree on this branch and land the WHOLE force in it. The worktree is resolved by the daemon in the repo containing --cwd (or, when --cwd is empty, the current directory)."`
 	WorktreeBase string `long:"worktree-base" optional:"true" help:"Base branch for a newly-created --worktree (default: the repo's default branch). Ignored when the --worktree branch already exists."`
 }
 
@@ -112,23 +112,24 @@ func runTaskForceDeploy(p *taskForceDeployParams, stdin io.Reader, stdout, stder
 
 	cwd := strings.TrimSpace(p.Cwd)
 
-	// Worktree handling — the CLI resolves it in-process (the same git
-	// operation the dashboard picker performs), then hands the resolved path
-	// down as the whole force's cwd. createdWorktree is non-empty only when a
-	// fresh worktree was made (vs an existing one reused), so a failed deploy
-	// can tear it back down rather than leaking an orphan.
-	createdWorktree := ""
+	// Worktree handling — the daemon resolves it (the same git operation the
+	// dashboard picker performs, run outside this caller's sandbox), then the
+	// resolved path becomes the whole force's cwd. createdWorktree is
+	// non-empty only when a fresh worktree was made (vs an existing one
+	// reused), so a failed deploy can tear it back down rather than leaking an
+	// orphan.
+	createdWorktree, discardWorktree := "", ""
 	if wt := strings.TrimSpace(p.Worktree); wt != "" {
 		worktreeRepo := cwd
-		wtPath, createdNew, wtErr := resolveSpawnWorktree(worktreeRepo, wt, p.WorktreeBase)
+		prepared, wtErr := resolveSpawnWorktree(worktreeRepo, wt, p.WorktreeBase, 0)
 		if wtErr != nil {
 			fmt.Fprintf(stderr, "Error: %v\n", wtErr)
 			return rcInvalidArg
 		}
-		if createdNew {
-			createdWorktree = wtPath
+		if prepared.Created {
+			createdWorktree, discardWorktree = prepared.Path, prepared.DiscardToken
 		}
-		cwd = wtPath
+		cwd = prepared.Path
 	}
 
 	body := map[string]any{"mission": mission}
@@ -156,16 +157,14 @@ func runTaskForceDeploy(p *taskForceDeployParams, stdin io.Reader, stdout, stder
 		// The deploy failed after we created a worktree for it. Remove the
 		// now-orphaned worktree so a retry starts clean — except on a 504
 		// conv-id-poll timeout, where a spawn subprocess may still be coming
-		// up inside it (mirrors spawn's teardown policy). The branch is always
-		// kept, so a retry reuses it.
+		// up inside it (mirrors spawn's teardown policy). A branch the daemon
+		// cut for the worktree goes with it, so a retry cuts a fresh one from
+		// --worktree-base; a pre-existing branch survives.
 		if createdWorktree != "" {
 			if de, ok := err.(*DaemonError); ok && de.Status == http.StatusGatewayTimeout {
 				fmt.Fprintf(stderr, "Note: kept the worktree %s — the force may still be coming up.\n", createdWorktree)
-			} else if _, rmErr := removeSpawnWorktree(createdWorktree); rmErr != nil {
-				fmt.Fprintf(stderr, "Note: could not remove the worktree created for this deploy (%s): %v\n",
-					createdWorktree, rmErr)
 			} else {
-				fmt.Fprintf(stderr, "Note: removed the worktree created for this deploy (%s)\n", createdWorktree)
+				undoSpawnWorktree(stderr, createdWorktree, discardWorktree, "deploy", 0)
 			}
 		}
 		return MapDaemonErrorToRC(err)
