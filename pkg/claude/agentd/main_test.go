@@ -61,6 +61,7 @@ func TestMain(m *testing.M) {
 		panic(fmt.Sprintf("set isolated agentd test TMUX_TMPDIR: %v", err))
 	}
 	agentdTestTmuxBase = tmuxBase
+	tmuxSocketPath := filepath.Join(tmuxBase, fmt.Sprintf("tmux-%d", os.Getuid()), clcommon.TmuxSocketName)
 
 	agentd.SetOpenTerminalForTest(func(string) error {
 		return errors.New("agentd tests: terminal spawn suppressed by default (TCL-584); swap agentd.SetOpenTerminalForTest to observe the open path")
@@ -107,9 +108,9 @@ func TestMain(m *testing.M) {
 	restoreCodexProbe()
 	restoreEscalationProcess()
 	// A real detached session would keep its server and panes alive after its
-	// socket is unlinked. Stop only this process's isolated server before
-	// removing the private socket tree; no server is the normal case.
-	_ = clcommon.TmuxCommand("kill-server").Run()
+	// socket is unlinked. Target the computed private socket explicitly rather
+	// than trusting teardown-time environment; no server is the normal case.
+	_ = exec.Command("tmux", "-S", tmuxSocketPath, "kill-server").Run()
 	_ = os.RemoveAll(tmuxBase)
 	os.Exit(code)
 }
