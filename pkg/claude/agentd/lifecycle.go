@@ -3367,8 +3367,20 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		writeError(w, http.StatusInternalServerError, "io", trustLayoutErr.Error())
 		return
 	}
-	if spawnerConvID != "" && childSandboxGrantsDirWrite(
-		h.Name, harnessBuiltinMode, body.SandboxImplementation) {
+	// A child with no cwd write (Codex read-only) normally needs no proof — it
+	// receives no write access to anchor. But the caller-owned trust exemption
+	// (spawn_dir_trust.go) justifies itself with a write capability: pre-trust
+	// is safe there BECAUSE the caller could already write the harness config
+	// that dir carries. So whenever that exemption is what would permit the
+	// request, demand the proof regardless of the child's own sandbox — else a
+	// read-only caller, which by construction can write nothing, would seed the
+	// human's trust store off an unproven claim. The sibling-worktree exemption
+	// is excluded: it is forced on precisely so a detached child cannot stall on
+	// the trust dialog, and it carries its own proof pairing when the child
+	// takes repository grants.
+	if spawnerConvID != "" && (childSandboxGrantsDirWrite(
+		h.Name, harnessBuiltinMode, body.SandboxImplementation) ||
+		(body.TrustDir && !autoTrustSiblingWorktree)) {
 		dirs := []string{cwd}
 		dirs = appendUniqueDirs(dirs, worktreePath)
 		dirs = appendUniqueDirs(dirs, gitWorktreeWriteDirs...)
@@ -3460,9 +3472,15 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		trustDir = true
 	}
 	if spawnerConvID != "" && trustDir && !autoTrustSiblingWorktree {
-		writeError(w, http.StatusForbidden, "trust_dir_restricted",
-			"agent-initiated spawns may pre-trust only tclaude's verified default sibling worktrees; leave trust_dir off or ask the human to spawn this child")
-		return
+		callerOwned, ownErr := callerOwnedDirTrustProved(spawnerConvID, cwd, proofToken, proofDirs)
+		if ownErr != nil {
+			writeError(w, http.StatusInternalServerError, "io", ownErr.Error())
+			return
+		}
+		if !callerOwned {
+			writeError(w, http.StatusForbidden, "trust_dir_restricted", trustDirRestrictedMessage)
+			return
+		}
 	}
 
 	// Gate the explicit "start with remote control" opt-in: it is a Claude Code
@@ -4702,8 +4720,14 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		p.TrustDir = true
 	}
 	if p.SpawnedByConv != "" && p.TrustDir && !autoTrustSiblingWorktree {
-		return nil, &spawnFailure{http.StatusForbidden, "trust_dir_restricted",
-			"agent-initiated spawns may pre-trust only tclaude's verified default sibling worktrees; leave trust_dir off or ask the human to spawn this child"}
+		callerOwned, ownErr := callerOwnedDirTrustProved(
+			p.SpawnedByConv, p.Cwd, p.DirWriteProofToken, p.DirWriteProofDirs)
+		if ownErr != nil {
+			return nil, &spawnFailure{http.StatusInternalServerError, "io", ownErr.Error()}
+		}
+		if !callerOwned {
+			return nil, &spawnFailure{http.StatusForbidden, "trust_dir_restricted", trustDirRestrictedMessage}
+		}
 	}
 	// Judges the LAUNCH mode for the same reason handleGroupSpawn does: the
 	// guard must reason about the posture the child's row will carry, which for
