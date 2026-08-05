@@ -315,15 +315,58 @@ func syncCopilotConvIndex(entries []convops.SessionEntry) {
 			}
 		}
 	}
+	convIDs := make([]string, 0, len(entries))
+	for i := range entries {
+		convIDs = append(convIDs, entries[i].SessionID)
+	}
+	liveWorkspaces, liveErr := db.ListAgentWorkspacesByConv(convIDs)
+	if liveErr != nil {
+		// Keep the cache sync useful for titles/prompts even if the optional
+		// live overlay cannot be read. Existing conv_index branch fields are
+		// retained below, which is safer than replacing a hook observation
+		// with a potentially older workspace.yaml value.
+		slog.Warn("copilot convstore: live workspaces unreadable; preserving cached branches",
+			"error", liveErr)
+	}
 
 	for i := range entries {
-		if row := cached[entries[i].SessionID]; row != nil && !row.ArchivedAt.IsZero() {
-			entries[i].ArchivedAt = row.ArchivedAt.UTC().Format(time.RFC3339)
+		cachedRow := cached[entries[i].SessionID]
+		if cachedRow != nil && !cachedRow.ArchivedAt.IsZero() {
+			entries[i].ArchivedAt = cachedRow.ArchivedAt.UTC().Format(time.RFC3339)
 		}
-		if err := db.UpsertConvIndex(copilotEntryDBRow(entries[i])); err != nil {
+		row := copilotEntryDBRow(entries[i])
+		preserveCopilotLiveBranches(row, cachedRow, liveWorkspaces[entries[i].SessionID], liveErr)
+		if err := db.UpsertConvIndex(row); err != nil {
 			slog.Warn("copilot convstore: conv_index upsert failed; continuing from Copilot",
 				"conv", entries[i].SessionID, "error", err)
 		}
+	}
+}
+
+// preserveCopilotLiveBranches merges the cold workspace.yaml observation with
+// the hook-owned live workspace snapshot before the full conv_index upsert.
+// The full upsert is necessary for Copilot's title/prompt metadata, but without
+// this overlay it would blank git_branch_startup and could replace a newer
+// hook-time branch with an older workspace.yaml value on every `conv ls`.
+func preserveCopilotLiveBranches(row, cached *db.ConvIndexRow, live db.AgentWorkspace, liveErr error) {
+	if row == nil {
+		return
+	}
+	if cached != nil && cached.GitBranchStartup != "" {
+		row.GitBranchStartup = cached.GitBranchStartup
+	} else {
+		row.GitBranchStartup = row.GitBranch
+	}
+	if liveErr != nil {
+		if cached != nil && cached.GitBranch != "" {
+			row.GitBranch = cached.GitBranch
+		}
+		return
+	}
+	workspaceUpdated, _ := time.Parse(time.RFC3339, row.Modified)
+	if live.ConvID != "" && live.Branch != "" &&
+		(workspaceUpdated.IsZero() || !live.UpdatedAt.Before(workspaceUpdated)) {
+		row.GitBranch = live.Branch
 	}
 }
 
@@ -348,8 +391,12 @@ func copilotEntryDBRow(entry convops.SessionEntry) *db.ConvIndexRow {
 		Modified:     entry.Modified,
 		ProjectPath:  entry.ProjectPath,
 		GitBranch:    entry.GitBranch,
-		IndexedAt:    time.Now(),
-		Harness:      CopilotName,
+		// The cold store has only one branch value. Treat it as startup on the
+		// first index; syncCopilotConvIndex preserves an established startup
+		// value from a hook-owned snapshot on subsequent refreshes.
+		GitBranchStartup: entry.GitBranch,
+		IndexedAt:        time.Now(),
+		Harness:          CopilotName,
 	}
 }
 
