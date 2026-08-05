@@ -1558,7 +1558,7 @@ func applyHook(ctx context.Context, input HookCallbackInput, envSessionID string
 		}
 	}
 
-	persistCodexWorkspaceSnapshot(state, input)
+	persistHookWorkspaceSnapshot(state, input)
 
 	// Codex rollout telemetry is owned by agentd's incremental follower. Hook
 	// callbacks are separate processes and must not replay a potentially huge
@@ -1848,14 +1848,17 @@ func harnessUsesSlashContextControls(name string) bool {
 	return h.SupportsCompact()
 }
 
-// persistCodexWorkspaceSnapshot is Codex's replacement for the Claude Code
-// statusline workspace write. Codex has no command-backed statusline payload,
-// but every hook carries the session cwd, so resolve git there at hook time and
-// publish the same agent_workspace row the dashboard already reads. The first
-// branch observed also seeds conv_index.git_branch_startup; later observations
-// update only the current branch so the UI can keep showing "init" vs "now".
-func persistCodexWorkspaceSnapshot(state *SessionState, input HookCallbackInput) {
-	if state == nil || state.Harness != harness.CodexName || state.ConvID == "" {
+// persistHookWorkspaceSnapshot replaces Claude Code's command-backed
+// statusline workspace write for harnesses without that surface. Codex and
+// Copilot both carry the session cwd on every hook, so resolve git there at
+// hook time and publish the same agent_workspace row the dashboard already
+// reads. The first branch observed also seeds conv_index.git_branch_startup;
+// later observations update only the current branch so the UI can keep showing
+// "init" vs "now". Once that branch is present, the dashboard's existing
+// asynchronous git/gh enrichment supplies its compare and pull-request links.
+func persistHookWorkspaceSnapshot(state *SessionState, input HookCallbackInput) {
+	if state == nil || state.ConvID == "" ||
+		(state.Harness != harness.CodexName && state.Harness != harness.CopilotName) {
 		return
 	}
 	if input.ConvID != "" && input.ConvID != state.ConvID {
@@ -1878,7 +1881,7 @@ func persistCodexWorkspaceSnapshot(state *SessionState, input HookCallbackInput)
 		Branch:    branch,
 		UpdatedAt: now,
 	}); err != nil {
-		slog.Warn("codex-workspace: failed to upsert agent_workspace",
+		slog.Warn("hook-workspace: failed to upsert agent_workspace",
 			"conv_id", state.ConvID, "error", err, "module", "hooks")
 	}
 
@@ -1905,17 +1908,17 @@ func persistCodexWorkspaceSnapshot(state *SessionState, input HookCallbackInput)
 		GitBranch:        branch,
 		GitBranchStartup: branch,
 		ProjectPath:      cwd,
-		Harness:          harness.CodexName,
+		Harness:          state.Harness,
 		IndexedAt:        now,
 	}); err != nil {
-		slog.Warn("codex-workspace: failed to upsert conv_index branch snapshot",
+		slog.Warn("hook-workspace: failed to upsert conv_index branch snapshot",
 			"conv_id", state.ConvID, "branch", branch, "error", err, "module", "hooks")
 	}
 	if branch == "" {
 		return
 	}
 	if err := db.AppendConvBranchHistoryHook(state.ConvID, branch, worktreeRoot); err != nil {
-		slog.Warn("codex-workspace: failed to record branch history",
+		slog.Warn("hook-workspace: failed to record branch history",
 			"conv_id", state.ConvID, "branch", branch, "error", err, "module", "hooks")
 	}
 }

@@ -127,6 +127,39 @@ func TestCopilotConvStoreListsSessions(t *testing.T) {
 	assert.Positive(t, entry.FileSize)
 }
 
+func TestCopilotConvStoreSyncPreservesLiveBranchAndStartup(t *testing.T) {
+	home := copilotTestHome(t)
+	cwd := t.TempDir()
+	copilotSession(t, home, copilotTestID,
+		workspaceYAML(copilotTestID, cwd, "branch test", false,
+			"2026-08-03T19:08:12.442Z", "2026-08-03T19:10:13.219Z"),
+		copilotUserEvent("switch branches"))
+
+	initial := time.Date(2026, 8, 3, 19, 8, 12, 0, time.UTC)
+	require.NoError(t, db.UpsertConvIndexBranchSnapshot(&db.ConvIndexRow{
+		ConvID: copilotTestID, GitBranch: "main", GitBranchStartup: "main",
+		ProjectPath: cwd, Harness: CopilotName, IndexedAt: initial,
+	}))
+	liveAt := initial.Add(time.Minute)
+	require.NoError(t, db.UpsertAgentWorkspace(db.AgentWorkspace{
+		ConvID: copilotTestID, Cwd: cwd, Branch: "feature-live", UpdatedAt: liveAt,
+	}))
+	require.NoError(t, db.UpsertConvIndexBranchSnapshot(&db.ConvIndexRow{
+		ConvID: copilotTestID, GitBranch: "feature-live", GitBranchStartup: "feature-live",
+		ProjectPath: cwd, Harness: CopilotName, IndexedAt: liveAt,
+	}))
+
+	_, err := (copilotConvStore{home: home}).ListConvs("")
+	require.NoError(t, err)
+	row, err := db.GetConvIndex(copilotTestID)
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	assert.Equal(t, "feature-live", row.GitBranch,
+		"a later non-branch workspace.yaml update must not replace the hook snapshot")
+	assert.Equal(t, "main", row.GitBranchStartup,
+		"a cold metadata sync must not erase the immutable startup branch")
+}
+
 // A Copilot-generated name is a summary; only `user_named: true` is an
 // operator's own title. DisplayTitle's existing precedence then needs no
 // Copilot-specific rule.
