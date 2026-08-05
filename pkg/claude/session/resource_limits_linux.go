@@ -114,23 +114,27 @@ func configuredResourceDelegationDir() string {
 	return ExternalResourceDelegationDir()
 }
 
+// delegationWriteRefused reports the failures that mean the delegated node
+// itself rejected the write rather than the requested limit being wrong: a
+// missing delegation, or a hierarchy the sandbox mounted read-only.
+func delegationWriteRefused(err error) bool {
+	return errors.Is(err, os.ErrPermission) || errors.Is(err, syscall.EROFS)
+}
+
 // resourceDelegationDeniedHint explains a refused write in the delegated node.
-// A permission failure there is a delegation problem rather than a problem with
-// the requested limit, and the two shapes it takes have different fixes: a node
-// that resolved to the root of the mounted hierarchy can never be delegated at
-// all, while a real subtree merely has to be owned by the launching user.
-func resourceDelegationDeniedHint(delegation string, derived bool) string {
+// The two shapes it takes have different fixes. A node that resolved to the
+// root of the mounted hierarchy usually means the derivation ran inside a
+// cgroup namespace that has no delegated node to find, and no other path under
+// that mount would serve either. A real subtree merely has to be delegated to
+// the launching user.
+func resourceDelegationDeniedHint(delegation string) string {
 	root := filepath.Clean(resourceCgroupRoot)
 	if filepath.Clean(delegation) != root {
-		return fmt.Sprintf("%s is not writable by uid %d; systemd's Delegate= is what chowns a delegated subtree to the service user, and under a cgroup namespace the kernel's nsdelegate additionally refuses writes outside the namespace root, so an agentd running inside a container or a bubblewrap sandbox cannot create cgroups in a host hierarchy it can merely see. Configure the unit that owns that node with Delegate=cpu memory (agentd's own unit also needs DelegateSubgroup=%s, which keeps the delegated node process-free), or point --resource-delegation-dir at a delegated root that this user can write",
+		return fmt.Sprintf("%s is not writable by uid %d; systemd's Delegate= is what chowns a delegated subtree to the service user, and under a cgroup namespace the kernel's nsdelegate additionally refuses writes outside the namespace root. Configure the unit that owns that node with Delegate=cpu memory (agentd's own unit also needs DelegateSubgroup=%s, which keeps the delegated node process-free), or point --resource-delegation-dir at a delegated root that this user can write",
 			delegation, os.Geteuid(), resourceSupervisorCgroup)
 	}
-	cause := fmt.Sprintf("%s is the root of the mounted cgroup v2 hierarchy, which is never delegated", root)
-	if derived {
-		cause += fmt.Sprintf("; tclaude derived it because /proc/self/cgroup reports the unified path \"/\", which is what a container or an unshared cgroup namespace such as bubblewrap's --unshare-cgroup reports while %s still shows the host hierarchy", root)
-	}
-	return cause + fmt.Sprintf(". Run agentd outside any cgroup namespace as a systemd unit with Delegate=cpu memory, DelegateSubgroup=%s, and OOMPolicy=continue, or set --resource-delegation-dir to a delegated root that this user can write",
-		resourceSupervisorCgroup)
+	return fmt.Sprintf("tclaude derived the delegated parent from /proc/self/cgroup and got %s, the root of the mounted hierarchy, which uid %d cannot write — what an agentd inside a container or an unshared cgroup namespace sees when the host hierarchy is mounted there. The kernel's nsdelegate then refuses writes to every cgroup outside the namespace root, so no other path under that mount would serve either. Run agentd outside that namespace as a systemd unit with Delegate=cpu memory, DelegateSubgroup=%s, and OOMPolicy=continue, or give the namespace a delegated, writable cgroup root",
+		root, os.Geteuid(), resourceSupervisorCgroup)
 }
 
 func wrapResourceLimitedCommand(
@@ -151,7 +155,6 @@ func wrapResourceLimitedCommand(
 // pane-owned harnesses call it through wrapResourceLimitedCommand.
 func PrepareResourceCgroup(sessionID string, limits sandboxpolicy.ResourceLimits) (string, func(), error) {
 	delegation := configuredResourceDelegationDir()
-	derived := false
 	if delegation != "" {
 		validated, err := ValidateResourceDelegationDir(delegation)
 		if err != nil {
@@ -164,7 +167,6 @@ func PrepareResourceCgroup(sessionID string, limits sandboxpolicy.ResourceLimits
 			return "", func() {}, fmt.Errorf("resource limits unavailable: %w", err)
 		}
 		delegation = resourceDelegationDir(current)
-		derived = true
 	}
 	controllersRaw, err := os.ReadFile(filepath.Join(delegation, "cgroup.controllers"))
 	if err != nil {
@@ -196,8 +198,8 @@ func PrepareResourceCgroup(sessionID string, limits sandboxpolicy.ResourceLimits
 	}
 	if len(toEnable) > 0 {
 		if err := os.WriteFile(filepath.Join(delegation, "cgroup.subtree_control"), []byte(strings.Join(toEnable, " ")), 0o644); err != nil {
-			if errors.Is(err, os.ErrPermission) {
-				return "", func() {}, fmt.Errorf("enable delegated cgroup v2 controllers %s: %w (%s)", strings.Join(needed, ", "), err, resourceDelegationDeniedHint(delegation, derived))
+			if delegationWriteRefused(err) {
+				return "", func() {}, fmt.Errorf("enable delegated cgroup v2 controllers %s: %w (%s)", strings.Join(needed, ", "), err, resourceDelegationDeniedHint(delegation))
 			}
 			return "", func() {}, fmt.Errorf("enable delegated cgroup v2 controllers %s: %w (the external --resource-delegation-dir runtime needs Delegate=cpu memory, or tclaude-agentd.service needs Delegate=cpu memory and DelegateSubgroup=%s; a delegated node that still holds processes cannot enable controllers at all, which is what DelegateSubgroup avoids)", strings.Join(needed, ", "), err, resourceSupervisorCgroup)
 		}
@@ -205,8 +207,8 @@ func PrepareResourceCgroup(sessionID string, limits sandboxpolicy.ResourceLimits
 	digest := sha256.Sum256([]byte(sessionID))
 	dir := filepath.Join(delegation, fmt.Sprintf("tclaude-%x", digest[:10]))
 	if err := os.Mkdir(dir, 0o755); err != nil {
-		if errors.Is(err, os.ErrPermission) {
-			return "", func() {}, fmt.Errorf("create resource cgroup for session %q: %w (%s)", sessionID, err, resourceDelegationDeniedHint(delegation, derived))
+		if delegationWriteRefused(err) {
+			return "", func() {}, fmt.Errorf("create resource cgroup for session %q: %w (%s)", sessionID, err, resourceDelegationDeniedHint(delegation))
 		}
 		if !errors.Is(err, os.ErrExist) {
 			return "", func() {}, fmt.Errorf("create resource cgroup for session %q: %w", sessionID, err)
