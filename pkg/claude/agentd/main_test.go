@@ -42,6 +42,10 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		panic(fmt.Sprintf("create isolated agentd test tmux base: %v", err))
 	}
+	tmuxBase, err = filepath.EvalSymlinks(tmuxBase)
+	if err != nil {
+		panic(fmt.Sprintf("canonicalize isolated agentd test tmux base: %v", err))
+	}
 	if err := os.Setenv("TMUX_TMPDIR", tmuxBase); err != nil {
 		panic(fmt.Sprintf("set isolated agentd test TMUX_TMPDIR: %v", err))
 	}
