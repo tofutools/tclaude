@@ -133,6 +133,7 @@ function OpaqueTerminalHost({
   onSelectionChange,
   onComposeMessage,
   onDisconnect,
+  disconnectNotice = null,
 }) {
   const hostRef = useRef(null);
   const widgetRef = useRef(null);
@@ -161,7 +162,7 @@ function OpaqueTerminalHost({
     };
   }, [descriptor.id]);
   useLayoutEffect(() => widgetRef.current?.setActive(active), [active, activationToken]);
-  return html`<div class=${className}><div ref=${hostRef} class=${fitClassName}></div></div>`;
+  return html`<div class=${className}><div ref=${hostRef} class=${fitClassName}></div>${disconnectNotice}</div>`;
 }
 
 function CopyButton({ className, id, hasSelection, actions, runtimeID }) {
@@ -177,6 +178,19 @@ function CopyButton({ className, id, hasSelection, actions, runtimeID }) {
       aria-label=${label}
       onClick=${() => void actions.widgetFor(runtimeID)?.copy()}
     >Copy</button>
+  `;
+}
+
+function TerminalDisconnectNotice() {
+  return html`
+    <div class="mux-terminal-disconnect-overlay" role="alert" aria-live="assertive">
+      <div class="mux-terminal-disconnect-card">
+        <div class="mux-terminal-disconnect-icon" aria-hidden="true">⚠️</div>
+        <h2 class="mux-terminal-disconnect-title">Terminal disconnected</h2>
+        <p class="mux-terminal-disconnect-body">This terminal is no longer connected.</p>
+        <p class="mux-terminal-disconnect-status">Use Reconnect above to try again.</p>
+      </div>
+    </div>
   `;
 }
 
@@ -268,6 +282,7 @@ function TerminalPane({
         onReconnectChange=${setReconnect}
         onSelectionChange=${setHasSelection}
         onComposeMessage=${composeMessage}
+        disconnectNotice=${status === 'disconnected' && reconnect ? html`<${TerminalDisconnectNotice} />` : null}
       />
     </div>
   `;

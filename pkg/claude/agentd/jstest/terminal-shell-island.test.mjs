@@ -296,6 +296,43 @@ test('dashboard terminal feature owns three hosts while preserving opaque xterm 
   assert.equal(modalHost.childElementCount, 0);
 });
 
+test('a disconnected active pane gets a terminal-area notice while keeping Reconnect in the header', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { host, badgeHost, modalHost } = installHosts(harness);
+  const fake = fakeWidgetFactory(harness);
+  const { mountTerminalsFeature } = await harness.importDashboardModule('js/preact-loader.js');
+  const controller = await harness.importDashboardModule('js/terminals-tab.js');
+  const cleanup = await mountTerminalsFeature({ widgetFactory: fake.factory });
+
+  await harness.act(async () => {
+    controller.openTerminalPane({ ws: '/disconnected', key: 'disconnected', label: 'disconnected' });
+    await Promise.resolve();
+  });
+  const pane = host.querySelector('.mux-pane.active');
+  assertAbsent(pane.querySelector('.mux-terminal-disconnect-overlay'),
+    'the initial disconnected status does not show a notice before the widget settles');
+
+  await harness.act(() => {
+    fake.widgets[0].options.onStatus('disconnected');
+    fake.widgets[0].options.onReconnectChange(true);
+  });
+  const notice = pane.querySelector('.mux-terminal-disconnect-overlay');
+  assert.ok(notice, 'a settled disconnect is obvious in the terminal area');
+  assert.equal(notice.getAttribute('role'), 'alert');
+  assert.equal(notice.querySelector('.mux-terminal-disconnect-title').textContent, 'Terminal disconnected');
+  assert.ok(getByRole(pane, 'button', { name: 'Reconnect' }),
+    'the existing header reconnect control remains available above the notice');
+  assert.equal(notice.parentElement.classList.contains('mux-pane-xterm'), true,
+    'the notice is scoped to the xterm area rather than the whole pane');
+
+  await harness.act(() => fake.widgets[0].options.onStatus('connected'));
+  assertAbsent(pane.querySelector('.mux-terminal-disconnect-overlay'),
+    'reconnecting removes the terminal-area notice');
+  cleanup();
+  assert.equal(badgeHost.childElementCount, 0);
+  assert.equal(modalHost.childElementCount, 0);
+});
+
 test('background pane open and focus leave the current dashboard tab visible', async (t) => {
   const harness = await createPreactHarness(t);
   const { host, badgeHost, terminals } = installHosts(harness);

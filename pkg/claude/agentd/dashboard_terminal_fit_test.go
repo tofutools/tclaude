@@ -91,7 +91,7 @@ func TestDashboardTerminalFitContainerWiring(t *testing.T) {
 
 	shell := readDashboardJS(t, "terminal-shell-island.js")
 	for _, want := range []string{
-		"return html`<div class=${className}><div ref=${hostRef} class=${fitClassName}></div></div>`;",
+		"return html`<div class=${className}><div ref=${hostRef} class=${fitClassName}></div>${disconnectNotice}</div>`;",
 		`className="mux-pane-xterm"`,
 		`fitClassName="mux-pane-xterm-fit"`,
 		`className="term-session-xterm"`,

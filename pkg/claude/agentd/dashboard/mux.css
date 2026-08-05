@@ -255,7 +255,10 @@
 .mux-palette-toggle[hidden] { display: none; }
 .mux-palette-toggle input { margin: 0; accent-color: #8b6dd6; cursor: pointer; }
 
-.mux-pane-xterm { flex: 1; min-height: 0; padding: 6px 6px 0; overflow: hidden; }
+.mux-pane-xterm {
+  position: relative;
+  flex: 1; min-height: 0; padding: 6px 6px 0; overflow: hidden;
+}
 /* FitAddon measures .xterm's direct parent. The inner box fills the host's
    CONTENT area, so the top/side visual inset is excluded from row/column
    sizing without becoming xterm padding (which draws a black frame and
@@ -271,6 +274,45 @@
 .mux-pane-xterm .xterm-viewport { scrollbar-width: none; }
 .mux-pane-xterm .xterm-viewport::-webkit-scrollbar { display: none; }
 .mux-pane-xterm .xterm-scrollable-element > .scrollbar { display: none; }
+
+/* A settled terminal disconnect needs a stronger cue than the small status
+   label in the header. Keep the curtain inside the xterm host so the pane's
+   header — especially its Reconnect control — stays available. The same pane
+   chrome is used by the dashboard tab and the standalone terminal pop-out. */
+.mux-terminal-disconnect-overlay {
+  position: absolute; inset: 0; z-index: 2;
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px;
+  background: rgba(13, 17, 23, 0.78);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+}
+.mux-terminal-disconnect-card {
+  width: min(440px, calc(100% - 48px));
+  padding: 28px 24px;
+  text-align: center;
+  color: #c9d1d9;
+  background: #21262d;
+  border: 2px solid #f85149;
+  border-radius: 12px;
+  box-shadow: 0 0 0 4px rgba(248, 81, 73, 0.22), 0 18px 60px rgba(0, 0, 0, 0.7);
+  animation: mux-terminal-disconnect-pulse 1.6s ease-in-out infinite;
+}
+@keyframes mux-terminal-disconnect-pulse {
+  0%, 100% { box-shadow: 0 0 0 4px rgba(248, 81, 73, 0.18), 0 18px 60px rgba(0, 0, 0, 0.7); }
+  50% { box-shadow: 0 0 0 9px rgba(248, 81, 73, 0.40), 0 18px 60px rgba(0, 0, 0, 0.7); }
+}
+.mux-terminal-disconnect-icon { font-size: 48px; line-height: 1; margin-bottom: 10px; }
+.mux-terminal-disconnect-title {
+  margin: 0 0 10px; font-size: 22px; font-weight: 700; color: #f85149;
+}
+.mux-terminal-disconnect-body {
+  margin: 0 0 12px; font-size: 14px; line-height: 1.5; color: #adbac7;
+}
+.mux-terminal-disconnect-status { margin: 0; font-size: 13px; color: #7d8590; }
+@media (prefers-reduced-motion: reduce) {
+  .mux-terminal-disconnect-card { animation: none; }
+}
 
 /* Wizard terminal chrome. This lives in the shared widget sheet so a
    terminal popped into its own browser tab keeps the same portal frame. The
