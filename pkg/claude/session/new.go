@@ -1766,7 +1766,10 @@ func runNew(params *NewParams) error {
 	// reopens beneath a deny (workspace, Git admin paths, agent directories), so
 	// an authored `deny ~` with no reopen of its own still renders as a split
 	// policy and must be gated as one.
-	if !outerLayer {
+	// The LATE gate, over rendered rules rather than authored ones. It needs the
+	// same unconfined arm as its early twin above: the rendered shape is no more
+	// enforceable than the authored one when nothing is enforcing.
+	if !outerLayer && !unconfined {
 		if err := harness.ValidateSandboxReopenUnderDeny(h.Name, effectiveHarnessBuiltinMode,
 			sandboxpolicy.GrantsFromDirs(launchReadDirs, launchWriteDirs, launchDenyDirs)); err != nil {
 			return err

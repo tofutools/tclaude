@@ -1442,8 +1442,13 @@ func UnconfinedAccessRulesNotice(
 		Axis:   "access_rules",
 		Reason: AccessNoticeReasonUnconfinedImplementation,
 		Effect: AccessNoticeEffectNotEnforced,
+		// Deliberately says nothing about what IS enforced. This predicate
+		// admits every unconfined implementation, and they do not agree on
+		// that: `resource-only` holds a CPU/memory cgroup, `off` refuses
+		// limits outright. Naming one implementation's guarantee in a message
+		// the other can reach is how a disclosure becomes false later.
 		Detail: fmt.Sprintf(
-			"sandbox implementation %q enforces no access confinement; the resolved profile chain's filesystem, network and socket rules are recorded but NOT enforced for this launch. Only its CPU/memory limits are.",
+			"sandbox implementation %q enforces no access confinement; the resolved profile chain's filesystem, network and socket rules are recorded but NOT enforced for this launch.",
 			implementation),
 	}, true
 }

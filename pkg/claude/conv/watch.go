@@ -2459,7 +2459,30 @@ func resumeLaunchCmdWithStackedProof(
 	}
 	session.ApplyAutoCompactWindowEnv(h, autoCompactWindow, resumeEnv)
 	harnessBuiltinMode, resumeCwd := resumeSandboxState(convID)
-	if effectiveSandbox != nil && !outerLayer &&
+	// An implementation that confines nothing has nothing to reassert. The block
+	// below plans enforcement, and PlanAccessEnforcement correctly refuses a
+	// closed network that no mechanism can hold — which is the right answer for
+	// every caller that expected a wall, and the wrong question for one that
+	// declared it has none. Without this, resuming a resource-only conversation
+	// whose chain carries a modern deny-baseline `network:` block fails with
+	// sandbox_profile_changed, on both `tclaude conv resume` and watch's
+	// auto-resume, even though the same chain spawns fine.
+	//
+	// The rules are still disclosed, in the same words a fresh launch uses, so
+	// a resumed pane does not look quieter than the one it replaced.
+	unconfined := implementation.OmitsOSConfinement()
+	if effectiveSandbox != nil && unconfined {
+		if notice, ok := sandboxpolicy.UnconfinedAccessRulesNotice(
+			implementation, effectiveProfile,
+		); ok {
+			effectiveProfile.AccessNotices = sandboxpolicy.ReplaceAccessDegradationNotices(
+				effectiveProfile.AccessNotices, notice,
+			)
+			effectiveSandbox.Effective.AccessNotices = append(
+				[]sandboxpolicy.AccessNotice(nil), effectiveProfile.AccessNotices...)
+		}
+	}
+	if effectiveSandbox != nil && !outerLayer && !unconfined &&
 		(effectiveProfile.Network != nil || effectiveProfile.UnixSockets != nil) {
 		// Standalone conversation/watch resume does not pass through agentd's
 		// lifecycle planner. Reassert the persisted access intent here with no
@@ -2527,21 +2550,26 @@ func resumeLaunchCmdWithStackedProof(
 		return "", "", nil, err
 	}
 	approvalPolicy, autoReview := approvalState.Policy, approvalState.AutoReview
-	if !outerLayer {
+	// The resume-side twins of the session-new capability gates, and they need
+	// the same answer: each asks whether the harness's own sandbox can REPRESENT
+	// a rule, which is not the question for an implementation that stood every
+	// access boundary down on purpose. Leaving them un-gated is what made a
+	// resource-only conversation spawnable but not resumable.
+	if !outerLayer && !unconfined {
 		if err := harness.ValidateSandboxReopenUnderDeny(h.Name, harnessBuiltinMode, launchGrants); err != nil {
 			return "", "", nil, err
 		}
 	}
-	if !outerLayer && h.Name == harness.DefaultName && len(denyDirs) > 0 && harnessBuiltinMode != harness.ClaudeSandboxOn {
+	if !outerLayer && !unconfined && h.Name == harness.DefaultName && len(denyDirs) > 0 && harnessBuiltinMode != harness.ClaudeSandboxOn {
 		return "", "", nil, fmt.Errorf("unsupported_sandbox_profile_filesystem: Claude filesystem deny rules require sandbox %s", harness.ClaudeSandboxOn)
 	}
-	if !outerLayer && networkAccess != sandboxpolicy.NetworkAccessInherit && h.Name != harness.CodexName {
+	if !outerLayer && !unconfined && networkAccess != sandboxpolicy.NetworkAccessInherit && h.Name != harness.CodexName {
 		return "", "", nil, fmt.Errorf("unsupported_sandbox_profile_network: network policies are currently supported only by the Codex managed sandbox")
 	}
-	if !outerLayer && networkAccess != sandboxpolicy.NetworkAccessInherit && harnessBuiltinMode != harness.SandboxManagedProfile {
+	if !outerLayer && !unconfined && networkAccess != sandboxpolicy.NetworkAccessInherit && harnessBuiltinMode != harness.SandboxManagedProfile {
 		return "", "", nil, fmt.Errorf("unsupported_sandbox_profile_network: codex network rules require sandbox %s", harness.SandboxManagedProfile)
 	}
-	if !outerLayer && networkAccess != sandboxpolicy.NetworkAccessInherit {
+	if !outerLayer && !unconfined && networkAccess != sandboxpolicy.NetworkAccessInherit {
 		if err := harness.ValidateCodexAgentNetworkAccess(networkAccess); err != nil {
 			return "", "", nil, fmt.Errorf("unsupported_sandbox_profile_network: %w", err)
 		}
@@ -2593,7 +2621,7 @@ func resumeLaunchCmdWithStackedProof(
 	// above can introduce a reopen beneath a deny that the authored profile did
 	// not contain. Mirrors the spawn path.
 	renderedGrants := sandboxpolicy.GrantsFromDirs(readDirs, writeDirs, denyDirs)
-	if !outerLayer {
+	if !outerLayer && !unconfined {
 		if err := harness.ValidateSandboxReopenUnderDeny(h.Name, harnessBuiltinMode, renderedGrants); err != nil {
 			return "", "", nil, err
 		}
@@ -2677,7 +2705,7 @@ func resumeLaunchCmdWithStackedProof(
 			spec.ExecutablePath = splitCapability.ExecutablePath
 		}
 		cleanupPath = profilePath
-	} else if !outerLayer && h.Name == harness.CodexName && len(readDirs)+len(writeDirs)+len(denyDirs) > 0 {
+	} else if !outerLayer && !unconfined && h.Name == harness.CodexName && len(readDirs)+len(writeDirs)+len(denyDirs) > 0 {
 		return "", "", nil, fmt.Errorf("unsupported_sandbox_profile_filesystem: Codex filesystem rules require sandbox %s", harness.SandboxManagedProfile)
 	}
 	if splitCapability != nil {

@@ -2,8 +2,8 @@ package agentd
 
 import (
 	"fmt"
-	"runtime"
 	"net/http"
+	"runtime"
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"

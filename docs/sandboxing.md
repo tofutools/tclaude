@@ -179,6 +179,12 @@ the limits to arrive. Instead the launch records a `not_enforced` access notice
 naming the implementation, and the access-enforcement preview reports `None` on
 every axis.
 
+This holds on all three seams that plan access — the daemon spawn path, a
+direct `tclaude session new`, and `tclaude conv resume` (including watch's
+auto-resume). A `resource-only` conversation that spawns under a given chain
+always resumes under it; the notice is attached identically either way, so a
+resumed pane never looks quieter than the one it replaced.
+
 Two things are still refused rather than degraded, because neither is a rule
 that merely fails to apply:
 
