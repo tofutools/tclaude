@@ -134,6 +134,15 @@ const (
 	// snapshot carries this exact notice through the forked session launcher;
 	// profiles cannot author it.
 	AccessNoticeReasonOperatorUnenforcedLaunchOverride = "operator_unenforced_launch_override"
+	// AccessNoticeReasonUnconfinedImplementation records that the resolved
+	// profile chain authored access rules which the selected implementation
+	// confines nothing to enforce them with. It exists for `resource-only`,
+	// whose chain must keep resolving because resource_limits travel in it,
+	// and which therefore inherits whatever filesystem/network rules a global
+	// or group profile already carried. Those rules are inert; the operator
+	// has to be told so, because a resolved profile that shows up in the
+	// snapshot otherwise reads as a policy in force.
+	AccessNoticeReasonUnconfinedImplementation = "unconfined_implementation"
 	// AccessNoticeReasonProxyEngineNoProxyOverride carries the proxy engine's
 	// proxy-environment ownership: an inherited NO_PROXY/no_proxy is overridden
 	// to empty inside the sandbox rather than honored or refused over. It is

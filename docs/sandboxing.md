@@ -168,10 +168,28 @@ The two unconfined implementations differ on exactly one axis:
 limits rather than quietly applying them.
 
 A `resource-only` launch still resolves the sandbox-profile chain, because that
-chain is what carries `resource_limits`. Any filesystem, network, or socket
-rules in the resolved profile are therefore authored but **not enforced**, and
-the access-enforcement preview says so: every access axis reports `None`, and
-the disclosed mechanism reads `sandbox off; cgroup resource limits only`.
+chain is what carries `resource_limits`. The chain is the whole stack — global,
+then group, then the explicit profile — so a `resource-only` agent generally
+inherits whatever filesystem and network rules are already assigned globally.
+
+Those rules are **recorded but not enforced**. The launch is not refused for
+them: refusing would make the implementation unreachable for anyone whose
+global profile carries a network rule, while the chain still has to resolve for
+the limits to arrive. Instead the launch records a `not_enforced` access notice
+naming the implementation, and the access-enforcement preview reports `None` on
+every axis.
+
+Two things are still refused rather than degraded, because neither is a rule
+that merely fails to apply:
+
+- **Remapped mount paths** (`mount_path`), which need a mount namespace that no
+  cgroup provides — the authored sandbox path would simply be empty.
+- **The implementation off Linux**, where no cgroup can be created at all.
+
+`resource-only` is also excluded from the dashboard's **restart without
+sandbox** action. That action trades access confinement away, and this
+implementation has none to trade — the only thing it would remove is the
+CPU/memory ceiling, which is the opposite of what the action means.
 
 When agentd is run as a systemd service, its unit must delegate the required
 controllers to an otherwise empty parent. With systemd 254 or newer, configure

@@ -327,14 +327,15 @@ func accessEnforcementTable(
 	filteredNetworkReady bool,
 ) (accessEnforcementTableRow, error) {
 	if implementation.OmitsOSConfinement() {
-		// `resource-only` enforces nothing on any access axis, so it shares
-		// every verdict below. Only the mechanism string differs, and it must:
-		// the disclosure names what is actually running, and a cgroup that
-		// caps CPU and memory is running.
-		mechanism := "sandbox off"
-		if implementation == sandboxpolicy.ImplementationResourceOnly {
-			mechanism = "sandbox off; cgroup resource limits only"
-		}
+		// `resource-only` shares every verdict AND the mechanism string with
+		// `off`. It is tempting to name its cgroup here, but this table only
+		// ever sees the access axes — never the resolved ResourceLimits — so a
+		// mechanism naming a cgroup would also be emitted for a resource-only
+		// launch whose chain configures no limits, and on a platform where
+		// none can be created. That is a claim about enforcement that may not
+		// exist, in the one place the operator relies on to learn what is
+		// running. The limits disclose themselves where they are known: the
+		// effective-context memory/CPU fields, and the launch-time notices.
 		return accessEnforcementTableRow{
 			NetworkClosed: EnforceNone,
 			NetworkList:   EnforceNone,
@@ -342,7 +343,7 @@ func accessEnforcementTable(
 			SocketClosed:  EnforceNone,
 			SocketList:    EnforceNone,
 			Scope:         "process",
-			Mechanism:     mechanism,
+			Mechanism:     "sandbox off",
 		}, nil
 	}
 	if implementation.UsesTclaudeLayer() {

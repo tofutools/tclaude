@@ -631,15 +631,24 @@ func runNew(params *NewParams) error {
 	); err != nil {
 		return err
 	}
-	if !outerLayer && len(sandboxSnapshotActiveFilesystem(launchSandbox)) > 0 &&
+	// An implementation that confines nothing is not asked whether the harness
+	// can represent a rule: it has stood every access boundary down on purpose,
+	// so the rules below are inert rather than unsupported. Refusing here would
+	// make the implementation unreachable for any operator whose global or
+	// group profile already carries such a rule, while the chain itself must
+	// keep resolving because resource_limits travel in it. This mirrors the
+	// daemon seam's arm in sandboxProfileCapabilityFailure; mount paths are
+	// still refused above, where an empty authored path is a real failure.
+	unconfined := sandboxImplementation.OmitsOSConfinement()
+	if !outerLayer && !unconfined && len(sandboxSnapshotActiveFilesystem(launchSandbox)) > 0 &&
 		h.Name == harness.CodexName && params.PermissionProfile != harness.CodexAgentProfile {
 		return fmt.Errorf("unsupported_sandbox_profile_filesystem: codex filesystem rules require sandbox %s", harness.SandboxManagedProfile)
 	}
-	if !outerLayer && len(sandboxSnapshotDirs(launchSandbox, sandboxpolicy.AccessDeny)) > 0 &&
+	if !outerLayer && !unconfined && len(sandboxSnapshotDirs(launchSandbox, sandboxpolicy.AccessDeny)) > 0 &&
 		h.Name == harness.DefaultName && harnessBuiltinMode != harness.ClaudeSandboxOn {
 		return fmt.Errorf("unsupported_sandbox_profile_filesystem: Claude filesystem deny rules require sandbox %s", harness.ClaudeSandboxOn)
 	}
-	if !outerLayer && len(sandboxSnapshotActiveFilesystem(launchSandbox)) > 0 &&
+	if !outerLayer && !unconfined && len(sandboxSnapshotActiveFilesystem(launchSandbox)) > 0 &&
 		h.Name == harness.OpenCodeName && harnessBuiltinMode != harness.OpenCodeSandboxAccessControl {
 		return fmt.Errorf("unsupported_sandbox_profile_filesystem: OpenCode filesystem rules require soft access-control mode %s", harness.OpenCodeSandboxAccessControl)
 	}
@@ -658,7 +667,7 @@ func runNew(params *NewParams) error {
 		effectiveHarnessBuiltinMode = harness.SandboxManagedProfile
 	}
 	launchFilesystem := sandboxSnapshotActiveFilesystem(launchSandbox)
-	if !outerLayer {
+	if !outerLayer && !unconfined {
 		if err := harness.ValidateSandboxReopenUnderDeny(h.Name, effectiveHarnessBuiltinMode, launchFilesystem); err != nil {
 			return err
 		}
@@ -666,7 +675,7 @@ func runNew(params *NewParams) error {
 	networkAccess := sandboxSnapshotNetworkAccess(launchSandbox)
 	hasNewAccessAxes := launchSandbox != nil &&
 		(launchSandbox.Effective.Network != nil || launchSandbox.Effective.UnixSockets != nil)
-	if networkAccess != sandboxpolicy.NetworkAccessInherit && !hasNewAccessAxes && !outerLayer {
+	if networkAccess != sandboxpolicy.NetworkAccessInherit && !hasNewAccessAxes && !outerLayer && !unconfined {
 		switch h.Name {
 		case harness.CodexName:
 			if params.PermissionProfile != harness.CodexAgentProfile {

@@ -175,6 +175,29 @@ func sandboxProfileCapabilityFailure(
 		// layer's network transport assertion and renders the mount plan.
 		return nil
 	}
+	if implementation.OmitsOSConfinement() {
+		// Every gate below asks whether the harness's own sandbox can REPRESENT
+		// a rule, and answers by refusing when it cannot. That question is not
+		// posed here: this implementation has already stood every access
+		// boundary down on purpose, so no rule is represented and none is
+		// claimed to be.
+		//
+		// Refusing would make the implementation unreachable rather than safe.
+		// The resolved snapshot is the whole chain — global, group, then the
+		// explicit profile — and it must keep resolving because
+		// `resource_limits` travel in it. An operator whose global profile
+		// carries any network rule (or, on Codex/OpenCode, any filesystem rule)
+		// would otherwise be unable to launch a resource-only agent at all,
+		// without authoring a second limits-only chain for the purpose.
+		//
+		// The rules are inert, not honored: planSandboxProfileAccessForLaunch
+		// records an explicit not-enforced notice, and the access-enforcement
+		// table reports None on every axis. Mount paths are deliberately still
+		// refused above — a remapped grant needs a mount namespace, and leaving
+		// the authored sandbox path empty is a different failure from a rule
+		// that simply does not apply.
+		return nil
+	}
 	// The capability gate runs FIRST and unconditionally: a reopen-under-deny
 	// shape must be refused by a harness that cannot enforce it even when the
 	// profile carries no other rules. Approximating it would hand the operator a
@@ -240,6 +263,40 @@ func sandboxProfileCapabilityFailure(
 	}
 }
 
+// unconfinedAccessRulesNotice reports the disclosure owed when an
+// implementation that confines nothing resolves a chain that authored access
+// rules anyway. It is silent when the chain carries none, so a limits-only
+// profile does not acquire a warning about rules it never had.
+func unconfinedAccessRulesNotice(
+	implementation sandboxpolicy.Implementation,
+	snapshot *sandboxpolicy.Snapshot,
+) (sandboxpolicy.AccessNotice, bool) {
+	if !implementation.OmitsOSConfinement() || snapshot == nil {
+		return sandboxpolicy.AccessNotice{}, false
+	}
+	filesystem, err := sandboxpolicy.FilesystemForLaunch(snapshot.Effective)
+	if err != nil {
+		filesystem = nil
+	}
+	authored := len(filesystem) > 0 ||
+		len(snapshot.Effective.AgentDirectories) > 0 ||
+		snapshot.Effective.Network != nil ||
+		snapshot.Effective.UnixSockets != nil ||
+		snapshot.Effective.NetworkAccess != sandboxpolicy.NetworkAccessInherit
+	if !authored {
+		return sandboxpolicy.AccessNotice{}, false
+	}
+	return sandboxpolicy.AccessNotice{
+		Class:  sandboxpolicy.AccessNoticeClassDegradation,
+		Axis:   "access_rules",
+		Reason: sandboxpolicy.AccessNoticeReasonUnconfinedImplementation,
+		Effect: sandboxpolicy.AccessNoticeEffectNotEnforced,
+		Detail: fmt.Sprintf(
+			"sandbox implementation %q enforces no access confinement; the resolved profile chain's filesystem, network and socket rules are recorded but NOT enforced for this launch. Only its CPU/memory limits are.",
+			implementation),
+	}, true
+}
+
 func planSandboxProfileAccessForLaunch(
 	harnessName, harnessBuiltinMode string,
 	snapshot *sandboxpolicy.Snapshot,
@@ -272,6 +329,12 @@ func planSandboxProfileAccessForLaunch(
 		})
 		snapshot.Effective.AccessNotices = sandboxpolicy.ReplaceAccessDegradationNotices(
 			snapshot.Effective.AccessNotices, resourceNotices...)
+	}
+	if notice, ok := unconfinedAccessRulesNotice(implementation, snapshot); ok {
+		resourceNotices = append(resourceNotices, notice)
+		snapshot.Effective.AccessNotices = sandboxpolicy.ReplaceAccessDegradationNotices(
+			snapshot.Effective.AccessNotices, resourceNotices...)
+		return resourceNotices, nil
 	}
 	if snapshot.Effective.Network == nil && snapshot.Effective.UnixSockets == nil {
 		return resourceNotices, nil

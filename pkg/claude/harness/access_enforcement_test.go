@@ -1453,11 +1453,14 @@ func TestResourceOnlyPredictionCreditsNoAccessEnforcement(t *testing.T) {
 			assert.Equal(t, off.NetworkClosed, resourceOnly.NetworkClosed)
 			assert.Equal(t, off.SocketClosed, resourceOnly.SocketClosed)
 
-			assert.Equal(t, "sandbox off; cgroup resource limits only",
-				resourceOnly.Mechanism,
-				"the mechanism must say both halves: no confinement, and a real cgroup")
-			assert.NotEqual(t, off.Mechanism, resourceOnly.Mechanism,
-				"a limits-only launch must not be disclosed as a plain sandbox-off launch")
+			// The mechanism must NOT name a cgroup. This table never sees the
+			// resolved ResourceLimits, so any such claim would also be made
+			// for a resource-only launch that configures no limits, and on a
+			// platform where none can exist.
+			assert.Equal(t, "sandbox off", resourceOnly.Mechanism)
+			assert.Equal(t, off.Mechanism, resourceOnly.Mechanism,
+				"on the access axes the two postures are identical, and the "+
+					"disclosure must not imply enforcement this table cannot see")
 		})
 	}
 }
