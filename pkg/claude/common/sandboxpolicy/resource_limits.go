@@ -85,6 +85,16 @@ func NormalizeResourceLimits(in ResourceLimits) (ResourceLimits, error) {
 	return out, nil
 }
 
+// ResourceCgroupRequested reports whether a launch has to create the per-agent
+// cgroup. An authored ceiling requires one, and so does `resource-only` with no
+// ceiling at all: that spelling exists for the cgroup itself, so a limitless
+// resource-only launch is an accounting boundary — per-agent counters, OOM
+// attribution through memory.events, and a kill handle for the whole workload
+// tree — rather than the silent no-op it would otherwise be.
+func ResourceCgroupRequested(limits ResourceLimits, implementation Implementation) bool {
+	return limits.Enabled() || implementation == ImplementationResourceOnly
+}
+
 // ValidateResourceLimitTarget checks the MVP's product compatibility boundary.
 // Host controller/delegation probes are deliberately separate and run only at
 // the Linux launch seam.
@@ -96,10 +106,14 @@ func NormalizeResourceLimits(in ResourceLimits) (ResourceLimits, error) {
 // stays refused so that the spelling meaning "tclaude enforces nothing here"
 // keeps meaning exactly that.
 func ValidateResourceLimitTarget(limits ResourceLimits, implementation Implementation, platform string) error {
-	if !limits.Enabled() {
+	if !ResourceCgroupRequested(limits, implementation) {
 		return nil
 	}
 	if platform != "linux" {
+		if !limits.Enabled() {
+			return fmt.Errorf("sandbox implementation %s needs Linux cgroup v2 for its per-agent cgroup; %s launches cannot create one",
+				ImplementationResourceOnly, platform)
+		}
 		return fmt.Errorf("resource limits are Linux only; %s launches cannot enforce this profile", platform)
 	}
 	if implementation == ImplementationOff {

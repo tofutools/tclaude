@@ -58,6 +58,32 @@ func TestSpawn_ResourceOnlyCarriesLimitsToLaunch(t *testing.T) {
 			"it must survive into the launch snapshot")
 }
 
+// resource-only with nothing authored used to be a silent no-op: no ceiling
+// meant no cgroup, which made the implementation indistinguishable from `off`.
+// It now means the accounting boundary, so the spawn must succeed and stay
+// recorded as resource-only rather than being resolved away.
+func TestSpawn_ResourceOnlyWithoutLimitsStillLaunches(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+
+	spawn := f.AsHuman().SpawnWith("crew", map[string]any{
+		"name":                   "accounted",
+		"sandbox_implementation": "resource-only",
+	})
+	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+
+	implementation, ok := f.World.SpawnSandboxImplementation(spawn.ConvID)
+	require.True(t, ok)
+	assert.Equal(t, "resource-only", implementation,
+		"the launch keeps the implementation whose only boundary is the cgroup")
+
+	row, err := db.FindSessionByConvID(spawn.ConvID)
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	assert.Equal(t, string(sandboxpolicy.ImplementationResourceOnly), row.SandboxImplementation,
+		"a flagless resume must reach the same accounting boundary")
+}
+
 // The regression the cold review caught. The resolved chain is global + group +
 // explicit profile, and resource_limits travel in that same chain — so a
 // resource-only launch must tolerate access rules it inherited rather than

@@ -211,6 +211,58 @@ func TestWrapResourceLimitedCommandRequiresOnlyConfiguredController(t *testing.T
 	assert.Equal(t, "memory", string(enabled), "already-enabled controller is not rewritten")
 }
 
+func TestPrepareResourceCgroupCreatesAccountingBoundaryWithoutLimits(t *testing.T) {
+	current := fakeCurrentResourceCgroup(t, "cpu memory io", "")
+
+	dir, cleanup, err := PrepareResourceCgroup("accounting-only", sandboxpolicy.ResourceLimits{})
+	require.NoError(t, err)
+	t.Cleanup(cleanup)
+	assert.Equal(t, current, filepath.Dir(dir))
+	assert.NoFileExists(t, filepath.Join(dir, "memory.max"), "no ceiling was authored")
+	assert.NoFileExists(t, filepath.Join(dir, "cpu.max"))
+	enabled, err := os.ReadFile(filepath.Join(current, "cgroup.subtree_control"))
+	require.NoError(t, err)
+	// The counters and the memory.events OOM attribution are the whole point, and
+	// both need their controller enabled in the parent.
+	assert.Equal(t, "+memory +cpu", string(enabled))
+	require.NoError(t, ValidatePreparedResourceCgroup(dir, sandboxpolicy.ResourceLimits{}),
+		"a limitless boundary must still validate for a managed-server relaunch")
+}
+
+func TestPrepareResourceCgroupAccountingDegradesWhenControllerIsMissing(t *testing.T) {
+	current := fakeCurrentResourceCgroup(t, "memory io", "")
+
+	dir, cleanup, err := PrepareResourceCgroup("accounting-partial", sandboxpolicy.ResourceLimits{})
+	require.NoError(t, err, "a missing controller costs counters, not enforcement, so it must not refuse")
+	t.Cleanup(cleanup)
+	assert.DirExists(t, dir)
+	enabled, err := os.ReadFile(filepath.Join(current, "cgroup.subtree_control"))
+	require.NoError(t, err)
+	assert.Equal(t, "+memory", string(enabled), "only the delegated controller is enabled")
+}
+
+func TestPrepareResourceCgroupAccountingSurvivesUnwritableSubtreeControl(t *testing.T) {
+	current := fakeCurrentResourceCgroup(t, "cpu memory", "")
+	readOnlyCgroupNode(t, filepath.Join(current, "cgroup.subtree_control"))
+
+	dir, cleanup, err := PrepareResourceCgroup("accounting-no-controllers", sandboxpolicy.ResourceLimits{})
+	require.NoError(t, err, "the boundary is still worth creating for its process tracking")
+	t.Cleanup(cleanup)
+	assert.DirExists(t, dir)
+}
+
+func TestWrapResourceLimitedCommandWrapsPaneWithoutLimits(t *testing.T) {
+	fakeCurrentResourceCgroup(t, "cpu memory", "cpu memory")
+
+	wrapped, cleanup, err := wrapResourceLimitedCommand(
+		"accounting-pane", sandboxpolicy.ResourceLimits{}, "exec harness", false)
+	require.NoError(t, err)
+	t.Cleanup(cleanup)
+	assert.Contains(t, wrapped, "resource-limit-exec",
+		"the pane must still join the boundary, or nothing is accounted to it")
+	assert.Contains(t, wrapped, "exec harness")
+}
+
 func TestWrapResourceLimitedCommandFailsWhenControllerIsNotDelegated(t *testing.T) {
 	fakeCurrentResourceCgroup(t, "memory", "")
 	cpu := 1.0
@@ -220,15 +272,15 @@ func TestWrapResourceLimitedCommandFailsWhenControllerIsNotDelegated(t *testing.
 	assert.ErrorContains(t, err, "Delegate=cpu memory")
 }
 
-// readOnlyCgroupNode makes a prepared cgroup directory reject creation the way
-// an undelegated node does for an unprivileged launch.
-func readOnlyCgroupNode(t *testing.T, dir string) {
+// readOnlyCgroupNode makes a prepared cgroup directory or interface file reject
+// writes the way an undelegated node does for an unprivileged launch.
+func readOnlyCgroupNode(t *testing.T, path string) {
 	t.Helper()
 	if os.Geteuid() == 0 {
 		t.Skip("root may write an undelegated cgroup node, so the denial cannot be simulated")
 	}
-	require.NoError(t, os.Chmod(dir, 0o555))
-	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+	require.NoError(t, os.Chmod(path, 0o555))
+	t.Cleanup(func() { _ = os.Chmod(path, 0o755) })
 }
 
 // fakeDerivedResourceCgroup pins the unified path this process appears to be in,

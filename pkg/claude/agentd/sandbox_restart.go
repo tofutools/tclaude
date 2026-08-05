@@ -92,13 +92,13 @@ func dashboardSandboxRestartAgent(w http.ResponseWriter, r *http.Request, convSe
 		// harness-builtin and rebuild the snapshot through
 		// temporarySandboxLaunchSnapshot, which zeroes ResourceLimits — so the
 		// only thing this action would actually remove from a resource-only
-		// agent is its CPU/memory ceiling, under a label that says sandbox.
-		// Refuse instead of silently lifting the one budget it enforces.
+		// agent is its per-agent cgroup, under a label that says sandbox.
+		// Refuse instead of silently dropping the one boundary it applies.
 		if implementation, implErr := sandboxpolicy.NormalizeImplementation(
 			normal.SandboxImplementation,
 		); implErr == nil && implementation == sandboxpolicy.ImplementationResourceOnly {
 			writeError(w, http.StatusConflict, "unsupported",
-				fmt.Sprintf("this agent runs under sandbox implementation %q, which already has no OS-level access confinement to unlock; restarting without a sandbox would only remove the CPU/memory limits it does enforce",
+				fmt.Sprintf("this agent runs under sandbox implementation %q, which already has no OS-level access confinement to unlock; restarting without a sandbox would only remove the per-agent cgroup it does apply",
 					implementation))
 			return
 		}

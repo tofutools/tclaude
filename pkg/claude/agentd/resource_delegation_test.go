@@ -271,6 +271,31 @@ func mustFileMode(t *testing.T, path string) os.FileMode {
 	return info.Mode().Perm()
 }
 
+func TestManagedServerPreparesAccountingCgroupForLimitlessResourceOnly(t *testing.T) {
+	setupTestDB(t)
+	t.Setenv("TMUX", "")
+	accounting := "/sys/fs/cgroup/system.slice/tclaude-agentd.service/tclaude-accounting"
+	previousPrepare := prepareResourceCgroup
+	prepareResourceCgroup = func(sessionID string, limits sandboxpolicy.ResourceLimits) (string, func(), error) {
+		assert.False(t, limits.Enabled(), "no ceiling was authored; the cgroup itself is the request")
+		return accounting, func() {}, nil
+	}
+	t.Cleanup(func() { prepareResourceCgroup = previousPrepare })
+	snapshot := &sandboxpolicy.Snapshot{}
+
+	dir, _, err := prepareManagedServerResourceCgroup("managed-accounting", snapshot,
+		string(sandboxpolicy.ImplementationResourceOnly), false)
+	require.NoError(t, err)
+	assert.Equal(t, accounting, dir,
+		"a managed server under resource-only must join the boundary its implementation names")
+
+	dir, _, err = prepareManagedServerResourceCgroup("managed-unbounded", snapshot,
+		string(sandboxpolicy.ImplementationHarnessBuiltin), false)
+	require.NoError(t, err)
+	assert.Empty(t, dir,
+		"an unauthored profile under any other implementation keeps the previous launch path")
+}
+
 func TestManagedServerDropsStoredCgroupFromPreviousDelegationBeforeReprepare(t *testing.T) {
 	setupTestDB(t)
 	t.Setenv("TMUX", "")
@@ -293,7 +318,7 @@ func TestManagedServerDropsStoredCgroupFromPreviousDelegationBeforeReprepare(t *
 	}}
 
 	dir, _, err := prepareManagedServerResourceCgroup(
-		"managed-old-cgroup", snapshot, false)
+		"managed-old-cgroup", snapshot, string(sandboxpolicy.ImplementationHarnessBuiltin), false)
 	require.NoError(t, err)
 	assert.Equal(t, "/sys/fs/cgroup/system.slice/tclaude-tmux.service/tclaude-new", dir)
 	stored, lookupErr := db.GetOpenCodeRuntime("managed-old-cgroup")

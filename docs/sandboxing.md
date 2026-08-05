@@ -133,20 +133,23 @@ with no confinement at all (see below). They do not make the guest report a
 smaller machine;
 interfaces such as `/proc/meminfo` may still describe host memory.
 
-Leaving both fields blank preserves the previous launch path exactly: tclaude
-does not probe controllers, create a cgroup, or add a wrapper. Configured limits
-are Linux-only in this MVP. A macOS launch, an `off` implementation, or a Linux
-host without usable delegated cgroup v2 controllers refuses by default. The
-dashboard's existing **allow launch without enforcement** checkbox is the
-operator-controlled escape hatch and records a visible degradation notice.
+Leaving both fields blank preserves the previous launch path exactly — tclaude
+does not probe controllers, create a cgroup, or add a wrapper — for every
+implementation except `resource-only`, which creates the cgroup either way (see
+"A cgroup with no ceiling" below). Configured limits are Linux-only in this MVP.
+A macOS launch, an `off` implementation, or a Linux host without usable delegated
+cgroup v2 controllers refuses by default. The dashboard's existing **allow launch
+without enforcement** checkbox is the operator-controlled escape hatch and
+records a visible degradation notice.
 
 ### Limits without confinement: the `resource-only` implementation
 
 `resource-only` is the sandbox implementation for operators who want a per-agent
-CPU/memory budget and no access confinement at all. It creates and joins the
-same cgroup every other implementation uses, and it uses no bubblewrap, no
-namespaces, and no harness-native sandbox: the harness launches under its own
-no-confinement mode, exactly as under `off`.
+cgroup — a CPU/memory budget, or just the accounting boundary — and no access
+confinement at all. It creates and joins the same cgroup every other
+implementation uses, and it uses no bubblewrap, no namespaces, and no
+harness-native sandbox: the harness launches under its own no-confinement mode,
+exactly as under `off`.
 
 Reach for it when the goal is blast-radius control rather than confinement — a
 runaway browser or build under one agent should not be able to exhaust host
@@ -159,13 +162,41 @@ want no wall; `resource-only` trades confinement away, it does not add anything
 
 The two unconfined implementations differ on exactly one axis:
 
-| | access confinement | `resource_limits` |
-|---|---|---|
-| `off` | none | refused |
-| `resource-only` | none | enforced in a per-launch cgroup |
+| | access confinement | `resource_limits` | with no limits authored |
+|---|---|---|---|
+| `off` | none | refused | nothing |
+| `resource-only` | none | enforced in a per-launch cgroup | per-launch cgroup, no ceiling |
 
 `off` keeps meaning "tclaude enforces nothing here", which is why it refuses
 limits rather than quietly applying them.
+
+#### A cgroup with no ceiling
+
+`resource-only` with no `resource_limits` authored anywhere in the chain is not a
+no-op — that spelling exists for the cgroup itself, so the launch gets the
+boundary without a ceiling. What that buys:
+
+- per-agent accounting: `memory.current`, `memory.peak`, `cpu.stat`,
+  `pids.current` for the whole workload tree, under a cgroup named for the
+  session;
+- OOM attribution: `memory.events`' `oom_kill` counter includes kills by the
+  *host* OOM killer, so tclaude's `resource_limit_oom` exit reason fires for an
+  agent the host killed under memory pressure, not only for one that hit its own
+  `memory.max`;
+- a kill handle for every process the agent started, however it daemonized.
+
+Both the `cpu` and `memory` controllers are enabled in the delegated parent so
+those counters exist. Unlike a ceiling, a controller the delegation does not
+carry is *not* a refusal here: it costs visibility, not enforcement, so the
+launch proceeds and logs which counters are unavailable. The cgroup itself is
+still required — if it cannot be created, a `resource-only` launch has no
+boundary at all and is refused, with **allow launch without enforcement** as the
+operator's escape hatch, exactly as for a ceiling.
+
+This changed behavior: before, `resource-only` with no limits silently created
+nothing and was indistinguishable from `off`. A conversation recorded that way
+now creates its cgroup on the next launch, and fails if the host has no
+delegation for it.
 
 A `resource-only` launch still resolves the sandbox-profile chain, because that
 chain is what carries `resource_limits`. The chain is the whole stack — global,

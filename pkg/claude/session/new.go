@@ -1914,7 +1914,8 @@ func runNew(params *NewParams) error {
 			resourceCgroupCleanup()
 		}
 	}()
-	if launchSandbox != nil && launchSandbox.Effective.ResourceLimits.Enabled() &&
+	if launchSandbox != nil && sandboxpolicy.ResourceCgroupRequested(
+		launchSandbox.Effective.ResourceLimits, sandboxImplementation) &&
 		!resourceLimitsAlreadyOverridden(launchSandbox.Effective.AccessNotices) {
 		if err := sandboxpolicy.ValidateResourceLimitTarget(
 			launchSandbox.Effective.ResourceLimits, sandboxImplementation, runtime.GOOS,

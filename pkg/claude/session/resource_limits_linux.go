@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -114,6 +115,17 @@ func configuredResourceDelegationDir() string {
 	return ExternalResourceDelegationDir()
 }
 
+// enableDelegatedControllers turns on the controllers a workload cgroup needs in
+// its parent. An empty request writes nothing: cgroup.subtree_control is not
+// idempotent to rewrite, and an already-enabled controller must stay untouched.
+func enableDelegatedControllers(delegation string, toEnable []string) error {
+	if len(toEnable) == 0 {
+		return nil
+	}
+	return os.WriteFile(filepath.Join(delegation, "cgroup.subtree_control"),
+		[]byte(strings.Join(toEnable, " ")), 0o644)
+}
+
 // delegationWriteRefused reports the failures that mean the delegated node
 // itself rejected the write rather than the requested limit being wrong: a
 // missing delegation, or a hierarchy the sandbox mounted read-only.
@@ -185,23 +197,43 @@ func PrepareResourceCgroup(sessionID string, limits sandboxpolicy.ResourceLimits
 			return "", func() {}, fmt.Errorf("resource limits require delegated cgroup v2 %s controller; configure the external --resource-delegation-dir runtime with Delegate=cpu memory, or configure tclaude-agentd.service with Delegate=cpu memory and DelegateSubgroup=%s", controller, resourceSupervisorCgroup)
 		}
 	}
+	wanted := append([]string{}, needed...)
+	if !limits.Enabled() {
+		// An accounting-only boundary wants both axes' counters, but neither is a
+		// ceiling: a controller this delegation does not carry costs the operator
+		// visibility rather than enforcement, so it degrades instead of refusing.
+		for _, controller := range []string{"memory", "cpu"} {
+			if containsString(available, controller) {
+				wanted = append(wanted, controller)
+				continue
+			}
+			slog.Warn("resource cgroup: delegated subtree does not carry a controller; its per-agent counters stay unavailable",
+				"session_id", sessionID, "controller", controller, "delegation", delegation)
+		}
+	}
 	enabledRaw, err := os.ReadFile(filepath.Join(delegation, "cgroup.subtree_control"))
 	if err != nil {
 		return "", func() {}, fmt.Errorf("inspect delegated cgroup controllers: %w", err)
 	}
 	enabled := strings.Fields(string(enabledRaw))
 	toEnable := []string{}
-	for _, controller := range needed {
+	for _, controller := range wanted {
 		if !containsString(enabled, controller) {
 			toEnable = append(toEnable, "+"+controller)
 		}
 	}
-	if len(toEnable) > 0 {
-		if err := os.WriteFile(filepath.Join(delegation, "cgroup.subtree_control"), []byte(strings.Join(toEnable, " ")), 0o644); err != nil {
-			if delegationWriteRefused(err) {
-				return "", func() {}, fmt.Errorf("enable delegated cgroup v2 controllers %s: %w (%s)", strings.Join(needed, ", "), err, resourceDelegationDeniedHint(delegation))
-			}
-			return "", func() {}, fmt.Errorf("enable delegated cgroup v2 controllers %s: %w (the external --resource-delegation-dir runtime needs Delegate=cpu memory, or tclaude-agentd.service needs Delegate=cpu memory and DelegateSubgroup=%s; a delegated node that still holds processes cannot enable controllers at all, which is what DelegateSubgroup avoids)", strings.Join(needed, ", "), err, resourceSupervisorCgroup)
+	if err := enableDelegatedControllers(delegation, toEnable); err != nil {
+		switch {
+		case !limits.Enabled():
+			// No ceiling depends on these controllers, and the boundary is still
+			// worth creating for its process tracking and OOM attribution.
+			slog.Warn("resource cgroup: cannot enable delegated controllers for accounting; per-agent counters stay unavailable",
+				"session_id", sessionID, "delegation", delegation,
+				"controllers", strings.Join(wanted, ", "), "error", err)
+		case delegationWriteRefused(err):
+			return "", func() {}, fmt.Errorf("enable delegated cgroup v2 controllers %s: %w (%s)", strings.Join(wanted, ", "), err, resourceDelegationDeniedHint(delegation))
+		default:
+			return "", func() {}, fmt.Errorf("enable delegated cgroup v2 controllers %s: %w (the external --resource-delegation-dir runtime needs Delegate=cpu memory, or tclaude-agentd.service needs Delegate=cpu memory and DelegateSubgroup=%s; a delegated node that still holds processes cannot enable controllers at all, which is what DelegateSubgroup avoids)", strings.Join(wanted, ", "), err, resourceSupervisorCgroup)
 		}
 	}
 	digest := sha256.Sum256([]byte(sessionID))

@@ -13,11 +13,18 @@ var prepareResourceCgroup = session.PrepareResourceCgroup
 func prepareManagedServerResourceCgroup(
 	sessionID string,
 	snapshot *sandboxpolicy.Snapshot,
+	rawImplementation string,
 	allowUnenforced bool,
 ) (string, func(), error) {
 	noop := func() {}
-	if snapshot == nil || !snapshot.Effective.ResourceLimits.Enabled() ||
-		hasResourceLimitOverride(snapshot.Effective.AccessNotices) {
+	if snapshot == nil || hasResourceLimitOverride(snapshot.Effective.AccessNotices) {
+		return "", noop, nil
+	}
+	implementation, err := sandboxpolicy.NormalizeImplementation(rawImplementation)
+	if err != nil {
+		return "", noop, fmt.Errorf("managed server sandbox implementation: %w", err)
+	}
+	if !sandboxpolicy.ResourceCgroupRequested(snapshot.Effective.ResourceLimits, implementation) {
 		return "", noop, nil
 	}
 	if existing, lookupErr := db.GetOpenCodeRuntime(sessionID); lookupErr != nil {
