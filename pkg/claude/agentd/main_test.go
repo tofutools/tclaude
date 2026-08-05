@@ -38,7 +38,10 @@ func TestMain(m *testing.M) {
 	// internal package agentd tests share this binary but cannot call the
 	// external-package fixture. Tests that need a specific TMUX_TMPDIR override
 	// it after this point; t.Setenv cleanup restores this isolated default.
-	tmuxBase, err := os.MkdirTemp("", "tclaude-agentd-test-tmux-")
+	// Use the short system temp root explicitly. macOS's ambient TMPDIR lives
+	// below /var/folders/...; adding tmux's own tmux-UID/socket suffix there can
+	// exceed the platform's Unix-socket path limit before a server can start.
+	tmuxBase, err := os.MkdirTemp("/tmp", "tclaude-agentd-")
 	if err != nil {
 		panic(fmt.Sprintf("create isolated agentd test tmux base: %v", err))
 	}
