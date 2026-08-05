@@ -116,6 +116,10 @@ test('menu filter puts name hits before descriptive-text hits', async (t) => {
 
   const priorities = visible.map((item) => item.getAttribute(module.MATCH_PRIORITY_ATTR));
   assert.deepEqual(priorities, ['1', '1', '2', '2']);
+  assert.deepEqual(visible.map((item) => item.getAttribute('aria-posinset')),
+    ['1', '2', '3', '4'], 'assistive technology gets the ranked visual positions');
+  assert.deepEqual(visible.map((item) => item.getAttribute('aria-setsize')),
+    ['4', '4', '4', '4']);
 });
 
 test('menu filter preserves authored order within each match group', async (t) => {
@@ -140,6 +144,10 @@ test('menu filter hides separators only while a query is live', async (t) => {
 
   module.applyMenuFilter(menu, '');
   assert.equal(separator.hasAttribute(module.FILTERED_OUT_ATTR), false);
+  for (const item of module.menuItems(menu)) {
+    assert.equal(item.hasAttribute('aria-posinset'), false);
+    assert.equal(item.hasAttribute('aria-setsize'), false);
+  }
 });
 
 test('resetActive restores the untouched menu, cursor included', async (t) => {

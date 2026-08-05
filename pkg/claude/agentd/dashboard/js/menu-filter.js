@@ -69,6 +69,8 @@ export const EMPTY_ATTR = 'data-menu-empty';
 export const MATCH_PRIORITY_ATTR = 'data-menu-match-priority';
 const NAME_MATCH_PRIORITY = 1;
 const DETAIL_MATCH_PRIORITY = 2;
+const POS_IN_SET_ATTR = 'aria-posinset';
+const SET_SIZE_ATTR = 'aria-setsize';
 
 function toggleAttr(el, name, on) {
   if (on) el.setAttribute(name, '1');
@@ -244,6 +246,22 @@ export function applyMenuFilter(menu, query, { input, resetActive = false } = {}
     if (matched) visible.push(item);
   }
   visible = visible.sort((a, b) => matchPriority(a) - matchPriority(b));
+  // CSS `order` supplies the two visual groups without moving Preact-owned DOM
+  // nodes. Publish that same logical order to assistive technology: otherwise
+  // a screen reader following the keyboard cursor would encounter authored DOM
+  // positions while the highlighted row moves through the ranked visual list.
+  // Clear the override with the query so the untouched menu returns to its
+  // ordinary DOM-derived set semantics.
+  for (const item of items) {
+    item.removeAttribute(POS_IN_SET_ATTR);
+    item.removeAttribute(SET_SIZE_ATTR);
+  }
+  if (normalized) {
+    visible.forEach((item, index) => {
+      item.setAttribute(POS_IN_SET_ATTR, String(index + 1));
+      item.setAttribute(SET_SIZE_ATTR, String(visible.length));
+    });
+  }
   for (const separator of menu.querySelectorAll(MENU_SEPARATOR_SELECTOR)) {
     toggleAttr(separator, FILTERED_OUT_ATTR, !!normalized);
   }
