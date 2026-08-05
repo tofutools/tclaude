@@ -3459,9 +3459,9 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	if autoTrustSiblingWorktree {
 		trustDir = true
 	}
-	if spawnerConvID != "" && trustDir && !autoTrustSiblingWorktree {
-		writeError(w, http.StatusForbidden, "trust_dir_restricted",
-			"agent-initiated spawns may pre-trust only tclaude's verified default sibling worktrees; leave trust_dir off or ask the human to spawn this child")
+	if spawnerConvID != "" && trustDir && !autoTrustSiblingWorktree &&
+		!callerOwnedDirTrust(spawnerConvID, cwd) {
+		writeError(w, http.StatusForbidden, "trust_dir_restricted", trustDirRestrictedMessage)
 		return
 	}
 
@@ -4701,9 +4701,9 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	if autoTrustSiblingWorktree {
 		p.TrustDir = true
 	}
-	if p.SpawnedByConv != "" && p.TrustDir && !autoTrustSiblingWorktree {
-		return nil, &spawnFailure{http.StatusForbidden, "trust_dir_restricted",
-			"agent-initiated spawns may pre-trust only tclaude's verified default sibling worktrees; leave trust_dir off or ask the human to spawn this child"}
+	if p.SpawnedByConv != "" && p.TrustDir && !autoTrustSiblingWorktree &&
+		!callerOwnedDirTrust(p.SpawnedByConv, p.Cwd) {
+		return nil, &spawnFailure{http.StatusForbidden, "trust_dir_restricted", trustDirRestrictedMessage}
 	}
 	// Judges the LAUNCH mode for the same reason handleGroupSpawn does: the
 	// guard must reason about the posture the child's row will carry, which for

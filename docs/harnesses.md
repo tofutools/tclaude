@@ -1256,11 +1256,16 @@ own, so it is deliberately narrow:
   for every harness with a trust dialog, so a freshly cut worktree doesn't
   stall.
 - **Agents cannot widen it.** An agent-initiated spawn may pre-trust *only*
-  such a sibling worktree; any other path it names is a `trust_dir_restricted`
-  refusal. Ask a human to spawn that child instead. Note the layout check is
-  paired with the dir write-proof, which independently requires the agent to
-  prove write access to the worktree's Git admin dir — the two together are the
-  guard, not the naming convention on its own.
+  such a sibling worktree, or a directory the calling agent already works in —
+  its own start dir, the dir its edits are landing in, or any subdirectory of
+  either. Any other path it names is a `trust_dir_restricted` refusal; ask a
+  human to spawn that child instead. Both exemptions are paired with the dir
+  write-proof, which independently requires the agent to prove write access to
+  the child's launch dir (and, for a worktree, its Git admin dir) — the pairing
+  is the guard, not the naming convention or the containment test on its own.
+  The caller-owned form only *permits* pre-trust; unlike a fresh sibling
+  worktree it is never forced on, because a directory the caller already lives
+  in is normally trusted already.
 - **Conservative writes.** Atomic (temp + rename), idempotent (an
   already-trusted dir is a clean no-op), and fail-safe — a config shape the
   editor cannot edit safely is refused rather than corrupted.
