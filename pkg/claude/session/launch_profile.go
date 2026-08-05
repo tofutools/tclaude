@@ -132,32 +132,28 @@ func applyGlobalDefaultLaunchProfileWithLookPath(
 	}
 	profileMatchesHarness := profileHarness == h.Name
 
-	if !explicit.has("model") && strings.TrimSpace(params.Model) == "" {
+	// Model and effort belong to one harness's catalog. A global profile for a
+	// different harness is ambient configuration, not intent for this launch,
+	// so it must not supply either field even when the resolved harness has a
+	// permissive validator. Copilot deliberately accepts future/brokered model
+	// tokens, which otherwise lets a Claude default such as opus[1m] leak into
+	// `tclaude --harness copilot` and reach `copilot --model`.
+	if profileMatchesHarness && !explicit.has("model") && strings.TrimSpace(params.Model) == "" {
 		if raw := strings.TrimSpace(prof.Model); raw != "" {
 			value, validateErr := h.Models.ValidateModel(raw)
-			switch {
-			case validateErr == nil:
-				params.Model = value
-			case profileMatchesHarness:
+			if validateErr != nil {
 				return fmt.Errorf("global default spawn profile %q: %w", prof.Name, validateErr)
-			default:
-				slog.Warn("session new: ignored global default profile model for a different harness",
-					"profile", prof.Name, "harness", h.Name, "model", raw)
 			}
+			params.Model = value
 		}
 	}
-	if !explicit.has("effort") && strings.TrimSpace(params.Effort) == "" {
+	if profileMatchesHarness && !explicit.has("effort") && strings.TrimSpace(params.Effort) == "" {
 		if raw := strings.TrimSpace(prof.Effort); raw != "" {
 			value, validateErr := h.Models.ValidateEffort(raw)
-			switch {
-			case validateErr == nil:
-				params.Effort = value
-			case profileMatchesHarness:
+			if validateErr != nil {
 				return fmt.Errorf("global default spawn profile %q: %w", prof.Name, validateErr)
-			default:
-				slog.Warn("session new: ignored global default profile effort for a different harness",
-					"profile", prof.Name, "harness", h.Name, "effort", raw)
 			}
+			params.Effort = value
 		}
 	}
 	return nil
