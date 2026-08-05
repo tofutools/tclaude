@@ -223,8 +223,9 @@ func TestBwrapProtectedRehideFailsClosedOnUnresolvedIdentity(t *testing.T) {
 func TestBwrapRefusalGuardsRefuseFoldedVariantSpellings(t *testing.T) {
 	err := validateTclaudeLayerHarnessStateRules(
 		"/nonexistent-tcl985/state/claude",
+		sandboxpolicy.AccessWrite,
 		[]sandboxpolicy.FilesystemGrant{
-			{Path: "/nonexistent-tcl985/State/Claude/sessions", Access: sandboxpolicy.AccessWrite},
+			{Path: "/nonexistent-tcl985/State/Claude/sessions", Access: sandboxpolicy.AccessRead},
 		},
 	)
 	require.Error(t, err)
@@ -232,6 +233,7 @@ func TestBwrapRefusalGuardsRefuseFoldedVariantSpellings(t *testing.T) {
 
 	require.NoError(t, validateTclaudeLayerHarnessStateRules(
 		"/nonexistent-tcl985/state/claude",
+		sandboxpolicy.AccessWrite,
 		[]sandboxpolicy.FilesystemGrant{
 			{Path: "/nonexistent-tcl985/elsewhere", Access: sandboxpolicy.AccessWrite},
 		},

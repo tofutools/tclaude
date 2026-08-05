@@ -514,7 +514,42 @@ func TestWrapTclaudeLayerRefusesProfileRuleWithinHarnessState(t *testing.T) {
 		ProfileFilesystem: []sandboxpolicy.FilesystemGrant{offending},
 	}, "agent")
 	require.ErrorContains(t, err, stateRoot)
-	require.ErrorContains(t, err, "cannot persist harness state")
+	require.ErrorContains(t, err, "requires write access")
+	require.ErrorContains(t, err, "conflicting harness-state authority")
+}
+
+func TestValidateTclaudeLayerHarnessStateRulesAllowsEquivalentAccess(t *testing.T) {
+	stateRoot := "/var/lib/harness"
+
+	for _, grant := range []sandboxpolicy.FilesystemGrant{
+		{Path: stateRoot, Access: sandboxpolicy.AccessWrite},
+		{Path: filepath.Join(stateRoot, "cache"), Access: sandboxpolicy.AccessWrite},
+	} {
+		require.NoError(t, validateTclaudeLayerHarnessStateRules(
+			stateRoot, sandboxpolicy.AccessWrite,
+			[]sandboxpolicy.FilesystemGrant{grant}),
+			"a write rule inside a writable contract root is redundant, not conflicting")
+	}
+
+	for _, access := range []sandboxpolicy.Access{
+		sandboxpolicy.AccessRead,
+		sandboxpolicy.AccessDeny,
+	} {
+		err := validateTclaudeLayerHarnessStateRules(
+			stateRoot, sandboxpolicy.AccessWrite,
+			[]sandboxpolicy.FilesystemGrant{{Path: stateRoot, Access: access}})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "requires write access")
+	}
+
+	require.NoError(t, validateTclaudeLayerHarnessStateRules(
+		stateRoot, sandboxpolicy.AccessRead,
+		[]sandboxpolicy.FilesystemGrant{{Path: stateRoot, Access: sandboxpolicy.AccessRead}}),
+		"a read rule inside a read-only contract root is likewise redundant")
+	require.Error(t, validateTclaudeLayerHarnessStateRules(
+		stateRoot, sandboxpolicy.AccessRead,
+		[]sandboxpolicy.FilesystemGrant{{Path: stateRoot, Access: sandboxpolicy.AccessWrite}}),
+		"a write rule must not broaden a read-only harness-state contract")
 }
 
 func TestBuildTclaudeLayerLaunchSpecMaterializesSharedContract(t *testing.T) {

@@ -1439,11 +1439,20 @@ func tclaudeLayerSpecRenderInput(
 	if err != nil {
 		return nil, nil, nil, nil, nil, sandboxpolicy.MountPlan{}, err
 	}
-	stateRoots := append([]string{phase0WriteDirs[0]}, spec.Contract.StateDirs...)
-	stateRoots = append(stateRoots, spec.Contract.ReadOnlyStateDirs...)
-	for _, stateRoot := range stateRoots {
+	writableStateRoots := append([]string{phase0WriteDirs[0]}, spec.Contract.StateDirs...)
+	for _, stateRoot := range writableStateRoots {
 		if err := validateTclaudeLayerHarnessStateRules(
 			stateRoot,
+			sandboxpolicy.AccessWrite,
+			spec.Contract.ProfileFilesystem,
+		); err != nil {
+			return nil, nil, nil, nil, nil, sandboxpolicy.MountPlan{}, err
+		}
+	}
+	for _, stateRoot := range spec.Contract.ReadOnlyStateDirs {
+		if err := validateTclaudeLayerHarnessStateRules(
+			stateRoot,
+			sandboxpolicy.AccessRead,
 			spec.Contract.ProfileFilesystem,
 		); err != nil {
 			return nil, nil, nil, nil, nil, sandboxpolicy.MountPlan{}, err
@@ -1480,7 +1489,8 @@ func tclaudeLayerSpecRenderInput(
 				}
 			}
 			if err := validateTclaudeLayerHarnessStateRules(
-				path, spec.Contract.ProfileFilesystem); err != nil {
+				path, sandboxpolicy.AccessRead,
+				spec.Contract.ProfileFilesystem); err != nil {
 				return nil, nil, nil, nil, nil, sandboxpolicy.MountPlan{}, err
 			}
 		}
@@ -1631,7 +1641,8 @@ func PrepareTclaudeLayerHarnessState(spec TclaudeLayerLaunchSpec) error {
 			return fmt.Errorf("tclaude-layer harness state path %q is not absolute", path)
 		}
 		if err := validateTclaudeLayerHarnessStateRules(
-			path, spec.Contract.ProfileFilesystem); err != nil {
+			path, sandboxpolicy.AccessWrite,
+			spec.Contract.ProfileFilesystem); err != nil {
 			return err
 		}
 		for _, protected := range protectedRoots {
@@ -1686,7 +1697,8 @@ func PrepareTclaudeLayerHarnessState(spec TclaudeLayerLaunchSpec) error {
 				path, stateRoot)
 		}
 		if err := validateTclaudeLayerHarnessStateRules(
-			path, spec.Contract.ProfileFilesystem); err != nil {
+			path, sandboxpolicy.AccessRead,
+			spec.Contract.ProfileFilesystem); err != nil {
 			return err
 		}
 		for _, protected := range protectedRoots {
@@ -2677,23 +2689,33 @@ func appendTclaudeLayerContractRepairs(
 
 // validateTclaudeLayerHarnessStateRules is guard-biased like the protected-root
 // checks around it, but the trade it makes is a different one and worth naming.
-// Its refusal is FUNCTIONAL rather than a containment deny: it refuses a launch
-// that could not persist harness state. So an over-refusal here costs a failed
-// launch with a clear error, not a spuriously hidden path. The direction is
-// still the safe one — a grant that reaches the state root only through a case
-// variant would silently defeat the rule — but do not read the surrounding
-// protected-root rationale onto it.
+// Its refusal is FUNCTIONAL rather than a containment deny: it rejects an
+// ordinary profile rule that would change the access the launch contract needs
+// for harness state. A same-access row is redundant, not conflicting: profiles
+// commonly grant a shared cache writable for every harness, and Copilot's
+// generated baseline may independently require that exact cache writable.
+// Refusing the duplicate would make two compatible sources of authority less
+// composable than either source alone.
+//
+// The containment comparison remains guard-biased. If a case-folded spelling
+// might reach the state root, only the same required access is admitted; a
+// different access still refuses rather than silently changing the contract.
 func validateTclaudeLayerHarnessStateRules(
 	stateRoot string,
+	requiredAccess sandboxpolicy.Access,
 	profileFilesystem []sandboxpolicy.FilesystemGrant,
 ) error {
 	for _, grant := range profileFilesystem {
 		if sandboxpolicy.GuardContainsOrEqual(stateRoot, grant.Path) {
+			if grant.Access == requiredAccess {
+				continue
+			}
 			return fmt.Errorf(
-				"tclaude-layer profile filesystem rule %q (%s) is at or below harness state root %q; refusing a launch that cannot persist harness state",
+				"tclaude-layer profile filesystem rule %q (%s) is at or below harness state root %q, which requires %s access; refusing a launch with conflicting harness-state authority",
 				grant.Path,
 				grant.Access,
 				stateRoot,
+				requiredAccess,
 			)
 		}
 	}
