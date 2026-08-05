@@ -363,9 +363,11 @@ func preserveCopilotLiveBranches(row, cached *db.ConvIndexRow, live db.AgentWork
 		}
 		return
 	}
-	workspaceUpdated, _ := time.Parse(time.RFC3339, row.Modified)
-	if live.ConvID != "" && live.Branch != "" &&
-		(workspaceUpdated.IsZero() || !live.UpdatedAt.Before(workspaceUpdated)) {
+	// workspace.yaml.updated_at covers every metadata write (rename, summary,
+	// checkpoint, ...), not specifically a branch observation, so it cannot be
+	// compared meaningfully with the hook timestamp. Once a live workspace row
+	// exists, that hook-owned observation is the dashboard branch authority.
+	if live.ConvID != "" && live.Branch != "" {
 		row.GitBranch = live.Branch
 	}
 }

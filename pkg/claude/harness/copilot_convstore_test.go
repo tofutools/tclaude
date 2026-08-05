@@ -127,12 +127,12 @@ func TestCopilotConvStoreListsSessions(t *testing.T) {
 	assert.Positive(t, entry.FileSize)
 }
 
-func TestCopilotConvStoreSyncPreservesNewerLiveBranchAndStartup(t *testing.T) {
+func TestCopilotConvStoreSyncPreservesLiveBranchAndStartup(t *testing.T) {
 	home := copilotTestHome(t)
 	cwd := t.TempDir()
 	copilotSession(t, home, copilotTestID,
 		workspaceYAML(copilotTestID, cwd, "branch test", false,
-			"2026-08-03T19:08:12.442Z", "2026-08-03T19:08:13.219Z"),
+			"2026-08-03T19:08:12.442Z", "2026-08-03T19:10:13.219Z"),
 		copilotUserEvent("switch branches"))
 
 	initial := time.Date(2026, 8, 3, 19, 8, 12, 0, time.UTC)
@@ -155,7 +155,7 @@ func TestCopilotConvStoreSyncPreservesNewerLiveBranchAndStartup(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, row)
 	assert.Equal(t, "feature-live", row.GitBranch,
-		"an older workspace.yaml branch must not replace the hook snapshot")
+		"a later non-branch workspace.yaml update must not replace the hook snapshot")
 	assert.Equal(t, "main", row.GitBranchStartup,
 		"a cold metadata sync must not erase the immutable startup branch")
 }
