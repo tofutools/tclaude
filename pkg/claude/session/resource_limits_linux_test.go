@@ -219,6 +219,66 @@ func TestWrapResourceLimitedCommandFailsWhenControllerIsNotDelegated(t *testing.
 	assert.ErrorContains(t, err, "Delegate=cpu memory")
 }
 
+// readOnlyCgroupNode makes a prepared cgroup directory reject creation the way
+// an undelegated node does for an unprivileged launch.
+func readOnlyCgroupNode(t *testing.T, dir string) {
+	t.Helper()
+	if os.Geteuid() == 0 {
+		t.Skip("root may write an undelegated cgroup node, so the denial cannot be simulated")
+	}
+	require.NoError(t, os.Chmod(dir, 0o555))
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+}
+
+func TestPrepareResourceCgroupExplainsUndelegatedRootCgroup(t *testing.T) {
+	t.Setenv(ResourceDelegationDirEnv, "")
+	t.Setenv("TMUX", "")
+	oldRoot, oldProc := resourceCgroupRoot, resourceProcRoot
+	resourceCgroupRoot, resourceProcRoot = t.TempDir(), t.TempDir()
+	t.Cleanup(func() { resourceCgroupRoot, resourceProcRoot = oldRoot, oldProc })
+	// A container or an unshared cgroup namespace reports the unified path "/",
+	// so the derivation lands on the root of whatever is mounted there.
+	require.NoError(t, os.MkdirAll(filepath.Join(resourceProcRoot, "self"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(resourceProcRoot, "self", "cgroup"), []byte("0::/\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(resourceCgroupRoot, "cgroup.controllers"), []byte("cpu memory"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(resourceCgroupRoot, "cgroup.subtree_control"), []byte("cpu memory"), 0o644))
+	readOnlyCgroupNode(t, resourceCgroupRoot)
+
+	_, _, err := PrepareResourceCgroup("cgroup-test", sandboxpolicy.ResourceLimits{Memory: "256MB"})
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "root of the mounted cgroup v2 hierarchy")
+	assert.ErrorContains(t, err, "unshared cgroup namespace")
+	assert.ErrorContains(t, err, "DelegateSubgroup="+resourceSupervisorCgroup)
+}
+
+func TestPrepareResourceCgroupExplainsUnwritableDelegatedNode(t *testing.T) {
+	fakeCurrentResourceCgroup(t, "cpu memory", "memory")
+	external := filepath.Join(resourceCgroupRoot, "system.slice", "tclaude-tmux.service")
+	require.NoError(t, os.MkdirAll(external, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(external, "cgroup.controllers"), []byte("cpu memory"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(external, "cgroup.subtree_control"), []byte("cpu memory"), 0o644))
+	t.Setenv(ResourceDelegationDirEnv, external)
+	readOnlyCgroupNode(t, external)
+
+	_, _, err := PrepareResourceCgroup("cgroup-test", sandboxpolicy.ResourceLimits{Memory: "256MB"})
+	require.Error(t, err)
+	assert.ErrorContains(t, err, external+" is not writable by uid")
+	assert.ErrorContains(t, err, "nsdelegate")
+	assert.NotContains(t, err.Error(), "root of the mounted cgroup v2 hierarchy",
+		"an explicitly configured node must not be diagnosed as the hierarchy root")
+}
+
+func TestPrepareResourceCgroupExplainsUndelegatedControllerEnable(t *testing.T) {
+	current := fakeCurrentResourceCgroup(t, "cpu memory", "")
+	readOnlyCgroupNode(t, current)
+	require.NoError(t, os.Chmod(filepath.Join(current, "cgroup.subtree_control"), 0o444))
+
+	_, _, err := PrepareResourceCgroup("cgroup-test", sandboxpolicy.ResourceLimits{Memory: "256MB"})
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "enable delegated cgroup v2 controllers memory")
+	assert.ErrorContains(t, err, "Delegate=cpu memory")
+}
+
 func TestResourceDelegationDirUsesSystemdSupervisorParent(t *testing.T) {
 	assert.Equal(t, "/sys/fs/cgroup/system.slice/tclaude-agentd.service",
 		resourceDelegationDir("/sys/fs/cgroup/system.slice/tclaude-agentd.service/tclaude-supervisor"))
