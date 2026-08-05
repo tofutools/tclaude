@@ -90,6 +90,10 @@ func newFlow(t *testing.T) *testharness.Flow {
 	// the scenarios that DO wedge a pane from paying production seconds.
 	t.Cleanup(agentd.SetSoftExitEscalationTimingForTest(
 		20*time.Millisecond, 10*time.Millisecond, time.Millisecond))
+	// The escalation ladder's two OS-process rungs are neutralized BINARY-WIDE
+	// in TestMain, not here, because a default in this file would protect only
+	// the tests that call newFlow — and the internal `package agentd` tests
+	// reach the same ladder without it. See the comment there (TCL-1035).
 	// Neutralize the post-focus auto-tiling pass by default: a bulk focus
 	// now runs a tiling gate, and no flow test should read the developer's
 	// real config.json or move a real OS window as a side effect of one.
@@ -303,9 +307,15 @@ func restoreAfterBackgroundDrain(restore func()) {
 // Registration order matters and is why this takes t rather than being folded
 // into the setter. Cleanups run LIFO, so a hook installed AFTER newFlow gets
 // its restore run BEFORE newFlow's own drain — which is exactly the window
-// this closes. A hook installed BEFORE newFlow is already safe for the
-// opposite reason, and that is load-bearing rather than obvious: see
-// TestRetire_DeleteWorktreeUnkillableAgentPostsKeptNotice.
+// this closes. A hook installed BEFORE newFlow is safe from that window for
+// the opposite reason.
+//
+// "Before newFlow is safe" is about the RESTORE only, and it is not general
+// advice: for any hook newFlow or TestMain also sets, installing before them
+// means being silently overwritten. That is not hypothetical — it is what
+// TestRetire_DeleteWorktreeUnkillableAgentPostsKeptNotice used to do with the
+// escalation process pair, and why it now installs after newFlow through this
+// helper (TCL-1035).
 func cleanupAfterBackgroundDrain(t *testing.T, restore func()) {
 	t.Helper()
 	t.Cleanup(func() { restoreAfterBackgroundDrain(restore) })
