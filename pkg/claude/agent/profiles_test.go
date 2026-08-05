@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	commonTable "github.com/tofutools/tclaude/pkg/claude/common/table"
 )
 
 func boolPtr(b bool) *bool { return &b }
@@ -91,6 +92,27 @@ func TestRunProfilesLsPreservesFullNamesAndEmitsStableJSON(t *testing.T) {
 	require.Len(t, profiles, 2)
 	assert.Equal(t, "alpha", profiles[0].Name, "JSON list ordering is stable")
 	assert.Equal(t, "sonnet[250k]-high", profiles[1].Name)
+}
+
+func TestRunProfilesLsAlignsUnicodeNamesByTerminalWidth(t *testing.T) {
+	var calls []capturedReq
+	stubDaemon(t, &calls, ok(`[
+		{"name":"plain-profile","aliases":["plain-alias"]},
+		{"name":"配置🚀-profile-name","aliases":["unicode-alias"]}
+	]`))
+	var stdout, stderr bytes.Buffer
+	require.Equal(t, rcOK, runProfilesLs(&profilesLsParams{}, &stdout, &stderr), "stderr=%s", stderr.String())
+
+	var aliasColumns []int
+	for _, line := range strings.Split(stdout.String(), "\n") {
+		for _, alias := range []string{"plain-alias", "unicode-alias"} {
+			if index := strings.Index(line, alias); index >= 0 {
+				aliasColumns = append(aliasColumns, commonTable.StringWidth(line[:index]))
+			}
+		}
+	}
+	require.Len(t, aliasColumns, 2)
+	assert.Equal(t, aliasColumns[0], aliasColumns[1], "aliases stay aligned after Unicode profile names")
 }
 
 func TestProfilesLsExposesJSONFlagAndKeepsTableDefault(t *testing.T) {

@@ -12,6 +12,7 @@ import (
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
+	"github.com/tofutools/tclaude/pkg/claude/common/table"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/common"
 )
@@ -284,11 +285,11 @@ func runProfilesLs(p *profilesLsParams, stdout, stderr io.Writer) int {
 	}
 	nameWidth := 16
 	for _, p := range profiles {
-		if len(p.Name) > nameWidth {
-			nameWidth = len(p.Name)
+		if width := table.StringWidth(p.Name); width > nameWidth {
+			nameWidth = width
 		}
 	}
-	fmt.Fprintf(stdout, "%-*s  %-22s  %-8s  %-12s  %-7s  %-36s  %s\n", nameWidth, "NAME", "ALIASES", "HARNESS", "MODEL", "EFFORT", "STATUS", "DESCR")
+	fmt.Fprintf(stdout, "%s  %-22s  %-8s  %-12s  %-7s  %-36s  %s\n", table.PadRight("NAME", nameWidth), "ALIASES", "HARNESS", "MODEL", "EFFORT", "STATUS", "DESCR")
 	fmt.Fprintln(stdout, strings.Repeat("─", 144+nameWidth-16))
 	for _, p := range profiles {
 		status := "enabled"
@@ -297,8 +298,8 @@ func runProfilesLs(p *profilesLsParams, stdout, stderr io.Writer) int {
 		} else if p.OperatorOnly {
 			status = "👤 operator only"
 		}
-		fmt.Fprintf(stdout, "%-*s  %-22s  %-8s  %-12s  %-7s  %-36s  %s\n",
-			nameWidth, p.Name, truncate(dash(strings.Join(p.Aliases, ", ")), 22), truncate(dash(p.Harness), 8), truncate(dash(p.Model), 12),
+		fmt.Fprintf(stdout, "%s  %-22s  %-8s  %-12s  %-7s  %-36s  %s\n",
+			table.PadRight(p.Name, nameWidth), truncate(dash(strings.Join(p.Aliases, ", ")), 22), truncate(dash(p.Harness), 8), truncate(dash(p.Model), 12),
 			truncate(dash(p.Effort), 7), truncate(status, 36), truncate(p.Descr, 30))
 	}
 	return rcOK
