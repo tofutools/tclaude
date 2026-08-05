@@ -310,7 +310,7 @@ func TestReincarnate_TemporaryOffDisablesTclaudeOuterLayer(t *testing.T) {
 	require.Equalf(t, http.StatusOK, source.Code, "spawn body=%s", source.Raw)
 
 	override := harness.ClaudeSandboxOff
-	require.NoError(t, db.SetTemporarySandboxModeForConv(
+	require.NoError(t, db.SetTemporaryHarnessBuiltinModeForConv(
 		source.ConvID, harness.ClaudeSandboxOn,
 		string(sandboxpolicy.ImplementationTclaudeLayer), "", &override,
 	))

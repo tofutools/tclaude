@@ -159,7 +159,7 @@ type SpawnArgs struct {
 	RouteHelperGroupIDs                    []int64
 	RouteHelperProxyOnly                   bool
 
-	// Sandbox is the launch-time OS-sandbox mode for harnesses that take one
+	// Sandbox is the launch-time harness-builtin sandbox mode for harnesses that take one
 	// (Codex's --sandbox, or the managed-profile pseudo-mode); "" omits it. The
 	// daemon resolves it to the harness's secure default before spawning so a
 	// daemon-owned Codex agent runs sandboxed by default (JOH-192/JOH-207).

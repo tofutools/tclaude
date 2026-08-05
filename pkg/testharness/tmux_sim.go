@@ -1,6 +1,7 @@
 package testharness
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -117,6 +118,10 @@ type TmuxSim struct {
 	// pid). Re-registering the same name — the test stand-in for a resume
 	// reusing a conv-id-derived tmux name — therefore yields a DIFFERENT pid,
 	// which is exactly what the soft-exit retry's livePanePID guard keys on.
+	//
+	// It is a sequence number: the pane ID is "%<n>" and the pane PID is
+	// fakePaneBasePID + n, so pane-id spellings stay small and readable while
+	// no session is ever handed pid 1. See fakePaneBasePID.
 	nextPID int
 	// clients maps simulated client ttys to their attached sessions. Most
 	// flows have none; lifecycle handoff tests opt in through AttachClient.
@@ -152,6 +157,23 @@ type tmuxSession struct {
 	killResistant bool
 }
 
+// fakePaneBasePID keeps the sim's fake pane pids away from real, meaningful
+// ones — and away from 1 in particular.
+//
+// Production's escalation ladder signals the pane process's GROUP:
+// kill(-pgid, sig). A pane pid of 1 resolves to pgid 1, and kill(-1, …) is not
+// "an unlikely target", it is the kernel's wildcard for every process the
+// caller may signal. The sim used to number from 1, so the first session in
+// every scenario carried the one pid whose group spelling is catastrophic
+// (TCL-1035). The flow fixture now neutralizes the signal rungs by default,
+// which is the actual fix; this is defence in depth for the same failure, and
+// it costs nothing because no assertion reads these values — scenarios that
+// care set their own via SetPaneIdentityForTest.
+//
+// Pane IDs are deliberately NOT rebased: they stay %1, %2, … so nothing that
+// reads a pane-id spelling changes.
+const fakePaneBasePID = 100000
+
 func newTmuxSim() *TmuxSim {
 	return &TmuxSim{
 		sessions:        map[string]*tmuxSession{},
@@ -169,6 +191,17 @@ func newTmuxSim() *TmuxSim {
 // appropriate status; for verbs that mutate state (send-keys,
 // kill-session), the mutation happens here before the cmd is returned.
 func (t *TmuxSim) Command(args ...string) *exec.Cmd {
+	// Client-level options precede the command word. The real tmux client
+	// consumes them before dispatching (external mode currently adds -N), so
+	// consume those options positionally instead of searching argv for a known
+	// verb. That keeps payload text from becoming a second command.
+	var parseErr error
+	args, parseErr = tmuxCommandArgs(args)
+	if parseErr != nil {
+		cmd := exec.Command(falseBin)
+		cmd.Err = parseErr
+		return cmd
+	}
 	if len(args) > 0 {
 		t.mu.Lock()
 		t.commandCounts[args[0]]++
@@ -348,6 +381,56 @@ func (t *TmuxSim) Command(args ...string) *exec.Cmd {
 	return exec.Command(trueBin)
 }
 
+// tmuxCommandArgs drops client-level options and returns the command plus its
+// arguments. Options with values come from tmux's documented client
+// invocation grammar (`tmux -h`); keeping that small table here means the
+// first non-option token is always the command boundary, even when a payload
+// contains a word such as "new-session". If an unknown option is followed by
+// a non-option token, fail closed: it may be a value for a newly-added option,
+// and guessing the verb would be silently wrong. If tmux adds another
+// documented option with a value, add it to tmuxClientOptionsWithValue.
+func tmuxCommandArgs(args []string) ([]string, error) {
+	for len(args) > 0 && strings.HasPrefix(args[0], "-") {
+		option := args[0]
+		args = args[1:]
+		if _, takesValue := tmuxClientOptionsWithValue[option]; takesValue {
+			if len(args) == 0 {
+				return nil, fmt.Errorf("tmux simulator: client option %q requires a value", option)
+			}
+			args = args[1:]
+			continue
+		}
+		if _, knownFlag := tmuxClientOptions[option]; !knownFlag && len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+			return nil, fmt.Errorf("tmux simulator: cannot determine whether unknown client option %q takes a value; add it to tmuxClientOptions or tmuxClientOptionsWithValue", option)
+		}
+	}
+	return args, nil
+}
+
+// These are the documented valueless client options from `tmux -h`. The
+// strict unknown-option failure above is intentional: a newly added option
+// with a value must be listed here (or in tmuxClientOptionsWithValue) instead
+// of silently shifting the simulated command boundary.
+var tmuxClientOptions = map[string]struct{}{
+	"-2": {},
+	"-C": {},
+	"-D": {},
+	"-h": {},
+	"-l": {},
+	"-N": {},
+	"-u": {},
+	"-V": {},
+	"-v": {},
+}
+
+var tmuxClientOptionsWithValue = map[string]struct{}{
+	"-c": {},
+	"-f": {},
+	"-L": {},
+	"-S": {},
+	"-T": {},
+}
+
 func tmuxArgValue(args []string, flag string) string {
 	for i := 0; i+1 < len(args); i++ {
 		if args[i] == flag {
@@ -372,10 +455,32 @@ func (t *TmuxSim) MutationTargets(verb string) []string {
 // FailNextCommand makes the next invocation of verb return exit status 1
 // without applying its ordinary simulated behavior. Faults queue FIFO so a
 // flow can describe a short sequence of failures deterministically.
+//
+// A queued fault belongs to the VERB, not to a caller. It is taken by
+// whichever goroutine issues that verb first, so a flow which means "this
+// probe fails" gets that only while the probe it is aiming at is the sole
+// issuer of the verb. When a second production actor polls the same verb
+// concurrently — the soft-exit escalation watchdog re-probing panes with
+// display-message while the retry ladder probes the same pane — the fault
+// lands on whichever one the scheduler happens to run next, and the intended
+// probe silently succeeds (TCL-1028). Serialize such a flow (park the other
+// actor) and confirm delivery with PendingCommandFaults rather than assuming
+// the aim held.
 func (t *TmuxSim) FailNextCommand(verb string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.commandFaults[verb] = append(t.commandFaults[verb], tmuxCommandFault{fail: true})
+}
+
+// PendingCommandFaults reports how many queued faults for verb have not been
+// taken yet. A flow that queues a fault for one specific call uses this to
+// wait for that call to CONSUME it, which — with every other issuer of the
+// verb parked — is a causal statement that the intended caller saw the fault,
+// rather than a timing assumption that it got there first.
+func (t *TmuxSim) PendingCommandFaults(verb string) int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return len(t.commandFaults[verb])
 }
 
 // HangNextCommand makes the next invocation of verb remain in Run for d
@@ -772,7 +877,7 @@ func (t *TmuxSim) Register(name, cwd string, pane PaneSim) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.nextPID++
-	t.sessions[name] = &tmuxSession{name: name, cwd: cwd, pane: pane, paneID: "%" + strconv.Itoa(t.nextPID), panePID: t.nextPID}
+	t.sessions[name] = &tmuxSession{name: name, cwd: cwd, pane: pane, paneID: "%" + strconv.Itoa(t.nextPID), panePID: fakePaneBasePID + t.nextPID}
 }
 
 // MarkAlive registers a session without an attached pane sim. Used for
@@ -784,7 +889,7 @@ func (t *TmuxSim) MarkAlive(name string) {
 	defer t.mu.Unlock()
 	if _, ok := t.sessions[name]; !ok {
 		t.nextPID++
-		t.sessions[name] = &tmuxSession{name: name, paneID: "%" + strconv.Itoa(t.nextPID), panePID: t.nextPID}
+		t.sessions[name] = &tmuxSession{name: name, paneID: "%" + strconv.Itoa(t.nextPID), panePID: fakePaneBasePID + t.nextPID}
 	}
 }
 

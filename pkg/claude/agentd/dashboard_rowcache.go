@@ -240,7 +240,7 @@ func (rc *snapshotRowCache) viewFor(convID string) *convRowBundle {
 			rc.codexTelemetryTiming = rc.codexTelemetryTiming.add(timing)
 		}, rc.addRowWork),
 	}
-	b.State.TemporarySandboxMode = rc.agents[convID].TemporarySandboxMode
+	b.State.TemporaryHarnessBuiltinMode = rc.agents[convID].TemporaryHarnessBuiltinMode
 	rc.memo[convID] = b
 	return b
 }

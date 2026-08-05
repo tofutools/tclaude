@@ -71,10 +71,10 @@ export const CLAUDE_INHERIT_SANDBOX_LABEL = 'Claude settings decide (inherit)';
 export const CLAUDE_INHERIT_SANDBOX_PLAIN = "Claude's own settings decide whether its built-in "
   + 'sandbox is enabled for this launch.';
 
-// sandboxModeLabel renders one harness sandbox mode for a human. Only Claude's
+// harnessBuiltinModeLabel renders one harness sandbox mode for a human. Only Claude's
 // `inherit` is rewritten: it is the one mode whose token says nothing about what
 // the launch actually gets. Every other mode already names its own effect.
-export function sandboxModeLabel(harnessName, mode) {
+export function harnessBuiltinModeLabel(harnessName, mode) {
   if (harnessName === 'claude' && mode === 'inherit') return CLAUDE_INHERIT_SANDBOX_LABEL;
   if (harnessName === 'codex' && mode === 'tclaude-agent') {
     return 'Managed workspace + agent coordination (tclaude-agent)';
@@ -82,22 +82,22 @@ export function sandboxModeLabel(harnessName, mode) {
   return mode;
 }
 
-// sandboxModeOptionLabel is the selectable form: the label plus the harness's
+// harnessBuiltinModeOptionLabel is the selectable form: the label plus the harness's
 // own recommendation. It folds the two into ONE parenthetical for a rewritten
 // mode, because a caller appending "(recommended)" to a label that already ends
 // in "(inherit)" produces "…(inherit) (recommended)". Both dialogs call this
 // rather than composing the two halves themselves.
-export function sandboxModeOptionLabel(harnessName, mode, recommended) {
-  const label = sandboxModeLabel(harnessName, mode);
+export function harnessBuiltinModeOptionLabel(harnessName, mode, recommended) {
+  const label = harnessBuiltinModeLabel(harnessName, mode);
   if (mode !== recommended) return label;
   return label.endsWith(')')
     ? `${label.slice(0, -1)}, recommended)`
     : `${label} (recommended)`;
 }
 
-// sandboxModeDetail is the read-only form used where a resolved mode is
+// harnessBuiltinModeDetail is the read-only form used where a resolved mode is
 // reported back rather than chosen — the preview's evaluation details.
-export function sandboxModeDetail(harnessName, mode) {
+export function harnessBuiltinModeDetail(harnessName, mode) {
   return harnessName === 'claude' && mode === 'inherit'
     ? `inherit — ${CLAUDE_INHERIT_SANDBOX_PLAIN}`
     : mode;

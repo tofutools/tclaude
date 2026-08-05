@@ -58,3 +58,102 @@ func TestRenderPermissionsState_LeadsWithAgentID(t *testing.T) {
 		}
 	})
 }
+
+// TestPermSourceNote_OwnerScope pins how an owner-conferred slug is
+// phrased (TCL-1013). The gate scopes the owner bypass to owned groups or
+// their members for most slugs; rendering all of them as a bare "(via
+// ownership)" reads as fleet-wide authority the gate refuses.
+func TestPermSourceNote_OwnerScope(t *testing.T) {
+	owned := []string{"dev", "qa"}
+
+	for _, tc := range []struct {
+		name   string
+		source string
+		owned  []string
+		want   string
+	}{
+		{
+			name:   "group-scoped names the owned groups",
+			source: "owner:group",
+			owned:  owned,
+			want:   "(via ownership of: dev, qa)",
+		},
+		{
+			name:   "member-scoped says it reaches their members",
+			source: "owner:member",
+			owned:  owned,
+			want:   "(via ownership of: dev, qa — their members only)",
+		},
+		{
+			name:   "unscoped must not claim a per-group limit",
+			source: "owner:any",
+			owned:  owned,
+			want:   "(via ownership)",
+		},
+		{
+			// An older daemon sends bare "owner" with no scope.
+			name:   "older daemon keeps the unscoped wording",
+			source: "owner",
+			owned:  nil,
+			want:   "(via ownership)",
+		},
+		{
+			// Scope known but no groups to name — say less, not more.
+			name:   "no owned groups falls back rather than inventing a scope",
+			source: "owner:group",
+			owned:  nil,
+			want:   "(via ownership)",
+		},
+		{
+			// A NEWER daemon could invent a fourth scope. Guessing the
+			// narrower group phrasing would misreport it — exactly the
+			// failure this change exists to prevent.
+			name:   "an unknown scope falls back to the unscoped wording",
+			source: "owner:fleet",
+			owned:  owned,
+			want:   "(via ownership)",
+		},
+		{
+			name:   "a plain default stays unannotated",
+			source: "default",
+			owned:  owned,
+			want:   "",
+		},
+		{
+			name:   "sudo is called out as temporary",
+			source: "sudo",
+			owned:  nil,
+			want:   "(via sudo elevation)",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := permSourceNote(tc.source, false, tc.owned); got != tc.want {
+				t.Errorf("permSourceNote(%q, false, %v) = %q, want %q",
+					tc.source, tc.owned, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestOwnerScopeCell pins the OWNER column of `permissions slugs`: three
+// call-site families confer three different reaches, and collapsing them
+// into one tick is what let the table imply fleet-wide authority.
+func TestOwnerScopeCell(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   permSlugEntry
+		want string
+	}{
+		{"group scope", permSlugEntry{OwnerImplied: true, OwnerScope: "group"}, "✔ group"},
+		{"member scope", permSlugEntry{OwnerImplied: true, OwnerScope: "member"}, "✔ member"},
+		{"any scope", permSlugEntry{OwnerImplied: true, OwnerScope: "any"}, "✔ any"},
+		{"older daemon sends no scope", permSlugEntry{OwnerImplied: true}, "✔"},
+		{"no owner bypass", permSlugEntry{}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ownerScopeCell(tc.in); got != tc.want {
+				t.Errorf("ownerScopeCell(%+v) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}

@@ -272,25 +272,33 @@ func (s *Sanitizer) Requests(rs []RecordedRequest) []RequestObservation {
 	return out
 }
 
-// selfPacedEventTypes are emitted by a producer with its own clock, so their
-// POSITION in the stream is scheduling noise rather than contract.
+// selfPacedEventTypes are emitted by a session-level producer with its own
+// clock, so their POSITION in the stream is scheduling noise rather than
+// contract. They are not scoped to one tool execution.
 //
 // Only one member so far, and it earned its place by breaking a golden.
-// session.background_tasks_changed is a poller tick: it fires on a timer for as
-// long as a tool runs, interleaving with that tool's own events according to
-// which goroutine happened to be scheduled. Two runs of the identical scenario
-// produced identical event MULTISETS — 13 pings both times — differing only in
-// whether one of them landed before or after a pair of
-// tool.execution_partial_result events. Nothing about the CLI's behavior
-// differed; a busy host moved a tick across a boundary.
+// session.background_tasks_changed is a session event emitted by Copilot's
+// background-task registry and notification lifecycle. In the pinned 1.0.77
+// tool-call run, 13 pings were emitted: most interleaved with the tool's own
+// events, but two arrived after tool.execution_complete and before the terminal
+// result line. A tool-execution window would therefore reject a real pinned
+// stream. The event is session-scoped, and its placement relative to the
+// causal stream is controlled by task completion/notification scheduling;
+// a busy host can move it across a boundary without changing behavior.
 //
-// A golden that pins that position is not pinning compatibility, it is pinning
-// a race, and it fails with a contract-drift message describing drift that did
-// not happen. Membership here is therefore a claim about the EMITTER — this
-// event is produced by an independent timer — and should be argued that way,
-// not granted to whatever type a flake happens to land on. Everything else
-// stays exactly where it is, in exact order: an event that reflects the CLI's
-// actual progress through a turn is ordered evidence and must stay ordered.
+// A golden that pins that pre-result position is not pinning compatibility, it
+// is pinning a race, and it fails with a contract-drift message describing drift
+// that did not happen. Membership here is therefore a claim about the EMITTER
+// — this event is produced by an independent session/task lifecycle — and
+// should be argued that way, not granted to whatever type a flake happens to
+// land on. In pinned Copilot CLI 1.0.77, ORr's Fe = Qe.on("*") JSONL listener
+// emits the terminal result through zWt only after pending work is drained;
+// zWt's enclosing finally then calls Fe() to unsubscribe from session events
+// before ORr returns and shutdown begins. A ping after result is therefore
+// outside this stream's session lifecycle and remains ordered evidence.
+// Re-check these symbols if the version pin moves. Everything else stays
+// exactly where it is, in exact order: an event that reflects the CLI's actual
+// progress through a turn must stay ordered.
 var selfPacedEventTypes = map[string]bool{
 	"session.background_tasks_changed": true,
 }
@@ -299,18 +307,21 @@ var selfPacedEventTypes = map[string]bool{
 type EventObservation struct {
 	// Types is the ordered event-type sequence, the stable part of the stream.
 	//
-	// Self-paced types are excluded — see selfPacedEventTypes and SelfPaced
-	// below. What remains is causally ordered: every entry is the CLI reaching
-	// a point in the turn, so the sequence is reproducible and a change in it
-	// is a real change in behavior.
+	// Self-paced types before the terminal result are excluded — see
+	// selfPacedEventTypes and SelfPaced below. A self-paced type after result is
+	// retained here as drift. Otherwise the sequence is causally ordered: every
+	// entry is the CLI reaching a point in the turn, so a change in it is real
+	// behavior change.
 	Types []string `json:"types"`
 	// SelfPaced is the sorted SET of self-paced event types the run emitted.
 	//
 	// A set, not a sequence and not a count: that the CLI notifies about
-	// background tasks while a tool runs is the contract, and it is pinned
-	// here. How many ticks fit inside one echo, and where they fell relative
-	// to the tool's own events, are properties of a timer racing a fast
-	// command — recording them as evidence is what made this stream flaky.
+	// background-task changes before the terminal result is the contract, and it
+	// is pinned here. How many notifications occur, and where they fall relative
+	// to the causal stream, are properties of task-lifecycle scheduling —
+	// recording their exact positions is what made this stream flaky. A
+	// post-result occurrence stays in Types so a stream that outlives its output
+	// listener remains visible.
 	SelfPaced []string `json:"selfPacedEventTypes,omitempty"`
 	// ResultExitCode and ResultSessionID come from the terminal result line.
 	ResultExitCode  *int   `json:"resultExitCode,omitempty"`
@@ -320,13 +331,15 @@ type EventObservation struct {
 	AssistantText string `json:"assistantText,omitempty"`
 }
 
-// splitSelfPacedEvents partitions an event-type sequence into the causally
-// ordered part and the set of self-paced types that were removed from it.
+// splitSelfPacedEvents partitions an event-type sequence into the ordered part
+// and the set of self-paced types removed before the terminal result. A
+// self-paced occurrence after result stays ordered so the stream reports it.
 func splitSelfPacedEvents(types []string) (ordered []string, selfPaced []string) {
 	seen := map[string]bool{}
 	ordered = make([]string, 0, len(types))
+	resultSeen := false
 	for _, ty := range types {
-		if selfPacedEventTypes[ty] {
+		if selfPacedEventTypes[ty] && !resultSeen {
 			if !seen[ty] {
 				seen[ty] = true
 				selfPaced = append(selfPaced, ty)
@@ -334,6 +347,9 @@ func splitSelfPacedEvents(types []string) (ordered []string, selfPaced []string)
 			continue
 		}
 		ordered = append(ordered, ty)
+		if ty == "result" {
+			resultSeen = true
+		}
 	}
 	sort.Strings(selfPaced)
 	return ordered, selfPaced

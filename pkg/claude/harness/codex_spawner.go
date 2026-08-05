@@ -30,7 +30,7 @@ func (codexSpawner) Binary() string { return "codex" }
 // the same way the CC spawner relies on tmux for cwd. Effort maps onto
 // Codex's reasoning-effort config (JOH-155). Sandbox mode is a per-spawn
 // `--sandbox` flag (JOH-192) — resolved/validated at the spawn boundary
-// (ResolveSandboxMode) and emitted verbatim here, so the user's config.toml
+// (ResolveHarnessBuiltinMode) and emitted verbatim here, so the user's config.toml
 // sandbox_mode/profiles stay untouched.
 func (codexSpawner) BuildCommand(spec SpawnSpec) string {
 	binary := "codex"
@@ -58,21 +58,21 @@ func (codexSpawner) BuildCommand(spec SpawnSpec) string {
 		// daemon-spawned agent that must reach the agentd socket: Codex ignores
 		// permission profiles whenever a `--sandbox`/sandbox_mode is present,
 		// and only the profile model can allowlist that one Unix socket
-		// (JOH-207). Mutually exclusive with SandboxMode (the spec builder sets
+		// (JOH-207). Mutually exclusive with HarnessBuiltinMode (the spec builder sets
 		// one or the other) — emitting both would let `--sandbox` silently void
 		// the profile, so the profile wins and `--sandbox` is omitted. Accepted
 		// on both a fresh `codex` and `codex resume <id>` (shared option,
 		// verified against codex-cli 0.139.0). The value is a validated profile
 		// name, never free text, but quoted defensively.
 		cmd += " -p " + clcommon.ShellQuoteArg(spec.PermissionProfile)
-	} else if spec.SandboxMode != "" {
+	} else if spec.HarnessBuiltinMode != "" {
 		// `--sandbox {read-only|workspace-write|danger-full-access}` selects
 		// Codex's OS-native sandbox for THIS invocation only — a per-spawn
 		// flag, so the user's config.toml sandbox_mode/profiles are left
 		// untouched. Accepted on both a fresh `codex` and `codex resume
 		// <id>` (shared option). The value is a validated enum
 		// (codexSandbox.ValidateMode), never free text, but quoted defensively.
-		cmd += " --sandbox " + clcommon.ShellQuoteArg(spec.SandboxMode)
+		cmd += " --sandbox " + clcommon.ShellQuoteArg(spec.HarnessBuiltinMode)
 	}
 	if spec.StrongNestedSandbox {
 		// Verified against codex-cli 0.145.0: false selects the current

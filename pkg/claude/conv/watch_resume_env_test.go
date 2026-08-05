@@ -94,7 +94,7 @@ func TestResumeLaunchCmd_AppliesActorSnapshotAndStripsOperatorToken(t *testing.T
 	require.NoError(t, db.SetAgentEffectiveSandboxConfig(agentID, &snapshot))
 	require.NoError(t, db.SaveSession(&db.SessionRow{
 		ID: "source-session", ConvID: resumeConvClaude, Harness: harness.DefaultName,
-		SandboxMode: harness.ClaudeSandboxOn,
+		HarnessBuiltinMode: harness.ClaudeSandboxOn,
 	}))
 
 	cmd, _, _, err := resumeLaunchCmd(harness.DefaultName, resumeConvClaude[:8], resumeConvClaude, nil)
@@ -113,7 +113,7 @@ func TestResumeLaunchCmd_AppliesActorSnapshotAndStripsOperatorToken(t *testing.T
 
 	require.NoError(t, db.SaveSession(&db.SessionRow{
 		ID: "source-session", ConvID: resumeConvClaude, Harness: harness.DefaultName,
-		SandboxMode: harness.ClaudeSandboxInherit,
+		HarnessBuiltinMode: harness.ClaudeSandboxInherit,
 	}))
 	_, _, _, err = resumeLaunchCmd(harness.DefaultName, resumeConvClaude[:8], resumeConvClaude, nil)
 	require.ErrorContains(t, err, "deny rules require sandbox on")
@@ -132,7 +132,7 @@ func TestResumeLaunchCmd_CodexFilesystemRequiresManagedProfile(t *testing.T) {
 	require.NoError(t, db.SetAgentEffectiveSandboxConfig(agentID, &snapshot))
 	require.NoError(t, db.SaveSession(&db.SessionRow{
 		ID: "source-session", ConvID: resumeConvCodex, Harness: harness.CodexName,
-		SandboxMode: harness.SandboxReadOnly,
+		HarnessBuiltinMode: harness.SandboxReadOnly,
 	}))
 
 	_, _, _, err = resumeLaunchCmd(harness.CodexName, resumeConvCodex[:8], resumeConvCodex, nil)
@@ -140,7 +140,7 @@ func TestResumeLaunchCmd_CodexFilesystemRequiresManagedProfile(t *testing.T) {
 
 	require.NoError(t, db.SaveSession(&db.SessionRow{
 		ID: "source-session", ConvID: resumeConvCodex, Harness: harness.CodexName,
-		SandboxMode: harness.SandboxManagedProfile,
+		HarnessBuiltinMode: harness.SandboxManagedProfile,
 	}))
 	cmd, _, _, err := resumeLaunchCmd(harness.CodexName, resumeConvCodex[:8], resumeConvCodex, nil)
 	require.NoError(t, err)
@@ -186,7 +186,7 @@ func TestResumeLaunchCmd_CodexManagedProfileIncludesGitWorktreeGrants(t *testing
 
 	require.NoError(t, db.SaveSession(&db.SessionRow{
 		ID: "source-session", ConvID: resumeConvCodex, Harness: harness.CodexName,
-		Cwd: repo, SandboxMode: harness.SandboxManagedProfile,
+		Cwd: repo, HarnessBuiltinMode: harness.SandboxManagedProfile,
 	}))
 	launch, _, _, err := resumeLaunchCmd(harness.CodexName, resumeConvCodex[:8], resumeConvCodex, nil)
 	require.NoError(t, err)
@@ -218,7 +218,7 @@ func TestResumeLaunchCmd_ClaudeSandboxIncludesGitWorktreeGrants(t *testing.T) {
 
 	require.NoError(t, db.SaveSession(&db.SessionRow{
 		ID: "source-session", ConvID: resumeConvClaude, Harness: harness.DefaultName,
-		Cwd: repo, SandboxMode: harness.ClaudeSandboxOn,
+		Cwd: repo, HarnessBuiltinMode: harness.ClaudeSandboxOn,
 	}))
 	launch, _, _, err := resumeLaunchCmd(harness.DefaultName, resumeConvClaude[:8], resumeConvClaude, nil)
 	require.NoError(t, err)
@@ -321,7 +321,7 @@ func TestResumeDenyHomeCodexRequiresVerifiedSplitPolicy(t *testing.T) {
 	require.NoError(t, db.SetAgentEffectiveSandboxConfig(agentID, &snapshot))
 	require.NoError(t, db.SaveSession(&db.SessionRow{
 		ID: "source-session", ConvID: resumeConvCodex, Harness: harness.CodexName,
-		Cwd: workspace, SandboxMode: harness.SandboxManagedProfile,
+		Cwd: workspace, HarnessBuiltinMode: harness.SandboxManagedProfile,
 	}))
 
 	_, _, _, err = resumeLaunchCmd(harness.CodexName, resumeConvCodex[:8], resumeConvCodex, nil)
@@ -345,7 +345,7 @@ func TestResumeWithoutDenyKeepsWorkspaceInheritanceUnchanged(t *testing.T) {
 	require.NoError(t, db.SetAgentEffectiveSandboxConfig(agentID, &snapshot))
 	require.NoError(t, db.SaveSession(&db.SessionRow{
 		ID: "source-session", ConvID: resumeConvCodex, Harness: harness.CodexName,
-		Cwd: workspace, SandboxMode: harness.SandboxManagedProfile,
+		Cwd: workspace, HarnessBuiltinMode: harness.SandboxManagedProfile,
 	}))
 
 	_, path, _, err := resumeLaunchCmd(harness.CodexName, resumeConvCodex[:8], resumeConvCodex, nil)
@@ -400,7 +400,7 @@ func TestWatchResumeRefreshesSocketMaterializationForAdapterAndSavedState(t *tes
 	require.NoError(t, db.SetAgentEffectiveSandboxConfig(agentID, &snapshot))
 	require.NoError(t, db.SaveSession(&db.SessionRow{
 		ID: "source-session", ConvID: resumeConvCodex, Harness: harness.CodexName,
-		Cwd: workspace, SandboxMode: harness.SandboxManagedProfile,
+		Cwd: workspace, HarnessBuiltinMode: harness.SandboxManagedProfile,
 	}))
 
 	var launchSnapshot *sandboxpolicy.Snapshot
@@ -453,7 +453,7 @@ func TestStandaloneResumeDoesNotInheritUnenforcedNetworkAuthorization(t *testing
 		ConvID:                resumeConvCodex,
 		Harness:               harness.CodexName,
 		Cwd:                   workspace,
-		SandboxMode:           harness.SandboxManagedProfile,
+		HarnessBuiltinMode:    harness.SandboxManagedProfile,
 		SandboxImplementation: string(sandboxpolicy.ImplementationHarnessBuiltin),
 	}))
 
@@ -519,7 +519,7 @@ func TestCodexDenyHomeWatchRendererHostSmoke(t *testing.T) {
 	require.NoError(t, db.SetAgentEffectiveSandboxConfig(agentID, &snapshot))
 	require.NoError(t, db.SaveSession(&db.SessionRow{
 		ID: "source-session", ConvID: resumeConvCodex, Harness: harness.CodexName,
-		Cwd: workspace, SandboxMode: harness.SandboxManagedProfile,
+		Cwd: workspace, HarnessBuiltinMode: harness.SandboxManagedProfile,
 	}))
 
 	launch, profilePath, _, err := resumeLaunchCmd(harness.CodexName, resumeConvCodex[:8], resumeConvCodex, nil)
@@ -564,7 +564,7 @@ func TestResumeDenyHomeKeepsClaudeWorkspaceWritableOutsideGitRepository(t *testi
 	require.NoError(t, db.SetAgentEffectiveSandboxConfig(agentID, &snapshot))
 	require.NoError(t, db.SaveSession(&db.SessionRow{
 		ID: "source-session", ConvID: resumeConvClaude, Harness: harness.DefaultName,
-		Cwd: workspace, SandboxMode: harness.ClaudeSandboxOn,
+		Cwd: workspace, HarnessBuiltinMode: harness.ClaudeSandboxOn,
 	}))
 
 	launch, _, _, err := resumeLaunchCmd(harness.DefaultName, resumeConvClaude[:8], resumeConvClaude, nil)

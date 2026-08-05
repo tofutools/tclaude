@@ -335,7 +335,12 @@ function sandboxRecordedDetails(member) {
   const lines = [
     `Status: ${state.os_sandbox_state || state.sandbox_mode || 'Not recorded'}`,
     `Implementation: ${implementation}`,
-    `Mode: ${state.sandbox_mode || 'Not recorded'}`,
+    // Named for what it holds (TCL-1023): this is the HARNESS'S OWN sandbox
+    // setting, not tclaude's enforcement. A tclaude-layer launch stands the
+    // harness's inner wall down, so a bare `Mode: off` beside
+    // `Implementation: tclaude-layer` read as "unconfined" when it means the
+    // opposite. The Implementation line above says who actually enforces.
+    `Harness sandbox mode: ${state.sandbox_mode || 'Not recorded'}`,
     `Profile: ${sandboxProfileLabel(member)}`,
     `Source: ${source || 'Not recorded'}`,
   ];

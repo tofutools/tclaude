@@ -69,7 +69,7 @@ func describeReopens(shapes []sandboxpolicy.ReopenUnderDeny) string {
 // harness/mode combination that can actually enforce it. A profile with no such
 // shape passes unconditionally: ordinary deny rows are enforceable everywhere.
 // Storing the shape is always allowed; this check runs only at launch/resume.
-func ValidateSandboxReopenUnderDeny(harnessName, sandboxMode string, grants []sandboxpolicy.FilesystemGrant) error {
+func ValidateSandboxReopenUnderDeny(harnessName, harnessBuiltinMode string, grants []sandboxpolicy.FilesystemGrant) error {
 	shapes := sandboxpolicy.ReopensUnderDeny(grants)
 	if len(shapes) == 0 {
 		return nil
@@ -81,17 +81,17 @@ func ValidateSandboxReopenUnderDeny(harnessName, sandboxMode string, grants []sa
 		// overlap (denyRead ["~/"] + allowRead ["."]), but only sandbox "on"
 		// guarantees the deny AND the reopen are applied at all. An inherit/off
 		// launch would quietly drop both.
-		if strings.TrimSpace(sandboxMode) != ClaudeSandboxOn {
+		if strings.TrimSpace(harnessBuiltinMode) != ClaudeSandboxOn {
 			return &SandboxCapabilityError{Harness: DefaultName, Kind: SandboxCapabilityReopenUnderDeny, Message: fmt.Sprintf(
 				"reopening a path beneath a deny (%s) requires Claude sandbox %q; sandbox %q cannot guarantee the deny or the reopen is enforced",
-				detail, ClaudeSandboxOn, sandboxMode)}
+				detail, ClaudeSandboxOn, harnessBuiltinMode)}
 		}
 		return nil
 	case CodexName:
-		if strings.TrimSpace(sandboxMode) != SandboxManagedProfile {
+		if strings.TrimSpace(harnessBuiltinMode) != SandboxManagedProfile {
 			return &SandboxCapabilityError{Harness: CodexName, Kind: SandboxCapabilityReopenUnderDeny, Message: fmt.Sprintf(
 				"reopening a path beneath a deny (%s) requires Codex sandbox %q; raw sandbox %q cannot render the managed path policy",
-				detail, SandboxManagedProfile, sandboxMode)}
+				detail, SandboxManagedProfile, harnessBuiltinMode)}
 		}
 		if sandboxRuntimeGOOS != "linux" {
 			return &SandboxCapabilityError{Harness: CodexName, Kind: SandboxCapabilityReopenUnderDeny, Message: fmt.Sprintf(
@@ -105,7 +105,7 @@ func ValidateSandboxReopenUnderDeny(harnessName, sandboxMode string, grants []sa
 		}
 		return nil
 	case OpenCodeName:
-		if strings.TrimSpace(sandboxMode) == OpenCodeSandboxAccessControl {
+		if strings.TrimSpace(harnessBuiltinMode) == OpenCodeSandboxAccessControl {
 			// OpenCode session permissions are last-match-wins. The adapter
 			// emits broad roots before narrower roots, so a specific grant can
 			// faithfully reopen beneath an ordinary deny. This remains soft
@@ -114,7 +114,7 @@ func ValidateSandboxReopenUnderDeny(harnessName, sandboxMode string, grants []sa
 		}
 		return &SandboxCapabilityError{Harness: OpenCodeName, Kind: SandboxCapabilityReopenUnderDeny, Message: fmt.Sprintf(
 			"OpenCode has no tclaude OS containment; it can reopen a path beneath a deny (%s) only in soft access-control mode %q, while sandbox %q does not render directory rules",
-			detail, OpenCodeSandboxAccessControl, sandboxMode)}
+			detail, OpenCodeSandboxAccessControl, harnessBuiltinMode)}
 	default:
 		return &SandboxCapabilityError{Harness: harnessName, Kind: SandboxCapabilityReopenUnderDeny, Message: fmt.Sprintf(
 			"harness %q cannot reopen a path beneath a deny (%s)", harnessName, detail)}

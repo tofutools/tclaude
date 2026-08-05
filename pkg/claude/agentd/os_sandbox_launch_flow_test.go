@@ -59,7 +59,7 @@ func TestClaudeSpawn_RecordsInheritedOSSandboxVerdict(t *testing.T) {
 	// string "inherit" — i.e. "whatever settings.json says". That is precisely the
 	// value the badge used to skip, and precisely why it cannot answer the
 	// question the verdict above answers.
-	assert.Equal(t, "inherit", row.SandboxMode,
+	assert.Equal(t, "inherit", row.HarnessBuiltinMode,
 		"the mode stays the unchosen request")
 }
 

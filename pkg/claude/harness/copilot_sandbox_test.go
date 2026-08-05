@@ -75,12 +75,12 @@ func TestCopilotSandboxCatalog(t *testing.T) {
 // unlock uses.
 func TestCopilotTclaudeLayerMode(t *testing.T) {
 	h := MustGet(CopilotName)
-	mode, err := TclaudeLayerSandboxMode(h)
+	mode, err := TclaudeLayerHarnessBuiltinMode(h)
 	if err != nil {
-		t.Fatalf("TclaudeLayerSandboxMode(copilot) = %v, want the assert-off mode", err)
+		t.Fatalf("TclaudeLayerHarnessBuiltinMode(copilot) = %v, want the assert-off mode", err)
 	}
 	if mode != CopilotSandboxOff {
-		t.Fatalf("TclaudeLayerSandboxMode(copilot) = %q, want %q", mode, CopilotSandboxOff)
+		t.Fatalf("TclaudeLayerHarnessBuiltinMode(copilot) = %q, want %q", mode, CopilotSandboxOff)
 	}
 	off, err := SandboxOffMode(h)
 	if err != nil || off != CopilotSandboxOff {

@@ -49,10 +49,11 @@ func TestResumeLaunchCmd_PreservesRecordedApprovalPosture(t *testing.T) {
 	assert.Contains(t, cmd, "--ask-for-approval on-request")
 	assert.Contains(t, cmd, `approvals_reviewer="auto_review"`)
 
-	policy, autoReview, err := resumeApprovalState(h, resumeConvCodex)
+	state, err := resumeApprovalState(h, resumeConvCodex)
 	require.NoError(t, err)
-	assert.Equal(t, harness.ApprovalOnRequest, policy)
-	assert.True(t, autoReview)
+	assert.Equal(t, harness.ApprovalOnRequest, state.Policy)
+	assert.True(t, state.AutoReview)
+	assert.False(t, state.Reresolved, "a recorded posture is reproduced, not re-resolved")
 }
 
 func TestResumeLaunchCmd_PreservesUnmanagedPostureAfterSessionPrune(t *testing.T) {
@@ -60,7 +61,7 @@ func TestResumeLaunchCmd_PreservesUnmanagedPostureAfterSessionPrune(t *testing.T
 	const cwd = "/tmp/plain-codex-resume"
 	require.NoError(t, db.SaveSession(&db.SessionRow{
 		ID: "plain-codex-pruned", ConvID: resumeConvCodex, Cwd: cwd,
-		Harness: harness.CodexName, SandboxMode: harness.SandboxReadOnly,
+		Harness: harness.CodexName, HarnessBuiltinMode: harness.SandboxReadOnly,
 		ApprovalPolicy: harness.ApprovalUntrusted, ApprovalAutoReview: true,
 	}))
 	require.NoError(t, db.DeleteSession("plain-codex-pruned"))
@@ -73,10 +74,10 @@ func TestResumeLaunchCmd_PreservesUnmanagedPostureAfterSessionPrune(t *testing.T
 	mode, gotCwd := resumeSandboxState(resumeConvCodex)
 	assert.Equal(t, harness.SandboxReadOnly, mode)
 	assert.Equal(t, cwd, gotCwd)
-	policy, autoReview, err := resumeApprovalState(h, resumeConvCodex)
+	state, err := resumeApprovalState(h, resumeConvCodex)
 	require.NoError(t, err)
-	assert.Equal(t, harness.ApprovalUntrusted, policy)
-	assert.True(t, autoReview)
+	assert.Equal(t, harness.ApprovalUntrusted, state.Policy)
+	assert.True(t, state.AutoReview)
 }
 
 // A Claude conv keeps its existing `claude --resume <id>` launch unchanged.
@@ -116,11 +117,11 @@ func TestResumeLaunchCmd_UnknownHarnessErrors(t *testing.T) {
 	assert.Contains(t, err.Error(), resumeConvCodex, "the error names the conv that couldn't be resumed")
 }
 
-func TestResumeSandboxModeForImplementationMapsOpenCodeTclaudeLayer(t *testing.T) {
+func TestResumeHarnessBuiltinModeForImplementationMapsOpenCodeTclaudeLayer(t *testing.T) {
 	opencode, err := harness.Resolve(harness.OpenCodeName)
 	require.NoError(t, err)
 
-	got, err := resumeSandboxModeForImplementation(
+	got, err := resumeHarnessBuiltinModeForImplementation(
 		opencode,
 		harness.OpenCodeSandboxAccessControl,
 		sandboxpolicy.ImplementationTclaudeLayer,

@@ -122,9 +122,9 @@ func TestRecordedLaunchPostureForConv_TemporaryOffUsesProcessImplementation(t *t
 	temporaryMode := "off"
 	implementation := string(sandboxpolicy.ImplementationTclaudeLayer)
 	require.NoError(t, SetAgentRelaunchProfile(agentID, AgentRelaunchProfile{
-		Version: RelaunchProfileVersion, SandboxMode: &normalMode,
-		SandboxImplementation: &implementation,
-		TemporarySandboxMode:  &temporaryMode,
+		Version: RelaunchProfileVersion, HarnessBuiltinMode: &normalMode,
+		SandboxImplementation:       &implementation,
+		TemporaryHarnessBuiltinMode: &temporaryMode,
 	}))
 
 	posture, err := RecordedLaunchPostureForConv(convID)
@@ -150,23 +150,23 @@ func TestRecordedLaunchPostureForConv_RecoversFailedTemporaryRestore(t *testing.
 	builtin := string(sandboxpolicy.ImplementationHarnessBuiltin)
 	require.NoError(t, SaveSession(&SessionRow{
 		ID: "posture-before-unlock", ConvID: convID, Cwd: "/tmp/posture",
-		Harness: DefaultHarness, SandboxMode: "off",
+		Harness: DefaultHarness, HarnessBuiltinMode: "off",
 		SandboxImplementation: layered,
 	}))
 	require.NoError(t, SaveSession(&SessionRow{
 		ID: "posture-temporary-unlock", ConvID: convID, Cwd: "/tmp/posture",
-		Harness: DefaultHarness, SandboxMode: "off",
-		SandboxImplementation: builtin,
-		SandboxModeSource:     TemporarySandboxModeSource,
+		Harness: DefaultHarness, HarnessBuiltinMode: "off",
+		SandboxImplementation:    builtin,
+		HarnessBuiltinModeSource: TemporaryHarnessBuiltinModeSource,
 	}))
 	require.NoError(t, SaveSession(&SessionRow{
 		ID: "posture-failed-restore-row", ConvID: convID, Cwd: "/tmp/posture",
-		Harness: DefaultHarness, SandboxMode: "off",
+		Harness: DefaultHarness, HarnessBuiltinMode: "off",
 		SandboxImplementation: builtin,
 	}))
 	require.NoError(t, SetAgentRelaunchProfile(agentID, AgentRelaunchProfile{
 		Version:                RelaunchProfileVersion,
-		SandboxMode:            stringPtr("off"),
+		HarnessBuiltinMode:     stringPtr("off"),
 		SandboxImplementation:  &builtin,
 		ApprovalPolicy:         stringPtr("default"),
 		ApprovalAutoReview:     boolPtr(false),
@@ -226,14 +226,14 @@ func TestRecordedLaunchPostureForConv_LegacySessionRowIsTheWeakestTier(t *testin
 	)
 	require.NoError(t, SaveSession(&SessionRow{
 		ID: sessionID, ConvID: convID, Cwd: "/tmp/posture-legacy", Status: "exited",
-		Harness: DefaultHarness, SandboxMode: "on", AskUserQuestionTimeout: "10m",
+		Harness: DefaultHarness, HarnessBuiltinMode: "on", AskUserQuestionTimeout: "10m",
 	}))
 
 	posture, err := RecordedLaunchPostureForConv(convID)
 	require.NoError(t, err)
 	require.NotNil(t, posture)
-	require.NotNil(t, posture.SandboxMode)
-	assert.Equal(t, "on", *posture.SandboxMode)
+	require.NotNil(t, posture.HarnessBuiltinMode)
+	assert.Equal(t, "on", *posture.HarnessBuiltinMode)
 	require.NotNil(t, posture.AskUserQuestionTimeout)
 	assert.Equal(t, "10m", *posture.AskUserQuestionTimeout)
 	// The legacy tier reads plain columns, which cannot express "unknown", so a

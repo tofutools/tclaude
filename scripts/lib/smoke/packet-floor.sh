@@ -4,10 +4,10 @@
 # It lives in the shared lib rather than in one shard because two different
 # shards need the same floor for different reasons, and because ci.yml's
 # sandbox-v2 job currently carries a copy of this inline. Nothing here reads a
-# workflow variable or an Actions-only path, so that job can later delegate to
-# this function instead of maintaining a second copy of the pin — which is the
-# only way the two can be kept from drifting apart. This change does NOT touch
-# that job; it only makes the convergence possible.
+# workflow variable or an Actions-only path, so the workflow can share the
+# apt-source isolation helper without coupling this packet-floor pin to
+# Actions-only paths. The pin remains inline there so its trust-walk setup stays
+# visible in the job that exercises it.
 #
 # WHY A SHARD WITHOUT A PROXY NEEDS THIS: a loopback-only list is a FILTERED
 # posture that is not discriminating, so it deploys no filtering engine and the
@@ -98,7 +98,7 @@ smoke::packet_floor_install() {
   if [[ ! -x "$bin_dir/pasta" ]]; then
     smoke::log "Installing packet-floor prerequisites (nftables, passt $SMOKE_PASST_TAG)"
     if [[ "${SMOKE_SKIP_APT:-0}" != "1" ]]; then
-      sudo apt-get update --quiet ||
+      smoke::apt_update ||
         { smoke::packet_floor_prereq_failed "apt-get update failed"; return 1; }
       sudo apt-get install --yes --no-install-recommends nftables ||
         { smoke::packet_floor_prereq_failed "installing nftables failed"; return 1; }

@@ -16,7 +16,7 @@
 
 import { dashPrefs } from './prefs.js';
 import { formatTokenWindow } from './agent-spawn-model.js';
-import { sandboxModeLabel } from './resolved-defaults.js';
+import { harnessBuiltinModeLabel } from './resolved-defaults.js';
 
 const API = '/api/spawn-profiles';
 
@@ -286,7 +286,7 @@ function profileDetailChips(p) {
   // The expanded chips DO show an authored `inherit` (unlike the compact
   // summary, which drops it as the recommended no-override), so it has to say
   // what it means rather than repeat the token at the operator.
-  text('sandbox', sandboxModeLabel(p.harness || 'claude', p.sandbox));
+  text('sandbox', harnessBuiltinModeLabel(p.harness || 'claude', p.sandbox));
   text('sandbox impl', p.sandbox_implementation);
   text('approval', p.approval);
   text('ask-timeout', p.ask_user_question_timeout);

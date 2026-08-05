@@ -99,7 +99,7 @@ type Harness struct {
 	// config target (+ any trust step). nil = this build can't install
 	// hooks for the harness; `tclaude setup` skips it with a message.
 	Hooks HookInstaller
-	// Sandbox names the launch-time OS-sandbox modes this harness accepts
+	// Sandbox names the launch-time harness-builtin sandbox modes this harness accepts
 	// (Codex's --sandbox) and its secure default. nil for harnesses whose
 	// sandbox is configured out of band (Claude Code → settings.json), in
 	// which case the spawn path passes no sandbox flag and rejects an
@@ -426,8 +426,8 @@ func (h *Harness) UsesCodexOneShotReplay() bool {
 
 // NeedsManagedProfileForOneShot reports whether this recorded posture needs a
 // launch-unique managed profile before the Asker can render it.
-func (h *Harness) NeedsManagedProfileForOneShot(sandboxMode string) bool {
-	return h.UsesCodexOneShotReplay() && sandboxMode == SandboxManagedProfile
+func (h *Harness) NeedsManagedProfileForOneShot(harnessBuiltinMode string) bool {
+	return h.UsesCodexOneShotReplay() && harnessBuiltinMode == SandboxManagedProfile
 }
 
 // PreMintsAskConvID reports whether a FRESH `tclaude ask` can pin its conv-id

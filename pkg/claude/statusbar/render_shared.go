@@ -324,6 +324,6 @@ func temporarySandboxOff(convID string) bool {
 	if err != nil || agentID == "" {
 		return false
 	}
-	_, active, err := db.TemporarySandboxModeForAgent(agentID)
+	_, active, err := db.TemporaryHarnessBuiltinModeForAgent(agentID)
 	return err == nil && active
 }

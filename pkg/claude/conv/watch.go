@@ -2458,7 +2458,7 @@ func resumeLaunchCmdWithStackedProof(
 		return "", "", nil, fmt.Errorf("load auto-compaction window for conversation %s: %w", convID, err)
 	}
 	session.ApplyAutoCompactWindowEnv(h, autoCompactWindow, resumeEnv)
-	sandboxMode, resumeCwd := resumeSandboxState(convID)
+	harnessBuiltinMode, resumeCwd := resumeSandboxState(convID)
 	if effectiveSandbox != nil && !outerLayer &&
 		(effectiveProfile.Network != nil || effectiveProfile.UnixSockets != nil) {
 		// Standalone conversation/watch resume does not pass through agentd's
@@ -2471,9 +2471,9 @@ func resumeLaunchCmdWithStackedProof(
 			return "", "", nil, fmt.Errorf("sandbox_profile_changed: %w", axesErr)
 		}
 		launchOSSandbox := harness.ResolveLaunchOSSandbox(
-			h, sandboxMode, resumeSandboxChosenBy(convID), resumeCwd)
+			h, harnessBuiltinMode, resumeSandboxChosenBy(convID), resumeCwd)
 		caps, capsErr := harness.ResolveAccessEnforcement(
-			h, implementation, axes, launchOSSandbox, sandboxMode)
+			h, implementation, axes, launchOSSandbox, harnessBuiltinMode)
 		if capsErr != nil {
 			return "", "", nil, fmt.Errorf("sandbox_profile_changed: %w", capsErr)
 		}
@@ -2522,22 +2522,23 @@ func resumeLaunchCmdWithStackedProof(
 					plannedAxes.Network, err)
 		}
 	}
-	approvalPolicy, autoReview, err := resumeApprovalState(h, convID)
+	approvalState, err := resumeApprovalState(h, convID)
 	if err != nil {
 		return "", "", nil, err
 	}
+	approvalPolicy, autoReview := approvalState.Policy, approvalState.AutoReview
 	if !outerLayer {
-		if err := harness.ValidateSandboxReopenUnderDeny(h.Name, sandboxMode, launchGrants); err != nil {
+		if err := harness.ValidateSandboxReopenUnderDeny(h.Name, harnessBuiltinMode, launchGrants); err != nil {
 			return "", "", nil, err
 		}
 	}
-	if !outerLayer && h.Name == harness.DefaultName && len(denyDirs) > 0 && sandboxMode != harness.ClaudeSandboxOn {
+	if !outerLayer && h.Name == harness.DefaultName && len(denyDirs) > 0 && harnessBuiltinMode != harness.ClaudeSandboxOn {
 		return "", "", nil, fmt.Errorf("unsupported_sandbox_profile_filesystem: Claude filesystem deny rules require sandbox %s", harness.ClaudeSandboxOn)
 	}
 	if !outerLayer && networkAccess != sandboxpolicy.NetworkAccessInherit && h.Name != harness.CodexName {
 		return "", "", nil, fmt.Errorf("unsupported_sandbox_profile_network: network policies are currently supported only by the Codex managed sandbox")
 	}
-	if !outerLayer && networkAccess != sandboxpolicy.NetworkAccessInherit && sandboxMode != harness.SandboxManagedProfile {
+	if !outerLayer && networkAccess != sandboxpolicy.NetworkAccessInherit && harnessBuiltinMode != harness.SandboxManagedProfile {
 		return "", "", nil, fmt.Errorf("unsupported_sandbox_profile_network: codex network rules require sandbox %s", harness.SandboxManagedProfile)
 	}
 	if !outerLayer && networkAccess != sandboxpolicy.NetworkAccessInherit {
@@ -2545,8 +2546,8 @@ func resumeLaunchCmdWithStackedProof(
 			return "", "", nil, fmt.Errorf("unsupported_sandbox_profile_network: %w", err)
 		}
 	}
-	sandboxMode, err = resumeSandboxModeForImplementation(
-		h, sandboxMode, implementation, stacked,
+	harnessBuiltinMode, err = resumeHarnessBuiltinModeForImplementation(
+		h, harnessBuiltinMode, implementation, stacked,
 	)
 	if err != nil {
 		return "", "", nil, err
@@ -2557,8 +2558,8 @@ func resumeLaunchCmdWithStackedProof(
 	workspaceDenied := resumeDenyCoversPath(launchGrants, resumeCwd)
 	var tclaudeLayerContractWriteDirs []string
 	if outerLayer ||
-		(h.Name == harness.CodexName && sandboxMode == harness.SandboxManagedProfile) ||
-		(h.Name == harness.DefaultName && sandboxMode != harness.ClaudeSandboxOff) {
+		(h.Name == harness.CodexName && harnessBuiltinMode == harness.SandboxManagedProfile) ||
+		(h.Name == harness.DefaultName && harnessBuiltinMode != harness.ClaudeSandboxOff) {
 		gitWriteDirs, err := resumeGitWorktreeWriteDirs(resumeCwd, workspaceDenied)
 		if err != nil {
 			return "", "", nil, fmt.Errorf("resolve sandboxed resume Git grants: %w", err)
@@ -2593,7 +2594,7 @@ func resumeLaunchCmdWithStackedProof(
 	// not contain. Mirrors the spawn path.
 	renderedGrants := sandboxpolicy.GrantsFromDirs(readDirs, writeDirs, denyDirs)
 	if !outerLayer {
-		if err := harness.ValidateSandboxReopenUnderDeny(h.Name, sandboxMode, renderedGrants); err != nil {
+		if err := harness.ValidateSandboxReopenUnderDeny(h.Name, harnessBuiltinMode, renderedGrants); err != nil {
 			return "", "", nil, err
 		}
 	}
@@ -2617,16 +2618,16 @@ func resumeLaunchCmdWithStackedProof(
 		return "", "", nil, err
 	}
 	spec := harness.SpawnSpec{
-		EnvExports:       clcommon.BuildEnvExports(resumeEnv),
-		ShellEnvironment: shellEnvironment,
-		ResumeID:         convID,
-		ExtraArgs:        extraArgs,
-		SandboxMode:      sandboxMode,
-		SandboxReadDirs:  readDirs,
-		SandboxWriteDirs: writeDirs,
-		SandboxDenyDirs:  denyDirs,
-		ApprovalPolicy:   approvalPolicy,
-		AutoReview:       autoReview,
+		EnvExports:         clcommon.BuildEnvExports(resumeEnv),
+		ShellEnvironment:   shellEnvironment,
+		ResumeID:           convID,
+		ExtraArgs:          extraArgs,
+		HarnessBuiltinMode: harnessBuiltinMode,
+		SandboxReadDirs:    readDirs,
+		SandboxWriteDirs:   writeDirs,
+		SandboxDenyDirs:    denyDirs,
+		ApprovalPolicy:     approvalPolicy,
+		AutoReview:         autoReview,
 		// The recorded AskUserQuestion timeout rides the same `--settings` payload
 		// as the sandbox block, so it has to reach the spec too — an omitted one
 		// silently returns a resumed agent to blocking on every question.
@@ -2645,7 +2646,7 @@ func resumeLaunchCmdWithStackedProof(
 	}
 	cleanupPath := ""
 	var splitCapability *harness.CodexSplitPolicyCapability
-	if (!outerLayer || stacked) && h.Name == harness.CodexName && sandboxMode == harness.SandboxManagedProfile {
+	if (!outerLayer || stacked) && h.Name == harness.CodexName && harnessBuiltinMode == harness.SandboxManagedProfile {
 		resumeWriteDirs := writeDirs
 		requireSplitPolicy := sandboxpolicy.HasReopenUnderDeny(renderedGrants)
 		if requireSplitPolicy {
@@ -2670,7 +2671,7 @@ func resumeLaunchCmdWithStackedProof(
 		if err != nil {
 			return "", "", nil, fmt.Errorf("prepare managed Codex resume profile: %w", err)
 		}
-		spec.SandboxMode = ""
+		spec.HarnessBuiltinMode = ""
 		spec.PermissionProfile = profileName
 		if splitCapability != nil {
 			spec.ExecutablePath = splitCapability.ExecutablePath
@@ -2778,14 +2779,14 @@ func resumeLaunchCmdWithStackedProof(
 	return cmd, cleanupPath, h, nil
 }
 
-func resumeSandboxModeForImplementation(
+func resumeHarnessBuiltinModeForImplementation(
 	h *harness.Harness,
 	recordedMode string,
 	implementation sandboxpolicy.Implementation,
 	stacked bool,
 ) (string, error) {
 	if implementation == sandboxpolicy.ImplementationTclaudeLayer {
-		return harness.TclaudeLayerSandboxMode(h)
+		return harness.TclaudeLayerHarnessBuiltinMode(h)
 	}
 	if stacked {
 		switch h.Name {
@@ -2886,7 +2887,7 @@ func appendUniqueResumeDir(dirs []string, dir string) []string {
 func resumeSandboxState(convID string) (mode, cwd string) {
 	launch, launchErr := db.SessionLaunchProfileForConv(convID)
 	if launchErr == nil {
-		mode = strings.TrimSpace(launch.SandboxMode)
+		mode = strings.TrimSpace(launch.HarnessBuiltinMode)
 	}
 	if profile, err := db.ConversationResumeProfileForConv(convID); err == nil && profile != nil {
 		cwd = strings.TrimSpace(profile.Cwd)
@@ -2902,12 +2903,12 @@ func resumeSandboxState(convID string) (mode, cwd string) {
 		return mode, ""
 	}
 	if launchErr != nil {
-		mode = strings.TrimSpace(row.SandboxMode)
+		mode = strings.TrimSpace(row.HarnessBuiltinMode)
 	}
 	return mode, strings.TrimSpace(row.Cwd)
 }
 
-func resumeSandboxMode(convID string) string {
+func resumeHarnessBuiltinMode(convID string) string {
 	mode, _ := resumeSandboxState(convID)
 	return mode
 }
@@ -2931,7 +2932,7 @@ func resumeSandboxImplementation(convID string) (sandboxpolicy.Implementation, e
 }
 
 // resumeSandboxChosenBy replays the recorded attribution for the mode
-// resumeSandboxMode replays. A resume re-resolves the VERDICT against today's
+// resumeHarnessBuiltinMode replays. A resume re-resolves the VERDICT against today's
 // settings files, but the mode itself is a replay — so who chose it is a replay
 // too, and dropping it would let an agent's containment become anonymous after
 // its first restart. "" when nothing was recorded (a pre-v158 row, or a launch
@@ -2941,7 +2942,7 @@ func resumeSandboxChosenBy(convID string) string {
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(launch.SandboxModeSource)
+	return strings.TrimSpace(launch.HarnessBuiltinModeSource)
 }
 
 // resumeContextPosture reads the three launch postures SaveSession's UPSERT
@@ -3019,44 +3020,56 @@ func resumeAskTimeout(h *harness.Harness, convID string) (string, error) {
 	return timeout, nil
 }
 
-// resumeApprovalState carries the most recently recorded posture onto the
-// next session generation. Legacy rows have no posture; pin those to the
-// harness's daemon-safe default instead of creating another unknown row.
-func resumeApprovalState(h *harness.Harness, convID string) (string, bool, error) {
+// resumedApproval is the approval posture a resume reconstructs, plus whether
+// it came from current config rather than from the record — so the resume can
+// say which, instead of re-resolving silently.
+type resumedApproval struct {
+	Policy     string
+	AutoReview bool
+	Reresolved bool
+}
+
+// resumeApprovalState reconstructs the approval INPUT the conversation recorded
+// and carries it onto the next session generation. It is the CLI's entry point
+// into the one reconstruction rule the daemon relaunch paths use too
+// (harness.ReconstructApprovalPolicy): a recorded posture is reproduced and
+// re-validated, and a blank row — which recorded no input at all — stays absent
+// and re-resolves under current config rather than being pinned to whatever it
+// would historically have resolved to. See TCL-990 and the agentd counterpart,
+// reconstructApproval.
+func resumeApprovalState(h *harness.Harness, convID string) (resumedApproval, error) {
 	launch, err := db.SessionLaunchProfileForConv(convID)
 	if err != nil {
-		return "", false, fmt.Errorf("load approval posture for conversation %s: %w", convID, err)
+		return resumedApproval{}, fmt.Errorf("load approval posture for conversation %s: %w", convID, err)
 	}
-	policy := strings.TrimSpace(launch.ApprovalPolicy)
-	autoReview := launch.ApprovalAutoReview
-	if policy == "" && h != nil && h.Name == harness.CopilotName {
-		// NOT the harness default, for the reason agentd.approvalForHarness
-		// gives on the daemon side: every Copilot launch tclaude made before
-		// the approval catalog existed emitted zero permission flags, so
-		// `inherit` IS the faithful reconstruction of a blank row and
-		// `allow-tools` would be a promotion.
-		//
-		// The promotion would also be durable rather than momentary. The
-		// resumed generation's posture is written back into the new session
-		// row below, so a single interactive resume would hand a conversation
-		// the approvalAutoInSandbox lineage authority that
-		// classifyApprovalLineage deliberately refuses to credit a blank
-		// Copilot row with — and it would do so on a path the operator reaches
-		// by picking the conversation out of a list.
-		policy, err = harness.ValidateApprovalPolicy(h, harness.CopilotApprovalInherit)
-	} else if policy == "" {
-		policy, err = harness.ResolveApprovalPolicy(h, "")
-	} else {
-		policy, err = harness.ValidateApprovalPolicy(h, policy)
-	}
+	policy, reresolved, err := harness.ReconstructApprovalPolicy(h, launch.ApprovalPolicy)
 	if err != nil {
-		return "", false, fmt.Errorf("invalid recorded approval posture for conversation %s: %w", convID, err)
+		return resumedApproval{}, fmt.Errorf("invalid recorded approval posture for conversation %s: %w", convID, err)
 	}
-	autoReview, err = harness.ResolveAutoReview(h, autoReview)
+	autoReview, err := harness.ResolveAutoReview(h, launch.ApprovalAutoReview)
 	if err != nil {
-		return "", false, fmt.Errorf("invalid recorded auto-review posture for conversation %s: %w", convID, err)
+		return resumedApproval{}, fmt.Errorf("invalid recorded auto-review posture for conversation %s: %w", convID, err)
 	}
-	return policy, autoReview, nil
+	return resumedApproval{Policy: policy, AutoReview: autoReview, Reresolved: reresolved}, nil
+}
+
+// describeResumedApproval is the one-line notice a resume prints so the posture
+// it actually launches under is visible — in particular when it was re-resolved
+// from an unrecorded input, which is the case that can differ from the previous
+// generation. Returns "" for a harness with no launch-time approval posture.
+func describeResumedApproval(h *harness.Harness, state resumedApproval) string {
+	if state.Policy == "" {
+		return ""
+	}
+	name := harness.DefaultName
+	if h != nil {
+		name = h.Name
+	}
+	if state.Reresolved {
+		return fmt.Sprintf("Approval: %s %s (no approval posture was recorded; resolved from current config)",
+			name, state.Policy)
+	}
+	return fmt.Sprintf("Approval: %s %s (recorded)", name, state.Policy)
 }
 
 func resumeGitWorktreeWriteDirs(cwd string, strictHome bool) ([]string, error) {
@@ -3183,9 +3196,13 @@ func createSessionForConv(conv *SessionEntry) error {
 	if stackedProof != nil {
 		defer stackedProof.Cleanup()
 	}
-	approvalPolicy, autoReview, err := resumeApprovalState(h, conv.SessionID)
+	approvalState, err := resumeApprovalState(h, conv.SessionID)
 	if err != nil {
 		return err
+	}
+	approvalPolicy, autoReview := approvalState.Policy, approvalState.AutoReview
+	if notice := describeResumedApproval(h, approvalState); notice != "" {
+		fmt.Println(notice)
 	}
 	// Read the postures this resume must reproduce BEFORE it creates any row of
 	// its own — including the row the resumed pane's own SessionStart hook may
@@ -3238,7 +3255,7 @@ func createSessionForConv(conv *SessionEntry) error {
 	// A resume is a fresh launch: re-resolve whether the OS sandbox actually
 	// confines it rather than carrying the predecessor's verdict, because the
 	// operator may have changed settings.json since (TCL-729).
-	resumeMode := resumeSandboxMode(conv.SessionID)
+	resumeMode := resumeHarnessBuiltinMode(conv.SessionID)
 	resumeChosenBy := resumeSandboxChosenBy(conv.SessionID)
 	resumeImplementation, err := resumeSandboxImplementation(conv.SessionID)
 	if err != nil {
@@ -3254,25 +3271,25 @@ func createSessionForConv(conv *SessionEntry) error {
 		)
 	}
 	state := &session.SessionState{
-		ID:                     sessionID,
-		TmuxSession:            tmuxSession,
-		PID:                    pid,
-		Cwd:                    cwd,
-		ConvID:                 conv.SessionID,
-		Status:                 session.StatusIdle,
-		Harness:                h.Name,
-		SandboxMode:            resumeMode,
-		SandboxImplementation:  string(resumeImplementation),
-		SandboxModeSource:      resumeChosenBy,
-		OSSandboxState:         launchOSSandbox.State,
-		OSSandboxSource:        launchOSSandbox.Source,
-		OSSandboxUnverified:    launchOSSandbox.Unverified,
-		EffectiveSandbox:       launchEffectiveSandbox,
-		ApprovalPolicy:         approvalPolicy,
-		ApprovalAutoReview:     autoReview,
-		AskUserQuestionTimeout: askTimeout,
-		Created:                time.Now(),
-		Updated:                time.Now(),
+		ID:                       sessionID,
+		TmuxSession:              tmuxSession,
+		PID:                      pid,
+		Cwd:                      cwd,
+		ConvID:                   conv.SessionID,
+		Status:                   session.StatusIdle,
+		Harness:                  h.Name,
+		HarnessBuiltinMode:       resumeMode,
+		SandboxImplementation:    string(resumeImplementation),
+		HarnessBuiltinModeSource: resumeChosenBy,
+		OSSandboxState:           launchOSSandbox.State,
+		OSSandboxSource:          launchOSSandbox.Source,
+		OSSandboxUnverified:      launchOSSandbox.Unverified,
+		EffectiveSandbox:         launchEffectiveSandbox,
+		ApprovalPolicy:           approvalPolicy,
+		ApprovalAutoReview:       autoReview,
+		AskUserQuestionTimeout:   askTimeout,
+		Created:                  time.Now(),
+		Updated:                  time.Now(),
 	}
 
 	if err := session.SaveSessionState(state); err != nil {

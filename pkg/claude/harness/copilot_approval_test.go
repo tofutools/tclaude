@@ -25,9 +25,9 @@ func TestCopilotApprovalCatalog(t *testing.T) {
 	if got := h.Approval.DefaultPolicy(); got != CopilotApprovalAllowTools {
 		t.Fatalf("DefaultPolicy() = %q, want %q — an unattended pane must not default to a prompting posture", got, CopilotApprovalAllowTools)
 	}
-	// The default must survive its own validator: agentd.approvalForHarness
-	// resolves a launch by validating DefaultPolicy(), and a default that fails
-	// validation silently degrades to "no policy at all".
+	// The default must survive its own validator: ReconstructApprovalPolicy
+	// resolves an unrecorded input by validating DefaultPolicy(), and a default
+	// that fails validation silently degrades to "no policy at all".
 	if got, err := h.Approval.ValidatePolicy(h.Approval.DefaultPolicy()); err != nil || got != CopilotApprovalAllowTools {
 		t.Fatalf("ValidatePolicy(DefaultPolicy()) = %q, %v; want the default to validate to itself", got, err)
 	}

@@ -244,7 +244,7 @@ covers **interactive human sessions**:
 | **Rename / compact / graceful stop** | ✅ in-pane `/rename`, `/compact`, `/exit`. `/exit` closes the *current* session: with other sessions open in the same CLI it foregrounds the newest remaining one instead of quitting, so tclaude keeps its hard-kill fallback for a pane that doesn't actually exit. The exit is preceded by a **cancel keystroke** (`C-c`, `Lifecycle.SoftExitPrefixKeys`) — see below |
 | **Hooks / live status** | ✅ `<COPILOT_HOME>/hooks/tclaude.json` — a tclaude-**owned** drop-in file, merged by Copilot with the user's own hooks; no trust step, no `config.json` involvement. Registers `SessionStart`, `UserPromptSubmit`, `PostToolUse`, `Stop`, `SessionEnd`, so a pane reports working/idle per turn. See [below](#copilot-hooks) for what is deliberately left out |
 | **Conversation store** | ✅ cold list / resolve / cwd filter / title / existence, read from Copilot's own per-session `<COPILOT_HOME>/session-state/<id>/` files. No SQLite access at all — see [below](#copilot-conversation-store) |
-| **Sandbox** | ⚠️ `inherit` (default) / `off` — an *assertion*, not a lever. Copilot's own command sandbox has no launch flag, so tclaude can neither enable nor disable it; `off` means "verified not engaged" and is what `--sandbox-impl tclaude-layer` resolves to. See [below](#copilot-and-tclaudes-outer-sandbox). Copilot's *own* command sandboxing was separately evaluated and deliberately not advertised as a harness-builtin implementation — see [below](#copilots-own-command-sandboxing) |
+| **Sandbox** | ⚠️ `inherit` (default) / `off` — an *assertion*, not a lever. Copilot's own command sandbox has no per-launch lever tclaude can use — its hidden `--sandbox`/`--no-sandbox` flags need `--experimental`, which also lets the pane undo the choice — so tclaude neither enables nor disables it; `off` means "verified not engaged" and is what `--sandbox-impl tclaude-layer` resolves to. See [below](#copilot-and-tclaudes-outer-sandbox). Copilot's *own* command sandboxing was separately evaluated and deliberately not advertised as a harness-builtin implementation — see [below](#copilots-own-command-sandboxing) |
 | **tclaude-layer (outer OS sandbox)** | ✅ Linux bubblewrap / macOS Seatbelt, with Copilot's pre-approved directory catalog composed into the mount plan |
 | **Model transport under a filtered network** | ⚠️ the default first-party GitHub Copilot route only (`api.githubcopilot.com`, `api.individual.githubcopilot.com`, `api.github.com`); the model host is assigned per account at token exchange, so only observed tiers are named and the rest stay denied. Every route-moving input is refused rather than followed, read from both settings files with the same precedence as the sandbox key |
 | **Directory pre-trust at spawn** ([below](#directory-trust-at-spawn)) | ✅ opt-in `trust_dir` appends the launch dir to `trustedFolders` in `<COPILOT_HOME>/config.json`. Copilot's modal blocks *before* any provider contact, so an unseeded detached pane never reaches its first turn |
@@ -511,10 +511,13 @@ tclaude does not generalize from it.
 
 Copilot ships a real OS sandbox — Microsoft Execution Containers (MXC), which
 uses bubblewrap on Linux and Seatbelt on macOS — but it is **experimental, off
-by default, and has no launch flag and no environment variable**. It is
-configured only by the `sandbox` key of two files under `COPILOT_HOME` and by
-the in-pane `/sandbox enable|disable`, which is itself only registered when
-experimental features are on (`copilot help sandbox`, pinned 1.0.77).
+by default, and has no environment variable and no per-launch flag tclaude can
+use**. It is configured by the `sandbox` key of two files under `COPILOT_HOME`,
+by the in-pane `/sandbox enable|disable`, and by hidden `--sandbox` /
+`--no-sandbox` flags — but the slash command and the flags alike are live only
+when experimental features are on, so selecting a posture on the command line
+and letting the pane revoke it are the same switch (`copilot help sandbox`,
+pinned 1.0.77; TCL-1011).
 
 Both files matter, and the **legacy one wins**. At startup the CLI migrates
 user settings out of `config.json` into `settings.json`, overwriting what was
@@ -950,7 +953,10 @@ What Copilot actually has, measured against the pinned 1.0.77 binary:
 | **Shell commands** | Genuinely OS-confined — Microsoft Execution Containers (bubblewrap on Linux, Seatbelt on macOS, ProcessContainer on Windows) |
 | **Built-in file edits** (`create`, `edit`, …) | **Not** OS-confined. GitHub says so outright, and the fixture measures it: on a host where the OS backend cannot start at all, a `create` into the granted workspace still wrote its file while every shell command failed |
 | **Path checking of those edits** | Sound as far as it goes — symlinks planted inside the workspace and `..` traversal are both resolved before the decision, so the objection is *where* enforcement lives, not a defect in it |
-| **How it is turned on** | `sandbox.enabled` in the settings under `COPILOT_HOME`, the interactive `/sandbox` dialog, or organization policy. There is **no launch flag**, and `--experimental` gates only the `/sandbox` *command* — a settings-enabled sandbox applies without it |
+| **How it is turned on** | `sandbox.enabled` in the settings under `COPILOT_HOME`, the interactive `/sandbox` dialog, or organization policy. A settings-enabled sandbox applies with no `--experimental` anywhere. There *are* hidden `--sandbox` / `--no-sandbox` flags (added in 1.0.70, absent from `copilot --help`) that override the settings file for one launch without persisting — but they are **only honored under `--experimental`**, and are silently ignored without it. Since `--experimental` is also what registers the in-pane `/sandbox enable\|disable` command, the only argv that selects a posture is the same argv that lets the pane revoke it |
+| **What a denied path is** | On Linux, `--tmpfs` mounted over the target — masking, not a deny rule. Nothing reaches the host, but the write does not fail inside the sandbox; it lands in a throwaway filesystem, so the model can be told it succeeded |
+| **Credentials in the environment** | Inherited. The generated policy is `--clearenv` followed by `--setenv` of the parent's own environment, so a token exported in the launching shell is exported into the sandbox. It is a filesystem and network boundary, not a credential one |
+| **`sandbox.allowBypass`** | Changes the *kind* of boundary: with it on, a policy violation becomes a permission request rather than a refusal. Headless it fails closed (auto-denied); whether a pane auto-approves is unmeasured |
 | **Which settings file** | **Both** `settings.json` and `config.json` are live, and `config.json` wins. `settings.json` is canonical; `config.json` is a legacy source the CLI migrates from at startup — it decides that launch, is merged into `settings.json`, and is left as a managed stub. The merge is **shallow**: a top-level key `config.json` never mentions survives, but one it does mention has its whole value replaced, so a `config.json` carrying any `sandbox` object discards `settings.json`'s `sandbox` object entirely. Anything inspecting a Copilot sandbox posture must read both names and model that replacement |
 | **Availability** | Host-conditional on Linux: `bwrap` on PATH is not enough, the kernel must also permit an unprivileged user namespace |
 | **When the backend cannot start** | Fails closed — shell commands error out rather than silently running unconfined |
@@ -968,11 +974,21 @@ Code's SRT and Codex's `--sandbox` confine their own edit tools through the OS;
 that difference *is* the contract.
 
 Three further properties would each need answering even if the file half were
-closed: there is no launch-time flag to pin a per-spawn posture with (and
-`clearPolicyOnExit` plus an in-session `/sandbox disable` can move it under a
-running agent), the feature is experimental by its own vendor's description, and
-its availability is a runtime property of the host that tclaude cannot verify at
-launch.
+closed. The launch-time flags that would pin a per-spawn posture exist but are
+gated behind `--experimental`, which is the same switch that lets an in-session
+`/sandbox disable` move the posture under a running agent — so a recorded
+posture and a revocable one arrive together or not at all. The feature is
+experimental by its own vendor's description, and by the shipped API schema,
+which tags `SandboxConfig` `"stability": "experimental"`. And its availability
+is a runtime property of the host that tclaude cannot verify at launch.
+
+The sandbox is also under continuous change rather than settled: the bundled
+changelog carries sandbox-touching entries in 14 of the last 20 releases,
+including several that moved behavior rather than polish — per-launch flags
+added (1.0.70), built-in edits gaining an approvable bypass (1.0.69),
+`clearPolicyOnExit` removed (1.0.69), the macOS keychain default flipped to off
+(1.0.72), and an organization-enforced managed floor plus MDM enforcement
+(1.0.76, 1.0.77).
 
 The two-file precedence in the table above is a security detail rather than a
 trivia one, and it is the reason the row exists: a check that reads only
@@ -1003,6 +1019,34 @@ the default granted surface. A target that reads as "outside the policy" is
 probably inside it, and an assertion built on that reading measures nothing. The
 measured surface per platform is recorded in
 `TestCopilotNativeSandboxShellBasePolicySurface`.
+
+### The two sandbox axes
+
+Every launch records **two independent sandbox values**, and reading either one
+alone gets the agent's posture wrong.
+
+| Axis | Flag | What it says | Values |
+| --- | --- | --- | --- |
+| **Harness-builtin mode** | `--sandbox` | What the **harness itself** does about sandboxing | Claude `inherit`/`on`/`off`; Codex `tclaude-agent`/`workspace-write`/`read-only`/`danger-full-access`; OpenCode `access-control`/`tclaude-layer`/`off`; Copilot `inherit`/`off` |
+| **Implementation** | `--sandbox-impl` | **Who enforces** OS containment | `off`, `harness-builtin`, `tclaude-layer`, `stacked` |
+
+The trap is the first axis's permissive-looking values. Under
+`--sandbox-impl tclaude-layer` tclaude wraps the process in its own wall
+(bubblewrap / Seatbelt) and **deliberately stands the harness's inner sandbox
+down**, because two nested sandboxes fight. Such a launch therefore records
+Claude `off` or Codex `danger-full-access` — an *instruction to the harness*,
+not a statement that the agent is unconfined. It is in fact confined, by
+tclaude.
+
+That is why the code calls this axis the **harness-builtin mode**
+(`HarnessBuiltinMode`), not `mode`: a field called `mode` holding `off` reads as
+"no sandbox" to any reasonable reader, and code that read it that way produced a
+real write-confinement escape (TCL-991). Anything judging what an agent may do —
+the spawn lineage guard, the directory write-proof, the dashboard's posture
+badge — must read the pair.
+
+For back-compat the CLI flag stays `--sandbox` and the persisted column stays
+`sandbox_mode`; only the code and this documentation use the clearer name.
 
 ### Sandbox & approval defaults (Codex)
 
@@ -1089,9 +1133,15 @@ are left untouched. The research behind the defaults lives in the
 
 ### Sandbox at spawn (Claude Code)
 
-> The modes below decide *whether* containment is enforced. What it then does to
-> a running agent — deny + reopen, the capability gate, and the failure modes —
-> is in [Sandboxing](sandboxing.md).
+> The modes below set **the harness's own sandbox** — internally the
+> *harness-builtin mode* axis. They decide what Claude Code does about
+> confinement, which is only the same thing as "is this agent confined" when
+> the harness is also the one enforcing. Under `--sandbox-impl tclaude-layer`
+> tclaude's own wall enforces and the harness's inner sandbox is deliberately
+> stood down, so such a launch records `off` while being confined — see
+> [the two axes](#the-two-sandbox-axes). What containment then does to a running
+> agent — deny + reopen, the capability gate, and the failure modes — is in
+> [Sandboxing](sandboxing.md).
 
 Claude Code's OS sandbox lives in `settings.json` (a `sandbox` block), not a
 launch flag — there is no `claude --sandbox`. tclaude still offers a **per-session
@@ -1126,8 +1176,13 @@ outrank it). Three modes:
   are hidden (read + write), so the sandboxed agent can't snoop on or tamper with
   shared daemon state. The same proof-pinned repository write paths described
   above are included.
-- **`off`** — forces the sandbox **off** for this session even if `settings.json`
-  enables it (the agent's Bash runs unconfined).
+- **`off`** — forces **Claude Code's own** sandbox off for this session even if
+  `settings.json` enables it. Whether the agent is then unconfined depends on
+  the other axis: under `--sandbox-impl harness-builtin` or `off` nothing else
+  is enforcing, so its Bash runs unconfined; under `tclaude-layer` this is the
+  mode tclaude *itself* forces precisely because its own wall is enforcing, and
+  the agent is confined. `off` is a statement about the harness, never a verdict
+  on the process.
 
 On Linux the tmux rule is socket-specific: agents may still run the `tmux`
 binary against a private socket they own, but cannot connect to the existing

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -201,6 +202,52 @@ func DenialMarker(toolResults []string) string {
 	return ""
 }
 
+// dialogMarkersPresent names the permission dialogs visible in a transcript,
+// or "none" when it shows no dialog this package knows how to name.
+//
+// It exists for the INCONCLUSIVE arm. A run that cannot be classified is the
+// one case where the screen is the only remaining evidence, and it was also
+// the one case that discarded it: the error named the request counts and the
+// settle state and said nothing about what was actually drawn. So a failure
+// that could have been resolved by looking — is the CLI parked on a dialog, or
+// still working toward one? — instead required guessing, and a whole class of
+// macOS failures (TCL-1029) stayed undiagnosable across several sightings for
+// exactly that reason.
+//
+// This lists EVERY dialog drawn during the run, including ones ClassifyPermission
+// draws a verdict from. The two are not in tension, but the difference is worth
+// stating: a marker means the dialog was drawn at some point, not that the CLI
+// is parked on it now, so a verdict may only rest on one where nothing stronger
+// contradicts it. That is why the classifier checks tool results FIRST — a run
+// that answered its prompt and went on to execute still carries the marker for
+// the rest of the transcript, and reading it as blocked would manufacture a
+// finding out of stale screen text (pinned by TestClassifyPermissionArms'
+// path-dialog-does-not-beat-a-tool-result row). Reaching this diagnostic means
+// no such evidence exists, so here the marker is simply reported.
+func dialogMarkersPresent(transcript string) string {
+	var found []string
+	for _, marker := range []string{TrustPromptMarker, PathPromptMarker} {
+		if containsMarker(transcript, marker) {
+			found = append(found, strconv.Quote(marker))
+		}
+	}
+	if len(found) == 0 {
+		return "none"
+	}
+	return strings.Join(found, ", ")
+}
+
+// containsMarker matches a dialog title the way PTYResult.Contains does, case
+// insensitively, so the classifier and the scenarios that corroborate it cannot
+// disagree about whether a dialog was on screen. They used different
+// comparisons until the verdict started depending on one of them: a re-cased
+// TUI title would then have left the scenario assertion passing while the
+// verdict silently fell back to the sampled-quiescence arm.
+func containsMarker(transcript, marker string) bool {
+	return strings.Contains(
+		strings.ToLower(transcript), strings.ToLower(marker))
+}
+
 // PermissionVerdict pairs an outcome with the observation behind it.
 type PermissionVerdict struct {
 	Outcome PermissionOutcome
@@ -264,7 +311,7 @@ func ClassifyPermission(
 				"need looking at rather than being recorded as execution",
 			followUpRequests)
 
-	case totalRequests == 0 && stillAlive && strings.Contains(transcript, TrustPromptMarker):
+	case totalRequests == 0 && stillAlive && containsMarker(transcript, TrustPromptMarker):
 		// Named separately from the generic blocked arm because it is a
 		// different gate at a different time: this one blocks BEFORE the model
 		// is ever contacted, so no permission flag can be observed past it.
@@ -272,6 +319,39 @@ func ClassifyPermission(
 			Outcome: PermissionBlocked,
 			Evidence: "blocked at the folder-trust dialog before contacting the provider " +
 				"(0 provider requests)",
+		}, nil
+
+	case stillAlive && containsMarker(transcript, PathPromptMarker):
+		// The directory-access dialog, named for the same reason the trust
+		// dialog above is: it identifies WHICH gate stopped the launch.
+		//
+		// It is also checked BEFORE the quiescence arm, and that ordering is
+		// the fix for TCL-1029's B. Quiescence is sampled once, on the tick the
+		// run ends on, so an arm cut by the deadline is called blocked or
+		// undecidable according to whether that instant fell more or less than
+		// PTYQuiescence after the last write — a phase check against the CLI's
+		// render cadence, not an observation about the launch. On Linux the
+		// silence window catches these arms long before the deadline and the
+		// sample is never consulted; on macOS the render cadence keeps output
+		// gaps in a band that rarely reaches it (measured: allowed arms go
+		// quiet up to 5.8s, blocked arms as little as 4.1s, against a 10s
+		// window), so ~4 in 5 blocked arms reached the deadline and had their
+		// verdict decided by that coin flip.
+		//
+		// The dialog is the durable fact the sample was standing in for. The
+		// transcript accumulates, so once the CLI has drawn this prompt the
+		// marker is there whatever the output is doing when the clock runs out
+		// — which is exactly why the coin flip was never necessary. Verified
+		// by construction rather than observed: forcing a Linux blocked arm
+		// down the deadline path (permissionDeadline shortened below the
+		// silence window) reproduces the macOS failure, and the marker is
+		// present in every reproduction.
+		return PermissionVerdict{
+			Outcome: PermissionBlocked,
+			Evidence: fmt.Sprintf(
+				"no tool-result follow-up after %d provider request(s); the process is alive "+
+					"showing the directory-access dialog, i.e. parked on a prompt",
+				totalRequests),
 		}, nil
 
 	case stillAlive && quiesced:
@@ -296,10 +376,13 @@ func ClassifyPermission(
 				"request(s), the process is still alive, but its output never settled. "+
 				"That is neither a prompt (which stops producing output) nor an exit, so it "+
 				"is most likely still working and the scenario's deadline was too short. "+
-				"Raising the deadline is the fix; recording it as 'blocked' would be a "+
-				"guess, and this measurement exists precisely because guesses about "+
-				"Copilot's blocking behavior are what TCL-973 cannot afford",
-			totalRequests)
+				"Recording it as 'blocked' would be a guess, and this measurement exists "+
+				"precisely because guesses about Copilot's blocking behavior are what "+
+				"TCL-973 cannot afford. Permission dialogs drawn during the run: %s "+
+				"(a dialog here means the CLI reached a prompt and the run was cut "+
+				"before that could be established; none means it never got that far, "+
+				"which is a bound or a hang rather than a permission gate)",
+			totalRequests, dialogMarkersPresent(transcript))
 	}
 }
 

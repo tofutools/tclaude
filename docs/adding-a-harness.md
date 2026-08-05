@@ -137,8 +137,12 @@ BuildCommand(spec SpawnSpec) string  // the full shell command run inside the tm
 `SpawnSpec` carries everything needed to build the command: `EnvExports` (the
 identity env prefix), `ResumeID` (empty = fresh; the resume form is
 harness-specific — `claude --resume <id>` vs `codex resume <id>`), validated
-`Model`/`Effort`, `ExtraArgs`, and the optional `SandboxMode` / `ApprovalPolicy`
-/ `AutoReview` / `BypassHookTrust` knobs. Shell-quote anything you interpolate.
+`Model`/`Effort`, `ExtraArgs`, and the optional `HarnessBuiltinMode` /
+`ApprovalPolicy` / `AutoReview` / `BypassHookTrust` knobs. Shell-quote anything
+you interpolate. `HarnessBuiltinMode` is your harness's *own* sandbox setting
+— never a claim that the process is confined, since a `tclaude-layer` launch
+stands your harness's inner sandbox down while tclaude's wall enforces. See
+[the two sandbox axes](harnesses.md#the-two-sandbox-axes).
 
 ### `ModelCatalog` — model & effort *(required to spawn)*
 

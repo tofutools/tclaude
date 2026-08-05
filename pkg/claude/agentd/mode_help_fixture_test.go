@@ -24,7 +24,7 @@ func collectModeHelp(t *testing.T) map[string]string {
 	t.Helper()
 	help := map[string]string{}
 	for _, entry := range buildHarnessCatalog() {
-		for mode, text := range entry.SandboxModeHelp {
+		for mode, text := range entry.HarnessBuiltinModeHelp {
 			help[entry.Name+"/sandbox/"+mode] = text
 		}
 		for mode, text := range entry.ApprovalModeHelp {

@@ -13,6 +13,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
+	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
 func TestPlanSandboxProfileAccessDisclosesUnmaterializedSocketEntries(t *testing.T) {
@@ -183,6 +184,7 @@ func TestPlanSandboxProfileAccessPersistsDetectedProbeWhenVerdictCannotFlip(t *t
 }
 
 func TestPlanSandboxProfileAccessActivatesReadyOpenCodeWithExplicitProvider(t *testing.T) {
+	testharness.ClearModelTransportProxyEnv(t)
 	oldProbe := probeFilteredNetworkPrerequisite
 	oldVerdict := resolveTclaudeLayerAccessVerdict
 	t.Cleanup(func() {
@@ -257,6 +259,7 @@ func TestPlanSandboxProfileAccessEnforcesOpenCodeLinuxDenyRows(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("filtered gateway capability is Linux-only")
 	}
+	testharness.ClearModelTransportProxyEnv(t)
 	oldProbe := probeFilteredNetworkPrerequisite
 	oldVerdict := resolveTclaudeLayerAccessVerdict
 	t.Cleanup(func() {
@@ -319,6 +322,7 @@ func TestPlanSandboxProfileAccessMintsModelTransportFromLaunchContext(t *testing
 	if runtime.GOOS != "linux" {
 		t.Skip("filtered gateway capability is Linux-only")
 	}
+	testharness.ClearModelTransportProxyEnv(t)
 	oldProbe := probeFilteredNetworkPrerequisite
 	oldVerdict := resolveTclaudeLayerAccessVerdict
 	t.Cleanup(func() {
@@ -475,7 +479,7 @@ func TestSandboxProfilesDisabledForExplicitNoContainmentModes(t *testing.T) {
 	require.False(t, sandboxProfilesDisabled(harness.OpenCodeName, ""))
 }
 
-func TestOpenCodeSandboxModeAndImplementationMustAgree(t *testing.T) {
+func TestOpenCodeHarnessBuiltinModeAndImplementationMustAgree(t *testing.T) {
 	require.Nil(t, sandboxProfileCapabilityFailure(
 		harness.OpenCodeName,
 		harness.OpenCodeSandboxTclaudeLayer,
@@ -513,31 +517,31 @@ func TestOpenCodePolicyRepresentabilityUsesAccessControlAndFailsClosedOtherwise(
 }
 
 func TestOpenCodeSandboxLineageClassifiesLayerAccessControlOffAndUnknown(t *testing.T) {
-	openCodeOff := spawnLineageSandbox{Harness: harness.OpenCodeName, Mode: harness.OpenCodeSandboxOff}
+	openCodeOff := spawnLineageSandbox{Harness: harness.OpenCodeName, HarnessBuiltinMode: harness.OpenCodeSandboxOff}
 	require.True(t, spawnSandboxLineageAllowed(openCodeOff, openCodeOff))
 	require.False(t, spawnSandboxLineageAllowed(
-		spawnLineageSandbox{Harness: harness.DefaultName, Mode: harness.ClaudeSandboxOn},
+		spawnLineageSandbox{Harness: harness.DefaultName, HarnessBuiltinMode: harness.ClaudeSandboxOn},
 		openCodeOff,
 	))
 
-	access := spawnLineageSandbox{Harness: harness.OpenCodeName, Mode: harness.OpenCodeSandboxAccessControl}
-	layer := spawnLineageSandbox{Harness: harness.OpenCodeName, Mode: harness.OpenCodeSandboxTclaudeLayer}
+	access := spawnLineageSandbox{Harness: harness.OpenCodeName, HarnessBuiltinMode: harness.OpenCodeSandboxAccessControl}
+	layer := spawnLineageSandbox{Harness: harness.OpenCodeName, HarnessBuiltinMode: harness.OpenCodeSandboxTclaudeLayer}
 	require.True(t, spawnSandboxLineageAllowed(access, access))
 	require.True(t, spawnSandboxLineageAllowed(access, layer))
 	require.True(t, spawnSandboxLineageAllowed(layer, layer))
 	require.False(t, spawnSandboxLineageAllowed(layer, access))
 	require.True(t, spawnSandboxLineageAllowed(access,
-		spawnLineageSandbox{Harness: harness.DefaultName, Mode: harness.ClaudeSandboxOn}))
+		spawnLineageSandbox{Harness: harness.DefaultName, HarnessBuiltinMode: harness.ClaudeSandboxOn}))
 	require.True(t, spawnSandboxLineageAllowed(access,
-		spawnLineageSandbox{Harness: harness.CodexName, Mode: harness.SandboxManagedProfile}))
+		spawnLineageSandbox{Harness: harness.CodexName, HarnessBuiltinMode: harness.SandboxManagedProfile}))
 	require.False(t, spawnSandboxLineageAllowed(access, openCodeOff))
 	require.False(t, spawnSandboxLineageAllowed(
-		spawnLineageSandbox{Harness: harness.OpenCodeName, Mode: ""},
+		spawnLineageSandbox{Harness: harness.OpenCodeName, HarnessBuiltinMode: ""},
 		access,
 	))
 	require.False(t, spawnSandboxLineageAllowed(
 		access,
-		spawnLineageSandbox{Harness: harness.OpenCodeName, Mode: "unknown"},
+		spawnLineageSandbox{Harness: harness.OpenCodeName, HarnessBuiltinMode: "unknown"},
 	))
 }
 

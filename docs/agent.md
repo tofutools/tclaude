@@ -881,8 +881,9 @@ reincarnation re-resolve ordinary rules from the current registry, but every
 deny row in the launch snapshot must still be present, with no reopen beneath
 it that the snapshot did not already have. There is no human in the loop on a
 relaunch, so widening is never granted implicitly. A relaunch also preserves
-the sandbox mode the agent was launched under rather than re-deriving the
-harness default, so an enforced `sandbox on` posture is not silently dropped.
+the harness-builtin mode the agent was launched under rather than re-deriving
+the harness default, so an enforced `sandbox on` posture is not silently
+dropped.
 
 `agent_directories` is a JSON array of environment-variable names, for example
 `["GOCACHE", "GOLANGCI_LINT_CACHE"]`. At spawn, agentd creates a fresh private
@@ -1156,8 +1157,21 @@ inherit multiple group memberships or ownerships must be allowed by every
 destination group's effective edge.
 
 The sandbox lineage guard compares the spawning agent's recorded harness /
-sandbox mode with the fully resolved child launch shape, after any group
-default spawn profile has filled blank fields. In short:
+harness-builtin mode (the `--sandbox` axis — what the harness itself does about
+sandboxing) with the fully resolved child launch shape, after any group
+default spawn profile has filled blank fields.
+
+Both sides are read together with their sandbox *implementation*, because the
+mode alone is not a posture. Under `--sandbox-impl tclaude-layer` tclaude's own
+wall enforces and the harness's inner sandbox is deliberately stood down, so
+the launch records Claude `off` / Codex `danger-full-access` — an instruction to
+the harness, not an unconfined agent. Such a launch is classified as the
+confinement class it actually has (Claude `on` / the Codex managed profile) on
+both the parent and the child side. Rows recorded with the implementation unset,
+`harness-builtin`, `stacked`, or `off` are read at face value by the mode rules
+below.
+
+In short, for a parent read at face value:
 
 - Claude `off` or Codex `danger-full-access` parents can spawn any sandbox.
 - Claude `inherit`/`on` parents can spawn sandboxed Codex children
@@ -1287,10 +1301,24 @@ A legacy Codex session whose durable spawn provenance proves it used the old
 daemon default is reconstructed as `never` by the database migration and the
 runtime compatibility guard. This is faithful launch-history reconstruction,
 not an assumption that `never` is less capable than prompt-oriented policies.
-Ambiguous direct/imported/template histories stay fail-closed; relaunching them
-under the current version records the conservative `untrusted` posture. The
-human spawn path bypasses approval lineage, as it does the sandbox-lineage
-guard.
+Ambiguous direct/imported/template histories stay fail-closed for the *lineage*
+guard — an agent whose own posture cannot be reconstructed may not spawn
+children until it is relaunched.
+
+Relaunching such a session does not invent a posture for it. Resume and
+relaunch reuse the approval **input** a conversation recorded, not the value
+that input happened to resolve to at the time: an explicitly recorded posture is
+reproduced exactly and re-validated, while an absent one stays absent and
+re-resolves under current config (Claude `auto`, Codex `never`, Copilot
+`allow-tools`, OpenCode `deny`). Reconstruction therefore never lands on a
+posture strictly less capable than what current config resolves an unspecified
+input to — pinning a blank row to a historical value is what used to leave a
+resumed agent prompting on a detached pane, or unable to delegate because
+approval lineage would not credit the pinned posture. An operator who broadens
+their default does retroactively broaden old conversations on their next
+resume; that is their own current config, and a resume prints the posture it
+resolved so the change is visible. The human spawn path bypasses approval
+lineage, as it does the sandbox-lineage guard.
 
 The **dir write-proof** closes the lineage guard's remaining gap: sandboxes
 grant write access rooted at the launch cwd, so an agent that picks the
@@ -1314,8 +1342,9 @@ retargeting and real-directory swaps between HTTP validation and launch.
 own sandbox, which is exactly the capability being proven — so a permitted
 spawn just works, and a forbidden one fails with a clear "cannot prove write
 access" error. Humans, fully-open parents (Claude `off` / Codex
-`danger-full-access`), and Codex `read-only` children (no cwd write to prove)
-are exempt. The same handshake guards a clone's `cwd` override and the
+`danger-full-access` — judged with the implementation, so a tclaude-layer
+parent recording those modes is *not* exempt), and Codex `read-only` children
+(no cwd write to prove) are exempt. The same handshake guards a clone's `cwd` override and the
 template spawn surfaces (`instantiate` / `deploy` / `reinforce` — the whole
 cast shares one proven launch cwd, plus any shared worktree and the
 per-agent-worktree repo); the matching `tclaude agent templates …` /

@@ -337,7 +337,7 @@ func TestSandboxProfileAgentCanSpawnChildWithAdditionalAgentDirectories(t *testi
 	// exercises the managed Codex path before sandbox-profile containment.
 	parentSession, err := db.FindSessionByConvID(parent.ConvID)
 	require.NoError(t, err)
-	parentSession.SandboxMode = "tclaude-agent"
+	parentSession.HarnessBuiltinMode = "tclaude-agent"
 	require.NoError(t, db.SaveSession(parentSession))
 	require.NoError(t, db.GrantAgentPermission(parent.ConvID, agentd.PermGroupsSpawn, "test"))
 	parentSnapshot, ok := f.World.SpawnSandboxPolicy(parent.ConvID)
@@ -447,7 +447,7 @@ func TestSandboxProfileSpawnRejectsExplicitInternetWidening(t *testing.T) {
 		parentSession, err := db.FindSessionByConvID(parent.ConvID)
 		require.NoError(t, err)
 		require.NotNil(t, parentSession)
-		parentSession.SandboxMode = harness.SandboxManagedProfile
+		parentSession.HarnessBuiltinMode = harness.SandboxManagedProfile
 		require.NoError(t, db.SaveSession(parentSession))
 		require.NoError(t, db.GrantAgentPermission(parent.ConvID, agentd.PermGroupsSpawn, "test"))
 		makeInternetProfile(t)

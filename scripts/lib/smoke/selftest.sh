@@ -24,6 +24,31 @@ work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 failures=0
 
+# The deb822 classifier must tolerate formatting whitespace while still
+# refusing a source file that mixes Microsoft and another vendor. This is kept
+# here rather than as a one-off command in CI so every smoke run exercises the
+# exact parser used before apt-get update.
+apt_source_classifier_test() {
+  local name="$1" want="$2" content="$3"
+  local source_file="$work/apt-source-$name.sources"
+  local got=refuse
+  printf '%b' "$content" > "$source_file"
+  if smoke::apt_source_is_microsoft_only "$source_file"; then
+    got=pass
+  fi
+  if [[ "$got" != "$want" ]]; then
+    printf 'selftest FAIL: apt-source-%s — wanted %s, got %s\n' "$name" "$want" "$got"
+    failures=1
+  fi
+}
+
+apt_source_classifier_test microsoft-trailing-space pass \
+  'Types: deb\nURIs: https://packages.microsoft.com/repos/azure-cli/ \nSuites: noble\nComponents: main\n'
+apt_source_classifier_test microsoft-non-http pass \
+  'Types: deb\nURIs: file:packages.microsoft.com/repos/azure-cli/\nSuites: noble\nComponents: main\n'
+apt_source_classifier_test mixed refuse \
+  'Types: deb\nURIs: https://packages.microsoft.com/repos/azure-cli/ https://archive.ubuntu.com/ubuntu/\nSuites: noble\nComponents: main\n'
+
 # expect_verdict WANT(pass|refuse) CASE LOG_CONTENT TEST_NAME...
 expect_verdict() {
   local want="$1" name="$2" content="$3"

@@ -116,7 +116,7 @@ type NewParams struct {
 	// profile (a spawned agent is the untrusted party) and Claude to inherit (no
 	// override — its settings.json is the operator's chosen posture). See
 	// JOH-192 / JOH-207.
-	Sandbox string `long:"sandbox" optional:"true" help:"Launch containment (per-harness). Codex: tclaude-agent (managed profile = workspace-write + agentd socket) | workspace-write | read-only | danger-full-access. Claude Code: inherit | on (force OS sandbox on via --settings) | off. Unset = no override (each harness uses its own config)"`
+	Sandbox string `long:"sandbox" optional:"true" help:"The HARNESS'S OWN sandbox setting (per-harness) — not who enforces containment, which is --sandbox-impl. Codex: tclaude-agent (managed profile = workspace-write + agentd socket) | workspace-write | read-only | danger-full-access. Claude Code: inherit | on (force OS sandbox on via --settings) | off. Unset = no override (each harness uses its own config)"`
 
 	// SandboxImplementation selects who owns OS-level containment. The default
 	// is the harness's historical behavior; tclaude-layer is an experimental
@@ -340,11 +340,11 @@ func RegisterJoinGroupCompletion(cmd *cobra.Command) {
 // (the JOH-207 path — `codex -p <name>`), otherwise the --sandbox mode (which
 // may itself be ""). The two are mutually exclusive upstream, so at most one
 // is non-empty.
-func sandboxDescr(sandboxMode, permissionProfile string) string {
+func sandboxDescr(harnessBuiltinMode, permissionProfile string) string {
 	if permissionProfile != "" {
 		return permissionProfile
 	}
-	return sandboxMode
+	return harnessBuiltinMode
 }
 
 // validateReplacedPermissionProfile applies the --permission-profile rules to a
@@ -359,19 +359,19 @@ func sandboxDescr(sandboxMode, permissionProfile string) string {
 // --permission-profile <typo>` would launch silently where every other
 // implementation refuses it.
 //
-// requestedSandboxMode is the mode the operator asked for, BEFORE the
+// requestedHarnessBuiltinMode is the mode the operator asked for, BEFORE the
 // implementation forced its own: the rules are about what they typed, and
 // judging the forced mode would report a conflict they could not have caused.
 // The checks and their order mirror the ones further down runNew, which remain
 // the only ones a non-tclaude-layer launch runs.
 func validateReplacedPermissionProfile(
-	h *harness.Harness, requestedSandboxMode, permissionProfile string,
+	h *harness.Harness, requestedHarnessBuiltinMode, permissionProfile string,
 ) error {
-	requestedSandboxMode = strings.TrimSpace(requestedSandboxMode)
+	requestedHarnessBuiltinMode = strings.TrimSpace(requestedHarnessBuiltinMode)
 	// The managed-profile pseudo-mode selects the tclaude-agent profile, so a
 	// DIFFERENT explicit profile beside it is a conflict the operator must fix
 	// rather than have silently resolved.
-	if h.Name == harness.CodexName && requestedSandboxMode == harness.SandboxManagedProfile {
+	if h.Name == harness.CodexName && requestedHarnessBuiltinMode == harness.SandboxManagedProfile {
 		if up := strings.TrimSpace(permissionProfile); up != "" && up != harness.CodexAgentProfile {
 			return fmt.Errorf("--sandbox %s selects the managed %s profile and conflicts with --permission-profile %s",
 				harness.SandboxManagedProfile, harness.CodexAgentProfile, up)
@@ -387,7 +387,7 @@ func validateReplacedPermissionProfile(
 	if profile == "" {
 		return nil
 	}
-	if requestedSandboxMode != "" {
+	if requestedHarnessBuiltinMode != "" {
 		return fmt.Errorf("--permission-profile and --sandbox are mutually exclusive: " +
 			"Codex ignores a permission profile when --sandbox is set")
 	}
@@ -531,15 +531,15 @@ func runNew(params *NewParams) error {
 	// runNew: a relaunch replays the containment decision that was made rather
 	// than re-deriving a new one, and erasing it would be permanent (TCL-730).
 	// That is a replay, not a default — an explicit flag still wins.
-	// For Claude Code, ValidateSandboxMode normalizes its
+	// For Claude Code, ValidateHarnessBuiltinMode normalizes its
 	// inherit/blank to "" (no `--settings` override); the spawner turns on/off
 	// into the override. The cwd-safety check needs the resolved cwd, so it
 	// happens later.
-	sandboxMode, err := harness.ValidateSandboxMode(h, params.Sandbox)
+	harnessBuiltinMode, err := harness.ValidateHarnessBuiltinMode(h, params.Sandbox)
 	if err != nil {
 		return err
 	}
-	params.Sandbox = sandboxMode
+	params.Sandbox = harnessBuiltinMode
 
 	sandboxImplementation, err := sandboxpolicy.NormalizeImplementation(params.SandboxImpl)
 	if err != nil {
@@ -565,19 +565,19 @@ func runNew(params *NewParams) error {
 		if err := ValidateStackedSandboxHarness(h); err != nil {
 			return err
 		}
-		sandboxMode, params.PermissionProfile, err = stackedSandboxLaunchMode(h)
+		harnessBuiltinMode, params.PermissionProfile, err = stackedSandboxLaunchMode(h)
 		if err != nil {
 			return err
 		}
-		params.Sandbox = sandboxMode
+		params.Sandbox = harnessBuiltinMode
 	}
-	requestedSandboxMode := sandboxMode
-	sandboxMode, err = harness.ResolveSandboxImplementationMode(
-		h, sandboxMode, sandboxImplementation)
+	requestedHarnessBuiltinMode := harnessBuiltinMode
+	harnessBuiltinMode, err = harness.ResolveSandboxImplementationMode(
+		h, harnessBuiltinMode, sandboxImplementation)
 	if err != nil {
 		return err
 	}
-	params.Sandbox = sandboxMode
+	params.Sandbox = harnessBuiltinMode
 	if tclaudeLayerOnly {
 		// The single-wall implementation replaces the harness's own permission
 		// profile with tclaude's outer wall; ResolveSandboxImplementationMode
@@ -592,7 +592,7 @@ func runNew(params *NewParams) error {
 		// that was a loud error before must stay one. Validate what they asked
 		// for against the mode they asked for, THEN discard it.
 		if err := validateReplacedPermissionProfile(
-			h, requestedSandboxMode, params.PermissionProfile,
+			h, requestedHarnessBuiltinMode, params.PermissionProfile,
 		); err != nil {
 			return err
 		}
@@ -613,13 +613,13 @@ func runNew(params *NewParams) error {
 	// daemon never reaches this: appendSandboxArgs already passes
 	// --permission-profile.) A conflicting explicit --permission-profile is a real
 	// error; an equal one is harmless.
-	if h.Name == harness.CodexName && sandboxMode == harness.SandboxManagedProfile {
+	if h.Name == harness.CodexName && harnessBuiltinMode == harness.SandboxManagedProfile {
 		if up := strings.TrimSpace(params.PermissionProfile); up != "" && up != harness.CodexAgentProfile {
 			return fmt.Errorf("--sandbox %s selects the managed %s profile and conflicts with --permission-profile %s",
 				harness.SandboxManagedProfile, harness.CodexAgentProfile, up)
 		}
 		params.PermissionProfile = harness.CodexAgentProfile
-		sandboxMode = ""
+		harnessBuiltinMode = ""
 		params.Sandbox = ""
 	}
 	// Mount paths are enforceable only where tclaude owns a mount namespace.
@@ -636,11 +636,11 @@ func runNew(params *NewParams) error {
 		return fmt.Errorf("unsupported_sandbox_profile_filesystem: codex filesystem rules require sandbox %s", harness.SandboxManagedProfile)
 	}
 	if !outerLayer && len(sandboxSnapshotDirs(launchSandbox, sandboxpolicy.AccessDeny)) > 0 &&
-		h.Name == harness.DefaultName && sandboxMode != harness.ClaudeSandboxOn {
+		h.Name == harness.DefaultName && harnessBuiltinMode != harness.ClaudeSandboxOn {
 		return fmt.Errorf("unsupported_sandbox_profile_filesystem: Claude filesystem deny rules require sandbox %s", harness.ClaudeSandboxOn)
 	}
 	if !outerLayer && len(sandboxSnapshotActiveFilesystem(launchSandbox)) > 0 &&
-		h.Name == harness.OpenCodeName && sandboxMode != harness.OpenCodeSandboxAccessControl {
+		h.Name == harness.OpenCodeName && harnessBuiltinMode != harness.OpenCodeSandboxAccessControl {
 		return fmt.Errorf("unsupported_sandbox_profile_filesystem: OpenCode filesystem rules require soft access-control mode %s", harness.OpenCodeSandboxAccessControl)
 	}
 	// Capability gates. Both refuse loudly rather than launching with a weaker
@@ -651,15 +651,15 @@ func runNew(params *NewParams) error {
 	// authored profile; the rendered rules are gated again once the launch
 	// contract has added its own reopens.
 	codexManagedProfile := h.Name == harness.CodexName && params.PermissionProfile == harness.CodexAgentProfile
-	effectiveSandboxMode := sandboxMode
+	effectiveHarnessBuiltinMode := harnessBuiltinMode
 	if codexManagedProfile {
 		// The managed profile is selected via -p rather than --sandbox, so
-		// sandboxMode was cleared above; restore the logical mode for the gates.
-		effectiveSandboxMode = harness.SandboxManagedProfile
+		// harnessBuiltinMode was cleared above; restore the logical mode for the gates.
+		effectiveHarnessBuiltinMode = harness.SandboxManagedProfile
 	}
 	launchFilesystem := sandboxSnapshotActiveFilesystem(launchSandbox)
 	if !outerLayer {
-		if err := harness.ValidateSandboxReopenUnderDeny(h.Name, effectiveSandboxMode, launchFilesystem); err != nil {
+		if err := harness.ValidateSandboxReopenUnderDeny(h.Name, effectiveHarnessBuiltinMode, launchFilesystem); err != nil {
 			return err
 		}
 	}
@@ -676,7 +676,7 @@ func runNew(params *NewParams) error {
 				return fmt.Errorf("unsupported_sandbox_profile_network: %w", err)
 			}
 		case harness.OpenCodeName:
-			if sandboxMode != harness.OpenCodeSandboxAccessControl {
+			if harnessBuiltinMode != harness.OpenCodeSandboxAccessControl {
 				return fmt.Errorf("unsupported_sandbox_profile_network: OpenCode web-tool network rules require soft access-control mode %s", harness.OpenCodeSandboxAccessControl)
 			}
 		default:
@@ -710,7 +710,7 @@ func runNew(params *NewParams) error {
 	}
 	params.PermissionProfile = profile
 	if profile != "" {
-		if sandboxMode != "" {
+		if harnessBuiltinMode != "" {
 			return fmt.Errorf("--permission-profile and --sandbox are mutually exclusive: " +
 				"Codex ignores a permission profile when --sandbox is set")
 		}
@@ -1251,7 +1251,7 @@ func runNew(params *NewParams) error {
 	// containment. No-op for harnesses/modes that don't write outside cwd.
 	// The managed tclaude-agent profile extends :workspace (same cwd-subtree
 	// writability), so guard it exactly as workspace-write.
-	guardMode := sandboxMode
+	guardMode := harnessBuiltinMode
 	if params.PermissionProfile == harness.CodexAgentProfile {
 		guardMode = harness.SandboxWorkspaceWrite
 	}
@@ -1259,7 +1259,7 @@ func runNew(params *NewParams) error {
 		return fmt.Errorf("refusing to launch a %s agent in %q under workspace-write containment (%s): "+
 			"that cwd contains your tclaude/Codex/Claude state dirs, which the sandbox would make writable "+
 			"(defeating it). Run the agent from a project subdirectory, or use sandbox %s to opt out of the sandbox",
-			h.Name, cwd, sandboxDescr(sandboxMode, params.PermissionProfile), harness.SandboxDangerFull)
+			h.Name, cwd, sandboxDescr(harnessBuiltinMode, params.PermissionProfile), harness.SandboxDangerFull)
 	}
 
 	// Spawn-posture warnings: the Claude unsandboxed-autonomy pairing (TCL-586)
@@ -1273,10 +1273,10 @@ func runNew(params *NewParams) error {
 	// echoes which postures the resume carried. It stays a warning on stderr,
 	// never a refusal: the human is the trust root here.
 	if !outerLayer || h.Name == harness.OpenCodeName {
-		for _, info := range harness.SpawnSandboxInfo(h, sandboxMode) {
+		for _, info := range harness.SpawnSandboxInfo(h, harnessBuiltinMode) {
 			fmt.Fprintf(os.Stderr, "ℹ %s\n", info)
 		}
-		for _, warning := range harness.SpawnSandboxWarnings(h, approvalPolicy, sandboxMode, cwd, outerLayer) {
+		for _, warning := range harness.SpawnSandboxWarnings(h, approvalPolicy, harnessBuiltinMode, cwd, outerLayer) {
 			fmt.Fprintf(os.Stderr, "%s\n", warning)
 		}
 	}
@@ -1298,10 +1298,10 @@ func runNew(params *NewParams) error {
 	// profile, and replayed into a child argv on every later relaunch. Cleaning
 	// only the derived os_sandbox_source would leave the raw label in all three.
 	sandboxChosenBy := harness.SanitizeSandboxChosenBy(params.SandboxChosenBy)
-	if sandboxChosenBy == "" && sandboxMode != "" && !params.ManagedLaunch {
+	if sandboxChosenBy == "" && harnessBuiltinMode != "" && !params.ManagedLaunch {
 		sandboxChosenBy = harness.SandboxChosenExplicitly
 	}
-	launchOSSandbox := harness.ResolveLaunchOSSandbox(h, sandboxMode, sandboxChosenBy, cwd)
+	launchOSSandbox := harness.ResolveLaunchOSSandbox(h, harnessBuiltinMode, sandboxChosenBy, cwd)
 	bwrapBinary := ""
 	var bwrapCapabilityErr error
 	if outerLayer {
@@ -1384,7 +1384,7 @@ func runNew(params *NewParams) error {
 			}
 		}
 		caps, capsErr := harness.ResolveAccessEnforcement(
-			h, sandboxImplementation, axes, launchOSSandbox, effectiveSandboxMode,
+			h, sandboxImplementation, axes, launchOSSandbox, effectiveHarnessBuiltinMode,
 		)
 		if capsErr != nil {
 			return capsErr
@@ -1640,24 +1640,24 @@ func runNew(params *NewParams) error {
 
 	launchCreated := time.Now()
 	state := &SessionState{
-		ID:                     sessionID,
-		TmuxSession:            tmuxSession,
-		Cwd:                    cwd,
-		ConvID:                 rowConvID,
-		Status:                 StatusIdle,
-		Harness:                h.Name,
-		SandboxMode:            sandboxDescr(sandboxMode, params.PermissionProfile),
-		SandboxImplementation:  string(sandboxImplementation),
-		SandboxModeSource:      sandboxChosenBy,
-		OSSandboxState:         launchOSSandbox.State,
-		OSSandboxSource:        launchOSSandbox.Source,
-		OSSandboxUnverified:    launchOSSandbox.Unverified,
-		EffectiveSandbox:       effectiveSandbox,
-		ApprovalPolicy:         recordedApprovalPolicy,
-		ApprovalAutoReview:     autoReview,
-		AskUserQuestionTimeout: askTimeout,
-		Created:                launchCreated,
-		Updated:                launchCreated,
+		ID:                       sessionID,
+		TmuxSession:              tmuxSession,
+		Cwd:                      cwd,
+		ConvID:                   rowConvID,
+		Status:                   StatusIdle,
+		Harness:                  h.Name,
+		HarnessBuiltinMode:       sandboxDescr(harnessBuiltinMode, params.PermissionProfile),
+		SandboxImplementation:    string(sandboxImplementation),
+		HarnessBuiltinModeSource: sandboxChosenBy,
+		OSSandboxState:           launchOSSandbox.State,
+		OSSandboxSource:          launchOSSandbox.Source,
+		OSSandboxUnverified:      launchOSSandbox.Unverified,
+		EffectiveSandbox:         effectiveSandbox,
+		ApprovalPolicy:           recordedApprovalPolicy,
+		ApprovalAutoReview:       autoReview,
+		AskUserQuestionTimeout:   askTimeout,
+		Created:                  launchCreated,
+		Updated:                  launchCreated,
 	}
 	// Establish the fresh launch identity before any private barrier/token
 	// filesystem setup. Row reuse therefore cannot retain predecessor callback
@@ -1711,7 +1711,7 @@ func runNew(params *NewParams) error {
 			return fmt.Errorf("find OpenCode executable: %w", err)
 		}
 	}
-	launchGitWriteDirs := gitWorktreeWriteDirs(params, h.Name, sandboxMode, cwd)
+	launchGitWriteDirs := gitWorktreeWriteDirs(params, h.Name, harnessBuiltinMode, cwd)
 	if outerLayer && tclaudeLayerWrapsPane(h.Name) {
 		// Derive repository grants for the outer wall independently of the
 		// harness-native mode. Under stacked, the inner wall receives the same
@@ -1734,7 +1734,7 @@ func runNew(params *NewParams) error {
 	// an authored `deny ~` with no reopen of its own still renders as a split
 	// policy and must be gated as one.
 	if !outerLayer {
-		if err := harness.ValidateSandboxReopenUnderDeny(h.Name, effectiveSandboxMode,
+		if err := harness.ValidateSandboxReopenUnderDeny(h.Name, effectiveHarnessBuiltinMode,
 			sandboxpolicy.GrantsFromDirs(launchReadDirs, launchWriteDirs, launchDenyDirs)); err != nil {
 			return err
 		}
@@ -1776,7 +1776,7 @@ func runNew(params *NewParams) error {
 		Effort:                      effort,
 		Model:                       model,
 		ExtraArgs:                   extraArgs,
-		SandboxMode:                 sandboxMode,
+		HarnessBuiltinMode:          harnessBuiltinMode,
 		SandboxWriteDirs:            launchWriteDirs,
 		SandboxReadDirs:             launchReadDirs,
 		SandboxDenyDirs:             launchDenyDirs,
@@ -2146,8 +2146,8 @@ func applyOpenCodeAttachEnvironment(environment map[string]string, isolation str
 	environment["OPENCODE_CONFIG_DIR"] = ""
 }
 
-func gitWorktreeWriteDirs(params *NewParams, harnessName, sandboxMode, cwd string) []string {
-	if !spawnSandboxUsesGitWriteDirs(harnessName, sandboxMode) {
+func gitWorktreeWriteDirs(params *NewParams, harnessName, harnessBuiltinMode, cwd string) []string {
+	if !spawnSandboxUsesGitWriteDirs(harnessName, harnessBuiltinMode) {
 		return nil
 	}
 	if params.GitWorktreeWriteDirsPinned {
@@ -2167,11 +2167,11 @@ func gitWorktreeWriteDirs(params *NewParams, harnessName, sandboxMode, cwd strin
 	return harness.GitWorktreeWriteDirs(cwd, commonDir, home)
 }
 
-func spawnSandboxUsesGitWriteDirs(harnessName, sandboxMode string) bool {
+func spawnSandboxUsesGitWriteDirs(harnessName, harnessBuiltinMode string) bool {
 	if harnessName == harness.CodexName {
-		return sandboxMode == harness.SandboxManagedProfile
+		return harnessBuiltinMode == harness.SandboxManagedProfile
 	}
-	return harnessName == harness.DefaultName && sandboxMode != harness.ClaudeSandboxOff
+	return harnessName == harness.DefaultName && harnessBuiltinMode != harness.ClaudeSandboxOff
 }
 
 func validateCodexGitCommonDirPin(params *NewParams) error {
@@ -2240,7 +2240,7 @@ func EnsureCodexManagedOneShotProfile(
 func OneShotLaunchPosture(
 	cwd string,
 	targetHarness *harness.Harness,
-	sandboxMode, approvalPolicy string,
+	harnessBuiltinMode, approvalPolicy string,
 	autoReview bool,
 	effectiveSandbox *sandboxpolicy.Snapshot,
 ) (harness.SpawnSpec, error) {
@@ -2259,7 +2259,7 @@ func OneShotLaunchPosture(
 		return harness.SpawnSpec{}, err
 	}
 	params := &NewParams{}
-	launchGitWriteDirs := gitWorktreeWriteDirs(params, harnessName, sandboxMode, cwd)
+	launchGitWriteDirs := gitWorktreeWriteDirs(params, harnessName, harnessBuiltinMode, cwd)
 	if sandboxDenyCoversPath(effectiveSandbox, cwd) {
 		launchGitWriteDirs = denyNarrowedGitWriteDirs(cwd, "", launchGitWriteDirs)
 	}
@@ -2270,19 +2270,19 @@ func OneShotLaunchPosture(
 	launchReadDirs := append(sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessRead),
 		launchContractReadDirs...)
 	launchDenyDirs := sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessDeny)
-	if err := harness.ValidateSandboxReopenUnderDeny(harnessName, sandboxMode,
+	if err := harness.ValidateSandboxReopenUnderDeny(harnessName, harnessBuiltinMode,
 		sandboxpolicy.GrantsFromDirs(launchReadDirs, launchWriteDirs, launchDenyDirs)); err != nil {
 		return harness.SpawnSpec{}, err
 	}
 	posture := harness.SpawnSpec{
-		Cwd:              cwd,
-		SandboxMode:      sandboxMode,
-		SandboxWriteDirs: launchWriteDirs,
-		SandboxReadDirs:  launchReadDirs,
-		SandboxDenyDirs:  launchDenyDirs,
-		ShellEnvironment: sandboxSnapshotEnvironment(effectiveSandbox),
-		ApprovalPolicy:   approvalPolicy,
-		AutoReview:       autoReview,
+		Cwd:                cwd,
+		HarnessBuiltinMode: harnessBuiltinMode,
+		SandboxWriteDirs:   launchWriteDirs,
+		SandboxReadDirs:    launchReadDirs,
+		SandboxDenyDirs:    launchDenyDirs,
+		ShellEnvironment:   sandboxSnapshotEnvironment(effectiveSandbox),
+		ApprovalPolicy:     approvalPolicy,
+		AutoReview:         autoReview,
 	}
 	return targetHarness.PrepareHostControlSandboxLaunch(posture)
 }

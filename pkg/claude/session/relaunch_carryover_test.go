@@ -54,7 +54,7 @@ func fullClaudePosture() *db.AgentRelaunchProfile {
 	features := map[string]string{"bundled-skills": "off"}
 	return &db.AgentRelaunchProfile{
 		Version:                db.RelaunchProfileVersion,
-		SandboxMode:            ptr(harness.ClaudeSandboxOn),
+		HarnessBuiltinMode:     ptr(harness.ClaudeSandboxOn),
 		SandboxImplementation:  ptr(string(sandboxpolicy.ImplementationTclaudeLayer)),
 		ApprovalPolicy:         ptr("plan"),
 		ApprovalAutoReview:     ptr(true),
@@ -113,14 +113,14 @@ func TestApplyRecordedLaunchPosture_CarriesTemporarySandboxOverride(t *testing.T
 	temporary := harness.ClaudeSandboxOff
 	normalSource := `group default profile "confined"`
 	seedResumableConv(t, cwd, &db.AgentRelaunchProfile{
-		Version: db.RelaunchProfileVersion, SandboxMode: &normal,
-		SandboxModeSource: &normalSource, TemporarySandboxMode: &temporary,
+		Version: db.RelaunchProfileVersion, HarnessBuiltinMode: &normal,
+		HarnessBuiltinModeSource: &normalSource, TemporaryHarnessBuiltinMode: &temporary,
 	})
 
 	params := &NewParams{Resume: carryoverConvID, Dir: cwd}
 	require.NoError(t, applyRecordedLaunchPosture(params, explicitLaunchFields{}))
 	assert.Equal(t, harness.ClaudeSandboxOff, params.Sandbox)
-	assert.Equal(t, db.TemporarySandboxModeSource, params.SandboxChosenBy)
+	assert.Equal(t, db.TemporaryHarnessBuiltinModeSource, params.SandboxChosenBy)
 }
 
 // TestApplyRecordedLaunchPosture_ExplicitFlagWins pins the other half of the
@@ -265,7 +265,7 @@ func TestApplyRecordedLaunchPosture_SaysNothingWhenNothingWasPinned(t *testing.T
 	nothing := map[string]string{}
 	seedResumableConv(t, cwd, &db.AgentRelaunchProfile{
 		Version:                db.RelaunchProfileVersion,
-		SandboxMode:            ptr(""),
+		HarnessBuiltinMode:     ptr(""),
 		ApprovalPolicy:         ptr(harness.ClaudePermissionInherit),
 		ApprovalAutoReview:     ptr(false),
 		AskUserQuestionTimeout: ptr(""),
@@ -288,7 +288,7 @@ func TestApplyRecordedLaunchPosture_SaysNothingWhenNothingWasPinned(t *testing.T
 // TestApplyRecordedLaunchPosture_InheritIsNotAPinnedPosture is the same rule at
 // the other spelling of "nothing pinned", and it is the COMMON path rather than
 // an edge case: the daemon spawn path resolves a blank sandbox through
-// harness.ResolveSandboxMode, which applies claudeSandbox.DefaultMode() =
+// harness.ResolveHarnessBuiltinMode, which applies claudeSandbox.DefaultMode() =
 // inherit, so every agentd-spawned Claude agent that did not explicitly choose
 // containment has sandbox_mode=inherit recorded against it. A human then typing
 // `tclaude session new -r <that conv>` — the headline scenario for TCL-730 —
@@ -297,7 +297,7 @@ func TestApplyRecordedLaunchPosture_InheritIsNotAPinnedPosture(t *testing.T) {
 	cwd := carryoverTestHome(t)
 	seedResumableConv(t, cwd, &db.AgentRelaunchProfile{
 		Version:                db.RelaunchProfileVersion,
-		SandboxMode:            ptr(harness.ClaudeSandboxInherit),
+		HarnessBuiltinMode:     ptr(harness.ClaudeSandboxInherit),
 		ApprovalPolicy:         ptr(harness.ClaudePermissionInherit),
 		AskUserQuestionTimeout: ptr(harness.ClaudeAskTimeoutInherit),
 	})

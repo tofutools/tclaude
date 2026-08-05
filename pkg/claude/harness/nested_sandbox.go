@@ -143,7 +143,7 @@ func (claudeNestedSandbox) EnginePresence() error {
 }
 
 func (claudeNestedSandbox) PrepareLaunch(spec SpawnSpec) SpawnSpec {
-	spec.SandboxMode = ClaudeSandboxOn
+	spec.HarnessBuiltinMode = ClaudeSandboxOn
 	spec.PermissionProfile = ""
 	spec.StrongNestedSandbox = true
 	return spec
@@ -311,7 +311,7 @@ func (codexNestedSandbox) EnginePresence() error {
 }
 
 func (codexNestedSandbox) PrepareLaunch(spec SpawnSpec) SpawnSpec {
-	spec.SandboxMode = ""
+	spec.HarnessBuiltinMode = ""
 	if spec.PermissionProfile == "" {
 		spec.PermissionProfile = CodexAgentProfile
 	}

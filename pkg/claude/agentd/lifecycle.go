@@ -1258,7 +1258,7 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 	relaunchSandbox := launchConfig.Sandbox
 	harnessName := launchConfig.Harness
 	relaunchSandboxImplementation := launchConfig.activeSandboxImplementation()
-	if launchConfig.TemporarySandboxMode {
+	if launchConfig.TemporaryHarnessBuiltinMode {
 		effectiveSandbox = temporarySandboxLaunchSnapshot(harnessName, stableEffectiveSandbox)
 	}
 	// The harness's own sandbox configuration is re-verified on every relaunch,
@@ -1393,7 +1393,7 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 		return res
 	}
 	var persistedAgentID string
-	if effectiveSandbox != nil && !launchConfig.TemporarySandboxMode {
+	if effectiveSandbox != nil && !launchConfig.TemporaryHarnessBuiltinMode {
 		agentID, err := db.AgentIDForConv(convID)
 		if err != nil {
 			res.Action = "error"
@@ -1439,7 +1439,7 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 		Harness:                    harnessName,
 		Sandbox:                    relaunchSandbox,
 		SandboxImplementation:      relaunchSandboxImplementation,
-		SandboxChosenBy:            launchConfig.SandboxModeSource,
+		SandboxChosenBy:            launchConfig.HarnessBuiltinModeSource,
 		Approval:                   approval,
 		AutoReview:                 autoReview,
 		AskUserQuestionTimeout:     launchConfig.AskUserQuestionTimeout,
@@ -1451,7 +1451,7 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 	}); err != nil {
 		res.Action = "error"
 		res.Detail = "spawn: " + err.Error()
-		if !launchConfig.TemporarySandboxMode && resumePolicy != nil && resumePolicy.Previous != nil && effectiveSandbox != nil {
+		if !launchConfig.TemporaryHarnessBuiltinMode && resumePolicy != nil && resumePolicy.Previous != nil && effectiveSandbox != nil {
 			if _, cleanupErr := removeSupersededMaterializedAgentDirectories(*effectiveSandbox, *resumePolicy.Previous); cleanupErr != nil {
 				res.Detail += "; remove unused agent-owned directories: " + cleanupErr.Error()
 			}
@@ -1467,7 +1467,7 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 		}
 	} else {
 		res.Action = "resumed"
-		if !launchConfig.TemporarySandboxMode && resumePolicy != nil && resumePolicy.Previous != nil && effectiveSandbox != nil {
+		if !launchConfig.TemporaryHarnessBuiltinMode && resumePolicy != nil && resumePolicy.Previous != nil && effectiveSandbox != nil {
 			if _, cleanupErr := removeSupersededMaterializedAgentDirectories(*resumePolicy.Previous, *effectiveSandbox); cleanupErr != nil {
 				res.Detail = "resumed; remove superseded agent-owned directories: " + cleanupErr.Error()
 			}
@@ -1523,18 +1523,20 @@ func recoverMissingConversationResumeProfile(convID string, recreateMissingDir b
 		return nil, fmt.Errorf("human recovery could not encode current resume provenance: %w", err)
 	}
 	empty := ""
+	// Recovery has no recorded approval input to reproduce, so it records none:
+	// a blank posture re-resolves under current config at every relaunch (see
+	// harness.ReconstructApprovalPolicy). Writing a value here would be
+	// reconstruction inventing an input — and the value it used to write for
+	// Codex (`untrusted`) is exactly the one the rule forbids, since it both
+	// prompts on a detached pane and is denied the in-sandbox lineage bit the
+	// agent needs to delegate. TCL-990.
 	approval := ""
-	if harnessName == harness.CodexName {
-		// Match the pre-v145 missing-row compatibility rule: ambiguous legacy
-		// Codex authority resumes at its least automatic posture.
-		approval = harness.ApprovalUntrusted
-	}
 	no := false
 	sshWorkaround := harnessName == harness.CodexName
 	zero := int64(0)
 	legacy := db.AgentRelaunchProfile{
-		Version:     db.RelaunchProfileVersion,
-		SandboxMode: &empty, ApprovalPolicy: &approval,
+		Version:            db.RelaunchProfileVersion,
+		HarnessBuiltinMode: &empty, ApprovalPolicy: &approval,
 		ApprovalAutoReview: &no, ModelID: &empty, Effort: &empty,
 		ContextWindowSize: &zero, AskUserQuestionTimeout: &empty,
 		RemoteControl: &no, AutoMemory: &no, AutoCompactWindow: &empty,
@@ -2645,8 +2647,8 @@ func spawnAuditResolution(p spawnParams, launch *agent.ResolvedLaunch, requested
 			"model":                     p.Model,
 			"effort":                    p.Effort,
 			"ssh_workaround":            p.SSHWorkaround,
-			"sandbox":                   p.SandboxMode,
-			"sandbox_source":            p.SandboxModeSource,
+			"sandbox":                   p.HarnessBuiltinMode,
+			"sandbox_source":            p.HarnessBuiltinModeSource,
 			"sandbox_implementation":    p.SandboxImplementation,
 			"allow_unenforced_sandbox":  p.AllowUnenforcedSandbox,
 			"approval":                  p.ApprovalPolicy,
@@ -2988,9 +2990,9 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// party that can say a global/group default profile forced the containment,
 	// and the badge would otherwise credit "this launch" — i.e. the operator.
 	var sandboxSource string
-	body.SandboxMode, sandboxSource, sandboxNote, fieldFail = resolveStringLaunchField(
-		"sandbox", body.SandboxMode, h.Name, profileTiers, func(p *db.SpawnProfile) string { return p.Sandbox },
-		func(raw string) (string, error) { return harness.ValidateSandboxMode(h, raw) })
+	body.HarnessBuiltinMode, sandboxSource, sandboxNote, fieldFail = resolveStringLaunchField(
+		"sandbox", body.HarnessBuiltinMode, h.Name, profileTiers, func(p *db.SpawnProfile) string { return p.Sandbox },
+		func(raw string) (string, error) { return harness.ValidateHarnessBuiltinMode(h, raw) })
 	if fieldFail != nil {
 		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
 		return
@@ -3157,13 +3159,13 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// ~/.claude — refuse here with a clean 400 rather than after the forked
 	// session times out. (Claude's `on` block protects those dirs via settings,
 	// so this Codex-specific guard doesn't apply to it.)
-	sandboxMode, sbErr := harness.ResolveSandboxMode(h, body.SandboxMode)
+	harnessBuiltinMode, sbErr := harness.ResolveHarnessBuiltinMode(h, body.HarnessBuiltinMode)
 	if sbErr != nil {
 		writeError(w, http.StatusBadRequest, "invalid_sandbox", sbErr.Error())
 		return
 	}
-	sandboxMode, fieldFail = resolveSandboxImplementationMode(
-		h, sandboxMode, body.SandboxImplementation)
+	harnessBuiltinMode, fieldFail = resolveSandboxImplementationMode(
+		h, harnessBuiltinMode, body.SandboxImplementation)
 	if fieldFail != nil {
 		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
 		return
@@ -3173,7 +3175,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		resolvedLaunch.Notes = append(resolvedLaunch.Notes,
 			clcommon.OpenCodeStatePrivateNote)
 	}
-	if sandboxMode != harness.SandboxManagedProfile {
+	if harnessBuiltinMode != harness.SandboxManagedProfile {
 		if sshWorkaround {
 			resolvedLaunch.Notes = append(resolvedLaunch.Notes,
 				"SSH workaround disabled because it applies only to the Codex tclaude-agent managed sandbox")
@@ -3214,21 +3216,21 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// on the one axis tclaude deliberately leaves to them (TCL-586). The same
 	// call also surfaces OpenCode's toothless access-control "sandbox".
 	resolvedLaunch.Warnings = append(resolvedLaunch.Warnings,
-		harness.SpawnSandboxWarnings(h, approvalPolicy, sandboxMode, cwd,
+		harness.SpawnSandboxWarnings(h, approvalPolicy, harnessBuiltinMode, cwd,
 			spawnUsesTclaudeLayer(body.SandboxImplementation))...)
 	resolvedLaunch.Info = append(resolvedLaunch.Info,
-		harness.SpawnSandboxInfo(h, sandboxMode)...)
+		harness.SpawnSandboxInfo(h, harnessBuiltinMode)...)
 	autoReview, arErr := harness.ResolveAutoReview(h, body.AutoReview)
 	if arErr != nil {
 		writeError(w, http.StatusBadRequest, "invalid_auto_review", arErr.Error())
 		return
 	}
-	if home, herr := os.UserHomeDir(); herr == nil && harness.CodexSandboxCwdConflict(sandboxMode, cwd, home) {
+	if home, herr := os.UserHomeDir(); herr == nil && harness.CodexSandboxCwdConflict(harnessBuiltinMode, cwd, home) {
 		writeError(w, http.StatusBadRequest, "invalid_cwd", fmt.Sprintf(
 			"refusing to spawn a %s agent in %q under sandbox %q: it would expose "+
 				"~/.tclaude / ~/.codex / ~/.claude to the agent's writes; spawn in a "+
 				"project subdirectory or set sandbox %q to opt out",
-			h.Name, cwd, sandboxMode, harness.SandboxDangerFull))
+			h.Name, cwd, harnessBuiltinMode, harness.SandboxDangerFull))
 		return
 	}
 
@@ -3243,8 +3245,8 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// judges: a tclaude-layer child records the single-wall posture, and the
 	// guard has to reason about the posture that will actually be persisted and
 	// later read back when this child spawns children of its own (TCL-989).
-	childLaunchSandbox, fieldFail := resolveLaunchSandboxMode(
-		h, sandboxMode, body.SandboxImplementation)
+	childLaunchSandbox, fieldFail := resolveLaunchHarnessBuiltinMode(
+		h, harnessBuiltinMode, body.SandboxImplementation)
 	if fieldFail != nil {
 		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
 		return
@@ -3267,7 +3269,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// state; this server-side rule also covers CLI callers and older tabs.
 	effectiveSandbox := sandboxpolicy.OmittedProfilesSnapshot()
 	var policyErr error
-	if !sandboxProfilesDisabled(h.Name, sandboxMode, body.SandboxImplementation) &&
+	if !sandboxProfilesDisabled(h.Name, harnessBuiltinMode, body.SandboxImplementation) &&
 		!body.OmitSandboxProfiles {
 		effectiveSandbox, policyErr = db.ResolveEffectiveSandboxSnapshot(g.ID, body.SandboxProfile)
 	}
@@ -3305,12 +3307,12 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		}
 	}
 	if fail := sandboxProfileCapabilityFailure(
-		h.Name, sandboxMode, &effectiveSandbox, body.SandboxImplementation); fail != nil {
+		h.Name, harnessBuiltinMode, &effectiveSandbox, body.SandboxImplementation); fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
 	if _, fail := planSandboxProfileAccessForLaunch(
-		h.Name, sandboxMode, &effectiveSandbox, body.SandboxImplementation,
+		h.Name, harnessBuiltinMode, &effectiveSandbox, body.SandboxImplementation,
 		session.ModelTransportLaunchContext{
 			Model: body.Model,
 			Cwd:   cwd,
@@ -3346,12 +3348,12 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	var proofToken string
 	var codexGitCommonDir string
 	codexGitCommonDirPinned := spawnUsesPinnedGitCommonDir(
-		h.Name, sandboxMode, body.SandboxImplementation)
+		h.Name, harnessBuiltinMode, body.SandboxImplementation)
 	var gitWorktreeWriteDirs []string
 	if codexGitCommonDirPinned {
 		var gerr error
 		codexGitCommonDir, gerr = spawnGitCommonDir(
-			h.Name, sandboxMode, body.SandboxImplementation, cwd)
+			h.Name, harnessBuiltinMode, body.SandboxImplementation, cwd)
 		if gerr != nil {
 			writeError(w, http.StatusInternalServerError, "io", gerr.Error())
 			return
@@ -3365,7 +3367,8 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		writeError(w, http.StatusInternalServerError, "io", trustLayoutErr.Error())
 		return
 	}
-	if spawnerConvID != "" && childSandboxGrantsDirWrite(h.Name, sandboxMode) {
+	if spawnerConvID != "" && childSandboxGrantsDirWrite(
+		h.Name, harnessBuiltinMode, body.SandboxImplementation) {
 		dirs := []string{cwd}
 		dirs = appendUniqueDirs(dirs, worktreePath)
 		dirs = appendUniqueDirs(dirs, gitWorktreeWriteDirs...)
@@ -3570,8 +3573,8 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		Harness:                    h.Name,
 		SSHWorkaround:              sshWorkaround,
 		SSHWorkaroundSet:           true,
-		SandboxMode:                sandboxMode,
-		SandboxModeSource:          sandboxSource,
+		HarnessBuiltinMode:         harnessBuiltinMode,
+		HarnessBuiltinModeSource:   sandboxSource,
 		SandboxImplementation:      body.SandboxImplementation,
 		AllowUnenforcedSandbox:     body.AllowUnenforcedSandbox,
 		AskUserQuestionTimeout:     askTimeout,
@@ -3764,19 +3767,19 @@ type spawnParams struct {
 	// SSHWorkaroundSet preserves an explicit false through executeSpawn's
 	// safety-net profile overlay.
 	SSHWorkaroundSet bool
-	// SandboxMode is the resolved launch sandbox mode for a harness that
+	// HarnessBuiltinMode is the resolved launch sandbox mode for a harness that
 	// takes one (Codex: the managed "tclaude-agent" profile by default), or "" to omit the
 	// flag (Claude Code, or no sandbox handling). Resolved + cwd-guarded at
 	// the spawn boundary (handleGroupSpawn) before building the params; it
 	// forwards to `tclaude session new --sandbox <mode>`.
-	SandboxMode string
-	// SandboxModeSource names the resolution tier that CHOSE SandboxMode — an
+	HarnessBuiltinMode string
+	// HarnessBuiltinModeSource names the resolution tier that CHOSE HarnessBuiltinMode — an
 	// explicit request field, or the named / group-default / global-default
 	// spawn profile that carried it. It forwards to `tclaude session new
 	// --sandbox-chosen-by` and is recorded beside the launch's sandbox verdict,
 	// so the dashboard badge can attribute the containment to the profile that
 	// imposed it instead of to an operator who never chose one. "" omits it.
-	SandboxModeSource string
+	HarnessBuiltinModeSource string
 	// SandboxImplementation is the resolved owner of OS-level containment:
 	// "tclaude-layer" for the experimental tclaude-owned bubblewrap wrapper, or
 	// "" / "harness-builtin" for the legacy harness-owned path. It forwards to
@@ -4447,9 +4450,9 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 	if fail != nil {
 		return fail
 	}
-	p.SandboxMode, _, _, fail = resolveStringLaunchField("sandbox", p.SandboxMode, h.Name, tiers,
+	p.HarnessBuiltinMode, _, _, fail = resolveStringLaunchField("sandbox", p.HarnessBuiltinMode, h.Name, tiers,
 		func(prof *db.SpawnProfile) string { return prof.Sandbox },
-		func(raw string) (string, error) { return harness.ValidateSandboxMode(h, raw) })
+		func(raw string) (string, error) { return harness.ValidateHarnessBuiltinMode(h, raw) })
 	if fail != nil {
 		return fail
 	}
@@ -4525,14 +4528,14 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 		}
 		p.SSHWorkaroundSet = true
 	}
-	if p.SandboxMode, err = harness.ResolveSandboxMode(h, p.SandboxMode); err != nil {
+	if p.HarnessBuiltinMode, err = harness.ResolveHarnessBuiltinMode(h, p.HarnessBuiltinMode); err != nil {
 		return &spawnFailure{http.StatusBadRequest, "invalid_sandbox", err.Error()}
 	}
-	if p.SandboxMode, fail = resolveSandboxImplementationMode(
-		h, p.SandboxMode, p.SandboxImplementation); fail != nil {
+	if p.HarnessBuiltinMode, fail = resolveSandboxImplementationMode(
+		h, p.HarnessBuiltinMode, p.SandboxImplementation); fail != nil {
 		return fail
 	}
-	if p.SandboxMode != harness.SandboxManagedProfile {
+	if p.HarnessBuiltinMode != harness.SandboxManagedProfile {
 		p.SSHWorkaround = false
 	}
 	// As at the HTTP boundary: empty HERE (after the profile tiers above) means
@@ -4636,14 +4639,14 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	// particular, template/wave callers can arrive with a previously resolved
 	// global/group policy even though this agent explicitly selects Codex's raw
 	// no-sandbox mode.
-	if sandboxProfilesDisabled(p.Harness, p.SandboxMode, p.SandboxImplementation) {
+	if sandboxProfilesDisabled(p.Harness, p.HarnessBuiltinMode, p.SandboxImplementation) {
 		omitted := sandboxpolicy.OmittedProfilesSnapshot()
 		p.EffectiveSandbox = &omitted
 	}
 	if spawnUsesPinnedGitCommonDir(
-		p.Harness, p.SandboxMode, p.SandboxImplementation) && !p.CodexGitCommonDirPinned {
+		p.Harness, p.HarnessBuiltinMode, p.SandboxImplementation) && !p.CodexGitCommonDirPinned {
 		gitCommonDir, err := spawnGitCommonDir(
-			p.Harness, p.SandboxMode, p.SandboxImplementation, p.Cwd)
+			p.Harness, p.HarnessBuiltinMode, p.SandboxImplementation, p.Cwd)
 		if err != nil {
 			return nil, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
 		}
@@ -4674,11 +4677,11 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		p.EffectiveSandbox = &validated
 	}
 	if fail := sandboxProfileCapabilityFailure(
-		p.Harness, p.SandboxMode, p.EffectiveSandbox, p.SandboxImplementation); fail != nil {
+		p.Harness, p.HarnessBuiltinMode, p.EffectiveSandbox, p.SandboxImplementation); fail != nil {
 		return nil, fail
 	}
 	if _, fail := planSandboxProfileAccessForLaunch(
-		p.Harness, p.SandboxMode, p.EffectiveSandbox, p.SandboxImplementation,
+		p.Harness, p.HarnessBuiltinMode, p.EffectiveSandbox, p.SandboxImplementation,
 		session.ModelTransportLaunchContext{
 			Model: p.Model,
 			Cwd:   p.Cwd,
@@ -4709,8 +4712,8 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	if hErr != nil {
 		return nil, &spawnFailure{http.StatusUnprocessableEntity, "invalid_harness", hErr.Error()}
 	}
-	childLaunchSandbox, fail := resolveLaunchSandboxMode(
-		childHarness, p.SandboxMode, p.SandboxImplementation)
+	childLaunchSandbox, fail := resolveLaunchHarnessBuiltinMode(
+		childHarness, p.HarnessBuiltinMode, p.SandboxImplementation)
 	if fail != nil {
 		return nil, fail
 	}
@@ -4849,8 +4852,8 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		Effort:                     p.Effort,
 		Model:                      p.Model,
 		Harness:                    p.Harness,
-		Sandbox:                    p.SandboxMode,
-		SandboxChosenBy:            p.SandboxModeSource,
+		Sandbox:                    p.HarnessBuiltinMode,
+		SandboxChosenBy:            p.HarnessBuiltinModeSource,
 		SandboxImplementation:      p.SandboxImplementation,
 		DarwinRouteCapable:         p.DarwinRouteCapable,
 		DarwinRouteAgentID:         p.DarwinRouteAgentID,
@@ -4883,7 +4886,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		p.Cwd = resolvedCwd
 		spawnArgs.Cwd = resolvedCwd
 		permissionJSON, err := openCodePermissionJSONForLaunch(
-			p.Cwd, p.SandboxMode, p.ApprovalPolicy, p.ToolGovernance, p.EffectiveSandbox)
+			p.Cwd, p.HarnessBuiltinMode, p.ApprovalPolicy, p.ToolGovernance, p.EffectiveSandbox)
 		if err != nil {
 			return nil, &spawnFailure{http.StatusUnprocessableEntity, "invalid_opencode_permission_policy",
 				"could not build OpenCode access-control policy: " + err.Error()}
@@ -5541,7 +5544,7 @@ func executeServerSpawnDeferred(g *db.AgentGroup, p spawnParams, syncProofCleanu
 	}
 	p.Cwd = resolvedCwd
 	if _, err := openCodePermissionJSONForLaunch(
-		p.Cwd, p.SandboxMode, p.ApprovalPolicy, p.ToolGovernance, p.EffectiveSandbox); err != nil {
+		p.Cwd, p.HarnessBuiltinMode, p.ApprovalPolicy, p.ToolGovernance, p.EffectiveSandbox); err != nil {
 		return nil, &spawnFailure{http.StatusUnprocessableEntity, "invalid_opencode_permission_policy",
 			"could not build OpenCode access-control policy: " + err.Error()}
 	}
@@ -7143,7 +7146,7 @@ func appendSandboxArgs(args []string, h, sandbox string) []string {
 // appendSandboxFlag adds `--sandbox <mode>` to a `tclaude session new` argv
 // when a mode is set. "" omits it (no sandbox handling — Claude Code, or a
 // caller that didn't resolve one). The mode is a validated enum resolved at
-// the spawn boundary (harness.ResolveSandboxMode), never user free-text, so
+// the spawn boundary (harness.ResolveHarnessBuiltinMode), never user free-text, so
 // it is safe as a bare arg. The forked `tclaude session new` re-validates.
 func appendSandboxFlag(args []string, mode string) []string {
 	if mode != "" {

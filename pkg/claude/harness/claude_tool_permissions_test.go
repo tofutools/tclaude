@@ -115,8 +115,8 @@ func TestClaudeToolPermissionPatternRoot(t *testing.T) {
 // denies reach here.
 func TestClaudeSettingsInheritMirrorsLeafDeny(t *testing.T) {
 	settings := claudeSettingsJSON(SpawnSpec{
-		SandboxMode:     ClaudeSandboxInherit,
-		SandboxDenyDirs: []string{"/home/op/.ssh"},
+		HarnessBuiltinMode: ClaudeSandboxInherit,
+		SandboxDenyDirs:    []string{"/home/op/.ssh"},
 	})
 	if !strings.Contains(settings, `Read(//home/op/.ssh/**)`) {
 		t.Fatalf("inherit did not mirror the leaf deny to the tool surface: %s", settings)
@@ -132,8 +132,8 @@ func TestClaudeSettingsInheritMirrorsLeafDeny(t *testing.T) {
 // must land under permissions.deny where Claude Code reads them.
 func TestClaudeSettingsRendersBothSurfaces(t *testing.T) {
 	settings := claudeSettingsJSON(SpawnSpec{
-		SandboxMode:     ClaudeSandboxOn,
-		SandboxDenyDirs: []string{"/home/op/.ssh"},
+		HarnessBuiltinMode: ClaudeSandboxOn,
+		SandboxDenyDirs:    []string{"/home/op/.ssh"},
 	})
 	var decoded struct {
 		Sandbox struct {
@@ -161,8 +161,8 @@ func TestClaudeSettingsRendersBothSurfaces(t *testing.T) {
 // would stop meaning off.
 func TestClaudeSettingsSandboxOffEmitsNoToolDeny(t *testing.T) {
 	settings := claudeSettingsJSON(SpawnSpec{
-		SandboxMode:     ClaudeSandboxOff,
-		SandboxDenyDirs: []string{"/home/op/.ssh"},
+		HarnessBuiltinMode: ClaudeSandboxOff,
+		SandboxDenyDirs:    []string{"/home/op/.ssh"},
 	})
 	if strings.Contains(settings, "permissions") {
 		t.Fatalf("sandbox off must emit no tool-permission rules: %s", settings)

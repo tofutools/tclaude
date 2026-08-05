@@ -89,10 +89,14 @@ type permissionsEffectiveResp struct {
 	Source       string   `json:"source"`
 	OwnerImplied []string `json:"owner_implied"`
 	// Provenance maps each effective slug to the daemon resolver's source
-	// for it — "sudo", "override", "group", "default" or "owner". Absent
-	// from an older daemon's reply, in which case rows render unannotated
-	// apart from the OwnerImplied projection.
+	// for it — "sudo", "override", "group", "default", or "owner:<scope>"
+	// for the structural owner bypass. Absent from an older daemon's
+	// reply, in which case rows render unannotated apart from the
+	// OwnerImplied projection.
 	Provenance map[string]string `json:"provenance,omitempty"`
+	// OwnedGroups names the active groups this target owns — what an
+	// owner-conferred slug is scoped to. Empty for a non-owner.
+	OwnedGroups []string `json:"owned_groups,omitempty"`
 }
 
 // ambiguousCandidate is one entry of the daemon's typed `ambiguous`
@@ -110,6 +114,10 @@ type permSlugEntry struct {
 	// confers this slug structurally (the owner-bypass), so an owner holds
 	// it for owned groups / their members without an explicit grant.
 	OwnerImplied bool `json:"owner_implied,omitempty"`
+	// OwnerScope says how far that bypass reaches — "group" (the owned
+	// groups), "member" (their members) or "any" (unscoped). Empty from a
+	// daemon that predates the field.
+	OwnerScope string `json:"owner_scope,omitempty"`
 }
 
 type permissionsMutateResp struct {
@@ -304,7 +312,7 @@ func renderEffectivePerms(p *permissionsLsParams, stdout, stderr io.Writer) int 
 		ownerSet[s] = true
 	}
 	for _, s := range resp.Effective {
-		if note := permSourceNote(resp.Provenance[s], ownerSet[s]); note != "" {
+		if note := permSourceNote(resp.Provenance[s], ownerSet[s], resp.OwnedGroups); note != "" {
 			fmt.Fprintf(stdout, "  %s  %s\n", s, note)
 		} else {
 			fmt.Fprintf(stdout, "  %s\n", s)
@@ -316,10 +324,14 @@ func renderEffectivePerms(p *permissionsLsParams, stdout, stderr io.Writer) int 
 // permSourceNote renders the daemon's per-slug provenance as the short
 // parenthetical the listing appends. A slug held by the plain config
 // default gets no note — that is the unremarkable case, and annotating
-// every row would bury the ones that matter. ownerImplied keeps the
-// historical "(via ownership)" wording working against a daemon that
-// predates the provenance map.
-func permSourceNote(source string, ownerImplied bool) string {
+// every row would bury the ones that matter.
+//
+// Owner rows carry their SCOPE, because "(via ownership)" alone reads as
+// fleet-wide authority the gate does not grant: a group- or member-scoped
+// slug reaches only the groups this agent owns, and is refused everywhere
+// else. ownerImplied keeps the historical unscoped wording working
+// against a daemon that predates the provenance map.
+func permSourceNote(source string, ownerImplied bool, ownedGroups []string) string {
 	switch source {
 	case "sudo":
 		return "(via sudo elevation)"
@@ -327,15 +339,37 @@ func permSourceNote(source string, ownerImplied bool) string {
 		return "(via agent grant)"
 	case "group":
 		return "(via group)"
-	case "owner":
-		return "(via ownership)"
 	case "default":
 		return ""
 	}
-	if ownerImplied {
+	if scope, ok := strings.CutPrefix(source, "owner:"); ok {
+		return ownerScopeNote(scope, ownedGroups)
+	}
+	if source == "owner" || ownerImplied {
 		return "(via ownership)"
 	}
 	return ""
+}
+
+// ownerScopeNote phrases an owner-conferred slug's reach. With no owned
+// groups to name (an older daemon, or a lookup that failed) it falls back
+// to the unscoped wording rather than claiming a scope it cannot show.
+func ownerScopeNote(scope string, ownedGroups []string) string {
+	if len(ownedGroups) == 0 {
+		return "(via ownership)"
+	}
+	where := strings.Join(ownedGroups, ", ")
+	switch scope {
+	case "group":
+		return fmt.Sprintf("(via ownership of: %s)", where)
+	case "member":
+		return fmt.Sprintf("(via ownership of: %s — their members only)", where)
+	}
+	// "any", and any scope a NEWER daemon invented that this build does
+	// not know: fall back to the unscoped wording. Guessing the narrower
+	// group phrasing would misreport an unknown scope, which is the
+	// failure this whole change exists to prevent.
+	return "(via ownership)"
 }
 
 // printDaemonAmbiguous renders the daemon's typed ambiguity envelope.
@@ -488,6 +522,22 @@ func runPermissionsMutate(path, verb, target, slug, askHumanRaw string, stdout, 
 	return rcOK
 }
 
+// ownerScopeCell renders the OWNER column: the scope an owner-conferred
+// slug actually reaches, not a bare tick. Three call-site families confer
+// three different reaches, and collapsing them into ✔ is what let the
+// listing imply fleet-wide authority. An older daemon sends no scope, so
+// a plain OwnerImplied still renders ✔.
+func ownerScopeCell(s permSlugEntry) string {
+	switch s.OwnerScope {
+	case "group", "member", "any":
+		return "✔ " + s.OwnerScope
+	}
+	if s.OwnerImplied {
+		return "✔"
+	}
+	return ""
+}
+
 // --- permissions slugs ---
 
 type permissionsSlugsParams struct {
@@ -528,18 +578,18 @@ func runPermissionsSlugs(p *permissionsSlugsParams, stdout, stderr io.Writer) in
 	}
 	tbl := table.New(
 		table.Column{Header: "SLUG", MinWidth: 12, Weight: 0.5, Truncate: true},
-		table.Column{Header: "OWNER", Width: 5},
+		table.Column{Header: "OWNER", Width: 8},
 		table.Column{Header: "DESCRIPTION", MinWidth: 20, Weight: 1.5, Truncate: true},
 	)
 	tbl.SetTerminalWidth(table.GetTerminalWidth())
 	for _, s := range slugs {
-		owner := ""
-		if s.OwnerImplied {
-			owner = "✔"
-		}
-		tbl.AddRow(table.Row{Cells: []string{s.Slug, owner, s.Description}})
+		tbl.AddRow(table.Row{Cells: []string{s.Slug, ownerScopeCell(s), s.Description}})
 	}
 	fmt.Fprintln(stdout, tbl.Render())
-	fmt.Fprintln(stdout, "\nOWNER ✔ = group ownership confers this slug for owned groups / their members, without an explicit grant (a per-agent deny still suppresses it).")
+	fmt.Fprintln(stdout, "\nOWNER = group ownership confers this slug without an explicit grant.")
+	fmt.Fprintln(stdout, "  ✔ group   — over the groups you own")
+	fmt.Fprintln(stdout, "  ✔ member  — over members of the groups you own")
+	fmt.Fprintln(stdout, "  ✔ any     — unscoped; owning any group at all is enough")
+	fmt.Fprintln(stdout, "A per-agent deny suppresses the bypass.")
 	return rcOK
 }

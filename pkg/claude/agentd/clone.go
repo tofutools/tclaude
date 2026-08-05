@@ -143,14 +143,14 @@ func cloneSupportsArgvEnrollment(h *harness.Harness) bool {
 }
 
 func cloneSandboxPosture(relaunch *durableRelaunchConfig) (mode, source string) {
-	if relaunch.TemporarySandboxMode {
+	if relaunch.TemporaryHarnessBuiltinMode {
 		return relaunch.NormalSandbox, relaunch.NormalSandboxSource
 	}
-	return relaunch.Sandbox, relaunch.SandboxModeSource
+	return relaunch.Sandbox, relaunch.HarnessBuiltinModeSource
 }
 
 func cloneSSHWorkaround(relaunch *durableRelaunchConfig) bool {
-	if relaunch.TemporarySandboxMode {
+	if relaunch.TemporaryHarnessBuiltinMode {
 		return relaunch.NormalSSHWorkaround
 	}
 	return relaunch.SSHWorkaround

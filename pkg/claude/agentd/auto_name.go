@@ -134,13 +134,13 @@ func runAutoName(agentID, convID, harnessName, cwd, fallback, prompt string) {
 	posture := harness.SpawnSpec{}
 	switch h.Name {
 	case harness.DefaultName:
-		posture.SandboxMode = harness.ClaudeSandboxOn
+		posture.HarnessBuiltinMode = harness.ClaudeSandboxOn
 		posture.ApprovalPolicy, err = harness.ResolveApprovalPolicy(h, "plan")
 		if err == nil {
 			posture, err = h.PrepareHostControlSandboxLaunch(posture)
 		}
 	case harness.CodexName:
-		posture.SandboxMode = harness.SandboxReadOnly
+		posture.HarnessBuiltinMode = harness.SandboxReadOnly
 		posture.ApprovalPolicy, err = harness.ResolveApprovalPolicy(h, "")
 	}
 	if err != nil {

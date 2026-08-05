@@ -11,7 +11,7 @@ import (
 )
 
 func openCodePermissionJSONForLaunch(
-	cwd, sandboxMode, approvalPolicy, toolGovernance string,
+	cwd, harnessBuiltinMode, approvalPolicy, toolGovernance string,
 	snapshot *sandboxpolicy.Snapshot,
 ) (string, error) {
 	var err error
@@ -20,11 +20,11 @@ func openCodePermissionJSONForLaunch(
 		return "", err
 	}
 	spec := harness.OpenCodePermissionSpec{
-		Cwd:            cwd,
-		Worktree:       harness.OpenCodeWorktree(cwd),
-		SandboxMode:    sandboxMode,
-		ApprovalPolicy: approvalPolicy,
-		ToolGovernance: toolGovernance,
+		Cwd:                cwd,
+		Worktree:           harness.OpenCodeWorktree(cwd),
+		HarnessBuiltinMode: harnessBuiltinMode,
+		ApprovalPolicy:     approvalPolicy,
+		ToolGovernance:     toolGovernance,
 	}
 	if snapshot != nil {
 		filesystem, err := sandboxpolicy.FilesystemForLaunch(snapshot.Effective)

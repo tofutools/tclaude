@@ -94,8 +94,18 @@ jobs:
           node-version: 24
 
       - name: Install Linux sandbox prerequisites
+        shell: bash
         run: |
-          sudo apt-get update
+          source "$GITHUB_WORKSPACE/scripts/lib/smoke/common.sh"
+          if declare -F smoke::apt_update >/dev/null 2>&1; then
+            smoke::apt_update
+          else
+            echo "::warning title=Missing smoke helper::smoke::apt_update was not found after sourcing common.sh. This checkout may predate the helper; rebase onto main is the likely fix. Falling back to plain apt-get update without Microsoft-source isolation."
+            if ! sudo apt-get update; then
+              echo "::error::apt-get update failed while using the stale-PR fallback; inspect the apt output above"
+              exit 1
+            fi
+          fi
           # Claude's embedded SRT discovers rg and socat at runtime; keep them
           # explicit so a runner-image change cannot turn the real nested smoke
           # into an accidental dependency check.
@@ -1027,7 +1037,16 @@ jobs:
         if: matrix.platform == 'linux'
         shell: bash
         run: |
-          sudo apt-get update
+          source "$GITHUB_WORKSPACE/scripts/lib/smoke/common.sh"
+          if declare -F smoke::apt_update >/dev/null 2>&1; then
+            smoke::apt_update
+          else
+            echo "::warning title=Missing smoke helper::smoke::apt_update was not found after sourcing common.sh. This checkout may predate the helper; rebase onto main is the likely fix. Falling back to plain apt-get update without Microsoft-source isolation."
+            if ! sudo apt-get update; then
+              echo "::error::apt-get update failed while using the stale-PR fallback; inspect the apt output above"
+              exit 1
+            fi
+          fi
           sudo apt-get install -y bubblewrap
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
           bwrap --ro-bind / / --proc /proc --dev /dev true \
@@ -1212,6 +1231,27 @@ jobs:
               # this scenario is skipped, the online arm's containment claim is
               # unbacked while the whole matrix still reports green.
               TestCopilotPermissionWebFetchEgressWallIsInForce
+              # TCL-1011's native-sandbox parents. The subtest rows below carry
+              # the real evidence, and these carry the case the subtest gate
+              # cannot see: a table whose rows were all RENAMED still satisfies
+              # nothing, but a parent that failed to run at all is invisible to
+              # a gate that only greps for rows it expects. Both halves, per
+              # the same reasoning that gave this job two gates in the first
+              # place.
+              #
+              # Linux-only, like most of the matrix above and for the same
+              # reason: what they measure is the CLI's own gating, in its
+              # JavaScript, not a platform boundary. They still RUN on the
+              # macOS arm through that arm's run_filter, so a platform-specific
+              # regression fails that job on its own.
+              TestCopilotNativeSandboxSessionFlagsAreAccepted
+              TestCopilotNativeSandboxSessionFlagsNeedExperimental
+              TestCopilotNativeSandboxSessionFlagsDoNotPersist
+              TestCopilotNativeSandboxAllowBypassDemotesEnforcementToAPrompt
+              # Linux-only in the TEST as well: it reads a bubblewrap argv, and
+              # the darwin backend emits a Seatbelt profile instead. Requiring
+              # it on macOS would demand a PASS from a scenario that skips.
+              TestCopilotNativeSandboxGeneratedLinuxPolicy
             )
             # += and NOT =. A plain assignment here would REPLACE the shared
             # array above rather than extend it, silently dropping the five
@@ -1273,6 +1313,40 @@ jobs:
               'TestCopilotPermissionWebFetchURLDenyEnforcement/deny-tool/url(*)'
               'TestCopilotPermissionWebFetchURLDenyEnforcement/deny-url/*'
               'TestCopilotPermissionWebFetchURLDenyEnforcement/deny-url/https-star'
+              # TCL-1011's native-sandbox rows. Linux-only for the same reason
+              # most of the matrix above is: what they measure is the CLI's own
+              # gating, in its JavaScript, not a platform boundary — the flags
+              # are honoured or ignored by the same code on both hosts. They
+              # still RUN on the macOS arm through the shared run_filter, so a
+              # platform-specific regression fails that job on its own; what is
+              # Linux-only is the anti-skip requirement.
+              #
+              # The exception that proves the rule is the generated-policy pair,
+              # which is Linux-only in the test itself: it reads a bubblewrap
+              # argv, and the darwin backend emits a Seatbelt profile instead.
+              # Requiring it on macOS would demand a PASS from a scenario that
+              # deliberately skips there.
+              'TestCopilotNativeSandboxSessionFlagsAreAccepted/hidden-from-help'
+              'TestCopilotNativeSandboxSessionFlagsAreAccepted/sandbox'
+              'TestCopilotNativeSandboxSessionFlagsAreAccepted/no-sandbox'
+              'TestCopilotNativeSandboxSessionFlagsAreAccepted/unknown-control'
+              'TestCopilotNativeSandboxSessionFlagsNeedExperimental/enabled_no_flag'
+              'TestCopilotNativeSandboxSessionFlagsNeedExperimental/disabled_no_flag'
+              'TestCopilotNativeSandboxSessionFlagsNeedExperimental/enabled_experimental_only'
+              'TestCopilotNativeSandboxSessionFlagsNeedExperimental/disabled_experimental_only'
+              'TestCopilotNativeSandboxSessionFlagsNeedExperimental/enabled_no_sandbox_flag'
+              'TestCopilotNativeSandboxSessionFlagsNeedExperimental/disabled_sandbox_flag'
+              'TestCopilotNativeSandboxSessionFlagsNeedExperimental/enabled_no_sandbox_flag_experimental'
+              'TestCopilotNativeSandboxSessionFlagsNeedExperimental/disabled_sandbox_flag_experimental'
+              'TestCopilotNativeSandboxSessionFlagsDoNotPersist/no_sandbox_over_enabled'
+              'TestCopilotNativeSandboxSessionFlagsDoNotPersist/sandbox_over_disabled'
+              'TestCopilotNativeSandboxAllowBypassDemotesEnforcementToAPrompt/bypass_off'
+              'TestCopilotNativeSandboxAllowBypassDemotesEnforcementToAPrompt/bypass_on'
+              'TestCopilotNativeSandboxAllowBypassDemotesEnforcementToAPrompt/bypass_off_autopilot'
+              'TestCopilotNativeSandboxAllowBypassDemotesEnforcementToAPrompt/bypass_on_autopilot'
+              'TestCopilotNativeSandboxAllowBypassDemotesEnforcementToAPrompt/bypass_on_yolo'
+              'TestCopilotNativeSandboxGeneratedLinuxPolicy/outbound_denied'
+              'TestCopilotNativeSandboxGeneratedLinuxPolicy/outbound_allowed'
             )
           fi
           # The gate's own integrity check. Everything below verifies that the

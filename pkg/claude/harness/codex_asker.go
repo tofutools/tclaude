@@ -47,8 +47,8 @@ func (codexAsker) BuildAskArgv(spec AskSpec) []string {
 			if posture.PermissionProfile != "" {
 				argv = append(argv, "-p", posture.PermissionProfile)
 				hasLaunchContainment = true
-			} else if posture.SandboxMode != "" {
-				argv = append(argv, "--sandbox", posture.SandboxMode)
+			} else if posture.HarnessBuiltinMode != "" {
+				argv = append(argv, "--sandbox", posture.HarnessBuiltinMode)
 				hasLaunchContainment = true
 			}
 			if posture.ApprovalPolicy != "" {

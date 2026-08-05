@@ -53,7 +53,7 @@ func TestTaskForceDeploy_RecordsWhoChoseTheSandbox(t *testing.T) {
 	rows, err := db.FindSessionsByConvID(convID)
 	require.NoError(t, err)
 	require.NotEmpty(t, rows, "spawned session row")
-	assert.Equal(t, `profile "locked-down"`, rows[0].SandboxModeSource,
+	assert.Equal(t, `profile "locked-down"`, rows[0].HarnessBuiltinModeSource,
 		"the deployed member records the tier that chose its sandbox, not an anonymous launch")
 	assert.Contains(t, rows[0].OSSandboxSource, `profile "locked-down"`,
 		"and the recorded verdict the badge renders names it too")

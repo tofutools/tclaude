@@ -403,7 +403,7 @@ func TestSandboxProfileDraftEnforcementDetectsCrossScopeFilesystemCarveOut(t *te
 	}, got.Contexts[0].Filesystem)
 }
 
-func TestSandboxProfileDraftEnforcementUsesResolvedDefaultSandboxMode(t *testing.T) {
+func TestSandboxProfileDraftEnforcementUsesResolvedDefaultHarnessBuiltinMode(t *testing.T) {
 	f := newFlow(t)
 	_, err := db.CreateAgentGroup("crew", "")
 	require.NoError(t, err)

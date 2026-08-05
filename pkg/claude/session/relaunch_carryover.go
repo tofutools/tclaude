@@ -116,10 +116,10 @@ var launchCarryoverExcused = map[string]string{
 		"across a resume, and the status line re-records it on every render, so an " +
 		"omitted --model resumes on the same model instead of reverting",
 	"Effort": "recorded by the status line on every render, like ModelID",
-	"SandboxModeSource": "not a launch parameter of its own — it is the attribution " +
-		"for SandboxMode and is carried by that field's own carry(), so a separate " +
+	"HarnessBuiltinModeSource": "not a launch parameter of its own — it is the attribution " +
+		"for HarnessBuiltinMode and is carried by that field's own carry(), so a separate " +
 		"entry here would be a second, desynchronizable copy of the same decision",
-	"TemporarySandboxMode": "an agent-owned override folded into SandboxMode's carry; " +
+	"TemporaryHarnessBuiltinMode": "an agent-owned override folded into HarnessBuiltinMode's carry; " +
 		"it is not a second independent session-new flag",
 	"ContextWindowSize": "an OBSERVED statusline value, not operator intent; carrying " +
 		"it would mean re-deriving Claude's \"[1m]\" model suffix rather than replaying " +
@@ -162,7 +162,7 @@ var launchCarryoverFields = []launchCarryoverField{
 	},
 	{
 		flag:        "sandbox",
-		recorded:    "SandboxMode",
+		recorded:    "HarnessBuiltinMode",
 		containment: true,
 		unpinned:    []string{harness.ClaudeSandboxInherit},
 		// --permission-profile is the same decision spelled differently (and is
@@ -172,17 +172,17 @@ var launchCarryoverFields = []launchCarryoverField{
 			return strings.TrimSpace(p.Sandbox) != "" || strings.TrimSpace(p.PermissionProfile) != ""
 		},
 		carry: func(h *harness.Harness, rec *db.AgentRelaunchProfile, p *NewParams) (any, carryOutcome) {
-			recordedMode := rec.SandboxMode
-			recordedSource := rec.SandboxModeSource
-			if rec.TemporarySandboxMode != nil {
-				recordedMode = rec.TemporarySandboxMode
-				source := db.TemporarySandboxModeSource
+			recordedMode := rec.HarnessBuiltinMode
+			recordedSource := rec.HarnessBuiltinModeSource
+			if rec.TemporaryHarnessBuiltinMode != nil {
+				recordedMode = rec.TemporaryHarnessBuiltinMode
+				source := db.TemporaryHarnessBuiltinModeSource
 				recordedSource = &source
 			}
 			if recordedMode == nil {
 				return nil, carryUnrecorded
 			}
-			mode, err := harness.ValidateSandboxMode(h, strings.TrimSpace(*recordedMode))
+			mode, err := harness.ValidateHarnessBuiltinMode(h, strings.TrimSpace(*recordedMode))
 			if err != nil {
 				return nil, carryDropped
 			}

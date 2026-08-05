@@ -125,15 +125,17 @@ func TestResumeLaunchCmd_CopilotKeepsOrdinaryPassThroughArgs(t *testing.T) {
 	assert.Contains(t, cmd, "--no-color")
 }
 
-// A Copilot row that predates the approval catalog carries a blank posture. The
-// interactive resume path must reconstruct it as `inherit` — what those launches
-// actually did — and never as the new `allow-tools` default.
+// A Copilot row that predates the approval catalog carries a blank posture,
+// which means no approval input was recorded — not that `inherit` was chosen.
+// Resume therefore re-resolves it under current config (TCL-990), which today
+// is the `allow-tools` default, and renders that posture's flags.
 //
-// The promotion this guards against would be durable, not momentary: the
-// resumed generation's posture is written back into the new session row, so one
-// resume would permanently hand the conversation in-sandbox lineage authority
-// that the lineage classifier refuses to credit a blank Copilot row with.
-func TestResumeLaunchCmd_CopilotBlankRowDoesNotGainTheNewDefault(t *testing.T) {
+// This reverses the earlier pin to `inherit`. Pinning reproduced a historical
+// RESOLUTION rather than the recorded INPUT, and it did so durably: the resumed
+// generation's posture is written back into the new session row, so one resume
+// permanently held the conversation at a posture the lineage classifier will
+// not credit with in-sandbox authority — leaving it unable to delegate.
+func TestResumeLaunchCmd_CopilotBlankRowReResolvesUnderCurrentConfig(t *testing.T) {
 	setupTestDB(t)
 	require.NoError(t, db.SaveSession(&db.SessionRow{
 		ID: "resume-copilot-legacy", ConvID: resumeConvCopilot,
@@ -143,35 +145,34 @@ func TestResumeLaunchCmd_CopilotBlankRowDoesNotGainTheNewDefault(t *testing.T) {
 
 	h, err := harness.Resolve(harness.CopilotName)
 	require.NoError(t, err)
-	policy, autoReview, err := resumeApprovalState(h, resumeConvCopilot)
+	state, err := resumeApprovalState(h, resumeConvCopilot)
 	require.NoError(t, err)
-	assert.Equal(t, harness.CopilotApprovalInherit, policy,
-		"a blank Copilot row must reconstruct as inherit, not be promoted to the daemon default")
-	assert.False(t, autoReview)
+	assert.Equal(t, harness.CopilotApprovalAllowTools, state.Policy,
+		"a row that recorded no approval input re-resolves under current config")
+	assert.True(t, state.Reresolved, "the resume must be able to say current config chose this")
+	assert.False(t, state.AutoReview)
 
 	cmd, _, _, err := resumeLaunchCmd(harness.CopilotName,
 		resumeConvCopilot[:8], resumeConvCopilot, nil)
 	require.NoError(t, err)
-	assert.NotContains(t, cmd, "--allow-all-tools",
-		"resuming a pre-catalog row must not silently auto-approve every tool")
-	assert.NotContains(t, cmd, "--no-ask-user")
+	assert.Contains(t, cmd, "--allow-all-tools")
+	assert.Contains(t, cmd, "--no-ask-user")
 }
 
-// The correction is Copilot-specific: another harness's blank-row fallback must
-// be untouched. A blank Codex row still reconstructs as `untrusted` (the launch
-// profile's own conservative legacy inference), not as Codex's `never` default
-// and not as anything this branch introduced.
-func TestResumeApprovalState_BlankRowFallbackUnchangedForOtherHarnesses(t *testing.T) {
+// An EXPLICITLY recorded `inherit` is still reproduced exactly. The rule reuses
+// recorded inputs; it does not stop honouring the ones that exist.
+func TestResumeLaunchCmd_CopilotExplicitInheritIsStillReproduced(t *testing.T) {
 	setupTestDB(t)
 	require.NoError(t, db.SaveSession(&db.SessionRow{
-		ID: "resume-codex-legacy", ConvID: resumeConvCodex, Harness: harness.CodexName,
+		ID: "resume-copilot-inherit", ConvID: resumeConvCopilot,
+		Harness: harness.CopilotName, ApprovalPolicy: harness.CopilotApprovalInherit,
 	}))
-	h, err := harness.Resolve(harness.CodexName)
+	h, err := harness.Resolve(harness.CopilotName)
 	require.NoError(t, err)
-	policy, _, err := resumeApprovalState(h, resumeConvCodex)
+	state, err := resumeApprovalState(h, resumeConvCopilot)
 	require.NoError(t, err)
-	assert.Equal(t, harness.ApprovalUntrusted, policy,
-		"the Codex legacy path keeps its own conservative reconstruction")
+	assert.Equal(t, harness.CopilotApprovalInherit, state.Policy)
+	assert.False(t, state.Reresolved)
 }
 
 // TCL-973 — what actually protects the implicit temp grant.
@@ -265,7 +266,7 @@ func TestResumeLaunchCmd_CopilotDenyUnderTheImplicitTempGrant(t *testing.T) {
 			}
 			require.NoError(t, db.SaveSession(&db.SessionRow{
 				ID: "resume-copilot-temp", ConvID: resumeConvCopilot,
-				Harness: harness.CopilotName, SandboxMode: harness.CopilotSandboxOff,
+				Harness: harness.CopilotName, HarnessBuiltinMode: harness.CopilotSandboxOff,
 				SandboxImplementation: implementation,
 				ApprovalPolicy:        harness.CopilotApprovalAllowTools,
 			}))

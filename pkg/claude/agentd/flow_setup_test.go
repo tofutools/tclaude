@@ -1,8 +1,11 @@
 package agentd_test
 
 import (
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
@@ -87,6 +90,10 @@ func newFlow(t *testing.T) *testharness.Flow {
 	// the scenarios that DO wedge a pane from paying production seconds.
 	t.Cleanup(agentd.SetSoftExitEscalationTimingForTest(
 		20*time.Millisecond, 10*time.Millisecond, time.Millisecond))
+	// The escalation ladder's two OS-process rungs are neutralized BINARY-WIDE
+	// in TestMain, not here, because a default in this file would protect only
+	// the tests that call newFlow — and the internal `package agentd` tests
+	// reach the same ladder without it. See the comment there (TCL-1035).
 	// Neutralize the post-focus auto-tiling pass by default: a bulk focus
 	// now runs a tiling gate, and no flow test should read the developer's
 	// real config.json or move a real OS window as a side effect of one.
@@ -135,4 +142,181 @@ func newFlow(t *testing.T) *testharness.Flow {
 		agentd.AsHumanPeer,
 		agentd.AsAgentPeer,
 	)
+}
+
+// holdRetiringPane wedges a retiring agent's /exit and hands the moment of its
+// death to the test, deterministically. The returned func ends the pane; call
+// it once the scenario's drift is in place, and ALWAYS before draining the
+// background — the parked watchdog holds a background slot, so a drain that
+// precedes the release blocks until the go test timeout.
+//
+// Scenarios that watch what happens BETWEEN a soft exit and the work it
+// unblocks need a pane that is still alive when the retire response is written
+// and that exits only after the test says so. Wedging /exit in the simulator
+// (TCL-760) is half of that: it stops the simulator from ending the pane on its
+// own. It stopped being the whole of it once the soft-exit escalation ladder
+// landed (TCL-1001, 40dc0c504) — a pane that ignores /exit is precisely the
+// pane that watchdog exists to kill, and flow tests shrink its deadline to 20ms
+// (SetSoftExitEscalationTimingForTest above). That kill ends the pane on a
+// timer, so a deferred retire cleanup's exit-wait could be satisfied — and its
+// live-claimant snapshot taken — before the test had installed the drift it
+// asserts about. That is TCL-1019, and TCL-760's identical failure text.
+//
+// So the ladder's probe loop blocks until the release. Pane death then has
+// exactly one cause here: the fixture asking for it, with no wall-clock budget
+// on either side. Tests that assert on the ladder itself must NOT use this —
+// they wedge /exit directly and let the watchdog run.
+func holdRetiringPane(t *testing.T, cc *testharness.CCSim) func() {
+	t.Helper()
+	require.NotNil(t, cc, "no CCSim to hold")
+	cc.OnInput("/exit", func(*testharness.CCSim, string) bool {
+		return true
+	})
+	release := holdSoftExitEscalation(t)
+	return func() {
+		cc.MarkDead()
+		release()
+	}
+}
+
+// holdRetiringCodexPane is holdRetiringPane for a Codex pane, whose exit
+// command is /quit.
+func holdRetiringCodexPane(t *testing.T, cx *testharness.CodexSim) func() {
+	t.Helper()
+	require.NotNil(t, cx, "no CodexSim to hold")
+	cx.OnInput("/quit", func(*testharness.CodexSim, string) bool {
+		return true
+	})
+	release := holdSoftExitEscalation(t)
+	return func() {
+		cx.MarkDead()
+		release()
+	}
+}
+
+// escalationWitness observes whether the soft-exit escalation watchdog has
+// reached its first probe, and lets a scenario SAMPLE that at one chosen
+// instant.
+//
+// The park hook fires at the top of waitForLifecycleTargetGone's loop, one
+// statement before probeLifecyclePane, so "probed" is exactly "a second issuer
+// of the pane-probe verbs now exists". A scenario whose fault is queued inside
+// the SYNCHRONOUS injection depends on there being no such issuer yet —
+// scheduleSoftExitEscalation is not called until injectSoftExitTarget returns
+// — and that is a property of call ORDER, which is the kind of property
+// TCL-1028 showed can hold by luck and stop holding silently. Sampling it
+// where the fault is queued, and asserting it false, makes a future
+// re-ordering fail the test instead of recreating the bug.
+type escalationWitness struct {
+	mu      sync.Mutex
+	probed  bool
+	sampled bool
+}
+
+func (w *escalationWitness) markProbed() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.probed = true
+}
+
+// sample is called from a production-goroutine hook; probedWhenSampled from
+// the test goroutine. Hence the mutex — this package runs under -race.
+func (w *escalationWitness) sample() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.sampled = w.probed
+}
+
+func (w *escalationWitness) probedWhenSampled() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.sampled
+}
+
+// holdSoftExitEscalation parks the escalation watchdog on its first probe
+// until the returned func runs, so nothing but the caller can end a wedged
+// pane. Only the watchdog's own wait is gated; the ladder's behaviour once it
+// runs is untouched.
+func holdSoftExitEscalation(t *testing.T) func() {
+	t.Helper()
+	return holdSoftExitEscalationInto(t, nil)
+}
+
+// holdSoftExitEscalationInto is holdSoftExitEscalation, additionally recording
+// each probe against w.
+//
+// REGISTER ANY OTHER HOOK CLEANUP BEFORE CALLING THIS. Cleanup is LIFO, so
+// this helper's cleanup — which releases the parked watchdog and only then
+// drains — has to run FIRST. A cleanupAfterBackgroundDrain registered after it
+// would try to drain while the watchdog is still parked, and block forever.
+func holdSoftExitEscalationInto(t *testing.T, w *escalationWitness) func() {
+	t.Helper()
+	released := make(chan struct{})
+	var once sync.Once
+	release := func() { once.Do(func() { close(released) }) }
+	restore := agentd.SetSoftExitEscalationPollForTest(func() {
+		if w != nil {
+			w.markProbed()
+		}
+		<-released
+	})
+	// One cleanup, in this order, because all three steps matter on the path
+	// where a require fails before the test releases: unpark the watchdog so
+	// nothing is left blocked on a finished test, JOIN it, and only then
+	// restore the hook — restoring while the loop is still reading it is a
+	// data race that would fail the package under -race and bury the real
+	// assertion failure.
+	t.Cleanup(func() {
+		release()
+		restoreAfterBackgroundDrain(restore)
+	})
+	return release
+}
+
+// restoreAfterBackgroundDrain joins the background before putting a test hook
+// back, and is the whole of what a NON-PARKING hook needs at cleanup.
+//
+// The hooks in this package are plain package-level func vars: a background
+// goroutine reads one while the test's cleanup writes it, with no
+// synchronization on either side. On the happy path the test has already
+// called WaitForBackgroundForTest, so there is no overlap and no race. The
+// exposure is the failure path — a require failing before that join aborts the
+// test, cleanup restores immediately, and the goroutine may still be reading.
+// Under -race that reports as a data race for the whole package and BURIES the
+// real assertion failure, so a genuine test failure arrives as noise in
+// unrelated output.
+//
+// Two steps, not the three in holdSoftExitEscalation above. That one needs a
+// release first because its hook PARKS on a channel, so joining before
+// releasing would block until the go test timeout. A hook that returns on its
+// own has nothing to release, and adding a release with no hold behind it
+// would copy the shape of a sibling fix instead of fixing the site — and would
+// teach the next reader that three steps is the pattern here. It is not; the
+// release is a consequence of parking.
+func restoreAfterBackgroundDrain(restore func()) {
+	agentd.WaitForBackgroundForTest()
+	restore()
+}
+
+// cleanupAfterBackgroundDrain registers restoreAfterBackgroundDrain, and is
+// what a test installing a hook should reach for. It exists so the correct
+// ordering is the SHAPE a new site copies: the broken version and the correct
+// one differ only by which function the restore is handed to, and a plain
+// t.Cleanup(restore) looks entirely reasonable right up until a require fails.
+//
+// Registration order matters and is why this takes t rather than being folded
+// into the setter. Cleanups run LIFO, so a hook installed AFTER newFlow gets
+// its restore run BEFORE newFlow's own drain — which is exactly the window
+// this closes. A hook installed BEFORE newFlow is safe from that window for
+// the opposite reason.
+//
+// "Before newFlow is safe" is about the RESTORE only, and it is not general
+// advice: for any hook newFlow or TestMain also sets, installing before them
+// means being silently overwritten. That is not hypothetical — it is what
+// TestRetire_DeleteWorktreeUnkillableAgentPostsKeptNotice used to do with the
+// escalation process pair, and why it now installs after newFlow through this
+// helper (TCL-1035).
+func cleanupAfterBackgroundDrain(t *testing.T, restore func()) {
+	t.Helper()
+	t.Cleanup(func() { restoreAfterBackgroundDrain(restore) })
 }

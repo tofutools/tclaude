@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"golang.org/x/text/cases"
 	"golang.org/x/text/unicode/norm"
 )
 
@@ -78,9 +79,10 @@ import (
 // pure functions rather than something that depends on a probe answering
 // correctly.
 //
-// "Case/NFC variant" is meant in ToLower+NFC's terms, which are slightly wider
-// than case alone: ToLower is not injective beyond case, so a pair like U+212A
-// KELVIN SIGN and "k", or U+0130 and "i", also nominates and reaches steps 3-4.
+// "Case/NFC variant" is meant in foldGuardPath's terms, which are slightly wider
+// than case alone: neither simple lowercasing nor full case folding is injective
+// beyond case, so a pair like U+212A KELVIN SIGN and "k", U+0130 and "i", or
+// U+00DF and "ss" also nominates and reaches steps 3-4.
 // Every such divergence from PathContainsOrEqual is an over-REFUSAL — the extra
 // pairs are exactly the ones a folding volume might merge — and when both
 // spellings exist os.SameFile refutes them and the answer returns to false. So
@@ -156,22 +158,74 @@ func guardSpellingsAlias(a, b string) bool {
 	return os.SameFile(aInfo, bInfo)
 }
 
-// foldGuardPath is the nomination key: case- and NFC-folded. It matches
-// session.seatbeltFoldedPath byte for byte (ToLower first, then NFC) so the
-// validator nominates exactly the spellings the Seatbelt emitter does.
+// FoldGuardPath is the nomination key: case- and NFC-folded. session.seatbeltFoldedPath
+// CALLS this function rather than reimplementing it, so the validator nominates
+// exactly the spellings the Seatbelt emitter merges and the two cannot drift
+// apart. Do not add a second folding rule anywhere; add options here instead.
 //
-// Known residual, tracked as TCL-985 and NOT closed by this file: strings.ToLower
-// is Unicode simple lowercasing, not APFS/HFS+'s own case-folding table. A rune
-// where the two disagree (Greek final sigma ς/σ, U+0130 İ) fails to nominate a
-// pair the volume does in fact merge, and step 2 then answers false with no I/O.
-// Fixing it means moving to full case folding (x/text/cases.Fold) in the
-// validator AND the Seatbelt emitter at once — a validator that nominated a
-// different set of spellings than the emitter merges would put the two out of
-// step, which is the class of bug this work exists to remove.
-// TestFoldGuardPathMatchesTheSeatbeltEmitterRule pins them together so they
-// cannot drift apart by accident.
+// Nothing outside a nomination step should use this. It is not a canonical
+// spelling and it names no real directory — only identity settles a nomination.
+func FoldGuardPath(path string) string { return foldGuardPath(path) }
+
+// foldGuardPath composes simple lowercasing with FULL Unicode case folding, then
+// NFC. Both case passes are deliberate, and the order matters.
+//
+// TCL-981 folded with strings.ToLower alone, which is Unicode SIMPLE lowercasing
+// rather than APFS/HFS+'s own case-folding table: a rune where the two disagree
+// (Greek final sigma ς vs σ, U+1E9E ẞ vs "ss") failed to nominate a pair the
+// volume does in fact merge, and step 2 then answered false with no I/O — a
+// fail-open. cases.Fold is the full-folding table that closes those.
+//
+// DO NOT "SIMPLIFY" THIS TO cases.Fold ALONE. That reads like an obvious
+// cleanup — one case rule instead of two — and it is a fail-open, because full
+// folding is NOT a superset of simple lowercasing. U+0130 İ is the
+// counterexample: unicode.ToLower maps it to "i", while full folding maps it to
+// "i" + U+0307 COMBINING DOT ABOVE, which no longer folds together with a plain
+// "i". Dropping ToLower would close the sigma and sharp-s holes while opening a
+// new one of exactly the same shape.
+//
+// Composing the two — lowercase first, then fold — nominates the union of what
+// either rule nominates. That is the invariant to preserve across any future
+// change here: A GUARD KEY MAY ONLY EVER MERGE MORE, NEVER LESS. Every extra
+// merge is an over-REFUSAL that os.SameFile refutes when both spellings exist,
+// while every lost merge is a pair that never reaches steps 3-4 at all — the
+// guard answers false with no I/O and a folding volume merges behind its back.
+// TestFoldGuardPathOnlyEverMergesMore enforces this exhaustively over every code
+// point rather than by example, because one overlooked rune is the whole bug.
+//
+// NFC runs on BOTH SIDES of the case passes, and the leading one is not
+// belt-and-braces — TCL-981's trailing-NFC-only shape is unsafe the moment full
+// folding enters, and cold review of TCL-985 caught it there.
+//
+// TCL-981's key was NFC(ToLower(x)). ToLower is per-rune, so it preserves
+// combining classes, and the trailing NFC therefore made that key closed under
+// canonical equivalence: any two spellings of one name produced one key. Full
+// folding breaks that closure, because it can turn a combining mark into a
+// STARTER. U+0345 COMBINING GREEK YPOGEGRAMMENI (ccc=240) folds to U+03B9 ι
+// (ccc=0), and once it is a starter the trailing NFC can no longer canonically
+// reorder it past a lower-class mark that followed it.
+//
+// Concretely, "ῳ̖" spelled U+1FF3 U+0316 and "ῳ̖" spelled U+03C9 U+0316 U+0345
+// are canonically equivalent — one directory on any volume that normalizes, and
+// TCL-981's key merged them — but folding before normalizing yields "ωι̖" and
+// "ω̖ι". Two keys, no folded containment, step 2 answers false with NO I/O, and
+// a folding volume merges behind the guard's back. That is the exact fail-open
+// this file exists to prevent, reintroduced by a reordering.
+//
+// Normalizing FIRST removes the hazard by construction rather than by patching
+// the one rune: canonically equivalent inputs become the same string before any
+// case pass runs, so no case rule can ever separate them again.
 func foldGuardPath(path string) string {
-	return normalizeNFC(strings.ToLower(filepath.Clean(path)))
+	// cases.Fold returns a stateful Caser that must not be shared across
+	// goroutines, so it is constructed per call rather than cached in a package
+	// variable. That makes this key materially more expensive than TCL-981's,
+	// and session.seatbeltFoldedPath calls it from four sort comparators — so it
+	// is O(n log n) per profile render, not the once-per-comparison this reads
+	// like. Region counts are small (tens), so the cost is real but bounded; a
+	// caller sorting a large set should hoist the key rather than cache a Caser
+	// here, which would not be safe.
+	return normalizeNFC(cases.Fold().String(strings.ToLower(
+		normalizeNFC(filepath.Clean(path)))))
 }
 
 // normalizeNFC is the single NFC entry point for this package, so the validator

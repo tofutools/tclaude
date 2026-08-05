@@ -109,11 +109,11 @@ func (claudeSandbox) ValidateMode(mode string) (string, error) {
 	}
 }
 
-// claudeSandboxModeHelp is the one-line description the spawn UI shows for each
+// claudeHarnessBuiltinModeHelp is the one-line description the spawn UI shows for each
 // mode. `on` calls out the agentd-socket reachability + ~/.tclaude hiding (the
 // properties that keep a sandboxed agent able to coordinate yet unable to read
 // peers' state). Keyed by mode value.
-var claudeSandboxModeHelp = map[string]string{
+var claudeHarnessBuiltinModeHelp = map[string]string{
 	ClaudeSandboxInherit: "Use your Claude Code settings.json enabled/disabled posture as-is, including any tclaude hardening already installed. On Linux, when enabled, the per-launch deny blocks the tmux server hosting agent panes. Claude's built-in macOS sandbox has no exact socket deny; use tclaude-layer for the exact boundary or an operator-selected false Unix-socket allowlist for broader blocking.",
 	ClaudeSandboxOn:      "Force Claude Code's OS sandbox ON for this session, even if settings.json leaves it off. The agentd socket stays reachable and ~/.tclaude/data is hidden; Linux also blocks the tmux server hosting agent panes. Claude's built-in macOS sandbox has no exact socket deny; use tclaude-layer for that boundary.",
 	ClaudeSandboxOff:     "⚠ Force the OS sandbox OFF for this session, even if settings.json enables it. The agent's Bash runs unconfined.",
@@ -124,7 +124,7 @@ var claudeSandboxModeHelp = map[string]string{
 // though ValidateMode collapses it to "" — the dashboard renders help off the
 // raw Modes() tokens, not the validated value.
 func (claudeSandbox) ModeHelp(mode string) string {
-	return claudeSandboxModeHelp[strings.TrimSpace(mode)]
+	return claudeHarnessBuiltinModeHelp[strings.TrimSpace(mode)]
 }
 
 // ClaudeSandboxOnBlock is the value of the settings.json `sandbox` key the

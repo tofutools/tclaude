@@ -66,19 +66,19 @@ func (s *simSpawner) spawnNewCopilot(args clcommon.SpawnArgs) error {
 	}
 	s.recordCopilotSpawnObservability(sim.ConvID, args)
 	if err := saveSessionWithResumeProvenance(&db.SessionRow{
-		ID:                     label,
-		TmuxSession:            label,
-		ConvID:                 sim.ConvID,
-		Cwd:                    sim.Cwd,
-		Status:                 "running",
-		Harness:                copilotHarnessName,
-		SandboxMode:            launchSandboxMode(copilotHarnessName, args.Sandbox, args.SandboxImplementation),
-		SandboxImplementation:  args.SandboxImplementation,
-		SandboxModeSource:      args.SandboxChosenBy,
-		EffectiveSandbox:       args.EffectiveSandbox,
-		ApprovalPolicy:         args.Approval,
-		ApprovalAutoReview:     args.AutoReview,
-		AskUserQuestionTimeout: args.AskUserQuestionTimeout,
+		ID:                       label,
+		TmuxSession:              label,
+		ConvID:                   sim.ConvID,
+		Cwd:                      sim.Cwd,
+		Status:                   "running",
+		Harness:                  copilotHarnessName,
+		HarnessBuiltinMode:       launchHarnessBuiltinMode(copilotHarnessName, args.Sandbox, args.SandboxImplementation),
+		SandboxImplementation:    args.SandboxImplementation,
+		HarnessBuiltinModeSource: args.SandboxChosenBy,
+		EffectiveSandbox:         args.EffectiveSandbox,
+		ApprovalPolicy:           args.Approval,
+		ApprovalAutoReview:       args.AutoReview,
+		AskUserQuestionTimeout:   args.AskUserQuestionTimeout,
 	}); err != nil {
 		return err
 	}
@@ -146,19 +146,19 @@ func (s *simSpawner) spawnResumeCopilot(args clcommon.SpawnArgs) error {
 	label := generateResumeLabel()
 	sim.SetSessionID(label)
 	if err := saveSessionWithResumeProvenance(&db.SessionRow{
-		ID:                     label,
-		TmuxSession:            label,
-		ConvID:                 convID,
-		Cwd:                    sim.Cwd,
-		Status:                 "running",
-		Harness:                copilotHarnessName,
-		SandboxMode:            launchSandboxMode(copilotHarnessName, args.Sandbox, args.SandboxImplementation),
-		SandboxImplementation:  args.SandboxImplementation,
-		SandboxModeSource:      args.SandboxChosenBy,
-		EffectiveSandbox:       args.EffectiveSandbox,
-		ApprovalPolicy:         args.Approval,
-		ApprovalAutoReview:     args.AutoReview,
-		AskUserQuestionTimeout: args.AskUserQuestionTimeout,
+		ID:                       label,
+		TmuxSession:              label,
+		ConvID:                   convID,
+		Cwd:                      sim.Cwd,
+		Status:                   "running",
+		Harness:                  copilotHarnessName,
+		HarnessBuiltinMode:       launchHarnessBuiltinMode(copilotHarnessName, args.Sandbox, args.SandboxImplementation),
+		SandboxImplementation:    args.SandboxImplementation,
+		HarnessBuiltinModeSource: args.SandboxChosenBy,
+		EffectiveSandbox:         args.EffectiveSandbox,
+		ApprovalPolicy:           args.Approval,
+		ApprovalAutoReview:       args.AutoReview,
+		AskUserQuestionTimeout:   args.AskUserQuestionTimeout,
 	}); err != nil {
 		return err
 	}

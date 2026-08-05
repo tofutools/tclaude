@@ -5,6 +5,8 @@ import (
 	"slices"
 	"sort"
 	"strings"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
 // Copilot's approval catalog. Every flag rendered from a token here is one the
@@ -190,16 +192,22 @@ const (
 // copilot` with no --ask-for-approval leaves the spec's policy empty on
 // purpose: a human at a terminal is the trust root, so ValidateApprovalPolicy
 // does not force a posture on them. What the SESSION ROW records for that same
-// launch is `inherit`, and every reconstruction path — the daemon's
-// approvalForHarness, resumeApprovalState, the relaunch profile — maps blank to
-// `inherit` too. So blank already MEANS inherit everywhere else in tclaude, and
-// rendering it as anything else here made one conversation's fresh launch and
-// its own resume disagree: the resume rendered the profile's directories and
-// the launch that created it did not. It also made ValidateCopilotAddDirGrants
-// refuse a launch while naming an `--add-dir` root that launch never emitted.
-// Blank therefore renders the INHERIT-shaped arm — the directory grants and
-// nothing else. It must not render --allow-all-tools: not forcing a posture on
-// a human is the entire reason the policy is blank.
+// launch is `inherit`, and rendering blank as anything else here made one
+// conversation's fresh launch and its own resume disagree: the resume rendered
+// the profile's directories and the launch that created it did not. It also
+// made ValidateCopilotAddDirGrants refuse a launch while naming an `--add-dir`
+// root that launch never emitted. Blank therefore renders the INHERIT-shaped
+// arm — the directory grants and nothing else. It must not render
+// --allow-all-tools: not forcing a posture on a human is the entire reason the
+// policy is blank.
+//
+// This is the EMISSION layer, and it is the only place blank still behaves like
+// inherit. Reconstruction no longer pins a blank row to `inherit`: a row that
+// recorded no approval input re-resolves under current config, which for
+// Copilot is `allow-tools` (ReconstructApprovalPolicy, TCL-990). The two are
+// consistent — a launch that emits no flags records no posture, and a
+// reconstruction of that record asks current config what an unspecified input
+// means today.
 //
 // An unrecognized policy still renders nothing rather than guessing. Callers
 // validate first, so that arm is belt-and-braces, and rendering the default for
@@ -376,11 +384,15 @@ const SandboxCopilotDenyInsideAddDir = "copilot-deny-inside-add-dir"
 // macOS default, and the temp root is one of the two grants Copilot makes with
 // no flag, so it would have been the most common way to reach this gate at all.
 //
-// KNOWN LIMIT: what remains is still a lexical containment rule over normalized
-// spellings, not the identity-only, guard-biased rule TCL-981 established.
-// TCL-985 tracks converting the remaining sites to GuardContainsOrEqual, and
-// this is one of them; the normalization here fixes an ordinary disagreement
-// between two tclaude-side producers rather than doing that conversion early.
+// TCL-985 completed the conversion this comment used to defer: the containment
+// test below is now GuardContainsOrEqual, so a case/NFC-folded spelling that
+// filesystem identity cannot refute refuses the launch rather than passing it.
+// A true answer here returns a SandboxCapabilityError, so the guard bias is the
+// correct one — the deny sits inside a granted root and the launch must not
+// proceed. The normalization described above remains what fixes the ordinary
+// /var-vs-/private/var disagreement between two tclaude-side producers.
+//
+// The caveat below survives that conversion and still applies.
 // This is a change of ANSWER, not only of coverage, and the direction is not
 // uniformly "refuses more". Resolving the deny side can also move a deny OUT of
 // a root that lexically contained its authored spelling — a deny authored under
@@ -405,7 +417,7 @@ func ValidateCopilotAddDirGrants(
 	rendered := copilotAddDirRoots(append(append([]string(nil), readDirs...), writeDirs...))
 	for _, grant := range copilotGrantRoots(rendered, cwd, tempDir) {
 		for _, deny := range denies {
-			if !pathContains(grant.resolved, resolveSymlinks(deny)) {
+			if !sandboxpolicy.GuardContainsOrEqual(grant.resolved, resolveSymlinks(deny)) {
 				continue
 			}
 			// The message names the AUTHORED spellings throughout. An operator

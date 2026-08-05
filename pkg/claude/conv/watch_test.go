@@ -542,6 +542,7 @@ func TestFsDebounceLoop_ForwardsShortUUIDToValidationLayer(t *testing.T) {
 
 func TestFsDebounceLoop_AutoWatchesNewSubdir(t *testing.T) {
 	projectsDir := t.TempDir()
+	projectDir := filepath.Join(projectsDir, "-Users-new-project")
 
 	outCh := make(chan fsFileChangeMsg, 16)
 	closeCh := make(chan struct{})
@@ -552,30 +553,28 @@ func TestFsDebounceLoop_AutoWatchesNewSubdir(t *testing.T) {
 	require.NoError(t, err)
 	defer w.Close()
 
-	go fsDebounceLoop(w, projectsDir, outCh, closeCh)
+	watchAdded := make(chan error, 1)
+	go fsDebounceEvents(w.Events, w.Errors, func(path string) error {
+		err := w.Add(path)
+		if path == projectDir {
+			watchAdded <- err
+		}
+		return err
+	}, projectsDir, outCh, closeCh)
 
 	// Create a new project subdir
-	projectDir := filepath.Join(projectsDir, "-Users-new-project")
 	require.NoError(t, os.MkdirAll(projectDir, 0755))
 
-	// Watcher.Add is synchronous once the loop consumes the directory event.
-	// Poll the externally observable watch list instead of guessing how long
-	// the OS event will take to arrive.
-	require.EventuallyWithT(t, func(c *assert.CollectT) {
-		assert.Contains(c, w.WatchList(), projectDir, "watch list after project directory create")
-	}, 10*time.Second, 10*time.Millisecond)
-
-	// Now create a .jsonl file inside the new subdir
-	convID := "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
-	filePath := filepath.Join(projectDir, convID+".jsonl")
-	require.NoError(t, os.WriteFile(filePath, []byte(`{"type":"user"}`), 0644))
-
+	// Wait on the loop's actual Add call rather than chaining a second OS
+	// notification through the newly registered directory. File-create
+	// delivery from an already watched directory has its own focused test.
 	select {
-	case msg := <-outCh:
-		assert.Equal(t, filePath, msg.FilePath)
+	case err := <-watchAdded:
+		require.NoError(t, err)
 	case <-time.After(10 * time.Second):
-		t.Fatal("timed out — new subdir was not auto-watched")
+		t.Fatal("timed out waiting for the debounce loop to register the new project directory")
 	}
+	assert.Contains(t, w.WatchList(), projectDir, "watch list after acknowledged Add call")
 }
 
 func TestFsDebounceLoop_CloseChStopsLoop(t *testing.T) {

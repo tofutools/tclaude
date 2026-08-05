@@ -49,11 +49,11 @@ func relaunchSandboxForProfile(profile *db.AgentRelaunchProfile, harnessName str
 	if profile == nil {
 		return "", fmt.Errorf("durable agent relaunch profile is missing")
 	}
-	if profile.SandboxMode == nil {
+	if profile.HarnessBuiltinMode == nil {
 		return "", fmt.Errorf("durable agent relaunch profile has unknown sandbox mode")
 	}
 	return relaunchSandboxForSession(&db.SessionRow{
-		Harness: harnessName, SandboxMode: *profile.SandboxMode,
+		Harness: harnessName, HarnessBuiltinMode: *profile.HarnessBuiltinMode,
 	})
 }
 
@@ -112,7 +112,7 @@ func relaunchSandboxForSession(row *db.SessionRow) (string, error) {
 		return "", fmt.Errorf("relaunch source session is missing")
 	}
 	harnessName := strings.TrimSpace(row.Harness)
-	recorded := strings.TrimSpace(row.SandboxMode)
+	recorded := strings.TrimSpace(row.HarnessBuiltinMode)
 	if recorded == "" {
 		// Legacy rows did not persist the field. Preserve the established Codex
 		// managed-profile/default behavior only for that explicit legacy case.
@@ -163,49 +163,52 @@ func sandboxImplementationForConv(convID string) string {
 	return config.activeSandboxImplementation()
 }
 
-// approvalForHarness returns the safe launch default used for legacy rows that
-// have no recorded posture. Current relaunches use approvalForRelaunch to
-// preserve the source generation exactly.
-func approvalForHarness(name string) string {
-	name = strings.TrimSpace(name)
-	if name == harness.DefaultName {
-		// NOT the harness default (`auto`). A relaunch reconstructs an existing
-		// agent, so it must tighten, never loosen — the same principle
-		// sandboxForHarness states and the Codex branch above enforces by
-		// returning `untrusted` rather than the current `never` default.
-		//
-		// A blank Claude row is also not ambiguous the way a Codex one is: every
-		// legacy Claude launch emitted no `--permission-mode`, so `inherit` IS the
-		// faithful reconstruction. Returning `auto` here would silently mint full
-		// in-sandbox delegation authority the row never provably had — and because
-		// the remaining callers are error fallbacks, it would do so on a mere DB
-		// hiccup (widen-on-error).
-		return harness.ClaudePermissionInherit
+// reconstructApproval is the daemon's entry point into the one reconstruction
+// rule (harness.ReconstructApprovalPolicy): a recorded posture is reproduced
+// and re-validated, an absent one re-resolves under current config. Every
+// daemon surface that rebuilds a launch — relaunch, clone, seance, the durable
+// relaunch profile — goes through here, so none of them can pin a blank row to
+// a historical value the CLI resume path would re-resolve. See TCL-990.
+func reconstructApproval(harnessName, recorded string) (string, error) {
+	h, err := harness.Resolve(strings.TrimSpace(harnessName))
+	if err != nil {
+		return "", err
 	}
-	if name == harness.CopilotName {
-		// Same reasoning as the Claude branch, and just as unambiguous: every
-		// Copilot launch tclaude made before TCL-973 emitted zero permission
-		// flags, so `inherit` IS the faithful reconstruction of a blank row.
-		// Returning the new `allow-tools` default would take a row that ran
-		// under Copilot's prompting posture and relaunch it with tools
-		// auto-approved and ask_user removed — a silent promotion performed by
-		// lifecycle repair, on rows the operator never chose it for.
-		return harness.CopilotApprovalInherit
+	policy, reresolved, err := harness.ReconstructApprovalPolicy(h, recorded)
+	if err != nil {
+		return "", err
 	}
-	if h, err := harness.Resolve(name); err == nil && h.SupportsApproval() {
-		// Codex's `never` default validates to itself.
-		if pol, verr := h.Approval.ValidatePolicy(h.Approval.DefaultPolicy()); verr == nil {
-			return pol
-		}
+	if reresolved && policy != "" {
+		slog.Info("relaunch: no recorded approval posture; resolved from current config",
+			"harness", h.Name, "approval", policy)
 	}
-	return ""
+	return policy, nil
 }
 
-// approvalForRelaunch preserves the source generation's recorded authority.
-// Proven legacy daemon launches reconstruct their historical default. An
-// ambiguous Codex row relaunches as untrusted: the least automatic Codex
-// capability, so lifecycle repair cannot broaden unknown authority. Current
-// rows carry both inputs exactly.
+// approvalForHarness returns what an UNRECORDED approval input resolves to
+// under current config for this harness — the reconstruction rule's
+// absent-posture arm.
+//
+// approvalForRelaunch also uses it for its ERROR arms (unreadable row, pruned
+// row, unknown harness, unvalidatable recorded value). Those are not the same
+// thing as an absent input: an input may have been recorded and simply not
+// readable. They land here anyway because the caller — clone's standalone
+// export/conv branch, the only path that reaches those arms — needs a value,
+// and the alternative is the historical pin this rule exists to remove. The
+// managed relaunch path does not fail this way: durableRelaunchConfigForConv
+// returns an error instead of a posture.
+func approvalForHarness(name string) string {
+	policy, err := reconstructApproval(name, "")
+	if err != nil {
+		return ""
+	}
+	return policy
+}
+
+// approvalForRelaunch reconstructs the source generation's approval INPUT. A
+// recorded posture is reproduced exactly and re-validated; a blank row recorded
+// no input, so it re-resolves under current config instead of being pinned to
+// what it would historically have resolved to.
 func approvalForRelaunch(sourceConv, harnessName string) (string, bool) {
 	row, err := db.FindSessionByConvID(sourceConv)
 	if err != nil {
@@ -216,28 +219,11 @@ func approvalForRelaunch(sourceConv, harnessName string) (string, bool) {
 	if row == nil {
 		return approvalForHarness(harnessName), false
 	}
-	if strings.TrimSpace(row.ApprovalPolicy) == "" {
-		if strings.TrimSpace(harnessName) == harness.CodexName {
-			policy, proven, inferErr := db.LegacyCodexApprovalForConv(sourceConv)
-			if inferErr != nil {
-				slog.Warn("relaunch: legacy approval provenance lookup failed; using conservative fallback",
-					"conv", sourceConv, "error", inferErr)
-			}
-			if proven {
-				return policy, false
-			}
-			// An ambiguous legacy Codex row cannot faithfully inherit its old
-			// posture. Relaunch it at the least automatic Codex capability rather
-			// than silently widening it to the daemon's current never default.
-			return harness.ApprovalUntrusted, false
-		}
-		return approvalForHarness(harnessName), false
-	}
 	h, err := harness.Resolve(harnessName)
 	if err != nil {
 		return approvalForHarness(harnessName), false
 	}
-	policy, err := harness.ValidateApprovalPolicy(h, row.ApprovalPolicy)
+	policy, err := reconstructApproval(harnessName, row.ApprovalPolicy)
 	if err != nil {
 		return approvalForHarness(harnessName), false
 	}

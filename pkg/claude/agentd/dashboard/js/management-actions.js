@@ -1030,10 +1030,10 @@ export function createManagementActions({
   // exactly what the daemon reads when dir is empty. (The spawn dialog passes a
   // real CWD; both share fetchUnsandboxedAutonomy.)
   function loadUnsandboxedAutonomy({
-    harness = '', sandbox: sandboxMode = '', sandboxImplementation = '', approval = '',
+    harness = '', sandbox: harnessBuiltinMode = '', sandboxImplementation = '', approval = '',
   } = {}) {
     return fetchUnsandboxedAutonomy(fetch, {
-      harness, sandbox: sandboxMode, sandboxImplementation, approval, dir: '',
+      harness, sandbox: harnessBuiltinMode, sandboxImplementation, approval, dir: '',
     });
   }
 

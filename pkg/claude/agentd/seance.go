@@ -242,7 +242,7 @@ func handleWhoamiSeanceRun(w http.ResponseWriter, r *http.Request) {
 	profilePath := ""
 	var splitCapability *harness.CodexSplitPolicyCapability
 	if h.UsesCodexOneShotReplay() {
-		guardMode := posture.SandboxMode
+		guardMode := posture.HarnessBuiltinMode
 		if guardMode == harness.SandboxManagedProfile {
 			guardMode = harness.SandboxWorkspaceWrite
 		}
@@ -261,7 +261,7 @@ func handleWhoamiSeanceRun(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	if h.NeedsManagedProfileForOneShot(posture.SandboxMode) {
+	if h.NeedsManagedProfileForOneShot(posture.HarnessBuiltinMode) {
 		profileName, path, capability, profileErr := EnsureSeanceCodexProfile(
 			resolved.Cwd, session.GenerateSessionID(), resolved.effectiveSandbox)
 		if profileErr != nil {
@@ -269,7 +269,7 @@ func handleWhoamiSeanceRun(w http.ResponseWriter, r *http.Request) {
 				"the harness sandbox could not initialize: "+profileErr.Error())
 			return
 		}
-		posture.SandboxMode = ""
+		posture.HarnessBuiltinMode = ""
 		posture.PermissionProfile = profileName
 		profilePath = path
 		splitCapability = capability
@@ -304,6 +304,14 @@ func handleWhoamiSeanceRun(w http.ResponseWriter, r *http.Request) {
 	setAuditDetail(r, fmt.Sprintf("predecessor %s; harness %s", short8(resolved.Predecessor), h.Name))
 	runCtx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
+	// Claim the directory before the subprocess starts, above the swappable
+	// exec seam so the production path always registers. The séance runs in a
+	// PREDECESSOR generation's cwd — an offline superseded conversation that
+	// captureAgentWorktreeClaims deliberately stops counting as a claimant — so
+	// without this a live harness sits for minutes in a directory the cleanup
+	// snapshot affirmatively reports as unclaimed (TCL-1026).
+	releaseSeanceWorktree := holdSeanceWorktree(resolved.Cwd)
+	defer releaseSeanceWorktree()
 	result := RunSeanceHarness(runCtx, SeanceExecPlan{
 		Argv:        argv,
 		Cwd:         resolved.Cwd,
@@ -397,14 +405,14 @@ func recordedSeanceLaunchForConv(convID string) (seanceRecordedLaunch, error) {
 	}
 
 	recordedSandbox := ""
-	if fallback != nil && fallback.SandboxMode != nil {
-		recordedSandbox = *fallback.SandboxMode
+	if fallback != nil && fallback.HarnessBuiltinMode != nil {
+		recordedSandbox = *fallback.HarnessBuiltinMode
 	}
-	if row != nil && strings.TrimSpace(row.SandboxMode) != "" {
-		recordedSandbox = row.SandboxMode
+	if row != nil && strings.TrimSpace(row.HarnessBuiltinMode) != "" {
+		recordedSandbox = row.HarnessBuiltinMode
 	}
 	out.sandbox, err = relaunchSandboxForSession(&db.SessionRow{
-		Harness: out.harness, SandboxMode: recordedSandbox,
+		Harness: out.harness, HarnessBuiltinMode: recordedSandbox,
 	})
 	if err != nil {
 		return seanceRecordedLaunch{}, err
@@ -424,14 +432,9 @@ func recordedSeanceLaunchForConv(convID string) (seanceRecordedLaunch, error) {
 		recordedApproval = row.ApprovalPolicy
 		autoReview = row.ApprovalAutoReview
 	}
-	recordedApproval = strings.TrimSpace(recordedApproval)
-	if recordedApproval == "" {
-		out.approval = approvalForHarness(h.Name)
-	} else {
-		out.approval, err = harness.ValidateApprovalPolicy(h, recordedApproval)
-		if err != nil {
-			return seanceRecordedLaunch{}, fmt.Errorf("invalid recorded approval policy: %w", err)
-		}
+	out.approval, err = reconstructApproval(h.Name, recordedApproval)
+	if err != nil {
+		return seanceRecordedLaunch{}, fmt.Errorf("invalid recorded approval policy: %w", err)
 	}
 	out.autoReview, err = harness.ResolveAutoReview(h, autoReview)
 	if err != nil {
@@ -515,7 +518,7 @@ func resolveSeancePlan(
 		return seanceResolveResp{}, false
 	}
 
-	sandboxMode := recorded.sandbox
+	harnessBuiltinMode := recorded.sandbox
 	approvalPolicy := recorded.approval
 	autoReview := recorded.autoReview
 
@@ -546,13 +549,13 @@ func resolveSeancePlan(
 			"the predecessor's recorded sandbox is no longer valid: "+err.Error())
 		return seanceResolveResp{}, false
 	}
-	if fail := sandboxProfileCapabilityFailure(h.Name, sandboxMode, effectiveSandbox); fail != nil {
+	if fail := sandboxProfileCapabilityFailure(h.Name, harnessBuiltinMode, effectiveSandbox); fail != nil {
 		writeError(w, http.StatusConflict, "sandbox_profile_changed",
 			"cannot reproduce the predecessor's recorded sandbox: "+fail.Msg)
 		return seanceResolveResp{}, false
 	}
 	posture, err := session.OneShotLaunchPosture(
-		cwd, h, sandboxMode, approvalPolicy, autoReview, effectiveSandbox)
+		cwd, h, harnessBuiltinMode, approvalPolicy, autoReview, effectiveSandbox)
 	if err != nil {
 		writeError(w, http.StatusConflict, "sandbox_profile_changed",
 			"cannot reproduce the predecessor's recorded sandbox: "+err.Error())
@@ -565,7 +568,7 @@ func resolveSeancePlan(
 		Hops:             hops,
 		Requested:        req.Back,
 		Exact:            exact,
-		Sandbox:          sandboxMode,
+		Sandbox:          harnessBuiltinMode,
 		Approval:         approvalPolicy,
 		AutoReview:       autoReview,
 		SandboxDenyDirs:  append([]string(nil), posture.SandboxDenyDirs...),

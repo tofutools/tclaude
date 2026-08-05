@@ -27,6 +27,7 @@ import (
 
 func TestClassifyPermissionArms(t *testing.T) {
 	const trustTranscript = "…\n" + copilotfixture.TrustPromptMarker + "\nDo you trust…"
+	const pathTranscript = "…\n" + copilotfixture.PathPromptMarker + "\n/tmp/probe.txt…"
 
 	for _, tc := range []struct {
 		name             string
@@ -108,6 +109,44 @@ func TestClassifyPermissionArms(t *testing.T) {
 			name: "alive-but-still-producing-output", total: 1, followUps: 0,
 			stillAlive: true, quiesced: false,
 			wantErr: true,
+		},
+		{
+			// The directory-access arm, and the reason it exists (TCL-1029):
+			// quiesced is FALSE here, which used to make this the error row
+			// above. A launch showing its dialog is parked whatever the output
+			// happened to be doing on the tick the run ended.
+			name: "path-dialog-decides-without-quiescence", total: 1, followUps: 0,
+			stillAlive: true, quiesced: false,
+			transcript: pathTranscript,
+			want:       copilotfixture.PermissionBlocked,
+		},
+		{
+			// ORDER: a tool result still beats the dialog. The transcript
+			// accumulates, so a scenario that answered the prompt and went on
+			// to execute carries the marker for the rest of the run — reading
+			// it as blocked would manufacture a finding out of stale screen
+			// text, against the one observable that proves execution.
+			name: "path-dialog-does-not-beat-a-tool-result", total: 2, followUps: 1,
+			stillAlive: true, quiesced: false,
+			transcript:  pathTranscript,
+			toolResults: []string{"probe output"},
+			want:        copilotfixture.PermissionAllowed,
+		},
+		{
+			// ORDER: so does a denial, for the same reason it beats execution.
+			name: "path-dialog-does-not-beat-a-denial", total: 2, followUps: 1,
+			stillAlive: true, quiesced: false,
+			transcript:  pathTranscript,
+			toolResults: []string{"Permission denied"},
+			want:        copilotfixture.PermissionDenied,
+		},
+		{
+			// ORDER: a dialog on a CLI that then exited is refused, not
+			// blocked. Blocked means parked forever; this process is gone.
+			name: "path-dialog-on-an-exited-cli-is-refused", total: 1, followUps: 0,
+			stillAlive: false, quiesced: false,
+			transcript: pathTranscript,
+			want:       copilotfixture.PermissionRefused,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

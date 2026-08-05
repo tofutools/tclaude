@@ -23,16 +23,16 @@ type OpenCodePermissionRule struct {
 // OpenCodePermissionSpec is the validated launch posture rendered into one
 // session ruleset. Paths must already be canonical absolute directories.
 type OpenCodePermissionSpec struct {
-	Cwd            string
-	Worktree       string
-	SandboxMode    string
-	ApprovalPolicy string
-	ToolGovernance string
-	ReadDirs       []string
-	WriteDirs      []string
-	DenyDirs       []string
-	ReadBaseline   string
-	NetworkAccess  sandboxpolicy.NetworkAccess
+	Cwd                string
+	Worktree           string
+	HarnessBuiltinMode string
+	ApprovalPolicy     string
+	ToolGovernance     string
+	ReadDirs           []string
+	WriteDirs          []string
+	DenyDirs           []string
+	ReadBaseline       string
+	NetworkAccess      sandboxpolicy.NetworkAccess
 }
 
 const (
@@ -70,8 +70,8 @@ func OpenCodeWorktree(cwd string) string {
 // It is intentionally allowlist-shaped: an unknown or newly added OpenCode
 // tool remains caught by the leading deny-all rule until it is audited.
 func BuildOpenCodePermissionRules(spec OpenCodePermissionSpec) ([]OpenCodePermissionRule, error) {
-	sandboxMode, err := (openCodeSandbox{}).ValidateMode(spec.SandboxMode)
-	if err != nil || sandboxMode == "" {
+	harnessBuiltinMode, err := (openCodeSandbox{}).ValidateMode(spec.HarnessBuiltinMode)
+	if err != nil || harnessBuiltinMode == "" {
 		if err != nil {
 			return nil, err
 		}
@@ -115,11 +115,11 @@ func BuildOpenCodePermissionRules(spec OpenCodePermissionSpec) ([]OpenCodePermis
 	rules := []OpenCodePermissionRule{{
 		Permission: "*", Pattern: "*", Action: openCodeActionDeny,
 	}}
-	if sandboxMode == OpenCodeSandboxOff {
+	if harnessBuiltinMode == OpenCodeSandboxOff {
 		rules = appendOpenCodeOffRules(rules, approval, toolGovernance, network)
 		return appendOpenCodeEnvReadRules(rules, approval, "."), nil
 	}
-	if sandboxMode == OpenCodeSandboxTclaudeLayer {
+	if harnessBuiltinMode == OpenCodeSandboxTclaudeLayer {
 		rules = appendOpenCodeTclaudeLayerRules(
 			rules, approval, toolGovernance, network,
 		)

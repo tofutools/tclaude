@@ -258,6 +258,33 @@ When adding a new scenario:
    relevant flow test. Over time the sims accrete the institutional
    knowledge of "things that have surprised us".
 
+### Shrinking production timings
+
+Flow fixtures shrink production waits so a scenario costs milliseconds instead
+of seconds. Shrinking two related timings *proportionally* is the trap: it
+preserves their ratio and discards their absolute separation, and scheduler
+jitter is absolute.
+
+TCL-1028 is the worked example. A soft stop runs two concurrent actors with
+nothing ordering them: the bounded re-injection ladder spends its attempts by
+~8 s, and the escalation watchdog's deadline is 10 s — 2 s of separation that no
+amount of runner load can close. The fixture scaled both down, to 1 ms retries
+against a 20 ms deadline. Same ratio, and now a single 20 ms deschedule reorders
+them. Two scenarios in `soft_exit_retry_flow_test.go` failed intermittently on
+loaded macOS runners — in *opposite* directions, over-running and under-running
+the same attempt count — while passing 40/40 on an idle Linux box. The fixture
+had not modelled production faster; it had moved the system into a regime where
+two actors production never races can be reordered by nothing more than a busy
+runner.
+
+So before shrinking a wait, ask which other actor it is separated from, and
+whether the shrunken separation is still large next to a scheduler pause (tens
+of milliseconds on a loaded CI runner). When it is not, do not go looking for a
+bigger margin — order the two actors, per "Deterministic timing in tests" above:
+park one on a hook, wait for observable state proving the other reached the
+point under test, then release. A margin that needs tuning is the symptom; the
+missing order is the bug.
+
 ## Code conventions
 
 - Focused single-topic commits. See `git log` for the style:

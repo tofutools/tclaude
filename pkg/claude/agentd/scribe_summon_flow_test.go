@@ -621,7 +621,7 @@ func TestScribeSummon_AgentGatedLikeSpawn(t *testing.T) {
 	recordBypassParent := func(conv string) {
 		require.NoError(t, db.SaveSession(&db.SessionRow{
 			ID: "sess-" + conv, ConvID: conv, Cwd: f.World.HomeDir, Status: "running",
-			Harness: harness.DefaultName, SandboxMode: harness.ClaudeSandboxOff,
+			Harness: harness.DefaultName, HarnessBuiltinMode: harness.ClaudeSandboxOff,
 			ApprovalPolicy: "bypassPermissions",
 		}))
 	}

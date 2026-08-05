@@ -27,7 +27,14 @@ var softExitSignalLadder = []struct {
 // and a harness that is being held open by a child (a shell tool, an indexer)
 // is precisely the case the ladder exists for. Signalling only the leader
 // would leave that child owning the terminal.
-var signalLifecycleProcessGroup = func(pid int, sig syscall.Signal) error {
+var signalLifecycleProcessGroup = signalProcessGroup
+
+// signalProcessGroup is the production implementation, named rather than
+// anonymous so a unit test can exercise the REAL refusals directly. The var
+// above is swapped binary-wide by TestMain (TCL-1035), so a test that went
+// through it would be asserting against a no-op stub — which is how the first
+// version of that test managed to pass and then fail for the right reason.
+func signalProcessGroup(pid int, sig syscall.Signal) error {
 	pgid, err := syscall.Getpgid(pid)
 	if err != nil {
 		return err
@@ -38,6 +45,27 @@ var signalLifecycleProcessGroup = func(pid int, sig syscall.Signal) error {
 	// exactly why it is worth failing closed on rather than trusting.
 	if pgid == syscall.Getpgrp() {
 		return fmt.Errorf("refusing to signal the daemon's own process group (pgid %d)", pgid)
+	}
+	// The second instance of the same guard, for a case that is worse.
+	//
+	// kill(2) reads a negative pid as a group, and two spellings are not group
+	// sends at all: -1 means EVERY process the caller may signal, and -0 means
+	// the caller's own group. So a pane process whose group resolved to 1 would
+	// make this ladder SIGKILL the user's whole session, and one that resolved
+	// to 0 would make it kill the daemon's group by another route.
+	//
+	// I cannot demonstrate either happening in production, and this is not a
+	// claim that they do — tmux gives every pane its own session and group,
+	// which should keep both unreachable. It is guarded for the same reason the
+	// line above it is: the cost of the guard is a logged refusal, no
+	// legitimate call is ever spelled this way, and the cost of being wrong is
+	// every process the user owns.
+	//
+	// Tests can no longer produce it — TestMain neutralizes these rungs for the
+	// whole test binary (TCL-1035) — which removes the only party that was ever
+	// observed doing it, not the exposure itself.
+	if pgid <= 1 {
+		return fmt.Errorf("refusing to signal process group %d: not a pane's group", pgid)
 	}
 	return syscall.Kill(-pgid, sig)
 }

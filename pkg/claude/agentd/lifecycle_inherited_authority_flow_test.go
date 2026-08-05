@@ -458,15 +458,20 @@ func TestReincarnateDefersSupersededDirectoryCleanupUntilPredecessorExits(t *tes
 	require.NoError(t, err)
 	profile.AgentDirectories = []string{"GOCACHE"}
 	require.NoError(t, db.UpdateSandboxProfile(profile))
+	// Hold the predecessor's pane open across the response so "still exiting"
+	// is a fixture-owned state rather than a race against the exit command's
+	// simulated latency (and against the soft-exit escalation watchdog, which
+	// would otherwise end the pane on its own 20ms deadline).
 	codex := f.World.Codexes.GetByConvID(target.ConvID)
 	require.NotNil(t, codex)
-	codex.SetCommandDelay("/quit", 200*time.Millisecond)
+	exitPane := holdRetiringCodexPane(t, codex)
 
 	rec := agentReq(t, f, target.ConvID, http.MethodPost, "/v1/whoami/reincarnate",
 		map[string]any{"follow_up": "continue"})
 	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 	_, statErr := os.Stat(oldDir)
 	require.NoError(t, statErr, "old directory must remain while the predecessor is still exiting")
+	exitPane()
 	agentd.WaitForBackgroundForTest()
 	_, statErr = os.Stat(oldDir)
 	assert.True(t, os.IsNotExist(statErr), "old directory should be removed after predecessor exit; err=%v", statErr)

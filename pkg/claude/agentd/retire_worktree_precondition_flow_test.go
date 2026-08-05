@@ -396,13 +396,12 @@ func TestRetireAgent_WorktreePrecondition(t *testing.T) {
 				cwd: {Root: cwd, Branch: "feature-a", Kind: "linked"},
 			})
 
-			// Hold /exit until the branch drift is installed. A wall-clock delay
-			// here would race the test setup against the deferred cleanup.
+			// Hold the pane open until the branch drift is installed. A
+			// wall-clock delay here would race the test setup against the
+			// deferred cleanup.
 			cc := f.World.CCs.GetByConvID(conv)
 			require.NotNil(t, cc, "no CCSim registered for %s", conv)
-			cc.OnInput("/exit", func(*testharness.CCSim, string) bool {
-				return true
-			})
+			exitPane := holdRetiringPane(t, cc)
 
 			mux := agentd.BuildDashboardHandlerForTest()
 			query := url.Values{
@@ -422,7 +421,7 @@ func TestRetireAgent_WorktreePrecondition(t *testing.T) {
 			fw.setDir(cwd, worktree.WorktreeStatus{
 				Root: cwd, Branch: "feature-b", Kind: "linked",
 			})
-			cc.MarkDead()
+			exitPane()
 			agentd.WaitForBackgroundForTest()
 
 			assert.False(t, fw.wasRemoved(cwd),
@@ -452,9 +451,7 @@ func TestRetireAgent_WorktreePrecondition(t *testing.T) {
 
 			cc := f.World.CCs.GetByConvID(conv)
 			require.NotNil(t, cc, "no CCSim registered for %s", conv)
-			cc.OnInput("/exit", func(*testharness.CCSim, string) bool {
-				return true
-			})
+			exitPane := holdRetiringPane(t, cc)
 
 			mux := agentd.BuildDashboardHandlerForTest()
 			query := url.Values{
@@ -472,7 +469,7 @@ func TestRetireAgent_WorktreePrecondition(t *testing.T) {
 			f.HaveConvWithTitle(other, "newcomer-worker")
 			f.HaveAliveSession(other, "spwn-rwpo", "tmux-rwpo", cwd)
 			f.HaveEnrolledAgent(other)
-			cc.MarkDead()
+			exitPane()
 			agentd.WaitForBackgroundForTest()
 
 			assert.False(t, fw.wasRemoved(cwd),

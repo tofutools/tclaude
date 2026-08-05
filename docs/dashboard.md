@@ -629,7 +629,10 @@ infer the effects of a named profile. See
 The optional adjacent **›** is a separate, non-mutating details action. It is
 hidden by default; enable `features.recorded_sandbox_details` in the config file
 or **Config → Experimental features → Recorded sandbox details** to show it.
-It expands only facts frozen on that launch row: recorded mode and provenance,
+It expands only facts frozen on that launch row: the recorded harness sandbox
+mode (labelled **Harness sandbox mode** — the harness's own setting, which a
+`tclaude-layer` launch stands down while tclaude's wall enforces; the
+**Implementation** line above it is who enforces) and its provenance,
 applied profile names, persisted access notices, and a known partial-fidelity
 sentence when the recorded implementation/source pair exactly matches a ruled
 producer literal. An unknown unverified pair gets a generic
@@ -1190,7 +1193,7 @@ Overriding a control replaces resolution for that axis only.
 Keep this distinct from sandbox-policy composition. Resolved defaults pick one
 winner per launch field; sandbox profiles do not compete — the global sandbox
 profile, the group sandbox profile, and an explicit sandbox profile all apply
-together. Claude's sandbox mode `inherit` is rendered in plain language
+together. Claude's harness-builtin mode `inherit` is rendered in plain language
 throughout ("Claude settings decide"), because the token alone does not say
 whether the built-in sandbox ends up enabled; for the same reason, naming a
 resolved implementation owner never asserts that its sandbox is switched on.

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/worktree"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -292,7 +294,7 @@ func TestSeancePlan_OpenCodeExactGenerationDoesNotRedirect(t *testing.T) {
 		require.NoError(t, err)
 		require.NotEmpty(t, sessions)
 		for _, session := range sessions {
-			session.SandboxMode = harness.OpenCodeSandboxAccessControl
+			session.HarnessBuiltinMode = harness.OpenCodeSandboxAccessControl
 			session.ApprovalPolicy = harness.OpenCodeApprovalDeny
 			require.NoError(t, db.SaveSession(session))
 		}
@@ -469,7 +471,7 @@ func TestSeanceRun_ReplaysExactPredecessorCodexSandbox(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, oldRows)
 	for _, row := range oldRows {
-		row.SandboxMode = harness.SandboxManagedProfile
+		row.HarnessBuiltinMode = harness.SandboxManagedProfile
 		row.ApprovalPolicy = harness.ApprovalNever
 		row.EffectiveSandbox = &predecessorSnapshot
 		require.NoError(t, db.SaveSession(row))
@@ -486,7 +488,7 @@ func TestSeanceRun_ReplaysExactPredecessorCodexSandbox(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, newRows)
 	for _, row := range newRows {
-		row.SandboxMode = harness.SandboxManagedProfile
+		row.HarnessBuiltinMode = harness.SandboxManagedProfile
 		row.ApprovalPolicy = harness.ApprovalNever
 		row.EffectiveSandbox = &successorSnapshot
 		require.NoError(t, db.SaveSession(row))
@@ -553,7 +555,7 @@ func TestSeanceRun_CodexManagedSandboxRejectsHarnessHomeAsWorkspace(t *testing.T
 	require.NoError(t, err)
 	require.NotEmpty(t, oldRows)
 	for _, row := range oldRows {
-		row.SandboxMode = harness.SandboxManagedProfile
+		row.HarnessBuiltinMode = harness.SandboxManagedProfile
 		row.ApprovalPolicy = harness.ApprovalNever
 		require.NoError(t, db.SaveSession(row))
 	}
@@ -605,7 +607,7 @@ func TestSeanceRun_CodexRawWorkspaceRejectsHarnessHome(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, oldRows)
 	for _, row := range oldRows {
-		row.SandboxMode = harness.SandboxWorkspaceWrite
+		row.HarnessBuiltinMode = harness.SandboxWorkspaceWrite
 		row.ApprovalPolicy = harness.ApprovalNever
 		require.NoError(t, db.SaveSession(row))
 	}
@@ -831,4 +833,113 @@ func TestSeanceRun_ConcurrencyIsBounded(t *testing.T) {
 		got := <-done
 		assert.Equal(t, http.StatusOK, got.status, "body=%s", got.body)
 	}
+}
+
+// A live séance runs in a PREDECESSOR generation's cwd — an offline superseded
+// conversation that captureAgentWorktreeClaims deliberately stops counting as a
+// claimant. Retiring a different agent recorded at that same root, with worktree
+// deletion, must not remove the directory the séance subprocess is sitting in
+// (TCL-1026). The removal is driven from inside the harness boundary so the
+// cleanup lands while the séance is genuinely in flight.
+func TestSeanceRun_HoldsItsWorktreeAgainstConcurrentRetirement(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	const (
+		oldConv   = "5ea11ce0-1111-2222-3333-444444444444"
+		newConv   = "5ea11ce0-5555-6666-7777-888888888888"
+		otherConv = "0the4000-1111-2222-3333-444444444444"
+	)
+	repo, _ := initRepoOnMain(t)
+	shared, err := worktree.AddWorktreeIn(repo, "seance-held", "main", "")
+	require.NoError(t, err)
+
+	// The séance target: superseded by newConv AND offline, so it claims
+	// nothing itself. Both are required — a live pane would claim the root on
+	// its own and the séance hold would not be what keeps the worktree.
+	f.HaveConvWithTitle(oldConv, "old-runner")
+	haveSeanceSession(f, oldConv, "old-runner-label", "old-runner-tmux", shared)
+	f.MarkOffline("old-runner-tmux")
+	f.HaveConvWithTitle(newConv, "new-runner")
+	haveSeanceSession(f, newConv, "new-runner-label", "new-runner-tmux", f.TestCwd("seance-held-new"))
+	_, err = db.RotateAgentConv(oldConv, newConv, "reincarnate")
+	require.NoError(t, err)
+
+	// An unrelated agent recorded at the same root — the one the operator
+	// retires. It is offline, so nothing but the séance claim stands in the way.
+	f.HaveConvWithTitle(otherConv, "other-at-same-root")
+	f.HaveAliveSession(otherConv, "spwn-other", "tmux-other", shared)
+	f.HaveEnrolledAgent(otherConv)
+	f.MarkOffline("tmux-other")
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	previous := agentd.RunSeanceHarness
+	var retire cleanupResp
+	var retired bool
+	agentd.RunSeanceHarness = func(_ context.Context, _ agentd.SeanceExecPlan) agentd.SeanceExecResult {
+		// Inside the séance: the subprocess is "running" in shared right now.
+		retire = postCleanup(t, mux, "/api/cleanup/agents",
+			`{"agents":["`+otherConv+`"],"delete":true,"delete_worktrees":true}`)
+		retired = true
+		return agentd.SeanceExecResult{Stdout: "held\n", Started: true}
+	}
+	t.Cleanup(func() { agentd.RunSeanceHarness = previous })
+
+	got, status, body := requestSeanceRun(t, f, newConv, map[string]any{
+		"target":     oldConv,
+		"question":   "Are you holding this directory?",
+		"timeout_ms": int64((30 * time.Second).Milliseconds()),
+	})
+	require.Equal(t, http.StatusOK, status, "body=%s", body)
+	require.True(t, retired, "the retirement must run inside the séance")
+	assert.Equal(t, "held\n", got.Answer)
+
+	require.Len(t, retire.Outcomes, 1)
+	assert.Equal(t, 1, retire.Deleted, "the agent itself is still retired")
+	assert.Contains(t, retire.Outcomes[0].Detail, "séance",
+		"the note must name what is actually holding the root")
+	assert.DirExists(t, shared,
+		"a live séance's cwd must never be removed out from under it")
+
+	// The claim is released with the séance, so the same retirement now
+	// proceeds — the hold is scoped to the subprocess, not permanent.
+	assert.Empty(t, heldSeanceWorktreesForTest(), "claim released after the séance")
+}
+
+// The claim set is read by cleanup on a different goroutine than the séance that
+// registers it, and seanceConcurrency admits more than one at a time. Exercise
+// that overlap directly so a missing lock fails here rather than as a
+// package-wide -race failure somewhere unrelated.
+func TestSeanceWorktreeClaims_ConcurrentHoldAndCapture(t *testing.T) {
+	dirs := []string{t.TempDir(), t.TempDir()}
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+	for _, dir := range dirs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				release := agentd.HoldSeanceWorktreeForTest(dir)
+				release()
+			}
+		}()
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 500; i++ {
+			_ = heldSeanceWorktreesForTest()
+		}
+		close(stop)
+	}()
+	wg.Wait()
+	assert.Empty(t, heldSeanceWorktreesForTest(), "every hold released")
+}
+
+func heldSeanceWorktreesForTest() []string {
+	return agentd.HeldSeanceWorktreesForTest()
 }

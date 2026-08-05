@@ -76,10 +76,10 @@ func TestTemporarySandboxWarningFollowsStableAgentAcrossRotation(t *testing.T) {
 	require.NoError(t, err)
 	normal := "on"
 	require.NoError(t, db.SetAgentRelaunchProfile(agentID, db.AgentRelaunchProfile{
-		Version: db.RelaunchProfileVersion, SandboxMode: &normal,
+		Version: db.RelaunchProfileVersion, HarnessBuiltinMode: &normal,
 	}))
 	override := "off"
-	require.NoError(t, db.SetTemporarySandboxModeForConv(
+	require.NoError(t, db.SetTemporaryHarnessBuiltinModeForConv(
 		oldConv, normal, "harness-builtin", "test", &override,
 	))
 	assert.True(t, temporarySandboxOff(oldConv), "the override must raise the SB-OFF badge")
@@ -88,7 +88,7 @@ func TestTemporarySandboxWarningFollowsStableAgentAcrossRotation(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, temporarySandboxOff(newConv), "the badge must follow the stable agent across a /clear rotation")
 
-	require.NoError(t, db.SetTemporarySandboxModeForConv(newConv, "", "", "", nil))
+	require.NoError(t, db.SetTemporaryHarnessBuiltinModeForConv(newConv, "", "", "", nil))
 	assert.False(t, temporarySandboxOff(newConv), "clearing the override must drop the badge")
 }
 

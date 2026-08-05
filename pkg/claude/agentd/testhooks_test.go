@@ -443,6 +443,24 @@ func SetSoftExitEscalationProcessForTest(
 	}
 }
 
+// LifecycleProcessAliveForTest calls whichever alive predicate is currently
+// installed. It exists so a flow test can PROVE the fixture neutralized the
+// escalation ladder's process rungs, rather than trusting that newFlow still
+// does it.
+//
+// Only the alive predicate is exposed, and the asymmetry is deliberate rather
+// than an oversight: calling the signaller to check it would deliver a real
+// signal on exactly the runs where the default went missing — the failure the
+// check exists to catch. alive=false stands the ladder down before any signal
+// is attempted, so it is the safe end to observe.
+//
+// That "before" is a property of escalateStuckSoftExit's current ordering
+// (waitForPaneProcessGone, then signal), not a law: a future reorder that
+// signalled first would leave this check green while a production signaller
+// fired. Worth knowing, and still the right trade — the alternative is a check
+// that delivers a real signal on exactly the runs where the default is gone.
+func LifecycleProcessAliveForTest(pid int) bool { return lifecycleProcessAlive(pid) }
+
 // SetSoftExitEscalationPollForTest observes each watchdog probe.
 func SetSoftExitEscalationPollForTest(fn func()) func() {
 	prev := softExitEscalationPollForTest
@@ -1549,3 +1567,12 @@ func SetTUIAttachForTest(fn func(agentName, tmuxSession string, inTmux bool) tea
 	tuiAttachToPane = fn
 	return func() { tuiAttachToPane = prev }
 }
+
+// HoldSeanceWorktreeForTest and HeldSeanceWorktreesForTest expose the séance
+// worktree claim registry so a flow test can assert the hold is released with
+// the séance, and drive concurrent hold/read overlap under -race. Production
+// registration happens in handleWhoamiSeanceRun, above the RunSeanceHarness
+// seam, so the HTTP path exercises the real thing without these.
+func HoldSeanceWorktreeForTest(dir string) func() { return holdSeanceWorktree(dir) }
+
+func HeldSeanceWorktreesForTest() []string { return heldSeanceWorktrees() }
