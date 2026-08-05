@@ -511,7 +511,7 @@ func TestRunNewResourceOnlyRefusesWhenTheHostHasNoDelegation(t *testing.T) {
 	ClaudeAncestorCheck = func() bool { return false }
 	t.Cleanup(func() { ClaudeAncestorCheck = prevCheck })
 	stubTmuxOnPath(t)
-	rec := &paneScriptCapturingTmux{launchRecordingTmux: &launchRecordingTmux{}}
+	rec := &launchRecordingTmux{}
 	swapTmux(t, rec)
 
 	err := runNew(&NewParams{
@@ -524,6 +524,39 @@ func TestRunNewResourceOnlyRefusesWhenTheHostHasNoDelegation(t *testing.T) {
 	assert.ErrorContains(t, err, "delegated cgroup v2",
 		"the refusal must name what is missing, as it does for a ceiling")
 	assert.Empty(t, rec.newSessions(), "the launch must be refused before tmux")
+}
+
+// The other half of the same policy: a reincarnated successor or no-copy clone
+// forks `session new` with no -r and no operator control of its own, so the
+// undelegated host must not make it unlaunchable.
+func TestRunNewResourceOnlyContinuationDegradesWhenTheHostHasNoDelegation(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	oldRoot := resourceCgroupRoot
+	resourceCgroupRoot = t.TempDir()
+	t.Cleanup(func() { resourceCgroupRoot = oldRoot })
+	t.Setenv(ResourceDelegationDirEnv, "")
+	t.Setenv("TMUX", "")
+	prevCheck := ClaudeAncestorCheck
+	ClaudeAncestorCheck = func() bool { return false }
+	t.Cleanup(func() { ClaudeAncestorCheck = prevCheck })
+	stubTmuxOnPath(t)
+	logged := captureWarnings(t)
+	rec := &paneScriptCapturingTmux{launchRecordingTmux: &launchRecordingTmux{failNewSession: true}}
+	swapTmux(t, rec)
+
+	err := runNew(&NewParams{
+		Label:               "spwn-continuation",
+		Dir:                 t.TempDir(),
+		Detached:            true,
+		SandboxImpl:         string(sandboxpolicy.ImplementationResourceOnly),
+		SandboxContinuation: true,
+	})
+	require.Error(t, err, "the fake tmux refuses new-session")
+	assert.NotContains(t, err.Error(), "delegated cgroup v2",
+		"a continuation must reach its pane rather than being stranded")
+	require.NotEmpty(t, rec.script, "the launch must still reach tmux")
+	assert.NotContains(t, rec.script, "resource-limit-exec", "there is no cgroup to join")
+	assert.Contains(t, logged.String(), "resource cgroup unavailable")
 }
 
 // The pane seam is where most launches get their cgroup, and resource-only

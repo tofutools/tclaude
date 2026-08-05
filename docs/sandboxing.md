@@ -203,8 +203,17 @@ boundary and quietly got none is indistinguishable from one that never tried.
 A **relaunch** of a boundary with no ceiling degrades instead: it proceeds without
 the cgroup and records a `resource_cgroup_unavailable` notice naming what is
 missing. Refusing there would make an agent already recorded as `resource-only`
-permanently unresumable, because the launch override is a fresh-spawn control with
-no resume equivalent. A ceiling still fails closed on every path, resume included.
+permanently unlaunchable, because the launch override is a fresh-spawn control
+with no relaunch equivalent. "Relaunch" covers a resume, a reincarnated successor
+and a no-copy clone — the last two fork a launch with no `-r`, so they carry an
+explicit continuation marker instead. A ceiling still fails closed on all of
+them.
+
+One seam is still outside this: `tclaude conv resume` (and watch-mode
+auto-resume) launches without creating or joining a cgroup at all, so a
+`resource-only` conversation resumed that way runs unbounded with no notice. That
+predates the accounting boundary — it applies to authored ceilings too — and is
+tracked separately.
 
 This changed behavior: before, `resource-only` with no limits silently created
 nothing and was indistinguishable from `off`. A conversation recorded that way

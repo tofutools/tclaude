@@ -39,6 +39,7 @@ type NewParams struct {
 	DarwinRouteCapable     bool   `short:"Q" long:"darwin-route-capable" help:"Internal: launch exact Darwin route slots"`
 	DarwinRouteAgentID     string `short:"I" long:"darwin-route-agent-id" optional:"true" help:"Internal: stable agent identity for Darwin route slots"`
 	AllowUnenforcedSandbox bool   `long:"allow-unenforced-sandbox" help:"Internal: operator authorized launch when sandbox enforcement is unavailable"`
+	SandboxContinuation    bool   `short:"-" long:"sandbox-continuation" help:"Internal: this launch continues an existing agent's recorded sandbox posture (reincarnation, no-copy clone)"`
 	// SandboxChosenBy is the resolution tier that supplied --sandbox, as
 	// resolved by the daemon spawn boundary ("explicit", `global default
 	// profile "x"`, …). The badge attributes the launch's containment to it, so
@@ -290,6 +291,7 @@ func NewCmd() *cobra.Command {
 	cmd.Args = cobra.ArbitraryArgs
 	_ = cmd.Flags().MarkHidden("managed-launch")
 	_ = cmd.Flags().MarkHidden("allow-unenforced-sandbox")
+	_ = cmd.Flags().MarkHidden("sandbox-continuation")
 	_ = cmd.Flags().MarkHidden("cwd-write-proof")
 	_ = cmd.Flags().MarkHidden("dir-write-proof")
 	_ = cmd.Flags().MarkHidden("codex-git-common-dir")
@@ -1959,15 +1961,20 @@ func runNew(params *NewParams) error {
 				resourceCgroupCleanup = cleanup
 				harnessCmd = wrapped
 			} else {
-				switch ResourceCgroupFailureAction(launchResourceLimits,
-					strings.TrimSpace(params.Resume) != "", params.AllowUnenforcedSandbox) {
+				continuation := launchIsSandboxContinuation(params)
+				switch ResourceCgroupFailureAction(
+					launchResourceLimits, continuation, params.AllowUnenforcedSandbox) {
 				case DiscloseMissingResourceAccounting:
-					slog.Warn("resource cgroup unavailable; resuming without per-agent accounting",
-						"session_id", sessionID, "error", resourceErr)
+					slog.Warn("resource cgroup unavailable; launching without per-agent accounting",
+						"session_id", sessionID, "continuation", continuation, "error", resourceErr)
 					recordResourceNotice(ResourceCgroupUnavailableNotice(resourceErr))
 				case DiscloseUnenforcedResourceOverride:
 					recordResourceNotice(resourceLimitOverrideNotice(resourceErr))
 				case RefuseResourceCgroupFailure:
+					return resourceErr
+				default:
+					// A policy value this seam does not know must not silently drop the
+					// boundary the launch asked for.
 					return resourceErr
 				}
 			}

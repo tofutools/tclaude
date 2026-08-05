@@ -62,6 +62,8 @@ func prepareManagedServerResourceCgroup(
 		appendManagedServerResourceOverride(snapshot, err)
 		return "", noop, nil
 	}
+	// RefuseResourceCgroupFailure, and any policy value this seam does not know:
+	// fail closed rather than start a server without the boundary it asked for.
 	return "", noop, err
 }
 

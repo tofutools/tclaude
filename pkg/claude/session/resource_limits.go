@@ -2,6 +2,7 @@ package session
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
@@ -32,30 +33,49 @@ const (
 	// DiscloseUnenforcedResourceOverride launches anyway because the operator
 	// authorized that for this spawn through the dashboard.
 	DiscloseUnenforcedResourceOverride
-	// DiscloseMissingResourceAccounting launches anyway because refusing would
-	// strand an existing agent. It applies only to a relaunch of a boundary with
-	// no ceiling: the dashboard override is a fresh-spawn control with no resume
-	// equivalent, so refusing a resume over counters would make an agent already
-	// recorded as resource-only permanently unresumable. A ceiling still fails
-	// closed on every path.
+	// DiscloseMissingResourceAccounting launches anyway because no ceiling was
+	// authored and refusing would strand the agent rather than inform anyone. It
+	// covers every continuation of an existing agent — a resume, a reincarnation,
+	// a no-copy clone — none of which carries the dashboard's fresh-spawn
+	// override, so a refusal there would make an agent already recorded as
+	// resource-only permanently unlaunchable. A ceiling still fails closed.
 	DiscloseMissingResourceAccounting
 )
 
 // ResourceCgroupFailureAction picks between refusing and disclosing. It is the
 // one place that decides, because the pane seam and the managed-server seam must
 // answer identically for the same launch.
+//
+// continuation means this launch carries a sandbox posture recorded earlier
+// rather than one the operator is choosing right now. That is the whole
+// distinction: a refusal is worth raising only where someone can act on it.
 func ResourceCgroupFailureAction(
 	limits sandboxpolicy.ResourceLimits,
-	resuming bool,
+	continuation bool,
 	allowUnenforced bool,
 ) ResourceCgroupFailurePolicy {
-	if resuming && !limits.Enabled() {
-		return DiscloseMissingResourceAccounting
+	if !limits.Enabled() {
+		// Nothing authored is going unenforced, so the override has nothing to
+		// authorize here — and claiming it did would record the wrong reason AND
+		// make it sticky, since an override notice suppresses the probe on every
+		// later launch. Disclose the missing counters instead.
+		if continuation || allowUnenforced {
+			return DiscloseMissingResourceAccounting
+		}
+		return RefuseResourceCgroupFailure
 	}
 	if allowUnenforced {
 		return DiscloseUnenforcedResourceOverride
 	}
 	return RefuseResourceCgroupFailure
+}
+
+// launchIsSandboxContinuation reports whether this launch carries a sandbox
+// posture recorded earlier rather than one an operator is choosing now. A resume
+// says so with -r; a reincarnated successor and a no-copy clone fork
+// `session new` without it and carry the explicit marker instead.
+func launchIsSandboxContinuation(params *NewParams) bool {
+	return strings.TrimSpace(params.Resume) != "" || params.SandboxContinuation
 }
 
 // ResourceCgroupUnavailableNotice discloses a limitless launch that could not get

@@ -6871,6 +6871,9 @@ func sessionNewArgs(a clcommon.SpawnArgs) []string {
 	if a.AllowUnenforcedSandbox {
 		args = append(args, "--allow-unenforced-sandbox")
 	}
+	if a.SandboxContinuation {
+		args = append(args, "--sandbox-continuation")
+	}
 	if a.CwdWriteProof != "" {
 		args = append(args, "--cwd-write-proof", a.CwdWriteProof)
 	}
