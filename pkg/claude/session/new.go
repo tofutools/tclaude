@@ -1955,21 +1955,21 @@ func runNew(params *NewParams) error {
 					params.AllowUnenforcedSandbox,
 				)
 			}
-			switch {
-			case resourceErr == nil:
+			if resourceErr == nil {
 				resourceCgroupCleanup = cleanup
 				harnessCmd = wrapped
-			case !launchResourceLimits.Enabled():
-				// Nothing authored is being widened, and the dashboard's launch
-				// override does not exist on a resume, so refusing here would leave
-				// an already-recorded resource-only agent unlaunchable over counters.
-				slog.Warn("resource cgroup unavailable; launching without per-agent accounting",
-					"session_id", sessionID, "error", resourceErr)
-				recordResourceNotice(resourceCgroupUnavailableNotice(resourceErr))
-			case !params.AllowUnenforcedSandbox:
-				return resourceErr
-			default:
-				recordResourceNotice(resourceLimitOverrideNotice(resourceErr))
+			} else {
+				switch ResourceCgroupFailureAction(launchResourceLimits,
+					strings.TrimSpace(params.Resume) != "", params.AllowUnenforcedSandbox) {
+				case DiscloseMissingResourceAccounting:
+					slog.Warn("resource cgroup unavailable; resuming without per-agent accounting",
+						"session_id", sessionID, "error", resourceErr)
+					recordResourceNotice(ResourceCgroupUnavailableNotice(resourceErr))
+				case DiscloseUnenforcedResourceOverride:
+					recordResourceNotice(resourceLimitOverrideNotice(resourceErr))
+				case RefuseResourceCgroupFailure:
+					return resourceErr
+				}
 			}
 		}
 	}
