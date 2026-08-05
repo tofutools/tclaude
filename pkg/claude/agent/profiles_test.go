@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	commonTable "github.com/tofutools/tclaude/pkg/claude/common/table"
 )
 
 func boolPtr(b bool) *bool { return &b }
@@ -66,10 +68,60 @@ func TestRunProfilesLsUsesProminentDisabledMarker(t *testing.T) {
 	var calls []capturedReq
 	stubDaemon(t, &calls, ok(`[{"name":"paused","disabled":true,"disabled_reason":"provider outage"},{"name":"restored","disabled":false,"disabled_reason":"previous outage"}]`))
 	var stdout, stderr bytes.Buffer
-	require.Equal(t, rcOK, runProfilesLs(&stdout, &stderr))
+	require.Equal(t, rcOK, runProfilesLs(&profilesLsParams{}, &stdout, &stderr))
 	assert.Contains(t, stdout.String(), "🚫 disabled: provider outage")
 	assert.NotContains(t, stdout.String(), "🚫 disabled: previous outage",
 		"a remembered reason does not make an enabled profile look disabled")
+}
+
+func TestRunProfilesLsPreservesFullNamesAndEmitsStableJSON(t *testing.T) {
+	var calls []capturedReq
+	stubDaemon(t, &calls, ok(`[
+		{"name":"sonnet[250k]-high","harness":"claude","model":"sonnet[1m]"},
+		{"name":"alpha","aliases":["first"]}
+	]`))
+	var stdout, stderr bytes.Buffer
+	require.Equal(t, rcOK, runProfilesLs(&profilesLsParams{}, &stdout, &stderr), "stderr=%s", stderr.String())
+	assert.Contains(t, stdout.String(), "sonnet[250k]-high")
+	assert.NotContains(t, stdout.String(), "sonnet[250k]-...")
+
+	stdout.Reset()
+	require.Equal(t, rcOK, runProfilesLs(&profilesLsParams{JSON: true}, &stdout, &stderr), "stderr=%s", stderr.String())
+	var profiles []profileJSON
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &profiles))
+	require.Len(t, profiles, 2)
+	assert.Equal(t, "alpha", profiles[0].Name, "JSON list ordering is stable")
+	assert.Equal(t, "sonnet[250k]-high", profiles[1].Name)
+}
+
+func TestRunProfilesLsAlignsUnicodeNamesByTerminalWidth(t *testing.T) {
+	var calls []capturedReq
+	stubDaemon(t, &calls, ok(`[
+		{"name":"plain-profile","aliases":["plain-alias"]},
+		{"name":"配置🚀-profile-name","aliases":["unicode-alias"]}
+	]`))
+	var stdout, stderr bytes.Buffer
+	require.Equal(t, rcOK, runProfilesLs(&profilesLsParams{}, &stdout, &stderr), "stderr=%s", stderr.String())
+
+	var aliasColumns []int
+	for _, line := range strings.Split(stdout.String(), "\n") {
+		for _, alias := range []string{"plain-alias", "unicode-alias"} {
+			if index := strings.Index(line, alias); index >= 0 {
+				aliasColumns = append(aliasColumns, commonTable.StringWidth(line[:index]))
+			}
+		}
+	}
+	require.Len(t, aliasColumns, 2)
+	assert.Equal(t, aliasColumns[0], aliasColumns[1], "aliases stay aligned after Unicode profile names")
+}
+
+func TestProfilesLsExposesJSONFlagAndKeepsTableDefault(t *testing.T) {
+	command := profilesLsCmd()
+	flag := command.Flags().Lookup("json")
+	require.NotNil(t, flag)
+	assert.Equal(t, "false", flag.DefValue)
+	assert.Contains(t, flag.Usage, "JSON")
+	assert.Contains(t, command.Long, "--json")
 }
 
 func TestRunProfilesDisableAndEnable(t *testing.T) {
