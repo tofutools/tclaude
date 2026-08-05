@@ -1,6 +1,9 @@
 package conv
 
 import (
+	"net"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -118,4 +121,62 @@ func TestResumeLaunchCmd_ResourceOnlyDisclosesInertAccessRules(t *testing.T) {
 	}
 	assert.True(t, disclosed,
 		"the resumed snapshot must carry the same inert-rules notice a fresh launch does")
+}
+
+// The narrow-but-real refusal the socket skip actually closes.
+//
+// RevalidateSnapshot and the materializer diverge on one axis:
+// validateSocketAllowEntry checks a path_glob by resolving its LITERAL
+// ANCESTOR only, while MaterializeUnixSocketList globs that directory and then
+// Lstats every matched CHILD. Listing a directory needs r; stat-ing its
+// children needs x. A directory left readable-but-not-executable (a tightened
+// socket dir, a tmpfiles.d mode) separates the two: revalidation passes and the
+// materializer refuses.
+//
+// That is the one measured case where skipping the materialization changes the
+// outcome for an unconfined resume, rather than merely avoiding work something
+// else refuses first. An explicit `path` row under the same directory does NOT
+// reach it — revalidation resolves that one itself and refuses first, which is
+// the residual limitation documented at the skip.
+func TestResumeLaunchCmd_ResourceOnlyResumesOverAGlobTheMaterializerWouldRefuse(t *testing.T) {
+	setupTestDB(t)
+	clearAmbientResumeOverride(t)
+
+	dir := filepath.Join(t.TempDir(), "sockets")
+	require.NoError(t, os.Mkdir(dir, 0o755))
+	listener, err := net.Listen("unix", filepath.Join(dir, "agent.sock"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = listener.Close() })
+
+	effective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{
+		Global: &sandboxpolicy.Profile{
+			Name: "socket-glob-limits",
+			UnixSockets: &sandboxpolicy.UnixSocketRules{
+				Mode:  sandboxpolicy.AccessModeList,
+				Allow: []sandboxpolicy.SocketAllowEntry{{PathGlob: filepath.Join(dir, "*.sock")}},
+			},
+			ResourceLimits: sandboxpolicy.ResourceLimits{Memory: "8GiB"},
+		},
+	})
+	require.NoError(t, err)
+	snapshot := sandboxpolicy.NewSnapshot(effective, nil)
+	agentID, _, agentErr := db.EnsureAgentForConv(resumeConvClaude, "test")
+	require.NoError(t, agentErr)
+	require.NoError(t, db.SetAgentEffectiveSandboxConfig(agentID, &snapshot))
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "resource-only-glob", ConvID: resumeConvClaude,
+		Harness:               harness.DefaultName,
+		HarnessBuiltinMode:    harness.ClaudeSandboxOff,
+		SandboxImplementation: string(sandboxpolicy.ImplementationResourceOnly),
+	}))
+
+	// Readable, not executable: the glob still lists, the children no longer stat.
+	require.NoError(t, os.Chmod(dir, 0o444))
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+
+	_, _, _, resumeErr := resumeLaunchCmd(
+		harness.DefaultName, resumeConvClaude[:8], resumeConvClaude, nil)
+	require.NoError(t, resumeErr,
+		"an unconfined resume must not materialize a socket allowlist it does not "+
+			"enforce; this row passes revalidation and refuses only in the materializer")
 }

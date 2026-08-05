@@ -2354,22 +2354,26 @@ func resumeLaunchCmdWithStackedProof(
 		// Materializing the socket allowlist is enforcement work, and an
 		// unconfined launch enforces no socket policy, so it is skipped here.
 		//
-		// Being precise about what that buys, because the obvious claim is
-		// wrong in both directions. It creates no state —
-		// MaterializeUnixSocketList only globs, Lstats and EvalSymlinks — so
-		// there is no junk to avoid. It CAN refuse: a non-IsNotExist
-		// Lstat/EvalSymlinks error, or an allow row a symlink retarget moved
-		// beneath a protected directory, becomes sandbox_profile_changed. But
-		// RevalidateSnapshot immediately above resolves the same paths (and a
-		// glob's literal ancestor) and refuses FIRST on every such case that
-		// has been measured — both an EACCES parent and a glob under one. So
-		// this skip is defence in depth, not a fix for a reachable refusal, and
-		// a resource-only conversation whose socket allow path becomes
-		// unreadable between launches still fails at RevalidateSnapshot.
+		// This guard is load-bearing on a narrow but real case, and the
+		// reasoning is recorded because the obvious reading — "RevalidateSnapshot
+		// above already resolves these paths, so nothing gets here" — is true
+		// for most shapes and false for the one that matters. The two calls
+		// diverge on a permission bit: validateSocketAllowEntry resolves a
+		// path_glob's LITERAL ANCESTOR, while MaterializeUnixSocketList globs
+		// that directory and Lstats every matched CHILD. Listing needs r,
+		// stat-ing children needs x, so a directory left readable-but-not-
+		// executable (a tightened socket dir, a tmpfiles.d mode) passes
+		// revalidation and refuses here — turning a resume into
+		// sandbox_profile_changed over an allowlist this launch does not
+		// enforce. Pinned by TestResumeLaunchCmd_ResourceOnlyResumesOverAGlob-
+		// TheMaterializerWouldRefuse; delete the guard and that test fails.
 		//
-		// RevalidateSnapshot is deliberately NOT skipped: it validates the
-		// whole snapshot, and the profile and environment it returns are what
-		// every resume is built from.
+		// Only these two statements are skipped. RevalidateSnapshot is
+		// deliberately NOT: it validates the whole snapshot, and the profile
+		// and environment it returns are what every resume is built from. That
+		// leaves one documented residual — an explicit `path` allow row that
+		// becomes unreadable between launches still fails there, because
+		// revalidation resolves that row itself.
 		if !unconfined {
 			renderedAxes, axesErr := sandboxpolicy.PlannedEffectiveAccessAxes(validated.Effective)
 			if axesErr != nil {
