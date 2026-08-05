@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"syscall"
 	"testing"
@@ -14,8 +15,6 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
-
-const agentdTestTmuxBaseEnv = "TCLAUDE_AGENTD_TEST_TMUX_BASE"
 
 var agentdTestTmuxBase string
 
@@ -40,29 +39,23 @@ func TestMain(m *testing.M) {
 	// internal package agentd tests share this binary but cannot call the
 	// external-package fixture. Tests that need a specific TMUX_TMPDIR override
 	// it after this point; t.Setenv cleanup restores this isolated default.
-	// A few sandbox smokes copy this test binary and execute it as an in-sandbox
-	// helper. Reuse the parent's base there: creating a fresh /tmp directory is
-	// correctly denied by those profiles, while the inherited isolated socket
-	// target remains safely disjoint from the operator's server. Only the
-	// process that created the directory owns its cleanup.
-	tmuxBase := os.Getenv(agentdTestTmuxBaseEnv)
-	ownsTmuxBase := tmuxBase == ""
-	if ownsTmuxBase {
-		// Use the short system temp root explicitly. macOS's ambient TMPDIR lives
-		// below /var/folders/...; adding tmux's own tmux-UID/socket suffix there can
-		// exceed the platform's Unix-socket path limit before a server can start.
-		var err error
-		tmuxBase, err = os.MkdirTemp("/tmp", "tclaude-agentd-")
-		if err != nil {
-			panic(fmt.Sprintf("create isolated agentd test tmux base: %v", err))
+	// Use the short system temp root explicitly. macOS's ambient TMPDIR lives
+	// below /var/folders/...; adding tmux's own tmux-UID/socket suffix there can
+	// exceed the platform's Unix-socket path limit before a server can start.
+	// Sandboxed helper copies of this test binary may correctly be denied direct
+	// /tmp writes; give those processes their own ambient-temp base instead.
+	tmuxBase, shortRootErr := os.MkdirTemp("/tmp", "tclaude-agentd-")
+	if shortRootErr != nil {
+		var ambientErr error
+		tmuxBase, ambientErr = os.MkdirTemp("", "tclaude-agentd-")
+		if ambientErr != nil {
+			panic(fmt.Sprintf("create isolated agentd test tmux base: short root: %v; ambient root: %v", shortRootErr, ambientErr))
 		}
-		tmuxBase, err = filepath.EvalSymlinks(tmuxBase)
-		if err != nil {
-			panic(fmt.Sprintf("canonicalize isolated agentd test tmux base: %v", err))
-		}
-		if err := os.Setenv(agentdTestTmuxBaseEnv, tmuxBase); err != nil {
-			panic(fmt.Sprintf("mark isolated agentd test tmux base: %v", err))
-		}
+	}
+	var err error
+	tmuxBase, err = filepath.EvalSymlinks(tmuxBase)
+	if err != nil {
+		panic(fmt.Sprintf("canonicalize isolated agentd test tmux base: %v", err))
 	}
 	if err := os.Setenv("TMUX_TMPDIR", tmuxBase); err != nil {
 		panic(fmt.Sprintf("set isolated agentd test TMUX_TMPDIR: %v", err))
@@ -113,9 +106,7 @@ func TestMain(m *testing.M) {
 	code := m.Run()
 	restoreCodexProbe()
 	restoreEscalationProcess()
-	if ownsTmuxBase {
-		_ = os.RemoveAll(tmuxBase)
-	}
+	_ = os.RemoveAll(tmuxBase)
 	os.Exit(code)
 }
 
@@ -126,10 +117,6 @@ func TestMainIsolatesTmuxServer(t *testing.T) {
 	if got := os.Getenv("TMUX_TMPDIR"); got != agentdTestTmuxBase {
 		t.Fatalf("TMUX_TMPDIR = %q, want TestMain's throwaway base %q; agentd tests can reach another tmux server", got, agentdTestTmuxBase)
 	}
-	if got := os.Getenv(agentdTestTmuxBaseEnv); got != agentdTestTmuxBase {
-		t.Fatalf("%s = %q, want inherited throwaway base %q", agentdTestTmuxBaseEnv, got, agentdTestTmuxBase)
-	}
-
 	got, err := clcommon.TclaudeTmuxSocketDir()
 	if err != nil {
 		t.Fatal(err)
@@ -137,5 +124,32 @@ func TestMainIsolatesTmuxServer(t *testing.T) {
 	want := filepath.Join(agentdTestTmuxBase, fmt.Sprintf("tmux-%d", os.Getuid()))
 	if got != want {
 		t.Fatalf("tclaude tmux socket directory = %q, want isolated directory %q", got, want)
+	}
+}
+
+func TestMainReplacesAmbientTmuxBase(t *testing.T) {
+	const childEnv = "TCLAUDE_AGENTD_TEST_AMBIENT_BASE_CHILD"
+	if ambient := os.Getenv(childEnv); ambient != "" {
+		if agentdTestTmuxBase == ambient || os.Getenv("TMUX_TMPDIR") == ambient {
+			t.Fatalf("TestMain retained ambient tmux base %q; agentd tests can reach that server", ambient)
+		}
+		return
+	}
+
+	for _, ambient := range []string{"/tmp", t.TempDir()} {
+		ambient := ambient
+		t.Run(filepath.Base(ambient), func(t *testing.T) {
+			cmd := exec.Command(os.Args[0], "-test.run=^TestMainReplacesAmbientTmuxBase$", "-test.count=1")
+			cmd.Env = append(os.Environ(),
+				childEnv+"="+ambient,
+				"TMUX_TMPDIR="+ambient,
+				// Regression for the discarded inheritance design: this private-looking
+				// marker must not make an arbitrary live base trustworthy.
+				"TCLAUDE_AGENTD_TEST_TMUX_BASE="+ambient,
+			)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("child with ambient tmux base %q failed: %v\n%s", ambient, err, out)
+			}
+		})
 	}
 }
