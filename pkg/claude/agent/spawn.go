@@ -690,7 +690,9 @@ func spawnCmd() *cobra.Command {
 			"--worktree-base to pick the branch it is cut from. For a monorepo launch dir " +
 			"whose code work belongs in a nested sub-repo, point --worktree-repo at the " +
 			"sub-repo: the agent then launches in --cwd and the worktree rides into its " +
-			"welcome message. " +
+			"welcome message. The checkout itself runs in the daemon, outside your " +
+			"sandbox — a sandboxed caller proves it can write the repo and the " +
+			"worktree's parent instead. " +
 			"\n\n" +
 			"Default resolution. Each launch field (--harness, --model, --effort, " +
 			"--sandbox, --sandbox-impl, --ask-for-approval, --ask-user-question-timeout) is resolved " +
@@ -1317,26 +1319,32 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	// default (every other spawn path does). Resolved in mergeProfileIntoSpawn.
 	req.IncludeGroupContext = merged.IncludeGroupContext
 
-	// Worktree handling. The CLI resolves the worktree itself — creating
-	// it in-process, the same git operation the dashboard's worktree
-	// picker performs server-side — then passes the resolved cwd /
-	// worktree_path / worktree_branch, the identical wire shape the
-	// dashboard sends. createdWorktree is non-empty only when a fresh
-	// worktree was made (vs an existing one reused), so a failed spawn
-	// can tear it back down rather than leaking an orphan.
-	createdWorktree := ""
+	// Worktree handling. The daemon resolves the worktree — the same git
+	// operation the dashboard's worktree picker performs server-side, run
+	// outside the caller's sandbox (see spawn_worktree.go) — and the
+	// resolved cwd / worktree_path / worktree_branch then ride the spawn
+	// in the identical wire shape the dashboard sends. createdWorktree is
+	// non-empty only when a fresh worktree was made (vs an existing one
+	// reused), so a failed spawn can tear it back down rather than
+	// leaking an orphan.
+	createdWorktree, discardWorktree := "", ""
 	if wt := strings.TrimSpace(p.Worktree); wt != "" {
 		worktreeRepo := strings.TrimSpace(p.WorktreeRepo)
 		if worktreeRepo == "" {
 			worktreeRepo = cwd
 		}
-		wtPath, createdNew, wtErr := resolveSpawnWorktree(worktreeRepo, wt, p.WorktreeBase)
+		prepared, wtErr := resolveSpawnWorktree(worktreeRepo, wt, p.WorktreeBase, ask)
 		if wtErr != nil {
 			fmt.Fprintf(stderr, "Error: %v\n", wtErr)
-			return nil, rcInvalidArg
+			// The failure now comes off the wire, so it carries the
+			// daemon's own classification: a permission refusal exits as
+			// an auth failure, an unreachable daemon as an I/O one, and
+			// only a genuinely bad branch/repo as a usage error.
+			return nil, MapDaemonErrorToRC(wtErr)
 		}
-		if createdNew {
-			createdWorktree = wtPath
+		wtPath := prepared.Path
+		if prepared.Created {
+			createdWorktree, discardWorktree = wtPath, prepared.DiscardToken
 		}
 		// Clean both sides before comparing: a trailing slash or "/."
 		// on --worktree-repo must not mis-classify an in-place worktree
@@ -1380,18 +1388,21 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		// force-removing the dir would yank it out from under a
 		// recovering session. Every other failure (guardrail rejection,
 		// launch failure, bad arg) happens before any CC runs there, so
-		// the worktree is a guaranteed orphan. The branch is always kept
-		// (removeSpawnWorktree only drops the working dir), so a retry
-		// reuses it.
+		// the worktree is a guaranteed orphan. A branch the daemon cut
+		// for this worktree goes with it, so a retry cuts a fresh one
+		// from --worktree-base instead of silently reusing a branch left
+		// over from the failed attempt; a branch that already existed
+		// survives the teardown. The teardown is itself a daemon call
+		// now, so a spawn that failed BECAUSE the daemon went away cannot
+		// clean up either: it says so on stderr and leaves the worktree
+		// for the operator, rather than the CLI reaching into a directory
+		// its own sandbox may not be able to finish removing.
 		if createdWorktree != "" {
 			if de, ok := err.(*DaemonError); ok && de.Status == http.StatusGatewayTimeout {
 				fmt.Fprintf(stderr, "Note: kept the worktree %s — the session may still be coming up.\n",
 					createdWorktree)
-			} else if _, rmErr := removeSpawnWorktree(createdWorktree); rmErr != nil {
-				fmt.Fprintf(stderr, "Note: could not remove the worktree created for this spawn (%s): %v\n",
-					createdWorktree, rmErr)
 			} else {
-				fmt.Fprintf(stderr, "Note: removed the worktree created for this spawn (%s)\n", createdWorktree)
+				undoSpawnWorktree(stderr, createdWorktree, discardWorktree, "spawn", ask)
 			}
 		}
 		return nil, MapDaemonErrorToRC(err)

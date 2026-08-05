@@ -40,6 +40,32 @@ func gitIn(dir string, args ...string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+// gitInNoRepoHooks is gitIn for a command that CHECKS OUT a tree, with
+// the repo's own hook and monitor hooks disabled.
+//
+// Every caller of AddWorktreeIn is the daemon acting on a repo some
+// agent named (a spawn's --worktree-repo, a template's per-agent
+// worktree repo, the console's picker). `git worktree add` populates a
+// working tree, which runs the repo's post-checkout hook and honours a
+// repo-local core.hooksPath / core.fsmonitor — all of them repo-owned
+// scripts that would run as the daemon, outside the caller's sandbox.
+// An agent that can `git init` a repo in its own writable area could
+// otherwise plant a hook there and have the daemon execute it. -c
+// overrides config at every level, so a repo-local setting cannot win.
+//
+// This is not a claim that a checkout of a hostile repo is safe in
+// general: content filters (filter.<driver>.smudge, selected by the
+// repo's own .gitattributes) run on checkout too and have no single
+// off switch. It closes the trivially reachable vectors; treat the repo
+// a caller names as input, not as trusted.
+func gitInNoRepoHooks(dir string, args ...string) (string, error) {
+	hardened := append([]string{
+		"-c", "core.hooksPath=/dev/null",
+		"-c", "core.fsmonitor=",
+	}, args...)
+	return gitIn(dir, hardened...)
+}
+
 // asExitError is errors.As specialised to *exec.ExitError, kept local
 // so gitIn doesn't need to pull errors into its import set just for
 // one type assertion.
@@ -451,6 +477,40 @@ func branchExistsIn(dir, branch string) bool {
 	return err == nil
 }
 
+// BranchExistsIn reports whether branch resolves in the repo containing
+// dir. The exported form of branchExistsIn, for callers that must tell a
+// branch they cut apart from one that was already there — agentd's
+// worktree preparation checks it before and after a failed
+// `git worktree add` to know whether the half-finished attempt left a
+// new branch behind.
+func BranchExistsIn(dir, branch string) bool {
+	return branchExistsIn(dir, strings.TrimSpace(branch))
+}
+
+// DeleteBranchIn force-deletes branch from the repo containing dir and
+// reports whether it was there to delete. Used to roll back the branch
+// `git worktree add -b` cuts before it populates the checkout: when the
+// checkout then fails, the branch survives the failure and a retry would
+// silently reuse it instead of cutting a fresh one from the requested
+// base.
+//
+// The repo trunk is never deleted (isProtectedBranch), and an
+// already-absent branch is a no-op rather than an error, so the rollback
+// is safe to call blind.
+func DeleteBranchIn(dir, branch string) (bool, error) {
+	branch = strings.TrimSpace(branch)
+	if branch == "" || branch == "HEAD" || isProtectedBranch(branch) {
+		return false, nil
+	}
+	if _, err := gitIn(dir, "branch", "-D", branch); err != nil {
+		if isNoSuchBranchErr(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("delete branch %s: %w", branch, err)
+	}
+	return true, nil
+}
+
 // HasCommitsIn reports whether the repo containing dir has at least one
 // commit. A freshly `git init`-ed repo has an unborn HEAD — a current
 // branch ref (e.g. main) that points at no commit yet. Such a repo has
@@ -476,8 +536,10 @@ func HasCommitsIn(dir string) bool {
 // ≥ 2.42 for `worktree add --orphan`.)
 //
 // This is the non-printing, repo-anchored core of RunAdd — RunAdd
-// stays as the chatty CLI front door; the agentd worktree endpoint
-// calls this.
+// stays as the chatty CLI front door; the agentd worktree endpoints
+// call this. Every caller here is the daemon acting on a repo someone
+// else named, so the checkout runs with the repo's own hooks disabled
+// (see gitInNoRepoHooks).
 func AddWorktreeIn(repoPath, branch, fromBranch, path string) (string, error) {
 	branch = strings.TrimSpace(branch)
 	if branch == "" {
@@ -533,7 +595,7 @@ func AddWorktreeIn(repoPath, branch, fromBranch, path string) (string, error) {
 	default:
 		args = []string{"worktree", "add", "-b", branch, worktreePath, baseBranch}
 	}
-	if _, err := gitIn(repoRoot, args...); err != nil {
+	if _, err := gitInNoRepoHooks(repoRoot, args...); err != nil {
 		if !hasCommits {
 			return "", fmt.Errorf("failed to create worktree in a repo with no commits "+
 				"(needs git ≥ 2.42 for orphan worktrees, or make an initial commit first): %w", err)
