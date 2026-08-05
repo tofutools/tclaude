@@ -3,14 +3,19 @@ package agentd_test
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
+	"path/filepath"
 	"syscall"
 	"testing"
 
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
+
+var agentdTestTmuxBase string
 
 // TestMain installs a binary-wide default for the terminal-spawning
 // seam, so any test that reaches an openTerminal call site without
@@ -28,6 +33,20 @@ import (
 // `package agentd` test files compiled alongside this external
 // package.
 func TestMain(m *testing.M) {
+	// Keep every tmux command in this test binary away from the operator's
+	// live `-L tclaude` server. This belongs here rather than in newFlow:
+	// internal package agentd tests share this binary but cannot call the
+	// external-package fixture. Tests that need a specific TMUX_TMPDIR override
+	// it after this point; t.Setenv cleanup restores this isolated default.
+	tmuxBase, err := os.MkdirTemp("", "tclaude-agentd-test-tmux-")
+	if err != nil {
+		panic(fmt.Sprintf("create isolated agentd test tmux base: %v", err))
+	}
+	if err := os.Setenv("TMUX_TMPDIR", tmuxBase); err != nil {
+		panic(fmt.Sprintf("set isolated agentd test TMUX_TMPDIR: %v", err))
+	}
+	agentdTestTmuxBase = tmuxBase
+
 	agentd.SetOpenTerminalForTest(func(string) error {
 		return errors.New("agentd tests: terminal spawn suppressed by default (TCL-584); swap agentd.SetOpenTerminalForTest to observe the open path")
 	})
@@ -72,5 +91,24 @@ func TestMain(m *testing.M) {
 	code := m.Run()
 	restoreCodexProbe()
 	restoreEscalationProcess()
+	_ = os.RemoveAll(tmuxBase)
 	os.Exit(code)
+}
+
+func TestMainIsolatesTmuxServer(t *testing.T) {
+	if agentdTestTmuxBase == "" {
+		t.Fatal("TestMain did not install a throwaway tmux base; agentd tests can reach the operator's live server")
+	}
+	if got := os.Getenv("TMUX_TMPDIR"); got != agentdTestTmuxBase {
+		t.Fatalf("TMUX_TMPDIR = %q, want TestMain's throwaway base %q; agentd tests can reach another tmux server", got, agentdTestTmuxBase)
+	}
+
+	got, err := clcommon.TclaudeTmuxSocketDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(agentdTestTmuxBase, fmt.Sprintf("tmux-%d", os.Getuid()))
+	if got != want {
+		t.Fatalf("tclaude tmux socket directory = %q, want isolated directory %q", got, want)
+	}
 }
