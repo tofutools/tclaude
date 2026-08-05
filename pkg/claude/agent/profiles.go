@@ -240,19 +240,23 @@ func runProfilesDefaultClear(stdout, stderr io.Writer) int {
 
 // ---- ls ----
 
+type profilesLsParams struct {
+	JSON bool `long:"json" help:"Emit the complete profile list as JSON instead of a table."`
+}
+
 func profilesLsCmd() *cobra.Command {
-	return boa.CmdT[struct{}]{
+	return boa.CmdT[profilesLsParams]{
 		Use:         "ls",
 		Short:       "List spawn profiles in the library",
-		Long:        "Returns every spawn profile with its aliases, launch shape (harness/model/effort), and one-line description.",
+		Long:        "Returns every spawn profile with its aliases, launch shape (harness/model/effort), and one-line description. With --json, emits the complete profiles as a JSON array.",
 		ParamEnrich: common.DefaultParamEnricher(),
-		RunFunc: func(_ *struct{}, _ *cobra.Command, _ []string) {
-			os.Exit(runProfilesLs(os.Stdout, os.Stderr))
+		RunFunc: func(p *profilesLsParams, _ *cobra.Command, _ []string) {
+			os.Exit(runProfilesLs(p, os.Stdout, os.Stderr))
 		},
 	}.ToCobra()
 }
 
-func runProfilesLs(stdout, stderr io.Writer) int {
+func runProfilesLs(p *profilesLsParams, stdout, stderr io.Writer) int {
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
@@ -261,13 +265,31 @@ func runProfilesLs(stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
+	sort.Slice(profiles, func(i, j int) bool { return profiles[i].Name < profiles[j].Name })
+	if p.JSON {
+		if profiles == nil {
+			profiles = []profileJSON{}
+		}
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(profiles); err != nil {
+			fmt.Fprintf(stderr, "Error: encoding profile JSON: %v\n", err)
+			return rcIOFailure
+		}
+		return rcOK
+	}
 	if len(profiles) == 0 {
 		fmt.Fprintln(stdout, "(no spawn profiles)")
 		return rcOK
 	}
-	sort.Slice(profiles, func(i, j int) bool { return profiles[i].Name < profiles[j].Name })
-	fmt.Fprintf(stdout, "%-16s  %-22s  %-8s  %-12s  %-7s  %-36s  %s\n", "NAME", "ALIASES", "HARNESS", "MODEL", "EFFORT", "STATUS", "DESCR")
-	fmt.Fprintln(stdout, strings.Repeat("─", 144))
+	nameWidth := 16
+	for _, p := range profiles {
+		if len(p.Name) > nameWidth {
+			nameWidth = len(p.Name)
+		}
+	}
+	fmt.Fprintf(stdout, "%-*s  %-22s  %-8s  %-12s  %-7s  %-36s  %s\n", nameWidth, "NAME", "ALIASES", "HARNESS", "MODEL", "EFFORT", "STATUS", "DESCR")
+	fmt.Fprintln(stdout, strings.Repeat("─", 144+nameWidth-16))
 	for _, p := range profiles {
 		status := "enabled"
 		if profileDisabledValue(&p) {
@@ -275,8 +297,8 @@ func runProfilesLs(stdout, stderr io.Writer) int {
 		} else if p.OperatorOnly {
 			status = "👤 operator only"
 		}
-		fmt.Fprintf(stdout, "%-16s  %-22s  %-8s  %-12s  %-7s  %-36s  %s\n",
-			truncate(p.Name, 16), truncate(dash(strings.Join(p.Aliases, ", ")), 22), truncate(dash(p.Harness), 8), truncate(dash(p.Model), 12),
+		fmt.Fprintf(stdout, "%-*s  %-22s  %-8s  %-12s  %-7s  %-36s  %s\n",
+			nameWidth, p.Name, truncate(dash(strings.Join(p.Aliases, ", ")), 22), truncate(dash(p.Harness), 8), truncate(dash(p.Model), 12),
 			truncate(dash(p.Effort), 7), truncate(status, 36), truncate(p.Descr, 30))
 	}
 	return rcOK
