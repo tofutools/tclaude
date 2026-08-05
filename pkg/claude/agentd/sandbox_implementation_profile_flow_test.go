@@ -266,11 +266,25 @@ func TestDashboardSnapshot_SandboxImplCatalogDisclosesHostAvailability(t *testin
 		assert.Equal(t, "harness-builtin", catalog["default"],
 			"the default must remain the legacy implementation")
 		options, _ := catalog["options"].([]any)
-		require.Len(t, options, 4)
-		assert.Equal(t, "off", options[3].(map[string]any)["value"])
-		var sawExperimental, sawStacked, sawBuiltin bool
+		require.Len(t, options, 5)
+		assert.Equal(t, "off", options[4].(map[string]any)["value"],
+			"off must stay last: it is the floor of the list, and resource-only "+
+				"sits directly above it as the same posture plus a cgroup")
+		var sawExperimental, sawStacked, sawBuiltin, sawResourceOnly bool
 		for _, raw := range options {
 			option, _ := raw.(map[string]any)
+			if option["value"] == "resource-only" {
+				sawResourceOnly = true
+				// Not flagged experimental: the cgroup path it uses is the
+				// same one harness-builtin launches already take.
+				assert.NotEqual(t, true, option["experimental"])
+				assert.Contains(t, option["descr"], "No OS-level access confinement",
+					"the option must lead with what it does NOT do, so it is never "+
+						"mistaken for a confinement tier")
+				assert.Contains(t, option["descr"], "Linux only",
+					"the platform caveat must be stated, not implied")
+				continue
+			}
 			if option["value"] == "harness-builtin" {
 				sawBuiltin = true
 				// The renderer fills {harness} with the selected harness's
@@ -300,6 +314,9 @@ func TestDashboardSnapshot_SandboxImplCatalogDisclosesHostAvailability(t *testin
 		assert.True(t, sawExperimental, "the catalog must offer the tclaude layer")
 		assert.True(t, sawStacked, "the catalog must always offer stacked")
 		assert.True(t, sawBuiltin, "the catalog must always offer the harness-owned option")
+		assert.True(t, sawResourceOnly,
+			"the catalog must offer the limits-only posture; without it the only way "+
+				"to cap an agent's memory is to also adopt a confinement tier")
 	})
 }
 

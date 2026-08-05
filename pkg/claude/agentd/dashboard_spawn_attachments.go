@@ -331,7 +331,10 @@ func terminalAttachmentBase(
 		)
 	}
 	switch implementation {
-	case sandboxpolicy.ImplementationHarnessBuiltin, sandboxpolicy.ImplementationOff:
+	case sandboxpolicy.ImplementationHarnessBuiltin, sandboxpolicy.ImplementationOff,
+		sandboxpolicy.ImplementationResourceOnly:
+		// A cgroup does not remap the filesystem, so a resource-only pane sees
+		// the shared attachment root exactly as harness-builtin and off do.
 		return spawnAttachmentsBaseDir(), true, http.StatusOK, nil
 	case sandboxpolicy.ImplementationTclaudeLayer:
 		privateRoot := tclcommon.SpawnAttachmentsPrivateDir(sess.ID)

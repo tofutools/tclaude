@@ -253,6 +253,27 @@ func ResolveAccessEnforcement(
 			return AccessEnforcement{}, err
 		}
 	}
+	if implementation.OmitsOSConfinement() {
+		// An off verdict is this implementation's DECLARED posture, not a
+		// failed prerequisite. The bail below exists for a launch that expected
+		// a wall and did not get one; refusing here instead turns every
+		// `resource-only` launch whose chain carries a modern network or
+		// unix_sockets block into a dead pane, because the seam that plans
+		// access is reached long after the spawn API has answered 200.
+		//
+		// Answering before the bail — rather than only inside
+		// accessEnforcementTable — is what keeps the daemon's preview and the
+		// session launch agreeing by construction: both reach this function,
+		// and only one of them used to survive it.
+		row, err := accessEnforcementTable(
+			h, implementation, axes, validatedBuiltinMode, runtime.GOOS,
+			osSandbox.FilteredNetwork,
+		)
+		if err != nil {
+			return AccessEnforcement{}, err
+		}
+		return accessEnforcementFromTable(row), nil
+	}
 	if osSandbox.State != "on" {
 		return AccessEnforcement{}, fmt.Errorf(
 			"access enforcement requires a functioning OS sandbox; verdict is %q from %q",
@@ -326,7 +347,16 @@ func accessEnforcementTable(
 	validatedBuiltinMode, goos string,
 	filteredNetworkReady bool,
 ) (accessEnforcementTableRow, error) {
-	if implementation == sandboxpolicy.ImplementationOff {
+	if implementation.OmitsOSConfinement() {
+		// `resource-only` shares every verdict AND the mechanism string with
+		// `off`. It is tempting to name its cgroup here, but this table only
+		// ever sees the access axes — never the resolved ResourceLimits — so a
+		// mechanism naming a cgroup would also be emitted for a resource-only
+		// launch whose chain configures no limits, and on a platform where
+		// none can be created. That is a claim about enforcement that may not
+		// exist, in the one place the operator relies on to learn what is
+		// running. The limits disclose themselves where they are known: the
+		// effective-context memory/CPU fields, and the launch-time notices.
 		return accessEnforcementTableRow{
 			NetworkClosed: EnforceNone,
 			NetworkList:   EnforceNone,

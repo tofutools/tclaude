@@ -1122,6 +1122,15 @@ func parseSandboxProfileEnforcementTarget(raw string) (parsedSandboxProfileEnfor
 			raw,
 		)
 	}
+	// Refuse rather than degrade, exactly as stacked does. A cgroup budget is a
+	// Linux mechanism; off Linux this implementation is byte-for-byte `off`,
+	// and accepting it would predict a posture the platform cannot produce.
+	if implementation == sandboxpolicy.ImplementationResourceOnly && platform != "linux" {
+		return parsedSandboxProfileEnforcementTarget{}, fmt.Errorf(
+			`invalid --for target %q: resource-only sandbox prediction is supported only on linux`,
+			raw,
+		)
+	}
 	return parsedSandboxProfileEnforcementTarget{
 		implementation: implementation, harness: h, platform: platform, raw: raw,
 	}, nil
@@ -1130,7 +1139,7 @@ func parseSandboxProfileEnforcementTarget(raw string) (parsedSandboxProfileEnfor
 func invalidSandboxProfileTarget(raw string) error {
 	return fmt.Errorf(
 		`invalid --for target %q (want implementation[/harness[/platform]]; `+
-			`implementation: off, harness-builtin, tclaude-layer, stacked; `+
+			`implementation: off, resource-only, harness-builtin, tclaude-layer, stacked; `+
 			`harness: claude, codex, opencode; platform: linux, darwin)`,
 		raw,
 	)

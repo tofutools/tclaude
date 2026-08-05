@@ -133,6 +133,14 @@ func buildSandboxImplCatalog() dashboardSandboxImpl {
 					"model-free round-trip through {harness}'s real nested OS sandbox. Linux Claude/Codex only.",
 			},
 			{
+				Value: string(sandboxpolicy.ImplementationResourceOnly),
+				Label: "Resource limits only",
+				Descr: "No OS-level access confinement, but the launch runs in its own cgroup " +
+					"carrying the profile's CPU and memory limits, so one runaway agent cannot " +
+					"exhaust the host. Linux only; needs no bwrap or namespaces. Pair the limits " +
+					"with {harness} built-in instead if you also want its access confinement.",
+			},
+			{
 				Value: string(sandboxpolicy.ImplementationOff),
 				Label: "Off",
 				Descr: "Disables OS-level sandbox confinement for this launch.",

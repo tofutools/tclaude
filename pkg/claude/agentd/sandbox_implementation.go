@@ -3,6 +3,7 @@ package agentd
 import (
 	"fmt"
 	"net/http"
+	"runtime"
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
@@ -244,7 +245,22 @@ func spawnUsesTclaudeLayer(implementation string) bool {
 // refuses.
 func sandboxImplementationHostFailure(harnessName, implementation string) *spawnFailure {
 	normalized, err := sandboxpolicy.NormalizeImplementation(implementation)
-	if err != nil || !normalized.UsesTclaudeLayer() {
+	if err != nil {
+		return nil
+	}
+	// A cgroup budget is a Linux mechanism. Off Linux this implementation can
+	// create nothing, and accepting it would make it byte-for-byte `off` while
+	// the flag help and the dashboard catalog both promise a per-agent ceiling
+	// — the silent degrade this subsystem refuses everywhere else. The `--for`
+	// preview parser refuses the same target; this is the launch-path half,
+	// without which that refusal only covered the prediction endpoint.
+	if normalized == sandboxpolicy.ImplementationResourceOnly && runtime.GOOS != "linux" {
+		return sandboxImplementationUnavailable(fmt.Sprintf(
+			"sandbox implementation %s is Linux only: %s cannot create a resource cgroup, and launching would silently be %s with no limits",
+			sandboxpolicy.ImplementationResourceOnly, runtime.GOOS,
+			sandboxpolicy.ImplementationOff))
+	}
+	if !normalized.UsesTclaudeLayer() {
 		return nil
 	}
 	availability := tclaudeLayerHostAvailability

@@ -221,7 +221,10 @@ func hypotheticalSandboxProfilePlan(body sandboxProfilePlanRequest) (sandboxProf
 	)
 	planReason := ""
 	if !target.implementation.UsesTclaudeLayer() {
-		planReason = "harness-builtin has no outer mount plan"
+		// Name the implementation actually selected. Hardcoding harness-builtin
+		// here misreported `off`, and would now misreport `resource-only` too:
+		// the reason the operator reads should be about the posture they chose.
+		planReason = fmt.Sprintf("%s has no outer mount plan", target.implementation)
 	}
 	response := sandboxProfilePlanResponse{
 		Source: "hypothetical",

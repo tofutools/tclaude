@@ -9,6 +9,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
@@ -85,6 +86,22 @@ func dashboardSandboxRestartAgent(w http.ResponseWriter, r *http.Request, convSe
 	}
 	var override *string
 	if action == sandboxRestartUnlock {
+		// "Restart without sandbox" trades access confinement away, which is
+		// what the operator is asking for. An implementation that has no
+		// access confinement has nothing to trade: the relaunch would force
+		// harness-builtin and rebuild the snapshot through
+		// temporarySandboxLaunchSnapshot, which zeroes ResourceLimits — so the
+		// only thing this action would actually remove from a resource-only
+		// agent is its CPU/memory ceiling, under a label that says sandbox.
+		// Refuse instead of silently lifting the one budget it enforces.
+		if implementation, implErr := sandboxpolicy.NormalizeImplementation(
+			normal.SandboxImplementation,
+		); implErr == nil && implementation == sandboxpolicy.ImplementationResourceOnly {
+			writeError(w, http.StatusConflict, "unsupported",
+				fmt.Sprintf("this agent runs under sandbox implementation %q, which already has no OS-level access confinement to unlock; restarting without a sandbox would only remove the CPU/memory limits it does enforce",
+					implementation))
+			return
+		}
 		h, resolveErr := harness.Resolve(normal.Harness)
 		if resolveErr != nil {
 			writeError(w, http.StatusConflict, "harness", resolveErr.Error())

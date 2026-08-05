@@ -148,7 +148,7 @@ func TestSandboxProfileEnforcementRefusalNeverMasksAWholeRequestError(t *testing
 	}{{
 		name:    "unknown implementation",
 		query:   "for=tclaude-layer%2Fclaude%2Flinux&for=not-an-implementation",
-		message: "implementation: off, harness-builtin, tclaude-layer, stacked",
+		message: "implementation: off, resource-only, harness-builtin, tclaude-layer, stacked",
 	}, {
 		name:    "unsupported platform",
 		query:   "for=tclaude-layer%2Fclaude%2Flinux&for=tclaude-layer%2Fclaude%2Fwindows",

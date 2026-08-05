@@ -175,6 +175,29 @@ func sandboxProfileCapabilityFailure(
 		// layer's network transport assertion and renders the mount plan.
 		return nil
 	}
+	if implementation.OmitsOSConfinement() {
+		// Every gate below asks whether the harness's own sandbox can REPRESENT
+		// a rule, and answers by refusing when it cannot. That question is not
+		// posed here: this implementation has already stood every access
+		// boundary down on purpose, so no rule is represented and none is
+		// claimed to be.
+		//
+		// Refusing would make the implementation unreachable rather than safe.
+		// The resolved snapshot is the whole chain — global, group, then the
+		// explicit profile — and it must keep resolving because
+		// `resource_limits` travel in it. An operator whose global profile
+		// carries any network rule (or, on Codex/OpenCode, any filesystem rule)
+		// would otherwise be unable to launch a resource-only agent at all,
+		// without authoring a second limits-only chain for the purpose.
+		//
+		// The rules are inert, not honored: planSandboxProfileAccessForLaunch
+		// records an explicit not-enforced notice, and the access-enforcement
+		// table reports None on every axis. Mount paths are deliberately still
+		// refused above — a remapped grant needs a mount namespace, and leaving
+		// the authored sandbox path empty is a different failure from a rule
+		// that simply does not apply.
+		return nil
+	}
 	// The capability gate runs FIRST and unconditionally: a reopen-under-deny
 	// shape must be refused by a harness that cannot enforce it even when the
 	// profile carries no other rules. Approximating it would hand the operator a
@@ -272,6 +295,14 @@ func planSandboxProfileAccessForLaunch(
 		})
 		snapshot.Effective.AccessNotices = sandboxpolicy.ReplaceAccessDegradationNotices(
 			snapshot.Effective.AccessNotices, resourceNotices...)
+	}
+	if notice, ok := sandboxpolicy.UnconfinedAccessRulesNotice(
+		implementation, snapshot.Effective,
+	); ok {
+		resourceNotices = append(resourceNotices, notice)
+		snapshot.Effective.AccessNotices = sandboxpolicy.ReplaceAccessDegradationNotices(
+			snapshot.Effective.AccessNotices, resourceNotices...)
+		return resourceNotices, nil
 	}
 	if snapshot.Effective.Network == nil && snapshot.Effective.UnixSockets == nil {
 		return resourceNotices, nil
@@ -493,6 +524,16 @@ func sandboxProfilesDisabled(
 ) bool {
 	if len(sandboxImplementation) > 0 {
 		implementation, err := sandboxpolicy.NormalizeImplementation(sandboxImplementation[0])
+		if err == nil && implementation == sandboxpolicy.ImplementationResourceOnly {
+			// resource-only resolves the harness's no-confinement mode, which
+			// for Codex is danger-full-access — the very mode the switch below
+			// treats as a profile opt-out. Omitting the tiers here would
+			// discard the resolved resource_limits along with them and leave
+			// the implementation enforcing nothing at all, so it must answer
+			// before the mode is consulted. Its access rules are still not
+			// enforced; the access-enforcement table discloses that as None.
+			return false
+		}
 		if err == nil && implementation == sandboxpolicy.ImplementationOff {
 			return true
 		}

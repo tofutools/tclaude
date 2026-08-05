@@ -140,6 +140,7 @@ export const SANDBOX_IMPL_DEFAULT = 'harness-builtin';
 export const SANDBOX_IMPL_TCLAUDE_LAYER = 'tclaude-layer';
 export const SANDBOX_IMPL_STACKED = 'stacked';
 export const SANDBOX_IMPL_OFF = 'off';
+export const SANDBOX_IMPL_RESOURCE_ONLY = 'resource-only';
 
 export function harnessBuiltinModeIsOff(harnessName, mode) {
   const offModes = {
@@ -406,6 +407,17 @@ export function sandboxImplHintFor(draft, view, resolvedImplementation = '') {
       text: 'Sandbox OFF. The agent runs without OS-level confinement.',
     };
   }
+  /* The other implementation with no confinement. It must warn as loudly as
+     Off does about what it does NOT do, while naming the one thing it does. */
+  if (value === SANDBOX_IMPL_RESOURCE_ONLY) {
+    return {
+      warn: true,
+      text: 'Sandbox OFF. The agent runs without OS-level confinement; only the '
+        + "profile's CPU/memory limits are enforced, in a per-agent cgroup. Any "
+        + 'filesystem or network rules in the resolved profile are recorded but '
+        + 'NOT enforced. Linux only.',
+    };
+  }
   if (value === SANDBOX_IMPL_DEFAULT && !view.sandboxImplCanBuiltin) {
     const explicit = text(draft.sandboxImpl) === SANDBOX_IMPL_DEFAULT;
     const harnessLabel = view.sandboxImplHarness || 'this harness';
@@ -493,8 +505,24 @@ export function spawnCapabilityView(draft, context, resolvedSandboxImpl = '') {
   const selectedSandboxImpl = text(draft.sandboxImpl);
   const resolvedBuiltinSandbox = !selectedSandboxImpl
     && text(resolvedSandboxImpl) === SANDBOX_IMPL_DEFAULT;
-  const sandboxProfilesDisabled = draft.sandboxImpl === SANDBOX_IMPL_OFF
-    || (draft.harness === 'codex' && draft.sandbox === 'danger-full-access');
+  /* Mirrors agentd's sandboxProfilesDisabled, INCLUDING the order in which it
+     asks and the VALUE it asks about. Two things make this easy to get wrong:
+
+     - resource-only must be answered before the harness/mode clause, because it
+       resolves Codex's no-confinement mode, danger-full-access, which is
+       exactly what that clause treats as a profile opt-out.
+     - it must be answered about the EFFECTIVE implementation, not the dialog's
+       explicit one. The daemon resolves the profile chain into
+       body.SandboxImplementation before it reaches its own gate, so a blank
+       dialog whose group/global profile pins resource-only is resource-only on
+       the server. Asking about draft.sandboxImpl alone would make the client
+       send omit_sandbox_profiles where the server would not have omitted — and
+       the daemon honours that flag unconditionally, discarding the
+       resource_limits on a launch that otherwise succeeds. */
+  const effectiveSandboxImpl = selectedSandboxImpl || text(resolvedSandboxImpl);
+  const sandboxProfilesDisabled = effectiveSandboxImpl !== SANDBOX_IMPL_RESOURCE_ONLY
+    && (effectiveSandboxImpl === SANDBOX_IMPL_OFF
+      || (draft.harness === 'codex' && draft.sandbox === 'danger-full-access'));
   const showSSHWorkaround = !!harness?.can_ssh_workaround;
   const sshWorkaroundAvailable = showSSHWorkaround
     && (!draft.sandboxImpl || draft.sandboxImpl === SANDBOX_IMPL_DEFAULT)

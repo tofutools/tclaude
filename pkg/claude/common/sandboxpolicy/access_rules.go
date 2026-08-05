@@ -134,6 +134,15 @@ const (
 	// snapshot carries this exact notice through the forked session launcher;
 	// profiles cannot author it.
 	AccessNoticeReasonOperatorUnenforcedLaunchOverride = "operator_unenforced_launch_override"
+	// AccessNoticeReasonUnconfinedImplementation records that the resolved
+	// profile chain authored access rules which the selected implementation
+	// confines nothing to enforce them with. It exists for `resource-only`,
+	// whose chain must keep resolving because resource_limits travel in it,
+	// and which therefore inherits whatever filesystem/network rules a global
+	// or group profile already carried. Those rules are inert; the operator
+	// has to be told so, because a resolved profile that shows up in the
+	// snapshot otherwise reads as a policy in force.
+	AccessNoticeReasonUnconfinedImplementation = "unconfined_implementation"
 	// AccessNoticeReasonProxyEngineNoProxyOverride carries the proxy engine's
 	// proxy-environment ownership: an inherited NO_PROXY/no_proxy is overridden
 	// to empty inside the sandbox rather than honored or refused over. It is
@@ -1393,4 +1402,53 @@ func slicesEqualStrings(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// UnconfinedAccessRulesNotice reports the disclosure owed when an
+// implementation that confines nothing resolves a chain that authored access
+// rules anyway.
+//
+// It lives here, not at either launch seam, because BOTH seams owe the same
+// disclosure and they resolve their snapshots by different routes: the daemon
+// spawn path plans access before forking, while a direct `tclaude session new`
+// reaches the launch with the chain already resolved. One of them having a
+// quieter idea of what is inert than the other is exactly the drift this
+// function exists to prevent.
+//
+// It is silent when the chain authored nothing, so a limits-only profile does
+// not acquire a warning about rules it never had — a notice that fires on
+// every such launch teaches the operator to ignore it.
+func UnconfinedAccessRulesNotice(
+	implementation Implementation,
+	effective EffectiveProfile,
+) (AccessNotice, bool) {
+	if !implementation.OmitsOSConfinement() {
+		return AccessNotice{}, false
+	}
+	filesystem, err := FilesystemForLaunch(effective)
+	if err != nil {
+		filesystem = nil
+	}
+	authored := len(filesystem) > 0 ||
+		len(effective.AgentDirectories) > 0 ||
+		effective.Network != nil ||
+		effective.UnixSockets != nil ||
+		effective.NetworkAccess != NetworkAccessInherit
+	if !authored {
+		return AccessNotice{}, false
+	}
+	return AccessNotice{
+		Class:  AccessNoticeClassDegradation,
+		Axis:   "access_rules",
+		Reason: AccessNoticeReasonUnconfinedImplementation,
+		Effect: AccessNoticeEffectNotEnforced,
+		// Deliberately says nothing about what IS enforced. This predicate
+		// admits every unconfined implementation, and they do not agree on
+		// that: `resource-only` holds a CPU/memory cgroup, `off` refuses
+		// limits outright. Naming one implementation's guarantee in a message
+		// the other can reach is how a disclosure becomes false later.
+		Detail: fmt.Sprintf(
+			"sandbox implementation %q enforces no access confinement; the resolved profile chain's filesystem, network and socket rules are recorded but NOT enforced for this launch.",
+			implementation),
+	}, true
 }

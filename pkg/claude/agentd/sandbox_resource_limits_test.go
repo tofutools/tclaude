@@ -74,3 +74,61 @@ func TestResourceLimitsRequireExportVersion11(t *testing.T) {
 	envelope.FormatVersion = 11
 	assert.Nil(t, validateSandboxProfileExportVersionContent(envelope))
 }
+
+// The limits axis is the whole point of resource-only, and it travels inside
+// the resolved sandbox snapshot. Omitting the profile tiers replaces that
+// snapshot with an empty one, so anything that omits them for this
+// implementation silently discards the limits and leaves it enforcing nothing.
+//
+// Codex is the case that makes this sharp rather than theoretical:
+// resource-only resolves its no-confinement mode, danger-full-access, which is
+// exactly the mode the Codex rule treats as a profile opt-out. The
+// implementation therefore has to be answered before the mode is consulted.
+func TestResourceOnlyNeverOmitsTheProfileTiersThatCarryItsLimits(t *testing.T) {
+	for _, harnessName := range []string{harness.DefaultName, harness.CodexName} {
+		t.Run(harnessName, func(t *testing.T) {
+			h := harness.MustGet(harnessName)
+
+			mode, failure := resolveSandboxImplementationMode(
+				h, "", string(sandboxpolicy.ImplementationResourceOnly))
+			require.Nil(t, failure)
+			assert.False(t,
+				sandboxProfilesDisabled(harnessName, mode,
+					string(sandboxpolicy.ImplementationResourceOnly)),
+				"resource-only must keep resolving profiles; omitting them would drop "+
+					"resource_limits and make the implementation a no-op")
+
+			offMode, failure := resolveSandboxImplementationMode(
+				h, "", string(sandboxpolicy.ImplementationOff))
+			require.Nil(t, failure)
+			assert.True(t,
+				sandboxProfilesDisabled(harnessName, offMode,
+					string(sandboxpolicy.ImplementationOff)),
+				"off must keep omitting them: it carries no limits to preserve")
+		})
+	}
+
+	// Codex's mode-keyed opt-out must still hold on its own terms, so the
+	// short-circuit above is not mistaken for having removed it.
+	assert.True(t, sandboxProfilesDisabled(harness.CodexName, harness.SandboxDangerFull,
+		string(sandboxpolicy.ImplementationHarnessBuiltin)))
+}
+
+// The enforcement preview must admit a resource-only target, or the dashboard
+// would show the one implementation built for limits refusing to carry them.
+func TestResourceOnlyPassesTheResourceLimitCompatibilityGate(t *testing.T) {
+	profile := sandboxpolicy.Profile{
+		Name: "limited", ResourceLimits: sandboxpolicy.ResourceLimits{Memory: "8GiB"},
+	}
+	target := parsedSandboxProfileEnforcementTarget{
+		implementation: sandboxpolicy.ImplementationResourceOnly,
+		harness:        harness.MustGet(harness.DefaultName), platform: "linux",
+	}
+	assert.Nil(t, sandboxResourceLimitRefusal(profile, target))
+
+	darwin := target
+	darwin.platform = "darwin"
+	refusal := sandboxResourceLimitRefusal(profile, darwin)
+	require.NotNil(t, refusal)
+	assert.Contains(t, refusal.Message, "Linux only")
+}

@@ -122,7 +122,7 @@ type NewParams struct {
 	// is the harness's historical behavior; tclaude-layer is an experimental
 	// whole-process wrapper (bubblewrap on Linux, Seatbelt on macOS). OpenCode's
 	// historical behavior is a command filter, not confinement.
-	SandboxImpl string `long:"sandbox-impl" optional:"true" help:"Sandbox implementation: harness-builtin (only for a harness with a real built-in OS sandbox) | tclaude-layer (tclaude outer wall, harness OS sandbox off) | stacked (Linux Claude/Codex only; experimental live real-engine probe, both walls; refuses without fallback) | off (no OS sandbox). Unset keeps historical harness behavior; for OpenCode that is a command filter, not confinement"`
+	SandboxImpl string `long:"sandbox-impl" optional:"true" help:"Sandbox implementation: harness-builtin (only for a harness with a real built-in OS sandbox) | tclaude-layer (tclaude outer wall, harness OS sandbox off) | stacked (Linux Claude/Codex only; experimental live real-engine probe, both walls; refuses without fallback) | resource-only (Linux only; no access confinement, but the profile's CPU/memory limits are enforced in a per-launch cgroup; no bwrap or namespaces) | off (no OS sandbox). Unset keeps historical harness behavior; for OpenCode that is a command filter, not confinement"`
 	// sandboxImplExplicit preserves the decision/replay boundary after
 	// applyRecordedLaunchPosture fills an omitted --sandbox-impl on resume.
 	// It is internal state, not a CLI parameter.
@@ -631,15 +631,24 @@ func runNew(params *NewParams) error {
 	); err != nil {
 		return err
 	}
-	if !outerLayer && len(sandboxSnapshotActiveFilesystem(launchSandbox)) > 0 &&
+	// An implementation that confines nothing is not asked whether the harness
+	// can represent a rule: it has stood every access boundary down on purpose,
+	// so the rules below are inert rather than unsupported. Refusing here would
+	// make the implementation unreachable for any operator whose global or
+	// group profile already carries such a rule, while the chain itself must
+	// keep resolving because resource_limits travel in it. This mirrors the
+	// daemon seam's arm in sandboxProfileCapabilityFailure; mount paths are
+	// still refused above, where an empty authored path is a real failure.
+	unconfined := sandboxImplementation.OmitsOSConfinement()
+	if !outerLayer && !unconfined && len(sandboxSnapshotActiveFilesystem(launchSandbox)) > 0 &&
 		h.Name == harness.CodexName && params.PermissionProfile != harness.CodexAgentProfile {
 		return fmt.Errorf("unsupported_sandbox_profile_filesystem: codex filesystem rules require sandbox %s", harness.SandboxManagedProfile)
 	}
-	if !outerLayer && len(sandboxSnapshotDirs(launchSandbox, sandboxpolicy.AccessDeny)) > 0 &&
+	if !outerLayer && !unconfined && len(sandboxSnapshotDirs(launchSandbox, sandboxpolicy.AccessDeny)) > 0 &&
 		h.Name == harness.DefaultName && harnessBuiltinMode != harness.ClaudeSandboxOn {
 		return fmt.Errorf("unsupported_sandbox_profile_filesystem: Claude filesystem deny rules require sandbox %s", harness.ClaudeSandboxOn)
 	}
-	if !outerLayer && len(sandboxSnapshotActiveFilesystem(launchSandbox)) > 0 &&
+	if !outerLayer && !unconfined && len(sandboxSnapshotActiveFilesystem(launchSandbox)) > 0 &&
 		h.Name == harness.OpenCodeName && harnessBuiltinMode != harness.OpenCodeSandboxAccessControl {
 		return fmt.Errorf("unsupported_sandbox_profile_filesystem: OpenCode filesystem rules require soft access-control mode %s", harness.OpenCodeSandboxAccessControl)
 	}
@@ -658,7 +667,7 @@ func runNew(params *NewParams) error {
 		effectiveHarnessBuiltinMode = harness.SandboxManagedProfile
 	}
 	launchFilesystem := sandboxSnapshotActiveFilesystem(launchSandbox)
-	if !outerLayer {
+	if !outerLayer && !unconfined {
 		if err := harness.ValidateSandboxReopenUnderDeny(h.Name, effectiveHarnessBuiltinMode, launchFilesystem); err != nil {
 			return err
 		}
@@ -666,7 +675,7 @@ func runNew(params *NewParams) error {
 	networkAccess := sandboxSnapshotNetworkAccess(launchSandbox)
 	hasNewAccessAxes := launchSandbox != nil &&
 		(launchSandbox.Effective.Network != nil || launchSandbox.Effective.UnixSockets != nil)
-	if networkAccess != sandboxpolicy.NetworkAccessInherit && !hasNewAccessAxes && !outerLayer {
+	if networkAccess != sandboxpolicy.NetworkAccessInherit && !hasNewAccessAxes && !outerLayer && !unconfined {
 		switch h.Name {
 		case harness.CodexName:
 			if params.PermissionProfile != harness.CodexAgentProfile {
@@ -1360,7 +1369,31 @@ func runNew(params *NewParams) error {
 			return err
 		}
 	}
-	if launchSandbox != nil &&
+	if unconfined && launchSandbox != nil {
+		// Everything the block below does — resolve capabilities, render the
+		// planned rules, probe the filtered-network prerequisite, materialize a
+		// unix socket set — describes enforcement. This implementation has
+		// none, so there is nothing to render and, in particular, nothing to
+		// materialize: a socket set prepared for a launch that enforces no
+		// socket policy is state created for no reader.
+		//
+		// The rules still have to be DISCLOSED, and by the same words the
+		// daemon uses, which is why the notice is built in sandboxpolicy rather
+		// than at either seam.
+		if notice, ok := sandboxpolicy.UnconfinedAccessRulesNotice(
+			sandboxImplementation, launchSandbox.Effective,
+		); ok {
+			launchSandbox.Effective.AccessNotices = replaceAccessDegradationNotices(
+				launchSandbox.Effective.AccessNotices, notice,
+			)
+			if effectiveSandbox != nil {
+				effectiveSandbox.Effective.AccessNotices = replaceAccessDegradationNotices(
+					effectiveSandbox.Effective.AccessNotices, notice,
+				)
+			}
+		}
+	}
+	if !unconfined && launchSandbox != nil &&
 		(launchSandbox.Effective.Network != nil || launchSandbox.Effective.UnixSockets != nil) {
 		axes, axesErr := sandboxpolicy.EffectiveAccessAxes(launchSandbox.Effective)
 		if axesErr != nil {
@@ -1733,7 +1766,10 @@ func runNew(params *NewParams) error {
 	// reopens beneath a deny (workspace, Git admin paths, agent directories), so
 	// an authored `deny ~` with no reopen of its own still renders as a split
 	// policy and must be gated as one.
-	if !outerLayer {
+	// The LATE gate, over rendered rules rather than authored ones. It needs the
+	// same unconfined arm as its early twin above: the rendered shape is no more
+	// enforceable than the authored one when nothing is enforcing.
+	if !outerLayer && !unconfined {
 		if err := harness.ValidateSandboxReopenUnderDeny(h.Name, effectiveHarnessBuiltinMode,
 			sandboxpolicy.GrantsFromDirs(launchReadDirs, launchWriteDirs, launchDenyDirs)); err != nil {
 			return err
