@@ -211,6 +211,62 @@ func TestApplyHook_CodexPublishesWorkspaceBranch(t *testing.T) {
 	assert.Equal(t, "main", loc.StartupBranch, "dashboard resolver keeps Codex init branch stable")
 }
 
+func TestApplyHook_CopilotPublishesWorkspaceBranch(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
+
+	repo := filepath.Join(home, "repo")
+	require.NoError(t, os.MkdirAll(repo, 0o755))
+	runGit(t, repo, "init", "-b", "main")
+	runGit(t, repo, "config", "user.email", "tclaude-test@example.invalid")
+	runGit(t, repo, "config", "user.name", "tclaude test")
+	runGit(t, repo, "commit", "--allow-empty", "-m", "init")
+
+	const convID = "019ec004-4250-79b1-9ade-ebaea4159003"
+	const sessionID = "agent-copilot-branch"
+	require.NoError(t, session.SaveSessionState(&session.SessionState{
+		ID:      sessionID,
+		ConvID:  convID,
+		Status:  session.StatusIdle,
+		Harness: "copilot",
+		Cwd:     repo,
+	}))
+
+	require.NoError(t, session.ApplyHook(session.HookCallbackInput{
+		HookEventName: "UserPromptSubmit",
+		ConvID:        convID,
+		Cwd:           repo,
+	}, sessionID))
+
+	ws, err := db.GetAgentWorkspace(convID)
+	require.NoError(t, err)
+	assert.Equal(t, repo, ws.Cwd)
+	assert.Equal(t, "main", ws.Branch, "Copilot hooks publish the launch-dir branch")
+
+	row, err := db.GetConvIndex(convID)
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	assert.Equal(t, "copilot", row.Harness)
+	assert.Equal(t, "main", row.GitBranch)
+	assert.Equal(t, "main", row.GitBranchStartup, "first observed Copilot branch becomes init")
+
+	runGit(t, repo, "checkout", "-b", "feature-copilot")
+	require.NoError(t, session.ApplyHook(session.HookCallbackInput{
+		HookEventName: "Stop",
+		ConvID:        convID,
+		Cwd:           repo,
+	}, sessionID))
+
+	loc := agent.ResolveLocation(convID)
+	assert.Equal(t, "feature-copilot", loc.CurrentBranch,
+		"dashboard resolver sees Copilot's current branch")
+	assert.Equal(t, "main", loc.StartupBranch,
+		"dashboard resolver keeps Copilot's init branch stable")
+}
+
 func TestApplyHook_CodexDoesNotReadRolloutCost(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

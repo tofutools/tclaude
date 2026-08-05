@@ -2,6 +2,8 @@ package agentd_test
 
 import (
 	"encoding/json"
+	"os"
+	"os/exec"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -119,6 +121,55 @@ func TestCopilotHooks_TurnGoesWorkingThenIdle(t *testing.T) {
 	got = member()
 	assert.Equal(t, session.StatusIdle, got.State.Status, "Stop returns the agent to idle")
 	assert.Empty(t, got.State.StatusDetail)
+}
+
+// Copilot has no command-backed statusline, so its hook cwd is also the live
+// workspace signal that feeds the dashboard's Branch column. Once the branch
+// is present, the ordinary asynchronous git/gh enrichment should discover the
+// current PR exactly as it does for every other harness.
+func TestCopilotHooks_PublishDashboardBranchAndPR(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	t.Cleanup(agentd.SetGitInfoResolverForTest(
+		func(repoDir, branch string) (string, string, int, string, string, bool) {
+			if branch != "feature-copilot" {
+				return "", "", 0, "", "", false
+			}
+			return "https://github.com/acme/app", "main", 77,
+				"https://github.com/acme/app/pull/77", "open", true
+		}))
+
+	f := newFlow(t)
+	f.HaveGroup("squad")
+	cwd := f.TestCwd("copilot-branch")
+	require.NoError(t, os.MkdirAll(cwd, 0o755))
+	runCopilotHookGit(t, cwd, "init", "-b", "feature-copilot")
+	runCopilotHookGit(t, cwd, "config", "user.email", "tclaude-test@example.invalid")
+	runCopilotHookGit(t, cwd, "config", "user.name", "tclaude test")
+	runCopilotHookGit(t, cwd, "commit", "--allow-empty", "-m", "init")
+	haveCopilotSession(t, f, copilotFlowConv, copilotFlowLabel, "tmux-copi", cwd)
+	f.HaveMember("squad", copilotFlowConv)
+
+	capture := copilotfixture.LoadHookCapture(t, copilotfixture.HookScenarioClaudeDialect)
+	require.NoError(t, session.ApplyHook(
+		copilotHook(t, capture, "UserPromptSubmit", 0, copilotFlowConv, cwd),
+		copilotFlowLabel))
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	_ = fetchDashSnapshot(t, mux) // cold branch-link cache schedules git/gh resolution
+	agentd.WaitForBackgroundForTest()
+	member := findDashMember(fetchDashSnapshot(t, mux), "squad", copilotFlowConv)
+	require.NotNil(t, member)
+	assert.Equal(t, "feature-copilot", member.Branch)
+	assert.Equal(t, 77, member.BranchPRNum)
+	assert.Equal(t, "https://github.com/acme/app/pull/77", member.BranchPRURL)
+}
+
+func runCopilotHookGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v failed: %v\n%s", args, err, string(out))
+	}
 }
 
 // Scenario: the guard that makes the test above pass must not change any OTHER
