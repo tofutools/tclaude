@@ -1439,24 +1439,11 @@ func tclaudeLayerSpecRenderInput(
 	if err != nil {
 		return nil, nil, nil, nil, nil, sandboxpolicy.MountPlan{}, err
 	}
-	writableStateRoots := append([]string{phase0WriteDirs[0]}, spec.Contract.StateDirs...)
-	for _, stateRoot := range writableStateRoots {
-		if err := validateTclaudeLayerHarnessStateRules(
-			stateRoot,
-			sandboxpolicy.AccessWrite,
-			spec.Contract.ProfileFilesystem,
-		); err != nil {
-			return nil, nil, nil, nil, nil, sandboxpolicy.MountPlan{}, err
-		}
-	}
-	for _, stateRoot := range spec.Contract.ReadOnlyStateDirs {
-		if err := validateTclaudeLayerHarnessStateRules(
-			stateRoot,
-			sandboxpolicy.AccessRead,
-			spec.Contract.ProfileFilesystem,
-		); err != nil {
-			return nil, nil, nil, nil, nil, sandboxpolicy.MountPlan{}, err
-		}
+	if err := validateTclaudeLayerHarnessStateRules(
+		tclaudeLayerHarnessStateRules(spec.Contract, phase0WriteDirs[0]),
+		spec.Contract.ProfileFilesystem,
+	); err != nil {
+		return nil, nil, nil, nil, nil, sandboxpolicy.MountPlan{}, err
 	}
 	privateWriteDirs, err := cleanTclaudeLayerPrivateWriteDirs(
 		spec.Contract.PrivateWriteDirs,
@@ -1487,11 +1474,6 @@ func tclaudeLayerSpecRenderInput(
 							"daemon-final read-only bind path %q is at or below protected root %q",
 							path, protected)
 				}
-			}
-			if err := validateTclaudeLayerHarnessStateRules(
-				path, sandboxpolicy.AccessRead,
-				spec.Contract.ProfileFilesystem); err != nil {
-				return nil, nil, nil, nil, nil, sandboxpolicy.MountPlan{}, err
 			}
 		}
 	}
@@ -1631,6 +1613,12 @@ func PrepareTclaudeLayerHarnessState(spec TclaudeLayerLaunchSpec) error {
 		len(spec.Contract.ReadOnlyBinds) == 0 {
 		return fmt.Errorf("OpenCode tclaude-layer launch spec does not protect its executable state")
 	}
+	if err := validateTclaudeLayerHarnessStateRules(
+		tclaudeLayerHarnessStateRules(spec.Contract, spec.Contract.StateRoot),
+		spec.Contract.ProfileFilesystem,
+	); err != nil {
+		return err
+	}
 	protectedRoots, err := sandboxpolicy.ProtectedPaths()
 	if err != nil {
 		return fmt.Errorf("resolve protected paths before preparing harness state: %w", err)
@@ -1639,11 +1627,6 @@ func PrepareTclaudeLayerHarnessState(spec TclaudeLayerLaunchSpec) error {
 		path = filepath.Clean(strings.TrimSpace(path))
 		if path == "." || !filepath.IsAbs(path) {
 			return fmt.Errorf("tclaude-layer harness state path %q is not absolute", path)
-		}
-		if err := validateTclaudeLayerHarnessStateRules(
-			path, sandboxpolicy.AccessWrite,
-			spec.Contract.ProfileFilesystem); err != nil {
-			return err
 		}
 		for _, protected := range protectedRoots {
 			if sandboxpolicy.GuardContainsOrEqual(protected, path) {
@@ -1695,11 +1678,6 @@ func PrepareTclaudeLayerHarnessState(spec TclaudeLayerLaunchSpec) error {
 			return fmt.Errorf(
 				"tclaude-layer read-only harness state path %q is not below state root %q",
 				path, stateRoot)
-		}
-		if err := validateTclaudeLayerHarnessStateRules(
-			path, sandboxpolicy.AccessRead,
-			spec.Contract.ProfileFilesystem); err != nil {
-			return err
 		}
 		for _, protected := range protectedRoots {
 			if sandboxpolicy.GuardContainsOrEqual(protected, path) {
@@ -2687,6 +2665,34 @@ func appendTclaudeLayerContractRepairs(
 	return args
 }
 
+type tclaudeLayerHarnessStateRule struct {
+	Path   string
+	Access sandboxpolicy.Access
+}
+
+func tclaudeLayerHarnessStateRules(
+	contract TclaudeLayerLaunchContract,
+	stateRoot string,
+) []tclaudeLayerHarnessStateRule {
+	rules := make([]tclaudeLayerHarnessStateRule, 0,
+		1+len(contract.StateDirs)+len(contract.ReadOnlyStateDirs)+2*len(contract.ReadOnlyBinds))
+	appendRule := func(path string, access sandboxpolicy.Access) {
+		rules = append(rules, tclaudeLayerHarnessStateRule{Path: path, Access: access})
+	}
+	appendRule(stateRoot, sandboxpolicy.AccessWrite)
+	for _, path := range contract.StateDirs {
+		appendRule(path, sandboxpolicy.AccessWrite)
+	}
+	for _, path := range contract.ReadOnlyStateDirs {
+		appendRule(path, sandboxpolicy.AccessRead)
+	}
+	for _, bind := range contract.ReadOnlyBinds {
+		appendRule(bind.Source, sandboxpolicy.AccessRead)
+		appendRule(bind.Target, sandboxpolicy.AccessRead)
+	}
+	return rules
+}
+
 // validateTclaudeLayerHarnessStateRules is guard-biased like the protected-root
 // checks around it, but the trade it makes is a different one and worth naming.
 // Its refusal is FUNCTIONAL rather than a containment deny: it rejects an
@@ -2697,29 +2703,54 @@ func appendTclaudeLayerContractRepairs(
 // Refusing the duplicate would make two compatible sources of authority less
 // composable than either source alone.
 //
-// The containment comparison remains guard-biased. If a case-folded spelling
-// might reach the state root, only the same required access is admitted; a
-// different access still refuses rather than silently changing the contract.
+// The most-specific contract rule wins, just like an emitted mount plan. That
+// distinction matters for OpenCode's read-only bin subtree inside its writable
+// state root. The containment comparison remains guard-biased: if a
+// case-folded spelling might reach state, only the selected rule's access is
+// admitted; a different access still refuses rather than silently changing the
+// contract.
 func validateTclaudeLayerHarnessStateRules(
-	stateRoot string,
-	requiredAccess sandboxpolicy.Access,
+	stateRules []tclaudeLayerHarnessStateRule,
 	profileFilesystem []sandboxpolicy.FilesystemGrant,
 ) error {
 	for _, grant := range profileFilesystem {
-		if sandboxpolicy.GuardContainsOrEqual(stateRoot, grant.Path) {
-			if grant.Access == requiredAccess {
+		var matched *tclaudeLayerHarnessStateRule
+		for index := range stateRules {
+			candidate := &stateRules[index]
+			if !sandboxpolicy.GuardContainsOrEqual(candidate.Path, grant.Path) {
 				continue
 			}
-			return fmt.Errorf(
-				"tclaude-layer profile filesystem rule %q (%s) is at or below harness state root %q, which requires %s access; refusing a launch with conflicting harness-state authority",
-				grant.Path,
-				grant.Access,
-				stateRoot,
-				requiredAccess,
-			)
+			if matched == nil || sandboxPathDepth(candidate.Path) > sandboxPathDepth(matched.Path) {
+				matched = candidate
+				continue
+			}
+			if sandboxPathDepth(candidate.Path) == sandboxPathDepth(matched.Path) &&
+				candidate.Access != matched.Access {
+				return fmt.Errorf(
+					"tclaude-layer harness state rules %q (%s) and %q (%s) ambiguously cover profile filesystem rule %q",
+					matched.Path, matched.Access, candidate.Path, candidate.Access, grant.Path)
+			}
 		}
+		if matched == nil || grant.Access == matched.Access {
+			continue
+		}
+		return fmt.Errorf(
+			"tclaude-layer profile filesystem rule %q (%s) is at or below harness state root %q, which requires %s access; refusing a launch with conflicting harness-state authority",
+			grant.Path,
+			grant.Access,
+			matched.Path,
+			matched.Access,
+		)
 	}
 	return nil
+}
+
+func sandboxPathDepth(path string) int {
+	path = filepath.Clean(path)
+	if path == string(filepath.Separator) {
+		return 0
+	}
+	return strings.Count(path, string(filepath.Separator))
 }
 
 func tclaudeLayerPhase0WriteDirs(
