@@ -155,18 +155,21 @@ func TestSandboxImplementationOffResolvesTheHarnessOffMode(t *testing.T) {
 // wearing the limits-only name, and every mode-keyed gate would judge it as
 // confined — the opposite of what the operator selected.
 func TestResourceOnlyResolvesTheHarnessOffMode(t *testing.T) {
-	for _, tc := range []struct{ harness, want string }{
-		{DefaultName, ClaudeSandboxOff},
-		{CodexName, SandboxDangerFull},
-		{OpenCodeName, OpenCodeSandboxOff},
-		{CopilotName, CopilotSandboxOff},
+	for _, tc := range []struct{ harness, want, confining string }{
+		{DefaultName, ClaudeSandboxOff, ClaudeSandboxOn},
+		{CodexName, SandboxDangerFull, SandboxManagedProfile},
+		{OpenCodeName, OpenCodeSandboxOff, OpenCodeSandboxAccessControl},
+		{CopilotName, CopilotSandboxOff, CopilotSandboxInherit},
 	} {
 		h, err := Resolve(tc.harness)
 		require.NoError(t, err)
-		// An inherited non-empty mode must not survive: the whole point of the
-		// resolver is that an independently configured sandbox value cannot
-		// quietly re-confine an explicitly unconfined implementation.
-		for _, inherited := range []string{"", tc.want} {
+		// The `confining` value is the one that carries the claim. Inheriting
+		// only "" and tc.want would leave the assertions passing for a resolver
+		// that discards its argument, which is not what is being asserted: the
+		// point is that a CONFINING mode, configured independently of the
+		// implementation, cannot quietly re-confine an explicitly unconfined
+		// launch. That needs a value the resolver must actively override.
+		for _, inherited := range []string{"", tc.want, tc.confining} {
 			got, err := ResolveSandboxImplementationMode(
 				h, inherited, sandboxpolicy.ImplementationResourceOnly)
 			require.NoErrorf(t, err, "harness %s mode %q", tc.harness, inherited)

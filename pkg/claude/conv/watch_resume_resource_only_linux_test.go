@@ -1,3 +1,11 @@
+//go:build linux
+
+// resource-only is a Linux-only implementation: sandboxImplementationHostFailure
+// refuses it off Linux rather than degrading to `off`, so every test that drives
+// a real resource-only launch or resume belongs here. The predicate, mode and
+// enforcement-table tests stay cross-platform — they take an explicit platform
+// argument and assert the same answer everywhere.
+
 package conv
 
 import (
@@ -170,6 +178,12 @@ func TestResumeLaunchCmd_ResourceOnlyResumesOverAGlobTheMaterializerWouldRefuse(
 		SandboxImplementation: string(sandboxpolicy.ImplementationResourceOnly),
 	}))
 
+	// Root bypasses the permission check entirely, so the materializer would
+	// succeed and this test would pass while proving nothing — and CI commonly
+	// runs as root in a container. Skip loudly rather than assert vacuously.
+	if os.Geteuid() == 0 {
+		t.Skip("needs a non-root euid: root ignores the missing execute bit this test relies on")
+	}
 	// Readable, not executable: the glob still lists, the children no longer stat.
 	require.NoError(t, os.Chmod(dir, 0o444))
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })

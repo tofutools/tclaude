@@ -1,3 +1,11 @@
+//go:build linux
+
+// resource-only is a Linux-only implementation: sandboxImplementationHostFailure
+// refuses it off Linux rather than degrading to `off`, so every test that drives
+// a real resource-only launch or resume belongs here. The predicate, mode and
+// enforcement-table tests stay cross-platform — they take an explicit platform
+// argument and assert the same answer everywhere.
+
 package agentd_test
 
 import (

@@ -553,6 +553,21 @@ test('the spawn request omits an untouched row and sends an explicit one', async
   assert.notEqual(resourceOnlyCodex.body.omit_sandbox_profiles, true,
     'a Codex draft holding danger-full-access must not drop the limits');
 
+  // The same must hold when resource-only arrives from the PROFILE CHAIN rather
+  // than the dialog. The daemon resolves the chain into body.SandboxImplementation
+  // before reaching its own gate, so a blank dialog backed by a resource-only
+  // group/global profile is resource-only server-side. A client that judged
+  // draft.sandboxImpl alone would send omit_sandbox_profiles here, and the
+  // daemon honours that flag unconditionally — dropping the limits on a launch
+  // that still succeeds.
+  const resolvedResourceOnly = model.spawnCapabilityView(
+    { ...base, harness: 'codex', sandbox: 'danger-full-access', sandboxImpl: '' },
+    context, 'resource-only',
+  );
+  assert.equal(resolvedResourceOnly.sandboxProfilesDisabled, false,
+    'a profile-resolved resource-only must keep the profile tiers, exactly as an '
+    + 'explicitly selected one does');
+
   // OpenCode supports the layer through its managed server topology.
   const oc = model.buildSpawnRequest(
     { ...base, harness: 'opencode', sandboxImpl: 'tclaude-layer' }, context, null,

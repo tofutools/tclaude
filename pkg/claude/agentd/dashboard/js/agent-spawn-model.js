@@ -506,15 +506,22 @@ export function spawnCapabilityView(draft, context, resolvedSandboxImpl = '') {
   const resolvedBuiltinSandbox = !selectedSandboxImpl
     && text(resolvedSandboxImpl) === SANDBOX_IMPL_DEFAULT;
   /* Mirrors agentd's sandboxProfilesDisabled, INCLUDING the order in which it
-     asks. resource-only must be answered before the harness/mode clause: it
-     resolves Codex's no-confinement mode, danger-full-access, which is exactly
-     what that clause treats as a profile opt-out. Answering it second would
-     send omit_sandbox_profiles for such a draft, and the daemon honours that
-     flag independently of its own short-circuit — discarding the
-     resource_limits this implementation exists to apply, on a launch that
-     otherwise succeeds. */
-  const sandboxProfilesDisabled = draft.sandboxImpl !== SANDBOX_IMPL_RESOURCE_ONLY
-    && (draft.sandboxImpl === SANDBOX_IMPL_OFF
+     asks and the VALUE it asks about. Two things make this easy to get wrong:
+
+     - resource-only must be answered before the harness/mode clause, because it
+       resolves Codex's no-confinement mode, danger-full-access, which is
+       exactly what that clause treats as a profile opt-out.
+     - it must be answered about the EFFECTIVE implementation, not the dialog's
+       explicit one. The daemon resolves the profile chain into
+       body.SandboxImplementation before it reaches its own gate, so a blank
+       dialog whose group/global profile pins resource-only is resource-only on
+       the server. Asking about draft.sandboxImpl alone would make the client
+       send omit_sandbox_profiles where the server would not have omitted — and
+       the daemon honours that flag unconditionally, discarding the
+       resource_limits on a launch that otherwise succeeds. */
+  const effectiveSandboxImpl = selectedSandboxImpl || text(resolvedSandboxImpl);
+  const sandboxProfilesDisabled = effectiveSandboxImpl !== SANDBOX_IMPL_RESOURCE_ONLY
+    && (effectiveSandboxImpl === SANDBOX_IMPL_OFF
       || (draft.harness === 'codex' && draft.sandbox === 'danger-full-access'));
   const showSSHWorkaround = !!harness?.can_ssh_workaround;
   const sshWorkaroundAvailable = showSSHWorkaround
