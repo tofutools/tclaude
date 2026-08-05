@@ -104,7 +104,7 @@ func TestGlobalDefaultLaunchProfile_ExplicitFieldsWinIndependently(t *testing.T)
 			name:     "harness",
 			params:   NewParams{Harness: "claude"},
 			explicit: explicitLaunchFields{"harness": true},
-			want:     NewParams{Harness: "claude", Effort: "high"},
+			want:     NewParams{Harness: "claude"},
 		},
 		{
 			name:     "model",
@@ -131,6 +131,22 @@ func TestGlobalDefaultLaunchProfile_ExplicitFieldsWinIndependently(t *testing.T)
 			assert.Equal(t, tt.want.Effort, params.Effort)
 		})
 	}
+}
+
+func TestGlobalDefaultLaunchProfile_ForeignModelAndEffortDoNotReachCopilot(t *testing.T) {
+	setGlobalLaunchProfile(t, db.SpawnProfile{
+		Name: "claude-default", Harness: harness.DefaultName,
+		Model: "opus[1m]", Effort: "high",
+	})
+	params := &NewParams{Harness: harness.CopilotName}
+	require.NoError(t, applyGlobalDefaultLaunchProfile(
+		params, explicitLaunchFields{"harness": true},
+	))
+	assert.Equal(t, harness.CopilotName, params.Harness)
+	assert.Empty(t, params.Model,
+		"a Claude default profile's model must not fill a Copilot terminal launch")
+	assert.Empty(t, params.Effort,
+		"a Claude default profile's effort must not fill a Copilot terminal launch")
 }
 
 func TestGlobalDefaultLaunchProfile_ExplicitEmptyFieldUsesHarnessDefault(t *testing.T) {
