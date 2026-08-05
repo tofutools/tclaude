@@ -120,11 +120,23 @@ func runTaskForceDeploy(p *taskForceDeployParams, stdin io.Reader, stdout, stder
 	// orphan.
 	createdWorktree, discardWorktree := "", ""
 	if wt := strings.TrimSpace(p.Worktree); wt != "" {
+		// With no --cwd the repo is THIS process's working directory, not
+		// the daemon's: the operator means the repo they are standing in.
+		// Sending a blank repo would let the daemon fall back to its own
+		// cwd and cut the branch in whatever repo it happens to be in.
 		worktreeRepo := cwd
+		if worktreeRepo == "" {
+			wd, wdErr := os.Getwd()
+			if wdErr != nil {
+				fmt.Fprintf(stderr, "Error: --worktree needs a repo: %v\n", wdErr)
+				return rcInvalidArg
+			}
+			worktreeRepo = wd
+		}
 		prepared, wtErr := resolveSpawnWorktree(worktreeRepo, wt, p.WorktreeBase, 0)
 		if wtErr != nil {
 			fmt.Fprintf(stderr, "Error: %v\n", wtErr)
-			return rcInvalidArg
+			return MapDaemonErrorToRC(wtErr)
 		}
 		if prepared.Created {
 			createdWorktree, discardWorktree = prepared.Path, prepared.DiscardToken

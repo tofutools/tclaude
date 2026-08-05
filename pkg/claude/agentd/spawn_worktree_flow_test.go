@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -61,6 +62,8 @@ func TestSpawnWorktreePrepare_AgentProvesRepoAndParentThenDaemonCreates(t *testi
 	testharness.DecodeJSON(t, rec, &reuse)
 	assert.False(t, reuse.Created, "an existing worktree on the branch is reused")
 	assert.Equal(t, resp.Path, reuse.Path, "reuse returns the same path")
+	assert.Empty(t, reuse.DiscardToken,
+		"a reused worktree is not this caller's to discard — no token")
 
 	// The discard token from the create call takes it back down, branch
 	// and all — the daemon cut that branch for this worktree.
@@ -79,6 +82,77 @@ func TestSpawnWorktreePrepare_AgentProvesRepoAndParentThenDaemonCreates(t *testi
 	rec = agentReq(t, f, parentConv, http.MethodPost, "/v1/worktrees/discard",
 		map[string]any{"token": resp.DiscardToken})
 	assert.Equal(t, http.StatusNotFound, rec.Code, "a spent discard token is not re-usable")
+}
+
+// Scenario: the negative half of the same guarantee — an agent that
+// does NOT answer the challenge gets nothing. This is the assertion that
+// catches a future refactor dropping the proof gate: the caller retries
+// with a token but without creating the proof files, and the daemon must
+// refuse and leave the repo untouched (no worktree, no branch).
+func TestSpawnWorktreePrepare_UnprovedAgentCreatesNothing(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	const parentConv = "parent-wtnp-aaaa-bbbb-cccc-111111111111"
+	haveSpawnCapableSandboxParent(t, f, "alpha", parentConv, harness.DefaultName, harness.ClaudeSandboxInherit)
+
+	repo, repoParent := initRepoOnMain(t)
+	body := map[string]any{"repo": repo, "branch": "feat-x", "base": "main"}
+	ch := decodeWriteProofChallenge(t,
+		agentReq(t, f, parentConv, http.MethodPost, "/v1/worktrees/prepare", body))
+
+	// Retry with the token but WITHOUT writing the proof files — the
+	// shape of an agent whose sandbox cannot write those directories.
+	body["write_proof_token"] = ch.WriteProof.Token
+	rec := agentReq(t, f, parentConv, http.MethodPost, "/v1/worktrees/prepare", body)
+	require.Equalf(t, http.StatusForbidden, rec.Code, "body=%s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "write-permission proof file",
+		"the refusal should name what is missing")
+
+	_, statErr := os.Stat(filepath.Join(repoParent, "repo-feat-x"))
+	assert.Truef(t, os.IsNotExist(statErr), "nothing should have been created; stat err=%v", statErr)
+	assert.NotContains(t, worktree.BranchesIn(repo), "feat-x", "no branch should have been cut")
+}
+
+// Scenario: the worktree was cut on a branch that already existed. The
+// discard removes the directory it created and leaves the branch alone —
+// deleting it would destroy work the caller never asked this endpoint to
+// create.
+func TestSpawnWorktreeDiscard_KeepsAPreExistingBranch(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	const caller = "owner-wtkb-aaaa-bbbb-cccc-111111111111"
+	haveSpawnCapableSandboxParent(t, f, "alpha", caller, harness.DefaultName, harness.ClaudeSandboxOff)
+
+	repo, repoParent := initRepoOnMain(t)
+	gitInRepo(t, repo, "branch", "feat-x")
+
+	rec := agentReq(t, f, caller, http.MethodPost, "/v1/worktrees/prepare",
+		map[string]any{"repo": repo, "branch": "feat-x"})
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var prepared agent.WorktreePrepareResponse
+	testharness.DecodeJSON(t, rec, &prepared)
+	require.True(t, prepared.Created, "an existing branch with no worktree still needs one cut")
+
+	rec = agentReq(t, f, caller, http.MethodPost, "/v1/worktrees/discard",
+		map[string]any{"token": prepared.DiscardToken})
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var discarded agent.WorktreeDiscardResponse
+	testharness.DecodeJSON(t, rec, &discarded)
+	assert.True(t, discarded.Removed, "the worktree directory is removed")
+	assert.False(t, discarded.BranchDeleted, "a branch we did not cut is not ours to delete")
+	assert.Contains(t, worktree.BranchesIn(repo), "feat-x", "the pre-existing branch survives")
+	_, statErr := os.Stat(filepath.Join(repoParent, "repo-feat-x"))
+	assert.Truef(t, os.IsNotExist(statErr), "worktree dir should be gone; stat err=%v", statErr)
+}
+
+// gitInRepo runs a git command in repo and fails the test on error.
+func gitInRepo(t *testing.T, repo string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = repo
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
 }
 
 // Scenario: one agent may not discard a worktree another agent prepared.
@@ -122,6 +196,12 @@ func TestSpawnCLI_WorktreeBranchRolledBackWhenCheckoutFails(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("alpha")
 	bridgeAgentClientToMux(t, f.Mux)
+
+	if os.Geteuid() == 0 {
+		// Mode bits do not bind root, so the checkout would succeed and
+		// this test would assert the opposite of what happens.
+		t.Skip("read-only directory does not stop root")
+	}
 
 	repo, parent := initRepoOnMain(t)
 	require.NoError(t, os.Chmod(parent, 0o555), "make the worktree's parent read-only")

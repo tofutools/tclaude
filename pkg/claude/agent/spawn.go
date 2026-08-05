@@ -1336,7 +1336,11 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		prepared, wtErr := resolveSpawnWorktree(worktreeRepo, wt, p.WorktreeBase, ask)
 		if wtErr != nil {
 			fmt.Fprintf(stderr, "Error: %v\n", wtErr)
-			return nil, rcInvalidArg
+			// The failure now comes off the wire, so it carries the
+			// daemon's own classification: a permission refusal exits as
+			// an auth failure, an unreachable daemon as an I/O one, and
+			// only a genuinely bad branch/repo as a usage error.
+			return nil, MapDaemonErrorToRC(wtErr)
 		}
 		wtPath := prepared.Path
 		if prepared.Created {
@@ -1388,7 +1392,11 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		// for this worktree goes with it, so a retry cuts a fresh one
 		// from --worktree-base instead of silently reusing a branch left
 		// over from the failed attempt; a branch that already existed
-		// survives the teardown.
+		// survives the teardown. The teardown is itself a daemon call
+		// now, so a spawn that failed BECAUSE the daemon went away cannot
+		// clean up either: it says so on stderr and leaves the worktree
+		// for the operator, rather than the CLI reaching into a directory
+		// its own sandbox may not be able to finish removing.
 		if createdWorktree != "" {
 			if de, ok := err.(*DaemonError); ok && de.Status == http.StatusGatewayTimeout {
 				fmt.Fprintf(stderr, "Note: kept the worktree %s — the session may still be coming up.\n",

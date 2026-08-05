@@ -59,11 +59,14 @@ const (
 	// that never comes back is forgotten.
 	preparedWorktreeTTL = 30 * time.Minute
 
-	// maxPreparedWorktrees caps the registry so a caller looping on
-	// prepare cannot grow it without bound; minting past the cap evicts
-	// the oldest entry. An evicted worktree is not removed — it is only
-	// no longer addressable by token, exactly like an expired one.
-	maxPreparedWorktrees = 64
+	// maxPreparedWorktreesPerCaller caps the registry PER CALLER, so a
+	// caller looping on prepare cannot grow it without bound and — the
+	// reason it is per caller rather than global — cannot evict another
+	// agent's discard token and strand that agent's cleanup. Minting past
+	// the cap evicts the caller's own oldest entry. An evicted worktree is
+	// not removed; it is only no longer addressable by token, exactly like
+	// an expired one.
+	maxPreparedWorktreesPerCaller = 16
 )
 
 // preparedWorktree records a worktree this daemon created for a spawn,
@@ -71,6 +74,12 @@ const (
 // distinguishes a branch we cut for it — which the discard deletes, so a
 // retry cuts a fresh one from the requested base — from one that already
 // existed and must outlive the teardown.
+//
+// The registry is in memory: a daemon restart between prepare and a
+// failed spawn forgets the token, and the worktree survives as an
+// orphan the operator prunes like any other. Persisting it would trade
+// that rare case for a durable record of paths to delete, which is the
+// worse thing to get wrong.
 type preparedWorktree struct {
 	caller        string // conv-id, or "" for the human
 	path          string
@@ -82,6 +91,11 @@ type preparedWorktree struct {
 var (
 	preparedWorktreesMu sync.Mutex
 	preparedWorktrees   = map[string]preparedWorktree{}
+
+	// prepareWorktreeMu serializes the create half of prepare — see the
+	// call site for why the branch snapshot and the checkout must not
+	// interleave with another prepare's.
+	prepareWorktreeMu sync.Mutex
 )
 
 // registerPreparedWorktree stores wt under a fresh single-use token and
@@ -97,17 +111,31 @@ func registerPreparedWorktree(wt preparedWorktree) string {
 	preparedWorktreesMu.Lock()
 	defer preparedWorktreesMu.Unlock()
 	purgeExpiredPreparedWorktreesLocked()
-	if len(preparedWorktrees) >= maxPreparedWorktrees {
-		oldest := ""
-		for tok, entry := range preparedWorktrees {
-			if oldest == "" || entry.expires.Before(preparedWorktrees[oldest].expires) {
-				oldest = tok
-			}
+	oldest, mine := "", 0
+	for tok, entry := range preparedWorktrees {
+		if entry.caller != wt.caller {
+			continue
 		}
+		mine++
+		if oldest == "" || entry.expires.Before(preparedWorktrees[oldest].expires) {
+			oldest = tok
+		}
+	}
+	if mine >= maxPreparedWorktreesPerCaller {
 		delete(preparedWorktrees, oldest)
 	}
 	preparedWorktrees[token] = wt
 	return token
+}
+
+// restorePreparedWorktree puts a consumed entry back under its own
+// token. Used when the teardown it was consumed for failed: the
+// worktree is still there, so the caller (or the operator, retrying)
+// must still be able to address it.
+func restorePreparedWorktree(token string, wt preparedWorktree) {
+	preparedWorktreesMu.Lock()
+	defer preparedWorktreesMu.Unlock()
+	preparedWorktrees[token] = wt
 }
 
 // takePreparedWorktree consumes the entry token addresses, if it exists,
@@ -177,6 +205,16 @@ func handleWorktreePrepare(w http.ResponseWriter, r *http.Request) {
 	// the equivalent of picking it from the dashboard's list. No proof
 	// is needed to be told a path that already exists; the spawn that
 	// follows proves the launch dir itself.
+	//
+	// Note what the lookup above and this scan do concede: they answer
+	// "does this path exist, is it inside a repo, what is checked out
+	// there" for a path the caller named, and they answer it as the
+	// daemon rather than inside the caller's sandbox. That is a read
+	// capability an agent did not have while the resolution ran
+	// in-process. It is accepted deliberately — the answer is a path the
+	// caller must still pass the spawn's own write-proof to use — but it
+	// is a capability, not nothing, so keep the failure messages to what
+	// a caller needs to fix its own request.
 	wts, err := worktree.ListWorktreesIn(root)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "worktree",
@@ -210,9 +248,31 @@ func handleWorktreePrepare(w http.ResponseWriter, r *http.Request) {
 			for _, raw := range dirs {
 				proofDirs = appendUniqueDirs(proofDirs, resolved[raw])
 			}
+			// The proof was taken over the parent of the RAW root; the
+			// checkout lands in the parent of the RESOLVED one, and the two
+			// differ if the root's own last component is a symlink. Assert
+			// they are the same directory rather than assuming it — the same
+			// assertion the per-agent-worktree path makes before it writes
+			// into a directory it just created.
+			if parent := filepath.Dir(root); !dirListContains(proofDirs, parent) {
+				writeError(w, http.StatusForbidden, "write_proof_failed", fmt.Sprintf(
+					"the worktree would be created in %s, which is not the directory the "+
+						"write-proof was verified in; retry to be challenged for it", parent))
+				return
+			}
 		}
 	}
 	defer cleanupDirWriteProofMarkers(proofToken, proofDirs)
+
+	// Serialize creation so two concurrent prepares for the same new
+	// branch cannot interleave the branch-existed snapshot below with
+	// each other's `git worktree add`: the loser would otherwise see a
+	// branch that appeared since it looked and roll back the WINNER's
+	// branch. Worktree creation is a rare, slow, human-scale operation,
+	// so one lock for all repos is cheap enough to be worth its
+	// simplicity.
+	prepareWorktreeMu.Lock()
+	defer prepareWorktreeMu.Unlock()
 
 	branchExisted := worktree.BranchExistsIn(root, branch)
 	path, addErr := worktree.AddWorktreeIn(root, branch, base, "")
@@ -278,6 +338,10 @@ func handleWorktreeDiscard(w http.ResponseWriter, r *http.Request) {
 		removed, err = worktree.RemoveLinkedWorktree(entry.path, true)
 	}
 	if err != nil {
+		// The teardown failed, so the worktree is still there: put the
+		// token back rather than spending it on a removal that did not
+		// happen, and leave the caller (or the operator) able to retry.
+		restorePreparedWorktree(token, entry)
 		writeError(w, http.StatusInternalServerError, "worktree", err.Error())
 		return
 	}
