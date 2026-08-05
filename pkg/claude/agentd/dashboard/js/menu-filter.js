@@ -11,11 +11,12 @@
 //
 // Two deliberate departures from the Ctrl/Cmd-K palette (palette.js):
 //
-//   - Order is PRESERVED. rankCommands() sorts by score, which is right for a
-//     search surface built from scratch, but wrong here: a cog menu is a
-//     spatial list the operator has learned, and reshuffling it on every
-//     keystroke fights the click-to-scan habit these menus exist for. So the
-//     score is used as a PREDICATE (>0 keeps the item) and never as an order.
+//   - Order is PRESERVED WITHIN TWO MATCH GROUPS. A hit in the action's name
+//     comes before one found only in its tooltip / data-act slug, so typing
+//     "terminal" prefers "open web terminal" over an otherwise-earlier action
+//     whose help text merely mentions a terminal. Within each group the menu's
+//     familiar spatial order stays intact; scoreCommand's finer score ladder
+//     does not continuously reshuffle the rows.
 //   - The searchable text is READ FROM THE RENDERED DOM, not declared by each
 //     item. That is not a shortcut, it is the only complete source: several
 //     items (NotifyMenuItem, RemoteMenuItem, RestartMenuItem,
@@ -29,7 +30,7 @@
 // palette-score.js, reused verbatim so both surfaces answer a query the same
 // way.
 //
-// Ownership: the three attributes below are written ONLY here, and are absent
+// Ownership: the four attributes below are written ONLY here, and are absent
 // from every menu item's vnode props. Preact therefore never diffs them, so
 // applying a filter to a Preact-rendered menu cannot conflict with a snapshot
 // re-render — the owner just re-applies after each one (ActionMenu does this in
@@ -63,6 +64,11 @@ export const FILTERED_OUT_ATTR = 'data-menu-filtered-out';
 export const ACTIVE_ATTR = 'data-menu-active';
 // Set on the menu when a query matches nothing (CSS renders the empty note).
 export const EMPTY_ATTR = 'data-menu-empty';
+// Set while a query is live so CSS and keyboard navigation agree on the two
+// stable result groups: name hits first, descriptive-text hits second.
+export const MATCH_PRIORITY_ATTR = 'data-menu-match-priority';
+const NAME_MATCH_PRIORITY = 1;
+const DETAIL_MATCH_PRIORITY = 2;
 
 function toggleAttr(el, name, on) {
   if (on) el.setAttribute(name, '1');
@@ -82,7 +88,13 @@ export function menuItems(menu) {
 }
 
 function visibleItems(menu) {
-  return menuItems(menu).filter((item) => !item.hasAttribute(FILTERED_OUT_ATTR));
+  return menuItems(menu)
+    .filter((item) => !item.hasAttribute(FILTERED_OUT_ATTR))
+    .sort((a, b) => matchPriority(a) - matchPriority(b));
+}
+
+function matchPriority(item) {
+  return Number(item.getAttribute(MATCH_PRIORITY_ATTR)) || 0;
 }
 
 // textPieces collects each text node separately instead of taking textContent,
@@ -127,6 +139,20 @@ export function menuItemMatches(item, query) {
   if (!query) return true;
   return scoreCommand(query, menuItemLabel(item).toLowerCase(),
     menuItemHaystack(item).toLowerCase()) > 0;
+}
+
+// Return a coarse priority rather than the palette's full score. Cog menus
+// retain their authored order among equally direct matches, while still making
+// an action whose NAME answers the query easier to reach than an action found
+// only through its explanatory metadata. Both plain and wizard labels count as
+// names so either vocabulary behaves the same in either theme.
+export function menuItemMatchPriority(item, query) {
+  if (!query) return 0;
+  const label = menuItemLabel(item).toLowerCase();
+  if (scoreCommand(query, label, label) > 0) return NAME_MATCH_PRIORITY;
+  return scoreCommand(query, label, menuItemHaystack(item).toLowerCase()) > 0
+    ? DETAIL_MATCH_PRIORITY
+    : 0;
 }
 
 export function menuActiveItem(menu) {
@@ -208,12 +234,16 @@ export function applyMenuFilter(menu, query, { input, resetActive = false } = {}
   const normalized = String(query || '').trim().toLowerCase();
   linkFilterInput(menu, input);
   const items = menuItems(menu);
-  const visible = [];
+  let visible = [];
   for (const item of items) {
-    const matched = menuItemMatches(item, normalized);
+    const priority = menuItemMatchPriority(item, normalized);
+    const matched = !normalized || priority > 0;
     toggleAttr(item, FILTERED_OUT_ATTR, !matched);
+    if (priority) item.setAttribute(MATCH_PRIORITY_ATTR, String(priority));
+    else item.removeAttribute(MATCH_PRIORITY_ATTR);
     if (matched) visible.push(item);
   }
+  visible = visible.sort((a, b) => matchPriority(a) - matchPriority(b));
   for (const separator of menu.querySelectorAll(MENU_SEPARATOR_SELECTOR)) {
     toggleAttr(separator, FILTERED_OUT_ATTR, !!normalized);
   }

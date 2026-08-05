@@ -3220,10 +3220,10 @@ body.wizard .subgroup-btn .subgroup-ico { display: none; }
 
 /* ── Cog-menu type-to-filter (menu-filter.js) ─────────────────────────────
    Each cog menu opens with a slim filter box above its items: typing narrows
-   the list, ↑/↓ move a cursor, Enter runs the cursor's item. The items are
-   untouched — same set, same order, same handlers — so the click-to-pick path
-   is exactly what it was; this is purely an additional way in.
-   The three data-menu-* attributes below are written ONLY by menu-filter.js and
+   the list, ↑/↓ move a cursor, Enter runs the cursor's item. Name matches
+   precede matches found only in descriptive metadata; each group retains the
+   authored menu order and all items keep their existing handlers.
+   The four data-menu-* attributes below are written ONLY by menu-filter.js and
    are declared by no vnode, so applying a filter to a Preact-rendered menu
    cannot collide with a snapshot re-render. */
 .action-menu-filter {
@@ -3238,6 +3238,11 @@ body.wizard .subgroup-btn .subgroup-ico { display: none; }
    separators, because with an arbitrary subset showing, the semantic grouping
    they divide no longer describes what is on screen. */
 .action-menu [data-menu-filtered-out] { display: none; }
+/* Keep the filter first, then show name hits before tooltip / data-act hits.
+   menu-filter.js sorts keyboard navigation by the same marker, so visual and
+   arrow-key order cannot diverge. No marker is present without a live query. */
+.action-menu [data-menu-match-priority="1"] { order: 1; }
+.action-menu [data-menu-match-priority="2"] { order: 2; }
 /* One cursor shared by mouse and keyboard: menu-filter.js moves this marker on
    hover as well, so a pointer and an ↑/↓ cursor can never light two rows at
    once. It marks the row with a BACKGROUND only — same as .palette-item.selected

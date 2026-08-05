@@ -3,8 +3,9 @@
 // These cover the rules that are easy to regress and invisible in a screenshot:
 // that both theme vocabularies stay searchable without inventing a fused phrase
 // across the two label spans, that the descriptive `title` is search fodder,
-// that order is preserved rather than ranked, and that disabled items are listed
-// but never become the Enter target.
+// that name hits precede descriptive-text hits without disturbing order within
+// either group, and that disabled items are listed but never become the Enter
+// target.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -103,17 +104,27 @@ test('menu filter reuses the palette synonyms', async (t) => {
     ['+ add member', '🧹 cleanup worktrees…', '⧉ clone…', 'delete group']);
 });
 
-test('menu filter preserves menu order instead of ranking', async (t) => {
+test('menu filter puts name hits before descriptive-text hits', async (t) => {
+  const { harness, ...module } = await core(t);
+  const { menu, input } = mountMenu(harness);
+
+  const { visible } = module.applyMenuFilter(menu, 'group', { input });
+  assert.deepEqual(labelsOf(visible),
+    ['⧉ clone…', 'delete group', '+ add member', '🧹 cleanup worktrees…']);
+  assert.equal(module.menuActiveItem(menu).getAttribute('data-act'), 'clone-group',
+    'Enter starts on the first visually ranked result');
+
+  const priorities = visible.map((item) => item.getAttribute(module.MATCH_PRIORITY_ATTR));
+  assert.deepEqual(priorities, ['1', '1', '2', '2']);
+});
+
+test('menu filter preserves authored order within each match group', async (t) => {
   const { harness, ...module } = await core(t);
   const { menu } = mountMenu(harness);
 
-  // "delete group" is the strongest match here — a word-start hit on the label
-  // (score 80) — while the other three match only as a phrase inside their
-  // title (50). Ranked, it would jump to the top; it must stay last, where the
-  // operator has always found it.
-  module.applyMenuFilter(menu, 'group');
-  assert.deepEqual(shown(module, menu),
-    ['+ add member', '🧹 cleanup worktrees…', '⧉ clone…', 'delete group']);
+  const { visible } = module.applyMenuFilter(menu, 'party');
+  assert.deepEqual(labelsOf(visible),
+    ['⧉ clone…', 'delete group', '+ add member', '🧹 cleanup worktrees…']);
 });
 
 test('menu filter hides separators only while a query is live', async (t) => {
@@ -173,11 +184,11 @@ test('a narrowing query moves the cursor off an item it filtered away', async (t
   const { harness, ...module } = await core(t);
   const { menu, input } = mountMenu(harness);
   module.applyMenuFilter(menu, 'group', { input });
-  assert.equal(module.menuActiveItem(menu).getAttribute('data-act'), 'add-member');
+  assert.equal(module.menuActiveItem(menu).getAttribute('data-act'), 'clone-group');
 
-  // "conversation" appears only in add-member's title, so the cursor's item
-  // survives; "clone" drops it, and the cursor must fall to the new top match
-  // rather than pointing at a hidden row.
+  // "conversation" appears only in add-member's title, so the cursor moves to
+  // that result; "clone" drops it, and the cursor must fall to the new top
+  // match rather than pointing at a hidden row.
   module.applyMenuFilter(menu, 'conversation', { input });
   assert.equal(module.menuActiveItem(menu).getAttribute('data-act'), 'add-member');
 
@@ -199,7 +210,7 @@ test('a live query pre-selects its top match so Enter runs without arrowing', as
   }, { hasQuery: true });
 
   assert.equal(handled, true);
-  assert.deepEqual(runs, ['add-member'], 'the topmost match ran');
+  assert.deepEqual(runs, ['clone-group'], 'the topmost name match ran');
 });
 
 test('disabled items are listed but skipped by the keyboard', async (t) => {
