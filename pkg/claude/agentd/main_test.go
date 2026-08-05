@@ -106,6 +106,10 @@ func TestMain(m *testing.M) {
 	code := m.Run()
 	restoreCodexProbe()
 	restoreEscalationProcess()
+	// A real detached session would keep its server and panes alive after its
+	// socket is unlinked. Stop only this process's isolated server before
+	// removing the private socket tree; no server is the normal case.
+	_ = clcommon.TmuxCommand("kill-server").Run()
 	_ = os.RemoveAll(tmuxBase)
 	os.Exit(code)
 }
