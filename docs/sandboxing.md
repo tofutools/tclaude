@@ -205,6 +205,20 @@ siblings and leaves the delegated unit node process-free. A delegation or
 controller failure is reported at launch with an actionable error; tclaude
 never widens a configured limit without the explicit operator override.
 
+Without such a unit, agentd derives the delegated parent from its own
+`/proc/self/cgroup`. Inside a container or an unshared cgroup namespace the
+unified path reads `/`, so that derivation resolves to the root of whatever is
+mounted at `/sys/fs/cgroup`. That works only where the namespace's own cgroup
+root is delegated and writable, as it is for systemd in a container with a
+private cgroup namespace. It does not work where the host hierarchy is mounted
+into the namespace instead — a bubblewrap sandbox binding the host
+`/sys/fs/cgroup` under `--unshare-cgroup`, for example: the derived root is
+root-owned, and the kernel's `nsdelegate` refuses writes to every cgroup outside
+the namespace root, so no other path under that mount serves either. A launch in
+that state fails with an error naming the cause; run agentd outside the cgroup
+namespace as the unit above, or give the namespace a delegated, writable cgroup
+root.
+
 For deployments where tmux panes must survive agentd service upgrades, put the
 `-L tclaude` tmux server in a separate, long-lived systemd unit with
 `Delegate=cpu memory` and `DelegateSubgroup=tclaude-tmux`, then start agentd
