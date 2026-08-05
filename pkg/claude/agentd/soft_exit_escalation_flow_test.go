@@ -13,27 +13,36 @@ import (
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
-// The fixture must never let a scenario signal a real process group.
+// NO TEST IN THIS BINARY MAY SIGNAL A REAL PROCESS GROUP.
 //
 // The ladder's last two rungs are kill(-pgid, SIGTERM) then SIGKILL against
 // the pane process. Only tmux kill-pane is simulated; the signals were the
-// real syscalls in any scenario that did not opt out, and the simulator handed
-// its first session pane pid 1 — whose group spelling, kill(-1, …), is the
-// kernel's wildcard for every process the caller may signal. A scenario that
+// real syscalls in any test that did not opt out, and the simulator handed its
+// first session pane pid 1 — whose group spelling, kill(-1, …), is the
+// kernel's wildcard for every process the caller may signal. A test that
 // reached that rung killed the test binary, its `go test` parent, and on a
 // developer's or agent's machine the shell and harness around them. It left no
 // failure and no stack, so it read as infrastructure trouble rather than as a
 // test doing it (TCL-1035).
 //
-// newFlow now installs a neutral pair, and this pins that it still does: with
-// the production predicate the assertion below reads TRUE for this very
-// process, so deleting the default fails here instead of somewhere silent.
-func TestFlowFixture_NeutralizesEscalationProcessRungs(t *testing.T) {
+// TestMain installs a neutral pair binary-wide, and this pins that it still
+// does. With the production predicate the assertions below read TRUE for this
+// very process, so removing the default fails here instead of somewhere
+// silent.
+//
+// Checked BEFORE and AFTER newFlow deliberately. Before, because the internal
+// `package agentd` tests reach the same ladder without ever calling newFlow —
+// they are the reason the default lives in TestMain rather than in the flow
+// fixture. After, because newFlow installs a wall of its own hooks and must
+// not undo this one.
+func TestTestBinary_NeutralizesEscalationProcessRungs(t *testing.T) {
+	assert.False(t, agentd.LifecycleProcessAliveForTest(os.Getpid()),
+		"TestMain must neutralize the escalation ladder's process rungs for the whole "+
+			"binary: this pid is certainly alive, so a true here means the production "+
+			"predicate is installed and some test can reach kill(-pgid, ...) for real")
 	newFlow(t)
 	assert.False(t, agentd.LifecycleProcessAliveForTest(os.Getpid()),
-		"newFlow must neutralize the escalation ladder's process rungs: this pid is "+
-			"certainly alive, so a true here means the production predicate is installed "+
-			"and some scenario can reach kill(-pgid, ...) for real")
+		"newFlow must not undo TestMain's neutral pair")
 }
 
 // Flow coverage for the soft-exit escalation ladder (TCL-1001).

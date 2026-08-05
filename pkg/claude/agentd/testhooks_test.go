@@ -452,8 +452,13 @@ func SetSoftExitEscalationProcessForTest(
 // than an oversight: calling the signaller to check it would deliver a real
 // signal on exactly the runs where the default went missing — the failure the
 // check exists to catch. alive=false stands the ladder down before any signal
-// is attempted, so it is the safe end to observe and it carries the whole
-// property.
+// is attempted, so it is the safe end to observe.
+//
+// That "before" is a property of escalateStuckSoftExit's current ordering
+// (waitForPaneProcessGone, then signal), not a law: a future reorder that
+// signalled first would leave this check green while a production signaller
+// fired. Worth knowing, and still the right trade — the alternative is a check
+// that delivers a real signal on exactly the runs where the default is gone.
 func LifecycleProcessAliveForTest(pid int) bool { return lifecycleProcessAlive(pid) }
 
 // SetSoftExitEscalationPollForTest observes each watchdog probe.

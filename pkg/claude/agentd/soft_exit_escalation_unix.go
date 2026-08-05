@@ -27,7 +27,14 @@ var softExitSignalLadder = []struct {
 // and a harness that is being held open by a child (a shell tool, an indexer)
 // is precisely the case the ladder exists for. Signalling only the leader
 // would leave that child owning the terminal.
-var signalLifecycleProcessGroup = func(pid int, sig syscall.Signal) error {
+var signalLifecycleProcessGroup = signalProcessGroup
+
+// signalProcessGroup is the production implementation, named rather than
+// anonymous so a unit test can exercise the REAL refusals directly. The var
+// above is swapped binary-wide by TestMain (TCL-1035), so a test that went
+// through it would be asserting against a no-op stub — which is how the first
+// version of that test managed to pass and then fail for the right reason.
+func signalProcessGroup(pid int, sig syscall.Signal) error {
 	pgid, err := syscall.Getpgid(pid)
 	if err != nil {
 		return err
@@ -54,8 +61,8 @@ var signalLifecycleProcessGroup = func(pid int, sig syscall.Signal) error {
 	// legitimate call is ever spelled this way, and the cost of being wrong is
 	// every process the user owns.
 	//
-	// Tests can no longer produce it — the flow fixture neutralizes these rungs
-	// by default (TCL-1035) — which removes the only party that was ever
+	// Tests can no longer produce it — TestMain neutralizes these rungs for the
+	// whole test binary (TCL-1035) — which removes the only party that was ever
 	// observed doing it, not the exposure itself.
 	if pgid <= 1 {
 		return fmt.Errorf("refusing to signal process group %d: not a pane's group", pgid)

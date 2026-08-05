@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -546,14 +547,31 @@ func TestRetire_DeleteWorktreeUnkillableAgentPostsKeptNotice(t *testing.T) {
 	// Nothing the daemon does can end this process: the signals are delivered
 	// to a stub that keeps reporting the pid alive.
 	//
-	// Installed AFTER newFlow, which now installs a neutral pair by default
-	// (TCL-1035) — installing before it would be silently overwritten and this
-	// scenario would stop reaching the signal rungs it exists for.
+	// Installed AFTER newFlow and TestMain's binary-wide neutral pair
+	// (TCL-1035) — installing before them would be silently overwritten and
+	// this scenario would stop reaching the signal rungs it exists for.
 	// cleanupAfterBackgroundDrain is what keeps the restore from racing the
 	// ladder goroutine that reads these hooks.
+	//
+	// The recorded signals are ASSERTED at the end, and that is what makes the
+	// ordering above enforce itself rather than be a comment. Without the
+	// assertion this scenario passes either way: the kill-resistant pane keeps
+	// the session listed, the grace expires and the kept notice is posted
+	// whether the ladder reached the signal rungs or stood down at kill-pane.
+	// Someone reinstating the old ordering would get a green test that had
+	// quietly stopped covering the path it is named for.
+	var (
+		signalMu  sync.Mutex
+		signalled []syscall.Signal
+	)
 	cleanupAfterBackgroundDrain(t, agentd.SetSoftExitEscalationProcessForTest(
 		func(int) bool { return true },
-		func(int, syscall.Signal) error { return nil },
+		func(_ int, sig syscall.Signal) error {
+			signalMu.Lock()
+			defer signalMu.Unlock()
+			signalled = append(signalled, sig)
+			return nil
+		},
 	))
 
 	const conv = "rwhu-1111-2222-3333-4444"
@@ -588,4 +606,10 @@ func TestRetire_DeleteWorktreeUnkillableAgentPostsKeptNotice(t *testing.T) {
 	require.NotEmpty(t, msgs, "a kept (agent-never-exited) outcome must post a human notice")
 	assert.Contains(t, msgs[0].Subject, "kept")
 	assert.Contains(t, msgs[0].Body, "did not exit")
+
+	signalMu.Lock()
+	defer signalMu.Unlock()
+	assert.Equal(t, []syscall.Signal{syscall.SIGTERM, syscall.SIGKILL}, signalled,
+		"this scenario exists to cover a process that survives the WHOLE ladder; "+
+			"an empty list means it stood down at kill-pane and stopped covering it")
 }
