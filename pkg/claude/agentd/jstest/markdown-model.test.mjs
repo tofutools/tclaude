@@ -247,16 +247,22 @@ test('only a daemon-confirmed raster attachment can be shown as an image', async
     { id: 1, filename: 'notes.md', url: '/api/human-messages/9/attachments/1', markdown: true },
     { id: 2, filename: 'logo.svg', url: '/api/human-messages/9/attachments/2' },
     { id: 3, filename: 'claim.png', url: '/api/human-messages/9/attachments/3', previewable: false },
-    // A published file the daemon gave no route to is not addressable either.
+    // A published file the daemon gave no route to is not addressable either,
+    // and neither is one whose route is not the same-origin path the daemon
+    // mints — the viewer checks the shape rather than trusting the field.
     { id: 4, filename: 'orphan.png', url: '', previewable: true },
+    { id: 5, filename: 'offsite.png', url: 'https://elsewhere.invalid/x.png', previewable: true },
+    { id: 6, filename: 'schemeless.png', url: '//elsewhere.invalid/x.png', previewable: true },
   ];
   for (const source of [
     '![doc](notes.md)', '![logo](logo.svg)', '![claim](claim.png)', '![orphan](orphan.png)',
+    '![offsite](offsite.png)', '![schemeless](schemeless.png)',
   ]) {
     const tree = markdownToTree(parser, source, { attachments });
     assert.equal(findAll(tree, 'img').length, 0, `${source} builds no image`);
     assert.equal(findAll(tree, REMOTE_IMAGE).length, 0, `${source} offers nothing to load`);
-    assert.match(tree.map(text).join(''), /doc|logo|claim|orphan/, `${source} keeps its alt text`);
+    assert.match(tree.map(text).join(''), /doc|logo|claim|orphan|offsite|schemeless/,
+      `${source} keeps its alt text`);
   }
 });
 

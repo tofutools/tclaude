@@ -148,9 +148,17 @@ function imageNameKeys(value) {
 function attachmentImageIndex(attachments) {
   const index = new Map();
   for (const attachment of attachments || []) {
-    if (!attachment?.previewable || !attachment.url) continue;
+    if (!attachment?.previewable) continue;
+    const url = String(attachment.url ?? '');
+    // The route is the daemon's to mint, and every one it mints is a
+    // root-relative path on this origin. Checking the shape rather than
+    // trusting the field keeps the module's own invariant true — an image src
+    // is inline, or it is same-origin, or it is held back — whatever a future
+    // snapshot puts in `url`. `//host/x` is a root-relative-looking absolute
+    // URL, which is why the second character matters.
+    if (!url.startsWith('/') || url.startsWith('//')) continue;
     for (const key of imageNameKeys(attachment.filename)) {
-      if (!index.has(key)) index.set(key, String(attachment.url));
+      if (!index.has(key)) index.set(key, url);
     }
   }
   return index;
