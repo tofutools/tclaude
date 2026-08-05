@@ -2307,6 +2307,9 @@ func resumeLaunchCmdWithStackedProof(
 	}
 	outerLayer := implementation.UsesTclaudeLayer()
 	stacked := implementation.UsesNestedHarnessSandbox()
+	// Declared beside outerLayer because it answers the same kind of question
+	// for every gate below: whether this launch has an access boundary at all.
+	unconfined := implementation.OmitsOSConfinement()
 	if outerLayer {
 		// OpenCode's outer wall belongs around agentd's authoritative serve
 		// process, not this interactive attach pane. The agentd resume path
@@ -2348,17 +2351,38 @@ func resumeLaunchCmdWithStackedProof(
 		if err != nil {
 			return "", "", nil, fmt.Errorf("sandbox_profile_changed: %w", err)
 		}
-		renderedAxes, err := sandboxpolicy.PlannedEffectiveAccessAxes(validated.Effective)
-		if err != nil {
-			return "", "", nil, fmt.Errorf("sandbox_profile_changed: %w", err)
+		// Materializing the socket allowlist is enforcement work, and an
+		// unconfined launch enforces no socket policy, so it is skipped here.
+		//
+		// Being precise about what that buys, because the obvious claim is
+		// wrong in both directions. It creates no state —
+		// MaterializeUnixSocketList only globs, Lstats and EvalSymlinks — so
+		// there is no junk to avoid. It CAN refuse: a non-IsNotExist
+		// Lstat/EvalSymlinks error, or an allow row a symlink retarget moved
+		// beneath a protected directory, becomes sandbox_profile_changed. But
+		// RevalidateSnapshot immediately above resolves the same paths (and a
+		// glob's literal ancestor) and refuses FIRST on every such case that
+		// has been measured — both an EACCES parent and a glob under one. So
+		// this skip is defence in depth, not a fix for a reachable refusal, and
+		// a resource-only conversation whose socket allow path becomes
+		// unreadable between launches still fails at RevalidateSnapshot.
+		//
+		// RevalidateSnapshot is deliberately NOT skipped: it validates the
+		// whole snapshot, and the profile and environment it returns are what
+		// every resume is built from.
+		if !unconfined {
+			renderedAxes, axesErr := sandboxpolicy.PlannedEffectiveAccessAxes(validated.Effective)
+			if axesErr != nil {
+				return "", "", nil, fmt.Errorf("sandbox_profile_changed: %w", axesErr)
+			}
+			materialization, prepErr := sandboxpolicy.PrepareUnixSocketLaunch(
+				renderedAxes.UnixSockets)
+			if prepErr != nil {
+				return "", "", nil, fmt.Errorf("sandbox_profile_changed: %w", prepErr)
+			}
+			sandboxpolicy.SetUnixSocketLaunchMaterialization(
+				&validated, materialization)
 		}
-		materialization, err := sandboxpolicy.PrepareUnixSocketLaunch(
-			renderedAxes.UnixSockets)
-		if err != nil {
-			return "", "", nil, fmt.Errorf("sandbox_profile_changed: %w", err)
-		}
-		sandboxpolicy.SetUnixSocketLaunchMaterialization(
-			&validated, materialization)
 		effectiveSandbox = &validated
 		effectiveProfile = validated.Effective
 		shellEnvironment = make(map[string]string, len(validated.Effective.Environment))
@@ -2470,7 +2494,6 @@ func resumeLaunchCmdWithStackedProof(
 	//
 	// The rules are still disclosed, in the same words a fresh launch uses, so
 	// a resumed pane does not look quieter than the one it replaced.
-	unconfined := implementation.OmitsOSConfinement()
 	if effectiveSandbox != nil && unconfined {
 		if notice, ok := sandboxpolicy.UnconfinedAccessRulesNotice(
 			implementation, effectiveProfile,
