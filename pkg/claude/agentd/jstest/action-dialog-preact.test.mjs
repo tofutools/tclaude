@@ -589,3 +589,174 @@ test('export request errors prefer friendly JSON error fields and retain plain t
     /plain failure/,
   );
 });
+
+// The sandbox-implementation picker records durable RELAUNCH intent. Its whole
+// correctness rests on two things the row cannot supply: the posture it edits
+// comes from the server, and the value it sends is the one the operator picked.
+
+function sandboxImplPosture(overrides = {}) {
+  return {
+    conv_id: 'agent-conv',
+    harness: 'claude',
+    sandbox_implementation: 'harness-builtin',
+    sandbox: 'on',
+    sandbox_source: 'group default profile "confined"',
+    online: false,
+    resource_cgroup: false,
+    ...overrides,
+  };
+}
+
+function sandboxImplActions(calls, overrides = {}) {
+  return {
+    loadSandboxImpl: async () => sandboxImplPosture(),
+    assignSandboxImpl: async (value) => { calls.push(['assign', value]); },
+    sandboxImplOptions: () => ([
+      { value: 'harness-builtin', label: 'Claude Code built-in', descr: 'Claude Code owns OS-level containment.' },
+      { value: 'resource-only', label: 'Resource limits only', descr: 'No access confinement; runs in its own cgroup.' },
+      { value: 'tclaude-layer', label: 'tclaude layer', descr: 'bubblewrap namespace.', experimental: true },
+    ]),
+    sandboxModes: () => ['inherit', 'on', 'off'],
+    ...overrides,
+  };
+}
+
+test('sandbox-impl dialog renders the SERVER posture, not the row it was opened from', async (t) => {
+  const calls = [];
+  // The descriptor deliberately carries no implementation — a row's recorded
+  // value describes the last launch, which is a different question.
+  const { harness, host, cleanup } = await mountDialogs(
+    t, 'sandbox-impl', { conv: 'agent-conv', label: 'worker', harness: 'claude' },
+    sandboxImplActions(calls),
+  );
+  t.after(cleanup);
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+
+  assert.ok(host.querySelector('#sandbox-impl-modal'));
+  assert.equal(host.querySelector('#sandbox-impl-meta').textContent.trim(), 'worker');
+  const options = host.querySelectorAll('#sandbox-impl-options input[type=radio]');
+  assert.equal(options.length, 3, 'every catalog option is offered');
+  const selected = host.querySelectorAll('#sandbox-impl-options .sandbox-impl-option.selected');
+  assert.equal(selected.length, 1, 'exactly one implementation reads as chosen');
+  assert.equal(selected[0].querySelector('input[type=radio]').value, 'harness-builtin',
+    'the dialog opens on the posture the server reported');
+  assert.match(host.querySelector('#sandbox-impl-options').textContent, /current/,
+    'the recorded implementation is marked so the operator can see what changes');
+  assert.match(host.querySelector('#sandbox-impl-options').textContent, /own cgroup/,
+    'each option carries its catalog description — the reason a picker was chosen');
+
+  // Assign is inert until the operator actually moves off the recorded value.
+  assert.equal(host.querySelector('#sandbox-impl-assign').disabled, true);
+});
+
+test('sandbox-impl dialog assigns the picked implementation and the optional mode pin', async (t) => {
+  const calls = [];
+  const { harness, host, cleanup } = await mountDialogs(
+    t, 'sandbox-impl', { conv: 'agent-conv', label: 'worker', harness: 'claude' },
+    sandboxImplActions(calls),
+  );
+  t.after(cleanup);
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+
+  const resourceOnly = [...host.querySelectorAll('#sandbox-impl-options input[type=radio]')]
+    .find((option) => option.value === 'resource-only');
+  await harness.act(() => resourceOnly.dispatchEvent(
+    new harness.window.Event('change', { bubbles: true })));
+  const assign = host.querySelector('#sandbox-impl-assign');
+  assert.equal(assign.disabled, false, 'a real change enables the action');
+
+  assign.click();
+  await harness.act(() => Promise.resolve());
+  assert.deepEqual(calls, [['assign', {
+    conv: 'agent-conv', label: 'worker', implementation: 'resource-only', sandbox: '',
+  }]], 'an unpinned mode is sent EMPTY so the server decides what to carry forward');
+});
+
+test('sandbox-impl dialog surfaces a refusal instead of closing', async (t) => {
+  const calls = [];
+  const { harness, host, cleanup } = await mountDialogs(
+    t, 'sandbox-impl', { conv: 'agent-conv', label: 'worker' },
+    sandboxImplActions(calls, {
+      assignSandboxImpl: async () => {
+        throw new Error('sandbox implementation resource-only needs a per-agent cgroup this host cannot create');
+      },
+    }),
+  );
+  t.after(cleanup);
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+
+  const resourceOnly = [...host.querySelectorAll('#sandbox-impl-options input[type=radio]')]
+    .find((option) => option.value === 'resource-only');
+  await harness.act(() => resourceOnly.dispatchEvent(
+    new harness.window.Event('change', { bubbles: true })));
+  host.querySelector('#sandbox-impl-assign').click();
+  await harness.act(() => Promise.resolve());
+
+  assert.ok(host.querySelector('#sandbox-impl-modal'), 'a refused assignment keeps the dialog open');
+  assert.match(host.querySelector('#sandbox-impl-error').textContent, /cannot create/,
+    'the host-capability refusal is the operator’s next action — it must be readable');
+  assert.equal(host.querySelector('#sandbox-impl-assign').disabled, false,
+    'the operator can retry or pick another implementation');
+});
+
+test('sandbox-impl dialog reports a failed posture load rather than offering a guess', async (t) => {
+  const calls = [];
+  const { harness, host, cleanup } = await mountDialogs(
+    t, 'sandbox-impl', { conv: 'agent-conv', label: 'worker' },
+    sandboxImplActions(calls, {
+      loadSandboxImpl: async () => { throw new Error('durable relaunch profile is missing'); },
+    }),
+  );
+  t.after(cleanup);
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+
+  assert.match(host.querySelector('#sandbox-impl-load-error').textContent, /profile is missing/);
+  assertAbsent(host.querySelector('#sandbox-impl-options'),
+    'with no known posture there is nothing to pick FROM — offering the catalog ' +
+    'would invite an assignment made blind');
+  assert.equal(host.querySelector('#sandbox-impl-assign').disabled, true);
+});
+
+test('sandbox-impl dialog sends an explicitly pinned harness mode', async (t) => {
+  const calls = [];
+  const { harness, host, cleanup } = await mountDialogs(
+    t, 'sandbox-impl', { conv: 'agent-conv', label: 'worker' },
+    sandboxImplActions(calls),
+  );
+  t.after(cleanup);
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+
+  const mode = host.querySelector('#sandbox-impl-mode');
+  assert.ok(mode, 'a harness with launch-time sandbox modes gets the pin row');
+  assert.equal(mode.querySelectorAll('option').length, 4,
+    'the modes plus the leave-it-to-the-server default');
+  [...mode.options].forEach((option) => option.removeAttribute('selected'));
+  mode.querySelector('option[value="on"]').setAttribute('selected', '');
+  await harness.act(() => mode.dispatchEvent(new harness.window.Event('change', { bubbles: true })));
+
+  const resourceOnly = [...host.querySelectorAll('#sandbox-impl-options input[type=radio]')]
+    .find((option) => option.value === 'resource-only');
+  await harness.act(() => resourceOnly.dispatchEvent(
+    new harness.window.Event('change', { bubbles: true })));
+  host.querySelector('#sandbox-impl-assign').click();
+  await harness.act(() => Promise.resolve());
+
+  assert.deepEqual(calls, [['assign', {
+    conv: 'agent-conv', label: 'worker', implementation: 'resource-only', sandbox: 'on',
+  }]]);
+});
+
+test('sandbox-impl dialog hides the mode pin for a harness with no launch-time modes', async (t) => {
+  const calls = [];
+  const { harness, host, cleanup } = await mountDialogs(
+    t, 'sandbox-impl', { conv: 'agent-conv', label: 'worker' },
+    sandboxImplActions(calls, { sandboxModes: () => [] }),
+  );
+  t.after(cleanup);
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+
+  assertAbsent(host.querySelector('#sandbox-impl-mode'),
+    'a harness configured out of band has no mode to pin, so offering the row ' +
+    'would invite a value the server refuses');
+  assert.ok(host.querySelector('#sandbox-impl-options'), 'the implementation choice remains');
+});
