@@ -119,12 +119,54 @@ func configuredResourceDelegationDir() string {
 // its parent. An empty request writes nothing at all rather than writing an
 // empty string, which keeps a launch working on a delegated node whose
 // cgroup.subtree_control is not writable but already carries the controllers.
-func enableDelegatedControllers(delegation string, toEnable []string) error {
+var enableDelegatedControllers = func(delegation string, toEnable []string) error {
 	if len(toEnable) == 0 {
 		return nil
 	}
 	return os.WriteFile(filepath.Join(delegation, "cgroup.subtree_control"),
 		[]byte(strings.Join(toEnable, " ")), 0o644)
+}
+
+// resourceDelegationProcessCount reports how many processes a cgroup holds
+// directly, and whether that could be established at all. The two are different
+// answers: a node proven empty rules a diagnosis out, while a cgroup.procs the
+// launch could not read — which the same access control that refused the write
+// can also cause — leaves it open.
+func resourceDelegationProcessCount(dir string) (int, bool) {
+	raw, err := os.ReadFile(filepath.Join(dir, "cgroup.procs"))
+	if err != nil {
+		return 0, false
+	}
+	return len(strings.Fields(string(raw))), true
+}
+
+// resourceDelegationBusyHint explains an EBUSY refusal from a delegated node's
+// cgroup.subtree_control. cgroup v2 forbids a cgroup from both holding processes
+// of its own and enabling controllers for its children, so a delegated node that
+// anything still lives in cannot be configured at all — and the kernel reports
+// that as "device or resource busy", which names neither the rule nor the
+// processes keeping it in force.
+//
+// The returned text is empty when the refusal was something else, or when the
+// node is proven process-free and so cannot be failing this rule, so the hint
+// only appears where it is genuinely the cause.
+func resourceDelegationBusyHint(delegation string, err error) string {
+	if !errors.Is(err, syscall.EBUSY) {
+		return ""
+	}
+	held, counted := resourceDelegationProcessCount(delegation)
+	if counted && held == 0 {
+		return ""
+	}
+	population := fmt.Sprintf("%s still holds %d process(es) of its own", delegation, held)
+	if !counted {
+		// EBUSY on this write has no other cause worth naming, so an uncountable
+		// node still gets the rule and the fix — without asserting a number the
+		// launch could not read.
+		population = fmt.Sprintf("%s holds processes of its own (its cgroup.procs could not be read to say how many)", delegation)
+	}
+	return fmt.Sprintf("%s, and cgroup v2 refuses to enable controllers in a cgroup that is not process-free; every process there has to move into a child cgroup first. DelegateSubgroup=%s arranges that for a systemd service, whose main process systemd forks itself, but it has no effect on a scope: a scope's processes are started by something else and merely registered into it, so nothing places them in the subgroup. Under a scope, move into a %s child from the launcher before starting anything else",
+		population, resourceSupervisorCgroup, resourceSupervisorCgroup)
 }
 
 // delegationWriteRefused reports the failures that mean the delegated node
@@ -226,17 +268,30 @@ func PrepareResourceCgroup(sessionID string, limits sandboxpolicy.ResourceLimits
 		}
 	}
 	if err := enableDelegatedControllers(delegation, toEnable); err != nil {
+		busy := resourceDelegationBusyHint(delegation, err)
 		switch {
 		case !limits.Enabled():
 			// No ceiling depends on these controllers, and the boundary is still
-			// worth creating for its process tracking and OOM attribution.
-			slog.Warn("resource cgroup: cannot enable delegated controllers for accounting; per-agent counters stay unavailable",
+			// worth creating for its process tracking and OOM attribution. The
+			// warning is the only trace this degradation leaves, so it carries the
+			// cause when one can be established rather than only the raw errno.
+			attrs := []any{
 				"session_id", sessionID, "delegation", delegation,
-				"controllers", strings.Join(wanted, ", "), "error", err)
+				"controllers", strings.Join(wanted, ", "), "error", err,
+			}
+			if busy != "" {
+				attrs = append(attrs, "cause", busy)
+			}
+			slog.Warn("resource cgroup: cannot enable delegated controllers for accounting; per-agent counters stay unavailable",
+				attrs...)
+		case busy != "":
+			return "", func() {}, fmt.Errorf("enable delegated cgroup v2 controllers %s: %w (%s)", strings.Join(wanted, ", "), err, busy)
 		case delegationWriteRefused(err):
 			return "", func() {}, fmt.Errorf("enable delegated cgroup v2 controllers %s: %w (%s)", strings.Join(wanted, ", "), err, resourceDelegationDeniedHint(delegation))
 		default:
-			return "", func() {}, fmt.Errorf("enable delegated cgroup v2 controllers %s: %w (the external --resource-delegation-dir runtime needs Delegate=cpu memory, or tclaude-agentd.service needs Delegate=cpu memory and DelegateSubgroup=%s; a delegated node that still holds processes cannot enable controllers at all, which is what DelegateSubgroup avoids)", strings.Join(wanted, ", "), err, resourceSupervisorCgroup)
+			// A node still holding processes reports EBUSY and is diagnosed above,
+			// so this carries only the delegation advice that remains.
+			return "", func() {}, fmt.Errorf("enable delegated cgroup v2 controllers %s: %w (the external --resource-delegation-dir runtime needs Delegate=cpu memory, or tclaude-agentd.service needs Delegate=cpu memory and DelegateSubgroup=%s)", strings.Join(wanted, ", "), err, resourceSupervisorCgroup)
 		}
 	}
 	digest := sha256.Sum256([]byte(sessionID))
@@ -399,6 +454,10 @@ func runResourceLimitExec(cgroupDir, sessionID, command string, allowUnenforced 
 	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return errors.New("resource-limit-exec cgroup is not a real directory")
 	}
+	// Read the counter before the workload can contribute to it. A durable
+	// managed-server boundary is reused across relaunches, so a nonzero reading
+	// here belongs to an earlier one.
+	oomBaseline := ReadResourceCgroupOOMKills(cgroupDir)
 	gateRead, gateWrite, err := os.Pipe()
 	if err != nil {
 		return err
@@ -433,7 +492,7 @@ func runResourceLimitExec(cgroupDir, sessionID, command string, allowUnenforced 
 		return fmt.Errorf("attach workload to resource cgroup before release: %w", moveErr)
 	}
 	waitErr := child.Wait()
-	if ResourceCgroupOOMKilled(cgroupDir) {
+	if ResourceCgroupOOMDeath(cgroupDir, oomBaseline, waitErr) {
 		if err := recordResourceLimitOOMForExec(sessionID); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: record resource-limit OOM outcome: %v\n", err)
 		}
@@ -446,10 +505,15 @@ func runResourceLimitExec(cgroupDir, sessionID, command string, allowUnenforced 
 	}
 	var exitErr *exec.ExitError
 	if errors.As(waitErr, &exitErr) {
-		os.Exit(resourceLimitChildExitCode(exitErr))
+		// Production never returns from this; the seam exists so a test can drive
+		// the non-zero exits the OOM attribution above is decided on.
+		resourceLimitExecExit(resourceLimitChildExitCode(exitErr))
+		return nil
 	}
 	return waitErr
 }
+
+var resourceLimitExecExit = os.Exit
 
 func resourceLimitChildExitCode(exitErr *exec.ExitError) int {
 	if status, ok := exitErr.Sys().(syscall.WaitStatus); ok && status.Signaled() {
@@ -458,10 +522,20 @@ func resourceLimitChildExitCode(exitErr *exec.ExitError) int {
 	return exitErr.ExitCode()
 }
 
-func ResourceCgroupOOMKilled(dir string) bool {
+// ReadResourceCgroupOOMKills reads how many OOM kills the kernel has performed
+// in the cgroup at dir since that cgroup was created. The counter only ever
+// rises while the cgroup lives, so it says nothing on its own about which
+// launch, or which process, the kills belong to; take a reading when a workload
+// starts and hand it to ResourceCgroupOOMDeath when that workload exits.
+func ReadResourceCgroupOOMKills(dir string) ResourceCgroupOOMCount {
+	// An empty dir is a launch with no boundary at all; joining it would read
+	// memory.events relative to the working directory.
+	if dir == "" {
+		return ResourceCgroupOOMCount{}
+	}
 	raw, err := os.ReadFile(filepath.Join(dir, "memory.events"))
 	if err != nil {
-		return false
+		return ResourceCgroupOOMCount{}
 	}
 	for _, line := range strings.Split(string(raw), "\n") {
 		fields := strings.Fields(line)
@@ -469,7 +543,69 @@ func ResourceCgroupOOMKilled(dir string) bool {
 			continue
 		}
 		count, parseErr := strconv.ParseUint(fields[1], 10, 64)
-		return parseErr == nil && count > 0
+		if parseErr != nil {
+			return ResourceCgroupOOMCount{}
+		}
+		return ResourceCgroupOOMCount{kills: count, known: true}
 	}
-	return false
+	return ResourceCgroupOOMCount{}
+}
+
+// ResourceCgroupOOMDeath reports whether a workload that has just exited was
+// killed by the memory ceiling of the cgroup at dir. baseline is the
+// ReadResourceCgroupOOMKills reading taken when that workload was started, and
+// waitErr is what waiting on it returned.
+func ResourceCgroupOOMDeath(dir string, baseline ResourceCgroupOOMCount, waitErr error) bool {
+	return resourceLimitOOMDeath(baseline, ReadResourceCgroupOOMKills(dir), waitErr)
+}
+
+// resourceLimitOOMDeath decides whether the memory ceiling is what ended this
+// workload. Two facts have to line up, because either alone misattributes.
+//
+// A rise in the counter is necessary: memory.events counts oom_kill for the life
+// of the cgroup, which spans every relaunch into a durable managed-server
+// boundary and every earlier kill the workload shrugged off, so only kills since
+// this workload started can bear on how it ended. A reading that could not be
+// taken at either end leaves the rise unestablished, which attributes nothing
+// rather than treating an unknown baseline as zero.
+//
+// A rise is not sufficient. The kernel kills the greediest task in the cgroup,
+// which is frequently a descendant the harness survives — an agent that runs one
+// memory-hungry child and carries on is the ordinary case, not the exceptional
+// one. The workload also has to have died of a kill, per
+// resourceLimitWorkloadDiedOnKill.
+//
+// The pairing still under-reports rather than over-reports: a harness that exits
+// with some other non-zero status because a descendant was killed reads as the
+// ordinary failure it is, and a workload killed for an unrelated reason after
+// surviving an earlier OOM is misread. What it will not do is report an OOM
+// death for a workload that exited cleanly, which is the misattribution an
+// operator actually sees.
+func resourceLimitOOMDeath(before, after ResourceCgroupOOMCount, waitErr error) bool {
+	if !before.known || !after.known || after.kills <= before.kills {
+		return false
+	}
+	return resourceLimitWorkloadDiedOnKill(waitErr)
+}
+
+// resourceLimitWorkloadDiedOnKill reports whether a wait result is consistent
+// with SIGKILL, the signal the OOM killer sends, having ended the workload.
+//
+// Both shapes it can take are real, and which one appears is not tclaude's
+// choice. A workload killed directly is reported as signalled. But the process
+// waited on here is a shell wrapping the harness, and /bin/sh forks rather than
+// execs the command it is given on the systems this runs on — so the harness the
+// kernel actually picks is a child of that shell. The shell reaps it and exits
+// normally, relaying the death as the conventional 128+signal status. Reading
+// only the signalled shape would therefore miss every real OOM on the pane path,
+// and on any sandboxed managed server, whose bwrap relays the same way.
+func resourceLimitWorkloadDiedOnKill(waitErr error) bool {
+	var exitErr *exec.ExitError
+	if !errors.As(waitErr, &exitErr) {
+		return false
+	}
+	if status, ok := exitErr.Sys().(syscall.WaitStatus); ok && status.Signaled() {
+		return status.Signal() == syscall.SIGKILL
+	}
+	return exitErr.ExitCode() == resourceLimitKilledExitCode
 }

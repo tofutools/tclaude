@@ -3,6 +3,7 @@ package session
 import (
 	"fmt"
 	"strings"
+	"syscall"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
@@ -103,6 +104,23 @@ func recordResourceLimitRuntimeOverride(sessionID string, cause error) error {
 var recordResourceLimitRuntimeOverrideForExec = recordResourceLimitRuntimeOverride
 
 const ResourceLimitOOMExitReason = "resource_limit_oom"
+
+// resourceLimitKilledExitCode is the status a shell reports for a command its
+// own child died on SIGKILL for, by the conventional 128+signal encoding that
+// resourceLimitChildExitCode also produces.
+const resourceLimitKilledExitCode = 128 + int(syscall.SIGKILL)
+
+// ResourceCgroupOOMCount is one reading of a cgroup's cumulative OOM kill
+// counter. The zero value means the counter could not be read, which attributes
+// nothing: a launch that never established a baseline must not later manufacture
+// a rise out of the absence of one.
+type ResourceCgroupOOMCount struct {
+	kills uint64
+	known bool
+}
+
+// Kills reports the counter value and whether it could be read at all.
+func (c ResourceCgroupOOMCount) Kills() (uint64, bool) { return c.kills, c.known }
 
 var recordResourceLimitOOMForExec = func(sessionID string) error {
 	return db.SetSessionExitReason(sessionID, ResourceLimitOOMExitReason)

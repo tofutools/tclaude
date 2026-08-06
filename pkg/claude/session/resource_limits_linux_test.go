@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"syscall"
 	"testing"
 
@@ -17,19 +18,20 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
+// fakeCurrentResourceCgroup fakes the launching process's own cgroup and returns
+// the delegated parent a launch derives from it.
+//
+// The unified path is pinned rather than read from the host, and pinned to the
+// shape the docs prescribe: agentd in a tclaude-supervisor subgroup whose parent
+// is the delegation. Reading the real /proc/self/cgroup made every test using
+// this helper exercise whichever shape the host happened to be configured for —
+// and write its controller files to the process's own cgroup rather than the
+// derived delegation, leaving the delegation bare on correctly configured hosts.
+// resourceDelegationDir's own unit test covers the derivation for both shapes.
 func fakeCurrentResourceCgroup(t *testing.T, controllers, enabled string) string {
 	t.Helper()
-	t.Setenv(ResourceDelegationDirEnv, "")
-	t.Setenv("TMUX", "")
-	oldRoot := resourceCgroupRoot
-	resourceCgroupRoot = t.TempDir()
-	t.Cleanup(func() { resourceCgroupRoot = oldRoot })
-	dir, err := currentCgroupDir()
-	require.NoError(t, err)
-	require.NoError(t, os.MkdirAll(dir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "cgroup.controllers"), []byte(controllers), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "cgroup.subtree_control"), []byte(enabled), 0o644))
-	return dir
+	return fakeDerivedResourceCgroup(t,
+		"/system.slice/tclaude-agentd.service/"+resourceSupervisorCgroup, controllers, enabled)
 }
 
 // captureWarnings redirects slog for one test. An accounting degradation has no
@@ -184,6 +186,12 @@ func TestWrapResourceLimitedCommandRendersIndependentAxes(t *testing.T) {
 	require.NoError(t, err)
 	var cgroup string
 	for _, entry := range entries {
+		// The supervisor subgroup shares the tclaude- prefix and sits beside the
+		// workload cgroups in every correctly delegated tree, so a scan for the
+		// launch's own boundary has to step over it the way production does.
+		if entry.Name() == resourceSupervisorCgroup {
+			continue
+		}
 		if entry.IsDir() && len(entry.Name()) > len("tclaude-") && entry.Name()[:len("tclaude-")] == "tclaude-" {
 			cgroup = filepath.Join(current, entry.Name())
 		}
@@ -396,14 +404,224 @@ func TestValidatePreparedResourceCgroupAcceptsRemovedAxesOnlyAtMax(t *testing.T)
 	require.NoError(t, ValidatePreparedResourceCgroup(dir, sandboxpolicy.ResourceLimits{}))
 }
 
-func TestResourceCgroupOOMKilled(t *testing.T) {
+func TestReadResourceCgroupOOMKillsReadsTheCumulativeCounter(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "memory.events"),
-		[]byte("low 0\nhigh 0\nmax 1\noom 1\noom_kill 1\n"), 0o644))
-	assert.True(t, ResourceCgroupOOMKilled(dir))
+		[]byte("low 0\nhigh 0\nmax 1\noom 1\noom_kill 3\n"), 0o644))
+	kills, known := ReadResourceCgroupOOMKills(dir).Kills()
+	assert.True(t, known)
+	assert.Equal(t, uint64(3), kills)
+
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "memory.events"),
 		[]byte("oom_kill 0\n"), 0o644))
-	assert.False(t, ResourceCgroupOOMKilled(dir))
+	kills, known = ReadResourceCgroupOOMKills(dir).Kills()
+	assert.True(t, known, "zero is a reading, not the absence of one")
+	assert.Equal(t, uint64(0), kills)
+
+	// A cgroup whose counters were never delegated has no memory.events at all.
+	// Reading that as zero would let a later valid reading look like a rise.
+	_, known = ReadResourceCgroupOOMKills(t.TempDir()).Kills()
+	assert.False(t, known)
+	_, known = ReadResourceCgroupOOMKills("").Kills()
+	assert.False(t, known, "a launch with no boundary must not read a relative path")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "memory.events"),
+		[]byte("oom_kill notanumber\n"), 0o644))
+	_, known = ReadResourceCgroupOOMKills(dir).Kills()
+	assert.False(t, known)
+}
+
+func oomCount(kills uint64) ResourceCgroupOOMCount {
+	return ResourceCgroupOOMCount{kills: kills, known: true}
+}
+
+// waitErrorFrom runs a throwaway shell and returns what waiting on it produced,
+// so a test can build the real *exec.ExitError shapes the attribution reads
+// rather than a hand-rolled stand-in.
+func waitErrorFrom(t *testing.T, script string) error {
+	t.Helper()
+	return exec.Command("/bin/sh", "-c", script).Run()
+}
+
+// The counter rising is not the same fact as this workload dying of it. A
+// long-lived agent that survives one greedy child, and a durable managed-server
+// boundary carrying kills over from an earlier relaunch, both look identical to
+// a bare `oom_kill > 0` read.
+func TestResourceLimitOOMDeathRequiresBothARiseAndADeathByKill(t *testing.T) {
+	// The shape the pane path actually produces: the kernel kills the harness,
+	// and the shell waited on relays that as 128+SIGKILL. Asserted here rather
+	// than assumed, because requiring the signalled shape alone made the
+	// attribution unreachable in production.
+	relayed := waitErrorFrom(t, "/bin/sleep 30 & victim=$!; kill -KILL $victim; wait $victim")
+	var relayedExit *exec.ExitError
+	require.ErrorAs(t, relayed, &relayedExit)
+	require.False(t, relayedExit.Sys().(syscall.WaitStatus).Signaled(),
+		"the wrapper shell survives its child and exits normally")
+	require.Equal(t, 137, relayedExit.ExitCode())
+
+	// The shape a directly killed workload produces.
+	signalled := waitErrorFrom(t, "kill -KILL $$")
+	require.Error(t, signalled)
+
+	assert.True(t, resourceLimitOOMDeath(oomCount(0), oomCount(1), relayed),
+		"a harness killed under its wrapper shell is the ordinary production case")
+	assert.True(t, resourceLimitOOMDeath(oomCount(0), oomCount(1), signalled),
+		"a workload killed directly is the same death, differently reported")
+	assert.True(t, resourceLimitOOMDeath(oomCount(4), oomCount(5), signalled),
+		"a durable boundary attributes the rise, not the accumulated total")
+
+	assert.False(t, resourceLimitOOMDeath(oomCount(1), oomCount(1), signalled),
+		"a kill inherited from an earlier launch says nothing about this one")
+	assert.False(t, resourceLimitOOMDeath(oomCount(0), oomCount(1), nil),
+		"an agent that survived the kill and later exited cleanly did not die of it")
+	assert.False(t, resourceLimitOOMDeath(oomCount(0), oomCount(1), waitErrorFrom(t, "exit 1")),
+		"a non-zero exit after a surviving descendant was killed is an ordinary failure")
+	assert.False(t, resourceLimitOOMDeath(oomCount(0), oomCount(1), waitErrorFrom(t, "kill -TERM $$")),
+		"the OOM killer sends SIGKILL, so another signal is another cause")
+	assert.False(t, resourceLimitOOMDeath(ResourceCgroupOOMCount{}, oomCount(1), signalled),
+		"without a baseline there is no rise to establish, only an unknown")
+	assert.False(t, resourceLimitOOMDeath(oomCount(0), ResourceCgroupOOMCount{}, signalled),
+		"a counter that vanished at exit proves nothing either")
+}
+
+// The operator-visible bug this guards: an agent that shrugged off an OOM kill
+// and was later exited by hand was still stamped resource_limit_oom.
+func TestResourceLimitExecDoesNotAttributeASurvivedOOMToACleanExit(t *testing.T) {
+	oldRoot := resourceCgroupRoot
+	resourceCgroupRoot = t.TempDir()
+	t.Cleanup(func() { resourceCgroupRoot = oldRoot })
+	dir := filepath.Join(resourceCgroupRoot, "tclaude-oom-survivor")
+	require.NoError(t, os.Mkdir(dir, 0o755))
+	events := filepath.Join(dir, "memory.events")
+	require.NoError(t, os.WriteFile(events, []byte("oom_kill 0\n"), 0o644))
+
+	oldRecord := recordResourceLimitOOMForExec
+	recorded := false
+	recordResourceLimitOOMForExec = func(string) error { recorded = true; return nil }
+	t.Cleanup(func() { recordResourceLimitOOMForExec = oldRecord })
+
+	// The workload outlives a kill in its own cgroup, then exits of its own
+	// accord — exactly the shape that used to be reported as an OOM death.
+	require.NoError(t, runResourceLimitExec(
+		dir, "session-oom-survivor",
+		"printf 'oom_kill 1\\n' > '"+events+"'; exit 0", false,
+	))
+	assert.False(t, recorded,
+		"a workload that exited cleanly must not be recorded as killed by its ceiling")
+	kills, known := ReadResourceCgroupOOMKills(dir).Kills()
+	require.True(t, known)
+	assert.Equal(t, uint64(1), kills,
+		"the kill itself must still be observable; only the attribution is withheld")
+}
+
+// The other half of the same rule, and the case the first version of this change
+// got wrong: a real ceiling hit must still be recorded. It has to run through
+// runResourceLimitExec rather than the predicate alone, because what the pane
+// path produces — a wrapper shell relaying its harness's death — is exactly what
+// a predicate-only test cannot show.
+func TestResourceLimitExecRecordsAKillRelayedByTheWrapperShell(t *testing.T) {
+	oldRoot := resourceCgroupRoot
+	resourceCgroupRoot = t.TempDir()
+	t.Cleanup(func() { resourceCgroupRoot = oldRoot })
+	dir := filepath.Join(resourceCgroupRoot, "tclaude-oom-victim")
+	require.NoError(t, os.Mkdir(dir, 0o755))
+	events := filepath.Join(dir, "memory.events")
+	require.NoError(t, os.WriteFile(events, []byte("oom_kill 0\n"), 0o644))
+
+	oldRecord := recordResourceLimitOOMForExec
+	recordedFor := ""
+	recordResourceLimitOOMForExec = func(sessionID string) error { recordedFor = sessionID; return nil }
+	t.Cleanup(func() { recordResourceLimitOOMForExec = oldRecord })
+	oldExit := resourceLimitExecExit
+	exitCode := 0
+	resourceLimitExecExit = func(code int) { exitCode = code }
+	t.Cleanup(func() { resourceLimitExecExit = oldExit })
+
+	// The kernel picks the harness, not the shell wrapping it, so the process
+	// this waits on outlives the kill and reports it as a status.
+	require.NoError(t, runResourceLimitExec(
+		dir, "session-oom-victim",
+		"printf 'oom_kill 1\\n' > '"+events+"'; /bin/sleep 30 & victim=$!; kill -KILL $victim; wait $victim",
+		false,
+	))
+	assert.Equal(t, "session-oom-victim", recordedFor,
+		"a ceiling that actually killed the workload has to reach the session's exit reason")
+	assert.Equal(t, 137, exitCode, "the pane still reports the workload's own status")
+}
+
+func TestResourceDelegationBusyHintNamesTheInternalProcessRule(t *testing.T) {
+	delegation := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(delegation, "cgroup.procs"),
+		[]byte("1\n2\n3\n"), 0o644))
+	busy := &os.PathError{Op: "write", Path: delegation, Err: syscall.EBUSY}
+
+	hint := resourceDelegationBusyHint(delegation, busy)
+	assert.Contains(t, hint, "still holds 3 process(es)",
+		"the count is what turns an opaque EBUSY into something an operator can act on")
+	assert.Contains(t, hint, "process-free")
+	assert.Contains(t, hint, "no effect on a scope",
+		"a scope is where the documented DelegateSubgroup fix silently does nothing")
+	assert.Contains(t, hint, resourceSupervisorCgroup)
+
+	assert.Empty(t, resourceDelegationBusyHint(delegation, &os.PathError{Err: syscall.EACCES}),
+		"a permission denial has a different fix and must not be diagnosed as this one")
+
+	// The access control that refuses the controller write can also hide
+	// cgroup.procs. Falling silent there would route the operator back to the
+	// DelegateSubgroup advice this diagnosis exists to correct, so the rule and
+	// the fix still have to be stated — without a count nothing established.
+	uncounted := resourceDelegationBusyHint(t.TempDir(), busy)
+	assert.Contains(t, uncounted, "could not be read")
+	assert.Contains(t, uncounted, "no effect on a scope")
+	assert.NotContains(t, uncounted, "0 process(es)")
+
+	require.NoError(t, os.WriteFile(filepath.Join(delegation, "cgroup.procs"), nil, 0o644))
+	assert.Empty(t, resourceDelegationBusyHint(delegation, busy),
+		"a node proven process-free refused the write for some other reason")
+}
+
+// refuseControllerEnable makes the delegated node reject the controller write the
+// way a node that still holds processes does. No ordinary filesystem produces
+// EBUSY for this write, so the refusal has to be injected at the seam.
+func refuseControllerEnable(t *testing.T, delegation string, held int) {
+	t.Helper()
+	pids := make([]byte, 0, held*2)
+	for i := 1; i <= held; i++ {
+		pids = append(pids, []byte(strconv.Itoa(i)+"\n")...)
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(delegation, "cgroup.procs"), pids, 0o644))
+	previous := enableDelegatedControllers
+	enableDelegatedControllers = func(dir string, toEnable []string) error {
+		assert.Equal(t, delegation, dir, "the launch must configure the node it derived")
+		assert.NotEmpty(t, toEnable, "a refusal is only reachable when something was requested")
+		return &os.PathError{Op: "write", Path: filepath.Join(dir, "cgroup.subtree_control"), Err: syscall.EBUSY}
+	}
+	t.Cleanup(func() { enableDelegatedControllers = previous })
+}
+
+func TestPrepareResourceCgroupAccountingNamesTheInternalProcessRule(t *testing.T) {
+	current := fakeCurrentResourceCgroup(t, "cpu memory", "")
+	refuseControllerEnable(t, current, 13)
+	logged := captureWarnings(t)
+
+	dir, cleanup, err := PrepareResourceCgroup("acct-busy", sandboxpolicy.ResourceLimits{})
+	require.NoError(t, err, "no ceiling depends on these controllers")
+	t.Cleanup(cleanup)
+	assert.DirExists(t, dir)
+	assert.Contains(t, logged.String(), "still holds 13 process(es)",
+		"the degradation warning is the only trace, so it has to carry the cause")
+	assert.Contains(t, logged.String(), "no effect on a scope")
+}
+
+func TestPrepareResourceCgroupEnforcedNamesTheInternalProcessRule(t *testing.T) {
+	current := fakeCurrentResourceCgroup(t, "cpu memory", "")
+	refuseControllerEnable(t, current, 13)
+
+	_, _, err := PrepareResourceCgroup("enforced-busy", sandboxpolicy.ResourceLimits{Memory: "256MB"})
+	require.Error(t, err, "a ceiling that cannot be enforced must refuse the launch")
+	assert.ErrorContains(t, err, "still holds 13 process(es)")
+	assert.ErrorContains(t, err, "no effect on a scope")
+	assert.NotContains(t, err.Error(), "is not writable by uid",
+		"a busy node is delegated correctly; diagnosing it as undelegated sends the operator the wrong way")
 }
 
 func TestResourceLimitExecOperatorOverrideFallsBackAfterAttachFailure(t *testing.T) {
