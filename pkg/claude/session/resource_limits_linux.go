@@ -340,9 +340,12 @@ func runResourceLimitExec(cgroupDir, sessionID, command string, allowUnenforced 
 		return err
 	}
 	defer func() { _ = gateRead.Close(); _ = gateWrite.Close() }()
+	// The gate shell only waits on fd 3 and execs; the INNER shell is the one
+	// that interprets the harness command, so that is the one pinned to bash
+	// (clcommon.BootstrapShellPath) rather than left to whatever /bin/sh is.
 	child := exec.Command("/bin/sh", "-c",
-		`IFS= read -r tclaude_resource_gate <&3 || exit 125; exec /bin/sh -c "$1"`,
-		"tclaude-resource-limit", command)
+		`IFS= read -r tclaude_resource_gate <&3 || exit 125; exec "$2" -c "$1"`,
+		"tclaude-resource-limit", command, clcommon.BootstrapShellPath())
 	child.Stdin, child.Stdout, child.Stderr = os.Stdin, os.Stdout, os.Stderr
 	child.ExtraFiles = []*os.File{gateRead}
 	if err := child.Start(); err != nil {

@@ -111,7 +111,7 @@ func TestCodexApprovalMonitor_StartupReconcilesOnlyLivePaneProfile(t *testing.T)
 	assert.NotContains(t, string(data), "linear.stale_issue")
 }
 
-// Script-launch pane shape (`sh <launch-script> <profile-path>`): the whole
+// Script-launch pane shape (`<shell> <launch-script> <profile-path>`): the whole
 // bootstrap lives in a self-deleting script, so the profile path rides the
 // pane argv as an inert marker (session.CodexProfileMarkerArgs) and startup
 // recovery must match it there. The inline `sh -c "…"` shape above remains
@@ -140,9 +140,20 @@ func TestCodexApprovalProfileOwnership_ScriptLaunchShape(t *testing.T) {
 		[]string{"sh /tmp/evil-script " + profile}),
 		"only a tclaude launch-script word may carry a claim")
 
+	// tclaude pins its bootstrap interpreter to bash (TCL-1038), and a pane
+	// launched by an older tclaude still carries the bare `sh` word. Both are
+	// tclaude's own shape, so recovery must recognize either — including the
+	// absolute path the resolver actually renders.
+	for _, shell := range []string{"bash", "/bin/bash", "/usr/bin/bash", "/bin/sh",
+		clcommon.BootstrapShellPath()} {
+		assert.True(t, codexApprovalProfileOwnedByLivePane(profile,
+			[]string{shell + " " + script + " " + profile}),
+			"%s script-launch argv must claim its profile", shell)
+	}
+
 	assert.False(t, codexApprovalProfileOwnedByLivePane(profile,
-		[]string{"bash " + script + " " + profile}),
-		"a non-sh word 0 must not match")
+		[]string{"python3 " + script + " " + profile}),
+		"a word 0 that is not a shell tclaude launches with must not match")
 
 	assert.False(t, codexApprovalProfileOwnedByLivePane(profile,
 		[]string{"sh " + script}),

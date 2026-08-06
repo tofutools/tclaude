@@ -395,7 +395,7 @@ func renderDarwinSeatbeltCommandWithRouteSlots(
 		harnessCommand = "export " + DarwinRouteSlotsEnv + "=" +
 			clcommon.ShellQuoteArg(encoded) + "; " + harnessCommand
 	}
-	command += " -- /bin/sh -c " + clcommon.ShellQuoteArg(harnessCommand)
+	command += sandboxExecShellPrefix() + clcommon.ShellQuoteArg(harnessCommand)
 	return command, nil
 }
 

@@ -116,7 +116,7 @@ func (r *launchRecordingTmux) newSessions() [][]string {
 type recordedNewSession struct {
 	noStart bool              // leading client-level -N
 	opts    map[string]string // -d/-s/-c, valueless flags mapped to ""
-	pane    []string          // the pane command: `sh <script> [markers]`
+	pane    []string          // the pane command: `<shell> <script> [markers]`
 }
 
 // parseNewSession locates the pane command STRUCTURALLY rather than at a fixed
@@ -183,12 +183,13 @@ func TestLaunchArgvIsConstantSizeThroughProductionPath(t *testing.T) {
 	require.Len(t, launches, 2, "each launch runs exactly one new-session")
 	smallArgv, hugeArgv := launches[0], launches[1]
 
-	// The command must ride in a script file, never inline: `sh <script>`.
+	// The command must ride in a script file, never inline: `<shell> <script>`.
 	small, huge := parseNewSession(t, smallArgv), parseNewSession(t, hugeArgv)
 	assert.Equal(t, cwd, huge.opts["-c"], "launch dir rides as -c, not in the pane command")
-	require.Len(t, huge.pane, 3, "pane argv must be exactly `sh <script> <marker>`")
-	require.Len(t, small.pane, 2, "a marker-free launch adds no pane words beyond `sh <script>`")
-	assert.Equal(t, "sh", huge.pane[0], "pane command must be sh <script>")
+	require.Len(t, huge.pane, 3, "pane argv must be exactly `<shell> <script> <marker>`")
+	require.Len(t, small.pane, 2, "a marker-free launch adds no pane words beyond `<shell> <script>`")
+	assert.Equal(t, clcommon.BootstrapShellPath(), huge.pane[0],
+		"pane command must run the script under tclaude's pinned bootstrap shell")
 	scriptPath := huge.pane[1]
 	assert.Contains(t, scriptPath, "launch-scripts", "script must live in the private launch-scripts dir")
 	assert.Equal(t, profileMarker, huge.pane[len(huge.pane)-1],
