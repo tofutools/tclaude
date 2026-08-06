@@ -86,6 +86,73 @@ func TestNotifyHuman_AttachmentDownloadAndDelete(t *testing.T) {
 	assert.True(t, os.IsNotExist(err), "deleting the message also removes its bytes")
 }
 
+// Scenario: the artifact IS the message. A subject names what arrived and the
+// published file carries the content, so the notification is accepted with no
+// body — and the human still gets the download.
+func TestNotifyHuman_BodilessAttachmentWithSubjectDelivers(t *testing.T) {
+	f := newFlow(t)
+	const conv = "nobody-1111-2222-33334444"
+	f.HaveConvWithTitle(conv, "shot-taker")
+	require.NoError(t, db.GrantAgentPermission(conv, agentd.PermHumanNotify, "test"))
+
+	rec := postNotifyAttachmentWithMetadata(t, f.Mux, conv,
+		map[string]string{"body": "  ", "subject": "dashboard mock", "name": "mock.png"},
+		"pixels", "image/png")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var delivered struct {
+		ID int64 `json:"id"`
+	}
+	testharness.DecodeJSON(t, rec, &delivered)
+
+	msgs, err := db.ListHumanMessages()
+	require.NoError(t, err)
+	require.Len(t, msgs, 1)
+	assert.Empty(t, msgs[0].Body, "the bodiless form is stored as written, not padded")
+	assert.Equal(t, "dashboard mock", msgs[0].Subject)
+	require.NotNil(t, msgs[0].Attachment())
+	assert.Equal(t, "mock.png", msgs[0].Attachment().Filename)
+
+	dash := dashHandlerForTest(t)
+	download := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodGet,
+		"/api/human-messages/"+strconv.FormatInt(delivered.ID, 10)+"/attachment", nil))
+	require.Equal(t, http.StatusOK, download.Code, download.Body.String())
+	assert.Equal(t, "pixels", download.Body.String())
+}
+
+// Scenario: neither a body nor a subject. The attachment alone says nothing
+// about what arrived, so this stays a bad request and stores nothing.
+func TestNotifyHuman_BodilessAttachmentWithoutSubjectRejected(t *testing.T) {
+	f := newFlow(t)
+	const conv = "nosub-1111-2222-33334444"
+	f.HaveConvWithTitle(conv, "silent-sender")
+	require.NoError(t, db.GrantAgentPermission(conv, agentd.PermHumanNotify, "test"))
+
+	rec := postNotifyAttachmentWithMetadata(t, f.Mux, conv,
+		map[string]string{"body": "  ", "name": "mystery.bin"}, "data", "application/octet-stream")
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+
+	msgs, err := db.ListHumanMessages()
+	require.NoError(t, err)
+	assert.Empty(t, msgs)
+	attachments, err := db.ListHumanMessageAttachments()
+	require.NoError(t, err)
+	assert.Empty(t, attachments, "a refused notification stores no bytes")
+}
+
+// Scenario: a plain notification carries no file, so a subject cannot stand in
+// for the body — the bodiless form is the attachment route's alone.
+func TestNotifyHuman_SubjectWithoutBodyRejectedOnPlainRoute(t *testing.T) {
+	f := newFlow(t)
+	r := testharness.JSONRequest(t, http.MethodPost, "/v1/notify-human",
+		map[string]any{"body": "  ", "subject": "heads up"})
+	r = agentd.AsHumanPeer(r)
+	rec := testharness.Serve(f.Mux, r)
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+
+	msgs, _ := db.ListHumanMessages()
+	assert.Empty(t, msgs)
+}
+
 func TestNotifyHuman_ZeroByteAttachment(t *testing.T) {
 	f := newFlow(t)
 	const conv = "zero-1111-2222-3333-4444"
@@ -240,12 +307,22 @@ func postNotifyAttachment(t *testing.T, mux http.Handler, conv, name, data strin
 
 func postNotifyAttachmentWithContentType(t *testing.T, mux http.Handler, conv, name, data, contentType string) *httptest.ResponseRecorder {
 	t.Helper()
-	metadata, err := json.Marshal(map[string]string{"body": "artifact ready", "name": name})
+	return postNotifyAttachmentWithMetadata(t, mux, conv,
+		map[string]string{"body": "artifact ready", "name": name}, data, contentType)
+}
+
+// postNotifyAttachmentWithMetadata is the raw-body upload with caller-chosen
+// metadata, for the tests that vary the body/subject rather than the file.
+func postNotifyAttachmentWithMetadata(t *testing.T, mux http.Handler, conv string,
+	metadata map[string]string, data, contentType string,
+) *httptest.ResponseRecorder {
+	t.Helper()
+	raw, err := json.Marshal(metadata)
 	require.NoError(t, err)
 	req, err := http.NewRequest(http.MethodPost, "/v1/notify-human/attachment", strings.NewReader(data))
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", contentType)
-	req.Header.Set("X-Tclaude-Notify-Metadata", base64.RawURLEncoding.EncodeToString(metadata))
+	req.Header.Set("X-Tclaude-Notify-Metadata", base64.RawURLEncoding.EncodeToString(raw))
 	return testharness.Serve(mux, agentd.AsAgentPeer(req, conv))
 }
 

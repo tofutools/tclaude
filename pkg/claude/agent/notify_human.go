@@ -25,7 +25,7 @@ import (
 // instead of scrolling the PO's busy terminal.
 
 type notifyHumanParams struct {
-	Body     string   `pos:"true" optional:"true" help:"Notification text (or use --file)."`
+	Body     string   `pos:"true" optional:"true" help:"Notification text (or use --file; optional when --subject accompanies --attach)."`
 	Subject  string   `long:"subject" short:"s" optional:"true" help:"Optional one-line subject."`
 	File     string   `long:"file" short:"f" optional:"true" help:"Read the body from this file ('-' reads stdin). Sidesteps shell quoting — best for long, multi-line, or backtick-containing bodies."`
 	Attach   []string `long:"attach" short:"a" optional:"true" help:"Publish a file or directory for the human to download. Repeat for several paths; a few files arrive as separate downloads, a large set or a directory as one zip."`
@@ -41,7 +41,8 @@ func notifyHumanCmd() *cobra.Command {
 		Short: "Send the human a notification (shown in the dashboard Messages tab)",
 		Long: "Sends a message to the human — it lands in the agentd dashboard's Messages tab, letting a coordinating agent reach the human off the busy terminal.\n\n" +
 			"Sending is gated: it passes for the human, for holders of the `human.notify` permission (which the human grants to a trusted coordinating agent such as the PO), and for any group owner (owning a group is a trusted coordinating role, so an owner may send slug or not). Agents with none of these are refused.\n\n" +
-			"Give the body inline or with --file (--file - reads stdin). Add --attach to publish a file or directory through agentd; the human gets a download button on the message. Repeat --attach for several files: up to 20 arrive as separate downloads (so an image stays viewable), while a directory or a larger set is packaged as one zip. --zip / --separate force either shape.",
+			"Give the body inline or with --file (--file - reads stdin). Add --attach to publish a file or directory through agentd; the human gets a download button on the message. Repeat --attach for several files: up to 20 arrive as separate downloads (so an image stays viewable), while a directory or a larger set is packaged as one zip. --zip / --separate force either shape.\n\n" +
+			"The body may be omitted when the message is the attachment: --subject plus at least one --attach is a complete notification on its own. Either alone is not — a subject with nothing published, or a file with nothing naming it, is refused.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *notifyHumanParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
@@ -58,8 +59,10 @@ func runNotifyHuman(p *notifyHumanParams, stdin io.Reader, stdout, stderr io.Wri
 	if rc != rcOK {
 		return rc
 	}
-	if strings.TrimSpace(body) == "" {
-		fmt.Fprintln(stderr, "Error: a notification body is required — pass it inline or via --file")
+	if !notifyHumanHasContent(body, p) {
+		fmt.Fprintln(stderr,
+			"Error: a notification body is required — pass it inline or via --file"+
+				" (or send --subject with --attach and no body)")
 		return rcInvalidArg
 	}
 	ask, err := ParseAskHuman(p.AskHuman)
@@ -116,6 +119,19 @@ func runNotifyHuman(p *notifyHumanParams, stdin io.Reader, stdout, stderr io.Wri
 	}
 	fmt.Fprintf(stdout, "Notified the human (message #%d) with %s ready to download.\n", resp.ID, summary)
 	return rcOK
+}
+
+// notifyHumanHasContent reports whether the notification says anything at all.
+// A body is normally what makes it readable — but when the message IS the
+// attachment, a subject already names what arrived and the file itself is the
+// content, so demanding prose on top of it only invites filler. A subject alone
+// is still not enough: with nothing published, the message would be a headline
+// over an empty page.
+func notifyHumanHasContent(body string, p *notifyHumanParams) bool {
+	if strings.TrimSpace(body) != "" {
+		return true
+	}
+	return strings.TrimSpace(p.Subject) != "" && len(p.Attach) > 0
 }
 
 // notifyHumanAutoZipFileCount is where automatic packaging kicks in. Below it,

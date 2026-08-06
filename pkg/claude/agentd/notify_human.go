@@ -194,8 +194,16 @@ func handleNotifyHumanAttachment(w http.ResponseWriter, r *http.Request) {
 	meta.Body = strings.TrimSpace(meta.Body)
 	meta.Subject = strings.TrimSpace(meta.Subject)
 	meta.Name = sanitizeExportFilename(meta.Name)
-	if meta.Body == "" || len(meta.Body) > maxNotifyHumanBodyLen {
-		writeError(w, http.StatusBadRequest, "invalid_arg", "body is required and must fit the notification limit")
+	// The body may be empty here — and only here. This route always carries at
+	// least one published file, so a subject plus the attachment is already a
+	// complete message; the bodiless notification is "here is the artifact,
+	// this is what it is". A message with neither is still nothing to read.
+	if meta.Body == "" && meta.Subject == "" {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "a body or a subject is required")
+		return
+	}
+	if len(meta.Body) > maxNotifyHumanBodyLen {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "body is too long")
 		return
 	}
 	if len(meta.Subject) > maxNotifyHumanSubjectLen {

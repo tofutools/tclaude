@@ -13,6 +13,9 @@ func TestHumanNotificationAttentionAssetsAreWired(t *testing.T) {
 		"member row":      {"js/groups-member-table.js", "human-notification-attention"},
 		"hover preview":   {"js/groups-member-table.js", "human-notification-preview"},
 		"preview a11y":    {"js/groups-member-table.js", "aria-describedby"},
+		// A notification may carry a subject and an attachment but no body; the
+		// hover preview must say so rather than calling it empty.
+		"bodiless hover": {"js/groups-member-table.js", "the attached file is the notification"},
 		"group bots":      {"js/groups-list.js", "human-notification-hint"},
 		"global bots":     {"js/shell-island.js", "human-notification-hint"},
 		"reader launch":   {"js/human-notification-attention.js", "tclaude:open-human-notification"},

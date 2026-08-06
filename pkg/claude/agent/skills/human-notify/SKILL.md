@@ -73,11 +73,27 @@ tclaude agent notify-human --file -                  # body from stdin
 tclaude agent notify-human "Report ready" --attach report.md
 tclaude agent notify-human "Site bundle ready" --attach dist/ --name site.zip
 tclaude agent notify-human "Artifacts ready" -a report.md -a chart.png
+tclaude agent notify-human --subject "Dashboard mock" -a mock.png   # no body
 ```
 
 Prefer `--file` for long, multi-line, or code-heavy bodies — it
 sidesteps shell quoting (an inline backtick is eaten by the shell).
 Same reasoning as `tclaude agent message --file`.
+
+### Sending without a body
+
+A body is normally required, but you may omit it when the message **is**
+the attachment: `--subject` plus at least one `--attach` is a complete
+notification on its own. The subject names what arrived and the file
+carries the content, so there is no need to invent a line of prose
+restating it — a rendered mock, a screenshot, or a report sent for review
+is often clearer with just a subject.
+
+The two halves are both required for that form. A subject with nothing
+attached is a headline over an empty page, and an attachment with no
+subject says nothing about what arrived; either alone is rejected. Keep
+writing a body whenever you actually have something to say about the file
+— what to look at, what decision you need, what changed.
 
 Use repeatable `--attach <path>` flags when the result itself is a file the
 human should receive. A single file keeps its name and type. Up to 20 attached

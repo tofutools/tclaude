@@ -750,7 +750,8 @@ function HumanNotificationAttention({ member, snapshot }) {
         <strong>${message.subject || '(no subject)'}</strong>
         <span>${relTime(message.created_at)}</span>
       </span>
-      <span class="human-notification-preview-body">${message.body || '(empty notification)'}</span>
+      <span class="human-notification-preview-body">${message.body
+        || (attachment ? 'No message — the attached file is the notification.' : '(empty notification)')}</span>
       <span class="human-notification-preview-foot">
         ${attachment
           ? html`<span class="human-notification-preview-attachment">📎 ${attachment.filename || 'attachment'}</span>`
