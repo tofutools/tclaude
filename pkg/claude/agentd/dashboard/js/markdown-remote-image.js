@@ -56,7 +56,16 @@ export function RemoteImage({ src, alt, title, loaded, onLoad }) {
     <button type="button" class="markdown-remote-image-load"
       title=${src}
       aria-label=${`${retry ? 'Retry loading' : 'Load'} the external image "${description}"${host ? ` from ${host}` : ''}`}
-      onClick=${() => { setFailed(false); onLoad?.(src); }}>${retry ? 'Try again' : 'Load image'}</button>
+      onClick=${(event) => {
+        // A document may wrap its image in a link — `[![alt](img)](target)` —
+        // which puts this button inside an anchor pointing wherever the author
+        // chose. Loading the image is this button's whole job, so the click
+        // stops here rather than also opening the author's link.
+        event.preventDefault();
+        event.stopPropagation();
+        setFailed(false);
+        onLoad?.(src);
+      }}>${retry ? 'Try again' : 'Load image'}</button>
   </span>`;
 }
 

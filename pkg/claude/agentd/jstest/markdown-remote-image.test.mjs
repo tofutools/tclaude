@@ -83,6 +83,48 @@ test('a document holding several remote images offers them as one decision', asy
     'with nothing left held back the notice has nothing to say');
 });
 
+// The notice counts what is on screen. A document showing the same URL twice
+// shows two placeholders, and a line above it saying "1" would be describing
+// something the operator cannot see. Loading is still by URL, so the pair
+// resolves together — one decision, two pictures.
+test('a repeated remote URL is counted per placeholder and loaded as one', async (t) => {
+  const { harness, container } = await render(t, [
+    `![one](${REMOTE})`, `![again](${REMOTE})`, '![other](https://b.invalid/2.png)',
+  ].join('\n\n'));
+
+  assert.equal(container.querySelectorAll('.markdown-remote-image').length, 3);
+  assert.match(container.querySelector('.markdown-remote-image-notice').textContent, /3 images/,
+    'the count names the placeholders, not the distinct hosts');
+
+  const first = container.querySelectorAll('.markdown-remote-image-load')[0];
+  await harness.act(() => first.click());
+  assert.deepEqual(
+    [...container.querySelectorAll('img')].map((img) => img.getAttribute('src')),
+    [REMOTE, REMOTE], 'one decision covers every placeholder for that URL');
+  assert.equal(container.querySelectorAll('.markdown-remote-image').length, 1,
+    'only the unrelated image is still held back');
+  assert.equal(container.querySelector('.markdown-remote-image-notice'), null,
+    'and one of those needs no banner');
+});
+
+// A document may wrap its image in a link: `[![alt](img)](target)`. The button
+// then sits inside an anchor the author chose the destination of, and loading
+// the image must not also be a navigation.
+test('loading an image inside a link does not follow the link', async (t) => {
+  const { harness, container } = await render(t,
+    `[![the diagram](${REMOTE})](https://elsewhere.invalid/)`);
+
+  const anchor = container.querySelector('a');
+  assert.ok(anchor?.querySelector('.markdown-remote-image'), 'the placeholder is inside the link');
+
+  let navigated = false;
+  anchor.addEventListener('click', (event) => { if (!event.defaultPrevented) navigated = true; });
+  await harness.act(() => container.querySelector('.markdown-remote-image-load').click());
+
+  assert.equal(navigated, false, 'the click loaded the image instead of opening the link');
+  assert.equal(container.querySelector('img')?.getAttribute('src'), REMOTE);
+});
+
 // One held-back image needs no banner: its own button is already the shortest
 // path, and a notice above every illustrated document would be noise.
 test('a single remote image gets no document-level notice', async (t) => {

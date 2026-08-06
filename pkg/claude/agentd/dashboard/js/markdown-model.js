@@ -64,6 +64,14 @@ const DATA_IMAGE = /^data:image\/(?:gif|png|jpeg|webp);base64,[a-z0-9+/]+=*$/i;
 // trusted raster, javascript:, ftp:, file: — is not an image target at all.
 const REMOTE_IMAGE_SCHEMES = new Set(['http:', 'https:']);
 
+// ...and it must name an authority, which the scheme alone does not settle.
+// `https:./x.png` parses as https with a host of "."; the browser, resolving
+// that same string against the DOCUMENT's base, lands on this origin instead.
+// Requiring the `//` keeps the two readings identical, so the src the viewer
+// holds back is the src the browser would fetch and the host in the
+// placeholder is the host that would really be contacted.
+const REMOTE_IMAGE_AUTHORITY = /^https?:\/\//i;
+
 // REMOTE_IMAGE is the node a document's remote image becomes: a placeholder
 // the operator can turn into a real <img> with one click, rendered by
 // markdown-remote-image.js.
@@ -159,8 +167,12 @@ function attachmentImageIndex(attachments) {
     // The second character is what decides it, and BOTH separators have to be
     // refused: `//host/x` is a protocol-relative absolute URL, and for a
     // special scheme the URL parser reads a backslash as a slash, so
-    // `/\host/x` resolves to that host just the same.
-    if (!/^\/(?![/\\])/.test(url)) continue;
+    // `/\host/x` resolves to that host just the same. Tab and newline are
+    // refused outright rather than reasoned about, because the parser DELETES
+    // them before it parses — `/<tab>/host/x` reads as `//host/x` — so any
+    // shape test that runs on the raw string is testing a different string
+    // than the one that will be resolved.
+    if (/[\t\n\r]/.test(url) || !/^\/(?![/\\])/.test(url)) continue;
     for (const key of imageNameKeys(attachment.filename)) {
       if (!index.has(key)) index.set(key, url);
     }
@@ -185,14 +197,27 @@ function resolveImageSource(value, index) {
     // Fall through to the published-file lookup below.
   }
   if (parsed) {
-    return REMOTE_IMAGE_SCHEMES.has(parsed.protocol) ? { tag: REMOTE_IMAGE, src: raw } : null;
+    if (!REMOTE_IMAGE_SCHEMES.has(parsed.protocol)) return null;
+    return REMOTE_IMAGE_AUTHORITY.test(raw) ? { tag: REMOTE_IMAGE, src: raw } : null;
   }
+  // The route is the daemon's own, same-origin and authenticated, holding bytes
+  // the operator's daemon already stores. Loading it tells no third party
+  // anything, so unlike a remote image it needs no click.
   for (const key of imageNameKeys(raw)) {
     const url = index.get(key);
-    // The route is the daemon's own, same-origin and authenticated, holding
-    // bytes the operator's daemon already stores. Loading it tells no third
-    // party anything, so unlike a remote image it needs no click.
     if (url) return { tag: 'img', src: url };
+  }
+  // A cache-busting query or an anchor is something an author writes without
+  // thinking; neither can be part of a published filename that matched nothing,
+  // so try again without it rather than silently dropping the picture. The
+  // exact spelling is tried FIRST, so a file whose name really does contain one
+  // still matches itself.
+  const bare = raw.replace(/[?#].*$/, '');
+  if (bare !== raw) {
+    for (const key of imageNameKeys(bare)) {
+      const url = index.get(key);
+      if (url) return { tag: 'img', src: url };
+    }
   }
   // A relative name matching nothing published, a protocol-relative `//host/x`,
   // an absolute path: all would resolve against the dashboard's own origin,
@@ -368,21 +393,20 @@ export function markdownToTree(parser, source, { attachments } = {}) {
   return walk(parser.parse(text, {}), attachmentImageIndex(attachments));
 }
 
-// remoteImageSources lists the distinct remote images a rendered tree is
-// holding back, in document order. The viewer uses it to tell the operator how
-// many there are and to offer loading them in one go.
+// remoteImageSources lists the src of every remote image in a rendered tree, in
+// document order, one entry per placeholder rather than one per distinct URL.
+// The viewer counts them to tell the operator how many placeholders are on
+// screen — a document that shows the same URL twice shows two of them — and
+// the count has to match what they can see. Loading still works by URL, so the
+// two occurrences resolve together; a Set at the call site collapses them.
 export function remoteImageSources(nodes) {
   const found = [];
-  const seen = new Set();
   const stack = [...(nodes || [])].reverse();
   while (stack.length) {
     const node = stack.pop();
     if (typeof node === 'string' || !node) continue;
     if (node.tag === REMOTE_IMAGE) {
-      if (!seen.has(node.attrs.src)) {
-        seen.add(node.attrs.src);
-        found.push(node.attrs.src);
-      }
+      found.push(node.attrs.src);
       continue;
     }
     for (let i = (node.children || []).length - 1; i >= 0; i -= 1) stack.push(node.children[i]);

@@ -1594,18 +1594,27 @@ does a reference to a **file published with the same notification**: an agent
 that runs `notify-human --attach report.md --attach chart.png` can write
 `![the chart](chart.png)` in the report and have the image appear in the
 document. The reference is matched against the published filenames — after
-percent-decoding, ignoring a leading `./`, and ignoring case — and resolves to
-that file's own authenticated download route on the daemon. Only files the
-daemon has confirmed are raster images (the same content-sniffed `previewable`
-verdict behind the attachment thumbnail, SVG excluded) can be referenced this
-way; a reference to anything else, or to a name nothing published, degrades to
-the image's alt text.
+percent-decoding, ignoring a leading `./`, ignoring case, and, if nothing
+matched, ignoring a trailing `?query` or `#fragment` — and resolves to that
+file's own authenticated download route on the daemon. Only files the daemon
+has confirmed are raster images (the same content-sniffed `previewable` verdict
+behind the attachment thumbnail, SVG excluded) can be referenced this way; a
+reference to anything else, or to a name nothing published, degrades to the
+image's alt text.
 
 A **remote `http(s)` image** is described rather than fetched. It renders as a
 placeholder carrying the alt text and the host, with a **Load image** button;
 the request happens when the operator clicks it, and not before. A document
-holding back more than one gets a single line above it offering to load them
-all. Once loaded, the image is requested with `referrerpolicy="no-referrer"`.
+holding back more than one placeholder gets a single line above it offering to
+load them all; loading is by URL, so a document showing the same image twice
+resolves both from one click. Once loaded, the image is requested with
+`referrerpolicy="no-referrer"`.
+
+Only a target naming its own authority — `https://host/path` — counts as
+remote. `https:path` has a scheme but no `//`, and the browser resolves that
+against the dashboard's own base rather than as a remote address, so the host a
+placeholder named would not be the host contacted; such a target degrades to
+alt text with everything else.
 The reason for the click is that an `<img>` is the one thing in a document that
 reaches the network without the operator doing anything, and the document's
 author is an agent that may be running behind tclaude's own egress boundary
