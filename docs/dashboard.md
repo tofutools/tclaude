@@ -1606,7 +1606,10 @@ file's own authenticated download route on the daemon. Only files the daemon
 has confirmed are raster images (the same content-sniffed `previewable` verdict
 behind the attachment thumbnail, SVG excluded) can be referenced this way; a
 reference to anything else, or to a name nothing published, degrades to the
-image's alt text.
+image's alt text. So does a name that two published files both answer to —
+published twice under one name, or under names differing only in case or in
+percent-encoding — since it identifies neither, and showing one of them would
+be showing whichever happened to be attached first.
 
 A **remote `http(s)` image** is described rather than fetched. It renders as a
 placeholder carrying the alt text and the host, with a **Load image** button;

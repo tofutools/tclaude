@@ -150,6 +150,12 @@ function imageNameKeys(value) {
   return keys;
 }
 
+// A name two different published files both answer to. Kept in the index in
+// place of a route, because "which of these did the author mean" has no answer
+// and picking one silently shows the operator a picture chosen by the order the
+// files happened to arrive in.
+const AMBIGUOUS = Symbol('ambiguous attachment name');
+
 // attachmentImageIndex maps the names a document can use onto the download
 // routes of the images published with it.
 //
@@ -180,10 +186,27 @@ function attachmentImageIndex(attachments) {
     // than the one that will be resolved.
     if (/[\t\n\r]/.test(url) || !/^\/(?![/\\])/.test(url)) continue;
     for (const key of imageNameKeys(attachment.filename)) {
+      // Two files can answer to one key: published under the same name, under
+      // names differing only in case, or as a percent-encoded spelling of each
+      // other. Whichever it is, the key stops identifying a file, and a name
+      // that identifies no single file resolves to no image at all.
       if (!index.has(key)) index.set(key, url);
+      else if (index.get(key) !== url) index.set(key, AMBIGUOUS);
     }
   }
   return index;
+}
+
+// lookupAttachmentImage answers with a route, with AMBIGUOUS, or with null when
+// nothing published answers to the name. The first key that matches decides,
+// including when what it decides is that the name is ambiguous — falling
+// through to the next spelling would be the same silent guess by another route.
+function lookupAttachmentImage(index, name) {
+  for (const key of imageNameKeys(name)) {
+    const found = index.get(key);
+    if (found) return found;
+  }
+  return null;
 }
 
 // resolveImageSource decides which of the three kinds of image target this is,
@@ -209,26 +232,22 @@ function resolveImageSource(value, index) {
   // The route is the daemon's own, same-origin and authenticated, holding bytes
   // the operator's daemon already stores. Loading it tells no third party
   // anything, so unlike a remote image it needs no click.
-  for (const key of imageNameKeys(raw)) {
-    const url = index.get(key);
-    if (url) return { tag: 'img', src: url };
+  let found = lookupAttachmentImage(index, raw);
+  if (found === null) {
+    // A cache-busting query or an anchor is something an author writes without
+    // thinking; neither can be part of a published filename that matched
+    // nothing, so try again without it rather than silently dropping the
+    // picture. The exact spelling is tried FIRST, so a file whose name really
+    // does contain one still matches itself.
+    const bare = raw.replace(/[?#].*$/, '');
+    if (bare !== raw) found = lookupAttachmentImage(index, bare);
   }
-  // A cache-busting query or an anchor is something an author writes without
-  // thinking; neither can be part of a published filename that matched nothing,
-  // so try again without it rather than silently dropping the picture. The
-  // exact spelling is tried FIRST, so a file whose name really does contain one
-  // still matches itself.
-  const bare = raw.replace(/[?#].*$/, '');
-  if (bare !== raw) {
-    for (const key of imageNameKeys(bare)) {
-      const url = index.get(key);
-      if (url) return { tag: 'img', src: url };
-    }
-  }
-  // A relative name matching nothing published, a protocol-relative `//host/x`,
-  // an absolute path: all would resolve against the dashboard's own origin,
-  // which is never what the author meant.
-  return null;
+  // A route renders. AMBIGUOUS and null both mean the viewer cannot say which
+  // picture was meant, and a relative name matching nothing published, a
+  // protocol-relative `//host/x` or an absolute path would resolve against the
+  // dashboard's own origin, which is never what the author meant. All of them
+  // keep the author's words instead.
+  return typeof found === 'string' ? { tag: 'img', src: found } : null;
 }
 
 // attributesFor keeps only what each element is allowed to carry, and checks

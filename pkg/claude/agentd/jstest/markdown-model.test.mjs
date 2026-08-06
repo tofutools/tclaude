@@ -268,6 +268,48 @@ test('an image published with the document renders from its own route', async (t
   assert.equal(titled.attrs.alt, 'c');
 });
 
+// Which picture the operator is shown must never be decided by the order the
+// files were published in. A name that two published files both answer to
+// identifies neither, so it shows the author's words instead of an arbitrary
+// one of the two.
+test('a name two published files answer to shows no image, in either order', async (t) => {
+  const { markdownToTree, parser } = await loadModel(t);
+  const file = (filename, id) => ({
+    id, filename, url: `/api/human-messages/9/attachments/${id}`, previewable: true,
+  });
+  const imageSrc = (attachments, source) => {
+    const node = find(markdownToTree(parser, source, { attachments }), 'img');
+    return node ? node.attrs.src : null;
+  };
+
+  for (const [label, attachments, source] of [
+    ['published twice under one name', [file('chart.png', 1), file('chart.png', 2)], '![c](chart.png)'],
+    ['names differing only in case', [file('Chart.png', 1), file('chart.png', 2)], '![c](chart.png)'],
+  ]) {
+    assert.equal(imageSrc(attachments, source), null, `${label}: no image`);
+    assert.equal(imageSrc([...attachments].reverse(), source), null,
+      `${label}: still no image when the list arrives the other way round`);
+    assert.match(markdownToTree(parser, source, { attachments }).map(text).join(''), /c/,
+      `${label}: keeps its alt text`);
+  }
+
+  // A percent-encoded name and its decoded twin. markdown-it normalizes both
+  // document spellings to `a%20b.png`, so the reference names the file called
+  // exactly that — the decoded key is never what a document asks for first —
+  // and the answer must not move when the two files swap places.
+  const encoded = [file('a%20b.png', 1), file('a b.png', 2)];
+  const want = '/api/human-messages/9/attachments/1';
+  for (const source of ['![c](<a b.png>)', '![c](a%20b.png)']) {
+    assert.equal(imageSrc(encoded, source), want, `${source} names the file spelled that way`);
+    assert.equal(imageSrc([...encoded].reverse(), source), want,
+      `${source} is unmoved by the publishing order`);
+  }
+  // Published alone, the decoded twin is still reachable through that spelling:
+  // marking the shared key ambiguous must not cost a file its only name.
+  assert.equal(imageSrc([file('a b.png', 2)], '![c](a%20b.png)'),
+    '/api/human-messages/9/attachments/2');
+});
+
 // A cache-buster or an anchor is something an author appends without thinking,
 // and neither can be part of a name that already failed to match — so the
 // picture appears rather than silently becoming alt text.
