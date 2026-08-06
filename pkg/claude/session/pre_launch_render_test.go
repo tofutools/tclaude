@@ -273,3 +273,71 @@ func TestPreLaunchUnwindsPipefailAndErrtrace(t *testing.T) {
 	assert.NotContains(t, out, "ERRTRACE_LEAKED")
 	assert.NotContains(t, out, "PIPEFAIL_LEAKED")
 }
+
+// A block's `exports` list is a promise that the block defines those names.
+// The failure it guards against is not the block erroring — that the ERR trap
+// already catches — but the block succeeding and still leaving the variable
+// undefined, because a path moved or a conditional branch was not taken. Left
+// unchecked that starts an agent whose tool is subtly misconfigured, and the
+// blame lands on the tool rather than on the block.
+func TestPreLaunchDeclaredExportMustActuallyBeSet(t *testing.T) {
+	rendered, err := renderPreLaunchScript([]sandboxpolicy.PreLaunchBlock{
+		{
+			Name:    "forgetful",
+			Script:  "if false; then export PLAYWRIGHT_CLI_SESSION=never; fi\n",
+			Exports: []string{"PLAYWRIGHT_CLI_SESSION"},
+		},
+	}, true, "/bin/bash")
+	require.NoError(t, err)
+
+	out, code := runRenderedPreLaunch(t, rendered, `echo HARNESS_STARTED`)
+	assert.Equal(t, preLaunchFailExitCode, code)
+	assert.Contains(t, out, "forgetful", "the message must name the block that broke its promise")
+	assert.Contains(t, out, "PLAYWRIGHT_CLI_SESSION", "…and the name it failed to set")
+	assert.NotContains(t, out, "HARNESS_STARTED")
+}
+
+// The check must not be a presence-of-non-empty-value check: exporting a
+// deliberately empty value is a legitimate way to say "defined, but blank",
+// and failing that would make the declaration unusable for it.
+func TestPreLaunchDeclaredExportAcceptsAnEmptyValue(t *testing.T) {
+	rendered, err := renderPreLaunchScript([]sandboxpolicy.PreLaunchBlock{
+		{Name: "blank", Script: "export TCL_BLANK=\n", Exports: []string{"TCL_BLANK"}},
+	}, true, "/bin/bash")
+	require.NoError(t, err)
+
+	out, code := runRenderedPreLaunch(t, rendered, `echo "started:[$TCL_BLANK]"`)
+	assert.Equal(t, 0, code)
+	assert.Contains(t, out, "started:[]")
+}
+
+// Each block is checked against its own promises, right after it runs, so a
+// later block cannot accidentally satisfy an earlier one's declaration.
+func TestPreLaunchExportsAreCheckedPerBlockInOrder(t *testing.T) {
+	rendered, err := renderPreLaunchScript([]sandboxpolicy.PreLaunchBlock{
+		{Name: "first", Script: "true\n", Exports: []string{"TCL_LATE"}},
+		{Name: "second", Script: "export TCL_LATE=1\n"},
+	}, true, "/bin/bash")
+	require.NoError(t, err)
+
+	out, code := runRenderedPreLaunch(t, rendered, `echo HARNESS_STARTED`)
+	assert.Equal(t, preLaunchFailExitCode, code)
+	assert.Contains(t, out, "first",
+		"a name set only by a later block must not satisfy an earlier block's declaration")
+	assert.NotContains(t, out, "HARNESS_STARTED")
+}
+
+// A satisfied declaration must be invisible: no bookkeeping left behind and the
+// harness command untouched.
+func TestPreLaunchSatisfiedExportsLeaveNothingBehind(t *testing.T) {
+	rendered, err := renderPreLaunchScript([]sandboxpolicy.PreLaunchBlock{
+		{Name: "good", Script: "export TCL_OK=yes\n", Exports: []string{"TCL_OK"}},
+	}, true, "/bin/bash")
+	require.NoError(t, err)
+
+	out, code := runRenderedPreLaunch(t, rendered, `echo "n=[$n]"; echo "ok=$TCL_OK"`)
+	assert.Equal(t, 0, code)
+	assert.Contains(t, out, "ok=yes")
+	assert.Contains(t, out, "n=[]",
+		"the loop variable must stay local to the helper, not leak into the harness environment")
+}

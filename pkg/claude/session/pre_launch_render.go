@@ -73,6 +73,17 @@ func renderPreLaunchScript(
 	out.WriteString("tclaude_pre_launch_failed() { ")
 	out.WriteString("echo \"tclaude: pre-launch block '$1' failed; refusing harness launch\" >&2; ")
 	out.WriteString(fmt.Sprintf("exit %d; }; ", preLaunchFailExitCode))
+	// A block's `exports` is a promise that it defines those names. Checking it
+	// here is what makes the declaration load-bearing rather than decorative:
+	// the failure it catches — a block that ran fine but left the variable
+	// undefined, because a path moved or a branch was not taken — otherwise
+	// surfaces much later as the tool misbehaving, with nothing pointing back at
+	// the block. `${!n+x}` tests set-ness, not emptiness: an intentionally empty
+	// value is a legitimate thing to export.
+	out.WriteString("tclaude_pre_launch_require() { local n; for n in \"$@\"; do ")
+	out.WriteString("if [ -z \"${!n+x}\" ]; then ")
+	out.WriteString("echo \"tclaude: pre-launch block '$tclaude_pre_launch_block' declares export '$n' but did not set it\" >&2; ")
+	out.WriteString(fmt.Sprintf("exit %d; fi; done; }; ", preLaunchFailExitCode))
 	// -E, not just -e. Without errtrace the ERR trap is NOT inherited by shell
 	// functions, command substitutions or subshells, so the overwhelmingly
 	// ordinary `helper() { … }; helper` shape would abort with a bare exit 1 and
@@ -94,6 +105,16 @@ func renderPreLaunchScript(
 		// An operator's block need not end in a newline, and without one its
 		// last line would run into the next block's assignment.
 		if !strings.HasSuffix(b.Script, "\n") {
+			out.WriteString("\n")
+		}
+		if len(b.Exports) > 0 {
+			out.WriteString("tclaude_pre_launch_require")
+			for _, name := range b.Exports {
+				// Normalization already bounds these to env-var syntax; quoting
+				// keeps that from being the only thing between a name and the
+				// shell, exactly as for the block name above.
+				out.WriteString(" " + clcommon.ShellQuoteArg(name))
+			}
 			out.WriteString("\n")
 		}
 	}

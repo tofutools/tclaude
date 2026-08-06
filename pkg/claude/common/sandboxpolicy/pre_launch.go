@@ -193,12 +193,24 @@ func mergePreLaunch(accumulated, incoming []PreLaunchBlock) []PreLaunchBlock {
 // PreLaunchExports is the union of every declared export name across blocks, in
 // stable order.
 //
-// NOTE: nothing consumes this yet. It exists for the harness adapter that must
-// forward a block's values BY NAME — Codex scrubs the environment of its shell
-// tool, and a value computed by a block does not exist at command-build time,
-// so `shell_environment_policy.set.<name>=<value>` cannot carry it. Wiring that
-// is TCL-1040. Until then a declared export is inert for Codex, and the other
-// three harnesses need no help because they inherit the pane environment.
+// A declared export needs no per-harness forwarding machinery. A block runs in
+// the launching shell, so its values are in the harness process's own
+// environment, and all four harnesses pass that down to the commands they run.
+// Codex was the doubtful one — it can rebuild a tool command's environment from
+// `shell_environment_policy` — but that policy's default is `inherit = "all"`,
+// verified against codex-cli 0.146.1: a value a block exports is visible to the
+// shell tool unmodified, while `exclude`/`inherit = "core"` do strip it, which
+// is what proves the policy is applied on that path rather than bypassed.
+//
+// So the remaining gap is only an operator config.toml that narrows `inherit`
+// or excludes the name. Closing it needs the value at command-build time, which
+// a block-computed value by definition does not have; it would take rendering
+// `-c shell_environment_policy.set.<name>=<value>` from the pane shell after the
+// blocks run. That is TCL-1040, deliberately deferred as hardening.
+//
+// What the declaration buys today is the launch-time check in the rendered
+// fragment: a block that finishes without defining a name it promised stops the
+// launch there, instead of the agent starting subtly misconfigured.
 func PreLaunchExports(blocks []PreLaunchBlock) []string {
 	seen := map[string]struct{}{}
 	out := []string{}

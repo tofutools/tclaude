@@ -923,14 +923,24 @@ starting a half-configured agent. Both are unwound before the harness command,
 so nothing leaks into its own shell semantics. A host with no bash refuses to
 launch a profile carrying blocks rather than running them under `/bin/sh`.
 
-`exports` is optional and never enforced. Claude Code, Copilot and OpenCode
-inherit the pane's environment, so a block works there whether or not it
-declares anything. Codex scrubs the environment of its shell tool, so values a
-block produces have to be forwarded by name — **that forwarding is not built
-yet**, so under Codex a block's values reach the harness process but not
-necessarily its shell tool. Unlike `environment`, these names are not checked
-against the reserved list — reaching `XDG_CONFIG_HOME` or `PATH` is much of the
-point.
+`exports` is optional. It declares the names a block promises to define, and
+the launch checks that promise: a block that finishes without setting one of
+them stops the launch and names both the block and the variable. That catches
+the quiet failure — the block ran fine, but a path moved or a branch was not
+taken, so the tool starts misconfigured and the blame lands on the tool. A name
+set to an empty string counts as defined; only *undefined* fails.
+
+You do not need `exports` to make values reach a tool. A block runs in the
+launching shell, so what it exports is in the harness process's environment, and
+all four harnesses pass that down to the commands they run — including Codex,
+whose `shell_environment_policy` defaults to `inherit = "all"`. The one case
+that still gets dropped is an operator `~/.codex/config.toml` that narrows
+`inherit` or excludes the name; restoring it there needs the value at
+command-build time, which a block-computed value does not have, so that is
+tracked separately rather than solved here.
+
+Unlike `environment`, these names are not checked against the reserved list —
+reaching `XDG_CONFIG_HOME` or `PATH` is much of the point.
 
 > Do **not** export `XDG_CONFIG_HOME` / `XDG_CACHE_HOME` / `XDG_DATA_HOME`
 > globally into the agent's environment. Every other XDG-aware tool in the
