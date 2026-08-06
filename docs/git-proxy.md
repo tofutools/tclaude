@@ -159,9 +159,21 @@ tclaude proxy github run log-failed <databaseId from that listing>
 
 The id is also recoverable from the `detailsUrl` in a `pr checks` rollup
 (`…/actions/runs/<run-id>/job/<job-id>`), which is worth knowing but is the
-long way round. `run ls` additionally reaches runs `pr checks` cannot show at
-all: the rollup carries only the latest attempt per check, so a run that failed
-before someone re-ran it does not appear there.
+long way round.
+
+`run ls` additionally reaches runs `pr checks` cannot show at all: a
+`statusCheckRollup` is scoped to the pull request's **head commit**, so a
+force-push or an amend takes every run against the superseded commit out of
+`pr checks`, while `run ls --branch` still lists them. Compare `headSha`
+against the commit you care about.
+
+Re-runs are **not** such a case, and it is worth being explicit because the
+intuition points the wrong way: re-running a workflow does not create a new
+run, it adds an *attempt* to the same run id. A failure that was re-run green
+therefore reports as green in `pr checks` and in `run ls` alike, and
+`run log-failed` reads the latest attempt. The `attempt` field shows that a run
+has been re-run; reading an earlier attempt's log is not something the proxy
+offers.
 
 `pr comments` returns everything said on the pull request, in two sections:
 the **conversation** (issue comments and the body of each review submission,

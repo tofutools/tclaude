@@ -349,7 +349,15 @@ const maxGHProxyTextBytesForTest = 256 * 1024
 // runs it gives no way to open.
 func TestGHProxy_RunListIsTheRouteToARunID(t *testing.T) {
 	f, rec := gitProxyWorld(t, []string{"github.com/tofutools"})
-	rec.gh = agentd.ProxyResult{Stdout: `[{"databaseId":31090120054,"conclusion":"FAILURE"}]`}
+	// 9007199254740993 is 2^53+1, the smallest integer float64 cannot hold. A
+	// real run id (~3x10^10) round-trips through float64 exactly, so a fixture
+	// using one would pass against the very implementation this is meant to
+	// exclude — an unmarshal-into-any-then-remarshal in either the daemon's
+	// passthrough or the CLI's render, which would silently hand the agent
+	// ...992 and send it looking at a run that does not exist.
+	rec.gh = agentd.ProxyResult{
+		Stdout: `[{"databaseId":9007199254740993,"conclusion":"FAILURE"}]`,
+	}
 	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubRead, "test"))
 
 	res := gitProxyPost(t, f, "/v1/github/run/list", map[string]any{
@@ -360,17 +368,16 @@ func TestGHProxy_RunListIsTheRouteToARunID(t *testing.T) {
 	call := ghCall(t, rec)
 	assert.Equal(t, []string{
 		"run", "list", "--repo", "tofutools/tclaude", "--limit", "5",
-		"--json", "databaseId,conclusion,status,workflowName,displayTitle,headBranch,event,createdAt,url",
+		"--json", "databaseId,headSha,attempt,conclusion,status,workflowName,displayTitle,headBranch,event,createdAt,url",
 		"--branch", "feat/thing", "--status", "failure",
 	}, call.Args)
 
-	// A run id past 2^53 would be mangled by a float64 round-trip, so the
-	// listing must reach the agent as the bytes GitHub sent.
 	var out struct {
 		JSON json.RawMessage `json:"json"`
 	}
 	require.NoError(t, json.Unmarshal(res.Body.Bytes(), &out))
-	assert.Contains(t, string(out.JSON), "31090120054")
+	assert.Contains(t, string(out.JSON), "9007199254740993",
+		"a float64 round-trip would render this as 9007199254740992")
 }
 
 // TestGHProxy_RunListRefusesInjectionShapedFilters — branch and status both
@@ -407,7 +414,12 @@ func TestGHProxy_RunListOmitsFiltersItWasNotGiven(t *testing.T) {
 	call := ghCall(t, rec)
 	assert.NotContains(t, call.Args, "--status", "an unasked-for status filter hides runs")
 	assert.NotContains(t, call.Args, "--branch")
-	assert.Contains(t, call.Args, "20", "and the limit falls back to the shared default")
+	// The full argv, so "20" has to be the LIMIT rather than merely a string
+	// that appears somewhere among the arguments.
+	assert.Equal(t, []string{
+		"run", "list", "--repo", "tofutools/tclaude", "--limit", "20",
+		"--json", "databaseId,headSha,attempt,conclusion,status,workflowName,displayTitle,headBranch,event,createdAt,url",
+	}, call.Args)
 }
 
 // TestGHProxy_RunLogFailedAcceptsARealRunID is the regression for bounding a

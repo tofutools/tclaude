@@ -24,7 +24,7 @@ const (
 	ghPRListFields  = "number,title,state,isDraft,headRefName,baseRefName,url,updatedAt,author"
 	ghPRViewFields  = "number,title,state,isDraft,headRefName,baseRefName,url,body,createdAt,updatedAt,author,mergeable,reviewDecision"
 	ghPRChecksField = "number,url,statusCheckRollup"
-	ghRunListFields = "databaseId,conclusion,status,workflowName,displayTitle,headBranch,event,createdAt,url"
+	ghRunListFields = "databaseId,headSha,attempt,conclusion,status,workflowName,displayTitle,headBranch,event,createdAt,url"
 	ghIssueListFlds = "number,title,state,url,updatedAt,author,labels"
 	ghIssueViewFlds = "number,title,state,url,body,createdAt,updatedAt,author,labels,assignees"
 )
@@ -348,13 +348,19 @@ type ghProxyRunListRequest struct {
 //
 // Without it the only route to a run id is regexing one out of the detailsUrl
 // buried in a `pr checks` rollup, which works and reads like a workaround.
-// This also reaches the runs `pr checks` cannot show at all: the rollup
-// carries only the LATEST attempt per check, so the run that actually failed
-// before someone re-ran it is invisible there.
+//
+// It also reaches runs `pr checks` cannot show, though not the ones you might
+// expect. A statusCheckRollup is scoped to the pull request's HEAD COMMIT, so
+// a force-push or an amend takes every run against the superseded commit out
+// of `pr checks` entirely, while `run ls --branch` still lists them. Re-runs
+// are NOT such a case: re-running does not create a new run, it adds an
+// attempt to the same run id, and both `pr checks` and `run list` then report
+// that latest attempt's conclusion.
 //
 // `databaseId` is the field that matters — it is the id every other run verb
 // takes — so it leads the field list rather than sitting alphabetically among
-// the rest.
+// the rest. `headSha` and `attempt` follow because they are what distinguish a
+// superseded run from a current one, and a re-run from a first try.
 func handleGHProxyRunList(w http.ResponseWriter, r *http.Request) {
 	var body ghProxyRunListRequest
 	g, ok := openGHProxy(w, r, PermGitHubRead, &body, func() string { return body.Remote })

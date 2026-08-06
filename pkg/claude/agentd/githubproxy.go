@@ -380,6 +380,11 @@ func validateGHState(state string, allowed ...string) (string, *proxyFault) {
 // ghRunStatuses is gh's own `run list --status` vocabulary, verbatim (gh 2.97).
 // An allow-list of literals, so the value that reaches argv is one of these
 // constants and never the caller's string.
+//
+// This is the AUTHORITY. The CLI keeps its own copy for shell completion
+// because it must not import the daemon; TestGHRunStatusCompletionMatchesTheGate
+// pins the two together, so a status added here cannot silently stop being
+// offered there.
 var ghRunStatuses = []string{
 	"queued", "completed", "in_progress", "requested", "waiting", "pending",
 	"action_required", "cancelled", "failure", "neutral", "skipped", "stale",
@@ -404,6 +409,10 @@ func validateGHRunStatus(status string) (string, *proxyFault) {
 	return "", faultf(http.StatusBadRequest, "invalid_arg",
 		"status %q is not one of: %s", status, strings.Join(ghRunStatuses, ", "))
 }
+
+// GHRunStatusesForTest exposes the gate's vocabulary so the CLI's completion
+// copy can be pinned against it.
+func GHRunStatusesForTest() []string { return append([]string(nil), ghRunStatuses...) }
 
 func validateGHLimit(limit int) (string, *proxyFault) {
 	if limit == 0 {

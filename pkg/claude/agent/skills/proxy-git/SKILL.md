@@ -100,8 +100,19 @@ steps only; there is no full-log verb, and you do not want one.
 
 The id is also sitting in `pr checks` output, in each entry's `detailsUrl`
 (`…/actions/runs/18234567890/job/523…`), if you already have that JSON open.
-But prefer `run ls`: the rollup shows only the latest attempt per check, so a
-run that failed before it was re-run is not in `pr checks` at all.
+
+Prefer `run ls` when the branch has been force-pushed or amended: `pr checks`
+only reports runs against the PR's current head commit, so runs against the
+commit you replaced vanish from it while `run ls --branch` still lists them.
+Check `headSha` to see which commit a run belongs to.
+
+One thing that does **not** work the way you would guess: re-running a
+workflow does not make a new run, it adds an *attempt* to the same run id. So a
+check that failed and was re-run green looks green everywhere — in `pr checks`,
+in `run ls`, and in `run log-failed`, which reads the latest attempt. If you
+are told CI failed but everything reads green, a re-run is the likely reason;
+the `attempt` field will be above 1. Ask your human rather than concluding the
+report was wrong.
 
 Two `run log-failed` results that are easy to misread:
 

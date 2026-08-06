@@ -511,8 +511,14 @@ func githubRunListCmd() *cobra.Command {
 			"`run log-failed` takes.\n\n" +
 			"This is how you find a failed run:\n\n" +
 			"    tclaude proxy github run ls --branch my-branch --status failure\n\n" +
-			"It also reaches runs `pr checks` cannot show: that rollup carries only the latest attempt " +
-			"per check, so a run that failed before someone re-ran it does not appear there at all.",
+			"It also reaches runs `pr checks` cannot show at all: that rollup is scoped to the pull " +
+			"request's HEAD COMMIT, so after a force-push or an amend every run against the superseded " +
+			"commit disappears from it, while `run ls --branch` still lists them. Compare `headSha` " +
+			"against the commit you care about.\n\n" +
+			"Re-runs are not such a case: re-running adds an attempt to the SAME run id rather than " +
+			"creating a new run, so a failure that was re-run green reports as green in both. The " +
+			"`attempt` field tells you a run has been re-run; reading the earlier attempt's log is not " +
+			"something this proxy offers.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *githubRunListParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(agent.CompleteAskHumanDurations)
@@ -533,10 +539,21 @@ func githubRunListCmd() *cobra.Command {
 // ghRunStatusAlternatives mirrors gh's `run list --status` vocabulary for shell
 // completion. The daemon validates independently — this is a convenience, not
 // a gate, and a stale entry here costs a refusal rather than a bad argv.
+//
+// A copy rather than an import: the CLI must not depend on the daemon package,
+// because a check made in this process is a check the caller could have
+// skipped. TestGHRunStatusCompletionMatchesTheGate pins it to the authority in
+// pkg/claude/agentd.
 var ghRunStatusAlternatives = []string{
 	"queued", "completed", "in_progress", "requested", "waiting", "pending",
 	"action_required", "cancelled", "failure", "neutral", "skipped", "stale",
 	"startup_failure", "success", "timed_out",
+}
+
+// GHRunStatusAlternativesForTest exposes the completion vocabulary so it can be
+// pinned against the daemon's gate.
+func GHRunStatusAlternativesForTest() []string {
+	return append([]string(nil), ghRunStatusAlternatives...)
 }
 
 type githubRunParams struct {
