@@ -262,6 +262,10 @@ tclaude agent sandbox-impl set <agent> resource-only
 tclaude agent resume <agent>
 ```
 
+or, in the dashboard, **🧩 sandbox implementation…** in the agent's row menu —
+disabled while the agent is running, and it opens a picker listing each
+implementation with its description.
+
 The implementation is durable relaunch intent, so the assignment takes effect on
 the next launch and is refused while the agent is running. The recorded harness
 sandbox mode moves with it (`resource-only` stands the harness's own wall down),

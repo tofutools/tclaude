@@ -1,4 +1,5 @@
 import { clonePayload } from './clone-payload.js';
+import { findSpawnHarness, sandboxImplOptionsFor } from './agent-spawn-model.js';
 
 const CLONE_TIMEOUT_MS = 35_000;
 const EXPORT_POLL_INTERVAL_MS = 2_000;
@@ -77,6 +78,7 @@ export function createActionDialogActions({
       return state.openPresetClone(options);
     },
     openExport: state.openExport,
+    openSandboxImpl: state.openSandboxImpl,
     openTerminalDirectory: state.openTerminalDirectory,
     finishChoice: state.finishChoice,
     close: state.close,
@@ -216,6 +218,49 @@ export function createActionDialogActions({
     },
     async deleteExport(jobID) {
       await exportRequest(`/api/export-jobs/${encodeURIComponent(jobID)}`, { method: 'DELETE' });
+    },
+    // The implementation catalog the spawn dialog renders, named after the
+    // agent's own harness. Shared rather than re-derived so the assignment dialog
+    // and the spawn dialog cannot describe the same implementation differently.
+    sandboxImplOptions(harnessName) {
+      const snapshot = getSnapshot() || {};
+      const harness = findSpawnHarness(snapshot.harnesses, harnessName);
+      const label = harness?.display_name || harness?.name || harnessName;
+      // canBuiltinOSSandbox is deliberately NOT passed through here. It hides
+      // harness-builtin in the spawn dialog for a harness that owns no OS
+      // sandbox, which is right when CHOOSING a posture — but harness-builtin is
+      // the recorded value such an agent already has, so hiding it would leave
+      // the operator unable to put one back.
+      return sandboxImplOptionsFor(snapshot.sandbox_impl?.options, label);
+    },
+    // The harness's own sandbox modes, for the optional pin. Empty for a harness
+    // whose sandbox is configured out of band, which is what hides the row.
+    sandboxModes(harnessName) {
+      const harness = findSpawnHarness((getSnapshot() || {}).harnesses, harnessName);
+      if (!harness?.can_sandbox) return [];
+      return Array.isArray(harness.sandbox_modes) ? harness.sandbox_modes : [];
+    },
+    // The durable sandbox posture the NEXT launch will use. Read from the server
+    // rather than the row snapshot, whose sandbox fields describe the last launch
+    // — the two diverge as soon as an assignment is recorded.
+    async loadSandboxImpl(conv, { signal } = {}) {
+      return requestJSON(fetchImpl, `/api/agents/${encodeURIComponent(conv)}/sandbox-impl`, { signal });
+    },
+    async assignSandboxImpl({ conv, label, implementation, sandbox }, owner) {
+      const payload = await requestJSON(
+        fetchImpl, `/api/agents/${encodeURIComponent(conv)}/sandbox-impl`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ implementation, sandbox: sandbox || '' }),
+        },
+      );
+      state.close(owner);
+      const name = label || String(conv).slice(0, 8);
+      // Name the wake explicitly. The assignment changed nothing about the
+      // agent as it stands — it is recorded intent, and an operator who reads
+      // "assigned" as "applied" would believe a stopped agent is now bounded.
+      notify(`${name}: sandbox implementation → ${payload.sandbox_implementation} (applied when you wake it)`);
+      refresh();
+      return payload;
     },
     async clearExports(conv) {
       await exportRequest(`/api/agents/${encodeURIComponent(conv)}/exports`, { method: 'DELETE' });

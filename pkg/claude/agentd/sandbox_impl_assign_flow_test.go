@@ -201,6 +201,72 @@ func TestSandboxImplAssign_RestoringHarnessBuiltinDoesNotInheritTheForcedOffMode
 	assert.Equal(t, harness.ClaudeSandboxOn, pinned.Sandbox)
 }
 
+// The dashboard picker reaches the same operation over the cookie-authenticated
+// route. Its GET is what the dialog renders from, and it must report the DURABLE
+// posture: the row it is opened from carries the last launch's implementation,
+// which is a different question and diverges the moment an assignment lands.
+func TestSandboxImplAssign_DashboardRouteReadsAndAssigns(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+
+	spawn := f.AsHuman().SpawnWith("crew", map[string]any{
+		"name":    "dash-target",
+		"sandbox": harness.ClaudeSandboxOn,
+	})
+	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+	f.AsHuman().Stop(spawn.ConvID, false)
+
+	dash := agentd.BuildDashboardHandlerForTest()
+	path := "/api/agents/" + spawn.ConvID + "/sandbox-impl"
+
+	read := testharness.Serve(dash, dashReq(t, http.MethodGet, path, nil))
+	require.Equalf(t, http.StatusOK, read.Code, "GET body=%s", read.Body.String())
+	var before sandboxImplWire
+	testharness.DecodeJSON(t, read, &before)
+	assert.Equal(t, string(sandboxpolicy.ImplementationHarnessBuiltin), before.Implementation)
+	assert.Equal(t, harness.ClaudeSandboxOn, before.Sandbox)
+	assert.False(t, before.Online)
+
+	write := testharness.Serve(dash, dashReq(t, http.MethodPost, path,
+		map[string]any{"implementation": string(sandboxpolicy.ImplementationOff)}))
+	require.Equalf(t, http.StatusOK, write.Code, "POST body=%s", write.Body.String())
+	var after sandboxImplWire
+	testharness.DecodeJSON(t, write, &after)
+	assert.Equal(t, string(sandboxpolicy.ImplementationOff), after.Implementation)
+	assert.Equal(t, string(sandboxpolicy.ImplementationHarnessBuiltin), after.Previous)
+
+	// The recorded session row still describes the OLD launch, which is exactly
+	// why the dialog reads this endpoint rather than the row.
+	row, err := db.FindSessionByConvID(spawn.ConvID)
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	assert.Equal(t, string(sandboxpolicy.ImplementationHarnessBuiltin), row.SandboxImplementation)
+	assert.Equal(t, string(sandboxpolicy.ImplementationOff),
+		showSandboxImpl(t, f, spawn.ConvID).Implementation)
+
+	f.AsHuman().Resume(spawn.ConvID)
+	relaunched, ok := f.World.SpawnSandboxImplementation(spawn.ConvID)
+	require.True(t, ok)
+	assert.Equal(t, string(sandboxpolicy.ImplementationOff), relaunched)
+}
+
+// The dashboard route refuses a running agent for the same reason the CLI does —
+// the button is disabled in the UI, but a stale page must not be able to record a
+// posture the live process does not have.
+func TestSandboxImplAssign_DashboardRouteRefusesWhileOnline(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+
+	spawn := f.AsHuman().Spawn("crew", "dash-live")
+	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+
+	rec := testharness.Serve(agentd.BuildDashboardHandlerForTest(),
+		dashReq(t, http.MethodPost, "/api/agents/"+spawn.ConvID+"/sandbox-impl",
+			map[string]any{"implementation": string(sandboxpolicy.ImplementationOff)}))
+	assert.Equal(t, http.StatusConflict, rec.Code)
+	assert.Contains(t, rec.Body.String(), "agent_online")
+}
+
 // The slug is not owner-implied on purpose: the assignment can move an agent
 // onto an implementation with no access confinement at all, which is the
 // boundary the sandbox-lineage guard protects. Owning the group the target

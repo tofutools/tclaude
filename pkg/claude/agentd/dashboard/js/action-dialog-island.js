@@ -9,7 +9,7 @@ import { normaliseFollowUp } from './action-dialog-actions.js';
 import { registerActionDialogController } from './action-dialog-controller.js';
 import { shortCwd } from './helpers.js';
 import {
-  AgentExportDialog, PresetCloneDialog, TerminalDirectoryDialog,
+  AgentExportDialog, PresetCloneDialog, SandboxImplDialog, TerminalDirectoryDialog,
 } from './small-dialog-components.js';
 
 const html = htm.bind(h);
@@ -524,6 +524,7 @@ export function ActionDialogApp({ state, actions, confirmDiscard, snapshot }) {
   />`;
   if (descriptor.kind === 'preset-clone') return html`<${PresetCloneDialog} key=${descriptor.launchID} descriptor=${descriptor} actions=${actions} confirmDiscard=${confirmDiscard} />`;
   if (descriptor.kind === 'agent-export') return html`<${AgentExportDialog} key=${descriptor.launchID} descriptor=${descriptor} actions=${actions} confirmDiscard=${confirmDiscard} />`;
+  if (descriptor.kind === 'sandbox-impl') return html`<${SandboxImplDialog} key=${descriptor.launchID} descriptor=${descriptor} actions=${actions} confirmDiscard=${confirmDiscard} />`;
   if (descriptor.kind === 'terminal-directory') return html`<${TerminalDirectoryDialog} key=${descriptor.launchID} descriptor=${descriptor} actions=${actions} confirmDiscard=${confirmDiscard} />`;
   return null;
 }

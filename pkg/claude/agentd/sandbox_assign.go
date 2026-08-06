@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
@@ -57,6 +58,27 @@ func handleAgentSandboxImplementation(w http.ResponseWriter, r *http.Request, co
 		return
 	}
 	assignAgentSandboxImplementation(w, r, convID)
+}
+
+// dashboardSandboxImplementationAgent is the cookie-authenticated half of the
+// same operation, for the dashboard's picker dialog: GET loads the durable
+// posture the dialog renders, POST assigns.
+//
+// It carries no slug check because the dashboard human IS the operator this
+// capability is reserved for — checkDashboardAuth in handleDashboardAgentsAPI is
+// the consent layer, exactly as it is for the sandbox-restart action beside it.
+// The /v1 route keeps requirePermission for agent callers.
+func dashboardSandboxImplementationAgent(w http.ResponseWriter, r *http.Request, convSelector string) {
+	resolved, _, err := agent.ResolveSelector(convSelector)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "not_found", "resolve agent: "+err.Error())
+		return
+	}
+	if r.Method == http.MethodGet {
+		writeSandboxImplementationResponse(w, resolved.ConvID, "")
+		return
+	}
+	assignAgentSandboxImplementation(w, r, resolved.ConvID)
 }
 
 func assignAgentSandboxImplementation(w http.ResponseWriter, r *http.Request, convID string) {

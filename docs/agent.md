@@ -984,6 +984,13 @@ than the `--target` flag the self-defaulting lifecycle verbs use: the
 implementation is applied by a launch, and the assignment is refused while the
 agent is running (`409 agent_online`). Stop the agent, assign, then wake it.
 
+The dashboard exposes the same operation as **🧩 sandbox implementation…** in
+the agent row menu, which opens a picker listing each implementation with its
+description. The menu item is disabled while the agent is running and says why.
+The dialog reads the durable posture from the server rather than the row it was
+opened from — the row's sandbox fields describe the agent's last *launch*, which
+diverges from relaunch intent as soon as an assignment is recorded.
+
 The recorded harness sandbox **mode** moves with the implementation, because
 the implementation decides what the harness's own sandbox may be —
 `resource-only`, `off` and `tclaude-layer` all derive the mode their launch runs
