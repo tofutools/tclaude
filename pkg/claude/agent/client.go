@@ -252,8 +252,9 @@ type DaemonOpts struct {
 	// Timeout, when > 0, overrides the default 10s client timeout for
 	// this one request. Needed by slow endpoints — template
 	// instantiation spawns a whole agent team and can run well past
-	// 10s. Ignored when AskHuman is set (that path picks its own
-	// generous timeout).
+	// 10s. Combined with AskHuman rather than overridden by it: the
+	// popup wait happens in the daemon BEFORE the endpoint runs, so a
+	// request that needs both waits for both.
 	Timeout time.Duration
 	// RetryOutput receives retry notices. Nil writes to os.Stderr. This is
 	// primarily useful to callers that already expose an injectable stderr.
@@ -363,6 +364,25 @@ func DaemonRequest(method, path string, in, out any, opts DaemonOpts) error {
 	return DaemonRequestImpl(method, path, in, out, opts)
 }
 
+// daemonClientTimeout is the per-request client budget, or 0 for the default.
+//
+// The two waits ADD UP rather than replacing one another. The daemon resolves
+// an --ask-human popup inside requirePermission and only THEN runs the
+// endpoint, so a request that needs both spends both. Taking only the approval
+// budget — which is what this did while it was a switch — hangs up on a
+// slow-but-succeeding endpoint the moment someone passes --ask-human to it:
+// the caller reports "the daemon did not answer" while the daemon finishes the
+// work and files a response nobody will ever read. That is worst on exactly
+// the endpoints the flag is most useful for, since those are the slow ones.
+func daemonClientTimeout(opts DaemonOpts) time.Duration {
+	if opts.AskHuman > 0 {
+		// The popup can run to its full timeout, plus headroom for the daemon
+		// to notice and answer.
+		return opts.AskHuman + 30*time.Second + opts.Timeout
+	}
+	return opts.Timeout
+}
+
 func daemonReq(method, path string, in, out any, opts DaemonOpts) error {
 	var body io.Reader
 	if in != nil {
@@ -382,15 +402,11 @@ func daemonReq(method, path string, in, out any, opts DaemonOpts) error {
 		req.Header.Set("Content-Type", "application/json")
 	}
 	client := httpClient()
-	switch {
-	case opts.AskHuman > 0:
+	if opts.AskHuman > 0 {
 		req.Header.Set("X-Tclaude-Ask-Human", opts.AskHuman.String())
-		// The default client has a short timeout; popup approvals can
-		// take up to 300s. Use a per-request client whose timeout is
-		// generous enough to outlive the daemon's wait.
-		client = httpClientWithTimeout(opts.AskHuman + 30*time.Second)
-	case opts.Timeout > 0:
-		client = httpClientWithTimeout(opts.Timeout)
+	}
+	if budget := daemonClientTimeout(opts); budget > 0 {
+		client = httpClientWithTimeout(budget)
 	}
 	if opts.TargetConv != "" {
 		req.Header.Set("X-Tclaude-Target-Conv", opts.TargetConv)

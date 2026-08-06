@@ -50,16 +50,24 @@ func TestGHProxyOutcome_RenderFallsBackToRawOnUnparseableJSON(t *testing.T) {
 
 // TestGHProxyOutcome_RenderPassesTextPayloadsThrough — `pr comments` and
 // `run log-failed` are the two verbs whose payload is prose rather than JSON.
-// Their whitespace is load-bearing (indented log lines, comment separators), so
-// the renderer must not reflow it, and a tail-truncated answer must say so —
-// otherwise an agent reads a half log as the whole failure.
+// Indentation and column alignment inside a log line are load-bearing, so the
+// renderer must not reflow them, and a tail-truncated answer must say so —
+// otherwise an agent reads half a log as the whole failure.
+//
+// Trailing newlines are the one thing render does normalise (TrimRight then
+// Fprintln), which is why the fixture's interior whitespace is what is
+// asserted rather than the byte-for-byte string.
 func TestGHProxyOutcome_RenderPassesTextPayloadsThrough(t *testing.T) {
-	const log = "build\tTest\t    --- FAIL: TestThing (0.00s)\nbuild\tTest\t        want 1, got 2\n"
+	const log = "=== inline review comments ===\n\nfile:\tmain.go:42\n--\n    indented body\n\n\n"
 	o := &ghProxyOutcome{Stdout: log, Truncated: true}
 
 	var stdout, stderr bytes.Buffer
-	require.Equal(t, rcOK, o.render(&stdout, &stderr, "run log-failed"))
-	assert.Equal(t, log, stdout.String(), "log whitespace is the log")
+	require.Equal(t, rcOK, o.render(&stdout, &stderr, "pr comments"))
+	got := stdout.String()
+	assert.Contains(t, got, "file:\tmain.go:42", "tabs inside a line are not reflowed")
+	assert.Contains(t, got, "\n    indented body", "leading indentation survives")
+	assert.Contains(t, got, "=== inline review comments ===\n\nfile:",
+		"blank lines BETWEEN sections are structure, not padding")
 	assert.Contains(t, stderr.String(), "truncated",
 		"a half answer that does not say so reads as a whole one")
 }

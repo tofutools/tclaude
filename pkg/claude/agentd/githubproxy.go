@@ -52,6 +52,13 @@ const (
 	// other verb wait three minutes for a hung one.
 	ghProxyLogTimeout = 180 * time.Second
 
+	// ghProxyCommentsTimeout is the TOTAL budget for `pr comments`, which is
+	// two gh calls (the conversation, then the inline review threads). A
+	// budget rather than two independent bounds, so the daemon's worst case
+	// stays a number the CLI can wait on rather than the sum of whatever the
+	// verb happens to do next.
+	ghProxyCommentsTimeout = 90 * time.Second
+
 	// maxGHProxyTextBytes is the tail kept from a verb whose output IS the
 	// payload — a comment thread, a failed job's log — rather than a
 	// diagnosis. The default 16 KiB is right for "what went wrong with this

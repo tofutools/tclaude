@@ -31,11 +31,15 @@ import (
 // client hang-up that leaves the agent unsure whether a PR was created.
 const ghProxyTimeout = 90 * time.Second
 
-// ghProxyLogTimeout is the same bound for `run log-failed`, which downloads a
-// run's log archive daemon-side and is allowed 180s there. A client cap below
-// the daemon's would turn every slow-but-succeeding log read into a hang-up
-// that reports nothing.
-const ghProxyLogTimeout = 210 * time.Second
+// ghProxyBulkTimeout is the bound for the two reads the daemon allows longer
+// than its own 60s default: `run log-failed` (180s there — it downloads a
+// run's whole log archive) and `pr comments` (90s — two calls under one
+// budget). A client cap below the daemon's would turn a slow-but-succeeding
+// read into a hang-up that reports nothing, which is the failure that leaves
+// an agent unsure whether it saw all the feedback. One generous constant
+// rather than one per verb: this is a backstop against a hung daemon, and the
+// daemon's own bound is what actually ends a slow call.
+const ghProxyBulkTimeout = 210 * time.Second
 
 func githubCmd() *cobra.Command {
 	return boa.CmdT[struct{}]{
@@ -289,21 +293,27 @@ func githubPRCommentsCmd() *cobra.Command {
 	return boa.CmdT[githubNumberParams]{
 		Use:     "comments",
 		Aliases: []string{"thread"},
-		Short:   "Read the comment thread on a pull request",
-		Long: "Prints the review conversation on a pull request — the same thing `gh pr view N --comments` " +
-			"shows — oldest first. This is the READ; `pr comment` is the write.\n\n" +
-			"It covers issue comments and the body of each review submission. Line-level comments attached " +
-			"to a review's diff threads are not in gh's `--comments` output and so are not here either; a " +
-			"bot that files findings inline shows up as its summary, with the detail on the PR page.\n\n" +
-			"The thread is text, not JSON, and a long one is returned tail-first if it exceeds the daemon's " +
-			"response bound — the newest comments, which are the ones you are usually here for.",
+		Short:   "Read all review feedback on a pull request",
+		Long: "Prints everything said on a pull request, in two sections. This is the READ; `pr comment` " +
+			"is the write.\n\n" +
+			"  1. the conversation — issue comments and the body of each review submission, oldest first " +
+			"(what `gh pr view N --comments` shows)\n" +
+			"  2. the inline review comments — the line-level notes inside each review's diff threads, each " +
+			"with its file, line and permalink\n\n" +
+			"Both sections matter for a review bot: CodeRabbit posts its summary as a review body, but " +
+			"every actionable finding is an inline comment. Section 1 alone tells you the PR was reviewed " +
+			"and not what the review said.\n\n" +
+			"The output is text, not JSON. Each section is bounded separately, so a long conversation " +
+			"cannot squeeze out the inline findings; if one is too large you get its tail — the newest " +
+			"comments, which are the ones you are usually here for.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *githubNumberParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(agent.CompleteAskHumanDurations)
 			return nil
 		},
 		RunFunc: func(p *githubNumberParams, _ *cobra.Command, _ []string) {
-			os.Exit(ghProxyCall("/v1/github/pr/comments", numberBody(p), p.AskHuman, "pr comments", os.Stdout, os.Stderr))
+			os.Exit(ghProxyCallTimeout("/v1/github/pr/comments", numberBody(p), p.AskHuman,
+				"pr comments", ghProxyBulkTimeout, os.Stdout, os.Stderr))
 		},
 	}.ToCobra()
 }
@@ -512,7 +522,7 @@ func githubRunLogFailedCmd() *cobra.Command {
 			os.Exit(ghProxyCallTimeout("/v1/github/run/log-failed", map[string]any{
 				"remote": strings.TrimSpace(p.Remote),
 				"run_id": p.RunID,
-			}, p.AskHuman, "run log-failed", ghProxyLogTimeout, os.Stdout, os.Stderr))
+			}, p.AskHuman, "run log-failed", ghProxyBulkTimeout, os.Stdout, os.Stderr))
 		},
 	}.ToCobra()
 }

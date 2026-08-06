@@ -135,7 +135,7 @@ tclaude proxy github pr create --title "…" --body-file pr.md
 tclaude proxy github pr ls --state open
 tclaude proxy github pr view 42
 tclaude proxy github pr checks 42
-tclaude proxy github pr comments 42            # read the review thread
+tclaude proxy github pr comments 42            # read ALL review feedback
 tclaude proxy github pr comment 42 --body-file reply.md
 tclaude proxy github pr edit 42 --body-file new-description.md
 tclaude proxy github pr ready 42
@@ -153,18 +153,43 @@ is the number in the failed check's `detailsUrl`
 an agent can walk from "CI is red" to the failing assertion without a token and
 without a browser.
 
-Both of these, and `pr comments`, return **text rather than JSON** — they are
-`gh pr view --comments` and `gh run view --log-failed` verbatim. Their output is
-also the payload rather than a diagnosis, so they keep a 256 KiB tail instead of
-the 16 KiB every other verb gets, and `run log-failed` is allowed 180s because
-gh downloads the run's whole log archive. Only the *failed* steps are ever
+`pr comments` returns everything said on the pull request, in two sections:
+the **conversation** (issue comments and the body of each review submission,
+what `gh pr view --comments` shows) and the **inline review comments** (the
+line-level notes inside each review's diff threads, with file, line and
+permalink). Both are needed for a review bot: CodeRabbit posts its summary as a
+review body and every actionable finding as an inline comment, so the
+conversation alone tells you the PR was reviewed and not what the review said.
+
+`pr comments` and `run log-failed` are the only verbs that return **text rather
+than JSON** — every other read, `pr checks` included, is `gh --json` passed
+through unmodelled and bounded at 16 KiB. These two are different because their
+output is the payload rather than a diagnosis: each section keeps a 256 KiB
+tail, so a long conversation cannot squeeze out the inline findings, and
+`run log-failed` is allowed 180s because gh downloads the run's whole log
+archive rather than calling one endpoint. Only the *failed* steps are ever
 available; there is no `--log` equivalent, because the full log of a green
 matrix build is megabytes that say nothing the check rollup did not.
 
-One inherited limit worth knowing: gh's `--comments` shows issue comments and
-the *body* of each review submission, not the line-level comments inside a
-review's diff threads. A bot that files its findings inline (CodeRabbit does)
-appears as its summary, and the detail stays on the PR page.
+Two answers that look like nothing going wrong, and are not:
+
+- `run log-failed` on a run with **no failed steps** prints nothing and exits 0.
+  Silence means the run is green, not that the read failed.
+- `run log-failed` on a run **still in progress** exits non-zero; gh's message
+  says so. Wait and retry rather than treating it as a broken command.
+
+The inline section is a projection rather than raw passthrough — GitHub returns
+a `diff_hunk` per comment that repeats the surrounding diff and is routinely
+larger than the comments themselves, which is a poor trade for an agent reading
+under a context budget. The projection is a single jq constant in
+`githubproxy_handlers.go`.
+
+> **These two verbs carry third-party prose into an agent's context.** A PR
+> comment can be written by anyone who can comment on the repository, and a CI
+> log echoes branch and PR titles. Every other proxy read returns structured
+> gh JSON; these return free text that an agent will read as part of its
+> instructions unless it has been told otherwise. The bundled `proxy-git` skill
+> says so; keep it in mind if you write your own guidance.
 
 `git remotes` is the command to point an agent at when something is refused: it
 lists every remote with the allow-list verdict and the reason, so the agent can

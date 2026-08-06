@@ -3,6 +3,7 @@ package agentd_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -37,8 +39,11 @@ const (
 // probes the daemon makes (repo root, remote URLs, current branch) and records
 // every command so a test can assert on what would have been executed.
 type gitProxyRecorder struct {
-	mu       sync.Mutex
-	calls    []agentd.ProxyCommand
+	mu    sync.Mutex
+	calls []agentd.ProxyCommand
+	// budgets is the remaining context deadline seen by each call in `calls`,
+	// same index. Zero means the call had no deadline at all.
+	budgets  []time.Duration
 	repoRoot string
 	// gitDir overrides the reported --absolute-git-dir, to model a `.git`
 	// GITFILE that points the daemon at another repository's metadata.
@@ -71,6 +76,17 @@ type gitProxyRecorder struct {
 	configProbeFails bool
 	// gh is the canned result for a `gh` invocation.
 	gh agentd.ProxyResult
+	// ghSeq, when non-empty, answers successive gh calls in order and falls
+	// back to gh once exhausted. Needed by the verbs that make more than one
+	// gh call, where "the first succeeded and the second did not" is a
+	// distinct outcome the handler has to render honestly.
+	ghSeq []agentd.ProxyResult
+	// ghErrAfter, when > 0, makes gh calls beyond that count return a
+	// TRANSPORT error (gh could not be run) rather than a non-zero exit. The
+	// two are different outcomes and handlers that make several gh calls have
+	// to render both honestly.
+	ghErrAfter int
+	ghCalls    int
 }
 
 func newGitProxyRecorder(repoRoot string) *gitProxyRecorder {
@@ -105,12 +121,32 @@ func subcommand(args []string) []string {
 	return nil
 }
 
-func (r *gitProxyRecorder) exec(_ context.Context, cmd agentd.ProxyCommand) (agentd.ProxyResult, error) {
+func (r *gitProxyRecorder) exec(ctx context.Context, cmd agentd.ProxyCommand) (agentd.ProxyResult, error) {
 	r.mu.Lock()
 	r.calls = append(r.calls, cmd)
+	// The deadline is the only visible trace of the timeout a handler chose,
+	// and a handler that picks the wrong one fails in production rather than
+	// in the suite — an under-budgeted call just gets killed mid-answer. Record
+	// the budget so a test can assert on it.
+	budget := time.Duration(0)
+	if deadline, ok := ctx.Deadline(); ok {
+		budget = time.Until(deadline)
+	}
+	r.budgets = append(r.budgets, budget)
 	r.mu.Unlock()
 
 	if cmd.Tool == "gh" {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		r.ghCalls++
+		if r.ghErrAfter > 0 && r.ghCalls > r.ghErrAfter {
+			return agentd.ProxyResult{}, errors.New("run gh: gh exploded")
+		}
+		if len(r.ghSeq) > 0 {
+			next := r.ghSeq[0]
+			r.ghSeq = r.ghSeq[1:]
+			return next, nil
+		}
 		return r.gh, nil
 	}
 	sub := subcommand(cmd.Args)

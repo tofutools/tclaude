@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -139,7 +140,68 @@ func TestGHProxy_BodyTravelsByFileNotArgv(t *testing.T) {
 	assert.True(t, os.IsNotExist(err), "the staged body file must be cleaned up, got err=%v", err)
 }
 
-// TestGHProxy_PRCommentsIsARead — reading the review thread must sit behind
+// ghCalls returns every gh invocation the recorder saw, with the context
+// budget each was given.
+func ghCalls(t *testing.T, rec *gitProxyRecorder) ([]agentd.ProxyCommand, []time.Duration) {
+	t.Helper()
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	var cmds []agentd.ProxyCommand
+	var budgets []time.Duration
+	for i, c := range rec.calls {
+		if c.Tool == "gh" {
+			cmds = append(cmds, c)
+			budgets = append(budgets, rec.budgets[i])
+		}
+	}
+	return cmds, budgets
+}
+
+// TestGHProxy_PRCommentsReadsBothPlacesFeedbackLives is the regression for the
+// verb answering only half the question.
+//
+// GitHub keeps PR feedback in two stores, and gh has no command that returns
+// both. `pr view --comments` gives issue comments and review BODIES; the
+// line-level notes inside a review's diff threads are only on
+// /pulls/N/comments. A review bot posts its summary as a body and every
+// actionable finding as an inline comment, so a `pr comments` that made only
+// the first call would report "reviewed, no findings" on a PR with thirty of
+// them — a wrong answer that reads exactly like a right one.
+func TestGHProxy_PRCommentsReadsBothPlacesFeedbackLives(t *testing.T) {
+	f, rec := gitProxyWorld(t, []string{"github.com/tofutools"})
+	rec.gh = agentd.ProxyResult{Stdout: "GH-OUTPUT"}
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubRead, "test"))
+
+	res := gitProxyPost(t, f, "/v1/github/pr/comments", map[string]any{"number": 42})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+
+	cmds, _ := ghCalls(t, rec)
+	require.Len(t, cmds, 2, "both stores must be read")
+	assert.Equal(t, []string{"pr", "view", "42", "--repo", "tofutools/tclaude", "--comments"}, cmds[0].Args)
+
+	// The API path carries the DERIVED slug literally. gh's own {owner}/{repo}
+	// placeholders would be expanded from the repository gh discovers in its
+	// working directory — the agent-writable .git/config this proxy runs in a
+	// neutral directory precisely to escape.
+	assert.Equal(t, "api", cmds[1].Args[0])
+	assert.Equal(t, "repos/tofutools/tclaude/pulls/42/comments?per_page=100", cmds[1].Args[1])
+	assert.NotContains(t, strings.Join(cmds[1].Args, " "), "{owner}")
+	// No -f/-F: gh flips to POST the moment a field is added, which would turn
+	// a read verb into a write carrying the operator's credential.
+	assert.NotContains(t, cmds[1].Args, "-f")
+	assert.NotContains(t, cmds[1].Args, "-F")
+
+	// Both sections are labelled even when a section is empty, so "nobody
+	// commented" cannot be confused with "this verb does not look there".
+	var out struct {
+		Stdout string `json:"stdout"`
+	}
+	require.NoError(t, json.Unmarshal(res.Body.Bytes(), &out))
+	assert.Contains(t, out.Stdout, "conversation")
+	assert.Contains(t, out.Stdout, "inline review comments")
+}
+
+// TestGHProxy_PRCommentsIsARead — reading the thread must sit behind
 // github.read, not github.write. The route name is one character away from the
 // verb that PUBLISHES a comment as the operator, so getting this backwards
 // would either lock an agent out of reading or, worse, let a read-only agent
@@ -152,8 +214,6 @@ func TestGHProxy_PRCommentsIsARead(t *testing.T) {
 	res := gitProxyPost(t, f, "/v1/github/pr/comments", map[string]any{"number": 42})
 	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
 
-	call := ghCall(t, rec)
-	assert.Equal(t, []string{"pr", "view", "42", "--repo", "tofutools/tclaude", "--comments"}, call.Args)
 	// The thread is prose, not JSON, so it must survive as stdout rather than
 	// being swallowed by the JSON passthrough.
 	var out struct {
@@ -163,18 +223,98 @@ func TestGHProxy_PRCommentsIsARead(t *testing.T) {
 	assert.Contains(t, out.Stdout, "nit: rename this")
 }
 
-// TestGHProxy_BulkReadsKeepAMuchLargerTail — the default 16 KiB tail is sized
-// for a diagnosis ("push rejected, non-fast-forward"). For the two verbs whose
-// output IS the payload it would cut a review thread or a test failure off in
-// the middle, so they must ask for their own bound.
+// TestGHProxy_PRCommentsStillReportsTheConversationWhenTheInlineReadFails —
+// half an answer must not be served as a whole one. If the inline read fails,
+// the agent has to learn that it is missing exactly the section a review bot
+// files its findings in, rather than reading "no inline review comments".
+func TestGHProxy_PRCommentsStillReportsTheConversationWhenTheInlineReadFails(t *testing.T) {
+	f, rec := gitProxyWorld(t, []string{"github.com/tofutools"})
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubRead, "test"))
+	// First call succeeds, second fails.
+	rec.ghSeq = []agentd.ProxyResult{
+		{Stdout: "the human said something"},
+		{ExitCode: 1, Stderr: "gh: Not Found (HTTP 404)"},
+	}
+
+	res := gitProxyPost(t, f, "/v1/github/pr/comments", map[string]any{"number": 42})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+
+	var out struct {
+		Stdout   string `json:"stdout"`
+		Stderr   string `json:"stderr"`
+		ExitCode int    `json:"exit_code"`
+	}
+	require.NoError(t, json.Unmarshal(res.Body.Bytes(), &out))
+	assert.Contains(t, out.Stdout, "the human said something", "the half that worked is still worth having")
+	assert.Contains(t, out.Stdout, "could not be read")
+	assert.NotContains(t, out.Stdout, "(no inline review comments)",
+		"a failed read must never render as an empty one")
+	assert.NotEqual(t, 0, out.ExitCode, "and the failure has to be visible in the exit code")
+	assert.Contains(t, out.Stderr, "404")
+}
+
+// TestGHProxy_PRCommentsSurvivesATransportFailureOnTheInlineRead — the same
+// half-answer contract as the non-zero-exit case, but for the path that
+// respond() would otherwise turn into a bare 502 with no body at all,
+// discarding a conversation the daemon had already read successfully.
+func TestGHProxy_PRCommentsSurvivesATransportFailureOnTheInlineRead(t *testing.T) {
+	f, rec := gitProxyWorld(t, []string{"github.com/tofutools"})
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubRead, "test"))
+	rec.gh = agentd.ProxyResult{Stdout: "the human said something"}
+	rec.ghErrAfter = 1 // the conversation succeeds, then gh cannot be run at all
+
+	res := gitProxyPost(t, f, "/v1/github/pr/comments", map[string]any{"number": 42})
+	require.Equal(t, http.StatusOK, res.Code,
+		"a 502 here would throw away a conversation that was read successfully")
+
+	var out struct {
+		Stdout   string `json:"stdout"`
+		Stderr   string `json:"stderr"`
+		ExitCode int    `json:"exit_code"`
+	}
+	require.NoError(t, json.Unmarshal(res.Body.Bytes(), &out))
+	assert.Contains(t, out.Stdout, "the human said something")
+	assert.Contains(t, out.Stdout, "could not be read")
+	assert.NotEqual(t, 0, out.ExitCode)
+	assert.Contains(t, out.Stderr, "gh exploded")
+}
+
+// TestGHProxy_PRCommentsSkipsTheSecondCallWhenThePRCannotBeRead — no number,
+// no access, no network. The inline read would fail identically and say so
+// twice.
+func TestGHProxy_PRCommentsSkipsTheSecondCallWhenThePRCannotBeRead(t *testing.T) {
+	f, rec := gitProxyWorld(t, []string{"github.com/tofutools"})
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubRead, "test"))
+	rec.gh = agentd.ProxyResult{ExitCode: 1, Stderr: "gh: Could not resolve to a PullRequest"}
+
+	res := gitProxyPost(t, f, "/v1/github/pr/comments", map[string]any{"number": 999999})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+	assert.Equal(t, 1, ghCallCount(rec), "a PR that cannot be read is not read twice")
+}
+
+// TestGHProxy_BulkReadsKeepAMuchLargerTail — the default tail is sized for a
+// diagnosis ("push rejected, non-fast-forward"). For the verbs whose output IS
+// the payload it would cut a review thread or a test failure off in the
+// middle, so they must ask for their own bound.
+//
+// This asserts the ProxyCommand the daemon BUILDS; that the seam then honours
+// the field is pinned separately, against a real subprocess, by
+// TestRealGit_RunProxyCommandHonoursMaxOutputBytes.
 func TestGHProxy_BulkReadsKeepAMuchLargerTail(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		path string
 		body map[string]any
+		// budget is the deadline each individual call must see. It is the only
+		// trace a timeout choice leaves, and getting it wrong fails in
+		// production rather than here — an under-budgeted call is killed
+		// mid-answer. `pr comments` also runs both calls under a 90s TOTAL
+		// budget, which caps this one only once the first call has spent
+		// time, so it is not visible against an instant recorder.
+		budget time.Duration
 	}{
-		{"pr comments", "/v1/github/pr/comments", map[string]any{"number": 42}},
-		{"run log-failed", "/v1/github/run/log-failed", map[string]any{"run_id": 18234567890}},
+		{"pr comments", "/v1/github/pr/comments", map[string]any{"number": 42}, 60 * time.Second},
+		{"run log-failed", "/v1/github/run/log-failed", map[string]any{"run_id": 18234567890}, 180 * time.Second},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f, rec := gitProxyWorld(t, []string{"github.com/tofutools"})
@@ -183,11 +323,25 @@ func TestGHProxy_BulkReadsKeepAMuchLargerTail(t *testing.T) {
 
 			res := gitProxyPost(t, f, tc.path, tc.body)
 			require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
-			assert.Greater(t, ghCall(t, rec).MaxOutputBytes, 16*1024,
-				"a bulk read must raise the output bound above the diagnosis-sized default")
+
+			cmds, budgets := ghCalls(t, rec)
+			require.NotEmpty(t, cmds)
+			for i, cmd := range cmds {
+				assert.Equal(t, maxGHProxyTextBytesForTest, cmd.MaxOutputBytes,
+					"call %d must raise the output bound above the diagnosis-sized default", i)
+				// Within a second of the intended budget — the deadline is read
+				// after the request has already travelled through the mux.
+				assert.InDelta(t, tc.budget.Seconds(), budgets[i].Seconds(), 1.0,
+					"call %d ran on the wrong timeout budget", i)
+			}
 		})
 	}
 }
+
+// maxGHProxyTextBytesForTest mirrors the daemon's bulk bound. Stated here
+// rather than compared against a bare number so that raising the daemon's
+// constant is a deliberate two-file edit rather than a silent one.
+const maxGHProxyTextBytesForTest = 256 * 1024
 
 // TestGHProxy_RunLogFailedAcceptsARealRunID is the regression for bounding a
 // run id with the PR-number validator. GitHub Actions run ids are global

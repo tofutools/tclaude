@@ -29,6 +29,54 @@ func idempotencyRequest(t *testing.T, key, body string) *http.Request {
 	return req.WithContext(context.WithValue(req.Context(), peerKey{}, p))
 }
 
+// TestIdempotencyBulkReadRoutesAreNotPersisted — the GitHub proxy's bulk reads
+// are POSTs so the audit middleware records the credential spend, not because
+// they mutate anything. Storing their responses would put up to half a
+// megabyte of CI log per call into the operator's daemon database, which has
+// no auto_vacuum and so never gives the space back, in exchange for a replay
+// guarantee that a free, repeatable read does not need.
+//
+// The handler running twice is the POINT here, not a defect: two reads of the
+// same log are two reads of the same log.
+func TestIdempotencyBulkReadRoutesAreNotPersisted(t *testing.T) {
+	setupTestDB(t)
+	for path, exempt := range map[string]bool{
+		"/v1/github/run/log-failed": true,
+		"/v1/github/pr/comments":    true,
+		// A neighbouring proxy verb that DOES mutate must keep its durable
+		// boundary — opening the same pull request twice is the failure the
+		// whole mechanism exists to prevent.
+		"/v1/github/pr/create": false,
+	} {
+		t.Run(path, func(t *testing.T) {
+			key := uuid.NewString()
+			var calls atomic.Int32
+			handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				calls.Add(1)
+				_, _ = w.Write([]byte(`{"stdout":"a very large log"}`))
+			})
+
+			for range 2 {
+				req := idempotencyRequest(t, key, "payload")
+				req.URL.Path = path
+				rec := httptest.NewRecorder()
+				idempotencyRequestsWithOwner(handler, "daemon-a").ServeHTTP(rec, req)
+				require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+			}
+
+			record, err := db.GetAgentdRequest(key)
+			if exempt {
+				assert.Equal(t, int32(2), calls.Load(), "an exempt read simply runs again")
+				assert.Empty(t, record.ResponseBody, "no response body may be persisted for %s", path)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, int32(1), calls.Load(), "a mutation must not run twice")
+			assert.NotEmpty(t, record.ResponseBody, "a mutation keeps its durable receipt")
+		})
+	}
+}
+
 func TestIdempotencyCompletedResponseReplaysAcrossDaemonOwners(t *testing.T) {
 	setupTestDB(t)
 	key := uuid.NewString()
