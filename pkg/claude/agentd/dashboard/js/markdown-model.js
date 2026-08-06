@@ -55,9 +55,15 @@ const ALLOWED_TAGS = new Set([
 // property that matters most here.
 const LINK_SCHEMES = new Set(['http:', 'https:', 'mailto:']);
 
-// A self-contained data: URI, restricted to the raster types the notification
-// image preview already trusts. No SVG: it carries script. Such an image
-// reaches nothing, so it renders on sight.
+// A self-contained data: URI. Such an image reaches nothing, so it renders on
+// sight. No SVG: it carries script.
+//
+// The four types are markdown-it's own set (its GOOD_DATA_RE), not the wider
+// one the attachment thumbnail trusts — that also admits AVIF. Listing more
+// here would change nothing, because the parser refuses any other data: target
+// before this module is asked about it, so an inline AVIF stays visible as the
+// reference the author typed. An AVIF ATTACHMENT is unaffected: it is
+// `previewable`, and reaches the document by name rather than by data: URI.
 const DATA_IMAGE = /^data:image\/(?:gif|png|jpeg|webp);base64,[a-z0-9+/]+=*$/i;
 
 // The schemes a remote image may name. Anything else — data: that is not a

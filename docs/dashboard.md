@@ -1589,9 +1589,15 @@ its text and loses the anchor.
 A document can carry **images**, from three places, which the viewer does not
 treat alike.
 
-A self-contained `data:` raster URI renders on sight — it reaches nothing. So
-does a reference to a **file published with the same notification**: an agent
-that runs `notify-human --attach report.md --attach chart.png` can write
+A self-contained `data:` raster URI renders on sight — it reaches nothing —
+but only for GIF, PNG, JPEG, and WebP. Any other `data:` image, AVIF included,
+is refused as a link target by markdown-it itself, which admits exactly those
+four, so the document shows the reference as written rather than the picture.
+An AVIF published as an attachment does render, so attach one rather than
+inlining it.
+
+A reference to a **file published with the same notification** renders too: an
+agent that runs `notify-human --attach report.md --attach chart.png` can write
 `![the chart](chart.png)` in the report and have the image appear in the
 document. The reference is matched against the published filenames — after
 percent-decoding, ignoring a leading `./`, ignoring case, and, if nothing
