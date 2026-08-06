@@ -78,7 +78,7 @@ export function RemoteImageNotice({ count, onLoadAll }) {
   if (count < 2) return null;
   return html`<div class="markdown-remote-image-notice" role="status">
     <span class="markdown-remote-image-notice-text">
-      This document shows ${count} images hosted elsewhere. None are fetched until you ask.
+      This document shows ${count} images hosted elsewhere. None are fetched unless you ask.
     </span>
     <button type="button" class="markdown-remote-image-notice-load" onClick=${onLoadAll}>
       Load all ${count}
