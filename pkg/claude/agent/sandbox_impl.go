@@ -101,6 +101,8 @@ func sandboxImplSetCmd() *cobra.Command {
 	}.ToCobra()
 }
 
+// sandboxImplementationChoices is the closed set, for shell completion and the
+// local pre-check.
 func sandboxImplementationChoices() []string {
 	return []string{
 		string(sandboxpolicy.ImplementationHarnessBuiltin),
@@ -125,6 +127,7 @@ type sandboxImplResp struct {
 	ResourceCgroup   bool   `json:"resource_cgroup"`
 }
 
+// runSandboxImplShow reads one agent's durable posture and renders it.
 func runSandboxImplShow(p *sandboxImplShowParams, stdout, stderr io.Writer) int {
 	target := strings.TrimSpace(p.Agent)
 	if target == "" {
@@ -143,6 +146,9 @@ func runSandboxImplShow(p *sandboxImplShowParams, stdout, stderr io.Writer) int 
 	return printSandboxImpl(&resp, p.JSON, stdout, stderr)
 }
 
+// runSandboxImplSet assigns a new implementation. The value is checked against
+// the closed set locally so a typo does not cost a round-trip; the daemon
+// re-validates against the resolved harness and host, which is the authority.
 func runSandboxImplSet(p *sandboxImplSetParams, stdout, stderr io.Writer) int {
 	target := strings.TrimSpace(p.Agent)
 	if target == "" {
@@ -190,6 +196,8 @@ func sandboxImplPath(target string) string {
 	return "/v1/agent/" + url.PathEscape(target) + "/sandbox-impl"
 }
 
+// printSandboxImpl renders one posture, naming what an assignment replaced and
+// what the operator still has to do for it to take effect.
 func printSandboxImpl(resp *sandboxImplResp, asJSON bool, stdout, stderr io.Writer) int {
 	if asJSON {
 		enc := json.NewEncoder(stdout)

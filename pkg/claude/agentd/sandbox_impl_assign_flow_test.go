@@ -247,7 +247,13 @@ func TestSandboxImplAssign_DashboardRouteReadsAndAssigns(t *testing.T) {
 	f.AsHuman().Resume(spawn.ConvID)
 	relaunched, ok := f.World.SpawnSandboxImplementation(spawn.ConvID)
 	require.True(t, ok)
-	assert.Equal(t, string(sandboxpolicy.ImplementationOff), relaunched)
+	assert.Equal(t, string(sandboxpolicy.ImplementationOff), relaunched,
+		"the launch boundary must receive the assigned implementation")
+	resumedRow, err := db.FindSessionByConvID(spawn.ConvID)
+	require.NoError(t, err)
+	require.NotNil(t, resumedRow)
+	assert.Equal(t, string(sandboxpolicy.ImplementationOff), resumedRow.SandboxImplementation,
+		"and the row the next relaunch reads must record it")
 }
 
 // A posture-changing route must not answer to a method it never validated.

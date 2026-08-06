@@ -289,7 +289,7 @@ export function createActionDialogActions({
       // agent as it stands — it is recorded intent, and an operator who reads
       // "assigned" as "applied" would believe a stopped agent is now bounded.
       notify(`${name}: sandbox implementation → ${payload.sandbox_implementation} (applied when you wake it)`);
-      refresh();
+      await refresh();
       return payload;
     },
     async clearExports(conv) {

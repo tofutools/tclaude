@@ -264,9 +264,19 @@ func ResetCodexRefreshThrottleForTest(sessionID string) {
 
 // SetPrepareResourceCgroupForTest swaps the cgroup boundary a flow test cannot
 // create for real: the sandbox-implementation assignment probes it before
-// recording a posture that needs one, and a CI host with no delegated cgroup v2
+// recording a posture that needs one, and a host with no delegated cgroup v2
 // subtree would otherwise refuse every such assignment. Pass an error to drive
 // the refusal branch deliberately.
+//
+// This does not add a swap point. prepareResourceCgroup is already an
+// indirection in production code (resource_limits.go), already swapped by the
+// in-package resource_delegation_test.go; this only exposes it to the
+// agentd_test flow package. It is an external boundary in the same sense tmux
+// and `session new` are: creating a cgroup writes to the host's cgroup v2
+// hierarchy, which a test process cannot do unless the machine happens to
+// delegate one. Running it for real would make these scenarios pass or skip by
+// accident of the runner, which is the opposite of what they are for — the
+// boundary itself is covered at the launch seam in pkg/claude/session.
 func SetPrepareResourceCgroupForTest(
 	fn func(sessionID string, limits sandboxpolicy.ResourceLimits) (string, func(), error),
 ) func() {

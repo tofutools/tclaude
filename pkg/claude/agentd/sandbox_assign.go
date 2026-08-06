@@ -81,6 +81,13 @@ func dashboardSandboxImplementationAgent(w http.ResponseWriter, r *http.Request,
 	assignAgentSandboxImplementation(w, r, resolved.ConvID)
 }
 
+// assignAgentSandboxImplementation validates and records one posture change.
+//
+// The check order is deliberate: the requested VALUE is judged first so a
+// misspelling is a 400 rather than a report on whatever the agent happens to be
+// doing; then the state conflicts an operator must resolve (not an agent, not
+// running, not unlocked); then the launch gates, which are the expensive ones
+// and the only ones that need the resolved chain.
 func assignAgentSandboxImplementation(w http.ResponseWriter, r *http.Request, convID string) {
 	var body struct {
 		// Implementation is the sandbox implementation to record. Required:
@@ -343,6 +350,10 @@ type sandboxImplementationAssignmentWire struct {
 	ResourceCgroup bool `json:"resource_cgroup"`
 }
 
+// writeSandboxImplementationResponse renders the posture a relaunch would use.
+// previous is the implementation an assignment just replaced, and is empty on a
+// read — the difference is what lets a client report a change rather than a
+// state.
 func writeSandboxImplementationResponse(w http.ResponseWriter, convID, previous string) {
 	agentID, err := db.AgentIDForConv(convID)
 	if err != nil {

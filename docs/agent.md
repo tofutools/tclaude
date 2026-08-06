@@ -977,6 +977,7 @@ cgroup.
 ```bash
 tclaude agent sandbox-impl show <agent> [--json]
 tclaude agent sandbox-impl set <agent> <implementation> [--sandbox MODE] [--json]
+                                                        [--ask-human DUR]
 ```
 
 There is no self-targeted form, and the agent selector is positional rather
