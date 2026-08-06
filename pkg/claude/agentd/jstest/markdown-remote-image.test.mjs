@@ -62,6 +62,51 @@ test('an image that fails to load offers another try instead of a broken icon', 
   assert.ok(container.querySelector('img'), 'retrying asks for the image again');
 });
 
+// A fetch that failed leaves the operator exactly where they started for that
+// image, so the document has to count it among what it is still holding back —
+// otherwise the count above the document disagrees with the placeholders under
+// it, and the bulk control silently skips the one image that needs a retry.
+test('an image that fails after Load all is counted and offered again', async (t) => {
+  const { harness, container } = await render(t, [
+    '![one](https://a.invalid/1.png)', '![two](https://b.invalid/2.png)',
+    '![three](https://c.invalid/3.png)',
+  ].join('\n\n'));
+  const W = container.ownerDocument.defaultView;
+  const fail = (img) => harness.act(() => img.dispatchEvent(new W.Event('error')));
+  const placeholders = () => container.querySelectorAll('.markdown-remote-image');
+  const notice = () => container.querySelector('.markdown-remote-image-notice');
+
+  await harness.act(() => notice().querySelector('.markdown-remote-image-notice-load').click());
+  assert.equal(container.querySelectorAll('img').length, 3);
+
+  const [first, second] = container.querySelectorAll('img');
+  await fail(first);
+  await fail(second);
+
+  assert.equal(placeholders().length, 2, 'both failures are back to placeholders');
+  assert.equal(container.querySelectorAll('img').length, 1, 'the one that loaded stays');
+  assert.match(notice().textContent, /2 images/,
+    'the count names what is on screen, failures included');
+  for (const placeholder of placeholders()) {
+    assert.equal(placeholder.getAttribute('data-failed'), 'true');
+    assert.equal(placeholder.querySelector('.markdown-remote-image-load').textContent.trim(),
+      'Try again');
+  }
+
+  // Load all is the retry for every one of them, not just the untried ones.
+  await harness.act(() => notice().querySelector('.markdown-remote-image-notice-load').click());
+  assert.deepEqual(
+    [...container.querySelectorAll('img')].map((img) => img.getAttribute('src')),
+    ['https://a.invalid/1.png', 'https://b.invalid/2.png', 'https://c.invalid/3.png']);
+  assert.equal(placeholders().length, 0);
+  assert.equal(notice(), null, 'with nothing held back the banner has nothing to say');
+
+  // And a failure after the retry is still reported, rather than latching.
+  await fail(container.querySelectorAll('img')[0]);
+  assert.equal(placeholders().length, 1);
+  assert.equal(placeholders()[0].getAttribute('data-failed'), 'true');
+});
+
 test('a document holding several remote images offers them as one decision', async (t) => {
   const { harness, container } = await render(t, [
     '![one](https://a.invalid/1.png)',

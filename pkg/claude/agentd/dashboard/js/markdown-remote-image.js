@@ -9,11 +9,12 @@
 // naming the host, and the request happens only when the operator asks for it.
 //
 // Load state lives in MarkdownDocument rather than here, because "load all the
-// images in this document" is a decision about the document. These components
-// are told what has been loaded and report what the operator clicked.
+// images in this document" is a decision about the document — and so is "which
+// of these is still waiting to be seen", which a failure puts an image back
+// into. These components are told what has been loaded and what has failed, and
+// report what the operator clicked and what the browser refused to fetch.
 
 import { h } from 'preact';
-import { useState } from 'preact/hooks';
 import htm from 'htm';
 
 const html = htm.bind(h);
@@ -33,18 +34,19 @@ function hostOf(src) {
 // RemoteImage is one held-back image: a placeholder until `loaded`, the real
 // picture after. Everything inline-level, because an image lives inside a
 // paragraph.
-export function RemoteImage({ src, alt, title, loaded, onLoad }) {
-  const [failed, setFailed] = useState(false);
+export function RemoteImage({ src, alt, title, loaded, failed, onLoad, onError }) {
   const host = hostOf(src);
   const description = alt || 'Untitled image';
 
   if (loaded && !failed) {
     return html`<img class="markdown-remote-image-loaded" src=${src} alt=${alt || ''}
       title=${title} loading="lazy" decoding="async" referrerpolicy="no-referrer"
-      onError=${() => setFailed(true)} />`;
+      onError=${() => onError?.(src)} />`;
   }
 
-  const retry = loaded && failed;
+  // `failed` implies the operator already asked for this one, so the placeholder
+  // it goes back to is a retry rather than a first offer.
+  const retry = Boolean(failed);
   return html`<span class="markdown-remote-image" data-failed=${retry ? 'true' : 'false'}>
     <span class="markdown-remote-image-icon" aria-hidden="true">▤</span>
     <span class="markdown-remote-image-text">
@@ -63,7 +65,6 @@ export function RemoteImage({ src, alt, title, loaded, onLoad }) {
         // stops here rather than also opening the author's link.
         event.preventDefault();
         event.stopPropagation();
-        setFailed(false);
         onLoad?.(src);
       }}>${retry ? 'Try again' : 'Load image'}</button>
   </span>`;
