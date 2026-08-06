@@ -1797,6 +1797,12 @@ func runNew(params *NewParams) error {
 		launchReadDirs, launchWriteDirs, launchDenyDirs, outerLayer); err != nil {
 		return err
 	}
+	// Rendered from the same snapshot ShellEnvironment reads, so what the pane
+	// runs and what the harness is told about agree by construction.
+	preLaunchScript, err := RenderPreLaunchScript(effectiveSandbox)
+	if err != nil {
+		return err
+	}
 	spawnSpec := harness.SpawnSpec{
 		ExecutablePath:              executablePath,
 		Cwd:                         cwd,
@@ -1807,6 +1813,7 @@ func runNew(params *NewParams) error {
 		OpenCodeControlSocketInode:  openCodeControlSocketInode,
 		OpenCodeServerPID:           openCodeServerPID,
 		EnvExports:                  envExports,
+		PreLaunchScript:             preLaunchScript,
 		ShellEnvironment:            sandboxSnapshotEnvironment(effectiveSandbox),
 		ResumeID:                    fullConvID,
 		SessionID:                   params.SessionID,

@@ -208,12 +208,26 @@ func TestNoProfileFieldCanCarryProtectedAccess(t *testing.T) {
 			// FilesystemSpellings is non-authority metadata and is accepted
 			// only when its resolved_path names an already-validated
 			// Filesystem row. It cannot create a read/write grant.
-			want: []string{"Name", "Filesystem", "FilesystemSpellings", "Environment", "AgentDirectories", "NetworkAccess", "Network", "UnixSockets", "ResourceLimits", "DarwinAllowMachRegister", "Includes"},
+			//
+			// PreLaunch (TCL-1039) is shell text, not policy. It names no host
+			// path to the policy layer and produces no mount-plan entry,
+			// permission rule or grant of any kind — it is simply run, INSIDE
+			// the wall, after the sandbox exists. Protected roots are hidden and
+			// denied there by the static hardening independent of any profile,
+			// so a block cannot reach them no matter what it says. That is the
+			// distinction from break-glass, which was a second AUTHORITY section
+			// that emitted real entries while skipping normalizeFilesystem.
+			// TestPreLaunchBlocksCannotInjectFilesystemAuthority below checks
+			// this rather than leaving it as a claim.
+			want: []string{"Name", "Filesystem", "FilesystemSpellings", "Environment", "AgentDirectories", "NetworkAccess", "Network", "UnixSockets", "ResourceLimits", "DarwinAllowMachRegister", "PreLaunch", "Includes"},
 		},
 		{
 			name: "EffectiveProfile",
 			typ:  reflect.TypeOf(EffectiveProfile{}),
-			want: []string{"Filesystem", "MountAliases", "Environment", "AgentDirectories", "NetworkAccess", "Network", "UnixSockets", "ResourceLimits", "DarwinAllowMachRegister", "AccessNotices", "Provenance"},
+			// PreLaunch: see the Profile note above. It survives resolution so
+			// the launch path can run it, but it is never consulted by anything
+			// that renders access.
+			want: []string{"Filesystem", "MountAliases", "Environment", "AgentDirectories", "NetworkAccess", "Network", "UnixSockets", "ResourceLimits", "DarwinAllowMachRegister", "PreLaunch", "AccessNotices", "Provenance"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -287,6 +301,67 @@ func TestRenderedMountPlanNeverTouchesAProtectedRoot(t *testing.T) {
 				"mount alias link %q intersects protected root %q", alias.Link, root)
 			assert.False(t, pathsIntersect(alias.Target, root),
 				"mount alias target %q intersects protected root %q", alias.Target, root)
+		}
+	}
+}
+
+// TestPreLaunchBlocksCannotInjectFilesystemAuthority backs the claim made in
+// TestNoProfileFieldCanCarryProtectedAccess's expected-field list.
+//
+// A pre-launch block is the first profile field whose value is arbitrary
+// operator text rather than validated structure, so the question it raises is
+// the one break-glass answered wrongly: can it become authority? The answer
+// must be no by construction — it is run, not resolved, so a block naming
+// protected roots in every way an author might try must leave the effective
+// policy and the rendered mount plan byte-identical to the same profile without
+// it.
+func TestPreLaunchBlocksCannotInjectFilesystemAuthority(t *testing.T) {
+	home, tclaudeData, claudeSessions, _ := protectedHome(t)
+	workspace := filepath.Join(home, "workspace")
+	require.NoError(t, os.MkdirAll(workspace, 0o755))
+
+	base := Profile{
+		Name:       "base",
+		Filesystem: []FilesystemGrant{{Path: workspace, Access: AccessWrite}},
+	}
+	withBlocks := base
+	withBlocks.PreLaunch = []PreLaunchBlock{
+		{
+			Name: "names-protected-roots",
+			// Every spelling an author might reach for, as script text.
+			Script: "cat " + tclaudeData + "/db.sqlite\n" +
+				"ls " + claudeSessions + "\n" +
+				"mkdir -p " + filepath.Join(tclaudeData, "child") + "\n" +
+				"export SNEAKY=" + home + "\n",
+			Exports: []string{"SNEAKY"},
+		},
+	}
+
+	plain, err := Resolve(Scopes{Explicit: &base})
+	require.NoError(t, err)
+	blocked, err := Resolve(Scopes{Explicit: &withBlocks})
+	require.NoError(t, err,
+		"a block naming protected paths is ordinary text and must resolve, not error")
+
+	require.NotEmpty(t, blocked.PreLaunch, "the block must survive resolution to be runnable")
+	assert.Equal(t, plain.Filesystem, blocked.Filesystem,
+		"pre-launch text must not add, remove or alter a single filesystem rule")
+	assert.Equal(t, plain.Environment, blocked.Environment,
+		"a declared export is a NAME the harness may forward, never an environment value")
+
+	// The mount plan is what the appliers replay, so this is the load-bearing
+	// half: whatever the script says, no protected path may appear there.
+	protected, err := ProtectedPaths()
+	require.NoError(t, err)
+	plainPlan, err := RenderMountPlan(plain)
+	require.NoError(t, err)
+	blockedPlan, err := RenderMountPlan(blocked)
+	require.NoError(t, err)
+	assert.Equal(t, plainPlan, blockedPlan, "pre-launch text must not reach the mount plan at all")
+	for _, entry := range blockedPlan.Entries {
+		for _, root := range protected {
+			assert.False(t, pathContainsOrEqual(root, entry.Path),
+				"mount entry %q is at or beneath protected root %q", entry.Path, root)
 		}
 	}
 }

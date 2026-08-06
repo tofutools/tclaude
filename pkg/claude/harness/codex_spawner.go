@@ -37,7 +37,7 @@ func (codexSpawner) BuildCommand(spec SpawnSpec) string {
 	if spec.ExecutablePath != "" {
 		binary = clcommon.ShellQuoteArg(spec.ExecutablePath)
 	}
-	cmd := spec.EnvExports + binary
+	cmd := spec.EnvExports + spec.PreLaunchScript + binary
 	if spec.ResumeID != "" {
 		// `codex resume <id>` — resume is a subcommand; the id is a
 		// positional. Quoted defensively even though it's a UUID.

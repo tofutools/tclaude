@@ -2672,8 +2672,18 @@ func resumeLaunchCmdWithStackedProof(
 	if err != nil {
 		return "", "", nil, err
 	}
+	// A resume that dropped the profile's pre-launch blocks would hand the agent
+	// back a DIFFERENT environment than it launched with — the wrapper it put on
+	// PATH gone, its per-agent session id unset — and the tool would start
+	// failing mid-life for no visible reason. Render from the same validated
+	// snapshot the rest of this boundary reads.
+	preLaunchScript, err := session.RenderPreLaunchScript(effectiveSandbox)
+	if err != nil {
+		return "", "", nil, err
+	}
 	spec := harness.SpawnSpec{
 		EnvExports:         clcommon.BuildEnvExports(resumeEnv),
+		PreLaunchScript:    preLaunchScript,
 		ShellEnvironment:   shellEnvironment,
 		ResumeID:           convID,
 		ExtraArgs:          extraArgs,

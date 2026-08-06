@@ -153,7 +153,12 @@ type Profile struct {
 	UnixSockets             *UnixSocketRules     `json:"unix_sockets,omitempty"`
 	ResourceLimits          ResourceLimits       `json:"resource_limits,omitempty"`
 	DarwinAllowMachRegister bool                 `json:"darwin_allow_mach_register,omitempty"`
-	Includes                []string             `json:"includes,omitempty"`
+	// PreLaunch is operator-authored shell run inside the sandbox before the
+	// harness starts, for setup the declarative fields cannot express. Like
+	// Includes it keeps its authored order, because the blocks are sequential
+	// statements rather than a set of keys. See pre_launch.go.
+	PreLaunch []PreLaunchBlock `json:"pre_launch,omitempty"`
+	Includes  []string         `json:"includes,omitempty"`
 }
 
 var environmentNameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
@@ -248,6 +253,10 @@ func normalize(in Profile, allowMissing, authoring bool) (Profile, []string, err
 	if err != nil {
 		return Profile{}, nil, err
 	}
+	preLaunch, err := normalizePreLaunch(in.PreLaunch)
+	if err != nil {
+		return Profile{}, nil, err
+	}
 	networkAccess, err := NormalizeNetworkAccess(in.NetworkAccess)
 	if err != nil {
 		return Profile{}, nil, err
@@ -279,7 +288,8 @@ func normalize(in Profile, allowMissing, authoring bool) (Profile, []string, err
 		Name: name, Filesystem: filesystem, FilesystemSpellings: filesystemSpellings,
 		Environment: environment, AgentDirectories: agentDirectories, NetworkAccess: networkAccess,
 		Network: network, UnixSockets: unixSockets, ResourceLimits: resourceLimits,
-		DarwinAllowMachRegister: in.DarwinAllowMachRegister, Includes: includes,
+		DarwinAllowMachRegister: in.DarwinAllowMachRegister, PreLaunch: preLaunch,
+		Includes: includes,
 	}, missing, nil
 }
 

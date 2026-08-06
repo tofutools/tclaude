@@ -79,7 +79,7 @@ func (copilotSpawner) BuildCommand(spec SpawnSpec) string {
 	if spec.ExecutablePath != "" {
 		binary = clcommon.ShellQuoteArg(spec.ExecutablePath)
 	}
-	cmd := spec.EnvExports + copilotEnvScrub + binary
+	cmd := spec.EnvExports + copilotEnvScrub + spec.PreLaunchScript + binary
 	if spec.ResumeID != "" {
 		// `--resume=<id>` resumes EXACTLY this conversation. tclaude always
 		// knows the full id it wants, so it never uses the option's fuzzier

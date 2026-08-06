@@ -896,6 +896,57 @@ agent recreates the declared directories empty at their frozen paths. A name
 cannot also have a literal `environment` value, and the normal reserved-variable
 rules apply.
 
+`pre_launch` is an ordered array of named shell blocks run **inside the
+sandbox**, after the profile's `environment` is exported and before the harness
+binary starts:
+
+```json
+"pre_launch": [
+  {
+    "name": "playwright",
+    "script": "pw=/tmp/pw-$$\nmkdir -p \"$pw\"/{config,cache,data}\nexport PLAYWRIGHT_MCP_BROWSER=chrome\n",
+    "exports": ["PLAYWRIGHT_MCP_BROWSER"]
+  }
+]
+```
+
+Use it for setup the declarative fields cannot express: a value that must be
+computed per launch, a directory layout a tool insists on, a wrapper dropped
+earlier on `PATH`. Prefer `environment` for a fixed value and
+`agent_directories` for a private writable directory — those can be inspected,
+composed and disclosed, while a script can only be run.
+
+The blocks are **bash**, and they run in the launching shell itself so the
+environment they set reaches the harness. `set -e` is in force with a trap that
+names the failing block: a block that fails aborts the launch rather than
+starting a half-configured agent. Both are unwound before the harness command,
+so nothing leaks into its own shell semantics. A host with no bash refuses to
+launch a profile carrying blocks rather than running them under `/bin/sh`.
+
+`exports` is optional and never enforced. Claude Code, Copilot and OpenCode
+inherit the pane's environment, so a block works there whether or not it
+declares anything; Codex scrubs the environment of its shell tool, so values a
+block produces must be forwarded by name. Unlike `environment`, these names are
+not checked against the reserved list — reaching `XDG_CONFIG_HOME` or `PATH` is
+much of the point.
+
+> Do **not** export `XDG_CONFIG_HOME` / `XDG_CACHE_HOME` / `XDG_DATA_HOME`
+> globally into the agent's environment. Every other XDG-aware tool in the
+> agent — `gh`, `git`, `codex`, `claude` — then loses its normal configuration.
+> Put a small wrapper earlier on `PATH` instead, scoping those variables to the
+> one tool that needs them before exec'ing the real binary.
+
+Composition follows the other fields: included profiles' blocks run first in
+include order, then the profile's own; a same-named block from a later tier
+replaces the earlier one **in place**, keeping its position, because these are
+sequential statements. Blocks are frozen into the launch snapshot, so resume and
+reincarnate replay the same setup. They take no part in lineage containment: a
+block runs inside the agent's own wall, after the sandbox exists, so it is setup
+performed with already-checked authority rather than authority itself.
+
+Blocks are shell for a tmux pane, so they do not apply to `tclaude ask`, which
+execs an argv with no shell at all.
+
 By default the shared parent root is granted once, so the agent can create,
 rewrite, and delete its own env-var'd directories. Setting
 `features.agent_dirs_mount_parent` to `false` (in the config file or dashboard
@@ -939,7 +990,8 @@ tclaude agent sandbox-profiles draft --token <dashboard-token> --file profile.js
 ```
 
 `show --json` emits the same profile shape accepted by `create` and `edit`,
-including `filesystem`, `environment`, and `agent_directories` arrays.
+including `filesystem`, `environment`, `agent_directories`, and `pre_launch`
+arrays.
 The names `export` and `import` are reserved for the portable-transfer routes
 and are rejected case-insensitively at create, rename, and import boundaries.
 Export bundles are portable and versioned. Assignment export is opt-in, and an

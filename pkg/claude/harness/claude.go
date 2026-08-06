@@ -107,7 +107,7 @@ func (claudeSpawner) BuildCommand(spec SpawnSpec) string {
 	if spec.ExecutablePath != "" {
 		binary = clcommon.ShellQuoteArg(spec.ExecutablePath)
 	}
-	cmd := spec.EnvExports + binary
+	cmd := spec.EnvExports + spec.PreLaunchScript + binary
 	if spec.ResumeID != "" {
 		cmd += " --resume " + spec.ResumeID
 	}

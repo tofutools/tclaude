@@ -10,6 +10,10 @@ import (
 	"time"
 )
 
+// SnapshotVersion 10 adds operator-authored pre-launch script blocks. An older
+// binary must REJECT such a snapshot rather than ignore the field: silently
+// dropping the blocks would start an agent whose environment was never
+// prepared, failing later and far from the cause.
 // SnapshotVersion 9 adds Linux resource limits. Version 8 added the network and Unix-socket access axes plus their
 // persisted access notices. Version 7 removes break_glass_filesystem, the one sanctioned
 // exception to the protected-root wall (TCL-791). Version 6 added
@@ -18,7 +22,7 @@ import (
 // bump preserved the fail-closed downgrade property, where an older binary
 // rejects a newer snapshot rather than ignoring a marker it does not
 // understand. Version 5 removed the retired read-baseline mechanism (TCL-623).
-const SnapshotVersion = 9
+const SnapshotVersion = 10
 
 // AppliedProfile preserves stable registry provenance without making the
 // registry row authoritative after resolution. The effective values in the
@@ -685,6 +689,7 @@ func cloneEffectiveProfile(in EffectiveProfile) EffectiveProfile {
 		UnixSockets:             cloneUnixSocketRulesPtr(in.UnixSockets),
 		ResourceLimits:          cloneResourceLimits(in.ResourceLimits),
 		DarwinAllowMachRegister: in.DarwinAllowMachRegister,
+		PreLaunch:               clonePreLaunch(in.PreLaunch),
 		AccessNotices:           cloneAccessNotices(in.AccessNotices),
 		Provenance: ResolutionProvenance{
 			Applied:          cloneProfileSources(in.Provenance.Applied),
