@@ -58,6 +58,33 @@ func TestSpawn_ResourceOnlyCarriesLimitsToLaunch(t *testing.T) {
 			"it must survive into the launch snapshot")
 }
 
+// A guard on the new gate rather than on the boundary itself: flow tests swap
+// the session launcher, so no cgroup is created here. What this pins is that
+// widening the gate from "a ceiling was authored" to "the implementation asked"
+// did not start refusing or rewriting a spawn that authored nothing — the
+// cgroup-creation half is covered at the launch seam in pkg/claude/session.
+func TestSpawn_ResourceOnlyWithoutLimitsStillLaunches(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+
+	spawn := f.AsHuman().SpawnWith("crew", map[string]any{
+		"name":                   "accounted",
+		"sandbox_implementation": "resource-only",
+	})
+	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+
+	implementation, ok := f.World.SpawnSandboxImplementation(spawn.ConvID)
+	require.True(t, ok)
+	assert.Equal(t, "resource-only", implementation,
+		"the launch keeps the implementation whose only boundary is the cgroup")
+
+	row, err := db.FindSessionByConvID(spawn.ConvID)
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	assert.Equal(t, string(sandboxpolicy.ImplementationResourceOnly), row.SandboxImplementation,
+		"the recorded implementation is what a flagless resume replays")
+}
+
 // The regression the cold review caught. The resolved chain is global + group +
 // explicit profile, and resource_limits travel in that same chain — so a
 // resource-only launch must tolerate access rules it inherited rather than

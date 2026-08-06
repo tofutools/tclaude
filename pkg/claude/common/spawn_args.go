@@ -176,6 +176,14 @@ type SpawnArgs struct {
 	// AllowUnenforcedSandbox is a one-shot dashboard-operator authorization.
 	// It is forwarded only for a fresh birth; relaunch paths leave it false.
 	AllowUnenforcedSandbox bool
+	// SandboxContinuation marks a launch that carries a sandbox posture recorded
+	// earlier rather than one an operator is choosing now, even though it forks
+	// `session new` without -r: a reincarnated successor, a no-copy clone. Launch
+	// requirements that would be refused for a fresh choice are disclosed instead
+	// on these paths, because no operator control (including
+	// AllowUnenforcedSandbox, which is dashboard-spawn-only) reaches them, so a
+	// refusal would strand the agent rather than inform anyone.
+	SandboxContinuation bool
 
 	// SandboxChosenBy names the resolution tier that supplied Sandbox — an
 	// explicit request field, or the named / group-default / global-default

@@ -39,6 +39,7 @@ type NewParams struct {
 	DarwinRouteCapable     bool   `short:"Q" long:"darwin-route-capable" help:"Internal: launch exact Darwin route slots"`
 	DarwinRouteAgentID     string `short:"I" long:"darwin-route-agent-id" optional:"true" help:"Internal: stable agent identity for Darwin route slots"`
 	AllowUnenforcedSandbox bool   `long:"allow-unenforced-sandbox" help:"Internal: operator authorized launch when sandbox enforcement is unavailable"`
+	SandboxContinuation    bool   `short:"-" long:"sandbox-continuation" help:"Internal: this launch continues an existing agent's recorded sandbox posture (reincarnation, no-copy clone)"`
 	// SandboxChosenBy is the resolution tier that supplied --sandbox, as
 	// resolved by the daemon spawn boundary ("explicit", `global default
 	// profile "x"`, …). The badge attributes the launch's containment to it, so
@@ -122,7 +123,7 @@ type NewParams struct {
 	// is the harness's historical behavior; tclaude-layer is an experimental
 	// whole-process wrapper (bubblewrap on Linux, Seatbelt on macOS). OpenCode's
 	// historical behavior is a command filter, not confinement.
-	SandboxImpl string `long:"sandbox-impl" optional:"true" help:"Sandbox implementation: harness-builtin (only for a harness with a real built-in OS sandbox) | tclaude-layer (tclaude outer wall, harness OS sandbox off) | stacked (Linux Claude/Codex only; experimental live real-engine probe, both walls; refuses without fallback) | resource-only (Linux only; no access confinement, but the profile's CPU/memory limits are enforced in a per-launch cgroup; no bwrap or namespaces) | off (no OS sandbox). Unset keeps historical harness behavior; for OpenCode that is a command filter, not confinement"`
+	SandboxImpl string `long:"sandbox-impl" optional:"true" help:"Sandbox implementation: harness-builtin (only for a harness with a real built-in OS sandbox) | tclaude-layer (tclaude outer wall, harness OS sandbox off) | stacked (Linux Claude/Codex only; experimental live real-engine probe, both walls; refuses without fallback) | resource-only (Linux only; no access confinement, but the launch gets a per-launch cgroup: the profile's CPU/memory limits if it authored any, otherwise accounting and OOM attribution only; no bwrap or namespaces) | off (no OS sandbox). Unset keeps historical harness behavior; for OpenCode that is a command filter, not confinement"`
 	// sandboxImplExplicit preserves the decision/replay boundary after
 	// applyRecordedLaunchPosture fills an omitted --sandbox-impl on resume.
 	// It is internal state, not a CLI parameter.
@@ -290,6 +291,7 @@ func NewCmd() *cobra.Command {
 	cmd.Args = cobra.ArbitraryArgs
 	_ = cmd.Flags().MarkHidden("managed-launch")
 	_ = cmd.Flags().MarkHidden("allow-unenforced-sandbox")
+	_ = cmd.Flags().MarkHidden("sandbox-continuation")
 	_ = cmd.Flags().MarkHidden("cwd-write-proof")
 	_ = cmd.Flags().MarkHidden("dir-write-proof")
 	_ = cmd.Flags().MarkHidden("codex-git-common-dir")
@@ -1914,19 +1916,33 @@ func runNew(params *NewParams) error {
 			resourceCgroupCleanup()
 		}
 	}()
-	if launchSandbox != nil && launchSandbox.Effective.ResourceLimits.Enabled() &&
-		!resourceLimitsAlreadyOverridden(launchSandbox.Effective.AccessNotices) {
+	// resource-only requests the cgroup through the implementation alone, so this
+	// seam must not require a launch snapshot to find the request: a direct
+	// `tclaude session new --sandbox-impl resource-only` and a CLI resume both
+	// arrive with no snapshot at all.
+	var launchResourceLimits sandboxpolicy.ResourceLimits
+	var launchResourceNotices []sandboxpolicy.AccessNotice
+	if launchSandbox != nil {
+		launchResourceLimits = launchSandbox.Effective.ResourceLimits
+		launchResourceNotices = launchSandbox.Effective.AccessNotices
+	}
+	recordResourceNotice := func(notice sandboxpolicy.AccessNotice) {
+		if launchSandbox != nil {
+			launchSandbox.Effective.AccessNotices = append(launchSandbox.Effective.AccessNotices, notice)
+		}
+		if effectiveSandbox != nil {
+			effectiveSandbox.Effective.AccessNotices = append(effectiveSandbox.Effective.AccessNotices, notice)
+		}
+	}
+	if sandboxpolicy.ResourceCgroupRequested(launchResourceLimits, sandboxImplementation) &&
+		!resourceLimitsAlreadyOverridden(launchResourceNotices) {
 		if err := sandboxpolicy.ValidateResourceLimitTarget(
-			launchSandbox.Effective.ResourceLimits, sandboxImplementation, runtime.GOOS,
+			launchResourceLimits, sandboxImplementation, runtime.GOOS,
 		); err != nil {
 			if !params.AllowUnenforcedSandbox {
 				return fmt.Errorf("unsupported_sandbox_profile_resource_limits: %w", err)
 			}
-			notice := resourceLimitOverrideNotice(err)
-			launchSandbox.Effective.AccessNotices = append(launchSandbox.Effective.AccessNotices, notice)
-			if effectiveSandbox != nil {
-				effectiveSandbox.Effective.AccessNotices = append(effectiveSandbox.Effective.AccessNotices, notice)
-			}
+			recordResourceNotice(resourceLimitOverrideNotice(err))
 		} else {
 			var wrapped string
 			var cleanup func()
@@ -1937,22 +1953,30 @@ func runNew(params *NewParams) error {
 				cleanup = func() {}
 			} else {
 				wrapped, cleanup, resourceErr = wrapResourceLimitedCommand(
-					sessionID, launchSandbox.Effective.ResourceLimits, harnessCmd,
+					sessionID, launchResourceLimits, harnessCmd,
 					params.AllowUnenforcedSandbox,
 				)
 			}
-			if resourceErr != nil {
-				if !params.AllowUnenforcedSandbox {
-					return resourceErr
-				}
-				notice := resourceLimitOverrideNotice(resourceErr)
-				launchSandbox.Effective.AccessNotices = append(launchSandbox.Effective.AccessNotices, notice)
-				if effectiveSandbox != nil {
-					effectiveSandbox.Effective.AccessNotices = append(effectiveSandbox.Effective.AccessNotices, notice)
-				}
-			} else {
+			if resourceErr == nil {
 				resourceCgroupCleanup = cleanup
 				harnessCmd = wrapped
+			} else {
+				continuation := launchIsSandboxContinuation(params)
+				switch ResourceCgroupFailureAction(
+					launchResourceLimits, continuation, params.AllowUnenforcedSandbox) {
+				case DiscloseMissingResourceAccounting:
+					slog.Warn("resource cgroup unavailable; launching without per-agent accounting",
+						"session_id", sessionID, "continuation", continuation, "error", resourceErr)
+					recordResourceNotice(ResourceCgroupUnavailableNotice(resourceErr))
+				case DiscloseUnenforcedResourceOverride:
+					recordResourceNotice(resourceLimitOverrideNotice(resourceErr))
+				case RefuseResourceCgroupFailure:
+					return resourceErr
+				default:
+					// A policy value this seam does not know must not silently drop the
+					// boundary the launch asked for.
+					return resourceErr
+				}
 			}
 		}
 	}

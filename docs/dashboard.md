@@ -797,6 +797,16 @@ restart**. The override is keyed to the stable agent identity, so `/clear` or
 reincarnation cannot lose it; a clone is a new agent and inherits the normal
 posture, not the temporary unlock.
 
+**🧩 sandbox implementation…** in the same menu is the opposite kind of action:
+it records which layer owns OS-level confinement for the agent's *next* launch,
+rather than restarting anything. That makes it offline-only — the item is
+disabled while the agent runs and its tooltip names the stop → assign → wake
+sequence. The picker lists each implementation with its description; the common
+use is moving an agent created before `resource-only` existed onto it, so its
+next launch gets a per-agent cgroup. The dialog reads the durable posture from
+the server, not from the row, because the row's sandbox fields describe the last
+launch. See [Sandboxing](sandboxing.md#moving-an-existing-agent-onto-it).
+
 If a human terminal is attached to the agent's tmux session, the restart parks
 that client on a short-lived bridge session and switches it onto the resumed
 pane automatically. This is best-effort, like reincarnation's client handoff:

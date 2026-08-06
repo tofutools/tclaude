@@ -78,6 +78,8 @@ func handleAgentByConv(w http.ResponseWriter, r *http.Request) {
 		handleAgentRename(w, r, convID)
 	case "remote-control":
 		handleAgentRemoteControl(w, r, convID)
+	case "sandbox-impl":
+		handleAgentSandboxImplementation(w, r, convID)
 	case "clone":
 		handleAgentClone(w, r, convID)
 	case "stop":

@@ -4000,6 +4000,59 @@ details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .gr
   background: #4d1d1d; border-color: #f85149; color: #f85149;
 }
 .modal-buttons button.confirm-danger:hover { background: #f85149; color: #fff; }
+
+/* Sandbox-implementation assignment dialog (small-dialog-components.js). It
+   rides the plain .modal skin rather than .cron-create-modal, so it lives here
+   beside that skin's own rules and re-states the three things .modal does not
+   give it: a scroll container, a wider label column, and .primary.
+
+   A radio list rather than a <select> because each implementation trades a
+   different thing away, and the catalog descriptions are what make that
+   legible — a select would hide them behind the closed control. */
+#sandbox-impl-modal .modal {
+  max-width: 560px;
+  /* .modal has no height bound, and .modal-overlay centres without scrolling,
+     so a list this tall would push its own buttons past the viewport on a
+     laptop with no way to reach them. */
+  max-height: 86vh; overflow-y: auto;
+  /* .cron-create-modal defines --cron-label-w; under .modal the shared field
+     rows fall back to the 72px literal, which wraps "Harness sandbox mode"
+     across three lines. */
+  --cron-label-w: 148px;
+}
+.sandbox-impl-loading { margin: 8px 0; font-size: 12px; color: #7d8590; }
+#sandbox-impl-options { display: flex; flex-direction: column; gap: 5px; margin: 10px 0 4px; }
+.sandbox-impl-option {
+  display: flex; align-items: flex-start; gap: 9px; padding: 7px 9px;
+  background: #0d1117; border: 1px solid #2a3340; border-radius: 4px; cursor: pointer;
+}
+.sandbox-impl-option:hover { border-color: #3b4b5f; }
+.sandbox-impl-option.selected { border-color: #58a6ff; background: #10202f; }
+.sandbox-impl-option input[type=radio] { margin: 2px 0 0; flex: 0 0 auto; }
+.sandbox-impl-option-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.sandbox-impl-option-name {
+  font-family: ui-monospace, monospace; font-size: 12px; color: #e6edf3;
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+}
+.sandbox-impl-option-label { font-size: 11.5px; color: #c9d1d9; }
+.sandbox-impl-option-descr { font-size: 11px; color: #8b949e; line-height: 1.45; }
+.sandbox-impl-tag {
+  font-family: ui-sans-serif, system-ui, sans-serif; font-size: 10px; color: #3fb950;
+  border: 1px solid #2c4b33; border-radius: 8px; padding: 0 6px;
+}
+.sandbox-impl-tag.warn { color: #e3a008; border-color: #6b4f1d; }
+.sandbox-impl-hint { margin: 8px 0 0; font-size: 11px; color: #7d8590; line-height: 1.45; }
+.sandbox-impl-warn { color: #e3a008; }
+/* .primary is styled per modal family (.cron-create-modal, .sudo-grant-modal,
+   …) rather than globally, and this dialog renders the plain .modal skin — so
+   it carries its own rule instead of inheriting a call-to-action treatment that
+   does not reach it. */
+#sandbox-impl-modal .modal-buttons button.primary {
+  background: #1f6feb; border-color: #1f6feb; color: #fff;
+}
+#sandbox-impl-modal .modal-buttons button.primary:disabled {
+  background: #6e7681; border-color: #6e7681; cursor: default;
+}
 .modal-buttons button:hover { border-color: #58a6ff; }
 .modal .field { display: flex; flex-direction: column; gap: 4px; margin: 10px 0; }
 .modal .field label { font-size: 12px; color: #7d8590; }

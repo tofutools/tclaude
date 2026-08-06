@@ -88,3 +88,24 @@ func TestValidateResourceLimitTarget(t *testing.T) {
 	assert.ErrorContains(t, ValidateResourceLimitTarget(limits, ImplementationOff, "linux"), "implementation off")
 	require.NoError(t, ValidateResourceLimitTarget(ResourceLimits{}, ImplementationOff, "darwin"))
 }
+
+func TestResourceCgroupRequestedCoversLimitlessResourceOnly(t *testing.T) {
+	limits := ResourceLimits{Memory: "1GiB"}
+	assert.True(t, ResourceCgroupRequested(limits, ImplementationHarnessBuiltin),
+		"an authored ceiling needs the cgroup under any implementation that may carry it")
+	assert.True(t, ResourceCgroupRequested(ResourceLimits{}, ImplementationResourceOnly),
+		"resource-only is the cgroup; with no ceiling it is an accounting boundary, not a no-op")
+	assert.False(t, ResourceCgroupRequested(ResourceLimits{}, ImplementationHarnessBuiltin),
+		"an unauthored profile must keep the launch path it had before limits existed")
+	assert.False(t, ResourceCgroupRequested(ResourceLimits{}, ImplementationOff))
+	assert.False(t, ResourceCgroupRequested(ResourceLimits{}, ImplementationTclaudeLayer))
+}
+
+func TestValidateResourceLimitTargetGuardsLimitlessResourceOnly(t *testing.T) {
+	require.NoError(t, ValidateResourceLimitTarget(ResourceLimits{}, ImplementationResourceOnly, "linux"),
+		"a limitless resource-only launch is exactly what the accounting cgroup serves")
+	err := ValidateResourceLimitTarget(ResourceLimits{}, ImplementationResourceOnly, "darwin")
+	assert.ErrorContains(t, err, "per-agent cgroup")
+	assert.NotContains(t, err.Error(), "resource limits are Linux only",
+		"no ceiling was authored, so the refusal must not blame one")
+}

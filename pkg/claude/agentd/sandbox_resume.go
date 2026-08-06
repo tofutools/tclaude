@@ -24,20 +24,31 @@ func cleanupUncommittedResumeSandboxPolicy(policy *resumeSandboxPolicy) error {
 	return err
 }
 
-// resolveResumeSandboxPolicy reconstructs an offline agent's policy from the
-// current global/group/explicit registry state. The previous snapshot supplies
-// only stable provenance and private agent-directory bindings; its ordinary
-// filesystem/environment values are not launch authority after resume.
-func resolveResumeSandboxPolicy(convID string, sshWorkaround bool, sshLaunchKey string) (*resumeSandboxPolicy, error) {
-	previous, err := db.AgentEffectiveSandboxConfigForConv(convID)
+// resolveCurrentSandboxChainForConv answers what a relaunch of this
+// conversation would compose from the CURRENT registry — global, then group,
+// then the explicit profile recorded at launch — and returns it alongside the
+// recorded snapshot it was derived from.
+//
+// It is the side-effect-free half of resolveResumeSandboxPolicy below, split out
+// because the sandbox-implementation assignment has to judge the same chain the
+// relaunch will judge, and must not materialize agent directories or rotate SSH
+// bindings to find out. The recorded snapshot alone is not that answer: it is
+// last-launch state, so a ceiling added to the global or group profile since then
+// is absent from it, and gates run against it would clear a posture the relaunch
+// then refuses.
+//
+// A conversation with no recorded snapshot, or one whose durable choice was to
+// omit profiles entirely, has nothing to re-resolve; both cases return the
+// recorded value as the current one so callers see a single answer.
+func resolveCurrentSandboxChainForConv(
+	convID string,
+) (current, previous *sandboxpolicy.Snapshot, err error) {
+	previous, err = db.AgentEffectiveSandboxConfigForConv(convID)
 	if err != nil || previous == nil {
-		return &resumeSandboxPolicy{Snapshot: previous, Previous: previous}, err
+		return previous, previous, err
 	}
 	if previous.ProfilesOmitted {
-		// This is a durable per-agent launch choice, not an empty ambient
-		// resolution. Do not let later global/group assignments reappear on
-		// resume or reincarnation.
-		return &resumeSandboxPolicy{Snapshot: previous, Previous: previous}, nil
+		return previous, previous, nil
 	}
 
 	var explicitProfileID int64
@@ -53,21 +64,40 @@ func resolveResumeSandboxPolicy(convID string, sshWorkaround bool, sshLaunchKey 
 	if groupID == 0 {
 		groupID, err = resumeSandboxGroupID(convID)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
-	current, err := db.ResolveEffectiveSandboxSnapshotByID(groupID, explicitProfileID)
+	resolved, err := db.ResolveEffectiveSandboxSnapshotByID(groupID, explicitProfileID)
 	if errors.Is(err, db.ErrSandboxProfileNotFound) && explicitProfileName != "" {
 		// A deleted explicit profile can be recovered by recreating it under its
 		// recorded name. Ordinary renames still follow the stable ID above.
-		current, err = db.ResolveEffectiveSandboxSnapshot(groupID, explicitProfileName)
+		resolved, err = db.ResolveEffectiveSandboxSnapshot(groupID, explicitProfileName)
 	}
 	if errors.Is(err, db.ErrSandboxProfileNotFound) {
-		return nil, fmt.Errorf("the explicit sandbox profile %q used at launch no longer exists; recreate it under that name, then resume again", explicitProfileName)
+		return nil, nil, fmt.Errorf("the explicit sandbox profile %q used at launch no longer exists; recreate it under that name, then resume again", explicitProfileName)
 	}
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
+	return &resolved, previous, nil
+}
+
+// resolveResumeSandboxPolicy reconstructs an offline agent's policy from the
+// current global/group/explicit registry state. The previous snapshot supplies
+// only stable provenance and private agent-directory bindings; its ordinary
+// filesystem/environment values are not launch authority after resume.
+func resolveResumeSandboxPolicy(convID string, sshWorkaround bool, sshLaunchKey string) (*resumeSandboxPolicy, error) {
+	resolved, previous, err := resolveCurrentSandboxChainForConv(convID)
+	if err != nil || previous == nil {
+		return &resumeSandboxPolicy{Snapshot: previous, Previous: previous}, err
+	}
+	if previous.ProfilesOmitted {
+		// This is a durable per-agent launch choice, not an empty ambient
+		// resolution. Do not let later global/group assignments reappear on
+		// resume or reincarnation.
+		return &resumeSandboxPolicy{Snapshot: previous, Previous: previous}, nil
+	}
+	current := *resolved
 	current, err = configureCodexSSHWorkaroundDeclaration(current, sshWorkaround)
 	if err != nil {
 		return nil, err

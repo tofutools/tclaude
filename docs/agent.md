@@ -965,6 +965,74 @@ structured proposal to the human dashboard. It cannot create or edit a saved
 profile, change global/group assignments, or launch an agent; the human must
 preview the result and explicitly save it through the ordinary editor.
 
+### sandbox-impl
+
+The sandbox *implementation* — which layer owns OS-level confinement — is
+chosen at spawn and recorded as durable relaunch intent. `sandbox-impl` reads
+and rewrites that record for an agent that already exists, which is how an
+agent spawned before an implementation existed reaches it. The common case is
+moving an older agent onto `resource-only` so its next launch gets a per-agent
+cgroup.
+
+```bash
+tclaude agent sandbox-impl show <agent> [--json]
+tclaude agent sandbox-impl set <agent> <implementation> [--sandbox MODE] [--json]
+                                                        [--ask-human DUR]
+```
+
+There is no self-targeted form, and the agent selector is positional rather
+than the `--target` flag the self-defaulting lifecycle verbs use: the
+implementation is applied by a launch, and the assignment is refused while the
+agent is running (`409 agent_online`). Stop the agent, assign, then wake it.
+
+The dashboard exposes the same operation as **🧩 sandbox implementation…** in
+the agent row menu, which opens a picker listing each implementation with its
+description. The menu item is disabled while the agent is running and says why.
+The dialog reads the durable posture from the server rather than the row it was
+opened from — the row's sandbox fields describe the agent's last *launch*, which
+diverges from relaunch intent as soon as an assignment is recorded.
+
+The recorded harness sandbox **mode** moves with the implementation, because
+the implementation decides what the harness's own sandbox may be —
+`resource-only`, `off` and `tclaude-layer` all derive the mode their launch runs
+under. The mode's attribution becomes `operator sandbox assignment`, since no
+spawn profile chose it.
+
+When the implementation being replaced derived the mode that way, the recorded
+mode is not carried forward: it was an artifact of that implementation, not
+anyone's choice, so the harness's own default is recorded instead. Without that,
+putting an agent back on `harness-builtin` would pair it with the off mode its
+previous implementation forced — an agent with no confinement at all, under the
+command issued to restore some. `--sandbox` pins a mode explicitly.
+
+The assignment runs the gates a launch runs, against the chain that relaunch
+will resolve — not the one recorded at the last launch, which is stale the
+moment a global or group profile changes. So an implementation this harness
+cannot run or this host cannot provide is refused here rather than at wake time,
+as are rules the implementation cannot represent (a `mount_path` outside the
+Linux tclaude-layer) and a ceiling it cannot carry (`off` refuses resource
+limits). Those refusals matter more here than at spawn: a relaunch has no
+equivalent of the dashboard's **allow launch without enforcement** control, so a
+posture that fails them would leave the agent unable to start at all.
+
+An implementation that needs a per-agent cgroup additionally probes that this
+host can create one, by creating and removing the real boundary. A relaunch of a
+ceiling-free boundary deliberately degrades to a notice rather than refusing
+(see [Sandboxing](sandboxing.md#a-cgroup-with-no-ceiling)), so the assignment is
+the only place that refusal is actionable.
+
+The command requires the `agent.sandbox-impl` permission — reads included, on
+the same reasoning that gates sandbox-profile payload reads. Unlike the other
+cross-agent verbs, **group ownership does not confer it**: the assignment can
+move an agent onto an implementation with no access confinement at all, and a
+lead that could do that to a member would walk around the sandbox-lineage guard
+that caps what it can spawn. It is operator policy, like
+`sandbox-profiles.manage`, and is not default-granted.
+
+A reversible dashboard sandbox unlock suspends the durable posture rather than
+replacing it, so an assignment is refused while one is active
+(`409 temporary_sandbox_override`); restore the agent's normal sandbox first.
+
 ### spawn
 
 ```bash
@@ -2041,7 +2109,7 @@ gate group, messaging, template, and permission administration.
 | Family        | Slugs |
 |---------------|-------|
 | `self.*`      | `self.rename`, `self.compact`, `self.clone`, `self.schedule`, `self.remote-control`, `self.task`, `self.pr`, `self.tags`, `self.dir-repair` |
-| `agent.*`     | `agent.rename`, `agent.compact`, `agent.reincarnate`, `agent.clone`, `agent.context-info`, `agent.resume`, `agent.stop`, `agent.delete`, `agent.schedule`, `agent.promote`, `agent.retire`, `agent.remote-control` |
+| `agent.*`     | `agent.rename`, `agent.compact`, `agent.reincarnate`, `agent.clone`, `agent.context-info`, `agent.resume`, `agent.stop`, `agent.delete`, `agent.schedule`, `agent.promote`, `agent.retire`, `agent.remote-control`, `agent.sandbox-impl` (not owner-conferred) |
 | `groups.*`    | `groups.create`, `groups.rm`, `groups.archive`, `groups.stop`, `groups.resume`, `groups.retire`, `groups.spawn`, `groups.own`, `groups.link.add`, `groups.link.rm`, `groups.export`, `groups.import` |
 | `member.*`    | `member.add`, `member.remove`, `member.redesignate` |
 | `permissions.*` | `permissions.grant`, `permissions.revoke` |

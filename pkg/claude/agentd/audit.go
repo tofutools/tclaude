@@ -859,6 +859,12 @@ var auditedAgentVerbs = map[string]bool{
 	"retire":         true,
 	"reinstate":      true,
 	"notify":         true,
+	// A durable rewrite of which layer confines an agent — including onto one
+	// with no access confinement at all. That is precisely the kind of change an
+	// operator reconstructing "when did this agent stop being sandboxed" needs to
+	// find, and the /v1 route reserves it to a non-owner-conferred slug for the
+	// same reason.
+	"sandbox-impl": true,
 }
 
 func describeAgentVerb(c *auditCtx) {
