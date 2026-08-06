@@ -10,11 +10,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
@@ -701,13 +703,26 @@ type paneScriptCapturingTmux struct {
 
 func (c *paneScriptCapturingTmux) Command(args ...string) *exec.Cmd {
 	if recordedTmuxCommand(args) == "new-session" {
+		// The interpreter is whatever the host resolved (TCL-1038), and it comes
+		// with flags — `/bin/bash -p`, not a bare `sh`. Matching a literal word
+		// would silently capture nothing and every assertion here would fail on
+		// its NotEmpty precondition rather than on what it means to test, so
+		// find the shell by the same predicate the launch path uses and take the
+		// first non-flag word after it as the script.
 		for i, arg := range args {
-			if arg == "sh" && i+1 < len(args) {
-				if body, err := os.ReadFile(args[i+1]); err == nil {
+			if !clcommon.IsBootstrapShellWord(filepath.Base(arg)) {
+				continue
+			}
+			for _, candidate := range args[i+1:] {
+				if strings.HasPrefix(candidate, "-") {
+					continue
+				}
+				if body, err := os.ReadFile(candidate); err == nil {
 					c.script = string(body)
 				}
 				break
 			}
+			break
 		}
 	}
 	return c.launchRecordingTmux.Command(args...)
