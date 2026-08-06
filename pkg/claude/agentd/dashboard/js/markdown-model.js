@@ -154,9 +154,13 @@ function attachmentImageIndex(attachments) {
     // root-relative path on this origin. Checking the shape rather than
     // trusting the field keeps the module's own invariant true — an image src
     // is inline, or it is same-origin, or it is held back — whatever a future
-    // snapshot puts in `url`. `//host/x` is a root-relative-looking absolute
-    // URL, which is why the second character matters.
-    if (!url.startsWith('/') || url.startsWith('//')) continue;
+    // snapshot puts in `url`.
+    //
+    // The second character is what decides it, and BOTH separators have to be
+    // refused: `//host/x` is a protocol-relative absolute URL, and for a
+    // special scheme the URL parser reads a backslash as a slash, so
+    // `/\host/x` resolves to that host just the same.
+    if (!/^\/(?![/\\])/.test(url)) continue;
     for (const key of imageNameKeys(attachment.filename)) {
       if (!index.has(key)) index.set(key, url);
     }

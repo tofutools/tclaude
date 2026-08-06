@@ -108,6 +108,46 @@ test('an image published with the document renders with no decision to make', as
   assert.equal(img.getAttribute('loading'), 'lazy');
 });
 
+// What the operator agreed to fetch belongs to the document they were reading.
+// The clearing has to happen in the same commit that paints the new document:
+// an effect would run one commit late, and by then the browser has already been
+// handed an <img> the operator never approved for THIS document.
+test('a new document does not inherit the last one’s loaded images', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { MarkdownDocument } = await harness.importDashboardModule('js/markdown-document.js');
+  const mounted = await harness.mount(
+    harness.html`<${MarkdownDocument} source=${`![d](${REMOTE})`} />`,
+  );
+  for (let i = 0; i < 3; i += 1) {
+    await harness.act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  }
+  await harness.act(() => mounted.container.querySelector('.markdown-remote-image-load').click());
+  assert.equal(mounted.container.querySelector('img').getAttribute('src'), REMOTE);
+
+  // The same URL in a different document: nothing about the first decision
+  // says anything about this one. Rendered deliberately WITHOUT act, so the
+  // assertion sees the commit the browser sees — effects have not run yet, and
+  // an <img> present here is a request already in flight.
+  harness.preact.render(
+    harness.html`<${MarkdownDocument} source=${`# Other\n\n![d](${REMOTE})`} />`,
+    mounted.container,
+  );
+  // Read the commit, then let effects run before asserting: throwing inside the
+  // unflushed window leaves the renderer mid-update and the failure surfaces as
+  // a hung suite instead of a message.
+  const committed = {
+    img: mounted.container.querySelector('img'),
+    placeholder: mounted.container.querySelector('.markdown-remote-image'),
+  };
+  await harness.act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+
+  assert.equal(committed.img, null,
+    'the second document must not be fetching on the strength of the first');
+  assert.ok(committed.placeholder, 'it offers the same image as a fresh decision');
+  assert.equal(mounted.container.querySelector('img'), null, 'and it stays that way');
+  await mounted.unmount();
+});
+
 // A surface with no attachment list to hand over must still render documents;
 // a reference it cannot resolve falls back to the words the author wrote.
 test('a document rendered without its attachments keeps its alt text', async (t) => {

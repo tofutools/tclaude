@@ -253,15 +253,19 @@ test('only a daemon-confirmed raster attachment can be shown as an image', async
     { id: 4, filename: 'orphan.png', url: '', previewable: true },
     { id: 5, filename: 'offsite.png', url: 'https://elsewhere.invalid/x.png', previewable: true },
     { id: 6, filename: 'schemeless.png', url: '//elsewhere.invalid/x.png', previewable: true },
+    // `new URL('/\\host/x', origin)` is `https://host/x`: for a special scheme
+    // the parser reads a backslash as a slash, so a path-looking route can name
+    // another origin.
+    { id: 7, filename: 'backslash.png', url: '/\\elsewhere.invalid/x.png', previewable: true },
   ];
   for (const source of [
     '![doc](notes.md)', '![logo](logo.svg)', '![claim](claim.png)', '![orphan](orphan.png)',
-    '![offsite](offsite.png)', '![schemeless](schemeless.png)',
+    '![offsite](offsite.png)', '![schemeless](schemeless.png)', '![backslash](backslash.png)',
   ]) {
     const tree = markdownToTree(parser, source, { attachments });
     assert.equal(findAll(tree, 'img').length, 0, `${source} builds no image`);
     assert.equal(findAll(tree, REMOTE_IMAGE).length, 0, `${source} offers nothing to load`);
-    assert.match(tree.map(text).join(''), /doc|logo|claim|orphan|offsite|schemeless/,
+    assert.match(tree.map(text).join(''), /doc|logo|claim|orphan|offsite|schemeless|backslash/,
       `${source} keeps its alt text`);
   }
 });
@@ -364,6 +368,17 @@ test('no document can produce a tag or attribute outside the allowlists', async 
       assert.ok(ALLOWED_TAGS.has(node.tag), `tag ${node.tag} escaped the allowlist via:\n${source}`);
       for (const name of Object.keys(node.attrs || {})) {
         assert.ok(ALLOWED_ATTRS.has(name), `attribute ${name} escaped the allowlist via:\n${source}`);
+      }
+      // An <img> src is the one attribute VALUE the corpus has to check, because
+      // it is the only one that makes the browser fetch something on its own.
+      // The tag name no longer settles it: an image can now legitimately be
+      // built from an attachment route or held back as `remote-image`, so a
+      // regression that turned a remote target into a plain <img> would produce
+      // only allowlisted names. Nothing is published to these documents, so a
+      // data: raster is the sole src any of them may carry.
+      if (node.tag === 'img') {
+        assert.match(node.attrs.src ?? '', /^data:image\/(?:gif|png|jpeg|webp);base64,/,
+          `img src ${node.attrs.src} escaped the inline-only rule via:\n${source}`);
       }
       stack.push(...(node.children || []));
     }
