@@ -127,6 +127,70 @@ func TestSandboxImplAssign_RefusesWhenTheHostCannotCreateTheCgroup(t *testing.T)
 		"a boundary that cannot be created must not be recorded as if it could")
 }
 
+// The wedge the assignment must not create. `off` is the one implementation that
+// refuses to carry resource limits, and the chain's ceiling is resolved at every
+// launch — so recording that pair would leave EVERY later wake failing closed,
+// with the dashboard's allow-unenforced control unreachable (it is a fresh-spawn
+// control). The refusal has to happen at assignment time or not at all.
+func TestSandboxImplAssign_RefusesAnImplementationThatCannotCarryTheChainsCeiling(t *testing.T) {
+	f := newFlow(t)
+	stubResourceCgroup(t, nil)
+	f.HaveGroup("crew")
+	_, err := db.CreateSandboxProfile(&db.SandboxProfile{
+		Name:           "capped",
+		ResourceLimits: sandboxpolicy.ResourceLimits{Memory: "8GiB"},
+	})
+	require.NoError(t, err)
+
+	spawn := f.AsHuman().SpawnWith("crew", map[string]any{
+		"name":            "has-a-ceiling",
+		"sandbox_profile": "capped",
+	})
+	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+	f.AsHuman().Stop(spawn.ConvID, false)
+
+	_, code, body := assignSandboxImpl(t, f, spawn.ConvID,
+		map[string]any{"implementation": string(sandboxpolicy.ImplementationOff)})
+	assert.Equal(t, http.StatusUnprocessableEntity, code)
+	assert.Contains(t, body, "unsupported_sandbox_profile_resource_limits")
+	assert.Contains(t, body, "cannot carry resource limits")
+
+	// The agent is untouched and still wakes — the point of refusing here.
+	assert.Equal(t, string(sandboxpolicy.ImplementationHarnessBuiltin),
+		showSandboxImpl(t, f, spawn.ConvID).Implementation)
+	f.AsHuman().Resume(spawn.ConvID)
+}
+
+// A ceiling added to the chain AFTER the agent last launched is what the
+// relaunch will resolve, so it is what the assignment must judge. Reading the
+// recorded last-launch snapshot instead would clear a posture the very next wake
+// refuses.
+func TestSandboxImplAssign_JudgesTheChainTheRelaunchWillResolve(t *testing.T) {
+	f := newFlow(t)
+	stubResourceCgroup(t, nil)
+	f.HaveGroup("crew")
+
+	spawn := f.AsHuman().Spawn("crew", "ceiling-added-later")
+	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+	f.AsHuman().Stop(spawn.ConvID, false)
+
+	// The global default gains a ceiling only now — after the launch whose
+	// snapshot is recorded on the agent.
+	_, err := db.CreateSandboxProfile(&db.SandboxProfile{
+		Name:           "global-ceiling",
+		ResourceLimits: sandboxpolicy.ResourceLimits{Memory: "4GiB"},
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.SetGlobalSandboxProfile("global-ceiling"))
+
+	_, code, body := assignSandboxImpl(t, f, spawn.ConvID,
+		map[string]any{"implementation": string(sandboxpolicy.ImplementationOff)})
+	assert.Equal(t, http.StatusUnprocessableEntity, code,
+		"the ceiling is absent from the recorded snapshot and present in the "+
+			"chain the relaunch resolves; judging the stale one would wedge the agent")
+	assert.Contains(t, body, "cannot carry resource limits")
+}
+
 // An implementation with no cgroup in it must not pay for the probe, or a host
 // with no delegation could not use the endpoint at all.
 func TestSandboxImplAssign_SkipsTheCgroupProbeWhenNoBoundaryIsAsked(t *testing.T) {

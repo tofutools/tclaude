@@ -986,22 +986,35 @@ agent is running (`409 agent_online`). Stop the agent, assign, then wake it.
 
 The recorded harness sandbox **mode** moves with the implementation, because
 the implementation decides what the harness's own sandbox may be —
-`resource-only` and `off` resolve every harness to its no-confinement mode. The
-mode's attribution becomes `operator sandbox assignment`, since no spawn
-profile chose it. `--sandbox` pins a mode explicitly, which is what you want
-when returning an agent to `harness-builtin`.
+`resource-only`, `off` and `tclaude-layer` all derive the mode their launch runs
+under. The mode's attribution becomes `operator sandbox assignment`, since no
+spawn profile chose it.
 
-The assignment is validated the way a launch validates: an implementation this
-harness cannot run, or this host cannot provide, is refused here rather than at
-wake time, as is a recorded profile whose rules the implementation cannot
-represent (a `mount_path` outside the Linux tclaude-layer). An implementation
-that needs a per-agent cgroup additionally probes that this host can create
-one, because the launch it takes effect on is a *relaunch* — and a relaunch of
-a ceiling-free boundary deliberately degrades to a notice rather than refusing
-(see [Sandboxing](sandboxing.md#a-cgroup-with-no-ceiling)). Validating at the
-moment the operator chooses is the only place that refusal is actionable.
+When the implementation being replaced derived the mode that way, the recorded
+mode is not carried forward: it was an artifact of that implementation, not
+anyone's choice, so the harness's own default is recorded instead. Without that,
+putting an agent back on `harness-builtin` would pair it with the off mode its
+previous implementation forced — an agent with no confinement at all, under the
+command issued to restore some. `--sandbox` pins a mode explicitly.
 
-Writes require the `agent.sandbox-impl` permission. Unlike the other
+The assignment runs the gates a launch runs, against the chain that relaunch
+will resolve — not the one recorded at the last launch, which is stale the
+moment a global or group profile changes. So an implementation this harness
+cannot run or this host cannot provide is refused here rather than at wake time,
+as are rules the implementation cannot represent (a `mount_path` outside the
+Linux tclaude-layer) and a ceiling it cannot carry (`off` refuses resource
+limits). Those refusals matter more here than at spawn: a relaunch has no
+equivalent of the dashboard's **allow launch without enforcement** control, so a
+posture that fails them would leave the agent unable to start at all.
+
+An implementation that needs a per-agent cgroup additionally probes that this
+host can create one, by creating and removing the real boundary. A relaunch of a
+ceiling-free boundary deliberately degrades to a notice rather than refusing
+(see [Sandboxing](sandboxing.md#a-cgroup-with-no-ceiling)), so the assignment is
+the only place that refusal is actionable.
+
+The command requires the `agent.sandbox-impl` permission — reads included, on
+the same reasoning that gates sandbox-profile payload reads. Unlike the other
 cross-agent verbs, **group ownership does not confer it**: the assignment can
 move an agent onto an implementation with no access confinement at all, and a
 lead that could do that to a member would walk around the sandbox-lineage guard

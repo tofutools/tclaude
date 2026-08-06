@@ -162,6 +162,45 @@ func TestSandboxImplAssign_RefusesAnUnknownImplementation(t *testing.T) {
 	assert.Contains(t, emptyBody, "implementation is required")
 }
 
+// Restoring `harness-builtin` must not quietly land on a posture with no
+// confinement. The mode recorded for a no-confinement implementation is one that
+// implementation FORCED, so carrying it into harness-builtin would pair the
+// implementation that means "the harness confines this agent" with the mode that
+// means "it does not" — under the command an operator issues to undo their
+// change.
+func TestSandboxImplAssign_RestoringHarnessBuiltinDoesNotInheritTheForcedOffMode(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+
+	spawn := f.AsHuman().SpawnWith("crew", map[string]any{
+		"name":    "round-trip",
+		"sandbox": harness.ClaudeSandboxOn,
+	})
+	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+	f.AsHuman().Stop(spawn.ConvID, false)
+
+	unconfined, code, body := assignSandboxImpl(t, f, spawn.ConvID,
+		map[string]any{"implementation": string(sandboxpolicy.ImplementationOff)})
+	require.Equalf(t, http.StatusOK, code, "assign off body=%s", body)
+	require.Equal(t, harness.ClaudeSandboxOff, unconfined.Sandbox)
+
+	restored, code, body := assignSandboxImpl(t, f, spawn.ConvID,
+		map[string]any{"implementation": string(sandboxpolicy.ImplementationHarnessBuiltin)})
+	require.Equalf(t, http.StatusOK, code, "assign harness-builtin body=%s", body)
+	assert.Equal(t, harness.ClaudeSandboxInherit, restored.Sandbox,
+		"with no mode ever chosen for this posture, the harness default is the "+
+			"honest answer — not the off mode the replaced implementation forced")
+	assert.NotEqual(t, harness.ClaudeSandboxOff, restored.Sandbox)
+
+	// An explicit mode is still the operator's to pick.
+	pinned, code, body := assignSandboxImpl(t, f, spawn.ConvID, map[string]any{
+		"implementation": string(sandboxpolicy.ImplementationHarnessBuiltin),
+		"sandbox":        harness.ClaudeSandboxOn,
+	})
+	require.Equalf(t, http.StatusOK, code, "assign pinned body=%s", body)
+	assert.Equal(t, harness.ClaudeSandboxOn, pinned.Sandbox)
+}
+
 // The slug is not owner-implied on purpose: the assignment can move an agent
 // onto an implementation with no access confinement at all, which is the
 // boundary the sandbox-lineage guard protects. Owning the group the target

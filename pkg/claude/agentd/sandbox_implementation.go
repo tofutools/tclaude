@@ -127,6 +127,59 @@ func validateSandboxImplementationForHarness(h *harness.Harness, raw string) (st
 	return string(implementation), nil
 }
 
+// validateAssignedSandboxImplementation is validateSandboxImplementationForHarness
+// for a REASSIGNMENT of an existing agent, and differs on exactly one point: it
+// does not treat harness-builtin as a claim that the harness owns a real OS
+// sandbox.
+//
+// That claim-check is right where it lives — an operator authoring a profile that
+// PINS harness-builtin for OpenCode or Copilot is asserting confinement those
+// harnesses do not provide. It is wrong here, because an assignment has no blank
+// spelling: every launch resolves to some implementation, relaunchProfileForSpawn
+// records blank as harness-builtin, and so harness-builtin is what an OpenCode or
+// Copilot agent already IS. Rejecting it would make this a one-way door — such an
+// agent could be moved to resource-only and never back, with `off` not equivalent
+// (it also drops OpenCode's own command filter).
+//
+// The capability gates that describe what tclaude will actually run still apply
+// unchanged, so a harness that cannot host the outer layer or a nested sandbox is
+// still refused.
+func validateAssignedSandboxImplementation(
+	h *harness.Harness, raw string,
+) (string, error) {
+	implementation, err := sandboxpolicy.NormalizeImplementation(raw)
+	if err != nil {
+		return "", err
+	}
+	if implementation.UsesNestedHarnessSandbox() {
+		if err := session.ValidateStackedSandboxHarness(h); err != nil {
+			return "", err
+		}
+	}
+	if implementation.UsesTclaudeLayer() {
+		if err := session.ValidateTclaudeLayerHarness(h.Name); err != nil {
+			return "", err
+		}
+	}
+	return string(implementation), nil
+}
+
+// sandboxImplementationForcesLaunchMode reports whether an implementation
+// DERIVES the harness-builtin mode a launch runs under instead of carrying the
+// one the operator chose. It names the two forcing branches in
+// harness.ResolveSandboxImplementationMode: the no-confinement implementations
+// resolve to the harness's own off mode, and the single-wall tclaude-layer to the
+// reviewed no-inner-wall posture its descriptor declares.
+//
+// A reassignment reads it to decide whether the recorded mode is worth carrying.
+// A mode that was forced is an artifact of the implementation being replaced, not
+// an operator's choice, so carrying it forward is how "put this agent back on
+// harness-builtin" would silently land on a posture with no confinement at all.
+func sandboxImplementationForcesLaunchMode(implementation sandboxpolicy.Implementation) bool {
+	return implementation.OmitsOSConfinement() ||
+		implementation == sandboxpolicy.ImplementationTclaudeLayer
+}
+
 func sandboxImplementationValidationStatus(err error) int {
 	if harness.IsBuiltinOSSandboxInvalid(err) {
 		return http.StatusUnprocessableEntity

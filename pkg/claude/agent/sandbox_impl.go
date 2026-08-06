@@ -34,8 +34,8 @@ func sandboxImplCmd() *cobra.Command {
 			"older agent `resource-only`, so its next launch runs in a per-agent cgroup with the " +
 			"accounting, OOM attribution and kill handle that brings.\n\n" +
 			"The assignment takes effect on the next launch, so the agent must be stopped: stop it, " +
-			"assign, then wake it. Writes require the `agent.sandbox-impl` permission, which group " +
-			"ownership does NOT confer.",
+			"assign, then wake it. Both subcommands require the `agent.sandbox-impl` permission, " +
+			"which group ownership does NOT confer.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds:     []*cobra.Command{sandboxImplShowCmd(), sandboxImplSetCmd()},
 	}.ToCobra()
@@ -77,13 +77,17 @@ func sandboxImplSetCmd() *cobra.Command {
 			"the posture is applied by the launch that follows, so assigning it under a running pane " +
 			"would leave the record describing containment the live process does not have.\n\n" +
 			"The recorded harness sandbox mode moves with the implementation, because the " +
-			"implementation decides what the harness's own sandbox may be — `resource-only` and `off` " +
-			"resolve every harness to its no-confinement mode. Use --sandbox to pin a different mode " +
-			"explicitly (for example when returning an agent to harness-builtin).\n\n" +
-			"An implementation this harness or host cannot run is refused here rather than at wake " +
-			"time, and `resource-only` additionally probes that this host can actually create the " +
-			"per-agent cgroup — a relaunch would only degrade to a notice, so the check belongs where " +
-			"the operator is making the choice.",
+			"implementation decides what the harness's own sandbox may be — `resource-only`, `off` " +
+			"and `tclaude-layer` all derive the mode their launch runs under. A mode derived that way " +
+			"is not carried forward onto the next implementation (the harness default is used " +
+			"instead), so restoring harness-builtin does not silently keep the off mode its " +
+			"predecessor forced. Use --sandbox to pin a mode explicitly.\n\n" +
+			"The gates a launch runs are run here too, against the chain the relaunch will resolve: " +
+			"an implementation this harness or host cannot run, rules it cannot represent, or a " +
+			"ceiling it cannot carry are all refused now rather than at wake time — where a relaunch " +
+			"has no allow-unenforced override to rescue it. `resource-only` additionally probes that " +
+			"this host can actually create the per-agent cgroup, since a relaunch would only degrade " +
+			"to a notice.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *sandboxImplSetParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Agent).SetAlternativesFunc(completeConvSelectors)
@@ -192,7 +196,7 @@ func printSandboxImpl(resp *sandboxImplResp, asJSON bool, stdout, stderr io.Writ
 		enc.SetIndent("", "  ")
 		if err := enc.Encode(resp); err != nil {
 			fmt.Fprintf(stderr, "Error: %v\n", err)
-			return rcInvalidArg
+			return rcIOFailure
 		}
 		return rcOK
 	}

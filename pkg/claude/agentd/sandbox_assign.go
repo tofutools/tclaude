@@ -10,6 +10,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 // Assigning a sandbox implementation to an EXISTING agent is the durable
@@ -66,9 +67,10 @@ func assignAgentSandboxImplementation(w http.ResponseWriter, r *http.Request, co
 		// compatibility default back.
 		Implementation string `json:"implementation"`
 		// Sandbox optionally pins the harness-builtin MODE recorded alongside
-		// it. Omitted, the agent's recorded mode is carried through the same
-		// resolution a launch applies — which for the no-confinement
-		// implementations replaces it with the harness's own off mode.
+		// it. Omitted, the agent's recorded mode is carried forward — unless the
+		// implementation being replaced FORCED that mode, in which case it is an
+		// artifact of the old implementation rather than an operator's choice and
+		// the harness's own default is used instead.
 		Sandbox string `json:"sandbox,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -82,6 +84,13 @@ func assignAgentSandboxImplementation(w http.ResponseWriter, r *http.Request, co
 				sandboxpolicy.ImplementationHarnessBuiltin, sandboxpolicy.ImplementationTclaudeLayer,
 				sandboxpolicy.ImplementationStacked, sandboxpolicy.ImplementationResourceOnly,
 				sandboxpolicy.ImplementationOff))
+		return
+	}
+	// Judge the VALUE before the state conflicts below, so a misspelling is a 400
+	// rather than whatever the agent happens to be doing right now.
+	if _, err := sandboxpolicy.NormalizeImplementation(requested); err != nil {
+		writeError(w, http.StatusBadRequest,
+			"invalid_"+sandboxImplementationField, err.Error())
 		return
 	}
 
@@ -130,27 +139,24 @@ func assignAgentSandboxImplementation(w http.ResponseWriter, r *http.Request, co
 
 	// Harness applicability first: an implementation this harness cannot run is
 	// a bad request whatever the host looks like.
-	implementation, err := validateSandboxImplementationForHarness(h, requested)
+	implementation, err := validateAssignedSandboxImplementation(h, requested)
 	if err != nil {
 		writeError(w, sandboxImplementationValidationStatus(err),
 			"invalid_"+sandboxImplementationField, err.Error())
 		return
 	}
-	requestedMode := strings.TrimSpace(body.Sandbox)
-	if requestedMode == "" {
-		requestedMode = current.NormalSandbox
-	}
-	mode, fail := resolveLaunchHarnessBuiltinMode(h, requestedMode, implementation)
+	mode, fail := assignedHarnessBuiltinMode(h, current, body.Sandbox, implementation)
 	if fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
 
-	// Then the gates a relaunch applies to an already-resolved value. Running
-	// them here is what makes the assignment actionable: their refusals name a
-	// missing tool or an unrepresentable rule, and an operator reading one now
-	// can pick a different implementation instead of discovering at wake time
-	// that the agent no longer starts.
+	// Then every gate a relaunch applies to an already-resolved posture, against
+	// the chain that relaunch will actually resolve. Running them here is what
+	// makes the assignment actionable: their refusals name a missing tool or an
+	// unrepresentable rule, and an operator reading one now can pick a different
+	// implementation instead of discovering at wake time that the agent no longer
+	// starts — with no relaunch-side override to rescue it.
 	if fail := sandboxImplementationPostureFailure(h.Name, implementation); fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
@@ -159,18 +165,32 @@ func assignAgentSandboxImplementation(w http.ResponseWriter, r *http.Request, co
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
-	recorded, err := db.AgentEffectiveSandboxConfigForConv(convID)
+	planned, _, err := resolveCurrentSandboxChainForConv(convID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "db",
-			"read recorded effective sandbox: "+err.Error())
+		writeError(w, http.StatusConflict, "sandbox_profile_changed", err.Error())
 		return
 	}
 	if fail := sandboxProfileCapabilityFailure(
-		h.Name, mode, recorded, implementation); fail != nil {
+		h.Name, mode, planned, implementation); fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
-	if err := preflightAssignedResourceCgroup(convID, recorded, implementation); err != nil {
+	// The gate that carries ValidateResourceLimitTarget, among others. Without it
+	// an agent whose chain authors a ceiling could be assigned an implementation
+	// that cannot carry one, and every later wake would fail closed — the
+	// dashboard's allow-unenforced control is a fresh-spawn control, so nothing
+	// would let the agent start again short of another assignment. false for
+	// allowUnenforcedSandbox for the same reason: the relaunch this posture is
+	// for has no such override either.
+	if _, fail := planSandboxProfileAccessForLaunch(
+		h.Name, mode, planned, implementation,
+		session.ModelTransportLaunchContext{Model: current.Model, Cwd: current.Cwd},
+		false,
+	); fail != nil {
+		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		return
+	}
+	if err := preflightAssignedResourceCgroup(convID, planned, implementation); err != nil {
 		writeError(w, http.StatusUnprocessableEntity,
 			sandboxImplementationUnavailableKind, err.Error())
 		return
@@ -190,6 +210,40 @@ func assignAgentSandboxImplementation(w http.ResponseWriter, r *http.Request, co
 	writeSandboxImplementationResponse(w, convID, previous)
 }
 
+// assignedHarnessBuiltinMode decides which harness-builtin mode the new posture
+// records, and it is the one place the "undo my change" path can go wrong.
+//
+// An explicit request wins. Otherwise the agent's recorded mode is carried
+// forward — except when the implementation being REPLACED forced that mode, in
+// which case it says nothing about what the operator wanted. Carrying it is how
+// `set <agent> harness-builtin` on an agent currently running `off`,
+// `resource-only` or `tclaude-layer` would record harness-builtin paired with the
+// harness's own OFF mode: an agent with no confinement at all, chosen by nobody,
+// under a command the operator issued to restore confinement. The harness default
+// is what a fresh daemon spawn would pick, which is the honest answer to "no mode
+// was ever chosen for this posture".
+func assignedHarnessBuiltinMode(
+	h *harness.Harness,
+	current *durableRelaunchConfig,
+	requestedMode string,
+	implementation string,
+) (string, *spawnFailure) {
+	requestedMode = strings.TrimSpace(requestedMode)
+	if requestedMode == "" {
+		requestedMode = current.NormalSandbox
+		replaced, err := sandboxpolicy.NormalizeImplementation(current.SandboxImplementation)
+		if err != nil || sandboxImplementationForcesLaunchMode(replaced) {
+			defaulted, defaultErr := harness.ResolveHarnessBuiltinMode(h, "")
+			if defaultErr != nil {
+				return "", &spawnFailure{http.StatusUnprocessableEntity,
+					"invalid_sandbox", defaultErr.Error()}
+			}
+			requestedMode = defaulted
+		}
+	}
+	return resolveLaunchHarnessBuiltinMode(h, requestedMode, implementation)
+}
+
 // preflightAssignedResourceCgroup fails the ASSIGNMENT when the boundary the
 // operator is selecting cannot be created on this host.
 //
@@ -204,12 +258,13 @@ func assignAgentSandboxImplementation(w http.ResponseWriter, r *http.Request, co
 //
 // The probe is the real thing: it creates the cgroup a launch would create and
 // removes it again, so a delegation this host cannot provide is reported with
-// the same actionable error the launch would have raised. A ceiling authored in
-// the agent's recorded chain is probed too, since assigning an implementation
-// that carries it is also when that limit first becomes reachable.
+// the same actionable error the launch would have raised. It runs against the
+// chain the relaunch will RESOLVE rather than the recorded one, because a ceiling
+// added to the global or group profile since the last launch changes the answer:
+// accounting-only degrades where a ceiling fails closed.
 func preflightAssignedResourceCgroup(
 	convID string,
-	recorded *sandboxpolicy.Snapshot,
+	planned *sandboxpolicy.Snapshot,
 	implementation string,
 ) error {
 	normalized, err := sandboxpolicy.NormalizeImplementation(implementation)
@@ -217,8 +272,15 @@ func preflightAssignedResourceCgroup(
 		return err
 	}
 	var limits sandboxpolicy.ResourceLimits
-	if recorded != nil {
-		limits = recorded.Effective.ResourceLimits
+	if planned != nil {
+		// A launch that already carries the operator's unenforced override skips
+		// the boundary entirely (prepareManagedServerResourceCgroup, and the pane
+		// seam's equivalent), so probing one here would refuse an assignment for a
+		// cgroup the launch is never going to ask for.
+		if hasResourceLimitOverride(planned.Effective.AccessNotices) {
+			return nil
+		}
+		limits = planned.Effective.ResourceLimits
 	}
 	if !sandboxpolicy.ResourceCgroupRequested(limits, normalized) {
 		return nil
@@ -270,9 +332,11 @@ func writeSandboxImplementationResponse(w http.ResponseWriter, convID, previous 
 		writeError(w, http.StatusConflict, "relaunch_profile", err.Error())
 		return
 	}
+	// The chain a relaunch would resolve, not the recorded one, so the reported
+	// answer matches the launch this posture is for.
 	limits := sandboxpolicy.ResourceLimits{}
-	if recorded, recErr := db.AgentEffectiveSandboxConfigForConv(convID); recErr == nil && recorded != nil {
-		limits = recorded.Effective.ResourceLimits
+	if planned, _, planErr := resolveCurrentSandboxChainForConv(convID); planErr == nil && planned != nil {
+		limits = planned.Effective.ResourceLimits
 	}
 	implementation, normErr := sandboxpolicy.NormalizeImplementation(posture.SandboxImplementation)
 	writeJSON(w, http.StatusOK, sandboxImplementationAssignmentWire{
