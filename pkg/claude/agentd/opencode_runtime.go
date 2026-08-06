@@ -697,6 +697,10 @@ func startOpenCodeProcess(
 		return nil, err
 	}
 	defer closeCgroupFD()
+	// Snapshot before the server can contribute to the counter: this boundary is
+	// durable across relaunches, so kills already recorded belong to an earlier
+	// server and must not be attributed to this one's exit.
+	oomBaseline := session.ResourceCgroupOOMKills(runtime.ResourceCgroupDir)
 	if err := cmd.Start(); err != nil {
 		if runtime.ResourceCgroupDir != "" {
 			return nil, fmt.Errorf("%w: start server: %v", errOpenCodeResourceCgroup, err)
@@ -712,7 +716,7 @@ func startOpenCodeProcess(
 	openCodeProcesses.Unlock()
 	go func() {
 		err := cmd.Wait()
-		if runtime.ResourceCgroupDir != "" && session.ResourceCgroupOOMKilled(runtime.ResourceCgroupDir) {
+		if runtime.ResourceCgroupDir != "" && session.ResourceCgroupOOMDeath(runtime.ResourceCgroupDir, oomBaseline, err) {
 			if recordErr := db.SetSessionExitReason(runtime.SessionID, session.ResourceLimitOOMExitReason); recordErr != nil {
 				slog.Warn("OpenCode resource limit: record OOM outcome", "session_id", runtime.SessionID, "error", recordErr)
 			}

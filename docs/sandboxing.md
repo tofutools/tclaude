@@ -259,6 +259,32 @@ siblings and leaves the delegated unit node process-free. A delegation or
 controller failure is reported at launch with an actionable error; tclaude
 never widens a configured limit without the explicit operator override.
 
+`DelegateSubgroup=` only places the main process systemd forks itself, so it has
+no effect on a **scope**: a scope's processes are started by something else and
+merely registered into it, and systemd never moves them. An agentd brought up
+inside a `systemd-run --scope` wrapper alongside its tmux server therefore leaves
+the delegated node holding processes, and cgroup v2 refuses to enable controllers
+in a node that is not process-free — reported as `EBUSY` ("device or resource
+busy") on `cgroup.subtree_control`. Either run agentd as a real service unit, or
+have the launcher move itself into the subgroup before starting anything else, so
+every later process inherits it:
+
+```sh
+cg=/sys/fs/cgroup$(sed -n 's|^0::||p' /proc/self/cgroup)
+mkdir -p "$cg/tclaude-supervisor"
+echo $$ > "$cg/tclaude-supervisor/cgroup.procs"
+```
+
+The subgroup name is what the derivation below looks for, so it must be exactly
+`tclaude-supervisor`.
+
+Panes also have to write their own PID into the workload cgroup's
+`cgroup.procs`, which a mandatory access control policy can deny even where the
+subtree is correctly delegated and the permission bits allow it. Under AppArmor
+that is a rule on the pane's profile — and on a stacked profile it must be
+present in every profile of the stack, since a stack permits only what all of
+them permit.
+
 Without such a unit, agentd derives the delegated parent from its own
 `/proc/self/cgroup`. Inside a container or an unshared cgroup namespace the
 unified path reads `/`, so that derivation resolves to the root of whatever is

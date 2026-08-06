@@ -38,7 +38,9 @@ func ValidateExternalTmuxServerCgroup(int, string) error {
 	return fmt.Errorf("external resource delegation is Linux only")
 }
 
-func ResourceCgroupOOMKilled(string) bool { return false }
+func ResourceCgroupOOMKills(string) uint64 { return 0 }
+
+func ResourceCgroupOOMDeath(string, uint64, error) bool { return false }
 
 func resourceLimitExecCmd() *cobra.Command {
 	return &cobra.Command{
