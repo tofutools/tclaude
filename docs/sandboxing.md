@@ -215,6 +215,33 @@ auto-resume) launches without creating or joining a cgroup at all, so a
 predates the accounting boundary — it applies to authored ceilings too — and is
 tracked separately.
 
+#### Moving an existing agent onto it
+
+An agent that predates `resource-only` — or any agent spawned under a different
+implementation — can be moved onto it without being recreated:
+
+```bash
+tclaude agent stop <agent>
+tclaude agent sandbox-impl set <agent> resource-only
+tclaude agent resume <agent>
+```
+
+The implementation is durable relaunch intent, so the assignment takes effect on
+the next launch and is refused while the agent is running. The recorded
+harness sandbox mode moves with it (`resource-only` stands the harness's own wall
+down), and the mode's attribution becomes `operator sandbox assignment` rather
+than whichever spawn tier chose the mode it replaced.
+
+Because that next launch is a *relaunch*, it would only degrade — the paragraph
+above — if the host could not create the cgroup. The assignment therefore probes
+the boundary itself and refuses when the host cannot provide one, so an operator
+who selects the implementation learns about a missing delegation while they are
+still choosing rather than after waking an agent that quietly got nothing.
+
+See [Agent coordination → sandbox-impl](agent.md#sandbox-impl) for the full
+command, its validation, and the `agent.sandbox-impl` permission (which group
+ownership deliberately does not confer).
+
 This changed behavior: before, `resource-only` with no limits silently created
 nothing and was indistinguishable from `off`. A conversation recorded that way
 now creates its cgroup where the host allows it, refuses a fresh launch where it

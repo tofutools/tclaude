@@ -315,6 +315,14 @@ const (
 	PermAgentTask          = "agent.task"
 	PermAgentPR            = "agent.pr"
 	PermAgentTags          = "agent.tags"
+	// PermAgentSandboxImplementation gates rewriting an EXISTING agent's durable
+	// sandbox implementation. It deliberately confers no owner bypass: the
+	// assignment can move an agent onto an implementation with no access
+	// confinement at all, which is the boundary the sandbox-lineage guard exists
+	// to protect, and a group owner is not automatically an operator of the host's
+	// sandbox policy. Same reasoning as sandbox-profiles.manage, which is likewise
+	// human-only.
+	PermAgentSandboxImplementation = "agent.sandbox-impl"
 	PermGroupsCreate       = "groups.create"
 	PermGroupsRm           = "groups.rm"
 	PermGroupsStop         = "groups.stop"

@@ -262,6 +262,19 @@ func ResetCodexRefreshThrottleForTest(sessionID string) {
 	resetCodexRefreshThrottleForTest(sessionID)
 }
 
+// SetPrepareResourceCgroupForTest swaps the cgroup boundary a flow test cannot
+// create for real: the sandbox-implementation assignment probes it before
+// recording a posture that needs one, and a CI host with no delegated cgroup v2
+// subtree would otherwise refuse every such assignment. Pass an error to drive
+// the refusal branch deliberately.
+func SetPrepareResourceCgroupForTest(
+	fn func(sessionID string, limits sandboxpolicy.ResourceLimits) (string, func(), error),
+) func() {
+	previous := prepareResourceCgroup
+	prepareResourceCgroup = fn
+	return func() { prepareResourceCgroup = previous }
+}
+
 // SetTmuxCacheTTLForTest overrides the shared LiveTmuxSessions cache TTL and
 // clears any warm entry, returning a restore closure. newFlow sets it to 0 so
 // the cache is transparent (every call re-probes) — preserving each existing

@@ -965,6 +965,53 @@ structured proposal to the human dashboard. It cannot create or edit a saved
 profile, change global/group assignments, or launch an agent; the human must
 preview the result and explicitly save it through the ordinary editor.
 
+### sandbox-impl
+
+The sandbox *implementation* — which layer owns OS-level confinement — is
+chosen at spawn and recorded as durable relaunch intent. `sandbox-impl` reads
+and rewrites that record for an agent that already exists, which is how an
+agent spawned before an implementation existed reaches it. The common case is
+moving an older agent onto `resource-only` so its next launch gets a per-agent
+cgroup.
+
+```bash
+tclaude agent sandbox-impl show <agent> [--json]
+tclaude agent sandbox-impl set <agent> <implementation> [--sandbox MODE] [--json]
+```
+
+There is no self-targeted form, and the agent selector is positional rather
+than the `--target` flag the self-defaulting lifecycle verbs use: the
+implementation is applied by a launch, and the assignment is refused while the
+agent is running (`409 agent_online`). Stop the agent, assign, then wake it.
+
+The recorded harness sandbox **mode** moves with the implementation, because
+the implementation decides what the harness's own sandbox may be —
+`resource-only` and `off` resolve every harness to its no-confinement mode. The
+mode's attribution becomes `operator sandbox assignment`, since no spawn
+profile chose it. `--sandbox` pins a mode explicitly, which is what you want
+when returning an agent to `harness-builtin`.
+
+The assignment is validated the way a launch validates: an implementation this
+harness cannot run, or this host cannot provide, is refused here rather than at
+wake time, as is a recorded profile whose rules the implementation cannot
+represent (a `mount_path` outside the Linux tclaude-layer). An implementation
+that needs a per-agent cgroup additionally probes that this host can create
+one, because the launch it takes effect on is a *relaunch* — and a relaunch of
+a ceiling-free boundary deliberately degrades to a notice rather than refusing
+(see [Sandboxing](sandboxing.md#a-cgroup-with-no-ceiling)). Validating at the
+moment the operator chooses is the only place that refusal is actionable.
+
+Writes require the `agent.sandbox-impl` permission. Unlike the other
+cross-agent verbs, **group ownership does not confer it**: the assignment can
+move an agent onto an implementation with no access confinement at all, and a
+lead that could do that to a member would walk around the sandbox-lineage guard
+that caps what it can spawn. It is operator policy, like
+`sandbox-profiles.manage`, and is not default-granted.
+
+A reversible dashboard sandbox unlock suspends the durable posture rather than
+replacing it, so an assignment is refused while one is active
+(`409 temporary_sandbox_override`); restore the agent's normal sandbox first.
+
 ### spawn
 
 ```bash
@@ -2041,7 +2088,7 @@ gate group, messaging, template, and permission administration.
 | Family        | Slugs |
 |---------------|-------|
 | `self.*`      | `self.rename`, `self.compact`, `self.clone`, `self.schedule`, `self.remote-control`, `self.task`, `self.pr`, `self.tags`, `self.dir-repair` |
-| `agent.*`     | `agent.rename`, `agent.compact`, `agent.reincarnate`, `agent.clone`, `agent.context-info`, `agent.resume`, `agent.stop`, `agent.delete`, `agent.schedule`, `agent.promote`, `agent.retire`, `agent.remote-control` |
+| `agent.*`     | `agent.rename`, `agent.compact`, `agent.reincarnate`, `agent.clone`, `agent.context-info`, `agent.resume`, `agent.stop`, `agent.delete`, `agent.schedule`, `agent.promote`, `agent.retire`, `agent.remote-control`, `agent.sandbox-impl` (not owner-conferred) |
 | `groups.*`    | `groups.create`, `groups.rm`, `groups.archive`, `groups.stop`, `groups.resume`, `groups.retire`, `groups.spawn`, `groups.own`, `groups.link.add`, `groups.link.rm`, `groups.export`, `groups.import` |
 | `member.*`    | `member.add`, `member.remove`, `member.redesignate` |
 | `permissions.*` | `permissions.grant`, `permissions.revoke` |

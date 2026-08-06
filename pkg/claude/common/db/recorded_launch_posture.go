@@ -155,6 +155,16 @@ func NormalSandboxImplementationForConv(
 	if implementation != sandboxpolicy.ImplementationHarnessBuiltin {
 		return implementation, nil
 	}
+	// An operator assignment is a deliberate later choice, so there is nothing to
+	// repair: the historical scan below exists to undo a projection bug, and its
+	// own fingerprint requires the damaged temporary-unlock tail. That tail
+	// survives a restore whose relaunch failed, which is exactly when an operator
+	// reassigns the agent to harness-builtin — and resurrecting the older layered
+	// value there would undo the assignment they just made.
+	if posture != nil && posture.HarnessBuiltinModeSource != nil &&
+		strings.TrimSpace(*posture.HarnessBuiltinModeSource) == AssignedSandboxImplementationSource {
+		return implementation, nil
+	}
 	historical, err := PreTemporaryUnlockSandboxImplementationForConv(convID)
 	if err != nil || strings.TrimSpace(historical) == "" {
 		return implementation, err
