@@ -293,6 +293,11 @@ var permissionRegistry = []PermSlug{
 			"Group owners can toggle members of groups they own without this slug.",
 	},
 	{
+		Slug: PermAgentSandboxImplementation,
+		Description: "Assign the durable sandbox implementation an EXISTING offline agent relaunches under (tclaude agent sandbox-impl set). " +
+			"It can move an agent onto an implementation with no OS-level access confinement, so group ownership does NOT confer it and it is not default-granted (effectively human-only).",
+	},
+	{
 		Slug:       PermAgentInboxWatch,
 		OwnerScope: ownerScopeMember,
 		Description: "Watch ANOTHER agent's inbox — a live read of messages addressed to it. " +

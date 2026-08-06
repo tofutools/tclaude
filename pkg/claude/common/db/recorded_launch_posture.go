@@ -155,6 +155,22 @@ func NormalSandboxImplementationForConv(
 	if implementation != sandboxpolicy.ImplementationHarnessBuiltin {
 		return implementation, nil
 	}
+	// An operator assignment is a deliberate later choice, so there is nothing to
+	// repair: the historical scan below exists to undo a projection bug, and its
+	// own fingerprint requires the damaged temporary-unlock tail. That tail
+	// survives a restore whose relaunch failed, which is exactly when an operator
+	// reassigns the agent to harness-builtin — and resurrecting the older layered
+	// value there would undo the assignment they just made.
+	//
+	// The marker is read from the MODE attribution because that is where an
+	// assignment records itself; the two move together only because
+	// AssignAgentSandboxImplementation writes them together. A future edit that
+	// stamps this source while changing the mode ALONE would disable this repair
+	// as a side effect, so keep that constant to writes of the whole posture.
+	if posture != nil && posture.HarnessBuiltinModeSource != nil &&
+		strings.TrimSpace(*posture.HarnessBuiltinModeSource) == AssignedSandboxImplementationSource {
+		return implementation, nil
+	}
 	historical, err := PreTemporaryUnlockSandboxImplementationForConv(convID)
 	if err != nil || strings.TrimSpace(historical) == "" {
 		return implementation, err
