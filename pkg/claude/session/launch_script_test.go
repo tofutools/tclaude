@@ -186,11 +186,12 @@ func TestLaunchArgvIsConstantSizeThroughProductionPath(t *testing.T) {
 	// The command must ride in a script file, never inline: `<shell> <script>`.
 	small, huge := parseNewSession(t, smallArgv), parseNewSession(t, hugeArgv)
 	assert.Equal(t, cwd, huge.opts["-c"], "launch dir rides as -c, not in the pane command")
-	require.Len(t, huge.pane, 3, "pane argv must be exactly `<shell> <script> <marker>`")
-	require.Len(t, small.pane, 2, "a marker-free launch adds no pane words beyond `<shell> <script>`")
-	assert.Equal(t, clcommon.BootstrapShellPath(), huge.pane[0],
+	shell := clcommon.BootstrapShellArgv()
+	require.Len(t, huge.pane, len(shell)+2, "pane argv must be exactly `<shell> <script> <marker>`")
+	require.Len(t, small.pane, len(shell)+1, "a marker-free launch adds no pane words beyond `<shell> <script>`")
+	assert.Equal(t, shell, huge.pane[:len(shell)],
 		"pane command must run the script under tclaude's pinned bootstrap shell")
-	scriptPath := huge.pane[1]
+	scriptPath := huge.pane[len(shell)]
 	assert.Contains(t, scriptPath, "launch-scripts", "script must live in the private launch-scripts dir")
 	assert.Equal(t, profileMarker, huge.pane[len(huge.pane)-1],
 		"the codex profile marker rides as the trailing argv word")
@@ -241,10 +242,11 @@ func TestOpenCodeCredentialReachesPaneOnlyThroughPrivateBootstrap(t *testing.T) 
 	assert.NotContains(t, argv, "43210")
 
 	pane := parseNewSession(t, launches[0]).pane
-	require.Len(t, pane, 2, "pane argv must be exactly `<shell> <script>`")
-	require.Equal(t, clcommon.BootstrapShellPath(), pane[0],
+	shell := clcommon.BootstrapShellArgv()
+	require.Len(t, pane, len(shell)+1, "pane argv must be exactly `<shell> <script>`")
+	require.Equal(t, shell, pane[:len(shell)],
 		"pane command must run the script under tclaude's pinned bootstrap shell")
-	scriptPath := pane[1]
+	scriptPath := pane[len(shell)]
 	raw, err := os.ReadFile(scriptPath)
 	require.NoError(t, err)
 	content := string(raw)
@@ -277,10 +279,12 @@ func TestLaunchArgvCarriesNoStartFlagInsideTclaudeTmuxServer(t *testing.T) {
 	require.True(t, parsed.noStart, "a launch inside the tclaude server must pass -N")
 	assert.Equal(t, "spwn-nostrt", parsed.opts["-s"])
 	assert.Equal(t, cwd, parsed.opts["-c"])
-	require.Len(t, parsed.pane, 2, "pane argv must be exactly `<shell> <script>`")
-	assert.Equal(t, clcommon.BootstrapShellPath(), parsed.pane[0],
+	shell := clcommon.BootstrapShellArgv()
+	require.Len(t, parsed.pane, len(shell)+1, "pane argv must be exactly `<shell> <script>`")
+	assert.Equal(t, shell, parsed.pane[:len(shell)],
 		"pane command must run the script under tclaude's pinned bootstrap shell")
-	assert.Contains(t, parsed.pane[1], "launch-scripts", "script must live in the private launch-scripts dir")
+	assert.Contains(t, parsed.pane[len(shell)], "launch-scripts",
+		"script must live in the private launch-scripts dir")
 }
 
 func TestLaunchPreflightRejectsOversizedArgvBeforeTmux(t *testing.T) {

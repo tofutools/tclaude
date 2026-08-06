@@ -19,5 +19,5 @@ import (
 // rewritten after the fact (tclaudeLayerPreserveRouteHelperFD) without the two
 // spellings drifting apart.
 func sandboxExecShellPrefix() string {
-	return " -- " + clcommon.ShellQuoteArg(clcommon.BootstrapShellPath()) + " -c "
+	return " -- " + clcommon.BootstrapShellCommandPrefix() + " -c "
 }

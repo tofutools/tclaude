@@ -60,7 +60,29 @@ func TestResolveBootstrapShellFallsBackToPathLookup(t *testing.T) {
 		assert.Equal(t, "bash", name)
 		return found, nil
 	})
+	withTrustedRoots(t, []string{dir})
 	assert.Equal(t, found, resolveBootstrapShell())
+}
+
+// A PATH bash outside the OS surface the isolated sandbox posture binds into
+// its constructed root (NixOS /nix/store/…, Linuxbrew /home/linuxbrew/…) exists
+// on the host and NOT inside the namespace. Pinning it would exec-fail the pane
+// for any profile asking for that posture — and this is precisely the host the
+// PATH branch exists to serve, so the branch would only ever fire where it
+// breaks. Falling back is the honest answer.
+func TestResolveBootstrapShellRefusesPathBashOutsideTrustedRoots(t *testing.T) {
+	dir := t.TempDir()
+	found := writeFakeShell(t, dir, "bash", 0o755)
+	withBootstrapShellResolver(t, nil, func(string) (string, error) { return found, nil })
+	withTrustedRoots(t, []string{"/bin", "/usr"})
+	assert.Equal(t, BootstrapShellFallback, resolveBootstrapShell())
+}
+
+// filepath.Abs would resolve a relative PATH entry against THIS process's cwd,
+// which is not the pane's cwd — tmux starts the pane with its own -c.
+func TestResolveBootstrapShellRefusesRelativePathResult(t *testing.T) {
+	withBootstrapShellResolver(t, nil, func(string) (string, error) { return "bin/bash", nil })
+	assert.Equal(t, BootstrapShellFallback, resolveBootstrapShell())
 }
 
 // With no bash anywhere, the resolver must still produce a usable interpreter
@@ -71,6 +93,39 @@ func TestResolveBootstrapShellFallsBackToSh(t *testing.T) {
 	withBootstrapShellResolver(t, []string{filepath.Join(t.TempDir(), "absent")},
 		func(string) (string, error) { return "", errors.New("not on PATH") })
 	assert.Equal(t, BootstrapShellFallback, resolveBootstrapShell())
+}
+
+func withTrustedRoots(t *testing.T, roots []string) {
+	t.Helper()
+	original := bootstrapShellTrustedRoots
+	t.Cleanup(func() { bootstrapShellTrustedRoots = original })
+	bootstrapShellTrustedRoots = roots
+}
+
+// Containment is by path SEGMENT, not string prefix: /usr-local is not under
+// /usr, and a trusted root must not be widened by a neighbouring name.
+func TestUnderBootstrapShellTrustedRoot(t *testing.T) {
+	withTrustedRoots(t, []string{"/bin", "/usr"})
+	for _, path := range []string{"/bin", "/bin/bash", "/usr/bin/bash", "/usr/local/bin/bash"} {
+		assert.True(t, underBootstrapShellTrustedRoot(path), path)
+	}
+	for _, path := range []string{"/binary/bash", "/usr-local/bin/bash", "/nix/store/x/bin/bash", "/opt/bash"} {
+		assert.False(t, underBootstrapShellTrustedRoot(path), path)
+	}
+}
+
+// -p is what keeps $BASH_ENV and environment-exported functions out of the
+// shell that runs tclaude's fail-closed launch guard. It must ride on the
+// argv and on the embedded-command spelling alike — and must NOT be passed to
+// the fallback, whose option set is not tclaude's to assume.
+func TestBootstrapShellArgvCarriesPrivilegedFlagOnlyForBash(t *testing.T) {
+	if BootstrapShellIsBash() {
+		assert.Equal(t, []string{BootstrapShellPath(), "-p"}, BootstrapShellArgv())
+		assert.Equal(t, ShellQuoteArg(BootstrapShellPath())+" -p", BootstrapShellCommandPrefix())
+		return
+	}
+	assert.Equal(t, []string{BootstrapShellFallback}, BootstrapShellArgv())
+	assert.Equal(t, ShellQuoteArg(BootstrapShellFallback), BootstrapShellCommandPrefix())
 }
 
 func TestIsBootstrapShellWord(t *testing.T) {

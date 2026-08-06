@@ -2894,10 +2894,9 @@ func launchDetachedTmuxSession(tmuxSession, cwd, cmd string, markerArgs ...strin
 	}
 	// Multi-word command → tmux execvp's it directly (spawn.c), no extra
 	// shell join/quoting layer.
-	args := append([]string{
-		"new-session", "-d", "-s", tmuxSession, "-c", cwd,
-		clcommon.BootstrapShellPath(), scriptPath,
-	}, markerArgs...)
+	args := append([]string{"new-session", "-d", "-s", tmuxSession, "-c", cwd}, clcommon.BootstrapShellArgv()...)
+	args = append(args, scriptPath)
+	args = append(args, markerArgs...)
 	args = ExternalTmuxNoStartArgs(args...)
 	if n := tmuxArgvBytes(args); n > tmuxClientArgvLimit {
 		cleanupScript()
