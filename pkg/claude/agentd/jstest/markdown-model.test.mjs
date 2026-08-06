@@ -501,10 +501,30 @@ test('no document can produce a tag or attribute outside the allowlists', async 
         assert.match(node.attrs.src ?? '', /^data:image\/(?:gif|png|jpeg|webp);base64,/,
           `img src ${node.attrs.src} escaped the inline-only rule via:\n${source}`);
       }
+      // Parsed rather than pattern-matched. What has to be true of a held-back
+      // image is that it addresses a real remote host — which is what the
+      // placeholder promises to name and what the operator's click will fetch —
+      // and a spelling starting with `https://` only implies that for as long as
+      // the model keeps storing the target verbatim. `https://:1/x` matches the
+      // pattern and addresses nothing.
       if (node.tag === 'remote-image') {
         seenRemote = true;
-        assert.match(node.attrs.src ?? '', /^https?:\/\//i,
-          `remote-image src ${node.attrs.src} is not a remote URL, via:\n${source}`);
+        const src = node.attrs.src ?? '';
+        let target = null;
+        try {
+          target = new URL(src);
+        } catch {
+          // Left null, which the assertion below reports.
+        }
+        const parsed = target
+          ? `protocol ${target.protocol}, host ${JSON.stringify(target.host)}`
+          : 'does not parse as an absolute URL';
+        assert.ok(
+          target !== null
+            && (target.protocol === 'http:' || target.protocol === 'https:')
+            && target.host !== '',
+          `remote-image src ${src} (${parsed}) is not an http(s) URL naming a host, via:\n${source}`,
+        );
       }
       stack.push(...(node.children || []));
     }
