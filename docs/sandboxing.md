@@ -194,18 +194,32 @@ controller in the shared delegated parent turns it on for every workload cgroup
 under it, so sibling launches gain the same counters (and their own untouched
 `memory.max`/`cpu.max` files) whether or not they asked.
 
-Nothing here is refused. A ceiling fails closed when the host cannot enforce it,
-but a boundary with no ceiling is observability: on a host with no delegated
-cgroup the launch proceeds without one and records a `resource_cgroup_unavailable`
-degradation notice naming what is missing. Refusing instead would make an agent
-already recorded as `resource-only` unresumable — the **allow launch without
-enforcement** override is a fresh-spawn control and does not exist on a resume.
+The cgroup itself is required on a fresh launch. If the host cannot create it —
+no delegated subtree, an undelegated hierarchy root — the launch is refused with
+the error naming the missing delegation, exactly as for a ceiling, and **allow
+launch without enforcement** is the same escape hatch. A launch that asked for a
+boundary and quietly got none is indistinguishable from one that never tried.
+
+A **relaunch** of a boundary with no ceiling degrades instead: it proceeds without
+the cgroup and records a `resource_cgroup_unavailable` notice naming what is
+missing. Refusing there would make an agent already recorded as `resource-only`
+permanently unlaunchable, because the launch override is a fresh-spawn control
+with no relaunch equivalent. "Relaunch" covers a resume, a reincarnated successor
+and a no-copy clone — the last two fork a launch with no `-r`, so they carry an
+explicit continuation marker instead. A ceiling still fails closed on all of
+them.
+
+One seam is still outside this: `tclaude conv resume` (and watch-mode
+auto-resume) launches without creating or joining a cgroup at all, so a
+`resource-only` conversation resumed that way runs unbounded with no notice. That
+predates the accounting boundary — it applies to authored ceilings too — and is
+tracked separately.
 
 This changed behavior: before, `resource-only` with no limits silently created
 nothing and was indistinguishable from `off`. A conversation recorded that way
-now creates its cgroup on the next launch where the host allows it, and
-discloses the gap where it does not. Off Linux the implementation is still
-refused outright, as it always was.
+now creates its cgroup where the host allows it, refuses a fresh launch where it
+does not, and discloses the gap on a resume. Off Linux the implementation is
+still refused outright, as it always was.
 
 A `resource-only` launch still resolves the sandbox-profile chain, because that
 chain is what carries `resource_limits`. The chain is the whole stack — global,

@@ -284,19 +284,19 @@ func TestManagedServerPreparesAccountingCgroupForLimitlessResourceOnly(t *testin
 	snapshot := &sandboxpolicy.Snapshot{}
 
 	dir, _, err := prepareManagedServerResourceCgroup("managed-accounting", snapshot,
-		string(sandboxpolicy.ImplementationResourceOnly), false)
+		string(sandboxpolicy.ImplementationResourceOnly), false, false)
 	require.NoError(t, err)
 	assert.Equal(t, accounting, dir,
 		"a managed server under resource-only must join the boundary its implementation names")
 
 	dir, _, err = prepareManagedServerResourceCgroup("managed-unbounded", snapshot,
-		string(sandboxpolicy.ImplementationHarnessBuiltin), false)
+		string(sandboxpolicy.ImplementationHarnessBuiltin), false, false)
 	require.NoError(t, err)
 	assert.Empty(t, dir,
 		"an unauthored profile under any other implementation keeps the previous launch path")
 }
 
-func TestManagedServerAccountingDegradesWhenHostHasNoDelegation(t *testing.T) {
+func TestManagedServerAccountingResumeDegradesWhenHostHasNoDelegation(t *testing.T) {
 	setupTestDB(t)
 	t.Setenv("TMUX", "")
 	previousPrepare := prepareResourceCgroup
@@ -306,8 +306,13 @@ func TestManagedServerAccountingDegradesWhenHostHasNoDelegation(t *testing.T) {
 	t.Cleanup(func() { prepareResourceCgroup = previousPrepare })
 	snapshot := &sandboxpolicy.Snapshot{}
 
+	_, _, freshErr := prepareManagedServerResourceCgroup("managed-nodeleg", snapshot,
+		string(sandboxpolicy.ImplementationResourceOnly), false, false)
+	assert.ErrorContains(t, freshErr, "delegated cgroup v2 service subtree",
+		"a fresh spawn must say the boundary it asked for is unavailable")
+
 	dir, _, err := prepareManagedServerResourceCgroup("managed-nodeleg", snapshot,
-		string(sandboxpolicy.ImplementationResourceOnly), false)
+		string(sandboxpolicy.ImplementationResourceOnly), false, true)
 	require.NoError(t, err,
 		"an unstartable server is too high a price for counters, and a resume has no override")
 	assert.Empty(t, dir)
@@ -334,7 +339,7 @@ func TestManagedServerStillRefusesUnenforceableCeiling(t *testing.T) {
 	}}
 
 	_, _, err := prepareManagedServerResourceCgroup("managed-capped", snapshot,
-		string(sandboxpolicy.ImplementationResourceOnly), false)
+		string(sandboxpolicy.ImplementationResourceOnly), false, true)
 	assert.Error(t, err, "an authored ceiling must still fail closed")
 }
 
@@ -360,7 +365,7 @@ func TestManagedServerDropsStoredCgroupFromPreviousDelegationBeforeReprepare(t *
 	}}
 
 	dir, _, err := prepareManagedServerResourceCgroup(
-		"managed-old-cgroup", snapshot, string(sandboxpolicy.ImplementationHarnessBuiltin), false)
+		"managed-old-cgroup", snapshot, string(sandboxpolicy.ImplementationHarnessBuiltin), false, false)
 	require.NoError(t, err)
 	assert.Equal(t, "/sys/fs/cgroup/system.slice/tclaude-tmux.service/tclaude-new", dir)
 	stored, lookupErr := db.GetOpenCodeRuntime("managed-old-cgroup")

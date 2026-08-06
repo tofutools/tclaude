@@ -495,13 +495,42 @@ func (c *paneScriptCapturingTmux) Command(args ...string) *exec.Cmd {
 	return c.launchRecordingTmux.Command(args...)
 }
 
-// A host with no delegated cgroup must not make an already-recorded
-// resource-only agent unlaunchable: the dashboard override is a fresh-spawn
-// control, so refusing here would strand the agent on every resume.
-func TestRunNewResourceOnlyDegradesWhenTheHostHasNoDelegation(t *testing.T) {
+// The operator asked for a boundary this host cannot create. A fresh launch is a
+// live decision, so it must say so — reported as "it did not even try" when the
+// launch instead succeeded quietly.
+func TestRunNewResourceOnlyRefusesWhenTheHostHasNoDelegation(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	// A cgroup root with no controllers file at all is what an undelegated host
 	// looks like to the derivation.
+	oldRoot := resourceCgroupRoot
+	resourceCgroupRoot = t.TempDir()
+	t.Cleanup(func() { resourceCgroupRoot = oldRoot })
+	t.Setenv(ResourceDelegationDirEnv, "")
+	t.Setenv("TMUX", "")
+	prevCheck := ClaudeAncestorCheck
+	ClaudeAncestorCheck = func() bool { return false }
+	t.Cleanup(func() { ClaudeAncestorCheck = prevCheck })
+	stubTmuxOnPath(t)
+	rec := &launchRecordingTmux{}
+	swapTmux(t, rec)
+
+	err := runNew(&NewParams{
+		Label:       "spwn-nodeleg",
+		Dir:         t.TempDir(),
+		Detached:    true,
+		SandboxImpl: string(sandboxpolicy.ImplementationResourceOnly),
+	})
+	require.Error(t, err, "a boundary the host cannot create must not launch silently")
+	assert.ErrorContains(t, err, "delegated cgroup v2",
+		"the refusal must name what is missing, as it does for a ceiling")
+	assert.Empty(t, rec.newSessions(), "the launch must be refused before tmux")
+}
+
+// The other half of the same policy: a reincarnated successor or no-copy clone
+// forks `session new` with no -r and no operator control of its own, so the
+// undelegated host must not make it unlaunchable.
+func TestRunNewResourceOnlyContinuationDegradesWhenTheHostHasNoDelegation(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	oldRoot := resourceCgroupRoot
 	resourceCgroupRoot = t.TempDir()
 	t.Cleanup(func() { resourceCgroupRoot = oldRoot })
@@ -516,17 +545,17 @@ func TestRunNewResourceOnlyDegradesWhenTheHostHasNoDelegation(t *testing.T) {
 	swapTmux(t, rec)
 
 	err := runNew(&NewParams{
-		Label:       "spwn-nodeleg",
-		Dir:         t.TempDir(),
-		Detached:    true,
-		SandboxImpl: string(sandboxpolicy.ImplementationResourceOnly),
+		Label:               "spwn-continuation",
+		Dir:                 t.TempDir(),
+		Detached:            true,
+		SandboxImpl:         string(sandboxpolicy.ImplementationResourceOnly),
+		SandboxContinuation: true,
 	})
 	require.Error(t, err, "the fake tmux refuses new-session")
 	assert.NotContains(t, err.Error(), "delegated cgroup v2",
-		"a missing boundary with no ceiling authored must not refuse the launch")
+		"a continuation must reach its pane rather than being stranded")
 	require.NotEmpty(t, rec.script, "the launch must still reach tmux")
-	assert.NotContains(t, rec.script, "resource-limit-exec",
-		"there is no cgroup to join")
+	assert.NotContains(t, rec.script, "resource-limit-exec", "there is no cgroup to join")
 	assert.Contains(t, logged.String(), "resource cgroup unavailable")
 }
 

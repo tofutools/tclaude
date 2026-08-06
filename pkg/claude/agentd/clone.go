@@ -467,6 +467,10 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 		proofArgs.AutoMemory = autoMemory
 		proofArgs.ContextFeatures = contextFeatures
 		proofArgs.AutoCompactWindow = autoCompactWindow
+		// A no-copy clone inherits the source agent's recorded posture through a
+		// `session new` fork with no -r, so it is a continuation for launch
+		// requirements the host may not be able to meet (see SandboxContinuation).
+		proofArgs.SandboxContinuation = true
 		// A launch-enrolled no-copy clone presets its conv-id so the name and
 		// handoff can ride the same argv, exactly as reincarnate's successor
 		// does. Without enrollment the id is whatever the harness mints, and the

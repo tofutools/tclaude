@@ -485,15 +485,20 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 	}
 	approval, autoReview := relaunch.Approval, relaunch.AutoReview
 	spawnArgs := clcommon.SpawnArgs{
-		EffectiveSandbox:       effectiveSandbox,
-		Label:                  label,
-		Cwd:                    cwd,
-		Effort:                 effort,
-		Model:                  model,
-		Harness:                relaunch.Harness,
-		Sandbox:                reincarnateSandbox,
-		SandboxImplementation:  reincarnateSandboxImplementation,
-		SandboxChosenBy:        relaunch.HarnessBuiltinModeSource,
+		EffectiveSandbox:      effectiveSandbox,
+		Label:                 label,
+		Cwd:                   cwd,
+		Effort:                effort,
+		Model:                 model,
+		Harness:               relaunch.Harness,
+		Sandbox:               reincarnateSandbox,
+		SandboxImplementation: reincarnateSandboxImplementation,
+		SandboxChosenBy:       relaunch.HarnessBuiltinModeSource,
+		// The successor inherits the predecessor's recorded posture and forks
+		// `session new` without -r. No operator control reaches this launch, so a
+		// host that cannot provide a recorded boundary must disclose rather than
+		// refuse — refusing would leave a context-exhausted agent no way out.
+		SandboxContinuation:    true,
 		Approval:               approval,
 		ToolGovernance:         relaunch.ToolGovernance,
 		AutoReview:             autoReview,

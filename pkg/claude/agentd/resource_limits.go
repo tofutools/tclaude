@@ -16,6 +16,7 @@ func prepareManagedServerResourceCgroup(
 	snapshot *sandboxpolicy.Snapshot,
 	rawImplementation string,
 	allowUnenforced bool,
+	resuming bool,
 ) (string, func(), error) {
 	noop := func() {}
 	// resource-only asks for the cgroup through the implementation alone, so a
@@ -49,19 +50,21 @@ func prepareManagedServerResourceCgroup(
 	if err == nil {
 		return dir, cleanup, nil
 	}
-	if !limits.Enabled() {
-		// An accounting boundary is observability: a host that cannot provide one
-		// must not make the server unstartable, on a resume least of all.
-		slog.Warn("resource cgroup unavailable; starting managed server without per-agent accounting",
+	switch session.ResourceCgroupFailureAction(limits, resuming, allowUnenforced) {
+	case session.DiscloseMissingResourceAccounting:
+		// Refusing a relaunch over counters would strand the conversation: the
+		// dashboard override is a fresh-spawn control with no resume equivalent.
+		slog.Warn("resource cgroup unavailable; resuming managed server without per-agent accounting",
 			"session_id", sessionID, "error", err)
 		appendManagedServerAccountingUnavailable(snapshot, err)
 		return "", noop, nil
+	case session.DiscloseUnenforcedResourceOverride:
+		appendManagedServerResourceOverride(snapshot, err)
+		return "", noop, nil
 	}
-	if !allowUnenforced {
-		return "", noop, err
-	}
-	appendManagedServerResourceOverride(snapshot, err)
-	return "", noop, nil
+	// RefuseResourceCgroupFailure, and any policy value this seam does not know:
+	// fail closed rather than start a server without the boundary it asked for.
+	return "", noop, err
 }
 
 // appendManagedServerAccountingUnavailable mirrors the pane-side disclosure for
@@ -71,12 +74,7 @@ func appendManagedServerAccountingUnavailable(snapshot *sandboxpolicy.Snapshot, 
 		return
 	}
 	snapshot.Effective.AccessNotices = append(snapshot.Effective.AccessNotices,
-		sandboxpolicy.AccessNotice{
-			Class: sandboxpolicy.AccessNoticeClassDegradation, Axis: "resource_limits",
-			Reason: sandboxpolicy.AccessNoticeReasonResourceCgroupUnavailable,
-			Effect: sandboxpolicy.AccessNoticeEffectNotEnforced,
-			Detail: fmt.Sprintf("no ceiling was authored and this host has no delegated cgroup for the per-agent boundary, so accounting, OOM attribution and the workload kill handle are unavailable: %v", err),
-		})
+		session.ResourceCgroupUnavailableNotice(err))
 }
 
 func appendManagedServerResourceOverride(snapshot *sandboxpolicy.Snapshot, err error) {
