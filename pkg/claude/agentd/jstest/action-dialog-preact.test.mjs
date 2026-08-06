@@ -617,6 +617,7 @@ function sandboxImplActions(calls, overrides = {}) {
       { value: 'tclaude-layer', label: 'tclaude layer', descr: 'bubblewrap namespace.', experimental: true },
     ]),
     sandboxModes: () => ['inherit', 'on', 'off'],
+    sandboxImplAvailability: () => '',
     ...overrides,
   };
 }
@@ -717,7 +718,45 @@ test('sandbox-impl dialog reports a failed posture load rather than offering a g
   assert.equal(host.querySelector('#sandbox-impl-assign').disabled, true);
 });
 
-test('sandbox-impl dialog sends an explicitly pinned harness mode', async (t) => {
+test('sandbox-impl dialog pins a harness mode, and re-pinning alone is a real change', async (t) => {
+  const calls = [];
+  // Recorded as resource-only, so moving BACK to harness-builtin is what exposes
+  // the pin: it is the one implementation whose launch keeps the mode it is given.
+  const { harness, host, cleanup } = await mountDialogs(
+    t, 'sandbox-impl', { conv: 'agent-conv', label: 'worker' },
+    sandboxImplActions(calls, {
+      loadSandboxImpl: async () => sandboxImplPosture({
+        sandbox_implementation: 'resource-only', sandbox: 'off',
+      }),
+    }),
+  );
+  t.after(cleanup);
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+
+  assertAbsent(host.querySelector('#sandbox-impl-mode'),
+    'resource-only derives its own mode; a pin beside it would be collected and discarded');
+
+  const builtin = [...host.querySelectorAll('#sandbox-impl-options input[type=radio]')]
+    .find((option) => option.value === 'harness-builtin');
+  await harness.act(() => builtin.dispatchEvent(
+    new harness.window.Event('change', { bubbles: true })));
+
+  const mode = host.querySelector('#sandbox-impl-mode');
+  assert.ok(mode, 'harness-builtin keeps the mode, so the pin appears with it');
+  assert.equal(mode.querySelectorAll('option').length, 4,
+    'the modes plus the leave-it-to-the-server default');
+  [...mode.options].forEach((option) => option.removeAttribute('selected'));
+  mode.querySelector('option[value="on"]').setAttribute('selected', '');
+  await harness.act(() => mode.dispatchEvent(new harness.window.Event('change', { bubbles: true })));
+
+  host.querySelector('#sandbox-impl-assign').click();
+  await harness.act(() => Promise.resolve());
+  assert.deepEqual(calls, [['assign', {
+    conv: 'agent-conv', label: 'worker', implementation: 'harness-builtin', sandbox: 'on',
+  }]]);
+});
+
+test('sandbox-impl dialog treats a mode-only pin as assignable', async (t) => {
   const calls = [];
   const { harness, host, cleanup } = await mountDialogs(
     t, 'sandbox-impl', { conv: 'agent-conv', label: 'worker' },
@@ -726,23 +765,21 @@ test('sandbox-impl dialog sends an explicitly pinned harness mode', async (t) =>
   t.after(cleanup);
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
 
+  // Already on harness-builtin, so the pin row is present from the start and
+  // changing ONLY the mode is the whole edit. Leaving Assign disabled here would
+  // strand the operator in a dirty dialog whose only exit is a discard prompt.
   const mode = host.querySelector('#sandbox-impl-mode');
-  assert.ok(mode, 'a harness with launch-time sandbox modes gets the pin row');
-  assert.equal(mode.querySelectorAll('option').length, 4,
-    'the modes plus the leave-it-to-the-server default');
+  assert.ok(mode);
+  assert.equal(host.querySelector('#sandbox-impl-assign').disabled, true);
   [...mode.options].forEach((option) => option.removeAttribute('selected'));
-  mode.querySelector('option[value="on"]').setAttribute('selected', '');
+  mode.querySelector('option[value="off"]').setAttribute('selected', '');
   await harness.act(() => mode.dispatchEvent(new harness.window.Event('change', { bubbles: true })));
 
-  const resourceOnly = [...host.querySelectorAll('#sandbox-impl-options input[type=radio]')]
-    .find((option) => option.value === 'resource-only');
-  await harness.act(() => resourceOnly.dispatchEvent(
-    new harness.window.Event('change', { bubbles: true })));
+  assert.equal(host.querySelector('#sandbox-impl-assign').disabled, false);
   host.querySelector('#sandbox-impl-assign').click();
   await harness.act(() => Promise.resolve());
-
   assert.deepEqual(calls, [['assign', {
-    conv: 'agent-conv', label: 'worker', implementation: 'resource-only', sandbox: 'on',
+    conv: 'agent-conv', label: 'worker', implementation: 'harness-builtin', sandbox: 'off',
   }]]);
 });
 
@@ -759,4 +796,97 @@ test('sandbox-impl dialog hides the mode pin for a harness with no launch-time m
     'a harness configured out of band has no mode to pin, so offering the row ' +
     'would invite a value the server refuses');
   assert.ok(host.querySelector('#sandbox-impl-options'), 'the implementation choice remains');
+});
+
+// The close path the first cut got wrong: ManagementOverlay's onClose is the
+// TERMINAL step of its close transaction, so routing it back into requestClose
+// no-ops — leaving a dialog that only a successful POST could dismiss, and, since
+// the descriptor stays owned, blocking every other action dialog behind it.
+test('sandbox-impl dialog closes on Cancel and frees the shared dialog slot', async (t) => {
+  const calls = [];
+  const { harness, host, state, cleanup } = await mountDialogs(
+    t, 'sandbox-impl', { conv: 'agent-conv', label: 'worker' },
+    sandboxImplActions(calls),
+  );
+  t.after(cleanup);
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+
+  host.querySelector('#sandbox-impl-cancel').click();
+  await harness.act(() => Promise.resolve());
+  assertAbsent(host.querySelector('#sandbox-impl-modal'), 'Cancel must actually close');
+  assert.equal(state.dialog.value, null, 'the descriptor must be released');
+  assert.equal(calls.length, 0, 'closing assigns nothing');
+
+  assert.equal(state.openClone({ conv: 'other', label: 'peer' }), true,
+    'a dialog left owned would silently block every other action dialog');
+});
+
+test('sandbox-impl dialog closes on Escape once nothing is dirty', async (t) => {
+  const calls = [];
+  const { harness, host, cleanup } = await mountDialogs(
+    t, 'sandbox-impl', { conv: 'agent-conv', label: 'worker' },
+    sandboxImplActions(calls),
+  );
+  t.after(cleanup);
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+
+  const escape = new harness.window.Event('keydown', { bubbles: true });
+  Object.defineProperty(escape, 'key', { value: 'Escape' });
+  harness.document.dispatchEvent(escape);
+  await harness.act(() => Promise.resolve());
+  assertAbsent(host.querySelector('#sandbox-impl-modal'));
+});
+
+test('sandbox-impl dialog guards a real edit behind the discard prompt', async (t) => {
+  const calls = [];
+  let confirmations = 0;
+  let allowDiscard = false;
+  const { harness, host, cleanup } = await mountDialogs(
+    t, 'sandbox-impl', { conv: 'agent-conv', label: 'worker' },
+    sandboxImplActions(calls),
+    async () => { confirmations += 1; return allowDiscard; },
+  );
+  t.after(cleanup);
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+
+  const resourceOnly = [...host.querySelectorAll('#sandbox-impl-options input[type=radio]')]
+    .find((option) => option.value === 'resource-only');
+  await harness.act(() => resourceOnly.dispatchEvent(
+    new harness.window.Event('change', { bubbles: true })));
+
+  host.querySelector('#sandbox-impl-cancel').click();
+  await harness.act(() => Promise.resolve());
+  assert.equal(confirmations, 1);
+  assert.ok(host.querySelector('#sandbox-impl-modal'), 'a refused discard keeps the edit');
+
+  allowDiscard = true;
+  host.querySelector('#sandbox-impl-cancel').click();
+  await harness.act(() => Promise.resolve());
+  assertAbsent(host.querySelector('#sandbox-impl-modal'));
+});
+
+test('sandbox-impl dialog discloses a host that cannot run the selected implementation', async (t) => {
+  const calls = [];
+  const { harness, host, cleanup } = await mountDialogs(
+    t, 'sandbox-impl', { conv: 'agent-conv', label: 'worker' },
+    sandboxImplActions(calls, {
+      sandboxImplAvailability: (_harness, implementation) => (
+        implementation === 'tclaude-layer' ? 'bwrap is not installed on this host' : ''
+      ),
+    }),
+  );
+  t.after(cleanup);
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+
+  assertAbsent(host.querySelector('#sandbox-impl-availability'),
+    'the recorded implementation runs here, so there is nothing to warn about');
+  const layer = [...host.querySelectorAll('#sandbox-impl-options input[type=radio]')]
+    .find((option) => option.value === 'tclaude-layer');
+  await harness.act(() => layer.dispatchEvent(
+    new harness.window.Event('change', { bubbles: true })));
+
+  assert.match(host.querySelector('#sandbox-impl-availability').textContent, /bwrap is not installed/,
+    'the option stays selectable — the launch refusal is the authority — but the ' +
+    'operator must not have to learn this from a failed POST');
+  assert.equal(host.querySelector('#sandbox-impl-assign').disabled, false);
 });

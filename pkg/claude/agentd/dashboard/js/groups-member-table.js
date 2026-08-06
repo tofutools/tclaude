@@ -649,8 +649,9 @@ function SandboxImplMenuItem({ member }) {
   const title = member.online
     ? `${regular} is unavailable while ${label} is running — the implementation is applied by the launch that follows it. Stop the agent first, assign, then wake it.`
     : `Choose which layer owns OS-level confinement for ${label}'s next launch — for example a per-agent cgroup (resource-only) for an agent created before that existed. Recorded now, applied when you wake it.`;
-  // data-harness only names the catalog while the dialog is still loading; the
-  // authoritative harness comes back with the posture it fetches.
+  // data-harness is a fallback only. The dialog renders its catalog from the
+  // harness the SERVER reports with the posture; this covers the case where that
+  // field is absent, and is never consulted otherwise.
   return html`<${MenuButton}
     member=${member} act="sandbox-impl" regular=${regular} wizard="🧩 ward implementation…"
     attrs=${{ 'data-harness': member.state?.harness || '' }}

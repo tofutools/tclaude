@@ -41,6 +41,13 @@ func TestDashboardSandboxImplDialogWiring(t *testing.T) {
 		{island, "action-dialog-island.js", `descriptor.kind === 'sandbox-impl'`},
 		{components, "small-dialog-components.js", `export function SandboxImplDialog(`},
 		{components, "small-dialog-components.js", `id="sandbox-impl-modal"`},
+		// ManagementOverlay's onClose is the TERMINAL step of its close
+		// transaction. Routing it back into requestClose re-enters a guarded
+		// close that no-ops, leaving a dialog only a successful POST can dismiss
+		// — and, since the descriptor stays owned, blocking every other action
+		// dialog behind it. The behaviour is covered in jstest; this pins the
+		// shape so the wrong one cannot be reintroduced silently.
+		{components, "small-dialog-components.js", `onClose=${() => actions.close(descriptor)}`},
 		{components, "small-dialog-components.js", `id="sandbox-impl-options"`},
 		{components, "small-dialog-components.js", `id="sandbox-impl-mode"`},
 		{components, "small-dialog-components.js", `id="sandbox-impl-assign"`},

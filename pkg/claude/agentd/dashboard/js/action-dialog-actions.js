@@ -233,6 +233,36 @@ export function createActionDialogActions({
       // the operator unable to put one back.
       return sandboxImplOptionsFor(snapshot.sandbox_impl?.options, label);
     },
+    // Host/harness availability for ONE selected implementation, as the spawn
+    // dialog and the profile editor disclose it. The picker deliberately offers
+    // every implementation — the launch-time refusal is the authority, and a
+    // dialog that hid an option would replace it — so this is what keeps the
+    // operator from choosing one this box cannot run and learning it from a POST.
+    sandboxImplAvailability(harnessName, implementation) {
+      const snapshot = getSnapshot() || {};
+      const catalog = snapshot.sandbox_impl || {};
+      const harness = findSpawnHarness(snapshot.harnesses, harnessName);
+      if (implementation === 'stacked') {
+        if (harness && !harness.can_stacked) {
+          return `${harness.display_name || harnessName} has no nested sandbox to stack under tclaude's outer wall.`;
+        }
+        const stacked = catalog.stacked?.[harnessName];
+        if (stacked && !stacked.available) return stacked.unavailable_reason || 'the stacked engine is unavailable on this host.';
+        if (catalog.stacked_apparmor_nested_bwrap_likely) {
+          return 'this host most likely denies the nested bubblewrap that stacked needs (AppArmor bwrap-userns-restrict).';
+        }
+        return '';
+      }
+      if (implementation === 'tclaude-layer') {
+        const serverBoundary = !!harness?.tclaude_layer_server_boundary;
+        const available = serverBoundary ? catalog.server_host_available : catalog.host_available;
+        const reason = serverBoundary
+          ? catalog.server_host_unavailable_reason
+          : catalog.host_unavailable_reason;
+        if (available === false) return reason || 'the tclaude layer is unavailable on this host.';
+      }
+      return '';
+    },
     // The harness's own sandbox modes, for the optional pin. Empty for a harness
     // whose sandbox is configured out of band, which is what hides the row.
     sandboxModes(harnessName) {

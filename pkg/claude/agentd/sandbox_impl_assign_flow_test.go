@@ -250,6 +250,24 @@ func TestSandboxImplAssign_DashboardRouteReadsAndAssigns(t *testing.T) {
 	assert.Equal(t, string(sandboxpolicy.ImplementationOff), relaunched)
 }
 
+// A posture-changing route must not answer to a method it never validated.
+func TestSandboxImplAssign_DashboardRouteRejectsOtherMethods(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+
+	spawn := f.AsHuman().Spawn("crew", "dash-methods")
+	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+	f.AsHuman().Stop(spawn.ConvID, false)
+
+	for _, method := range []string{http.MethodDelete, http.MethodPut, http.MethodPatch} {
+		rec := testharness.Serve(agentd.BuildDashboardHandlerForTest(),
+			dashReq(t, method, "/api/agents/"+spawn.ConvID+"/sandbox-impl", nil))
+		assert.Equal(t, http.StatusMethodNotAllowed, rec.Code, "method %s", method)
+	}
+	assert.Equal(t, string(sandboxpolicy.ImplementationHarnessBuiltin),
+		showSandboxImpl(t, f, spawn.ConvID).Implementation)
+}
+
 // The dashboard route refuses a running agent for the same reason the CLI does —
 // the button is disabled in the UI, but a stale page must not be able to record a
 // posture the live process does not have.

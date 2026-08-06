@@ -368,6 +368,10 @@ export function TerminalDirectoryDialog({ descriptor, actions, confirmDiscard })
 // default. Sending "" is what asks for that.
 const SANDBOX_IMPL_MODE_INHERIT = '';
 
+// The one implementation that KEEPS the harness-builtin mode a launch is given.
+// Every other one derives its own, which is why the pin is offered only here.
+const SANDBOX_IMPL_HARNESS_BUILTIN = 'harness-builtin';
+
 // SandboxImplDialog assigns the sandbox IMPLEMENTATION an existing agent will
 // relaunch under — the operator counterpart to picking one at spawn.
 //
@@ -384,6 +388,7 @@ export function SandboxImplDialog({ descriptor, actions, confirmDiscard }) {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const submitGuard = useRef(false);
+  const firstOptionRef = useRef(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -404,15 +409,24 @@ export function SandboxImplDialog({ descriptor, actions, confirmDiscard }) {
 
   const posture = request.data || {};
   const current = String(posture.sandbox_implementation || '');
-  const options = actions.sandboxImplOptions(posture.harness || descriptor.harness);
-  const modes = actions.sandboxModes(posture.harness || descriptor.harness);
+  const harnessName = posture.harness || descriptor.harness;
+  const options = actions.sandboxImplOptions(harnessName);
+  // The pin is offered only where the launch would actually keep it. Every other
+  // implementation DERIVES its harness mode (harness.ResolveSandboxImplementationMode),
+  // so a select rendered beside them would be at its most prominent exactly where
+  // the server discards what it collects.
+  const modes = choice === SANDBOX_IMPL_HARNESS_BUILTIN
+    ? actions.sandboxModes(harnessName)
+    : [];
+  const availability = actions.sandboxImplAvailability(harnessName, choice);
+  const pinned = modes.length > 0 ? mode : SANDBOX_IMPL_MODE_INHERIT;
   // Dirty only once the operator has actually moved off the recorded posture, so
   // closing a dialog they merely looked at does not raise a discard prompt.
   const dirty = request.phase === 'ready'
-    && (choice !== current || mode !== SANDBOX_IMPL_MODE_INHERIT);
+    && (choice !== current || pinned !== SANDBOX_IMPL_MODE_INHERIT);
 
   const submit = async () => {
-    if (submitGuard.current || !choice || request.phase !== 'ready') return;
+    if (submitGuard.current || !choice || request.phase !== 'ready' || !dirty) return;
     submitGuard.current = true;
     setError('');
     setBusy(true);
@@ -421,7 +435,7 @@ export function SandboxImplDialog({ descriptor, actions, confirmDiscard }) {
         conv: descriptor.conv,
         label: descriptor.label,
         implementation: choice,
-        sandbox: mode,
+        sandbox: pinned,
       }, descriptor);
     } catch (cause) { setError(errorMessage(cause)); }
     finally {
@@ -435,7 +449,8 @@ export function SandboxImplDialog({ descriptor, actions, confirmDiscard }) {
       id="sandbox-impl-modal"
       dialogClass="modal"
       labelledby="sandbox-impl-title"
-      onClose=${() => { void requestClose(); }}
+      initialFocusRef=${firstOptionRef}
+      onClose=${() => actions.close(descriptor)}
       onSubmitHotkey=${submit}
       dirty=${dirty}
       blocked=${busy}
@@ -455,25 +470,35 @@ export function SandboxImplDialog({ descriptor, actions, confirmDiscard }) {
       ${request.phase === 'error' && html`<div class="cron-create-error" id="sandbox-impl-load-error" role="alert">${request.error}</div>`}
       ${request.phase === 'ready' && html`
         <div id="sandbox-impl-options" role="radiogroup" aria-labelledby="sandbox-impl-title">
-          ${options.map((option) => {
+          ${options.map((option, index) => {
             const value = String(option.value || '');
             const selected = value === choice;
             return html`
               <label class=${`sandbox-impl-option${selected ? ' selected' : ''}`} key=${value}
                 title=${option.descr || ''}>
                 <input type="radio" name="sandbox-impl-choice" value=${value} checked=${selected}
+                  ref=${index === 0 ? firstOptionRef : null}
                   disabled=${busy} onChange=${() => setChoice(value)} />
                 <span class="sandbox-impl-option-body">
                   <span class="sandbox-impl-option-name">${value}
                     ${value === current && html`<span class="sandbox-impl-tag">current</span>`}
                     ${option.experimental && html`<span class="sandbox-impl-tag warn">experimental</span>`}
                   </span>
+                  ${/* The catalog label names the harness ("Claude Code built-in"); the
+                        value above is the enum the CLI and the API take. Both are shown
+                        because the operator may be reading either. */
+                    option.label && html`<span class="sandbox-impl-option-label">${option.label}</span>`}
                   <span class="sandbox-impl-option-descr">${option.descr}</span>
                 </span>
               </label>
             `;
           })}
         </div>
+        ${availability && html`
+          <p class="sandbox-impl-hint sandbox-impl-warn" id="sandbox-impl-availability" role="status">
+            ⚠ ${availability}
+          </p>
+        `}
         ${modes.length > 0 && html`
           <label class="cron-create-row" id="sandbox-impl-mode-row">
             <span class="cron-create-label">Harness sandbox mode</span>
@@ -484,8 +509,8 @@ export function SandboxImplDialog({ descriptor, actions, confirmDiscard }) {
             </select>
           </label>
           <p class="sandbox-impl-hint" id="sandbox-impl-hint"><${Words}
-            plain=${html`Leave this alone unless you mean to pin it. An implementation that stands the harness's own wall down (<code>off</code>, <code>resource-only</code>, <code>tclaude-layer</code>) sets the mode itself.`}
-            wizard=${html`Leave this be unless you mean to bind it. A ward that lowers the harness's own wall sets the mode itself.`}
+            plain="Leave this alone unless you mean to pin it. Left alone, the server carries the agent's recorded mode forward, or uses the harness default when the implementation being replaced had forced one."
+            wizard="Leave this be unless you mean to bind it. Left alone, the recorded mode carries forward."
           /></p>
         `}
         ${posture.temporary_sandbox_active && html`
@@ -497,7 +522,7 @@ export function SandboxImplDialog({ descriptor, actions, confirmDiscard }) {
         <button id="sandbox-impl-cancel" type="button" disabled=${busy}
           onClick=${() => { void requestClose(); }}>Cancel</button>
         <button id="sandbox-impl-assign" class="primary" type="button"
-          disabled=${busy || request.phase !== 'ready' || !choice || choice === current}
+          disabled=${busy || !dirty}
           onClick=${submit}>${busy ? 'Assigning…' : 'Assign'}</button>
       </div>
     </${Overlay}>
