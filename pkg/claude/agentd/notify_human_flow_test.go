@@ -91,7 +91,7 @@ func TestNotifyHuman_AttachmentDownloadAndDelete(t *testing.T) {
 // body — and the human still gets the download.
 func TestNotifyHuman_BodilessAttachmentWithSubjectDelivers(t *testing.T) {
 	f := newFlow(t)
-	const conv = "nobody-1111-2222-33334444"
+	const conv = "nobd-1111-2222-3333-4444"
 	f.HaveConvWithTitle(conv, "shot-taker")
 	require.NoError(t, db.GrantAgentPermission(conv, agentd.PermHumanNotify, "test"))
 
@@ -123,13 +123,15 @@ func TestNotifyHuman_BodilessAttachmentWithSubjectDelivers(t *testing.T) {
 // about what arrived, so this stays a bad request and stores nothing.
 func TestNotifyHuman_BodilessAttachmentWithoutSubjectRejected(t *testing.T) {
 	f := newFlow(t)
-	const conv = "nosub-1111-2222-33334444"
+	const conv = "nsub-1111-2222-3333-4444"
 	f.HaveConvWithTitle(conv, "silent-sender")
 	require.NoError(t, db.GrantAgentPermission(conv, agentd.PermHumanNotify, "test"))
 
 	rec := postNotifyAttachmentWithMetadata(t, f.Mux, conv,
 		map[string]string{"body": "  ", "name": "mystery.bin"}, "data", "application/octet-stream")
 	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "a body or a subject is required",
+		"the refusal must be the content gate, not some other 400")
 
 	msgs, err := db.ListHumanMessages()
 	require.NoError(t, err)
@@ -148,8 +150,11 @@ func TestNotifyHuman_SubjectWithoutBodyRejectedOnPlainRoute(t *testing.T) {
 	r = agentd.AsHumanPeer(r)
 	rec := testharness.Serve(f.Mux, r)
 	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "body is required",
+		"a subject must not satisfy the plain route's body requirement")
 
-	msgs, _ := db.ListHumanMessages()
+	msgs, err := db.ListHumanMessages()
+	require.NoError(t, err)
 	assert.Empty(t, msgs)
 }
 

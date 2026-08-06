@@ -4,7 +4,7 @@ import htm from 'htm';
 import { relTime, shortAgentId } from './helpers.js';
 import { humanNotificationMatchesSender } from './human-notification-attention.js';
 import { openHumanNotifications } from './mail-bridge.js';
-import { attachmentHref, messageAttachments } from './human-attachments.js';
+import { attachmentHref, bodilessNotice, messageAttachments } from './human-attachments.js';
 import { openHumanReplyModal } from './message-access-dialog-controller.js';
 import { hasShownOverlay } from './overlay-stack.js';
 import { ImageAttachmentPreview } from './image-preview-overlay.js';
@@ -206,7 +206,9 @@ export function GroupsNotificationReader({
       <div class="human-notification-drawer-message">
         <h2 id="human-notification-drawer-subject">${message.subject || '(no subject)'}</h2>
         <div class="human-notification-drawer-date">${created}${created ? ` · ${relTime(message.created_at)}` : ''}</div>
-        <div class="human-notification-drawer-body"><${LinkifiedBody} text=${message.body || ''} /></div>
+        <div class="human-notification-drawer-body">${bodilessNotice(message)
+          ? html`<span class="notification-bodiless">${bodilessNotice(message)}</span>`
+          : html`<${LinkifiedBody} text=${message.body || ''} />`}</div>
         <${Attachment} message=${message} />
       </div>
     </div>

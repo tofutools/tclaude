@@ -26,7 +26,7 @@ import (
 
 type notifyHumanParams struct {
 	Body     string   `pos:"true" optional:"true" help:"Notification text (or use --file; optional when --subject accompanies --attach)."`
-	Subject  string   `long:"subject" short:"s" optional:"true" help:"Optional one-line subject."`
+	Subject  string   `long:"subject" short:"s" optional:"true" help:"One-line subject. Optional, except when sending --attach with no body."`
 	File     string   `long:"file" short:"f" optional:"true" help:"Read the body from this file ('-' reads stdin). Sidesteps shell quoting — best for long, multi-line, or backtick-containing bodies."`
 	Attach   []string `long:"attach" short:"a" optional:"true" help:"Publish a file or directory for the human to download. Repeat for several paths; a few files arrive as separate downloads, a large set or a directory as one zip."`
 	Name     string   `long:"name" optional:"true" help:"Download filename override. Implies --zip when several paths are attached."`

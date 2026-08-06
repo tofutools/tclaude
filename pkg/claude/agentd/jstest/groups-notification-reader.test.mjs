@@ -201,6 +201,87 @@ test('attachment card and explicit button download the same published file', asy
   assert.match(links[1].textContent, /Download/);
 });
 
+// `notify-human --subject … --attach …` sends no body: the published file IS
+// the message. The drawer must say so where the body would be, or the operator
+// reads a subject over a blank gap and cannot tell it from a broken message.
+test('a notification with no body says the attachment is the message', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { GroupsNotificationReader } = await harness.importDashboardModule(
+    'js/groups-notification-reader.js',
+  );
+  const message = {
+    id: 43,
+    from_agent: 'agt_sender',
+    from_conv: 'conv-sender',
+    from_title: 'sender',
+    subject: 'dashboard mock',
+    body: '',
+    read: true,
+    attachment: { filename: 'mock.png', content_type: 'image/png', size_bytes: 2048 },
+  };
+  const state = {
+    snapshot: { value: { messages: [message], messages_unread: 0 } },
+    publish() {},
+  };
+  const mounted = await harness.mount(harness.html`
+    <${GroupsNotificationReader}
+      descriptor=${{
+        sender: { agent: 'agt_sender', conv: 'conv-sender', label: 'sender' },
+        messageId: 43,
+      }}
+      snapshot=${state.snapshot.value}
+      state=${state}
+      actions=${{ reportError() {} }}
+      onSelect=${() => {}}
+      onClose=${() => {}}
+    />
+  `);
+  const notice = mounted.container.querySelector('.notification-bodiless');
+  assert.ok(notice, 'a bodiless notification explains itself instead of rendering nothing');
+  assert.match(notice.textContent, /the attached file is the notification/);
+  // The subject and the download are still the point of the message.
+  assert.match(mounted.container.querySelector('h2').textContent, /dashboard mock/);
+  assert.ok(mounted.container.querySelector('.human-notification-drawer-attachment a'));
+  await mounted.unmount();
+});
+
+// A message that is empty for no good reason must NOT get the explanation —
+// there is no attachment to point at, so the notice would be a lie.
+test('an empty message with no attachment gets no bodiless notice', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { GroupsNotificationReader } = await harness.importDashboardModule(
+    'js/groups-notification-reader.js',
+  );
+  const message = {
+    id: 44,
+    from_agent: 'agt_sender',
+    from_conv: 'conv-sender',
+    from_title: 'sender',
+    subject: 'nothing here',
+    body: '',
+    read: true,
+  };
+  const state = {
+    snapshot: { value: { messages: [message], messages_unread: 0 } },
+    publish() {},
+  };
+  const mounted = await harness.mount(harness.html`
+    <${GroupsNotificationReader}
+      descriptor=${{
+        sender: { agent: 'agt_sender', conv: 'conv-sender', label: 'sender' },
+        messageId: 44,
+      }}
+      snapshot=${state.snapshot.value}
+      state=${state}
+      actions=${{ reportError() {} }}
+      onSelect=${() => {}}
+      onClose=${() => {}}
+    />
+  `);
+  assert.equal(mounted.container.querySelector('.notification-bodiless'), null);
+  await mounted.unmount();
+});
+
 test('reply button opens the shared reply dialog with notification context', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ GroupsNotificationReader }, dialogController] = await Promise.all([
