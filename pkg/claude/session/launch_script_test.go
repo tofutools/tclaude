@@ -241,8 +241,9 @@ func TestOpenCodeCredentialReachesPaneOnlyThroughPrivateBootstrap(t *testing.T) 
 	assert.NotContains(t, argv, "43210")
 
 	pane := parseNewSession(t, launches[0]).pane
-	require.Len(t, pane, 2, "pane argv must be exactly `sh <script>`")
-	require.Equal(t, "sh", pane[0], "pane command must be sh <script>")
+	require.Len(t, pane, 2, "pane argv must be exactly `<shell> <script>`")
+	require.Equal(t, clcommon.BootstrapShellPath(), pane[0],
+		"pane command must run the script under tclaude's pinned bootstrap shell")
 	scriptPath := pane[1]
 	raw, err := os.ReadFile(scriptPath)
 	require.NoError(t, err)
@@ -276,8 +277,9 @@ func TestLaunchArgvCarriesNoStartFlagInsideTclaudeTmuxServer(t *testing.T) {
 	require.True(t, parsed.noStart, "a launch inside the tclaude server must pass -N")
 	assert.Equal(t, "spwn-nostrt", parsed.opts["-s"])
 	assert.Equal(t, cwd, parsed.opts["-c"])
-	require.Len(t, parsed.pane, 2, "pane argv must be exactly `sh <script>`")
-	assert.Equal(t, "sh", parsed.pane[0], "pane command must be sh <script>")
+	require.Len(t, parsed.pane, 2, "pane argv must be exactly `<shell> <script>`")
+	assert.Equal(t, clcommon.BootstrapShellPath(), parsed.pane[0],
+		"pane command must run the script under tclaude's pinned bootstrap shell")
 	assert.Contains(t, parsed.pane[1], "launch-scripts", "script must live in the private launch-scripts dir")
 }
 
