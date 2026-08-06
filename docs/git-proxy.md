@@ -104,7 +104,7 @@ Four slugs, none granted by default and none conferred by group ownership:
 |---|---|
 | `git.read` | `git remotes`, `git ls-remote`, `git fetch` |
 | `git.push` | `git push` |
-| `github.read` | `github pr ls/view/checks`, `github issue ls/view` |
+| `github.read` | `github pr ls/view/checks/comments`, `github issue ls/view`, `github run log-failed` |
 | `github.write` | `github pr create/edit/comment/ready`, `github issue comment` |
 
 ```bash
@@ -135,13 +135,36 @@ tclaude proxy github pr create --title "…" --body-file pr.md
 tclaude proxy github pr ls --state open
 tclaude proxy github pr view 42
 tclaude proxy github pr checks 42
+tclaude proxy github pr comments 42            # read the review thread
 tclaude proxy github pr comment 42 --body-file reply.md
 tclaude proxy github pr edit 42 --body-file new-description.md
 tclaude proxy github pr ready 42
 tclaude proxy github issue ls
 tclaude proxy github issue view 7
 tclaude proxy github issue comment 7 --body-file note.md
+tclaude proxy github run log-failed 18234567890   # why that check went red
 ```
+
+### Reading review feedback and CI failures
+
+`pr checks` names the job that went red; `run log-failed` says why. The run id
+is the number in the failed check's `detailsUrl`
+(`…/actions/runs/<run-id>/job/<job-id>`), which `pr checks` already returns, so
+an agent can walk from "CI is red" to the failing assertion without a token and
+without a browser.
+
+Both of these, and `pr comments`, return **text rather than JSON** — they are
+`gh pr view --comments` and `gh run view --log-failed` verbatim. Their output is
+also the payload rather than a diagnosis, so they keep a 256 KiB tail instead of
+the 16 KiB every other verb gets, and `run log-failed` is allowed 180s because
+gh downloads the run's whole log archive. Only the *failed* steps are ever
+available; there is no `--log` equivalent, because the full log of a green
+matrix build is megabytes that say nothing the check rollup did not.
+
+One inherited limit worth knowing: gh's `--comments` shows issue comments and
+the *body* of each review submission, not the line-level comments inside a
+review's diff threads. A bot that files its findings inline (CodeRabbit does)
+appears as its summary, and the detail stays on the PR page.
 
 `git remotes` is the command to point an agent at when something is refused: it
 lists every remote with the allow-list verdict and the reason, so the agent can

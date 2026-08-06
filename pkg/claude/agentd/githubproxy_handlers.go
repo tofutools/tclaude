@@ -198,6 +198,72 @@ func handleGHProxyPRChecks(w http.ResponseWriter, r *http.Request) {
 	g.respond(w, r, "pr.checks", res, err)
 }
 
+// handleGHProxyPRComments serves POST /v1/github/pr/comments — the review
+// conversation on a pull request.
+//
+// This is the one read that is deliberately NOT `--json`. gh renders the
+// thread with `--comments`, and that rendering interleaves issue comments with
+// review submissions in one chronological stream, each with its author and
+// status. Reassembling that from `--json comments,reviews` would mean the
+// daemon modelling and merging two gh schemas — exactly what the rest of this
+// file refuses to do — to produce something less readable.
+//
+// Note the limit gh's own `--comments` has, which this inherits: it shows
+// issue comments and review BODIES, not the line-level comments attached to a
+// review's diff threads. A bot that files its findings inline (CodeRabbit
+// does) shows up here as its summary, and the detail is on the PR page.
+func handleGHProxyPRComments(w http.ResponseWriter, r *http.Request) {
+	var body ghProxyNumberRequest
+	g, ok := openGHProxy(w, r, PermGitHubRead, &body, func() string { return body.Remote })
+	if !ok {
+		return
+	}
+	number, fault := validateGHNumber(body.Number)
+	if fault != nil {
+		writeProxyFault(w, fault)
+		return
+	}
+	// Bulk: a long-running PR's thread runs to tens of kilobytes, and the
+	// default tail would cut it off mid-review.
+	res, err := g.ghBulk(r.Context(), ghProxyTimeout,
+		"pr", "view", number, "--repo", g.ownerRepo, "--comments")
+	g.respond(w, r, "pr.comments", res, err)
+}
+
+// ghProxyRunRequest names one GitHub Actions workflow run.
+type ghProxyRunRequest struct {
+	Remote string `json:"remote,omitempty"`
+	RunID  int64  `json:"run_id"`
+}
+
+// handleGHProxyRunLogFailed serves POST /v1/github/run/log-failed — the log of
+// whatever steps failed in a workflow run.
+//
+// It is the other half of `pr checks`: checks says WHICH job went red, this
+// says why. Only the failed steps, never `--log`: the full log of a green
+// matrix build is megabytes of noise that would blow the response bound and
+// tell the agent nothing it did not already know from the check rollup.
+//
+// The run id is not derived from anything — an agent takes it from the
+// `detailsUrl` in a `pr checks` rollup — but it is still bounded by the same
+// repository, because gh is given the derived --repo and a run id belonging to
+// another repository simply 404s.
+func handleGHProxyRunLogFailed(w http.ResponseWriter, r *http.Request) {
+	var body ghProxyRunRequest
+	g, ok := openGHProxy(w, r, PermGitHubRead, &body, func() string { return body.Remote })
+	if !ok {
+		return
+	}
+	runID, fault := validateGHRunID(body.RunID)
+	if fault != nil {
+		writeProxyFault(w, fault)
+		return
+	}
+	res, err := g.ghBulk(r.Context(), ghProxyLogTimeout,
+		"run", "view", runID, "--repo", g.ownerRepo, "--log-failed")
+	g.respond(w, r, "run.log-failed", res, err)
+}
+
 // ghProxyPREditRequest edits an existing pull request's title and/or body.
 type ghProxyPREditRequest struct {
 	Number int    `json:"number"`

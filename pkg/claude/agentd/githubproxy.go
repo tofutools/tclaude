@@ -44,6 +44,23 @@ const (
 	// GitHub being slow or rate-limiting.
 	ghProxyTimeout = 60 * time.Second
 
+	// ghProxyLogTimeout bounds a CI-log read. `gh run view --log-failed` does
+	// not call one endpoint: it downloads the run's whole log archive (and,
+	// when GitHub cannot associate jobs with it, falls back to fetching each
+	// job's log individually). A large matrix build legitimately needs longer
+	// than an API call, so it gets its own bound rather than making every
+	// other verb wait three minutes for a hung one.
+	ghProxyLogTimeout = 180 * time.Second
+
+	// maxGHProxyTextBytes is the tail kept from a verb whose output IS the
+	// payload — a comment thread, a failed job's log — rather than a
+	// diagnosis. The default 16 KiB is right for "what went wrong with this
+	// push"; it would cut a CodeRabbit review or a Go test failure off in the
+	// middle. The tail is still what is kept, and it is still the useful end:
+	// comments render oldest-first, and a failing step's error is at the end
+	// of its log.
+	maxGHProxyTextBytes = 256 * 1024
+
 	// maxGHProxyBodyBytes bounds a PR/issue body or comment. GitHub's own
 	// limit is 65536 characters; this is that, with headroom for multi-byte
 	// runes, and it is enforced before anything is written to disk.
@@ -190,14 +207,27 @@ func ghProxyEnv(policy config.GitProxyConfig) ([]string, *proxyFault) {
 // configured for this repository point to a known GitHub host") rather than
 // silently acting on whatever repository happened to be in scope.
 func (g *ghProxySession) gh(ctx context.Context, args ...string) (ProxyResult, error) {
-	runCtx, cancel := context.WithTimeout(ctx, ghProxyTimeout)
+	return g.ghBounded(ctx, ghProxyTimeout, 0, args...)
+}
+
+// ghBulk runs a gh subcommand whose output is the payload rather than a
+// diagnosis, so it keeps a much larger tail. Same argv contract as gh: every
+// value has already passed a validateGH* gate.
+func (g *ghProxySession) ghBulk(ctx context.Context, timeout time.Duration, args ...string) (ProxyResult, error) {
+	return g.ghBounded(ctx, timeout, maxGHProxyTextBytes, args...)
+}
+
+// ghBounded is the shared body. maxOutput of 0 takes the daemon-wide default.
+func (g *ghProxySession) ghBounded(ctx context.Context, timeout time.Duration, maxOutput int, args ...string) (ProxyResult, error) {
+	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	return proxyExec(runCtx, ProxyCommand{
-		Tool: "gh",
-		Path: g.ghPath,
-		Args: append([]string(nil), args...),
-		Dir:  g.neutral,
-		Env:  g.env,
+		Tool:           "gh",
+		Path:           g.ghPath,
+		Args:           append([]string(nil), args...),
+		Dir:            g.neutral,
+		Env:            g.env,
+		MaxOutputBytes: maxOutput,
 	})
 }
 
@@ -248,6 +278,24 @@ func validateGHNumber(n int) (string, *proxyFault) {
 			"a positive pull-request/issue number is required")
 	}
 	return strconv.Itoa(n), nil
+}
+
+// validateGHRunID bounds a GitHub Actions workflow-run id. It gets its own
+// validator rather than reusing validateGHNumber because the two live in
+// different number spaces: PR numbers are per-repository and small, while run
+// ids are global database ids already past 10^10 — validateGHNumber's ceiling
+// would refuse every real one.
+//
+// The upper bound is 2^53, the largest integer a JSON number carries exactly.
+// Anything above it did not survive the wire intact, so refusing it is honest
+// rather than restrictive. Like validateGHNumber, the value that reaches argv
+// is re-formatted from the parsed integer, never the caller's string.
+func validateGHRunID(id int64) (string, *proxyFault) {
+	if id <= 0 || id > 1<<53 {
+		return "", faultf(http.StatusBadRequest, "invalid_arg",
+			"a positive workflow-run id is required")
+	}
+	return strconv.FormatInt(id, 10), nil
 }
 
 // validateGHBody bounds free text. Unlike every other parameter here the body

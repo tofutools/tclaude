@@ -1,14 +1,16 @@
 ---
 name: proxy-git
 description: >-
-  Fetch, push, and open GitHub pull requests through `tclaude proxy git` and
-  `tclaude proxy github` when your own sandbox has no credentials — the
-  `tclaude agentd` daemon runs git and gh on the host with ITS SSH key and
-  GitHub token, so you never hold them. Use when a plain `git push`, `git
-  fetch`, or `gh pr create` fails with a permission, authentication, or network
-  error, or when you have been told the daemon holds the credentials. Gated on
-  the `git.read` / `git.push` / `github.read` / `github.write` slugs, none of
-  which is granted by default, and bounded by an operator allow-list of remotes.
+  Fetch, push, open GitHub pull requests, and read back their review comments
+  and CI failure logs through `tclaude proxy git` and `tclaude proxy github`
+  when your own sandbox has no credentials — the `tclaude agentd` daemon runs
+  git and gh on the host with ITS SSH key and GitHub token, so you never hold
+  them. Use when a plain `git push`, `git fetch`, `gh pr create`, `gh pr view
+  --comments`, or `gh run view --log-failed` fails with a permission,
+  authentication, or network error, or when you have been told the daemon holds
+  the credentials. Gated on the `git.read` / `git.push` / `github.read` /
+  `github.write` slugs, none of which is granted by default, and bounded by an
+  operator allow-list of remotes.
 ---
 
 # Git and GitHub without holding the credential
@@ -60,6 +62,8 @@ tclaude proxy git push --force-with-lease       # only if the operator enabled i
 tclaude proxy github pr ls --state open
 tclaude proxy github pr view 42
 tclaude proxy github pr checks 42               # CI state; pending is an answer
+tclaude proxy github pr comments 42             # the review thread (read)
+tclaude proxy github run log-failed 18234567890 # why a check went red
 tclaude proxy github issue ls
 tclaude proxy github issue view 7
 
@@ -73,6 +77,34 @@ tclaude proxy github issue comment 7 --body-file note.md
 Use `--body-file` (or `--body-file -` for stdin) for anything multi-line. It
 sidesteps shell quoting — backticks especially — and keeps the text out of the
 process command line.
+
+Note the pair: `pr comments 42` **reads** the thread, `pr comment 42 --body-file
+reply.md` **writes** to it. One is `github.read`, the other `github.write`.
+
+## Watching a pull request you opened
+
+Three commands, in this order:
+
+```bash
+tclaude proxy github pr checks 42     # which check is red?
+tclaude proxy github pr comments 42   # what did the reviewers say?
+tclaude proxy github run log-failed <run-id>
+```
+
+`pr checks` returns a `statusCheckRollup`; each entry has a `detailsUrl` like
+`https://github.com/org/repo/actions/runs/18234567890/job/523…`. The number
+after `/runs/` is the run id `run log-failed` wants. It prints the log of the
+failed steps only — there is no full-log verb, and you do not want one.
+
+`pr comments` is `gh pr view --comments`: issue comments and the body of each
+review submission, oldest first. It does **not** include the line-level comments
+inside a review's diff threads, so a bot that files findings inline (CodeRabbit
+does) shows up here as its summary and the specifics stay on the PR page. If you
+need those specifics, ask your human to paste them or to look with you.
+
+Both return text, not JSON, and both keep only the tail if the answer is very
+large — the newest comments, the end of the failing step. If the daemon says the
+output was truncated, treat what you got as the tail and not as the whole thing.
 
 ## What you cannot do, and why
 

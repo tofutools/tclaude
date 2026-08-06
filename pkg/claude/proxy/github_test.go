@@ -48,6 +48,22 @@ func TestGHProxyOutcome_RenderFallsBackToRawOnUnparseableJSON(t *testing.T) {
 	assert.Contains(t, stdout.String(), `"number":7`)
 }
 
+// TestGHProxyOutcome_RenderPassesTextPayloadsThrough — `pr comments` and
+// `run log-failed` are the two verbs whose payload is prose rather than JSON.
+// Their whitespace is load-bearing (indented log lines, comment separators), so
+// the renderer must not reflow it, and a tail-truncated answer must say so —
+// otherwise an agent reads a half log as the whole failure.
+func TestGHProxyOutcome_RenderPassesTextPayloadsThrough(t *testing.T) {
+	const log = "build\tTest\t    --- FAIL: TestThing (0.00s)\nbuild\tTest\t        want 1, got 2\n"
+	o := &ghProxyOutcome{Stdout: log, Truncated: true}
+
+	var stdout, stderr bytes.Buffer
+	require.Equal(t, rcOK, o.render(&stdout, &stderr, "run log-failed"))
+	assert.Equal(t, log, stdout.String(), "log whitespace is the log")
+	assert.Contains(t, stderr.String(), "truncated",
+		"a half answer that does not say so reads as a whole one")
+}
+
 func indexOf(s, sub string) int {
 	return bytes.Index([]byte(s), []byte(sub))
 }

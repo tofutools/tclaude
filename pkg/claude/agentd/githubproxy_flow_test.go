@@ -139,6 +139,110 @@ func TestGHProxy_BodyTravelsByFileNotArgv(t *testing.T) {
 	assert.True(t, os.IsNotExist(err), "the staged body file must be cleaned up, got err=%v", err)
 }
 
+// TestGHProxy_PRCommentsIsARead — reading the review thread must sit behind
+// github.read, not github.write. The route name is one character away from the
+// verb that PUBLISHES a comment as the operator, so getting this backwards
+// would either lock an agent out of reading or, worse, let a read-only agent
+// through to the write path.
+func TestGHProxy_PRCommentsIsARead(t *testing.T) {
+	f, rec := gitProxyWorld(t, []string{"github.com/tofutools"})
+	rec.gh = agentd.ProxyResult{Stdout: "author:\tcoderabbitai\n--\nnit: rename this\n"}
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubRead, "test"))
+
+	res := gitProxyPost(t, f, "/v1/github/pr/comments", map[string]any{"number": 42})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+
+	call := ghCall(t, rec)
+	assert.Equal(t, []string{"pr", "view", "42", "--repo", "tofutools/tclaude", "--comments"}, call.Args)
+	// The thread is prose, not JSON, so it must survive as stdout rather than
+	// being swallowed by the JSON passthrough.
+	var out struct {
+		Stdout string `json:"stdout"`
+	}
+	require.NoError(t, json.Unmarshal(res.Body.Bytes(), &out))
+	assert.Contains(t, out.Stdout, "nit: rename this")
+}
+
+// TestGHProxy_BulkReadsKeepAMuchLargerTail — the default 16 KiB tail is sized
+// for a diagnosis ("push rejected, non-fast-forward"). For the two verbs whose
+// output IS the payload it would cut a review thread or a test failure off in
+// the middle, so they must ask for their own bound.
+func TestGHProxy_BulkReadsKeepAMuchLargerTail(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		path string
+		body map[string]any
+	}{
+		{"pr comments", "/v1/github/pr/comments", map[string]any{"number": 42}},
+		{"run log-failed", "/v1/github/run/log-failed", map[string]any{"run_id": 18234567890}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, rec := gitProxyWorld(t, []string{"github.com/tofutools"})
+			rec.gh = agentd.ProxyResult{Stdout: "ok"}
+			require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubRead, "test"))
+
+			res := gitProxyPost(t, f, tc.path, tc.body)
+			require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+			assert.Greater(t, ghCall(t, rec).MaxOutputBytes, 16*1024,
+				"a bulk read must raise the output bound above the diagnosis-sized default")
+		})
+	}
+}
+
+// TestGHProxy_RunLogFailedAcceptsARealRunID is the regression for bounding a
+// run id with the PR-number validator. GitHub Actions run ids are global
+// database ids already past 10^10, so a ceiling sized for per-repository PR
+// numbers would refuse every run that exists.
+func TestGHProxy_RunLogFailedAcceptsARealRunID(t *testing.T) {
+	f, rec := gitProxyWorld(t, []string{"github.com/tofutools"})
+	rec.gh = agentd.ProxyResult{Stdout: "build\tTest\t--- FAIL: TestThing\n"}
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubRead, "test"))
+
+	res := gitProxyPost(t, f, "/v1/github/run/log-failed", map[string]any{"run_id": 18234567890})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+
+	call := ghCall(t, rec)
+	assert.Equal(t, []string{
+		"run", "view", "18234567890", "--repo", "tofutools/tclaude", "--log-failed",
+	}, call.Args)
+	// --log, which would pull the whole run, is deliberately not offered.
+	assert.NotContains(t, call.Args, "--log")
+}
+
+// TestGHProxy_RunLogFailedRefusesAnUnrepresentableRunID — a run id above 2^53
+// did not survive JSON intact, so echoing it back at gh would query a
+// different run than the caller named.
+func TestGHProxy_RunLogFailedRefusesAnUnrepresentableRunID(t *testing.T) {
+	f, rec := gitProxyWorld(t, []string{"github.com/tofutools"})
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubRead, "test"))
+
+	for _, id := range []any{0, -1, 1 << 60} {
+		res := gitProxyPost(t, f, "/v1/github/run/log-failed", map[string]any{"run_id": id})
+		assert.Equal(t, http.StatusBadRequest, res.Code, "run_id=%v body=%s", id, res.Body.String())
+	}
+	assert.Equal(t, 0, ghCallCount(rec))
+}
+
+// TestGHProxy_RunLogFailedInheritsTheRepositoryDerivation — a run id is the one
+// scalar here the agent supplies freely, so the containment has to come from
+// the derived --repo. gh 404s a run id belonging to another repository.
+func TestGHProxy_RunLogFailedInheritsTheRepositoryDerivation(t *testing.T) {
+	f, rec := gitProxyWorld(t, []string{"github.com/tofutools"})
+	rec.gh = agentd.ProxyResult{Stdout: "x"}
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubRead, "test"))
+
+	res := gitProxyPost(t, f, "/v1/github/run/log-failed", map[string]any{
+		"run_id": 18234567890, "repo": "attacker/exfil",
+	})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+
+	call := ghCall(t, rec)
+	i := slices.Index(call.Args, "--repo")
+	require.GreaterOrEqual(t, i, 0)
+	assert.Equal(t, "tofutools/tclaude", call.Args[i+1])
+	assert.NotEqual(t, rec.repoRoot, call.Dir)
+}
+
 // TestGHProxy_TokenNeverReachesArgv — when the operator configures a token
 // file, the token goes into the child's environment, never its command line.
 func TestGHProxy_TokenNeverReachesArgv(t *testing.T) {
