@@ -343,6 +343,73 @@ func TestGHProxy_BulkReadsKeepAMuchLargerTail(t *testing.T) {
 // constant is a deliberate two-file edit rather than a silent one.
 const maxGHProxyTextBytesForTest = 256 * 1024
 
+// TestGHProxy_RunListIsTheRouteToARunID — `run log-failed` takes an id that is
+// derived from nothing, so an agent needs a way to find one. This is it, and
+// the field that makes it usable is databaseId: without it the listing names
+// runs it gives no way to open.
+func TestGHProxy_RunListIsTheRouteToARunID(t *testing.T) {
+	f, rec := gitProxyWorld(t, []string{"github.com/tofutools"})
+	rec.gh = agentd.ProxyResult{Stdout: `[{"databaseId":31090120054,"conclusion":"FAILURE"}]`}
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubRead, "test"))
+
+	res := gitProxyPost(t, f, "/v1/github/run/list", map[string]any{
+		"branch": "feat/thing", "status": "failure", "limit": 5,
+	})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+
+	call := ghCall(t, rec)
+	assert.Equal(t, []string{
+		"run", "list", "--repo", "tofutools/tclaude", "--limit", "5",
+		"--json", "databaseId,conclusion,status,workflowName,displayTitle,headBranch,event,createdAt,url",
+		"--branch", "feat/thing", "--status", "failure",
+	}, call.Args)
+
+	// A run id past 2^53 would be mangled by a float64 round-trip, so the
+	// listing must reach the agent as the bytes GitHub sent.
+	var out struct {
+		JSON json.RawMessage `json:"json"`
+	}
+	require.NoError(t, json.Unmarshal(res.Body.Bytes(), &out))
+	assert.Contains(t, string(out.JSON), "31090120054")
+}
+
+// TestGHProxy_RunListRefusesInjectionShapedFilters — branch and status both
+// reach argv, so both are gated. An unfiltered listing is a legitimate
+// request; a listing filtered by "--exec=id" is not.
+func TestGHProxy_RunListRefusesInjectionShapedFilters(t *testing.T) {
+	f, rec := gitProxyWorld(t, []string{"github.com/tofutools"})
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubRead, "test"))
+
+	for _, body := range []map[string]any{
+		{"branch": "--exec=id"},
+		{"status": "; rm -rf /"},
+		{"status": "definitely-not-a-status"},
+		{"limit": 100000},
+	} {
+		res := gitProxyPost(t, f, "/v1/github/run/list", body)
+		assert.Equal(t, http.StatusBadRequest, res.Code, "body=%v got=%s", body, res.Body.String())
+	}
+	assert.Equal(t, 0, ghCallCount(rec), "no invalid filter may reach gh")
+}
+
+// TestGHProxy_RunListOmitsFiltersItWasNotGiven — an empty status must mean "no
+// filter", not a default one. validateGHState (used by `pr ls`) treats empty as
+// "take the first allowed value", and inheriting that here would silently show
+// only queued runs while looking like a complete listing.
+func TestGHProxy_RunListOmitsFiltersItWasNotGiven(t *testing.T) {
+	f, rec := gitProxyWorld(t, []string{"github.com/tofutools"})
+	rec.gh = agentd.ProxyResult{Stdout: "[]"}
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubRead, "test"))
+
+	res := gitProxyPost(t, f, "/v1/github/run/list", map[string]any{})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+
+	call := ghCall(t, rec)
+	assert.NotContains(t, call.Args, "--status", "an unasked-for status filter hides runs")
+	assert.NotContains(t, call.Args, "--branch")
+	assert.Contains(t, call.Args, "20", "and the limit falls back to the shared default")
+}
+
 // TestGHProxy_RunLogFailedAcceptsARealRunID is the regression for bounding a
 // run id with the PR-number validator. GitHub Actions run ids are global
 // database ids already past 10^10, so a ceiling sized for per-repository PR

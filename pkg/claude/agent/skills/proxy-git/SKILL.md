@@ -63,6 +63,7 @@ tclaude proxy github pr ls --state open
 tclaude proxy github pr view 42
 tclaude proxy github pr checks 42               # CI state; pending is an answer
 tclaude proxy github pr comments 42             # all review feedback (read)
+tclaude proxy github run ls --status failure    # find a failed run's id
 tclaude proxy github run log-failed 18234567890 # why a check went red
 tclaude proxy github issue ls
 tclaude proxy github issue view 7
@@ -84,18 +85,23 @@ Note the pair: `pr comments 42` **reads** the feedback, `pr comment 42
 
 ## Watching a pull request you opened
 
-Three commands, in this order:
-
 ```bash
 tclaude proxy github pr checks 42     # which check is red?
 tclaude proxy github pr comments 42   # what did the reviewers say?
-tclaude proxy github run log-failed <run-id>
+
+# and when a check is red, in two steps:
+tclaude proxy github run ls --branch <your-branch> --status failure --limit 5
+tclaude proxy github run log-failed <databaseId from that listing>
 ```
 
-`pr checks` returns a `statusCheckRollup`; each entry has a `detailsUrl` like
-`https://github.com/org/repo/actions/runs/18234567890/job/523…`. The number
-after `/runs/` is the run id `run log-failed` wants. It prints the log of the
-failed steps only — there is no full-log verb, and you do not want one.
+`run ls` is how you get a run id. Take `databaseId` from the row you want —
+that is exactly what `run log-failed` takes. It prints the log of the failed
+steps only; there is no full-log verb, and you do not want one.
+
+The id is also sitting in `pr checks` output, in each entry's `detailsUrl`
+(`…/actions/runs/18234567890/job/523…`), if you already have that JSON open.
+But prefer `run ls`: the rollup shows only the latest attempt per check, so a
+run that failed before it was re-run is not in `pr checks` at all.
 
 Two `run log-failed` results that are easy to misread:
 

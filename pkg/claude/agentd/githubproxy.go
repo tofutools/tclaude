@@ -377,6 +377,34 @@ func validateGHState(state string, allowed ...string) (string, *proxyFault) {
 		"state %q is not one of: %s", state, strings.Join(allowed, ", "))
 }
 
+// ghRunStatuses is gh's own `run list --status` vocabulary, verbatim (gh 2.97).
+// An allow-list of literals, so the value that reaches argv is one of these
+// constants and never the caller's string.
+var ghRunStatuses = []string{
+	"queued", "completed", "in_progress", "requested", "waiting", "pending",
+	"action_required", "cancelled", "failure", "neutral", "skipped", "stale",
+	"startup_failure", "success", "timed_out",
+}
+
+// validateGHRunStatus bounds the run-list filter. It differs from
+// validateGHState in what an EMPTY value means: there, empty picks the first
+// allowed state as a default; here it means no filter at all, because "every
+// recent run" is the sensible default listing and there is no one status that
+// could stand in for it.
+func validateGHRunStatus(status string) (string, *proxyFault) {
+	status = strings.ToLower(strings.TrimSpace(status))
+	if status == "" {
+		return "", nil
+	}
+	for _, a := range ghRunStatuses {
+		if status == a {
+			return a, nil
+		}
+	}
+	return "", faultf(http.StatusBadRequest, "invalid_arg",
+		"status %q is not one of: %s", status, strings.Join(ghRunStatuses, ", "))
+}
+
 func validateGHLimit(limit int) (string, *proxyFault) {
 	if limit == 0 {
 		limit = defaultGHProxyLimit

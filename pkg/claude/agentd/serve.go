@@ -1277,6 +1277,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("POST /v1/github/pr/view", handleGHProxyPRView)
 	mux.HandleFunc("POST /v1/github/pr/checks", handleGHProxyPRChecks)
 	mux.HandleFunc("POST /v1/github/pr/comments", handleGHProxyPRComments)
+	mux.HandleFunc("POST /v1/github/run/list", handleGHProxyRunList)
 	mux.HandleFunc("POST /v1/github/run/log-failed", handleGHProxyRunLogFailed)
 	mux.HandleFunc("POST /v1/github/pr/comment", handleGHProxyPRComment)
 	mux.HandleFunc("POST /v1/github/pr/edit", handleGHProxyPREdit)

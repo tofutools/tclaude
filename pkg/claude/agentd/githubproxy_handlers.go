@@ -24,6 +24,7 @@ const (
 	ghPRListFields  = "number,title,state,isDraft,headRefName,baseRefName,url,updatedAt,author"
 	ghPRViewFields  = "number,title,state,isDraft,headRefName,baseRefName,url,body,createdAt,updatedAt,author,mergeable,reviewDecision"
 	ghPRChecksField = "number,url,statusCheckRollup"
+	ghRunListFields = "databaseId,conclusion,status,workflowName,displayTitle,headBranch,event,createdAt,url"
 	ghIssueListFlds = "number,title,state,url,updatedAt,author,labels"
 	ghIssueViewFlds = "number,title,state,url,body,createdAt,updatedAt,author,labels,assignees"
 )
@@ -333,6 +334,59 @@ func ghSectionBody(s, empty string) string {
 type ghProxyRunRequest struct {
 	Remote string `json:"remote,omitempty"`
 	RunID  int64  `json:"run_id"`
+}
+
+type ghProxyRunListRequest struct {
+	Remote string `json:"remote,omitempty"`
+	Branch string `json:"branch,omitempty"`
+	Status string `json:"status,omitempty"`
+	Limit  int    `json:"limit,omitempty"`
+}
+
+// handleGHProxyRunList serves POST /v1/github/run/list — the run ids
+// `run log-failed` needs.
+//
+// Without it the only route to a run id is regexing one out of the detailsUrl
+// buried in a `pr checks` rollup, which works and reads like a workaround.
+// This also reaches the runs `pr checks` cannot show at all: the rollup
+// carries only the LATEST attempt per check, so the run that actually failed
+// before someone re-ran it is invisible there.
+//
+// `databaseId` is the field that matters — it is the id every other run verb
+// takes — so it leads the field list rather than sitting alphabetically among
+// the rest.
+func handleGHProxyRunList(w http.ResponseWriter, r *http.Request) {
+	var body ghProxyRunListRequest
+	g, ok := openGHProxy(w, r, PermGitHubRead, &body, func() string { return body.Remote })
+	if !ok {
+		return
+	}
+	limit, fault := validateGHLimit(body.Limit)
+	if fault != nil {
+		writeProxyFault(w, fault)
+		return
+	}
+	args := []string{"run", "list", "--repo", g.ownerRepo, "--limit", limit, "--json", ghRunListFields}
+	if branch := strings.TrimSpace(body.Branch); branch != "" {
+		// The same gate every other ref parameter passes. A branch reaches
+		// argv, so "--exec=id" must not survive being called a branch name.
+		if fault := validateBranchName(branch); fault != nil {
+			writeProxyFault(w, fault)
+			return
+		}
+		args = append(args, "--branch", branch)
+	}
+	status, fault := validateGHRunStatus(body.Status)
+	if fault != nil {
+		writeProxyFault(w, fault)
+		return
+	}
+	if status != "" {
+		args = append(args, "--status", status)
+	}
+	// Not bulk: a bounded list of run metadata, like every other --json read.
+	res, err := g.gh(r.Context(), args...)
+	g.respond(w, r, "run.list", res, err)
 }
 
 // handleGHProxyRunLogFailed serves POST /v1/github/run/log-failed — the log of

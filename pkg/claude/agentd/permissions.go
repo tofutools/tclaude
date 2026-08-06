@@ -403,7 +403,7 @@ var permissionRegistry = []PermSlug{
 	{
 		Slug: PermGitHubRead,
 		Description: "Read GitHub pull requests, issues and CI results through the daemon's gh credentials (tclaude proxy github " +
-			"pr ls/view/checks/comments, issue ls/view, run log-failed). Restricted to the repository the agent's own remote " +
+			"pr ls/view/checks/comments, issue ls/view, run ls/log-failed). Restricted to the repository the agent's own remote " +
 			"resolves to, and only when that remote is on the operator's allow-list. Not default-granted: it reads private " +
 			"repository data as the operator.",
 	},

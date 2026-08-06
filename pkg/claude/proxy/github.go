@@ -488,9 +488,55 @@ func githubRunCmd() *cobra.Command {
 		Short:       "GitHub Actions workflow runs",
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
+			githubRunListCmd(),
 			githubRunLogFailedCmd(),
 		},
 	}.ToCobra()
+}
+
+type githubRunListParams struct {
+	Branch   string `long:"branch" short:"b" optional:"true" help:"Only runs for this branch."`
+	Status   string `long:"status" short:"s" optional:"true" help:"Only runs with this status (e.g. 'failure', 'in_progress', 'success')."`
+	Limit    int    `long:"limit" optional:"true" help:"Maximum rows (1-100, default 20)."`
+	Remote   string `long:"remote" optional:"true" help:"Remote naming the repository to act on (default: origin)."`
+	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout. Capped at 300s. Timeout = deny."`
+}
+
+func githubRunListCmd() *cobra.Command {
+	return boa.CmdT[githubRunListParams]{
+		Use:     "ls",
+		Aliases: []string{"list"},
+		Short:   "List GitHub Actions workflow runs",
+		Long: "Lists workflow runs, most recent first. The `databaseId` in each row is the run id " +
+			"`run log-failed` takes.\n\n" +
+			"This is how you find a failed run:\n\n" +
+			"    tclaude proxy github run ls --branch my-branch --status failure\n\n" +
+			"It also reaches runs `pr checks` cannot show: that rollup carries only the latest attempt " +
+			"per check, so a run that failed before someone re-ran it does not appear there at all.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *githubRunListParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(agent.CompleteAskHumanDurations)
+			boa.GetParamT(ctx, &p.Status).SetAlternatives(ghRunStatusAlternatives)
+			return nil
+		},
+		RunFunc: func(p *githubRunListParams, _ *cobra.Command, _ []string) {
+			os.Exit(ghProxyCall("/v1/github/run/list", map[string]any{
+				"remote": strings.TrimSpace(p.Remote),
+				"branch": strings.TrimSpace(p.Branch),
+				"status": strings.TrimSpace(p.Status),
+				"limit":  p.Limit,
+			}, p.AskHuman, "run ls", os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
+// ghRunStatusAlternatives mirrors gh's `run list --status` vocabulary for shell
+// completion. The daemon validates independently — this is a convenience, not
+// a gate, and a stale entry here costs a refusal rather than a bad argv.
+var ghRunStatusAlternatives = []string{
+	"queued", "completed", "in_progress", "requested", "waiting", "pending",
+	"action_required", "cancelled", "failure", "neutral", "skipped", "stale",
+	"startup_failure", "success", "timed_out",
 }
 
 type githubRunParams struct {

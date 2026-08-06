@@ -104,7 +104,7 @@ Four slugs, none granted by default and none conferred by group ownership:
 |---|---|
 | `git.read` | `git remotes`, `git ls-remote`, `git fetch` |
 | `git.push` | `git push` |
-| `github.read` | `github pr ls/view/checks/comments`, `github issue ls/view`, `github run log-failed` |
+| `github.read` | `github pr ls/view/checks/comments`, `github issue ls/view`, `github run ls/log-failed` |
 | `github.write` | `github pr create/edit/comment/ready`, `github issue comment` |
 
 ```bash
@@ -142,16 +142,26 @@ tclaude proxy github pr ready 42
 tclaude proxy github issue ls
 tclaude proxy github issue view 7
 tclaude proxy github issue comment 7 --body-file note.md
+tclaude proxy github run ls --branch feat/x --status failure
 tclaude proxy github run log-failed 18234567890   # why that check went red
 ```
 
 ### Reading review feedback and CI failures
 
-`pr checks` names the job that went red; `run log-failed` says why. The run id
-is the number in the failed check's `detailsUrl`
-(`…/actions/runs/<run-id>/job/<job-id>`), which `pr checks` already returns, so
-an agent can walk from "CI is red" to the failing assertion without a token and
-without a browser.
+`pr checks` names the job that went red; `run log-failed` says why; `run ls`
+finds the run id in between. An agent can walk from "CI is red" to the failing
+assertion without a token and without a browser:
+
+```bash
+tclaude proxy github run ls --branch feat/x --status failure --limit 5
+tclaude proxy github run log-failed <databaseId from that listing>
+```
+
+The id is also recoverable from the `detailsUrl` in a `pr checks` rollup
+(`…/actions/runs/<run-id>/job/<job-id>`), which is worth knowing but is the
+long way round. `run ls` additionally reaches runs `pr checks` cannot show at
+all: the rollup carries only the latest attempt per check, so a run that failed
+before someone re-ran it does not appear there.
 
 `pr comments` returns everything said on the pull request, in two sections:
 the **conversation** (issue comments and the body of each review submission,
