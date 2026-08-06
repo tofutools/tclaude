@@ -31,9 +31,12 @@ const (
 // for a private writable directory injected as a variable — because those can
 // be inspected, composed and disclosed, while a script can only be run.
 //
-// A block runs INSIDE the agent's own sandbox, so it holds no authority the
-// agent does not already have. That is what makes it safe to compose freely,
-// and it is why blocks take no part in lineage containment.
+// A block runs after the sandbox is established, with authority the launch has
+// already checked, so it holds nothing the agent does not already have. That is
+// what makes it safe to compose freely and why blocks take no part in lineage
+// containment. The confinement itself is only as strong as the sandbox in force
+// — under a harness-native sandbox, or none at all, the pane is unconfined and
+// so is the block; authoring profiles is gated on sandbox-profiles.manage.
 type PreLaunchBlock struct {
 	Name   string `json:"name"`
 	Script string `json:"script"`
@@ -41,8 +44,9 @@ type PreLaunchBlock struct {
 	// OPTIONAL and never enforced: Claude Code, Copilot and OpenCode inherit the
 	// pane's environment, so a block works there whether or not it declares
 	// anything. It exists because Codex scrubs the environment of its shell
-	// tool, so the values a block produces must be forwarded by name — and
-	// because a declared name is something the dashboard can show.
+	// tool, so the values a block produces must be forwarded by name — that
+	// forwarding is not built yet (TCL-1040) — and because a declared name is
+	// something the dashboard can show.
 	//
 	// Unlike a profile's `environment` entries, these names are NOT checked
 	// against the reserved list. Reaching a name the declarative field refuses
@@ -187,8 +191,14 @@ func mergePreLaunch(accumulated, incoming []PreLaunchBlock) []PreLaunchBlock {
 }
 
 // PreLaunchExports is the union of every declared export name across blocks, in
-// stable order. Harness adapters that must forward values by name (Codex) read
-// this rather than walking the blocks themselves.
+// stable order.
+//
+// NOTE: nothing consumes this yet. It exists for the harness adapter that must
+// forward a block's values BY NAME — Codex scrubs the environment of its shell
+// tool, and a value computed by a block does not exist at command-build time,
+// so `shell_environment_policy.set.<name>=<value>` cannot carry it. Wiring that
+// is TCL-1040. Until then a declared export is inert for Codex, and the other
+// three harnesses need no help because they inherit the pane environment.
 func PreLaunchExports(blocks []PreLaunchBlock) []string {
 	seen := map[string]struct{}{}
 	out := []string{}

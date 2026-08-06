@@ -90,7 +90,7 @@ func FlattenWithNotices(in Profile, lookup LookupProfile) (Profile, []AccessNoti
 	}
 	out := Profile{
 		Name:                    root.Name,
-		PreLaunch:               parts.preLaunch,
+		PreLaunch:               clonePreLaunch(parts.preLaunch),
 		Filesystem:              make([]FilesystemGrant, 0, len(parts.filesystem)),
 		Environment:             make([]EnvironmentEntry, 0, len(parts.environment)),
 		AgentDirectories:        make([]string, 0, len(parts.agentDirectories)),
@@ -405,7 +405,6 @@ func composeProfileAccessAxes(p Profile) *flattenedParts {
 		unixSockets:       axes.UnixSockets,
 		hasNewNetwork:     p.Network != nil,
 		hasNewUnixSockets: p.UnixSockets != nil,
-		preLaunch:         clonePreLaunch(p.PreLaunch),
 	}
 	if axes.Network.Mode == AccessModeList {
 		out.networkListContributors = []string{p.Name}

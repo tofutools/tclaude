@@ -225,3 +225,50 @@ func TestPreLaunchExportsUnion(t *testing.T) {
 		block("three", "z"),
 	}))
 }
+
+// A structurally compatible predecessor left out of NormalizeSnapshotVersion's
+// accept list strands EVERY live agent on upgrade: their frozen snapshot stops
+// revalidating, so resume, reincarnate and status all fail. That is exactly
+// what a version bump is most likely to get wrong, and it is invisible unless
+// something asserts the whole range rather than the current value.
+func TestEverySnapshotVersionUpToCurrentIsAccepted(t *testing.T) {
+	for version := 1; version <= SnapshotVersion; version++ {
+		got, err := NormalizeSnapshotVersion(Snapshot{Version: version})
+		require.NoError(t, err, "snapshot version %d must still be accepted", version)
+		assert.Equal(t, SnapshotVersion, got.Version, "version %d must upgrade in place", version)
+	}
+	_, err := NormalizeSnapshotVersion(Snapshot{Version: SnapshotVersion + 1})
+	assert.Error(t, err, "a FUTURE version must still be refused rather than reinterpreted")
+}
+
+// PreLaunch is the only frozen field that becomes executed shell text, so the
+// stored payload is revalidated rather than trusted.
+func TestRevalidateSnapshotChecksPreLaunch(t *testing.T) {
+	good := NewSnapshot(EffectiveProfile{
+		Filesystem: []FilesystemGrant{}, Environment: []EnvironmentEntry{}, AgentDirectories: []string{},
+		PreLaunch: []PreLaunchBlock{block("ok", "true\n")},
+	}, nil)
+	revalidated, err := RevalidateSnapshot(good)
+	require.NoError(t, err)
+	assert.Equal(t, good.Effective.PreLaunch, revalidated.Effective.PreLaunch)
+
+	tampered := NewSnapshot(EffectiveProfile{
+		Filesystem: []FilesystemGrant{}, Environment: []EnvironmentEntry{}, AgentDirectories: []string{},
+		PreLaunch: []PreLaunchBlock{{Name: "not a valid name", Script: "true\n"}},
+	}, nil)
+	_, err = RevalidateSnapshot(tampered)
+	assert.Error(t, err, "a snapshot edited after resolution must not revalidate")
+}
+
+// The fail-closed marker means "no profile tier applied at all", so it must not
+// be able to carry blocks either.
+func TestProfilesOmittedSnapshotRejectsPreLaunch(t *testing.T) {
+	snapshot := NewSnapshot(EffectiveProfile{
+		Filesystem: []FilesystemGrant{}, Environment: []EnvironmentEntry{}, AgentDirectories: []string{},
+		PreLaunch: []PreLaunchBlock{block("b", "true\n")},
+	}, nil)
+	snapshot.ProfilesOmitted = true
+	_, err := RevalidateSnapshot(snapshot)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "omitted sandbox-profile snapshot contains profile values")
+}

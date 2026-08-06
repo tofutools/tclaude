@@ -26,10 +26,14 @@ const preLaunchFailExitCode = 126
 // agent whose Playwright wrapper silently failed to install looks like a broken
 // tool, and the operator debugs the wrong thing; a launch that stops with the
 // block's name in the message says what actually happened. That is implemented
-// with `set -e` plus an ERR trap naming the current block — the trap is what
-// turns bash's bare non-zero exit into an attributable one. Both are unwound
-// before the harness command, so nothing about this leaks into the harness's
-// own shell semantics.
+// with `set -eEo pipefail` plus an ERR trap naming the current block — the trap
+// is what turns bash's bare non-zero exit into an attributable one. All of it is
+// unwound before the harness command, so nothing about this leaks into the
+// harness's own shell semantics.
+//
+// A block that installs its own ERR trap takes over attribution (and tclaude's
+// unconditional `trap - ERR` then clears it); a block that means to tolerate a
+// failing command should say so with `|| true`, as in any `set -e` script.
 //
 // Returns "" when there are no blocks, so a profile without them renders
 // exactly the command it rendered before this feature existed.
@@ -69,7 +73,17 @@ func renderPreLaunchScript(
 	out.WriteString("tclaude_pre_launch_failed() { ")
 	out.WriteString("echo \"tclaude: pre-launch block '$1' failed; refusing harness launch\" >&2; ")
 	out.WriteString(fmt.Sprintf("exit %d; }; ", preLaunchFailExitCode))
-	out.WriteString("set -e; ")
+	// -E, not just -e. Without errtrace the ERR trap is NOT inherited by shell
+	// functions, command substitutions or subshells, so the overwhelmingly
+	// ordinary `helper() { … }; helper` shape would abort with a bare exit 1 and
+	// NO message — the pane dies and the operator is told nothing, which is the
+	// exact outcome naming the block exists to prevent.
+	//
+	// -o pipefail because `curl … | tar -x` is how a block that installs
+	// something is actually written. Without it the pipeline's status is the
+	// LAST command's, so a failed download does not abort at all: the harness
+	// starts with the setup silently skipped, which is worse than aborting.
+	out.WriteString("set -eEo pipefail; ")
 	out.WriteString("trap 'tclaude_pre_launch_failed \"$tclaude_pre_launch_block\"' ERR; ")
 	for _, b := range blocks {
 		// The name rides as a quoted VALUE, never as interpolated shell text:
@@ -83,6 +97,6 @@ func renderPreLaunchScript(
 			out.WriteString("\n")
 		}
 	}
-	out.WriteString("trap - ERR; set +e; unset tclaude_pre_launch_block; ")
+	out.WriteString("trap - ERR; set +eEo pipefail; unset tclaude_pre_launch_block; ")
 	return out.String(), nil
 }

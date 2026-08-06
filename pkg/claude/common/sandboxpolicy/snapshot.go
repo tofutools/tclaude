@@ -520,6 +520,7 @@ func RevalidateSnapshot(in Snapshot) (Snapshot, error) {
 		in.Effective.ResourceLimits.Enabled() ||
 		in.Effective.DarwinAllowMachRegister ||
 		len(in.Effective.AccessNotices) > 0 ||
+		len(in.Effective.PreLaunch) > 0 ||
 		in.UnixSocketMaterialization != nil) {
 		return Snapshot{}, fmt.Errorf("omitted sandbox-profile snapshot contains profile values")
 	}
@@ -531,9 +532,17 @@ func RevalidateSnapshot(in Snapshot) (Snapshot, error) {
 		UnixSockets:             in.Effective.UnixSockets,
 		ResourceLimits:          in.Effective.ResourceLimits,
 		DarwinAllowMachRegister: in.Effective.DarwinAllowMachRegister,
+		PreLaunch:               in.Effective.PreLaunch,
 	})
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("revalidate effective sandbox snapshot: %w", err)
+	}
+	// PreLaunch is the only frozen field that becomes EXECUTED shell text, so
+	// re-running its validation over the stored payload matters more here than
+	// for a field that is merely read. A snapshot whose blocks no longer
+	// normalize to themselves was edited after resolution.
+	if !reflect.DeepEqual(normalized.PreLaunch, clonePreLaunch(in.Effective.PreLaunch)) {
+		return Snapshot{}, fmt.Errorf("effective sandbox pre-launch blocks changed since resolution")
 	}
 	normalized.Network, err = normalizeEffectiveNetworkRules(
 		in.Effective.Network)
@@ -643,7 +652,13 @@ func NormalizeSnapshotVersion(in Snapshot) (Snapshot, error) {
 	// snapshots instead would strand live agents on upgrade for no security
 	// gain, and there is no operator present at decode time to receive an error
 	// — the v163 migration's durable disclosure is what informs them.
-	case 1, 2, 3, 4, 5, 6, 7, 8, SnapshotVersion:
+	// v9 carries no pre_launch blocks, which decodes to "no blocks" — the same
+	// meaning as a profile that never had any. EVERY version below
+	// SnapshotVersion must appear here: a structurally compatible predecessor
+	// left out of this list strands every live agent's resume on upgrade, which
+	// is the outcome the paragraphs above exist to avoid.
+	// TestEverySnapshotVersionUpToCurrentIsAccepted pins that.
+	case 1, 2, 3, 4, 5, 6, 7, 8, 9, SnapshotVersion:
 		in.Version = SnapshotVersion
 		return in, nil
 	default:

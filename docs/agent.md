@@ -925,10 +925,12 @@ launch a profile carrying blocks rather than running them under `/bin/sh`.
 
 `exports` is optional and never enforced. Claude Code, Copilot and OpenCode
 inherit the pane's environment, so a block works there whether or not it
-declares anything; Codex scrubs the environment of its shell tool, so values a
-block produces must be forwarded by name. Unlike `environment`, these names are
-not checked against the reserved list — reaching `XDG_CONFIG_HOME` or `PATH` is
-much of the point.
+declares anything. Codex scrubs the environment of its shell tool, so values a
+block produces have to be forwarded by name — **that forwarding is not built
+yet**, so under Codex a block's values reach the harness process but not
+necessarily its shell tool. Unlike `environment`, these names are not checked
+against the reserved list — reaching `XDG_CONFIG_HOME` or `PATH` is much of the
+point.
 
 > Do **not** export `XDG_CONFIG_HOME` / `XDG_CACHE_HOME` / `XDG_DATA_HOME`
 > globally into the agent's environment. Every other XDG-aware tool in the
@@ -941,8 +943,10 @@ include order, then the profile's own; a same-named block from a later tier
 replaces the earlier one **in place**, keeping its position, because these are
 sequential statements. Blocks are frozen into the launch snapshot, so resume and
 reincarnate replay the same setup. They take no part in lineage containment: a
-block runs inside the agent's own wall, after the sandbox exists, so it is setup
-performed with already-checked authority rather than authority itself.
+block runs after the sandbox is established, with authority the launch has
+already checked, so it is setup rather than authority itself. Note that "inside
+the sandbox" is only as strong as the sandbox in force — under a harness-native
+sandbox, or with no sandbox at all, the pane is unconfined and so is the block.
 
 Blocks are shell for a tmux pane, so they do not apply to `tclaude ask`, which
 execs an argv with no shell at all.

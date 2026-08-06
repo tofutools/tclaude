@@ -218,3 +218,58 @@ func TestEmptyPreLaunchLeavesEveryHarnessCommandUnchanged(t *testing.T) {
 		})
 	}
 }
+
+// A helper function is an entirely ordinary shape in 64 KB of allowed script,
+// and without `set -E` the ERR trap is not inherited into one: the pane would
+// die with a bare exit 1 and NO message, which is precisely the "operator
+// debugs the wrong thing" outcome naming the block exists to prevent.
+func TestPreLaunchAttributesFailuresInsideFunctions(t *testing.T) {
+	for _, tc := range []struct{ name, script string }{
+		{"function body", "install_it() { false; }\ninstall_it\n"},
+		{"command substitution", "value=$(false)\n"},
+		{"nested function", "outer() { inner() { false; }; inner; }\nouter\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rendered, err := renderPreLaunchScript([]sandboxpolicy.PreLaunchBlock{
+				{Name: "blk", Script: tc.script},
+			}, true, "/bin/bash")
+			require.NoError(t, err)
+			out, code := runRenderedPreLaunch(t, rendered, `echo HARNESS_STARTED`)
+			assert.Equal(t, preLaunchFailExitCode, code)
+			assert.Contains(t, out, "pre-launch block 'blk' failed",
+				"a failure inside a function must still be attributed to its block")
+			assert.NotContains(t, out, "HARNESS_STARTED")
+		})
+	}
+}
+
+// `curl … | tar -x` is how a block that installs something is actually
+// written. Without pipefail the pipeline's status is the LAST command's, so a
+// failed download does not abort at all and the harness starts with the setup
+// silently skipped — worse than aborting, because everything looks fine.
+func TestPreLaunchAbortsOnFailedPipeline(t *testing.T) {
+	rendered, err := renderPreLaunchScript([]sandboxpolicy.PreLaunchBlock{
+		{Name: "installer", Script: "false | cat\n"},
+	}, true, "/bin/bash")
+	require.NoError(t, err)
+	out, code := runRenderedPreLaunch(t, rendered, `echo HARNESS_STARTED`)
+	assert.Equal(t, preLaunchFailExitCode, code)
+	assert.Contains(t, out, "installer")
+	assert.NotContains(t, out, "HARNESS_STARTED")
+}
+
+// …and every option tclaude turned on must be off again for the harness, or a
+// harness command containing a tolerated non-zero pipeline would abort the pane.
+func TestPreLaunchUnwindsPipefailAndErrtrace(t *testing.T) {
+	rendered, err := renderPreLaunchScript([]sandboxpolicy.PreLaunchBlock{
+		{Name: "b", Script: "true\n"},
+	}, true, "/bin/bash")
+	require.NoError(t, err)
+	out, code := runRenderedPreLaunch(t, rendered,
+		`false | cat; echo "pipeline:$?"; case "$-" in *E*) echo ERRTRACE_LEAKED;; esac; `+
+			`case "$(set -o | grep pipefail)" in *on*) echo PIPEFAIL_LEAKED;; esac`)
+	assert.Equal(t, 0, code)
+	assert.Contains(t, out, "pipeline:0")
+	assert.NotContains(t, out, "ERRTRACE_LEAKED")
+	assert.NotContains(t, out, "PIPEFAIL_LEAKED")
+}
