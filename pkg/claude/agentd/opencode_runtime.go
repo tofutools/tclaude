@@ -700,7 +700,7 @@ func startOpenCodeProcess(
 	// Snapshot before the server can contribute to the counter: this boundary is
 	// durable across relaunches, so kills already recorded belong to an earlier
 	// server and must not be attributed to this one's exit.
-	oomBaseline := session.ResourceCgroupOOMKills(runtime.ResourceCgroupDir)
+	oomBaseline := session.ReadResourceCgroupOOMKills(runtime.ResourceCgroupDir)
 	if err := cmd.Start(); err != nil {
 		if runtime.ResourceCgroupDir != "" {
 			return nil, fmt.Errorf("%w: start server: %v", errOpenCodeResourceCgroup, err)

@@ -266,8 +266,9 @@ inside a `systemd-run --scope` wrapper alongside its tmux server therefore leave
 the delegated node holding processes, and cgroup v2 refuses to enable controllers
 in a node that is not process-free — reported as `EBUSY` ("device or resource
 busy") on `cgroup.subtree_control`. Either run agentd as a real service unit, or
-have the launcher move itself into the subgroup before starting anything else, so
-every later process inherits it:
+create the scope with `Delegate=` as usual and have the launcher move itself into
+the subgroup before starting anything else, so every later process inherits it
+(the move needs that delegation; without it the `mkdir` is refused outright):
 
 ```sh
 cg=/sys/fs/cgroup$(sed -n 's|^0::||p' /proc/self/cgroup)
