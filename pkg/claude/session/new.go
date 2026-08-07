@@ -2883,7 +2883,7 @@ func CodexProfileMarkerArgs(profilePath string) []string {
 // sandbox rule count, path length and prompt length — a fully-loaded spawn
 // measured ~18.8KB and died with tmux's cryptic "command too long". The
 // bootstrap goes to a private self-deleting script instead and the pane runs
-// `sh <script> [markers]`, which keeps the tmux argv O(1) in all of the
+// `<shell> <script> [markers]`, which keeps the tmux argv O(1) in all of the
 // above. The pre-flight check below can then only trip on a pathological
 // session name / cwd, and fails with an error that names them.
 //
@@ -2918,7 +2918,9 @@ func launchDetachedTmuxSession(tmuxSession, cwd, cmd string, markerArgs ...strin
 	}
 	// Multi-word command → tmux execvp's it directly (spawn.c), no extra
 	// shell join/quoting layer.
-	args := append([]string{"new-session", "-d", "-s", tmuxSession, "-c", cwd, "sh", scriptPath}, markerArgs...)
+	args := append([]string{"new-session", "-d", "-s", tmuxSession, "-c", cwd}, clcommon.BootstrapShellArgv()...)
+	args = append(args, scriptPath)
+	args = append(args, markerArgs...)
 	args = ExternalTmuxNoStartArgs(args...)
 	if n := tmuxArgvBytes(args); n > tmuxClientArgvLimit {
 		cleanupScript()

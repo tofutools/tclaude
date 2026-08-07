@@ -167,7 +167,8 @@ NoisyCaptureStderr() bool             // does print mode write a verbose transcr
 
 `tclaude ask` puts a single foreground, terminal-attached question to the
 harness against a per-`(terminal, cwd)` thread. Unlike `Spawner.BuildCommand`
-(which returns a `sh -c` **string** for a tmux pane), an ask is exec'd directly
+(which returns a shell-command **string** for a tmux pane — interpreted by
+bash, `clcommon.BootstrapShellPath`), an ask is exec'd directly
 with **no shell**, so this returns an **argv** (`[]string`): `argv[0]` is the
 binary and the question rides as one already-separated element, never
 shell-quoted into a command line. `AskSpec` carries `ResumeID` **xor**
