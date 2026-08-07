@@ -251,7 +251,7 @@ func stopOneConvUnderLaunchLock(convID string, force bool, lifecycleAction, rela
 		logLifecycleStopFailure("capture", sess.TmuxSession, sess.ID, targetErr)
 		res.Action = "error"
 		res.Detail = "capture selected pane: " + targetErr.Error()
-		return res, softExitClosed
+		return res, softExitUnattempted
 	}
 	if err := refreshStoppedSessionResumeProvenance(sess); err != nil {
 		// Administrative stop must remain available even when the target cwd is
@@ -265,7 +265,7 @@ func stopOneConvUnderLaunchLock(convID string, force bool, lifecycleAction, rela
 		intentSet := setExitIntentTargetBestEffort(target, lifecycleAction, relatedEventID)
 		if lifecycleAction != "" && intentSet == nil {
 			res.Action, res.Detail = "error", "selected launch intent became stale"
-			return res, softExitClosed
+			return res, softExitUnattempted
 		}
 		if err := killLifecycleTarget(target); err != nil {
 			clearFailedExitIntent(intentSet)
@@ -291,12 +291,12 @@ func stopOneConvUnderLaunchLock(convID string, force bool, lifecycleAction, rela
 		if h.Name == harness.OpenCodeName && openCodeControlInputBlocked(sess.Status) {
 			res.Action = "error"
 			res.Detail = "OpenCode TUI is " + sess.Status + "; retry soft stop when idle or force kill"
-			return res, softExitClosed
+			return res, softExitUnattempted
 		}
 		intentSet := setExitIntentTargetBestEffort(target, lifecycleAction, relatedEventID)
 		if lifecycleAction != "" && intentSet == nil {
 			res.Action, res.Detail = "error", "selected launch intent became stale"
-			return res, softExitClosed
+			return res, softExitUnattempted
 		}
 		delivered := false
 		if h.Name == harness.OpenCodeName {
@@ -333,6 +333,16 @@ func stopOneConvUnderLaunchLock(convID string, force bool, lifecycleAction, rela
 				return res, finishStopWait(target, waitPolicy, lifecycleAction, relatedEventID, "soft-exit", &res)
 			}
 			scheduleSoftExitEscalation(target, lifecycleAction, relatedEventID, "soft-exit")
+		} else if waitPolicy.wait {
+			// The caller asked to wait, but this action does not entitle us to
+			// kill (stopIntendsPaneClosure is what gates that). Wait for the pane
+			// anyway — silently returning "closed" without a single probe would
+			// hand the caller a guarantee nothing checked — just never escalate.
+			if waitForLifecycleTargetGone(target, waitPolicy.deadline) {
+				return res, softExitClosed
+			}
+			res.Detail = joinDetail(res.Detail, "pane still alive; no escalation for this stop")
+			return res, softExitStuck
 		}
 		return res, softExitClosed
 	}
@@ -341,7 +351,7 @@ func stopOneConvUnderLaunchLock(convID string, force bool, lifecycleAction, rela
 	intentSet := setExitIntentTargetBestEffort(target, lifecycleAction, relatedEventID)
 	if lifecycleAction != "" && intentSet == nil {
 		res.Action, res.Detail = "error", "selected launch intent became stale"
-		return res, softExitClosed
+		return res, softExitUnattempted
 	}
 	if err := killLifecycleTarget(target); err != nil {
 		clearFailedExitIntent(intentSet)
@@ -2212,16 +2222,21 @@ type retireTeardown struct {
 //
 // The order is load-bearing:
 //
-//  1. Stop the pane — and WAIT for the process to actually be gone. Steps 2
-//     and 3 delete things the agent is still holding (its agent-owned cache
-//     directories; the worktree that is its cwd), so a fire-and-forget /exit
-//     put both of them in a race they usually lost — the operator-visible
-//     symptom being "kept because the agent did not exit within grace" and a
-//     retired agent whose pane was still running.
-//  2. Agent-owned directory cleanup.
+//  1. Stop the pane. This one is deliberately FIRE-AND-FORGET, unlike the
+//     delete paths: steps 2 and 3 do not act immediately. Both
+//     cleanupAgentDirectoriesAfterRetire and scheduleRetireWorktreeCleanup
+//     already defer their destructive half to a background waiter that polls
+//     until the pane is actually offline (retireWorktreeExitGrace), and report
+//     to the human via the Messages tab when that promise cannot be kept. So
+//     "wait until the process really stopped before touching what it holds" is
+//     already honoured here — asynchronously, without holding the request open
+//     for the escalation window. The pane is still guaranteed to die: the
+//     out-of-band ladder armed by the stop converges well inside that grace,
+//     which is what TCL-1001 added it for.
+//  2. Agent-owned directory cleanup (deferred internally until the pane exits).
 //  3. Worktree + branch cleanup, from the view the CALLER resolved before any
 //     demotion or shutdown (wt) — resolving it here would read a world the
-//     stop above already changed.
+//     stop above already changed. Also deferred internally.
 //
 // The demotion itself (retireAgentConv) stays with the caller: only it knows
 // the precondition to enforce (live-generation guard, require_offline) and the
@@ -2229,10 +2244,13 @@ type retireTeardown struct {
 func finishRetiredConv(convID string, shutdown, deleteWorktree bool, wt agentWorktreeView, relatedEventID string) retireTeardown {
 	var td retireTeardown
 	if shutdown {
-		td.Stop, _ = stopOneConvAndWait(convID, false /* soft exit */, db.AgentExitActionRetire, relatedEventID, 0)
+		td.Stop = stopOneConvWithIntent(convID, false /* soft exit */, db.AgentExitActionRetire, relatedEventID)
 		switch td.Stop.Action {
 		case "soft_stopped":
-			note := "/exit sent"
+			// Harness-agnostic wording on purpose: the group-retire copy of this
+			// used to say "/exit sent", which is simply untrue for a Codex pane
+			// (/quit) or an OpenCode one (a managed TUI call, no keystroke).
+			note := "session soft-stopped"
 			if td.Stop.Detail != "" {
 				note += " (" + td.Stop.Detail + ")"
 			}
@@ -2245,9 +2263,12 @@ func finishRetiredConv(convID string, shutdown, deleteWorktree bool, wt agentWor
 	if deleteWorktree {
 		plan := scheduleRetireWorktreeCleanup(convID, wt, shutdown)
 		td.Worktree = &plan
-		// "none" means the agent had no worktree at all — not worth a line in
-		// the outcome table; every other action is something that happened.
-		if plan.Action != "none" && plan.Detail != "" {
+		// Every plan gets its note, "none" ("no worktree") included: the note
+		// only ever appears when the caller explicitly asked for
+		// delete_worktree, and there "this one had nothing to delete" is an
+		// answer, not noise. Keeps the group-retire member table byte-identical
+		// to what it produced before the three copies were merged.
+		if plan.Detail != "" {
 			td.Notes = append(td.Notes, plan.Detail)
 		}
 	}

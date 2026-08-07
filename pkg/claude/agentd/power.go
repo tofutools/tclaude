@@ -470,26 +470,55 @@ func escalateShutdownUnderLaunchLock(convID string, grace time.Duration) powerAg
 		out.Outcome = shutdownOffline
 		return out
 	}
-	if stopped.Action == "error" {
-		// The exit command never landed (a send-keys error, a busy OpenCode
-		// TUI). The ladder still ran for the injectable cases, so the outcome
-		// below is what decides — the note just records why it got there.
+
+	// softExitUnattempted means the soft path never reached the pane — target
+	// capture failed, the launch intent went stale, or a busy OpenCode TUI
+	// refused control input — so no exit command was delivered and no rung of
+	// the ladder ran. The pre-ladder code force-killed here, and it must keep
+	// doing so: a Shutdown button that leaves the agent running because its TUI
+	// was busy is the bug, and reporting that as a graceful exit is worse.
+	forced := false
+	if outcome == softExitUnattempted {
+		out.Detail = "soft exit unavailable (" + stopped.Detail + "); escalated to force-kill"
+		forced = true
+		stopped, outcome = stopOneConvUnderLaunchLock(
+			convID, true, db.AgentExitActionForceStop, "", stopWaitForExit(0),
+		)
+		if stopped.Action == "skipped:already_offline" {
+			// It went away between the two attempts — the kill was a no-op.
+			out.Outcome = shutdownExited
+			return out
+		}
+	} else if stopped.Action == "error" {
+		// The exit command itself failed to land (a send-keys error), but the
+		// ladder DID run for it, so the outcome below is what decides — this
+		// note only records why it got there.
 		out.Detail = "soft exit failed (" + stopped.Detail + ")"
 	}
-	switch outcome {
-	case softExitClosed:
-		out.Outcome = shutdownExited
-	case softExitEscalated:
+
+	switch {
+	case outcome == softExitUnattempted:
+		// Even the force attempt could not act on the pane.
+		out.Outcome = shutdownFailed
+		out.Detail = joinPowerDetail(out.Detail, "could not act on the pane: "+stopped.Detail)
+	case outcome == softExitStuck:
+		out.Outcome = shutdownFailed
+		out.Detail = joinPowerDetail(out.Detail, "pane process still alive after kill escalation")
+	case outcome == softExitEscalated || forced:
 		out.Outcome = shutdownKilled
 	default:
-		out.Outcome = shutdownFailed
-		detail := "pane process still alive after kill escalation"
-		if out.Detail != "" {
-			detail = out.Detail + "; " + detail
-		}
-		out.Detail = detail
+		out.Outcome = shutdownExited
 	}
 	return out
+}
+
+// joinPowerDetail appends a clause to a power outcome's detail, keeping the
+// existing "why we got here" prefix in front of it.
+func joinPowerDetail(existing, add string) string {
+	if existing == "" {
+		return add
+	}
+	return existing + "; " + add
 }
 
 // waitForConvOffline polls convID's tmux liveness until it goes

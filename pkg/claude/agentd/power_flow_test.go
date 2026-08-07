@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -443,4 +444,53 @@ func TestPowerOn_RejectsUnknownScope(t *testing.T) {
 		testharness.JSONRequest(t, http.MethodPost, "/api/power-on",
 			map[string]any{"scope": "group"}))
 	assert.Equal(t, http.StatusBadRequest, rec.Code, "body=%s", rec.Body.String())
+}
+
+// Scenario: an agent whose harness REFUSES the soft exit outright — an
+// OpenCode pane whose TUI is busy, which openCodeControlInputBlocked rejects
+// before a single control message is sent — is force-killed and reported as
+// such.
+//
+// The regression this pins: the soft stop returns "error" there WITHOUT
+// delivering an exit command and without running any rung of the escalation
+// ladder. A shutdown that reads that as "nothing left to escalate" reports the
+// agent as exited_gracefully while its pane is still running — and the restart
+// paths, which abort only on shutdownFailed, would then relaunch a second
+// session over the live one. "The stop never touched the pane" and "the pane
+// exited" must stay distinguishable (softExitUnattempted vs softExitClosed).
+func TestShutdown_HarnessRefusesSoftExit_ForceKillsAndReportsIt(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	mux := agentd.BuildDashboardHandlerForTest()
+
+	const (
+		group = "tclaude-dev"
+		conv  = "ses_opencode_busy_shutdown"
+		tmux  = "tmux-opencode-busy-shutdown"
+	)
+	_, server := openCodeTUICommandServer(t, f, tmux, false)
+	defer server.Close()
+	f.HaveGroup(group)
+	haveOpenCodeControlSession(t, f, conv, "spwn-oc-busy-shutdown", tmux, server.URL)
+	f.HaveMember(group, conv)
+	// Busy TUI: the soft-exit path bails out before dispatching anything.
+	f.SetSessionStatus(conv, session.StatusWorking)
+	require.True(t, f.World.Tmux.IsAlive(tmux), "pre: the busy agent is alive")
+
+	code, resp := postShutdown(t, mux, map[string]any{
+		"scope": "group", "group": group, "grace_ms": 60,
+	})
+	require.Equal(t, http.StatusOK, code)
+	require.Equal(t, 1, resp.Targeted, "agents=%+v", resp.Agents)
+
+	assert.NotEqual(t, "exited_gracefully", outcomeFor(resp.Agents, conv),
+		"an agent whose soft exit was never even attempted must not be reported as having exited; agents=%+v",
+		resp.Agents)
+	assert.Equal(t, "force_killed", outcomeFor(resp.Agents, conv),
+		"a refused soft exit escalates to a force kill; agents=%+v", resp.Agents)
+	assert.Equal(t, 0, resp.ExitedGracefully, "agents=%+v", resp.Agents)
+	assert.Equal(t, 1, resp.ForceKilled, "agents=%+v", resp.Agents)
+
+	assert.False(t, f.World.Tmux.IsAlive(tmux),
+		"the pane must actually be gone — a Shutdown button that leaves a busy agent running is the bug")
 }

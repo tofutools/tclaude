@@ -80,6 +80,18 @@ const (
 	// alive. Nothing further is available; the caller must not assume the
 	// agent released its files, cwd or worktree.
 	softExitStuck
+	// softExitUnattempted — the stop never reached the pane at all: capturing
+	// the lifecycle target failed, the selected launch intent went stale under
+	// us, or a busy OpenCode TUI refused control input. No exit command was
+	// delivered and no rung of the ladder ran, so the ONLY thing known is that
+	// we did not stop it.
+	//
+	// This must never be folded into softExitClosed. It reads as "nothing
+	// happened", and "nothing happened" is the opposite of "it exited" — a
+	// caller that conflates the two reports a still-running agent as gracefully
+	// stopped, and anything gated on a failed stop (the restart paths' abort
+	// before relaunch) sails straight past its guard.
+	softExitUnattempted
 )
 
 // scheduleSoftExitEscalation backgrounds the ladder for one stopped target.
