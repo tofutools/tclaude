@@ -293,7 +293,7 @@ export function BrokerRefusalNotice({ snapshot }) {
   // resolved to a row that disagreed with its claim, and that row may be
   // hidden even though its per-agent badge was recorded.
   const attributed = Math.max(0, total - unplaceable);
-  if (!(attributed > 0 || unplaceable > 1)) return null;
+  if (!(total > 0 && (attributed > 0 || unplaceable > 1))) return null;
   const plural = total === 1 ? '' : 's';
   const title = 'These callbacks carry telemetry — status, cost, context, directory — for some agent, and it is being dropped;'
     + ' the affected agent keeps working, so nothing else on the dashboard will look wrong.'
