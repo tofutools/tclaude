@@ -1714,10 +1714,10 @@ body.wizard :is(.markdown-preview-overlay, .image-preview-overlay) header {
   background: #17131f; border-bottom: 1px solid #3a2f57;
   animation: none; background-size: auto;
 }
-body.wizard :is(.markdown-preview-overlay, .image-preview-overlay) header button {
-  padding: 0; border-radius: 0;
-}
-body.wizard :is(.markdown-preview-close, .image-preview-close) { border-radius: 4px; }
+body.wizard :is(.markdown-preview-overlay, .image-preview-overlay)
+  header :is(.markdown-preview-close, .image-preview-close) { padding: 0; border-radius: 4px; }
+body.wizard :is(.markdown-preview-overlay, .image-preview-overlay)
+  header .markdown-preview-mode { padding: 5px 10px; border-radius: 0; }
 body.wizard :is(.markdown-preview-dialog, .image-preview-dialog) {
   border-color: #3a2f57; background: #12101a; color: #d8cff0;
   box-shadow: 0 24px 70px rgba(18, 6, 38, .62);
@@ -1765,10 +1765,10 @@ body.slop :is(.markdown-preview-overlay, .image-preview-overlay) header {
   background: #2a0a0a; border-bottom: 1px solid #8b0000;
   animation: none; background-size: auto;
 }
-body.slop :is(.markdown-preview-overlay, .image-preview-overlay) header button {
-  padding: 0; border-radius: 0;
-}
-body.slop :is(.markdown-preview-close, .image-preview-close) { border-radius: 4px; }
+body.slop :is(.markdown-preview-overlay, .image-preview-overlay)
+  header :is(.markdown-preview-close, .image-preview-close) { padding: 0; border-radius: 4px; }
+body.slop :is(.markdown-preview-overlay, .image-preview-overlay)
+  header .markdown-preview-mode { padding: 5px 10px; border-radius: 0; }
 body.slop :is(.markdown-preview-dialog, .image-preview-dialog) {
   border-color: #8b0000; background: #1a0505; color: #f0dcc0;
   box-shadow: 0 24px 70px rgba(0, 0, 0, .66);
