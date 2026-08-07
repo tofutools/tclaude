@@ -41,3 +41,28 @@ func TestSessionArgs_AutoMemoryCarriedWhenOptedIn(t *testing.T) {
 		}
 	}
 }
+
+func TestSessionArgs_ContextWindowMaxCarried(t *testing.T) {
+	const max = "272000"
+	for name, args := range map[string][]string{
+		"new": sessionNewArgs(clcommon.SpawnArgs{
+			Label: "lbl", Cwd: "/tmp/x", ContextWindowMax: 272000,
+		}),
+		"resume": sessionResumeArgs(clcommon.SpawnArgs{
+			ConvID: "conv-1", Cwd: "/tmp/x", ContextWindowMax: 272000,
+		}),
+	} {
+		i := slices.Index(args, "--context-window-max")
+		if i < 0 || i+1 >= len(args) || args[i+1] != max {
+			t.Fatalf("%s: configured context max must carry its canonical token count, got %v", name, args)
+		}
+	}
+	for name, args := range map[string][]string{
+		"new":    sessionNewArgs(clcommon.SpawnArgs{Label: "lbl", Cwd: "/tmp/x"}),
+		"resume": sessionResumeArgs(clcommon.SpawnArgs{ConvID: "conv-1", Cwd: "/tmp/x"}),
+	} {
+		if slices.Contains(args, "--context-window-max") {
+			t.Fatalf("%s: unset context max must omit the flag, got %v", name, args)
+		}
+	}
+}

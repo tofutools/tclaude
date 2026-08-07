@@ -621,6 +621,13 @@ export function parseAutoCompactWindow(raw) {
   return Number.isFinite(tokens) && Number.isInteger(tokens) ? tokens : null;
 }
 
+// Copilot's configured cap uses the same token-count vocabulary as the
+// adjacent Claude auto-compact control (for example, 272k or 0.5M), while the
+// wire still carries the canonical integer token count.
+export function parseContextWindowMax(raw) {
+  return parseAutoCompactWindow(raw);
+}
+
 // autoCompactWindowHintFor renders the one-line note under the window field:
 // what the pin means in practice, or why the current text will be rejected.
 // Returns null when the field is blank (nothing useful to say about "unset").
@@ -652,8 +659,8 @@ export function autoCompactWindowHintFor(draft, view) {
 export function contextWindowMaxHintFor(draft, view) {
   const raw = text(draft.contextWindowMax);
   if (!raw) return null;
-  if (!/^\d+$/.test(raw.trim())) return { warn: true, text: 'Use a whole number of tokens.' };
-  const value = Number(raw.trim());
+  const value = parseContextWindowMax(raw);
+  if (value == null) return { warn: true, text: 'Use a whole number of tokens, 272k or 0.5M.' };
   const min = view.contextWindowMaxMin || 0;
   const max = view.contextWindowMaxMax || 0;
   if (!Number.isSafeInteger(value) || (min && value < min) || (max && value > max)) {
@@ -944,7 +951,6 @@ export function clearSpawnProfileFields(draft, context, {
     autoMemory: false,
     sshWorkaround: !!findSpawnHarness(context.harnesses, defaults.harness)?.can_ssh_workaround,
     autoCompactWindow: defaults.autoCompactWindow,
-    contextWindowMax: defaults.contextWindowMax,
     sandboxImpl: defaults.sandboxImpl,
     allowUnenforcedSandbox: defaults.allowUnenforcedSandbox,
     sandboxImplCleared: null,
@@ -1086,7 +1092,7 @@ export function spawnProfileSeed(draft, context) {
     seed.auto_compact_window = text(draft.autoCompactWindow);
   }
   if (view.showContextWindowMax && text(draft.contextWindowMax)) {
-    seed.context_window_max = Number(text(draft.contextWindowMax).trim());
+    seed.context_window_max = parseContextWindowMax(draft.contextWindowMax);
   }
   // Seed only an explicit selection. Leaving it unset keeps the profile silent
   // so lower tiers still speak — and a profile that pinned harness-builtin
@@ -1201,7 +1207,7 @@ export function buildSpawnRequest(draft, context, worktreeSelection, attachmentP
     body.auto_compact_window = text(draft.autoCompactWindow);
   }
   if (view.showContextWindowMax && text(draft.contextWindowMax)) {
-    body.context_window_max = Number(text(draft.contextWindowMax).trim());
+    body.context_window_max = parseContextWindowMax(draft.contextWindowMax);
   }
   // Blank omits the key, so an untouched row leaves the daemon's profile tier
   // stack in charge and the launch stays default-off. An explicit selection —

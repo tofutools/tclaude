@@ -286,6 +286,56 @@ func TestCopilotUsageConfiguredMaxOverridesModelDefault(t *testing.T) {
 	assert.Zero(t, snap.ContextWindowSize, "configured max must not overwrite observed window")
 }
 
+// A configured denominator is launch intent, not a consequence of model
+// telemetry. It must remain visible while Copilot has usage tokens but has not
+// disclosed an observed model id yet.
+func TestCopilotUsageConfiguredMaxWorksWithoutObservedModel(t *testing.T) {
+	setupTestDB(t)
+	resetCopilotUsageStateForTest()
+	t.Cleanup(resetCopilotUsageStateForTest)
+
+	sess := copilotUsageSession(t, "s-copilot", "conv-1")
+	agentID, _, err := db.EnsureAgentForConv(sess.ConvID, "spawn")
+	require.NoError(t, err)
+	max := int64(100_000)
+	require.NoError(t, db.SetAgentRelaunchProfile(agentID, db.AgentRelaunchProfile{
+		Version: db.RelaunchProfileVersion, ConfiguredContextWindowMax: &max,
+	}))
+
+	call := copilotUsageCall(1, 75_000, 300)
+	call.Model = ""
+	applyCopilotUsageCalls(sess, []harness.CopilotUsageCall{call})
+
+	snap, err := db.GetContextSnapshot(sess.ID)
+	require.NoError(t, err)
+	assert.InDelta(t, 75.0, snap.ContextPct, 0.001,
+		"an explicit cap applies even before Copilot reports a model")
+}
+
+func TestCopilotDashboardConfiguredMaxWorksWithoutObservedModel(t *testing.T) {
+	setupTestDB(t)
+	resetCopilotUsageStateForTest()
+	t.Cleanup(resetCopilotUsageStateForTest)
+
+	sess := copilotUsageSession(t, "s-copilot", "conv-1")
+	agentID, _, err := db.EnsureAgentForConv(sess.ConvID, "spawn")
+	require.NoError(t, err)
+	max := int64(100_000)
+	require.NoError(t, db.SetAgentRelaunchProfile(agentID, db.AgentRelaunchProfile{
+		Version: db.RelaunchProfileVersion, ConfiguredContextWindowMax: &max,
+	}))
+	updated, err := db.UpdateContextSnapshotForGeneration(
+		sess.ID, sess.ConvID, sess.CreatedAt, 75, 75_000, 300, 0)
+	require.NoError(t, err)
+	require.True(t, updated)
+
+	state := stateForConvInSessionsBatched(
+		[]*db.SessionRow{sess}, map[string]struct{}{sess.TmuxSession: {}}, nil, nil, nil)
+	assert.Equal(t, int64(100_000), state.ContextWindowMax)
+	assert.Equal(t, "configured", state.ContextWindowSource)
+	assert.InDelta(t, 75.0, state.ContextPct, 0.001)
+}
+
 // TestCopilotUsagePrecedenceSurvivesCompaction is the self-correcting argument
 // made checkable: after a compaction the next call's input_tokens already
 // reflects the smaller window, so the sweep's numerator moves down with it and

@@ -1,4 +1,5 @@
 import { readReviewer, reviewerValue } from './approval-controls.js';
+import { parseContextWindowMax } from './agent-spawn-model.js';
 
 export const TRI_OPTIONS = [
   ['', "Default (leave dialog's own)"], ['1', 'on'], ['0', 'off'],
@@ -121,7 +122,7 @@ export function profilePayload(draft, original = null, catalog = [], { local = f
     body.auto_compact_window = String(draft.auto_compact_window).trim();
   }
   if (h?.can_context_window_max && String(draft.context_window_max || '').trim()) {
-    body.context_window_max = Number(String(draft.context_window_max).trim());
+    body.context_window_max = parseContextWindowMax(draft.context_window_max);
   }
   // Blank omits the key: an untouched row must leave the profile silent rather
   // than pinning harness-builtin over whatever a lower spawn tier would supply.

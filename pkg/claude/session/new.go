@@ -233,6 +233,12 @@ type NewParams struct {
 	// rather than a silent drop.
 	AutoCompactWindow string `long:"auto-compact-window" optional:"true" help:"Context capacity in tokens for Claude Code's auto-compaction (CLAUDE_CODE_AUTO_COMPACT_WINDOW). Accepts 450000, 450k or 0.5M. Pin it below a 1M model's real window to compact earlier, while the agent is still sharp. Capped at the model's actual window; also decouples the compaction threshold from the status line's percentage. Unset uses the model default. Not applicable to codex"`
 
+	// ContextWindowMax is tclaude's configured Copilot context-meter
+	// denominator. Copilot does not report a cap or accept this as a harness
+	// flag, so the value is persisted as launch intent and kept separate from
+	// the observed context_window_size snapshot.
+	ContextWindowMax int64 `long:"context-window-max" optional:"true" help:"Configured Copilot context cap in tokens for the context meter. Unset uses the observed model's static assumption. Copilot only; not a harness-reported value"`
+
 	// --join-group makes the new session auto-join an existing agent group
 	// the moment its conv-id materialises. Routed through the daemon's
 	// `groups.spawn` orchestration; not compatible with --resume / --label.
@@ -849,6 +855,11 @@ func runNew(params *NewParams) error {
 		return err
 	}
 	params.AutoCompactWindow = autoCompactWindow
+	contextWindowMax, err := harness.ResolveCopilotContextWindow(h, params.ContextWindowMax)
+	if err != nil {
+		return err
+	}
+	params.ContextWindowMax = contextWindowMax
 
 	if params.JoinGroup != "" {
 		if JoinGroupHandler == nil {
@@ -2153,6 +2164,7 @@ func runNew(params *NewParams) error {
 		AutoMemory:        autoMemory,
 		ContextFeatures:   contextFeatures,
 		AutoCompactWindow: autoCompactWindow,
+		ContextWindowMax:  params.ContextWindowMax,
 		RemoteControl:     remoteControl,
 	})
 	// Claude reports its live model and effort through the statusline hook.

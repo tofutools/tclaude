@@ -480,6 +480,51 @@ func SetConversationResumeProfile(convID string, profile ConversationResumeProfi
 	return err
 }
 
+// SetSessionConfiguredContextWindowMax records the configured Copilot meter
+// denominator in the conversation fallback owned by the session's
+// conversation. The cap is tclaude launch intent, not a sessions observation
+// column, so it must be updated directly alongside the other relaunch facts.
+// Managed agents also keep the stable agent profile; this fallback write makes
+// a direct `session new --context-window-max` survive the next resume.
+func SetSessionConfiguredContextWindowMax(sessionID string, value int64) error {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return nil
+	}
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	var convID, harnessName, cwd string
+	err = d.QueryRow(`SELECT conv_id, harness, cwd FROM sessions WHERE id = ?`, sessionID).
+		Scan(&convID, &harnessName, &cwd)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	convID = strings.TrimSpace(convID)
+	if convID == "" {
+		return nil
+	}
+	conversation, err := ConversationResumeProfileForConv(convID)
+	if err != nil {
+		return err
+	}
+	if conversation == nil {
+		conversation = &ConversationResumeProfile{
+			Version: RelaunchProfileVersion, Harness: strings.TrimSpace(harnessName), Cwd: cwd,
+		}
+	}
+	if conversation.FallbackRelaunch == nil {
+		conversation.FallbackRelaunch = &AgentRelaunchProfile{Version: RelaunchProfileVersion}
+	}
+	max := value
+	conversation.FallbackRelaunch.ConfiguredContextWindowMax = &max
+	return SetConversationResumeProfile(convID, *conversation)
+}
+
 // BackfillDurableRelaunchProfilesFromLatestSession is the explicit legacy
 // bridge for records created before v145 (and tests/older binaries that wrote a
 // session without the new dual-write). It persists the newest session snapshot

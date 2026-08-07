@@ -262,4 +262,9 @@ type SpawnArgs struct {
 	// (harness.ResolveAutoCompactWindow normalizes "450k" → "450000").
 	// Claude-Code-only; harnesses with no such knob (Codex, OpenCode) ignore it.
 	AutoCompactWindow string
+
+	// ContextWindowMax is tclaude's configured Copilot context-meter denominator.
+	// It is forwarded to `tclaude session new` so launch intent is recorded, not
+	// to Copilot CLI, which neither reports nor accepts a context cap.
+	ContextWindowMax int64
 }

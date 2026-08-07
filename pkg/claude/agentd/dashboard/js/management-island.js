@@ -1219,14 +1219,24 @@ function ProfileEditor({ descriptor, state, actions, confirmDiscard, openProfile
   const baseline = useMemo(() => profileDraft(seed, options, catalog), [descriptor]);
   const [draft, setDraft] = useState(() => clone(baseline));
   const dirty = dirtyDraft(draft, baseline); const local = !!options.local;
+  const hEntry = harnessByName(catalog, draft.harness);
   const submit = async () => {
     state.error.value = '';
     if (!local && !draft.name.trim()) { state.error.value = 'profile name is required'; return; }
     if (!local && draft.disabled && !draft.disabled_reason.trim()) { state.error.value = 'a reason is required when disabling a profile'; return; }
+    if (hEntry?.can_context_window_max) {
+      const hint = contextWindowMaxHintFor(
+        { contextWindowMax: draft.context_window_max },
+        {
+          contextWindowMaxMin: Number(hEntry.context_window_max_min) || 0,
+          contextWindowMaxMax: Number(hEntry.context_window_max_max) || 0,
+        },
+      );
+      if (hint?.warn) { state.error.value = hint.text; return; }
+    }
     await actions.saveProfile({ draft, original: options.editExisting === false ? null : seed, options, payload: profilePayload(draft, seed, catalog, { local }) });
   };
   const saving = state.busy.value === 'profile-save';
-  const hEntry = harnessByName(catalog, draft.harness);
   const sshWorkaroundAvailable = !!hEntry?.can_ssh_workaround
     && draft.sandbox === 'tclaude-agent';
   return html`<${Overlay} id="profile-editor-modal" labelledby="profile-editor-title" onClose=${state.closeDialog} onSubmitHotkey=${saving ? null : submit} dirty=${dirty} blocked=${saving} confirmDiscard=${confirmDiscard} registerClose=${registerClose}><h3 id="profile-editor-title">${local ? wizWord('Custom launch — this agent only', 'Bespoke summons — this familiar only') : options.cloneSourceName ? wizWord(`Clone profile: ${options.cloneSourceName}`, `Mirror pattern: ${options.cloneSourceName}`) : seed && options.editExisting !== false ? wizWord(`Edit profile: ${seed.name}`, `Edit pattern: ${seed.name}`) : wizWord('New spawn profile', 'New familiar pattern')}</h3>

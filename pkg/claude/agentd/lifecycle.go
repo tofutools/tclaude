@@ -1448,6 +1448,7 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 		AutoMemory:                 launchConfig.AutoMemory,
 		ContextFeatures:            launchConfig.ContextFeatures,
 		AutoCompactWindow:          launchConfig.AutoCompactWindow,
+		ContextWindowMax:           launchConfig.ContextWindowMax,
 	}); err != nil {
 		res.Action = "error"
 		res.Detail = "spawn: " + err.Error()
@@ -4972,6 +4973,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		AutoMemory:                 p.AutoMemory,
 		ContextFeatures:            p.ContextFeatures,
 		AutoCompactWindow:          p.AutoCompactWindow,
+		ContextWindowMax:           p.ContextWindowMax,
 	}
 	routeHelperConvID := ""
 	routeHelperGeneration := ""
@@ -7015,6 +7017,7 @@ func sessionNewArgs(a clcommon.SpawnArgs) []string {
 	args = appendAutoMemoryFlag(args, a.AutoMemory)
 	args = appendContextFeaturesFlag(args, a.ContextFeatures)
 	args = appendAutoCompactWindowFlag(args, a.AutoCompactWindow)
+	args = appendContextWindowMaxFlag(args, a.ContextWindowMax)
 	args = appendInitialPromptArg(args, a)
 	return args
 }
@@ -7028,6 +7031,16 @@ func sessionNewArgs(a clcommon.SpawnArgs) []string {
 func appendAutoCompactWindowFlag(args []string, window string) []string {
 	if window = strings.TrimSpace(window); window != "" {
 		args = append(args, "--auto-compact-window", window)
+	}
+	return args
+}
+
+// appendContextWindowMaxFlag carries tclaude's configured Copilot meter
+// denominator into the child session launcher. It is intent, not a Copilot
+// CLI option, so the child records it without forwarding it to the harness.
+func appendContextWindowMaxFlag(args []string, max int64) []string {
+	if max > 0 {
+		args = append(args, "--context-window-max", strconv.FormatInt(max, 10))
 	}
 	return args
 }
@@ -7174,6 +7187,7 @@ func sessionResumeArgs(a clcommon.SpawnArgs) []string {
 	// relaunch — otherwise the successor to an agent deliberately compacting at
 	// 450K comes back running to the model's full window.
 	args = appendAutoCompactWindowFlag(args, a.AutoCompactWindow)
+	args = appendContextWindowMaxFlag(args, a.ContextWindowMax)
 	return args
 }
 

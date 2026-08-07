@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agent"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
@@ -55,6 +56,37 @@ func TestSpawnHarnessPinned_ClaudeGlobalDefaultModelNeverReachesCopilot(t *testi
 	launch := copilotLaunchOf(t, f, resp.ConvID)
 	assert.Empty(t, launch.Model, "no --model flag may be emitted")
 	assert.Empty(t, launch.Effort)
+}
+
+func TestSpawnHarnessPinned_ForeignDefaultContextMaxNeverReachesCopilot(t *testing.T) {
+	f := newCopilotFlow(t)
+	f.HaveGroup("crew")
+	_, err := db.CreateSpawnProfile(&db.SpawnProfile{
+		Name: "claude-default", Harness: harness.DefaultName, ContextWindowMax: 100_000,
+	})
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, setGlobalProfile(t, f, "claude-default").Code)
+
+	resp, _ := runSpawnCLI(t, f, &agent.SpawnParams{
+		Group: "crew", Name: "copilot-worker", Harness: harness.CopilotName,
+	})
+	assert.Empty(t, resp.Resolved.ContextWindowMax.Value,
+		"a foreign default profile must not supply Copilot-only meter intent")
+}
+
+func TestSpawnHarnessPinned_CopilotProfileContextMaxNeverReachesCodex(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	_, err := db.CreateSpawnProfile(&db.SpawnProfile{
+		Name: "copilot-cap", Harness: harness.CopilotName, ContextWindowMax: 100_000,
+	})
+	require.NoError(t, err)
+
+	resp, _ := runSpawnCLI(t, f, &agent.SpawnParams{
+		Group: "crew", Name: "codex-worker", Harness: harness.CodexName, Profile: "copilot-cap",
+	})
+	assert.Empty(t, resp.Resolved.ContextWindowMax.Value,
+		"Copilot-only meter intent must be refused on a Codex launch")
 }
 
 // The same gate on the group-default tier, and the fallthrough it enables: a

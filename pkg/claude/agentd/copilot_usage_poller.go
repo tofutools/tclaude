@@ -797,11 +797,9 @@ func persistCopilotUsageContext(sess *db.SessionRow, snapshot db.CopilotUsageSna
 		return
 	}
 	window := int64(0)
-	if strings.TrimSpace(snapshot.Model) != "" {
-		window = copilotConfiguredContextWindowMax(sess.ConvID)
-		if window == 0 {
-			window = harness.CopilotContextWindowDefault(snapshot.Model)
-		}
+	window = copilotConfiguredContextWindowMax(sess.ConvID)
+	if window == 0 && strings.TrimSpace(snapshot.Model) != "" {
+		window = harness.CopilotContextWindowDefault(snapshot.Model)
 	}
 	pct := copilotContextPct(snapshot.LastCallInputTokens, window)
 
