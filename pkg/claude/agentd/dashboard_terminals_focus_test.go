@@ -62,7 +62,7 @@ func TestGroupTerminalActionsSupportBackgroundOpen(t *testing.T) {
 		"if (source === contextActivatedSource)",
 		"const terminalPaneOptions = { reveal: action.openInBackground !== true }",
 		"focusTerminalForConv([agent], terminalPaneOptions)",
-		"openWebWindowPane(agent, label, terminalPaneOptions)",
+		"openWebWindowPane(agent, label, { ...terminalPaneOptions, harness })",
 	} {
 		if !strings.Contains(rows, needle) {
 			t.Errorf("Groups terminal background-open wiring missing %q", needle)
@@ -93,7 +93,7 @@ func TestGroupTerminalActionsSupportBackgroundOpen(t *testing.T) {
 func TestBulkFocusUsesWebPanesByDefault(t *testing.T) {
 	actions := readDashboardJS(t, "transaction-dialog-actions.js")
 	branch := strings.Index(actions, "if (request.direction === 'focus' && request.webTerminal) {")
-	open := strings.Index(actions, "openWebWindowPane(target.selector, target.label)")
+	open := strings.Index(actions, "openWebWindowPane(target.selector, target.label, { harness: target.harness })")
 	fetch := strings.Index(actions, "fetchImpl('/api/agent-windows'")
 	if branch < 0 || open < branch || fetch < open {
 		t.Fatal("transaction actions must open each selected web pane before the native-only " +
