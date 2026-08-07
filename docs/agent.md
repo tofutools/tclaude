@@ -2406,9 +2406,10 @@ for Claude Code, plus both `~/.agents/skills/` and `$CODEX_HOME/skills`
   `tclaude agent clipboard`; the daemon runs the platform copy tool on
   the host. Gated on `human.clipboard` (explicit grant or `--ask-human`
   popup; not owner-implied).
-- **`proxy-git`** — fetch, push, and open GitHub pull requests through
-  `tclaude proxy git` / `tclaude proxy github` when the agent's own sandbox
-  holds no credentials. See [Git & GitHub proxy](git-proxy.md).
+- **`proxy-git`** — fetch, push, open GitHub pull requests, and read back
+  their review comments and CI failure logs through `tclaude proxy git` /
+  `tclaude proxy github` when the agent's own sandbox holds no credentials.
+  See [Git & GitHub proxy](git-proxy.md).
 
 Re-run `tclaude setup --install-agent-skills` after `go install
 …@latest` to refresh the on-disk copies with whatever the new binary
