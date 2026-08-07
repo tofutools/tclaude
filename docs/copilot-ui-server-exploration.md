@@ -15,9 +15,12 @@ the same time**, through a hidden `--ui-server` flag:
 
 ```
 --ui-server            Enable TUI with embedded JSON-RPC server
---port <port>          (default: random available port)
---host <host>          (default: 127.0.0.1)
+--port <port>          Port to listen on when in server mode (default: random available port)
+--host <host>          Host address to bind server to (default: 127.0.0.1)
 ```
+
+All three are `hideHelp()` in the bundle, so that block is reconstructed from the option
+definitions rather than quoted from `--help` output.
 
 The bundled `@github/copilot-sdk` typings name this mode explicitly — several methods
 are documented as "Only available when connecting to a server running in TUI+server
@@ -40,14 +43,20 @@ supervision because its TUI and its server are different processes; Copilot does
 ## `--acp` is not this
 
 The [documented ACP server](https://docs.github.com/en/copilot/reference/copilot-cli-reference/acp-server)
-is a *headless* mode and cannot be combined with the TUI. In the shipped bundle `--acp`
-sits in the same mutual-exclusion set as `--server`, `--headless` and `--embedded-host`,
-and taking that branch disposes the stdin raw-mode capture and never mounts the
-terminal UI. Starting `copilot --acp` therefore looks like it "accepts the command and
-shows nothing" — that is the intended behaviour, not a misconfiguration.
+is a *headless* mode. Taking the `--acp` branch disposes the stdin raw-mode capture and
+never mounts the terminal UI, so `copilot --acp` looks like it "accepts the command and
+shows nothing" — intended behaviour, not a misconfiguration.
+
+**`--acp` and `--ui-server` are not mutually exclusive, and that is worse than if they
+were.** There is no exclusion check between them: `copilot --acp --ui-server --port N`
+is accepted, ACP silently wins, no TUI mounts, and the port listens. A combination that
+looks like it should give both modes gives you one, with nothing to say so. (The
+`Set(["--server","--headless","--acp","--embedded-host"])` in the bundle is a
+non-interactive argv sniff gating the raw-mode stdin capture — it is not an exclusion
+set, and should not be cited as one.)
 
 `--acp` is also a lowest-common-denominator protocol next to Copilot's own JSON-RPC
-surface, which exposes roughly 250 methods.
+surface, which exposes 299 methods in the SDK and 338 paths in the schema.
 
 ## Wire protocol
 
@@ -70,16 +79,32 @@ engineer:
 | `copilot-sdk/*.d.ts`, `copilot-sdk/docs/` | Typed SDK surface and prose docs. |
 | `copilot-sdk/index.js` | The reference client. `grep 'sendRequest("'` yields the full method list. |
 
-**`api.schema.json` is not complete, and the gap is load-bearing.** Its session section
-is missing `session.create`, `session.setForeground` and `session.getForeground` — all
-three work against a live server. A client generated purely from the schema could not
-create a session at all. Treat `copilot-sdk/index.js` as authoritative for what a real
-client sends.
+**`api.schema.json` is not complete.** Its session section is missing `session.create`,
+`session.setForeground` and `session.getForeground`, all three of which work against a
+live server. Treat `copilot-sdk/index.js` as authoritative for what a real client sends.
 
-The schema *does* document `sessions.open`, which is the trap: against a session the
-server does not have, `sessions.open` returns `{"status": "not_found"}` as a **successful
-result**, with no JSON-RPC error. Nothing signals that the open did not take, so the
-failure only surfaces later as `Session not found` on every subsequent `session.*` call.
+### The `sessions.open` trap
+
+The schema does document `sessions.open`, and this is where an implementer will lose
+time, because **`sessions.open` looks like it works and then does not**:
+
+- `sessions.open {kind: "create"}` genuinely succeeds — it returns
+  `{"status": "created", "sessionId": ...}` and creates a session-state directory on
+  disk. But **that session is not in the RPC session registry**: every `session.*` call
+  against it fails with `Session not found`, and `setForeground` returns
+  `{"success": false}`. The danger is not a missing create path; it is a create path
+  that exists and produces a session you cannot drive.
+- `sessions.open {kind: "attach"}` against the pane's own **startup** session returns
+  `{"status": "resumed"}` — and the session is *still* undrivable. So attach is not a
+  rescue path either, which is the first thing most implementers try.
+- Against a session the server does not have, `sessions.open` reports
+  `{"status": "not_found"}` as a **successful result** rather than a JSON-RPC error.
+  This is documented behaviour (`SessionsOpenStatus`, and `SessionsOpenAttach` says so
+  explicitly) — but a caller that only checks for transport errors will sail past it and
+  see the failure much later as `Session not found`.
+
+Use `session.create`. It is absent from the schema and it is the only path that yields a
+drivable session.
 
 ## Session bootstrap
 
@@ -122,7 +147,8 @@ Verified in both directions:
   `assistant.idle`, `session.idle`, `session.usage_checkpoint`, plus
   `session.lifecycle` events (`session.created`, `session.foreground`,
   `session.background`).
-- `session.name.set` changes the title live in the TUI.
+- `session.name.set` changes the **terminal title** (OSC escape, visible as tmux's
+  `pane_title`) — not in-pane text. Anything scraping pane contents will not see it.
 
 **Multiple simultaneous clients are supported.** With four sockets held open at once,
 all four completed `connect`, all four received the *same* event stream for a single
@@ -143,6 +169,7 @@ delivers as tmux keystrokes:
 | `/model` | `session.model.switchTo`, `session.model.setReasoningEffort` |
 | `/exit` | `session.shutdown`, `sessions.close` |
 | mode switch | `session.mode.set` |
+| any other `/` command | `session.commands.*` (list, invoke, enqueue, execute) |
 
 With no keystroke equivalent at all: `session.queue.*` (inspect, reorder, clear the
 pending queue), `session.plan.*`, `session.tasks.*`, `session.permissions.*`,
@@ -152,17 +179,24 @@ Structured state that removes the need to scrape the pane:
 
 - `session.usage.getMetrics` — per-model input, output, cache-read, cache-write and
   reasoning token counts, AIU cost, request counts, and code-change stats.
-- `session.metadata.contextInfo` — `totalTokens`, `limit`, compaction threshold, split
-  into system, tool-definition, MCP, custom-instruction and conversation tokens.
+- `session.metadata.contextInfo` — exactly `modelName`, `systemTokens`,
+  `conversationTokens`, `toolDefinitionsTokens`, `mcpToolsTokens`, `totalTokens`,
+  `promptTokenLimit`, `compactionThreshold`, `limit`, `bufferTokens`
+  (`additionalProperties: false`).
 
-Two shapes worth knowing before you consume either, because both fail quietly:
+Four traps, all of which fail quietly rather than loudly:
 
 - `modelMetrics` entries are **nested**, not flat:
   `{requests: {count, cost}, usage: {inputTokens, outputTokens, cacheReadTokens,
   cacheWriteTokens, reasoningTokens}, totalNanoAiu, tokenDetails}`. A flattened struct
   still decodes without error and reports zero for everything.
 - `session.metadata.contextInfo` returns `{contextInfo: null}` until the first turn
-  completes. That is a normal state, not an error.
+  completes. Normal state, not an error.
+- **`mcpToolsTokens` is a documented subset of `toolDefinitionsTokens`.** Adding the
+  breakdown fields together double-counts it.
+- **`contextInfo.modelName` is not the model that ran the turn.** Observed reporting
+  `claude-sonnet-4.5` for a turn that actually ran on `gpt-5-mini`. Read the model from
+  `session.usage.getMetrics` instead.
 
 ## Requires a real terminal
 
@@ -187,10 +221,10 @@ step down from what the OpenCode integration provides.
   passive observer: it can read the whole conversation stream and issue commands
   against every session on that server.
 
-A unix socket is not an option. `startTcpListener` is the only listener; the SDK offers
-stdio, TCP, URI and in-process transports and nothing else; `--stdio` is explicitly
-rejected in combination with `--ui-server`; and the `socketPath` references in the
-bundle belong to the IDE-MCP *client*, not the server.
+A unix socket is not an option. `startTcpListener` is the only listener; the SDK's
+transports are stdio, TCP, URI, in-process and child-process — none of them a socket
+path; `--stdio` is explicitly rejected in combination with `--ui-server`; and all eight
+`socketPath` references in the bundle belong to the IDE-MCP *client*, not the server.
 
 For contrast, the OpenCode integration mints a per-runtime 256-bit password
 (`randomOpenCodePassword`), sends it as HTTP Basic on every request, binds
@@ -204,14 +238,19 @@ trusted.
 
 ## Port discovery
 
-Omitting `--port` binds an OS-assigned port. That port is **not published anywhere
-machine-readable**: the only record is an `Embedded server started on port <N>` line in
-the log directory. Copilot does have an attach-discovery registry, but only
+Omitting `--port` binds an OS-assigned port, on `127.0.0.1` by default. That port is
+**not published anywhere machine-readable**: the records are an
+`Embedded server started on port <N>` log line (INFO), a
+`CLI server listening on port <N>` line logged at ERROR level, and the number printed
+in-pane by the TUI itself. Copilot does have an attach-discovery registry, but only
 `--managed-server` publishes to it.
 
-For a multi-agent host this needs an explicit mechanism — either tclaude assigns the
-port, or it reads the chosen port back from a per-agent `--log-dir`, or it inspects the
-pane process's listening sockets.
+For a multi-agent host this needs an explicit mechanism. tclaude's decision is that
+**agentd assigns the port** rather than discovering it — the consumer then holds the
+number before the process exists, which no discovery option can offer. Because
+`--ui-server` has no authentication, the launched process must be positively observed to
+own the listening socket before the first RPC; that ownership check is the only thing
+distinguishing our agent from whatever else won the bind race.
 
 ## Stability risk
 
@@ -219,3 +258,10 @@ pane process's listening sockets.
 suggests it is intended rather than accidental, but it is absent from the public
 documentation and could change without notice. Every finding here is against **1.0.78**
 specifically.
+
+One ambiguous signal worth tracking: the attach-discovery registry type still carries a
+`"ui-server"` kind, commented as "legacy/normal CLI process", and the attach picker
+still consumes it — even though `--ui-server` does not publish to the registry today.
+That reads like a capability that was removed, or one that is being reintroduced, rather
+than one that never existed. Either way it is a reason to re-check this mode on each
+Copilot CLI upgrade rather than assuming it is stable.
