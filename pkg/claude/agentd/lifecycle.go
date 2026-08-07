@@ -161,8 +161,26 @@ type stopWaitPolicy struct {
 	deadline time.Duration
 }
 
-// stopNoWait is the historical fire-and-forget contract: deliver the exit,
-// arm the out-of-band escalation, return.
+// stopNoWait is the fire-and-forget contract: deliver the exit, arm the
+// out-of-band escalation (scheduleSoftExitEscalation), return. The pane still
+// dies — the same ladder runs, just in the background — the caller simply does
+// not learn when.
+//
+// It is correct ONLY where "stopped" is the entire request and nothing
+// downstream depends on the process being gone. That is exactly three callers
+// today, and the list should stay short:
+//
+//   - POST /v1/agent/{selector}/stop      — the CLI's `tclaude agent stop`
+//   - POST /api/agents/{id}/stop          — the dashboard's per-agent stop button
+//   - the non-force agent delete, which deliberately refuses with 409 and asks
+//     the caller to retry rather than waiting out the escalation window
+//
+// The first two would otherwise hold a human's request for the length of the
+// escalation window to report something the human can already see in the pane.
+// Anything that goes on to touch what the agent holds — a retire deleting its
+// directories or worktree, a delete unlinking its .jsonl, a restart relaunching
+// into the same identity, a bulk op reporting what it achieved — must use
+// stopWaitForExit / stopOneConvAndWait instead.
 var stopNoWait = stopWaitPolicy{}
 
 // stopWaitForExit blocks the stop until the pane process is gone or the kill
@@ -2450,7 +2468,17 @@ func handleAgentDelete(w http.ResponseWriter, r *http.Request, targetConv string
 		return
 	}
 	force := r.URL.Query().Get("force") == "1"
-	stopRes := stopOneConv(targetConv, force)
+	// ?force=1 goes on to purge immediately, so it must WAIT for the pane
+	// process to actually be gone — the teardown below unlinks the .jsonl and
+	// every row the agent might still be writing to. The non-force path
+	// deliberately does NOT wait: its contract is to refuse (409) and let the
+	// caller retry, so blocking it for the escalation window would buy nothing.
+	var stopRes memberOpResult
+	if force {
+		stopRes, _ = stopOneConvAndWait(targetConv, force, db.AgentExitActionForceStop, auditRequestEventID(r), 0)
+	} else {
+		stopRes = stopOneConv(targetConv, force)
+	}
 	if stopRes.Action == "error" {
 		writeError(w, http.StatusInternalServerError, "stop", stopRes.Detail)
 		return

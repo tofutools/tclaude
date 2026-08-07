@@ -500,11 +500,16 @@ func handleDashboardAgentsAPI(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Dashboard deletes always force-kill any alive tmux session for
-	// this conv — the "delete forever" button is unambiguous human
-	// intent. Without this, the conv resurrects in handlePeers via
-	// the still-alive sessions row.
-	stopOneConv(convID, true /* force */)
+	// Stop any alive tmux session for this conv, and WAIT for the process to
+	// be gone. Without a stop the conv resurrects in handlePeers via the
+	// still-alive sessions row; without the wait, everything below — the
+	// agent-directory removal, the .jsonl unlink, the row purge — runs
+	// against a process that may still be writing. The stop goes soft-first
+	// through the shared ladder ("delete forever" is unambiguous human
+	// intent, but a harness still gets its exit command and the double-tap
+	// re-injections before kill-pane / SIGTERM / SIGKILL), which for the
+	// usual case — deleting an already-offline conv — returns immediately.
+	stopOneConvAndWait(convID, false /* soft exit first */, db.AgentExitActionForceStop, auditRequestEventID(r), 0)
 
 	// Single source of truth for the comprehensive cleanup: filesystem
 	// + DB union purge across every conv-id-referencing table +
@@ -589,9 +594,10 @@ func handleDashboardAgentGenerationDelete(w http.ResponseWriter, r *http.Request
 	}
 
 	// A predecessor is offline by construction (a /clear shares the head's
-	// process; a reincarnate soft-exits the original), but force-kill any
-	// lingering pane before teardown — same discipline as the agent delete.
-	stopOneConv(convID, true /* force */)
+	// process; a reincarnate soft-exits the original), but stop and wait out
+	// any lingering pane before teardown — same discipline as the agent
+	// delete, so the row + .jsonl purge below cannot race a live process.
+	stopOneConvAndWait(convID, false /* soft exit first */, db.AgentExitActionForceStop, auditRequestEventID(r), 0)
 
 	// Exact, single-generation teardown: rows + .jsonl for THIS conv only.
 	// db.DeleteAgentByConvID takes the predecessor-unlink branch (this is not
