@@ -135,6 +135,12 @@ func TestPreLaunchTerminatesBlocksWithoutTrailingNewlines(t *testing.T) {
 // every other XDG-aware tool in the agent (gh, git, codex, claude).
 func TestPreLaunchSupportsTheWrapperOnPathPattern(t *testing.T) {
 	dir := t.TempDir()
+	// Pin the agent's own XDG_CONFIG_HOME rather than assuming the host leaves
+	// it unset: asserting it stays *empty* passes only on a machine that never
+	// set it, and the property under test is that the wrapper does not disturb
+	// whatever the agent already had.
+	const ambientConfigHome = "/agent-own/config"
+	t.Setenv("XDG_CONFIG_HOME", ambientConfigHome)
 	rendered, err := renderPreLaunchScript([]sandboxpolicy.PreLaunchBlock{{
 		Name: "playwright",
 		Script: "pw_home=" + dir + "/pw\n" +
@@ -154,7 +160,7 @@ func TestPreLaunchSupportsTheWrapperOnPathPattern(t *testing.T) {
 	out, code := runRenderedPreLaunch(t, rendered,
 		`printf 'ambient=[%s]\n' "$XDG_CONFIG_HOME"; wrapped`)
 	require.Equal(t, 0, code, out)
-	assert.Contains(t, out, "ambient=[]",
+	assert.Contains(t, out, "ambient=["+ambientConfigHome+"]",
 		"the agent's own XDG_CONFIG_HOME must be untouched; only the wrapped tool is scoped")
 	assert.Contains(t, out, "config="+filepath.Join(dir, "pw", "bin", "wrapped.d"))
 

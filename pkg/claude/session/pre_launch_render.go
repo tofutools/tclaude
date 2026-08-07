@@ -72,7 +72,7 @@ func renderPreLaunchScript(
 	var out strings.Builder
 	out.WriteString("tclaude_pre_launch_failed() { ")
 	out.WriteString("echo \"tclaude: pre-launch block '$1' failed; refusing harness launch\" >&2; ")
-	out.WriteString(fmt.Sprintf("exit %d; }; ", preLaunchFailExitCode))
+	fmt.Fprintf(&out, "exit %d; }; ", preLaunchFailExitCode)
 	// A block's `exports` is a promise that it defines those names. Checking it
 	// here is what makes the declaration load-bearing rather than decorative:
 	// the failure it catches — a block that ran fine but left the variable
@@ -83,7 +83,7 @@ func renderPreLaunchScript(
 	out.WriteString("tclaude_pre_launch_require() { local n; for n in \"$@\"; do ")
 	out.WriteString("if [ -z \"${!n+x}\" ]; then ")
 	out.WriteString("echo \"tclaude: pre-launch block '$tclaude_pre_launch_block' declares export '$n' but did not set it\" >&2; ")
-	out.WriteString(fmt.Sprintf("exit %d; fi; done; }; ", preLaunchFailExitCode))
+	fmt.Fprintf(&out, "exit %d; fi; done; }; ", preLaunchFailExitCode)
 	// -E, not just -e. Without errtrace the ERR trap is NOT inherited by shell
 	// functions, command substitutions or subshells, so the overwhelmingly
 	// ordinary `helper() { … }; helper` shape would abort with a bare exit 1 and
