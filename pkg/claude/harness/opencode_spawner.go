@@ -25,7 +25,7 @@ func (openCodeSpawner) BuildCommand(spec SpawnSpec) string {
 		binary = clcommon.ShellQuoteArg(spec.ExecutablePath)
 	}
 	attachURL := spec.ServerURL
-	cmdPrefix := spec.EnvExports
+	cmdPrefix := spec.EnvExports + spec.PreLaunchScript
 	if spec.OpenCodeTransport == db.OpenCodeTransportUnixRelay {
 		cmdPrefix += clcommon.DetectAbsoluteCmd(
 			opencodeapi.UnixAttachShimMode,

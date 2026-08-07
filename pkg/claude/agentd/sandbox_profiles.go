@@ -106,6 +106,7 @@ type sandboxProfileJSON struct {
 	UnixSockets             *sandboxpolicy.UnixSocketRules     `json:"unix_sockets,omitempty"`
 	ResourceLimits          sandboxpolicy.ResourceLimits       `json:"resource_limits,omitempty"`
 	DarwinAllowMachRegister bool                               `json:"darwin_allow_mach_register,omitempty"`
+	PreLaunch               []sandboxpolicy.PreLaunchBlock     `json:"pre_launch,omitempty"`
 	Includes                []string                           `json:"includes,omitempty"`
 	CreatedAt               string                             `json:"created_at,omitempty"`
 	UpdatedAt               string                             `json:"updated_at,omitempty"`
@@ -151,7 +152,8 @@ func sandboxProfileToJSON(p *db.SandboxProfile, localFields bool) sandboxProfile
 		Environment:         p.Environment, AgentDirectories: p.AgentDirectories,
 		NetworkAccess: sandboxpolicy.LegacyNetworkAccessForExport(p.Network, p.NetworkAccess),
 		Network:       p.Network, UnixSockets: p.UnixSockets, ResourceLimits: p.ResourceLimits,
-		DarwinAllowMachRegister: p.DarwinAllowMachRegister, Includes: p.Includes,
+		DarwinAllowMachRegister: p.DarwinAllowMachRegister, PreLaunch: p.PreLaunch,
+		Includes: p.Includes,
 	}
 	if localFields {
 		out.ID = p.ID
@@ -171,7 +173,8 @@ func buildSandboxProfile(body sandboxProfileJSON) (*db.SandboxProfile, []string,
 		FilesystemSpellings: body.FilesystemSpellings,
 		Environment:         body.Environment, AgentDirectories: body.AgentDirectories, NetworkAccess: body.NetworkAccess,
 		Network: body.Network, UnixSockets: body.UnixSockets, ResourceLimits: body.ResourceLimits,
-		DarwinAllowMachRegister: body.DarwinAllowMachRegister, Includes: body.Includes,
+		DarwinAllowMachRegister: body.DarwinAllowMachRegister, PreLaunch: body.PreLaunch,
+		Includes: body.Includes,
 	}
 	var normalized sandboxpolicy.Profile
 	var missing []string
@@ -190,7 +193,8 @@ func buildSandboxProfile(body sandboxProfileJSON) (*db.SandboxProfile, []string,
 		Environment:         normalized.Environment, AgentDirectories: normalized.AgentDirectories,
 		NetworkAccess: normalized.NetworkAccess, Network: normalized.Network,
 		UnixSockets: normalized.UnixSockets, ResourceLimits: normalized.ResourceLimits,
-		DarwinAllowMachRegister: normalized.DarwinAllowMachRegister, Includes: normalized.Includes,
+		DarwinAllowMachRegister: normalized.DarwinAllowMachRegister, PreLaunch: normalized.PreLaunch,
+		Includes: normalized.Includes,
 	}, missing, nil
 }
 
@@ -200,7 +204,8 @@ func buildSandboxProfileForImport(body sandboxProfileJSON) (*db.SandboxProfile, 
 		FilesystemSpellings: body.FilesystemSpellings,
 		Environment:         body.Environment, AgentDirectories: body.AgentDirectories, NetworkAccess: body.NetworkAccess,
 		Network: body.Network, UnixSockets: body.UnixSockets, ResourceLimits: body.ResourceLimits,
-		DarwinAllowMachRegister: body.DarwinAllowMachRegister, Includes: body.Includes,
+		DarwinAllowMachRegister: body.DarwinAllowMachRegister, PreLaunch: body.PreLaunch,
+		Includes: body.Includes,
 	})
 	if err != nil {
 		return nil, nil, err
@@ -211,7 +216,8 @@ func buildSandboxProfileForImport(body sandboxProfileJSON) (*db.SandboxProfile, 
 		Environment:         normalized.Environment, AgentDirectories: normalized.AgentDirectories,
 		NetworkAccess: normalized.NetworkAccess, Network: normalized.Network,
 		UnixSockets: normalized.UnixSockets, ResourceLimits: normalized.ResourceLimits,
-		DarwinAllowMachRegister: normalized.DarwinAllowMachRegister, Includes: normalized.Includes,
+		DarwinAllowMachRegister: normalized.DarwinAllowMachRegister, PreLaunch: normalized.PreLaunch,
+		Includes: normalized.Includes,
 	}, missing, nil
 }
 

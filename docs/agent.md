@@ -896,6 +896,71 @@ agent recreates the declared directories empty at their frozen paths. A name
 cannot also have a literal `environment` value, and the normal reserved-variable
 rules apply.
 
+`pre_launch` is an ordered array of named shell blocks run **inside the
+sandbox**, after the profile's `environment` is exported and before the harness
+binary starts:
+
+```json
+"pre_launch": [
+  {
+    "name": "playwright",
+    "script": "pw=/tmp/pw-$$\nmkdir -p \"$pw\"/{config,cache,data}\nexport PLAYWRIGHT_MCP_BROWSER=chrome\n",
+    "exports": ["PLAYWRIGHT_MCP_BROWSER"]
+  }
+]
+```
+
+Use it for setup the declarative fields cannot express: a value that must be
+computed per launch, a directory layout a tool insists on, a wrapper dropped
+earlier on `PATH`. Prefer `environment` for a fixed value and
+`agent_directories` for a private writable directory — those can be inspected,
+composed and disclosed, while a script can only be run.
+
+The blocks are **bash**, and they run in the launching shell itself so the
+environment they set reaches the harness. `set -e` is in force with a trap that
+names the failing block: a block that fails aborts the launch rather than
+starting a half-configured agent. Both are unwound before the harness command,
+so nothing leaks into its own shell semantics. A host with no bash refuses to
+launch a profile carrying blocks rather than running them under `/bin/sh`.
+
+`exports` is optional. It declares the names a block promises to define, and
+the launch checks that promise: a block that finishes without setting one of
+them stops the launch and names both the block and the variable. That catches
+the quiet failure — the block ran fine, but a path moved or a branch was not
+taken, so the tool starts misconfigured and the blame lands on the tool. A name
+set to an empty string counts as defined; only *undefined* fails.
+
+You do not need `exports` to make values reach a tool. A block runs in the
+launching shell, so what it exports is in the harness process's environment, and
+all four harnesses pass that down to the commands they run — including Codex,
+whose `shell_environment_policy` defaults to `inherit = "all"`. The one case
+that still gets dropped is an operator `~/.codex/config.toml` that narrows
+`inherit` or excludes the name; restoring it there needs the value at
+command-build time, which a block-computed value does not have, so that is
+tracked separately rather than solved here.
+
+Unlike `environment`, these names are not checked against the reserved list —
+reaching `XDG_CONFIG_HOME` or `PATH` is much of the point.
+
+> Do **not** export `XDG_CONFIG_HOME` / `XDG_CACHE_HOME` / `XDG_DATA_HOME`
+> globally into the agent's environment. Every other XDG-aware tool in the
+> agent — `gh`, `git`, `codex`, `claude` — then loses its normal configuration.
+> Put a small wrapper earlier on `PATH` instead, scoping those variables to the
+> one tool that needs them before exec'ing the real binary.
+
+Composition follows the other fields: included profiles' blocks run first in
+include order, then the profile's own; a same-named block from a later tier
+replaces the earlier one **in place**, keeping its position, because these are
+sequential statements. Blocks are frozen into the launch snapshot, so resume and
+reincarnate replay the same setup. They take no part in lineage containment: a
+block runs after the sandbox is established, with authority the launch has
+already checked, so it is setup rather than authority itself. Note that "inside
+the sandbox" is only as strong as the sandbox in force — under a harness-native
+sandbox, or with no sandbox at all, the pane is unconfined and so is the block.
+
+Blocks are shell for a tmux pane, so they do not apply to `tclaude ask`, which
+execs an argv with no shell at all.
+
 By default the shared parent root is granted once, so the agent can create,
 rewrite, and delete its own env-var'd directories. Setting
 `features.agent_dirs_mount_parent` to `false` (in the config file or dashboard
@@ -939,7 +1004,8 @@ tclaude agent sandbox-profiles draft --token <dashboard-token> --file profile.js
 ```
 
 `show --json` emits the same profile shape accepted by `create` and `edit`,
-including `filesystem`, `environment`, and `agent_directories` arrays.
+including `filesystem`, `environment`, `agent_directories`, and `pre_launch`
+arrays.
 The names `export` and `import` are reserved for the portable-transfer routes
 and are rejected case-insensitively at create, rename, and import boundaries.
 Export bundles are portable and versioned. Assignment export is opt-in, and an

@@ -70,6 +70,10 @@ type EffectiveProfile struct {
 	UnixSockets             *UnixSocketRules     `json:"unix_sockets,omitempty"`
 	ResourceLimits          ResourceLimits       `json:"resource_limits,omitempty"`
 	DarwinAllowMachRegister bool                 `json:"darwin_allow_mach_register,omitempty"`
+	// PreLaunch is composed across scopes in tier order (global, group,
+	// explicit): a later tier replaces a same-named block in place and appends
+	// new ones. Order is execution order, so it is never sorted.
+	PreLaunch []PreLaunchBlock `json:"pre_launch,omitempty"`
 	AccessNotices           []AccessNotice       `json:"access_notices,omitempty"`
 	Provenance              ResolutionProvenance `json:"provenance"`
 }
@@ -122,6 +126,7 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 	hasNewNetwork := false
 	hasNewUnixSockets := false
 	networkListContributors := []string{}
+	preLaunch := []PreLaunchBlock{}
 	engineSelections := []NetworkEngineSelection{}
 	socketListContributors := []string{}
 	observableFilesystemSpellings := []observableFilesystemSpelling{}
@@ -183,6 +188,7 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 		}
 		source := ProfileSource{Scope: tier.scope, Profile: normalized.Name}
 		result.Provenance.Applied = append(result.Provenance.Applied, source)
+		preLaunch = mergePreLaunch(preLaunch, normalized.PreLaunch)
 		for _, grant := range normalized.Filesystem {
 			guest := grant.GuestPath()
 			current, exists := filesystem[guest]
@@ -437,6 +443,9 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 	if unixSocketRules.Mode == AccessModeList && len(unixSocketRules.Allow) == 0 {
 		result.AccessNotices = append(result.AccessNotices,
 			compositionNotice("unix_sockets", socketListContributors))
+	}
+	if len(preLaunch) > 0 {
+		result.PreLaunch = preLaunch
 	}
 	return result, nil
 }
