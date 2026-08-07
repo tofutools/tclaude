@@ -192,6 +192,20 @@ type SpawnSpec struct {
 	// row materialises (JOH-256), so the toggle's direction logic + the
 	// dashboard indicator start from the armed state.
 	RemoteControl bool
+	// CopilotAPIPort is the loopback TCP port an API-backed Copilot pane must
+	// bind for its embedded JSON-RPC server, realised as
+	// `copilot --ui-server --host 127.0.0.1 --port <n>`.
+	//
+	// Zero omits the whole embedded-server spelling, which is what every
+	// send-keys Copilot launch and every other harness passes. The port is
+	// chosen upstream — by agentd, or by `session new` for a launch no daemon
+	// started — never here: the whole point is that the number is known before
+	// the process exists. See TCL-1054.
+	//
+	// Harnesses with no embedded server ignore it. Copilot's descriptor is the
+	// only adapter that renders it, and the resolvers refuse an explicit value
+	// for any other harness long before a spec reaches a Spawner.
+	CopilotAPIPort int
 	// InitialPrompt is an optional first-turn prompt the harness submits
 	// ITSELF at launch (the harness's own positional [PROMPT] arg) — not a
 	// tclaude send-keys injection. It exists for a harness whose conv-id is

@@ -323,6 +323,7 @@ func (r *sessionReaper) tick(now time.Time) (reaped int) {
 						"session", st.ID, "error", err)
 				}
 			}
+			releaseCopilotAPIPortForExit(st.Harness, st.ConvID)
 			// SessionEnd may win the status race before pane-died records its richer
 			// structural evidence. Enrich the launch-scoped audit event before
 			// removing the retained pane, preserving evidence for bounded retries
@@ -456,6 +457,7 @@ func (r *sessionReaper) tick(now time.Time) (reaped int) {
 					"session", st.ID, "error", err)
 			}
 		}
+		releaseCopilotAPIPortForExit(st.Harness, st.ConvID)
 		cause := db.AgentExitCauseDisappeared
 		var exitCode *int
 		signal := ""

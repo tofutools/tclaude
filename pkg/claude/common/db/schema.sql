@@ -1236,3 +1236,11 @@ CREATE TABLE copilot_usage_snapshots (
 CREATE INDEX idx_copilot_usage_snapshots_conv
 			ON copilot_usage_snapshots(conv_id);
 
+CREATE TABLE copilot_api_runtimes (
+			conv_id TEXT PRIMARY KEY,
+			port INTEGER NOT NULL CHECK (port > 0 AND port <= 65535),
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
+		) STRICT
+	;
+

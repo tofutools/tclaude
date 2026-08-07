@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"strconv"
 	"strings"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
@@ -118,6 +119,30 @@ func (copilotSpawner) BuildCommand(spec SpawnSpec) string {
 		// the shared low/medium/high/xhigh/max levels) passes straight through
 		// with no per-model remapping of the kind Codex needs.
 		cmd += " --effort=" + clcommon.ShellQuoteArg(spec.Effort)
+	}
+	if spec.CopilotAPIPort > 0 {
+		// TUI+server mode: one process runs the interactive TUI *and* listens on
+		// a TCP port speaking Content-Length-framed JSON-RPC 2.0. That single
+		// process shape is why tclaude's existing "harness process under the
+		// pane" liveness anchoring keeps working unchanged.
+		//
+		// `--host 127.0.0.1` is pinned rather than left to Copilot's default.
+		// This endpoint has NO authentication of any kind (TCL-1055) — a client
+		// that sends `connect` with no token is accepted even with
+		// COPILOT_CONNECTION_TOKEN exported — so the loopback bind is the only
+		// thing keeping it off the network, and it is far too important to
+		// inherit from an undocumented default that a Copilot release could
+		// change without notice. Pinning it also keeps ONE address in play:
+		// tclaude reserves 127.0.0.1:<n>, the pane binds 127.0.0.1:<n>, and the
+		// ownership proof reads the 127.0.0.1:<n> listener. A wildcard bind would
+		// break the third even while the first two worked.
+		//
+		// Never combined with --acp. The two are NOT mutually exclusive and that
+		// is worse than if they were: `--acp --ui-server` is accepted, ACP wins
+		// silently, no TUI mounts, and the port still listens. --acp is refused
+		// as a pass-through arg, so the combination cannot be reached from here.
+		cmd += " --ui-server --host 127.0.0.1 --port " +
+			clcommon.ShellQuoteArg(strconv.Itoa(spec.CopilotAPIPort))
 	}
 	// The resolved approval policy, expanded into Copilot's several permission
 	// flags plus one `--add-dir` per profile-granted directory. A single

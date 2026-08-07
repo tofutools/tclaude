@@ -240,9 +240,19 @@ type NewParams struct {
 	ContextWindowMax int64 `long:"context-window-max" optional:"true" help:"Configured Copilot context cap in tokens for the context meter. Unset uses the observed model's static assumption. Copilot only; not a harness-reported value"`
 
 	// CopilotAPI selects the API-backed Copilot mode. Recorded as launch intent
-	// here; the runtime that acts on it is separate work (TCL-1054/1056), so
-	// today this flag only decides which mode the conversation is pinned to.
+	// here; the runtime that acts on it is separate work (TCL-1056), so today
+	// this flag decides which mode the conversation is pinned to and, with
+	// CopilotAPIPort, makes the pane bind the embedded server.
 	CopilotAPI bool `long:"copilot-api" help:"EXPERIMENTAL: drive this Copilot agent over its embedded JSON-RPC API instead of tmux send-keys. Off by default. Copilot only"`
+
+	// CopilotAPIPort is the loopback port the embedded JSON-RPC server binds.
+	//
+	// Normally supplied by agentd, which allocates it so the consumer holds the
+	// number before the process exists (TCL-1054). Unset on a direct
+	// `session new --copilot-api` allocates one here instead, so a launch driven
+	// from a terminal still gets a working pane; nothing in agentd is waiting on
+	// that number, because nothing in agentd started that launch.
+	CopilotAPIPort int `long:"copilot-api-port" optional:"true" help:"Loopback port for the API-backed Copilot agent's embedded JSON-RPC server. Normally chosen by tclaude agentd; unset allocates a free port. Requires --copilot-api"`
 
 	// --join-group makes the new session auto-join an existing agent group
 	// the moment its conv-id materialises. Routed through the daemon's
@@ -873,6 +883,11 @@ func runNew(params *NewParams) error {
 		return err
 	}
 	params.CopilotAPI = copilotAPI
+	copilotAPIPort, err := ResolveCopilotAPIPort(copilotAPI, params.CopilotAPIPort)
+	if err != nil {
+		return err
+	}
+	params.CopilotAPIPort = copilotAPIPort
 
 	if params.JoinGroup != "" {
 		if JoinGroupHandler == nil {
@@ -1855,6 +1870,7 @@ func runNew(params *NewParams) error {
 		ApprovalPolicy:              approvalPolicy,
 		AutoReview:                  autoReview,
 		RemoteControl:               remoteControl,
+		CopilotAPIPort:              params.CopilotAPIPort,
 		InitialPrompt:               params.InitialPrompt,
 	}
 	if stacked {
