@@ -25,25 +25,41 @@ import (
 // scopes XDG to Playwright alone, rather than exporting XDG_CONFIG_HOME into
 // the agent and breaking gh, git, codex and claude along with it.
 const playwrightReferenceScript = `pw="$TCLAUDE_PW_HOME"
-real="$(command -v playwright-cli || true)"
+# Resolve the real binary with our own wrapper directory removed from PATH.
+# Blocks re-run on every launch including resume, so by the second launch the
+# wrapper may already be first on PATH; a plain lookup would find the wrapper
+# and wrap it in itself, an exec loop that hangs with no output. Excluding the
+# directory makes a re-run idempotent instead of fatal.
+pw_search=""
+IFS=: read -ra pw_parts <<< "$PATH"
+for pw_entry in "${pw_parts[@]}"; do
+  [ "$pw_entry" = "$pw/bin" ] && continue
+  pw_search="${pw_search:+$pw_search:}$pw_entry"
+done
+real="$(PATH="$pw_search" command -v playwright-cli || true)"
 if [ -z "$real" ]; then
   echo "playwright-cli is not installed on this host" >&2
   false  # abort the launch; tclaude names this block in the failure
 fi
-if [ "$real" = "$pw/bin/playwright-cli" ]; then
-  echo "playwright-cli already resolves to the wrapper; refusing to wrap it again" >&2
-  false
-fi
+export TCLAUDE_PW_REAL="$real"
 mkdir -p "$pw"/{config,cache,data,bin}
-cat > "$pw/bin/playwright-cli" <<WRAPPER
+# A QUOTED heredoc: nothing is interpolated at write time, so a directory
+# containing $, backtick, backslash or quote cannot corrupt the wrapper. The
+# wrapper reads both values from its environment at run time instead.
+cat > "$pw/bin/playwright-cli" <<'WRAPPER'
 #!/bin/bash
-XDG_CONFIG_HOME="$pw/config" \
-XDG_CACHE_HOME="$pw/cache" \
-XDG_DATA_HOME="$pw/data" \
-exec "$real" "\$@"
+XDG_CONFIG_HOME="$TCLAUDE_PW_HOME/config" \
+XDG_CACHE_HOME="$TCLAUDE_PW_HOME/cache" \
+XDG_DATA_HOME="$TCLAUDE_PW_HOME/data" \
+exec "$TCLAUDE_PW_REAL" "$@"
 WRAPPER
 chmod +x "$pw/bin/playwright-cli"
 export PATH="$pw/bin:$PATH"
+export PLAYWRIGHT_CLI_WRAPPER_DIR="$pw/bin"
+# Playwright's downloaded browser bundles live under $XDG_CACHE_HOME, which we
+# just made per-agent — so without this every agent would see an empty browser
+# registry and re-download hundreds of MB. Keep the registry shared.
+export PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-$HOME/.cache/ms-playwright}"
 export PLAYWRIGHT_CLI_SESSION="$(basename "$pw")"
 export PLAYWRIGHT_MCP_BROWSER=chrome
 export PLAYWRIGHT_MCP_SANDBOX=false
@@ -54,7 +70,10 @@ func playwrightReferenceBlock() sandboxpolicy.PreLaunchBlock {
 		Name:   "playwright-cli",
 		Script: playwrightReferenceScript,
 		Exports: []string{
-			"PATH", "PLAYWRIGHT_CLI_SESSION",
+			// Not PATH: it is always set, so the set-ness check would pass even
+			// if the block never touched it. The wrapper-dir sentinel is set on
+			// the same line of reasoning and is genuinely absent on failure.
+			"PLAYWRIGHT_CLI_WRAPPER_DIR", "PLAYWRIGHT_CLI_SESSION",
 			"PLAYWRIGHT_MCP_BROWSER", "PLAYWRIGHT_MCP_SANDBOX",
 		},
 	}
@@ -63,7 +82,7 @@ func playwrightReferenceBlock() sandboxpolicy.PreLaunchBlock {
 // renderReference runs the reference block with a stub playwright-cli on PATH,
 // so the block's own logic is exercised on any host — the real binary is only
 // needed by the opt-in smoke test below.
-func renderReference(t *testing.T, agentDir string) (string, int) {
+func renderReference(t *testing.T, agentDir string) string {
 	t.Helper()
 	stub := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(stub, "playwright-cli"),
@@ -74,7 +93,7 @@ func renderReference(t *testing.T, agentDir string) (string, int) {
 	rendered, err := renderPreLaunchScript(
 		[]sandboxpolicy.PreLaunchBlock{playwrightReferenceBlock()}, true, "/bin/bash")
 	require.NoError(t, err)
-	return rendered, 0
+	return rendered
 }
 
 // The whole point of the wrapper: Playwright gets private XDG directories while
@@ -83,7 +102,7 @@ func renderReference(t *testing.T, agentDir string) (string, int) {
 func TestPlaywrightReferenceScopesXDGToPlaywrightAlone(t *testing.T) {
 	agentDir := filepath.Join(t.TempDir(), "pw-home")
 	require.NoError(t, os.MkdirAll(agentDir, 0o755))
-	rendered, _ := renderReference(t, agentDir)
+	rendered := renderReference(t, agentDir)
 	t.Setenv("XDG_CONFIG_HOME", "/agent-own/config")
 
 	out, code := runRenderedPreLaunch(t, rendered,
@@ -101,7 +120,7 @@ func TestPlaywrightReferenceScopesXDGToPlaywrightAlone(t *testing.T) {
 func TestPlaywrightReferenceSetsTheDocumentedEnvironment(t *testing.T) {
 	agentDir := filepath.Join(t.TempDir(), "spwn-abc123")
 	require.NoError(t, os.MkdirAll(agentDir, 0o755))
-	rendered, _ := renderReference(t, agentDir)
+	rendered := renderReference(t, agentDir)
 
 	out, code := runRenderedPreLaunch(t, rendered,
 		`printf 'session=%s browser=%s sandbox=%s\n' \
@@ -118,7 +137,7 @@ func TestPlaywrightReferenceGivesEachAgentItsOwnSession(t *testing.T) {
 	for _, agent := range []string{"spwn-aaa111", "spwn-bbb222"} {
 		dir := filepath.Join(t.TempDir(), agent)
 		require.NoError(t, os.MkdirAll(dir, 0o755))
-		rendered, _ := renderReference(t, dir)
+		rendered := renderReference(t, dir)
 		out, code := runRenderedPreLaunch(t, rendered, `printf '%s\n' "$PLAYWRIGHT_CLI_SESSION"`)
 		require.Equal(t, 0, code, out)
 		sessions[agent] = strings.TrimSpace(out)
@@ -127,34 +146,37 @@ func TestPlaywrightReferenceGivesEachAgentItsOwnSession(t *testing.T) {
 		"concurrent agents must not share a Playwright session")
 }
 
-// Blocks re-run on every launch, including a resume. If the wrapper directory
-// were already on PATH, `command -v` would resolve to the wrapper and the block
-// would wrap it in itself — an exec loop that only appears on the second launch.
-func TestPlaywrightReferenceRefusesToWrapItsOwnWrapper(t *testing.T) {
+// Blocks re-run on every launch, including a resume, so by the second launch
+// the wrapper directory is already on PATH. Resolving with that directory
+// excluded makes the re-run a no-op instead of wrapping the wrapper in itself
+// — which would exec-loop in one process: a hang with no output, on the second
+// launch only, which is about the worst shape a bug can have.
+func TestPlaywrightReferenceIsIdempotentAcrossResume(t *testing.T) {
 	agentDir := filepath.Join(t.TempDir(), "pw-home")
-	require.NoError(t, os.MkdirAll(filepath.Join(agentDir, "bin"), 0o755))
-	// Simulate the hazard directly: only the wrapper is reachable.
-	require.NoError(t, os.WriteFile(filepath.Join(agentDir, "bin", "playwright-cli"),
-		[]byte("#!/bin/bash\ntrue\n"), 0o755))
-	t.Setenv("PATH", filepath.Join(agentDir, "bin"))
-	t.Setenv("TCLAUDE_PW_HOME", agentDir)
+	require.NoError(t, os.MkdirAll(agentDir, 0o755))
+	rendered := renderReference(t, agentDir)
 
-	rendered, err := renderPreLaunchScript(
-		[]sandboxpolicy.PreLaunchBlock{playwrightReferenceBlock()}, true, "/bin/bash")
-	require.NoError(t, err)
-
-	out, code := runRenderedPreLaunch(t, rendered, `echo HARNESS_STARTED`)
-	assert.Equal(t, preLaunchFailExitCode, code)
-	assert.Contains(t, out, "refusing to wrap it again")
-	assert.NotContains(t, out, "HARNESS_STARTED")
+	// Two launches in one shell is exactly what a resume looks like to the
+	// block: the first one's PATH export is still in effect for the second.
+	out, code := runRenderedPreLaunch(t, rendered+rendered,
+		`grep -c "$TCLAUDE_PW_REAL" "$PLAYWRIGHT_CLI_WRAPPER_DIR/playwright-cli"; playwright-cli --version`)
+	require.Equal(t, 0, code, out)
+	assert.NotContains(t, out, filepath.Join(agentDir, "bin", "playwright-cli")+"\" \"$@\"",
+		"the wrapper must never exec itself")
+	assert.Contains(t, out, "stub config="+filepath.Join(agentDir, "config"),
+		"a resumed launch must still reach the real binary through the wrapper")
 }
 
-// A missing binary must stop the launch naming the block, not produce a wrapper
-// that execs nothing and fails later inside the agent.
+// A missing binary must stop the launch with tclaude's own attribution, not
+// merely with the block's echo — the echo would print even if the ERR trap were
+// broken, so assert on the framework's message.
 func TestPlaywrightReferenceFailsLoudlyWithoutPlaywright(t *testing.T) {
 	agentDir := t.TempDir()
-	t.Setenv("PATH", t.TempDir()) // empty dir: no playwright-cli anywhere
+	// Keep the system directories reachable so the block fails on the missing
+	// binary rather than on a missing mkdir, but put a directory with no
+	// playwright-cli first and strip the one this host actually has.
 	t.Setenv("TCLAUDE_PW_HOME", agentDir)
+	t.Setenv("PATH", stripPlaywrightFromPath(t))
 
 	rendered, err := renderPreLaunchScript(
 		[]sandboxpolicy.PreLaunchBlock{playwrightReferenceBlock()}, true, "/bin/bash")
@@ -163,8 +185,27 @@ func TestPlaywrightReferenceFailsLoudlyWithoutPlaywright(t *testing.T) {
 	out, code := runRenderedPreLaunch(t, rendered, `echo HARNESS_STARTED`)
 	assert.Equal(t, preLaunchFailExitCode, code)
 	assert.Contains(t, out, "not installed")
-	assert.Contains(t, out, "playwright-cli", "the failing block must be named")
+	assert.Contains(t, out, "pre-launch block 'playwright-cli' failed",
+		"tclaude's ERR trap must attribute the failure, not just the block's own echo")
 	assert.NotContains(t, out, "HARNESS_STARTED")
+}
+
+// stripPlaywrightFromPath returns PATH with every directory containing a
+// playwright-cli removed, so the missing-binary path is exercised on a host
+// that has one installed.
+func stripPlaywrightFromPath(t *testing.T) string {
+	t.Helper()
+	kept := []string{}
+	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
+		if dir == "" {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(dir, "playwright-cli")); err == nil {
+			continue
+		}
+		kept = append(kept, dir)
+	}
+	return strings.Join(kept, string(os.PathListSeparator))
 }
 
 // Opt-in end-to-end smoke against the real binary: render a local HTML file and
@@ -207,12 +248,15 @@ func TestPlaywrightReferenceRendersAPNG(t *testing.T) {
 	// is the one the block derived, so this is also the concurrency contract —
 	// a second agent runs the identical sequence against its own session.
 	out, code := runRenderedPreLaunch(t, rendered,
-		`set -x
-		 playwright-cli open "`+page+`" || echo "SMOKE_FAILED:open:$?"
-		 playwright-cli resize 400 300      || echo "SMOKE_FAILED:resize:$?"
-		 playwright-cli screenshot --filename `+shot+` || echo "SMOKE_FAILED:shot:$?"
-		 playwright-cli close               || echo "SMOKE_FAILED:close:$?"
-		 playwright-cli list 2>&1 | tail -3`)
+		// cd first: playwright-cli drops session artifacts in the working
+		// directory, and under `go test` that is the package directory — it
+		// would litter the repo, which is also the opposite of keeping an
+		// agent's generated output inside its own workspace.
+		`cd `+clcommon.ShellQuoteArg(work)+`
+		 playwright-cli open `+clcommon.ShellQuoteArg(page)+` || echo "SMOKE_FAILED:open:$?"
+		 playwright-cli resize 400 300 || echo "SMOKE_FAILED:resize:$?"
+		 playwright-cli screenshot --filename `+clcommon.ShellQuoteArg(shot)+` || echo "SMOKE_FAILED:shot:$?"
+		 playwright-cli close || echo "SMOKE_FAILED:close:$?"`)
 	require.Equal(t, 0, code, out)
 	require.NotContains(t, out, "SMOKE_FAILED", out)
 
@@ -224,8 +268,6 @@ func TestPlaywrightReferenceRendersAPNG(t *testing.T) {
 	assert.Equal(t, 400, width)
 	assert.Equal(t, 300, height)
 
-	// The generated PNG stays inside the agent's own workspace.
-	assert.True(t, strings.HasPrefix(shot, work))
 }
 
 // pngDimensions reads width/height straight from the IHDR chunk, so the smoke
@@ -265,8 +307,8 @@ func TestPlaywrightReferenceTwoAgentsRenderConcurrently(t *testing.T) {
 	srv := httptest.NewServer(http.FileServer(http.Dir(work)))
 	t.Cleanup(srv.Close)
 
-	// Rendered outside the goroutines: renderPreLaunchScript reads process
-	// environment through t.Setenv, which is not safe to race on.
+	// Rendered outside the goroutines because t.Setenv is not safe to race on,
+	// and each agent needs a different TCLAUDE_PW_HOME baked into its fragment.
 	type agent struct {
 		name     string
 		rendered string
@@ -290,6 +332,14 @@ func TestPlaywrightReferenceTwoAgentsRenderConcurrently(t *testing.T) {
 		})
 	}
 
+	// runRenderedPreLaunch can t.Skip (no bash) or require — both Goexit, which
+	// is illegal off the test goroutine and would surface as a confusing
+	// missing-output failure. Run one trivially here so any such exit happens
+	// on this goroutine, before any are spawned.
+	if _, code := runRenderedPreLaunch(t, "", "true"); code != 0 {
+		t.Fatalf("baseline fragment failed with %d", code)
+	}
+
 	var wg sync.WaitGroup
 	outs := make([]string, len(agents))
 	codes := make([]int, len(agents))
@@ -298,25 +348,50 @@ func TestPlaywrightReferenceTwoAgentsRenderConcurrently(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			outs[i], codes[i] = runRenderedPreLaunch(t, a.rendered,
-				`playwright-cli open "`+srv.URL+`/page.html"`+"\n"+
-					`playwright-cli resize 640 480`+"\n"+
-					`playwright-cli screenshot --filename `+a.shot+"\n"+
-					`printf 'SESSION=%s\n' "$PLAYWRIGHT_CLI_SESSION"`+"\n"+
-					`playwright-cli close`)
+				`cd `+clcommon.ShellQuoteArg(work)+`
+				 playwright-cli open `+clcommon.ShellQuoteArg(srv.URL+"/page.html")+` || echo "SMOKE_FAILED:open:$?"
+				 playwright-cli resize 640 480 || echo "SMOKE_FAILED:resize:$?"
+				 playwright-cli screenshot --filename `+clcommon.ShellQuoteArg(a.shot)+` || echo "SMOKE_FAILED:shot:$?"
+				 printf 'SESSION=%s\n' "$PLAYWRIGHT_CLI_SESSION"
+				 playwright-cli close || echo "SMOKE_FAILED:close:$?"`)
 		}()
 	}
 	wg.Wait()
 
-	seen := map[string]bool{}
 	for i, a := range agents {
 		require.Equal(t, 0, codes[i], "%s: %s", a.name, outs[i])
+		require.NotContains(t, outs[i], "SMOKE_FAILED", "%s: %s", a.name, outs[i])
 		assert.Contains(t, outs[i], "SESSION="+a.name,
 			"each agent must drive the session its own directory names")
-		seen[a.name] = true
 
 		width, height := pngDimensions(t, a.shot)
 		assert.Equal(t, 640, width, "%s produced a wrong-sized render", a.name)
 		assert.Equal(t, 480, height, "%s produced a wrong-sized render", a.name)
 	}
-	assert.Len(t, seen, 2, "the two agents must not have shared one session")
+}
+
+// The docs quote the reference block and the tests execute it. That is only
+// worth claiming if something fails when they diverge — otherwise "executed by
+// a test, so it cannot rot" is exactly the kind of assurance that quietly stops
+// being true. Compare them rather than trusting a comment telling the next
+// person to update both.
+func TestPlaywrightReferenceDocsMatchTheExecutedScript(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "agent.md"))
+	require.NoError(t, err)
+	doc := string(raw)
+
+	heading := "### Reference: scoping `playwright-cli` to one agent"
+	start := strings.Index(doc, heading)
+	require.GreaterOrEqual(t, start, 0, "the reference section must exist in docs/agent.md")
+
+	fence := "```bash\n"
+	open := strings.Index(doc[start:], fence)
+	require.GreaterOrEqual(t, open, 0, "the reference section must carry a bash block")
+	body := doc[start+open+len(fence):]
+	end := strings.Index(body, "```")
+	require.GreaterOrEqual(t, end, 0, "the bash block must be closed")
+
+	assert.Equal(t, playwrightReferenceScript, body[:end],
+		"docs/agent.md and playwrightReferenceScript have drifted; the docs quote a "+
+			"block no test executes")
 }
