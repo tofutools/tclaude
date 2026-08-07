@@ -194,9 +194,11 @@ Four traps, all of which fail quietly rather than loudly:
   completes. Normal state, not an error.
 - **`mcpToolsTokens` is a documented subset of `toolDefinitionsTokens`.** Adding the
   breakdown fields together double-counts it.
-- **`contextInfo.modelName` is not the model that ran the turn.** Observed reporting
-  `claude-sonnet-4.5` for a turn that actually ran on `gpt-5-mini`. Read the model from
-  `session.usage.getMetrics` instead.
+- **Do not source the model from `contextInfo`.** `contextInfo.modelName` was observed
+  reporting `claude-sonnet-4.5` for a turn that ran on `gpt-5-mini`, under auto mode.
+  That is a single observation and the rule behind it is *not* established — it may
+  track the session default, the last tokenization target, or something else. Read the
+  model from `session.usage.getMetrics` instead.
 
 ## Requires a real terminal
 
