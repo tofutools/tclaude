@@ -7,7 +7,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
@@ -379,17 +378,14 @@ func runWindowOp(direction, scope, group string, universe, convs []string) agent
 	}
 
 	// Apply the op to every agent in PARALLEL so one slow tmux call
-	// can't delay the rest — same shape as runShutdown.
+	// can't delay the rest — the shared bulk fan-out every other
+	// multi-agent op goes through. Unbounded (limit = the cohort) because a
+	// window op is a single short tmux call per agent, and the whole point
+	// is that the human's focus/unfocus lands at once.
 	outcomes := make([]agentWindowOutcome, len(alive))
-	var wg sync.WaitGroup
-	for i := range alive {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			outcomes[i] = applyWindowOp(direction, alive[i].convID, alive[i].sess)
-		}(i)
-	}
-	wg.Wait()
+	forEachAgentConcurrently(alive, len(alive), func(i int, t windowTarget) {
+		outcomes[i] = applyWindowOp(direction, t.convID, t.sess)
+	})
 
 	// Follow a bulk focus with the opt-in auto-tiling pass (no-op when
 	// disabled or when only one window was focused). It runs in the

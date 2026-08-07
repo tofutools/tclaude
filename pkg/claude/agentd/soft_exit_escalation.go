@@ -64,10 +64,34 @@ var softExitEscalationPollInterval = 250 * time.Millisecond
 // tclaude did it on purpose.
 const daemonEscalatedKillReason = "daemon_kill"
 
+// softExitOutcome says how a stop that WAITED for its pane ended. It is the
+// return of awaitLifecycleTargetExit; the fire-and-forget scheduler discards
+// it.
+type softExitOutcome int
+
+const (
+	// softExitClosed — the pane closed on its own within the deadline (or was
+	// already gone / already replaced). Nothing was killed.
+	softExitClosed softExitOutcome = iota
+	// softExitEscalated — the pane outlived the deadline, the ladder ran, and
+	// the process is gone now.
+	softExitEscalated
+	// softExitStuck — the ladder ran to the end and the pane process is STILL
+	// alive. Nothing further is available; the caller must not assume the
+	// agent released its files, cwd or worktree.
+	softExitStuck
+)
+
 // scheduleSoftExitEscalation backgrounds the ladder for one stopped target.
 // lifecycleAction/relatedEventID are the same attribution the caller armed
 // before injecting, re-armed at the kill so an escalation stays daemon-owned
 // even when the injection failed and its intent was cleared.
+//
+// This is the fire-and-forget half of the pair: the stop returns as soon as
+// the exit command is delivered and the pane is closed out-of-band. Callers
+// that must not proceed until the process has actually stopped — a retire
+// about to delete the agent's directories, a bulk stop reporting what it
+// achieved — use awaitLifecycleTargetExit instead.
 func scheduleSoftExitEscalation(target *lifecycleTarget, lifecycleAction, relatedEventID, reason string) {
 	if target == nil {
 		return
@@ -78,6 +102,31 @@ func scheduleSoftExitEscalation(target *lifecycleTarget, lifecycleAction, relate
 		}
 		escalateStuckSoftExit(target, lifecycleAction, relatedEventID, reason)
 	})
+}
+
+// awaitLifecycleTargetExit is scheduleSoftExitEscalation run INLINE: it gives
+// the delivered soft exit (and its bounded re-injections — the double tap)
+// until the deadline to close the pane on its own, then runs the same
+// kill-pane → SIGTERM → SIGKILL ladder, and only returns once the pane process
+// is actually gone or the ladder is exhausted.
+//
+// deadline is AUTHORITATIVE, including zero: the power buttons pass their
+// per-request grace, and a grace of 0 legitimately means "probe once, then
+// escalate". Resolving a default belongs to the caller that has one
+// (stopOneConvAndWait), not here.
+//
+// The caller MUST already hold the conversation's launch lock — the whole
+// point is that the stop, the wait and the escalation are one indivisible
+// step, so a resume cannot relaunch the conv into the identity being killed
+// halfway through.
+func awaitLifecycleTargetExit(target *lifecycleTarget, deadline time.Duration, lifecycleAction, relatedEventID, reason string) softExitOutcome {
+	if target == nil {
+		return softExitClosed
+	}
+	if waitForLifecycleTargetGone(target, deadline) {
+		return softExitClosed
+	}
+	return escalateStuckSoftExitUnderLaunchLock(target, lifecycleAction, relatedEventID, reason)
 }
 
 // waitForLifecycleTargetGone polls until the frozen target is no longer a live
@@ -117,12 +166,20 @@ func waitForLifecycleTargetGone(target *lifecycleTarget, window time.Duration) b
 
 // escalateStuckSoftExit runs the ladder under the conversation launch lock, so
 // a concurrent resume cannot relaunch the conv into the pane identity being
-// killed halfway through.
+// killed halfway through. The background scheduler's entry point; a caller
+// that already holds the lock uses escalateStuckSoftExitUnderLaunchLock.
 func escalateStuckSoftExit(target *lifecycleTarget, lifecycleAction, relatedEventID, reason string) {
 	launchLock := resumeLaunchLock(target.convID)
 	launchLock.Lock()
 	defer launchLock.Unlock()
+	escalateStuckSoftExitUnderLaunchLock(target, lifecycleAction, relatedEventID, reason)
+}
 
+// escalateStuckSoftExitUnderLaunchLock is the ladder itself, after its caller
+// has taken the conversation launch lock. It reports whether the pane process
+// was actually gone by the time it returned, so a synchronous stop can tell
+// "killed, and it is really down" from "nothing left to do".
+func escalateStuckSoftExitUnderLaunchLock(target *lifecycleTarget, lifecycleAction, relatedEventID, reason string) softExitOutcome {
 	probe, err := target.revalidate()
 	if err != nil {
 		// Died, or a successor now owns the name — either way the ladder has
@@ -130,7 +187,7 @@ func escalateStuckSoftExit(target *lifecycleTarget, lifecycleAction, relatedEven
 		slog.Info("soft-exit escalation stood down; target pane is gone or replaced",
 			"conv", short8(target.convID), "tmux_session", target.tmuxSession,
 			"pane_id", target.paneID, "reason", reason)
-		return
+		return softExitClosed
 	}
 
 	// Attribution BEFORE the kill: whatever the ladder does from here, the
@@ -165,11 +222,17 @@ func escalateStuckSoftExit(target *lifecycleTarget, lifecycleAction, relatedEven
 		pid = target.panePID
 	}
 	if pid <= 0 {
-		return
+		// No pid to signal — the tmux kill above is all the ladder has. Give
+		// the pane one grace window to disappear so the caller still learns
+		// whether the process actually went away.
+		if waitForLifecycleTargetGone(target, softExitEscalationSignalGrace) {
+			return softExitEscalated
+		}
+		return softExitStuck
 	}
 	for _, step := range softExitSignalLadder {
 		if waitForPaneProcessGone(target, pid, softExitEscalationSignalGrace) {
-			return
+			return softExitEscalated
 		}
 		slog.Warn("soft-exit escalation: pane process survived; signalling process group",
 			"conv", short8(target.convID), "tmux_session", target.tmuxSession,
@@ -181,11 +244,12 @@ func escalateStuckSoftExit(target *lifecycleTarget, lifecycleAction, relatedEven
 		}
 	}
 	if waitForPaneProcessGone(target, pid, softExitEscalationSignalGrace) {
-		return
+		return softExitEscalated
 	}
 	slog.Error("soft-exit escalation exhausted; pane process still alive",
 		"conv", short8(target.convID), "tmux_session", target.tmuxSession,
 		"pane_pid", pid, "reason", reason)
+	return softExitStuck
 }
 
 // waitForPaneProcessGone polls the pane process until it is gone or the grace

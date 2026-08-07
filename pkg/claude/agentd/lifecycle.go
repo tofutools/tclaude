@@ -19,8 +19,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"golang.org/x/sync/errgroup"
-
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
@@ -93,12 +91,24 @@ func handleGroupStop(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
+	// Every member is stopped CONCURRENTLY and each stop WAITS for its pane
+	// process to actually die (the full ladder: the exit command plus its
+	// double-tap re-injections, then kill-pane, SIGTERM, SIGKILL). Sequentially
+	// that would be the sum of every member's exit latency — a group of ten
+	// agents that each take their time closing would hold the request for a
+	// minute-plus and report "soft_stopped" for panes still running. Bounded
+	// fan-out makes the wall-clock the SLOWEST member instead of the sum, which
+	// is what makes waiting affordable in the first place.
 	out := groupOpResp{Group: g.Name, Action: "stop", Members: []memberOpResult{}}
-	for _, m := range members {
-		res := stopOneConvWithIntent(m.ConvID, force, action, requestEventID)
-		res.AgentID = peerAgentID(m.ConvID)
-		res.Title = agent.FreshTitle(m.ConvID)
-		out.Members = append(out.Members, res)
+	out.Members = mapAgentsConcurrently(members, batchAgentOpConcurrency,
+		func(_ int, m *db.AgentGroupMember) (memberOpResult, bool) {
+			res, _ := stopOneConvAndWait(m.ConvID, force, action, requestEventID, 0)
+			res.AgentID = peerAgentID(m.ConvID)
+			res.Title = agent.FreshTitle(m.ConvID)
+			return res, true
+		})
+	if out.Members == nil {
+		out.Members = []memberOpResult{}
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -130,11 +140,76 @@ func stopOneConvWithIntent(convID string, force bool, lifecycleAction, relatedEv
 	return stopOneConvWithIntentUnderLaunchLock(convID, force, lifecycleAction, relatedEventID)
 }
 
+// stopWaitPolicy says whether a stop returns as soon as the exit command is
+// delivered (the default, stopNoWait) or stays until the pane process is
+// actually gone.
+//
+// A delivered /exit is not a stopped agent. Every caller that goes on to touch
+// what the agent still holds — retire deleting its agent-owned directories or
+// its worktree, a bulk stop reporting to the human what it achieved, a restart
+// about to relaunch into the same identity — needs the second contract, or it
+// races the pane it just asked to close. Waiting is also what makes a bulk
+// stop's answer true: without it the response says "soft_stopped" for agents
+// that are still very much running.
+//
+// deadline is how long the delivered exit (and its bounded double-tap
+// re-injections) has to work before the kill ladder starts. It is taken
+// literally, zero included: a caller that wants "no grace, escalate now"
+// (the power buttons' grace_ms=0) gets exactly that.
+type stopWaitPolicy struct {
+	wait     bool
+	deadline time.Duration
+}
+
+// stopNoWait is the historical fire-and-forget contract: deliver the exit,
+// arm the out-of-band escalation, return.
+var stopNoWait = stopWaitPolicy{}
+
+// stopWaitForExit blocks the stop until the pane process is gone or the kill
+// ladder is exhausted. deadline 0 → softExitEscalationDeadline.
+func stopWaitForExit(deadline time.Duration) stopWaitPolicy {
+	return stopWaitPolicy{wait: true, deadline: deadline}
+}
+
 // stopOneConvWithIntentUnderLaunchLock is stopOneConvWithIntent after the
 // caller has acquired the conversation launch lock. Compound lifecycle
 // operations use it to keep stop → posture mutation → resume indivisible from
 // other daemon wake/stop requests.
 func stopOneConvWithIntentUnderLaunchLock(convID string, force bool, lifecycleAction, relatedEventID string) memberOpResult {
+	res, _ := stopOneConvUnderLaunchLock(convID, force, lifecycleAction, relatedEventID, stopNoWait)
+	return res
+}
+
+// stopOneConvAndWait soft-stops convID and does not return until its pane
+// process has actually gone away — the full ladder run inline: the delivered
+// exit command plus its bounded re-injections get `deadline` to work, then
+// kill-pane, SIGTERM and SIGKILL each get their turn.
+//
+// This is the primitive for every caller that must not proceed while the agent
+// is still running: the retire tiers (which then delete the agent's
+// directories and worktree) and the bulk stop surfaces. The returned
+// softExitOutcome says whether it closed on its own, needed the ladder, or is
+// STILL alive — the last of which a caller must treat as "the agent never
+// released anything".
+//
+// deadline 0 means "the standard window" (softExitEscalationDeadline); a
+// caller that needs an explicit zero-grace stop drives
+// stopOneConvUnderLaunchLock with stopWaitForExit(0) itself.
+func stopOneConvAndWait(convID string, force bool, lifecycleAction, relatedEventID string, deadline time.Duration) (memberOpResult, softExitOutcome) {
+	if deadline <= 0 {
+		deadline = softExitEscalationDeadline
+	}
+	launchLock := resumeLaunchLock(convID)
+	launchLock.Lock()
+	defer launchLock.Unlock()
+	return stopOneConvUnderLaunchLock(convID, force, lifecycleAction, relatedEventID, stopWaitForExit(deadline))
+}
+
+// stopOneConvUnderLaunchLock is the one stop implementation both contracts go
+// through; waitPolicy picks which. The softExitOutcome is only meaningful when
+// waitPolicy.wait is set (it is softExitClosed otherwise — nothing was
+// waited for, so nothing is known).
+func stopOneConvUnderLaunchLock(convID string, force bool, lifecycleAction, relatedEventID string, waitPolicy stopWaitPolicy) (memberOpResult, softExitOutcome) {
 	recoveryReason := lifecycleAction
 	if recoveryReason == "" {
 		recoveryReason = db.AgentExitActionStop
@@ -150,7 +225,7 @@ func stopOneConvWithIntentUnderLaunchLock(convID string, force bool, lifecycleAc
 	sess := pickAliveSession(convID)
 	if sess == nil {
 		res.Action = "skipped:already_offline"
-		return res
+		return res, softExitClosed
 	}
 	res.TmuxSes = sess.TmuxSession
 	target, targetErr := captureLifecycleTarget(sess)
@@ -158,7 +233,7 @@ func stopOneConvWithIntentUnderLaunchLock(convID string, force bool, lifecycleAc
 		logLifecycleStopFailure("capture", sess.TmuxSession, sess.ID, targetErr)
 		res.Action = "error"
 		res.Detail = "capture selected pane: " + targetErr.Error()
-		return res
+		return res, softExitClosed
 	}
 	if err := refreshStoppedSessionResumeProvenance(sess); err != nil {
 		// Administrative stop must remain available even when the target cwd is
@@ -172,7 +247,7 @@ func stopOneConvWithIntentUnderLaunchLock(convID string, force bool, lifecycleAc
 		intentSet := setExitIntentTargetBestEffort(target, lifecycleAction, relatedEventID)
 		if lifecycleAction != "" && intentSet == nil {
 			res.Action, res.Detail = "error", "selected launch intent became stale"
-			return res
+			return res, softExitClosed
 		}
 		if err := killLifecycleTarget(target); err != nil {
 			clearFailedExitIntent(intentSet)
@@ -181,7 +256,11 @@ func stopOneConvWithIntentUnderLaunchLock(convID string, force bool, lifecycleAc
 		} else {
 			res.Action = "killed"
 		}
-		return res
+		// A successful kill-pane is tmux letting go of the pane, not proof the
+		// harness process died — it can be wedged in uninterruptible work or
+		// held open by a child. A waiting caller gets the signal half of the
+		// ladder (SIGTERM, then SIGKILL) until the process group is really gone.
+		return res, finishStopWait(target, waitPolicy, lifecycleAction, relatedEventID, "force-stop", &res)
 	}
 	// Soft stop: inject the harness's exit command (CC's `/exit`). The
 	// harness closes the conversation cleanly and the tmux session goes
@@ -194,12 +273,12 @@ func stopOneConvWithIntentUnderLaunchLock(convID string, force bool, lifecycleAc
 		if h.Name == harness.OpenCodeName && openCodeControlInputBlocked(sess.Status) {
 			res.Action = "error"
 			res.Detail = "OpenCode TUI is " + sess.Status + "; retry soft stop when idle or force kill"
-			return res
+			return res, softExitClosed
 		}
 		intentSet := setExitIntentTargetBestEffort(target, lifecycleAction, relatedEventID)
 		if lifecycleAction != "" && intentSet == nil {
 			res.Action, res.Detail = "error", "selected launch intent became stale"
-			return res
+			return res, softExitClosed
 		}
 		delivered := false
 		if h.Name == harness.OpenCodeName {
@@ -232,16 +311,19 @@ func stopOneConvWithIntentUnderLaunchLock(convID string, force bool, lifecycleAc
 		// its own directory-cleanup grace (TCL-1001). The ladder converges well
 		// inside that grace.
 		if stopIntendsPaneClosure(lifecycleAction) {
+			if waitPolicy.wait {
+				return res, finishStopWait(target, waitPolicy, lifecycleAction, relatedEventID, "soft-exit", &res)
+			}
 			scheduleSoftExitEscalation(target, lifecycleAction, relatedEventID, "soft-exit")
 		}
-		return res
+		return res, softExitClosed
 	}
 	// No soft-exit command for this harness → hard kill so the pane never
 	// lingers because we couldn't type a graceful exit.
 	intentSet := setExitIntentTargetBestEffort(target, lifecycleAction, relatedEventID)
 	if lifecycleAction != "" && intentSet == nil {
 		res.Action, res.Detail = "error", "selected launch intent became stale"
-		return res
+		return res, softExitClosed
 	}
 	if err := killLifecycleTarget(target); err != nil {
 		clearFailedExitIntent(intentSet)
@@ -250,7 +332,37 @@ func stopOneConvWithIntentUnderLaunchLock(convID string, force bool, lifecycleAc
 	} else {
 		res.Action = "killed_no_soft_exit"
 	}
-	return res
+	return res, finishStopWait(target, waitPolicy, lifecycleAction, relatedEventID, "no-soft-exit", &res)
+}
+
+// finishStopWait runs the inline half of a waiting stop and annotates the
+// result with what the wait cost. A non-waiting policy is a no-op, so every
+// stop branch can end with the same call.
+//
+// The Detail notes matter to the operator: a bulk retire whose members all
+// came back "escalated to kill" is a harness that stopped honouring its own
+// exit command, and a "still alive" member is one whose directories and
+// worktree were deliberately left in place.
+func finishStopWait(target *lifecycleTarget, waitPolicy stopWaitPolicy, lifecycleAction, relatedEventID, reason string, res *memberOpResult) softExitOutcome {
+	if !waitPolicy.wait {
+		return softExitClosed
+	}
+	deadline := waitPolicy.deadline
+	if reason != "soft-exit" {
+		// The kill already happened; only the signal ladder is left, so there
+		// is no delivered exit command to wait out first.
+		deadline = softExitEscalationSignalGrace
+	}
+	outcome := awaitLifecycleTargetExit(target, deadline, lifecycleAction, relatedEventID, reason)
+	switch outcome {
+	case softExitEscalated:
+		if reason == "soft-exit" {
+			res.Detail = joinDetail(res.Detail, "pane did not exit; escalated to kill")
+		}
+	case softExitStuck:
+		res.Detail = joinDetail(res.Detail, "pane process still alive after kill escalation")
+	}
+	return outcome
 }
 
 type lifecycleTarget struct {
@@ -874,18 +986,41 @@ func handleGroupResume(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
+	// Resume every member CONCURRENTLY: each one is a DB/filesystem probe plus
+	// a spawned `tclaude session new` subprocess, so a sequential loop cost the
+	// SUM of every member's launch. The bound is the same one the dashboard's
+	// Power On button already uses (powerOnConcurrency) — a group resume and a
+	// scope=group power-on start the identical work, and an unbounded burst of
+	// harness launches is what that bound exists to prevent.
 	out := groupOpResp{Group: g.Name, Action: "resume", Members: []memberOpResult{}}
-	for _, m := range members {
-		res := resumeOneConvLocked(m.ConvID, false, requestTrustRoot)
-		if res.Action == "error:resume_provenance" && !requestTrustRoot && parseAskHumanHeader(r) > 0 {
-			if !requestResumeRecoveryApproval(w, r, PermGroupsResume, authTarget, m.ConvID) {
+	out.Members = mapAgentsConcurrently(members, powerOnConcurrency,
+		func(_ int, m *db.AgentGroupMember) (memberOpResult, bool) {
+			res := resumeOneConvLocked(m.ConvID, false, requestTrustRoot)
+			res.AgentID = peerAgentID(m.ConvID)
+			res.Title = agent.FreshTitle(m.ConvID)
+			return res, true
+		})
+	if out.Members == nil {
+		out.Members = []memberOpResult{}
+	}
+	// The recovery-approval retry stays SEQUENTIAL and after the fan-out: it
+	// pops a human prompt per member and can write the response itself, neither
+	// of which is safe from a worker goroutine. Only members that actually hit
+	// the provenance gate reach it, so the common case never pays for it.
+	if !requestTrustRoot && parseAskHumanHeader(r) > 0 {
+		for i := range out.Members {
+			if out.Members[i].Action != "error:resume_provenance" {
+				continue
+			}
+			convID := out.Members[i].ConvID
+			if !requestResumeRecoveryApproval(w, r, PermGroupsResume, authTarget, convID) {
 				return
 			}
-			res = resumeOneConvLocked(m.ConvID, false, true)
+			res := resumeOneConvLocked(convID, false, true)
+			res.AgentID = peerAgentID(convID)
+			res.Title = agent.FreshTitle(convID)
+			out.Members[i] = res
 		}
-		res.AgentID = peerAgentID(m.ConvID)
-		res.Title = agent.FreshTitle(m.ConvID)
-		out.Members = append(out.Members, res)
 	}
 	// Re-enable exactly the rhythms a prior emptying retire auto-disabled
 	// (JOH-345) — but ONLY once the group has live members again. Retire REMOVES
@@ -1942,41 +2077,35 @@ func bulkRetireGroupMembers(g *db.AgentGroup, caller, reason string, shutdown, d
 	results := make([]*memberOpResult, len(members))
 	ownerGroupsPer := make([][]int64, len(members))
 
-	eg := new(errgroup.Group)
-	eg.SetLimit(bulkRetireGroupConcurrency)
-	for i, m := range members {
-		eg.Go(func() error {
-			res := memberOpResult{AgentID: peerAgentID(m.ConvID), ConvID: m.ConvID, Title: agent.FreshTitle(m.ConvID)}
+	forEachAgentConcurrently(members, bulkRetireGroupConcurrency, func(i int, m *db.AgentGroupMember) {
+		res := memberOpResult{AgentID: peerAgentID(m.ConvID), ConvID: m.ConvID, Title: agent.FreshTitle(m.ConvID)}
+		switch {
+		case m.ConvID == "":
+			res.Action = "skipped:no_conv_id"
+			res.Detail = "placeholder member (no conv yet)"
+		case caller != "" && sameActor(m.ConvID, caller):
+			// Match on the stable actor (JOH-323): the caller never
+			// retires itself, including a predecessor generation of
+			// itself that still sits in the roster.
+			res.Action = "skipped:self"
+			res.Detail = "the caller never retires itself"
+		default:
 			switch {
-			case m.ConvID == "":
-				res.Action = "skipped:no_conv_id"
-				res.Detail = "placeholder member (no conv yet)"
-			case caller != "" && sameActor(m.ConvID, caller):
-				// Match on the stable actor (JOH-323): the caller never
-				// retires itself, including a predecessor generation of
-				// itself that still sits in the roster.
-				res.Action = "skipped:self"
-				res.Detail = "the caller never retires itself"
-			default:
-				switch {
-				case selected != nil:
-					if _, ok := selected[m.ConvID]; !ok {
-						return nil // not in the explicit selection — omit
-					}
-				case filter != nil:
-					online, status := convLiveStatus(m.ConvID, alive)
-					if !filter.matches(online, status) {
-						return nil // filtered out — omit from the response
-					}
+			case selected != nil:
+				if _, ok := selected[m.ConvID]; !ok {
+					return // not in the explicit selection — omit
 				}
-				res, ownerGroupsPer[i] = retireGroupMember(
-					m.ConvID, by, reason, shutdown, deleteWorktree, retireWorktrees[m.ConvID], res, relatedEventID)
+			case filter != nil:
+				online, status := convLiveStatus(m.ConvID, alive)
+				if !filter.matches(online, status) {
+					return // filtered out — omit from the response
+				}
 			}
-			results[i] = &res
-			return nil
-		})
-	}
-	_ = eg.Wait() // workers never return an error — per-member failures live in res.Action
+			res, ownerGroupsPer[i] = retireGroupMember(
+				m.ConvID, by, reason, shutdown, deleteWorktree, retireWorktrees[m.ConvID], res, relatedEventID)
+		}
+		results[i] = &res
+	})
 
 	out := groupRetireResp{Group: g.Name, Action: "retire", Members: []memberOpResult{}}
 	ownerless := map[int64]bool{}
@@ -2037,22 +2166,74 @@ func retireGroupMember(convID, by, reason string, shutdown, deleteWorktree bool,
 	res.Action = "retired"
 	res.Detail = summarizeRetireOutcome(outcome)
 
+	td := finishRetiredConv(convID, shutdown, deleteWorktree, wt, relatedEventID)
+	res.TmuxSes = td.Stop.TmuxSes
+	res.Worktree = td.Worktree
+	for _, note := range td.Notes {
+		res.Detail = joinDetail(res.Detail, note)
+	}
+	return res, ownerGroups
+}
+
+// retireTeardown is what the post-demotion half of a retire did: the stop
+// result (zero-valued when no shutdown was asked for), the worktree plan (nil
+// when ?delete_worktree was off) and the human-readable notes each step
+// produced, in order.
+type retireTeardown struct {
+	Stop     memberOpResult
+	Worktree *retireWorktreePlan
+	Notes    []string
+}
+
+// finishRetiredConv is THE post-demotion half of a retire, shared by all three
+// retire surfaces: the single-agent /v1/agent/{selector}/retire endpoint, the
+// bulk group retire (retireGroupMember) and the dashboard's fleet cleanup tier.
+// Each of those used to inline its own slightly-different copy of the same
+// three steps, which is how they drifted apart on which stop primitive they
+// used and which notes they surfaced.
+//
+// The order is load-bearing:
+//
+//  1. Stop the pane — and WAIT for the process to actually be gone. Steps 2
+//     and 3 delete things the agent is still holding (its agent-owned cache
+//     directories; the worktree that is its cwd), so a fire-and-forget /exit
+//     put both of them in a race they usually lost — the operator-visible
+//     symptom being "kept because the agent did not exit within grace" and a
+//     retired agent whose pane was still running.
+//  2. Agent-owned directory cleanup.
+//  3. Worktree + branch cleanup, from the view the CALLER resolved before any
+//     demotion or shutdown (wt) — resolving it here would read a world the
+//     stop above already changed.
+//
+// The demotion itself (retireAgentConv) stays with the caller: only it knows
+// the precondition to enforce (live-generation guard, require_offline) and the
+// actor to attribute the change to.
+func finishRetiredConv(convID string, shutdown, deleteWorktree bool, wt agentWorktreeView, relatedEventID string) retireTeardown {
+	var td retireTeardown
 	if shutdown {
-		sd := stopOneConvWithIntent(convID, false /* soft exit */, db.AgentExitActionRetire, relatedEventID)
-		res.TmuxSes = sd.TmuxSes
-		if sd.Action == "soft_stopped" {
-			res.Detail = joinDetail(res.Detail, "/exit sent")
+		td.Stop, _ = stopOneConvAndWait(convID, false /* soft exit */, db.AgentExitActionRetire, relatedEventID, 0)
+		switch td.Stop.Action {
+		case "soft_stopped":
+			note := "/exit sent"
+			if td.Stop.Detail != "" {
+				note += " (" + td.Stop.Detail + ")"
+			}
+			td.Notes = append(td.Notes, note)
+		case "error":
+			td.Notes = append(td.Notes, "session shutdown failed: "+td.Stop.Detail)
 		}
 	}
 	cleanupAgentDirectoriesAfterRetire(convID, shutdown)
 	if deleteWorktree {
 		plan := scheduleRetireWorktreeCleanup(convID, wt, shutdown)
-		res.Worktree = &plan
-		if plan.Detail != "" {
-			res.Detail = joinDetail(res.Detail, plan.Detail)
+		td.Worktree = &plan
+		// "none" means the agent had no worktree at all — not worth a line in
+		// the outcome table; every other action is something that happened.
+		if plan.Action != "none" && plan.Detail != "" {
+			td.Notes = append(td.Notes, plan.Detail)
 		}
 	}
-	return res, ownerGroups
+	return td
 }
 
 // retireStatusFilter is the optional ?status= filter for bulk retire.
