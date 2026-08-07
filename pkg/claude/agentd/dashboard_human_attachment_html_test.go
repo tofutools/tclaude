@@ -45,6 +45,24 @@ func TestDashboardHTML_HumanAttachmentWired(t *testing.T) {
 	if !strings.Contains(css, ".dialog-resizer {") {
 		t.Error("dashboard CSS is missing the resize grip shared by the attachment viewers")
 	}
+	// The viewers are chrome opened from the notification surfaces, so they
+	// re-skin with the shell like the reader does. The undo rules matter most:
+	// `body.wizard header` / `body.slop header` are bare element selectors for
+	// the page banner that reach a dialog's <header> too.
+	for _, rule := range []string{
+		"body.wizard :is(.markdown-preview-overlay, .image-preview-overlay) header {",
+		"body.slop :is(.markdown-preview-overlay, .image-preview-overlay) header {",
+		"body.wizard .markdown-document {",
+		"body.slop .markdown-document {",
+	} {
+		if !strings.Contains(css, rule) {
+			t.Errorf("dashboard CSS is missing the %s skin", rule)
+		}
+	}
+	// A scrolling surface in this dashboard gets the house scrollbar, per theme.
+	if !strings.Contains(css, ":is(.markdown-preview-stage, .image-preview-stage)::-webkit-scrollbar {") {
+		t.Error("the attachment viewers' scrolling stages have no styled scrollbar")
+	}
 	for _, name := range []string{"js/image-preview-overlay.js", "js/markdown-attachment.js"} {
 		if !strings.Contains(dashboardAssetFile(t, name), "DialogResizer") {
 			t.Errorf("%s does not offer the resize grip", name)

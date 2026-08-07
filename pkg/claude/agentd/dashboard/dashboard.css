@@ -1370,7 +1370,13 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
 }
 .image-preview-download { padding: 5px 9px; border-color: #1f6feb; color: #58a6ff; text-decoration: none; }
 .image-preview-download:hover, .image-preview-download:focus-visible { background: rgba(31, 111, 235, .14); }
-.image-preview-close { width: 30px; height: 30px; padding: 0; color: #8b949e; font-size: 19px; }
+.image-preview-close {
+  width: 30px; height: 30px; padding: 0; color: #8b949e; font-size: 19px;
+  /* Centred as a box, not on a text baseline — a glyph like × sits
+     visibly low otherwise, and this also absorbs the padding the
+     page-level `body.wizard header button` rule adds here. */
+  display: grid; place-items: center; line-height: 1;
+}
 .image-preview-close:hover, .image-preview-close:focus-visible,
 .image-preview-footer button:hover:not(:disabled), .image-preview-footer button:focus-visible {
   border-color: #58a6ff; color: #f0f6fc;
@@ -1534,7 +1540,13 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
 }
 .markdown-preview-download { padding: 5px 9px; border-color: #1f6feb; color: #58a6ff; text-decoration: none; }
 .markdown-preview-download:hover, .markdown-preview-download:focus-visible { background: rgba(31, 111, 235, .14); }
-.markdown-preview-close { width: 30px; height: 30px; padding: 0; color: #8b949e; font-size: 19px; }
+.markdown-preview-close {
+  width: 30px; height: 30px; padding: 0; color: #8b949e; font-size: 19px;
+  /* Centred as a box, not on a text baseline — a glyph like × sits
+     visibly low otherwise, and this also absorbs the padding the
+     page-level `body.wizard header button` rule adds here. */
+  display: grid; place-items: center; line-height: 1;
+}
 .markdown-preview-close:hover, .markdown-preview-close:focus-visible {
   border-color: #58a6ff; color: #f0f6fc;
 }
@@ -1542,7 +1554,7 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
    floats over this stage (the image viewer has a footer there instead). */
 .markdown-preview-stage {
   position: relative; min-height: 0; flex: 1; overflow: auto;
-  padding: 22px 24px 30px; background: #0b1016;
+  padding: 24px 38px 34px; background: #0b1016;
 }
 .markdown-document-state {
   display: flex; flex-direction: column; gap: 5px; max-width: 420px;
@@ -1641,7 +1653,14 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
 .markdown-document th, .markdown-document td {
   padding: 6px 11px; border: 1px solid #30363d;
 }
-.markdown-document th { background: #161b22; color: #f0f6fc; font-weight: 600; }
+/* The page-level `table th` rule is for the dashboard's own data tables and
+   reaches this one too, so a document's `| Name |` came out as an 11px
+   letterspaced NAME that could not wrap. This is the author's text: restate the
+   typography the surrounding document uses. */
+.markdown-document th {
+  background: #161b22; color: #f0f6fc; font-weight: 600;
+  font-size: inherit; text-transform: none; letter-spacing: normal; white-space: normal;
+}
 .markdown-document tbody tr:nth-child(even) { background: rgba(22, 27, 34, .55); }
 
 /* The document fills the viewer, with no measure cap of its own: the operator
@@ -1662,10 +1681,272 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
   .markdown-preview-header-actions { flex: 0 0 auto; }
   .markdown-preview-download { padding: 5px 7px; font-size: 11px; }
   .markdown-preview-mode { padding: 5px 7px; font-size: 11px; }
-  .markdown-preview-stage { padding: 16px 14px 22px; }
+  .markdown-preview-stage { padding: 18px 18px 24px; }
   .markdown-preview-document { font-size: 13.5px; }
   .markdown-attachment-document { margin-top: 8px; padding-top: 10px; }
 }
+
+/* ─── Attachment-viewer scrollbars ────────────────────────────────────
+   The viewers scroll, so their scrollbars are dashboard furniture like the
+   mail panes' — the same 10px track and rounded thumb, per theme. Firefox has
+   no ::-webkit-scrollbar surface; its standardized fallback is kept OUT of
+   WebKit/Blink, where a non-auto scrollbar-color suppresses the richer
+   pseudo-element treatment. (Same split as the .mail-* panes above.) */
+@supports not selector(::-webkit-scrollbar) {
+  .markdown-preview-stage, .image-preview-stage {
+    scrollbar-width: thin; scrollbar-color: #6e7681 #0b1016;
+  }
+  body.wizard :is(.markdown-preview-stage, .image-preview-stage) { scrollbar-color: #7a5db0 #140f28; }
+  body.slop :is(.markdown-preview-stage, .image-preview-stage) { scrollbar-color: #c11a1a #1a0505; }
+}
+:is(.markdown-preview-stage, .image-preview-stage)::-webkit-scrollbar { width: 10px; height: 10px; }
+:is(.markdown-preview-stage, .image-preview-stage)::-webkit-scrollbar-track,
+:is(.markdown-preview-stage, .image-preview-stage)::-webkit-scrollbar-corner { background: #0b1016; }
+:is(.markdown-preview-stage, .image-preview-stage)::-webkit-scrollbar-thumb {
+  background: #6e7681; border-radius: 6px; border: 2px solid #0b1016;
+}
+:is(.markdown-preview-stage, .image-preview-stage)::-webkit-scrollbar-thumb:hover { background: #8b949e; }
+:is(.markdown-preview-stage, .image-preview-stage)::-webkit-scrollbar-thumb:active { background: #b1bac4; }
+
+/* ─── Attachment viewers under the cosmetic themes ────────────────────
+   Both viewers are chrome opened FROM the notification surfaces, so they
+   re-skin with the shell the way the reader below does. The dialog CHROME
+   stays under the two overlay classes, which nothing else uses. The rendered
+   DOCUMENT is themed unscoped further down, because the same document renders
+   in the message card as well as in the viewer, and .markdown-document has no
+   consumer outside those notification surfaces (markdown-attachment.js is the
+   only place MarkdownDocument is mounted) — so that is a deliberate exception
+   to the overlay scoping, not a leak.
+
+   The first rules UNDO rather than add: `body.wizard header` and `body.slop
+   header` are bare element selectors meant for the page banner, so they reach
+   a dialog's <header> too — the shimmer gradient turned up inside the viewer
+   uninvited. `header button` likewise re-pads the controls in there. */
+body.wizard :is(.markdown-preview-overlay, .image-preview-overlay) header {
+  background: #17131f; border-bottom: 1px solid #3a2f57;
+  animation: none; background-size: auto;
+}
+body.wizard :is(.markdown-preview-overlay, .image-preview-overlay)
+  header :is(.markdown-preview-close, .image-preview-close) { padding: 0; border-radius: 4px; }
+body.wizard :is(.markdown-preview-overlay, .image-preview-overlay)
+  header .markdown-preview-mode { padding: 5px 10px; border-radius: 0; }
+body.wizard :is(.markdown-preview-dialog, .image-preview-dialog) {
+  border-color: #3a2f57; background: #12101a; color: #d8cff0;
+  box-shadow: 0 24px 70px rgba(18, 6, 38, .62);
+}
+body.wizard :is(.markdown-preview-heading, .image-preview-heading) h2 { color: #e6dcff; }
+body.wizard :is(.markdown-preview-heading, .image-preview-heading) span,
+body.wizard :is(.image-preview-footer-size, .image-preview-zoom-label),
+body.wizard .image-preview-footer-file { color: #9a86c9; }
+body.wizard :is(.markdown-preview-download, .image-preview-download) {
+  border-color: #7c5cc4; background: #1d1730; color: #b39ddb;
+}
+body.wizard :is(.markdown-preview-download, .image-preview-download):hover,
+body.wizard :is(.markdown-preview-download, .image-preview-download):focus-visible {
+  background: rgba(124, 92, 196, .18); color: #e6dcff;
+}
+body.wizard :is(.markdown-preview-close, .image-preview-close) {
+  border-color: #3a2f57; background: #1d1730; color: #b39ddb;
+}
+body.wizard :is(.markdown-preview-overlay, .image-preview-overlay)
+  header :is(.markdown-preview-close, .image-preview-close):hover,
+body.wizard :is(.markdown-preview-overlay, .image-preview-overlay)
+  header :is(.markdown-preview-close, .image-preview-close):focus-visible {
+  background: #2a2140; border-color: #7c5cc4; color: #e6dcff;
+}
+body.wizard .markdown-preview-modes { border-color: #3a2f57; }
+body.wizard .markdown-preview-mode {
+  padding: 5px 10px; border: 0; background: #1d1730; color: #9a86c9;
+}
+body.wizard .markdown-preview-mode + .markdown-preview-mode { border-left: 1px solid #3a2f57; }
+body.wizard .markdown-preview-mode:hover { background: #2a2140; color: #e6dcff; }
+body.wizard .markdown-preview-mode[aria-pressed="true"]:hover { background: #3b2a63; }
+body.wizard .markdown-preview-mode[aria-pressed="true"] { background: #3b2a63; color: #e6dcff; }
+body.wizard .markdown-preview-mode:focus-visible { box-shadow: inset 0 0 0 2px #b39ddb; color: #e6dcff; }
+body.wizard :is(.markdown-preview-stage, .image-preview-footer) { background: #12101a; }
+body.wizard .image-preview-footer { border-top-color: #3a2f57; }
+body.wizard .image-preview-footer button {
+  background: #1d1730; border-color: #3a2f57; color: #d8cff0;
+}
+body.wizard .image-preview-footer button:hover:not(:disabled),
+body.wizard .image-preview-footer button:focus-visible { border-color: #7c5cc4; color: #e6dcff; }
+body.wizard .markdown-preview-source { color: #d8cff0; }
+body.wizard :is(.markdown-preview-overlay, .image-preview-overlay) .dialog-resizer { color: #6b5b8f; }
+body.wizard :is(.markdown-preview-overlay, .image-preview-overlay) .dialog-resizer:hover,
+body.wizard :is(.markdown-preview-overlay, .image-preview-overlay) .dialog-resizer:focus-visible { color: #b39ddb; }
+
+body.slop :is(.markdown-preview-overlay, .image-preview-overlay) header {
+  background: #2a0a0a; border-bottom: 1px solid #8b0000;
+  animation: none; background-size: auto;
+}
+body.slop :is(.markdown-preview-overlay, .image-preview-overlay)
+  header :is(.markdown-preview-close, .image-preview-close) { padding: 0; border-radius: 4px; }
+body.slop :is(.markdown-preview-overlay, .image-preview-overlay)
+  header .markdown-preview-mode { padding: 5px 10px; border-radius: 0; }
+body.slop :is(.markdown-preview-dialog, .image-preview-dialog) {
+  border-color: #8b0000; background: #1a0505; color: #f0dcc0;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, .66);
+}
+body.slop :is(.markdown-preview-heading, .image-preview-heading) h2 { color: #ffe88c; }
+body.slop :is(.markdown-preview-heading, .image-preview-heading) span,
+body.slop :is(.image-preview-footer-size, .image-preview-zoom-label),
+body.slop .image-preview-footer-file { color: #c9a86b; }
+body.slop :is(.markdown-preview-download, .image-preview-download) {
+  border-color: #ffd700; background: #2a0a0a; color: #ffd700;
+}
+body.slop :is(.markdown-preview-download, .image-preview-download):hover,
+body.slop :is(.markdown-preview-download, .image-preview-download):focus-visible {
+  background: rgba(255, 215, 0, .13); color: #ffe88c;
+}
+body.slop :is(.markdown-preview-close, .image-preview-close) {
+  border-color: #8b0000; background: #2a0a0a; color: #c9a86b;
+}
+body.slop :is(.markdown-preview-overlay, .image-preview-overlay)
+  header :is(.markdown-preview-close, .image-preview-close):hover,
+body.slop :is(.markdown-preview-overlay, .image-preview-overlay)
+  header :is(.markdown-preview-close, .image-preview-close):focus-visible {
+  background: #3d0d0d; border-color: #ffd700; color: #ffe88c;
+}
+body.slop .markdown-preview-modes { border-color: #8b0000; }
+body.slop .markdown-preview-mode {
+  padding: 5px 10px; border: 0; background: #2a0a0a; color: #c9a86b;
+}
+body.slop .markdown-preview-mode + .markdown-preview-mode { border-left: 1px solid #8b0000; }
+body.slop .markdown-preview-mode:hover { background: #3d0d0d; color: #ffe88c; }
+body.slop .markdown-preview-mode[aria-pressed="true"]:hover { background: #8b1a1a; }
+body.slop .markdown-preview-mode[aria-pressed="true"] { background: #8b1a1a; color: #ffd700; }
+body.slop .markdown-preview-mode:focus-visible { box-shadow: inset 0 0 0 2px #ffd700; color: #ffe88c; }
+body.slop :is(.markdown-preview-stage, .image-preview-footer) { background: #1a0505; }
+body.slop .image-preview-footer { border-top-color: #8b0000; }
+body.slop .image-preview-footer button {
+  background: #2a0a0a; border-color: #8b0000; color: #f0dcc0;
+}
+body.slop .image-preview-footer button:hover:not(:disabled),
+body.slop .image-preview-footer button:focus-visible { border-color: #ffd700; color: #ffe88c; }
+body.slop .markdown-preview-source { color: #f0dcc0; }
+body.slop :is(.markdown-preview-overlay, .image-preview-overlay) .dialog-resizer { color: #7a3b3b; }
+body.slop :is(.markdown-preview-overlay, .image-preview-overlay) .dialog-resizer:hover,
+body.slop :is(.markdown-preview-overlay, .image-preview-overlay) .dialog-resizer:focus-visible { color: #ffd700; }
+
+body.wizard :is(.markdown-preview-stage, .image-preview-stage)::-webkit-scrollbar-track,
+body.wizard :is(.markdown-preview-stage, .image-preview-stage)::-webkit-scrollbar-corner { background: #140f28; }
+body.wizard :is(.markdown-preview-stage, .image-preview-stage)::-webkit-scrollbar-thumb {
+  background: #7a5db0; border-color: #140f28;
+}
+body.wizard :is(.markdown-preview-stage, .image-preview-stage)::-webkit-scrollbar-thumb:hover { background: #a97bd6; }
+body.wizard :is(.markdown-preview-stage, .image-preview-stage)::-webkit-scrollbar-thumb:active { background: #c9a6f0; }
+body.slop :is(.markdown-preview-stage, .image-preview-stage)::-webkit-scrollbar-track,
+body.slop :is(.markdown-preview-stage, .image-preview-stage)::-webkit-scrollbar-corner { background: #1a0505; }
+body.slop :is(.markdown-preview-stage, .image-preview-stage)::-webkit-scrollbar-thumb {
+  background: #c11a1a; border-color: #1a0505;
+}
+body.slop :is(.markdown-preview-stage, .image-preview-stage)::-webkit-scrollbar-thumb:hover { background: #e02b2b; }
+body.slop :is(.markdown-preview-stage, .image-preview-stage)::-webkit-scrollbar-thumb:active { background: #ffd700; }
+
+/* The rendered document itself, on BOTH surfaces that show one: the card in
+   the message and the viewer. Default-theme colours are in the .markdown-document
+   block above; these are the same roles in each theme's palette. */
+body.wizard .markdown-document { color: #d8cff0; }
+body.wizard .markdown-document :is(h1, h2, h3, h4) { color: #e6dcff; }
+body.wizard .markdown-document :is(h5, h6) { color: #b39ddb; }
+body.wizard .markdown-document :is(h1, h2) { border-bottom-color: #3a2f57; }
+body.wizard .markdown-document a { color: #b39ddb; }
+body.wizard .markdown-document strong { color: #f0e9ff; }
+body.wizard .markdown-document :is(s, blockquote) { color: #9a86c9; }
+body.wizard .markdown-document blockquote { border-left-color: #4d3d72; }
+body.wizard .markdown-document hr { border-top-color: #3a2f57; }
+body.wizard .markdown-document code { background: #241a3a; color: #f0e9ff; }
+body.wizard .markdown-document pre { border-color: #3a2f57; background: #17131f; }
+body.wizard .markdown-document :is(th, td) { border-color: #3a2f57; }
+body.wizard .markdown-document th { background: #241a3a; color: #e6dcff; }
+body.wizard .markdown-document tbody tr:nth-child(even) { background: rgba(36, 26, 58, .5); }
+body.wizard .markdown-attachment-document { border-top-color: #3a2f57; }
+body.wizard .markdown-attachment-state strong { color: #e6dcff; }
+body.wizard :is(.markdown-attachment-state span, .markdown-attachment-state) { color: #9a86c9; }
+body.wizard .human-attachment-markdown-trigger {
+  background: #1d1730; border-color: #3a2f57; color: #d8cff0;
+}
+body.wizard .human-attachment-markdown-trigger:hover:not(:disabled),
+body.wizard .human-attachment-markdown-trigger:focus-visible { border-color: #7c5cc4; color: #e6dcff; }
+body.wizard .human-attachment-markdown-icon { color: #b39ddb; }
+
+/* The states and affordances INSIDE a themed dialog. An element left at the
+   default palette in a skinned viewer is exactly the bug this block exists to
+   fix, so the loading/error panels, the remote-image placeholders and their
+   load buttons all follow the theme too. */
+body.wizard :is(.markdown-document-state, .image-preview-state) {
+  border-color: #4d3d72; background: rgba(23, 19, 31, .92); color: #9a86c9;
+}
+body.wizard :is(.markdown-document-state, .image-preview-state) strong { color: #e6dcff; }
+body.wizard :is(.markdown-document-state, .image-preview-state) span { color: #9a86c9; }
+body.wizard .markdown-remote-image { border-color: #4d3d72; background: rgba(36, 26, 58, .55); }
+body.wizard .markdown-remote-image[data-failed="true"] { border-color: #7a4a6a; }
+body.wizard :is(.markdown-remote-image-icon, .markdown-remote-image-text > span,
+  .markdown-remote-image-notice-text) { color: #9a86c9; }
+body.wizard .markdown-remote-image-text strong { color: #d8cff0; }
+body.wizard .markdown-remote-image-notice { border-color: #4d3d72; background: rgba(36, 26, 58, .55); }
+body.wizard :is(.markdown-remote-image-load, .markdown-remote-image-notice-load) {
+  border-color: #7c5cc4; background: #1d1730; color: #b39ddb;
+}
+body.wizard :is(.markdown-remote-image-load, .markdown-remote-image-notice-load):hover,
+body.wizard :is(.markdown-remote-image-load, .markdown-remote-image-notice-load):focus-visible {
+  background: rgba(124, 92, 196, .18); color: #e6dcff;
+}
+body.wizard :is(.markdown-preview-overlay, .image-preview-overlay) .dialog-resizer:focus-visible {
+  outline-color: #b39ddb;
+}
+
+
+body.slop .markdown-document { color: #f0dcc0; }
+body.slop .markdown-document :is(h1, h2, h3, h4) { color: #ffe88c; }
+body.slop .markdown-document :is(h5, h6) { color: #c9a86b; }
+body.slop .markdown-document :is(h1, h2) { border-bottom-color: #8b0000; }
+body.slop .markdown-document a { color: #ffd700; }
+body.slop .markdown-document strong { color: #ffe88c; }
+body.slop .markdown-document :is(s, blockquote) { color: #c9a86b; }
+body.slop .markdown-document blockquote { border-left-color: #8b0000; }
+body.slop .markdown-document hr { border-top-color: #8b0000; }
+body.slop .markdown-document code { background: #4a0a0a; color: #ffe88c; }
+body.slop .markdown-document pre { border-color: #8b0000; background: #2a0a0a; }
+body.slop .markdown-document :is(th, td) { border-color: #8b0000; }
+body.slop .markdown-document th { background: #4a0a0a; color: #ffe88c; }
+body.slop .markdown-document tbody tr:nth-child(even) { background: rgba(74, 10, 10, .5); }
+body.slop .markdown-attachment-document { border-top-color: #8b0000; }
+body.slop .markdown-attachment-state strong { color: #ffe88c; }
+body.slop :is(.markdown-attachment-state span, .markdown-attachment-state) { color: #c9a86b; }
+body.slop .human-attachment-markdown-trigger {
+  background: #2a0a0a; border-color: #8b0000; color: #f0dcc0;
+}
+body.slop .human-attachment-markdown-trigger:hover:not(:disabled),
+body.slop .human-attachment-markdown-trigger:focus-visible { border-color: #ffd700; color: #ffe88c; }
+body.slop .human-attachment-markdown-icon { color: #ffd700; }
+
+/* The states and affordances INSIDE a themed dialog. An element left at the
+   default palette in a skinned viewer is exactly the bug this block exists to
+   fix, so the loading/error panels, the remote-image placeholders and their
+   load buttons all follow the theme too. */
+body.slop :is(.markdown-document-state, .image-preview-state) {
+  border-color: #8b0000; background: rgba(42, 10, 10, .92); color: #c9a86b;
+}
+body.slop :is(.markdown-document-state, .image-preview-state) strong { color: #ffe88c; }
+body.slop :is(.markdown-document-state, .image-preview-state) span { color: #c9a86b; }
+body.slop .markdown-remote-image { border-color: #8b0000; background: rgba(74, 10, 10, .5); }
+body.slop .markdown-remote-image[data-failed="true"] { border-color: #ff6b6b; }
+body.slop :is(.markdown-remote-image-icon, .markdown-remote-image-text > span,
+  .markdown-remote-image-notice-text) { color: #c9a86b; }
+body.slop .markdown-remote-image-text strong { color: #f0dcc0; }
+body.slop .markdown-remote-image-notice { border-color: #8b0000; background: rgba(74, 10, 10, .5); }
+body.slop :is(.markdown-remote-image-load, .markdown-remote-image-notice-load) {
+  border-color: #ffd700; background: #2a0a0a; color: #ffd700;
+}
+body.slop :is(.markdown-remote-image-load, .markdown-remote-image-notice-load):hover,
+body.slop :is(.markdown-remote-image-load, .markdown-remote-image-notice-load):focus-visible {
+  background: rgba(255, 215, 0, .14); color: #ffe88c;
+}
+body.slop :is(.markdown-preview-overlay, .image-preview-overlay) .dialog-resizer:focus-visible {
+  outline-color: #ffd700;
+}
+
 
 /* ─── Reader skins for the cosmetic themes ────────────────────────────
    The reader is chrome, so it re-skins with the shell the way the dock does:
