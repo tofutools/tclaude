@@ -49,11 +49,12 @@ export function inspectSandboxDirectories(body) { return request('/api/sandbox-p
 export function createSandboxDirectories(body) { return request('/api/sandbox-profile-directories/create', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); }
 
 export function sandboxProfileSummary(profile) {
-  const fs = profile.filesystem || []; const env = profile.environment || []; const inc = profile.includes || []; const own = profile.agent_directories || [];
+  const fs = profile.filesystem || []; const env = profile.environment || []; const inc = profile.includes || []; const own = profile.agent_directories || []; const pre = profile.pre_launch || [];
   const parts = [['read', 'read'], ['write', 'write'], ['deny', 'deny']].flatMap(([access, label]) => { const count = fs.filter((entry) => entry.access === access).length; return count ? [`${count} ${label}`] : []; });
   if (inc.length) parts.push(`${inc.length} include${inc.length === 1 ? '' : 's'}`);
   if (env.length) parts.push(`${env.length} env key${env.length === 1 ? '' : 's'}`);
   if (own.length) parts.push(`${own.length} agent dir${own.length === 1 ? '' : 's'}`);
+  if (pre.length) parts.push(`${pre.length} pre-launch script${pre.length === 1 ? '' : 's'}`);
   const limits = profile.resource_limits || {};
   if (limits.memory) parts.push(`memory ${limits.memory}`);
   if (limits.cpu != null) parts.push(`CPU ${limits.cpu}`);
@@ -318,7 +319,7 @@ export function sandboxPredictionWarnings(prediction) {
     // them read alike.
     capability.push(...refusals.map((refusal) => `Launch refused: ${refusal.message}`));
     if (target.refusal) continue;
-    for (const axis of ['filesystem', 'environment', 'agent_directories', 'network', 'unix_sockets']) {
+    for (const axis of ['filesystem', 'environment', 'agent_directories', 'pre_launch', 'network', 'unix_sockets']) {
       const verdict = target.axes?.[axis];
       if (verdict && verdict.outcome !== 'enforced') capability.push(verdict.detail);
     }
@@ -380,6 +381,18 @@ function effectiveRuleRows(context = {}, constructedRoot = false) {
   }
   for (const name of context.agent_directories || []) {
     rows.push({ axis: 'agent_directories', label: `Private read/write directory: $${name}` });
+  }
+  // Blocks are the one axis that is arbitrary shell rather than a rule, so the
+  // preview names them and says what they promise to define, without pretending
+  // a script can be summarised the way a grant can.
+  for (const block of context.pre_launch || []) {
+    const exports = (block && block.exports || []).join(', ');
+    rows.push({
+      axis: 'pre_launch',
+      label: exports
+        ? `Pre-launch script: ${block.name} → ${exports}`
+        : `Pre-launch script: ${block && block.name}`,
+    });
   }
 
   const axes = sandboxAccessAxes(context);
@@ -545,6 +558,7 @@ export function sandboxOtherAssignmentWarnings(overallAxes = {}, selectedAxes = 
     filesystem: 'Directory rules',
     environment: 'Environment rules',
     agent_directories: 'Private-directory rules',
+    pre_launch: 'Pre-launch scripts',
     network: 'Network rules',
     unix_sockets: 'Unix-socket rules',
   };
