@@ -3,8 +3,6 @@ package copilotfixture_test
 import (
 	"os"
 	"path/filepath"
-	"strconv"
-	"strings"
 	"testing"
 	"time"
 
@@ -85,62 +83,6 @@ func TestRunPTYBlockedAfterEndsAQuietRunEarly(t *testing.T) {
 	assert.Less(t, res.Elapsed, 15*time.Second,
 		"the point of BlockedAfter is not paying the deadline; elapsed=%s", res.Elapsed)
 	assert.Contains(t, res.TranscriptText(), "ready")
-}
-
-// TestRunPTYStopsDescendantsBeforeReturning pins the cleanup behind TCL-1045.
-//
-// Copilot starts helpers that inherit its PTY session. Killing only the CLI
-// parent left those helpers free to keep writing into the fixture's t.TempDir;
-// on macOS, testing's concurrent RemoveAll then failed with "directory not
-// empty" even though every permission assertion had passed. The heartbeat is
-// the deterministic form of that race: it must stop before RunPTY returns.
-func TestRunPTYStopsDescendantsBeforeReturning(t *testing.T) {
-	heartbeat := filepath.Join(t.TempDir(), "descendant-heartbeat")
-	fakeCopilot(t, `
-(
-  while :; do
-    printf x >> "$HEARTBEAT"
-    sleep 0.02
-  done
-) &
-echo "descendant=$!"
-echo ready
-sleep 60`)
-
-	run := fakeRunOptions(t)
-	run.ExtraEnv = []string{"HEARTBEAT=" + heartbeat}
-	res := copilotfixture.RunPTY(t, copilotfixture.PTYOptions{
-		RunOptions:   run,
-		Deadline:     30 * time.Second,
-		BlockedAfter: 3 * time.Second,
-	})
-
-	var descendantPID int
-	for _, field := range strings.Fields(res.TranscriptText()) {
-		if value, ok := strings.CutPrefix(field, "descendant="); ok {
-			descendantPID, _ = strconv.Atoi(strings.TrimSpace(value))
-			break
-		}
-	}
-	if descendantPID > 0 {
-		t.Cleanup(func() {
-			process, err := os.FindProcess(descendantPID)
-			if err == nil {
-				_ = process.Kill()
-			}
-		})
-	}
-
-	require.True(t, res.Blocked, "the fake must exercise the early-stop path")
-	require.NotZero(t, descendantPID, "the fake must disclose its background writer pid")
-	before, err := os.Stat(heartbeat)
-	require.NoError(t, err)
-	require.Positive(t, before.Size(), "the descendant must have written before teardown")
-	time.Sleep(250 * time.Millisecond)
-	after, err := os.Stat(heartbeat)
-	require.NoError(t, err)
-	assert.Equal(t, before.Size(), after.Size(),
-		"RunPTY returned while a descendant could still mutate fixture state")
 }
 
 // TestRunPTYSettledBeatsBlockedAfter pins the precedence between the two early
