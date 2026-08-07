@@ -163,3 +163,43 @@ test('a failed aggregate shell mount aborts bootstrap instead of stranding feedb
     /Dashboard shell failed to mount/,
   );
 });
+
+test('a blocking confirmation stays up, disabled and spinning, until its action settles', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createShellState }, { Confirm }] = await Promise.all([
+    harness.importDashboardModule('js/shell-state.js'),
+    harness.importDashboardModule('js/shell-island.js'),
+  ]);
+  const feedback = createShellState();
+  const mounted = await harness.mount(harness.html`<${Confirm} feedback=${feedback} />`);
+
+  let release;
+  const work = new Promise((resolve) => { release = resolve; });
+  let answered;
+  await harness.act(() => {
+    answered = feedback.confirm({
+      title: 'Shutdown?', okLabel: 'Shut down 3 agents', busyLabel: 'Shutting down…',
+      action: () => work,
+    });
+  });
+  await harness.act(() => { getByRole(mounted.container, 'button', { name: 'Shut down 3 agents' }).click(); });
+
+  const ok = mounted.container.querySelector('#confirm-ok');
+  const cancel = mounted.container.querySelector('#confirm-cancel');
+  assert.equal(ok.disabled, true, 'the primary is disabled while the work runs');
+  assert.equal(cancel.disabled, true, 'cancel cannot abandon work already in flight');
+  assert.equal(ok.getAttribute('aria-busy'), 'true');
+  assert.match(ok.textContent, /Shutting down…/, 'the primary swaps to its busy label');
+  assert.ok(ok.querySelector('.btn-spinner'), 'the shared in-button spinner marks the wait');
+
+  // Escape must not dismiss a busy dialog — hiding it would only lose sight of
+  // the request, not stop it.
+  await harness.act(() => { harness.fireEvent(harness.document, 'keydown', { key: 'Escape' }); });
+  assert.ok(mounted.container.querySelector('#confirm-ok'), 'a busy dialog ignores Escape');
+
+  await harness.act(async () => { release('ok'); await answered; });
+  assert.equal(await answered, 'ok');
+  assert.equal(mounted.container.querySelector('#confirm-modal').classList.contains('show'), false,
+    'the dialog comes down once the action settles');
+  await mounted.unmount();
+});

@@ -406,6 +406,16 @@ func runPowerOnWithResume(targets []string, resume func(string) memberOpResult) 
 		res := resume(convID)
 		switch res.Action {
 		case "resumed":
+			// The spawn was launched — now confirm the agent actually came up.
+			// Without this a resume that dies during harness startup reports
+			// success and the operator is left with a "resumed" agent that is
+			// not running.
+			if !waitForConvOnline(convID, powerOnOnlineGrace) {
+				out.Outcome = powerOnFailed
+				out.Detail = "resume was launched but the agent did not come online within " +
+					powerOnOnlineGrace.String()
+				break
+			}
 			out.Outcome = powerOnResumed
 		case "skipped:already_online":
 			// Raced — the agent came online between collection and now.
@@ -519,6 +529,40 @@ func joinPowerDetail(existing, add string) string {
 		return add
 	}
 	return existing + "; " + add
+}
+
+// powerOnOnlineGrace is how long a resumed agent has to actually appear as a
+// live tmux session before the resume is reported as failed.
+//
+// A resume spawns `tclaude session new -r <conv>` DETACHED, so the spawn call
+// returning means the child was launched, not that the agent came up. Anything
+// after that — a harness that exits on startup, a sandbox that refuses, a cwd
+// that vanished between the check and the launch — used to be invisible: the
+// response said "resumed" and the agent simply was not there. The operator's
+// report was exactly that ("one failed to resume without any indication").
+//
+// A package var so flow tests can shrink it.
+var powerOnOnlineGrace = 15 * time.Second
+
+// waitForConvOnline is the mirror of waitForConvOffline: it polls until convID
+// HAS a live tmux session, or the grace closes. Returns true if the agent came
+// up within the window.
+func waitForConvOnline(convID string, grace time.Duration) bool {
+	deadline := time.Now().Add(grace)
+	for {
+		if pickAliveSession(convID) != nil {
+			return true
+		}
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return false
+		}
+		sleep := shutdownPollInterval
+		if sleep > remaining {
+			sleep = remaining
+		}
+		time.Sleep(sleep)
+	}
 }
 
 // waitForConvOffline polls convID's tmux liveness until it goes

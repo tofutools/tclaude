@@ -50,28 +50,34 @@ export async function shutdownScope(scope, groupName) {
     return;
   }
   const n = running === 1 ? '1 running agent' : `${running} running agents`;
-  const confirmed = await confirmModal({
-    title: 'Shutdown?',
-    body: `This stops ${n} in ${where}. Each agent is sent /exit, then `
-      + `force-killed only if it has not exited within the grace period. `
-      + `Stop only — no conversations, group memberships, enrollment or `
-      + `permissions are deleted. Resume any session to bring that agent back.`,
-    meta: metaLine,
-    okLabel: `Shut down ${running === 1 ? '1 agent' : running + ' agents'}`,
-  });
-  if (!confirmed) return;
   const payload = scope === 'group' ? {scope: 'group', group: groupName} : {scope: 'all'};
   let r;
   try {
-    r = await fetch('/api/shutdown', {
-      method: 'POST', credentials: 'same-origin',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(payload),
+    // The request genuinely waits: the daemon soft-exits each agent, gives it
+    // the grace window, and escalates to a kill only if it will not go. Running
+    // it as the confirm's own action keeps the modal up, busy, for that whole
+    // time — dismissing on click and working invisibly made a shutdown that was
+    // doing its job look like a button that did nothing.
+    r = await confirmModal({
+      title: 'Shutdown?',
+      body: `This stops ${n} in ${where}. Each agent is sent /exit, then `
+        + `force-killed only if it has not exited within the grace period. `
+        + `Stop only — no conversations, group memberships, enrollment or `
+        + `permissions are deleted. Resume any session to bring that agent back.`,
+      meta: metaLine,
+      okLabel: `Shut down ${running === 1 ? '1 agent' : running + ' agents'}`,
+      busyLabel: 'Shutting down…',
+      action: () => fetch('/api/shutdown', {
+        method: 'POST', credentials: 'same-origin',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload),
+      }),
     });
   } catch (e) {
     toast(`shutdown failed: ${e && e.message || e}`, true);
     return;
   }
+  if (!r) return;
   if (!r.ok) {
     toast(`shutdown failed: ${await r.text()}`, true);
     return;
@@ -114,28 +120,32 @@ export async function powerOnScope(scope, groupName) {
     return;
   }
   const n = offline === 1 ? '1 offline agent' : `${offline} offline agents`;
-  const confirmed = await confirmModal({
-    title: 'Power on?',
-    body: `This resumes ${n} in ${where}. Each offline agent is restarted `
-      + `in a fresh tmux session, resumed onto its existing conversation. `
-      + `Agents already running are left alone. Resume only — nothing new `
-      + `is created.`,
-    meta: metaLine,
-    okLabel: `Power on ${offline === 1 ? '1 agent' : offline + ' agents'}`,
-  });
-  if (!confirmed) return;
   const payload = scope === 'group' ? {scope: 'group', group: groupName} : {scope: 'all'};
   let r;
   try {
-    r = await fetch('/api/power-on', {
-      method: 'POST', credentials: 'same-origin',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(payload),
+    // Same contract as shutdown: the daemon confirms each resumed agent is
+    // actually online before reporting it, so the request takes real time and
+    // the modal has to stay up and busy while it does.
+    r = await confirmModal({
+      title: 'Power on?',
+      body: `This resumes ${n} in ${where}. Each offline agent is restarted `
+        + `in a fresh tmux session, resumed onto its existing conversation. `
+        + `Agents already running are left alone. Resume only — nothing new `
+        + `is created.`,
+      meta: metaLine,
+      okLabel: `Power on ${offline === 1 ? '1 agent' : offline + ' agents'}`,
+      busyLabel: 'Powering on…',
+      action: () => fetch('/api/power-on', {
+        method: 'POST', credentials: 'same-origin',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload),
+      }),
     });
   } catch (e) {
     toast(`power on failed: ${e && e.message || e}`, true);
     return;
   }
+  if (!r) return;
   if (!r.ok) {
     toast(`power on failed: ${await r.text()}`, true);
     return;

@@ -1075,6 +1075,7 @@ func handleGroupResume(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 	out.Members = mapAgentsConcurrently(members, powerOnConcurrency,
 		func(_ int, m *db.AgentGroupMember) (memberOpResult, bool) {
 			res := resumeOneConvLocked(m.ConvID, false, requestTrustRoot)
+			confirmResumedConvOnline(m.ConvID, &res)
 			res.AgentID = peerAgentID(m.ConvID)
 			res.Title = agent.FreshTitle(m.ConvID)
 			return res, true
@@ -1137,6 +1138,31 @@ func handleGroupResume(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 		}
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// confirmResumedConvOnline downgrades a "resumed" result to an error when the
+// agent never actually appears as a live tmux session.
+//
+// A resume launches `tclaude session new -r <conv>` DETACHED, so a successful
+// spawn means the child started, not that the agent is up. Everything that can
+// go wrong after that — a harness that exits during startup, a sandbox that
+// refuses, a cwd that vanished between the pre-check and the launch — was
+// previously invisible: the member table said "resumed" for an agent that is
+// not running. Reporting the truth is the whole point of a bulk resume the
+// operator is watching.
+//
+// A no-op for every non-"resumed" action, so the skip/error results the resume
+// already resolved are passed through untouched.
+func confirmResumedConvOnline(convID string, res *memberOpResult) {
+	if res.Action != "resumed" {
+		return
+	}
+	if waitForConvOnline(convID, powerOnOnlineGrace) {
+		return
+	}
+	res.Action = "error:not_online"
+	res.Detail = joinDetail(res.Detail,
+		"resume was launched but the agent did not come online within "+powerOnOnlineGrace.String())
 }
 
 // resumeOneConv spawns a detached `tclaude session new -r <conv>`
