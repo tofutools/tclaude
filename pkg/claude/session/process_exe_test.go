@@ -3,8 +3,10 @@
 package session
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -31,6 +33,31 @@ func TestGetProcessExeName_ReportsTheRunningBinary(t *testing.T) {
 // arbitrary. Pid 0 is never a readable process on Linux or macOS.
 func TestGetProcessExeName_UnreadableProcessYieldsEmpty(t *testing.T) {
 	assert.Empty(t, GetProcessExeName(0))
+}
+
+// On Linux an unreadable exe link must NOT fall back to `ps`, because there
+// ps prints comm — the process-settable value this function exists to be
+// stronger than. A process can reach that branch on purpose:
+// prctl(PR_SET_DUMPABLE, 0) makes its own /proc/<pid>/exe unreadable. If the
+// fallback ran, such a process would choose this function's answer, and the
+// harness gate would be back to trusting a name.
+//
+// The failure is staged through the link reader rather than a real
+// dumpable-cleared process: the point being pinned is what the function does
+// with a failed read, and staging it is the only portable way to be sure the
+// test exercises that branch at all.
+func TestGetProcessExeName_LinuxDoesNotFallBackToComm(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the no-fallback rule is Linux-only; elsewhere ps reports the executable path")
+	}
+	prev := procExeLink
+	procExeLink = func(int) (string, error) { return "", errors.New("permission denied") }
+	t.Cleanup(func() { procExeLink = prev })
+
+	assert.Empty(t, GetProcessExeName(os.Getpid()),
+		"an unreadable exe link is no evidence, not weaker evidence")
+	assert.False(t, IsHarnessProcessAt(os.Getpid(), "MainThread"),
+		"and the harness gate above it stays closed")
 }
 
 // IsHarnessProcessAt admits a process on EITHER piece of evidence — the name

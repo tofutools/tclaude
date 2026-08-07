@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -80,6 +81,14 @@ func GetProcessName(pid int) string {
 	return name
 }
 
+// procExeLink reads the /proc/<pid>/exe link. Indirected through a package
+// var so a test can force the unreadable branch — the case that decides
+// whether this function may answer with weaker evidence than it promises,
+// and one no test can stage against a real process portably.
+var procExeLink = func(pid int) (string, error) {
+	return os.Readlink(fmt.Sprintf("/proc/%d/exe", pid))
+}
+
 // GetProcessExeName returns the basename of the executable a process is
 // running, or "" when it cannot be read.
 //
@@ -97,14 +106,25 @@ func GetProcessName(pid int) string {
 // there prints the executable path — the same identity, which is why the
 // harness walks below have always worked on macOS and only ever missed
 // Copilot on Linux.
+//
+// On Linux there is NO fallback: an unreadable /proc/<pid>/exe yields "".
+// `ps` there prints comm, the very value this function exists to be stronger
+// than — and a process can force that path deliberately, since
+// prctl(PR_SET_DUMPABLE, 0) makes its own exe link unreadable. Answering with
+// comm would let a caller choose what this function returns, quietly voiding
+// the contract above for anyone who relies on it. No evidence is the honest
+// answer; callers degrade to the name check they would have used anyway.
 func GetProcessExeName(pid int) string {
-	if target, err := os.Readlink(fmt.Sprintf("/proc/%d/exe", pid)); err == nil {
+	if target, err := procExeLink(pid); err == nil {
 		// A replaced binary reads back as "/path/to/exe (deleted)".
 		target = strings.TrimSuffix(strings.TrimSpace(target), " (deleted)")
 		if target == "" {
 			return ""
 		}
 		return filepath.Base(target)
+	}
+	if runtime.GOOS == "linux" {
+		return ""
 	}
 	cmd := exec.Command("ps", "-o", "comm=", "-p", strconv.Itoa(pid))
 	output, err := cmd.Output()
