@@ -285,7 +285,15 @@ export function GroupsList({ host, state, actions }) {
 export function BrokerRefusalNotice({ snapshot }) {
   const total = Number(snapshot?.broker_refusals_total || 0);
   const unplaceable = Number(snapshot?.broker_refusals_unplaceable || 0);
-  if (!(total > 0)) return null;
+  // A harness can race one final callback against teardown after its session
+  // row has gone away. That caller is necessarily unplaceable, and one lost
+  // teardown event is not evidence that a live agent's telemetry is stuck.
+  // Wait for a repeat before raising the machine-wide alarm. A refusal the
+  // daemon DID place remains immediately actionable: it means a caller was
+  // resolved to a row that disagreed with its claim, and that row may be
+  // hidden even though its per-agent badge was recorded.
+  const attributed = Math.max(0, total - unplaceable);
+  if (!(attributed > 0 || unplaceable > 1)) return null;
   const plural = total === 1 ? '' : 's';
   const title = 'These callbacks carry telemetry — status, cost, context, directory — for some agent, and it is being dropped;'
     + ' the affected agent keeps working, so nothing else on the dashboard will look wrong.'
