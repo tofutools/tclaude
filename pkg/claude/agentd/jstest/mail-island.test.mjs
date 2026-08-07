@@ -86,6 +86,13 @@ test('Messages loads immediately when its tab becomes active or is reselected', 
 test('Messages island preserves native controls, CSS hooks, focus, reader, and keyed rows across incoming updates', async (t) => {
   const harness = await createPreactHarness(t);
   const { MailApp } = await harness.importDashboardModule('js/mail-island.js');
+  const { dashboardState } = await harness.importDashboardModule('js/snapshot-store.js');
+  dashboardState.publishLocalEdit({
+    agents: [{
+      agent_id: 'agt_alpha', conv_id: 'conv-a', state: { harness: 'copilot' },
+    }],
+  });
+  t.after(() => dashboardState.publishLocalEdit(null));
   const state = harness.signals.signal(populated());
   const controller = controllerFor(state);
   const mounted = await harness.mount(harness.html`<${MailApp} controller=${controller} />`);
@@ -101,6 +108,8 @@ test('Messages island preserves native controls, CSS hooks, focus, reader, and k
   assert.equal(mounted.container.querySelector('.mail-reader-body a').getAttribute('href'), 'https://example.com/report');
   assert.equal(mounted.container.querySelector('.mail-attachment a').getAttribute('download'), 'report.md');
   assert.equal(mounted.container.querySelector('.mail-attachment-size').textContent, '1.5 KiB');
+  assert.equal(mounted.container.querySelector('[data-act="msg-focus"]').dataset.harness, 'copilot',
+    'message focus carries the live sender harness into the terminal launcher');
 
   const originalRow = mounted.container.querySelector('.mail-row-wrap');
   const originalReader = mounted.container.querySelector('#mail-reader');
