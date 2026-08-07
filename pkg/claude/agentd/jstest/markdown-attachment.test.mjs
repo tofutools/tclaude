@@ -42,6 +42,15 @@ function okText(body) {
   return { ok: true, status: 200, text: async () => body };
 }
 
+function controls(mounted) {
+  const found = {};
+  for (const button of mounted.container.querySelectorAll('.human-attachment-markdown-trigger')) {
+    if (/View source/.test(button.textContent)) found.source = button;
+    else if (/Open/.test(button.textContent)) found.open = button;
+  }
+  return found;
+}
+
 async function mount(t, respond, item = attachment, messageID = 42) {
   const harness = await createPreactHarness(t);
   const { MarkdownAttachment } = await harness.importDashboardModule('js/markdown-attachment.js');
@@ -78,10 +87,53 @@ test('a Markdown attachment renders its document in the message', async (t) => {
   await mounted.unmount();
 });
 
+// The message column is narrow, so a long document needs the same dedicated
+// viewer an image attachment gets.
+test('the open control shows the rendered document in a dedicated viewer', async (t) => {
+  const { harness, mounted } = await mount(t, () => okText(document));
+
+  const trigger = controls(mounted).open;
+  assert.ok(trigger, 'a Markdown attachment offers an open control');
+  assert.equal(trigger.getAttribute('aria-label'), 'Open plan.md in the document viewer');
+
+  await harness.act(() => {
+    trigger.focus();
+    trigger.click();
+  });
+  await settle(harness);
+
+  const overlay = mounted.container.querySelector('.markdown-preview-overlay');
+  assert.ok(overlay, 'the control opens the modal viewer');
+  const dialog = overlay.querySelector('[role="dialog"]');
+  assert.equal(dialog.getAttribute('aria-modal'), 'true');
+  assert.equal(dialog.querySelector('h2').textContent, 'plan.md');
+  const rendered = dialog.querySelector('.markdown-preview-document');
+  assert.ok(rendered, 'the viewer opens on the rendered document');
+  assert.equal(rendered.querySelector('h1').textContent, 'Plan');
+  assert.equal(dialog.querySelector('.markdown-preview-source'), null,
+    'the rendered mode is not the raw source');
+
+  // Both modes stay reachable, so arriving in one is never a dead end.
+  const [renderedMode, sourceMode] = dialog.querySelectorAll('.markdown-preview-mode');
+  assert.equal(renderedMode.getAttribute('aria-pressed'), 'true');
+  assert.equal(sourceMode.getAttribute('aria-pressed'), 'false');
+  await harness.act(() => { sourceMode.click(); });
+  assert.equal(dialog.querySelector('.markdown-preview-source').textContent, document);
+  assert.equal(dialog.querySelector('.markdown-preview-document'), null);
+
+  await harness.act(() => {
+    harness.fireEvent(harness.document, 'keydown', { key: 'Escape' });
+  });
+  assert.equal(mounted.container.querySelector('.markdown-preview-overlay'), null);
+  assertSameNode(harness.document.activeElement, trigger,
+    'closing restores focus to the invoker');
+  await mounted.unmount();
+});
+
 test('the control opens the original Markdown source', async (t) => {
   const { harness, mounted } = await mount(t, () => okText(document));
 
-  const trigger = mounted.container.querySelector('.human-attachment-markdown-trigger');
+  const trigger = controls(mounted).source;
   assert.ok(trigger, 'a Markdown attachment offers a source control');
   assert.match(trigger.textContent, /View source/);
   assert.equal(trigger.getAttribute('aria-label'), 'View the Markdown source of plan.md');
@@ -127,14 +179,17 @@ test('the source control is inert until the document has been read', async (t) =
     <${MarkdownAttachment} messageID=${42} attachment=${attachment} />
   `);
 
-  const trigger = mounted.container.querySelector('.human-attachment-markdown-trigger');
-  assert.equal(trigger.disabled, true, 'the control is disabled while the fetch is in flight');
+  const pending = controls(mounted);
+  assert.equal(pending.open.disabled, true, 'the open control is disabled while the fetch is in flight');
+  assert.equal(pending.source.disabled, true, 'the source control is disabled while the fetch is in flight');
   assert.match(mounted.container.querySelector('.markdown-attachment-state').textContent,
     /loading document/i);
 
   await harness.act(async () => { release(); await new Promise((resolve) => setTimeout(resolve, 0)); });
   await settle(harness);
-  assert.equal(mounted.container.querySelector('.human-attachment-markdown-trigger').disabled, false);
+  const ready = controls(mounted);
+  assert.equal(ready.open.disabled, false);
+  assert.equal(ready.source.disabled, false);
   await mounted.unmount();
 });
 
