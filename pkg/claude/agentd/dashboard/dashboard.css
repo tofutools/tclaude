@@ -1402,7 +1402,8 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
 
 /* Human-notify Markdown attachments. The document renders in the card itself,
    on its own full-width row below the file line, because it IS the message.
-   The control beside the download link opens the original source instead. */
+   The controls beside the download link open the modal viewer — on the rendered
+   document, or on the original source. */
 .human-attachment-markdown-trigger {
   display: inline-flex; align-items: center; gap: 6px; padding: 5px 9px;
   border: 1px solid #30363d; border-radius: 4px; background: #21262d;
@@ -1431,7 +1432,8 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
 .markdown-attachment-state strong { color: #f0f6fc; font-size: 13px; }
 .markdown-attachment-state span { color: #8b949e; font-size: 11px; }
 
-/* Shared Markdown source view. Like the image viewer it is a real
+/* Shared Markdown document viewer (rendered or source). Like the image viewer
+   it is a real
    .modal-overlay, so the dashboard's overlay stack, Escape routing, and
    refresh suspension all see it. */
 .markdown-preview-overlay {
@@ -1472,8 +1474,15 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
   color: #8b949e; cursor: pointer; font: inherit; font-size: 12px;
 }
 .markdown-preview-mode + .markdown-preview-mode { border-left: 1px solid #30363d; }
-.markdown-preview-mode:hover, .markdown-preview-mode:focus-visible { color: #f0f6fc; }
+.markdown-preview-mode:hover { color: #f0f6fc; }
 .markdown-preview-mode[aria-pressed="true"] { background: rgba(31, 111, 235, .18); color: #58a6ff; }
+/* The group clips an outline, so the focus ring is drawn inside the button —
+   the same treatment .sbx-segmented-option uses. It follows the pressed rule so
+   the selected mode shows a ring too. */
+.markdown-preview-mode:focus-visible {
+  box-shadow: inset 0 0 0 2px #58a6ff; outline: 0; position: relative; z-index: 1;
+  color: #f0f6fc;
+}
 .markdown-preview-download { padding: 5px 9px; border-color: #1f6feb; color: #58a6ff; text-decoration: none; }
 .markdown-preview-download:hover, .markdown-preview-download:focus-visible { background: rgba(31, 111, 235, .14); }
 .markdown-preview-close { width: 30px; height: 30px; padding: 0; color: #8b949e; font-size: 19px; }
@@ -1492,9 +1501,6 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
 }
 .markdown-document-state strong { color: #f0f6fc; font-size: 13px; }
 .markdown-document-state span { color: #8b949e; font-size: 11px; }
-/* The viewer is wider than the message column, so the rendered document keeps a
-   readable measure instead of running the full dialog width. */
-.markdown-preview-document { max-width: 760px; margin: 0 auto; font-size: 14px; }
 .markdown-preview-source {
   margin: 0; color: #c9d1d9; font-size: 12px; line-height: 1.55;
   white-space: pre-wrap; overflow-wrap: anywhere;
@@ -1550,6 +1556,12 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
 }
 .markdown-document th { background: #161b22; color: #f0f6fc; font-weight: 600; }
 .markdown-document tbody tr:nth-child(even) { background: rgba(22, 27, 34, .55); }
+
+/* The viewer is wider than the message column, so the rendered document keeps a
+   readable measure instead of running the full dialog width. It follows the
+   .markdown-document block deliberately: the element carries both classes at
+   equal specificity, so source order is what decides the font size. */
+.markdown-preview-document { max-width: 760px; margin: 0 auto; font-size: 14px; }
 
 @media (max-width: 720px) {
   .markdown-preview-overlay { padding: 0; }
