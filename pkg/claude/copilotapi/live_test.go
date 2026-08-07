@@ -391,7 +391,11 @@ func TestLiveSend(t *testing.T) {
 	}
 
 	// session.send is fire-and-forget; completion is observed on the stream.
-	deadline := time.After(120 * time.Second)
+	//
+	// This budget stays inside ctx's, so a turn that never finishes fails here
+	// with "never reached session.idle" rather than racing ctx and surfacing
+	// as a context deadline from whichever call happened to be in flight.
+	deadline := time.After(90 * time.Second)
 	for {
 		select {
 		case notification, ok := <-subscription.C():

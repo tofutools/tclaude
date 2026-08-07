@@ -1,7 +1,6 @@
 package copilotapi
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -175,7 +174,7 @@ func DialRetry(ctx context.Context, address string, opts *Options) (*Client, err
 
 func (c *Client) handshake(ctx context.Context, token string, allowMismatch bool) error {
 	var result ConnectResult
-	if err := c.Call(ctx, "connect", ConnectParams{Token: token}, &result); err != nil {
+	if err := c.Call(ctx, MethodConnect, ConnectParams{Token: token}, &result); err != nil {
 		return fmt.Errorf("copilotapi: handshake: %w", err)
 	}
 	if !result.OK {
@@ -257,7 +256,7 @@ func (c *Client) shutdown(cause error) {
 
 // readLoop owns all reads from the connection for the Client's lifetime.
 func (c *Client) readLoop() {
-	reader := bufio.NewReader(c.conn)
+	reader := newFrameReader(c.conn)
 	for {
 		frame, err := readFrame(reader)
 		if err != nil {

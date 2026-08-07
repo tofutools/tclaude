@@ -179,9 +179,17 @@ func TestCallHonoursContextCancellation(t *testing.T) {
 		t.Fatalf("err = %v, want context.DeadlineExceeded", err)
 	}
 
-	// The abandoned call must not poison later ones on the same connection.
-	if _, err := client.Ping(context.Background(), "still here"); err == nil {
-		t.Log("ping after abandoned call succeeded")
+	// The abandoned call must not poison later ones on the same connection:
+	// its pending entry has to be gone, and the reply that eventually arrives
+	// for it must not be handed to this ping.
+	pingCtx, pingCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer pingCancel()
+	result, err := client.Ping(pingCtx, "still here")
+	if err != nil {
+		t.Fatalf("ping after an abandoned call: %v", err)
+	}
+	if result.Message != "pong: still here" {
+		t.Errorf("Message = %q, want %q", result.Message, "pong: still here")
 	}
 }
 

@@ -75,6 +75,44 @@ func TestReadFrameRejectsOversizeLength(t *testing.T) {
 	}
 }
 
+func TestReadFrameRejectsOversizeHeaderLine(t *testing.T) {
+	// A peer that never sends a newline must be stopped by the read buffer
+	// rather than allowed to grow one. io.MultiReader keeps the stream endless
+	// so the test fails by hanging or exhausting memory if the bound is lost.
+	endless := io.MultiReader(
+		strings.NewReader("Content-Length: "),
+		&repeatingReader{value: '9'},
+	)
+	_, err := readFrame(newFrameReader(endless))
+	if !errors.Is(err, ErrHeaderTooLarge) {
+		t.Fatalf("err = %v, want ErrHeaderTooLarge", err)
+	}
+}
+
+func TestReadFrameRejectsEndlessHeaderLines(t *testing.T) {
+	// Each line is short enough to fit the buffer, so only the header-block
+	// budget stops a peer that sends them forever.
+	var header strings.Builder
+	for header.Len() <= maxHeaderBytes {
+		header.WriteString("X-Filler: padding\r\n")
+	}
+	header.WriteString("Content-Length: 2\r\n\r\nhi")
+	_, err := readFrame(newFrameReader(strings.NewReader(header.String())))
+	if !errors.Is(err, ErrHeaderTooLarge) {
+		t.Fatalf("err = %v, want ErrHeaderTooLarge", err)
+	}
+}
+
+// repeatingReader yields the same byte forever.
+type repeatingReader struct{ value byte }
+
+func (r *repeatingReader) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = r.value
+	}
+	return len(p), nil
+}
+
 func TestReadFrameTruncatedBody(t *testing.T) {
 	raw := "Content-Length: 10\r\n\r\nshort"
 	_, err := readFrame(bufio.NewReader(strings.NewReader(raw)))
