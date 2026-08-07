@@ -306,20 +306,24 @@ func persistCopilotContextSnapshot(
 	}
 
 	if hasLive {
-		// The sweep owns the numerator. `window` above has already absorbed
-		// whatever denominator the durable log most recently disclosed, so the
-		// percentage is recomputed here from the LIVE occupancy against that
-		// window rather than left at the compaction-time reading. With no
-		// disclosed window this yields 0 — unknown — and the token count is
-		// still written, which is the honest report of an occupancy whose
-		// denominator Copilot has not told anyone.
+		// The sweep owns the numerator, and the percentage is recomputed here
+		// against the same EFFECTIVE denominator the sweep resolves — the
+		// configured cap, else the observed model's static assumption, else
+		// whatever window the durable log disclosed (already absorbed into
+		// `window` above). Using the raw `window` alone was the TCL-1048
+		// follow-up bug: Copilot rarely discloses a window, so this branch
+		// recomputed pct against 0 and overwrote the sweep's real percentage
+		// on every token advance while the counts kept landing. `window`
+		// itself is still what the observed column persists — the effective
+		// denominator shapes only the percentage.
 		input = live.ContextTokens
 		// max() for the same reason the shutdown total uses it: the two sources
 		// count different things (the sweep counts calls it has consumed, the
 		// durable log's shutdown total is restored across a resume), and
 		// whichever is ahead is the one that has seen more of the session.
 		output = max(output, live.OutputTokens)
-		pct = copilotContextPct(input, window)
+		pct = copilotContextPct(input,
+			copilotEffectiveContextWindow(sess.ConvID, live.Model, window))
 	}
 
 	if output == state.persistedOutput && input == state.persistedInput &&

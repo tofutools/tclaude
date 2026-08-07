@@ -82,6 +82,13 @@ type copilotUsageLiveEntry struct {
 	ContextTokens int64
 	// OutputTokens is cumulative across every call the sweep has consumed.
 	OutputTokens int64
+	// Model is the newest top-level call's model id. The read-through follower
+	// needs it to resolve the same effective denominator the sweep uses
+	// (configured cap, else this model's static assumption) — without it the
+	// follower could only measure against the observed window column, which
+	// Copilot rarely discloses, and the two writers would flap the row between
+	// a real percentage and 0.
+	Model string
 
 	// LastEventID is the cursor, kept here so a sweep that is already up to
 	// date issues no query work for this session beyond its range scan.
@@ -596,6 +603,7 @@ func copilotUsageEntryFor(sess *db.SessionRow) (copilotUsageLiveEntry, *db.Copil
 		fresh.LastEventID = stored.LastEventID
 		fresh.ContextTokens = stored.LastCallInputTokens
 		fresh.OutputTokens = stored.OutputTokens
+		fresh.Model = stored.Model
 		restored = stored
 	}
 
@@ -755,6 +763,7 @@ func publishCopilotUsage(sess *db.SessionRow, snapshot db.CopilotUsageSnapshot) 
 		CreatedAt:     sess.CreatedAt,
 		ContextTokens: snapshot.LastCallInputTokens,
 		OutputTokens:  snapshot.OutputTokens,
+		Model:         snapshot.Model,
 		LastEventID:   snapshot.LastEventID,
 		loaded:        true,
 	}
@@ -796,11 +805,7 @@ func persistCopilotUsageContext(sess *db.SessionRow, snapshot db.CopilotUsageSna
 			"session_id", sess.ID, "error", err, "module", "agentd")
 		return
 	}
-	window := int64(0)
-	window = copilotConfiguredContextWindowMax(sess.ConvID)
-	if window == 0 && strings.TrimSpace(snapshot.Model) != "" {
-		window = harness.CopilotContextWindowDefault(snapshot.Model)
-	}
+	window := copilotEffectiveContextWindow(sess.ConvID, snapshot.Model, stored.ContextWindowSize)
 	pct := copilotContextPct(snapshot.LastCallInputTokens, window)
 
 	// tokens_output may only ever ADVANCE, hence max() rather than the sweep's
@@ -855,6 +860,32 @@ func copilotConfiguredContextWindowMax(convID string) int64 {
 		}
 	}
 	return 0
+}
+
+// copilotEffectiveContextWindow is the ONE place the meter's effective
+// denominator is resolved, shared by the sweep and the read-through follower
+// so the two writers converge on the same percentage instead of flapping the
+// row (the follower once recomputed against only the observed column, which
+// Copilot rarely discloses, and overwrote the sweep's percentage with 0 on
+// every token advance).
+//
+// The order is the settled TCL-1048 precedence, then the observed disclosure
+// as the last resort: an explicit configured cap is operator intent and wins
+// outright; the observed model's static assumption fills in when there is no
+// cap; a window Copilot itself disclosed in the durable log is used only when
+// tclaude knows nothing better. This matches the dashboard tooltip's own
+// fallback (configured/assumed max, else the observed window), so the
+// percentage and the "x / y tokens" beside it always describe the same ratio.
+func copilotEffectiveContextWindow(convID, model string, observed int64) int64 {
+	if window := copilotConfiguredContextWindowMax(convID); window > 0 {
+		return window
+	}
+	if trimmed := strings.TrimSpace(model); trimmed != "" {
+		if window := harness.CopilotContextWindowDefault(trimmed); window > 0 {
+			return window
+		}
+	}
+	return max(observed, 0)
 }
 
 // copilotContextPct is the ONE place Copilot's occupancy percentage is

@@ -422,3 +422,50 @@ func TestCopilotContextRefreshRefusesAStaleGeneration(t *testing.T) {
 	assert.Nil(t, checkpoint,
 		"nor may its follower cursor be attached to the recreated row")
 }
+
+// TestCopilotLivePctSurvivesDurableRefresh is the TCL-1048 follow-up
+// regression, straight from the operator's screenshot: "context: 19k / 200k
+// tokens (assumed cap) — 0%".
+//
+// The sweep and this follower are two writers of the same row. The sweep
+// resolves the effective denominator (configured cap, else the observed
+// model's static assumption) and wrote a real percentage; the follower then
+// recomputed against only the durable log's disclosed window — which Copilot
+// rarely provides — and overwrote that percentage with 0 on every token
+// advance, while the token counts kept landing. Both writers must resolve the
+// SAME effective denominator.
+func TestCopilotLivePctSurvivesDurableRefresh(t *testing.T) {
+	setupTestDB(t)
+	resetCopilotContextRefreshStateForTest()
+	resetCopilotUsageStateForTest()
+	t.Cleanup(resetCopilotContextRefreshStateForTest)
+	t.Cleanup(resetCopilotUsageStateForTest)
+
+	copilotRefreshHome(t) // session dir exists; no durable log, no disclosure
+
+	sess := copilotRefreshSession(t, "copilot-live-pct")
+	// One real swept call: model observed (200k static band), 18762-token
+	// prompt — the sweep persists ~9.4%.
+	call := copilotUsageCall(1, 18762, 245)
+	call.SessionID = sess.ConvID
+	call.Model = "gpt-5-mini"
+	applyCopilotUsageCalls(sess, []harness.CopilotUsageCall{call})
+
+	snap, err := db.GetContextSnapshot(sess.ID)
+	require.NoError(t, err)
+	require.InDelta(t, 9.381, snap.ContextPct, 0.001)
+
+	// The durable read-through refresh has no disclosed window to offer. It
+	// must recompute against the same effective denominator, not clobber the
+	// sweep's percentage back to 0.
+	refreshCopilotContextSnapshotOnRead(sess, true)
+
+	snap, err = db.GetContextSnapshot(sess.ID)
+	require.NoError(t, err)
+	assert.InDelta(t, 9.381, snap.ContextPct, 0.001,
+		"the follower must measure the live numerator against the effective cap")
+	assert.Equal(t, int64(18762), snap.TokensInput)
+	assert.Equal(t, int64(245), snap.TokensOutput)
+	assert.Zero(t, snap.ContextWindowSize,
+		"the observed window column still reports only what Copilot disclosed")
+}
