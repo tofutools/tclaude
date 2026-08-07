@@ -65,7 +65,8 @@ export function isBrowserPasteShortcut(event) {
 // means. An application that emits no OSC leaves only a quiet, bounded token.
 export function isTerminalClipboardRequestShortcut(event) {
   if (!event || event.type !== 'keydown' || event.altKey || event.shiftKey ||
-      event.isComposing || event.keyCode === 229) return false;
+      event.isComposing || event.keyCode === 229 ||
+      (event.ctrlKey && event.metaKey)) return false;
   const copyKey = event.code === 'KeyC' ||
     (typeof event.key === 'string' && event.key.toLowerCase() === 'c');
   return copyKey && Boolean(event.ctrlKey || event.metaKey);

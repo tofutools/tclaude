@@ -2123,6 +2123,11 @@ func runNew(params *NewParams) error {
 
 	applyTmuxWindowTitle(tmuxSession, sessionID)
 
+	// Copilot wraps clipboard OSC 52 in tmux's passthrough envelope. Enable
+	// that capability only on its window; the shared tmux server and all other
+	// harness windows retain their existing passthrough policy.
+	ConfigureTmuxPassthrough(tmuxSession, h)
+
 	// Enable tmux mouse-wheel scrollback for this session when the harness
 	// relies on tmux for history (Codex CLI). Scoped to this session only so
 	// Claude Code panes — which own their scrollback — are untouched (JOH-213).

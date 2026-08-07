@@ -2065,7 +2065,9 @@ clipboard.
 When Copilot CLI is installed, `tclaude setup` offers to persist its documented
 `copyOnSelect: true` preference. An existing value is treated as an operator
 choice and left unchanged; the keyboard path above remains available when the
-preference is deliberately disabled.
+preference is deliberately disabled. Copilot wraps its OSC 52 writes in tmux's
+passthrough protocol, so tclaude enables `allow-passthrough` only on Copilot
+windows; it does not relax the shared tmux server or other harness windows.
 
 To make a browser-owned selection instead, use **Option-drag on macOS** or
 **Shift-drag on Linux/Windows**, then press **Ctrl/⌘-Shift-C** or click

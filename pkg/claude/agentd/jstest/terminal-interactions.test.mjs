@@ -69,6 +69,8 @@ test('plain Ctrl/Cmd+C arms an application clipboard request without claiming mo
   assert.equal(isTerminalClipboardRequestShortcut(
     key({ key: 'c', code: 'KeyC', ctrlKey: true, altKey: true })), false);
   assert.equal(isTerminalClipboardRequestShortcut(
+    key({ key: 'c', code: 'KeyC', ctrlKey: true, metaKey: true })), false);
+  assert.equal(isTerminalClipboardRequestShortcut(
     key({ key: 'c', code: 'KeyC' })), false);
   assert.equal(isTerminalClipboardRequestShortcut(
     key({ type: 'keyup', key: 'c', code: 'KeyC', ctrlKey: true })), false);
