@@ -70,9 +70,16 @@ engineer:
 | `copilot-sdk/*.d.ts`, `copilot-sdk/docs/` | Typed SDK surface and prose docs. |
 | `copilot-sdk/index.js` | The reference client. `grep 'sendRequest("'` yields the full method list. |
 
-**`api.schema.json` is not complete.** It documents `sessions.open`, but the method the
-SDK actually uses to create a session is `session.create`, which the schema does not
-contain. Treat `copilot-sdk/index.js` as authoritative for what a real client sends.
+**`api.schema.json` is not complete, and the gap is load-bearing.** Its session section
+is missing `session.create`, `session.setForeground` and `session.getForeground` — all
+three work against a live server. A client generated purely from the schema could not
+create a session at all. Treat `copilot-sdk/index.js` as authoritative for what a real
+client sends.
+
+The schema *does* document `sessions.open`, which is the trap: against a session the
+server does not have, `sessions.open` returns `{"status": "not_found"}` as a **successful
+result**, with no JSON-RPC error. Nothing signals that the open did not take, so the
+failure only surfaces later as `Session not found` on every subsequent `session.*` call.
 
 ## Session bootstrap
 
@@ -147,6 +154,22 @@ Structured state that removes the need to scrape the pane:
   reasoning token counts, AIU cost, request counts, and code-change stats.
 - `session.metadata.contextInfo` — `totalTokens`, `limit`, compaction threshold, split
   into system, tool-definition, MCP, custom-instruction and conversation tokens.
+
+Two shapes worth knowing before you consume either, because both fail quietly:
+
+- `modelMetrics` entries are **nested**, not flat:
+  `{requests: {count, cost}, usage: {inputTokens, outputTokens, cacheReadTokens,
+  cacheWriteTokens, reasoningTokens}, totalNanoAiu, tokenDetails}`. A flattened struct
+  still decodes without error and reports zero for everything.
+- `session.metadata.contextInfo` returns `{contextInfo: null}` until the first turn
+  completes. That is a normal state, not an error.
+
+## Requires a real terminal
+
+The embedded server only starts once the TUI mounts, and the TUI only mounts on a
+genuine PTY. Running `copilot --ui-server` with redirected stdio produces no TUI and
+**no listening port**. tmux supplies a PTY so tclaude's pane is fine, but any test
+harness driving Copilot directly has to allocate one.
 
 ## Security posture
 
