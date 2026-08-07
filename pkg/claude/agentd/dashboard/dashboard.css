@@ -1251,7 +1251,14 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
   overflow: hidden; color: #f0f6fc; font-size: 12px;
   text-overflow: ellipsis; white-space: nowrap;
 }
-.human-notification-drawer-file span { margin-top: 2px; color: #7d8590; font-size: 10px; }
+/* One line, clipped — same treatment the filename above it already gets. A
+   media type is long enough to wrap to three lines in the drawer's width, and a
+   wrapped line grows the file column UNDER the card's buttons instead of
+   pushing them aside, which reads as the metadata overlapping them. */
+.human-notification-drawer-file span {
+  margin-top: 2px; overflow: hidden; color: #7d8590; font-size: 10px;
+  text-overflow: ellipsis; white-space: nowrap;
+}
 .human-notification-drawer-download {
   padding: 5px 9px; border: 1px solid #1f6feb; border-radius: 4px;
   color: #58a6ff; font-size: 12px; text-decoration: none;
@@ -1633,11 +1640,13 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
 .markdown-document th { background: #161b22; color: #f0f6fc; font-weight: 600; }
 .markdown-document tbody tr:nth-child(even) { background: rgba(22, 27, 34, .55); }
 
-/* The viewer is wider than the message column, so the rendered document keeps a
-   readable measure instead of running the full dialog width. It follows the
-   .markdown-document block deliberately: the element carries both classes at
-   equal specificity, so source order is what decides the font size. */
-.markdown-preview-document { max-width: 760px; margin: 0 auto; font-size: 14px; }
+/* The document fills the viewer, with no measure cap of its own: the operator
+   sets the width by resizing the dialog, and a cap would make dragging it wider
+   do nothing but add margin. Slightly larger type than the message column, since
+   this is the surface meant for reading. Placed after the .markdown-document
+   block deliberately — the element carries both classes at equal specificity,
+   so source order is what decides the font size. */
+.markdown-preview-document { font-size: 14px; }
 
 @media (max-width: 720px) {
   .markdown-preview-overlay { padding: 0; }

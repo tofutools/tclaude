@@ -7,11 +7,13 @@
 // button put the actual message one click away and — since the attachment card
 // sits below the body — well down the pane.
 //
-// The two controls beside it open the same modal viewer the image attachments
-// get, for a long document the message column is too narrow to read: "Open"
-// lands on the rendered document, "View source" on the original Markdown. Both
-// modes stay reachable from a toggle in the viewer's header, so arriving in one
-// is never a dead end.
+// The single control beside it opens the same modal viewer the image
+// attachments get, for a long document the message column is too narrow to
+// read. It lands on the rendered document; the original Markdown is one click
+// further, on the viewer's own Rendered/Source toggle. That toggle is why there
+// is one control here and not two: a second card button for the source spelled
+// out a mode the viewer already switches between, and the card — a filename, a
+// media type, a size, a download link — has no width to spare for it.
 
 import { Fragment, h } from 'preact';
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
@@ -106,15 +108,9 @@ export function MarkdownAttachment({ messageID, attachment, siblings, surface = 
   return html`<${Fragment}>
     <button type="button" class="human-attachment-markdown-trigger"
       disabled=${loadState !== 'ready'}
-      onClick=${() => setViewMode('rendered')} aria-label=${`Open ${filename} in the document viewer`}>
+      onClick=${() => setViewMode('rendered')} aria-label=${`View ${filename} in the document viewer`}>
       <span class="human-attachment-markdown-icon" aria-hidden="true">⤢</span>
-      <span class="human-attachment-markdown-label">Open</span>
-    </button>
-    <button type="button" class="human-attachment-markdown-trigger"
-      disabled=${loadState !== 'ready'}
-      onClick=${() => setViewMode('source')} aria-label=${`View the Markdown source of ${filename}`}>
-      <span class="human-attachment-markdown-icon" aria-hidden="true">¶</span>
-      <span class="human-attachment-markdown-label">View source</span>
+      <span class="human-attachment-markdown-label">View</span>
     </button>
     <div class="markdown-attachment-document">
       <${LoadState} state=${loadState} />

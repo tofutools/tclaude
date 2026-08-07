@@ -81,9 +81,8 @@ async function openMarkdownViewer(t, options) {
     <${MarkdownAttachment} messageID=${42} attachment=${markdownAttachment} surface="messages" />
   `);
   await settle(harness);
-  const open = [...mounted.container.querySelectorAll('.human-attachment-markdown-trigger')]
-    .find((button) => /Open/.test(button.textContent));
-  await harness.act(() => { open.click(); });
+  const view = mounted.container.querySelector('.human-attachment-markdown-trigger');
+  await harness.act(() => { view.click(); });
   await settle(harness);
   return { harness, prefs, mounted, dialog: mounted.container.querySelector('.markdown-preview-dialog') };
 }
@@ -269,8 +268,7 @@ test('a size dragged on one attachment is the size the next one opens at', async
     </div>
   `);
   await settle(harness);
-  const [openA, openB] = [...mounted.container.querySelectorAll('.human-attachment-markdown-trigger')]
-    .filter((button) => /Open/.test(button.textContent));
+  const [openA, openB] = [...mounted.container.querySelectorAll('.human-attachment-markdown-trigger')];
 
   await harness.act(() => { openA.click(); });
   await settle(harness);
