@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"runtime"
@@ -82,6 +83,12 @@ func handleSandboxCommonRuleCatalog(w http.ResponseWriter, r *http.Request) {
 		},
 	})
 }
+
+// sandboxProfileMaxBodyBytes bounds a profile document. The PATCH handler reads
+// the body whole so it can tell an absent pre_launch from an explicit empty
+// one, and an unbounded ReadAll would hold whatever was sent. Generous: the
+// largest real profile is orders of magnitude under it.
+const sandboxProfileMaxBodyBytes = 8 << 20
 
 const (
 	sandboxProfileExportFormat        = "tclaude-sandbox-profiles"
@@ -334,10 +341,29 @@ func handleSandboxProfileByName(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "changed", "sandbox profile changed since preview; reopen it and review the latest changes")
 			return
 		}
-		var body sandboxProfileJSON
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, sandboxProfileMaxBodyBytes))
+		if err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 			return
+		}
+		var body sandboxProfileJSON
+		if err := json.Unmarshal(raw, &body); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+			return
+		}
+		// A PATCH that never mentions pre_launch must not delete it. Clients
+		// build their save payload from a field whitelist — the dashboard does
+		// — so a field the editor does not know about is simply absent, and
+		// treating absent as "clear" would destroy an operator's setup script
+		// when they merely renamed a profile. Probe the raw JSON: an absent key
+		// and an explicit `[]` both decode to a nil slice, but only the second
+		// one means "remove them".
+		// Errors are impossible here and deliberately ignored: any input this
+		// could reject was already rejected by the struct decode above.
+		var present map[string]json.RawMessage
+		_ = json.Unmarshal(raw, &present)
+		if _, sent := present["pre_launch"]; !sent {
+			body.PreLaunch = existing.PreLaunch
 		}
 		p, missing, err := buildSandboxProfile(body)
 		if err != nil {
