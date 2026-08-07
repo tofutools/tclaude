@@ -56,13 +56,15 @@ export function openTerminalPane(seedOrPromise, { reveal = true } = {}) {
 // caller is fire-and-forget; the deep-link restore in terminal-nav-route.js
 // needs to know whether the agent's terminal actually came up.
 export function openWebWindowPane(agent, label, options) {
+  const { harness = '', ...paneOptions } = options || {};
   return openTerminalPane({
     ws: `/api/open-window-ws/${encodeURIComponent(agent)}`,
     label,
     key: `window:${agent}`,
     hideConv: agent,
     agent,
-  }, options);
+    harness,
+  }, paneOptions);
 }
 
 export function openWebTermPane(agent, label, whichOrPromise) {

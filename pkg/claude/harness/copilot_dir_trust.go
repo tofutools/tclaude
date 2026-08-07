@@ -244,6 +244,10 @@ func parseCopilotSettingsObject(data []byte, name string) (map[string]json.RawMe
 		return nil, fmt.Errorf("copilot dir-trust: cannot parse Copilot %s as a JSON object: %w; "+
 			"fix the file, or clear the folder-trust prompt in the pane once", name, err)
 	}
+	if out == nil {
+		return nil, fmt.Errorf("copilot dir-trust: cannot parse Copilot %s as a JSON object: top-level null is not an object; "+
+			"fix the file, or clear the folder-trust prompt in the pane once", name)
+	}
 	return out, nil
 }
 

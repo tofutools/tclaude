@@ -120,6 +120,8 @@ test('dashboard terminal feature owns three hosts while preserving opaque xterm 
   assert.equal(badgeHost.querySelector('#terminals-badge').textContent, '1');
   assert.equal(host.querySelectorAll('[role="tab"]').length, 1);
   assert.equal(fake.widgets.length, 1);
+  assert.equal(fake.widgets[0].options.applicationClipboardShortcuts, false,
+    'ordinary terminals keep the application copy bridge disabled');
   const opaqueChild = fake.widgets[0].child;
   assert.equal(opaqueChild.parentElement.classList.contains('mux-pane-xterm-fit'), true);
   assert.equal(opaqueChild.parentElement.parentElement.classList.contains('mux-pane-xterm'), true,
@@ -165,13 +167,17 @@ test('dashboard terminal feature owns three hosts while preserving opaque xterm 
   assert.equal(composed.length, 3);
 
   await harness.act(async () => {
-    controller.openTerminalPane({ ws: '/two', key: 'two', label: 'two', agent: 'agt_two' });
+    controller.openTerminalPane({
+      ws: '/two', key: 'two', label: 'two', agent: 'agt_two', harness: 'copilot',
+    });
     await Promise.resolve();
   });
   assert.equal(host.querySelectorAll('[role="tab"]').length, 2);
   assert.equal(badgeHost.querySelector('#terminals-badge').textContent, '2');
   assert.equal(fake.widgets[0].activeEdges.at(-1), false);
   assert.equal(fake.widgets[1].activeEdges.at(-1), true);
+  assert.equal(fake.widgets[1].options.applicationClipboardShortcuts, true,
+    'Copilot live panes enable the application copy bridge');
   assert.deepEqual(fake.widgets[1].calls, [],
     'switching panes while Terminals is visible relies on the existing activation path');
   await harness.act(() => composed[0].restoreFocus());

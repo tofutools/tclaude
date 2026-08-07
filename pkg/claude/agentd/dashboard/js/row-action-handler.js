@@ -66,6 +66,7 @@ export async function handleRowAction(action) {
   // using `conv`.
   const agent = data.agent || conv;
   const label = data.label || conv;
+  const harness = data.harness || '';
   try {
     let ok = false;
     switch (act) {
@@ -304,7 +305,7 @@ export async function handleRowAction(action) {
         // the agent selector, so this focuses an existing pane rather than
         // duplicating (the focusTerminalForConv check above already handled
         // the common already-open case).
-        if (webTerminalDefault()) { openWebWindowPane(agent, label, terminalPaneOptions); toast(`focused: ${label}`); return; }
+        if (webTerminalDefault()) { openWebWindowPane(agent, label, { ...terminalPaneOptions, harness }); toast(`focused: ${label}`); return; }
         // Non-destructive; no confirm modal, just fire-and-toast.
         const r = await fetch(`/api/jump/${encodeURIComponent(agent)}`, {
           method: 'POST', credentials: 'same-origin',
@@ -385,7 +386,7 @@ export async function handleRowAction(action) {
         // = "web"), open the live session as a browser pane instead — same as
         // the dedicated "web window" button; the revealed Terminals tab is the
         // feedback (parity with web-open-window, which likewise doesn't toast).
-        if (webTerminalDefault()) { openWebWindowPane(agent, label); return; }
+        if (webTerminalDefault()) { openWebWindowPane(agent, label, { harness }); return; }
         const r = await fetch(`/api/open-window/${encodeURIComponent(agent)}`, {
           method: 'POST', credentials: 'same-origin',
         });
@@ -396,7 +397,7 @@ export async function handleRowAction(action) {
         // the tmux client, or the agent session stays "attached" and can't be
         // reattached. Only the open-window attach (the agent's live session)
         // gets this; web-term opens its own throwaway session.
-        if (info.mode === 'browser') { openTermModal({ wsPath: info.ws, label, hideConv: agent }); return; }
+        if (info.mode === 'browser') { openTermModal({ wsPath: info.ws, label, hideConv: agent, harness }); return; }
         toast(`window opened: ${label}`);
         return;
       }
@@ -408,7 +409,7 @@ export async function handleRowAction(action) {
         // closing the pane runs the reliable server-side detach. Same helper
         // the "focus" / "open window" actions use when web terminals are the
         // default.
-        openWebWindowPane(agent, label, terminalPaneOptions);
+        openWebWindowPane(agent, label, { ...terminalPaneOptions, harness });
         return;
       }
       case 'focus-pending': {
@@ -923,7 +924,7 @@ export async function handleRowAction(action) {
         if (focusTerminalForConv([conv])) {
           toast(`focused: ${label}`);
         } else if (webTerminalDefault()) {
-          openWebWindowPane(conv, label);
+          openWebWindowPane(conv, label, { harness });
           toast(`focused: ${label}`);
         } else {
           const jr = await fetch(`/api/jump/${encodeURIComponent(conv)}`, {

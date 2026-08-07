@@ -90,3 +90,43 @@ func TestResolveCopilotCopyOnSelectLeavesUnknownValueDeliberate(t *testing.T) {
 	assert.False(t, state.Valid)
 	assert.Equal(t, path, state.Source)
 }
+
+func TestResolveCopilotCopyOnSelectLeavesNullDeliberate(t *testing.T) {
+	home, getenv := copilotClipboardFixture(t)
+	stateDir, err := CopilotStateDirForLaunch(getenv, home)
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(stateDir, 0o700))
+	settingsPath := filepath.Join(stateDir, CopilotSettingsFileName)
+	configPath := filepath.Join(stateDir, CopilotConfigFileName)
+	require.NoError(t, os.WriteFile(settingsPath, []byte(`{"copyOnSelect":true}`), 0o600))
+	require.NoError(t, os.WriteFile(configPath, []byte(`{"copyOnSelect":null}`), 0o600))
+
+	state, err := ResolveCopilotCopyOnSelect(getenv, home)
+	require.NoError(t, err)
+	assert.True(t, state.Present)
+	assert.False(t, state.Valid)
+	assert.Equal(t, configPath, state.Source)
+
+	before, err := os.ReadFile(settingsPath)
+	require.NoError(t, err)
+	require.NoError(t, EnableCopilotCopyOnSelect(getenv, home))
+	after, err := os.ReadFile(settingsPath)
+	require.NoError(t, err)
+	assert.Equal(t, string(before), string(after))
+}
+
+func TestEnableCopilotCopyOnSelectRefusesNullSettingsDocument(t *testing.T) {
+	home, getenv := copilotClipboardFixture(t)
+	stateDir, err := CopilotStateDirForLaunch(getenv, home)
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(stateDir, 0o700))
+	path := filepath.Join(stateDir, CopilotSettingsFileName)
+	require.NoError(t, os.WriteFile(path, []byte(`null`), 0o600))
+
+	err = EnableCopilotCopyOnSelect(getenv, home)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "top-level null is not an object")
+	data, readErr := os.ReadFile(path)
+	require.NoError(t, readErr)
+	assert.Equal(t, "null", string(data))
+}

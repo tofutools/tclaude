@@ -201,6 +201,7 @@ function WindowSelectionDialog({ descriptor, actions, confirmDiscard }) {
       targets: Object.freeze(selectedCandidates.map((candidate) => Object.freeze({
         selector: candidate.agent_id || candidate.conv_id,
         label: candidate.title || candidate.conv_id.slice(0, 8),
+        harness: candidate.state?.harness || '',
       }))),
     });
     if (!submittedRequest) setSubmittedRequest(request);

@@ -30,6 +30,7 @@ function memberAttrs(member) {
     'data-conv': member.conv_id,
     'data-agent': member.agent_id || member.conv_id,
     'data-label': member.title || member.conv_id,
+    'data-harness': member.state?.harness || '',
   };
 }
 

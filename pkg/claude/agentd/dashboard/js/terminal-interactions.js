@@ -448,6 +448,7 @@ async function uploadImages(files, signal, terminalPath) {
 export function attachTerminalInteractions({
   term, host, copyButton, setStatus, baseStatus = () => '',
   terminalPath,
+  applicationClipboardShortcuts = false,
   onComposeMessage = null, onSelectionChange = () => {},
   requestPalette = requestCommandPalette,
   fetchImpl = globalThis.fetch,
@@ -709,7 +710,7 @@ export function attachTerminalInteractions({
     // Do not call preventDefault: Chrome still needs to dispatch the paste
     // event to xterm's textarea (and our capture listener above it).
     if (isBrowserPasteShortcut(event)) return false;
-    if (isTerminalClipboardRequestShortcut(event)) {
+    if (applicationClipboardShortcuts && isTerminalClipboardRequestShortcut(event)) {
       // Start the permission-sensitive browser write inside the trusted
       // keydown, then leave the chord entirely to xterm/the TUI. Copilot's OSC
       // 52 response resolves it; Ctrl+C applications that merely cancel work

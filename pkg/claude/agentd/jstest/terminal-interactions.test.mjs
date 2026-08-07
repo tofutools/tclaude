@@ -312,7 +312,9 @@ test('terminal lifecycle accepts OSC 52 only after a pointer or keyboard copy ge
   const doc = new FakeEventTarget();
   const first = terminalHarness(doc);
   const second = terminalHarness(doc);
-  const firstInteractions = attachTerminalInteractions({ term: first.term, host: first.host });
+  const firstInteractions = attachTerminalInteractions({
+    term: first.term, host: first.host, applicationClipboardShortcuts: true,
+  });
   const secondInteractions = attachTerminalInteractions({ term: second.term, host: second.host });
   try {
     // An OSC sequence with no preceding mouse copy is consumed but cannot
@@ -364,6 +366,24 @@ test('terminal lifecycle accepts OSC 52 only after a pointer or keyboard copy ge
     else delete globalThis.navigator;
     if (oldClipboardItem) Object.defineProperty(globalThis, 'ClipboardItem', oldClipboardItem);
     else delete globalThis.ClipboardItem;
+  }
+});
+
+test('application clipboard shortcuts stay disabled for non-Copilot terminals', () => {
+  const doc = new FakeEventTarget();
+  const harness = terminalHarness(doc);
+  const interactions = attachTerminalInteractions({ term: harness.term, host: harness.host });
+  try {
+    let prevented = false;
+    const event = key({
+      key: 'c', code: 'KeyC', metaKey: true,
+      preventDefault() { prevented = true; },
+    });
+    assert.equal(harness.key(event), true);
+    assert.equal(prevented, false);
+    assert.deepEqual(harness.inputs, []);
+  } finally {
+    interactions.dispose();
   }
 });
 

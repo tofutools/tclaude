@@ -85,7 +85,7 @@ export function createTransactionDialogActions({
         };
         try {
           for (const target of request.targets || []) {
-            openWebWindowPane(target.selector, target.label);
+            openWebWindowPane(target.selector, target.label, { harness: target.harness });
           }
           report(`focus web terminals: ${result.focused} focused`);
           return result;

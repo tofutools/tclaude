@@ -197,6 +197,7 @@ export function createTerminalShellActions({
       key: pane.seed.key,
       hideConv: pane.seed.hideConv,
       agent: pane.seed.agent,
+      harness: pane.seed.harness,
       initialRetry: true,
       wizard: documentRef.body.classList.contains('wizard'),
     };
@@ -288,6 +289,7 @@ export function createTerminalShellActions({
       label: descriptor.label,
       hideConv: descriptor.seed.hideConv,
       agent: descriptor.seed.hideConv,
+      harness: descriptor.seed.harness,
       initialRetry: descriptor.seed.initialRetry,
     };
     await closeModal(id, { detach: true });

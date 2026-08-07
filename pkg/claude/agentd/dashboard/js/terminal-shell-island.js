@@ -148,6 +148,7 @@ function OpaqueTerminalHost({
       onReconnectChange,
       onSelectionChange,
       onComposeMessage,
+      applicationClipboardShortcuts: descriptor.seed.harness === 'copilot',
       onDisconnect,
       initialRetry: descriptor.seed.initialRetry === true,
     });
@@ -1458,7 +1459,7 @@ export function mountTerminalShellIsland({
   const unbindNavRouting = bindTerminalNavRouting({
     state,
     snapshot,
-    openAgentPane: (agent, label) => openWebWindowPane(agent, label),
+    openAgentPane: (agent, label, harness) => openWebWindowPane(agent, label, { harness }),
     leaveTab: () => document.querySelector('nav [data-tab="groups"]')?.click(),
   });
   render(html`<${TerminalTabs} state=${state} actions=${actions} widgetFactory=${widgetFactory}

@@ -94,7 +94,7 @@ const bulkWindowOp = createPaletteWindowOperator({
   closeTerminalsForWindowOp,
 });
 
-async function jumpAgent(conv, label, preferWebTerminal) {
+async function jumpAgent(conv, label, preferWebTerminal, harness = '') {
   // If this agent already has an open web terminal / window pane in the
   // Terminals tab, jump to THAT instead of raising a native OS window — mirrors
   // the per-agent 'jump' row action.
@@ -102,7 +102,7 @@ async function jumpAgent(conv, label, preferWebTerminal) {
   // With web terminals as the default (config dashboard.default_terminal =
   // "web"), open the agent's live session as a browser pane rather than raising
   // a native OS window — same as the per-agent 'jump' row action.
-  if (preferWebTerminal) { openWebWindowPane(conv, label); toast(`focused: ${label}`); return; }
+  if (preferWebTerminal) { openWebWindowPane(conv, label, { harness }); toast(`focused: ${label}`); return; }
   try {
     const r = await fetch(`/api/jump/${encodeURIComponent(conv)}`, {
       method: 'POST', credentials: 'same-origin',
@@ -641,7 +641,7 @@ export function buildCommands(snapshot) {
       hint: wiz("raise / open this agent's terminal", "conjure this familiar's scrying portal"),
       keywords: 'focus show jump bring up window agent ' + label + ' ' + (a.conv_id || '')
         + ' reveal behold conjure portal scrying familiar',
-      run: () => jumpAgent(sel, label, snap.default_terminal === 'web'),
+      run: () => jumpAgent(sel, label, snap.default_terminal === 'web', a.state?.harness || ''),
     });
     cmds.push({
       icon: wiz('⏏', '🌫'), label: wiz(`Hide window: ${label}`, `Veil familiar: ${label}`),

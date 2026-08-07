@@ -1,7 +1,6 @@
 package harness
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -33,12 +32,14 @@ func ResolveCopilotCopyOnSelect(
 		return CopilotCopyOnSelectState{}, err
 	}
 	source, present := merged[CopilotCopyOnSelectKey]
-	if !present || bytes.Equal(bytes.TrimSpace(source.Raw), []byte("null")) {
+	if !present {
 		return CopilotCopyOnSelectState{}, nil
 	}
 	state := CopilotCopyOnSelectState{Present: true, Source: source.Path}
-	if err := json.Unmarshal(source.Raw, &state.Enabled); err == nil {
+	var enabled *bool
+	if err := json.Unmarshal(source.Raw, &enabled); err == nil && enabled != nil {
 		state.Valid = true
+		state.Enabled = *enabled
 	}
 	return state, nil
 }
@@ -65,8 +66,7 @@ func EnableCopilotCopyOnSelect(getenv func(string) string, home string) error {
 		if err != nil {
 			return false, nil, err
 		}
-		if raw, exists := settings[CopilotCopyOnSelectKey]; exists &&
-			!bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		if _, exists := settings[CopilotCopyOnSelectKey]; exists {
 			return false, nil, nil
 		}
 		settings[CopilotCopyOnSelectKey] = json.RawMessage("true")

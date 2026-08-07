@@ -523,6 +523,11 @@ func ResolveCopilotMergedSettings(
 				"cannot parse Copilot settings %s as a JSON object: %v; fix the file or use "+
 					"another posture", path, err))
 		}
+		if file == nil {
+			return nil, copilotInnerSandboxError(fmt.Sprintf(
+				"cannot parse Copilot settings %s as a JSON object: top-level null is not an object; "+
+					"fix the file or use another posture", path))
+		}
 		for key, raw := range file {
 			merged[key] = CopilotSettingsSource{Raw: raw, Path: path}
 		}
