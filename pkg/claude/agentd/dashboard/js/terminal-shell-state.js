@@ -656,9 +656,10 @@ export function createTerminalShellState({ prefs = dashPrefs, persistPresentatio
     return panes.value.filter((pane) => groupIDFor(pane.key) === id);
   }
 
-  function openModal({ wsPath, ws, label = '', hideConv = null, initialRetry = false } = {}) {
+  function openModal({ wsPath, ws, label = '', hideConv = null, harness = '', initialRetry = false } = {}) {
     const seed = normalizeSeed({
-      ws: wsPath || ws, label, hideConv: hideConv || null, initialRetry: initialRetry === true,
+      ws: wsPath || ws, label, hideConv: hideConv || null, harness,
+      initialRetry: initialRetry === true,
     });
     if (!seed) return null;
     modalSequence += 1;

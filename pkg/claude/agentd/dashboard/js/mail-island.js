@@ -451,6 +451,15 @@ export function messageDeliveryState(message) {
   return '';
 }
 
+function senderHarness(message) {
+  const agent = message?.from_agent || '';
+  const conv = message?.from_conv || '';
+  const roster = dashboardState.snapshot.value?.agents || [];
+  const sender = roster.find((entry) =>
+    (agent && entry?.agent_id === agent) || (conv && entry?.conv_id === conv));
+  return sender?.state?.harness || '';
+}
+
 function MessageReader({ current, controller, model }) {
   const wizard = document.body.classList.contains('wizard');
   if (model.access) {
@@ -498,6 +507,7 @@ function MessageReader({ current, controller, model }) {
         data-conv=${message.from_conv} data-label=${message.from_title || message.from_conv} data-subject=${message.subject || ''}
         title="Reply to this agent — opens a dialog to send your answer back">reply</button>
         <button data-act="msg-focus" data-id=${message.id} data-conv=${fromTarget} data-label=${message.from_title || message.from_conv}
+          data-harness=${senderHarness(message)}
           disabled=${!senderLive} title=${senderLive ? 'Focus this agent’s terminal window and mark the message read' : 'Sending agent is offline — no window to focus'}>focus</button></${Fragment}>`}
       <button data-act=${human ? (message.read ? 'msg-mark-unread' : 'msg-mark-read') : undefined}
         onClick=${human ? undefined : () => controller.setMessagesRead([message.id], !message.read)}

@@ -795,17 +795,17 @@ func TestDashboardAssets_DefaultTerminalWired(t *testing.T) {
 		"export function openWebWindowPane(",
 		"export function openWebTermPane(",
 		// row-actions.js — the routed per-row actions (native → web branches).
-		"if (webTerminalDefault()) { openWebWindowPane(agent, label, terminalPaneOptions); toast(",
+		"if (webTerminalDefault()) { openWebWindowPane(agent, label, { ...terminalPaneOptions, harness }); toast(",
 		"if (webTerminalDefault()) { openWebTermPane(agent, label, chooseTerminalDirectory(label)); return; }",
-		"if (webTerminalDefault()) { openWebWindowPane(agent, label); return; }",
+		"if (webTerminalDefault()) { openWebWindowPane(agent, label, { harness }); return; }",
 		"if (webTerminalDefault()) { openWebTermPane(agent, label, which); return; }",
 		// palette.js — the shell-owned command palette passes the snapshot-derived
 		// preference into the command's "focus window" action.
-		"if (preferWebTerminal) { openWebWindowPane(conv, label); toast(",
+		"if (preferWebTerminal) { openWebWindowPane(conv, label, { harness }); toast(",
 		// transaction-dialog-actions.js — bulk focus opens every selected agent as a web pane and
 		// skips the native-only /api/agent-windows focus endpoint.
 		"if (request.direction === 'focus' && request.webTerminal) {",
-		"openWebWindowPane(target.selector, target.label);",
+		"openWebWindowPane(target.selector, target.label, { harness: target.harness });",
 		// config.js — load + gather the Config-tab checkbox.
 		"#cfg-dashboard-default-web-terminal",
 		"dashboard.default_terminal = 'web'",

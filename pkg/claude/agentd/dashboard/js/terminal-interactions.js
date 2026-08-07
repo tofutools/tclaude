@@ -56,6 +56,21 @@ export function isBrowserPasteShortcut(event) {
   return pasteKey && Boolean(event.ctrlKey || event.metaKey);
 }
 
+// A TUI may own its selection and use the ordinary platform copy chord to
+// publish it through OSC 52. Copilot CLI does exactly that: the selection is
+// invisible to xterm, Ctrl/Cmd+C stays application input, and the resulting
+// OSC arrives asynchronously over the PTY. Recognize only the exact copy
+// gesture so the caller can arm browser clipboard access without consuming the
+// key -- the running application must still receive it and decide what it
+// means. An application that emits no OSC leaves only a quiet, bounded token.
+export function isTerminalClipboardRequestShortcut(event) {
+  if (!event || event.type !== 'keydown' || event.altKey || event.shiftKey ||
+      event.isComposing || event.keyCode === 229) return false;
+  const copyKey = event.code === 'KeyC' ||
+    (typeof event.key === 'string' && event.key.toLowerCase() === 'c');
+  return copyKey && Boolean(event.ctrlKey || event.metaKey);
+}
+
 export function isComposeMessageShortcut(event) {
   if (!event || event.type !== 'keydown' || event.altKey || event.shiftKey ||
       event.isComposing || event.keyCode === 229) return false;
@@ -433,6 +448,7 @@ async function uploadImages(files, signal, terminalPath) {
 export function attachTerminalInteractions({
   term, host, copyButton, setStatus, baseStatus = () => '',
   terminalPath,
+  applicationClipboardShortcuts = false,
   onComposeMessage = null, onSelectionChange = () => {},
   requestPalette = requestCommandPalette,
   fetchImpl = globalThis.fetch,
@@ -694,6 +710,22 @@ export function attachTerminalInteractions({
     // Do not call preventDefault: Chrome still needs to dispatch the paste
     // event to xterm's textarea (and our capture listener above it).
     if (isBrowserPasteShortcut(event)) return false;
+    if (applicationClipboardShortcuts && isTerminalClipboardRequestShortcut(event)) {
+      // Start the permission-sensitive browser write inside the trusted
+      // keydown, then leave the chord entirely to xterm/the TUI. Copilot's OSC
+      // 52 response resolves it; Ctrl+C applications that merely cancel work
+      // emit nothing and the pending token expires without changing clipboard.
+      armTmuxClipboardFromGesture();
+      if (event.metaKey && !event.ctrlKey) {
+        event.preventDefault();
+        // xterm maps Meta+C to an Escape-prefixed character rather than the
+        // Ctrl+C byte Copilot's terminal UI binds. Inject ETX through
+        // Terminal.input so it follows the ordinary onData/WebSocket path once.
+        term.input('\x03');
+        return false;
+      }
+      return true;
+    }
     const input = terminalKeyInput(event);
     if (input !== null) {
       event.preventDefault();

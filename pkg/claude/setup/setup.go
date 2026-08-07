@@ -251,6 +251,15 @@ func runSetup(params *Params) error {
 	fmt.Println("\n=== AskUserQuestion Timeout ===")
 	configureAskUserQuestionTimeout(params)
 
+	// 2a″. Copilot CLI copy-on-select. Unlike a spawn-time settings
+	// override, setup is an explicit persistent configuration step, so it can
+	// safely offer to add the documented global setting while respecting any
+	// existing true/false choice.
+	if copilot, ok := harness.Get(harness.CopilotName); ok && harnessOnPath(copilot) {
+		fmt.Println("\n=== Copilot Clipboard ===")
+		configureCopilotClipboard(params)
+	}
+
 	// 2b. Codex CLI status line (when codex is installed). Codex has no
 	// command-backed status line (openai/codex#17827), so tclaude can't
 	// install its renderer there; instead it curates Codex's built-in
@@ -890,6 +899,11 @@ func checkStatus(harnessName string) error {
 	// Check AskUserQuestion idle-timeout
 	fmt.Println("\n=== AskUserQuestion Timeout ===")
 	checkAskUserQuestionTimeout()
+
+	if copilot, ok := harness.Get(harness.CopilotName); ok && harnessOnPath(copilot) {
+		fmt.Println("\n=== Copilot Clipboard ===")
+		checkCopilotClipboard()
+	}
 
 	// Check Codex status line
 	fmt.Println("\n=== Codex Status Bar ===")

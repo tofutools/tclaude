@@ -288,6 +288,7 @@ export function createAgentSpawnActions({
             key: `window:${agent}`,
             hideConv: payload.conv_id || agent,
             agent,
+            harness: draft.harness || '',
           });
           if (pane) notify(`spawned ${label} → ${draft.group} — opened in Terminals tab`);
           else notify(`spawned ${label} → ${draft.group} — terminal pane did not open`, true);

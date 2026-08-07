@@ -13,6 +13,7 @@ export function webWindowTargets(candidates) {
     targets.push({
       selector: String(candidate.agent_id || '').trim() || conv,
       label: String(candidate.title || '').trim() || conv.slice(0, 8),
+      harness: String(candidate.state?.harness || '').trim(),
     });
   }
   return targets;
@@ -30,7 +31,7 @@ export function createPaletteWindowOperator({
     if (payload.direction === 'focus' && webTerminal) {
       try {
         for (const target of targets) {
-          openWebWindowPane(target.selector, target.label);
+          openWebWindowPane(target.selector, target.label, { harness: target.harness });
         }
         const result = {
           direction: 'focus',

@@ -190,12 +190,13 @@ test('web focus branches outside HTTP and opens the exact frozen selectors', asy
     direction: 'focus', scope: 'all', convs: ['agt_alpha', beta.conv_id],
     webTerminal: true,
     targets: [
-      { selector: 'agt_alpha', label: 'Alpha worker' },
-      { selector: beta.conv_id, label: 'Beta worker' },
+      { selector: 'agt_alpha', label: 'Alpha worker', harness: 'copilot' },
+      { selector: beta.conv_id, label: 'Beta worker', harness: 'codex' },
     ],
   });
   assert.deepEqual(opened, [
-    ['agt_alpha', 'Alpha worker'], [beta.conv_id, 'Beta worker'],
+    ['agt_alpha', 'Alpha worker', { harness: 'copilot' }],
+    [beta.conv_id, 'Beta worker', { harness: 'codex' }],
   ]);
   assert.deepEqual(notices, [['focus web terminals: 2 focused']]);
   assert.equal(result.terminal, 'web');

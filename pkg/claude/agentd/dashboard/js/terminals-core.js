@@ -98,6 +98,7 @@ export function mountTerminalWidget({
   onReconnectChange = () => {},
   onSelectionChange = () => {},
   onComposeMessage = null,
+  applicationClipboardShortcuts = false,
   onDisconnect = () => {},
   initialRetry = false,
   initialRetryDelays = INITIAL_RETRY_DELAYS_MS,
@@ -395,6 +396,7 @@ export function mountTerminalWidget({
     setStatus,
     baseStatus: () => ws && ws.readyState === WebSocketCtor.OPEN ? 'connected' : 'disconnected',
     onComposeMessage,
+    applicationClipboardShortcuts,
     onSelectionChange: (selected) => { if (!disposed) onSelectionChange(selected); },
   });
 

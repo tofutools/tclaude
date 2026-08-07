@@ -51,6 +51,10 @@ function rosterEntry(snapshotValue, agent) {
   return roster.find((entry) => entry?.agent_id === agent || entry?.conv_id === agent) || null;
 }
 
+function agentHarness(snapshotValue, agent) {
+  return rosterEntry(snapshotValue, String(agent || ''))?.state?.harness || '';
+}
+
 // knownAgent reports whether a selector names an agent the daemon currently
 // knows about. This is what makes a dead deep link fail EARLY: opening a pane
 // succeeds for any well-formed seed — the socket only 404s later — so without
@@ -128,7 +132,11 @@ export function bindTerminalNavRouting({
     if (!knownAgent(snapshot?.value, agent)) return false;
     // Nothing open for this agent — the ordinary hard-refresh case, where the
     // whole pane set is gone. Reattach just this one.
-    const opened = await openAgentPane(agent, agentLabel(snapshot?.value, agent));
+    const opened = await openAgentPane(
+      agent,
+      agentLabel(snapshot?.value, agent),
+      agentHarness(snapshot?.value, agent),
+    );
     return !!opened;
   }
 

@@ -7,7 +7,7 @@ import {
 } from '../dashboard/js/palette-window-ops.js';
 
 const agents = [
-  { online: true, agent_id: 'agt_alpha', conv_id: 'conv-alpha', title: 'Alpha' },
+  { online: true, agent_id: 'agt_alpha', conv_id: 'conv-alpha', title: 'Alpha', state: { harness: 'copilot' } },
   { online: true, conv_id: 'conv-beta', title: '' },
   { online: false, agent_id: 'agt_offline', conv_id: 'conv-offline', title: 'Offline' },
   { online: true, agent_id: 'agt_duplicate', conv_id: 'conv-alpha', title: 'Duplicate' },
@@ -35,12 +35,12 @@ test('web focus opens each running agent in the terminal shell without native HT
   );
 
   assert.deepEqual(targets, [
-    { selector: 'agt_alpha', label: 'Alpha' },
-    { selector: 'conv-beta', label: 'conv-bet' },
+    { selector: 'agt_alpha', label: 'Alpha', harness: 'copilot' },
+    { selector: 'conv-beta', label: 'conv-bet', harness: '' },
   ]);
   assert.deepEqual(opened, [
-    ['agt_alpha', 'Alpha'],
-    ['conv-beta', 'conv-bet'],
+    ['agt_alpha', 'Alpha', { harness: 'copilot' }],
+    ['conv-beta', 'conv-bet', { harness: '' }],
   ]);
   assert.deepEqual(requests, []);
   assert.deepEqual(notices, [['focus all windows: 2 focused']]);

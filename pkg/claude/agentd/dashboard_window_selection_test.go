@@ -50,7 +50,7 @@ func TestDashboardWindowSelectionExclusiveOwnership(t *testing.T) {
 	}
 	for _, required := range []string{
 		"async selectAgentWindows(request)", "fetchImpl('/api/agent-windows'",
-		"body: JSON.stringify(payload)", "openWebWindowPane(target.selector, target.label)",
+		"body: JSON.stringify(payload)", "openWebWindowPane(target.selector, target.label, { harness: target.harness })",
 		"closeTerminalsForWindowOp(result.agents)",
 	} {
 		if !strings.Contains(actions, required) {

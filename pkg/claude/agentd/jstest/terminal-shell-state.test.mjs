@@ -193,7 +193,9 @@ test('terminal actions sequence socket disposal, detach, pop-out, and external h
   assert.equal(replacement.seed.initialRetry, true);
   assert.equal(requests.length, 1, 'replacing a handoff duplicate does not detach the session again');
 
-  const popped = actions.openPane({ ws: '/pop', key: 'pop', label: 'pop', hideConv: 'agt_pop' });
+  const popped = actions.openPane({
+    ws: '/pop', key: 'pop', label: 'pop', hideConv: 'agt_pop', harness: 'copilot',
+  });
   const poppedWidget = fakeWidget();
   actions.registerWidget(popped.id, poppedWidget);
   await actions.popOutPane(popped.key);
@@ -202,6 +204,7 @@ test('terminal actions sequence socket disposal, detach, pop-out, and external h
   assert.match(opened.at(-1), /^\/terminals\?solo=1#open=/);
   const payload = JSON.parse(decodeURIComponent(opened.at(-1).split('#open=')[1]));
   assert.equal(payload.hideConv, 'agt_pop');
+  assert.equal(payload.harness, 'copilot');
   assert.deepEqual(notices, [], 'a detach that lands says nothing');
 
   // A blocked pop-up must not silently swallow a detach: the drag gesture has
