@@ -32,10 +32,18 @@ name: Copilot lab
 on:
   workflow_dispatch:
   pull_request:
+    # Same set as ci.yml's, so a PR cannot get the lab without the smoke.
+    branches: [main, main-codex, implement-stable-agent-identity, dnd-palette]
     paths:
       - 'pkg/claude/harness/copilotfixture/**'
       - 'pkg/claude/harness/copilot*.go'
       - '.github/workflows/copilot-lab.yml'
+      # The smoke job's npm spec lives here. Bumping it without running the lab
+      # is how the two pins drift apart, so a change to it earns a lab run.
+      - '.github/workflows/ci.yml'
+      # Sourced by the Linux arm's sandbox provisioning, which degrades to a
+      # warning rather than a failure when its helper goes missing.
+      - 'scripts/lib/smoke/common.sh'
 
 permissions:
   contents: read
@@ -74,7 +82,13 @@ jobs:
             # Below any healthy run; catches "the gate variable was renamed and
             # the whole suite silently skipped", which is the failure mode a
             # green-because-nothing-ran job actually has. See the gate step.
+            # Observed on a real run: 74 matched, ~4 legitimately skip.
             min_passes: 60
+            # Table rows, counted separately because a parent whose subtests
+            # ALL skipped still prints `--- PASS: Parent` — so the floor above
+            # is blind to exactly the scenarios permission_contract.json cites.
+            # Observed on the same run: 136 across both steps.
+            min_subtest_passes: 100
           - platform: macos
             runner: macos-latest
             # The Seatbelt half of TCL-977's evidence, plus TCL-978's platform
@@ -86,6 +100,10 @@ jobs:
             # skip themselves, so this arm is the only place they are evidence.
             run_filter: TestCopilotNativeSandbox|TestCopilotSandboxBaseline|TestCopilotDefaultCachePlacement|TestCopilotPackageCacheIsExecutable|TestCopilotInnerSandbox|TestCopilotLegacyConfig|TestCopilotStartupDialsOnlyContractedHosts|TestCopilotConvStoreMatchesTheUnresolvedCwdSpelling|TestCopilotPermissionPathGrants|TestCopilotDirTrust
             min_passes: 15
+            # Deliberately slack: no macOS run has been measured since the
+            # split, so this is sized to catch a wholesale skip and nothing
+            # finer. Tighten it from the first green run's numbers.
+            min_subtest_passes: 10
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -179,15 +197,16 @@ jobs:
       # a typo or a rename in either would turn this job into a silent no-op
       # that reports success forever.
       #
-      # Be precise about what this catches and what it does not. It is a FLOOR,
-      # not a manifest: it catches the real failure mode (the gate went soft
-      # and nothing ran) and it cannot catch one scenario quietly starting to
-      # skip. Enumerating all ~110 names is what the previous incarnation did,
-      # and the list rotted faster than it caught anything — the two occasions
-      # it did fire, it was the list that was wrong. The per-scenario guarantee
-      # that survived is in Go, where it belongs: the contract guard below ties
-      # permission_contract.json to declared scenarios, and requireLab fails
-      # loudly rather than skipping once the lab variable is set.
+      # Be precise about what this catches and what it does not. These are
+      # FLOORS, not a manifest: they catch the real failure mode (a gate went
+      # soft and nothing ran) and they cannot catch one scenario quietly
+      # starting to skip. Enumerating all ~110 names is what the previous
+      # incarnation did, and the list rotted faster than it caught anything.
+      #
+      # TWO floors, because one is not enough. Go prints `--- PASS: Parent`
+      # for a table whose subtests every one SKIPPED, so a top-level count is
+      # blind to precisely the rows permission_contract.json cites as evidence.
+      # The indented count is what sees those.
       #
       # Skips are printed rather than gated because several are legitimate and
       # platform-dependent (the bubblewrap-argv policy scenario has no Seatbelt
@@ -198,18 +217,25 @@ jobs:
         run: |
           log="$RUNNER_TEMP/copilot-lab.log"
           passes=$(grep -cE '^--- PASS: ' "$log" || true)
+          # Leading whitespace is how `go test -v` marks a subtest.
+          subtests=$(grep -cE '^[[:space:]]+--- PASS: ' "$log" || true)
           {
             echo "### Copilot lab (${{ matrix.platform }})"
             echo
-            echo "Top-level passes: **$passes** (floor: ${{ matrix.min_passes }})"
+            echo "Scenario passes: **$passes** (floor: ${{ matrix.min_passes }})"
+            echo "Table-row passes: **$subtests** (floor: ${{ matrix.min_subtest_passes }})"
             echo
-            echo "Skipped scenarios:"
+            echo "Skipped:"
             echo '```'
-            grep -E '^--- SKIP: ' "$log" || echo "(none)"
+            grep -E '^[[:space:]]*--- SKIP: ' "$log" || echo "(none)"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           if (( passes < ${{ matrix.min_passes }} )); then
             echo "::error::Only $passes lab scenarios passed, below the floor of ${{ matrix.min_passes }}. The suite gate (TCLAUDE_COPILOT_FIXTURE_SMOKE / TCLAUDE_COPILOT_FIXTURE_LAB) has almost certainly gone soft, or the run filter no longer matches."
+            exit 1
+          fi
+          if (( subtests < ${{ matrix.min_subtest_passes }} )); then
+            echo "::error::Only $subtests lab table rows passed, below the floor of ${{ matrix.min_subtest_passes }}. A parent test whose rows all skip still reports PASS, so this is the gate that sees it — the permission matrix rows cited by permission_contract.json are the likely casualty."
             exit 1
           fi
           # The contract guard is named explicitly because it is the one test

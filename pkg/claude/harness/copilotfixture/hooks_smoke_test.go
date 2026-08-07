@@ -88,18 +88,29 @@ func TestCopilotHooksFireFromTheInstalledFile(t *testing.T) {
 		}
 	}
 
-	// Every payload the run produced must match its committed capture. The
-	// committed set covers a resume run too, which this scenario does not
-	// perform, so the comparison is per event rather than whole-stream.
-	want := copilotfixture.LoadHookCapture(t, copilotfixture.HookScenarioClaudeDialect)
+	// Per-PR half: every event tclaude installs actually fired. That is a
+	// statement about OUR installer and holds for any release still honouring
+	// the hook contract, so it is measured on every push.
 	for _, event := range harness.CopilotHookEvents {
-		recorded, ok := got[event]
-		require.Truef(t, ok, "installed event %s did not fire", event)
-		expected, ok := want.Find(event)
-		require.Truef(t, ok, "no committed capture for %s", event)
-		assert.JSONEq(t, string(expected), string(recorded),
-			"Copilot hook contract drift on %s. Review the diff as compatibility "+
-				"evidence before re-recording the committed capture.", event)
+		require.Containsf(t, got, event, "installed event %s did not fire", event)
+	}
+
+	// Lab half: every payload the run produced must match its committed
+	// capture. The captures live under testdata/<PinnedCLIVersion>/hooks, so
+	// this is version-coupled by construction — exactly the coupling the
+	// per-PR set must not carry, or bumping the workflow's npm spec would
+	// redden unrelated PRs with a golden diff. The committed set covers a
+	// resume run too, which this scenario does not perform, so the comparison
+	// is per event rather than whole-stream.
+	if labMode() {
+		want := copilotfixture.LoadHookCapture(t, copilotfixture.HookScenarioClaudeDialect)
+		for _, event := range harness.CopilotHookEvents {
+			expected, ok := want.Find(event)
+			require.Truef(t, ok, "no committed capture for %s", event)
+			assert.JSONEq(t, string(expected), string(got[event]),
+				"Copilot hook contract drift on %s. Review the diff as compatibility "+
+					"evidence before re-recording the committed capture.", event)
+		}
 	}
 
 	// The ordering that forced a change in the status machine: Copilot
