@@ -28,10 +28,14 @@
 // calls. `session.create`, `session.setForeground` and `session.getForeground`
 // are all absent from the schema's `session` section, yet all three are
 // required to drive a session and all three work against a live server.
-// Generating from the schema would therefore produce a client that cannot
-// create a session at all. `copilot-sdk/index.js` — the reference client — is
-// authoritative for what the wire actually carries, and the narrow surface we
-// need is small enough to hand-write against it and verify live.
+//
+// The gap is not that a generated client would obviously lack a way to create
+// a session. It would have one — `sessions.open` with `kind: "create"` is
+// fully described in the schema and genuinely succeeds. It would just be the
+// wrong one, and the failure would arrive later and elsewhere. See the traps
+// below. `copilot-sdk/index.js` — the reference client — is authoritative for
+// what the wire actually carries, and the narrow surface we need is small
+// enough to hand-write against it and verify live.
 //
 // # Traps
 //
@@ -43,11 +47,31 @@
 // UUID) and then [Client.SetForegroundSession] it, which drops the pane's
 // original blank session to the background.
 //
-// `sessions.open` looks like the way to adopt an existing session and is the
-// one the schema documents, but against an unknown session it returns
-// `{"status":"not_found"}` as a *successful* result rather than an error. Code
-// that trusts it silently proceeds against a session that does not exist and
-// only fails later, on every subsequent `session.*` call. Use `session.create`.
+// `sessions.open` is the session-opening method the schema documents, and it
+// is a trap in three separate ways. All three were verified against a live
+// 1.0.78 server.
+//
+//   - `{kind: "create"}` really does create a session and reports
+//     `{"status":"created", "sessionId":…}`, writing session state to disk.
+//     But the session it creates is not registered in the RPC session
+//     registry, so it is undrivable: `session.name.set` on it fails with
+//     "Session not found", and `session.setForeground` returns
+//     `{"success":false}`. The danger here is not a missing create path — it
+//     is a create path that exists, reports success, and hands back something
+//     that cannot be driven.
+//   - `{kind: "attach"}` against the pane's own startup session returns
+//     `{"status":"resumed"}`, which reads as success, while the session
+//     remains just as undrivable.
+//   - An unknown session yields `{"status":"not_found"}` as a *successful*
+//     JSON-RPC result. This one is documented — `not_found` is a value of the
+//     SessionsOpenStatus enum — so the hazard is not that the server stays
+//     silent, but that a caller checking only for transport and JSON-RPC
+//     errors sails straight past a status field that was telling it the
+//     truth.
+//
+// In every case the symptom surfaces later, on some unrelated `session.*`
+// call, far from the `sessions.open` that caused it. Use `session.create`,
+// which is the only path to a session this client can actually drive.
 //
 // # Driving a session
 //

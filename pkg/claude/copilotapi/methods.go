@@ -36,11 +36,22 @@ func (c *Client) Ping(ctx context.Context, message string) (PingResult, error) {
 
 // CreateSession creates a session that this client can drive.
 //
-// This is the only way to get a drivable session. The pane's own startup
-// session is visible through [Client.GetForegroundSession] but rejects every
-// `session.*` call, and `sessions.open` reports a missing session as a
-// successful `{"status":"not_found"}` result rather than an error — see the
-// package docs.
+// This is the only way to get a drivable session, and the alternatives fail
+// in ways that look like success:
+//
+//   - The pane's own startup session is visible through
+//     [Client.GetForegroundSession] but rejects every `session.*` call.
+//   - `sessions.open` with `{kind: "create"}` — the create path the schema
+//     documents — really does create a session and answers
+//     `{"status":"created"}`, but that session is never registered with the
+//     RPC session registry, so it cannot be named, foregrounded or driven.
+//   - `sessions.open` with `{kind: "attach"}` answers `{"status":"resumed"}`
+//     for a session that stays undrivable, and `{"status":"not_found"}` — a
+//     successful JSON-RPC result — for one that does not exist.
+//
+// See the package docs for the full account. In each case the error surfaces
+// later, on an unrelated call, so preferring this method is what keeps the
+// failure where it belongs.
 //
 // params.SessionID may be left empty, in which case one is generated.
 func (c *Client) CreateSession(ctx context.Context, params CreateSessionParams) (SessionInfo, error) {

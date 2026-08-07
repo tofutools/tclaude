@@ -182,24 +182,87 @@ func TestLiveTUISessionIsNotDrivable(t *testing.T) {
 	}
 }
 
-func TestLiveSessionsOpenReportsMissingSessionAsSuccess(t *testing.T) {
-	// sessions.open is the method api.schema.json documents for adopting a
-	// session, and it is a trap: against an unknown session it answers
-	// {"status":"not_found"} as a successful result. Code that trusts it
-	// proceeds against a session that does not exist.
+// openResult is the subset of the sessions.open reply the traps turn on.
+type openResult struct {
+	Status    string `json:"status"`
+	SessionID string `json:"sessionId"`
+}
+
+// assertUndrivable proves a session ID cannot actually be driven, which is the
+// point of every sessions.open trap: the open reports success and the failure
+// only appears on a later, unrelated call.
+func assertUndrivable(ctx context.Context, t *testing.T, client *Client, sessionID, what string) {
+	t.Helper()
+	err := client.SetSessionName(ctx, sessionID, "should not work")
+	if err == nil {
+		t.Fatalf("%s produced a drivable session; the docs are now wrong", what)
+	}
+	if !IsSessionNotFound(err) {
+		t.Fatalf("%s: name.set err = %v, want a session-not-found error", what, err)
+	}
+	// setForeground refuses in-band rather than as a JSON-RPC error.
+	if err := client.SetForegroundSession(ctx, sessionID); err == nil {
+		t.Fatalf("%s: setForeground reported success for an undrivable session", what)
+	}
+}
+
+func TestLiveSessionsOpenCreatesUndrivableSessions(t *testing.T) {
+	// sessions.open is the session-opening method api.schema.json documents,
+	// and every path through it fails in a way that reads as success. The
+	// hazard is not a missing create path: `kind: "create"` exists, is fully
+	// specified in the schema, and genuinely creates a session — one that is
+	// never registered with the RPC session registry and so cannot be driven.
 	client := liveClient(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	var result struct {
-		Status string `json:"status"`
-	}
-	if err := client.Call(ctx, "sessions.open", map[string]string{"sessionId": NewSessionID()}, &result); err != nil {
-		t.Fatalf("sessions.open returned an error; the trap may be fixed upstream: %v", err)
-	}
-	if result.Status != "not_found" {
-		t.Errorf("status = %q, want %q", result.Status, "not_found")
-	}
+	t.Run("create reports created but is undrivable", func(t *testing.T) {
+		var result openResult
+		params := map[string]any{
+			"kind":    "create",
+			"options": map[string]any{"workingDirectory": t.TempDir()},
+		}
+		if err := client.Call(ctx, "sessions.open", params, &result); err != nil {
+			t.Fatalf("sessions.open create errored; the trap may be fixed upstream: %v", err)
+		}
+		if result.Status != "created" {
+			t.Fatalf("status = %q, want %q", result.Status, "created")
+		}
+		if result.SessionID == "" {
+			t.Fatal("sessions.open create returned no session ID")
+		}
+		assertUndrivable(ctx, t, client, result.SessionID, "sessions.open create")
+	})
+
+	t.Run("attach reports resumed but is undrivable", func(t *testing.T) {
+		foreground, err := client.GetForegroundSession(ctx)
+		if err != nil {
+			t.Fatalf("GetForegroundSession: %v", err)
+		}
+		var result openResult
+		params := map[string]any{"kind": "attach", "sessionId": foreground.SessionID}
+		if err := client.Call(ctx, "sessions.open", params, &result); err != nil {
+			t.Fatalf("sessions.open attach errored; the trap may be fixed upstream: %v", err)
+		}
+		if result.Status != "resumed" {
+			t.Fatalf("status = %q, want %q", result.Status, "resumed")
+		}
+		assertUndrivable(ctx, t, client, foreground.SessionID, "sessions.open attach")
+	})
+
+	t.Run("unknown session reports not_found as success", func(t *testing.T) {
+		// Documented behaviour — not_found is a SessionsOpenStatus value — so
+		// the hazard is a caller checking only for transport and JSON-RPC
+		// errors and sailing past the status field.
+		var result openResult
+		params := map[string]any{"kind": "attach", "sessionId": NewSessionID()}
+		if err := client.Call(ctx, "sessions.open", params, &result); err != nil {
+			t.Fatalf("sessions.open errored; the trap may be fixed upstream: %v", err)
+		}
+		if result.Status != "not_found" {
+			t.Errorf("status = %q, want %q", result.Status, "not_found")
+		}
+	})
 }
 
 func TestLiveMultipleClientsShareOneServer(t *testing.T) {
