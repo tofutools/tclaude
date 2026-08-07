@@ -40,13 +40,16 @@ func cleanupPTYProcessGroup(
 	pid int, grace time.Duration, signal signalPTYProcessGroup,
 ) error {
 	if err := signal(-pid, syscall.SIGKILL); err != nil {
-		return ignoreMissingPTYProcess(err)
+		if ptyProcessGroupGone(err) {
+			return nil
+		}
+		return err
 	}
 
 	deadline := time.Now().Add(grace)
 	for {
 		err := signal(-pid, 0)
-		if errors.Is(err, syscall.ESRCH) {
+		if ptyProcessGroupGone(err) {
 			return nil
 		}
 		if err != nil {
