@@ -31,6 +31,7 @@ import { SandboxImplHint } from './sandbox-impl-hint.js';
 import {
   sandboxPreLaunchEditorRows,
   sandboxPreLaunchForWire,
+  sandboxPreLaunchNewEditorRow,
   sandboxPreLaunchValidation,
 } from './sandbox-pre-launch.js';
 import {
@@ -1328,7 +1329,9 @@ function SandboxPreLaunchEditor({ blocks, setDraft, validation }) {
     const nameErrorID = `sandbox-profile-editor-pre-launch-name-error-${index}`;
     const scriptErrorID = `sandbox-profile-editor-pre-launch-script-error-${index}`;
     const exportsErrorID = `sandbox-profile-editor-pre-launch-exports-error-${index}`;
-    return html`<div key=${index} class=${`sbx-prelaunch-card${[...errors.name, ...errors.script, ...errors.exports].length ? ' is-invalid' : ''}`}>
+    return html`<div key=${block._editor_id || index} role="group"
+      aria-label=${`Block ${index + 1}: ${(block.name || '').trim() || 'unnamed'}`}
+      class=${`sbx-prelaunch-card${[...errors.name, ...errors.script, ...errors.exports].length ? ' is-invalid' : ''}`}>
       <div class="sbx-prelaunch-head">
         <span class="sbx-prelaunch-order" aria-label=${`Execution position ${index + 1}`}>${index + 1}</span>
         <label class="sbx-prelaunch-name">Block name
@@ -1365,7 +1368,7 @@ function SandboxPreLaunchEditor({ blocks, setDraft, validation }) {
   })}</div>
     <button type="button" class="sbx-add-row sbx-prelaunch-add" disabled=${rows.length >= 32}
       onClick=${() => setDraft((draft) => ({ ...draft, pre_launch: [
-        ...(draft.pre_launch || []), { name: '', script: '', exports: [], _exports_text: '' },
+        ...(draft.pre_launch || []), sandboxPreLaunchNewEditorRow(),
       ] }))}>＋ add block</button>`;
 }
 
@@ -1468,7 +1471,7 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
      opening and closing this panel does not raise a spurious discard prompt. Clearing an existing profile's
      blocks still emits the explicit empty array the daemon needs to distinguish "clear" from "leave alone". */
   return { filesystem, filesystem_spellings, environment, includes, agent_directories, ...(baseline.pre_launch === undefined && pre_launch.length === 0 ? {} : { pre_launch }), network: axes.network, unix_sockets: axes.unix_sockets, resource_limits: sandboxResourceLimitsForWire(resource_limits) }; };
-  const applyRaw = () => { try { const parsed = parseRaw(); setDraft((value) => { const next = { ...value, ...parsed, filesystem: sandboxFilesystemEditorRows(parsed.filesystem, parsed.filesystem_spellings) }; if (parsed.pre_launch === undefined) delete next.pre_launch; else next.pre_launch = sandboxPreLaunchEditorRows(parsed.pre_launch); return next; }); state.error.value = ''; return true; } catch (error) { state.error.value = error.message || String(error); return false; } };
+  const applyRaw = () => { try { const parsed = parseRaw(); setDraft((value) => { const next = { ...value, ...parsed, filesystem: sandboxFilesystemEditorRows(parsed.filesystem, parsed.filesystem_spellings) }; if (parsed.pre_launch === undefined) delete next.pre_launch; else next.pre_launch = sandboxPreLaunchEditorRows(parsed.pre_launch, value.pre_launch); return next; }); state.error.value = ''; return true; } catch (error) { state.error.value = error.message || String(error); return false; } };
   const toggleAdvanced = () => { if (advanced && !applyRaw()) return; if (!advanced) { const wire = sandboxFilesystemWire(draft, baseline); setRawFS(JSON.stringify(wire.filesystem, null, 2)); setRawSpellings(JSON.stringify(wire.filesystem_spellings, null, 2)); setRawEnv(JSON.stringify(draft.environment, null, 2)); setRawIncludes(JSON.stringify(draft.includes, null, 2)); setRawAgentDirs(JSON.stringify(draft.agent_directories, null, 2)); setRawNetwork(JSON.stringify(draft.network, null, 2)); setRawSockets(JSON.stringify(draft.unix_sockets, null, 2)); setRawResources(JSON.stringify(sandboxResourceLimitsForWire(draft.resource_limits), null, 2)); setRawPreLaunch(JSON.stringify(sandboxPreLaunchForWire(draft.pre_launch || []), null, 2)); } setAdvanced(!advanced); };
   const submit = async () => {
     let value = { ...draft, ...sandboxFilesystemWire(draft, baseline), resource_limits: sandboxResourceLimitsForWire(draft.resource_limits), ...(draft.pre_launch === undefined ? {} : { pre_launch: sandboxPreLaunchForWire(draft.pre_launch) }) };

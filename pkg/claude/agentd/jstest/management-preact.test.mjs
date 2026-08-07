@@ -1760,6 +1760,7 @@ test('sandbox pre-launch editor is a first-class ordered multiline section and d
       pre_launch: [
         { name: 'first', script: 'export FIRST=1\n', exports: ['FIRST'] },
         { name: 'second', script: 'export SECOND=2\n', exports: ['SECOND'] },
+        { name: 'third', script: 'export THIRD=3\n', exports: ['THIRD'] },
       ],
     },
     options: {},
@@ -1773,27 +1774,41 @@ test('sandbox pre-launch editor is a first-class ordered multiline section and d
   const section = host.querySelector('#sandbox-profile-editor-pre-launch-section');
   assert.equal(section.tagName, 'DETAILS');
   assert.equal(section.hasAttribute('open'), false, 'the peer section starts folded like the others');
-  assert.equal(section.querySelector('.sbx-section-count').textContent, '2 entries');
+  assert.equal(section.querySelector('.sbx-section-count').textContent, '3 entries');
   assert.match(section.querySelector('.sbx-prelaunch-intro').textContent, /top to bottom/);
-  assert.deepEqual([...section.querySelectorAll('.sbx-prelaunch-order')].map((node) => node.textContent), ['1', '2']);
-  assert.equal(section.querySelectorAll('.sbx-prelaunch-script textarea').length, 2,
+  assert.deepEqual([...section.querySelectorAll('.sbx-prelaunch-order')].map((node) => node.textContent), ['1', '2', '3']);
+  assert.equal(section.querySelectorAll('.sbx-prelaunch-script textarea').length, 3,
     'each entry is a real multiline script box');
+  assert.deepEqual([...section.querySelectorAll('.sbx-prelaunch-card')].map((card) => card.getAttribute('aria-label')),
+    ['Block 1: first', 'Block 2: second', 'Block 3: third'],
+    'repeated field labels are scoped by an accessible position-and-name group');
 
-  await harness.act(() => harness.fireEvent(
-    section.querySelector('button[aria-label="Move block 2 up"]'), 'click'));
+  const movingUp = section.querySelector('button[aria-label="Move block 3 up"]');
+  movingUp.focus();
+  await harness.act(() => harness.fireEvent(movingUp, 'click'));
+  assertSameNode(harness.document.activeElement, movingUp,
+    'a moved block keeps keyboard focus on its own stable keyed control');
   assert.deepEqual([...section.querySelectorAll('.sbx-prelaunch-name input')].map((input) => input.value),
-    ['second', 'first'], 'up/down controls change execution order on screen');
+    ['first', 'third', 'second'], 'up/down controls change execution order on screen');
+  assert.equal(movingUp.getAttribute('aria-label'), 'Move block 2 up');
+  await harness.act(() => harness.fireEvent(movingUp, 'click'));
+  assertSameNode(harness.document.activeElement, movingUp,
+    'repeating the keyboard action continues moving the same block');
+  assert.deepEqual([...section.querySelectorAll('.sbx-prelaunch-name input')].map((input) => input.value),
+    ['third', 'first', 'second']);
   const exports = section.querySelectorAll('.sbx-prelaunch-exports input')[0];
-  exports.value = 'SECOND, PATH XDG_CONFIG_HOME';
+  exports.value = 'THIRD, PATH XDG_CONFIG_HOME';
   await harness.act(() => harness.fireEvent(exports, 'input'));
   await harness.act(() => harness.fireEvent(host.querySelector('#sandbox-profile-editor-submit'), 'click'));
-  assert.deepEqual(saves[0].draft.pre_launch.map((block) => block.name), ['second', 'first']);
-  assert.deepEqual(saves[0].draft.pre_launch[0].exports, ['SECOND', 'PATH', 'XDG_CONFIG_HOME']);
+  assert.deepEqual(saves[0].draft.pre_launch.map((block) => block.name), ['third', 'first', 'second']);
+  assert.deepEqual(saves[0].draft.pre_launch[0].exports, ['THIRD', 'PATH', 'XDG_CONFIG_HOME']);
   assert.equal('_exports_text' in saves[0].draft.pre_launch[0], false,
     'editor-only export text never reaches the daemon');
+  assert.equal('_editor_id' in saves[0].draft.pre_launch[0], false,
+    'stable editor row identities never reach the daemon');
 
-  const removals = [...section.querySelectorAll('.sbx-prelaunch-remove')];
-  await harness.act(() => harness.fireEvent(removals[1], 'click'));
+  await harness.act(() => harness.fireEvent(section.querySelector('.sbx-prelaunch-remove'), 'click'));
+  await harness.act(() => harness.fireEvent(section.querySelector('.sbx-prelaunch-remove'), 'click'));
   await harness.act(() => harness.fireEvent(section.querySelector('.sbx-prelaunch-remove'), 'click'));
   assert.equal(section.querySelector('.sbx-section-count').textContent, '0 entries');
   await harness.act(() => harness.fireEvent(host.querySelector('#sandbox-profile-editor-submit'), 'click'));

@@ -6,20 +6,41 @@ const MAX_EXPORTS = 64;
 const BLOCK_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
 const EXPORT_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const utf8 = new TextEncoder();
+let editorRowSequence = 0;
+
+function nextEditorRowID() {
+  editorRowSequence += 1;
+  return `pre-launch-editor-${editorRowSequence}`;
+}
 
 export function sandboxPreLaunchExportNames(value) {
   const text = Array.isArray(value) ? value.join(' ') : String(value || '');
   return text.split(/[\s,]+/u).map((name) => name.trim()).filter(Boolean);
 }
 
-export function sandboxPreLaunchEditorRows(blocks) {
+export function sandboxPreLaunchEditorRows(blocks, previous = []) {
   if (!Array.isArray(blocks)) return [];
-  return blocks.map((block) => ({
-    ...block,
-    exports: Array.isArray(block?.exports) ? [...block.exports] : [],
-    _exports_text: block?._exports_text
-      ?? (Array.isArray(block?.exports) ? block.exports.join(', ') : ''),
+  const previousByName = new Map(previous.flatMap((block) => {
+    const name = typeof block?.name === 'string' ? block.name.trim() : '';
+    return name && block?._editor_id ? [[name, block._editor_id]] : [];
   }));
+  return blocks.map((block, index) => {
+    const name = typeof block?.name === 'string' ? block.name.trim() : '';
+    return {
+      ...block,
+      exports: Array.isArray(block?.exports) ? [...block.exports] : [],
+      _exports_text: block?._exports_text
+        ?? (Array.isArray(block?.exports) ? block.exports.join(', ') : ''),
+      _editor_id: block?._editor_id || previousByName.get(name)
+        || previous[index]?._editor_id || nextEditorRowID(),
+    };
+  });
+}
+
+export function sandboxPreLaunchNewEditorRow() {
+  return {
+    name: '', script: '', exports: [], _exports_text: '', _editor_id: nextEditorRowID(),
+  };
 }
 
 export function sandboxPreLaunchForWire(blocks) {
@@ -106,4 +127,3 @@ export function sandboxPreLaunchValidation(blocks) {
   ];
   return { profile, blocks: perBlock, errors };
 }
-
