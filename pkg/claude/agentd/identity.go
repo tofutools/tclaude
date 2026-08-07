@@ -848,9 +848,42 @@ func parseAskHumanHeader(r *http.Request) time.Duration {
 // without real /proc. Production points them at the session package's
 // /proc readers.
 var (
-	procName   = session.GetProcessName
-	procParent = session.GetParentPID
+	procName    = session.GetProcessName
+	procParent  = session.GetParentPID
+	procExeName = session.GetProcessExeName
 )
+
+// harnessNameAt returns the harness runtime name of the process at pid — the
+// name the walks below key their harness-specific branches on — or "" when
+// the process is not a harness runtime. name is the value the caller already
+// read from procName.
+//
+// The executable is consulted when the name misses because a process's NAME
+// is not proof of what it runs: on Linux procName reads /proc/<pid>/comm,
+// the main thread's name, which the program itself may overwrite. Copilot's
+// Node SEA does exactly that — a running `copilot` reports comm "MainThread"
+// and its npm loader reports "node-MainThread" — so a Copilot pane had NO
+// recognisable harness ancestor and every one of its callers classified as
+// classUnconfirmed: no whoami, no inbox, no sends (TCL-1049). macOS never hit
+// it because there the same reader falls back to `ps -o comm=`, which prints
+// the executable path.
+//
+// This only widens WHICH ancestors are considered; it does not widen what may
+// establish a conv-id. Resolution below still keys exclusively on host pids
+// the daemon itself recorded at spawn. And the added evidence is a fact of the
+// kernel — /proc/<pid>/exe is the binary being executed, not a settable
+// string. argv[0] is deliberately NOT consulted: a process controls its own
+// argv, so admitting it would let any process present itself as a harness.
+func harnessNameAt(pid int, name string) string {
+	if session.IsHarnessProcessName(name) {
+		return name
+	}
+	exe := procExeName(pid)
+	if exe != "" && exe != name && session.IsHarnessProcessName(exe) {
+		return exe
+	}
+	return ""
+}
 
 // convIDForPID walks up from pid to the nearest coding-harness ancestor —
 // any harness runtime (claude, codex, …) or "node" (Claude Code runs as
@@ -913,8 +946,9 @@ func convIDForPID(pid int) (convID string, hasAncestor bool) {
 	for cur > 1 {
 		name := procName(cur)
 		parent := procParent(cur)
-		if session.IsHarnessProcessName(name) {
+		if hname := harnessNameAt(cur, name); hname != "" {
 			hasAncestor = true
+			name = hname
 			if id := readSessionFile(cur); id != "" {
 				return id, true
 			}
@@ -1004,7 +1038,7 @@ func hookSessionRowForPID(pid int) (*db.SessionRow, int) {
 	for cur > 1 {
 		name := procName(cur)
 		parent := procParent(cur)
-		if session.IsHarnessProcessName(name) {
+		if harnessNameAt(cur, name) != "" {
 			if row := sessionRowByPID(cur); row != nil {
 				return row, cur
 			}

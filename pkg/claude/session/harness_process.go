@@ -7,8 +7,12 @@ import (
 )
 
 // IsHarnessProcessName reports whether a process name is one of the
-// coding-harness runtimes tclaude drives. Two process-tree walks rely on
-// it to recognise the harness ancestor of a descendant process:
+// coding-harness runtimes tclaude drives. It is the NAME half of the
+// harness-ancestor test; walks call IsHarnessProcessAt, which falls back to
+// the process's executable when the name misses, because a harness may
+// rename its main thread (Copilot does — TCL-1049). Two process-tree walks
+// rely on the test to recognise the harness ancestor of a descendant
+// process:
 //
 //   - FindClaudePID, walking up from a `tclaude session hook-callback`
 //     (the callback is a child of the harness that invoked it), records a

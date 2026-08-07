@@ -570,21 +570,53 @@ func AsAgentPeerWithPID(r *http.Request, convID string, pid int) *http.Request {
 	return r.WithContext(context.WithValue(r.Context(), peerKey{}, p))
 }
 
+// AsResolvedPeer attaches the peer the production identity middleware would
+// have attached for a caller whose socket peer credential is pid: both the
+// conv-id and the has-a-harness-ancestor verdict come from convIDForPID's
+// real walk over the installed process tree (see SetProcTreeWithExeForTest).
+//
+// Use it instead of AsAgentPeer when the identity RESOLUTION is what a test
+// is about. AsAgentPeer asserts the answer — it hands the handler a conv-id
+// — so a test built on it cannot see a caller the daemon would have refused
+// as unidentifiable, which is exactly what happened to every Copilot pane
+// (TCL-1049).
+func AsResolvedPeer(r *http.Request, pid int) *http.Request {
+	p := &peer{PID: pid}
+	p.ConvID, p.HasClaudeAncestor = convIDForPID(pid)
+	return r.WithContext(context.WithValue(r.Context(), peerKey{}, p))
+}
+
 // SetProcTreeForTest installs a synthetic process tree over the /proc
 // readers the identity walks use, so a flow test can model the
 // harness → wrapper → pane ancestry an identity resolution depends on
 // without spawning real processes. Unlisted pids resolve to init, ending
 // the walk. Returns a restore function.
+//
+// Every pid's executable reads back as "" — a tree that models processes by
+// name only. That also keeps the walks deterministic: the real exe reader
+// would otherwise resolve a synthetic pid against whatever host process
+// happens to hold that number. Use SetProcTreeWithExeForTest to model a
+// harness whose name and executable differ.
 func SetProcTreeForTest(name map[int]string, parent map[int]int) func() {
-	prevName, prevParent := procName, procParent
+	return SetProcTreeWithExeForTest(name, nil, parent)
+}
+
+// SetProcTreeWithExeForTest is SetProcTreeForTest with per-pid executable
+// basenames, so a test can model the case the name-only tree cannot: a
+// harness process whose /proc/<pid>/comm is NOT its binary's name because it
+// renamed its main thread. Copilot's Node SEA does this (comm "MainThread",
+// exe "copilot"), which is what made its panes unidentifiable — TCL-1049.
+func SetProcTreeWithExeForTest(name, exe map[int]string, parent map[int]int) func() {
+	prevName, prevParent, prevExe := procName, procParent, procExeName
 	procName = func(pid int) string { return name[pid] }
+	procExeName = func(pid int) string { return exe[pid] }
 	procParent = func(pid int) int {
 		if p, ok := parent[pid]; ok {
 			return p
 		}
 		return 1
 	}
-	return func() { procName, procParent = prevName, prevParent }
+	return func() { procName, procParent, procExeName = prevName, prevParent, prevExe }
 }
 
 // SetOperatorTokenForTest installs a known operator token so flow tests

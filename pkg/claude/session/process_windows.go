@@ -71,18 +71,35 @@ func GetProcessName(pid int) string {
 	return ""
 }
 
+// GetProcessExeName returns the basename of a process's executable. wmic's
+// Name is already the image name, so on Windows this is GetProcessName.
+// Native Windows is not a supported target; this exists so the shared
+// harness-ancestor predicate compiles.
+func GetProcessExeName(pid int) string { return GetProcessName(pid) }
+
+// IsHarnessProcessAt is the Windows twin of the Unix predicate: it reports
+// whether the process at pid is a coding-harness runtime. See the Unix
+// implementation for why the executable, not the thread name, is the
+// authority there.
+func IsHarnessProcessAt(pid int, name string) bool {
+	if IsHarnessProcessName(name) {
+		return true
+	}
+	exe := GetProcessExeName(pid)
+	return exe != "" && exe != name && IsHarnessProcessName(exe)
+}
+
 // FindClaudePID walks up the process tree from the current process to find
 // the coding-harness ancestor — a parent named "claude"/"node" (Claude
 // Code runs as node) or any other registered harness binary (e.g.
 // "codex"). Returns its PID, or 0 if none is found. The harness-aware match
-// (IsHarnessProcessName) is what lets a Codex hook callback record a real
+// (IsHarnessProcessAt) is what lets a Codex hook callback record a real
 // PID instead of 0 (JOH-160).
 func FindClaudePID() int {
 	pid := os.Getppid()
 	// Windows uses PID 0 for System Idle Process
 	for pid > 0 {
-		name := GetProcessName(pid)
-		if IsHarnessProcessName(name) {
+		if IsHarnessProcessAt(pid, GetProcessName(pid)) {
 			return pid
 		}
 		newPid := GetParentPID(pid)

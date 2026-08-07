@@ -171,7 +171,7 @@ tclaude agent dashboard
 On every request the daemon resolves the connecting socket peer into
 exactly one *caller identity*. It reads the peer's PID from the kernel,
 walks the host process tree looking for a recognized harness runtime (`claude`,
-`codex`, or Claude Code's `node` process), and
+`codex`, `copilot`, or Claude Code's `node` process), and
 checks the request for an operator token. The verdict is one of:
 
 - **Agent** — a coding-harness ancestor is present in the process tree. For
@@ -192,6 +192,16 @@ checks the request for an operator token. The verdict is one of:
   harness ancestor whose conv-id can't be resolved → `403`; a peer
   whose PID can't be read at all → `401`. There is **no** fail-open
   "assume human" path — an unproven caller is always refused.
+
+A process is recognized as a harness runtime by its name *or* by its
+executable (`/proc/<pid>/exe`). The executable is consulted because a name is
+not proof: on Linux the name comes from `/proc/<pid>/comm`, which is the
+process's main-thread name and can be overwritten by the program itself —
+Copilot's CLI does this, so it reports `MainThread` rather than `copilot`.
+The executable is a kernel-maintained fact a process cannot choose; `argv[0]`
+is deliberately never consulted, because a process does control that. This
+only decides which ancestors are *considered*: a conv-id still comes solely
+from host PIDs the daemon recorded itself at spawn.
 
 ### Session routing is not caller identity
 
