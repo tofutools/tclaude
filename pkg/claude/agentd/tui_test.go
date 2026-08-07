@@ -821,6 +821,116 @@ func TestTUIHelpMentionsTheMissingDashboard(t *testing.T) {
 	assert.Equal(t, tuiModeList, closed.(tuiModel).mode)
 }
 
+// tuiNamedKey builds the KeyPressMsg for a key with no character of its own.
+func tuiNamedKey(code rune) tea.KeyPressMsg { return tea.KeyPressMsg{Code: code} }
+
+// The help text is longer than most terminals, so the view is windowed: it
+// renders no more rows than the terminal has, whatever it costs the text.
+func TestTUIHelpViewFitsTheTerminal(t *testing.T) {
+	m := newTUIModel(nil)
+	m.width, m.height = 100, 24
+	body := m.helpBodyLines()
+	require.Greater(t, len(body), m.height, "the help has to overflow for this test to mean anything")
+
+	// The trailing newline is a line terminator rather than a row — the same
+	// shape renderList's own budget renders to.
+	assert.LessOrEqual(t, lipgloss.Height(m.renderHelpView()), m.height+1)
+
+	// Narrow enough that the hand-wrapped body wraps again, which costs rows
+	// the line count does not show.
+	m.width = 40
+	assert.LessOrEqual(t, lipgloss.Height(m.renderHelpView()), m.height+1)
+}
+
+// Everything the help says stays reachable: the keys scroll it to its last
+// line, and the footer says they do.
+func TestTUIHelpScrollsToItsLastLine(t *testing.T) {
+	m := newTUIModel(nil)
+	m.width, m.height = 100, 24
+	m.mode = tuiModeHelp
+	body := m.helpBodyLines()
+	last := body[len(body)-1]
+
+	assert.Contains(t, m.renderHelpView(), "any other key closes")
+	assert.NotContains(t, m.renderHelpView(), last)
+
+	// One line down shows one more line, and no longer shows the first.
+	down, _ := m.handleKey(tuiNamedKey(tea.KeyDown))
+	scrolled := down.(tuiModel)
+	require.Equal(t, tuiModeHelp, scrolled.mode, "a scroll key must not close the help")
+	assert.Equal(t, 1, scrolled.helpOffset)
+
+	// End goes to the bottom, which is the end of the text.
+	bottom, _ := scrolled.handleKey(tuiNamedKey(tea.KeyEnd))
+	atEnd := bottom.(tuiModel)
+	require.Equal(t, tuiModeHelp, atEnd.mode)
+	assert.Contains(t, atEnd.renderHelpView(), last)
+
+	// Down at the bottom stays there rather than scrolling into blank rows.
+	stuck, _ := atEnd.handleKey(tuiNamedKey(tea.KeyDown))
+	assert.Equal(t, atEnd.helpOffset, stuck.(tuiModel).helpOffset)
+
+	// Home comes back to the top, page by page or in one jump.
+	paged, _ := atEnd.handleKey(tuiNamedKey(tea.KeyPgUp))
+	assert.Less(t, paged.(tuiModel).helpOffset, atEnd.helpOffset)
+	top, _ := paged.(tuiModel).handleKey(tuiKey("g"))
+	assert.Equal(t, 0, top.(tuiModel).helpOffset)
+	// …and the vi keys the listing uses do the same, G included.
+	viBottom, _ := top.(tuiModel).handleKey(tuiKey("G"))
+	assert.Equal(t, atEnd.helpOffset, viBottom.(tuiModel).helpOffset)
+	viTop, _ := viBottom.(tuiModel).handleKey(tuiNamedKey(tea.KeyHome))
+	assert.Equal(t, 0, viTop.(tuiModel).helpOffset)
+	assert.Contains(t, top.(tuiModel).renderHelpView(), "tclaude terminal dashboard — keys")
+}
+
+// Scrolling the help and then closing it leaves nothing behind: the next
+// reading opens at the top.
+func TestTUIHelpOpensAtTheTop(t *testing.T) {
+	m := newTUIModel(nil)
+	m.width, m.height = 100, 24
+	m.mode = tuiModeHelp
+
+	scrolled, _ := m.handleKey(tuiNamedKey(tea.KeyPgDown))
+	require.Greater(t, scrolled.(tuiModel).helpOffset, 0)
+
+	closed, _ := scrolled.(tuiModel).handleKey(tuiKey("x"))
+	require.Equal(t, tuiModeList, closed.(tuiModel).mode)
+	assert.Equal(t, 0, closed.(tuiModel).helpOffset)
+
+	reopened, _ := closed.(tuiModel).handleKey(tuiKey("?"))
+	assert.Equal(t, tuiModeHelp, reopened.(tuiModel).mode)
+	assert.Equal(t, 0, reopened.(tuiModel).helpOffset)
+}
+
+// A terminal tall enough for the whole text gets no scroll chrome, and a
+// console that has not been told its size yet shows the text rather than one
+// line of it.
+func TestTUIHelpWithoutScrollingSaysSo(t *testing.T) {
+	m := newTUIModel(nil)
+	m.width, m.height = 100, 500
+	assert.Contains(t, m.renderHelpView(), tuiHelpCloseHint)
+	assert.NotContains(t, m.renderHelpView(), "any other key closes")
+
+	// No WindowSizeMsg yet: no height to window to.
+	unsized := newTUIModel(nil)
+	assert.Equal(t, unsized.renderHelp(), unsized.renderHelpView())
+}
+
+// A terminal that grows under an open help view must not leave it scrolled
+// past the end of the text, which would show a screen of blank rows.
+func TestTUIHelpOffsetClampsOnResize(t *testing.T) {
+	m := newTUIModel(nil)
+	m.width, m.height = 100, 10
+	m.mode = tuiModeHelp
+
+	bottom, _ := m.handleKey(tuiNamedKey(tea.KeyEnd))
+	atEnd := bottom.(tuiModel)
+	require.Greater(t, atEnd.helpOffset, 0)
+
+	grown, _ := atEnd.Update(tea.WindowSizeMsg{Width: 100, Height: 500})
+	assert.Equal(t, 0, grown.(tuiModel).helpOffset)
+}
+
 // A handler panic must cost one request, not the daemon: on the socket path
 // net/http contains it, and the console has to match that.
 func TestTUIAPIContainsAHandlerPanic(t *testing.T) {

@@ -71,6 +71,11 @@ r      refresh now (the list also polls every 2s)
 q      quit — this SHUTS DOWN the daemon (it asks first)
 ```
 
+The key help is longer than most terminals, so it scrolls: **↑/↓**, **PgUp**/
+**PgDn** and **Home**/**End** (or **k**/**j**, **^B**/**^F**, **g**/**G**) move
+through it, and any other key closes it as before. A terminal tall enough for
+the whole text says so instead of showing the scroll keys.
+
 ### Two kinds of row
 
 The list holds agents and, below them, this host's plain **sessions** — the
