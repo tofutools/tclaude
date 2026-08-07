@@ -29,6 +29,11 @@ import { approvalPolicyLabel, approvalReviewerHelp, approvalReviewerOptions } fr
 import { HelpDisclosure, HelpField } from './help-field.js';
 import { SandboxImplHint } from './sandbox-impl-hint.js';
 import {
+  sandboxPreLaunchEditorRows,
+  sandboxPreLaunchForWire,
+  sandboxPreLaunchValidation,
+} from './sandbox-pre-launch.js';
+import {
   approvalControlsVisibleFor, autoCompactWindowHintFor, harnessBuiltinModeHelpForImplementation,
   sandboxImplHintFor, sandboxImplCaveatFor, sandboxImplClearedNoticeFor, sandboxImplOptionsFor,
   harnessBuiltinModeControlLabel, harnessBuiltinModeOptionsForImplementation,
@@ -120,6 +125,9 @@ const INCLUDES_HELP = 'Included profiles apply first, in order; this profile ove
   + 'exact-same-path or same-variable values.';
 const AGENT_DIRECTORIES_HELP = 'Environment-variable names backed by fresh isolated writable '
   + 'directories created for each spawned agent.';
+const PRE_LAUNCH_HELP = 'Named bash blocks for setup that declarative environment or directory '
+  + 'fields cannot express. They run inside the sandbox after the profile environment and before '
+  + 'the harness starts. Declared exports are checked after each block and make its contract visible.';
 const EFFECTIVE_POLICY_HELP = 'Evaluates the composed policy for the selected implementation, '
   + 'harness, platform, and assignment context. This preview reports enforcement capability '
   + 'limits without changing the authored profile. '
@@ -1295,6 +1303,72 @@ function sandboxFilesystemWire(draft, baseline) {
   };
 }
 
+function SandboxPreLaunchEditor({ blocks, setDraft, validation }) {
+  const rows = blocks || [];
+  const update = (index, patch) => setDraft((draft) => ({
+    ...draft,
+    pre_launch: (draft.pre_launch || []).map((block, i) =>
+      i === index ? { ...block, ...patch } : block),
+  }));
+  const remove = (index) => setDraft((draft) => ({
+    ...draft,
+    pre_launch: (draft.pre_launch || []).filter((_, i) => i !== index),
+  }));
+  const move = (index, offset) => setDraft((draft) => {
+    const pre_launch = [...(draft.pre_launch || [])];
+    const target = index + offset;
+    if (target < 0 || target >= pre_launch.length) return draft;
+    [pre_launch[index], pre_launch[target]] = [pre_launch[target], pre_launch[index]];
+    return { ...draft, pre_launch };
+  });
+  return html`<div class="sbx-prelaunch-intro"><strong>Execution order:</strong> blocks run top to bottom in the launching shell.</div>
+    ${validation.profile.map((error, index) => html`<div key=${index} class="sbx-prelaunch-error" role="alert">${error}</div>`)}
+    <div class="sbx-prelaunch-list">${rows.map((block, index) => {
+    const errors = validation.blocks[index] || { name: [], script: [], exports: [] };
+    const nameErrorID = `sandbox-profile-editor-pre-launch-name-error-${index}`;
+    const scriptErrorID = `sandbox-profile-editor-pre-launch-script-error-${index}`;
+    const exportsErrorID = `sandbox-profile-editor-pre-launch-exports-error-${index}`;
+    return html`<div key=${index} class=${`sbx-prelaunch-card${[...errors.name, ...errors.script, ...errors.exports].length ? ' is-invalid' : ''}`}>
+      <div class="sbx-prelaunch-head">
+        <span class="sbx-prelaunch-order" aria-label=${`Execution position ${index + 1}`}>${index + 1}</span>
+        <label class="sbx-prelaunch-name">Block name
+          <input value=${block.name || ''} placeholder="setup-tools" autocomplete="off" spellcheck="false"
+            aria-invalid=${errors.name.length ? 'true' : null}
+            aria-describedby=${errors.name.length ? nameErrorID : null}
+            onInput=${(event) => update(index, { name: event.currentTarget.value })}/>
+        </label>
+        <div class="sbx-prelaunch-actions" aria-label=${`Reorder or remove block ${index + 1}`}>
+          <button type="button" disabled=${index === 0} aria-label=${`Move block ${index + 1} up`}
+            title="Move earlier" onClick=${() => move(index, -1)}>↑</button>
+          <button type="button" disabled=${index === rows.length - 1} aria-label=${`Move block ${index + 1} down`}
+            title="Move later" onClick=${() => move(index, 1)}>↓</button>
+          <button type="button" class="sbx-prelaunch-remove" aria-label=${`Remove block ${index + 1}`}
+            onClick=${() => remove(index)}>Remove</button>
+        </div>
+      </div>
+      ${errors.name.length > 0 && html`<div id=${nameErrorID} class="sbx-prelaunch-error" role="alert">${errors.name.join(' ')}</div>`}
+      <label class="sbx-prelaunch-script">Script
+        <textarea rows="8" value=${block.script || ''} placeholder=${'#!/usr/bin/env bash\nexport TOOL_HOME=/tmp/tool'} spellcheck="false"
+          aria-invalid=${errors.script.length ? 'true' : null}
+          aria-describedby=${errors.script.length ? scriptErrorID : null}
+          onInput=${(event) => update(index, { script: event.currentTarget.value })}/>
+      </label>
+      ${errors.script.length > 0 && html`<div id=${scriptErrorID} class="sbx-prelaunch-error" role="alert">${errors.script.join(' ')}</div>`}
+      <label class="sbx-prelaunch-exports">Exports <span>comma or space separated</span>
+        <input value=${block._exports_text || ''} placeholder="PATH, TOOL_HOME" autocomplete="off" spellcheck="false"
+          aria-invalid=${errors.exports.length ? 'true' : null}
+          aria-describedby=${errors.exports.length ? exportsErrorID : null}
+          onInput=${(event) => update(index, { _exports_text: event.currentTarget.value })}/>
+      </label>
+      ${errors.exports.length > 0 && html`<div id=${exportsErrorID} class="sbx-prelaunch-error" role="alert">${errors.exports.join(' ')}</div>`}
+    </div>`;
+  })}</div>
+    <button type="button" class="sbx-add-row sbx-prelaunch-add" disabled=${rows.length >= 32}
+      onClick=${() => setDraft((draft) => ({ ...draft, pre_launch: [
+        ...(draft.pre_launch || []), { name: '', script: '', exports: [], _exports_text: '' },
+      ] }))}>＋ add block</button>`;
+}
+
 function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDiscard }) {
   const { requestClose, registerClose } = useGuardedOverlayClose();
   const seed = descriptor.seed || null; const options = descriptor.options || {};
@@ -1303,10 +1377,10 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
     const axes = sandboxAccessAxes(seed || {});
     const network = sandboxNetworkAuthoring(seed || {});
     const filesystem_spellings = clone(seed?.filesystem_spellings ?? null);
-    return { id: seed?.id || 0, name: seed?.name || '', filesystem: sandboxFilesystemEditorRows(seed?.filesystem || [], filesystem_spellings), filesystem_spellings, environment: clone(seed?.environment || []), includes: clone(seed?.includes || []), agent_directories: clone(seed?.agent_directories || []), network_access: '', network, unix_sockets: axes.unix_sockets, resource_limits: { memory: seed?.resource_limits?.memory || '', cpu: seed?.resource_limits?.cpu == null ? '' : String(seed.resource_limits.cpu) }, darwin_allow_mach_register: !!seed?.darwin_allow_mach_register, ...(seed?.pre_launch ? { pre_launch: clone(seed.pre_launch) } : {}) };
+    return { id: seed?.id || 0, name: seed?.name || '', filesystem: sandboxFilesystemEditorRows(seed?.filesystem || [], filesystem_spellings), filesystem_spellings, environment: clone(seed?.environment || []), includes: clone(seed?.includes || []), agent_directories: clone(seed?.agent_directories || []), network_access: '', network, unix_sockets: axes.unix_sockets, resource_limits: { memory: seed?.resource_limits?.memory || '', cpu: seed?.resource_limits?.cpu == null ? '' : String(seed.resource_limits.cpu) }, darwin_allow_mach_register: !!seed?.darwin_allow_mach_register, ...(seed?.pre_launch ? { pre_launch: sandboxPreLaunchEditorRows(seed.pre_launch) } : {}) };
   }, [descriptor]);
   const initialFilesystemWire = sandboxFilesystemWire(baseline, baseline);
-  const [draft, setDraft] = useState(() => clone(baseline)); const [advanced, setAdvanced] = useState(false); const [rawFS, setRawFS] = useState(() => JSON.stringify(initialFilesystemWire.filesystem, null, 2)); const [rawSpellings, setRawSpellings] = useState(() => JSON.stringify(initialFilesystemWire.filesystem_spellings, null, 2)); const [rawEnv, setRawEnv] = useState(() => JSON.stringify(baseline.environment, null, 2)); const [rawIncludes, setRawIncludes] = useState(() => JSON.stringify(baseline.includes, null, 2)); const [rawAgentDirs, setRawAgentDirs] = useState(() => JSON.stringify(baseline.agent_directories, null, 2)); const [rawNetwork, setRawNetwork] = useState(() => JSON.stringify(baseline.network, null, 2)); const [rawSockets, setRawSockets] = useState(() => JSON.stringify(baseline.unix_sockets, null, 2)); const [rawResources, setRawResources] = useState(() => JSON.stringify(sandboxResourceLimitsForWire(baseline.resource_limits), null, 2)); const [rawPreLaunch, setRawPreLaunch] = useState(() => JSON.stringify(baseline.pre_launch || [], null, 2));
+  const [draft, setDraft] = useState(() => clone(baseline)); const [advanced, setAdvanced] = useState(false); const [rawFS, setRawFS] = useState(() => JSON.stringify(initialFilesystemWire.filesystem, null, 2)); const [rawSpellings, setRawSpellings] = useState(() => JSON.stringify(initialFilesystemWire.filesystem_spellings, null, 2)); const [rawEnv, setRawEnv] = useState(() => JSON.stringify(baseline.environment, null, 2)); const [rawIncludes, setRawIncludes] = useState(() => JSON.stringify(baseline.includes, null, 2)); const [rawAgentDirs, setRawAgentDirs] = useState(() => JSON.stringify(baseline.agent_directories, null, 2)); const [rawNetwork, setRawNetwork] = useState(() => JSON.stringify(baseline.network, null, 2)); const [rawSockets, setRawSockets] = useState(() => JSON.stringify(baseline.unix_sockets, null, 2)); const [rawResources, setRawResources] = useState(() => JSON.stringify(sandboxResourceLimitsForWire(baseline.resource_limits), null, 2)); const [rawPreLaunch, setRawPreLaunch] = useState(() => JSON.stringify(sandboxPreLaunchForWire(baseline.pre_launch || []), null, 2));
   // The audited common-rule presets. They are pure row inserters: nothing from
   // the catalog is persisted, so a profile never depends on it being loaded.
   const [commonRules, setCommonRules] = useState({ version: 0, categories: [], informational: [], global_filesystem: [], global_network: [], global_unix_sockets: [], network_packs: [], network_templates: [], socket_templates: [], global_config_warnings: [] });
@@ -1390,14 +1464,14 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
     return next;
   }) }));
   const setEnv = (index, patch) => setDraft((value) => ({ ...value, environment: value.environment.map((row, i) => i === index ? { ...row, ...patch } : row) }));
-  const parseRaw = () => { const filesystem = JSON.parse(rawFS || '[]'); const filesystem_spellings = JSON.parse(rawSpellings || 'null'); const environment = JSON.parse(rawEnv || '[]'); const includes = JSON.parse(rawIncludes || '[]'); const agent_directories = JSON.parse(rawAgentDirs || '[]'); const network = JSON.parse(rawNetwork || '{}'); const unix_sockets = JSON.parse(rawSockets || '{}'); const resource_limits = JSON.parse(rawResources || '{}'); if (![filesystem, environment, includes, agent_directories].every(Array.isArray)) throw new Error('filesystem, environment, includes and agent dirs must be arrays'); if (filesystem_spellings !== null && (!filesystem_spellings || Array.isArray(filesystem_spellings))) throw new Error('filesystem spellings must be a JSON object or null'); if (!network || typeof network !== 'object' || Array.isArray(network) || !unix_sockets || typeof unix_sockets !== 'object' || Array.isArray(unix_sockets) || !resource_limits || typeof resource_limits !== 'object' || Array.isArray(resource_limits)) throw new Error('network and unix sockets must be JSON objects; resource limits must be a JSON object'); if (network.allow != null && !Array.isArray(network.allow) || network.deny != null && !Array.isArray(network.deny) || unix_sockets.allow != null && !Array.isArray(unix_sockets.allow)) throw new Error('network allow/deny and Unix-socket allow fields must be arrays'); if (network.packs != null && !Array.isArray(network.packs) || network.deny_packs != null && !Array.isArray(network.deny_packs)) throw new Error('network packs and deny_packs must be arrays'); const resourceErrors = sandboxResourceLimitErrors(resource_limits); if (resourceErrors.length) throw new Error(resourceErrors[0]); const rowError = accessRowShapeError(network, unix_sockets); if (rowError) throw new Error(rowError); const pre_launch = JSON.parse(rawPreLaunch || '[]'); if (!Array.isArray(pre_launch)) throw new Error('pre-launch must be a JSON array of blocks'); for (const block of pre_launch) { if (!block || typeof block !== 'object' || Array.isArray(block)) throw new Error('each pre-launch block must be a JSON object'); if (typeof block.name !== 'string' || !block.name.trim()) throw new Error('each pre-launch block needs a name'); if (typeof block.script !== 'string' || !block.script.trim()) throw new Error(`pre-launch block "${block.name}" needs a script`); if (block.exports != null && (!Array.isArray(block.exports) || block.exports.some((name) => typeof name !== 'string'))) throw new Error(`pre-launch block "${block.name}" exports must be an array of variable names`); } const axes = sandboxAccessAxes({ network, unix_sockets }); /* Omitting the key on a block-less profile keeps the draft byte-identical to the baseline, so merely
+  const parseRaw = () => { const filesystem = JSON.parse(rawFS || '[]'); const filesystem_spellings = JSON.parse(rawSpellings || 'null'); const environment = JSON.parse(rawEnv || '[]'); const includes = JSON.parse(rawIncludes || '[]'); const agent_directories = JSON.parse(rawAgentDirs || '[]'); const network = JSON.parse(rawNetwork || '{}'); const unix_sockets = JSON.parse(rawSockets || '{}'); const resource_limits = JSON.parse(rawResources || '{}'); if (![filesystem, environment, includes, agent_directories].every(Array.isArray)) throw new Error('filesystem, environment, includes and agent dirs must be arrays'); if (filesystem_spellings !== null && (!filesystem_spellings || Array.isArray(filesystem_spellings))) throw new Error('filesystem spellings must be a JSON object or null'); if (!network || typeof network !== 'object' || Array.isArray(network) || !unix_sockets || typeof unix_sockets !== 'object' || Array.isArray(unix_sockets) || !resource_limits || typeof resource_limits !== 'object' || Array.isArray(resource_limits)) throw new Error('network and unix sockets must be JSON objects; resource limits must be a JSON object'); if (network.allow != null && !Array.isArray(network.allow) || network.deny != null && !Array.isArray(network.deny) || unix_sockets.allow != null && !Array.isArray(unix_sockets.allow)) throw new Error('network allow/deny and Unix-socket allow fields must be arrays'); if (network.packs != null && !Array.isArray(network.packs) || network.deny_packs != null && !Array.isArray(network.deny_packs)) throw new Error('network packs and deny_packs must be arrays'); const resourceErrors = sandboxResourceLimitErrors(resource_limits); if (resourceErrors.length) throw new Error(resourceErrors[0]); const rowError = accessRowShapeError(network, unix_sockets); if (rowError) throw new Error(rowError); const pre_launch = JSON.parse(rawPreLaunch || '[]'); const preLaunchErrors = sandboxPreLaunchValidation(pre_launch).errors; if (preLaunchErrors.length) throw new Error(preLaunchErrors[0]); const axes = sandboxAccessAxes({ network, unix_sockets }); /* Omitting the key on a block-less profile keeps the draft byte-identical to the baseline, so merely
      opening and closing this panel does not raise a spurious discard prompt. Clearing an existing profile's
      blocks still emits the explicit empty array the daemon needs to distinguish "clear" from "leave alone". */
   return { filesystem, filesystem_spellings, environment, includes, agent_directories, ...(baseline.pre_launch === undefined && pre_launch.length === 0 ? {} : { pre_launch }), network: axes.network, unix_sockets: axes.unix_sockets, resource_limits: sandboxResourceLimitsForWire(resource_limits) }; };
-  const applyRaw = () => { try { const parsed = parseRaw(); setDraft((value) => ({ ...value, ...parsed, filesystem: sandboxFilesystemEditorRows(parsed.filesystem, parsed.filesystem_spellings) })); state.error.value = ''; return true; } catch (error) { state.error.value = error.message || String(error); return false; } };
-  const toggleAdvanced = () => { if (advanced && !applyRaw()) return; if (!advanced) { const wire = sandboxFilesystemWire(draft, baseline); setRawFS(JSON.stringify(wire.filesystem, null, 2)); setRawSpellings(JSON.stringify(wire.filesystem_spellings, null, 2)); setRawEnv(JSON.stringify(draft.environment, null, 2)); setRawIncludes(JSON.stringify(draft.includes, null, 2)); setRawAgentDirs(JSON.stringify(draft.agent_directories, null, 2)); setRawNetwork(JSON.stringify(draft.network, null, 2)); setRawSockets(JSON.stringify(draft.unix_sockets, null, 2)); setRawResources(JSON.stringify(sandboxResourceLimitsForWire(draft.resource_limits), null, 2)); setRawPreLaunch(JSON.stringify(draft.pre_launch || [], null, 2)); } setAdvanced(!advanced); };
+  const applyRaw = () => { try { const parsed = parseRaw(); setDraft((value) => { const next = { ...value, ...parsed, filesystem: sandboxFilesystemEditorRows(parsed.filesystem, parsed.filesystem_spellings) }; if (parsed.pre_launch === undefined) delete next.pre_launch; else next.pre_launch = sandboxPreLaunchEditorRows(parsed.pre_launch); return next; }); state.error.value = ''; return true; } catch (error) { state.error.value = error.message || String(error); return false; } };
+  const toggleAdvanced = () => { if (advanced && !applyRaw()) return; if (!advanced) { const wire = sandboxFilesystemWire(draft, baseline); setRawFS(JSON.stringify(wire.filesystem, null, 2)); setRawSpellings(JSON.stringify(wire.filesystem_spellings, null, 2)); setRawEnv(JSON.stringify(draft.environment, null, 2)); setRawIncludes(JSON.stringify(draft.includes, null, 2)); setRawAgentDirs(JSON.stringify(draft.agent_directories, null, 2)); setRawNetwork(JSON.stringify(draft.network, null, 2)); setRawSockets(JSON.stringify(draft.unix_sockets, null, 2)); setRawResources(JSON.stringify(sandboxResourceLimitsForWire(draft.resource_limits), null, 2)); setRawPreLaunch(JSON.stringify(sandboxPreLaunchForWire(draft.pre_launch || []), null, 2)); } setAdvanced(!advanced); };
   const submit = async () => {
-    let value = { ...draft, ...sandboxFilesystemWire(draft, baseline), resource_limits: sandboxResourceLimitsForWire(draft.resource_limits) };
+    let value = { ...draft, ...sandboxFilesystemWire(draft, baseline), resource_limits: sandboxResourceLimitsForWire(draft.resource_limits), ...(draft.pre_launch === undefined ? {} : { pre_launch: sandboxPreLaunchForWire(draft.pre_launch) }) };
     if (advanced) { try { value = { ...draft, ...parseRaw() }; } catch (error) { state.error.value = error.message || String(error); return; } }
     await actions.saveSandbox({ draft: value, original: seed, options });
   };
@@ -1409,7 +1483,7 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
     wasSaving.current = saving;
   }, [saving]);
   useEffect(() => { if (advanced) return undefined; let active = true; const generation = ++directoryGeneration.current; const filesystem = clone(draft.filesystem); const timer = setTimeout(async () => { try { const result = await actions.inspectDirectories(filesystem); if (active && generation === directoryGeneration.current) setDirectoryStatus({ missing: result?.missing || [], creatable: result?.creatable || [] }); } catch (_) { if (active && generation === directoryGeneration.current) setDirectoryStatus({ missing: [], creatable: [] }); } }, 300); return () => { active = false; clearTimeout(timer); }; }, [advanced, filesystemSignature]);
-  let predictionDraft = { ...draft, ...sandboxFilesystemWire(draft, baseline), resource_limits: sandboxResourceLimitsForWire(draft.resource_limits) };
+  let predictionDraft = { ...draft, ...sandboxFilesystemWire(draft, baseline), resource_limits: sandboxResourceLimitsForWire(draft.resource_limits), ...(draft.pre_launch === undefined ? {} : { pre_launch: sandboxPreLaunchForWire(draft.pre_launch) }) };
   let predictionDraftError = '';
   if (advanced) {
     try { predictionDraft = { ...draft, ...parseRaw() }; }
@@ -1427,15 +1501,17 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
     ? `Saving is paused because release-owned network intent cannot be displayed for: ${hiddenNetworkPacks.join(', ')}.${commonRuleFeedBusy ? ' The pack catalog is still loading.' : commonRuleFeedError ? ` Catalog error: ${commonRuleFeedError}` : ' Retry the common-rule catalog.'}`
     : '';
   const accessErrors = [...sandboxAccessDraftErrors(draft), ...sandboxResourceLimitErrors(draft.resource_limits)];
+  const preLaunchValidation = sandboxPreLaunchValidation(sandboxPreLaunchForWire(draft.pre_launch || []));
   // Raw JSON is authoritative while Advanced is open, so a repaired raw axis
   // can resume preview even if the hidden structured draft remains invalid.
   const predictionAccessErrors = predictionDraftError ? [] : advanced
     ? [
       ...sandboxAccessDraftErrors(predictionDraft), ...sandboxResourceLimitErrors(predictionDraft.resource_limits),
+      ...sandboxPreLaunchValidation(predictionDraft.pre_launch || []).errors,
       ...(networkPackVisibilityError ? [networkPackVisibilityError] : []),
     ]
     : [
-      ...accessErrors,
+      ...accessErrors, ...preLaunchValidation.errors,
       ...(networkPackVisibilityError ? [networkPackVisibilityError] : []),
     ];
   const predictionPauseReason = predictionDraftError || predictionAccessErrors[0] || '';
@@ -1472,7 +1548,7 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
   }, [predictionSignature]);
   const createMissing = async () => { const filesystem = clone(draft.filesystem); const signature = JSON.stringify(filesystem); const generation = ++directoryGeneration.current; setDirectoryBusy(true); state.error.value = ''; try { const result = await actions.createDirectories(filesystem); const refreshed = await actions.inspectDirectories(filesystem); if (generation === directoryGeneration.current && signature === latestFilesystem.current) { const created = result?.created || []; state.error.value = `Created ${created.length} sandbox director${created.length === 1 ? 'y' : 'ies'}.`; setDirectoryStatus({ missing: refreshed?.missing || [], creatable: refreshed?.creatable || [] }); } } catch (error) { if (generation === directoryGeneration.current) state.error.value = error.message || String(error); } finally { setDirectoryBusy(false); } };
   const configureWithAgent = () => {
-    let value = { ...draft, ...sandboxFilesystemWire(draft, baseline), resource_limits: sandboxResourceLimitsForWire(draft.resource_limits) };
+    let value = { ...draft, ...sandboxFilesystemWire(draft, baseline), resource_limits: sandboxResourceLimitsForWire(draft.resource_limits), ...(draft.pre_launch === undefined ? {} : { pre_launch: sandboxPreLaunchForWire(draft.pre_launch) }) };
     if (advanced) {
       try { value = { ...draft, ...parseRaw() }; }
       catch (error) { state.error.value = error.message || String(error); return; }
@@ -1480,6 +1556,7 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
     const handoffErrors = [
       ...sandboxAccessDraftErrors(value),
       ...sandboxResourceLimitErrors(value.resource_limits),
+      ...sandboxPreLaunchValidation(value.pre_launch || []).errors,
       ...(networkPackVisibilityError ? [networkPackVisibilityError] : []),
     ];
     if (handoffErrors.length) { state.error.value = handoffErrors[0]; return; }
@@ -1489,7 +1566,7 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
     void actions.configureSandboxWithAgent(value, { targetName, editExisting, cloneSourceName: options.cloneSourceName, onCreate: options.onCreate });
   };
   const structuredFilesystemWire = sandboxFilesystemWire(draft, baseline);
-  const rawDirty = advanced && [rawFS !== JSON.stringify(structuredFilesystemWire.filesystem, null, 2), rawSpellings !== JSON.stringify(structuredFilesystemWire.filesystem_spellings, null, 2), rawEnv !== JSON.stringify(draft.environment, null, 2), rawIncludes !== JSON.stringify(draft.includes, null, 2), rawAgentDirs !== JSON.stringify(draft.agent_directories, null, 2), rawNetwork !== JSON.stringify(draft.network, null, 2), rawSockets !== JSON.stringify(draft.unix_sockets, null, 2), rawResources !== JSON.stringify(sandboxResourceLimitsForWire(draft.resource_limits), null, 2), rawPreLaunch !== JSON.stringify(draft.pre_launch || [], null, 2)].some(Boolean);
+  const rawDirty = advanced && [rawFS !== JSON.stringify(structuredFilesystemWire.filesystem, null, 2), rawSpellings !== JSON.stringify(structuredFilesystemWire.filesystem_spellings, null, 2), rawEnv !== JSON.stringify(draft.environment, null, 2), rawIncludes !== JSON.stringify(draft.includes, null, 2), rawAgentDirs !== JSON.stringify(draft.agent_directories, null, 2), rawNetwork !== JSON.stringify(draft.network, null, 2), rawSockets !== JSON.stringify(draft.unix_sockets, null, 2), rawResources !== JSON.stringify(sandboxResourceLimitsForWire(draft.resource_limits), null, 2), rawPreLaunch !== JSON.stringify(sandboxPreLaunchForWire(draft.pre_launch || []), null, 2)].some(Boolean);
   // A preset inserts ordinary deny rows and then forgets it ever existed: no
   // stored ID, no hidden state. Paths already present in the table are left
   // exactly as authored rather than silently re-denied, and the notice says so.
@@ -1519,7 +1596,7 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
     && (prediction?.targets || []).some((target) =>
       sandboxPolicyNeedsAttention(target, selectedEffective, effectiveContext));
   const submitBlocked = saving || directoryBusy || !!networkPackVisibilityError
-    || (!advanced && accessErrors.length > 0);
+    || (!advanced && (accessErrors.length > 0 || preLaunchValidation.errors.length > 0));
   return html`<${Overlay} id="sandbox-profile-editor-modal" labelledby="sandbox-profile-editor-title" onClose=${state.closeDialog} onSubmitHotkey=${submitBlocked ? null : submit} dirty=${dirty || rawDirty} blocked=${saving || directoryBusy} confirmDiscard=${confirmDiscard} registerClose=${registerClose} resizeKey="tclaude.dash.modalSize.sandbox-profile-editor"><h3 id="sandbox-profile-editor-title">${options.cloneSourceName ? wizWord(`Clone sandbox profile: ${options.cloneSourceName}`, `Mirror ward: ${options.cloneSourceName}`) : seed ? wizWord(`Edit sandbox profile: ${seed.name}`, `Edit ward: ${seed.name}`) : wizWord('New sandbox profile', 'New ward')}</h3><${Row} label="Name"><input value=${draft.name} onInput=${(event) => change(setDraft, 'name', event.currentTarget.value)} placeholder="e.g. shared-build-caches" autofocus autocomplete="off" spellcheck="false"/></${Row}>
     ${!advanced && html`<${NetworkAccessEditor} draft=${draft} setDraft=${setDraft} catalog=${commonRules} newDraft=${!seed}
       packVisibilityError=${networkPackVisibilityError}
@@ -1578,6 +1655,11 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
     </${SandboxSection}>`}
     <${SandboxSection} id="sandbox-profile-editor-environment-section" label="Environment"
       help=${ENVIRONMENT_HELP} hidden=${advanced} entryCount=${draft.environment.length}><div class="sbx-rows">${draft.environment.map((row, index) => html`<div key=${index} class="sbx-row sbx-environment-row"><input class="sbx-env-name" value=${row.name || ''} placeholder="NAME" onInput=${(event) => setEnv(index, { name: event.currentTarget.value })}/><input class="sbx-env-value" value=${row.value || ''} placeholder="value" onInput=${(event) => setEnv(index, { value: event.currentTarget.value })}/><button type="button" onClick=${() => setDraft((value) => ({ ...value, environment: value.environment.filter((_, i) => i !== index) }))}>×</button></div>`)}</div><button type="button" class="sbx-add-row" onClick=${() => setDraft((value) => ({ ...value, environment: [...value.environment, { name: '', value: '' }] }))}>＋ add variable</button></${SandboxSection}>
+    <${SandboxSection} id="sandbox-profile-editor-pre-launch-section" label="Pre-launch scripts"
+      help=${PRE_LAUNCH_HELP} hidden=${advanced} entryCount=${(draft.pre_launch || []).length}>
+      <${SandboxPreLaunchEditor} blocks=${draft.pre_launch || []} setDraft=${setDraft}
+        validation=${preLaunchValidation}/>
+    </${SandboxSection}>
     <${SandboxSection} id="sandbox-profile-editor-includes-section" label="Includes"
       help=${INCLUDES_HELP} hidden=${advanced} entryCount=${draft.includes.length}><div class="sbx-rows">${draft.includes.map((name, index) => {
     const missing = !!name && !sandboxProfiles.some((item) => item.name === name);

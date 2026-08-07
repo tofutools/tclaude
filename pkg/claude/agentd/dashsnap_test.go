@@ -1334,6 +1334,15 @@ func baseStates() []dashsnap.State {
 			SettleMS: 700,
 		},
 		{
+			Key:      "management-sandbox-pre-launch-editor",
+			Title:    "Management — pre-launch scripts",
+			Caption:  "A first-class foldable sandbox-profile section with an execution-order hint, numbered multiline bash blocks, declared exports, and compact reorder/remove controls.",
+			Width:    1280,
+			Height:   1000,
+			JS:       sandboxPreLaunchDashSnapJS(),
+			SettleMS: 700,
+		},
+		{
 			Key:   "management-sandbox-mount-path-editor",
 			Title: "Management — mount a directory at a sandbox path",
 			Caption: "The per-row \u2933 control on the filesystem table. Row 1 is remapped with its panel open; " +
@@ -3469,6 +3478,48 @@ func sandboxCommonRulesJS() string {
   if (!document.querySelector('.sbx-common-rule-entry')) throw new Error('common-rule entries did not render');
   menu.scrollIntoView({ block: 'center' });
   await new Promise(function(resolve){ setTimeout(resolve, 120); });
+})();`
+}
+
+// sandboxPreLaunchDashSnapJS opens the real editor with the typical two-block
+// shape. The browser assertions pin the first-class section contract while the
+// capture makes the actual textarea height, card spacing, and action density
+// reviewable in both dashboard skins.
+func sandboxPreLaunchDashSnapJS() string {
+	return `return (async function(){
+  var module = await import('/static/js/sandbox-profiles.js');
+  module.openSandboxProfileEditor({
+    name:'dashsnap-pre-launch',filesystem:[],environment:[],includes:[],agent_directories:[],
+    pre_launch:[
+      {name:'install-wrapper',script:'set -euo pipefail\nmkdir -p /tmp/tools/bin\nprintf "#!/usr/bin/env bash\\nexec playwright-cli \\\"$@\\\"\\n" > /tmp/tools/bin/browser\nchmod +x /tmp/tools/bin/browser\nexport PATH="/tmp/tools/bin:$PATH"\n',exports:['PATH']},
+      {name:'launch-session',script:'export PLAYWRIGHT_CLI_SESSION="render-$$-$(date +%s)"\nexport PLAYWRIGHT_MCP_OUTPUT_DIR=/tmp/playwright-output\nmkdir -p "$PLAYWRIGHT_MCP_OUTPUT_DIR"\n',exports:['PLAYWRIGHT_CLI_SESSION','PLAYWRIGHT_MCP_OUTPUT_DIR']}
+    ],
+    network:{baseline:'allow',packs:[],deny_packs:[],allow:[],deny:[]},
+    unix_sockets:{mode:''}
+  });
+  var deadline=Date.now()+6000;
+  while(!document.querySelector('#sandbox-profile-editor-pre-launch-section')&&Date.now()<deadline){
+    await new Promise(function(resolve){setTimeout(resolve,40);});
+  }
+  var section=document.querySelector('#sandbox-profile-editor-pre-launch-section');
+  if(!section) throw new Error('pre-launch editor section did not render');
+  section.open=true;
+  await new Promise(function(resolve){requestAnimationFrame(function(){requestAnimationFrame(resolve);});});
+  if(section.querySelector('.sbx-section-count').textContent.trim()!=='2 entries'){
+    throw new Error('pre-launch editor count does not use shared section wording');
+  }
+  var cards=[...section.querySelectorAll('.sbx-prelaunch-card')];
+  if(cards.length!==2) throw new Error('expected two visible pre-launch cards');
+  if(cards.some(function(card){return !card.querySelector('textarea')||!card.querySelector('.sbx-prelaunch-exports input');})){
+    throw new Error('a pre-launch card is missing its multiline script or exports field');
+  }
+  if(!section.querySelector('.sbx-prelaunch-intro').textContent.includes('top to bottom')){
+    throw new Error('execution-order hint is missing');
+  }
+  if(cards[0].getBoundingClientRect().bottom>=cards[1].getBoundingClientRect().top){
+    throw new Error('pre-launch cards do not paint in distinct vertical execution order');
+  }
+  section.scrollIntoView({block:'center'});
 })();`
 }
 
